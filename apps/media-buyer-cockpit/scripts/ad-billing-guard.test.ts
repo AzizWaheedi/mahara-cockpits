@@ -680,6 +680,51 @@ test("a crashed run frees its lease even when the first finish calls fail", asyn
   expect(run.finishes()).toBe(3);
 });
 
+// 26 Oct 2026: every client re-read the whole Client Data sheet, 17 reads a run. A run now reads it once.
+function sheetRun(sheetFails: boolean) {
+  const observed: { binding: string; signal: string; error: string | null }[] = [];
+  let sheets = 0;
+  const t = {
+    env: {},
+    rpc: async (name: string, args: Record<string, any>) => {
+      if (name === "cockpit_ad_billing_observe")
+        observed.push({ binding: args.p_binding, signal: args.p_signal, error: args.p_error });
+      return name === "cockpit_ad_billing_start" ? true : null;
+    },
+    tasks: async () => [],
+    rows: async () =>
+      ["1", "2", "3"].map((n) => ({ id: "b" + n, client_name: "client" + n, account_id: "12345" + n, revision: 1, ads_task_ids: [] })),
+    sheet: async () => {
+      sheets++;
+      if (sheetFails) throw new ProviderError("Google", 0, true);
+      return sheet;
+    },
+    eligibility: async (_b: Binding, rows: Promise<unknown[][]>) => {
+      expect(await rows).toBe(sheet);
+    },
+    meta: async (id: string) => ({ id: "act_" + id, account_status: 1 }),
+  };
+  return { t: t as unknown as Transport, observed, sheets: () => sheets };
+}
+
+test("a poll reads Client Data once and names its slowest client", async () => {
+  const run = sheetRun(false);
+  const result: any = await poll(run.t, [0]);
+  expect(run.sheets()).toBe(1);
+  expect(result).toMatchObject({ busy: false, checked: 3, failures: 0 });
+  expect(run.observed.map((o) => o.signal)).toEqual(["healthy", "healthy", "healthy"]);
+  expect(result.slowest.client).toMatch(/^client[123]$/);
+  expect(typeof result.secs).toBe("number");
+});
+
+test("a failed Client Data read fails each client's check without crashing the run", async () => {
+  const run = sheetRun(true);
+  const result: any = await poll(run.t, [0]);
+  expect(run.sheets()).toBe(1);
+  expect(result).toMatchObject({ busy: false, checked: 3, failures: 3 });
+  expect(run.observed.every((o) => o.signal === "unknown" && /Google/.test(o.error ?? ""))).toBe(true);
+});
+
 test("when every finish call fails, the run's own error still goes up", async () => {
   const run = crashingRun(99);
   await expect(poll(run.t, [0, 0, 0, 0])).rejects.toThrow("Database request failed (network).");

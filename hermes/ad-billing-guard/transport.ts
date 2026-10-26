@@ -227,13 +227,14 @@ export class Transport {
 			throw new Error("Client Data is unavailable");
 		return result.values;
 	}
-	async eligibility(binding: Binding) {
-		const [client, sheet, ads] = await Promise.all([
+	// A poll passes the one Client Data read of its run. A send reads it fresh (the default).
+	async eligibility(binding: Binding, sheet: Promise<unknown[][]> = this.sheet()) {
+		const [client, rows, ads] = await Promise.all([
 			this.task(binding.client_task_id),
-			this.sheet(),
+			sheet,
 			Promise.all(binding.ads_task_ids.map((id) => this.task(id))),
 		]);
-		validateBinding(binding, client, ads, sheet);
+		validateBinding(binding, client, ads, rows);
 	}
 	preflight(d: Delivery) {
 		if (d.channel === "slack") {
