@@ -79,6 +79,11 @@ export function storeLive(name: string | null, live: LiveState): void {
 
 export type DeckMessage =
   | { type: "hello"; from: "notes" | "deck" | "prep" }
+  /**
+   * The call guide asks which windows are open (docs/call-guide/DESIGN.md):
+   * the deck answers with its state, a notes window with its hello.
+   */
+  | { type: "roll-call" }
   | {
       type: "state";
       index: number;

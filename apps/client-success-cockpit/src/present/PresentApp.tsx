@@ -275,6 +275,7 @@ export function PresentApp({
         book={bookFor}
         io={io}
         hosted={Boolean(host)}
+        practice={rehearseAsked || Boolean(bp?.rehearsal)}
       />
     );
   if (view === "prep")
@@ -288,6 +289,8 @@ export function PresentApp({
         book={bookFor}
         io={io}
         hosted={Boolean(host)}
+        practice={rehearseAsked || Boolean(bp?.rehearsal)}
+        openNotes={openNotes}
         uploadLogo={
           uploadLogo
             ? async file => {

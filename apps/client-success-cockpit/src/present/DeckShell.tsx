@@ -316,7 +316,11 @@ export function DeckShell({
             Math.max(0, (stops[slides.length - 1] ?? 1) - 1),
           );
       } else if (m.type === "goto") go(m.index, m.tour ?? 0);
-      else if (m.type === "hello" && m.from === "notes" && slide) {
+      else if (
+        ((m.type === "hello" && m.from === "notes") ||
+          m.type === "roll-call") &&
+        slide
+      ) {
         hub.post({
           type: "state",
           index,

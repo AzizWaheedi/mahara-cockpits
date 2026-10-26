@@ -1,0 +1,50 @@
+/* The call guide's beacon (docs/call-guide/DESIGN.md): the real control for
+   the step that is now wears a slow teal ring. The guide sets
+   data-guide-now on <html> while help is on; the control carries
+   data-guide. One rule per target, so only the lit one rings. Never on the
+   shared deck: the canvas has no data-guide controls. */
+
+:root[data-guide-now="present"] [data-guide="present"],
+:root[data-guide-now="notes"] [data-guide="notes"],
+:root[data-guide-now="part1"] [data-guide="part1"],
+:root[data-guide-now="part2"] [data-guide="part2"],
+:root[data-guide-now="part3"] [data-guide="part3"],
+:root[data-guide-now="book-blueprint"] [data-guide="book-blueprint"] {
+  --guide-ring: color-mix(in oklch, var(--mahara-teal) 85%, transparent);
+  box-shadow:
+    0 0 0 2px var(--background),
+    0 0 0 4px var(--guide-ring);
+  animation: guide-beacon 2.4s ease-in-out infinite;
+}
+
+@keyframes guide-beacon {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 2px var(--background),
+      0 0 0 4px var(--guide-ring),
+      0 0 0 4px color-mix(in oklch, var(--mahara-teal) 0%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px var(--background),
+      0 0 0 4px var(--guide-ring),
+      0 0 18px 6px color-mix(in oklch, var(--mahara-teal) 35%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-guide-now] [data-guide] {
+    animation: none;
+  }
+}
+
+/* The lamp beside the step that is now: the rail's teal lamp, small. */
+.guide-lamp {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  background: var(--mahara-teal);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--mahara-teal) 22%, transparent);
+}

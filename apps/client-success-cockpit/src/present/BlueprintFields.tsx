@@ -543,6 +543,7 @@ export function PressButton({ bp, part }: { bp: BpModel; part: BpPart }) {
       size="sm"
       disabled={busy || Boolean(order)}
       title={order ?? undefined}
+      data-guide={`part${part}`}
       onClick={() => {
         setBusy(true);
         void bp.press(part).finally(() => setBusy(false));

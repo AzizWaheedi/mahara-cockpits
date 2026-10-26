@@ -14,6 +14,7 @@ import { focusOf } from "./AdsStage";
 import { makeAddFiles } from "./adsActions";
 import { BlueprintNotes } from "./BlueprintNotes";
 import { BlueprintPrep } from "./BlueprintPrep";
+import { CallGuideBand } from "./CallGuide";
 import { DECK_NAME, t } from "./content";
 import { Field, Segmented, SlideControls, Toggle } from "./controls";
 import { DeckShell } from "./DeckShell";
@@ -24,6 +25,7 @@ import { LaunchControls } from "./launchControls";
 import { saveLine } from "./NotesWindow";
 import type { DeckKind } from "./sources";
 import { TrayFiles } from "./TrayFiles";
+import { useCallFacts } from "./useCallFacts";
 import type { DeckIO, DeckModel } from "./useDeckModel";
 import { useDriveImports } from "./useDriveImports";
 import { PrepVideos } from "./VideoPrep";
@@ -56,6 +58,8 @@ export function PrepView({
   uploadLogo,
   io,
   hosted = false,
+  practice = false,
+  openNotes,
 }: {
   model: DeckModel;
   deck: DeckKind;
@@ -69,8 +73,19 @@ export function PrepView({
   io?: DeckIO;
   /** Inside the creative director cockpit's page (EMBED.md 4.2). */
   hosted?: boolean;
+  /** A rehearsal or a practice run: the call guide never counts it. */
+  practice?: boolean;
+  /** Opens the notes window, for the call guide's step (not when hosted). */
+  openNotes?: () => void;
 }) {
   const d = model.data;
+  const facts = useCallFacts({
+    hub: model.hub,
+    d,
+    slides: shown,
+    bp: base.bp,
+    isNotes: false,
+  });
   const [pos, setPos] = useState<Pos>({ index: 0, tour: 0 });
   const [messages, setMessages] = useState<string[]>([]);
   const posRef = useRef(pos);
@@ -230,12 +245,26 @@ export function PrepView({
               model.setPrep(deck, { language: v }, true);
             }}
           />
-          <Button onClick={links.present}>
+          <Button onClick={links.present} data-guide="present">
             <Presentation aria-hidden />
             Present
           </Button>
         </div>
       </header>
+
+      {/* The CSM's read-only view of the Blueprint runs no call of its own. */}
+      {deck !== "blueprint" || (base.bp && !base.bp.readOnly) ? (
+        <div className={cn(hosted && "pr-[var(--host-end,16px)]")}>
+          <CallGuideBand
+            deck={deck}
+            taskId={d.taskId}
+            facts={facts}
+            hosted={hosted}
+            practice={practice}
+            openNotes={hosted ? undefined : openNotes}
+          />
+        </div>
+      ) : null}
 
       <div
         className={cn(

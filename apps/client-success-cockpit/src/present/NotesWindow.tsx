@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { focusOf } from "./AdsStage";
 import { makeAddFiles } from "./adsActions";
 import { BlueprintNotes } from "./BlueprintNotes";
+import { CallGuideLine } from "./CallGuide";
 import type { DeckMessage } from "./channel";
 import { DECK_NAME, t } from "./content";
 import { groupLinks, Segmented, SlideControls } from "./controls";
@@ -44,6 +45,7 @@ import {
 } from "./launchControls";
 import { serviceNames } from "./services";
 import type { DeckKind } from "./sources";
+import { useCallFacts } from "./useCallFacts";
 import type { DeckIO, DeckModel, SaveState } from "./useDeckModel";
 import { useDriveImports } from "./useDriveImports";
 import {
@@ -297,6 +299,7 @@ export function NotesWindow({
   book,
   io,
   hosted = false,
+  practice = false,
 }: {
   model: DeckModel;
   deck: DeckKind;
@@ -306,8 +309,11 @@ export function NotesWindow({
   io?: DeckIO;
   /** The Blueprint's notes for the creative director cockpit (EMBED.md 4.4). */
   hosted?: boolean;
+  /** A rehearsal or a practice run: the call guide never counts it. */
+  practice?: boolean;
 }) {
   const { hub, data: d } = model;
+  const facts = useCallFacts({ hub, d, slides, bp: base.bp, isNotes: true });
   /** The kickoff on the deck's last slide, as the deck window has it. */
   const [kickoff, setKickoff] = useState<KickoffView | null>(null);
   const [at, setAt] = useState<DeckState | null>(null);
@@ -366,6 +372,8 @@ export function NotesWindow({
       if (m.type === "state") {
         setAt(m);
         setDeckClosed(false);
+      } else if (m.type === "roll-call") {
+        hub.post({ type: "hello", from: "notes" });
       } else if (m.type === "kickoff") {
         setKickoff(m.view);
       } else if (m.type === "closed") {
@@ -517,6 +525,15 @@ export function NotesWindow({
             Rehearsal: nothing is saved or sent.
           </div>
         ) : null}
+        {deck !== "blueprint" || (base.bp && !base.bp.readOnly) ? (
+          <CallGuideLine
+            deck={deck}
+            taskId={d.taskId}
+            facts={facts}
+            hosted={hosted}
+            practice={practice}
+          />
+        ) : null}
       </header>
 
       <main className="flex-1 space-y-4 px-4 py-4 text-sm leading-6">
@@ -628,13 +645,20 @@ export function NotesWindow({
               post={act => hub.post({ type: "kickoff-act", act })}
               book={
                 book
-                  ? o =>
-                      book(
-                        "blueprint",
-                        KICKOFF.ending?.label ??
-                          "Book the Brand Blueprint call",
-                        o,
-                      )
+                  ? o => (
+                      // The call guide lights it while it is the step.
+                      <span
+                        data-guide="book-blueprint"
+                        className="inline-flex rounded-md"
+                      >
+                        {book(
+                          "blueprint",
+                          KICKOFF.ending?.label ??
+                            "Book the Brand Blueprint call",
+                          o,
+                        )}
+                      </span>
+                    )
                   : undefined
               }
             />
