@@ -569,19 +569,33 @@ export async function fathomSource(ctx: Ctx, since: string, transcriptsPerRun = 
 
 // ---------------------------------------------------------------- Meta activities
 
-export async function metaSource(ctx: Ctx, sinceMs: number): Promise<Health> {
-  const { t, db } = ctx;
+/** The ad accounts whose activity is read, each with its client's task id. */
+export async function metaAccounts(db: Db, clients: Client[]): Promise<Map<string, string>> {
   const accounts = new Map<string, string>(); // account id → task id
   // A stopped client's account is often no longer shared with us; Meta then
   // refuses it and the whole source reads as failing. Skip their cards.
   for (const c of await db.all("clients", "select=name,meta_ad_account_id&is_active=eq.true&meta_ad_account_id=not.is.null")) {
-    const card = ctx.clients.find(k => isClientOf(c.name, k));
+    const card = clients.find(k => isClientOf(c.name, k));
     if (card && !card.stopped) accounts.set(String(c.meta_ad_account_id).replace(/^act_/, ""), card.taskId);
   }
   for (const c of await db.all("cockpit_campaigns", "select=client_name,meta_account_id&source_deleted=is.false")) {
-    const card = ctx.clients.find(k => isClientOf(c.client_name, k));
+    const card = clients.find(k => isClientOf(c.client_name, k));
     if (card && c.meta_account_id) accounts.set(String(c.meta_account_id).replace(/^act_/, ""), card.taskId);
   }
+  // `clients.name` is the Meta account's own name, so a name match misses an
+  // account named unlike its client. Safad's "Safad Consulting" dropped out on
+  // 22 Oct 2026 when its only campaign row was deleted. The ad billing watch
+  // holds each enrolled client's verified account by task id, so it wins.
+  for (const b of await db.all("cockpit_ad_billing_bindings", "select=client_task_id,account_id&enabled=eq.true")) {
+    const card = clients.find(k => k.taskId === String(b.client_task_id));
+    if (card && !card.stopped && b.account_id) accounts.set(String(b.account_id).replace(/^act_/, ""), card.taskId);
+  }
+  return accounts;
+}
+
+export async function metaSource(ctx: Ctx, sinceMs: number): Promise<Health> {
+  const { t, db } = ctx;
+  const accounts = await metaAccounts(db, ctx.clients);
   const rows: Row[] = [];
   const failed: string[] = [];
   let read = 0;
