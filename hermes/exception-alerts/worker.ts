@@ -661,7 +661,8 @@ if (import.meta.main) {
     process.exit(r.ok ? 0 : 2);
   } catch (e) {
     console.error(`[${new Date().toISOString()}] exception-alerts FAILED: ${String((e as Error)?.stack ?? e).slice(0, 600)}`);
-    if (env.SUPABASE_SERVICE_ROLE_KEY) await recordFailure(makeIo(env), e);
+    // Only a writing run records its failure: a read-only run never touches the health row.
+    if (process.argv.includes("--apply") && env.SUPABASE_SERVICE_ROLE_KEY) await recordFailure(makeIo(env), e);
     process.exit(1);
   }
 }

@@ -518,12 +518,19 @@ async function exceptionAlerts(apply: boolean) {
   try {
     const x = await import("../exception-alerts/worker");
     const env = x.readEnv();
+    // A budget, so a slow database never holds this job's lock past its 15-minute beat.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const budget = new Promise<never>((_, fail) => {
+      timer = setTimeout(() => fail(new Error("took longer than 4 minutes and was stopped")), 4 * 60_000);
+    });
     try {
-      const r = await x.runExceptions(x.makeIo(env), env, { apply });
+      const r = await Promise.race([x.runExceptions(x.makeIo(env), env, { apply }), budget]);
       console.log(`[${at()}] exception-alerts ${r.skipped ? `skipped (${r.skipped})` : r.ok ? "ok" : "FAILED"}: ${r.note}`);
     } catch (e) {
       console.error(`[${at()}] exception-alerts FAILED: ${String((e as Error)?.stack ?? e).slice(0, 600)}`);
       if (apply && env.SUPABASE_SERVICE_ROLE_KEY) await x.recordFailure(x.makeIo(env), e);
+    } finally {
+      clearTimeout(timer);
     }
   } catch (e) {
     console.error(`[${at()}] exception-alerts FAILED to load: ${String((e as Error)?.message ?? e).slice(0, 400)}`);
