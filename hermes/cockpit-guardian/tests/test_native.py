@@ -3,7 +3,7 @@ import unittest
 from datetime import timedelta
 from checks import native
 from guard.context import Context
-from guard.model import FAIL, OK
+from guard.model import FAIL, OK, WARN
 from tests import fakes
 
 
@@ -33,6 +33,31 @@ class Native(unittest.TestCase):
         value=snapshot()
         value['checks'].append(dict(key='source:provider:fixture',ok=False,at=None,max_age_min=None))
         self.assertEqual(native.run_native(context(value)).status,FAIL)
+
+    def test_a_failed_provider_call_alone_is_a_named_warning(self):
+        # 26 Oct 2026: Ardon's lead form read failed every cycle and kept the whole check Broken with no name.
+        value=snapshot()
+        value['checks'].append(dict(key='source:cockpit_media_provider_health:9f3a',name='Provider meta',ok=False,
+                                    error='Latest provider receipt is unsuccessful',detail='graph.facebook.com/v21.0/4584687278486426',
+                                    at=fakes.ago(3),max_age_min=None))
+        result=native.run_native(context(value))
+        self.assertEqual(result.status,WARN)
+        self.assertIn('4584687278486426',result.summary)
+        self.assertEqual(result.items,['source:cockpit_media_provider_health:9f3a'])
+        worker=next(r for r in value['checks'] if r['key']=='worker:media-core')
+        worker['at']=fakes.ago(91)
+        self.assertEqual(native.run_native(context(value)).status,FAIL)
+
+    def test_only_exception_alerts_may_declare_a_150_minute_window(self):
+        value=snapshot()
+        value['checks'].append(dict(key='worker:exception-alerts',name='Exception alerts',ok=True,at=fakes.ago(120),max_age_min=150))
+        self.assertEqual(native.run_native(context(value)).status,OK)
+        value['checks'][-1]['max_age_min']=151
+        self.assertEqual(native.run_native(context(value)).status,FAIL)
+        value['checks'][-1].update(key='worker:other',max_age_min=150)
+        result=native.run_native(context(value))
+        self.assertEqual(result.status,FAIL)
+        self.assertIn('Exception alerts',result.summary)
 
     def test_malformed_summary_key_fails_without_a_parser_exception(self):
         value=snapshot()

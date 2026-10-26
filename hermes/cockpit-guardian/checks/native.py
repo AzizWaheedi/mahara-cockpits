@@ -1,6 +1,7 @@
 """Read-only native evidence. An empty queue is not worker activation evidence."""
+import re
 from guard.context import SourceError
-from guard.model import Check, fail, ok, unknown, age_min, parse_time
+from guard.model import Check, fail, ok, unknown, warn, age_min, parse_time
 
 EXPECTED={
  'media':set('inbox clientLinks clientComments boardCards offBoardCampaigns manualChanges adChanges metaTree clickupMembers clientPrefs feedback syncRuns onboardings launchWatch trackingIssues marketPlays campaignChat'.split()),
@@ -10,6 +11,12 @@ EXPECTED={
 SECTION_KEYS='money expenses growth webinar b2bAds delivery calls clients team hiring portal assets organic machine'.split()
 # Match the existing SQL/view and Vercel watchdog. Queues are not worker heartbeats.
 REQUIRED_CHECKS={*('section:'+key for key in SECTION_KEYS),'worker:media-core','worker:ceo-refresh','worker:team-calendar','queue:ask-ai','queue:eod','catalog:native'}
+# The longest freshness window a reading may declare. Exception alerts work at most once an hour on the lead sync
+# watch's cron and declare 150 minutes (PR 71, 26 Oct 2026); the 45-minute default read that as invalid.
+MAX_AGE_CAP={'worker:media-core':90,'worker:exception-alerts':150}
+# One provider call whose latest receipt failed (cockpit_native_monitor_base). A one-off call is never repeated, so
+# these stayed Broken from 9 Oct 2026 without a name. They are a named warning; producers and sections still fail.
+PROVIDER_RECEIPT=re.compile(r'^source:cockpit_[a-z]+_provider_health:')
 
 def run_native(ctx):
     """Consume the existing monitor contract. No publisher or migration is implied."""
@@ -25,18 +32,30 @@ def run_native(ctx):
     readings=value['checks'];keys=[r.get('key') for r in readings if isinstance(r,dict)]
     if len(keys)!=len(readings) or any(not isinstance(key,str) or not key for key in keys) or len(keys)!=len(set(keys)) or not REQUIRED_CHECKS.issubset(keys):
         return fail('The native worker summary is incomplete. Every required producer needs its own evidence.')
+    providers=[]
     for row in readings:
+        if PROVIDER_RECEIPT.match(row['key']) and row.get('ok') is not True:
+            providers.append(row);continue
         if not isinstance(row['key'],str) or row.get('ok') is not True:
-            return fail('A native producer, queue, source or provider check failed. Review its protected receipts.')
+            return fail(f"Native reading {row.get('name') or row['key']} failed: {str(row.get('error') or 'no detail')[:120]}",
+                        evidence={'key':row['key']})
         age=age_min(row.get('at'),ctx.now);limit=row.get('max_age_min')
         needs_stamp=row['key'].startswith(('worker:','section:'))
-        cap=90 if row['key']=='worker:media-core' else 45
+        cap=MAX_AGE_CAP.get(row['key'],45)
         if limit is None:
             if needs_stamp or (row['key'].startswith('queue:') and row.get('at') is not None):
                 return fail('A native producer or pending queue lacks its freshness requirement.')
             continue
         if not isinstance(limit,(int,float)) or isinstance(limit,bool) or not 0<limit<=cap or age is None or not 0<=age<=limit:
-            return fail('A native reading is missing, stale or invalid. Review its doctor and receipts.')
+            return fail(f"Native reading {row.get('name') or row['key']} is missing, stale or invalid. Review its doctor and receipts.",
+                        evidence={'key':row['key'],'max_age_min':limit,'age_min':age})
+    if providers:
+        named=[f"{r.get('name') or 'Provider'} {r.get('detail') or r['key'].rsplit(':',1)[-1][:8]}" for r in providers]
+        return warn(f"{len(providers)} provider call(s) failed on their latest try: {', '.join(named[:4])}"
+                    f"{' and more' if len(named)>4 else ''}. Producers and sections pass.",
+                    evidence={'failed_calls':len(providers),'calls':named[:20]},items=sorted(r['key'] for r in providers),
+                    action='Read the named call in its provider ledger. A Meta 400 or 403 on one object is usually a '
+                           'missing Page or account permission; a Google 403 is a sheet not shared with the worker.')
     return ok('Native monitor checks pass. Job-worker activation still needs host and processed-job evidence.')
 
 def run_sources(ctx):
