@@ -134,6 +134,25 @@ export async function savePersonalEod(
   return checked(data);
 }
 
+/**
+ * Keeps the first time the form was opened for a working day (20261026151000).
+ * The server writes it once and returns the time it already has after that.
+ */
+export async function markEodOpened(
+  client: SupabaseClient,
+  role: EodRole,
+  day: string,
+): Promise<{ openedAt: string | null; first: boolean }> {
+  const { data, error } = await client.rpc("cockpit_mark_eod_opened", {
+    p_role: role,
+    p_day: day,
+  });
+  if (error) throw new Error(error.message);
+  if (!data || data.day !== day)
+    throw new Error("The server did not confirm the open time.");
+  return { openedAt: data.openedAt ?? null, first: data.first === true };
+}
+
 /** Why Slack or the sheet has not taken it yet, in plain words. */
 export function eodDeliveryReason(o: EodOutbox): string {
   const e = (o.error ?? "").toLowerCase();
