@@ -149,6 +149,19 @@ const ADS_READ = {
 };
 const adsReads: any[] = [];
 const callReads: any[] = [];
+const eodCallReads: any[] = [];
+const eodOpens: any[] = [];
+/** One Fathom call the CSM hosted on the EOD day, invented. */
+const EOD_CALLS = [
+  {
+    id: 7,
+    taskId: "86exnk0v4",
+    clientName: "Greystone Contracting",
+    startsAt: "2026-10-26T08:00:00Z",
+    summary:
+      "## Meeting Purpose\n\n[Plan the villa shoot for next week.](https://fathom.video/share/x) Then more.",
+  },
+];
 // The call read's answer; a test swaps it to see the page without it.
 const onTrackCalls = () => ({
   data: callCentreFixture("on_track"),
@@ -291,6 +304,26 @@ const mockClient: any = {
               replyState: null,
             },
           ],
+        },
+        error: null,
+      });
+    }
+    // The EOD call summary draft (2026-10-26): the CSM's own Fathom calls,
+    // and the first open of the form.
+    if (name === "cockpit_csm_eod_calls") {
+      eodCallReads.push(_args);
+      return Promise.resolve({
+        data: { day: _args.p_day, calls: EOD_CALLS },
+        error: null,
+      });
+    }
+    if (name === "cockpit_mark_eod_opened") {
+      eodOpens.push(_args);
+      return Promise.resolve({
+        data: {
+          day: _args.p_day,
+          openedAt: "2026-10-26T15:00:00Z",
+          first: eodOpens.length === 1,
         },
         error: null,
       });
@@ -1772,4 +1805,91 @@ test("the Ads tab prints a SAR account's amounts in dollars", async () => {
     "Not every ad account here is converted to dollars, so spend does not add up across campaigns.",
   );
   expect(dinars).not.toContain("$322");
+});
+
+/**
+ * The EOD call summary draft (Muhammed, 26 October 2026): one line per client
+ * called that working day, the CSM's note first, Fathom when there is none. It
+ * asks before replacing typed text, and New signups and Upsells start from the
+ * day's activity. The form's first open is sent once.
+ */
+test("the EOD drafts the call summary from the day's calls and asks before replacing", async () => {
+  const host = win.document.createElement("div");
+  win.document.body.appendChild(host);
+  const root = createRoot(host as any);
+  eodCallReads.length = 0;
+  eodOpens.length = 0;
+  const logged = (subject: string, action: string, reason: string | null) => ({
+    subject,
+    action,
+    kind: "approved",
+    reason: reason ?? undefined,
+    loggedAt: "2026-10-26T09:00:00Z",
+  });
+  currentSnapshot = {
+    ...snapshot,
+    eodOwner: "00000000-0000-4000-8000-000000000001",
+    eodDay: "2026-10-26",
+    eod: {
+      _id: "41",
+      answers: { callSummary: "My own line" },
+      submittedAt: null,
+    },
+    eodDecisions: [
+      logged("MOFAG", "Held a call", "Walked through the October report"),
+      logged("Greystone Contracting", "Held a call", null),
+      logged("MOFAG", "Upsell pitched", null),
+    ],
+    callHealth: [
+      { key: "csm-fathom", ok: true, lastOkAt: new Date().toISOString() },
+    ],
+  };
+  isSnapshotLoading = false;
+  snapshotError = null;
+  const box = () =>
+    host.querySelector("#eod-call-summary") as unknown as { value: string };
+  const button = (label: string) =>
+    [...host.querySelectorAll("button")].find(
+      b => (b.textContent ?? "").trim() === label,
+    );
+  try {
+    await reactAct(async () => {
+      root.render(createElement(MemoryRouter, null, pageFor("eod")));
+    });
+    // A second render must not send the open again.
+    await reactAct(async () => {
+      root.render(createElement(MemoryRouter, null, pageFor("eod")));
+    });
+    expect(eodOpens).toEqual([{ p_role: "csm", p_day: "2026-10-26" }]);
+    const text = () => (host.textContent ?? "").replace(/\s+/g, " ");
+    // Upsells is Y from the logged upsell; New signups stays N with nothing logged.
+    expect(text()).toContain("UpsellsSet from today's activity");
+    expect(text()).not.toContain("pre-onboardingSet from");
+
+    expect(box().value).toBe("My own line");
+    await reactAct(async () => button("Draft from today's calls")?.click());
+    expect(eodCallReads).toEqual([{ p_day: "2026-10-26" }]);
+    // The box has text: nothing changes until the CSM says so.
+    expect(box().value).toBe("My own line");
+    expect(text()).toContain("Replace what you wrote with the draft?");
+    await reactAct(async () => button("Keep mine")?.click());
+    expect(box().value).toBe("My own line");
+    expect(text()).not.toContain("Replace what you wrote");
+
+    await reactAct(async () => button("Draft from today's calls")?.click());
+    await reactAct(async () => button("Replace")?.click());
+    // In call order: the Greystone recording started before the MOFAG call.
+    expect(box().value).toBe(
+      [
+        "Greystone Contracting: Plan the villa shoot for next week.",
+        "MOFAG: Walked through the October report",
+      ].join("\n"),
+    );
+    expect(text()).toContain(
+      "Drafted 2 lines for Mon 26 Oct: 1 from your notes, 1 from Fathom. Edit it before you file.",
+    );
+  } finally {
+    await reactAct(async () => root.unmount());
+    currentSnapshot = snapshot;
+  }
 });

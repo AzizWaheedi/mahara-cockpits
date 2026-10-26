@@ -25,7 +25,7 @@ Client to CRM link, in order: `clients.ghl_location_id`, then `ghl_client_ad_acc
 
 ## Slack
 
-One message per client per episode in #tech-general, tagging the media buyer(s) on duty (active cockpit members with the `media_buyer` role who are not admin or CEO; Slack ID by exact email, never by name). The "fixed" reply goes in the same thread. No channel mentions, no repeats.
+One message per client per episode in #tech-general, tagging the **systems manager** (active `cockpit_people` rows whose role is "Systems manager"; Slack ID by exact email, never by name). Aziz moved ownership from the media buyer to the systems manager on 2026-10-26. The "fixed" reply goes in the same thread. No channel mentions, no repeats.
 
 Every post is a row in `cockpit_lead_sync_alerts` written **before** the send, with a reference tag in the message (`lsw:<episode>:<kind>`):
 
@@ -67,7 +67,9 @@ Cron (user `hermes`), its own lock, never the native media feed:
 */15 * * * * /usr/bin/flock -n /home/hermes/.lead-sync-watch/lock /home/hermes/lead-sync-watch-current/hermes/lead-sync-watch/run.sh run --apply >> /home/hermes/.lead-sync-watch/cron.log 2>&1
 ```
 
-Release: copy `hermes/lead-sync-watch/` into `/home/hermes/lead-sync-watch-<sha>`, run the tests and `doctor` there, then point `lead-sync-watch-current` at it. Roll back by pointing the link at the previous release.
+Release: copy `hermes/lead-sync-watch/` **and** `hermes/exception-alerts/` into `/home/hermes/lead-sync-watch-<sha>/hermes/`, run both test suites and both `doctor`s there, then point `lead-sync-watch-current` at it. Roll back by pointing the link at the previous release.
+
+**Exception alerts ride this cron line** (plan 4.1, `hermes/exception-alerts/README.md`). After each `run`, the worker calls them. They do their work at most once in 55 minutes, write their own health row (`exception-alerts`) and log line, and never change this job's exit code. Their switches live in `/home/hermes/.exception-alerts/env` (`run.sh` exports `EXCEPTION_ALERTS_ENV_FILES`); `EXCEPTION_ALERTS=off` there switches them off without touching the lead sync check.
 
 **Stop the alerts without stopping the checks:** remove `--apply` from the cron line (it then only reads). To mute one client during a known migration, nothing extra is needed: it alerts once per episode only.
 

@@ -9,7 +9,7 @@ import {
   Table2,
   X,
 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   Link,
   useLocation,
@@ -63,7 +63,7 @@ import { type Caller, useClientCallers } from "@/lib/callCentreClient";
 import { readChurnPage } from "@/lib/churnClient";
 import type { MonthRow } from "@/lib/churnCore";
 import { useClientWhatsApp } from "@/lib/clientWhatsApp";
-import { kuwaitDayOf, logCall } from "@/lib/csmCalls";
+import { kuwaitDayOf, logCall, staleSentence } from "@/lib/csmCalls";
 import { opportunitiesFor, rankOpportunities } from "@/lib/csmHotList";
 import { LINK_GROUPS } from "@/lib/csmLinks";
 import {
@@ -96,6 +96,13 @@ import {
   nextPocState,
   serviceModel,
 } from "@/lib/csmTemplates";
+import {
+  buildCallDraft,
+  countDecisions,
+  eodDayLabel,
+  markEodOpened,
+  readEodCalls,
+} from "@/lib/eodDraft";
 import {
   displayLabel,
   plainText,
@@ -1362,8 +1369,21 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
   const [expectations, setExpectations] = useState("");
   const [touchpoints, setTouchpoints] = useState("Y");
   const [fathom, setFathom] = useState("Y");
-  const [newSignups, setNewSignups] = useState("N");
-  const [upsells, setUpsells] = useState("N");
+  // Null until the CSM picks: the answer then follows the day's logged activity.
+  const [newSignups, setNewSignups] = useState<string | null>(null);
+  const [upsells, setUpsells] = useState<string | null>(null);
+  // "Draft from today's calls": the note under the box, and a draft waiting
+  // for a yes when the box already has text.
+  const [drafting, setDrafting] = useState(false);
+  const [draftNote, setDraftNote] = useState<{
+    tone: "good" | "warn";
+    text: string;
+  } | null>(null);
+  const [pendingDraft, setPendingDraft] = useState<{
+    text: string;
+    note: { tone: "good" | "warn"; text: string };
+  } | null>(null);
+  const summaryBox = useRef<HTMLTextAreaElement>(null);
   const [reviews, setReviews] = useState("N");
   const [referrals, setReferrals] = useState("N");
   const [lost, setLost] = useState("");
@@ -1385,8 +1405,10 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
     setExpectations(String(a.expectations ?? ""));
     setTouchpoints(String(a.touchpoints ?? "Y"));
     setFathom(String(a.fathom ?? "Y"));
-    setNewSignups(String(a.newSignups ?? "N"));
-    setUpsells(String(a.upsells ?? "N"));
+    setNewSignups(a.newSignups == null ? null : String(a.newSignups));
+    setUpsells(a.upsells == null ? null : String(a.upsells));
+    setDraftNote(null);
+    setPendingDraft(null);
     setReviews(String(a.reviews ?? "N"));
     setReferrals(String(a.referrals ?? "N"));
     setLost(String(a.lost ?? ""));
@@ -1396,6 +1418,27 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
     setExtended(String(a.extended ?? ""));
     setPausedToday(String(a.paused ?? ""));
   }, [snap?.eodOwner, snap?.eodDay, snap?.eod?._id]);
+
+  // The first open of the form each working day, for open-to-submit time.
+  // The server keeps the first one; a failure never blocks the form.
+  const openedFor = useRef("");
+  useEffect(() => {
+    const day = snap?.eodDay;
+    if (section !== "eod" || !auth.client || !snap?.eodOwner || !day) return;
+    if (snap.eod?.submittedAt) return;
+    const key = `${snap.eodOwner}:${day}`;
+    if (openedFor.current === key) return;
+    openedFor.current = key;
+    markEodOpened(auth.client, day).catch(error =>
+      console.warn("The EOD open time was not saved:", error),
+    );
+  }, [
+    section,
+    auth.client,
+    snap?.eodOwner,
+    snap?.eodDay,
+    snap?.eod?.submittedAt,
+  ]);
 
   // Income plan. Local overrides win over the saved row until he saves again.
   const [targetEdit, setTargetEdit] = useState<string | null>(null);
@@ -1522,20 +1565,78 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
 
   // biome-ignore lint/suspicious/noExplicitAny: decision rows
   const ds: any[] = snap.decisions ?? [];
-  // A call is a call logged ("Held a call"), not a booking that mentions one.
-  const callsToday = ds.filter(d => /^held a call/i.test(d.action)).length;
-  const clientsHandled = new Set(ds.map(d => d.subject)).size;
-  const signupsToday = ds.filter(d =>
-    /signup|welcome|onboarding/i.test(d.action),
-  ).length;
-  const hotToday = ds.filter(d =>
-    /upsell|referral|review/i.test(d.action),
-  ).length;
-  // "ticket" is what the native page saves; "rerouted" is the Convex history.
-  // A ticket counts once ClickUp has it, the same rule as the list below.
-  const ticketsToday = ds.filter(
-    d => (d.kind === "ticket" || d.kind === "rerouted") && d.clickupTaskUrl,
-  ).length;
+  // The end of day counts its own working day (04:00 to 04:00 Kuwait), the day
+  // the report is filed under; the rest of the page keeps the calendar day.
+  const eodDs: any[] = snap.eodDecisions ?? ds;
+  const eodC = countDecisions(eodDs);
+  const callsToday = eodC.calls;
+  const clientsHandled = eodC.handled;
+  const signupsToday = eodC.signups;
+  const hotToday = eodC.hot;
+  const ticketsToday = eodC.tickets;
+  // Pre-set from the day's activity until the CSM picks an answer.
+  const signupsAnswer = newSignups ?? (eodC.signups > 0 ? "Y" : "N");
+  const upsellsAnswer = upsells ?? (eodC.upsells > 0 ? "Y" : "N");
+
+  const applyDraft = (text: string, note: NonNullable<typeof draftNote>) => {
+    setCallSummary(text);
+    setPendingDraft(null);
+    setDraftNote(note);
+    // After React has put the draft in the box, so the cursor lands at its end.
+    window.requestAnimationFrame(() => {
+      const box = summaryBox.current;
+      if (!box) return;
+      box.focus();
+      box.setSelectionRange(box.value.length, box.value.length);
+    });
+  };
+  /** One line per client called this working day. It fills the box; it never files. */
+  const draftCalls = async () => {
+    const day = snap.eodDay;
+    if (!auth.client || !day) return;
+    setDrafting(true);
+    setPendingDraft(null);
+    setDraftNote(null);
+    try {
+      let calls: Awaited<ReturnType<typeof readEodCalls>> = [];
+      let fathomGap: string | null = null;
+      try {
+        calls = await readEodCalls(auth.client, day);
+        fathomGap = staleSentence(
+          (snap.callHealth ?? []).find(
+            (h: { key: string }) => h.key === "csm-fathom",
+          ),
+          "csm-fathom",
+        );
+      } catch (error) {
+        fathomGap = `Fathom could not be read (${(error as Error).message}), so recorded calls are missing.`;
+      }
+      const draft = buildCallDraft(day, eodDs, calls);
+      const label = eodDayLabel(day);
+      if (!draft.lines) {
+        setDraftNote({
+          tone: "warn",
+          text: `No calls found for ${label} yet. Log a call on the client's page, or try again once Fathom has your recording.${fathomGap ? ` ${fathomGap}` : ""}`,
+        });
+        return;
+      }
+      const parts = [
+        draft.fromNotes && `${draft.fromNotes} from your notes`,
+        draft.fromFathom && `${draft.fromFathom} from Fathom`,
+        draft.noNote && `${draft.noNote} with no note`,
+      ].filter(Boolean);
+      const lines = `${draft.lines} ${draft.lines === 1 ? "line" : "lines"}`;
+      const note = {
+        tone: fathomGap ? ("warn" as const) : ("good" as const),
+        text: `Drafted ${lines} for ${label}: ${parts.join(", ")}. Edit it before you file.${fathomGap ? ` ${fathomGap}` : ""}`,
+      };
+      if (callSummary.trim() && callSummary.trim() !== draft.text)
+        setPendingDraft({ text: draft.text, note });
+      else applyDraft(draft.text, note);
+    } finally {
+      setDrafting(false);
+    }
+  };
   const clients: Client[] = snap.clients;
   const clientNames = clients.map(x => String(x.name ?? ""));
   // Who needs you = the combined priority list across both motions.
@@ -3209,15 +3310,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               />
               <StatTile plain label="Calls logged" value={callsToday} />
               <StatTile plain label="Tickets raised" value={ticketsToday} />
-              <StatTile
-                plain
-                label="Left with a reason"
-                value={
-                  snap.decisions.filter(
-                    (d: { kind: string }) => d.kind === "left",
-                  ).length
-                }
-              />
+              <StatTile plain label="Left with a reason" value={eodC.left} />
             </div>
             <Textarea
               rows={3}
@@ -3293,14 +3386,65 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               </label>
             </div>
             <div>
-              <div className="mb-1.5 text-xs font-medium">Call summary</div>
+              <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                <label
+                  htmlFor="eod-call-summary"
+                  className="text-xs font-medium"
+                >
+                  Call summary
+                </label>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={drafting || !snap.eodDay}
+                  onClick={() => void draftCalls()}
+                >
+                  {drafting ? "Drafting…" : "Draft from today's calls"}
+                </Button>
+              </div>
               <Textarea
+                id="eod-call-summary"
+                ref={summaryBox}
                 rows={4}
                 value={callSummary}
                 onChange={e => setCallSummary(e.target.value)}
                 placeholder="One line per call or client. This is the part leadership reads."
                 dir="auto"
               />
+              {pendingDraft && (
+                <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl bg-muted/40 p-3 text-xs">
+                  <span className="mr-auto">
+                    Replace what you wrote with the draft?
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() =>
+                      applyDraft(pendingDraft.text, pendingDraft.note)
+                    }
+                  >
+                    Replace
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setPendingDraft(null)}
+                  >
+                    Keep mine
+                  </Button>
+                </div>
+              )}
+              {draftNote && !pendingDraft && (
+                <p
+                  role="status"
+                  className="mt-1.5 flex items-start gap-2 text-xs text-muted-foreground"
+                >
+                  <span className="mt-1 inline-flex">
+                    <Dot tone={draftNote.tone} />
+                  </span>
+                  <span>{draftNote.text}</span>
+                </p>
+              )}
             </div>
             <div>
               <div className="mb-1.5 text-xs font-medium">
@@ -3327,10 +3471,24 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               />
               <YesNo
                 label="New signups or pre-onboarding"
-                value={newSignups}
+                value={signupsAnswer}
                 onChange={setNewSignups}
+                hint={
+                  newSignups === null && signupsAnswer === "Y"
+                    ? "Set from today's activity"
+                    : undefined
+                }
               />
-              <YesNo label="Upsells" value={upsells} onChange={setUpsells} />
+              <YesNo
+                label="Upsells"
+                value={upsellsAnswer}
+                onChange={setUpsells}
+                hint={
+                  upsells === null && upsellsAnswer === "Y"
+                    ? "Set from today's activity"
+                    : undefined
+                }
+              />
               <YesNo
                 label="Google reviews"
                 value={reviews}
@@ -3407,8 +3565,8 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                       expectations,
                       touchpoints,
                       fathom,
-                      newSignups,
-                      upsells,
+                      newSignups: signupsAnswer,
+                      upsells: upsellsAnswer,
                       reviews,
                       referrals,
                       lost,
@@ -3424,9 +3582,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                       signups: signupsToday,
                       hot: hotToday,
                       tickets: ticketsToday,
-                      left: snap.decisions.filter(
-                        (d: { kind: string }) => d.kind === "left",
-                      ).length,
+                      left: eodC.left,
                     },
                   });
                   toast.success(
@@ -3881,16 +4037,26 @@ function YesNo({
   label,
   value,
   onChange,
+  hint,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
+  /** Why the answer is already set, until the CSM changes it. */
+  hint?: string;
 }) {
   return (
     <>
       {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
       <label className="flex items-center justify-between gap-2 rounded-xl bg-muted/40 py-1.5 pr-1.5 pl-3 text-xs">
-        <span>{label}</span>
+        <span className="min-w-0">
+          {label}
+          {hint && (
+            <span className="block text-[11px] text-muted-foreground">
+              {hint}
+            </span>
+          )}
+        </span>
         <AnimatedSelect
           className="text-xs"
           value={value}

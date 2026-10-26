@@ -26,6 +26,7 @@ import { CreativePreview } from "@/components/CreativePreview";
 import { money as moneyShown } from "@/components/ceo/format";
 import { DosDontsList, parseDosDonts } from "@/components/DosDonts";
 import { EditPanel } from "@/components/EditPanel";
+import { ExceptionAlerts } from "@/components/ExceptionAlerts";
 import { FunnelLine } from "@/components/funnel/FunnelSheet";
 import { LostLeads } from "@/components/LostLeads";
 import {
@@ -4080,6 +4081,9 @@ function Cockpit({ view }: { view: View }) {
         <>
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
             <div className="min-w-0 space-y-6">
+              {/* Exception alerts (plan 4.1): the clients whose numbers
+                  broke, first, so the day starts where the money is. */}
+              <ExceptionAlerts />
               {sprint}
               <div id="tasks" className="scroll-mt-6 space-y-6">
                 <LaunchToday data={launch.data} />

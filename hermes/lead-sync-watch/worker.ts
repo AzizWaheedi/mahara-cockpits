@@ -5,7 +5,7 @@
  * account's own time zone, summed over every ad account of the client) against
  * the leads that reached its GoHighLevel sub-account (public.client_leads, kept
  * fresh by the existing GHL lead sync) over the same rolling 24h and 6h
- * windows. A confirmed gap posts once to #tech-general tagging the media buyer,
+ * windows. A confirmed gap posts once to #tech-general tagging the systems manager,
  * and a "fixed" reply goes in the same thread when the counts match again.
  *
  *   bun hermes/lead-sync-watch/worker.ts doctor
@@ -234,15 +234,18 @@ export const sumHours = (hours: { at: number; leads: number }[], w: { start: num
 
 // ------------------------------------------------------------------ Slack
 
-async function mentionsFor(io: Io, client: Client, cache: Map<string, string | null>): Promise<string[]> {
-  // The media buyers on duty. Kept small and explicit: the cockpit roster's media buyers who are
-  // not admins. Unknown emails are skipped, never guessed by name.
-  const rows = await io.db.all("cockpit_members", "select=email,roles,clients,active&active=is.true");
-  const buyers = rows.filter(r => (r.roles ?? []).includes("media_buyer") && !(r.roles ?? []).includes("admin") && !(r.roles ?? []).includes("ceo"));
-  const mine = buyers.filter(r => !(r.clients ?? []).length || (r.clients ?? []).some((c: string) => c.trim().toLowerCase() === client.name.trim().toLowerCase()));
+/** The roster role that owns lead-connection alerts (Aziz, 2026-10-26: the systems manager, not the media buyer). */
+export const ALERT_OWNER_ROLE = "systems manager";
+const roleKey = (s: unknown) => String(s ?? "").toLowerCase().replace(/[^a-z]+/g, " ").trim();
+
+export async function mentionsFor(io: Io, _client: Client, cache: Map<string, string | null>): Promise<string[]> {
+  // The systems manager(s) on the active team roster (cockpit_people.role). Slack ID by exact
+  // email, never guessed by name. Unknown emails are skipped.
+  const rows = await io.db.all("cockpit_people", "select=email,role,active&active=is.true");
+  const owners = rows.filter(r => roleKey(r.role) === ALERT_OWNER_ROLE && r.email);
   const out: string[] = [];
-  for (const b of mine) {
-    const email = String(b.email).toLowerCase();
+  for (const b of owners) {
+    const email = String(b.email).trim().toLowerCase();
     if (!cache.has(email)) {
       try {
         cache.set(email, (await io.slack("users.lookupByEmail", { email })).user?.id ?? null);
@@ -251,7 +254,7 @@ async function mentionsFor(io: Io, client: Client, cache: Map<string, string | n
       }
     }
     const id = cache.get(email);
-    if (id) out.push(id);
+    if (id && !out.includes(id)) out.push(id);
   }
   return out;
 }
@@ -504,6 +507,36 @@ const arg = (name: string) => {
   return i > 0 ? process.argv[i + 1] : undefined;
 };
 
+/**
+ * Exception alerts (plan 4.1, hermes/exception-alerts) ride this cron line instead of a
+ * scheduler of their own. They run at most once in 55 minutes, keep their own health row
+ * (cockpit_sync_state key exception-alerts) and their own log line, and never change this
+ * check's exit code. EXCEPTION_ALERTS=off in their env file switches them off.
+ */
+async function exceptionAlerts(apply: boolean) {
+  const at = () => new Date().toISOString();
+  try {
+    const x = await import("../exception-alerts/worker");
+    const env = x.readEnv();
+    // A budget, so a slow database never holds this job's lock past its 15-minute beat.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const budget = new Promise<never>((_, fail) => {
+      timer = setTimeout(() => fail(new Error("took longer than 4 minutes and was stopped")), 4 * 60_000);
+    });
+    try {
+      const r = await Promise.race([x.runExceptions(x.makeIo(env), env, { apply }), budget]);
+      console.log(`[${at()}] exception-alerts ${r.skipped ? `skipped (${r.skipped})` : r.ok ? "ok" : "FAILED"}: ${r.note}`);
+    } catch (e) {
+      console.error(`[${at()}] exception-alerts FAILED: ${String((e as Error)?.stack ?? e).slice(0, 600)}`);
+      if (apply && env.SUPABASE_SERVICE_ROLE_KEY) await x.recordFailure(x.makeIo(env), e);
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (e) {
+    console.error(`[${at()}] exception-alerts FAILED to load: ${String((e as Error)?.message ?? e).slice(0, 400)}`);
+  }
+}
+
 if (import.meta.main) {
   const env = readEnv();
   const cmd = process.argv[2] ?? "run";
@@ -525,6 +558,7 @@ if (import.meta.main) {
     const rep = arg("--report");
     if (rep) writeFileSync(rep, JSON.stringify(r, null, 1));
     console.log(`[${new Date().toISOString()}] ${r.note}${r.sends.length ? ` Slack: ${r.sends.map(s => `${s.client} ${s.kind} ${s.status}`).join(", ")}` : ""}`);
+    if (cmd === "run") await exceptionAlerts(process.argv.includes("--apply"));
     process.exit(r.ok ? 0 : 2);
   } catch (e) {
     console.error(`[${new Date().toISOString()}] lead-sync-watch failed: ${String((e as Error)?.stack ?? e).slice(0, 600)}`);
@@ -534,6 +568,7 @@ if (import.meta.main) {
       const now = new Date().toISOString();
       await io.db.upsert("cockpit_sync_state", [{ key: HEALTH_KEY, last_run_at: now, ok: false, note: `Run failed: ${String((e as Error)?.message ?? e).slice(0, 400)}`, updated_at: now }], "key");
     } catch {}
+    if (cmd === "run") await exceptionAlerts(process.argv.includes("--apply"));
     process.exit(1);
   }
 }

@@ -137,9 +137,63 @@ function tableAnswer(name: string): Answer | undefined {
       return ok([]);
     case "cockpit_ads":
       return ok(adsPageAdRows());
+    // Exception alerts on Today: `&exceptions=none` is the all-clear.
+    case "cockpit_exception_state":
+      return ok(harnessExceptions(Date.now()));
     default:
       return undefined;
   }
+}
+
+/** Today's exception alerts: three open, two clients too new to judge. */
+function harnessExceptions(now: number): unknown[] {
+  if (new URLSearchParams(window.location.search).get("exceptions") === "none")
+    return [];
+  const at = (h: number) => new Date(now - h * 3_600_000).toISOString();
+  return [
+    {
+      rule: "cpb_over_line",
+      client_key: "cedar stone interiors",
+      client_name: "Cedar Stone Interiors",
+      state: "open",
+      reason:
+        "Cost per booking $96.40 over the last 7 days ($482.00 for 5 bookings), over the $80.00 line for 3 days in a row.",
+      opened_at: at(26),
+    },
+    {
+      rule: "zero_leads",
+      client_key: "marble bay",
+      client_name: "Marble Bay",
+      state: "open",
+      reason:
+        "$212.50 spent with no lead since 2026-10-24 (2 days). The line is $90.00, 2 x its own cost per lead over 60 days ($45.00).",
+      opened_at: at(3),
+    },
+    {
+      rule: "lead_sync",
+      client_key: "juniper kitchens",
+      client_name: "Juniper Kitchens",
+      state: "open",
+      reason: "Meta counted 14 leads in the last 24 hours, the CRM 6.",
+      opened_at: at(5),
+    },
+    {
+      rule: "cpb_over_line",
+      client_key: "opal house renovation",
+      client_name: "Opal House Renovation",
+      state: "too_little_data",
+      reason: "Too little data: 2 bookings in the window, 3 needed.",
+      opened_at: null,
+    },
+    {
+      rule: "zero_leads",
+      client_key: "falcon ridge",
+      client_name: "Falcon Ridge",
+      state: "too_little_data",
+      reason: "No lead yet, but the campaign has run under 48 hours.",
+      opened_at: null,
+    },
+  ];
 }
 
 /** The native media reads the page makes on load (mediaNativeClient.ts). */
@@ -211,6 +265,17 @@ export function installAdsPageHarness(client: SupabaseClient): void {
       // The morning checklist: nothing ticked yet.
       case "cockpit_get_daily_checks":
         return ok([]);
+      // The exception alerts footer: checked 12 minutes ago, messages off.
+      // `&exceptions=fail` is a check that went wrong.
+      case "cockpit_exception_summary": {
+        const fail = params.get("exceptions") === "fail";
+        return ok({
+          checkedAt: new Date(now - 12 * 60_000).toISOString(),
+          lastOkAt: new Date(now - (fail ? 190 : 12) * 60_000).toISOString(),
+          ok: !fail,
+          delivery: "dry",
+        });
+      }
       // No report yet today (personalEod.ts checked()).
       case "cockpit_personal_eod":
         return ok({
