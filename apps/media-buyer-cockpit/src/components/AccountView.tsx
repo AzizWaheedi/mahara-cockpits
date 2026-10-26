@@ -12,12 +12,12 @@ import { CreativePreview } from "@/components/CreativePreview";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { money, shortDate } from "@/components/ceo/format";
 import { StatTile } from "@/components/ceo/StatTile";
-import { FunnelSplit, FunnelTag } from "@/components/FunnelSplit";
 import {
   STATUS_COLOR,
   StatusChip,
   type StatusTone,
 } from "@/components/ceo/StatusChip";
+import { FunnelSplit, FunnelTag } from "@/components/FunnelSplit";
 import { LostLeads } from "@/components/LostLeads";
 import { LeadPageSection } from "@/components/pageform/LeadPageSection";
 import { RangePicker } from "@/components/RangePicker";
