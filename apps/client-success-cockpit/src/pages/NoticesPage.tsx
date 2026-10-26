@@ -4,6 +4,7 @@ import {
   NOTICES_SUB,
   NoticesRouting,
 } from "@/components/NoticesRouting";
+import { portalUrl } from "@/lib/portal";
 
 /*
  * Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 · component scope: a page
@@ -33,6 +34,17 @@ export function NoticesPage() {
         sub={NOTICES_SUB}
       />
       <NoticesRouting standalone />
+      {/* Ticket routing and the alert rules live in the portal (D17). */}
+      <p className="text-sm text-muted-foreground">
+        Ticket routing and alert settings are in{" "}
+        <a
+          href={`${portalUrl()}/requests/settings`}
+          className="font-medium text-[color:var(--primary-ink,var(--primary))] underline-offset-4 hover:underline"
+        >
+          Requests settings
+        </a>
+        .
+      </p>
     </div>
   );
 }

@@ -62,6 +62,8 @@ BLUEPRINT_KINDS = ("blueprintLaunch", "blueprintClose", "blueprintOffer")
 # The Slack notices other than a late kickoff's "Kickoff card updated" reply, which has its own row.
 NOTICE_KINDS = ("kickoff", "blueprint.close", "blueprint.updated", "blueprint.media", "blueprint.offer", "rehearsal")
 REPLY_KINDS = ("kickoff.updated",)
+# The writeback queue's requests and focus view presses (20261026r); the log job's kinds are its own.
+REQUEST_KINDS = ("request", "task_action")
 
 
 QUEUES = (
@@ -110,11 +112,19 @@ QUEUES = (
     Queue("queue-creative-reconcile", "cockpit_creative_outbox", "Brand Blueprint press needing a look", ("reconcile",),
           "created_at", 0, "the tech lead", "Check the card in ClickUp against the press, then settle the row by hand "
           "(RUNBOOK, Brand Blueprint press drain).", "", status_col="state", kind_col="kind", kinds=BLUEPRINT_KINDS),
+    # Requests and focus view presses on the ClickUp writeback queue (20261026r, 20261026t): clickup-writeback job
+    # requests claims them every minute, and a delivered request's 2-minute check waits 2 minutes on purpose, so one
+    # still waiting after 15 minutes is stuck. The log job's own kinds are not read here.
+    Queue("queue-clickup-requests", "cockpit_clickup_writeback_queue", "request or task change bound for ClickUp",
+          ("queued", "sending", "retry", "unknown"), "created_at", 15, "the tech lead",
+          "Run the requests doctor (clickup-writeback job requests_doctor); an unknown needs a person to look in ClickUp "
+          "for its Cockpit ref (RUNBOOK, Requests writer).", "", status_col="state", kind_col="kind", kinds=REQUEST_KINDS,
+          failed_col="updated_at"),
 )
 
 
 WITH_ERROR = ("eod_outbox", "team_calendar_ops", "cockpit_post_jobs", "editor_requests", "ideation_requests", "social_jobs",
-              "cockpit_sales_requests", "cockpit_slack_notices", "cockpit_creative_outbox")
+              "cockpit_sales_requests", "cockpit_slack_notices", "cockpit_creative_outbox", "cockpit_clickup_writeback_queue")
 
 
 def _as_status(r: dict[str, Any], col: str) -> dict[str, Any]:

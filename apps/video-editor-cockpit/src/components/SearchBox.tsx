@@ -154,6 +154,16 @@ function Results({ onClose }: { onClose: () => void }) {
       external: true,
       text: "team meetings schedule agenda portal",
     };
+    // Ask another team: it becomes a ClickUp task with an owner (2026-10-26).
+    const requests: Hit = {
+      key: "page:requests",
+      label: "Ask a team",
+      sub: "Requests, in the portal: it becomes a ClickUp task with an owner",
+      kind: "Page",
+      href: `${portalUrl()}/requests`,
+      external: true,
+      text: "ask a team request ticket ask tech creative call centre portal",
+    };
     const performance: Hit = {
       key: "page:performance",
       label: "Client performance",
@@ -171,9 +181,24 @@ function Results({ onClose }: { onClose: () => void }) {
       href: "/guide",
       text: "how to use this desk sop guide help the day steps demo video links",
     };
-    const all = [...jobHits, ...clipHits, ...PAGES, team, performance, sop];
+    const all = [
+      ...jobHits,
+      ...clipHits,
+      ...PAGES,
+      team,
+      requests,
+      performance,
+      sop,
+    ];
     if (!typed)
-      return [...jobHits.slice(0, 6), ...PAGES, team, performance, sop];
+      return [
+        ...jobHits.slice(0, 6),
+        ...PAGES,
+        team,
+        requests,
+        performance,
+        sop,
+      ];
     return all
       .map(h => ({ h, s: matchScore(h.text, q) }))
       .filter(x => x.s > 0)

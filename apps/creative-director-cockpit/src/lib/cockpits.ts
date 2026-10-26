@@ -9,6 +9,7 @@ import {
   Megaphone,
   Palette,
   ShieldCheck,
+  Ticket,
   UsersRound,
 } from "lucide-react";
 
@@ -28,6 +29,8 @@ export const COCKPIT_ICON: Record<string, LucideIcon> = {
   team: UsersRound,
   /** Client performance, the portal's board for every seat (2026-10-16). */
   performance: ChartNoAxesCombined,
+  /** Ask a team: the portal's Requests page (2026-10-26). */
+  requests: Ticket,
   sop: BookOpen,
 };
 

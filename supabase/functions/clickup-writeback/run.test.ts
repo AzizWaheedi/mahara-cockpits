@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { boardAge, cardList, type Deps, gate, kpiGate, pacer, runDoctor, runDosDonts, runKpi, runLog } from "./run";
+import { boardAge, cardList, type Deps, gate, kpiGate, noJobNote, pacer, runDoctor, runDosDonts, runKpi, runLog, unknownJobNote } from "./run";
 import type { Provider } from "./queue";
 import { ADS_LIST, CLIENTS_LIST, DOS_DONTS_FIELD, FIELD, NOTES_MARK } from "./rules";
 
@@ -435,5 +435,58 @@ describe("doctor and pacing", () => {
     const pace = pacer(2, () => t, async ms => { slept.push(ms); t += ms; });
     await pace(); await pace(); await pace();
     expect(slept).toEqual([60_005]);
+  });
+});
+
+describe("the requests switch beside the other jobs (contract 4.1)", () => {
+  const manual = {
+    id: "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    kind: "manual_change",
+    payload: { campaignName: "A", what: "Raised budget to $40", by: "nada@maharamedia.com", at: NOW - 60_000 },
+    attempts: 1,
+    created_at: new Date(NOW - 60_000).toISOString(),
+    source_exists: true,
+  };
+  const billing = {
+    id: "1f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    kind: "billing",
+    payload: { eventId: 41, taskId: "task_a", clientName: "Acme", source: "csm", by: "sara@tests.invalid", at: NOW - 60_000, kind: "extension", writes: [{ field: "extension", value: 2 }] },
+    attempts: 1,
+    created_at: new Date(NOW - 60_000).toISOString(),
+    source_exists: true,
+  };
+
+  it("alone keeps the log a dry run, billing included", async () => {
+    const h = harness({ CLICKUP_API_TOKEN: "x", CLICKUP_WRITEBACK_APPLY_REQUESTS: "true" }, { items: [billing, manual] });
+    const out = await runLog(h.deps);
+    expect(h.writes()).toEqual([]);
+    expect(h.saves().map(s => s.state)).toEqual(["dry_run", "dry_run"]);
+    expect(out.note).toContain("Nothing was written to ClickUp");
+    expect(h.rpcs.find(r => r.name === "cockpit_clickup_writeback_begin")?.params.p_mode).toBe("dry_run");
+  });
+
+  it("alone keeps Do's & Don'ts and the KPI columns dry runs", async () => {
+    const d = harness({ CLICKUP_API_TOKEN: "x", CLICKUP_WRITEBACK_APPLY_REQUESTS: "true" }, { route: c => (c.method === "GET" && c.path.startsWith(`list/${CLIENTS_LIST}/task`) ? { tasks: [] } : undefined) });
+    expect(await runDosDonts(d.deps)).toMatchObject({ mode: "dry_run" });
+    expect(d.writes()).toEqual([]);
+    const k = harness({ CLICKUP_API_TOKEN: "x", CLICKUP_WRITEBACK_APPLY_REQUESTS: "true" });
+    expect(await runKpi(k.deps)).toMatchObject({ ok: false, mode: "dry_run" });
+    expect(k.writes()).toEqual([]);
+  });
+
+  it("the unknown-job sentence names all six jobs", () => {
+    expect(unknownJobNote("forms")).toBe('Unknown job "forms". Use kpi, log, dosdonts, doctor, requests or requests_doctor.');
+    expect(noJobNote).toBe("Send a JSON body with a job: kpi, log, dosdonts, doctor, requests or requests_doctor.");
+  });
+
+  it("the doctor names the requests mode and the canary cards", async () => {
+    const off = await runDoctor(harness({ CLICKUP_API_TOKEN: "x", CRON_SECRET: "s" }).deps);
+    expect(off).toMatchObject({ requestsMode: "dry_run", requestsOnlyCards: [] });
+    expect(off.note).toContain("Requests and task changes: dry run (they are written only when CLICKUP_WRITEBACK_APPLY_REQUESTS is true).");
+    const canary = await runDoctor(harness({ CLICKUP_API_TOKEN: "x", CRON_SECRET: "s", CLICKUP_WRITEBACK_APPLY_REQUESTS: "true", CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS: "86eywg1cq" }).deps);
+    expect(canary).toMatchObject({ requestsMode: "apply_limited", requestsOnlyCards: ["86eywg1cq"] });
+    expect(canary.note).toContain("Requests and task changes: apply_limited to the cards 86eywg1cq (CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS).");
+    // The general switch does not open requests.
+    expect((await runDoctor(harness({ CLICKUP_WRITEBACK_APPLY: "true" }).deps)).requestsMode).toBe("dry_run");
   });
 });

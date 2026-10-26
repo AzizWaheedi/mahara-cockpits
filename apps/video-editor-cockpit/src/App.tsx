@@ -11,6 +11,8 @@ import {
 import { JobsHome, Library } from "./components/Places";
 import { SearchBox } from "./components/SearchBox";
 import Sidebar from "./components/Sidebar";
+import { AlertsBell } from "./components/tasks/AlertsBell";
+import { TaskFocusHost } from "./components/tasks/TaskFocus";
 import { Wordmark } from "./components/Wordmark";
 import { SessionProvider, useWho } from "./lib/auth";
 import { useCanOpen, useEodToday, useJobs, useMe } from "./lib/data";
@@ -237,11 +239,15 @@ function Shell() {
             </button>
             <Wordmark size="sm" />
             <span className="text-sm text-muted-foreground">Editor desk</span>
+            {/* Task alerts, beside the search, on a phone or a tablet. */}
+            <span className="ml-auto">
+              <AlertsBell variant="icon" />
+            </span>
             <button
               type="button"
               onClick={openSearch}
               aria-label="Search"
-              className="ml-auto grid size-10 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="grid size-10 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
               <Search aria-hidden className="size-5" />
             </button>
@@ -250,6 +256,10 @@ function Shell() {
 
         {/* The layout pads every page, 16 / 24 / 32px (DESIGN.md, Pages). */}
         <main className="min-w-0 flex-1 px-4 pt-4 pb-12 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8">
+          {/* From 1024px there is no bar, so the bell is a row on top. */}
+          <div className="hidden lg:block">
+            <AlertsBell variant="row" />
+          </div>
           <Routes>
             {/* Jobs is home: the list, or the board (?view=board). */}
             <Route path="/" element={<JobsHome eodDue={counts.eod > 0} />} />
@@ -313,6 +323,8 @@ function Shell() {
         </main>
       </div>
       <SearchBox />
+      {/* One task, in place, wherever the address has ?focus=. */}
+      <TaskFocusHost />
     </div>
   );
 }

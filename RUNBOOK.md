@@ -661,6 +661,121 @@ Going live (the lead session, in this order):
    offers a close route, and the Blueprint card shows refusals and the Slack
    stops.
 
+## Requests writer (clickup-writeback job requests)
+
+Every request the team sends from `/requests` (or the CSM client page's Ask a
+team) becomes one ClickUp task per part, built from its SOP: the ClickUp
+template object where the type has one, else its SOP steps as a checklist
+(`docs/requests/CONTRACT.md` sections 2 and 4). Migration
+`20261026r_requests.sql` holds the requests, their parts and the queue
+changes; each part is one `cockpit_clickup_writeback_queue` row of kind
+`request`. A tick, comment or Mark done from a cockpit's focus view is a row of
+kind `task_action` (migration `20261026t`), and every delivered part gets a
+`task_action` row with `op = 'verify'` two minutes later (the owner check).
+
+- pg_cron `mahara-clickup-writeback-requests` runs
+  `cockpit_clickup_requests_kick()` every minute. It posts `{"job":"requests"}`
+  to `clickup-writeback` with `x-cron-secret` from the vault's
+  `cockpit_sync_secret` (the one the log job uses), and notes what it did in
+  `cockpit_sync_state` key `clickup-writeback:requests-kick`.
+- Each run reports its mode in `cockpit_sync_state` key
+  `clickup-writeback:requests` (`detail.mode`: `dry_run`, `apply` or
+  `apply_limited`, and `detail.onlyCards`). The form and the focus view read it:
+  older than 15 minutes means "unknown", and nobody can send.
+- Nothing reaches ClickUp unless the function secret
+  `CLICKUP_WRITEBACK_APPLY_REQUESTS` is exactly `true`. The canary
+  `CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS` (comma-separated client card ids, the
+  rehearsal uses the internal test card `86eywg1cq`) narrows it to those cards.
+  The general `CLICKUP_WRITEBACK_APPLY` does not open these kinds and this
+  switch opens nothing else. Pace: `CLICKUP_REQUESTS_CALLS_PER_MINUTE` (120).
+- While the writer is a dry run, `/requests` tells the team to use the ClickUp
+  request form; editors, admins and the CEO may still send, and their rows stay
+  `dry_run` (planned, not written).
+- Every ClickUp write ends with its marker: `Cockpit ref R-<10 hex>-<part>` on a
+  request's task (and `-card` on the client card's comment, `-old` on a routed
+  old ticket), `Cockpit ref T-<10 hex>` on a focus view comment.
+- The guardian's "Request or task change bound for ClickUp queue" warns when a
+  `request` or `task_action` row waits over 15 minutes in `queued`, `sending`,
+  `retry` or `unknown`, or one failed in 24 hours.
+
+Calling the writer's doctor by hand (reads only; the secret stays in the vault):
+
+```sql
+select net.http_post(url := 'https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/clickup-writeback',
+  headers := jsonb_build_object('Content-Type','application/json','x-cron-secret',(select decrypted_secret from vault.decrypted_secrets where name='cockpit_sync_secret')),
+  body := '{"job":"requests_doctor"}'::jsonb, timeout_milliseconds := 60000);
+select status_code, left(content::text, 3000) from net._http_response where id = <id>;
+```
+
+It checks the secrets by name, the mode, every template a type names, every
+Request Type option and field id, every named owner and each list's done
+status, and writes `cockpit_sync_state` key `clickup-writeback:requests-doctor`.
+
+| Symptom | What to do | Who |
+| --- | --- | --- |
+| A request reads "Sending to ClickUp" for more than a few minutes | `select key, ok, note, last_run_at from public.cockpit_sync_state where key like 'clickup-writeback:requests%';`. A kick note naming the vault: add `cockpit_sync_secret`. A mode older than 15 minutes: the runs stopped; check `mahara-clickup-writeback-requests` in `cron.job` and the function's log | the tech lead |
+| A row in `unknown` | ClickUp may have the task. Open the part's list in ClickUp and search for its `Cockpit ref R-...` (the first 10 hex characters of the request id without dashes, then the part). The writer reads back before any new write, so the next run adopts it by the marker; two matches stay `unknown` with "Two tasks match this request in ClickUp. Keep one and cancel the other.": set one to cancelled in ClickUp (never delete), and the next run adopts the other | the tech lead |
+| A row in `failed` or `dry_run` to send again | First look in ClickUp for its Cockpit ref: a failed create can still have made the task. With no task there, requeue it with a fresh plan, as the service role: `update public.cockpit_clickup_writeback_queue set state='queued', attempts=0, next_attempt_at=now(), planned=null, steps=null, progress='{}'::jsonb where kind='request' and state in ('failed','dry_run') and source_id='<request id>';` (the part and the request follow). With a task there, leave `progress` as it is so the writer adopts it | the tech lead |
+| "ClickUp renamed this request type. Fix it in Requests settings." | The option's name on the folder field `e9fd8024-...` no longer matches the type. Rename it back in ClickUp, or turn Set Request Type off for that type | the systems manager |
+| Request Type is off for a type that had it on | The 2-minute check found ClickUp moved or renamed the task after Request Type was set (a folder rule fired), so the writer turned it off (audit `request_type.request_type_off`). To turn it back on: Requests settings, Request types, the type, Set Request Type in ClickUp, Save (a new version). Only after a `[TEST]` ticket on that list shows ClickUp keeps the task where it is | an editor |
+| A part reads "A ClickUp rule keeps removing the owner" | A list rule unassigns on create. Assign it in ClickUp, and switch that list rule off (C3) | the systems manager |
+| A seat cannot be assigned or see "Assigned to me" | Its seat is not linked to a ClickUp user: Requests settings, People in ClickUp, pick the user (the hourly seats read links by exact email; a hand link is never overwritten) | an editor |
+| The `[TEST]` rehearsal tickets after the check | Set each to cancelled in ClickUp. Never delete them; the requests stay in the cockpit as the record | the systems manager |
+
+## Task mirror and alerts (cockpit-tasks)
+
+"Your tasks" on every Today, the alerts bell in every cockpit and the focus
+view read one mirror of ClickUp (`docs/requests/CONTRACT.md` sections 3 and 5,
+migration `20261026t_task_alerts.sql`, `supabase/functions/cockpit-tasks`).
+
+- `cockpit_task_mirror`: one row per ClickUp task a read has seen. It is a
+  cache; one audit row per run (`task_mirror.run`), never one per task.
+- pg_cron `mahara-task-mirror` (every 2 minutes) and
+  `mahara-task-mirror-seats` (hourly at :11) run
+  `cockpit_task_mirror_kick('delta')` and `('seats')`. They post to
+  `cockpit-tasks` (JWT check off) with `x-cron-secret` from the vault's
+  `cockpit_tasks_cron_secret`, the same value as the function secret
+  `TASKS_CRON_SECRET`, and note what they did in `cockpit_sync_state` key
+  `task-mirror:kick`.
+- The delta reads the workspace's changed tasks since `task-mirror:delta`'s
+  `detail.cursorMs` (less 10 minutes), the new comments on up to 40 of them,
+  and makes the daily due and overdue alerts. The seats read takes the
+  workspace members (seats link by exact email), the request fields and
+  templates, every linked seat's open tasks in full, and the old ClickUp
+  form's tickets on All Tasks (imported as unrouted requests).
+- No alert before the baseline: `task-mirror:seats`'s `detail.baselinedAt`,
+  set once by the first seats run that read every linked seat. Assignment and
+  status alerts come from the delta only, so linking a seat never floods its
+  bell. Alerts never go to the person who caused them when that is known, and
+  never for a client card except a mention.
+- Every ClickUp call is a GET receipted in `cockpit_media_provider_health`
+  under the run's `action_id`. Nothing here posts to Slack: new assignments
+  already post in the team channels through `hermes/task-assignment-alerts`.
+- Each seat's alert kinds and shift are on Requests settings, Alerts (its own;
+  editors may pick any seat). The shift (from the seat's schedule on Team &
+  payroll, set there, or 10:00 to 18:00 Sunday to Thursday) decides when the
+  daily "due today" and overdue alerts appear. A failed request always alerts.
+
+Calling it by hand, as the writer's doctor above, with url
+`.../functions/v1/cockpit-tasks`, the vault secret `cockpit_tasks_cron_secret`
+and body `{"job":"doctor"}` (or `{"job":"delta"}` / `{"job":"seats"}`, which
+answer 202 and run in the background).
+
+| Symptom | What to do | Who |
+| --- | --- | --- |
+| "Your seat is not linked to a ClickUp user" | That seat has no ClickUp user by email. Requests settings, People in ClickUp: pick the user, or Clear to say it has none. The card shows tasks within two minutes of the link | an editor |
+| "Task updates are late. Last read at 14:02." | `task-mirror:delta` has not succeeded in 10 minutes. `select key, ok, note, last_run_at, last_ok_at, detail from public.cockpit_sync_state where key like 'task-mirror%';`. A kick note naming the vault: add `cockpit_tasks_cron_secret`. "CLICKUP_API_TOKEN is not set": set the function secret. "More than 1,000 tasks changed in one read": the next run goes on; nothing to do unless it repeats. Otherwise run the doctor | the tech lead |
+| "Your tasks could not be read just now" | The database call itself failed for that seat. Try again; if it repeats, the read functions are missing (apply `20261026t`) or the seat is inactive | the tech lead |
+| No alerts at all after going live | `task-mirror:seats` has no `baselinedAt` yet: a seats run has not read every linked seat (its note names the seats it missed). Fix that seat's link or wait for the next run | the tech lead |
+| A task someone left still shows on their card | The hourly seats read takes them off any task ClickUp no longer lists for them; until then the delta keeps what ClickUp last said | nobody |
+| A focus view press stays "Waiting for ClickUp to confirm." | The writer is off or late (the Requests writer section above); the press is a `task_action` row with `dedupe_key 'task:<action id>'` | the tech lead |
+| The guardian's "task-mirror:delta" or "task-mirror:seats" in Cockpit jobs | Late (10 minutes for the delta, 90 for the seats read) or `ok` false: read the note as above | the tech lead |
+
+To stop the mirror:
+`select cron.unschedule(jobid) from cron.job where jobname in ('mahara-task-mirror','mahara-task-mirror-seats');`.
+The cards then say the updates are late; nothing is lost, and the next run
+after they start again reads from the cursor.
+
 ## Sales cockpit
 
 cockpit.maharamedia.com/sales/, for the setters and closers (plan:

@@ -178,6 +178,12 @@ function CeoRail() {
       icon: COCKPIT_ICON.team,
     },
     {
+      key: "requests",
+      label: "Ask a team",
+      href: "/requests",
+      icon: COCKPIT_ICON.requests,
+    },
+    {
       key: "performance",
       label: "Client performance",
       href: "/performance",
@@ -349,6 +355,16 @@ function SidebarNav() {
                 label="Team meetings"
                 icon={COCKPIT_ICON.team}
                 isActive={location.pathname.startsWith("/team")}
+              />
+            ) : null}
+            {/* Everybody's: ask another team for something; it becomes a
+                ClickUp task with its SOP steps and an owner (2026-10-26). */}
+            {auth.isAuthenticated ? (
+              <NavLink
+                href="/requests"
+                label="Ask a team"
+                icon={COCKPIT_ICON.requests}
+                isActive={location.pathname.startsWith("/requests")}
               />
             ) : null}
             {/* Everybody's: every client against its targets (2026-10-16). */}

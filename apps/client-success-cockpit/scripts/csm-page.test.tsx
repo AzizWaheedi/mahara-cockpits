@@ -173,6 +173,78 @@ let overviewDeferred: Deferred<any> | null = null;
 let profileDeferred: Deferred<any> | null = null;
 let selectedClientForProfile: string | null = null;
 
+/**
+ * The requests this CSM raised (cockpit_requests_read, view "mine"): two sent
+ * today in Kuwait, one of them failed, and one from yesterday that the
+ * "Requests you raised today" card leaves out (2026-10-26).
+ */
+const requestRow = (over: Record<string, unknown>) => ({
+  id: "4b1f6a0e-2c1d-4a7e-9d0b-0a1b2c3d4e10",
+  typeKey: "general_tech",
+  typeLabel: "General tech request",
+  team: "tech",
+  teamLabel: "Operations / Tech",
+  clientTaskId: "86exnk0v4",
+  clientName: "Greystone Contracting",
+  requesterLabel: "the CSM",
+  mine: true,
+  dueOn: null,
+  priority: "normal",
+  state: "delivered",
+  done: false,
+  createdAt: new Date().toISOString(),
+  source: "client_page",
+  canCancel: false,
+  canRoute: false,
+  parts: [
+    {
+      part: "main",
+      listName: "Operations / Tech",
+      teamLabel: "Operations / Tech",
+      taskName: "Greystone Contracting - General tech request",
+      owner: { label: "the systems manager", how: "rule", note: null },
+      state: "delivered",
+      error: null,
+      url: "https://app.clickup.com/t/86fxreq01",
+      status: "to do",
+      statusType: "open",
+      verifyState: "kept",
+      verifyNote: null,
+    },
+  ],
+  ...over,
+});
+const myRequestRows = [
+  requestRow({}),
+  requestRow({
+    id: "4b1f6a0e-2c1d-4a7e-9d0b-0a1b2c3d4e11",
+    typeKey: "client_pause",
+    typeLabel: "Client pause",
+    state: "failed",
+    parts: [
+      {
+        part: "tech",
+        listName: "Operations / Tech",
+        teamLabel: "Operations / Tech",
+        taskName: "Greystone Contracting - Client pause (Tech)",
+        owner: { label: "the systems manager", how: "rule", note: null },
+        state: "failed",
+        error: "ClickUp refused the template.",
+        url: null,
+        status: null,
+        statusType: null,
+        verifyState: null,
+        verifyNote: null,
+      },
+    ],
+  }),
+  requestRow({
+    id: "4b1f6a0e-2c1d-4a7e-9d0b-0a1b2c3d4e12",
+    typeLabel: "Change company name",
+    createdAt: new Date(Date.now() - 2 * 86400_000).toISOString(),
+  }),
+];
+
 const mockClient: any = {
   auth: {
     getUser: async () => ({
@@ -191,6 +263,37 @@ const mockClient: any = {
     signOut: async () => ({ error: null }),
   },
   rpc: (name: string, _args: any) => {
+    // Requests and Your tasks on Today (2026-10-26). This seat has no
+    // ClickUp link in the fake, so the card says so instead of showing zero.
+    if (name === "cockpit_requests_read")
+      return Promise.resolve({
+        data: {
+          asOf: new Date().toISOString(),
+          view: "mine",
+          views: [{ key: "mine", label: "My requests", count: 3 }],
+          rows: myRequestRows,
+          note: null,
+        },
+        error: null,
+      });
+    if (name === "cockpit_my_tasks" || name === "cockpit_task_alerts")
+      return Promise.resolve({
+        data: {
+          asOf: new Date().toISOString(),
+          sourceAt: new Date().toISOString(),
+          ready: true,
+          link: "not_linked",
+          note: "Your seat is not linked to a ClickUp user, so your tasks cannot show here. Ask the systems manager to link it.",
+          counts: { overdue: 0, today: 0, total: 0 },
+          tasks: [],
+          more: 0,
+          unread: 0,
+          alerts: [],
+        },
+        error: null,
+      });
+    if (name === "cockpit_task_alert_rules_read")
+      return Promise.resolve({ data: { canEditOthers: false }, error: null });
     if (name === "cockpit_ad_billing_review_panel") {
       return {
         abortSignal: async () => ({
@@ -534,6 +637,18 @@ mock.module("@/lib/backlog", () => ({
   }),
   queueGap: async () => {
     throw new Error("Gap queueing is not exercised by page rendering.");
+  },
+}));
+
+/**
+ * The request form is the portal's shared component, tested on its own
+ * (request-form.test.tsx); here only its place on the client page is checked.
+ */
+let requestFormProps: Record<string, unknown> | null = null;
+mock.module("@/components/tasks/RequestForm", () => ({
+  RequestForm: (props: Record<string, unknown>) => {
+    requestFormProps = props;
+    return null;
   },
 }));
 
@@ -1971,4 +2086,59 @@ test("the EOD drafts the call summary from the day's calls and asks before repla
     await reactAct(async () => root.unmount());
     currentSnapshot = snapshot;
   }
+});
+
+test("Today lists the requests you raised today, with their state and ClickUp link", async () => {
+  const host = win.document.createElement("div");
+  win.document.body.appendChild(host);
+  const root = createRoot(host as unknown as Element);
+  currentSnapshot = snapshot;
+  isSnapshotLoading = false;
+  snapshotError = null;
+  try {
+    await reactAct(async () => {
+      root.render(createElement(MemoryRouter, null, pageFor("today")));
+    });
+    for (let i = 0; i < 3; i++)
+      await reactAct(async () => {
+        await new Promise(r => setTimeout(r, 0));
+      });
+    const text = (host.textContent ?? "").replace(/\s+/g, " ");
+    expect(text).toContain("Requests you raised today");
+    expect(text).not.toContain("Tickets raised today");
+    expect(text).toContain("General tech request");
+    expect(text).toContain("Client pause");
+    // A failed request says why, in the request's own words.
+    expect(text).toContain("Not in ClickUp: ClickUp refused the template");
+    // Yesterday's request is not today's.
+    expect(text).not.toContain("Change company name");
+    const links = [...host.querySelectorAll("a")].filter(
+      a => a.textContent === "Open in ClickUp",
+    );
+    expect(links.map(a => a.getAttribute("href"))).toEqual([
+      "https://app.clickup.com/t/86fxreq01",
+    ]);
+    // Your tasks sits on Today and says the seat is not linked, not zero.
+    expect(text).toContain("Your tasks");
+    expect(text).toContain(
+      "Your seat is not linked to a ClickUp user, so your tasks cannot show here.",
+    );
+  } finally {
+    await reactAct(async () => root.unmount());
+  }
+});
+
+test("the client page's Ask a team is the request form, with the client fixed", async () => {
+  requestFormProps = null;
+  const text = await renderSection("client", `/clients/${GREYSTONE}?act=task`);
+  expect(text).toContain("Ask a team");
+  expect(requestFormProps).toEqual({
+    source: "client_page",
+    presetClient: { taskId: GREYSTONE, name: "Greystone Contracting" },
+    compact: true,
+  });
+  // The old ticket select and its button are gone; the reminder stays.
+  expect(text).not.toContain("Create the ticket for");
+  expect(text).toContain("A reminder for you");
+  expect(text).not.toContain("Media buyer (Marketing / ADs)");
 });

@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from "react-router";
 import { COCKPIT_SOP } from "../lib/cockpits";
 import { useLeadSearch } from "../lib/data";
 import { PAGES } from "../lib/pages";
+import { portalUrl } from "../lib/portal";
 import { matchScore, onOpenSearch } from "../lib/search";
 import { Dialog } from "./ui/dialog";
 
@@ -27,6 +28,8 @@ type Hit = {
   href: string;
   /** Opens in a new tab: the SOP lives in ClickUp. */
   external?: boolean;
+  /** Opens in this tab, in the portal (another app on the same origin). */
+  portal?: boolean;
 };
 
 const SOP: Hit & { text: string } = {
@@ -46,6 +49,17 @@ const OWED: Hit & { text: string } = {
   kind: "Page",
   href: "/calendar?view=owed",
   text: "calls owed a mark outcome calendar",
+};
+
+/** Ask another team: the portal's Requests page (2026-10-26). */
+const ASK: Hit & { text: string } = {
+  key: "page:requests",
+  label: "Ask a team",
+  sub: "Requests, in the portal: it becomes a ClickUp task with an owner",
+  kind: "Page",
+  href: `${portalUrl()}/requests`,
+  portal: true,
+  text: "ask a team request ticket ask tech creative call centre portal",
 };
 
 export function SearchBox({ isManager }: { isManager: boolean }) {
@@ -112,6 +126,7 @@ function Results({
         text: `${p.label} ${p.words ?? ""}`,
       })),
       OWED,
+      ASK,
       SOP,
     ];
     if (!typed) return pages as Hit[];
@@ -147,6 +162,7 @@ function Results({
   const go = (h: Hit) => {
     onClose();
     if (h.external) window.open(h.href, "_blank", "noopener,noreferrer");
+    else if (h.portal) window.location.assign(h.href);
     else navigate(h.href);
   };
 

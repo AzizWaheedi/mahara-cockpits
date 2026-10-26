@@ -774,17 +774,22 @@ function Provisional({ pv }: { pv: Any }) {
   );
 }
 
-const TEAMS: [string, string][] = [
-  ["", "Me (Client Success list)"],
-  ["creative", "Media / Creative"],
-  ["tech", "Operations / Tech"],
-  ["call_center", "Call centre"],
-  ["media_buyer", "Media buyer (Marketing / ADs)"],
-];
+/**
+ * The team a task added here before 2026-10-26 went to, for the list of
+ * tasks already added. New requests to another team go through Ask a team
+ * (the request form), which picks the board, the template and the owner.
+ */
+const PAST_TEAMS: Record<string, string> = {
+  creative: "Media / Creative",
+  tech: "Operations / Tech",
+  call_center: "Call centre",
+  media_buyer: "Media buyer (Marketing / ADs)",
+};
 
 /**
- * Add a task for this client: a reminder for me, or a request to another
- * team. It reaches ClickUp within five minutes with the client's tag on it.
+ * A reminder for me about this client, on my Client Success list, with the
+ * client's tag on it. Asking another team is the request form's job (Ask a
+ * team), so this form no longer offers the teams.
  */
 export function AddTask({
   taskId,
@@ -801,7 +806,6 @@ export function AddTask({
   const [open, setOpen] = useState(inline);
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
-  const [team, setTeam] = useState("");
   const [due, setDue] = useState("");
 
   const reloadTasks = useCallback(() => {
@@ -820,14 +824,9 @@ export function AddTask({
       clientName,
       title: title.trim(),
       note: note.trim() || undefined,
-      department: team || undefined,
       due: due ? Date.parse(`${due}T12:00:00+03:00`) : undefined,
     });
-    toast.success(
-      team
-        ? `Sent to ${TEAMS.find(t => t[0] === team)?.[1] ?? team}, in ClickUp within 5 minutes`
-        : "Added to your Client Success list, in ClickUp within 5 minutes",
-    );
+    toast.success("Added to your Client Success list.");
     setTitle("");
     setNote("");
     setDue("");
@@ -843,7 +842,7 @@ export function AddTask({
           aria-expanded={open}
           onClick={() => setOpen(v => !v)}
         >
-          {open ? "Close" : "Add a task for this client"}
+          {open ? "Close" : "A reminder for you"}
         </Button>
       )}
       {open ? (
@@ -857,6 +856,7 @@ export function AddTask({
           <input
             className="h-9 w-full rounded-lg border bg-background px-3"
             placeholder="What needs doing"
+            aria-label="What needs doing"
             value={title}
             onChange={e => setTitle(e.target.value)}
           />
@@ -868,16 +868,6 @@ export function AddTask({
             onChange={e => setNote(e.target.value)}
           />
           <div className="flex flex-wrap items-center gap-2">
-            <AnimatedSelect
-              value={team}
-              onChange={e => setTeam(e.target.value)}
-            >
-              {TEAMS.map(([k, label]) => (
-                <option key={k} value={k}>
-                  {label}
-                </option>
-              ))}
-            </AnimatedSelect>
             <DateInput
               className="rounded-lg border bg-background px-3 py-1.5"
               value={due}
@@ -890,12 +880,13 @@ export function AddTask({
               disabled={!title.trim()}
               className="ml-auto"
             >
-              Add task
+              Add to my list
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Tagged "{clientName.toLowerCase()}" in ClickUp, so the board
-            attributes it to this client.
+            It goes on your Client Success list, tagged "
+            {clientName.toLowerCase()}" in ClickUp, so the board attributes it
+            to this client. To ask another team, use Ask a team.
           </p>
         </form>
       ) : null}
@@ -909,8 +900,7 @@ export function AddTask({
               <span className="font-medium">{t.title}</span>
               <span className="text-xs text-muted-foreground">
                 {t.department
-                  ? (TEAMS.find(x => x[0] === t.department)?.[1] ??
-                    t.department)
+                  ? (PAST_TEAMS[t.department] ?? t.department)
                   : "My list"}
               </span>
               <span className="ml-auto text-xs">

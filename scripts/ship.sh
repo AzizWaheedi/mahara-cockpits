@@ -106,6 +106,16 @@ if [ -f apps/media-buyer-cockpit/scripts/slack-notices-supabase.test.ts ]; then
   (cd apps/creative-director-cockpit && bun test scripts/blueprint.test.tsx scripts/blueprint-notices.test.tsx >/dev/null 2>&1) \
     || { echo "the creative director's Blueprint card tests fail"; exit 1; }
 fi
+# Requests and task alerts (docs/requests/CONTRACT.md): the request types and their
+# routing, the writer's queue rows, the task mirror and its alerts, the screens. Wrong is
+# a ticket that lands on the wrong team or nowhere, a task alert nobody gets, or one
+# that floods a bell.
+if [ -f apps/media-buyer-cockpit/scripts/requests-supabase.test.ts ]; then
+  (cd apps/media-buyer-cockpit && bun test scripts/requests-supabase.test.ts scripts/request-types-seed.test.ts scripts/task-alerts-supabase.test.ts scripts/requests-fit-supabase.test.ts scripts/tasks-core.test.ts scripts/your-tasks.test.tsx scripts/requests-core.test.ts scripts/request-form.test.tsx scripts/requests-page.test.tsx scripts/requests-settings.test.tsx >/dev/null 2>&1) \
+    || { echo "the requests or task alerts tests fail (cd apps/media-buyer-cockpit && bun test scripts/requests-supabase.test.ts scripts/request-types-seed.test.ts scripts/task-alerts-supabase.test.ts scripts/requests-fit-supabase.test.ts scripts/tasks-core.test.ts scripts/your-tasks.test.tsx scripts/requests-core.test.ts scripts/request-form.test.tsx scripts/requests-page.test.tsx scripts/requests-settings.test.tsx)"; exit 1; }
+  (bun test supabase/functions/clickup-writeback supabase/functions/cockpit-tasks >/dev/null 2>&1) \
+    || { echo "the requests writer or task mirror function tests fail (bun test supabase/functions/clickup-writeback supabase/functions/cockpit-tasks)"; exit 1; }
+fi
 if [ -f apps/client-success-cockpit/scripts/check-in.test.ts ]; then
   (cd apps/client-success-cockpit && bun test scripts/check-in.test.ts >/dev/null 2>&1) \
     || { echo "the client check-in booking tests fail"; exit 1; }

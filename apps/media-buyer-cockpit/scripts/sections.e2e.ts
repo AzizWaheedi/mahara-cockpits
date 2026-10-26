@@ -4,7 +4,7 @@ runTest("Four sections load with real content", async h => {
   for (const [path, must] of [
     ["/dashboard", "First three moves today"],
     ["/ads", "Campaigns · ranked by what needs a decision"],
-    ["/tasks", "Your ClickUp tasks"],
+    ["/tasks", "Your tasks"],
     ["/touchpoints", "Proactive touchpoints"],
     ["/eod", "Your EOD report"],
   ] as const) {

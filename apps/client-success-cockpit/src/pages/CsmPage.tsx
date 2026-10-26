@@ -53,6 +53,8 @@ import { PortalTasksButton } from "@/components/PortalTasks";
 import { ReportIssue } from "@/components/ReportIssue";
 import { CallList } from "@/components/results/CallList";
 import { SyncStrip } from "@/components/SyncStrip";
+import { RequestForm } from "@/components/tasks/RequestForm";
+import { YourTasks } from "@/components/tasks/YourTasks";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
@@ -101,6 +103,7 @@ import {
   countDecisions,
   eodDayLabel,
   markEodOpened,
+  onEodDay,
   readEodCalls,
 } from "@/lib/eodDraft";
 import {
@@ -125,6 +128,8 @@ import { fetchClientProfile } from "@/lib/performance";
 import { eodDeliveryNote } from "@/lib/personalEod";
 import { portalUrl } from "@/lib/portal";
 import { kuwaitDay, periodOf } from "@/lib/reportPeriod";
+import { readRequests } from "@/lib/requestsClient";
+import { type RequestRow, stateChip, stateWords } from "@/lib/requestsCore";
 import { fold, matchScore } from "@/lib/search";
 import {
   CLICKUP_ACT_KINDS,
@@ -152,57 +157,157 @@ import { OfferHotRow } from "./money/offers/OfferHotRow";
 import { MakeProposalButton } from "./money/offers/proposal/MakeProposalButton";
 import { ProposalsCard } from "./money/offers/proposal/ProposalsCard";
 
-/** Tickets the CSM raises. Picking the request picks the board — she never picks a team. */
-/** A ticket's team as people say it: "Media buyer", not media_buyer. */
-const teamName = (dept?: string) =>
-  TICKETS.find(t => t.dept === dept)?.deptLabel ?? dept ?? "another team";
+/**
+ * The requests this seat raised (cockpit_requests_read, view "mine"), read
+ * when Today or the end of day opens and again on Try again. "Requests you
+ * raised today" and the end of day's ticket count read the same rows, so a
+ * request counts once, and a failed read says so instead of showing zero.
+ */
+type MyRequests = {
+  rows: RequestRow[] | null;
+  error: string | null;
+  reading: boolean;
+  reload: () => void;
+};
 
-const TICKETS: { label: string; dept: string; deptLabel: string }[] = [
-  {
-    label: "Switch this campaign to a landing page",
-    dept: "tech",
-    deptLabel: "Tech",
-  },
-  {
-    label: "Add qualification questions to the lead form",
-    dept: "tech",
-    deptLabel: "Tech",
-  },
-  { label: "Tracking / page is broken", dept: "tech", deptLabel: "Tech" },
-  { label: "GHL or automation change needed", dept: "tech", deptLabel: "Tech" },
-  { label: "New ads needed", dept: "creative", deptLabel: "Creative" },
-  { label: "New scripts needed", dept: "creative", deptLabel: "Creative" },
-  {
-    label: "Thank-you video to lift show rate",
-    dept: "creative",
-    deptLabel: "Creative",
-  },
-  {
-    label: "Lead quality is poor, review targeting",
-    dept: "media_buyer",
-    deptLabel: "Media buyer",
-  },
-  {
-    label: "Budget change requested by the client",
-    dept: "media_buyer",
-    deptLabel: "Media buyer",
-  },
-  // Lifecycle requests. They all land on Operations/Tech, which is where the
-  // Request Type field with the pause / relaunch / offboarding options actually lives.
-  { label: "Pause this client", dept: "tech", deptLabel: "Tech" },
-  { label: "Relaunch this client", dept: "tech", deptLabel: "Tech" },
-  { label: "Offboard this client", dept: "tech", deptLabel: "Tech" },
-  {
-    label: "Leads are not being called",
-    dept: "call_center",
-    deptLabel: "Call centre",
-  },
-  {
-    label: "Show-rate SOP needed for this account",
-    dept: "call_center",
-    deptLabel: "Call centre",
-  },
-];
+function useMyRequests(
+  client: ReturnType<typeof useCockpitAuth>["client"],
+  on: boolean,
+): MyRequests {
+  const [rows, setRows] = useState<RequestRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [reading, setReading] = useState(false);
+  const [asked, setAsked] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: asked is the Try again trigger
+  useEffect(() => {
+    if (!client || !on) return;
+    let live = true;
+    setReading(true);
+    readRequests(client, "mine", 50)
+      .then(read => {
+        if (!live) return;
+        setRows(Array.isArray(read?.rows) ? read.rows : []);
+        setError(null);
+      })
+      .catch(e => {
+        if (live)
+          setError(
+            (e as Error)?.message?.trim() ||
+              "Your requests could not be read just now.",
+          );
+      })
+      .finally(() => {
+        if (live) setReading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [client, on, asked]);
+  return { rows, error, reading, reload: () => setAsked(n => n + 1) };
+}
+
+/** A request counts as raised once part of it is in ClickUp (the ticket rule). */
+const requestLanded = (r: RequestRow) =>
+  r.done || r.parts.some(part => part.state === "delivered");
+
+/** The request chip's tone on the kit's chip. */
+const REQUEST_TONE = {
+  good: "good",
+  warning: "warn",
+  serious: "bad",
+  critical: "bad",
+  neutral: "neutral",
+} as const;
+
+/**
+ * "Requests you raised today": the requests this seat sent today in Kuwait,
+ * one line each, its state as a chip and the ClickUp task behind it.
+ */
+function RequestsRaisedToday({ mine }: { mine: MyRequests }) {
+  const today = kuwaitDay();
+  const rows = (mine.rows ?? []).filter(
+    r => kuwaitDay(Date.parse(r.createdAt)) === today,
+  );
+  return (
+    <SectionCard
+      title="Requests you raised today"
+      count={mine.rows && !mine.error ? rows.length : undefined}
+      sub="Each one becomes a ClickUp task on the other team's board, with its SOP steps and an owner."
+      action={
+        <a
+          href={`${portalUrl()}/requests?view=mine`}
+          className="inline-flex items-center gap-1 text-xs font-medium text-[color:var(--primary-ink,var(--primary))] underline-offset-4 hover:underline"
+        >
+          My requests
+          <ChevronRight aria-hidden className="size-3.5" />
+        </a>
+      }
+      flush
+    >
+      {mine.error ? (
+        <div className="px-4 py-4 text-sm sm:px-6" role="alert">
+          {mine.error}{" "}
+          <button
+            type="button"
+            className="font-medium text-[color:var(--primary-ink,var(--primary))] underline-offset-4 hover:underline disabled:text-muted-foreground"
+            disabled={mine.reading}
+            onClick={mine.reload}
+          >
+            {mine.reading ? "Trying…" : "Try again"}
+          </button>
+        </div>
+      ) : !mine.rows ? (
+        <p
+          className="px-4 py-4 text-sm text-muted-foreground sm:px-6"
+          aria-busy="true"
+        >
+          Reading your requests…
+        </p>
+      ) : rows.length === 0 ? (
+        <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
+          No requests raised today. Open a client and press Ask a team.
+        </p>
+      ) : (
+        rows.map(r => {
+          const chip = stateChip(r);
+          const trouble =
+            !r.done &&
+            (r.state === "failed" ||
+              r.state === "partial" ||
+              r.state === "dry_run");
+          const links = r.parts.filter(part => part.url);
+          return (
+            <div
+              key={r.id}
+              className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-sm sm:px-6"
+            >
+              <Chip tone={REQUEST_TONE[chip.tone]}>{chip.label}</Chip>
+              <span className="min-w-0 flex-1">
+                <span className="font-medium">{r.typeLabel}</span>
+                {r.clientName ? (
+                  <span className="text-muted-foreground">
+                    {" · "}
+                    <bdi dir="auto">{r.clientName}</bdi>
+                  </span>
+                ) : null}
+              </span>
+              {links.map(part => (
+                <ExtLink key={part.part} href={String(part.url)}>
+                  {links.length > 1 ? part.teamLabel : "Open in ClickUp"}
+                </ExtLink>
+              ))}
+              {trouble ? (
+                <p className="basis-full text-xs text-muted-foreground">
+                  {stateWords(r)}
+                </p>
+              ) : null}
+            </div>
+          );
+        })
+      )}
+    </SectionCard>
+  );
+}
 
 /**
  * The ClickUp board's Client Status options, spelled exactly as ClickUp has
@@ -1358,8 +1463,6 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
     : "all";
   const [find, setFind] = useState("");
 
-  const [ticket, setTicket] = useState(TICKETS[0].label);
-  const [ticketNote, setTicketNote] = useState("");
   const [reason, setReason] = useState(REASONS[0]);
   const [clock, setClock] = useState(CLOCKS[1]);
   const [note, setNote] = useState("");
@@ -1537,6 +1640,10 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
       setKitRefreshing(null);
     }
   };
+  const myRequests = useMyRequests(
+    auth.client,
+    section === "today" || section === "eod",
+  );
   if (sb.error) {
     return (
       <div className="p-10 text-sm text-muted-foreground" role="alert">
@@ -1576,7 +1683,21 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
   const clientsHandled = eodC.handled;
   const signupsToday = eodC.signups;
   const hotToday = eodC.hot;
-  const ticketsToday = eodC.tickets;
+  // Tickets raised = the old decision tickets plus the requests sent on this
+  // EOD day that reached ClickUp (the request form replaced the ticket
+  // select on 2026-10-26). A failed read of the requests adds nothing; the
+  // card on Today says the read failed.
+  const eodDay = typeof snap.eodDay === "string" ? snap.eodDay : "";
+  const requestsLanded =
+    /^\d{4}-\d{2}-\d{2}$/.test(eodDay) && myRequests.rows
+      ? onEodDay(
+          eodDay,
+          myRequests.rows
+            .filter(requestLanded)
+            .map(r => ({ loggedAt: r.createdAt })),
+        ).length
+      : 0;
+  const ticketsToday = eodC.tickets + requestsLanded;
   // Pre-set from the day's activity until the CSM picks an answer.
   const signupsAnswer = newSignups ?? (eodC.signups > 0 ? "Y" : "N");
   const upsellsAnswer = upsells ?? (eodC.upsells > 0 ? "Y" : "N");
@@ -1659,9 +1780,6 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
       .flatMap((c: Client) => opportunitiesFor(c)),
   );
   const looseList = clients.filter(c => c.loose.length > 0);
-  const ticketRows = ds.filter(
-    d => d.kind === "ticket" || d.kind === "rerouted",
-  );
   // A commitment counts as outstanding until the CSM turns it into a task or says done.
   const handledText = new Set(ds.map(d => d.action));
   const commitmentRows = clients.flatMap((c: Client) =>
@@ -1708,20 +1826,17 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
       return;
     }
     setNote("");
-    setTicketNote("");
     // The message panel stays open: it asks for the next call once logged.
     if (panel !== "message" && panel !== "update") setPanel(null);
     // Stage and happiness are on the client's ClickUp card once act returns.
-    // A ticket reaches its team through the ClickUp log: the ticket list shows
-    // when it lands. Everything else stays in the cockpit.
+    // Everything else stays in the cockpit. Requests to another team go
+    // through the request form (Ask a team), not through here.
     toast.success(
       CLICKUP_ACT_KINDS.has(kind)
         ? "Saved, ClickUp updated"
-        : kind === "ticket"
-          ? "Request saved. It shows as landed once it is on the team's board."
-          : kind === "left"
-            ? "Left, with a reason logged"
-            : "Saved in the cockpit",
+        : kind === "left"
+          ? "Left, with a reason logged"
+          : "Saved in the cockpit",
     );
   };
 
@@ -2308,42 +2423,20 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
             <div className="space-y-6 rounded-2xl border bg-card p-4 text-sm sm:p-6">
               <div className="space-y-3">
                 <h2 className="text-[15px] font-semibold">Ask a team</h2>
-                <AnimatedSelect
-                  className="w-full"
-                  value={ticket}
-                  onChange={e => setTicket(e.target.value)}
-                >
-                  {TICKETS.map(r => (
-                    <option key={r.label} value={r.label}>
-                      {r.label} ({r.deptLabel})
-                    </option>
-                  ))}
-                </AnimatedSelect>
-                <Textarea
-                  placeholder="What exactly is needed?"
-                  value={ticketNote}
-                  onChange={e => setTicketNote(e.target.value)}
-                  rows={2}
-                  dir="auto"
-                />
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    const hit = TICKETS.find(r => r.label === ticket);
-                    if (!hit) return;
-                    run(c, hit.label, "ticket", {
-                      department: hit.dept,
-                      note: ticketNote,
-                    });
+                {/* One request form for every cockpit: the type picks the
+                    board, the SOP template and the owner (CONTRACT.md 6.3). */}
+                <RequestForm
+                  source="client_page"
+                  presetClient={{
+                    taskId: String(c.taskId),
+                    name: String(c.name),
                   }}
-                >
-                  Create the ticket for{" "}
-                  {TICKETS.find(r => r.label === ticket)?.deptLabel}
-                </Button>
+                  compact
+                />
               </div>
               <div className="space-y-3 border-t pt-5">
                 <h2 className="text-[15px] font-semibold">
-                  Anything else, for you or a team
+                  A reminder for you
                 </h2>
                 <AddTask
                   taskId={String(c.taskId)}
@@ -2794,6 +2887,11 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
         </div>
       )}
 
+      {/* Your tasks (PLAN.md D19): your own open ClickUp tasks, five at
+          most, each opening in place. The Client Success board below stays
+          until the per-seat read is shown to hold the same tasks (TD 11.3). */}
+      {section === "today" && <YourTasks />}
+
       {section === "today" && <AdBillingDailyTask />}
 
       {section === "today" && <TodaysCalls snap={snap} />}
@@ -2836,70 +2934,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
             )}
           </SectionCard>
 
-          <SectionCard
-            title="Tickets raised today"
-            count={ticketRows.length}
-            sub="Verified against ClickUp: a ticket counts as landed once it exists on the other team's board."
-            flush
-          >
-            {ticketRows.length === 0 ? (
-              <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
-                No tickets raised today.
-              </p>
-            ) : (
-              ticketRows.map(
-                (d: {
-                  _id: string;
-                  subject: string;
-                  action: string;
-                  reroutedTo?: string;
-                  clickupTaskUrl?: string;
-                  logError?: string;
-                }) => (
-                  <ChecklistItem
-                    key={d._id}
-                    title={`${d.subject}, ${d.action}`}
-                    meta={
-                      <>
-                        <span className="text-xs text-muted-foreground">
-                          to {teamName(d.reroutedTo)}
-                        </span>
-                        <Chip
-                          tone={
-                            d.clickupTaskUrl
-                              ? "good"
-                              : d.logError
-                                ? "bad"
-                                : "neutral"
-                          }
-                        >
-                          {d.clickupTaskUrl
-                            ? "Landed"
-                            : d.logError
-                              ? "Failed"
-                              : "Waiting"}
-                        </Chip>
-                      </>
-                    }
-                    why={
-                      d.clickupTaskUrl
-                        ? `Created on the ${teamName(d.reroutedTo)} board.`
-                        : d.logError
-                          ? `ClickUp rejected it: ${d.logError}. Raise it again.`
-                          : `Not on the ${teamName(d.reroutedTo)} board yet. If it is urgent, tell the team directly.`
-                    }
-                    action={
-                      d.clickupTaskUrl ? (
-                        <ExtLink href={d.clickupTaskUrl}>
-                          Open it in ClickUp
-                        </ExtLink>
-                      ) : undefined
-                    }
-                  />
-                ),
-              )
-            )}
-          </SectionCard>
+          <RequestsRaisedToday mine={myRequests} />
 
           <SectionCard
             title="Loose ends"

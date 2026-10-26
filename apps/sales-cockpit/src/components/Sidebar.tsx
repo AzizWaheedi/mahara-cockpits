@@ -171,8 +171,8 @@ export default function Sidebar({
   onToggleCollapse?: () => void;
 }) {
   const { cockpits, signOut } = useWho();
-  // The sales SOP (ClickUp, a new tab), then team meetings and the Client
-  // Performance board (everybody's), then the doors.
+  // The sales SOP (ClickUp, a new tab), then team meetings, Ask a team and
+  // the Client Performance board (everybody's), then the doors.
   const doors: {
     key: string;
     label: string;
@@ -186,6 +186,8 @@ export default function Sidebar({
       newTab: true,
     },
     { key: "team", label: "Team meetings", href: `${portalUrl()}/team` },
+    // Ask another team: the portal's Requests page (2026-10-26).
+    { key: "requests", label: "Ask a team", href: `${portalUrl()}/requests` },
     {
       key: "performance",
       label: "Client performance",
