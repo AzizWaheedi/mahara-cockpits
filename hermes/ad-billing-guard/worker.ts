@@ -16,6 +16,8 @@ export async function poll(t: Transport, finishWaits = FINISH_WAITS_MS) {
 		return { busy: true, checked: 0 };
 	let checked = 0,
 		failures = 0;
+	const began = Date.now();
+	let slowest: { client: string; eligibility_s: number; meta_s: number } | null = null;
 	try {
 		const roster = (await t.tasks(CLIENT_LIST))
 			.filter((c) => activeTask(c, c.id))
@@ -28,12 +30,21 @@ export async function poll(t: Transport, finishWaits = FINISH_WAITS_MS) {
 			"cockpit_ad_billing_bindings",
 			"enabled=eq.true",
 		);
+		// One Client Data read per run, not one per client (17 reads became 1, 26 Oct 2026). A failed read still
+		// fails each client's check, as before.
+		const sheet = t.sheet();
+		sheet.catch(() => {});
 		for (const b of bindings) {
 			let signal: any = "unknown",
 				lastFour: string | null = null,
 				error: string | null = null;
+			// Slow runs (up to 251 s on 26 Oct 2026) had clients taking 16-20 s instead of 2 s, and nothing recorded
+			// which service stalled. The summary line names the slowest client and where its time went.
+			const start = Date.now();
+			let checkedAt: number | null = null;
 			try {
-				await t.eligibility(b);
+				await t.eligibility(b, sheet);
+				checkedAt = Date.now();
 				({ signal, lastFour } = classify(
 					await t.meta(b.account_id),
 					b.account_id,
@@ -47,6 +58,11 @@ export async function poll(t: Transport, finishWaits = FINISH_WAITS_MS) {
 					JSON.stringify({ at: new Date().toISOString(), client: b.client_name, error }),
 				);
 			}
+			const end = Date.now(),
+				eligibility_s = ((checkedAt ?? end) - start) / 1000,
+				meta_s = checkedAt ? (end - checkedAt) / 1000 : 0;
+			if (!slowest || eligibility_s + meta_s > slowest.eligibility_s + slowest.meta_s)
+				slowest = { client: b.client_name, eligibility_s, meta_s };
 			const copy = bodies(
 				signal === "healthy" ? "recovered" : signal,
 				lastFour,
@@ -69,7 +85,7 @@ export async function poll(t: Transport, finishWaits = FINISH_WAITS_MS) {
 				? `${failures} binding checks failed. Review the billing panel.`
 				: null,
 		});
-		return { busy: false, checked, failures };
+		return { busy: false, checked, failures, secs: (Date.now() - began) / 1000, slowest };
 	} catch (error) {
 		for (const wait of finishWaits) {
 			if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
