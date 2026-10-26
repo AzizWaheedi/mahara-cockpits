@@ -79,6 +79,7 @@ const {
   callReducer,
   PartsRail,
   portalFrames,
+  practiceFrames,
   railView,
   readsAgain,
   startCall,
@@ -684,4 +685,60 @@ test("deckHost.ts is the client success app's file, byte for byte, and imports n
   );
   expect(mine.equals(theirs)).toBe(true);
   expect(mine.toString()).not.toMatch(/^(import |export .* from )/m);
+});
+
+// ------------------------------------------------------- the practice client
+
+describe("the practice client's call (docs/call-guide/DESIGN.md)", () => {
+  const at = (path: string) =>
+    text(html(createElement(AuthenticatedRoutes), path));
+
+  test("its two routes outrank :taskId, behind the same gate", () => {
+    seat("creative");
+    expect(at("/blueprint/practice")).toBe("page:PracticeCallPage");
+    expect(
+      html(createElement(AuthenticatedRoutes), "/blueprint/practice").includes(
+        "data-layout",
+      ),
+    ).toBe(true);
+    expect(at("/blueprint/practice/notes")).toBe("page:PracticeNotesPage");
+    seat("csm");
+    expect(at("/blueprint/practice")).toContain("This cockpit isn't yours");
+    seat("creative");
+  });
+
+  test("says it is made up, goes back to All clients, and frames only the practice deck", () => {
+    const h = page(ready, {
+      taskId: host.PRACTICE_TASK,
+      practice: true,
+      io: null,
+      clientName: host.PRACTICE_NAME,
+      frames: practiceFrames,
+      initialRead: { row: null, now: new Date().toISOString(), at: Date.now() },
+    });
+    const t = text(h);
+    expect(t).toContain(
+      "Practice client: made up. Nothing is saved, sent or booked.",
+    );
+    expect(t).toContain(`Brand Blueprint call · ${host.PRACTICE_NAME}`);
+    expect(t).toContain("All clients");
+    expect(t).not.toContain("Rehearsal");
+    // Nothing is ever sent, so the rail stays where it starts.
+    expect(t).toContain("Not sent yet");
+    expect(h).toContain(
+      'src="/client-success/practice/present/blueprint?view=prep&amp;host=creative&amp;notes=%2Fcreative%2Fblueprint%2Fpractice%2Fnotes"',
+    );
+    expect(
+      practiceFrames.allowed("/client-success/practice/present/blueprint"),
+    ).toBe(true);
+    expect(
+      practiceFrames.allowed(
+        `/client-success/clients/${TASK}/present/blueprint`,
+      ),
+    ).toBe(false);
+    expect(practiceFrames.notes).toBe("/creative/blueprint/practice/notes");
+    expect(host.notesWindowName(host.PRACTICE_TASK)).toBe(
+      "mahara-notes-practice-client-blueprint",
+    );
+  });
 });

@@ -6,6 +6,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
+import { Link } from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { BookCallButton, MainContact } from "@/components/ClientCheckIn";
@@ -533,6 +534,12 @@ export function OnboardingKit({
                 status="Seven slides for the call, in its own window. Share that window only."
               >
                 <PresentDeckLinks taskId={client.taskId} deck="onboarding" />
+                <Link
+                  to="/practice"
+                  className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                >
+                  Practice this call
+                </Link>
               </Item>
             )}
             <Item

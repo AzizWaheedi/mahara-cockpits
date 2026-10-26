@@ -69,6 +69,7 @@ export function PresentApp({
   uploadLogo,
   report,
   kickoff,
+  practice = false,
 }: {
   taskId: string;
   deck: DeckKind;
@@ -92,20 +93,29 @@ export function PresentApp({
    * slide draws its frame still (prep's preview).
    */
   kickoff?: KickoffPort;
+  /**
+   * The practice client (docs/call-guide/DESIGN.md): made up, and nothing
+   * is saved, sent or booked. Its Blueprint always runs as a rehearsal.
+   */
+  practice?: boolean;
 }) {
   // The Brand Blueprint's answers and parts, on its own deck only. A
   // rehearsal is asked by the address and allowed by the seat (admins and
   // the CEO): answers stay in memory and each press shows its plan. Its
   // windows talk on their own channel, so a rehearsal never reaches (or
-  // saves through) a real window of the same client.
+  // saves through) a real window of the same client. The practice client's
+  // card ID is never a client's, so its windows keep the plain names.
   const [rehearseAsked] = useState(
-    () => new URLSearchParams(window.location.search).get("rehearse") === "1",
+    () =>
+      (practice && deck === "blueprint") ||
+      new URLSearchParams(window.location.search).get("rehearse") === "1",
   );
+  const own = rehearseAsked && !practice ? "rehearse" : "";
   const model = useDeckModel({
     taskId,
     deck,
     io,
-    hubName: `${channelName(taskId, deck)}${rehearseAsked ? ":rehearse" : ""}`,
+    hubName: `${channelName(taskId, deck)}${own ? `:${own}` : ""}`,
   });
   const [still] = useState(prefersStill);
   const bp = useBlueprint({
@@ -127,7 +137,7 @@ export function PresentApp({
     [all, d, model.prep, deck],
   );
 
-  const notesName = `mahara-notes-${taskId}-${deck}${rehearseAsked ? "-rehearse" : ""}`;
+  const notesName = `mahara-notes-${taskId}-${deck}${own ? `-${own}` : ""}`;
   const openNotes = useCallback(
     () =>
       host
@@ -275,7 +285,8 @@ export function PresentApp({
         book={bookFor}
         io={io}
         hosted={Boolean(host)}
-        practice={rehearseAsked || Boolean(bp?.rehearsal)}
+        practice={practice || rehearseAsked || Boolean(bp?.rehearsal)}
+        made={practice}
       />
     );
   if (view === "prep")
@@ -289,7 +300,8 @@ export function PresentApp({
         book={bookFor}
         io={io}
         hosted={Boolean(host)}
-        practice={rehearseAsked || Boolean(bp?.rehearsal)}
+        practice={practice || rehearseAsked || Boolean(bp?.rehearsal)}
+        made={practice}
         openNotes={openNotes}
         uploadLogo={
           uploadLogo
@@ -320,7 +332,7 @@ export function PresentApp({
             void model.flush();
             openWindow(
               urls.deck,
-              `mahara-deck-${taskId}-${deck}${rehearseAsked ? "-rehearse" : ""}`,
+              `mahara-deck-${taskId}-${deck}${own ? `-${own}` : ""}`,
             );
           },
         }}

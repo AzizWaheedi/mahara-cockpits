@@ -9,6 +9,9 @@ import {
   blueprintPathOf,
   type FrameMessage,
   isTaskId,
+  PRACTICE_TASK,
+  practiceFrame,
+  practicePathOf,
 } from "@/lib/deckHost";
 
 /**
@@ -138,6 +141,17 @@ export function BlueprintNotesPage() {
         const m = blueprintPathOf(p);
         return m?.taskId === taskId && m.view === "notes";
       }}
+    />
+  );
+}
+
+/** The practice client's notes popup: /creative/blueprint/practice/notes. */
+export function PracticeNotesPage() {
+  return (
+    <BlueprintNotes
+      taskId={PRACTICE_TASK}
+      src={practiceFrame("notes")}
+      allowed={p => practicePathOf(p) === "notes"}
     />
   );
 }

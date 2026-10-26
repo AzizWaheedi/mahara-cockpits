@@ -1,5 +1,5 @@
-export { BlueprintCallPage } from "./BlueprintCallPage";
-export { BlueprintNotesPage } from "./BlueprintNotesPage";
+export { BlueprintCallPage, PracticeCallPage } from "./BlueprintCallPage";
+export { BlueprintNotesPage, PracticeNotesPage } from "./BlueprintNotesPage";
 export { ScriptingCalendar } from "./CalendarPage";
 export { ClientDatabasePage, ScriptDatabasePage } from "./ClientDatabasePage";
 export { ClientPage } from "./ClientPage";

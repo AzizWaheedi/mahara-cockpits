@@ -96,12 +96,51 @@ Blueprint parts). It writes nothing.
 
 The CSM's read-only view of the Blueprint shows no guide.
 
+## The practice client
+
+**Where.** The CSM: Clients, "Practice a call" (`/client-success/practice`),
+and "Practice this call" under the onboarding deck on a client's
+onboarding panel. The creative director: Clients, "Practice a Blueprint
+call" (`/creative/blueprint/practice`, its notes at `.../practice/notes`).
+
+**What.** Noor Studio Interiors, the deck harness's made-up firm
+(`src/dev/deck`), under the card ID `practice-client`. The address, the
+name and the creative director's frames live in `deckHost.ts`, the file
+both apps already share byte for byte. The screens are the real ones
+(prep, the notes window, the deck, the creative director's page) with
+`practice` on, so the guide is the same one the real call shows.
+
+**Where it starts.** The onboarding call before the kickoff, nothing
+booked. The launch call as the fixture has it. The Blueprint with part 1
+not filled, so the creative director practises the prep too.
+
+**Nothing leaves the browser.**
+
+| Real call | Practice |
+|---|---|
+| Reads the record | Reads the fixture |
+| Saves prep | Keeps prep in `mahara-practice:v1:prep`, shared by the practice windows; Start over clears it |
+| Uploads ads | Shows the file from this browser's copy |
+| Kickoff in Typeform | A look-alike form (`practiceForm.ts`); Typeform never loads, since its sandbox reaches the live form (KICKOFF.md 9) |
+| Books a call | Says a time and books nothing |
+| Blueprint presses send | Run as a rehearsal and show their plan |
+| The creative director's rail reads the record | Reads nothing; stays at "Not sent yet" |
+
+One exception, on purpose: a crash in a practice window reports to the
+issue queue like any deck crash, with its `/practice` address.
+
+A practice run never counts towards help off. Its windows and channel
+carry `practice-client`, never a client's ID, so they keep the plain names
+(no `:rehearse` suffix).
+
 ## Not in scope
 
 - Changes to the decks, the kickoff form, the Blueprint parts or their wording.
 - A guide on the shared deck, or anything the client sees.
 - Counting calls on the server; help on or off is a browser convenience.
 - The media launch flow, training videos (team-videos project).
+- Practice data on the server, more than one practice client, or a
+  practice of the CSM's read-only Blueprint view.
 
 ## How we know it works
 
@@ -111,6 +150,13 @@ The CSM's read-only view of the Blueprint shows no guide.
 - Render tests show the guide in prep and in the notes window, and none in
   the CSM's read-only Blueprint view or on the shared deck.
 - The deck harness shows the guide at 390, 820 and 1440 wide in dark.
+- `scripts/practice-client.test.tsx` pins the practice client: its
+  addresses, its starting state, prep kept and cleared, the look-alike
+  form, the practice line in prep and notes, the Blueprint as a rehearsal
+  on the plain channel, no network call, never counted. The creative
+  director's `scripts/blueprint-call.test.tsx` pins its routes and page.
+- The deck harness draws it with `practice=1` (`view=page` for the
+  practice page).
 - After release: the kickoff is sent during the onboarding call and part 2
   is pressed during the Blueprint call more often, read from the audit rows
   the cockpits already write.

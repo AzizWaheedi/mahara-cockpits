@@ -29,6 +29,9 @@ import { DeckRouteBoundary } from "@/present/DeckBoundary";
 const PresentPage = lazy(() => import("@/present/PresentPage"));
 /** A client's forms (the kickoff first), loaded only when a form window opens. */
 const FormWindow = lazy(() => import("@/forms/FormWindow"));
+/** The practice client (docs/call-guide/DESIGN.md): its page and its decks. */
+const PracticePage = lazy(() => import("@/practice/PracticePage"));
+const PracticeDeckPage = lazy(() => import("@/practice/PracticeDeckPage"));
 
 /** An old address, sent on to where its page lives now, with its query string. */
 function Moved({ to }: { to: string }) {
@@ -94,6 +97,28 @@ export function AuthenticatedRoutes() {
               </DeckRouteBoundary>
             }
           />
+          {/* The practice Blueprint, framed by the creative director's
+              practice call page. Made up: nothing is saved or sent. */}
+          <Route
+            path="/practice/present/blueprint"
+            element={
+              <DeckRouteBoundary>
+                <Suspense fallback={null}>
+                  <PracticeDeckPage deck="blueprint" />
+                </Suspense>
+              </DeckRouteBoundary>
+            }
+          />
+          <Route
+            path="/practice/present/blueprint/notes"
+            element={
+              <DeckRouteBoundary>
+                <Suspense fallback={null}>
+                  <PracticeDeckPage deck="blueprint" notes />
+                </Suspense>
+              </DeckRouteBoundary>
+            }
+          />
         </Route>
         {/* The client decks (CSM decks, 2026-10-19): the CSM seat only, and
             outside AppLayout, so no sidebar, HermesChat or Cmd+K can take
@@ -116,6 +141,28 @@ export function AuthenticatedRoutes() {
               <DeckRouteBoundary>
                 <Suspense fallback={null}>
                   <PresentPage notes />
+                </Suspense>
+              </DeckRouteBoundary>
+            }
+          />
+          {/* The practice client's two decks, outside AppLayout as the
+              real decks are. */}
+          <Route
+            path="/practice/present/:deck"
+            element={
+              <DeckRouteBoundary>
+                <Suspense fallback={null}>
+                  <PracticeDeckPage />
+                </Suspense>
+              </DeckRouteBoundary>
+            }
+          />
+          <Route
+            path="/practice/present/:deck/notes"
+            element={
+              <DeckRouteBoundary>
+                <Suspense fallback={null}>
+                  <PracticeDeckPage notes />
                 </Suspense>
               </DeckRouteBoundary>
             }
@@ -147,6 +194,14 @@ export function AuthenticatedRoutes() {
             <Route path="/eod" element={<EndOfDayPage />} />
             <Route path="/backlog" element={<BacklogPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route
+              path="/practice"
+              element={
+                <Suspense fallback={null}>
+                  <PracticePage />
+                </Suspense>
+              }
+            />
             {/* The old addresses land where their page lives now, query string
                 kept, so a bookmark or a Slack link never breaks. Every page in
                 this cockpit is the CSM's: a session minted for another seat

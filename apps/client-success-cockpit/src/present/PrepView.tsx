@@ -14,7 +14,7 @@ import { focusOf } from "./AdsStage";
 import { makeAddFiles } from "./adsActions";
 import { BlueprintNotes } from "./BlueprintNotes";
 import { BlueprintPrep } from "./BlueprintPrep";
-import { CallGuideBand } from "./CallGuide";
+import { CallGuideBand, PracticeNote } from "./CallGuide";
 import { DECK_NAME, t } from "./content";
 import { Field, Segmented, SlideControls, Toggle } from "./controls";
 import { DeckShell } from "./DeckShell";
@@ -59,6 +59,7 @@ export function PrepView({
   io,
   hosted = false,
   practice = false,
+  made = false,
   openNotes,
 }: {
   model: DeckModel;
@@ -75,6 +76,8 @@ export function PrepView({
   hosted?: boolean;
   /** A rehearsal or a practice run: the call guide never counts it. */
   practice?: boolean;
+  /** The practice client: made up, says so above the guide. */
+  made?: boolean;
   /** Opens the notes window, for the call guide's step (not when hosted). */
   openNotes?: () => void;
 }) {
@@ -255,6 +258,7 @@ export function PrepView({
       {/* The CSM's read-only view of the Blueprint runs no call of its own. */}
       {deck !== "blueprint" || (base.bp && !base.bp.readOnly) ? (
         <div className={cn(hosted && "pr-[var(--host-end,16px)]")}>
+          {made ? <PracticeNote className="mx-4 mt-3 w-fit" /> : null}
           <CallGuideBand
             deck={deck}
             taskId={d.taskId}
@@ -359,7 +363,9 @@ export function PrepView({
               ? "."
               : "; the shared deck opens in its own window with Present."}
           </div>
-          {deck === "blueprint" ? <BlueprintPrep bp={base.bp} d={d} /> : null}
+          {deck === "blueprint" ? (
+            <BlueprintPrep bp={base.bp} d={d} made={made} />
+          ) : null}
         </div>
 
         <aside className="space-y-4 rounded-xl border p-4">

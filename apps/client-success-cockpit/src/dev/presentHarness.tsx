@@ -11,7 +11,9 @@
  * bp=open|part1|sent|closed|locked, src/dev/deck/blueprintFixtures.ts, and
  * rehearse=1 for its plan-only presses; host=creative, inside a frame on
  * the same origin, for the creative director cockpit's host mode, with
- * notes=<a /creative/ path> for the notes window it opens, EMBED.md 6).
+ * notes=<a /creative/ path> for the notes window it opens, EMBED.md 6;
+ * practice=1 for the practice client, docs/call-guide/DESIGN.md, with
+ * view=page for its page).
  * Saves and uploads stay in
  * memory (an upload pretends to take a second and a half); nothing is sent
  * anywhere and no form loads or submits.
@@ -47,6 +49,10 @@ import { FIXTURES, type FixtureKey } from "./deck/fixtures";
 import { fakeKickoff, kickoffScenario } from "./deck/kickoffFixtures";
 import { PartsSheet } from "./deck/PartsSheet";
 import "@/index.css";
+import { Toaster } from "sonner";
+import PracticePage from "@/practice/PracticePage";
+import { practiceIO, practiceKickoff } from "@/practice/practiceClient";
+import { PRACTICE_TASK } from "@/present/deckHost";
 
 const params = new URLSearchParams(window.location.search);
 const fixture = (params.get("fixture") ?? "full") as FixtureKey;
@@ -401,6 +407,63 @@ function Harness() {
   );
 }
 
+/**
+ * practice=1: the practice client's windows (docs/call-guide/DESIGN.md), as
+ * its routes draw them, with view=page for the CSM's practice page.
+ */
+function PracticeHarness() {
+  const io = useMemo(() => practiceIO(deck, "Sara Al-Harbi"), []);
+  const kickoff = useMemo(
+    () =>
+      deck === "onboarding"
+        ? practiceKickoff(deck, {
+            name: "Sara Al-Harbi",
+            email: "sara@example.com",
+          })
+        : undefined,
+    [],
+  );
+  if (params.get("view") === "page")
+    return (
+      <div className="min-h-screen bg-background p-4 text-foreground sm:p-6 lg:p-8">
+        <PracticePage />
+        <Toaster />
+      </div>
+    );
+  return (
+    <>
+      <PresentApp
+        taskId={PRACTICE_TASK}
+        deck={deck}
+        view={view}
+        io={io}
+        practice
+        urls={{
+          deck: at({ view: null }),
+          notes: at({ view: "notes" }),
+          prep: at({ view: "prep" }),
+          client: at({ view: "page" }),
+          other: at({
+            deck: deck === "onboarding" ? "launch" : "onboarding",
+            view: "prep",
+          }),
+        }}
+        book={(_d, kind, label, onBooked) => (
+          <button
+            type="button"
+            className="rounded-lg border px-3 py-1.5 text-sm hover:border-primary"
+            onClick={() => onBooked(new Date(HARNESS_NOW).toISOString())}
+          >
+            {label} ({kind}, practice)
+          </button>
+        )}
+        kickoff={kickoff}
+      />
+      <Toaster />
+    </>
+  );
+}
+
 const parts = params.get("view") === "parts";
 const driveSheet = params.get("view") === "drive";
 const sheetLang = params.get("lang") === "ar" ? "ar" : "en";
@@ -411,6 +474,8 @@ createRoot(document.getElementById("root") as HTMLElement).render(
       <PartsSheet lang={sheetLang} sheet={Number(params.get("sheet") ?? 0)} />
     ) : driveSheet ? (
       <DriveSheet lang={sheetLang} />
+    ) : params.get("practice") === "1" ? (
+      <PracticeHarness />
     ) : (
       <Harness />
     )}

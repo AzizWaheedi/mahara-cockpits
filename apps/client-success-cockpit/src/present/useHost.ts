@@ -7,6 +7,8 @@ import {
   frameMessage,
   hostAsked,
   notesWindowName,
+  PRACTICE_TASK,
+  practicePathOf,
   sameOriginParent,
 } from "./deckHost";
 
@@ -56,8 +58,12 @@ export function hostFor(
 export function hostFrame(
   w: Window | undefined = typeof window === "undefined" ? undefined : window,
 ): Host | null {
-  const at = w ? blueprintPathOf(w.location.pathname) : null;
-  return at ? hostFor("blueprint", at.taskId, w) : null;
+  if (!w) return null;
+  const at = blueprintPathOf(w.location.pathname);
+  if (at) return hostFor("blueprint", at.taskId, w);
+  return practicePathOf(w.location.pathname)
+    ? hostFor("blueprint", PRACTICE_TASK, w)
+    : null;
 }
 
 export function useHost(taskId: string, deck: string): Host | null {

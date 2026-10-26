@@ -45,6 +45,11 @@ import {
   NOTES_FEATURES,
   notesWindowName,
   type PartAnchor,
+  PRACTICE_CALL,
+  PRACTICE_NAME,
+  PRACTICE_TASK,
+  practiceFrame,
+  practicePathOf,
 } from "@/lib/deckHost";
 import { cn } from "@/lib/utils";
 
@@ -466,6 +471,7 @@ export function BlueprintCall({
   host,
   readOnly: readOnlyGiven,
   onSignIn,
+  practice = false,
 }: {
   taskId: string;
   rehearse: boolean;
@@ -490,6 +496,11 @@ export function BlueprintCall({
    * sign in and back here. Left out (the harness), a link to the sign-in.
    */
   onSignIn?: () => void;
+  /**
+   * The practice client (docs/call-guide/DESIGN.md): made up, nothing is
+   * saved or sent, and Back goes to All clients.
+   */
+  practice?: boolean;
 }) {
   const valid = isTaskId(taskId);
   const frames = useMemo(
@@ -661,9 +672,10 @@ export function BlueprintCall({
       );
   };
 
-  const backTo = name
-    ? `/clients/${encodeURIComponent(name)}#blueprint`
-    : "/clients";
+  const backTo =
+    name && !practice
+      ? `/clients/${encodeURIComponent(name)}#blueprint`
+      : "/clients";
   // The name comes from the card at once; a pasted address waits for the
   // record, then the frame. Until one answers, a quiet line, never a guess.
   const waiting = !name && (read === undefined || s.stage.kind === "opening");
@@ -681,7 +693,11 @@ export function BlueprintCall({
       className="mb-3 inline-flex max-w-full items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
     >
       <ArrowLeft aria-hidden className="size-3.5 shrink-0" />
-      {name ? <bdi className="truncate">{name}</bdi> : "All clients"}
+      {name && !practice ? (
+        <bdi className="truncate">{name}</bdi>
+      ) : (
+        "All clients"
+      )}
     </Link>
   );
 
@@ -698,7 +714,9 @@ export function BlueprintCall({
       />
     );
   if (host && wrongHost(host)) {
-    const there = `${PORTAL}/creative/blueprint/${taskId}${rehearse ? "?rehearse=1" : ""}${at ? `#${at}` : ""}`;
+    const there = practice
+      ? `${PORTAL}${PRACTICE_CALL.call}`
+      : `${PORTAL}/creative/blueprint/${taskId}${rehearse ? "?rehearse=1" : ""}${at ? `#${at}` : ""}`;
     return (
       <Notice
         title="The Blueprint opens on cockpit.maharamedia.com."
@@ -740,7 +758,13 @@ export function BlueprintCall({
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div className="min-w-0">
             <h1 className="text-2xl font-semibold tracking-tight">
-              Brand Blueprint call
+              {practice ? (
+                <>
+                  Brand Blueprint call · <bdi>{name}</bdi>
+                </>
+              ) : (
+                "Brand Blueprint call"
+              )}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
               Present fills this tab with the deck. Share only this tab on the
@@ -770,7 +794,15 @@ export function BlueprintCall({
             </Button>
           </div>
         </header>
-        {rehearse ? (
+        {practice ? (
+          <p
+            data-practice-note=""
+            className="mt-4 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-xs font-medium"
+          >
+            Practice client: made up. Nothing is saved, sent or booked. Each
+            press shows its plan.
+          </p>
+        ) : rehearse ? (
           <p className="callout-warn mt-4 rounded-lg border px-3 py-2 text-xs">
             Rehearsal: nothing is saved or sent. Each press shows its plan.
           </p>
@@ -1083,6 +1115,41 @@ export function BlueprintCallPage() {
         typeof routed?.clientName === "string" ? routed.clientName : null
       }
       at={at}
+      host={typeof window === "undefined" ? undefined : window.location.host}
+      onSignIn={() => void auth.signOut()}
+    />
+  );
+}
+
+/** The practice client's frames: its own deck paths in the client success app. */
+export const practiceFrames: CallFrames = {
+  prep: at => practiceFrame("prep", at),
+  deck: () => practiceFrame("present"),
+  notes: PRACTICE_CALL.notes,
+  allowed: p => practicePathOf(p) === "deck",
+};
+
+/**
+ * The route: /creative/blueprint/practice (docs/call-guide/DESIGN.md). The
+ * same call on the practice client, with the call guide. No record is read:
+ * the rail stays at "Not sent yet", as nothing is ever sent.
+ */
+export function PracticeCallPage() {
+  const auth = useCockpitAuth();
+  const [read] = useState<Read>(() => ({
+    row: null,
+    now: new Date().toISOString(),
+    at: Date.now(),
+  }));
+  return (
+    <BlueprintCall
+      taskId={PRACTICE_TASK}
+      rehearse={false}
+      practice
+      io={null}
+      clientName={PRACTICE_NAME}
+      frames={practiceFrames}
+      initialRead={read}
       host={typeof window === "undefined" ? undefined : window.location.host}
       onSignIn={() => void auth.signOut()}
     />

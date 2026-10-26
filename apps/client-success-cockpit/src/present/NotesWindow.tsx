@@ -21,7 +21,7 @@ import { cn } from "@/lib/utils";
 import { focusOf } from "./AdsStage";
 import { makeAddFiles } from "./adsActions";
 import { BlueprintNotes } from "./BlueprintNotes";
-import { CallGuideLine } from "./CallGuide";
+import { CallGuideLine, PracticeNote } from "./CallGuide";
 import type { DeckMessage } from "./channel";
 import { DECK_NAME, t } from "./content";
 import { groupLinks, Segmented, SlideControls } from "./controls";
@@ -300,6 +300,7 @@ export function NotesWindow({
   io,
   hosted = false,
   practice = false,
+  made = false,
 }: {
   model: DeckModel;
   deck: DeckKind;
@@ -311,6 +312,8 @@ export function NotesWindow({
   hosted?: boolean;
   /** A rehearsal or a practice run: the call guide never counts it. */
   practice?: boolean;
+  /** The practice client: made up, says so in the header. */
+  made?: boolean;
 }) {
   const { hub, data: d } = model;
   const facts = useCallFacts({ hub, d, slides, bp: base.bp, isNotes: true });
@@ -520,7 +523,9 @@ export function NotesWindow({
               ? " · press Present to follow it here"
               : " · open the deck window to follow it here"}
         </div>
-        {deck === "blueprint" && base.bp?.rehearsal ? (
+        {made ? (
+          <PracticeNote className="mt-1" />
+        ) : deck === "blueprint" && base.bp?.rehearsal ? (
           <div className="mt-1 rounded-md bg-primary/15 px-2 py-1 text-xs font-medium">
             Rehearsal: nothing is saved or sent.
           </div>

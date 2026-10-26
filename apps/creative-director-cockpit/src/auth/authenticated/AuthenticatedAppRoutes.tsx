@@ -20,6 +20,8 @@ import {
   LoginPage,
   MeetingsPage,
   PlaybookPage,
+  PracticeCallPage,
+  PracticeNotesPage,
   ReviewPage,
   ScriptDatabasePage,
   ScriptsPage,
@@ -87,6 +89,12 @@ export function AuthenticatedRoutes() {
             path="/blueprint/:taskId/notes"
             element={<BlueprintNotesPage />}
           />
+          {/* The practice client's notes (docs/call-guide/DESIGN.md): its
+              static segment outranks :taskId. */}
+          <Route
+            path="/blueprint/practice/notes"
+            element={<PracticeNotesPage />}
+          />
         </Route>
         <Route element={<AppLayout />}>
           {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
@@ -96,6 +104,8 @@ export function AuthenticatedRoutes() {
             <Route path="/clients/:name" element={<ClientPage />} />
             {/* The Brand Blueprint call, inside this cockpit (EMBED.md 4.1). */}
             <Route path="/blueprint/:taskId" element={<BlueprintCallPage />} />
+            {/* The same call on the practice client: nothing saved or sent. */}
+            <Route path="/blueprint/practice" element={<PracticeCallPage />} />
             <Route path="/links" element={<KeyLinksPage />} />
             <Route
               path="/what-works"

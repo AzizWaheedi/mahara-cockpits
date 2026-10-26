@@ -142,6 +142,41 @@ export function blueprintPathOf(
   return m?.[1] ? { taskId: m[1], view: m[2] ? "notes" : "deck" } : null;
 }
 
+/**
+ * The practice client's Blueprint call (docs/call-guide/DESIGN.md): made
+ * up, at its own paths in both apps, under a card ID that is never a
+ * ClickUp one, so none of its windows or channels meets a real client's.
+ */
+export const PRACTICE_TASK = "practice-client";
+export const PRACTICE_NAME = "Noor Studio Interiors";
+const PRACTICE_DECK = "/client-success/practice/present/blueprint";
+export const PRACTICE_CALL = {
+  call: "/creative/blueprint/practice",
+  notes: "/creative/blueprint/practice/notes",
+};
+
+/** The practice Blueprint's address for one view, in host mode. */
+export function practiceFrame(
+  view: FrameView,
+  at: PartAnchor | null = null,
+): string {
+  const q = new URLSearchParams();
+  if (view === "prep") q.set("view", "prep");
+  q.set("host", "creative");
+  if (view !== "notes") q.set("notes", PRACTICE_CALL.notes);
+  const tail = view === "notes" ? "/notes" : "";
+  return `${PRACTICE_DECK}${tail}?${q.toString()}${at ? `#${at}` : ""}`;
+}
+
+/** The practice Blueprint's own paths in the client success app, else null. */
+export function practicePathOf(pathname: string): "deck" | "notes" | null {
+  const m =
+    /^\/client-success\/practice\/present\/blueprint(\/notes)?\/?$/.exec(
+      pathname,
+    );
+  return m ? (m[1] ? "notes" : "deck") : null;
+}
+
 /** The parent page when this window is a frame on the same origin. */
 export function sameOriginParent(w: Window): Window | null {
   try {

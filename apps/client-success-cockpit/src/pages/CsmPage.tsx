@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   MoonStar,
+  Presentation,
   Table2,
   X,
 } from "lucide-react";
@@ -2617,6 +2618,14 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                   <Link to="/eod">
                     <MoonStar aria-hidden />
                     End of day
+                  </Link>
+                </Button>
+              ) : null}
+              {section === "clients" && !embedded ? (
+                <Button size="sm" variant="outline" asChild>
+                  <Link to="/practice">
+                    <Presentation aria-hidden />
+                    Practice a call
                   </Link>
                 </Button>
               ) : null}

@@ -255,6 +255,21 @@ export function CallGuideBand(p: CallGuideProps) {
   );
 }
 
+/** The practice client's one line, where a rehearsal says its own. */
+export function PracticeNote({ className }: { className?: string }) {
+  return (
+    <div
+      data-practice-note=""
+      className={cn(
+        "rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1.5 text-xs font-medium",
+        className,
+      )}
+    >
+      Practice client: made up. Nothing is saved, sent or booked.
+    </div>
+  );
+}
+
 /** The notes window's line: where the call is, under the slide's title. */
 export function CallGuideLine(p: CallGuideProps) {
   const { view: v, help, setHelpOn } = useGuide(p);

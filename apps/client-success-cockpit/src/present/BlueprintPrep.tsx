@@ -57,9 +57,12 @@ function Check1({
 export function BlueprintPrep({
   bp,
   d,
+  made = false,
 }: {
   bp: BpModel | null | undefined;
   d: DeckData;
+  /** The practice client, whose own line is above: no rehearsal line. */
+  made?: boolean;
 }) {
   const suggestions = useMemo(
     () => (bp ? part1Suggestions(bp.prefill, bp.answers) : []),
@@ -76,7 +79,7 @@ export function BlueprintPrep({
   const kickoff = d.kickoff.entry;
   return (
     <div className="space-y-5">
-      {bp.rehearsal ? (
+      {bp.rehearsal && !made ? (
         <div className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-sm font-medium">
           Rehearsal: nothing is saved or sent.
         </div>

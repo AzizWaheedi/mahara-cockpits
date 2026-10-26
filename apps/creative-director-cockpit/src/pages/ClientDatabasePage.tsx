@@ -1,9 +1,10 @@
-import { ChevronRight, Search } from "lucide-react";
+import { ChevronRight, Presentation, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { PageHeader } from "@/components/PageHeader";
 import { AnimatedSelect } from "@/components/ui/animated-select";
+import { Button } from "@/components/ui/button";
 import {
   WinnerFilter,
   type WinnerOrigin,
@@ -144,9 +145,21 @@ export function ClientDatabasePage() {
         title="Clients"
         sub={`${data.counts.live} live · ${data.counts.toContact} waiting on you`}
         actions={
-          view === "all" ? (
-            <SearchBox value={q} onChange={setQ} placeholder="Find a client" />
-          ) : undefined
+          <>
+            <Button size="sm" variant="outline" asChild>
+              <Link to="/blueprint/practice">
+                <Presentation aria-hidden />
+                Practice a Blueprint call
+              </Link>
+            </Button>
+            {view === "all" ? (
+              <SearchBox
+                value={q}
+                onChange={setQ}
+                placeholder="Find a client"
+              />
+            ) : null}
+          </>
         }
       />
 
