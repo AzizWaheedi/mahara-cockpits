@@ -25,7 +25,7 @@ Client to CRM link, in order: `clients.ghl_location_id`, then `ghl_client_ad_acc
 
 ## Slack
 
-One message per client per episode in #tech-general, tagging the media buyer(s) on duty (active cockpit members with the `media_buyer` role who are not admin or CEO; Slack ID by exact email, never by name). The "fixed" reply goes in the same thread. No channel mentions, no repeats.
+One message per client per episode in #tech-general, tagging the **systems manager** (active `cockpit_people` rows whose role is "Systems manager"; Slack ID by exact email, never by name). Aziz moved ownership from the media buyer to the systems manager on 2026-10-26. The "fixed" reply goes in the same thread. No channel mentions, no repeats.
 
 Every post is a row in `cockpit_lead_sync_alerts` written **before** the send, with a reference tag in the message (`lsw:<episode>:<kind>`):
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { deliver, loadRoster, run, sumHours, window } from "./worker";
+import { deliver, loadRoster, mentionsFor, run, sumHours, window } from "./worker";
 
 type Row = Record<string, any>;
 
@@ -49,7 +49,7 @@ function fakeIo(seed: Record<string, Row[]>, opts: { slackFails?: string; slackT
       return { ok: true, ts };
     }
     if (method === "conversations.history" || method === "conversations.replies") return { ok: true, messages: opts.history ?? [] };
-    if (method === "users.lookupByEmail") return { ok: true, user: { id: "UNADA" } };
+    if (method === "users.lookupByEmail") return { ok: true, user: { id: params.email === "sys@m.com" ? "USYS" : params.email === "buyer@m.com" ? "UBUYER" : null } };
     if (method === "conversations.info") return { ok: true, channel: { is_member: true } };
     throw new Error(method);
   };
@@ -143,5 +143,24 @@ describe("roster", () => {
   test("refuses a roster that looks empty", async () => {
     const f = fakeIo({ ...seed, cockpit_campaigns: seed.cockpit_campaigns.slice(0, 2) });
     await expect(loadRoster(f.io)).rejects.toThrow(/refusing/);
+  });
+});
+
+describe("who the alert tags", () => {
+  const client = { key: "loc1", name: "Castello Industries", locationId: "loc1", accounts: ["1"], matchedBy: "x" };
+  test("the active systems manager, never the media buyer", async () => {
+    const f = fakeIo({
+      cockpit_people: [
+        { email: "sys@m.com", role: "Systems manager", active: true },
+        { email: "buyer@m.com", role: "Media buyer", active: true },
+        { email: "old@m.com", role: "Systems Manager", active: false },
+      ],
+      cockpit_members: [{ email: "buyer@m.com", roles: ["media_buyer"], clients: [], active: true }],
+    });
+    expect(await mentionsFor(f.io, client, new Map())).toEqual(["USYS"]);
+  });
+  test("no systems manager on the roster tags nobody rather than guessing", async () => {
+    const f = fakeIo({ cockpit_people: [{ email: "buyer@m.com", role: "Media buyer", active: true }] });
+    expect(await mentionsFor(f.io, client, new Map())).toEqual([]);
   });
 });
