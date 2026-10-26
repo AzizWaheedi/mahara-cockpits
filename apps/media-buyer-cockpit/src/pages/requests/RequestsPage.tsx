@@ -155,7 +155,8 @@ export function RequestsPage() {
   const today = kuwaitToday();
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
+    // ceo-root: StatusChip and StatusDot take their colours from it (ceo.css).
+    <div className="ceo-root mx-auto w-full max-w-6xl space-y-6">
       <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
         <div className="min-w-0 max-w-2xl">
           <h1 className="text-2xl font-semibold tracking-tight">Requests</h1>
@@ -173,19 +174,30 @@ export function RequestsPage() {
         </Link>
       </header>
 
-      <FilterChips
-        options={options}
-        value={view}
-        ariaLabel="Requests"
-        onChange={k => go({ view: k === "ask" ? null : k })}
-      />
+      {/* The kit's row carries -my-1 (its chips' tap margins) and beat
+          space-y-6, which has no specificity in Tailwind v4, so the card
+          below rode 4px into the pills. In a wrapper, the wrapper takes the
+          24px and the row's -4px only meets its own padding. */}
+      <div>
+        <FilterChips
+          options={options}
+          value={view}
+          ariaLabel="Requests"
+          onChange={k => go({ view: k === "ask" ? null : k })}
+        />
+      </div>
 
       {view === "ask" ? (
         <section className="max-w-2xl rounded-2xl border bg-card p-4 sm:p-6">
-          {route ? (
+          {route?.replacesTaskId ? (
             <p className="mb-4 rounded-xl bg-muted/40 p-3 text-[13px] text-muted-foreground">
               Routing a ticket from the old ClickUp form. Sending this closes
               the old one in ClickUp with a link to the new task.
+            </p>
+          ) : route?.againOf ? (
+            <p className="mb-4 rounded-xl bg-muted/40 p-3 text-[13px] text-muted-foreground">
+              Filing again a request that did not reach ClickUp. Check the
+              answers, then send.
             </p>
           ) : null}
           {clientParam && !route ? (
@@ -193,7 +205,7 @@ export function RequestsPage() {
               For one client.{" "}
               <button
                 type="button"
-                className="rounded-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-sm font-medium text-[color:var(--tk-ink,var(--primary))] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => go({ client: null, clientName: null })}
               >
                 Pick another client
@@ -208,6 +220,7 @@ export function RequestsPage() {
             presetType={presetType}
             presetClient={presetClient}
             presetDetails={route?.details ?? undefined}
+            presetAnswers={route?.answers}
             replacesTaskId={route?.replacesTaskId || undefined}
             onSent={() => {
               // The old ticket is routed now; the notice above goes, and

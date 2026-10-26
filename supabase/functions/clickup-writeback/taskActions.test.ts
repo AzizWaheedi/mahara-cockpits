@@ -360,7 +360,7 @@ describe("the two-minute check of a delivered request (op verify)", () => {
     expect(row.state).toBe("delivered");
     const off = seeded({ CLICKUP_API_TOKEN: "x" });
     const dry = await run(off);
-    expect(dry.state).toBe("dry_run");
+    expect(dry.state).toBe("queued");
     expect(off.clickup.calls).toEqual([]);
   });
 });
@@ -395,7 +395,8 @@ describe("dry runs and lanes", () => {
     const h = seeded({ ...LIVE, CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS: TEST_CARD });
     const row = h.db.enqueue("task_action", tick());
     await h.run();
-    expect(row.state).toBe("dry_run");
+    expect(row.state).toBe("queued");
+    expect(row.attempts).toBe(0);
     expect(row.planned).toEqual(planTaskAction({ id: row.id, kind: "task_action", payload: tick(), attempts: 1, created_at: "" }));
     expect(h.clickup.calls).toEqual([]);
   });

@@ -577,6 +577,12 @@ export class FakeDb {
   doctorInputs: Row = { types: [], templates: [], lists: {} };
   /** Make one RPC throw (bookkeeping failure). */
   fail?: (name: string, params: Row) => Error | undefined;
+  /**
+   * The two RPCs the review asked migration r for (RT-1 release, RT-3 task owners). Off: the database
+   * answers them as PostgREST does for a function that is not there, and the writer's fallbacks run.
+   */
+  withRelease = true;
+  withTaskOwners = true;
   private seq = 0;
 
   constructor(readonly now: () => number) {}
@@ -657,6 +663,14 @@ export class FakeDb {
         return null;
       case "cockpit_clickup_writeback_idle":
         return null;
+      case "cockpit_clickup_writeback_release":
+        if (!this.withRelease) throw new Error("Supabase 404: Could not find the function public.cockpit_clickup_writeback_release");
+        return this.release(params);
+      case "cockpit_clickup_writeback_task_owners":
+        if (!this.withTaskOwners) throw new Error("Supabase 404: Could not find the function public.cockpit_clickup_writeback_task_owners");
+        return this.rows
+          .filter(q => q.kind === "request" && q.task_id && (params.p_task_ids as string[]).includes(q.task_id))
+          .map(q => ({ taskId: q.task_id, queueId: q.id }));
       default:
         throw new Error(`Supabase 404: no fake RPC ${name}`);
     }
@@ -677,6 +691,25 @@ export class FakeDb {
       const sourceExists = q.kind === "request" ? !this.cancelled.has(String(q.source_id)) : true;
       return { ...structuredClone(q), created_at: new Date(q.created_at).toISOString(), next_attempt_at: new Date(q.next_attempt_at).toISOString(), source_exists: sourceExists };
     });
+  }
+
+  /** The release the writer asks for: back to the queue as it was, the claim's attempt taken off. */
+  private release(params: Row) {
+    const q = this.rows.find(x => x.id === params.p_id);
+    if (!q || q.state !== "sending" || q.claim_token !== params.p_token) throw new Error("Supabase 400: This queue item is no longer claimed by this run");
+    const before = { state: q.state, task_id: q.task_id, progress: q.progress };
+    const progressed = Boolean(q.progress && (q.progress.task || Object.keys((q.progress.steps as Row | undefined) ?? {}).length));
+    Object.assign(q, {
+      state: progressed ? "retry" : "queued",
+      attempts: Math.max(0, q.attempts - 1),
+      claim_token: null,
+      claimed_at: null,
+      planned: Array.isArray(params.p_planned) ? structuredClone(params.p_planned) : q.planned,
+      error: params.p_note === null || params.p_note === undefined ? q.error : String(params.p_note).slice(0, 500),
+      next_attempt_at: params.p_next_attempt_at ? Date.parse(String(params.p_next_attempt_at)) : this.now(),
+    });
+    this.sync(q, before);
+    return { id: q.id, state: q.state };
   }
 
   private save(id: string, token: string, patch: Row) {

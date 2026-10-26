@@ -1,7 +1,7 @@
 /* Hallmark · component: Your tasks card, alerts bell, task focus view, panel
  * genre: modern-minimal · theme: the cockpit's own (docs/DESIGN.md, locked)
  * states: default · hover · focus · active · disabled · loading · error · success
- * contrast: pass (tokens only; teal text through --primary-ink in light)
+ * contrast: pass (tokens only; teal text through --tk-ink in light)
  * pre-emit critique: P4 H5 E4 S4 R5 V3
  *
  * Design plan (CONTRACT.md 6.1). Subject: a thirteen-person agency keeping
@@ -18,6 +18,25 @@
  * only tokens every index.css defines. Editor and sales have no --accent, so
  * hover tints mix --foreground into transparent.
  */
+
+/* Teal as text. Client success and creative define --primary-ink (a darker
+ * teal on light cards). The portal, editor and sales cockpits do not, and
+ * their teal text on white was 1.95:1, so in light mode it is the teal mixed
+ * with the ink, the way sales already draws teal words (--now-ink): about
+ * 5.4:1 on white. On dark cards it is the brand teal. Defined the same in
+ * tasks.css and requests.css, so either file alone is enough; :root.dark
+ * wins over :root whichever file loads last. */
+:root {
+  --tk-ink: var(
+    --primary-ink,
+    color-mix(in oklab, var(--primary) 55%, var(--foreground))
+  );
+}
+:root.dark,
+.dark {
+  --tk-ink: var(--primary-ink, var(--primary));
+}
+
 
 .tk-card {
   border: 1px solid var(--border);
@@ -71,6 +90,9 @@
   margin: 0;
   padding: 0;
   border-top: 1px solid var(--border);
+  /* The client column shows by the list's own width (DESIGN.md: inside a
+     card, layout follows the card, never the screen). */
+  container-type: inline-size;
 }
 .tk-list > li + li {
   border-top: 1px solid var(--border);
@@ -144,7 +166,7 @@
   font-size: 13px;
   color: var(--muted-foreground);
 }
-@media (min-width: 640px) {
+@container (min-width: 520px) {
   .tk-row-client {
     display: block;
   }
@@ -198,7 +220,7 @@
   border: 0;
   border-top: 1px solid var(--border);
   background: transparent;
-  color: var(--primary-ink, var(--primary));
+  color: var(--tk-ink);
   font: inherit;
   font-size: 14px;
   font-weight: 500;
@@ -263,7 +285,7 @@
   font-size: 13px;
   font-weight: 500;
   text-align: left;
-  color: var(--primary-ink, var(--primary));
+  color: var(--tk-ink);
   cursor: pointer;
   text-underline-offset: 4px;
 }
@@ -291,7 +313,7 @@
   gap: 4px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--primary-ink, var(--primary));
+  color: var(--tk-ink);
   text-decoration: none;
   text-underline-offset: 4px;
 }
@@ -543,8 +565,22 @@
 }
 .tk-alert-text {
   display: grid;
+  flex: 1 1 auto;
   min-width: 0;
   gap: 2px;
+}
+/* When it came: small, muted, mono, on the row's right. */
+.tk-alert-time {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  margin-inline-start: auto;
+  padding-inline-start: 8px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .tk-alert-title {
   font-size: 14px;
@@ -919,10 +955,38 @@
   align-items: center;
   font-weight: 600;
   cursor: pointer;
+  list-style: none;
+}
+/* One chevron, drawn here so all five cockpits match (the summary carries
+   no-marker, so an index.css Disclosures block does not add a second). */
+.tk-details > summary::-webkit-details-marker {
+  display: none;
+}
+.tk-details > summary::before {
+  content: "";
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin-inline-end: 6px;
+  background-color: currentColor;
+  opacity: 0.75;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path d='m9 18 6-6-6-6'/></svg>")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path d='m9 18 6-6-6-6'/></svg>")
+    center / contain no-repeat;
+  transition: transform 150ms ease;
+}
+.tk-details[open] > summary::before {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tk-details > summary::before {
+    transition: none;
+  }
 }
 @media (hover: hover) {
   .tk-details > summary:hover {
-    color: var(--primary-ink, var(--primary));
+    color: var(--tk-ink);
   }
 }
 .tk-details > summary:focus-visible {

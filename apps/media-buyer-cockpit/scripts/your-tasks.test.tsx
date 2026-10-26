@@ -323,12 +323,27 @@ test("a late mirror keeps its rows and says when it last read, in mono", async (
   expect(late?.querySelector("time.tk-mono")).not.toBeNull();
 });
 
-test("nothing assigned says where new tasks will show", async () => {
+test("nothing assigned says what this cockpit leaves out and where new tasks will show", async () => {
   seat.client = fakeClient("empty");
   await render(createElement(YourTasks));
   expect(text()).toContain(
-    "Nothing is assigned to you in ClickUp. New tasks show here within two minutes.",
+    "Nothing open is assigned to you outside the client cards. New ClickUp tasks show here within two minutes.",
   );
+  // Never the false "nothing in ClickUp" (D3).
+  expect(text()).not.toContain("Nothing is assigned to you in ClickUp");
+});
+
+test("the editor cockpit's empty card says Jobs holds the Video Pipeline", async () => {
+  seat.client = fakeClient("empty");
+  (seat as { cockpit: string }).cockpit = "editor";
+  try {
+    await render(createElement(YourTasks));
+    expect(text()).toContain(
+      "Nothing open is assigned to you outside Jobs and the client cards.",
+    );
+  } finally {
+    (seat as { cockpit: string }).cockpit = "portal";
+  }
 });
 
 test("a row opens the focus view with ?focus=, and Escape closes it", async () => {
@@ -430,6 +445,16 @@ test("the bell counts unread alerts, opens the list and marks all read", async (
   const panel = dialog();
   expect(panel?.querySelectorAll(".tk-alert")).toHaveLength(5);
   expect(panel?.querySelectorAll(".tk-dot:not(.tk-dot-read)")).toHaveLength(3);
+  // Each alert says when it came (D9), from its own time.
+  const times = [...(panel?.querySelectorAll(".tk-alert time") ?? [])];
+  expect(times).toHaveLength(5);
+  expect(times[0]?.textContent).toBe("6 min ago");
+  for (const t of times) {
+    expect(t.getAttribute("datetime")).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(t.textContent).toMatch(
+      /^(Just now|\d+ min ago|\d+ h ago|Yesterday \d{2}:\d{2}|\w{3} \d{1,2} \w{3} \d{2}:\d{2})$/,
+    );
+  }
   expect(panel?.textContent).toContain(
     "Checked every 2 minutes while this cockpit is open.",
   );
@@ -542,4 +567,56 @@ test("a signed-out seat sees no card, no bell and no focus view", async () => {
   } finally {
     seat.signedIn = true;
   }
+});
+
+// --- The shared stylesheet (D6, D7, D8) -------------------------------------
+test("the shared stylesheets: teal text that reads on white, one Details chevron, a client column by the card's width", async () => {
+  const { readFileSync } = await import("node:fs");
+  const css = readFileSync(
+    new URL("../src/components/tasks/tasks.css", import.meta.url),
+    "utf8",
+  );
+  const rq = readFileSync(
+    new URL("../src/components/tasks/requests.css", import.meta.url),
+    "utf8",
+  );
+  for (const sheet of [css, rq]) {
+    // Teal words go through --tk-ink: --primary-ink where a cockpit has
+    // one, else the teal mixed with the ink in light mode (D6).
+    expect(sheet).not.toContain("color: var(--primary-ink, var(--primary))");
+    expect(sheet).toContain(
+      "color-mix(in oklab, var(--primary) 55%, var(--foreground))",
+    );
+    expect(sheet).toMatch(
+      /:root\.dark,\s*\.dark\s*\{\s*--tk-ink: var\(--primary-ink, var\(--primary\)\);/,
+    );
+  }
+  // The client column shows by the list's own width, not the screen's (D8).
+  expect(css).toMatch(/\.tk-list \{[^}]*container-type: inline-size;/);
+  expect(css).toMatch(
+    /@container \(min-width: 520px\) \{\s*\.tk-row-client \{\s*display: block;/,
+  );
+  expect(css).not.toMatch(
+    /@media \(min-width: 640px\) \{\s*\.tk-row-client/,
+  );
+  // The focus view's Details draws its own chevron, in every cockpit (D7).
+  expect(css).toContain(".tk-details > summary::before");
+  expect(css).toContain(".tk-details[open] > summary::before");
+  const focus = readFileSync(
+    new URL("../src/components/tasks/TaskFocus.tsx", import.meta.url),
+    "utf8",
+  );
+  expect(focus).toContain('<summary className="no-marker">Details</summary>');
+});
+
+test("the CEO's landing page carries Your tasks, as every Today does (F13)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const today = readFileSync(
+    new URL("../src/pages/ceo/TodayTab.tsx", import.meta.url),
+    "utf8",
+  );
+  expect(today).toContain(
+    'import { YourTasks } from "@/components/tasks/YourTasks";',
+  );
+  expect(today).toMatch(/<TeamTodayCard[^>]*\/>\s*\{\/\*[\s\S]*?\*\/\}\s*<YourTasks \/>/);
 });

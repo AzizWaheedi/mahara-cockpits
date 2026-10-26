@@ -138,7 +138,15 @@ export type TypeView = {
 };
 
 export type WriterMode = "apply" | "apply_limited" | "dry_run" | "unknown";
-export type WriterAnswer = { canSend: boolean; note: string | null };
+export type WriterAnswer = {
+  canSend: boolean;
+  note: string | null;
+  /**
+   * A send now is saved but held until requests open (a dry run, or off
+   * the test card). Absent from an older database: requestsOpen() decides.
+   */
+  held?: boolean;
+};
 
 /** The answer of cockpit_request_types_read (2.5). */
 export type TypesRead = {
@@ -242,6 +250,9 @@ export type RequestRow = {
   source: RequestSource;
   canCancel: boolean;
   canRoute: boolean;
+  /** Saved but not sent: it goes to ClickUp once requests open. */
+  held?: boolean;
+  heldNote?: string | null;
   parts: PartRow[];
 };
 
@@ -252,6 +263,8 @@ export type SubmitResult = {
   reused: boolean;
   duplicateOf: string | null;
   note: string | null;
+  /** Saved, held until requests open (see WriterAnswer.held). */
+  held?: boolean;
   parts: PartRow[];
 };
 
@@ -290,6 +303,28 @@ export type SubmitInput = {
 
 /** The tone of a chip, the same names as the cockpit's StatusChip. */
 export type Tone = "good" | "warning" | "serious" | "critical" | "neutral";
+
+/**
+ * The internal test card: while the writer is "apply_limited", only
+ * requests for this card reach ClickUp (CONTRACT.md 2.8, R6).
+ */
+export const REQUESTS_CANARY_CARD = "86eywg1cq";
+
+/**
+ * Whether a request filed now for this client card reaches ClickUp: the
+ * writer is "apply", or "apply_limited" and the card is the test card. In a
+ * dry run, or while the writer has not reported, requests are not open and
+ * a send is only saved.
+ */
+export function requestsOpen(
+  writer: { mode?: WriterMode | string | null } | null | undefined,
+  clientTaskId: string | null | undefined,
+): boolean {
+  if (writer?.mode === "apply") return true;
+  if (writer?.mode === "apply_limited")
+    return clientTaskId === REQUESTS_CANARY_CARD;
+  return false;
+}
 
 /** The public ClickUp request form, while the writer is not live (R6). */
 export const CLICKUP_FORM_URL =
@@ -344,7 +379,16 @@ const OWN_PLACE: FieldKind[] = ["client", "deadline", "priority"];
 /** The sentences the screens use (contract 6.6), in one place. */
 export const REQUEST_SENTENCES = {
   sent: "Request sent.",
-  sentTo: (list: string, owner: string) => `Sent to ${list}. Owner: ${owner}.`,
+  saved: "Request saved.",
+  /** The sent panel, one line per task, by the task's state. */
+  held: (list: string) => `Saved. Goes to ${list} when requests open.`,
+  heldInList: (list: string) =>
+    `In ${list}, not finished yet. The cockpit finishes it when requests open.`,
+  heldRequest: "Saved. It goes to ClickUp when requests open",
+  sendingTo: (list: string) => `Sending to ${list}.`,
+  checkingIn: (list: string) => `Checking whether it reached ${list}.`,
+  inList: (list: string, owner: string) => `In ${list}. Owner: ${owner}.`,
+  notSentTo: (list: string, why: string) => `Not sent to ${list}: ${why}.`,
   noType: "Pick what you need first.",
   missingChoice:
     "This choice could not be read from ClickUp. Ask the systems manager.",
@@ -612,7 +656,8 @@ const reason = (e: string | null | undefined) =>
 
 const firstError = (row: Pick<RequestRow, "parts">) =>
   row.parts.find(p => p.state === "failed" || p.state === "skipped")?.error ??
-  row.parts.find(p => p.error)?.error ??
+  row.parts.find(p => p.error && p.state !== "delivered" && !partWaiting(p))
+    ?.error ??
   null;
 
 /** The ClickUp statuses of the delivered tasks, each once. */
@@ -632,14 +677,16 @@ const statuses = (row: Pick<RequestRow, "parts">) =>
 
 /** The request's state as one sentence (the panel and the row's hint). */
 export function stateWords(
-  row: Pick<RequestRow, "state" | "done" | "parts">,
+  row: Pick<RequestRow, "state" | "done" | "parts" | "held">,
 ): string {
   if (row.done && row.state !== "cancelled") return "Done";
+  if (requestHeld(row)) return REQUEST_SENTENCES.heldRequest;
   switch (row.state) {
     case "sending":
       return "Sending to ClickUp";
     case "dry_run":
-      return "Not in ClickUp: the writer is in its test run";
+      // Before 2026-10-26 a held request settled here; kept as a fallback.
+      return REQUEST_SENTENCES.heldRequest;
     case "delivered": {
       const s = statuses(row);
       return s ? `In ClickUp: ${s}` : "In ClickUp";
@@ -659,17 +706,20 @@ export function stateWords(
 }
 
 /** The row's chip: a short label and its tone. */
-export function stateChip(row: Pick<RequestRow, "state" | "done" | "parts">): {
+export function stateChip(
+  row: Pick<RequestRow, "state" | "done" | "parts" | "held">,
+): {
   label: string;
   tone: Tone;
 } {
   if (row.done && row.state !== "cancelled")
     return { label: "Done", tone: "good" };
+  if (requestHeld(row)) return { label: "Saved", tone: "warning" };
   switch (row.state) {
     case "sending":
       return { label: "Sending", tone: "neutral" };
     case "dry_run":
-      return { label: "Test run", tone: "warning" };
+      return { label: "Saved", tone: "warning" };
     case "delivered": {
       // Two tasks at different statuses read "In ClickUp"; the panel and
       // the row's hint name each one.
@@ -699,7 +749,11 @@ export function stateChip(row: Pick<RequestRow, "state" | "done" | "parts">): {
 const DONE_TYPES = ["done", "closed"];
 
 /** One task of a request, in words. */
-export function partWords(part: PartRow): string {
+export function partWords(part: PartRow, held = false): string {
+  if (partHeld(part, !held))
+    return part.url
+      ? "In ClickUp, not finished yet. The cockpit finishes it when requests open"
+      : REQUEST_SENTENCES.heldRequest;
   switch (part.state) {
     case "queued":
     case "sending":
@@ -715,7 +769,7 @@ export function partWords(part: PartRow): string {
           : "Done in ClickUp";
       return part.status ? `In ClickUp: ${part.status}` : "In ClickUp";
     case "dry_run":
-      return "Not in ClickUp: the writer is in its test run";
+      return REQUEST_SENTENCES.heldRequest;
     case "skipped":
       return `Not sent: ${reason(part.error)}`;
     case "failed":
@@ -729,7 +783,11 @@ export function partWords(part: PartRow): string {
 }
 
 /** A part's chip. */
-export function partChip(part: PartRow): { label: string; tone: Tone } {
+export function partChip(
+  part: PartRow,
+  held = false,
+): { label: string; tone: Tone } {
+  if (partHeld(part, !held)) return { label: "Saved", tone: "warning" };
   switch (part.state) {
     case "delivered":
       if (part.statusType && DONE_TYPES.includes(part.statusType))
@@ -741,7 +799,7 @@ export function partChip(part: PartRow): { label: string; tone: Tone } {
         tone: "neutral",
       };
     case "dry_run":
-      return { label: "Test run", tone: "warning" };
+      return { label: "Saved", tone: "warning" };
     case "skipped":
       return { label: "Not sent", tone: "serious" };
     case "failed":
@@ -756,9 +814,11 @@ export function partChip(part: PartRow): { label: string; tone: Tone } {
 
 /** The note under an owner: why this person, when it is not the plain rule. */
 export function ownerNote(owner: Owner): string | null {
-  if (owner.how === "card") return REQUEST_SENTENCES.cardOwner;
-  if (owner.how === "fallback" || owner.how === "none")
-    return owner.note?.trim() || null;
+  // The server words the note for the reader (an editor also gets where to
+  // fix it), so what comes back is shown as it is.
+  const said = owner.note?.trim() || null;
+  if (owner.how === "card") return said ?? REQUEST_SENTENCES.cardOwner;
+  if (owner.how === "fallback" || owner.how === "none") return said;
   return null;
 }
 
@@ -812,16 +872,107 @@ export function joinWords(list: string[]): string {
   return `${list.slice(0, -1).join(", ")} and ${list.at(-1)}`;
 }
 
-/** The sent panel's lines: one "Sent to {list}. Owner: {owner}." per task. */
-export function sentLines(
-  parts: Pick<PartRow, "listName" | "owner">[],
-): string[] {
-  return parts.map(p =>
-    REQUEST_SENTENCES.sentTo(
-      p.listName,
-      p.owner.how === "none" || !p.owner.label ? "nobody yet" : p.owner.label,
-    ),
+/**
+ * The writer's note on a task it handed back to the queue because requests
+ * are not open (a dry run, or off the test card): "Waiting in the queue:
+ * ...". Its wording names the writer's switch, so the screens say the held
+ * sentence instead of showing it.
+ */
+const WAITING_NOTE = /^\s*Waiting in the queue\b/i;
+
+/** Whether the writer held this task back (its note, or the old state). */
+export const partWaiting = (part: Pick<PartRow, "state" | "error">) =>
+  part.state === "dry_run" ||
+  (["queued", "sending", "retry"].includes(part.state) &&
+    WAITING_NOTE.test(part.error ?? ""));
+
+/**
+ * Whether a task of a request is only saved, not on its way: the writer
+ * held it back, or requests are not open (`open` false) and it has not
+ * reached a settled state. A delivered task is never held.
+ */
+export function partHeld(
+  part: Pick<PartRow, "state" | "error">,
+  open: boolean,
+): boolean {
+  if (partWaiting(part)) return true;
+  return !open && ["queued", "sending", "retry"].includes(part.state);
+}
+
+/** Whether a task of a sent request is still on its way to ClickUp. */
+export function partMoving(
+  part: Pick<PartRow, "state" | "error">,
+  open: boolean,
+): boolean {
+  return (
+    !partHeld(part, open) &&
+    ["queued", "sending", "retry", "unknown"].includes(part.state)
   );
+}
+
+/**
+ * A request saved but not sent: the server says so (held), or every task
+ * not yet in ClickUp was held back by the writer.
+ */
+export function requestHeld(
+  row: Pick<RequestRow, "state" | "done" | "parts" | "held">,
+): boolean {
+  if (row.done) return false;
+  if (row.held === true) return true;
+  if (row.state === "dry_run") return false; // stateWords' own fallback
+  const waiting = row.parts.filter(p => partWaiting(p));
+  return (
+    row.state === "sending" &&
+    waiting.length > 0 &&
+    row.parts.every(p => partWaiting(p) || p.state === "delivered")
+  );
+}
+
+/**
+ * A task in ClickUp that the cockpit could not finish (a refused step):
+ * it is delivered, and its note says what to check. A quiet warning under
+ * the task, never a failure.
+ */
+export function deliveredNote(
+  part: Pick<PartRow, "state" | "error">,
+): string | null {
+  return part.state === "delivered" ? part.error?.trim() || null : null;
+}
+
+/**
+ * The sent panel's lines, one per task, said by where the task really is:
+ * "Saved. Goes to {list} when requests open." while requests are not open,
+ * "Sending to {list}." on its way, "In {list}. Owner: {owner}." once it is
+ * on the list. Never "in" a list before ClickUp has it. `open` is
+ * requestsOpen() for the request's card.
+ */
+export function sentLines(
+  parts: Pick<PartRow, "listName" | "owner" | "state" | "error" | "url">[],
+  open: boolean,
+): string[] {
+  return parts.map(p => {
+    if (partHeld(p, open))
+      return p.url
+        ? REQUEST_SENTENCES.heldInList(p.listName)
+        : REQUEST_SENTENCES.held(p.listName);
+    switch (p.state) {
+      case "delivered":
+        return REQUEST_SENTENCES.inList(
+          p.listName,
+          p.owner.how === "none" || !p.owner.label
+            ? "nobody yet"
+            : p.owner.label,
+        );
+      case "unknown":
+        return REQUEST_SENTENCES.checkingIn(p.listName);
+      case "failed":
+      case "skipped":
+        return REQUEST_SENTENCES.notSentTo(p.listName, reason(p.error));
+      case "imported":
+        return "On All Tasks in ClickUp.";
+    }
+    return REQUEST_SENTENCES.sendingTo(p.listName);
+  });
 }
 
 /** Types grouped by team, in the server's order, with a search applied. */

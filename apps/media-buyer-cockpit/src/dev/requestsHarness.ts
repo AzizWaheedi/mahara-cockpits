@@ -556,32 +556,75 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
   const editorOf = (s: HarnessSeat) => s.editor;
   const allOf = (s: HarnessSeat) => s.editor || s.admin || s.ceo;
 
-  function canSend(clientTaskId: string | null): string | null {
+  /**
+   * Who may file now and whether it is held (cockpit_request_send_gate, as
+   * the review of 2026-10-26 changed it): apply sends at once; otherwise a
+   * lead (editor, admin, CEO) may file and the request is held until
+   * requests open, and anyone else is pointed to the ClickUp form.
+   */
+  function gate(clientTaskId: string | null): {
+    allowed: boolean;
+    held: boolean;
+    note: string | null;
+  } {
     const s = fake.seat;
     const lead = s.editor || s.admin || s.ceo;
+    const refuse = (note: string) => ({ allowed: false, held: false, note });
+    const hold = (note: string) => ({ allowed: true, held: true, note });
     switch (fake.mode) {
       case "apply":
-        return null;
+        return { allowed: true, held: false, note: null };
       case "apply_limited":
-        if (
-          lead &&
-          clientTaskId &&
-          (opts.onlyCards ?? ["86eywg1cq"]).includes(clientTaskId)
-        )
-          return null;
-        return lead
-          ? "Requests are being tested on the internal test card only. Pick that card, or wait until they open to everyone."
-          : "Requests are being tested. They open to everyone soon. Use the ClickUp request form until then.";
+        if (!lead)
+          return refuse(
+            "Requests are being tested. They open to everyone soon. Use the ClickUp request form until then.",
+          );
+        if (takes(clientTaskId))
+          return { allowed: true, held: false, note: null };
+        return hold(
+          "Saved. Requests are being tested on the internal test card only, so this goes to ClickUp once they open to everyone.",
+        );
       case "dry_run":
         return lead
-          ? null
-          : "Requests are not switched on yet. Use the ClickUp request form until then.";
+          ? hold(
+              "Saved. Requests are not open yet, so this goes to ClickUp once they are.",
+            )
+          : refuse(
+              "Requests are not switched on yet. Use the ClickUp request form until then.",
+            );
       default:
         return lead
-          ? "The requests writer has not reported in the last 15 minutes. Check it on the Machine tab before sending."
-          : "Requests are not switched on yet. Use the ClickUp request form until then.";
+          ? hold(
+              "Saved. The requests writer has not reported in the last 15 minutes, so this goes to ClickUp once it runs with requests open. Check it on the Machine tab.",
+            )
+          : refuse(
+              "Requests are not switched on yet. Use the ClickUp request form until then.",
+            );
     }
   }
+
+  /** Whether the writer takes a row for this card now (apply, or the canary). */
+  function takes(clientTaskId: string | null): boolean {
+    if (fake.mode === "apply") return true;
+    return (
+      fake.mode === "apply_limited" &&
+      Boolean(clientTaskId) &&
+      (opts.onlyCards ?? ["86eywg1cq"]).includes(String(clientTaskId))
+    );
+  }
+
+  /** The writer's note on a row it handed back to the queue (run.ts WAITING). */
+  const waitingNote = () =>
+    fake.mode === "apply_limited"
+      ? "Waiting in the queue: requests are being tested on the canary card only, so this goes when they open to every card."
+      : "Waiting in the queue: requests are a dry run, so nothing goes to ClickUp until CLICKUP_WRITEBACK_APPLY_REQUESTS is true.";
+
+  /** Saved, not sent: every part still waits untried and the writer would not take it. */
+  const heldOf = (r: StoredRequest) =>
+    r.state === "sending" &&
+    r.parts.length > 0 &&
+    r.parts.every(p => p.state === "queued") &&
+    !takes(r.clientTaskId);
 
   const typeOf = (key: unknown) => types.find(t => t.key === key) ?? null;
   const clientOf = (id: unknown) =>
@@ -717,7 +760,11 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
       canRoute:
         r.state === "imported" &&
         (allOf(s) || s.teams.includes(r.team)) &&
-        canSend(r.clientTaskId) === null,
+        gate(r.clientTaskId).allowed,
+      held: heldOf(r),
+      heldNote: heldOf(r)
+        ? "Saved, not sent yet. It goes to ClickUp once requests open."
+        : null,
       parts: r.parts.map(({ ownerId: _o, team: _t, ...p }) => ({ ...p })),
     };
   }
@@ -858,7 +905,7 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
       priority: "high",
       createdAt: iso(2),
     });
-    // Held as a test run.
+    // Held: saved while requests were not open, the writer's note on it.
     const script = addRequest({
       typeKey: "new_script",
       clientTaskId: "86harb004",
@@ -867,7 +914,8 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
       dueOn: addDays(today(), 6),
       createdAt: iso(60 * 5),
     });
-    script.parts[0].state = "dry_run";
+    script.parts[0].error =
+      "Waiting in the queue: requests are a dry run, so nothing goes to ClickUp until CLICKUP_WRITEBACK_APPLY_REQUESTS is true.";
     refresh(script);
     // Did not reach ClickUp.
     const card = addRequest({
@@ -888,6 +936,9 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
       createdAt: iso(60 * 24 * 6),
     });
     deliver(lp.parts[0], 3, "review required", "custom");
+    // In ClickUp, but a step was refused (requests.ts STEP_REFUSED).
+    lp.parts[0].error =
+      "The SOP steps did not save as a checklist in ClickUp. Add them on the task there.";
     lp.parts[0].ownerId = fake.seat.clickupUserId;
     lp.parts[0].owner = { label: fake.seat.label, how: "named", note: null };
     refresh(lp);
@@ -952,8 +1003,15 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
       let moved = false;
       for (const p of r.parts)
         if (p.state === "queued" || p.state === "sending") {
-          if (fake.mode === "dry_run") p.state = "dry_run";
-          else deliver(p, n++);
+          if (!takes(r.clientTaskId)) {
+            // The writer hands the row back to the queue with its note
+            // (run.ts hold): nothing goes to ClickUp, nothing is a try.
+            p.state = "queued";
+            p.error = waitingNote();
+            continue;
+          }
+          p.error = null;
+          deliver(p, n++);
           moved = true;
         }
       if (moved) {
@@ -973,7 +1031,7 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
   function typesRead(): Answer {
     const s = fake.seat;
     const editor = editorOf(s);
-    const note = canSend(null);
+    const g = gate(null);
     const list = types
       .filter(t => t.enabled || editor)
       .sort(
@@ -991,7 +1049,12 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
         editor,
         all: allOf(s),
       },
-      writer: { mode: fake.mode, canSend: note === null, note },
+      writer: {
+        mode: fake.mode,
+        canSend: g.allowed,
+        held: g.held,
+        note: g.note,
+      },
       types: list,
     };
     if (editor && opts.specs) {
@@ -1011,8 +1074,8 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
   }
 
   function submit(a: Args): Answer {
-    const note = canSend((a.p_client_task_id as string) ?? null);
-    if (note) return fail(note, "55000");
+    const g = gate((a.p_client_task_id as string) ?? null);
+    if (!g.allowed) return fail(g.note ?? "Requests are not open.", "55000");
     if (!["requests_page", "client_page"].includes(String(a.p_source)))
       return fail("Send requests from the Requests page or a client page.");
     const t = typeOf(a.p_type_key);
@@ -1044,7 +1107,8 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
           state: existing.state,
           reused: true,
           duplicateOf: null,
-          note: null,
+          note: heldOf(existing) ? g.note : null,
+          held: heldOf(existing),
           parts: rowOf(existing).parts,
         });
       return fail(
@@ -1087,6 +1151,7 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
           reused: false,
           duplicateOf: dup.id,
           note: `An open ${t.label.toLowerCase()} request for ${client?.name ?? "this client"} already exists. Open it instead.`,
+          held: false,
           parts: [],
         });
     }
@@ -1118,7 +1183,8 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
       state: r.state,
       reused: false,
       duplicateOf: null,
-      note: null,
+      note: g.held ? g.note : null,
+      held: g.held,
       parts: rowOf(r).parts,
     });
   }
@@ -1378,14 +1444,14 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
             owner: { label: owner.label, how: owner.how, note: owner.note },
           }),
         );
-        const note = canSend(clientTaskId);
+        const g = gate(clientTaskId);
         return ok({
           parts,
           note: parts.length
             ? null
             : `Pick ${whenLabel(t) ?? "the choices above"} to see where it goes.`,
           dueDefault: workingDaysAhead(today(), t.due_days),
-          writer: { canSend: note === null, note },
+          writer: { canSend: g.allowed, held: g.held, note: g.note },
         });
       }
       case "cockpit_request_submit":
@@ -1525,6 +1591,23 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
           if (!HARNESS_PEOPLE.some(p => p.clickupUserId === cu))
             return fail(
               "That person is not in the ClickUp workspace. Pick someone from the list.",
+            );
+          // One seat a ClickUp person (the review of 2026-10-26).
+          const taken = Object.entries(links).find(
+            ([m, l]) =>
+              m !== id &&
+              l?.clickupUserId === cu &&
+              ["ok", "manual"].includes(l.state),
+          );
+          if (taken)
+            return fail(
+              "That ClickUp user is already linked to another seat. Clear that link first.",
+              "23505",
+            );
+          if (id === s.memberId && !s.ceo)
+            return fail(
+              "You cannot link your own seat. Ask the CEO or another editor to do it.",
+              "42501",
             );
           links[id] = {
             state: "manual",

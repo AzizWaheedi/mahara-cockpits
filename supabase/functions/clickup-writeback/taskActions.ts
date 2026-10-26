@@ -168,6 +168,10 @@ async function verify(book: StepBook, provider: Provider, p: Row, ctx: RunContex
       // Nothing was written to ClickUp: the check runs again on the ladder.
       throw halt("retry", ACTION_SAY.rtOffLater);
     }
+    // Parts of this type later in this run leave Request Type empty (requests.ts stepRequestType reads
+    // the type again before writing it, so parts in later runs do too). Parts delivered inside these two
+    // minutes each have their own check, which finds its own move.
+    ctx.requestTypeTurnedOff(String(p.typeKey));
     progress.verify = "moved";
     progress.verifyNote = where;
     return book.set("verify", "done", { rtOff: true });

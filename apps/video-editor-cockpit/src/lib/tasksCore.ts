@@ -160,8 +160,15 @@ export const TASK_SENTENCES = {
     "Your tasks could not be read just now. They are still in ClickUp. Try again in a minute.",
   staleBefore: "Task updates are late. Last read at ",
   staleAfter: ". Open ClickUp for anything urgent.",
+  /**
+   * No open task for this seat in this cockpit. Every cockpit leaves the
+   * client cards out (cockpit_task_hidden), so the sentence says so rather
+   * than claim nothing is assigned in ClickUp; see emptySentence().
+   */
   empty:
-    "Nothing is assigned to you in ClickUp. New tasks show here within two minutes.",
+    "Nothing open is assigned to you outside the client cards. New ClickUp tasks show here within two minutes.",
+  emptyEditor:
+    "Nothing open is assigned to you outside Jobs and the client cards. New ClickUp tasks show here within two minutes.",
   bellEmpty: "No alerts in the last 14 days.",
   bellNotRead: "Alerts could not refresh. Try again.",
   bellChecked: "Checked every 2 minutes while this cockpit is open.",
@@ -176,6 +183,36 @@ export const TASK_SENTENCES = {
   notOpened: "This task could not be opened. Open it in ClickUp.",
   notSent: "That change could not be sent. Try again.",
 } as const;
+
+/**
+ * The empty card's sentence for a cockpit. The server leaves lists out by
+ * cockpit (the client cards everywhere, Video Pipeline in the editor, whose
+ * Jobs page owns it), so the sentence names what is left out: an empty
+ * card is never told "nothing is assigned to you in ClickUp".
+ */
+export function emptySentence(cockpit: string): string {
+  return cockpit === "editor"
+    ? TASK_SENTENCES.emptyEditor
+    : TASK_SENTENCES.empty;
+}
+
+/**
+ * When an alert came, short: "Just now", "12 min ago", "3 h ago",
+ * "Yesterday 14:02", "Sun 25 Oct 09:10" (Kuwait time). "" for no time.
+ */
+export function agoWords(at: string | null | undefined, nowMs: number): string {
+  const ms = at ? Date.parse(at) : Number.NaN;
+  if (!Number.isFinite(ms)) return "";
+  const mins = Math.floor((nowMs - ms) / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins} min ago`;
+  const day = kuwaitDay(ms);
+  const today = kuwaitDay(nowMs);
+  if (day === today) return `${Math.floor(mins / 60)} h ago`;
+  if (dayNumber(today) - dayNumber(day) === 1)
+    return `Yesterday ${kuwaitTime(ms)}`;
+  return `${dayWords(day, true)} ${kuwaitTime(ms)}`;
+}
 
 /** "Task updates are late. Last read at 14:02. Open ClickUp for anything urgent." */
 export function staleSentence(time: string): string {

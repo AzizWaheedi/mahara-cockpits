@@ -363,7 +363,12 @@ describe("the request form", () => {
       send.click();
     });
     await flush(6);
-    expect(page()).toContain("Failed to fetch");
+    // The browser's own words stay out of the form (D5): a plain sentence
+    // with what to do.
+    expect(page()).toContain(
+      "The cockpit could not reach the database. Check your connection, then try again.",
+    );
+    expect(page()).not.toContain("Failed to fetch");
     // The answers are still there.
     expect(field("details").value).toBe(
       "The lead form on the landing page stopped.",
@@ -372,9 +377,11 @@ describe("the request form", () => {
     await click(button("Send request"));
     await flush(4);
     expect(submits().length).toBe(1);
-    expect(page()).toContain(
-      "Sent to Operations / Tech. Owner: the systems manager.",
-    );
+    // On its way, not yet in the list: never "Sent to" before ClickUp has
+    // it, and said once (D13).
+    expect(page()).toContain("Sending to Operations / Tech.");
+    expect(page()).not.toContain("Sent to");
+    expect(page()).not.toContain("Sending to ClickUp");
     expect(page()).toContain("See it in My requests");
     // The failed press and the sent one carried the same id.
     expect(pressed.length).toBe(2);
@@ -472,6 +479,7 @@ describe("the request form", () => {
             data: null,
             error: {
               message: "What is needed?: keep it under 4000 characters.",
+              code: "22023",
             },
           }
         : null;
@@ -482,5 +490,94 @@ describe("the request form", () => {
     ) as any;
     expect(text(note)).toBe("What is needed?: keep it under 4000 characters.");
     expect(field("details").getAttribute("aria-invalid")).toBe("true");
+  });
+
+  test("after a send the panel follows the task: sending, then in the list", async () => {
+    await render();
+    await pick("General tech request");
+    await type(field("details"), "The CRM sync stopped.");
+    await click(button("Send request"));
+    await flush(4);
+    expect(page()).toContain("Sending to Operations / Tech.");
+    // The writer's run puts it in ClickUp; the panel reads it again within
+    // five seconds and only then says it is in the list, with its owner.
+    fake.advance();
+    await act(async () => {
+      await new Promise(r => setTimeout(r, 5300));
+    });
+    await flush(4);
+    expect(page()).toContain(
+      "In Operations / Tech. Owner: the systems manager.",
+    );
+    expect(page()).not.toContain("Sending to Operations / Tech.");
+  }, 15000);
+
+  test("an editor may file while requests are not open: told it is saved, never sent", async () => {
+    fake = createRequestsFake({ seat: "ceo", mode: "dry_run", now: () => NOW });
+    await render();
+    await pick("General tech request");
+    await type(field("details"), "Check the CRM sync.");
+    // The database's note for a held request, above Send (F3/F5).
+    const note =
+      "Saved. Requests are not open yet, so this goes to ClickUp once they are.";
+    expect(page()).toContain(note);
+    expect(button("Send request")).toBeTruthy();
+    await click(button("Send request"));
+    await flush(4);
+    expect(submits().length).toBe(1);
+    expect(page()).toContain(
+      "Saved. Goes to Operations / Tech when requests open.",
+    );
+    expect(page()).not.toContain("Sent to");
+    expect(page()).not.toContain("Sending to");
+    expect(page()).not.toContain("Owner:");
+    // The writer hands it back to the queue with its note; still held.
+    fake.advance();
+    const stored = fake.requests.find(
+      r => r.id === submits()[0].args.p_request_id,
+    );
+    expect(stored?.parts[0].state).toBe("queued");
+    expect(stored?.parts[0].error).toMatch(/^Waiting in the queue/);
+  });
+
+  test("off the test card while requests are tested, an editor's request is held too", async () => {
+    fake = createRequestsFake({
+      seat: "ceo",
+      mode: "apply_limited",
+      now: () => NOW,
+    });
+    await render({
+      source: "client_page",
+      presetClient: { taskId: "86harb002", name: "Dune Build Co" },
+      compact: true,
+    });
+    await pick("Card missing for ads");
+    expect(page()).toContain(
+      "Saved. Requests are being tested on the internal test card only, so this goes to ClickUp once they open to everyone.",
+    );
+    await click(button("Send request"));
+    await flush(4);
+    expect(page()).toContain("when requests open.");
+    expect(page()).not.toContain("Sending to");
+  });
+
+  test("a request filed again starts from its own answers (D2)", async () => {
+    // The panel hands over the answers as words: a choice by its name.
+    await render({
+      presetType: "low_schedule_rate",
+      presetClient: { taskId: "86harb002", name: "Dune Build Co" },
+      presetAnswers: {
+        schedule_rate_issue: "Both",
+        additional_notes: "Raised again after ClickUp refused it.",
+      },
+    });
+    const issue = field("schedule_rate_issue");
+    const chosen = [...issue.querySelectorAll("option")].find(
+      (o: any) => o.value === issue.value,
+    ) as any;
+    expect(text(chosen)).toBe("Both");
+    expect(field("additional_notes").value).toBe(
+      "Raised again after ClickUp refused it.",
+    );
   });
 });

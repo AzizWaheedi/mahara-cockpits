@@ -9,7 +9,7 @@ import {
   type SeatLinksRead,
   setSeatLink,
 } from "@/lib/requestsAdmin";
-import { errorWords } from "@/lib/requestsClient";
+import { errorWords, PLAIN_ERRORS, RequestError } from "@/lib/requestsClient";
 import { stampWords } from "@/lib/requestsCore";
 import { useTaskSeat } from "@/lib/taskSeat";
 
@@ -23,6 +23,54 @@ import { useTaskSeat } from "@/lib/taskSeat";
  * A seat that is not linked sees "not linked" on its Today card, never an
  * empty list, so this is where that gets fixed (R11).
  */
+
+/**
+ * A seat's one line: "Huda, set by hand" when linked; when not, the
+ * server's own sentence where it says why and what to do (no email match,
+ * two matches, or a match already linked to another seat), else "Not
+ * linked. {how}." Said once, never the same fact twice.
+ */
+export function seatLine(s: SeatLink, linked: boolean): string {
+  if (linked)
+    return `${s.link?.username ?? `ClickUp user ${s.link?.clickupUserId}`}, ${linkHow(s.link).toLowerCase()}`;
+  const note = s.link?.note?.trim();
+  if (note && (s.link?.state === "not_found" || s.link?.state === "ambiguous"))
+    return note;
+  return `Not linked. ${linkHow(s.link)}.`;
+}
+
+/**
+ * A refused link in plain words (cockpit_member_clickup_set): a ClickUp
+ * person already linked to another seat names that seat; a seat that may
+ * not be linked from here, and a pick that is not valid, say what to do.
+ */
+export function linkRefusal(
+  e: unknown,
+  clickupUserId: number | null,
+  read: { status: string; data?: SeatLinksRead },
+): string {
+  const code = e instanceof RequestError ? e.code : null;
+  if (code === "23505") {
+    const data = read.status === "ready" ? read.data : undefined;
+    const member = data?.members.find(m => m.clickupUserId === clickupUserId);
+    const other = member?.linkedTo
+      ? data?.seats.find(x => x.memberId === member.linkedTo)?.label
+      : null;
+    return other
+      ? `That ClickUp person is already linked to ${other}. Clear that link first.`
+      : "That ClickUp person is already linked to another seat. Clear that link first.";
+  }
+  if (code === "42501" || code === "22023") {
+    // The server's own sentence says which rule refused it; keep it.
+    const said = errorWords(e);
+    if (said && !Object.values(PLAIN_ERRORS).includes(said as never))
+      return said;
+    return code === "42501"
+      ? "This seat cannot be linked from your seat. Only the CEO links their own seat, and the CEO's ClickUp account links only to the CEO."
+      : "That link cannot be saved. Pick someone from the list.";
+  }
+  return errorWords(e);
+}
 
 /** People in ClickUp (editors): which ClickUp user each seat is. */
 export function SeatLinks() {
@@ -73,7 +121,10 @@ export function SeatLinks() {
       // too, so read it again.
       void load();
     } catch (e) {
-      setRowError({ id: s.memberId, text: errorWords(e) });
+      setRowError({
+        id: s.memberId,
+        text: linkRefusal(e, clickupUserId, read),
+      });
     } finally {
       setSaving(null);
     }
@@ -158,15 +209,12 @@ export function SeatLinks() {
                     tone={linked ? "good" : "warning"}
                     label={linked ? "Linked" : "Not linked"}
                   />
-                  <span className="truncate">
-                    {linked
-                      ? `${s.link?.username ?? `ClickUp user ${s.link?.clickupUserId}`}, ${linkHow(s.link).toLowerCase()}`
-                      : `Not linked. ${linkHow(s.link)}.`}
+                  {/* One line a seat (D10): who it is linked to and how,
+                      or why it is not linked, with the fix. */}
+                  <span className="min-w-0">
+                    {seatLine(s, Boolean(linked))}
                   </span>
                 </p>
-                {s.link?.note ? (
-                  <p className="text-xs text-muted-foreground">{s.link.note}</p>
-                ) : null}
                 {rowError?.id === s.memberId ? (
                   <p className="text-[13px] text-destructive" role="alert">
                     {rowError.text}
@@ -209,14 +257,18 @@ export function SeatLinks() {
                       className="size-4 animate-spin text-muted-foreground"
                     />
                   ) : null}
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={busy || s.link?.state === "cleared"}
-                    onClick={() => void link(s, null)}
-                  >
-                    Clear
-                  </Button>
+                  {/* Clear undoes a link an editor set by hand; an email
+                      match is changed by picking another user. */}
+                  {s.link?.state === "manual" ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => void link(s, null)}
+                    >
+                      Clear
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             </li>

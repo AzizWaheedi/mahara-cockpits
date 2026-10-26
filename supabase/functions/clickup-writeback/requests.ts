@@ -78,7 +78,23 @@ export const SAY = {
   oldGone: "The old ticket was already moved or closed.",
   badPayload: "This request has no usable ClickUp plan. Cancel it and raise it again.",
   bookkeeping: "The cockpit could not save its progress, so the next run reads ClickUp back before writing again.",
+  unfinished: "The task is in ClickUp, but the cockpit could not finish every step on it. Check it in ClickUp.",
+  noTemplateChecklist: "The template brought no checklist in ClickUp, and this request type has no SOP steps to add. Add them in Requests settings.",
+  rtTurnedOff: "Request Type was turned off for this type after ClickUp moved one of its tasks, so the cockpit left it empty.",
+  rtCheckLater: "The cockpit could not check whether Request Type is still on for this type. The next run tries again.",
 } as const;
+
+/** What a person reads when ClickUp refused a step after the task was made. The task stays; the part is delivered with this note. */
+export const STEP_REFUSED: Record<string, string> = {
+  description: "The request details did not save in the task description in ClickUp. They are in the cockpit.",
+  owner_due_priority: "ClickUp refused the owner, due day or priority. Set them on the task in ClickUp.",
+  checklist: "The SOP steps did not save as a checklist in ClickUp. Add them on the task there.",
+  tag: "The client tag did not save in ClickUp.",
+  fields: "Some fields did not save in ClickUp. They are in the description.",
+  request_type: "Request Type did not save in ClickUp.",
+  card_comment: "The link comment on the client card did not post in ClickUp. The task itself is there.",
+  replaces: "The old ticket was not routed in ClickUp. Close it there.",
+};
 
 // --- Small helpers -------------------------------------------------------------------
 
@@ -228,6 +244,15 @@ export type RunContext = {
   listFields: (listId: string) => Promise<Row[]>;
   /** A list's statuses, read once a run. */
   listStatuses: (listId: string) => Promise<Row[]>;
+  /**
+   * Whether Request Type is still on for a type right now (cockpit_request_doctor_inputs, read once a
+   * run). A type the database does not name follows its payload (true).
+   */
+  requestTypeOn: (typeKey: string) => Promise<boolean>;
+  /** A two-minute check turned Request Type off for this type in this run. */
+  requestTypeTurnedOff: (typeKey: string) => void;
+  /** Of these ClickUp task ids, the ones another queue row already owns. */
+  ownedElsewhere: (taskIds: string[], queueId: string) => Promise<Set<string>>;
 };
 
 export type Save = (patch: Row) => Promise<void>;
@@ -246,12 +271,22 @@ export function requestsDb(rpc: (name: string, params?: Row) => Promise<any>) {
       rpc("cockpit_clickup_requests_state", { p_ok: ok, p_note: note, p_mode: mode, p_only_cards: onlyCards, p_counts: counts }),
     doctorInputs: () => rpc("cockpit_request_doctor_inputs", {}),
     rtOff: (key: string, note: string) => rpc("cockpit_request_type_rt_off", { p_key: key, p_note: note }),
+    /**
+     * Hand a claimed row back to the queue without counting a try (RT-1): queued again, or retry when it
+     * has ClickUp progress, attempts less the claim's one, the plan kept for the review.
+     */
+    release: (id: string, token: string, planned: unknown[], note: string, nextAttemptAt: string) =>
+      rpc("cockpit_clickup_writeback_release", { p_id: id, p_token: token, p_planned: planned, p_note: note, p_next_attempt_at: nextAttemptAt }),
+    /** [{taskId, queueId}] for the ClickUp task ids queue rows of kind request already hold (migration r, RT-3). */
+    taskOwners: (taskIds: string[]) => rpc("cockpit_clickup_writeback_task_owners", { p_task_ids: taskIds }),
   };
 }
 
 /** The run context's three shared reads, each once a run, through the run's own ledger id. */
 export function runContext(provider: Provider, now: () => number, rpc: RunContext["rpc"]): RunContext {
   let tags: Promise<Map<string, string>> | undefined;
+  let types: Promise<Map<string, boolean>> | undefined;
+  const turnedOff = new Set<string>();
   return {
     now,
     rpc,
@@ -273,6 +308,28 @@ export function runContext(provider: Provider, now: () => number, rpc: RunContex
         if (!Array.isArray(r.statuses)) throw new Error(`ClickUp did not return the statuses of list ${listId}`);
         return r.statuses as Row[];
       })),
+    requestTypeOn: async (typeKey: string) => {
+      if (turnedOff.has(typeKey)) return false;
+      types ??= requestsDb(rpc).doctorInputs().then((r: Row) => {
+        if (!Array.isArray(r?.types)) throw new Error("The request types did not come back from the database.");
+        return new Map(r.types.map((t: Row) => [String(t.key), t.setRequestType === true]));
+      });
+      types.catch(() => (types = undefined));
+      return (await types).get(typeKey) ?? true;
+    },
+    requestTypeTurnedOff: (typeKey: string) => {
+      turnedOff.add(typeKey);
+    },
+    ownedElsewhere: async (taskIds: string[], queueId: string) => {
+      if (!taskIds.length) return new Set();
+      try {
+        const rows = await requestsDb(rpc).taskOwners(taskIds);
+        return new Set((Array.isArray(rows) ? rows : []).filter((r: Row) => String(r?.queueId) !== queueId).map((r: Row) => String(r.taskId)));
+      } catch {
+        // A database without the owners read: the Cockpit ref markers in the descriptions still exclude.
+        return new Set();
+      }
+    },
   };
 }
 
@@ -349,6 +406,17 @@ export function outcomeOf(e: unknown, book: StepBook, key: string): RequestOutco
 
 export const halt = (state: RequestOutcome["state"], message: string) => new Halt(state, message);
 
+/**
+ * A step that ClickUp refused for good once the task exists: a 4xx that is not a 429, or a step's own
+ * "failed" (a renamed Request Type option). Never the task itself gone, never our own bookkeeping, and
+ * never a 429, a 5xx or a lost answer, which retry from the step.
+ */
+export function refusedForGood(e: unknown): boolean {
+  if (e instanceof Bookkeeping) return false;
+  if (e instanceof Halt) return e.state === "failed" && e.message !== SAY.gone;
+  return classify(e) === "refused";
+}
+
 // --- The request steps (contract 4.3) -------------------------------------------------
 
 export const REQUEST_STEPS = ["create", "description", "owner_due_priority", "checklist", "tag", "fields", "request_type", "card_comment", "replaces"];
@@ -357,7 +425,8 @@ export const REQUEST_STEPS = ["create", "description", "owner_due_priority", "ch
 export function requestStepKeys(p: Row): string[] {
   const keys = ["create"];
   if (p.templateId) keys.push("description", "owner_due_priority");
-  if (p.sopStepsWhen && Array.isArray(p.sopSteps) && p.sopSteps.length) keys.push("checklist");
+  // Every template part checks its checklist: the template's own, or the SOP steps when it brought none.
+  if (p.templateId || hasSopSteps(p)) keys.push("checklist");
   if (p.clientTag) keys.push("tag");
   if (Array.isArray(p.fields) && p.fields.length) keys.push("fields");
   if (p.setRequestType === true) keys.push("request_type");
@@ -379,6 +448,10 @@ export function payloadProblem(p: Row): string | null {
   return null;
 }
 
+const hasSopSteps = (p: Row) => Array.isArray(p.sopSteps) && p.sopSteps.length > 0;
+/** When the SOP steps go on: always with no template, only into an empty template otherwise. */
+const sopWhen = (p: Row): "always" | "if_template_empty" | null =>
+  !hasSopSteps(p) ? null : p.templateId ? "if_template_empty" : "always";
 const ownerOf = (p: Row): number | null => (p.ownerClickupId === null || p.ownerClickupId === undefined ? null : Number(p.ownerClickupId));
 const dueMsOf = (p: Row): number | null => (Number.isFinite(Number(p.dueMs)) && Number(p.dueMs) > 0 ? Number(p.dueMs) : p.dueOn ? noonKuwait(String(p.dueOn)) : null);
 const priorityValueOf = (p: Row): number | null => {
@@ -430,8 +503,10 @@ export function planRequest(item: RequestsItem): Planned[] {
     new: { name: p.taskName, description: p.templateId ? `the template's text, then: ${p.descriptionMarkdown}` : p.descriptionMarkdown, owner: p.ownerLabel ?? null, ownerClickupId: ownerOf(p), dueOn: p.dueOn ?? null, priority: p.priority ?? null },
     note: markerOf(p),
   }];
-  if (p.sopStepsWhen && Array.isArray(p.sopSteps) && p.sopSteps.length)
-    out.push({ ...base, taskId: null, field: String(p.sopChecklistName ?? "SOP steps"), old: null, new: p.sopSteps, ...(p.sopStepsWhen === "if_template_empty" ? { note: "Only when the template brings no checklist." } : {}) });
+  if (hasSopSteps(p))
+    out.push({ ...base, taskId: null, field: String(p.sopChecklistName ?? "SOP steps"), old: null, new: p.sopSteps, ...(sopWhen(p) === "if_template_empty" ? { note: "Only when the template brings no checklist." } : {}) });
+  else if (p.templateId)
+    out.push({ ...base, taskId: null, field: "checklist", old: null, new: null, note: "Reads back that the template brought its checklist; this type has no SOP steps to add." });
   if (p.clientTag) out.push({ ...base, taskId: null, field: "tag", old: null, new: p.clientTag, note: "Only when the space has this tag." });
   for (const f of fieldsOf(p)) out.push({ ...base, taskId: null, field: String(f.label ?? f.fieldId), fieldId: f.fieldId, old: null, new: f.display ?? f.value });
   if (p.setRequestType === true) out.push({ ...base, taskId: null, field: "Request Type", fieldId: REQUEST_TYPE_FIELD, old: null, new: p.requestTypeOptionName });
@@ -487,8 +562,16 @@ async function stepCreate(x: Ctx) {
     const startedAt = book.startedAt("create", x.item.created_at);
     const r = await provider.call("clickup", "GET", `list/${p.listId}/task?order_by=created&include_closed=true&date_created_gt=${startedAt - 60_000}`);
     const tasks: Row[] = Array.isArray(r.tasks) ? r.tasks : [];
-    const found = tasks.filter(t =>
-      p.templateId ? String(t.name) === String(p.taskName) : [t.text_content, t.description, t.markdown_description].some(s => String(s ?? "").includes(x.marker)));
+    const texts = (t: Row) => [t.text_content, t.description, t.markdown_description].map(s => String(s ?? ""));
+    const ours = (t: Row) => texts(t).some(s => s.includes(x.marker));
+    let found = tasks.filter(ours);
+    if (!found.length && p.templateId) {
+      // A template task carries no marker until its description step. Never adopt one another part
+      // already owns: by another Cockpit ref in its text, or by another queue row holding its id.
+      const named = tasks.filter(t => String(t.name) === String(p.taskName) && !texts(t).some(s => /Cockpit ref R-[0-9a-f]{10}-/.test(s)));
+      const owned = await x.ctx.ownedElsewhere(named.map(t => String(t.id)), x.item.id);
+      found = named.filter(t => !owned.has(String(t.id)));
+    }
     if (found.length > 1) throw halt("unknown", SAY.twoTasks);
     if (found.length === 1) return adopt(x, (await readTask(provider, String(found[0].id), true)) ?? found[0]);
     if (x.ctx.now() - startedAt < 5 * 60_000) throw halt("unknown", SAY.waiting);
@@ -567,6 +650,14 @@ const itemNames = (cl: Row | undefined) =>
 
 async function stepChecklist(x: Ctx) {
   const { p, provider, book } = x;
+  if (!hasSopSteps(p)) {
+    // A template part with no SOP steps: read back that the template brought its checklist.
+    const t = await current(x);
+    const lists: Row[] = Array.isArray(t.checklists) ? t.checklists : [];
+    if (lists.length) return book.set("checklist", "unchanged", { why: "The template brought its own checklist." });
+    x.notes.push(SAY.noTemplateChecklist);
+    return book.set("checklist", "mismatch", { why: SAY.noTemplateChecklist });
+  }
   const steps: string[] = (p.sopSteps as unknown[]).map(String);
   const name = String(p.sopChecklistName || "SOP steps");
   const st = book.get("checklist");
@@ -584,7 +675,7 @@ async function stepChecklist(x: Ctx) {
   }
   let wrote = false;
   if (!cl) {
-    if (p.sopStepsWhen === "if_template_empty" && lists.length > 0)
+    if (sopWhen(p) === "if_template_empty" && lists.length > 0)
       return book.set("checklist", "skipped", { why: "The template brought its own checklist." });
     await book.start("checklist");
     const made = await write(x, () => provider.call("clickup", "POST", `task/${book.progress.task!.id}/checklist`, { name }));
@@ -707,6 +798,18 @@ async function stepRequestType(x: Ctx) {
     x.notes.push("Request Type in ClickUp already shows another type, so the cockpit left it.");
     return book.set("request_type", "mismatch");
   }
+  // The payload is frozen, but a two-minute check may have turned Request Type off for this type since
+  // (ClickUp moved one of its tasks): a part still queued then leaves it empty.
+  let on: boolean;
+  try {
+    on = await x.ctx.requestTypeOn(String(p.typeKey));
+  } catch {
+    throw halt("retry", SAY.rtCheckLater);
+  }
+  if (!on) {
+    x.notes.push(SAY.rtTurnedOff);
+    return book.set("request_type", "skipped", { why: SAY.rtTurnedOff });
+  }
   await book.start("request_type");
   try {
     await write(x, () => provider.call("clickup", "POST", `task/${book.progress.task!.id}/field/${REQUEST_TYPE_FIELD}`, { value: optionId }));
@@ -813,7 +916,16 @@ export async function executeRequest(item: RequestsItem, provider: Provider, sav
     for (key of keys) {
       if (book.settled(key)) continue;
       book.writing = false;
-      await STEP_RUNNERS[key](x);
+      try {
+        await STEP_RUNNERS[key](x);
+      } catch (e) {
+        // Once the task exists, a step ClickUp refused for good never fails the part: a failed part
+        // invites a second request and a second task. The step is marked and named, the rest go on.
+        if (key === "create" || !book.progress.task?.id || !refusedForGood(e)) throw e;
+        x.latest = null;
+        await book.set(key, "mismatch", { refused: errorText(e) });
+        x.notes.push(e instanceof Halt ? e.message : (STEP_REFUSED[key] ?? SAY.unfinished));
+      }
     }
   } catch (e) {
     return { ...outcomeOf(e, book, key), taskId: book.progress.task?.id };

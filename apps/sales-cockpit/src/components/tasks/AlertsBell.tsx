@@ -5,6 +5,7 @@ import { useTaskSeat } from "@/lib/taskSeat";
 import { focusSearch, useTaskFeed } from "@/lib/tasksClient";
 import {
   type AlertRow,
+  agoWords,
   alertOpens,
   kuwaitTime,
   TASK_SENTENCES,
@@ -61,6 +62,7 @@ export function AlertsBell({
 
   const data = feed.alerts;
   const alerts = data?.alerts ?? [];
+  const nowMs = Date.now();
   const extraItems = extra?.items ?? [];
   const unreadTasks = data
     ? Math.max(data.unread, alerts.filter(a => !a.read).length)
@@ -236,6 +238,11 @@ export function AlertsBell({
                       ) : null}
                     </span>
                   </span>
+                  {a.at ? (
+                    <time className="tk-alert-time" dateTime={a.at}>
+                      {agoWords(a.at, nowMs)}
+                    </time>
+                  ) : null}
                   {a.read ? null : <span className="tk-sr">Unread</span>}
                 </button>
               </li>

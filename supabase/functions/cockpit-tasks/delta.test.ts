@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mirrorTask, NO_TOKEN, pacer } from "./clickup";
-import { COMMENT_TASKS, OVERLAP_MS, REPLY_READS, runDelta, TRUNCATED } from "./delta";
+import { COMMENT_TASKS, mostFailed, OVERLAP_MS, REPLY_READS, runDelta, TRUNCATED } from "./delta";
 import { cuTask, kit, NOW, TOKEN } from "./testkit";
 
 const tasksAt = (n: number, from = NOW - 3_600_000) =>
@@ -28,7 +28,7 @@ describe("the delta", () => {
     expect(r).toMatchObject({ ok: true, pages: 2, tasks: 150, truncated: false, cursorMs: NOW - 3_600_000 + 149_000 });
     const state = k.db.last("cockpit_task_mirror_state").args;
     expect(state).toMatchObject({ p_job: "delta", p_ok: true, p_note: "Read 150 changed tasks and 0 comment threads; 0 alerts." });
-    expect(state.p_detail).toEqual({ cursorMs: NOW - 3_600_000 + 149_000, pages: 2, tasks: 150, comments: 0, alerts: 0, truncated: false });
+    expect(state.p_detail).toEqual({ cursorMs: NOW - 3_600_000 + 149_000, pages: 2, tasks: 150, comments: 0, commentsFailed: 0, alerts: 0, truncated: false });
     expect(k.db.of("cockpit_task_alerts_tick").length).toBe(1);
   });
 
@@ -47,7 +47,8 @@ describe("the delta", () => {
     expect(r.truncated).toBe(true);
     expect(r.ok).toBe(false);
     expect(r.tasks).toBe(1000);
-    expect(r.cursorMs).toBe(NOW - 3_600_000 + 999_000);
+    // 1 ms before the last change read: a task sharing its timestamp on the next page is read again.
+    expect(r.cursorMs).toBe(NOW - 3_600_000 + 999_000 - 1);
     expect(r.note.startsWith(TRUNCATED)).toBe(true);
     expect(k.db.last("cockpit_task_mirror_state").args.p_ok).toBe(false);
   });
@@ -64,7 +65,7 @@ describe("the delta", () => {
     const r = await runDelta(k.deps);
     expect(r.ok).toBe(false);
     expect(r.tasks).toBe(100);
-    expect(r.cursorMs).toBe(NOW - 3_600_000 + 99_000);
+    expect(r.cursorMs).toBe(NOW - 3_600_000 + 99_000 - 1);
     expect(r.note).toContain("The changed tasks could not all be read from ClickUp");
     // The same, with ClickUp answering newest first.
     const k2 = kit();
@@ -124,10 +125,88 @@ describe("the delta", () => {
     ];
     k.clickup.fail.set("task/x1/comment", 500);
     const r = await runDelta(k.deps);
-    expect(r.ok).toBe(false);
+    // One thread of two is not most of them: the run stays ok and last_ok_at moves (F7).
+    expect(r.ok).toBe(true);
     expect(r.comments).toBe(1);
+    expect(r.commentsFailed).toBe(1);
     expect(r.note).toContain("The comments on task x1 could not be read");
-    expect(k.db.of("cockpit_task_mirror_comments").map(c => c.args.p_task_id)).toEqual(["x2"]);
+    expect(k.db.last("cockpit_task_mirror_state").args.p_ok).toBe(true);
+    // x2 is read; x1 is marked tried (p_failed), never as read.
+    const calls = k.db.of("cockpit_task_mirror_comments").map(c => c.args);
+    expect(calls.filter(a => !a.p_failed).map(a => a.p_task_id)).toEqual(["x2"]);
+    expect(calls.filter(a => a.p_failed)).toEqual([{ p_task_id: "x1", p_comments: [], p_read_at: expect.any(String), p_failed: true }]);
+  });
+
+  test("most comment threads failing makes the run not ok and says so", async () => {
+    const k = kit();
+    k.db.handlers.cockpit_task_mirror_comment_due = () => [{ taskId: "x1", sinceMs: 0 }, { taskId: "x2", sinceMs: 0 }, { taskId: "x3", sinceMs: 0 }];
+    k.clickup.fail.set("task/x1/comment", 500);
+    k.clickup.fail.set("task/x2/comment", 401);
+    const r = await runDelta(k.deps);
+    expect(r.ok).toBe(false);
+    expect(r.note).toContain("Most comment threads could not be read (2 of 3)");
+    expect([mostFailed(1, 1), mostFailed(1, 2), mostFailed(2, 4), mostFailed(2, 3), mostFailed(3, 4)]).toEqual([false, false, false, true, true]);
+  });
+
+  test("a database that refuses the tried marker does not stop the run", async () => {
+    const k = kit();
+    k.db.handlers.cockpit_task_mirror_comment_due = () => [{ taskId: "x1", sinceMs: 0 }, { taskId: "x2", sinceMs: 0 }];
+    k.db.handlers.cockpit_task_mirror_comments = a => {
+      if (a.p_failed) throw new Error("Could not find the function with p_failed");
+      return { alerts: 0 };
+    };
+    k.clickup.fail.set("task/x1/comment", 500);
+    const r = await runDelta(k.deps);
+    expect(r).toMatchObject({ ok: true, comments: 1, commentsFailed: 1 });
+  });
+
+  test("each thread passes the moment its read began as p_read_at (F6)", async () => {
+    const k = kit();
+    k.db.handlers.cockpit_task_mirror_comment_due = () => [{ taskId: "x1", sinceMs: 0 }, { taskId: "x2", sinceMs: 0 }];
+    const before = k.deps.now();
+    await runDelta(k.deps);
+    const [a, b] = k.db.of("cockpit_task_mirror_comments").map(c => c.args);
+    expect(Date.parse(String(a.p_read_at))).toBeGreaterThanOrEqual(before);
+    // Read before its GET: the second thread's read began after the first one's GET (paced).
+    expect(Date.parse(String(b.p_read_at))).toBeGreaterThan(Date.parse(String(a.p_read_at)));
+  });
+
+  test("after a truncated run the next one starts at the cursor with no overlap, so 1,000+ changes in 10 minutes never stall or skip (F4)", async () => {
+    const k = kit();
+    // 2,500 changes inside 5 minutes, two of them sharing each timestamp, so page edges split ties.
+    const many = Array.from({ length: 2500 }, (_, i) => cuTask(`m${i}`, { date_updated: String(NOW - 300_000 + Math.floor(i / 2) * 200) }));
+    k.clickup.delta = many;
+    let cursorMs: number | null = null;
+    let truncatedNote = "";
+    k.db.handlers.cockpit_task_mirror_inputs = () => ({ cursorMs, linked: [], states: { delta: truncatedNote ? { note: truncatedNote } : null } });
+    k.db.handlers.cockpit_task_mirror_state = a => {
+      const c = (a.p_detail as any).cursorMs;
+      if (typeof c === "number") cursorMs = Math.max(cursorMs ?? c, c);
+      truncatedNote = String(a.p_note);
+      return null;
+    };
+    const seen = new Set<string>();
+    for (let run = 0; run < 5; run++) {
+      const before = k.db.of("cockpit_task_mirror_upsert").length;
+      const r = await runDelta(k.deps);
+      for (const c of k.db.of("cockpit_task_mirror_upsert").slice(before)) for (const t of c.args.p_tasks as any[]) seen.add(t.taskId);
+      if (!r.truncated) break;
+    }
+    expect(seen.size).toBe(2500);
+    // The first read of the second run began exactly at the first run's cursor.
+    const reads = k.clickup.calls.filter(c => c.path === "team/90182518398/task" && c.query.get("page") === "0");
+    expect(Number(reads[1].query.get("date_updated_gt"))).toBe(Number(many[999].date_updated) - 1);
+  });
+
+  test("the database's own truncated flag wins over the note when it sends one", async () => {
+    const k = kit();
+    k.db.handlers.cockpit_task_mirror_inputs = () => ({ cursorMs: NOW - 120_000, deltaTruncated: true, linked: [], states: { delta: { note: "fine" } } });
+    await runDelta(k.deps);
+    expect(Number(k.clickup.calls.filter(c => c.path === "team/90182518398/task")[0].query.get("date_updated_gt"))).toBe(NOW - 120_000);
+    const k2 = kit();
+    k2.db.handlers.cockpit_task_mirror_inputs = () => ({ cursorMs: NOW - 120_000, deltaTruncated: false, linked: [], states: { delta: { note: TRUNCATED } } });
+    await runDelta(k2.deps);
+    expect(Number(k2.clickup.calls.filter(c => c.path === "team/90182518398/task")[0].query.get("date_updated_gt"))).toBe(NOW - 120_000 - OVERLAP_MS);
   });
 
   test("every ClickUp call is a GET with the token, receipted under the run's action id, paced", async () => {

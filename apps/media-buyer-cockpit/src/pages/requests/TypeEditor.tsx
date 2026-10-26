@@ -98,6 +98,30 @@ export function sopChip(part: TypePartView): {
 }
 
 /**
+ * A part's "runs when" in words, from the stored targets (editors read
+ * them): "when Platform is Meta or TikTok". Null for a part that always
+ * runs. Two parts that differ only by this or by their template must not
+ * read the same on the type row (D11).
+ */
+export function partWhenWords(type: TypeView, part: string): string | null {
+  const when = type.targets?.find(t => t.part === part)?.when;
+  if (!when?.field_key || !when.options?.length) return null;
+  const field =
+    type.fieldSpecs?.find(f => f.key === when.field_key) ??
+    type.fields.find(f => f.key === when.field_key);
+  const names = when.options.map(
+    id => field?.options?.find(o => o.id === id)?.name ?? id,
+  );
+  return `when ${field?.label ?? when.field_key} is ${orWords(names)}`;
+}
+
+/** "a", "a or b", "a, b or c". */
+function orWords(list: string[]): string {
+  if (list.length <= 1) return list[0] ?? "";
+  return `${list.slice(0, -1).join(", ")} or ${list.at(-1)}`;
+}
+
+/**
  * Request types (editors): one row per type; the On/Off switch saves at
  * once, a press on the row opens the editor.
  */
@@ -173,15 +197,22 @@ export function RequestTypes({
               <ul className="mt-1 space-y-1">
                 {t.parts.map(p => {
                   const chip = sopChip(p);
+                  const when = partWhenWords(t, p.part);
                   return (
                     <li
                       key={p.part}
                       className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-muted-foreground"
                     >
-                      <span>
+                      <span className="min-w-0">
                         {p.listName}, {p.ruleLabel}
+                        {when ? `, ${when}` : null}
                       </span>
                       <StatusChip tone={chip.tone} label={chip.label} />
+                      {p.templateName ? (
+                        <bdi dir="auto" className="min-w-0 break-words">
+                          {p.templateName}
+                        </bdi>
+                      ) : null}
                     </li>
                   );
                 })}
@@ -516,7 +547,9 @@ function TypeEditor({
       }`}
       footer={footer}
     >
-      <div className="space-y-8 text-sm">
+      {/* The panel sits outside the page (a portal), so it carries its own
+          ceo-root for the status colours. */}
+      <div className="ceo-root space-y-8 text-sm">
         {versions ? (
           <Part title="Versions">
             {versions.status === "loading" ? (
@@ -812,13 +845,13 @@ function TypeEditor({
               <StatusDot tone="warning" label="Draft" />
               Draft: check with the systems manager.
             </p>
-          ) : type.sopStepsState === "source" ? (
-            <p className="text-[13px] text-muted-foreground">
-              From the template's source task. Added only when the template
-              brings no checklist.
-            </p>
           ) : null}
+          {/* One explanation: where these steps came from, when known, and
+              when they are added. */}
           <p className="text-[13px] text-muted-foreground">
+            {type.sopStepsState === "source"
+              ? "From the template's source task. "
+              : ""}
             Added as a checklist to a task made without a template, or when the
             template has no checklist.
           </p>

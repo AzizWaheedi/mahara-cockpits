@@ -69,6 +69,10 @@ CREATE TABLE IF NOT EXISTS public.cockpit_task_mirror (
   checklist_done   integer,
   checklist_total  integer,
   comments_read_at timestamptz,
+  -- A comment thread read that failed: how many in a row, and when the last
+  -- one failed (cockpit_task_mirror_comment_due steps such a task back).
+  comments_failures  integer NOT NULL DEFAULT 0 CHECK (comments_failures >= 0),
+  comments_failed_at timestamptz,
   -- The focus read's cache: {dueHasTime, description, checklists, subtasks, comments, statuses}.
   detail           jsonb CHECK (detail IS NULL OR jsonb_typeof(detail) = 'object'),
   detail_at        timestamptz,
@@ -77,6 +81,8 @@ CREATE TABLE IF NOT EXISTS public.cockpit_task_mirror (
   -- Not seen by any read for 7 days.
   gone_at          timestamptz
 );
+ALTER TABLE public.cockpit_task_mirror ADD COLUMN IF NOT EXISTS comments_failures integer NOT NULL DEFAULT 0 CHECK (comments_failures >= 0);
+ALTER TABLE public.cockpit_task_mirror ADD COLUMN IF NOT EXISTS comments_failed_at timestamptz;
 CREATE INDEX IF NOT EXISTS cockpit_task_mirror_assignees ON public.cockpit_task_mirror USING gin (assignee_ids);
 CREATE INDEX IF NOT EXISTS cockpit_task_mirror_updated ON public.cockpit_task_mirror (date_updated);
 CREATE INDEX IF NOT EXISTS cockpit_task_mirror_list ON public.cockpit_task_mirror (list_id);
@@ -94,11 +100,16 @@ CREATE TABLE IF NOT EXISTS public.cockpit_task_alerts (
   body        text NOT NULL CHECK (char_length(body) BETWEEN 1 AND 240),
   client_name text,
   actor_label text,
+  -- Which cockpits show it: NULL every one; 'editor' only the editor desk;
+  -- 'not_editor' every one but the editor desk (a due today count that holds
+  -- Video Pipeline tasks, which the editor desk keeps on its Jobs page).
+  scope       text CHECK (scope IS NULL OR scope IN ('editor','not_editor')),
   -- When it happened.
   at          timestamptz NOT NULL,
   read_at     timestamptz,
   created_at  timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE public.cockpit_task_alerts ADD COLUMN IF NOT EXISTS scope text CHECK (scope IS NULL OR scope IN ('editor','not_editor'));
 CREATE INDEX IF NOT EXISTS cockpit_task_alerts_member ON public.cockpit_task_alerts (member_id, at DESC);
 
 CREATE TABLE IF NOT EXISTS public.cockpit_task_alert_rules (
@@ -147,13 +158,29 @@ BEGIN
   RETURN p_cockpit;
 END $$;
 
--- Whether a cockpit leaves a list out: the client cards always (a mention on
--- a card still shows in the bell), and Video Pipeline in the editor cockpit
--- (its Jobs page owns those).
-CREATE OR REPLACE FUNCTION public.cockpit_task_hidden(p_cockpit text, p_list text, p_kind text)
+-- Whether a cockpit leaves a task out (review 2026-10-26, asks F1 and F2):
+-- - a client card itself (a top-level task on Clients - Mahara), never a
+--   real subtask of a card assigned to someone; a mention on a card still
+--   shows in the bell;
+-- - in the editor desk, Video Pipeline tasks on Your tasks only (p_kind
+--   NULL), because its Jobs page lists them. The editor's own Video Pipeline
+--   alerts always show: no other screen there tells them.
+-- p_top: the task has no parent (NULL when not known, read as top-level).
+DROP FUNCTION IF EXISTS public.cockpit_task_hidden(text, text, text);
+CREATE OR REPLACE FUNCTION public.cockpit_task_hidden(p_cockpit text, p_list text, p_kind text, p_top boolean)
 RETURNS boolean LANGUAGE sql IMMUTABLE SECURITY DEFINER SET search_path = '' AS $$
-  SELECT (coalesce(p_list, '') = '901816559981' AND coalesce(p_kind, '') <> 'mention')
-      OR (coalesce(p_cockpit, '') = 'editor' AND coalesce(p_list, '') = '901816720767')
+  SELECT (coalesce(p_list, '') = '901816559981' AND coalesce(p_top, true) AND coalesce(p_kind, '') <> 'mention')
+      OR (p_kind IS NULL AND coalesce(p_cockpit, '') = 'editor' AND coalesce(p_list, '') = '901816720767')
+$$;
+
+-- Whether a cockpit's bell leaves an alert out: its scope, then the rule above
+-- (a card's subtask is known from the mirror).
+CREATE OR REPLACE FUNCTION public.cockpit_task_alert_hidden(p_cockpit text, a public.cockpit_task_alerts)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT (coalesce(a.scope, '') = 'editor' AND coalesce(p_cockpit, '') <> 'editor')
+      OR (coalesce(a.scope, '') = 'not_editor' AND coalesce(p_cockpit, '') = 'editor')
+      OR public.cockpit_task_hidden(p_cockpit, a.list_id, a.kind,
+           NOT EXISTS (SELECT 1 FROM public.cockpit_task_mirror m WHERE m.task_id = a.task_id AND m.parent_id IS NOT NULL))
 $$;
 
 -- One audit row, as every person's write here leaves.
@@ -208,8 +235,9 @@ $$;
 
 -- One alert row: only for an active seat that wants the kind (a failed
 -- request always alerts), once per dedupe key. Returns 1 when it was made.
+DROP FUNCTION IF EXISTS public.cockpit_task_alert_add(uuid, text, text, text, uuid, text, text, text, text, text, timestamptz);
 CREATE OR REPLACE FUNCTION public.cockpit_task_alert_add(p_member uuid, p_kind text, p_key text, p_task text, p_request uuid,
-  p_list text, p_title text, p_body text, p_client text, p_actor text, p_at timestamptz)
+  p_list text, p_title text, p_body text, p_client text, p_actor text, p_at timestamptz, p_scope text DEFAULT NULL)
 RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE v_n integer;
 BEGIN
@@ -217,11 +245,11 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.cockpit_members m WHERE m.id = p_member AND m.active) THEN RETURN 0; END IF;
   IF p_kind <> 'request_failed' AND NOT (p_kind = ANY(public.cockpit_task_kinds(p_member))) THEN RETURN 0; END IF;
   INSERT INTO public.cockpit_task_alerts(member_id, kind, dedupe_key, task_id, request_id, list_id, title, body,
-    client_name, actor_label, at)
+    client_name, actor_label, scope, at)
   VALUES (p_member, p_kind, left(p_key, 300), p_task, p_request, p_list,
     left(coalesce(nullif(btrim(p_title), ''), 'A ClickUp task'), 200),
     left(coalesce(nullif(btrim(p_body), ''), 'Open it to see what changed.'), 240),
-    p_client, p_actor, coalesce(p_at, now()))
+    p_client, p_actor, p_scope, coalesce(p_at, now()))
   ON CONFLICT (dedupe_key) DO NOTHING;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   RETURN v_n;
@@ -346,9 +374,16 @@ BEGIN
                 WHEN NOT v_board THEN 'Ticking and Mark done work on the team request boards. Open this one in ClickUp.' END);
 END $$;
 
--- Who wrote a comment, as the team sees it: {label, memberId}. The API user
--- is the cockpit, unless the comment carries a focus view's Cockpit ref T-,
--- then it is the seat that pressed Comment.
+-- Who wrote a comment, as the team sees it: {label, memberId, cockpit, quiet}.
+-- The API user 284616470 is the CEO's own ClickUp account, which the cockpit
+-- also writes with (review 2026-10-26, F8):
+-- - with a focus view's "Cockpit ref T-" that matches a press: the seat that
+--   pressed Comment;
+-- - with any other "Cockpit ref" marker (a request's card comment, or a T-
+--   that matches no press): the cockpit (cockpit true);
+-- - with no marker: the CEO, by role. ClickUp cannot tell the CEO's own hand
+--   from an automation on the same account, so such a comment makes no
+--   comment alert (quiet true); a mention in it still alerts.
 CREATE OR REPLACE FUNCTION public.cockpit_task_comment_author(p_author bigint, p_text text)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE v_ref text; v_payload jsonb; v_member uuid;
@@ -360,14 +395,41 @@ BEGIN
        WHERE q.kind = 'task_action' AND q.payload->>'ref' = v_ref ORDER BY q.created_at LIMIT 1;
       IF v_payload IS NOT NULL THEN
         RETURN jsonb_build_object('label', coalesce(v_payload->'actor'->>'label', 'a team member'),
-          'memberId', v_payload->'actor'->>'memberId', 'cockpit', false);
+          'memberId', v_payload->'actor'->>'memberId', 'cockpit', false, 'quiet', false);
       END IF;
     END IF;
-    RETURN jsonb_build_object('label', 'the cockpit', 'memberId', NULL, 'cockpit', true);
+    IF coalesce(p_text, '') ~ 'Cockpit ref [A-Za-z0-9-]+' THEN
+      RETURN jsonb_build_object('label', 'the cockpit', 'memberId', NULL, 'cockpit', true, 'quiet', true);
+    END IF;
+    SELECT l.member_id INTO v_member FROM public.cockpit_task_linked() l WHERE l.clickup_user_id = p_author LIMIT 1;
+    RETURN jsonb_build_object('label', 'the CEO', 'memberId', v_member, 'cockpit', false, 'quiet', true);
   END IF;
   SELECT l.member_id INTO v_member FROM public.cockpit_task_linked() l WHERE l.clickup_user_id = p_author LIMIT 1;
-  RETURN jsonb_build_object('label', public.cockpit_request_owner_label(p_author), 'memberId', v_member, 'cockpit', false);
+  RETURN jsonb_build_object('label', public.cockpit_request_owner_label(p_author), 'memberId', v_member, 'cockpit', false,
+    'quiet', false);
 END $$;
+
+-- The tasks one seat's Your tasks shows in one cockpit at p_now (contract
+-- 3.3): open, not archived, not gone, not hidden there, and a subtask whose
+-- parent is in the set folds under it. The daily due today count reads the
+-- same set (review 2026-10-26, contract F2), so the alert and the card agree.
+CREATE OR REPLACE FUNCTION public.cockpit_task_my_set(p_cu bigint, p_cockpit text, p_now timestamptz)
+RETURNS TABLE(task_id text, due_on date, due_at timestamptz, date_created timestamptz, late boolean, today boolean)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  WITH mine AS (
+    SELECT m.task_id, m.parent_id, m.due_on, m.due_at, m.due_has_time, m.date_created
+      FROM public.cockpit_task_mirror m
+     WHERE p_cu IS NOT NULL AND m.assignee_ids @> ARRAY[p_cu] AND m.status_type NOT IN ('done','closed')
+       AND NOT m.archived AND m.gone_at IS NULL
+       AND NOT public.cockpit_task_hidden(p_cockpit, m.list_id, NULL, m.parent_id IS NULL)
+  )
+  SELECT x.task_id, x.due_on, x.due_at, x.date_created,
+         x.due_on IS NOT NULL AND (x.due_on < (p_now AT TIME ZONE 'Asia/Kuwait')::date
+                                   OR (x.due_has_time IS TRUE AND x.due_at < p_now)),
+         coalesce(x.due_on = (p_now AT TIME ZONE 'Asia/Kuwait')::date, false)
+    FROM mine x
+   WHERE x.parent_id IS NULL OR NOT EXISTS (SELECT 1 FROM mine y WHERE y.task_id = x.parent_id)
+$$;
 
 -- A seat's shift on the day of p_at (contract 3.2): the rules' times, else
 -- the seat's cockpit_people schedule (exceptions first), else 10:00 to 18:00
@@ -590,17 +652,9 @@ BEGIN
       'note', 'Your seat is not linked to a ClickUp user, so your tasks cannot show here. Ask the systems manager to link it.',
       'counts', jsonb_build_object('overdue', 0, 'today', 0, 'total', 0), 'tasks', '[]'::jsonb, 'more', 0);
   END IF;
-  WITH mine AS (
-    SELECT m.task_id, m.parent_id, m.due_on, m.due_at, m.due_has_time, m.date_created
-      FROM public.cockpit_task_mirror m
-     WHERE m.assignee_ids @> ARRAY[v_cu] AND m.status_type NOT IN ('done','closed') AND NOT m.archived AND m.gone_at IS NULL
-       AND NOT public.cockpit_task_hidden(v_cockpit, m.list_id, NULL)
-  ), shown AS (
+  WITH shown AS (
     -- A subtask whose parent is in the list shows with its parent, not apart.
-    SELECT x.*, (x.due_on IS NOT NULL AND (x.due_on < v_today OR (x.due_has_time IS TRUE AND x.due_at < now()))) AS late,
-           coalesce(x.due_on = v_today, false) AS today
-      FROM mine x
-     WHERE x.parent_id IS NULL OR NOT EXISTS (SELECT 1 FROM mine p WHERE p.task_id = x.parent_id)
+    SELECT x.* FROM public.cockpit_task_my_set(v_cu, v_cockpit, now()) x
   ), ranked AS (
     SELECT s.task_id, s.late, s.today,
            row_number() OVER (ORDER BY CASE WHEN s.late THEN 0 WHEN s.today THEN 1 ELSE 2 END,
@@ -633,11 +687,11 @@ BEGIN
     INTO v_rows
     FROM (SELECT * FROM public.cockpit_task_alerts x
            WHERE x.member_id = v_member AND x.at > now() - interval '14 days'
-             AND NOT public.cockpit_task_hidden(v_cockpit, x.list_id, x.kind)
+             AND NOT public.cockpit_task_alert_hidden(v_cockpit, x)
            ORDER BY x.at DESC, x.created_at DESC LIMIT 50) a;
   SELECT count(*)::integer INTO v_unread FROM public.cockpit_task_alerts x
    WHERE x.member_id = v_member AND x.at > now() - interval '14 days' AND x.read_at IS NULL
-     AND NOT public.cockpit_task_hidden(v_cockpit, x.list_id, x.kind);
+     AND NOT public.cockpit_task_alert_hidden(v_cockpit, x);
   RETURN jsonb_build_object('asOf', now(), 'sourceAt', v_state->'sourceAt', 'ready', v_state->'ready',
     'link', v_seat->>'link',
     'note', CASE WHEN v_seat->>'link' = 'not_linked'
@@ -729,11 +783,14 @@ BEGIN
       'subtasks', CASE WHEN jsonb_typeof(m.detail->'subtasks') = 'array' THEN m.detail->'subtasks' ELSE '[]'::jsonb END,
       'comments', v_comments);
   END IF;
+  -- Only this seat's own presses: another seat's action ids never leave the
+  -- database (review 2026-10-26, SEC-5).
   SELECT coalesce(jsonb_agg(jsonb_build_object('id', q.id, 'op', q.payload->>'op', 'state', q.state, 'error', q.error,
            'at', q.updated_at, 'itemId', q.payload->>'itemId') ORDER BY q.created_at DESC), '[]'::jsonb)
     INTO v_actions
     FROM public.cockpit_clickup_writeback_queue q
-   WHERE q.kind = 'task_action' AND q.task_id = p_task_id AND q.created_at > now() - interval '24 hours';
+   WHERE q.kind = 'task_action' AND q.task_id = p_task_id AND q.created_at > now() - interval '24 hours'
+     AND q.payload->'actor'->>'memberId' = v_seat->>'memberId';
   v_mode := public.cockpit_clickup_requests_mode();
   RETURN jsonb_build_object('asOf', now(), 'task', v_task,
     'request', CASE WHEN r.id IS NOT NULL THEN jsonb_build_object('id', r.id, 'typeLabel', r.type_label,
@@ -821,8 +878,10 @@ BEGIN
       RAISE EXCEPTION 'The task''s status could not be read. Reload the task.' USING ERRCODE = '22023';
     END IF;
   END IF;
+  -- The comment's marker is chosen here, never from the browser's action id,
+  -- so no press can take another's ref (review 2026-10-26, SEC-5).
   v_payload := jsonb_build_object('actionId', p_action_id,
-    'ref', 'T-' || left(replace(p_action_id::text, '-', ''), 10),
+    'ref', 'T-' || left(md5(p_action_id::text || ':' || clock_timestamp()::text || ':' || random()::text), 10),
     'op', p_op, 'taskId', p_task_id, 'listId', m.list_id, 'clientTaskId', m.client_task_id,
     'checklistId', CASE WHEN p_op IN ('tick','untick') THEN v_in->>'checklistId' END,
     'itemId', CASE WHEN p_op IN ('tick','untick') THEN v_in->>'itemId' END,
@@ -940,15 +999,89 @@ BEGIN
     'cursorMs', CASE WHEN jsonb_typeof(d.detail->'cursorMs') = 'number' THEN d.detail->'cursorMs' END,
     'baselinedAt', public.cockpit_task_baseline(),
     'teamId', '90182518398', 'linked', v_linked, 'notLinked', v_not,
+    -- The last delta stopped part way (over 1,000 changes): the next starts at the cursor itself.
+    'deltaTruncated', coalesce(CASE WHEN jsonb_typeof(d.detail->'truncated') = 'boolean' THEN (d.detail->>'truncated')::boolean END, false),
     'allTasksList', '901816723226', 'fieldsList', '901816723190',
     'states', jsonb_build_object(
       'delta', CASE WHEN d.key IS NOT NULL THEN jsonb_build_object('at', d.last_run_at, 'okAt', d.last_ok_at, 'ok', d.ok, 'note', d.note) END,
       'seats', CASE WHEN s.key IS NOT NULL THEN jsonb_build_object('at', s.last_run_at, 'okAt', s.last_ok_at, 'ok', s.ok, 'note', s.note) END));
 END $$;
 
--- Tasks as a read saw them (MirrorTask, contract 5.2), at most 200. The
--- request parts take their status and owners, and the alerts of 3.2 are
--- made: assigned and status only from a delta read, none before the baseline.
+-- One mirror row changed (old is all NULL for a row new to the mirror): the
+-- request parts take its status and owners, and the alerts of 3.2 are made.
+-- Every write path calls it (the delta, the hourly seat read, the focus
+-- view's read and its cache), so no read swallows a change another would
+-- have told (review 2026-10-26, contract F1). Assigned and status alerts need
+-- p_real, a change ClickUp itself reports (its date_updated moved on, or the
+-- live read's status differs), so the mirror correcting itself (a seat read
+-- putting back an id the mirror took off) never alerts. None before the
+-- baseline; a row new to the mirror alerts a seat only when it changed after
+-- the baseline and after that seat was linked, so a seat linked later is
+-- never flooded with its old tasks. Never on a client card itself.
+CREATE OR REPLACE FUNCTION public.cockpit_task_mirror_changed(old public.cockpit_task_mirror, cur public.cockpit_task_mirror,
+  p_real boolean, p_base timestamptz)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  v_new boolean := old.task_id IS NULL;
+  v_alerts integer := 0; v_client_name text; s record; pt record;
+BEGIN
+  IF cur.task_id IS NULL THEN RETURN 0; END IF;
+  IF cur.client_task_id IS NOT NULL THEN
+    SELECT o.client_name INTO v_client_name FROM public.cockpit_client_onboarding o WHERE o.clickup_task_id = cur.client_task_id;
+  END IF;
+
+  -- The request parts this task is, and their requests.
+  FOR pt IN SELECT p.request_id, p.part, p.status_type AS old_type, p.list_id,
+                   r.requester_member_id, r.state AS request_state, r.type_label, r.client_name
+              FROM public.cockpit_request_parts p JOIN public.cockpit_requests r ON r.id = p.request_id
+             WHERE p.clickup_task_id = cur.task_id LOOP
+    UPDATE public.cockpit_request_parts SET status = cur.status, status_type = cur.status_type,
+      assignee_ids = cur.assignee_ids, mirrored_at = now(), updated_at = now()
+     WHERE request_id = pt.request_id AND part = pt.part;
+    PERFORM public.cockpit_request_refresh(pt.request_id);
+    IF p_base IS NOT NULL AND cur.status_type IN ('done','closed') AND coalesce(pt.old_type, '') NOT IN ('done','closed')
+       AND pt.request_state <> 'cancelled' AND pt.requester_member_id IS NOT NULL THEN
+      v_alerts := v_alerts + public.cockpit_task_alert_add(pt.requester_member_id, 'request_done',
+        'request_done:' || pt.request_id::text || ':' || pt.part, cur.task_id, pt.request_id, cur.list_id,
+        pt.type_label || coalesce(': ' || nullif(btrim(pt.client_name), ''), ''),
+        CASE WHEN cur.status_type = 'closed' THEN 'Closed in ClickUp.' ELSE 'Done in ClickUp.' END,
+        pt.client_name, NULL, coalesce(cur.date_closed, cur.date_updated));
+    END IF;
+  END LOOP;
+
+  -- Assigned and status.
+  IF p_base IS NULL OR NOT coalesce(p_real, false) THEN RETURN v_alerts; END IF;
+  IF cur.list_id = '901816559981' AND cur.parent_id IS NULL THEN RETURN v_alerts; END IF;
+  FOR s IN SELECT * FROM public.cockpit_task_linked() LOOP
+    CONTINUE WHEN NOT (s.clickup_user_id = ANY(cur.assignee_ids));
+    IF (v_new OR NOT (s.clickup_user_id = ANY(coalesce(old.assignee_ids, '{}'::bigint[]))))
+       AND cur.status_type NOT IN ('done','closed') AND NOT cur.archived
+       AND NOT (v_new AND cur.creator_id IS NOT DISTINCT FROM s.clickup_user_id)
+       AND NOT (v_new AND cur.date_updated < greatest(p_base, s.linked_at))
+       AND NOT EXISTS (SELECT 1 FROM public.cockpit_request_parts p JOIN public.cockpit_requests r ON r.id = p.request_id
+                        WHERE p.clickup_task_id = cur.task_id AND r.requester_member_id = s.member_id) THEN
+      v_alerts := v_alerts + public.cockpit_task_alert_add(s.member_id, 'assigned',
+        'assigned:' || cur.task_id || ':' || s.member_id::text || ':' || (extract(epoch FROM cur.date_updated) * 1000)::bigint::text,
+        cur.task_id, NULL, cur.list_id, cur.name, 'Assigned to you', v_client_name, NULL, cur.date_updated);
+    END IF;
+    -- ClickUp's task read names no one who moved it, so the only mover known
+    -- is a seat's own Mark done from the focus view (contract 3.2, F9).
+    IF NOT v_new AND old.status IS DISTINCT FROM cur.status
+       AND NOT EXISTS (SELECT 1 FROM public.cockpit_clickup_writeback_queue q
+                        WHERE q.kind = 'task_action' AND q.task_id = cur.task_id AND q.state = 'delivered'
+                          AND q.payload->'actor'->>'memberId' = s.member_id::text
+                          AND coalesce(q.delivered_at, q.updated_at) > now() - interval '10 minutes') THEN
+      v_alerts := v_alerts + public.cockpit_task_alert_add(s.member_id, 'status',
+        'status:' || cur.task_id || ':' || s.member_id::text || ':' || cur.status || ':'
+          || (extract(epoch FROM cur.date_updated) * 1000)::bigint::text,
+        cur.task_id, NULL, cur.list_id, cur.name, 'Moved to ' || cur.status, v_client_name, NULL, cur.date_updated);
+    END IF;
+  END LOOP;
+  RETURN v_alerts;
+END $$;
+
+-- Tasks as a read saw them (MirrorTask, contract 5.2), at most 200, from any
+-- read (delta, seat or detail): each row through the shared diff above.
 CREATE OR REPLACE FUNCTION public.cockpit_task_mirror_upsert(p_tasks jsonb, p_source text)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -956,8 +1089,8 @@ DECLARE
   v_base timestamptz := public.cockpit_task_baseline();
   v_upserted integer := 0; v_alerts integer := 0; v_skipped integer := 0;
   v_id text; v_due timestamptz; v_has boolean; v_assignees bigint[]; v_watchers bigint[]; v_tags text[];
-  v_created timestamptz; v_updated timestamptz; v_closed timestamptz; v_client text; v_client_name text;
-  v_priority text; v_status text; v_type text; v_new boolean; s record; pt record; v_n integer;
+  v_created timestamptz; v_updated timestamptz; v_closed timestamptz; v_client text;
+  v_priority text; v_status text; v_type text; v_new boolean;
 BEGIN
   IF p_source IS NULL OR p_source NOT IN ('delta','seat','detail') THEN
     RAISE EXCEPTION 'Say which read this is: delta, seat or detail.' USING ERRCODE = '22023';
@@ -1031,54 +1164,7 @@ BEGIN
       seen_at = now(), gone_at = NULL
     RETURNING * INTO cur;
     v_upserted := v_upserted + 1;
-    v_client_name := NULL;
-    IF cur.client_task_id IS NOT NULL THEN
-      SELECT o.client_name INTO v_client_name FROM public.cockpit_client_onboarding o WHERE o.clickup_task_id = cur.client_task_id;
-    END IF;
-
-    -- The request parts this task is, and their requests.
-    FOR pt IN SELECT p.request_id, p.part, p.status_type AS old_type, p.list_id,
-                     r.requester_member_id, r.state AS request_state, r.type_label, r.client_name
-                FROM public.cockpit_request_parts p JOIN public.cockpit_requests r ON r.id = p.request_id
-               WHERE p.clickup_task_id = v_id LOOP
-      UPDATE public.cockpit_request_parts SET status = cur.status, status_type = cur.status_type,
-        assignee_ids = cur.assignee_ids, mirrored_at = now(), updated_at = now()
-       WHERE request_id = pt.request_id AND part = pt.part;
-      PERFORM public.cockpit_request_refresh(pt.request_id);
-      IF v_base IS NOT NULL AND cur.status_type IN ('done','closed') AND coalesce(pt.old_type, '') NOT IN ('done','closed')
-         AND pt.request_state <> 'cancelled' AND pt.requester_member_id IS NOT NULL THEN
-        v_alerts := v_alerts + public.cockpit_task_alert_add(pt.requester_member_id, 'request_done',
-          'request_done:' || pt.request_id::text || ':' || pt.part, v_id, pt.request_id, cur.list_id,
-          pt.type_label || coalesce(': ' || nullif(btrim(pt.client_name), ''), ''),
-          CASE WHEN cur.status_type = 'closed' THEN 'Closed in ClickUp.' ELSE 'Done in ClickUp.' END,
-          pt.client_name, NULL, coalesce(cur.date_closed, cur.date_updated));
-      END IF;
-    END LOOP;
-
-    -- Assigned and status: a delta read after the baseline, never on a client card.
-    CONTINUE WHEN p_source <> 'delta' OR v_base IS NULL OR cur.list_id = '901816559981';
-    FOR s IN SELECT * FROM public.cockpit_task_linked() LOOP
-      CONTINUE WHEN NOT (s.clickup_user_id = ANY(cur.assignee_ids));
-      IF (v_new OR NOT (s.clickup_user_id = ANY(old.assignee_ids)))
-         AND cur.status_type NOT IN ('done','closed') AND NOT cur.archived
-         AND NOT (v_new AND cur.creator_id IS NOT DISTINCT FROM s.clickup_user_id)
-         AND NOT EXISTS (SELECT 1 FROM public.cockpit_request_parts p JOIN public.cockpit_requests r ON r.id = p.request_id
-                          WHERE p.clickup_task_id = v_id AND r.requester_member_id = s.member_id) THEN
-        v_alerts := v_alerts + public.cockpit_task_alert_add(s.member_id, 'assigned',
-          'assigned:' || v_id || ':' || s.member_id::text || ':' || (extract(epoch FROM cur.date_updated) * 1000)::bigint::text,
-          v_id, NULL, cur.list_id, cur.name, 'Assigned to you', v_client_name, NULL, cur.date_updated);
-      END IF;
-      IF NOT v_new AND old.status IS DISTINCT FROM cur.status
-         AND NOT EXISTS (SELECT 1 FROM public.cockpit_clickup_writeback_queue q
-                          WHERE q.kind = 'task_action' AND q.task_id = v_id AND q.state = 'delivered'
-                            AND q.payload->'actor'->>'memberId' = s.member_id::text
-                            AND coalesce(q.delivered_at, q.updated_at) > now() - interval '10 minutes') THEN
-        v_alerts := v_alerts + public.cockpit_task_alert_add(s.member_id, 'status',
-          'status:' || v_id || ':' || s.member_id::text || ':' || cur.status || ':'
-            || (extract(epoch FROM cur.date_updated) * 1000)::bigint::text,
-          v_id, NULL, cur.list_id, cur.name, 'Moved to ' || cur.status, v_client_name, NULL, cur.date_updated);
-      END IF;
-    END LOOP;
+    v_alerts := v_alerts + public.cockpit_task_mirror_changed(old, cur, v_new OR cur.date_updated > old.date_updated, v_base);
   END LOOP;
   RETURN jsonb_build_object('upserted', v_upserted, 'alerts', v_alerts, 'skipped', v_skipped);
 END $$;
@@ -1121,6 +1207,10 @@ BEGIN
            (m.assignee_ids && coalesce((SELECT ids FROM linked), '{}'::bigint[])) AS mine
       FROM public.cockpit_task_mirror m
      WHERE m.date_updated > now() - interval '24 hours' AND m.gone_at IS NULL
+       -- A thread whose last reads failed steps back: 2, 4, 8 ... minutes, at most an hour.
+       AND NOT (m.comments_failures > 0 AND m.comments_failed_at IS NOT NULL
+                AND m.comments_failed_at > now() - least(interval '2 minutes' * power(2, least(m.comments_failures - 1, 10)),
+                                                          interval '1 hour'))
   )
   SELECT coalesce(jsonb_agg(jsonb_build_object('taskId', d.task_id,
            'sinceMs', (extract(epoch FROM d.cutoff) * 1000)::bigint) ORDER BY d.mine DESC, d.date_updated DESC), '[]'::jsonb)
@@ -1132,14 +1222,26 @@ BEGIN
 END $$;
 
 -- One task's comments, newest first, as cockpit-tasks read them: comment and
--- mention alerts (3.2), then the task's comments count as read.
-CREATE OR REPLACE FUNCTION public.cockpit_task_mirror_comments(p_task_id text, p_comments jsonb)
+-- mention alerts (3.2), then the task's comments count as read up to
+-- p_read_at, the moment that thread's read began (review 2026-10-26, F6), so
+-- a comment posted while the run went on is read next time. A read that
+-- failed (p_failed) makes no alert, leaves the read time alone and counts a
+-- failure, so cockpit_task_mirror_comment_due steps the task back.
+DROP FUNCTION IF EXISTS public.cockpit_task_mirror_comments(text, jsonb);
+CREATE OR REPLACE FUNCTION public.cockpit_task_mirror_comments(p_task_id text, p_comments jsonb,
+  p_read_at timestamptz DEFAULT now(), p_failed boolean DEFAULT false)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   m public.cockpit_task_mirror; v_base timestamptz := public.cockpit_task_baseline(); v_cut timestamptz;
-  c jsonb; v_at timestamptz; v_author bigint; v_who jsonb; v_cockpit boolean; v_tags bigint[]; v_assignee bigint; s record;
-  v_alerts integer := 0; v_client text; v_n integer;
+  c jsonb; v_at timestamptz; v_author bigint; v_who jsonb; v_cockpit boolean; v_quiet boolean; v_tags bigint[];
+  v_assignee bigint; s record; v_alerts integer := 0; v_client text; v_n integer;
+  v_read timestamptz := least(coalesce(p_read_at, now()), now());
 BEGIN
+  IF coalesce(p_failed, false) THEN
+    UPDATE public.cockpit_task_mirror SET comments_failures = comments_failures + 1, comments_failed_at = now()
+     WHERE task_id = p_task_id;
+    RETURN jsonb_build_object('alerts', 0);
+  END IF;
   IF jsonb_typeof(p_comments) IS DISTINCT FROM 'array' THEN
     RAISE EXCEPTION 'Send the comments as a list.' USING ERRCODE = '22023';
   END IF;
@@ -1157,9 +1259,11 @@ BEGIN
       CONTINUE WHEN v_at <= v_cut;
       v_author := CASE WHEN coalesce(c->>'authorId', '') ~ '^[0-9]{1,18}$' THEN (c->>'authorId')::bigint END;
       v_who := public.cockpit_task_comment_author(v_author, c->>'text');
-      -- The API user with no focus view ref: the cockpit's, Make's or an agent's own note (or the CEO by
-      -- hand; ClickUp cannot tell them apart). It makes no comment alert; a mention in it still alerts.
+      -- The cockpit's own note (a Cockpit ref marker no press owns): no name, no comment alert.
       v_cockpit := coalesce((v_who->>'cockpit')::boolean, false);
+      -- The API user without a marker (the CEO by hand, or an automation on that account) makes no
+      -- comment alert either; a mention in it still alerts, said as the CEO.
+      v_quiet := coalesce((v_who->>'quiet')::boolean, false);
       v_tags := ARRAY(SELECT x::bigint FROM jsonb_array_elements_text(
                   CASE WHEN jsonb_typeof(c->'tagIds') = 'array' THEN c->'tagIds' ELSE '[]'::jsonb END) x
                  WHERE x ~ '^[0-9]{1,18}$');
@@ -1181,7 +1285,8 @@ BEGIN
             v_n := -1;
           END IF;
         END IF;
-        IF v_n = 0 AND NOT v_cockpit AND s.clickup_user_id = ANY(m.assignee_ids) AND m.list_id <> '901816559981' THEN
+        IF v_n = 0 AND NOT v_cockpit AND NOT v_quiet AND s.clickup_user_id = ANY(m.assignee_ids)
+           AND NOT (m.list_id = '901816559981' AND m.parent_id IS NULL) THEN
           v_n := public.cockpit_task_alert_add(s.member_id, 'comment', 'comment:' || (c->>'id') || ':' || s.member_id::text,
             m.task_id, NULL, m.list_id, m.name, public.cockpit_task_actor_phrase(v_who->>'label', 'commented'),
             v_client, v_who->>'label', v_at);
@@ -1190,7 +1295,11 @@ BEGIN
       END LOOP;
     END LOOP;
   END IF;
-  UPDATE public.cockpit_task_mirror SET comments_read_at = now() WHERE task_id = p_task_id;
+  -- Read up to when this thread's read began; never back in time.
+  UPDATE public.cockpit_task_mirror
+     SET comments_read_at = greatest(coalesce(comments_read_at, v_read), v_read),
+         comments_failures = 0, comments_failed_at = NULL
+   WHERE task_id = p_task_id;
   RETURN jsonb_build_object('alerts', v_alerts);
 END $$;
 
@@ -1199,27 +1308,36 @@ END $$;
 CREATE OR REPLACE FUNCTION public.cockpit_task_alerts_tick_at(p_now timestamptz)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
-  v_base timestamptz := public.cockpit_task_baseline(); s record; v_shift jsonb; v_today date; v_n integer;
-  v_due integer := 0; v_over integer := 0; t record; v_from date;
+  v_base timestamptz := public.cockpit_task_baseline(); s record; v_shift jsonb; v_today date; v_all integer; v_ed integer;
+  v_due integer := 0; v_over integer := 0; t record; v_from date; v_key text;
 BEGIN
   IF v_base IS NULL THEN RETURN jsonb_build_object('dueToday', 0, 'overdue', 0); END IF;
   v_today := (p_now AT TIME ZONE 'Asia/Kuwait')::date;
   FOR s IN SELECT * FROM public.cockpit_task_linked() LOOP
     v_shift := public.cockpit_task_shift(s.member_id, p_now);
     CONTINUE WHEN NOT coalesce((v_shift->>'started')::boolean, false);
-    SELECT count(*)::integer INTO v_n FROM public.cockpit_task_mirror m
-     WHERE m.assignee_ids @> ARRAY[s.clickup_user_id] AND m.status_type NOT IN ('done','closed') AND NOT m.archived
-       AND m.gone_at IS NULL AND m.list_id <> '901816559981' AND m.due_on = v_today;
-    IF v_n > 0 THEN
-      v_due := v_due + public.cockpit_task_alert_add(s.member_id, 'due_today', 'due_today:' || s.member_id::text || ':' || v_today::text,
-        NULL, NULL, NULL, CASE WHEN v_n = 1 THEN '1 task is due today' ELSE v_n || ' tasks are due today' END,
-        'Open Your tasks to see them.', NULL, NULL, p_now);
+    -- The tasks due today on the seat's Your tasks (review 2026-10-26, contract F2). The editor desk
+    -- keeps Video Pipeline on its Jobs page, so when that changes the count the desk gets its own.
+    SELECT count(*) FILTER (WHERE x.today)::integer INTO v_all FROM public.cockpit_task_my_set(s.clickup_user_id, 'portal', p_now) x;
+    SELECT count(*) FILTER (WHERE x.today)::integer INTO v_ed FROM public.cockpit_task_my_set(s.clickup_user_id, 'editor', p_now) x;
+    v_key := 'due_today:' || s.member_id::text || ':' || v_today::text;
+    IF NOT EXISTS (SELECT 1 FROM public.cockpit_task_alerts a WHERE a.dedupe_key = v_key) THEN
+      IF v_all > 0 THEN
+        v_due := v_due + public.cockpit_task_alert_add(s.member_id, 'due_today', v_key,
+          NULL, NULL, NULL, CASE WHEN v_all = 1 THEN '1 task is due today' ELSE v_all || ' tasks are due today' END,
+          'Open Your tasks to see them.', NULL, NULL, p_now, CASE WHEN v_all <> v_ed THEN 'not_editor' END);
+      END IF;
+      IF v_all <> v_ed AND v_ed > 0 THEN
+        v_due := v_due + public.cockpit_task_alert_add(s.member_id, 'due_today', v_key || ':editor',
+          NULL, NULL, NULL, CASE WHEN v_ed = 1 THEN '1 task is due today' ELSE v_ed || ' tasks are due today' END,
+          'Open Your tasks to see them.', NULL, NULL, p_now, 'editor');
+      END IF;
     END IF;
     -- Only what fell due after the alerts began for this seat.
     v_from := greatest((v_base AT TIME ZONE 'Asia/Kuwait')::date, (s.linked_at AT TIME ZONE 'Asia/Kuwait')::date);
     FOR t IN SELECT m.task_id, m.list_id, m.name, m.due_on, m.client_task_id FROM public.cockpit_task_mirror m
               WHERE m.assignee_ids @> ARRAY[s.clickup_user_id] AND m.status_type NOT IN ('done','closed') AND NOT m.archived
-                AND m.gone_at IS NULL AND m.list_id <> '901816559981'
+                AND m.gone_at IS NULL AND NOT (m.list_id = '901816559981' AND m.parent_id IS NULL)
                 AND m.due_on < v_today AND m.due_on >= v_from LOOP
       v_over := v_over + public.cockpit_task_alert_add(s.member_id, 'overdue',
         'overdue:' || t.task_id || ':' || s.member_id::text || ':' || t.due_on::text, t.task_id, NULL, t.list_id, t.name,
@@ -1237,14 +1355,18 @@ BEGIN
 END $$;
 
 -- The focus view's live read, cached on the row (contract 3.5).
+-- A status it finds that the mirror did not have goes through the shared
+-- diff, so its status alert is made here, not swallowed (contract F1).
 CREATE OR REPLACE FUNCTION public.cockpit_task_detail_cache(p_task_id text, p_detail jsonb)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE v_lists jsonb; v_subtasks jsonb; v_comments jsonb; v_done integer; v_total integer; v_has boolean;
+  old public.cockpit_task_mirror; cur public.cockpit_task_mirror;
 BEGIN
   IF jsonb_typeof(p_detail) IS DISTINCT FROM 'object' THEN
     RAISE EXCEPTION 'Send the task''s detail as an object.' USING ERRCODE = '22023';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM public.cockpit_task_mirror WHERE task_id = p_task_id) THEN
+  SELECT * INTO old FROM public.cockpit_task_mirror WHERE task_id = p_task_id FOR UPDATE;
+  IF old.task_id IS NULL THEN
     RAISE EXCEPTION 'This task is not in the mirror yet; read it first.' USING ERRCODE = 'P0002';
   END IF;
   SELECT coalesce(jsonb_agg(jsonb_build_object('id', cl->>'id', 'name', left(coalesce(cl->>'name', ''), 200),
@@ -1282,7 +1404,11 @@ BEGIN
     status_type = coalesce(nullif(lower(btrim(p_detail->>'statusType')), ''), m.status_type),
     due_has_time = CASE WHEN m.due_at IS NULL THEN NULL ELSE coalesce(v_has, m.due_has_time) END,
     checklist_done = v_done, checklist_total = v_total
-   WHERE m.task_id = p_task_id;
+   WHERE m.task_id = p_task_id
+  RETURNING * INTO cur;
+  IF old.status IS DISTINCT FROM cur.status OR old.status_type IS DISTINCT FROM cur.status_type THEN
+    PERFORM public.cockpit_task_mirror_changed(old, cur, old.status IS DISTINCT FROM cur.status, public.cockpit_task_baseline());
+  END IF;
 END $$;
 
 -- One run's report: cockpit_sync_state task-mirror:delta or task-mirror:seats,
@@ -1371,10 +1497,12 @@ DECLARE f text;
 BEGIN
   -- Internal: the helpers, the triggers' functions and the kick.
   FOREACH f IN ARRAY ARRAY[
-    'cockpit_task_alert_kinds()', 'cockpit_task_cockpit(text)', 'cockpit_task_hidden(text,text,text)',
+    'cockpit_task_alert_kinds()', 'cockpit_task_cockpit(text)', 'cockpit_task_hidden(text,text,text,boolean)',
+    'cockpit_task_alert_hidden(text,public.cockpit_task_alerts)', 'cockpit_task_my_set(bigint,text,timestamptz)',
+    'cockpit_task_mirror_changed(public.cockpit_task_mirror,public.cockpit_task_mirror,boolean,timestamptz)',
     'cockpit_task_audit(text,text,text,text,jsonb,jsonb,jsonb)', 'cockpit_task_state()', 'cockpit_task_baseline()',
     'cockpit_task_linked()', 'cockpit_task_kinds(uuid)',
-    'cockpit_task_alert_add(uuid,text,text,text,uuid,text,text,text,text,text,timestamptz)',
+    'cockpit_task_alert_add(uuid,text,text,text,uuid,text,text,text,text,text,timestamptz,text)',
     'cockpit_task_actor_phrase(text,text)', 'cockpit_task_client_of(text,text,text[])',
     'cockpit_task_row(public.cockpit_task_mirror)', 'cockpit_task_may_open(jsonb,text)', 'cockpit_task_requester_of(jsonb,text)',
     'cockpit_task_board(text)', 'cockpit_task_writer_open(text)', 'cockpit_task_can(jsonb,public.cockpit_task_mirror)',
@@ -1386,7 +1514,7 @@ BEGIN
   -- cockpit-tasks: the service key only.
   FOREACH f IN ARRAY ARRAY[
     'cockpit_task_mirror_inputs()', 'cockpit_task_mirror_upsert(jsonb,text)', 'cockpit_task_mirror_seat(bigint,text[])',
-    'cockpit_task_mirror_comment_due(integer)', 'cockpit_task_mirror_comments(text,jsonb)', 'cockpit_task_alerts_tick()',
+    'cockpit_task_mirror_comment_due(integer)', 'cockpit_task_mirror_comments(text,jsonb,timestamptz,boolean)', 'cockpit_task_alerts_tick()',
     'cockpit_task_detail_cache(text,jsonb)', 'cockpit_task_mirror_state(text,boolean,text,jsonb)'] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, anon, authenticated, service_role', f);
     EXECUTE format('GRANT EXECUTE ON FUNCTION public.%s TO service_role', f);

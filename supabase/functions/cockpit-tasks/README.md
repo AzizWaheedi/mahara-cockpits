@@ -18,7 +18,7 @@ checked in constant time before the body is read.
 
 | Body | When | What happens |
 | --- | --- | --- |
-| `{"job":"delta"}` | every 2 minutes (`mahara-task-mirror`) | 202 at once; in the background: the workspace's changed tasks since the cursor less 10 minutes, oldest change first, up to 10 pages; the comments (and up to 10 reply threads) of up to 40 changed tasks; the daily due and overdue alerts; state `task-mirror:delta` |
+| `{"job":"delta"}` | every 2 minutes (`mahara-task-mirror`) | 202 at once; in the background: the workspace's changed tasks since the cursor less 10 minutes (the cursor itself right after a truncated run), oldest change first, up to 10 pages; the comments (and up to 10 reply threads) of up to 40 changed tasks; the daily due and overdue alerts; state `task-mirror:delta` |
 | `{"job":"seats"}` | hourly at :11 (`mahara-task-mirror-seats`) | 202 at once; in the background: the workspace members (links seats by exact email), the request field catalog, the template objects, every linked seat's open tasks in full (up to 5 pages each), the old ClickUp form's tickets on All Tasks; state `task-mirror:seats` |
 | `{"job":"doctor"}` | by hand | the secrets by name, one `GET user` (and its rate limit), the linked seats, the last two runs |
 

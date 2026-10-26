@@ -9,7 +9,14 @@
  * failed state says what to do next. Every person, client and id is made
  * up.
  */
-import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  describe,
+  expect,
+  setSystemTime,
+  test,
+} from "bun:test";
 
 const g = globalThis as any;
 const ENV = {
@@ -63,6 +70,10 @@ type Answer = {
   error: { message: string; code?: string } | null;
 };
 const NOW = Date.parse("2026-10-26T08:00:00Z"); // Monday 11:00 in Kuwait
+// The page reads today from the clock and the store from NOW: the same
+// day for both, whatever the hour the tests run (after 21:00 UTC it is
+// already tomorrow in Kuwait).
+setSystemTime(new Date(NOW));
 let fake: Fake = createRequestsFake({ seat: "ceo", now: () => NOW });
 /** Answers a call before the store does, once per name; null passes it on. */
 let before: (name: string, args: any) => Answer | null = () => null;
@@ -241,6 +252,7 @@ afterEach(async () => {
 
 afterAll(async () => {
   await act(async () => root.unmount());
+  setSystemTime();
   globalThis.fetch = realFetch;
   console.error = realError;
   db.rpc = real.rpc;
@@ -345,6 +357,9 @@ describe("/requests", () => {
     await click(rowWith("General tech request"));
     await flush(4);
     await click(buttonIn(dialog(), "Cancel request"));
+    // Focus moves to the reason box, inside the dialog (D15).
+    expect(win.document.activeElement?.tagName).toBe("TEXTAREA");
+    expect(dialog().contains(win.document.activeElement)).toBe(true);
     // The reason box, then its own Cancel request.
     const confirm = () =>
       [...dialog().querySelectorAll("section button")].find(
@@ -401,7 +416,9 @@ describe("/requests", () => {
     expect(
       fake.requests.find(r => r.importedTaskId === "z8xharn01")?.state,
     ).toBe("routed");
-    expect(page()).toContain("Sent to Client Success. Owner: the CSM.");
+    // On its way: not "in" the list before ClickUp has it (F4).
+    expect(page()).toContain("Sending to Client Success.");
+    expect(page()).not.toContain("Sent to");
   });
 
   test("a seat that is not linked sees why Assigned to me is empty", async () => {
@@ -424,7 +441,11 @@ describe("/requests", () => {
           }
         : null;
     await render("/requests?view=all");
-    expect(page()).toContain("canceling statement due to statement timeout");
+    // Plain words and what to do, never the database's own text (D5).
+    expect(page()).toContain(
+      "The database took too long to answer. Try again in a minute.",
+    );
+    expect(page()).not.toContain("canceling statement");
     before = () => null;
     await click(buttonIn(container, "Try again"));
     await flush(4);
@@ -443,5 +464,98 @@ describe("/requests", () => {
     expect(page()).toContain(
       "Requests are not on the database yet. Use the ClickUp request form until they are.",
     );
+  });
+
+  test("status chips take their colours from the page's ceo-root, in the panel too (D1)", async () => {
+    await render("/requests?view=mine");
+    // StatusChip: a rounded-full bordered chip whose icon is coloured by
+    // var(--ceo-*), which only a .ceo-root ancestor defines.
+    const coloured = () =>
+      [
+        ...win.document.querySelectorAll("span.rounded-full.border > svg"),
+      ] as any[];
+    expect(coloured().length).toBeGreaterThan(0);
+    for (const icon of coloured())
+      expect(icon.closest(".ceo-root")).toBeTruthy();
+    await click(rowWith("Client pause"));
+    await flush(4);
+    const inPanel = coloured().filter(i => dialog().contains(i));
+    expect(inPanel.length).toBeGreaterThan(0);
+    for (const icon of inPanel) expect(icon.closest(".ceo-root")).toBeTruthy();
+  });
+
+  test("the pill row keeps its own space above the card (D4)", async () => {
+    await render("/requests?view=mine");
+    const pills = container.querySelector(
+      '[role="group"][aria-label="Requests"]',
+    ) as any;
+    // The row sits in its own wrapper: the page's space-y-6 margin lands
+    // on the wrapper, which the row's -my-1 cannot cancel.
+    expect(pills).toBeTruthy();
+    expect(pills.parentElement?.className ?? "").not.toContain("space-y-6");
+    expect(pills.parentElement?.parentElement?.className).toContain(
+      "space-y-6",
+    );
+  });
+
+  test("a request that did not reach ClickUp says why once and offers the next step (D2)", async () => {
+    await render("/requests?view=all");
+    await click(rowWith("Card missing for ads"));
+    await flush(4);
+    const d = dialog();
+    const all = squash(text(d));
+    const reason = "ClickUp refused the task: the list is full";
+    expect(all.split(reason).length).toBe(2); // said once
+    expect(all.split("Not sent").length).toBe(2); // one chip
+    expect(all).toContain(
+      "Nothing reached ClickUp. File it again with the same answers, or use the ClickUp request form.",
+    );
+    expect(all).toContain("If it fails again, tell the systems manager.");
+    const form = [...d.querySelectorAll("a")].find((a: any) =>
+      text(a).includes("Open the ClickUp request form"),
+    ) as any;
+    expect(form?.getAttribute("href")).toContain("forms.clickup.com");
+    // File it again: the form, prefilled with its type and client.
+    await click(buttonIn(d, "File it again"));
+    await settle();
+    expect(dialog()).toBeNull();
+    expect(page()).toContain(
+      "Filing again a request that did not reach ClickUp. Check the answers, then send.",
+    );
+    expect(page()).not.toContain("Routing a ticket from the old ClickUp form.");
+    expect(page()).toContain("Card missing for ads");
+    expect(page()).toContain("Dune Build Co");
+    await click(buttonIn(container, "Send request"));
+    await flush(4);
+    const sent = fake.calls.find(c => c.name === "cockpit_request_submit");
+    expect(sent?.args.p_type_key).toBe("card_missing");
+    expect(sent?.args.p_client_task_id).toBe("86harb002");
+    expect(sent?.args.p_replaces_task_id).toBeNull();
+  });
+
+  test("a held request reads as saved, never as sending (F4)", async () => {
+    await render("/requests?view=mine");
+    const held = rowWith("New script");
+    expect(squash(text(held))).toContain("Saved");
+    await click(held);
+    await flush(4);
+    const all = squash(text(dialog()));
+    expect(all).toContain("Saved. It goes to ClickUp when requests open");
+    expect(all).not.toContain("Sending to ClickUp");
+    expect(all).not.toContain("Waiting in the queue");
+    expect(all).not.toContain("CLICKUP_WRITEBACK_APPLY_REQUESTS");
+  });
+
+  test("a task in ClickUp with a refused step shows a quiet note, not a failure", async () => {
+    await render("/requests?view=assigned");
+    await click(rowWith("Create a landing page"));
+    await flush(4);
+    const d = dialog();
+    const all = squash(text(d));
+    expect(all).toContain(
+      "The SOP steps did not save as a checklist in ClickUp. Add them on the task there.",
+    );
+    expect(all).not.toContain("Not sent");
+    expect(d.querySelector('[role="img"][aria-label="Not finished"]')).toBeTruthy();
   });
 });

@@ -245,6 +245,15 @@ const myRequestRows = [
   }),
 ];
 
+/**
+ * The requests writer's mode (cockpit_request_types_read). The request form
+ * replaces the old Ask a team only once requests are open (review F6).
+ */
+let writerModeNow = "apply";
+/** The rows cockpit_requests_read answers; a test may swap them. */
+let requestRowsNow: any[] = myRequestRows;
+const requestReads: Record<string, unknown>[] = [];
+
 const mockClient: any = {
   auth: {
     getUser: async () => ({
@@ -265,14 +274,38 @@ const mockClient: any = {
   rpc: (name: string, _args: any) => {
     // Requests and Your tasks on Today (2026-10-26). This seat has no
     // ClickUp link in the fake, so the card says so instead of showing zero.
-    if (name === "cockpit_requests_read")
+    if (name === "cockpit_requests_read") {
+      requestReads.push(_args);
       return Promise.resolve({
         data: {
           asOf: new Date().toISOString(),
           view: "mine",
-          views: [{ key: "mine", label: "My requests", count: 3 }],
-          rows: myRequestRows,
+          views: [
+            { key: "mine", label: "My requests", count: requestRowsNow.length },
+          ],
+          rows: requestRowsNow,
           note: null,
+        },
+        error: null,
+      });
+    }
+    if (name === "cockpit_request_types_read")
+      return Promise.resolve({
+        data: {
+          asOf: new Date().toISOString(),
+          seat: {
+            label: "the CSM",
+            link: "linked",
+            teams: ["client_success"],
+            editor: false,
+            all: false,
+          },
+          writer: {
+            mode: writerModeNow,
+            canSend: writerModeNow === "apply",
+            note: null,
+          },
+          types: [],
         },
         error: null,
       });
@@ -661,7 +694,8 @@ mock.module("sonner", () => ({
   },
 }));
 
-const { CsmPage } = await import("../src/pages/CsmPage");
+const { CsmPage, MY_REQUESTS_LIMIT } = await import("../src/pages/CsmPage");
+const { forgetWriterMode } = await import("../src/lib/requestsOpen");
 const { ClientPerformancePage } = await import(
   "../src/pages/ClientPerformancePage"
 );
@@ -2141,4 +2175,115 @@ test("the client page's Ask a team is the request form, with the client fixed", 
   expect(text).not.toContain("Create the ticket for");
   expect(text).toContain("A reminder for you");
   expect(text).not.toContain("Media buyer (Marketing / ADs)");
+});
+
+/** Renders one section, lets the reads answer, and hands back the host. */
+async function renderLive(section: string, url = "/") {
+  const host = win.document.createElement("div");
+  win.document.body.appendChild(host);
+  // biome-ignore lint/suspicious/noExplicitAny: happy-dom element into React DOM
+  const root = createRoot(host as any);
+  currentSnapshot = snapshot;
+  isSnapshotLoading = false;
+  snapshotError = null;
+  await reactAct(async () => {
+    root.render(
+      createElement(MemoryRouter, { initialEntries: [url] }, pageFor(section)),
+    );
+  });
+  for (let i = 0; i < 4; i++)
+    await reactAct(async () => {
+      await new Promise(r => setTimeout(r, 0));
+    });
+  return {
+    host,
+    text: () => (host.textContent ?? "").replace(/\s+/g, " "),
+    done: () => reactAct(async () => root.unmount()),
+  };
+}
+
+test("until requests open, the client page keeps the old Ask a team and AddTask's teams (F6)", async () => {
+  for (const mode of ["dry_run", "unknown", "apply_limited"]) {
+    writerModeNow = mode;
+    forgetWriterMode(mockClient);
+    requestFormProps = null;
+    sent.length = 0;
+    const page = await renderLive("client", `/clients/${GREYSTONE}?act=task`);
+    try {
+      const text = page.text();
+      // The decision-log ticket, exactly as on main.
+      expect(text).toContain("Ask a team");
+      expect(text).toContain("Create the ticket for Tech");
+      expect(text).toContain("Anything else, for you or a team");
+      expect(requestFormProps).toBeNull();
+      // AddTask offers the teams again.
+      expect(text).toContain("Media buyer (Marketing / ADs)");
+      expect(text).not.toContain("A reminder for you");
+      const create = [...page.host.querySelectorAll("button")].find(b =>
+        (b.textContent ?? "").startsWith("Create the ticket for"),
+      );
+      await reactAct(async () => {
+        (create as unknown as HTMLButtonElement).click();
+      });
+      await reactAct(async () => {
+        await new Promise(r => setTimeout(r, 0));
+      });
+      const ticket = sent.find(([, a]) => a.kind === "ticket")?.[1];
+      expect(ticket).toMatchObject({
+        kind: "ticket",
+        department: "tech",
+        taskId: GREYSTONE,
+        action: "Switch this campaign to a landing page",
+      });
+    } finally {
+      await page.done();
+    }
+  }
+  writerModeNow = "apply";
+  forgetWriterMode(mockClient);
+});
+
+test("until requests open, Today keeps the tickets card beside the requests (F6)", async () => {
+  writerModeNow = "dry_run";
+  forgetWriterMode(mockClient);
+  const page = await renderLive("today");
+  try {
+    const text = page.text();
+    expect(text).toContain("Tickets raised today");
+    // Today's requests still show: an editor may have filed some.
+    expect(text).toContain("Requests you raised today");
+  } finally {
+    await page.done();
+    writerModeNow = "apply";
+    forgetWriterMode(mockClient);
+  }
+});
+
+test("today's requests come from the whole read, and a full read says it may miss one (contract F3)", async () => {
+  requestReads.length = 0;
+  // A full read: 200 rows, open ones first, so a closed one from today
+  // might be past the end.
+  requestRowsNow = Array.from({ length: MY_REQUESTS_LIMIT }, (_, i) =>
+    requestRow({
+      id: `4b1f6a0e-2c1d-4a7e-9d0b-${String(i).padStart(12, "0")}`,
+      typeLabel: i === 0 ? "Fresh today" : "Older one",
+      createdAt:
+        i === 0
+          ? new Date().toISOString()
+          : new Date(Date.now() - 3 * 86400_000).toISOString(),
+    }),
+  );
+  const page = await renderLive("today");
+  try {
+    expect(requestReads.at(-1)).toEqual({ p_view: "mine", p_limit: 200 });
+    const text = page.text();
+    expect(text).toContain("Fresh today");
+    expect(text).not.toContain("Older one");
+    expect(text).toContain(
+      "Your latest 200 requests were read, open ones first, so one closed today may be missing here. My requests has them all.",
+    );
+  } finally {
+    await page.done();
+    requestRowsNow = myRequestRows;
+  }
 });

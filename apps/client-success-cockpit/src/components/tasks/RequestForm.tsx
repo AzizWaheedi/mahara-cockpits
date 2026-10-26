@@ -20,6 +20,7 @@ import {
   errorWords,
   newRequestId,
   previewRequest,
+  readRequest,
   readRequestClients,
   readRequestTypes,
   submitRequest,
@@ -30,6 +31,7 @@ import {
   cleanAnswers,
   clientField,
   dayLabel,
+  deliveredNote,
   dueField,
   type FieldView,
   fieldOfSentence,
@@ -39,13 +41,15 @@ import {
   ownerNote,
   PRIORITIES,
   type Priority,
+  partHeld,
+  partMoving,
   priorityField,
   REQUEST_SENTENCES,
   type RoutePart,
   type RoutePreview,
+  requestsOpen,
   type SubmitResult,
   sentLines,
-  stateWords,
   type TypesRead,
   type TypeView,
   validateAnswers,
@@ -65,7 +69,7 @@ import "./requests.css";
  *   for work. The job: pick the right request, answer only its questions,
  *   and know before pressing Send exactly where it lands.
  * - Tokens: the app's own. --primary (Mahara teal) for the one action and
- *   the chosen row, var(--primary-ink, var(--primary)) for teal marks in
+ *   the chosen row, var(--tk-ink) (requests.css) for teal marks in
  *   light mode, --destructive for a refusal, --success for sent. No new
  *   colour, no gradient, no glow.
  * - Type: Geist; 14px inputs and rows, 13px route and help lines; Geist Mono
@@ -91,6 +95,11 @@ export type RequestFormProps = {
   presetType?: string;
   /** Text for the type's details question (a routed old ticket). */
   presetDetails?: string;
+  /**
+   * Answers to start from, by field key, as words (a request filed again
+   * after it did not reach ClickUp). A choice matches by its name or id.
+   */
+  presetAnswers?: Record<string, string>;
   /** The old ClickUp form ticket this request routes (2.10). */
   replacesTaskId?: string;
   /** Tighter spacing and a shorter type list, inside another card. */
@@ -115,6 +124,7 @@ export function RequestForm({
   presetClient,
   presetType,
   presetDetails,
+  presetAnswers,
   replacesTaskId,
   compact = false,
   onSent,
@@ -134,6 +144,9 @@ export function RequestForm({
   const [attempted, setAttempted] = useState(false);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState<SubmitResult | null>(null);
+  // Whether requests were open for the sent request: its words say "Saved"
+  // until they are, never "Sending" or "In {list}".
+  const [sentOpen, setSentOpen] = useState(true);
   const [duplicate, setDuplicate] = useState<SubmitResult | null>(null);
   const [preview, setPreview] = useState<Load<RoutePreview> | null>(null);
   // True while a new preview is being read over the last one.
@@ -168,18 +181,24 @@ export function RequestForm({
   }, [types, source, presetClient]);
   const type = offered.find(t => t.key === typeKey) ?? null;
 
-  const choose = useCallback((next: TypeView | null, details?: string) => {
-    setTypeKey(next?.key ?? null);
-    setErrors({});
-    setFormError(null);
-    setAttempted(false);
-    setPreview(null);
-    if (!next) return;
-    setDueOn(next.dueDefault);
-    setPriority(next.priority);
-    const detailsField = next.fields.find(f => f.kind === "details");
-    setAnswers(details && detailsField ? { [detailsField.key]: details } : {});
-  }, []);
+  const choose = useCallback(
+    (
+      next: TypeView | null,
+      details?: string,
+      start?: Record<string, string>,
+    ) => {
+      setTypeKey(next?.key ?? null);
+      setErrors({});
+      setFormError(null);
+      setAttempted(false);
+      setPreview(null);
+      if (!next) return;
+      setDueOn(next.dueDefault);
+      setPriority(next.priority);
+      setAnswers(startAnswers(next, details, start));
+    },
+    [],
+  );
 
   // The preset type, once the types are read.
   const presetDone = useRef(false);
@@ -187,8 +206,8 @@ export function RequestForm({
     if (presetDone.current || types.status !== "ready") return;
     presetDone.current = true;
     const hit = offered.find(t => t.key === presetType);
-    if (hit) choose(hit, presetDetails);
-  }, [types.status, offered, presetType, presetDetails, choose]);
+    if (hit) choose(hit, presetDetails, presetAnswers);
+  }, [types.status, offered, presetType, presetDetails, presetAnswers, choose]);
 
   // Re-check a field once the person has pressed Send and then fixes it.
   useEffect(() => {
@@ -239,6 +258,46 @@ export function RequestForm({
       : types.status === "ready"
         ? types.data.writer
         : null;
+  // Whether a send now reaches ClickUp, or is only saved until requests
+  // open (a dry run, or off the test card): the server's answer for this
+  // card (writer.held) when it gives one, else the writer's mode.
+  const open =
+    typeof writer?.held === "boolean"
+      ? !writer.held
+      : requestsOpen(
+          types.status === "ready" ? types.data.writer : null,
+          picked?.taskId ?? null,
+        );
+
+  // After a send, read the request again while a task is on its way, so the
+  // panel says "In {list}" only once ClickUp has it. Every 5 seconds for two
+  // minutes at most; a failed read keeps the last answer.
+  const sentId = sent?.id ?? null;
+  const moving = Boolean(sent?.parts.some(p => partMoving(p, sentOpen)));
+  useEffect(() => {
+    if (!client || !sentId || !moving) return;
+    let reads = 0;
+    let live = true;
+    const timer = setInterval(async () => {
+      reads += 1;
+      if (reads > 24) {
+        clearInterval(timer);
+        return;
+      }
+      try {
+        const next = await readRequest(client, sentId);
+        if (!live) return;
+        setSent(s => (s && s.id === sentId ? { ...s, parts: next.parts } : s));
+        if (typeof next.held === "boolean") setSentOpen(!next.held);
+      } catch {
+        // The panel keeps what it last knew.
+      }
+    }, 5000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [client, sentId, moving]);
 
   const setAnswer = (key: string, value: string) =>
     setAnswers(a => ({ ...a, [key]: value }));
@@ -294,8 +353,14 @@ export function RequestForm({
       if (result.state === "duplicate") {
         setDuplicate(result);
       } else {
+        const reached = typeof result.held === "boolean" ? !result.held : open;
+        setSentOpen(reached);
         setSent(result);
-        seat.toast.success(REQUEST_SENTENCES.sent);
+        seat.toast.success(
+          result.parts.length && result.parts.every(p => partHeld(p, reached))
+            ? REQUEST_SENTENCES.saved
+            : REQUEST_SENTENCES.sent,
+        );
         onSent?.(result);
       }
     } catch (e) {
@@ -365,19 +430,17 @@ export function RequestForm({
         <div className="rq-sent" role="status">
           <CircleCheck aria-hidden className="rq-sent-icon" />
           <div className="rq-sent-body">
-            {sentLines(sent.parts).map(line => (
-              <p key={line} className="rq-sent-line">
-                {line}
-              </p>
-            ))}
-            <p className="rq-muted">
-              {stateWords({
-                state: sent.state === "duplicate" ? "sending" : sent.state,
-                done: false,
-                parts: sent.parts,
-              })}
-              .
-            </p>
+            {sentLines(sent.parts, sentOpen).map((line, i) => {
+              const note = deliveredNote(sent.parts[i]);
+              return (
+                <div key={sent.parts[i]?.part ?? line}>
+                  <p className="rq-sent-line">{line}</p>
+                  {note ? (
+                    <p className="rq-muted rq-warn-note">{note}</p>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         </div>
         <div className="rq-actions">
@@ -429,10 +492,21 @@ export function RequestForm({
   // The writer's answer before anyone types (2.8): said once at the top
   // until a type is picked, then in place of Send.
   const writerOff = writer && !writer.canSend ? writer : null;
+  // A seat that may file while requests are not open (editors, admins, the
+  // CEO in a dry run) is told the request is saved, not sent.
+  const writerNote =
+    writer?.canSend && writer.note?.trim() ? writer.note.trim() : null;
 
   return (
     <div className={root} ref={formRef}>
       {writerOff && !type ? <WriterOff note={writerOff.note} /> : null}
+      {/* A held request's note (saved until requests open): said before
+          anything is picked, then above Send. */}
+      {writerNote && !type ? (
+        <p className="rq-off rq-off-note" role="status">
+          {writerNote}
+        </p>
+      ) : null}
       <TypePicker
         types={offered}
         chosen={type}
@@ -527,6 +601,11 @@ export function RequestForm({
             <WriterOff note={writerOff.note} />
           ) : (
             <div className="rq-actions">
+              {writerNote ? (
+                <p className="rq-off rq-off-note" role="status">
+                  {writerNote}
+                </p>
+              ) : null}
               <button
                 type="button"
                 className="rq-btn rq-btn-primary"
@@ -552,6 +631,32 @@ export function RequestForm({
       ) : null}
     </div>
   );
+}
+
+/**
+ * A type's first answers: the routed ticket's details, or a request's own
+ * answers as words when it is filed again (a choice by its name or id).
+ */
+export function startAnswers(
+  type: TypeView,
+  details?: string,
+  start?: Record<string, string>,
+): Answers {
+  const out: Answers = {};
+  for (const f of type.fields) {
+    const raw = start?.[f.key];
+    if (raw === undefined || raw === null || String(raw).trim() === "")
+      continue;
+    const text = String(raw).trim();
+    if (f.kind === "select") {
+      const hit = (f.options ?? []).find(o => o.id === text || o.name === text);
+      if (hit) out[f.key] = hit.id;
+    } else if (!["client", "deadline", "priority"].includes(f.kind))
+      out[f.key] = text;
+  }
+  const detailsField = type.fields.find(f => f.kind === "details");
+  if (details && detailsField) out[detailsField.key] = details;
+  return out;
 }
 
 /** A link into the portal: in place inside it, a plain link from elsewhere. */

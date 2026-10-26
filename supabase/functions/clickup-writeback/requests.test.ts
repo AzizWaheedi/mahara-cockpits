@@ -15,8 +15,9 @@ import {
   requestStepKeys,
   runContext,
   SAY,
+  STEP_REFUSED,
 } from "./requests";
-import { gate, kpiGate, runRequestsDoctor } from "./run";
+import { gate, HOLD_MS, kpiGate, runRequestsDoctor, WAITING } from "./run";
 import {
   CARD,
   clickupStoredDue,
@@ -82,8 +83,10 @@ describe("a run under every switch but the requests switch", () => {
       const c = h.db.enqueue("task_action", { ...requestPayload(), op: "comment", ref: "T-0123456789", taskId: "86work0001", text: "Done on my side", actor: { clickupUserId: 1 } });
       const out = await h.run();
       expect(h.clickup.calls).toEqual([]);
-      expect([a, b, c].map(r => r.state)).toEqual(["dry_run", "dry_run", "dry_run"]);
-      expect(out).toMatchObject({ ok: true, mode: "dry_run", note: "Dry run: 2 requests and 1 task change planned. Nothing was written to ClickUp." });
+      // Never settled (RT-1): each row is back in the queue, its try not counted, and goes once the switch is on.
+      expect([a, b, c].map(r => r.state)).toEqual(["queued", "queued", "queued"]);
+      expect([a, b, c].map(r => r.attempts)).toEqual([0, 0, 0]);
+      expect(out).toMatchObject({ ok: true, mode: "dry_run", note: "Dry run: 2 requests and 1 task change planned. Nothing was written to ClickUp. They wait in the queue for the switch." });
       // The canary list is reported as set, even while the switch keeps everything a dry run.
       expect(h.db.lastState()).toMatchObject({ p_ok: true, p_mode: "dry_run", p_only_cards: env.CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS ? [CARD] : [], p_note: out.note });
     }
@@ -275,7 +278,7 @@ describe("a request from a template, in two parts (Client pause)", () => {
     const media = h.db.enqueue("request", mediaP);
     const out = await h.run();
     expect(out.note).toBe("2 requests delivered, 0 to retry, 0 failed.");
-    expect(tech.steps).toEqual(["create", "description", "owner_due_priority", "tag", "card_comment"]);
+    expect(tech.steps).toEqual(["create", "description", "owner_due_priority", "checklist", "tag", "card_comment"]);
 
     const fromTemplate = h.clickup.writes().filter(c => c.path.includes("/taskTemplate/"));
     expect(fromTemplate.map(c => [c.path, c.body])).toEqual([
@@ -290,7 +293,7 @@ describe("a request from a template, in two parts (Client pause)", () => {
     // ClickUp keeps 06:00 Kuwait for the 12:00 Kuwait write; the day is what is checked.
     expect(Number(t.due_date)).toBe(clickupStoredDue(techP.dueMs));
     expect(Number(t.due_date)).not.toBe(techP.dueMs);
-    expect(steps(tech)).toEqual({ create: "done", description: "done", owner_due_priority: "done", tag: "done", card_comment: "done" });
+    expect(steps(tech)).toEqual({ create: "done", description: "done", owner_due_priority: "done", checklist: "unchanged", tag: "done", card_comment: "done" });
     const put = h.clickup.writes().find(c => c.method === "PUT" && c.path === `task/${tech.task_id}` && c.body?.assignees);
     expect(put?.body).toEqual({ assignees: { add: [PEOPLE.systemsManager], rem: [] }, due_date: techP.dueMs, due_date_time: false, priority: 3 });
 
@@ -711,9 +714,9 @@ describe("resuming after a lost answer (contract 4.3, On resume)", () => {
     }
   });
 
-  it("gives up after the retry ladder", async () => {
+  it("gives up after the retry ladder when no task was made", async () => {
     const h = harness(LIVE);
-    h.clickup.fail = c => (c.method === "GET" && c.path.startsWith("space/") ? rejected(503, "Down") : undefined);
+    h.clickup.fail = c => (c.method === "POST" && c.path.endsWith("/task") ? rejected(429, "Rate limit") : undefined);
     const row = h.db.enqueue("request", requestPayload());
     for (let i = 0; i < 6; i++) {
       await h.run();
@@ -721,6 +724,22 @@ describe("resuming after a lost answer (contract 4.3, On resume)", () => {
     }
     expect(row.state).toBe("failed");
     expect(row.attempts).toBe(6);
+    expect(row.task_id).toBeNull();
+  });
+
+  it("after the ladder, a part whose task is in ClickUp is delivered with a plain note, never failed (RT-2)", async () => {
+    const h = harness(LIVE);
+    h.clickup.fail = c => (c.method === "GET" && c.path.startsWith("space/") ? rejected(503, "Down") : undefined);
+    const row = h.db.enqueue("request", requestPayload());
+    for (let i = 0; i < 6; i++) {
+      await h.run();
+      h.advance(240 * 60_000);
+    }
+    expect(row.state).toBe("delivered");
+    expect(row.error?.startsWith(SAY.unfinished)).toBe(true);
+    expect(row.attempts).toBe(6);
+    // One task, made once.
+    expect(h.clickup.writes().filter(c => c.method === "POST" && c.path === `list/${LISTS.tech}/task`).length).toBe(1);
   });
 });
 
@@ -740,8 +759,9 @@ describe("the canary card", () => {
     const canary = h.db.enqueue("request", requestPayload({ clientTaskId: TEST_CARD, clientName: "Test client", clientTag: "test client" }));
     const other = h.db.enqueue("request", requestPayload({ requestId: "2b2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", ref: "R-2b2b3c4d5e-main" }));
     const out = await h.run();
-    expect([canary.state, other.state]).toEqual(["delivered", "dry_run"]);
-    expect(out).toMatchObject({ ok: true, mode: "apply_limited", note: "Testing on the canary card: 1 delivered, 1 held as a dry run." });
+    expect([canary.state, other.state]).toEqual(["delivered", "queued"]);
+    expect(other.error).toBe(WAITING.apply_limited);
+    expect(out).toMatchObject({ ok: true, mode: "apply_limited", note: "Testing on the canary card: 1 delivered, 1 held as a dry run (waiting in the queue)." });
     expect(h.db.lastState()).toMatchObject({ p_mode: "apply_limited", p_only_cards: [TEST_CARD] });
     expect(h.clickup.writes().every(c => !c.path.includes(CARD))).toBe(true);
   });
@@ -871,9 +891,13 @@ describe("the database the writer calls (migration 20261026r)", () => {
 
   it("defines every RPC the requests job calls, and grants each to the service role only", () => {
     const called = [...new Set([...CALLERS.matchAll(/rpc\(\s*"(\w+)"/g)].map(m => m[1]))].sort();
+    // Asked of migration r by review R1 (RT-1, RT-3); each has a fallback the tests drive with it absent.
+    const PENDING = ["cockpit_clickup_writeback_release", "cockpit_clickup_writeback_task_owners"];
     expect(called).toEqual([
       "cockpit_clickup_requests_state",
       "cockpit_clickup_writeback_claim_requests",
+      "cockpit_clickup_writeback_release",
+      "cockpit_clickup_writeback_task_owners",
       "cockpit_request_doctor_inputs",
       "cockpit_request_sweep",
       "cockpit_request_type_rt_off",
@@ -881,6 +905,7 @@ describe("the database the writer calls (migration 20261026r)", () => {
     const serviceBlock = /The writer's and the task mirror's RPCs[\s\S]*?LOOP([\s\S]*?)END LOOP;/.exec(SQL)?.[0] ?? "";
     expect(serviceBlock).toContain("GRANT EXECUTE ON FUNCTION public.%s TO service_role");
     for (const name of called) {
+      if (PENDING.includes(name) && !SQL.includes(`FUNCTION public.${name}(`)) continue;
       expect(SQL).toContain(`CREATE OR REPLACE FUNCTION public.${name}(`);
       expect(serviceBlock).toContain(`'${name}(`);
     }

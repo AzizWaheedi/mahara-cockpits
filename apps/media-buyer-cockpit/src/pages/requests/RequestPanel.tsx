@@ -1,11 +1,13 @@
 import { ArrowUpRight, CircleAlert, LoaderCircle } from "lucide-react";
-import { useCallback, useEffect, useId, useState } from "react";
-import { StatusChip } from "@/components/ceo/StatusChip";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { StatusChip, StatusDot } from "@/components/ceo/StatusChip";
 import { TaskPanel } from "@/components/tasks/TaskPanel";
 import { Button } from "@/components/ui/button";
 import { cancelRequest, errorWords, readRequest } from "@/lib/requestsClient";
 import {
+  CLICKUP_FORM_URL,
   dayLabel,
+  deliveredNote,
   isOpen,
   ownerNote,
   PRIORITIES,
@@ -13,6 +15,7 @@ import {
   partWords,
   type RequestDetail,
   type RequestRow,
+  requestHeld,
   stampWords,
   stateChip,
   stateWords,
@@ -20,13 +23,24 @@ import {
 } from "@/lib/requestsCore";
 import { useTaskSeat } from "@/lib/taskSeat";
 
-/** What "Make it a request" hands the form (2.10, 6.4). */
+/**
+ * What "Make it a request" hands the form (2.10, 6.4), or "File it again"
+ * for a request that did not reach ClickUp (no replacesTaskId, its answers
+ * as words in `answers`).
+ */
 export type RouteFrom = {
   typeKey: string;
   client: { taskId: string; name: string } | null;
   details: string | null;
   replacesTaskId: string;
+  answers?: Record<string, string>;
+  /** The request being filed again. */
+  againOf?: string;
 };
+
+/** Whether a request stopped short of ClickUp and needs a next step. */
+export const stuck = (row: Pick<RequestRow, "state" | "done">) =>
+  !row.done && (row.state === "failed" || row.state === "partial");
 
 const CANCEL_LIMIT = 240;
 
@@ -71,6 +85,13 @@ export function RequestPanel({
   const [busy, setBusy] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const reasonId = useId();
+  const reasonRef = useRef<HTMLTextAreaElement>(null);
+
+  // "Cancel request" swaps the footer button for the reason box; focus goes
+  // to the box, so it never falls out of the dialog onto the page.
+  useEffect(() => {
+    if (cancelling) reasonRef.current?.focus();
+  }, [cancelling]);
 
   const load = useCallback(async () => {
     if (!client || !requestId) return;
@@ -118,6 +139,11 @@ export function RequestPanel({
     detail.canRoute;
 
   const canCancel = Boolean(detail?.canCancel && isOpen(detail));
+  // Saved, not sent: every task says so, not "Sending to ClickUp".
+  const held = detail ? requestHeld(detail) : false;
+  // What the state line above the tasks says (nothing for a failed or
+  // partial request: each task says why once).
+  const factsWords = detail ? factsLine(detail) : "";
   // A footer only when it holds an action, so a request with none ends
   // with its history, not an empty bar.
   const footer =
@@ -187,8 +213,35 @@ export function RequestPanel({
           Reading the request
         </p>
       ) : (
-        <div className="space-y-6 text-sm">
+        // The panel is a portal outside the page, so it carries its own
+        // ceo-root for the status colours.
+        <div className="ceo-root space-y-6 text-sm">
           <Facts detail={detail} />
+          {stuck(detail) ? (
+            <NextStep
+              detail={detail}
+              onAgain={
+                onRoute
+                  ? () =>
+                      onRoute({
+                        typeKey: detail.typeKey,
+                        client: detail.clientTaskId
+                          ? {
+                              taskId: detail.clientTaskId,
+                              name: detail.clientName ?? "",
+                            }
+                          : null,
+                        details: detail.details,
+                        replacesTaskId: "",
+                        answers: Object.fromEntries(
+                          detail.answers.map(a => [a.key, a.display]),
+                        ),
+                        againOf: detail.id,
+                      })
+                  : undefined
+              }
+            />
+          ) : null}
 
           {detail.answers.length || detail.details ? (
             <section className="space-y-2">
@@ -224,25 +277,41 @@ export function RequestPanel({
             </h3>
             <ul className="divide-y rounded-xl border">
               {detail.parts.map(p => {
-                const chip = partChip(p);
+                const chip = partChip(p, held);
+                // One task: the request's chip and line above already say
+                // its state, so the task says only what is its own.
+                const one = detail.parts.length === 1;
+                const words = partWords(p, held);
+                const sayWords = !(one && words === factsWords);
                 const note = ownerNote(p.owner);
                 const check = verifyWords(p);
+                const unfinished = deliveredNote(p);
                 return (
                   <li key={p.part} className="space-y-1.5 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="font-medium">{p.listName}</span>
-                      <StatusChip tone={chip.tone} label={chip.label} />
+                      {one ? null : (
+                        <StatusChip tone={chip.tone} label={chip.label} />
+                      )}
                     </div>
                     <p dir="auto" className="break-words text-[13px]">
                       <bdi>{p.taskName}</bdi>
                     </p>
                     <p className="text-[13px] text-muted-foreground">
-                      {partWords(p)}. Owner:{" "}
+                      {sayWords ? `${words}. ` : null}Owner:{" "}
                       {p.owner.how === "none" || !p.owner.label
                         ? "nobody yet"
                         : p.owner.label}
                       .
                     </p>
+                    {unfinished ? (
+                      // In ClickUp, but a step was refused: a quiet warning
+                      // with what to check, never a failure.
+                      <p className="flex items-baseline gap-1.5 text-[13px] text-muted-foreground">
+                        <StatusDot tone="warning" label="Not finished" />
+                        <span className="min-w-0">{unfinished}</span>
+                      </p>
+                    ) : null}
                     {note ? (
                       <p className="text-[13px] text-muted-foreground">
                         {note}
@@ -258,7 +327,7 @@ export function RequestPanel({
                         href={p.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-1 rounded-sm text-[13px] font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        className="inline-flex items-center gap-1 rounded-sm text-[13px] font-medium text-[color:var(--tk-ink,var(--primary))] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         Open in ClickUp
                         <ArrowUpRight aria-hidden className="size-3.5" />
@@ -276,6 +345,7 @@ export function RequestPanel({
                 Why cancel it?
               </label>
               <textarea
+                ref={reasonRef}
                 id={reasonId}
                 dir="auto"
                 rows={2}
@@ -349,19 +419,32 @@ export function RequestPanel({
 }
 
 /**
+ * The state line beside the request's chip: nothing when it would repeat the
+ * chip, and nothing for a failed or partial request, whose reason is said
+ * once, on the task that did not reach ClickUp.
+ */
+function factsLine(detail: RequestDetail): string {
+  if (stuck(detail)) return "";
+  const words = stateWords(detail);
+  return words.toLowerCase() === stateChip(detail).label.toLowerCase()
+    ? ""
+    : words;
+}
+
+/**
  * The request's state and its facts. The client and who asked are in the
  * panel's subtitle, so they are not said again here.
  */
 function Facts({ detail }: { detail: RequestDetail }) {
   const chip = stateChip(detail);
-  const words = stateWords(detail);
+  const words = factsLine(detail);
   const priority =
     PRIORITIES.find(p => p.key === detail.priority)?.label ?? detail.priority;
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <StatusChip tone={chip.tone} label={chip.label} size="md" />
-        {words.toLowerCase() !== chip.label.toLowerCase() ? (
+        {words ? (
           <span className="text-[13px] text-muted-foreground">{words}</span>
         ) : null}
       </div>
@@ -378,5 +461,51 @@ function Facts({ detail }: { detail: RequestDetail }) {
         <dd>{detail.teamLabel}</dd>
       </dl>
     </div>
+  );
+}
+
+/**
+ * What to do when a request did not reach ClickUp: file it again with the
+ * same answers, or use the ClickUp request form, and who to ask if it keeps
+ * failing. Said once, under the state; the reason is on the task itself.
+ */
+function NextStep({
+  detail,
+  onAgain,
+}: {
+  detail: RequestDetail;
+  onAgain?: () => void;
+}) {
+  const some = detail.state === "partial";
+  return (
+    <section
+      className="space-y-3 rounded-xl bg-muted/40 p-4"
+      aria-label="What to do next"
+    >
+      <p className="text-[13px]">
+        {some
+          ? "The tasks that did reach ClickUp stay there. File the rest again, or use the ClickUp request form."
+          : "Nothing reached ClickUp. File it again with the same answers, or use the ClickUp request form."}{" "}
+        <span className="text-muted-foreground">
+          If it fails again, tell the systems manager.
+        </span>
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        {onAgain ? (
+          <Button size="sm" onClick={onAgain}>
+            File it again
+          </Button>
+        ) : null}
+        <a
+          href={CLICKUP_FORM_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[13px] font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          Open the ClickUp request form
+          <ArrowUpRight aria-hidden className="size-3.5" />
+        </a>
+      </div>
+    </section>
   );
 }

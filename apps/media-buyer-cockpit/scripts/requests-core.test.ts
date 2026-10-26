@@ -21,6 +21,7 @@ import {
   bodyFields,
   cleanAnswers,
   dayLabel,
+  deliveredNote,
   display,
   dueWord,
   fieldOfSentence,
@@ -30,9 +31,15 @@ import {
   kuwaitToday,
   type PartRow,
   partChip,
+  partHeld,
+  partMoving,
+  partWaiting,
   partWords,
   REQUEST_SENTENCES,
+  REQUESTS_CANARY_CARD,
   type RequestRow,
+  requestHeld,
+  requestsOpen,
   routeLine,
   sentLines,
   stateChip,
@@ -41,6 +48,12 @@ import {
   validateAnswers,
   verifyWords,
 } from "../src/lib/requestsCore";
+import {
+  callRequests,
+  errorWords,
+  PLAIN_ERRORS,
+  RequestError,
+} from "../src/lib/requestsClient";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const seed = JSON.parse(
@@ -316,8 +329,10 @@ describe("states in words (6.6)", () => {
     expect(
       stateWords(row({ state: "sending", parts: [part({ state: "queued" })] })),
     ).toBe("Sending to ClickUp");
+    // The old held state, kept as a fallback: said as saved, not as the
+    // writer's test run.
     expect(stateWords(row({ state: "dry_run" }))).toBe(
-      "Not in ClickUp: the writer is in its test run",
+      "Saved. It goes to ClickUp when requests open",
     );
     expect(stateWords(row())).toBe("In ClickUp: to do");
     expect(
@@ -463,19 +478,245 @@ describe("the route line (6.1's signature)", () => {
     );
   });
 
-  test("the sent panel says where each task went", () => {
+  test("the sent panel says where each task really is (F4, D13)", () => {
+    const owners = { label: "", how: "none" as const, note: null };
+    // In the list only once ClickUp has it, with its owner.
     expect(
-      sentLines([
-        part(),
-        part({
-          listName: "Marketing / ADs",
-          owner: { label: "", how: "none", note: null },
-        }),
-      ]),
+      sentLines(
+        [part(), part({ listName: "Marketing / ADs", owner: owners })],
+        true,
+      ),
     ).toEqual([
-      "Sent to Operations / Tech. Owner: the systems manager.",
-      "Sent to Marketing / ADs. Owner: nobody yet.",
+      "In Operations / Tech. Owner: the systems manager.",
+      "In Marketing / ADs. Owner: nobody yet.",
     ]);
+    // On its way while requests are open.
+    expect(
+      sentLines(
+        [
+          part({ state: "queued", url: null }),
+          part({ state: "sending", url: null }),
+          part({ state: "retry", url: null }),
+          part({ state: "unknown", url: null }),
+        ],
+        true,
+      ),
+    ).toEqual([
+      "Sending to Operations / Tech.",
+      "Sending to Operations / Tech.",
+      "Sending to Operations / Tech.",
+      "Checking whether it reached Operations / Tech.",
+    ]);
+    // Held while requests are not open: saved, never sent, no owner yet.
+    expect(sentLines([part({ state: "queued", url: null })], false)).toEqual([
+      "Saved. Goes to Operations / Tech when requests open.",
+    ]);
+    // The writer's note marks a held task even when the form thought
+    // requests were open; a task ClickUp already has says so.
+    const waiting =
+      "Waiting in the queue: requests are a dry run, so nothing goes to ClickUp until CLICKUP_WRITEBACK_APPLY_REQUESTS is true.";
+    expect(
+      sentLines(
+        [
+          part({ state: "queued", url: null, error: waiting }),
+          part({ state: "retry", error: waiting }),
+        ],
+        true,
+      ),
+    ).toEqual([
+      "Saved. Goes to Operations / Tech when requests open.",
+      "In Operations / Tech, not finished yet. The cockpit finishes it when requests open.",
+    ]);
+    // A delivered task is never held, and a failure says why.
+    expect(
+      sentLines(
+        [part(), part({ state: "failed", url: null, error: "Gone." })],
+        false,
+      ),
+    ).toEqual([
+      "In Operations / Tech. Owner: the systems manager.",
+      "Not sent to Operations / Tech: Gone.",
+    ]);
+    // The old held state is a harmless fallback.
+    expect(sentLines([part({ state: "dry_run", url: null })], true)).toEqual([
+      "Saved. Goes to Operations / Tech when requests open.",
+    ]);
+  });
+
+  test("requests are open for a card in apply, and in apply_limited for the test card only", () => {
+    expect(requestsOpen({ mode: "apply" }, null)).toBe(true);
+    expect(requestsOpen({ mode: "apply_limited" }, REQUESTS_CANARY_CARD)).toBe(
+      true,
+    );
+    expect(REQUESTS_CANARY_CARD).toBe("86eywg1cq");
+    expect(requestsOpen({ mode: "apply_limited" }, "86harb002")).toBe(false);
+    expect(requestsOpen({ mode: "dry_run" }, REQUESTS_CANARY_CARD)).toBe(false);
+    expect(requestsOpen({ mode: "unknown" }, null)).toBe(false);
+    expect(requestsOpen(null, null)).toBe(false);
+  });
+
+  test("a held request reads as saved everywhere, from the server or the writer's note", () => {
+    const waiting =
+      "Waiting in the queue: requests are being tested on the canary card only, so this goes when they open to every card.";
+    const queued = part({ state: "queued", url: null });
+    // The server's flag.
+    const flagged = { ...row({ state: "sending", parts: [queued] }), held: true };
+    expect(requestHeld(flagged)).toBe(true);
+    expect(stateWords(flagged)).toBe(
+      "Saved. It goes to ClickUp when requests open",
+    );
+    expect(stateChip(flagged)).toEqual({ label: "Saved", tone: "warning" });
+    // The writer's note on every task not yet in ClickUp.
+    const noted = row({
+      state: "sending",
+      parts: [part({ state: "queued", url: null, error: waiting })],
+    });
+    expect(requestHeld(noted)).toBe(true);
+    expect(partWaiting(noted.parts[0])).toBe(true);
+    expect(partWords(noted.parts[0])).toBe(
+      "Saved. It goes to ClickUp when requests open",
+    );
+    expect(partChip(noted.parts[0])).toEqual({
+      label: "Saved",
+      tone: "warning",
+    });
+    // A held request's tasks say so, not "Sending to ClickUp".
+    expect(partWords(queued, true)).toBe(
+      "Saved. It goes to ClickUp when requests open",
+    );
+    expect(partWords(queued)).toBe("Sending to ClickUp");
+    // On its way is not held; done is never held.
+    expect(requestHeld(row({ state: "sending", parts: [queued] }))).toBe(false);
+    expect(requestHeld({ ...flagged, done: true })).toBe(false);
+    expect(partHeld(part(), false)).toBe(false);
+    expect(partMoving(queued, true)).toBe(true);
+    expect(partMoving(queued, false)).toBe(false);
+  });
+
+  test("a task in ClickUp with a refused step is delivered, with a quiet note", () => {
+    const refused =
+      "The SOP steps did not save as a checklist in ClickUp. Add them on the task there.";
+    const p = part({ error: refused });
+    expect(deliveredNote(p)).toBe(refused);
+    expect(partChip(p)).toEqual({ label: "To do", tone: "neutral" });
+    expect(partWords(p)).toBe("In ClickUp: to do");
+    expect(deliveredNote(part({ state: "failed", error: refused }))).toBe(null);
+    expect(deliveredNote(part())).toBe(null);
+    // A delivered note is not the reason a partial request names.
+    expect(
+      stateWords(
+        row({
+          state: "partial",
+          parts: [p, part({ state: "failed", error: "The task was deleted." })],
+        }),
+      ),
+    ).toBe("Part of it did not reach ClickUp: The task was deleted");
+  });
+});
+
+describe("database and network errors in plain words (D5)", () => {
+  const answering =
+    (answer: unknown, throws = false) =>
+    ({
+      rpc: async () => {
+        if (throws) throw new TypeError("Failed to fetch");
+        return answer;
+      },
+    }) as any;
+  const said = async (p: Promise<unknown>) => {
+    try {
+      await p;
+    } catch (e) {
+      return e;
+    }
+    throw new Error("expected a refusal");
+  };
+
+  test("the server's own sentences pass through; raw database text never does", async () => {
+    const warn = console.warn;
+    const logged: unknown[][] = [];
+    console.warn = (...a: unknown[]) => void logged.push(a);
+    try {
+      const own = (await said(
+        callRequests(
+          answering({
+            data: null,
+            error: { message: "Client: pick a client.", code: "22023" },
+          }),
+          "cockpit_request_submit",
+        ),
+      )) as RequestError;
+      expect(own).toBeInstanceOf(RequestError);
+      expect(own.message).toBe("Client: pick a client.");
+      expect(own.code).toBe("22023");
+      for (const [error, words] of [
+        [
+          {
+            message: "canceling statement due to statement timeout",
+            code: "57014",
+          },
+          PLAIN_ERRORS.slow,
+        ],
+        [{ message: "JWT expired", code: "PGRST301" }, PLAIN_ERRORS.signedOut],
+        [
+          { message: 'relation "x" does not exist', code: "42P01" },
+          PLAIN_ERRORS.other,
+        ],
+        [{ message: "", code: null }, PLAIN_ERRORS.other],
+        // Postgres's own words under a code the server also uses.
+        [
+          {
+            message: "permission denied for function cockpit_x",
+            code: "42501",
+          },
+          PLAIN_ERRORS.notAllowed,
+        ],
+        [
+          {
+            message:
+              'duplicate key value violates unique constraint "cockpit_member_clickup_user_key"',
+            code: "23505",
+          },
+          PLAIN_ERRORS.clash,
+        ],
+        // The server's own sentence under 23505 is shown as it is.
+        [
+          {
+            message:
+              "That ClickUp user is already linked to another seat. Clear that link first.",
+            code: "23505",
+          },
+          "That ClickUp user is already linked to another seat. Clear that link first.",
+        ],
+      ] as const) {
+        const e = (await said(
+          callRequests(answering({ data: null, error }), "cockpit_x"),
+        )) as Error;
+        expect(e.message).toBe(words);
+      }
+      const offline = (await said(
+        callRequests(answering(null, true), "cockpit_x"),
+      )) as Error;
+      expect(offline.message).toBe(PLAIN_ERRORS.unreachable);
+      expect(offline.message).not.toContain("Failed to fetch");
+      // The missing migration keeps its own sentence.
+      const missing = (await said(
+        callRequests(
+          answering({ data: null, error: { message: "x", code: "PGRST202" } }),
+          "cockpit_x",
+        ),
+      )) as Error;
+      expect(missing.message).toBe(REQUEST_SENTENCES.missingFunction);
+      // Something that is not a RequestError is not shown as it is.
+      expect(errorWords(new Error("undefined is not an object"))).toBe(
+        PLAIN_ERRORS.other,
+      );
+      expect(errorWords(new RequestError("Pick one."))).toBe("Pick one.");
+      // The raw text went to the console for whoever debugs it.
+      expect(JSON.stringify(logged)).toContain("statement timeout");
+    } finally {
+      console.warn = warn;
+    }
   });
 });
 

@@ -315,10 +315,32 @@ describe("request types", () => {
     expect(pause).toContain("Operations / Tech, the systems manager");
     expect(pause).toContain("Marketing / ADs, the media buyer of record");
     expect(pause).toContain("Template");
+    // Each task names its template, so two parts never read the same (D11).
+    expect(pause).toContain("Client Pause ⏸️ (Tech)");
+    expect(pause).toContain("Client Pause ⏸️ (Media)");
     expect(pause).toContain("Due in 2 days");
+    // Parts that differ by their "runs when" say it.
+    const low = squash(text(typeRow("Low schedule rate")));
+    expect(low).toContain(
+      "Call Center, the client's CSM, when Where is the problem? is Call Center Issue or Both",
+    );
+    expect(low).toContain(
+      "Marketing / ADs, the media buyer of record, when Where is the problem? is Ads issue or Both",
+    );
     expect(squash(text(typeRow("General tech request")))).toContain(
       "5 draft steps",
     );
+  });
+
+  test("a type whose steps came from the template's source task explains them once (D14)", async () => {
+    await render();
+    await click(typeRow("WhatsApp connection issue"));
+    const all = squash(text(dialog()));
+    expect(all).toContain(
+      "From the template's source task. Added as a checklist to a task made without a template, or when the template has no checklist.",
+    );
+    expect(all.split("Added as a checklist").length).toBe(2);
+    expect(all).not.toContain("Added only when the template brings no checklist.");
   });
 
   test("the On/Off switch saves at once with the version it read", async () => {
@@ -482,10 +504,20 @@ describe("people in ClickUp", () => {
         text(li).startsWith(label),
       ) as any;
     expect(squash(text(row("Sara, CSM")))).toContain("Sara, matched by email");
-    expect(squash(text(row("Faris, closer")))).toContain(
-      "Not linked. No match by email.",
-    );
-    expect(squash(text(row("Call centre")))).toContain("Two matches by email");
+    // One line a seat, never the same fact twice (D10).
+    const faris = squash(text(row("Faris, closer")));
+    expect(faris).toContain("No ClickUp member has this seat's email.");
+    expect(faris).not.toContain("No match by email");
+    const callers = squash(text(row("Call centre")));
+    expect(callers).toContain("Two ClickUp members have this seat's email.");
+    expect(callers).not.toContain("Two matches by email");
+    const yousef = squash(text(row("Yousef, media buyer")));
+    expect(yousef).toContain("set by hand");
+    expect(yousef).not.toContain("Set by an editor.");
+    // Clear only where a link was set by hand.
+    expect(buttonIn(row("Yousef, media buyer"), "Clear")).toBeTruthy();
+    expect(buttonIn(row("Sara, CSM"), "Clear")).toBeUndefined();
+    expect(buttonIn(row("Faris, closer"), "Clear")).toBeUndefined();
     await setValue(row("Faris, closer").querySelector("select"), "120000002");
     const set = fake.calls.find(c => c.name === "cockpit_member_clickup_set");
     expect(set?.args).toEqual({
@@ -502,6 +534,22 @@ describe("people in ClickUp", () => {
       p_clickup_user_id: null,
     });
     expect(squash(text(row("Faris, closer")))).toContain("Cleared by hand");
+    expect(buttonIn(row("Faris, closer"), "Clear")).toBeUndefined();
+  });
+
+  test("a ClickUp person already linked to another seat names that seat", async () => {
+    await render("/requests/settings?tab=people");
+    const row = (label: string) =>
+      [...container.querySelectorAll("li")].find((li: any) =>
+        text(li).startsWith(label),
+      ) as any;
+    // Sara's ClickUp user, picked for Faris: refused with 23505.
+    await setValue(row("Faris, closer").querySelector("select"), "113688800");
+    const refusal = squash(text(row("Faris, closer")));
+    expect(refusal).toContain(
+      "That ClickUp person is already linked to Sara, CSM. Clear that link first.",
+    );
+    expect(refusal).not.toContain("duplicate key");
   });
 });
 

@@ -8,6 +8,7 @@ import { expect, test } from "bun:test";
 import {
   ALERT_KINDS,
   actionPhase,
+  agoWords,
   actionState,
   alertOpens,
   alertWords,
@@ -15,6 +16,7 @@ import {
   checklistWords,
   dayWords,
   dueWords,
+  emptySentence,
   firstFive,
   isTaskId,
   kuwaitDay,
@@ -121,8 +123,10 @@ test("the sentences are the contract's, word for word", () => {
   expect(staleSentence("14:02")).toBe(
     "Task updates are late. Last read at 14:02. Open ClickUp for anything urgent.",
   );
+  // The empty card says what this cockpit leaves out (D3): never that
+  // nothing is assigned in ClickUp.
   expect(TASK_SENTENCES.empty).toBe(
-    "Nothing is assigned to you in ClickUp. New tasks show here within two minutes.",
+    "Nothing open is assigned to you outside the client cards. New ClickUp tasks show here within two minutes.",
   );
   expect(TASK_SENTENCES.bellEmpty).toBe("No alerts in the last 14 days.");
   expect(TASK_SENTENCES.bellNotRead).toBe(
@@ -229,4 +233,28 @@ test("small words: checklists, status dots, task ids, markers", () => {
   );
   expect(capitalFirst("the CSM")).toBe("The CSM");
   expect(capitalFirst("")).toBe("");
+});
+
+test("the empty card names what this cockpit leaves out (D3)", () => {
+  expect(emptySentence("portal")).toBe(TASK_SENTENCES.empty);
+  expect(emptySentence("csm")).toBe(TASK_SENTENCES.empty);
+  // The editor cockpit hides Video Pipeline (its Jobs page owns it).
+  expect(emptySentence("editor")).toBe(
+    "Nothing open is assigned to you outside Jobs and the client cards. New ClickUp tasks show here within two minutes.",
+  );
+  for (const c of ["portal", "csm", "creative", "editor", "sales"])
+    expect(emptySentence(c)).not.toContain("Nothing is assigned to you in");
+});
+
+test("an alert's time, short and in Kuwait time (D9)", () => {
+  const now = at("2026-10-26T08:00:00Z"); // Mon 11:00 in Kuwait
+  expect(agoWords("2026-10-26T07:59:40Z", now)).toBe("Just now");
+  expect(agoWords("2026-10-26T07:48:00Z", now)).toBe("12 min ago");
+  expect(agoWords("2026-10-26T05:00:00Z", now)).toBe("3 h ago");
+  // Before Kuwait midnight is yesterday, with its clock.
+  expect(agoWords("2026-10-25T20:30:00Z", now)).toBe("Yesterday 23:30");
+  expect(agoWords("2026-10-25T21:30:00Z", now)).toBe("10 h ago"); // 00:30 today
+  expect(agoWords("2026-10-22T06:10:00Z", now)).toBe("Thu 22 Oct 09:10");
+  expect(agoWords(null, now)).toBe("");
+  expect(agoWords("not a time", now)).toBe("");
 });

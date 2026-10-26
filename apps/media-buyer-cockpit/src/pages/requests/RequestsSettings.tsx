@@ -81,7 +81,8 @@ export function RequestsSettings() {
   );
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
+    // ceo-root: StatusChip and StatusDot take their colours from it (ceo.css).
+    <div className="ceo-root mx-auto w-full max-w-6xl space-y-6">
       <header className="min-w-0 max-w-2xl">
         <h1 className="text-2xl font-semibold tracking-tight">
           Requests settings
@@ -97,7 +98,7 @@ export function RequestsSettings() {
         </p>
         <a
           href="/client-success/notices"
-          className="mt-2 inline-flex items-center gap-0.5 rounded-sm text-[13px] font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="mt-2 inline-flex items-center gap-0.5 rounded-sm text-[13px] font-medium text-[color:var(--tk-ink,var(--primary))] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           Slack notices
           <ChevronRight aria-hidden className="size-3.5" />
@@ -132,16 +133,20 @@ export function RequestsSettings() {
       ) : (
         <>
           {options.length > 1 ? (
-            <FilterChips
-              options={options}
-              value={tab}
-              ariaLabel="Settings"
-              onChange={k => {
-                const p = new URLSearchParams(params);
-                p.set("tab", k);
-                setParams(p);
-              }}
-            />
+            // A wrapper takes space-y-6's 24px; the row's own -my-1 would
+            // beat it and pull the card below into the pills.
+            <div>
+              <FilterChips
+                options={options}
+                value={tab}
+                ariaLabel="Settings"
+                onChange={k => {
+                  const p = new URLSearchParams(params);
+                  p.set("tab", k);
+                  setParams(p);
+                }}
+              />
+            </div>
           ) : null}
           {tab === "types" ? (
             <RequestTypes

@@ -10,6 +10,7 @@ import {
 } from "@/lib/tasksClient";
 import {
   dueWords,
+  emptySentence,
   firstFive,
   kuwaitTime,
   type MyTasks,
@@ -43,6 +44,7 @@ export type CardState =
 /** What the card shows for a feed state. */
 export function cardState(
   feed: Pick<TaskFeedState, "tasks" | "error">,
+  cockpit = "portal",
 ): CardState {
   const data = feed.tasks;
   if (!data) return feed.error.tasks ? { kind: "failed" } : { kind: "reading" };
@@ -57,7 +59,7 @@ export function cardState(
   // Never read is not "nothing to do": it says it could not be read.
   if (!data.ready && !lateAt) return { kind: "failed" };
   const empty =
-    data.tasks.length === 0 ? (lateAt ? null : TASK_SENTENCES.empty) : null;
+    data.tasks.length === 0 ? (lateAt ? null : emptySentence(cockpit)) : null;
   return { kind: "tasks", data, lateAt, empty };
 }
 
@@ -127,8 +129,9 @@ export function TaskListPanel({
   open: boolean;
   onClose: () => void;
 }) {
+  const seat = useTaskSeat();
   const feed = useTaskFeed();
-  const state = cardState(feed);
+  const state = cardState(feed, seat.cockpit);
   const nowMs = Date.now();
   const data = state.kind === "tasks" ? state.data : null;
   return (
@@ -239,7 +242,7 @@ export function YourTasks({ id }: { id?: string }) {
   const [all, setAll] = useState(false);
   const titleId = useId();
   if (!seat.signedIn || !seat.client) return null;
-  const state = cardState(feed);
+  const state = cardState(feed, seat.cockpit);
   const nowMs = Date.now();
   const data = state.kind === "tasks" ? state.data : null;
   const rows = data ? firstFive(data.tasks) : [];

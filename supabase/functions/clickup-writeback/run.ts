@@ -470,6 +470,17 @@ export const REQUESTS_RUN_BUDGET_MS = 100_000;
 const HELD = "Held for the next run, so this run ends inside its time limit.";
 const NOT_STARTED = "The requests run could not start, so this waits for the next run.";
 const GAVE_UP = "Gave up after the retry ladder.";
+/** A row the switch keeps out of ClickUp is handed back for this long, so the next rows in the queue get their turn. */
+export const HOLD_MS = 5 * 60_000;
+export const WAITING = {
+  dry_run: "Waiting in the queue: requests are a dry run, so nothing goes to ClickUp until CLICKUP_WRITEBACK_APPLY_REQUESTS is true.",
+  apply_limited: "Waiting in the queue: requests are being tested on the canary card only, so this goes when they open to every card.",
+} as const;
+/** Attempts that counted: claims that only held a row back for the switch (progress.held) are not tries. */
+export const triesOf = (item: RequestsItem) => Math.max(0, Number(item.attempts ?? 0) - Math.max(0, Number(item.progress?.held ?? 0) || 0));
+/** A request part whose ClickUp task exists: create settled with its id. */
+const taskMade = (item: RequestsItem, o: RequestOutcome) =>
+  item.kind === "request" && Boolean(o.taskId) && ["done", "mismatch"].includes(String(o.progress?.steps?.create?.state ?? ""));
 
 type Tally = { requests: number; actions: number; checks: number };
 const tally = (): Tally => ({ requests: 0, actions: 0, checks: 0 });
@@ -503,6 +514,23 @@ export async function runRequests(deps: Deps, limit = 6): Promise<JobResult> {
   const claimed = tally(), delivered = tally(), dry = tally();
   const planned: Planned[] = [];
   const save = (id: string, patch: Row) => deps.rpc("cockpit_clickup_writeback_save", { p_id: id, p_token: token, p_patch: patch });
+  /**
+   * Hand a row the switch keeps out of ClickUp back to the queue without counting a try:
+   * cockpit_clickup_writeback_release puts it back as it was (queued, or retry when it has ClickUp
+   * progress) with the claim's attempt taken off. On a database without it, the row goes to retry
+   * with its progress kept and progress.held counting the claims that were not tries (triesOf).
+   */
+  const hold = async (item: RequestsItem, plan: Planned[], note: string) => {
+    const next = new Date(deps.now() + HOLD_MS).toISOString();
+    try {
+      await db.release(item.id, token, plan, note, next);
+      return;
+    } catch {
+      // Not there yet (or refused): the save below keeps the row retryable either way.
+    }
+    const progress = { ...(item.progress ?? {}), held: (Number(item.progress?.held ?? 0) || 0) + 1 };
+    await save(item.id, { state: "retry", planned: plan, progress, error: note, next_attempt_at: next });
+  };
   let runId: string | null = null;
   let stop = "";
   try {
@@ -537,9 +565,10 @@ export async function runRequests(deps: Deps, limit = 6): Promise<JobResult> {
         }
         const live = item.kind === "task_action" && item.payload?.op === "verify" ? g.apply : g.live(item.payload?.clientTaskId);
         if (!live) {
-          // A dry run calls no provider: the plan comes from the frozen payload alone.
+          // A dry run calls no provider: the plan comes from the frozen payload alone. The row is never
+          // settled: it goes back to the queue, its progress untouched, and is sent once the switch lets it.
           const plan = item.kind === "request" ? planRequest(item) : planTaskAction(item);
-          await save(item.id, { state: "dry_run", planned: plan });
+          await hold(item, plan, g.mode === "apply_limited" ? WAITING.apply_limited : WAITING.dry_run);
           planned.push(...plan);
           counts.dryRun += 1;
           dry[kind] += 1;
@@ -556,21 +585,27 @@ export async function runRequests(deps: Deps, limit = 6): Promise<JobResult> {
           item.kind === "request" ? await executeRequest(frozen, provider, itemSave, ctx) : await executeTaskAction(frozen, provider, itemSave, ctx);
         const now = deps.now();
         const taskId = o.taskId ? { task_id: o.taskId } : {};
+        const tries = triesOf(item);
+        const gaveUp = o.state !== "delivered" && o.state !== "skipped" && o.state !== "failed" && tries > RETRY_MINUTES.length;
         const settle =
           o.state === "delivered"
             // A note on a delivered item (a field that did not save, a moved task) shows on its request part.
             ? { state: "delivered", progress: o.progress, delivered_at: new Date(now).toISOString(), error: o.note ? redact(o.note) : null, ...taskId }
             : o.state === "skipped"
               ? { state: "skipped", progress: o.progress, error: o.error ? redact(o.error) : null, ...taskId }
-              : o.state === "failed" || item.attempts > RETRY_MINUTES.length
-                ? { state: "failed", progress: o.progress, error: redact(o.error ?? GAVE_UP), ...taskId }
-                : {
-                    state: o.state,
-                    progress: o.progress,
-                    error: o.error ? redact(o.error) : null,
-                    next_attempt_at: new Date(now + RETRY_MINUTES[Math.min(Math.max(item.attempts - 1, 0), RETRY_MINUTES.length - 1)] * 60_000).toISOString(),
-                    ...taskId,
-                  };
+              : gaveUp && taskMade(item, o)
+                // The task is in ClickUp: settling it failed would invite a second one. It is delivered, and
+                // the step that never finished is named on the part.
+                ? { state: "delivered", progress: o.progress, delivered_at: new Date(now).toISOString(), error: redact(`${SAY.unfinished} ${o.error ?? ""}`.trim()), ...taskId }
+                : o.state === "failed" || gaveUp
+                  ? { state: "failed", progress: o.progress, error: redact(o.error ?? GAVE_UP), ...taskId }
+                  : {
+                      state: o.state,
+                      progress: o.progress,
+                      error: o.error ? redact(o.error) : null,
+                      next_attempt_at: new Date(now + RETRY_MINUTES[Math.min(Math.max(tries - 1, 0), RETRY_MINUTES.length - 1)] * 60_000).toISOString(),
+                      ...taskId,
+                    };
         // Counted only once its state is saved: an item whose last save failed is counted as unknown below.
         await save(item.id, settle);
         const settled = settle.state as "delivered" | "skipped" | "failed" | "retry" | "unknown";
@@ -590,9 +625,9 @@ export async function runRequests(deps: Deps, limit = 6): Promise<JobResult> {
       stop ? `Stopped: ${stop}` : "",
     ].filter(Boolean).join(" ");
     const note = !g.apply
-      ? `Dry run: ${itemsWords(dry, claimed)} planned. Nothing was written to ClickUp.`
+      ? `Dry run: ${itemsWords(dry, claimed)} planned. Nothing was written to ClickUp. ${counts.dryRun === 1 ? "It waits" : "They wait"} in the queue for the switch.`
       : g.mode === "apply_limited"
-        ? `Testing on the canary card: ${counts.delivered} delivered, ${counts.dryRun} held as a dry run.${toRetry || counts.failed ? ` ${toRetry} to retry, ${counts.failed} failed.` : ""}`
+        ? `Testing on the canary card: ${counts.delivered} delivered, ${counts.dryRun} held as a dry run (waiting in the queue).${toRetry || counts.failed ? ` ${toRetry} to retry, ${counts.failed} failed.` : ""}`
         : `${itemsWords(delivered, claimed)} delivered, ${toRetry} to retry, ${counts.failed} failed.${counts.dryRun ? ` ${counts.dryRun} held as a dry run.` : ""}`;
     const full = tail ? `${note} ${tail}` : note;
     const ok = counts.failed === 0 && !stop;

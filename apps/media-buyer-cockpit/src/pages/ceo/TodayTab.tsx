@@ -51,6 +51,7 @@ import {
 import { type Timeframe, useTimeframe } from "@/components/ceo/timeframe";
 import type { CeoSections } from "@/components/ceo/useCeo";
 import { range as rangeText } from "@/components/ceo/windows";
+import { YourTasks } from "@/components/tasks/YourTasks";
 import { cn } from "@/lib/utils";
 import type {
   ClientRow,
@@ -206,6 +207,10 @@ export function TodayTab({ sections, now, day, goTab }: CeoTabProps) {
           <div className="grid min-w-0 gap-4 lg:gap-6">
             <LiveFeedCard section={sections.team} now={now} goTab={goTab} />
             <TeamTodayCard section={sections.team} now={now} today={today} />
+            {/* Your own ClickUp tasks (PLAN.md D19): /ceo is where the CEO
+                lands, so the card every Today carries sits here too, quietly
+                under the team. */}
+            <YourTasks />
           </div>
         </div>
 

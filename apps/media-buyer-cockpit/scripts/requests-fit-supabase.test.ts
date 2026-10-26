@@ -914,7 +914,7 @@ describe("a request on the canary card", () => {
     const run = await runRequests(writer);
     expect(run.ok, run.note).toBe(true);
     expect(run.note).toBe(
-      "Testing on the canary card: 1 delivered, 0 held as a dry run.",
+      "Testing on the canary card: 1 delivered, 0 held as a dry run (waiting in the queue).",
     );
 
     const made = [...world.tasks.values()].filter(t => t.list.id === TECH);
@@ -1054,9 +1054,17 @@ describe("a request on the canary card", () => {
     expect(said).toContain(
       "wrote in the cockpit: Started on it; the sheet lost its share.",
     );
-    expect(said).toContain(
-      `Cockpit ref T-${comment.actionId.replaceAll("-", "").slice(0, 10)}`,
-    );
+    // The marker is the one the database chose for the press (review 2026-10-26, SEC-5), never one
+    // made from the browser's action id.
+    const ref = (
+      await q<{ ref: string }>(
+        "SELECT payload->>'ref' AS ref FROM public.cockpit_clickup_writeback_queue WHERE id=$1",
+        [comment.actionId],
+      )
+    )[0].ref;
+    expect(ref).toMatch(/^T-[0-9a-f]{10}$/);
+    expect(ref).not.toBe(`T-${comment.actionId.replaceAll("-", "").slice(0, 10)}`);
+    expect(said).toContain(`Cockpit ref ${ref}`);
     // The comment's words never reach the audit log (3.4), only how long it was.
     const leaked = await q<{ n: number }>(
       "SELECT count(*)::int n FROM public.cockpit_audit_log WHERE \"after\"::text LIKE '%sheet lost its share%' OR \"before\"::text LIKE '%sheet lost its share%' OR metadata::text LIKE '%sheet lost its share%'",

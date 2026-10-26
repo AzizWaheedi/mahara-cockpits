@@ -459,7 +459,7 @@ function FocusView({
 
         {description ? (
           <details className="tk-details">
-            <summary>Details</summary>
+            <summary className="no-marker">Details</summary>
             <div className="tk-desc" dir="auto">
               {description}
             </div>

@@ -3,7 +3,7 @@
  * all five apps. Only the tokens every app defines: --card, --border,
  * --foreground, --muted, --muted-foreground, --background, --primary,
  * --primary-foreground, --warning, --destructive, --success, --ring, and
- * var(--primary-ink, var(--primary)) for teal marks (only client success
+ * var(--tk-ink) for teal text (below; only client success
  * and creative define --primary-ink). No Tailwind class, no new colour.
  *
  * Hallmark · component: request form · states: default · hover · focus ·
@@ -11,6 +11,25 @@
  * in every state; focus is an outline in the reserved slot, so nothing
  * shifts.
  */
+
+/* Teal as text. Client success and creative define --primary-ink (a darker
+ * teal on light cards). The portal, editor and sales cockpits do not, and
+ * their teal text on white was 1.95:1, so in light mode it is the teal mixed
+ * with the ink, the way sales already draws teal words (--now-ink): about
+ * 5.4:1 on white. On dark cards it is the brand teal. Defined the same in
+ * tasks.css and requests.css, so either file alone is enough; :root.dark
+ * wins over :root whichever file loads last. */
+:root {
+  --tk-ink: var(
+    --primary-ink,
+    color-mix(in oklab, var(--primary) 55%, var(--foreground))
+  );
+}
+:root.dark,
+.dark {
+  --tk-ink: var(--primary-ink, var(--primary));
+}
+
 
 .rq-form {
   display: grid;
@@ -304,7 +323,7 @@ input[type="date"].rq-input {
   width: 16px;
   height: 16px;
   margin-top: 2px;
-  color: var(--primary-ink, var(--primary));
+  color: var(--tk-ink);
 }
 .rq-route-text {
   display: grid;
@@ -392,7 +411,7 @@ input[type="date"].rq-input {
 }
 .rq-btn-ghost {
   background: transparent;
-  color: var(--primary-ink, var(--primary));
+  color: var(--tk-ink);
 }
 @media (max-width: 639px) {
   .rq-form:not(.rq-compact) .rq-actions > .rq-btn:not(.rq-btn-sm) {
@@ -406,7 +425,7 @@ input[type="date"].rq-input {
   gap: 4px;
   width: fit-content;
   border-radius: 4px;
-  color: var(--primary-ink, var(--primary));
+  color: var(--tk-ink);
   font-size: 13px;
   font-weight: 500;
   text-decoration: none;
@@ -501,6 +520,21 @@ input[type="date"].rq-input {
 .rq-sent-line {
   font-size: 14px;
   font-weight: 500;
+}
+/* A task in ClickUp the cockpit could not finish: a quiet note under it,
+   the warning colour on its dot only. */
+.rq-warn-note::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-inline-end: 6px;
+  border-radius: 999px;
+  background: var(--warning);
+  vertical-align: 1px;
+}
+.rq-off-note {
+  flex: 1 1 100%;
 }
 .rq-off {
   flex-direction: column;

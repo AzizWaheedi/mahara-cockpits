@@ -421,7 +421,7 @@ describe("the migration", () => {
       "cockpit_task_mirror_upsert(jsonb,text)",
       "cockpit_task_mirror_seat(bigint,text[])",
       "cockpit_task_mirror_comment_due(integer)",
-      "cockpit_task_mirror_comments(text,jsonb)",
+      "cockpit_task_mirror_comments(text,jsonb,timestamptz,boolean)",
       "cockpit_task_alerts_tick()",
       "cockpit_task_detail_cache(text,jsonb)",
       "cockpit_task_mirror_state(text,boolean,text,jsonb)",
@@ -438,13 +438,16 @@ describe("the migration", () => {
     const internal = [
       "cockpit_task_alert_kinds()",
       "cockpit_task_cockpit(text)",
-      "cockpit_task_hidden(text,text,text)",
+      "cockpit_task_hidden(text,text,text,boolean)",
+      "cockpit_task_alert_hidden(text,public.cockpit_task_alerts)",
+      "cockpit_task_my_set(bigint,text,timestamptz)",
+      "cockpit_task_mirror_changed(public.cockpit_task_mirror,public.cockpit_task_mirror,boolean,timestamptz)",
       "cockpit_task_audit(text,text,text,text,jsonb,jsonb,jsonb)",
       "cockpit_task_state()",
       "cockpit_task_baseline()",
       "cockpit_task_linked()",
       "cockpit_task_kinds(uuid)",
-      "cockpit_task_alert_add(uuid,text,text,text,uuid,text,text,text,text,text,timestamptz)",
+      "cockpit_task_alert_add(uuid,text,text,text,uuid,text,text,text,text,text,timestamptz,text)",
       "cockpit_task_actor_phrase(text,text)",
       "cockpit_task_client_of(text,text,text[])",
       "cockpit_task_row(public.cockpit_task_mirror)",
@@ -542,7 +545,7 @@ describe("before the baseline", () => {
 });
 
 describe("alerts after the baseline", () => {
-  test("assigned: once, only to the seat added, never from a seat or detail read, never to the creator or the requester", async () => {
+  test("assigned: once, only to the seat added, from any read that carries ClickUp's change, never to the creator or the requester", async () => {
     // Added to an existing task in a delta.
     expect((await upsert([task("pre1", { assigneeIds: [CU.csm, CU.sm] })])).alerts).toBe(1);
     expect(await alertKeys(ADMIN)).toEqual([`assigned:pre1:${ids[ADMIN]}:${tasks.get("pre1")!.dateUpdatedMs}`]);
@@ -552,10 +555,27 @@ describe("alerts after the baseline", () => {
     expect(a.kind).toBe("assigned");
     // The same read again changes nothing.
     expect((await upsert([tasks.get("pre1")!])).alerts).toBe(0);
-    // A seat or detail read corrects the mirror without alerting.
-    expect((await upsert([task("pre1", { assigneeIds: [CU.csm, CU.sm, CU.creative] })], "seat")).alerts).toBe(0);
-    expect((await upsert([task("seat1", { assigneeIds: [CU.creative] })], "detail")).alerts).toBe(0);
-    expect(await alertKeys(CREATIVE)).toEqual([]);
+    // Review 2026-10-26 (contract F1): an hourly seat read or a focus view read that carries a change
+    // ClickUp made (its date_updated moved on) alerts like the delta would have; the delta that reads
+    // the same change later says nothing more.
+    expect((await upsert([task("pre1", { assigneeIds: [CU.csm, CU.sm, CU.creative] })], "seat")).alerts).toBe(1);
+    expect(await alertKeys(CREATIVE)).toEqual([`assigned:pre1:${ids[CREATIVE]}:${tasks.get("pre1")!.dateUpdatedMs}`]);
+    expect((await upsert([tasks.get("pre1")!])).alerts).toBe(0);
+    // The mirror correcting itself (a seat read putting back an id the mirror took off, ClickUp
+    // unchanged) says nothing.
+    expect((await svc<Row>("SELECT public.cockpit_task_mirror_seat($1,ARRAY[]::text[]) r", [CU.creative])).removed).toBe(1);
+    expect((await upsert([tasks.get("pre1")!], "seat")).alerts).toBe(0);
+    expect((await q("SELECT assignee_ids FROM public.cockpit_task_mirror WHERE task_id='pre1'"))[0].assignee_ids.map(Number)).toContain(CU.creative);
+    // A task new to the mirror from a focus view read, changed after the baseline, alerts.
+    expect((await upsert([task("seat1", { assigneeIds: [CU.creative] })], "detail")).alerts).toBe(1);
+    // An old task a seat read finds for the first time (unchanged since before the baseline) never
+    // floods the bell, from any read.
+    expect((await upsert([task("old-seat1", { assigneeIds: [CU.creative], dateUpdatedMs: Date.now() - 3 * DAY })], "seat")).alerts).toBe(0);
+    expect((await upsert([task("old-seat2", { assigneeIds: [CU.creative], dateUpdatedMs: Date.now() - 3 * DAY })])).alerts).toBe(0);
+    expect((await alertKeys(CREATIVE)).filter(k => k.startsWith("assigned:"))).toEqual([
+      `assigned:pre1:${ids[CREATIVE]}:${tasks.get("pre1")!.dateUpdatedMs}`,
+      `assigned:seat1:${ids[CREATIVE]}:${tasks.get("seat1")!.dateUpdatedMs}`,
+    ]);
     // A new task: the seat that made it is not told; the other assignee is.
     expect((await upsert([task("new1", { assigneeIds: [CU.sm, CU.editor], creatorId: CU.sm })])).alerts).toBe(1);
     expect((await alertKeys(EDITOR)).some(k => k.startsWith("assigned:new1:"))).toBe(true);
@@ -563,8 +583,10 @@ describe("alerts after the baseline", () => {
     // Unlinked, deactivated and unknown people get nothing; a closed task says nothing.
     expect((await upsert([task("new2", { assigneeIds: [CU.other, CU.outsider] })])).alerts).toBe(0);
     expect((await upsert([task("new3", { assigneeIds: [CU.csm], status: "complete", statusType: "done" })])).alerts).toBe(0);
-    // A client card is never an assignment alert.
+    // A client card itself is never an assignment alert; a real subtask on a card is (ask F2).
     expect((await upsert([task("cardx1", { listId: CARDS, assigneeIds: [CU.csm] })])).alerts).toBe(0);
+    expect((await upsert([task("cardsub1", { listId: CARDS, parentId: "cardx1", assigneeIds: [CU.csm] })])).alerts).toBe(1);
+    expect((await alertKeys(CSM)).some(k => k.startsWith("assigned:cardsub1:"))).toBe(true);
     expect(await count("SELECT count(*) n FROM public.cockpit_task_alerts WHERE member_id=$1", [ids[GONE]])).toBe(0);
   });
 
@@ -653,7 +675,7 @@ describe("alerts after the baseline", () => {
     expect((await alertsOf(CSM)).filter(a => a.dedupe_key.startsWith("comment:c9"))).toEqual([]);
   });
 
-  test("a mention in the API user's own note still alerts, without a name; its plain notes do not", async () => {
+  test("the API user's note with no cockpit marker is the CEO's (F8): a mention in it alerts as the CEO; its plain notes alert nobody", async () => {
     await upsert([task("cm3", { assigneeIds: [CU.csm, CU.sm] })]);
     const r = await comments("cm3", [
       { id: "m1", authorId: CU.ceo, atMs: Date.now(), text: "Make: @Noura the kickoff is in", tagIds: [CU.csm] },
@@ -661,7 +683,7 @@ describe("alerts after the baseline", () => {
     ]);
     expect(r.alerts).toBe(1);
     const [m] = (await alertsOf(CSM)).filter(a => a.task_id === "cm3" && a.kind !== "assigned");
-    expect([m.kind, m.body, m.actor_label]).toEqual(["mention", "You were mentioned in a comment", null]);
+    expect([m.kind, m.body, m.actor_label]).toEqual(["mention", "The CEO mentioned you", "the CEO"]);
     expect((await alertsOf(ADMIN)).filter(a => a.task_id === "cm3" && a.kind !== "assigned")).toEqual([]);
   });
 
@@ -895,10 +917,15 @@ describe("the bell", () => {
     expect(b.alerts.some((a: Row) => a.kind === "mention" && a.taskId === "cardx1")).toBe(true);
     const mine = new Set((await alertsOf(CSM)).map(a => a.id));
     expect(b.alerts.every((a: Row) => mine.has(a.id))).toBe(true);
-    // The editor cockpit hides Video Pipeline alerts.
+    // The editor desk shows its own Video Pipeline alerts (ask F1); only its Your tasks leaves them to
+    // the Jobs page.
     await upsert([task("vid1", { listId: VIDEO, assigneeIds: [CU.editor] })]);
     expect((await bell(EDITOR, "portal")).alerts.some((a: Row) => a.taskId === "vid1")).toBe(true);
-    expect((await bell(EDITOR, "editor")).alerts.some((a: Row) => a.taskId === "vid1")).toBe(false);
+    expect((await bell(EDITOR, "editor")).alerts.some((a: Row) => a.taskId === "vid1")).toBe(true);
+    expect((await myTasks(EDITOR, "editor")).tasks.some((t: Row) => t.taskId === "vid1")).toBe(false);
+    expect((await myTasks(EDITOR, "portal")).tasks.some((t: Row) => t.taskId === "vid1")).toBe(true);
+    // A card's subtask alert shows; the card's own (made before this rule) would not.
+    expect(b.alerts.some((a: Row) => a.taskId === "cardsub1" && a.kind === "assigned")).toBe(true);
     // Alerts older than 14 days drop off.
     const old = (await alertsOf(CSM))[0];
     await q("ALTER TABLE public.cockpit_task_alerts DISABLE TRIGGER cockpit_task_alerts_guard");
@@ -1039,9 +1066,12 @@ describe("tick, comment and Mark done", () => {
     expect(row.source_table).toBe("cockpit_task_mirror");
     expect(row.source_id).toBe("w1");
     expect(row.task_id).toBe("w1");
+    // The comment marker is chosen by the database, never from the browser's action id (SEC-5).
+    expect(row.payload.ref).toMatch(/^T-[0-9a-f]{10}$/);
+    expect(row.payload.ref).not.toBe(`T-${A1.replaceAll("-", "").slice(0, 10)}`);
     expect(row.payload).toEqual({
       actionId: A1,
-      ref: `T-${A1.replaceAll("-", "").slice(0, 10)}`,
+      ref: row.payload.ref,
       op: "tick",
       taskId: "w1",
       listId: CS_LIST,
@@ -1087,6 +1117,9 @@ describe("tick, comment and Mark done", () => {
     const [d3] = await q("SELECT payload FROM public.cockpit_clickup_writeback_queue WHERE id=$1", [A3]);
     expect(d3.payload.actor).toEqual({ memberId: ids[ADMIN], clickupUserId: CU.sm, label: "the systems manager", isAdmin: true });
     expect(d3.payload.statusSeen).toBe("to do");
+    // Each seat's focus view lists only its own presses; another seat's action ids never leave the database.
+    expect((await detail(CSM, "w1")).actions.map((a: Row) => a.id)).toEqual([A2, A1]);
+    expect((await detail(ADMIN, "w1")).actions.map((a: Row) => a.id)).toEqual([A3]);
     await upsert([task("unread1", { assigneeIds: [CU.sm], listId: TECH })]);
     const A4 = uuid(513);
     await act(EDITOR, A4, "unread1", "comment", { text: "Thanks" });
@@ -1183,5 +1216,131 @@ describe("the service door", () => {
 
   test("the mirror leaves no audit row per task", async () => {
     expect(await count("SELECT count(*) n FROM public.cockpit_audit_log WHERE entity_type='cockpit_task_mirror' AND action<>'task.act'")).toBe(0);
+  });
+});
+
+describe("review 2026-10-26", () => {
+  const commentsAt = (taskId: string, list: Row[], readAt: string | null, failed = false) =>
+    svc<Row>("SELECT public.cockpit_task_mirror_comments($1,$2::jsonb,$3::timestamptz,$4) r", [taskId, JSON.stringify(list), readAt, failed]);
+  const due = async () => (await svc<Row[]>("SELECT public.cockpit_task_mirror_comment_due(60) r")).map(d => d.taskId as string);
+  const mirrorRow = async (id: string) => (await q("SELECT * FROM public.cockpit_task_mirror WHERE task_id=$1", [id]))[0];
+
+  test("ask F2: a real subtask of a client card is on Your tasks; the card itself is not", async () => {
+    await upsert([
+      task("rv-card", { listId: CARDS, assigneeIds: [CU.creative] }),
+      task("rv-cardsub", { listId: CARDS, parentId: "rv-card", assigneeIds: [CU.creative] }),
+    ]);
+    const mine = (await myTasks(CREATIVE)).tasks.map((t: Row) => t.taskId);
+    expect(mine).toContain("rv-cardsub");
+    expect(mine).not.toContain("rv-card");
+  });
+
+  test("contract F2: due today counts what Your tasks shows; the editor desk, which keeps Video Pipeline on Jobs, gets its own count", async () => {
+    let day = addDays(today(), 9);
+    while (![0, 1, 2, 3, 4].includes(new Date(`${day}T12:00:00Z`).getUTCDay())) day = addDays(day, 1);
+    await upsert([
+      task("rv-dvid", { listId: VIDEO, listName: "Video Pipeline", assigneeIds: [CU.editor], dueAtMs: noon(day) }),
+      task("rv-dtech", { assigneeIds: [CU.editor], dueAtMs: noon(day) }),
+      task("rv-dtechsub", { parentId: "rv-dtech", assigneeIds: [CU.editor], dueAtMs: noon(day) }),
+      task("rv-dcard", { listId: CARDS, assigneeIds: [CU.editor], dueAtMs: noon(day) }),
+    ]);
+    // The editor's shift starts at 13:00 (an earlier test); 13:30 Kuwait.
+    await tickAt(noon(day) + 90 * MIN);
+    const dues = (await alertsOf(EDITOR)).filter(a => a.kind === "due_today" && a.dedupe_key.includes(day));
+    expect(dues.map(a => [a.dedupe_key, a.title, a.scope, a.list_id])).toEqual([
+      [`due_today:${ids[EDITOR]}:${day}`, "2 tasks are due today", "not_editor", null],
+      [`due_today:${ids[EDITOR]}:${day}:editor`, "1 task is due today", "editor", null],
+    ]);
+    const [all, edOnly] = dues.map(a => a.id as string);
+    const portal = (await bell(EDITOR, "portal")).alerts.map((a: Row) => a.id);
+    const desk = (await bell(EDITOR, "editor")).alerts.map((a: Row) => a.id);
+    expect([portal.includes(all), portal.includes(edOnly)]).toEqual([true, false]);
+    expect([desk.includes(all), desk.includes(edOnly)]).toEqual([false, true]);
+    // Ticking again that day adds nothing.
+    await tickAt(noon(day) + 120 * MIN);
+    expect((await alertsOf(EDITOR)).filter(a => a.kind === "due_today" && a.dedupe_key.includes(day)).length).toBe(2);
+  });
+
+  test("contract F1: a status the focus view's live read finds is told, once", async () => {
+    // The systems manager wants every kind (the CSM's rules, set above, keep only assigned and mention).
+    await upsert([task("rv-st", { assigneeIds: [CU.sm], status: "to do", statusType: "open" })]);
+    await svc("SELECT public.cockpit_task_detail_cache('rv-st',$1::jsonb) r", [JSON.stringify({ status: "in review", statusType: "custom" })]);
+    expect((await mirrorRow("rv-st")).status).toBe("in review");
+    expect((await alertsOf(ADMIN)).filter(a => a.task_id === "rv-st" && a.kind === "status").map(a => a.body)).toEqual(["Moved to in review"]);
+    // The delta that reads the same move later says nothing more.
+    await upsert([task("rv-st", { status: "in review", statusType: "custom" })]);
+    expect((await alertsOf(ADMIN)).filter(a => a.task_id === "rv-st" && a.kind === "status").length).toBe(1);
+  });
+
+  test("F6: a thread is read up to when its read began, so a comment posted meanwhile is read next time", async () => {
+    await upsert([task("rv-rd", { assigneeIds: [CU.sm] })]);
+    // Its last read was two minutes ago (after the baseline).
+    await q("UPDATE public.cockpit_task_mirror SET comments_read_at=now()-interval '2 minutes' WHERE task_id='rv-rd'");
+    const now = Date.now();
+    const readAt = new Date(now - 30_000).toISOString();
+    expect((await commentsAt("rv-rd", [{ id: "rd-1", authorId: CU.csm, atMs: now - 60_000, text: "first" }], readAt)).alerts).toBe(1);
+    expect(new Date((await mirrorRow("rv-rd")).comments_read_at).toISOString()).toBe(readAt);
+    // Posted while that read ran (after it began): the next read tells it.
+    expect((await commentsAt("rv-rd", [{ id: "rd-2", authorId: CU.csm, atMs: now - 10_000, text: "meanwhile" }], null)).alerts).toBe(1);
+    // The read time never goes back, and never past now; old callers (two arguments) still work.
+    const later = new Date((await mirrorRow("rv-rd")).comments_read_at).getTime();
+    await commentsAt("rv-rd", [], new Date(now - 3600_000).toISOString());
+    expect(new Date((await mirrorRow("rv-rd")).comments_read_at).getTime()).toBe(later);
+    await commentsAt("rv-rd", [], new Date(now + 3600_000).toISOString());
+    expect(new Date((await mirrorRow("rv-rd")).comments_read_at).getTime()).toBeLessThanOrEqual(Date.now());
+    expect((await comments("rv-rd", [])).alerts).toBe(0);
+  });
+
+  test("a thread read that failed counts, leaves the read time and steps the task back: 2, 4, 8 minutes, at most an hour", async () => {
+    await upsert([task("rv-fail", { assigneeIds: [CU.csm] })]);
+    expect(await due()).toContain("rv-fail");
+    const before = (await mirrorRow("rv-fail")).comments_read_at;
+    expect(await commentsAt("rv-fail", [{ id: "f-1", authorId: CU.sm, atMs: Date.now(), text: "x" }], null, true)).toEqual({ alerts: 0 });
+    let row = await mirrorRow("rv-fail");
+    expect([row.comments_failures, row.comments_failed_at !== null, row.comments_read_at]).toEqual([1, true, before]);
+    expect(await due()).not.toContain("rv-fail");
+    // One failure waits 2 minutes.
+    await q("UPDATE public.cockpit_task_mirror SET comments_failed_at=now()-interval '3 minutes' WHERE task_id='rv-fail'");
+    expect(await due()).toContain("rv-fail");
+    // Three in a row wait 8 minutes; a great many wait at most an hour.
+    await q("UPDATE public.cockpit_task_mirror SET comments_failures=3, comments_failed_at=now()-interval '5 minutes' WHERE task_id='rv-fail'");
+    expect(await due()).not.toContain("rv-fail");
+    await q("UPDATE public.cockpit_task_mirror SET comments_failures=40, comments_failed_at=now()-interval '61 minutes' WHERE task_id='rv-fail'");
+    expect(await due()).toContain("rv-fail");
+    // A read that works resets the count.
+    await commentsAt("rv-fail", [], null);
+    row = await mirrorRow("rv-fail");
+    expect([row.comments_failures, row.comments_failed_at]).toEqual([0, null]);
+    expect(row.comments_read_at).not.toBeNull();
+  });
+
+  test("F8: in the focus view, the API user's comment with no marker is the CEO's; a cockpit marker is the cockpit's", async () => {
+    await upsert([task("rv-f8", { assigneeIds: [CU.csm, CU.ceo] })], "detail");
+    const now = Date.now();
+    await svc("SELECT public.cockpit_task_detail_cache('rv-f8',$1::jsonb) r", [
+      JSON.stringify({
+        comments: [
+          { id: "f8-1", authorId: CU.ceo, atMs: now - 1000, text: "Please move this up" },
+          { id: "f8-2", authorId: CU.ceo, atMs: now - 2000, text: "Cockpit · the CSM asked Operations / Tech: X\n\nCockpit ref R-1a2b3c4d5e-main-card" },
+        ],
+      }),
+    ]);
+    const byCsm = (await detail(CSM, "rv-f8")).detail.comments.map((c: Row) => [c.id, c.authorLabel, c.mine]);
+    expect(byCsm).toEqual([
+      ["f8-1", "the CEO", false],
+      ["f8-2", "the cockpit", false],
+    ]);
+    const byCeo = (await detail(CEO, "rv-f8")).detail.comments.map((c: Row) => [c.id, c.mine]);
+    expect(byCeo).toEqual([
+      ["f8-1", true],
+      ["f8-2", false],
+    ]);
+  });
+
+  test("the inputs say when the last delta stopped part way", async () => {
+    await mirrorState("delta", false, { cursorMs: Date.now(), truncated: true });
+    expect((await svc<Row>("SELECT public.cockpit_task_mirror_inputs() r")).deltaTruncated).toBe(true);
+    await mirrorState("delta", true, { cursorMs: Date.now(), truncated: false });
+    expect((await svc<Row>("SELECT public.cockpit_task_mirror_inputs() r")).deltaTruncated).toBe(false);
   });
 });

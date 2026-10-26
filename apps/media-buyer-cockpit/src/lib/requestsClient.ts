@@ -1,8 +1,8 @@
 /**
  * Requests: thin wrappers over the browser functions of
- * docs/requests/CONTRACT.md 2.5. Each one throws the server's own sentence
- * (a RequestError, with the Postgres code when there is one), so a screen
- * shows exactly what the database refused and why. Byte-identical in all
+ * docs/requests/CONTRACT.md 2.5. Each one throws a RequestError: the
+ * server's own sentence when it refused on purpose, plain words when the
+ * database or the network failed (the raw text goes to the console). Byte-identical in all
  * five apps (scripts/check-shared.sh).
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -34,6 +34,59 @@ type RpcAnswer = {
   error: { message?: string; code?: string } | null;
 };
 
+/**
+ * The codes the request and task functions raise their own sentences with
+ * (RAISE EXCEPTION ... USING ERRCODE, migrations r and t): those sentences
+ * are written for the screen and shown as they are. Anything else is the
+ * database or the network talking, and the screen says it in plain words.
+ */
+const OWN_SENTENCE_CODES = new Set([
+  "P0001",
+  "P0002",
+  "22023",
+  "23505",
+  "40001",
+  "42501",
+  "55000",
+]);
+
+/**
+ * Postgres's own wording, which can come back under the same codes (a grant
+ * missing, a constraint, a bad value): never shown as it is.
+ */
+const RAW_DATABASE =
+  /permission denied|duplicate key value|violates [\w-]+ constraint|invalid input syntax|syntax error|does not exist|canceling statement|null value in column/i;
+
+/** Plain words for what the database or the network said (D5). */
+export const PLAIN_ERRORS = {
+  unreachable:
+    "The cockpit could not reach the database. Check your connection, then try again.",
+  slow: "The database took too long to answer. Try again in a minute.",
+  signedOut: "Your sign-in has run out. Sign in again, then try again.",
+  other:
+    "The database could not answer just now. Try again in a minute; if it keeps happening, tell the systems manager.",
+  nothing: "The database sent back nothing. Try again.",
+  notAllowed:
+    "Your seat cannot do this here. Ask the systems manager if you need it.",
+  clash: "That is already saved for someone else. Reload, then try again.",
+} as const;
+
+/** The plain sentence for a database refusal that is not one of ours. */
+export function plainError(code: string | null, message: string): string {
+  if (
+    code === "57014" ||
+    /statement timeout|canceling statement/i.test(message)
+  )
+    return PLAIN_ERRORS.slow;
+  if (code === "PGRST301" || code === "PGRST302" || /jwt/i.test(message))
+    return PLAIN_ERRORS.signedOut;
+  if (/failed to fetch|network|load failed|fetch failed/i.test(message))
+    return PLAIN_ERRORS.unreachable;
+  if (code === "42501") return PLAIN_ERRORS.notAllowed;
+  if (code === "23505") return PLAIN_ERRORS.clash;
+  return PLAIN_ERRORS.other;
+}
+
 /** One RPC, its refusal turned into a RequestError. */
 export async function callRequests<T>(
   client: SupabaseClient,
@@ -44,11 +97,9 @@ export async function callRequests<T>(
   try {
     answer = (await client.rpc(name, args)) as RpcAnswer;
   } catch (e) {
-    throw new RequestError(
-      e instanceof Error && e.message
-        ? `The cockpit could not reach the database: ${e.message}`
-        : "The cockpit could not reach the database. Try again in a minute.",
-    );
+    // The raw text goes to the console for whoever debugs it, not the screen.
+    console.warn(`${name} could not reach the database`, e);
+    throw new RequestError(PLAIN_ERRORS.unreachable);
   }
   if (answer.error) {
     const code = answer.error.code ?? null;
@@ -56,13 +107,18 @@ export async function callRequests<T>(
     if (code === "PGRST202" || code === "42883")
       throw new RequestError(REQUEST_SENTENCES.missingFunction, code);
     const message = (answer.error.message ?? "").trim();
-    throw new RequestError(
-      message || "The database refused this without a reason.",
-      code,
-    );
+    if (
+      code &&
+      OWN_SENTENCE_CODES.has(code) &&
+      message &&
+      !RAW_DATABASE.test(message)
+    )
+      throw new RequestError(message, code);
+    console.warn(`${name} refused`, code, message);
+    throw new RequestError(plainError(code, message), code);
   }
   if (answer.data === null || answer.data === undefined)
-    throw new RequestError("The database sent back nothing. Try again.");
+    throw new RequestError(PLAIN_ERRORS.nothing);
   return answer.data as T;
 }
 
@@ -148,8 +204,13 @@ export function newRequestId(): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
-/** A thrown value as a sentence. */
+/**
+ * A thrown value as a sentence. A RequestError already carries the words
+ * the screen should show; anything else (a bug, a browser error) is kept
+ * out of the screen and logged.
+ */
 export function errorWords(e: unknown): string {
-  const text = e instanceof Error ? e.message : String(e ?? "");
-  return text.trim() || "Something went wrong. Try again.";
+  if (e instanceof RequestError && e.message.trim()) return e.message.trim();
+  console.warn("Request screen error", e);
+  return plainError(null, e instanceof Error ? e.message : String(e ?? ""));
 }
