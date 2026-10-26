@@ -20,7 +20,11 @@ import { KICKOFF } from "@/forms/kickoff";
 import { cn } from "@/lib/utils";
 import { focusOf } from "./AdsStage";
 import { makeAddFiles } from "./adsActions";
-import { BlueprintNotes } from "./BlueprintNotes";
+import {
+  BlueprintDoHere,
+  BlueprintNotes,
+  BlueprintWrapUp,
+} from "./BlueprintNotes";
 import { CallGuideLine, PracticeNote } from "./CallGuide";
 import type { DeckMessage } from "./channel";
 import { DECK_NAME, t } from "./content";
@@ -344,6 +348,8 @@ export function NotesWindow({
   const zoomDone = useRef(false);
   /** The deck window closed: the recap takes the talk track's place. */
   const [deckClosed, setDeckClosed] = useState(false);
+  /** The Blueprint wrap-up, opened from slide 14 before the deck window closes. */
+  const [wrapOpen, setWrapOpen] = useState(false);
   /** "If they push back": stays as the CSM left it, open once opened. */
   const [pushOpen, setPushOpen] = useState(false);
   const drive = useDriveImports({
@@ -557,7 +563,24 @@ export function NotesWindow({
             ) : null}
           </section>
         ) : null}
-        <section className="space-y-2" hidden={deckClosed}>
+        {deck === "blueprint" ? (
+          deckClosed || wrapOpen ? (
+            <BlueprintWrapUp
+              bp={base.bp}
+              d={d}
+              onBack={deckClosed ? undefined : () => setWrapOpen(false)}
+            />
+          ) : (
+            <BlueprintDoHere
+              bp={base.bp}
+              d={d}
+              slideId={slide.id}
+              reload={model.reload}
+              onWrap={() => setWrapOpen(true)}
+            />
+          )
+        ) : null}
+        <section className="space-y-2" hidden={deckClosed || wrapOpen}>
           <h3 className="text-xs font-medium text-muted-foreground">Say</h3>
           <SayList
             lines={notes.say}
@@ -728,12 +751,14 @@ export function NotesWindow({
         ) : null}
 
         {deck === "blueprint" ? (
-          <BlueprintNotes
-            bp={base.bp}
-            d={d}
-            slideId={slide.id}
-            reload={model.reload}
-          />
+          deckClosed || wrapOpen ? null : (
+            <BlueprintNotes
+              bp={base.bp}
+              d={d}
+              slideId={slide.id}
+              reload={model.reload}
+            />
+          )
         ) : deck === "launch" ? (
           <LaunchControls
             slideId={slide.id}

@@ -4290,7 +4290,9 @@ export function blueprintSlides(): SlideDef[] {
     def("content", ctx => <Content ctx={ctx} />),
     def("read-back", ctx => <ReadBack ctx={ctx} />),
     def("next", ctx => <Next ctx={ctx} />, {
-      todo: () => ["Book the launch call, then press Close the call."],
+      todo: () => [
+        "Book the launch call. After you hang up, press Close the call in the wrap-up.",
+      ],
     }),
   ];
 }

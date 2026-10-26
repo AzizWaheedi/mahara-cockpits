@@ -1151,8 +1151,7 @@ export const BP_NOTES: Record<BpSlideId, SlideNotes> = {
     say: [
       "Book the launch call now, in its own window. Check the booking in your notes.",
       "Stop 1: the string. Amber cards are theirs: the four shots. The first card says part 1 is sent only once Send to media went.",
-      "Then press Close the call in your notes.",
-      "Anything for the CSM (capacity, a second service, more ads) goes in your notes, never into this conversation.",
+      "After you hang up, the wrap-up opens in your notes: add anything for the CSM there, then press Close the call.",
     ],
     sayAr: [
       "هذا اللي بيصير بعد اليوم. البطاقات الصفرا عليكم.",

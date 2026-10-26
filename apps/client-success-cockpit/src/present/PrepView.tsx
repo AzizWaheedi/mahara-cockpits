@@ -458,6 +458,7 @@ export function PrepView({
                   d={d}
                   slideId={slide.id}
                   reload={model.reload}
+                  inPrep
                 />
               ) : deck === "launch" ? (
                 <LaunchControls

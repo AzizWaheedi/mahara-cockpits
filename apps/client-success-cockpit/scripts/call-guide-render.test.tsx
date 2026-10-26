@@ -427,7 +427,9 @@ describe("the Brand Blueprint", () => {
       view: "prep",
       loaded,
     });
-    expect(band()?.textContent).toContain("Read the prep and draft the offer");
+    expect(band()?.textContent).toContain(
+      "Confirm part 1 and draft the offer in prep",
+    );
     expect(band()?.textContent).toContain("Step 1 of 7");
     // Its presses carry the beacon's hook.
     expect(win.document.querySelector('[data-guide="part1"]')).not.toBeNull();
