@@ -26,6 +26,8 @@
  * cockpit's own refusal for a seat without the creative director's role.
  * view=notes is the notes popup the deck's N opens (state=checking: its
  * line while the sign-in is checked; state=noseat: the refusal in it).
+ * practice=1 with view=call or notes is the practice client's call
+ * (docs/call-guide/DESIGN.md), on the deck harness's practice=1 frames.
  *
  * Every save, press and run is held in this page's memory; nothing reaches
  * Supabase, ClickUp, Slack or Make.
@@ -55,7 +57,7 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { isBlueprintCall } from "@/lib/blueprint";
 import { buildSnapshot, snapshotContext } from "@/lib/creativeSourceModels";
-import type { PartAnchor } from "@/lib/deckHost";
+import { type PartAnchor, PRACTICE_NAME, PRACTICE_TASK } from "@/lib/deckHost";
 import {
   BlueprintCall,
   type Call,
@@ -82,6 +84,8 @@ const bp = params.get("bp") ?? "closed";
 const rehearse = params.get("rehearse") === "1";
 const admin = params.get("admin") === "1";
 const light = params.get("theme") === "light";
+/** practice=1 (view=call or notes): the practice client's call, docs/call-guide/DESIGN.md. */
+const practice = params.get("practice") === "1";
 if (light) document.documentElement.classList.remove("dark");
 
 /** The top of the client's page, drawn plainly so the card sits in place. */
@@ -216,7 +220,7 @@ const fixture = params.get("fixture") ?? "full";
 const cardBp = params.get("bp") ?? "part1";
 const deckBp = DECK_BP.has(cardBp) ? cardBp : "part1";
 /** The deck harness's own ID, so the call's channel is its frames' channel. */
-const CALL_TASK = `fixture-${fixture}`;
+const CALL_TASK = practice ? PRACTICE_TASK : `fixture-${fixture}`;
 const DECK_HARNESS = "/client-success/present-harness.html";
 
 function deckHarness(v: "prep" | "present" | "notes", notes?: string) {
@@ -226,6 +230,7 @@ function deckHarness(v: "prep" | "present" | "notes", notes?: string) {
     fixture,
     bp: deckBp,
   });
+  if (practice) q.set("practice", "1");
   if (rehearse) q.set("rehearse", "1");
   if (light) q.set("theme", "light");
   q.set("host", "creative");
@@ -236,6 +241,7 @@ function deckHarness(v: "prep" | "present" | "notes", notes?: string) {
 /** The notes popup the deck's N and the header's button open. */
 const notesView = (() => {
   const q = new URLSearchParams({ view: "notes", fixture, bp: cardBp });
+  if (practice) q.set("practice", "1");
   if (rehearse) q.set("rehearse", "1");
   if (light) q.set("theme", "light");
   return `/creative/blueprint-harness.html?${q.toString()}`;
@@ -278,7 +284,29 @@ function CallView() {
   const state = params.get("state");
   const forced = forcedCall(state);
   if (state === "noseat") return <NotYourCockpit home="/client-success/" />;
+  if (practice) return <PracticeHarnessCall />;
   return <HarnessCall state={state} forced={forced} />;
+}
+
+/** The practice call, as PracticeCallPage draws it, on the deck harness's practice frames. */
+function PracticeHarnessCall() {
+  const [read] = useState(() => ({
+    row: null,
+    now: new Date().toISOString(),
+    at: Date.now(),
+  }));
+  return (
+    <BlueprintCall
+      taskId={PRACTICE_TASK}
+      rehearse={false}
+      practice
+      io={null}
+      clientName={PRACTICE_NAME}
+      frames={harnessFrames}
+      initialRead={read}
+      host={window.location.host}
+    />
+  );
 }
 
 function HarnessCall({

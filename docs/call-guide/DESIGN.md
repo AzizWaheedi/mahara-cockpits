@@ -111,8 +111,9 @@ both apps already share byte for byte. The screens are the real ones
 `practice` on, so the guide is the same one the real call shows.
 
 **Where it starts.** The onboarding call before the kickoff, nothing
-booked. The launch call as the fixture has it. The Blueprint with part 1
-not filled, so the creative director practises the prep too.
+booked. The launch call as the fixture has it. The Blueprint as a good
+prep leaves it: part 1 answered, with capacity and the starter pack's
+approval left for the call, then Send to media.
 
 **Nothing leaves the browser.**
 

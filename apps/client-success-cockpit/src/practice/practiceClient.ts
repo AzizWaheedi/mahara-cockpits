@@ -56,7 +56,9 @@ export function practiceLoaded(
   presenter: string | null,
 ): Loaded {
   if (deck === "blueprint") {
-    const loaded = blueprintLoaded("full", "open", { rehearse: true });
+    // As a good prep leaves it: on the call, capacity and the starter
+    // pack's approval are left, then Send to media.
+    const loaded = blueprintLoaded("full", "part1", { rehearse: true });
     return {
       ...loaded,
       kit: loaded.kit
