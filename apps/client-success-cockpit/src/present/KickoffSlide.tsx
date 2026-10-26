@@ -856,6 +856,7 @@ export function KickoffNotes({
             sent && trail ? (
               <AfterSend
                 config={KICKOFF}
+                taskId={view.taskId}
                 links={view.links ?? undefined}
                 sent={sent}
                 trail={trail}

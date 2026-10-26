@@ -90,6 +90,85 @@ describe("kickoff.ts holds the config and the registry", () => {
   });
 });
 
+describe("the kickoff's words tell the truth (docs/forms/PLAN.md S9, S10)", () => {
+  test("after the send: Make updates the card, the CSM books the call, the team hears in Slack", () => {
+    expect(KICKOFF.after.say).toBe(
+      "Kickoff sent. Make is updating the card. Book the Brand Blueprint call below.",
+    );
+    expect(KICKOFF.after.doneSay).toBe(
+      "Kickoff sent. The card is updated. Book the Brand Blueprint call below.",
+    );
+    // Where the team hears comes from the notice, never from code (D17).
+    expect(KICKOFF.after.sub("#onboarding")).toBe(
+      "The team hears in #onboarding once the card is updated.",
+    );
+    expect(read("src/forms/kickoff.ts")).not.toMatch(
+      /#csm-general|#media-general/,
+    );
+    expect(KICKOFF.again).toBe(
+      "a second Kickoff Handoff comment, a second Technical and Creative task and a second WhatsApp to the client's group",
+    );
+    expect(KICKOFF.makeDoes).toEqual([
+      "The Kickoff Handoff comment, with every answer, on the client's ClickUp card.",
+      "A Technical Onboarding task and a Creative Onboarding task.",
+      "The Brand Blueprint link on the card, and the card at Brand Blueprint Booked.",
+      "The Onboarding Map at phase 4.",
+      "The phase 4 WhatsApp to the client's group.",
+    ]);
+    const all = [
+      KICKOFF.after.say,
+      KICKOFF.after.doneSay,
+      KICKOFF.after.sub("Slack"),
+      ...KICKOFF.makeDoes,
+    ];
+    for (const line of all) {
+      expect(line).not.toMatch(/booking the Brand Blueprint|Make 06|summary/);
+      expect(line).not.toMatch(/[!—]/);
+    }
+  });
+
+  test("KICKOFF.md 4.4 quotes the second-kickoff warning the window shows", () => {
+    const doc = read("../../docs/csm-forms/KICKOFF.md");
+    const section =
+      doc.match(/### 4\.4 A second kickoff([\s\S]*?)\n### /)?.[1] ?? "";
+    const quoted = section
+      .split("\n")
+      .filter(l => l.startsWith(">"))
+      .map(l => l.replace(/^>\s?/, ""))
+      .join(" ")
+      .replace(/\s+/g, " ");
+    expect(quoted).toContain(
+      `Sending another runs Make again: ${KICKOFF.again}.`,
+    );
+    expect(quoted).not.toContain("summary");
+  });
+
+  test("the trail's last link opens the cockpit's own Blueprint; the old Typeform is gone", () => {
+    const back = KICKOFF.after.linkBack;
+    expect(back).toMatchObject({
+      key: "blueprint_form",
+      label: "The card has the Brand Blueprint link",
+      pending: "Make adds the Brand Blueprint link to the card",
+      short: "the Blueprint link",
+      open: "Open the Brand Blueprint",
+    });
+    expect(back?.href?.("86fixture1")).toBe(
+      "/client-success/clients/86fixture1/present/blueprint?view=prep",
+    );
+    expect(read("src/forms/kickoff.ts")).not.toContain("oYZKtogO");
+    expect(KICKOFF.after.notice).toMatchObject({
+      kind: "kickoff",
+      line: "Once Make has updated the card, usually within a few minutes.",
+    });
+    expect(KICKOFF.after.notice?.pending("#csm-general")).toBe(
+      "The team hears in #csm-general",
+    );
+    expect(KICKOFF.after.notice?.pending("Slack")).toBe(
+      "The team hears in Slack",
+    );
+  });
+});
+
 describe("the core's dependencies are the ones KICKOFF.md 2.6 lists", () => {
   const doc = read("../../docs/csm-forms/KICKOFF.md");
   const section =

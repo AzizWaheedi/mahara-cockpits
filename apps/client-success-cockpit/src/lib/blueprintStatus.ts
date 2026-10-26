@@ -17,6 +17,9 @@ const row = z.object({
   taskId: text,
   clientName: text,
   parts: z.record(text, stamp),
+  // The first close found the Onboarding Map at phase 5 or later, so it left
+  // the map and the phase 5 paste out (20261025o, X11).
+  closeMapSkipped: z.boolean().optional(),
 });
 const read = z.object({ rows: z.array(row), now: text });
 const settings = z.object({ closeRoute: text });
@@ -29,6 +32,8 @@ export type BlueprintStatus = {
   parts: BlueprintParts | null;
   /** null when the setting could not be read: the copy button then stays away. */
   closeRoute: string | null;
+  /** The client was already past phase 5 at the first close: no phase 5 message to paste. */
+  closeMapSkipped?: boolean;
   now: string;
 };
 
@@ -57,6 +62,7 @@ export async function readBlueprintStatus(
   return {
     parts: mine ? (mine.parts as BlueprintParts) : null,
     closeRoute,
+    ...(mine?.closeMapSkipped ? { closeMapSkipped: true } : {}),
     now: page.data.now,
   };
 }
@@ -118,18 +124,21 @@ export function blueprintDone(parts: BlueprintParts | null): boolean {
 /**
  * What the CSM pastes in the client's WhatsApp group after the call: the
  * same text as the card comment (blueprintBrief.ts). Only once the call is
- * closed, and never while Make is the one that sends it. Until Make 14's
+ * closed, never while Make is the one that sends it, and never for a client
+ * the first close found already past phase 5 (X11: the card comment has no
+ * paste then, and the notice says there is none to send). Until Make 14's
  * phase 5 text is copied into the cockpit, the map link is what is copied.
  */
 export function phase5Copy(args: {
   taskId: string;
   clientName: string;
-  status: Pick<BlueprintStatus, "parts" | "closeRoute">;
+  status: Pick<BlueprintStatus, "parts" | "closeRoute" | "closeMapSkipped">;
   links: Record<string, string | undefined>;
 }): { label: string; text: string; note: string | null } | null {
   const { status } = args;
   if (!status.parts?.["2"]) return null;
   if (!status.closeRoute || status.closeRoute === "make") return null;
+  if (status.closeMapSkipped) return null;
   const folder = args.links.drive_folder ?? args.links.drive ?? null;
   const message = phase5Message({
     card: { id: args.taskId, name: args.clientName },
@@ -137,7 +146,7 @@ export function phase5Copy(args: {
   });
   return message
     ? {
-        label: "Copy the phase 5 message for the group",
+        label: "Copy the phase 5 message",
         text: message,
         note: null,
       }
@@ -158,3 +167,65 @@ export function blueprintPrepUrl(taskId: string): string {
 }
 export const blueprintPrepWindow = (taskId: string) =>
   `mahara-prep-${taskId}-blueprint`;
+
+/** The stages before launch at which a Blueprint call is held. */
+const NUDGE_STAGE = /brand blueprint booked|ready for launch/i;
+/** A Blueprint call that took place, or was due to. */
+const HELD = new Set(["held", "showed", "confirmed", "booked"]);
+
+/** The phase in the card's Onboarding Map link (`?phase=4`), or null. */
+export function mapPhaseOf(url: string | null | undefined): number | null {
+  const m = String(url ?? "").match(/[?&]phase=([0-9]+)/);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * A Blueprint call took place, yet the cockpit has no close for it (docs/
+ * forms/PLAN.md S8; the same rule as cockpit_blueprint_sources'
+ * blueprintCall.nudge, on the CSM's own reads): the card at Brand Blueprint
+ * Booked or Ready For Launch, its Onboarding Map at phase 4 or lower, the
+ * latest past `kind = blueprint` call, and no part 2. Null otherwise.
+ */
+export function blueprintNudge(args: {
+  stage: string | null | undefined;
+  mapUrl: string | null | undefined;
+  parts: BlueprintParts | null | undefined;
+  calls: { kind: string; startsAt?: string; status: string }[];
+  now: string;
+}): { heldAt: string } | null {
+  if (!NUDGE_STAGE.test(String(args.stage ?? ""))) return null;
+  if ((mapPhaseOf(args.mapUrl) ?? 0) > 4) return null;
+  if (args.parts?.["2"]) return null;
+  const now = Date.parse(args.now);
+  const held = args.calls
+    .filter(
+      c =>
+        c.kind === "blueprint" &&
+        HELD.has(String(c.status).toLowerCase()) &&
+        Number.isFinite(Date.parse(String(c.startsAt ?? ""))) &&
+        Date.parse(String(c.startsAt)) <= now,
+    )
+    .map(c => String(c.startsAt))
+    .sort((a, b) => Date.parse(b) - Date.parse(a));
+  return held[0] ? { heldAt: held[0] } : null;
+}
+
+/** Only these stages read the call store for the nudge. */
+export const nudgeStage = (stage: string | null | undefined) =>
+  NUDGE_STAGE.test(String(stage ?? ""));
+
+/** "Sun 18 Oct", Kuwait's calendar. */
+export function nudgeDay(iso: string): string {
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return "";
+  const k = new Date(at + KUWAIT_MS);
+  return `${WEEKDAY[k.getUTCDay()]} ${k.getUTCDate()} ${MONTH[k.getUTCMonth()]}`;
+}
+
+/**
+ * The nudge's one sentence, for the CSM: the creative director closes the
+ * call from their own call page, which this seat cannot open, so the next
+ * step is theirs to ask for.
+ */
+export const nudgeLine = (heldAt: string) =>
+  `Blueprint call held ${nudgeDay(heldAt)}. No Blueprint record yet. Ask the creative director to close the call.`;

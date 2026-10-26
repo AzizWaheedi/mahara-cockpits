@@ -1,4 +1,4 @@
-import { Presentation } from "lucide-react";
+import { ArrowUpRight, Presentation } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
@@ -7,11 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   blueprintMembers,
-  CLOSE_ROUTES,
-  type CloseRoute,
   DRIVE_FOLDER,
   dayShort,
   folderView,
+  NOTICES_SETTINGS_URL,
   problem,
   readBlueprintSettings,
   SERVICES,
@@ -24,15 +23,17 @@ import { cn } from "@/lib/utils";
 /**
  * Settings, "Brand Blueprint" (docs/brand-blueprint SPEC.md 4.3): the five
  * starter packs, the launch media buyer, and what happens after Close the
- * call. Each change goes through cockpit_blueprint_settings_set, which
- * checks it and writes one audit row; the members list is read from ClickUp
- * with a GET through cockpit-creative-api.
+ * call, which is fixed now (docs/forms/PLAN.md D5: the close writes the card
+ * only; Slack hears through the client success cockpit's notices). Each
+ * change goes through cockpit_blueprint_settings_set, which checks it and
+ * writes one audit row; the members list is read from ClickUp with a GET
+ * through cockpit-creative-api.
  */
 
 export type SettingsIO = {
   read: () => Promise<Settings>;
   set: (
-    key: `pack.${ServiceKey}` | "launch_assignee" | "close_route",
+    key: `pack.${ServiceKey}` | "launch_assignee",
     value: string | null,
     label?: string | null,
   ) => Promise<Settings>;
@@ -115,7 +116,7 @@ export function BlueprintSettings({
             onSaved={setSettings}
             initialMembers={initial?.members}
           />
-          <CloseSwitch settings={settings} io={io} onSaved={setSettings} />
+          <AfterClose />
         </div>
       ) : null}
     </section>
@@ -144,8 +145,7 @@ function Group({
 
 function changedLine(settings: Settings, key: string): string | null {
   const c = settings.changes?.[key];
-  // The close switch's first value comes with the migration, not a person.
-  if (!c || (key === "close_route" && !c.by)) return null;
+  if (!c) return null;
   return `Set ${dayShort(c.at)}${c.by ? ` by ${c.by}` : ""}`;
 }
 
@@ -469,142 +469,26 @@ function LaunchBuyer({
   );
 }
 
-function CloseSwitch({
-  settings,
-  io,
-  onSaved,
-}: {
-  settings: Settings;
-  io: SettingsIO;
-  onSaved: (s: Settings) => void;
-}) {
-  const [busy, setBusy] = useState<CloseRoute | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const canEdit = settings.can.closeRoute;
-  const current = settings.closeRoute;
-
-  async function choose(route: CloseRoute) {
-    if (!canEdit || route === current) return;
-    setBusy(route);
-    setError(null);
-    try {
-      onSaved(await io.set("close_route", route));
-      toast.success("Saved what happens after Close the call");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : problem(e));
-    } finally {
-      setBusy(null);
-    }
-  }
-
+/**
+ * What happens after Close the call, read only (docs/forms/PLAN.md D5): the
+ * card and its comments, the CSM's paste, and the notices, which are set in
+ * the client success cockpit's Settings, Notices and routing.
+ */
+function AfterClose() {
   return (
     <Group
       title="After Close the call"
-      hint={
-        canEdit
-          ? "Who tells the media team, writes the card's last two fields and sends the phase 5 WhatsApp."
-          : "Who tells the media team and sends the phase 5 WhatsApp. Only an admin or the CEO changes this."
-      }
+      hint="The cockpit writes the card and its comments, and the CSM pastes the phase 5 WhatsApp from the card comment. The client success and media teams hear in Slack through the notices; where they post and who they tag is set on Notices and routing."
     >
-      {canEdit ? (
-        <fieldset className="space-y-2" disabled={busy !== null}>
-          <legend className="sr-only">After Close the call</legend>
-          {CLOSE_ROUTES.map(r => {
-            const on = r.key === current;
-            return (
-              <label
-                key={r.key}
-                className={cn(
-                  "flex gap-3 rounded-lg border px-3 py-2.5",
-                  on
-                    ? "border-primary/60 bg-accent/40"
-                    : "cursor-pointer hover:bg-muted/40",
-                )}
-              >
-                <input
-                  type="radio"
-                  name="bp-close-route"
-                  value={r.key}
-                  checked={on}
-                  onChange={() => void choose(r.key)}
-                  className="mt-1 size-4 shrink-0 accent-[var(--primary)]"
-                />
-                <RouteText
-                  label={r.label}
-                  line={r.line}
-                  on={on}
-                  busy={busy === r.key}
-                />
-              </label>
-            );
-          })}
-        </fieldset>
-      ) : (
-        // Read only for the creative director: the three, the current one marked.
-        <ul className="space-y-2" aria-label="After Close the call">
-          {CLOSE_ROUTES.map(r => {
-            const on = r.key === current;
-            return (
-              <li
-                key={r.key}
-                aria-current={on ? "true" : undefined}
-                className={cn(
-                  "flex gap-3 rounded-lg border px-3 py-2.5",
-                  on ? "border-primary/60 bg-accent/40" : "opacity-70",
-                )}
-              >
-                <span
-                  aria-hidden
-                  className={cn(
-                    "mt-1 grid size-4 shrink-0 place-items-center rounded-full border",
-                    on ? "border-primary" : "border-muted-foreground/50",
-                  )}
-                >
-                  {on ? (
-                    <span className="size-2 rounded-full bg-primary" />
-                  ) : null}
-                </span>
-                <RouteText label={r.label} line={r.line} on={on} busy={false} />
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      {error ? (
-        <p role="alert" className="text-xs txt-bad">
-          {error}
-        </p>
-      ) : changedLine(settings, "close_route") ? (
-        <p className="text-xs text-muted-foreground">
-          {changedLine(settings, "close_route")}
-        </p>
-      ) : null}
+      <a
+        href={NOTICES_SETTINGS_URL}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex items-center gap-1 whitespace-nowrap text-sm font-medium text-primary-ink underline-offset-4 hover:underline"
+      >
+        Open Notices and routing
+        <ArrowUpRight aria-hidden className="size-3.5 shrink-0" />
+      </a>
     </Group>
-  );
-}
-
-function RouteText({
-  label,
-  line,
-  on,
-  busy,
-}: {
-  label: string;
-  line: string;
-  on: boolean;
-  busy: boolean;
-}) {
-  return (
-    <span className="min-w-0">
-      <span className="text-sm font-medium">
-        {label}
-        {on || busy ? (
-          <span className="ml-2 font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
-            {busy ? "Saving…" : "Now"}
-          </span>
-        ) : null}
-      </span>
-      <span className="mt-0.5 block text-xs text-muted-foreground">{line}</span>
-    </span>
   );
 }

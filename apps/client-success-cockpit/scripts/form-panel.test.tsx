@@ -235,7 +235,7 @@ describe("a send", () => {
       taskId: fx.TASK,
       form: "kickoff",
       clientName: fx.NAME,
-      say: `Kickoff sent for ${fx.NAME}. Make is booking the Brand Blueprint.`,
+      say: `Kickoff sent for ${fx.NAME}. Make is updating the card. Book the Brand Blueprint call below.`,
     });
     // Once the note lands, the cockpit tab is told to read the sends again
     // (its first read raced the note).
@@ -243,11 +243,15 @@ describe("a send", () => {
       { type: "noted", taskId: fx.TASK, form: "kickoff" },
     ]);
     expect(host.textContent).toContain(
-      "Kickoff sent. Make is booking the Brand Blueprint.",
+      "Kickoff sent. Make is updating the card. Book the Brand Blueprint call below.",
     );
+    // No notice yet, so no channel is known: Slack, never a channel in code.
     expect(host.textContent).toContain(
-      "Make also drafts the client's WhatsApp summary for approval in Slack.",
+      "The team hears in Slack once the card is updated.",
     );
+    expect(host.textContent).not.toContain("#csm-general");
+    // Make books nothing (docs/forms/PLAN.md S10).
+    expect(host.textContent).not.toContain("Make is booking");
     expect(host.textContent).toContain("Sent from the cockpit at 13:30.");
     expect(
       host.querySelector('[role="status"][aria-live="polite"]'),
@@ -476,6 +480,367 @@ describe("a send", () => {
   });
 });
 
+describe("the trail's last stops (docs/forms/STAGE1-CONTRACT.md 6.1)", () => {
+  const nf = () => import("../src/dev/noticesFixtures");
+  // Make has done its part: Brand Blueprint Booked after the send, and the
+  // card's Brand Blueprint link.
+  const doneRow = () =>
+    fx.fixtureRow({
+      client_status: "Brand Blueprint Booked♠️",
+      card_updated_at: "2026-10-22T10:31:00Z",
+      links: {
+        clickup: `https://app.clickup.com/t/${fx.TASK}`,
+        blueprint_form: `https://maharamedia.typeform.com/to/oYZKtogO#onboarding_client_id=${fx.TASK}`,
+      },
+    });
+  async function sendWith(
+    ctx: ReturnType<typeof fx.fixtureContext>,
+    responseId: string,
+    extra: { windowLink?: string; io?: Record<string, any> } = {},
+  ) {
+    const { mounted, embed } = stand();
+    const { host, root } = mountHost();
+    const { io: panelIo } = io(extra.io ?? {});
+    await act(async () =>
+      root.render(
+        <FormPanel
+          config={KICKOFF}
+          ctx={ctx}
+          io={panelIo}
+          clientName={fx.NAME}
+          embed={embed}
+          windowLink={extra.windowLink}
+        />,
+      ),
+    );
+    await flush();
+    await act(async () =>
+      mounted[0].options.onSubmit({ formId: "tG7dnxBn", responseId }),
+    );
+    await flush();
+    return host;
+  }
+
+  test("posted: the Slack stop says where and when, and opens the post", async () => {
+    const { kickoffNotice, noticeRead } = await nf();
+    const host = await sendWith(
+      fx.fixtureContext({
+        row: doneRow(),
+        notices: noticeRead(fx.TASK, [
+          kickoffNotice("posted", "resp0000000101", fx.NOW),
+        ]),
+      }),
+      "resp0000000101",
+    );
+    expect(host.textContent).toContain("Posted in #csm-general at 13:31");
+    const slack = Array.from(host.querySelectorAll("a")).find((a: any) =>
+      (a.textContent ?? "").includes("Open in Slack"),
+    ) as any;
+    expect(slack?.getAttribute("href")).toBe(
+      "https://example-workspace.slack.com/archives/C09RZ0GS0V9/p1792872070187739",
+    );
+    expect(host.textContent).toContain("All five steps are done.");
+    // The headline says what happened, and no "once the card is updated" line stays.
+    expect(host.textContent).toContain(
+      "Kickoff sent. The card is updated. Book the Brand Blueprint call below.",
+    );
+    expect(host.textContent).not.toContain("Make is updating the card");
+    expect(host.textContent).not.toContain("once the card is updated");
+  });
+
+  test("the Blueprint button opens the cockpit's own Blueprint, never the old Typeform", async () => {
+    const host = await sendWith(
+      fx.fixtureContext({ row: doneRow(), notices: null }),
+      "resp0000000102",
+    );
+    expect(host.textContent).toContain("The card has the Brand Blueprint link");
+    const open = Array.from(host.querySelectorAll("a")).find((a: any) =>
+      (a.textContent ?? "").includes("Open the Brand Blueprint"),
+    ) as any;
+    expect(open?.getAttribute("href")).toBe(
+      `/client-success/clients/${fx.TASK}/present/blueprint?view=prep`,
+    );
+    expect(host.innerHTML).not.toContain("oYZKtogO");
+    expect(host.textContent).not.toContain("Open the Brand Blueprint form");
+  });
+
+  test("waiting: the config's words, and the booking is not held up by Slack", async () => {
+    const { noticeRead } = await nf();
+    const asked: any[] = [];
+    const { mounted, embed } = stand();
+    const { host, root } = mountHost();
+    const { io: panelIo } = io();
+    await act(async () =>
+      root.render(
+        <FormPanel
+          config={KICKOFF}
+          ctx={fx.fixtureContext({
+            row: doneRow(),
+            notices: noticeRead(fx.TASK, []),
+          })}
+          io={panelIo}
+          clientName={fx.NAME}
+          embed={embed}
+          book={p => {
+            asked.push(p);
+            return <button type="button">{p.label}</button>;
+          }}
+        />,
+      ),
+    );
+    await flush();
+    await act(async () =>
+      mounted[0].options.onSubmit({
+        formId: "tG7dnxBn",
+        responseId: "resp0000000103",
+      }),
+    );
+    await flush();
+    expect(host.textContent).toContain("The team hears in Slack");
+    expect(host.textContent).toContain(
+      "Once Make has updated the card, usually within a few minutes.",
+    );
+    expect(host.textContent).not.toContain("#csm-general");
+    expect(asked.at(-1)?.variant).toBe("default");
+  });
+
+  test("failed or not confirmed: said with its reason, for the tech lead", async () => {
+    const { kickoffNotice, noticeRead } = await nf();
+    const failed = await sendWith(
+      fx.fixtureContext({
+        row: doneRow(),
+        notices: noticeRead(fx.TASK, [
+          kickoffNotice("failed", "resp0000000104", fx.NOW),
+        ]),
+      }),
+      "resp0000000104",
+    );
+    expect(failed.textContent).toContain(
+      "Not posted. Slack says mahara-club-bot is not in that channel. Ask the tech lead to add it there and send the notice again.",
+    );
+    // The lead carries the warning; the reason is a plain sentence.
+    const lead = Array.from(failed.querySelectorAll(".txt-warn")).find(
+      (e: any) => e.textContent === "Not posted.",
+    );
+    expect(lead).toBeTruthy();
+    expect(failed.textContent).toContain(", needs a person");
+    expect(failed.textContent).not.toContain("All five steps are done.");
+  });
+
+  test("on a phone the fold opens on a notice that needs a person, with the warning dot", async () => {
+    const { kickoffNotice, noticeRead } = await nf();
+    const real = (win as any).matchMedia;
+    (win as any).matchMedia = (q: string) => ({
+      matches: !/min-width/.test(q),
+      addEventListener() {},
+      removeEventListener() {},
+    });
+    (globalThis as any).matchMedia = (win as any).matchMedia;
+    try {
+      const host = await sendWith(
+        fx.fixtureContext({
+          row: doneRow(),
+          notices: noticeRead(fx.TASK, [
+            kickoffNotice("failed", "resp0000000111", fx.NOW),
+          ]),
+        }),
+        "resp0000000111",
+      );
+      const fold = host.querySelector("details.group\\/fold") as any;
+      expect(fold).toBeTruthy();
+      expect(fold.open).toBe(true);
+      const summary = fold.querySelector("summary") as any;
+      expect(summary.textContent).toContain(
+        "Not posted in Slack · tell the tech lead",
+      );
+      expect(summary.querySelector(".bg-warning")).toBeTruthy();
+      // The instruction is never cut off on a phone: this line wraps.
+      expect(summary.querySelector(".truncate")).toBeNull();
+    } finally {
+      (win as any).matchMedia = real;
+      (globalThis as any).matchMedia = real;
+    }
+  });
+
+  test("muted and a failed read each say so", async () => {
+    const { kickoffNotice, noticeRead } = await nf();
+    const muted = await sendWith(
+      fx.fixtureContext({
+        row: doneRow(),
+        notices: noticeRead(fx.TASK, [
+          kickoffNotice("muted", "resp0000000105", fx.NOW),
+        ]),
+      }),
+      "resp0000000105",
+    );
+    expect(muted.textContent).toContain(
+      "Not posted: the kickoff notice is off in Settings.",
+    );
+    // Off is not a success: the footer never says every step is done.
+    expect(muted.textContent).not.toContain("All five steps are done.");
+    expect(muted.textContent).toContain(
+      "The card's steps are done. The Slack notice was not posted.",
+    );
+    expect(muted.textContent).not.toContain("once the card is updated");
+    const unread = await sendWith(
+      fx.fixtureContext({
+        row: doneRow(),
+        notices: null,
+        failed: { notices: "Failed to fetch" },
+      }),
+      "resp0000000106",
+    );
+    expect(unread.textContent).toContain(
+      "The cockpit could not read the Slack notice just now. Check now reads it again.",
+    );
+    expect(unread.textContent).not.toContain("All five steps are done.");
+  });
+
+  test("a posted Kickoff complete reads the card once, so the trail never says Make is late beside it", async () => {
+    const { kickoffNotice, noticeRead } = await nf();
+    let checks = 0;
+    const counting = { check: async () => void checks++ };
+    // The window's copy of the card is from before Make's update.
+    await sendWith(
+      fx.fixtureContext({
+        notices: noticeRead(fx.TASK, [
+          kickoffNotice("posted", "resp0000000121", fx.NOW),
+        ]),
+      }),
+      "resp0000000121",
+      { io: counting },
+    );
+    expect(checks).toBe(1);
+    // A late notice says the card is not done: nothing to catch up on.
+    checks = 0;
+    await sendWith(
+      fx.fixtureContext({
+        notices: noticeRead(fx.TASK, [
+          kickoffNotice("late", "resp0000000122", fx.NOW),
+        ]),
+      }),
+      "resp0000000122",
+      { io: counting },
+    );
+    expect(checks).toBe(0);
+    // A card already shown done needs no read.
+    checks = 0;
+    await sendWith(
+      fx.fixtureContext({
+        row: doneRow(),
+        notices: noticeRead(fx.TASK, [
+          kickoffNotice("posted", "resp0000000123", fx.NOW),
+        ]),
+      }),
+      "resp0000000123",
+      { io: counting },
+    );
+    expect(checks).toBe(0);
+  });
+
+  test("while the Slack stop waits, the notices are read again every minute; not when the screen does not read them", async () => {
+    const { noticeRead } = await nf();
+    const delays: number[] = [];
+    const real = win.setInterval.bind(win);
+    (win as any).setInterval = (fn: any, ms: number, ...rest: any[]) => {
+      delays.push(ms);
+      return real(fn, ms, ...rest);
+    };
+    try {
+      await sendWith(
+        fx.fixtureContext({ row: doneRow(), notices: noticeRead(fx.TASK, []) }),
+        "resp0000000107",
+        { io: { notices: async () => {} } },
+      );
+      expect(delays).toContain(60_000);
+      // One failed read never ends the watch: it keeps reading.
+      delays.length = 0;
+      await sendWith(
+        fx.fixtureContext({
+          row: doneRow(),
+          notices: null,
+          failed: { notices: "Failed to fetch" },
+        }),
+        "resp0000000110",
+        { io: { notices: async () => {} } },
+      );
+      expect(delays).toContain(60_000);
+      delays.length = 0;
+      await sendWith(
+        fx.fixtureContext({ row: doneRow(), notices: noticeRead(fx.TASK, []) }),
+        "resp0000000108",
+      );
+      expect(delays).not.toContain(60_000);
+    } finally {
+      (win as any).setInterval = real;
+    }
+  });
+
+  test("the trail offers this kickoff's window to copy", async () => {
+    const written: string[] = [];
+    Object.defineProperty(win.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (t: string) => void written.push(t) },
+    });
+    const link = `https://cockpit.maharamedia.com/client-success/clients/${fx.TASK}/forms/kickoff`;
+    const host = await sendWith(fx.fixtureContext(), "resp0000000109", {
+      windowLink: link,
+    });
+    expect(host.textContent).toContain("This kickoff's window");
+    await act(async () => button(host, "Copy the link").click());
+    await flush();
+    expect(written).toEqual([link]);
+    // The browser will not copy: the link appears to select by hand, as the toast says.
+    Object.defineProperty(win.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async () => Promise.reject(new Error("denied")) },
+    });
+    expect(host.querySelector("input[readonly]")).toBeNull();
+    await act(async () => button(host, "Copy the link").click());
+    await flush();
+    const shown = host.querySelector("input[readonly]") as any;
+    expect(shown?.value).toBe(link);
+  });
+
+  test("the window builds its own link from where it is", async () => {
+    const { mounted, embed } = stand();
+    const { host, root } = mountHost();
+    const { io: panelIo } = io();
+    const written: string[] = [];
+    Object.defineProperty(win.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (t: string) => void written.push(t) },
+    });
+    await act(async () =>
+      root.render(
+        <FormWindowView
+          cfg={KICKOFF}
+          taskId={fx.TASK}
+          state={{ kind: "ready", ctx: fx.fixtureContext() }}
+          io={panelIo}
+          embed={embed}
+          onRetry={() => {}}
+          onRefresh={() => {}}
+          initialSharing={false}
+        />,
+      ),
+    );
+    await flush();
+    await act(async () =>
+      mounted[0].options.onSubmit({
+        formId: "tG7dnxBn",
+        responseId: "resp0000000110",
+      }),
+    );
+    await flush();
+    await act(async () => button(host, "Copy the link").click());
+    await flush();
+    expect(written).toEqual([
+      `https://localhost/client-success/clients/${fx.TASK}/forms/kickoff`,
+    ]);
+  });
+});
+
 describe("the guard and the frozen form", () => {
   test("a second kickoff needs a deliberate click before the form loads", async () => {
     const { mounted, embed } = stand();
@@ -508,7 +873,7 @@ describe("the guard and the frozen form", () => {
     await flush();
     expect(mounted.length).toBe(0);
     expect(host.textContent).toContain(
-      `A kickoff for ${fx.NAME} went in on 15 Oct. Sending another runs Make again: a second Technical and Creative task, a second WhatsApp to the client's group and a second summary. Fix a wrong answer in Typeform's results instead.`,
+      `A kickoff for ${fx.NAME} went in on 15 Oct. Sending another runs Make again: a second Kickoff Handoff comment, a second Technical and Creative task and a second WhatsApp to the client's group. Fix a wrong answer in Typeform's results instead.`,
     );
     expect(button(host, "Read what was filled")).toBeTruthy();
     expect(host.textContent).toContain("Already sent");

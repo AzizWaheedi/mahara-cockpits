@@ -82,9 +82,12 @@ test('model helper falls back without leaking credentials and B2B source is fixe
 });
 test('Slack and task questions require confirmed transport receipts, never queue success',async()=>{
  const plan=prepareSlack({request:'Please review this'},scope,'buyer@example.com',()=>undefined);
- expect(plan.body?.channel).toBe('U09305KE2KS');const p=provider([{ok:true,ts:'1234.567',channel:'D123ABC'},{messages:[{ts:'1234.567',text:plan.body?.text}]}]);
- await executePlan(plan,p);expect(p.calls).toHaveLength(2);
+ // Slack stores the email as a mailto link, so the read-back checks the bot's message by its ts, not the text.
+ expect(plan.body?.channel).toBe('U09305KE2KS');const p=provider([{ok:true,ts:'1234.567',channel:'D123ABC',message:{bot_id:'B0BOT'}},{messages:[{ts:'1234.567',bot_id:'B0BOT',text:'Request from <mailto:buyer@example.com|buyer@example.com> in the cockpit'}]}]);
+ await executePlan(plan,p);expect(p.calls).toHaveLength(2);expect(p.calls[1]).toEqual(['slack','GET','conversations.history?channel=D123ABC&latest=1234.567&inclusive=true&limit=1']);
  await expect(executePlan(plan,provider([{ok:true,ts:'1234.567',channel:'D123ABC'},{messages:[]}]))).rejects.toThrow('read-back');
+ await expect(executePlan(plan,provider([{ok:true,ts:'1234.567',channel:'D123ABC'},{messages:[{ts:'1234.567',text:plan.body?.text}]}]))).rejects.toThrow('read-back');
+ await expect(executePlan(plan,provider([{ok:true,ts:'1234.567',channel:'C123ABC'}]))).rejects.toThrow('verifiable');
  await expect(prepareDetail({taskId:'other',question:'What happened?'},scope,'buyer@example.com',provider([]))).rejects.toThrow('authorized');
 });
 test('workflow SQL preserves empty-client access, founder drafts, scoped language and real learning/history effects',async()=>{

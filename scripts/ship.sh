@@ -93,6 +93,19 @@ if [ -f apps/client-success-cockpit/scripts/deck-engine.test.ts ]; then
   (cd apps/client-success-cockpit && bun test scripts/deck-*.test.ts scripts/deck-*.test.tsx >/dev/null 2>&1) \
     || { echo "the client deck tests fail (cd apps/client-success-cockpit && bun test scripts/deck-)"; exit 1; }
 fi
+# Slack notices and the Blueprint drain (docs/forms/STAGE1-CONTRACT.md): the outbox's
+# states and triggers, the sender's text and receipts, the drain's refusals. Wrong is a
+# kickoff nobody hears about, a notice posted twice, or a press that never runs.
+if [ -f apps/media-buyer-cockpit/scripts/slack-notices-supabase.test.ts ]; then
+  (cd apps/media-buyer-cockpit && bun test scripts/slack-notices-supabase.test.ts scripts/blueprints-supabase.test.ts scripts/stage1-fit-supabase.test.ts >/dev/null 2>&1) \
+    || { echo "the Slack notices or Brand Blueprint database tests fail (cd apps/media-buyer-cockpit && bun test scripts/slack-notices-supabase.test.ts scripts/blueprints-supabase.test.ts scripts/stage1-fit-supabase.test.ts)"; exit 1; }
+  (bun test supabase/functions/cockpit-notices supabase/functions/cockpit-creative-api supabase/functions/cockpit-media-api/slack.test.ts supabase/functions/cockpit-media-api/workflows.test.ts >/dev/null 2>&1) \
+    || { echo "the notices sender, Blueprint drain or Slack receipt tests fail"; exit 1; }
+  (cd apps/client-success-cockpit && bun test scripts/form-status.test.ts scripts/form-panel.test.tsx scripts/notices-routing.test.tsx scripts/blueprint-csm-line.test.ts >/dev/null 2>&1) \
+    || { echo "the kickoff trail or notices settings tests fail"; exit 1; }
+  (cd apps/creative-director-cockpit && bun test scripts/blueprint.test.tsx scripts/blueprint-notices.test.tsx >/dev/null 2>&1) \
+    || { echo "the creative director's Blueprint card tests fail"; exit 1; }
+fi
 if [ -f apps/client-success-cockpit/scripts/check-in.test.ts ]; then
   (cd apps/client-success-cockpit && bun test scripts/check-in.test.ts >/dev/null 2>&1) \
     || { echo "the client check-in booking tests fail"; exit 1; }

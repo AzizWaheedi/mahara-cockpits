@@ -2,6 +2,7 @@ import type { BlueprintIO } from "@/components/BlueprintCard";
 import type { SettingsIO } from "@/components/BlueprintSettings";
 import {
   type Answers,
+  type BlueprintCall,
   BlueprintError,
   type BlueprintRow,
   type BlueprintSettings,
@@ -10,6 +11,7 @@ import {
   type Part,
   partAnswers,
 } from "@/lib/blueprint";
+import type { NoticeRead, NoticeView } from "@/lib/notices";
 
 /**
  * Made-up firms for the Blueprint harness and its shots: no client's data.
@@ -119,7 +121,46 @@ export function rowFor(state: string): BlueprintRow | null {
     case "open":
       return null;
     case "part1":
+    case "nudge":
       return base({ ...PART1, best_client: PART2.best_client });
+    // The server drain refused the press once and tries again (20261025o).
+    case "refused": {
+      const r = base({ ...PART1 });
+      return {
+        ...r,
+        parts: { "1": stamp(ago(0.1), partAnswers(1, PART1)) },
+        outbox: {
+          "1": box("pending", ago(0.1), {
+            attempts: 1,
+            error:
+              "The Marketing/ADs list has two open launch tasks for this client. Close one in ClickUp.",
+          }),
+          "2": null,
+          "3": null,
+        },
+      };
+    }
+    // Three refusals: failed, pressed again once fixed.
+    case "refused3":
+    case "timedout": {
+      const r = base({ ...PART1 });
+      return {
+        ...r,
+        parts: { "1": stamp(ago(0.8), partAnswers(1, PART1)) },
+        outbox: {
+          "1": box("failed", ago(0.8), {
+            attempts: state === "refused3" ? 3 : 0,
+            error:
+              state === "refused3"
+                ? "The Marketing/ADs list has two open launch tasks for this client. Close one in ClickUp."
+                : "This press did not finish within 30 minutes. Press again.",
+            settledAt: ago(0.2),
+          }),
+          "2": null,
+          "3": null,
+        },
+      };
+    }
     case "unconfirmed": {
       const r = base({ ...PART1 });
       return {
@@ -140,6 +181,8 @@ export function rowFor(state: string): BlueprintRow | null {
     case "closed":
     case "late":
     case "conflict":
+    case "posted":
+    case "notposted":
     case "needs": {
       const a = {
         ...PART1,
@@ -199,6 +242,136 @@ export function rowFor(state: string): BlueprintRow | null {
   }
 }
 
+/** The Blueprint call read (cockpit_blueprint_sources.blueprintCall), per ?bp=. */
+export function callFor(state: string): BlueprintCall | null {
+  if (state !== "nudge") return null;
+  return {
+    heldAt: ago(24 * 7),
+    status: "held",
+    stage: "Brand Blueprint Booked♠️",
+    mapPhase: 4,
+    nudge: true,
+  };
+}
+
+function notice(over: Partial<NoticeView> & Pick<NoticeView, "kind">) {
+  return {
+    id: crypto.randomUUID(),
+    state: "posted" as const,
+    variant: "done",
+    responseId: null,
+    outboxId: null,
+    parentKind: null,
+    channel: { id: "C09RZ0GS0V9", name: "csm-general" },
+    at: ago(21.3),
+    dueAt: null,
+    permalink: "https://example-workspace.slack.com/archives/C09RZ0GS0V9/p1",
+    reason: null,
+    ...over,
+  } satisfies NoticeView;
+}
+
+/** The card's Slack notices (cockpit_slack_notice_read), per ?bp=. */
+export function noticesFor(state: string): NoticeRead {
+  const now = new Date().toISOString();
+  const media = (over: Partial<NoticeView> = {}) =>
+    notice({
+      kind: "blueprint.media",
+      variant: "new",
+      channel: { id: "C0AE8G5MT7Y", name: "media-general" },
+      permalink: "https://example-workspace.slack.com/archives/C0AE8G5MT7Y/p1",
+      ...over,
+    });
+  switch (state) {
+    case "posted":
+    case "closed":
+      return {
+        taskId: TASK,
+        now,
+        notices: [media(), notice({ kind: "blueprint.close" })],
+      };
+    case "notposted":
+      return {
+        taskId: TASK,
+        now,
+        notices: [
+          media(),
+          notice({
+            kind: "blueprint.close",
+            state: "failed",
+            permalink: null,
+            reason:
+              "Slack says mahara-club-bot is not in that channel. Ask the tech lead to add it there and send the notice again.",
+          }),
+        ],
+      };
+    // Both queued (the sender's minute has not come yet).
+    case "queued":
+      return {
+        taskId: TASK,
+        now,
+        notices: [
+          media({
+            state: "queued",
+            at: ago(0.01),
+            permalink: null,
+            reason: "Queued.",
+          }),
+          notice({
+            kind: "blueprint.close",
+            state: "queued",
+            at: ago(0.01),
+            permalink: null,
+            reason: "Queued.",
+          }),
+        ],
+      };
+    // The offer's reply posted two days before the read.
+    case "olderreply":
+      return {
+        taskId: TASK,
+        now,
+        notices: [
+          notice({ kind: "blueprint.offer", variant: "thread", at: ago(48) }),
+          media(),
+          notice({ kind: "blueprint.close" }),
+        ],
+      };
+    // The close notice was turned off, so the offer posted top level.
+    case "offertop":
+      return {
+        taskId: TASK,
+        now,
+        notices: [
+          notice({ kind: "blueprint.offer", variant: "top", at: ago(1) }),
+          media(),
+          notice({
+            kind: "blueprint.close",
+            state: "muted",
+            permalink: null,
+            reason: "Turned off in Settings, Notices and routing.",
+          }),
+        ],
+      };
+    case "locked":
+      return {
+        taskId: TASK,
+        now,
+        notices: [
+          notice({
+            kind: "blueprint.offer",
+            variant: "thread",
+            at: ago(1),
+          }),
+          media(),
+          notice({ kind: "blueprint.close" }),
+        ],
+      };
+    default:
+      return { taskId: TASK, now, notices: [] };
+  }
+}
+
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 /**
@@ -207,7 +380,12 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
  */
 export function fakeBlueprintIO(
   start: BlueprintRow | null,
-  opts: { conflictOnce?: boolean; runFails?: string } = {},
+  opts: {
+    conflictOnce?: boolean;
+    runFails?: string;
+    call?: BlueprintCall | null;
+    notices?: NoticeRead;
+  } = {},
 ): BlueprintIO {
   let mem = start ? structuredClone(start) : null;
   let conflict = Boolean(opts.conflictOnce);
@@ -340,6 +518,20 @@ export function fakeBlueprintIO(
       };
     },
     session: () => "harnesssession0001",
+    call: async () => {
+      await sleep(200);
+      return opts.call ?? null;
+    },
+    notices: async () => {
+      await sleep(200);
+      return (
+        opts.notices ?? {
+          taskId: TASK,
+          now: new Date().toISOString(),
+          notices: [],
+        }
+      );
+    },
   };
 }
 
@@ -381,9 +573,7 @@ export function fakeSettingsIO(start: BlueprintSettings): SettingsIO {
       if (key.startsWith("pack.")) {
         const s = key.slice(5);
         next.packs = { ...(next.packs ?? {}), [s]: value };
-      } else if (key === "launch_assignee")
-        next.assignee = value ? { id: value, label: label ?? null } : null;
-      else next.closeRoute = value ?? "card_only";
+      } else next.assignee = value ? { id: value, label: label ?? null } : null;
       next.changes = {
         ...(next.changes ?? {}),
         [key]: { at: new Date().toISOString(), by: "Omar" },

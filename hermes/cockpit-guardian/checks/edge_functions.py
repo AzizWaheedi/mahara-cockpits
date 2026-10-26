@@ -37,6 +37,13 @@ EXPECTED = {
     "comment-watch": False,
     "cockpit-csm-api": True,
     "clickup-writeback": False,
+    # The Slack notices sender (docs/forms/STAGE1-CONTRACT.md section 4): pg_cron calls it with x-cron-secret and the
+    # door checks that secret, so its JWT check is off. Flip to True only if the deploy could not turn it off (pg_cron
+    # then sends the anon key as Authorization as well).
+    "cockpit-notices": False,
+    # The creative director's API: signed-in presses, and since 20261025o the Blueprint drain, which pg_cron calls
+    # with the anon key and x-cron-secret, so its JWT check stays on.
+    "cockpit-creative-api": True,
 }
 
 
@@ -90,8 +97,8 @@ def run_sales_api(ctx: Context) -> Result:
 CHECKS = [
     Check(
         id="edge-functions", area="supabase", name="Edge Functions", catalogue="S7",
-        means=f"The {len(EXPECTED)} Edge Functions are ACTIVE, sales-api and hiring-api with verify_jwt on and the rest "
-              "off, sales-live and hiring-sync included.",
+        means=f"The {len(EXPECTED)} Edge Functions are ACTIVE, {', '.join(s for s, j in EXPECTED.items() if j)} with "
+              "verify_jwt on and the rest off, sales-live, hiring-sync and cockpit-notices included.",
         severity="high",
         reads="Management API GET /v1/projects/{ref}/functions (needs SUPABASE_ACCESS_TOKEN)",
         threshold="A function missing, not ACTIVE, or with the wrong verify_jwt: fail.", run=run_functions,

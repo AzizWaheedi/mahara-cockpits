@@ -7,7 +7,8 @@ import * as B from '../../../apps/client-success-cockpit/src/present/blueprintBr
 // Payment Date or Daily Budget (assertSafe refuses a plan that names one).
 export const BLUEPRINT_KINDS=['blueprintLaunch','blueprintClose','blueprintOffer'] as const;
 export const isBlueprint=(kind:unknown)=>typeof kind==='string'&&(BLUEPRINT_KINDS as readonly string[]).includes(kind);
-export interface BlueprintPlan extends MultiPlan {blueprint:{kind:string;lines:string[];make?:Row}}
+// No plan carries a Make send any more: the close writes ClickUp only, and the notices post to Slack.
+export interface BlueprintPlan extends MultiPlan {blueprint:{kind:string;lines:string[]}}
 type Env=(name:string)=>string|undefined;
 const ID=/^[A-Za-z0-9]{4,20}$/,CARD=/^[A-Za-z0-9_-]{1,40}$/;
 const norm=(s:unknown)=>String(s??'').normalize('NFKC').replace(/[^\p{L}\p{N}]+/gu,' ').trim().toLowerCase();
@@ -105,32 +106,35 @@ async function prepareLaunch(p:B.BlueprintPayload,card:Row,provider:Provider,now
  if(cap&&(first||B.changedKeys(['capacity','capacity_note'],p.previous,a).length)){steps.push(comment(String(card.id),cap,csm?.id));lines.push(`Would comment on the client card for ${csm?.name??'the CSM'}: capacity is ${String(a.capacity)}.`);}
  return {steps,result:{kind:'blueprintLaunch',launchTaskId:launch}};
 }
-async function prepareClose(p:B.BlueprintPayload,card:Row,provider:Provider,env:Env,lines:string[]):Promise<MultiPlan&{make?:Row}>{
+// The phase in an Onboarding Map link ("...?phase=4&cid=..."), or null when the value holds none.
+export function mapPhaseOf(value:unknown):number|null{const m=String(value??'').match(/[?&]phase=(\d+)/);return m?Number(m[1]):null;}
+// Close the call writes ClickUp only (docs/forms/STAGE1-CONTRACT.md 5.2): the card fields, step 2, the
+// launch-task comment and the CSM's comment. Whatever p.closeRoute says, there is no Slack or Make step:
+// #csm-general and #media-general hear through the cockpit's notices, which read this result.
+async function prepareClose(p:B.BlueprintPayload,card:Row,provider:Provider,lines:string[]):Promise<MultiPlan>{
  const a=p.answers,steps:Plan[]=[],first=!p.previous,csm=csmOf(card);
- const route=['card_only','slack','make'].includes(String(p.closeRoute))?String(p.closeRoute):'card_only';
- const makeLive=route==='make'&&env('BLUEPRINT_MAKE_CLOSE')==='on'&&Boolean(env('MAKE_BLUEPRINT_HOOK'))&&Boolean(env('MAKE_BLUEPRINT_KEY'));
- const fallback=route==='make'&&!makeLive,effective=fallback?'card_only':route;
- if(fallback)lines.push('Make close is chosen but not switched on in the server: the CSM pastes the WhatsApp.');
  const found=await findLaunch(provider,p);
  const approval=B.adApprovalNeeded(a.approval);
  if(approval){const s=dropdown(card.id,field(card,'adApproval'),approval);if(s){steps.push(s);lines.push(`Would set Ad Approval Needed?: ${approval}.`);}}
- if(effective!=='make'){
-  const label=B.canSelfRecord(a.camera);if(label){const s=dropdown(card.id,field(card,'canSelfRecord'),label);if(s){steps.push(s);lines.push(`Would set Can Self-Record?: ${label}.`);}}
-  if(first){const f=field(card,'onboardingMap'),url=p.mapUrl??B.mapUrl(card.id);if(String(f.value??'')!==url){steps.push({provider:'clickup',method:'POST',path:`task/${card.id}/field/${f.id}`,body:{value:url},verifyPath:`task/${card.id}`,expected:{field:f.id,value:url},precondition:{field:f.id,value:typeof f.value==='string'&&f.value?f.value:[]}});lines.push('Would set the Onboarding Map to phase 5.');}}
+ const label=B.canSelfRecord(a.camera);if(label){const s=dropdown(card.id,field(card,'canSelfRecord'),label);if(s){steps.push(s);lines.push(`Would set Can Self-Record?: ${label}.`);}}
+ // The Onboarding Map, first press only: a card already at phase 5 or later is left as it is, and gets
+ // no phase 5 WhatsApp to paste (a client past phase 5 must not get the phase 5 message again).
+ let mapPhase:number|null=null,mapSkipped=false;
+ if(first){
+  const f=field(card,'onboardingMap'),url=p.mapUrl??B.mapUrl(card.id);mapPhase=mapPhaseOf(f.value);
+  if(mapPhase!==null&&mapPhase>=5){mapSkipped=true;lines.push(`The Onboarding Map is already at phase ${mapPhase}, so it is left as it is.`);}
+  else if(String(f.value??'')!==url){steps.push({provider:'clickup',method:'POST',path:`task/${card.id}/field/${f.id}`,body:{value:url},verifyPath:`task/${card.id}`,expected:{field:f.id,value:url},precondition:{field:f.id,value:typeof f.value==='string'&&f.value?f.value:[]}});lines.push('Would set the Onboarding Map to phase 5.');}
  }
  const t=await stepTask(provider,p.step2,'2');
  if(t){const s=await doneStep(provider,t);if(s){steps.push(s);lines.push(`Would complete "${t.name}".`);}}else lines.push('Creative Onboarding step 2 was not found, so it is left as it is.');
  if(found){const text=B.closeLaunchComment(p);steps.push(comment(String(found.id),text));lines.push(`Would comment on the launch task "${found.name}" (${text.split('\n').length} lines).`);}
  else lines.push('No open launch task was found, so the launch-task comment is skipped.');
- const whatsapp=first&&effective!=='make';
- const note=B.closeCsmComment(p,{whatsapp,launchFound:Boolean(found),makeFallback:fallback});
+ const whatsapp=first&&!mapSkipped;
+ const note=B.closeCsmComment(p,{whatsapp,launchFound:Boolean(found),makeFallback:false});
  steps.push(comment(String(card.id),note,csm?.id));
  lines.push(`Would comment on the client card for ${csm?.name??'the CSM'}${whatsapp?', with the phase 5 WhatsApp to paste':''}.`);
- const slackText=B.slackCloseText(p,found?String(found.id):null);
- if(first&&effective==='slack'){steps.push({provider:'slack',method:'POST',path:'chat.postMessage',body:{channel:B.MEDIA_GENERAL,text:slackText},verifyPath:'conversations.history',expected:{text:slackText},slackMessage:true});lines.push(`Would post to #media-general: "${slackText}"`);}
- let make:Row|undefined;
- if(first&&effective==='make'){make=B.makeClose(p,slackText);lines.push('Would send the close to Make 14 once (no read-back): it posts to Slack, writes Can Self-Record? and the Onboarding Map, and sends the phase 5 WhatsApp.');}
- return {steps,result:{kind:'blueprintClose',launchTaskId:found?String(found.id):null,closeRoute:effective},...(make?{make}:{})};
+ if(first)lines.push("On the first close the cockpit's notices tell the team in Slack (Settings, Notices and routing).");
+ return {steps,result:{kind:'blueprintClose',launchTaskId:found?String(found.id):null,closeRoute:'card_only',mapPhase,mapSkipped}};
 }
 async function prepareOffer(p:B.BlueprintPayload,card:Row,provider:Provider,lines:string[]):Promise<MultiPlan>{
  const steps:Plan[]=[],first=!p.previous,csm=csmOf(card);
@@ -158,10 +162,9 @@ export async function prepareBlueprint(row:Row,provider:Provider,env:Env,now=new
  if(String(card.list?.id??'')!==B.CLIENTS_LIST)throw new Error('That task is not on the Clients list');
  if(loose(card.name)!==loose(row.client_name))throw new Error("The card's name changed since the press. Refresh, then send again.");
  const lines:string[]=[];
- const plan=part===1?await prepareLaunch(p,card,reader,now,lines):part===2?await prepareClose(p,card,reader,env,lines):await prepareOffer(p,card,reader,lines);
+ const plan=part===1?await prepareLaunch(p,card,reader,now,lines):part===2?await prepareClose(p,card,reader,lines):await prepareOffer(p,card,reader,lines);
  assertSafe(plan);
- const {make,...rest}=plan as MultiPlan&{make?:Row};
- return {...rest,blueprint:{kind:row.kind,lines,...(make?{make}:{})}};
+ return {...plan,blueprint:{kind:row.kind,lines}};
 }
 // Plain sentences for the notes window, the CD cockpit and a rehearsal.
 export const describePlan=(plan:BlueprintPlan)=>[...plan.blueprint.lines];

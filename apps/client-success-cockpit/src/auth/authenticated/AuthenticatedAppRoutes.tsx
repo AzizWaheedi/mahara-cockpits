@@ -18,6 +18,7 @@ import {
   LandingPage,
   LoginPage,
   MoneyPage,
+  NoticesPage,
   SettingsPage,
   SignupPage,
   TodayPage,
@@ -70,6 +71,13 @@ export function AuthenticatedRoutes() {
           <Route element={<BillingReviewLayout wide />}>
             <Route path="/invoices" element={<InvoicesPage />} />
           </Route>
+        </Route>
+        {/* Notices and routing (D17): the CEO or an admin may give any seat
+            the right to change it, so any signed-in seat opens the page; the
+            server's viewer and editor gates decide what it shows. No CSM
+            sidebar or data provider is mounted for another seat. */}
+        <Route element={<BillingReviewLayout />}>
+          <Route path="/notices" element={<NoticesPage />} />
         </Route>
         {/* The Brand Blueprint call (docs/brand-blueprint/SPEC.md 4.7): the
             creative director presents it, the CSM reads it. Its static

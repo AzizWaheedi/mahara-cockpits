@@ -23,6 +23,8 @@ EXPECTED_JOBS = (
     "mahara-clickup-writeback-log", "mahara-clickup-writeback-kpi", "mahara-clickup-writeback-dosdonts",
     # 20261015190100: queues an EOD again hourly after a fixable Slack refusal (queues.EOD_RETRY_JOB).
     "mahara-eod-retry",
+    # 20261025n: the Slack notices kick every minute; 20261025o: the Brand Blueprint press drain every 2 minutes.
+    "mahara-slack-notices", "mahara-creative-drain",
 )
 
 

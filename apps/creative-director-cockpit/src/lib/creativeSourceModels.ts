@@ -1278,7 +1278,6 @@ export const buildContextPack = async (ctx: any, { name }: any) => {
   );
   line("Brand DNA", client.brandDnaDoc);
   line("Offer cheat sheet", client.offerCheatSheet);
-  line("Brand blueprint form", client.blueprintFormLink);
   line("Market research", client.marketResearchDoc);
   line("Client history", client.clientHistoryDoc);
   line("Drive folder", client.driveLink ?? client.driveFolder);

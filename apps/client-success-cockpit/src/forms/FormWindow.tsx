@@ -15,6 +15,7 @@ import {
 } from "./FormPanel";
 import type { FormConfig, FormContext } from "./formConfig";
 import { formConfig } from "./kickoff";
+import { formUrl } from "./OpenFormButton";
 import { formLink } from "./prefill";
 import { formReads, useLiveForm, type WindowState } from "./useLiveForm";
 
@@ -86,9 +87,11 @@ function LiveFormWindow({
     () => ({ email: auth.email, firstName: firstName(auth.name) }),
     [auth.email, auth.name],
   );
+  // The window reads the card's Slack notices for the trail's last stop.
+  const notices = Boolean(cfg.after.notice);
   const reads = useMemo(
-    () => formReads(client, taskId, cfg.key),
-    [client, taskId, cfg.key],
+    () => formReads(client, taskId, cfg.key, { notices }),
+    [client, taskId, cfg.key, notices],
   );
   const live = useLiveForm({ cfg, taskId, reads, me });
 
@@ -133,6 +136,8 @@ export interface FormWindowViewProps {
   book?: (p: BookProps, ctx: FormContext) => ReactNode;
   /** The harness starts in Sharing without touching this browser's choice. */
   initialSharing?: boolean;
+  /** This window's own address in full; the harness passes a stand-in. */
+  windowLink?: string;
 }
 
 /** The window as drawn: header, seal, switch, and the panel or a plain state. */
@@ -148,6 +153,7 @@ export function FormWindowView({
   embed,
   book,
   initialSharing,
+  windowLink,
 }: FormWindowViewProps) {
   const [sharing, setSharing] = useState(() => initialSharing ?? readSharing());
   const [phase, setPhase] = useState<FormPhase>("open");
@@ -172,6 +178,11 @@ export function FormWindowView({
     if (initialSharing === undefined) saveSharing(on);
   };
   const open = ctx ? formLink(cfg.formId, cfg.hidden(ctx).values) : null;
+  const self =
+    windowLink ??
+    (typeof window !== "undefined"
+      ? `${window.location.origin}${formUrl(taskId, cfg.key)}`
+      : undefined);
 
   return (
     <div className="flex h-dvh flex-col bg-background text-foreground">
@@ -331,6 +342,7 @@ export function FormWindowView({
             embed={embed}
             book={book ? p => book(p, state.ctx) : undefined}
             onPhase={setPhase}
+            windowLink={self}
           />
         )}
       </main>
