@@ -49,6 +49,34 @@ function plain(error: { message?: string; code?: string } | null): never {
   throw new NoticeError(m || "The server gave no reason.", code);
 }
 
+/**
+ * Why a read failed, as a short cause with no advice of its own: the screen
+ * that shows it gives the one thing to do (read again, then the tech lead).
+ */
+export function readProblem(e: unknown): string {
+  const m = (e instanceof Error ? e.message : String(e ?? "")).trim();
+  if (/No connection|Failed to fetch|NetworkError|network/i.test(m))
+    return "the cockpit could not reach the server";
+  if (
+    /not live in the cockpit yet|could not find the function|PGRST202|schema cache/i.test(
+      m,
+    )
+  )
+    return "the Slack notices are not live in the cockpit yet";
+  if (/Sign in again|JWT|not authenticated/i.test(m))
+    return "your sign-in has ended, so sign in again first";
+  if (/shape this page does not read/i.test(m))
+    return "the server answered in a shape this page does not read";
+  // The server's own words, first sentence only, without a full stop.
+  const first = m
+    .split(/(?<=[.!?])\s/)[0]
+    ?.replace(/[.!?]+$/, "")
+    .trim();
+  return first
+    ? first.charAt(0).toLowerCase() + first.slice(1)
+    : "the server gave no reason";
+}
+
 const nul = <T extends z.ZodType>(s: T) =>
   s.nullish().transform(v => (v ?? null) as z.output<T> | null);
 
@@ -117,12 +145,22 @@ const setting = z.object({
   fixedOn: z.boolean().optional().default(false),
   channel: nul(z.object({ id: z.string(), name: nul(z.string()) })),
   mentionRule: z.array(z.string()),
+  // `label` is the first name and role for an editor's picker, the role for
+  // everyone else; `role` is what the team's sentence says ("the project
+  // manager"); `slack` is what the next notice does with them (contract X4).
   mentionPeople: z.array(
-    z.object({
-      id: z.number(),
-      label: z.string(),
-      slackKnown: z.boolean().optional().default(false),
-    }),
+    z
+      .object({
+        id: z.number(),
+        label: z.string(),
+        role: z.string().optional(),
+        slack: z
+          .enum(["ok", "checking", "not_found", "refused", "unchecked"])
+          .optional()
+          .default("unchecked"),
+        slackKnown: z.boolean().optional().default(false),
+      })
+      .transform(p => ({ ...p, role: p.role ?? p.label })),
   ),
   tags: z
     .array(
@@ -130,6 +168,7 @@ const setting = z.object({
         rule: z.string(),
         found: z.boolean(),
         slackKnown: z.boolean(),
+        checking: z.boolean().optional().default(false),
       }),
     )
     .optional()
@@ -375,22 +414,31 @@ export type NoticeTone = "good" | "warn" | "neutral" | "accent";
 const tell = (reason: string) =>
   /tech lead/i.test(reason) ? "" : " Tell the tech lead.";
 
+/** A reason as a sentence of its own, after the stop's own lead. */
+export const asSentence = (reason: string) =>
+  `${reason.charAt(0).toUpperCase()}${reason.slice(1)}.`;
+
 /**
  * One notice as a stop on a trail (STAGE1-CONTRACT.md 6.1): "Posted in
- * #csm-general at 14:03", "Not posted in #media-general: … Tell the tech
- * lead.", or what it waits for. `reply` says "Reply posted" for a thread.
+ * #csm-general at 14:03", "Not posted in #media-general. {Reason}. Tell the
+ * tech lead.", or what it waits for. "Reply posted" only for a post that
+ * went in a thread (variant `thread`): a reply whose first notice did not
+ * post goes top level (variant `top`) and says "Posted". A stop that needs a
+ * person has a `lead` ("Not posted in #media-general."): the screens draw it
+ * in the warning tone and the reason after it as a plain sentence, the
+ * kickoff trail's treatment.
  */
 export function noticeStop(
   n: NoticeView,
   now: string,
-  opts: { reply?: boolean; offLine?: string } = {},
-): { text: string; tone: NoticeTone; href: string | null } {
+  opts: { offLine?: string } = {},
+): { text: string; tone: NoticeTone; href: string | null; lead?: string } {
   const where = placeOf(n);
   const reason = clause(n.reason) || "no reason was given";
   switch (n.state) {
     case "posted":
       return {
-        text: `${opts.reply ? "Reply posted" : "Posted"} in ${where} ${atNoticeWhen(n.at, now)}`,
+        text: `${n.variant === "thread" ? "Reply posted" : "Posted"} in ${where} ${atNoticeWhen(n.at, now)}`,
         tone: "good",
         href: n.permalink,
       };
@@ -409,18 +457,25 @@ export function noticeStop(
     }
     case "sending":
       return { text: `Posting in ${where} now.`, tone: "accent", href: null };
-    case "failed":
+    case "failed": {
+      const lead = `Not posted in ${where}.`;
       return {
-        text: `Not posted in ${where}: ${reason}.${tell(reason)}`,
+        text: `${lead} ${asSentence(reason)}${tell(reason)}`,
         tone: "warn",
         href: null,
+        lead,
       };
-    case "unknown":
+    }
+    // It may have reached Slack (X17): the sender never posts it twice.
+    case "unknown": {
+      const lead = `Not confirmed in ${where}.`;
       return {
-        text: `Not confirmed in ${where}: ${reason}.${tell(reason)}`,
+        text: `${lead} ${asSentence(reason)}${tell(reason)}`,
         tone: "warn",
         href: null,
+        lead,
       };
+    }
     case "muted":
       return {
         text: opts.offLine ?? "Not posted: this notice is off in Settings.",
@@ -428,6 +483,10 @@ export function noticeStop(
         href: null,
       };
     case "skipped":
-      return { text: `Not posted: ${reason}.`, tone: "neutral", href: null };
+      return {
+        text: `Not posted. ${asSentence(reason)}`,
+        tone: "neutral",
+        href: null,
+      };
   }
 }

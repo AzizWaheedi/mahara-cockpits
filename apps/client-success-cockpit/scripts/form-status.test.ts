@@ -18,10 +18,13 @@ import {
 import { kickoffNotice, noticeRead } from "../src/dev/noticesFixtures";
 import type { NoticeView } from "../src/forms/formConfig";
 import {
+  afterLines,
   kickoffAlready,
   kickoffCardDone,
+  noticeWhere,
   sendLine,
   sendNotice,
+  trailAllDone,
   trailFor,
   trailSummary,
 } from "../src/forms/formStatus";
@@ -299,8 +302,14 @@ describe("the Slack stop", () => {
   });
 
   test("no row yet, queued or sending: the config's pending words, and the trail waits on it", () => {
+    // No row yet: no channel is known, so it says Slack, never a channel in code.
+    const none = trail(notices(null));
+    expect(slack(none)).toMatchObject({
+      label: "The team hears in Slack",
+      where: "Slack",
+      done: false,
+    });
     for (const n of [
-      null,
       kickoffNotice("queued", send.responseId, SENT_AT),
       {
         ...(kickoffNotice("queued", send.responseId, SENT_AT) as NoticeView),
@@ -325,6 +334,110 @@ describe("the Slack stop", () => {
         "Kickoff sent · waiting for the Slack notice",
       );
     }
+  });
+
+  test("an editor moved the notice in Settings: every word follows the channel the server names (D17)", () => {
+    const moved = {
+      ...(kickoffNotice("queued", send.responseId, SENT_AT) as NoticeView),
+      channel: { id: "C0ONBOARD01", name: "onboarding" },
+    };
+    const t = trail(notices(moved));
+    expect(slack(t)?.label).toBe("The team hears in #onboarding");
+    expect(afterLines(KICKOFF, t).sub).toBe(
+      "The team hears in #onboarding once the card is updated.",
+    );
+    expect(JSON.stringify(t)).not.toContain("csm-general");
+    expect(noticeWhere(null)).toBe("Slack");
+    expect(noticeWhere({ channel: { id: "C0ONBOARD01", name: null } })).toBe(
+      "Slack",
+    );
+  });
+
+  test("the after panel's headline and line follow the trail, not a fixed sentence", () => {
+    // Make has done its part and the notice waits: the done sentence, and where it posts.
+    const waiting = trail(
+      notices(kickoffNotice("queued", send.responseId, SENT_AT)),
+    );
+    expect(afterLines(KICKOFF, waiting)).toEqual({
+      say: "Kickoff sent. The card is updated. Book the Brand Blueprint call below.",
+      sub: "The team hears in #csm-general once the card is updated.",
+    });
+    // Posted, off, skipped, failed: the stop says it, so the line goes.
+    for (const state of ["posted", "muted", "skipped", "failed", "late"])
+      expect(
+        afterLines(
+          KICKOFF,
+          trail(notices(kickoffNotice(state, send.responseId, SENT_AT))),
+        ).sub,
+      ).toBeNull();
+    // Before Make: the working sentence; when late: the late one, without the line.
+    const ctx = fixtureContext({
+      row: fixtureRow({ forms: { kickoff } }),
+      ...notices(null),
+    });
+    const early = trailFor(
+      KICKOFF,
+      ctx,
+      send,
+      at("2026-10-22T11:03:00Z"),
+      sendNotice(KICKOFF, ctx, send.responseId),
+    );
+    expect(afterLines(KICKOFF, early)).toEqual({
+      say: "Kickoff sent. Make is updating the card. Book the Brand Blueprint call below.",
+      sub: "The team hears in Slack once the card is updated.",
+    });
+    const late = trailFor(
+      KICKOFF,
+      ctx,
+      send,
+      at("2026-10-22T11:20:00Z"),
+      sendNotice(KICKOFF, ctx, send.responseId),
+    );
+    expect(afterLines(KICKOFF, late)).toEqual({
+      say: "Kickoff sent. Make has not updated the card yet.",
+      sub: null,
+    });
+    // A notice that was off is done, but never counts as a success.
+    const muted = trail(
+      notices(kickoffNotice("muted", send.responseId, SENT_AT)),
+    );
+    expect(muted.stops.every(s => s.done)).toBe(true);
+    expect(trailAllDone(muted)).toBe(false);
+    expect(
+      trailAllDone(
+        trail(notices(kickoffNotice("posted", send.responseId, SENT_AT))),
+      ),
+    ).toBe(true);
+  });
+
+  test("on a phone the fold names a notice that needs a person, ahead of any wait", () => {
+    // The card is done but the Blueprint link is not: the failure still leads.
+    const ctx = fixtureContext({
+      row: fixtureRow({
+        client_status: "Brand Blueprint Booked♠️",
+        card_updated_at: "2026-10-22T11:03:10Z",
+        forms: { kickoff },
+        links: {},
+      }),
+      ...notices(kickoffNotice("failed", send.responseId, SENT_AT)),
+    });
+    const t = trailFor(
+      KICKOFF,
+      ctx,
+      send,
+      at("2026-10-22T11:04:00Z"),
+      sendNotice(KICKOFF, ctx, send.responseId),
+    );
+    expect(t.current).toBe("link");
+    expect(trailSummary(KICKOFF, t)).toBe(
+      "Not posted in Slack · tell the tech lead",
+    );
+    const unknown = trail(
+      notices(kickoffNotice("unknown", send.responseId, SENT_AT)),
+    );
+    expect(trailSummary(KICKOFF, unknown)).toBe(
+      "Not confirmed in Slack · tell the tech lead",
+    );
   });
 
   test("another response's notice is not this send's", () => {
@@ -358,14 +471,19 @@ describe("the Slack stop", () => {
 
   test("failed: not posted, the reason, tell the tech lead; it needs a person", () => {
     const t = trail(notices(kickoffNotice("failed", send.responseId, SENT_AT)));
+    // One label, the stop's own; the reason reads as its own sentence.
     expect(slack(t)).toMatchObject({
       label:
-        "Not posted: Slack refused it: mahara-club-bot is not in #csm-general. Invite it there, then ask the tech lead to requeue this notice.",
+        "Not posted. Slack says mahara-club-bot is not in that channel. Ask the tech lead to add it there and send the notice again.",
+      lead: "Not posted.",
       done: false,
       problem: true,
     });
+    expect(slack(t)?.label).not.toMatch(/^[^.]*: /);
     expect(t.current).toBe("slack");
-    expect(trailSummary(KICKOFF, t)).toBe("Kickoff sent · not posted in Slack");
+    expect(trailSummary(KICKOFF, t)).toBe(
+      "Not posted in Slack · tell the tech lead",
+    );
     // A reason that does not say who to tell gets the tech lead added.
     const plain = trail(
       notices({
@@ -374,7 +492,7 @@ describe("the Slack stop", () => {
       }),
     );
     expect(slack(plain)?.label).toBe(
-      "Not posted: Slack refused it (msg_blocked). Tell the tech lead.",
+      "Not posted. Slack refused it (msg_blocked). Tell the tech lead.",
     );
   });
 
@@ -384,11 +502,14 @@ describe("the Slack stop", () => {
     );
     expect(slack(t)).toMatchObject({
       label:
-        "Not confirmed: Slack did not confirm the post; it is not sent again in case it arrived. Tell the tech lead.",
+        "Not confirmed. Slack did not confirm the post; it is not sent again in case it arrived. Tell the tech lead.",
+      lead: "Not confirmed.",
       done: false,
       problem: true,
     });
-    expect(trailSummary(KICKOFF, t)).toBe("Kickoff sent · not posted in Slack");
+    expect(trailSummary(KICKOFF, t)).toBe(
+      "Not confirmed in Slack · tell the tech lead",
+    );
   });
 
   test("muted and skipped: not posted, said why, and done (quietly)", () => {
@@ -409,7 +530,7 @@ describe("the Slack stop", () => {
     );
     expect(slack(skipped)).toMatchObject({
       label:
-        "Not posted: This kickoff was more than 48 hours old when the mirror listed it, so it was not posted.",
+        "Not posted. This kickoff was more than 48 hours old when the mirror listed it, so it was not posted.",
       done: true,
       quiet: true,
     });
@@ -417,8 +538,10 @@ describe("the Slack stop", () => {
 
   test("the read failed: said so, neither done nor the stop the trail stands at", () => {
     const t = trail({ notices: null, failed: { notices: "Failed to fetch" } });
+    // It says what to do next, and the window keeps reading (useFormPanel).
     expect(slack(t)).toMatchObject({
-      label: "The cockpit could not read the Slack notice just now.",
+      label:
+        "The cockpit could not read the Slack notice just now. Check now reads it again.",
       done: false,
       unread: true,
     });

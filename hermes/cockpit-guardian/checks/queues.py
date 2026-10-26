@@ -59,6 +59,9 @@ class Queue:
 
 # The creative outbox's Brand Blueprint presses (20261024a, 20261025o); its other kinds are not drained.
 BLUEPRINT_KINDS = ("blueprintLaunch", "blueprintClose", "blueprintOffer")
+# The Slack notices other than a late kickoff's "Kickoff card updated" reply, which has its own row.
+NOTICE_KINDS = ("kickoff", "blueprint.close", "blueprint.updated", "blueprint.media", "blueprint.offer", "rehearsal")
+REPLY_KINDS = ("kickoff.updated",)
 
 
 QUEUES = (
@@ -86,13 +89,23 @@ QUEUES = (
     # (docs/forms/STAGE1-CONTRACT.md section 11, X7).
     Queue("queue-slack-notices", "cockpit_slack_notices", "Slack notice", ("queued", "sending", "unknown"), "created_at", 30,
           "the tech lead", "Run the cockpit-notices doctor; an unknown needs a person to look in Slack for its Ref "
-          "(RUNBOOK, Slack notices).", "", status_col="state", failed_col="finished_at"),
+          "(RUNBOOK, Slack notices).", "", status_col="state", failed_col="finished_at", kind_col="kind",
+          kinds=NOTICE_KINDS),
+    # A late kickoff's reply waits on purpose: the sender posts it only once the card's Kickoff Handoff comment is
+    # there, checking every 10 minutes for up to 48 hours (20261025n's claim ends it then). It is read by when it is
+    # next due, so a reply waiting its turn is fine and one the sender stopped picking up shows within 30 minutes.
+    Queue("queue-slack-notice-replies", "cockpit_slack_notices", "Kickoff card updated reply", ("queued", "sending", "unknown"),
+          "next_attempt_at", 30, "the tech lead", "Run the cockpit-notices doctor; a reply waiting past its turn means the "
+          "sender is not running (RUNBOOK, Slack notices).", "", status_col="state", failed_col="finished_at",
+          kind_col="kind", kinds=REPLY_KINDS),
     # The Brand Blueprint presses and their server drain (20261025o): the drain runs every 2 minutes and fails a
-    # press at 30 minutes or after 3 refusals, so one still pending after 10 minutes is stuck.
-    Queue("queue-creative-blueprint", "cockpit_creative_outbox", "Brand Blueprint press", ("pending",), "created_at", 10,
-          "the tech lead", "Read the press's error on the Blueprint card; the drain runs every 2 minutes "
-          "(RUNBOOK, Brand Blueprint press drain).", "", status_col="state", kind_col="kind", kinds=BLUEPRINT_KINDS,
-          failed_col="settled_at"),
+    # press at 30 minutes or after 3 refusals, so one still pending after 10 minutes is stuck. A press is
+    # `sending` for the seconds its run takes; one still sending after 10 minutes lost its run part way (a
+    # worker stopped by the wall clock or a deploy), and nothing moves it on or posts its notice.
+    Queue("queue-creative-blueprint", "cockpit_creative_outbox", "Brand Blueprint press", ("pending", "sending"), "created_at", 10,
+          "the tech lead", "Read the press's error on the Blueprint card; the drain runs every 2 minutes. A press stuck "
+          "sending: check the card against its journal, then settle it by hand (RUNBOOK, Brand Blueprint press drain).", "",
+          status_col="state", kind_col="kind", kinds=BLUEPRINT_KINDS, failed_col="settled_at"),
     # A press in reconcile reached ClickUp but its read-back did not match: nothing retries it, so any one is a look.
     Queue("queue-creative-reconcile", "cockpit_creative_outbox", "Brand Blueprint press needing a look", ("reconcile",),
           "created_at", 0, "the tech lead", "Check the card in ClickUp against the press, then settle the row by hand "

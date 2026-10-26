@@ -60,10 +60,18 @@ export async function runClientAction(input:Row,load:OutboxLoader,admin:any,env:
   const provider=providerTools(env,async(event)=>{if(event.phase==='intent'&&event.method!=='GET')await check();const {error}=await admin.from('cockpit_media_provider_health').insert({...event,action_id:started?id:null});if(error)throw new Error('Could not save provider receipt');});
   try{
    const plan=await prepareOutbox(row,provider,env);if(input.apply!==true)return {dryRun:true,plan,...('blueprint' in plan?{lines:describePlan(plan)}:{})};await check();
-   const journal=await admin.from('cockpit_media_actions').insert({id,actor_id:actorId,operation:`creativeClient.${row.kind}`,campaign_name:null,request:cron?{outbox:row,source:'cron'}:{outbox:row}});if(journal.error)throw new Error('This client action needs reconciliation before retrying');started=true;
+   // A Blueprint plan's own values (the map phase it read, the launch task it found), kept in the journal
+   // before anything is written: a close that ends in reconcile writes no result, and its Slack notices
+   // read these instead (cockpit_slack_notice_close_found). A '$' value is only known after a step, so none.
+   const planned='blueprint' in plan&&plan.result&&typeof plan.result==='object'?Object.fromEntries(Object.entries(plan.result).map(([k,v])=>[k,typeof v==='string'&&v.startsWith('$')?null:v])):undefined;
+   const journal=await admin.from('cockpit_media_actions').insert({id,actor_id:actorId,operation:`creativeClient.${row.kind}`,campaign_name:null,request:{outbox:row,...(cron?{source:'cron'}:{}),...(planned?{planned}:{})}});
+   // Two drains that overlap (a lease that ran out under a slow press): the other run holds this press, so
+   // the drain skips it and counts nothing. Any other journal failure is a refusal, as before.
+   if(journal.error&&cron&&(journal.error.code==='23505'||/duplicate key/i.test(String(journal.error.message??''))))return {id,skipped:true,state:'pending'};
+   if(journal.error)throw new Error('This client action needs reconciliation before retrying');started=true;
    const claimed=await admin.from('cockpit_creative_outbox').update({state:'sending'}).eq('id',id).eq('state','pending').select('id').single();if(claimed.error)throw new Error('Client action was already claimed');
    const result=await executeOutbox(plan,provider);
-   const done=await admin.from('cockpit_creative_outbox').update({state:'done',result,settled_at:new Date().toISOString()}).eq('id',id).eq('state','sending');if(done.error)throw new Error('Provider action completed but its result was not saved');
+   const done=await admin.from('cockpit_creative_outbox').update({state:'done',result,error:null,settled_at:new Date().toISOString()}).eq('id',id).eq('state','sending');if(done.error)throw new Error('Provider action completed but its result was not saved');
    const final=await admin.from('cockpit_media_actions').update({state:'confirmed',result,completed_at:new Date().toISOString()}).eq('id',id).eq('state','pending');if(final.error)throw new Error('Provider action completed but its receipt was not saved');
    // Send to media names its launch task on the record, so the next press goes there first. The task is
    // already confirmed in ClickUp, so a failed note is reported, not thrown: the next press finds it by tag.

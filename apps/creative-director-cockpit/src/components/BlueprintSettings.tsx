@@ -478,16 +478,16 @@ function AfterClose() {
   return (
     <Group
       title="After Close the call"
-      hint="The cockpit writes the card and its comments, and the CSM pastes the phase 5 WhatsApp from the card comment. #csm-general and #media-general hear through the notices."
+      hint="The cockpit writes the card and its comments, and the CSM pastes the phase 5 WhatsApp from the card comment. The client success and media teams hear in Slack through the notices; where they post and who they tag is set on Notices and routing."
     >
       <a
         href={NOTICES_SETTINGS_URL}
         target="_blank"
         rel="noreferrer"
-        className="inline-flex items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline"
+        className="inline-flex items-center gap-1 whitespace-nowrap text-sm font-medium text-primary-ink underline-offset-4 hover:underline"
       >
-        Change where and who in the client success cockpit
-        <ArrowUpRight aria-hidden className="size-3.5" />
+        Open Notices and routing
+        <ArrowUpRight aria-hidden className="size-3.5 shrink-0" />
       </a>
     </Group>
   );

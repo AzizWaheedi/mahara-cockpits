@@ -103,7 +103,7 @@ if [ -f apps/media-buyer-cockpit/scripts/slack-notices-supabase.test.ts ]; then
     || { echo "the notices sender, Blueprint drain or Slack receipt tests fail"; exit 1; }
   (cd apps/client-success-cockpit && bun test scripts/form-status.test.ts scripts/form-panel.test.tsx scripts/notices-routing.test.tsx scripts/blueprint-csm-line.test.ts >/dev/null 2>&1) \
     || { echo "the kickoff trail or notices settings tests fail"; exit 1; }
-  (cd apps/creative-director-cockpit && bun test scripts/blueprint.test.tsx >/dev/null 2>&1) \
+  (cd apps/creative-director-cockpit && bun test scripts/blueprint.test.tsx scripts/blueprint-notices.test.tsx >/dev/null 2>&1) \
     || { echo "the creative director's Blueprint card tests fail"; exit 1; }
 fi
 if [ -f apps/client-success-cockpit/scripts/check-in.test.ts ]; then

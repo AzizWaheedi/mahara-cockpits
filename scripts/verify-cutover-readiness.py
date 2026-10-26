@@ -150,6 +150,7 @@ RELEVANT_TEST_FILES = [
     "apps/client-success-cockpit/scripts/notices-routing.test.tsx",
     "apps/client-success-cockpit/scripts/blueprint-brief.test.ts",
     "apps/creative-director-cockpit/scripts/blueprint.test.tsx",
+    "apps/creative-director-cockpit/scripts/blueprint-notices.test.tsx",
     "hermes/cockpit-sync/creative-fields.test.ts",
 ]
 

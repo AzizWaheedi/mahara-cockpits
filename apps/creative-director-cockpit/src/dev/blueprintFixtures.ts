@@ -301,7 +301,55 @@ export function noticesFor(state: string): NoticeRead {
             state: "failed",
             permalink: null,
             reason:
-              "Slack refused it: mahara-club-bot is not in #csm-general. Invite it there, then ask the tech lead to requeue this notice.",
+              "Slack says mahara-club-bot is not in that channel. Ask the tech lead to add it there and send the notice again.",
+          }),
+        ],
+      };
+    // Both queued (the sender's minute has not come yet).
+    case "queued":
+      return {
+        taskId: TASK,
+        now,
+        notices: [
+          media({
+            state: "queued",
+            at: ago(0.01),
+            permalink: null,
+            reason: "Queued.",
+          }),
+          notice({
+            kind: "blueprint.close",
+            state: "queued",
+            at: ago(0.01),
+            permalink: null,
+            reason: "Queued.",
+          }),
+        ],
+      };
+    // The offer's reply posted two days before the read.
+    case "olderreply":
+      return {
+        taskId: TASK,
+        now,
+        notices: [
+          notice({ kind: "blueprint.offer", variant: "thread", at: ago(48) }),
+          media(),
+          notice({ kind: "blueprint.close" }),
+        ],
+      };
+    // The close notice was turned off, so the offer posted top level.
+    case "offertop":
+      return {
+        taskId: TASK,
+        now,
+        notices: [
+          notice({ kind: "blueprint.offer", variant: "top", at: ago(1) }),
+          media(),
+          notice({
+            kind: "blueprint.close",
+            state: "muted",
+            permalink: null,
+            reason: "Turned off in Settings, Notices and routing.",
           }),
         ],
       };

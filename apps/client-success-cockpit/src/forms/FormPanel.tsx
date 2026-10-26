@@ -25,7 +25,12 @@ import type {
   RailPart,
   RailRow,
 } from "./formConfig";
-import { type Trail, trailSummary } from "./formStatus";
+import {
+  afterLines,
+  type Trail,
+  trailAllDone,
+  trailSummary,
+} from "./formStatus";
 import { kuwaitShortDay, kuwaitTime } from "./formTime";
 import {
   type CreateWidget,
@@ -171,12 +176,14 @@ export function FormPanel({
   const missingCount = parts.find(p => p.id === "missing")?.rows.length ?? 0;
   const desk = useMinWidth(1024);
 
-  // Below 1024 px the panel is a fold; it opens on its own when a step is late.
+  // Below 1024 px the panel is a fold; it opens on its own when a step is
+  // late or needs a person (a notice not posted), and then shows a warning dot.
   const [foldOpen, setFoldOpen] = useState(false);
   const late = trail?.late ?? null;
+  const needsPerson = Boolean(trail?.stops.some(s => s.problem));
   useEffect(() => {
-    if (late) setFoldOpen(true);
-  }, [late]);
+    if (late || needsPerson) setFoldOpen(true);
+  }, [late, needsPerson]);
 
   const { jumped, jump } = useJump();
 
@@ -333,8 +340,15 @@ export function FormPanel({
                 className="size-4 shrink-0 text-muted-foreground transition-transform group-open/fold:rotate-90"
               />
               {trail ? (
-                <span className="min-w-0 truncate">
-                  {late ? (
+                // A line a person must act on wraps rather than lose its
+                // instruction; a wait may cut short.
+                <span
+                  className={cn(
+                    "min-w-0",
+                    needsPerson ? "text-pretty" : "truncate",
+                  )}
+                >
+                  {late || needsPerson ? (
                     <span className="mr-1.5 inline-flex align-middle">
                       <Dot tone="warn" />
                     </span>
@@ -1068,7 +1082,12 @@ export function AfterSend({
   const linkHref = back?.href ? back.href(taskId) : link;
   const name = config.title.toLowerCase();
   const late = trail.late;
-  const allDone = trail.stops.every(s => s.done);
+  // A notice that was off or skipped is done but not a success: the footer
+  // never counts it as one.
+  const allDone = trailAllDone(trail);
+  const quietSlack = trail.stops.every(s => s.done) && !allDone;
+  const head = afterLines(config, trail);
+  const [showLink, setShowLink] = useState(false);
   // The late sentence: its first sentence in bold, the rest as it is.
   const lateFirst = trail.lateLine?.match(/^.*?\.(?=\s|$)/)?.[0] ?? "";
   const lateRest = trail.lateLine?.slice(lateFirst.length).trim() ?? "";
@@ -1082,10 +1101,10 @@ export function AfterSend({
       aria-label="After the send"
     >
       <div>
-        <p className="text-[15px] font-semibold leading-6">
-          {late ? config.after.lateSay[late] : config.after.say}
-        </p>
-        <p className="text-xs text-muted-foreground">{config.after.sub}</p>
+        <p className="text-[15px] font-semibold leading-6">{head.say}</p>
+        {head.sub ? (
+          <p className="text-xs text-muted-foreground">{head.sub}</p>
+        ) : null}
       </div>
 
       {sent.error ? (
@@ -1148,14 +1167,12 @@ export function AfterSend({
                         : "text-muted-foreground",
                   )}
                 >
-                  {s.problem && s.label.includes(": ") ? (
-                    // "Not posted:" carries the warning; the reason reads
+                  {s.problem && s.lead && s.label.startsWith(s.lead) ? (
+                    // "Not posted." carries the warning; the reason reads
                     // as a plain sentence after it.
                     <>
-                      <span className="txt-warn font-medium">
-                        {s.label.slice(0, s.label.indexOf(": ") + 1)}
-                      </span>
-                      {s.label.slice(s.label.indexOf(": ") + 1)}
+                      <span className="txt-warn font-medium">{s.lead}</span>
+                      {s.label.slice(s.lead.length)}
                     </>
                   ) : (
                     s.label
@@ -1230,13 +1247,15 @@ export function AfterSend({
             ? null
             : allDone
               ? `All ${steps} steps are done.`
-              : checkedAt
-                ? `Checked ClickUp and Typeform at ${kuwaitTime(checkedAt)}.`
-                : late
-                  ? "The 10-minute sync carries on."
-                  : `The cockpit checks the card at ${config.after.checksAtSec
-                      .map(s => (s < 60 ? `${s} s` : `${s / 60} min`))
-                      .join(", ")}.`}
+              : quietSlack
+                ? "The card's steps are done. The Slack notice was not posted."
+                : checkedAt
+                  ? `Checked ClickUp and Typeform at ${kuwaitTime(checkedAt)}.`
+                  : late
+                    ? "The 10-minute sync carries on."
+                    : `The cockpit checks the card at ${config.after.checksAtSec
+                        .map(s => (s < 60 ? `${s} s` : `${s / 60} min`))
+                        .join(", ")}.`}
         </span>
         <Button size="sm" variant="ghost" onClick={onCheck} disabled={checking}>
           <RefreshCw
@@ -1253,30 +1272,45 @@ export function AfterSend({
       ) : null}
 
       {windowLink ? (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-          <span>This {name}'s window</span>
-          <button
-            type="button"
-            className={cn(
-              INK,
-              "inline-flex items-center gap-1 underline-offset-4 hover:underline",
-            )}
-            onClick={() =>
-              navigator.clipboard.writeText(windowLink).then(
-                () =>
-                  toast.success(
-                    `Link copied. It opens this client's ${name} window.`,
-                  ),
-                () =>
-                  toast.error(
-                    "The browser would not copy. Select the text instead.",
-                  ),
-              )
-            }
-          >
-            <Copy aria-hidden className="size-3.5" />
-            Copy the link
-          </button>
+        <div className="space-y-1.5 text-xs text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>This {name}'s window</span>
+            <button
+              type="button"
+              className={cn(
+                INK,
+                "inline-flex items-center gap-1 underline-offset-4 hover:underline",
+              )}
+              onClick={() =>
+                navigator.clipboard.writeText(windowLink).then(
+                  () =>
+                    toast.success(
+                      `Link copied. It opens this client's ${name} window.`,
+                    ),
+                  () => {
+                    // The link is shown to select by hand, so the words
+                    // point at something on the screen.
+                    setShowLink(true);
+                    toast.error(
+                      "The browser would not copy. Select the link below instead.",
+                    );
+                  },
+                )
+              }
+            >
+              <Copy aria-hidden className="size-3.5" />
+              Copy the link
+            </button>
+          </div>
+          {showLink ? (
+            <input
+              readOnly
+              aria-label={`This ${name}'s window link`}
+              value={windowLink}
+              onFocus={e => e.currentTarget.select()}
+              className="block w-full min-w-0 rounded-md border bg-background px-2 py-1 font-mono text-[11px] text-foreground"
+            />
+          ) : null}
         </div>
       ) : null}
 

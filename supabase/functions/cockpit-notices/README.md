@@ -9,9 +9,9 @@ mahara-club-bot.
 | Notice | Posts in | Tags (default, changed in Settings) |
 |---|---|---|
 | Kickoff complete | #csm-general | the creative director |
-| Kickoff in, card not updated (20 minutes without the Kickoff Handoff comment) | #csm-general | the CSM, the systems manager |
+| Kickoff in, card not updated (20 minutes without the Kickoff Handoff comment and the card at Brand Blueprint Booked, both) | #csm-general | the CSM, the systems manager |
 | Second kickoff (a line in either) | | the CSM |
-| Kickoff card updated (a reply under a late notice) | its thread | nobody |
+| Kickoff card updated (a reply under a late notice, once the card looks done and has the Kickoff Handoff comment) | its thread | nobody |
 | Brand Blueprint complete, or closed with a card update to check | #csm-general | the CSM |
 | Brand Blueprint completed, for media | #media-general | nobody |
 | Blueprint card confirmed (a reply) | its thread | nobody |
@@ -30,7 +30,7 @@ not exactly one of these is 400 with the sentence saying what to send.
 
 | Body | What happens |
 |---|---|
-| `{"job":"run"}` | 202 at once; in the background: sweep, check new channels, reconcile unknowns, claim up to 10, post, record |
+| `{"job":"run"}` | 202 at once; in the background: sweep, check new channels and newly tagged people, reconcile unknowns, claim up to 3, post (none started after a minute of work; the rest go back to the queue), record |
 | `{"job":"doctor"}` | the bot, its scopes, every channel (recorded), every tag; `ok` only when all pass |
 | `{"job":"dryRun","responseId":"..."}` | a kickoff from the mirror: one ClickUp read, the text and tags; posts nothing, writes no notice |
 | `{"job":"dryRun","kind":"blueprint.close","taskId":"...","facts":{...},"variant":"done"}` | the same from given facts (`variant` optional) |
@@ -48,12 +48,23 @@ there is work (`cockpit_slack_notices_kick()`).
    (mahara-club-bot, `U0C0MJZNS2Y`). Otherwise every claimed row goes back to
    the queue for 5 minutes and nothing is posted or checked.
 3. A kickoff reads the card's comments: a `KICKOFF HANDOFF` comment at or after
-   the submit gives Kickoff complete; none within 20 minutes waits a minute (not
-   an attempt); none after 20 minutes, or comments that could not be read, gives
-   the late notice.
-4. Tags resolve to `<@U...>`; a seat without a Slack id is looked up by email;
+   the submit **and** the card looking done (`live.looksDone`: the Brand
+   Blueprint stage, changed since the submit) give Kickoff complete. Make
+   writes the comment first (module [11]) and the stage later ([21]), so a
+   comment alone is not enough. Either half missing within 20 minutes waits a
+   minute (not an attempt); after 20 minutes it is the late notice, whose line
+   says which half is missing. The sent facts keep `commentCheck`,
+   `looksDone` and `cardUpdatedAt` (what it saw).
+   A late kickoff's reply (`kickoff.updated`, queued by the sweep once the card
+   looks done, from what the late notice saw, never the post time) reads the comments too:
+   it posts only once the comment is there, else it waits 10 minutes (not an
+   attempt); the claim lets it go 48 hours after the kickoff.
+4. Tags resolve to `<@U...>`; a seat without a Slack id is looked up by email,
+   and Slack's answer is kept in `cockpit_slack_people` for the Settings card;
    anything still missing is the role label in plain text, plus a
-   `notices/mentions` warning row in the ledger.
+   `notices/mentions` warning row in the ledger. People an editor tags are
+   checked the same way within a minute of the save
+   (`cockpit_slack_person_pending`, `cockpit_slack_person_checked`).
 5. `text.ts` builds the words (`text` always ends with `Ref CN-xxxxxxxx`). One
    `chat.postMessage`, `unfurl_links` and `unfurl_media` false.
 6. It counts as posted only on Slack's receipt: `ok`, a `ts`, and the channel
@@ -67,12 +78,14 @@ there is work (`cockpit_slack_notices_kick()`).
 | ok, another channel, or no ts | `unknown` (it posted somewhere; never resent) |
 | rate limited | `retry` after Slack's wait, 3 tries at most |
 | a refusal | `failed`, with a sentence for the tech lead |
+| `internal_error` or `fatal_error` (Slack: it may have gone through) | `unknown` |
 | no answer, a 5xx, an unreadable answer, a break after the request left | `unknown` |
 | a break before the request left | `retry` |
 
-An `unknown` is never sent again. Each run looks for its Ref in the channel
-(or its thread) from a minute before it was claimed; found, it becomes
-`posted`. Not found, it stays for a person (RUNBOOK, Slack notices).
+An `unknown` is never sent again. Each run looks for its Ref where the claim
+sent it (the thread stored in `thread_ts`, else the channel) from a minute
+before it was claimed; found, it becomes `posted`. Not found, it stays for a
+person (RUNBOOK, Slack notices).
 
 ## Secrets and receipts
 

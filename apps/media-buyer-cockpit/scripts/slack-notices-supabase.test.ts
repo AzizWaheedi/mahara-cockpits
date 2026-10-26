@@ -243,9 +243,12 @@ async function outbox(
   );
   return rows[0].id;
 }
+// As cockpit-creative-api settles a press: only a run that finished writes
+// its result; a reconcile (and a stuck send settled by hand) writes none.
 const move = (id: string, state: string, res: Row | null = null) =>
   q(
-    `UPDATE public.cockpit_creative_outbox SET state=$2, result=coalesce($3::jsonb, result),
+    `UPDATE public.cockpit_creative_outbox SET state=$2,
+       result = CASE WHEN $2 = 'done' THEN coalesce($3::jsonb, result) ELSE result END,
        settled_at = CASE WHEN $2 IN ('done','reconcile','failed') THEN now() ELSE settled_at END WHERE id=$1`,
     [id, state, res ? JSON.stringify(res) : null],
   );
@@ -338,6 +341,22 @@ beforeAll(async () => {
       "cockpit_csm_calls",
     ),
   );
+  // The press journal and the Blueprint record: a close that settled without
+  // a result takes its facts from them.
+  await db.exec(
+    cut(
+      migration("20260927g_cockpit_media_actions.sql"),
+      /CREATE TABLE public\.cockpit_media_actions \([\s\S]*?\n\);/,
+      "cockpit_media_actions",
+    ),
+  );
+  await db.exec(
+    cut(
+      migration("20261024a_brand_blueprints.sql"),
+      /CREATE TABLE IF NOT EXISTS public\.cockpit_blueprints \([\s\S]*?\n\);/,
+      "cockpit_blueprints",
+    ),
+  );
 
   // The roster and the client gates, from their canonical migrations.
   const roster = migration("20260927v_csm_read_models.sql");
@@ -403,7 +422,8 @@ beforeAll(async () => {
   await db.exec(`
     REVOKE ALL ON public.cockpit_sync_state, public.cockpit_people, public.cockpit_eod_radar_slack_ids,
       public.cockpit_client_onboarding, public.cockpit_creative_outbox, public.cockpit_csm_form_sends,
-      public.cockpit_csm_calls, public.cockpit_csm_source_state, public.cockpit_csm_sources FROM anon, authenticated;`);
+      public.cockpit_csm_calls, public.cockpit_csm_source_state, public.cockpit_csm_sources,
+      public.cockpit_media_actions, public.cockpit_blueprints FROM anon, authenticated;`);
 
   // Seats.
   await member(db, CEO, "aziz@maharamedia.com", []);
@@ -547,8 +567,9 @@ describe("the migration", () => {
     "cockpit_slack_notice_settings",
     "cockpit_forms_editors",
     "cockpit_slack_notices",
+    "cockpit_slack_people",
   ];
-  test("browser roles cannot touch the four tables; the service role only reads them; row security is on", async () => {
+  test("browser roles cannot touch the five tables; the service role only reads them; row security is on", async () => {
     for (const table of TABLES) {
       for (const role of ["anon", "authenticated"])
         for (const privilege of [
@@ -619,6 +640,8 @@ describe("the migration", () => {
       "cockpit_slack_notice_doctor_inputs()",
       "cockpit_slack_notice_rehearse_service(text,text)",
       "cockpit_slack_notice_fix(uuid,text,text)",
+      "cockpit_slack_person_pending()",
+      "cockpit_slack_person_checked(bigint,text,text,text)",
     ];
     const browser = [
       "cockpit_slack_notice_read(text)",
@@ -637,6 +660,8 @@ describe("the migration", () => {
       "cockpit_slack_notice_mentions(text[],bigint[],text)",
       "cockpit_slack_notice_queue(text,text,text,text,jsonb,uuid,text,text)",
       "cockpit_slack_notice_kickoff_facts(text,text,jsonb,text)",
+      "cockpit_slack_notice_close_found(public.cockpit_creative_outbox)",
+      "cockpit_slack_notice_launch_task(public.cockpit_creative_outbox)",
       "cockpit_slack_notice_close_facts(public.cockpit_creative_outbox)",
       "cockpit_slack_notice_offer_facts(public.cockpit_creative_outbox)",
       "cockpit_slack_notice_live(public.cockpit_slack_notices)",
@@ -649,6 +674,11 @@ describe("the migration", () => {
       "cockpit_forms_editor_gate()",
       "cockpit_slack_notice_viewer()",
       "cockpit_slack_notices_kick()",
+      "cockpit_slack_person_id(bigint)",
+      "cockpit_slack_person_state(bigint)",
+      "cockpit_slack_person_label(text)",
+      "cockpit_slack_people_queue(bigint[],text)",
+      "cockpit_forms_editor_seat_off()",
     ];
     for (const fn of service) {
       expect(await can("service_role", `public.${fn}`)).toBe(true);
@@ -1095,6 +1125,94 @@ describe("the Brand Blueprint triggers", () => {
     expect(await notices()).toBe(before);
   });
 
+  test("a close that settles to reconcile, or by hand, keeps its launch task and the map phase it read (X28)", async () => {
+    // Part 1 recorded the launch task on the Blueprint; the close's run
+    // wrote its journal (with the plan's own values) and then went to
+    // reconcile, which writes no result.
+    await q(
+      "INSERT INTO public.cockpit_blueprints(task_id, client_name, launch_task_id, updated_by) VALUES('taskX1','Xi Homes','86launchX1','creative@tests.invalid')",
+    );
+    const id = await outbox("blueprintClose", "taskX1", "Xi Homes", {
+      payload: { service: "fitout" },
+    });
+    await q(
+      `INSERT INTO public.cockpit_media_actions(id, actor_id, operation, request)
+       VALUES($1, $2, 'creativeClient.blueprintClose', $3::jsonb)`,
+      [
+        id,
+        CREATIVE,
+        JSON.stringify({
+          outbox: { id },
+          planned: {
+            kind: "blueprintClose",
+            launchTaskId: null,
+            closeRoute: "card_only",
+            mapPhase: 6,
+            mapSkipped: true,
+          },
+        }),
+      ],
+    );
+    await move(id, "sending");
+    await move(id, "reconcile");
+    expect(
+      (
+        await q(
+          "SELECT result FROM public.cockpit_creative_outbox WHERE id=$1",
+          [id],
+        )
+      )[0].result,
+    ).toBeNull();
+    expect((await notice("blueprint:taskX1:close")).facts).toMatchObject({
+      settled: "reconcile",
+      launchTaskId: "86launchX1",
+      mapPhase: 6,
+    });
+    expect((await notice("blueprint:taskX1:media")).facts).toMatchObject({
+      launchTaskId: "86launchX1",
+      mapPhase: 6,
+    });
+
+    // A stuck send settled to done by hand (RUNBOOK): no result, no journal
+    // planned values either; the Blueprint's launch task still comes through,
+    // and the phase is unknown, never zero.
+    await q(
+      "INSERT INTO public.cockpit_blueprints(task_id, client_name, launch_task_id, updated_by) VALUES('taskX2','Xi Two','86launchX2','creative@tests.invalid')",
+    );
+    const hand = await outbox("blueprintClose", "taskX2", "Xi Two");
+    await q(
+      `INSERT INTO public.cockpit_media_actions(id, actor_id, operation, request)
+       VALUES($1, $2, 'creativeClient.blueprintClose', '{"outbox":{}}'::jsonb)`,
+      [hand, CREATIVE],
+    );
+    await move(hand, "sending");
+    await q(
+      "UPDATE public.cockpit_creative_outbox SET state='done', settled_at=now() WHERE id=$1",
+      [hand],
+    );
+    expect((await notice("blueprint:taskX2:close")).facts).toMatchObject({
+      settled: "done",
+      launchTaskId: "86launchX2",
+      mapPhase: null,
+    });
+    // A close whose run finished keeps its own result over both.
+    await q(
+      "INSERT INTO public.cockpit_blueprints(task_id, client_name, launch_task_id, updated_by) VALUES('taskX3','Xi Three','86launchOLD','creative@tests.invalid')",
+    );
+    await press(
+      "blueprintClose",
+      "taskX3",
+      "Xi Three",
+      ["done"],
+      {},
+      { ...LAUNCH, launchTaskId: "86launchX3", mapPhase: 3 },
+    );
+    expect((await notice("blueprint:taskX3:media")).facts).toMatchObject({
+      launchTaskId: "86launchX3",
+      mapPhase: 3,
+    });
+  });
+
   test("a later press that settles done after a close left to check queues the reply once", async () => {
     await press("blueprintClose", "taskS1", "Sigma Build", ["reconcile"]);
     const close = await notice("blueprint:taskS1:close");
@@ -1356,6 +1474,57 @@ describe("the claim", () => {
     expect((await notice("kickoff:kickgamma001")).updated_at).toEqual(
       gamma.updated_at,
     );
+  });
+
+  test("after an outage, a notice more than 48 hours past its event is skipped with a plain reason, never posted", async () => {
+    // Queued while nothing could post (no vault secret, or the wrong bot
+    // requeueing every 5 minutes, which is never an attempt), then three
+    // days pass.
+    await onboard(
+      "taskY1",
+      "Ypsilon Homes",
+      kickoffForm("kickypsil001", ago(5)),
+    );
+    const kick = await notice("kickoff:kickypsil001");
+    await press(
+      "blueprintClose",
+      "taskY2",
+      "Ypsilon Two",
+      ["done"],
+      {},
+      { kind: "blueprintClose", mapPhase: 4, mapSkipped: false },
+    );
+    const close = await notice("blueprint:taskY2:close");
+    const media = await notice("blueprint:taskY2:media");
+    // The guard keeps a row's creation time; the test turns it off to age them.
+    await q(
+      "ALTER TABLE public.cockpit_slack_notices DISABLE TRIGGER cockpit_slack_notices_guard",
+    );
+    await q(
+      `UPDATE public.cockpit_slack_notices
+          SET created_at = now() - interval '72 hours', next_attempt_at = now(),
+              facts = facts || jsonb_build_object('submittedAt', $2::text, 'closedAt', CASE WHEN facts ? 'closedAt' THEN $2::text END)
+        WHERE id = ANY($1::uuid[])`,
+      [[kick.id, close.id, media.id], ago(72 * 60)],
+    );
+    await q(
+      "ALTER TABLE public.cockpit_slack_notices ENABLE TRIGGER cockpit_slack_notices_guard",
+    );
+    for (const id of [kick.id, close.id, media.id])
+      expect((await claim(id)).rows).toEqual([]);
+    expect(await notice("kickoff:kickypsil001")).toMatchObject({
+      state: "skipped",
+      error:
+        "This kickoff was more than 48 hours old by the time the cockpit could send it, so it was not posted.",
+    });
+    for (const key of ["blueprint:taskY2:close", "blueprint:taskY2:media"])
+      expect(await notice(key)).toMatchObject({
+        state: "skipped",
+        error:
+          "This notice was more than 48 hours old by the time the cockpit could send it, so it was not posted.",
+      });
+    // Each skip left its audit row, from the cron.
+    expect((await audits(kick.id)).at(-1)!.source_system).toBe("cron");
   });
 });
 
@@ -1852,8 +2021,13 @@ describe("the sweep", () => {
       "cardUpdatedAt",
       "client",
       "responseId",
+      "submittedAt",
       "taskId",
     ]);
+    // The sender re-checks the card's Kickoff Handoff comment from the kickoff's time.
+    expect(followUp.facts.submittedAt).toBe(
+      (await notice("kickoff:kickkappa001")).facts.submittedAt,
+    );
 
     // A second sweep finds nothing new.
     expect(await sweep()).toEqual({
@@ -1881,6 +2055,231 @@ describe("the sweep", () => {
     await result(reply.id, "posted", "1792900300.000400", CSM_GENERAL, null, {
       variant: "thread",
     });
+  });
+
+  test("a card that already looked done when the late notice posted gets its reply queued at once; the sender holds it for the comment, and none past 48 hours", async () => {
+    const L = "taskL1";
+    // A second kickoff on a card already at Brand Blueprint Booked: Make did
+    // not write the new Kickoff Handoff comment, but the card was touched
+    // after the submit, so it looks done.
+    await onboard(
+      L,
+      "Lambda Living",
+      kickoffForm("kicklambda01", ago(25)),
+      "Brand Blueprint Booked♠️",
+    );
+    await q(
+      "UPDATE public.cockpit_client_onboarding SET card_updated_at=now() - interval '19 minutes' WHERE clickup_task_id=$1",
+      [L],
+    );
+    const late = await notice("kickoff:kicklambda01");
+    const got = await claim(late.id);
+    expect(got.rows[0].live).toMatchObject({ looksDone: true });
+    await result(late.id, "posted", "1792900700.000800", CSM_GENERAL, null, {
+      variant: "late",
+      facts: {
+        commentCheck: "missing",
+        looksDone: true,
+        cardUpdatedAt: got.rows[0].live.cardUpdatedAt,
+      },
+    });
+    // The late notice saw the comment missing, so the card that looks done
+    // gets its reply now, with a card time from before the alarm, and the
+    // kickoff's time so the sender checks the comment before posting it.
+    expect((await sweep()).followups).toBe(1);
+    const reply = await notice("kickoff:kicklambda01:updated");
+    expect(reply.parent_id).toBe(late.id);
+    expect(Date.parse(reply.facts.cardUpdatedAt)).toBeLessThan(
+      Date.parse((await notice("kickoff:kicklambda01")).finished_at),
+    );
+    expect(reply.facts.submittedAt).toBe(late.facts.submittedAt);
+    expect((await sweep()).followups).toBe(0);
+    // Waiting for the comment, the sender requeues it; 48 hours after the
+    // kickoff the claim lets it go without a post.
+    await claim(reply.id);
+    await result(
+      reply.id,
+      "requeue",
+      null,
+      null,
+      "Waiting for the card's Kickoff Handoff comment.",
+      {
+        retryAfterSec: 600,
+      },
+    );
+    await q(
+      "UPDATE public.cockpit_slack_notices SET next_attempt_at=now(), facts = facts || jsonb_build_object('submittedAt', $2::text) WHERE id=$1",
+      [reply.id, ago(49 * 60)],
+    );
+    expect((await claim(reply.id)).rows).toEqual([]);
+    const ended = await notice("kickoff:kicklambda01:updated");
+    expect(ended.state).toBe("skipped");
+    expect(ended.error).toBe(
+      "The card had no Kickoff Handoff comment 48 hours after the kickoff, so no reply was posted. The late notice stands.",
+    );
+  });
+
+  test("a late notice whose comment read failed, on a card already done, gets its reply (X19)", async () => {
+    const U = "taskU1";
+    // Make finished at 3 minutes; the 20-minute send could not read the
+    // comments (a 429, a 5xx, the timeout), so the late notice went out with
+    // commentCheck unread although the card looked done.
+    await onboard(
+      U,
+      "Upsilon Homes",
+      kickoffForm("kickupsil001", ago(21)),
+      "Brand Blueprint Booked",
+    );
+    await q(
+      "UPDATE public.cockpit_client_onboarding SET card_updated_at=now() - interval '18 minutes' WHERE clickup_task_id=$1",
+      [U],
+    );
+    const late = await notice("kickoff:kickupsil001");
+    const got = await claim(late.id);
+    expect(got.rows[0].live).toMatchObject({ looksDone: true });
+    await result(late.id, "posted", "1792900710.000810", CSM_GENERAL, null, {
+      variant: "late",
+      facts: {
+        commentCheck: "unread",
+        looksDone: true,
+        cardUpdatedAt: got.rows[0].live.cardUpdatedAt,
+      },
+    });
+    // Nothing else edits the card: the reply is queued all the same.
+    expect((await sweep()).followups).toBe(1);
+    const reply = await notice("kickoff:kickupsil001:updated");
+    expect(reply).toMatchObject({
+      kind: "kickoff.updated",
+      parent_id: late.id,
+      state: "queued",
+    });
+    const thread = await claim(reply.id);
+    expect(thread.rows[0]).toMatchObject({
+      threadTs: "1792900710.000810",
+      target: CSM_GENERAL,
+    });
+    await result(reply.id, "posted", "1792900720.000820", CSM_GENERAL, null, {
+      variant: "thread",
+    });
+    expect((await sweep()).followups).toBe(0);
+  });
+
+  test("a late notice the mirror was behind on gets its reply once the mirror shows the card done, with a card time before the alarm (X19)", async () => {
+    const M = "taskV1";
+    await onboard(
+      M,
+      "Vega Studio",
+      kickoffForm("kickvega0001", ago(21)),
+      "Onboarding Booked",
+    );
+    const late = await notice("kickoff:kickvega0001");
+    const got = await claim(late.id);
+    expect(got.rows[0].live).toMatchObject({ looksDone: false });
+    await result(late.id, "posted", "1792900730.000830", CSM_GENERAL, null, {
+      variant: "late",
+      facts: {
+        commentCheck: "found",
+        looksDone: false,
+        cardUpdatedAt: got.rows[0].live.cardUpdatedAt,
+      },
+    });
+    // The card is not done yet: no reply.
+    expect((await sweep()).followups).toBe(0);
+    expect(await maybeNotice("kickoff:kickvega0001:updated")).toBeNull();
+    // The next mirror run brings the card in as done, changed 6 minutes ago:
+    // before the late notice posted.
+    await q(
+      "UPDATE public.cockpit_client_onboarding SET client_status='Brand Blueprint Booked', card_updated_at=now() - interval '6 minutes' WHERE clickup_task_id=$1",
+      [M],
+    );
+    expect((await sweep()).followups).toBe(1);
+    const reply = await notice("kickoff:kickvega0001:updated");
+    expect(reply.parent_id).toBe(late.id);
+    expect(Date.parse(reply.facts.cardUpdatedAt)).toBeLessThan(
+      Date.parse((await notice("kickoff:kickvega0001")).finished_at),
+    );
+    expect((await sweep()).followups).toBe(0);
+    await claim(reply.id);
+    await result(reply.id, "posted", "1792900740.000840", CSM_GENERAL, null, {
+      variant: "thread",
+    });
+  });
+
+  test("an unknown reply is looked for where the claim sent it, even after its first notice posts later", async () => {
+    const P = "taskP1";
+    await press(
+      "blueprintClose",
+      P,
+      "Pi Studio",
+      ["done"],
+      {},
+      {
+        kind: "blueprintClose",
+        mapPhase: 4,
+        mapSkipped: false,
+      },
+    );
+    const close = await notice(`blueprint:${P}:close`);
+    await claim(close.id);
+    await result(
+      close.id,
+      "retry",
+      null,
+      null,
+      "Slack asked the cockpit to slow down (try 3 of 3).",
+      {},
+    );
+    await q(
+      "UPDATE public.cockpit_slack_notices SET next_attempt_at=now() WHERE id=$1",
+      [close.id],
+    );
+    await claim(close.id);
+    await result(close.id, "retry", null, null, null, {});
+    await q(
+      "UPDATE public.cockpit_slack_notices SET next_attempt_at=now() WHERE id=$1",
+      [close.id],
+    );
+    await claim(close.id);
+    await result(close.id, "retry", null, null, null, {});
+    expect((await notice(`blueprint:${P}:close`)).state).toBe("failed");
+    // The offer goes top level, and Slack does not confirm it.
+    await press("blueprintOffer", P, "Pi Studio", ["done"]);
+    const offer = await notice(`blueprint:${P}:offer`);
+    const top = await claim(offer.id);
+    expect(top.rows[0]).toMatchObject({ threadTs: null, target: CSM_GENERAL });
+    expect((await notice(`blueprint:${P}:offer`)).thread_ts).toBeNull();
+    await result(
+      offer.id,
+      "unknown",
+      null,
+      null,
+      "Slack did not confirm the post; it is not sent again in case it arrived.",
+      {
+        variant: "top",
+      },
+    );
+    // The tech lead fixes the channel and requeues the close; it posts.
+    await svc("SELECT public.cockpit_slack_notice_fix($1,'requeue',null) r", [
+      close.id,
+    ]);
+    await claim(close.id);
+    await result(close.id, "posted", "1792999999.000100", CSM_GENERAL, null, {
+      variant: "done",
+    });
+    const out = await svc<Row[]>(
+      "SELECT public.cockpit_slack_notice_unknowns(10) r",
+    );
+    expect(out.find(u => u.id === offer.id)).toMatchObject({
+      channel: CSM_GENERAL,
+      threadTs: null,
+    });
+    // A reply that did go in a thread keeps that thread.
+    const reply = await notice("blueprint:taskR1:updated");
+    expect(reply.thread_ts).toBe("1792872070.187739");
+    await q(
+      "UPDATE public.cockpit_slack_notices SET checked_at=now() WHERE id=$1",
+      [offer.id],
+    );
   });
 });
 
@@ -1912,11 +2311,12 @@ describe("reading a card's notices", () => {
     ]);
     for (const n of r.notices) expect(Object.keys(n).sort()).toEqual(VIEW_KEYS);
     const [typeform, second, first] = r.notices;
+    // Not claimed yet: it names where it is set to post now.
     expect(typeform).toMatchObject({
       state: "queued",
       reason: "Queued.",
       responseId: "bpacme00001",
-      channel: null,
+      channel: { id: CSM_GENERAL, name: "csm-general" },
     });
     expect(first).toMatchObject({
       state: "posted",
@@ -1967,6 +2367,29 @@ describe("reading a card's notices", () => {
     expect(Date.parse(g.notices[0].dueAt)).toBe(
       Date.parse(kick.facts.submittedAt) + 20 * 60_000,
     );
+    // Its channel is the one Settings names now (D17): an editor's move
+    // shows on every screen before the notice is claimed.
+    expect(kick.target).toBeNull();
+    expect(g.notices[0].channel).toEqual({
+      id: CSM_GENERAL,
+      name: "csm-general",
+    });
+    await q(
+      "UPDATE public.cockpit_slack_notice_settings SET channel=$1 WHERE kind='kickoff'",
+      [MEDIA_GENERAL],
+    );
+    try {
+      const moved = await one<Row>(CEO, READ, [C]);
+      expect(moved.notices[0].channel).toEqual({
+        id: MEDIA_GENERAL,
+        name: "media-general",
+      });
+    } finally {
+      await q(
+        "UPDATE public.cockpit_slack_notice_settings SET channel=$1 WHERE kind='kickoff'",
+        [CSM_GENERAL],
+      );
+    }
   });
 
   test("another CSM, a creative seat without the client and a media buyer are refused; the creative seat with it, the CEO and an admin read", async () => {
@@ -2042,14 +2465,26 @@ describe("notices and routing settings (D17)", () => {
         "SELECT facts->>'responseId' AS rid FROM public.cockpit_slack_notices WHERE kind='kickoff' ORDER BY created_at DESC, id LIMIT 1",
       )
     )[0].rid;
-    expect(["kickfresh001", "kickkappa002"]).toContain(newest);
+    expect([
+      "kickfresh001",
+      "kickkappa002",
+      "kicklambda01",
+      "kickupsil001",
+      "kickvega0001",
+    ]).toContain(newest);
     expect(byKind.kickoff.last.responseId).toBe(newest);
     expect(byKind["kickoff.late"]).toMatchObject({
       shape: "variant",
       fixedOn: true,
       channel: null,
     });
-    expect(byKind["kickoff.late"].last.responseId).toBe("kickkappa001");
+    expect(byKind["kickoff.late"].last.responseId).toBe(
+      (
+        await q(
+          "SELECT facts->>'responseId' AS rid FROM public.cockpit_slack_notices WHERE kind='kickoff' AND variant='late' ORDER BY created_at DESC, id LIMIT 1",
+        )
+      )[0].rid,
+    );
     expect(byKind["kickoff.second"].last.kind).toBe("kickoff");
     expect(byKind["kickoff.updated"]).toMatchObject({
       shape: "reply",
@@ -2249,11 +2684,20 @@ describe("notices and routing settings (D17)", () => {
       mentionPeople: [people.bilal, String(people.bilal), people.sara],
     });
     const offer = r.notices.find((n: Row) => n.kind === "blueprint.offer");
+    // Sara has no Slack id yet, so the save queued a check for her (X4).
     expect(offer.mentionPeople).toEqual([
-      { id: people.bilal, label: "Bilal, Media buyer", slackKnown: true },
+      {
+        id: people.bilal,
+        label: "Bilal, Media buyer",
+        role: "the media buyer",
+        slack: "ok",
+        slackKnown: true,
+      },
       {
         id: people.sara,
         label: "Sara, Client success manager",
+        role: "the client success manager",
+        slack: "checking",
         slackKnown: false,
       },
     ]);
@@ -2274,6 +2718,117 @@ describe("notices and routing settings (D17)", () => {
       ["people", "the client success manager", null, "csm-b@tests.invalid"],
     ]);
     await settingsSet(CEO, "blueprint.offer", { mentionPeople: [] });
+  });
+
+  test("a person an editor tags is checked in Slack by the sender; the card says what the next notice does with them", async () => {
+    const PENDING = "SELECT public.cockpit_slack_person_pending() r";
+    const CHECKED = "SELECT public.cockpit_slack_person_checked($1,$2,$3,$4) r";
+    // The CEO has no Slack id row (contract section 10): choosing him queues
+    // a check, as does Sara; Bilal's EOD radar id is already known.
+    await settingsSet(CEO, "blueprint.offer", {
+      mentionPeople: [people.aziz, people.sara, people.bilal],
+    });
+    expect(
+      (await svc<Row[]>(PENDING)).map(p => [p.personId, p.email]).sort(),
+    ).toEqual(
+      [
+        [people.aziz, "aziz@maharamedia.com"],
+        [people.sara, "csm-b@tests.invalid"],
+      ].sort(),
+    );
+    expect(await refused(CEO, PENDING)).toContain("permission denied");
+    expect(
+      await refused(CEO, CHECKED, [people.aziz, "ok", "U0CEOAAAA1", null]),
+    ).toContain("permission denied");
+    // A viewer reads the role, never the first name.
+    const viewer = (await settingsRead(CSM_A)).notices.find(
+      (n: Row) => n.kind === "blueprint.offer",
+    );
+    expect(
+      viewer.mentionPeople.map((p: Row) => [p.label, p.role, p.slack]),
+    ).toEqual([
+      ["the CEO", "the CEO", "checking"],
+      ["the client success manager", "the client success manager", "checking"],
+      ["the media buyer", "the media buyer", "ok"],
+    ]);
+    expect(JSON.stringify(viewer)).not.toMatch(/Aziz|Sara|Bilal/);
+
+    // The sender answers: the CEO is in Slack, Sara's address is not.
+    expect(
+      await svcRefused(CHECKED, [people.aziz, "ok", "not-an-id", null]),
+    ).toContain("member ID");
+    expect(
+      await svc<Row>(CHECKED, [
+        people.aziz,
+        "ok",
+        "U0CEOAAAA1",
+        "Found in Slack.",
+      ]),
+    ).toMatchObject({ personId: people.aziz, state: "ok" });
+    await svc<Row>(CHECKED, [
+      people.sara,
+      "not_found",
+      null,
+      "Slack has no member with the address on the team list.",
+    ]);
+    expect(await svc<Row[]>(PENDING)).toEqual([]);
+    const after = (await settingsRead(CEO)).notices.find(
+      (n: Row) => n.kind === "blueprint.offer",
+    );
+    expect(
+      after.mentionPeople.map((p: Row) => [p.id, p.slack, p.slackKnown]),
+    ).toEqual([
+      [people.aziz, "ok", true],
+      [people.sara, "not_found", false],
+      [people.bilal, "ok", true],
+    ]);
+    const dry = await svc<Row>(
+      "SELECT public.cockpit_slack_notice_inputs($1::jsonb) r",
+      [
+        JSON.stringify({
+          kind: "blueprint.offer",
+          taskId: B,
+          facts: { taskId: B, client: "Beta Build" },
+        }),
+      ],
+    );
+    expect(dry.mentions.main.map((m: Row) => [m.label, m.slackId])).toEqual([
+      ["the CEO", "U0CEOAAAA1"],
+      ["the client success manager", null],
+      ["the media buyer", "U0BUYERAA1"],
+    ]);
+    const audit = (await audits(String(people.aziz))).filter(
+      a => a.entity_type === "cockpit_slack_people",
+    );
+    expect(audit.map(a => [a.action, a.after?.state])).toEqual([
+      ["slack_notice.person", "checking"],
+      ["slack_notice.person", "ok"],
+    ]);
+
+    // Choosing Sara again asks Slack again (her address may have changed);
+    // the CEO, now found, is not asked again.
+    await settingsSet(CEO, "blueprint.offer", { mentionPeople: [] });
+    await settingsSet(CEO, "blueprint.offer", {
+      mentionPeople: [people.sara, people.aziz],
+    });
+    expect((await svc<Row[]>(PENDING)).map(p => p.personId)).toEqual([
+      people.sara,
+    ]);
+    // A seat rule queues a check for whoever holds the seat without an id.
+    await settingsSet(CEO, "blueprint.offer", { mentionPeople: [] });
+    await q("DELETE FROM public.cockpit_slack_people");
+    await settingsSet(CEO, "blueprint.offer", { mentionRule: ["seat:csm"] });
+    expect((await svc<Row[]>(PENDING)).map(p => p.personId)).toEqual([
+      people.sara,
+    ]);
+    const seat = (await settingsRead(CEO)).notices.find(
+      (n: Row) => n.kind === "blueprint.offer",
+    );
+    expect(seat.tags).toEqual([
+      { rule: "seat:csm", found: true, slackKnown: true, checking: true },
+    ]);
+    await settingsSet(CEO, "blueprint.offer", { mentionRule: [] });
+    await q("DELETE FROM public.cockpit_slack_people");
   });
 
   test("channels: added as checking, checked by the sender, refused or ready, removed only when no notice posts there", async () => {
@@ -2469,6 +3024,70 @@ describe("notices and routing settings (D17)", () => {
     ).toContain("client-success or creative");
     // The row comes back, so the rehearsal test can use this seat.
     await set(CEO, editorRow, true);
+  });
+
+  test("the right to change notices ends with the seat: re-adding the address later does not bring it back", async () => {
+    const LEAVER = "00000000-0000-4000-8000-0000000000f5";
+    await member(db, LEAVER, "leaver@tests.invalid", ["csm"]);
+    const id = await memberId(LEAVER);
+    await one<Row>(CEO, "SELECT public.cockpit_forms_editor_set($1,true) r", [
+      id,
+    ]);
+    expect((await settingsRead(LEAVER)).can.edit).toBe(true);
+    // The Admin page's remove: the seat is switched off and its roles cleared
+    // (cockpit_admin_remove_member), the row kept.
+    await actor(db, ADMIN);
+    await db.exec("RESET ROLE");
+    await db.query(
+      "UPDATE public.cockpit_members SET active=false, roles='{}', updated_at=now() WHERE id=$1",
+      [id],
+    );
+    await asOwner();
+    expect(
+      await count(
+        "SELECT count(*) n FROM public.cockpit_forms_editors WHERE member_id=$1",
+        [id],
+      ),
+    ).toBe(0);
+    const gone = (await audits(id)).filter(
+      a => a.action === "forms.editor_removed",
+    );
+    expect(gone.length).toBe(1);
+    expect(gone[0]).toMatchObject({
+      actor_email: "sm@tests.invalid",
+      metadata: { op: "delete", why: "seat_off" },
+    });
+    // Re-added months later with another role (cockpit_admin_upsert_member
+    // keeps the id): no right comes back without a new grant.
+    await q(
+      "UPDATE public.cockpit_members SET active=true, roles=ARRAY['media_buyer'], updated_at=now() WHERE id=$1",
+      [id],
+    );
+    expect(await memberId(LEAVER)).toBe(id);
+    expect(await settingsRefused(LEAVER, "kickoff", { on: false })).toContain(
+      "Only the CEO, an admin or someone they add",
+    );
+    expect(
+      await refused(
+        LEAVER,
+        "SELECT public.cockpit_slack_channel_add('C0SOMEWHERE1',NULL)",
+      ),
+    ).toContain("Only the CEO, an admin or someone they add");
+    expect(
+      (await settingsRead(CEO)).editors.map((e: Row) => e.memberId),
+    ).not.toContain(id);
+    // A seat switched off for another reason, or a change that keeps it on,
+    // leaves the other editors' rows alone.
+    await q(
+      "UPDATE public.cockpit_members SET name='Mona E', updated_at=now() WHERE auth_user_id=$1",
+      [EDITOR_ROW],
+    );
+    expect(
+      await count(
+        "SELECT count(*) n FROM public.cockpit_forms_editors WHERE member_id=$1",
+        [await memberId(EDITOR_ROW)],
+      ),
+    ).toBe(1);
   });
 });
 
@@ -2911,6 +3530,19 @@ describe("the dry run, the doctor's inputs and the kick", () => {
       )
     )[0];
     expect(state).toMatchObject({ ok: true, note: "Nothing to send" });
+    // A person an editor tagged, waiting for the sender's Slack check, is work.
+    await q(
+      "INSERT INTO public.cockpit_slack_people(person_id,state,requested_by) VALUES($1,'checking','test')",
+      [people.sara],
+    );
+    await q("SELECT public.cockpit_slack_notices_kick()");
+    state = (
+      await q(
+        "SELECT * FROM public.cockpit_sync_state WHERE key='slack-notices-kick'",
+      )
+    )[0];
+    expect(state.ok).toBe(false);
+    await q("DELETE FROM public.cockpit_slack_people");
     expect(
       await count("SELECT count(*) n FROM pg_proc WHERE proname='schedule'"),
     ).toBe(0);

@@ -14,12 +14,21 @@
 --    and cockpit_creative_outbox queue it, the sweep backs them up, and the
 --    cockpit-notices Edge Function claims, posts and records each row. A
 --    state-move guard allows only the sender's moves; nothing is deleted.
+-- 5. cockpit_slack_people: the people a notice tags, checked in Slack by the
+--    sender (users.lookupByEmail) within a minute of an editor choosing them,
+--    and again whenever a notice looks one up. A seat switched off loses its
+--    editing right (a trigger on cockpit_members).
 --
--- Row security is on for all four tables, every browser and default grant is
+-- Row security is on for all five tables, every browser and default grant is
 -- revoked, and the service role may only read them: every write goes through
 -- the SECURITY DEFINER functions below, and every write leaves an audit row
 -- in cockpit_audit_log (by trigger). The kick reads its secret from the
 -- vault, and pg_cron, pg_net and the vault are touched only where they exist.
+--
+-- It reads, and never writes: the onboarding mirror (20261005a), the creative
+-- outbox (20260927s), the press journal cockpit_media_actions (20260927g) and
+-- the Blueprint record cockpit_blueprints (20261024a), both for a close that
+-- settled without a result, the form sends (20261023a) and the calls (20261011c).
 BEGIN;
 
 -- ---------------------------------------------------------------------------
@@ -95,6 +104,10 @@ CREATE TABLE IF NOT EXISTS public.cockpit_slack_notices (
   -- The last reconcile look at an unknown.
   checked_at      timestamptz,
   slack_ts        text CHECK (slack_ts IS NULL OR slack_ts ~ '^[0-9]+\.[0-9]+$'),
+  -- The thread the claim chose for a reply (its first notice's ts), NULL when
+  -- it went top level. The reconcile searches where it went, whatever the
+  -- first notice did later.
+  thread_ts       text CHECK (thread_ts IS NULL OR thread_ts ~ '^[0-9]+\.[0-9]+$'),
   permalink       text CHECK (permalink IS NULL OR permalink ~ '^https://[a-z0-9.-]+\.slack\.com/'),
   -- A plain sentence.
   error           text CHECK (error IS NULL OR char_length(error) <= 240),
@@ -115,16 +128,36 @@ CREATE INDEX IF NOT EXISTS cockpit_slack_notices_open
 CREATE INDEX IF NOT EXISTS cockpit_slack_notices_parent
   ON public.cockpit_slack_notices (parent_id) WHERE parent_id IS NOT NULL;
 
+-- The people a notice tags, as Slack knows them (contract X4). An editor's
+-- choice queues a check ("checking"); the sender looks the address up within
+-- a minute and records ok with the member id, not_found or refused. A notice
+-- that looks a person up at send time records the answer here too, so the
+-- Settings card says what the next notice will really do. The EOD radar's
+-- ids (cockpit_eod_radar_slack_ids) are read first and never written here.
+CREATE TABLE IF NOT EXISTS public.cockpit_slack_people (
+  person_id     bigint PRIMARY KEY REFERENCES public.cockpit_people(id),
+  state         text NOT NULL DEFAULT 'checking' CHECK (state IN ('checking','ok','not_found','refused')),
+  slack_user_id text CHECK (slack_user_id IS NULL OR slack_user_id ~ '^[UW][A-Z0-9]{8,12}$'),
+  -- The plain sentence of the last check.
+  note          text CHECK (note IS NULL OR char_length(note) <= 240),
+  checked_at    timestamptz,
+  requested_by  text NOT NULL CHECK (btrim(requested_by) <> ''),
+  updated_at    timestamptz NOT NULL DEFAULT now(),
+  CHECK (state <> 'ok' OR slack_user_id IS NOT NULL)
+);
+
 ALTER TABLE public.cockpit_slack_channels ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cockpit_slack_notice_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cockpit_forms_editors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cockpit_slack_notices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cockpit_slack_people ENABLE ROW LEVEL SECURITY;
 -- No policies: the browser reaches these only through the functions below.
 REVOKE ALL ON public.cockpit_slack_channels, public.cockpit_slack_notice_settings,
-  public.cockpit_forms_editors, public.cockpit_slack_notices FROM PUBLIC, anon, authenticated, service_role;
+  public.cockpit_forms_editors, public.cockpit_slack_notices, public.cockpit_slack_people
+  FROM PUBLIC, anon, authenticated, service_role;
 -- The guardian reads; every write goes through the definer functions.
 GRANT SELECT ON public.cockpit_slack_channels, public.cockpit_slack_notice_settings,
-  public.cockpit_forms_editors, public.cockpit_slack_notices TO service_role;
+  public.cockpit_forms_editors, public.cockpit_slack_notices, public.cockpit_slack_people TO service_role;
 
 -- ---------------------------------------------------------------------------
 -- 2. Small helpers (internal: no role may execute them)
@@ -207,6 +240,15 @@ BEGIN
   END;
 END $$;
 
+-- A named person as the team sees them: their role, never their name ("the
+-- project manager"; "the CEO" keeps its capitals).
+CREATE OR REPLACE FUNCTION public.cockpit_slack_person_label(p_role text)
+RETURNS text LANGUAGE sql IMMUTABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT CASE WHEN nullif(btrim(p_role), '') IS NULL THEN 'a team member'
+              WHEN btrim(p_role) = upper(btrim(p_role)) THEN 'the ' || btrim(p_role)
+              ELSE 'the ' || lower(btrim(p_role)) END
+$$;
+
 -- A seat as an editor list shows it: first name and role.
 CREATE OR REPLACE FUNCTION public.cockpit_slack_notice_seat_label(p_email text, p_name text)
 RETURNS text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
@@ -227,6 +269,52 @@ BEGIN
     v_role := upper(left(v_role, 1)) || substr(v_role, 2);
   END IF;
   RETURN v_first || ', ' || v_role;
+END $$;
+
+-- A person's Slack member id: the EOD radar's checked id first, else the
+-- notices' own check. NULL when neither has found one.
+CREATE OR REPLACE FUNCTION public.cockpit_slack_person_id(p_person bigint)
+RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT coalesce(
+    (SELECT sid.slack_user_id FROM public.cockpit_eod_radar_slack_ids sid
+      WHERE sid.person_id = p_person AND sid.state = 'ok' AND sid.slack_user_id IS NOT NULL),
+    (SELECT sp.slack_user_id FROM public.cockpit_slack_people sp
+      WHERE sp.person_id = p_person AND sp.state = 'ok' AND sp.slack_user_id IS NOT NULL))
+$$;
+
+-- What the Settings card says about a tagged person: ok (tagged), checking
+-- (the sender looks the address up within a minute), not_found or refused
+-- (written as the role in plain text), unchecked (looked up when it posts).
+CREATE OR REPLACE FUNCTION public.cockpit_slack_person_state(p_person bigint)
+RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT CASE
+    WHEN p_person IS NULL THEN 'unchecked'
+    WHEN public.cockpit_slack_person_id(p_person) IS NOT NULL THEN 'ok'
+    ELSE coalesce((SELECT sp.state FROM public.cockpit_slack_people sp WHERE sp.person_id = p_person), 'unchecked')
+  END
+$$;
+
+-- Queue a Slack check for each person who has no member id yet and an
+-- address to look up. A person found before is left alone; one Slack did
+-- not find, or would not look up, is checked again (their address may have
+-- changed). Internal: settings_set calls it.
+CREATE OR REPLACE FUNCTION public.cockpit_slack_people_queue(p_people bigint[], p_by text)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE v_n integer := 0; v_id bigint;
+BEGIN
+  FOREACH v_id IN ARRAY coalesce(p_people, '{}'::bigint[]) LOOP
+    CONTINUE WHEN v_id IS NULL OR public.cockpit_slack_person_id(v_id) IS NOT NULL;
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM public.cockpit_people pp
+                               WHERE pp.id = v_id AND pp.active AND nullif(btrim(pp.email), '') IS NOT NULL);
+    INSERT INTO public.cockpit_slack_people AS t(person_id, state, note, requested_by)
+    VALUES (v_id, 'checking', 'Checking Slack for the address on the team list.', coalesce(nullif(btrim(p_by), ''), 'unknown'))
+    ON CONFLICT (person_id) DO UPDATE
+       SET state = 'checking', slack_user_id = NULL, note = EXCLUDED.note, requested_by = EXCLUDED.requested_by,
+           updated_at = now()
+     WHERE t.state IN ('not_found','refused');
+    v_n := v_n + 1;
+  END LOOP;
+  RETURN v_n;
 END $$;
 
 -- Who a notice tags, resolved now (contract 3.9). Seat rules come from the
@@ -255,19 +343,18 @@ BEGIN
       v_label := CASE v_rule WHEN 'seat:creative' THEN 'the creative director' ELSE 'the CSM' END;
       FOR rec IN
         SELECT DISTINCT ON (coalesce(pp.id::text, 'e:' || lower(btrim(m.email))))
-               pp.id AS person_id, lower(btrim(coalesce(pp.email, m.email))) AS email, sid.slack_user_id
+               pp.id AS person_id, lower(btrim(coalesce(pp.email, m.email))) AS email,
+               public.cockpit_slack_person_id(pp.id) AS slack_user_id
           FROM public.cockpit_members m
           JOIN auth.users u ON u.id = m.auth_user_id AND u.email_confirmed_at IS NOT NULL
           LEFT JOIN public.cockpit_people pp
                  ON pp.active AND lower(btrim(pp.email)) = lower(btrim(m.email))
-          LEFT JOIN public.cockpit_eod_radar_slack_ids sid
-                 ON sid.person_id = pp.id AND sid.state = 'ok' AND sid.slack_user_id IS NOT NULL
          WHERE m.active
            AND NOT ('admin' = ANY(m.roles))
            AND v_role = ANY(m.roles)
            AND (p_client IS NULL OR cardinality(m.clients) = 0 OR EXISTS (
                  SELECT 1 FROM unnest(m.clients) AS c(n) WHERE lower(btrim(c.n)) = lower(btrim(p_client))))
-         ORDER BY coalesce(pp.id::text, 'e:' || lower(btrim(m.email))), sid.slack_user_id NULLS LAST
+         ORDER BY coalesce(pp.id::text, 'e:' || lower(btrim(m.email))), public.cockpit_slack_person_id(pp.id) NULLS LAST
       LOOP
         v_found := v_found + 1;
         v_key := coalesce(rec.person_id::text, 'e:' || rec.email);
@@ -279,9 +366,7 @@ BEGIN
     ELSIF v_rule = 'seat:systems_manager' THEN
       v_label := 'the systems manager';
       FOR rec IN
-        SELECT pp.id AS person_id, lower(btrim(pp.email)) AS email,
-               (SELECT sid.slack_user_id FROM public.cockpit_eod_radar_slack_ids sid
-                 WHERE sid.person_id = pp.id AND sid.state = 'ok' AND sid.slack_user_id IS NOT NULL) AS slack_user_id
+        SELECT pp.id AS person_id, lower(btrim(pp.email)) AS email, public.cockpit_slack_person_id(pp.id) AS slack_user_id
           FROM public.cockpit_people pp
          WHERE pp.active AND lower(btrim(pp.role)) = 'systems manager'
          ORDER BY pp.id
@@ -304,11 +389,8 @@ BEGIN
 
   FOREACH v_id IN ARRAY coalesce(p_people, '{}'::bigint[]) LOOP
     SELECT pp.id AS person_id, lower(btrim(pp.email)) AS email,
-           CASE WHEN nullif(btrim(pp.role), '') IS NULL THEN 'a team member'
-                WHEN btrim(pp.role) = upper(btrim(pp.role)) THEN 'the ' || btrim(pp.role)
-                ELSE 'the ' || lower(btrim(pp.role)) END AS label,
-           (SELECT sid.slack_user_id FROM public.cockpit_eod_radar_slack_ids sid
-             WHERE sid.person_id = pp.id AND sid.state = 'ok' AND sid.slack_user_id IS NOT NULL) AS slack_user_id
+           public.cockpit_slack_person_label(pp.role) AS label,
+           public.cockpit_slack_person_id(pp.id) AS slack_user_id
       INTO rec
       FROM public.cockpit_people pp WHERE pp.id = v_id AND pp.active;
     IF NOT FOUND THEN
@@ -399,6 +481,28 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
     'launchTaskId', NULL::text, 'mapPhase', NULL::integer, 'service', NULL::text)
 $$;
 
+-- What a close found on the card. A press that settled without a result (the
+-- run went to reconcile, or a stuck send was settled by hand: neither writes
+-- result) still has the plan's own values, read before it wrote anything, in
+-- its journal row (cockpit_media_actions.request->'planned', written by
+-- cockpit-creative-api before the claim). Never the mirror's map now, which
+-- may show the phase 5 this close itself wrote.
+CREATE OR REPLACE FUNCTION public.cockpit_slack_notice_close_found(p_row public.cockpit_creative_outbox)
+RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT CASE WHEN jsonb_typeof(p_row.result) = 'object' THEN p_row.result
+              ELSE coalesce((SELECT CASE WHEN jsonb_typeof(a.request->'planned') = 'object' THEN a.request->'planned' END
+                               FROM public.cockpit_media_actions a WHERE a.id = p_row.id), '{}'::jsonb) END
+$$;
+
+-- The launch task: the close's own, else the one part 1 recorded on the
+-- Blueprint (cockpit_blueprints.launch_task_id), so the media post keeps its
+-- link whatever the close's run did.
+CREATE OR REPLACE FUNCTION public.cockpit_slack_notice_launch_task(p_row public.cockpit_creative_outbox)
+RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT coalesce(nullif(public.cockpit_slack_notice_close_found(p_row)->>'launchTaskId', ''),
+                  (SELECT nullif(b.launch_task_id, '') FROM public.cockpit_blueprints b WHERE b.task_id = p_row.task_id))
+$$;
+
 CREATE OR REPLACE FUNCTION public.cockpit_slack_notice_close_facts(p_row public.cockpit_creative_outbox)
 RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
   SELECT jsonb_build_object(
@@ -410,9 +514,10 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
     'settled', CASE WHEN p_row.state IN ('done','reconcile') THEN p_row.state END,
     'closedAt', public.cockpit_slack_notice_iso(coalesce(p_row.settled_at, now())),
     'closedByRole', public.cockpit_slack_notice_role_of(p_row.actor_email),
-    'launchTaskId', nullif(p_row.result->>'launchTaskId', ''),
-    'mapPhase', CASE WHEN p_row.result->>'mapPhase' ~ '^[0-9]{1,3}$' THEN (p_row.result->>'mapPhase')::integer END,
+    'launchTaskId', public.cockpit_slack_notice_launch_task(p_row),
+    'mapPhase', CASE WHEN f->>'mapPhase' ~ '^[0-9]{1,3}$' THEN (f->>'mapPhase')::integer END,
     'service', nullif(p_row.payload->>'service', ''))
+    FROM (SELECT public.cockpit_slack_notice_close_found(p_row) AS f) x
 $$;
 
 CREATE OR REPLACE FUNCTION public.cockpit_slack_notice_media_facts(p_row public.cockpit_creative_outbox)
@@ -422,8 +527,9 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
     'client', p_row.client_name,
     'outboxId', p_row.id::text,
     'service', nullif(p_row.payload->>'service', ''),
-    'launchTaskId', nullif(p_row.result->>'launchTaskId', ''),
-    'mapPhase', CASE WHEN p_row.result->>'mapPhase' ~ '^[0-9]{1,3}$' THEN (p_row.result->>'mapPhase')::integer END)
+    'launchTaskId', public.cockpit_slack_notice_launch_task(p_row),
+    'mapPhase', CASE WHEN f->>'mapPhase' ~ '^[0-9]{1,3}$' THEN (f->>'mapPhase')::integer END)
+    FROM (SELECT public.cockpit_slack_notice_close_found(p_row) AS f) x
 $$;
 
 CREATE OR REPLACE FUNCTION public.cockpit_slack_notice_updated_facts(p_row public.cockpit_creative_outbox)
@@ -487,6 +593,16 @@ DECLARE v_channel text; v_name text; v_reason text; v_due timestamptz;
 BEGIN
   IF p_row.id IS NULL THEN RETURN NULL; END IF;
   v_channel := coalesce(p_row.channel, CASE WHEN p_row.kind <> 'rehearsal' THEN p_row.target END);
+  -- Not claimed yet: where it is set to post now, so a screen never names a
+  -- channel an editor has since changed (D17). A reply goes where its first
+  -- notice posted, else where its kind posts top level.
+  IF v_channel IS NULL AND p_row.kind <> 'rehearsal' AND p_row.state = 'queued' THEN
+    IF p_row.parent_id IS NOT NULL THEN
+      SELECT p.channel INTO v_channel FROM public.cockpit_slack_notices p
+       WHERE p.id = p_row.parent_id AND p.state = 'posted';
+    END IF;
+    v_channel := coalesce(v_channel, public.cockpit_slack_notice_target(p_row.kind));
+  END IF;
   IF v_channel IS NOT NULL THEN
     SELECT c.name INTO v_name FROM public.cockpit_slack_channels c WHERE c.id = v_channel;
   END IF;
@@ -496,7 +612,19 @@ BEGIN
       v_reason := coalesce(p_row.error, 'Waiting for Make to update the card.');
     ELSE
       v_due := p_row.next_attempt_at;
-      v_reason := CASE WHEN p_row.parent_id IS NOT NULL THEN 'Waiting for its first notice.' ELSE 'Queued.' END;
+      -- A reply waits for its first notice only while the claim would (that
+      -- one queued, sending, or unknown for under 30 minutes). Once the sender
+      -- has had it, its own words say what it waits for: a late kickoff's
+      -- reply waits up to 48 hours for the Kickoff Handoff comment (X19).
+      IF p_row.parent_id IS NOT NULL AND EXISTS (
+           SELECT 1 FROM public.cockpit_slack_notices p
+            WHERE p.id = p_row.parent_id
+              AND (p.state IN ('queued','sending')
+                   OR (p.state = 'unknown' AND p.claimed_at > now() - interval '30 minutes'))) THEN
+        v_reason := 'Waiting for its first notice.';
+      ELSE
+        v_reason := coalesce(p_row.error, 'Queued.');
+      END IF;
     END IF;
   ELSIF p_row.state = 'sending' THEN
     v_reason := 'Posting now.';
@@ -630,7 +758,7 @@ BEGIN
   RAISE EXCEPTION 'A notice is never deleted' USING ERRCODE = '55000';
 END $$;
 
--- One audit function for the four tables. A notice records its state and
+-- One audit function for the five tables. A notice records its state and
 -- delivery fields only, never its text, blocks or facts.
 CREATE OR REPLACE FUNCTION public.cockpit_slack_notice_audit()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
@@ -670,9 +798,16 @@ BEGIN
     ELSIF TG_TABLE_NAME = 'cockpit_slack_channels' THEN
       v_action := 'slack_notice.channel';
       v_entity := v_row->>'id';
+    ELSIF TG_TABLE_NAME = 'cockpit_slack_people' THEN
+      v_action := 'slack_notice.person';
+      v_entity := v_row->>'person_id';
     ELSE
       v_action := CASE WHEN TG_OP = 'DELETE' THEN 'forms.editor_removed' ELSE 'forms.editor_added' END;
       v_entity := v_row->>'member_id';
+      -- Why the right ended, when a trigger ended it (the seat was switched off).
+      IF nullif(current_setting('cockpit.notice_why', true), '') IS NOT NULL THEN
+        v_meta := v_meta || jsonb_build_object('why', current_setting('cockpit.notice_why', true));
+      END IF;
     END IF;
   END IF;
   v_action := coalesce(nullif(current_setting('cockpit.notice_action', true), ''), v_action);
@@ -719,6 +854,29 @@ CREATE TRIGGER cockpit_slack_channels_no_truncate BEFORE TRUNCATE ON public.cock
 DROP TRIGGER IF EXISTS cockpit_forms_editors_audit ON public.cockpit_forms_editors;
 CREATE TRIGGER cockpit_forms_editors_audit AFTER INSERT OR DELETE ON public.cockpit_forms_editors
   FOR EACH ROW EXECUTE FUNCTION public.cockpit_slack_notice_audit();
+
+DROP TRIGGER IF EXISTS cockpit_slack_people_audit ON public.cockpit_slack_people;
+CREATE TRIGGER cockpit_slack_people_audit AFTER INSERT OR UPDATE ON public.cockpit_slack_people
+  FOR EACH ROW EXECUTE FUNCTION public.cockpit_slack_notice_audit();
+
+-- The editing right ends with the seat. The Admin page switches a seat off
+-- (cockpit_admin_remove_member sets active false) and re-adds an address on
+-- the same row (cockpit_admin_upsert_member keeps the id), so a right kept
+-- on a switched-off seat would come back with whatever role the seat gets
+-- next. The delete is audited as forms.editor_removed.
+CREATE OR REPLACE FUNCTION public.cockpit_forms_editor_seat_off()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  PERFORM set_config('cockpit.notice_why', 'seat_off', true);
+  DELETE FROM public.cockpit_forms_editors e WHERE e.member_id = NEW.id;
+  PERFORM set_config('cockpit.notice_why', '', true);
+  RETURN NULL;
+END $$;
+
+DROP TRIGGER IF EXISTS cockpit_forms_editor_seat_off ON public.cockpit_members;
+CREATE TRIGGER cockpit_forms_editor_seat_off AFTER UPDATE OF active ON public.cockpit_members
+  FOR EACH ROW WHEN (OLD.active IS DISTINCT FROM NEW.active AND NOT coalesce(NEW.active, false))
+  EXECUTE FUNCTION public.cockpit_forms_editor_seat_off();
 
 -- ---------------------------------------------------------------------------
 -- 6. The queue triggers. Neither ever raises: the onboarding one runs inside
@@ -965,11 +1123,20 @@ BEGIN
     END;
   END LOOP;
 
-  -- 6. A late kickoff whose card has since caught up: a reply under it.
+  -- 6. A late kickoff whose card now looks done: a reply under it. The rule
+  --    reads what the late notice saw (its send facts), never the post time
+  --    against ClickUp's date_updated: a card done before the alarm (the
+  --    comment GET failed, or the mirror had not caught up at the claim)
+  --    must still get its reply (X19). A late notice by its nature saw the
+  --    comment missing or unread, or the card not done, so any late notice
+  --    whose card looks done now qualifies; one recorded by hand as seeing
+  --    both qualifies only once the card changes from what it saw. The
+  --    sender posts the reply only once the Kickoff Handoff comment is on
+  --    the card, so it never answers an alarm that still stands.
   FOR n IN
     SELECT * FROM public.cockpit_slack_notices k
      WHERE k.kind = 'kickoff' AND k.variant = 'late' AND k.state = 'posted' AND k.created_at > now() - interval '48 hours'
-       AND nullif(k.facts->>'responseId', '') IS NOT NULL
+       AND k.finished_at IS NOT NULL AND nullif(k.facts->>'responseId', '') IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM public.cockpit_slack_notices u
                         WHERE u.dedupe_key = 'kickoff:' || (k.facts->>'responseId') || ':updated')
   LOOP
@@ -978,10 +1145,14 @@ BEGIN
       v_updated := NULL;
       SELECT x.client_status, x.card_updated_at INTO v_status, v_updated
         FROM public.cockpit_client_onboarding x WHERE x.clickup_task_id = n.task_id;
-      IF public.cockpit_slack_notice_card_done(v_status, v_updated, public.cockpit_slack_notice_ts(n.facts->>'submittedAt'))
+      IF (coalesce(n.facts->>'commentCheck', '') <> 'found'
+          OR coalesce(n.facts->>'looksDone', '') <> 'true'
+          OR v_updated IS DISTINCT FROM public.cockpit_slack_notice_ts(n.facts->>'cardUpdatedAt'))
+         AND public.cockpit_slack_notice_card_done(v_status, v_updated, public.cockpit_slack_notice_ts(n.facts->>'submittedAt'))
          AND public.cockpit_slack_notice_queue('kickoff.updated', 'kickoff:' || (n.facts->>'responseId') || ':updated',
                n.task_id, n.client_name,
                jsonb_build_object('taskId', n.task_id, 'client', n.client_name, 'responseId', n.facts->>'responseId',
+                                  'submittedAt', n.facts->>'submittedAt',
                                   'cardUpdatedAt', public.cockpit_slack_notice_iso(v_updated)),
                n.id, 'queued', NULL) IS NOT NULL THEN
         v_followups := v_followups + 1;
@@ -1031,6 +1202,7 @@ DECLARE
   v_lookup text;
   v_email text;
   v_sub timestamptz;
+  v_event timestamptz;
   v_status text;
   v_updated timestamptz;
   v_row jsonb;
@@ -1064,11 +1236,42 @@ BEGIN
       CONTINUE;
     END IF;
 
+    -- 1b. Too old to be true now. After an outage (the vault secret, the
+    --     bot's token, the sender) a backlog must end in a recorded skip,
+    --     never in posts whose words no longer hold ("20 minutes after the
+    --     kickoff" days later). The event's own time: the kickoff's submit,
+    --     the close's, the offer's or the confirmation's, else when the row
+    --     was queued. A late kickoff's reply keeps its own 48-hour rule (2).
+    IF r.kind NOT IN ('rehearsal','kickoff.updated') THEN
+      v_event := coalesce(public.cockpit_slack_notice_ts(r.facts->>'submittedAt'),
+                          public.cockpit_slack_notice_ts(r.facts->>'closedAt'),
+                          public.cockpit_slack_notice_ts(r.facts->>'offeredAt'),
+                          public.cockpit_slack_notice_ts(r.facts->>'confirmedAt'),
+                          r.created_at);
+      IF v_event <= now() - interval '48 hours' THEN
+        UPDATE public.cockpit_slack_notices SET state = 'skipped', finished_at = now(),
+               error = CASE WHEN r.kind = 'kickoff'
+                            THEN 'This kickoff was more than 48 hours old by the time the cockpit could send it, so it was not posted.'
+                            ELSE 'This notice was more than 48 hours old by the time the cockpit could send it, so it was not posted.' END
+         WHERE id = r.id;
+        CONTINUE;
+      END IF;
+    END IF;
+
     -- 2. A reply waits for its first notice, then goes in its thread.
     IF r.parent_id IS NOT NULL THEN
       SELECT * INTO p FROM public.cockpit_slack_notices x WHERE x.id = r.parent_id;
       v_found := FOUND;
       IF v_found AND (p.state IN ('queued','sending') OR (p.state = 'unknown' AND p.claimed_at > now() - interval '30 minutes')) THEN
+        CONTINUE;
+      ELSIF v_found AND p.state = 'posted' AND r.kind = 'kickoff.updated'
+            AND now() > coalesce(public.cockpit_slack_notice_ts(coalesce(r.facts->>'submittedAt', p.facts->>'submittedAt')),
+                                 r.created_at) + interval '48 hours' THEN
+        -- The sender waited for the card's Kickoff Handoff comment and it
+        -- never came: the late notice stands, and no reply says otherwise.
+        UPDATE public.cockpit_slack_notices SET state = 'skipped', finished_at = now(),
+               error = 'The card had no Kickoff Handoff comment 48 hours after the kickoff, so no reply was posted. The late notice stands.'
+         WHERE id = r.id;
         CONTINUE;
       ELSIF v_found AND p.state = 'posted' THEN
         v_thread := p.slack_ts;
@@ -1095,11 +1298,9 @@ BEGIN
              ORDER BY m.active DESC, m.updated_at DESC LIMIT 1;
           END IF;
           IF v_email IS NOT NULL THEN
-            SELECT sid.slack_user_id INTO v_target
+            SELECT public.cockpit_slack_person_id(pp.id) INTO v_target
               FROM public.cockpit_people pp
-              JOIN public.cockpit_eod_radar_slack_ids sid
-                ON sid.person_id = pp.id AND sid.state = 'ok' AND sid.slack_user_id IS NOT NULL
-             WHERE pp.active AND lower(btrim(pp.email)) = v_email
+             WHERE pp.active AND lower(btrim(pp.email)) = v_email AND public.cockpit_slack_person_id(pp.id) IS NOT NULL
              ORDER BY pp.id LIMIT 1;
             IF v_target IS NULL THEN v_lookup := v_email; END IF;
           END IF;
@@ -1142,7 +1343,7 @@ BEGIN
     END IF;
 
     -- 6. Claimed.
-    UPDATE public.cockpit_slack_notices SET state = 'sending', claimed_at = now(), target = v_target
+    UPDATE public.cockpit_slack_notices SET state = 'sending', claimed_at = now(), target = v_target, thread_ts = v_thread
      WHERE id = r.id RETURNING * INTO r;
 
     -- 7. The row the sender works from.
@@ -1157,7 +1358,7 @@ BEGIN
       'facts', r.facts,
       'live', public.cockpit_slack_notice_live(r),
       'target', r.target,
-      'threadTs', v_thread,
+      'threadTs', r.thread_ts,
       'parentId', r.parent_id,
       'mentions', public.cockpit_slack_notice_claim_mentions(r.kind, r.client_name));
     IF r.kind = 'rehearsal' THEN
@@ -1274,7 +1475,6 @@ RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   v_lim integer := least(greatest(coalesce(p_limit, 10), 1), 10);
   v_out jsonb := '[]'::jsonb;
-  v_thread text;
   r public.cockpit_slack_notices;
 BEGIN
   PERFORM set_config('cockpit.audit_source', 'cron', true);
@@ -1287,17 +1487,15 @@ BEGIN
      FOR UPDATE SKIP LOCKED
   LOOP
     UPDATE public.cockpit_slack_notices SET checked_at = now() WHERE id = r.id;
-    v_thread := NULL;
-    IF r.parent_id IS NOT NULL THEN
-      SELECT p.slack_ts INTO v_thread FROM public.cockpit_slack_notices p WHERE p.id = r.parent_id AND p.state = 'posted';
-    END IF;
     v_out := v_out || jsonb_build_array(jsonb_build_object(
       'id', r.id,
       'ref', 'CN-' || left(r.id::text, 8),
       'kind', r.kind,
       'target', r.target,
       'channel', coalesce(r.channel, CASE WHEN r.target ~ '^[CG]' THEN r.target END),
-      'threadTs', v_thread,
+      -- Where the claim sent it: a thread, or top level. Never re-worked out
+      -- from the first notice's state now, which may have changed since.
+      'threadTs', r.thread_ts,
       'oldest', (extract(epoch FROM r.claimed_at) - 60)::text));
   END LOOP;
   RETURN v_out;
@@ -1335,6 +1533,45 @@ BEGIN
          updated_at = now()
    WHERE id = c.id RETURNING * INTO c;
   RETURN to_jsonb(c);
+END $$;
+
+-- People an editor chose for whom the sender has not asked Slack yet, with
+-- the address to look up (the service key only; never a browser).
+CREATE OR REPLACE FUNCTION public.cockpit_slack_person_pending()
+RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT coalesce(jsonb_agg(jsonb_build_object('personId', x.person_id, 'email', x.email) ORDER BY x.updated_at, x.person_id),
+                  '[]'::jsonb)
+    FROM (SELECT sp.person_id, lower(btrim(pp.email)) AS email, sp.updated_at
+            FROM public.cockpit_slack_people sp
+            JOIN public.cockpit_people pp ON pp.id = sp.person_id AND pp.active AND nullif(btrim(pp.email), '') IS NOT NULL
+           WHERE sp.state = 'checking'
+           ORDER BY sp.updated_at, sp.person_id LIMIT 5) x
+$$;
+
+-- What Slack said about one person: ok with their member id, not_found or
+-- refused, with a plain sentence. The sender records a send-time lookup the
+-- same way, so it needs no queued row first.
+CREATE OR REPLACE FUNCTION public.cockpit_slack_person_checked(p_person bigint, p_state text, p_slack text, p_note text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE r public.cockpit_slack_people; v_slack text := upper(btrim(coalesce(p_slack, '')));
+BEGIN
+  IF p_state IS NULL OR p_state NOT IN ('ok','not_found','refused') THEN
+    RAISE EXCEPTION 'Choose ok, not_found or refused' USING ERRCODE = '22023';
+  END IF;
+  IF p_state = 'ok' AND v_slack !~ '^[UW][A-Z0-9]{8,12}$' THEN
+    RAISE EXCEPTION 'A person found in Slack needs their member ID (it starts with U or W).' USING ERRCODE = '22023';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.cockpit_people pp WHERE pp.id = p_person) THEN
+    RAISE EXCEPTION 'That person is not on the team list.' USING ERRCODE = '22023';
+  END IF;
+  PERFORM set_config('cockpit.audit_source', 'cron', true);
+  INSERT INTO public.cockpit_slack_people AS t(person_id, state, slack_user_id, note, checked_at, requested_by)
+  VALUES (p_person, p_state, CASE WHEN p_state = 'ok' THEN v_slack END, left(nullif(btrim(p_note), ''), 240), now(), 'cockpit-notices')
+  ON CONFLICT (person_id) DO UPDATE
+     SET state = EXCLUDED.state, slack_user_id = EXCLUDED.slack_user_id, note = EXCLUDED.note,
+         checked_at = now(), updated_at = now()
+  RETURNING * INTO r;
+  RETURN jsonb_build_object('personId', r.person_id, 'state', r.state, 'note', r.note);
 END $$;
 
 -- The dry run's inputs: builds what a claim would hand the sender, writes nothing.
@@ -1544,14 +1781,20 @@ BEGIN
       'channel', CASE WHEN v_shape = 'post' AND s.channel IS NOT NULL THEN
                    jsonb_build_object('id', s.channel, 'name', (SELECT c.name FROM public.cockpit_slack_channels c WHERE c.id = s.channel)) END,
       'mentionRule', to_jsonb(s.mention_rule),
+      -- A named person reads as their role to everyone (the sentence the
+      -- team sees); only an editor's picker shows the first name. `slack`
+      -- says what the next notice does with them (contract X4).
       'mentionPeople', coalesce((
         SELECT jsonb_agg(jsonb_build_object(
                  'id', u.id,
-                 'label', coalesce(split_part(btrim(pp.name), ' ', 1) || coalesce(', ' || nullif(btrim(pp.role), ''), ''),
-                                   'Not on the team list'),
-                 'slackKnown', coalesce(pp.active, false) AND EXISTS (
-                   SELECT 1 FROM public.cockpit_eod_radar_slack_ids sid
-                    WHERE sid.person_id = pp.id AND sid.state = 'ok' AND sid.slack_user_id IS NOT NULL))
+                 'label', CASE WHEN pp.id IS NULL OR NOT pp.active THEN 'Not on the team list'
+                               WHEN v_edit THEN split_part(btrim(pp.name), ' ', 1) || coalesce(', ' || nullif(btrim(pp.role), ''), '')
+                               ELSE public.cockpit_slack_person_label(pp.role) END,
+                 'role', CASE WHEN pp.id IS NULL OR NOT pp.active THEN 'a team member'
+                              ELSE public.cockpit_slack_person_label(pp.role) END,
+                 'slack', CASE WHEN pp.id IS NULL OR NOT pp.active THEN 'not_found'
+                               ELSE public.cockpit_slack_person_state(pp.id) END,
+                 'slackKnown', coalesce(pp.active, false) AND public.cockpit_slack_person_id(pp.id) IS NOT NULL)
                ORDER BY u.ord)
           FROM unnest(s.mention_people) WITH ORDINALITY AS u(id, ord)
           LEFT JOIN public.cockpit_people pp ON pp.id = u.id), '[]'::jsonb),
@@ -1559,7 +1802,10 @@ BEGIN
         SELECT jsonb_agg(jsonb_build_object(
                  'rule', u.rule,
                  'found', EXISTS (SELECT 1 FROM jsonb_array_elements(m.list) e WHERE NOT coalesce((e->>'missing')::boolean, false)),
-                 'slackKnown', EXISTS (SELECT 1 FROM jsonb_array_elements(m.list) e WHERE e->>'slackId' IS NOT NULL))
+                 'slackKnown', EXISTS (SELECT 1 FROM jsonb_array_elements(m.list) e WHERE e->>'slackId' IS NOT NULL),
+                 'checking', EXISTS (SELECT 1 FROM jsonb_array_elements(m.list) e
+                                      WHERE e->>'slackId' IS NULL AND e->>'personId' ~ '^[0-9]+$'
+                                        AND public.cockpit_slack_person_state((e->>'personId')::bigint) = 'checking'))
                ORDER BY u.ord)
           FROM unnest(s.mention_rule) WITH ORDINALITY AS u(rule, ord)
           CROSS JOIN LATERAL (SELECT public.cockpit_slack_notice_mentions(ARRAY[u.rule], '{}'::bigint[], NULL) AS list) m), '[]'::jsonb),
@@ -1699,6 +1945,15 @@ BEGIN
      SET enabled = v_on, channel = v_channel, mention_rule = v_rule, mention_people = v_people,
          updated_by = g->>'email', updated_at = now()
    WHERE kind = s.kind;
+  -- Everyone the change tags with no Slack id yet is checked by the sender
+  -- within a minute: the named people, and whoever holds the seats now.
+  IF (v_rule, v_people) IS DISTINCT FROM (s.mention_rule, s.mention_people) THEN
+    PERFORM public.cockpit_slack_people_queue(
+      v_people || coalesce((SELECT array_agg(DISTINCT (e->>'personId')::bigint)
+                              FROM jsonb_array_elements(public.cockpit_slack_notice_mentions(v_rule, '{}'::bigint[], NULL)) e
+                             WHERE e->>'personId' ~ '^[0-9]+$' AND e->>'slackId' IS NULL), '{}'::bigint[]),
+      g->>'email');
+  END IF;
   RETURN public.cockpit_slack_notice_settings_read();
 END $$;
 
@@ -1829,7 +2084,8 @@ BEGIN
      AND NOT EXISTS (SELECT 1 FROM public.cockpit_slack_notices n
                       WHERE n.state = 'unknown' AND n.claimed_at > now() - interval '24 hours'
                         AND (n.checked_at IS NULL OR n.checked_at < now() - interval '10 minutes'))
-     AND NOT EXISTS (SELECT 1 FROM public.cockpit_slack_channels c WHERE c.state = 'checking') THEN
+     AND NOT EXISTS (SELECT 1 FROM public.cockpit_slack_channels c WHERE c.state = 'checking')
+     AND public.cockpit_slack_person_pending() = '[]'::jsonb THEN
     INSERT INTO public.cockpit_sync_state(key, last_run_at, last_ok_at, ok, note, updated_at)
     VALUES ('slack-notices-kick', now(), now(), true, 'Nothing to send', now())
     ON CONFLICT (key) DO UPDATE SET last_run_at = now(), last_ok_at = now(), ok = true, note = EXCLUDED.note, updated_at = now();
@@ -1884,8 +2140,11 @@ BEGIN
     'cockpit_slack_notice_card_done(text,timestamptz,timestamptz)', 'cockpit_slack_notice_shape(text)',
     'cockpit_slack_notice_kind_label(text)', 'cockpit_slack_notice_role_of(text)', 'cockpit_slack_notice_seat_label(text,text)',
     'cockpit_slack_notice_mentions(text[],bigint[],text)', 'cockpit_slack_notice_claim_mentions(text,text)',
+    'cockpit_slack_person_id(bigint)', 'cockpit_slack_person_state(bigint)', 'cockpit_slack_person_label(text)',
+    'cockpit_slack_people_queue(bigint[],text)', 'cockpit_forms_editor_seat_off()',
     'cockpit_slack_notice_target(text)', 'cockpit_slack_notice_queue(text,text,text,text,jsonb,uuid,text,text)',
     'cockpit_slack_notice_kickoff_facts(text,text,jsonb,text)', 'cockpit_slack_notice_typeform_facts(text,text,jsonb)',
+    'cockpit_slack_notice_close_found(public.cockpit_creative_outbox)', 'cockpit_slack_notice_launch_task(public.cockpit_creative_outbox)',
     'cockpit_slack_notice_close_facts(public.cockpit_creative_outbox)', 'cockpit_slack_notice_media_facts(public.cockpit_creative_outbox)',
     'cockpit_slack_notice_updated_facts(public.cockpit_creative_outbox)', 'cockpit_slack_notice_offer_facts(public.cockpit_creative_outbox)',
     'cockpit_slack_notice_live(public.cockpit_slack_notices)', 'cockpit_slack_notice_view(public.cockpit_slack_notices)',
@@ -1900,6 +2159,7 @@ BEGIN
     'cockpit_slack_notice_sweep()', 'cockpit_slack_notice_claim(integer,uuid)',
     'cockpit_slack_notice_result(uuid,text,text,text,text,jsonb)', 'cockpit_slack_notice_unknowns(integer)',
     'cockpit_slack_channel_pending()', 'cockpit_slack_channel_checked(text,boolean,text,boolean,text)',
+    'cockpit_slack_person_pending()', 'cockpit_slack_person_checked(bigint,text,text,text)',
     'cockpit_slack_notice_inputs(jsonb)', 'cockpit_slack_notice_doctor_inputs()',
     'cockpit_slack_notice_rehearse_service(text,text)', 'cockpit_slack_notice_fix(uuid,text,text)'] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, anon, authenticated, service_role', f);
@@ -1933,6 +2193,12 @@ INSERT INTO public.cockpit_slack_notice_settings(kind, enabled, channel, mention
   ('blueprint.media', true, 'C0AE8G5MT7Y', '{}'::text[], 'migration'),
   ('blueprint.offer', true, NULL, '{}'::text[], 'migration')
 ON CONFLICT (kind) DO NOTHING;
+
+-- A seat already switched off keeps no editing right (the trigger above
+-- does the same from now on).
+DELETE FROM public.cockpit_forms_editors e
+ USING public.cockpit_members m
+ WHERE m.id = e.member_id AND NOT coalesce(m.active, false);
 
 -- Every kickoff already in the mirror and older than 48 hours is recorded as
 -- skipped, so switching the notices on posts nothing old. Newer ones are left

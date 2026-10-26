@@ -17,7 +17,7 @@
 import { providerTools, slackTools, type SlackHealthRow, type SlackTools } from "../cockpit-csm-api/tools.ts";
 import type { Rpc } from "../cockpit-hours-sync/db.ts";
 import { slackReceiptConfirmed } from "../_shared/slackReceipt.ts";
-import { cachedLookup, type ClaimMentions, type Mention, mentionsFor, plainLabels, readMention, resolveMentions } from "./mentions.ts";
+import { cachedLookup, type ClaimMentions, type Mention, mentionsFor, type PersonLooked, personNote, plainLabels, readMention, resolveMentions } from "./mentions.ts";
 import { isNoticeKind, isVariantOf, type NoticeFacts, type NoticeKind, noticeText, sampleFacts, type SlackBlock, type TextMention, type Variant } from "./text.ts";
 
 // ------------------------------------------------------------------ deps and the ledger
@@ -190,11 +190,19 @@ export function rehearsalVariant(kind: NoticeKind, facts: Record<string, unknown
 }
 
 export const WAITING = "Waiting for Make's Kickoff Handoff comment.";
+export const WAITING_CARD = "Waiting for the card to show Brand Blueprint Booked.";
+/** A late kickoff's reply waits for the comment the late notice said was missing. */
+export const WAITING_REPLY = "Waiting for the card's Kickoff Handoff comment before saying the card is updated.";
+/** How often a waiting reply checks the card's comments again. */
+export const REPLY_RECHECK_SEC = 600;
 export const UNKNOWN = "Slack did not confirm the post; it is not sent again in case it arrived.";
 export const NO_SLACK_ID = "No Slack account was found for you. Ask the tech lead to add your address to the team list.";
-export const WRONG_BOT = "The Slack token is not mahara-club-bot, so nothing was posted. The tech lead sets SLACK_BOT_TOKEN again.";
-export const BAD_TOKEN = "Slack refused the bot's token. The tech lead sets SLACK_BOT_TOKEN again.";
-export const NO_TOKEN = "SLACK_BOT_TOKEN is not set on cockpit-notices.";
+// The reasons below reach the CSM's and the creative director's screens word
+// for word, so they name what people recognise; the secret's name and the
+// function's are the doctor's and the RUNBOOK's (doctor.ts).
+export const WRONG_BOT = "The cockpit is connected to Slack as the wrong bot, so nothing was posted. Tell the tech lead.";
+export const BAD_TOKEN = "Slack refused the cockpit's connection, so nothing was posted. Tell the tech lead.";
+export const NO_TOKEN = "The cockpit's Slack connection is not set up, so nothing was posted. Tell the tech lead.";
 const TOKEN_CODES = new Set(["invalid_auth", "not_authed", "token_revoked", "account_inactive", "token_expired"]);
 export const isTokenCode = (code: string) => TOKEN_CODES.has(code);
 
@@ -205,10 +213,13 @@ export function placeLabel(target: string, names: Map<string, string>): string {
 }
 
 /** Slack's refusal code as a plain sentence (contract 4.3). */
+// Each sentence stands alone after a stop's own label ("Not posted in #csm-general."), so none
+// starts with a label of its own.
 export function refusalSentence(code: string, place: string): string {
-  if (code === "not_in_channel" || code === "channel_not_found") return `Slack refused it: mahara-club-bot is not in ${place}. Invite it there, then ask the tech lead to requeue this notice.`;
+  // The stop's lead already names the channel ("Not posted in #csm-general.").
+  if (code === "not_in_channel" || code === "channel_not_found") return "Slack says mahara-club-bot is not in that channel. Ask the tech lead to add it there and send the notice again.";
   if (code === "is_archived") return `${place} is archived. Choose another channel in Settings, Notices and routing.`;
-  if (code === "missing_scope") return "Slack refused it: the bot lacks a permission. The tech lead adds it to the Slack app.";
+  if (code === "missing_scope") return "The bot lacks a Slack permission. The tech lead adds it to the Slack app.";
   if (isTokenCode(code)) return BAD_TOKEN;
   if (code === "invalid_blocks" || code === "msg_too_long") return "Slack refused the message's layout. The tech lead checks the notice text.";
   return `Slack refused it (${code.replace(/[^a-z0-9_]/g, "").slice(0, 60) || "no code"}).`;
@@ -317,6 +328,24 @@ export function sendContext(deps: NoticeDeps, token: string): SendContext {
 
 const SUBMIT_WAIT_MS = 20 * 60_000;
 
+/**
+ * Slack's answer for each person looked up by address, kept in
+ * cockpit_slack_people, so the Settings card says what a notice really does
+ * with them (contract X4). Best effort: a record that fails never holds a post.
+ */
+export async function rememberPeople(deps: NoticeDeps, looked: PersonLooked[]): Promise<number> {
+  let n = 0;
+  for (const p of looked) {
+    try {
+      await deps.rpc("cockpit_slack_person_checked", { p_person: p.personId, p_state: p.state, p_slack: p.slackId, p_note: personNote(p) });
+      n += 1;
+    } catch {
+      // Checked again by the next notice, or by an editor's next change.
+    }
+  }
+  return n;
+}
+
 /** Post one claimed row and record what happened. Never throws for a Slack or ClickUp problem. */
 export async function sendClaimed(ctx: SendContext, row: ClaimedRow): Promise<SendResult> {
   const { deps } = ctx;
@@ -353,14 +382,28 @@ export async function sendClaimed(ctx: SendContext, row: ClaimedRow): Promise<Se
   if (rehearsal) {
     variant = rehearsalVariant(kind, row.facts);
   } else if (kind === "kickoff") {
+    // Complete needs both halves of Make's run: the Kickoff Handoff comment
+    // (module 11, written first) and the card at Brand Blueprint Booked
+    // (module 21, written later). A run that broke between them is late.
     const submittedAt = String(row.facts.submittedAt ?? "");
     const check = await kickoffComment(deps, row.taskId, submittedAt, row.id);
+    const looksDone = row.live.looksDone === true;
     const due = Date.parse(submittedAt) + SUBMIT_WAIT_MS;
-    if (check.state !== "found" && Number.isFinite(due) && now.getTime() < due) {
-      return record(deps, row.id, "requeue", { error: WAITING, detail: { retryAfterSec: 60 } });
+    if ((check.state !== "found" || !looksDone) && Number.isFinite(due) && now.getTime() < due) {
+      return record(deps, row.id, "requeue", { error: check.state !== "found" ? WAITING : WAITING_CARD, detail: { retryAfterSec: 60 } });
     }
-    variant = check.state === "found" ? "complete" : "late";
-    sendFacts = { commentCheck: check.state, handoffAt: check.state === "found" ? check.at : null, filledByRole: txt(row.live.filledByRole) };
+    variant = check.state === "found" && looksDone ? "complete" : "late";
+    // What this notice saw, kept on the row: the sweep decides a late
+    // notice's reply from it (X19), never from the post time.
+    sendFacts = { commentCheck: check.state, handoffAt: check.state === "found" ? check.at : null, filledByRole: txt(row.live.filledByRole), looksDone, cardUpdatedAt: txt(row.live.cardUpdatedAt) };
+  } else if (kind === "kickoff.updated") {
+    // The reply says the card caught up, so the comment the late notice
+    // missed must be there now; the claim lets it go 48 hours after the
+    // kickoff if it never comes.
+    const check = await kickoffComment(deps, row.taskId, String(row.facts.submittedAt ?? ""), row.id);
+    if (check.state !== "found") return record(deps, row.id, "requeue", { error: WAITING_REPLY, detail: { retryAfterSec: REPLY_RECHECK_SEC } });
+    variant = pickVariant(kind, row.facts, row.live, row.threadTs);
+    sendFacts = { commentCheck: check.state, handoffAt: check.at };
   } else {
     variant = pickVariant(kind, row.facts, row.live, row.threadTs);
   }
@@ -373,6 +416,7 @@ export async function sendClaimed(ctx: SendContext, row: ClaimedRow): Promise<Se
     const wanted = mentionsFor(variant, row.mentions, row.facts.second === true);
     const resolved = await resolveMentions(wanted, lookup);
     tags = resolved.tags;
+    await rememberPeople(deps, resolved.looked);
     try {
       if (resolved.unresolved > 0) await deps.insertHealth(mentionsRow(row.id, false));
       else if (wanted.length) await deps.insertHealth(mentionsRow(row.id, true));

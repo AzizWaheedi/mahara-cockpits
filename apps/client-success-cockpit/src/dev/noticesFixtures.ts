@@ -54,10 +54,11 @@ export function kickoffNotice(
     case "late":
       return noticeFixture({ ...base, variant: "late", at: later(21) });
     case "queued":
+      // The server names where it is set to post before it is claimed (D17).
       return noticeFixture({
         ...base,
         state: "queued",
-        channel: null,
+        channel: CSM_GENERAL,
         permalink: null,
         at: sentAt,
         dueAt: later(20),
@@ -70,7 +71,7 @@ export function kickoffNotice(
         permalink: null,
         at: later(2),
         reason:
-          "Slack refused it: mahara-club-bot is not in #csm-general. Invite it there, then ask the tech lead to requeue this notice.",
+          "Slack says mahara-club-bot is not in that channel. Ask the tech lead to add it there and send the notice again.",
       });
     case "unknown":
       return noticeFixture({
@@ -128,10 +129,16 @@ export function settingsReadFixture(
   const edit = opts.edit ?? true;
   const editors = opts.editors ?? edit;
   const migration = { updatedBy: "the migration", updatedAt: ago(now, 72) };
-  const seat = (rule: string, found = true, slackKnown = true) => ({
+  const seat = (
+    rule: string,
+    found = true,
+    slackKnown = true,
+    checking = false,
+  ) => ({
     rule,
     found,
     slackKnown,
+    checking,
   });
   return {
     can: { edit, editors },
@@ -196,8 +203,16 @@ export function settingsReadFixture(
         fixedOn: false,
         channel: CSM_GENERAL,
         mentionRule: ["seat:csm"],
+        // Named by role to everyone; the first name only in an editor's
+        // picker. The sender is checking her address in Slack (X4).
         mentionPeople: [
-          { id: 41, label: "Rana, Project manager", slackKnown: false },
+          {
+            id: 41,
+            label: edit ? "Rana, Project manager" : "the project manager",
+            role: "the project manager",
+            slack: "checking" as const,
+            slackKnown: false,
+          },
         ],
         tags: [seat("seat:csm")],
         ...migration,
@@ -207,7 +222,7 @@ export function settingsReadFixture(
           permalink: null,
           at: ago(now, 5),
           reason:
-            "Slack refused it: mahara-club-bot is not in #csm-general. Invite it there, then ask the tech lead to requeue this notice.",
+            "Slack says mahara-club-bot is not in that channel. Ask the tech lead to add it there and send the notice again.",
         }),
       },
       {
@@ -394,16 +409,27 @@ export function fakeNoticesIO(
           rule,
           found: true,
           slackKnown: true,
+          checking: false,
         }));
       }
       if (patch.mentionPeople) {
         if (patch.mentionPeople.length > 10)
           refuse("Choose people from the team list.");
-        row.mentionPeople = patch.mentionPeople.map(id => ({
-          id,
-          label: mem.people.find(p => p.id === id)?.label ?? `Person ${id}`,
-          slackKnown: true,
-        }));
+        row.mentionPeople = patch.mentionPeople.map(id => {
+          const label =
+            mem.people.find(p => p.id === id)?.label ?? `Person ${id}`;
+          const role = label.includes(", ")
+            ? `the ${label.split(", ")[1].toLowerCase()}`
+            : "a team member";
+          // A person just chosen is checked in Slack by the sender.
+          return {
+            id,
+            label,
+            role,
+            slack: "checking" as const,
+            slackKnown: false,
+          };
+        });
       }
       row.updatedBy = "the systems manager";
       row.updatedAt = mem.now;

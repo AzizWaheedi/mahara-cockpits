@@ -7,7 +7,12 @@
  */
 import type { SlackTools } from "../cockpit-csm-api/tools.ts";
 import { cachedLookup, labelOf, type Mention, readMention } from "./mentions.ts";
-import { BAD_TOKEN, isTokenCode, NO_TOKEN, type NoticeDeps, slackFor } from "./send.ts";
+import { isTokenCode, type NoticeDeps, slackFor } from "./send.ts";
+
+// The doctor answers the tech lead, so it names the secret and the function;
+// the sender's reasons on the team's screens do not (send.ts).
+export const DOCTOR_NO_TOKEN = "SLACK_BOT_TOKEN is not set on cockpit-notices. The tech lead sets it.";
+export const DOCTOR_BAD_TOKEN = "Slack refused SLACK_BOT_TOKEN. The tech lead sets it again.";
 
 export type ChannelVerdict = { ok: boolean | null; name: string; private: boolean | null; member: boolean; note: string };
 
@@ -39,7 +44,7 @@ export async function checkChannel(slack: SlackTools, id: string, knownName: str
     if (read.kind === "refused" && read.code === "not_in_channel") return { ok: false, name, private: null, member: false, note: `Invite @mahara-club-bot to #${name}, then add it again.` };
     if (read.kind === "refused" && read.code === "channel_not_found") return { ok: false, name, private: null, member: false, note: notFound };
     if (read.kind === "refused" && read.code === "missing_scope") {
-      return { ok: false, name, private: null, member: false, note: "Slack refused the check: the bot lacks a permission. The tech lead adds it to the Slack app." };
+      return { ok: false, name, private: null, member: false, note: "The bot lacks the Slack permission to check it. The tech lead adds it to the Slack app." };
     }
     return { ok: null, name, private: null, member: false, note: "Slack did not answer the check. It is checked again on the next run." };
   }
@@ -101,14 +106,14 @@ export async function runDoctor(deps: NoticeDeps): Promise<Doctor> {
   })));
 
   if (!token) {
-    return { ok: false, bot: { userId: null, ok: false }, missingScopes: [], channels: listed("Not checked: SLACK_BOT_TOKEN is not set."), mentions: notChecked(), secrets, note: `${NO_TOKEN} The tech lead sets it.` };
+    return { ok: false, bot: { userId: null, ok: false }, missingScopes: [], channels: listed("Not checked: SLACK_BOT_TOKEN is not set."), mentions: notChecked(), secrets, note: DOCTOR_NO_TOKEN };
   }
   const slack = slackFor(deps, token, "doctor");
   const auth = await slack.authTest();
   const botOk = auth.ok && auth.userId === deps.botUser().trim();
   if (!botOk) {
     const note = !auth.ok
-      ? isTokenCode(auth.code) ? BAD_TOKEN : `Slack did not answer the token check (${auth.code}). Run the doctor again.`
+      ? isTokenCode(auth.code) ? DOCTOR_BAD_TOKEN : `Slack did not answer the token check (${auth.code}). Run the doctor again.`
       : `The Slack token is ${auth.userId ?? "an unknown user"}, not mahara-club-bot (${deps.botUser()}), so nothing is posted. The tech lead sets SLACK_BOT_TOKEN again.`;
     return { ok: false, bot: { userId: auth.ok ? auth.userId : null, ok: false }, missingScopes: [], channels: listed("Not checked: the token is not mahara-club-bot."), mentions: notChecked(), secrets, note };
   }

@@ -2234,11 +2234,20 @@ describe("the close drain and the Blueprint call (20261025o)", () => {
       );
     expect(await lastSource()).toBeNull();
     expect(await audits()).toBe(1);
-    const write = async (settings: Record<string, string>) => {
+    // `as`: the request's JWT role. The service key's requests carry
+    // service_role; a definer function a signed-in seat called runs as its
+    // owner with the seat's own claims (authenticated).
+    const write = async (
+      settings: Record<string, string>,
+      as: "service_role" | "authenticated" = "service_role",
+    ) => {
       await asOwner();
-      await db.exec("SET ROLE service_role");
+      if (as === "service_role") await db.exec("SET ROLE service_role");
       try {
         await db.exec("BEGIN");
+        await db.query("SELECT set_config('request.jwt.claims',$1,true)", [
+          JSON.stringify({ role: as }),
+        ]);
         for (const [k, v] of Object.entries(settings))
           await db.query("SELECT set_config($1,$2,true)", [k, v]);
         await db.query(
@@ -2261,7 +2270,15 @@ describe("the close drain and the Blueprint call (20261025o)", () => {
     // An unreadable header never breaks the write.
     expect(await write({ "request.headers": "not json" })).toBeNull();
     expect(await write({})).toBeNull();
-    expect(await audits()).toBe(6);
+    // A browser can send any header: through a definer function a signed-in
+    // seat calls, the header does not make its write the drain's.
+    expect(
+      await write(
+        { "request.headers": '{"x-cockpit-source":"cron"}' },
+        "authenticated",
+      ),
+    ).toBeNull();
+    expect(await audits()).toBe(7);
     const row = await owner<Row>(
       "SELECT jsonb_build_object('action',action,'source_app',source_app,'actor',actor_email,'after',after) r FROM public.cockpit_audit_log WHERE entity_type='creative_outbox' AND entity_id=$1 AND source_system='cron' ORDER BY created_at, id LIMIT 1",
       [uuid(301)],
@@ -2272,6 +2289,207 @@ describe("the close drain and the Blueprint call (20261025o)", () => {
       actor: "cd-a@tests.invalid",
       after: { id: uuid(301), attempts: 0 },
     });
+  });
+
+  test("a creative director's press that sends x-cockpit-source: cron is still theirs in the audit", async () => {
+    const cur = await owner<Row>(
+      "SELECT jsonb_build_object('revision',revision,'destination',answers->>'destination') r FROM public.cockpit_blueprints WHERE task_id=$1",
+      [A],
+    );
+    await save(
+      CD_A,
+      A,
+      {
+        destination:
+          cur.destination === "landing_page" ? "lead_form" : "landing_page",
+      },
+      { base: cur.revision },
+    );
+    await db.query("SELECT set_config('request.headers',$1,false)", [
+      '{"x-cockpit-source":"cron"}',
+    ]);
+    try {
+      expect(await press(CD_A, A, 1, uuid(390))).toMatchObject({
+        id: uuid(390),
+      });
+    } finally {
+      await db.query("SELECT set_config('request.headers','',false)");
+    }
+    const rows = await owner<Row[]>(
+      "SELECT coalesce(jsonb_agg(jsonb_build_object('source',source_system,'actor',actor_email)), '[]'::jsonb) r FROM public.cockpit_audit_log WHERE entity_type='creative_outbox' AND created_at > now() - interval '1 minute' AND (entity_id=$1 OR after->>'error' = 'Superseded by a later press of the same part')",
+      [uuid(390)],
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows)
+      expect(row).toMatchObject({ source: null, actor: "cd-a@tests.invalid" });
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_creative_outbox SET state='failed', settled_at=now() WHERE id=$1",
+      [uuid(390)],
+    );
+  });
+
+  test("a press that failed (past its 30 minutes, or refused three times) pressed again with its kept request ID runs as a new press", async () => {
+    const toggle = async () => {
+      const cur = await owner<Row>(
+        "SELECT jsonb_build_object('revision',revision,'destination',answers->>'destination') r FROM public.cockpit_blueprints WHERE task_id=$1",
+        [A],
+      );
+      await save(
+        CD_A,
+        A,
+        { destination: cur.destination === "landing_page" ? "lead_form" : "landing_page" },
+        { base: cur.revision },
+      );
+    };
+    await toggle();
+    const first = await press(CD_A, A, 1, uuid(395));
+    expect(first).toMatchObject({ id: uuid(395), state: "pending" });
+    // The browser's run never finished; the drain's due list fails it at 30 minutes.
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_creative_outbox SET created_at = now() - interval '45 minutes' WHERE id=$1",
+      [uuid(395)],
+    );
+    expect((await service<Row>("SELECT public.cockpit_creative_outbox_due(true) r")).failed).toBeGreaterThanOrEqual(1);
+    expect(await state(uuid(395))).toMatchObject({ state: "failed" });
+
+    // The deck and the card keep the press's ID until a run succeeds, so the
+    // press again sends it: a new press under a new ID, pending, to run.
+    const again = await press(CD_A, A, 1, uuid(395));
+    expect(again.id).not.toBe(uuid(395));
+    expect(again).toMatchObject({ state: "pending", part: 1, presses: first.presses + 1 });
+    expect(again.again).toBeUndefined();
+    expect(again.duplicate).toBeUndefined();
+    expect(await state(again.id)).toMatchObject({ state: "pending", attempts: 0 });
+    expect(await state(uuid(395))).toMatchObject({ state: "failed" });
+    const got = await one<Row>(CD_A, "SELECT public.cockpit_creative_client_action('get',$1::jsonb) r", [
+      JSON.stringify({ id: again.id }),
+    ]);
+    expect(got).toMatchObject({ id: again.id, kind: "blueprintLaunch", state: "pending" });
+    const audit = await owner<Row>(
+      "SELECT metadata r FROM public.cockpit_audit_log WHERE action='blueprint.part_done' AND metadata->>'request_id' = $1",
+      [again.id],
+    );
+    expect(audit).toMatchObject({ part: 1, request_id: again.id, replaces: uuid(395), second: true });
+    const read = (
+      await one<Row>(CD_A, "SELECT public.cockpit_blueprint_read($1::text[]) r", [[A]])
+    ).rows[0];
+    expect(read.parts["1"].lastRequestId).toBe(again.id);
+    expect(read.outbox["1"]).toMatchObject({ id: again.id, state: "pending" });
+
+    // The same old ID once more, while the new press is still pending: the
+    // live press comes back, so nothing is queued twice.
+    const outboxBefore = await outboxRows();
+    expect(await press(CD_A, A, 1, uuid(395))).toMatchObject({ id: again.id, state: "pending", duplicate: true });
+    expect(await outboxRows()).toBe(outboxBefore);
+
+    // A press that needs a look (reconcile) is never run again by a press.
+    await asOwner();
+    await db.query("UPDATE public.cockpit_creative_outbox SET state='sending' WHERE id=$1", [again.id]);
+    await db.query("UPDATE public.cockpit_creative_outbox SET state='reconcile', settled_at=now() WHERE id=$1", [again.id]);
+    expect(await press(CD_A, A, 1, again.id)).toMatchObject({ id: again.id, state: "reconcile", again: true });
+    await db.query("UPDATE public.cockpit_creative_outbox SET state='failed' WHERE id=$1", [again.id]);
+  });
+
+  test("a press the due list hands out is leased to that drain run: an overlapping run skips it, a refusal lets it go", async () => {
+    await queue(uuid(396), { age: 5 });
+    const mine = (r: Row) => r.rows.filter((x: Row) => x.id === uuid(396));
+    const lease = () =>
+      owner<string | null>("SELECT drain_until::text r FROM public.cockpit_creative_outbox WHERE id=$1", [uuid(396)]);
+    // A dry run writes no lease.
+    expect(mine(await service<Row>("SELECT public.cockpit_creative_outbox_due(false) r"))).toHaveLength(1);
+    expect(await lease()).toBeNull();
+    // A real run leases it for 10 minutes, with its audit row from the cron.
+    expect(mine(await service<Row>("SELECT public.cockpit_creative_outbox_due(true) r"))).toHaveLength(1);
+    expect(
+      await owner<boolean>(
+        "SELECT drain_until BETWEEN now() + interval '9 minutes' AND now() + interval '11 minutes' r FROM public.cockpit_creative_outbox WHERE id=$1",
+        [uuid(396)],
+      ),
+    ).toBe(true);
+    expect(
+      await owner<string>(
+        "SELECT source_system r FROM public.cockpit_audit_log WHERE entity_type='creative_outbox' AND entity_id=$1 AND after->>'drain_until' IS NOT NULL ORDER BY created_at DESC LIMIT 1",
+        [uuid(396)],
+      ),
+    ).toBe("cron");
+    // A drain that starts while the first still prepares it gets nothing,
+    // and a dry run shows what a run would take now: nothing either.
+    expect(mine(await service<Row>("SELECT public.cockpit_creative_outbox_due(true) r"))).toHaveLength(0);
+    expect(mine(await service<Row>("SELECT public.cockpit_creative_outbox_due(false) r"))).toHaveLength(0);
+    // A counted refusal lets it go: the next kick tries again.
+    expect(
+      await service<Row>("SELECT public.cockpit_creative_outbox_refused($1::uuid,'ClickUp did not answer. It tries again.') r", [uuid(396)]),
+    ).toMatchObject({ state: "pending", attempts: 1 });
+    expect(await lease()).toBeNull();
+    expect(mine(await service<Row>("SELECT public.cockpit_creative_outbox_due(true) r"))).toHaveLength(1);
+    // A leased press past its 30 minutes is not failed under the run holding
+    // it; once the lease ends, it fails.
+    await asOwner();
+    await db.query("UPDATE public.cockpit_creative_outbox SET created_at = now() - interval '40 minutes' WHERE id=$1", [uuid(396)]);
+    await service<Row>("SELECT public.cockpit_creative_outbox_due(true) r");
+    expect(await state(uuid(396))).toMatchObject({ state: "pending" });
+    await asOwner();
+    await db.query("UPDATE public.cockpit_creative_outbox SET drain_until = now() - interval '1 second' WHERE id=$1", [uuid(396)]);
+    await service<Row>("SELECT public.cockpit_creative_outbox_due(true) r");
+    expect(await state(uuid(396))).toMatchObject({
+      state: "failed",
+      error: "This press did not finish within 30 minutes. Press again.",
+    });
+  });
+
+  test("closeMapSkipped: a first close that found the map past phase 4 says so to every reader", async () => {
+    const read = async () =>
+      (
+        await one<Row>(
+          CD_A,
+          "SELECT public.cockpit_blueprint_read($1::text[]) r",
+          [[A]],
+        )
+      ).rows[0];
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_creative_outbox SET result = coalesce(result,'{}'::jsonb) - 'mapSkipped' WHERE task_id=$1 AND kind='blueprintClose'",
+      [A],
+    );
+    expect((await read()).closeMapSkipped).toBe(false);
+    await queue(uuid(391), { state: "done" });
+    await db.query(
+      "UPDATE public.cockpit_creative_outbox SET result=$2::jsonb, created_at = now() - interval '2 days' WHERE id=$1",
+      [
+        uuid(391),
+        JSON.stringify({
+          kind: "blueprintClose",
+          launchTaskId: null,
+          closeRoute: "card_only",
+          mapPhase: 6,
+          mapSkipped: true,
+        }),
+      ],
+    );
+    // A later press (not the first) reads no map; the first close still speaks.
+    await queue(uuid(392), { state: "done" });
+    await db.query(
+      "UPDATE public.cockpit_creative_outbox SET result=$2::jsonb WHERE id=$1",
+      [
+        uuid(392),
+        JSON.stringify({
+          kind: "blueprintClose",
+          launchTaskId: null,
+          closeRoute: "card_only",
+          mapPhase: null,
+          mapSkipped: false,
+        }),
+      ],
+    );
+    expect((await read()).closeMapSkipped).toBe(true);
+    expect((await read()).outbox["2"].result.mapSkipped).toBe(false);
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_creative_outbox SET state='failed', result = result - 'mapSkipped' WHERE id IN ($1,$2)",
+      [uuid(391), uuid(392)],
+    );
   });
 
   test("the due list: pending Blueprint presses 2 to 30 minutes old with under 3 refusals, oldest first; older ones fail; a dry run writes nothing", async () => {
@@ -2734,6 +2952,16 @@ describe("applying again", () => {
         "SELECT count(*)::int r FROM pg_constraint WHERE conname='cockpit_creative_outbox_attempts_check'",
       ),
     ).toBe(1);
+    // The press is 20261025o's (a failed press pressed again is a new one), for a signed-in seat only.
+    expect(
+      await owner<string>(
+        "SELECT prosrc r FROM pg_proc WHERE proname='cockpit_blueprint_part_done' AND pronamespace='public'::regnamespace",
+      ),
+    ).toContain("gen_random_uuid()");
+    const pd = "public.cockpit_blueprint_part_done(text,integer,uuid)";
+    expect(await owner("SELECT has_function_privilege('authenticated',$1,'EXECUTE') r", [pd])).toBe(true);
+    for (const role of ["anon", "service_role"])
+      expect(await owner("SELECT has_function_privilege($1,$2,'EXECUTE') r", [role, pd])).toBe(false);
     expect(
       (
         await one<Row>(

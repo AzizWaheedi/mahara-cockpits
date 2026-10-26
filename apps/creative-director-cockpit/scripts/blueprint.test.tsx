@@ -464,21 +464,27 @@ test("Settings: five packs in the kickoff's order and words; the close is fixed 
   // No route to choose, for anyone (docs/forms/PLAN.md D5).
   for (const page of [cd, html(true)]) {
     expect(page).toContain("After Close the call");
+    // No channel named in code (D17): Notices and routing says where.
     expect(page).toContain(
-      "The cockpit writes the card and its comments, and the CSM pastes the phase 5 WhatsApp from the card comment. #csm-general and #media-general hear through the notices.",
+      "The cockpit writes the card and its comments, and the CSM pastes the phase 5 WhatsApp from the card comment. The client success and media teams hear in Slack through the notices; where they post and who they tag is set on Notices and routing.",
     );
-    expect(page).toContain(
-      "Change where and who in the client success cockpit",
+    expect(page).not.toMatch(/#csm-general|#media-general/);
+    expect(page).toContain("Open Notices and routing");
+    // One line at 320 px: short words, no wrap, the arrow kept beside them,
+    // teal text in the ink that reads on white.
+    expect(page).toMatch(
+      /<a [^>]*class="[^"]*whitespace-nowrap[^"]*text-primary-ink[^"]*"[^>]*>Open Notices and routing<svg[^>]*shrink-0/,
     );
+    // The page every seat may open; the server decides what it shows.
     expect(page).toContain(
-      'href="https://cockpit.maharamedia.com/client-success/settings"',
+      'href="https://cockpit.maharamedia.com/client-success/notices"',
     );
     expect(page).not.toContain('name="bp-close-route"');
     expect(page).not.toMatch(/Card and Slack|Make 14|Card only/);
   }
   expect("CLOSE_ROUTES" in lib).toBe(false);
   expect(lib.NOTICES_SETTINGS_URL).toBe(
-    "https://cockpit.maharamedia.com/client-success/settings",
+    "https://cockpit.maharamedia.com/client-success/notices",
   );
 });
 
@@ -507,6 +513,16 @@ test("the nudge: a held Blueprint call with no close says so and opens the call 
   expect(html).toMatch(
     /<a [^>]*href="\/blueprint\/86exmpl01"[^>]*>Open the call page\.<\/a>/,
   );
+  // Legible on the warning banner in light theme: the ink teal, underlined.
+  expect(html).toMatch(
+    /<a [^>]*class="[^"]*text-primary-ink underline[^"]*"[^>]*>Open the call page\.<\/a>/,
+  );
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
+  expect(css).toContain("--primary-ink: #00807b;");
+  expect(css).toContain("--color-primary-ink: var(--primary-ink);");
   expect(lib.dayWeek("2026-10-18T10:00:00Z")).toBe("Sun 18 Oct");
   // The server says no nudge, or the call is closed: no nudge.
   expect(
@@ -528,53 +544,110 @@ test("the close's Slack stops: where and when each posted, and what to do when o
       }),
     ).replace(/<!-- -->/g, "");
   const posted = at("posted", noticesFor("posted"));
-  expect(posted).toMatch(
-    /Posted in #csm-general (at|on \w{3} \d{1,2} \w{3}) ?\d\d:\d\d/,
-  );
-  expect(posted).toMatch(
-    /Posted in #media-general (at|on \w{3} \d{1,2} \w{3}) ?\d\d:\d\d/,
+  // Dated against the close on the row's own line ("Call closed 15:57"):
+  // "at 16:03" on the close's Kuwait day, else "on Mon 26 Oct 09:00", the
+  // card's one day format. Never against the read's clock, which made a
+  // post read as earlier than the close the day after.
+  const closedAt = rowFor("posted").parts?.["2"]?.lastAt as string;
+  const stopTime = (iso: string, anchor: string) => {
+    const w = lib.whenNear(iso, anchor);
+    return /^\d\d:\d\d$/.test(w) ? `at ${w}` : `on ${w}`;
+  };
+  for (const n of noticesFor("posted").notices)
+    expect(posted).toContain(
+      `Posted in #${n.channel?.name} ${stopTime(n.at, closedAt)}`,
+    );
+  expect(posted).not.toMatch(/on \w{3} \d{1,2} \w{3}, \d\d:\d\d/);
+  // A post a day after the close says its day, in the card's format.
+  const nextDay = new Date(Date.parse(closedAt) + 26 * 3600_000).toISOString();
+  const later = noticesFor("posted");
+  const dayAfter = at("posted", {
+    ...later,
+    notices: later.notices.map(n => ({ ...n, at: nextDay })),
+  });
+  expect(dayAfter).toContain(
+    `Posted in #csm-general on ${lib.whenLong(nextDay)}`,
   );
   expect(posted).toContain(
     'href="https://example-workspace.slack.com/archives/C09RZ0GS0V9/p1"',
   );
   expect(posted).toContain("Open in Slack");
+  // The lead carries the warning; the reason is a plain sentence after it,
+  // with one label, never two.
   const refused = at("notposted", noticesFor("notposted"));
   expect(refused).toContain(
-    "Not posted in #csm-general: Slack refused it: mahara-club-bot is not in #csm-general. Invite it there, then ask the tech lead to requeue this notice.",
+    '<span class="txt-warn font-medium">Not posted in #csm-general.</span><span class="text-foreground"> Slack says mahara-club-bot is not in that channel. Ask the tech lead to add it there and send the notice again.</span>',
   );
+  expect(refused).not.toMatch(/: Slack (says|refused it):/);
+  // Beside wrapped text the dot sits on the first line.
+  expect(refused).toContain('<span class="mt-[5px] flex self-start">');
   // Nothing on record, or a failed read: said, never blank.
   const none = at("closed", {
     taskId: TASK,
     now: new Date().toISOString(),
     notices: [],
   });
-  expect(none).toContain("No #csm-general notice is on record for this close.");
   expect(none).toContain(
-    "No #media-general notice is on record for this close.",
+    "No client success notice is on record for this close.",
   );
+  expect(none).toContain("No media notice is on record for this close.");
+  expect(none).not.toMatch(/#csm-general|#media-general/);
   expect(at("closed", null)).toContain(
     "The cockpit could not read the Slack notices just now.",
   );
-  // Part 3's reply under the close.
-  expect(at("needs", noticesFor("locked"))).toMatch(
-    /Reply posted in #csm-general at \d\d:\d\d/,
+  // Part 3's post, dated against the offer on its own line: "Reply posted"
+  // only when it went in the close's thread.
+  const offeredAt = rowFor("needs").parts?.["3"]?.lastAt as string;
+  const reply = noticesFor("locked").notices[0];
+  expect(at("needs", noticesFor("locked"))).toContain(
+    `Reply posted in #csm-general ${stopTime(reply.at, offeredAt)}`,
+  );
+  const older = noticesFor("olderreply").notices[0];
+  expect(at("needs", noticesFor("olderreply"))).toContain(
+    `Reply posted in #csm-general on ${lib.whenLong(older.at)}`,
+  );
+  // The close did not post (turned off), so the offer went top level: it
+  // says "Posted", never "Reply posted" under a thread that does not exist.
+  const top = at("needs", noticesFor("offertop"));
+  const topAt = noticesFor("offertop").notices[0].at;
+  expect(top).toContain(`Posted in #csm-general ${stopTime(topAt, offeredAt)}`);
+  expect(top).not.toContain("Reply posted");
+  // Queued: where it is set to post (the server names Settings' channel).
+  expect(at("posted", noticesFor("queued"))).toContain(
+    "Waiting to post in #csm-general.",
   );
   // Before the close there is nothing to say about Slack.
   expect(at("sent", noticesFor("posted"))).not.toContain("#csm-general");
 });
 
-test("the server drain's refusals: trying again, then fix it and press again; a timed-out press as stored", () => {
-  expect(card("refused")).toContain(
-    "This press was refused: The Marketing/ADs list has two open launch tasks for this client. Close one in ClickUp. The cockpit tries again in 2 minutes (1 of 3).",
+test("the server drain's refusals: one state while it tries again; the two ends name the press and open its part", () => {
+  // Trying again: one state, no button to press, the cause and its fix first.
+  const refused = card("refused");
+  expect(refused).toContain(">Refused, trying again<");
+  // Its reason sits under the state it explains, as the notice stops do.
+  expect(refused).toContain(
+    '<p role="status" class="mt-1 pl-8 text-xs txt-warn sm:pl-48">',
   );
-  expect(card("refused3")).toContain(
-    "This press was refused: The Marketing/ADs list has two open launch tasks for this client. Close one in ClickUp. Fix it and press again.",
+  expect(refused).toContain(
+    "The Marketing/ADs list has two open launch tasks for this client. Close one in ClickUp. The cockpit tries again in 2 minutes (1 of 3).",
   );
-  expect(card("refused3")).not.toContain("Needs a look:");
-  expect(card("timedout")).toContain(
-    "This press did not finish within 30 minutes. Press again.",
+  expect(refused).not.toContain("Saved, not confirmed");
+  expect(refused).not.toContain("Run it again");
+  // Three refusals, or 30 minutes: the press by name, and the way to it.
+  const refused3 = card("refused3");
+  expect(refused3).toContain(
+    "This press was refused: The Marketing/ADs list has two open launch tasks for this client. Close one in ClickUp. Fix it, then press Send to media on the call again.",
   );
-  expect(card("timedout")).not.toContain("Needs a look:");
+  expect(refused3).not.toContain("Needs a look:");
+  expect(refused3).toMatch(
+    /<a [^>]*href="\/blueprint\/86exmpl01#part1"[^>]*>Open part 1<\/a>/,
+  );
+  const timedout = card("timedout");
+  expect(timedout).toContain(
+    "This press did not finish within 30 minutes. Press Send to media on the call again.",
+  );
+  expect(timedout).not.toContain("Needs a look:");
+  expect(timedout).toContain(">Open part 1</a>");
   // A press stopped part way still needs a person.
   expect(card("needs")).toContain("Needs a look:");
 });

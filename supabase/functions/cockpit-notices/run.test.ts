@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { runDoctor } from "./doctor";
-import { JobError, runDryRun, runNotices, runRehearse } from "./run";
-import { NO_SLACK_ID, NO_TOKEN, UNKNOWN, WAITING, WRONG_BOT } from "./send";
+import { DOCTOR_NO_TOKEN, runDoctor } from "./doctor";
+import { CLAIM_LIMIT, JobError, OUT_OF_TIME, runDryRun, runNotices, runRehearse } from "./run";
+import { BAD_TOKEN, NO_SLACK_ID, NO_TOKEN, REPLY_RECHECK_SEC, UNKNOWN, WAITING, WAITING_CARD, WAITING_REPLY, WRONG_BOT } from "./send";
 import {
   BOT_USER, claimed, CREATIVE, CSM, CSM_GENERAL, deps, FakeClickUp, FakeSlack, fakeRpc, ID, MEDIA_GENERAL, mention, minutesAgo, NOW, receiptsRecorder, ref, SYSTEMS,
 } from "./testkit";
@@ -38,7 +38,7 @@ describe("the kickoff notice", () => {
     const d = detailOf(r);
     expect(d.variant).toBe("complete");
     expect(d.permalink).toBe(`https://example-team.slack.com/archives/${CSM_GENERAL}/p${String(posted.ts).replace(".", "")}`);
-    expect(d.facts).toEqual({ commentCheck: "found", handoffAt: minutesAgo(23), filledByRole: "the CSM" });
+    expect(d.facts).toEqual({ commentCheck: "found", handoffAt: minutesAgo(23), filledByRole: "the CSM", looksDone: true, cardUpdatedAt: minutesAgo(23) });
     expect(blocksText(d)).toContain("<@U0B2SHGS1JA>");
     expect(blocksText(d)).toContain("The card shows Brand Blueprint Booked, and the Brand Blueprint link.");
     expect(blocksText(d)).toContain("Filled by the CSM on Sun 25 Oct, 14:05.");
@@ -101,7 +101,69 @@ describe("the kickoff notice", () => {
     expect(d.text).toBe(`Kickoff in, card not updated: Acme &amp; Sons &lt;Interiors&gt;. Open the card and check it. Ref ${ref(ID(1))}`);
     expect(blocksText(d)).toContain("The card has no Kickoff Handoff comment 20 minutes after the kickoff. Open the card and check it. Do not send the kickoff again. <@U0C5JHUCTPG> <@U0AS90SHMH8>");
     expect(blocksText(d)).not.toContain("U0B2SHGS1JA");
-    expect(d.facts).toEqual({ commentCheck: "missing", handoffAt: null, filledByRole: "the CSM" });
+    // What it saw is kept, so the sweep can answer it once the card is done (X19).
+    expect(d.facts).toEqual({ commentCheck: "missing", handoffAt: null, filledByRole: "the CSM", looksDone: true, cardUpdatedAt: minutesAgo(23) });
+  });
+
+  test("the comment there but the card not moved: it waits, then at 20 minutes posts late, never complete", async () => {
+    // Make wrote the Kickoff Handoff comment (module 11) and broke before the
+    // card's stage and link (module 21): the claim let it through at 20 minutes.
+    const notMoved = { clientStatus: "Onboarding Booked", cardUpdatedAt: minutesAgo(60 * 24), blueprintLink: false, looksDone: false, filledByRole: "the CSM", dueBy: minutesAgo(1) };
+    const row = claimed({ facts: { ...claimed().facts as Record<string, unknown>, submittedAt: minutesAgo(21) }, live: notMoved });
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(row) }) });
+    kit.clickup.handoff("task0001", minutesAgo(20));
+    await runNotices(kit.deps);
+    const r = lastResult(kit);
+    expect(r.p_outcome).toBe("posted");
+    const d = detailOf(r);
+    expect(d.variant).toBe("late");
+    expect(blocksText(d)).toContain(
+      "The Kickoff Handoff comment is on the card, but 20 minutes after the kickoff the card shows Onboarding Booked, not Brand Blueprint Booked. Open the card and check it. Do not send the kickoff again. <@U0C5JHUCTPG> <@U0AS90SHMH8>",
+    );
+    expect(blocksText(d)).not.toContain("U0B2SHGS1JA");
+    expect(d.facts).toEqual({ commentCheck: "found", handoffAt: minutesAgo(20), filledByRole: "the CSM", looksDone: false, cardUpdatedAt: minutesAgo(60 * 24) });
+    // Within 20 minutes the same card waits for it, not an attempt.
+    const early = claimed({ facts: { ...claimed().facts as Record<string, unknown>, submittedAt: minutesAgo(4) }, live: notMoved });
+    const k2 = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(early) }) });
+    k2.clickup.handoff("task0001", minutesAgo(3));
+    await runNotices(k2.deps);
+    expect(lastResult(k2)).toMatchObject({ p_outcome: "requeue", p_error: WAITING_CARD, p_detail: { retryAfterSec: 60 } });
+    expect(k2.slack.posts()).toHaveLength(0);
+  });
+
+  test("the card-updated reply posts only once the Kickoff Handoff comment is there; until then it waits, not an attempt", async () => {
+    const reply = (over: Record<string, unknown> = {}) => claimed({
+      kind: "kickoff.updated",
+      facts: { taskId: "task0001", client: "Acme Interiors", responseId: "resp00000001", submittedAt: minutesAgo(90), cardUpdatedAt: minutesAgo(3) },
+      live: { clientStatus: "Brand Blueprint Booked♠️", cardUpdatedAt: minutesAgo(2) },
+      threadTs: "1792900100.000200",
+      parentId: ID(5),
+      mentions: { main: [] },
+      ...over,
+    });
+    // The card changed, but the comment the late notice missed is still not there.
+    const waiting = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(reply()) }) });
+    waiting.clickup.handoff("task0001", minutesAgo(200)); // an older kickoff's comment does not count
+    await runNotices(waiting.deps);
+    expect(lastResult(waiting)).toMatchObject({ p_outcome: "requeue", p_error: WAITING_REPLY, p_detail: { retryAfterSec: REPLY_RECHECK_SEC } });
+    expect(waiting.slack.posts()).toHaveLength(0);
+    // Comments that cannot be read are not a yes either.
+    const unread = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(reply()) }) });
+    unread.clickup.fail = true;
+    await runNotices(unread.deps);
+    expect(lastResult(unread).p_outcome).toBe("requeue");
+    // Now it is there: the reply goes in the late notice's thread and says what caught up.
+    const ready = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(reply()) }) });
+    ready.clickup.handoff("task0001", minutesAgo(10));
+    await runNotices(ready.deps);
+    const r = lastResult(ready);
+    expect(r.p_outcome).toBe("posted");
+    expect(ready.slack.posts()[0].body?.thread_ts).toBe("1792900100.000200");
+    expect(detailOf(r)).toMatchObject({
+      variant: "thread",
+      text: `Card updated at 14:28. It has the Kickoff Handoff comment and shows Brand Blueprint Booked. Ref ${ref(ID(1))}`,
+      facts: { commentCheck: "found", handoffAt: minutesAgo(10) },
+    });
   });
 
   test("unread comments: waits within 20 minutes, then posts the late notice with its own line", async () => {
@@ -211,19 +273,41 @@ describe("what Slack answers", () => {
     expect(lastResult(kit)).toMatchObject({ p_outcome: "retry", p_error: "The notices provider receipt could not be saved; no call was made without one." });
     expect(kit.slack.posts()).toHaveLength(0);
   });
+  test("internal_error and fatal_error may have posted: unknown, never failed, so nobody requeues a post that is there", async () => {
+    for (const code of ["internal_error", "fatal_error"]) {
+      const { r, result, kit } = await run({ refuse: code });
+      expect(result).toMatchObject({ failed: 0, unknown: 1 });
+      expect(r).toMatchObject({ p_outcome: "unknown", p_error: `Slack answered ${code}, which can mean the post went through; it is not sent again in case it arrived.` });
+      expect(kit.receipts.rows.find(x => x.resource === "slack.com/api/chat.postMessage" && x.phase !== "intent")).toMatchObject({ phase: "unknown", http_status: 200 });
+    }
+    // Slack did not take these requests: refusals, as before.
+    for (const code of ["service_unavailable", "request_timeout"]) {
+      const { r } = await run({ refuse: code });
+      expect(r).toMatchObject({ p_outcome: "failed", p_error: `Slack refused it (${code}).` });
+    }
+  });
   test("an answer for another channel, or without a ts, is unknown", async () => {
     const other = await run({ channel: MEDIA_GENERAL });
     expect(other.r).toMatchObject({ p_outcome: "unknown", p_error: `Slack answered for another channel (${MEDIA_GENERAL}). Look there first; it is not sent again.` });
     const noTs = await run("no-ts");
     expect(noTs.r.p_outcome).toBe("unknown");
   });
-  test("a refusal is failed, in a sentence that names the channel", async () => {
+  test("a refusal is failed, in a plain sentence after the stop's own lead (which names the channel)", async () => {
     const { r } = await run({ refuse: "not_in_channel" });
-    expect(r).toMatchObject({ p_outcome: "failed", p_error: "Slack refused it: mahara-club-bot is not in #csm-general. Invite it there, then ask the tech lead to requeue this notice." });
+    expect(r).toMatchObject({ p_outcome: "failed", p_error: "Slack says mahara-club-bot is not in that channel. Ask the tech lead to add it there and send the notice again." });
+    expect((await run({ refuse: "missing_scope" })).r.p_error).toBe("The bot lacks a Slack permission. The tech lead adds it to the Slack app.");
+    // Each sentence stands alone after a stop's own label: none opens with a label of its own.
+    for (const code of ["not_in_channel", "missing_scope", "is_archived", "invalid_blocks", "token_revoked", "something_new"])
+      expect(String((await run({ refuse: code })).r.p_error)).not.toMatch(/^[^.]*: /);
     expect((await run({ refuse: "is_archived" })).r.p_error).toBe("#csm-general is archived. Choose another channel in Settings, Notices and routing.");
     expect((await run({ refuse: "invalid_blocks" })).r.p_error).toBe("Slack refused the message's layout. The tech lead checks the notice text.");
-    expect((await run({ refuse: "token_revoked" })).r.p_error).toBe("Slack refused the bot's token. The tech lead sets SLACK_BOT_TOKEN again.");
+    expect((await run({ refuse: "token_revoked" })).r.p_error).toBe(BAD_TOKEN);
     expect((await run({ refuse: "something_new" })).r.p_error).toBe("Slack refused it (something_new).");
+    // The CSM and the creative director read these word for word: no secret,
+    // function or queue words, which are the doctor's and the RUNBOOK's.
+    for (const code of ["not_in_channel", "channel_not_found", "missing_scope", "is_archived", "invalid_blocks", "token_revoked", "something_new"])
+      expect(String((await run({ refuse: code })).r.p_error)).not.toMatch(/SLACK_BOT_TOKEN|cockpit-notices|requeue/i);
+    for (const s of [WRONG_BOT, BAD_TOKEN, NO_TOKEN]) expect(s).not.toMatch(/SLACK_BOT_TOKEN|cockpit-notices|requeue/i);
   });
   test("the Blueprint close posts its done variant with the three links", async () => {
     const { r } = await run("ok");
@@ -284,6 +368,32 @@ describe("tags", () => {
     expect(blocksText(detailOf(lastResult(kit)))).toContain("<@U0FOUNDBYML>");
     expect(kit.receipts.rows.find(r => r.resource === "notices/mentions")!.http_status).toBe(200);
   });
+  test("what Slack said about a person looked up by address is kept for the Settings card", async () => {
+    const slack = new FakeSlack();
+    slack.users.set("found.person@example.test", "U0FOUNDBYML");
+    const kit = deps({
+      slack,
+      rpc: fakeRpc({
+        cockpit_slack_notice_claim: claimOnce(withMentions([
+          mention("people", "the project manager", null, { personId: 41, email: "found.person@example.test" }),
+          mention("people", "the closer", null, { personId: 42, email: "nobody@example.test" }),
+          mention("people", "the CEO", "U0CEOAAAA1", { personId: 43, email: "known@example.test" }),
+        ])),
+        cockpit_slack_person_checked: a => ({ personId: a.p_person, state: a.p_state }),
+      }),
+    });
+    kit.clickup.handoff("task0001", minutesAgo(23));
+    await runNotices(kit.deps);
+    expect(kit.rpc.calls.filter(c => c.name === "cockpit_slack_person_checked").map(c => c.args)).toEqual([
+      { p_person: 41, p_state: "ok", p_slack: "U0FOUNDBYML", p_note: "Found in Slack by the address on the team list." },
+      { p_person: 42, p_state: "not_found", p_slack: null, p_note: "Slack has no member with the address on the team list, so the notice writes the role in plain text." },
+    ]);
+    expect(blocksText(detailOf(lastResult(kit)))).toContain("<@U0FOUNDBYML> the closer <@U0CEOAAAA1>");
+    // A record that fails never holds the post.
+    const broken = deps({ slack, rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(withMentions([mention("people", "the project manager", null, { personId: 41, email: "found.person@example.test" })])) }) });
+    broken.clickup.handoff("task0001", minutesAgo(23));
+    expect(await runNotices(broken.deps)).toMatchObject({ posted: 1 });
+  });
   test("a rule that found nobody is its label in plain text, plus the warning row", async () => {
     const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(withMentions([{ rule: "seat:creative", missing: true }])) }) });
     kit.clickup.handoff("task0001", minutesAgo(23));
@@ -326,6 +436,73 @@ describe("the reconcile", () => {
     expect(kit.rpc.results()).toEqual([]);
     expect(kit.slack.posts()).toHaveLength(0);
     expect(kit.net.calls.filter(c => c.url.pathname === "/api/conversations.history")).toHaveLength(1);
+  });
+});
+
+describe("the run's limits", () => {
+  test("it claims three at most, and a row not reached within a minute goes back to the queue, not an attempt and never sending", async () => {
+    const rows = [claimed({ id: ID(1) }), claimed({ id: ID(2) }), claimed({ id: ID(3) })];
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(...rows) }) });
+    kit.clickup.handoff("task0001", minutesAgo(23));
+    // Slow answers: every receipt costs ten seconds of the run's clock.
+    let t = NOW.getTime();
+    kit.deps.now = () => new Date(t);
+    const insert = kit.deps.insertHealth;
+    kit.deps.insertHealth = async row => {
+      t += 10_000;
+      await insert(row);
+    };
+    const result = await runNotices(kit.deps);
+    expect(kit.rpc.calls.find(c => c.name === "cockpit_slack_notice_claim")!.args).toEqual({ p_limit: CLAIM_LIMIT });
+    expect(CLAIM_LIMIT).toBe(3);
+    expect(result).toMatchObject({ claimed: 3, posted: 1, requeued: 2, note: OUT_OF_TIME });
+    expect(kit.slack.posts()).toHaveLength(1);
+    expect(kit.rpc.results().map(r => [r.p_id, r.p_outcome])).toEqual([
+      [ID(1), "posted"],
+      [ID(2), "requeue"],
+      [ID(3), "requeue"],
+    ]);
+    expect(kit.rpc.results().slice(1).map(r => [r.p_error, (r.p_detail as Record<string, unknown>).retryAfterSec])).toEqual([
+      [OUT_OF_TIME, 30],
+      [OUT_OF_TIME, 30],
+    ]);
+  });
+  test("a slow start leaves the claim to the next run", async () => {
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(claimed()) }) });
+    let t = NOW.getTime();
+    kit.deps.now = () => new Date(t);
+    const rpc = kit.deps.rpc;
+    kit.deps.rpc = async (name, args) => {
+      if (name === "cockpit_slack_notice_unknowns") t += 61_000;
+      return rpc(name, args);
+    };
+    const result = await runNotices(kit.deps);
+    expect(result.note).toBe("The run ran out of time before the claim; the next run sends what is due.");
+    expect(kit.rpc.calls.some(c => c.name === "cockpit_slack_notice_claim")).toBe(false);
+  });
+  test("people an editor tagged are looked up by address and recorded; no answer leaves them to the next run", async () => {
+    const slack = new FakeSlack();
+    slack.users.set("pm@example.test", "U0PROJECTM1");
+    const kit = deps({
+      slack,
+      rpc: fakeRpc({
+        cockpit_slack_person_pending: () => [{ personId: 41, email: "pm@example.test" }, { personId: 42, email: "gone@example.test" }],
+        cockpit_slack_person_checked: a => ({ personId: a.p_person, state: a.p_state }),
+      }),
+    });
+    const result = await runNotices(kit.deps);
+    expect(result.people).toBe(2);
+    expect(kit.rpc.calls.filter(c => c.name === "cockpit_slack_person_checked").map(c => [c.args.p_person, c.args.p_state, c.args.p_slack])).toEqual([
+      [41, "ok", "U0PROJECTM1"],
+      [42, "not_found", null],
+    ]);
+    // Neither address reached a receipt or a result.
+    expect(JSON.stringify([kit.receipts.rows, kit.rpc.results()])).not.toMatch(/example\.test/);
+    // The wrong bot checks nobody.
+    const wrong = deps({ rpc: fakeRpc({ cockpit_slack_person_pending: () => [{ personId: 41, email: "pm@example.test" }] }) });
+    wrong.slack.authUser = "U0OTHERBOT1";
+    expect((await runNotices(wrong.deps)).people).toBe(0);
+    expect(wrong.net.calls.some(c => c.url.pathname === "/api/users.lookupByEmail")).toBe(false);
   });
 });
 
@@ -506,7 +683,8 @@ describe("the doctor", () => {
     const kit = deps({ token: "", rpc: fakeRpc({ cockpit_slack_notice_doctor_inputs: inputs() }) });
     const d = await runDoctor(kit.deps);
     expect(d).toMatchObject({ ok: false, bot: { userId: null, ok: false } });
-    expect(d.note).toContain(NO_TOKEN);
+    expect(d.note).toBe(DOCTOR_NO_TOKEN);
+    expect(d.note).toContain("SLACK_BOT_TOKEN");
     expect(d.secrets.SLACK_BOT_TOKEN).toBe(false);
     expect(kit.net.calls).toHaveLength(0);
   });

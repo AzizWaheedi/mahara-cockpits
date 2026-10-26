@@ -26,8 +26,12 @@ export interface TrailStop {
   done: boolean;
   /** A line under the label, when it adds something. */
   line: string | null;
-  /** It stopped and needs a person: "Not posted: … Tell the tech lead." */
+  /** It stopped and needs a person: "Not posted. … Tell the tech lead." */
   problem?: boolean;
+  /** A problem's own words ("Not posted."), drawn in the warning tone before the reason. */
+  lead?: string;
+  /** The Slack stop's place: "#csm-general", or "Slack" while the channel is not known. */
+  where?: string;
   /** Done, but not a success: a notice that was turned off or skipped. */
   quiet?: boolean;
   /** The stop could not be read: neither done nor the current stop. */
@@ -70,6 +74,19 @@ const clause = (s: string) => s.trim().replace(/\.\s*$/, "");
 const tell = (reason: string) =>
   /tech lead/i.test(reason) ? "" : " Tell the tech lead.";
 
+/** A reason as a sentence of its own, after the stop's own lead. */
+const sentence = (reason: string) =>
+  `${reason.charAt(0).toUpperCase()}${reason.slice(1)}.`;
+
+/**
+ * Where a notice goes, in words: its channel's name ("#csm-general"), which
+ * the server gives for a queued notice from Settings as they are now (D17),
+ * or "Slack" while it is not known. Never a channel written in code.
+ */
+export function noticeWhere(n: Pick<NoticeView, "channel"> | null): string {
+  return n?.channel?.name ? `#${n.channel.name}` : "Slack";
+}
+
 /** The Slack stop, by the notice's state (STAGE1-CONTRACT.md 6.1). */
 export function slackStop(
   cfg: Pick<FormConfig, "after">,
@@ -77,20 +94,22 @@ export function slackStop(
 ): TrailStop {
   const want = cfg.after.notice;
   const n = slack.notice;
-  const where = n?.channel?.name ? `#${n.channel.name}` : null;
+  const where = noticeWhere(n);
   const reason = clause(n?.reason ?? "") || "no reason was given";
-  const base = { key: "slack" as const, line: null };
+  const base = { key: "slack" as const, line: null, where };
+  const pending = want ? want.pending(where) : `The team hears in ${where}`;
   if (!n) {
     if (slack.unread)
       return {
         ...base,
-        label: "The cockpit could not read the Slack notice just now.",
+        label:
+          "The cockpit could not read the Slack notice just now. Check now reads it again.",
         done: false,
         unread: true,
       };
     return {
       ...base,
-      label: want?.pending ?? "The team hears in Slack",
+      label: pending,
       done: false,
       line: want?.line ?? null,
     };
@@ -99,7 +118,7 @@ export function slackStop(
     case "posted":
       return {
         ...base,
-        label: `Posted in ${where ?? "Slack"} at ${kuwaitTime(n.at)}`,
+        label: `Posted in ${where} at ${kuwaitTime(n.at)}`,
         done: true,
         line:
           n.variant === "late"
@@ -113,16 +132,15 @@ export function slackStop(
     case "sending":
       return {
         ...base,
-        label: where
-          ? `The team hears in ${where}`
-          : (want?.pending ?? "The team hears in Slack"),
+        label: pending,
         done: false,
         line: want?.line ?? null,
       };
     case "failed":
       return {
         ...base,
-        label: `Not posted: ${reason}.${tell(reason)}`,
+        label: `Not posted. ${sentence(reason)}${tell(reason)}`,
+        lead: "Not posted.",
         done: false,
         problem: true,
       };
@@ -130,7 +148,8 @@ export function slackStop(
     case "unknown":
       return {
         ...base,
-        label: `Not confirmed: ${reason}.${tell(reason)}`,
+        label: `Not confirmed. ${sentence(reason)}${tell(reason)}`,
+        lead: "Not confirmed.",
         done: false,
         problem: true,
       };
@@ -144,7 +163,7 @@ export function slackStop(
     case "skipped":
       return {
         ...base,
-        label: `Not posted: ${reason}.`,
+        label: `Not posted. ${sentence(reason)}`,
         done: true,
         quiet: true,
       };
@@ -288,6 +307,32 @@ export function trailFor(
   return { stops, current, late, lateLine };
 }
 
+/**
+ * The after panel's headline and the line under it, from the trail as it
+ * stands: the late sentence while a step is late; once Make has done its
+ * part, the done sentence; the "team hears" line only while the Slack stop
+ * still waits (once it is posted, off or stopped, the stop itself says so).
+ */
+export function afterLines(
+  cfg: Pick<FormConfig, "after">,
+  trail: Pick<Trail, "stops" | "late">,
+): { say: string; sub: string | null } {
+  if (trail.late) return { say: cfg.after.lateSay[trail.late], sub: null };
+  const cardDone = trail.stops
+    .filter(s => s.key === "card" || s.key === "link")
+    .every(s => s.done);
+  const slack = trail.stops.find(s => s.key === "slack");
+  const waits = slack ? !slack.done && !slack.problem : !cardDone;
+  return {
+    say: cardDone ? cfg.after.doneSay : cfg.after.say,
+    sub: waits ? cfg.after.sub(slack?.where ?? "Slack") : null,
+  };
+}
+
+/** Every stop done, and none of them quietly (a notice off or skipped is not a success). */
+export const trailAllDone = (trail: Pick<Trail, "stops">) =>
+  trail.stops.every(s => s.done && !s.quiet);
+
 /** The trail in a few words, for a folded panel: "Kickoff sent · waiting for Make". */
 export function trailSummary(
   cfg: Pick<FormConfig, "title" | "after">,
@@ -295,6 +340,11 @@ export function trailSummary(
 ): string {
   const head = `${cfg.title} sent`;
   const slack = trail.stops?.find(s => s.key === "slack");
+  // A stop that needs a person outranks every wait: on a phone the fold is all
+  // the CSM sees, so the action leads and fits at 320 px (the window's own
+  // header already names the form, and the trail says it was sent).
+  if (slack?.problem)
+    return `${slack.lead === "Not confirmed." ? "Not confirmed" : "Not posted"} in Slack · tell the tech lead`;
   if (trail.late === "make") return `${head} · Make is late`;
   if (trail.late === "typeform") return `${head} · Typeform is late`;
   switch (trail.current) {
@@ -311,9 +361,7 @@ export function trailSummary(
     case "link":
       return `${head} · waiting for ${cfg.after.linkBack?.short ?? "Make"}`;
     case "slack":
-      return slack?.problem
-        ? `${head} · not posted in Slack`
-        : `${head} · waiting for the Slack notice`;
+      return `${head} · waiting for the Slack notice`;
     default:
       return head;
   }

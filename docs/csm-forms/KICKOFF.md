@@ -102,10 +102,14 @@ and 5 below say so where it matters.
 
 ### After the call
 8. The window shows **"Kickoff sent. Make is updating the card. Book the
-   Brand Blueprint call below."**, with "The team hears in #csm-general once
-   the card is updated." under it, and the trail: sent, Typeform has it,
-   Make updated the card, the card has the Brand Blueprint link, the team
-   hears in #csm-general. Make books nothing: the CSM books the Brand
+   Brand Blueprint call below."** (once Make has done its part: "Kickoff
+   sent. The card is updated. Book the Brand Blueprint call below."), with
+   "The team hears in {#channel} once the card is updated." under it while
+   the notice waits, and the trail: sent, Typeform has it, Make updated the
+   card, the card has the Brand Blueprint link, the team hears in Slack. The
+   channel is the one Settings, Notices and routing names for the notice
+   (the server gives it for a queued notice too), or "Slack" until a notice
+   is on record: no channel is written in code. Make books nothing: the CSM books the Brand
    Blueprint call (step 9). Once the link stop is done its button, **Open the
    Brand Blueprint**, opens the cockpit's own Blueprint prep view
    (`/client-success/clients/{taskId}/present/blueprint?view=prep`), never
@@ -115,13 +119,17 @@ and 5 below say so where it matters.
    cockpit's own **Book the Brand Blueprint call** dialog for this client
    (`BookCallButton kind="blueprint"`, the same HighLevel calendar
    `x84ET6KnA8odlsjYiVLq`) instead of leaving the window.
-9a. **The team hears in #csm-general.** Once Make has updated the card (the
-   stage and the Kickoff Handoff comment are there), the cockpit posts
-   "Kickoff complete: {client}" and tags the creative director, who runs the
-   Brand Blueprint call. If the card has not caught up 20 minutes after the
-   kickoff, it posts "Kickoff in, card not updated: {client}" instead and
-   tags the CSM and the systems manager, and a reply follows in its thread
-   when the card catches up. A second kickoff adds a line and tags the CSM.
+9a. **The team hears in Slack** (#csm-general unless Settings says
+   otherwise). Once Make has updated the card (the Kickoff Handoff comment
+   is there **and** the card is at Brand Blueprint Booked, both), the cockpit
+   posts "Kickoff complete: {client}" and tags the creative director, who
+   runs the Brand Blueprint call. If either half is missing 20 minutes after
+   the kickoff, it posts "Kickoff in, card not updated: {client}" instead
+   and tags the CSM and the systems manager. A reply "Card updated at
+   14:31. It has the Kickoff Handoff comment and shows Brand Blueprint
+   Booked." follows in its thread once the card changes after that notice
+   and has both halves; no reply comes after 48 hours. A second kickoff adds
+   a line and tags the CSM.
    The trail's last stop reads "Posted in #csm-general at 14:03" with **Open
    in Slack**. The notice is posted whether or not the window stays open.
 10. The cockpit tab gets the same news (a toast and a re-read of the
@@ -221,7 +229,8 @@ interface FormConfig {
   partial?: { afterRef: string; say: string };
   after: {
     say: string;                  // "Kickoff sent. Make is updating the card. Book the Brand Blueprint call below."
-    sub: string;                  // the muted line under it: "The team hears in #csm-general once the card is updated."
+    doneSay: string;              // once the card stops are done: "Kickoff sent. The card is updated. Book the Brand Blueprint call below."
+    sub(where: string): string;   // the muted line while the notice waits: "The team hears in {where} once the card is updated."
     lateSay: { make: string; typeform: string };  // the headline once a step is late
     lateMake: string;             // Make is late, in full: names the card comment Make writes
     checksAtSec: number[];        // [45, 120, 300]
@@ -238,7 +247,7 @@ interface FormConfig {
     };
     notice?: {                    // the Slack stop, after the link stop (Stage 1)
       kind: "kickoff";
-      pending: string;            // "The team hears in #csm-general"
+      pending(where: string): string; // "The team hears in {where}": the notice's channel, else "Slack"
       line: string;               // "Once Make has updated the card, usually within a few minutes."
     };
   };
@@ -582,7 +591,10 @@ digits only.
 (`handover`). These are what the panel already shows on "Before the call".
 
 Each row's copy button toasts "<Label> copied." On failure: "The browser
-would not copy. Select the text instead."
+would not copy. Select the text instead." (the row's text is on screen).
+The trail's own copy of the window's link shows the link in a read-only box
+when the browser will not copy: "The browser would not copy. Select the link
+below instead."
 
 ---
 
@@ -590,8 +602,12 @@ would not copy. Select the text instead."
 
 ### 4.1 What the window shows
 Above the trail, in a teal-ringed strip: **"Kickoff sent. Make is updating
-the card. Book the Brand Blueprint call below."** Under it, a muted line:
-"The team hears in #csm-general once the card is updated." (Make books
+the card. Book the Brand Blueprint call below."**, and once the card and
+link stops are done, **"Kickoff sent. The card is updated. Book the Brand
+Blueprint call below."** (the late sentence when a step is late). Under it,
+while the Slack notice still waits, a muted line: "The team hears in
+{#channel, or Slack} once the card is updated." It goes once the notice is
+posted, off, skipped or stopped: the Slack stop says that itself. (Make books
 nothing, and the old line about Make's WhatsApp summary is gone: that draft
 never reached a client, and A3 takes its webhook off.) The header's "Open in
 Typeform" is gone from here on: it would open a fresh form for the same
@@ -608,28 +624,40 @@ the window's one teal glow:
 | Typeform | `row.forms.kickoff.response_id` equals the send's ID, or the timeline's form history has its token | "Typeform lists it", "Usually within a minute." | "Typeform has it", "Submitted at 14:02." |
 | Card | `client_status` is Brand Blueprint Booked♠️ (or a later stage: LAUNCH BOOKED, Ready For Launch🚀, Active) **and** `card_updated_at` is at or after the submit | "Make updates the card", "Usually within a minute of Typeform." | "Make updated the card at 14:03", "The card is at Brand Blueprint Booked." |
 | Link | the card stop is done and `links.blueprint_form` is present | "Make adds the Brand Blueprint link to the card" | "The card has the Brand Blueprint link", then **Book the Brand Blueprint call** (teal) and **Open the Brand Blueprint** (the cockpit's own Blueprint prep view, `linkBack.href`; never the retired Typeform) |
-| Slack | the `kickoff` notice whose `responseId` is the send's is `posted` (`muted` and `skipped` count as done, quietly) | "The team hears in #csm-general", "Once Make has updated the card, usually within a few minutes." | "Posted in #csm-general at 14:03", with **Open in Slack** when Slack gave a link. A late notice adds "It says the card was not updated, so the team checks it." |
+| Slack | the `kickoff` notice whose `responseId` is the send's is `posted` (`muted` and `skipped` count as done, quietly) | "The team hears in {#channel}" (the notice's channel as Settings names it; "Slack" before a notice is on record), "Once Make has updated the card, usually within a few minutes." | "Posted in #csm-general at 14:03", with **Open in Slack** when Slack gave a link. A late notice adds "It says the card was not updated, so the team checks it." |
 
 The Slack stop reads `cockpit_slack_notice_read(taskId)` with the window's
-other reads and on every check, and, while it is pending and the window is
-visible, again every 60 seconds for 25 minutes (a kickoff waits for Make up
-to 20 minutes by design). It is written from the notice's state:
+other reads and on every check, and, while it is pending or its last read
+failed and the window is visible, again every 60 seconds for 25 minutes (a
+kickoff waits for Make up to 20 minutes by design; one failed read never ends
+the watch). It is written from the notice's state:
 - `queued` or `sending`, or no notice yet: the pending words above.
-- `failed`: "Not posted: {reason}. Tell the tech lead.", with a warning dot.
-- `unknown`: "Not confirmed: {reason}. Tell the tech lead.", with a warning
-  dot. An unknown may already be in Slack, so it never says "not posted";
-  the sender never posts it twice.
+- `failed`: "Not posted. {Reason}. Tell the tech lead.", with a warning dot.
+  "Not posted." is drawn in the warning tone and the reason as a plain
+  sentence after it; the reason never carries a label of its own.
+- `unknown`: "Not confirmed. {Reason}. Tell the tech lead.", the same way.
+  An unknown may already be in Slack, so it never says "not posted"; the
+  sender never posts it twice.
 - "Tell the tech lead." is left off when the reason already names the tech
   lead.
-- `muted`: "Not posted: the kickoff notice is off in Settings." (done).
-- `skipped`: "Not posted: {reason}" (done), for example a kickoff more than
-  48 hours old when the mirror listed it.
-- The read failed: "The cockpit could not read the Slack notice just now."
-  (not done, and not the current stop).
+- `muted`: "Not posted: the kickoff notice is off in Settings." (done,
+  quietly).
+- `skipped`: "Not posted. {Reason}." (done, quietly), for example a kickoff
+  more than 48 hours old when the mirror listed it.
+- The read failed: "The cockpit could not read the Slack notice just now.
+  Check now reads it again." (not done, and not the current stop).
 
 When every stop is done, the line under the trail says "All five steps are
-done.", and the folded summary reads "Kickoff sent · posted in Slack" (or
-"· not posted in Slack" when the notice was off or skipped). The deck's last
+done." A notice that was off or skipped is done but not a success: the line
+says "The card's steps are done. The Slack notice was not posted." instead.
+The folded summary (below 1024 px) reads "Kickoff sent · posted in Slack"
+(or "· not posted in Slack" when the notice was off or skipped). A notice
+that needs a person outranks every wait there: "Not posted in Slack · tell
+the tech lead" (or "Not confirmed"), with the warning dot; it fits at 320 px
+and wraps rather than lose its instruction, and the fold opens by itself, as
+it does for a late step. When "Kickoff complete" posts while the window's copy
+of the card still waits, the window reads the card once, so the trail never
+says "Make is late" beside a complete notice. The deck's last
 slide shows the same trail without the Slack stop: the deck is on the
 client's screen.
 
@@ -690,13 +718,20 @@ at 14:02").
 The team does not depend on this window being open. The cockpit's notice
 waits for the card for 20 minutes, not 5: Make takes at most about 2.5
 minutes and the mirror publishes every 10, so 20 is the line where the card
-is late. At 20 minutes without the Kickoff Handoff comment it posts "Kickoff
-in, card not updated: {client}. Open the card and check it." in #csm-general
-and tags the CSM and the systems manager ("Do not send the kickoff again."
-is in it too). If the cockpit could not read the card's comments, it says so
-instead. When the card later passes, a reply "Card updated at 14:31." follows
-in that thread (within 48 hours). The late notice is also the check that
-Make's status step (module [21]) still completed.
+is late. "Kickoff complete" needs both halves of Make's run: the Kickoff
+Handoff comment (module [11], written first) and the card at Brand Blueprint
+Booked (module [21], later). At 20 minutes without both it posts "Kickoff
+in, card not updated: {client}. Open the card and check it." in the
+kickoff's channel and tags the CSM and the systems manager ("Do not send the
+kickoff again." is in it too). The line says which half is missing: no
+Kickoff Handoff comment; the comments could not be read; or the comment is
+there but the card shows another stage (a run that broke after its first
+step). This is the check that Make's status step (module [21]) still
+completed. A reply "Card updated at 14:31. It has the Kickoff Handoff comment
+and shows Brand Blueprint Booked." follows in that thread only once the card
+has changed after the late notice and has both halves (the sender checks the
+comment again every 10 minutes); 48 hours after the kickoff it stops
+waiting and posts nothing, and the late notice stands.
 
 ### 4.4 A second kickoff
 `already` is true when any of these holds: `forms.kickoff` on the record
@@ -705,9 +740,13 @@ timeline's form history. Four of the seven clients in onboarding have one
 today. The window then holds the form behind this warning:
 
 > A kickoff for <Client> went in on 15 Oct. Sending another runs Make again:
-> a second Technical and Creative task, a second WhatsApp to the client's
-> group and a second summary. Fix a wrong answer in Typeform's results
-> instead.
+> a second Kickoff Handoff comment, a second Technical and Creative task and
+> a second WhatsApp to the client's group. Fix a wrong answer in Typeform's
+> results instead.
+
+(The day can read "on 15 Oct from <who>" when the cockpit's own send row
+names who sent it. The text after "Sending another runs Make again:" is
+`KICKOFF.again`, which a test pins.)
 
 It reads as a stop, not a note: the kicker is "● Already sent" in the
 warning ink. The actions are laid out on purpose: first **Read what was

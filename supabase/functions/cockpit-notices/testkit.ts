@@ -191,6 +191,7 @@ export function fakeRpc(handlers: Record<string, Handler> = {}) {
   const base: Record<string, Handler> = {
     cockpit_slack_notice_sweep: () => ({ unknown: 0, kickoffs: 0, closes: 0, media: 0, offers: 0, followups: 0 }),
     cockpit_slack_channel_pending: () => [],
+    cockpit_slack_person_pending: () => [],
     cockpit_slack_notice_unknowns: () => [],
     cockpit_slack_notice_claim: () => ({ busy: false, rows: [] }),
     cockpit_slack_notice_result: a => {

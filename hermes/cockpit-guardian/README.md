@@ -57,7 +57,7 @@ python3 guardian.py report                  # the plain-English summary
 python3 guardian.py report --post           # the same to Slack, once a Kuwait day
 python3 guardian.py ai-brief --incident ID  # a brief a Claude Code session can act on
 python3 guardian.py ai-fix --incident ID    # Claude Code headless -> branch -> pull request
-python3 -m unittest                          # 400 tests, no network (Python 3.11 or later)
+python3 -m unittest                          # 402 tests, no network (Python 3.11 or later)
 ```
 
 Flags: `--mode report-only|fix` (report-only for a run by hand; the VPS cron line
@@ -395,8 +395,9 @@ the box.
 | Guardian incident rows | Rows waited over an hour for Supabase, or Supabase refused one | Hermes | Read `~/.cockpit-guardian/guardian.log` |
 | Dead-man switch: cockpit-guardian | (from the Cloudflare worker, not the guardian) No beat for 10 minutes, or its alerts stuck 15 minutes | Hermes | `tail ~/.cockpit-guardian/cron.log`; `crontab -l`; `python3 guardian.py doctor` |
 | The guardian cannot write its folder | A full disk: it only reads until it can save again | Hermes | Free space (`df -h`), then check `~/.cockpit-guardian` is writable |
-| Slack notice queue | A kickoff or Brand Blueprint notice in `cockpit_slack_notices` stayed queued, sending or unknown over 30 minutes, or one failed in 24 h. A kickoff waits up to 20 minutes for Make on purpose, so 30 is the line | the tech lead | Run the cockpit-notices doctor (`RUNBOOK.md`, Slack notices). An `unknown` may have posted: look in its channel for its `Ref CN-` first and never send it again blind. A `failed` names its cause: fix that, then requeue it with `cockpit_slack_notice_fix`. Nothing posting at all: read `slack-notices-kick` in `cockpit_sync_state` |
-| Brand Blueprint press queue | A Brand Blueprint press in `cockpit_creative_outbox` stayed pending over 10 minutes (the drain runs every 2 minutes), or one failed in 24 h | the tech lead | Read the press's error on the Blueprint card and `creative-drain-kick` in `cockpit_sync_state`. A press that failed after 30 minutes or 3 refusals is pressed again from the card once its cause is fixed (`RUNBOOK.md`, Brand Blueprint press drain) |
+| Slack notice queue | A kickoff or Brand Blueprint notice in `cockpit_slack_notices` (not a late kickoff's reply, next row) stayed queued, sending or unknown over 30 minutes, or one failed in 24 h. A kickoff waits up to 20 minutes for Make on purpose, so 30 is the line | the tech lead | Run the cockpit-notices doctor (`RUNBOOK.md`, Slack notices). An `unknown` may have posted: look in its channel for its `Ref CN-` first and never send it again blind. A `failed` names its cause: fix that, then requeue it with `cockpit_slack_notice_fix` (not one whose cause is Slack's `internal_error` or `fatal_error`: those are `unknown`, and may be in the channel). Nothing posting at all: read `slack-notices-kick` in `cockpit_sync_state` |
+| Kickoff card updated reply queue | A late kickoff's reply (`kickoff.updated`) whose turn passed over 30 minutes ago, one sending or unknown that long, or one failed in 24 h. It waits on purpose, checking every 10 minutes for the card's Kickoff Handoff comment for up to 48 hours, so it is read by `next_attempt_at`, not by when it was made | the tech lead | The sender is not running: as the row above. A reply that waits is not a fault; the late notice above it is what the team acts on |
+| Brand Blueprint press queue | A Brand Blueprint press in `cockpit_creative_outbox` stayed pending, or sending, over 10 minutes (the drain runs every 2 minutes; a run takes seconds), or one failed in 24 h | the tech lead | Read the press's error on the Blueprint card and `creative-drain-kick` in `cockpit_sync_state`. A press that failed after 30 minutes or 3 refusals is pressed again from the card once its cause is fixed. One still `sending` lost its run part way: check the card against its journal, then settle it by hand (`RUNBOOK.md`, Brand Blueprint press drain) |
 | Brand Blueprint press needing a look | A press is in `reconcile`: ClickUp took the writes but the read-back did not match. Nothing retries it | the tech lead | Check the card in ClickUp against the press first, then settle the row by hand. Never press again before looking |
 
 ## Files
@@ -518,6 +519,7 @@ kinds `blueprintLaunch`, `blueprintClose` and `blueprintOffer`.
 | `queue-team-calendar` | W12 | Any row waiting over 30 min: warn. |  |
 | `queue-feedback` | X3 | Any row waiting over 24.0 h: warn. |  |
 | `queue-slack-notices` |  | Any row waiting over 30 min, or any row failed in 24 h: warn. |  |
+| `queue-slack-notice-replies` |  | Any row waiting over 30 min, or any row failed in 24 h: warn. |  |
 | `queue-creative-blueprint` |  | Any row waiting over 10 min, or any row failed in 24 h: warn. |  |
 | `queue-creative-reconcile` |  | Any open row: warn. |  |
 | `issue-reports` |  | Any open: warn (summary only). |  |

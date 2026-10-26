@@ -89,15 +89,34 @@ describe("every row of the copy table (contract 4.5)", () => {
     const second = noticeText("kickoff", "late", { ...late, second: true });
     expect(lines(second.blocks).at(-1)).toBe("This is the second kickoff for this client. Do not send it a third time.");
   });
-  test("kickoff.updated, thread and top", () => {
-    const f = base({ cardUpdatedAt: "2026-10-25T11:40:00Z" });
+  test("kickoff, late with the comment there: Make broke before it moved the card", () => {
+    // The Kickoff Handoff comment is written first (module 11); the card's
+    // stage and link later (module 21). A run that stopped between them is late.
+    const half = { ...kickoffFacts, commentCheck: "found", clientStatus: "Onboarding Booked", mentions: [CSM, SYSTEMS] };
+    const late = noticeText("kickoff", "late", half);
+    expect(late.text).toBe(`Kickoff in, card not updated: Acme Interiors. Open the card and check it. Ref ${REF}`);
+    expect(lines(late.blocks)[2]).toBe(
+      "The Kickoff Handoff comment is on the card, but 20 minutes after the kickoff the card shows Onboarding Booked, not Brand Blueprint Booked. Open the card and check it. Do not send the kickoff again. <@U0C5JHUCTPG> <@U0AS90SHMH8>",
+    );
+    // At the stage already, but the cockpit saw no change since the kickoff.
+    const stale = noticeText("kickoff", "late", { ...half, clientStatus: "Brand Blueprint Booked♠️" });
+    expect(lines(stale.blocks)[2]).toStartWith(
+      "The Kickoff Handoff comment is on the card, but the cockpit has not seen the card change since the kickoff.",
+    );
+    expect(lines(noticeText("kickoff", "late", { ...half, clientStatus: "<b>x</b>" }).blocks)[2]).toContain("shows b x b,");
+  });
+  test("kickoff.updated, thread and top: it names what caught up", () => {
+    const f = base({ cardUpdatedAt: "2026-10-25T11:40:00Z", clientStatus: "Brand Blueprint Booked♠️" });
     const thread = noticeText("kickoff.updated", "thread", f);
-    expect(thread.text).toBe(`Card updated at 14:40. Ref ${REF}`);
+    expect(thread.text).toBe(`Card updated at 14:40. It has the Kickoff Handoff comment and shows Brand Blueprint Booked. Ref ${REF}`);
     expect(thread.blocks).toHaveLength(1);
-    expect(section(thread.blocks)).toBe("Card updated at 14:40.");
+    expect(section(thread.blocks)).toBe("Card updated at 14:40. It has the Kickoff Handoff comment and shows Brand Blueprint Booked.");
     const top = noticeText("kickoff.updated", "top", f);
     expect(top.text).toBe(`Kickoff card updated: Acme Interiors, at Sun 25 Oct, 14:40. Ref ${REF}`);
-    expect(lines(top.blocks)).toEqual(["*Kickoff card updated: Acme Interiors*", "Card updated at Sun 25 Oct, 14:40."]);
+    expect(lines(top.blocks)).toEqual([
+      "*Kickoff card updated: Acme Interiors*",
+      "Card updated at Sun 25 Oct, 14:40. It has the Kickoff Handoff comment and shows Brand Blueprint Booked.",
+    ]);
     expect(contexts(top.blocks)).toEqual([`<${L.cockpit}|Open in the cockpit>`, `Client success · Ref ${REF}`]);
   });
   test("blueprint.close, done: phase 4, then phase 6, then no launch call", () => {
@@ -111,12 +130,24 @@ describe("every row of the copy table (contract 4.5)", () => {
       "Launch call booked for Wed 28 Oct, 10:00.",
     ]);
     expect(contexts(done.blocks)).toEqual([`<${L.cockpit}|Open in the cockpit> · <${L.blueprint}|Read the Blueprint> · <${L.card}|Open the ClickUp card>`, `Client success · Ref ${REF}`]);
+    // A client already live (the map past phase 4): the same rule as the
+    // media notice's live variant, so the two posts of one close agree.
     const past = noticeText("blueprint.close", "done", { ...f, mapPhase: 6, launchCallAt: null, closedByRole: null });
+    expect(past.text).toBe(`Brand Blueprint complete: Acme Interiors. The client is already live. Ref ${REF}`);
     expect(lines(past.blocks).slice(1)).toEqual([
-      "Closed by the creative director on Mon 26 Oct, 15:40. Scripts and custom creative can start.",
-      "<@U0C5JHUCTPG> next: the Onboarding Map is already at phase 6, so there is no phase 5 WhatsApp to send.",
-      "Launch call not booked yet.",
+      "Closed by the creative director on Mon 26 Oct, 15:40. The client is already live, so nothing new starts from this close.",
+      "<@U0C5JHUCTPG> next: the Onboarding Map is already at phase 6, so there is no phase 5 WhatsApp to send and no launch call to book.",
     ]);
+    const media = noticeText("blueprint.media", "live", { ...f, mapPhase: 6, mentions: [] });
+    expect(lines(media.blocks).at(-1)).toBe("The client is already live; nothing new starts from this close.");
+    // Active with the map below phase 5: no launch call, and the paste is checked first.
+    const active = noticeText("blueprint.close", "done", { ...f, mapPhase: 4, clientStatus: "Active" });
+    expect(lines(active.blocks).slice(1)).toEqual([
+      "Closed by the creative director on Mon 26 Oct, 15:40. The client is already live, so nothing new starts from this close.",
+      "<@U0C5JHUCTPG> next: there is no launch call to book. Check the card before you send the phase 5 WhatsApp from your comment.",
+    ]);
+    expect(JSON.stringify(active)).not.toContain("Scripts and custom creative can start");
+    expect(JSON.stringify(active)).not.toContain("Launch call");
     const nobody = noticeText("blueprint.close", "done", { ...f, mentions: [] });
     expect(lines(nobody.blocks)[2]).toBe("Next: send the phase 5 WhatsApp from your comment on the card, then book the launch call.");
   });

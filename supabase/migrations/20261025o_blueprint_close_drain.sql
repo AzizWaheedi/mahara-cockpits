@@ -7,15 +7,16 @@
 -- 1. cockpit_creative_outbox gains attempts (0 to 3): how many times the
 --    server drain was refused while it prepared a press.
 -- 2. cockpit_creative_outbox_audit() also records source_system: 'cron' when
---    the drain wrote (the cockpit.audit_source setting, or the service key's
---    x-cockpit-source header), else NULL as before.
+--    the drain wrote (the cockpit.audit_source setting, or the x-cockpit-source
+--    header on a service-key request only), else NULL as before.
 -- 3. cockpit_blueprint_settings_set: close_route takes card_only only. The
 --    #csm-general and #media-general posts are notices now, so a Slack
 --    problem never sends a close to reconcile.
 -- 4. cockpit_blueprint_sources: one more key, blueprintCall (the latest
 --    Blueprint call that has happened, the card's stage, the map's phase and
 --    the nudge). The gate is unchanged.
--- 5. cockpit_blueprint_json: each part's outbox object carries attempts.
+-- 5. cockpit_blueprint_json: each part's outbox object carries attempts, and
+--    closeMapSkipped says the first close found the map past phase 4.
 -- 6. The drain, for the service key only: cockpit_creative_outbox_due lists
 --    Blueprint presses pending between 2 and 30 minutes and fails older ones;
 --    cockpit_creative_outbox_load_for_actor loads a press as its presser's
@@ -23,7 +24,14 @@
 --    cockpit_creative_outbox_refused counts a refusal and fails the press at
 --    the third. pg_cron's mahara-creative-drain calls
 --    cockpit_creative_drain_kick every 2 minutes, which posts to
---    cockpit-creative-api only when a press waits.
+--    cockpit-creative-api only when a press waits. A press the due list
+--    hands out is leased to that run for 10 minutes (drain_until), so two
+--    drains that overlap never prepare the same press.
+-- 7. cockpit_blueprint_part_done: a press whose request ID is known and
+--    failed (refused three times, past its 30 minutes, or superseded) is a
+--    new press under a new ID when it is pressed again. The browsers keep a
+--    press's ID until its run succeeds, so before this the same press could
+--    never run again.
 --
 -- The vault secrets (cockpit_creative_cron_secret, cockpit_anon_key) are
 -- never in this file. Until they exist the kick posts nothing and says so in
@@ -48,6 +56,9 @@ BEGIN
       ADD CONSTRAINT cockpit_creative_outbox_attempts_check CHECK (attempts BETWEEN 0 AND 3);
   END IF;
 END $$;
+-- The drain's lease: until when one drain run holds a press it listed. Only
+-- the due list sets it, and a counted refusal clears it.
+ALTER TABLE public.cockpit_creative_outbox ADD COLUMN IF NOT EXISTS drain_until timestamptz;
 CREATE INDEX IF NOT EXISTS cockpit_creative_outbox_pending_bp ON public.cockpit_creative_outbox (created_at)
   WHERE state = 'pending' AND kind IN ('blueprintLaunch','blueprintClose','blueprintOffer');
 -- The table's grants are unchanged: SELECT, INSERT and UPDATE for the service key only.
@@ -56,20 +67,32 @@ CREATE INDEX IF NOT EXISTS cockpit_creative_outbox_pending_bp ON public.cockpit_
 -- 2. The outbox audit, with where the write came from
 -- ---------------------------------------------------------------------------
 
--- The same row as 20260927s wrote, plus source_system. The header is read
--- inside its own block: the table is service-only, so only the service key
--- can send x-cockpit-source, and an unreadable request.headers is NULL.
+-- The same row as 20260927s wrote, plus source_system. The x-cockpit-source
+-- header counts only on a request made with the service key: PostgREST copies
+-- every client header into request.headers, and a signed-in seat reaches this
+-- trigger through cockpit_blueprint_part_done and cockpit_creative_client_action
+-- (both granted to authenticated), so a browser could otherwise label its own
+-- press as the drain's. The role is read from the request's JWT claims, as
+-- auth.role() reads it (the same trusted check as 20261004b and 20261017b).
+-- Both are read inside their own block: an unreadable setting is NULL, and the
+-- audit never raises.
 CREATE OR REPLACE FUNCTION public.cockpit_creative_outbox_audit()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
-DECLARE v_header text; v_source text;
+DECLARE v_header text; v_role text; v_source text;
 BEGIN
   BEGIN
     v_header := nullif(current_setting('request.headers', true), '')::jsonb->>'x-cockpit-source';
   EXCEPTION WHEN OTHERS THEN
     v_header := NULL;
   END;
+  BEGIN
+    v_role := coalesce(nullif(current_setting('request.jwt.claim.role', true), ''),
+                       nullif(current_setting('request.jwt.claims', true), '')::jsonb->>'role');
+  EXCEPTION WHEN OTHERS THEN
+    v_role := NULL;
+  END;
   v_source := coalesce(nullif(current_setting('cockpit.audit_source', true), ''),
-                       CASE WHEN v_header = 'cron' THEN 'cron' END);
+                       CASE WHEN v_header = 'cron' AND v_role = 'service_role' THEN 'cron' END);
   INSERT INTO public.cockpit_audit_log(action, entity_type, entity_id, actor_email, source_app, source_system, before, after)
   VALUES (lower(TG_OP), 'creative_outbox', NEW.id::text, NEW.actor_email, 'creative', v_source,
           CASE WHEN TG_OP = 'UPDATE' THEN to_jsonb(OLD) END, to_jsonb(NEW));
@@ -353,7 +376,14 @@ BEGIN
     'taskId', p_row.task_id, 'clientName', p_row.client_name, 'answers', p_row.answers, 'meta', v_meta,
     'parts', v_parts, 'revision', p_row.revision, 'launchTaskId', p_row.launch_task_id,
     'createdAt', p_row.created_at, 'updatedAt', p_row.updated_at,
-    'updatedBy', public.cockpit_blueprint_first_name(p_row.updated_by), 'outbox', v_outbox);
+    'updatedBy', public.cockpit_blueprint_first_name(p_row.updated_by), 'outbox', v_outbox,
+    -- The first close found the Onboarding Map already at phase 5 or later,
+    -- so it left the map and the phase 5 paste out (X11). Only a first close
+    -- reads the map, so any close that says so speaks for the client; the
+    -- CSM's copy button stays away too.
+    'closeMapSkipped', EXISTS (SELECT 1 FROM public.cockpit_creative_outbox o
+                                WHERE o.task_id = p_row.task_id AND o.kind = 'blueprintClose'
+                                  AND o.result->>'mapSkipped' = 'true'));
 END $$;
 
 -- ---------------------------------------------------------------------------
@@ -362,12 +392,16 @@ END $$;
 
 -- Blueprint presses the browser did not finish. With p_apply (the default),
 -- a press pending for over 30 minutes fails with a sentence the card shows;
--- presses pending between 2 and 30 minutes with fewer than 3 refusals are
--- listed, oldest first, at most 5. With p_apply false (or null) it writes
--- nothing, and failed is the count that would fail.
+-- presses pending between 2 and 30 minutes with fewer than 3 refusals and
+-- no live lease are listed, oldest first, at most 5, and leased to this run
+-- for 10 minutes (longer than one drain run lasts), so a drain that starts
+-- while another still prepares a press skips it. A leased press is not failed
+-- under the run that holds it. With p_apply false (or null) it writes
+-- nothing: the list is what a run would take now, and failed is the count
+-- that would fail.
 CREATE OR REPLACE FUNCTION public.cockpit_creative_outbox_due(p_apply boolean DEFAULT true)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
-DECLARE v_apply boolean := p_apply IS TRUE; v_failed integer := 0; v_rows jsonb;
+DECLARE v_apply boolean := p_apply IS TRUE; v_failed integer := 0; v_rows jsonb; v_ids uuid[];
 BEGIN
   IF v_apply THEN
     PERFORM set_config('cockpit.audit_source', 'cron', true);
@@ -376,22 +410,31 @@ BEGIN
          SET state = 'failed', error = 'This press did not finish within 30 minutes. Press again.', settled_at = now()
        WHERE o.state = 'pending' AND o.kind IN ('blueprintLaunch','blueprintClose','blueprintOffer')
          AND o.created_at < now() - interval '30 minutes'
+         AND (o.drain_until IS NULL OR o.drain_until <= now())
       RETURNING 1)
     SELECT count(*) INTO v_failed FROM f;
   ELSE
     SELECT count(*) INTO v_failed FROM public.cockpit_creative_outbox o
      WHERE o.state = 'pending' AND o.kind IN ('blueprintLaunch','blueprintClose','blueprintOffer')
-       AND o.created_at < now() - interval '30 minutes';
+       AND o.created_at < now() - interval '30 minutes'
+       AND (o.drain_until IS NULL OR o.drain_until <= now());
   END IF;
-  SELECT coalesce(jsonb_agg(jsonb_build_object(
-           'id', d.id, 'kind', d.kind, 'taskId', d.task_id, 'clientName', d.client_name, 'actorId', d.actor_id,
-           'attempts', d.attempts, 'createdAt', d.created_at) ORDER BY d.created_at, d.id), '[]'::jsonb)
-    INTO v_rows
-    FROM (SELECT o.* FROM public.cockpit_creative_outbox o
+  SELECT coalesce(array_agg(d.id ORDER BY d.created_at, d.id), '{}'::uuid[]) INTO v_ids
+    FROM (SELECT o.id, o.created_at FROM public.cockpit_creative_outbox o
            WHERE o.state = 'pending' AND o.kind IN ('blueprintLaunch','blueprintClose','blueprintOffer')
              AND o.created_at BETWEEN now() - interval '30 minutes' AND now() - interval '2 minutes'
              AND o.attempts < 3
-           ORDER BY o.created_at, o.id LIMIT 5) d;
+             AND (o.drain_until IS NULL OR o.drain_until <= now())
+           ORDER BY o.created_at, o.id LIMIT 5
+           FOR UPDATE SKIP LOCKED) d;
+  IF v_apply AND cardinality(v_ids) > 0 THEN
+    UPDATE public.cockpit_creative_outbox o SET drain_until = now() + interval '10 minutes' WHERE o.id = ANY(v_ids);
+  END IF;
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'id', o.id, 'kind', o.kind, 'taskId', o.task_id, 'clientName', o.client_name, 'actorId', o.actor_id,
+           'attempts', o.attempts, 'createdAt', o.created_at) ORDER BY o.created_at, o.id), '[]'::jsonb)
+    INTO v_rows
+    FROM public.cockpit_creative_outbox o WHERE o.id = ANY(v_ids);
   RETURN jsonb_build_object('apply', v_apply, 'failed', v_failed, 'rows', v_rows);
 END $$;
 
@@ -415,9 +458,9 @@ BEGIN
 END $$;
 
 -- The drain was refused while it prepared a press (nothing was sent): one
--- more attempt and the sentence; the third fails the press, so the card
--- says to fix it and press again. A press no longer pending is returned as
--- it is.
+-- more attempt and the sentence, and the lease is let go so the next kick
+-- (2 minutes) tries again; the third fails the press, so the card says to
+-- fix it and press again. A press no longer pending is returned as it is.
 CREATE OR REPLACE FUNCTION public.cockpit_creative_outbox_refused(p_id uuid, p_error text)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -433,7 +476,7 @@ BEGIN
     RETURN jsonb_build_object('id', q.id, 'state', q.state, 'attempts', q.attempts);
   END IF;
   UPDATE public.cockpit_creative_outbox o
-     SET attempts = least(o.attempts + 1, 3), error = v_error,
+     SET attempts = least(o.attempts + 1, 3), error = v_error, drain_until = NULL,
          state = CASE WHEN o.attempts + 1 >= 3 THEN 'failed' ELSE o.state END,
          settled_at = CASE WHEN o.attempts + 1 >= 3 THEN now() ELSE o.settled_at END
    WHERE o.id = q.id
@@ -506,6 +549,120 @@ BEGIN
 END $$;
 
 -- ---------------------------------------------------------------------------
+-- 7. A failed press pressed again runs as a new press
+-- ---------------------------------------------------------------------------
+
+-- 20261024a's body (the live one, checked 2026-10-26) with one change: the
+-- same request ID again returns its row unless that row failed. A failed
+-- press is pressed again as a new one under a server-made ID ('replaces' in
+-- the audit row names the old one). Every other check, lock and message is
+-- unchanged: a reconcile row still returns as it is ("needs a look"), and a
+-- sending one still blocks the part for 10 minutes.
+CREATE OR REPLACE FUNCTION public.cockpit_blueprint_part_done(p_task_id text, p_part integer, p_request_id uuid)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  g jsonb; r public.cockpit_blueprints; v_kind text; q public.cockpit_creative_outbox; v_missing text[];
+  v_sent jsonb; v_old jsonb; v_stamp jsonb; v_presses integer; v_payload jsonb;
+  v_id uuid := p_request_id; v_replaces uuid;
+BEGIN
+  g := public.cockpit_blueprint_gate_for_actor(auth.uid(), p_task_id, true);
+  IF p_part IS NULL OR p_part NOT IN (1, 2, 3) THEN
+    RAISE EXCEPTION 'Choose part 1, 2 or 3' USING ERRCODE = '22023';
+  END IF;
+  IF p_request_id IS NULL THEN
+    RAISE EXCEPTION 'A request ID is required' USING ERRCODE = '22023';
+  END IF;
+  v_kind := CASE p_part WHEN 1 THEN 'blueprintLaunch' WHEN 2 THEN 'blueprintClose' ELSE 'blueprintOffer' END;
+
+  PERFORM pg_advisory_xact_lock(hashtextextended('cockpit_blueprints:' || p_task_id, 0));
+  SELECT * INTO r FROM public.cockpit_blueprints b WHERE b.task_id = p_task_id FOR UPDATE;
+  v_old := r.parts->(p_part::text);
+
+  -- The same request again (a retry after a dropped connection).
+  SELECT * INTO q FROM public.cockpit_creative_outbox o WHERE o.id = p_request_id;
+  IF FOUND THEN
+    IF q.kind IS DISTINCT FROM v_kind OR q.task_id IS DISTINCT FROM p_task_id
+       OR q.client_name IS DISTINCT FROM g->>'clientName' OR q.actor_id IS DISTINCT FROM (g->>'actorId')::uuid THEN
+      RAISE EXCEPTION 'This request does not match its first send' USING ERRCODE = '22023';
+    END IF;
+    IF q.state IS DISTINCT FROM 'failed' THEN
+      RETURN jsonb_build_object('id', q.id, 'state', q.state, 'part', p_part, 'firstAt', v_old->'firstAt',
+                                'presses', coalesce((v_old->>'presses')::integer, 0), 'again', true);
+    END IF;
+    -- Failed: nothing of it ran, and it can never run under this ID. Both
+    -- browsers keep a press's ID until its run succeeds, so this is the
+    -- person pressing again: a new press under a new ID, which the browser
+    -- runs (it runs the ID it is given). The checks below apply as to any
+    -- press, so an unchanged later press that is live is returned instead.
+    v_replaces := q.id;
+    v_id := gen_random_uuid();
+  END IF;
+
+  IF p_part = 2 AND NOT (coalesce(r.parts, '{}'::jsonb) ? '1') THEN
+    RAISE EXCEPTION 'Send part 1 to media first.' USING ERRCODE = '22023';
+  END IF;
+  IF p_part = 3 AND NOT (coalesce(r.parts, '{}'::jsonb) ? '2') THEN
+    RAISE EXCEPTION 'Close the call first.' USING ERRCODE = '22023';
+  END IF;
+  v_missing := public.cockpit_blueprint_missing(p_part, coalesce(r.answers, '{}'::jsonb));
+  IF cardinality(v_missing) > 0 THEN
+    RAISE EXCEPTION 'Still missing' USING ERRCODE = '22023', DETAIL = array_to_string(v_missing, ',');
+  END IF;
+  v_sent := public.cockpit_blueprint_part_answers(p_part, r.answers);
+
+  -- Nothing changed since the last press, and that press is live or done.
+  IF v_old IS NOT NULL AND v_old->'sent' = v_sent THEN
+    SELECT * INTO q FROM public.cockpit_creative_outbox o
+     WHERE o.task_id = p_task_id AND o.kind = v_kind ORDER BY o.created_at DESC, o.id LIMIT 1;
+    IF FOUND AND q.state IN ('pending','sending','done') THEN
+      RETURN jsonb_build_object('id', q.id, 'state', q.state, 'part', p_part, 'firstAt', v_old->'firstAt',
+                                'presses', coalesce((v_old->>'presses')::integer, 0), 'duplicate', true,
+                                'lastAt', v_old->'lastAt');
+    END IF;
+  END IF;
+
+  -- An earlier send of this part still running: its run may not have made
+  -- (or tagged) the launch task yet, so a second run now could make another.
+  -- A run claimed over 10 minutes ago that never settled does not block the
+  -- part for ever.
+  IF EXISTS (SELECT 1 FROM public.cockpit_creative_outbox o
+               LEFT JOIN public.cockpit_media_actions a ON a.id = o.id
+              WHERE o.task_id = p_task_id AND o.kind = v_kind AND o.state = 'sending'
+                AND coalesce(a.created_at, o.created_at) > now() - interval '10 minutes') THEN
+    RAISE EXCEPTION 'The last send of this part is still running. Wait for it to finish, then send the changes.'
+      USING ERRCODE = '55P03';
+  END IF;
+
+  v_payload := public.cockpit_blueprint_payload(g, p_part, r.answers, to_jsonb(r));
+  -- An earlier press of this part that never started is superseded, so a
+  -- stale window cannot run it after this one.
+  UPDATE public.cockpit_creative_outbox o
+     SET state = 'failed', error = 'Superseded by a later press of the same part', settled_at = now()
+   WHERE o.task_id = p_task_id AND o.kind = v_kind AND o.state = 'pending';
+  INSERT INTO public.cockpit_creative_outbox(id, client_name, kind, task_id, payload, actor_id, actor_email)
+  VALUES (v_id, g->>'clientName', v_kind, p_task_id, v_payload, (g->>'actorId')::uuid, g->>'email');
+
+  v_presses := coalesce((v_old->>'presses')::integer, 0) + 1;
+  v_stamp := jsonb_build_object(
+    'status', 'done',
+    'firstAt', coalesce(v_old->'firstAt', to_jsonb(now())), 'firstBy', coalesce(v_old->'firstBy', to_jsonb(g->>'email')),
+    'lastAt', now(), 'lastBy', g->>'email', 'presses', v_presses, 'lastRequestId', v_id, 'sent', v_sent);
+  PERFORM set_config('cockpit.blueprint_action', 'blueprint.part', true);
+  UPDATE public.cockpit_blueprints b
+     SET parts = jsonb_set(b.parts, ARRAY[p_part::text], v_stamp), client_name = g->>'clientName',
+         updated_at = now(), updated_by = g->>'email'
+   WHERE b.task_id = p_task_id;
+
+  INSERT INTO public.cockpit_audit_log(action, entity_type, entity_id, actor_email, source_app, source_system,
+                                       before, after, metadata)
+  VALUES ('blueprint.part_done', 'cockpit_blueprints', p_task_id, g->>'email', 'creative', 'supabase', NULL, NULL,
+          jsonb_strip_nulls(jsonb_build_object('part', p_part, 'client_name', g->>'clientName', 'request_id', v_id,
+                             'second', v_presses > 1, 'replaces', v_replaces)));
+  RETURN jsonb_build_object('id', v_id, 'state', 'pending', 'part', p_part, 'firstAt', v_stamp->'firstAt',
+                            'presses', v_presses);
+END $$;
+
+-- ---------------------------------------------------------------------------
 -- Grants: every function here loses Supabase's default grants, then gets
 -- exactly one (or none).
 -- ---------------------------------------------------------------------------
@@ -518,12 +675,14 @@ REVOKE ALL ON FUNCTION
   public.cockpit_creative_outbox_due(boolean),
   public.cockpit_creative_outbox_load_for_actor(uuid),
   public.cockpit_creative_outbox_refused(uuid, text),
-  public.cockpit_creative_drain_kick()
+  public.cockpit_creative_drain_kick(),
+  public.cockpit_blueprint_part_done(text, integer, uuid)
 FROM PUBLIC, anon, authenticated, service_role;
 
 GRANT EXECUTE ON FUNCTION
   public.cockpit_blueprint_settings_set(text, text, text),
-  public.cockpit_blueprint_sources(text)
+  public.cockpit_blueprint_sources(text),
+  public.cockpit_blueprint_part_done(text, integer, uuid)
 TO authenticated;
 
 GRANT EXECUTE ON FUNCTION

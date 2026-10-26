@@ -28,6 +28,7 @@ import {
   slackStop,
 } from "../../client-success-cockpit/src/forms/formStatus";
 import { KICKOFF } from "../../client-success-cockpit/src/forms/kickoff";
+import * as BS from "../../client-success-cockpit/src/lib/blueprintStatus";
 import * as CSN from "../../client-success-cockpit/src/lib/notices";
 import * as CDB from "../../creative-director-cockpit/src/lib/blueprint";
 import * as CDN from "../../creative-director-cockpit/src/lib/notices";
@@ -46,6 +47,14 @@ const C = "taskC1"; // Gamma Design: a press nobody finished
 const S1 = "sessionFITAAAAAAAAAAA1";
 const RID = "kickacmefit01";
 const NEW_CHANNEL = "C0NEWCHAN01";
+// The review fixes' cards (2026-10-26): each its own invented client.
+const D = "taskD1"; // Delta Studio: a late kickoff and its reply
+const E = "taskE1"; // Echo Build: Make wrote its comment and stopped
+const F = "taskF1"; // Foxtrot Build: a reply that went top level
+const G = "taskG1"; // Golf Homes: already live at the close
+const RID_D = "kickdeltafit1";
+const RID_E = "kickechofit01";
+const MEDIA = "00000000-0000-4000-8000-0000000000f1"; // media buyer, every client
 
 const PART1 = {
   service: "interior",
@@ -250,33 +259,88 @@ async function settle(
     await asOwner();
   }
 }
-async function save(values: Row) {
+async function save(values: Row, task = A) {
   const rev =
     (
       await q<{ r: number | null }>(
         "SELECT revision r FROM public.cockpit_blueprints WHERE task_id=$1",
-        [A],
+        [task],
       )
     )[0]?.r ?? null;
   const changes = Object.fromEntries(
     Object.entries(values).map(([k, value]) => [k, { value, seen: null }]),
   );
   const out = await client(CREATIVE).rpc("cockpit_blueprint_save", {
-    p_task_id: A,
+    p_task_id: task,
     p_changes: changes,
     p_session: S1,
     p_base_revision: rev,
   });
   if (out.error) throw new Error(out.error.message);
 }
-async function pressPart(part: number, id: string) {
+async function pressPart(part: number, id: string, task = A) {
   const out = await client(CREATIVE).rpc("cockpit_blueprint_part_done", {
-    p_task_id: A,
+    p_task_id: task,
     p_part: part,
     p_request_id: id,
   });
   if (out.error) throw new Error(out.error.message);
   return out.data as Row;
+}
+
+// One more card on both rosters and in the onboarding mirror.
+async function addClient(
+  taskId: string,
+  name: string,
+  status: string,
+  phase: number,
+) {
+  const snap = "2026-10-24T08:00:00Z";
+  for (const table of ["cockpit_csm_sources", "cockpit_creative_sources"])
+    await q(
+      `INSERT INTO public.${table}(table_name,source_id,client_names,data,source_snapshot_at) VALUES('clients',$1,$2,$3::jsonb,$4)`,
+      [
+        `x-${taskId}`,
+        [name],
+        JSON.stringify({ _id: `x-${taskId}`, taskId, name }),
+        snap,
+      ],
+    );
+  // The client success gate counts the roster against its state row.
+  for (const [state, table] of [
+    ["cockpit_csm_source_state", "cockpit_csm_sources"],
+    ["cockpit_creative_source_state", "cockpit_creative_sources"],
+  ])
+    await q(
+      `UPDATE public.${state} SET row_count=(SELECT count(*) FROM public.${table} WHERE table_name='clients') WHERE table_name='clients'`,
+    );
+  await q(
+    `INSERT INTO public.cockpit_client_onboarding(clickup_task_id,client_name,client_status,csm,links,forms,card_updated_at)
+     VALUES($1,$2,$3,NULL,$4::jsonb,'{}'::jsonb, now() - interval '3 days')`,
+    [
+      taskId,
+      name,
+      status,
+      JSON.stringify({
+        onboarding_map: `https://mahara-onboarding-map.vercel.app/?phase=${phase}&cid=${taskId}`,
+      }),
+    ],
+  );
+}
+// The mirror lists a kickoff submitted some minutes ago.
+async function kickoffFor(taskId: string, rid: string, minutesAgo: number) {
+  await q(
+    "UPDATE public.cockpit_client_onboarding SET forms = jsonb_build_object('kickoff', $2::jsonb) WHERE clickup_task_id=$1",
+    [
+      taskId,
+      JSON.stringify({
+        form_id: "tG7dnxBn",
+        response_id: rid,
+        submitted_at: new Date(Date.now() - minutesAgo * 60_000).toISOString(),
+        answers: [],
+      }),
+    ],
+  );
 }
 
 async function build(files: readonly string[]) {
@@ -982,6 +1046,422 @@ for (const order of ORDERS)
           [test1.id],
         );
         expect(dm[0]).toEqual({ target: "U0SYSMANA1", channel: "D0SYSMDM001" });
+      });
+    });
+
+    // The review fixes of 2026-10-26 (contract X18 to X29), each where one
+    // builder's piece meets another's.
+    describe("the review fixes, across the pieces", () => {
+      const WAITING_REPLY =
+        "Waiting for the card's Kickoff Handoff comment before saying the card is updated.";
+
+      test("X18, X26: the comment there but the card not moved is late, posted where Settings says now", async () => {
+        await addClient(E, "Echo Build", "Onboarding Booked", 4);
+        // An editor moves the kickoff notice to the channel checked earlier.
+        await CSN.setNoticeSetting(client(ADMIN) as never, "kickoff", {
+          channel: NEW_CHANNEL,
+        });
+        await kickoffFor(E, RID_E, 25);
+        const trail = async () =>
+          slackStop(
+            KICKOFF,
+            sendNotice(
+              KICKOFF,
+              {
+                notices: await CSN.readNotices(client(ADMIN) as never, E),
+                failed: {},
+              },
+              RID_E,
+            )!,
+          );
+        // Queued: the trail names the channel Settings gives it now.
+        expect((await trail()).label).toBe("The team hears in #client-wins");
+        // Make wrote its comment, then stopped before it moved the card.
+        clickup.handoff(E, new Date(Date.now() - 24 * 60_000).toISOString());
+        expect(await runNotices(deps)).toMatchObject({ claimed: 1, posted: 1 });
+        const row = await notice(`kickoff:${RID_E}`);
+        expect(row).toMatchObject({
+          state: "posted",
+          variant: "late",
+          channel: NEW_CHANNEL,
+        });
+        expect(row.facts).toMatchObject({
+          commentCheck: "found",
+          looksDone: false,
+        });
+        const body = slack.posts().at(-1)!.body!;
+        expect(body.channel).toBe(NEW_CHANNEL);
+        expect(String(body.text)).toStartWith(
+          "Kickoff in, card not updated: Echo Build.",
+        );
+        const blocks = JSON.stringify(body.blocks);
+        expect(blocks).toContain(
+          "The Kickoff Handoff comment is on the card, but 20 minutes after the kickoff the card shows Onboarding Booked, not Brand Blueprint Booked.",
+        );
+        // Late tags the CSM (nobody holds the seat for this client: plain
+        // text, and the warning row) and the systems manager.
+        expect(blocks).toContain("<@U0SYSMANA1>");
+        expect(
+          await q(
+            "SELECT http_status FROM public.cockpit_csm_provider_health WHERE run_key=$1 AND resource='notices/mentions'",
+            [row.id],
+          ),
+        ).toEqual([{ http_status: null }]);
+        expect((await trail()).label).toMatch(
+          /^Posted in #client-wins at \d{2}:\d{2}$/,
+        );
+        await CSN.setNoticeSetting(client(ADMIN) as never, "kickoff", {
+          channel: kit.CSM_GENERAL,
+        });
+      });
+
+      test("X19, X21: a late kickoff's reply waits for the comment and says so, then posts in the late notice's thread", async () => {
+        await addClient(D, "Delta Studio", "Onboarding Booked", 4);
+        await kickoffFor(D, RID_D, 25);
+        // No comment 20 minutes on: late.
+        expect(await runNotices(deps)).toMatchObject({ claimed: 1, posted: 1 });
+        const late = await notice(`kickoff:${RID_D}`);
+        expect(late).toMatchObject({ state: "posted", variant: "late" });
+        expect(late.facts).toMatchObject({ commentCheck: "missing" });
+        // The card has not changed since the alarm: no reply.
+        await runNotices(deps);
+        expect(await notice(`kickoff:${RID_D}:updated`)).toBeNull();
+        // Someone moves the card by hand, without Make's comment.
+        await q(
+          "UPDATE public.cockpit_client_onboarding SET client_status='Brand Blueprint Booked♠️', card_updated_at=now() + interval '1 second' WHERE clickup_task_id=$1",
+          [D],
+        );
+        expect(await runNotices(deps)).toMatchObject({
+          claimed: 1,
+          requeued: 1,
+          posted: 0,
+        });
+        const waiting = await notice(`kickoff:${RID_D}:updated`);
+        expect(waiting).toMatchObject({
+          state: "queued",
+          parent_id: late.id,
+          error: WAITING_REPLY,
+        });
+        // Settings says what it waits for, not "its first notice".
+        const read = await CSN.readNoticeSettings(client(ADMIN) as never);
+        const last = read.notices.find(n => n.kind === "kickoff.updated")!
+          .last!;
+        expect(last).toMatchObject({ state: "queued", reason: WAITING_REPLY });
+        expect(CSN.noticeStop(last, read.now).text).toBe(WAITING_REPLY);
+        // The comment comes; at the reply's next turn it posts in the thread.
+        clickup.handoff(D, new Date().toISOString());
+        await q(
+          "UPDATE public.cockpit_slack_notices SET next_attempt_at = now() WHERE id=$1",
+          [waiting.id],
+        );
+        expect(await runNotices(deps)).toMatchObject({ claimed: 1, posted: 1 });
+        const reply = await notice(`kickoff:${RID_D}:updated`);
+        expect(reply).toMatchObject({
+          state: "posted",
+          variant: "thread",
+          thread_ts: late.slack_ts,
+          channel: late.channel,
+        });
+        const body = slack.posts().at(-1)!.body!;
+        expect(body.thread_ts).toBe(late.slack_ts);
+        expect(String(body.text)).toMatch(
+          /^Card updated at \d{2}:\d{2}\. It has the Kickoff Handoff comment and shows Brand Blueprint Booked\. Ref CN-/,
+        );
+      });
+
+      test("X21: a reply that went top level is looked for at top level, after its first notice posts", async () => {
+        const at = new Date().toISOString();
+        const queue = async (
+          kind: string,
+          key: string,
+          facts: Row,
+          parent: string | null,
+        ) =>
+          (
+            await q<{ r: string }>(
+              "SELECT public.cockpit_slack_notice_queue($1,$2,$3,'Foxtrot Build',$4::jsonb,$5::uuid,'queued',NULL) r",
+              [kind, key, F, JSON.stringify(facts), parent],
+            )
+          )[0].r;
+        const closeId = await queue(
+          "blueprint.close",
+          `blueprint:${F}:close`,
+          {
+            taskId: F,
+            client: "Foxtrot Build",
+            source: "cockpit",
+            settled: "done",
+            closedAt: at,
+            closedByRole: "the creative director",
+            mapPhase: 4,
+            service: "fitout",
+          },
+          null,
+        );
+        const offerId = await queue(
+          "blueprint.offer",
+          `blueprint:${F}:offer`,
+          {
+            taskId: F,
+            client: "Foxtrot Build",
+            offeredAt: at,
+            offeredByRole: "the creative director",
+            dnaComplete: true,
+          },
+          closeId,
+        );
+        const state = async (id: string) =>
+          (
+            await q(
+              "SELECT state, target, channel, slack_ts, thread_ts FROM public.cockpit_slack_notices WHERE id=$1",
+              [id],
+            )
+          )[0];
+        // The close is refused while the offer waits for it; the offer then
+        // goes top level and Slack does not answer.
+        slack.post = { refuse: "not_in_channel" };
+        expect(await runNotices(deps)).toMatchObject({ claimed: 1, failed: 1 });
+        slack.post = "5xx";
+        expect(await runNotices(deps)).toMatchObject({
+          claimed: 1,
+          unknown: 1,
+        });
+        expect(await state(offerId)).toMatchObject({
+          state: "unknown",
+          target: kit.CSM_GENERAL,
+          thread_ts: null,
+        });
+        // Fixed and requeued, the close posts and starts a thread.
+        slack.post = "ok";
+        await rpcAsService("cockpit_slack_notice_fix", {
+          p_id: closeId,
+          p_action: "requeue",
+          p_note: null,
+        });
+        expect(await runNotices(deps)).toMatchObject({
+          posted: 1,
+          reconciled: 0,
+        });
+        expect((await state(closeId)).state).toBe("posted");
+        // The offer had arrived after all, at top level: the next look finds
+        // it there, not in the close's new thread.
+        const ts = slack.seed(
+          kit.CSM_GENERAL,
+          `Offer locked: Foxtrot Build. Ref CN-${offerId.slice(0, 8)}`,
+        );
+        await q(
+          "UPDATE public.cockpit_slack_notices SET checked_at = NULL WHERE id=$1",
+          [offerId],
+        );
+        expect(await runNotices(deps)).toMatchObject({
+          reconciled: 1,
+          posted: 0,
+        });
+        expect(await state(offerId)).toMatchObject({
+          state: "posted",
+          slack_ts: ts,
+          channel: kit.CSM_GENERAL,
+          thread_ts: null,
+        });
+      });
+
+      test("X27: an editor tags people; the sender checks them in Slack; the card reads the answer, by role", async () => {
+        const pm = (
+          await q<{ id: number }>(
+            "INSERT INTO public.cockpit_people(name,email,role,added_by) VALUES('Sara Example','pm@tests.invalid','Project manager','test') RETURNING id",
+          )
+        )[0].id;
+        const ceo = (
+          await q<{ id: number }>(
+            "SELECT id FROM public.cockpit_people WHERE email='aziz@maharamedia.com'",
+          )
+        )[0].id;
+        const people = (r: CSN.SettingsRead) =>
+          r.notices.find(n => n.kind === "blueprint.offer")!.mentionPeople;
+        const saved = await CSN.setNoticeSetting(
+          client(ADMIN) as never,
+          "blueprint.offer",
+          { mentionPeople: [pm, ceo] },
+        );
+        expect(
+          people(saved).map(p => [
+            p.id,
+            p.label,
+            p.role,
+            p.slack,
+            p.slackKnown,
+          ]),
+        ).toEqual([
+          [
+            pm,
+            "Sara, Project manager",
+            "the project manager",
+            "checking",
+            false,
+          ],
+          [ceo, "Aziz, CEO", "the CEO", "checking", false],
+        ]);
+        // Anyone else reads the role only.
+        expect(
+          people(await CSN.readNoticeSettings(client(CSM_A) as never)).map(
+            p => p.label,
+          ),
+        ).toEqual(["the project manager", "the CEO"]);
+        // Slack knows the CEO's address and not the project manager's.
+        slack.users.set("aziz@maharamedia.com", "U0AZIZEX01");
+        expect((await runNotices(deps)).people).toBe(2);
+        expect(
+          people(await CSN.readNoticeSettings(client(ADMIN) as never)).map(
+            p => [p.slack, p.slackKnown],
+          ),
+        ).toEqual([
+          ["not_found", false],
+          ["ok", true],
+        ]);
+        // The next offer tags the CEO by the id the check found.
+        const inputs = (await rpcAsService(
+          "cockpit_slack_notice_doctor_inputs",
+          {},
+        )) as Row;
+        expect(
+          inputs.settings
+            .find((s: Row) => s.kind === "blueprint.offer")
+            .mentions.map((m: Row) => [m.personId, m.slackId])
+            .sort(),
+        ).toEqual(
+          [
+            [pm, null],
+            [ceo, "U0AZIZEX01"],
+          ].sort(),
+        );
+        await CSN.setNoticeSetting(client(ADMIN) as never, "blueprint.offer", {
+          mentionPeople: [],
+        });
+      });
+
+      test("X24, X25: a media buyer the CEO adds can change notices; switching the seat off ends the right for good", async () => {
+        await member(db, MEDIA, "media@tests.invalid", ["media_buyer"]);
+        expect(
+          CSN.noAccess(
+            await CSN.readNoticeSettings(client(MEDIA) as never).catch(e => e),
+          ),
+        ).toBe(true);
+        const seat = (
+          await q<{ id: string }>(
+            "SELECT id FROM public.cockpit_members WHERE auth_user_id=$1",
+            [MEDIA],
+          )
+        )[0].id;
+        const added = await CSN.setFormsEditor(
+          client(CEO) as never,
+          seat,
+          true,
+        );
+        expect(added.editors.map(e => e.memberId)).toContain(seat);
+        expect(
+          (await CSN.readNoticeSettings(client(MEDIA) as never)).can,
+        ).toEqual({ edit: true, editors: false });
+        const changed = await CSN.setNoticeSetting(
+          client(MEDIA) as never,
+          "kickoff.updated",
+          { mentionRule: ["seat:csm"] },
+        );
+        expect(
+          changed.notices.find(n => n.kind === "kickoff.updated")!.mentionRule,
+        ).toEqual(["seat:csm"]);
+        await CSN.setNoticeSetting(client(MEDIA) as never, "kickoff.updated", {
+          mentionRule: [],
+        });
+        // Switched off, then on again: the right does not come back.
+        await q("UPDATE public.cockpit_members SET active=false WHERE id=$1", [
+          seat,
+        ]);
+        expect(
+          await q(
+            "SELECT count(*)::int n FROM public.cockpit_forms_editors WHERE member_id=$1",
+            [seat],
+          ),
+        ).toEqual([{ n: 0 }]);
+        expect(
+          (
+            await q(
+              "SELECT action, metadata FROM public.cockpit_audit_log WHERE entity_type='cockpit_forms_editors' AND entity_id=$1 AND action='forms.editor_removed'",
+              [seat],
+            )
+          )[0],
+        ).toMatchObject({ metadata: { why: "seat_off" } });
+        await q("UPDATE public.cockpit_members SET active=true WHERE id=$1", [
+          seat,
+        ]);
+        expect(
+          CSN.noAccess(
+            await CSN.readNoticeSettings(client(MEDIA) as never).catch(e => e),
+          ),
+        ).toBe(true);
+      });
+
+      test("X28, X29: a close for a client already past phase 5 says it is live, and the CSM gets no phase 5 copy", async () => {
+        await addClient(G, "Golf Homes", "Active", 6);
+        await save({ ...PART1, ...PART2 }, G);
+        await pressPart(1, uuid(21), G);
+        await settle(uuid(21), "done", {
+          kind: "blueprintLaunch",
+          launchTaskId: "86launchG1",
+        });
+        await pressPart(2, uuid(22), G);
+        // The shape cockpit-creative-api/blueprint.ts returns at phase 5 or later.
+        await settle(uuid(22), "done", {
+          kind: "blueprintClose",
+          launchTaskId: "86launchG1",
+          closeRoute: "card_only",
+          mapPhase: 6,
+          mapSkipped: true,
+        });
+        expect((await notice(`blueprint:${G}:close`)).facts).toMatchObject({
+          mapPhase: 6,
+        });
+        expect(await runNotices(deps)).toMatchObject({ claimed: 2, posted: 2 });
+        const posted = (channel: string) =>
+          slack
+            .posts()
+            .find(
+              p =>
+                p.body?.channel === channel &&
+                String(p.body?.text).includes("Golf Homes"),
+            )!.body!;
+        const close = posted(kit.CSM_GENERAL);
+        expect(String(close.text)).toStartWith(
+          "Brand Blueprint complete: Golf Homes. The client is already live.",
+        );
+        expect(JSON.stringify(close.blocks)).toContain(
+          "the Onboarding Map is already at phase 6, so there is no phase 5 WhatsApp to send and no launch call to book.",
+        );
+        expect(JSON.stringify(close.blocks)).not.toContain("Launch call");
+        expect(String(posted(kit.MEDIA_GENERAL).text)).toStartWith(
+          "Brand Blueprint completed: Golf Homes. The client is already live.",
+        );
+        // The CSM's Onboarding panel leaves the phase 5 copy out for this
+        // card, and keeps it for a card whose first close moved the map.
+        const golf = await BS.readBlueprintStatus(client(ADMIN) as never, G);
+        expect(golf.closeMapSkipped).toBe(true);
+        expect(
+          BS.phase5Copy({
+            taskId: G,
+            clientName: "Golf Homes",
+            status: golf,
+            links: {},
+          }),
+        ).toBeNull();
+        const acme = await BS.readBlueprintStatus(client(CSM_A) as never, A);
+        expect(acme.closeMapSkipped).toBeUndefined();
+        expect(
+          BS.phase5Copy({
+            taskId: A,
+            clientName: "Acme Interiors",
+            status: acme,
+            links: {},
+          }),
+        ).not.toBeNull();
       });
     });
   });

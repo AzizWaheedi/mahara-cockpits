@@ -569,7 +569,8 @@ class StageOneQueues(unittest.TestCase):
             c = checks_mod.by_id()[qid]
             self.assertIn("where state in", c.reads)
         self.assertEqual(self.q("queue-slack-notices").states, ("queued", "sending", "unknown"))
-        self.assertIsNone(self.q("queue-slack-notices").kind_col)
+        self.assertEqual(self.q("queue-slack-notices").kind_col, "kind")
+        self.assertNotIn("kickoff.updated", self.q("queue-slack-notices").kinds)
         self.assertIn("RUNBOOK, Slack notices", self.q("queue-slack-notices").action)
         self.assertIn("RUNBOOK, Brand Blueprint press drain", self.q("queue-creative-blueprint").action)
 
@@ -594,7 +595,7 @@ class StageOneQueues(unittest.TestCase):
     def test_a_failed_notice_in_24_hours_warns_by_its_finish_time(self):
         rows = {"cockpit_slack_notices": [
             notice("failed", 60, finished_at=fakes.ago(50),
-                   error="Slack refused it: mahara-club-bot is not in #csm-general. Invite it there."),
+                   error="Slack says mahara-club-bot is not in #csm-general. Invite it there."),
             notice("failed", 3000, finished_at=fakes.ago(2990), error="an old one")]}
         r, _ = self.run_q("queue-slack-notices", rows)
         self.assertEqual(r.status, WARN)
@@ -602,6 +603,38 @@ class StageOneQueues(unittest.TestCase):
         self.assertIn("mahara-club-bot is not in #csm-general", r.summary)
         self.assertNotIn("an old one", r.summary)
         self.assertEqual(r.items, ["failed"])
+
+    def test_a_late_kickoffs_reply_waiting_for_the_comment_is_read_by_its_next_turn(self):
+        # The reply is requeued every 10 minutes while the card lacks its Kickoff Handoff comment: old by
+        # created_at, never late by next_attempt_at. The main row leaves it out.
+        waiting = notice("queued", 600, kind="kickoff.updated", next_attempt_at=fakes.ago(-8),
+                         error="Waiting for the card's Kickoff Handoff comment before saying the card is updated.")
+        r, _ = self.run_q("queue-slack-notices", {"cockpit_slack_notices": [waiting]})
+        self.assertEqual(r.status, OK)
+        r, _ = self.run_q("queue-slack-notice-replies", {"cockpit_slack_notices": [waiting]})
+        self.assertEqual(r.status, OK)
+        # The sender stopped picking it up: its turn passed 40 minutes ago.
+        stuck = {**waiting, "next_attempt_at": fakes.ago(40)}
+        r, _ = self.run_q("queue-slack-notice-replies", {"cockpit_slack_notices": [stuck, notice("queued", 600)]})
+        self.assertEqual(r.status, WARN)
+        self.assertIn("1 Kickoff card updated reply(s) waited past 30 min; the oldest is queued for 40 min", r.summary)
+        # An unknown reply still needs a person, and a failed one warns too.
+        r, _ = self.run_q("queue-slack-notice-replies", {"cockpit_slack_notices": [
+            notice("failed", 90, kind="kickoff.updated", finished_at=fakes.ago(30), error="Slack refused it (x)."),
+            notice("failed", 90, finished_at=fakes.ago(30), error="a kickoff's own failure")]})
+        self.assertEqual(r.status, WARN)
+        self.assertNotIn("a kickoff's own failure", r.summary)
+
+    def test_a_blueprint_press_stuck_sending_warns(self):
+        # A run stopped after its claim leaves the press sending: no notice, no retry, the card spinning.
+        q = self.q("queue-creative-blueprint")
+        self.assertEqual(q.states, ("pending", "sending"))
+        r, _ = self.run_q("queue-creative-blueprint", {"cockpit_creative_outbox": [press("sending", 3)]})
+        self.assertEqual(r.status, OK)
+        r, _ = self.run_q("queue-creative-blueprint", {"cockpit_creative_outbox": [press("sending", 240)]})
+        self.assertEqual(r.status, WARN)
+        self.assertIn("the oldest is sending for 4.0 h", r.summary)
+        self.assertIn("settle it by hand", q.action)
 
     def test_a_blueprint_press_pending_past_10_minutes_warns(self):
         r, _ = self.run_q("queue-creative-blueprint", {"cockpit_creative_outbox": [press("pending", 8)]})

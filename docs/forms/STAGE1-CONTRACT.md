@@ -168,6 +168,7 @@ editing right (section 11, decision X1).
 | `finished_at` | `timestamptz` | |
 | `checked_at` | `timestamptz` | last reconcile look at an `unknown` |
 | `slack_ts` | `text` | `CHECK (slack_ts IS NULL OR slack_ts ~ '^[0-9]+\.[0-9]+$')` |
+| `thread_ts` | `text` | the thread the claim sent a reply to (its parent's `slack_ts`), NULL when it went top level; same CHECK as `slack_ts` (X21) |
 | `permalink` | `text` | `CHECK (permalink IS NULL OR permalink ~ '^https://[a-z0-9.-]+\.slack\.com/')` |
 | `error` | `text` | `CHECK (error IS NULL OR char_length(error) <= 240)`; a plain sentence |
 | `created_at` | `timestamptz NOT NULL DEFAULT now()` | |
@@ -184,8 +185,21 @@ Indexes (`IF NOT EXISTS`):
 `cockpit_slack_notices_open ON (state, created_at) WHERE state IN ('queued','sending','unknown')`;
 `cockpit_slack_notices_parent ON (parent_id) WHERE parent_id IS NOT NULL`.
 
-Grants for all four tables: RLS on, `REVOKE ALL ... FROM PUBLIC, anon, authenticated, service_role`,
-then `GRANT SELECT ON` all four `TO service_role` (the guardian reads; every
+**`public.cockpit_slack_people`**: the people a notice tags, checked in Slack
+by the sender (X4, X27).
+
+| Column | Type | Rule |
+|---|---|---|
+| `person_id` | `bigint PRIMARY KEY REFERENCES public.cockpit_people(id)` | |
+| `state` | `text NOT NULL DEFAULT 'checking'` | `CHECK (state IN ('checking','ok','not_found','refused'))`; `ok` needs `slack_user_id` |
+| `slack_user_id` | `text` | `CHECK (slack_user_id IS NULL OR slack_user_id ~ '^[UW][A-Z0-9]{8,12}$')` |
+| `note` | `text` | 240 at most; the plain sentence of the last check |
+| `checked_at` | `timestamptz` | |
+| `requested_by` | `text NOT NULL` | an editor's email, or `cockpit-notices` |
+| `updated_at` | `timestamptz NOT NULL DEFAULT now()` | |
+
+Grants for all five tables: RLS on, `REVOKE ALL ... FROM PUBLIC, anon, authenticated, service_role`,
+then `GRANT SELECT ON` all five `TO service_role` (the guardian reads; every
 write goes through the definer functions). No policies.
 
 #### Triggers
@@ -199,7 +213,9 @@ write goes through the definer functions). No policies.
 | `cockpit_slack_notice_settings_no_delete` | `BEFORE DELETE OR TRUNCATE` | `cockpit_slack_notice_refuse_delete()` | |
 | `cockpit_slack_channels_audit` | `AFTER INSERT OR UPDATE ON cockpit_slack_channels` | `cockpit_slack_notice_audit()` | |
 | `cockpit_slack_channels_no_delete` | `BEFORE DELETE OR TRUNCATE` | `cockpit_slack_notice_refuse_delete()` | a channel is marked `removed`, never deleted |
-| `cockpit_forms_editors_audit` | `AFTER INSERT OR DELETE ON cockpit_forms_editors` | `cockpit_slack_notice_audit()` | |
+| `cockpit_forms_editors_audit` | `AFTER INSERT OR DELETE ON cockpit_forms_editors` | `cockpit_slack_notice_audit()` | (a delete by the seat-off trigger carries `metadata.why = 'seat_off'`) |
+| `cockpit_slack_people_audit` | `AFTER INSERT OR UPDATE ON cockpit_slack_people` | `cockpit_slack_notice_audit()` | action `slack_notice.person` |
+| `cockpit_forms_editor_seat_off` | `AFTER UPDATE OF active ON public.cockpit_members FOR EACH ROW WHEN (OLD.active IS DISTINCT FROM NEW.active AND NOT coalesce(NEW.active, false))` | `cockpit_forms_editor_seat_off()` | deletes the seat's `cockpit_forms_editors` row: the right ends with the seat, and re-adding the address (same id) never brings it back (X24). The migration also deletes the rows of seats already switched off |
 | `cockpit_slack_notice_kickoff` | `AFTER INSERT OR UPDATE ON public.cockpit_client_onboarding FOR EACH ROW WHEN ((NEW.forms ? 'kickoff') OR (NEW.forms ? 'blueprint'))` | `cockpit_slack_notice_from_onboarding()` | section "Queue triggers" |
 | `cockpit_slack_notice_blueprint` | `AFTER UPDATE OF state ON public.cockpit_creative_outbox FOR EACH ROW WHEN (OLD.state IS DISTINCT FROM NEW.state AND NEW.kind IN ('blueprintClose','blueprintOffer'))` | `cockpit_slack_notice_from_outbox()` | section "Queue triggers" |
 
@@ -238,6 +254,10 @@ Every service RPC below that writes does `PERFORM set_config('cockpit.audit_sour
 | `cockpit_slack_notice_card_done(p_status text, p_card_updated timestamptz, p_since timestamptz)` | `boolean` IMMUTABLE | "the card looks done": the stage pattern (below the table) on `coalesce(p_status, '')` with `~*`, AND `p_card_updated IS NOT NULL AND p_since IS NOT NULL AND p_card_updated >= p_since`; a test pins the pattern (section 9) |
 | `cockpit_slack_notice_shape(p_kind text)` | `text` IMMUTABLE | `post` / `reply` / `variant` / `test` (rehearsal) |
 | `cockpit_slack_notice_role_of(p_email text)` | `text` STABLE | the role label of a seat: founder address (`aziz@maharamedia.com`, `awaheedi2008@gmail.com`) `the CEO`; active `cockpit_people.role = 'Systems manager'` `the systems manager`; member roles `csm` `the CSM`, `creative` `the creative director`, `media_buyer` `the media buyer`, `editor` `the video editor`, `admin` `an admin`; else `a team member`; NULL for NULL |
+| `cockpit_slack_person_id(p_person bigint)` | `text` STABLE | the EOD radar's `ok` Slack id, else the notices' own `cockpit_slack_people` `ok` id |
+| `cockpit_slack_person_state(p_person bigint)` | `text` STABLE | `ok` (an id is known), else the check's state (`checking`, `not_found`, `refused`), else `unchecked` |
+| `cockpit_slack_person_label(p_role text)` | `text` IMMUTABLE | a named person's role label, `the ` + lower case (`the CEO` keeps its capitals) |
+| `cockpit_slack_people_queue(p_people bigint[], p_by text)` | `integer` | queues a `checking` row for each active person with an address and no known id; a `not_found` or `refused` one is checked again |
 | `cockpit_slack_notice_mentions(p_rules text[], p_people bigint[], p_client text)` | `jsonb` STABLE | array of `Mention` rows (section 3.9), resolved now: seat rules from `cockpit_members` (active, confirmed, not `admin`, the role in `roles`, `cardinality(clients) = 0` or the client in `clients` by `lower(btrim())`), joined to active `cockpit_people` by `lower(btrim(email))`, then `cockpit_eod_radar_slack_ids` with `state = 'ok'`; `seat:systems_manager` from active `cockpit_people` with `role = 'Systems manager'`; `p_people` from active `cockpit_people` by id. A rule that finds nobody gives one `{rule, missing: true}` entry. Deduped by person (or email when no person row) |
 | `cockpit_slack_notice_queue(p_kind text, p_dedupe text, p_task text, p_client text, p_facts jsonb, p_parent uuid, p_state text, p_error text)` | `uuid` | `INSERT ... ON CONFLICT (dedupe_key) DO NOTHING RETURNING id`; `skipped` rows get `finished_at = now()` and `p_error`; NULL when it existed |
 | `cockpit_slack_notice_kickoff_facts(p_task text, p_client text, p_forms jsonb, p_old_response text)` | `jsonb` STABLE | the `kickoff` facts of section 3.1 |
@@ -335,7 +355,7 @@ All return `jsonb` unless said. All write `cockpit.audit_source = 'cron'` first.
 3. Missed closes: `cockpit_creative_outbox` `kind = 'blueprintClose'`, `state IN ('done','reconcile')`, `coalesce(settled_at, created_at) > now() - interval '48 hours'`: insert the close and the media rows when their keys are absent (the trigger's facts).
 4. Missed offers: `kind = 'blueprintOffer'`, `state = 'done'`, `settled_at` within 48 hours, no offer key.
 5. Missed `blueprint.updated`: a close notice with `facts->>'settled' = 'reconcile'` whose task has a `blueprintClose` outbox row in `done` settled after the notice's `created_at`.
-6. `kickoff.updated`: a `kickoff` notice with `variant = 'late'`, `state = 'posted'`, `created_at` within 48 hours, no `kickoff:{rid}:updated` row, whose onboarding row now passes `cockpit_slack_notice_card_done(client_status, card_updated_at, submittedAt)`: queue key `'kickoff:' || rid || ':updated'`, `parent_id` the late notice, facts 3.2.
+6. `kickoff.updated`: a `kickoff` notice with `variant = 'late'`, `state = 'posted'`, `created_at` within 48 hours, no `kickoff:{rid}:updated` row, whose onboarding row now passes `cockpit_slack_notice_card_done(client_status, card_updated_at, submittedAt)` and whose send facts show it did not see both halves: `commentCheck <> 'found'`, or `looksDone` not true, or `card_updated_at` differs from the `cardUpdatedAt` it recorded (a late notice always meets one of the first two; the third covers a row recorded by hand). Never `card_updated_at` against the post time: a card done before the alarm (a failed comment read, or the mirror behind at the claim) still gets its reply. Queue key `'kickoff:' || rid || ':updated'`, `parent_id` the late notice, facts 3.2. The sender posts it only once the Kickoff Handoff comment is there (4.3, X19).
 7. Typeform Blueprint records within 48 hours with no close key: queue as the trigger does.
 
 **`cockpit_slack_notice_claim(p_limit integer, p_only uuid DEFAULT NULL)`** returns `{"busy": boolean, "rows": ClaimedRow[]}`:
@@ -349,8 +369,18 @@ FOR r IN queued rows with next_attempt_at <= now() (and id = p_only when given)
   EXIT when v_lim rows are claimed
   s := settings row of r.kind (none for rehearsal)
   1. s.enabled false: queued -> muted, finished_at now(), error 'Turned off in Settings, Notices and routing.'; CONTINUE
+  1b. not a rehearsal or kickoff.updated, and its event (facts.submittedAt, closedAt, offeredAt or
+     confirmedAt, else r.created_at) is 48 hours old or more: queued -> skipped, error 'This kickoff
+     was more than 48 hours old by the time the cockpit could send it, so it was not posted.' (a
+     kickoff) or 'This notice was more than 48 hours old by the time the cockpit could send it, so
+     it was not posted.'; CONTINUE. An outage (no vault secret, the wrong bot requeueing every 5
+     minutes, a stopped sender) ends in a recorded skip, never in posts whose words no longer hold
+     (X33); a requeue by hand after 48 hours ends the same way.
   2. reply (parent_id set), p := parent:
      p.state in (queued, sending), or unknown claimed under 30 minutes ago: CONTINUE (wait)
+     p.state = posted and r.kind = kickoff.updated and now() > (r.facts.submittedAt, else
+        p.facts.submittedAt, else r.created_at) + 48 hours: queued -> skipped, error 'The card had no
+        Kickoff Handoff comment 48 hours after the kickoff, so no reply was posted. The late notice stands.'; CONTINUE
      p.state = posted: thread_ts := p.slack_ts; target := p.channel
      p.state in (muted, skipped) and r.kind <> 'blueprint.offer': queued -> skipped,
         error 'Its first notice did not post, so this reply was not sent.'; CONTINUE
@@ -368,7 +398,8 @@ FOR r IN queued rows with next_attempt_at <= now() (and id = p_only when given)
   5. non-rehearsal top-level target not an `ok` channel: queued -> sending -> failed
      (the target is not written, so the guard does not refuse the move),
      format('The channel for this notice is not ready (%s). Choose one in Settings, Notices and routing.', coalesce(target, 'none')); CONTINUE
-  6. queued -> sending, claimed_at now(), target := the target above (attempts unchanged)
+  6. queued -> sending, claimed_at now(), target := the target above, thread_ts := the thread
+     above or NULL (attempts unchanged)
   7. append ClaimedRow
 RETURN {"busy": false, "rows": [...]}
 ```
@@ -416,11 +447,16 @@ CHECK), `target` (only for a rehearsal whose `target` is NULL, `^[UW]`),
 `claimed_at > now() - interval '24 hours'` and `checked_at` NULL or older than
 10 minutes, `FOR UPDATE SKIP LOCKED`, at most `least(p_limit, 10)`; sets
 `checked_at = now()`. `channel` = the stored `channel`, else `target` when it is
-a C or G id, else NULL (cannot be reconciled). `threadTs` = the parent's
-`slack_ts` when the row is a reply to a posted parent. `oldest` =
+a C or G id, else NULL (cannot be reconciled). `threadTs` = the stored
+`thread_ts`: where the claim sent it, never worked out again from the
+parent's state now (X21). `oldest` =
 `extract(epoch from claimed_at) - 60` as text.
 
 **`cockpit_slack_channel_pending()`** returns `[{id, name}]`: channels in `checking`, at most 5.
+
+**`cockpit_slack_person_pending()`** returns `[{personId, email}]`: `cockpit_slack_people` rows in `checking` whose person is active with an address, at most 5 (the address is for the sender's lookup only).
+
+**`cockpit_slack_person_checked(p_person bigint, p_state text, p_slack text, p_note text)`** upserts a person's check: `ok` (needs a U or W id), `not_found` or `refused`, with the sentence; returns `{personId, state, note}`. The sender calls it for the pending list and for every send-time lookup.
 
 **`cockpit_slack_channel_checked(p_id text, p_ok boolean, p_name text, p_private boolean, p_note text)`** sets `state` (`ok` or `refused`), `name` (when given and valid), `private`, `note`, `checked_at = now()` on a channel not `removed`; returns the channel row as JSON. Used by the sender for `checking` rows and by the doctor for every row.
 
@@ -467,10 +503,10 @@ notice with that `task_id`, newest first, at most 20.
  "at": "timestamptz", "dueAt": "timestamptz|null", "permalink": "text|null", "reason": "text|null"}
 ```
 
-- `channel`: the returned `channel`, else `target`, with the name from `cockpit_slack_channels`; NULL when neither.
+- `channel`: the returned `channel`, else `target`, with the name from `cockpit_slack_channels`; for a non-rehearsal row still `queued` with neither, where it is set to post now: a reply's posted parent's channel, else `cockpit_slack_notice_target(kind)` (X26). NULL when none.
 - `at`: `finished_at` when set, else `claimed_at` when `sending`, else `created_at`.
 - `dueAt`: kickoff queued: `facts.submittedAt + 20 minutes`; other queued: `next_attempt_at`; else NULL.
-- `reason`: NULL when posted; queued kickoff: `error` when set, else `Waiting for Make to update the card.`; queued reply: `Waiting for its first notice.`; other queued: `Queued.`; sending: `Posting now.`; failed, unknown, skipped, muted: `error`.
+- `reason`: NULL when posted; queued kickoff: `error` when set, else `Waiting for Make to update the card.`; queued reply while its first notice is still queued, sending or unknown for under 30 minutes (the claim's wait): `Waiting for its first notice.`; other queued: `error` when set (a late kickoff's reply waiting for the Kickoff Handoff comment, X19, or a rate limit), else `Queued.`; sending: `Posting now.`; failed, unknown, skipped, muted: `error`.
 - Never `text`, `blocks`, `facts` (other than `responseId` and `outboxId`) or `target` of a rehearsal.
 
 **`cockpit_slack_notice_settings_read()`** returns (`SettingsRead`):
@@ -500,7 +536,12 @@ Gate first: `cockpit_slack_notice_viewer()`. `notices` in the seed order of the
 table above. `fixedOn` true for the two variant rows. `channel` NULL for reply
 and variant rows. `tags`: one per rule, `found` = the rule resolves to at least
 one person or seat now, `slackKnown` = at least one has an `ok` Slack id.
-`last`: the newest notice of that kind. `people` (active `cockpit_people` with
+`last`: the newest notice of that kind. `mentionPeople[]` carries `id`,
+`label` (first name and role for an editor, the role label for anyone else),
+`role` (the role label, what the row's sentence says), `slack`
+(`cockpit_slack_person_state`: `ok`, `checking`, `not_found`, `refused`,
+`unchecked`) and `slackKnown`; `tags[]` also carries `checking` (a seat
+holder's check is under way). `people` (active `cockpit_people` with
 an email, `label` = first name and role) only when `can.edit`, else `[]`.
 `editors` (the CEO and admin seats are implied and not listed; the
 `cockpit_forms_editors` rows, `label` = first name and role) and `members`
@@ -522,7 +563,9 @@ Unknown kind: `There is no notice called {kind}.`; unknown patch key:
 `Unknown setting: {key}.`; patch not an object: `Send the changes as an object.`
 No change: returns the read without writing. A change: `UPDATE` with
 `updated_by` = the gate's email, `updated_at = now()`, action `slack_notice.setting`
-(the audit trigger records old and new).
+(the audit trigger records old and new). When the tags change, everyone they
+now tag without a known Slack id (the named people, and the seats' current
+holders) gets a `checking` row in `cockpit_slack_people` (X4, X27).
 
 **`cockpit_slack_channel_add(p_channel text, p_name text)`** returns `SettingsRead`. Editor gate. `p_channel` (trimmed, upper case) `~ '^[CG][A-Z0-9]{8,12}$'` else `Paste the channel's ID from Slack (it starts with C or G).`; `p_name` optional (without `#`). Already `ok`: `That channel is already on the list.`; new, `refused` or `removed`: upsert to `checking`, `note = 'Checking that mahara-club-bot is in it.'`, `added_by` = the gate's email. The sender checks it within a minute.
 
@@ -538,7 +581,8 @@ No change: returns the read without writing. A change: `UPDATE` with
 
 1. `PERFORM public.cockpit_slack_notice_sweep();`
 2. Work exists when any of: a `queued` row with `next_attempt_at <= now()`; an
-   `unknown` row the unknowns RPC would hand out; a channel in `checking`. No
+   `unknown` row the unknowns RPC would hand out; a channel in `checking`; a
+   person `cockpit_slack_person_pending()` lists. No
    work: upsert `cockpit_sync_state` key `slack-notices-kick` (`ok = true`,
    `note = 'Nothing to send'`) and return NULL.
 3. Vault, only inside `to_regclass('vault.decrypted_secrets') IS NOT NULL`:
@@ -566,10 +610,13 @@ and `20260927s_creative_read_models.sql`, so build on the repo text).
    Index `cockpit_creative_outbox_pending_bp ON public.cockpit_creative_outbox (created_at) WHERE state = 'pending' AND kind IN ('blueprintLaunch','blueprintClose','blueprintOffer')`.
    Grants on the table are unchanged (`SELECT, INSERT, UPDATE` to `service_role`).
 2. **`cockpit_creative_outbox_audit()`** replaced: the same insert as today plus
-   `source_system`: `coalesce(nullif(current_setting('cockpit.audit_source', true), ''), CASE WHEN <x-cockpit-source header> = 'cron' THEN 'cron' END)`,
+   `source_system`: `coalesce(nullif(current_setting('cockpit.audit_source', true), ''), CASE WHEN <x-cockpit-source header> = 'cron' AND <the request's JWT role> = 'service_role' THEN 'cron' END)`,
    where the header is read as `nullif(current_setting('request.headers', true), '')::jsonb->>'x-cockpit-source'`
-   inside its own `BEGIN/EXCEPTION WHEN OTHERS THEN NULL` (the table is
-   service-only, so only the service key can set the header). It never raises.
+   and the role as `auth.role()` reads it (`request.jwt.claim.role`, else `request.jwt.claims->>'role'`),
+   each inside its own `BEGIN/EXCEPTION WHEN OTHERS THEN NULL`. PostgREST copies
+   every client header into `request.headers`, and a signed-in seat reaches the
+   trigger through `cockpit_blueprint_part_done` and `cockpit_creative_client_action`,
+   so the header counts only on a service-key request (X23). It never raises.
 3. **`cockpit_blueprint_settings_set(p_key text, p_value text, p_label text)`** replaced: the repo body, with the route branch changed to:
    blank `close_route`: `Choose card_only.`; `close_route` other than `card_only`:
    `The close writes the card only. #csm-general and #media-general hear through the notices: Settings, Notices and routing in the client success cockpit.` (22023).
@@ -586,15 +633,16 @@ and `20260927s_creative_read_models.sql`, so build on the repo text).
    - `stage`: `cockpit_client_onboarding.client_status`; `mapPhase`: `substring(links->>'onboarding_map' from '[?&]phase=([0-9]+)')::int`.
    - `nudge`: `stage ~* '(brand blueprint booked|ready for launch)'` AND `coalesce(mapPhase, 0) <= 4` AND `heldAt IS NOT NULL` AND the card's `cockpit_blueprints.parts` has no `'2'` (or no row).
    On live data this is true for exactly Alalia.co, Makers and Smmim studio. The gate (creative write, CSM read) is unchanged.
-5. **`cockpit_blueprint_json(p_row public.cockpit_blueprints)`** replaced: each part's outbox object gains `'attempts', o.attempts`.
+5. **`cockpit_blueprint_json(p_row public.cockpit_blueprints)`** replaced: each part's outbox object gains `'attempts', o.attempts`, and the row gains `closeMapSkipped` (boolean: any `blueprintClose` outbox row of the card whose `result->>'mapSkipped'` is true; only a first close reads the map). The CSM's phase 5 copy reads it (X29).
 6. **`cockpit_creative_outbox_due(p_apply boolean DEFAULT true)`** returns
    `{"apply": bool, "failed": int, "rows": [{"id": uuid, "kind": text, "taskId": text, "clientName": text, "actorId": uuid, "attempts": int, "createdAt": timestamptz}]}`.
-   Blueprint kinds only. When `p_apply`: sets `cockpit.audit_source = 'cron'` and moves `pending` rows with `created_at < now() - interval '30 minutes'` to `failed`, `error = 'This press did not finish within 30 minutes. Press again.'`, `settled_at = now()`. Lists `pending` rows with `created_at` between `now() - 30 minutes` and `now() - 2 minutes` and `attempts < 3`, oldest first, at most 5. With `p_apply = false` it writes nothing (`failed` = the count that would fail).
+   Blueprint kinds only. When `p_apply`: sets `cockpit.audit_source = 'cron'` and moves `pending` rows with `created_at < now() - interval '30 minutes'` to `failed`, `error = 'This press did not finish within 30 minutes. Press again.'`, `settled_at = now()`. Lists `pending` rows with `created_at` between `now() - 30 minutes` and `now() - 2 minutes`, `attempts < 3` and no live lease (`drain_until` null or past), oldest first, at most 5 (`FOR UPDATE SKIP LOCKED`); when `p_apply`, each listed row gets `drain_until = now() + 10 minutes`, so a drain that overlaps the one holding a press never prepares it, and a leased row is not failed at 30 minutes until its lease ends (X35). With `p_apply = false` it writes nothing: the list is what a run would take now, and `failed` the count that would fail.
 7. **`cockpit_creative_outbox_load_for_actor(p_id uuid)`** returns exactly what `cockpit_creative_client_action('get', {id})` returns: `to_jsonb(row) || jsonb_build_object('sourceTask', <the same sourceTask subquery as get>)`. Refuses a missing or non-Blueprint row (`This press is not a Brand Blueprint press.`, 22023). Calls `public.cockpit_blueprint_gate_for_actor(row.actor_id, row.task_id, true)` first, which raises when the presser lost the creative seat or the client.
-8. **`cockpit_creative_outbox_refused(p_id uuid, p_error text)`** returns `{"id": uuid, "state": text, "attempts": int}`. Sets `cockpit.audit_source = 'cron'`. Only from `pending` (else returns the row unchanged): `attempts + 1`, `error = left(p_error, 1000)`; at 3: `state = 'failed'`, `settled_at = now()`.
-9. **`cockpit_creative_drain_kick()` RETURNS bigint** (no grant): when no Blueprint row is `pending` with `created_at < now() - 2 minutes`, note `Nothing to drain` and return NULL; else read vault `cockpit_creative_cron_secret` and `cockpit_anon_key` (both required: the function keeps its JWT check, plan 1.7); missing: `cockpit_sync_state` key `creative-drain-kick`, `ok = false`, note naming the missing secret; else `net.http_post` to `https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/cockpit-creative-api` with body `{"operation":"cron","job":"drain","apply":true}`, headers `Content-Type`, `x-cron-secret`, `Authorization: Bearer <anon>`, `apikey: <anon>`, timeout 5000.
+8. **`cockpit_creative_outbox_refused(p_id uuid, p_error text)`** returns `{"id": uuid, "state": text, "attempts": int}`. Sets `cockpit.audit_source = 'cron'`. Only from `pending` (else returns the row unchanged): `attempts + 1`, `error = left(p_error, 1000)`, `drain_until = NULL` (the next kick tries again); at 3: `state = 'failed'`, `settled_at = now()`.
+9. **`cockpit_creative_drain_kick()` RETURNS bigint** (no grant): when no Blueprint row is `pending` with `created_at < now() - 2 minutes`, note `Nothing to drain` and return NULL; else read vault `cockpit_creative_cron_secret` and `cockpit_anon_key` (both required: the function keeps its JWT check, plan 1.7); missing: `cockpit_sync_state` key `creative-drain-kick`, `ok = false`, note naming the missing secret; else `net.http_post` to `https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/cockpit-creative-api` with body `{"operation":"cron","job":"drain","apply":true}`, headers `Content-Type`, `x-cron-secret`, `Authorization: Bearer <anon>`, `apikey: <anon>`, timeout 5000. The function answers a real drain (`apply` true) with 202 at once and runs it in the background (`EdgeRuntime.waitUntil`), so 5000 covers the answer, not the presses; a dry run (`apply` false) answers 200 with its list (X30).
    Cron `mahara-creative-drain`, `'*/2 * * * *'`, `SELECT public.cockpit_creative_drain_kick();`, in the guarded `DO` block of 2.1.
-10. **Grants.** Re-assert, after the `CREATE OR REPLACE`s: `cockpit_blueprint_settings_set(text,text,text)` and `cockpit_blueprint_sources(text)` `TO authenticated` only; `cockpit_blueprint_json(cockpit_blueprints)` and `cockpit_creative_outbox_audit()` no grant; the three drain RPCs `TO service_role` only; the kick no grant. Each after `REVOKE ALL ... FROM PUBLIC, anon, authenticated, service_role`.
+9b. **`cockpit_blueprint_part_done(p_task_id text, p_part integer, p_request_id uuid)`** replaced with 20261024a's body (the live one) and one change: a known request ID whose row is `failed` (three refusals, past 30 minutes, or superseded) is pressed again as a new press under `gen_random_uuid()`, with every check of a new press (an unchanged later press that is live returns as `duplicate`; a `sending` one within 10 minutes still blocks), and the returned `id` is the new one; the `blueprint.part_done` audit row's metadata gains `replaces` (the old ID). Any other known row returns as before (`again`). Both browsers keep a press's ID until its run succeeds and run the ID they are given, so this needs no browser change (X36).
+10. **Grants.** Re-assert, after the `CREATE OR REPLACE`s: `cockpit_blueprint_settings_set(text,text,text)` and `cockpit_blueprint_sources(text)` `TO authenticated` only; `cockpit_blueprint_json(cockpit_blueprints)` and `cockpit_creative_outbox_audit()` no grant; the three drain RPCs `TO service_role` only; `cockpit_blueprint_part_done(text,integer,uuid)` `TO authenticated` only; the kick no grant. Each after `REVOKE ALL ... FROM PUBLIC, anon, authenticated, service_role`.
 
 ---
 
@@ -617,12 +665,17 @@ times are ISO 8601 strings. Keys are camelCase. Each key's source is named.
 | `previousResponseId` | text or null | OLD's `response_id` when it differed |
 
 Added at send (`p_detail.facts`): `commentCheck` (`found`, `missing`, `unread`),
-`handoffAt` (the Kickoff Handoff comment's time or null), `filledByRole`.
+`handoffAt` (the Kickoff Handoff comment's time or null), `filledByRole`,
+`looksDone` (the claim's `live.looksDone` at send: whether the card looked done),
+`cardUpdatedAt` (the claim's `live.cardUpdatedAt`: the card time it saw). The
+sweep decides the late notice's reply from these (X19).
 
 ### 3.2 `kickoff.updated` (sweep; dedupe `kickoff:{responseId}:updated`, parent = the late kickoff)
 
-`taskId`, `client`, `responseId` (from the parent), `cardUpdatedAt` (text,
-`cockpit_client_onboarding.card_updated_at` at sweep time).
+`taskId`, `client`, `responseId`, `submittedAt` (from the parent: the
+sender checks the Kickoff Handoff comment from it), `cardUpdatedAt` (text,
+`cockpit_client_onboarding.card_updated_at` at sweep time). Added at send:
+`commentCheck` (`found`), `handoffAt`.
 
 ### 3.3 `blueprint.close` (outbox trigger, sweep, Typeform branch; dedupe `blueprint:{taskId}:close`)
 
@@ -635,8 +688,15 @@ Added at send (`p_detail.facts`): `commentCheck` (`found`, `missing`, `unread`),
 | `settled` | `done`, `reconcile` or null | the NEW outbox state (Typeform: null) |
 | `closedAt` | text | `coalesce(settled_at, now())` (Typeform: `forms->'blueprint'->>'submitted_at'`) |
 | `closedByRole` | text or null | `cockpit_slack_notice_role_of(actor_email)` (Typeform: null) |
-| `launchTaskId` | text or null | `result->>'launchTaskId'` |
-| `mapPhase` | integer or null | `(result->>'mapPhase')::int` (section 5.2) |
+| `launchTaskId` | text or null | `found->>'launchTaskId'`, else `cockpit_blueprints.launch_task_id` (part 1's) |
+| `mapPhase` | integer or null | `(found->>'mapPhase')::int` (section 5.2) |
+
+`found` is `cockpit_slack_notice_close_found(row)`: the press's `result` when it
+has one, else its journal's planned values (`cockpit_media_actions.request->'planned'`,
+the plan's own values written before the claim, 5.2), else `{}`. A close that
+settles to `reconcile`, or a stuck send settled by hand, writes no `result`, so
+without this its media post lost its launch task link and the `live` rule (X34).
+Never the onboarding mirror's map, which may show the phase 5 the close wrote.
 | `service` | text or null | `payload->>'service'` (`design-build`, `interior`, `architecture`, `fitout`, `construction`) |
 
 ### 3.4 `blueprint.media` (outbox trigger, sweep; dedupe `blueprint:{taskId}:media`)
@@ -743,20 +803,35 @@ receipts carry `run_key = 'dry-run'`).
    `channel_not_found`: `Slack shows no channel {id} to the bot. If it is private, invite @mahara-club-bot first, then add it again.`;
    a public channel when the scopes lack `channels:history`:
    `The bot cannot read #{name}, so its posts cannot be checked. Use a private channel, or add channels:history to the Slack app.`
+2b. People: `cockpit_slack_person_pending()`; for each, `users.lookupByEmail`;
+   `ok`, `not_found` or `refused` is recorded with `cockpit_slack_person_checked`
+   and a sentence; no answer leaves it `checking` for the next run.
 3. Reconcile (4.4).
-4. `cockpit_slack_notice_claim(10)`. `busy`: stop.
+4. `cockpit_slack_notice_claim(3)`: three at most (the minute kick brings the
+   rest). Past a minute of the run's work, no claim (X22). `busy`: stop.
 5. Before the first post of the run: `auth.test`. Its `user_id` must equal
    `NOTICES_BOT_USER`; otherwise every claimed row gets outcome `requeue`
-   (`retryAfterSec` 300, error `The Slack token is not mahara-club-bot, so nothing was posted. The tech lead sets SLACK_BOT_TOKEN again.`)
-   and the run stops. No token: every row `failed`, `SLACK_BOT_TOKEN is not set on cockpit-notices.`
+   (`retryAfterSec` 300, error `The cockpit is connected to Slack as the wrong bot, so nothing was posted. Tell the tech lead.`)
+   and the run stops. No token: every row `failed`, `The cockpit's Slack connection is not set up, so nothing was posted. Tell the tech lead.`
+   These reasons reach the CSM's and the creative director's screens word for word, so they never name a secret, a function or a queue action; the doctor's notes (for the tech lead) keep `SLACK_BOT_TOKEN` (X37).
 6. Per row:
    - **Kickoff comment check.** `providerTools(CLICKUP_API_TOKEN, health).call('GET', 'task/{taskId}/comment')`
      from `cockpit-csm-api/tools.ts`. `found` when a comment's `comment_text`
      matches `/kickoff handoff/i` and `Number(date) >= Date.parse(submittedAt) - 1000`
-     (`handoffAt` = that date); else `missing`; a throw is `unread`. Not found
-     and `now < submittedAt + 20 min`: outcome `requeue`, `retryAfterSec` 60,
-     error `Waiting for Make's Kickoff Handoff comment.` (not an attempt).
-     Else variant `complete` when found, `late` when not.
+     (`handoffAt` = that date); else `missing`; a throw is `unread`.
+     Variant `complete` only when the comment is found **and** `live.looksDone`
+     (the card at the Brand Blueprint stage, changed since the submit): Make
+     writes the comment first (module [11]) and the stage later ([21]), so a
+     comment alone is not a finished card (X18). Either half missing and
+     `now < submittedAt + 20 min`: outcome `requeue`, `retryAfterSec` 60, error
+     `Waiting for Make's Kickoff Handoff comment.` (comment missing) or
+     `Waiting for the card to show Brand Blueprint Booked.` (not an attempt).
+     Else `late`. The send facts add `looksDone`.
+   - **A late kickoff's reply** (`kickoff.updated`): the same comment check from
+     `facts.submittedAt`. Not `found`: outcome `requeue`, `retryAfterSec` 600, error
+     `Waiting for the card's Kickoff Handoff comment before saying the card is updated.`
+     (not an attempt; the claim lets it go 48 hours after the kickoff). Found:
+     `thread` or `top` as below (X19).
    - **Variant** for the other kinds: `blueprint.close`: `typeform` when
      `source = 'typeform'`, `reconcile` when `settled = 'reconcile'`, else `done`;
      `blueprint.media`: `live` when `mapPhase >= 5` or `clientStatus ~* '^\s*active\s*$'`,
@@ -765,7 +840,9 @@ receipts carry `run_key = 'dry-run'`).
    - **Mentions.** The list for the variant: `complete`: `main` then `second`
      when `facts.second`; `late`: `late` then `second` when `facts.second`; all
      else `main`. A `Mention` with `slackId` null and an `email`:
-     `slackTools.lookupByEmail`; found sets `slackId`. Still none, or a
+     `slackTools.lookupByEmail`; found sets `slackId`. Each answer for a person
+     on the team list is recorded with `cockpit_slack_person_checked` (best
+     effort: a record that fails never holds the post). Still none, or a
      `missing` rule: the text uses the role label in plain text, and the sender
      writes one ledger row `{provider: 'slack', method: 'GET', resource: 'notices/mentions', phase: 'response', http_status: null, run_key: id}`
      (the native monitor shows it until a later run writes the same resource
@@ -782,24 +859,35 @@ receipts carry `run_key = 'dry-run'`).
      `ratelimited`: outcome `retry` with `retryAfterSec`. Refused: outcome
      `failed` with the sentence below. Unknown, or a throw after the request
      left: `unknown`, `Slack did not confirm the post; it is not sent again in case it arrived.`
-     A throw before the request left: outcome `retry`, the error as a sentence.
-7. Return `{"ok": bool, "swept": {...}, "channels": n, "reconciled": n, "claimed": n, "posted": n, "requeued": n, "retried": n, "failed": n, "unknown": n}`.
+     Slack's `internal_error` and `fatal_error` (documented as "some aspect of
+     the operation may have succeeded") are `unknown` too, never `failed`:
+     `Slack answered {code}, which can mean the post went through; it is not sent again in case it arrived.`
+     (X20). A throw before the request left: outcome `retry`, the error as a sentence.
+   - **Time.** No row is started after a minute of the run's work: the rest get
+     outcome `requeue`, `retryAfterSec` 30, `The run ran out of time before posting it; the next run sends it.`
+     (not an attempt; X22).
+7. Return `{"ok": bool, "swept": {...}, "channels": n, "people": n, "reconciled": n, "claimed": n, "posted": n, "requeued": n, "retried": n, "failed": n, "unknown": n}`.
 
 Refusal sentences (`code` from Slack's `error`):
 
 | Code | Sentence |
 |---|---|
-| `not_in_channel`, `channel_not_found` | `Slack refused it: mahara-club-bot is not in #{name}. Invite it there, then ask the tech lead to requeue this notice.` |
+| `not_in_channel`, `channel_not_found` | `Slack says mahara-club-bot is not in that channel. Ask the tech lead to add it there and send the notice again.` (the stop's lead already names the channel) |
 | `is_archived` | `#{name} is archived. Choose another channel in Settings, Notices and routing.` |
-| `missing_scope` | `Slack refused it: the bot lacks a permission. The tech lead adds it to the Slack app.` |
-| `invalid_auth`, `not_authed`, `token_revoked`, `account_inactive` | `Slack refused the bot's token. The tech lead sets SLACK_BOT_TOKEN again.` |
+| `missing_scope` | `The bot lacks a Slack permission. The tech lead adds it to the Slack app.` |
+| `invalid_auth`, `not_authed`, `token_revoked`, `account_inactive` | `Slack refused the cockpit's connection, so nothing was posted. Tell the tech lead.` |
 | `invalid_blocks`, `msg_too_long` | `Slack refused the message's layout. The tech lead checks the notice text.` |
 | other | `Slack refused it ({code}).` |
+
+No sentence opens with a label of its own (`... :`): each stands after a
+stop's own lead ("Not posted in #csm-general.").
 
 ### 4.4 Reconcile
 
 `cockpit_slack_notice_unknowns(10)`. Rows with `channel` null are left alone.
-Replies: `conversations.replies(channel, ts = threadTs, oldest)`; top level:
+Replies the claim sent to a thread (`threadTs`, the stored `thread_ts`):
+`conversations.replies(channel, ts = threadTs, oldest)`; top level, a reply
+that went top level included:
 `conversations.history(channel, oldest)`; `limit` 200, up to 20 pages by
 `response_metadata.next_cursor`. A message whose `text` contains `Ref {ref}`
 and has a `bot_id` (or `subtype = 'bot_message'`): outcome `posted` with that
@@ -903,10 +991,10 @@ would start with an empty mention starts with the next word capitalised):
 | Kind, variant | `text` | Section lines |
 |---|---|---|
 | kickoff, complete | `Kickoff complete: {client}. Next is the Brand Blueprint call. Ref CN-x` | `*Kickoff complete: {client}*` / `Filled {by {filledByRole} \| in Typeform} on {kuwaitWhen(submittedAt)}.` / `The card shows {cleanStatus(clientStatus)}{, and the Brand Blueprint link}.` / `The Kickoff Handoff comment is on the card ({kuwaitClock(handoffAt)}).` / second: `This is the second kickoff for this client. The card has a new Kickoff Handoff comment, so check it for a second Technical and Creative task, and do not send it a third time.` / `Next is the Brand Blueprint call. {mentions}` |
-| kickoff, late | `Kickoff in, card not updated: {client}. Open the card and check it. Ref CN-x` | `*Kickoff in, card not updated: {client}*` / `Filled ... on ...` / missing: `The card has no Kickoff Handoff comment 20 minutes after the kickoff. Open the card and check it. Do not send the kickoff again. {mentions}`; unread: `The cockpit could not read the card's comments 20 minutes after the kickoff. Open the card and check it for the Kickoff Handoff comment. Do not send the kickoff again. {mentions}` / second: `This is the second kickoff for this client. Do not send it a third time.` |
-| kickoff.updated, thread | `Card updated at {kuwaitClock(cardUpdatedAt)}. Ref CN-x` | `Card updated at {kuwaitClock}.` (no link block) |
-| kickoff.updated, top | `Kickoff card updated: {client}, at {kuwaitWhen}. Ref CN-x` | `*Kickoff card updated: {client}*` / `Card updated at {kuwaitWhen(cardUpdatedAt)}.` |
-| blueprint.close, done | `Brand Blueprint complete: {client}. Next is the launch call. Ref CN-x` | `*Brand Blueprint complete: {client}*` / `Closed by {closedByRole \| the creative director} on {kuwaitWhen(closedAt)}. Scripts and custom creative can start.` / `{mentions} next: send the phase 5 WhatsApp from your comment on the card, then book the launch call.` (mapPhase 5 or more: `{mentions} next: the Onboarding Map is already at phase {n}, so there is no phase 5 WhatsApp to send.`) / `Launch call booked for {kuwaitWhen(launchCallAt)}.` or `Launch call not booked yet.` |
+| kickoff, late | `Kickoff in, card not updated: {client}. Open the card and check it. Ref CN-x` | `*Kickoff in, card not updated: {client}*` / `Filled ... on ...` / missing: `The card has no Kickoff Handoff comment 20 minutes after the kickoff. Open the card and check it. Do not send the kickoff again. {mentions}`; unread: `The cockpit could not read the card's comments 20 minutes after the kickoff. Open the card and check it for the Kickoff Handoff comment. Do not send the kickoff again. {mentions}`; found (the comment is there, the card is not done): `The Kickoff Handoff comment is on the card, but 20 minutes after the kickoff the card shows {cleanStatus(clientStatus)}, not Brand Blueprint Booked. Open the card and check it. Do not send the kickoff again. {mentions}` (at the stage already but not changed since the kickoff: `The Kickoff Handoff comment is on the card, but the cockpit has not seen the card change since the kickoff. Open the card and check it. Do not send the kickoff again. {mentions}`) / second: `This is the second kickoff for this client. Do not send it a third time.` |
+| kickoff.updated, thread | `Card updated at {kuwaitClock(cardUpdatedAt)}. It has the Kickoff Handoff comment and shows {cleanStatus(clientStatus)}. Ref CN-x` | the same sentence (no link block) |
+| kickoff.updated, top | `Kickoff card updated: {client}, at {kuwaitWhen}. Ref CN-x` | `*Kickoff card updated: {client}*` / `Card updated at {kuwaitWhen(cardUpdatedAt)}. It has the Kickoff Handoff comment and shows {cleanStatus(clientStatus)}.` |
+| blueprint.close, done | `Brand Blueprint complete: {client}. Next is the launch call. Ref CN-x` | `*Brand Blueprint complete: {client}*` / `Closed by {closedByRole \| the creative director} on {kuwaitWhen(closedAt)}. Scripts and custom creative can start.` / `{mentions} next: send the phase 5 WhatsApp from your comment on the card, then book the launch call.` / `Launch call booked for {kuwaitWhen(launchCallAt)}.` or `Launch call not booked yet.` A client already live (mapPhase 5 or more, or `clientStatus` Active: the media notice's `live` rule, X28): text `Brand Blueprint complete: {client}. The client is already live. Ref CN-x`; lines `*Brand Blueprint complete: {client}*` / `Closed by ... on .... The client is already live, so nothing new starts from this close.` / `{mentions} next: the Onboarding Map is already at phase {n}, so there is no phase 5 WhatsApp to send and no launch call to book.` (Active below phase 5: `{mentions} next: there is no launch call to book. Check the card before you send the phase 5 WhatsApp from your comment.`); no launch-call line |
 | blueprint.close, reconcile | `Blueprint closed: {client}. The card update needs a check. Ref CN-x` | `*Blueprint closed: {client}*` / `The card update needs a check. Open the call page. {mentions}` |
 | blueprint.close, typeform | `Brand Blueprint complete: {client}. Next is the launch call. Ref CN-x` | `*Brand Blueprint complete: {client}*` / `The Blueprint form is in. Next is the launch call. {mentions}` |
 | blueprint.media, new | `Brand Blueprint completed: {client}. Scripts and custom creative can start. Ref CN-x` | `*Brand Blueprint completed*` / `Client: {client}` / `Service focus: {SERVICE_LABEL[service] \| not chosen}` / `<card\|card>` and, with a launch task, ` · <launch\|launch task>` / `Scripts and custom creative can start.` |
@@ -989,7 +1077,11 @@ exist.
   the fence, journal, claim and settle of today, with `load` for both the first
   read and `check()`. With `source: 'cron'`: a loaded row not `pending` returns
   `{id, skipped: true, state}`; the journal `request` is `{outbox: row, source: 'cron'}`;
-  `actor_id` is `actorId` (the presser's). Errors are thrown as
+  a journal insert that conflicts (`23505`: another run holds the press) returns
+  `{id, skipped: true, state: 'pending'}` and is never a refusal (X35);
+  `actor_id` is `actorId` (the presser's). Every journal `request` of a Blueprint
+  press also carries `planned`: the plan's `result` with any `$` reference as null
+  (3.3). The done update clears `error`. Errors are thrown as
   `ClientActionError` with `started`.
 
 `drain.ts` (new): `runDrain(admin: any, env: Env, apply: boolean): Promise<{ok: true; apply: boolean; failed: number; ran: {id: string; kind: string; outcome: 'done'|'reconcile'|'refused'|'skipped'|'dryRun'; attempts?: number; error?: string}[]}>`:
@@ -1045,7 +1137,8 @@ headings, no fake chrome, no invented numbers, works at 320 px.
 | `src/present/kickoffStop.ts`, `src/present/KickoffSlide.tsx` | type changes only; the deck never shows the Slack stop (the deck is on the client's screen) |
 | `src/lib/notices.ts` (new) | zod-parsed clients for the seven browser RPCs of 2.1 |
 | `src/lib/blueprintStatus.ts` | `blueprintNudge({stage, mapUrl, parts, calls, now}): {heldAt: string} \| null`, the rule of 2.2 item 4 on the CSM's own reads |
-| `src/components/OnboardingKit.tsx` | Kickoff item: `Copy the kickoff window's link` (done: `Link copied. It opens this client's kickoff window.`). Brand Blueprint item: the nudge (reads `readClientTimeline` only when the stage is Brand Blueprint Booked or Ready For Launch and part 2 is absent; tone warn; `Blueprint call held {Sun 18 Oct}. No Blueprint record yet. Open the call page.` with the existing Open the Blueprint deck button); after part 2, the close's Slack stop from `cockpit_slack_notice_read` (kinds `blueprint.close` and `blueprint.media`) |
+| `src/components/OnboardingKit.tsx` | Kickoff item: `Copy the kickoff window's link` (done: `Link copied. It opens this client's kickoff window.`; a copy the browser refuses shows the text to select). Brand Blueprint item: the nudge (reads `readClientTimeline` only when the stage is Brand Blueprint Booked or Ready For Launch and part 2 is absent; tone warn; `Blueprint call held {Sun 18 Oct}. No Blueprint record yet. Ask the creative director to close the call.` with the existing Open the Blueprint deck button); after part 2, the close's Slack stop from `cockpit_slack_notice_read` (kinds `blueprint.close` and `blueprint.media`). Teal words in `text-primary-ink`. No phase 5 copy when `closeMapSkipped` (X29) |
+| `src/pages/NoticesPage.tsx`, `src/auth/authenticated/AuthenticatedAppRoutes.tsx`, `src/pages/index.ts` | `/notices`: Notices and routing on its own page, under `ProtectedRoute` and the shared `BillingReviewLayout`, with no role gate: a forms editor may hold any role, and the server's gates decide what each seat sees (X25) |
 | `src/components/NoticesRouting.tsx` (new) | the Notices and routing card (6.3) |
 | `src/pages/SettingsPage.tsx` | mounts `NoticesRouting` as its own section |
 | `src/dev/formHarness.tsx` and a notices fixture | fixtures for the new states |
@@ -1068,7 +1161,9 @@ makeDoes: [
 ],
 after: {
   say: "Kickoff sent. Make is updating the card. Book the Brand Blueprint call below.",
-  sub: "The team hears in #csm-general once the card is updated.",
+  doneSay: "Kickoff sent. The card is updated. Book the Brand Blueprint call below.",
+  // the channel comes from the notice (Settings names it), never from code (X26)
+  sub: where => `The team hears in ${where} once the card is updated.`,
   // lateSay, lateMake, checksAtSec, lateAfterMin, cardDone, cardLine: unchanged
   linkBack: {
     key: "blueprint_form",
@@ -1080,20 +1175,35 @@ after: {
   },
   notice: {
     kind: "kickoff",
-    pending: "The team hears in #csm-general",
+    pending: where => `The team hears in ${where}`,
     line: "Once Make has updated the card, usually within a few minutes.",
   },
 },
 ```
 
+`where` is the notice's channel as the server names it (`#csm-general`), or
+`Slack` before a notice is on record. The headline is `say` while Make works,
+`doneSay` once the card and link stops are done, `lateSay` when a step is
+late; `sub` shows only while the Slack stop still waits (`afterLines`).
+
 The Slack stop, by notice state: `posted`: `Posted in #{name} at {14:03}`, done,
 with `Open in Slack` when there is a permalink; `queued`, `sending` or no row
-yet: `notice.pending`, line `notice.line`; `failed`:
-`Not posted: {reason}. Tell the tech lead.`, `problem: true`; `unknown`:
-`Not confirmed: {reason}. Tell the tech lead.`, `problem: true` (X17); `muted`:
-`Not posted: the kickoff notice is off in Settings.`, done; `skipped`:
-`Not posted: {reason}`, done; read failed: `The cockpit could not read the Slack notice just now.`
-(not done, not current).
+yet: `notice.pending(where)`, line `notice.line`; `failed`:
+`Not posted. {Reason}. Tell the tech lead.`, `problem: true`, `lead: "Not posted."`; `unknown`:
+`Not confirmed. {Reason}. Tell the tech lead.`, `problem: true`, `lead: "Not confirmed."` (X17); `muted`:
+`Not posted: the kickoff notice is off in Settings.`, done, quiet; `skipped`:
+`Not posted. {Reason}.`, done, quiet; read failed: `The cockpit could not read the Slack notice just now. Check now reads it again.`
+(not done, not current; the 60-second re-read goes on). The lead is drawn in
+the warning tone and the reason as a plain sentence after it, on every
+surface (the window, the Onboarding panel, the Blueprint card, Settings). A
+quiet stop never counts toward "All five steps are done."; the footer says
+`The card's steps are done. The Slack notice was not posted.` instead. Below
+1024 px the fold's summary ranks a stop that needs a person first
+(`Not posted in Slack · tell the tech lead`, or `Not confirmed in Slack · tell the tech lead`:
+the action leads and fits at 320 px, and this one line wraps rather than truncate)
+with the warning dot, and the fold opens by itself. When the kickoff notice
+posts `complete` while the window's card stops still wait, the window runs
+`io.check()` once (X38).
 
 ### 6.2 Creative director cockpit (`apps/creative-director-cockpit`)
 
@@ -1101,10 +1211,11 @@ yet: `notice.pending`, line `notice.line`; `failed`:
 |---|---|
 | `src/lib/blueprint.ts` | remove `CLOSE_ROUTES` and `CloseRoute`; `setBlueprintSetting` key type without `"close_route"`; outbox schema gains `attempts: z.number().int().optional()`; `readBlueprintCall(client, taskId)` reads `cockpit_blueprint_sources(taskId).blueprintCall` |
 | `src/lib/notices.ts` (new) | zod-parsed `cockpit_slack_notice_read` only |
-| `src/components/BlueprintCard.tsx` | nudge (when `blueprintCall.nudge`): `Blueprint call held {Sun 18 Oct}. No Blueprint record yet. Open the call page.` linking `callLink(...)`; part 2 row: `Posted in #csm-general at 14:03` and `#media-general at 14:03` (or `Not posted in #{name}: {reason}. Tell the tech lead.`); part 3 row: `Reply posted in #{name} at {time}`; a pending press with `attempts > 0`: `This press was refused: {error}. The cockpit tries again in 2 minutes ({attempts} of 3).`; failed with `attempts >= 3`: `This press was refused: {error}. Fix it and press again.`; failed after 30 minutes: the stored error as it is |
-| `src/components/BlueprintSettings.tsx` | the `CloseSwitch` group is replaced by a read-only group `After Close the call`: `The cockpit writes the card and its comments, and the CSM pastes the phase 5 WhatsApp from the card comment. #csm-general and #media-general hear through the notices.` with a link `Change where and who in the client success cockpit` to `https://cockpit.maharamedia.com/client-success/settings` |
+| `src/components/BlueprintCard.tsx` | nudge (when `blueprintCall.nudge`): `Blueprint call held {Sun 18 Oct}. No Blueprint record yet. Open the call page.` linking `callLink(...)`; part 2 row: `Posted in #csm-general at 14:03` and `#media-general at 14:03` (`on Sun 25 Oct 14:03` on another day than the close: each stop is dated against its part's own line, never the read's clock, in the card's one day format), or `Not posted in #{name}. {Reason}. Tell the tech lead.`, or `Waiting to post in #{name}.`; with none on record: `No client success notice is on record for this close.` / `No media notice is on record for this close.`; part 3 row: `Reply posted in #{name} at {time}` when it went in the close's thread (variant `thread`), else `Posted in #{name} at {time}` (dated against the offer's line); the notices are read again every minute while one is queued or sending (or a read failed), for 25 minutes, and with every read of the record; a pending press with `attempts > 0`: one state `Refused, trying again` (no Run it again) and the line, under the state column like every sub-line (`pl-8 sm:pl-48`), `{error}. The cockpit tries again in 2 minutes ({attempts} of 3).`; failed with `attempts >= 3`: `This press was refused: {error}. Fix it, then press {Send to media \| Close the call} on the call again.`; failed after 30 minutes: `This press did not finish within 30 minutes. Press {...} on the call again.`; both with `Open part 1` or `Open part 2` on the row. A dot beside wrapped text sits on its first line |
+| `src/components/BlueprintSettings.tsx` | the `CloseSwitch` group is replaced by a read-only group `After Close the call`: `The cockpit writes the card and its comments, and the CSM pastes the phase 5 WhatsApp from the card comment. The client success and media teams hear in Slack through the notices; where they post and who they tag is set on Notices and routing.` with a link `Open Notices and routing` to `https://cockpit.maharamedia.com/client-success/notices` (X25) |
 | `src/lib/creativeSourceModels.ts` | remove line 1281 (`line("Brand blueprint form", client.blueprintFormLink);`) |
 | `src/dev/blueprintFixtures.ts`, `src/dev/blueprintHarness.tsx` | fixtures for the nudge, the stops and the refusals |
+| `scripts/blueprint-notices.test.tsx` (new) | the card mounted in happy-dom (from the client success cockpit's dependencies): a queued notice read again until it posts |
 
 ### 6.3 The Notices and routing card (`NoticesRouting.tsx`)
 
@@ -1125,10 +1236,17 @@ Rows, in this order, with these labels and one-line hints:
 | `blueprint.offer` | Offer locked | A reply under the close when the offer is locked. |
 
 Each row's sentence: `Posts in #{channel} and tags {the creative director, the CSM, ...}.`
-(`Replies in the first notice's thread`, `Tags nobody`, `Off.`); a tag that
-finds nobody shows `nobody is in that seat`; the last notice's state as a stop
-(`Posted at 14:03` / `Not posted: {reason}`). Editors (`can.edit`): an `On`
-switch (post and reply rows), a channel select from `ok` channels (post rows),
+(`Replies in the first notice's thread`, `Tags nobody`, `Off.`); everyone is
+named by role, a named person too (`the project manager`), never a first name
+outside an editor's picker; a tag that finds nobody shows `nobody is in that
+seat`; one without a Slack id yet shows the check (`checking Slack`, `not found
+in Slack, so written as plain text`, `looked up in Slack when it posts`); the
+last notice's state as a stop (`Last: posted in #csm-general at 14:03` / `Last:
+not posted in #csm-general. {Reason}.`). Editors (`can.edit`): an `On` switch
+(post and reply rows; it saves at once: `Turned off. The next {label} notice is not posted.`
+/ `Turned on. The next {label} notice posts.`), a fold labelled `Change where
+and who` (post rows) or `Change who` (reply and variant rows), a channel select
+from `ok` channels (post rows),
 seat chips and a people picker (`people`), `Save` (toast `Saved. The next notice uses it.`),
 and `Send a test to me` (post and reply rows): `Test on its way. It reaches your Slack direct messages within a minute.`,
 then from `test`: `Sent to your direct messages at 14:03.` or `Not sent: {reason}`;
@@ -1137,9 +1255,17 @@ Channels sub-section: the list with state (`Checking`, `Ready`, `Refused: {note}
 `Add a channel` (ID and an optional name; `Checking`, then `Added` or the
 note), `Remove` (refusal sentence shown in place). Editors sub-section, only
 when `can.editors`: `Who can change these: the CEO, admins, and:` the list,
-`Add` from `members`, `Remove`. Non-editors see the sentences only and
-`Only the CEO, an admin or someone they add can change these.`
-A failed read: `The notice settings could not be read: {reason}. Refresh the page; if it stays, tell the tech lead.`
+`Add` from `members` (toast `Added. They change these on the Notices and routing page.`,
+and a line linking `/client-success/notices`, the page any seat opens),
+`Remove`. Non-editors see the sentences only and
+`Only the CEO, an admin or someone they add can change these.` On its own
+page (`standalone`), a seat the viewer gate refuses reads `This page is for the
+client success and creative seats, and for anyone the CEO or an admin lets
+change notices. Ask the CEO if you need it.`
+A failed read: `The notice settings could not be read: {cause}.` then the button `Read them again` and `; if it stays, tell the tech lead.`: one thing to do. `{cause}` is `readProblem(e)` (lib/notices.ts), a short clause with no advice of its own: `the cockpit could not reach the server`, `the Slack notices are not live in the cockpit yet`, `your sign-in has ended, so sign in again first`, `the server answered in a shape this page does not read`, else the server's first sentence.
+The switch's toast quotes the row's label: `Turned on. The next "{label}" notice posts.` / `Turned off. The "{label}" notice does not post until it is on again.` ("Brand Blueprint completed, for media" has a comma of its own).
+While the fold holds a change not saved, `Send a test to me` is disabled with the line `Save first. The test uses the saved settings.` (the server builds a test from the saved row).
+On its own page the card sits under the page's `PageHeader` h1 `Notices and routing` (NoticesPage) and drops its own title and line; on Settings it keeps its h2.
 An RPC refusal is shown under the control that caused it, in the server's words.
 
 ### 6.4 Shared-file pins
@@ -1174,8 +1300,12 @@ Guardian queue rows:
 BLUEPRINT_KINDS = ("blueprintLaunch", "blueprintClose", "blueprintOffer")
 Queue("queue-slack-notices", "cockpit_slack_notices", "Slack notice", ("queued", "sending", "unknown"), "created_at", 30,
       "the tech lead", "Run the cockpit-notices doctor; an unknown needs a person to look in Slack for its Ref "
-      "(RUNBOOK, Slack notices).", "", status_col="state", failed_col="finished_at"),
-Queue("queue-creative-blueprint", "cockpit_creative_outbox", "Brand Blueprint press", ("pending",), "created_at", 10,
+      "(RUNBOOK, Slack notices).", "", status_col="state", failed_col="finished_at",
+      kind_col="kind", kinds=NOTICE_KINDS),          # every kind but kickoff.updated
+Queue("queue-slack-notice-replies", "cockpit_slack_notices", "Kickoff card updated reply", ("queued", "sending", "unknown"),
+      "next_attempt_at", 30, ...,                     # it waits on purpose (X19): read by its next turn
+      status_col="state", failed_col="finished_at", kind_col="kind", kinds=("kickoff.updated",)),
+Queue("queue-creative-blueprint", "cockpit_creative_outbox", "Brand Blueprint press", ("pending", "sending"), "created_at", 10,   # X31
       "the tech lead", "Read the press's error on the Blueprint card; the drain runs every 2 minutes "
       "(RUNBOOK, Brand Blueprint press drain).", "", status_col="state", kind_col="kind", kinds=BLUEPRINT_KINDS,
       failed_col="settled_at"),
@@ -1264,7 +1394,9 @@ Every file has exactly one owner. A file not listed is not changed.
 | `apps/creative-director-cockpit/src/components/BlueprintCard.tsx` | screens |
 | `apps/creative-director-cockpit/src/components/BlueprintSettings.tsx` | screens |
 | `apps/creative-director-cockpit/src/dev/blueprintFixtures.ts`, `src/dev/blueprintHarness.tsx` | screens |
-| `apps/creative-director-cockpit/scripts/blueprint.test.tsx` | screens |
+| `apps/creative-director-cockpit/scripts/blueprint.test.tsx`, `scripts/blueprint-notices.test.tsx` (new, review fixes) | screens |
+| `apps/creative-director-cockpit/src/index.css` (the `--primary-ink` token only, the client success cockpit's value; review fixes) | screens |
+| `apps/client-success-cockpit/src/pages/NoticesPage.tsx` (new), `src/pages/index.ts`, `src/auth/authenticated/AuthenticatedAppRoutes.tsx` (the `/notices` route only; review fixes, X25) | screens |
 | `hermes/cockpit-guardian/checks/queues.py`, `checks/edge_functions.py`, `checks/pg_cron.py`, `README.md` | workers-docs |
 | `hermes/cockpit-guardian/tests/test_checks_data.py`, `tests/test_hiring_sync.py` | workers-docs |
 | `hermes/cockpit-sync/creativeProducer.ts`, `creative-fields.test.ts` (verify only) | workers-docs |
@@ -1272,6 +1404,10 @@ Every file has exactly one owner. A file not listed is not changed.
 | `docs/csm-forms/KICKOFF.md`, `docs/brand-blueprint/SPEC.md` | workers-docs |
 | `scripts/ship.sh`, `scripts/verify-cutover-readiness.py` | workers-docs |
 | `docs/forms/STAGE1-CONTRACT.md`, `docs/forms/PLAN.md`, `docs/forms/maps/*` | the orchestrator (no builder edits them) |
+| `apps/media-buyer-cockpit/scripts/stage1-fit-supabase.test.ts`, `stage1-ownership.test.ts` (new: every file this branch changes is in this table) | the orchestrator |
+
+Both `csmLinks.ts` files (the Links page's Card details form) are not Stage 1's:
+the link goes with PLAN 3.10 (build session 8, then C9), not here.
 
 Not touched by anyone: `apps/client-success-cockpit/src/present/blueprintBrief.ts`,
 `src/present/BlueprintFields.tsx`, `src/present/deckHost.ts`,
@@ -1285,7 +1421,7 @@ Hand-offs between roles (build to the contract, not to each other's code):
 |---|---|---|
 | db-notices | notices-fn | the service RPCs of 2.1, `ClaimedRow`, `Mention`, facts (3) |
 | db-notices | screens | the browser RPCs of 2.1, `NoticeView`, `SettingsRead` |
-| db-blueprint | db-notices | the close result keys `mapPhase`, `mapSkipped`, `launchTaskId` (5.2); the trigger reads them from `result` |
+| db-blueprint | db-notices | the close result keys `mapPhase`, `mapSkipped`, `launchTaskId` (5.2); the trigger reads them from `result`, else the journal's `planned` (3.3) |
 | db-blueprint | screens | `blueprintCall` (2.2 item 4), outbox `attempts` |
 | screens | db-notices | `BLUEPRINT_ON` stays byte for byte in `formStatus.ts` |
 | db-notices, db-blueprint | workers-docs | table and column names in 2 for the guardian, RPC names for the RUNBOOK |
@@ -1441,4 +1577,25 @@ in one PGlite.
 | X14 | No Typeform Blueprint seed | An old record with key `blueprint:{task}:close` would silence that card's first native close |
 | X15 | The SQL stage pattern is the TypeScript pattern exactly (contains, not anchored) | The plan's anchored version differs from `kickoffCardDone` |
 | X16 | The close preview no longer quotes `slackCloseText` | The real post's text lives in `cockpit-notices/text.ts`; a quoted preview would not match it |
-| X17 | An `unknown` notice reads "Not confirmed: {reason}." on every stop, not "Not posted"; "Tell the tech lead." is left off when the reason already names the tech lead (integration, 2026-10-25) | An unknown may already be in Slack (X9); "Not posted" beside "it is not sent again in case it arrived" contradicts itself |
+| X17 | An `unknown` notice reads "Not confirmed. {Reason}." on every stop, not "Not posted"; "Tell the tech lead." is left off when the reason already names the tech lead (integration, 2026-10-25; the colon became a full stop in the review fixes, 2026-10-26) | An unknown may already be in Slack (X9); "Not posted" beside "it is not sent again in case it arrived" contradicts itself |
+| X18 | Kickoff complete needs the Kickoff Handoff comment **and** `live.looksDone`; either missing at 20 minutes is the late notice, with a line for "comment there, card not moved" (review fix, 2026-10-26) | Make writes the comment first (module [11]) and the stage later ([21]): a run that broke between them was announced complete, tagging only the creative director, and the late notice that S14 relies on never fired |
+| X19 | The `kickoff.updated` reply is queued once the card looks done and the late notice's send facts show it did not see both halves (`commentCheck`, `looksDone`, `cardUpdatedAt`), and posted only once the Kickoff Handoff comment is there; it waits 10 minutes at a time (`requeue`) and the claim lets it go 48 hours after the kickoff (review fix; the timestamp gate against `finished_at` was dropped in the second review, 2026-10-26) | A card that already looked done when the comment was missing got "Card updated" at once while the alarm still stood. The later gate (`card_updated_at > finished_at`) then lost true replies: a card done before the alarm (a comment read that failed, or the mirror behind at the claim) kept a false late alarm for good; the sender's comment check alone stops a wrong reply |
+| X20 | Slack's `internal_error` and `fatal_error` are `unknown`, never `failed` (review fix) | Slack documents both as "some aspect of the operation may have succeeded"; a `failed` row is the one the RUNBOOK requeues, which would post it twice |
+| X21 | The claim stores the thread it chose (`thread_ts`), and the reconcile searches there (review fix) | Worked out again from the parent's state, a reply that went top level was searched in a thread its parent got later, and never found |
+| X22 | A run claims 3 notices at most and starts no post after a minute; the rest go back with `requeue` (review fix) | Rows claimed and never reached sat in `sending` until the sweep called them unknown, each a manual Slack search |
+| X23 | The outbox audit trusts `x-cockpit-source: cron` only on a service-key request (review fix) | PostgREST copies client headers, and a seat reaches the trigger through two authenticated definer functions |
+| X24 | Switching a seat off deletes its `cockpit_forms_editors` row (a trigger on `cockpit_members`) (review fix) | Re-adding the address keeps the seat's id, so the right came back with whatever role the seat got next |
+| X25 | Notices and routing also has its own page, `/client-success/notices`, under no role gate; the creative cockpit links there (review fix) | D17 gives the right to any seat the CEO or an admin adds, but `/settings` admitted CSM seats only, so a creative or media seat with the right could never use it |
+| X26 | A queued notice's view names the channel Settings gives it now, and no screen writes a channel name in code ("Slack" when none is known) (review fix) | An editor's move to another channel left every screen naming #csm-general for the whole wait |
+| X27 | People checks (X4) run after the save: the save queues a `checking` row in `cockpit_slack_people`, the sender answers within a minute, and the card shows the check; every send-time lookup is kept there too. D17's "before the change saves" is relaxed to this (review fix) | The card read only the EOD radar's cache, so it was wrong both ways about who a notice tags; refusing a save until Slack answers would need a second round trip for every person |
+| X28 | The close notice uses the media notice's `live` rule (map phase 5 or later, or Active) and then says the client is already live, with no launch call (review fix) | The two posts of one close contradicted each other, and the CSM was told to book a launch call for a live client |
+| X29 | The CSM's phase 5 copy reads `closeMapSkipped` from `cockpit_blueprint_json` (review fix) | X11 reached the card comment and the notice but not the panel's copy button; the current map link cannot tell, since a normal close moves it to phase 5 |
+| X30 | The drain door answers 202 and runs the presses under `EdgeRuntime.waitUntil`; a dry run answers 200 (review fix) | pg_net hangs up at 5 s, before a press finishes, and every drain would have read as a timeout |
+| X31 | The guardian watches Blueprint presses `sending` over 10 minutes, and a late kickoff's reply by its next turn (review fix) | A press whose run stopped part way had no notice, no alarm and no retry; a reply that waits on purpose would otherwise warn for hours |
+| X32 | A queued reply reads "Waiting for its first notice." only while the claim waits for that notice (queued, sending, or unknown under 30 minutes); otherwise a queued notice shows the sender's stored `error` when there is one (fit round, 2026-10-26) | After X19 a late kickoff's reply is requeued for up to 48 hours with its parent posted; Settings and every stop said it waited for a first notice that was already in Slack |
+| X33 | The claim skips a notice whose event is 48 hours old or more, with a plain reason (second review, 2026-10-26) | The 48-hour rule lived only where notices are queued; after an outage (no vault secret, the wrong bot requeueing forever) the whole backlog would post at once, with "20 minutes after the kickoff" days later |
+| X34 | A close's facts take the plan's own values from its journal when the press has no result, and the launch task from the Blueprint record (second review) | A close that settled to reconcile, or a stuck send settled by hand, writes no result: its media post lost the launch task link and could tell a live client that scripts can start |
+| X35 | The drain's due list leases each press it hands out for 10 minutes, a refusal lets it go, and a journal conflict in the drain is a skip (second review) | Drains run in the background past the next kick; two could prepare the same press, and the second's refusal could fail a press the first was about to run |
+| X36 | A failed press pressed again with its kept request ID is a new press under a new ID (second review) | Both browsers keep a press's ID until a run succeeds, and part_done returned the failed row for it, so after the drain failed a press it could never run again without an answer edit |
+| X37 | The sender's reasons on the team's screens name no secret, function or queue action; the doctor's keep them (second review) | "requeue this notice" and SLACK_BOT_TOKEN reached the CSM and the creative director word for word |
+| X38 | The kickoff window reads the card once when "Kickoff complete" posts while its card stops still wait; the fold's problem line leads with the action and wraps (second review) | The window said "Make has not updated the card" beside a posted complete notice until a focus or Check now; on a phone the summary cut off "the tech lead" |

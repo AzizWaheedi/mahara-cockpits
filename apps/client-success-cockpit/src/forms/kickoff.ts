@@ -45,7 +45,11 @@ export const KICKOFF: FormConfig = {
   ending: { book: "blueprint", label: "Book the Brand Blueprint call" },
   after: {
     say: "Kickoff sent. Make is updating the card. Book the Brand Blueprint call below.",
-    sub: "The team hears in #csm-general once the card is updated.",
+    doneSay:
+      "Kickoff sent. The card is updated. Book the Brand Blueprint call below.",
+    // Where it posts comes from the notice (Settings, Notices and routing),
+    // never from code (D17).
+    sub: where => `The team hears in ${where} once the card is updated.`,
     lateSay: {
       make: "Kickoff sent. Make has not updated the card yet.",
       typeform: "Kickoff sent. Typeform has not listed it yet.",
@@ -70,11 +74,11 @@ export const KICKOFF: FormConfig = {
       open: "Open the Brand Blueprint",
       href: taskId => blueprintPrepUrl(taskId),
     },
-    // The cockpit's own #csm-general notice (cockpit-notices), once Make
-    // has updated the card or 20 minutes have passed.
+    // The cockpit's own Slack notice (cockpit-notices), once Make has
+    // updated the card or 20 minutes have passed.
     notice: {
       kind: "kickoff",
-      pending: "The team hears in #csm-general",
+      pending: where => `The team hears in ${where}`,
       line: "Once Make has updated the card, usually within a few minutes.",
     },
   },

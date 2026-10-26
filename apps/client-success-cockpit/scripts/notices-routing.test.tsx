@@ -68,8 +68,14 @@ const { NoticesRouting, noticeSentence, joinWords } = await import(
 const { fakeNoticesIO, settingsReadFixture } = await import(
   "../src/dev/noticesFixtures"
 );
-const { NoticeError, readNoticeSettings, setNoticeSetting, readNotices } =
-  await import("../src/lib/notices");
+const {
+  NoticeError,
+  readNoticeSettings,
+  setNoticeSetting,
+  readNotices,
+  readProblem,
+  noticeStop,
+} = await import("../src/lib/notices");
 
 const hosts: { root: ReturnType<typeof createRoot> }[] = [];
 async function draw(el: any) {
@@ -89,6 +95,36 @@ const wait = (ms: number) =>
   act(async () => {
     await new Promise(r => setTimeout(r, ms));
   });
+// The card reads again on its own timer: wait for what that read shows, up
+// to two seconds, not a fixed time a busy machine can overrun.
+const waitFor = async (shown: () => boolean, ms = 2000) => {
+  for (const end = Date.now() + ms; !shown() && Date.now() < end; )
+    await wait(20);
+};
+// The sender's minute, held by the test: until release(), the card's own
+// re-reads (every 20 ms here) find what the last change left, so a busy
+// machine cannot post a test or finish a channel check between two steps.
+function heldIO(start: ReturnType<typeof settingsReadFixture>) {
+  const io = fakeNoticesIO(start, { settleAfterReads: 1 });
+  const { read, set, addChannel, removeChannel } = io;
+  let held = true;
+  let last = start;
+  const keep =
+    <A extends unknown[]>(f: (...a: A) => Promise<typeof start>) =>
+    async (...a: A) => {
+      last = await f(...a);
+      return last;
+    };
+  return Object.assign(io, {
+    read: () => (held ? Promise.resolve(last) : read()),
+    set: keep(set),
+    addChannel: keep(addChannel),
+    removeChannel: keep(removeChannel),
+    release: () => {
+      held = false;
+    },
+  });
+}
 const text = (el: any) => String(el?.textContent ?? "").replace(/\s+/g, " ");
 const row = (host: any, kind: string) =>
   host.querySelector(`li[data-kind="${kind}"]`);
@@ -140,8 +176,46 @@ describe("each notice reads as one sentence", () => {
     expect(noticeSentence(by("blueprint.offer"))).toBe(
       "Replies in the first notice's thread and tags the systems manager (nobody is in that seat).",
     );
+    // A named person reads as their role, as the Slack text names them,
+    // with what the sender's check says (X4); never a first name here.
     expect(noticeSentence(by("blueprint.close"))).toBe(
-      "Posts in #csm-general and tags the CSM and Rana, Project manager (no Slack account found, so named in plain text).",
+      "Posts in #csm-general and tags the CSM and the project manager (checking Slack).",
+    );
+    const close = by("blueprint.close");
+    const person = (slack: string, slackKnown = false) =>
+      noticeSentence({
+        ...close,
+        mentionRule: [],
+        mentionPeople: [{ ...close.mentionPeople[0], slack, slackKnown }],
+      });
+    expect(person("ok", true)).toBe(
+      "Posts in #csm-general and tags the project manager.",
+    );
+    expect(person("not_found")).toBe(
+      "Posts in #csm-general and tags the project manager (not found in Slack, so written as plain text).",
+    );
+    expect(person("unchecked")).toBe(
+      "Posts in #csm-general and tags the project manager (looked up in Slack when it posts).",
+    );
+    const seat = (t: Record<string, boolean>) =>
+      noticeSentence({
+        ...close,
+        mentionPeople: [],
+        tags: [
+          {
+            rule: "seat:csm",
+            found: true,
+            slackKnown: false,
+            checking: false,
+            ...t,
+          },
+        ],
+      });
+    expect(seat({ checking: true })).toBe(
+      "Posts in #csm-general and tags the CSM (checking Slack).",
+    );
+    expect(seat({})).toBe(
+      "Posts in #csm-general and tags the CSM (looked up in Slack when it posts).",
     );
     expect(joinWords(["a", "b", "c"])).toBe("a, b and c");
   });
@@ -183,8 +257,17 @@ describe("read only", () => {
     expect(text(row(host, "kickoff"))).toContain(
       "Changed by the systems manager",
     );
+    // One label, the stop's own; the lead in the warning tone, the reason plain.
     expect(text(row(host, "blueprint.close"))).toContain(
-      "Last: not posted in #csm-general: Slack refused it: mahara-club-bot is not in #csm-general. Invite it there, then ask the tech lead to requeue this notice.",
+      "Last: not posted in #csm-general. Slack says mahara-club-bot is not in that channel. Ask the tech lead to add it there and send the notice again.",
+    );
+    expect(
+      row(host, "blueprint.close").querySelector(".txt-warn")?.textContent,
+    ).toBe("not posted in #csm-general.");
+    // Staff by role for a viewer: no first name anywhere on the card.
+    expect(text(host)).not.toContain("Rana");
+    expect(text(row(host, "blueprint.close"))).toContain(
+      "the project manager (checking Slack)",
     );
     expect(text(row(host, "kickoff.updated"))).toContain(
       "No notice of this kind has gone out yet.",
@@ -218,6 +301,24 @@ describe("read only", () => {
       />,
     );
     expect(hidden.innerHTML).toBe("");
+    // On its own page (/notices, open to any seat) the refusal is said.
+    const page = await draw(
+      <NoticesRouting
+        standalone
+        io={{
+          ...fakeNoticesIO(settingsReadFixture()),
+          read: async () => {
+            throw new NoticeError(
+              "Current confirmed client-success or creative access is required",
+              "42501",
+            );
+          },
+        }}
+      />,
+    );
+    expect(text(page)).toContain(
+      "This page is for the client success and creative seats, and for anyone the CEO or an admin lets change notices. Ask the CEO if you need it.",
+    );
     const failed = await draw(
       <NoticesRouting
         io={{
@@ -228,15 +329,44 @@ describe("read only", () => {
         }}
       />,
     );
+    // One thing to do, and a cause in plain words, never the browser's.
     expect(text(failed)).toContain(
-      "The notice settings could not be read: Failed to fetch. Refresh the page; if it stays, tell the tech lead.",
+      "The notice settings could not be read: the cockpit could not reach the server. Read them again; if it stays, tell the tech lead.",
+    );
+    expect(text(failed)).not.toMatch(
+      /Failed to fetch|Refresh the page|Nothing was changed/,
     );
     expect(buttonIn(failed, "Read them again")).toBeTruthy();
+    // The cockpit's own reasons lose their advice here too.
+    expect(
+      readProblem(
+        new NoticeError(
+          "No connection. Nothing was changed; try again when you are back online.",
+        ),
+      ),
+    ).toBe("the cockpit could not reach the server");
+    expect(
+      readProblem(
+        new NoticeError(
+          "The Slack notices are not live in the cockpit yet. Tell the tech lead.",
+        ),
+      ),
+    ).toBe("the Slack notices are not live in the cockpit yet");
+    expect(
+      readProblem(
+        new NoticeError(
+          "The notice settings came back in a shape this page does not read. Refresh the page; if it stays, tell the tech lead.",
+        ),
+      ),
+    ).toBe("the server answered in a shape this page does not read");
+    expect(
+      readProblem(new Error("permission denied for function x. Ask.")),
+    ).toBe("permission denied for function x");
   });
 });
 
 describe("as an editor", () => {
-  test("the switch turns a notice off at once, and says the next notice uses it", async () => {
+  test("the switch turns a notice off at once, and says what the next one does", async () => {
     const read = settingsReadFixture();
     const io = fakeNoticesIO(read);
     const host = await draw(<NoticesRouting io={io} initial={read} />);
@@ -248,8 +378,34 @@ describe("as an editor", () => {
       fn: "set",
       args: ["kickoff", { on: false }],
     });
-    expect(toasts).toContain("Saved. The next notice uses it.");
+    expect(toasts).toContain(
+      'Turned off. The "Kickoff complete" notice does not post until it is on again.',
+    );
     expect(text(row(host, "kickoff"))).toContain("Off.");
+    await click(row(host, "kickoff").querySelector('[role="switch"]'));
+    await flush();
+    expect(toasts).toContain(
+      'Turned on. The next "Kickoff complete" notice posts.',
+    );
+    // A label with a comma of its own still reads as one name.
+    await click(row(host, "blueprint.media").querySelector('[role="switch"]'));
+    await flush();
+    expect(toasts).toContain(
+      'Turned off. The "Brand Blueprint completed, for media" notice does not post until it is on again.',
+    );
+    // Only a post row has a channel to change: the others' folds say who only.
+    const fold = (kind: string) =>
+      text(row(host, kind).querySelector("summary"));
+    expect(fold("kickoff")).toBe("Change where and who");
+    expect(fold("blueprint.media")).toBe("Change where and who");
+    for (const kind of [
+      "kickoff.late",
+      "kickoff.second",
+      "kickoff.updated",
+      "blueprint.updated",
+      "blueprint.offer",
+    ])
+      expect(fold(kind)).toBe("Change who");
     // The variant rows have no switch, and no test of their own.
     expect(
       row(host, "kickoff.late").querySelector('[role="switch"]'),
@@ -266,9 +422,15 @@ describe("as an editor", () => {
     const r = row(host, "kickoff");
     const save = () => buttonIn(r, "Save");
     expect(save().disabled).toBe(true);
+    expect(buttonIn(r, "Send a test to me").disabled).toBe(false);
+    expect(text(r)).not.toContain("Save first.");
     await click(buttonIn(r, "#media-general"));
     await click(buttonIn(r, "The CSM"));
     expect(save().disabled).toBe(false);
+    // The test is built from the saved row: with a change not saved, it
+    // waits, and says why.
+    expect(buttonIn(r, "Send a test to me").disabled).toBe(true);
+    expect(text(r)).toContain("Save first. The test uses the saved settings.");
     await click(save());
     await flush();
     expect(io.calls.at(-1)).toEqual({
@@ -301,7 +463,7 @@ describe("as an editor", () => {
 
   test("Send a test to me: on its way, then sent to your direct messages, or not sent and why", async () => {
     const read = settingsReadFixture();
-    const io = fakeNoticesIO(read, { settleAfterReads: 1 });
+    const io = heldIO(read);
     const host = await draw(
       <NoticesRouting io={io} initial={read} watchEveryMs={20} />,
     );
@@ -318,8 +480,12 @@ describe("as an editor", () => {
     expect(text(r)).toContain(
       "A test is already on its way. Wait for it, then send another.",
     );
-    // The card reads again on its own and finds the test posted.
-    await wait(80);
+    // The sender's minute comes: the card reads again on its own and finds
+    // the test posted.
+    io.release();
+    await waitFor(() =>
+      /Sent to your direct messages at \d\d:\d\d\./.test(text(r)),
+    );
     expect(text(r)).toMatch(/Sent to your direct messages at \d\d:\d\d\./);
 
     const notSent = await draw(
@@ -345,7 +511,7 @@ describe("as an editor", () => {
 
   test("channels: their checks, Add with the bot check, Remove refused while in use", async () => {
     const read = settingsReadFixture();
-    const io = fakeNoticesIO(read, { settleAfterReads: 1 });
+    const io = heldIO(read);
     const host = await draw(
       <NoticesRouting io={io} initial={read} watchEveryMs={20} />,
     );
@@ -378,7 +544,11 @@ describe("as an editor", () => {
     expect(text(host)).toContain(
       "Checking #ops-team: the cockpit makes sure mahara-club-bot is in it, within a minute.",
     );
-    await wait(80);
+    // The sender checks it on its next run.
+    io.release();
+    await waitFor(() =>
+      text(host).includes("Added. #ops-team is ready for a notice."),
+    );
     expect(text(host)).toContain("Added. #ops-team is ready for a notice.");
 
     const csm = Array.from(host.querySelectorAll("button")).find(
@@ -404,6 +574,14 @@ describe("as an editor", () => {
       fn: "setEditor",
       args: ["11111111-0000-4000-8000-000000000002", true],
     });
+    // What they can do now, and where: the page any seat opens.
+    expect(toasts).toContain(
+      "Added. They change these on the Notices and routing page.",
+    );
+    const page = Array.from(host.querySelectorAll("a")).find(
+      (a: any) => a.textContent === "Notices and routing page",
+    ) as any;
+    expect(page?.getAttribute("href")).toBe("/client-success/notices");
     const remove = Array.from(host.querySelectorAll("button")).find(
       (b: any) =>
         b.getAttribute("aria-label") === "Remove Hala, Systems manager",
@@ -421,6 +599,67 @@ describe("as an editor", () => {
     );
     expect(text(host2)).not.toContain("Who can change these");
     expect(buttonIn(host2, "Send a test to me")).toBeTruthy();
+  });
+});
+
+describe("where it lives", () => {
+  test("Notices and routing has a page every signed-in seat may open; the server decides what it shows", async () => {
+    const { readFileSync } = await import("node:fs");
+    const routes = readFileSync(
+      new URL(
+        "../src/auth/authenticated/AuthenticatedAppRoutes.tsx",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    // The wrappers around the /notices route, line by line (the file opens a
+    // wrapper as `<Route element={<X ...>}>` and closes it as `</Route>`).
+    const stack: string[] = [];
+    let around: string[] | null = null;
+    for (const line of routes.split("\n")) {
+      const open = line.match(/^\s*<Route element=\{<(\w+)[\s\S]*\}>\s*$/);
+      if (open) stack.push(open[1]);
+      else if (/^\s*<\/Route>\s*$/.test(line)) stack.pop();
+      if (line.includes('path="/notices"')) around = [...stack];
+    }
+    // Signed in, in the shared shell, and no role gate: a forms editor may hold any role.
+    expect(around).toEqual(["ProtectedRoute", "BillingReviewLayout"]);
+    // The CSM pages keep theirs.
+    expect(routes).toMatch(
+      /<RoleRoute role="csm" \/>\}>\s*\{\/\*[\s\S]*?path="\/settings"/,
+    );
+    expect(routes).toContain("<NoticesPage />");
+    const page = readFileSync(
+      new URL("../src/pages/NoticesPage.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(page).toContain("<NoticesRouting standalone />");
+    // The page has its own h1, as every page in the shell does; the card
+    // under it does not repeat the title.
+    const { NoticesPage } = await import("../src/pages/NoticesPage");
+    const shell = await draw(<NoticesPage />);
+    expect(shell.querySelectorAll("h1").length).toBe(1);
+    expect(text(shell.querySelector("h1"))).toBe("Notices and routing");
+    const alone = await draw(
+      <NoticesRouting
+        standalone
+        io={fakeNoticesIO(settingsReadFixture())}
+        initial={settingsReadFixture()}
+      />,
+    );
+    expect(alone.querySelector("h2#notices-title")).toBeNull();
+    expect(
+      alone.querySelector("section")?.getAttribute("aria-labelledby"),
+    ).toBe("notices-page-title");
+    const onSettings = await draw(
+      <NoticesRouting
+        io={fakeNoticesIO(settingsReadFixture())}
+        initial={settingsReadFixture()}
+      />,
+    );
+    expect(text(onSettings.querySelector("h2#notices-title"))).toBe(
+      "Notices and routing",
+    );
   });
 });
 
@@ -492,5 +731,36 @@ describe("the RPC clients", () => {
         "86fixture1",
       ),
     ).rejects.toThrow("came back in a shape this page does not read");
+  });
+});
+
+describe("the reply label", () => {
+  test("a reply says Reply posted only when it went in a thread; one whose first notice did not post says Posted", () => {
+    const now = "2026-10-25T11:30:00.000Z";
+    const base = {
+      id: "33333333-0000-4000-8000-000000000001",
+      kind: "blueprint.offer",
+      state: "posted",
+      responseId: null,
+      outboxId: null,
+      parentKind: "blueprint.close",
+      channel: { id: "C09RZ0GS0V9", name: "csm-general" },
+      at: "2026-10-25T11:03:00.000Z",
+      dueAt: null,
+      permalink: "https://example-team.slack.com/archives/C09RZ0GS0V9/p1",
+      reason: null,
+    } as const;
+    expect(noticeStop({ ...base, variant: "thread" } as any, now).text).toBe(
+      "Reply posted in #csm-general at 14:03",
+    );
+    expect(noticeStop({ ...base, variant: "top" } as any, now).text).toBe(
+      "Posted in #csm-general at 14:03",
+    );
+    expect(
+      noticeStop(
+        { ...base, kind: "kickoff.updated", variant: "top" } as any,
+        now,
+      ).text,
+    ).toBe("Posted in #csm-general at 14:03");
   });
 });

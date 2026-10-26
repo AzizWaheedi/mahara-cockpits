@@ -11,10 +11,11 @@
  * queue (or fails, with no token at all) with a sentence for the tech lead.
  */
 import { checkChannel, recordChannel } from "./doctor.ts";
-import { cachedLookup, type ClaimMentions, type Mention, mentionsFor, resolveMentions } from "./mentions.ts";
+import { cachedLookup, type ClaimMentions, type Mention, mentionsFor, type PersonLooked, resolveMentions } from "./mentions.ts";
 import { findRef, readUnknown, reconcileUnknowns } from "./reconcile.ts";
 import {
-  botGate, type ClaimedRow, type Gate, kickoffComment, type NoticeDeps, pickVariant, readClaimed, sendClaimed, sendContext, type SendResult, settleAll, slackFor,
+  botGate, type ClaimedRow, type Gate, kickoffComment, type NoticeDeps, pickVariant, readClaimed, rememberPeople, sendClaimed, sendContext, type SendResult, settleAll,
+  slackFor,
 } from "./send.ts";
 import { isNoticeKind, isVariantOf, type NoticeKind, noticeText, type SlackBlock, type Variant } from "./text.ts";
 
@@ -22,6 +23,8 @@ export type RunResult = {
   ok: boolean;
   swept: Record<string, number>;
   channels: number;
+  /** People an editor tagged, checked in Slack by their address this run. */
+  people: number;
   reconciled: number;
   claimed: number;
   posted: number;
@@ -36,6 +39,17 @@ export type RunResult = {
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const say = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message.slice(0, 240) : fallback);
 const SPACING_MS = 1000;
+/**
+ * At most three notices a run (the minute kick brings the rest), and no new
+ * post after a minute of work: one notice can take a ClickUp read (25 s at
+ * worst) and a post and a permalink (15 s each), and the Edge wall clock
+ * stops a background run at 150 s. A claimed row not reached in time goes
+ * back to the queue (not an attempt), so it never sits in `sending` until the
+ * sweep calls it unknown for a person to find (as meta-ad-days budgets 110 s).
+ */
+export const CLAIM_LIMIT = 3;
+export const RUN_BUDGET_MS = 60_000;
+export const OUT_OF_TIME = "The run ran out of time before posting it; the next run sends it.";
 
 /** The bot check, made at most once per run and only when something needs Slack. */
 function lazyGate(deps: NoticeDeps, token: string, runKey: string): () => Promise<Gate> {
@@ -44,10 +58,12 @@ function lazyGate(deps: NoticeDeps, token: string, runKey: string): () => Promis
 }
 
 export async function runNotices(deps: NoticeDeps): Promise<RunResult> {
-  const result: RunResult = { ok: true, swept: {}, channels: 0, reconciled: 0, claimed: 0, posted: 0, requeued: 0, retried: 0, failed: 0, unknown: 0 };
+  const result: RunResult = { ok: true, swept: {}, channels: 0, people: 0, reconciled: 0, claimed: 0, posted: 0, requeued: 0, retried: 0, failed: 0, unknown: 0 };
   const token = deps.slackToken().trim();
   const gate = lazyGate(deps, token, "run");
   const stop = (note: string, ok = false) => ({ ...result, ok, note });
+  const started = deps.now().getTime();
+  const late = () => deps.now().getTime() - started > RUN_BUDGET_MS;
 
   // 1. The sweep: stuck sends become unknown, anything the triggers missed is queued.
   try {
@@ -73,6 +89,27 @@ export async function runNotices(deps: NoticeDeps): Promise<RunResult> {
     result.note = `The channel check failed: ${say(e, "no answer")}`;
   }
 
+  // 2b. People an editor tagged: does Slack know their address (contract X4)?
+  try {
+    const pending = await deps.rpc("cockpit_slack_person_pending", {});
+    const list = (Array.isArray(pending) ? pending : []).filter(isObj)
+      .filter(p => typeof p.personId === "number" && typeof p.email === "string" && p.email);
+    if (list.length && token && (await gate()).ok) {
+      const slack = slackFor(deps, token, "run");
+      const looked: PersonLooked[] = [];
+      for (const p of list) {
+        const found = await slack.lookupByEmail(String(p.email));
+        // No answer: it stays checking for the next run.
+        if (found.state === "unknown") continue;
+        looked.push({ personId: Number(p.personId), state: found.state, slackId: found.state === "ok" ? found.id : null, code: found.state === "refused" ? found.code : null });
+      }
+      result.people = await rememberPeople(deps, looked);
+    }
+  } catch (e) {
+    result.ok = false;
+    result.note = `The people check failed: ${say(e, "no answer")}`;
+  }
+
   // 3. Reconcile: find unknowns in Slack by their Ref; never resend.
   try {
     const raw = await deps.rpc("cockpit_slack_notice_unknowns", { p_limit: 10 });
@@ -83,10 +120,11 @@ export async function runNotices(deps: NoticeDeps): Promise<RunResult> {
     result.note = `The reconcile failed: ${say(e, "no answer")}`;
   }
 
-  // 4. Claim.
+  // 4. Claim, while there is time to post what is claimed.
+  if (late()) return stop("The run ran out of time before the claim; the next run sends what is due.", result.ok);
   let rows: ClaimedRow[];
   try {
-    const claim = await deps.rpc("cockpit_slack_notice_claim", { p_limit: 10 });
+    const claim = await deps.rpc("cockpit_slack_notice_claim", { p_limit: CLAIM_LIMIT });
     if (isObj(claim) && claim.busy === true) return { ...result, busy: true, note: "Another run holds the notices; this one stopped." };
     rows = (isObj(claim) && Array.isArray(claim.rows) ? claim.rows : []).map(readClaimed).filter((r): r is ClaimedRow => !!r);
   } catch (e) {
@@ -102,9 +140,14 @@ export async function runNotices(deps: NoticeDeps): Promise<RunResult> {
     return stop(g.error);
   }
 
-  // 6. One row at a time, about a second apart.
+  // 6. One row at a time, about a second apart, none started after the budget.
   const ctx = sendContext(deps, token);
   for (const [i, row] of rows.entries()) {
+    if (late()) {
+      tally(result, await settleAll(deps, rows.slice(i), { ok: false, outcome: "requeue", error: OUT_OF_TIME, retryAfterSec: 30, userId: null }));
+      result.note = result.note ?? OUT_OF_TIME;
+      break;
+    }
     if (i > 0) await deps.sleep(SPACING_MS);
     let out: SendResult;
     try {
@@ -170,8 +213,9 @@ export async function runDryRun(deps: NoticeDeps, job: DryRunJob): Promise<DryRu
   if (kind === "kickoff") {
     const check = await kickoffComment(deps, taskId, String(facts.submittedAt ?? ""), "dry-run");
     commentCheck = check.state;
-    variant = asked ?? (check.state === "found" ? "complete" : "late");
-    sendFacts = { commentCheck: check.state, handoffAt: check.state === "found" ? check.at : null, filledByRole: typeof live.filledByRole === "string" ? live.filledByRole : null };
+    // As the sender: complete needs the comment and the card at the Brand Blueprint stage.
+    variant = asked ?? (check.state === "found" && live.looksDone === true ? "complete" : "late");
+    sendFacts = { commentCheck: check.state, handoffAt: check.state === "found" ? check.at : null, filledByRole: typeof live.filledByRole === "string" ? live.filledByRole : null, looksDone: live.looksDone === true };
   } else {
     variant = asked ?? pickVariant(kind, facts, live, threadTs);
   }

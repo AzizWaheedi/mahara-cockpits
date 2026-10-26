@@ -52,6 +52,9 @@ export const isVariantOf = (kind: NoticeKind, v: unknown): v is Variant => typeo
 // ------------------------------------------------------------------ small helpers
 
 const SLACK_ID = /^[UW][A-Z0-9]{8,12}$/;
+/** The card stages with or after Brand Blueprint Booked (formStatus.ts BLUEPRINT_ON, flag i). */
+const BLUEPRINT_ON = /brand blueprint booked|launch booked|ready for launch|^\s*active\s*$/i;
+const ACTIVE = /^\s*active\s*$/i;
 const TASK_ID = /^[A-Za-z0-9_-]{1,40}$/;
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -186,13 +189,21 @@ function kickoff(variant: Variant, f: NoticeFacts, who: Who): Built {
     return { text: `Kickoff complete: ${client}. Next is the Brand Blueprint call.`, lines, links, inline: false, footer: "Client success", placed: true };
   }
   const unread = f.commentCheck === "unread";
+  // The comment is there but the card is not at the Brand Blueprint stage:
+  // Make broke after its first step (the card update, module 21, comes later).
+  const commented = f.commentCheck === "found";
+  const status = cleanStatus(str(f.clientStatus));
   const lines = [
     `*Kickoff in, card not updated: ${client}*`,
     filledLine(f),
     tail(
-      unread
-        ? "The cockpit could not read the card's comments 20 minutes after the kickoff. Open the card and check it for the Kickoff Handoff comment. Do not send the kickoff again."
-        : "The card has no Kickoff Handoff comment 20 minutes after the kickoff. Open the card and check it. Do not send the kickoff again.",
+      commented
+        ? BLUEPRINT_ON.test(status)
+          ? "The Kickoff Handoff comment is on the card, but the cockpit has not seen the card change since the kickoff. Open the card and check it. Do not send the kickoff again."
+          : `The Kickoff Handoff comment is on the card, but 20 minutes after the kickoff the card shows ${status ? escapeSlack(status) : "no client status"}, not Brand Blueprint Booked. Open the card and check it. Do not send the kickoff again.`
+        : unread
+          ? "The cockpit could not read the card's comments 20 minutes after the kickoff. Open the card and check it for the Kickoff Handoff comment. Do not send the kickoff again."
+          : "The card has no Kickoff Handoff comment 20 minutes after the kickoff. Open the card and check it. Do not send the kickoff again.",
       who,
     ),
   ];
@@ -200,15 +211,20 @@ function kickoff(variant: Variant, f: NoticeFacts, who: Who): Built {
   return { text: `Kickoff in, card not updated: ${client}. Open the card and check it.`, lines, links, inline: false, footer: "Client success", placed: true };
 }
 
+// Posted only once the card has both what the late notice missed: the
+// Kickoff Handoff comment (the sender checks it) and the Brand Blueprint stage.
 function kickoffUpdated(variant: Variant, f: NoticeFacts): Built {
   const at = str(f.cardUpdatedAt);
+  const status = cleanStatus(str(f.clientStatus));
+  const caught = `It has the Kickoff Handoff comment${status ? ` and shows ${escapeSlack(status)}` : ""}.`;
   if (variant === "thread") {
-    return { text: `Card updated at ${kuwaitClock(at)}.`, lines: [`Card updated at ${kuwaitClock(at)}.`], links: [], inline: false, footer: null, placed: false };
+    const line = `Card updated at ${kuwaitClock(at)}. ${caught}`;
+    return { text: line, lines: [line], links: [], inline: false, footer: null, placed: false };
   }
   const client = escapeSlack(f.client);
   return {
     text: `Kickoff card updated: ${client}, at ${kuwaitWhen(at)}.`,
-    lines: [`*Kickoff card updated: ${client}*`, `Card updated at ${kuwaitWhen(at)}.`],
+    lines: [`*Kickoff card updated: ${client}*`, `Card updated at ${kuwaitWhen(at)}. ${caught}`],
     links: [{ url: noticeLinks(f.taskId).cockpit, words: "Open in the cockpit" }],
     inline: false,
     footer: "Client success",
@@ -239,15 +255,30 @@ function close(variant: Variant, f: NoticeFacts, who: Who): Built {
     };
   }
   const phase = Number(f.mapPhase);
+  const past5 = Number.isInteger(phase) && phase >= 5;
+  const closedBy = `Closed by ${role(f.closedByRole, "the creative director")} on ${kuwaitWhen(str(f.closedAt))}.`;
+  // A client already live (the map past phase 4, or the card Active): the
+  // same rule as the media notice's live variant, so the two posts agree.
+  if (past5 || ACTIVE.test(str(f.clientStatus))) {
+    return {
+      text: `Brand Blueprint complete: ${client}. The client is already live.`,
+      lines: [
+        `*Brand Blueprint complete: ${client}*`,
+        `${closedBy} The client is already live, so nothing new starts from this close.`,
+        past5
+          ? lead(`next: the Onboarding Map is already at phase ${phase}, so there is no phase 5 WhatsApp to send and no launch call to book.`, who)
+          : lead("next: there is no launch call to book. Check the card before you send the phase 5 WhatsApp from your comment.", who),
+      ],
+      links, inline: false, footer: "Client success", placed: true,
+    };
+  }
   const launchAt = str(f.launchCallAt);
   return {
     text: `Brand Blueprint complete: ${client}. Next is the launch call.`,
     lines: [
       `*Brand Blueprint complete: ${client}*`,
-      `Closed by ${role(f.closedByRole, "the creative director")} on ${kuwaitWhen(str(f.closedAt))}. Scripts and custom creative can start.`,
-      Number.isInteger(phase) && phase >= 5
-        ? lead(`next: the Onboarding Map is already at phase ${phase}, so there is no phase 5 WhatsApp to send.`, who)
-        : lead("next: send the phase 5 WhatsApp from your comment on the card, then book the launch call.", who),
+      `${closedBy} Scripts and custom creative can start.`,
+      lead("next: send the phase 5 WhatsApp from your comment on the card, then book the launch call.", who),
       launchAt && kuwait(launchAt) ? `Launch call booked for ${kuwaitWhen(launchAt)}.` : "Launch call not booked yet.",
     ],
     links, inline: false, footer: "Client success", placed: true,

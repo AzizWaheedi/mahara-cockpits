@@ -21,6 +21,7 @@ import {
   noAccess,
   noticeStop,
   readNoticeSettings,
+  readProblem,
   rehearseNotice,
   removeSlackChannel,
   SEAT_LABEL,
@@ -111,6 +112,15 @@ export const NOTICE_ROWS: Record<
 };
 
 const SAVED = "Saved. The next notice uses it.";
+/** Beside a disabled test while the fold holds a change: the test is built from the saved row. */
+const SAVE_FIRST = "Save first. The test uses the saved settings.";
+/** The page an editor of any seat opens (AuthenticatedAppRoutes, /notices). */
+export const NOTICES_PAGE = "/client-success/notices";
+/** The id of that page's h1, which labels the card there. */
+export const NOTICES_PAGE_TITLE = "notices-page-title";
+/** What the card is, under its title (on Settings) or the page's h1. */
+export const NOTICES_SUB =
+  "Where the cockpit posts in Slack when a kickoff or a Brand Blueprint is done, and who it tags. A change applies to the next notice.";
 const TEST_SENT =
   "Test on its way. It reaches your Slack direct messages within a minute.";
 const CHANNEL_ID = /^[CG][A-Z0-9]{8,12}$/;
@@ -131,21 +141,37 @@ export function joinWords(list: string[]): string {
 const channelName = (c: { id: string; name: string | null }) =>
   c.name ? `#${c.name}` : c.id;
 
-/** Who a row tags, in words: "the CSM (nobody is in that seat)". */
+/**
+ * What the next notice does with someone who has no Slack ID yet, from the
+ * sender's check (contract X4): it is checking now, Slack did not find
+ * them, or it looks them up by address when it posts.
+ */
+function slackNote(state: string): string | null {
+  if (state === "ok") return null;
+  if (state === "checking") return "checking Slack";
+  if (state === "not_found" || state === "refused")
+    return "not found in Slack, so written as plain text";
+  return "looked up in Slack when it posts";
+}
+
+/**
+ * Who a row tags, in words. Everyone is named by role, as the Slack text
+ * names them ("the CSM (nobody is in that seat)", "the project manager
+ * (checking Slack)"); first names appear only in an editor's picker.
+ */
 export function tagWords(n: NoticeSetting): string[] {
   const seats = n.mentionRule.map(rule => {
     const label = SEAT_LABEL[rule as SeatRule] ?? rule;
     const t = n.tags.find(x => x.rule === rule);
     if (t && !t.found) return `${label} (nobody is in that seat)`;
     if (t && !t.slackKnown)
-      return `${label} (no Slack account found, so named in plain text)`;
+      return `${label} (${t.checking ? "checking Slack" : "looked up in Slack when it posts"})`;
     return label;
   });
-  const people = n.mentionPeople.map(p =>
-    p.slackKnown
-      ? p.label
-      : `${p.label} (no Slack account found, so named in plain text)`,
-  );
+  const people = n.mentionPeople.map(p => {
+    const note = slackNote(p.slackKnown ? "ok" : p.slack);
+    return note ? `${p.role} (${note})` : p.role;
+  });
   return [...seats, ...people];
 }
 
@@ -182,6 +208,7 @@ export function NoticesRouting({
   io: given,
   initial,
   watchEveryMs = WATCH_EVERY_MS,
+  standalone = false,
 }: {
   /** Stand-ins for the harness and the tests. */
   io?: NoticesIO;
@@ -189,6 +216,11 @@ export function NoticesRouting({
   initial?: SettingsRead;
   /** How often the card reads again after a test or a new channel (tests shorten it). */
   watchEveryMs?: number;
+  /**
+   * On its own page (/notices, open to every seat): a seat the server does
+   * not let in is told so, instead of seeing nothing.
+   */
+  standalone?: boolean;
 }) {
   const auth = useCockpitAuth();
   const io = useMemo<NoticesIO | null>(
@@ -210,7 +242,7 @@ export function NoticesRouting({
       setRead(await io.read());
     } catch (e) {
       // A seat with no right to see notices sees nothing here.
-      setRead(noAccess(e) ? { hidden: true } : { error: words(e) });
+      setRead(noAccess(e) ? { hidden: true } : { error: readProblem(e) });
     }
   }, [io]);
 
@@ -232,41 +264,58 @@ export function NoticesRouting({
   }, [watching, watchUntil, io, watchEveryMs]);
   const watch = () => setWatchUntil(Date.now() + WATCH_FOR_MS);
 
-  if (!io || (read && "hidden" in read)) return null;
+  if (!io) return null;
+  // On its own page the page's h1 (NoticesPage) names the card and says what
+  // it is, so the card drops its own title and line and is labelled by it.
+  const labelledBy = standalone ? NOTICES_PAGE_TITLE : "notices-title";
+  if (read && "hidden" in read)
+    return standalone ? (
+      <section
+        aria-labelledby={labelledBy}
+        className="rounded-2xl border bg-card p-4 sm:p-6"
+      >
+        <p className="text-sm text-muted-foreground">
+          This page is for the client success and creative seats, and for anyone
+          the CEO or an admin lets change notices. Ask the CEO if you need it.
+        </p>
+      </section>
+    ) : null;
 
   return (
     <section
-      aria-labelledby="notices-title"
+      aria-labelledby={labelledBy}
       className="rounded-2xl border bg-card p-4 sm:p-6"
     >
-      <h2
-        id="notices-title"
-        className="flex items-center gap-2 text-[15px] font-semibold"
-      >
-        <BellRing className="size-4 text-muted-foreground" aria-hidden />
-        Notices and routing
-      </h2>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Where the cockpit posts in Slack when a kickoff or a Brand Blueprint is
-        done, and who it tags. A change applies to the next notice.
-      </p>
+      {standalone ? null : (
+        <>
+          <h2
+            id="notices-title"
+            className="flex items-center gap-2 text-[15px] font-semibold"
+          >
+            <BellRing className="size-4 text-muted-foreground" aria-hidden />
+            Notices and routing
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">{NOTICES_SUB}</p>
+        </>
+      )}
 
       {read === null ? (
         <p className="mt-4 text-sm text-muted-foreground" role="status">
           Reading the notice settings…
         </p>
       ) : "error" in read ? (
+        // One thing to do: read again, then the tech lead. The cause is a
+        // short clause with no advice of its own (readProblem).
         <p role="alert" className="mt-4 text-sm">
-          The notice settings could not be read:{" "}
-          {read.error.replace(/\.\s*$/, "")}. Refresh the page; if it stays,
-          tell the tech lead.{" "}
+          The notice settings could not be read: {read.error}.{" "}
           <button
             type="button"
             onClick={() => void reload()}
-            className="text-primary-ink underline-offset-4 hover:underline"
+            className="font-medium text-primary-ink underline underline-offset-4"
           >
             Read them again
           </button>
+          ; if it stays, tell the tech lead.
         </p>
       ) : (
         <Body
@@ -401,7 +450,14 @@ function NoticeRow({
     setSwitchError(null);
     try {
       onRead(await io.set(n.kind, { on }));
-      toast.success(SAVED);
+      // The switch saves at once, so it says what the next one does.
+      // The label in quotes: "Brand Blueprint completed, for media" has a
+      // comma of its own, and the sentence must still parse.
+      toast.success(
+        on
+          ? `Turned on. The next "${meta.label}" notice posts.`
+          : `Turned off. The "${meta.label}" notice does not post until it is on again.`,
+      );
     } catch (e) {
       setSwitchError(words(e));
     } finally {
@@ -477,23 +533,32 @@ function LastStop({ n, now }: { n: NoticeSetting; now: string }) {
         No notice of this kind has gone out yet.
       </p>
     );
+  // "Reply posted" comes from the post itself (in a thread or not), never
+  // from the row's shape: a reply whose first notice did not post goes top level.
   const stop = noticeStop(n.last, now, {
-    reply: n.shape === "reply",
     offLine: "Not posted: it was off in Settings.",
   });
-  const text = stop.text.charAt(0).toLowerCase() + stop.text.slice(1);
+  const lower = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
+  // A stop that needs a person: the lead in the warning tone, the reason as a
+  // plain sentence after it (the kickoff trail's treatment).
+  const lead = stop.lead && stop.text.startsWith(stop.lead) ? stop.lead : null;
   return (
-    <p
-      className={cn(
-        "flex gap-1.5 text-xs",
-        stop.tone === "warn" ? "txt-warn" : "text-muted-foreground",
-      )}
-    >
-      <span className="mt-[5px] flex">
+    <p className="flex gap-1.5 text-xs text-muted-foreground">
+      <span className="mt-[5px] flex self-start">
         <Dot tone={stop.tone} />
       </span>
       <span className="min-w-0">
-        Last: {text}
+        Last:{" "}
+        {lead ? (
+          <>
+            <span className="txt-warn font-medium">{lower(lead)}</span>
+            <span className="text-foreground">
+              {stop.text.slice(lead.length)}
+            </span>
+          </>
+        ) : (
+          lower(stop.text)
+        )}
         {stop.href ? (
           <>
             {" "}
@@ -615,7 +680,9 @@ function Change({
           aria-hidden
           className="size-3.5 transition-transform group-open/change:rotate-90"
         />
-        Change where and who
+        {/* Only a post row has a channel to choose; replies and the kickoff's
+            variant lines choose tags only. */}
+        {n.shape === "post" ? "Change where and who" : "Change who"}
       </summary>
       <div className="mt-3 space-y-4 border-l pl-3">
         {n.shape === "post" ? (
@@ -732,13 +799,24 @@ function Change({
             <Button
               size="sm"
               variant="outline"
-              disabled={testing}
+              // The test is built on the server from the saved row, never
+              // from this draft: testing an unsaved change would mislead.
+              disabled={testing || dirty}
+              aria-describedby={dirty ? `${n.kind}-test-saved` : undefined}
               onClick={() => void test()}
             >
               {testing ? "Sending the test…" : "Send a test to me"}
             </Button>
           )}
         </div>
+        {dirty && n.shape !== "variant" ? (
+          <p
+            id={`${n.kind}-test-saved`}
+            className="text-xs text-muted-foreground"
+          >
+            {SAVE_FIRST}
+          </p>
+        ) : null}
         {testError ? (
           <p role="alert" className="txt-bad text-xs">
             {testError}
@@ -1023,7 +1101,7 @@ function Editors({
       onRead(await io.setEditor(memberId, on));
       toast.success(
         on
-          ? "Added. They can change notices and routing now."
+          ? "Added. They change these on the Notices and routing page."
           : "Removed. They can no longer change notices and routing.",
       );
     } catch (e) {
@@ -1039,6 +1117,16 @@ function Editors({
       <p className="text-sm">
         The CEO, admins, and{" "}
         {read.editors.length ? "these seats:" : "nobody else yet."}
+      </p>
+      <p className="text-xs text-muted-foreground">
+        Someone added here opens the{" "}
+        <a
+          href={NOTICES_PAGE}
+          className="text-primary-ink underline-offset-4 hover:underline"
+        >
+          Notices and routing page
+        </a>{" "}
+        from any seat, whatever their role.
       </p>
       {read.editors.length ? (
         <ul className="flex flex-wrap gap-1.5">

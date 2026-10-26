@@ -76,6 +76,23 @@ test("the phase 5 copy: after the close, never while Make sends it", () => {
   expect(phase5Copy(args(status(closed, "make")))).toBeNull();
   // The setting could not be read: no copy, rather than a second WhatsApp.
   expect(phase5Copy(args(status(closed, null)))).toBeNull();
+  // A client the first close found already past phase 5 (X11): no paste.
+  // The current map link says phase 5 after every normal close, so the gate
+  // is the close's own record, not the link.
+  expect(
+    phase5Copy(
+      args({ ...status(closed, "card_only"), closeMapSkipped: true } as never),
+    ),
+  ).toBeNull();
+  expect(
+    phase5Copy({
+      ...args(status(closed, "card_only")),
+      links: {
+        onboarding_map:
+          "https://mahara-onboarding-map.vercel.app/?phase=5&cid=x",
+      },
+    }),
+  ).not.toBeNull();
   const copy = phase5Copy(args(status(closed, "slack")));
   if (PHASE5_WHATSAPP === null) {
     // Until Make 14's text is copied in, the map link is what is pasted.
@@ -85,7 +102,7 @@ test("the phase 5 copy: after the close, never while Make sends it", () => {
       note: "The phase 5 text is not in the cockpit yet. Send the usual phase 5 message with this map link.",
     });
   } else {
-    expect(copy?.label).toBe("Copy the phase 5 message for the group");
+    expect(copy?.label).toBe("Copy the phase 5 message");
     expect(copy?.text).toContain(`?phase=5&cid=${TASK}`);
     expect(copy?.text).toContain("1ExampleFolder00001");
   }
@@ -113,6 +130,7 @@ test("the read: the card's row and the close switch; a failed setting is no copy
                 clientName: "Example",
                 answers: { method: "never shown here" },
                 parts: { "1": { firstAt: NOW, lastAt: NOW, sent: {} } },
+                closeMapSkipped: false,
               },
             ],
             now: NOW,
@@ -153,6 +171,38 @@ test("the read: the card's row and the close switch; a failed setting is no copy
     TASK,
   );
   expect(none.parts).toBeNull();
+  // The read carries the first close's map skip from cockpit_blueprint_json.
+  const skipped = await readBlueprintStatus(
+    {
+      rpc: async (name: string) =>
+        name === "cockpit_blueprint_read"
+          ? {
+              data: {
+                rows: [
+                  {
+                    taskId: TASK,
+                    clientName: "Example",
+                    parts: { "2": { firstAt: NOW } },
+                    closeMapSkipped: true,
+                  },
+                ],
+                now: NOW,
+              },
+              error: null,
+            }
+          : { data: { closeRoute: "card_only" }, error: null },
+    } as never,
+    TASK,
+  );
+  expect(skipped.closeMapSkipped).toBe(true);
+  expect(
+    phase5Copy({
+      taskId: TASK,
+      clientName: "Example",
+      status: skipped,
+      links: {},
+    }),
+  ).toBeNull();
   await expect(
     readBlueprintStatus(
       {
@@ -237,10 +287,10 @@ test("the nudge: a held Blueprint call, before launch, and no close", () => {
 
 test("the nudge's sentence: the call's day on Kuwait's calendar, and what to do", () => {
   expect(nudgeLine("2026-10-18T10:00:00Z")).toBe(
-    "Blueprint call held Sun 18 Oct. No Blueprint record yet. Open the call page.",
+    "Blueprint call held Sun 18 Oct. No Blueprint record yet. Ask the creative director to close the call.",
   );
   // 22:30 UTC is already the next day in Kuwait.
   expect(nudgeLine("2026-10-17T22:30:00Z")).toBe(
-    "Blueprint call held Sun 18 Oct. No Blueprint record yet. Open the call page.",
+    "Blueprint call held Sun 18 Oct. No Blueprint record yet. Ask the creative director to close the call.",
   );
 });

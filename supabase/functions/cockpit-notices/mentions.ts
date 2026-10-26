@@ -88,30 +88,51 @@ export function cachedLookup(lookup: Lookup): Lookup {
   };
 }
 
+/** What Slack said about one person on the team list, for cockpit_slack_person_checked. */
+export type PersonLooked = { personId: number; state: "ok" | "not_found" | "refused"; slackId: string | null; code: string | null };
+
 export type Resolved = {
   tags: TextMention[];
   report: { rule: string; label: string; tagged: boolean }[];
   /** Mentions that go out as plain text: no Slack id, or a rule that found nobody. */
   unresolved: number;
+  /** The team-list people looked up by address here, with Slack's answer (an unknown answer is left out). */
+  looked: PersonLooked[];
 };
 
 /** Fill missing Slack ids by email (when a lookup is given); anything still without one is its role label in plain text. */
 export async function resolveMentions(mentions: Mention[], lookup: Lookup | null): Promise<Resolved> {
   const tags: TextMention[] = [];
   const report: Resolved["report"] = [];
+  const looked: PersonLooked[] = [];
   let unresolved = 0;
   for (const m of mentions) {
     let id = m.slackId ?? null;
     if (!id && !m.missing && m.email && lookup) {
       const found = await lookup(m.email);
       if (found.state === "ok") id = found.id;
+      if (typeof m.personId === "number" && found.state !== "unknown" && !looked.some(x => x.personId === m.personId)) {
+        looked.push({
+          personId: m.personId,
+          state: found.state,
+          slackId: found.state === "ok" ? found.id : null,
+          code: found.state === "refused" ? found.code : null,
+        });
+      }
     }
     const label = labelOf(m);
     if (!id) unresolved += 1;
     tags.push({ label, slackId: id });
     report.push({ rule: m.rule, label, tagged: !!id });
   }
-  return { tags, report, unresolved };
+  return { tags, report, unresolved, looked };
+}
+
+/** The plain sentence a person check records, by Slack's answer. */
+export function personNote(p: Pick<PersonLooked, "state" | "code">): string {
+  if (p.state === "ok") return "Found in Slack by the address on the team list.";
+  if (p.state === "not_found") return "Slack has no member with the address on the team list, so the notice writes the role in plain text.";
+  return `Slack would not look the address up (${String(p.code ?? "no code").replace(/[^a-z0-9_]/g, "").slice(0, 60)}). The tech lead checks the app's users:read.email permission.`;
 }
 
 /** For a test post: who it would tag, as plain labels. */

@@ -27,10 +27,10 @@ class ClickUp{
 }
 // The service client: from(table).insert/update with eq/neq/select/single, and rpc(name, args).
 class Service{
- outbox=new Map<string,Row>();journal=new Map<string,Row>();health:Row[]=[];rpcs:Row[]=[];updates:Row[]=[];gateLost=false;beforeLoad?:(id:string)=>void;
+ outbox=new Map<string,Row>();journal=new Map<string,Row>();health:Row[]=[];rpcs:Row[]=[];updates:Row[]=[];gateLost=false;journalFails=false;beforeLoad?:(id:string)=>void;beforeJournal?:(id:string)=>void;
  press(id:string,ageMin:number,extra:Row={}){
   const payload={v:1,part:3,press:1,card:{id:CARD,name:'Acme Interiors'},answers:{offer:{name:'The Site Visit (example)',what:'A measured plan',firstStep:'A free visit'}},previous:null,launchTaskId:null,sentBy:'Dana',dna_status:'complete'};
-  this.outbox.set(id,{id,client_name:'Acme Interiors',kind:'blueprintOffer',task_id:CARD,payload,actor_id:PRESSER,actor_email:'cd-a@tests.invalid',state:'pending',result:null,error:null,attempts:0,created_at:new Date(Date.now()-ageMin*MIN).toISOString(),settled_at:null,...extra});
+  this.outbox.set(id,{id,client_name:'Acme Interiors',kind:'blueprintOffer',task_id:CARD,payload,actor_id:PRESSER,actor_email:'cd-a@tests.invalid',state:'pending',result:null,error:null,attempts:0,drain_until:null,created_at:new Date(Date.now()-ageMin*MIN).toISOString(),settled_at:null,...extra});
   return this.outbox.get(id)!;
  }
  admin={
@@ -39,7 +39,7 @@ class Service{
  };
  async insert(table:string,payload:Row){
   if(table==='cockpit_media_provider_health'){this.health.push(payload);return {error:null};}
-  if(table==='cockpit_media_actions'){if(this.journal.has(payload.id))return {error:{message:'duplicate key value violates unique constraint'}};this.journal.set(payload.id,{...structuredClone(payload),state:'pending'});return {error:null};}
+  if(table==='cockpit_media_actions'){if(this.journalFails)return {error:{code:'42501',message:'permission denied for table cockpit_media_actions'}};if(this.journal.has(payload.id))return {error:{code:'23505',message:'duplicate key value violates unique constraint "cockpit_media_actions_pkey"'}};this.beforeJournal?.(payload.id);this.journal.set(payload.id,{...structuredClone(payload),state:'pending'});return {error:null};}
   return {error:{message:`Unexpected insert into ${table}`}};
  }
  update(table:string,payload:Row){
@@ -56,13 +56,15 @@ class Service{
   return q;
  }
  rpc(name:string,args:Row){
-  const now=Date.now(),age=(r:Row)=>now-Date.parse(r.created_at);
+  const now=Date.now(),age=(r:Row)=>now-Date.parse(r.created_at),free=(r:Row)=>!r.drain_until||Date.parse(r.drain_until)<=now;
   if(name==='cockpit_creative_outbox_due'){
+   // As 20261025o: a listed press is leased to the run for 10 minutes; a leased one is neither listed nor failed.
    const apply=args.p_apply===true;let failed=0;
-   for(const r of this.outbox.values())if(r.state==='pending'&&BLUEPRINT.includes(r.kind)&&age(r)>30*MIN){failed++;if(apply)Object.assign(r,{state:'failed',error:'This press did not finish within 30 minutes. Press again.',settled_at:new Date().toISOString()});}
-   const rows=[...this.outbox.values()].filter(r=>r.state==='pending'&&BLUEPRINT.includes(r.kind)&&age(r)>=2*MIN&&age(r)<=30*MIN&&r.attempts<3)
-    .sort((x,y)=>x.created_at.localeCompare(y.created_at)).slice(0,5)
-    .map(r=>({id:r.id,kind:r.kind,taskId:r.task_id,clientName:r.client_name,actorId:r.actor_id,attempts:r.attempts,createdAt:r.created_at}));
+   for(const r of this.outbox.values())if(r.state==='pending'&&BLUEPRINT.includes(r.kind)&&age(r)>30*MIN&&free(r)){failed++;if(apply)Object.assign(r,{state:'failed',error:'This press did not finish within 30 minutes. Press again.',settled_at:new Date().toISOString()});}
+   const due=[...this.outbox.values()].filter(r=>r.state==='pending'&&BLUEPRINT.includes(r.kind)&&age(r)>=2*MIN&&age(r)<=30*MIN&&r.attempts<3&&free(r))
+    .sort((x,y)=>x.created_at.localeCompare(y.created_at)).slice(0,5);
+   if(apply)for(const r of due)r.drain_until=new Date(now+10*MIN).toISOString();
+   const rows=due.map(r=>({id:r.id,kind:r.kind,taskId:r.task_id,clientName:r.client_name,actorId:r.actor_id,attempts:r.attempts,createdAt:r.created_at}));
    return {data:{apply,failed,rows},error:null};
   }
   if(name==='cockpit_creative_outbox_load_for_actor'){
@@ -74,7 +76,7 @@ class Service{
   }
   if(name==='cockpit_creative_outbox_refused'){
    const r=this.outbox.get(args.p_id)!;
-   if(r.state==='pending'){r.attempts=Math.min(r.attempts+1,3);r.error=String(args.p_error).slice(0,1000);if(r.attempts>=3){r.state='failed';r.settled_at=new Date().toISOString();}}
+   if(r.state==='pending'){r.attempts=Math.min(r.attempts+1,3);r.error=String(args.p_error).slice(0,1000);r.drain_until=null;if(r.attempts>=3){r.state='failed';r.settled_at=new Date().toISOString();}}
    return {data:{id:r.id,state:r.state,attempts:r.attempts},error:null};
   }
   return {data:null,error:{message:`Unexpected rpc ${name}`}};
@@ -163,11 +165,56 @@ describe('the drain',()=>{
   expect(db.rpcs.some(r=>r.name==='cockpit_creative_outbox_refused')).toBe(false);
   expect((await runDrain(db.admin,env,true)).ran).toEqual([]);
  });
- test('a press the due list names twice (two drains at once) runs once: the journal keeps the second out',async()=>{
+ test('a press another drain holds (its journal is already written) is skipped: no attempt, no error, no ClickUp write',async()=>{
   const db=new Service();db.press(uuid(11),5);db.journal.set(uuid(11),{id:uuid(11),state:'pending'});
   const out=await runDrain(db.admin,env,true);
-  expect(out.ran).toEqual([{id:uuid(11),kind:'blueprintOffer',outcome:'refused',attempts:1,error:'This client action needs reconciliation before retrying'}]);
+  expect(out.ran).toEqual([{id:uuid(11),kind:'blueprintOffer',outcome:'skipped'}]);
+  expect(db.outbox.get(uuid(11))).toMatchObject({state:'pending',attempts:0,error:null});
+  expect(db.rpcs.some(r=>r.name==='cockpit_creative_outbox_refused')).toBe(false);
   expect(clickup.writes()).toEqual([]);
+ });
+ // Drain B runs to its end while A is between its journal and its claim: the window the review found.
+ const overlap=(db:Service,expire:boolean)=>{
+  let b:Row|null=null;const real=db.insert.bind(db);let first=true;
+  db.insert=async(table:string,payload:Row)=>{
+   const out=await real(table,payload);
+   if(table==='cockpit_media_actions'&&first){first=false;if(expire)db.outbox.get(payload.id)!.drain_until=null;b=await runDrain(db.admin,env,true);}
+   return out;
+  };
+  return ()=>b;
+ };
+ test('two drains that overlap: the second lists nothing the first holds, so the press runs once and is never refused',async()=>{
+  const db=new Service();db.press(uuid(12),5,{attempts:2});const second=overlap(db,false);
+  const a=await runDrain(db.admin,env,true);
+  expect(a.ran).toEqual([{id:uuid(12),kind:'blueprintOffer',outcome:'done'}]);
+  expect(second()).toEqual({ok:true,apply:true,failed:0,ran:[]});
+  expect(db.outbox.get(uuid(12))).toMatchObject({state:'done',attempts:2,error:null});
+  expect(db.rpcs.some(r=>r.name==='cockpit_creative_outbox_refused')).toBe(false);
+ });
+ test('a lease that ran out under a slow press: the second drain meets the journal and skips; the first still finishes',async()=>{
+  const db=new Service();db.press(uuid(13),5,{attempts:2});const second=overlap(db,true);
+  const a=await runDrain(db.admin,env,true);
+  expect(second()?.ran).toEqual([{id:uuid(13),kind:'blueprintOffer',outcome:'skipped'}]);
+  expect(a.ran).toEqual([{id:uuid(13),kind:'blueprintOffer',outcome:'done'}]);
+  // Before the fix: B's refusal was the third, failed the press, and A's claim then failed.
+  expect(db.outbox.get(uuid(13))).toMatchObject({state:'done',attempts:2,error:null});
+  expect(db.rpcs.some(r=>r.name==='cockpit_creative_outbox_refused')).toBe(false);
+  expect(clickup.writes().length).toBeGreaterThan(0);
+ });
+ test('a journal the drain cannot write for another reason is still a counted refusal',async()=>{
+  const db=new Service();db.press(uuid(14),5);db.journalFails=true;
+  const out=await runDrain(db.admin,env,true);
+  expect(out.ran).toEqual([{id:uuid(14),kind:'blueprintOffer',outcome:'refused',attempts:1,error:'This client action needs reconciliation before retrying'}]);
+  expect(clickup.writes()).toEqual([]);
+ });
+ test('a press refused once and then done keeps no stale error; its journal keeps the plan\'s own values',async()=>{
+  const db=new Service();db.press(uuid(15),5);db.gateLost=true;
+  expect((await runDrain(db.admin,env,true)).ran[0]).toMatchObject({outcome:'refused',attempts:1});
+  expect(db.outbox.get(uuid(15))).toMatchObject({state:'pending',error:'That client is not on your access list',drain_until:null});
+  db.gateLost=false;
+  expect((await runDrain(db.admin,env,true)).ran).toEqual([{id:uuid(15),kind:'blueprintOffer',outcome:'done'}]);
+  expect(db.outbox.get(uuid(15))).toMatchObject({state:'done',attempts:1,error:null});
+  expect(db.journal.get(uuid(15))!.request.planned).toEqual({kind:'blueprintOffer',launchTaskId:null});
  });
  test('a due list it cannot read stops the run with a sentence',async()=>{
   const db=new Service();db.admin.rpc=async()=>({data:null,error:{message:'permission denied for function cockpit_creative_outbox_due'}});
@@ -176,15 +223,15 @@ describe('the drain',()=>{
 });
 
 describe('the cron door',()=>{
- const door=(input:unknown,secret:string|null,e=env)=>{
-  const seen={admin:0,drain:[] as boolean[]};
+ const door=(input:unknown,secret:string|null,e=env,background=false)=>{
+  const seen={admin:0,drain:[] as boolean[],later:[] as Promise<unknown>[]};
   const drain=async(_admin:any,_env:any,apply:boolean)=>{seen.drain.push(apply);return {ok:true as const,apply,failed:0,ran:[]};};
-  return cronDoor(input,secret,e,()=>{seen.admin++;return {};},drain).then(r=>({r,seen}));
+  return cronDoor(input,secret,e,()=>{seen.admin++;return {};},drain,background?(w=>{seen.later.push(w);}):undefined).then(r=>({r,seen}));
  };
  test('a wrong, missing or unset secret is 401 before anything else is read or built',async()=>{
   for(const [secret,e] of [['wrong',env],[null,env],['cron-secret-12',env],['cron-secret-1234',env],['',(k:string)=>k==='CREATIVE_CRON_SECRET'?'':env(k)],['cron-secret-123',(k:string)=>k==='CREATIVE_CRON_SECRET'?undefined:env(k)]] as const){
    const {r,seen}=await door({operation:'cron',job:'nope'},secret,e as (k:string)=>string|undefined);
-   expect(r).toEqual({status:401,body:{ok:false,error:'not allowed'}});expect(seen).toEqual({admin:0,drain:[]});
+   expect(r).toEqual({status:401,body:{ok:false,error:'not allowed'}});expect(seen).toMatchObject({admin:0,drain:[]});
   }
  });
  test('the right secret with another job is 400 with the body to send; drain runs with apply only when it is true',async()=>{
@@ -193,13 +240,33 @@ describe('the cron door',()=>{
   expect((await door({operation:'cron'},'cron-secret-123')).r!.status).toBe(400);
   for(const [apply,want] of [[true,true],[false,false],['true',false],[undefined,false]] as const){
    const {r,seen}=await door({operation:'cron',job:'drain',apply},'cron-secret-123');
-   expect(r!.status).toBe(200);expect(seen).toEqual({admin:1,drain:[want]});
+   expect(r!.status).toBe(200);expect(seen).toMatchObject({admin:1,drain:[want]});
   }
+ });
+ test('a real drain answers 202 at once, inside pg_net\'s 5 s, and runs in the background; a dry run answers its list',async()=>{
+  // The drain is slow on purpose: the door must not wait for it.
+  let finish!:()=>void;const slow=new Promise<void>(r=>{finish=r;});const seen={drain:0,admin:0};const later:Promise<unknown>[]=[];
+  const drain=async(_a:any,_e:any,apply:boolean)=>{seen.drain++;await slow;return {ok:true as const,apply,failed:0,ran:[{id:'x',kind:'blueprintClose',outcome:'done' as const}]};};
+  const r=await cronDoor({operation:'cron',job:'drain',apply:true},'cron-secret-123',env,()=>{seen.admin++;return {};},drain,w=>{later.push(w);});
+  expect(r).toEqual({status:202,body:{ok:true,started:'drain'}});
+  expect(seen).toEqual({drain:1,admin:1});expect(later.length).toBe(1);
+  finish();await later[0];
+  // Apply false writes nothing, so it waits and answers what it would do.
+  const dry=await door({operation:'cron',job:'drain',apply:false},'cron-secret-123',env,true);
+  expect(dry.r).toEqual({status:200,body:{ok:true,apply:false,failed:0,ran:[]}});expect(dry.seen.later.length).toBe(0);
+  // A background run that throws is logged, never an unhandled rejection.
+  const errs:unknown[]=[];const was=console.error;console.error=(...a:unknown[])=>{errs.push(a[0]);};
+  try{
+   const boom=async()=>{throw new Error('The drain could not list the waiting presses: down');};
+   const out=await cronDoor({operation:'cron',job:'drain',apply:true},'cron-secret-123',env,()=>({}),boom as any,w=>{later.push(w);});
+   expect(out!.status).toBe(202);await later.at(-1);
+  }finally{console.error=was;}
+  expect(String(errs[0])).toContain('The drain could not list the waiting presses');
  });
  test('every other body goes on to the sign-in check',async()=>{
   for(const input of [{operation:'clientAction',args:{id:'x'}},{operation:'request'},null,'cron',[],{}]){
    const {r,seen}=await door(input,'cron-secret-123');
-   expect(r).toBeNull();expect(seen).toEqual({admin:0,drain:[]});
+   expect(r).toBeNull();expect(seen).toMatchObject({admin:0,drain:[]});
   }
  });
  test('the secret is compared in full, in constant time, and an empty one never matches',()=>{
@@ -213,6 +280,7 @@ describe('the cron door',()=>{
   expect(door).toBeGreaterThan(0);expect(user).toBeGreaterThan(door);expect(json).toBeGreaterThan(0);expect(json).toBeLessThan(door);
   expect(src.split('req.json()').length).toBe(2);
   expect(src).toContain("global:{headers:{'x-cockpit-source':'cron'}}");
+  expect(src).toContain('undefined,background)');
   expect(src).toContain('runClientAction(input,browserLoader(client),admin,env,auth.user.id)');
  });
 });

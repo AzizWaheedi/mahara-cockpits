@@ -183,6 +183,7 @@ export function BlueprintCard({
   io: given,
   initial,
   rehearse: rehearseGiven,
+  noticeEveryMs = NOTICE_EVERY_MS,
 }: {
   taskId: string;
   clientName: string;
@@ -190,6 +191,8 @@ export function BlueprintCard({
   offerSheet?: string | null;
   /** Stand-ins for the harness and the tests. */
   io?: BlueprintIO;
+  /** How often a waiting notice is read again (the tests shorten it). */
+  noticeEveryMs?: number;
   /** The harness's rehearsal; the page reads ?rehearse=1 for admins and the CEO. */
   rehearse?: boolean;
   /** A record already read (the harness and the tests render it at once). */
@@ -293,9 +296,18 @@ export function BlueprintCard({
       reload={reload}
       initialCall={initial?.call}
       initialNotices={initial?.notices}
+      noticeEveryMs={noticeEveryMs}
     />
   );
 }
+
+/**
+ * A close's notices post within about a minute of the settle (the sender's
+ * minute kick), and no outbox state moves after that: while one waits, the
+ * card reads them again every minute, for as long as a notice can wait.
+ */
+const NOTICE_EVERY_MS = 60_000;
+const NOTICE_WATCH_MS = 25 * 60_000;
 
 function Shell({
   children,
@@ -370,6 +382,7 @@ function BlueprintBody({
   reload,
   initialCall,
   initialNotices,
+  noticeEveryMs,
 }: {
   taskId: string;
   clientName: string;
@@ -384,6 +397,7 @@ function BlueprintBody({
   reload: () => Promise<void>;
   initialCall?: BlueprintCall | null;
   initialNotices?: NoticeRead | null;
+  noticeEveryMs: number;
 }) {
   const [row, setRow] = useState(firstRow);
   const [tick, setTick] = useState(() => Date.now());
@@ -539,9 +553,12 @@ function BlueprintBody({
   const lastSettled = [1, 2, 3]
     .map(p => outboxOf(row, p as Part)?.state ?? "")
     .join(",");
+  // While a shown notice waits to post, it is read again every minute (and
+  // with every read of the record: focus, the call's channel, a press).
+  const [noticeTick, setNoticeTick] = useState(0);
   // A part's run settling is when a notice is queued: `lastSettled` reads
-  // the notices again then.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: lastSettled re-runs the read
+  // the notices again then; `readAt` and `noticeTick` read them again after.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: lastSettled, readAt and noticeTick re-run the read
   useEffect(() => {
     if (!readsNotices || !io.notices) return;
     let gone = false;
@@ -554,8 +571,41 @@ function BlueprintBody({
     return () => {
       gone = true;
     };
-  }, [readsNotices, io, taskId, lastSettled]);
+  }, [readsNotices, io, taskId, lastSettled, readAt, noticeTick]);
   const noticeRead = notices && !("error" in notices) ? notices : null;
+  // A failed read is tried again the same way.
+  const noticeWaits =
+    Boolean(notices && "error" in notices) ||
+    Boolean(
+      noticeRead?.notices.some(
+        n =>
+          (n.kind === "blueprint.close" ||
+            n.kind === "blueprint.media" ||
+            n.kind === "blueprint.offer") &&
+          (n.state === "queued" || n.state === "sending"),
+      ),
+    );
+  const watchFrom = useRef<number | null>(null);
+  useEffect(() => {
+    if (!noticeWaits || !readsNotices) {
+      watchFrom.current = null;
+      return;
+    }
+    watchFrom.current ??= Date.now();
+    const t = window.setInterval(() => {
+      if (Date.now() - (watchFrom.current ?? Date.now()) > NOTICE_WATCH_MS) {
+        window.clearInterval(t);
+        return;
+      }
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState === "hidden"
+      )
+        return;
+      setNoticeTick(n => n + 1);
+    }, noticeEveryMs);
+    return () => window.clearInterval(t);
+  }, [noticeWaits, readsNotices, noticeEveryMs]);
 
   const stored = row?.answers ?? {};
   const answers: Answers = useMemo(
@@ -766,14 +816,14 @@ function BlueprintBody({
           role="note"
           className="callout-warn mb-3 flex gap-2 rounded-lg border px-3 py-2 text-sm"
         >
-          <span className="mt-[7px] flex">
+          <span className="mt-[7px] flex self-start">
             <Dot tone="warn" />
           </span>
           <span className="min-w-0">
             Blueprint call held {dayWeek(nudge)}. No Blueprint record yet.{" "}
             <Link
               {...link()}
-              className="font-medium text-primary underline-offset-4 hover:underline"
+              className="font-medium text-primary-ink underline underline-offset-4"
             >
               Open the call page.
             </Link>
@@ -795,15 +845,28 @@ function BlueprintBody({
             onSend={() => void press(p)}
             notices={
               p === 2 && sent2 ? (
-                <CloseStops read={notices} />
+                <CloseStops read={notices} anchor={sent2.lastAt} />
               ) : p === 3 && sent3 && noticeRead ? (
-                <OfferStop n={noticeOf(noticeRead, "blueprint.offer")} />
+                <OfferStop
+                  n={noticeOf(noticeRead, "blueprint.offer")}
+                  anchor={sent3.lastAt}
+                />
               ) : null
             }
             action={
-              p === 1 && states[1].kind === "ready" ? (
+              p === 1 &&
+              (states[1].kind === "ready" ||
+                (states[1].kind === "needs_look" &&
+                  outboxOf(row, 1)?.state === "failed")) ? (
                 <Button size="sm" variant="outline" asChild>
                   <Link {...link("part1")}>Open part 1</Link>
+                </Button>
+              ) : p === 2 &&
+                states[2].kind === "needs_look" &&
+                outboxOf(row, 2)?.state === "failed" ? (
+                // A failed close is pressed again from part 2 of the call.
+                <Button size="sm" variant="outline" asChild>
+                  <Link {...link("part2")}>Open part 2</Link>
                 </Button>
               ) : p === 2 &&
                 sent1 &&
@@ -949,7 +1012,11 @@ const DOT: Record<Tone, string> = {
   live: "bg-primary",
   quiet: "bg-muted-foreground/50",
 };
-/** The part's dot; the call page's parts rail draws the same one. */
+/**
+ * The part's dot; the call page's parts rail draws the same one. It centres
+ * itself on a one-line row; beside wrapped text its wrapper sets
+ * `self-start`, so it sits on the first line.
+ */
 export function Dot({ tone, pulse }: { tone: Tone; pulse?: boolean }) {
   return (
     <span
@@ -989,13 +1056,22 @@ function PartRow({
   /** The part's Slack notices: the close's two posts, the offer's reply. */
   notices?: ReactNode;
 }) {
-  const view = stateView(part, state, row, wait);
   const box = outboxOf(row, part);
-  // The server drain refused this press and tries it again (20261025o).
+  // The server drain refused this press and tries it again (20261025o): one
+  // state ("Refused, trying again"), no button, and the line leads with the
+  // cause and its fix (the error says what to do), then when it runs again.
   const retrying =
     box?.state === "pending" && (box.attempts ?? 0) > 0 && box.error
-      ? `This press was refused: ${clause(box.error)}. The cockpit tries again in 2 minutes (${box.attempts} of 3).`
+      ? `${clause(box.error)}. The cockpit tries again in 2 minutes (${box.attempts} of 3).`
       : null;
+  const view = retrying
+    ? {
+        tone: "warn" as Tone,
+        text: "Refused, trying again",
+        toneText: "txt-warn",
+        extra: undefined,
+      }
+    : stateView(part, state, row, wait);
   return (
     <li className="px-3 py-3 sm:px-4" data-part={part} data-state={state.kind}>
       <div className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-2 sm:grid-cols-[1.5rem_9.5rem_minmax(0,1fr)_auto] sm:items-center">
@@ -1004,14 +1080,17 @@ function PartRow({
         </span>
         <span className="text-sm font-medium">{PART_NAME[part]}</span>
         <span className="col-start-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm sm:col-start-3">
-          <span className="inline-flex min-w-0 items-baseline gap-2">
-            <Dot tone={view.tone} pulse={state.kind === "sending"} />
+          {/* A long state (a refusal) wraps: the dot stays on its first line. */}
+          <span className="inline-flex min-w-0 items-start gap-2">
+            <span className="mt-[7px] flex self-start">
+              <Dot tone={view.tone} pulse={state.kind === "sending"} />
+            </span>
             <span className={cn("min-w-0", view.toneText)}>{view.text}</span>
           </span>
           {view.extra}
         </span>
         <span className="col-start-2 mt-1.5 flex flex-wrap items-center gap-2 sm:col-start-4 sm:mt-0 sm:justify-end">
-          {state.kind === "unconfirmed" && canWrite ? (
+          {state.kind === "unconfirmed" && canWrite && !retrying ? (
             <Button
               size="sm"
               variant="outline"
@@ -1030,31 +1109,36 @@ function PartRow({
         </span>
       </div>
       {state.kind === "changed" ? (
-        <p className="mt-1 pl-8 text-xs text-muted-foreground">
+        <p className="mt-1 pl-8 text-xs text-muted-foreground sm:pl-48">
           Changed: {state.keys.map(k => KEY_LABEL[k] ?? k).join(", ")}.
         </p>
       ) : retrying ? (
-        <p role="status" className="mt-1 pl-8 text-xs txt-warn">
+        <p role="status" className="mt-1 pl-8 text-xs txt-warn sm:pl-48">
           {retrying}
         </p>
       ) : state.kind === "unconfirmed" ? (
-        <p className="mt-1 pl-8 text-xs text-muted-foreground">
+        <p className="mt-1 pl-8 text-xs text-muted-foreground sm:pl-48">
           The press is saved, but ClickUp did not confirm it. Run it again: it
           reuses the same request, so nothing is made twice.
         </p>
       ) : null}
       {notices ? (
-        // Under the part's state words, where the grid puts them.
+        // Under the part's state words, where the grid puts them (1.5rem +
+        // 9.5rem and two 0.5rem gaps = 12rem): every sub-line below a
+        // state starts there.
         <div className="mt-1.5 pl-8 sm:pl-48">{notices}</div>
       ) : null}
       {run?.error &&
       state.kind !== "needs_look" &&
       state.kind !== "unconfirmed" ? (
-        <p role="alert" className="mt-1 pl-8 text-xs txt-bad">
+        <p role="alert" className="mt-1 pl-8 text-xs txt-bad sm:pl-48">
           {run.error}
         </p>
       ) : run?.notice ? (
-        <p role="status" className="mt-1 pl-8 text-xs text-muted-foreground">
+        <p
+          role="status"
+          className="mt-1 pl-8 text-xs text-muted-foreground sm:pl-48"
+        >
           {run.notice}
         </p>
       ) : null}
@@ -1110,17 +1194,18 @@ export function stateView(
     case "needs_look": {
       const o = outboxOf(row, part);
       // The drain's ends (20261025o): three refusals, or 30 minutes.
+      // Both name the press and where it is: the row's Open part button.
       if (o?.state === "failed" && (o.attempts ?? 0) >= 3)
         return {
           tone: "bad",
-          text: `This press was refused: ${clause(s.error)}. Fix it and press again.`,
+          text: `This press was refused: ${clause(s.error)}. Fix it, then press ${pressName(part)} on the call again.`,
           toneText: "txt-bad",
           extra: <CopyId id={s.id} />,
         };
       if (o?.state === "failed" && /within 30 minutes/i.test(s.error))
         return {
           tone: "bad",
-          text: s.error,
+          text: `This press did not finish within 30 minutes. Press ${pressName(part)} on the call again.`,
           toneText: "txt-bad",
           extra: <CopyId id={s.id} />,
         };
@@ -1187,28 +1272,36 @@ const clause = (t: string) => t.trim().replace(/\.\s*$/, "");
 const tell = (reason: string) =>
   /tech lead/i.test(reason) ? "" : " Tell the tech lead.";
 
-/** "at 14:03" on the read's Kuwait day, else "on Sun 25 Oct 14:03". */
-const noticeTime = (n: NoticeView, now: string) => {
-  const w = whenNear(n.at, now);
+/**
+ * "at 14:03" on the same Kuwait day as the part's own line above it (the
+ * close, or the offer), else "on Sun 25 Oct 14:03": the card's one day
+ * format (whenLong), so a stop never reads as earlier than the line it sits
+ * under.
+ */
+const noticeTime = (n: NoticeView, anchor: string) => {
+  const w = whenNear(n.at, anchor);
   return /^\d\d:\d\d$/.test(w) ? `at ${w}` : `on ${w}`;
 };
+/** A reason as a sentence of its own, after the stop's lead. */
+const asSentence = (reason: string) =>
+  `${reason.charAt(0).toUpperCase()}${reason.slice(1)}.`;
 const place = (n: NoticeView) =>
   n.channel?.name ? `#${n.channel.name}` : (n.channel?.id ?? "Slack");
 
 /**
  * One notice as a stop (STAGE1-CONTRACT.md 6.2): "Posted in #csm-general at
  * 14:03", or "Not posted in #media-general: … Tell the tech lead.", or what
- * it waits for.
+ * it waits for. "Reply posted" only for a post that went in a thread: an
+ * offer whose close did not post goes top level (variant top).
  */
 function NoticeStop({
   n,
-  now,
-  reply,
+  anchor,
   fallback,
 }: {
   n: NoticeView | null;
-  now: string;
-  reply?: boolean;
+  /** The part's own time (its line above): the stop's day is said against it. */
+  anchor: string;
   /** Said when there is no notice of this kind. */
   fallback: string;
 }) {
@@ -1221,35 +1314,43 @@ function NoticeStop({
     );
   const where = place(n);
   const reason = clause(n.reason ?? "") || "no reason was given";
+  // A stop that needs a person: the lead in the warning tone, the reason as a
+  // plain sentence after it (the kickoff trail's treatment).
+  const lead =
+    n.state === "failed"
+      ? `Not posted in ${where}.`
+      : n.state === "unknown"
+        ? `Not confirmed in ${where}.`
+        : null;
   const [tone, text]: [Tone, string] =
     n.state === "posted"
       ? [
           "good",
-          `${reply ? "Reply posted" : "Posted"} in ${where} ${noticeTime(n, now)}`,
+          `${n.variant === "thread" ? "Reply posted" : "Posted"} in ${where} ${noticeTime(n, anchor)}`,
         ]
-      : n.state === "failed"
-        ? ["warn", `Not posted in ${where}: ${reason}.${tell(reason)}`]
-        : n.state === "unknown"
-          ? ["warn", `Not confirmed in ${where}: ${reason}.${tell(reason)}`]
-          : n.state === "muted"
-            ? ["quiet", "Not posted: it is off in the client success Settings."]
-            : n.state === "skipped"
-              ? ["quiet", `Not posted: ${reason}.`]
-              : n.state === "sending"
-                ? ["live", `Posting in ${where} now.`]
-                : ["live", `Waiting to post in ${where}.`];
+      : lead
+        ? ["warn", ` ${asSentence(reason)}${tell(reason)}`]
+        : n.state === "muted"
+          ? ["quiet", "Not posted: it is off in Notices and routing."]
+          : n.state === "skipped"
+            ? ["quiet", `Not posted. ${asSentence(reason)}`]
+            : n.state === "sending"
+              ? ["live", `Posting in ${where} now.`]
+              : ["live", `Waiting to post in ${where}.`];
   return (
-    <span
-      className={cn(
-        "flex gap-2 text-xs",
-        tone === "warn" ? "txt-warn" : "text-muted-foreground",
-      )}
-    >
-      <span className="mt-[5px] flex">
+    <span className="flex gap-2 text-xs text-muted-foreground">
+      <span className="mt-[5px] flex self-start">
         <Dot tone={tone} />
       </span>
       <span className="min-w-0">
-        {text}
+        {lead ? (
+          <>
+            <span className="txt-warn font-medium">{lead}</span>
+            <span className="text-foreground">{text}</span>
+          </>
+        ) : (
+          text
+        )}
         {n.state === "posted" && n.permalink ? (
           <>
             {" "}
@@ -1257,7 +1358,7 @@ function NoticeStop({
               href={n.permalink}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1 whitespace-nowrap text-primary underline-offset-4 hover:underline"
+              className="inline-flex items-center gap-1 whitespace-nowrap text-primary-ink underline-offset-4 hover:underline"
             >
               Open in Slack
               <ArrowUpRight aria-hidden className="size-3.5" />
@@ -1269,40 +1370,43 @@ function NoticeStop({
   );
 }
 
-/** Part 2's two posts: #csm-general and #media-general. */
+/** Part 2's two posts: #csm-general and #media-general, dated against the close. */
 function CloseStops({
   read,
+  anchor,
 }: {
   read: NoticeRead | { error: string } | null | undefined;
+  anchor: string;
 }) {
   if (read === undefined) return null;
   if (read === null || "error" in read)
     return (
       <span className="flex items-baseline gap-2 text-xs text-muted-foreground">
         <Dot tone="quiet" />
-        The cockpit could not read the Slack notices just now.
+        The cockpit could not read the Slack notices just now. It reads them
+        again within a minute.
       </span>
     );
   return (
     <span className="flex flex-col gap-0.5">
       <NoticeStop
         n={noticeOf(read, "blueprint.close")}
-        now={read.now}
-        fallback="No #csm-general notice is on record for this close."
+        anchor={anchor}
+        fallback="No client success notice is on record for this close."
       />
       <NoticeStop
         n={noticeOf(read, "blueprint.media")}
-        now={read.now}
-        fallback="No #media-general notice is on record for this close."
+        anchor={anchor}
+        fallback="No media notice is on record for this close."
       />
     </span>
   );
 }
 
-/** Part 3's reply under the close. */
-function OfferStop({ n }: { n: NoticeView | null }) {
+/** Part 3's post (a reply under the close, or top level), dated against the offer. */
+function OfferStop({ n, anchor }: { n: NoticeView | null; anchor: string }) {
   if (!n) return null;
-  return <NoticeStop n={n} now={n.at} reply fallback="" />;
+  return <NoticeStop n={n} anchor={anchor} fallback="" />;
 }
 
 function CopyId({ id }: { id: string }) {

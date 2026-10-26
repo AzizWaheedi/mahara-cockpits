@@ -217,10 +217,15 @@ export interface FormConfig {
   /** Partial submit point (the Blueprint only, KICKOFF.md 2.6). */
   partial?: { afterRef: string; say: string };
   after: {
-    /** "Kickoff sent. Make is updating the card. Book the Brand Blueprint call below." */
+    /** While Make works: "Kickoff sent. Make is updating the card. Book the Brand Blueprint call below." */
     say: string;
-    /** The muted line under it. */
-    sub: string;
+    /** Once Make has done its part: "Kickoff sent. The card is updated. Book the Brand Blueprint call below." */
+    doneSay: string;
+    /**
+     * The muted line under it, while the Slack notice waits: where it posts,
+     * from the notice ("#csm-general", or "Slack" until it is known).
+     */
+    sub: (where: string) => string;
     /** The headline instead, once a step is late. */
     lateSay: { make: string; typeform: string };
     /** Make is late: what to look for on the card, in full (it names the comment Make writes). */
@@ -256,8 +261,8 @@ export interface FormConfig {
      */
     notice?: {
       kind: "kickoff";
-      /** The stop while it waits: "The team hears in #csm-general". */
-      pending: string;
+      /** The stop while it waits, from where it posts: "The team hears in #csm-general". */
+      pending: (where: string) => string;
       /** The line under it while it waits. */
       line: string;
     };

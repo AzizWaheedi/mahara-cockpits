@@ -245,9 +245,11 @@ describe("a send", () => {
     expect(host.textContent).toContain(
       "Kickoff sent. Make is updating the card. Book the Brand Blueprint call below.",
     );
+    // No notice yet, so no channel is known: Slack, never a channel in code.
     expect(host.textContent).toContain(
-      "The team hears in #csm-general once the card is updated.",
+      "The team hears in Slack once the card is updated.",
     );
+    expect(host.textContent).not.toContain("#csm-general");
     // Make books nothing (docs/forms/PLAN.md S10).
     expect(host.textContent).not.toContain("Make is booking");
     expect(host.textContent).toContain("Sent from the cockpit at 13:30.");
@@ -538,6 +540,12 @@ describe("the trail's last stops (docs/forms/STAGE1-CONTRACT.md 6.1)", () => {
       "https://example-workspace.slack.com/archives/C09RZ0GS0V9/p1792872070187739",
     );
     expect(host.textContent).toContain("All five steps are done.");
+    // The headline says what happened, and no "once the card is updated" line stays.
+    expect(host.textContent).toContain(
+      "Kickoff sent. The card is updated. Book the Brand Blueprint call below.",
+    );
+    expect(host.textContent).not.toContain("Make is updating the card");
+    expect(host.textContent).not.toContain("once the card is updated");
   });
 
   test("the Blueprint button opens the cockpit's own Blueprint, never the old Typeform", async () => {
@@ -588,10 +596,11 @@ describe("the trail's last stops (docs/forms/STAGE1-CONTRACT.md 6.1)", () => {
       }),
     );
     await flush();
-    expect(host.textContent).toContain("The team hears in #csm-general");
+    expect(host.textContent).toContain("The team hears in Slack");
     expect(host.textContent).toContain(
       "Once Make has updated the card, usually within a few minutes.",
     );
+    expect(host.textContent).not.toContain("#csm-general");
     expect(asked.at(-1)?.variant).toBe("default");
   });
 
@@ -607,10 +616,50 @@ describe("the trail's last stops (docs/forms/STAGE1-CONTRACT.md 6.1)", () => {
       "resp0000000104",
     );
     expect(failed.textContent).toContain(
-      "Not posted: Slack refused it: mahara-club-bot is not in #csm-general. Invite it there, then ask the tech lead to requeue this notice.",
+      "Not posted. Slack says mahara-club-bot is not in that channel. Ask the tech lead to add it there and send the notice again.",
     );
+    // The lead carries the warning; the reason is a plain sentence.
+    const lead = Array.from(failed.querySelectorAll(".txt-warn")).find(
+      (e: any) => e.textContent === "Not posted.",
+    );
+    expect(lead).toBeTruthy();
     expect(failed.textContent).toContain(", needs a person");
     expect(failed.textContent).not.toContain("All five steps are done.");
+  });
+
+  test("on a phone the fold opens on a notice that needs a person, with the warning dot", async () => {
+    const { kickoffNotice, noticeRead } = await nf();
+    const real = (win as any).matchMedia;
+    (win as any).matchMedia = (q: string) => ({
+      matches: !/min-width/.test(q),
+      addEventListener() {},
+      removeEventListener() {},
+    });
+    (globalThis as any).matchMedia = (win as any).matchMedia;
+    try {
+      const host = await sendWith(
+        fx.fixtureContext({
+          row: doneRow(),
+          notices: noticeRead(fx.TASK, [
+            kickoffNotice("failed", "resp0000000111", fx.NOW),
+          ]),
+        }),
+        "resp0000000111",
+      );
+      const fold = host.querySelector("details.group\\/fold") as any;
+      expect(fold).toBeTruthy();
+      expect(fold.open).toBe(true);
+      const summary = fold.querySelector("summary") as any;
+      expect(summary.textContent).toContain(
+        "Not posted in Slack · tell the tech lead",
+      );
+      expect(summary.querySelector(".bg-warning")).toBeTruthy();
+      // The instruction is never cut off on a phone: this line wraps.
+      expect(summary.querySelector(".truncate")).toBeNull();
+    } finally {
+      (win as any).matchMedia = real;
+      (globalThis as any).matchMedia = real;
+    }
   });
 
   test("muted and a failed read each say so", async () => {
@@ -627,6 +676,12 @@ describe("the trail's last stops (docs/forms/STAGE1-CONTRACT.md 6.1)", () => {
     expect(muted.textContent).toContain(
       "Not posted: the kickoff notice is off in Settings.",
     );
+    // Off is not a success: the footer never says every step is done.
+    expect(muted.textContent).not.toContain("All five steps are done.");
+    expect(muted.textContent).toContain(
+      "The card's steps are done. The Slack notice was not posted.",
+    );
+    expect(muted.textContent).not.toContain("once the card is updated");
     const unread = await sendWith(
       fx.fixtureContext({
         row: doneRow(),
@@ -636,9 +691,51 @@ describe("the trail's last stops (docs/forms/STAGE1-CONTRACT.md 6.1)", () => {
       "resp0000000106",
     );
     expect(unread.textContent).toContain(
-      "The cockpit could not read the Slack notice just now.",
+      "The cockpit could not read the Slack notice just now. Check now reads it again.",
     );
     expect(unread.textContent).not.toContain("All five steps are done.");
+  });
+
+  test("a posted Kickoff complete reads the card once, so the trail never says Make is late beside it", async () => {
+    const { kickoffNotice, noticeRead } = await nf();
+    let checks = 0;
+    const counting = { check: async () => void checks++ };
+    // The window's copy of the card is from before Make's update.
+    await sendWith(
+      fx.fixtureContext({
+        notices: noticeRead(fx.TASK, [
+          kickoffNotice("posted", "resp0000000121", fx.NOW),
+        ]),
+      }),
+      "resp0000000121",
+      { io: counting },
+    );
+    expect(checks).toBe(1);
+    // A late notice says the card is not done: nothing to catch up on.
+    checks = 0;
+    await sendWith(
+      fx.fixtureContext({
+        notices: noticeRead(fx.TASK, [
+          kickoffNotice("late", "resp0000000122", fx.NOW),
+        ]),
+      }),
+      "resp0000000122",
+      { io: counting },
+    );
+    expect(checks).toBe(0);
+    // A card already shown done needs no read.
+    checks = 0;
+    await sendWith(
+      fx.fixtureContext({
+        row: doneRow(),
+        notices: noticeRead(fx.TASK, [
+          kickoffNotice("posted", "resp0000000123", fx.NOW),
+        ]),
+      }),
+      "resp0000000123",
+      { io: counting },
+    );
+    expect(checks).toBe(0);
   });
 
   test("while the Slack stop waits, the notices are read again every minute; not when the screen does not read them", async () => {
@@ -653,6 +750,18 @@ describe("the trail's last stops (docs/forms/STAGE1-CONTRACT.md 6.1)", () => {
       await sendWith(
         fx.fixtureContext({ row: doneRow(), notices: noticeRead(fx.TASK, []) }),
         "resp0000000107",
+        { io: { notices: async () => {} } },
+      );
+      expect(delays).toContain(60_000);
+      // One failed read never ends the watch: it keeps reading.
+      delays.length = 0;
+      await sendWith(
+        fx.fixtureContext({
+          row: doneRow(),
+          notices: null,
+          failed: { notices: "Failed to fetch" },
+        }),
+        "resp0000000110",
         { io: { notices: async () => {} } },
       );
       expect(delays).toContain(60_000);
@@ -681,6 +790,16 @@ describe("the trail's last stops (docs/forms/STAGE1-CONTRACT.md 6.1)", () => {
     await act(async () => button(host, "Copy the link").click());
     await flush();
     expect(written).toEqual([link]);
+    // The browser will not copy: the link appears to select by hand, as the toast says.
+    Object.defineProperty(win.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async () => Promise.reject(new Error("denied")) },
+    });
+    expect(host.querySelector("input[readonly]")).toBeNull();
+    await act(async () => button(host, "Copy the link").click());
+    await flush();
+    const shown = host.querySelector("input[readonly]") as any;
+    expect(shown?.value).toBe(link);
   });
 
   test("the window builds its own link from where it is", async () => {

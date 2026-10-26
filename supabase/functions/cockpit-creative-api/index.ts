@@ -8,6 +8,9 @@ import {runBuild} from './build.ts';
 import {rehearseBlueprint,blueprintMembers} from './blueprint.ts';
 const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,apikey,content-type,x-client-info','Access-Control-Allow-Methods':'POST,OPTIONS'};
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{...cors,'Content-Type':'application/json'}});
+// The drain's run goes on after the 202 (drain.ts cronDoor); without the edge runtime it runs inline.
+const runtime=globalThis as typeof globalThis&{EdgeRuntime?:{waitUntil?:(p:Promise<unknown>)=>void}};
+const background=runtime.EdgeRuntime?.waitUntil?(work:Promise<unknown>)=>runtime.EdgeRuntime!.waitUntil!(work):undefined;
 const canonical=(value:any):string=>JSON.stringify(value&&typeof value==='object'&&!Array.isArray(value)?Object.fromEntries(Object.keys(value).sort().map(k=>[k,JSON.parse(canonical(value[k]))])):value??null);
 Deno.serve(async(req:Request)=>{
  if(req.method==='OPTIONS')return new Response('',{headers:cors});
@@ -19,7 +22,7 @@ Deno.serve(async(req:Request)=>{
   // The body is read once, before the sign-in check, so pg_cron's drain is decided by its secret alone
   // (drain.ts). The service key it uses tells the outbox audit the writes came from the cron.
   let input:any=null;try{input=await req.json();}catch{input=null;}
-  const cron=await cronDoor(input,req.headers.get('x-cron-secret'),env,()=>createClient(url,service,{auth:{persistSession:false},global:{headers:{'x-cockpit-source':'cron'}}}));
+  const cron=await cronDoor(input,req.headers.get('x-cron-secret'),env,()=>createClient(url,service,{auth:{persistSession:false},global:{headers:{'x-cockpit-source':'cron'}}}),undefined,background);
   if(cron)return json(cron.body,cron.status);
   const authorization=req.headers.get('Authorization')??'';
   const client=createClient(url,key,{global:{headers:{Authorization:authorization}},auth:{persistSession:false}});

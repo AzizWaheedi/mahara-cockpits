@@ -361,23 +361,43 @@ export function useFormPanel({
     [config, ctx, prefill],
   );
 
+  const slackRead = sent ? sendNotice(config, ctx, sent.responseId) : undefined;
   const trail = sent
     ? trailFor(
         config,
         ctx,
         { responseId: sent.responseId, sentAt: sent.at, noted: !sent.error },
         serverNow(ctx),
-        sendNotice(config, ctx, sent.responseId),
+        slackRead,
       )
     : null;
 
-  // While the Slack stop waits and this window is in view, the notices are
-  // read again every minute, for the 25 minutes a kickoff notice can take
-  // (Make's update, or 20 minutes, then the sender's next minute).
+  // "Kickoff complete" posts only once the sender has read Make's Kickoff
+  // Handoff comment and the mirror shows the card done, so the card stops
+  // can no longer be behind: when it posts and this window's copy of the
+  // card still waits (the timed checks ended at 5 minutes), read the card
+  // once, so the trail never says "Make is late" beside a complete notice.
+  const completeId =
+    slackRead?.notice?.state === "posted" &&
+    slackRead.notice.variant === "complete"
+      ? slackRead.notice.id
+      : null;
+  const cardBehind = Boolean(
+    trail?.stops.some(s => (s.key === "card" || s.key === "link") && !s.done),
+  );
+  const caughtUp = useRef<string | null>(null);
+  useEffect(() => {
+    if (!completeId || !cardBehind || caughtUp.current === completeId) return;
+    caughtUp.current = completeId;
+    void runCheck();
+  }, [completeId, cardBehind, runCheck]);
+
+  // While the Slack stop waits, or its last read failed, and this window is
+  // in view, the notices are read again every minute, for the 25 minutes a
+  // kickoff notice can take (Make's update, or 20 minutes, then the sender's
+  // next minute). One failed read never ends the watch.
   const slackWaits = Boolean(
-    trail?.stops.some(
-      s => s.key === "slack" && !s.done && !s.problem && !s.unread,
-    ),
+    trail?.stops.some(s => s.key === "slack" && !s.done && !s.problem),
   );
   const readNotices = io.notices;
   const sentAt = sent?.at ?? null;

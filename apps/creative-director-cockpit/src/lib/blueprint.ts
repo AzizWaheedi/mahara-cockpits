@@ -817,11 +817,13 @@ export type ServiceKey = (typeof SERVICES)[number]["key"];
 
 /**
  * After Close the call the cockpit writes the card only (docs/forms/PLAN.md
- * D5): close_route is fixed at card_only on the server, and #csm-general and
- * #media-general hear through the client success cockpit's notices.
+ * D5): close_route is fixed at card_only on the server, and the teams hear
+ * in Slack through the client success cockpit's notices. Notices and
+ * routing has its own page, open to every seat (the server's gates decide
+ * what a seat sees and may change), so a creative seat reaches it too.
  */
 export const NOTICES_SETTINGS_URL =
-  "https://cockpit.maharamedia.com/client-success/settings";
+  "https://cockpit.maharamedia.com/client-success/notices";
 
 export const DRIVE_FOLDER =
   /^https:\/\/drive\.google\.com\/drive\/(u\/[0-9]\/)?folders\/[A-Za-z0-9_-]{10,100}(\?[A-Za-z0-9=&_.-]{0,100})?$/;

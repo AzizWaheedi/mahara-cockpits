@@ -353,7 +353,7 @@ function panelNotices(sent: boolean) {
                 permalink: null,
                 at: at(15),
                 reason:
-                  "Slack refused it: mahara-club-bot is not in #csm-general. Invite it there, then ask the tech lead to requeue this notice.",
+                  "Slack says mahara-club-bot is not in that channel. Ask the tech lead to add it there and send the notice again.",
               })
             : noticeFixture({ kind: "blueprint.close", at: at(15) }),
         ];

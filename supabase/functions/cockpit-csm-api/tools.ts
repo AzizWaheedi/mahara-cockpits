@@ -78,14 +78,17 @@ export function typeformTools(token:string,health:(row:Record<string,unknown>)=>
  * response or unknown row after; a row that cannot be saved throws, so no call goes out without one.
  * The resource is slack.com/api/{method} only: never a channel, a person, an email or the text. The
  * object id is the ts of a post, else null. Slack answers 200 with ok:false on a refusal, so both are
- * checked; a 5xx, a timeout or an unreadable 200 is unknown (it may have posted), never a refusal.
- * Nothing here retries.
+ * checked; a 5xx, a timeout or an unreadable 200 is unknown (it may have posted), never a refusal. So
+ * are internal_error and fatal_error, which Slack documents as "some aspect of the operation may have
+ * succeeded": a refusal would let a person requeue a post that is already in the channel.
+ * service_unavailable and request_timeout stay refusals (Slack did not take the request). Nothing here
+ * retries.
  */
 export type SlackHealthRow={provider:'slack';method:'GET'|'POST';resource:string;phase:'intent'|'response'|'unknown';http_status?:number|null;object_id?:string|null};
 export type SlackAnswer=
  |{kind:'ok';body:Record<string,unknown>;scopes:string|null}
  |{kind:'refused';code:string;status:number;retryAfter:number|null;scopes:string|null}
- |{kind:'unknown'};
+ |{kind:'unknown';code?:string};
 export type SlackPost=
  |{state:'posted';ts:string;channel:string;botId:string|null}
  |{state:'ratelimited';retryAfter:number}
@@ -93,6 +96,8 @@ export type SlackPost=
  |{state:'unknown';error:string};
 export type SlackResource='chat.postMessage'|'chat.getPermalink'|'conversations.history'|'conversations.replies'|'conversations.info'|'users.lookupByEmail'|'auth.test';
 const SLACK_RESOURCES=new Set<string>(['chat.postMessage','chat.getPermalink','conversations.history','conversations.replies','conversations.info','users.lookupByEmail','auth.test']);
+/** Slack's own codes for an answer that may have done what was asked. */
+export const SLACK_MAYBE_DONE=new Set<string>(['internal_error','fatal_error']);
 const slackObj=(v:unknown):v is Record<string,unknown>=>typeof v==='object'&&v!==null&&!Array.isArray(v);
 const slackStr=(v:unknown):string|null=>typeof v==='string'&&v?v:null;
 export function slackTools(token:string,health:(row:SlackHealthRow)=>Promise<void>,request:typeof fetch=fetch){
@@ -116,12 +121,12 @@ export function slackTools(token:string,health:(row:SlackHealthRow)=>Promise<voi
   const code=typeof body?.error==='string'?(body.error.toLowerCase().replace(/[^a-z0-9_]/g,'').slice(0,60)||null):null;
   const ok=response.ok&&body?.ok===true;
   const limited=response.status===429||code==='ratelimited';
-  const unknown=!ok&&!limited&&(response.status>=500||(response.ok&&body===null));
+  const unknown=!ok&&!limited&&(response.status>=500||(response.ok&&body===null)||(code!==null&&SLACK_MAYBE_DONE.has(code)));
   const ts=ok&&resource==='chat.postMessage'?slackStr(body?.ts):null;
   await health({...row,phase:unknown?'unknown':'response',http_status:response.status,object_id:ts});
   if(ok&&body)return {kind:'ok',body,scopes};
   if(limited){const after=Number(response.headers.get('retry-after'));return {kind:'refused',code:'ratelimited',status:response.status,retryAfter:Number.isFinite(after)&&after>0?Math.ceil(after):null,scopes};}
-  if(unknown)return {kind:'unknown'};
+  if(unknown)return code?{kind:'unknown',code}:{kind:'unknown'};
   return {kind:'refused',code:code??`http_${response.status}`,status:response.status,retryAfter:null,scopes};
  }
  const read=(resource:SlackResource,input:Record<string,unknown>)=>call('GET',resource,input);
@@ -130,7 +135,7 @@ export function slackTools(token:string,health:(row:SlackHealthRow)=>Promise<voi
   /** One post. Always unfurl_links and unfurl_media false. A throw (a receipt that could not be saved) is left to the caller, which knows from onSend whether the request had left. */
   async postMessage(input:{channel:string;text:string;blocks?:unknown[];thread_ts?:string},onSend?:()=>void):Promise<SlackPost>{
    const answer=await call('POST','chat.postMessage',{channel:input.channel,text:input.text,...(input.blocks?{blocks:input.blocks}:{}),...(input.thread_ts?{thread_ts:input.thread_ts}:{}),unfurl_links:false,unfurl_media:false},onSend);
-   if(answer.kind==='unknown')return {state:'unknown',error:'Slack did not confirm the post; it is not sent again in case it arrived.'};
+   if(answer.kind==='unknown')return {state:'unknown',error:answer.code?`Slack answered ${answer.code}, which can mean the post went through; it is not sent again in case it arrived.`:'Slack did not confirm the post; it is not sent again in case it arrived.'};
    if(answer.kind==='refused')return answer.code==='ratelimited'?{state:'ratelimited',retryAfter:answer.retryAfter??30}:{state:'failed',code:answer.code};
    const ts=slackStr(answer.body.ts)??'';
    if(!/^\d+\.\d+$/.test(ts))return {state:'unknown',error:"Slack answered without the message's timestamp; it is not sent again in case it arrived."};

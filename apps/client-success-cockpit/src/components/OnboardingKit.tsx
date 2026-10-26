@@ -149,7 +149,7 @@ function Read({
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
+      className="inline-flex items-center gap-1 text-primary-ink underline-offset-4 hover:underline"
     >
       {children}
       <ChevronRight aria-hidden className="size-3.5 shrink-0" />
@@ -170,7 +170,7 @@ function CopyLink({ url, children }: { url: string; children: ReactNode }) {
             ),
         );
       }}
-      className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
+      className="inline-flex items-center gap-1 text-primary-ink underline-offset-4 hover:underline"
     >
       <Copy aria-hidden className="size-3.5 shrink-0" />
       {children}
@@ -265,31 +265,40 @@ const failed = <T,>(v: Loaded<T>): v is { error: string } =>
 function NoticeLine({
   notice,
   now,
-  reply,
   offLine,
 }: {
   notice: NoticeView;
   now: string;
-  reply?: boolean;
   offLine?: string;
 }) {
-  const stop = noticeStop(notice, now, { reply, offLine });
+  // "Reply posted" only for a post that went in a thread (its variant).
+  const stop = noticeStop(notice, now, { offLine });
+  // A stop that needs a person: its lead ("Not posted in #csm-general.")
+  // carries the warning and the reason reads as a plain sentence after it,
+  // as on the kickoff window's trail.
+  const lead = stop.lead && stop.text.startsWith(stop.lead) ? stop.lead : null;
   return (
-    <div
-      className={cn(
-        "flex min-w-0 gap-1.5",
-        stop.tone === "warn" ? "txt-warn" : "text-muted-foreground",
-      )}
-    >
-      <span className="mt-[5px] flex">
+    <div className="flex min-w-0 gap-1.5 text-muted-foreground">
+      <span className="mt-[5px] flex self-start">
         <Dot tone={stop.tone} />
       </span>
       <span className="min-w-0">
-        {stop.text}
+        {lead ? (
+          <>
+            <span className="txt-warn font-medium">{lead}</span>
+            <span className="text-foreground">
+              {stop.text.slice(lead.length)}
+            </span>
+          </>
+        ) : (
+          stop.text
+        )}
         {stop.href ? (
           <>
             {" "}
-            <ExtLink href={stop.href}>Open in Slack</ExtLink>
+            <ExtLink href={stop.href} className="text-primary-ink">
+              Open in Slack
+            </ExtLink>
           </>
         ) : null}
       </span>
@@ -297,6 +306,10 @@ function NoticeLine({
   );
 }
 
+/**
+ * A copy button. When the browser will not copy, the text appears beside it
+ * to select by hand, so the error points at something on the screen.
+ */
 function CopyText({
   text,
   children,
@@ -308,24 +321,43 @@ function CopyText({
   done: string;
   title?: string;
 }) {
+  const [shown, setShown] = useState(false);
   return (
-    <button
-      type="button"
-      title={title}
-      onClick={() => {
-        navigator.clipboard.writeText(text).then(
-          () => toast.success(done),
-          () =>
-            toast.error(
-              "The copy did not work. Open the card and copy it there.",
-            ),
-        );
-      }}
-      className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
-    >
-      <Copy aria-hidden className="size-3.5 shrink-0" />
-      {children}
-    </button>
+    <>
+      <button
+        type="button"
+        title={title}
+        onClick={() => {
+          navigator.clipboard.writeText(text).then(
+            () => toast.success(done),
+            () => {
+              setShown(true);
+              toast.error(
+                "The browser would not copy. Select the text below instead.",
+              );
+            },
+          );
+        }}
+        // A button centres its text: a label that wraps on a phone keeps to
+        // the left, its icon on the first line.
+        className="inline-flex items-start gap-1 text-left text-primary-ink underline-offset-4 hover:underline"
+      >
+        <Copy aria-hidden className="mt-px size-3.5 shrink-0" />
+        {children}
+      </button>
+      {shown ? (
+        <textarea
+          readOnly
+          aria-label={
+            typeof children === "string" ? children : "The text to copy"
+          }
+          value={text}
+          rows={Math.min(6, text.split("\n").length)}
+          onFocus={e => e.currentTarget.select()}
+          className="basis-full rounded-md border bg-background px-2 py-1 font-mono text-[11px] text-foreground"
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -727,11 +759,13 @@ export function OnboardingKit({
                   ) : failed(notices) ? (
                     <span className="text-muted-foreground">
                       The cockpit could not read the Slack notice just now.
+                      Refresh reads it again.
                     </span>
                   ) : notices ? (
+                    // No notice row yet, so no channel is known: Settings
+                    // names it (D17), never this line.
                     <span className="text-muted-foreground">
-                      The team hears in #csm-general once Make has updated the
-                      card.
+                      The team hears in Slack once Make has updated the card.
                     </span>
                   ) : null}
                 </div>
@@ -885,6 +919,7 @@ export function OnboardingKit({
                       {failed(notices) ? (
                         <span className="text-muted-foreground">
                           The cockpit could not read the Slack notices just now.
+                          Refresh reads them again.
                         </span>
                       ) : notices === undefined ? null : close || media ? (
                         <>
@@ -895,7 +930,7 @@ export function OnboardingKit({
                             <NoticeLine notice={media} now={noticeNow} />
                           ) : null}
                           {offer ? (
-                            <NoticeLine notice={offer} now={noticeNow} reply />
+                            <NoticeLine notice={offer} now={noticeNow} />
                           ) : null}
                         </>
                       ) : (
@@ -928,7 +963,7 @@ export function OnboardingKit({
                           blueprintPrepWindow(client.taskId),
                         )
                       }
-                      className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
+                      className="inline-flex items-center gap-1 text-primary-ink underline-offset-4 hover:underline"
                     >
                       <Presentation aria-hidden className="size-3.5 shrink-0" />
                       Open the Blueprint deck
