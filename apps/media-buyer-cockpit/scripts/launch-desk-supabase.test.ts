@@ -682,7 +682,7 @@ test("client service holds fence launches and workers; offboarding needs all rec
 
 test("Switch on keeps the card it made, a logged launch is in scope and one pending intent per account covers it", async () => {
   await owner(db);
-  const sql = migration("20261026p_launch_card_at_switch_on.sql");
+  const sql = migration("20261026t_launch_card_at_switch_on.sql");
   await db.exec(sql);
   await db.exec(sql);
   for (const role of ["anon", "authenticated"])
