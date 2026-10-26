@@ -660,7 +660,10 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
 
 - **Source of truth:** `cockpit_meta_ad_days.destination_type` and
   `objective` per ad set, read by `cockpit_media_campaign_funnels` for the
-  campaigns on the ads board only (`cockpit_media_campaign_allowed`).
+  campaigns in the cockpit's campaign list (`cockpit_media_campaign_allowed`)
+  and, since 20261026u, for a campaign with a card in the current board
+  snapshot (`boardCards`) of a client the seat may see, matched by the card's
+  tag.
 - **Rule:** `ON_AD` = instant form; a WhatsApp, Messenger or Instagram DM
   destination is that chat; a lead objective with any other destination is a
   website (Meta reports `UNDEFINED` for website lead campaigns), named "Lead
@@ -674,10 +677,14 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
 - **Checked against:** Merge Studio, 27 Sep to 25 Oct 2026: the instant form
   campaign has $323.51 and 37 leads in both the tracker sheet and
   `cockpit_meta_ad_days`.
-- **Known gaps:** a campaign with no ClickUp Ads Management card is not on the
-  board, so it is in no funnel line (Merge Studio's web campaign on 26 Oct).
-  Triple Edge's `LEAD_GENERATION` campaign reports `UNDEFINED` with no landing
-  page views and reads as website ($19.91, Aug to Oct 2026).
+- **Known gaps:** the campaign list counts full days only (through yesterday)
+  and skips a campaign with under $0.50 in those 7 days, so a campaign that
+  first spent today is in no funnel line until the next morning update
+  (Merge Studio's web campaign on 26 Oct, card made at 17:36). The Lead page
+  shows Meta's clicks for it, today included, and says it has no full day in
+  the numbers above yet (20261026u). Triple Edge's `LEAD_GENERATION` campaign
+  reports `UNDEFINED` with no landing page views and reads as website ($19.91,
+  Aug to Oct 2026).
 
 ### Lead page visits from ads (20261026s)
 
