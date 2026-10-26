@@ -102,6 +102,7 @@ import {
 import { CPL_BAD, CPL_GATE, LEARNING_DAYS } from "@/lib/kpi";
 import { useLaunch } from "@/lib/launchClient";
 import { type MediaCoverage, pairedDay } from "@/lib/mediaStatsClient";
+import { pageFormFor, usePageFormList } from "@/lib/pageFormClient";
 import { type EodOutbox, eodDeliveryNote } from "@/lib/personalEod";
 import {
   defaultRange,
@@ -482,6 +483,7 @@ function ClientHeader({
   links,
   updates,
   onOpen,
+  onLeadPage,
   rulesBelow = false,
 }: {
   name: string;
@@ -490,6 +492,8 @@ function ClientHeader({
   updates: ClientUpdate[];
   /** Shows this one client in full, in place of the table. */
   onOpen?: () => void;
+  /** Opens the client's page at its Lead page; only for a client with one. */
+  onLeadPage?: () => void;
   /**
    * One of this client's campaigns is open below, carrying the same do's and
    * don'ts and card comment, so the header does not show them a second time.
@@ -523,6 +527,7 @@ function ClientHeader({
         dosOpen={open}
         hasUpdates={updates.length > 0}
         onDos={rulesBelow ? undefined : () => setOpen(o => !o)}
+        onLeadPage={onLeadPage}
       />
       {open && !rulesBelow && (
         <div className="mt-2 grid max-w-4xl gap-3 rounded-xl bg-card p-3 font-normal text-foreground">
@@ -574,18 +579,34 @@ function ClientRules({
   );
 }
 
-/** Drive folder, Brand DNA and offer sheet beside the client's name; a missing one says so. */
+/**
+ * Drive folder, Brand DNA and offer sheet beside the client's name; a missing
+ * one says so. A client with its own lead page also gets "Lead page", which
+ * opens the client's page at that part (Muhammed, 2026-10-26).
+ */
 function ClientLinks({
   links,
   dosOpen,
   hasUpdates,
   onDos,
+  onLeadPage,
 }: {
   links?: Campaign;
   dosOpen?: boolean;
   hasUpdates?: boolean;
   onDos?: () => void;
+  onLeadPage?: () => void;
 }) {
+  const leadPage = onLeadPage ? (
+    <button
+      type="button"
+      onClick={onLeadPage}
+      className="font-semibold text-primary underline"
+      title="Open this client's page at its Lead page"
+    >
+      Lead page
+    </button>
+  ) : null;
   const item = (href: string | undefined, label: string) =>
     href ? (
       <a
@@ -604,8 +625,9 @@ function ClientLinks({
     );
   if (!links)
     return (
-      <span className="ml-2 text-xs font-normal text-muted-foreground">
+      <span className="ml-2 inline-flex flex-wrap gap-2 text-xs font-normal text-muted-foreground">
         not on the ClickUp client list
+        {leadPage}
       </span>
     );
   return (
@@ -613,6 +635,7 @@ function ClientLinks({
       {item(links.driveLink, "Drive")}
       {item(links.brandDnaDoc, "Brand DNA")}
       {item(links.offerCheatSheet, "Offer")}
+      {leadPage}
       {onDos &&
         (parseDosDonts(links.dosDonts).length || hasUpdates ? (
           <button
@@ -1082,7 +1105,13 @@ function Cockpit({ view }: { view: View }) {
     () => parseAdAccounts(accountIdsParam),
     [accountIdsParam],
   );
-  const setAccountView = (name: string | null, accounts: string[] = []) =>
+  // `part` opens the client's page at one of its parts (the board's "Lead
+  // page" link); AccountView scrolls there and drops it.
+  const setAccountView = (
+    name: string | null,
+    accounts: string[] = [],
+    part?: string,
+  ) =>
     setParams(prev => {
       const next = new URLSearchParams(prev);
       if (name) next.set("account", name);
@@ -1091,8 +1120,12 @@ function Cockpit({ view }: { view: View }) {
       if (ids) next.set("adAccounts", ids);
       else next.delete("adAccounts");
       next.delete("campaign");
+      if (name && part) next.set("part", part);
+      else next.delete("part");
       return next;
     });
+  // The client form pages this seat may see: their clients get a Lead page link.
+  const pageList = usePageFormList();
   // The window each campaign is being read over. One default for the screen,
   // overridable per campaign — she often wants "today" on one client while
   // the rest stay on the 7-day read. [aziz, 2026-09-07] The board and a
@@ -3799,6 +3832,17 @@ function Cockpit({ view }: { view: View }) {
                                           c.clientName ?? c.accountName,
                                         );
                                       }
+                                }
+                                onLeadPage={
+                                  !c.internal &&
+                                  pageFormFor(pageList, clientOf(c))
+                                    ? () =>
+                                        setAccountView(
+                                          c.clientName ?? c.accountName,
+                                          [],
+                                          "lead-page",
+                                        )
+                                    : undefined
                                 }
                               />
                             </td>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { mediaAction } from "./mediaActionsClient";
 import type { PageFormSpec } from "./pageForm";
+import { supabase } from "./supabase";
 
 /**
  * A client's own form pages (Lead page on the client page), all through
@@ -201,4 +202,65 @@ export function usePageForms(client: string | null): PageFormsRead {
 
   const reload = useCallback(() => setTick(t => t + 1), []);
   return { data, error, loading, reload };
+}
+
+/** One client form page, for a link to it (cockpit_page_forms_listed, 20261026s). */
+export type PageFormListed = {
+  slug: string;
+  client: string;
+  title: string;
+  siteUrl: string;
+};
+
+let listed: Promise<PageFormListed[]> | null = null;
+
+/**
+ * Every client form page this seat may see, read once per page load and
+ * shared, so the board links each client with a page to its Lead page
+ * without one read per client. A failed read is not kept.
+ */
+export function readPageFormList(): Promise<PageFormListed[]> {
+  listed ??= (async () => {
+    const { data, error } = await supabase.rpc("cockpit_page_forms_listed");
+    if (error) throw new Error(error.message);
+    if (!Array.isArray(data))
+      throw new Error("The cockpit did not return the lead pages.");
+    return data.filter(
+      (p): p is PageFormListed =>
+        typeof p?.slug === "string" && typeof p?.client === "string",
+    );
+  })().catch(err => {
+    listed = null;
+    throw err;
+  });
+  return listed;
+}
+
+/** The pages this seat may see; undefined while reading and after a failed read. */
+export function usePageFormList(): PageFormListed[] | undefined {
+  const [list, setList] = useState<PageFormListed[] | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    readPageFormList()
+      .then(l => {
+        if (live) setList(l);
+      })
+      // No list means no link; the client page still shows its Lead page.
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+  return list;
+}
+
+/** The client's page, matched on the name as cockpit_page_form_scope matches it. */
+export function pageFormFor(
+  list: PageFormListed[] | undefined,
+  client: string | undefined,
+): PageFormListed | undefined {
+  const key = (client ?? "").trim().toLowerCase();
+  return key
+    ? list?.find(p => p.client.trim().toLowerCase() === key)
+    : undefined;
 }

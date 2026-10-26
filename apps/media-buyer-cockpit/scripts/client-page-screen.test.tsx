@@ -113,6 +113,8 @@ type Answer = { data: unknown; error: { message: string } | null };
 const rpcCalls: { name: string; args: any }[] = [];
 /** The client's own read for the test at hand. */
 let clientRange: (args: any) => unknown = () => ({});
+/** The campaigns' funnels for the test at hand. */
+let funnelAnswer: (args: any) => Answer = () => ({ data: [], error: null });
 db.rpc = (name: string, args: any = {}) => {
   rpcCalls.push({ name, args });
   const answer = async (): Promise<Answer> => {
@@ -152,6 +154,9 @@ db.rpc = (name: string, args: any = {}) => {
       }
       case "cockpit_media_client_range":
         return { data: clientRange(args), error: null };
+      // Each campaign's funnel (20261026s): none named unless a test sets it.
+      case "cockpit_media_campaign_funnels":
+        return funnelAnswer(args);
       case "cockpit_winner_saved_in":
         return { data: {}, error: null };
       case "cockpit_client_callers":
@@ -194,6 +199,7 @@ const DOM = [
   "matchMedia",
   "requestAnimationFrame",
   "cancelAnimationFrame",
+  "localStorage",
   "IS_REACT_ACT_ENVIRONMENT",
 ];
 const globalsBefore = new Map(
@@ -581,5 +587,88 @@ describe("spend that is not known", () => {
       ["ARCWANI", ["1034584029438250"]],
       ["Professional Touch", []],
     ]);
+  });
+});
+
+describe("the numbers by funnel (20261026s)", () => {
+  // Muhammed, 2026-10-26: the page has to say whether its numbers come from
+  // the instant form or the lead page. Cedar Stone's first campaign is set to
+  // an instant form, the second to a website.
+  const start = day(30);
+  const end = day(1);
+  const [FORM, WEB] = [
+    "Cedar Stone | Villa fit-out | Leads",
+    "Cedar Stone | Kitchens | Retarget",
+  ];
+  const whole = (args: any) => ({
+    from: args.p_start,
+    to: args.p_end,
+    countedFrom: args.p_start,
+    through: args.p_end,
+    throughSource: "media data",
+    clients: [clientRow({ spend: 4155.38, leads: 300, bookings: 62 })],
+    unmatched: [],
+  });
+  const row = (campaign: string, kind: string) => ({
+    campaign,
+    kind,
+    kinds: [{ kind, spend: 1 }],
+    linkClicks: kind === "website" ? 40 : null,
+    landingPageViews: kind === "website" ? 31 : null,
+  });
+
+  test("each funnel gets a line with its campaigns' spend, and each campaign its tag", async () => {
+    clientRange = whole;
+    funnelAnswer = () => ({
+      data: [row(FORM, "form"), row(WEB, "website")],
+      error: null,
+    });
+    await showPage({ start, end });
+    const list = container.querySelector(
+      '[aria-label="Spend and leads by funnel"]',
+    );
+    const lines = [...(list?.querySelectorAll("li") ?? [])].map(li =>
+      String(li.textContent),
+    );
+    // The same spend and leads as the campaign's own row in the list.
+    const factsOf = (n: string) =>
+      [...container.querySelectorAll("li")]
+        .map(li => String(li.textContent))
+        .find(t => t.startsWith(n) && t.includes(" leads · "))
+        ?.match(/(\$[\d,.]+) · (\d+) leads/)
+        ?.slice(1) ?? ["missing", "missing"];
+    const form = lines.find(l => l.startsWith("Instant form"));
+    const web = lines.find(l => l.startsWith("Website"));
+    for (const [line, n] of [
+      [form, FORM],
+      [web, WEB],
+    ] as const) {
+      const [spend, leads] = factsOf(n);
+      expect(line).toContain(spend);
+      expect(line).toContain(`${leads} leads`);
+    }
+    expect(lines).toHaveLength(2);
+    // No lead page for this client, so the website line is not called one.
+    expect(page()).not.toContain("Where visitors stop");
+    // The Campaigns list names each campaign's funnel before its numbers.
+    expect(page().match(/Instant form/g)?.length).toBeGreaterThanOrEqual(2);
+    const call = rpcCalls.find(
+      c => c.name === "cockpit_media_campaign_funnels",
+    );
+    expect([...(call?.args.p_campaigns ?? [])].sort()).toEqual(
+      [WEB, FORM].sort(),
+    );
+    expect([call?.args.p_start, call?.args.p_end]).toEqual([start, end]);
+  });
+
+  test("a failed read says so and leaves the totals alone", async () => {
+    clientRange = whole;
+    funnelAnswer = () => ({ data: null, error: { message: "read failed" } });
+    await showPage({ start, end });
+    expect(page()).toContain("The funnels could not be read: read failed.");
+    expect(
+      container.querySelector('[aria-label="Spend and leads by funnel"]'),
+    ).toBeNull();
+    funnelAnswer = () => ({ data: [], error: null });
   });
 });
