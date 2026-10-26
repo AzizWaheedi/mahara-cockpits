@@ -28,6 +28,7 @@ import {
 } from "@/forms/FormWindow";
 import type { FormContext } from "@/forms/formConfig";
 import { KICKOFF } from "@/forms/kickoff";
+import { standIn } from "@/practice/fixtures/typeformStandIn";
 import {
   FULL_ANSWERS,
   fixtureContext,
@@ -40,7 +41,6 @@ import {
   onboardingEntry,
   TASK,
 } from "./formFixtures";
-import { standIn } from "./typeformStandIn";
 import "@/index.css";
 
 const params = new URLSearchParams(window.location.search);

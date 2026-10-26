@@ -47,7 +47,9 @@ mock.module("@/auth/SupabaseAuthProvider", () => ({
 
 const { createRoot } = await import("react-dom/client");
 const { act } = await import("react");
-const { FIXTURES, seededVideos } = await import("../src/dev/deck/fixtures");
+const { FIXTURES, seededVideos } = await import(
+  "../src/practice/fixtures/fixtures"
+);
 const { emptyLive } = await import("../src/present/channel");
 const { deckData } = await import("../src/present/deckData");
 const { DeckShell } = await import("../src/present/DeckShell");
@@ -58,7 +60,7 @@ const S = await import("../src/present/sources");
 const V = await import("../src/present/videos");
 
 type DeckData = import("../src/present/deckData").DeckData;
-type FixtureKey = import("../src/dev/deck/fixtures").FixtureKey;
+type FixtureKey = import("../src/practice/fixtures/fixtures").FixtureKey;
 type SlideDef = import("../src/present/deckContext").SlideDef;
 type DeckKind = import("../src/present/sources").DeckKind;
 type DeckVideos = import("../src/present/sources").DeckVideos;

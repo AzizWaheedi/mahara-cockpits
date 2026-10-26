@@ -5,7 +5,7 @@ import type { Timeline } from "@/lib/csmCalls";
 import type { FormEntry, OnboardingRow } from "@/lib/onboardingCore";
 import type { KickoffPort } from "@/present/KickoffSlide";
 import type { Loaded } from "@/present/useDeckModel";
-import { standIn } from "../typeformStandIn";
+import { standIn } from "./typeformStandIn";
 
 /**
  * The kickoff on the deck harness's last slide (DESIGN 23), with Typeform's

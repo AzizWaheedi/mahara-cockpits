@@ -104,7 +104,7 @@ onboarding panel. The creative director: Clients, "Practice a Blueprint
 call" (`/creative/blueprint/practice`, its notes at `.../practice/notes`).
 
 **What.** Noor Studio Interiors, the deck harness's made-up firm
-(`src/dev/deck`), under the card ID `practice-client`. The address, the
+(`src/practice/fixtures`, which the harnesses share), under the card ID `practice-client`. The address, the
 name and the creative director's frames live in `deckHost.ts`, the file
 both apps already share byte for byte. The screens are the real ones
 (prep, the notes window, the deck, the creative director's page) with

@@ -5,16 +5,16 @@
  * the over-ten line, and the box while it checks. Nothing is sent.
  */
 
-import type { Lang } from "@/present/content";
-import { DriveBox } from "@/present/DriveBox";
-import { DRIVE_REFUSED, DRIVE_UI } from "@/present/driveCopy";
-import type { DriveBoxState, DriveRefusal } from "@/present/useDriveImports";
 import {
   DRIVE_SCENARIOS,
   type DriveScenario,
   driveScenario,
   HARNESS_NOW,
-} from "./driveFixtures";
+} from "@/practice/fixtures/driveFixtures";
+import type { Lang } from "@/present/content";
+import { DriveBox } from "@/present/DriveBox";
+import { DRIVE_REFUSED, DRIVE_UI } from "@/present/driveCopy";
+import type { DriveBoxState, DriveRefusal } from "@/present/useDriveImports";
 
 /** The harness's clock (19 October, 09:00), as prep reads it. */
 const NOW = HARNESS_NOW;

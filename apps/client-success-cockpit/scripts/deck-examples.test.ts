@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { FIXTURES, type FixtureKey } from "../src/dev/deck/fixtures";
+import { FIXTURES, type FixtureKey } from "../src/practice/fixtures/fixtures";
 import { deckData } from "../src/present/deckData";
 import {
   choiceOf,

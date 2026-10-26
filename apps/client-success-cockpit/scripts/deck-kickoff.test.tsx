@@ -82,7 +82,7 @@ mock.module("@/auth/SupabaseAuthProvider", () => ({
 const { createRoot } = await import("react-dom/client");
 const { act } = await import("react");
 const { renderToStaticMarkup } = await import("react-dom/server");
-const { FIXTURES } = await import("../src/dev/deck/fixtures");
+const { FIXTURES } = await import("../src/practice/fixtures/fixtures");
 const { emptyLive, DeckHub, channelName } = await import(
   "../src/present/channel"
 );

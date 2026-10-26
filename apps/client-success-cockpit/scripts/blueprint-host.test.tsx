@@ -108,9 +108,9 @@ const { default: ErrorBoundary } = await import(
 );
 const { useDeckReport } = await import("../src/present/DeckBoundary");
 const { blueprintLoaded, fakeBlueprintIO, BP_NOW } = await import(
-  "../src/dev/deck/blueprintFixtures"
+  "../src/practice/fixtures/blueprintFixtures"
 );
-const { FIXTURES } = await import("../src/dev/deck/fixtures");
+const { FIXTURES } = await import("../src/practice/fixtures/fixtures");
 
 type Loaded = import("../src/present/useDeckModel").Loaded;
 type DeckKind = import("../src/present/sources").DeckKind;

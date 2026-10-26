@@ -4,11 +4,11 @@
  * /client-success/present-harness.html?fixture=full&deck=onboarding&lang=en
  * (fixture: full | sparse | dwy | starter; view: present | notes | prep |
  * parts | drive; still=1 for no motion; drive=<scenario> for the Drive box,
- * src/dev/deck/driveFixtures.ts; kickoff=<scenario> for the onboarding
- * deck's last slide, src/dev/deck/kickoffFixtures.ts, with Typeform's
+ * src/practice/fixtures/driveFixtures.ts; kickoff=<scenario> for the onboarding
+ * deck's last slide, src/practice/fixtures/kickoffFixtures.ts, with Typeform's
  * stand-in, and rehearse=1 for its sandbox; deck=blueprint for the Brand
  * Blueprint call, with fixture=full|sparse|nokickoff|two|declined|nopack|arabic and
- * bp=open|part1|sent|closed|locked, src/dev/deck/blueprintFixtures.ts, and
+ * bp=open|part1|sent|closed|locked, src/practice/fixtures/blueprintFixtures.ts, and
  * rehearse=1 for its plan-only presses; host=creative, inside a frame on
  * the same origin, for the creative director cockpit's host mode, with
  * notes=<a /creative/ path> for the notes window it opens, EMBED.md 6;
@@ -23,6 +23,19 @@
 
 import { StrictMode, useMemo } from "react";
 import { createRoot } from "react-dom/client";
+import {
+  BP_NOW,
+  type BpFixture,
+  type BpState,
+  blueprintLoaded,
+  fakeBlueprintIO,
+} from "@/practice/fixtures/blueprintFixtures";
+import { fakeDrive, HARNESS_NOW } from "@/practice/fixtures/driveFixtures";
+import { FIXTURES, type FixtureKey } from "@/practice/fixtures/fixtures";
+import {
+  fakeKickoff,
+  kickoffScenario,
+} from "@/practice/fixtures/kickoffFixtures";
 import { SERVICES } from "@/present/content";
 import type { Overrides } from "@/present/deckData";
 import { PresentApp, type View } from "@/present/PresentApp";
@@ -36,17 +49,7 @@ import {
   VideoSaveError,
 } from "@/present/sources";
 import type { DeckIO } from "@/present/useDeckModel";
-import {
-  BP_NOW,
-  type BpFixture,
-  type BpState,
-  blueprintLoaded,
-  fakeBlueprintIO,
-} from "./deck/blueprintFixtures";
 import { DriveSheet } from "./deck/DriveSheet";
-import { fakeDrive, HARNESS_NOW } from "./deck/driveFixtures";
-import { FIXTURES, type FixtureKey } from "./deck/fixtures";
-import { fakeKickoff, kickoffScenario } from "./deck/kickoffFixtures";
 import { PartsSheet } from "./deck/PartsSheet";
 import "@/index.css";
 import { Toaster } from "sonner";

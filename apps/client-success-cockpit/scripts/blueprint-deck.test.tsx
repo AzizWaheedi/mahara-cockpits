@@ -103,7 +103,7 @@ const { missing } = await import("../src/present/blueprintForm");
 const { BlueprintNotes } = await import("../src/present/BlueprintNotes");
 const { PresentApp } = await import("../src/present/PresentApp");
 const { blueprintLoaded, fakeBlueprintIO, BP_NOW } = await import(
-  "../src/dev/deck/blueprintFixtures"
+  "../src/practice/fixtures/blueprintFixtures"
 );
 
 type Loaded = import("../src/present/useDeckModel").Loaded;

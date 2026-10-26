@@ -1,11 +1,3 @@
-import {
-  BP_NOW,
-  blueprintLoaded,
-  fakeBlueprintIO,
-} from "@/dev/deck/blueprintFixtures";
-import { fakeDrive, HARNESS_NOW } from "@/dev/deck/driveFixtures";
-import { FIXTURES } from "@/dev/deck/fixtures";
-import { fakeKickoff } from "@/dev/deck/kickoffFixtures";
 import type { Overrides } from "@/present/deckData";
 import { PRACTICE_NAME, PRACTICE_TASK } from "@/present/deckHost";
 import type { KickoffPort } from "@/present/KickoffSlide";
@@ -13,6 +5,14 @@ import type { PresentUrls } from "@/present/PresentApp";
 import { applyPatch } from "@/present/prep";
 import type { DeckKind, LaunchAd } from "@/present/sources";
 import type { DeckIO, Loaded } from "@/present/useDeckModel";
+import {
+  BP_NOW,
+  blueprintLoaded,
+  fakeBlueprintIO,
+} from "./fixtures/blueprintFixtures";
+import { fakeDrive, HARNESS_NOW } from "./fixtures/driveFixtures";
+import { FIXTURES } from "./fixtures/fixtures";
+import { fakeKickoff } from "./fixtures/kickoffFixtures";
 import { practiceForm } from "./practiceForm";
 
 /**

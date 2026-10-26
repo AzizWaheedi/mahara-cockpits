@@ -706,7 +706,7 @@ Section 24 of `present.css`, on `.dk-root[data-deck="blueprint"]` (every colour 
 
 ### 5.8 Harness and shots
 
-- `src/dev/presentHarness.tsx` accepts `deck=blueprint` and `bp=<state>`; fixtures in `src/dev/deck/blueprintFixtures.ts`, synthetic only (a made-up firm, labelled):
+- `src/dev/presentHarness.tsx` accepts `deck=blueprint` and `bp=<state>`; fixtures in `src/practice/fixtures/blueprintFixtures.ts`, synthetic only (a made-up firm, labelled):
   - `full` (kickoff, onboarding, deck prep red lines, all five packs, assignee, Market Research, a verified logo, a Brand DNA with four hex codes),
   - `sparse` (onboarding only, no packs),
   - `nokickoff`,

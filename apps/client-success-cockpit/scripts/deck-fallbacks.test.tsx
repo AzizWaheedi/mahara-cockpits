@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { FIXTURES, type FixtureKey } from "../src/dev/deck/fixtures";
+import { FIXTURES, type FixtureKey } from "../src/practice/fixtures/fixtures";
 import { emptyLive } from "../src/present/channel";
 import {
   challengeLines,

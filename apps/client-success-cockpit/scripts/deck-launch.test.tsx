@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { FIXTURES, type FixtureKey } from "../src/dev/deck/fixtures";
+import { FIXTURES, type FixtureKey } from "../src/practice/fixtures/fixtures";
 import {
   bandFor,
   bookedSlot,
@@ -1676,7 +1676,10 @@ describe("what the launch deck reads from the Brand Blueprint (SPEC 6.2)", () =>
         firstStep: "A free site visit",
       },
       rules: {
-        always: ["Our real projects", "Show our real projects, never stock photos"],
+        always: [
+          "Our real projects",
+          "Show our real projects, never stock photos",
+        ],
         never: ["No prices on screen", "No photos of the owner"],
         neverShow: ["The Salmiya villa"],
       },

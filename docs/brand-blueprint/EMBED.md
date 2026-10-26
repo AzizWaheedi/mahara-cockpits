@@ -41,7 +41,7 @@ So one call puts the CD in three windows whose addresses read `/client-success/.
 
 - **Rehearsal:** `?rehearse=1` on the client page, for admins and the CEO (`BlueprintCard.tsx` 176 to 180). The flag rides in every window's address; each window reads it from its own address (`PresentApp.tsx` 87 to 95), and the deck honours it only when the server says the seat may rehearse (`can.rehearse` from `cockpit_blueprint_sources`, `useBlueprint.ts` 229). Rehearsal windows have their own names and their own channel (`…:rehearse`), so they never reach a real window.
 - **CD harness:** `apps/creative-director-cockpit/blueprint-harness.html?view=card|dashboard|settings&bp=…` (`src/dev/blueprintHarness.tsx`) draws the card, the dashboard rows and Settings from `src/dev/blueprintFixtures.ts`. It cannot show the call.
-- **Deck harness:** `apps/client-success-cockpit/present-harness.html?deck=blueprint&view=prep|present|notes&fixture=…&bp=…` (`src/dev/presentHarness.tsx`) draws every view from `src/dev/deck/blueprintFixtures.ts`, saves in memory.
+- **Deck harness:** `apps/client-success-cockpit/present-harness.html?deck=blueprint&view=prep|present|notes&fixture=…&bp=…` (`src/dev/presentHarness.tsx`) draws every view from `src/practice/fixtures/blueprintFixtures.ts`, saves in memory.
 - **Gates:** the CD app's routes sit behind `ProtectedRoute` and `RoleRoute role="creative"` (admins and the CEO pass). The deck's routes sit behind `RoleRoute anyOf={["csm","creative"]}`; `/present/onboarding` and `/present/launch` stay `RoleRoute role="csm"`. The server decides every read and write (`cockpit_blueprint_gate_for_actor`, `cockpit_blueprint_sources`, `cockpit_blueprint_save`, `cockpit_blueprint_part_done`).
 
 ---

@@ -8,6 +8,7 @@
 
 import "@/present/present.css";
 import { useLayoutEffect, useState } from "react";
+import { FIXTURES } from "@/practice/fixtures/fixtures";
 import { type Lang, SHARED, t } from "@/present/content";
 import { creativeOf } from "@/present/creative";
 import { JourneyLanes, MiniRail } from "@/present/JourneyLanes";
@@ -18,7 +19,6 @@ import {
   ReelStory,
 } from "@/present/mockups/Phones";
 import { RoadStrip } from "@/present/Road";
-import { FIXTURES } from "./fixtures";
 
 export function PartsSheet({ lang, sheet }: { lang: Lang; sheet: number }) {
   const [scale, setScale] = useState(1);
