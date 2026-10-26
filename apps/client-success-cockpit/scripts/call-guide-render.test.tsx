@@ -288,9 +288,14 @@ describe("prep's band on the onboarding call", () => {
       view: "prep",
       loaded: beforeKickoff("fixture-guide-c"),
     });
-    // The button rides on its step only while that step is now.
-    expect(band()?.querySelector('[data-guide="notes"]')).toBeNull();
+    // First it rides on step 1, which ticks when a window opens: there,
+    // unlit, it is the way on.
+    const first = () =>
+      band()?.querySelector('[data-step="check"] [data-guide="notes"]');
+    expect(first()?.textContent).toContain("Open the notes window");
+    expect(beacon()).toBeNull();
     await say(hub, state("welcome", 0));
+    expect(first()).toBeNull();
     expect(lit()).toBe("notes");
     expect(beacon()).toBe("notes");
     const button = band()?.querySelector(

@@ -224,7 +224,10 @@ export function CallGuideBand(p: CallGuideProps) {
                             <div className="mt-0.5 text-xs text-pretty text-muted-foreground">
                               {s.how}
                             </div>
-                            {s.target === "notes" && p.openNotes ? (
+                            {/* The first step ticks when a window opens,
+                                so the notes window's button rides on it too. */}
+                            {(s.target === "notes" || s.n === 1) &&
+                            p.openNotes ? (
                               <Button
                                 size="sm"
                                 variant="outline"
