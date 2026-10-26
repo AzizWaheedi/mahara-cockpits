@@ -679,3 +679,105 @@ test("client service holds fence launches and workers; offboarding needs all rec
   ]);
   await owner(db);
 }, 30000);
+
+test("Switch on keeps the card it made, a logged launch is in scope and one pending intent per account covers it", async () => {
+  await owner(db);
+  const sql = migration("20261026p_launch_card_at_switch_on.sql");
+  await db.exec(sql);
+  await db.exec(sql);
+  for (const role of ["anon", "authenticated"])
+    expect(
+      (
+        await db.query<any>(
+          "select has_function_privilege($1,'cockpit_media_account_scope_before_client_hold(text,text,text,uuid)','EXECUTE') ok",
+          [role],
+        )
+      ).rows[0].ok,
+    ).toBe(false);
+  await actor(db, BUYER);
+  expect(
+    (
+      await db.query<any>(
+        "select cockpit_media_account_scope('launch.logCampaign','ready','111111') r",
+      )
+    ).rows[0].r.account,
+  ).toBe("111111");
+  await expect(
+    db.query(
+      "select cockpit_media_account_scope('launch.logCampaign','nothing','333333')",
+    ),
+  ).rejects.toThrow("owes Meta");
+  await expect(
+    db.query(
+      "select cockpit_media_account_scope('launch.somethingElse','ready','111111')",
+    ),
+  ).rejects.toThrow("Unknown launch operation");
+  await owner(db);
+  const launch = (
+    await db.query<any>(
+      `INSERT INTO cockpit_launches(clickup_id,location_id,client_name,account_id,kind,campaign_name,state,meta_campaign_id,created_by) VALUES('ready','ready','Ready','111111','copy','Card at switch','built','950001',$1) RETURNING id`,
+      [BUYER],
+    )
+  ).rows[0].id;
+  const switchId = "30000000-0000-4000-8000-000000000001";
+  const result = {
+    clickupId: "ready",
+    locationId: "ready",
+    clientName: "Ready",
+    accountId: "111111",
+    metaCampaignId: "950001",
+    metaAdsetIds: ["950002"],
+    metaAdIds: ["950003"],
+    impressionsAtSwitch: 0,
+    impressionDay: "2026-10-26",
+  };
+  await db.query(
+    "INSERT INTO cockpit_media_actions(id,actor_id,operation,campaign_name,request) VALUES($1,$2,'launch.switchOn','Card at switch',$3)",
+    [
+      switchId,
+      BUYER,
+      {
+        args: { clickupId: "ready", accountId: "111111", launchId: launch },
+        plan: { result },
+      },
+    ],
+  );
+  await db.query("select cockpit_finish_media_action($1,$2,'{}')", [
+    switchId,
+    { ...result, ok: true, cardTaskId: "card950" },
+  ]);
+  const after = (
+    await db.query<any>("select * from cockpit_launches where id=$1", [launch])
+  ).rows[0];
+  expect(after.state).toBe("switched_on");
+  expect(after.card_task_id).toBe("card950");
+  const logId = "30000000-0000-4000-8000-000000000002";
+  const pending = (id: string) =>
+    db.query(
+      "INSERT INTO cockpit_media_actions(id,actor_id,operation,campaign_name,request) VALUES($1,$2,'launch.logCampaign','Logged in Ads Manager',$3)",
+      [id, BUYER, { args: { clickupId: "ready", accountId: "123456789" } }],
+    );
+  await pending(logId);
+  await expect(pending("30000000-0000-4000-8000-000000000003")).rejects.toThrow(
+    "cockpit_launch_intent_account",
+  );
+  await db.query("select cockpit_finish_media_action($1,$2,'{}')", [
+    logId,
+    { ok: true, cardTaskId: "card951" },
+  ]);
+  expect(
+    (
+      await db.query<any>(
+        "select text from cockpit_campaign_action_messages where id=$1",
+        [logId],
+      )
+    ).rows[0].text,
+  ).toBe("Logged the Ads Manager launch on the board");
+  expect(
+    (
+      await db.query<any>(
+        "select count(*)::int n from cockpit_launches where campaign_name='Logged in Ads Manager'",
+      )
+    ).rows[0].n,
+  ).toBe(0);
+});
