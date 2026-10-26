@@ -29,6 +29,10 @@ def run_native(ctx):
     # whole seconds): -0.015 min failed every scan from 9 Oct 2026. Only more than 5 minutes ahead is a wrong clock.
     age=age_min(value.get('checked_at'),ctx.now)
     if age is None or not -5<=age<=10:return fail('The native worker summary timestamp is unavailable or stale.')
+    # The view is computed at the read, so a producer that finishes between the scan's start and the read is stamped
+    # after ctx.now: the team calendar worker runs every 5 minutes like the guardian and landed 17 s after it (26 Oct
+    # 2026). Measure readings against the read's time when it is later. A reading newer than the read still fails.
+    ref=max(ctx.now,parse_time(value['checked_at']))
     readings=value['checks'];keys=[r.get('key') for r in readings if isinstance(r,dict)]
     if len(keys)!=len(readings) or any(not isinstance(key,str) or not key for key in keys) or len(keys)!=len(set(keys)) or not REQUIRED_CHECKS.issubset(keys):
         return fail('The native worker summary is incomplete. Every required producer needs its own evidence.')
@@ -39,7 +43,7 @@ def run_native(ctx):
         if not isinstance(row['key'],str) or row.get('ok') is not True:
             return fail(f"Native reading {row.get('name') or row['key']} failed: {str(row.get('error') or 'no detail')[:120]}",
                         evidence={'key':row['key']})
-        age=age_min(row.get('at'),ctx.now);limit=row.get('max_age_min')
+        age=age_min(row.get('at'),ref);limit=row.get('max_age_min')
         needs_stamp=row['key'].startswith(('worker:','section:'))
         cap=MAX_AGE_CAP.get(row['key'],45)
         if limit is None:

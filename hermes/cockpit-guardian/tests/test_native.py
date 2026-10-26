@@ -104,6 +104,16 @@ class Native(unittest.TestCase):
         value["checked_at"] = None
         self.assertEqual(native.run_native(context(value)).status, FAIL)
 
+    def test_a_producer_that_finishes_during_the_scan_is_fresh(self):
+        # 26 Oct 2026: the team calendar worker landed 17 s after the scan's start, before the read.
+        value = snapshot()
+        value["checked_at"] = (fakes.NOW + timedelta(seconds=30)).isoformat()
+        worker = next(r for r in value["checks"] if r["key"] == "worker:team-calendar")
+        worker["at"] = (fakes.NOW + timedelta(seconds=17)).isoformat()
+        self.assertEqual(native.run_native(context(value)).status, OK)
+        worker["at"] = (fakes.NOW + timedelta(seconds=40)).isoformat()
+        self.assertEqual(native.run_native(context(value)).status, FAIL)
+
     def test_failed_doctor_is_not_a_fresh_success(self):
         value = snapshot()
         value["checks"][0]["ok"] = False
