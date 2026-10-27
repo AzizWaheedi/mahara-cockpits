@@ -1,4 +1,12 @@
-import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  describe,
+  expect,
+  mock,
+  setDefaultTimeout,
+  test,
+} from "bun:test";
 import { Window } from "happy-dom";
 
 /**
@@ -12,6 +20,10 @@ import { Window } from "happy-dom";
  *
  * Run: bun test scripts/notices-routing.test.tsx
  */
+
+// Let async React acts settle before the shared fixture is torn down.
+// A five-second cancellation can contaminate every following UI test.
+setDefaultTimeout(30_000);
 
 const win = new Window({
   url: "https://localhost/client-success/settings",
