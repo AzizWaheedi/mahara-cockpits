@@ -49,11 +49,11 @@ export function OffersTab({
       <section className="dko-panel">
         <h2>Pitch decks</h2>
         <p className="dko-help">
-          A presentation for the conversation, separate from the proposal you
-          send afterwards. Preview any deck here without changing a client
-          record.
+          Choose a service and pitch immediately with labelled examples. To use
+          a client's own work, price and conversation record, open their client
+          profile and choose Prepare for client.
         </p>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="dkq-library">
           {data.rows.map(row => (
             <CatalogDeckPreview key={row.offerKey} row={row} />
           ))}

@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import type { DeckModel } from "../useDeckModel";
 import { deckOfOffer } from "./kinds";
 import { belowList, listOf, validPrice } from "./price";
+import { QuickPitchButton } from "./QuickPitchButton";
 import { RevisionCloud } from "./slides/RevisionCloud";
 import type { CaptureMark, OfferModel } from "./useOffer";
 export function OfferPrep({
@@ -64,9 +65,13 @@ export function OfferPrep({
       <section className="dko-panel">
         <h2>Prepare one clear conversation</h2>
         <p className="dko-help">
-          Private prep. The client sees only the presentation. Captures and
-          opening prices are saved to this client's record.
+          Pitch now with labelled examples, or prepare this client's version.
+          Only the presentation is shared. Your changes here are saved to their
+          record.
         </p>
+        {m.row ? (
+          <QuickPitchButton offer={key} row={m.row} hold={hold} />
+        ) : null}
         {hold ? <p className="text-sm txt-warn">{hold}</p> : null}
         {key === "closer" ? (
           <label className="dko-field">
@@ -91,8 +96,8 @@ export function OfferPrep({
           </p>
         ) : null}
       </section>
-      <section className="dko-panel">
-        <h2>{website ? "01 · What we saw" : "01 · Evidence, if useful"}</h2>
+      <details className="dko-panel dkq-prep-detail">
+        <summary>Evidence and screenshots</summary>
         {website ? (
           <>
             <p className="dko-help">
@@ -295,9 +300,9 @@ export function OfferPrep({
             </div>
           </>
         ) : null}
-      </section>
-      <section className="dko-panel">
-        <h2>02 · Their words</h2>
+      </details>
+      <details className="dko-panel dkq-prep-detail">
+        <summary>Their words</summary>
         <label className="dko-field">
           Use their answer
           <select
@@ -347,9 +352,9 @@ export function OfferPrep({
             <option value="sa">Saudi</option>
           </select>
         </label>
-      </section>
+      </details>
       <section className="dko-panel">
-        <h2>03 · Their opening price</h2>
+        <h2>Their opening price</h2>
         <p className="dko-help">
           You choose the price. Below a set list price, add one line explaining
           why. The lower price discussed later stays in private notes.
@@ -450,8 +455,8 @@ export function OfferPrep({
         </label>
         {key === "website" ? <ProjectValue offer={m} save={save} /> : null}
       </section>
-      <section className="dko-panel">
-        <h2>04 · The client's mark and photos</h2>
+      <details className="dko-panel dkq-prep-detail">
+        <summary>Client photos and logo</summary>
         <div className="dko-capture-list">
           {model.loaded?.ads
             .filter(
@@ -534,7 +539,7 @@ export function OfferPrep({
             </button>
           ))}
         </div>
-      </section>
+      </details>
     </div>
   );
 }

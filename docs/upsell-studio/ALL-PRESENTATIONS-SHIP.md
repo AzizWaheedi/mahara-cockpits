@@ -1,6 +1,6 @@
 # All seven offer presentations, 27 October 2026
 
-Public proposals and backend are verified live. The guarded Client Success deployment is running; its receipt will be added after canonical verification.
+Public proposals, backend and the seven-deck Client Success release are verified live. The later quick-pitch design pass is tracked separately in QUICK-PITCH.md.
 
 ## What changes
 
@@ -37,4 +37,5 @@ Aziz suggested his existing Nabarati subscription instead of buying ElevenLabs. 
 - Import organization correction: [89](https://github.com/AzizWaheedi/mahara-cockpits/pull/89), merge `85a87abaa3c3ad1933f786ace0dab3dae67d87af`. Twenty feature files, imports and whitespace only. The exact CSM Biome check passes across 390 files with zero errors; independent AST and diff review verified unchanged bodies and bindings. The prior frozen guard run passed fresh builds/typechecks for all five apps and all 105 offline suites before stopping at these import diagnostics.
 - Public proposal deployment: `dpl_BwyDtuAZKQtzwgKoss14QQFgHBM5`, READY, source `2c7693642124b15ee44721863f9a2970b3984cc0`, canonical `https://offer.maharamedia.com`. All 17 runtime assets match committed bytes and the upload receipt. Both genuine logos and the published header policies match. Explicitly synthetic English/Arabic mobile checks passed with zero real API requests or event posts. Nested excluded asset paths return 404; root excluded filenames return the generic app shell through the existing code rewrite, without exposing source.
 - Backend migration: source `20261027115820_offer_presentations_readiness.sql`, SHA256 `72ba22acf9eb36fb34b2ccb71b8539d4cc2a6f7185e5754bfffb578cd71f8df1`, provider receipt version `20261027153102`, name `offer_presentations_readiness_20261027115820`. Seven functions, ownership/search paths/grants, nine private tables, catalogue deltas and audit receipts read back. Prices, settings, issued proposals and access controls remain unchanged. No Edge Function deployment.
-- Client Success: normal guarded release in progress from `85a87abaa3c3ad1933f786ace0dab3dae67d87af`; not yet claimed live.
+- Client Success: unchanged normal guard completed from `85a87abaa3c3ad1933f786ace0dab3dae67d87af`. Production `dpl_8oamSJ4nxkpmPcyNQuMri1RfuDdq` is READY in the correct `mahara-client-success` project, and canonical `/client-success` serves `index-CEJmbpnk.js`. Independent provider/source verification and authenticated Money > Offers readback confirmed seven decks and the seven-offer video selector. The UGC deck loaded the genuine logo and all three examples. No client or settings writes were used for verification.
+- Approved film source and offline evidence tooling: [90](https://github.com/AzizWaheedi/mahara-cockpits/pull/90), merge `7b5f632ec2835666efa11b7c21ee61dd247efb95`. This is source only, not a final-video publication.
