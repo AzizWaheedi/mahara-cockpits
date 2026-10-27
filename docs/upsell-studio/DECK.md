@@ -37,7 +37,7 @@ The visual correction pass adds a dark under-stroke behind the ink/teal revision
 
 The source-and-screenshot review inspected the revised capture cloud, English process sheet, Arabic investment, private prep/notes, Offers tab, Hot row, proposal builder and Arabic client page at 390 px. The 16:9 presentation matrix covers English/Arabic at 1920×1080 and 1366×768, including 0.67 device scale. The final proposal hardening preserves the design while allowing long client/CSM names, headings and line items to wrap. Canonical hover/print/font values now use named tokens, and the packaged preview was synced from the canonical page. The browser runner now covers 320/375/390/414/768/1280 px and eight additional long-text cases, measuring glyph rectangles inside their container and viewport rather than trusting document scroll width beneath overflow clipping. Those added cases have not yet been reported as passed.
 
-Known review boundaries: this pilot has no approved website proof; proof stays absent. The other six offers have catalogue/proposal entries but no presentation deck. The public-door switch stays a release step, rather than an unverified UI toggle.
+Pilot review boundaries at that checkpoint: no approved Website proof was available, so proof stayed absent; the other six offers had catalogue/proposal entries only. The seven-deck expansion below supersedes that presentation limitation. Public-door state is verified separately during release.
 
 The old prep-key registry remains exact for onboarding/launch. Offer savers use their own allow-list by deck; offer fields cannot be sent to the older decks, and operational budget fields cannot be sent to an offer deck. This small contract adjustment preserves the existing migration-pinned regression instead of weakening it.
 
@@ -62,3 +62,24 @@ Applicability is deliberately bounded:
 No observed blocker remains in the reviewed deck/private compositions. Final public-page acceptance requires the targeted rerun above; no “58/58” or universal mobile certification is asserted.
 
 Final acceptance update: the coordinating VPS runner completed all 71 public-proposal cases, all 29 targeted proposal unit tests and the full CSM build after the wrapping/token fix. The public mobile/text-bounds item above is closed. Inherited/private-component limits remain as stated. Evidence: `~/upsell-build/media/shots/proposal-final/report.json`.
+
+
+## Seven-deck expansion, 27 October 2026
+
+All seven offer routes now have independent presentation, prep, notes, video slots and per-offer saves. Website retains its reviewed architecture. The six additions use the actual bilingual catalog scope and timing: campaign branch map, search dossier, social contact sheet, filming storyboard, presenter gallery and recruitment roadmap. Every deck carries the genuine Mahara Media image asset. No new client-facing Arabic prose or performance claim was authored for these decks.
+
+Money > Offers includes a separate pitch-deck preview hub. It uses the current catalog without a client identity, persistence IO, pitch writer, prep saver or event writer. Previous/next and language controls remain inside the dialog. Per-client preparation and proposal creation stay separate. A Closer presentation requires a private named recruiter, with a direct path back to prep. No recruiter name appears on the shared deck.
+
+The presenter gallery reads the three catalog work URLs. Only reviewed Wistia URL shapes can form frames; players mount after a click. The three known examples use Wistia's verified full portrait files, not blurred swatches. Unknown examples keep a designed play surface without guessing a poster. A load failure retains the external viewing fallback.
+
+Release-candidate verification on the isolated VPS checkout:
+
+- 131 named frontend tests across nine files passed. They include all seven keys, pricing/cadence, prep boundaries, actual production navigation URLs, language readback, no persistence IO in catalog previews, legacy engine/prep behavior and a mounted asynchronous video-settings race regression.
+- App `tsc -b` passed after the final source edits. Scoped Biome formatting and lint passed; no unrelated source tree was reformatted.
+- `scripts/offer-all-shots.mjs` measured 475 slide states across English/Arabic, 1920×1080 and 1366×768 at 0.67 device scale, with zero text-overlap, footer/logo collision, overflow or browser failures. It also opened, navigated, switched language and closed all seven catalog previews without adding an RPC call.
+- `scripts/offer-navigation.browser.mjs` passed all seven fresh hash links, verified the Closer missing-recruiter recovery path and captured EN/AR presenter proof only after all three images decoded at natural dimensions of at least 1080×1920. The fresh-link check fixed an entry-hash timing race while preserving legacy decks.
+- Independent backend review found and closed cross-offer navigation links and a stale video-save reload race. A completed save for offer A can no longer replace offer B's panel. Returning video rows must also match the selected deck.
+
+Harness: `http://127.0.0.1:5312/client-success/offer-harness.html?view=offers` on the VPS. Add `offer=website|second_campaign|seo_geo|smm|cameraman|ugc|closer` for client-fixture views. Matrix evidence: `/home/hermes/upsell-build/media/shots/all-offers/report.json`; selected screenshots share that folder. Fictional client records and in-memory writes only. No production deployment or provider write is implied by these checks; root records the actual release separately.
+
+Bounded visual review inspected all seven English/Arabic scope compositions, the hub, bill, process and the actor gallery. Actual findings (search-panel text occlusion and social-sheet footer collision) were corrected before the passing matrix. New-work typography, RTL mirroring, genuine branding, readable footer spacing, reduced motion, user-triggered playback and honest missing-data states were reviewed. The approved cockpit/16:9 system takes precedence over full marketing-page themes, genre rotation and unrelated diversification gates; no universal 58/58 claim is made.

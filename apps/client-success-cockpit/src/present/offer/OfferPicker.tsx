@@ -58,16 +58,16 @@ export function OfferPicker({
             <h3 className="font-medium">{OFFER_NAMES[key]}</h3>
             <p className="dko-help">{o.fit.why}</p>
           </div>
-          {key === "website" ? (
+          {
             <a
               href={offerDeckUrl(taskId, key, "prep")}
               className="text-sm text-primary underline"
               target="_blank"
               rel="noreferrer"
             >
-              Prepare
+              Prepare pitch deck
             </a>
-          ) : null}
+          }
         </div>
         <p className="dko-help">
           {o.ready.ok

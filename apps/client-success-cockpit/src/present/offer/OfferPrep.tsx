@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { DeckModel } from "../useDeckModel";
+import { deckOfOffer } from "./kinds";
 import { belowList, listOf, validPrice } from "./price";
 import { RevisionCloud } from "./slides/RevisionCloud";
 import type { CaptureMark, OfferModel } from "./useOffer";
@@ -25,9 +26,13 @@ export function OfferPrep({
     [],
   );
   if (!m) return null;
+  const hold =
+    m.sources.waitsOn !== undefined ? m.sources.waitsOn : m.row?.waitsOn;
   const p = m.prep;
+  const key = m.row?.offerKey ?? "website";
+  const website = key === "website" || key === "seo_geo";
   const save = (patch: Record<string, unknown>) =>
-    model.setPrep("offer_website", patch, true);
+    model.setPrep(deckOfOffer(key), patch, true);
   const action = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     setMessage(null);
@@ -62,6 +67,23 @@ export function OfferPrep({
           Private prep. The client sees only the presentation. Captures and
           opening prices are saved to this client's record.
         </p>
+        {hold ? <p className="text-sm txt-warn">{hold}</p> : null}
+        {key === "closer" ? (
+          <label className="dko-field">
+            Named recruiter
+            <input
+              maxLength={120}
+              defaultValue={text("recruiter_name")}
+              onBlur={e =>
+                save({ recruiter_name: e.target.value.trim() || null })
+              }
+            />
+            <small>
+              Confirm who will own this search before presenting. This name
+              stays private.
+            </small>
+          </label>
+        ) : null}
         {message ? <p role="status">{message}</p> : null}
         {m.sources.mode === "client_asked" ? (
           <p className="dko-help">
@@ -70,60 +92,71 @@ export function OfferPrep({
         ) : null}
       </section>
       <section className="dko-panel">
-        <h2>01 · What we saw</h2>
-        <p className="dko-help">
-          {m.sources.site.verdict === "not_checked"
-            ? "Site not checked yet"
-            : (m.sources.site.note ??
-              m.sources.site.verdict.replaceAll("_", " "))}
-        </p>
-        {m.sources.site.disagree ? (
-          <p className="text-sm txt-warn">
-            The sources have different website addresses. Choose the right one
-            before checking.
+        <h2>{website ? "01 · What we saw" : "01 · Evidence, if useful"}</h2>
+        {website ? (
+          <>
+            <p className="dko-help">
+              {m.sources.site.verdict === "not_checked"
+                ? "Site not checked yet"
+                : (m.sources.site.note ??
+                  m.sources.site.verdict.replaceAll("_", " "))}
+            </p>
+            {m.sources.site.disagree ? (
+              <p className="text-sm txt-warn">
+                The sources have different website addresses. Choose the right
+                one before checking.
+              </p>
+            ) : null}
+            {m.sources.site.urls.map(v => (
+              <p key={v.url + v.from} className="dko-help">
+                {v.from}:{" "}
+                <a
+                  href={v.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline"
+                >
+                  {v.url}
+                </a>
+              </p>
+            ))}
+            <label className="dko-field">
+              Website address
+              <input
+                type="url"
+                defaultValue={text("site_url")}
+                onBlur={e => save({ site_url: e.target.value || null })}
+              />
+            </label>
+            <div className="flex gap-3">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy || !m.io}
+                onClick={() =>
+                  void action(() =>
+                    m.io!.siteCheck(text("site_url") || undefined),
+                  )
+                }
+              >
+                Check the site
+              </Button>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={p.site_thin === true}
+                  onChange={e => save({ site_thin: e.target.checked })}
+                />
+                It doesn't show their work
+              </label>
+            </div>
+          </>
+        ) : (
+          <p className="dko-help">
+            Use their actual work or a dated screenshot to support the
+            conversation. No example is treated as a client result.
           </p>
-        ) : null}
-        {m.sources.site.urls.map(v => (
-          <p key={v.url + v.from} className="dko-help">
-            {v.from}:{" "}
-            <a
-              href={v.url}
-              target="_blank"
-              rel="noreferrer"
-              className="underline"
-            >
-              {v.url}
-            </a>
-          </p>
-        ))}
-        <label className="dko-field">
-          Website address
-          <input
-            type="url"
-            defaultValue={text("site_url")}
-            onBlur={e => save({ site_url: e.target.value || null })}
-          />
-        </label>
-        <div className="flex gap-3">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy || !m.io}
-            onClick={() =>
-              void action(() => m.io!.siteCheck(text("site_url") || undefined))
-            }
-          >
-            Check the site
-          </Button>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={p.site_thin === true}
-              onChange={e => save({ site_thin: e.target.checked })}
-            />
-            It doesn't show their work
-          </label>
-        </div>
+        )}
         <div className="dko-fields">
           <label className="dko-field">
             Capture date
@@ -415,7 +448,7 @@ export function OfferPrep({
             Paste a real existing checkout. No checkout is created here.
           </small>
         </label>
-        <ProjectValue offer={m} save={save} />
+        {key === "website" ? <ProjectValue offer={m} save={save} /> : null}
       </section>
       <section className="dko-panel">
         <h2>04 · The client's mark and photos</h2>

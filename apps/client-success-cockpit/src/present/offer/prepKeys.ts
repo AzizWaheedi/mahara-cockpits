@@ -17,4 +17,5 @@ export const OFFER_PREP_KEYS = [
   "hidden_slides",
   "shown_slides",
   "presented_at",
+  "recruiter_name",
 ] as const;

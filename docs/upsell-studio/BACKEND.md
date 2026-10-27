@@ -369,3 +369,16 @@ Fixtures start from the Kuwait day (`KW_TODAY`, exported). Nine seats (`SEATS`, 
 ## Continuation checks, 26 October
 
 `upsell-proposals-supabase.test.ts` now covers draft validity edits that must not alter or reopen a sent page, draft preview parity, and Update link replacing the date. `upsell-monitor-supabase.test.ts` covers all three receipt ledgers, NULL-safe oEmbed handling, unchanged non-provider checks, owner-only base grants, an untouched service-role wrapper, repeated application and body/ACL drift guards. These added tests are queued for the coordinated VPS run; their results must be recorded before ship.
+
+
+## All seven presentations, 27 October 2026
+
+`20261027115820_offer_presentations_readiness.sql` is an additive follow-up, not a rewrite of the deployed pilot migrations. It refuses replacement-function body or grant drift, supports a repeat application and creates no table or public RPC. `cockpit_upsell_offer_readiness(text,text)` is a private helper; the existing scoped source/status RPCs call it.
+
+- `cockpit_csm_offer_sources` adds `ready: {ok, missing}` and `waitsOn: string|null`, matching the picker. Fresh captures are required for Website and Google/AI search only. Price/payment requirements and the actual client eligibility gate are unchanged. No automated fit is invented for the other six offers.
+- Closer prep adds `recruiter_name`, a trimmed private name of 3–120 characters. It is accepted only for Closer placement and remains in the existing scoped prep/audit record. Missing names produce `no_recruiter`. Starting a presentation stamp, creating a pitch or sending/updating a proposal link requires the name on the server, including client-asked mode. Existing pitch records remain editable. Preparation and draft previews remain available. The exact seeded recruiter hold resolves per client after a name is supplied; a different CEO-entered hold is preserved.
+- Manual SEO/SMM fulfilment and cameraman-location holds remain visible without creating new eligibility rules. SEO/GEO stays locked, and no reference hint becomes a price. Only the exact obsolete second-campaign pilot note and the UGC missing-examples note are cleared by the migration.
+- UGC `copy.en/ar.work[]` gets three user-authorized, ready Wistia examples: Khalda `qlwysqfu2g`, Castello `btp2dokvjr`, and AlKhalil `nix1oq0h3a`. The migration validates providers/copy and refuses to replace a different existing work list. Only those two work arrays change; other catalog copy and CEO settings stay intact. Each actual change increments its revision and leaves an audit row.
+- The existing proposal snapshot freezes these samples' labels and URLs on Send/Update link. Existing sent proposals are not changed. Public `work: [{label,url}]` and ProposalContent v1 remain the same; frontend rendering decides whether an allowlisted sample is an inline player. The recruiter name never joins the public allowlist.
+
+Verification is the named isolated PGlite file `apps/media-buyer-cockpit/scripts/offer-presentations-supabase.test.ts`, plus the existing gate/proposal/public/schema parity suites. All fixture records are fictional, and tests call no provider.

@@ -31,6 +31,7 @@ export const UPSELL_FILES = {
   v: "20261026v_upsell_offer_decks.sql",
   w: "20261026w_upsell_proposals.sql",
   x: "20261026x_upsell_catalog_copy.sql",
+  y: "20261027115820_offer_presentations_readiness.sql",
 } as const;
 export type UpsellStage = "base" | keyof typeof UPSELL_FILES;
 
@@ -130,7 +131,7 @@ export async function setClient(
 export async function upsellTestDb(
   opts: { through?: UpsellStage; twice?: boolean } = {},
 ): Promise<PGlite> {
-  const through = opts.through ?? (upsellFileExists("x") ? "x" : "w");
+  const through = opts.through ?? (upsellFileExists("y") ? "y" : upsellFileExists("x") ? "x" : "w");
   const twice = opts.twice ?? true;
   const db = await cockpitTestDb({ supabaseDefaultPrivileges: true });
   try {
@@ -453,7 +454,7 @@ export async function upsellTestDb(
     );
 
     for (const file of DECK_FILES) await db.exec(migration(file));
-    const files: (keyof typeof UPSELL_FILES)[] = ["u", "v", "w", "x"];
+    const files: (keyof typeof UPSELL_FILES)[] = ["u", "v", "w", "x", "y"];
     for (const stage of files.slice(
       0,
       through === "base" ? 0 : files.indexOf(through) + 1,

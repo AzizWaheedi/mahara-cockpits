@@ -1,4 +1,4 @@
-import { render, stateView, codeFromPath, stateFromQuery, embedUrl, whatsappUrl } from "./core.js";
+import { render, stateView, codeFromPath, stateFromQuery, embedUrl, whatsappUrl, workVideo } from "./core.js";
 import { STRINGS } from "./strings.js";
 
 export function deviceId(win) {
@@ -19,7 +19,7 @@ export function startOffer(win=window, doc=document) {
   let lang=String(win.navigator.language || "en").startsWith("ar") ? "ar" : "en";
   const language=(value)=>{ lang=value==="ar" ? "ar" : "en"; doc.documentElement.lang=lang; doc.documentElement.dir=lang==="ar"?"rtl":"ltr"; };
   const paint=(p,preview=false,strings=null)=>{
-    proposal=p; language(p?.lang); app.innerHTML=render(p,strings || STRINGS[lang],{preview,posterFallback:preview ? win.__OFFER_ART__ : null,proposalUrl:preview ? null : `${win.location.origin}${win.location.pathname}`});
+    proposal=p; language(p?.lang); app.innerHTML=render(p,strings || STRINGS[lang],{preview,brand:preview ? win.__OFFER_BRAND__ : null,posterFallback:preview ? win.__OFFER_ART__ : null,proposalUrl:preview ? null : `${win.location.origin}${win.location.pathname}`});
   };
   // Install the listener before telling the parent it can send data. No storage, fetch or links.
   if (win.__OFFER_PREVIEW__ === true) {
@@ -67,6 +67,20 @@ export function startOffer(win=window, doc=document) {
       box.replaceChildren(frame);
       frame.focus();
       void post("play");
+    } else if(action.dataset.action==="play-work"){
+      const index=Number(action.dataset.workIndex);
+      if(!Number.isInteger(index) || index<0 || index>=6) return;
+      const item=Array.isArray(proposal.work) ? proposal.work[index] : null;
+      const media=workVideo(item?.url);
+      if(!media) return;
+      const box=action.closest("[data-work-video]");
+      if(!box || box.querySelector("iframe")) return;
+      const frame=doc.createElement("iframe");
+      frame.src=media.embedUrl; frame.title=item.label || STRINGS[lang].play;
+      frame.allow="autoplay; fullscreen; picture-in-picture"; frame.allowFullscreen=true;
+      frame.referrerPolicy="no-referrer";
+      box.replaceChildren(frame); frame.focus();
+      // Actor examples do not inflate the main demo-play count.
     } else if(action.dataset.action==="cta"){
       event.preventDefault();
       const href=whatsappUrl(proposal.button?.whatsapp);

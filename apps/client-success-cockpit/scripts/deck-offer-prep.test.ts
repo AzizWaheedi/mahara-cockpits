@@ -23,7 +23,15 @@ const sql = readFileSync(
 );
 test("all offer prep keys have a server boundary", () => {
   expect(new Set(OFFER_PREP_KEYS).size).toBe(OFFER_PREP_KEYS.length);
-  for (const key of OFFER_PREP_KEYS) expect(sql).toContain(`'${key}'`);
+  const addition = readFileSync(
+    new URL(
+      "../../../supabase/migrations/20261027115820_offer_presentations_readiness.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  for (const key of OFFER_PREP_KEYS)
+    expect(key === "recruiter_name" ? addition : sql).toContain(`'${key}'`);
 });
 test("video refusal preserves the exact server sentence with null fields", async () => {
   const client = {
@@ -125,7 +133,18 @@ test("offer prep registry exactly matches the server CASE", () => {
   const keys = [
     ...body.matchAll(/^ {2}WHEN ((?:'[a-z_]+'(?:, )?)+) THEN/gm),
   ].flatMap(m => [...m[1].matchAll(/'([a-z_]+)'/g)].map(v => v[1]));
-  expect([...OFFER_PREP_KEYS].sort()).toEqual(keys.sort());
+  expect(
+    [...OFFER_PREP_KEYS].filter(k => k !== "recruiter_name").sort(),
+  ).toEqual(keys.sort());
+  const addition = readFileSync(
+    new URL(
+      "../../../supabase/migrations/20261027115820_offer_presentations_readiness.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  expect(addition).toContain("recruiter_name");
+  expect(OFFER_PREP_KEYS).toContain("recruiter_name");
 });
 
 test("prep confirmation accepts JSONB key order but refuses a stale price", () => {

@@ -1,3 +1,4 @@
+import { BUILT_OFFER_DECKS, type OfferDeckKind } from "../present/offer/kinds";
 import type { Overrides } from "@/present/deckData";
 import { PRACTICE_NAME, PRACTICE_TASK } from "@/present/deckHost";
 import type { KickoffPort } from "@/present/KickoffSlide";
@@ -140,7 +141,10 @@ export function practiceIO(deck: DeckKind, presenter: string | null): DeckIO {
     onboarding: kept.onboarding ?? loaded.prep.onboarding,
     launch: kept.launch ?? loaded.prep.launch,
     blueprint: {},
-    offer_website: {},
+    ...(Object.fromEntries(BUILT_OFFER_DECKS.map(k => [k, {}])) as Record<
+      OfferDeckKind,
+      Overrides
+    >),
   };
   let ads: LaunchAd[] = [...loaded.ads];
   let revision = 1;

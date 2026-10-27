@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { render, stateView, embedUrl, pictureUrl, whatsappUrl, codeFromPath, stateFromQuery, money } from "./core.js";
+import { render, stateView, embedUrl, pictureUrl, whatsappUrl, codeFromPath, stateFromQuery, money, workVideo } from "./core.js";
 import { STRINGS } from "./strings.js";
 import { fixture } from "./fixtures.ts";
 describe("public proposal rendering",()=>{
@@ -48,6 +48,8 @@ describe("public proposal rendering",()=>{
 });
 describe("URL boundaries and closed states",()=>{
   test("only known embeds, image hosts and real WhatsApp URL shapes",()=>{
+    expect(workVideo("https://maharamedia.wistia.com/medias/btp2dokvjr")?.posterUrl).toBe("https://embed-ssl.wistia.com/deliveries/33e27b2faa619214d4961f7d833a94f98e7a3cdf.jpg");
+    expect(workVideo("https://maharamedia.wistia.com/medias/aaaaaaaaaa")?.posterUrl).toBeNull();
     for(const bad of ["javascript:alert(1)","https://www.youtube-nocookie.com.evil.com/embed/abc","https://a@www.youtube-nocookie.com/embed/abc","https://www.youtube-nocookie.com:444/embed/abc","https://www.youtube-nocookie.com/watch?v=abc"]) expect(embedUrl(bad)).toBeNull();
     expect(embedUrl("https://www.youtube-nocookie.com/embed/abcdefghijk")).toBeTruthy();
     expect(pictureUrl("https://evil.test/logo.png")).toBeNull();
@@ -56,6 +58,8 @@ describe("URL boundaries and closed states",()=>{
   });
   test("invalid codes and video redirect flags never become open proposals",()=>{
     expect(codeFromPath("/abcdefghjkmn")).toBe("abcdefghjkmn");
+    expect(workVideo("https://maharamedia.wistia.com/medias/btp2dokvjr")?.posterUrl).toBe("https://embed-ssl.wistia.com/deliveries/33e27b2faa619214d4961f7d833a94f98e7a3cdf.jpg");
+    expect(workVideo("https://maharamedia.wistia.com/medias/aaaaaaaaaa")?.posterUrl).toBeNull();
     for(const bad of ["/short","/abcdefghjkmn/anything","/%XX","/abcdefghijkl"])expect(codeFromPath(bad)).toBeNull();
     expect(stateFromQuery("?gone=1")).toBe("videoGone");expect(stateFromQuery("?busy=1")).toBe("busy");expect(stateFromQuery("?error=1")).toBe("error");
   });
@@ -67,5 +71,53 @@ describe("URL boundaries and closed states",()=>{
     const html=readFileSync(new URL("./index.html",import.meta.url),"utf8");
     expect(html).not.toMatch(/clientName|amountUsd|upsell/i);
     expect(readFileSync(new URL("./offer.css",import.meta.url),"utf8")).toContain("@media print");
+  });
+});
+
+describe("genuine brand and frozen actor samples",()=>{
+  test("all proposal and closed-state branding uses the real image files",()=>{
+    for(const lang of ["en","ar"]){
+      const html=render(fixture(lang),STRINGS[lang]);
+      expect(html.match(/src="\/logo.png"/g)).toHaveLength(2);
+      expect(html.match(/src="\/logo-light.png"/g)).toHaveLength(2);
+      expect(html).not.toContain("Mahara<span>");
+      for(const state of Object.keys(STRINGS[lang].states)){
+        expect(stateView(state,STRINGS[lang],null)).toContain('src="/logo.png"');
+      }
+    }
+    const root=new URL("../../apps/client-success-cockpit/src/assets/",import.meta.url);
+    expect(readFileSync(new URL("./logo.png",import.meta.url))).toEqual(readFileSync(new URL("mahara-logo-dark.png",root)));
+    expect(readFileSync(new URL("./logo-light.png",import.meta.url))).toEqual(readFileSync(new URL("mahara-logo-light.png",root)));
+  });
+  test("only exact Wistia share and embed URLs can become inline work players",()=>{
+    expect(workVideo("https://maharamedia.wistia.com/medias/btp2dokvjr")?.embedUrl).toBe("https://fast.wistia.net/embed/iframe/btp2dokvjr");
+    expect(workVideo("https://maharamedia.wistia.com/medias/btp2dokvjr")?.posterUrl).toBe("https://embed-ssl.wistia.com/deliveries/33e27b2faa619214d4961f7d833a94f98e7a3cdf.jpg");
+    expect(workVideo("https://maharamedia.wistia.com/medias/aaaaaaaaaa")?.posterUrl).toBeNull();
+    for(const bad of [
+      "https://maharamedia.wistia.com.evil.test/medias/btp2dokvjr",
+      "https://evil.test/medias/btp2dokvjr",
+      "https://name@maharamedia.wistia.com/medias/btp2dokvjr",
+      "https://maharamedia.wistia.com:444/medias/btp2dokvjr",
+      "https://maharamedia.wistia.com/medias/btp2dokvjr?autoplay=true",
+      "https://maharamedia.wistia.com/medias/btp2dokvjr#x",
+      "https://maharamedia.wistia.com/medias/../../evil",
+      "https://fast.wistia.net/anything/btp2dokvjr"
+    ]) expect(workVideo(bad)).toBeNull();
+  });
+  test("frozen samples show independently, remain escaped and never autoplay",()=>{
+    const p=fixture();p.offer="ugc";p.work=[
+      {label:"Presenter A",url:"https://maharamedia.wistia.com/medias/qlwysqfu2g"},
+      {label:'"><script>bad()</script>',url:"https://maharamedia.wistia.com/medias/btp2dokvjr"},
+      {label:"Presenter C",url:"https://maharamedia.wistia.com/medias/nix1oq0h3a"}
+    ];
+    const html=render(p,STRINGS.en);
+    expect(html.match(/data-action="play-work"/g)).toHaveLength(3);
+    expect(html).not.toContain("<iframe");
+    expect(html).not.toContain("<script>bad");
+    expect(html).not.toContain("autoplay=true");
+    expect(html).toContain('data-work-index="2"');
+    const inert=render(p,STRINGS.en,{preview:true});
+    expect(inert).not.toMatch(/href=|<iframe/);
+    expect(inert.match(/data-work-index="\d" disabled/g)).toHaveLength(3);
   });
 });

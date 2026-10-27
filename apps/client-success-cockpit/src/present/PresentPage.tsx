@@ -1,3 +1,4 @@
+import { offerOfDeck } from "./offer/kinds";
 import { useMemo } from "react";
 import { Navigate, useLocation, useParams } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
@@ -14,9 +15,9 @@ import {
 import { useDeckReport } from "./DeckBoundary";
 import type { KickoffPort } from "./KickoffSlide";
 import { loadDeck } from "./load";
-import { isOfferDeck, offerDeckUrl } from "./offer/kinds";
+import { isOfferDeck } from "./offer/kinds";
 import { loadOfferDeck, offerIO } from "./offer/load";
-import { PresentApp, type PresentUrls, type View } from "./PresentApp";
+import { PresentApp, type View } from "./PresentApp";
 import {
   clearDeckVideo,
   type DeckKind,
@@ -40,49 +41,8 @@ import type { DeckIO } from "./useDeckModel";
  * seat's own Supabase client, so cockpit_csm_client_gate decides.
  */
 
-/** The app's base path; read when used (tests run without Vite's env). */
-const base = () =>
-  (import.meta.env?.BASE_URL ?? "/client-success/").replace(/\/$/, "");
-
-export function presentUrls(
-  key: string,
-  deck: DeckKind,
-  lang?: string,
-  rehearse = false,
-): PresentUrls {
-  if (isOfferDeck(deck)) {
-    const params = lang ? `?lang=${lang}` : "";
-    return {
-      deck: offerDeckUrl(key, "website") + params,
-      notes: offerDeckUrl(key, "website", "notes") + params,
-      prep: offerDeckUrl(key, "website", "prep"),
-      client: `${base()}/clients/${encodeURIComponent(key)}?tab=money`,
-      other: offerDeckUrl(key, "website", "prep"),
-    };
-  }
-  const k = encodeURIComponent(key);
-  // A rehearsal stays a rehearsal in every window it opens: each window
-  // reads ?rehearse=1 from its own address only.
-  const params = [lang ? `lang=${lang}` : null, rehearse ? "rehearse=1" : null]
-    .filter(Boolean)
-    .join("&");
-  const q = params ? `?${params}` : "";
-  const r = rehearse ? "&rehearse=1" : "";
-  // The Blueprint deck has no sister deck: its "other" link is its own prep.
-  const other: DeckKind =
-    deck === "blueprint"
-      ? "blueprint"
-      : deck === "onboarding"
-        ? "launch"
-        : "onboarding";
-  return {
-    deck: `${base()}/clients/${k}/present/${deck}${q}`,
-    notes: `${base()}/clients/${k}/present/${deck}/notes${q}`,
-    prep: `${base()}/clients/${k}/present/${deck}?view=prep${r}`,
-    client: `${base()}/clients/${k}?tab=onboarding`,
-    other: `${base()}/clients/${k}/present/${other}?view=prep${r}`,
-  };
-}
+export { presentUrls } from "./presentUrls";
+import { presentUrls } from "./presentUrls";
 
 export default function PresentPage({
   notes = false,
@@ -109,7 +69,8 @@ export default function PresentPage({
     () => ({
       load: () => {
         if (!client) throw Error("Sign in to the cockpit to open the deck.");
-        if (isOfferDeck(deck)) return loadOfferDeck(client, key);
+        if (isOfferDeck(deck))
+          return loadOfferDeck(client, key, offerOfDeck(deck));
         if (deck === "blueprint") return loadBlueprint(client, key);
         return loadDeck(
           client,
@@ -148,7 +109,9 @@ export default function PresentPage({
             },
           }
         : {}),
-      ...(isOfferDeck(deck) && client ? { offer: offerIO(client, key) } : {}),
+      ...(isOfferDeck(deck) && client
+        ? { offer: offerIO(client, key, offerOfDeck(deck)) }
+        : {}),
       savePrep: (k, patch) => {
         if (!client)
           throw Error(

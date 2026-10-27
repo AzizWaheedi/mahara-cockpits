@@ -7,7 +7,7 @@ import type { OfferNotesCopy } from "./content/types";
 import { WEBSITE_DECK as W } from "./content/website";
 import { proposalNewUrl } from "./kinds";
 import { formatMoney } from "./price";
-import type { OfferModel } from "./useOffer";
+import { offerCopy, type OfferModel } from "./useOffer";
 export function OfferNotes({
   offer: m,
   model,
@@ -24,6 +24,10 @@ export function OfferNotes({
     [copied, setCopied] = useState(false),
     [error, setError] = useState<string | null>(null);
   if (!m) return null;
+  const hold =
+    m.sources.waitsOn !== undefined ? m.sources.waitsOn : m.row?.waitsOn;
+  const website = m.row?.offerKey === "website";
+  const copy = offerCopy(m, model.lang);
   const say = (v: OfferNotesCopy) =>
     model.lang === "ar" ? (m.dialect === "sa" ? v.saySa : v.sayKw) : v.say;
   const list = (v: OfferNotesCopy) => (
@@ -54,37 +58,60 @@ export function OfferNotes({
             Play the video · V
           </Button>
         </div>
-        <p className="dko-help">
-          No cleared website proof is on file. The proof slide stays hidden.
-        </p>
-        <label className="dko-field">
-          Their answer
-          <select value={branch} onChange={e => setBranch(e.target.value)}>
-            <option value="no_site">No site</option>
-            <option value="broken">It doesn't open</option>
-            <option value="working_on_it">Working on it</option>
-          </select>
-        </label>
-        {list(W.branches[branch as keyof typeof W.branches])}
-        <details>
-          <summary className="cursor-pointer">If they push back</summary>
-          <label className="dko-field mt-3">
-            What's behind it
-            <select
-              value={objection}
-              onChange={e => setObjection(e.target.value)}
-            >
-              <option value="busy">Too busy</option>
-              <option value="burned">A bad past experience</option>
-              <option value="expensive">Feels expensive</option>
-            </select>
-          </label>
-          {list(W.objections[objection as keyof typeof W.objections])}
-        </details>
+        {website ? (
+          <>
+            <p className="dko-help">
+              No cleared website proof is on file. The proof slide stays hidden.
+            </p>
+            <label className="dko-field">
+              Their answer
+              <select value={branch} onChange={e => setBranch(e.target.value)}>
+                <option value="no_site">No site</option>
+                <option value="broken">It doesn't open</option>
+                <option value="working_on_it">Working on it</option>
+              </select>
+            </label>
+            {list(W.branches[branch as keyof typeof W.branches])}
+            <details>
+              <summary className="cursor-pointer">If they push back</summary>
+              <label className="dko-field mt-3">
+                What's behind it
+                <select
+                  value={objection}
+                  onChange={e => setObjection(e.target.value)}
+                >
+                  <option value="busy">Too busy</option>
+                  <option value="burned">A bad past experience</option>
+                  <option value="expensive">Feels expensive</option>
+                </select>
+              </label>
+              {list(W.objections[objection as keyof typeof W.objections])}
+            </details>
+          </>
+        ) : (
+          <div dir={model.lang === "ar" ? "rtl" : "ltr"}>
+            <p className="text-sm">{copy?.line}</p>
+            <ul className="dko-notes-list mt-3">
+              {copy?.need.map(v => (
+                <li key={v.key}>{v.text}</li>
+              ))}
+            </ul>
+            <p className="dko-help mt-3">
+              {hold ??
+                "Use the client's own context. No recommendation has been inferred from missing data."}
+            </p>
+          </div>
+        )}
       </section>
       <section className="dko-panel dko-private-price">
         <h2>Price discussion, private</h2>
-        {list(W.price.hold)}
+        {website ? (
+          list(W.price.hold)
+        ) : (
+          <p className="text-sm" dir={model.lang === "ar" ? "rtl" : "ltr"}>
+            {copy?.terms}
+          </p>
+        )}
         <Button
           size="sm"
           variant={held ? "outline" : "default"}
@@ -152,7 +179,7 @@ export function OfferNotes({
             >
               Record the agreed price
             </Button>
-            {m.pitch?.finalPrice ? (
+            {website && m.pitch?.finalPrice ? (
               <ul>
                 {say(W.price.lower).map(l => (
                   <li key={l}>
@@ -202,7 +229,10 @@ export function OfferNotes({
         )}
         <a
           className="text-primary underline"
-          href={proposalNewUrl(m.sources.gate.taskId, "website")}
+          href={proposalNewUrl(
+            m.sources.gate.taskId,
+            m.row?.offerKey ?? "website",
+          )}
           target="_blank"
           rel="noreferrer"
         >
@@ -251,11 +281,18 @@ export function OfferNotes({
               onClick={async () => {
                 try {
                   await navigator.clipboard.writeText(
-                    fill(W.whatsapp[model.lang === "en" ? "en" : m.dialect], {
-                      video,
-                      next,
-                      name: model.data?.csmFirst ?? "",
-                    }),
+                    website
+                      ? fill(
+                          W.whatsapp[model.lang === "en" ? "en" : m.dialect],
+                          {
+                            video,
+                            next,
+                            name: model.data?.csmFirst ?? "",
+                          },
+                        )
+                      : [copy?.name, video, next, model.data?.csmFirst]
+                          .filter(Boolean)
+                          .join("\n"),
                   );
                   setCopied(true);
                 } catch {
@@ -277,17 +314,19 @@ export function OfferNotes({
         ) : null}
         {error ? <p role="alert">{error}</p> : null}
       </section>
-      <details className="dko-panel">
-        <summary className="cursor-pointer">Facts, only if useful</summary>
-        {W.facts.map(f => (
-          <p className="text-sm" key={f.text}>
-            {f.text}
-            <span className="block text-xs text-muted-foreground">
-              {f.source} · {f.year}
-            </span>
-          </p>
-        ))}
-      </details>
+      {website ? (
+        <details className="dko-panel">
+          <summary className="cursor-pointer">Facts, only if useful</summary>
+          {W.facts.map(f => (
+            <p className="text-sm" key={f.text}>
+              {f.text}
+              <span className="block text-xs text-muted-foreground">
+                {f.source} · {f.year}
+              </span>
+            </p>
+          ))}
+        </details>
+      ) : null}
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import { CatalogDeckPreview } from "../../../present/offer/CatalogDeckPreview";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase";
@@ -45,6 +46,19 @@ export function OffersTab({
     );
   return (
     <div className="space-y-6">
+      <section className="dko-panel">
+        <h2>Pitch decks</h2>
+        <p className="dko-help">
+          A presentation for the conversation, separate from the proposal you
+          send afterwards. Preview any deck here without changing a client
+          record.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {data.rows.map(row => (
+            <CatalogDeckPreview key={row.offerKey} row={row} />
+          ))}
+        </div>
+      </section>
       <section className="dko-panel">
         <h2>Price list</h2>
         <p className="dko-help">

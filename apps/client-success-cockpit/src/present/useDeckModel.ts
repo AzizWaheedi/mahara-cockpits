@@ -1,3 +1,4 @@
+import { BUILT_OFFER_DECKS, type OfferDeckKind } from "./offer/kinds";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OnboardingRow } from "@/lib/onboardingCore";
 import type { Answers, BpPart } from "./blueprintForm";
@@ -63,8 +64,7 @@ export interface Loaded {
     onboarding: Overrides;
     launch: Overrides;
     blueprint?: Overrides;
-    offer_website?: Overrides;
-  };
+  } & Partial<Record<OfferDeckKind, Overrides>>;
   /**
    * The Brand Blueprint beside the deck's read (cockpit_blueprint_sources):
    * the seat's rights, the card, the settings and the record.
@@ -184,7 +184,7 @@ export function useDeckModel({
     onboarding: {},
     launch: {},
     blueprint: {},
-    offer_website: {},
+    ...emptyOfferPrep(),
   });
   const prepRef = useRef(prep);
   prepRef.current = prep;
@@ -250,7 +250,7 @@ export function useDeckModel({
         // Prep comes from the server on the first read only (prepAfterLoad).
         const nextPrep = prepAfterLoad(
           prepRef.current,
-          { blueprint: {}, offer_website: {}, ...out.prep },
+          { blueprint: {}, ...emptyOfferPrep(), ...out.prep },
           firstLoad.current,
         );
         firstLoad.current = false;
@@ -317,14 +317,16 @@ export function useDeckModel({
     return {
       onboarding: make("onboarding"),
       launch: make("launch"),
-      offer_website: make("offer_website"),
+      ...(Object.fromEntries(
+        BUILT_OFFER_DECKS.map(k => [k, make(k)]),
+      ) as Record<OfferDeckKind, PrepSaver>),
     };
   }, []);
   useEffect(
     () => () => {
       void savers.onboarding.flush();
       void savers.launch.flush();
-      void savers.offer_website.flush();
+      for (const k of BUILT_OFFER_DECKS) void savers[k].flush();
     },
     [savers],
   );
@@ -333,7 +335,7 @@ export function useDeckModel({
     const again = () => {
       void savers.onboarding.flush();
       void savers.launch.flush();
-      void savers.offer_website.flush();
+      for (const k of BUILT_OFFER_DECKS) void savers[k].flush();
     };
     window.addEventListener("online", again);
     return () => window.removeEventListener("online", again);
@@ -494,9 +496,16 @@ export function useDeckModel({
       Promise.all([
         savers.onboarding.flush(),
         savers.launch.flush(),
-        savers.offer_website.flush(),
+        ...BUILT_OFFER_DECKS.map(k => savers[k].flush()),
       ]),
   };
 }
 
 export type DeckModel = ReturnType<typeof useDeckModel>;
+
+function emptyOfferPrep(): Record<OfferDeckKind, Overrides> {
+  return Object.fromEntries(BUILT_OFFER_DECKS.map(k => [k, {}])) as Record<
+    OfferDeckKind,
+    Overrides
+  >;
+}

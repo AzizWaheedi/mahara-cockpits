@@ -6,3 +6,21 @@
 @media(max-width:760px){.of-proposal{padding:0 24px}.of-masthead{min-height:88px;gap:16px}.of-masthead p{max-width:148px;text-align:end;font-size:12px}.of-brand{font-size:18px;gap:4px}.of-heading{padding:40px 0 28px}.of-heading h1{font-size:38px;letter-spacing:-1px}.of-kicker{font-size:16px}.of-client-logo{max-width:100px;max-height:56px}.of-prepared{font-size:14px}.of-play{inset-inline-start:16px;bottom:16px;min-height:44px;padding:12px 16px;font-size:16px;gap:8px}.of-play svg{width:20px;height:20px}.of-example{top:12px;inset-inline-end:12px;padding:4px 8px}.of-video-note{font-size:12px}.of-section{grid-template-columns:minmax(0,1fr);gap:24px;padding:32px 0}.of-section h2{color:var(--of-muted);font-size:18px}.of-statement{font-size:23px}.of-deliverables li,.of-lines{font-size:18px}.of-investment{margin:32px -8px 0;padding:28px 16px}.of-bill th{font-size:18px}.of-bill td{font-size:23px}.of-footer{align-items:flex-start;flex-direction:column;padding:32px 0 40px}.of-footer>div{width:100%}.of-footer .of-button{width:100%}.of-state{padding:32px 24px}.of-state section{margin-top:88px}.of-state a{width:100%}.of-proposal[dir=rtl] .of-section h2{font-size:21px}.of-proposal[dir=rtl] .of-statement{font-size:25px}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
 @media print{:root{color-scheme:light;color:var(--of-space);background:var(--of-ink)}.of-proposal{max-width:none;padding:0}.of-section{break-inside:avoid;grid-template-columns:180px minmax(0,1fr);padding:24px 0}.of-masthead{min-height:64px}.of-heading{padding:24px 0}.of-video{max-height:280px}.of-play,.of-video-note,.of-button,.of-footer p{display:none}.of-investment{background:transparent;margin:24px 0 0;padding:24px 0;border:0}.of-brand span,.of-section h2,.of-kicker,.of-prepared,.of-masthead p,.of-terms,.of-split,.of-bill th small,.of-bill td span,.of-captures small{color:var(--of-print-ink)}.of-print-link{display:block;border-top:1px solid var(--of-print-ink);padding-top:16px;font-size:12px;overflow-wrap:anywhere}.of-footer{padding:24px 0}.of-bill th,.of-bill td,.of-section,.of-masthead{border-color:var(--of-print-line)}iframe{display:none!important}}
+
+/* Genuine brand assets and three real presenter examples. */
+.of-brand{display:inline-flex;align-items:center;flex:none;width:182px;max-width:42vw;height:40px}
+.of-brand img{display:block;width:100%;height:100%;object-fit:contain}
+.of-brand .of-brand-light{display:none}
+.of-work-gallery{grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;align-items:start}
+.of-work-film{min-width:0}.of-work-film figure{margin:0}
+.of-work-player{aspect-ratio:9/16;background:var(--of-deep);border:1px solid var(--of-line);border-radius:18px;position:relative;overflow:hidden;isolation:isolate}
+.of-work-player>img,.of-work-player>iframe{display:block;width:100%;height:100%;object-fit:cover;border:0}
+.of-work-play{position:absolute;inset:0;width:100%;border:0;padding:0 16px 24px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:12px;background:linear-gradient(transparent 52%,rgba(9,19,51,.9));color:#fff;cursor:pointer}
+.of-work-play svg{width:52px;height:52px;padding:15px;border-radius:50%;background:var(--of-teal);fill:var(--of-deep);transition:transform .18s}
+.of-work-play:hover:not(:disabled) svg{transform:scale(1.08)}
+.of-work-play span{font-size:14px;font-weight:500}.of-work-play:disabled{opacity:1}
+.of-work-film figcaption{padding-top:14px;line-height:1.5}
+.of-work-film figcaption a,.of-work-film figcaption>span{font-size:15px;min-height:44px;display:inline-flex;align-items:center;gap:8px}
+@media(max-width:760px){.of-brand{width:148px;height:33px}.of-work-gallery{grid-template-columns:minmax(0,1fr);gap:28px}.of-work-film{max-width:360px;width:100%;margin-inline:auto}}
+@media(prefers-reduced-motion:reduce){.of-work-play svg{transition:none}}
+@media print{.of-brand .of-brand-dark{display:none}.of-brand .of-brand-light{display:block}.of-work-play{display:none}.of-work-gallery{grid-template-columns:repeat(3,minmax(0,1fr))}.of-work-film{break-inside:avoid}.of-work-film figcaption a{font-size:12px}}

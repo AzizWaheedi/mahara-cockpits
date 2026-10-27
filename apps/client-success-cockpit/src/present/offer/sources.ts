@@ -149,6 +149,8 @@ const answer = z
   .nullable();
 export const offerSourcesSchema = z.object({
   mode: z.enum(["proactive", "client_asked", "refused"]),
+  ready: z.object({ ok: z.boolean(), missing: z.array(z.string()) }).optional(),
+  waitsOn: z.string().nullable().optional(),
   gate: gateSchema,
   catalog: catalogRowSchema.nullable(),
   prep: z
@@ -210,7 +212,13 @@ export const offerStatusSchema = z.object({
       ready: z.object({
         ok: z.boolean(),
         missing: z.array(
-          z.enum(["no_capture", "capture_old", "no_price", "no_payment_link"]),
+          z.enum([
+            "no_capture",
+            "capture_old",
+            "no_price",
+            "no_payment_link",
+            "no_recruiter",
+          ]),
         ),
       }),
       waitsOn: nullableText,

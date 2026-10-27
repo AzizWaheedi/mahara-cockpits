@@ -15,7 +15,7 @@ Live mode stores only a random `mm-offer-device`, performs one no-store read wit
 On the VPS after orchestrator approval:
 
 ```
-bun test sites/offer
+bun test sites/offer/core.test.js sites/offer/offer.test.js
 bun sites/offer/dev-door.ts 5421
 ```
 
@@ -24,3 +24,8 @@ The harness binds to loopback and uses only fictional data and the catalog's exa
 Source stage, 26 Oct 2026: tests and browser review are pending the shared VPS render completing. Review at 390 and 1280 in both languages, including every closed state and print. Do not claim a Hallmark execution score or parity before those checks run. Arabic copy, final video licences/closing clip and deployment remain separate approval gates owned by the orchestrator. No deploy is performed by these files.
 
 `logo.png`, `mark.png`, `favicon.png`, `apple-touch-icon.png` and `og.png` reuse the existing call-link brand files. Metadata is generic and contains no client name or amount. The `/v/:code` redirect targets `offer-door`, never the retired function name. Production headers prohibit framing, indexing, referrers and arbitrary scripts; this is why the internal builder uses inert srcdoc instead of framing the live page.
+
+## Presenter examples and genuine branding, 27 October 2026
+All page states use the real Mahara Media image lockup. The matching light-surface image is used for print. Sandboxed previews receive bounded trusted PNG data URLs, without reaching outside the preview for a brand asset.
+Frozen work links on the exact Mahara Wistia media path render as portrait example cards. No provider frame loads before a click. The original source link remains available. Example playback does not count as a main offer-demo play, and the preview remains inert.
+The fictional public harness also supports websiteen, websitear, campaignen, campaignar, seoen, seoar, smmen, smmar, ugcen, ugcar, closeren, closerar, cameramanen and cameramanar. Its $1,000 non-website figures are synthetic test values only. Wistia posters can load, but its CSP still blocks provider video frames.
