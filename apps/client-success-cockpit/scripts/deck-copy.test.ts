@@ -71,6 +71,17 @@ const ALL = leaves();
 const EN = ALL.filter(l => l.lang === "en");
 const AR = ALL.filter(l => l.lang === "ar");
 
+// The approved offer catalog names the search product explicitly. This exact
+// label is not a Gamma call-service claim; all legacy deck lines stay checked.
+const reviewedSearchName = (l: Leaf) =>
+  l.path === "DECK_NAME.offer_seo_geo.en" && l.text === "Google and AI search";
+
+test("the search offer name is the exact reviewed label", () => {
+  expect(ALL.filter(reviewedSearchName).map(l => l.text)).toEqual([
+    "Google and AI search",
+  ]);
+});
+
 /** Lines allowed to name what a rule bans, because they tell the CSM not to. */
 const ALLOWED: Record<string, string[]> = {
   guarantee: ["Don't link this list to the contract or to any guarantee."],
@@ -567,7 +578,9 @@ describe("rule 9: form", () => {
     expect(bad.map(l => `${l.path}: ${l.text}`)).toEqual([]);
     // Every other English line on the canvas too: no Title Case mid-sentence
     // ("I'd" is the pronoun, not a capital).
-    const lines = ALL.filter(l => l.lang === "en" && !l.spoken);
+    const lines = ALL.filter(
+      l => l.lang === "en" && !l.spoken && !reviewedSearchName(l),
+    );
     const shouty = lines.filter(l =>
       l.text
         .replace(/\{[^}]+\}/g, "")
@@ -1145,7 +1158,7 @@ describe("the Gamma pass: the expectations, as written", () => {
   test("the Gamma lines left out on purpose stay out", () => {
     expect(
       offenders(
-        EN,
+        EN.filter(l => !reviewedSearchName(l)),
         /\b(?:8|eight) (?:tries|times|follow-?ups)\b|\b80 ?%|third contact(?! ")|\b10 minutes\b|Sunday to Thursday|\bAI\b|tons of|monthly projections|monthly (?:results |reporting )?call/i,
       ).filter(l => !l.startsWith("L_NOTES.partnership.say")),
     ).toEqual([]);
