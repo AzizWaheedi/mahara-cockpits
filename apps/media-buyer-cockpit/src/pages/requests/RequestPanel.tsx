@@ -11,8 +11,12 @@ import {
   isOpen,
   ownerNote,
   PRIORITIES,
+  type Priority,
   partChip,
+  partHeld,
+  partialNext,
   partWords,
+  REQUEST_SENTENCES,
   type RequestDetail,
   type RequestRow,
   requestHeld,
@@ -25,8 +29,9 @@ import { useTaskSeat } from "@/lib/taskSeat";
 
 /**
  * What "Make it a request" hands the form (2.10, 6.4), or "File it again"
- * for a request that did not reach ClickUp (no replacesTaskId, its answers
- * as words in `answers`).
+ * for a request where nothing reached ClickUp (its answers as words in
+ * `answers`; a request that routed an old form ticket routes it again while
+ * the ticket still waits, else goes on its own).
  */
 export type RouteFrom = {
   typeKey: string;
@@ -34,13 +39,65 @@ export type RouteFrom = {
   details: string | null;
   replacesTaskId: string;
   answers?: Record<string, string>;
+  /**
+   * Its own priority and due day: what the person picked for a request filed
+   * again, or the old form ticket's. The form starts on them in place of the
+   * type's defaults (a due day already past gives the default).
+   */
+  priority?: Priority;
+  dueOn?: string | null;
   /** The request being filed again. */
   againOf?: string;
+  /**
+   * The seat may cancel the request being filed again: once the new one is
+   * sent, the first one is cancelled, so the queue holds the request once.
+   */
+  againCanCancel?: boolean;
 };
 
-/** Whether a request stopped short of ClickUp and needs a next step. */
-export const stuck = (row: Pick<RequestRow, "state" | "done">) =>
-  !row.done && (row.state === "failed" || row.state === "partial");
+/** The start of the writer's sentence for a routing request whose old ticket was handled in ClickUp. */
+const OLD_HANDLED = "The old ticket was already moved or closed in ClickUp";
+
+/**
+ * The next step a request needs: "again" when nothing reached ClickUp (it
+ * can be filed again whole), "partial" when part of it did (filing it again
+ * would make the tasks that landed twice, so only the missing task is
+ * raised, another way), "old" when a routing request made nothing because
+ * the team moved or closed its old form ticket in ClickUp while it waited
+ * (the work may be done: check the ticket, never file it again here), else
+ * none. A partial request keeps its next step even once its delivered tasks
+ * are done: the missing task never went.
+ */
+export function nextStep(
+  row: Pick<RequestRow, "state" | "done"> & {
+    replacesTaskId?: string | null;
+    parts?: Pick<RequestRow["parts"][number], "error">[];
+  },
+): "again" | "partial" | "old" | null {
+  if (row.state === "partial") return "partial";
+  if (row.state === "failed" && !row.done)
+    return row.replacesTaskId &&
+      (row.parts ?? []).some(p => (p.error ?? "").startsWith(OLD_HANDLED))
+      ? "old"
+      : "again";
+  return null;
+}
+
+/**
+ * Whether a failed request's task was deleted in ClickUp: the writer keeps the
+ * task's link on the only failed part that reached ClickUp (review round 3),
+ * so the next step never says nothing reached it.
+ */
+export const taskDeleted = (
+  row: Pick<RequestRow, "state"> & {
+    parts?: Pick<RequestRow["parts"][number], "state" | "url">[];
+  },
+) =>
+  row.state === "failed" &&
+  (row.parts ?? []).some(p => p.state === "failed" && Boolean(p.url));
+
+/** The cancel reason of a request filed again (contract 2.5, cancel). */
+export const AGAIN_REASON = "Filed again as a new request.";
 
 const CANCEL_LIMIT = 240;
 
@@ -141,8 +198,8 @@ export function RequestPanel({
   const canCancel = Boolean(detail?.canCancel && isOpen(detail));
   // Saved, not sent: every task says so, not "Sending to ClickUp".
   const held = detail ? requestHeld(detail) : false;
-  // What the state line above the tasks says (nothing for a failed or
-  // partial request: each task says why once).
+  // The state line beside the chip, only where it says more than the chip
+  // (factsLine); each task then says only what its chip and this do not.
   const factsWords = detail ? factsLine(detail) : "";
   // A footer only when it holds an action, so a request with none ends
   // with its history, not an empty bar.
@@ -167,6 +224,9 @@ export function RequestPanel({
                   : null,
                 details: detail.details,
                 replacesTaskId: importTaskId(detail) ?? "",
+                // The old ticket's own priority and due day (2.10).
+                priority: detail.priority,
+                dueOn: detail.dueOn,
               })
             }
           >
@@ -217,11 +277,13 @@ export function RequestPanel({
         // ceo-root for the status colours.
         <div className="ceo-root space-y-6 text-sm">
           <Facts detail={detail} />
-          {stuck(detail) ? (
+          {nextStep(detail) ? (
             <NextStep
               detail={detail}
               onAgain={
-                onRoute
+                // Only when nothing reached ClickUp: a partial request filed
+                // again would make its delivered tasks twice.
+                onRoute && nextStep(detail) === "again"
                   ? () =>
                       onRoute({
                         typeKey: detail.typeKey,
@@ -232,11 +294,20 @@ export function RequestPanel({
                             }
                           : null,
                         details: detail.details,
-                        replacesTaskId: "",
+                        // A routing request routes its old ticket again
+                        // (the server put it back in its queue when this
+                        // one failed); the form goes on without it if it
+                        // was routed meanwhile.
+                        replacesTaskId: detail.replacesTaskId ?? "",
                         answers: Object.fromEntries(
                           detail.answers.map(a => [a.key, a.display]),
                         ),
+                        // "The same answers": the priority and due day the
+                        // person picked too, not the type's defaults.
+                        priority: detail.priority,
+                        dueOn: detail.dueOn,
                         againOf: detail.id,
+                        againCanCancel: detail.canCancel,
                       })
                   : undefined
               }
@@ -278,11 +349,10 @@ export function RequestPanel({
             <ul className="divide-y rounded-xl border">
               {detail.parts.map(p => {
                 const chip = partChip(p, held);
-                // One task: the request's chip and line above already say
-                // its state, so the task says only what is its own.
+                // One task: the request's chip above is its chip. Each task
+                // says only what its chip and the lines above do not.
                 const one = detail.parts.length === 1;
-                const words = partWords(p, held);
-                const sayWords = !(one && words === factsWords);
+                const words = taskWords(p, detail, factsWords);
                 const note = ownerNote(p.owner);
                 const check = verifyWords(p);
                 const unfinished = deliveredNote(p);
@@ -298,7 +368,7 @@ export function RequestPanel({
                       <bdi>{p.taskName}</bdi>
                     </p>
                     <p className="text-[13px] text-muted-foreground">
-                      {sayWords ? `${words}. ` : null}Owner:{" "}
+                      {words ? `${words}. ` : null}Owner:{" "}
                       {p.owner.how === "none" || !p.owner.label
                         ? "nobody yet"
                         : p.owner.label}
@@ -419,16 +489,54 @@ export function RequestPanel({
 }
 
 /**
- * The state line beside the request's chip: nothing when it would repeat the
- * chip, and nothing for a failed or partial request, whose reason is said
- * once, on the task that did not reach ClickUp.
+ * The state line beside the request's chip, only when it says more than the
+ * chip (DESIGN.md, say a thing once): a held request's "when requests open",
+ * an old form ticket's way to route it. Nothing for a failed or partial
+ * request, whose next step is said once above the tasks and whose reason is
+ * on the task that did not reach ClickUp; nothing for one in ClickUp, on its
+ * way, routed, cancelled or done, which the chip names (a ClickUp status
+ * included: with two tasks, each task's own chip names its status).
  */
-function factsLine(detail: RequestDetail): string {
-  if (stuck(detail)) return "";
+export function factsLine(detail: RequestDetail): string {
+  if (nextStep(detail)) return "";
+  const held = requestHeld(detail);
+  if (
+    !held &&
+    (detail.done ||
+      ["delivered", "sending", "routed", "cancelled"].includes(detail.state))
+  )
+    return "";
   const words = stateWords(detail);
   return words.toLowerCase() === stateChip(detail).label.toLowerCase()
     ? ""
     : words;
+}
+
+/**
+ * A task's own state words beside its owner, or null when they would repeat
+ * what the panel already says: the next step above the tasks (an old ticket
+ * handled in ClickUp), the state line, the task's chip (or, with one task,
+ * the request's) naming a ClickUp status or "Sending". A refusal's reason,
+ * a retry, a check on whether it arrived and a held task's "when requests
+ * open" (when the state line does not say it) stay.
+ */
+export function taskWords(
+  part: RequestDetail["parts"][number],
+  detail: RequestDetail,
+  factsWords: string,
+): string | null {
+  const held = requestHeld(detail);
+  const words = partWords(part, held);
+  if (nextStep(detail) === "old" || words === factsWords) return null;
+  // Held: the state line above already says when it goes (in the database's
+  // words when it sends them), so the task does not say it again.
+  if (held && factsWords && words === REQUEST_SENTENCES.heldRequest)
+    return null;
+  if (part.state === "delivered") return null;
+  // On its way, not held: "Sending to ClickUp" beside a "Sending" chip.
+  if (["queued", "sending"].includes(part.state) && !partHeld(part, !held))
+    return null;
+  return words;
 }
 
 /**
@@ -465,9 +573,12 @@ function Facts({ detail }: { detail: RequestDetail }) {
 }
 
 /**
- * What to do when a request did not reach ClickUp: file it again with the
- * same answers, or use the ClickUp request form, and who to ask if it keeps
- * failing. Said once, under the state; the reason is on the task itself.
+ * What to do when a request did not reach ClickUp. Nothing reached it: file
+ * it again with the same answers, or use the ClickUp request form. Part of
+ * it did: name the missing task and raise only that one, with the form or
+ * through the systems manager (the cockpit files a whole request, and the
+ * tasks that landed must not be made twice). Said once, under the state;
+ * the reason is on the task itself.
  */
 function NextStep({
   detail,
@@ -476,7 +587,26 @@ function NextStep({
   detail: RequestDetail;
   onAgain?: () => void;
 }) {
-  const some = detail.state === "partial";
+  const step = nextStep(detail);
+  if (step === "old" && detail.replacesTaskId)
+    return (
+      <section
+        className="space-y-3 rounded-xl bg-muted/40 p-4"
+        aria-label="What to do next"
+      >
+        <p className="text-[13px]">{REQUEST_SENTENCES.oldHandledNext}</p>
+        <a
+          href={`https://app.clickup.com/t/${encodeURIComponent(detail.replacesTaskId)}`}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[13px] font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          Open the old ticket in ClickUp
+          <ArrowUpRight aria-hidden className="size-3.5" />
+        </a>
+      </section>
+    );
+  const some = step === "partial";
   return (
     <section
       className="space-y-3 rounded-xl bg-muted/40 p-4"
@@ -484,11 +614,18 @@ function NextStep({
     >
       <p className="text-[13px]">
         {some
-          ? "The tasks that did reach ClickUp stay there. File the rest again, or use the ClickUp request form."
-          : "Nothing reached ClickUp. File it again with the same answers, or use the ClickUp request form."}{" "}
-        <span className="text-muted-foreground">
-          If it fails again, tell the systems manager.
-        </span>
+          ? partialNext(detail)
+          : taskDeleted(detail)
+            ? REQUEST_SENTENCES.againDeleted
+            : REQUEST_SENTENCES.againFailed}
+        {some ? null : (
+          <>
+            {" "}
+            <span className="text-muted-foreground">
+              If it fails again, tell the systems manager.
+            </span>
+          </>
+        )}
       </p>
       <div className="flex flex-wrap items-center gap-2">
         {onAgain ? (

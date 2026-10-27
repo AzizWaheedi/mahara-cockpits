@@ -100,7 +100,9 @@ export async function runSeats(deps: Deps): Promise<SeatsResult> {
     problems.push(`The ClickUp members were not read: ${sentence(e)}`);
   }
 
-  // 2. The request field catalog (names and choices; never a new field).
+  // 2. The request field catalog: names and choices, and a field ClickUp added that a request can write
+  // (added unmapped, review R1 F11). The database never adds Request Type or the two fields the cockpit
+  // never writes (cockpit_request_never_written, review round 2), so every field the read returns is sent.
   try {
     const body = await cu.get(`list/${FIELDS_LIST}/field`);
     const fields = (Array.isArray(body?.fields) ? body.fields : []).map((f: Row) => ({
@@ -169,11 +171,21 @@ export async function runSeats(deps: Deps): Promise<SeatsResult> {
   if (missed.length) problems.push(`These seats' tasks were not read in full: ${missed.join("; ")}.`);
   result.complete = inputs !== null && missed.length === 0;
 
-  // 5. The old ClickUp form's tickets that never left All Tasks.
+  // 5. The old ClickUp form's tickets that never left All Tasks. After a complete read (every page), the ids of
+  // every task still open there go too (review round 3): an imported ticket missing from them was moved, closed
+  // or deleted in ClickUp, which the delta never reads for a deleted task, so it leaves the queues. A read cut
+  // short sends none, so a ticket on a page not read is never taken for gone.
   try {
     const read = await pages(cu, page => `list/${ALL_TASKS}/task?include_closed=false&subtasks=false&page=${page}`, ALL_TASKS_PAGES);
     const tickets = read.tasks.map(importTask).filter((t): t is Row => t !== null);
-    const done = (await deps.rpc("cockpit_request_import", { p_tasks: tickets })) as Row;
+    // By the task's own id and status type, so a ticket whose other fields read oddly is still counted open.
+    const open = read.full
+      ? read.tasks
+          .filter((t): t is Row => typeof t === "object" && t !== null && !["done", "closed"].includes(String((t as Row).status?.type ?? "").toLowerCase()))
+          .map(t => String(t.id ?? ""))
+          .filter(id => /^[A-Za-z0-9_-]{1,40}$/.test(id))
+      : null;
+    const done = (await deps.rpc("cockpit_request_import", open ? { p_tasks: tickets, p_open_ids: open } : { p_tasks: tickets })) as Row;
     result.imported = Number(done?.imported ?? 0);
   } catch (e) {
     problems.push(`The old form's tickets on All Tasks were not read: ${sentence(e)}`);

@@ -7,14 +7,14 @@ import { EmptyState } from "@/components/ceo/EmptyState";
 import { FilterChips, type FilterOption } from "@/components/ceo/FilterChips";
 import { RequestForm } from "@/components/tasks/RequestForm";
 import { Button } from "@/components/ui/button";
-import { errorWords, readRequests } from "@/lib/requestsClient";
+import { cancelRequest, errorWords, readRequests } from "@/lib/requestsClient";
 import {
   kuwaitToday,
   type RequestsRead,
   type RequestView,
 } from "@/lib/requestsCore";
 import { useTaskSeat } from "@/lib/taskSeat";
-import { RequestPanel, type RouteFrom } from "./RequestPanel";
+import { AGAIN_REASON, RequestPanel, type RouteFrom } from "./RequestPanel";
 import { RequestRowItem } from "./RequestRow";
 
 /*
@@ -179,7 +179,14 @@ export function RequestsPage() {
           below rode 4px into the pills. In a wrapper, the wrapper takes the
           24px and the row's -4px only meets its own padding. */}
       <div>
+        {/* Keyed by the pills it shows: the server's views arrive after the
+            first paint, and a new row scrolls itself to the active pill, so
+            a link to the last view (?view=all) never lands cut off. */}
         <FilterChips
+          key={options
+            .filter(o => o.count !== 0 || o.key === view)
+            .map(o => o.key)
+            .join(",")}
           options={options}
           value={view}
           ariaLabel="Requests"
@@ -189,15 +196,21 @@ export function RequestsPage() {
 
       {view === "ask" ? (
         <section className="max-w-2xl rounded-2xl border bg-card p-4 sm:p-6">
-          {route?.replacesTaskId ? (
+          {route?.againOf ? (
+            <p className="mb-4 rounded-xl bg-muted/40 p-3 text-[13px] text-muted-foreground">
+              Filing again a request that did not reach ClickUp. Check the
+              answers, then send.{" "}
+              {route.againCanCancel
+                ? "Sending it cancels the first one."
+                : "The first one stays in the queue until the person who asked for it or the systems manager cancels it."}
+              {route.replacesTaskId
+                ? " It routes the same old ClickUp form ticket, unless someone routed it meanwhile."
+                : null}
+            </p>
+          ) : route?.replacesTaskId ? (
             <p className="mb-4 rounded-xl bg-muted/40 p-3 text-[13px] text-muted-foreground">
               Routing a ticket from the old ClickUp form. Sending this closes
               the old one in ClickUp with a link to the new task.
-            </p>
-          ) : route?.againOf ? (
-            <p className="mb-4 rounded-xl bg-muted/40 p-3 text-[13px] text-muted-foreground">
-              Filing again a request that did not reach ClickUp. Check the
-              answers, then send.
             </p>
           ) : null}
           {clientParam && !route ? (
@@ -221,12 +234,30 @@ export function RequestsPage() {
             presetClient={presetClient}
             presetDetails={route?.details ?? undefined}
             presetAnswers={route?.answers}
+            presetPriority={route?.priority}
+            presetDueOn={route?.dueOn ?? undefined}
             replacesTaskId={route?.replacesTaskId || undefined}
+            replacesIfOpen={Boolean(route?.againOf)}
             onSent={() => {
-              // The old ticket is routed now; the notice above goes, and
-              // "Ask for something else" starts clean.
+              // An old ticket is routed now (the server moved it); a request
+              // filed again replaces the first one, which is cancelled here
+              // when the seat may, so the queue holds it once. The notice
+              // above goes, and "Ask for something else" starts clean.
+              const first =
+                route?.againOf && route.againCanCancel ? route.againOf : null;
               setRoute(null);
-              void load("mine");
+              void (async () => {
+                if (first && client) {
+                  try {
+                    await cancelRequest(client, first, AGAIN_REASON);
+                  } catch {
+                    seat.toast.error(
+                      "The new request is sent, but the first one is still open. Open it and cancel it.",
+                    );
+                  }
+                }
+                await load("mine");
+              })();
             }}
           />
         </section>
@@ -322,6 +353,15 @@ function ListBody({
       </div>
     );
   const { rows, note } = state.data;
+  // A note with no rows says why the view cannot show anything (a seat not
+  // linked to ClickUp, a seat with no team): it is the view's state, never
+  // followed by "nothing is assigned to you", which would read as zero.
+  if (note && !rows.length)
+    return (
+      <p className="px-5 py-6 text-sm" role="status">
+        {note}
+      </p>
+    );
   return (
     <>
       {note ? (

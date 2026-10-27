@@ -19,9 +19,10 @@
 // before the call and 'done' after its read-back. The task id is saved the
 // moment it is known. A step that started and never finished is read back
 // before anything is written again: a created task is found by its Cockpit
-// ref (or, from a template, its exact name), a comment by its marker, a
-// checklist by its name. Two matches are never guessed between: the row goes
-// to 'unknown' for a person.
+// ref as a whole token (or, from a template, its exact name), a comment by
+// its marker, a checklist by its name. Two matches are never guessed between:
+// the row goes to 'unknown' for a person, and once they cancel all but one
+// in ClickUp, the one left open is adopted.
 //
 // Dates read back by the Kuwait calendar day, never the millisecond: ClickUp
 // stores a date-only due date at its own hour (06:00 Kuwait was seen for a
@@ -50,7 +51,10 @@ export const TARGET_LISTS: Record<string, string> = {
   "901816723211": "Client Success",
   "901818016338": "Media/Creative",
 };
-/** Where Tick, Untick and Mark done work: the five department lists and All Tasks. */
+/**
+ * The lists the cockpit names in its own words: the five department lists and All Tasks. A focus view
+ * press works on a seat's task on any list but a client card itself (taskActions.ts preconditionProblem).
+ */
 export const ACTION_LISTS: Record<string, string> = { ...TARGET_LISTS, [ALL_TASKS]: "All Tasks" };
 
 const ID = /^[A-Za-z0-9_-]{1,40}$/;
@@ -64,11 +68,17 @@ export const SAY = {
     "CLICKUP_API_TOKEN is not set on this Edge Function. Add it under Edge Functions, Secrets, in the Supabase dashboard. Nothing was read or written.",
   cancelled: "The request was cancelled before it reached ClickUp.",
   twoTasks: "Two tasks match this request in ClickUp. Keep one and cancel the other.",
+  /** Review round 3: every task that matched was cancelled, so none is adopted until a person reopens one. */
+  allCancelled: "Every task that matches this request in ClickUp is cancelled. Reopen the one to keep, and the next run adopts it.",
   waiting: "Waiting to see whether ClickUp made this task. The next run looks for it by its Cockpit ref.",
   noId: "ClickUp did not return the new task's id. The next run looks for it by its Cockpit ref.",
+  /** Review round 3: the search for a create in doubt was refused (a 4xx), so whether the task exists is not known. */
+  searchRefused: "ClickUp refused the search for this request's task, so the cockpit cannot tell whether it was made. The next run searches again.",
   notYet: "ClickUp has not shown the new task yet. The next run reads it again.",
   gone: "The task is no longer in ClickUp, so the cockpit stopped. Raise the request again if it is still needed.",
-  renamed: "ClickUp renamed this request type. Fix it in Requests settings.",
+  /** Review R2: a renamed or removed option never stops a request; the task is made and Request Type stays empty. */
+  renamed:
+    "ClickUp renamed or removed this type's Request Type option, so the cockpit left Request Type empty. The systems manager can rename it back in ClickUp or turn Set Request Type off for this type in Requests settings.",
   descriptionLost: "The task description did not read back with its Cockpit ref. The next run checks it again.",
   twoChecklists: "Two SOP checklists match this request in ClickUp. Keep one and delete the other.",
   checklistShort: "The SOP checklist did not read back in full. The next run adds what is missing.",
@@ -76,16 +86,23 @@ export const SAY = {
   cardComment: "The link comment on the client card did not read back. The next run looks for it.",
   oldComment: "The comment on the old ticket did not read back. The next run looks for it.",
   oldGone: "The old ticket was already moved or closed.",
+  /** Review R2: a routing request whose old ticket the team handled in ClickUp while it waited makes no task. */
+  oldHandled: "The old ticket was already moved or closed in ClickUp, so no new task was made. Check it there.",
+  /** The old ticket handled between this part's task and its routing step: the task stays, the note says so. */
+  oldMovedAfter: "The old ticket was moved or closed in ClickUp before the cockpit could route it, so it was left as it is. Check that the work is not done twice.",
   badPayload: "This request has no usable ClickUp plan. Cancel it and raise it again.",
   bookkeeping: "The cockpit could not save its progress, so the next run reads ClickUp back before writing again.",
   unfinished: "The task is in ClickUp, but the cockpit could not finish every step on it. Check it in ClickUp.",
   noTemplateChecklist: "The template brought no checklist in ClickUp, and this request type has no SOP steps to add. Add them in Requests settings.",
-  rtTurnedOff: "Request Type was turned off for this type after ClickUp moved one of its tasks, so the cockpit left it empty.",
+  /** Off by a two-minute check (ClickUp moved one of the type's tasks) or by an editor in Requests settings. */
+  rtTurnedOff: "Request Type is off for this type now, so the cockpit left it empty.",
   rtCheckLater: "The cockpit could not check whether Request Type is still on for this type. The next run tries again.",
 } as const;
 
 /** What a person reads when ClickUp refused a step after the task was made. The task stays; the part is delivered with this note. */
 export const STEP_REFUSED: Record<string, string> = {
+  /** Review round 3: ClickUp answered the create with the task's id, then refused to show the task (a 4xx but 404). */
+  create: "ClickUp made the task but refused to show it to the cockpit. Check it in ClickUp.",
   description: "The request details did not save in the task description in ClickUp. They are in the cockpit.",
   owner_due_priority: "ClickUp refused the owner, due day or priority. Set them on the task in ClickUp.",
   checklist: "The SOP steps did not save as a checklist in ClickUp. Add them on the task there.",
@@ -222,6 +239,19 @@ export type RequestsItem = {
   progress?: Progress | null;
   task_id?: string | null;
   source_exists?: boolean;
+  /**
+   * The All Tasks ticket this row's request routes, on every part (review R2): the requests claim reads it
+   * from cockpit_requests.replaces_task_id. A database that does not send it yet leaves only the first part's
+   * payload.replacesTaskId, which runRequests copies to the parts claimed with it.
+   */
+  replaces_task_id?: string | null;
+  /**
+   * That old ticket's own client card (review round 3), null when it has none: during the canary
+   * (apply_limited) a routing request goes only when this card is a canary card (runRequests; migration
+   * 20261026r cockpit_request_replaces_ok). A database that does not send it holds every routing request
+   * during the canary, the safe side.
+   */
+  replaces_client_task_id?: string | null;
 };
 
 export type RequestOutcome = {
@@ -389,11 +419,32 @@ export class StepBook {
   }
 }
 
-/** The outcome of a thrown error, by the outbox's ladder (queue.ts classify). */
+/**
+ * ClickUp's own answer to a call: a status, as cockpit-media-api/tools.ts words it ("clickup rejected the request
+ * (404)"), or a read that answered without what it should hold (runContext's "ClickUp did not return the space's
+ * tags", which no retry changes).
+ */
+const CLICKUP_ANSWER = /rejected the request \(\d{3}|^ClickUp did not return /;
+
+/**
+ * The outbox ladder's class of an error (queue.ts classify), with one rule for this job (review R2): an error is
+ * "refused" only when it carries ClickUp's own answer. Anything else leaves the call in doubt: tools.ts saves the
+ * response receipt and reads the body after ClickUp has answered, so a receipt that could not be saved
+ * ("Supabase 503: ..."), a timeout or a dropped body read can follow a write that landed. Such an error is
+ * "unknown", read back before anything is written again (contract 4.2 item 7: a timeout is unknown, only another
+ * 4xx is failed). Every requests catch asks this, never classify itself.
+ */
+export function errorKind(e: unknown): ReturnType<typeof classify> {
+  const kind = classify(e);
+  if (kind !== "refused") return kind;
+  return CLICKUP_ANSWER.test(e instanceof Error ? e.message : String(e)) ? "refused" : "unknown";
+}
+
+/** The outcome of a thrown error, by the outbox's ladder (errorKind). */
 export function outcomeOf(e: unknown, book: StepBook, key: string): RequestOutcome {
   if (e instanceof Halt) return { state: e.state, progress: book.progress, error: e.message };
   if (e instanceof Bookkeeping) return { state: "unknown", progress: book.progress, error: e.message };
-  const kind = classify(e);
+  const kind = errorKind(e);
   const error = errorText(e);
   if (kind === "config") return { state: "retry", progress: book.progress, error, stop: true };
   if (kind === "retry") {
@@ -407,14 +458,14 @@ export function outcomeOf(e: unknown, book: StepBook, key: string): RequestOutco
 export const halt = (state: RequestOutcome["state"], message: string) => new Halt(state, message);
 
 /**
- * A step that ClickUp refused for good once the task exists: a 4xx that is not a 429, or a step's own
- * "failed" (a renamed Request Type option). Never the task itself gone, never our own bookkeeping, and
- * never a 429, a 5xx or a lost answer, which retry from the step.
+ * A step that ClickUp refused for good once the task exists: ClickUp's own 4xx that is not a 429, or a step's
+ * own "failed". Never the task itself gone, never our own bookkeeping, and never a 429, a 5xx, a lost answer
+ * or an error with no ClickUp answer at all (errorKind), which retry from the step.
  */
 export function refusedForGood(e: unknown): boolean {
   if (e instanceof Bookkeeping) return false;
   if (e instanceof Halt) return e.state === "failed" && e.message !== SAY.gone;
-  return classify(e) === "refused";
+  return errorKind(e) === "refused";
 }
 
 // --- The request steps (contract 4.3) -------------------------------------------------
@@ -460,6 +511,23 @@ const priorityValueOf = (p: Row): number | null => {
 };
 const fieldsOf = (p: Row): Row[] => (Array.isArray(p.fields) ? p.fields.filter((f: Row) => f && typeof f.fieldId === "string") : []);
 export const markerOf = (p: Row) => `Cockpit ref ${p.ref}`;
+/** Any request part's Cockpit ref ("R-" and the request's 10 hex, then the part). */
+const ANY_REF = /Cockpit ref R-[0-9a-f]{10}-/;
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/**
+ * Whether a text holds this part's Cockpit ref as a whole token (review round 3). Every part of a request shares
+ * "R-{10 hex}-", and the type editor names a second task on a board `{board}_two`, so part `tech`'s ref is the
+ * start of part `tech_two`'s: a letter, digit, underscore, hyphen or backslash after it (ClickUp's markdown writes
+ * `tech\_two`) means another ref. The end of the text, a space, a newline or a full stop may follow it.
+ */
+export const holdsMarker = (text: unknown, marker: string) =>
+  new RegExp(`${escapeRegExp(marker)}(?![A-Za-z0-9_\\\\-])`).test(String(text ?? ""));
+/**
+ * How long a task ClickUp answered the create with may stay out of sight (a 404 on its read) before the cockpit
+ * takes it as gone. The first read already allows for a template applied a moment late; the retry ladder reads it
+ * again at about 1, 6 and 21 minutes (review round 3: before, the second read a minute later called it gone).
+ */
+export const SHOW_WAIT_MS = 30 * 60_000;
 const taskUrlOf = (progress: Progress) => progress.task?.url ?? (progress.task ? `https://app.clickup.com/t/${progress.task.id}` : "");
 
 /** The create body for a type with no template (contract 4.3 step 1). Never custom_fields. */
@@ -548,32 +616,84 @@ async function adopt(x: Ctx, t: Row) {
   return book.set("create", "mismatch", { id, sawList: t.list?.id ?? null, sawName: t.name ?? null }, { task_id: id });
 }
 
+/** A task read back: the task, null on a 404, or ClickUp's own refusal of the read (a 4xx but 404 and 429) in words. */
+async function readBack(provider: Provider, id: string): Promise<{ task: Row | null; refused?: string }> {
+  try {
+    return { task: await readTask(provider, id, true) };
+  } catch (e) {
+    if (errorKind(e) !== "refused") throw e;
+    return { task: null, refused: errorText(e) };
+  }
+}
+
+/**
+ * A task ClickUp made (it answered the create with the id) and then refused to show: it exists, so the part never
+ * fails on it (RT-2, review round 3). The create is saved `mismatch` with the refusal and named in the note, and
+ * the remaining steps run.
+ */
+async function adoptUnread(x: Ctx, id: string, refused: string) {
+  const { book } = x;
+  book.progress.task = { id, url: book.progress.task?.url ?? `https://app.clickup.com/t/${id}` };
+  x.latest = null;
+  x.notes.push(STEP_REFUSED.create);
+  return book.set("create", "mismatch", { id, refused }, { task_id: id });
+}
+
 async function stepCreate(x: Ctx) {
   const { p, provider, book } = x;
   const st = book.get("create");
   // A task an earlier attempt learned about (or the row's own task id after a requeue) is read, never made again.
   const known = book.progress.task?.id ?? (x.item.task_id && ID.test(x.item.task_id) ? x.item.task_id : null);
   if (known) {
-    const t = await readTask(provider, known, true);
-    if (!t) throw halt("failed", SAY.gone);
-    return adopt(x, t);
+    const seen = await readBack(provider, known);
+    if (seen.refused) return adoptUnread(x, known, seen.refused);
+    if (seen.task) return adopt(x, seen.task);
+    // A 404 on the task this create made and never saw (still started) is the delay the first read allows for: it
+    // is read again on the ladder until 30 minutes after the create, never taken as gone a minute later. A task the
+    // part adopted before, or a row's own task id after a requeue, that ClickUp no longer has is gone (review round 3).
+    if (st?.state === "started" && x.ctx.now() - book.startedAt("create", x.item.created_at) < SHOW_WAIT_MS)
+      throw halt("unknown", SAY.notYet);
+    throw halt("failed", SAY.gone);
   }
   if (st?.state === "started") {
     const startedAt = book.startedAt("create", x.item.created_at);
-    const r = await provider.call("clickup", "GET", `list/${p.listId}/task?order_by=created&include_closed=true&date_created_gt=${startedAt - 60_000}`);
+    let r: Row;
+    try {
+      r = await provider.call("clickup", "GET", `list/${p.listId}/task?order_by=created&include_closed=true&date_created_gt=${startedAt - 60_000}`);
+    } catch (e) {
+      // The create may have landed, so ClickUp refusing the search never fails the part: failed would say nothing
+      // reached ClickUp and invite a second task. It is searched again (review round 3).
+      if (errorKind(e) === "refused") throw halt("unknown", `${SAY.searchRefused} ClickUp said: ${errorText(e)}`);
+      throw e;
+    }
     const tasks: Row[] = Array.isArray(r.tasks) ? r.tasks : [];
     const texts = (t: Row) => [t.text_content, t.description, t.markdown_description].map(s => String(s ?? ""));
-    const ours = (t: Row) => texts(t).some(s => s.includes(x.marker));
-    let found = tasks.filter(ours);
-    if (!found.length && p.templateId) {
-      // A template task carries no marker until its description step. Never adopt one another part
-      // already owns: by another Cockpit ref in its text, or by another queue row holding its id.
-      const named = tasks.filter(t => String(t.name) === String(p.taskName) && !texts(t).some(s => /Cockpit ref R-[0-9a-f]{10}-/.test(s)));
-      const owned = await x.ctx.ownedElsewhere(named.map(t => String(t.id)), x.item.id);
-      found = named.filter(t => !owned.has(String(t.id)));
+    // Never a task another queue row already holds, however it matched (RT-3; review round 3 for the ref).
+    const free = async (list: Row[]) => {
+      if (!list.length) return list;
+      const owned = await x.ctx.ownedElsewhere(list.map(t => String(t.id)), x.item.id);
+      return list.filter(t => !owned.has(String(t.id)));
+    };
+    // This part's own Cockpit ref first, as a whole token: part `tech` never takes part `tech_two`'s task.
+    let found = await free(tasks.filter(t => texts(t).some(s => holdsMarker(s, x.marker))));
+    // A template task carries no marker until its description step: its exact name, leaving out any task whose
+    // text holds another Cockpit ref.
+    if (!found.length && p.templateId)
+      found = await free(tasks.filter(t => String(t.name) === String(p.taskName) && !texts(t).some(s => ANY_REF.test(s))));
+    if (found.length > 1) {
+      // Two or more are never guessed between. A person keeps one and cancels the rest, as the error says: a
+      // cancelled task (status type closed) no longer counts, and the one left open is adopted (review round 3).
+      const open = found.filter(t => statusType(t) !== "closed");
+      if (!open.length) throw halt("unknown", SAY.allCancelled);
+      if (open.length > 1) throw halt("unknown", SAY.twoTasks);
+      found = open;
     }
-    if (found.length > 1) throw halt("unknown", SAY.twoTasks);
-    if (found.length === 1) return adopt(x, (await readTask(provider, String(found[0].id), true)) ?? found[0]);
+    if (found.length === 1) {
+      // ClickUp listed it, so it is there: its own read carries the markdown, and the list's copy serves when
+      // that read finds nothing or is refused.
+      const seen = await readBack(provider, String(found[0].id));
+      return adopt(x, seen.task ?? found[0]);
+    }
     if (x.ctx.now() - startedAt < 5 * 60_000) throw halt("unknown", SAY.waiting);
   }
   await book.start("create");
@@ -586,22 +706,25 @@ async function stepCreate(x: Ctx) {
   book.progress.task = { id, url: String(made?.url ?? made?.task?.url ?? `https://app.clickup.com/t/${id}`) };
   await book.set("create", "started", { id }, { task_id: id });
   // A task ClickUp has not shown yet (a template applied a moment late) is read again next run, never made twice.
-  const t = await readTask(provider, id, true);
-  if (!t) throw halt("unknown", SAY.notYet);
-  return adopt(x, t);
+  const seen = await readBack(provider, id);
+  if (seen.refused) return adoptUnread(x, id, seen.refused);
+  if (!seen.task) throw halt("unknown", SAY.notYet);
+  return adopt(x, seen.task);
 }
 
 async function stepDescription(x: Ctx) {
   const { p, provider, book } = x;
   const before = await read(x);
-  if (mdOf(before).includes(x.marker) || plainOf(before).includes(x.marker)) return book.set("description", "done");
+  // The ref as a whole token: a sibling part's longer ref (`tech_two` for `tech`) is not this part's (review round 3).
+  const marked = (t: Row) => holdsMarker(mdOf(t), x.marker) || holdsMarker(plainOf(t), x.marker);
+  if (marked(before)) return book.set("description", "done");
   const template = mdOf(before).trim();
   const templatePlain = plainOf(before).trim();
   await book.start("description");
   const content = template ? `${template}\n\n---\n\n${p.descriptionMarkdown ?? ""}\n\n${x.marker}` : `${p.descriptionMarkdown ?? ""}\n\n${x.marker}`;
   await write(x, () => provider.call("clickup", "PUT", `task/${book.progress.task!.id}`, { markdown_content: content }));
   const after = await read(x);
-  if (!mdOf(after).includes(x.marker) && !plainOf(after).includes(x.marker)) throw halt("unknown", SAY.descriptionLost);
+  if (!marked(after)) throw halt("unknown", SAY.descriptionLost);
   if (templatePlain && !normName(plainOf(after)).startsWith(normName(templatePlain))) {
     x.notes.push("ClickUp may have changed the template's text in the description. Check it in ClickUp.");
     return book.set("description", "mismatch");
@@ -725,7 +848,7 @@ async function stepTag(x: Ctx) {
   try {
     await write(x, () => provider.call("clickup", "POST", `task/${book.progress.task!.id}/tag/${encodeURIComponent(tag)}`));
   } catch (e) {
-    if (classify(e) !== "refused") throw e;
+    if (errorKind(e) !== "refused") throw e;
     x.notes.push("The client tag did not save in ClickUp.");
     return book.set("tag", "mismatch", { refused: errorText(e) });
   }
@@ -744,7 +867,11 @@ async function stepFields(x: Ctx) {
   let wrote = false;
   for (const f of fieldsOf(p)) {
     const label = String(f.label ?? f.fieldId);
-    if (PROTECTED_FIELDS.has(f.fieldId)) {
+    // Never the two fields the cockpit never writes, and never Request Type here: only its own step sets it,
+    // last, where the type's switch is on (R8). The database never freezes one into a payload (migration
+    // 20261026r cockpit_request_never_written); this is the second guard.
+    const fid = f.fieldId.toLowerCase();
+    if (PROTECTED_FIELDS.has(fid) || fid === REQUEST_TYPE_FIELD) {
       results[f.fieldId] = "mismatch";
       mismatched.push(label);
       continue;
@@ -762,7 +889,7 @@ async function stepFields(x: Ctx) {
       results[f.fieldId] = "written";
       wrote = true;
     } catch (e) {
-      if (classify(e) !== "refused") throw e;
+      if (errorKind(e) !== "refused") throw e;
       results[f.fieldId] = "mismatch";
       mismatched.push(label);
     }
@@ -788,18 +915,13 @@ async function stepFields(x: Ctx) {
 async function stepRequestType(x: Ctx) {
   const { p, provider, book } = x;
   const resumed = book.get("request_type")?.state === "started";
-  const problem = await requestTypeProblem(p, x.ctx);
-  if (problem) throw halt("failed", problem);
   const optionId = String(p.requestTypeOptionId);
   const t = await current(x);
+  // Already there (a write whose answer was lost, or a rule that set it): nothing to decide.
   if (fieldMatches(t, REQUEST_TYPE_FIELD, "select", optionId)) return book.set("request_type", resumed ? "done" : "unchanged");
-  if (!fieldEmpty(t, REQUEST_TYPE_FIELD)) {
-    // Written only when empty: a value someone else set stays.
-    x.notes.push("Request Type in ClickUp already shows another type, so the cockpit left it.");
-    return book.set("request_type", "mismatch");
-  }
-  // The payload is frozen, but a two-minute check may have turned Request Type off for this type since
-  // (ClickUp moved one of its tasks): a part still queued then leaves it empty.
+  // The payload is frozen, but Request Type may be off for this type now: a two-minute check turned it off
+  // (ClickUp moved one of its tasks) or an editor did in Requests settings. The live switch is read first, so
+  // a part filed or held while it was on leaves it empty (review R2).
   let on: boolean;
   try {
     on = await x.ctx.requestTypeOn(String(p.typeKey));
@@ -810,11 +932,22 @@ async function stepRequestType(x: Ctx) {
     x.notes.push(SAY.rtTurnedOff);
     return book.set("request_type", "skipped", { why: SAY.rtTurnedOff });
   }
+  // An option ClickUp renamed or removed is never written (it may mean another type now), and it never stops
+  // the request: the task is in ClickUp, Request Type stays empty and the note says what to do (review R2).
+  if (await requestTypeProblem(p, x.ctx)) {
+    x.notes.push(SAY.renamed);
+    return book.set("request_type", "skipped", { why: SAY.renamed });
+  }
+  if (!fieldEmpty(t, REQUEST_TYPE_FIELD)) {
+    // Written only when empty: a value someone else set stays.
+    x.notes.push("Request Type in ClickUp already shows another type, so the cockpit left it.");
+    return book.set("request_type", "mismatch");
+  }
   await book.start("request_type");
   try {
     await write(x, () => provider.call("clickup", "POST", `task/${book.progress.task!.id}/field/${REQUEST_TYPE_FIELD}`, { value: optionId }));
   } catch (e) {
-    if (classify(e) !== "refused") throw e;
+    if (errorKind(e) !== "refused") throw e;
     x.notes.push("Request Type did not save in ClickUp.");
     return book.set("request_type", "mismatch", { refused: errorText(e) });
   }
@@ -853,15 +986,21 @@ async function stepReplaces(x: Ctx) {
   const oldId = String(p.replacesTaskId);
   const marker = `${x.marker}-old`;
   const st = book.get("replaces");
+  // The task is made: an old ticket handled in ClickUp since the check before it stays as it is, and the part's
+  // note says so, because the work may now be in two tasks (review R2; before, this skip was silent).
+  const handled = () => {
+    x.notes.push(SAY.oldMovedAfter);
+    return book.set("replaces", "skipped", { why: SAY.oldGone });
+  };
   let old = await readTask(provider, oldId, true);
-  if (!old) return book.set("replaces", "skipped", { why: SAY.oldGone });
+  if (!old) return handled();
   let commentId = st?.commentId ? String(st.commentId) : null;
   if (!commentId && st?.state === "started") {
     const found = await findComment(provider, oldId, marker, book.startedAt("replaces", x.item.created_at) - 60_000);
     if (found) commentId = String(found.id);
   }
   if (!commentId) {
-    if (String(old.list?.id ?? "") !== ALL_TASKS || isClosed(old)) return book.set("replaces", "skipped", { why: SAY.oldGone });
+    if (String(old.list?.id ?? "") !== ALL_TASKS || isClosed(old)) return handled();
     commentId = await postComment(x, "replaces", oldId, oldTicketComment(p, taskUrlOf(book.progress)), marker, SAY.oldComment);
   }
   await book.set("replaces", "started", { commentId });
@@ -870,7 +1009,7 @@ async function stepReplaces(x: Ctx) {
     try {
       await write(x, () => provider.call("clickup", "PUT", `task/${oldId}`, { status: "cancelled" }));
     } catch (e) {
-      if (classify(e) !== "refused") throw e;
+      if (errorKind(e) !== "refused") throw e;
       x.notes.push("The old ticket did not close in ClickUp. Close it there.");
       return book.set("replaces", "mismatch", { commentId, refused: errorText(e) });
     }
@@ -895,6 +1034,27 @@ const STEP_RUNNERS: Record<string, (x: Ctx) => Promise<unknown>> = {
   replaces: stepReplaces,
 };
 
+/** "R-1a2b3c4d5e-": the part of a Cockpit ref every part of one request shares. */
+const requestRefOf = (p: Row) => /^R-[0-9a-f]{10}-/.exec(String(p.ref ?? ""))?.[0] ?? null;
+
+/**
+ * Whether the old ticket a routing request replaces was handled in ClickUp while the request waited (held until
+ * requests open, review R2): deleted, closed or done, or moved off All Tasks. Its sentence, or null while the
+ * ticket still waits on All Tasks. A moved or closed ticket that carries a comment from this same request was
+ * routed by it: the first part posts that comment and cancels the ticket in its last step, which never stops
+ * another part of the request.
+ */
+async function oldTicketHandled(x: Ctx, oldId: string): Promise<string | null> {
+  const old = await readTask(x.provider, oldId, true);
+  if (old && String(old.list?.id ?? "") === ALL_TASKS && !isClosed(old)) return null;
+  const ref = requestRefOf(x.p);
+  if (old && ref) {
+    const ours = await findComment(x.provider, oldId, `Cockpit ref ${ref}`, Date.parse(x.item.created_at) - 60_000);
+    if (ours) return null;
+  }
+  return SAY.oldHandled;
+}
+
 /**
  * Write one request part to ClickUp, step by step. `save` persists the progress
  * (and the task id the moment it is known) before and after every write.
@@ -904,15 +1064,23 @@ export async function executeRequest(item: RequestsItem, provider: Provider, sav
   const book = new StepBook(structuredClone(item.progress ?? {}), save, ctx.now);
   const problem = payloadProblem(p);
   if (problem) return { state: "failed", progress: book.progress, error: problem };
+  // The old ticket this request routes: on the first part's payload, and on every part from the claim.
+  const routes = p.replacesTaskId || item.replaces_task_id || null;
+  if (routes && !ID.test(String(routes))) return { state: "failed", progress: book.progress, error: SAY.badPayload };
   const x: Ctx = { item, p, provider, book, ctx, notes: [], marker: markerOf(p), latest: null };
   const keys = (item.steps?.length ? item.steps : requestStepKeys(p)).filter(k => STEP_RUNNERS[k]);
   let key = "create";
   try {
-    // Request Type is checked before the first write, so a renamed option never leaves half a ticket.
-    if (keys.includes("request_type") && !book.get("create")) {
-      const renamed = await requestTypeProblem(p, ctx);
-      if (renamed) throw halt("failed", renamed);
+    // A routing request reads its old ticket before it makes anything, so a ticket the team moved or closed in
+    // ClickUp while the request was held gets no second task (review R2). Every part checks, before its create
+    // starts; a part whose task may exist never stops here.
+    const taskKnown = Boolean(book.progress.task?.id) || (typeof item.task_id === "string" && ID.test(item.task_id));
+    if (routes && !book.get("create") && !taskKnown) {
+      const handled = await oldTicketHandled(x, String(routes));
+      if (handled) return { state: "skipped", progress: book.progress, error: handled };
     }
+    // Request Type never stops a part before its task is made: its own step, last, reads the switch and the
+    // option and leaves it empty with a note when either has changed (review R2).
     for (key of keys) {
       if (book.settled(key)) continue;
       book.writing = false;
@@ -941,8 +1109,8 @@ export async function executeRequest(item: RequestsItem, provider: Provider, sav
 export const REQUEST_SECRETS = ["CLICKUP_API_TOKEN", "CRON_SECRET", "CLICKUP_WRITEBACK_APPLY_REQUESTS", "CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS"];
 
 /**
- * Every template object a target names is in ClickUp, every pinned Request Type
- * option still exists with the same name, every field is on the folder, every
+ * Every template object a target names is in ClickUp, the Request Type option of
+ * every type that sets it still exists with the same name, every field is on the folder, every
  * named owner is a workspace member and every target list has a done status.
  */
 export async function doctorChecks(inputs: Row, provider: Provider): Promise<{ problems: string[]; counts: Row }> {
@@ -991,11 +1159,19 @@ export async function doctorChecks(inputs: Row, provider: Provider): Promise<{ p
   let targets = 0;
   for (const t of types) {
     const key = String(t.key);
-    if (rtField) {
+    // Only a type that sets Request Type uses its option; one switched off in Requests settings is fine as it is
+    // (review R2: the doctor stayed red after the fix it names). The option name cannot be edited in the cockpit,
+    // so the sentences name the two things that work.
+    if (rtField && t.setRequestType !== false) {
       const option = (rtField.type_config?.options ?? []).find((o: Row) => String(o.id) === String(t.optionId));
-      if (!option) problems.push(`${key}: its Request Type option is not in ClickUp any more. Fix it in Requests settings.`);
+      if (!option)
+        problems.push(
+          `${key}: its Request Type option is not in ClickUp any more, so its requests leave Request Type empty. Turn Set Request Type off for this type in Requests settings.`,
+        );
       else if (normName(option.name) !== normName(t.optionName))
-        problems.push(`${key}: ClickUp renamed its Request Type option to "${normName(option.name)}". Fix it in Requests settings.`);
+        problems.push(
+          `${key}: ClickUp renamed its Request Type option to "${normName(option.name)}", so its requests leave Request Type empty. Rename it back in ClickUp, or turn Set Request Type off for this type in Requests settings.`,
+        );
     }
     if (fields)
       for (const f of Array.isArray(t.fieldIds) ? t.fieldIds : [])

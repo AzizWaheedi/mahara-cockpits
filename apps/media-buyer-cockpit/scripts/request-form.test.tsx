@@ -8,7 +8,22 @@
  * sends once and a retry keeps the request id, and a lifecycle duplicate is
  * shown. Every person, client and id is made up.
  */
-import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  describe,
+  expect,
+  setDefaultTimeout,
+  setSystemTime,
+  test,
+} from "bun:test";
+
+// These screens run on real timers (the form's 250 ms debounce, the 3 s and
+// 5 s re-reads), in one process with the database suites as ship.sh runs
+// them, on a laptop several sessions share. A test that waits longer than
+// bun's 5 s default under that load is slow, not wrong: it may take 20 s.
+setDefaultTimeout(20_000);
+
 
 const g = globalThis as any;
 const ENV = {
@@ -62,6 +77,10 @@ type Answer = {
   error: { message: string; code?: string } | null;
 };
 const NOW = Date.parse("2026-10-26T08:00:00Z"); // Monday 11:00 in Kuwait
+// The form reads today from the clock (its date checks, a carried due day)
+// and the store from NOW: the same Kuwait day for both, whatever the date
+// the tests run on, as requests-page.test.tsx does.
+setSystemTime(new Date(NOW));
 let fake: Fake = createRequestsFake({ seat: "csm", now: () => NOW });
 /** Answers a call before the store does, once per name; null passes it on. */
 let before: (name: string, args: any) => Answer | null = () => null;
@@ -207,6 +226,7 @@ async function type(el: any, value: string) {
 }
 const field = (key: string) =>
   container.querySelector(`[data-field="${key}"]`) as any;
+const sentPanel = () => container.querySelector(".rq-sent") as any;
 const submits = () =>
   fake.calls.filter(c => c.name === "cockpit_request_submit");
 
@@ -244,6 +264,7 @@ afterEach(async () => {
 
 afterAll(async () => {
   await act(async () => root.unmount());
+  setSystemTime();
   globalThis.fetch = realFetch;
   console.error = realError;
   db.rpc = real.rpc;
@@ -331,9 +352,11 @@ describe("the request form", () => {
     const lines = [...container.querySelectorAll(".rq-route-line")].map(el =>
       text(el).replace(/\s+/g, " ").trim(),
     );
+    // The CSM is not an editor, so the owner note is the reader's (D12,
+    // review round 2): no "Set one in Requests settings" line.
     expect(lines).toEqual([
       'Goes to Call Center as "Dune Build Co - Low schedule rate (Call Center)". Owner: the CSM. Uses the ClickUp template Low Schedule Rate📉 (Call Center). Due Thu 29 Oct.The CSM named on the client card.',
-      'Goes to Marketing / ADs as "Dune Build Co - Low schedule rate (Ads)". Owner: the systems manager. Uses the ClickUp template Low Schedule Rate📉 (Ads). Due Thu 29 Oct.No media buyer of record is set, so the systems manager gets it. Set one in Requests settings.',
+      'Goes to Marketing / ADs as "Dune Build Co - Low schedule rate (Ads)". Owner: the systems manager. Uses the ClickUp template Low Schedule Rate📉 (Ads). Due Thu 29 Oct.No media buyer is named for this request type yet.',
     ]);
     const ads = [...issue.querySelectorAll("option")].find(
       (o: any) => text(o) === "Ads issue",
@@ -501,6 +524,10 @@ describe("the request form", () => {
     expect(page()).toContain("Sending to Operations / Tech.");
     // The writer's run puts it in ClickUp; the panel reads it again within
     // five seconds and only then says it is in the list, with its owner.
+    // On its way: a quiet mark, not the success check.
+    expect(sentPanel()?.getAttribute("data-tone")).toBe("moving");
+    expect(sentPanel()?.querySelector("svg.lucide-circle-dashed")).toBeTruthy();
+    expect(sentPanel()?.querySelector("svg.lucide-circle-check")).toBeNull();
     fake.advance();
     await act(async () => {
       await new Promise(r => setTimeout(r, 5300));
@@ -510,6 +537,85 @@ describe("the request form", () => {
       "In Operations / Tech. Owner: the systems manager.",
     );
     expect(page()).not.toContain("Sending to Operations / Tech.");
+    // In ClickUp: now the success check.
+    expect(sentPanel()?.getAttribute("data-tone")).toBe("done");
+    expect(sentPanel()?.querySelector("svg.lucide-circle-check")).toBeTruthy();
+  }, 15000);
+
+  test("a task refused on its way says so with the failure mark and the next step", async () => {
+    await render();
+    await pick("General tech request");
+    await type(field("details"), "The CRM sync stopped.");
+    await click(button("Send request"));
+    await flush(4);
+    // The writer's run: ClickUp refuses the task for good.
+    const stored = fake.requests.find(
+      r => r.id === submits()[0].args.p_request_id,
+    );
+    if (!stored) throw new Error("The request was not stored");
+    stored.parts[0].state = "failed";
+    stored.parts[0].error =
+      "ClickUp refused the task: the template is not in ClickUp.";
+    stored.state = "failed";
+    await act(async () => {
+      await new Promise(r => setTimeout(r, 5300));
+    });
+    await flush(4);
+    const panel = sentPanel();
+    expect(text(panel)).toContain(
+      "Not sent to Operations / Tech: ClickUp refused the task: the template is not in ClickUp.",
+    );
+    // Never a success check beside a task that did not go.
+    expect(panel?.getAttribute("data-tone")).toBe("failed");
+    expect(panel?.querySelector("svg.lucide-circle-check")).toBeNull();
+    expect(panel?.querySelector("svg.lucide-circle-alert")).toBeTruthy();
+    expect(text(panel)).toContain(
+      "Open the request to file it again, or use the ClickUp request form.",
+    );
+    const formLink = [...(panel?.querySelectorAll("a") ?? [])].find(
+      (a: any) => text(a).includes("Open the ClickUp request form"),
+    ) as any;
+    expect(formLink?.getAttribute("href")).toContain("forms.clickup.com");
+    // The request itself, where "File it again" is, in place of My requests.
+    const open = [...container.querySelectorAll("a")].find(
+      (a: any) => text(a) === "Open the request",
+    ) as any;
+    expect(open?.getAttribute("href")).toBe(
+      `/requests?id=${encodeURIComponent(stored.id)}`,
+    );
+    expect(page()).not.toContain("See it in My requests");
+  }, 15000);
+
+  test("a request half in ClickUp names the missing task in the sent panel", async () => {
+    await render({
+      presetType: "low_schedule_rate",
+      presetClient: { taskId: "86harb002", name: "Dune Build Co" },
+      presetAnswers: { schedule_rate_issue: "Both" },
+    });
+    await click(button("Send request"));
+    await flush(4);
+    const stored = fake.requests.find(
+      r => r.id === submits()[0].args.p_request_id,
+    );
+    if (!stored) throw new Error("The request was not stored");
+    expect(stored.parts.map(p => p.part)).toEqual(["call_center", "ads"]);
+    stored.parts[0].state = "delivered";
+    stored.parts[0].url = "https://app.clickup.com/t/86harn077";
+    stored.parts[0].status = "to do";
+    stored.parts[0].statusType = "open";
+    stored.parts[1].state = "failed";
+    stored.parts[1].error = "ClickUp refused the task: the template is gone.";
+    stored.state = "partial";
+    await act(async () => {
+      await new Promise(r => setTimeout(r, 5300));
+    });
+    await flush(4);
+    const panel = sentPanel();
+    expect(panel?.getAttribute("data-tone")).toBe("failed");
+    expect(text(panel)).toContain("In Call Center. Owner:");
+    expect(text(panel)).toContain(
+      "The Marketing / ADs task did not reach ClickUp; the one that did stays there. Raise the missing task with the ClickUp request form, or ask the systems manager to make it.",
+    );
   }, 15000);
 
   test("an editor may file while requests are not open: told it is saved, never sent", async () => {
@@ -517,9 +623,10 @@ describe("the request form", () => {
     await render();
     await pick("General tech request");
     await type(field("details"), "Check the CRM sync.");
-    // The database's note for a held request, above Send (F3/F5).
+    // The database's note for a held request, above Send (F3/F5). It is
+    // shown before anything is sent, so it never begins "Saved." (review round 2).
     const note =
-      "Saved. Requests are not open yet, so this goes to ClickUp once they are.";
+      "Requests are not open yet. What you send is saved and goes to ClickUp once they are.";
     expect(page()).toContain(note);
     expect(button("Send request")).toBeTruthy();
     await click(button("Send request"));
@@ -531,6 +638,10 @@ describe("the request form", () => {
     expect(page()).not.toContain("Sent to");
     expect(page()).not.toContain("Sending to");
     expect(page()).not.toContain("Owner:");
+    // Saved, not sent: the waiting mark in the warning colour, no check.
+    expect(sentPanel()?.getAttribute("data-tone")).toBe("held");
+    expect(sentPanel()?.querySelector("svg.lucide-clock")).toBeTruthy();
+    expect(sentPanel()?.querySelector("svg.lucide-circle-check")).toBeNull();
     // The writer hands it back to the queue with its note; still held.
     fake.advance();
     const stored = fake.requests.find(
@@ -553,12 +664,80 @@ describe("the request form", () => {
     });
     await pick("Card missing for ads");
     expect(page()).toContain(
-      "Saved. Requests are being tested on the internal test card only, so this goes to ClickUp once they open to everyone.",
+      "Requests are being tested on the internal test card only, where they go to ClickUp at once. Anything else you send is saved and goes to ClickUp once they open to everyone.",
     );
     await click(button("Send request"));
     await flush(4);
     expect(page()).toContain("when requests open.");
     expect(page()).not.toContain("Sending to");
+  });
+
+  test("a request's own priority and due day start the form, and go with a changed type", async () => {
+    await render({
+      presetType: "general_tech",
+      presetDetails: "The CRM sync stopped again.",
+      presetPriority: "urgent",
+      presetDueOn: "2026-10-29",
+    });
+    expect(field("priority").value).toBe("urgent");
+    expect((container.querySelector('input[type="date"]') as any).value).toBe(
+      "2026-10-29",
+    );
+    expect(field("details").value).toBe("The CRM sync stopped again.");
+    // Change to a type with no details question: the priority and due day
+    // stay, and the words show, said plainly that they are not sent.
+    await click(button("Change"));
+    await pick("Card missing for ads");
+    expect(field("priority").value).toBe("urgent");
+    expect((container.querySelector('input[type="date"]') as any).value).toBe(
+      "2026-10-29",
+    );
+    expect(container.querySelector(".rq-quote")?.textContent).toBe(
+      "The CRM sync stopped again.",
+    );
+    expect(page()).toContain(
+      "This type has no question for these words, so they are not sent with it.",
+    );
+    // Not a routed old ticket: nothing about one.
+    expect(page()).not.toContain("old ticket");
+  });
+
+  test("a carried due day already past starts on the type's due day; Ask for something else carries nothing", async () => {
+    await render({
+      presetType: "general_tech",
+      presetDetails: "Check the CRM sync.",
+      presetPriority: "low",
+      presetDueOn: "2026-10-20",
+    });
+    expect((container.querySelector('input[type="date"]') as any).value).toBe(
+      "2026-10-28",
+    );
+    expect(field("priority").value).toBe("low");
+    await click(button("Send request"));
+    await flush(4);
+    expect(submits()[0].args.p_due_on).toBe("2026-10-28");
+    expect(submits()[0].args.p_priority).toBe("low");
+    await click(button("Ask for something else"));
+    await pick("General tech request");
+    expect(field("priority").value).toBe("normal");
+    expect(field("details").value).toBe("");
+  });
+
+  test("a preset type that is turned off is said once, and its words go with the type picked", async () => {
+    const csm = fake.types.find(t => t.key === "general_csm");
+    if (!csm) throw new Error("No general_csm type in the harness");
+    csm.enabled = false;
+    await render({
+      presetType: "general_csm",
+      presetDetails: "Call the client about the invoice.",
+    });
+    const note =
+      "The request type it came with is turned off. Pick another type. What was asked is kept.";
+    expect(page()).toContain(note);
+    expect(page().split(note).length).toBe(2);
+    await pick("General tech request");
+    expect(page()).not.toContain("is turned off");
+    expect(field("details").value).toBe("Call the client about the invoice.");
   });
 
   test("a request filed again starts from its own answers (D2)", async () => {

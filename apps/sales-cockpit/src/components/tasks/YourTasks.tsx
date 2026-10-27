@@ -31,7 +31,12 @@ import "./tasks.css";
 export type CardState =
   | { kind: "reading" }
   | { kind: "failed" }
-  | { kind: "not_linked"; note: string }
+  | {
+      kind: "not_linked";
+      note: string;
+      /** An editor cleared the seat's link: no "Link it" is offered. */
+      cleared: boolean;
+    }
   | {
       kind: "tasks";
       data: MyTasks;
@@ -48,11 +53,16 @@ export function cardState(
 ): CardState {
   const data = feed.tasks;
   if (!data) return feed.error.tasks ? { kind: "failed" } : { kind: "reading" };
-  if (data.link === "not_linked")
+  if (data.link === "not_linked") {
+    const cleared = data.linkState === "cleared";
     return {
       kind: "not_linked",
-      note: data.note?.trim() || TASK_SENTENCES.notLinked,
+      note:
+        data.note?.trim() ||
+        (cleared ? TASK_SENTENCES.cleared : TASK_SENTENCES.notLinked),
+      cleared,
     };
+  }
   const sourceMs = data.sourceAt ? Date.parse(data.sourceAt) : Number.NaN;
   const lateAt =
     !data.ready && Number.isFinite(sourceMs) ? kuwaitTime(sourceMs) : null;
@@ -191,28 +201,31 @@ function CardNote({ state }: { state: CardState }) {
         </button>
       </div>
     );
-  if (state.kind === "not_linked") return <NotLinked note={state.note} />;
+  if (state.kind === "not_linked")
+    return <NotLinked note={state.note} cleared={state.cleared} />;
   if (state.empty) return <p className="tk-note">{state.empty}</p>;
   return null;
 }
 
-function NotLinked({ note }: { note: string }) {
+function NotLinked({ note, cleared }: { note: string; cleared: boolean }) {
   const seat = useTaskSeat();
   const [canLink, setCanLink] = useState(false);
   useEffect(() => {
-    if (!seat.client) return;
+    setCanLink(false);
+    // An editor said this seat has no ClickUp user: nobody is sent to link it.
+    if (!seat.client || cleared) return;
     let live = true;
-    void readCanLinkSeats(seat.client).then(yes => {
+    void readCanLinkSeats(seat.client, seat.seatId).then(yes => {
       if (live) setCanLink(yes);
     });
     return () => {
       live = false;
     };
-  }, [seat.client]);
+  }, [seat.client, seat.seatId, cleared]);
   return (
     <div className="tk-note">
       <p>{note}</p>
-      {canLink ? (
+      {canLink && !cleared ? (
         <PortalLink
           path="/requests/settings?tab=people"
           className="tk-link tk-link-chevron"

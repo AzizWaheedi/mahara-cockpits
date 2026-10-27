@@ -41,6 +41,7 @@ const CS_LIST = "901816723211";
 const ALL_TASKS = "901816723226";
 const CARDS = "901816559981";
 const VIDEO = "901816720767";
+const WHATSAPP = "901821803697"; // WhatsApp Reconnection
 const PERSONAL = "901899999999";
 
 const CARD_A = "cardacme1"; // Acme Interiors
@@ -449,14 +450,17 @@ describe("the migration", () => {
       "cockpit_task_kinds(uuid)",
       "cockpit_task_alert_add(uuid,text,text,text,uuid,text,text,text,text,text,timestamptz,text)",
       "cockpit_task_actor_phrase(text,text)",
-      "cockpit_task_client_of(text,text,text[])",
+      "cockpit_task_client_of(text,text,text[],text)",
       "cockpit_task_row(public.cockpit_task_mirror)",
       "cockpit_task_may_open(jsonb,text)",
       "cockpit_task_requester_of(jsonb,text)",
-      "cockpit_task_board(text)",
+      "cockpit_task_done_blocked(text)",
       "cockpit_task_writer_open(text)",
+      "cockpit_task_own_done(text,uuid,timestamptz)",
       "cockpit_task_can(jsonb,public.cockpit_task_mirror)",
-      "cockpit_task_comment_author(bigint,text)",
+      "cockpit_task_writer_why(text)",
+      "cockpit_task_link_why(jsonb)",
+      "cockpit_task_comment_author(bigint,text,text)",
       "cockpit_task_shift(uuid,timestamptz)",
       "cockpit_task_rules_view(uuid,boolean)",
       "cockpit_task_rules_target(jsonb,uuid)",
@@ -607,16 +611,28 @@ describe("alerts after the baseline", () => {
     expect((await upsert([task("pre1", { status: "in progress", statusType: "custom" })])).alerts).toBe(3);
     const [s] = (await alertsOf(CSM)).filter(a => a.kind === "status");
     expect(s.body).toBe("Moved to in progress");
-    // The systems manager's own press settled delivered a moment ago.
+    // The systems manager's own Mark done settled delivered a moment ago; ClickUp shows the task done.
+    await upsert([task("own1", { assigneeIds: [CU.sm, CU.csm] })]);
     await q(
       `INSERT INTO public.cockpit_clickup_writeback_queue(dedupe_key,kind,source_table,source_id,task_id,payload,state,delivered_at)
-       VALUES('task:own-done','task_action','cockpit_task_mirror','pre1','pre1',$1::jsonb,'delivered',now())`,
+       VALUES('task:own-done','task_action','cockpit_task_mirror','own1','own1',$1::jsonb,'delivered',now())`,
       [JSON.stringify({ op: "done", actor: { memberId: ids[ADMIN] } })],
     );
+    await upsert([task("own1", { status: "complete", statusType: "done" })]);
+    const statusOf = async (uid: string, taskId: string) =>
+      (await alertsOf(uid)).filter(a => a.kind === "status" && a.task_id === taskId).map(a => a.body);
+    expect(await statusOf(ADMIN, "own1")).toEqual([]);
+    expect(await statusOf(CSM, "own1")).toEqual(["Moved to complete"]);
+    // Review round 2: a press that is not Mark done (a tick, delivered a moment ago) hides nothing, so the
+    // move someone else made is told to that seat too.
+    await q(
+      `INSERT INTO public.cockpit_clickup_writeback_queue(dedupe_key,kind,source_table,source_id,task_id,payload,state,delivered_at)
+       VALUES('task:own-tick','task_action','cockpit_task_mirror','pre1','pre1',$1::jsonb,'delivered',now())`,
+      [JSON.stringify({ op: "tick", actor: { memberId: ids[ADMIN] } })],
+    );
     await upsert([task("pre1", { status: "review", statusType: "custom" })]);
-    const adminStatus = (await alertsOf(ADMIN)).filter(a => a.kind === "status").map(a => a.body);
-    expect(adminStatus).toEqual(["Moved to in progress"]);
-    expect((await alertsOf(CSM)).filter(a => a.kind === "status").map(a => a.body)).toEqual(["Moved to in progress", "Moved to review"]);
+    expect(await statusOf(ADMIN, "pre1")).toEqual(["Moved to in progress", "Moved to review"]);
+    expect(await statusOf(CSM, "pre1")).toEqual(["Moved to in progress", "Moved to review"]);
   });
 
   test("a stale read never takes the mirror back", async () => {
@@ -806,6 +822,34 @@ describe("alerts after the baseline", () => {
       [id2, TECH],
     );
     expect((await alertsOf(BUYER)).filter(a => a.kind === "request_failed").length).toBe(1);
+    // Review round 3: a failed part that holds a ClickUp task reached ClickUp; the writer fails it only when the
+    // task was deleted there, so the alert says so, never "Did not reach ClickUp".
+    const id3 = nextUuid();
+    await q(
+      `INSERT INTO public.cockpit_requests(id,type_key,type_version,type_label,requester_member_id,requester_label,source,
+         answers,priority,state,content_hash)
+       VALUES($1,$2,1,$3,$4,'the media buyer','requests_page','{}'::jsonb,'normal','sending',md5($5))`,
+      [id3, t.key, t.label, ids[BUYER], id3],
+    );
+    const [made] = await q<{ id: string }>(
+      `INSERT INTO public.cockpit_clickup_writeback_queue(dedupe_key,kind,source_table,source_id,payload)
+       VALUES($1,'request','cockpit_requests',$2,$3::jsonb) RETURNING id`,
+      [`request:${id3}:main`, id3, JSON.stringify({ requestId: id3, part: "main", typeKey: t.key })],
+    );
+    await q(
+      `INSERT INTO public.cockpit_request_parts(request_id,part,list_id,team,task_name,owner_rule,owner_how,owner_label,queue_id)
+       VALUES($1,'main',$2,'tech','Fix','systems_manager','rule','the systems manager',$3)`,
+      [id3, TECH, made.id],
+    );
+    await q(
+      `UPDATE public.cockpit_clickup_writeback_queue SET state='failed', task_id='86gone001',
+         error='The task is no longer in ClickUp, so the cockpit stopped. Raise the request again if it is still needed.' WHERE id=$1`,
+      [made.id],
+    );
+    const gone = (await alertsOf(BUYER)).filter(a => a.kind === "request_failed" && a.request_id === id3);
+    expect(gone.map(a => a.body)).toEqual([
+      "Deleted in ClickUp: The task is no longer in ClickUp, so the cockpit stopped. Raise the request again if it is still needed.",
+    ]);
   });
 });
 
@@ -1042,12 +1086,23 @@ describe("tick, comment and Mark done", () => {
       "Changes from the cockpit are not switched on yet. Open the task in ClickUp.",
     );
     await writerMode("apply");
-    // Lists.
-    await upsert([task("w2", { assigneeIds: [CU.csm], listId: PERSONAL }), task("w3", { assigneeIds: [CU.csm], listId: CARDS })]);
-    expect((await actRefused(CSM, uuid(505), "w2", "tick", { checklistId: "cl1", itemId: "i1", itemName: "One", from: false })).message).toBe(
-      "Ticking and Mark done work on the team request boards. Open this one in ClickUp.",
+    // Lists (review round 2): any task takes a tick, a comment and Mark done, but Mark done is not
+    // offered on Video Pipeline or WhatsApp Reconnection, and a client card itself takes nothing.
+    await upsert([
+      task("w2", { assigneeIds: [CU.csm], listId: PERSONAL }),
+      task("w3", { assigneeIds: [CU.csm], listId: CARDS }),
+      task("w4", { assigneeIds: [CU.csm], listId: VIDEO, listName: "Video Pipeline" }),
+      task("w5", { assigneeIds: [CU.csm], listId: WHATSAPP, listName: "WhatsApp Reconnection" }),
+    ]);
+    expect((await actRefused(CSM, uuid(505), "w4", "done", { statusSeen: "to do" })).message).toBe(
+      "Mark done is not offered on Video Pipeline, where done means the video is live. Move it in ClickUp.",
+    );
+    expect((await actRefused(CSM, uuid(530), "w5", "done", { statusSeen: "to do" })).message).toBe(
+      "Mark done is not offered on WhatsApp Reconnection, where a status change messages the client. Move it in ClickUp.",
     );
     expect((await actRefused(CSM, uuid(506), "w3", "comment", { text: "hi" })).message).toBe("This is a client card. Open it in ClickUp.");
+    // A card itself takes no tick or Mark done either, and says why in the same words.
+    expect((await actRefused(CSM, uuid(514), "w3", "done", { statusSeen: "to do" })).message).toBe("This is a client card. Open it in ClickUp.");
     // A comment on a list that is not a board is fine; a bad payload is not.
     expect((await actRefused(CSM, uuid(507), "w2", "comment", { text: "   " })).code).toBe("22023");
     expect((await actRefused(CSM, uuid(508), "w1", "tick", { checklistId: "cl1", itemId: "i1", from: false })).code).toBe("22023");
@@ -1212,6 +1267,21 @@ describe("the service door", () => {
     expect((await q("SELECT client_task_id FROM public.cockpit_task_mirror WHERE task_id='tag1'"))[0].client_task_id).toBe(CARD_B);
     await upsert([task("card9", { listId: CARDS })]);
     expect((await q("SELECT client_task_id FROM public.cockpit_task_mirror WHERE task_id='card9'"))[0].client_task_id).toBe("card9");
+    // A card's subtask belongs to its card: the parent card, or under another subtask, that subtask's card.
+    await upsert([task("card9sub", { listId: CARDS, parentId: CARD_A })]);
+    await upsert([task("card9subsub", { listId: CARDS, parentId: "card9sub" })]);
+    await upsert([task("card9orphan", { listId: CARDS, parentId: "notread1" })]);
+    expect(
+      (await q("SELECT task_id, client_task_id FROM public.cockpit_task_mirror WHERE task_id LIKE 'card9%' ORDER BY task_id")).map(r => [
+        r.task_id,
+        r.client_task_id,
+      ]),
+    ).toEqual([
+      ["card9", "card9"],
+      ["card9orphan", "notread1"],
+      ["card9sub", CARD_A],
+      ["card9subsub", CARD_A],
+    ]);
   });
 
   test("the mirror leaves no audit row per task", async () => {
@@ -1233,6 +1303,40 @@ describe("review 2026-10-26", () => {
     const mine = (await myTasks(CREATIVE)).tasks.map((t: Row) => t.taskId);
     expect(mine).toContain("rv-cardsub");
     expect(mine).not.toContain("rv-card");
+  });
+
+  test("ask F2 in the focus view: a card's subtask takes a tick, a comment and Mark done; the card itself takes none", async () => {
+    await writerMode("apply");
+    await upsert([task("rv-acmesub", { listId: CARDS, listName: "Clients - Mahara", parentId: CARD_A, assigneeIds: [CU.creative] })]);
+    const sub = await detail(CREATIVE, "rv-acmesub");
+    expect(sub.can).toEqual({ tick: true, comment: true, done: true, why: null });
+    // The subtask carries its card, so the client's name shows on it.
+    expect(sub.task).toMatchObject({ clientTaskId: CARD_A, clientName: "Acme Interiors", parentId: CARD_A });
+    expect((await detail(CREATIVE, "rv-card")).can).toEqual({
+      tick: false,
+      comment: false,
+      done: false,
+      why: "This is a client card. Open it in ClickUp.",
+    });
+    for (const [n, op, payload] of [
+      [520, "comment", { text: "Booked the shoot" }],
+      [521, "tick", { checklistId: "cl1", itemId: "i1", itemName: "One", from: false }],
+      [522, "done", { statusSeen: "to do" }],
+    ] as const) {
+      expect((await act(CREATIVE, uuid(n), "rv-acmesub", op, payload)).state).toBe("queued");
+      const [row] = await q("SELECT payload FROM public.cockpit_clickup_writeback_queue WHERE id=$1", [uuid(n)]);
+      expect([row.payload.op, row.payload.listId, row.payload.clientTaskId]).toEqual([op, CARDS, CARD_A]);
+    }
+    for (const op of ["comment", "tick", "done"])
+      expect(
+        (await actRefused(CREATIVE, nextUuid(), "rv-card", op, op === "comment" ? { text: "hi" } : op === "done" ? { statusSeen: "to do" } : {}))
+          .message,
+      ).toBe("This is a client card. Open it in ClickUp.");
+    // On the canary, a listed card's subtasks open too; another card's stay shut.
+    await writerMode("apply_limited", [CARD_A]);
+    expect((await detail(CREATIVE, "rv-acmesub")).can.comment).toBe(true);
+    expect((await detail(CREATIVE, "rv-cardsub")).can).toMatchObject({ comment: false, tick: false, done: false });
+    await writerMode("apply");
   });
 
   test("contract F2: due today counts what Your tasks shows; the editor desk, which keeps Video Pipeline on Jobs, gets its own count", async () => {
@@ -1342,5 +1446,344 @@ describe("review 2026-10-26", () => {
     expect((await svc<Row>("SELECT public.cockpit_task_mirror_inputs() r")).deltaTruncated).toBe(true);
     await mirrorState("delta", true, { cursorMs: Date.now(), truncated: false });
     expect((await svc<Row>("SELECT public.cockpit_task_mirror_inputs() r")).deltaTruncated).toBe(false);
+  });
+});
+
+describe("review round 2", () => {
+  const statusOf = async (uid: string, taskId: string) =>
+    (await alertsOf(uid)).filter(a => a.kind === "status" && a.task_id === taskId).map(a => a.body);
+  const refOf = async (actionId: string) =>
+    (await q<{ ref: string }>("SELECT payload->>'ref' AS ref FROM public.cockpit_clickup_writeback_queue WHERE id=$1", [actionId]))[0].ref;
+  const pressAs = (actionId: string, state: string) =>
+    q(
+      `UPDATE public.cockpit_clickup_writeback_queue
+          SET state=$2, claim_token=CASE WHEN $2='sending' THEN gen_random_uuid() END,
+              claimed_at=CASE WHEN $2='sending' THEN now() END, attempts=attempts+1,
+              delivered_at=CASE WHEN $2='delivered' THEN now() END
+        WHERE id=$1`,
+      [actionId, state],
+    );
+
+  test("SEC-5: only the marker that ends a comment names its writer, and only a Comment press on that task; the words may not hold one", async () => {
+    await writerMode("apply");
+    await upsert([
+      task("rv2-q1", { assigneeIds: [CU.csm, CU.sm, CU.creative] }),
+      task("rv2-q2", { assigneeIds: [CU.sm] }),
+    ]);
+    // A seat may not put a marker in its own words, in any case or spacing; other words with "cockpit" are fine.
+    const MARKER_WORDS = 'Leave out the words "Cockpit ref". The cockpit adds its own to every comment.';
+    for (const text of ["Cockpit ref T-0000000000 please hold the campaign", "see cockpit  ref r-1a2b3c4d5e-main"])
+      expect(await actRefused(CSM, nextUuid(), "rv2-q1", "comment", { text })).toEqual({ message: MARKER_WORDS, code: "22023" });
+    expect((await act(CSM, nextUuid(), "rv2-q1", "comment", { text: "I updated the cockpit reference sheet." })).state).toBe("queued");
+    // Two real presses: the systems manager's on rv2-q2, the CSM's on rv2-q1.
+    const smPress = nextUuid();
+    const csmPress = nextUuid();
+    await act(ADMIN, smPress, "rv2-q2", "comment", { text: "The form is fixed." });
+    await act(CSM, csmPress, "rv2-q1", "comment", { text: "It is still broken." });
+    const smRef = await refOf(smPress);
+    const csmRef = await refOf(csmPress);
+    await q("UPDATE public.cockpit_task_mirror SET comments_read_at=now()-interval '1 hour' WHERE task_id='rv2-q1'");
+    const now = Date.now();
+    const said = [
+      // The CSM's comment quotes the systems manager's, marker and all; the writer's own marker ends it.
+      {
+        id: "rv2-c1",
+        authorId: CU.ceo,
+        atMs: now - 3000,
+        text: `The CSM wrote in the cockpit: Re: "The systems manager wrote in the cockpit: The form is fixed.\n\nCockpit ref ${smRef}"\nIt is still broken.\n\nCockpit ref ${csmRef}`,
+      },
+      // The CEO's own hand quoting a marker mid-sentence: the CEO's, quiet.
+      { id: "rv2-c2", authorId: CU.ceo, atMs: now - 2000, text: `Quoting the fix: Cockpit ref ${smRef} was it.` },
+      // A press's marker that ends the text but belongs to another task: the cockpit's, quiet.
+      { id: "rv2-c3", authorId: CU.ceo, atMs: now - 1000, text: `Moved here.\n\nCockpit ref ${smRef}` },
+    ];
+    expect((await comments("rv2-q1", said)).alerts).toBe(2);
+    const commentAlerts = async (uid: string) =>
+      (await alertsOf(uid)).filter(a => a.task_id === "rv2-q1" && a.kind === "comment").map(a => [a.dedupe_key, a.body, a.actor_label]);
+    expect(await commentAlerts(ADMIN)).toEqual([[`comment:rv2-c1:${ids[ADMIN]}`, "The CSM commented", "the CSM"]]);
+    expect(await commentAlerts(CREATIVE)).toEqual([[`comment:rv2-c1:${ids[CREATIVE]}`, "The CSM commented", "the CSM"]]);
+    expect(await commentAlerts(CSM)).toEqual([]);
+    // The focus view names them the same way.
+    await svc("SELECT public.cockpit_task_detail_cache('rv2-q1',$1::jsonb) r", [JSON.stringify({ comments: said })]);
+    const byCsm = (await detail(CSM, "rv2-q1")).detail.comments.map((c: Row) => [c.id, c.authorLabel, c.mine]);
+    expect(byCsm).toEqual([
+      ["rv2-c3", "the cockpit", false],
+      ["rv2-c2", "the CEO", false],
+      ["rv2-c1", "the CSM", true],
+    ]);
+    expect((await detail(ADMIN, "rv2-q1")).detail.comments.find((c: Row) => c.id === "rv2-c1").mine).toBe(false);
+  });
+
+  test("a marker whose part holds an underscore is the cockpit's own, and the focus view cuts it (retest round 2)", async () => {
+    await upsert([task("rv2-u1", { assigneeIds: [CU.csm] })]);
+    await q("UPDATE public.cockpit_task_mirror SET comments_read_at=now()-interval '1 hour' WHERE task_id='rv2-u1'");
+    const now = Date.now();
+    // The writer's card comment and old-ticket comment for a request part named call_center.
+    const said = [
+      {
+        id: "rv2-u-c1",
+        authorId: CU.ceo,
+        atMs: now - 2000,
+        text: "Cockpit · The CSM asked Call Center: Low schedule rate\nhttps://app.clickup.com/t/cunew01\n\nCockpit ref R-0123456789-call_center-card",
+      },
+      {
+        id: "rv2-u-c2",
+        authorId: CU.ceo,
+        atMs: now - 1000,
+        text: "Routed in the cockpit as Low schedule rate: https://app.clickup.com/t/cunew01\n\nCockpit ref R-0123456789-call_center-old",
+      },
+    ];
+    expect((await comments("rv2-u1", said)).alerts).toBe(0);
+    await svc("SELECT public.cockpit_task_detail_cache('rv2-u1',$1::jsonb) r", [JSON.stringify({ comments: said })]);
+    expect((await detail(CSM, "rv2-u1")).detail.comments.map((c: Row) => [c.id, c.authorLabel, c.text])).toEqual([
+      ["rv2-u-c2", "the cockpit", "Routed in the cockpit as Low schedule rate: https://app.clickup.com/t/cunew01"],
+      ["rv2-u-c1", "the cockpit", "Cockpit · The CSM asked Call Center: Low schedule rate\nhttps://app.clickup.com/t/cunew01"],
+    ]);
+  });
+
+  test("the bell's unread count is the unread among the 50 it lists, so Mark all read clears it", async () => {
+    const TEMP = "00000000-0000-4000-8000-0000000000f8";
+    await member(db, TEMP, "temp-bell@tests.invalid", ["csm"]);
+    const [m] = await q<{ id: string }>("SELECT id FROM public.cockpit_members WHERE auth_user_id=$1", [TEMP]);
+    for (let i = 0; i < 60; i++)
+      await q(
+        "INSERT INTO public.cockpit_task_alerts(member_id,kind,dedupe_key,task_id,title,body,at) VALUES($1,'assigned',$2,$3,'A task','Assigned to you',now() - $4::integer * interval '1 minute')",
+        [m.id, `rv2-unread-${i}`, `rv2-u${i}`, i + 1],
+      );
+    const first = await bell(TEMP);
+    expect(first.alerts.length).toBe(50);
+    expect(first.unread).toBe(50);
+    expect(first.unread).toBe(first.alerts.filter((a: Row) => !a.read).length);
+    // Mark all read sends the ids it lists; the count is then nothing, though older alerts stay unread unseen.
+    expect(await one<Row>(TEMP, "SELECT public.cockpit_task_alerts_seen($1::uuid[]) r", [first.alerts.map((a: Row) => a.id)])).toEqual({
+      ok: true,
+      marked: 50,
+    });
+    const after = await bell(TEMP);
+    expect(after.unread).toBe(0);
+    expect(after.alerts.every((a: Row) => a.read)).toBe(true);
+    expect(await count("SELECT count(*) n FROM public.cockpit_task_alerts WHERE member_id=$1 AND read_at IS NULL", [m.id])).toBe(10);
+    // A new alert counts again.
+    await q("INSERT INTO public.cockpit_task_alerts(member_id,kind,dedupe_key,title,body,at) VALUES($1,'assigned','rv2-unread-new','A task','Assigned to you',now())", [
+      m.id,
+    ]);
+    expect((await bell(TEMP)).unread).toBe(1);
+  });
+
+  test("F9: the seat's own Mark done tells it nothing while it saves or once delivered; the others hear; a requester's own Mark done is no request done", async () => {
+    await writerMode("apply");
+    // While the press is still on its way, the focus view's 3-second read finds ClickUp already done.
+    for (const [n, state] of [
+      [1, "sending"],
+      [2, "retry"],
+      [3, "unknown"],
+      [4, "queued"],
+    ] as const) {
+      const id = `rv2-d${n}`;
+      await upsert([task(id, { assigneeIds: [CU.sm, CU.creative] })]);
+      const press = nextUuid();
+      expect((await act(ADMIN, press, id, "done", { statusSeen: "to do" })).state).toBe("queued");
+      if (state !== "queued") await pressAs(press, state);
+      await upsert([task(id, { status: "complete", statusType: "done" })], "detail");
+      expect([state, await statusOf(ADMIN, id)]).toEqual([state, []]);
+      expect([state, await statusOf(CREATIVE, id)]).toEqual([state, ["Moved to complete"]]);
+    }
+    // A Mark done delivered long before this change did not make it: the seat is told.
+    await upsert([task("rv2-d5", { assigneeIds: [CU.sm, CU.creative] })]);
+    await q(
+      `INSERT INTO public.cockpit_clickup_writeback_queue(dedupe_key,kind,source_table,source_id,task_id,payload,state,created_at,delivered_at)
+       VALUES('task:rv2-old-done','task_action','cockpit_task_mirror','rv2-d5','rv2-d5',$1::jsonb,'delivered',now()-interval '40 minutes',now()-interval '30 minutes')`,
+      [JSON.stringify({ op: "done", actor: { memberId: ids[ADMIN] } })],
+    );
+    await upsert([task("rv2-d5", { status: "complete", statusType: "done" })]);
+    expect(await statusOf(ADMIN, "rv2-d5")).toEqual(["Moved to complete"]);
+    // A press in flight never hides a move to a status that is not done.
+    await upsert([task("rv2-d1", { status: "in progress", statusType: "custom" })]);
+    expect(await statusOf(ADMIN, "rv2-d1")).toEqual(["Moved to in progress"]);
+
+    // The CEO filed a request; the CEO's own Mark done on its task makes no request done alert for the CEO.
+    const own = await deliveredRequest(CEO, "rv2-r1");
+    await upsert([task("rv2-r1", { assigneeIds: [CU.sm] })]);
+    const ceoPress = nextUuid();
+    await act(CEO, ceoPress, "rv2-r1", "done", { statusSeen: "to do" });
+    expect((await q("SELECT payload FROM public.cockpit_clickup_writeback_queue WHERE id=$1", [ceoPress]))[0].payload.requesterOfTask).toBe(true);
+    await pressAs(ceoPress, "delivered");
+    await upsert([task("rv2-r1", { status: "complete", statusType: "done" })]);
+    expect((await alertsOf(CEO)).filter(a => a.kind === "request_done" && a.request_id === own)).toEqual([]);
+    expect((await q("SELECT done_at FROM public.cockpit_requests WHERE id=$1", [own]))[0].done_at).not.toBeNull();
+    // Control: the owner's Mark done tells the CEO.
+    const other = await deliveredRequest(CEO, "rv2-r2");
+    await upsert([task("rv2-r2", { assigneeIds: [CU.sm] })]);
+    const smPress = nextUuid();
+    await act(ADMIN, smPress, "rv2-r2", "done", { statusSeen: "to do" });
+    await pressAs(smPress, "delivered");
+    await upsert([task("rv2-r2", { status: "complete", statusType: "done" })]);
+    expect((await alertsOf(CEO)).filter(a => a.kind === "request_done" && a.request_id === other).map(a => a.body)).toEqual(["Done in ClickUp."]);
+  });
+
+  test("ask F12: a seat's own task on any list takes a tick, a comment and Mark done; Mark done is not offered on Video Pipeline or WhatsApp Reconnection", async () => {
+    await writerMode("apply");
+    await upsert([
+      task("rv2-l1", { assigneeIds: [CU.creative], listId: PERSONAL, listName: "Personal List" }),
+      task("rv2-l2", { assigneeIds: [CU.creative], listId: VIDEO, listName: "Video Pipeline" }),
+      task("rv2-l3", { assigneeIds: [CU.creative], listId: WHATSAPP, listName: "WhatsApp Reconnection" }),
+    ]);
+    expect((await detail(CREATIVE, "rv2-l1")).can).toEqual({ tick: true, comment: true, done: true, why: null });
+    expect((await detail(CREATIVE, "rv2-l2")).can).toEqual({
+      tick: true,
+      comment: true,
+      done: false,
+      why: "Mark done is not offered on Video Pipeline, where done means the video is live. Move it in ClickUp.",
+    });
+    expect((await detail(CREATIVE, "rv2-l3")).can).toEqual({
+      tick: true,
+      comment: true,
+      done: false,
+      why: "Mark done is not offered on WhatsApp Reconnection, where a status change messages the client. Move it in ClickUp.",
+    });
+    for (const [taskId, op, payload] of [
+      ["rv2-l1", "tick", { checklistId: "cl9", itemId: "i9", itemName: "Book the shoot", from: false }],
+      ["rv2-l1", "done", { statusSeen: "to do" }],
+      ["rv2-l2", "tick", { checklistId: "cl8", itemId: "i8", itemName: "Cut the hook", from: false }],
+    ] as const) {
+      const press = nextUuid();
+      expect((await act(CREATIVE, press, taskId, op, payload)).state).toBe("queued");
+      const [row] = await q("SELECT payload FROM public.cockpit_clickup_writeback_queue WHERE id=$1", [press]);
+      expect([row.payload.op, row.payload.taskId]).toEqual([op, taskId]);
+    }
+    expect((await actRefused(CREATIVE, nextUuid(), "rv2-l2", "done", { statusSeen: "to do" })).code).toBe("55000");
+  });
+});
+
+describe("review round 3", () => {
+  const submitSql = "SELECT public.cockpit_request_submit($1::uuid,$2,$3,$4::jsonb,$5::date,$6,$7,$8)";
+  const kickRow = async () => (await q("SELECT ok, note FROM public.cockpit_sync_state WHERE key='task-mirror:kick'"))[0] ?? null;
+  const staleWriter = () =>
+    q(
+      "UPDATE public.cockpit_sync_state SET detail = jsonb_set(detail,'{at}',to_jsonb(now() - interval '16 minutes')) WHERE key='clickup-writeback:requests'",
+    );
+
+  test("a seat an editor cleared is told it has no ClickUp user, on its card, its bell and the focus view, never to ask for a link", async () => {
+    await writerMode("apply");
+    expect((await myTasks(CSM)).linkState).toBe("ok");
+    // The systems manager records that the buyer's seat has no ClickUp user.
+    await one(ADMIN, "SELECT public.cockpit_member_clickup_set($1,NULL) r", [ids[BUYER]]);
+    expect(await myTasks(BUYER)).toMatchObject({
+      link: "not_linked",
+      linkState: "cleared",
+      tasks: [],
+      note: "Your seat has no ClickUp user, so no ClickUp tasks show here. Requests you raise show under My requests.",
+    });
+    expect(await bell(BUYER)).toMatchObject({
+      link: "not_linked",
+      linkState: "cleared",
+      note: "Your seat has no ClickUp user, so only request alerts show here.",
+    });
+    // A task from a request the seat filed opens; changes are not offered, and it is told who can make them.
+    await upsert([task("rv3-c1", { assigneeIds: [CU.sm] })]);
+    await deliveredRequest(BUYER, "rv3-c1");
+    const NO_USER = "Your seat has no ClickUp user, so you cannot tick, comment or mark done here. Ask the task's owner.";
+    expect((await detail(BUYER, "rv3-c1")).can).toEqual({ tick: false, comment: false, done: false, why: NO_USER });
+    expect(await actRefused(BUYER, nextUuid(), "rv3-c1", "comment", { text: "Any news?" })).toEqual({ message: NO_USER, code: "55000" });
+    for (const text of [JSON.stringify(await myTasks(BUYER)), JSON.stringify(await bell(BUYER))]) expect(text).not.toContain("link it");
+  });
+
+  test("a hand link reads the seat's ClickUp tasks at once, not at the next hourly run; the same link again or a clear starts nothing", async () => {
+    // Stand-ins for the vault and pg_net, so the kick posts and says what it posted.
+    await asOwner();
+    await db.exec(`CREATE SCHEMA IF NOT EXISTS vault;
+             CREATE TABLE vault.decrypted_secrets (name text, decrypted_secret text);
+             INSERT INTO vault.decrypted_secrets VALUES ('cockpit_tasks_cron_secret', 'test-secret');
+             CREATE SCHEMA IF NOT EXISTS net;
+             CREATE TABLE net.posted (url text, body jsonb);
+             CREATE FUNCTION net.http_post(url text, body jsonb, headers jsonb, timeout_milliseconds integer) RETURNS bigint
+               LANGUAGE sql AS $$ INSERT INTO net.posted VALUES (url, body) RETURNING 1::bigint $$;`);
+    try {
+      const posted = async () => (await q<{ url: string; body: Row }>("SELECT url, body FROM net.posted")).map(p => [p.url, p.body]);
+      // From cleared to a ClickUp user: one seats read.
+      expect((await one<Row>(ADMIN, "SELECT public.cockpit_member_clickup_set($1,$2) r", [ids[BUYER], CU.other])).link).toMatchObject({
+        state: "manual",
+      });
+      expect(await posted()).toEqual([["https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/cockpit-tasks", { job: "seats" }]]);
+      expect(await kickRow()).toEqual({ ok: true, note: "Posted a seats run" });
+      // The same link again, or a clear, reads nothing.
+      await one(ADMIN, "SELECT public.cockpit_member_clickup_set($1,$2) r", [ids[BUYER], CU.other]);
+      await one(ADMIN, "SELECT public.cockpit_member_clickup_set($1,NULL) r", [ids[BUYER]]);
+      expect((await posted()).length).toBe(1);
+      await one(ADMIN, "SELECT public.cockpit_member_clickup_set($1,$2) r", [ids[BUYER], CU.other]);
+      expect((await posted()).length).toBe(2);
+    } finally {
+      await asOwner();
+      await db.exec("DROP SCHEMA vault CASCADE; DROP SCHEMA net CASCADE;");
+    }
+    // Without the vault the link still saves, and the kick says what is missing.
+    await one(ADMIN, "SELECT public.cockpit_member_clickup_set($1,NULL) r", [ids[BUYER]]);
+    await one(ADMIN, "SELECT public.cockpit_member_clickup_set($1,$2) r", [ids[BUYER], CU.other]);
+    expect(await kickRow()).toEqual({
+      ok: false,
+      note: "The vault has no cockpit_tasks_cron_secret, so the task mirror did not run. Add it to the vault.",
+    });
+    expect((await myTasks(BUYER)).link).toBe("linked");
+  });
+
+  test("an old form ticket the task mirror shows moved off All Tasks leaves the queue and is never routed; moved back, it waits again", async () => {
+    await writerMode("apply");
+    const opt = (await requestType("general_tech")).request_type_option_id;
+    await svc("SELECT public.cockpit_request_import($1::jsonb) r", [
+      JSON.stringify([
+        {
+          taskId: "rv3-old1",
+          name: "Form Submission rv3",
+          url: "https://app.clickup.com/t/rv3-old1",
+          optionId: opt,
+          tags: [],
+          description: "The booking form is broken.",
+          dateCreated: String(Date.now() - 3600_000),
+          priority: null,
+          dueAt: null,
+          status: "to do",
+          statusType: "open",
+        },
+      ]),
+    ]);
+    const imp = (await q("SELECT * FROM public.cockpit_requests WHERE imported_task_id='rv3-old1'"))[0];
+    const teamRow = async () =>
+      (await one<Row>(ADMIN, "SELECT public.cockpit_requests_read('team',200) r")).rows.find((r: Row) => r.id === imp.id);
+    const route = () =>
+      refused(ADMIN, submitSql, [nextUuid(), "general_tech", null, JSON.stringify({ details: "Fix it" }), null, null, "requests_page", "rv3-old1"]);
+    await upsert([task("rv3-old1", { listId: ALL_TASKS, listName: "All Tasks", name: "Form Submission rv3" })]);
+    expect(await teamRow()).toMatchObject({ state: "imported", canRoute: true, importHandled: false });
+    // A teammate routes it in ClickUp, as the queue told them: moved to Client Success, still open.
+    await upsert([task("rv3-old1", { listId: CS_LIST, listName: "Client Success" })]);
+    expect(await teamRow()).toBeUndefined();
+    expect(await one<Row>(ADMIN, "SELECT public.cockpit_request_get($1) r", [imp.id])).toMatchObject({
+      state: "imported",
+      canRoute: false,
+      importHandled: true,
+    });
+    expect(await route()).toEqual({ message: "That old ticket was already routed.", code: "55000" });
+    // Moved back to All Tasks: it waits in the queue again.
+    await upsert([task("rv3-old1", { listId: ALL_TASKS, listName: "All Tasks" })]);
+    expect(await teamRow()).toMatchObject({ canRoute: true, importHandled: false });
+  });
+
+  test("the focus view says a writer that stopped reporting is not reporting, never that changes are not switched on", async () => {
+    await writerMode("apply");
+    await upsert([task("rv3-q1", { assigneeIds: [CU.csm] }), task("rv3-q2", { assigneeIds: [CU.csm], tags: ["acme interiors"] })]);
+    const QUIET =
+      "Changes from the cockpit cannot be sent just now: the requests writer has not reported in the last 15 minutes. Open the task in ClickUp.";
+    const OFF = "Changes from the cockpit are not switched on yet. Open the task in ClickUp.";
+    await staleWriter();
+    expect((await detail(CSM, "rv3-q1")).can).toEqual({ tick: false, comment: false, done: false, why: QUIET });
+    expect(await actRefused(CSM, nextUuid(), "rv3-q1", "done", { statusSeen: "to do" })).toEqual({ message: QUIET, code: "55000" });
+    // Quiet during the canary: a task on the canary card is said quiet; any other was never switched on.
+    await writerMode("apply_limited", [CARD_A]);
+    await staleWriter();
+    expect((await detail(CSM, "rv3-q2")).can.why).toBe(QUIET);
+    expect((await detail(CSM, "rv3-q1")).can.why).toBe(OFF);
+    // Never reported: not switched on yet.
+    await q("DELETE FROM public.cockpit_sync_state WHERE key='clickup-writeback:requests'");
+    expect((await detail(CSM, "rv3-q1")).can.why).toBe(OFF);
+    await writerMode("apply");
   });
 });

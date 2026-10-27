@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { importTask } from "./clickup";
-import { runSeats, SEAT_PAGES } from "./seats";
+import { ALL_TASKS_PAGES, runSeats, SEAT_PAGES } from "./seats";
 import { cuTask, kit, NOW } from "./testkit";
 
 const SM = 113459516;
@@ -96,6 +96,9 @@ describe("the seats job", () => {
       ["ft2", "8c5d4f0e-0000-4000-8000-000000000001"],
     ]);
     expect(imported[0]).toMatchObject({ name: "Form Submission - #ft1", tags: ["acme interiors"], description: "Please offboard them", status: "to do", statusType: "open" });
+    // A complete read also names every task still open on All Tasks, form ticket or not (review round 3), so an
+    // imported ticket moved, closed or deleted in ClickUp leaves the queues; a done one is not open.
+    expect(k.db.of("cockpit_request_import")[0].args.p_open_ids).toEqual(["ft1", "ft2", "ft3", "other1"]);
     const state = k.db.last("cockpit_task_mirror_state").args;
     expect(state).toMatchObject({ p_job: "seats", p_ok: true });
     expect(state.p_detail).toEqual({ members: 2, linked: 3, seats: 3, imported: 2, templates: 2, fields: 3, complete: true });
@@ -153,6 +156,21 @@ describe("the seats job", () => {
     expect(r.ok).toBe(false);
     expect(r.complete).toBe(false);
     expect(k.db.last("cockpit_task_mirror_state").args.p_detail).toMatchObject({ complete: false });
+  });
+
+  test("a read of All Tasks cut short names no open tasks, so no imported ticket is taken for gone (review round 3)", async () => {
+    const k = kit();
+    k.clickup.allTasks = [formTicket("ft1", 10), ...Array.from({ length: ALL_TASKS_PAGES * 100 }, (_, i) => cuTask(`at${i}`, { list: { id: "901816723226" } }))];
+    const r = await runSeats(k.deps);
+    expect(r.imported).toBe(1);
+    const call = k.db.of("cockpit_request_import")[0].args;
+    expect((call.p_tasks as unknown[]).length).toBe(1);
+    expect("p_open_ids" in call).toBe(false);
+    // Read in full, a list with every ticket gone is sent as such: nothing is open there.
+    const k2 = kit();
+    k2.clickup.allTasks = [cuTask("at1", { list: { id: "901816723226" }, status: { status: "cancelled", type: "closed" } })];
+    await runSeats(k2.deps);
+    expect(k2.db.of("cockpit_request_import")[0].args.p_open_ids).toEqual([]);
   });
 
   test("an old ticket: a Form Submission, open, with a Request Type", () => {

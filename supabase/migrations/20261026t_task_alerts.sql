@@ -31,7 +31,13 @@
 --   cockpit_tasks_cron_secret (the function secret TASKS_CRON_SECRET). Until
 --   it exists, cockpit_sync_state key task-mirror:kick says so and nothing runs.
 -- - Your tasks and the bell say "not linked" for a seat with no ClickUp user;
---   link it in Requests settings, People in ClickUp (20261026r).
+--   link it in Requests settings, People in ClickUp (20261026r). A seat an
+--   editor cleared there is told it has no ClickUp user, and nobody is asked to
+--   link it (review round 3).
+-- - The focus view ticks, comments and marks done a seat's task on any list but
+--   a client card itself; Mark done is not offered on Video Pipeline or
+--   WhatsApp Reconnection (cockpit_task_done_blocked). clickup-writeback checks
+--   the same lists before it writes.
 
 BEGIN;
 
@@ -266,12 +272,23 @@ RETURNS text LANGUAGE sql IMMUTABLE SECURITY DEFINER SET search_path = '' AS $$
   END
 $$;
 
--- The client card a task belongs to (contract 3.1).
-CREATE OR REPLACE FUNCTION public.cockpit_task_client_of(p_task text, p_list text, p_tags text[])
+-- The client card a task belongs to (contract 3.1): on Clients - Mahara the
+-- card itself, and for a card's subtask its card (the parent when that is a
+-- card, else the parent's own card when the subtask sits under another
+-- subtask, review 2026-10-26: ask F2 put those subtasks on Your tasks, so the
+-- canary card and the client's name must follow them); else the request's
+-- card; else one tag equal to exactly one card's client name.
+DROP FUNCTION IF EXISTS public.cockpit_task_client_of(text, text, text[]);
+CREATE OR REPLACE FUNCTION public.cockpit_task_client_of(p_task text, p_list text, p_tags text[], p_parent text)
 RETURNS text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE v_card text; v_cards text[];
 BEGIN
-  IF p_list = '901816559981' THEN RETURN p_task; END IF;
+  IF p_list = '901816559981' THEN
+    IF p_parent IS NULL THEN RETURN p_task; END IF;
+    IF EXISTS (SELECT 1 FROM public.cockpit_client_onboarding o WHERE o.clickup_task_id = p_parent) THEN RETURN p_parent; END IF;
+    SELECT m.client_task_id INTO v_card FROM public.cockpit_task_mirror m WHERE m.task_id = p_parent;
+    RETURN coalesce(v_card, p_parent);
+  END IF;
   SELECT r.client_task_id INTO v_card
     FROM public.cockpit_request_parts p JOIN public.cockpit_requests r ON r.id = p.request_id
    WHERE p.clickup_task_id = p_task AND r.client_task_id IS NOT NULL
@@ -331,11 +348,22 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
                     AND r.requester_member_id::text = p_seat->>'memberId')
 $$;
 
--- Whether a list is one of the team request boards (the five department
--- lists and All Tasks), where ticking and Mark done work.
-CREATE OR REPLACE FUNCTION public.cockpit_task_board(p_list text)
-RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
-  SELECT EXISTS (SELECT 1 FROM jsonb_array_elements(public.cockpit_request_lists()) x WHERE x->>'listId' = p_list)
+-- Where Mark done is not offered, and why; NULL where it is (review round 2,
+-- ask F12: a seat's own tasks on any list take a tick, a comment and Mark done,
+-- not only the team request boards). Mark done writes the list's done-type
+-- status, which on these two lists sets more off than closing a task:
+-- - Video Pipeline: its done status is "live", the published video; the editor
+--   desk and the review flow move those tasks, never a generic Mark done;
+-- - WhatsApp Reconnection: a status change there calls a webhook that messages
+--   the client (docs/requests/maps/writers.md section 9).
+-- A client card itself takes no change at all (cockpit_task_can, cockpit_task_act).
+DROP FUNCTION IF EXISTS public.cockpit_task_board(text);
+CREATE OR REPLACE FUNCTION public.cockpit_task_done_blocked(p_list text)
+RETURNS text LANGUAGE sql IMMUTABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT CASE coalesce(p_list, '')
+    WHEN '901816720767' THEN 'Mark done is not offered on Video Pipeline, where done means the video is live. Move it in ClickUp.'
+    WHEN '901821803697' THEN 'Mark done is not offered on WhatsApp Reconnection, where a status change messages the client. Move it in ClickUp.'
+  END
 $$;
 
 -- Whether the writer would take a change on this task now.
@@ -347,17 +375,36 @@ BEGIN
       OR (v_mode->>'mode' = 'apply_limited' AND p_client_task IS NOT NULL AND coalesce(v_mode->'onlyCards', '[]'::jsonb) ? p_client_task);
 END $$;
 
+-- Why the focus view takes no change on a task the writer would not take now
+-- (review round 3): a writer that went quiet after it was writing this task's
+-- card is said as such (cockpit_request_writer_silent, migration r), never as
+-- "not switched on yet".
+CREATE OR REPLACE FUNCTION public.cockpit_task_writer_why(p_client_task text)
+RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT CASE WHEN public.cockpit_request_writer_silent(p_client_task)
+              THEN 'Changes from the cockpit cannot be sent just now: the requests writer has not reported in the last 15 minutes. Open the task in ClickUp.'
+              ELSE 'Changes from the cockpit are not switched on yet. Open the task in ClickUp.' END
+$$;
+
+-- Why a seat with no ClickUp link takes no change here (review round 3): a seat
+-- an editor cleared has no ClickUp user, so nobody is sent to link it.
+CREATE OR REPLACE FUNCTION public.cockpit_task_link_why(p_seat jsonb)
+RETURNS text LANGUAGE sql IMMUTABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT CASE WHEN p_seat->>'linkState' = 'cleared'
+              THEN 'Your seat has no ClickUp user, so you cannot tick, comment or mark done here. Ask the task''s owner.'
+              ELSE 'Link your seat to ClickUp to tick, comment and mark done here. Ask the systems manager.' END
+$$;
+
 -- What the focus view may offer on a task: {tick, comment, done, why}.
 CREATE OR REPLACE FUNCTION public.cockpit_task_can(p_seat jsonb, m public.cockpit_task_mirror)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   v_priv boolean := coalesce((p_seat->>'isAdmin')::boolean, false) OR coalesce((p_seat->>'isCeo')::boolean, false);
   v_linked boolean := jsonb_typeof(p_seat->'clickupUserId') = 'number';
-  v_board boolean; v_card boolean;
+  v_card boolean; v_blocked text;
 BEGIN
   IF NOT (v_linked OR v_priv) THEN
-    RETURN jsonb_build_object('tick', false, 'comment', false, 'done', false,
-      'why', 'Link your seat to ClickUp to tick, comment and mark done here. Ask the systems manager.');
+    RETURN jsonb_build_object('tick', false, 'comment', false, 'done', false, 'why', public.cockpit_task_link_why(p_seat));
   END IF;
   IF m.task_id IS NULL THEN
     RETURN jsonb_build_object('tick', false, 'comment', false, 'done', false,
@@ -365,13 +412,16 @@ BEGIN
   END IF;
   IF NOT public.cockpit_task_writer_open(m.client_task_id) THEN
     RETURN jsonb_build_object('tick', false, 'comment', false, 'done', false,
-      'why', 'Changes from the cockpit are not switched on yet. Open the task in ClickUp.');
+      'why', public.cockpit_task_writer_why(m.client_task_id));
   END IF;
-  v_card := m.list_id = '901816559981';
-  v_board := public.cockpit_task_board(m.list_id);
-  RETURN jsonb_build_object('tick', v_board, 'comment', NOT v_card, 'done', v_board,
-    'why', CASE WHEN v_card THEN 'This is a client card. Open it in ClickUp.'
-                WHEN NOT v_board THEN 'Ticking and Mark done work on the team request boards. Open this one in ClickUp.' END);
+  -- A client card itself is written in ClickUp; a real subtask on a card is a
+  -- task like any other (review 2026-10-26, ask F2). Any other task takes a
+  -- tick, a comment and Mark done, but Mark done on the two lists where a done
+  -- status sets more off (cockpit_task_done_blocked, review round 2).
+  v_card := m.list_id = '901816559981' AND m.parent_id IS NULL;
+  v_blocked := public.cockpit_task_done_blocked(m.list_id);
+  RETURN jsonb_build_object('tick', NOT v_card, 'comment', NOT v_card, 'done', NOT v_card AND v_blocked IS NULL,
+    'why', CASE WHEN v_card THEN 'This is a client card. Open it in ClickUp.' ELSE v_blocked END);
 END $$;
 
 -- Who wrote a comment, as the team sees it: {label, memberId, cockpit, quiet}.
@@ -384,21 +434,29 @@ END $$;
 -- - with no marker: the CEO, by role. ClickUp cannot tell the CEO's own hand
 --   from an automation on the same account, so such a comment makes no
 --   comment alert (quiet true); a mention in it still alerts.
-CREATE OR REPLACE FUNCTION public.cockpit_task_comment_author(p_author bigint, p_text text)
+-- Review round 2 (SEC-5): the writer always puts its marker last, so only the
+-- marker that ends the text counts, and a T- ref names only a Comment press on
+-- this same task. A ref quoted or pasted inside the words is just words (and
+-- cockpit_task_act refuses words that hold one).
+DROP FUNCTION IF EXISTS public.cockpit_task_comment_author(bigint, text);
+CREATE OR REPLACE FUNCTION public.cockpit_task_comment_author(p_author bigint, p_text text, p_task_id text)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE v_ref text; v_payload jsonb; v_member uuid;
 BEGIN
   IF p_author = 284616470 THEN
-    v_ref := substring(coalesce(p_text, '') FROM 'Cockpit ref (T-[0-9a-f]{10})');
+    v_ref := substring(coalesce(p_text, '') FROM 'Cockpit ref (T-[0-9a-f]{10})\s*$');
     IF v_ref IS NOT NULL THEN
       SELECT q.payload INTO v_payload FROM public.cockpit_clickup_writeback_queue q
-       WHERE q.kind = 'task_action' AND q.payload->>'ref' = v_ref ORDER BY q.created_at LIMIT 1;
+       WHERE q.kind = 'task_action' AND q.task_id = p_task_id AND q.payload->>'op' = 'comment' AND q.payload->>'ref' = v_ref
+       ORDER BY q.created_at LIMIT 1;
       IF v_payload IS NOT NULL THEN
         RETURN jsonb_build_object('label', coalesce(v_payload->'actor'->>'label', 'a team member'),
           'memberId', v_payload->'actor'->>'memberId', 'cockpit', false, 'quiet', false);
       END IF;
     END IF;
-    IF coalesce(p_text, '') ~ 'Cockpit ref [A-Za-z0-9-]+' THEN
+    -- Any other marker the cockpit writes ends the text too; a request's part
+    -- name can hold an underscore (R-0123456789-call_center-card).
+    IF coalesce(p_text, '') ~ 'Cockpit ref [A-Za-z0-9_-]+\s*$' THEN
       RETURN jsonb_build_object('label', 'the cockpit', 'memberId', NULL, 'cockpit', true, 'quiet', true);
     END IF;
     SELECT l.member_id INTO v_member FROM public.cockpit_task_linked() l WHERE l.clickup_user_id = p_author LIMIT 1;
@@ -586,7 +644,10 @@ CREATE TRIGGER cockpit_task_alert_rules_audit AFTER INSERT OR UPDATE ON public.c
   FOR EACH ROW EXECUTE FUNCTION public.cockpit_task_alert_rules_audit();
 
 -- A request part that ended failed or skipped tells the seat that asked
--- (linked or not), unless the request was cancelled.
+-- (linked or not), unless the request was cancelled. A failed part that holds
+-- a ClickUp task reached ClickUp: the writer fails such a part only when the
+-- task was deleted there (clickup-writeback SAY.gone, review round 3), so it
+-- never reads "Did not reach ClickUp".
 CREATE OR REPLACE FUNCTION public.cockpit_task_request_failed()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE r public.cockpit_requests;
@@ -599,7 +660,8 @@ BEGIN
   PERFORM public.cockpit_task_alert_add(r.requester_member_id, 'request_failed',
     'request_failed:' || r.id::text || ':' || NEW.part, NEW.clickup_task_id, r.id, NEW.list_id,
     r.type_label || coalesce(': ' || nullif(btrim(r.client_name), ''), ''),
-    'Did not reach ClickUp: ' || coalesce(nullif(btrim(NEW.error), ''), 'no reason was recorded.'),
+    CASE WHEN NEW.state = 'failed' AND NEW.clickup_task_id IS NOT NULL THEN 'Deleted in ClickUp: ' ELSE 'Did not reach ClickUp: ' END
+      || coalesce(nullif(btrim(NEW.error), ''), 'no reason was recorded.'),
     r.client_name, NULL, now());
   RETURN NULL;
 END $$;
@@ -648,8 +710,13 @@ DECLARE
 BEGIN
   v_cu := CASE WHEN jsonb_typeof(v_seat->'clickupUserId') = 'number' THEN (v_seat->>'clickupUserId')::bigint END;
   IF v_cu IS NULL THEN
+    -- linkState (review round 3): 'cleared' is an editor saying the seat has no
+    -- ClickUp user, so its card never asks anyone to link it.
     RETURN jsonb_build_object('asOf', now(), 'sourceAt', v_state->'sourceAt', 'ready', v_state->'ready', 'link', 'not_linked',
-      'note', 'Your seat is not linked to a ClickUp user, so your tasks cannot show here. Ask the systems manager to link it.',
+      'linkState', v_seat->'linkState',
+      'note', CASE WHEN v_seat->>'linkState' = 'cleared'
+                   THEN 'Your seat has no ClickUp user, so no ClickUp tasks show here. Requests you raise show under My requests.'
+                   ELSE 'Your seat is not linked to a ClickUp user, so your tasks cannot show here. Ask the systems manager to link it.' END,
       'counts', jsonb_build_object('overdue', 0, 'today', 0, 'total', 0), 'tasks', '[]'::jsonb, 'more', 0);
   END IF;
   WITH shown AS (
@@ -667,11 +734,15 @@ BEGIN
     INTO v_rows, v_total, v_late, v_due
     FROM ranked rk JOIN public.cockpit_task_mirror m2 ON m2.task_id = rk.task_id;
   RETURN jsonb_build_object('asOf', now(), 'sourceAt', v_state->'sourceAt', 'ready', v_state->'ready', 'link', 'linked',
+    'linkState', v_seat->'linkState',
     'note', NULL, 'counts', jsonb_build_object('overdue', v_late, 'today', v_due, 'total', v_total),
     'tasks', v_rows, 'more', greatest(v_total - 200, 0));
 END $$;
 
--- The bell (contract 3.3, TaskAlerts): the last 14 days, newest first, at most 50.
+-- The bell (contract 3.3, TaskAlerts): the last 14 days, newest first, at most
+-- 50, and unread counts those 50 (review round 2: a count over every alert of
+-- 14 days named alerts the list never shows, which Mark all read, sending the
+-- listed ids, could never clear).
 CREATE OR REPLACE FUNCTION public.cockpit_task_alerts(p_cockpit text)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -683,19 +754,20 @@ DECLARE
 BEGIN
   SELECT coalesce(jsonb_agg(jsonb_build_object('id', a.id, 'kind', a.kind, 'taskId', a.task_id, 'requestId', a.request_id,
            'title', a.title, 'body', a.body, 'clientName', a.client_name, 'at', a.at, 'read', a.read_at IS NOT NULL)
-           ORDER BY a.at DESC, a.created_at DESC), '[]'::jsonb)
-    INTO v_rows
+           ORDER BY a.at DESC, a.created_at DESC, a.id DESC), '[]'::jsonb),
+         (count(*) FILTER (WHERE a.read_at IS NULL))::integer
+    INTO v_rows, v_unread
     FROM (SELECT * FROM public.cockpit_task_alerts x
            WHERE x.member_id = v_member AND x.at > now() - interval '14 days'
              AND NOT public.cockpit_task_alert_hidden(v_cockpit, x)
-           ORDER BY x.at DESC, x.created_at DESC LIMIT 50) a;
-  SELECT count(*)::integer INTO v_unread FROM public.cockpit_task_alerts x
-   WHERE x.member_id = v_member AND x.at > now() - interval '14 days' AND x.read_at IS NULL
-     AND NOT public.cockpit_task_alert_hidden(v_cockpit, x);
+           ORDER BY x.at DESC, x.created_at DESC, x.id DESC LIMIT 50) a;
   RETURN jsonb_build_object('asOf', now(), 'sourceAt', v_state->'sourceAt', 'ready', v_state->'ready',
-    'link', v_seat->>'link',
-    'note', CASE WHEN v_seat->>'link' = 'not_linked'
-                 THEN 'Your seat is not linked to a ClickUp user, so only request alerts show here. Ask the systems manager to link it.' END,
+    'link', v_seat->>'link', 'linkState', v_seat->'linkState',
+    -- A seat an editor cleared has no ClickUp user: nobody is asked to link it (review round 3).
+    'note', CASE WHEN v_seat->>'link' <> 'not_linked' THEN NULL
+                 WHEN v_seat->>'linkState' = 'cleared'
+                   THEN 'Your seat has no ClickUp user, so only request alerts show here.'
+                 ELSE 'Your seat is not linked to a ClickUp user, so only request alerts show here. Ask the systems manager to link it.' END,
     'unread', v_unread, 'alerts', v_rows);
 END $$;
 
@@ -766,10 +838,10 @@ BEGIN
              'mine', CASE WHEN c.who->>'memberId' IS NOT NULL THEN c.who->>'memberId' = v_seat->>'memberId'
                           ELSE v_cu IS NOT NULL AND c.author = v_cu AND NOT coalesce((c.who->>'cockpit')::boolean, false) END,
              'at', CASE WHEN c.ms IS NOT NULL THEN to_timestamp(c.ms / 1000.0) END,
-             'text', left(btrim(regexp_replace(coalesce(c.e->>'text', ''), '\s*Cockpit ref [A-Za-z0-9-]+\s*$', '')), 1000))
+             'text', left(btrim(regexp_replace(coalesce(c.e->>'text', ''), '\s*Cockpit ref [A-Za-z0-9_-]+\s*$', '')), 1000))
              ORDER BY c.ms DESC NULLS LAST), '[]'::jsonb)
       INTO v_comments
-      FROM (SELECT x.e, x.ms, x.author, public.cockpit_task_comment_author(x.author, x.e->>'text') AS who
+      FROM (SELECT x.e, x.ms, x.author, public.cockpit_task_comment_author(x.author, x.e->>'text', p_task_id) AS who
               FROM (SELECT e,
                            CASE WHEN coalesce(e->>'atMs', '') ~ '^[0-9]{1,15}$' THEN (e->>'atMs')::bigint END AS ms,
                            CASE WHEN coalesce(e->>'authorId', '') ~ '^[0-9]{1,18}$' THEN (e->>'authorId')::bigint END AS author
@@ -808,7 +880,7 @@ RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   v_seat jsonb := public.cockpit_request_seat();
   v_cu bigint; v_priv boolean; m public.cockpit_task_mirror; q public.cockpit_clickup_writeback_queue;
-  v_in jsonb := coalesce(p_payload, '{}'::jsonb); v_core jsonb; v_payload jsonb; v_text text; v_name text;
+  v_in jsonb := coalesce(p_payload, '{}'::jsonb); v_core jsonb; v_payload jsonb; v_text text; v_name text; v_blocked text;
 BEGIN
   IF p_task_id IS NULL OR p_task_id !~ '^[A-Za-z0-9_-]{1,40}$' THEN
     RAISE EXCEPTION 'That is not a ClickUp task id.' USING ERRCODE = '22023';
@@ -847,20 +919,25 @@ BEGIN
   v_cu := CASE WHEN jsonb_typeof(v_seat->'clickupUserId') = 'number' THEN (v_seat->>'clickupUserId')::bigint END;
   v_priv := coalesce((v_seat->>'isAdmin')::boolean, false) OR coalesce((v_seat->>'isCeo')::boolean, false);
   IF v_cu IS NULL AND NOT v_priv THEN
-    RAISE EXCEPTION 'Link your seat to ClickUp to tick, comment and mark done here. Ask the systems manager.' USING ERRCODE = '55000';
+    RAISE EXCEPTION USING MESSAGE = public.cockpit_task_link_why(v_seat), ERRCODE = '55000';
   END IF;
   SELECT * INTO m FROM public.cockpit_task_mirror WHERE task_id = p_task_id;
   IF m.task_id IS NULL THEN
     RAISE EXCEPTION 'This task has not been read from ClickUp yet. Try again in two minutes.' USING ERRCODE = '55000';
   END IF;
-  IF p_op = 'comment' AND m.list_id = '901816559981' THEN
+  -- A client card itself is written in ClickUp; its real subtasks take every
+  -- change (review 2026-10-26, ask F2), as cockpit_task_can says. Any other
+  -- task takes every change too, but Mark done on the two lists where a done
+  -- status sets more off (cockpit_task_done_blocked, review round 2).
+  IF m.list_id = '901816559981' AND m.parent_id IS NULL THEN
     RAISE EXCEPTION 'This is a client card. Open it in ClickUp.' USING ERRCODE = '55000';
   END IF;
-  IF p_op <> 'comment' AND NOT public.cockpit_task_board(m.list_id) THEN
-    RAISE EXCEPTION 'Ticking and Mark done work on the team request boards. Open this one in ClickUp.' USING ERRCODE = '55000';
+  v_blocked := public.cockpit_task_done_blocked(m.list_id);
+  IF p_op = 'done' AND v_blocked IS NOT NULL THEN
+    RAISE EXCEPTION USING MESSAGE = v_blocked, ERRCODE = '55000';
   END IF;
   IF NOT public.cockpit_task_writer_open(m.client_task_id) THEN
-    RAISE EXCEPTION 'Changes from the cockpit are not switched on yet. Open the task in ClickUp.' USING ERRCODE = '55000';
+    RAISE EXCEPTION USING MESSAGE = public.cockpit_task_writer_why(m.client_task_id), ERRCODE = '55000';
   END IF;
   IF p_op IN ('tick','untick') THEN
     v_name := v_in->>'itemName';
@@ -872,6 +949,12 @@ BEGIN
     v_text := btrim(coalesce(v_in->>'text', ''));
     IF char_length(v_text) NOT BETWEEN 1 AND 2000 THEN
       RAISE EXCEPTION 'Write the comment first, in under 2,000 characters.' USING ERRCODE = '22023';
+    END IF;
+    -- The writer ends every comment with this press's own marker, and the reader
+    -- names the writer from it: words that hold another marker could be read as
+    -- someone else's comment, or as the cockpit's own (review round 2, SEC-5).
+    IF v_text ~* 'cockpit\s+ref\s+[a-z0-9]' THEN
+      RAISE EXCEPTION 'Leave out the words "Cockpit ref". The cockpit adds its own to every comment.' USING ERRCODE = '22023';
     END IF;
   ELSE
     IF char_length(btrim(coalesce(v_in->>'statusSeen', ''))) NOT BETWEEN 1 AND 100 THEN
@@ -1007,6 +1090,25 @@ BEGIN
       'seats', CASE WHEN s.key IS NOT NULL THEN jsonb_build_object('at', s.last_run_at, 'okAt', s.last_ok_at, 'ok', s.ok, 'note', s.note) END));
 END $$;
 
+-- Whether a seat's own Mark done from the focus view made this task done
+-- (review round 2, F9): a 'done' press of that seat on the task still on its
+-- way (queued, sending, retry, unknown: the focus view re-reads ClickUp every
+-- 3 seconds while it saves, so a read can land between the writer's PUT and
+-- its 'delivered'), or delivered no more than 10 minutes before ClickUp's
+-- change (p_changed, the task's date_updated), within a day. A tick or a
+-- comment never counts, so it hides no move someone else made.
+CREATE OR REPLACE FUNCTION public.cockpit_task_own_done(p_task text, p_member uuid, p_changed timestamptz)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT p_member IS NOT NULL AND EXISTS (
+    SELECT 1 FROM public.cockpit_clickup_writeback_queue q
+     WHERE q.kind = 'task_action' AND q.task_id = p_task AND q.payload->>'op' = 'done'
+       AND q.payload->'actor'->>'memberId' = p_member::text
+       AND q.created_at > now() - interval '24 hours'
+       AND (q.state IN ('queued','sending','retry','unknown')
+            OR (q.state = 'delivered'
+                AND coalesce(q.delivered_at, q.updated_at) > least(now(), coalesce(p_changed, now())) - interval '10 minutes')))
+$$;
+
 -- One mirror row changed (old is all NULL for a row new to the mirror): the
 -- request parts take its status and owners, and the alerts of 3.2 are made.
 -- Every write path calls it (the delta, the hourly seat read, the focus
@@ -1039,8 +1141,10 @@ BEGIN
       assignee_ids = cur.assignee_ids, mirrored_at = now(), updated_at = now()
      WHERE request_id = pt.request_id AND part = pt.part;
     PERFORM public.cockpit_request_refresh(pt.request_id);
+    -- Never to the requester for their own Mark done (contract 3.2, review round 2).
     IF p_base IS NOT NULL AND cur.status_type IN ('done','closed') AND coalesce(pt.old_type, '') NOT IN ('done','closed')
-       AND pt.request_state <> 'cancelled' AND pt.requester_member_id IS NOT NULL THEN
+       AND pt.request_state <> 'cancelled' AND pt.requester_member_id IS NOT NULL
+       AND NOT public.cockpit_task_own_done(cur.task_id, pt.requester_member_id, cur.date_updated) THEN
       v_alerts := v_alerts + public.cockpit_task_alert_add(pt.requester_member_id, 'request_done',
         'request_done:' || pt.request_id::text || ':' || pt.part, cur.task_id, pt.request_id, cur.list_id,
         pt.type_label || coalesce(': ' || nullif(btrim(pt.client_name), ''), ''),
@@ -1065,12 +1169,10 @@ BEGIN
         cur.task_id, NULL, cur.list_id, cur.name, 'Assigned to you', v_client_name, NULL, cur.date_updated);
     END IF;
     -- ClickUp's task read names no one who moved it, so the only mover known
-    -- is a seat's own Mark done from the focus view (contract 3.2, F9).
+    -- is a seat's own Mark done from the focus view (contract 3.2, F9), while it
+    -- saves or once delivered, and only for the done status it writes.
     IF NOT v_new AND old.status IS DISTINCT FROM cur.status
-       AND NOT EXISTS (SELECT 1 FROM public.cockpit_clickup_writeback_queue q
-                        WHERE q.kind = 'task_action' AND q.task_id = cur.task_id AND q.state = 'delivered'
-                          AND q.payload->'actor'->>'memberId' = s.member_id::text
-                          AND coalesce(q.delivered_at, q.updated_at) > now() - interval '10 minutes') THEN
+       AND NOT (cur.status_type IN ('done','closed') AND public.cockpit_task_own_done(cur.task_id, s.member_id, cur.date_updated)) THEN
       v_alerts := v_alerts + public.cockpit_task_alert_add(s.member_id, 'status',
         'status:' || cur.task_id || ':' || s.member_id::text || ':' || cur.status || ':'
           || (extract(epoch FROM cur.date_updated) * 1000)::bigint::text,
@@ -1137,7 +1239,8 @@ BEGIN
     v_has := CASE WHEN jsonb_typeof(e->'dueHasTime') = 'boolean' THEN (e->>'dueHasTime')::boolean
                   WHEN v_due IS NULL THEN NULL
                   WHEN NOT v_new AND old.due_at IS NOT DISTINCT FROM v_due THEN old.due_has_time END;
-    v_client := public.cockpit_task_client_of(v_id, e->>'listId', v_tags);
+    v_client := public.cockpit_task_client_of(v_id, e->>'listId', v_tags,
+      CASE WHEN coalesce(e->>'parentId', '') ~ '^[A-Za-z0-9_-]{1,40}$' THEN e->>'parentId' END);
     INSERT INTO public.cockpit_task_mirror AS t(task_id, list_id, list_name, folder_id, space_id, parent_id, name, status,
       status_type, priority, due_at, due_on, due_has_time, assignee_ids, watcher_ids, creator_id, tags, client_task_id, url,
       date_created, date_updated, date_closed, archived, checklist_done, checklist_total, first_seen_at, seen_at, gone_at)
@@ -1258,7 +1361,7 @@ BEGIN
       v_at := to_timestamp((c->>'atMs')::bigint / 1000.0);
       CONTINUE WHEN v_at <= v_cut;
       v_author := CASE WHEN coalesce(c->>'authorId', '') ~ '^[0-9]{1,18}$' THEN (c->>'authorId')::bigint END;
-      v_who := public.cockpit_task_comment_author(v_author, c->>'text');
+      v_who := public.cockpit_task_comment_author(v_author, c->>'text', m.task_id);
       -- The cockpit's own note (a Cockpit ref marker no press owns): no name, no comment alert.
       v_cockpit := coalesce((v_who->>'cockpit')::boolean, false);
       -- The API user without a marker (the CEO by hand, or an automation on that account) makes no
@@ -1503,10 +1606,11 @@ BEGIN
     'cockpit_task_audit(text,text,text,text,jsonb,jsonb,jsonb)', 'cockpit_task_state()', 'cockpit_task_baseline()',
     'cockpit_task_linked()', 'cockpit_task_kinds(uuid)',
     'cockpit_task_alert_add(uuid,text,text,text,uuid,text,text,text,text,text,timestamptz,text)',
-    'cockpit_task_actor_phrase(text,text)', 'cockpit_task_client_of(text,text,text[])',
+    'cockpit_task_actor_phrase(text,text)', 'cockpit_task_client_of(text,text,text[],text)',
     'cockpit_task_row(public.cockpit_task_mirror)', 'cockpit_task_may_open(jsonb,text)', 'cockpit_task_requester_of(jsonb,text)',
-    'cockpit_task_board(text)', 'cockpit_task_writer_open(text)', 'cockpit_task_can(jsonb,public.cockpit_task_mirror)',
-    'cockpit_task_comment_author(bigint,text)', 'cockpit_task_shift(uuid,timestamptz)', 'cockpit_task_rules_view(uuid,boolean)',
+    'cockpit_task_done_blocked(text)', 'cockpit_task_writer_open(text)', 'cockpit_task_own_done(text,uuid,timestamptz)', 'cockpit_task_can(jsonb,public.cockpit_task_mirror)',
+    'cockpit_task_writer_why(text)', 'cockpit_task_link_why(jsonb)',
+    'cockpit_task_comment_author(bigint,text,text)', 'cockpit_task_shift(uuid,timestamptz)', 'cockpit_task_rules_view(uuid,boolean)',
     'cockpit_task_rules_target(jsonb,uuid)', 'cockpit_task_alerts_guard()', 'cockpit_task_alert_rules_audit()',
     'cockpit_task_request_failed()', 'cockpit_task_alerts_tick_at(timestamptz)', 'cockpit_task_mirror_kick(text)'] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, anon, authenticated, service_role', f);

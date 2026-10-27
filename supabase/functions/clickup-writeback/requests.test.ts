@@ -4,8 +4,10 @@ import {
   cardCommentText,
   createBody,
   doctorChecks,
+  errorKind,
   executeRequest,
   fieldMatches,
+  holdsMarker,
   kuwaitDay,
   noonKuwait,
   normName,
@@ -17,7 +19,7 @@ import {
   SAY,
   STEP_REFUSED,
 } from "./requests";
-import { gate, HOLD_MS, kpiGate, runRequestsDoctor, WAITING } from "./run";
+import { DOUBT_MINUTES, finalWords, gate, HOLD_MS, kpiGate, runRequestsDoctor, STILL_CHECKING, WAITING } from "./run";
 import {
   CARD,
   clickupStoredDue,
@@ -35,6 +37,7 @@ import {
   requestPayload,
   RT_FIELD,
   TEST_CARD,
+  toolsHarness,
   unknownError,
   WHATSAPP_STEPS,
   whatsappPayload,
@@ -244,6 +247,26 @@ describe("a request with no template (General tech request)", () => {
     expect(writes.some(c => c.path.includes(RT_FIELD) || c.path.includes("09abf737") || c.path.includes("d3ac52c5"))).toBe(false);
   });
 
+  it("a field entry naming Request Type or a protected field is never posted: the part is delivered with the fields note (retest round 2)", async () => {
+    const h = harness(LIVE);
+    // setRequestType is off: nothing may set Request Type, not even a field entry an old payload carried.
+    const row = h.db.enqueue(
+      "request",
+      requestPayload({
+        setRequestType: false,
+        fields: [
+          { fieldId: RT_FIELD.toUpperCase(), kind: "select", value: OPTION.generalTech, label: "Request Type" },
+          { fieldId: "d3ac52c5-b71c-4782-9fea-1f9371cbae47", kind: "select", value: "x", label: "Type of Submission" },
+        ],
+      }),
+    );
+    await h.run();
+    expect(h.clickup.writes().some(c => /\/field\//.test(c.path))).toBe(false);
+    expect(row.state).toBe("delivered");
+    expect(row.progress?.steps?.fields).toMatchObject({ state: "mismatch", mismatched: ["Request Type", "Type of Submission"] });
+    expect(row.progress?.note).toContain("Some fields did not save in ClickUp: Request Type, Type of Submission. They are in the description.");
+  });
+
   it("with no client it makes no tag and no card link", async () => {
     const h = harness(LIVE);
     const row = h.db.enqueue("request", requestPayload({ clientName: null, clientTaskId: null }));
@@ -390,16 +413,32 @@ describe("a request that routes an old ticket from All Tasks", () => {
     expect(steps(row).replaces).toBe("done");
   });
 
-  it("leaves an old ticket someone already moved or closed, and still delivers the request", async () => {
-    for (const over of [{ listId: LISTS.cs }, { status: { status: "complete", type: "done" } }]) {
+  it("an old ticket the team already moved, closed or deleted gets no new task: the part is skipped with its sentence (review R2)", async () => {
+    for (const over of [{ listId: LISTS.cs }, { status: { status: "complete", type: "done" } }, { status: { status: "cancelled", type: "closed" } }, null]) {
       const h = harness(LIVE);
-      oldTicket(h, over);
+      if (over) oldTicket(h, over);
       const row = h.db.enqueue("request", requestPayload({ replacesTaskId: "86old0001" }));
-      await h.run();
-      expect(row.state).toBe("delivered");
-      expect(row.progress?.steps?.replaces).toMatchObject({ state: "skipped", why: "The old ticket was already moved or closed." });
+      const out = await h.run();
+      expect(row).toMatchObject({ state: "skipped", error: SAY.oldHandled, task_id: null });
+      // The old ticket is read first, and nothing at all is written: no task, no card link, no comment.
+      expect(h.clickup.calls[0]).toMatchObject({ method: "GET", path: "task/86old0001?include_markdown_description=true" });
+      expect(h.clickup.writes()).toEqual([]);
       expect(h.clickup.comments.get("86old0001")).toBeUndefined();
+      expect(out.note).toBe("0 requests delivered, 0 to retry, 0 failed. 1 skipped.");
     }
+  });
+
+  it("an old ticket moved or closed after this part's task was made is left, and the part says so", async () => {
+    const h = harness(LIVE);
+    oldTicket(h);
+    // Someone closes the old ticket in ClickUp while the new task is being made.
+    h.clickup.onCreate = () => (h.clickup.task("86old0001")!.status = { status: "complete", type: "done" });
+    const row = h.db.enqueue("request", requestPayload({ replacesTaskId: "86old0001" }));
+    await h.run();
+    expect(row.state).toBe("delivered");
+    expect(row.progress?.steps?.replaces).toMatchObject({ state: "skipped", why: SAY.oldGone });
+    expect(row.error).toBe(SAY.oldMovedAfter);
+    expect(h.clickup.comments.get("86old0001")).toBeUndefined();
   });
 
   it("an old ticket that will not close is a note, not a failure of the new one", async () => {
@@ -411,18 +450,140 @@ describe("a request that routes an old ticket from All Tasks", () => {
     expect(row.state).toBe("delivered");
     expect(row.error).toBe("The old ticket did not close in ClickUp. Close it there.");
   });
+
+  // Review R2: the CEO, an editor or an admin may route old tickets while requests are held (contract 2.8).
+  // The team keeps working the ClickUp form meanwhile, so a ticket may be handled there before requests open.
+  const routedPause = () => {
+    const [tech, media] = pausePayloads();
+    return [{ ...tech, replacesTaskId: "86old0001" }, media];
+  };
+
+  it("held while requests were off, then handled in ClickUp: no part makes a task once requests open", async () => {
+    const handledBy = [
+      (old: any) => (old.list = { id: LISTS.tech, name: "Operations / Tech" }),
+      (old: any) => (old.status = { status: "complete", type: "done" }),
+    ];
+    for (const handle of handledBy) {
+      const env: Record<string, string> = { CLICKUP_API_TOKEN: "x" };
+      const h = harness(env);
+      const old = oldTicket(h);
+      const [techP, mediaP] = routedPause();
+      const tech = h.db.enqueue("request", techP);
+      const media = h.db.enqueue("request", mediaP);
+      for (let i = 0; i < 3; i++) {
+        await h.run();
+        h.advance(HOLD_MS);
+      }
+      expect([tech.state, media.state]).toEqual(["queued", "queued"]);
+      expect(h.clickup.calls).toEqual([]);
+      // The systems manager moves (or completes) the old ticket by hand, then the CEO switches requests on.
+      handle(old);
+      env.CLICKUP_WRITEBACK_APPLY_REQUESTS = "true";
+      await h.run();
+      expect([tech.state, media.state]).toEqual(["skipped", "skipped"]);
+      expect([tech.error, media.error]).toEqual([SAY.oldHandled, SAY.oldHandled]);
+      expect(h.clickup.writes()).toEqual([]);
+      expect(h.db.parts.get(`${REQUEST_ID}:tech`)).toMatchObject({ state: "skipped", clickupTaskId: null });
+    }
+  });
+
+  it("every part checks the old ticket: from the claim, or from the first part claimed in the same run", async () => {
+    for (const withRoutes of [true, false]) {
+      const h = harness(LIVE);
+      h.db.withRoutes = withRoutes;
+      oldTicket(h, { status: { status: "cancelled", type: "closed" } });
+      const [techP, mediaP] = routedPause();
+      // The second part is claimed first: the claim orders parts of one request by id, not by part.
+      const media = h.db.enqueue("request", mediaP);
+      const tech = h.db.enqueue("request", techP);
+      await h.run();
+      expect([tech.state, media.state]).toEqual(["skipped", "skipped"]);
+      expect(h.clickup.writes()).toEqual([]);
+    }
+  });
+
+  it("a part sent after the first part routed the old ticket still makes its task (the closing comment is this request's)", async () => {
+    const h = harness(LIVE);
+    oldTicket(h);
+    const [techP, mediaP] = routedPause();
+    const tech = h.db.enqueue("request", techP);
+    const media = h.db.enqueue("request", mediaP);
+    // The media part's create is rate limited once: it goes after the tech part cancelled the old ticket.
+    let n = 0;
+    h.clickup.fail = c => (c.method === "POST" && c.path.includes(`list/${LISTS.ads}/`) && n++ === 0 ? rejected(429, "Rate limit") : undefined);
+    await h.run();
+    expect(tech.state).toBe("delivered");
+    expect(h.clickup.task("86old0001")!.status.type).toBe("closed");
+    expect(media.state).toBe("retry");
+    h.advance(60_000);
+    await h.run();
+    expect(media.state).toBe("delivered");
+    expect(h.clickup.writes().filter(c => c.path.includes("/taskTemplate/")).map(c => c.path.split("/")[1])).toEqual([LISTS.tech, LISTS.ads, LISTS.ads]);
+    expect([...h.clickup.tasks.values()].filter(t => t.name.startsWith("Acme Interiors - Client pause")).map(t => t.list.id).sort()).toEqual([LISTS.tech, LISTS.ads].sort());
+  });
+
+  it("a malformed old ticket id from the claim fails the part before any call", async () => {
+    const h = harness(LIVE);
+    const row = h.db.enqueue("request", requestPayload());
+    const claim = h.db.rpc;
+    h.deps.rpc = async (name, params) => {
+      const out = await claim(name, params);
+      return name === "cockpit_clickup_writeback_claim_requests" ? out.map((r: any) => ({ ...r, replaces_task_id: "../x" })) : out;
+    };
+    await h.run();
+    expect(row).toMatchObject({ state: "failed", error: SAY.badPayload });
+    expect(h.clickup.calls).toEqual([]);
+  });
 });
 
 describe("Request Type, set last and only where it is switched on", () => {
-  it("is checked before anything is written: a renamed option fails the part with no task made", async () => {
+  const options = (h: ReturnType<typeof harness>) => h.clickup.fields.find(f => f.id === RT_FIELD)!.type_config.options as any[];
+
+  it("an option ClickUp renamed or removed never stops the request: the task is made and Request Type stays empty with a note (review R2)", async () => {
+    const changes = [
+      (h: ReturnType<typeof harness>) => (options(h).find(o => o.id === OPTION.generalTech).name = "General Tech Ticket"),
+      (h: ReturnType<typeof harness>) => options(h).splice(options(h).findIndex(o => o.id === OPTION.generalTech), 1),
+    ];
+    for (const change of changes) {
+      const h = harness(LIVE);
+      change(h);
+      const row = h.db.enqueue("request", requestPayload({ setRequestType: true }));
+      const out = await h.run();
+      expect(row).toMatchObject({ state: "delivered", error: SAY.renamed });
+      expect(steps(row)).toMatchObject({ create: "done", request_type: "skipped", card_comment: "done" });
+      expect(row.progress?.steps?.request_type?.why).toBe(SAY.renamed);
+      expect(h.clickup.writes().some(c => c.path.endsWith(`/field/${RT_FIELD}`))).toBe(false);
+      expect(h.clickup.task(row.task_id!)?.list.id).toBe(LISTS.tech);
+      expect(out).toMatchObject({ ok: true, note: "1 request delivered, 0 to retry, 0 failed." });
+    }
+  });
+
+  it("the switch turned off in Requests settings reaches a part filed while it was on, whatever the option says", async () => {
+    for (const renamed of [false, true]) {
+      const h = harness(LIVE);
+      if (renamed) options(h).find(o => o.id === OPTION.generalTech).name = "General Tech Ticket";
+      // The payload froze Request Type on; an editor has switched it off since (cockpit_request_type_save).
+      h.db.doctorInputs = { types: [{ key: "general_tech", setRequestType: false }], templates: [], lists: {} };
+      const row = h.db.enqueue("request", requestPayload({ setRequestType: true }));
+      await h.run();
+      expect(row).toMatchObject({ state: "delivered", error: SAY.rtTurnedOff });
+      expect(steps(row).request_type).toBe("skipped");
+      expect(h.clickup.writes().some(c => c.path.endsWith(`/field/${RT_FIELD}`))).toBe(false);
+    }
+  });
+
+  it("a Request Type write whose answer was lost is found done, even if the switch went off before the next run", async () => {
     const h = harness(LIVE);
-    const rt = h.clickup.fields.find(f => f.id === RT_FIELD)!;
-    rt.type_config.options.find((o: any) => o.id === OPTION.generalTech).name = "General Tech Ticket";
+    let lost = false;
+    h.clickup.lose = c => (!lost && c.path.endsWith(`/field/${RT_FIELD}`) ? (lost = true) : false);
     const row = h.db.enqueue("request", requestPayload({ setRequestType: true }));
-    const out = await h.run();
-    expect(row).toMatchObject({ state: "failed", error: "ClickUp renamed this request type. Fix it in Requests settings." });
-    expect(h.clickup.writes()).toEqual([]);
-    expect(out).toMatchObject({ ok: false, note: "0 requests delivered, 0 to retry, 1 failed." });
+    await h.run();
+    expect(row.state).toBe("unknown");
+    h.db.doctorInputs = { types: [{ key: "general_tech", setRequestType: false }], templates: [], lists: {} };
+    h.advance(60_000);
+    await h.run();
+    expect(row).toMatchObject({ state: "delivered", error: null });
+    expect(steps(row).request_type).toBe("done");
   });
 
   it("matches the option by its name with stray spaces collapsed, writes it after the fields and reads it back", async () => {
@@ -743,6 +904,398 @@ describe("resuming after a lost answer (contract 4.3, On resume)", () => {
   });
 });
 
+describe("a call ClickUp answered that the cockpit could not record (review R2)", () => {
+  // Through the real providerTools: its response receipt is saved, and its body read, after ClickUp answered.
+  const DB_DOWN = () => new Error("Supabase 503: upstream connect error or disconnect/reset before headers");
+  const TIMED_OUT = () => new DOMException("Signal timed out.", "TimeoutError");
+  const once = <T,>(match: (x: T) => boolean) => {
+    let done = false;
+    return (x: T) => !done && match(x) && (done = true);
+  };
+  const failReceipt = (match: (row: any) => boolean, error: () => Error) => {
+    const first = once<any>(row => row.phase === "response" && match(row));
+    return (row: any) => (first(row) ? error() : undefined);
+  };
+  const isCreate = (r: any) => r.method === "POST" && (r.resource ?? r.path) === `list/${LISTS.tech}/task`;
+  const techTasks = (h: ReturnType<typeof harness>) => [...h.clickup.tasks.values()].filter(t => t.list.id === LISTS.tech);
+
+  it("only ClickUp's own answer makes a refusal; any other error leaves the call in doubt", () => {
+    expect(errorKind(rejected(400, "Value is not valid"))).toBe("refused");
+    expect(errorKind(rejected(404))).toBe("refused");
+    expect(errorKind(rejected(429, "Rate limit"))).toBe("retry");
+    expect(errorKind(rejected(502, "Bad gateway"))).toBe("unknown");
+    expect(errorKind(unknownError())).toBe("unknown");
+    expect(errorKind(new Error("CLICKUP_API_TOKEN is not configured"))).toBe("config");
+    // A read ClickUp answered without what it should hold is its answer too: no write is in doubt.
+    expect(errorKind(new Error("ClickUp did not return the space's tags"))).toBe("refused");
+    for (const e of [DB_DOWN(), TIMED_OUT(), new TypeError("terminated"), "socket hang up", new Error("Supabase 503: ClickUp did not return x")])
+      expect(errorKind(e)).toBe("unknown");
+  });
+
+  it("a create that landed, whose receipt or answer was then lost, is found by its Cockpit ref next run: one task, never failed", async () => {
+    const lost = [
+      { receipt: failReceipt(isCreate, DB_DOWN) },
+      { receipt: failReceipt(isCreate, TIMED_OUT) },
+      { dropBody: once<any>(isCreate) },
+    ];
+    for (const opts of lost) {
+      const h = toolsHarness(LIVE, opts);
+      const row = h.db.enqueue("request", requestPayload());
+      const out = await h.run();
+      // Before review R2 this settled failed, task_id null: "Did not reach ClickUp", and "File it again" made a second task.
+      expect(row).toMatchObject({ state: "unknown", task_id: null });
+      expect(row.progress?.steps?.create?.state).toBe("started");
+      expect(out.counts).toMatchObject({ unknown: 1, failed: 0 });
+      expect(techTasks(h)).toHaveLength(1);
+      h.advance(60_000);
+      await h.run();
+      expect(row).toMatchObject({ state: "delivered", error: null });
+      expect(row.task_id).toBe(techTasks(h)[0].id);
+      expect(techTasks(h)).toHaveLength(1);
+      expect(h.clickup.writes().filter(isCreate)).toHaveLength(1);
+    }
+  });
+
+  it("a tag, a field, Request Type or the old ticket's close that landed is read back, never noted as not saved", async () => {
+    const cases: [string, (r: any) => boolean][] = [
+      ["tag", r => r.method === "POST" && /^task\/[^/]+\/tag\//.test(r.resource)],
+      ["fields", r => r.method === "POST" && r.resource.endsWith(`/field/${FIELD.leadList}`)],
+      ["request_type", r => r.method === "POST" && r.resource.endsWith(`/field/${RT_FIELD}`)],
+      ["replaces", r => r.method === "PUT" && r.resource === "task/86old0001"],
+    ];
+    for (const [step, match] of cases) {
+      const h = toolsHarness(LIVE, { receipt: failReceipt(match, DB_DOWN) });
+      h.clickup.addTask({ id: "86old0001", name: "Form Submission - #1", listId: LISTS.allTasks });
+      const fields = [{ fieldId: FIELD.leadList, kind: "url", value: "https://docs.example.com/l", label: "Lead list" }];
+      const row = h.db.enqueue("request", requestPayload({ setRequestType: true, replacesTaskId: "86old0001", fields }));
+      await h.run();
+      expect([step, row.state]).toEqual([step, "unknown"]);
+      h.advance(60_000);
+      await h.run();
+      expect([step, row.state, row.error]).toEqual([step, "delivered", null]);
+      expect(steps(row)[step]).toBe("done");
+      expect(h.clickup.writes().filter(c => match({ ...c, resource: c.path.split("?")[0] }))).toHaveLength(1);
+    }
+  });
+
+  it("the read that looks for a lost create waits when its own receipt cannot be saved, and never orphans the task", async () => {
+    let readsFail = true;
+    const h = toolsHarness(LIVE, {
+      receipt: r => (readsFail && r.phase === "intent" && r.method === "GET" && r.resource === `list/${LISTS.tech}/task` ? DB_DOWN() : undefined),
+    });
+    h.clickup.lose = once<any>(isCreate);
+    const row = h.db.enqueue("request", requestPayload());
+    await h.run();
+    expect(row.state).toBe("unknown");
+    h.advance(60_000);
+    await h.run();
+    expect(row.state).toBe("unknown");
+    readsFail = false;
+    h.advance(5 * 60_000);
+    await h.run();
+    expect(row.state).toBe("delivered");
+    expect(techTasks(h)).toHaveLength(1);
+  });
+});
+
+describe("review round 3: the create step never says nothing reached ClickUp while ClickUp may hold the task", () => {
+  const TECH_TEMPLATE_PART = `${REQUEST_ID}:tech`;
+  const loseFirst = (h: ReturnType<typeof harness>, match: (c: any) => boolean) => {
+    let lost = false;
+    h.clickup.lose = c => (!lost && match(c) ? (lost = true) : false);
+  };
+  const templateCreates = (h: ReturnType<typeof harness>) => h.clickup.writes().filter(c => c.path.includes("/taskTemplate/"));
+  const techCreates = (h: ReturnType<typeof harness>) =>
+    h.clickup.writes().filter(c => c.method === "POST" && (c.path === `list/${LISTS.tech}/task` || c.path.startsWith(`list/${LISTS.tech}/taskTemplate/`)));
+  const cancelled = { status: "cancelled", type: "closed" };
+  /** A template part whose create answer was lost, then a same-named task in the window: "Two tasks match". */
+  const twoMatching = async () => {
+    const h = harness(LIVE);
+    loseFirst(h, c => c.path.includes("/taskTemplate/"));
+    const row = h.db.enqueue("request", pausePayloads()[0]);
+    await h.run();
+    const ours = [...h.clickup.tasks.values()].find(t => t.name === row.payload.taskName)!;
+    const stray = h.clickup.addTask({ name: row.payload.taskName, listId: LISTS.tech, date_created: String(NOW) });
+    h.advance(60_000);
+    await h.run();
+    expect(row).toMatchObject({ state: "unknown", error: SAY.twoTasks, task_id: null });
+    return { h, row, ours, stray };
+  };
+
+  it("two tasks match: once a person cancels one in ClickUp, as the error says, the next run adopts the one left open", async () => {
+    for (const cancel of ["stray", "ours"] as const) {
+      const { h, row, ours, stray } = await twoMatching();
+      (cancel === "stray" ? stray : ours).status = cancelled;
+      h.advance(5 * 60_000);
+      await h.run();
+      // Before review round 3 the cancelled task still matched (include_closed=true): unknown until the ladder ran out, then failed.
+      expect(row).toMatchObject({ state: "delivered", task_id: (cancel === "stray" ? ours : stray).id });
+      expect(templateCreates(h)).toHaveLength(1);
+      expect(h.clickup.task(row.task_id!)!.text_content).toContain(`Cockpit ref R-${REF_HEX}-tech`);
+    }
+  });
+
+  it("every matching task cancelled: nothing is adopted until a person reopens the one to keep", async () => {
+    const { h, row, ours, stray } = await twoMatching();
+    ours.status = cancelled;
+    stray.status = cancelled;
+    h.advance(5 * 60_000);
+    await h.run();
+    expect(row).toMatchObject({ state: "unknown", error: SAY.allCancelled, task_id: null });
+    ours.status = { status: "to do", type: "open" };
+    h.advance(15 * 60_000);
+    await h.run();
+    expect(row).toMatchObject({ state: "delivered", task_id: ours.id });
+    expect(templateCreates(h)).toHaveLength(1);
+  });
+
+  it("at the end of the ladder a create still in doubt stays unknown, read every 4 hours, never failed", async () => {
+    const { h, row, ours, stray } = await twoMatching();
+    for (let i = 0; i < 4; i++) {
+      h.advance(240 * 60_000);
+      await h.run();
+    }
+    expect(row.attempts).toBe(6);
+    // Before review round 3: failed, "Did not reach ClickUp", and the panel offered File it again, which made a third task.
+    expect(row).toMatchObject({ state: "unknown", error: `${SAY.twoTasks} ${STILL_CHECKING}`, task_id: null });
+    expect(row.next_attempt_at).toBe(h.clock.t + DOUBT_MINUTES * 60_000);
+    expect(h.db.parts.get(TECH_TEMPLATE_PART)).toMatchObject({ state: "unknown" });
+    stray.status = cancelled;
+    h.advance(DOUBT_MINUTES * 60_000);
+    await h.run();
+    expect(row).toMatchObject({ state: "delivered", task_id: ours.id, error: null });
+    expect(templateCreates(h)).toHaveLength(1);
+  });
+
+  it("a create whose every answer was a 5xx stays unknown after the ladder, then is made once ClickUp answers", async () => {
+    const h = harness(LIVE);
+    let down = true;
+    h.clickup.fail = c => (down && c.method === "POST" && c.path === `list/${LISTS.tech}/task` ? rejected(502, "Bad gateway") : undefined);
+    const row = h.db.enqueue("request", requestPayload());
+    for (let i = 0; i < 6; i++) {
+      await h.run();
+      h.advance(240 * 60_000);
+    }
+    expect(row.attempts).toBe(6);
+    expect(row).toMatchObject({ state: "unknown", task_id: null });
+    expect(row.error).toBe(`clickup rejected the request (502): Bad gateway ${STILL_CHECKING}`);
+    down = false;
+    await h.run();
+    expect(row.state).toBe("delivered");
+    expect([...h.clickup.tasks.values()].filter(t => t.list.id === LISTS.tech)).toHaveLength(1);
+  });
+
+  it("ClickUp refusing the search for a create in doubt leaves the part to search again, never failed", async () => {
+    const h = harness(LIVE);
+    let posted = false;
+    let searchRefused = true;
+    h.clickup.fail = c => {
+      if (!posted && c.method === "POST" && c.path === `list/${LISTS.tech}/task`) return (posted = true), rejected(502, "Bad gateway");
+      if (searchRefused && c.method === "GET" && c.path.startsWith(`list/${LISTS.tech}/task?`)) return rejected(403, "Team not authorized");
+      return undefined;
+    };
+    const row = h.db.enqueue("request", requestPayload());
+    await h.run();
+    expect(row.state).toBe("unknown");
+    h.advance(60_000);
+    await h.run();
+    // Before review round 3: failed with task_id null, "Did not reach ClickUp", although the first create may have landed.
+    expect(row.state).toBe("unknown");
+    expect(row.error).toBe(`${SAY.searchRefused} ClickUp said: clickup rejected the request (403): Team not authorized`);
+    searchRefused = false;
+    h.advance(5 * 60_000);
+    await h.run();
+    expect(row.state).toBe("delivered");
+    expect([...h.clickup.tasks.values()].filter(t => t.list.id === LISTS.tech)).toHaveLength(1);
+  });
+
+  it("a task ClickUp answered the create with but shows late is read again, never called gone a minute later", async () => {
+    const h = harness(LIVE);
+    const showsAt = NOW + 3 * 60_000;
+    h.clickup.fail = c => (h.clock.t < showsAt && c.method === "GET" && /^task\/86new/.test(c.path) ? rejected(404, "Task not found") : undefined);
+    const row = h.db.enqueue("request", pausePayloads()[0]);
+    await h.run();
+    expect(row).toMatchObject({ state: "unknown", error: SAY.notYet });
+    h.advance(60_000);
+    await h.run();
+    // Before review round 3 this second 404 was "gone": failed with task_id kept, so cancel was refused and filing it again made a second task.
+    expect(row).toMatchObject({ state: "unknown", error: SAY.notYet });
+    h.advance(5 * 60_000);
+    await h.run();
+    expect(row).toMatchObject({ state: "delivered", error: null });
+    expect(steps(row)).toMatchObject({ create: "done", description: "done", owner_due_priority: "done" });
+    expect(templateCreates(h)).toHaveLength(1);
+  });
+
+  it("a task ClickUp answered with and still does not show 30 minutes after the create is gone", async () => {
+    const h = harness(LIVE);
+    h.clickup.fail = c => (c.method === "GET" && /^task\/86new/.test(c.path) ? rejected(404, "Task not found") : undefined);
+    const row = h.db.enqueue("request", pausePayloads()[0]);
+    for (const wait of [0, 1, 5, 15]) {
+      h.advance(wait * 60_000);
+      await h.run();
+      expect([wait, row.state, row.error]).toEqual([wait, "unknown", SAY.notYet]);
+    }
+    h.advance(60 * 60_000);
+    await h.run();
+    expect(row).toMatchObject({ state: "failed", error: SAY.gone });
+    expect(templateCreates(h)).toHaveLength(1);
+  });
+
+  it("a task ClickUp answered with whose read-back keeps failing is delivered with a note at the end of the ladder, never failed (RT-2)", async () => {
+    for (const payload of [pausePayloads()[0], requestPayload()]) {
+      const h = harness(LIVE);
+      h.clickup.fail = c => (c.method === "GET" && /^task\/86new/.test(c.path) ? rejected(503, "Down") : undefined);
+      const row = h.db.enqueue("request", payload);
+      for (let i = 0; i < 6; i++) {
+        await h.run();
+        h.advance(240 * 60_000);
+      }
+      expect(row.attempts).toBe(6);
+      // Before review round 3: failed with the task's id and link, "Did not reach ClickUp", and File it again made a second task.
+      expect(row).toMatchObject({ state: "delivered", error: `${SAY.unfinished} clickup rejected the request (503): Down` });
+      expect(row.task_id).toMatch(/^86new/);
+      expect(h.db.parts.get(`${REQUEST_ID}:${payload.part}`)).toMatchObject({ state: "delivered", clickupTaskId: row.task_id });
+      expect(techCreates(h)).toHaveLength(1);
+    }
+  });
+
+  it("a task ClickUp made and then refused to show (a 4xx on its read) is delivered with a note, never failed (RT-2)", async () => {
+    const h = harness(LIVE);
+    h.clickup.fail = c => (c.method === "GET" && /^task\/86new[^/]*\?/.test(c.path) ? rejected(403, "Team not authorized") : undefined);
+    const row = h.db.enqueue("request", requestPayload());
+    await h.run();
+    expect(row.state).toBe("delivered");
+    expect(row.task_id).toMatch(/^86new/);
+    expect(row.progress?.steps?.create).toMatchObject({ state: "mismatch", id: row.task_id });
+    expect(String(row.progress?.steps?.create?.refused)).toContain("(403)");
+    expect(row.error).toContain(STEP_REFUSED.create);
+    // The card still links the task: that step reads only the card.
+    expect(steps(row).card_comment).toBe("done");
+    expect(techCreates(h)).toHaveLength(1);
+  });
+
+  it("the note of a part delivered at the end of the ladder promises no next run", async () => {
+    expect(finalWords(SAY.descriptionLost)).toBe("The task description did not read back with its Cockpit ref.");
+    expect(finalWords(`${SAY.bookkeeping} Supabase 503: upstream`)).toBe("Supabase 503: upstream");
+    expect(finalWords("clickup rejected the request (503): Down")).toBe("clickup rejected the request (503): Down");
+    expect(finalWords(undefined)).toBe("");
+    const h = harness(LIVE);
+    // ClickUp answers every description write and never keeps it.
+    const handle = h.clickup.handle.bind(h.clickup);
+    h.clickup.handle = async c => {
+      if (c.method !== "PUT" || c.body?.markdown_content === undefined) return handle(c);
+      h.clickup.calls.push(structuredClone(c));
+      return {};
+    };
+    const row = h.db.enqueue("request", pausePayloads()[0]);
+    for (let i = 0; i < 6; i++) {
+      await h.run();
+      h.advance(240 * 60_000);
+    }
+    expect(row).toMatchObject({ state: "delivered", error: `${SAY.unfinished} The task description did not read back with its Cockpit ref.` });
+  });
+});
+
+describe("review round 3: a part's Cockpit ref is a whole token, so a sibling part's task is never taken", () => {
+  const TECH = "Acme Interiors - General tech request";
+  const TECH_TWO = "Acme Interiors - General tech request (second Tech task)";
+  /** Two parts of one request on Operations / Tech, as the type editor names a second task on a board: tech and tech_two. */
+  const siblings = (tech: Record<string, unknown> = {}) => [requestPayload({ part: "tech", taskName: TECH, ...tech }), requestPayload({ part: "tech_two", taskName: TECH_TWO })];
+  const techTasks = (h: ReturnType<typeof harness>) => [...h.clickup.tasks.values()].filter(t => t.list.id === LISTS.tech);
+
+  it("matches the ref as a whole token, never a longer ref, its markdown-escaped form or a comment marker", () => {
+    const m = `Cockpit ref R-${REF_HEX}-tech`;
+    for (const text of [m, `The details.\n\n${m}`, `${m}\nmore`, `${m}.`, `${m} and more`]) expect([text, holdsMarker(text, m)]).toEqual([text, true]);
+    for (const text of [`${m}_two`, `${m}\\_two`, `${m}-card`, `${m}-old`, `${m}x`, `${m}2`, `Cockpit ref R-${REF_HEX}-tec`, ""]) expect([text, holdsMarker(text, m)]).toEqual([text, false]);
+    expect(holdsMarker(null, m)).toBe(false);
+  });
+
+  it("a create that never landed waits and makes its own task, never adopting the sibling part's", async () => {
+    const h = harness(LIVE);
+    let refused = false;
+    h.clickup.fail = c => (!refused && c.method === "POST" && c.path === `list/${LISTS.tech}/task` && c.body?.name === TECH ? ((refused = true), rejected(502, "Bad gateway")) : undefined);
+    const [tech, two] = siblings().map(p => h.db.enqueue("request", p));
+    await h.run();
+    expect(tech.state).toBe("unknown");
+    expect(two.state).toBe("delivered");
+    h.advance(60_000);
+    await h.run();
+    // Before review round 3 "...-tech" matched inside "...-tech_two": tech adopted tech_two's task and ran its steps on it.
+    expect(tech).toMatchObject({ state: "unknown", error: SAY.waiting });
+    h.advance(5 * 60_000);
+    await h.run();
+    expect(tech.state).toBe("delivered");
+    expect(tech.task_id).not.toBe(two.task_id);
+    expect(techTasks(h)).toHaveLength(2);
+    expect(h.clickup.task(two.task_id!)!.checklists).toHaveLength(1);
+    expect(h.clickup.comments.get(CARD)!.filter(c => c.comment_text.includes(`/t/${two.task_id}`))).toHaveLength(1);
+  });
+
+  it("a create that landed and lost its answer adopts its own task, never stopping on Two tasks match", async () => {
+    const h = harness(LIVE);
+    let lost = false;
+    h.clickup.lose = c => (!lost && c.method === "POST" && c.path === `list/${LISTS.tech}/task` && c.body?.name === TECH ? (lost = true) : false);
+    const [tech, two] = siblings().map(p => h.db.enqueue("request", p));
+    await h.run();
+    expect(tech.state).toBe("unknown");
+    h.advance(60_000);
+    await h.run();
+    expect(tech).toMatchObject({ state: "delivered", error: null });
+    expect(h.clickup.task(tech.task_id!)!.name).toBe(TECH);
+    expect(tech.task_id).not.toBe(two.task_id);
+    expect(techTasks(h)).toHaveLength(2);
+  });
+
+  it("a template part that lost its answer adopts its own task by name, never the sibling's by its longer ref", async () => {
+    const h = harness(LIVE);
+    let lost = false;
+    h.clickup.lose = c => (!lost && c.path.includes("/taskTemplate/") ? (lost = true) : false);
+    const tech = h.db.enqueue("request", siblings({ templateId: "t-86ex63qk5", templateName: "Client Pause ⏸️ (Tech)", sopSteps: null, sopChecklistName: null })[0]);
+    const two = h.db.enqueue("request", siblings()[1]);
+    await h.run();
+    const own = techTasks(h).find(t => t.name === TECH)!;
+    expect(two.state).toBe("delivered");
+    h.advance(60_000);
+    await h.run();
+    // Before review round 3 tech adopted tech_two's task by the longer ref and left its own template task with no part.
+    expect(tech).toMatchObject({ state: "delivered", task_id: own.id });
+    expect(h.clickup.comments.get(CARD)!.filter(c => c.comment_text.includes(`/t/${two.task_id}`))).toHaveLength(1);
+    expect(h.clickup.comments.get(CARD)!.filter(c => c.comment_text.includes(`/t/${own.id}`))).toHaveLength(1);
+  });
+
+  it("a task holding this part's own ref that another queue row holds is never adopted", async () => {
+    const h = harness(LIVE);
+    let lost = false;
+    h.clickup.lose = c => (!lost && c.method === "POST" && c.path === `list/${LISTS.tech}/task` ? (lost = true) : false);
+    const row = h.db.enqueue("request", requestPayload());
+    await h.run();
+    expect(row.state).toBe("unknown");
+    const mine = techTasks(h)[0];
+    // A copy carrying the same ref (ClickUp's duplicate keeps the description), and another queue row holds it.
+    const copy = h.clickup.addTask({ name: mine.name, listId: LISTS.tech, date_created: String(NOW + 1), markdown_description: mine.markdown_description, text_content: mine.text_content, description: mine.description });
+    h.db.enqueue("request", { ...requestPayload(), requestId: "2b2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", ref: "R-2b2b3c4d5e-main" }, { state: "unknown", task_id: copy.id, next_attempt_at: NOW + 3_600_000 });
+    h.advance(60_000);
+    await h.run();
+    // Before review round 3 the owners read covered only template name matches: two ref matches stopped it as Two tasks match.
+    expect(row).toMatchObject({ state: "delivered", task_id: mine.id });
+  });
+
+  it("the description step never takes a sibling part's longer ref for its own", async () => {
+    const h = harness(LIVE);
+    const [tech] = pausePayloads();
+    const sibling = `Template text\n\nCockpit ref R-${REF_HEX}-tech_two`;
+    const t = h.clickup.addTask({ name: tech.taskName, listId: LISTS.tech, markdown_description: sibling, text_content: sibling, description: sibling });
+    const at = new Date(NOW).toISOString();
+    const row = h.db.enqueue("request", tech, { task_id: t.id, progress: { task: { id: t.id, url: t.url }, steps: { create: { state: "done", id: t.id, at } } } });
+    await h.run();
+    expect(row.state).toBe("delivered");
+    // Before review round 3 the substring test read "...-tech" inside "...-tech_two" and marked the step done with no write.
+    expect(h.clickup.writes().filter(c => c.body?.markdown_content)).toHaveLength(1);
+    expect(holdsMarker(h.clickup.task(t.id)!.text_content, `Cockpit ref R-${REF_HEX}-tech`)).toBe(true);
+  });
+});
+
 describe("the due day reads by Kuwait day, never the millisecond", () => {
   it("06:00 Kuwait and 12:00 Kuwait are the same day; midnight in Kuwait starts the next", () => {
     expect(noonKuwait("2026-10-28")).toBe(Date.parse("2026-10-28T09:00:00Z"));
@@ -764,6 +1317,79 @@ describe("the canary card", () => {
     expect(out).toMatchObject({ ok: true, mode: "apply_limited", note: "Testing on the canary card: 1 delivered, 1 held as a dry run (waiting in the queue)." });
     expect(h.db.lastState()).toMatchObject({ p_mode: "apply_limited", p_only_cards: [TEST_CARD] });
     expect(h.clickup.writes().every(c => !c.path.includes(CARD))).toBe(true);
+  });
+});
+
+describe("review round 3: during the canary a routing request goes only when its old ticket's card is a canary card", () => {
+  const CANARY = { ...LIVE, CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS: TEST_CARD };
+  const onTestCard = (requestId: string, hex: string, replacesTaskId: string) =>
+    requestPayload({ requestId, ref: `R-${hex}-main`, clientTaskId: TEST_CARD, clientName: "Test client", clientTag: "test client", replacesTaskId });
+
+  it("the run right after a switch flip (claimed by the old mode) holds one whose old ticket has no card or another card; one on the test card goes", async () => {
+    const env: Record<string, string | undefined> = { ...CANARY };
+    const h = harness(env);
+    for (const id of ["86old0001", "86old0002", "86old0003"]) h.clickup.addTask({ id, name: `Form Submission - ${id}`, listId: LISTS.allTasks });
+    h.db.imports.set("86old0001", null);
+    h.db.imports.set("86old0002", CARD);
+    h.db.imports.set("86old0003", TEST_CARD);
+    const noCard = h.db.enqueue("request", onTestCard("3c3c3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", "3c3c3c4d5e", "86old0001"));
+    const realCard = h.db.enqueue("request", onTestCard("4d4d3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", "4d4d3c4d5e", "86old0002"));
+    const testCard = h.db.enqueue("request", onTestCard("5e5e3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", "5e5e3c4d5e", "86old0003"));
+    await h.run();
+    expect([noCard.state, realCard.state, testCard.state]).toEqual(["queued", "queued", "delivered"]);
+    expect([noCard.error, realCard.error]).toEqual([WAITING.apply_limited, WAITING.apply_limited]);
+    expect([noCard.attempts, realCard.attempts]).toEqual([0, 0]);
+    // Neither held ticket was read or touched; the test card's own ticket was routed and closed.
+    for (const id of ["86old0001", "86old0002"]) {
+      expect(h.clickup.calls.some(c => c.path.startsWith(`task/${id}`))).toBe(false);
+      expect(h.clickup.task(id)!.status).toEqual({ status: "to do", type: "open" });
+    }
+    expect(h.clickup.task("86old0003")!.status).toEqual({ status: "cancelled", type: "closed" });
+    // Requests open to every card: the held two go on the next run.
+    env.CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS = undefined;
+    h.advance(HOLD_MS);
+    await h.run();
+    expect([noCard.state, realCard.state]).toEqual(["delivered", "delivered"]);
+  });
+
+  it("a database that does not name the old ticket's card holds every routing request during the canary, the safe side", async () => {
+    const h = harness(CANARY);
+    h.clickup.addTask({ id: "86old0003", name: "Form Submission - 86old0003", listId: LISTS.allTasks });
+    h.db.imports.set("86old0003", TEST_CARD);
+    h.db.withRoutes = false;
+    const row = h.db.enqueue("request", onTestCard("6f6f3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", "6f6f3c4d5e", "86old0003"));
+    await h.run();
+    expect(row).toMatchObject({ state: "queued", error: WAITING.apply_limited });
+    expect(h.clickup.calls).toEqual([]);
+  });
+
+  it("the claim by the reported mode never takes such a request at all (the database's half, as the fake mirrors it)", async () => {
+    const h = harness(CANARY);
+    h.db.claimMode = { mode: "apply_limited", onlyCards: [TEST_CARD] };
+    h.db.imports.set("86old0001", null);
+    const row = h.db.enqueue("request", onTestCard("7a7a3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", "7a7a3c4d5e", "86old0001"));
+    const out = await h.run();
+    expect(out.note).toBe("Nothing to write.");
+    expect(row).toMatchObject({ state: "queued", attempts: 0 });
+  });
+});
+
+describe("review round 3: a create in doubt handed back while requests are not open stays unknown", () => {
+  it("a part whose create went out with no task the cockpit holds goes back unknown, never queued or retry, and nothing is called", async () => {
+    const h = harness({ CLICKUP_API_TOKEN: "x" });
+    const startedAt = new Date(NOW - 10 * 60_000).toISOString();
+    const inDoubt = h.db.enqueue("request", requestPayload(), {
+      state: "retry",
+      attempts: 2,
+      progress: { steps: { create: { state: "started", at: startedAt, startedAt } } },
+      error: SAY.waiting,
+    });
+    const fresh = h.db.enqueue("request", requestPayload({ requestId: "8b8b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", ref: "R-8b8b3c4d5e-main" }));
+    await h.run();
+    expect(inDoubt).toMatchObject({ state: "unknown", attempts: 2, error: WAITING.dry_run });
+    expect(h.db.parts.get(`${REQUEST_ID}:main`)?.state).toBe("unknown");
+    expect(fresh).toMatchObject({ state: "queued", attempts: 0 });
+    expect(h.clickup.calls).toEqual([]);
   });
 });
 
@@ -802,16 +1428,18 @@ describe("the requests doctor (contract 4.5)", () => {
     const h = harness({ ...LIVE, CRON_SECRET: "s" });
     h.db.doctorInputs = inputs({
       types: [
-        { key: "gone_bits", optionId: "00000000-0000-4000-8000-000000000000", optionName: "Gone", targets: [{ part: "main", listId: LISTS.callCenter, templateId: "t-86gone0001", ownerClickupId: 123 }], fieldIds: ["ffffffff-0000-4000-8000-000000000000"] },
+        { key: "gone_bits", optionId: "00000000-0000-4000-8000-000000000000", optionName: "Gone", setRequestType: true, targets: [{ part: "main", listId: LISTS.callCenter, templateId: "t-86gone0001", ownerClickupId: 123 }], fieldIds: ["ffffffff-0000-4000-8000-000000000000"] },
       ],
     });
+    // Renamed in ClickUp: general_tech sets Request Type, so it is named; client_pause has it switched off, so it is not (review R2).
+    h.clickup.fields.find(f => f.id === RT_FIELD)!.type_config.options.find((o: any) => o.id === OPTION.generalTech).name = "General Tech Ticket";
     h.clickup.fields.find(f => f.id === RT_FIELD)!.type_config.options.find((o: any) => o.id === OPTION.pause).name = "Client Pause ⏸️";
     h.clickup.statuses.set(LISTS.callCenter, [{ status: "to do", type: "open" }, { status: "cancelled", type: "closed" }]);
     const out = await runRequestsDoctor(h.deps);
     expect(out.ok).toBe(false);
     expect(out.problems).toEqual([
-      'client_pause: ClickUp renamed its Request Type option to "Client Pause ⏸️". Fix it in Requests settings.',
-      "gone_bits: its Request Type option is not in ClickUp any more. Fix it in Requests settings.",
+      'general_tech: ClickUp renamed its Request Type option to "General Tech Ticket", so its requests leave Request Type empty. Rename it back in ClickUp, or turn Set Request Type off for this type in Requests settings.',
+      "gone_bits: its Request Type option is not in ClickUp any more, so its requests leave Request Type empty. Turn Set Request Type off for this type in Requests settings.",
       "gone_bits: the field ffffffff-0000-4000-8000-000000000000 is not on the Operations / Tech list in ClickUp.",
       "gone_bits: the template t-86gone0001 for the main part is not in ClickUp any more. Pick another in Requests settings.",
       "gone_bits: the named owner of the main part (ClickUp user 123) is not in the workspace. Pick someone else in Requests settings.",

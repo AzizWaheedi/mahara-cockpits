@@ -2,6 +2,8 @@ import {
   ArrowUpRight,
   CircleAlert,
   CircleCheck,
+  CircleDashed,
+  Clock,
   CornerDownRight,
   LoaderCircle,
   Search,
@@ -28,6 +30,7 @@ import {
 import {
   CLICKUP_FORM_URL,
   type ClientOption,
+  carriedDueOn,
   cleanAnswers,
   clientField,
   dayLabel,
@@ -42,6 +45,7 @@ import {
   PRIORITIES,
   type Priority,
   partHeld,
+  partialNext,
   partMoving,
   priorityField,
   REQUEST_SENTENCES,
@@ -50,6 +54,7 @@ import {
   requestsOpen,
   type SubmitResult,
   sentLines,
+  sentTone,
   type TypesRead,
   type TypeView,
   validateAnswers,
@@ -100,8 +105,22 @@ export type RequestFormProps = {
    * after it did not reach ClickUp). A choice matches by its name or id.
    */
   presetAnswers?: Record<string, string>;
+  /**
+   * The priority and due day to start from (a request filed again, or an old
+   * form ticket made a request) in place of the type's defaults. A due day
+   * before today in Kuwait, or more than a year ahead, gives the default.
+   */
+  presetPriority?: Priority;
+  presetDueOn?: string;
   /** The old ClickUp form ticket this request routes (2.10). */
   replacesTaskId?: string;
+  /**
+   * A request filed again routes its old form ticket only while the ticket
+   * still waits: once it is routed ("That old ticket was already routed."),
+   * the request goes on its own. "Make it a request" leaves this off, so a
+   * ticket a teammate routed first is never asked for twice.
+   */
+  replacesIfOpen?: boolean;
   /** Tighter spacing and a shorter type list, inside another card. */
   compact?: boolean;
   /** Called once a request is sent (not for a duplicate). */
@@ -116,6 +135,19 @@ type Load<T> =
 type Answers = Record<string, string>;
 
 /**
+ * What a request brings into the form (an old form ticket made a request, or
+ * a request filed again): its details, its answers as words, its priority
+ * and due day. Kept for whichever type is picked, a changed or replacement
+ * type too, until "Ask for something else".
+ */
+type Carried = {
+  details?: string;
+  answers?: Record<string, string>;
+  priority?: Priority;
+  dueOn?: string;
+};
+
+/**
  * Ask a team: the request form (CONTRACT.md 6.4). Shared byte for byte by
  * the five cockpits; it reads the seat through each app's own taskSeat.ts.
  */
@@ -125,7 +157,10 @@ export function RequestForm({
   presetType,
   presetDetails,
   presetAnswers,
+  presetPriority,
+  presetDueOn,
   replacesTaskId,
+  replacesIfOpen = false,
   compact = false,
   onSent,
 }: RequestFormProps) {
@@ -156,6 +191,17 @@ export function RequestForm({
   const inFlight = useRef(false);
   const formRef = useRef<HTMLDivElement>(null);
   const baseId = useId();
+  // What the request this form starts from brings (Carried): it goes with
+  // whichever type is picked, so a Change or a type that is off never drops
+  // the old ticket's words or the request's own priority and due day.
+  const carried = useRef<Carried>({
+    details: presetDetails?.trim() || undefined,
+    answers: presetAnswers,
+    priority: presetPriority,
+    dueOn: presetDueOn,
+  });
+  // Why the type a request came with is not on the form, said once.
+  const [presetOff, setPresetOff] = useState<string | null>(null);
 
   const loadTypes = useCallback(async () => {
     if (!client) return;
@@ -181,33 +227,47 @@ export function RequestForm({
   }, [types, source, presetClient]);
   const type = offered.find(t => t.key === typeKey) ?? null;
 
-  const choose = useCallback(
-    (
-      next: TypeView | null,
-      details?: string,
-      start?: Record<string, string>,
-    ) => {
-      setTypeKey(next?.key ?? null);
-      setErrors({});
-      setFormError(null);
-      setAttempted(false);
-      setPreview(null);
-      if (!next) return;
-      setDueOn(next.dueDefault);
-      setPriority(next.priority);
-      setAnswers(startAnswers(next, details, start));
-    },
-    [],
-  );
+  const choose = useCallback((next: TypeView | null) => {
+    setTypeKey(next?.key ?? null);
+    setErrors({});
+    setFormError(null);
+    setAttempted(false);
+    setPreview(null);
+    if (!next) return;
+    const kept = carried.current;
+    setDueOn(carriedDueOn(kept.dueOn) ?? next.dueDefault);
+    setPriority(
+      PRIORITIES.find(p => p.key === kept.priority)?.key ?? next.priority,
+    );
+    setAnswers(startAnswers(next, kept.details, kept.answers));
+    setPresetOff(null);
+  }, []);
 
-  // The preset type, once the types are read.
+  // The preset type, once the types are read. A type that is not on the
+  // form is said once, and what the request brings waits for the type the
+  // person picks instead.
   const presetDone = useRef(false);
   useEffect(() => {
     if (presetDone.current || types.status !== "ready") return;
     presetDone.current = true;
+    if (!presetType) return;
     const hit = offered.find(t => t.key === presetType);
-    if (hit) choose(hit, presetDetails, presetAnswers);
-  }, [types.status, offered, presetType, presetDetails, presetAnswers, choose]);
+    if (hit) {
+      choose(hit);
+      return;
+    }
+    const listed = types.data.types.find(t => t.key === presetType);
+    const kept = carried.current;
+    const words =
+      listed?.enabled && !clientField(listed)
+        ? REQUEST_SENTENCES.presetNoClient
+        : REQUEST_SENTENCES.presetOff;
+    setPresetOff(
+      kept.details || Object.keys(kept.answers ?? {}).length
+        ? `${words} ${REQUEST_SENTENCES.presetKept}`
+        : words,
+    );
+  }, [types, offered, presetType, choose]);
 
   // Re-check a field once the person has pressed Send and then fixes it.
   useEffect(() => {
@@ -340,7 +400,7 @@ export function RequestForm({
     inFlight.current = true;
     setSending(true);
     try {
-      const result = await submitRequest(client, {
+      const body = {
         requestId: requestId.current,
         typeKey: type.key,
         clientTaskId: picked?.taskId ?? null,
@@ -349,7 +409,23 @@ export function RequestForm({
         priority,
         source,
         replacesTaskId: replacesTaskId ?? null,
-      });
+      };
+      let alone = false;
+      let result: SubmitResult;
+      try {
+        result = await submitRequest(client, body);
+      } catch (e) {
+        // Filed again, and its old form ticket was routed meanwhile: the
+        // server wrote nothing, so the same request id goes on its own.
+        if (
+          !replacesIfOpen ||
+          !body.replacesTaskId ||
+          errorWords(e) !== REQUEST_SENTENCES.oldTicketRouted
+        )
+          throw e;
+        alone = true;
+        result = await submitRequest(client, { ...body, replacesTaskId: null });
+      }
       if (result.state === "duplicate") {
         setDuplicate(result);
       } else {
@@ -357,9 +433,12 @@ export function RequestForm({
         setSentOpen(reached);
         setSent(result);
         seat.toast.success(
-          result.parts.length && result.parts.every(p => partHeld(p, reached))
-            ? REQUEST_SENTENCES.saved
-            : REQUEST_SENTENCES.sent,
+          alone
+            ? REQUEST_SENTENCES.sentAlone
+            : result.parts.length &&
+                result.parts.every(p => partHeld(p, reached))
+              ? REQUEST_SENTENCES.saved
+              : REQUEST_SENTENCES.sent,
         );
         onSent?.(result);
       }
@@ -378,6 +457,8 @@ export function RequestForm({
 
   function again() {
     requestId.current = newRequestId();
+    // Something else: nothing of the request this form started from.
+    carried.current = {};
     setSent(null);
     setDuplicate(null);
     setPicked(presetClient ?? null);
@@ -424,11 +505,25 @@ export function RequestForm({
       </div>
     );
 
-  if (sent)
+  if (sent) {
+    // The mark says where the request stands, never a success check beside
+    // a task that did not go: refused, on its way, saved until requests
+    // open, or in ClickUp.
+    const tone = sentTone(sent.parts, sentOpen);
+    const Mark =
+      tone === "failed"
+        ? CircleAlert
+        : tone === "moving"
+          ? CircleDashed
+          : tone === "held"
+            ? Clock
+            : CircleCheck;
+    const settled = tone === "failed" && !moving;
+    const landed = sent.parts.some(p => p.state === "delivered");
     return (
       <div className={root}>
-        <div className="rq-sent" role="status">
-          <CircleCheck aria-hidden className="rq-sent-icon" />
+        <div className="rq-sent" data-tone={tone} role="status">
+          <Mark aria-hidden className="rq-sent-icon" />
           <div className="rq-sent-body">
             {sentLines(sent.parts, sentOpen).map((line, i) => {
               const note = deliveredNote(sent.parts[i]);
@@ -441,6 +536,22 @@ export function RequestForm({
                 </div>
               );
             })}
+            {settled ? (
+              <>
+                <p className="rq-muted">
+                  {landed ? partialNext(sent) : REQUEST_SENTENCES.sentFailed}
+                </p>
+                <a
+                  className="rq-link"
+                  href={CLICKUP_FORM_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open the ClickUp request form
+                  <ArrowUpRight aria-hidden className="rq-link-icon" />
+                </a>
+              </>
+            ) : null}
           </div>
         </div>
         <div className="rq-actions">
@@ -451,12 +562,25 @@ export function RequestForm({
           >
             Ask for something else
           </button>
-          <PortalLink to="/requests?view=mine" className="rq-btn rq-btn-ghost">
-            See it in My requests
-          </PortalLink>
+          {tone === "failed" ? (
+            <PortalLink
+              to={`/requests?id=${encodeURIComponent(sent.id)}`}
+              className="rq-btn rq-btn-ghost"
+            >
+              Open the request
+            </PortalLink>
+          ) : (
+            <PortalLink
+              to="/requests?view=mine"
+              className="rq-btn rq-btn-ghost"
+            >
+              See it in My requests
+            </PortalLink>
+          )}
         </div>
       </div>
     );
+  }
 
   if (duplicate)
     return (
@@ -496,6 +620,12 @@ export function RequestForm({
   // CEO in a dry run) is told the request is saved, not sent.
   const writerNote =
     writer?.canSend && writer.note?.trim() ? writer.note.trim() : null;
+  // The words a request brought that the picked type has no question for
+  // (an old ticket made a "Card missing" request): shown, not dropped.
+  const keptWords =
+    type && !type.fields.some(f => f.kind === "details")
+      ? (carried.current.details ?? null)
+      : null;
 
   return (
     <div className={root} ref={formRef}>
@@ -505,6 +635,11 @@ export function RequestForm({
       {writerNote && !type ? (
         <p className="rq-off rq-off-note" role="status">
           {writerNote}
+        </p>
+      ) : null}
+      {presetOff && !type ? (
+        <p className="rq-off" role="status">
+          {presetOff}
         </p>
       ) : null}
       <TypePicker
@@ -542,6 +677,20 @@ export function RequestForm({
               />
             );
           })}
+
+          {keptWords ? (
+            <div className="rq-field">
+              <p className="rq-label">{REQUEST_SENTENCES.keptLabel}</p>
+              <p className="rq-quote" dir="auto">
+                {keptWords}
+              </p>
+              <p className="rq-help">
+                {replacesTaskId
+                  ? REQUEST_SENTENCES.keptRouted
+                  : REQUEST_SENTENCES.keptNotSent}
+              </p>
+            </div>
+          ) : null}
 
           <div className="rq-pair">
             {due ? (

@@ -17,6 +17,12 @@ import {
  * mount, every two minutes while the tab is visible, and on focus or a
  * return to the tab, never twice within 30 seconds (the media buyer's
  * ClientAlerts pattern). A press of "Try again" reads at once.
+ *
+ * The poll belongs to one seat. It is kept per client, cockpit and signed-in
+ * user, and it starts empty again once nothing on the page shows it (a
+ * sign-out unmounts every card and bell), so the next seat on the same tab
+ * never sees the last seat's tasks or alerts, and a read still on its way
+ * when the seat changed is dropped (as useLaunchNotices resets per seat).
  */
 
 export type TaskFeedState = {
@@ -62,14 +68,18 @@ class FeedStore {
   private listeners = new Set<() => void>();
   private busy = false;
   private last = 0;
+  /** Moves on at every stop: an answer from before it is never shown. */
+  private generation = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
 
   private client: SupabaseClient;
   private cockpit: string;
+  readonly seat: string;
 
-  constructor(client: SupabaseClient, cockpit: string) {
+  constructor(client: SupabaseClient, cockpit: string, seat: string) {
     this.client = client;
     this.cockpit = cockpit;
+    this.seat = seat;
   }
 
   get = (): TaskFeedState => this.state;
@@ -97,11 +107,22 @@ class FeedStore {
     document.addEventListener("visibilitychange", this.onWake);
   }
 
+  /**
+   * Nothing on the page shows the feed any more (a sign-out, or the last
+   * card and bell gone): the poll stops and forgets what it read, so the
+   * next mount reads afresh and never paints an earlier seat's rows. A read
+   * still out is left to finish and then dropped; the next one may start.
+   */
   private stop() {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     window.removeEventListener("focus", this.onWake);
     document.removeEventListener("visibilitychange", this.onWake);
+    this.generation += 1;
+    this.busy = false;
+    this.last = 0;
+    this.state = EMPTY;
+    forgetCanLink(this.client);
   }
 
   async read(force = false): Promise<void> {
@@ -110,6 +131,7 @@ class FeedStore {
       if (document.visibilityState === "hidden") return;
       if (Date.now() - this.last < MIN_GAP_MS) return;
     }
+    const generation = this.generation;
     this.busy = true;
     this.last = Date.now();
     this.set({ reading: true });
@@ -118,6 +140,8 @@ class FeedStore {
       call(this.client, "cockpit_my_tasks", args),
       call(this.client, "cockpit_task_alerts", args),
     ]);
+    // Read before a sign-out or for another seat: never shown.
+    if (generation !== this.generation) return;
     const okTasks =
       tasks.status === "fulfilled" &&
       Array.isArray((tasks.value as MyTasks | null)?.tasks);
@@ -144,13 +168,14 @@ class FeedStore {
   async markRead(ids: string[]): Promise<void> {
     const some = [...new Set(ids)].slice(0, 200);
     if (!some.length) return;
+    const generation = this.generation;
     try {
       await call(this.client, "cockpit_task_alerts_seen", { p_ids: some });
     } catch {
       throw new Error(TASK_SENTENCES.readNotSaved);
     }
     const alerts = this.state.alerts;
-    if (!alerts) return;
+    if (!alerts || generation !== this.generation) return;
     const marked = new Set(some);
     const rows = alerts.alerts.map(a =>
       marked.has(a.id) ? { ...a, read: true } : a,
@@ -171,15 +196,25 @@ class FeedStore {
 
 const stores = new WeakMap<SupabaseClient, Map<string, FeedStore>>();
 
-function storeFor(client: SupabaseClient, cockpit: string): FeedStore {
+/**
+ * The one poll for this client, cockpit and signed-in user. Another user on
+ * the same client and cockpit gets a store of its own; the earlier seat's
+ * store is dropped from the map (it empties itself once its last card or
+ * bell unmounts), so nothing of it is ever handed to the next seat.
+ */
+function storeFor(
+  client: SupabaseClient,
+  cockpit: string,
+  seat: string,
+): FeedStore {
   let byCockpit = stores.get(client);
   if (!byCockpit) {
     byCockpit = new Map();
     stores.set(client, byCockpit);
   }
   let store = byCockpit.get(cockpit);
-  if (!store) {
-    store = new FeedStore(client, cockpit);
+  if (!store || store.seat !== seat) {
+    store = new FeedStore(client, cockpit, seat);
     byCockpit.set(cockpit, store);
   }
   return store;
@@ -188,11 +223,13 @@ function storeFor(client: SupabaseClient, cockpit: string): FeedStore {
 const noSubscribe = () => () => {};
 const noState = () => EMPTY;
 
-/** Your tasks and your alerts, from one shared poll per tab. */
+/** Your tasks and your alerts, from one shared poll per tab and seat. */
 export function useTaskFeed(): TaskFeed {
   const seat = useTaskSeat();
   const store =
-    seat.client && seat.signedIn ? storeFor(seat.client, seat.cockpit) : null;
+    seat.client && seat.signedIn
+      ? storeFor(seat.client, seat.cockpit, seat.seatId ?? "")
+      : null;
   const state = useSyncExternalStore(
     store ? store.subscribe : noSubscribe,
     store ? store.get : noState,
@@ -209,23 +246,35 @@ export function useTaskFeed(): TaskFeed {
   );
 }
 
-const canLink = new WeakMap<SupabaseClient, Promise<boolean>>();
+const canLink = new WeakMap<
+  SupabaseClient,
+  { seat: string; answer: Promise<boolean> }
+>();
+
+/** A sign-out forgets the answer, so the next seat asks for its own. */
+function forgetCanLink(client: SupabaseClient) {
+  canLink.delete(client);
+}
 
 /**
  * Whether this seat may link seats to ClickUp users: the forms editor gate,
  * as cockpit_task_alert_rules_read answers it (canEditOthers). Read once per
- * tab, and only when a card has to say "not linked".
+ * seat on a tab, and only when a card has to say "not linked"; another seat
+ * on the same tab reads its own.
  */
-export function readCanLinkSeats(client: SupabaseClient): Promise<boolean> {
-  let answer = canLink.get(client);
-  if (!answer) {
-    answer = call(client, "cockpit_task_alert_rules_read", {})
-      .then(
-        d => (d as { canEditOthers?: unknown } | null)?.canEditOthers === true,
-      )
-      .catch(() => false);
-    canLink.set(client, answer);
-  }
+export function readCanLinkSeats(
+  client: SupabaseClient,
+  seat: string | null = null,
+): Promise<boolean> {
+  const key = seat ?? "";
+  const known = canLink.get(client);
+  if (known && known.seat === key) return known.answer;
+  const answer = call(client, "cockpit_task_alert_rules_read", {})
+    .then(
+      d => (d as { canEditOthers?: unknown } | null)?.canEditOthers === true,
+    )
+    .catch(() => false);
+  canLink.set(client, { seat: key, answer });
   return answer;
 }
 

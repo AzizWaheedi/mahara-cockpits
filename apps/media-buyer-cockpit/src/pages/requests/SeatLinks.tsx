@@ -72,6 +72,19 @@ export function linkRefusal(
   return errorWords(e);
 }
 
+/**
+ * Whether a seat's row offers Clear: a link matched by email or set by hand
+ * (one ClickUp user holds one seat, so freeing it is how it moves to
+ * another seat), or a match that found none or two (to record "none").
+ * Not on a seat already cleared or never checked.
+ */
+export function canClear(s: SeatLink): boolean {
+  return (
+    !!s.link &&
+    ["ok", "manual", "not_found", "ambiguous"].includes(s.link.state)
+  );
+}
+
 /** People in ClickUp (editors): which ClickUp user each seat is. */
 export function SeatLinks() {
   const seat = useTaskSeat();
@@ -257,13 +270,21 @@ export function SeatLinks() {
                       className="size-4 animate-spin text-muted-foreground"
                     />
                   ) : null}
-                  {/* Clear undoes a link an editor set by hand; an email
-                      match is changed by picking another user. */}
-                  {s.link?.state === "manual" ? (
+                  {/* Clear on every row that holds a link or a match result:
+                      it frees an email match's ClickUp user for another
+                      seat (the hourly match then leaves this seat alone),
+                      undoes a link set by hand, and on an unlinked seat
+                      records that it has no ClickUp user. */}
+                  {canClear(s) ? (
                     <Button
                       size="sm"
                       variant="ghost"
                       disabled={busy}
+                      title={
+                        linked
+                          ? `Clear the ClickUp link of ${s.label}`
+                          : `No ClickUp user for ${s.label}`
+                      }
                       onClick={() => void link(s, null)}
                     >
                       Clear

@@ -681,7 +681,14 @@ kind `task_action` (migration `20261026t`), and every delivered part gets a
 - Each run reports its mode in `cockpit_sync_state` key
   `clickup-writeback:requests` (`detail.mode`: `dry_run`, `apply` or
   `apply_limited`, and `detail.onlyCards`). The form and the focus view read it:
-  older than 15 minutes means "unknown", and nobody can send.
+  older than 15 minutes means "unknown": editors, admins and the CEO may still
+  file (held), and nobody else can send. When the last report was `apply`, the
+  team is told the writer is down ("Requests cannot be sent just now: the
+  requests writer has not reported in the last 15 minutes. Use the ClickUp
+  request form, and tell the systems manager."), a held request says it goes
+  "once the writer runs again", and the focus view says changes "cannot be sent
+  just now" (review round 3); before requests ever opened it still says they
+  are not switched on yet.
 - Nothing reaches ClickUp unless the function secret
   `CLICKUP_WRITEBACK_APPLY_REQUESTS` is exactly `true`. The canary
   `CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS` (comma-separated client card ids, the
@@ -689,14 +696,22 @@ kind `task_action` (migration `20261026t`), and every delivered part gets a
   The general `CLICKUP_WRITEBACK_APPLY` does not open these kinds and this
   switch opens nothing else. Pace: `CLICKUP_REQUESTS_CALLS_PER_MINUTE` (120).
 - While the writer is a dry run, `/requests` tells the team to use the ClickUp
-  request form; editors, admins and the CEO may still send, and their rows stay
-  `dry_run` (planned, not written).
+  request form; editors, admins and the CEO may still file, and their request is
+  held: saved, its rows `queued` and never claimed, said plainly on the form
+  and the request ("Saved, not sent yet. It goes to ClickUp once requests
+  open."). It goes on its own on the first run after requests open; on the
+  canary card it goes at once. Nothing is ever saved `dry_run` by this job.
+  During the canary a request that routes an old form ticket goes only when
+  that ticket's own card is a canary card, so the rehearsal never closes a real
+  ticket on All Tasks; any other waits until requests open to everyone.
 - Every ClickUp write ends with its marker: `Cockpit ref R-<10 hex>-<part>` on a
   request's task (and `-card` on the client card's comment, `-old` on a routed
   old ticket), `Cockpit ref T-<10 hex>` on a focus view comment.
 - The guardian's "Request or task change bound for ClickUp queue" warns when a
-  `request` or `task_action` row waits over 15 minutes in `queued`, `sending`,
-  `retry` or `unknown`, or one failed in 24 hours.
+  `request` or `task_action` row waits over 15 minutes in `sending`, `retry` or
+  `unknown`, or in `queued` while the writer reports mode `apply`, or one failed
+  in 24 hours. Before requests open, a held request is not stuck: the reading
+  says "{n} held until requests open."
 
 Calling the writer's doctor by hand (reads only; the secret stays in the vault):
 
@@ -714,10 +729,15 @@ status, and writes `cockpit_sync_state` key `clickup-writeback:requests-doctor`.
 | Symptom | What to do | Who |
 | --- | --- | --- |
 | A request reads "Sending to ClickUp" for more than a few minutes | `select key, ok, note, last_run_at from public.cockpit_sync_state where key like 'clickup-writeback:requests%';`. A kick note naming the vault: add `cockpit_sync_secret`. A mode older than 15 minutes: the runs stopped; check `mahara-clickup-writeback-requests` in `cron.job` and the function's log | the tech lead |
-| A row in `unknown` | ClickUp may have the task. Open the part's list in ClickUp and search for its `Cockpit ref R-...` (the first 10 hex characters of the request id without dashes, then the part). The writer reads back before any new write, so the next run adopts it by the marker; two matches stay `unknown` with "Two tasks match this request in ClickUp. Keep one and cancel the other.": set one to cancelled in ClickUp (never delete), and the next run adopts the other | the tech lead |
+| A row in `unknown` | ClickUp may have the task. `unknown` also covers a call ClickUp answered whose receipt could not be saved, a timeout and a dropped answer: only ClickUp's own refusal ("rejected the request (NNN)") fails a step. Open the part's list in ClickUp and search for its `Cockpit ref R-...` (the first 10 hex characters of the request id without dashes, then the part). The writer reads back before any new write, so the next run adopts it by the marker; two matches stay `unknown` with "Two tasks match this request in ClickUp. Keep one and cancel the other.": set one to cancelled in ClickUp (never delete), and the next run adopts the other | the tech lead |
+| A part reads "Checking whether it reached ClickUp" for hours, its note ending "The cockpit checks ClickUp again every 4 hours." | Its create may have reached ClickUp, but the cockpit holds no task for it: the answer was lost or had no id, two tasks match, every match is cancelled, or ClickUp refused or never answered the search. After the retry ladder (about 5 hours) it is never settled `failed` (that would invite a second task); it stays `unknown` and is read every 4 hours, and the guardian names it. Look in ClickUp for its `Cockpit ref R-...`. To read it now: `update public.cockpit_clickup_writeback_queue set next_attempt_at=now() where kind='request' and state='unknown' and source_id='<request id>';`. "Two tasks match this request in ClickUp. Keep one and cancel the other.": set one to cancelled. "Every task that matches this request in ClickUp is cancelled. Reopen the one to keep, and the next run adopts it.": reopen the one to keep in ClickUp. "ClickUp refused the search for this request's task, ...": run the requests doctor (the token's access to that list) | the tech lead |
+| A part in doubt that must be settled by hand | The cockpit refuses to cancel a part in `unknown` (`cockpit_request_cancellable`), and one whose create went out and lost its answer while it waits (`queued` or `retry` with a create on record, or handed back `unknown` while requests are not open; review round 3). Check ClickUp first. The task is there: leave the row; the next read adopts it by its Cockpit ref (keep exactly one open match). No task there and it is still needed: requeue it with a fresh plan (the next row). No task there and it is not needed: settle it, as the service role: `update public.cockpit_clickup_writeback_queue set state='failed', error='Settled by hand: no task in ClickUp.' where kind='request' and state in ('unknown','queued','retry') and source_id='<request id>' and payload->>'part'='<part>' and task_id is null;` (one part at a time; the part, the request and the requester's alert follow; the request can then be cancelled or filed again) | the tech lead |
 | A row in `failed` or `dry_run` to send again | First look in ClickUp for its Cockpit ref: a failed create can still have made the task. With no task there, requeue it with a fresh plan, as the service role: `update public.cockpit_clickup_writeback_queue set state='queued', attempts=0, next_attempt_at=now(), planned=null, steps=null, progress='{}'::jsonb where kind='request' and state in ('failed','dry_run') and source_id='<request id>';` (the part and the request follow). With a task there, leave `progress` as it is so the writer adopts it | the tech lead |
-| "ClickUp renamed this request type. Fix it in Requests settings." | The option's name on the folder field `e9fd8024-...` no longer matches the type. Rename it back in ClickUp, or turn Set Request Type off for that type | the systems manager |
-| Request Type is off for a type that had it on | The 2-minute check found ClickUp moved or renamed the task after Request Type was set (a folder rule fired), so the writer turned it off (audit `request_type.request_type_off`). To turn it back on: Requests settings, Request types, the type, Set Request Type in ClickUp, Save (a new version). Only after a `[TEST]` ticket on that list shows ClickUp keeps the task where it is | an editor |
+| A delivered part's note: "ClickUp renamed or removed this type's Request Type option, so the cockpit left Request Type empty. ..." (or the requests doctor: "{key}: ClickUp renamed its Request Type option to ..." / "... is not in ClickUp any more ...") | The task is made; only Request Type stays empty. The option's name on the folder field `e9fd8024-...` no longer matches the type, or the option is gone. Rename it back in ClickUp, or turn Set Request Type off for that type in Requests settings. The doctor checks the options only for types that have it on | the systems manager |
+| Request Type is off for a type that had it on | The 2-minute check found ClickUp moved or renamed the task after Request Type was set (a folder rule fired), so the writer turned it off (audit `request_type.request_type_off`). Only a check that runs on time does this (within 15 minutes of its due time); a later one changes nothing and its part's note ends "This check ran too late to tell a ClickUp rule from a person's change, so the cockpit changed nothing.". To turn it back on: Requests settings, Request types, the type, Set Request Type in ClickUp, Save (a new version). Only after a `[TEST]` ticket on that list shows ClickUp keeps the task where it is. Going back to an older version never turns it on, even one that had it on: the toast says "Request Type stays off." | an editor |
+| A routing request reads "The old ticket was already moved or closed in ClickUp, so no new task was made. Check it there." | While the request waited (held until requests open), the team moved, closed or deleted the old form ticket in ClickUp, so the writer made nothing. Open the old ticket (the request panel links it); file a new request only if the work is still needed. Nothing to clean up | the person who asked |
+| An old form ticket is back in its team's queue with "Back in the queue: ..." in its history | The request that routed it was cancelled, or ended failed (or partly) before its step that closes the old ticket. Route it again with Make it a request (a request filed again routes it by itself). An old ticket handled in ClickUp meanwhile never comes back (next row) | the team, or the systems manager |
+| An old form ticket left its team's queue: "Came in through the old ClickUp form. It was moved or closed in ClickUp, so it needs no routing here." (history "Left All Tasks: moved, closed or deleted in ClickUp") | The team dealt with it in ClickUp: the task mirror shows it on another list or done or closed, or a complete hourly read of All Tasks no longer found it open there (`cockpit_requests.import_left_at`, which also covers a ticket deleted in ClickUp; audit `request.import_left`). It is never routed from the cockpit again, and a routing request that waited for it keeps it routed. If it is reopened on All Tasks, the next complete read clears `import_left_at` (history "Back on All Tasks in ClickUp"). A read cut short changes nothing. `select id, imported_task_id, state, import_left_at from public.cockpit_requests where source='import' and import_left_at is not null;` | nobody |
 | A part reads "A ClickUp rule keeps removing the owner" | A list rule unassigns on create. Assign it in ClickUp, and switch that list rule off (C3) | the systems manager |
 | A seat cannot be assigned or see "Assigned to me" | Its seat is not linked to a ClickUp user: Requests settings, People in ClickUp, pick the user (the hourly seats read links by exact email; a hand link is never overwritten) | an editor |
 | The `[TEST]` rehearsal tickets after the check | Set each to cancelled in ClickUp. Never delete them; the requests stay in the cockpit as the record | the systems manager |
@@ -745,9 +765,13 @@ migration `20261026t_task_alerts.sql`, `supabase/functions/cockpit-tasks`).
   form's tickets on All Tasks (imported as unrouted requests).
 - No alert before the baseline: `task-mirror:seats`'s `detail.baselinedAt`,
   set once by the first seats run that read every linked seat. Assignment and
-  status alerts come from the delta only, so linking a seat never floods its
-  bell. Alerts never go to the person who caused them when that is known, and
-  never for a client card except a mention.
+  status alerts come from every read (delta, seats, focus view) through one
+  shared check of what ClickUp itself changed, and a task new to the mirror
+  alerts a seat only when it changed after that seat was linked, so linking a
+  seat never floods its bell. Alerts never go to the person who caused them
+  when that is known, and never for a client card itself except a mention; a
+  card's real subtasks alert, show on Your tasks and take a tick, a comment and
+  Mark done like any task.
 - Every ClickUp call is a GET receipted in `cockpit_media_provider_health`
   under the run's `action_id`. Nothing here posts to Slack: new assignments
   already post in the team channels through `hermes/task-assignment-alerts`.
@@ -763,12 +787,17 @@ answer 202 and run in the background).
 
 | Symptom | What to do | Who |
 | --- | --- | --- |
-| "Your seat is not linked to a ClickUp user" | That seat has no ClickUp user by email. Requests settings, People in ClickUp: pick the user, or Clear to say it has none. The card shows tasks within two minutes of the link | an editor |
+| "Your seat is not linked to a ClickUp user" | That seat has no ClickUp user by email. Requests settings, People in ClickUp: pick the user, or Clear to say it has none. A hand link starts a seats read at once (`cockpit_task_mirror_kick('seats')` from `cockpit_member_clickup_set`; review round 3), so the seat's older open tasks show within a few minutes, not at the next :11; `task-mirror:kick` notes the post. Clear shows on every row with a link or a match result; to move a ClickUp user to another seat, first Clear the seat that holds it (an email match too), because one ClickUp user is linked to one active seat. No editor links their own seat (the CEO may) | an editor |
+| "Your seat has no ClickUp user, so no ClickUp tasks show here." (or "... so only request alerts show here.", "... so you cannot tick, comment or mark done here.") | An editor cleared the seat's link on purpose (People in ClickUp, Clear), so nobody is asked to link it. To give it a ClickUp user later, pick one for that seat in People in ClickUp | an editor |
 | "Task updates are late. Last read at 14:02." | `task-mirror:delta` has not succeeded in 10 minutes. `select key, ok, note, last_run_at, last_ok_at, detail from public.cockpit_sync_state where key like 'task-mirror%';`. A kick note naming the vault: add `cockpit_tasks_cron_secret`. "CLICKUP_API_TOKEN is not set": set the function secret. "More than 1,000 tasks changed in one read": the next run goes on; nothing to do unless it repeats. Otherwise run the doctor | the tech lead |
 | "Your tasks could not be read just now" | The database call itself failed for that seat. Try again; if it repeats, the read functions are missing (apply `20261026t`) or the seat is inactive | the tech lead |
 | No alerts at all after going live | `task-mirror:seats` has no `baselinedAt` yet: a seats run has not read every linked seat (its note names the seats it missed). Fix that seat's link or wait for the next run | the tech lead |
 | A task someone left still shows on their card | The hourly seats read takes them off any task ClickUp no longer lists for them; until then the delta keeps what ClickUp last said | nobody |
 | A focus view press stays "Waiting for ClickUp to confirm." | The writer is off or late (the Requests writer section above); the press is a `task_action` row with `dedupe_key 'task:<action id>'` | the tech lead |
+| The focus view says "Changes from the cockpit cannot be sent just now: the requests writer has not reported in the last 15 minutes." (or the form: "Requests cannot be sent just now: ...") | The writer last reported `apply` and then stopped: read `clickup-writeback:requests` and `clickup-writeback:requests-kick` as in the Requests writer section, and the function's log | the tech lead |
+| Mark done on a client card's subtask fails with "Clients - Mahara has no done status in ClickUp. Mark it done there." | The writer sets the list's status of type done, and Clients - Mahara has none. Add one to that list in ClickUp, or mark the subtask done in ClickUp | the systems manager |
+| The focus view has no Mark done: "Mark done is not offered on Video Pipeline ..." or "... on WhatsApp Reconnection ..." | On purpose: done on Video Pipeline means the video is live, and a status change on WhatsApp Reconnection messages the client. A tick and a comment still work there; move the task in ClickUp | nobody |
+| A comment is refused: "Leave out the words "Cockpit ref". The cockpit adds its own to every comment." | The cockpit names a comment's writer from the marker that ends it, so typed markers are refused. Reword the comment | the person commenting |
 | The guardian's "task-mirror:delta" or "task-mirror:seats" in Cockpit jobs | Late (10 minutes for the delta, 90 for the seats read) or `ok` false: read the note as above | the tech lead |
 
 To stop the mirror:

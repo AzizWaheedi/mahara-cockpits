@@ -58,6 +58,14 @@ export function RequestsSettings() {
   }, [seat.ready, client, load]);
 
   const editor = read.status === "ready" && read.data.seat.editor;
+  // The Slack notices page reads only for a notices editor (the same gate as
+  // here) or a client success or creative seat (cockpit_slack_notice_viewer);
+  // any other seat would land on its refusal, so it gets no link.
+  const noticesOpen =
+    read.status === "ready" &&
+    (read.data.seat.editor ||
+      read.data.seat.teams.includes("client_success") ||
+      read.data.seat.teams.includes("creative"));
   const asked = params.get("tab") as Tab | null;
   const tab: Tab =
     read.status !== "ready"
@@ -96,13 +104,15 @@ export function RequestsSettings() {
               ? "Where each request goes, who owns it and what it asks, which ClickUp user each seat is, and which alerts you get. A change applies to the next request."
               : "Which task alerts you get, and when."}
         </p>
-        <a
-          href="/client-success/notices"
-          className="mt-2 inline-flex items-center gap-0.5 rounded-sm text-[13px] font-medium text-[color:var(--tk-ink,var(--primary))] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          Slack notices
-          <ChevronRight aria-hidden className="size-3.5" />
-        </a>
+        {noticesOpen ? (
+          <a
+            href="/client-success/notices"
+            className="mt-2 inline-flex items-center gap-0.5 rounded-sm text-[13px] font-medium text-[color:var(--tk-ink,var(--primary))] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Slack notices
+            <ChevronRight aria-hidden className="size-3.5" />
+          </a>
+        ) : null}
       </header>
 
       {read.status === "loading" ? (

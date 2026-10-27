@@ -75,6 +75,10 @@ export function kindOf(text: string, by: string): string {
   if (!t || t.startsWith(NOTES_MARK) || /clickbot/i.test(by)) return 'skip';
   if (/^(BILLING_|🎯|🤖)/u.test(t) || /Logged by the CSM via the Client Success Cockpit/i.test(t)) return 'skip';
   if (/^\**\s*CLOSER\s*:?/i.test(t)) return 'skip';
+  // The cockpit's own notes on a card, never digested: a request's link comment ("Cockpit · The CSM asked
+  // Operations / Tech: ...", clickup-writeback requests.ts cardCommentText, posted from the API user's account)
+  // and any comment that carries a Cockpit ref (requests, focus view presses, the CSM cockpit's older logs).
+  if (/^Cockpit · .+ asked /.test(t) || /Cockpit ref (?:[RT]-)?[0-9a-f]{10}/.test(t)) return 'skip';
   if (/^\W*(Client Research Report|Market Intelligence Report)/i.test(t)) return 'skip';
   // Handoffs carry a "Call recording: Not provided" line, so they are matched before calls.
   if (/KICKOFF HANDOFF|Kickoff form|Onboarding Form Answers/i.test(t)) return 'kickoff';

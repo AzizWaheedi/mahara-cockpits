@@ -31,8 +31,9 @@ import type { Row } from "./rules.ts";
 
 export const ACTION_SAY = {
   notYours: "This task is no longer yours in ClickUp. Open it there.",
-  boards: "Ticking and Mark done work on the team request boards. Open this one in ClickUp.",
   clientCard: "This is a client card. Open it in ClickUp.",
+  /** Migration 20261026t refuses these words in cockpit_task_act; a row that carries them anyway is never posted. */
+  markerWords: 'Leave out the words "Cockpit ref". The cockpit adds its own to every comment.',
   stepChanged: "ClickUp changed this step. Open the task there.",
   moved: "Someone moved this task in ClickUp. Open it there.",
   gone: "This task is no longer in ClickUp.",
@@ -43,7 +44,45 @@ export const ACTION_SAY = {
   removed: (list: string) => `A ClickUp rule on ${list} keeps removing the owner.`,
   alsoAdded: "ClickUp also added another person.",
   rtOffLater: "Request Type could not be turned off for this type just now. The next run tries again.",
+  ownerOff: "The owner is no longer on it.",
+  /** Review R2: a check that runs late changes nothing; what it saw is named first. */
+  late: (seen: string) => `${seen} This check ran too late to tell a ClickUp rule from a person's change, so the cockpit changed nothing.`,
 } as const;
+
+/**
+ * Where Mark done is not offered, and why (review round 2, ask F12; migration 20261026t
+ * cockpit_task_done_blocked holds the same two lists and sentences). Mark done writes the list's
+ * done-type status, which on these two lists sets more off than closing a task: on Video Pipeline
+ * done means the video is live, and on WhatsApp Reconnection a status change messages the client.
+ */
+export const DONE_BLOCKED: Record<string, string> = {
+  "901816720767": "Mark done is not offered on Video Pipeline, where done means the video is live. Move it in ClickUp.",
+  "901821803697": "Mark done is not offered on WhatsApp Reconnection, where a status change messages the client. Move it in ClickUp.",
+};
+
+/** Words that would read as a Cockpit ref (cockpit_task_act refuses the same pattern). */
+const MARKER_WORDS = /cockpit\s+ref\s+[a-z0-9]/i;
+
+/** The two-minute check is due this long after its part was delivered (migration 20261026r's sync trigger). */
+export const VERIFY_DUE_MS = 2 * 60_000;
+/**
+ * Past its time by more than this, a move, a rename or a missing owner may be a person's own change rather than
+ * a list rule, so the check turns nothing off and puts nobody back (review R2). A check waits through a switch-off
+ * (the claim takes nothing in a dry run), a writer outage or the retry ladder, and can run days late.
+ */
+export const VERIFY_LATE_MS = 15 * 60_000;
+
+/** An ISO time with its offset, as PostgreSQL writes a timestamptz into JSON (and cockpit_request_step_at reads). */
+const STAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:?\d{2})$/;
+/**
+ * A time migration 20261026r's sync trigger put on a 2-minute check (`ownerAt`, `madeAt`), in ms; anything
+ * unreadable (absent, not a string, not such a time) is absent, so the check falls back to the next clock.
+ */
+export const stampMs = (v: unknown): number | null => {
+  if (typeof v !== "string" || !STAMP.test(v.trim())) return null;
+  const ms = Date.parse(v.trim());
+  return Number.isFinite(ms) ? ms : null;
+};
 
 const ID = /^[A-Za-z0-9_-]{1,40}$/;
 const OPS = new Set(["tick", "untick", "comment", "done", "verify"]);
@@ -80,15 +119,23 @@ function actionProblem(p: Row): string | null {
   if ((p.op === "tick" || p.op === "untick") && (!ID.test(String(p.checklistId ?? "")) || !ID.test(String(p.itemId ?? "")) || typeof p.to !== "boolean"))
     return ACTION_SAY.badAction;
   if (p.op === "comment" && !(String(p.text ?? "").trim().length > 0 && String(p.text).length <= 2000)) return ACTION_SAY.badAction;
+  // The reader names a comment's writer from the marker that ends it: words that hold one could pass as another
+  // press's comment or the cockpit's own. The database refuses them at the press; this is the second guard.
+  if (p.op === "comment" && MARKER_WORDS.test(String(p.text))) return ACTION_SAY.markerWords;
   return null;
 }
 
-/** The task is on a list where this op works, and the person may still act on it. */
+/**
+ * The task is on a list where this op works, and the person may still act on it, as cockpit_task_can
+ * and cockpit_task_act say (migration 20261026t). A client card itself is written in ClickUp; its real
+ * subtasks (ClickUp's `parent` set) and a seat's task on any other list take a tick, a comment and Mark
+ * done (review round 2, ask F12), but Mark done on the two lists in DONE_BLOCKED.
+ */
 function preconditionProblem(p: Row, t: Row): string | null {
   const list = String(t.list?.id ?? "");
-  if (p.op === "comment") {
-    if (list === CLIENT_CARDS) return ACTION_SAY.clientCard;
-  } else if (!ACTION_LISTS[list]) return ACTION_SAY.boards;
+  const cardSubtask = list === CLIENT_CARDS && typeof t.parent === "string" && t.parent.trim() !== "";
+  if (list === CLIENT_CARDS && !cardSubtask) return ACTION_SAY.clientCard;
+  if (p.op === "done" && DONE_BLOCKED[list]) return DONE_BLOCKED[list];
   const actor = p.actor ?? {};
   const onIt = hasUser(t.assignees, actor.clickupUserId) || hasUser(t.watchers, actor.clickupUserId);
   if (!onIt && actor.isAdmin !== true && p.requesterOfTask !== true) return ACTION_SAY.notYours;
@@ -154,14 +201,47 @@ async function markDone(book: StepBook, provider: Provider, p: Row, t: Row, ctx:
  * its name and its owner. A list rule that removed the owner gets them put
  * back once. A task ClickUp moved or renamed after Request Type was set turns
  * Request Type off for that type, and nothing is put back.
+ *
+ * Only on time (review R2): a check that runs more than VERIFY_LATE_MS after it
+ * was due cannot tell a list rule from a person, so it reads the task, names
+ * what changed and changes nothing. What an on-time attempt already saw or
+ * started is finished however late the retry runs: a move it saw still turns
+ * Request Type off, and an owner it began putting back is only read back.
+ *
+ * Due is measured from the writes the check judges, not from delivery (review
+ * round 3; the sync trigger stamps them on the payload): Request Type from
+ * `madeAt`, the owner from `ownerAt` (then `madeAt`), each falling back to the
+ * check's own `created_at`. A later step retried for hours (the card comment,
+ * the old ticket) delays delivery, and so the check, but never those writes.
  */
-async function verify(book: StepBook, provider: Provider, p: Row, ctx: RunContext) {
+async function verify(book: StepBook, provider: Provider, p: Row, ctx: RunContext, createdAt: string) {
   const t = await readTask(provider, String(p.taskId), true);
   if (!t) throw halt("skipped", ACTION_SAY.gone);
   const progress = book.progress;
+  const st = book.get("verify");
   const moved = String(t.list?.id ?? "") !== String(p.listId) || String(t.name ?? "") !== String(p.taskName);
   const where = `ClickUp shows it on ${listName(t)} as "${String(t.name ?? "")}".`;
-  if (moved && p.setRequestType === true) {
+  const owner = p.ownerClickupId === null || p.ownerClickupId === undefined ? null : Number(p.ownerClickupId);
+  const ownerOff = owner !== null && !hasUser(t.assignees, owner);
+  const sawMove = Boolean(st?.movedAt);
+  const movedRt = moved && p.setRequestType === true;
+  const created = Date.parse(createdAt);
+  const madeMs = stampMs(p.madeAt) ?? created;
+  const ownerMs = stampMs(p.ownerAt) ?? stampMs(p.madeAt) ?? created;
+  const lateFrom = (ms: number) => ctx.now() - (ms + VERIFY_DUE_MS) > VERIFY_LATE_MS;
+  // A move with Request Type on is judged by when Request Type was written (it puts nobody back); otherwise a
+  // missing owner by when the owner was written.
+  const late = !sawMove && !st?.putBack && (movedRt ? lateFrom(madeMs) : ownerOff && lateFrom(ownerMs));
+  if (late) {
+    const note = ACTION_SAY.late([movedRt ? where : "", ownerOff ? ACTION_SAY.ownerOff : ""].filter(Boolean).join(" "));
+    delete progress.verify;
+    progress.verifyNote = note;
+    await book.set("verify", "skipped", { late: true });
+    throw halt("skipped", note);
+  }
+  if (sawMove || movedRt) {
+    // Recorded before the call, so a retry of a failed rt_off finishes it even when it runs late.
+    if (!sawMove) await book.set("verify", "started", { movedAt: new Date(ctx.now()).toISOString() });
     try {
       await requestsDb(ctx.rpc).rtOff(String(p.typeKey), RT_OFF_NOTE(String(p.taskName)));
     } catch {
@@ -176,10 +256,9 @@ async function verify(book: StepBook, provider: Provider, p: Row, ctx: RunContex
     progress.verifyNote = where;
     return book.set("verify", "done", { rtOff: true });
   }
-  const owner = p.ownerClickupId === null || p.ownerClickupId === undefined ? null : Number(p.ownerClickupId);
   const notes: string[] = moved ? [where] : [];
   const others = (assignees: unknown) => (Array.isArray(assignees) ? assignees : []).some((u: Row) => owner === null || String(u?.id) !== String(owner));
-  if (owner === null || hasUser(t.assignees, owner)) {
+  if (owner === null || !ownerOff) {
     if (owner !== null && others(t.assignees)) notes.push(ACTION_SAY.alsoAdded);
     // An owner this check put back on an earlier attempt (its answer was lost) was restored, not kept.
     progress.verify = book.get("verify")?.putBack ? "restored" : "kept";
@@ -238,11 +317,12 @@ export async function executeTaskAction(item: RequestsItem, provider: Provider, 
     // Settled on an earlier attempt whose last save did not land: report the same outcome again.
     if (op === "verify" && book.progress.verify === "removed")
       return { state: "failed", progress: book.progress, error: ACTION_SAY.removed(TARGET_LISTS[String(p.listId)] ?? "this list"), taskId: String(p.taskId) };
+    if (op === "verify" && book.get(op)?.late) return { state: "skipped", progress: book.progress, error: book.progress.verifyNote, taskId: String(p.taskId) };
     return { state: "delivered", progress: book.progress, note: op === "verify" ? book.progress.verifyNote : undefined, taskId: String(p.taskId) };
   }
   try {
     if (op === "verify") {
-      await verify(book, provider, p, ctx);
+      await verify(book, provider, p, ctx, item.created_at);
       return { state: "delivered", progress: book.progress, note: book.progress.verifyNote, taskId: String(p.taskId) };
     }
     const t = await readTask(provider, String(p.taskId), true);

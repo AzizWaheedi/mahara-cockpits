@@ -7,7 +7,22 @@
  * (taskSeat.ts is mocked); the database answers from the harness's invented
  * fixtures (src/dev/tasksHarness.ts). Nothing here reaches a network.
  */
-import { afterAll, afterEach, beforeAll, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  expect,
+  mock,
+  setDefaultTimeout,
+  test,
+} from "bun:test";
+
+// These screens run on real timers (the form's 250 ms debounce, the 3 s and
+// 5 s re-reads), in one process with the database suites as ship.sh runs
+// them, on a laptop several sessions share. A test that waits longer than
+// bun's 5 s default under that load is slow, not wrong: it may take 20 s.
+setDefaultTimeout(20_000);
+
 import { Window } from "happy-dom";
 import { act, createElement, type ReactNode } from "react";
 import type { Root } from "react-dom/client";
@@ -56,6 +71,7 @@ const seat = {
   client: null as unknown,
   ready: true,
   signedIn: true,
+  seatId: "seat-a" as string | null,
   cockpit: "portal" as const,
   portalHref: (path: string) => path,
   inPortal: true,
@@ -84,7 +100,15 @@ let calls: Call[] = [];
  */
 function fakeClient(
   scenario: TasksScenario,
-  options: { settleOnFirstPoll?: boolean } = {},
+  options: {
+    settleOnFirstPoll?: boolean;
+    /** Subtasks the focus view's detail read carries. */
+    subtasks?: { id: string; name: string; status: string; statusType: string }[];
+    /** The list the focus view's task sits on (the harness applies the done rule). */
+    detailList?: string;
+    /** How the writer settles a press: delivered (default) or skipped. */
+    settle?: "delivered" | "skipped";
+  } = {},
 ) {
   const rpc = async (name: string, args: Record<string, unknown> = {}) => {
     calls.push({ name, args });
@@ -107,7 +131,10 @@ function fakeClient(
       } as Answer;
     if (name === "cockpit_task_alert_rules_read")
       return {
-        data: { canEditOthers: scenario === "not_linked_editor" },
+        data: {
+          canEditOthers:
+            scenario === "not_linked_editor" || scenario === "cleared",
+        },
         error: null,
       } as Answer;
     if (name === "cockpit_task_act")
@@ -117,7 +144,7 @@ function fakeClient(
           String(args.p_op),
           args.p_payload as Record<string, unknown>,
           String(args.p_action_id),
-          "delivered",
+          options.settle ?? "delivered",
         ),
         error: null,
       } as Answer;
@@ -137,7 +164,16 @@ function fakeClient(
         harness.stepTasksHarness(body.taskId);
         harness.stepTasksHarness(body.taskId);
       }
-      const detail = harness.detailFixture(body.taskId);
+      const found = harness.detailFixture(body.taskId, {
+        listId: options.detailList,
+      });
+      const detail =
+        found && options.subtasks && found.detail
+          ? {
+              ...found,
+              detail: { ...found.detail, subtasks: options.subtasks },
+            }
+          : found;
       // A refusal comes back as supabase-js gives it: a non-2xx error whose
       // context is the response, with the database's sentence in the body.
       return detail
@@ -230,6 +266,7 @@ afterEach(async () => {
   document.body.replaceChildren();
   calls = [];
   where = "";
+  seat.seatId = "seat-a";
   harness.resetTasksHarness();
 });
 afterAll(() => {
@@ -294,6 +331,35 @@ test("an editor's not-linked card links to Requests settings", async () => {
   await render(createElement(YourTasks));
   const link = button("Link it in Requests settings");
   expect(link?.getAttribute("href")).toBe("/requests/settings?tab=people");
+});
+
+test("a seat an editor cleared is told it has no ClickUp user and is never sent to link it, on the card or the bell (review round 3)", async () => {
+  // The seat may link seats (an editor), but its own link was cleared on purpose.
+  seat.client = fakeClient("cleared");
+  const host = await render(
+    createElement(
+      "div",
+      null,
+      createElement(YourTasks),
+      createElement(AlertsBell, { variant: "row" }),
+    ),
+  );
+  expect(text()).toContain(
+    "Your seat has no ClickUp user, so no ClickUp tasks show here. Requests you raise show under My requests.",
+  );
+  expect(text()).not.toContain("Ask the systems manager to link it");
+  expect(host.querySelectorAll(".tk-row")).toHaveLength(0);
+  await settle();
+  expect(button("Link it in Requests settings")).toBeUndefined();
+  expect(calls.some(c => c.name === "cockpit_task_alert_rules_read")).toBe(
+    false,
+  );
+  await press(button(/^\s*Alerts/));
+  await settle();
+  expect(text()).toContain(
+    "Your seat has no ClickUp user, so only request alerts show here.",
+  );
+  expect(text()).not.toContain("Ask the systems manager to link it");
 });
 
 test("a failed read says so and offers Try again", async () => {
@@ -423,6 +489,64 @@ test("a tick goes Saving… then Saved once ClickUp has it", async () => {
       .length,
   ).toBeGreaterThan(0);
 }, 15_000);
+
+test("a Mark done that comes back skipped says why on its own line above both buttons", async () => {
+  seat.client = fakeClient("default", {
+    settleOnFirstPoll: true,
+    settle: "skipped",
+  });
+  await render(createElement(TaskFocusHost), "/dashboard?focus=86fxtk001");
+  await press(button("Mark done", dialog() ?? document));
+  await settle();
+  expect(dialog()?.textContent).toContain("Saving…");
+  // The view reads the task again after three seconds; the read-back settles it.
+  await settle(1000);
+  await new Promise(r => setTimeout(r, 2600));
+  await settle();
+  const foot = dialog()?.querySelector(".tk-foot-actions");
+  const sentence = "Someone moved this task in ClickUp. Open it there.";
+  // First in the footer, a line of its own: the sentence, then Mark done and
+  // Open in ClickUp on one row under it. Never inside Mark done's group,
+  // where it pushed Open in ClickUp to a third row.
+  const first = foot?.firstElementChild;
+  expect(first?.classList.contains("tk-foot-note")).toBe(true);
+  expect(first?.textContent).toBe(sentence);
+  expect(first?.getAttribute("role")).toBe("alert");
+  expect(foot?.querySelector(".tk-foot-done")?.textContent).toBe("Mark done");
+  expect(
+    [...(foot?.children ?? [])].map(c =>
+      c.classList.contains("tk-foot-note")
+        ? "note"
+        : c.classList.contains("tk-foot-done")
+          ? "done"
+          : (c.textContent ?? "").trim(),
+    ),
+  ).toEqual(["note", "done", "Open in ClickUp"]);
+  const { readFileSync } = await import("node:fs");
+  const css = readFileSync(
+    new URL("../src/components/tasks/tasks.css", import.meta.url),
+    "utf8",
+  );
+  // Its own full line, ahead of the buttons, and not taken back by the
+  // .tk-phase rules that come later in the sheet.
+  expect(css).toMatch(
+    /\.tk-foot-actions > \.tk-foot-note \{\s*flex: 1 1 100%;\s*order: -1;/,
+  );
+}, 15_000);
+
+test("on Video Pipeline a task takes a tick and a comment but no Mark done, said once (review round 2)", async () => {
+  seat.client = fakeClient("default", { detailList: "901816720767" });
+  await render(createElement(TaskFocusHost), "/dashboard?focus=86fxtk001");
+  const panel = dialog();
+  expect(button("Mark done", panel ?? document)).toBeUndefined();
+  const why =
+    "Mark done is not offered on Video Pipeline, where done means the video is live. Move it in ClickUp.";
+  expect(panel?.textContent?.split(why).length).toBe(2);
+  // The steps and the comment box stay.
+  expect(panel?.querySelectorAll('[role="checkbox"]').length).toBeGreaterThan(0);
+  expect(button("Comment", panel ?? document)).toBeDefined();
+  expect(button(/Open in ClickUp/, panel ?? document)).toBeDefined();
+});
 
 test("a task the seat may not open says why and offers only ClickUp", async () => {
   seat.client = fakeClient("default");
@@ -609,7 +733,7 @@ test("the shared stylesheets: teal text that reads on white, one Details chevron
   expect(focus).toContain('<summary className="no-marker">Details</summary>');
 });
 
-test("the CEO's landing page carries Your tasks, as every Today does (F13)", async () => {
+test("the CEO's landing page carries Your tasks high, as every Today does (F13, round 2)", async () => {
   const { readFileSync } = await import("node:fs");
   const today = readFileSync(
     new URL("../src/pages/ceo/TodayTab.tsx", import.meta.url),
@@ -618,5 +742,268 @@ test("the CEO's landing page carries Your tasks, as every Today does (F13)", asy
   expect(today).toContain(
     'import { YourTasks } from "@/components/tasks/YourTasks";',
   );
-  expect(today).toMatch(/<TeamTodayCard[^>]*\/>\s*\{\/\*[\s\S]*?\*\/\}\s*<YourTasks \/>/);
+  // Once, right under the KPI row and before the funnels, so on a phone it
+  // is the fourth block, not the tenth (under the team, three screens down).
+  expect(today.match(/<YourTasks \/>/g)).toHaveLength(1);
+  expect(today).toMatch(
+    /<KpiRow[^>]*\/>\s*\{\/\*[\s\S]*?\*\/\}\s*<YourTasks \/>/,
+  );
+  const at = (s: string) => today.indexOf(s);
+  expect(at("<YourTasks />")).toBeLessThan(at("<DeliveryFunnelCard"));
+  expect(at("<YourTasks />")).toBeLessThan(at("<ClientsCard"));
+  expect(at("<YourTasks />")).toBeLessThan(at("<TeamTodayCard"));
+});
+
+// --- One tab, two seats (review R2: the feed is the seat's own) -------------
+
+/**
+ * One client for the whole tab, as every cockpit keeps one: it answers for
+ * whoever is signed in when the call is made, as auth.uid() does. `hold()`
+ * makes the next reads wait until `release()`, so a first paint or a read
+ * still on its way at a sign-out can be seen.
+ */
+function tabClient(scenarios: Record<string, TasksScenario>) {
+  let who = Object.keys(scenarios)[0];
+  let holding = false;
+  let waiting: (() => void)[] = [];
+  const rpc = async (name: string, args: Record<string, unknown> = {}) => {
+    const scenario = scenarios[who];
+    calls.push({ name, args: { ...args, who } });
+    if (holding) await new Promise<void>(r => waiting.push(r));
+    if (name === "cockpit_my_tasks")
+      return { data: harness.myTasksFixture(scenario), error: null } as Answer;
+    if (name === "cockpit_task_alerts")
+      return { data: harness.alertsFixture(scenario), error: null } as Answer;
+    if (name === "cockpit_task_alert_rules_read")
+      return {
+        data: { canEditOthers: scenario === "not_linked_editor" },
+        error: null,
+      } as Answer;
+    throw new Error(`Unexpected RPC call: ${name}`);
+  };
+  return {
+    client: { rpc, functions: { invoke: async () => ({ data: null }) } },
+    as(next: string) {
+      who = next;
+    },
+    hold(on = true) {
+      holding = on;
+    },
+    release() {
+      const go = waiting;
+      waiting = [];
+      for (const r of go) r();
+    },
+  };
+}
+
+/** A seat signs out: every card and bell unmounts, the page stays loaded. */
+async function signOut() {
+  if (root) await act(async () => root?.unmount());
+  root = undefined;
+  document.body.replaceChildren();
+}
+
+const reads = () => calls.filter(c => c.name === "cockpit_my_tasks");
+const cardAndBell = () =>
+  createElement(
+    "div",
+    null,
+    createElement(YourTasks),
+    createElement(AlertsBell, { variant: "icon" }),
+  );
+
+test("the next seat on the same tab never sees the last seat's tasks or alerts", async () => {
+  const tab = tabClient({ ceo: "default", agent: "empty" });
+  seat.client = tab.client;
+  seat.seatId = "auth-ceo";
+  await render(cardAndBell());
+  expect(document.querySelectorAll(".tk-row")).toHaveLength(5);
+  expect(text()).toContain("Harbor Interiors - Client pause (Tech)");
+  expect(button("Alerts, 3 unread")).toBeDefined();
+  await signOut();
+  // Ten seconds later a call centre agent signs in on the same tab.
+  tab.as("agent");
+  seat.seatId = "auth-agent";
+  tab.hold();
+  await render(cardAndBell());
+  // Its first paint: nothing of the last seat's, and its own read at once.
+  expect(document.querySelectorAll(".tk-row")).toHaveLength(0);
+  expect(text()).not.toContain("Harbor Interiors");
+  expect(text()).toContain("Reading your tasks…");
+  expect(button("Alerts, 0 unread")).toBeDefined();
+  expect(reads().map(c => c.args.who)).toEqual(["ceo", "agent"]);
+  tab.release();
+  await settle();
+  expect(text()).toContain(
+    "Nothing open is assigned to you outside the client cards.",
+  );
+  expect(text()).not.toContain("Client pause (Tech)");
+  await press(button("Alerts, 0 unread"));
+  await settle();
+  expect(dialog()?.textContent).toContain("No alerts in the last 14 days.");
+});
+
+test("a read still out when the seat signed out never lands on the next seat", async () => {
+  // A seat with no id falls back to one store per client: the generation
+  // rule alone must drop the late answer and let the new read start.
+  const tab = tabClient({ ceo: "default", agent: "empty" });
+  seat.client = tab.client;
+  seat.seatId = null;
+  tab.hold();
+  await render(cardAndBell());
+  expect(text()).toContain("Reading your tasks…");
+  await signOut();
+  tab.as("agent");
+  tab.hold(false);
+  await render(cardAndBell());
+  // The new seat's read went at once, though the old one is still out.
+  expect(reads().map(c => c.args.who)).toEqual(["ceo", "agent"]);
+  expect(text()).toContain(
+    "Nothing open is assigned to you outside the client cards.",
+  );
+  // The old answer arrives late: dropped.
+  tab.release();
+  await settle();
+  expect(document.querySelectorAll(".tk-row")).toHaveLength(0);
+  expect(text()).not.toContain("Harbor Interiors");
+  expect(button("Alerts, 0 unread")).toBeDefined();
+});
+
+test("the same seat signing in again reads afresh, never the copy from before", async () => {
+  const tab = tabClient({ csm: "default" });
+  seat.client = tab.client;
+  seat.seatId = "auth-csm";
+  await render(cardAndBell());
+  expect(reads()).toHaveLength(1);
+  await signOut();
+  await render(cardAndBell());
+  // Within 30 seconds, but a new mount after a sign-out reads again.
+  expect(reads()).toHaveLength(2);
+  expect(document.querySelectorAll(".tk-row")).toHaveLength(5);
+});
+
+test("whether a seat may link seats is asked for each seat, not kept for the tab", async () => {
+  const tab = tabClient({ editor: "not_linked_editor", sales: "not_linked" });
+  seat.client = tab.client;
+  seat.seatId = "auth-editor";
+  await render(createElement(YourTasks));
+  expect(button("Link it in Requests settings")).toBeDefined();
+  await signOut();
+  tab.as("sales");
+  seat.seatId = "auth-sales";
+  await render(createElement(YourTasks));
+  expect(text()).toContain("Your seat is not linked to a ClickUp user");
+  expect(button("Link it in Requests settings")).toBeUndefined();
+  expect(
+    calls
+      .filter(c => c.name === "cockpit_task_alert_rules_read")
+      .map(c => c.args.who),
+  ).toEqual(["editor", "sales"]);
+});
+
+// --- The bell's rows (review R2) ---------------------------------------------
+
+test("a request alert names its client once; unread rows read heavier and say Unread", async () => {
+  seat.client = fakeClient("default");
+  await render(createElement(AlertsBell, { variant: "row" }));
+  await press(button("Alerts, 3 unread"));
+  await settle();
+  const rows = [...(dialog()?.querySelectorAll(".tk-alert") ?? [])];
+  const done = rows.find(r =>
+    (r.textContent ?? "").includes("New script: Cedar Fit-Out"),
+  );
+  expect(done?.querySelector(".tk-alert-body")?.textContent).toBe(
+    "Done in ClickUp.",
+  );
+  // Another alert: the body, then the client.
+  const mention = rows.find(r =>
+    (r.textContent ?? "").includes("The CSM mentioned you"),
+  );
+  expect(mention?.querySelector(".tk-alert-body")?.textContent).toBe(
+    "The CSM mentioned you · Dune Build Co",
+  );
+  // Unread: a heavier title and the screen reader's word, not a dot alone.
+  expect(dialog()?.querySelectorAll(".tk-alert.tk-alert-unread")).toHaveLength(
+    3,
+  );
+  for (const r of rows.filter(x => x.classList.contains("tk-alert-unread")))
+    expect(r.querySelector(".tk-sr")?.textContent).toBe("Unread");
+});
+
+test("a launch notice that is unread says so to a screen reader too", async () => {
+  seat.client = fakeClient("empty");
+  const extra = {
+    label: "Client alerts",
+    ready: true,
+    note: null,
+    items: [
+      {
+        id: "n1",
+        version: "v1",
+        title: "Relaunch check due",
+        body: "Harbor Interiors restarts tomorrow",
+        href: "/clients",
+        external: false,
+        read: false,
+      },
+    ],
+    markRead: async () => {},
+  };
+  await render(createElement(AlertsBell, { variant: "row", extra }));
+  await press(button("Alerts, 1 unread"));
+  await settle();
+  const notice = dialog()?.querySelector("a.tk-alert");
+  expect(notice?.classList.contains("tk-alert-unread")).toBe(true);
+  expect(notice?.querySelector(".tk-sr")?.textContent).toBe("Unread");
+});
+
+test("the focus view says a status in sentence case, as the request panel does", async () => {
+  seat.client = fakeClient("default", {
+    subtasks: [
+      {
+        id: "86fxsub01",
+        name: "Brief the editor",
+        status: "review required",
+        statusType: "custom",
+      },
+    ],
+  });
+  await render(createElement(TaskFocusHost), "/dashboard?focus=86fxtk001");
+  const panel = dialog();
+  expect(panel?.querySelector(".tk-chip")?.textContent).toBe("In progress");
+  expect(panel?.querySelector(".tk-list-inset .tk-row-due")?.textContent).toBe(
+    "Review required",
+  );
+});
+
+test("the unread dot reads on white, and the sales menu bar's bell matches its controls", async () => {
+  const { readFileSync } = await import("node:fs");
+  const css = readFileSync(
+    new URL("../src/components/tasks/tasks.css", import.meta.url),
+    "utf8",
+  );
+  // The teal ink (about 5:1 on white), never the brand teal (1.95:1).
+  expect(css).toMatch(/\.tk-dot \{[^}]*background: var\(--tk-ink\);/);
+  expect(css).not.toMatch(/\.tk-dot \{[^}]*background: var\(--primary\);/);
+  expect(css).toMatch(
+    /\.tk-alert-unread \.tk-alert-title \{\s*font-weight: 600;/,
+  );
+  // A 28px bell with a 16px icon inside .tk-bell-compact, the bar's size.
+  expect(css).toMatch(
+    /\.tk-bell-compact \.tk-bell-icon \{\s*width: 28px;\s*height: 28px;/,
+  );
+  expect(css).toMatch(
+    /\.tk-bell-compact \.tk-bell-icon svg \{\s*width: 16px;\s*height: 16px;/,
+  );
+  const bar = readFileSync(
+    new URL(
+      "../../sales-cockpit/src/components/MacOSMenuBar.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  expect(bar).toMatch(
+    /<span className="tk-bell-compact">\s*<AlertsBell variant="icon" \/>\s*<\/span>/,
+  );
 });

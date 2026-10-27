@@ -11,12 +11,16 @@
  *   /harness.html?path=%2Frequests%2Fsettings
  *
  * `requests=` picks the answer: default, empty (no requests yet), error,
- * missing (the functions are not on the database yet), loading. `seat=`
+ * missing (the functions are not on the database yet), loading, partial (a
+ * task refused while the other landed), old (a routing request whose old
+ * form ticket was closed in ClickUp while it waited). `seat=`
  * picks who is signed in: ceo (an editor, the default), csm, sales (not
  * linked to ClickUp). `writer=` sets the writer's mode: apply (default),
- * apply_limited, dry_run, unknown. `specs=1` adds the stored fields, the
- * field catalog and the templates to the editor's read (not in the
- * contract's TypeView yet). `delay=` sets the wait in ms (350 by default).
+ * apply_limited, dry_run, unknown. An editor's read carries the stored
+ * fields (TypeView.fieldSpecs), the field catalog and the templates, as
+ * cockpit_request_types_read sends them (contract 2.5, I1); `specs=0` leaves
+ * them out, the shape of a database from before I1, where the type editor
+ * keeps its questions locked. `delay=` sets the wait in ms (350 by default).
  *
  * The types are twelve of the 31 in docs/requests/request-types.json,
  * copied as they are (HARNESS_SEED at the end of this file); people,
@@ -39,6 +43,7 @@ import {
   type RequestState,
   type RequestView,
   type SopStepsState,
+  TARGET_LISTS,
   type TargetSpec,
   TEAM_LABEL,
   TEAM_ORDER,
@@ -267,13 +272,18 @@ function fieldOptions(f: FieldSpec, catalog: SeedCatalogField[]) {
   );
 }
 
-/** cockpit_request_type_view (2.5), for the seed's shape. */
+/**
+ * cockpit_request_type_view (2.5), for the seed's shape. An editor's view
+ * carries the stored fields as fieldSpecs, as the server always sends them
+ * (a choice kept in a ClickUp field keeps no options there: its choices are
+ * in `fields`, from the catalog); `specs` false leaves them out.
+ */
 export function typeViewOf(
   t: SeedType & { version?: number; updated_by?: string; updated_at?: string },
   catalog: SeedCatalogField[],
   editor: boolean,
   today: string,
-  specs = false,
+  specs = true,
 ): TypeView {
   const view: TypeView = {
     key: t.key,
@@ -338,7 +348,16 @@ const catalogView = (c: SeedCatalogField[]): CatalogField[] =>
 
 // --- The store -------------------------------------------------------------
 
-type StoredPart = PartRow & { ownerId: number | null; team: Team };
+type StoredPart = PartRow & {
+  ownerId: number | null;
+  team: Team;
+  /**
+   * The create went out and its answer was lost: a create on record, no task
+   * id (review round 3). Such a part is never cancelled, and a hand back
+   * keeps it unknown (cockpit_clickup_writeback_release).
+   */
+  createSent?: boolean;
+};
 type StoredRequest = {
   id: string;
   typeKey: string;
@@ -359,6 +378,11 @@ type StoredRequest = {
   importedTaskId: string | null;
   replacesTaskId: string | null;
   routedTo: string | null;
+  /**
+   * An old form ticket moved, closed or deleted in ClickUp since it came in
+   * (cockpit_request_import_handled, review round 3).
+   */
+  importHandled?: boolean;
   parts: StoredPart[];
   history: { at: string; what: string; byLabel: string }[];
 };
@@ -370,7 +394,10 @@ export type FakeOptions = {
   seed?: Seed;
   today?: string;
   now?: () => number;
-  /** Add the stored fields, the catalog and templates to the editor read. */
+  /**
+   * The stored fields, the catalog and the templates in an editor's read, as
+   * the contract has them (default true); false is a database from before I1.
+   */
   specs?: boolean;
   /** Start with no requests. */
   empty?: boolean;
@@ -424,6 +451,8 @@ function fakeUuid(): string {
 /** A store of requests and types answering the contract's functions. */
 export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
   const seed = opts.seed ?? HARNESS_SEED;
+  // An editor's read in the contract's shape unless asked otherwise (I1).
+  const specs = opts.specs ?? true;
   const now = opts.now ?? (() => Date.now());
   const today = () => opts.today ?? kuwaitToday(now());
   const iso = (minutesAgo = 0) =>
@@ -582,12 +611,12 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
         if (takes(clientTaskId))
           return { allowed: true, held: false, note: null };
         return hold(
-          "Saved. Requests are being tested on the internal test card only, so this goes to ClickUp once they open to everyone.",
+          "Requests are being tested on the internal test card only, where they go to ClickUp at once. Anything else you send is saved and goes to ClickUp once they open to everyone.",
         );
       case "dry_run":
         return lead
           ? hold(
-              "Saved. Requests are not open yet, so this goes to ClickUp once they are.",
+              "Requests are not open yet. What you send is saved and goes to ClickUp once they are.",
             )
           : refuse(
               "Requests are not switched on yet. Use the ClickUp request form until then.",
@@ -595,7 +624,7 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
       default:
         return lead
           ? hold(
-              "Saved. The requests writer has not reported in the last 15 minutes, so this goes to ClickUp once it runs with requests open. Check it on the Machine tab.",
+              "The requests writer has not reported in the last 15 minutes. What you send is saved and goes to ClickUp once it runs with requests open. Check it on the Machine tab.",
             )
           : refuse(
               "Requests are not switched on yet. Use the ClickUp request form until then.",
@@ -661,7 +690,7 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
       return {
         ...sysman,
         how: "fallback",
-        note: "No media buyer of record is set, so the systems manager gets it. Set one in Requests settings.",
+        note: "No media buyer of record is named on this request type, so the systems manager gets it. Set one in Requests settings.",
       };
     if (g.owner_rule === "systems_manager")
       return { ...sysman, how: "rule", note: null };
@@ -729,12 +758,33 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
     return t.fields.find(f => f.key === g.when?.field_key)?.label ?? null;
   }
 
+  /**
+   * An owner note as the reading seat sees it (cockpit_request_owner_note,
+   * review round 2): the "Set one in Requests settings" line is an editor's;
+   * anyone else reads that no media buyer is named yet.
+   */
+  function noteFor(note: string | null): string | null {
+    return note?.includes("Set one in Requests settings.") && !fake.seat.editor
+      ? "No media buyer is named for this request type yet."
+      : note;
+  }
+
+  /**
+   * cockpit_request_cancellable: never once a part is being sent, delivered
+   * or in doubt, holds a ClickUp task (a retry after the task was made too),
+   * or may hold one (a create whose answer was lost, review round 3).
+   */
   function cancellable(r: StoredRequest): boolean {
     const s = fake.seat;
     return (
       (r.requesterId === s.memberId || s.editor || s.admin || s.ceo) &&
       !["cancelled", "imported", "routed"].includes(r.state) &&
-      !r.parts.some(p => ["sending", "delivered", "unknown"].includes(p.state))
+      !r.parts.some(
+        p =>
+          ["sending", "delivered", "unknown"].includes(p.state) ||
+          Boolean(p.url) ||
+          p.createSent === true,
+      )
     );
   }
 
@@ -759,13 +809,18 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
       canCancel: cancellable(r),
       canRoute:
         r.state === "imported" &&
+        !r.importHandled &&
         (allOf(s) || s.teams.includes(r.team)) &&
         gate(r.clientTaskId).allowed,
+      importHandled: r.importHandled === true,
       held: heldOf(r),
       heldNote: heldOf(r)
         ? "Saved, not sent yet. It goes to ClickUp once requests open."
         : null,
-      parts: r.parts.map(({ ownerId: _o, team: _t, ...p }) => ({ ...p })),
+      parts: r.parts.map(({ ownerId: _o, team: _t, createSent: _c, ...p }) => ({
+        ...p,
+        owner: { ...p.owner, note: noteFor(p.owner.note) },
+      })),
     };
   }
 
@@ -790,7 +845,9 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
 
   function inView(r: StoredRequest, view: RequestView): boolean {
     const s = fake.seat;
-    const open = !r.done && !["cancelled", "routed"].includes(r.state);
+    // An old form ticket handled in ClickUp waits for nobody (review round 3).
+    const open =
+      !r.done && !["cancelled", "routed"].includes(r.state) && !r.importHandled;
     if (view === "mine") return r.requesterId === s.memberId;
     if (view === "assigned")
       return (
@@ -1005,8 +1062,9 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
         if (p.state === "queued" || p.state === "sending") {
           if (!takes(r.clientTaskId)) {
             // The writer hands the row back to the queue with its note
-            // (run.ts hold): nothing goes to ClickUp, nothing is a try.
-            p.state = "queued";
+            // (run.ts hold): nothing goes to ClickUp, nothing is a try. A
+            // create whose answer was lost stays unknown (review round 3).
+            p.state = p.createSent && !p.url ? "unknown" : "queued";
             p.error = waitingNote();
             continue;
           }
@@ -1039,7 +1097,7 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
           TEAM_ORDER.indexOf(a.team) - TEAM_ORDER.indexOf(b.team) ||
           a.type_index - b.type_index,
       )
-      .map(t => typeViewOf(t, seed.field_catalog, editor, today(), opts.specs));
+      .map(t => typeViewOf(t, seed.field_catalog, editor, today(), specs));
     const data: Record<string, unknown> = {
       asOf: iso(),
       seat: {
@@ -1057,7 +1115,7 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
       },
       types: list,
     };
-    if (editor && opts.specs) {
+    if (editor && specs) {
       data.catalog = catalogView(seed.field_catalog);
       const seen = new Map<string, string>();
       for (const t of types)
@@ -1133,8 +1191,14 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
       old = requests.find(r => r.importedTaskId === replaces);
       if (!old)
         return fail("That old ticket is not in the cockpit. Reload the queue.");
-      if (old.state !== "imported")
+      // Routed already, here or in ClickUp (moved, closed or deleted there).
+      if (old.state !== "imported" || old.importHandled)
         return fail("That old ticket was already routed.", "55000");
+      if (!takes(old.clientTaskId) && takes(clientTaskId))
+        return fail(
+          "This old ticket has no client card, so it cannot go out on the internal test card. Route it for its own client, or with none; it waits until requests open to everyone.",
+          "55000",
+        );
     }
     if (LIFECYCLE.includes(t.key) && clientTaskId) {
       const dup = requests.find(
@@ -1142,18 +1206,30 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
           r.typeKey === t.key &&
           r.clientTaskId === clientTaskId &&
           !["cancelled", "failed", "routed"].includes(r.state) &&
-          !r.done,
+          !r.done &&
+          !r.importHandled,
       );
-      if (dup)
+      if (dup) {
+        const opens =
+          dup.requesterId === fake.seat.memberId ||
+          allOf(fake.seat) ||
+          fake.seat.teams.includes(dup.team) ||
+          dup.parts.some(p => fake.seat.teams.includes(p.team));
+        const named = `An open ${t.label.toLowerCase()} request for ${client?.name ?? "this client"} already exists`;
         return ok({
           id: null,
           state: "duplicate",
           reused: false,
-          duplicateOf: dup.id,
-          note: `An open ${t.label.toLowerCase()} request for ${client?.name ?? "this client"} already exists. Open it instead.`,
+          duplicateOf: opens ? dup.id : null,
+          note: opens
+            ? `${named}. Open it instead.`
+            : dup.source === "import"
+              ? `${named}. It came in through the old ClickUp form and waits in the ${TEAM_LABEL[dup.team]} queue.`
+              : `${named}, raised by ${dup.requesterLabel}. Ask them about it.`,
           held: false,
           parts: [],
         });
+      }
     }
     const r = addRequest({
       id: String(a.p_request_id),
@@ -1259,9 +1335,12 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
         "40001",
       );
     let patch = (a.p_patch ?? {}) as Record<string, unknown>;
+    // Going back a version never turns Request Type on (review round 2).
+    let keptOff = false;
     if (restoreFrom !== undefined) {
       const v = versions[t.key].find(x => x.version === restoreFrom);
       if (!v) return fail("That version does not exist. Reload the versions.");
+      keptOff = v.row.set_request_type && !t.set_request_type;
       patch = {
         label: v.row.label,
         targets: v.row.targets,
@@ -1270,7 +1349,7 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
         sop_url: v.row.sop_url,
         due_days: v.row.due_days,
         priority: v.row.priority,
-        set_request_type: v.row.set_request_type,
+        set_request_type: v.row.set_request_type && t.set_request_type,
         enabled: v.row.enabled,
       };
     } else {
@@ -1298,7 +1377,34 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
       t.label = label;
     }
     if (Array.isArray(patch.targets)) {
-      for (const g of patch.targets as TargetSpec[])
+      // The guard's part rules (cockpit_request_type_problem): 1 to 3
+      // parts, each a unique short name on one of the five boards, with a
+      // name ending under 40 characters.
+      const parts = patch.targets as TargetSpec[];
+      if (parts.length < 1 || parts.length > 3)
+        return fail("Pick between 1 and 3 parts.");
+      const seen: string[] = [];
+      for (const g of parts) {
+        if (!/^[a-z_]{2,20}$/.test(String(g.part)))
+          return fail(
+            "Each part needs a short name of 2 to 20 lower case letters.",
+          );
+        if (seen.includes(g.part))
+          return fail(`Two parts share the name ${g.part}.`);
+        seen.push(g.part);
+        const board = TARGET_LISTS.find(l => l.listId === g.list_id);
+        if (!board)
+          return fail(`The ${g.part} part needs one of the five team boards.`);
+        if (board.team !== g.team)
+          return fail(
+            `The ${board.name} part has the wrong team for its board.`,
+          );
+        if (typeof g.name_suffix !== "string" || g.name_suffix.length > 40)
+          return fail(
+            `The ${board.name} part's name ending must be text under 40 characters.`,
+          );
+      }
+      for (const g of parts)
         if (
           g.owner_rule === "person" &&
           !HARNESS_PEOPLE.some(p => p.clickupUserId === g.owner_clickup_id)
@@ -1338,10 +1444,22 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
       savedAt: t.updated_at,
       savedByLabel: "the CEO",
       note:
-        restoreFrom !== undefined ? `Back to version ${restoreFrom}` : "Saved",
+        restoreFrom !== undefined
+          ? `Back to version ${restoreFrom}${keptOff ? ". Request Type stays off." : ""}`
+          : "Saved",
       row: JSON.parse(JSON.stringify(t)),
     });
-    return ok(typeViewOf(t, seed.field_catalog, true, today(), opts.specs));
+    const view = typeViewOf(t, seed.field_catalog, true, today(), specs);
+    return ok(
+      restoreFrom === undefined
+        ? view
+        : {
+            ...view,
+            restoreNote: keptOff
+              ? `Request Type stays off. Version ${restoreFrom} had it on, but it is off now; turn it on with its switch once the rehearsal ticket shows ClickUp keeps the task where it is.`
+              : null,
+          },
+    );
   }
 
   function seatRow(memberId: string) {
@@ -1441,7 +1559,11 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
         const parts = plan(t, clientTaskId, (args.p_answers ?? {}) as Args).map(
           ({ team: _t, owner, ...p }) => ({
             ...p,
-            owner: { label: owner.label, how: owner.how, note: owner.note },
+            owner: {
+              label: owner.label,
+              how: owner.how,
+              note: noteFor(owner.note),
+            },
           }),
         );
         const g = gate(clientTaskId);
@@ -1486,6 +1608,24 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
           what: `Cancelled: ${reason}`,
           byLabel: s.label,
         });
+        // The old form ticket it routed goes back to its queue (review round 2).
+        const routed = r.replacesTaskId
+          ? requests.find(
+              x =>
+                x.importedTaskId === r.replacesTaskId &&
+                x.state === "routed" &&
+                x.routedTo === r.id,
+            )
+          : undefined;
+        if (routed) {
+          routed.state = "imported";
+          routed.routedTo = null;
+          routed.history.push({
+            at: iso(),
+            what: "Back in the queue: the request that routed it was cancelled",
+            byLabel: s.label,
+          });
+        }
         return ok(rowOf(r));
       }
       case "cockpit_requests_read": {
@@ -1500,10 +1640,15 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
             "42501",
           );
         const limit = Math.max(1, Math.min(200, Number(args.p_limit ?? 50)));
+        // p_since: only the requests made at or after it (contract F3).
+        const since = args.p_since ? Date.parse(String(args.p_since)) : null;
         const open = (r: StoredRequest) =>
-          !r.done && !["cancelled", "routed"].includes(r.state);
+          !r.done &&
+          !["cancelled", "routed"].includes(r.state) &&
+          !r.importHandled;
         const rows = requests
           .filter(r => inView(r, view))
+          .filter(r => since === null || Date.parse(r.createdAt) >= since)
           .sort(
             (x, y) =>
               Number(open(y)) - Number(open(x)) ||
@@ -1674,9 +1819,37 @@ export function installRequestsHarness(client: SupabaseClient): void {
       ["apply", "apply_limited", "dry_run", "unknown"].includes(writer)
         ? writer
         : "apply",
-    specs: params.get("specs") === "1",
+    specs: params.get("specs") !== "0",
     empty: pick === "empty",
   });
+  // ?requests=partial: the pause's Media task refused for good at create
+  // while its Tech task landed, so the panel names the missing task.
+  if (pick === "partial") {
+    const pause = fake.requests.find(r => r.typeKey === "client_pause");
+    const media = pause?.parts.find(p => p.part === "media");
+    if (pause && media) {
+      media.state = "failed";
+      media.error =
+        "ClickUp refused the task: the template is not in ClickUp any more.";
+      media.url = null;
+      media.status = null;
+      media.statusType = null;
+      media.verifyState = null;
+      pause.state = "partial";
+    }
+  }
+  // ?requests=old: the request that did not reach ClickUp routed an old form
+  // ticket, and the writer's old-ticket check made nothing because the team
+  // closed that ticket in ClickUp while it waited (review round 2).
+  if (pick === "old") {
+    const card = fake.requests.find(r => r.typeKey === "card_missing");
+    if (card) {
+      card.replacesTaskId = "z8xharn01";
+      card.parts[0].state = "skipped";
+      card.parts[0].error =
+        "The old ticket was already moved or closed in ClickUp, so no new task was made. Check it there.";
+    }
+  }
   const c = client as unknown as {
     rpc: (name: string, args?: Args) => Promise<Answer>;
   };

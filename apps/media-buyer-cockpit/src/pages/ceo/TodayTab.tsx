@@ -182,6 +182,12 @@ export function TodayTab({ sections, now, day, goTab }: CeoTabProps) {
           goTab={goTab}
         />
 
+        {/* Your own ClickUp tasks (PLAN.md D19): /ceo is where the CEO
+            lands, so the card every Today carries sits high, under the
+            company's numbers and before the funnels, not three screens
+            down on a phone. Five rows at most, so it stays quiet. */}
+        <YourTasks />
+
         <div className="grid items-start gap-4 lg:gap-6 @4xl:grid-cols-2">
           <DeliveryFunnelCard
             delivery={sections.delivery}
@@ -207,10 +213,6 @@ export function TodayTab({ sections, now, day, goTab }: CeoTabProps) {
           <div className="grid min-w-0 gap-4 lg:gap-6">
             <LiveFeedCard section={sections.team} now={now} goTab={goTab} />
             <TeamTodayCard section={sections.team} now={now} today={today} />
-            {/* Your own ClickUp tasks (PLAN.md D19): /ceo is where the CEO
-                lands, so the card every Today carries sits here too, quietly
-                under the team. */}
-            <YourTasks />
           </div>
         </div>
 

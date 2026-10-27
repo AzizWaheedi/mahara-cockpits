@@ -101,6 +101,36 @@ const userIds = (list: unknown): number[] =>
   (Array.isArray(list) ? list : []).map(u => id(isObj(u) ? u.id : u)).filter((n): n is number => n !== null);
 const str = (v: unknown): string | null => (v === null || v === undefined || v === "" ? null : String(v));
 
+/**
+ * The first `n` UTF-16 units of a text, never ending on half of an emoji: a lone surrogate becomes a "\ud83d"
+ * escape in the JSON body, which Postgres refuses, and one such row would fail the whole call it rides in.
+ */
+export function cut(text: string, n: number): string {
+  if (text.length <= n) return text;
+  const last = text.charCodeAt(n - 1);
+  return text.slice(0, last >= 0xd800 && last <= 0xdbff ? n - 1 : n);
+}
+
+/** A comment's text as the database takes it (cockpit_task_mirror_comments, cockpit_task_detail_cache). */
+export const COMMENT_MAX = 1000;
+/** The marker the cockpit ends its own comments with: "Cockpit ref T-…" from a focus view, "Cockpit ref R-…-card" from a request. */
+const TRAILING_REF = /\s*(Cockpit ref [A-Za-z0-9_-]{1,60})\s*$/;
+
+/**
+ * A comment cut to 1,000 characters, keeping its trailing Cockpit ref (review R2). The database names a
+ * cockpit comment's writer from that marker (cockpit_task_comment_author), and a focus view takes up to
+ * 2,000 characters, so a plain cut dropped the marker of any long comment: it then read as the CEO's own,
+ * with no comment alert to the assignee. The words are cut to make room; the marker stays last.
+ */
+export function commentText(raw: unknown): string {
+  const text = String(raw ?? "");
+  if (text.length <= COMMENT_MAX) return text;
+  const ref = TRAILING_REF.exec(text);
+  if (!ref) return cut(text, COMMENT_MAX);
+  const tail = `\n\n${ref[1]}`;
+  return `${cut(text.slice(0, ref.index), COMMENT_MAX - tail.length).trimEnd()}${tail}`;
+}
+
 /** Checklist items with their nested children, in order. */
 export function flatItems(items: unknown): Row[] {
   return (Array.isArray(items) ? items : []).flatMap((i: Row) => (isObj(i) ? [i, ...flatItems(i.children)] : []));
@@ -129,7 +159,7 @@ export function mirrorTask(t: unknown): Row | null {
     folderId: str(t.folder?.id),
     spaceId: str(t.space?.id),
     parentId: typeof t.parent === "string" && TASK_ID.test(t.parent) ? t.parent : null,
-    name: String(t.name).slice(0, 500),
+    name: cut(String(t.name), 500),
     status: str(t.status?.status),
     statusType: str(t.status?.type),
     priority: str(t.priority?.priority),
@@ -159,7 +189,7 @@ export function commentRow(c: unknown, parentId: string | null = null): Row | nu
     id: String(c.id),
     authorId: id(c.user?.id),
     atMs: ms(c.date),
-    text: String(c.comment_text ?? "").slice(0, 1000),
+    text: commentText(c.comment_text),
     tagIds: parts.filter((p: Row) => isObj(p) && p.type === "tag").map((p: Row) => id(p.user?.id)).filter((n: number | null) => n !== null),
     assigneeId: id(c.assignee?.id),
     parentId,
@@ -170,7 +200,7 @@ export function commentRow(c: unknown, parentId: string | null = null): Row | nu
 export function detailCache(t: Row, comments: Row[]): Row {
   return {
     dueHasTime: typeof t.due_date_time === "boolean" ? t.due_date_time : null,
-    description: String(t.markdown_description ?? t.text_content ?? t.description ?? "").slice(0, 2000),
+    description: cut(String(t.markdown_description ?? t.text_content ?? t.description ?? ""), 2000),
     checklists: (Array.isArray(t.checklists) ? t.checklists : []).filter(isObj).map((c: Row) => ({
       id: String(c.id),
       name: String(c.name ?? ""),
@@ -211,7 +241,7 @@ export function importTask(t: unknown): Row | null {
     url: row.url,
     optionId,
     tags: row.tags,
-    description: String(t.text_content ?? t.description ?? "").slice(0, 4000),
+    description: cut(String(t.text_content ?? t.description ?? ""), 4000),
     dateCreated: row.dateCreatedMs,
     priority: row.priority,
     dueAt: row.dueAtMs,

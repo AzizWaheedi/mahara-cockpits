@@ -16,6 +16,11 @@ export interface TaskSeat {
   client: SupabaseClient | null;
   ready: boolean;
   signedIn: boolean;
+  /**
+   * The signed-in user's id, or null. The task feed is kept per seat, so
+   * the next seat to sign in on the same tab never sees the last one's tasks.
+   */
+  seatId: string | null;
   cockpit: TaskCockpit;
   /** A portal page's address from this cockpit. */
   portalHref(path: string): string;
@@ -24,12 +29,14 @@ export interface TaskSeat {
 }
 
 export function useTaskSeat(): TaskSeat {
-  const { client, ready, isAuthenticated } = useCockpitAuth();
+  const { client, ready, isAuthenticated, session } = useCockpitAuth();
+  const seatId = session?.user?.id ?? null;
   return useMemo(
     () => ({
       client,
       ready,
       signedIn: isAuthenticated,
+      seatId,
       cockpit: "csm",
       portalHref: (path: string) => `${portalUrl()}${path}`,
       inPortal: false,
@@ -38,6 +45,6 @@ export function useTaskSeat(): TaskSeat {
         error: (message: string) => toast.error(message),
       },
     }),
-    [client, ready, isAuthenticated],
+    [client, ready, isAuthenticated, seatId],
   );
 }

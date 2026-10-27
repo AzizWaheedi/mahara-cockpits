@@ -1,4 +1,5 @@
 import {describe, expect, test} from 'bun:test';
+import {cardCommentText} from '../clickup-writeback/requests.ts';
 import {CLIENTS_LIST, DOS_DONTS_FIELD, NOTES_MARK} from '../clickup-writeback/rules.ts';
 import {
   type Admin, type Clock, DIGEST_LIMIT, digestPrompt, gate, handle, isCurrent, kindOf, liveSources, mergeRules, nearDuplicate,
@@ -124,6 +125,21 @@ describe('the Convex rules, ported', () => {
     expect(kindOf('A long enough comment written by the automation bot user', 'ClickBot')).toBe('skip');
     expect(kindOf('**CLOSER: Omar, phone 555, the full sales handoff with personal details', 'omar')).toBe('skip');
     expect(kindOf('📊 Client Research Report for Acme with all the background', 'sara')).toBe('skip');
+  });
+
+  test('the cockpit\'s own request link comment on a card is never digested, nor any comment with a Cockpit ref', () => {
+    // As the requests writer posts it on the client card, from the API user's (the CEO's) account.
+    const link = cardCommentText(
+      {requesterLabel: 'the CSM', listName: 'Call Center', typeLabel: 'Low schedule rate', ref: 'R-1a2b3c4d5e-call_center'},
+      'https://app.clickup.com/t/86new0001',
+    );
+    expect(link).toStartWith('Cockpit · The CSM asked Call Center: Low schedule rate');
+    expect(kindOf(link, 'Abdulaziz Waheedi')).toBe('skip');
+    // A focus view comment and the CSM cockpit's older marker.
+    expect(kindOf('The CSM wrote in the cockpit: the client wants the villas campaign paused.\n\nCockpit ref T-9f8e7d6c5b', 'Abdulaziz Waheedi')).toBe('skip');
+    expect(kindOf('The client asked to move the shoot to Sunday morning instead.\n\nCockpit ref 67f0089f7e-l', 'sara')).toBe('skip');
+    // A person who only mentions the cockpit is still read.
+    expect(kindOf('Asked in the cockpit for the new script; the client wants it by Thursday.', 'sara')).toBe('note');
   });
 
   test('a current client has a Client Status that is not stopped and is not a test account', () => {

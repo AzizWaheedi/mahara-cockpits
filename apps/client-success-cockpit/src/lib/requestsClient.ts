@@ -174,15 +174,21 @@ export const cancelRequest = (
     p_reason: reason,
   });
 
-/** One view of requests: mine, assigned, team or all. */
+/**
+ * One view of requests: mine, assigned, team or all. `since` (an ISO time)
+ * reads only the requests made at or after it, so a card about today reads
+ * today's rows on the server (contract F3); the views' counts stay whole.
+ */
 export const readRequests = (
   client: SupabaseClient,
   view: RequestView,
   limit = 50,
+  since: string | null = null,
 ) =>
   callRequests<RequestsRead>(client, "cockpit_requests_read", {
     p_view: view,
     p_limit: Math.min(200, Math.max(1, Math.round(limit))),
+    ...(since ? { p_since: since } : {}),
   });
 
 /** One request with its answers and history. */

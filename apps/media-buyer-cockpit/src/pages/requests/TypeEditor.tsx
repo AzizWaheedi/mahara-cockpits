@@ -64,7 +64,67 @@ const RT_LINE =
 const SAVED = "Saved. The next request uses it.";
 const FIELDS_LOCKED =
   "Questions can be reworded, reordered or added here once the database sends each question's ClickUp link with this read. Until then they show as they are.";
-const LIMIT = { label: 80, step: 300, steps: 40, url: 500, help: 140 };
+const LIMIT = {
+  label: 80,
+  step: 300,
+  steps: 40,
+  url: 500,
+  help: 140,
+  tasks: 3,
+  suffix: 40,
+};
+
+/** A new task's name ending and owner, by its board (the seed's habits). */
+const TASK_DEFAULTS: Record<
+  TargetSpec["team"],
+  { suffix: string; rule: TargetSpec["owner_rule"] }
+> = {
+  client_success: { suffix: " (Client Success)", rule: "csm_of_card" },
+  tech: { suffix: " (Tech)", rule: "systems_manager" },
+  ads: { suffix: " (Ads)", rule: "media_buyer_of_record" },
+  creative: { suffix: " (Media)", rule: "creative_strategist" },
+  call_center: { suffix: " (Call Center)", rule: "csm_of_card" },
+  all_tasks: { suffix: "", rule: "systems_manager" },
+};
+
+/**
+ * A short task name the guard accepts (2 to 20 lower case letters and
+ * underscores, unique in the type): the base, then "_two", "_three" when
+ * that is taken.
+ */
+export function partName(base: string, taken: string[]): string {
+  for (const name of [base, `${base}_two`, `${base}_three`])
+    if (!taken.includes(name)) return name;
+  return `${base.slice(0, 13)}_other`;
+}
+
+/**
+ * A task to add to a type (6.4, "Add a task"): on the first board none of
+ * its tasks uses yet, owned by that board's usual rule, always running. Its
+ * short name is a placeholder while the editor is open, so its row keeps
+ * its place when its board changes; the save names it after its board
+ * (namedTargets).
+ */
+export function newTarget(targets: TargetSpec[]): TargetSpec {
+  const used = targets.map(t => t.team);
+  const list =
+    TARGET_LISTS.find(l => !used.includes(l.team)) ?? TARGET_LISTS[0];
+  const defaults = TASK_DEFAULTS[list.team];
+  return {
+    part: partName(
+      "added",
+      targets.map(t => t.part),
+    ),
+    name_suffix: defaults.suffix,
+    list_id: list.listId,
+    team: list.team,
+    template_id: null,
+    template_name: null,
+    owner_rule: defaults.rule,
+    owner_clickup_id: null,
+    when: null,
+  };
+}
 
 const KIND_WORDS: Record<FieldKind, string> = {
   client: "Client card",
@@ -99,20 +159,43 @@ export function sopChip(part: TypePartView): {
 
 /**
  * A part's "runs when" in words, from the stored targets (editors read
- * them): "when Platform is Meta or TikTok". Null for a part that always
- * runs. Two parts that differ only by this or by their template must not
- * read the same on the type row (D11).
+ * them): `when "Ad platform" is Facebook/Meta or Tiktok`. Null for a part
+ * that always runs. Two parts that differ only by this or by their template
+ * must not read the same on the type row (D11).
+ *
+ * The choices' names come from the form's own question first: for a choice
+ * kept in a ClickUp field the stored spec (fieldSpecs) holds no options, and
+ * the server fills the question's from the field catalog. Then the spec's
+ * own choices (a cockpit-only choice), then the catalog the editor read. An
+ * answer none of them names is said as one that could not be read, never as
+ * its ClickUp id.
  */
-export function partWhenWords(type: TypeView, part: string): string | null {
+export function partWhenWords(
+  type: TypeView,
+  part: string,
+  catalog?: CatalogField[] | null,
+): string | null {
   const when = type.targets?.find(t => t.part === part)?.when;
   if (!when?.field_key || !when.options?.length) return null;
-  const field =
-    type.fieldSpecs?.find(f => f.key === when.field_key) ??
-    type.fields.find(f => f.key === when.field_key);
-  const names = when.options.map(
-    id => field?.options?.find(o => o.id === id)?.name ?? id,
-  );
-  return `when ${field?.label ?? when.field_key} is ${orWords(names)}`;
+  const view = type.fields.find(f => f.key === when.field_key);
+  const spec = type.fieldSpecs?.find(f => f.key === when.field_key);
+  const kept = spec?.clickup_field_id
+    ? catalog?.find(c => c.clickupFieldId === spec.clickup_field_id)?.options
+    : null;
+  const nameOf = (id: string) =>
+    [view?.options, spec?.options, kept]
+      .map(list => list?.find(o => o.id === id)?.name)
+      .find(Boolean) ?? null;
+  const names = when.options.map(nameOf).filter((n): n is string => !!n);
+  const unread = when.options.length - names.length;
+  if (unread)
+    names.push(
+      unread === 1
+        ? "a choice that could not be read from ClickUp"
+        : `${unread} choices that could not be read from ClickUp`,
+    );
+  const label = spec?.label ?? view?.label ?? when.field_key;
+  return `when "${label}" is ${orWords(names)}`;
 }
 
 /** "a", "a or b", "a, b or c". */
@@ -197,7 +280,7 @@ export function RequestTypes({
               <ul className="mt-1 space-y-1">
                 {t.parts.map(p => {
                   const chip = sopChip(p);
-                  const when = partWhenWords(t, p.part);
+                  const when = partWhenWords(t, p.part, read.catalog);
                   return (
                     <li
                       key={p.part}
@@ -283,12 +366,32 @@ function draftOf(t: TypeView): Draft {
 const same = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b);
 
+/**
+ * The tasks as saved: a task kept from the type keeps its short name (its
+ * requests are filed under it); a task added in the editor is named after
+ * its board ("ads", or "ads_two" when taken).
+ */
+export function namedTargets(
+  targets: TargetSpec[],
+  saved: TargetSpec[],
+): TargetSpec[] {
+  const kept = new Set(saved.map(t => t.part));
+  const taken = targets.filter(t => kept.has(t.part)).map(t => t.part);
+  return targets.map(t => {
+    if (kept.has(t.part)) return t;
+    const part = partName(t.team, taken);
+    taken.push(part);
+    return { ...t, part };
+  });
+}
+
 /** Only the keys that changed (the save refuses any other key). */
 export function patchOf(t: TypeView, d: Draft): TypePatch {
   const p: TypePatch = {};
   if (d.label.trim() !== t.label) p.label = d.label.trim();
   if (d.enabled !== t.enabled) p.enabled = d.enabled;
-  if (t.targets && !same(d.targets, t.targets)) p.targets = d.targets;
+  if (t.targets && !same(d.targets, t.targets))
+    p.targets = namedTargets(d.targets, t.targets);
   if (d.fields && t.fieldSpecs && !same(d.fields, t.fieldSpecs))
     p.fields = d.fields;
   const steps = d.steps.map(s => s.trim()).filter(Boolean);
@@ -300,6 +403,17 @@ export function patchOf(t: TypeView, d: Draft): TypePatch {
   if (d.setRequestType !== Boolean(t.setRequestType))
     p.set_request_type = d.setRequestType;
   return p;
+}
+
+/**
+ * Whether one request can make both tasks: either runs every time, they hang
+ * on different questions, or they run for a shared answer. A choice has one
+ * answer, so two tasks on the same question with no answer in common never
+ * run together.
+ */
+export function bothRun(a: TargetSpec["when"], b: TargetSpec["when"]): boolean {
+  if (!a || !b || a.field_key !== b.field_key) return true;
+  return a.options.some(o => b.options.includes(o));
 }
 
 /** What the server would refuse, said before it is asked (2.2). */
@@ -318,12 +432,27 @@ export function draftProblems(d: Draft): string[] {
   if (steps.length > LIMIT.steps) out.push("SOP steps: 40 at most.");
   if (steps.some(s => s.length > LIMIT.step))
     out.push("SOP steps: keep each one to 300 characters.");
+  if (d.targets.length < 1 || d.targets.length > LIMIT.tasks)
+    out.push("Tasks: a request makes 1 to 3 tasks.");
+  const named: { name: string; when: TargetSpec["when"] }[] = [];
   for (const t of d.targets) {
     const list = TARGET_LISTS.find(l => l.listId === t.list_id)?.name ?? t.part;
     if (t.owner_rule === "person" && !t.owner_clickup_id)
       out.push(`${list}: pick the person who owns it.`);
     if (t.when && !t.when.options.length)
       out.push(`${list}: pick at least one answer it runs for.`);
+    if (t.name_suffix.length > LIMIT.suffix)
+      out.push(`${list}: keep the name ending to 40 characters.`);
+    // Two tasks on one board with one name would read as one task twice,
+    // but only when one request can make both (Create an ad account's
+    // Meta, TikTok and Snapchat tasks share a board and a name, and each
+    // runs for its own platform).
+    const name = `${t.list_id}|${t.name_suffix.trim().toLowerCase()}`;
+    if (named.some(p => p.name === name && bothRun(p.when, t.when)))
+      out.push(
+        `${list}: two tasks would have the same name. Give one a different name ending.`,
+      );
+    named.push({ name, when: t.when });
   }
   for (const f of d.fields ?? []) {
     if (!f.label.trim()) out.push("Questions: every question needs words.");
@@ -429,6 +558,24 @@ function TypeEditor({
       ...d,
       targets: d.targets.map((t, j) => (j === i ? { ...t, ...p } : t)),
     }));
+  // Add a task, or take one off (1 to 3, the guard's rule; 6.4).
+  const addTarget = () =>
+    setDraft(d =>
+      d.targets.length >= LIMIT.tasks
+        ? d
+        : { ...d, targets: [...d.targets, newTarget(d.targets)] },
+    );
+  const removeTarget = (i: number) =>
+    setDraft(d =>
+      d.targets.length <= 1
+        ? d
+        : { ...d, targets: d.targets.filter((_, j) => j !== i) },
+    );
+  // The choice questions a task may run on ("runs when"): the saved ones
+  // whose answers are known.
+  const choiceFields = type.fields.filter(
+    f => f.kind === "select" && (f.options ?? []).length > 0,
+  );
 
   async function save() {
     if (!client || saving) return;
@@ -474,7 +621,13 @@ function TypeEditor({
         v,
         type.version ?? 1,
       );
-      seat.toast.success(`Back to version ${v}. The next request uses it.`);
+      // Set Request Type is never turned back on by going back a version: the
+      // server keeps it off and says why, so the toast says it too.
+      seat.toast.success(
+        next.restoreNote
+          ? `Back to version ${v}. ${next.restoreNote}`
+          : `Back to version ${v}. The next request uses it.`,
+      );
       onSaved(next);
     } catch (e) {
       setSaveError(errorWords(e));
@@ -643,21 +796,49 @@ function TypeEditor({
                 ? type.fields.find(f => f.key === t.when?.field_key)
                 : null;
               const named = personName(t.owner_clickup_id);
+              const listName =
+                TARGET_LISTS.find(l => l.listId === t.list_id)?.name ?? t.part;
+              // A task added in this editor follows its board's usual name
+              // ending and owner until someone changes them; a saved task
+              // keeps its own.
+              const isNew = !(type.targets ?? []).some(x => x.part === t.part);
+              const usual = TASK_DEFAULTS[t.team];
+              const usualEnding = isNew && t.name_suffix === usual?.suffix;
+              const usualOwner =
+                isNew &&
+                t.owner_rule === usual?.rule &&
+                t.owner_clickup_id === null;
               return (
                 <li
                   key={t.part}
                   className="space-y-3 rounded-xl bg-muted/40 p-4"
                 >
-                  <p className="text-[13px] font-semibold">
-                    {type.parts[i]?.listName ??
-                      TARGET_LISTS.find(l => l.listId === t.list_id)?.name}
-                    {t.name_suffix.trim() ? (
-                      <span className="font-normal text-muted-foreground">
-                        {" "}
-                        ({t.name_suffix.trim().replace(/^\(|\)$/g, "")} task)
-                      </span>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p
+                      id={`${ids}-task-${i}`}
+                      className="text-[13px] font-semibold"
+                    >
+                      {listName}
+                      {t.name_suffix.trim() ? (
+                        <span className="font-normal text-muted-foreground">
+                          {" "}
+                          ({t.name_suffix.trim().replace(/^\(|\)$/g, "")} task)
+                        </span>
+                      ) : null}
+                    </p>
+                    {draft.targets.length > 1 ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="-my-1"
+                        aria-describedby={`${ids}-task-${i}`}
+                        onClick={() => removeTarget(i)}
+                      >
+                        <X aria-hidden />
+                        Remove this task
+                      </Button>
                     ) : null}
-                  </p>
+                  </div>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <Field id={`${ids}-list-${i}`} label="List">
                       <select
@@ -668,8 +849,17 @@ function TypeEditor({
                           const l = TARGET_LISTS.find(
                             x => x.listId === e.target.value,
                           );
-                          if (l)
-                            setTarget(i, { list_id: l.listId, team: l.team });
+                          if (!l) return;
+                          setTarget(i, {
+                            list_id: l.listId,
+                            team: l.team,
+                            ...(usualEnding
+                              ? { name_suffix: TASK_DEFAULTS[l.team].suffix }
+                              : {}),
+                            ...(usualOwner
+                              ? { owner_rule: TASK_DEFAULTS[l.team].rule }
+                              : {}),
+                          });
                         }}
                       >
                         {TARGET_LISTS.map(l => (
@@ -782,6 +972,57 @@ function TypeEditor({
                         ))}
                       </select>
                     </Field>
+                    <Field
+                      id={`${ids}-ending-${i}`}
+                      label="Name ending"
+                      help={`In ClickUp: "Client name - ${draft.label.trim() || type.label}${t.name_suffix}".`}
+                    >
+                      <input
+                        id={`${ids}-ending-${i}`}
+                        dir="auto"
+                        className={INPUT}
+                        value={t.name_suffix}
+                        maxLength={LIMIT.suffix}
+                        placeholder="Nothing added"
+                        onChange={e =>
+                          setTarget(i, { name_suffix: e.target.value })
+                        }
+                      />
+                    </Field>
+                    <Field id={`${ids}-runs-${i}`} label="Runs">
+                      <select
+                        id={`${ids}-runs-${i}`}
+                        className={INPUT}
+                        value={t.when?.field_key ?? ""}
+                        onChange={e => {
+                          const key = e.target.value;
+                          setTarget(i, {
+                            when: key
+                              ? {
+                                  field_key: key,
+                                  options:
+                                    t.when?.field_key === key
+                                      ? t.when.options
+                                      : [],
+                                }
+                              : null,
+                          });
+                        }}
+                      >
+                        <option value="">Every time</option>
+                        {t.when &&
+                        !choiceFields.some(f => f.key === t.when?.field_key) ? (
+                          <option value={t.when.field_key}>
+                            {`Depending on "${whenField?.label ?? t.when.field_key}"`}
+                          </option>
+                        ) : null}
+                        {choiceFields.map(f => (
+                          <option key={f.key} value={f.key}>
+                            Depending on "{f.label}"
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
                   </div>
                   <p className="text-[13px] text-muted-foreground">
                     {ownerExplain(t, named)}
@@ -789,7 +1030,7 @@ function TypeEditor({
                   {t.when && whenField ? (
                     <fieldset className="space-y-1.5">
                       <legend className="text-[13px] font-medium">
-                        Runs when {whenField.label} is
+                        Runs when "{whenField.label}" is
                       </legend>
                       <div className="flex flex-wrap gap-x-4 gap-y-1">
                         {(whenField.options ?? []).map(o => {
@@ -828,6 +1069,17 @@ function TypeEditor({
               );
             })}
           </ul>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            {draft.targets.length < LIMIT.tasks ? (
+              <Button size="sm" variant="outline" onClick={addTarget}>
+                <Plus aria-hidden />
+                Add a task
+              </Button>
+            ) : null}
+            <p className="text-xs text-muted-foreground">
+              A request makes 1 to 3 tasks, each on a team's board.
+            </p>
+          </div>
         </Part>
 
         <Part title="Questions">

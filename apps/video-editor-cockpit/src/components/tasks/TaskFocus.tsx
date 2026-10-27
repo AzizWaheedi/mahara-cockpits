@@ -63,7 +63,14 @@ export function TaskFocusHost() {
   return <FocusView key={taskId} taskId={taskId} onClose={close} />;
 }
 
-function PhaseNote({ phase }: { phase: ActionPhase | undefined }) {
+function PhaseNote({
+  phase,
+  className,
+}: {
+  phase: ActionPhase | undefined;
+  /** Where it sits, e.g. tk-foot-note: a line of its own above the buttons. */
+  className?: string;
+}) {
   if (!phase) return null;
   const words =
     phase.phase === "saving"
@@ -75,7 +82,7 @@ function PhaseNote({ phase }: { phase: ActionPhase | undefined }) {
           : phase.message;
   return (
     <span
-      className={`tk-phase tk-phase-${phase.phase}`}
+      className={`tk-phase tk-phase-${phase.phase}${className ? ` ${className}` : ""}`}
       role={phase.phase === "error" ? "alert" : "status"}
     >
       {words}
@@ -308,6 +315,15 @@ function FocusView({
       }
       footer={
         <div className="tk-foot-actions">
+          {/* What happened to Mark done ("Someone moved this task in ClickUp.
+              Open it there."): a line of its own above both buttons, so the
+              buttons stay on one row and Open in ClickUp stays beside it. */}
+          {(can.done || isDone) &&
+          doneState &&
+          doneState.phase !== "saving" &&
+          !isDone ? (
+            <PhaseNote phase={doneState} className="tk-foot-note" />
+          ) : null}
           {can.done || isDone ? (
             <span className="tk-foot-done">
               <button
@@ -326,9 +342,6 @@ function FocusView({
                     ? TASK_SENTENCES.saving
                     : TASK_SENTENCES.markDone}
               </button>
-              {doneState && doneState.phase !== "saving" && !isDone ? (
-                <PhaseNote phase={doneState} />
-              ) : null}
             </span>
           ) : null}
           {openInClickUp(task.url || fallbackUrl)}
@@ -339,7 +352,7 @@ function FocusView({
         <div className="tk-focus-meta">
           <span className={`tk-chip tk-chip-${tone}`}>
             <span className="tk-chip-dot" aria-hidden />
-            {task.status}
+            {capitalFirst(task.status)}
           </span>
           {detail.request ? (
             <span className="tk-focus-request">
@@ -449,7 +462,7 @@ function FocusView({
                     <bdi dir="auto" className="tk-row-title">
                       {s.name}
                     </bdi>
-                    <span className="tk-row-due">{s.status}</span>
+                    <span className="tk-row-due">{capitalFirst(s.status)}</span>
                   </Link>
                 </li>
               ))}

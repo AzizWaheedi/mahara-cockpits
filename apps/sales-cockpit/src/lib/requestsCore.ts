@@ -130,9 +130,11 @@ export type TypeView = {
   updatedByLabel?: string;
   updatedAt?: string;
   /**
-   * Editors: the fields as stored, with their ClickUp ids. Not in the
-   * contract's TypeView yet (see requests/TypeEditor.tsx); without it the
-   * editor keeps field changes locked rather than drop a ClickUp mapping.
+   * Editors: the fields as stored, with their ClickUp ids (contract 2.5,
+   * I1). A choice kept in a ClickUp field has no options here; its choices
+   * are in `fields`, from the field catalog. A database from before I1 sends
+   * none, and the type editor then keeps field changes locked rather than
+   * drop a ClickUp mapping.
    */
   fieldSpecs?: FieldSpec[];
 };
@@ -160,7 +162,7 @@ export type TypesRead = {
   };
   writer: WriterAnswer & { mode: WriterMode };
   types: TypeView[];
-  /** Editors: the field catalog and template cache (not in the contract yet). */
+  /** Editors: the field catalog and the template cache (contract 2.5, I1). */
   catalog?: CatalogField[];
   templates?: TemplateOption[];
 };
@@ -252,7 +254,16 @@ export type RequestRow = {
   canRoute: boolean;
   /** Saved but not sent: it goes to ClickUp once requests open. */
   held?: boolean;
+  /**
+   * The database's sentence for a held request: when requests open, or (review
+   * round 3) once a requests writer that stopped reporting runs again.
+   */
   heldNote?: string | null;
+  /**
+   * An old form ticket already moved, closed or deleted in ClickUp (review
+   * round 3): it left the queues, and nothing routes it from the cockpit.
+   */
+  importHandled?: boolean;
   parts: PartRow[];
 };
 
@@ -413,6 +424,73 @@ export const REQUEST_SENTENCES = {
   } as Record<VerifyState, string | null>,
   missingFunction:
     "Requests are not on the database yet. Use the ClickUp request form until they are.",
+  /**
+   * An old form ticket a seat may not make a request of here (canRoute
+   * false: requests are not open to the seat yet, or the ticket is not its
+   * team's): its own task in ClickUp is the way to route it.
+   */
+  importedElsewhere:
+    "Came in through the old ClickUp form. Route it in ClickUp.",
+  /**
+   * An old form ticket the team moved, closed or deleted in ClickUp since it
+   * came in (importHandled, review round 3): nothing is left to route.
+   */
+  importHandled:
+    "Came in through the old ClickUp form. It was moved or closed in ClickUp, so it needs no routing here.",
+  /** The next step on a request where nothing reached ClickUp. */
+  againFailed:
+    "Nothing reached ClickUp. File it again with the same answers, or use the ClickUp request form.",
+  /**
+   * The next step on a request whose task was deleted in ClickUp: it did
+   * reach ClickUp, so the panel never says nothing did (review round 3).
+   */
+  againDeleted:
+    "The task was deleted in ClickUp. File it again with the same answers, or use the ClickUp request form.",
+  /**
+   * A task whose create went out and lost its answer, handed back while
+   * requests are not open: it may be in ClickUp, and is checked first.
+   */
+  checkingHeld:
+    "ClickUp did not answer. The cockpit checks whether it arrived once requests open",
+  /** The sent panel's next step when nothing reached ClickUp. */
+  sentFailed:
+    "Open the request to file it again, or use the ClickUp request form.",
+  /** The server's refusal when the old form ticket a request routes is already routed (contract 2.5, step 8). */
+  oldTicketRouted: "That old ticket was already routed.",
+  /**
+   * A request filed again whose old form ticket was routed meanwhile (by the
+   * first request's own last step, or by a teammate): it goes on its own.
+   */
+  sentAlone:
+    "Request sent. Its old ClickUp form ticket was already routed, so this one goes on its own.",
+  /**
+   * The next step when a routing request made no task because the team moved
+   * or closed the old form ticket in ClickUp while it waited: nothing to file
+   * again (the work may be done); check the old ticket.
+   */
+  oldHandledNext:
+    "The old ClickUp form ticket was moved or closed in ClickUp while this request waited, so no task was made. Check the old ticket, and ask again only if the work is still needed.",
+  /**
+   * "Make it a request" or "File it again" when the type it came with is not
+   * on the form: turned off, or (on a page with the client fixed) a type that
+   * takes no client card. What was asked goes with the type picked instead.
+   */
+  presetOff: "The request type it came with is turned off. Pick another type.",
+  presetNoClient:
+    "The request type it came with does not take a client card, so it is not offered here. Pick another type.",
+  presetKept: "What was asked is kept.",
+  /**
+   * An old ticket's or a request's words when the type picked has no details
+   * question: shown so they can be carried into its questions, said plainly
+   * that they are not sent. Routing an old ticket, the database adds them to
+   * the new task's description with a link back (cockpit_request_plan,
+   * review round 3), since the old ticket is cancelled once routed.
+   */
+  keptLabel: "What was asked",
+  keptNotSent:
+    "This type has no question for these words, so they are not sent with it.",
+  keptRouted:
+    "This type has no question for these words, so the cockpit adds them to the new task's description, with a link to the old ticket.",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -474,6 +552,21 @@ export function stampWords(at: string | null, todayIso?: string): string {
   const ms = at ? Date.parse(at) : Number.NaN;
   if (!Number.isFinite(ms)) return "";
   return `${dayLabel(kuwaitToday(ms), todayIso)} ${kuwaitClock(at)}`;
+}
+
+/**
+ * The due day a request carries into the form (filed again, or an old form
+ * ticket made a request), when the server would take it: today in Kuwait to
+ * a year ahead (2.5 step 6). Else null, and the form starts on the type's
+ * default.
+ */
+export function carriedDueOn(
+  dueOn: string | null | undefined,
+  todayIso: string = kuwaitToday(),
+): string | null {
+  if (!dueOn || !ISO_DAY.test(dueOn)) return null;
+  const ahead = daysBetween(todayIso, dueOn);
+  return ahead >= 0 && ahead <= LIMITS.daysAhead ? dueOn : null;
 }
 
 /**
@@ -675,12 +768,26 @@ function deliveredStatuses(row: Pick<RequestRow, "parts">): string[] {
 const statuses = (row: Pick<RequestRow, "parts">) =>
   joinWords(deliveredStatuses(row));
 
-/** The request's state as one sentence (the panel and the row's hint). */
+/**
+ * The request's state as one sentence (the panel and the row's hint). An
+ * old form ticket says how to route it: "Make it a request" only where the
+ * seat may (canRoute), else in ClickUp, so no seat is told to press a
+ * button it does not have.
+ */
 export function stateWords(
-  row: Pick<RequestRow, "state" | "done" | "parts" | "held">,
+  row: Pick<RequestRow, "state" | "done" | "parts" | "held"> & {
+    canRoute?: boolean;
+    heldNote?: string | null;
+    importHandled?: boolean;
+  },
 ): string {
   if (row.done && row.state !== "cancelled") return "Done";
-  if (requestHeld(row)) return REQUEST_SENTENCES.heldRequest;
+  // The database's own sentence when it sends one (a writer that stopped
+  // reporting is said as such, review round 3), else the screens' words.
+  if (requestHeld(row))
+    return (
+      row.heldNote?.trim().replace(/\.$/, "") || REQUEST_SENTENCES.heldRequest
+    );
   switch (row.state) {
     case "sending":
       return "Sending to ClickUp";
@@ -698,16 +805,98 @@ export function stateWords(
     case "cancelled":
       return "Cancelled";
     case "imported":
-      return "Came in through the old ClickUp form. Make it a request to route it.";
+      if (row.importHandled) return REQUEST_SENTENCES.importHandled;
+      return row.canRoute === false
+        ? REQUEST_SENTENCES.importedElsewhere
+        : "Came in through the old ClickUp form. Make it a request to route it.";
     case "routed":
       return "Routed as a new request";
   }
   return "Sending to ClickUp";
 }
 
+/**
+ * The note of a task that reached ClickUp but that the cockpit could not
+ * finish (a refused step: the owner, the due day, the SOP steps, a field,
+ * the card comment), while the request is open; else null. Lists show it
+ * beside the row's state, so such a row never reads as a clean one.
+ */
+export function unfinishedNote(
+  row: Pick<RequestRow, "done" | "parts">,
+): string | null {
+  if (row.done) return null;
+  for (const p of row.parts) {
+    const note = deliveredNote(p);
+    if (note) return note;
+  }
+  return null;
+}
+
+/**
+ * A row's state in full, for a list's hint and the CSM's line: the state's
+ * sentence, then what to check on a task the cockpit could not finish.
+ */
+export function stateHint(
+  row: Pick<RequestRow, "state" | "done" | "parts" | "held"> & {
+    canRoute?: boolean;
+    heldNote?: string | null;
+    importHandled?: boolean;
+  },
+): string {
+  const words = stateWords(row);
+  const note = unfinishedNote(row);
+  return note ? `${words}. ${note}` : words;
+}
+
+/**
+ * What to do about a request part of which reached ClickUp: name the
+ * task that did not, keep the ones that did (filing the whole request again
+ * would make them twice), and raise the missing one another way.
+ */
+export function partialNext(row: Pick<RequestRow, "parts">): string {
+  const missing = [
+    ...new Set(
+      row.parts
+        .filter(p => p.state === "failed" || p.state === "skipped")
+        .map(p => p.listName),
+    ),
+  ];
+  const tasks = row.parts.filter(
+    p => p.state === "failed" || p.state === "skipped",
+  ).length;
+  const landed = row.parts.filter(p => p.state === "delivered").length;
+  const kept =
+    landed === 1
+      ? "the one that did stays there"
+      : "the ones that did stay there";
+  const many = tasks > 1;
+  const what = missing.length
+    ? `The ${joinWords(missing)} ${many ? "tasks" : "task"} did not reach ClickUp`
+    : "Part of this request did not reach ClickUp";
+  return `${what}; ${kept}. Raise the missing ${many ? "tasks" : "task"} with the ClickUp request form, or ask the systems manager to make ${many ? "them" : "it"}.`;
+}
+
+/**
+ * Where a sent request stands, for the sent panel's mark: a task refused
+ * (failed), one still on its way (moving), only saved until requests open
+ * (held), or every task in ClickUp (done).
+ */
+export function sentTone(
+  parts: Pick<PartRow, "state" | "error">[],
+  open: boolean,
+): "failed" | "moving" | "held" | "done" {
+  if (parts.some(p => p.state === "failed" || p.state === "skipped"))
+    return "failed";
+  if (parts.some(p => partMoving(p, open))) return "moving";
+  if (parts.some(p => partHeld(p, open))) return "held";
+  return "done";
+}
+
 /** The row's chip: a short label and its tone. */
 export function stateChip(
-  row: Pick<RequestRow, "state" | "done" | "parts" | "held">,
+  row: Pick<RequestRow, "state" | "done" | "parts" | "held"> & {
+    importHandled?: boolean;
+  },
 ): {
   label: string;
   tone: Tone;
@@ -722,14 +911,15 @@ export function stateChip(
       return { label: "Saved", tone: "warning" };
     case "delivered": {
       // Two tasks at different statuses read "In ClickUp"; the panel and
-      // the row's hint name each one.
+      // the row's hint name each one. A task the cockpit could not finish
+      // keeps its status, in the warning tone: something to check.
       const seen = deliveredStatuses(row);
       return {
         label:
           seen.length === 1
             ? seen[0].charAt(0).toUpperCase() + seen[0].slice(1)
             : "In ClickUp",
-        tone: "neutral",
+        tone: unfinishedNote(row) ? "warning" : "neutral",
       };
     }
     case "partial":
@@ -739,7 +929,11 @@ export function stateChip(
     case "cancelled":
       return { label: "Cancelled", tone: "neutral" };
     case "imported":
-      return { label: "Old form", tone: "warning" };
+      // Handled in ClickUp already: nothing left to do here.
+      return {
+        label: "Old form",
+        tone: row.importHandled ? "neutral" : "warning",
+      };
     case "routed":
       return { label: "Routed", tone: "neutral" };
   }
@@ -760,8 +954,17 @@ export function partWords(part: PartRow, held = false): string {
       return "Sending to ClickUp";
     case "retry":
       return "Sending to ClickUp, trying again in a few minutes";
-    case "unknown":
-      return "Checking whether it reached ClickUp";
+    case "unknown": {
+      // The writer's note names what a person must do when it stays in
+      // doubt (two tasks match, every match cancelled, a search refused;
+      // review round 3). A note naming the switch is never shown: a create
+      // handed back while requests are not open is checked once they are.
+      const said = (part.error ?? "").trim();
+      if (WAITING_NOTE.test(said)) return REQUEST_SENTENCES.checkingHeld;
+      return said
+        ? `Checking whether it reached ClickUp. ${reason(said)}`
+        : "Checking whether it reached ClickUp";
+    }
     case "delivered":
       if (part.statusType && DONE_TYPES.includes(part.statusType))
         return part.statusType === "closed"
@@ -1000,6 +1203,14 @@ export function groupTypes(
   return groups;
 }
 
-/** Whether a request is still open (not done, cancelled or routed). */
-export const isOpen = (row: Pick<RequestRow, "state" | "done">) =>
-  !row.done && !["cancelled", "routed"].includes(row.state);
+/**
+ * Whether a request is still open: not done, cancelled or routed, and not an
+ * old form ticket already handled in ClickUp (the database sorts those as
+ * not open, review round 3).
+ */
+export const isOpen = (
+  row: Pick<RequestRow, "state" | "done"> & { importHandled?: boolean },
+) =>
+  !row.done &&
+  !["cancelled", "routed"].includes(row.state) &&
+  !row.importHandled;

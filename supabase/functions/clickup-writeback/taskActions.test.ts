@@ -1,11 +1,15 @@
 import { describe, expect, it } from "bun:test";
-import { ACTION_SAY, actionCommentText, planTaskAction, RT_OFF_NOTE } from "./taskActions";
-import { actionPayload, CARD, harness, LISTS, LIVE, NOW, PEOPLE, rejected, REQUEST_ID, requestPayload, TEST_CARD } from "./requestsTestkit";
+import { ACTION_SAY, actionCommentText, planTaskAction, RT_OFF_NOTE, VERIFY_DUE_MS, VERIFY_LATE_MS } from "./taskActions";
+import { actionPayload, CARD, harness, LISTS, LIVE, NOW, PEOPLE, rejected, REQUEST_ID, requestPayload, TEST_CARD, toolsHarness } from "./requestsTestkit";
 
 const TASK = "86work0001";
 /** A task assigned to the systems manager on Operations / Tech, with a three-step checklist. */
 function seeded(env: Record<string, string> = LIVE, over: Record<string, unknown> = {}) {
   const h = harness(env);
+  addWorkTask(h, over);
+  return h;
+}
+function addWorkTask(h: ReturnType<typeof harness>, over: Record<string, unknown> = {}) {
   h.clickup.addTask({
     id: TASK,
     name: "Acme Interiors - General tech request",
@@ -109,16 +113,36 @@ describe("who may act, and where (the precondition read)", () => {
     }
   });
 
-  it("tick and Mark done work only on the team boards; a comment goes anywhere but a client card", async () => {
-    const onPipeline = seeded(LIVE, { list: { id: LISTS.pipeline, name: "Video Pipeline" } });
-    const t = onPipeline.db.enqueue("task_action", tick());
-    const c = onPipeline.db.enqueue("task_action", actionPayload("comment", { text: "Footage is in the Drive folder." }));
-    await onPipeline.run();
-    expect(t).toMatchObject({ state: "skipped", error: "Ticking and Mark done work on the team request boards. Open this one in ClickUp." });
-    // The comment waited in the task's lane behind the tick, and goes on the next run.
-    expect(c.state).toBe("queued");
-    await onPipeline.run();
-    expect(c.state).toBe("delivered");
+  it("a seat's task on any list takes a tick, a comment and Mark done; Mark done is not offered on Video Pipeline or WhatsApp Reconnection (review round 2, ask F12)", async () => {
+    const done = () => actionPayload("done", { statusSeen: "in progress" });
+    // Any other list: every press goes, as cockpit_task_can and cockpit_task_act now allow.
+    for (const press of [tick(), actionPayload("comment", { text: "Footage is in the Drive folder." }), done()]) {
+      const h = seeded(LIVE, { list: { id: LISTS.other, name: "Sales Follow-ups" } });
+      const row = h.db.enqueue("task_action", press);
+      await h.run();
+      expect(row).toMatchObject({ state: "delivered", error: null });
+      expect(h.clickup.writes().length).toBeGreaterThan(0);
+    }
+    // Video Pipeline and WhatsApp Reconnection: a tick and a comment go; Mark done is skipped with its own sentence.
+    for (const [list, name, why] of [
+      [LISTS.pipeline, "Video Pipeline", "Mark done is not offered on Video Pipeline, where done means the video is live. Move it in ClickUp."],
+      [LISTS.whatsapp, "WhatsApp Reconnection", "Mark done is not offered on WhatsApp Reconnection, where a status change messages the client. Move it in ClickUp."],
+    ] as const) {
+      const h = seeded(LIVE, { list: { id: list, name } });
+      const d = h.db.enqueue("task_action", done());
+      await h.run();
+      expect(d).toMatchObject({ state: "skipped", error: why });
+      expect(h.clickup.writes()).toEqual([]);
+      expect(h.clickup.task(TASK)!.status).toMatchObject({ status: "in progress", type: "custom" });
+      const t = h.db.enqueue("task_action", tick());
+      const c = h.db.enqueue("task_action", actionPayload("comment", { text: "Footage is in the Drive folder." }));
+      await h.run();
+      expect(t.state).toBe("delivered");
+      // The comment waited in the task's lane behind the tick, and goes on the next run.
+      expect(c.state).toBe("queued");
+      await h.run();
+      expect(c.state).toBe("delivered");
+    }
 
     const onCard = seeded(LIVE, { list: { id: LISTS.cards, name: "Clients - Mahara" } });
     const cc = onCard.db.enqueue("task_action", actionPayload("comment", { text: "Hello" }));
@@ -130,6 +154,46 @@ describe("who may act, and where (the precondition read)", () => {
     const a = onAll.db.enqueue("task_action", tick());
     await onAll.run();
     expect(a.state).toBe("delivered");
+    // The old boards sentence is gone.
+    expect(Object.keys(ACTION_SAY)).not.toContain("boards");
+  });
+
+  it("comment words that hold a Cockpit ref are never posted (the database refuses them; this is the second guard)", async () => {
+    for (const text of ["Cockpit ref T-0000000000 please hold", "see cockpit  ref r-1a2b3c4d5e-main"]) {
+      const h = seeded();
+      const row = h.db.enqueue("task_action", actionPayload("comment", { text }));
+      await h.run();
+      expect(row).toMatchObject({ state: "failed", error: ACTION_SAY.markerWords });
+      expect(h.clickup.calls).toEqual([]);
+    }
+    const ok = seeded();
+    const row = ok.db.enqueue("task_action", actionPayload("comment", { text: "I updated the cockpit reference sheet." }));
+    await ok.run();
+    expect(row.state).toBe("delivered");
+  });
+
+  it("a real subtask of a client card takes a tick, a comment and Mark done; the card itself takes none (ask F2)", async () => {
+    const card = { list: { id: LISTS.cards, name: "Clients - Mahara" } };
+    // The subtask: ClickUp names its parent card.
+    for (const press of [tick(), actionPayload("comment", { text: "Booked the shoot." }), actionPayload("done", { statusSeen: "in progress" })]) {
+      const h = seeded(LIVE, { ...card, parent: CARD });
+      const row = h.db.enqueue("task_action", press);
+      await h.run();
+      expect(row).toMatchObject({ state: "delivered", error: null });
+      expect(h.clickup.writes().length).toBeGreaterThan(0);
+    }
+    const done = seeded(LIVE, { ...card, parent: CARD });
+    done.db.enqueue("task_action", actionPayload("done", { statusSeen: "in progress" }));
+    await done.run();
+    expect(done.clickup.task(TASK)!.status).toMatchObject({ status: "complete", type: "done" });
+    // The card itself (no parent): every press is skipped with the same sentence, and nothing is written.
+    for (const press of [tick(), actionPayload("comment", { text: "Hello" }), actionPayload("done", { statusSeen: "in progress" })]) {
+      const h = seeded(LIVE, { ...card, parent: null });
+      const row = h.db.enqueue("task_action", press);
+      await h.run();
+      expect(row).toMatchObject({ state: "skipped", error: ACTION_SAY.clientCard });
+      expect(h.clickup.writes()).toEqual([]);
+    }
   });
 
   it("a task gone from ClickUp is skipped", async () => {
@@ -171,6 +235,26 @@ describe("comment", () => {
     h.advance(60_000);
     await h.run();
     expect(row.state).toBe("delivered");
+    expect(h.clickup.writes().filter(c => c.method === "POST")).toHaveLength(1);
+  });
+
+  it("a comment that posted but whose receipt could not be saved is read back next run, never failed or posted twice (review R2)", async () => {
+    let failed = false;
+    const h = toolsHarness(LIVE, {
+      receipt: r =>
+        !failed && r.phase === "response" && r.method === "POST" && r.resource === `task/${TASK}/comment`
+          ? ((failed = true), new Error("Supabase 503: upstream connect error"))
+          : undefined,
+    });
+    addWorkTask(h);
+    const row = h.db.enqueue("task_action", actionPayload("comment", { text: "The form is fixed." }));
+    await h.run();
+    // Before review R2 this settled failed, and pressing Comment again posted it twice.
+    expect(row.state).toBe("unknown");
+    expect(h.clickup.comments.get(TASK)).toHaveLength(1);
+    h.advance(60_000);
+    await h.run();
+    expect(row).toMatchObject({ state: "delivered", error: null });
     expect(h.clickup.writes().filter(c => c.method === "POST")).toHaveLength(1);
   });
 
@@ -362,6 +446,164 @@ describe("the two-minute check of a delivered request (op verify)", () => {
     const dry = await run(off);
     expect(dry.state).toBe("queued");
     expect(off.clickup.calls).toEqual([]);
+  });
+
+  // Review R2: a check held through a switch-off, a writer outage or the retry ladder can run days late, when a
+  // move, a rename or a missing owner is as likely a person's own change as a list rule.
+  const late = async (h: ReturnType<typeof harness>, payload = verify(), deliveredAgo = 3 * 86_400_000) => {
+    const row = h.db.enqueue("task_action", payload, {
+      dedupe_key: `verify:${REQUEST_ID}:main`, source_table: "cockpit_requests", source_id: REQUEST_ID, created_at: NOW - deliveredAgo,
+    });
+    await h.run();
+    return row;
+  };
+
+  it("late: a move turns nothing off and an owner a person took off is not put back; the check says what it saw", async () => {
+    const moved = seeded(LIVE, { list: { id: LISTS.ads, name: "Marketing / ADs" } });
+    const a = await late(moved, verify({ setRequestType: true }));
+    expect(a).toMatchObject({ state: "skipped", error: ACTION_SAY.late('ClickUp shows it on Marketing / ADs as "Acme Interiors - General tech request".') });
+    expect(moved.db.rtOff).toEqual([]);
+    expect(moved.clickup.writes()).toEqual([]);
+    expect(moved.db.parts.get(`${REQUEST_ID}:main`)).toMatchObject({ verifyNote: a.error });
+    expect(moved.db.parts.get(`${REQUEST_ID}:main`)?.verifyState).toBeUndefined();
+
+    // A person reassigned the task to the CSM days ago: before review R2 the late check put the systems manager back.
+    const reassigned = seeded(LIVE, { assignees: [{ id: PEOPLE.csm }] });
+    const b = await late(reassigned);
+    expect(b).toMatchObject({ state: "skipped", error: ACTION_SAY.late(ACTION_SAY.ownerOff) });
+    expect(reassigned.clickup.writes()).toEqual([]);
+    expect(reassigned.clickup.task(TASK)!.assignees).toEqual([{ id: PEOPLE.csm }]);
+  });
+
+  it("late with nothing to act on reads as usual: kept, and a move with Request Type off is only noted", async () => {
+    const kept = await late(seeded());
+    expect(kept).toMatchObject({ state: "delivered" });
+    expect(kept.progress?.verify).toBe("kept");
+    const noted = await late(seeded(LIVE, { name: "Renamed by the CSM" }));
+    expect(noted.progress).toMatchObject({ verify: "kept", verifyNote: 'ClickUp shows it on Operations / Tech as "Renamed by the CSM".' });
+  });
+
+  it("the limit is 15 minutes past the check's time", async () => {
+    const onTime = await late(seeded(LIVE, { name: "Renamed by a rule" }), verify({ setRequestType: true }), VERIFY_DUE_MS + VERIFY_LATE_MS);
+    expect(onTime.progress?.verify).toBe("moved");
+    const over = await late(seeded(LIVE, { name: "Renamed by a rule" }), verify({ setRequestType: true }), VERIFY_DUE_MS + VERIFY_LATE_MS + 1);
+    expect(over.state).toBe("skipped");
+  });
+
+  it("a move seen on time whose rt_off failed still turns Request Type off when the retry runs late", async () => {
+    const h = seeded(LIVE, { name: "Renamed by a rule" });
+    h.db.fail = name => (name === "cockpit_request_type_rt_off" ? new Error("Supabase 500") : undefined);
+    const row = await run(h, verify({ setRequestType: true }));
+    expect(row.state).toBe("retry");
+    expect(row.progress?.steps?.verify?.movedAt).toBeTruthy();
+    h.db.fail = undefined;
+    h.advance(45 * 60_000);
+    await h.run();
+    expect(row.progress?.verify).toBe("moved");
+    expect(h.db.rtOff.map(r => r.key)).toEqual(["general_tech"]);
+  });
+
+  it("an owner put back on time whose answer was lost is only read back when the retry runs late", async () => {
+    const h = seeded(LIVE, { assignees: [] });
+    h.clickup.lose = c => c.method === "PUT";
+    const row = await run(h);
+    expect(row.state).toBe("unknown");
+    h.clickup.lose = undefined;
+    h.advance(45 * 60_000);
+    await h.run();
+    expect(row.progress?.verify).toBe("restored");
+    expect(h.clickup.writes()).toHaveLength(1);
+  });
+
+  it("end to end: a check held through a switch-off, then a person's move days later, turns nothing off", async () => {
+    const env: Record<string, string> = { ...LIVE };
+    const h = harness(env);
+    const req = h.db.enqueue("request", requestPayload({ setRequestType: true }));
+    await h.run();
+    expect(req.state).toBe("delivered");
+    const check = h.db.byKey(`verify:${REQUEST_ID}:main`)!;
+    // The switch goes off before the check is due; the check waits in the queue.
+    delete env.CLICKUP_WRITEBACK_APPLY_REQUESTS;
+    h.advance(121_000);
+    await h.run();
+    expect(check.state).toBe("queued");
+    // Three days later the owner moves the task to another board, then requests open again.
+    h.advance(3 * 86_400_000);
+    h.clickup.task(req.task_id!)!.list = { id: LISTS.ads, name: "Marketing / ADs" };
+    env.CLICKUP_WRITEBACK_APPLY_REQUESTS = "true";
+    await h.run();
+    expect(check.state).toBe("skipped");
+    expect(check.error).toBe(ACTION_SAY.late('ClickUp shows it on Marketing / ADs as "Acme Interiors - General tech request".'));
+    expect(h.db.rtOff).toEqual([]);
+    expect(h.db.parts.get(`${REQUEST_ID}:main`)).toMatchObject({ state: "delivered", verifyNote: check.error });
+  });
+
+  // Review round 3: the sync trigger stamps when the owner (ownerAt) and Request Type (madeAt) were written, and
+  // the check's clock starts there, not at delivery, which a later step retried for hours (the card comment, the
+  // old ticket) can push back past the writes the check judges.
+  const at = (agoMs: number) => new Date(NOW - agoMs).toISOString();
+
+  it("on time is measured from when Request Type and the owner were written, not from delivery (review round 3)", async () => {
+    // Delivered a minute ago, but Request Type was written 40 minutes ago: the move turns nothing off.
+    const moved = seeded(LIVE, { name: "Renamed later" });
+    const a = await late(moved, verify({ setRequestType: true, ownerAt: at(40 * 60_000), madeAt: at(40 * 60_000) }), 60_000);
+    expect(a).toMatchObject({ state: "skipped", error: ACTION_SAY.late('ClickUp shows it on Operations / Tech as "Renamed later".') });
+    expect(moved.db.rtOff).toEqual([]);
+    // The owner written 40 minutes ago is not put back either.
+    const off = seeded(LIVE, { assignees: [{ id: PEOPLE.csm }] });
+    const b = await late(off, verify({ ownerAt: at(40 * 60_000), madeAt: at(40 * 60_000) }), 60_000);
+    expect(b).toMatchObject({ state: "skipped", error: ACTION_SAY.late(ACTION_SAY.ownerOff) });
+    expect(off.clickup.writes()).toEqual([]);
+    // The owner written long ago, Request Type five minutes ago: a move is judged by Request Type, so it is off.
+    const rt = seeded(LIVE, { name: "Renamed by a rule", assignees: [] });
+    const c = await late(rt, verify({ setRequestType: true, ownerAt: at(40 * 60_000), madeAt: at(5 * 60_000) }), 60_000);
+    expect(c.progress?.verify).toBe("moved");
+    expect(rt.db.rtOff.map(r => r.key)).toEqual(["general_tech"]);
+    expect(rt.clickup.writes()).toEqual([]);
+    // Delivered a day after the writes it judges is late; on the 15-minute line it is still on time.
+    const edge = await late(seeded(LIVE, { assignees: [] }), verify({ ownerAt: at(VERIFY_DUE_MS + VERIFY_LATE_MS) }), 60_000);
+    expect(edge.progress?.verify).toBe("restored");
+    const over = await late(seeded(LIVE, { assignees: [] }), verify({ ownerAt: at(VERIFY_DUE_MS + VERIFY_LATE_MS + 1) }), 60_000);
+    expect(over.state).toBe("skipped");
+  });
+
+  it("the owner's clock falls back to madeAt, then to the check's own time; a time it cannot read is absent", async () => {
+    // No ownerAt: madeAt (40 minutes ago) times the owner, so nobody is put back.
+    const fallback = seeded(LIVE, { assignees: [{ id: PEOPLE.csm }] });
+    const a = await late(fallback, verify({ madeAt: at(40 * 60_000) }), 60_000);
+    expect(a.state).toBe("skipped");
+    expect(fallback.clickup.writes()).toEqual([]);
+    // Unreadable times are absent: the check's own time (a minute ago) is on time, so the owner is put back.
+    for (const bad of ["yesterday", "12345", 1793005200000, "", null, { at: "2026-10-26T08:00:00Z" }]) {
+      const h = seeded(LIVE, { assignees: [] });
+      const row = await late(h, verify({ ownerAt: bad, madeAt: bad }), 60_000);
+      expect(row.progress?.verify).toBe("restored");
+      expect(h.clickup.writes()).toHaveLength(1);
+    }
+  });
+
+  it("end to end: a part whose card comment kept retrying is delivered late, and its check judges the writes, not the delivery", async () => {
+    const h = harness(LIVE);
+    // The link comment on the card is refused for a while (a 503), so the part is delivered long after its owner.
+    h.clickup.fail = c => (c.method === "POST" && c.path === `task/${CARD}/comment` ? rejected(503, "Service unavailable") : undefined);
+    const req = h.db.enqueue("request", requestPayload());
+    await h.run();
+    expect(req.state).not.toBe("delivered");
+    const made = Date.parse(String(req.progress?.steps?.create?.at));
+    h.clickup.fail = undefined;
+    for (let i = 0; i < 6 && req.state !== "delivered"; i++) {
+      h.advance(30 * 60_000);
+      await h.run();
+    }
+    expect(req.state).toBe("delivered");
+    const check = h.db.byKey(`verify:${REQUEST_ID}:main`)!;
+    expect(check.payload).toMatchObject({ setRequestType: false, ownerAt: new Date(made).toISOString(), madeAt: new Date(made).toISOString() });
+    // A person took the task over in ClickUp meanwhile: the check, due two minutes after delivery, puts nobody back.
+    h.clickup.task(req.task_id!)!.assignees = [{ id: PEOPLE.csm }];
+    h.advance(121_000);
+    await h.run();
+    expect(check).toMatchObject({ state: "skipped", error: ACTION_SAY.late(ACTION_SAY.ownerOff) });
+    expect(h.clickup.task(req.task_id!)!.assignees).toEqual([{ id: PEOPLE.csm }]);
   });
 });
 

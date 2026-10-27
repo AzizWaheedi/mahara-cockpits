@@ -694,7 +694,9 @@ mock.module("sonner", () => ({
   },
 }));
 
-const { CsmPage, MY_REQUESTS_LIMIT } = await import("../src/pages/CsmPage");
+const { CsmPage, MY_REQUESTS_LIMIT, requestsSince } = await import(
+  "../src/pages/CsmPage"
+);
 const { forgetWriterMode } = await import("../src/lib/requestsOpen");
 const { ClientPerformancePage } = await import(
   "../src/pages/ClientPerformancePage"
@@ -2259,10 +2261,9 @@ test("until requests open, Today keeps the tickets card beside the requests (F6)
   }
 });
 
-test("today's requests come from the whole read, and a full read says it may miss one (contract F3)", async () => {
+test("today's requests are read on the server from the start of the day, so no read is capped (contract F3)", async () => {
   requestReads.length = 0;
-  // A full read: 200 rows, open ones first, so a closed one from today
-  // might be past the end.
+  // The fake answers every row it holds; the card still keeps today's.
   requestRowsNow = Array.from({ length: MY_REQUESTS_LIMIT }, (_, i) =>
     requestRow({
       id: `4b1f6a0e-2c1d-4a7e-9d0b-${String(i).padStart(12, "0")}`,
@@ -2275,15 +2276,71 @@ test("today's requests come from the whole read, and a full read says it may mis
   );
   const page = await renderLive("today");
   try {
-    expect(requestReads.at(-1)).toEqual({ p_view: "mine", p_limit: 200 });
+    const asked = requestReads.at(-1) as Record<string, unknown>;
+    expect(asked).toEqual({
+      p_view: "mine",
+      p_limit: MY_REQUESTS_LIMIT,
+      p_since: requestsSince(snapshot.eodDay),
+    });
+    // From no later than today's start in Kuwait, and no earlier than 04:00 yesterday.
+    const since = Date.parse(String(asked.p_since));
+    const today = new Date(Date.now() + 3 * 3600_000)
+      .toISOString()
+      .slice(0, 10);
+    const start = Date.parse(`${today}T00:00:00+03:00`);
+    expect(since).toBeLessThanOrEqual(start);
+    expect(since).toBeGreaterThanOrEqual(start - 20 * 3600_000);
     const text = page.text();
     expect(text).toContain("Fresh today");
     expect(text).not.toContain("Older one");
-    expect(text).toContain(
-      "Your latest 200 requests were read, open ones first, so one closed today may be missing here. My requests has them all.",
-    );
+    // The server reads from that moment on, so the old "latest 200" note is gone.
+    expect(text).not.toContain("open ones first");
   } finally {
     await page.done();
     requestRowsNow = myRequestRows;
   }
+});
+
+test("a request in ClickUp with a step the cockpit could not finish says what to check (review R2)", async () => {
+  const refused =
+    "ClickUp refused the owner, due day or priority. Set them on the task in ClickUp.";
+  requestRowsNow = [
+    requestRow({
+      typeLabel: "Client pause",
+      parts: [
+        {
+          ...requestRow({}).parts[0],
+          part: "tech",
+          taskName: "Greystone Contracting - Client pause (Tech)",
+          error: refused,
+        },
+      ],
+    }),
+  ];
+  const page = await renderLive("today");
+  try {
+    const text = page.text();
+    expect(text).toContain("Client pause");
+    // Never a clean row: the state, then what to check, on one line.
+    expect(text).toContain(`In ClickUp: to do. ${refused}`);
+  } finally {
+    await page.done();
+    requestRowsNow = myRequestRows;
+  }
+});
+
+test("the read starts at today's start in Kuwait, or at 04:00 of the end of day's own day when that is earlier", () => {
+  // 10:00 Kuwait on 27 Oct: the calendar day and the EOD day are both the 27th.
+  const morning = Date.parse("2026-10-27T07:00:00Z");
+  expect(requestsSince(null, morning)).toBe("2026-10-26T21:00:00.000Z");
+  expect(requestsSince("2026-10-27", morning)).toBe(
+    "2026-10-26T21:00:00.000Z",
+  );
+  // 02:00 Kuwait on 27 Oct: the EOD still files the 26th, from 04:00 that day.
+  const night = Date.parse("2026-10-26T23:00:00Z");
+  expect(requestsSince(null, night)).toBe("2026-10-26T01:00:00.000Z");
+  // The server's EOD day wins over the clock: at 04:05 it may still be the 26th.
+  const turn = Date.parse("2026-10-27T01:05:00Z");
+  expect(requestsSince("2026-10-26", turn)).toBe("2026-10-26T01:00:00.000Z");
+  expect(requestsSince("not a day", turn)).toBe("2026-10-26T21:00:00.000Z");
 });

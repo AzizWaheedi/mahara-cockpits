@@ -113,8 +113,8 @@ fi
 if [ -f apps/media-buyer-cockpit/scripts/requests-supabase.test.ts ]; then
   (cd apps/media-buyer-cockpit && bun test scripts/requests-supabase.test.ts scripts/request-types-seed.test.ts scripts/task-alerts-supabase.test.ts scripts/requests-fit-supabase.test.ts scripts/tasks-core.test.ts scripts/your-tasks.test.tsx scripts/requests-core.test.ts scripts/request-form.test.tsx scripts/requests-page.test.tsx scripts/requests-settings.test.tsx >/dev/null 2>&1) \
     || { echo "the requests or task alerts tests fail (cd apps/media-buyer-cockpit && bun test scripts/requests-supabase.test.ts scripts/request-types-seed.test.ts scripts/task-alerts-supabase.test.ts scripts/requests-fit-supabase.test.ts scripts/tasks-core.test.ts scripts/your-tasks.test.tsx scripts/requests-core.test.ts scripts/request-form.test.tsx scripts/requests-page.test.tsx scripts/requests-settings.test.tsx)"; exit 1; }
-  (bun test supabase/functions/clickup-writeback supabase/functions/cockpit-tasks >/dev/null 2>&1) \
-    || { echo "the requests writer or task mirror function tests fail (bun test supabase/functions/clickup-writeback supabase/functions/cockpit-tasks)"; exit 1; }
+  (bun test supabase/functions/clickup-writeback supabase/functions/cockpit-tasks supabase/functions/comment-watch/watch.test.ts >/dev/null 2>&1) \
+    || { echo "the requests writer, task mirror or comment watch function tests fail (bun test supabase/functions/clickup-writeback supabase/functions/cockpit-tasks supabase/functions/comment-watch/watch.test.ts)"; exit 1; }
 fi
 if [ -f apps/client-success-cockpit/scripts/check-in.test.ts ]; then
   (cd apps/client-success-cockpit && bun test scripts/check-in.test.ts >/dev/null 2>&1) \

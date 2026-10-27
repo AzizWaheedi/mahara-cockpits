@@ -10,6 +10,7 @@ import {
   actionPhase,
   agoWords,
   actionState,
+  alertLine,
   alertOpens,
   alertWords,
   capitalFirst,
@@ -153,6 +154,8 @@ test("each alert kind has words, and a request alert opens the request", () => {
   for (const kind of ALERT_KINDS)
     expect(alertWords(kind).length).toBeGreaterThan(5);
   expect(alertWords("request_failed")).toBe("A failed request");
+  // ClickUp names nobody as the mover (contract 3.2, F9): never "someone".
+  expect(alertWords("status")).toBe("Your task moves");
   expect(
     alertOpens({ kind: "request_done", taskId: null, requestId: "r1" }),
   ).toBe("request");
@@ -257,4 +260,49 @@ test("an alert's time, short and in Kuwait time (D9)", () => {
   expect(agoWords("2026-10-22T06:10:00Z", now)).toBe("Thu 22 Oct 09:10");
   expect(agoWords(null, now)).toBe("");
   expect(agoWords("not a time", now)).toBe("");
+});
+
+test("a bell row names the client once, with no stray full stop before it", () => {
+  // A request alert's title already names the client (contract 3.2).
+  expect(
+    alertLine({
+      title: "New script: Cedar Fit-Out",
+      body: "Done in ClickUp.",
+      clientName: "Cedar Fit-Out",
+    }),
+  ).toEqual({ body: "Done in ClickUp.", client: null });
+  // The stored name may carry spaces the title's does not.
+  expect(
+    alertLine({
+      title: "Missing card: Harbor Interiors",
+      body: "Did not reach ClickUp: no reason was recorded.",
+      clientName: " Harbor Interiors ",
+    }),
+  ).toEqual({
+    body: "Did not reach ClickUp: no reason was recorded.",
+    client: null,
+  });
+  // Any other alert: the body, then the client.
+  expect(
+    alertLine({
+      title: "Dune Build Co - Landing page",
+      body: "The CSM mentioned you",
+      clientName: "Harbor Interiors",
+    }),
+  ).toEqual({ body: "The CSM mentioned you", client: "Harbor Interiors" });
+  // A body that ends in a full stop loses it before the client.
+  expect(
+    alertLine({
+      title: "Landing page",
+      body: "Closed in ClickUp.",
+      clientName: "Cedar Fit-Out",
+    }),
+  ).toEqual({ body: "Closed in ClickUp", client: "Cedar Fit-Out" });
+  // No client: the body as it is.
+  expect(
+    alertLine({ title: "General tech request", body: "Done in ClickUp." }),
+  ).toEqual({ body: "Done in ClickUp.", client: null });
+  expect(
+    alertLine({ title: "A task", body: "Assigned to you", clientName: "  " }),
+  ).toEqual({ body: "Assigned to you", client: null });
 });

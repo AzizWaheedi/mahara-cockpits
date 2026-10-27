@@ -6,6 +6,7 @@ import { focusSearch, useTaskFeed } from "@/lib/tasksClient";
 import {
   type AlertRow,
   agoWords,
+  alertLine,
   alertOpens,
   kuwaitTime,
   TASK_SENTENCES,
@@ -202,7 +203,10 @@ export function AlertsBell({
         ) : null}
         {data?.link === "not_linked" ? (
           <p className="tk-note">
-            {data.note?.trim() || TASK_SENTENCES.notLinked}
+            {data.note?.trim() ||
+              (data.linkState === "cleared"
+                ? TASK_SENTENCES.bellCleared
+                : TASK_SENTENCES.notLinked)}
           </p>
         ) : null}
         {lateAt ? <LateLine at={lateAt} /> : null}
@@ -217,7 +221,7 @@ export function AlertsBell({
               <li key={a.id}>
                 <button
                   type="button"
-                  className="tk-alert"
+                  className={`tk-alert${a.read ? "" : " tk-alert-unread"}`}
                   onClick={() => press(a)}
                 >
                   <span
@@ -228,15 +232,7 @@ export function AlertsBell({
                     <bdi dir="auto" className="tk-alert-title">
                       {a.title}
                     </bdi>
-                    <span className="tk-alert-body">
-                      {a.body}
-                      {a.clientName ? (
-                        <>
-                          {" · "}
-                          <bdi dir="auto">{a.clientName}</bdi>
-                        </>
-                      ) : null}
-                    </span>
+                    <AlertBody alert={a} />
                   </span>
                   {a.at ? (
                     <time className="tk-alert-time" dateTime={a.at}>
@@ -270,22 +266,16 @@ export function AlertsBell({
                         <bdi dir="auto" className="tk-alert-title">
                           {item.title}
                         </bdi>
-                        <span className="tk-alert-body">
-                          {item.body}
-                          {item.clientName ? (
-                            <>
-                              {" · "}
-                              <bdi dir="auto">{item.clientName}</bdi>
-                            </>
-                          ) : null}
-                        </span>
+                        <AlertBody alert={item} />
                       </span>
+                      {item.read ? null : <span className="tk-sr">Unread</span>}
                     </>
                   );
                   const done = () => {
                     setOpen(false);
                     if (!item.read) void markRead([], [item]);
                   };
+                  const rowClass = `tk-alert${item.read ? "" : " tk-alert-unread"}`;
                   return (
                     <li key={item.id}>
                       {item.external ? (
@@ -293,7 +283,7 @@ export function AlertsBell({
                           href={item.href}
                           target="_blank"
                           rel="noreferrer"
-                          className="tk-alert"
+                          className={rowClass}
                           onClick={done}
                         >
                           {inner}
@@ -301,7 +291,7 @@ export function AlertsBell({
                       ) : (
                         <Link
                           to={item.href}
-                          className="tk-alert"
+                          className={rowClass}
                           onClick={done}
                         >
                           {inner}
@@ -319,5 +309,28 @@ export function AlertsBell({
       </TaskPanel>
       <TaskListPanel open={list} onClose={() => setList(false)} />
     </>
+  );
+}
+
+/**
+ * An alert's second line: the body, then the client once (a request alert
+ * already names it in its title), with no stray full stop before it.
+ */
+function AlertBody({
+  alert,
+}: {
+  alert: { title: string; body: string; clientName?: string | null };
+}) {
+  const line = alertLine(alert);
+  return (
+    <span className="tk-alert-body">
+      {line.body}
+      {line.client ? (
+        <>
+          {line.body ? " · " : null}
+          <bdi dir="auto">{line.client}</bdi>
+        </>
+      ) : null}
+    </span>
   );
 }

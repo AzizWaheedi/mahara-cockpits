@@ -102,6 +102,7 @@ import {
   buildCallDraft,
   countDecisions,
   eodDayLabel,
+  eodWorkingDay,
   markEodOpened,
   onEodDay,
   readEodCalls,
@@ -133,7 +134,8 @@ import {
   type RequestRow,
   requestHeld,
   stateChip,
-  stateWords,
+  stateHint,
+  unfinishedNote,
 } from "@/lib/requestsCore";
 import { useRequestsOpen, useWriterMode } from "@/lib/requestsOpen";
 import { fold, matchScore } from "@/lib/search";
@@ -227,12 +229,6 @@ const TICKETS: { label: string; dept: string; deptLabel: string }[] = [
  */
 type MyRequests = {
   rows: RequestRow[] | null;
-  /**
-   * The read came back full (MY_REQUESTS_LIMIT rows). The server sorts open
-   * requests first, so a closed one from today may be past the end: the
-   * count is then "at least", and the card says so.
-   */
-  capped: boolean;
   error: string | null;
   reading: boolean;
   reload: () => void;
@@ -241,6 +237,7 @@ type MyRequests = {
 function useMyRequests(
   client: ReturnType<typeof useCockpitAuth>["client"],
   on: boolean,
+  since: string,
 ): MyRequests {
   const [rows, setRows] = useState<RequestRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -251,10 +248,9 @@ function useMyRequests(
     if (!client || !on) return;
     let live = true;
     setReading(true);
-    // The most cockpit_requests_read returns. It has no date filter and
-    // sorts open requests first, so the whole read is filtered to today
-    // here (raisedToday), and a full read is flagged as capped.
-    readRequests(client, "mine", MY_REQUESTS_LIMIT)
+    // Only the rows from `since` on (the server filters, contract F3); the
+    // two cards then keep their own day (raisedToday, onEodDay).
+    readRequests(client, "mine", MY_REQUESTS_LIMIT, since)
       .then(read => {
         if (!live) return;
         setRows(Array.isArray(read?.rows) ? read.rows : []);
@@ -273,10 +269,9 @@ function useMyRequests(
     return () => {
       live = false;
     };
-  }, [client, on, asked]);
+  }, [client, on, since, asked]);
   return {
     rows,
-    capped: (rows?.length ?? 0) >= MY_REQUESTS_LIMIT,
     error,
     reading,
     reload: () => setAsked(n => n + 1),
@@ -285,6 +280,25 @@ function useMyRequests(
 
 /** cockpit_requests_read's own ceiling (p_limit is capped at 200). */
 export const MY_REQUESTS_LIMIT = 200;
+
+/**
+ * The first moment the two cards read from: the start of today in Kuwait, or
+ * 04:00 Kuwait of the end of day's own day when that is earlier (before 04:00
+ * the end of day still files yesterday). The server's EOD day wins over the
+ * clock's guess.
+ */
+export function requestsSince(
+  eodDay: string | null | undefined,
+  now: number = Date.now(),
+): string {
+  const day =
+    typeof eodDay === "string" && /^\d{4}-\d{2}-\d{2}$/.test(eodDay)
+      ? eodDay
+      : eodWorkingDay(now);
+  const calendar = Date.parse(`${kuwaitDay(now)}T00:00:00+03:00`);
+  const eod = Date.parse(`${day}T04:00:00+03:00`);
+  return new Date(Math.min(calendar, eod)).toISOString();
+}
 
 /** The requests created today in Kuwait, in the read's order. */
 export function raisedToday(
@@ -316,7 +330,7 @@ function RequestsRaisedToday({ mine }: { mine: MyRequests }) {
   return (
     <SectionCard
       title="Requests you raised today"
-      count={mine.rows && !mine.error && !mine.capped ? rows.length : undefined}
+      count={mine.rows && !mine.error ? rows.length : undefined}
       sub="Each one becomes a ClickUp task on the other team's board, with its SOP steps and an owner."
       action={
         <a
@@ -355,13 +369,15 @@ function RequestsRaisedToday({ mine }: { mine: MyRequests }) {
       ) : (
         rows.map(r => {
           const chip = stateChip(r);
-          // Not (all) in ClickUp: say where it is, in one line.
+          // Not (all) in ClickUp, or in ClickUp with a step the cockpit
+          // could not finish: say where it is and what to check, in one line.
           const trouble =
             !r.done &&
             (r.state === "failed" ||
               r.state === "partial" ||
               r.state === "dry_run" ||
-              requestHeld(r));
+              requestHeld(r) ||
+              unfinishedNote(r) !== null);
           const links = r.parts.filter(part => part.url);
           return (
             <div
@@ -385,19 +401,13 @@ function RequestsRaisedToday({ mine }: { mine: MyRequests }) {
               ))}
               {trouble ? (
                 <p className="basis-full text-xs text-muted-foreground">
-                  {stateWords(r)}
+                  {stateHint(r)}
                 </p>
               ) : null}
             </div>
           );
         })
       )}
-      {mine.rows && !mine.error && mine.capped ? (
-        <p className="border-t px-4 py-3 text-xs text-muted-foreground sm:px-6">
-          Your latest {MY_REQUESTS_LIMIT} requests were read, open ones first,
-          so one closed today may be missing here. My requests has them all.
-        </p>
-      ) : null}
     </SectionCard>
   );
 }
@@ -1738,6 +1748,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
   const myRequests = useMyRequests(
     auth.client,
     section === "today" || section === "eod",
+    requestsSince(snap?.eodDay),
   );
   // The request form replaces the old Ask a team only once requests are
   // open for this client; until then the CSM keeps the path that works.

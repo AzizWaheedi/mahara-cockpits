@@ -11,6 +11,8 @@
  *
  * `tasks=` picks the answer: default (eight tasks, three alerts unread),
  * few, empty, not_linked, not_linked_editor (the seat may link seats),
+ * cleared (an editor said the seat has no ClickUp user, review round 3; the
+ * seat may link seats, yet is never asked to link its own),
  * stale (the mirror last read 25 minutes ago), never (it never read),
  * error (the read fails), loading (it never answers). `act=` picks how a
  * tick, comment or Mark done settles: delivered (after two reads, the
@@ -44,6 +46,7 @@ export type TasksScenario =
   | "empty"
   | "not_linked"
   | "not_linked_editor"
+  | "cleared"
   | "stale"
   | "never"
   | "error"
@@ -247,6 +250,17 @@ function serverOrder(rows: TaskRow[]): TaskRow[] {
 
 const NOT_LINKED =
   "Your seat is not linked to a ClickUp user, so your tasks cannot show here. Ask the systems manager to link it.";
+/** The database's notes for a seat an editor cleared (migration 20261026t, review round 3). */
+const CLEARED_CARD =
+  "Your seat has no ClickUp user, so no ClickUp tasks show here. Requests you raise show under My requests.";
+const CLEARED_BELL =
+  "Your seat has no ClickUp user, so only request alerts show here.";
+const NOT_LINKED_BELL =
+  "Your seat is not linked to a ClickUp user, so only request alerts show here. Ask the systems manager to link it.";
+const notLinkedIn = (scenario: TasksScenario) =>
+  scenario === "not_linked" ||
+  scenario === "not_linked_editor" ||
+  scenario === "cleared";
 
 /** cockpit_my_tasks for a scenario. */
 export function myTasksFixture(
@@ -258,8 +272,7 @@ export function myTasksFixture(
   const seeds =
     scenario === "few" ? SEEDS.slice(1, 4) : scenario === "empty" ? [] : SEEDS;
   const tasks = serverOrder(seeds.map(s => rowOf(s, nowMs)));
-  const notLinked =
-    scenario === "not_linked" || scenario === "not_linked_editor";
+  const notLinked = notLinkedIn(scenario);
   const shown = notLinked ? [] : tasks;
   return {
     asOf,
@@ -271,7 +284,8 @@ export function myTasksFixture(
           : fresh,
     ready: scenario !== "stale" && scenario !== "never",
     link: notLinked ? "not_linked" : "linked",
-    note: notLinked ? NOT_LINKED : null,
+    linkState: scenario === "cleared" ? "cleared" : notLinked ? null : "ok",
+    note: scenario === "cleared" ? CLEARED_CARD : notLinked ? NOT_LINKED : null,
     counts: {
       overdue: shown.filter(t => t.overdue).length,
       today: shown.filter(t => t.dueToday).length,
@@ -288,8 +302,7 @@ export function alertsFixture(
   nowMs: number = Date.now(),
 ): TaskAlerts {
   const minutes = (n: number) => new Date(nowMs - n * 60_000).toISOString();
-  const notLinked =
-    scenario === "not_linked" || scenario === "not_linked_editor";
+  const notLinked = notLinkedIn(scenario);
   const all: AlertRow[] = [
     {
       id: "a1f00000-0000-4000-8000-000000000001",
@@ -364,7 +377,13 @@ export function alertsFixture(
           ).toISOString(),
     ready: scenario !== "stale" && scenario !== "never",
     link: notLinked ? "not_linked" : "linked",
-    note: notLinked ? NOT_LINKED : null,
+    linkState: scenario === "cleared" ? "cleared" : notLinked ? null : "ok",
+    note:
+      scenario === "cleared"
+        ? CLEARED_BELL
+        : notLinked
+          ? NOT_LINKED_BELL
+          : null,
     unread: alerts.filter(a => !a.read).length,
     alerts,
   };
@@ -478,6 +497,22 @@ function liveOf(seed: Seed, nowMs: number): Live {
   return state;
 }
 
+/**
+ * Where Mark done is not offered, and why, as cockpit_task_done_blocked in
+ * migration 20261026t says (review round 2): a seat's task on any list takes
+ * a tick, a comment and Mark done, but a client card itself takes nothing.
+ */
+const DONE_BLOCKED: Record<string, { name: string; why: string }> = {
+  "901816720767": {
+    name: "Video Pipeline",
+    why: "Mark done is not offered on Video Pipeline, where done means the video is live. Move it in ClickUp.",
+  },
+  "901821803697": {
+    name: "WhatsApp Reconnection",
+    why: "Mark done is not offered on WhatsApp Reconnection, where a status change messages the client. Move it in ClickUp.",
+  },
+};
+
 /** The focus view's answer for one invented task. */
 export function detailFixture(
   taskId: string,
@@ -485,6 +520,8 @@ export function detailFixture(
     nowMs?: number;
     can?: "all" | "none";
     detailFails?: boolean;
+    /** Put the task on another list (Video Pipeline, WhatsApp Reconnection, ...). */
+    listId?: string;
   } = {},
 ): TaskDetail | null {
   const nowMs = options.nowMs ?? Date.now();
@@ -505,10 +542,14 @@ export function detailFixture(
   const total = lists.flatMap(l => l.items).length;
   const at = new Date(nowMs - (options.detailFails ? 9 * 60_000 : 0));
   const none = options.can === "none";
+  const listId = options.listId ?? row.listId;
+  const blocked = DONE_BLOCKED[listId] ?? null;
   return {
     asOf: new Date(nowMs).toISOString(),
     task: {
       ...row,
+      listId,
+      listName: blocked?.name ?? row.listName,
       status: state.status,
       statusType: state.statusType,
       checklist: total ? { done, total } : null,
@@ -546,7 +587,12 @@ export function detailFixture(
           done: false,
           why: "Changes from the cockpit are not switched on yet. Open the task in ClickUp.",
         }
-      : { tick: true, comment: true, done: true, why: null },
+      : {
+          tick: true,
+          comment: true,
+          done: !blocked,
+          why: blocked?.why ?? null,
+        },
     writer: none
       ? { mode: "dry_run", live: false }
       : { mode: "apply", live: true },
@@ -635,6 +681,7 @@ const SCENARIOS: TasksScenario[] = [
   "empty",
   "not_linked",
   "not_linked_editor",
+  "cleared",
   "stale",
   "never",
   "error",
@@ -719,7 +766,7 @@ export function installTasksHarness(client: SupabaseClient): void {
     // requests harness answers it everywhere else.
     if (
       name === "cockpit_task_alert_rules_read" &&
-      scenario === "not_linked_editor"
+      (scenario === "not_linked_editor" || scenario === "cleared")
     ) {
       await wait();
       return { data: { canEditOthers: true }, error: null };

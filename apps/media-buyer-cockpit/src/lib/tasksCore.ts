@@ -38,6 +38,17 @@ export type TaskRow = {
 };
 
 export type TaskLink = "linked" | "not_linked";
+/**
+ * The seat's link row as the database holds it (review round 3): "cleared" is
+ * an editor saying the seat has no ClickUp user, so nobody is asked to link
+ * it; null when the hourly read has not checked the seat yet.
+ */
+export type TaskLinkState =
+  | "ok"
+  | "manual"
+  | "not_found"
+  | "ambiguous"
+  | "cleared";
 
 export type MyTasks = {
   asOf: string;
@@ -46,6 +57,7 @@ export type MyTasks = {
   /** The mirror read ClickUp in the last ten minutes. */
   ready: boolean;
   link: TaskLink;
+  linkState?: TaskLinkState | null;
   note: string | null;
   counts: { overdue: number; today: number; total: number };
   tasks: TaskRow[];
@@ -91,6 +103,7 @@ export type TaskAlerts = {
   sourceAt: string | null;
   ready: boolean;
   link: TaskLink;
+  linkState?: TaskLinkState | null;
   note: string | null;
   unread: number;
   alerts: AlertRow[];
@@ -155,6 +168,11 @@ export type TaskDetail = {
 export const TASK_SENTENCES = {
   notLinked:
     "Your seat is not linked to a ClickUp user, so your tasks cannot show here. Ask the systems manager to link it.",
+  /** A seat an editor cleared (linkState "cleared", review round 3): no link to ask for. */
+  cleared:
+    "Your seat has no ClickUp user, so no ClickUp tasks show here. Requests you raise show under My requests.",
+  bellCleared:
+    "Your seat has no ClickUp user, so only request alerts show here.",
   linkIt: "Link it in Requests settings",
   notRead:
     "Your tasks could not be read just now. They are still in ClickUp. Try again in a minute.",
@@ -310,12 +328,35 @@ export function alertWords(kind: AlertKind): string {
     case "mention":
       return "Someone mentions you in a comment";
     case "status":
-      return "Someone moves your task";
+      // ClickUp names nobody as the mover, so a seat's own move in ClickUp
+      // alerts it too (contract 3.2, F9): never "someone".
+      return "Your task moves";
     case "request_done":
       return "Your request is done";
     case "request_failed":
       return "A failed request";
   }
+}
+
+/**
+ * A bell row's second line: the body, then the client, unless the title
+ * already names it (a request alert's title is "{type}: {client}"), so the
+ * client is said once. When the client follows, the body's closing full
+ * stop goes, so the line never reads "Done in ClickUp. · Acme".
+ */
+export function alertLine(alert: {
+  title: string;
+  body: string;
+  clientName?: string | null;
+}): { body: string; client: string | null } {
+  const client = alert.clientName?.trim() || null;
+  const named =
+    client !== null &&
+    (alert.title ?? "")
+      .toLocaleLowerCase()
+      .includes(client.toLocaleLowerCase());
+  if (!client || named) return { body: alert.body, client: null };
+  return { body: alert.body.replace(/\.\s*$/, ""), client };
 }
 
 /** A request alert opens the request; every other alert opens its task. */

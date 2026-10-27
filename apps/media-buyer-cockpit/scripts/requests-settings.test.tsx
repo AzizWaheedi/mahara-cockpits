@@ -10,7 +10,21 @@
  * and cleared; alert switches save at once, a failed request stays on, the
  * shift is set and given back. Every person, seat and id is made up.
  */
-import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  describe,
+  expect,
+  setDefaultTimeout,
+  test,
+} from "bun:test";
+
+// These screens run on real timers (the form's 250 ms debounce, the 3 s and
+// 5 s re-reads), in one process with the database suites as ship.sh runs
+// them, on a laptop several sessions share. A test that waits longer than
+// bun's 5 s default under that load is slow, not wrong: it may take 20 s.
+setDefaultTimeout(20_000);
+
 
 const g = globalThis as any;
 const ENV = {
@@ -305,12 +319,64 @@ describe("/requests/settings, the tabs by seat", () => {
     expect(fake.calls.some(c => c.name === "cockpit_member_clickup_read")).toBe(
       false,
     );
+    // A client success seat may read the Slack notices page.
+    const slack = [...container.querySelectorAll("a")].find(
+      (a: any) => text(a) === "Slack notices",
+    ) as any;
+    expect(slack?.getAttribute("href")).toBe("/client-success/notices");
+  });
+
+  test("Slack notices is linked only for a seat its page lets in", async () => {
+    // The notices page reads for an editor, a client success or a creative
+    // seat (cockpit_slack_notice_viewer); a sales seat would land on its
+    // refusal, which links back here.
+    fake = createRequestsFake({ seat: "sales", now: () => NOW });
+    await render();
+    expect(page()).toContain("Your alerts");
+    expect(
+      [...container.querySelectorAll("a")].some(
+        (a: any) => text(a) === "Slack notices",
+      ),
+    ).toBe(false);
+    expect(page()).not.toContain("Slack notices");
+  });
+
+  test("while the seat is read, no Slack notices link shows yet", async () => {
+    let release: (() => void) | null = null;
+    const held = new Promise<void>(r => {
+      release = r;
+    });
+    const realRpc = db.rpc;
+    db.rpc = async (name: string, args: any = {}) => {
+      if (name === "cockpit_request_types_read") await held;
+      return realRpc(name, args);
+    };
+    try {
+      await render();
+      expect(page()).toContain("Reading your seat");
+      expect(page()).not.toContain("Slack notices");
+      (release as unknown as () => void)();
+      await flush(6);
+      expect(page()).toContain("Slack notices");
+    } finally {
+      db.rpc = realRpc;
+    }
   });
 });
 
 describe("request types", () => {
+  /** A ClickUp option id (uuid) anywhere in some words. */
+  const OPTION_ID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
+
   test("one row a type: where each task goes, its owner, its SOP and the due rule", async () => {
+    // The editor's read as cockpit_request_types_read sends it (2.5, I1):
+    // fieldSpecs, where a choice kept in a ClickUp field has no options.
     await render();
+    const read = fake.call("cockpit_request_types_read").data as any;
+    const spec = read.types
+      .find((t: any) => t.key === "low_schedule_rate")
+      .fieldSpecs.find((f: any) => f.key === "schedule_rate_issue");
+    expect(spec.options).toBeNull();
     const pause = squash(text(typeRow("Client pause")));
     expect(pause).toContain("Operations / Tech, the systems manager");
     expect(pause).toContain("Marketing / ADs, the media buyer of record");
@@ -319,17 +385,134 @@ describe("request types", () => {
     expect(pause).toContain("Client Pause ⏸️ (Tech)");
     expect(pause).toContain("Client Pause ⏸️ (Media)");
     expect(pause).toContain("Due in 2 days");
-    // Parts that differ by their "runs when" say it.
+    // Parts that differ by their "runs when" say it, with the choices'
+    // names from the field catalog, never their ClickUp ids.
     const low = squash(text(typeRow("Low schedule rate")));
     expect(low).toContain(
-      "Call Center, the client's CSM, when Where is the problem? is Call Center Issue or Both",
+      'Call Center, the client\'s CSM, when "Where is the problem?" is Call Center Issue or Both',
     );
     expect(low).toContain(
-      "Marketing / ADs, the media buyer of record, when Where is the problem? is Ads issue or Both",
+      'Marketing / ADs, the media buyer of record, when "Where is the problem?" is Ads issue or Both',
     );
+    const ads = squash(text(typeRow("Create an ad account")));
+    for (const platform of ["Facebook/Meta", "Tiktok", "Snapchat"])
+      expect(ads).toContain(
+        `Marketing / ADs, the media buyer of record, when "Ad platform" is ${platform}`,
+      );
+    expect(low).not.toMatch(OPTION_ID);
+    expect(ads).not.toMatch(OPTION_ID);
     expect(squash(text(typeRow("General tech request")))).toContain(
       "5 draft steps",
     );
+  });
+
+  test("on a database from before I1 (no fieldSpecs) the rows name the choices too", async () => {
+    fake = createRequestsFake({ seat: "ceo", now: () => NOW, specs: false });
+    await render();
+    const low = squash(text(typeRow("Low schedule rate")));
+    expect(low).toContain(
+      'when "Where is the problem?" is Call Center Issue or Both',
+    );
+    expect(squash(text(typeRow("Create an ad account")))).toContain(
+      'when "Ad platform" is Facebook/Meta',
+    );
+  });
+
+  test("runs-when words: the form's choices, then the spec's, then the catalog; an unknown answer is never its id", async () => {
+    const { partWhenWords } = await import(
+      "../src/pages/requests/TypeEditor"
+    );
+    const read = fake.call("cockpit_request_types_read").data as any;
+    const ads = read.types.find((t: any) => t.key === "create_ad_account");
+    // The question's own choices came back empty (its ClickUp field went
+    // missing in the hourly read): the catalog the editor read still names
+    // the platform.
+    const missing = {
+      ...ads,
+      fields: ads.fields.map((f: any) =>
+        f.key === "ads_platform" ? { ...f, options: [] } : f,
+      ),
+    };
+    expect(partWhenWords(missing, "meta", read.catalog)).toBe(
+      'when "Ad platform" is Facebook/Meta',
+    );
+    // Nothing names it: said as a choice that could not be read.
+    expect(partWhenWords(missing, "meta", null)).toBe(
+      'when "Ad platform" is a choice that could not be read from ClickUp',
+    );
+    // A cockpit-only choice keeps its own options in the stored spec.
+    const own = {
+      ...ads,
+      fields: ads.fields.map((f: any) =>
+        f.key === "ads_platform" ? { ...f, options: [] } : f,
+      ),
+      fieldSpecs: ads.fieldSpecs.map((f: any) =>
+        f.key === "ads_platform"
+          ? {
+              ...f,
+              clickup_field_id: null,
+              options: [
+                { id: "88d55b4b-f296-4a0b-abc6-3b228889444a", name: "Meta" },
+              ],
+            }
+          : f,
+      ),
+    };
+    expect(partWhenWords(own, "meta", null)).toBe('when "Ad platform" is Meta');
+    // A part that always runs says nothing.
+    const pause = read.types.find((t: any) => t.key === "client_pause");
+    expect(partWhenWords(pause, "tech", read.catalog)).toBeNull();
+  });
+
+  test("Create an ad account saves a due change: its three platform tasks share a board and a name, never one request (C3)", async () => {
+    await render();
+    await click(typeRow("Create an ad account"));
+    expect(cards()).toHaveLength(3);
+    await setValue(labelled(dialog(), "Due in, working days"), "4");
+    await click(buttonIn(dialog(), "Save"));
+    expect(text(dialog())).not.toContain("two tasks would have the same name");
+    expect(saves()).toHaveLength(1);
+    expect(saves()[0].args).toEqual({
+      p_key: "create_ad_account",
+      p_patch: { due_days: 4 },
+      p_expected_version: 1,
+    });
+    // Naming the media buyer of record on one platform's task saves too.
+    await setValue(labelled(cards()[0], "Named person"), "120000001");
+    await click(buttonIn(dialog(), "Save"));
+    expect(saves()).toHaveLength(2);
+    expect(saves()[1].args.p_patch.targets[0]).toMatchObject({
+      part: "meta",
+      owner_clickup_id: 120000001,
+    });
+    // One request could make two of them once Meta also runs for TikTok:
+    // two tasks named the same on one board, refused before the save.
+    const tiktok = [...cards()[0].querySelectorAll("label")].find(
+      (l: any) => squash(text(l)) === "Tiktok",
+    ) as any;
+    await click(tiktok.querySelector("input"));
+    await click(buttonIn(dialog(), "Save"));
+    expect(text(dialog())).toContain(
+      "Marketing / ADs: two tasks would have the same name. Give one a different name ending.",
+    );
+    expect(saves()).toHaveLength(2);
+  });
+
+  test("two tasks clash only when one request can make both", async () => {
+    const { bothRun } = await import("../src/pages/requests/TypeEditor");
+    const on = (field_key: string, ...options: string[]) => ({
+      field_key,
+      options,
+    });
+    expect(bothRun(on("ads_platform", "meta"), on("ads_platform", "tiktok"))).toBe(
+      false,
+    );
+    expect(
+      bothRun(on("ads_platform", "meta", "tiktok"), on("ads_platform", "tiktok")),
+    ).toBe(true);
+    expect(bothRun(on("ads_platform", "meta"), null)).toBe(true);
+    expect(bothRun(null, null)).toBe(true);
+    expect(bothRun(on("ads_platform", "meta"), on("other", "meta"))).toBe(true);
   });
 
   test("a type whose steps came from the template's source task explains them once (D14)", async () => {
@@ -461,7 +644,172 @@ describe("request types", () => {
     expect((labelled(dialog(), "Due in, working days") as any).value).toBe("2");
   });
 
+  test("going back to a version never turns Set Request Type back on, and the toast says why (review round 2)", async () => {
+    const { toast } = await import("sonner");
+    const said: string[] = [];
+    const realSuccess = toast.success;
+    toast.success = ((m: unknown) => {
+      said.push(String(m));
+      return 0;
+    }) as typeof toast.success;
+    try {
+      await render();
+      await click(typeRow("General tech request"));
+      const rt = () => {
+        const l = [...dialog().querySelectorAll("label")].find(
+          (x: any) =>
+            squash(text(x.querySelector("span"))) ===
+            "Set Request Type in ClickUp",
+        ) as any;
+        return win.document.getElementById(l?.getAttribute("for")) as any;
+      };
+      // Version 2 turns it on, version 3 (a 2-minute check, or an editor) off.
+      expect(rt().getAttribute("data-state")).toBe("unchecked");
+      await click(rt());
+      await click(buttonIn(dialog(), "Save"));
+      expect(saves().at(-1)?.args.p_patch).toEqual({ set_request_type: true });
+      await click(rt());
+      await click(buttonIn(dialog(), "Save"));
+      expect(saves().at(-1)?.args.p_patch).toEqual({ set_request_type: false });
+      await click(buttonIn(dialog(), "Versions"));
+      await click(buttonIn(dialog(), "Go back to version 2"));
+      expect(said.at(-1)).toBe(
+        "Back to version 2. Request Type stays off. Version 2 had it on, but it is off now; turn it on with its switch once the rehearsal ticket shows ClickUp keeps the task where it is.",
+      );
+      expect(rt().getAttribute("data-state")).toBe("unchecked");
+      // A version that had it off says the usual.
+      await click(buttonIn(dialog(), "Versions"));
+      await click(buttonIn(dialog(), "Go back to version 1"));
+      expect(said.at(-1)).toBe("Back to version 1. The next request uses it.");
+    } finally {
+      toast.success = realSuccess;
+    }
+  });
+
+  // The task cards in the type editor ("Where it goes"), each with its own
+  // List, owner, name ending and Runs fields.
+  const cards = () =>
+    [...dialog().querySelectorAll("li")].filter((li: any) =>
+      text(li).includes("Who owns it"),
+    ) as any[];
+
+  test("a task can be added to a type and taken off again (ask 3, round 2)", async () => {
+    await render();
+    await click(typeRow("General tech request"));
+    expect(squash(text(dialog()))).toContain("Where it goes");
+    // One task: nothing to take off.
+    expect(buttonIn(dialog(), "Remove this task")).toBeUndefined();
+    await click(buttonIn(dialog(), "Add a task"));
+    expect(squash(text(dialog()))).toContain("Where its 2 tasks go");
+    expect(cards()).toHaveLength(2);
+    // The first board the type does not use yet, with that board's owner.
+    expect(squash(text(cards()[1]))).toContain(
+      "Client Success (Client Success task)",
+    );
+    expect(labelled(cards()[1], "Who owns it").value).toBe("csm_of_card");
+    // Moved to another board, its untouched name ending and owner follow.
+    await setValue(labelled(cards()[1], "List"), "901816723196");
+    expect(squash(text(cards()[1]))).toContain("Marketing / ADs (Ads task)");
+    expect(labelled(cards()[1], "Name ending").value).toBe(" (Ads)");
+    expect(labelled(cards()[1], "Who owns it").value).toBe(
+      "media_buyer_of_record",
+    );
+    await click(buttonIn(dialog(), "Save"));
+    const sent = saves()[0].args;
+    expect(Object.keys(sent.p_patch)).toEqual(["targets"]);
+    expect(sent.p_expected_version).toBe(1);
+    expect(sent.p_patch.targets.map((t: any) => t.part)).toEqual([
+      "main",
+      "ads",
+    ]);
+    // Saved under its board's name, a short name the guard accepts.
+    expect(sent.p_patch.targets[1]).toEqual({
+      part: "ads",
+      name_suffix: " (Ads)",
+      list_id: "901816723196",
+      team: "ads",
+      template_id: null,
+      template_name: null,
+      owner_rule: "media_buyer_of_record",
+      owner_clickup_id: null,
+      when: null,
+    });
+    expect(squash(text(dialog()))).toContain("version 2");
+    expect(squash(text(dialog()))).toContain("Where its 2 tasks go");
+    // The type's row names both tasks.
+    expect(squash(text(typeRow("General tech request")))).toContain(
+      "Marketing / ADs, the media buyer of record",
+    );
+    // Taken off again, with the version it read.
+    await click(buttonIn(cards()[1], "Remove this task"));
+    expect(cards()).toHaveLength(1);
+    expect(buttonIn(dialog(), "Remove this task")).toBeUndefined();
+    await click(buttonIn(dialog(), "Save"));
+    expect(saves()[1].args.p_patch.targets.map((t: any) => t.part)).toEqual([
+      "main",
+    ]);
+    expect(saves()[1].args.p_expected_version).toBe(2);
+  });
+
+  test("three tasks at most, and two tasks never share one name on one board", async () => {
+    await render();
+    await click(typeRow("Low schedule rate"));
+    expect(cards()).toHaveLength(2);
+    await click(buttonIn(dialog(), "Add a task"));
+    expect(cards()).toHaveLength(3);
+    expect(buttonIn(dialog(), "Add a task")).toBeUndefined();
+    expect(text(dialog())).toContain(
+      "A request makes 1 to 3 tasks, each on a team's board.",
+    );
+    // The third on the Call Center board with the first one's name ending.
+    await setValue(labelled(cards()[2], "List"), "901816723206");
+    await setValue(labelled(cards()[2], "Name ending"), " (Call Center)");
+    await click(buttonIn(dialog(), "Save"));
+    expect(text(dialog())).toContain(
+      "Call Center: two tasks would have the same name. Give one a different name ending.",
+    );
+    expect(saves()).toEqual([]);
+  });
+
+  test("a task's Runs choice: every time, or when a choice question is picked", async () => {
+    await render();
+    await click(typeRow("Low schedule rate"));
+    const runs = (i: number) => labelled(cards()[i], "Runs");
+    expect(runs(0).value).toBe("schedule_rate_issue");
+    expect(
+      [...runs(0).querySelectorAll("option")].map((o: any) => text(o)),
+    ).toEqual(["Every time", 'Depending on "Where is the problem?"']);
+    // The answers it runs for, by name, under the question in quotes.
+    expect(squash(text(cards()[0]))).toContain(
+      'Runs when "Where is the problem?" is',
+    );
+    // Each Remove names its task to a screen reader.
+    const remove = buttonIn(cards()[1], "Remove this task");
+    expect(
+      win.document.getElementById(remove.getAttribute("aria-describedby"))
+        ?.textContent,
+    ).toBe("Marketing / ADs (Ads task)");
+    // Every time: the answers it ran for go.
+    await setValue(runs(0), "");
+    expect(text(cards()[0])).not.toContain("Runs when");
+    // Back to a choice: it needs at least one answer before the save goes.
+    await setValue(runs(0), "schedule_rate_issue");
+    await click(buttonIn(dialog(), "Save"));
+    expect(text(dialog())).toContain(
+      "Call Center: pick at least one answer it runs for.",
+    );
+    expect(saves()).toEqual([]);
+    await setValue(runs(0), "");
+    await click(buttonIn(dialog(), "Save"));
+    const targets = saves()[0].args.p_patch.targets;
+    expect(targets[0].when).toBeNull();
+    expect(targets[1].when.field_key).toBe("schedule_rate_issue");
+    expect(targets.map((t: any) => t.part)).toEqual(["call_center", "ads"]);
+  });
+
   test("questions stay as they are until the read carries their ClickUp ids", async () => {
+    // A database from before I1: no fieldSpecs in the editor's read.
+    fake = createRequestsFake({ seat: "ceo", now: () => NOW, specs: false });
     await render();
     await click(typeRow("Low schedule rate"));
     expect(text(dialog())).toContain(
@@ -514,10 +862,13 @@ describe("people in ClickUp", () => {
     const yousef = squash(text(row("Yousef, media buyer")));
     expect(yousef).toContain("set by hand");
     expect(yousef).not.toContain("Set by an editor.");
-    // Clear only where a link was set by hand.
+    // Clear on every row that holds a link or a match result (round 2): an
+    // email match too, since one ClickUp user holds one seat and clearing
+    // is how it moves; on an unlinked seat it records "no ClickUp user".
     expect(buttonIn(row("Yousef, media buyer"), "Clear")).toBeTruthy();
-    expect(buttonIn(row("Sara, CSM"), "Clear")).toBeUndefined();
-    expect(buttonIn(row("Faris, closer"), "Clear")).toBeUndefined();
+    expect(buttonIn(row("Sara, CSM"), "Clear")).toBeTruthy();
+    expect(buttonIn(row("Faris, closer"), "Clear")).toBeTruthy();
+    expect(buttonIn(row("Call centre"), "Clear")).toBeTruthy();
     await setValue(row("Faris, closer").querySelector("select"), "120000002");
     const set = fake.calls.find(c => c.name === "cockpit_member_clickup_set");
     expect(set?.args).toEqual({
@@ -551,6 +902,34 @@ describe("people in ClickUp", () => {
     );
     expect(refusal).not.toContain("duplicate key");
   });
+
+  test("an email-matched link can be cleared, and its ClickUp user then linked to another seat", async () => {
+    await render("/requests/settings?tab=people");
+    const row = (label: string) =>
+      [...container.querySelectorAll("li")].find((li: any) =>
+        text(li).startsWith(label),
+      ) as any;
+    expect(squash(text(row("Sara, CSM")))).toContain("Sara, matched by email");
+    // The sentence the refusal gives can be followed on this screen.
+    await setValue(row("Faris, closer").querySelector("select"), "113688800");
+    expect(text(row("Faris, closer"))).toContain("Clear that link first.");
+    await click(buttonIn(row("Sara, CSM"), "Clear"));
+    const sets = () =>
+      fake.calls.filter(c => c.name === "cockpit_member_clickup_set");
+    expect(sets().at(-1)?.args).toEqual({
+      p_member_id: "m-csm",
+      p_clickup_user_id: null,
+    });
+    expect(squash(text(row("Sara, CSM")))).toContain("Cleared by hand");
+    await setValue(row("Faris, closer").querySelector("select"), "113688800");
+    expect(sets().at(-1)?.args).toEqual({
+      p_member_id: "m-sales",
+      p_clickup_user_id: 113688800,
+    });
+    const faris = squash(text(row("Faris, closer")));
+    expect(faris).toContain("Sara, set by hand");
+    expect(faris).not.toContain("Clear that link first.");
+  });
 });
 
 describe("alerts", () => {
@@ -582,6 +961,12 @@ describe("alerts", () => {
     expect(page()).toContain(
       "Slack: new assignments already post in your team's channel. Slack messages for these alerts are not switched on yet.",
     );
+    // ClickUp names nobody as the mover, so a seat's own move there alerts
+    // it too (contract 3.2, F9): the hint says so, never "someone else".
+    expect(squash(text(switchFor("Your task moved")?.closest("li")))).toContain(
+      "When its status changes, also when you move it in ClickUp yourself.",
+    );
+    expect(page()).not.toContain("someone else changes its status");
   });
 
   test("the shift: from the schedule, then set here, then back", async () => {

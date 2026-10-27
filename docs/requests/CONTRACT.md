@@ -81,7 +81,7 @@ Global rules every role checks (repo `CLAUDE.md`, PLAN 4.5):
 | R5 | The old `log` claim stops taking the new kinds in the same migration that adds them; the requests job has its own claim with one lane per task. | Otherwise the deployed `log` job would claim rows it cannot build |
 | R6 | While the writer is not live, `/requests` does not take requests from the team: the form says so and points to the ClickUp form. Editors, admins and the CEO may still file: the request is **held** (saved, its queue rows stay queued, said plainly) and goes to ClickUp once requests open; on the canary card it goes at once. (Review R1, 2026-10-26: replaces "their rows become dry runs".) | A dry-run row was never claimed again (WR 3.2), so a request filed in a dry run sat dead; a held row waits and goes by itself |
 | R7 | Owner rules: the systems manager, the creative strategist and the media buyer of record take the named person first; the client's CSM takes the card's CSM first. Every rule falls back to the systems manager with a visible note; nobody is ever assigned in silence. | TS finding 6 (no media buyer of record today), CT F3 |
-| R8 | Request Type is written last and only where `set_request_type` is on. It is on at seed for the 11 types that have no folder rule (nothing can fire) and off for the 20 that have one, until the `[TEST]` rehearsal clears them. The 2-minute check turns it off by itself if ClickUp moved or renamed the task. | WR 8, CT F2 |
+| R8 | Request Type is written last and only where `set_request_type` is on. It is on at seed for the 11 types that have no folder rule (nothing can fire) and off for the 20 that have one, until the `[TEST]` rehearsal clears them. The 2-minute check turns it off by itself if ClickUp moved or renamed the task, when it runs on time (within 15 minutes of its due time; a later check changes nothing). Going back to an older type version never turns it on, and no question may map to the Request Type field (review round 2). | WR 8, CT F2 |
 | R9 | One task mirror for every seat, in Supabase, filled by a new Edge Function `cockpit-tasks` (verify_jwt off): a workspace delta every 2 minutes, a full per-seat read, members, fields and templates every hour, and the live focus-view read. It also mirrors request status and imports the old form's unrouted tickets from All Tasks. | AT 8.1 option B; one mirror serves "Your tasks" and "My requests" |
 | R10 | Alerts are rows in `cockpit_task_alerts`, made in SQL from mirror changes, comment reads, a daily due check and request outcomes. **No Slack DM in this build**: the rules table carries `slack_dm` (held false by a CHECK) for the later slice. | The ask is in-cockpit alerts "same as the media buyer"; `task-assignment-alerts` already posts every assignment with a mention; a DM kind would rewrite the Stage 1 claim and sender that went live today, before their proof run; no DM receipt exists for the bot yet (AT 8.6) |
 | R11 | Seats link to ClickUp users in `cockpit_member_clickup`: by exact unique email each hour, or set by an editor. An unlinked seat sees "not linked", never zero. | AT 4, TD 5 |
@@ -129,7 +129,15 @@ Other ids used: workspace `90182518398`, folder `901812879297`, space
 client cards `901816559981`, Video Pipeline `901816720767`, test card
 `86eywg1cq`, the API user `284616470`. Never write the Marketing / ADs list
 field `09abf737-302f-422a-9d17-8fb9619903d1` or Type of Submission
-`d3ac52c5-b71c-4782-9fea-1f9371cbae47` (CT F3).
+`d3ac52c5-b71c-4782-9fea-1f9371cbae47` (CT F3). The hourly field read never
+adds `e9fd8024`, `09abf737` or `d3ac52c5` to the catalog. The type guard
+refuses a question mapped to one: "{label}: only the Set Request Type in
+ClickUp switch writes Request Type. Remove this question." or "{label}: the
+cockpit never writes this ClickUp field. Remove this question."
+`cockpit_request_plan` never puts one in `payload.fields` (internal
+`cockpit_request_never_written(text)`), and the writer's fields step never
+posts one either (a second guard, retest round 2). Migration r deletes any
+such catalog row once, with audit `request_fields.removed` (review round 2).
 
 Role to team (internal `public.cockpit_request_teams(p_roles text[], p_ceo boolean) returns text[]`):
 `csm` gives `client_success` and `call_center`; `media_buyer` gives `ads`;
@@ -264,6 +272,7 @@ with before and after.
 | `done_at` | timestamptz | NULL; set when every delivered part's ClickUp status type is `done` or `closed` |
 | `replaces_task_id` | text | NULL (the All Tasks ticket this request routes) |
 | `imported_task_id` | text | NULL UNIQUE |
+| `import_left_at` | timestamptz | NULL; an import only (review round 3): when a complete hourly read of All Tasks first no longer found its old ticket open there (moved, closed, deleted, renamed or its Request Type cleared in ClickUp); cleared when a complete read finds it again (2.10) |
 | `routed_to` | uuid | NULL REFERENCES `cockpit_requests(id)` |
 | `cancel_reason` | text | NULL, at most 240 |
 | `cancelled_by` | text | NULL |
@@ -348,7 +357,7 @@ What the seed decides (each one an editor can change later):
 
 | Function | Returns | Does |
 |---|---|---|
-| `cockpit_request_seat()` | jsonb `{memberId, authUserId, email, roles, label, isCeo, isAdmin, isEditor, clickupUserId, link, teams, teamOnly}` (`teamOnly` = `cockpit_is_team_only()`, 20261017b) | The active, confirmed seat of `auth.uid()` (the `cockpit_forms_editor_gate()` lookup). `label` is `public.cockpit_slack_notice_role_of(email)`. `isEditor` is true when `cockpit_forms_editor_gate()` passes. `link` is `linked` when `cockpit_member_clickup.state IN ('ok','manual')`, else `not_linked`. Raises `42501` "Sign in with an active seat to use requests." Migration t calls it too |
+| `cockpit_request_seat()` | jsonb `{memberId, authUserId, email, roles, label, isCeo, isAdmin, isEditor, clickupUserId, link, linkState, teams, teamOnly}` (`teamOnly` = `cockpit_is_team_only()`, 20261017b) | The active, confirmed seat of `auth.uid()` (the `cockpit_forms_editor_gate()` lookup). `label` is `public.cockpit_slack_notice_role_of(email)`. `isEditor` is true when `cockpit_forms_editor_gate()` passes. `link` is `linked` when `cockpit_member_clickup.state IN ('ok','manual')`, else `not_linked`. `linkState` (review round 3) is the link row's own state (`ok`, `manual`, `not_found`, `ambiguous`, `cleared`; null when the hourly read has not checked the seat): `cleared` is an editor saying the seat has no ClickUp user, so no screen asks anyone to link it. Raises `42501` "Sign in with an active seat to use requests." Migration t calls it too |
 | `cockpit_request_lists()` | jsonb | 2.1 |
 | `cockpit_request_teams(text[], boolean)` | text[] | 2.1 |
 | `cockpit_request_owner_label(p_clickup bigint)` | text | `cockpit_clickup_members.email` matched to an active `cockpit_people` row: role `Systems manager` gives "the systems manager", `Creative strategist` "the creative strategist", `Client success manager` "the CSM", `Media buyer` "the media buyer", `Video editor` "a video editor", `CEO` "the CEO"; a seat with no people row: `cockpit_slack_notice_role_of`; unknown: "a ClickUp member" |
@@ -359,15 +368,24 @@ What the seed decides (each one an editor can change later):
 | `cockpit_request_type_view(t cockpit_request_types, p_editor boolean)` | jsonb | TypeView (2.5) |
 | `cockpit_request_plan(p_type cockpit_request_types, p_request uuid, p_client_task text, p_client_name text, p_answers jsonb, p_due date, p_priority text, p_requester_label text, p_replaces text)` | jsonb array | One element per target that runs (its `when` holds): `{part, listId, team, listName, templateId, templateName, stepCount, owner, taskName, payload}`. `payload` is the queue payload of 2.6. Preview and submit both use it, so a preview always matches the send |
 | `cockpit_request_refresh(p_request uuid)` | void | Recomputes `state` and `done_at` from the parts (2.7) |
-| `cockpit_clickup_requests_mode()` | jsonb `{mode, onlyCards, at, live}` | From `cockpit_sync_state` key `clickup-writeback:requests`, `detail->>'mode'` and `detail->'onlyCards'`. Older than 15 minutes or missing: `mode 'unknown'`, `live false`. `live` is true for `apply` and `apply_limited`. Migration t calls it too |
+| `cockpit_clickup_requests_mode()` | jsonb `{mode, onlyCards, at, live, lastMode}` | From `cockpit_sync_state` key `clickup-writeback:requests`, `detail->>'mode'` and `detail->'onlyCards'`. Older than 15 minutes or missing: `mode 'unknown'`, `live false`. `live` is true for `apply` and `apply_limited`. `lastMode` (review round 3) is the mode the writer last reported, even when that report is stale (`dry_run`, `apply`, `apply_limited`, or null with no report), so a writer that went quiet after requests opened is said as such. Migration t calls it too |
 | `cockpit_request_send_gate(p_seat jsonb, p_client_task text)` | jsonb `{allowed, held, note}` | 2.8: whether the seat may file now, whether the request is held, and the sentence |
 | `cockpit_request_can_send(p_seat jsonb, p_client_task text)` | text | The gate's `note`: null only when the request goes to ClickUp at once; a held request has its note too |
 | `cockpit_request_writer_view(p_seat jsonb, p_client_task text)` | jsonb | `{mode, canSend, held, note}` (`canSend` = the gate's `allowed`) |
 | `cockpit_request_writer_takes(p_client_task text)` | boolean | The writer sends a row for this card now: `apply`, or `apply_limited` and the card in `onlyCards` |
-| `cockpit_request_held(r)` | boolean | `state 'sending'`, every part `queued`, every queue row `queued` with `attempts 0`, and the writer would not take it now |
+| `cockpit_request_held(r)` | boolean | `state 'sending'`, every part `queued`, every queue row `queued` with `attempts 0`, and the writer would not take it now: NOT (`cockpit_request_writer_takes(card)` AND `cockpit_request_replaces_ok(replaces, mode)`) (review round 3) |
 | `cockpit_request_client_visible(r, p_seat)` | boolean | A request with a client: `cockpit_client_allowed(client_name)`; with none: not for a team-only seat |
-| `cockpit_request_can_route(r, p_seat)` | boolean | An import still `imported`; an editor, an admin or the CEO, or a seat whose teams hold the type's team and that may see the client; and the gate allows the import's card |
-| `cockpit_request_owner_note(p_note, p_editor)` / `cockpit_request_owner_for(p_owner, p_editor)` | text / jsonb | The "Set one in Requests settings" note is for editors; anyone else reads "Goes to the systems manager." |
+| `cockpit_request_never_written(p_field_id text)` | boolean | True for `e9fd8024-…` (Request Type: only the writer's own `request_type` step sets it), `09abf737-…` and `d3ac52c5-…` (review round 2) |
+| `cockpit_request_sees_all(r, p_seat)` | boolean | An editor, an admin or the CEO; a team-only seat named an editor keeps `cockpit_request_client_visible` (review round 2). The All requests view and its count, the request panel, cancel and Route use it |
+| `cockpit_request_may_open(r, p_seat)` | boolean | The requester; `cockpit_request_sees_all`; a seat whose teams hold the type's or a part's team plus `cockpit_request_client_visible`; a part's owner or assignee. The gate of `cockpit_request_get` and of the duplicate answer's "Open it" (review round 2) |
+| `cockpit_request_unroute(r, p_why, p_actor)` | boolean | Puts the old form ticket a request routed back to `imported` (`routed_to` null, audit `request.unrouted` with metadata `{task_id, request_id, why}`) when nothing of that request will close it: no queue row carrying `replacesTaskId` is still open, delivered or a dry run, and none has `progress.steps.replaces`. Only the import this request routed (review round 2). Review round 3: also false when a `skipped` row of the request has an error starting "The old ticket was already moved or closed in ClickUp" (the writer's `SAY.oldHandled`, an interface the database matches on, so never reworded), or when the import is handled (`cockpit_request_import_handled`): an old ticket dealt with in ClickUp never goes back to a queue that would offer Route again |
+| `cockpit_request_can_route(r, p_seat)` | boolean | An import still `imported` and not handled in ClickUp (`cockpit_request_import_handled`, review round 3); an editor, an admin or the CEO (a team-only one within its client limit), or a seat whose teams hold the type's team and `cockpit_request_client_visible(r, seat)` (a ticket with no client is never a team-only seat's, review round 2); and the gate allows the import's card |
+| `cockpit_request_owner_note(p_note, p_editor)` / `cockpit_request_owner_for(p_owner, p_editor)` | text / jsonb | The "Set one in Requests settings" note is for editors; anyone else reads "No media buyer is named for this request type yet." (review round 2) |
+| `cockpit_request_writer_silent(p_client_task text)` | boolean | Review round 3: the writer's report is older than 15 minutes (mode `unknown`) and its last report would have sent this card (`lastMode` `apply`, or `apply_limited` with the card in `onlyCards`; a null card counts only for `apply`). The screens then say the writer is not reporting, never "not switched on yet" |
+| `cockpit_request_replaces_ok(p_replaces text, p_mode jsonb)` | boolean | Review round 3 (E-CANARY): whether a request that routes an old form ticket may go in this mode: true for no ticket or any mode but `apply_limited`; in `apply_limited` only when the old ticket's own card is a canary card, so the rehearsal never closes a real ticket on All Tasks, also for a request filed held before the test began. The requests claim, `cockpit_request_held` and submit step 8 read it |
+| `cockpit_request_import_handled(r cockpit_requests)` | boolean | Review round 3: an import whose old ticket was dealt with in ClickUp, by the writer's own rule (`requests.ts` `oldTicketHandled`): `import_left_at` is set, or the task mirror (migration t, read only where it exists) shows it on another list or with status type `done` or `closed`. The mirror's `gone_at` is not used (a ticket waiting untouched on All Tasks goes unseen for 7 days too). Such a ticket leaves the team and assigned views, sorts as not open, is never routed or counted as a duplicate, and never goes back to `imported` |
+| `cockpit_request_queue_in_clickup(q cockpit_clickup_writeback_queue)` | boolean | Review round 3: whether a queue row may already have made its ClickUp task: `sending`, `delivered` or `unknown`; a `task_id` or `progress.task.id`; or `queued`/`retry` with a create step on record (the writer records the create before its POST and forgets it only after a 429 on that POST, so a create on record means the POST went out and its answer was lost). Cancel and `canCancel` refuse while one exists |
+| `cockpit_request_step_at(p_step jsonb)` | timestamptz | Review round 3: a step's `at` as the writer stamped it (an ISO time with its offset), else null; never a word PostgreSQL would read as a time |
 | `cockpit_clickup_requests_kick()` | bigint | 2.9 |
 
 **Owner rules** (`cockpit_request_owner`). `how` and `note` show on the
@@ -379,7 +397,7 @@ preview and on every request row.
 | `systems_manager` | `owner_clickup_id`, else the people row `Systems manager` | `named`, `rule` |
 | `creative_strategist` | `owner_clickup_id`, else `Creative strategist` | `named`, `rule` |
 | `csm_of_card` | the card's CSM: `cockpit_client_onboarding.csm` equal (case-insensitive) to a `cockpit_clickup_members.username` whose email belongs to an active seat with role `csm`; else `owner_clickup_id`; else `Client success manager` | `card` ("The CSM named on the client card."), then `named`, `rule` |
-| `media_buyer_of_record` | `owner_clickup_id`, else `cockpit_blueprint_settings` key `launch_assignee` (digits), else the systems manager rule. The database holds no media buyer per client (checked 2026-10-26: no client, card or seat column names one; every media buyer seat has an empty client list; `launch_assignee` is not set live) | `named`, `rule`, then `fallback` with note "No media buyer of record is named on this request type, so the systems manager gets it. Set one in Requests settings." (stored as is; read by a non-editor as "Goes to the systems manager.", D12) |
+| `media_buyer_of_record` | `owner_clickup_id`, else `cockpit_blueprint_settings` key `launch_assignee` (digits), else the systems manager rule. The database holds no media buyer per client (checked 2026-10-26: no client, card or seat column names one; every media buyer seat has an empty client list; `launch_assignee` is not set live) | `named`, `rule`, then `fallback` with note "No media buyer of record is named on this request type, so the systems manager gets it. Set one in Requests settings." (stored as is; read by a non-editor as "No media buyer is named for this request type yet.", D12, review round 2) |
 | any rule that finds nobody | the systems manager rule | `fallback`, note "Nobody matched this rule, so the systems manager gets it." |
 | the systems manager cannot be found either | none | `none`, note "No owner could be found. The task goes to ClickUp without one; route it there." |
 
@@ -405,8 +423,11 @@ PartRow = {part, listName, teamLabel, taskName, owner: {label, how, note}, state
 
 RequestRow = {id, typeKey, typeLabel, team, teamLabel, clientTaskId, clientName,
   requesterLabel, mine, dueOn, priority, state, done, createdAt, source,
-  canCancel, canRoute, held, heldNote, parts: [PartRow]}
-  held: saved, not sent (cockpit_request_held); heldNote: "Saved, not sent yet. It goes to ClickUp once requests open." or null
+  canCancel, canRoute, importHandled, held, heldNote, parts: [PartRow]}
+  held: saved, not sent (cockpit_request_held); heldNote: "Saved, not sent yet. It goes to ClickUp once requests open." or null,
+    and (review round 3) when the writer is silent for that card (cockpit_request_writer_silent) "Saved, not sent yet: the
+    requests writer has not reported in the last 15 minutes. It goes to ClickUp once the writer runs again."
+  importHandled (review round 3): an import whose old ticket was moved, closed or deleted in ClickUp (cockpit_request_import_handled)
   PartRow.owner.note: as the reading seat sees it (D12)
 ```
 
@@ -420,16 +441,16 @@ systems manager."
 | `cockpit_request_types_read()` | any active seat | `{asOf, seat: {label, link, teams, editor, all}, writer: {mode, canSend, held, note}, types: [TypeView]}`, and for editors only `catalog: [{clickupFieldId, clickupName, label, kind, options, state}]` and `templates: [{id, name, state}]` (the field catalog and the template cache the type editor picks from). Non-editors get enabled types only; the form offers enabled types only, to editors too. `all` is true for an editor, an admin or the CEO. Order: team (Client Success, Operations / Tech, Marketing / ADs, Media/Creative, Call Center), then `type_index` |
 | `cockpit_request_clients(p_search text DEFAULT NULL, p_include_stopped boolean DEFAULT false)` | any active seat | `{clients: [{taskId, name, status}], more}` (`more` is true when over 30 cards match): `cockpit_client_onboarding` rows where `cockpit_client_allowed(client_name)`, name `ILIKE '%'||search||'%'`, Stopped and GHOSTED left out unless asked, ordered by name, 30 at most |
 | `cockpit_request_preview(p_type_key text, p_client_task_id text DEFAULT NULL, p_answers jsonb DEFAULT '{}')` | any active seat | `{parts: [{part, listName, teamLabel, taskName, templateName, stepCount, stepsDraft, owner}], note, dueDefault, writer: {canSend, held, note}}` (`owner.note` as the seat sees it, D12). When no target runs yet (its `when` field is unanswered), `parts` is empty and `note` is "Pick {field label} to see where it goes." Writes nothing |
-| `cockpit_request_submit(p_request_id uuid, p_type_key text, p_client_task_id text, p_answers jsonb, p_due_on date, p_priority text, p_source text, p_replaces_task_id text DEFAULT NULL)` | any active seat, then `cockpit_request_send_gate()->allowed` | See below. Returns `{id, state, reused, duplicateOf, note, held, parts: [PartRow]}`; a held request has `held: true` and `note` = the gate's sentence ("Saved. Requests are not open yet, so this goes to ClickUp once they are.") |
-| `cockpit_request_cancel(p_request_id uuid, p_reason text)` | the requester, an editor, an admin or the CEO | Refused once any part is `sending`, `delivered` or `unknown`, or any part or queue row has a ClickUp task (a `retry` after the task was made included): "Part of this request is already in ClickUp. Close it there." Otherwise every part's queue row in `queued`, `retry` or `dry_run` goes to `skipped` with "Cancelled in the cockpit.", the parts to `skipped`, the request to `cancelled`; audit `request.cancelled`. Returns RequestRow |
-| `cockpit_requests_read(p_view text, p_limit integer DEFAULT 50)` | any active seat; `all` needs editor, admin or CEO | `{asOf, view, views: [{key, label, count}], rows: [RequestRow], note}`. `mine`: requester is the seat. `assigned`: a part whose `owner_clickup_id` or mirrored `assignee_ids` holds the seat's ClickUp id, request not done or cancelled (an unlinked seat gets no rows and the note "Your seat is not linked to a ClickUp user, so requests assigned to you cannot show. Ask the systems manager to link it."). `team`: the type's team or a part's team is one of the seat's teams, not done or cancelled, imports included (an import's part sits on All Tasks, so its type's team decides), and within the client limit every other screen uses: a request for a client needs `cockpit_client_allowed(client_name)` (a team-only seat's empty list is no client, 20261017b); one with no client is not shown to a team-only seat (review R1, SEC-1). `all`: everything. Open first (not done, not cancelled), then `due_on` ascending with nulls last, then newest. `p_limit` 1 to 200. `views` lists only the views the seat has: `mine` "My requests", `assigned` "Assigned to me", `team` "{team label} queue" (one label per team; two teams read "Team queue"), `all` "All requests" |
-| `cockpit_request_get(p_request_id uuid)` | the requester, an owner or assignee of a part, a seat whose teams hold the type's or a part's team **and that may see the client** (as the `team` view), an editor, an admin, the CEO | RequestRow plus `{answers: [{key, label, display}], details, replacesTaskId, routedTo, history: [{at, what, byLabel}]}` from this request's audit rows |
+| `cockpit_request_submit(p_request_id uuid, p_type_key text, p_client_task_id text, p_answers jsonb, p_due_on date, p_priority text, p_source text, p_replaces_task_id text DEFAULT NULL)` | any active seat, then `cockpit_request_send_gate()->allowed` | See below. Returns `{id, state, reused, duplicateOf, note, held, parts: [PartRow]}`; a held request has `held: true` and `note` = the gate's sentence ("Requests are not open yet. What you send is saved and goes to ClickUp once they are.", review round 2) |
+| `cockpit_request_cancel(p_request_id uuid, p_reason text)` | the requester, or `cockpit_request_sees_all` (an editor, an admin or the CEO; a team-only one within its client limit) | Refused once any part is `sending`, `delivered` or `unknown`, or any part or queue row has a ClickUp task (a `retry` after the task was made included), or a `queued` or `retry` queue row has a create step on record (`cockpit_request_queue_in_clickup`, review round 3): "Part of this request is already in ClickUp. Close it there." Otherwise every part's queue row in `queued`, `retry` or `dry_run` goes to `skipped` with "Cancelled in the cockpit.", the parts to `skipped`, the request to `cancelled`; audit `request.cancelled`. A request that routed an old form ticket puts the import back to `imported`, `routed_to` null, audit `request.unrouted` (metadata why `cancelled`; review round 2). Returns RequestRow |
+| `cockpit_requests_read(p_view text, p_limit integer DEFAULT 50, p_since timestamptz DEFAULT NULL)` | any active seat; `all` needs editor, admin or CEO | `{asOf, view, views: [{key, label, count}], rows: [RequestRow], note}`. `p_since` (integration round 2, contract F3): only the rows created at or after it, so a card about today reads today's rows on the server; the views' counts are not filtered. `mine`: requester is the seat. `assigned`: a part whose `owner_clickup_id` or mirrored `assignee_ids` holds the seat's ClickUp id, request not done or cancelled (an unlinked seat gets no rows and the note "Your seat is not linked to a ClickUp user, so requests assigned to you cannot show. Ask the systems manager to link it."; a seat an editor cleared, `linkState` `cleared`, reads "Your seat has no ClickUp user, so nothing is assigned to you here. Requests you raise show under My requests.", review round 3). `team`: the type's team or a part's team is one of the seat's teams, not done or cancelled, imports included (an import's part sits on All Tasks, so its type's team decides) but not one handled in ClickUp (`cockpit_request_import_handled`, which `assigned` leaves out too; review round 3), and within the client limit every other screen uses: a request for a client needs `cockpit_client_allowed(client_name)` (a team-only seat's empty list is no client, 20261017b); one with no client is not shown to a team-only seat (review R1, SEC-1). `all`: everything, but a team-only seat named an editor keeps its client limit, in the rows and the count (review round 2). Open first (not done, cancelled or routed, and not an import handled in ClickUp), then `due_on` ascending with nulls last, then newest. `p_limit` 1 to 200. `views` lists only the views the seat has: `mine` "My requests", `assigned` "Assigned to me", `team` "{team label} queue" (one label per team; two teams read "Team queue"), `all` "All requests" |
+| `cockpit_request_get(p_request_id uuid)` | `cockpit_request_may_open`: the requester, an owner or assignee of a part, a seat whose teams hold the type's or a part's team **and that may see the client** (as the `team` view), an editor, an admin or the CEO (a team-only one within its client limit) | RequestRow plus `{answers: [{key, label, display}], details, replacesTaskId, routedTo, history: [{at, what, byLabel}]}` from this request's audit rows; `request.unrouted` reads "Back in the queue: the request that routed it was cancelled" or "Back in the queue: the request that routed it did not reach ClickUp" (review round 2). Review round 3 adds "Left All Tasks: moved, closed or deleted in ClickUp" and "Back on All Tasks in ClickUp" (audit `request.import_left`, 2.10), and "{team}: ClickUp did not answer; checked once requests open" (a create whose answer was lost, handed back `unknown` while requests are not open) |
 | `cockpit_request_type_save(p_key text, p_patch jsonb, p_expected_version integer)` | `cockpit_forms_editor_gate()` | Allowed patch keys: `label`, `targets`, `fields`, `sop_steps`, `sop_url`, `due_days`, `priority`, `set_request_type`, `enabled`; any other key refuses. A version other than the current refuses: "Someone saved this type since you opened it. Reload to see their change." A named person must be an active row of `cockpit_clickup_members`: "That person is not in the ClickUp workspace. Pick someone from the list." A template must be a `cockpit_request_templates` row in state `ok`: "That template is not in ClickUp any more. Pick another." Saving `sop_steps` sets `sop_steps_state = 'saved'`. Bumps `version`, inserts a versions row (note `Saved`), audit `request_type.saved` with the whole old and new rows. Returns TypeView (editor) |
 | `cockpit_request_type_versions(p_key text)` | editor gate | `{versions: [{version, savedAt, savedByLabel, note}]}` newest first |
-| `cockpit_request_type_restore(p_key text, p_version integer, p_expected_version integer)` | editor gate | Writes that version's row back as a new version (note `Back to version {n}`), same checks and audit (`request_type.restored`). Returns TypeView |
+| `cockpit_request_type_restore(p_key text, p_version integer, p_expected_version integer)` | editor gate | Writes that version's row back as a new version (note `Back to version {n}`), same checks and audit (`request_type.restored`). It never turns `set_request_type` on: the new value is the version's AND the current one (review round 2). When it kept it off: version note "Back to version {n}. Request Type stays off.", audit metadata `requestTypeKeptOff: true`, and the return is TypeView plus `restoreNote` "Request Type stays off. Version {n} had it on, but it is off now; turn it on with its switch once the rehearsal ticket shows ClickUp keeps the task where it is." (else `restoreNote` null). The type editor's toast reads "Back to version {n}. " plus that note |
 | `cockpit_request_people()` | editor gate | `{people: [{clickupUserId, label, seat: {memberId, label} or null}]}` from active `cockpit_clickup_members`; `label` is the username for an editor's picker |
 | `cockpit_member_clickup_read()` | editor gate | `{readAt, seats: [{memberId, label, roles, link: {state, clickupUserId, username, matchedBy, note, checkedAt} or null}], members: [{clickupUserId, username, linkedTo}]}`; active seats only; `label` is "first name, role" (`cockpit_slack_notice_seat_label`) |
-| `cockpit_member_clickup_set(p_member_id uuid, p_clickup_user_id bigint)` | editor gate | Null clears (`state 'cleared'`, never relinked by email). Otherwise the id must be an active member: `state 'manual'`, `matched_by 'editor'`. Refused (review R1, SEC-3): an editor's own seat unless the editor is the CEO (`42501` "You cannot link your own seat. Ask the CEO or another editor to do it."); a ClickUp user another active seat holds (`23505` "That ClickUp user is already linked to another seat. Clear that link first."); the API user `284616470` on any seat but the CEO's (`22023`). The hourly email match never takes a user another active seat holds (`ambiguous`). The audit trigger records each change with the editor's address. Returns the seat row of `_read` |
+| `cockpit_member_clickup_set(p_member_id uuid, p_clickup_user_id bigint)` | editor gate | Null clears (`state 'cleared'`, never relinked by email). Otherwise the id must be an active member: `state 'manual'`, `matched_by 'editor'`. Refused (review R1, SEC-3): an editor's own seat unless the editor is the CEO (`42501` "You cannot link your own seat. Ask the CEO or another editor to do it."); a ClickUp user another active seat holds (`23505` "That ClickUp user is already linked to another seat. Clear that link first."); the API user `284616470` on any seat but the CEO's (`22023`). The hourly email match never takes a user another active seat holds (`ambiguous`). The audit trigger records each change with the editor's address. A seat newly linked to a ClickUp user (no link before, a link that was not `ok` or `manual`, or another user) calls `cockpit_task_mirror_kick('seats')` inside an exception block, so its older open tasks reach the mirror at once rather than at the next :11 (review round 3). Returns the seat row of `_read` |
 
 **`cockpit_request_submit` in order:**
 
@@ -460,14 +481,30 @@ systems manager."
    failed or routed, `done_at` null, created in the last 60 days) for the
    same card and type returns `{state: 'duplicate', duplicateOf, note: "An
    open {type} request for {client} already exists. Open it instead."}` and
-   writes nothing.
-8. Replaces: `p_replaces_task_id` must be an import row's task id still in
-   state `imported` ("That old ticket was already routed."); the seat must
+   writes nothing. `duplicateOf` is set only when
+   `cockpit_request_may_open(existing, seat)`; otherwise `duplicateOf: null`
+   and the note "An open {type} request for {client} already exists, raised
+   by {requester role}. Ask them about it.", or for an old form ticket "An
+   open {type} request for {client} already exists. It came in through the
+   old ClickUp form and waits in the {team label} queue." (review round 2).
+   An import handled in ClickUp is never the duplicate (review round 3).
+8. Replaces (checked before step 7, so routing an old ticket is never its
+   own duplicate): `p_replaces_task_id` must be an import row's task id still
+   in state `imported` and not handled in ClickUp (`cockpit_request_import_handled`,
+   review round 3), checked first ("That old ticket was already routed.",
+   `55000`; the same sentence lets a request filed again with `replacesIfOpen`
+   go on its own); the seat must
    pass `cockpit_request_can_route` (the rule that shows Route; `42501` "Only
    that team, an editor, an admin or the CEO can route this old ticket.");
    when the import has a card, `p_client_task_id` must be that card ("This
-   old ticket is for {client}. Route it for that client."). That row moves to
-   `routed`, `routed_to` set.
+   old ticket is for {client}. Route it for that client."). In
+   `apply_limited` a ticket with no card cannot be routed onto a card the
+   writer takes (`cockpit_request_writer_takes` and not
+   `cockpit_request_replaces_ok`; `55000` "This old ticket has no client card, so it cannot go
+   out on the internal test card. Route it for its own client, or with none;
+   it waits until requests open to everyone.", review round 2). That row
+   moves to `routed`, `routed_to` set; it goes back to `imported` when the
+   routing request is cancelled or fails before its replaces step (2.7).
 9. Insert the request, its parts (`cockpit_request_plan`) and one queue row
    per part: `kind 'request'`, `dedupe_key 'request:{id}:{part}'`,
    `source_table 'cockpit_requests'`, `source_id` = the request id,
@@ -498,17 +535,17 @@ New service RPCs (`GRANT EXECUTE ... TO service_role` only):
 
 | Function | Does |
 |---|---|
-| `cockpit_clickup_writeback_claim_requests(p_token uuid, p_limit integer DEFAULT 6) returns jsonb` | The live claim's shape, for kinds `request` and `task_action` only, limit 1 to 10. It takes only what the writer would send, by the mode the writer last reported (`cockpit_clickup_requests_mode`): nothing in `dry_run` or `unknown`; in `apply_limited` only rows whose `payload.clientTaskId` is a canary card, and 2-minute checks (review R1). A switch flip shows from the run after (the writer reports its mode every run). One lane per task: a row whose `task_id` is not null is skipped while an older row with the same `task_id` is `queued`, `sending`, `retry` or `unknown`, except a 2-minute check (`op 'verify'`) that is not due yet (section 13). `source_exists`: `request` when the request exists and is not `cancelled`; `task_action` true |
+| `cockpit_clickup_writeback_claim_requests(p_token uuid, p_limit integer DEFAULT 6) returns jsonb` | The live claim's shape, for kinds `request` and `task_action` only, limit 1 to 10. It takes only what the writer would send, by the mode the writer last reported (`cockpit_clickup_requests_mode`): nothing in `dry_run` or `unknown`; in `apply_limited` only rows whose `payload.clientTaskId` is a canary card, and 2-minute checks (review R1), and a `request` row that routes an old form ticket only when that ticket's own card is a canary card (`cockpit_request_replaces_ok`, review round 3). A switch flip shows from the run after (the writer reports its mode every run). One lane per task: a row whose `task_id` is not null is skipped while an older row with the same `task_id` is `queued`, `sending`, `retry` or `unknown`, except a 2-minute check (`op 'verify'`) that is not due yet (section 13). `source_exists`: `request` when the request exists and is not `cancelled`; `task_action` true. Each `request` row also carries `replaces_task_id`, from its request's `cockpit_requests.replaces_task_id` (null for a `task_action`), so every part of a routing request reads its old ticket before it makes anything, even one claimed in a later run than the first part (review round 2; retest round 2). Each `request` row also carries `replaces_client_task_id` (the old ticket's own card, null when it has none; review round 3), so the writer holds such a row itself in the run right after a switch flip, which still claims by the mode reported before it |
 | `cockpit_request_sweep() returns integer` | Inserts the missing queue row for any part in `queued` with no `queue_id` (the second source) |
-| `cockpit_clickup_writeback_release(p_id uuid, p_token uuid, p_planned jsonb, p_note text, p_next_attempt_at timestamptz) returns jsonb` | A `request` or `task_action` row the writer claimed (state `sending`, its token) but will not send now goes back: `retry` when `progress` has `task` or any `steps`, else `queued`; `attempts - 1` (not below 0); token and `claimed_at` cleared; `planned` = `p_planned` when an array; `error` = `p_note` (500 chars) when given; `next_attempt_at` = `p_next_attempt_at` or now. Anything else refuses "This queue item is no longer claimed by this run". The part follows through the sync trigger; the queue's audit trigger records it. Returns `{id, state}`. Request and task_action rows are never settled `dry_run` any more |
+| `cockpit_clickup_writeback_release(p_id uuid, p_token uuid, p_planned jsonb, p_note text, p_next_attempt_at timestamptz) returns jsonb` | A `request` or `task_action` row the writer claimed (state `sending`, its token) but will not send now goes back: a `request` row with no task id, no `progress.task` and a create step on record stays `unknown` (its create went out and lost its answer; the task may be in ClickUp, so the screens say "checking", cancel stays refused and the writer reads it back before anything else; review round 3); else `retry` when `progress` has `task` or any `steps`, else `queued`; `attempts - 1` (not below 0); token and `claimed_at` cleared; `planned` = `p_planned` when an array; `error` = `p_note` (500 chars) when given; `next_attempt_at` = `p_next_attempt_at` or now. Anything else refuses "This queue item is no longer claimed by this run". The part follows through the sync trigger; the queue's audit trigger records it. Returns `{id, state}`. Request and task_action rows are never settled `dry_run` any more |
 | `cockpit_clickup_writeback_task_owners(p_task_ids text[]) returns jsonb` | `[{taskId, queueId}]`: the `request` queue rows whose `task_id` is one of these (the writer never adopts another part's task) |
 | `cockpit_clickup_requests_state(p_ok boolean, p_note text, p_mode text, p_only_cards text[], p_counts jsonb) returns void` | Upserts `cockpit_sync_state` key `clickup-writeback:requests` (`last_ok_at` only when ok; `detail = {mode, onlyCards, counts, at}`). Every run of the job calls it |
 | `cockpit_request_doctor_inputs() returns jsonb` | `{types: [{key, optionId, optionName, setRequestType, targets: [{part, listId, templateId, ownerClickupId}], fieldIds}], templates: [{id, name}], lists}` |
 | `cockpit_request_type_rt_off(p_key text, p_note text) returns void` | `set_request_type = false`, version plus one, versions row (`saved_by 'clickup-writeback'`, note), audit `request_type.request_type_off` (metadata `waitingRowsTurnedOff`). The type's `request` rows still waiting (`queued`, `retry`) get `payload.setRequestType = false` too (also when the type was already off); a row being sent or delivered keeps its own 2-minute check, whose payload carries Request Type as it was sent (review R1, RT-5) |
 | `cockpit_clickup_members_sync(p_members jsonb) returns jsonb` | Upserts `cockpit_clickup_members` from `[{id, username, email}]` (members not in the list become `active false`). Then for every active seat without a `manual` or `cleared` row: one active member with the same lower-case email gives `ok`, none `not_found`, more than one `ambiguous`. Returns `{members, linked, notFound, ambiguous}` |
-| `cockpit_request_field_catalog_sync(p_fields jsonb) returns jsonb` | From `GET list/901816723190/field` (`[{id, name, type, options}]`): updates `clickup_name`, `options` and `read_at` of catalog rows, marks catalog rows absent from the read `missing` (rows come back to `ok` when seen). A field ClickUp added is inserted (state `ok`, `label` = its name, used by no type until an editor maps it) when its type is one a request can write: `short_text` (text), `text` (longtext), `url`, `number`, `drop_down` (select, with its options); other types are counted as `skipped` (review R1, F11). Returns `{updated, missing, added, skipped}` |
+| `cockpit_request_field_catalog_sync(p_fields jsonb) returns jsonb` | From `GET list/901816723190/field` (`[{id, name, type, options}]`): updates `clickup_name`, `options` and `read_at` of catalog rows, marks catalog rows absent from the read `missing` (rows come back to `ok` when seen). A field ClickUp added is inserted (state `ok`, `label` = its name, used by no type until an editor maps it) when its type is one a request can write: `short_text` (text), `text` (longtext), `url`, `number`, `drop_down` (select, with its options); other types, and `e9fd8024`, `09abf737` and `d3ac52c5`, are counted as `skipped` and never added (review R1, F11; review round 2). Returns `{updated, missing, added, skipped}` |
 | `cockpit_request_templates_sync(p_templates jsonb) returns jsonb` | Upserts `[{id, name}]`; rows absent become `missing`. Returns `{seen, missing}` |
-| `cockpit_request_import(p_tasks jsonb) returns jsonb` | Section 2.10 |
+| `cockpit_request_import(p_tasks jsonb, p_open_ids text[] DEFAULT NULL) returns jsonb` | Section 2.10. The one-argument version is dropped (review round 3) |
 
 **`request` payload** (frozen into the row; the writer never reads the type
 table):
@@ -581,8 +618,18 @@ table):
     'cockpit_requests'`, `source_id` = the request id, `task_id` = the
     ClickUp task id, `next_attempt_at = now() + interval '2 minutes'`,
     payload `{op: 'verify', requestId, part, taskId, listId, taskName,
-    ownerClickupId, typeKey, setRequestType, clientTaskId}`
-    (`ON CONFLICT DO NOTHING`). Then `cockpit_request_refresh`.
+    ownerClickupId, typeKey, setRequestType, clientTaskId, ownerAt, madeAt}`
+    (`ON CONFLICT DO NOTHING`). Then `cockpit_request_refresh`. Review round
+    3: the payload says what the part's steps did, not what the frozen
+    payload asked for: `setRequestType` is true only when the `request_type`
+    step set Request Type (`done`) or found it set (`unchanged`); `ownerAt`
+    is when the owner was written (the `owner_due_priority` step on a template
+    part, else the create); `madeAt` is the part's last task write the check
+    judges (the `request_type` step when it set Request Type, else
+    `ownerAt`). Each comes from `cockpit_request_step_at`. The writer times
+    "on time" from them (4.4), not from delivery, which a retried later step
+    (the card comment, the old ticket) can push hours past the writes it
+    checks.
   - `task_action` with `payload->>'op' = 'verify'`, on `delivered`,
     `failed` or `skipped`: the part's `verify_state =
     NEW.progress->>'verify'`, `verify_note = coalesce(NEW.progress->>'verifyNote', NEW.error)`.
@@ -593,7 +640,12 @@ table):
   any part `queued`, `sending`, `retry` or `unknown` gives `sending`; every
   part `dry_run` gives `dry_run`; at least one `delivered` gives `partial`;
   else `failed`. `done_at` is set when every delivered part's mirrored
-  `status_type` is `done` or `closed`, and cleared when one reopens.
+  `status_type` is `done` or `closed`, and cleared when one reopens. A
+  request with `replaces_task_id` that ends `failed`, or `partial` with the
+  queue row carrying `replacesTaskId` failed or skipped and no
+  `progress.steps.replaces`, puts its import back to `imported`
+  (`cockpit_request_unroute`, audit `request.unrouted`, why `failed` or
+  `partial`, actor `clickup-writeback`; review round 2).
 - `cockpit_request_type_guard` (2.2), the no-delete triggers, the audit
   triggers on `cockpit_member_clickup`.
 
@@ -607,11 +659,21 @@ Review R1 (2026-10-26, binding): a request the writer will not send now is
 |---|---|---|
 | `apply` | any | sends (`allowed`, not held, note null) |
 | `apply_limited` | editor, admin or CEO, card in `onlyCards` | sends |
-| `apply_limited` | editor, admin or CEO, another card or none | held: "Saved. Requests are being tested on the internal test card only, so this goes to ClickUp once they open to everyone." |
+| `apply_limited` | editor, admin or CEO, another card or none | held: "Requests are being tested on the internal test card only, where they go to ClickUp at once. Anything else you send is saved and goes to ClickUp once they open to everyone." |
 | `apply_limited` | anyone else | refused: "Requests are being tested. They open to everyone soon. Use the ClickUp request form until then." |
-| `dry_run` | editor, admin or CEO | held: "Saved. Requests are not open yet, so this goes to ClickUp once they are." |
-| `dry_run` or `unknown` | anyone else | refused: "Requests are not switched on yet. Use the ClickUp request form until then." |
-| `unknown` | editor, admin or CEO | held: "Saved. The requests writer has not reported in the last 15 minutes, so this goes to ClickUp once it runs with requests open. Check it on the Machine tab." |
+| `dry_run` | editor, admin or CEO | held: "Requests are not open yet. What you send is saved and goes to ClickUp once they are." |
+| `dry_run` | anyone else | refused: "Requests are not switched on yet. Use the ClickUp request form until then." |
+| `unknown`, last report `apply` (`lastMode`) | anyone else | refused: "Requests cannot be sent just now: the requests writer has not reported in the last 15 minutes. Use the ClickUp request form, and tell the systems manager." (review round 3) |
+| `unknown`, last report `apply_limited` | anyone else | refused: "Requests are being tested. They open to everyone soon. Use the ClickUp request form until then." (review round 3) |
+| `unknown`, no report or last report `dry_run` | anyone else | refused: "Requests are not switched on yet. Use the ClickUp request form until then." |
+| `unknown` | editor, admin or CEO | held: "The requests writer has not reported in the last 15 minutes. What you send is saved and goes to ClickUp once it runs with requests open. Check it on the Machine tab." |
+
+The form shows a held note before anything is sent and beside Send, so none
+begins "Saved." (review round 2); the request itself still says "Saved, not
+sent yet. It goes to ClickUp once requests open." (`heldNote`), or, when the
+writer went quiet after it was sending that card (`cockpit_request_writer_silent`,
+review round 3), "Saved, not sent yet: the requests writer has not reported in
+the last 15 minutes. It goes to ClickUp once the writer runs again."
 
 A held request's parts stay `queued` and its request `sending`; RequestRow
 says `held` with `heldNote`. The requests claim takes nothing the writer
@@ -658,17 +720,36 @@ tag equal to a card's `lower(client_name)` (else none), `answers =
 `owner_label 'Nobody yet'`, `state 'imported'`, the mirrored status. No
 queue row. One audit row per run (`request.imported`, the task ids).
 Returns `{imported, skipped: [{taskId, why}]}`. A team queue shows it with
-"Came in through the old ClickUp form. Make it a request to route it."
+"Came in through the old ClickUp form. Make it a request to route it." where
+the seat may route it (`canRoute`), else "Came in through the old ClickUp
+form. Route it in ClickUp." (review round 2).
+
+Review round 3: `p_open_ids`, given only after a complete hourly read of All
+Tasks (every page; 5.3 step 5), is every task found open there (status type
+not `done` or `closed`), form ticket or not; NULL when the read was cut short.
+An import whose ticket is not among them left All Tasks or was closed or
+deleted in ClickUp: `import_left_at` is set, so it leaves the queues
+(`cockpit_request_import_handled`). One a complete read finds again has it
+cleared. The return then adds `left` and `back` (counts), and one audit row
+`request.import_left {left: [task ids], back: [task ids]}` is written when
+either is non-empty. Two seats runs at once (the hourly one and a hand link's)
+import a ticket once (`ON CONFLICT (imported_task_id) DO NOTHING`). A handled
+import reads "Came in through the old ClickUp form. It was moved or closed in
+ClickUp, so it needs no routing here." (6.6).
 
 ### 2.11 Grants (end of migration r)
 
-- Internal: every function in 2.4, the triggers' functions.
+- Internal: every function in 2.4 (review round 3 added
+  `cockpit_request_writer_silent(text)`, `cockpit_request_replaces_ok(text,jsonb)`,
+  `cockpit_request_import_handled(cockpit_requests)`,
+  `cockpit_request_queue_in_clickup(cockpit_clickup_writeback_queue)` and
+  `cockpit_request_step_at(jsonb)`), the triggers' functions.
 - `service_role`: `cockpit_clickup_writeback_claim_requests(uuid,integer)`,
   `cockpit_request_sweep()`, `cockpit_clickup_writeback_release(uuid,uuid,jsonb,text,timestamptz)`,
   `cockpit_clickup_writeback_task_owners(text[])`, `cockpit_clickup_requests_state(boolean,text,text,text[],jsonb)`,
   `cockpit_request_doctor_inputs()`, `cockpit_request_type_rt_off(text,text)`,
   `cockpit_clickup_members_sync(jsonb)`, `cockpit_request_field_catalog_sync(jsonb)`,
-  `cockpit_request_templates_sync(jsonb)`, `cockpit_request_import(jsonb)`;
+  `cockpit_request_templates_sync(jsonb)`, `cockpit_request_import(jsonb,text[])` (review round 3);
   the replaced `begin`, `idle` and `claim` keep their live grant (service
   role only).
 - `authenticated`: every function in 2.5.
@@ -702,7 +783,7 @@ Row security on, revoked from the four roles, `GRANT SELECT ... TO service_role`
 | `assignee_ids`, `watcher_ids` | bigint[] | NOT NULL DEFAULT '{}' |
 | `creator_id` | bigint | NULL |
 | `tags` | text[] | NOT NULL DEFAULT '{}' |
-| `client_task_id` | text | NULL: the card itself on `901816559981`; else the part's request card; else one tag equal to a card's `lower(client_name)` |
+| `client_task_id` | text | NULL: the card itself on `901816559981`, and for a card's subtask its card (the parent when it is a card, else the parent's own card; integration round 2); else the part's request card; else one tag equal to a card's `lower(client_name)` |
 | `url` | text | NOT NULL |
 | `date_created`, `date_updated` | timestamptz | NOT NULL |
 | `date_closed` | timestamptz | NULL |
@@ -777,20 +858,21 @@ only for kinds in the seat's rules, never for a client card itself (a
 top-level task on `901816559981`) except `mention` (a real subtask of a card
 alerts as any task, ask F2), and never to the person who caused the event
 when that is known. ClickUp's task read names no one who moved a task, so
-the only mover known is a seat's own focus view press: a `status` alert
-still goes to an assignee who moved the task in ClickUp themselves (F9, a
-known limit; history reads would cost a call per task).
+the only mover known is a seat's own focus view Mark done, while it is on its
+way or just delivered (review round 2): a `status` alert still goes to an
+assignee who moved the task in ClickUp themselves (F9, a known limit; history
+reads would cost a call per task).
 
 | Kind | Made by | When | Dedupe key | Title / body |
 |---|---|---|---|---|
 | `assigned` | `cockpit_task_mirror_changed` (every mirror write) | A real change (above) puts a linked seat's id in `assignee_ids` that was not in the old ones; or the row is new to the mirror and changed after the baseline and the seat's link. Skipped when the seat is the task's creator on a new task, or the seat filed the request that made it | `assigned:{task}:{member}:{date_updated ms}` | task name / "Assigned to you" |
-| `status` | `cockpit_task_mirror_changed` (every mirror write) | `status` changed on a task assigned to the seat, unless a `task_action` of that seat on that task settled `delivered` in the last 10 minutes | `status:{task}:{member}:{status}:{date_updated ms}` | task name / "Moved to {status}" |
+| `status` | `cockpit_task_mirror_changed` (every mirror write) | `status` changed on a task assigned to the seat, unless the new status is done or closed and that seat has a `task_action` op `done` on the task still `queued`, `sending`, `retry` or `unknown`, or `delivered` no more than 10 minutes before ClickUp's change (within 24 hours; `cockpit_task_own_done`); a tick or comment press hides nothing (review round 2) | `status:{task}:{member}:{status}:{date_updated ms}` | task name / "Moved to {status}" |
 | `comment` | `cockpit_task_mirror_comments` | A comment newer than the cut-off (below) on a task assigned to the seat, not by the seat, not on a client card itself. Comments by the API user `284616470` alert only when they carry a focus view's `Cockpit ref T-{hex}` (the actor is that queue row's seat); with another cockpit marker they are the cockpit's, and with none they are the CEO's own account (by hand or an automation; ClickUp cannot tell), labelled "the CEO" but making no comment alert (F8) | `comment:{comment id}:{member}` | task name / "{actor role} commented" or "A teammate commented" |
 | `mention` | `cockpit_task_mirror_comments` | A comment part `{type: 'tag', user.id}` or `assignee.id` equal to the seat's id, on any task, not by the seat. A mention replaces the comment alert for that seat. The API user with no marker mentions as "The CEO"; with a cockpit marker, "You were mentioned in a comment" | `mention:{comment id}:{member}` | task name / "{actor role} mentioned you" |
 | `due_today` | `cockpit_task_alerts_tick` | Once a Kuwait day, after the seat's shift start, on a working day of the seat, counting the tasks due today **on the seat's Your tasks** (`cockpit_task_my_set`: subtasks fold under a listed parent, client cards themselves left out; contract F2). When the editor desk's count differs (it keeps Video Pipeline on its Jobs page), two rows: the full count with `scope 'not_editor'` and the desk's count (when above 0) with `scope 'editor'` | `due_today:{member}:{day}` (and `…:editor`) | "{n} tasks are due today" (1: "1 task is due today") / "Open Your tasks to see them." (`task_id` null) |
 | `overdue` | `cockpit_task_alerts_tick` | After the seat's shift start, for each open task assigned to the seat (not a client card itself) with `due_on` before today and on or after the later of the baseline's day and the day the seat's link was made | `overdue:{task}:{member}:{due_on}` | task name / "Was due {Sun 26 Oct}" |
-| `request_done` | `cockpit_task_mirror_changed` (every mirror write) | A request part's mirrored `status_type` becomes `done` or `closed` | `request_done:{request}:{part}` | "{type label}: {client}" / "Done in ClickUp." or "Closed in ClickUp." |
-| `request_failed` | trigger on `cockpit_request_parts` | A part's state becomes `failed` or `skipped` and the request is not cancelled | `request_failed:{request}:{part}` | "{type label}: {client}" / "Did not reach ClickUp: {error}" |
+| `request_done` | `cockpit_task_mirror_changed` (every mirror write) | A request part's mirrored `status_type` becomes `done` or `closed`; not to the requester when their own Mark done made it (the same rule as `status`, review round 2) | `request_done:{request}:{part}` | "{type label}: {client}" / "Done in ClickUp." or "Closed in ClickUp." |
+| `request_failed` | trigger on `cockpit_request_parts` | A part's state becomes `failed` or `skipped` and the request is not cancelled | `request_failed:{request}:{part}` | "{type label}: {client}" / "Did not reach ClickUp: {error}", or "Deleted in ClickUp: {error}" for a `failed` part that holds a ClickUp task (the writer fails such a part only when its task was deleted in ClickUp, `SAY.gone`; integration round 4) |
 
 Comment cut-off: `coalesce(comments_read_at, greatest(baselinedAt,
 first_seen_at - interval '10 minutes'))`.
@@ -816,15 +898,17 @@ editor's own pipeline alerts always show. The bell applies an alert's
 TaskRow = {taskId, title, clientName, clientTaskId, listId, listName, status, statusType,
   dueOn, dueAt, dueHasTime, overdue, dueToday, priority, url, createdAt, parentId,
   checklist: {done, total} | null, requestId, requestTypeLabel}
-MyTasks = {asOf, sourceAt, ready, link, note, counts: {overdue, today, total}, tasks: [TaskRow], more}
+MyTasks = {asOf, sourceAt, ready, link, linkState, note, counts: {overdue, today, total}, tasks: [TaskRow], more}
 AlertRow = {id, kind, taskId, requestId, title, body, clientName, at, read}
-TaskAlerts = {asOf, sourceAt, ready, link, note, unread, alerts: [AlertRow]}
+TaskAlerts = {asOf, sourceAt, ready, link, linkState, note, unread, alerts: [AlertRow]}
+  linkState (review round 3): the seat's link row state (cockpit_request_seat), so a seat an editor
+  cleared is told it has no ClickUp user and is never sent to link it
 ```
 
 | Function | Gate | Rules |
 |---|---|---|
-| `cockpit_my_tasks(p_cockpit text)` | any active seat | `link 'not_linked'`: `tasks []`, `note` = the not-linked sentence (6.6). Else open tasks (`status_type` not `done` or `closed`, not archived, `gone_at` null) whose `assignee_ids` hold the seat's id, minus a subtask whose parent is also in the set. Order: overdue (`due_on` before today, or `due_has_time` and `due_at` before now) oldest due first; then due today; then everything else newest `date_created` first. At most 200 rows; `more` = the rest. `sourceAt` = `task-mirror:delta` `last_ok_at`; `ready` = that row ok and at most 10 minutes old |
-| `cockpit_task_alerts(p_cockpit text)` | any active seat | The seat's alerts of the last 14 days, newest first, at most 50, the cockpit's list filter applied; `unread` counts them unread. `link` and `ready` as above; request alerts show even when not linked |
+| `cockpit_my_tasks(p_cockpit text)` | any active seat | `link 'not_linked'`: `tasks []`, `note` = the not-linked sentence (6.6), or for a seat an editor cleared (`linkState` `cleared`, review round 3) "Your seat has no ClickUp user, so no ClickUp tasks show here. Requests you raise show under My requests.". Else open tasks (`status_type` not `done` or `closed`, not archived, `gone_at` null) whose `assignee_ids` hold the seat's id, minus a subtask whose parent is also in the set. Order: overdue (`due_on` before today, or `due_has_time` and `due_at` before now) oldest due first; then due today; then everything else newest `date_created` first. At most 200 rows; `more` = the rest. `sourceAt` = `task-mirror:delta` `last_ok_at`; `ready` = that row ok and at most 10 minutes old |
+| `cockpit_task_alerts(p_cockpit text)` | any active seat | The seat's alerts of the last 14 days, newest first (ties ordered by id), at most 50, the cockpit's list filter applied; `unread` counts the unread among the at most 50 returned, so Mark all read clears the count (review round 2). `link`, `linkState` and `ready` as above; request alerts show even when not linked. The not-linked note is "Your seat is not linked to a ClickUp user, so only request alerts show here. Ask the systems manager to link it.", or for a cleared seat "Your seat has no ClickUp user, so only request alerts show here." (review round 3) |
 | `cockpit_task_alerts_seen(p_ids uuid[])` | any active seat | Sets `read_at = now()` on at most 200 of the seat's own unread alerts; one audit row `task_alerts.seen` with the count and ids. Returns `{ok, marked}` |
 | `cockpit_task_detail(p_task_id text)` | the seat's id is an assignee or watcher, or the seat filed a request whose part is this task, or admin or CEO; else `42501` "This task is not assigned to you. Open it in ClickUp." | TaskDetail (below) |
 | `cockpit_task_act(p_action_id uuid, p_task_id text, p_op text, p_payload jsonb)` | as `cockpit_task_detail`, plus 3.4 | `{id, state, reused}` |
@@ -848,25 +932,59 @@ Comment authors come out as labels at read time
 (`cockpit_request_owner_label`; the API user `284616470` is the CEO's own
 account: with a `Cockpit ref T-` that matches a press, that seat's role;
 with any other cockpit marker, "the cockpit"; with none, "the CEO", and
-`mine` for the CEO's seat; F8); comment text is cut to 1000 chars; the
-newest 10 comments.
+`mine` for the CEO's seat; F8). Only a `Cockpit ref` that ends the text
+counts, and a `T-` ref names only a Comment press on the same task (review
+round 2, SEC-5); a marker's tail may hold an underscore (a part named
+`call_center` writes `R-…-call_center-card`), and the focus view cuts the
+ending marker from the text (retest round 2). Comment text is cut to 1,000
+characters, keeping a trailing `Cockpit ref …` last and never ending on half
+a surrogate pair (cockpit-tasks `commentText`, review round 2): a focus view
+comment may hold 2,000 characters (3.4), and the mirror keeps its first
+1,000 with the marker still last, so its writer stays known. The newest 10
+comments.
 
 ### 3.4 Task actions (`cockpit_task_act`)
 
 | Op | `p_payload` | Lists allowed |
 |---|---|---|
-| `tick`, `untick` | `{checklistId, itemId, itemName, from}` (`from` the resolved state the person saw) | the five department lists and All Tasks |
-| `comment` | `{text}` 1 to 2000 chars | any list but the client cards |
-| `done` | `{statusSeen}` | the five department lists and All Tasks |
+| `tick`, `untick` | `{checklistId, itemId, itemName, from}` (`from` the resolved state the person saw) | any task but a client card itself |
+| `comment` | `{text}` 1 to 2000 chars | any task but a client card itself |
+| `done` | `{statusSeen}` | any task but a client card itself, Video Pipeline `901816720767` and WhatsApp Reconnection `901821803697` |
+
+Review round 2 (ask F12): a seat's own tasks on any list take a tick, a
+comment and Mark done in the focus view, not only the team request boards.
+A client card itself (a top-level task on `901816559981`) takes no change
+from the cockpit; its real subtasks (ask F2 put them on Your tasks) take all
+three, in `cockpit_task_can`, `cockpit_task_act` and the writer alike.
+Mark done writes the list's done-type status, which on two lists sets more
+off than closing a task, so it is not offered there
+(`cockpit_task_done_blocked`, and `DONE_BLOCKED` in the writer): on Video
+Pipeline done means the video is live, and on WhatsApp Reconnection a status
+change messages the client. Mark done on a card's subtask uses the done
+status of Clients - Mahara; with none, the writer fails the press with
+"Clients - Mahara has no done status in ClickUp. Mark it done there."
 
 Checks in order, each refusing with its sentence (`55000`):
 seat linked, or admin or CEO ("Link your seat to ClickUp to tick, comment
-and mark done here. Ask the systems manager."); the task is in the mirror;
-the list allows the op ("Ticking and Mark done work on the team request
-boards. Open this one in ClickUp." / "This is a client card. Open it in
-ClickUp."); `cockpit_clickup_requests_mode()` is `apply`, or
-`apply_limited` with the task's `client_task_id` in `onlyCards` ("Changes
-from the cockpit are not switched on yet. Open the task in ClickUp.").
+and mark done here. Ask the systems manager.", or for a seat an editor cleared
+"Your seat has no ClickUp user, so you cannot tick, comment or mark done here.
+Ask the task's owner."; internal `cockpit_task_link_why(jsonb)`, review round
+3); the task is in the mirror;
+the task allows the op ("This is a client card. Open it in ClickUp." for any
+change on a card itself / for `done`: "Mark done is not offered on Video
+Pipeline, where done means the video is live. Move it in ClickUp." or "Mark
+done is not offered on WhatsApp Reconnection, where a status change messages
+the client. Move it in ClickUp."); `cockpit_clickup_requests_mode()` is
+`apply`, or `apply_limited` with the task's `client_task_id` in `onlyCards`
+("Changes from the cockpit are not switched on yet. Open the task in
+ClickUp.", or when the writer went quiet after it was writing that card,
+`cockpit_request_writer_silent`, "Changes from the cockpit cannot be sent just
+now: the requests writer has not reported in the last 15 minutes. Open the task
+in ClickUp."; internal `cockpit_task_writer_why(text)`, review round 3). `cockpit_task_can` gives the same answer as `{tick, comment,
+done, why}`. Comment words matching `(?i)cockpit\s+ref\s+[a-z0-9]` are
+refused (`22023`) "Leave out the words "Cockpit ref". The cockpit adds its own
+to every comment." (review round 2, SEC-5); the writer refuses such a row too
+(failed with the same sentence, never posted; retest round 2).
 
 Then one queue row: `kind 'task_action'`, `dedupe_key 'task:{p_action_id}'`,
 `source_table 'cockpit_task_mirror'`, `source_id` = the task id, `task_id` =
@@ -897,9 +1015,9 @@ comment text). Then the kick of 2.9, inside an exception block.
 | `cockpit_task_mirror_upsert(p_tasks jsonb, p_source text) returns jsonb` | `p_source` is `delta`, `seat` or `detail`; at most 200 rows (MirrorTask, 5.2). Upserts rows (sets `seen_at`, clears `gone_at`), computes `due_on` and `client_task_id`, then each row through `cockpit_task_mirror_changed` (internal): the matching `cockpit_request_parts` (`status`, `status_type`, `assignee_ids`, `mirrored_at`) and `cockpit_request_refresh`, and the 3.2 alerts from any source (none before the baseline). Returns `{upserted, alerts, skipped}` |
 | `cockpit_task_mirror_seat(p_clickup_user_id bigint, p_task_ids text[]) returns jsonb` | For open mirror rows holding that id but not in `p_task_ids`, removes the id from `assignee_ids` (the next delta has the truth); rows no read has seen for 7 days get `gone_at`. Returns `{removed}` |
 | `cockpit_task_mirror_comment_due(p_limit integer) returns jsonb` | Up to `p_limit` (at most 60) `[{taskId, sinceMs}]`: rows updated in the last 24 hours whose `date_updated` is after their cut-off, tasks assigned to a linked seat first, then the rest by `date_updated`. A task whose thread reads failed waits `least(2 minutes × 2^(failures - 1), 1 hour)` after the last failure |
-| `cockpit_task_mirror_comments(p_task_id text, p_comments jsonb, p_read_at timestamptz DEFAULT now(), p_failed boolean DEFAULT false) returns jsonb` | `p_comments` = `[{id, authorId, atMs, text, tagIds, assigneeId, parentId}]` (text cut to 1000). Makes 3.2's comment and mention alerts, sets `comments_read_at` to `p_read_at` (the moment that thread's read began, at most now, never back in time; F6) and clears the failure count. With `p_failed`: no alert, `comments_read_at` untouched, `comments_failures + 1`, `comments_failed_at = now()`. Two-argument callers still work. Returns `{alerts}` |
+| `cockpit_task_mirror_comments(p_task_id text, p_comments jsonb, p_read_at timestamptz DEFAULT now(), p_failed boolean DEFAULT false) returns jsonb` | `p_comments` = `[{id, authorId, atMs, text, tagIds, assigneeId, parentId}]` (text cut to 1,000 characters by cockpit-tasks `commentText`, keeping a trailing `Cockpit ref …` last and never ending on half a surrogate pair, review round 2). Makes 3.2's comment and mention alerts, sets `comments_read_at` to `p_read_at` (the moment that thread's read began, at most now, never back in time; F6) and clears the failure count. With `p_failed`: no alert, `comments_read_at` untouched, `comments_failures + 1`, `comments_failed_at = now()`. Two-argument callers still work. Returns `{alerts}` |
 | `cockpit_task_alerts_tick() returns jsonb` | 3.2's `due_today` and `overdue` for every linked seat. Returns `{dueToday, overdue}` |
-| `cockpit_task_detail_cache(p_task_id text, p_detail jsonb) returns void` | Stores `{dueHasTime, description (2000 chars), checklists, subtasks, comments: [{id, authorId, atMs, text}], statuses}` with `detail_at = now()`; also refreshes the row's `status`, `status_type`, `due_has_time`, `checklist_done`, `checklist_total`. A status the mirror did not have goes through `cockpit_task_mirror_changed` (its status alert and the request parts), never swallowed (contract F1) |
+| `cockpit_task_detail_cache(p_task_id text, p_detail jsonb) returns void` | Stores `{dueHasTime, description (2000 chars), checklists, subtasks, comments: [{id, authorId, atMs, text}], statuses}` (cockpit-tasks cuts the description, names and comments with the same surrogate-safe cut, a comment's trailing marker kept last) with `detail_at = now()`; also refreshes the row's `status`, `status_type`, `due_has_time`, `checklist_done`, `checklist_total`. A status the mirror did not have goes through `cockpit_task_mirror_changed` (its status alert and the request parts), never swallowed (contract F1) |
 | `cockpit_task_mirror_state(p_job text, p_ok boolean, p_note text, p_detail jsonb) returns void` | Upserts `task-mirror:delta` or `task-mirror:seats`; for `seats` with `p_detail->>'complete' = 'true'` sets `baselinedAt` once. One audit row per call, `task_mirror.run` (`metadata` = the counts), `source_system 'cron'` |
 
 ### 3.6 Kicks and crons
@@ -961,21 +1079,43 @@ helpers; `service_role` for 3.5; `authenticated` for 3.3.
    p_next_attempt_at)`: `queued` again, or `retry` when it already has ClickUp
    progress, the claim's attempt taken off, due again in 5 minutes
    (`HOLD_MS`) so the rows behind it get their turn, its error the sentence
-   "Waiting in the queue: …". It is sent once the switch lets it. On a
+   "Waiting in the queue: …". It is sent once the switch lets it. In
+   `apply_limited` a request that routes an old form ticket (`replaces_task_id`
+   from the claim, or the first part's `replacesTaskId`) is live only when the
+   claim's `replaces_client_task_id` is a canary card, else held the same way
+   (review round 3, E-CANARY): the run right after a switch flip still claims
+   by the mode reported before it. A database that sends no
+   `replaces_client_task_id` holds every routing request during the canary. On a
    database without the release the writer saves `retry` with the progress
    kept and `progress.held` + 1; the ladder counts `attempts - progress.held`
    (`triesOf`). No row is ever saved `dry_run` by this job.
 7. Live: run the item (4.3 or 4.4). Outcomes and the retry ladder as
    `runLog` (`RETRY_MINUTES`, 429 is `retry`, 5xx or a timeout is `unknown`
    and read back before any new write, another 4xx is `failed`), with one
-   rule for a request part whose task exists (create `done` or `mismatch`):
-   it is never settled `failed` except when the task is gone from ClickUp. A
+   rule for a request part whose task exists (ClickUp answered its create
+   with the task's id, or a task was adopted: `progress.task.id` or
+   `steps.create.id`; review round 3): it is never settled `failed` except
+   when the task is gone from ClickUp. A
    step ClickUp refuses for good (a 4xx, or a Request Type option renamed
    after the create) is saved `mismatch` with `refused`, named in the part's
    note (`STEP_REFUSED`), and the remaining steps run; the part is
    `delivered` with that note (RT-2). A part still unfinished at the end of
    the ladder is `delivered` with "The task is in ClickUp, but the cockpit
-   could not finish every step on it. Check it in ClickUp." plus the error.
+   could not finish every step on it. Check it in ClickUp." plus the error,
+   minus any sentence promising a next run (`finalWords`). A request part
+   whose create is still in doubt at the end of the ladder (create `started`
+   with no id: an answer lost or without an id, two tasks matching, a search
+   refused or unanswered) is never settled `failed`. It stays `unknown` with
+   its error plus "The cockpit checks ClickUp again every 4 hours." and
+   `next_attempt_at` now + 240 min (`DOUBT_MINUTES`), until it is adopted or a
+   person settles it (RUNBOOK). A create never begun, or forgotten after a
+   429, still fails at the end of the ladder.
+   Only ClickUp's own answer is a refusal: an error with no status in
+   "rejected the request (NNN)" (a receipt that could not be saved after
+   ClickUp answered, a timeout, a dropped body read) is `unknown` and read
+   back before any new write, in every step and inline catch (`requests.ts`
+   `errorKind`, review round 2). A read ClickUp answered without what it
+   should hold ("ClickUp did not return ...") stays a refusal.
 8. `cockpit_clickup_writeback_finish` and
    `cockpit_clickup_requests_state(ok, note, mode, onlyCards, counts)`.
    `ok` is false when any item failed or a secret is missing. Note examples:
@@ -996,32 +1136,39 @@ The marker line is `Cockpit ref {payload.ref}`.
 
 | # | Step | Write | Read-back | On resume (started, not done) |
 |---|---|---|---|---|
-| 1 | `create` | No template: `POST list/{listId}/task` with `name`, `markdown_description` (description plus a blank line and the marker), `assignees: [owner]` when an owner, `priority`, `due_date: dueMs`, `due_date_time: false`, `status: "to do"`, `notify_all: false`; never `custom_fields`. With a template: `POST list/{listId}/taskTemplate/{templateId}` with `{name: taskName}` | Id from the top or `task.id`; `GET task/{id}`: `list.id` equals `listId`, `name` equals `taskName` | `GET list/{listId}/task?order_by=created&include_closed=true&date_created_gt={started - 60 s}`: the marker in the text first (both kinds). A template task with no marker yet: the exact name, leaving out any task whose text holds another `Cockpit ref R-…` and any task another queue row holds (`cockpit_clickup_writeback_task_owners(p_task_ids)`, RT-3). One: adopt. Two or more: `unknown`, error "Two tasks match this request in ClickUp. Keep one and cancel the other." None after 5 minutes: create again |
-| 2 | `description` (template only) | `GET task/{id}?include_markdown_description=true`, then `PUT task/{id}` `{markdown_content: <template text> + "\n\n---\n\n" + description + marker}` | The description holds the marker and still starts with the template's text | The marker is there: `done` |
+| 0 | old ticket check (a request that routes one: `replacesTaskId` on the first part, the claim's `replaces_task_id` on every part) | none | Before the create starts and while no task is known: `GET task/{old}`. Deleted, closed or done, or no longer on `901816723226`, and no comment on it holding this request's `Cockpit ref R-{10 hex}-`: the part is `skipped` with "The old ticket was already moved or closed in ClickUp, so no new task was made. Check it there." and nothing is written (review round 2). Not a frozen step | Not a step: a part whose task may exist never stops here |
+| 1 | `create` | No template: `POST list/{listId}/task` with `name`, `markdown_description` (description plus a blank line and the marker), `assignees: [owner]` when an owner, `priority`, `due_date: dueMs`, `due_date_time: false`, `status: "to do"`, `notify_all: false`; never `custom_fields`. With a template: `POST list/{listId}/taskTemplate/{templateId}` with `{name: taskName}` | Id from the top or `task.id`; `GET task/{id}`: `list.id` equals `listId`, `name` equals `taskName`. Review round 3: a 404 right after the create, or on later reads of a task the create made but never saw, until 30 minutes after the create started (`SHOW_WAIT_MS`): `unknown`, "ClickUp has not shown the new task yet. The next run reads it again."; after that, or for a task adopted earlier or a requeued row's own task id: `failed`, "The task is no longer in ClickUp, so the cockpit stopped. Raise the request again if it is still needed.". ClickUp refusing that read (a 4xx, but not 404 or 429): create `mismatch` with `refused`, the note "ClickUp made the task but refused to show it to the cockpit. Check it in ClickUp." (`STEP_REFUSED.create`), and the remaining steps run (RT-2) | `GET list/{listId}/task?order_by=created&include_closed=true&date_created_gt={started - 60 s}`. Matching (review round 3): the marker in the text first (both kinds), matched as a whole word: the ref not followed by a letter, digit, `_`, `-` or `\` (`holdsMarker`). A template task with no marker yet is matched by exact name, leaving out any task whose text holds another `Cockpit ref R-…`. Either way, any task another queue row holds is left out (`cockpit_clickup_writeback_task_owners`; for marker matches since round 3). One match: adopt it (if its read is refused or 404s, use the list's copy). Two or more: drop those with status type `closed`; one left open: adopt it; two or more open: `unknown`, "Two tasks match this request in ClickUp. Keep one and cancel the other."; none open: `unknown`, "Every task that matches this request in ClickUp is cancelled. Reopen the one to keep, and the next run adopts it.". Search refused (a 4xx): `unknown`, "ClickUp refused the search for this request's task, so the cockpit cannot tell whether it was made. The next run searches again. ClickUp said: {error}". None found after 5 minutes: create again |
+| 2 | `description` (template only) | `GET task/{id}?include_markdown_description=true`, then `PUT task/{id}` `{markdown_content: <template text> + "\n\n---\n\n" + description + marker}` | The description holds the marker as a whole word (`holdsMarker`) and still starts with the template's text | The marker is there as a whole word (`holdsMarker`): `done` |
 | 3 | `owner_due_priority` (template only) | `PUT task/{id}` `{assignees: {add: [owner], rem: []}, due_date, due_date_time: false, priority}` | `assignees` has the owner; the Kuwait day of `due_date` equals `dueOn` (never the milliseconds); `priority.priority` is the name sent | Read; write only what differs |
 | 4 | `checklist` | Every template part has this step (F14). A template part with no `sopSteps`: read back; the template's checklist is there, `unchanged`; none, `mismatch` and the note "The template brought no checklist in ClickUp, and this request type has no SOP steps to add. Add them in Requests settings." With `sopSteps`: no template is `always`, a template is `if_template_empty` whatever `sopStepsWhen` says. When `always`, or `if_template_empty` and `GET task/{id}` shows no checklist: `POST task/{id}/checklist` `{name: sopChecklistName}`, then one `POST checklist/{cid}/checklist_item` `{name}` per step, in order | `GET task/{id}`: a checklist with that id and name whose items are the steps in order | Adopt a checklist with that exact name created after `started - 60 s` (two: `unknown`); add only the missing step names |
 | 5 | `tag` | When `clientTag` is in `GET space/901810248115/tag` (read once a run, compared in lower case): `POST task/{id}/tag/{tag}` | `tags` holds it (lower case) | Read |
-| 6 | `fields` | For each `fields` entry: `POST task/{id}/field/{fieldId}` `{value}` | `GET task/{id}` `custom_fields`: a select by option id or its orderindex, else the exact value | Read; write what differs. A field that will not save is `mismatch` with its label, not a failure: the answer is in the description. The item's note lists them: "Some fields did not save in ClickUp: {labels}. They are in the description." |
-| 7 | `request_type` (only when `setRequestType`) | Before writing, the type is read again (`cockpit_request_doctor_inputs`, once a run, and turned off at once in the run by a two-minute check that calls rt_off): Request Type off for it now, `skipped` and the note "Request Type was turned off for this type after ClickUp moved one of its tasks, so the cockpit left it empty." (RT-5); the read failing, `retry`. First `GET list/{listId}/field`: the option `requestTypeOptionId` exists on `e9fd8024-…` and its name, trimmed with spaces collapsed, equals `requestTypeOptionName` trimmed and collapsed, else `failed` "ClickUp renamed this request type. Fix it in Requests settings." Then `POST task/{id}/field/e9fd8024-8abe-4094-ac08-e6c0e736ad7e` `{value: option id}` | The value is the option id or its orderindex | Read; write only if empty |
+| 6 | `fields` | For each `fields` entry: `POST task/{id}/field/{fieldId}` `{value}` | `GET task/{id}` `custom_fields`: a select by option id or its orderindex, else the exact value | Read; write what differs. A field that will not save is `mismatch` with its label, not a failure: the answer is in the description. The item's note lists them: "Some fields did not save in ClickUp: {labels}. They are in the description." An entry naming `e9fd8024`, `09abf737` or `d3ac52c5` (any case) is never posted and counts as `mismatch` the same way (the database never freezes one; a second guard, retest round 2) |
+| 7 | `request_type` (only when `setRequestType`) | In order (review round 2): the value already set, `done` or `unchanged`; the type's switch off now (read again with `cockpit_request_doctor_inputs` once a run, and turned off at once in the run by a two-minute check that calls rt_off), `skipped` with the note "Request Type is off for this type now, so the cockpit left it empty." (the read failing: `retry`); the option missing or renamed on `e9fd8024-…` (`GET list/{listId}/field`, names compared trimmed with spaces collapsed), `skipped`, never written and never a failure, with the note "ClickUp renamed or removed this type's Request Type option, so the cockpit left Request Type empty. The systems manager can rename it back in ClickUp or turn Set Request Type off for this type in Requests settings."; another value already there, `mismatch`; else `POST task/{id}/field/e9fd8024-8abe-4094-ac08-e6c0e736ad7e` `{value: option id}`. Nothing about Request Type is checked before the create | The value is the option id or its orderindex | Read; write only if empty |
 | 8 | `card_comment` (when a client) | `POST task/{clientTaskId}/comment` `{comment_text, notify_all: false}`, text: `Cockpit · {Requester label} asked {listName}: {typeLabel}` newline `{task url}` blank line `Cockpit ref {ref}-card` | The answer's `id`; `GET task/{card}/comment` holds that id and the marker (contains, not equals) | Page back with `start` and `start_id` until older than `started - 60 s`; adopt the comment with the marker |
-| 9 | `replaces` (when `replacesTaskId`) | `GET task/{replacesTaskId}`: still on `901816723226` and not closed, else `skipped` with "The old ticket was already moved or closed." Then `POST task/{replacesTaskId}/comment` "Routed in the cockpit as {typeLabel}: {task url}" + marker `-old`, then `PUT task/{replacesTaskId}` `{status: 'cancelled'}` | The comment by id and marker; `status.type` is `closed` | Read |
+| 9 | `replaces` (when `replacesTaskId`) | `GET task/{replacesTaskId}`: still on `901816723226` and not closed, else `skipped` with why "The old ticket was already moved or closed." and the part's note "The old ticket was moved or closed in ClickUp before the cockpit could route it, so it was left as it is. Check that the work is not done twice." (review round 2). Then `POST task/{replacesTaskId}/comment` "Routed in the cockpit as {typeLabel}: {task url}" + marker `-old`, then `PUT task/{replacesTaskId}` `{status: 'cancelled'}` | The comment by id and marker; `status.type` is `closed` | Read |
 | 10 | settle | `delivered`, `task_id`, `progress.task = {id, url}`, `delivered_at` | | |
 
 ### 4.4 A `task_action` item
 
 Before any write: `GET task/{taskId}` (one read serves the precondition and
-later the read-back). The task's list must be one of the five department
-lists or All Tasks for `tick`, `untick`, `done`, and not the client cards
-for `comment`; and the actor's ClickUp id must still be an assignee or
-watcher, or `actor.isAdmin`, or `requesterOfTask`. Otherwise `skipped`:
-"This task is no longer yours in ClickUp. Open it there."
+later the read-back). The same lists as 3.4 (review round 2): a client card
+itself (on `901816559981` with no `parent`) takes no op ("This is a client
+card. Open it in ClickUp."); any other task takes `tick`, `untick` and
+`comment`, and `done` except on Video Pipeline `901816720767` and WhatsApp
+Reconnection `901821803697`, each skipped with its 3.4 sentence
+(`taskActions.ts` `DONE_BLOCKED`; the old boards sentence is gone); and the
+actor's ClickUp id must still be an assignee or watcher, or `actor.isAdmin`,
+or `requesterOfTask`. Otherwise `skipped`: "This task is no longer yours in
+ClickUp. Open it there." A `comment` whose words hold a Cockpit ref (3.4's
+pattern) is `failed` with "Leave out the words "Cockpit ref". The cockpit adds
+its own to every comment." before any call (retest round 2).
 
 | Op | Precondition | Write | Read-back |
 |---|---|---|---|
 | `tick` / `untick` | The item is in that checklist, its name equals `itemName`, its `resolved` equals `from`. Already `to`: `unchanged`. Name differs or gone: `skipped`, "ClickUp changed this step. Open the task there." | `PUT checklist/{checklistId}/checklist_item/{itemId}` `{resolved: to}` | `GET task/{taskId}`: the item's `resolved` equals `to` |
 | `comment` | none | `POST task/{taskId}/comment` `{comment_text: "{Actor label} wrote in the cockpit: {text}\n\nCockpit ref {ref}", notify_all: false}` | The answer's id; the comment list holds it with the marker. Resume as step 8 |
 | `done` | `status.status` equals `statusSeen`. Already a `done` type: `unchanged`. Otherwise changed: `skipped`, "Someone moved this task in ClickUp. Open it there." | The list's status whose type is `done` (`GET list/{listId}`, cached for the run; `complete` on all six lists today); `PUT task/{taskId}` `{status}` | `status.status` equals it and `status.type` is `done` |
-| `verify` | none | none, or once `PUT task/{taskId}` `{assignees: {add: [owner], rem: []}}` | `GET task/{taskId}`. With no `ownerClickupId`, only the list and name are checked. The owner is there: `verify 'kept'`. Missing: put it back once and read again; there now: `'restored'`; gone again: `failed`, `verify 'removed'`, "A ClickUp rule on {listName} keeps removing the owner." When `setRequestType` was on and the list or the name changed: `verify 'moved'`, call `cockpit_request_type_rt_off(typeKey, "ClickUp moved or renamed {taskName} after its Request Type was set, so Request Type is off for this type.")`, put nothing back. Parts of the type still queued or in retry then leave Request Type empty (4.3 step 7); a part delivered inside those two minutes has its own check, which finds its own move. Another person added by a list rule: `verifyNote` "ClickUp also added another person." |
+| `verify` | none | none, or once `PUT task/{taskId}` `{assignees: {add: [owner], rem: []}}` | `GET task/{taskId}`. With no `ownerClickupId`, only the list and name are checked. The owner is there: `verify 'kept'`. Missing: put it back once and read again; there now: `'restored'`; gone again: `failed`, `verify 'removed'`, "A ClickUp rule on {listName} keeps removing the owner." When `setRequestType` was on and the list or the name changed: `verify 'moved'`, call `cockpit_request_type_rt_off(typeKey, "ClickUp moved or renamed {taskName} after its Request Type was set, so Request Type is off for this type.")`, put nothing back. Parts of the type still queued or in retry then leave Request Type empty (4.3 step 7); a part delivered inside those two minutes has its own check, which finds its own move. Another person added by a list rule: `verifyNote` "ClickUp also added another person." On time only (review round 2): due 2 minutes after the write it judges (review round 3: `madeAt` for rt_off, `ownerAt` then `madeAt` for the owner put-back, each falling back to the check's `created_at`; a value that is not an ISO time with its offset is absent, `taskActions.ts` `stampMs`); more than 15 minutes after that, a check that would call rt_off or put the owner back changes nothing: `skipped`, no `progress.verify`, `verifyNote` and error "{what it saw} This check ran too late to tell a ClickUp rule from a person's change, so the cockpit changed nothing." A move seen on time (`steps.verify.movedAt`) still calls rt_off on a late retry; a `putBack` begun on time is only read back. A late check with nothing to act on reads as before |
 
 ### 4.5 The doctor (`{"job":"requests_doctor"}`)
 
@@ -1029,8 +1176,14 @@ Reads only. Secrets by name (`CLICKUP_API_TOKEN`, `CRON_SECRET`,
 `CLICKUP_WRITEBACK_APPLY_REQUESTS`, `CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS`;
 present or not, never the value), the mode, then with
 `cockpit_request_doctor_inputs()`: every template id in a target is in
-`GET team/90182518398/taskTemplate` pages 0 to 5; every option id exists on
-`e9fd8024-…` with a matching normalised name; every field id is on
+`GET team/90182518398/taskTemplate` pages 0 to 5; for each type whose
+`setRequestType` is not false, its option id exists on `e9fd8024-…` with a
+matching normalised name (review round 2), else "{key}: its Request Type
+option is not in ClickUp any more, so its requests leave Request Type empty.
+Turn Set Request Type off for this type in Requests settings." or "{key}:
+ClickUp renamed its Request Type option to "{name}", so its requests leave
+Request Type empty. Rename it back in ClickUp, or turn Set Request Type off
+for this type in Requests settings."; every field id is on
 `GET list/901816723190/field`; every named owner is in `GET team` members;
 each target list has a status of type `done` (`GET list/{id}`). Writes
 `cockpit_sync_state` key `clickup-writeback:requests-doctor` and returns
@@ -1091,7 +1244,10 @@ function never writes to ClickUp. Secrets read by name:
    (newest 25), and `GET comment/{id}/reply` for a comment newer than
    `sinceMs` with `reply_count > 0` (at most 10 reply reads a run); then
    `cockpit_task_mirror_comments(taskId, comments, p_read_at)`, `p_read_at`
-   the moment that thread's read began (F6). A thread that cannot be read is
+   the moment that thread's read began (F6). Each comment's text is cut to
+   1,000 characters with its trailing `Cockpit ref …` kept last (`commentText`);
+   task names (500) and the import descriptions (4,000) use the same
+   surrogate-safe cut (review round 2). A thread that cannot be read is
    named in the note and counted (`commentsFailed`), and its task is marked
    tried with `cockpit_task_mirror_comments(taskId, [], p_read_at,
    p_failed => true)` (it steps back; best effort). It makes the run not ok
@@ -1117,7 +1273,11 @@ function never writes to ClickUp. Secrets read by name:
    every seat finished.
 5. `GET list/901816723226/task?include_closed=false&subtasks=false`: tasks
    named `Form Submission%` with a value on `e9fd8024-…` to
-   `cockpit_request_import`.
+   `cockpit_request_import`. After a complete read (every page, at most 5),
+   `p_open_ids` goes too: the ids of every task there whose status type is not
+   `done` or `closed`, by the task's own id and status type (review round 3);
+   a read cut short sends none, so no ticket on an unread page is taken for
+   gone.
 6. `cockpit_task_mirror_state('seats', ok, note, {members, linked, seats, imported, templates, fields, complete})`.
 
 ### 5.4 `detail` (the focus view)
@@ -1127,7 +1287,9 @@ function never writes to ClickUp. Secrets read by name:
 2. When `refresh`, or `detailAt` is missing or older than 60 seconds:
    `GET task/{id}?include_markdown_description=true&include_subtasks=true`
    and `GET task/{id}/comment`; then `cockpit_task_detail_cache(id, {dueHasTime: due_date_time, description: markdown_description, checklists, subtasks, comments: [{id, authorId: user.id, atMs: date, text: comment_text}], statuses})`
-   and `cockpit_task_mirror_upsert([that task], 'detail')`. A ClickUp error
+   and `cockpit_task_mirror_upsert([that task], 'detail')` (each comment's
+   text through `commentText`, its trailing `Cockpit ref …` kept last; the
+   description through the same surrogate-safe cut; review round 2). A ClickUp error
    leaves the cache and returns it with `detailNote` "This task could not
    be read from ClickUp just now. What you see was read at {14:02}."
 3. Return user-JWT `cockpit_task_detail(taskId)` again.
@@ -1205,20 +1367,20 @@ prefixed `tk-` and `rq-`.
 | File | Owner | Exports and job |
 |---|---|---|
 | `src/lib/tasksCore.ts` | cockpit-screens | Import-free. The types `TaskRow`, `MyTasks`, `AlertKind`, `AlertRow`, `TaskAlerts`, `TaskDetail` (3.3, exactly); `firstFive(tasks)`; `kuwaitDay(ms)`; `dueWords(row, nowMs) -> {text, tone: 'late'|'today'|'none'}` ("3 days late", "1 day late", "Late, was 14:00", "Today", "Today 15:00", "Thu", "Thu 6 Nov", ""); `alertWords(kind)`; `TASK_SENTENCES` (6.6) |
-| `src/lib/tasksClient.ts` | cockpit-screens | `useTaskFeed()` -> `{tasks, alerts, error, refresh(), markRead(ids)}`: one shared poll per tab and client for `cockpit_my_tasks` and `cockpit_task_alerts` (on mount, every 120 s while visible, on focus and visibility, never twice within 30 s; `ClientAlerts.tsx:34-70`); `readTaskDetail(client, taskId, refresh)` through `client.functions.invoke('cockpit-tasks', {body: {op: 'detail', taskId, refresh}})`; `actOnTask(client, {taskId, op, payload})` (a new `crypto.randomUUID()` action id, `rpc('cockpit_task_act')`); `focusSearch(search, taskId | null)` |
+| `src/lib/tasksClient.ts` | cockpit-screens | `useTaskFeed()` -> `{tasks, alerts, error, refresh(), markRead(ids)}`: one poll per tab, client, cockpit and signed-in user (`seatId`; review round 2) for `cockpit_my_tasks` and `cockpit_task_alerts`; when its last card or bell unmounts it stops, empties and drops any answer still on its way, and the next mount reads at once; `readCanLinkSeats(client, seatId)` asks once per seat and is forgotten when the poll stops (on mount, every 120 s while visible, on focus and visibility, never twice within 30 s; `ClientAlerts.tsx:34-70`); `readTaskDetail(client, taskId, refresh)` through `client.functions.invoke('cockpit-tasks', {body: {op: 'detail', taskId, refresh}})`; `actOnTask(client, {taskId, op, payload})` (a new `crypto.randomUUID()` action id, `rpc('cockpit_task_act')`); `focusSearch(search, taskId | null)` |
 | `src/components/tasks/TaskPanel.tsx` | cockpit-screens | `TaskPanel({open, onClose, title, subtitle?, footer?, wide?, children})`: a dependency-free dialog, centred from `sm`, a full-height sheet on a phone, Escape and outside click close, focus kept inside and returned, `aria-modal`, body scroll locked. Built the way `video-editor-cockpit/src/components/ui/dialog.tsx:1-30` is |
 | `src/components/tasks/YourTasks.tsx` | cockpit-screens | `YourTasks({id?})`: the Today card. Reads `useTaskFeed()`. Rows open the focus view (`?focus=`). "See all {n}" opens the full list in `TaskPanel` in place |
-| `src/components/tasks/AlertsBell.tsx` | cockpit-screens | `AlertsBell({variant: 'row' | 'icon', extra?: ExtraAlerts})`. `row`: a right-aligned outline button "Alerts" plus the unread count (as `.client-alert-bar`). `icon`: a 40px button whose `aria-label` says "Alerts, {n} unread". Opens `TaskPanel` with the list (6.5). `ExtraAlerts = {label, ready, note?, items: ExtraAlert[], markRead(items): Promise<void>}`, `ExtraAlert = {id, version, title, body, clientName?, href, external, read, at?}` |
+| `src/components/tasks/AlertsBell.tsx` | cockpit-screens | `AlertsBell({variant: 'row' | 'icon', extra?: ExtraAlerts})`. `row`: a right-aligned outline button "Alerts" plus the unread count (as `.client-alert-bar`). `icon`: a 40px button whose `aria-label` says "Alerts, {n} unread"; inside `.tk-bell-compact` it is 28px with a 16px bell and a 14px count (review round 2). Opens `TaskPanel` with the list (6.5). `ExtraAlerts = {label, ready, note?, items: ExtraAlert[], markRead(items): Promise<void>}`, `ExtraAlert = {id, version, title, body, clientName?, href, external, read, at?}` |
 | `src/components/tasks/TaskFocus.tsx` | cockpit-screens | `TaskFocusHost()`: mounted once per layout; opens when the address has `?focus=<taskId>`, closes on Escape, Back or Close by removing the parameter (replace). The view itself (6.5) |
 | `src/components/tasks/tasks.css` | cockpit-screens | `tk-` classes on the tokens of 6.1 only, `var(--primary-ink, var(--primary))` for teal text |
 | `src/lib/requestsCore.ts` | portal-screens | Import-free. Types `TypeView`, `FieldView`, `PartRow`, `RequestRow` (2.5, exactly), `RoutePreview` (the answer of `cockpit_request_preview`) and `SubmitResult` (the answer of `cockpit_request_submit`); `validateAnswers(type, answers, clientTaskId, dueOn) -> Record<string, string>` (the same rules and sentences as 2.5 step 5, so the form says them before the server does); `display(field, value)`; `stateWords(row)`, `partWords(part)`, `routeLine(part, dueOn)`; `REQUEST_SENTENCES` (6.6) |
 | `src/lib/requestsClient.ts` | portal-screens | `readRequestTypes`, `readRequestClients`, `previewRequest`, `submitRequest`, `cancelRequest`, `readRequests`, `readRequest`: thin wrappers over 2.5 that throw the server's sentence |
-| `src/components/tasks/RequestForm.tsx` | portal-screens | `RequestForm({source: 'requests_page' | 'client_page', presetClient?: {taskId, name}, presetType?, presetDetails?, replacesTaskId?, compact?, onSent?(result)})`. Uses `useTaskSeat()`. 6.4 |
+| `src/components/tasks/RequestForm.tsx` | portal-screens | `RequestForm({source: 'requests_page' | 'client_page', presetClient?: {taskId, name}, presetType?, presetDetails?, presetAnswers?, presetPriority?: Priority, presetDueOn?: string, replacesTaskId?, replacesIfOpen?, compact?, onSent?(result)})`. Review round 3: what a request brings (`presetDetails`, `presetAnswers`, `presetPriority`, `presetDueOn`) goes with whichever type is picked, Change included, until "Ask for something else"; a due day before today in Kuwait or more than 365 days ahead gives the type's default (`requestsCore` exports `carriedDueOn(dueOn, today)`); a `presetType` not offered says `presetOff` or `presetNoClient`, plus `presetKept` when it brought words; a picked type with no details question shows the brought details read-only under `keptLabel`, with `keptNotSent`, or `keptRouted` when it routes an old ticket (integration round 4: the database then adds them to the new task's description, X2). Uses `useTaskSeat()`. `presetAnswers` (review R1, D2): a request filed again starts from its own answers, as words. `replacesIfOpen` (retest round 2): a request filed again routes its old form ticket while it still waits; when the server answers "That old ticket was already routed." the same request id goes on its own, with the toast "Request sent. Its old ClickUp form ticket was already routed, so this one goes on its own." "Make it a request" leaves it off, so a ticket a teammate routed first is never asked for twice. 6.4 |
 | `src/components/tasks/requests.css` | portal-screens | `rq-` classes, same token rule |
 
 Per app, not shared, one file each (cockpit-screens):
 
-`src/lib/taskSeat.ts` exports `useTaskSeat(): {client: SupabaseClient | null, ready, signedIn, cockpit: 'portal'|'csm'|'creative'|'editor'|'sales', portalHref(path), inPortal, toast: {success(m), error(m)}}`.
+`src/lib/taskSeat.ts` exports `useTaskSeat(): {client: SupabaseClient | null, ready, signedIn, seatId: string | null, cockpit: 'portal'|'csm'|'creative'|'editor'|'sales', portalHref(path), inPortal, toast: {success(m), error(m)}}`. `seatId` is the signed-in user's id (review round 2): the portal, client success and creative take it from `useCockpitAuth().session`, the editor and sales apps from `useWho().session`.
 The portal, client success and creative build it from `useCockpitAuth()`
 and `sonner`; the editor and sales from `useWho()`, `lib/supabase`,
 `lib/toast` and `lib/portal`. The portal's `portalHref` returns the path
@@ -1259,12 +1421,14 @@ Line numbers are today's (TD 2 and 7); re-read each before editing.
 | editor | `src/App.tsx` | Bell `icon` in the phone header before Search (241); `row` at the top of `<main>` (252), hidden below `lg`; `<TaskFocusHost />` beside `<SearchBox />` (315) |
 | editor | `src/pages/JobsPage.tsx` | `<YourTasks />` after the tally, before the chips (267), list view only; the seat adapter's `cockpit` is `editor`, so Video Pipeline stays on Jobs |
 | editor | `src/components/Sidebar.tsx:139-158`, `src/components/SearchBox.tsx:148-176` | "Ask a team" in `footLinks` after Team meetings (150); an "Ask a team" hit beside `page:team` |
-| sales | `src/components/MacOSMenuBar.tsx:95-121` | Bell `icon` in the right group before the theme button |
+| sales | `src/components/MacOSMenuBar.tsx:95-121` | Bell `icon` in the right group before the theme button, inside `<span className="tk-bell-compact">` (review round 2) |
 | sales | `src/App.tsx` | Bell `icon` in the phone header's right group (292-314); `<TaskFocusHost />` beside `<SearchBox />` (368) |
 | sales | `src/pages/TodayPage.tsx` | `<YourTasks />` at the top of the right column (170) |
 | sales | `src/components/Sidebar.tsx:178-202`, `src/components/SearchBox.tsx` | "Ask a team" door after Team meetings (188); an "Ask a team" hit |
 
-The CEO's `/ceo` gets the bell (from the portal layout) and no card. The
+The CEO's `/ceo` gets the bell (from the portal layout), and `TodayTab.tsx`
+places `<YourTasks />` directly after `<KpiRow />` (review R1 F13, placed in
+review round 2). The
 media buyer reroute panel (`CockpitPage.tsx:3395-3440`), the Card declined
 button and the media buyer's Service tab are not changed (R14).
 
@@ -1278,7 +1442,9 @@ database gates): `/requests` -> `pages/requests/RequestsPage.tsx`,
 **`/requests`.** Header "Requests", one muted line "Ask another team for
 something. It becomes a ClickUp task with its SOP steps and an owner." A
 32px pill row (scrolls sideways on a phone; zero-count pills hide): "Ask a
-team" (default) and the `views` the read returns. Address: `?view=ask|mine|assigned|team|all`,
+team" (default) and the `views` the read returns; the row is keyed by the
+pills it shows, so a deep link (`?view=all`) scrolls the active pill into view
+(review round 2). Address: `?view=ask|mine|assigned|team|all`,
 `?id=<request id>` opens one request in `TaskPanel`,
 `?type=<key>&client=<taskId>` prefills the form.
 
@@ -1293,27 +1459,93 @@ team" (default) and the `views` the read returns. Address: `?view=ask|mine|assig
   field changes). 5. "Send request" (teal). While `writer.canSend` is false
   the form shows `writer.note` in place of the button. After a send: a
   quiet panel "Sent to {list}. Owner: {owner}." with "Ask for something
-  else" and "See it in My requests"; a `duplicate` answer shows its note
-  and "Open it". Inputs keep their values on an error; the field named in
-  the sentence gets the message under it.
+  else" and "See it in My requests"; its mark follows `sentTone` (review
+  round 2): a task refused, `CircleAlert` with a border in `--destructive`;
+  on its way, a static `CircleDashed`, muted; saved until requests open,
+  `Clock` in `--warning`; every task in ClickUp, `CircleCheck` in
+  `--success`. On a refusal, once nothing is moving, the panel shows
+  `sentFailed` ("Open the request to file it again, or use the ClickUp
+  request form.") or `partialNext`, the form link, and "Open the request" to
+  `/requests?id=` in place of "See it in My requests". A `duplicate` answer
+  shows its note and "Open it" only when `duplicateOf` is set (review round
+  2). Inputs keep their values on an error; the field named in the sentence
+  gets the message under it.
 - *My requests / Assigned to me / {team} queue / All requests*: a flush
-  list of RequestRow, one line each: status chip, type label, client,
-  due word, owner label; a press opens `?id=`. A request with two parts
-  shows one chip summarising both and both lines in the panel.
+  list of RequestRow, one line each from `sm` (status chip, type label,
+  client, due word, owner label from `lg`); below `sm` two lines: the type
+  label (wrapping, never cut) with the due word on the right, then the status
+  chip and the client (review round 3); a press opens `?id=`. When
+  `cockpit_requests_read` returns a `note` and no rows (a seat not linked
+  asking for Assigned to me, a seat with no team asking for its queue), the
+  note is the view's whole state; no empty-state line follows it (R11). An
+  import handled in ClickUp is not open: no late due word (`isOpen`), its chip
+  in the neutral tone (integration round 4). A request with two parts
+  shows one chip summarising both and both lines in the panel. An open
+  request with a delivered task's note keeps its status label in the warning
+  tone; the row's title is `stateHint`, plus a screen-reader line "Not
+  finished: {note}"; the CSM card shows the same line (review round 2).
 - *The request panel*: type, client, requested by, due, priority, the
   answers, each part (list, task name, owner and its note, state chip, the
   ClickUp link with `ArrowUpRight`, the 2-minute check's note), history.
+  Each state is said once (review round 3). The line beside the request's
+  chip shows only what the chip does not (a held request's when-it-goes, an
+  old form ticket's way to route it). A task's words show only a refusal's
+  reason, a retry, an arrival check or a held note not already said above.
+  They never repeat a ClickUp status its chip names (or, with one task, the
+  request's chip), never say "Sending to ClickUp" beside a Sending chip, and
+  say nothing when the old-ticket next step already gives the reason. A held
+  request's line is the database's `heldNote` when it sends one (so a writer
+  gone quiet is said as such), and its tasks then do not repeat it; a task in
+  doubt (`unknown`) says "Checking whether it reached ClickUp." plus the
+  writer's note, which names what a person must do, or, handed back while
+  requests are not open, "ClickUp did not answer. The cockpit checks whether
+  it arrived once requests open" (integration round 4).
   "Cancel request" (outline, the requester, editors, admins and the CEO,
   only while `canCancel`) asks for a reason. An import row has "Make it a
-  request" (teal), which opens the form with the import's type, client and
-  details and `replacesTaskId`.
+  request" (teal), which opens the form with the import's type, client,
+  details, priority and due day and `replacesTaskId` (review round 3; "File it
+  again" also carries the request's priority and due day; a due day before
+  today in Kuwait or more than 365 days ahead gives the type's default;
+  `RouteFrom` gains `priority` and `dueOn`). An import handled in ClickUp
+  (`importHandled`) has no Make it a request and reads "Came in through the old
+  ClickUp form. It was moved or closed in ClickUp, so it needs no routing
+  here." (integration round 4). The next step, said once above the tasks
+  (review round 2): `failed`, "Nothing reached ClickUp. File it again with
+  the same answers, or use the ClickUp request form." (`againFailed`, true for
+  every `failed` the writer settles but a task deleted in ClickUp, review
+  round 3; a failed task that keeps its ClickUp link was deleted there and
+  reads "The task was deleted in ClickUp. File it again with the same
+  answers, or use the ClickUp request form.", `againDeleted`, integration
+  round 4), "File it again" and the ClickUp form link; after the new request is sent the first one is
+  cancelled with "Filed again as a new request." when the seat may, and the
+  notice above the form reads "Sending it cancels the first one." or "The
+  first one stays in the queue until the person who asked for it or the
+  systems manager cancels it." (else the toast "The new request is sent, but
+  the first one is still open. Open it and cancel it."). A routing request
+  filed again carries its `replacesTaskId` and `replacesIfOpen` (the notice
+  adds "It routes the same old ClickUp form ticket, unless someone routed it
+  meanwhile."; retest round 2). `partial` (done or not): no re-file, the
+  `partialNext` sentence and the form link. A `failed` routing request whose
+  task error is the writer's old-ticket check ("The old ticket was already
+  moved or closed in ClickUp ..."): no "File it again", the sentence "The old
+  ClickUp form ticket was moved or closed in ClickUp while this request
+  waited, so no task was made. Check the old ticket, and ask again only if
+  the work is still needed." and "Open the old ticket in ClickUp" (retest
+  round 2).
 
 **`/requests/settings`.** Tabs: "Request types", "People in ClickUp",
 "Alerts". Non-editors see only "Alerts" (their own rules). A line at the
-top links "Slack notices" to `/client-success/notices`.
+top links "Slack notices" to `/client-success/notices`, only for an editor
+or a seat whose `teams` include `client_success` or `creative` (the gate of
+`cockpit_slack_notice_viewer`); nothing shows while the seat is read
+(review round 2).
 
 - *Request types* (editors): one flush row per type: label, team, "{list},
-  {owner}" per part, a chip "Template", "{n} SOP steps", "{n} draft
+  {owner}" per part (with its runs-when, `when "{question}" is {a} or {b}`:
+  the choices' names from the question's own choices, then the stored spec's,
+  then the catalog the editor read, never an option id; a choice none of them
+  names reads "a choice that could not be read from ClickUp"; review round 3,
+  L1), a chip "Template", "{n} SOP steps", "{n} draft
   steps" or "No SOP steps", "Due in {n} days", an On/Off switch. A press
   opens the type in `TaskPanel` (`wide`): label; per part the list, the
   template (picked from `cockpit_request_templates` by name, "None" adds
@@ -1321,21 +1553,37 @@ top links "Slack notices" to `/client-success/notices`.
   manager, the creative strategist, the media buyer of record, a named
   person; with the named person or fallback beside it, from
   `cockpit_request_people`), the "runs when" choice for types that have
-  one; fields (reword, require, reorder, add from the ClickUp field list or
-  as a cockpit-only question, remove); SOP steps (one line each, add,
+  one; each task also has "Name ending" (at most 40 characters) and "Runs"
+  ("Every time" or "Depending on {question}"); "Add a task" while under 3
+  (the first unused board, that board's usual owner and ending, both
+  following the board until changed; saved under its board's short name,
+  `ads`, `ads_two`), "Remove this task" while over 1, and two tasks with the
+  same ending on one board are refused before the save, but only when one
+  request can make both (both run every time, or their runs-when choices on
+  the same question overlap; `bothRun`): Create an ad account keeps its three
+  tasks on one board with an empty ending, each on its own `ads_platform`
+  answer (review round 2; review round 3, L2; R3 stands: whole types are not
+  added or deleted); fields (reword, require,
+  reorder, add from the ClickUp field list or as a cockpit-only question,
+  remove); SOP steps (one line each, add,
   reorder, remove; a draft shows "Draft: check with the systems manager");
   SOP link; due days; priority; "Set Request Type in ClickUp" with its
   line "Off until the rehearsal ticket for this list shows ClickUp does
   not move it. The writer turns it off by itself if ClickUp moves a task.";
   Save (teal) and "Versions", which lists versions and offers "Go back to
-  version {n}". A 409-style version clash shows the server's sentence and
-  "Reload".
+  version {n}" (its toast adds the server's `restoreNote` when Request Type
+  stays off; retest round 2). A 409-style version clash shows the server's
+  sentence and "Reload".
 - *People in ClickUp* (editors): one row per active seat: "first name,
   role", the linked ClickUp user or "Not linked", how (matched by email /
   set by hand / no match / two matches), a picker to set it and "Clear".
-  The read time of the members list sits in the header.
+  Clear shows on rows whose link is `ok`, `manual`, `not_found` or
+  `ambiguous`, not on `cleared` or never-checked rows (review round 2). The
+  read time of the members list sits in the header.
 - *Alerts*: the seat's own rules: the eight kinds as switches
-  ("A failed request" is always on, its switch disabled with "Always on"),
+  ("A failed request" is always on, its switch disabled with "Always on";
+  the status kind's hint reads "When its status changes, also when you move
+  it in ClickUp yourself.", review round 2),
   "Your shift" (from your schedule / set here / the default 10:00 to
   18:00, Sunday to Thursday) and the Slack line "Slack: new assignments
   already post in your team's channel. Slack messages for these alerts are
@@ -1355,10 +1603,14 @@ cockpit-screens' `installTasksHarness`, and adds the `/requests` and
 - **Your tasks.** Header "Your tasks" and the count when above zero. Rows
   in the server's order, `firstFive`. The spine per 6.1. Footer "See all
   {n}" above five. States (6.6): not linked (and, for an editor, "Link it
-  in Requests settings"), not read, stale ("Last read at 14:02." in Mono),
-  empty.
+  in Requests settings", never for a seat an editor cleared: `linkState`
+  `cleared` reads the cleared note and asks nobody to link it, review round
+  3), not read, stale ("Last read at 14:02." in Mono), empty.
 - **The bell.** List newest first: a dot for unread, the title, one line
-  (`body`), the client. A press opens the focus view (task alerts) or the
+  (`body`), the client. The client follows the body only when the title does
+  not already name it, and the body's final full stop goes before it; unread
+  rows have a dot in `var(--tk-ink)` and a 600-weight title; launch notices
+  also carry the screen-reader "Unread" (review round 2). A press opens the focus view (task alerts) or the
   request panel at `${portal}/requests?id=` (request alerts) and marks it
   read. "Mark all read" (at most 200). The launch notices (`extra`) follow
   under their own label. Footer: "Checked every 2 minutes while this
@@ -1367,18 +1619,22 @@ cockpit-screens' `installTasksHarness`, and adds the `/requests` and
 - **The focus view** (`TaskPanel`, opened by `?focus=`): the title; one line
   "{client} · {list} · {due word}" with the spine; the status chip; when
   the task came from a request, "Request from {role}" and "SOP" (the
-  `sopUrl`, `ArrowUpRight`); the checklists ("{done} of {total} done"),
+  `sopUrl`, `ArrowUpRight`); the status chip and subtask statuses in
+  sentence case (review round 2); the checklists ("{done} of {total} done"),
   each item a checkbox row; the description folded under "Details"; the
   newest three comments and "Show the other {n}"; a comment box with
   "Comment" (outline); at the foot "Mark done" (teal, the one primary) and
-  "Open in ClickUp" (outline, `ArrowUpRight`). A press writes through
+  "Open in ClickUp" (outline, `ArrowUpRight`); Mark done's skipped, failed or
+  waiting sentence sits on its own line above both buttons (`.tk-foot-note`),
+  so the buttons keep one row (review round 3). A press writes through
   `actOnTask` and shows "Saving…" on that control, then polls
   `readTaskDetail(…, true)` every 3 seconds for up to a minute until the
   action row is `delivered` ("Saved", the box ticks; "Done" replaces "Mark
   done"), `skipped` or `failed` (the row's sentence), else "Waiting for
   ClickUp to confirm." Each `can.*` that is false hides its control and
-  shows `can.why` once. A task the seat may not open shows the server's
-  sentence and only "Open in ClickUp".
+  shows `can.why` once (on Video Pipeline and WhatsApp Reconnection only Mark
+  done is hidden, with its 3.4 sentence; review round 2). A task the seat may
+  not open shows the server's sentence and only "Open in ClickUp".
 
 ### 6.6 Copy (use exactly)
 
@@ -1396,11 +1652,30 @@ cockpit-screens' `installTasksHarness`, and adds the `/requests` and
 | Form, sent | toast "Request sent." and the panel "Sent to {list}. Owner: {owner}." |
 | Form, writer off | `writer.note` (2.8) |
 | Form, no type picked | "Pick what you need first." |
-| Request states | `sending` "Sending to ClickUp" · `dry_run` "Not in ClickUp: the writer is in its test run" · `delivered` "In ClickUp: {status}" · `partial` "Part of it did not reach ClickUp: {error}" · `failed` "Not in ClickUp: {error}" · `cancelled` "Cancelled" · `imported` "Came in through the old ClickUp form. Make it a request to route it." · `routed` "Routed as a new request" · done "Done" |
+| Request states | `sending` "Sending to ClickUp" · `dry_run` "Not in ClickUp: the writer is in its test run" · `delivered` "In ClickUp: {status}" · `partial` "Part of it did not reach ClickUp: {error}" · `failed` "Not in ClickUp: {error}" · `cancelled` "Cancelled" · `imported` "Came in through the old ClickUp form. Make it a request to route it." where `canRoute`, else "Came in through the old ClickUp form. Route it in ClickUp." (review round 2) · `routed` "Routed as a new request" · done "Done" |
 | Owner how | `card` "The CSM named on the client card." · `fallback`, `none` the server's note |
 | 2-minute check | `restored` "A ClickUp rule removed the owner; the cockpit put them back." · `removed` "A ClickUp rule keeps removing the owner. Assign it in ClickUp." · `moved` "ClickUp moved this task after its Request Type was set. Request Type is now off for this type." |
 | Rail, palette, search | "Ask a team" |
 | Tab bar | "Requests" |
+| Alert settings, status (review round 2) | hint "When its status changes, also when you move it in ClickUp yourself."; `alertWords('status')` "Your task moves" |
+| Request panel, nothing reached ClickUp (`againFailed`) | "Nothing reached ClickUp. File it again with the same answers, or use the ClickUp request form." |
+| Request panel and sent panel, part of it reached ClickUp (`partialNext`) | "The {list} task did not reach ClickUp; the one that did stays there. Raise the missing task with the ClickUp request form, or ask the systems manager to make it." (plural: "tasks", "the ones that did stay there", "them") |
+| Sent panel, a task refused (`sentFailed`) | "Open the request to file it again, or use the ClickUp request form." |
+| Filed again, notice | "Sending it cancels the first one." / "The first one stays in the queue until the person who asked for it or the systems manager cancels it." (a routing request adds "It routes the same old ClickUp form ticket, unless someone routed it meanwhile.") |
+| Filed again, the first one not cancelled | toast "The new request is sent, but the first one is still open. Open it and cancel it." |
+| Filed again, its old ticket routed meanwhile (`sentAlone`, retest round 2) | toast "Request sent. Its old ClickUp form ticket was already routed, so this one goes on its own." |
+| Request panel, old ticket handled in ClickUp (`oldHandledNext`, retest round 2) | "The old ClickUp form ticket was moved or closed in ClickUp while this request waited, so no task was made. Check the old ticket, and ask again only if the work is still needed." and "Open the old ticket in ClickUp" |
+| Type editor, going back a version that had Request Type on (retest round 2) | toast "Back to version {n}. " + the server's `restoreNote` |
+| Request types, runs-when (review round 3) | `when "{question}" is {a} or {b}`; "a choice that could not be read from ClickUp" / "{n} choices that could not be read from ClickUp" |
+| Type editor, Runs (review round 3) | `Depending on "{question}"`, `Runs when "{question}" is` |
+| Form, a brought type not offered (review round 3) | "The request type it came with is turned off. Pick another type." / "The request type it came with does not take a client card, so it is not offered here. Pick another type."; appended when it brought words: "What was asked is kept." |
+| Form, kept words (review round 3; integration round 4) | label "What was asked"; "This type has no question for these words, so they are not sent with it."; routing an old ticket: "This type has no question for these words, so the cockpit adds them to the new task's description, with a link to the old ticket." (`keptRouted`) |
+| A seat an editor cleared (review round 3) | Your tasks: "Your seat has no ClickUp user, so no ClickUp tasks show here. Requests you raise show under My requests." · bell: "Your seat has no ClickUp user, so only request alerts show here." · focus view: "Your seat has no ClickUp user, so you cannot tick, comment or mark done here. Ask the task's owner." · Assigned to me: "Your seat has no ClickUp user, so nothing is assigned to you here. Requests you raise show under My requests." |
+| A writer gone quiet after requests opened (review round 3) | form, anyone but an editor, an admin or the CEO: "Requests cannot be sent just now: the requests writer has not reported in the last 15 minutes. Use the ClickUp request form, and tell the systems manager." · held request: "Saved, not sent yet: the requests writer has not reported in the last 15 minutes. It goes to ClickUp once the writer runs again." · focus view: "Changes from the cockpit cannot be sent just now: the requests writer has not reported in the last 15 minutes. Open the task in ClickUp." |
+| An old form ticket handled in ClickUp (`importHandled`, integration round 4) | "Came in through the old ClickUp form. It was moved or closed in ClickUp, so it needs no routing here." |
+| Request panel, a task deleted in ClickUp (`againDeleted`, integration round 4) | "The task was deleted in ClickUp. File it again with the same answers, or use the ClickUp request form." |
+| A task in doubt (integration round 4) | "Checking whether it reached ClickUp." + the writer's note; handed back while requests are not open: "ClickUp did not answer. The cockpit checks whether it arrived once requests open" (`checkingHeld`) |
+| Bell, a failed part whose task was deleted (integration round 4) | "Deleted in ClickUp: {error}" |
 
 ---
 
@@ -1414,7 +1689,11 @@ cockpit-screens' `installTasksHarness`, and adds the `/requests` and
   look in ClickUp for its Cockpit ref (RUNBOOK, Requests writer).",
   `status_col 'state'`, `kind_col 'kind'`, `kinds ('request','task_action')`,
   `failed_col 'updated_at'`; add `cockpit_clickup_writeback_queue` to
-  `WITH_ERROR`.
+  `WITH_ERROR`. Integration round 2: `held_unless ('clickup-writeback:requests',
+  'mode', 'apply')`, so a `queued` row counts only while the writer reports
+  mode `apply`; before requests open, a request an editor, an admin or the CEO
+  filed waits queued on purpose (2.8) and the reading says "{n} held until
+  requests open." (`sending`, `retry` and `unknown` count in every mode).
 - `checks/sections.py` `run_jobs` keys: `"clickup-writeback:requests": 10`,
   `"task-mirror:delta": 10`, `"task-mirror:seats": 90`.
 - `checks/pg_cron.py` `EXPECTED_JOBS`: `mahara-clickup-writeback-requests`,
@@ -1428,12 +1707,28 @@ cockpit-screens' `installTasksHarness`, and adds the `/requests` and
   plan (the operator `UPDATE` of `20261009f…sql:26-28`, `steps` and
   `progress` cleared), how to turn Request Type back on for a type, how to
   link a seat, what "not linked" and "late" mean, and the clean-up of the
-  `[TEST]` tickets (set cancelled, never delete).
+  `[TEST]` tickets (set cancelled, never delete). Review round 2 and its
+  retest add rows for: an `unknown` that covers a call whose receipt could
+  not be saved; the renamed or removed Request Type option (now a note on a
+  delivered part); Request Type turned off only by an on-time check, and
+  never turned back on by going back a version; a routing request skipped
+  because its old ticket was handled in ClickUp; an old ticket back in its
+  queue; Clear before moving a ClickUp user to another seat; Mark done not
+  offered on Video Pipeline and WhatsApp Reconnection; the refused "Cockpit
+  ref" words. Review round 3 adds rows for: a part in doubt read every 4 hours
+  and how to read it now; "Every task that matches ... is cancelled"; a
+  refused search (run the requests doctor); settling a part in doubt by hand
+  (the cockpit refuses to cancel it); a create in doubt handed back `unknown`
+  while requests are not open (look for its Cockpit ref); an old ticket that
+  left All Tasks (`import_left_at`); a hand link starting a seats read; a seat
+  an editor cleared; a writer gone quiet after requests opened.
 - `scripts/ship.sh`: one block after the Slack notices block, run when
   `apps/media-buyer-cockpit/scripts/requests-supabase.test.ts` exists:
   `cd apps/media-buyer-cockpit && bun test scripts/requests-supabase.test.ts scripts/request-types-seed.test.ts scripts/task-alerts-supabase.test.ts scripts/tasks-core.test.ts scripts/your-tasks.test.tsx scripts/requests-core.test.ts scripts/request-form.test.tsx scripts/requests-page.test.tsx scripts/requests-settings.test.tsx`
-  and `bun test supabase/functions/clickup-writeback supabase/functions/cockpit-tasks`,
-  each failing the ship with one plain line, as the block above it does.
+  and `bun test supabase/functions/clickup-writeback supabase/functions/cockpit-tasks supabase/functions/comment-watch/watch.test.ts`
+  (the comment watch's test joined in the retest of round 2), each failing
+  the ship with one plain line, as the block above it does. The block also
+  runs `scripts/requests-fit-supabase.test.ts` (section 13).
 
 ---
 
@@ -1461,11 +1756,13 @@ five apps" means the same path under `apps/media-buyer-cockpit`,
 | `supabase/functions/clickup-writeback/requestsTestkit.ts` (new) | writer |
 | `supabase/functions/clickup-writeback/requests.test.ts` (new) | writer |
 | `supabase/functions/clickup-writeback/taskActions.test.ts` (new) | writer |
+| `supabase/functions/clickup-writeback/reviewR1.test.ts` (new, review R1) | writer |
+| `supabase/functions/comment-watch/watch.ts`, `watch.test.ts` (retest round 2: the comment watch never digests the writer's own card comments; deployed on its own, section 12) | writer |
 | `supabase/migrations/20261026t_task_alerts.sql` (new) | mirror-alerts |
 | `apps/media-buyer-cockpit/scripts/task-alerts-supabase.test.ts` (new) | mirror-alerts |
 | `supabase/functions/cockpit-tasks/*` (all new: `index.ts`, `door.ts`, `delta.ts`, `seats.ts`, `detail.ts`, `doctor.ts`, `clickup.ts`, `testkit.ts`, `deno.json`, `README.md`, `door.test.ts`, `delta.test.ts`, `seats.test.ts`, `detail.test.ts`) | mirror-alerts |
 | `hermes/cockpit-guardian/checks/queues.py`, `checks/sections.py`, `checks/pg_cron.py`, `checks/edge_functions.py` | mirror-alerts |
-| `hermes/cockpit-guardian/tests/test_checks_data.py` and any other guardian test whose counts change | mirror-alerts |
+| `hermes/cockpit-guardian/tests/test_checks_data.py` and any other guardian test whose counts change (`tests/test_hiring_sync.py`) | mirror-alerts |
 | `RUNBOOK.md` | mirror-alerts |
 | `scripts/ship.sh` | mirror-alerts |
 | `src/lib/requestsCore.ts`, `src/lib/requestsClient.ts`, `src/components/tasks/RequestForm.tsx`, `src/components/tasks/requests.css` in all five apps (new) | portal-screens |
@@ -1479,8 +1776,10 @@ five apps" means the same path under `apps/media-buyer-cockpit`,
 | `src/lib/cockpits.ts` in all five apps (the `requests` icon only) | cockpit-screens |
 | `apps/media-buyer-cockpit/src/components/AppLayout.tsx`, `components/AppSidebar.tsx`, `components/MobileTabBar.tsx`, `components/CommandPalette.tsx`, `components/launch/ClientAlerts.tsx` | cockpit-screens |
 | `apps/media-buyer-cockpit/src/pages/CockpitPage.tsx`, `pages/team/TeamPage.tsx`, `pages/AdminPage.tsx` | cockpit-screens |
+| `apps/media-buyer-cockpit/src/pages/ceo/TodayTab.tsx` (review R1, ask F13: Your tasks on the CEO's Today) | cockpit-screens |
 | `apps/media-buyer-cockpit/src/dev/tasksHarness.ts` (new; exports `installTasksHarness(client)`) | cockpit-screens |
 | `apps/client-success-cockpit/src/components/AppLayout.tsx`, `components/AppSidebar.tsx`, `pages/CsmPage.tsx`, `pages/ClientPerformancePage.tsx`, `pages/NoticesPage.tsx` | cockpit-screens |
+| `apps/client-success-cockpit/src/lib/requestsOpen.ts` (new, review R1, ask F6: the old Ask a team stays until requests are open for the client) | cockpit-screens |
 | `apps/creative-director-cockpit/src/components/AppLayout.tsx`, `components/AppSidebar.tsx`, `pages/DashboardPage.tsx` | cockpit-screens |
 | `apps/video-editor-cockpit/src/App.tsx`, `pages/JobsPage.tsx`, `components/Sidebar.tsx`, `components/SearchBox.tsx` | cockpit-screens |
 | `apps/sales-cockpit/src/App.tsx`, `pages/TodayPage.tsx`, `components/Sidebar.tsx`, `components/SearchBox.tsx`, `components/MacOSMenuBar.tsx` | cockpit-screens |
@@ -1489,10 +1788,18 @@ five apps" means the same path under `apps/media-buyer-cockpit`,
 | `apps/media-buyer-cockpit/scripts/sections.e2e.ts` (line 7: "Your ClickUp tasks" becomes "Your tasks") | cockpit-screens |
 | `apps/client-success-cockpit/scripts/csm-page.test.tsx` (only where the Ask a team panel or the tickets card changed) | cockpit-screens |
 | `docs/requests/CONTRACT.md`, `docs/requests/request-types.json`, `docs/requests/maps/*` | the orchestrator (no builder edits them) |
+| `docs/requests/REVIEW-R1-raw.txt` (the round 1 findings and verdicts), `docs/forms/HANDOVER.md` (the forms handover) | the orchestrator |
 | `apps/media-buyer-cockpit/scripts/requests-ownership.test.ts` (new: every file this branch changes is in this table) | the orchestrator |
+| `apps/media-buyer-cockpit/scripts/requests-fit-supabase.test.ts` (new: the integration fit, section 13) | the orchestrator |
+
+`requests-ownership.test.ts` compares this table with `git diff --name-only`
+from the merge-base with `origin/main` (3f9f5c41 after the rebase of
+2026-10-26; 86ee4e84 when the build began) plus the untracked files, so
+main's own commits are never counted as this build's (integration round 2).
 
 Not touched by anyone: `supabase/functions/cockpit-csm-api/*`,
 `cockpit-media-api/*`, `cockpit-creative-api/*`, `cockpit-notices/*`,
+`comment-watch/index.ts` and `deno.json`,
 `apps/media-buyer-cockpit/convex/*`, `hermes/task-assignment-alerts/*`,
 `hermes/cockpit-sync/*`, every migration but the three above.
 
@@ -1561,12 +1868,30 @@ two-part type, a template with no checklist (WhatsApp connection) and a
 replaces request; resume of each step after a lost answer (create adopts
 by marker or name, two matches go `unknown`); the due read-back passes when
 ClickUp stores 06:00 Kuwait for a 12:00 Kuwait write; a field that will not
-save is a `mismatch` note, not a failure; Request Type refused on a renamed
-option; each `task_action` op with its preconditions, `unchanged` and
-`skipped` sentences; verify `kept`, `restored`, `removed`, `moved` (calls
-`rt_off`); the doctor reports a missing template and a renamed option;
+save is a `mismatch` note, not a failure; Request Type left empty with a note
+on a renamed or removed option; errors with no ClickUp answer (a receipt not
+saved, a timeout, a dropped body) are read back, never failed; a routing part
+whose old ticket was handled in ClickUp is skipped with no write; each
+`task_action` op with its preconditions, `unchanged` and `skipped`
+sentences, on any list but a client card itself, Mark done skipped on Video
+Pipeline and WhatsApp Reconnection; comment words that hold a Cockpit ref
+fail before any call; a field entry naming Request Type or a protected
+field is never posted; verify `kept`, `restored`, `removed`, `moved` (calls
+`rt_off`), and a late check changes nothing; the doctor reports a missing
+template and a renamed option (only for types with Request Type on); the
+comment watch skips the writer's card comment (`cardCommentText`) and any
+Cockpit ref (`bun test supabase/functions/comment-watch/watch.test.ts`);
 `rules.ts` maps the three wordings to the right options; the existing
 `run.test.ts`, `queue.test.ts`, `kpi.test.ts`, `billing.test.ts` still pass.
+Review round 3: a cancelled task drops out of two matches and the one left
+open is adopted; a create in doubt is never `failed` at the end of the
+ladder; a task that shows late is read for 30 minutes; a refused read-back
+or search never fails a part; parts `tech` and `tech_two` never take each
+other's task. Integration round 4: during the canary a routing request goes
+only when its old ticket's card is a canary card (held on a database that
+names no card); a create in doubt handed back while requests are not open
+stays `unknown`; the 2-minute check judges Request Type from `madeAt` and the
+owner from `ownerAt`, an unreadable time absent.
 
 **mirror-alerts**: `cd apps/media-buyer-cockpit && bun test scripts/task-alerts-supabase.test.ts`;
 `bun test supabase/functions/cockpit-tasks`; `cd hermes/cockpit-guardian && python3 -m unittest`;
@@ -1583,7 +1908,8 @@ mirror sets `done_at` and makes `request_done`; a failed part makes
 the cursor, truncation at 10 pages, comment and reply reads with their
 caps, the seats job (members, fields, templates, per seat, import), the
 detail op's user-JWT gate, cache and failure note, and that no non-GET call
-is ever made.
+is ever made; the seats job sends `p_open_ids` only after a complete read of
+All Tasks (integration round 4).
 
 **portal-screens**: `cd apps/media-buyer-cockpit && bun test scripts/requests-core.test.ts scripts/request-form.test.tsx scripts/requests-page.test.tsx scripts/requests-settings.test.tsx && bunx biome check --line-ending=auto src && bun run tsc --project tsconfig.app.json --noEmit && bun run tsc --project tsconfig.node.json --noEmit`.
 The happy-dom tests (`scripts/appointment-feedback.test.tsx` pattern): the
@@ -1657,6 +1983,8 @@ in place; `?focus=` opens the view and Escape closes it; a tick goes
 | X14 | Audit per write | The mirror writes one audit row per run, not per task | It is a cache of ClickUp; the audit log was compacted from 4.18M rows on 2026-10-09 |
 | X15 | PLAN 3.3: department queue for the department lead | A seat's teams by role (2.1); the CSM also sees Call Center | The CSM owns call centre types until a lead seat exists (PLAN 3.3 row 25) |
 | X16 | The ClickUp form has "Deadline" with a time | A due day only, written at 12:00 Kuwait | Date-only values re-time in ClickUp (WR 4); a day keeps "not too busy" |
+| X17 | WR 10.5: focus view presses only on the team request boards (an allow-list) | Any task but a client card itself takes a tick, a comment and Mark done, with a block list for Mark done: Video Pipeline `901816720767` and WhatsApp Reconnection `901821803697` (3.4, 4.4; review round 2) | Ask F12: "open it to just focus on it" means a seat's own task on any list; on those two lists a done status publishes a video or messages a client |
+| X18 | 2.5: going back to a type version restores every column | It never turns Set Request Type on (review round 2) | Request Type was off for a reason (a 2-minute check found ClickUp moved a task, or an editor switched it off); turning it on is the editor's own switch after the rehearsal ticket (R8) |
 
 **Not in this build** (named so nobody counts them done):
 
@@ -1674,25 +2002,142 @@ in place; `?focus=` opens the view and Escape closes it; a tick goes
   (WR 4) and the same check in `blueprint.ts:91` and `outbox.ts:17, 27`.
 - Closing the ClickUp form `2kzmr1ky-1178` and the create-time list rules
   (C3, two weeks after go-live).
+- Asked by the round 2 fixers and left out on purpose (retest round 2):
+  - A `p_again_of` argument on `cockpit_request_submit` (re-plan only an
+    original's failed parts, retire it in the same transaction). A partial
+    request's panel names the missing task (`partialNext`) and points to the
+    ClickUp form or the systems manager; a failed original that the seat
+    filing again may not cancel stays until its requester, an editor, an
+    admin or the CEO cancels it, and the notice says so.
+  - Keeping `done_at` null while a part is failed or skipped. Such a request
+    could never leave the queues: cancel is refused once a task exists, and a
+    partial request is never filed again whole. Its requester had the
+    `request_failed` alert, and the panel keeps the missing-task note.
+  - Re-pinning `clickup_option_name` from the field catalog. The catalog never
+    holds the Request Type field (R8), and a renamed option needs no code
+    change: rename it back in ClickUp or turn Set Request Type off for that
+    type in Requests settings.
+  - A null `client_name` on request alerts and no full stop in "Done in
+    ClickUp." and the like: the bell names the client once and drops the stop
+    before it (6.5).
+  - The same "a receipt not saved is a refusal" problem in the live log job
+    (`queue.ts` `executeItem`, the CSM tickets): `queue.ts` is not this
+    build's (section 8); noted for its own fix.
+- Asked by the round 3 fixers and left out on purpose (integration round 4):
+  - The writer saving `unknown` (not `retry`) when it holds a row whose create
+    is in doubt at its time budget or when a run cannot begin. The database
+    already refuses to cancel such a row (`cockpit_request_queue_in_clickup`:
+    a create on record in `queued` or `retry` counts as in ClickUp), the
+    writer reads it back before any new write, and the screens say "trying
+    again"; only the wording differs.
+  - A `lastMode` in the requests harness. The silent-writer sentences are the
+    database's, proven there (requests-supabase "a writer that stops
+    reporting after requests opened ...", task-alerts "the focus view says a
+    writer that stopped reporting ..."), and the screens show what it sends
+    (`heldNote`, `writer.note`, `can.why`).
 
 ---
 
 ## 12. After the build: deploy order and the CEO's items (main session)
 
-Deploy (nothing here is done by a builder):
+Deploy (nothing here is done by a builder; integration round 2 set this
+order against the code, the retest of round 2 checked it again, and
+integration round 4 moved the linking after the media buyer ship (review
+round 3, CN11): each step with the read-back that proves it):
 
-1. Migrations r, s, t: dry run `BEGIN; …; ROLLBACK;` through Composio, then
-   apply, each with its own `BEGIN;`/`COMMIT;` stripped (PLAN 1.7).
-2. `clickup-writeback` (keeps `verify_jwt` off) and `cockpit-tasks` (new,
-   `verify_jwt` off), bundled from committed code.
-3. Function secrets: `TASKS_CRON_SECRET` on `cockpit-tasks`; the same value
-   in the vault as `cockpit_tasks_cron_secret`. `CLICKUP_WRITEBACK_APPLY_REQUESTS`
-   stays unset.
-4. `doctor` on both functions; the first `seats` run (baseline, members,
-   seat links); read "People in ClickUp" and link the unmatched seats.
-5. `scripts/ship.sh media-buyer`, `client-success`, `creative`,
-   `video-editor`, `sales`; check each live bundle for "Your tasks" and
-   "Ask a team".
+0. Rebase onto the current `origin/main`, then commit the branch
+   (`requests-ownership.test.ts` 3 pass first, and the section 9 suites
+   green) and push to main; every later step deploys from that commit.
+   Integration round 4 read `origin/main` at `ef2262a1` (the upsell studio,
+   2026-10-27; its five migrations `20261026u_upsell_catalog` to
+   `20261027011000_upsell_monitor_web` are live and touch none of this
+   build's objects). Two files changed on both sides,
+   `apps/client-success-cockpit/src/pages/CsmPage.tsx` and
+   `scripts/check-shared.sh`; a trial three-way merge of each is clean. After
+   the rebase run again: check-shared (main added the offer page copies),
+   client success's `csm-page` tests, `tsc -b` and biome (main added
+   `apps/client-success-cockpit/biome.json`), and
+   `supabase/functions/comment-watch/watch.test.ts` (main changed
+   `cockpit-csm-api/tools.ts`, which comment-watch bundles). Read-back:
+   `git ls-remote origin main` names the commit.
+1. `clickup-writeback` first, `verify_jwt` off, bundled from the commit
+   (`scripts/dev/deploy_composio.py` with the `fn_extras.py` list). It is
+   backward compatible: kpi, log and dosdonts are as live but for the
+   `rules.ts` Request Type ids, and the requests cron of migration r posts
+   `{"job":"requests"}` to it every minute from step 2 on. It must be live
+   before migration t: t lets a focus view press a seat's task on any list,
+   and only this writer takes such a press (3.4, 4.4; the old one skipped it
+   with the boards sentence). `CLICKUP_WRITEBACK_APPLY_REQUESTS` and
+   `CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS` stay unset. Read-back: version up
+   one, `verify_jwt` false, neither switch in the secrets list (names only);
+   `{"job":"doctor"}` ends "Requests and task changes: ..."; `clickup-writeback:log`
+   still ok.
+2. `comment-watch`, `verify_jwt` off, bundled from the commit the same way
+   (its `fn_extras.py` list: `apps/media-buyer-cockpit/src/lib/kpi.ts`,
+   `clickup-writeback/rules.ts`, `cockpit-csm-api/tools.ts`), before any
+   request reaches ClickUp (the canary's link comments land on the test
+   card). Only `kindOf` changed: the writer's card comments are never
+   digested. Read-back: version up one, `verify_jwt` false; after its next
+   run (minute 7, 22, 37 or 52) `cockpit_sync_state` key `comment-watch` ok
+   with a fresh `last_ok_at`.
+3. Migration r, then s, then t: each dry run as `BEGIN; <file without its
+   own BEGIN;/COMMIT;> ROLLBACK;` through the Composio Supabase connection,
+   then applied with its migration name through `SUPABASE_APPLY_A_MIGRATION`
+   (PLAN 1.7). Read-backs: r: the eight tables, the claim's
+   `q.kind NOT IN ('request','task_action')`, the requests claim naming
+   `replaces_task_id` and `replaces_client_task_id`, `cockpit_requests_read`'s
+   arguments `p_view text, p_limit integer, p_since timestamp with time zone`,
+   `cockpit_request_import` only as `(p_tasks jsonb, p_open_ids text[])`,
+   `cockpit_requests.import_left_at` present, no catalog row for
+   `e9fd8024-…`, cron `mahara-clickup-writeback-requests` `* * * * *`, and
+   within two minutes `clickup-writeback:requests` ok, mode `dry_run`,
+   "Nothing to write."; s: 31 types, 31 versions, 24 catalog fields, 34
+   templates, `set_request_type` on for exactly the 11 keys of 2.3; t: the
+   three tables with row security, crons `mahara-task-mirror` `*/2 * * * *`
+   and `mahara-task-mirror-seats` `11 * * * *`, the queue audit trigger
+   holding "left out of the audit" with its grant unchanged,
+   `cockpit_task_client_of` taking `p_parent`, `cockpit_task_done_blocked`,
+   `cockpit_task_writer_why` and `cockpit_task_link_why` present and
+   `cockpit_task_board` gone, `cockpit_task_request_failed` holding
+   "Deleted in ClickUp: ", and `task-mirror:kick` saying the
+   vault has no `cockpit_tasks_cron_secret` (expected until step 4).
+4. `cockpit-tasks` (new), `verify_jwt` off; the function secret
+   `TASKS_CRON_SECRET` (a new value, never printed) and the same value in the
+   vault as `cockpit_tasks_cron_secret`. `CLICKUP_API_TOKEN`, `SUPABASE_URL`,
+   `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are already there
+   (by name). Read-back: ACTIVE with `verify_jwt` false; the vault holds the
+   name once; `{"job":"doctor"}` answers ok with the secrets by name and the
+   rate limit; within two minutes `task-mirror:kick` "Posted a delta run" and
+   `task-mirror:delta` ok.
+5. The first `seats` run (`cockpit_task_mirror_kick('seats')`, or wait for
+   :11): baseline, members, seat links, fields, templates, imports.
+   Read-back: `task-mirror:seats` ok with `baselinedAt`; catalog and
+   templates in state `ok` (still no `e9fd8024` row: the read skips it);
+   seat links `ok` for the matched seats; the old form's open tickets on All
+   Tasks imported, none with `import_left_at` (a complete read sends every
+   open id, so a ticket gets it only once it leaves All Tasks).
+6. The requests doctor (`{"job":"requests_doctor"}`). Read-back:
+   `clickup-writeback:requests-doctor` ok with no problems, note "Ready.
+   Requests and task changes: ... 31 request types and 38 targets checked
+   against ClickUp."
+7. `scripts/ship.sh media-buyer`. Linking cannot come before it: "People in
+   ClickUp" exists only in the media buyer's `/requests/settings`, and
+   `cockpit_member_clickup_set` needs a signed-in editor (review round 3,
+   CN11). Read-back: the live bundle holds "Your tasks", "Ask a team" and
+   "People in ClickUp"; `/requests/settings` opens for the CEO.
+8. Link the unmatched seats in "People in ClickUp" (the CEO or an editor; no
+   editor links their own seat; Clear first to move a ClickUp user). Read-back:
+   those rows `manual`; each new link starts a seats read at once
+   (`task-mirror:kick` "Posted a seats run" within a minute), and the seat's
+   open tasks show on its card within minutes.
+9. `scripts/ship.sh creative`, `video-editor`, `sales`, then `client-success`
+   last. Read-back: each live bundle holds "Your tasks" and "Ask a team"
+   (client success also "Requests you raised today").
+10. The guardian on the VPS, released the usual way after steps 1 to 6
+   (its rows need the function, the crons and the state keys). Read-back: a
+   report-only scan is green for `queue-clickup-requests` (held requests say
+   "held until requests open"), the three `run_jobs` keys, the three
+   `EXPECTED_JOBS` and `cockpit-tasks` with `verify_jwt` false.
 
 For the CEO's C3 batch, added to PLAN 5.2 (the build session carries out
 each on his yes, D16):
@@ -1705,9 +2150,24 @@ each on his yes, D16):
   owners, five link comments on the test card, and five
   `task-assignment-alerts` posts in #tech-general, #client-ads-general,
   #csm-general, #csr-general-channel and #media-general. Read each request's
-  2-minute check, then set the five tasks to cancelled.
+  2-minute check. Before cancelling them, open one of the five in a cockpit's
+  focus view (the canary opens the test card's tasks) and tick a step, write a
+  comment and press Mark done: read its three `task_action` rows `delivered`,
+  the comment ending in its own `Cockpit ref T-…` and shown under the seat's
+  role (retest round 2: the writer's task actions have not run live yet).
+  Then set the five tasks to cancelled.
+- During the rehearsal, read `GET list/901816559981` once (read only): Mark
+  done on a client card's subtask needs a status of type done on Clients -
+  Mahara (3.4). With none, add one in ClickUp or accept that those presses
+  fail with the writer's sentence.
 - Then clear `CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS`: requests open to the
-  whole team.
+  whole team, and the held requests go on the next runs by themselves,
+  routing requests whose old ticket is not on the test card included
+  (review round 3, E-CANARY). Read-back: `clickup-writeback:requests` mode
+  `apply`; no request left `held` (after a few runs, `select count(*) from
+  public.cockpit_clickup_writeback_queue where kind='request' and
+  state='queued' and attempts=0 and next_attempt_at < now() - interval '5
+  minutes'` is 0).
 - The systems manager checks the draft SOP steps and re-saves the drifted
   templates (Client Pause Tech, Switch Funnel Intent, Client Offboarding
   Tech, WhatsApp Connection, Card Missing without the card form, Low Show
@@ -1737,7 +2197,7 @@ its door) and is in the `scripts/ship.sh` requests block.
 | I5 | 3.3 | `shift.days` comes back as `["Sun","Mon",...]`; the screens read any case. `TaskDetail.actions[].id` is the press's action id, which is also its queue row's id |
 | I6 | 5.4 | A refused detail read is 403, 404 or 400 with `{error: <the database's sentence>}`; the focus view shows it |
 | I7 | tests | `your-tasks.test.tsx` loads react-dom with its DOM in place and hands its seat mock back when it is done, so the nine screen and database files pass in one `bun test` run as ship.sh runs them |
-| I8 | 12 | Ship order for the client success app: its client page's old "Ask a team" (the live decision-log path) is replaced by the request form, so ship it after the rehearsal opens requests to everyone, or accept that CSMs use the ClickUp form for that window |
+| I8 | 12 | Ship order for the client success app: its client page's old "Ask a team" (the live decision-log path) is replaced by the request form, so ship it after the rehearsal opens requests to everyone, or accept that CSMs use the ClickUp form for that window. Superseded by review R1 F6: the client page keeps the old Ask a team and AddTask's teams until requests are open for that client (`requestsOpen.ts`), so client success ships last in step 7 of section 12 |
 
 
 ---
@@ -1760,7 +2220,7 @@ change.
 | D-F3/4/5 | Dry run: an editor's request became a dead `dry_run` row | Held requests (2.8); the claim takes only what the writer sends; `cockpit_clickup_writeback_release` for a row the writer will not send | "dry run: …", "the canary: …", "release: …" |
 | D-RT-5 | Request Type off reached only the type row | Waiting rows of the type get `setRequestType false`; sent ones keep their 2-minute check | "RT-5: …" |
 | D-F10/D12 | The media buyer of record and its note | No per-client source exists (checked); the note is honest and its "set one" line is for editors only | "one open lifecycle request per card", "the media buyer of record: …" |
-| D-F11 | The field read never added a field | New writable fields are added, state `ok`, unmapped | "the field read keeps …" |
+| D-F11 | The field read never added a field | New writable fields are added, state `ok`, unmapped; never the three never-written fields (`e9fd8024`, `09abf737`, `d3ac52c5`; review round 2) | "the field read keeps …"; "review round 2: R8 …" |
 | T-Ask F1 | The editor desk dropped every Video Pipeline alert | `cockpit_task_hidden(…, p_top)`: Video Pipeline leaves only the desk's Your tasks | task-alerts "the bell: …" |
 | T-Ask F2 | A card's real subtasks were hidden | Only a card itself (top-level) is left out: Your tasks, alerts, due today, overdue, comments | "assigned: …", "ask F2: …" |
 | T-F1 | Seat and detail reads swallowed assignment and status changes | One shared diff for every mirror write; alerts on a change ClickUp reports | "assigned: …", "contract F1: …" |
@@ -1790,3 +2250,187 @@ removed):
 - `cockpit_member_clickup_set` refuses more (SEC-3), with the sentences in 2.5.
 - `cockpit_task_alerts` rows carry `scope`; the bell reads it, the AlertRow
   shape is unchanged.
+
+---
+
+## 15. Integration round 2 (2026-10-26 and 27, after the round 1 fixes)
+
+The branch was rebased onto main `3f9f5c41` (main's `20261026p`, `s`, `t`
+and both `u` files are live and touch none of this build's objects). What
+this round changed so the pieces fit, each with its proof:
+
+| # | Where | Settled | Proven by |
+|---|---|---|---|
+| J1 | 3.1, 3.4, 4.4, migration t, `taskActions.ts` | A client card's real subtasks (on Your tasks since ask F2) take a tick, a comment and Mark done in `cockpit_task_can`, `cockpit_task_act` and the writer alike; a card itself takes none, with "This is a client card. Open it in ClickUp." for every op. A card's subtask carries its card as `client_task_id` (`cockpit_task_client_of` takes `p_parent`), so the client's name shows on it and the canary card opens its subtasks. The boards sentence now names card subtasks | task-alerts "ask F2 in the focus view: …", "the upsert refuses …", "each refusal in order …"; taskActions "a real subtask of a client card …" |
+| J2 | 2.5, migration r, `requestsClient.ts`, CsmPage | `cockpit_requests_read(p_view, p_limit, p_since)`; `readRequests(client, view, limit, since)` sends `p_since` only when given. The CSM's "Requests you raised today" and the end of day's ticket count read from the start of today in Kuwait, or from 04:00 of the end of day's own day when that is earlier (`requestsSince`), so the old "latest 200, open ones first" note is gone | requests-supabase "since: …"; csm-page "today's requests are read on the server …", "the read starts at today's start …" |
+| J3 | 8, `requests-ownership.test.ts` | The test diffs from the merge-base with `origin/main`, not the old base `86ee4e84`, and section 8 names the five files the round 1 fixes added | requests-ownership 3 pass |
+| J4 | 7, guardian `queues.py` | `queue-clickup-requests` counts a `queued` row only while the writer reports mode `apply`: a held request (2.8) is not stuck | guardian "a held request waits on purpose until requests open" |
+| J5 | live drift | `cockpit_clickup_writeback_audit`, `_begin`, `_claim` and `_idle` are the only functions r and t replace that exist live; each live body equals its 20261009f body (whitespace aside) and keeps the grant `postgres, service_role`. r and t change only the intended lines (the `requests` job, the claim's kind filter, the comment length in the audit). The live queue kind and runs job checks are as r expects. No drift to carry | `pg_get_functiondef` read 2026-10-26 |
+| J6 | migrations | r, s and t apply twice in filename order between main's 20261026 files, and twice after them (as production will take them), on the fit test's Stage 1 base | PGlite run, both orders |
+
+Known and not this build's (each also fails on a clean export of main
+`3f9f5c41`): `apps/media-buyer-cockpit/scripts/ceo-delivery-cost.test.ts`
+needs `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in the environment
+(`src/lib/supabase.ts` builds its client at import; with any values set it
+passes 25 of 25); `scripts/eod-rollup.test.ts` "the EOD form's over-the-gate
+field reads the no-lead line too" expects a line main's `CockpitPage.tsx`
+still has.
+
+---
+
+## 16. Review round 2, the database side (2026-10-27)
+
+Migrations r and t after the round 2 review. Sections 2 and 3 above now say
+the rules; this is the list, with every shape a screen or a worker reads that
+changed. The seed (migration s) did not change.
+
+| # | Finding | Settled in the database | Proven by |
+|---|---|---|---|
+| E-R8 | Request Type could be set outside its own switch: the hourly field read could add the folder field, a question could map to it, a payload could carry it | `cockpit_request_never_written` (`e9fd8024`, `09abf737`, `d3ac52c5`): the read skips them, the type guard refuses a question mapped to one, `cockpit_request_plan` leaves them out; migration r deletes any such catalog row once (audit `request_fields.removed`) | requests-supabase "review round 2: R8: …" |
+| E-UNROUTE | An old form ticket stayed `routed` when the request that routed it was cancelled or failed before its replaces step, so Route never showed again | `cockpit_request_unroute`, from cancel and from `cockpit_request_refresh` (`failed`, or `partial` with the carrying row failed or skipped and no replaces step); audit `request.unrouted`; the history says "Back in the queue: …" | "a routing request cancelled before ClickUp …", "a routing request that fails before its replaces step …", "a two-part routing request whose part that carries the old ticket failed …" |
+| E-CANARY | In the canary, an old ticket with no card could be routed onto the test card, go at once and close a real ticket | submit step 8 refuses (`55000`) | "in the canary, an old ticket with no card cannot go out on the test card …" |
+| E-ROUTE | A team-only seat could route an old ticket with no client, which its queue never shows it | `cockpit_request_can_route` uses `cockpit_request_client_visible` | "a team-only seat cannot route an old ticket with no client …" |
+| E-EDITOR | A team-only seat named an editor saw every client's requests | `cockpit_request_sees_all`: All requests and its count, the request panel, cancel and Route keep its client limit | "a team-only seat named an editor keeps its client limit …" |
+| E-DUP | The duplicate answer's "Open it" led to a request the seat may not open | `cockpit_request_may_open` (also the request panel's gate); otherwise `duplicateOf: null` and a note naming who raised it by role, or the queue an old ticket waits in | "the duplicate answer for an old form ticket names the queue it waits in …" |
+| E-RESTORE | Going back to an older version turned Request Type back on | Restore sets the version's value AND the current one; version note, audit `requestTypeKeptOff`, and `restoreNote` | "going back to a version never turns Request Type back on; it may turn it off" |
+| E-HELD | The held notes began "Saved." on a form where nothing was sent yet | Reworded (2.8) | "the held notes are true before Send: none begins with Saved." |
+| E-OWNER | A non-editor read "Goes to the systems manager." beside the owner line that already names them | "No media buyer is named for this request type yet." | "one open lifecycle request per card" (the preview and the row as a non-editor reads them) |
+| E-SEC5 | A ref typed or quoted in a comment's words relabelled the comment | `cockpit_task_comment_author(bigint,text,text)`: only the marker that ends the text, a `T-` ref only among Comment presses on the same task; `cockpit_task_act` refuses words that hold a marker (`22023`) | task-alerts "SEC-5: …" |
+| E-BELL | The bell's unread count counted alerts beyond the 50 it lists, so Mark all read never cleared it | `unread` counts the unread among the 50 returned (ties by id) | "the bell's unread count is the unread among the 50 it lists …" |
+| E-F9 | A seat's own Mark done alerted it while still on its way; a tick or a comment hid status alerts | `cockpit_task_own_done`: an in-flight or just-delivered Mark done of that seat hides only a done or closed status, and the requester's own `request_done` | "F9: …" |
+| E-F12 | The focus view worked only on the team request boards | `cockpit_task_done_blocked` (Video Pipeline, WhatsApp Reconnection) replaces `cockpit_task_board`; `cockpit_task_can` and `cockpit_task_act` take any task but a client card itself | "ask F12: …" |
+
+Shapes that changed (all additions; no browser RPC was renamed and no
+argument was removed):
+
+- `cockpit_request_type_restore` returns TypeView plus `restoreNote` (text or
+  null).
+- `cockpit_request_submit`'s duplicate answer may carry `duplicateOf: null`
+  with the role or queue note.
+- `cockpit_task_can` answers `done: false` only on a client card itself,
+  Video Pipeline and WhatsApp Reconnection, with its sentence in `why`.
+- Internal: `cockpit_task_comment_author(bigint,text,text)` replaces the
+  two-argument one; `cockpit_task_board(text)` is dropped for
+  `cockpit_task_done_blocked(text)`; new `cockpit_request_never_written`,
+  `cockpit_request_sees_all`, `cockpit_request_may_open`,
+  `cockpit_request_unroute`, `cockpit_task_own_done`. New audit actions
+  `request.unrouted`, `request_fields.removed`.
+
+The writer's and the screens' halves of round 2 are in 4.2 to 4.5, 6.2 to
+6.6 and section 17.
+
+---
+
+## 17. Integration round 3 (2026-10-27, the retest after the round 2 fixes)
+
+What this round changed so the pieces fit, each with its proof. The base is
+still main `3f9f5c41` (`git ls-remote origin main`, read 2026-10-27).
+
+| # | Where | Settled | Proven by |
+|---|---|---|---|
+| K1 | 2.6, migration r | `cockpit_clickup_writeback_claim_requests` gives every `request` row its request's `replaces_task_id`, so a part claimed in a later run than the first part still reads the old ticket before it makes anything (the writer read it, but nothing sent it) | requests-supabase "every part of a routing request names the old ticket in its claim …" |
+| K2 | 3.3, migration t | The "any other cockpit marker" check and the focus view's marker cut take an underscore (`[A-Za-z0-9_-]`): a part named `call_center` writes `R-…-call_center-card`, which read as the CEO's own and kept its marker in the text | task-alerts "a marker whose part holds an underscore is the cockpit's own …" (fails on the old pattern) |
+| K3 | 3.4, 4.4, `taskActions.ts` | The writer takes a tick, a comment and Mark done on any task but a client card itself, and skips Mark done on Video Pipeline and WhatsApp Reconnection with the database's sentences (`DONE_BLOCKED`); `ACTION_SAY.boards` is gone. A comment whose words hold a Cockpit ref fails before any call (second guard). Without it, presses the database now accepts ended skipped | taskActions "a seat's task on any list takes …", "comment words that hold a Cockpit ref are never posted …" |
+| K4 | 4.3, `requests.ts` | The fields step never posts Request Type or a protected field, in any case: `mismatch` with the fields note (second guard) | requests "a field entry naming Request Type or a protected field is never posted …" |
+| K5 | 8, 12, `comment-watch/watch.ts` | `kindOf` skips "Cockpit · … asked …" and any `Cockpit ref` (also the CSM cockpit's older marker), so a request's link comment on a card is never digested as a typed note. The writer owns the two files; the function deploys on its own (step 2) | comment-watch "the cockpit's own request link comment on a card is never digested …" |
+| K6 | 6.2, 6.4, `RequestPanel.tsx`, `RequestsPage.tsx`, `RequestForm.tsx`, `requestsCore.ts` | "File it again" on a routing request carries its `replacesTaskId` with `replacesIfOpen`: it routes the old ticket the server put back in its queue, or, when the ticket was routed meanwhile, the same request id goes on its own with a toast. A routing request the old-ticket check skipped shows the ticket's link and no "File it again" | requests-page "a routing request filed again routes its old ticket again …", "routing an old ticket a teammate routed first is refused, never sent twice", "a routing request that made nothing because the old ticket was handled …" |
+| K7 | 6.4, `TypeEditor.tsx`, `requestsAdmin.ts` | Going back a version shows the server's `restoreNote` in the toast | requests-settings "going back to a version never turns Set Request Type back on …" |
+| K8 | `requestsHarness.ts`, `tasksHarness.ts` | The harness answers as the database now does: the held notes, the owner note per reader, the duplicate answer, the `request.unrouted` line on cancel, the no-card canary refusal, restore keeping Request Type off; the task harness applies the done rule by list | request-form, requests-page and requests-settings; your-tasks "on Video Pipeline a task takes a tick and a comment but no Mark done …" |
+| K9 | 7, `RUNBOOK.md`, `scripts/ship.sh`, `seats.ts` | The round 2 RUNBOOK rows (section 7); the ship gate's requests block also runs `supabase/functions/comment-watch/watch.test.ts`; the stale "never a new field" comment in `seats.ts` says what the read does | `bash -n scripts/ship.sh`; the block's commands run green |
+| K10 | tests | The four happy-dom screen files allow 20 s a test (`setDefaultTimeout`). Two of this round's first full runs of the eleven files timed out one screen test at about 7.5 s (it takes about 1 s alone) and the overlapping `act()` calls then failed the rest of that file and the next one (33 failures); nothing else changed between those runs and the green ones. No assertion changed | the eleven files green in one process again and again (section 9 commands) |
+| K11 | 8, `requests-ownership.test.ts` | `comment-watch/watch.ts` and `watch.test.ts` belong to the writer; every changed file has one owner | requests-ownership 3 pass |
+| K12 | live drift | Only `cockpit_clickup_writeback_audit`, `_begin`, `_claim` and `_idle` of the functions r and t replace exist live; each live body still equals its 20261009f body (comments and whitespace aside), grant `postgres, service_role`. r and t change only their intended lines. Live checks still the five queue kinds and `kpi, log, dosdonts`. No drift to carry | `pg_get_functiondef` read 2026-10-27 |
+| K13 | migrations | r, s and t apply twice in filename order among main's 20261026 files (p, r, s, s, t, t, u, u, then again), and twice after them as production takes them, on the fit test's Stage 1 base | PGlite run, both orders (scratch, deleted) |
+
+Asked and left out on purpose: see section 11, "Not in this build". The
+known failures outside this build in section 15 stand.
+
+---
+
+## 18. Review round 3, the database side (2026-10-27)
+
+Migrations r and t after the round 3 review. Sections 2 and 3 above now say
+the rules; this is the list, with every shape a screen or a worker reads that
+changed. The seed (migration s) did not change.
+
+| # | Finding | Settled in the database | Proven by |
+|---|---|---|---|
+| G-DOUBT | A part whose create went out and lost its answer (a create on record, no task id) could be cancelled while it waited in `queued` or `retry`, orphaning the task ClickUp made; a hand back put it to `queued` | `cockpit_request_queue_in_clickup` (cancel and `canCancel`); `cockpit_clickup_writeback_release` keeps such a row `unknown`; the history says "{team}: ClickUp did not answer; checked once requests open" | requests-supabase "a part whose create went out and lost its answer is never cancelled while it waits ...", "a routing request whose create is in doubt keeps its old ticket routed ..." |
+| G-CLOCK | The 2-minute check timed "on time" from delivery, which a retried later step can push hours past the writes it judges, and read `setRequestType` from the frozen payload | The verify payload carries `ownerAt` and `madeAt` (`cockpit_request_step_at`) and `setRequestType` from the `request_type` step's state (2.7) | "the 2-minute check's payload says what the part's steps did ..." |
+| G-CANARY | A request filed held before the canary began, routing an old ticket with no card onto the test card, could go out during it and close a real ticket | `cockpit_request_replaces_ok` in the requests claim, `cockpit_request_held` and submit step 8; the claim's rows carry `replaces_client_task_id` | "E-CANARY: a request filed held before the test ..." |
+| G-HANDLED | An old ticket moved, closed or deleted in ClickUp stayed in the team queue with Route, and a routing request the writer skipped for it put it back to `imported`, so the loop could start again | `cockpit_requests.import_left_at` from a complete hourly read (`cockpit_request_import(jsonb, text[])`, audit `request.import_left`); `cockpit_request_import_handled` (with the task mirror) in the views, the sort, `can_route`, submit steps 7 and 8 and `unroute`; `unroute` also stops on the writer's `SAY.oldHandled` | "an old ticket a complete hourly read no longer finds open on All Tasks leaves the queues ...", "a routing request the writer skipped because the old ticket was handled in ClickUp keeps it routed ..."; task-alerts "an old form ticket the task mirror shows moved off All Tasks ..." |
+| G-QUIET | A writer that stopped reporting after requests opened read as "not switched on yet" | `cockpit_clickup_requests_mode().lastMode`, `cockpit_request_writer_silent`; the send gate's `unknown` rows (2.8), `heldNote`, and the focus view's `cockpit_task_writer_why` | "a writer that stops reporting after requests opened is said as such ..."; task-alerts "the focus view says a writer that stopped reporting ..." |
+| G-CLEARED | A seat an editor cleared on purpose was still asked to "ask the systems manager to link it" | `cockpit_request_seat().linkState`; `MyTasks.linkState` and `TaskAlerts.linkState` with the cleared notes; Assigned to me's note; `cockpit_task_link_why` | task-alerts "a seat an editor cleared is told it has no ClickUp user ..." |
+| G-LINK | A hand link showed the seat's older open tasks only at the next :11 | `cockpit_member_clickup_set` calls `cockpit_task_mirror_kick('seats')` for a seat newly linked, inside an exception block | task-alerts "a hand link reads the seat's ClickUp tasks at once ..." |
+
+Shapes that changed (all additions; no browser RPC was renamed and no
+argument was removed):
+
+- RequestRow gains `importHandled`; `heldNote` has a second sentence (2.5).
+- `MyTasks` and `TaskAlerts` gain `linkState` (3.3).
+- The verify payload gains `ownerAt` and `madeAt` (2.7).
+- `cockpit_clickup_writeback_claim_requests` rows gain `replaces_client_task_id` (2.6).
+- Service: `cockpit_request_import(jsonb, text[])` replaces the one-argument
+  version (dropped); its return gains `left` and `back` when `p_open_ids` is given.
+- Internal: `cockpit_request_writer_silent(text)`, `cockpit_request_replaces_ok(text,jsonb)`,
+  `cockpit_request_import_handled(cockpit_requests)`,
+  `cockpit_request_queue_in_clickup(cockpit_clickup_writeback_queue)`,
+  `cockpit_request_step_at(jsonb)`, `cockpit_task_writer_why(text)`,
+  `cockpit_task_link_why(jsonb)`. New audit action `request.import_left`.
+
+---
+
+## 19. Review round 3, the writer and the screens (2026-10-27)
+
+**The writer** (`requests.ts`, `run.ts`; 4.2 item 7, 4.3 rows 1 and 2, 6.4
+`againFailed`). Proven in `requests.test.ts` (the two "review round 3"
+groups, 16 tests):
+
+| # | Settled | Proven by |
+|---|---|---|
+| W1 | Two matches drop the cancelled; one left open is adopted; every match cancelled is `unknown` with its own sentence | "two tasks match: once a person cancels one in ClickUp ...", "every matching task cancelled: nothing is adopted ..." |
+| W2 | A create still in doubt at the end of the ladder stays `unknown`, read every 4 hours (`DOUBT_MINUTES`, `STILL_CHECKING`), never `failed`; a refused search searches again | "at the end of the ladder a create still in doubt stays unknown ...", "a create whose every answer was a 5xx ...", "ClickUp refusing the search ..." |
+| W3 | A task ClickUp answered the create with is read for 30 minutes before it is called gone (`SHOW_WAIT_MS`); a refused read-back is `STEP_REFUSED.create` and the part is delivered with a note | "a task ClickUp answered the create with but shows late ...", "... still does not show 30 minutes after ...", "... whose read-back keeps failing ...", "a task ClickUp made and then refused to show ..." |
+| W4 | A part delivered at the end of the ladder promises no next run (`finalWords`) | "the note of a part delivered at the end of the ladder promises no next run" |
+| W5 | A part's ref is matched as a whole token (`holdsMarker`), so parts `tech` and `tech_two` never take each other's task, in the create and the description steps | "matches the ref as a whole token ...", "a create that never landed waits ...", "a create that landed and lost its answer adopts its own task ...", "a template part that lost its answer adopts its own task by name ...", "a task holding this part's own ref that another queue row holds ...", "the description step never takes a sibling part's longer ref ..." |
+
+**The screens** (6.2, 6.4, 6.5, 6.6, 12):
+
+| # | Settled | Proven by |
+|---|---|---|
+| L1 | The Request types row names each part's runs-when with the question quoted and the choices' names; the harness editor read is in the I1 shape by default | requests-settings "one row a type ...", "on a database from before I1 ...", "runs-when words ..." |
+| L2 | The same-name rule on one board applies only when one request can make both (`bothRun`) | "Create an ad account saves a due change ...", "two tasks clash only when one request can make both" |
+| L3 | A note with no rows is the list's whole state | requests-page "a seat that is not linked sees why ...", "a seat with no team ..." |
+| L4 | Below `sm` a row is two lines: the whole type with its due word, then the chip and the client | "on a phone a row shows the whole type and status ..." |
+| L5 | The request panel says each state once | "the panel says each state once ...", "a held request's when-it-goes is said once ...", "an old ticket whose check found it handled says so once ..." |
+| L6 | Mark done's sentence sits on its own line above the foot buttons | your-tasks "a Mark done that comes back skipped ..." |
+| L7 | A request filed again or an old ticket made a request carries its words, priority and due day into whichever type is picked; a turned-off type and kept words are said | three request-form tests, four requests-page tests, requests-core "a request's own due day carries into the form only when the server would take it" |
+| L8 | request-form.test.tsx sets the test clock to `NOW` | the request-form tests, run on any day |
+| L9 | Section 12 links the seats after the media buyer ship (CN11) | section 12 steps 7 to 10 |
+
+---
+
+## 20. Integration round 4 (2026-10-27, the retest after the round 3 fixes)
+
+What this round changed so the pieces fit, each with its proof. The base is
+still main `3f9f5c41`; the branch head is `58d6b62f` (round 1), with rounds 2,
+3 and this round uncommitted. `origin/main` has moved on to `ef2262a1` (the
+upsell studio); section 12 step 0 says what the rebase needs.
+
+| # | Where | Settled | Proven by |
+|---|---|---|---|
+| M1 | 4.4, `taskActions.ts` | The 2-minute check times the owner put-back from `ownerAt ?? madeAt ?? created_at` and rt_off from `madeAt ?? created_at`; a value that is not an ISO time with its offset is absent (`stampMs`) | taskActions "on time is measured from when Request Type and the owner were written ...", "the owner's clock falls back to madeAt ...", "end to end: a part whose card comment kept retrying is delivered late ..." |
+| M2 | 4.2 item 6, `run.ts`, `requests.ts` | In `apply_limited` a routing request is live only when the claim's `replaces_client_task_id` is a canary card, else held with the canary waiting note; a database that names no card holds it. Covers the run right after a switch flip, which still claims by the old mode | requests "review round 3: during the canary a routing request goes only when its old ticket's card is a canary card" (3 tests; 2 fail with the rule taken out) |
+| M3 | `requestsTestkit.ts` | The fake database mirrors migration r: the release keeps a create in doubt `unknown`; an opt-in claim by the reported mode with the canary rule (`claimMode`, `imports`) and `replaces_client_task_id`; the verify payload's `setRequestType` from the step, `ownerAt`, `madeAt` | requests "a part whose create went out with no task the cockpit holds goes back unknown ..."; the M1 end-to-end test |
+| M4 | 5.3, `cockpit-tasks/seats.ts`, `testkit.ts` | The seats job sends `p_open_ids` (every task open on All Tasks, by its own id and status type) only after a complete read; the fake answers `left` and `back` | seats "members, fields, templates, every linked seat in full ...", "a read of All Tasks cut short names no open tasks ..."; the fit test drives it through migration r |
+| M5 | 6.5, shared `tasksCore.ts`, `YourTasks.tsx`, `AlertsBell.tsx` (all five), `tasksHarness.ts` | `MyTasks.linkState` and `TaskAlerts.linkState`; a cleared seat is never offered "Link it in Requests settings" and the rules read is not asked; the harness has a `cleared` scenario answering as the database does | your-tasks "a seat an editor cleared is told it has no ClickUp user and is never sent to link it ..." |
+| M6 | 6.4, 6.6, shared `requestsCore.ts` (all five), `RequestPanel.tsx`, `requestsHarness.ts` | `importHandled` words, chip tone and not open; `againDeleted` for a failed task that keeps its link; an `unknown` task shows the writer's note, or `checkingHeld` for one handed back; a held request reads the database's `heldNote` once; the harness's `cancellable()` follows the database (a task, or a create in doubt, refuses), its hand back keeps a create in doubt `unknown`, and it answers `importHandled` | requests-core "review round 3: an old ticket handled in ClickUp, a create in doubt, a quiet writer's held note"; requests-page "an old form ticket moved or closed in ClickUp leaves the team queue ...", "a request whose task was deleted in ClickUp says so ...", "a part whose create may have reached ClickUp cannot be cancelled ...", "a held request reads in the database's words ..." |
+| M7 | 3.2, migration t | The `request_failed` alert of a failed part that holds a ClickUp task reads "Deleted in ClickUp: {error}" | task-alerts "request failed: ..." |
+| M8 | 2.4, 2.6, 6.2, migration r, `RequestForm.tsx`, `requestsCore.ts` (X2) | A routing request's tasks link back ("Routed from the old ClickUp form ticket: {url}") and carry the old ticket's words ("Asked on the old ClickUp form:") when the type has no details question, since the old ticket is cancelled once routed; the form says `keptRouted` | requests-supabase "making it a request routes it ...", "a type with a details question routing an old ticket gets the link back ..."; requests-page "Make it a request, then Change ..." |
+| M9 | 7, 12, RUNBOOK, HANDOVER | The round 3 RUNBOOK rows; section 12 steps 0 to 10 (CN11); `docs/forms/HANDOVER.md`'s status lines and deploy list | read |
+| M10 | live drift | `cockpit_clickup_writeback_audit`, `_begin`, `_claim` and `_idle` are still the only functions r and t replace that exist live; each live body equals its 20261009f body (comments and whitespace aside), grant `postgres, service_role`; r and t change only their intended lines. Live checks still the five queue kinds and `kpi, log, dosdonts`; no table, function, cron or vault name of this build exists live. Main's five upsell migrations were applied live during this round (`20261026u_upsell_catalog` to `20261027011000_upsell_monitor_web`, about 10:12 UTC); read again after them, the four bodies hash the same and nothing else changed. No drift to carry | `pg_get_functiondef` read twice 2026-10-27 |
+| M11 | migrations | r, s and t apply twice in filename order among main's 20261026 files (p, r, s, s, t, t, u, u, then r, s, t again) and twice after all of them as production takes them, on the fit test's Stage 1 base (main's files with their own tables stood in and function bodies unchecked); the whole fit suite passes on each (13 of 13) | PGlite run, both orders (scratch, deleted) |
+| M12 | 8 | Every changed file has one owner; no file was added | requests-ownership 3 pass |
+
+Asked and left out on purpose: see section 11, "Not in this build". The
+known failures outside this build in section 15 stand.

@@ -580,7 +580,7 @@ const SERVICE = [
   "cockpit_clickup_members_sync(jsonb)",
   "cockpit_request_field_catalog_sync(jsonb)",
   "cockpit_request_templates_sync(jsonb)",
-  "cockpit_request_import(jsonb)",
+  "cockpit_request_import(jsonb,text[])",
   "cockpit_clickup_writeback_begin(text,text,boolean)",
   "cockpit_clickup_writeback_idle(text,boolean,text)",
   "cockpit_clickup_writeback_claim(uuid,integer)",
@@ -591,7 +591,7 @@ const BROWSER = [
   "cockpit_request_preview(text,text,jsonb)",
   "cockpit_request_submit(uuid,text,text,jsonb,date,text,text,text)",
   "cockpit_request_cancel(uuid,text)",
-  "cockpit_requests_read(text,integer)",
+  "cockpit_requests_read(text,integer,timestamptz)",
   "cockpit_request_get(uuid)",
   "cockpit_request_type_save(text,jsonb,integer)",
   "cockpit_request_type_versions(text)",
@@ -639,6 +639,15 @@ const INTERNAL = [
   "cockpit_request_held(public.cockpit_requests)",
   "cockpit_request_client_visible(public.cockpit_requests,jsonb)",
   "cockpit_request_can_route(public.cockpit_requests,jsonb)",
+  "cockpit_request_writer_silent(text)",
+  "cockpit_request_replaces_ok(text,jsonb)",
+  "cockpit_request_import_handled(public.cockpit_requests)",
+  "cockpit_request_queue_in_clickup(public.cockpit_clickup_writeback_queue)",
+  "cockpit_request_step_at(jsonb)",
+  "cockpit_request_never_written(text)",
+  "cockpit_request_sees_all(public.cockpit_requests,jsonb)",
+  "cockpit_request_may_open(public.cockpit_requests,jsonb)",
+  "cockpit_request_unroute(public.cockpit_requests,text,text)",
   "cockpit_request_cancellable(public.cockpit_requests,jsonb)",
   "cockpit_request_row(public.cockpit_requests,jsonb)",
   "cockpit_request_in_view(public.cockpit_requests,text,text,jsonb)",
@@ -1723,12 +1732,14 @@ describe("the form's reads", () => {
 const NOT_ON =
   "Requests are not switched on yet. Use the ClickUp request form until then.";
 // Review 2026-10-26 (F3-F5): editors, admins and the CEO file while requests
-// are not open, and the request is held (saved, queued, not sent).
-const HELD = "Saved. Requests are not open yet, so this goes to ClickUp once they are.";
+// are not open, and the request is held (saved, queued, not sent). Review
+// round 2: the form shows the note before anything is sent, so it never says
+// "Saved." first; it is true before and after Send.
+const HELD = "Requests are not open yet. What you send is saved and goes to ClickUp once they are.";
 const STALE =
-  "Saved. The requests writer has not reported in the last 15 minutes, so this goes to ClickUp once it runs with requests open. Check it on the Machine tab.";
+  "The requests writer has not reported in the last 15 minutes. What you send is saved and goes to ClickUp once it runs with requests open. Check it on the Machine tab.";
 const TESTING_CARD =
-  "Saved. Requests are being tested on the internal test card only, so this goes to ClickUp once they open to everyone.";
+  "Requests are being tested on the internal test card only, where they go to ClickUp at once. Anything else you send is saved and goes to ClickUp once they open to everyone.";
 const TESTING =
   "Requests are being tested. They open to everyone soon. Use the ClickUp request form until then.";
 
@@ -2345,16 +2356,23 @@ describe("sending a request", () => {
       ],
     ]);
     // D12: the "set one" instruction is for editors (the systems manager here);
-    // anyone else reads a plain owner line, on the preview and on the request.
+    // anyone else reads why the systems manager has it (review round 2: the
+    // reason, never a line that only repeats the owner beside it), on the
+    // preview and on the request.
     expect(first.parts[1].owner.note).toBe(
       "No media buyer of record is named on this request type, so the systems manager gets it. Set one in Requests settings.",
     );
     const csmPreview = await preview(CSM, "client_pause", BETA, {});
-    expect(csmPreview.parts[1].owner.note).toBe("Goes to the systems manager.");
+    expect(csmPreview.parts[1].owner).toMatchObject({
+      label: "the systems manager",
+      how: "fallback",
+      note: "No media buyer is named for this request type yet.",
+    });
+    expect(csmPreview.parts[1].owner.note).not.toContain(csmPreview.parts[1].owner.label);
     expect((await preview(SM, "client_pause", BETA, {})).parts[1].owner.note).toMatch(/Set one in Requests settings\.$/);
     expect(
       (await one<Row>(BUYER, "SELECT public.cockpit_request_get($1) r", [first.id])).parts[1].owner.note,
-    ).toBe("Goes to the systems manager.");
+    ).toBe("No media buyer is named for this request type yet.");
     const rows = await queueRows(first.id);
     expect(
       rows.map(r => [
@@ -2369,7 +2387,9 @@ describe("sending a request", () => {
     const before = await count(
       "SELECT count(*) n FROM public.cockpit_requests",
     );
-    const again = await submit(CSM, { type: "client_pause", client: BETA });
+    // A seat that may open the open request (the media buyer: its part is on
+    // Marketing / ADs) is pointed to it.
+    const again = await submit(BUYER, { type: "client_pause", client: BETA });
     expect(again).toEqual({
       held: false,
       id: null,
@@ -2379,6 +2399,21 @@ describe("sending a request", () => {
       parts: [],
       note: "An open client pause request for Beta Build already exists. Open it instead.",
     });
+    // Review round 2: a seat that may not open it (the CSM: neither part is on its
+    // teams) gets no dead "Open it" link, and is told who raised it, by role.
+    const csmAgain = await submit(CSM, { type: "client_pause", client: BETA });
+    expect(csmAgain).toEqual({
+      held: false,
+      id: null,
+      state: "duplicate",
+      reused: false,
+      duplicateOf: null,
+      parts: [],
+      note: "An open client pause request for Beta Build already exists, raised by the systems manager. Ask them about it.",
+    });
+    expect(await refused(CSM, "SELECT public.cockpit_request_get($1)", [first.id])).toBe(
+      "This request is not yours to see. Ask the person who raised it.",
+    );
     expect(await count("SELECT count(*) n FROM public.cockpit_requests")).toBe(
       before,
     );
@@ -2431,7 +2466,9 @@ describe("sending a request", () => {
             how: x.owner_how,
             label: x.owner_label,
             // The CSM is not an editor: the "set one" line is for editors (D12).
-            note: x.owner_note?.includes("Set one in Requests settings.") ? "Goes to the systems manager." : x.owner_note,
+            note: x.owner_note?.includes("Set one in Requests settings.")
+              ? "No media buyer is named for this request type yet."
+              : x.owner_note,
           },
         })),
       );
@@ -2741,6 +2778,9 @@ describe("the writeback queue", () => {
       typeKey: "general_tech",
       setRequestType: false,
       clientTaskId: null,
+      // No step on record at delivery: the check falls back to its own row's time (review round 3).
+      ownerAt: null,
+      madeAt: null,
     });
     // A second delivery report never makes a second check.
     await q(
@@ -3340,7 +3380,8 @@ describe("editing a type", () => {
     expect(a.length).toBe(1);
     expect(a[0].before.version).toBe(2);
     expect(a[0].after.version).toBe(3);
-    expect(a[0].metadata).toEqual({ version: 3, from_version: 1 });
+    expect(a[0].metadata).toEqual({ version: 3, from_version: 1, requestTypeKeptOff: false });
+    expect(back.restoreNote).toBeNull();
 
     expect((await typeRow("employee_offboarding")).set_request_type).toBe(true);
     expect(
@@ -3579,6 +3620,13 @@ describe("the old form's tickets in All Tasks", () => {
     );
     expect(byPart.tech.replacesTaskId).toBe("cuold001");
     expect(byPart.media.replacesTaskId).toBeNull();
+    // Review round 3 (X2): every task links back to the old ticket, and, as client offboarding has no details
+    // question, carries the old ticket's words, which would otherwise stay only on the cancelled old ticket.
+    for (const part of ["tech", "media"]) {
+      const desc = byPart[part].descriptionMarkdown as string;
+      expect(desc).toContain("\n\nAsked on the old ClickUp form:\nClient is leaving at the end of the month.\n\n");
+      expect(desc).toContain("Routed from the old ClickUp form ticket: https://app.clickup.com/t/cuold001\nRequest in the cockpit: ");
+    }
     expect(byPart.tech).toMatchObject({
       setRequestType: true,
       templateId: "t-86ex629ve",
@@ -3618,6 +3666,26 @@ describe("the old form's tickets in All Tasks", () => {
       (await one<Row>(SM, "SELECT public.cockpit_request_get($1) r", [sent.id]))
         .replacesTaskId,
     ).toBe("cuold001");
+  });
+
+  test("a type with a details question routing an old ticket gets the link back, never the old words twice (review round 3, X2)", async () => {
+    await svc("SELECT public.cockpit_request_import($1::jsonb) r", [
+      JSON.stringify([{ ...tasks[1], taskId: "cuold004", url: "https://app.clickup.com/t/cuold004", description: "Call the client back." }]),
+    ]);
+    const sent = await submit(SM, {
+      type: "general_csm",
+      answers: { details: "Call the client back, today." },
+      replaces: "cuold004",
+    });
+    expect(sent.state).toBe("sending");
+    const [row] = await queueRows(sent.id);
+    const desc = row.payload.descriptionMarkdown as string;
+    expect(desc).toContain("Call the client back, today.");
+    expect(desc).not.toContain("Asked on the old ClickUp form");
+    expect(desc).toContain("Routed from the old ClickUp form ticket: https://app.clickup.com/t/cuold004");
+    // A request that routes nothing names no old ticket.
+    const plain = await submit(SM, { type: "general_csm", answers: { details: "Nothing old here." } });
+    expect((await queueRows(plain.id))[0].payload.descriptionMarkdown).not.toContain("old ClickUp form");
   });
 });
 
@@ -3672,10 +3740,17 @@ describe("the request lists", () => {
       mine.rows.every((r: Row) => r.state !== "cancelled" && !r.done),
     ).toBe(true);
     expect(mine.rows.some((r: Row) => r.typeKey === "general_csm")).toBe(true);
-    const unlinked = await read(CSM_B, "assigned");
+    // The sales seat has two ClickUp members on its address (ambiguous): not linked yet.
+    const unlinked = await read(SALES, "assigned");
     expect(unlinked.rows).toEqual([]);
     expect(unlinked.note).toBe(
       "Your seat is not linked to a ClickUp user, so requests assigned to you cannot show. Ask the systems manager to link it.",
+    );
+    // A seat an editor cleared has no ClickUp user: nobody is sent to link it (review round 3).
+    const cleared = await read(CSM_B, "assigned");
+    expect(cleared.rows).toEqual([]);
+    expect(cleared.note).toBe(
+      "Your seat has no ClickUp user, so nothing is assigned to you here. Requests you raise show under My requests.",
     );
     // The mirror's assignees count too.
     const s = await submit(SM, {
@@ -3718,6 +3793,52 @@ describe("the request lists", () => {
     expect(dues).toEqual([...dues].sort());
     expect((await read(CEO, "all", 3)).rows.length).toBe(3);
     expect((await read(CEO, "all", 0)).rows.length).toBe(1);
+  });
+
+  test("since: only the requests made at or after that moment, the views' counts whole (contract F3)", async () => {
+    const before = await read(CSM, "mine", 200);
+    expect(before.rows.length).toBeGreaterThan(2);
+    // Two of the CSM's requests were made yesterday.
+    const old: string[] = before.rows.slice(0, 2).map((r: Row) => r.id);
+    const kept = await q<{ id: string; created_at: string }>(
+      "SELECT id, created_at FROM public.cockpit_requests WHERE id = ANY($1::uuid[])",
+      [old],
+    );
+    await q(
+      "UPDATE public.cockpit_requests SET created_at = now() - interval '1 day' WHERE id = ANY($1::uuid[])",
+      [old],
+    );
+    try {
+      const since = new Date(Date.now() - 3600_000).toISOString();
+      const today = await one<Row>(
+        CSM,
+        "SELECT public.cockpit_requests_read($1,$2,$3::timestamptz) r",
+        ["mine", 200, since],
+      );
+      expect(today.rows.map((r: Row) => r.id).sort()).toEqual(
+        before.rows
+          .map((r: Row) => r.id)
+          .filter((id: string) => !old.includes(id))
+          .sort(),
+      );
+      expect(today.views).toEqual(before.views);
+      // A moment after every request: no rows, said as an empty list.
+      const later = await one<Row>(
+        CSM,
+        "SELECT public.cockpit_requests_read('mine',50,now() + interval '1 hour') r",
+      );
+      expect(later.rows).toEqual([]);
+      // Without it, every row as before.
+      expect((await read(CSM, "mine", 200)).rows.length).toBe(
+        before.rows.length,
+      );
+    } finally {
+      for (const k of kept)
+        await q("UPDATE public.cockpit_requests SET created_at = $2 WHERE id = $1", [
+          k.id,
+          k.created_at,
+        ]);
+    }
   });
 
   test("one request: who may open it, its answers and its history", async () => {
@@ -4280,8 +4401,12 @@ describe("review 2026-10-26: the team queue's client limit, routing, links, canc
       "SELECT metadata FROM public.cockpit_audit_log WHERE action='request_type.request_type_off' AND entity_id='csm_request' ORDER BY created_at DESC LIMIT 1",
     );
     expect(a[0].metadata.waitingRowsTurnedOff).toBe(2);
-    // The part being sent is delivered: its 2-minute check still carries Request Type on.
-    await q("UPDATE public.cockpit_clickup_writeback_queue SET state='delivered', task_id='cusent77', delivered_at=now(), claim_token=NULL WHERE source_id=$1 AND kind='request'", [sending.id]);
+    // The part being sent sets Request Type and is delivered: its 2-minute check still carries Request Type on
+    // (from what its request_type step did, review round 3).
+    await q(
+      "UPDATE public.cockpit_clickup_writeback_queue SET state='delivered', task_id='cusent77', delivered_at=now(), claim_token=NULL, progress=$2::jsonb WHERE source_id=$1 AND kind='request'",
+      [sending.id, JSON.stringify({ task: { id: "cusent77" }, steps: { create: { state: "done", at: new Date().toISOString() }, request_type: { state: "done", at: new Date().toISOString() } } })],
+    );
     const verify = (await q("SELECT payload FROM public.cockpit_clickup_writeback_queue WHERE dedupe_key=$1", [`verify:${sending.id}:main`]))[0];
     expect(verify.payload.setRequestType).toBe(true);
   });
@@ -4325,18 +4450,30 @@ describe("review 2026-10-26: the writer hands back what it will not send", () =>
     expect((await one<Row>(SM, "SELECT public.cockpit_request_get($1) r", [sent.id])).history.map((h: Row) => h.what)).toContain(
       "Operations / Tech: waiting in the queue until requests open",
     );
-    // With ClickUp progress it goes back as retry.
+    // A create whose answer was lost (on record, no task id yet) stays unknown (review round 3): the task may be
+    // in ClickUp, so the part says it is being checked and cancel stays refused.
     await claimAs(row.id);
     await q(
       `UPDATE public.cockpit_clickup_writeback_queue SET progress='{"steps":{"create":{"state":"started"}}}'::jsonb WHERE id=$1`,
       [row.id],
     );
-    expect(await release(row.id, TOKEN, null, null, null)).toEqual({ id: row.id, state: "retry" });
-    expect((await q("SELECT error, planned FROM public.cockpit_clickup_writeback_queue WHERE id=$1", [row.id]))[0]).toEqual({
+    expect(await release(row.id, TOKEN, null, null, null)).toEqual({ id: row.id, state: "unknown" });
+    expect((await q("SELECT error, planned, attempts FROM public.cockpit_clickup_writeback_queue WHERE id=$1", [row.id]))[0]).toEqual({
       error: note,
       planned: [{ step: "create" }],
+      attempts: 0,
     });
-    expect((await parts(sent.id))[0].state).toBe("retry");
+    expect((await parts(sent.id))[0].state).toBe("unknown");
+    expect((await one<Row>(SM, "SELECT public.cockpit_request_get($1) r", [sent.id])).canCancel).toBe(false);
+    // With a task in ClickUp and a later step on record it goes back as retry.
+    await claimAs(row.id);
+    await q(
+      `UPDATE public.cockpit_clickup_writeback_queue SET task_id='cuheld01',
+         progress='{"task":{"id":"cuheld01"},"steps":{"create":{"state":"done","id":"cuheld01"},"description":{"state":"started"}}}'::jsonb WHERE id=$1`,
+      [row.id],
+    );
+    expect(await release(row.id, TOKEN, null, null, null)).toEqual({ id: row.id, state: "retry" });
+    expect((await parts(sent.id))[0]).toMatchObject({ state: "retry", clickup_task_id: "cuheld01" });
     // Another kind of row is never released here.
     const other = (
       await q(
@@ -4361,5 +4498,755 @@ describe("review 2026-10-26: the writer hands back what it will not send", () =>
     ]);
     expect(await svc("SELECT public.cockpit_clickup_writeback_task_owners(ARRAY[]::text[]) r")).toEqual([]);
     expect(await refused(SM, "SELECT public.cockpit_clickup_writeback_task_owners(ARRAY['cuowned01'])")).toMatch(/permission denied/);
+  });
+});
+
+describe("review round 2: Request Type, old tickets, the canary, the client limit, the duplicate answer and restore", () => {
+  const RT = "e9fd8024-8abe-4094-ac08-e6c0e736ad7e";
+  const ADS_LIST_FIELD = "09abf737-302f-422a-9d17-8fb9619903d1";
+  const SUBMISSION = "d3ac52c5-b71c-4782-9fea-1f9371cbae47";
+  const PAUSE_OPTION = seedType("client_pause").request_type_option_id;
+  const read = (who: string, view: string) =>
+    one<Row>(who, "SELECT public.cockpit_requests_read($1,200) r", [view]);
+  const get = (who: string, id: string) =>
+    one<Row>(who, "SELECT public.cockpit_request_get($1) r", [id]);
+  const NOT_YOURS = "This request is not yours to see. Ask the person who raised it.";
+  const importTicket = (taskId: string, typeKey: string, tags: string[] = [], description = "From the old form.") =>
+    svc<Row>("SELECT public.cockpit_request_import($1::jsonb) r", [
+      JSON.stringify([
+        {
+          taskId,
+          name: `Form Submission ${taskId}`,
+          url: `https://app.clickup.com/t/${taskId}`,
+          optionId: seedType(typeKey).request_type_option_id,
+          tags,
+          description,
+          dateCreated: String(Date.now() - 3600_000),
+          priority: null,
+          dueAt: null,
+          status: "to do",
+          statusType: "open",
+        },
+      ]),
+    ]);
+  const importRow = async (taskId: string) =>
+    (await q("SELECT * FROM public.cockpit_requests WHERE imported_task_id=$1", [taskId]))[0];
+  /** Runs SQL as the owner with a seat's sign-in, so an internal helper sees that seat. */
+  async function asSeat<T = any>(who: string, text: string, params: unknown[] = []): Promise<T> {
+    await actor(db, who);
+    await db.exec("RESET ROLE");
+    try {
+      return (await db.query<{ r: T }>(text, params)).rows[0].r;
+    } finally {
+      await asOwner();
+    }
+  }
+  const canRoute = (who: string, taskId: string) =>
+    asSeat<boolean>(
+      who,
+      "SELECT public.cockpit_request_can_route(r, public.cockpit_request_seat()) r FROM public.cockpit_requests r WHERE r.imported_task_id=$1",
+      [taskId],
+    );
+  const delivered = (taskId: string, steps: Row = {}) => ({
+    state: "delivered",
+    task_id: taskId,
+    delivered_at: new Date().toISOString(),
+    progress: { task: { id: taskId, url: `https://app.clickup.com/t/${taskId}` }, steps: { create: { state: "done" }, ...steps } },
+  });
+
+  test("R8: the field read never adds Request Type or the two fields the cockpit never writes; the guard refuses them as a question; no payload carries one", async () => {
+    await mode("apply");
+    // GET list/901816723190/field returns the catalog's fields and the Request Type folder field.
+    const catalog = await q("SELECT clickup_field_id, clickup_name, kind, options FROM public.cockpit_request_field_catalog");
+    const typeOf: Record<string, string> = { text: "short_text", longtext: "text", url: "url", number: "number", select: "drop_down" };
+    const fieldRead = [
+      ...catalog.map(c => ({ id: c.clickup_field_id, name: c.clickup_name, type: typeOf[c.kind], options: c.options })),
+      { id: RT, name: "Request Type", type: "drop_down", options: [{ id: PAUSE_OPTION, name: "Client Pause Request ⏸️", orderindex: 13 }] },
+      { id: ADS_LIST_FIELD, name: "Request Type", type: "drop_down", options: [{ id: "ads-failed", name: "Ads Failed", orderindex: 0 }] },
+      { id: SUBMISSION.toUpperCase(), name: "Type of Submission", type: "drop_down", options: [] },
+    ];
+    expect(await svc<Row>("SELECT public.cockpit_request_field_catalog_sync($1::jsonb) r", [JSON.stringify(fieldRead)])).toEqual({
+      updated: catalog.length,
+      missing: 0,
+      added: 0,
+      skipped: 3,
+    });
+    expect(
+      await count("SELECT count(*) n FROM public.cockpit_request_field_catalog WHERE clickup_field_id = ANY($1::uuid[])", [
+        [RT, ADS_LIST_FIELD, SUBMISSION],
+      ]),
+    ).toBe(0);
+    // So the type editor never offers them.
+    const editorView = await one<Row>(SM, "SELECT public.cockpit_request_types_read() r");
+    expect(editorView.catalog.some((c: Row) => [RT, ADS_LIST_FIELD, SUBMISSION].includes(c.clickupFieldId))).toBe(false);
+
+    // A catalog row an older read made: the guard still refuses the question, by id.
+    await q(
+      "INSERT INTO public.cockpit_request_field_catalog(clickup_field_id, clickup_name, kind, label, options, state, read_at) VALUES($1,'Request Type','select','Request Type',$2::jsonb,'ok',now())",
+      [RT, JSON.stringify([{ id: PAUSE_OPTION, name: "Client Pause Request ⏸️" }])],
+    );
+    const tech = await typeRow("general_tech");
+    const withQuestion = (field: Row) => {
+      const fields = [...tech.fields];
+      fields.splice(
+        fields.findIndex((f: Row) => f.kind === "deadline"),
+        0,
+        { required: false, options: null, help: null, ...field },
+      );
+      return fields;
+    };
+    expect(
+      await typeSaveRefused(SM, "general_tech", { fields: withQuestion({ key: "request_type", label: "Request Type", kind: "select", clickup_field_id: RT }) }, tech.version),
+    ).toEqual({
+      message: "Request Type: only the Set Request Type in ClickUp switch writes Request Type. Remove this question.",
+      code: "22023",
+    });
+    for (const id of [ADS_LIST_FIELD, SUBMISSION])
+      expect(
+        await typeSaveRefused(SM, "general_tech", { fields: withQuestion({ key: "ads_state", label: "Ads state", kind: "select", clickup_field_id: id }) }, tech.version),
+      ).toEqual({ message: "Ads state: the cockpit never writes this ClickUp field. Remove this question.", code: "22023" });
+    expect((await typeRow("general_tech")).version).toBe(tech.version);
+
+    // A type that mapped it anyway (an old version the sweep re-plans): the payload leaves it out.
+    const company = seedType("company_name").fields;
+    const at = company.findIndex(f => f.kind === "deadline");
+    const mapped = [
+      ...company.slice(0, at),
+      { key: "request_type", label: "Request Type", kind: "select", clickup_field_id: RT, required: false, options: null, help: null },
+      ...company.slice(at),
+    ];
+    const plan = await q<{ r: Row[] }>(
+      `SELECT public.cockpit_request_plan(jsonb_populate_record(t, jsonb_build_object('fields', $1::jsonb)), NULL, $2, 'Acme Interiors',
+         $3::jsonb, NULL, NULL, 'the CSM', NULL) r FROM public.cockpit_request_types t WHERE t.key = 'company_name'`,
+      [JSON.stringify(mapped), ACME, JSON.stringify({ new_company_name: "Acme Interiors LLC", request_type: PAUSE_OPTION })],
+    );
+    expect(plan[0].r[0].payload.fields.map((f: Row) => f.fieldId)).toEqual([fieldOf("company_name", "new_company_name").clickup_field_id]);
+
+    // The migration takes such a row out, once, with one audit row.
+    await asOwner();
+    await db.exec(migration(R));
+    expect(await count("SELECT count(*) n FROM public.cockpit_request_field_catalog WHERE clickup_field_id=$1", [RT])).toBe(0);
+    const removed = await q("SELECT * FROM public.cockpit_audit_log WHERE action='request_fields.removed'");
+    expect(removed.length).toBe(1);
+    expect(removed[0]).toMatchObject({ actor_email: "migration", entity_type: "cockpit_request_field_catalog" });
+    expect(removed[0].metadata.fieldIds).toEqual([RT]);
+    await db.exec(migration(R));
+    expect(await count("SELECT count(*) n FROM public.cockpit_audit_log WHERE action='request_fields.removed'")).toBe(1);
+  });
+
+  test("a routing request cancelled before ClickUp puts the old ticket back in its queue, where it is routed again", async () => {
+    await mode("dry_run");
+    await importTicket("cuold030", "general_csm", ["acme interiors"], "Acme asks for a call.");
+    const imp = await importRow("cuold030");
+    expect(imp).toMatchObject({ state: "imported", client_task_id: ACME });
+    const held = await submit(SM, { type: "general_csm", client: ACME, answers: { details: "Call Acme" }, replaces: "cuold030" });
+    expect(held).toMatchObject({ state: "sending", held: true });
+    expect(await importRow("cuold030")).toMatchObject({ state: "routed", routed_to: held.id });
+    // The editor picked the wrong type and cancels before anything reached ClickUp.
+    expect((await one<Row>(SM, "SELECT public.cockpit_request_cancel($1,'Wrong type') r", [held.id])).state).toBe("cancelled");
+    expect(await importRow("cuold030")).toMatchObject({ state: "imported", routed_to: null });
+    const a = await q("SELECT * FROM public.cockpit_audit_log WHERE action='request.unrouted' AND entity_id=$1", [imp.id]);
+    expect(a.length).toBe(1);
+    expect(a[0]).toMatchObject({
+      actor_email: "sm@tests.invalid",
+      entity_type: "cockpit_requests",
+      before: { state: "routed", routed_to: held.id },
+      after: { state: "imported", routed_to: null },
+      metadata: { task_id: "cuold030", request_id: held.id, why: "cancelled" },
+    });
+    expect((await get(SM, imp.id)).history.map((h: Row) => [h.what, h.byLabel])).toEqual([
+      ["Came in through the old ClickUp form", "the task reader"],
+      ["Routed as a new request", "the systems manager"],
+      ["Back in the queue: the request that routed it was cancelled", "the systems manager"],
+    ]);
+    // Back on the team's queue with Route once requests open, and routed again.
+    await mode("apply");
+    expect((await read(CSM, "team")).rows.find((r: Row) => r.id === imp.id)).toMatchObject({ state: "imported", canRoute: true });
+    const again = await submit(CSM, { type: "general_csm", client: ACME, answers: { details: "Call Acme" }, replaces: "cuold030" });
+    expect(again.state).toBe("sending");
+    expect(await importRow("cuold030")).toMatchObject({ state: "routed", routed_to: again.id });
+  });
+
+  test("a routing request that fails before its replaces step puts the old ticket back; filed again with it, it routes it; a landed replaces step keeps it routed", async () => {
+    await mode("apply");
+    await importTicket("cuold031", "general_tech", [], "The booking form is broken.");
+    const imp = await importRow("cuold031");
+    const first = await submit(SM, { type: "general_tech", answers: { details: "Fix the booking form" }, replaces: "cuold031" });
+    const row = await queueOf(first.id);
+    expect(row.payload.replacesTaskId).toBe("cuold031");
+    await writerMoves(row.id, [{ state: "failed", error: "ClickUp refused the task (400)." }]);
+    expect((await request(first.id)).state).toBe("failed");
+    expect(await importRow("cuold031")).toMatchObject({ state: "imported", routed_to: null });
+    expect(
+      await q("SELECT actor_email, metadata FROM public.cockpit_audit_log WHERE action='request.unrouted' AND entity_id=$1", [imp.id]),
+    ).toEqual([{ actor_email: "clickup-writeback", metadata: { task_id: "cuold031", request_id: first.id, why: "failed" } }]);
+    expect((await get(SM, imp.id)).history.at(-1)).toMatchObject({
+      what: "Back in the queue: the request that routed it did not reach ClickUp",
+      byLabel: "the requests writer",
+    });
+    // "File it again" with the old ticket: it routes it this time.
+    const second = await submit(SM, { type: "general_tech", answers: { details: "Fix the booking form" }, replaces: "cuold031" });
+    expect(second.state).toBe("sending");
+    expect(await importRow("cuold031")).toMatchObject({ state: "routed", routed_to: second.id });
+    // Its part lands with the replaces step done: the old ticket stays routed.
+    await writerMoves((await queueOf(second.id)).id, [delivered("cunew031", { replaces: { state: "done" } })]);
+    expect((await request(second.id)).state).toBe("delivered");
+    expect(await importRow("cuold031")).toMatchObject({ state: "routed", routed_to: second.id });
+    expect(await count("SELECT count(*) n FROM public.cockpit_audit_log WHERE action='request.unrouted' AND entity_id=$1", [imp.id])).toBe(1);
+  });
+
+  test("a two-part routing request whose part that carries the old ticket failed while the other landed puts it back; the other way round keeps it routed", async () => {
+    await mode("apply");
+    const both = { schedule_rate_issue: OPT_BOTH };
+    await importTicket("cuold032", "low_schedule_rate", ["beta build"]);
+    await importTicket("cuold033", "low_schedule_rate", ["beta build"]);
+    const r32 = await submit(SM, { type: "low_schedule_rate", client: BETA, answers: both, replaces: "cuold032" });
+    const rows32 = await queueRows(r32.id);
+    const carrier32 = rows32.find(r => r.payload.replacesTaskId === "cuold032") as Row;
+    const other32 = rows32.find(r => r.payload.replacesTaskId === null) as Row;
+    expect([carrier32.payload.part, other32.payload.part]).toEqual(["call_center", "ads"]);
+    await writerMoves(carrier32.id, [{ state: "failed", error: "The template is not in ClickUp any more." }]);
+    // Still sending (the ads part is open): nothing moves yet.
+    expect(await importRow("cuold032")).toMatchObject({ state: "routed", routed_to: r32.id });
+    await writerMoves(other32.id, [delivered("cuads032")]);
+    expect((await request(r32.id)).state).toBe("partial");
+    expect(await importRow("cuold032")).toMatchObject({ state: "imported", routed_to: null });
+    // The part that carries it landed and ran its replaces step; the other failed: it stays routed.
+    const r33 = await submit(SM, { type: "low_schedule_rate", client: BETA, answers: both, replaces: "cuold033" });
+    const rows33 = await queueRows(r33.id);
+    await writerMoves((rows33.find(r => r.payload.replacesTaskId === "cuold033") as Row).id, [delivered("cucc033", { replaces: { state: "done" } })]);
+    await writerMoves((rows33.find(r => r.payload.replacesTaskId === null) as Row).id, [{ state: "failed", error: "x" }]);
+    expect((await request(r33.id)).state).toBe("partial");
+    expect(await importRow("cuold033")).toMatchObject({ state: "routed", routed_to: r33.id });
+  });
+
+  test("every part of a routing request names the old ticket in its claim, not only the first part's payload (retest round 2)", async () => {
+    await mode("apply");
+    await importTicket("cuold040", "low_schedule_rate", ["beta build"]);
+    const routing = await submit(SM, { type: "low_schedule_rate", client: BETA, answers: { schedule_rate_issue: OPT_BOTH }, replaces: "cuold040" });
+    const plain = await submit(SM, { type: "general_tech", answers: { details: "No old ticket here" } });
+    const rows = [...(await queueRows(routing.id)), ...(await queueRows(plain.id))];
+    const byPart = (list: Row[], value: (x: Row) => unknown) =>
+      Object.fromEntries(list.map(x => [`${x.source_id === plain.id ? "plain" : "routing"}:${x.payload.part}`, value(x)]));
+    // The payload names it on the first part only.
+    expect(byPart(rows, x => x.payload.replacesTaskId)).toEqual({
+      "routing:call_center": "cuold040",
+      "routing:ads": null,
+      "plain:main": null,
+    });
+    await holdAllBut(rows.map(x => x.id));
+    const claimed = await claimRequests(10);
+    // Each part claimed reads the old ticket before it makes anything, even one claimed in a later run.
+    expect(byPart(claimed, x => x.replaces_task_id)).toEqual({
+      "routing:call_center": "cuold040",
+      "routing:ads": "cuold040",
+      "plain:main": null,
+    });
+    // Back to the queue as the writer leaves a row it does not send now.
+    for (const x of claimed)
+      await svc("SELECT public.cockpit_clickup_writeback_release($1,$2,NULL,NULL,NULL) r", [x.id, x.claim_token]);
+    expect((await queueRows(routing.id)).map(x => x.state)).toEqual(["queued", "queued"]);
+  });
+
+  test("in the canary, an old ticket with no card cannot go out on the test card; routed for its own client it is held; once requests open it goes", async () => {
+    await importTicket("cuold034", "general_tech", []);
+    await importTicket("cuold035", "general_tech", []);
+    await mode("apply_limited", [TEST_CARD]);
+    const imp34 = await importRow("cuold034");
+    expect(imp34.client_task_id).toBeNull();
+    expect((await get(SM, imp34.id)).canRoute).toBe(true);
+    expect(
+      await refusedCode(SM, submitSql, submitArgs({ type: "general_tech", client: TEST_CARD, answers: { details: "x" }, replaces: "cuold034" })),
+    ).toEqual({
+      message:
+        "This old ticket has no client card, so it cannot go out on the internal test card. Route it for its own client, or with none; it waits until requests open to everyone.",
+      code: "55000",
+    });
+    expect(await importRow("cuold034")).toMatchObject({ state: "imported", routed_to: null });
+    // For its own client it is filed held: nothing reaches ClickUp until requests open.
+    const held = await submit(SM, { type: "general_tech", client: ACME, answers: { details: "x" }, replaces: "cuold034" });
+    expect(held).toMatchObject({ state: "sending", held: true });
+    expect((await get(SM, held.id)).held).toBe(true);
+    // Once requests open to everyone, a ticket with no card may go on any card.
+    await mode("apply");
+    const sent = await submit(SM, { type: "general_tech", client: TEST_CARD, answers: { details: "y" }, replaces: "cuold035" });
+    expect(sent).toMatchObject({ state: "sending", held: false });
+  });
+
+  test("a team-only seat cannot route an old ticket with no client, which its queue and the request panel never show it", async () => {
+    await mode("apply");
+    await importTicket("cuold036", "low_show_rate", []);
+    const imp = await importRow("cuold036");
+    expect(imp.client_task_id).toBeNull();
+    expect((await read(CALL, "team")).rows.some((r: Row) => r.id === imp.id)).toBe(false);
+    expect(await refused(CALL, "SELECT public.cockpit_request_get($1)", [imp.id])).toBe(NOT_YOURS);
+    expect(await canRoute(CALL, "cuold036")).toBe(false);
+    expect(await submitRefused(CALL, { type: "low_show_rate", client: ACME, replaces: "cuold036" })).toBe(
+      "Only that team, an editor, an admin or the CEO can route this old ticket.",
+    );
+    expect(await importRow("cuold036")).toMatchObject({ state: "imported" });
+    // The CSM (call centre is one of its teams, and it is not team-only) routes it.
+    expect((await read(CSM, "team")).rows.find((r: Row) => r.id === imp.id)).toMatchObject({ canRoute: true });
+    expect((await submit(CSM, { type: "low_show_rate", client: ACME, replaces: "cuold036" })).state).toBe("sending");
+  });
+
+  test("a team-only seat named an editor keeps its client limit: All requests and its count, the request panel, cancel and Route", async () => {
+    await mode("apply");
+    const callId = await memberId(CALL);
+    await q("INSERT INTO public.cockpit_forms_editors(member_id, added_by) VALUES($1,'aziz@maharamedia.com')", [callId]);
+    try {
+      expect((await one<Row>(CALL, "SELECT public.cockpit_request_types_read() r")).seat).toMatchObject({ editor: true, all: true });
+      const acme = await submit(CSM, { type: "general_csm", client: ACME, answers: { details: "Acme only" } });
+      const beta = await submit(CSM, { type: "general_csm", client: BETA, answers: { details: "Beta only" } });
+      const none = await submit(SM, { type: "general_tech", answers: { details: "No client" } });
+      const all = await read(CALL, "all");
+      const ids = all.rows.map((r: Row) => r.id);
+      expect(ids).toContain(acme.id);
+      expect(ids).not.toContain(beta.id);
+      expect(ids).not.toContain(none.id);
+      expect(all.rows.every((r: Row) => r.clientName === "Acme Interiors")).toBe(true);
+      expect(all.views.find((v: Row) => v.key === "all").count).toBe(
+        await count("SELECT count(*) n FROM public.cockpit_requests WHERE client_name='Acme Interiors'"),
+      );
+      expect(await refused(CALL, "SELECT public.cockpit_request_get($1)", [beta.id])).toBe(NOT_YOURS);
+      expect(await refused(CALL, "SELECT public.cockpit_request_get($1)", [none.id])).toBe(NOT_YOURS);
+      expect((await get(CALL, acme.id)).canCancel).toBe(true);
+      expect(await refused(CALL, "SELECT public.cockpit_request_cancel($1,'Not mine')", [beta.id])).toBe(
+        "Only the person who asked, an editor, an admin or the CEO can cancel this request.",
+      );
+      expect((await request(beta.id)).state).toBe("sending");
+      // Route: its own client's old ticket yes, another client's no.
+      await importTicket("cuold037", "low_show_rate", ["beta build"]);
+      await importTicket("cuold038", "low_show_rate", ["acme interiors"]);
+      expect(await canRoute(CALL, "cuold037")).toBe(false);
+      expect(await canRoute(CALL, "cuold038")).toBe(true);
+      // An editor who is not team-only still sees everything.
+      const video = (await read(VIDEO, "all")).rows.map((r: Row) => r.id);
+      for (const id of [acme.id, beta.id, none.id]) expect(video).toContain(id);
+      expect(await canRoute(VIDEO, "cuold037")).toBe(true);
+    } finally {
+      await q("DELETE FROM public.cockpit_forms_editors WHERE member_id=$1", [callId]);
+    }
+    expect(await refused(CALL, "SELECT public.cockpit_requests_read('all')")).toBe("Only an editor, an admin or the CEO can see all requests.");
+  });
+
+  test("the duplicate answer for an old form ticket names the queue it waits in; a seat that may open it gets Open it", async () => {
+    await mode("apply");
+    await importTicket("cuold039", "client_pause", ["delta homes"]);
+    const imp = await importRow("cuold039");
+    expect(imp.client_task_id).toBe("taskdelta1");
+    expect(await submit(CSM, { type: "client_pause", client: "taskdelta1" })).toMatchObject({
+      state: "duplicate",
+      duplicateOf: null,
+      note: "An open client pause request for Delta Homes already exists. It came in through the old ClickUp form and waits in the Operations / Tech queue.",
+    });
+    expect(await submit(SM, { type: "client_pause", client: "taskdelta1" })).toMatchObject({
+      state: "duplicate",
+      duplicateOf: imp.id,
+      note: "An open client pause request for Delta Homes already exists. Open it instead.",
+    });
+  });
+
+  test("going back to a version never turns Request Type back on; it may turn it off", async () => {
+    await mode("apply");
+    const start = await typeRow("company_name");
+    expect(start.set_request_type).toBe(true);
+    await svc(
+      "SELECT public.cockpit_request_type_rt_off('company_name','ClickUp moved or renamed a task after its Request Type was set, so Request Type is off for this type.') r",
+    );
+    const off = await typeRow("company_name");
+    expect(off).toMatchObject({ set_request_type: false, version: start.version + 1 });
+    const saved = await typeSave(SM, "company_name", { label: "Company name change" }, off.version);
+    expect(saved.setRequestType).toBe(false);
+    const back = await one<Row>(SM, "SELECT public.cockpit_request_type_restore('company_name',$1,$2) r", [start.version, saved.version]);
+    expect(back).toMatchObject({ version: saved.version + 1, label: start.label, setRequestType: false });
+    expect(back.restoreNote).toBe(
+      `Request Type stays off. Version ${start.version} had it on, but it is off now; turn it on with its switch once the rehearsal ticket shows ClickUp keeps the task where it is.`,
+    );
+    expect((await typeRow("company_name")).set_request_type).toBe(false);
+    expect(
+      (await q("SELECT note FROM public.cockpit_request_type_versions WHERE key='company_name' AND version=$1", [back.version]))[0].note,
+    ).toBe(`Back to version ${start.version}. Request Type stays off.`);
+    expect(
+      (
+        await q(
+          "SELECT metadata FROM public.cockpit_audit_log WHERE action='request_type.restored' AND entity_id='company_name' ORDER BY created_at DESC LIMIT 1",
+        )
+      )[0].metadata,
+    ).toEqual({ version: back.version, from_version: start.version, requestTypeKeptOff: true });
+    // The writer's read and the next request say off too.
+    expect((await svc<Row>("SELECT public.cockpit_request_doctor_inputs() r")).types.find((t: Row) => t.key === "company_name").setRequestType).toBe(
+      false,
+    );
+    const sent = await submit(CSM, { type: "company_name", client: ACME, answers: { new_company_name: "Acme Interiors LLC" } });
+    expect((await queueOf(sent.id)).payload).toMatchObject({ setRequestType: false, typeVersion: back.version });
+    // The editor's switch turns it on; going back to a version that had it off turns it off.
+    const on = await typeSave(SM, "company_name", { set_request_type: true }, back.version);
+    expect(on.setRequestType).toBe(true);
+    expect(await one<Row>(SM, "SELECT public.cockpit_request_type_restore('company_name',$1,$2) r", [off.version, on.version])).toMatchObject({
+      setRequestType: false,
+      restoreNote: null,
+    });
+  });
+
+  test("the held notes are true before Send: none begins with Saved.", async () => {
+    const notes: string[] = [];
+    await mode("dry_run");
+    notes.push((await one<Row>(CEO, "SELECT public.cockpit_request_types_read() r")).writer.note);
+    await mode("apply_limited", [TEST_CARD]);
+    notes.push((await one<Row>(CEO, "SELECT public.cockpit_request_types_read() r")).writer.note);
+    notes.push((await preview(CEO, "general_tech", ACME, {})).writer.note);
+    await modeGone();
+    notes.push((await one<Row>(CEO, "SELECT public.cockpit_request_types_read() r")).writer.note);
+    await mode("apply");
+    expect(notes).toEqual([HELD, TESTING_CARD, TESTING_CARD, STALE]);
+    for (const note of notes) {
+      expect(note.startsWith("Saved")).toBe(false);
+      expect(note).toMatch(/you send is saved and goes to ClickUp/);
+    }
+  });
+});
+
+describe("review round 3: a create in doubt, the 2-minute check's clock, the canary for held requests, old tickets handled in ClickUp, a quiet writer", () => {
+  const read = (who: string, view: string) => one<Row>(who, "SELECT public.cockpit_requests_read($1,200) r", [view]);
+  const get = (who: string, id: string) => one<Row>(who, "SELECT public.cockpit_request_get($1) r", [id]);
+  const writer = async (who: string) => (await one<Row>(who, "SELECT public.cockpit_request_types_read() r")).writer;
+  const importTicket = (taskId: string, typeKey: string, tags: string[] = []) =>
+    svc<Row>("SELECT public.cockpit_request_import($1::jsonb) r", [
+      JSON.stringify([
+        {
+          taskId,
+          name: `Form Submission ${taskId}`,
+          url: `https://app.clickup.com/t/${taskId}`,
+          optionId: seedType(typeKey).request_type_option_id,
+          tags,
+          description: "From the old form.",
+          dateCreated: String(Date.now() - 3600_000),
+          priority: null,
+          dueAt: null,
+          status: "to do",
+          statusType: "open",
+        },
+      ]),
+    ]);
+  const importRow = async (taskId: string) =>
+    (await q("SELECT * FROM public.cockpit_requests WHERE imported_task_id=$1", [taskId]))[0];
+  /** The hourly read of All Tasks finished: every open task it found there, but these. */
+  const completeReadWithout = async (...gone: string[]) => {
+    const open = (await q<{ t: string }>("SELECT imported_task_id t FROM public.cockpit_requests WHERE source='import'"))
+      .map(x => x.t)
+      .filter(t => !gone.includes(t));
+    return svc<Row>("SELECT public.cockpit_request_import('[]'::jsonb, $1::text[]) r", [open]);
+  };
+  const canRoute = async (who: string, taskId: string) => {
+    await actor(db, who);
+    await db.exec("RESET ROLE");
+    try {
+      return (
+        await db.query<{ r: boolean }>(
+          "SELECT public.cockpit_request_can_route(r, public.cockpit_request_seat()) r FROM public.cockpit_requests r WHERE r.imported_task_id=$1",
+          [taskId],
+        )
+      ).rows[0].r;
+    } finally {
+      await asOwner();
+    }
+  };
+  const claimAs = async (id: string) => {
+    const token = uid();
+    await q(
+      "UPDATE public.cockpit_clickup_writeback_queue SET state='sending', claim_token=$2, claimed_at=now(), attempts=attempts+1 WHERE id=$1",
+      [id, token],
+    );
+    return token;
+  };
+  const stale = () =>
+    q(
+      "UPDATE public.cockpit_sync_state SET detail = jsonb_set(detail,'{at}',to_jsonb(now() - interval '16 minutes')) WHERE key='clickup-writeback:requests'",
+    );
+  const IN_CLICKUP = "Part of this request is already in ClickUp. Close it there.";
+  const OLD_HANDLED = "The old ticket was already moved or closed in ClickUp, so no new task was made. Check it there.";
+
+  test("a part whose create went out and lost its answer is never cancelled while it waits: after a run's time budget, a hand back at a switch flip or a 429 on the read that looks for it; a clean 429 and a refused create still can be", async () => {
+    await mode("apply");
+    const at = new Date().toISOString();
+    const lost = { steps: { create: { state: "started", at, startedAt: at } } };
+    const budget = await submit(CSM, { type: "general_csm", client: ACME, answers: { details: "Lost create, then the run's time was up" } });
+    const flip = await submit(CSM, { type: "general_csm", client: ACME, answers: { details: "Lost create, then a switch flip" } });
+    const read429 = await submit(CSM, { type: "general_csm", client: ACME, answers: { details: "Lost create, then a 429 on the read" } });
+    for (const r of [budget, flip, read429]) {
+      const row = await queueOf(r.id);
+      await holdAllBut([row.id]);
+      // The create POST went out and its answer was lost: unknown, the create on record, no task id.
+      await writerMoves(row.id, [{ state: "sending", progress: lost }, { state: "unknown", error: "ClickUp did not answer in time." }]);
+      expect((await get(CSM, r.id)).canCancel).toBe(false);
+    }
+    // 1. The next run's time budget ran out first: saved retry, its progress kept.
+    await writerMoves((await queueOf(budget.id)).id, [{ state: "retry", error: "Held for the next run." }]);
+    // 2. A switch flip: the run is not live for it and hands it back.
+    const flipRow = await queueOf(flip.id);
+    const token = await claimAs(flipRow.id);
+    expect(
+      await svc<Row>("SELECT public.cockpit_clickup_writeback_release($1,$2,NULL,$3,NULL) r", [
+        flipRow.id,
+        token,
+        "Waiting in the queue: requests are being tested on the canary card only.",
+      ]),
+    ).toEqual({ id: flipRow.id, state: "unknown" });
+    // 3. A 429 on the read that looks for the task: retry, the create still on record.
+    await writerMoves((await queueOf(read429.id)).id, [{ state: "retry", error: "ClickUp asked to wait (429).", progress: lost }]);
+    for (const r of [budget, flip, read429]) {
+      const row = await queueOf(r.id);
+      expect(row.task_id).toBeNull();
+      expect(row.progress.steps.create.state).toBe("started");
+      expect((await request(r.id)).state).toBe("sending");
+      expect((await get(CSM, r.id)).canCancel).toBe(false);
+      expect((await get(SM, r.id)).canCancel).toBe(false);
+      expect(await refused(CSM, "SELECT public.cockpit_request_cancel($1,'Not needed')", [r.id])).toBe(IN_CLICKUP);
+    }
+    expect((await partOf(budget.id)).state).toBe("retry");
+    expect((await partOf(flip.id)).state).toBe("unknown");
+    expect((await partOf(read429.id)).state).toBe("retry");
+    expect((await get(CSM, flip.id)).history.map((h: Row) => h.what)).toContain("Client Success: ClickUp did not answer; checked once requests open");
+    // A clean 429 on the POST itself: the writer forgets the create, so nothing can be in ClickUp.
+    const clean = await submit(CSM, { type: "general_csm", client: ACME, answers: { details: "A clean 429" } });
+    const cleanRow = await queueOf(clean.id);
+    await holdAllBut([cleanRow.id]);
+    await writerMoves(cleanRow.id, [{ state: "sending", progress: lost }, { state: "retry", error: "ClickUp asked to wait (429).", progress: { steps: {} } }]);
+    expect((await get(CSM, clean.id)).canCancel).toBe(true);
+    expect((await one<Row>(CSM, "SELECT public.cockpit_request_cancel($1,'Not needed') r", [clean.id])).state).toBe("cancelled");
+    // A create ClickUp refused (a 4xx) ends failed with the create on record: nothing was made, and it can be cancelled.
+    const refusedCreate = await submit(CSM, { type: "general_csm", client: ACME, answers: { details: "A refused create" } });
+    const refusedRow = await queueOf(refusedCreate.id);
+    await holdAllBut([refusedRow.id]);
+    await writerMoves(refusedRow.id, [{ state: "sending", progress: lost }, { state: "failed", error: "ClickUp rejected the request (400)." }]);
+    expect((await request(refusedCreate.id)).state).toBe("failed");
+    expect((await get(CSM, refusedCreate.id)).canCancel).toBe(true);
+    expect((await one<Row>(CSM, "SELECT public.cockpit_request_cancel($1,'Filed again as a new request.') r", [refusedCreate.id])).state).toBe(
+      "cancelled",
+    );
+  });
+
+  test("a routing request whose create is in doubt keeps its old ticket routed: cancel is refused, so the ticket is never offered twice", async () => {
+    await mode("apply");
+    await importTicket("cuold300", "general_tech", []);
+    const routing = await submit(SM, { type: "general_tech", answers: { details: "Route me" }, replaces: "cuold300" });
+    const row = await queueOf(routing.id);
+    await holdAllBut([row.id]);
+    await writerMoves(row.id, [
+      { state: "sending", progress: { steps: { create: { state: "started", at: new Date().toISOString() } } } },
+      { state: "retry", error: "ClickUp asked to wait (429)." },
+    ]);
+    expect(await refused(SM, "SELECT public.cockpit_request_cancel($1,'Wrong type')", [routing.id])).toBe(IN_CLICKUP);
+    expect(await importRow("cuold300")).toMatchObject({ state: "routed", routed_to: routing.id });
+    expect(await canRoute(SM, "cuold300")).toBe(false);
+  });
+
+  test("the 2-minute check's payload says what the part's steps did: Request Type only when the cockpit set it, and when the owner and Request Type were written, not when the part was delivered", async () => {
+    await mode("apply");
+    const t0 = Date.now();
+    const iso = (minutesAgo: number) => new Date(t0 - minutesAgo * 60_000).toISOString();
+    const deliver = async (details: string, steps: Row) => {
+      const s = await submit(SM, { type: "general_tech", answers: { details } });
+      const row = await queueOf(s.id);
+      // Frozen with Request Type on, as a type with the switch on is.
+      await q("UPDATE public.cockpit_clickup_writeback_queue SET payload = jsonb_set(payload,'{setRequestType}','true'::jsonb) WHERE id=$1", [row.id]);
+      await holdAllBut([row.id]);
+      const task = `cu-made-${row.id.slice(-6)}`;
+      await writerMoves(row.id, [
+        { state: "delivered", task_id: task, delivered_at: new Date().toISOString(), progress: { task: { id: task }, steps } },
+      ]);
+      return (await verifyOf(s.id)).payload as Row;
+    };
+    const ms = (v: string | null) => (v === null ? null : Date.parse(v));
+    // The card comment was retried for 25 minutes after the task's last write: the check is timed from the writes.
+    const late = await deliver("Card comment retried", {
+      create: { state: "done", at: iso(31) },
+      owner_due_priority: { state: "done", at: iso(30) },
+      request_type: { state: "done", at: iso(28) },
+      card_comment: { state: "done", at: iso(0) },
+    });
+    expect(late.setRequestType).toBe(true);
+    expect(ms(late.ownerAt)).toBe(ms(iso(30)) as number);
+    expect(ms(late.madeAt)).toBe(ms(iso(28)) as number);
+    // Request Type found already set counts as set; a no-template part's owner came with the create.
+    const unchanged = await deliver("Request Type already there", {
+      create: { state: "done", at: iso(5) },
+      request_type: { state: "unchanged", at: iso(4) },
+    });
+    expect(unchanged).toMatchObject({ setRequestType: true });
+    expect(ms(unchanged.ownerAt)).toBe(ms(iso(5)) as number);
+    expect(ms(unchanged.madeAt)).toBe(ms(iso(4)) as number);
+    // Renamed option: Request Type was left empty, so a move after it is never Request Type's doing.
+    const skipped = await deliver("Option renamed", {
+      create: { state: "done", at: iso(20) },
+      request_type: { state: "skipped", at: iso(19) },
+    });
+    expect(skipped.setRequestType).toBe(false);
+    expect(ms(skipped.madeAt)).toBe(ms(iso(20)) as number);
+    // Another value already there, or never reached (the ladder delivered the task with a note).
+    const mismatch = await deliver("Another value there", { create: { state: "done", at: iso(3) }, request_type: { state: "mismatch", at: iso(2) } });
+    expect(mismatch.setRequestType).toBe(false);
+    const neverReached = await deliver("Gave up at the tag", { create: { state: "done", at: iso(321) }, tag: { state: "started", at: iso(300) } });
+    expect(neverReached.setRequestType).toBe(false);
+    expect(ms(neverReached.madeAt)).toBe(ms(iso(321)) as number);
+    // An unreadable time is left out, never a guess (PostgreSQL alone would read "yesterday" as a time).
+    for (const at of ["yesterday", "soon", "2026-10-27"]) {
+      const odd = await deliver(`Odd time ${at}`, { create: { state: "done", at } });
+      expect(odd).toMatchObject({ ownerAt: null, madeAt: null, setRequestType: false });
+    }
+  });
+
+  test("E-CANARY: a request filed held before the test, routing an old ticket with no card onto the test card, never goes out during it; one whose old ticket is the test card's goes; once requests open both go", async () => {
+    await importTicket("cuold301", "general_tech", []);
+    await importTicket("cuold302", "general_tech", ["mahara test card"]);
+    await importTicket("cuold303", "general_tech", []);
+    expect((await importRow("cuold302")).client_task_id).toBe(TEST_CARD);
+    // Filed held before the test: in a dry run, and while the writer had not reported (unknown).
+    await mode("dry_run");
+    const noCard = await submit(SM, { type: "general_tech", client: TEST_CARD, answers: { details: "No card, dry run" }, replaces: "cuold301" });
+    const ownCard = await submit(SM, { type: "general_tech", client: TEST_CARD, answers: { details: "The test card's own" }, replaces: "cuold302" });
+    await modeGone();
+    const quiet = await submit(SM, { type: "general_tech", client: TEST_CARD, answers: { details: "No card, writer quiet" }, replaces: "cuold303" });
+    for (const r of [noCard, ownCard, quiet]) expect(r).toMatchObject({ state: "sending", held: true });
+    const rows = [...(await queueRows(noCard.id)), ...(await queueRows(ownCard.id)), ...(await queueRows(quiet.id))];
+    await holdAllBut(rows.map(x => x.id));
+    // The rehearsal: only the test card's own old ticket goes; the other two stay held.
+    await mode("apply_limited", [TEST_CARD]);
+    const claimed = await claimRequests(10);
+    expect(claimed.map(x => [x.source_id, x.replaces_task_id, x.replaces_client_task_id])).toEqual([[ownCard.id, "cuold302", TEST_CARD]]);
+    expect((await get(SM, noCard.id)).held).toBe(true);
+    expect((await get(SM, quiet.id)).held).toBe(true);
+    expect((await get(SM, ownCard.id)).held).toBe(false);
+    for (const x of claimed) await svc("SELECT public.cockpit_clickup_writeback_release($1,$2,NULL,NULL,NULL) r", [x.id, x.claim_token]);
+    // Requests open to everyone: a ticket with no card may go on any card.
+    await mode("apply");
+    const open = await claimRequests(10);
+    expect(open.map(x => [x.source_id, x.replaces_client_task_id]).sort()).toEqual(
+      [
+        [noCard.id, null],
+        [ownCard.id, TEST_CARD],
+        [quiet.id, null],
+      ].sort(),
+    );
+    for (const x of open) await svc("SELECT public.cockpit_clickup_writeback_release($1,$2,NULL,NULL,NULL) r", [x.id, x.claim_token]);
+    // A request that routes nothing carries no old ticket's card.
+    const plain = await submit(SM, { type: "general_tech", client: TEST_CARD, answers: { details: "Routes nothing" } });
+    await holdAllBut([(await queueOf(plain.id)).id]);
+    const [p] = await claimRequests(10);
+    expect([p.source_id, p.replaces_task_id, p.replaces_client_task_id]).toEqual([plain.id, null, null]);
+    await svc("SELECT public.cockpit_clickup_writeback_release($1,$2,NULL,NULL,NULL) r", [p.id, p.claim_token]);
+  });
+
+  test("an old ticket a complete hourly read no longer finds open on All Tasks leaves the queues: no Route, no lifecycle duplicate, refused as routed; found again, it is back", async () => {
+    await mode("apply");
+    await importTicket("cuold311", "client_pause", ["gamma design"]);
+    const imp = await importRow("cuold311");
+    expect(imp).toMatchObject({ client_task_id: GAMMA, state: "imported", import_left_at: null });
+    expect((await read(SM, "team")).rows.find((r: Row) => r.id === imp.id)).toMatchObject({ canRoute: true, importHandled: false });
+    expect(await submit(SM, { type: "client_pause", client: GAMMA })).toMatchObject({ state: "duplicate", duplicateOf: imp.id });
+    // A read cut short says nothing about what left.
+    expect(await svc<Row>("SELECT public.cockpit_request_import('[]'::jsonb, NULL) r")).toEqual({ imported: 0, skipped: [] });
+    expect((await importRow("cuold311")).import_left_at).toBeNull();
+    // Moved, closed or deleted in ClickUp: the complete read no longer finds it.
+    expect(await completeReadWithout("cuold311")).toEqual({ imported: 0, skipped: [], left: 1, back: 0 });
+    expect((await importRow("cuold311")).import_left_at).not.toBeNull();
+    const team = await read(SM, "team");
+    expect(team.rows.some((r: Row) => r.id === imp.id)).toBe(false);
+    expect(team.views.find((v: Row) => v.key === "team").count).toBe(
+      (await read(SM, "team")).rows.length >= 200 ? team.views.find((v: Row) => v.key === "team").count : team.rows.length,
+    );
+    expect(await canRoute(SM, "cuold311")).toBe(false);
+    const panel = await get(SM, imp.id);
+    expect(panel).toMatchObject({ state: "imported", canRoute: false, importHandled: true });
+    expect(panel.history.map((h: Row) => h.what)).toContain("Left All Tasks: moved, closed or deleted in ClickUp");
+    expect(await submitRefused(SM, { type: "client_pause", client: GAMMA, replaces: "cuold311" })).toBe("That old ticket was already routed.");
+    expect((await importRow("cuold311")).state).toBe("imported");
+    // It no longer stands in for an open pause on the card.
+    const fresh = await submit(SM, { type: "client_pause", client: GAMMA });
+    expect(fresh.state).toBe("sending");
+    await one(SM, "SELECT public.cockpit_request_cancel($1,'Test') r", [fresh.id]);
+    const a = await q("SELECT metadata FROM public.cockpit_audit_log WHERE action='request.import_left' ORDER BY created_at");
+    expect(a.at(-1)?.metadata).toEqual({ left: ["cuold311"], back: [] });
+    // Back on All Tasks: back in the queue, with Route.
+    expect(await completeReadWithout()).toEqual({ imported: 0, skipped: [], left: 0, back: 1 });
+    expect((await importRow("cuold311")).import_left_at).toBeNull();
+    expect((await read(SM, "team")).rows.find((r: Row) => r.id === imp.id)).toMatchObject({ canRoute: true, importHandled: false });
+    expect((await get(SM, imp.id)).history.map((h: Row) => h.what)).toContain("Back on All Tasks in ClickUp");
+  });
+
+  test("a routing request the writer skipped because the old ticket was handled in ClickUp keeps it routed: Route never shows again, so the loop cannot start", async () => {
+    await mode("apply");
+    await importTicket("cuold321", "general_csm", ["acme interiors"]);
+    const imp = await importRow("cuold321");
+    const routing = await submit(CSM, { type: "general_csm", client: ACME, answers: { details: "Route it" }, replaces: "cuold321" });
+    const row = await queueOf(routing.id);
+    await holdAllBut([row.id]);
+    await writerMoves(row.id, [{ state: "skipped", error: OLD_HANDLED, progress: { steps: {} } }]);
+    expect((await request(routing.id)).state).toBe("failed");
+    expect(await importRow("cuold321")).toMatchObject({ state: "routed", routed_to: routing.id });
+    expect(await count("SELECT count(*) n FROM public.cockpit_audit_log WHERE action='request.unrouted' AND entity_id=$1", [imp.id])).toBe(0);
+    expect((await read(CSM, "team")).rows.some((r: Row) => r.id === imp.id)).toBe(false);
+    expect(await canRoute(CSM, "cuold321")).toBe(false);
+    // Both parts of a two-part routing request skipped the same way: kept routed too.
+    await importTicket("cuold322", "low_schedule_rate", ["beta build"]);
+    const two = await submit(SM, { type: "low_schedule_rate", client: BETA, answers: { schedule_rate_issue: OPT_BOTH }, replaces: "cuold322" });
+    for (const r of await queueRows(two.id)) {
+      await holdAllBut([r.id]);
+      await writerMoves(r.id, [{ state: "skipped", error: OLD_HANDLED }]);
+    }
+    expect((await request(two.id)).state).toBe("failed");
+    expect((await importRow("cuold322")).state).toBe("routed");
+    // A routing request that fails for another reason after its old ticket left All Tasks keeps it routed;
+    // one cancelled after that too: it is not the cockpit's to route any more.
+    await importTicket("cuold323", "general_tech", []);
+    await importTicket("cuold324", "general_tech", []);
+    const failing = await submit(SM, { type: "general_tech", answers: { details: "Fails" }, replaces: "cuold323" });
+    await mode("dry_run");
+    const held = await submit(SM, { type: "general_tech", answers: { details: "Held, then cancelled" }, replaces: "cuold324" });
+    await mode("apply");
+    await completeReadWithout("cuold323", "cuold324");
+    const f = await queueOf(failing.id);
+    await holdAllBut([f.id]);
+    await writerMoves(f.id, [{ state: "failed", error: "ClickUp rejected the request (400)." }]);
+    expect((await request(failing.id)).state).toBe("failed");
+    expect((await importRow("cuold323")).state).toBe("routed");
+    expect((await one<Row>(SM, "SELECT public.cockpit_request_cancel($1,'Done in ClickUp') r", [held.id])).state).toBe("cancelled");
+    expect((await importRow("cuold324")).state).toBe("routed");
+  });
+
+  test("a writer that stops reporting after requests opened is said as such: the team is told it is down and who to tell, a held request waits for it; never 'not switched on yet'", async () => {
+    const SILENT =
+      "Requests cannot be sent just now: the requests writer has not reported in the last 15 minutes. Use the ClickUp request form, and tell the systems manager.";
+    await mode("apply");
+    await stale();
+    expect(await writer(CSM)).toEqual({ mode: "unknown", canSend: false, held: false, note: SILENT });
+    expect(await refusedCode(CSM, submitSql, submitArgs({ type: "general_csm", client: ACME, answers: { details: "x" } }))).toEqual({
+      message: SILENT,
+      code: "55000",
+    });
+    // Editors still file, held, and the request says what it waits for.
+    expect(await writer(CEO)).toEqual({ mode: "unknown", canSend: true, held: true, note: STALE });
+    const held = await submit(SM, { type: "general_tech", answers: { details: "Filed while the writer is quiet" } });
+    expect(held).toMatchObject({ held: true, note: STALE });
+    expect(await get(SM, held.id)).toMatchObject({
+      held: true,
+      heldNote: "Saved, not sent yet: the requests writer has not reported in the last 15 minutes. It goes to ClickUp once the writer runs again.",
+    });
+    // Quiet during the canary: the team still reads that requests are being tested.
+    await mode("apply_limited", [TEST_CARD]);
+    await stale();
+    expect((await writer(CSM)).note).toBe(TESTING);
+    expect((await get(SM, held.id)).heldNote).toBe("Saved, not sent yet. It goes to ClickUp once requests open.");
+    // Never switched on, or quiet in a dry run: not switched on yet.
+    await mode("dry_run");
+    await stale();
+    expect((await writer(CSM)).note).toBe(NOT_ON);
+    await modeGone();
+    expect((await writer(CSM)).note).toBe(NOT_ON);
+    expect((await q<{ r: Row }>("SELECT public.cockpit_clickup_requests_mode() r"))[0].r).toMatchObject({ mode: "unknown", lastMode: null });
+    await mode("apply");
+    expect((await q<{ r: Row }>("SELECT public.cockpit_clickup_requests_mode() r"))[0].r).toMatchObject({ mode: "apply", lastMode: "apply" });
+    await one(SM, "SELECT public.cockpit_request_cancel($1,'Test') r", [held.id]);
   });
 });

@@ -2,24 +2,26 @@
  * Requests and task alerts: every file this build changes has exactly one
  * owner (docs/requests/CONTRACT.md section 8), and nothing else changed.
  *
- * It reads git: the files changed since the build's base (main 86ee4e84)
- * plus the untracked ones. It runs only on the build's own branch
- * (tickets-1026), before the build is committed onto main; on any other
- * checkout it is skipped, because later commits on main are not this
- * build's. Not in scripts/ship.sh for that reason.
+ * It reads git: the files changed since the build's base plus the untracked
+ * ones. The base is where the branch leaves main (the merge-base with
+ * origin/main: 86ee4e84 when the build began, 3f9f5c41 after the rebase of
+ * 2026-10-26), so main's own commits are never counted as this build's. It
+ * runs only on the build's own branch (tickets-1026), before the build is
+ * committed onto main; on any other checkout it is skipped. Not in
+ * scripts/ship.sh for that reason.
  */
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
-const BASE = "86ee4e84";
 const BRANCH = "tickets-1026";
 
 function git(...args: string[]): string | null {
   const out = spawnSync("git", args, { cwd: ROOT, encoding: "utf8" });
   return out.status === 0 ? out.stdout : null;
 }
+const BASE = git("merge-base", "HEAD", "origin/main")?.trim() || "3f9f5c41";
 const onBranch =
   git("rev-parse", "--abbrev-ref", "HEAD")?.trim() === BRANCH &&
   git("cat-file", "-e", `${BASE}^{commit}`) !== null;
@@ -53,7 +55,13 @@ const OWNERS: Record<string, string[]> = {
     "requestsTestkit.ts",
     "requests.test.ts",
     "taskActions.test.ts",
-  ].map(f => `supabase/functions/clickup-writeback/${f}`),
+    // Review R1 (2026-10-26): the writer's fixes, proven in their own file.
+    "reviewR1.test.ts",
+  ]
+    .map(f => `supabase/functions/clickup-writeback/${f}`)
+    // Retest round 2: the comment watch never digests the writer's own card
+    // comments (a request's link comment, any Cockpit ref).
+    .concat(["watch.ts", "watch.test.ts"].map(f => `supabase/functions/comment-watch/${f}`)),
   "mirror-alerts": [
     "supabase/migrations/20261026t_task_alerts.sql",
     "apps/media-buyer-cockpit/scripts/task-alerts-supabase.test.ts",
@@ -130,6 +138,8 @@ const OWNERS: Record<string, string[]> = {
       "pages/CockpitPage.tsx",
       "pages/team/TeamPage.tsx",
       "pages/AdminPage.tsx",
+      // Review R1, ask F13: the CEO's /ceo Today tab has Your tasks.
+      "pages/ceo/TodayTab.tsx",
       "dev/tasksHarness.ts",
     ].map(f => `apps/media-buyer-cockpit/src/${f}`),
     ...[
@@ -138,6 +148,8 @@ const OWNERS: Record<string, string[]> = {
       "pages/CsmPage.tsx",
       "pages/ClientPerformancePage.tsx",
       "pages/NoticesPage.tsx",
+      // Review R1, ask F6: the old Ask a team stays until requests are open for that client.
+      "lib/requestsOpen.ts",
     ].map(f => `apps/client-success-cockpit/src/${f}`),
     ...[
       "components/AppLayout.tsx",
@@ -174,6 +186,9 @@ const OWNERS: Record<string, string[]> = {
     ].map(f => `docs/requests/maps/${f}`),
     "apps/media-buyer-cockpit/scripts/requests-ownership.test.ts",
     "apps/media-buyer-cockpit/scripts/requests-fit-supabase.test.ts",
+    // The round 1 review's findings and verdicts, and the forms handover.
+    "docs/requests/REVIEW-R1-raw.txt",
+    "docs/forms/HANDOVER.md",
   ],
 };
 

@@ -478,9 +478,30 @@ export const WAITING = {
 } as const;
 /** Attempts that counted: claims that only held a row back for the switch (progress.held) are not tries. */
 export const triesOf = (item: RequestsItem) => Math.max(0, Number(item.attempts ?? 0) - Math.max(0, Number(item.progress?.held ?? 0) || 0));
-/** A request part whose ClickUp task exists: create settled with its id. */
-const taskMade = (item: RequestsItem, o: RequestOutcome) =>
-  item.kind === "request" && Boolean(o.taskId) && ["done", "mismatch"].includes(String(o.progress?.steps?.create?.state ?? ""));
+/**
+ * A request part whose ClickUp task exists: ClickUp answered its create with the task's id, or a task was adopted
+ * (review round 3: a create still started with its id counts, so a task whose read-back kept failing for the whole
+ * ladder is delivered with a note, never failed while it sits in ClickUp).
+ */
+export const taskMade = (item: RequestsItem, o: RequestOutcome) =>
+  item.kind === "request" && Boolean(o.taskId || o.progress?.steps?.create?.id);
+/**
+ * A request part whose create may have reached ClickUp with no task the cockpit holds: started and never adopted
+ * (an answer lost or with no id, two tasks matching, a search refused or unanswered). Failed would say nothing
+ * reached ClickUp and invite a second task, so at the end of the ladder it stays unknown for a person (review round 3).
+ */
+export const createInDoubt = (item: RequestsItem, o: RequestOutcome) =>
+  item.kind === "request" && !taskMade(item, o) && o.progress?.steps?.create?.state === "started";
+/** After the ladder, a create in doubt is read again this often (the ladder's last step), until a person settles it. */
+export const DOUBT_MINUTES = RETRY_MINUTES[RETRY_MINUTES.length - 1];
+export const STILL_CHECKING = `The cockpit checks ClickUp again every ${DOUBT_MINUTES / 60} hours.`;
+/** A settled part's note keeps the error's words but no promise of a next run: none follows once it is settled. */
+export const finalWords = (error: string | undefined) =>
+  String(error ?? "")
+    .split(/(?<=\.)\s+/)
+    .filter(s => !/\bnext run\b/i.test(s))
+    .join(" ")
+    .trim();
 
 type Tally = { requests: number; actions: number; checks: number };
 const tally = (): Tally => ({ requests: 0, actions: 0, checks: 0 });
@@ -512,6 +533,14 @@ export async function runRequests(deps: Deps, limit = 6): Promise<JobResult> {
   }
   const counts = { claimed: items.length, delivered: 0, dryRun: 0, skipped: 0, retry: 0, unknown: 0, failed: 0, held: 0 };
   const claimed = tally(), delivered = tally(), dry = tally();
+  // The old ticket each routing request replaces, so every part checks it before making its task (review R2).
+  // The claim names it on every part (replaces_task_id). On a database that does not send it yet, only the first
+  // part's payload names it, and that serves the parts claimed in the same run.
+  const routes = new Map<string, string>();
+  for (const item of items) {
+    const old = item.kind === "request" ? item.replaces_task_id || item.payload?.replacesTaskId : null;
+    if (old && item.payload?.requestId) routes.set(String(item.payload.requestId), String(old));
+  }
   const planned: Planned[] = [];
   const save = (id: string, patch: Row) => deps.rpc("cockpit_clickup_writeback_save", { p_id: id, p_token: token, p_patch: patch });
   /**
@@ -563,7 +592,15 @@ export async function runRequests(deps: Deps, limit = 6): Promise<JobResult> {
           counts.skipped += 1;
           continue;
         }
-        const live = item.kind === "task_action" && item.payload?.op === "verify" ? g.apply : g.live(item.payload?.clientTaskId);
+        // During the canary a request that routes an old form ticket goes only when that ticket's own card is a
+        // canary card, so the rehearsal never closes a real ticket on All Tasks (review round 3, E-CANARY). The
+        // claim keeps the same rule by the mode the writer last reported; this covers the run right after a
+        // switch flip, which still claims by the old mode.
+        const routesOld = item.kind === "request" && Boolean(item.replaces_task_id || routes.get(String(item.payload?.requestId)));
+        const live =
+          item.kind === "task_action" && item.payload?.op === "verify"
+            ? g.apply
+            : g.live(item.payload?.clientTaskId) && (!routesOld || g.live(item.replaces_client_task_id));
         if (!live) {
           // A dry run calls no provider: the plan comes from the frozen payload alone. The row is never
           // settled: it goes back to the queue, its progress untouched, and is sent once the switch lets it.
@@ -580,7 +617,8 @@ export async function runRequests(deps: Deps, limit = 6): Promise<JobResult> {
         const itemSave = async (patch: Row) => {
           await save(item.id, patch);
         };
-        const frozen = { ...item, steps: keys };
+        const routed = item.kind === "request" ? item.replaces_task_id || routes.get(String(item.payload?.requestId)) || null : null;
+        const frozen = { ...item, steps: keys, ...(routed ? { replaces_task_id: routed } : {}) };
         const o: RequestOutcome =
           item.kind === "request" ? await executeRequest(frozen, provider, itemSave, ctx) : await executeTaskAction(frozen, provider, itemSave, ctx);
         const now = deps.now();
@@ -596,16 +634,26 @@ export async function runRequests(deps: Deps, limit = 6): Promise<JobResult> {
               : gaveUp && taskMade(item, o)
                 // The task is in ClickUp: settling it failed would invite a second one. It is delivered, and
                 // the step that never finished is named on the part.
-                ? { state: "delivered", progress: o.progress, delivered_at: new Date(now).toISOString(), error: redact(`${SAY.unfinished} ${o.error ?? ""}`.trim()), ...taskId }
-                : o.state === "failed" || gaveUp
-                  ? { state: "failed", progress: o.progress, error: redact(o.error ?? GAVE_UP), ...taskId }
-                  : {
-                      state: o.state,
+                ? { state: "delivered", progress: o.progress, delivered_at: new Date(now).toISOString(), error: redact(`${SAY.unfinished} ${finalWords(o.error)}`.trim()), ...taskId }
+                : gaveUp && createInDoubt(item, o)
+                  // ClickUp may hold the task (two match, or an answer was lost): never "Nothing reached
+                  // ClickUp". It stays unknown, the guardian names it, and it is read again every 4 hours, so a
+                  // person who keeps one task and cancels the other sees it adopted.
+                  ? {
+                      state: "unknown",
                       progress: o.progress,
-                      error: o.error ? redact(o.error) : null,
-                      next_attempt_at: new Date(now + RETRY_MINUTES[Math.min(Math.max(tries - 1, 0), RETRY_MINUTES.length - 1)] * 60_000).toISOString(),
-                      ...taskId,
-                    };
+                      error: redact(`${o.error ?? ""} ${STILL_CHECKING}`.trim()),
+                      next_attempt_at: new Date(now + DOUBT_MINUTES * 60_000).toISOString(),
+                    }
+                  : o.state === "failed" || gaveUp
+                    ? { state: "failed", progress: o.progress, error: redact(o.error ?? GAVE_UP), ...taskId }
+                    : {
+                        state: o.state,
+                        progress: o.progress,
+                        error: o.error ? redact(o.error) : null,
+                        next_attempt_at: new Date(now + RETRY_MINUTES[Math.min(Math.max(tries - 1, 0), RETRY_MINUTES.length - 1)] * 60_000).toISOString(),
+                        ...taskId,
+                      };
         // Counted only once its state is saved: an item whose last save failed is counted as unknown below.
         await save(item.id, settle);
         const settled = settle.state as "delivered" | "skipped" | "failed" | "retry" | "unknown";

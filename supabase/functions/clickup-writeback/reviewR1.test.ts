@@ -169,7 +169,8 @@ describe("RT-2: once the task exists, a refused step never fails the part", () =
     await h.run();
     expect(row.state).toBe("delivered");
     expect(row.error).toContain(SAY.renamed);
-    expect(steps(row)).toMatchObject({ request_type: "mismatch", card_comment: "done" });
+    // Review R2: a renamed option is left empty on purpose (skipped), never written and never a failure.
+    expect(steps(row)).toMatchObject({ request_type: "skipped", card_comment: "done" });
   });
 
   it("the task deleted in ClickUp still fails the part (raising it again is right)", async () => {

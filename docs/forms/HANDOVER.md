@@ -28,7 +28,7 @@ The standing rules are in the repo `CLAUDE.md`: Supabase first, row security and
 | Eight read-only maps | `docs/forms/maps/*.md`: kickoff-path, blueprint-path, slack, typeform-inventory (43 forms), make-inventory (202 scenarios), clickup-ticketing, fathom, repo-forms |
 | Stage 1 contract | `docs/forms/STAGE1-CONTRACT.md` |
 | Ticketing contract, maps and review | `docs/requests/CONTRACT.md`, `docs/requests/maps/*.md` (types-and-sops covers all 31 types with SOP drafts; also alerts-and-tasks, today-and-shell, writers), `docs/requests/REVIEW-R1-raw.txt` |
-| Ticketing code | branch **`tickets-1026`** at `0b1dae4d` on GitHub (not merged, **not deployed**) |
+| Ticketing code | branch **`tickets-1026`** in the worktree below: HEAD `58d6b62f` (review round 1 fixes) on main `3f9f5c41`, with review rounds 2 and 3 and integration rounds 3 and 4 **uncommitted** in the worktree (not merged, **not deployed**; checked 2026-10-27) |
 | Worktree | `/Users/abdulazizwaheedi/mahara-cockpits/.claude/worktrees/forms-1025` (on branch tickets-1026, with node_modules) |
 | Memory | `~/.claude/projects/-Users-abdulazizwaheedi-mahara-cockpits/memory/forms-program.md` (plus native-release, csm-decks, forms-in-cockpits-queue) |
 | Shared session note | mahara-context `shared/sessions/20261025T170000Z-claude-forms-program-stage1.md` |
@@ -101,9 +101,9 @@ The standing rules are in the repo `CLAUDE.md`: Supabase first, row security and
 | Card data | **The CEO's:** clear the Google Sheet and the Slack DM `D09SHBK5G8H` that hold old card details (the agent does not delete data) | |
 | Built-in browser | **Not signed in to the cockpit.** The Blueprint presses on the test card and a look at the Settings screen need the CEO to sign in once | |
 
-## 5. Ticketing, task alerts and Your tasks: built, NOT reviewed or fixed, NOT deployed
+## 5. Ticketing, task alerts and Your tasks: built, reviewed and fixed through round 3, NOT deployed
 
-Branch `tickets-1026` (`0b1dae4d`, based on main `86ee4e84`).
+Branch `tickets-1026`: HEAD `58d6b62f` on main `3f9f5c41` (rebased from `86ee4e84`), with review rounds 2 and 3 and integration round 4 uncommitted in the worktree. Main has moved on since (`ef2262a1`, the upsell studio, read 2026-10-27): rebase before the commit (deploy step 0 below). Every confirmed finding of rounds 1 to 3 is fixed; `docs/requests/CONTRACT.md` sections 14 to 20 list each with its proof.
 
 **Build run:** wf_b0bbcac2-199.
 - Maps, contract and all five builders (db, writer, mirror-alerts, portal-screens, cockpit-screens) finished.
@@ -131,7 +131,7 @@ Branch `tickets-1026` (`0b1dae4d`, based on main `86ee4e84`).
 - a shared, byte-identical set pinned in check-shared: AlertsBell, the Your tasks card, the focus view, RequestForm;
 - wired into every cockpit's Today page and sidebar ("Ask a team").
 
-**Confirmed major findings to fix first** (details in REVIEW-R1-raw.txt):
+**Round 1's confirmed major findings** (all fixed; details in REVIEW-R1-raw.txt and CONTRACT sections 14 to 20):
 
 *Security:*
 - **SEC-1:** the team queue ignores the team-only client limit.
@@ -157,23 +157,24 @@ Branch `tickets-1026` (`0b1dae4d`, based on main `86ee4e84`).
 - **D3:** the empty sentence is false where the mirror is not linked.
 
 **Next steps:**
-1. Resume the workflow:
-   ```
-   Workflow({scriptPath: "/Users/abdulazizwaheedi/.claude/projects/-Users-abdulazizwaheedi-mahara-cockpits--claude-worktrees-forms-1025/a94c7658-4b90-494c-87ef-26f7d24c1e6e/workflows/scripts/tickets-alerts-build-wf_b0bbcac2-199.js", resumeFromRunId: "wf_b0bbcac2-199"})
-   ```
-   This works only in the same Claude session. Otherwise, re-run verify, fix, retest and review round 2 from REVIEW-R1-raw.txt by hand.
-2. When round 2 has no blockers or majors, deploy in the order the integrate step wrote down. In short:
-   1. Commit, rebase onto main and push.
-   2. Deploy `clickup-writeback` first (`verify_jwt` off; leave both request switches unset).
-   3. Migrations r, s, t: dry-run each inside `BEGIN; ... ROLLBACK;` with the file's own BEGIN and COMMIT stripped, then apply. The read-backs are in REVIEW-R1-raw.txt "STEP" lines 2 to 4.
-   4. Deploy `cockpit-tasks` (`verify_jwt` off). Add `TASKS_CRON_SECRET` as a function secret and `cockpit_tasks_cron_secret` in the vault, then run its doctor.
-   5. Kick the first seats run.
-   6. Run the requests doctor.
-   7. Ship media-buyer, creative, video-editor, sales.
-   8. Link the unmatched seats (2 call centre, 1 sales) in /requests/settings.
-   9. Release the guardian.
-   10. On the CEO's yes, `CLICKUP_WRITEBACK_APPLY_REQUESTS=true` with the canary card, then 5 [TEST] tickets on `86eywg1cq`.
-   11. Ship client-success **last**.
+1. Review rounds 1 to 3 are fixed and integration round 4 is green (CONTRACT section 20). The workflow that built it is finished; nothing is left to resume.
+2. Deploy in the order of CONTRACT section 12, steps 0 to 10, each with the read-back that proves it there. In short:
+   0. Rebase the branch onto the current `origin/main` (`ef2262a1` on 2026-10-27; `CsmPage.tsx` and `scripts/check-shared.sh` changed on both sides and merge cleanly), run `requests-ownership.test.ts` (3 pass) and the section 9 suites again, commit and push to main. Every later step deploys from that commit.
+   1. Deploy `clickup-writeback` first, `verify_jwt` off, both request switches (`CLICKUP_WRITEBACK_APPLY_REQUESTS`, `CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS`) unset. It must be live before migration t.
+   2. Deploy `comment-watch`, `verify_jwt` off, before any request reaches ClickUp (the writer's link comments on the test card are never digested).
+   3. Migrations r, then s, then t: dry-run each inside `BEGIN; ... ROLLBACK;` with the file's own BEGIN and COMMIT stripped, then apply it with its migration name through Composio `SUPABASE_APPLY_A_MIGRATION`.
+   4. Deploy `cockpit-tasks` (new), `verify_jwt` off; the function secret `TASKS_CRON_SECRET` and the same value in the vault as `cockpit_tasks_cron_secret`; then its doctor.
+   5. The first seats run (`cockpit_task_mirror_kick('seats')`, or wait for :11): baseline, members, seat links, fields, templates, old form tickets.
+   6. The requests doctor (`{"job":"requests_doctor"}`).
+   7. `scripts/ship.sh media-buyer` ("People in ClickUp" lives only in its `/requests/settings`).
+   8. Link the unmatched seats (2 call centre, 1 sales) in People in ClickUp; each link starts a seats read at once.
+   9. `scripts/ship.sh creative`, `video-editor`, `sales`, then `client-success` **last**.
+   10. Release the guardian on the VPS (its rows need steps 1 to 6).
+3. The CEO's C3 batch, on his yes (CONTRACT section 12, after step 10):
+   - `CLICKUP_WRITEBACK_APPLY_REQUESTS=true` with `CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS=86eywg1cq`; Set Request Type on for the five types; five `[TEST]` requests on the test card (`general_tech`, `general_marketing`, `general_csm`, `low_show_rate`, `new_script`): five tasks with owners, five link comments on the card, five channel posts, each 2-minute check read; a tick, a comment and Mark done from one task's focus view (three `task_action` rows `delivered`); then the five tasks set to cancelled, never deleted.
+   - Read `GET list/901816559981` once for a done status (Mark done on a card's subtask).
+   - Then clear `CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS`. Read back `clickup-writeback:requests` mode `apply` and no request left held (the held ones, routing requests whose old ticket is not on the test card included, go on the next runs by themselves).
+   - The systems manager checks the draft SOP steps and re-saves the drifted templates; the media buyer of record is named on the eight media buyer types, both in Requests settings.
 3. Plan 3.3 corrections found by the types map:
    - row 8's Media template is `t-86exj3g1a`, not `t-86exj3h8f`;
    - row 21's template sends the retired card form, so it is withheld and safe SOP steps were drafted instead.

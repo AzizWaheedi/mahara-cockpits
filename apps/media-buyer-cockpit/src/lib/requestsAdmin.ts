@@ -126,18 +126,26 @@ export const readTypeVersions = (client: SupabaseClient, key: string) =>
     { p_key: key },
   );
 
-/** Writes an older version back as a new one. */
+/**
+ * Writes an older version back as a new one. It never turns Set Request Type
+ * on: when the version had it on and the type has it off now, it stays off
+ * and `restoreNote` says so (review round 2); else `restoreNote` is null.
+ */
 export const restoreRequestType = (
   client: SupabaseClient,
   key: string,
   version: number,
   expectedVersion: number,
 ) =>
-  callRequests<TypeView>(client, "cockpit_request_type_restore", {
-    p_key: key,
-    p_version: version,
-    p_expected_version: expectedVersion,
-  });
+  callRequests<TypeView & { restoreNote?: string | null }>(
+    client,
+    "cockpit_request_type_restore",
+    {
+      p_key: key,
+      p_version: version,
+      p_expected_version: expectedVersion,
+    },
+  );
 
 /** The ClickUp members an editor may name as an owner. */
 export const readRequestPeople = (client: SupabaseClient) =>
@@ -203,7 +211,9 @@ export const ALERT_KIND_WORDS: Record<
   },
   status: {
     label: "Your task moved",
-    hint: "When someone else changes its status.",
+    // ClickUp names nobody as the mover, so a seat's own move there alerts
+    // it too (contract 3.2, F9): the hint never says "someone else".
+    hint: "When its status changes, also when you move it in ClickUp yourself.",
   },
   request_done: {
     label: "A request of yours is done",

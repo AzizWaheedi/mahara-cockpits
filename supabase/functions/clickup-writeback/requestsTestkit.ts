@@ -17,6 +17,7 @@
 // the folder field id and the Request Type option ids, which are ClickUp's
 // own (docs/requests/request-types.json) and no secret.
 
+import { providerTools } from "../cockpit-media-api/tools.ts";
 import type { Provider } from "./queue.ts";
 import type { Row } from "./rules.ts";
 import { type Deps, runRequests } from "./run.ts";
@@ -33,6 +34,10 @@ export const LISTS = {
   allTasks: "901816723226",
   cards: "901816559981",
   pipeline: "901816720767",
+  /** WhatsApp Reconnection: a status change there messages the client, so Mark done is not offered. */
+  whatsapp: "901821803697",
+  /** Any other list a seat's task may sit on (invented). */
+  other: "901800000099",
 } as const;
 export const LIST_NAMES: Record<string, string> = {
   [LISTS.tech]: "Operations / Tech",
@@ -43,6 +48,8 @@ export const LIST_NAMES: Record<string, string> = {
   [LISTS.allTasks]: "All Tasks",
   [LISTS.cards]: "Clients - Mahara",
   [LISTS.pipeline]: "Video Pipeline",
+  [LISTS.whatsapp]: "WhatsApp Reconnection",
+  [LISTS.other]: "Sales Follow-ups",
 };
 /** Invented ClickUp users, by role. */
 export const PEOPLE = { systemsManager: 700001, strategist: 700002, csm: 700003, mediaBuyer: 700004, api: 700009 } as const;
@@ -536,6 +543,32 @@ export class FakeClickUp {
   }
 }
 
+/**
+ * A fetch that answers ClickUp's v2 API from a FakeClickUp, so a test can drive the writer through the real
+ * providerTools (cockpit-media-api/tools.ts) and its receipts. A refusal answers with its status, as ClickUp
+ * does; a lost answer (`lose`) drops the connection after the call landed. `dropBody` answers 200 for a call
+ * that landed, with a body that breaks while it is read.
+ */
+export function clickupFetch(clickup: FakeClickUp, opts: { dropBody?: (c: Call) => boolean } = {}): typeof fetch {
+  return async (input, init) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    const method = String(init?.method ?? "GET").toUpperCase();
+    const body = typeof init?.body === "string" && init.body ? JSON.parse(init.body) : undefined;
+    const call: Call = { actionId: "tools", provider: "clickup", method, path: `${url.pathname.replace(/^\/api\/v2\//, "")}${url.search}`, body };
+    let out: Row;
+    try {
+      out = await clickup.handle(call);
+    } catch (e) {
+      const refused = /rejected the request \((\d{3})\)(?::\s*([\s\S]*))?/.exec(String(e instanceof Error ? e.message : e));
+      if (!refused) throw e;
+      return new Response(JSON.stringify({ err: refused[2] ?? "", ECODE: "FAKE_001" }), { status: Number(refused[1]), headers: { "Content-Type": "application/json" } });
+    }
+    if (opts.dropBody?.(call))
+      return new Response(new ReadableStream({ start: c => c.error(new TypeError("The connection dropped while the answer was read.")) }), { status: 200 });
+    return new Response(JSON.stringify(out), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+}
+
 // --- The fake queue (migrations 20261009f and 20261026r) -----------------------------------------
 
 export type QueueRow = {
@@ -560,6 +593,8 @@ export type QueueRow = {
 };
 
 const SAVE_KEYS = new Set(["state", "steps", "progress", "planned", "task_id", "error", "next_attempt_at", "delivered_at"]);
+/** A step's time as cockpit_request_step_at (migration 20261026r) accepts it: ISO with its offset. */
+const STEP_AT = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?(Z|[+-][0-9]{2}:?[0-9]{2})$/;
 const SAVE_STATES = new Set(["sending", "retry", "unknown", "delivered", "dry_run", "skipped", "failed"]);
 
 export class FakeDb {
@@ -583,6 +618,22 @@ export class FakeDb {
    */
   withRelease = true;
   withTaskOwners = true;
+  /**
+   * Review R2 asks migration r's claim for replaces_task_id on every part of a routing request (from
+   * cockpit_requests.replaces_task_id). Off: the claim sends none, and only the first part's payload names it.
+   * With it, review round 3's replaces_client_task_id: the old ticket's own card, from `imports`.
+   */
+  withRoutes = true;
+  /** The old form tickets on All Tasks the cockpit imported: ticket id to its client card (null: none). */
+  imports = new Map<string, string | null>();
+  /**
+   * The mode the writer last reported, as migration r's claim reads it (cockpit_clickup_requests_mode). Unset:
+   * the claim takes every due row, as a claim from before that rule did (the writer's own hold is then what
+   * keeps a row out of ClickUp, as in the run right after a switch flip). Set: nothing in dry_run or unknown;
+   * in apply_limited only the canary cards' rows and the 2-minute checks, and a routing request only when its
+   * old ticket's card is a canary card (cockpit_request_replaces_ok, review round 3).
+   */
+  claimMode?: { mode: "dry_run" | "apply" | "apply_limited" | "unknown"; onlyCards?: string[] };
   private seq = 0;
 
   constructor(readonly now: () => number) {}
@@ -676,11 +727,34 @@ export class FakeDb {
     }
   };
 
+  /** The request's replaces_task_id, which only its first part's payload carries. */
+  private routesOf(q: QueueRow): string | null {
+    if (q.kind !== "request") return null;
+    return this.rows.find(o => o.kind === "request" && o.source_id === q.source_id && o.payload?.replacesTaskId)?.payload.replacesTaskId ?? null;
+  }
+
+  /** Whether the claim takes this row in the mode the writer last reported (migration r's claim). */
+  private takes(q: QueueRow): boolean {
+    const m = this.claimMode;
+    if (!m) return true;
+    if (m.mode === "apply") return true;
+    if (m.mode !== "apply_limited") return false;
+    if (q.kind === "task_action" && q.payload?.op === "verify") return true;
+    const cards = m.onlyCards ?? [];
+    if (typeof q.payload?.clientTaskId !== "string" || !cards.includes(q.payload.clientTaskId)) return false;
+    // cockpit_request_replaces_ok: a routing request only when its old ticket's own card is a canary card.
+    const old = this.routesOf(q);
+    if (q.kind !== "request" || !old) return true;
+    const card = this.imports.get(old) ?? null;
+    return card !== null && cards.includes(card);
+  }
+
   private claim(token: string, limit: number) {
     const now = this.now();
     const open = new Set(["queued", "sending", "retry", "unknown"]);
     const due = this.rows
       .filter(q => ["request", "task_action"].includes(q.kind))
+      .filter(q => this.takes(q))
       .filter(q => (["queued", "retry", "unknown"].includes(q.state) && q.next_attempt_at <= now) || (q.state === "sending" && (q.claimed_at ?? now) < now - 600_000))
       // One lane per task: an older open row on the same task goes first.
       .filter(q => !q.task_id || !this.rows.some(o => o.id !== q.id && o.task_id === q.task_id && open.has(o.state) && o.created_at < q.created_at))
@@ -689,18 +763,32 @@ export class FakeDb {
     return due.map(q => {
       Object.assign(q, { state: "sending", claim_token: token, claimed_at: now, attempts: q.attempts + 1 });
       const sourceExists = q.kind === "request" ? !this.cancelled.has(String(q.source_id)) : true;
-      return { ...structuredClone(q), created_at: new Date(q.created_at).toISOString(), next_attempt_at: new Date(q.next_attempt_at).toISOString(), source_exists: sourceExists };
+      const routes = q.kind === "request" && this.withRoutes ? this.routesOf(q) : undefined;
+      return {
+        ...structuredClone(q),
+        created_at: new Date(q.created_at).toISOString(),
+        next_attempt_at: new Date(q.next_attempt_at).toISOString(),
+        source_exists: sourceExists,
+        ...(routes === undefined
+          ? {}
+          : { replaces_task_id: routes, replaces_client_task_id: routes === null ? null : (this.imports.get(routes) ?? null) }),
+      };
     });
   }
 
-  /** The release the writer asks for: back to the queue as it was, the claim's attempt taken off. */
+  /**
+   * The release the writer asks for: back to the queue as it was, the claim's attempt taken off. Review round
+   * 3: a request row whose create went out and lost its answer (a create on record, no task id) stays unknown.
+   */
   private release(params: Row) {
     const q = this.rows.find(x => x.id === params.p_id);
     if (!q || q.state !== "sending" || q.claim_token !== params.p_token) throw new Error("Supabase 400: This queue item is no longer claimed by this run");
     const before = { state: q.state, task_id: q.task_id, progress: q.progress };
-    const progressed = Boolean(q.progress && (q.progress.task || Object.keys((q.progress.steps as Row | undefined) ?? {}).length));
+    const steps = (q.progress?.steps as Row | undefined) ?? {};
+    const progressed = Boolean(q.progress && (q.progress.task || Object.keys(steps).length));
+    const inDoubt = q.kind === "request" && !q.task_id && !(q.progress?.task as Row | undefined)?.id && "create" in steps;
     Object.assign(q, {
-      state: progressed ? "retry" : "queued",
+      state: inDoubt ? "unknown" : progressed ? "retry" : "queued",
       attempts: Math.max(0, q.attempts - 1),
       claim_token: null,
       claimed_at: null,
@@ -751,7 +839,18 @@ export class FakeDb {
       });
       this.parts.set(key, part);
       if (q.state === "delivered" && before.state !== "delivered" && part.clickupTaskId)
-        if (!this.byKey(`verify:${key}`))
+        if (!this.byKey(`verify:${key}`)) {
+          // Review round 3: the check's payload says what the part's steps did (cockpit_request_step_at reads
+          // each step's own time): Request Type only when the request_type step set it or found it set, and
+          // when the owner (then Request Type) was written, which the writer times "on time" from.
+          const steps = (q.progress?.steps as Row | undefined) ?? {};
+          const stepAt = (s: unknown) => {
+            const at = (s as Row | undefined)?.at;
+            return typeof at === "string" && STEP_AT.test(at) && Number.isFinite(Date.parse(at)) ? at : null;
+          };
+          const rtSet = ["done", "unchanged"].includes(String(steps.request_type?.state ?? ""));
+          const ownerAt = stepAt(steps.owner_due_priority) ?? stepAt(steps.create);
+          const madeAt = (rtSet ? stepAt(steps.request_type) : null) ?? ownerAt;
           this.enqueue(
             "task_action",
             {
@@ -763,11 +862,14 @@ export class FakeDb {
               taskName: p.taskName,
               ownerClickupId: p.ownerClickupId ?? null,
               typeKey: p.typeKey,
-              setRequestType: p.setRequestType === true,
+              setRequestType: rtSet,
               clientTaskId: p.clientTaskId ?? null,
+              ownerAt,
+              madeAt,
             },
             { dedupe_key: `verify:${key}`, source_table: "cockpit_requests", source_id: String(p.requestId), next_attempt_at: this.now() + 120_000 },
           );
+        }
     } else if (p.op === "verify" && ["delivered", "failed", "skipped"].includes(q.state)) {
       const part = this.parts.get(key) ?? {};
       const v = q.progress?.verify;
@@ -810,3 +912,29 @@ export function harness(env: Record<string, string | undefined> = {}) {
 }
 
 export const LIVE = { CLICKUP_API_TOKEN: "pk_test_never_printed", CLICKUP_WRITEBACK_APPLY_REQUESTS: "true" } as const;
+
+/**
+ * The harness with every ClickUp call going through the real providerTools and its receipts, wired as
+ * index.ts wires them: a receipt that cannot be saved throws out of the call. `receipt` returns the error a
+ * receipt's save throws (the database down, a timeout), so a test can lose the record of a call that landed;
+ * `dropBody` breaks the answer's body after the call landed (review R2).
+ */
+export function toolsHarness(
+  env: Record<string, string | undefined> = LIVE,
+  opts: { receipt?: (row: Row) => Error | undefined; dropBody?: (c: Call) => boolean } = {},
+) {
+  const h = harness(env);
+  const receipts: Row[] = [];
+  const answer = clickupFetch(h.clickup, { dropBody: opts.dropBody });
+  h.deps.providerFor = actionId =>
+    providerTools(
+      k => env[k],
+      async row => {
+        const failure = opts.receipt?.({ ...row, action_id: actionId });
+        if (failure) throw failure;
+        receipts.push({ ...row, action_id: actionId });
+      },
+      answer,
+    ) as Provider;
+  return { ...h, receipts };
+}

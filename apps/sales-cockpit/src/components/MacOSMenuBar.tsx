@@ -105,8 +105,12 @@ export function MacOSMenuBar({
           </Link>
         ) : null}
 
-        {/* Task alerts: what changed for you in ClickUp (PLAN.md D19). */}
-        <AlertsBell variant="icon" />
+        {/* Task alerts: what changed for you in ClickUp (PLAN.md D19). In
+            this 40px bar of 28px controls the bell takes their size
+            (tasks.css .tk-bell-compact), not the phone bar's 40px. */}
+        <span className="tk-bell-compact">
+          <AlertsBell variant="icon" />
+        </span>
 
         <button
           type="button"

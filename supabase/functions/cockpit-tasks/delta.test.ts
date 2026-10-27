@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mirrorTask, NO_TOKEN, pacer } from "./clickup";
+import { COMMENT_MAX, commentRow, commentText, cut, detailCache, mirrorTask, NO_TOKEN, pacer, type Row } from "./clickup";
 import { COMMENT_TASKS, mostFailed, OVERLAP_MS, REPLY_READS, runDelta, TRUNCATED } from "./delta";
 import { cuTask, kit, NOW, TOKEN } from "./testkit";
 
@@ -299,5 +299,58 @@ describe("the delta", () => {
     await pace();
     await pace();
     expect(waits).toEqual([500, 500]);
+  });
+});
+
+describe("a long comment keeps its Cockpit ref (review R2)", () => {
+  // What a focus view posts (taskActions.ts actionCommentText): up to 2,000 characters, then the marker.
+  const fromCockpit = (n: number) => `The CSM wrote in the cockpit: ${"w".repeat(n)}\n\nCockpit ref T-0123456789`;
+  // The marker as cockpit_task_comment_author reads it, anchored at the end as review R2 asks of migration t.
+  const refOf = (text: string) => /Cockpit ref (T-[0-9a-f]{10})\s*$/.exec(text)?.[1] ?? null;
+  const row = (text: string) => commentRow({ id: "c1", comment_text: text, date: String(NOW - 1000), user: { id: 284616470 }, comment: [] })!;
+
+  test("a 1,200 character comment is cut to 1,000 with its marker last, so its writer is still known", () => {
+    const text = row(fromCockpit(1200)).text;
+    expect(text.length).toBeLessThanOrEqual(COMMENT_MAX);
+    // Postgres counts characters, never more than the UTF-16 length: its left(…, 1000) keeps all of it.
+    expect(Array.from(text).length).toBeLessThanOrEqual(COMMENT_MAX);
+    expect(text.startsWith("The CSM wrote in the cockpit: www")).toBe(true);
+    expect(text.endsWith("w\n\nCockpit ref T-0123456789")).toBe(true);
+    expect(refOf(text)).toBe("T-0123456789");
+    // Before review R2: a plain cut lost the marker, and the comment read as the CEO's own, with no alert.
+    expect(refOf(fromCockpit(1200).slice(0, COMMENT_MAX))).toBeNull();
+    // A request's card link keeps its marker the same way.
+    expect(row(`Cockpit · The CSM asked Call Center: Low show rate\n${"x".repeat(1100)}\n\nCockpit ref R-1a2b3c4d5e-call_center-card`).text.endsWith(
+      "\n\nCockpit ref R-1a2b3c4d5e-call_center-card",
+    )).toBe(true);
+  });
+
+  test("short comments are untouched; a long one with no marker is cut as before", () => {
+    expect(row(fromCockpit(900)).text).toBe(fromCockpit(900));
+    expect(commentText("plain words ".repeat(200))).toBe("plain words ".repeat(200).slice(0, COMMENT_MAX));
+    expect(commentText(null)).toBe("");
+  });
+
+  test("a cut never leaves half an emoji, which Postgres would refuse in the JSON", () => {
+    const text = `${"a".repeat(999)}😀 and more`;
+    expect(cut(text, 1000)).toBe("a".repeat(999));
+    expect(commentText(text)).toBe("a".repeat(999));
+    expect(cut("short", 1000)).toBe("short");
+  });
+
+  test("the delta hands the database the marker of a long cockpit comment", async () => {
+    const k = kit();
+    k.db.handlers.cockpit_task_mirror_comment_due = () => [{ taskId: "t1", sinceMs: NOW - 600_000 }];
+    k.clickup.comments.set("t1", [{ id: "c9", comment_text: fromCockpit(1500), date: String(NOW - 1000), user: { id: 284616470 }, comment: [] }]);
+    await runDelta(k.deps);
+    const sent = (k.db.last("cockpit_task_mirror_comments").args.p_comments as Row[])[0];
+    expect(sent.text.length).toBeLessThanOrEqual(COMMENT_MAX);
+    expect(refOf(sent.text)).toBe("T-0123456789");
+  });
+
+  test("the focus view's cache keeps it too", () => {
+    const cache = detailCache(cuTask("x1"), [{ id: "c9", comment_text: fromCockpit(1990), date: String(NOW), user: { id: 284616470 } }]);
+    expect(refOf(cache.comments[0].text)).toBe("T-0123456789");
+    expect(cache.comments[0].text.length).toBeLessThanOrEqual(COMMENT_MAX);
   });
 });

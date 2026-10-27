@@ -51,6 +51,9 @@ class Queue:
     status_col: str = "status"         # the column that holds the state (reported as status)
     kind_col: Optional[str] = None     # set with kinds: only rows whose kind_col is one of kinds count
     kinds: tuple[str, ...] = ()
+    # Set: a queued row is held on purpose, not stuck, unless the cockpit_sync_state row named here says the worker
+    # takes queued rows now: (key, its detail field, the value that means it does).
+    held_unless: Optional[tuple[str, str, str]] = None
 
     def scope(self) -> list[tuple[str, str, Any]]:
         """The kind filter, as a where clause (empty when the queue reads every row)."""
@@ -114,12 +117,14 @@ QUEUES = (
           "(RUNBOOK, Brand Blueprint press drain).", "", status_col="state", kind_col="kind", kinds=BLUEPRINT_KINDS),
     # Requests and focus view presses on the ClickUp writeback queue (20261026r, 20261026t): clickup-writeback job
     # requests claims them every minute, and a delivered request's 2-minute check waits 2 minutes on purpose, so one
-    # still waiting after 15 minutes is stuck. The log job's own kinds are not read here.
+    # still waiting after 15 minutes is stuck. The log job's own kinds are not read here. Until requests are open
+    # (the writer reports mode apply), a request filed by an editor, an admin or the CEO is held queued on purpose
+    # (CONTRACT 2.8) and goes on its own once they open, so a queued row counts only in mode apply.
     Queue("queue-clickup-requests", "cockpit_clickup_writeback_queue", "request or task change bound for ClickUp",
           ("queued", "sending", "retry", "unknown"), "created_at", 15, "the tech lead",
           "Run the requests doctor (clickup-writeback job requests_doctor); an unknown needs a person to look in ClickUp "
           "for its Cockpit ref (RUNBOOK, Requests writer).", "", status_col="state", kind_col="kind", kinds=REQUEST_KINDS,
-          failed_col="updated_at"),
+          failed_col="updated_at", held_unless=("clickup-writeback:requests", "mode", "apply")),
 )
 
 
@@ -139,6 +144,14 @@ def queue_check(q: Queue) -> Callable[[Context], Result]:
         rows = ctx.rows(q.table, f"{q.id_col},{st},{q.time_col}{err_col}",
                         where=[(st, "in", list(q.states))] + q.scope(), order=f"{q.time_col}.asc", limit=50)
         rows = [_as_status(r, st) for r in rows]
+        held = 0
+        if q.held_unless and any(r.get("status") == "queued" for r in rows):
+            key, field, value = q.held_unless
+            state = ctx.rows("cockpit_sync_state", "key,detail", where=[("key", "eq", key)], limit=1)
+            detail = state[0].get("detail") if state else None
+            if not (isinstance(detail, dict) and detail.get(field) == value):
+                held = sum(1 for r in rows if r.get("status") == "queued")
+                rows = [r for r in rows if r.get("status") != "queued"]
         old = []
         for r in rows:
             age = age_min(r.get(q.time_col), ctx.now)
@@ -152,11 +165,15 @@ def queue_check(q: Queue) -> Callable[[Context], Result]:
                               order=f"{q.failed_col}.desc", limit=50)
             failed = [_as_status(r, st) for r in failed]
         ev = {"waiting": len(rows), "over_limit": len(old), "failed_24h": len(failed)}
+        if q.held_unless:
+            ev["held"] = held
+        held_note = f" {held} held until requests open." if held else ""
         if not old and not failed:
             if not q.limit_min:
-                return ok(f"No {q.label} is open" + (" and none failed in 24 h." if q.failed_col else "."), evidence=ev)
+                return ok(f"No {q.label} is open" + (" and none failed in 24 h." if q.failed_col else ".") + held_note,
+                          evidence=ev)
             return ok(f"No {q.label} has waited over {ago(q.limit_min)} ({len(rows)} open)"
-                      + (" and none failed in 24 h." if q.failed_col else "."), evidence=ev)
+                      + (" and none failed in 24 h." if q.failed_col else ".") + held_note, evidence=ev)
         parts, items, since_t = [], [], None
         if old:
             r, age = old[0]
@@ -316,7 +333,9 @@ CHECKS = [
           means=_means(q), severity="low",
           reads=f"{q.table} where {q.status_col} in ({', '.join(q.states)})"
                 + (f" and {q.kind_col} in ({', '.join(q.kinds)})" if q.scope() else "") + f", by {q.time_col}"
-                + (f"; and {q.status_col} failed by {q.failed_col} in 24 h" if q.failed_col else ""),
+                + (f"; and {q.status_col} failed by {q.failed_col} in 24 h" if q.failed_col else "")
+                + (f"; queued rows count only while cockpit_sync_state {q.held_unless[0]} has {q.held_unless[1]} "
+                   f"{q.held_unless[2]}" if q.held_unless else ""),
           threshold=_threshold(q), run=queue_check(q), owner=q.owner, action=q.action)
     for q in QUEUES
 ] + [

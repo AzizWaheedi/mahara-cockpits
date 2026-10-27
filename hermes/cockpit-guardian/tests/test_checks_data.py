@@ -738,6 +738,31 @@ class RequestsAndTaskMirror(unittest.TestCase):
         self.assertIn("1 request or task change bound for ClickUp(s) waited past 15 min; the oldest is unknown", r.summary)
         self.assertIn("look for its Cockpit ref", r.summary)
 
+    def test_a_held_request_waits_on_purpose_until_requests_open(self):
+        """CONTRACT 2.8: an editor's request filed before requests open stays queued and goes by itself later."""
+        rows = [queued("queued", 400), queued("retry", 9)]
+
+        def run(mode):
+            state = [] if mode is None else [{"key": "clickup-writeback:requests", "detail": {"mode": mode}}]
+            db = fakes.FakeDb({"cockpit_clickup_writeback_queue": rows, "cockpit_sync_state": state})
+            return queues.queue_check(self.q())(make(db=db))
+
+        for mode in (None, "dry_run", "apply_limited", "unknown"):
+            r = run(mode)
+            self.assertEqual(r.status, OK, mode)
+            self.assertIn("1 held until requests open.", r.summary)
+            self.assertEqual(r.evidence["held"], 1)
+        r = run("apply")
+        self.assertEqual(r.status, WARN)
+        self.assertIn("the oldest is queued", r.summary)
+        self.assertEqual(r.evidence["held"], 0)
+        # A row the writer holds (sending, retry, unknown) counts whatever the mode.
+        db = fakes.FakeDb({"cockpit_clickup_writeback_queue": [queued("unknown", 40)],
+                           "cockpit_sync_state": [{"key": "clickup-writeback:requests", "detail": {"mode": "dry_run"}}]})
+        self.assertEqual(queues.queue_check(self.q())(make(db=db)).status, WARN)
+        self.assertIn("queued rows count only while cockpit_sync_state clickup-writeback:requests has mode apply",
+                      checks_mod.by_id()["queue-clickup-requests"].reads)
+
     def test_a_failed_request_in_24_hours_warns(self):
         r, _ = self.run_q([queued("failed", 90, updated_at=fakes.ago(60), error="clickup rejected the request (400)")])
         self.assertEqual(r.status, WARN)

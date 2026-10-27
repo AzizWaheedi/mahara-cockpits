@@ -43,6 +43,23 @@
 --   the old requeue: UPDATE ... SET state='queued', attempts=0,
 --   next_attempt_at=now(), planned=NULL, steps=NULL, progress='{}'::jsonb
 --   WHERE kind='request' AND state='dry_run' AND source_id='<request id>'.)
+-- - An old form ticket routed from All Tasks goes back to its queue
+--   ('imported', audit request.unrouted) when the request that routed it is
+--   cancelled, or ends failed (or partly) before its replaces step began.
+-- - Request Type is set only by a type's own "Set Request Type in ClickUp"
+--   switch, last (R8): the hourly field read never adds the folder field
+--   e9fd8024 (nor 09abf737 or d3ac52c5) to the catalog, the type guard refuses
+--   a question mapped to one, and a payload never carries one. Going back to an
+--   older version never turns Request Type back on.
+-- - Review round 3: a request part whose create went out and lost its answer
+--   (a create on record, no task id) is never cancelled, and a hand back keeps
+--   it unknown: look for its Cockpit ref in ClickUp. During the canary
+--   (apply_limited) a request that routes an old ticket goes only when that
+--   ticket's own card is a canary card. An old ticket moved off All Tasks,
+--   closed or deleted in ClickUp (the task mirror, or a complete hourly read
+--   that no longer finds it: import_left_at) leaves the queues and is never
+--   routed again from the cockpit. A hand link in People in ClickUp starts a
+--   seats read of the task mirror at once.
 
 BEGIN;
 
@@ -161,6 +178,11 @@ CREATE TABLE IF NOT EXISTS public.cockpit_requests (
   CHECK ((source = 'import') = (imported_task_id IS NOT NULL)),
   CHECK (source = 'import' OR requester_member_id IS NOT NULL)
 );
+-- An import (review round 3): when a complete hourly read of All Tasks first no
+-- longer found its old form ticket open there (moved, closed, deleted, renamed or
+-- its Request Type cleared in ClickUp); cleared when a complete read finds it
+-- again. cockpit_request_import_handled reads it with the task mirror.
+ALTER TABLE public.cockpit_requests ADD COLUMN IF NOT EXISTS import_left_at timestamptz;
 CREATE INDEX IF NOT EXISTS cockpit_requests_requester ON public.cockpit_requests (requester_member_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS cockpit_requests_client ON public.cockpit_requests (client_task_id);
 CREATE INDEX IF NOT EXISTS cockpit_requests_open_lifecycle ON public.cockpit_requests (type_key, client_task_id)
@@ -348,6 +370,19 @@ RETURNS text LANGUAGE sql IMMUTABLE SECURITY DEFINER SET search_path = '' AS $$
    WHERE x->>'listId' = p_list_id AND (x->>'target')::boolean
 $$;
 
+-- The ClickUp fields a request never writes (contract 2.1, R8 and CT F3): the
+-- Request Type folder field e9fd8024 (written only by the writer's own
+-- request_type step, last, and only where set_request_type is on), the
+-- Marketing / ADs list field 09abf737 and Type of Submission d3ac52c5. Review
+-- round 2: the hourly field read never adds them to the catalog, the type guard
+-- refuses a question mapped to one, and a request's payload never carries one.
+CREATE OR REPLACE FUNCTION public.cockpit_request_never_written(p_field_id text)
+RETURNS boolean LANGUAGE sql IMMUTABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT lower(btrim(coalesce(p_field_id, ''))) IN ('e9fd8024-8abe-4094-ac08-e6c0e736ad7e',
+                                                    '09abf737-302f-422a-9d17-8fb9619903d1',
+                                                    'd3ac52c5-b71c-4782-9fea-1f9371cbae47')
+$$;
+
 -- The order the screens list teams in.
 CREATE OR REPLACE FUNCTION public.cockpit_request_team_order(p_team text)
 RETURNS integer LANGUAGE sql IMMUTABLE SECURITY DEFINER SET search_path = '' AS $$
@@ -395,7 +430,7 @@ CREATE OR REPLACE FUNCTION public.cockpit_request_seat()
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   v_id uuid; v_auth uuid; v_email text; v_roles text[];
-  v_ceo boolean; v_admin boolean; v_editor boolean := false; v_cu bigint;
+  v_ceo boolean; v_admin boolean; v_editor boolean := false; v_cu bigint; v_link_state text;
 BEGIN
   SELECT cm.id, cm.auth_user_id, cm.email, cm.roles INTO v_id, v_auth, v_email, v_roles
     FROM public.cockpit_members cm JOIN auth.users u ON u.id = cm.auth_user_id
@@ -413,12 +448,16 @@ BEGIN
   EXCEPTION WHEN insufficient_privilege THEN
     v_editor := false;
   END;
-  SELECT l.clickup_user_id INTO v_cu FROM public.cockpit_member_clickup l
-   WHERE l.member_id = v_id AND l.state IN ('ok','manual');
+  SELECT CASE WHEN l.state IN ('ok','manual') THEN l.clickup_user_id END, l.state INTO v_cu, v_link_state
+    FROM public.cockpit_member_clickup l WHERE l.member_id = v_id;
   RETURN jsonb_build_object('memberId', v_id, 'authUserId', v_auth, 'email', v_email, 'roles', to_jsonb(v_roles),
     'label', coalesce(public.cockpit_slack_notice_role_of(v_email), 'a team member'),
     'isCeo', v_ceo, 'isAdmin', v_admin, 'isEditor', v_editor,
     'clickupUserId', v_cu, 'link', CASE WHEN v_cu IS NULL THEN 'not_linked' ELSE 'linked' END,
+    -- The link row's own state (review round 3): 'cleared' is an editor saying this
+    -- seat has no ClickUp user, so its screens never ask anyone to link it. NULL
+    -- when the hourly read has not checked the seat yet.
+    'linkState', v_link_state,
     'teams', to_jsonb(public.cockpit_request_teams(v_roles, v_ceo)),
     -- A team-only seat (20261017b) sees only its own clients, never every client.
     'teamOnly', coalesce(public.cockpit_is_team_only(), false));
@@ -549,11 +588,13 @@ BEGIN
 END $$;
 
 -- An owner note as one viewer reads it: the "Set one in Requests settings"
--- instruction is for editors; everyone else reads a plain owner line.
+-- instruction is for editors. Everyone else reads why the fallback owner has
+-- it (review round 2: "Goes to the systems manager." only repeated the owner
+-- the line beside it already names), so the note stays visible (R7).
 CREATE OR REPLACE FUNCTION public.cockpit_request_owner_note(p_note text, p_editor boolean)
 RETURNS text LANGUAGE sql IMMUTABLE SECURITY DEFINER SET search_path = '' AS $$
   SELECT CASE WHEN p_note IS NOT NULL AND p_note LIKE '%Set one in Requests settings.%' AND NOT coalesce(p_editor, false)
-              THEN 'Goes to the systems manager.' ELSE p_note END
+              THEN 'No media buyer is named for this request type yet.' ELSE p_note END
 $$;
 
 -- An owner object ({clickupId, how, label, note}) as one viewer reads it.
@@ -657,6 +698,13 @@ BEGIN
     IF v_f->'clickup_field_id' IS NOT NULL AND jsonb_typeof(v_f->'clickup_field_id') <> 'null' THEN
       IF coalesce(v_f->>'clickup_field_id', '') !~ v_uuid THEN
         RETURN v_label || ': that ClickUp field is not in the field list.';
+      END IF;
+      -- Request Type is written only by its own switch, last (R8); the other two never (CT F3).
+      IF lower(v_f->>'clickup_field_id') = 'e9fd8024-8abe-4094-ac08-e6c0e736ad7e' THEN
+        RETURN v_label || ': only the Set Request Type in ClickUp switch writes Request Type. Remove this question.';
+      END IF;
+      IF public.cockpit_request_never_written(v_f->>'clickup_field_id') THEN
+        RETURN v_label || ': the cockpit never writes this ClickUp field. Remove this question.';
       END IF;
       SELECT c.kind, c.options INTO v_cat_kind, v_cat_options FROM public.cockpit_request_field_catalog c
        WHERE c.clickup_field_id = (v_f->>'clickup_field_id')::uuid;
@@ -898,6 +946,10 @@ END $$;
 -- 2.4 and 2.6). The preview and the submit both read it, so a preview
 -- always matches the send. p_request NULL (a preview) leaves the ref and
 -- the request link out.
+-- A request that routes an old form ticket (p_replaces; review round 3, X2)
+-- links back to it in every task's description, and carries the old ticket's
+-- words when the type has no details question: the writer cancels the old
+-- ticket, so they would otherwise stay only on a cancelled task.
 CREATE OR REPLACE FUNCTION public.cockpit_request_plan(p_type public.cockpit_request_types, p_request uuid, p_client_task text,
   p_client_name text, p_answers jsonb, p_due date, p_priority text, p_requester_label text, p_replaces text)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
@@ -914,8 +966,12 @@ DECLARE
   v_has_steps boolean := p_type.sop_steps IS NOT NULL AND jsonb_array_length(p_type.sop_steps) > 0;
   v_details text; v_bullets text; v_fields jsonb; v_t jsonb; v_out jsonb := '[]'::jsonb;
   v_owner jsonb; v_name text; v_when text; v_steps jsonb; v_checklist text; v_tail text[]; v_desc text;
-  v_first boolean := true; v_head text;
+  v_first boolean := true; v_head text; v_old_words text;
 BEGIN
+  IF p_replaces IS NOT NULL AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(p_type.fields) f WHERE f->>'kind' = 'details') THEN
+    SELECT nullif(btrim(i.answers->>'details'), '') INTO v_old_words FROM public.cockpit_requests i
+     WHERE i.imported_task_id = p_replaces AND i.source = 'import';
+  END IF;
   SELECT public.cockpit_request_answer_display(f, v_answers->(f->>'key')) INTO v_details
     FROM jsonb_array_elements(p_type.fields) f WHERE f->>'kind' = 'details' LIMIT 1;
   SELECT string_agg('- ' || (f->>'label') || ': ' || public.cockpit_request_answer_display(f, v_answers->(f->>'key')), E'\n' ORDER BY n)
@@ -925,7 +981,10 @@ BEGIN
            'value', public.cockpit_request_answer_value(f, v_answers->(f->>'key')), 'label', f->>'label',
            'display', public.cockpit_request_answer_display(f, v_answers->(f->>'key'))) ORDER BY n), '[]'::jsonb)
     INTO v_fields FROM jsonb_array_elements(p_type.fields) WITH ORDINALITY AS x(f, n)
-   WHERE f->>'clickup_field_id' IS NOT NULL AND public.cockpit_request_answered(v_answers->(f->>'key'));
+   WHERE f->>'clickup_field_id' IS NOT NULL AND public.cockpit_request_answered(v_answers->(f->>'key'))
+     -- Never Request Type or the two fields the cockpit never writes, even from an
+     -- old type version (R8, CT F3): their answer stays in the description only.
+     AND NOT public.cockpit_request_never_written(f->>'clickup_field_id');
   v_head := '**' || p_type.label || '** for ' || coalesce(v_client, 'no client') || E'\n'
     || 'Requested by ' || v_requester || ' in the cockpit on ' || public.cockpit_request_day_words(v_today)
     || '. Due ' || public.cockpit_request_day_words(v_due) || '. Priority ' || v_priority || '.';
@@ -947,9 +1006,13 @@ BEGIN
       v_tail := v_tail || 'SOP steps are a draft until the systems manager checks them.'::text;
     END IF;
     IF v_card IS NOT NULL THEN v_tail := v_tail || ('Client card: https://app.clickup.com/t/' || v_card); END IF;
+    IF p_replaces IS NOT NULL THEN
+      v_tail := v_tail || ('Routed from the old ClickUp form ticket: https://app.clickup.com/t/' || p_replaces);
+    END IF;
     IF v_url IS NOT NULL THEN v_tail := v_tail || ('Request in the cockpit: ' || v_url); END IF;
-    v_desc := array_to_string(ARRAY[v_head, v_details, v_bullets,
-                nullif(array_to_string(v_tail, E'\n'), '')], E'\n\n');
+    v_desc := array_to_string(ARRAY[v_head, v_details,
+                CASE WHEN v_old_words IS NOT NULL THEN 'Asked on the old ClickUp form:' || E'\n' || v_old_words END,
+                v_bullets, nullif(array_to_string(v_tail, E'\n'), '')], E'\n\n');
     v_out := v_out || jsonb_build_array(jsonb_build_object(
       'part', v_t->>'part', 'listId', v_t->>'list_id', 'team', v_t->>'team',
       'listName', public.cockpit_request_team_label(v_t->>'team'),
@@ -982,7 +1045,54 @@ BEGIN
   RETURN v_out;
 END $$;
 
--- A request's state and done time, from its parts (contract 2.7).
+-- Puts the old form ticket a request routed back in its queue (review round 2):
+-- submit marks the import 'routed' at once, so when nothing of that request will
+-- close the old ticket in ClickUp (the request was cancelled, or the part that
+-- carries the old ticket ended failed or skipped before its replaces step began)
+-- the import is 'imported' again, Route shows again and a re-file can route it.
+-- Only the import this request routed; one audit row. True when it moved.
+-- Review round 3: an old ticket dealt with in ClickUp stays routed (it never
+-- goes back to a queue that would offer Route again): the writer skipped a part
+-- because the old ticket was already moved or closed (its sentence on a skipped
+-- row), or cockpit_request_import_handled says so now.
+CREATE OR REPLACE FUNCTION public.cockpit_request_unroute(r public.cockpit_requests, p_why text, p_actor text)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE v_import public.cockpit_requests;
+BEGIN
+  IF r.id IS NULL OR r.replaces_task_id IS NULL THEN RETURN false; END IF;
+  -- The replaces step rides on the queue row that carries replacesTaskId: while it
+  -- is open, delivered, a dry run, or has that step on record, the old ticket may
+  -- be closed by it, so the import stays routed.
+  IF EXISTS (SELECT 1 FROM public.cockpit_clickup_writeback_queue q
+              WHERE q.kind = 'request' AND q.source_id = r.id::text AND q.payload->>'replacesTaskId' IS NOT NULL
+                AND (q.state NOT IN ('failed','skipped')
+                     OR (jsonb_typeof(q.progress->'steps') = 'object' AND q.progress->'steps' ? 'replaces'))) THEN
+    RETURN false;
+  END IF;
+  -- The writer's old ticket check (requests.ts SAY.oldHandled) found it handled in ClickUp.
+  IF EXISTS (SELECT 1 FROM public.cockpit_clickup_writeback_queue q
+              WHERE q.kind = 'request' AND q.source_id = r.id::text AND q.state = 'skipped'
+                AND q.error LIKE 'The old ticket was already moved or closed in ClickUp%') THEN
+    RETURN false;
+  END IF;
+  SELECT * INTO v_import FROM public.cockpit_requests
+   WHERE imported_task_id = r.replaces_task_id AND state = 'routed' AND routed_to = r.id FOR UPDATE;
+  IF v_import.id IS NULL OR public.cockpit_request_import_handled(v_import) THEN RETURN false; END IF;
+  UPDATE public.cockpit_requests SET state = 'imported', routed_to = NULL, updated_at = now()
+   WHERE id = v_import.id
+  RETURNING * INTO v_import;
+  IF v_import.id IS NULL THEN RETURN false; END IF;
+  PERFORM public.cockpit_request_audit('request.unrouted', 'cockpit_requests', v_import.id::text,
+    coalesce(nullif(btrim(p_actor), ''), 'clickup-writeback'),
+    jsonb_build_object('state', 'routed', 'routed_to', r.id), jsonb_build_object('state', 'imported', 'routed_to', NULL),
+    jsonb_build_object('task_id', r.replaces_task_id, 'request_id', r.id, 'why', p_why));
+  RETURN true;
+END $$;
+
+-- A request's state and done time, from its parts (contract 2.7). A request
+-- that routed an old form ticket and ends failed, or partial with the part
+-- that carries the old ticket failed, puts the old ticket back in its queue
+-- (cockpit_request_unroute above).
 CREATE OR REPLACE FUNCTION public.cockpit_request_refresh(p_request uuid)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -1009,13 +1119,19 @@ BEGIN
   IF v_state IS DISTINCT FROM r.state OR v_done IS DISTINCT FROM r.done_at THEN
     UPDATE public.cockpit_requests SET state = v_state, done_at = v_done, updated_at = now() WHERE id = p_request;
   END IF;
+  IF r.replaces_task_id IS NOT NULL AND v_state IN ('failed','partial') THEN
+    PERFORM public.cockpit_request_unroute(r, v_state, nullif(current_setting('cockpit.audit_actor', true), ''));
+  END IF;
 END $$;
 
 -- The requests writer's mode, from its last report (contract 2.4). Older
 -- than 15 minutes or never reported: unknown. Migration t calls it too.
+-- lastMode (review round 3) is the mode the writer last reported, even when
+-- that report is old: a writer that went quiet after requests opened is
+-- "silent" (cockpit_request_writer_silent), not "not switched on yet".
 CREATE OR REPLACE FUNCTION public.cockpit_clickup_requests_mode()
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
-DECLARE s public.cockpit_sync_state; v_at timestamptz; v_mode text; v_cards jsonb;
+DECLARE s public.cockpit_sync_state; v_at timestamptz; v_mode text; v_cards jsonb; v_last text;
 BEGIN
   SELECT * INTO s FROM public.cockpit_sync_state WHERE key = 'clickup-writeback:requests';
   BEGIN
@@ -1024,12 +1140,30 @@ BEGIN
     v_at := s.last_run_at;
   END;
   v_mode := s.detail->>'mode';
+  v_last := CASE WHEN v_mode IN ('dry_run','apply','apply_limited') THEN v_mode END;
   v_cards := CASE WHEN jsonb_typeof(s.detail->'onlyCards') = 'array' THEN s.detail->'onlyCards' ELSE '[]'::jsonb END;
   IF s.key IS NULL OR v_at IS NULL OR v_at < now() - interval '15 minutes'
      OR coalesce(v_mode, '') NOT IN ('dry_run','apply','apply_limited') THEN
-    RETURN jsonb_build_object('mode', 'unknown', 'onlyCards', v_cards, 'at', v_at, 'live', false);
+    RETURN jsonb_build_object('mode', 'unknown', 'onlyCards', v_cards, 'at', v_at, 'live', false, 'lastMode', v_last);
   END IF;
-  RETURN jsonb_build_object('mode', v_mode, 'onlyCards', v_cards, 'at', v_at, 'live', v_mode IN ('apply','apply_limited'));
+  RETURN jsonb_build_object('mode', v_mode, 'onlyCards', v_cards, 'at', v_at, 'live', v_mode IN ('apply','apply_limited'),
+    'lastMode', v_last);
+END $$;
+
+-- Whether the requests writer has gone quiet after it was writing this card
+-- (review round 3): its report is older than 15 minutes (mode unknown) and
+-- the last one it made would have sent this card (apply, or apply_limited
+-- with the card on the canary list). The screens then say the writer is not
+-- reporting, never that requests are "not switched on yet". NULL card: only
+-- a last report of apply counts.
+CREATE OR REPLACE FUNCTION public.cockpit_request_writer_silent(p_client_task text)
+RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE v_mode jsonb := public.cockpit_clickup_requests_mode();
+BEGIN
+  RETURN v_mode->>'mode' = 'unknown'
+     AND (v_mode->>'lastMode' = 'apply'
+          OR (v_mode->>'lastMode' = 'apply_limited' AND p_client_task IS NOT NULL
+              AND coalesce(v_mode->'onlyCards', '[]'::jsonb) ? p_client_task));
 END $$;
 
 -- Who may file a request now, by the writer's mode (contract 2.8, as changed
@@ -1040,6 +1174,9 @@ END $$;
 --   rows stay queued (the writer claims nothing it would not send) and go to
 --   ClickUp once requests open. note says so plainly. Anyone else is refused
 --   and pointed to the ClickUp form.
+-- The form shows the held note before anything is sent and beside Send, so
+-- it is worded to be true before and after Send (review round 2: it began
+-- "Saved." while nothing was saved yet).
 CREATE OR REPLACE FUNCTION public.cockpit_request_send_gate(p_seat jsonb, p_client_task text)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -1059,18 +1196,28 @@ BEGIN
         RETURN jsonb_build_object('allowed', true, 'held', false, 'note', NULL);
       END IF;
       RETURN jsonb_build_object('allowed', true, 'held', true,
-        'note', 'Saved. Requests are being tested on the internal test card only, so this goes to ClickUp once they open to everyone.');
+        'note', 'Requests are being tested on the internal test card only, where they go to ClickUp at once. Anything else you send is saved and goes to ClickUp once they open to everyone.');
     WHEN 'dry_run' THEN
       IF v_priv THEN
         RETURN jsonb_build_object('allowed', true, 'held', true,
-          'note', 'Saved. Requests are not open yet, so this goes to ClickUp once they are.');
+          'note', 'Requests are not open yet. What you send is saved and goes to ClickUp once they are.');
       END IF;
       RETURN jsonb_build_object('allowed', false, 'held', false,
         'note', 'Requests are not switched on yet. Use the ClickUp request form until then.');
     ELSE
       IF v_priv THEN
         RETURN jsonb_build_object('allowed', true, 'held', true,
-          'note', 'Saved. The requests writer has not reported in the last 15 minutes, so this goes to ClickUp once it runs with requests open. Check it on the Machine tab.');
+          'note', 'The requests writer has not reported in the last 15 minutes. What you send is saved and goes to ClickUp once it runs with requests open. Check it on the Machine tab.');
+      END IF;
+      -- Review round 3: a writer that stopped reporting after requests opened is
+      -- not "not switched on yet"; the team is told it is down and who to tell.
+      IF v_mode->>'lastMode' = 'apply' THEN
+        RETURN jsonb_build_object('allowed', false, 'held', false,
+          'note', 'Requests cannot be sent just now: the requests writer has not reported in the last 15 minutes. Use the ClickUp request form, and tell the systems manager.');
+      END IF;
+      IF v_mode->>'lastMode' = 'apply_limited' THEN
+        RETURN jsonb_build_object('allowed', false, 'held', false,
+          'note', 'Requests are being tested. They open to everyone soon. Use the ClickUp request form until then.');
       END IF;
       RETURN jsonb_build_object('allowed', false, 'held', false,
         'note', 'Requests are not switched on yet. Use the ClickUp request form until then.');
@@ -1163,8 +1310,23 @@ BEGIN
           AND coalesce(v_mode->'onlyCards', '[]'::jsonb) ? p_client_task);
 END $$;
 
+-- Whether a request that routes an old form ticket may go in this writer mode
+-- (review round 3, E-CANARY): during the test on the canary cards
+-- (apply_limited) only when the old ticket's own card is a canary card, so the
+-- rehearsal never closes a real ticket on All Tasks, also for a request filed
+-- held before the test began (dry run, or a writer that had stopped
+-- reporting). Any other mode, or a request that routes nothing: true. The
+-- requests claim, cockpit_request_held and the submit check all read it.
+CREATE OR REPLACE FUNCTION public.cockpit_request_replaces_ok(p_replaces text, p_mode jsonb)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT p_replaces IS NULL OR coalesce(p_mode->>'mode', '') <> 'apply_limited'
+      OR EXISTS (SELECT 1 FROM public.cockpit_requests i
+                  WHERE i.imported_task_id = p_replaces AND i.client_task_id IS NOT NULL
+                    AND coalesce(p_mode->'onlyCards', '[]'::jsonb) ? i.client_task_id)
+$$;
+
 -- A request saved but not sent: every part still waits in the queue untried
--- and the writer would not take it now.
+-- and the writer would not take it now (its card, and the old ticket it routes).
 CREATE OR REPLACE FUNCTION public.cockpit_request_held(r public.cockpit_requests)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
   SELECT r.state = 'sending'
@@ -1172,8 +1334,32 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
      AND NOT EXISTS (SELECT 1 FROM public.cockpit_request_parts p WHERE p.request_id = r.id AND p.state <> 'queued')
      AND NOT EXISTS (SELECT 1 FROM public.cockpit_clickup_writeback_queue q
                       WHERE q.kind = 'request' AND q.source_id = r.id::text AND (q.state <> 'queued' OR q.attempts > 0))
-     AND NOT public.cockpit_request_writer_takes(r.client_task_id)
+     AND NOT (public.cockpit_request_writer_takes(r.client_task_id)
+              AND public.cockpit_request_replaces_ok(r.replaces_task_id, public.cockpit_clickup_requests_mode()))
 $$;
+
+-- Whether an old form ticket was dealt with in ClickUp (review round 3), by the
+-- writer's own rule (clickup-writeback requests.ts oldTicketHandled): it is no
+-- longer open on All Tasks. Two sources: the task mirror shows it on another
+-- list, or done or closed (the delta reads a move within two minutes); or a
+-- complete hourly read of All Tasks no longer found it (import_left_at, which
+-- also covers a ticket deleted in ClickUp, a change the delta never reads). The
+-- mirror's gone_at is not used: a ticket waiting untouched on All Tasks goes
+-- unseen for 7 days too. Such a ticket leaves the team and assigned views, is
+-- never routed or counted as a duplicate, and never goes back to 'imported'.
+-- The mirror is migration t's: read only where it exists.
+CREATE OR REPLACE FUNCTION public.cockpit_request_import_handled(r public.cockpit_requests)
+RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE v_moved boolean;
+BEGIN
+  IF r.id IS NULL OR r.source IS DISTINCT FROM 'import' OR r.imported_task_id IS NULL THEN RETURN false; END IF;
+  IF r.import_left_at IS NOT NULL THEN RETURN true; END IF;
+  IF to_regclass('public.cockpit_task_mirror') IS NULL THEN RETURN false; END IF;
+  EXECUTE 'SELECT EXISTS (SELECT 1 FROM public.cockpit_task_mirror m WHERE m.task_id = $1
+             AND (m.list_id <> ''901816723226'' OR m.status_type IN (''done'',''closed'')))'
+    INTO v_moved USING r.imported_task_id;
+  RETURN coalesce(v_moved, false);
+END $$;
 
 -- Whether a seat may see a request for its client: a request for a client
 -- needs cockpit_client_allowed (a team-only seat's empty client list is no
@@ -1185,36 +1371,88 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
               ELSE coalesce(public.cockpit_client_allowed(r.client_name), false) END
 $$;
 
+-- Whether a seat sees this request as an editor, an admin or the CEO: every
+-- request, except that a team-only seat named an editor keeps its client limit
+-- (review round 2; 20261017b: "only its own clients, never every client"). The
+-- All requests view, the request panel, cancel and Route all use it.
+CREATE OR REPLACE FUNCTION public.cockpit_request_sees_all(r public.cockpit_requests, p_seat jsonb)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT (coalesce((p_seat->>'isEditor')::boolean, false) OR coalesce((p_seat->>'isAdmin')::boolean, false)
+          OR coalesce((p_seat->>'isCeo')::boolean, false))
+     AND (NOT coalesce((p_seat->>'teamOnly')::boolean, false) OR public.cockpit_request_client_visible(r, p_seat))
+$$;
+
+-- Whether a seat may open a request (cockpit_request_get, and the duplicate
+-- answer's "Open it"): the requester; an editor, an admin or the CEO (within
+-- a team-only seat's client limit); a seat whose teams hold the type's or a
+-- part's team, within the client limit every other screen uses (20261017b);
+-- or an owner or assignee of a part.
+CREATE OR REPLACE FUNCTION public.cockpit_request_may_open(r public.cockpit_requests, p_seat jsonb)
+RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  v_cu bigint := CASE WHEN jsonb_typeof(p_seat->'clickupUserId') = 'number' THEN (p_seat->>'clickupUserId')::bigint END;
+  v_teams jsonb := coalesce(p_seat->'teams', '[]'::jsonb);
+  v_team text;
+BEGIN
+  IF r.id IS NULL THEN RETURN false; END IF;
+  IF r.requester_member_id IS NOT NULL AND r.requester_member_id::text = p_seat->>'memberId' THEN RETURN true; END IF;
+  IF public.cockpit_request_sees_all(r, p_seat) THEN RETURN true; END IF;
+  SELECT t.team INTO v_team FROM public.cockpit_request_types t WHERE t.key = r.type_key;
+  IF (v_teams ? coalesce(v_team, '')
+      OR EXISTS (SELECT 1 FROM public.cockpit_request_parts p WHERE p.request_id = r.id AND v_teams ? p.team))
+     AND public.cockpit_request_client_visible(r, p_seat) THEN
+    RETURN true;
+  END IF;
+  RETURN v_cu IS NOT NULL AND EXISTS (SELECT 1 FROM public.cockpit_request_parts p WHERE p.request_id = r.id
+           AND (p.owner_clickup_id = v_cu OR v_cu = ANY(coalesce(p.assignee_ids, '{}'))));
+END $$;
+
+-- Whether a queue row of a request may already have made its ClickUp task, so
+-- the request is never cancelled here (contract 2.5): it is being sent, was
+-- delivered or is in doubt (unknown); it holds a task id; or (review round 3) it
+-- waits (queued or retry) with a create on record. The writer records the create
+-- before its POST and forgets it only after a 429 on that POST, so a create still
+-- on record means the POST went out and its answer was lost: the run's time
+-- budget, a run that could not begin and a 429 on the read that looks for the
+-- task leave such a row in retry (a hand back keeps it unknown). Cancelling it
+-- would orphan the task ClickUp made, owner and Cockpit ref included.
+CREATE OR REPLACE FUNCTION public.cockpit_request_queue_in_clickup(q public.cockpit_clickup_writeback_queue)
+RETURNS boolean LANGUAGE sql IMMUTABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT q.state IN ('sending','delivered','unknown') OR q.task_id IS NOT NULL OR q.progress->'task'->>'id' IS NOT NULL
+      OR (q.state IN ('queued','retry') AND jsonb_typeof(q.progress->'steps') = 'object' AND q.progress->'steps' ? 'create')
+$$;
+
 -- Whether a seat may cancel a request now. A part that already has a ClickUp
--- task (a retry after the task was made included) is never cancelled here.
+-- task (a retry after the task was made included), or may have one (a create
+-- whose answer was lost), is never cancelled here.
 CREATE OR REPLACE FUNCTION public.cockpit_request_cancellable(r public.cockpit_requests, p_seat jsonb)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
-  SELECT (r.requester_member_id::text = p_seat->>'memberId'
-          OR coalesce((p_seat->>'isEditor')::boolean, false) OR coalesce((p_seat->>'isAdmin')::boolean, false)
-          OR coalesce((p_seat->>'isCeo')::boolean, false))
+  SELECT (r.requester_member_id::text = p_seat->>'memberId' OR public.cockpit_request_sees_all(r, p_seat))
      AND r.state NOT IN ('cancelled','imported','routed')
      AND NOT EXISTS (SELECT 1 FROM public.cockpit_request_parts p
                       WHERE p.request_id = r.id AND (p.state IN ('sending','delivered','unknown') OR p.clickup_task_id IS NOT NULL))
      AND NOT EXISTS (SELECT 1 FROM public.cockpit_clickup_writeback_queue q
-                      WHERE q.kind = 'request' AND q.source_id = r.id::text
-                        AND (q.state IN ('sending','delivered','unknown') OR q.task_id IS NOT NULL
-                             OR q.progress->'task'->>'id' IS NOT NULL))
+                      WHERE q.kind = 'request' AND q.source_id = r.id::text AND public.cockpit_request_queue_in_clickup(q))
 $$;
 
 -- Whether a seat may route an old form ticket (an import still 'imported'):
--- an editor, an admin or the CEO, or a seat whose teams hold the type's team
--- and that may see the ticket's client; and the seat may file a request for
--- the ticket's card now (held included).
+-- an editor, an admin or the CEO (a team-only one within its client limit),
+-- or a seat whose teams hold the type's team and that may see the ticket's
+-- client by the rule of the team queue and the request panel
+-- (cockpit_request_client_visible: a ticket with no client is not a team-only
+-- seat's, review round 2); and the seat may file a request for the ticket's
+-- card now (held included).
 CREATE OR REPLACE FUNCTION public.cockpit_request_can_route(r public.cockpit_requests, p_seat jsonb)
 RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE v_team text; v_all boolean;
 BEGIN
   IF r.id IS NULL OR r.source IS DISTINCT FROM 'import' OR r.state IS DISTINCT FROM 'imported' THEN RETURN false; END IF;
+  -- Dealt with in ClickUp already (review round 3): the writer would skip it.
+  IF public.cockpit_request_import_handled(r) THEN RETURN false; END IF;
   SELECT t.team INTO v_team FROM public.cockpit_request_types t WHERE t.key = r.type_key;
-  v_all := coalesce((p_seat->>'isEditor')::boolean, false) OR coalesce((p_seat->>'isAdmin')::boolean, false)
-           OR coalesce((p_seat->>'isCeo')::boolean, false);
+  v_all := public.cockpit_request_sees_all(r, p_seat);
   IF NOT v_all AND NOT (coalesce(p_seat->'teams', '[]'::jsonb) ? coalesce(v_team, '')
-                        AND (r.client_name IS NULL OR coalesce(public.cockpit_client_allowed(r.client_name), false))) THEN
+                        AND public.cockpit_request_client_visible(r, p_seat)) THEN
     RETURN false;
   END IF;
   RETURN coalesce((public.cockpit_request_send_gate(p_seat, r.client_task_id)->>'allowed')::boolean, false);
@@ -1238,9 +1476,15 @@ BEGIN
     'createdAt', r.created_at, 'source', r.source,
     'canCancel', public.cockpit_request_cancellable(r, p_seat),
     'canRoute', public.cockpit_request_can_route(r, p_seat),
-    -- Saved but not sent: it goes to ClickUp once requests open.
+    -- An old form ticket already moved, closed or deleted in ClickUp (review round 3).
+    'importHandled', public.cockpit_request_import_handled(r),
+    -- Saved but not sent: it goes to ClickUp once requests open, or (review round 3)
+    -- once the writer, quiet for 15 minutes after requests opened, runs again.
     'held', v_held,
-    'heldNote', CASE WHEN v_held THEN 'Saved, not sent yet. It goes to ClickUp once requests open.' END,
+    'heldNote', CASE WHEN NOT v_held THEN NULL
+                     WHEN public.cockpit_request_writer_silent(r.client_task_id)
+                       THEN 'Saved, not sent yet: the requests writer has not reported in the last 15 minutes. It goes to ClickUp once the writer runs again.'
+                     ELSE 'Saved, not sent yet. It goes to ClickUp once requests open.' END,
     'parts', v_parts);
 END $$;
 
@@ -1254,16 +1498,20 @@ BEGIN
   ELSIF p_view = 'assigned' THEN
     RETURN v_cu IS NOT NULL AND r.done_at IS NULL AND r.state NOT IN ('cancelled','routed')
        AND EXISTS (SELECT 1 FROM public.cockpit_request_parts p
-                    WHERE p.request_id = r.id AND (p.owner_clickup_id = v_cu OR v_cu = ANY(coalesce(p.assignee_ids, '{}'))));
+                    WHERE p.request_id = r.id AND (p.owner_clickup_id = v_cu OR v_cu = ANY(coalesce(p.assignee_ids, '{}'))))
+       -- An old form ticket already dealt with in ClickUp is no longer waiting (review round 3).
+       AND NOT public.cockpit_request_import_handled(r);
   ELSIF p_view = 'team' THEN
     RETURN r.done_at IS NULL AND r.state NOT IN ('cancelled','routed')
        AND (coalesce(p_seat->'teams', '[]'::jsonb) ? coalesce(p_team, '')
             OR EXISTS (SELECT 1 FROM public.cockpit_request_parts p
                         WHERE p.request_id = r.id AND coalesce(p_seat->'teams', '[]'::jsonb) ? p.team))
        -- The client limit every other screen uses (20261017b).
-       AND public.cockpit_request_client_visible(r, p_seat);
+       AND public.cockpit_request_client_visible(r, p_seat)
+       AND NOT public.cockpit_request_import_handled(r);
   ELSIF p_view = 'all' THEN
-    RETURN true;
+    -- Everything, but a team-only seat named an editor keeps its client limit.
+    RETURN public.cockpit_request_sees_all(r, p_seat);
   END IF;
   RETURN false;
 END $$;
@@ -1404,11 +1652,35 @@ DROP TRIGGER IF EXISTS cockpit_member_clickup_audit ON public.cockpit_member_cli
 CREATE TRIGGER cockpit_member_clickup_audit AFTER INSERT OR UPDATE ON public.cockpit_member_clickup
   FOR EACH ROW EXECUTE FUNCTION public.cockpit_member_clickup_audit();
 
+-- A step's time as the writer stamped it (StepBook: an ISO time with its offset
+-- on every state it records); NULL when absent or anything else (PostgreSQL would
+-- read words such as 'yesterday' as a time, which is never what the writer wrote).
+CREATE OR REPLACE FUNCTION public.cockpit_request_step_at(p_step jsonb)
+RETURNS timestamptz LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  IF jsonb_typeof(p_step) IS DISTINCT FROM 'object' OR jsonb_typeof(p_step->'at') IS DISTINCT FROM 'string'
+     OR p_step->>'at' !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?(Z|[+-][0-9]{2}:?[0-9]{2})$' THEN
+    RETURN NULL;
+  END IF;
+  RETURN (p_step->>'at')::timestamptz;
+EXCEPTION WHEN others THEN
+  RETURN NULL;
+END $$;
+
 -- The writer's queue moves the request parts (contract 2.7). No audit here:
 -- the queue's own trigger (20261009f) records every state change but sending.
+-- The 2-minute check's payload (review round 3) says what the part's steps
+-- really did, not what the frozen payload asked for: setRequestType is true
+-- only when the request_type step set Request Type (done) or found it set
+-- (unchanged); ownerAt is when the owner was written (owner_due_priority on a
+-- template part, else the create); madeAt is the part's last task write the
+-- check judges (Request Type when set, else the owner). The writer times "on
+-- time" from them, not from delivery, which a retried later step (the card
+-- comment, the old ticket) can push hours past the writes it checks.
 CREATE OR REPLACE FUNCTION public.cockpit_request_queue_sync()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE v_req uuid; v_part text; v_p public.cockpit_request_parts;
+  v_steps jsonb; v_rt_set boolean; v_owner_at timestamptz; v_made_at timestamptz;
 BEGIN
   BEGIN
     v_req := (NEW.payload->>'requestId')::uuid;
@@ -1428,14 +1700,20 @@ BEGIN
     RETURNING p.* INTO v_p;
     IF v_p.request_id IS NULL THEN RETURN NULL; END IF;
     IF NEW.state = 'delivered' AND OLD.state IS DISTINCT FROM 'delivered' AND v_p.clickup_task_id IS NOT NULL THEN
+      v_steps := CASE WHEN jsonb_typeof(NEW.progress->'steps') = 'object' THEN NEW.progress->'steps' ELSE '{}'::jsonb END;
+      v_rt_set := coalesce(v_steps->'request_type'->>'state', '') IN ('done','unchanged');
+      v_owner_at := coalesce(public.cockpit_request_step_at(v_steps->'owner_due_priority'),
+                             public.cockpit_request_step_at(v_steps->'create'));
+      v_made_at := coalesce(CASE WHEN v_rt_set THEN public.cockpit_request_step_at(v_steps->'request_type') END, v_owner_at);
       INSERT INTO public.cockpit_clickup_writeback_queue(dedupe_key, kind, source_table, source_id, task_id, next_attempt_at, payload)
       VALUES ('verify:' || v_req::text || ':' || v_part, 'task_action', 'cockpit_requests', v_req::text, v_p.clickup_task_id,
         now() + interval '2 minutes',
         jsonb_build_object('op', 'verify', 'requestId', v_req, 'part', v_part, 'taskId', v_p.clickup_task_id,
           'listId', v_p.list_id, 'taskName', v_p.task_name, 'ownerClickupId', v_p.owner_clickup_id,
           'typeKey', NEW.payload->>'typeKey',
-          'setRequestType', coalesce(NEW.payload->'setRequestType', 'false'::jsonb),
-          'clientTaskId', NEW.payload->'clientTaskId'))
+          'setRequestType', v_rt_set,
+          'clientTaskId', NEW.payload->'clientTaskId',
+          'ownerAt', v_owner_at, 'madeAt', v_made_at))
       ON CONFLICT (dedupe_key) DO NOTHING;
     END IF;
     IF NEW.state IS DISTINCT FROM OLD.state THEN
@@ -1685,7 +1963,10 @@ BEGIN
     IF v_import.id IS NULL THEN
       RAISE EXCEPTION 'That old ticket is not in the cockpit. Reload the queue.' USING ERRCODE = '22023';
     END IF;
-    IF v_import.state <> 'imported' THEN
+    -- Routed already, here or in ClickUp (review round 3: moved, closed or deleted
+    -- there, which the writer would skip). The same sentence lets a request filed
+    -- again with replacesIfOpen go on its own.
+    IF v_import.state <> 'imported' OR public.cockpit_request_import_handled(v_import) THEN
       RAISE EXCEPTION 'That old ticket was already routed.' USING ERRCODE = '55000';
     END IF;
     -- The same rule that shows Route on the queue (canRoute), and the ticket's own card.
@@ -1696,6 +1977,17 @@ BEGIN
       RAISE EXCEPTION USING MESSAGE = 'This old ticket is for ' || coalesce(v_import.client_name, 'another client')
         || '. Route it for that client.', ERRCODE = '22023';
     END IF;
+    -- During the test on the internal test card (apply_limited), only that card's
+    -- own tickets go out. A ticket with no card routed onto the test card would go
+    -- at once and close a real ticket on All Tasks (review round 2): it is routed
+    -- for its own client instead, held until requests open to everyone. The claim
+    -- keeps the same rule for a request filed before the test began (review round 3,
+    -- cockpit_request_replaces_ok), so a held one never goes out during it either.
+    IF public.cockpit_request_writer_takes(p_client_task_id)
+       AND NOT public.cockpit_request_replaces_ok(p_replaces_task_id, public.cockpit_clickup_requests_mode()) THEN
+      RAISE EXCEPTION 'This old ticket has no client card, so it cannot go out on the internal test card. Route it for its own client, or with none; it waits until requests open to everyone.'
+        USING ERRCODE = '55000';
+    END IF;
   END IF;
   -- 7. One open lifecycle request per card.
   IF t.key IN ('client_offboarding','client_pause','client_relaunch') AND p_client_task_id IS NOT NULL THEN
@@ -1704,10 +1996,23 @@ BEGIN
        AND q.state NOT IN ('cancelled','failed','routed') AND q.done_at IS NULL
        AND q.created_at > now() - interval '60 days'
        AND (p_replaces_task_id IS NULL OR q.imported_task_id IS DISTINCT FROM p_replaces_task_id)
+       -- An old form ticket already dealt with in ClickUp waits for nobody (review round 3).
+       AND NOT public.cockpit_request_import_handled(q)
      ORDER BY q.created_at DESC LIMIT 1;
     IF v_dup.id IS NOT NULL THEN
-      RETURN jsonb_build_object('id', NULL, 'state', 'duplicate', 'reused', false, 'duplicateOf', v_dup.id, 'held', false,
-        'note', 'An open ' || lower(t.label) || ' request for ' || coalesce(v_client, 'this client') || ' already exists. Open it instead.',
+      -- "Open it" only for a seat that may open it (review round 2); anyone else
+      -- is told who raised it, by role, or which queue an old form ticket waits in.
+      IF public.cockpit_request_may_open(v_dup, v_seat) THEN
+        RETURN jsonb_build_object('id', NULL, 'state', 'duplicate', 'reused', false, 'duplicateOf', v_dup.id, 'held', false,
+          'note', 'An open ' || lower(t.label) || ' request for ' || coalesce(v_client, 'this client') || ' already exists. Open it instead.',
+          'parts', '[]'::jsonb);
+      END IF;
+      RETURN jsonb_build_object('id', NULL, 'state', 'duplicate', 'reused', false, 'duplicateOf', NULL, 'held', false,
+        'note', 'An open ' || lower(t.label) || ' request for ' || coalesce(v_client, 'this client') || ' already exists'
+          || CASE WHEN v_dup.source = 'import'
+                  THEN '. It came in through the old ClickUp form and waits in the '
+                       || coalesce(public.cockpit_request_team_label(t.team), 'team') || ' queue.'
+                  ELSE ', raised by ' || coalesce(nullif(btrim(v_dup.requester_label), ''), 'a team member') || '. Ask them about it.' END,
         'parts', '[]'::jsonb);
     END IF;
   END IF;
@@ -1763,12 +2068,11 @@ DECLARE
   v_seat jsonb := public.cockpit_request_seat();
   r public.cockpit_requests; v_after public.cockpit_requests;
   v_reason text := btrim(coalesce(p_reason, ''));
-  v_priv boolean := coalesce((v_seat->>'isEditor')::boolean, false) OR coalesce((v_seat->>'isAdmin')::boolean, false)
-                    OR coalesce((v_seat->>'isCeo')::boolean, false);
 BEGIN
   SELECT * INTO r FROM public.cockpit_requests WHERE id = p_request_id FOR UPDATE;
   IF r.id IS NULL THEN RAISE EXCEPTION 'That request is not in the cockpit. Reload the list.' USING ERRCODE = '22023'; END IF;
-  IF NOT v_priv AND r.requester_member_id::text IS DISTINCT FROM v_seat->>'memberId' THEN
+  -- An editor, an admin or the CEO; a team-only editor only within its client limit.
+  IF NOT public.cockpit_request_sees_all(r, v_seat) AND r.requester_member_id::text IS DISTINCT FROM v_seat->>'memberId' THEN
     RAISE EXCEPTION 'Only the person who asked, an editor, an admin or the CEO can cancel this request.' USING ERRCODE = '42501';
   END IF;
   IF r.state = 'cancelled' THEN RETURN public.cockpit_request_row(r, v_seat); END IF;
@@ -1781,13 +2085,12 @@ BEGIN
   -- Lock the queue rows first: a claim skips locked rows, so nothing starts sending under us.
   PERFORM 1 FROM public.cockpit_clickup_writeback_queue q
    WHERE q.kind = 'request' AND q.source_id = r.id::text FOR UPDATE;
-  -- A part with a ClickUp task (a retry after the task was made too) is in ClickUp already.
+  -- A part with a ClickUp task (a retry after the task was made too) is in ClickUp
+  -- already; so may be one whose create went out and lost its answer (review round 3).
   IF EXISTS (SELECT 1 FROM public.cockpit_request_parts p
               WHERE p.request_id = r.id AND (p.state IN ('sending','delivered','unknown') OR p.clickup_task_id IS NOT NULL))
      OR EXISTS (SELECT 1 FROM public.cockpit_clickup_writeback_queue q
-                 WHERE q.kind = 'request' AND q.source_id = r.id::text
-                   AND (q.state IN ('sending','delivered','unknown') OR q.task_id IS NOT NULL
-                        OR q.progress->'task'->>'id' IS NOT NULL)) THEN
+                 WHERE q.kind = 'request' AND q.source_id = r.id::text AND public.cockpit_request_queue_in_clickup(q)) THEN
     RAISE EXCEPTION 'Part of this request is already in ClickUp. Close it there.' USING ERRCODE = '55000';
   END IF;
   UPDATE public.cockpit_requests SET state = 'cancelled', cancel_reason = v_reason, cancelled_by = v_seat->>'email', updated_at = now()
@@ -1799,11 +2102,18 @@ BEGIN
   PERFORM public.cockpit_request_audit('request.cancelled', 'cockpit_requests', r.id::text, v_seat->>'email',
     jsonb_build_object('state', r.state), jsonb_build_object('state', 'cancelled', 'cancel_reason', v_reason),
     jsonb_build_object('type', r.type_key));
+  -- A request that routed an old form ticket never reached ClickUp (checked
+  -- above), so the old ticket goes back to its queue to be routed again.
+  PERFORM public.cockpit_request_unroute(r, 'cancelled', v_seat->>'email');
   SELECT * INTO v_after FROM public.cockpit_requests WHERE id = r.id;
   RETURN public.cockpit_request_row(v_after, v_seat);
 END $$;
 
-CREATE OR REPLACE FUNCTION public.cockpit_requests_read(p_view text, p_limit integer DEFAULT 50)
+-- p_since (review 2026-10-26, contract F3): only the rows created at or
+-- after it, so a card that shows today's requests reads today's, not the
+-- newest 200 with open ones first. The views' counts are not filtered.
+DROP FUNCTION IF EXISTS public.cockpit_requests_read(text, integer);
+CREATE OR REPLACE FUNCTION public.cockpit_requests_read(p_view text, p_limit integer DEFAULT 50, p_since timestamptz DEFAULT NULL)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   v_seat jsonb := public.cockpit_request_seat();
@@ -1832,19 +2142,28 @@ BEGIN
                  WHERE public.cockpit_request_in_view(r, t.team, 'team', v_seat)));
   END IF;
   IF v_all THEN
-    v_views := v_views || jsonb_build_object('key', 'all', 'label', 'All requests', 'count', (SELECT count(*) FROM public.cockpit_requests));
+    v_views := v_views || jsonb_build_object('key', 'all', 'label', 'All requests',
+      'count', (SELECT count(*) FROM public.cockpit_requests r WHERE public.cockpit_request_in_view(r, NULL, 'all', v_seat)));
   END IF;
   IF p_view = 'assigned' AND NOT v_linked THEN
-    v_note := 'Your seat is not linked to a ClickUp user, so requests assigned to you cannot show. Ask the systems manager to link it.';
+    -- An editor said this seat has no ClickUp user (review round 3): nobody is asked to link it.
+    v_note := CASE WHEN v_seat->>'linkState' = 'cleared'
+                   THEN 'Your seat has no ClickUp user, so nothing is assigned to you here. Requests you raise show under My requests.'
+                   ELSE 'Your seat is not linked to a ClickUp user, so requests assigned to you cannot show. Ask the systems manager to link it.' END;
   ELSIF p_view = 'team' AND jsonb_array_length(v_teams) = 0 THEN
     v_note := 'Your seat has no team queue. Use My requests to see what you asked for.';
   END IF;
+  -- Open first: not done, cancelled or routed, and not an old form ticket already
+  -- dealt with in ClickUp (review round 3).
   SELECT coalesce(jsonb_agg(public.cockpit_request_row(x.req, v_seat) ORDER BY x.open DESC, x.due_on ASC NULLS LAST, x.created_at DESC), '[]'::jsonb)
     INTO v_rows
-    FROM (SELECT r AS req, (r.done_at IS NULL AND r.state NOT IN ('cancelled','routed')) AS open, r.due_on, r.created_at
-            FROM public.cockpit_requests r JOIN public.cockpit_request_types t ON t.key = r.type_key
-           WHERE public.cockpit_request_in_view(r, t.team, p_view, v_seat)
-           ORDER BY (r.done_at IS NULL AND r.state NOT IN ('cancelled','routed')) DESC, r.due_on ASC NULLS LAST, r.created_at DESC
+    FROM (SELECT y.req, y.open, y.due_on, y.created_at
+            FROM (SELECT r AS req, (r.done_at IS NULL AND r.state NOT IN ('cancelled','routed')
+                                    AND NOT public.cockpit_request_import_handled(r)) AS open, r.due_on, r.created_at
+                    FROM public.cockpit_requests r JOIN public.cockpit_request_types t ON t.key = r.type_key
+                   WHERE (p_since IS NULL OR r.created_at >= p_since)
+                     AND public.cockpit_request_in_view(r, t.team, p_view, v_seat)) y
+           ORDER BY y.open DESC, y.due_on ASC NULLS LAST, y.created_at DESC
            LIMIT v_limit) x;
   RETURN jsonb_build_object('asOf', now(), 'view', p_view, 'views', v_views, 'rows', v_rows, 'note', v_note);
 END $$;
@@ -1853,23 +2172,15 @@ CREATE OR REPLACE FUNCTION public.cockpit_request_get(p_request_id uuid)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   v_seat jsonb := public.cockpit_request_seat();
-  v_cu bigint := CASE WHEN jsonb_typeof(v_seat->'clickupUserId') = 'number' THEN (v_seat->>'clickupUserId')::bigint END;
-  v_teams jsonb := coalesce(v_seat->'teams', '[]'::jsonb);
-  r public.cockpit_requests; t public.cockpit_request_types; v_team text;
+  r public.cockpit_requests; t public.cockpit_request_types;
   v_answers jsonb; v_details text; v_history jsonb;
 BEGIN
   SELECT * INTO r FROM public.cockpit_requests WHERE id = p_request_id;
   IF r.id IS NULL THEN RAISE EXCEPTION 'That request is not in the cockpit. Reload the list.' USING ERRCODE = '22023'; END IF;
-  SELECT tt.team INTO v_team FROM public.cockpit_request_types tt WHERE tt.key = r.type_key;
-  IF NOT (r.requester_member_id::text IS NOT DISTINCT FROM v_seat->>'memberId'
-          OR coalesce((v_seat->>'isEditor')::boolean, false) OR coalesce((v_seat->>'isAdmin')::boolean, false)
-          OR coalesce((v_seat->>'isCeo')::boolean, false)
-          -- A team's request, within the client limit every other screen uses (20261017b).
-          OR ((v_teams ? coalesce(v_team, '')
-               OR EXISTS (SELECT 1 FROM public.cockpit_request_parts p WHERE p.request_id = r.id AND v_teams ? p.team))
-              AND public.cockpit_request_client_visible(r, v_seat))
-          OR (v_cu IS NOT NULL AND EXISTS (SELECT 1 FROM public.cockpit_request_parts p WHERE p.request_id = r.id
-                      AND (p.owner_clickup_id = v_cu OR v_cu = ANY(coalesce(p.assignee_ids, '{}')))))) THEN
+  -- The requester, an editor, an admin or the CEO (a team-only one within its
+  -- client limit), the type's or a part's team within the client limit, or a
+  -- part's owner or assignee (cockpit_request_may_open).
+  IF NOT public.cockpit_request_may_open(r, v_seat) THEN
     RAISE EXCEPTION 'This request is not yours to see. Ask the person who raised it.' USING ERRCODE = '42501';
   END IF;
   t := public.cockpit_request_type_at(r.type_key, r.type_version);
@@ -1888,11 +2199,22 @@ BEGIN
                            WHEN 'request.cancelled' THEN 'Cancelled: ' || coalesce(a.after->>'cancel_reason', '')
                            WHEN 'request.imported' THEN 'Came in through the old ClickUp form'
                            WHEN 'request.routed' THEN 'Routed as a new request'
+                           WHEN 'request.unrouted' THEN
+                             CASE a.metadata->>'why'
+                               WHEN 'cancelled' THEN 'Back in the queue: the request that routed it was cancelled'
+                               ELSE 'Back in the queue: the request that routed it did not reach ClickUp' END
+                           -- The hourly read of All Tasks (review round 3).
+                           WHEN 'request.import_left' THEN
+                             CASE WHEN a.metadata->'left' ? coalesce(r.imported_task_id, '')
+                                  THEN 'Left All Tasks: moved, closed or deleted in ClickUp'
+                                  ELSE 'Back on All Tasks in ClickUp' END
                            ELSE a.action END AS what,
              public.cockpit_request_by_label(a.actor_email) AS by_label
         FROM public.cockpit_audit_log a
        WHERE a.entity_type = 'cockpit_requests'
-         AND (a.entity_id = r.id::text OR (a.action = 'request.imported' AND a.metadata->'requestIds' ? r.id::text))
+         AND (a.entity_id = r.id::text OR (a.action = 'request.imported' AND a.metadata->'requestIds' ? r.id::text)
+              OR (a.action = 'request.import_left' AND r.imported_task_id IS NOT NULL
+                  AND (a.metadata->'left' ? r.imported_task_id OR a.metadata->'back' ? r.imported_task_id)))
       UNION ALL
       SELECT a.created_at,
              public.cockpit_request_team_label(p.team) || ': ' ||
@@ -1908,7 +2230,10 @@ BEGIN
                                            WHEN 'retry' THEN CASE WHEN a.after->>'error' LIKE 'Waiting in the queue%'
                                                                   THEN 'waiting in the queue until requests open'
                                                                   ELSE 'ClickUp asked to wait, trying again' END
-                                           WHEN 'unknown' THEN 'ClickUp did not answer, checking'
+                                           -- Review round 3: a create whose answer was lost, handed back while requests are not open.
+                                           WHEN 'unknown' THEN CASE WHEN a.after->>'error' LIKE 'Waiting in the queue%'
+                                                                    THEN 'ClickUp did not answer; checked once requests open'
+                                                                    ELSE 'ClickUp did not answer, checking' END
                                            WHEN 'failed' THEN 'did not reach ClickUp'
                                            WHEN 'skipped' THEN 'not sent'
                                            WHEN 'queued' THEN CASE WHEN a.after->>'error' LIKE 'Waiting in the queue%'
@@ -2018,12 +2343,18 @@ BEGIN
   RETURN jsonb_build_object('versions', v);
 END $$;
 
+-- Going back to a version writes it as a new one. Request Type is the one
+-- thing it never turns on (review round 2): it may only stay as it is or go
+-- off, because it was off for a reason (the 2-minute check found ClickUp moved
+-- a task, or an editor switched it off) and turning it on is the editor's own
+-- switch, after the rehearsal ticket (R8). restoreNote says so when it kept it off.
 CREATE OR REPLACE FUNCTION public.cockpit_request_type_restore(p_key text, p_version integer, p_expected_version integer)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   v_gate jsonb := public.cockpit_forms_editor_gate();
   v_email text := lower(btrim(v_gate->>'email'));
   t public.cockpit_request_types; n public.cockpit_request_types; v_row jsonb; o public.cockpit_request_types;
+  v_kept_off boolean;
 BEGIN
   SELECT * INTO t FROM public.cockpit_request_types WHERE key = p_key FOR UPDATE;
   IF t.key IS NULL THEN RAISE EXCEPTION 'That request type does not exist. Reload the page.' USING ERRCODE = '22023'; END IF;
@@ -2033,17 +2364,21 @@ BEGIN
   SELECT v."row" INTO v_row FROM public.cockpit_request_type_versions v WHERE v.key = p_key AND v.version = p_version;
   IF v_row IS NULL THEN RAISE EXCEPTION 'That version does not exist. Reload the versions.' USING ERRCODE = '22023'; END IF;
   o := jsonb_populate_record(NULL::public.cockpit_request_types, v_row);
+  v_kept_off := coalesce(o.set_request_type, false) AND NOT t.set_request_type;
   UPDATE public.cockpit_request_types SET label = o.label,
     targets = public.cockpit_request_targets_checked(o.targets, t.targets), fields = o.fields,
     sop_steps = o.sop_steps, sop_steps_state = o.sop_steps_state, sop_url = o.sop_url, due_days = o.due_days,
-    priority = o.priority, set_request_type = o.set_request_type, enabled = o.enabled,
+    priority = o.priority, set_request_type = coalesce(o.set_request_type, false) AND t.set_request_type, enabled = o.enabled,
     version = t.version + 1, updated_by = v_email, updated_at = now()
    WHERE key = p_key RETURNING * INTO n;
   INSERT INTO public.cockpit_request_type_versions(key, version, "row", saved_by, note)
-  VALUES (n.key, n.version, to_jsonb(n), v_email, 'Back to version ' || p_version);
+  VALUES (n.key, n.version, to_jsonb(n), v_email,
+    'Back to version ' || p_version || CASE WHEN v_kept_off THEN '. Request Type stays off.' ELSE '' END);
   PERFORM public.cockpit_request_audit('request_type.restored', 'cockpit_request_types', n.key, v_email, to_jsonb(t), to_jsonb(n),
-    jsonb_build_object('version', n.version, 'from_version', p_version));
-  RETURN public.cockpit_request_type_view(n, true);
+    jsonb_build_object('version', n.version, 'from_version', p_version, 'requestTypeKeptOff', v_kept_off));
+  RETURN public.cockpit_request_type_view(n, true) || jsonb_build_object('restoreNote',
+    CASE WHEN v_kept_off THEN 'Request Type stays off. Version ' || p_version
+      || ' had it on, but it is off now; turn it on with its switch once the rehearsal ticket shows ClickUp keeps the task where it is.' END);
 END $$;
 
 CREATE OR REPLACE FUNCTION public.cockpit_request_people()
@@ -2094,10 +2429,16 @@ END $$;
 -- the API user 284616470 (the CEO's own ClickUp account, which every cockpit
 -- write comes from) links only to the CEO's seat. The audit trigger records
 -- every change with the editor's address.
+-- Review round 3: a new hand link starts a seats read of the task mirror at
+-- once (cockpit_task_mirror_kick, migration t, looked up when it runs): the
+-- delta only reads tasks changed lately, so the seat's older open tasks reach
+-- the mirror only through a full read of the seat, which otherwise waits for
+-- the hourly run at :11 while the card says nothing is assigned. A kick that
+-- cannot post (no vault secret, no pg_net, no migration t) never fails the link.
 CREATE OR REPLACE FUNCTION public.cockpit_member_clickup_set(p_member_id uuid, p_clickup_user_id bigint)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE v_gate jsonb := public.cockpit_forms_editor_gate(); v_email text := lower(btrim(v_gate->>'email'));
-  v_target_email text;
+  v_target_email text; v_before public.cockpit_member_clickup;
 BEGIN
   SELECT lower(btrim(m.email)) INTO v_target_email FROM public.cockpit_members m WHERE m.id = p_member_id AND m.active;
   IF v_target_email IS NULL THEN
@@ -2124,10 +2465,20 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM public.cockpit_clickup_members c WHERE c.clickup_user_id = p_clickup_user_id AND c.active) THEN
       RAISE EXCEPTION 'That person is not in the ClickUp workspace. Pick someone from the list.' USING ERRCODE = '22023';
     END IF;
+    SELECT * INTO v_before FROM public.cockpit_member_clickup WHERE member_id = p_member_id;
     INSERT INTO public.cockpit_member_clickup(member_id, clickup_user_id, state, matched_by, note, checked_at, updated_by, updated_at)
     VALUES (p_member_id, p_clickup_user_id, 'manual', 'editor', 'Set by an editor.', now(), v_email, now())
     ON CONFLICT (member_id) DO UPDATE SET clickup_user_id = EXCLUDED.clickup_user_id, state = 'manual', matched_by = 'editor',
       note = EXCLUDED.note, checked_at = now(), updated_by = v_email, updated_at = now();
+    -- A seat newly linked to this ClickUp user has its open tasks read now, not at the next :11.
+    IF v_before.member_id IS NULL OR v_before.state NOT IN ('ok','manual')
+       OR v_before.clickup_user_id IS DISTINCT FROM p_clickup_user_id THEN
+      BEGIN
+        PERFORM public.cockpit_task_mirror_kick('seats');
+      EXCEPTION WHEN OTHERS THEN
+        NULL; -- The hourly seats run reads it.
+      END;
+    END IF;
   END IF;
   RETURN public.cockpit_member_clickup_seat(p_member_id);
 END $$;
@@ -2142,6 +2493,12 @@ END $$;
 -- only the canary cards' rows in apply_limited. The rest stay queued and go
 -- once requests open; a dry run never turns a request into a dead dry_run row.
 -- The writer checks its own switch too; this is the database's half.
+-- Review round 3 (E-CANARY): in apply_limited a request that routes an old form
+-- ticket goes only when that ticket's own card is a canary card
+-- (cockpit_request_replaces_ok), also one filed held before the test began, so
+-- the rehearsal never closes a real ticket on All Tasks. Each request row
+-- carries replaces_client_task_id (the old ticket's card, null when it has
+-- none) so the writer applies the same rule in the run after a switch flip.
 CREATE OR REPLACE FUNCTION public.cockpit_clickup_writeback_claim_requests(p_token uuid, p_limit integer DEFAULT 6)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE out jsonb; v_mode jsonb := public.cockpit_clickup_requests_mode();
@@ -2155,7 +2512,10 @@ BEGIN
             -- The 2-minute check only reads (and puts an owner back): live whenever the switch is on.
             OR (q.kind = 'task_action' AND q.payload->>'op' = 'verify')
             OR (jsonb_typeof(q.payload->'clientTaskId') = 'string'
-                AND coalesce(v_mode->'onlyCards', '[]'::jsonb) ? (q.payload->>'clientTaskId')))
+                AND coalesce(v_mode->'onlyCards', '[]'::jsonb) ? (q.payload->>'clientTaskId')
+                AND (q.kind <> 'request'
+                     OR public.cockpit_request_replaces_ok(
+                          (SELECT r.replaces_task_id FROM public.cockpit_requests r WHERE r.id::text = q.source_id), v_mode))))
        AND ((q.state IN ('queued','retry','unknown') AND q.next_attempt_at <= now())
          OR (q.state = 'sending' AND q.claimed_at < now() - interval '10 minutes'))
        AND (q.task_id IS NULL OR NOT EXISTS (
@@ -2175,9 +2535,20 @@ BEGIN
       FROM picked WHERE q.id = picked.id
     RETURNING q.*
   )
+  -- replaces_task_id (review round 2): the old form ticket a request routes,
+  -- on every part's row. Only the first part's payload names it, and a part
+  -- claimed in a later run than the first must still read the old ticket
+  -- before it makes anything (clickup-writeback requests.ts executeRequest).
   SELECT coalesce(jsonb_agg(to_jsonb(c) || jsonb_build_object('source_exists', CASE c.kind
       WHEN 'request' THEN EXISTS (SELECT 1 FROM public.cockpit_requests r WHERE r.id::text = c.source_id AND r.state <> 'cancelled')
-      ELSE true END) ORDER BY c.created_at, c.id), '[]'::jsonb)
+      ELSE true END,
+      'replaces_task_id', CASE WHEN c.kind = 'request'
+        THEN (SELECT r.replaces_task_id FROM public.cockpit_requests r WHERE r.id::text = c.source_id) END,
+      'replaces_client_task_id', CASE WHEN c.kind = 'request'
+        THEN (SELECT i.client_task_id FROM public.cockpit_requests r
+                JOIN public.cockpit_requests i ON i.imported_task_id = r.replaces_task_id
+               WHERE r.id::text = c.source_id) END)
+      ORDER BY c.created_at, c.id), '[]'::jsonb)
     INTO out FROM claimed c;
   RETURN out;
 END $$;
@@ -2187,6 +2558,10 @@ END $$;
 -- retry once it has ClickUp progress (a task or a step). Only the run that
 -- holds the claim may release it. The part follows through the sync trigger,
 -- and the queue's own audit trigger (20261009f) records the state change.
+-- Review round 3: a request row whose create went out and lost its answer (a
+-- create on record, no task id yet) stays unknown, as the writer left it: the
+-- task may be in ClickUp, so the screens say "checking", cancel stays refused
+-- and the writer reads it back before anything else once requests open.
 CREATE OR REPLACE FUNCTION public.cockpit_clickup_writeback_release(p_id uuid, p_token uuid, p_planned jsonb, p_note text,
   p_next_attempt_at timestamptz)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
@@ -2199,7 +2574,10 @@ BEGIN
   IF q.kind NOT IN ('request','task_action') THEN
     RAISE EXCEPTION 'Only a request or a task change is handed back this way';
   END IF;
-  v_state := CASE WHEN q.progress ? 'task'
+  v_state := CASE WHEN q.kind = 'request' AND q.task_id IS NULL AND q.progress->'task'->>'id' IS NULL
+                    AND jsonb_typeof(q.progress->'steps') = 'object' AND q.progress->'steps' ? 'create'
+                  THEN 'unknown'
+                  WHEN q.progress ? 'task'
                     OR (jsonb_typeof(q.progress->'steps') = 'object' AND q.progress->'steps' <> '{}'::jsonb)
                     OR (jsonb_typeof(q.progress->'steps') = 'array' AND jsonb_array_length(q.progress->'steps') > 0)
                   THEN 'retry' ELSE 'queued' END;
@@ -2394,7 +2772,10 @@ END $$;
 -- ClickUp added since is added as a new catalog row (state ok, used by no
 -- type until an editor maps it), when its type is one a request can write:
 -- short_text (text), text (longtext), url, number, drop_down (select).
--- Other types are counted in skipped and left out.
+-- Other types are counted in skipped and left out, and so are the fields a
+-- request never writes (cockpit_request_never_written: that read returns the
+-- Request Type folder field e9fd8024, which only the writer's own request_type
+-- step sets, review round 2).
 CREATE OR REPLACE FUNCTION public.cockpit_request_field_catalog_sync(p_fields jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE v_updated integer; v_missing integer; v_added integer; v_skipped integer;
@@ -2406,6 +2787,7 @@ BEGIN
   WITH seen AS (
     SELECT DISTINCT ON (e->>'id') e->>'id' AS id, e->>'name' AS name, e->'options' AS options
       FROM jsonb_array_elements(p_fields) e WHERE jsonb_typeof(e) = 'object' AND e->>'id' IS NOT NULL
+       AND NOT public.cockpit_request_never_written(e->>'id')
      ORDER BY e->>'id'
   ), upd AS (
     UPDATE public.cockpit_request_field_catalog c SET
@@ -2421,8 +2803,9 @@ BEGIN
   SELECT count(*) INTO v_updated FROM upd;
   WITH fresh AS (
     SELECT DISTINCT ON (lower(e->>'id')) lower(e->>'id') AS id, left(btrim(e->>'name'), 200) AS name,
-           CASE lower(coalesce(e->>'type', '')) WHEN 'short_text' THEN 'text' WHEN 'text' THEN 'longtext'
-                WHEN 'url' THEN 'url' WHEN 'number' THEN 'number' WHEN 'drop_down' THEN 'select' END AS kind,
+           CASE WHEN public.cockpit_request_never_written(e->>'id') THEN NULL
+                ELSE CASE lower(coalesce(e->>'type', '')) WHEN 'short_text' THEN 'text' WHEN 'text' THEN 'longtext'
+                       WHEN 'url' THEN 'url' WHEN 'number' THEN 'number' WHEN 'drop_down' THEN 'select' END END AS kind,
            e->'options' AS options
       FROM jsonb_array_elements(p_fields) e
      WHERE jsonb_typeof(e) = 'object'
@@ -2452,6 +2835,24 @@ BEGIN
   RETURN jsonb_build_object('updated', v_updated, 'missing', v_missing, 'added', v_added, 'skipped', v_skipped);
 END $$;
 
+-- A catalog row for a field a request never writes (an hourly read before the
+-- review round 2 change could have added the Request Type folder field) comes
+-- out, with one audit row; a re-apply finds none and writes nothing.
+DO $$
+DECLARE v_ids jsonb;
+BEGIN
+  WITH gone AS (
+    DELETE FROM public.cockpit_request_field_catalog c
+     WHERE public.cockpit_request_never_written(c.clickup_field_id::text)
+    RETURNING c.clickup_field_id
+  )
+  SELECT jsonb_agg(gone.clickup_field_id ORDER BY gone.clickup_field_id) INTO v_ids FROM gone;
+  IF v_ids IS NOT NULL THEN
+    PERFORM public.cockpit_request_audit('request_fields.removed', 'cockpit_request_field_catalog', NULL, 'migration', NULL, NULL,
+      jsonb_build_object('fieldIds', v_ids, 'why', 'A request never writes these ClickUp fields (Request Type has its own switch).'));
+  END IF;
+END $$;
+
 -- The template objects, hourly (id and name only).
 CREATE OR REPLACE FUNCTION public.cockpit_request_templates_sync(p_templates jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
@@ -2477,12 +2878,21 @@ BEGIN
 END $$;
 
 -- The old form's tickets that sit in All Tasks (contract 2.10). One audit row a run.
-CREATE OR REPLACE FUNCTION public.cockpit_request_import(p_tasks jsonb)
+-- Review round 3: p_open_ids, when the hourly read of All Tasks was complete, is
+-- every task it found open there (not done or closed), form ticket or not; NULL
+-- when the read was cut short. An import whose ticket is not among them left All
+-- Tasks, or was closed or deleted in ClickUp, by the writer's own rule (requests.ts
+-- oldTicketHandled): import_left_at is set, so it leaves the queues
+-- (cockpit_request_import_handled); one a complete read finds again is cleared.
+-- Audit request.import_left lists both. Two seats runs at once (the hourly one and
+-- a hand link's) import a ticket once.
+DROP FUNCTION IF EXISTS public.cockpit_request_import(jsonb);
+CREATE OR REPLACE FUNCTION public.cockpit_request_import(p_tasks jsonb, p_open_ids text[] DEFAULT NULL)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   e jsonb; t public.cockpit_request_types; v_id uuid; v_card text; v_client text; v_cards text[];
   v_answers jsonb; v_due date; v_priority text; v_created timestamptz; v_imported jsonb := '[]'::jsonb; v_ids jsonb := '[]'::jsonb;
-  v_skipped jsonb := '[]'::jsonb;
+  v_skipped jsonb := '[]'::jsonb; v_got uuid; v_left jsonb := '[]'::jsonb; v_back jsonb := '[]'::jsonb;
 BEGIN
   PERFORM set_config('cockpit.audit_source', 'cron', true);
   IF jsonb_typeof(p_tasks) IS DISTINCT FROM 'array' THEN
@@ -2513,10 +2923,15 @@ BEGIN
     v_priority := CASE WHEN lower(coalesce(e->>'priority', '')) IN ('urgent','high','normal','low') THEN lower(e->>'priority') ELSE t.priority END;
     v_created := CASE WHEN coalesce(e->>'dateCreated', '') ~ '^[0-9]{10,15}$' THEN to_timestamp((e->>'dateCreated')::bigint / 1000.0) ELSE now() END;
     v_id := gen_random_uuid();
+    v_got := NULL;
     INSERT INTO public.cockpit_requests(id, type_key, type_version, type_label, requester_member_id, requester_email, requester_label,
       source, client_task_id, client_name, answers, due_on, priority, state, imported_task_id, content_hash, created_at, updated_at)
     VALUES (v_id, t.key, t.version, t.label, NULL, NULL, 'the old ClickUp form', 'import', v_card, v_client, v_answers, v_due,
-      v_priority, 'imported', e->>'taskId', public.cockpit_request_hash(t.key, v_card, v_answers, v_due, v_priority, NULL), v_created, now());
+      v_priority, 'imported', e->>'taskId', public.cockpit_request_hash(t.key, v_card, v_answers, v_due, v_priority, NULL), v_created, now())
+    ON CONFLICT (imported_task_id) DO NOTHING
+    RETURNING id INTO v_got;
+    -- Another seats run imported it a moment ago.
+    CONTINUE WHEN v_got IS NULL;
     INSERT INTO public.cockpit_request_parts(request_id, part, list_id, team, task_name, owner_rule, owner_clickup_id, owner_how,
       owner_label, state, clickup_task_id, clickup_url, status, status_type, mirrored_at)
     VALUES (v_id, 'main', '901816723226', 'all_tasks', left(coalesce(nullif(btrim(e->>'name'), ''), t.label), 200),
@@ -2526,11 +2941,32 @@ BEGIN
     v_imported := v_imported || to_jsonb(e->>'taskId');
     v_ids := v_ids || to_jsonb(v_id::text);
   END LOOP;
+  -- A complete read: which old tickets left All Tasks, and which came back.
+  IF p_open_ids IS NOT NULL THEN
+    WITH gone AS (
+      UPDATE public.cockpit_requests r SET import_left_at = now(), updated_at = now()
+       WHERE r.source = 'import' AND r.import_left_at IS NULL AND NOT (r.imported_task_id = ANY(p_open_ids))
+      RETURNING r.imported_task_id
+    )
+    SELECT coalesce(jsonb_agg(gone.imported_task_id ORDER BY gone.imported_task_id), '[]'::jsonb) INTO v_left FROM gone;
+    WITH back AS (
+      UPDATE public.cockpit_requests r SET import_left_at = NULL, updated_at = now()
+       WHERE r.source = 'import' AND r.import_left_at IS NOT NULL AND r.imported_task_id = ANY(p_open_ids)
+      RETURNING r.imported_task_id
+    )
+    SELECT coalesce(jsonb_agg(back.imported_task_id ORDER BY back.imported_task_id), '[]'::jsonb) INTO v_back FROM back;
+    IF jsonb_array_length(v_left) > 0 OR jsonb_array_length(v_back) > 0 THEN
+      PERFORM public.cockpit_request_audit('request.import_left', 'cockpit_requests', NULL, 'cockpit-tasks', NULL, NULL,
+        jsonb_build_object('left', v_left, 'back', v_back));
+    END IF;
+  END IF;
   IF jsonb_array_length(v_imported) > 0 OR jsonb_array_length(v_skipped) > 0 THEN
     PERFORM public.cockpit_request_audit('request.imported', 'cockpit_requests', NULL, 'cockpit-tasks', NULL, NULL,
       jsonb_build_object('taskIds', v_imported, 'requestIds', v_ids, 'skipped', v_skipped));
   END IF;
-  RETURN jsonb_build_object('imported', jsonb_array_length(v_imported), 'skipped', v_skipped);
+  RETURN jsonb_build_object('imported', jsonb_array_length(v_imported), 'skipped', v_skipped)
+    || CASE WHEN p_open_ids IS NOT NULL THEN jsonb_build_object('left', jsonb_array_length(v_left), 'back', jsonb_array_length(v_back))
+            ELSE '{}'::jsonb END;
 END $$;
 
 -- ---------------------------------------------------------------------------
@@ -2568,6 +3004,11 @@ BEGIN
     'cockpit_request_send_gate(jsonb,text)', 'cockpit_request_writer_view(jsonb,text)', 'cockpit_request_writer_takes(text)',
     'cockpit_request_held(public.cockpit_requests)', 'cockpit_request_client_visible(public.cockpit_requests,jsonb)',
     'cockpit_request_can_route(public.cockpit_requests,jsonb)',
+    'cockpit_request_writer_silent(text)', 'cockpit_request_replaces_ok(text,jsonb)',
+    'cockpit_request_import_handled(public.cockpit_requests)',
+    'cockpit_request_queue_in_clickup(public.cockpit_clickup_writeback_queue)', 'cockpit_request_step_at(jsonb)',
+    'cockpit_request_never_written(text)', 'cockpit_request_sees_all(public.cockpit_requests,jsonb)',
+    'cockpit_request_may_open(public.cockpit_requests,jsonb)', 'cockpit_request_unroute(public.cockpit_requests,text,text)',
     'cockpit_request_in_view(public.cockpit_requests,text,text,jsonb)',
     'cockpit_request_hash(text,text,jsonb,date,text,text)', 'cockpit_request_targets_checked(jsonb,jsonb)',
     'cockpit_request_type_at(text,integer)', 'cockpit_member_clickup_seat(uuid)',
@@ -2581,7 +3022,7 @@ BEGIN
     'cockpit_clickup_writeback_release(uuid,uuid,jsonb,text,timestamptz)', 'cockpit_clickup_writeback_task_owners(text[])',
     'cockpit_clickup_requests_state(boolean,text,text,text[],jsonb)', 'cockpit_request_doctor_inputs()',
     'cockpit_request_type_rt_off(text,text)', 'cockpit_clickup_members_sync(jsonb)',
-    'cockpit_request_field_catalog_sync(jsonb)', 'cockpit_request_templates_sync(jsonb)', 'cockpit_request_import(jsonb)',
+    'cockpit_request_field_catalog_sync(jsonb)', 'cockpit_request_templates_sync(jsonb)', 'cockpit_request_import(jsonb,text[])',
     'cockpit_clickup_writeback_begin(text,text,boolean)', 'cockpit_clickup_writeback_idle(text,boolean,text)',
     'cockpit_clickup_writeback_claim(uuid,integer)'] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, anon, authenticated, service_role', f);
@@ -2591,7 +3032,7 @@ BEGIN
   FOREACH f IN ARRAY ARRAY[
     'cockpit_request_types_read()', 'cockpit_request_clients(text,boolean)', 'cockpit_request_preview(text,text,jsonb)',
     'cockpit_request_submit(uuid,text,text,jsonb,date,text,text,text)', 'cockpit_request_cancel(uuid,text)',
-    'cockpit_requests_read(text,integer)', 'cockpit_request_get(uuid)', 'cockpit_request_type_save(text,jsonb,integer)',
+    'cockpit_requests_read(text,integer,timestamptz)', 'cockpit_request_get(uuid)', 'cockpit_request_type_save(text,jsonb,integer)',
     'cockpit_request_type_versions(text)', 'cockpit_request_type_restore(text,integer,integer)', 'cockpit_request_people()',
     'cockpit_member_clickup_read()', 'cockpit_member_clickup_set(uuid,bigint)'] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, anon, authenticated, service_role', f);

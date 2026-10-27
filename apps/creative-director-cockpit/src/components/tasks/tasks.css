@@ -500,6 +500,30 @@
   font-variant-numeric: tabular-nums;
   box-shadow: 0 0 0 2px var(--background);
 }
+/* The bell in a 40px bar of 28px controls (the sales menu bar): the icon
+ * button at the bar's size, a 16px bell, the count tucked on its corner. */
+.tk-bell-compact {
+  display: inline-flex;
+}
+.tk-bell-compact .tk-bell-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+.tk-bell-compact .tk-bell-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.tk-bell-compact .tk-bell-badge {
+  top: 2px;
+  right: auto;
+  left: 15px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  font-size: 9px;
+  line-height: 14px;
+}
 .tk-bell-tools {
   display: flex;
   justify-content: flex-end;
@@ -552,16 +576,22 @@
   outline: 2px solid var(--ring, var(--primary));
   outline-offset: -2px;
 }
+/* Unread: a dot in the teal ink (the brand teal on dark cards; on white the
+ * teal mixed with the ink, about 5:1, where the brand teal was 1.95:1) and a
+ * heavier title, so read and unread rows differ by more than one dot. */
 .tk-dot {
   flex: 0 0 auto;
   width: 7px;
   height: 7px;
   margin-top: 6px;
   border-radius: 999px;
-  background: var(--primary);
+  background: var(--tk-ink);
 }
 .tk-dot-read {
   background: var(--border);
+}
+.tk-alert-unread .tk-alert-title {
+  font-weight: 600;
 }
 .tk-alert-text {
   display: grid;
@@ -760,6 +790,14 @@
   align-items: center;
   gap: 8px;
   margin-right: auto;
+}
+/* What happened to Mark done, on a line of its own above both buttons: the
+   buttons keep one row whatever the sentence's length. Two classes, so the
+   .tk-phase rules below do not take its line back. */
+.tk-foot-actions > .tk-foot-note {
+  flex: 1 1 100%;
+  order: -1;
+  white-space: normal;
 }
 
 /* The focus view: one task. */

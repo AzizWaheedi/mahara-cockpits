@@ -283,6 +283,21 @@ input[type="date"].rq-input {
 .rq-chosen .rq-muted {
   font-size: 12px;
 }
+/* What a request brought that the picked type has no question for: the
+   words as they came, in a quiet panel, scrolling when long. */
+.rq-quote {
+  max-height: 160px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 
 /* --- The route line (the signature) -------------------------------------- */
 
@@ -511,6 +526,20 @@ input[type="date"].rq-input {
 }
 .rq-sent-icon {
   color: var(--success);
+}
+/* The sent panel's mark follows its tasks: refused, on the way, saved until
+   requests open; the success green only once every task is in ClickUp. */
+.rq-sent[data-tone="failed"] {
+  border: 1px solid color-mix(in oklab, var(--destructive) 35%, var(--border));
+}
+.rq-sent[data-tone="failed"] .rq-sent-icon {
+  color: var(--destructive);
+}
+.rq-sent[data-tone="moving"] .rq-sent-icon {
+  color: var(--muted-foreground);
+}
+.rq-sent[data-tone="held"] .rq-sent-icon {
+  color: var(--warning);
 }
 .rq-sent-body {
   display: grid;

@@ -135,7 +135,13 @@ export class FakeRpc {
     cockpit_clickup_members_sync: a => ({ members: (a.p_members as unknown[]).length, linked: 0, notFound: 0, ambiguous: 0 }),
     cockpit_request_field_catalog_sync: a => ({ updated: (a.p_fields as unknown[]).length, missing: 0 }),
     cockpit_request_templates_sync: a => ({ seen: (a.p_templates as unknown[]).length, missing: 0 }),
-    cockpit_request_import: a => ({ imported: (a.p_tasks as unknown[]).length, skipped: [] }),
+    // p_open_ids (review round 3) comes only after a complete read of All Tasks; the answer then counts which
+    // imports left it and which came back.
+    cockpit_request_import: a => ({
+      imported: (a.p_tasks as unknown[]).length,
+      skipped: [],
+      ...(Array.isArray(a.p_open_ids) ? { left: 0, back: 0 } : {}),
+    }),
   };
 
   rpc = async (name: string, args: Record<string, unknown> = {}) => {

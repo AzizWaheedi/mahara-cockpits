@@ -19,6 +19,7 @@ import {
 import {
   ANSWER_PROBLEMS,
   bodyFields,
+  carriedDueOn,
   cleanAnswers,
   dayLabel,
   deliveredNote,
@@ -32,6 +33,7 @@ import {
   type PartRow,
   partChip,
   partHeld,
+  partialNext,
   partMoving,
   partWaiting,
   partWords,
@@ -42,9 +44,12 @@ import {
   requestsOpen,
   routeLine,
   sentLines,
+  sentTone,
   stateChip,
+  stateHint,
   stateWords,
   type TypeView,
+  unfinishedNote,
   validateAnswers,
   verifyWords,
 } from "../src/lib/requestsCore";
@@ -440,6 +445,18 @@ describe("states in words (6.6)", () => {
     expect(kuwaitToday(Date.parse("2026-10-26T21:00:00Z"))).toBe("2026-10-27");
     expect(kuwaitClock("2026-10-26T11:02:00Z")).toBe("14:02");
   });
+
+  test("a request's own due day carries into the form only when the server would take it", () => {
+    expect(carriedDueOn("2026-10-29", TODAY)).toBe("2026-10-29");
+    expect(carriedDueOn(TODAY, TODAY)).toBe(TODAY);
+    // Before today in Kuwait, more than a year ahead, or not a day: the
+    // form starts on the type's default instead.
+    expect(carriedDueOn("2026-10-25", TODAY)).toBeNull();
+    expect(carriedDueOn("2027-10-27", TODAY)).toBeNull();
+    expect(carriedDueOn("2027-10-26", TODAY)).toBe("2027-10-26");
+    expect(carriedDueOn("29 Oct", TODAY)).toBeNull();
+    expect(carriedDueOn(null, TODAY)).toBeNull();
+  });
 });
 
 describe("the route line (6.1's signature)", () => {
@@ -612,11 +629,142 @@ describe("the route line (6.1's signature)", () => {
       ),
     ).toBe("Part of it did not reach ClickUp: The task was deleted");
   });
+
+  test("a list row whose task the cockpit could not finish never reads as a clean one", () => {
+    const refused =
+      "ClickUp refused the owner, due day or priority. Set them on the task in ClickUp.";
+    const noted = row({ parts: [part({ error: refused })] });
+    expect(unfinishedNote(noted)).toBe(refused);
+    // The chip keeps its ClickUp status, in the warning tone.
+    expect(stateChip(noted)).toEqual({ label: "To do", tone: "warning" });
+    expect(stateChip(row())).toEqual({ label: "To do", tone: "neutral" });
+    // The hint says the state, then what to check.
+    expect(stateHint(noted)).toBe(`In ClickUp: to do. ${refused}`);
+    expect(stateHint(row())).toBe("In ClickUp: to do");
+    // Once done, there is nothing left to check.
+    const done = { ...noted, done: true };
+    expect(unfinishedNote(done)).toBe(null);
+    expect(stateChip(done)).toEqual({ label: "Done", tone: "good" });
+    expect(stateHint(done)).toBe("Done");
+    // A failed task's error is its reason, never an unfinished note.
+    expect(
+      unfinishedNote(
+        row({ parts: [part({ state: "failed", error: refused })] }),
+      ),
+    ).toBe(null);
+  });
+
+  test("an old form ticket says Make it a request only to a seat that may route it", () => {
+    const imported = { ...row({ state: "imported" }), canRoute: true };
+    expect(stateWords(imported)).toBe(
+      "Came in through the old ClickUp form. Make it a request to route it.",
+    );
+    expect(stateWords({ ...imported, canRoute: false })).toBe(
+      "Came in through the old ClickUp form. Route it in ClickUp.",
+    );
+    expect(stateHint({ ...imported, canRoute: false })).toBe(
+      REQUEST_SENTENCES.importedElsewhere,
+    );
+  });
+
+  test("review round 3: an old ticket handled in ClickUp, a create in doubt, a quiet writer's held note", () => {
+    // An old form ticket the team moved, closed or deleted in ClickUp: no route is offered, and it is not open.
+    const handled = { ...row({ state: "imported" }), canRoute: false, importHandled: true };
+    expect(stateWords(handled)).toBe(REQUEST_SENTENCES.importHandled);
+    expect(stateWords(handled)).not.toContain("Route it in ClickUp");
+    expect(stateChip(handled)).toEqual({ label: "Old form", tone: "neutral" });
+    expect(isOpen(handled)).toBe(false);
+    expect(isOpen({ ...handled, importHandled: false })).toBe(true);
+    // A task in doubt says what a person must do, in the writer's words.
+    const twoTasks =
+      "Two tasks match this request in ClickUp. Keep one and cancel the other. The cockpit checks ClickUp again every 4 hours.";
+    expect(partWords(part({ state: "unknown", url: null, error: twoTasks }))).toBe(
+      "Checking whether it reached ClickUp. Two tasks match this request in ClickUp. Keep one and cancel the other. The cockpit checks ClickUp again every 4 hours",
+    );
+    // Handed back while requests are not open, it never shows the switch's note.
+    const heldInDoubt = part({
+      state: "unknown",
+      url: null,
+      error: "Waiting in the queue: requests are a dry run, so nothing goes to ClickUp until CLICKUP_WRITEBACK_APPLY_REQUESTS is true.",
+    });
+    expect(partWords(heldInDoubt)).toBe(REQUEST_SENTENCES.checkingHeld);
+    expect(partWords(heldInDoubt)).not.toContain("CLICKUP_WRITEBACK");
+    expect(partChip(heldInDoubt)).toEqual({ label: "Checking", tone: "warning" });
+    // The database's held note, when it sends one, is the request's words (a writer gone quiet said as such).
+    const quiet = {
+      ...row({ state: "sending", parts: [part({ state: "queued", url: null })] }),
+      held: true,
+      heldNote:
+        "Saved, not sent yet: the requests writer has not reported in the last 15 minutes. It goes to ClickUp once the writer runs again.",
+    };
+    expect(stateWords(quiet)).toBe(
+      "Saved, not sent yet: the requests writer has not reported in the last 15 minutes. It goes to ClickUp once the writer runs again",
+    );
+    expect(stateWords({ ...quiet, heldNote: null })).toBe(REQUEST_SENTENCES.heldRequest);
+  });
+
+  test("a partial request names the task that did not go, and keeps the ones that did", () => {
+    const tech = part({ part: "tech", listName: "Operations / Tech" });
+    const media = (over: Partial<PartRow> = {}) =>
+      part({ part: "media", listName: "Marketing / ADs", ...over });
+    expect(
+      partialNext({ parts: [tech, media({ state: "failed", error: "x" })] }),
+    ).toBe(
+      "The Marketing / ADs task did not reach ClickUp; the one that did stays there. Raise the missing task with the ClickUp request form, or ask the systems manager to make it.",
+    );
+    // Two refused, one landed: both named, "them".
+    expect(
+      partialNext({
+        parts: [
+          tech,
+          media({ state: "failed" }),
+          part({ part: "cc", listName: "Call Center", state: "skipped" }),
+        ],
+      }),
+    ).toBe(
+      "The Marketing / ADs and Call Center tasks did not reach ClickUp; the one that did stays there. Raise the missing tasks with the ClickUp request form, or ask the systems manager to make them.",
+    );
+    // Two landed: "the ones that did stay there".
+    expect(
+      partialNext({
+        parts: [tech, part({ part: "b" }), media({ state: "failed" })],
+      }),
+    ).toContain("; the ones that did stay there.");
+    // No task named as refused (an older state): still a next step.
+    expect(partialNext({ parts: [tech] })).toBe(
+      "Part of this request did not reach ClickUp; the one that did stays there. Raise the missing task with the ClickUp request form, or ask the systems manager to make it.",
+    );
+    for (const words of [
+      partialNext({ parts: [tech, media({ state: "failed" })] }),
+      REQUEST_SENTENCES.againFailed,
+      REQUEST_SENTENCES.sentFailed,
+      REQUEST_SENTENCES.importedElsewhere,
+    ]) {
+      expect(words).not.toMatch(/[!—]/);
+      expect(words).not.toContain("File the rest again");
+    }
+  });
+
+  test("the sent panel's mark follows its tasks: refused, on the way, saved, in ClickUp", () => {
+    const queued = part({ state: "queued", url: null });
+    const waiting = part({
+      state: "queued",
+      url: null,
+      error: "Waiting in the queue: requests are a dry run.",
+    });
+    expect(sentTone([part()], true)).toBe("done");
+    expect(sentTone([queued], true)).toBe("moving");
+    expect(sentTone([part({ state: "unknown" })], true)).toBe("moving");
+    expect(sentTone([waiting], true)).toBe("held");
+    expect(sentTone([queued], false)).toBe("held");
+    // A refused task wins over one still on its way: never a check beside it.
+    expect(sentTone([part({ state: "failed" }), queued], true)).toBe("failed");
+    expect(sentTone([part(), part({ state: "skipped" })], true)).toBe("failed");
+  });
 });
 
 describe("database and network errors in plain words (D5)", () => {
-  const answering =
-    (answer: unknown, throws = false) =>
+  const answering = (answer: unknown, throws = false) =>
     ({
       rpc: async () => {
         if (throws) throw new TypeError("Failed to fetch");
