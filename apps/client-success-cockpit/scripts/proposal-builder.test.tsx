@@ -15,6 +15,8 @@ import {
   type ProposalIO,
 } from "../src/pages/money/offers/proposal/proposalSources";
 
+import { OFFER_KEYS } from "../src/present/offer/kinds";
+
 function deferred<T>() {
   let resolve!: (v: T) => void;
   let reject!: (e: unknown) => void;
@@ -592,3 +594,19 @@ test("refreshing assets cannot discard a conflicting recovered draft", async () 
     ).toBe("2026-12-31");
     expect(host.textContent).toContain("newer version was saved");
   }));
+
+for (const offer of OFFER_KEYS) {
+  test(`proposal preparation keeps the ${offer} offer`, async () =>
+    browserTest(async (host, render) => {
+      const f = ioFixture();
+      f.bundle.proposal.offerKey = offer;
+      await render(f.io);
+      const link = Array.from(host.querySelectorAll("a")).find(
+        a => a.textContent?.trim() === "Open preparation",
+      );
+      expect(link?.getAttribute("href")).toBe(
+        `/client-success/clients/${encodeURIComponent(f.bundle.proposal.taskId)}/present/offer/${offer}?view=prep`,
+      );
+      expect(f.sends()).toBe(0);
+    }));
+}

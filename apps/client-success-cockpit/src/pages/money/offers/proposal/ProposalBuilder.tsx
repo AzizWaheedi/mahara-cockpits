@@ -836,7 +836,7 @@ export function ProposalBuilder({
               )}
               <div className="flex flex-wrap items-center gap-3">
                 <a
-                  href={offerDeckUrl(p.taskId, "website", "prep")}
+                  href={offerDeckUrl(p.taskId, p.offerKey, "prep")}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-sm underline underline-offset-4"

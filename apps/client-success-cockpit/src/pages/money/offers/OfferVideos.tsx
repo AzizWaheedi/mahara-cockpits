@@ -1,3 +1,10 @@
+import {
+  OFFER_KEYS,
+  OFFER_NAMES,
+  deckOfOffer,
+  type OfferKey,
+  type OfferDeckKind,
+} from "../../../present/offer/kinds";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { checkVideo, type OfferClient } from "../../../present/offer/sources";
@@ -14,20 +21,29 @@ export function OfferVideos({
   client: OfferClient;
   isCeo: boolean;
 }) {
+  const [offer, setOffer] = useState<OfferKey>("website");
+  const deck = deckOfOffer(offer);
   const [videos, setVideos] = useState<DeckVideos | null>(null),
     [error, setError] = useState<string | null>(null);
   const request = useRef(0);
+  const currentScope = useRef({ client, deck });
+  currentScope.current = { client, deck };
   const reload = useCallback(async () => {
+    // A save from an unmounted offer field cannot refresh a different offer.
+    const current = () =>
+      currentScope.current.client === client &&
+      currentScope.current.deck === deck;
+    if (!current()) return;
     const id = ++request.current;
     setError(null);
     try {
-      const next = await readDeckVideos(client, "offer_website");
-      if (id === request.current) setVideos(next);
+      const next = await readDeckVideos(client, deck);
+      if (id === request.current && current()) setVideos(next);
     } catch (e) {
-      if (id === request.current)
+      if (id === request.current && current())
         setError(e instanceof Error ? e.message : String(e));
     }
-  }, [client]);
+  }, [client, deck]);
   useEffect(() => {
     setVideos(null);
     void reload();
@@ -37,7 +53,20 @@ export function OfferVideos({
   }, [reload]);
   return (
     <section className="dko-panel">
-      <h2>The website, in one minute</h2>
+      <h2>Offer videos</h2>
+      <label className="dko-field">
+        Offer
+        <select
+          value={offer}
+          onChange={e => setOffer(e.target.value as OfferKey)}
+        >
+          {OFFER_KEYS.map(k => (
+            <option key={k} value={k}>
+              {OFFER_NAMES[k]}
+            </option>
+          ))}
+        </select>
+      </label>
       <p className="dko-help">
         The same video appears in the deck, recap and proposal. Only the CEO
         changes these links.
@@ -47,7 +76,8 @@ export function OfferVideos({
         <div className="dko-fields">
           {(["en", "ar"] as const).map(lang => (
             <VideoField
-              key={lang}
+              key={deck + lang}
+              deck={deck}
               client={client}
               isCeo={isCeo}
               lang={lang}
@@ -63,6 +93,7 @@ export function OfferVideos({
   );
 }
 function VideoField({
+  deck,
   client,
   isCeo,
   lang,
@@ -73,9 +104,12 @@ function VideoField({
   isCeo: boolean;
   lang: "en" | "ar";
   videos: DeckVideos;
+  deck: OfferDeckKind;
   reload: () => Promise<void>;
 }) {
-  const row = videos.rows.find(v => v.slotKey === "demo" && v.lang === lang);
+  const row = videos.rows.find(
+    v => v.deck === deck && v.slotKey === "demo" && v.lang === lang,
+  );
   const [url, setUrl] = useState(row?.url ?? ""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState<string | null>(null);
@@ -86,7 +120,7 @@ function VideoField({
     try {
       if (clear)
         await clearDeckVideo(client, {
-          deck: "offer_website",
+          deck,
           slotKey: "demo",
           lang,
           revision: row?.revision ?? 0,
@@ -99,7 +133,7 @@ function VideoField({
               "This video cannot be watched without signing in.",
           );
         await saveDeckVideo(client, {
-          deck: "offer_website",
+          deck,
           slotKey: "demo",
           lang,
           url: checked.url ?? url,

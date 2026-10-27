@@ -11,6 +11,7 @@ import {
   readOfferStatus,
 } from "../../../present/offer/sources";
 export const READY_WORDS: Record<string, string> = {
+  no_recruiter: "Name the recruiter",
   no_capture: "Add a dated capture",
   capture_old: "Refresh the capture",
   no_price: "Choose the opening price",
@@ -79,10 +80,10 @@ export function OfferHotRow({
                 "No offer suggested right now.")}
           </p>
         </div>
-        {prepare?.key === "website" ? (
+        {prepare ? (
           <a
             className="text-sm text-primary underline"
-            href={offerDeckUrl(String(c.taskId), "website", "prep")}
+            href={offerDeckUrl(String(c.taskId), prepare.key, "prep")}
             target="_blank"
             rel="noreferrer"
           >

@@ -5,6 +5,7 @@ import type { Lang } from "../content";
 import type { DeckData, Overrides } from "../deckData";
 import type { LaunchAd } from "../sources";
 import type { DeckModel, Loaded } from "../useDeckModel";
+import { deckOfOffer, type OfferDeckKind } from "./kinds";
 import { belowList, openingOf, type Price } from "./price";
 import {
   type CatalogRow,
@@ -143,9 +144,9 @@ export async function confirmOfferPrep(
   writePrep: DeckModel["setPrep"],
   flush: () => Promise<unknown>,
   readSources?: OfferIO["readSources"],
+  deck: OfferDeckKind = "offer_website",
 ): Promise<void> {
-  if (prep.language !== lang)
-    writePrep("offer_website", { language: lang }, true);
+  if (prep.language !== lang) writePrep(deck, { language: lang }, true);
   await flush();
   if (!readSources) return;
   const fresh = await readSources();
@@ -156,6 +157,7 @@ export async function confirmOfferPrep(
     "payment_link",
     "language",
     "client_asked",
+    "recruiter_name",
   ]) {
     if (!sameOfferPrepValue(expected[key], fresh.prep?.overrides[key])) {
       throw Error(
@@ -197,7 +199,14 @@ export function useOffer({
       setBusy(true);
       setError(null);
       try {
-        await confirmOfferPrep(prep, lang, writePrep, flush, io.readSources);
+        await confirmOfferPrep(
+          prep,
+          lang,
+          writePrep,
+          flush,
+          io.readSources,
+          deckOfOffer(src.catalog?.offerKey ?? "website"),
+        );
         const old = pitch ?? src.pitches.find(p => !p.answer) ?? null;
         request.current ??= old?.requestId ?? crypto.randomUUID();
         const saved = await io.savePitch(

@@ -4,6 +4,9 @@ import type { DeckData, Overrides } from "./deckData";
 import { visible } from "./engine";
 import { launchSlides } from "./launchDeck";
 import { websiteSlides } from "./offer/websiteDeck";
+import { serviceSlides } from "./offer/serviceDeck";
+import { offerOfDeck, type OfferDeckKind } from "./offer/kinds";
+import type { OfferModel } from "./offer/useOffer";
 import { onboardingSlides } from "./onboardingDeck";
 import type { DeckKind } from "./sources";
 import type { DeckModel } from "./useDeckModel";
@@ -13,6 +16,12 @@ export const DECKS: Record<DeckKind, () => SlideDef[]> = {
   onboarding: onboardingSlides,
   launch: launchSlides,
   blueprint: blueprintSlides,
+  offer_second_campaign: () => serviceSlides("second_campaign"),
+  offer_seo_geo: () => serviceSlides("seo_geo"),
+  offer_smm: () => serviceSlides("smm"),
+  offer_cameraman: () => serviceSlides("cameraman"),
+  offer_ugc: () => serviceSlides("ugc"),
+  offer_closer: () => serviceSlides("closer"),
   offer_website: websiteSlides,
 };
 
@@ -26,6 +35,12 @@ export const TARGET_MINUTES: Record<DeckKind, number> = {
   launch: 28,
   /** The Brand Blueprint call: 14 slides, 45 minutes (SPEC 5.2). */
   blueprint: 45,
+  offer_second_campaign: 8,
+  offer_seo_geo: 8,
+  offer_smm: 8,
+  offer_cameraman: 8,
+  offer_ugc: 8,
+  offer_closer: 8,
   offer_website: 8,
 };
 
@@ -78,4 +93,12 @@ export function baseCtx(
     still,
     presenting,
   };
+}
+
+export function offerSlides(
+  deck: OfferDeckKind,
+  model?: OfferModel | null,
+): SlideDef[] {
+  const key = offerOfDeck(deck);
+  return key === "website" ? websiteSlides(model) : serviceSlides(key, model);
 }

@@ -4,7 +4,7 @@ import { isOfferDeck } from "./offer/kinds";
 import { OfferRefused } from "./offer/OfferRefused";
 import { copyOf } from "./offer/sources";
 import { useOffer } from "./offer/useOffer";
-import { websiteSlides } from "./offer/websiteDeck";
+import { offerSlides } from "./decks";
 import "./present.css";
 import {
   type ReactNode,
@@ -148,7 +148,7 @@ export function PresentApp({
     writePrep: model.setPrep,
   });
   const all = useMemo(
-    () => (isOfferDeck(deck) ? websiteSlides(offer) : DECKS[deck]()),
+    () => (isOfferDeck(deck) ? offerSlides(deck, offer) : DECKS[deck]()),
     [deck, offer],
   );
   const [offerPos, setOfferPos] = useState<Pos>({ index: 0, tour: 0 });
@@ -161,8 +161,10 @@ export function PresentApp({
 
   useEffect(() => {
     if (isOfferDeck(deck) && d)
-      document.title = fill(WEBSITE_DECK.tab[model.lang], { name: d.name });
-  }, [deck, d, model.lang]);
+      document.title = offer?.row
+        ? `${d.name}: ${copyOf(offer.row, model.lang)?.deckTitle ?? ""}`
+        : fill(WEBSITE_DECK.tab[model.lang], { name: d.name });
+  }, [deck, d, model.lang, offer?.row]);
   const offerKey = useCallback(
     (key: string) => {
       if (!isOfferDeck(deck) || key.toLowerCase() !== "h") return false;
@@ -186,16 +188,21 @@ export function PresentApp({
       setOfferJump(false);
     }
   }, [offerJump, shown]);
+  // Read the entry address before DeckShell can publish its initial position.
+  const [offerStart] = useState(() => {
+    const p = new URLSearchParams(window.location.search);
+    return {
+      id: p.get("slide") ?? window.location.hash.slice(1),
+      tour: Math.max(0, Number(p.get("stop")) || 0),
+    };
+  });
   const positionedOffer = useRef(false);
   useEffect(() => {
     if (!isOfferDeck(deck) || !d || positionedOffer.current) return;
     positionedOffer.current = true;
-    const p = new URLSearchParams(window.location.search),
-      id = p.get("slide") ?? window.location.hash.slice(1),
-      index = shown.findIndex(s => s.id === id),
-      tour = Math.max(0, Number(p.get("stop")) || 0);
-    if (index >= 0) setOfferPos({ index, tour });
-  }, [deck, d, shown]);
+    const index = shown.findIndex(s => s.id === offerStart.id);
+    if (index >= 0) setOfferPos({ index, tour: offerStart.tour });
+  }, [deck, d, shown, offerStart]);
   const notesName = `mahara-notes-${taskId}-${deck}${own ? `-${own}` : ""}`;
   const openNotes = useCallback(
     () =>
@@ -335,8 +342,25 @@ export function PresentApp({
   if (offer?.row && !copyOf(offer.row, model.lang))
     return (
       <Screen>
-        The website wording is not ready yet. Read the catalogue again before
+        The offer wording is not ready yet. Read the catalogue again before
         presenting.
+      </Screen>
+    );
+  if (
+    view === "present" &&
+    offer?.row?.offerKey === "closer" &&
+    !(
+      typeof offer.prep.recruiter_name === "string" &&
+      offer.prep.recruiter_name.trim().length >= 3
+    )
+  )
+    return (
+      <Screen>
+        <p>
+          This presentation needs a named recruiter. Confirm who will own the
+          search before presenting.
+        </p>
+        <a href={urls.prep}>Open private prep</a>
       </Screen>
     );
   if (!all.length)

@@ -121,3 +121,22 @@ describe("proposal preview boundary", () => {
     ).toBe(4);
   });
 });
+
+test("preview embeds genuine trusted PNG logos without allowing script or remote logo injection", () => {
+  const png = "data:image/png;base64,iVBORw0KGgoAAA=";
+  const html = buildProposalSrcdoc({
+    ...source,
+    logoDark: png,
+    logoLight: png,
+  });
+  expect(html).toContain(
+    'window.__OFFER_BRAND__={"dark":"' + png + '","light":"' + png + '"}',
+  );
+  const bad = buildProposalSrcdoc({
+    ...source,
+    logoDark: "https://evil.test/tracker",
+    logoLight: "</script><script>bad()</script>",
+  });
+  expect(bad).toContain('window.__OFFER_BRAND__={"dark":null,"light":null}');
+  expect(bad).not.toContain("evil.test/tracker");
+});

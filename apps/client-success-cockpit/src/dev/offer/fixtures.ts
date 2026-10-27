@@ -1,5 +1,5 @@
 import { FIXTURES } from "../../practice/fixtures/fixtures";
-import { OFFER_KEYS } from "../../present/offer/kinds";
+import { OFFER_KEYS, deckOfOffer } from "../../present/offer/kinds";
 import { openingOf } from "../../present/offer/price";
 import type {
   CatalogRow,
@@ -373,15 +373,22 @@ export function fixturePitch(
     id: old?.id ?? crypto.randomUUID(),
     requestId,
     taskId: loaded.offer!.gate.taskId,
-    offerKey: "website",
+    offerKey: loaded.offer!.catalog?.offerKey ?? "website",
     pitchedOn: "2026-10-26",
     csm: "fixture@example.test",
     mode: "proactive",
     clientWords: null,
     clientAskedOn: null,
     gate: loaded.offer!.gate,
-    listPrice: { build: 2000, care: 200 },
-    openingPrice: { build: 2000, care: 200 },
+    listPrice: Object.fromEntries(
+      loaded.offer!.catalog?.parts.map(p => [p.key, p.amount]) ?? [],
+    ),
+    openingPrice: loaded.offer!.catalog
+      ? openingOf(
+          loaded.offer!.catalog,
+          loaded.prep[deckOfOffer(loaded.offer!.catalog.offerKey)] ?? {},
+        )
+      : null,
     openingReason: null,
     heldFull: patch.held_full === true || old?.heldFull === true,
     finalPrice:
@@ -392,7 +399,11 @@ export function fixturePitch(
     followUpOn: (patch.follow_up_on as string) ?? old?.followUpOn ?? null,
     noReason: (patch.no_reason as string) ?? old?.noReason ?? null,
     paymentLink: "https://whop.com/checkout/fixture_only",
-    lang: loaded.prep.offer_website?.language === "ar" ? "ar" : "en",
+    lang:
+      loaded.prep[deckOfOffer(loaded.offer!.catalog?.offerKey ?? "website")]
+        ?.language === "ar"
+        ? "ar"
+        : "en",
     videoCode: "abcdefghjk",
     revision: (old?.revision ?? 0) + 1,
     createdAt: OFFER_NOW,

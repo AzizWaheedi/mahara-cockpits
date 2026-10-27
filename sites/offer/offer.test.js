@@ -55,3 +55,22 @@ test("bad JSON closes the page without exposing server output",async()=>{
   expect(win.document.body.textContent).not.toContain("private stack trace");
   stop();await win.happyDOM.abort();
 });
+
+test("actor playback uses its frozen item, rejects tampered indices and does not count as main-demo play",async()=>{
+  const win=setup();const p=fixture();p.video=null;p.work=[
+    {label:"Example A",url:"https://maharamedia.wistia.com/medias/qlwysqfu2g"},
+    {label:"Example B",url:"https://maharamedia.wistia.com/medias/btp2dokvjr"}
+  ];
+  const calls=[];win.fetch=async(url,opts={})=>{calls.push({url:String(url),opts});return new Response(JSON.stringify({state:"open",proposal:p}));};
+  const stop=startOffer(win,win.document);await tick();
+  const buttons=win.document.querySelectorAll('[data-action="play-work"]');
+  buttons[0].dataset.workIndex="-1";buttons[0].click();
+  expect(win.document.querySelector("iframe")).toBeNull();
+  buttons[1].click();
+  const frame=win.document.querySelector("iframe");
+  expect(frame.src).toBe("https://fast.wistia.net/embed/iframe/btp2dokvjr");
+  expect(frame.title).toBe("Example B");
+  expect(calls).toHaveLength(1);
+  expect(win.document.querySelectorAll("iframe")).toHaveLength(1);
+  stop();await win.happyDOM.abort();
+});

@@ -1,3 +1,4 @@
+import type { OfferDeckKind } from "./offer/kinds";
 import { WEBSITE_DECK } from "./offer/content/website";
 /**
  * Everything the two client decks say, in English and in the client-facing
@@ -1323,12 +1324,21 @@ export const journeyName = (i: number, dwy: boolean): L => {
 
 /** The decks' names, for the chrome and the presenter's windows. */
 export const DECK_NAME: Record<
-  "onboarding" | "launch" | "blueprint" | "offer_website",
+  "onboarding" | "launch" | "blueprint" | OfferDeckKind,
   L
 > = {
   onboarding: { en: "Onboarding", ar: "التعريف" },
   launch: { en: "Launch", ar: "الإطلاق" },
   blueprint: { en: "Brand Blueprint", ar: "بناء الهوية والعرض" },
+  offer_second_campaign: { en: "Second campaign", ar: "حملة ثانية" },
+  offer_seo_geo: {
+    en: "Google and AI search",
+    ar: "قوقل والبحث بالذكاء الاصطناعي",
+  },
+  offer_smm: { en: "Social media", ar: "السوشال ميديا" },
+  offer_cameraman: { en: "Cameraman day", ar: "يوم تصوير" },
+  offer_ugc: { en: "Presenter videos", ar: "فيديوهات بمقدّم" },
+  offer_closer: { en: "Closer placement", ar: "توظيف مندوب مبيعات" },
   offer_website: WEBSITE_DECK.name,
 };
 

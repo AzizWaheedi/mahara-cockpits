@@ -9,16 +9,19 @@ export const OFFER_KEYS = [
 ] as const;
 export type OfferKey = (typeof OFFER_KEYS)[number];
 export const OFFER_ORDER = OFFER_KEYS;
-export type OfferDeckKind = "offer_website";
-export const BUILT_OFFER_DECKS: readonly OfferDeckKind[] = ["offer_website"];
+export type OfferDeckKind = `offer_${OfferKey}`;
+export const BUILT_OFFER_DECKS: readonly OfferDeckKind[] = OFFER_KEYS.map(
+  key => `offer_${key}` as OfferDeckKind,
+);
 export const isOfferDeck = (value: unknown): value is OfferDeckKind =>
-  value === "offer_website";
+  typeof value === "string" &&
+  BUILT_OFFER_DECKS.includes(value as OfferDeckKind);
 export const isOfferKey = (value: unknown): value is OfferKey =>
   typeof value === "string" &&
   (OFFER_KEYS as readonly string[]).includes(value);
-export const offerOfDeck = (_deck: OfferDeckKind): OfferKey => "website";
-export const deckOfOffer = (offer: OfferKey): OfferDeckKind | null =>
-  offer === "website" ? "offer_website" : null;
+export const offerOfDeck = (deck: OfferDeckKind): OfferKey =>
+  deck.slice(6) as OfferKey;
+export const deckOfOffer = (offer: OfferKey): OfferDeckKind => `offer_${offer}`;
 const base = () =>
   (import.meta.env?.BASE_URL ?? "/client-success/").replace(/\/$/, "");
 export const offerDeckUrl = (

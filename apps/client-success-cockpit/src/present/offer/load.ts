@@ -15,26 +15,32 @@ import {
   uploadUpsellFile,
 } from "./sources";
 import type { OfferIO } from "./useOffer";
+import { deckOfOffer, type OfferKey } from "./kinds";
 export async function loadOfferDeck(
   client: SupabaseClient,
   taskId: string,
+  key: OfferKey = "website",
 ): Promise<Loaded> {
   const [deck, offer, files] = await Promise.all([
-    loadDeck(client, taskId, "offer_website"),
-    readOfferSources(client, taskId, "website"),
+    loadDeck(client, taskId, deckOfOffer(key)),
+    readOfferSources(client, taskId, key),
     listUpsellFiles(client, taskId),
   ]);
   return {
     ...deck,
     offer: { ...offer, files: files.rows },
-    prep: { ...deck.prep, offer_website: offer.prep?.overrides ?? {} },
+    prep: { ...deck.prep, [deckOfOffer(key)]: offer.prep?.overrides ?? {} },
   };
 }
-export function offerIO(client: SupabaseClient, taskId: string): OfferIO {
+export function offerIO(
+  client: SupabaseClient,
+  taskId: string,
+  key: OfferKey = "website",
+): OfferIO {
   return {
-    readSources: () => readOfferSources(client, taskId, "website"),
+    readSources: () => readOfferSources(client, taskId, key),
     savePitch: (requestId, patch, revision) =>
-      savePitch(client, taskId, "website", requestId, patch, revision),
+      savePitch(client, taskId, key, requestId, patch, revision),
     pitchVideo: id => pitchVideo(client, id),
     siteCheck: url => runSiteCheck(client, taskId, url),
     markWin: (text, on) => markWin(client, taskId, text, on),

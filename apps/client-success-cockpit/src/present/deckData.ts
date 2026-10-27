@@ -1,3 +1,4 @@
+import type { OfferDeckKind } from "./offer/kinds";
 import { parseDosDonts } from "@/components/DosDonts";
 import {
   type Answered,
@@ -111,8 +112,7 @@ export interface DeckInput {
     onboarding: Overrides;
     launch: Overrides;
     blueprint?: Overrides;
-    offer_website?: Overrides;
-  };
+  } & Partial<Record<OfferDeckKind, Overrides>>;
   /** This client's ready uploads, with signed links when they were signed. */
   ads: LaunchAd[];
   /** The signed-in seat's name, when the server has no first name for it. */

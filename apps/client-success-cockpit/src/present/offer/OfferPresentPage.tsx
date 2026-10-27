@@ -1,13 +1,14 @@
 import { Navigate, useParams } from "react-router";
 import PresentPage from "../PresentPage";
+import { isOfferKey, deckOfOffer } from "./kinds";
 export default function OfferPresentPage({
   notes = false,
 }: {
   notes?: boolean;
 }) {
   const { offer, key = "" } = useParams();
-  return offer === "website" ? (
-    <PresentPage deck="offer_website" notes={notes} />
+  return isOfferKey(offer) ? (
+    <PresentPage key={offer} deck={deckOfOffer(offer)} notes={notes} />
   ) : (
     <Navigate replace to={`/clients/${encodeURIComponent(key)}`} />
   );

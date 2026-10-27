@@ -82,7 +82,7 @@ export function PriceRow({
     <article className="dko-offer-row">
       <div>
         <h3 className="font-medium">{OFFER_NAMES[row.offerKey]}</h3>
-        <p className="dko-help">{row.waitsOn ?? "Website deck and proposal"}</p>
+        <p className="dko-help">{row.waitsOn ?? "Pitch deck and proposal"}</p>
         {row.locked ? (
           <span className="text-xs txt-warn">Price locked</span>
         ) : null}

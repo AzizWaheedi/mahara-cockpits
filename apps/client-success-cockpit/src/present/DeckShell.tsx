@@ -1,3 +1,5 @@
+import maharaMark from "@/assets/mahara-logo-dark.png";
+import maharaPrintMark from "@/assets/mahara-logo-light.png";
 import { isOfferDeck } from "./offer/kinds";
 import { OFFER_VIDEO_SLOTS, offerVideoItems } from "./offer/videos";
 import "./present.css";
@@ -573,6 +575,16 @@ export function DeckShell({
           ) : null}
           {railAt != null ? (
             <MiniRail lang={lang} current={railAt} dwy={base.d.mode.dwy} />
+          ) : null}
+          {isOfferDeck(base.deck) ? (
+            <div className="dks-mahara-mark">
+              <img
+                src={maharaMark}
+                alt="Mahara Media"
+                className="dks-mark-dark"
+              />
+              <img src={maharaPrintMark} alt="" className="dks-mark-print" />
+            </div>
           ) : null}
           {slide && !slide.cover ? (
             <span className="dk-count" aria-hidden>

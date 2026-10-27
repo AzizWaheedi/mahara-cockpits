@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { DeckModel } from "../useDeckModel";
+import { isOfferDeck } from "./kinds";
 import type { OfferModel } from "./useOffer";
 export function OfferRefused({
   offer,
@@ -83,7 +84,7 @@ export function OfferRefused({
         </section>
       ) : null}
       <section className="dko-panel">
-        <h2>The client asked about a website</h2>
+        <h2>The client asked about this offer</h2>
         <label className="dko-field">
           Their words
           <textarea
@@ -108,7 +109,9 @@ export function OfferRefused({
             setError(null);
             try {
               model.setPrep(
-                "offer_website",
+                model.data && isOfferDeck(model.data.deck)
+                  ? model.data.deck
+                  : "offer_website",
                 { client_asked: { words: words.trim(), on } },
                 true,
               );

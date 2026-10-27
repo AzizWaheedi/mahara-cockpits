@@ -1,3 +1,5 @@
+import { allOfferLoaded, ALL_CATALOG } from "./offer/allFixtures";
+import { deckOfOffer, isOfferKey } from "../present/offer/kinds";
 import { useMemo } from "react";
 import { createRoot } from "react-dom/client";
 import { OfferHotRow } from "../pages/money/offers/OfferHotRow";
@@ -12,20 +14,24 @@ import {
   OFFER_FIXTURES,
   OFFER_NOW,
   type OfferFixture,
-  offerLoaded,
   offerStatus,
-  WEBSITE_ROW,
 } from "./offer/fixtures";
 import "../index.css";
 
+const harnessCalls: string[] = [];
+Object.assign(window, { offerHarnessCalls: harnessCalls });
 const params = new URLSearchParams(location.search);
 const asked = params.get("fixture");
 const fixture: OfferFixture = OFFER_FIXTURES.includes(asked as OfferFixture)
   ? (asked as OfferFixture)
   : "full";
+const selectedOffer = isOfferKey(params.get("offer"))
+  ? (params.get("offer") as keyof typeof ALL_CATALOG)
+  : "website";
+const selectedDeck = deckOfOffer(selectedOffer);
 function App() {
   const client = useMemo(() => {
-    let row = structuredClone(WEBSITE_ROW);
+    let row = structuredClone(ALL_CATALOG[selectedOffer]);
     const settings = {
       whatsappNumber: null as string | null,
       validDays: 30,
@@ -33,10 +39,13 @@ function App() {
     };
     return {
       rpc: async (name: string, args: Record<string, unknown>) => {
+        harnessCalls.push(name);
         if (name === "cockpit_upsell_catalog_read")
           return {
             data: {
-              rows: [row],
+              rows: Object.values(ALL_CATALOG).map(v =>
+                v.offerKey === selectedOffer ? row : v,
+              ),
               settings,
               videos: [],
               isCeo: params.get("role") === "ceo",
@@ -94,7 +103,7 @@ function App() {
     } as unknown as OfferClient;
   }, []);
   const io = useMemo<DeckIO>(() => {
-    const loaded = offerLoaded(fixture);
+    const loaded = allOfferLoaded(selectedOffer, fixture);
     let revision = 1,
       pitch: Pitch | null = null;
     return {
@@ -103,10 +112,11 @@ function App() {
       presenterName: "Example account manager",
       savePrep: async (deck, patch) => {
         loaded.prep[deck] = applyPatch(loaded.prep[deck] ?? {}, patch);
-        loaded.offer!.prep!.overrides = loaded.prep.offer_website!;
+        loaded.offer!.prep!.overrides = loaded.prep[selectedDeck]!;
         if (patch.client_asked) {
           loaded.offer!.mode = "client_asked";
-          loaded.offer!.catalog = offerLoaded("full").offer!.catalog;
+          loaded.offer!.catalog = allOfferLoaded(selectedOffer, "full")
+            .offer!.catalog;
         }
         return {
           deck,
@@ -205,8 +215,8 @@ function App() {
     );
   return (
     <PresentApp
-      taskId={`offer-fixture-${fixture}`}
-      deck="offer_website"
+      taskId={`offer-fixture-${selectedOffer}-${fixture}`}
+      deck={selectedDeck}
       view={(params.get("view") ?? "present") as View}
       io={io}
       urls={{
