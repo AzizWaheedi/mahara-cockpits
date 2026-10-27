@@ -61,8 +61,8 @@ Small local artifacts: `~/mahara-worktrees/hw-notes/upsell-studio/video/website/
 
 Creative Triage project `bldgtotkfmhoxmlzowdx`:
 
-- Current roster: 55 clients, 20 Active, complete snapshot and fresh source state. No duplicate/malformed task IDs found.
-- 54 of 55 fail at least one of the eight checks reproduced from existing data. This is not a complete eligibility verdict: new win ticks and offer history were not queried because those tables are not deployed.
+- Pre-release roster snapshot: 55 clients, 20 Active, complete snapshot and fresh source state. No duplicate/malformed task IDs found.
+- 54 of 55 fail at least one of the eight checks reproduced from existing data. This is not a complete eligibility verdict: new win ticks and offer history were not queried because those tables were not yet deployed at the time of that pre-release read.
 - Among Active clients: stale happiness 13, not happy 14, pause required 8, raised on last call 6, red 13, renewal window 4, too new 5. Reasons overlap.
 - Six clients have sheet win evidence. Missing evidence is unknown in this dry run, not proof of no win.
 - No eligibility rules were loosened. The optional generic-problem-word change and renewal-default change remain CEO decisions.
