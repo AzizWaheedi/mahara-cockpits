@@ -2830,3 +2830,601 @@ button.dk-devices {
     display: none;
   }
 }
+
+/* ======================================== the system, one funnel (2026-10-27)
+   The five-step slide (system.tsx, systemPlan.ts; the CEO: "show the funnel
+   and then how we scale it"). Real ads at the funnel's wide mouth, the
+   landing page, the five-minute alert, a real call and the portal it pours
+   into; the time-wasters leave through a gap in its floor and a loop runs
+   from the portal back to the ads. The drawing mirrors whole in Arabic; the
+   screens and words sit on logical sides and are never flipped. Its own
+   classes, so the deck's hover lift never moves a screen it has placed:
+   they answer the pointer with the teal glow alone. */
+
+.dk-sys {
+  position: absolute !important;
+  inset: 0;
+  --dk-sys-ms: 700ms;
+  --dk-sys-portal-shadow: 0 40px 90px -40px rgba(0, 0, 0, 0.8);
+  --dk-sys-portal-ring:
+    0 0 0 2px rgba(0, 207, 200, 0.9), 0 0 60px rgba(0, 207, 200, 0.45);
+}
+.dk-sys-art,
+.dk-sys-layer,
+.dk-sys-step,
+.dk-sys-flow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+[dir="rtl"] .dk-sys-art {
+  transform: scaleX(-1);
+}
+.dk-sys-art svg {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+
+/* The walls: the Mahara gradient run along the funnel, a soft band under it. */
+.dk-sys-body {
+  fill: url(#dk-sys-fill);
+}
+.dk-sys-wall,
+.dk-sys-halo {
+  fill: none;
+  stroke: url(#dk-sys-grad);
+  stroke-linecap: round;
+}
+.dk-sys-wall {
+  stroke-width: 3;
+}
+.dk-sys-halo {
+  stroke-width: 12;
+  opacity: 0.12;
+}
+.dk-sys-drop {
+  fill: none;
+  stroke: rgba(242, 246, 250, 0.4);
+  stroke-width: 2;
+  stroke-dasharray: 2 9;
+  stroke-linecap: round;
+  transition: opacity var(--dk-sys-ms) var(--dk-ease);
+}
+/* The 5 minutes, as a dimension on a plan. */
+.dk-sys-span {
+  fill: none;
+  stroke: rgba(242, 246, 250, 0.42);
+  stroke-width: 2;
+  stroke-linecap: round;
+  transition:
+    stroke var(--dk-sys-ms) var(--dk-ease),
+    opacity var(--dk-sys-ms) var(--dk-ease);
+}
+.dk-sys-loop,
+.dk-sys-loop-head {
+  fill: none;
+  stroke: var(--dk-teal);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition:
+    opacity var(--dk-sys-ms) var(--dk-ease),
+    stroke-width var(--dk-sys-ms) var(--dk-ease);
+}
+.dk-sys-loop {
+  opacity: 0.55;
+}
+.dk-sys-loop-head {
+  opacity: 0.8;
+}
+
+/* The leads and the light that rides the loop (their runs: systemPlan.ts). */
+.dk-sys-flow {
+  transition: opacity var(--dk-sys-ms) var(--dk-ease);
+}
+.dk-sys-lead {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border-radius: 50%;
+  background-color: rgba(242, 246, 250, 0.85);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+/* A signed lead's glow: its own layer, faded in, never a moving shadow. */
+.dk-sys-lead::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 6px rgba(0, 207, 200, 0.22),
+    0 0 26px rgba(0, 207, 200, 0.85);
+  opacity: 0;
+}
+.dk-sys-ride {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border-radius: 50%;
+  background: var(--dk-teal);
+  box-shadow:
+    0 0 0 6px rgba(0, 207, 200, 0.2),
+    0 0 24px rgba(0, 207, 200, 0.9);
+  opacity: 0;
+  transition: filter var(--dk-sys-ms) var(--dk-ease);
+}
+
+/* The screens. Each is laid out open and moved to its overview place, so
+   it is drawn from its full size and stays sharp. */
+.dk-sys-pv {
+  position: absolute;
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  pointer-events: auto;
+  transition: transform var(--dk-sys-ms) var(--dk-ease);
+}
+.dk-sys-pv:focus-visible,
+.dk-sys-name:focus-visible {
+  outline: 3px solid var(--dk-teal);
+  outline-offset: 6px;
+  border-radius: 14px;
+}
+.dk-sys-tilt {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  transition:
+    rotate var(--dk-sys-ms) var(--dk-ease),
+    filter var(--dk-hover-ms) var(--dk-ease);
+}
+/* Under the pointer: the teal edge and glow, as a filter, so nothing it has
+   placed moves and the portal's ring is left alone. */
+.dk-sys-pv:hover .dk-sys-tilt {
+  filter: drop-shadow(0 0 2px var(--dk-edge))
+    drop-shadow(0 18px 40px rgba(0, 207, 200, 0.45));
+}
+.dk-sys-step {
+  transition: opacity 520ms var(--dk-ease);
+}
+.dk-sys-phone {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 8px;
+  border-radius: 30px;
+  background: linear-gradient(160deg, #1d2950 0%, #0a1230 100%);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.16),
+    inset 0 0 0 2px rgba(255, 255, 255, 0.05),
+    0 30px 60px -26px rgba(0, 0, 0, 0.85);
+}
+.dk-sys-screen {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 22px;
+  background: #000;
+}
+.dk-sys-screen img,
+.dk-sys-shot > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top;
+}
+.dk-sys-notch {
+  position: absolute;
+  top: 15px;
+  left: 50%;
+  z-index: 2;
+  width: 28%;
+  height: 11px;
+  border-radius: 999px;
+  background: #000;
+  transform: translateX(-50%);
+}
+.dk-sys-shot {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #1a1d21;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 30px 60px -28px rgba(0, 0, 0, 0.85);
+}
+.dk-sys-browser {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid var(--dk-line);
+  background: #f6f8f7;
+  box-shadow: var(--dk-sys-portal-shadow);
+}
+/* A signed project pouring in lights the portal's ring (its runs:
+   systemPlan.ts). The grown portal on the last stop has its own ring, timed
+   to its own door. */
+.dk-sys-glow {
+  position: absolute;
+  inset: 0;
+  border-radius: 14px;
+  box-shadow: var(--dk-sys-portal-ring);
+  opacity: 0;
+  pointer-events: none;
+}
+.dk-sys-glow[data-k="open"],
+.dk-sys[data-at="5"] .dk-sys-glow[data-k="rest"] {
+  visibility: hidden;
+}
+.dk-sys[data-at="5"] .dk-sys-glow[data-k="open"] {
+  visibility: visible;
+}
+.dk-sys-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  background: #0b1638;
+  border-bottom: 1px solid var(--dk-line);
+}
+.dk-sys-bar i {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+}
+.dk-sys-bar span {
+  margin-inline-start: 8px;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--dk-ink-3);
+  direction: ltr;
+}
+.dk-sys-page {
+  position: relative;
+  display: block;
+  flex: 1;
+  min-height: 0;
+}
+.dk-sys-page img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+}
+.dk-sys-demo {
+  position: absolute;
+  bottom: 14px;
+  inset-inline-end: 14px;
+  padding: 6px 16px;
+  border-radius: 999px;
+  background: rgba(9, 19, 51, 0.88);
+  color: var(--dk-ink);
+  font-size: 20px;
+  line-height: 1.25;
+}
+[dir="rtl"] .dk-sys-demo {
+  font-size: 21px;
+}
+/* On the portal's lens, inside the tile it marks. */
+.dk-sys-lens .dk-sys-demo {
+  bottom: 20px;
+  inset-inline-end: 20px;
+}
+/* The steps that answer the prospect's challenge (the rail's ring, on the screen). */
+.dk-sys-step[data-match] :is(.dk-sys-phone, .dk-sys-shot, .dk-sys-browser) {
+  outline: 2px solid rgba(0, 207, 200, 0.75);
+  outline-offset: 4px;
+}
+
+/* A second screen a step brings in, cut so its words read (its padding:
+   LENS_PAD). */
+.dk-sys-lens {
+  position: absolute;
+  border-radius: 16px;
+  background: var(--dk-panel);
+  box-shadow:
+    0 0 0 1px rgba(0, 207, 200, 0.5),
+    0 30px 70px -30px rgba(0, 0, 0, 0.9);
+  transition:
+    opacity 420ms var(--dk-ease),
+    transform 520ms var(--dk-ease);
+}
+.dk-sys-cut {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: 8px;
+}
+.dk-sys-cut img {
+  position: absolute;
+  display: block;
+  max-width: none;
+}
+
+/* The step names, down the funnel's top wall: the rail, drawn large. Each
+   is placed by its bottom edge (LABELS), so a taller line grows upward. */
+.dk-sys-name {
+  position: absolute;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  white-space: nowrap;
+  font: inherit;
+  font-size: 25px;
+  line-height: 1.2;
+  font-weight: 600;
+  color: var(--dk-ink);
+  pointer-events: auto;
+  transform: translate(-50%, -100%);
+  transition:
+    color var(--dk-sys-ms) var(--dk-ease),
+    opacity var(--dk-sys-ms) var(--dk-ease),
+    top var(--dk-sys-ms) var(--dk-ease),
+    inset-inline-start var(--dk-sys-ms) var(--dk-ease);
+}
+[dir="rtl"] .dk-sys-name {
+  transform: translate(50%, -100%);
+  font-size: 27px;
+  line-height: 1.35;
+}
+.dk-sys-name b {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--dk-teal);
+  transition:
+    color var(--dk-sys-ms) var(--dk-ease),
+    text-shadow var(--dk-hover-ms) var(--dk-ease);
+}
+.dk-sys-name:hover b {
+  text-shadow: 0 0 22px rgba(0, 207, 200, 0.45);
+}
+[dir="rtl"] .dk-sys-name b {
+  font-size: 26px;
+}
+.dk-sys:not([data-at="0"]) .dk-sys-name {
+  color: var(--dk-ink-3);
+}
+.dk-sys:not([data-at="0"]) .dk-sys-name b {
+  color: rgba(0, 207, 200, 0.5);
+}
+.dk-sys:not([data-at="0"]) .dk-sys-name:not([data-on]):hover {
+  color: var(--dk-ink-2);
+}
+.dk-sys .dk-sys-name[data-on] {
+  color: var(--dk-ink);
+}
+.dk-sys .dk-sys-name[data-on] b {
+  color: var(--dk-teal);
+}
+.dk-sys-name[data-match] b {
+  padding: 0 4px;
+  outline: 2px dashed rgba(0, 207, 200, 0.85);
+  outline-offset: 4px;
+  border-radius: 6px;
+}
+.dk-sys-name[data-gone] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* The words on the drawing. */
+.dk-sys-min,
+.dk-sys-note,
+.dk-sys-say {
+  position: absolute;
+  white-space: nowrap;
+  pointer-events: none;
+  transition:
+    opacity var(--dk-sys-ms) var(--dk-ease),
+    color var(--dk-sys-ms) var(--dk-ease);
+}
+.dk-sys-min {
+  transform: translateX(-50%);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 24px;
+  line-height: 1.2;
+  color: var(--dk-teal);
+}
+[dir="rtl"] .dk-sys-min {
+  transform: translateX(50%);
+  font-family: "IBM Plex Sans Arabic", "Geist Mono", sans-serif;
+  font-size: 26px;
+}
+.dk-sys-note {
+  font-size: 24px;
+  line-height: 1.25;
+  color: var(--dk-ink-2);
+}
+[dir="rtl"] .dk-sys-note {
+  font-size: 26px;
+  line-height: 1.45;
+}
+.dk-sys-say {
+  transform: translate(-50%, -50%);
+  padding: 0 22px;
+  background: var(--dk-space);
+  font-size: 25px;
+  line-height: 36px;
+  font-weight: 600;
+  color: var(--dk-teal);
+}
+[dir="rtl"] .dk-sys-say {
+  transform: translate(50%, -50%);
+  font-size: 27px;
+}
+
+/* The header: the overview's title, or the open step's own line. */
+.dk-sys-head {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 1180px;
+}
+.dk-sys-line {
+  font-size: 44px;
+  line-height: 1.16;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+[dir="rtl"] .dk-sys-line {
+  font-size: 42px;
+  line-height: 1.4;
+  letter-spacing: 0;
+  font-weight: 700;
+}
+.dk-sys-match {
+  display: inline-block;
+  margin-inline-start: 16px;
+  padding: 3px 14px;
+  border-radius: 999px;
+  background: var(--dk-teal-soft);
+  box-shadow: 0 0 0 1px rgba(0, 207, 200, 0.45);
+  font-size: 20px;
+  vertical-align: 2px;
+}
+
+/* At a stop: the open step leads, the rest of the drawing steps back. The
+   loop's words dim by their colour alone, so the ground behind them still
+   hides the line and the light that pass under them. */
+.dk-sys:not([data-at="0"]):not([data-at="5"])
+  :is(.dk-sys-loop, .dk-sys-loop-head) {
+  opacity: 0.25;
+}
+.dk-sys:not([data-at="0"]):not([data-at="5"]) .dk-sys-say {
+  color: rgba(0, 207, 200, 0.3);
+}
+.dk-sys:not([data-at="0"]):not([data-at="5"]) .dk-sys-ride {
+  filter: opacity(0.25);
+}
+.dk-sys:is([data-at="3"], [data-at="4"]) .dk-sys-flow {
+  opacity: 0.3;
+}
+.dk-sys:not([data-at="0"]):not([data-at="2"]) :is(.dk-sys-note, .dk-sys-drop) {
+  opacity: 0;
+}
+.dk-sys[data-at="2"] .dk-sys-note {
+  color: var(--dk-ink);
+}
+.dk-sys:not([data-at="0"]):not([data-at="3"]) :is(.dk-sys-span, .dk-sys-min) {
+  opacity: 0.3;
+}
+.dk-sys[data-at="3"] .dk-sys-span {
+  stroke: var(--dk-teal);
+}
+/* The last stop: the portal grows and the loop lights with the tour's line. */
+.dk-sys[data-at="5"] .dk-sys-loop {
+  opacity: 1;
+  stroke-width: 4;
+}
+.dk-sys[data-at="5"] .dk-sys-loop-head {
+  opacity: 1;
+}
+.dk-sys[data-at="5"] .dk-sys-say {
+  font-size: 28px;
+  font-weight: 500;
+  color: var(--dk-ink);
+}
+[dir="rtl"] .dk-sys[data-at="5"] .dk-sys-say {
+  font-size: 30px;
+}
+
+/* The entrance: the walls pour in from the mouth, the screens rise in order
+   (Rv), the loop closes last and the leads start to move. */
+.dk-slide[data-active] .dk-sys-draw {
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  animation: dk-sys-draw 1100ms var(--dk-ease) 250ms forwards;
+}
+.dk-slide[data-active] .dk-sys-loop-draw {
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  animation: dk-sys-draw 900ms var(--dk-ease) 1250ms forwards;
+}
+.dk-slide[data-active] .dk-sys-late {
+  animation: dk-sys-show 600ms var(--dk-ease) 1350ms backwards;
+}
+.dk-slide[data-active] .dk-sys-flow {
+  animation: dk-sys-show 700ms var(--dk-ease) 1300ms backwards;
+}
+.dk-slide[data-active] .dk-sys-say {
+  animation: dk-sys-swap 520ms var(--dk-ease) backwards;
+}
+@keyframes dk-sys-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes dk-sys-show {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes dk-sys-swap {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dk-slide[data-active] :is(.dk-sys-draw, .dk-sys-loop-draw) {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+  .dk-slide[data-active] :is(.dk-sys-late, .dk-sys-flow, .dk-sys-say) {
+    animation: none;
+  }
+  .dk-sys-ride {
+    display: none;
+  }
+  .dk-sys
+    :is(
+      .dk-sys-pv,
+      .dk-sys-tilt,
+      .dk-sys-step,
+      .dk-sys-lens,
+      .dk-sys-name,
+      .dk-sys-name b,
+      .dk-sys-min,
+      .dk-sys-note,
+      .dk-sys-say,
+      .dk-sys-loop,
+      .dk-sys-loop-head,
+      .dk-sys-span,
+      .dk-sys-drop,
+      .dk-sys-flow
+    ) {
+    transition: none;
+  }
+}

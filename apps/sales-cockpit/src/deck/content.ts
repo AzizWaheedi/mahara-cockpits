@@ -101,6 +101,46 @@ export const PILLARS: Pillar[] = [
   },
 ];
 
+/** "Step 2 of 5": a step's place in the system, the way the step slides open. */
+export function pillarLabel(key: PillarKey, lang: Lang) {
+  const n = PILLARS.findIndex(p => p.key === key) + 1;
+  return lang === "ar" ? `الخطوة ${"١٢٣٤٥"[n - 1]} من ٥` : `Step ${n} of 5`;
+}
+
+/**
+ * "Step 2 of 5 · Landing pages that filter": the five-step slide's label at a
+ * stop. Arabic takes a comma: a middle dot after ٥ reads as a zero (٥ ٠).
+ */
+export function stepLabel(key: PillarKey, lang: Lang) {
+  const pillar = PILLARS.find(p => p.key === key);
+  const name = pillar ? t(pillar.name, lang) : "";
+  return lang === "ar"
+    ? `${pillarLabel(key, lang)}، ${name}`
+    : `${pillarLabel(key, lang)} · ${name}`;
+}
+
+/**
+ * The five-step slide's own words (system.tsx), beside the funnel it draws.
+ * The step names and lines are PILLARS; the loop's long line is the portal
+ * tour's (tour.ts); these are the notes on the drawing, each from a line
+ * the deck already says: the filter's "screen out the time-wasters" and the
+ * data step's "a plan to scale what works".
+ */
+export const SYSTEM = {
+  title: {
+    en: "Five steps, and one team running them.",
+    ar: "خمس خطوات.. وفريق واحد يشغلها.",
+  },
+  out: {
+    en: "Time-wasters leave here",
+    ar: "اللي يضيعون وقتك.. يطلعون هني",
+  },
+  loop: { en: "We scale what works", ar: "نكبّر اللي يشتغل" },
+  minutes: { en: "5 min", ar: "٥ دقايق" },
+  match: { en: "Answers your challenge", ar: "يحل مشكلتك" },
+  demo: { en: "Demo workspace", ar: "حساب تجريبي" },
+} satisfies Record<string, L>;
+
 // ------------------------------------------------------ the problem picker
 
 export type ProblemKey =
