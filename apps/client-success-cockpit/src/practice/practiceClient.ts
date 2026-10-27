@@ -140,6 +140,7 @@ export function practiceIO(deck: DeckKind, presenter: string | null): DeckIO {
     onboarding: kept.onboarding ?? loaded.prep.onboarding,
     launch: kept.launch ?? loaded.prep.launch,
     blueprint: {},
+    offer_website: {},
   };
   let ads: LaunchAd[] = [...loaded.ads];
   let revision = 1;

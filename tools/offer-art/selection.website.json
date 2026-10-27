@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "offer": "website",
+  "example": {"en": "Hosh Design & Build, Example", "ar": "حوش للتصميم والبناء، مثال"},
+  "sourceDirectory": "upsell-studio-video/website/final/art",
+  "sourceGrade": "mahara-deep-space-v1.cube, already baked; no second creative grade",
+  "sourceReview": "Existing contact sheet visually reviewed on 26 Oct 2026. Empty architecture, no people, faces, writing or client assets. Final compressed exports need their own review.",
+  "images": [
+    {"id":"hero","file":"hero.webp","source":"website-hero-16x9.png","md5":"966080382b76aa34fe861e67bf00967c","job":"9ed8eea1-9d90-41d2-b829-eb7355d26306","treatment":"highlight-cap","alt":{"en":"Example: a contemporary Gulf villa beside a pool at dusk.","ar":"مثال: فيلا خليجية معاصرة بجانب مسبح وقت الغروب."}},
+    {"id":"stone","file":"bg-stone.webp","source":"website-bg-1.png","md5":"693619482c9f2950466965fd092c8302","job":"ea4776a5-cc4a-4d4d-94c1-7b0788e71770","treatment":"quiet-navy","alt":{"en":"Example: a stone wall and a narrow pool at dusk.","ar":"مثال: جدار حجري ومسبح ضيق وقت الغروب."}},
+    {"id":"courtyard","file":"bg-courtyard.webp","source":"website-bg-2.png","md5":"9d6809b419a60c67cd6a3a6c2ad58e9a","job":"4b20dcda-616a-44ba-914f-a65cdfd7e67d","treatment":"quiet-navy","alt":{"en":"Example: an empty courtyard with an olive tree and water channel.","ar":"مثال: فناء هادئ فيه شجرة زيتون ومجرى ماء."}},
+    {"id":"interior","file":"bg-interior.webp","source":"website-bg-3-spare.png","md5":"7b2ece824d3a6bee602795bbdbe8fd53","job":"a76fe6bf-9cee-431a-9213-474fa180d06c","treatment":"quiet-navy","alt":{"en":"Example: an empty interior looking onto a pool.","ar":"مثال: مساحة داخلية تطل على مسبح."}}
+  ]
+}

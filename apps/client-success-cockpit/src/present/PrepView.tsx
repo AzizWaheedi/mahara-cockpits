@@ -23,6 +23,9 @@ import type { CallKind } from "./deckData";
 import { type Pos, stepFrom } from "./engine";
 import { LaunchControls } from "./launchControls";
 import { saveLine } from "./NotesWindow";
+import { isOfferDeck } from "./offer/kinds";
+import { OfferNotes } from "./offer/OfferNotes";
+import { OfferPrep } from "./offer/OfferPrep";
 import type { DeckKind } from "./sources";
 import { TrayFiles } from "./TrayFiles";
 import { useCallFacts } from "./useCallFacts";
@@ -224,7 +227,7 @@ export function PrepView({
             </span>
           </>
         )}
-        {deck === "blueprint" ? null : (
+        {deck === "blueprint" || isOfferDeck(deck) ? null : (
           <a
             href={links.other}
             className="text-sm text-primary underline-offset-4 hover:underline"
@@ -256,7 +259,8 @@ export function PrepView({
       </header>
 
       {/* The CSM's read-only view of the Blueprint runs no call of its own. */}
-      {deck !== "blueprint" || (base.bp && !base.bp.readOnly) ? (
+      {!isOfferDeck(deck) &&
+      (deck !== "blueprint" || (base.bp && !base.bp.readOnly)) ? (
         <div className={cn(hosted && "pr-[var(--host-end,16px)]")}>
           {/* Hosted, the creative director's page says it once, above. */}
           {made && !hosted ? (
@@ -368,6 +372,8 @@ export function PrepView({
           </div>
           {deck === "blueprint" ? (
             <BlueprintPrep bp={base.bp} d={d} made={made} />
+          ) : isOfferDeck(deck) ? (
+            <OfferPrep offer={base.offer} model={model} />
           ) : null}
         </div>
 
@@ -460,6 +466,8 @@ export function PrepView({
                   reload={model.reload}
                   inPrep
                 />
+              ) : isOfferDeck(deck) ? (
+                <OfferNotes offer={base.offer} model={model} />
               ) : deck === "launch" ? (
                 <LaunchControls
                   slideId={slide.id}
@@ -503,7 +511,7 @@ export function PrepView({
             <h3 className="text-xs font-medium text-muted-foreground">
               The whole deck
             </h3>
-            {deck === "blueprint" ? null : (
+            {deck === "blueprint" || isOfferDeck(deck) ? null : (
               <Field
                 label="Service model"
                 hint={
@@ -527,7 +535,7 @@ export function PrepView({
                 />
               </Field>
             )}
-            {deck !== "blueprint" && d.mode.dwy ? (
+            {!isOfferDeck(deck) && deck !== "blueprint" && d.mode.dwy ? (
               <Toggle
                 checked={model.prep.onboarding.dwy_os_approved === true}
                 onChange={v =>
@@ -544,9 +552,15 @@ export function PrepView({
                 </span>
               </Toggle>
             ) : null}
-            {[...(model.loaded?.problems ?? []), ...d.notes].length ? (
+            {[
+              ...(model.loaded?.problems ?? []),
+              ...(isOfferDeck(deck) ? [] : d.notes),
+            ].length ? (
               <ul className="space-y-1 text-xs text-muted-foreground">
-                {[...(model.loaded?.problems ?? []), ...d.notes].map(n => (
+                {[
+                  ...(model.loaded?.problems ?? []),
+                  ...(isOfferDeck(deck) ? [] : d.notes),
+                ].map(n => (
                   <li key={n}>{n}</li>
                 ))}
               </ul>
@@ -575,7 +589,7 @@ export function PrepView({
               ) : null}
             </div>
           </section>
-          {deck === "blueprint" ? null : (
+          {deck === "blueprint" || isOfferDeck(deck) ? null : (
             <PrepVideos model={model} deck={deck} all={all} io={io} />
           )}
         </aside>

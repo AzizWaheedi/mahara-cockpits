@@ -1,3 +1,4 @@
+import { WEBSITE_DECK } from "./offer/content/website";
 /**
  * Everything the two client decks say, in English and in the client-facing
  * Gulf Arabic, in one place (docs/csm-decks/CONTENT.md and CONTENT-AR.md are
@@ -1321,10 +1322,14 @@ export const journeyName = (i: number, dwy: boolean): L => {
 };
 
 /** The decks' names, for the chrome and the presenter's windows. */
-export const DECK_NAME: Record<"onboarding" | "launch" | "blueprint", L> = {
+export const DECK_NAME: Record<
+  "onboarding" | "launch" | "blueprint" | "offer_website",
+  L
+> = {
   onboarding: { en: "Onboarding", ar: "التعريف" },
   launch: { en: "Launch", ar: "الإطلاق" },
   blueprint: { en: "Brand Blueprint", ar: "بناء الهوية والعرض" },
+  offer_website: WEBSITE_DECK.name,
 };
 
 export const CLOSED = { en: "Deck closed", ar: "انتهى العرض" } as const;

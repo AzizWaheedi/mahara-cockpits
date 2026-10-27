@@ -14,6 +14,8 @@ import {
 import { useDeckReport } from "./DeckBoundary";
 import type { KickoffPort } from "./KickoffSlide";
 import { loadDeck } from "./load";
+import { isOfferDeck, offerDeckUrl } from "./offer/kinds";
+import { loadOfferDeck, offerIO } from "./offer/load";
 import { PresentApp, type PresentUrls, type View } from "./PresentApp";
 import {
   clearDeckVideo,
@@ -48,6 +50,16 @@ export function presentUrls(
   lang?: string,
   rehearse = false,
 ): PresentUrls {
+  if (isOfferDeck(deck)) {
+    const params = lang ? `?lang=${lang}` : "";
+    return {
+      deck: offerDeckUrl(key, "website") + params,
+      notes: offerDeckUrl(key, "website", "notes") + params,
+      prep: offerDeckUrl(key, "website", "prep"),
+      client: `${base()}/clients/${encodeURIComponent(key)}?tab=money`,
+      other: offerDeckUrl(key, "website", "prep"),
+    };
+  }
   const k = encodeURIComponent(key);
   // A rehearsal stays a rehearsal in every window it opens: each window
   // reads ?rehearse=1 from its own address only.
@@ -97,6 +109,7 @@ export default function PresentPage({
     () => ({
       load: () => {
         if (!client) throw Error("Sign in to the cockpit to open the deck.");
+        if (isOfferDeck(deck)) return loadOfferDeck(client, key);
         if (deck === "blueprint") return loadBlueprint(client, key);
         return loadDeck(
           client,
@@ -135,6 +148,7 @@ export default function PresentPage({
             },
           }
         : {}),
+      ...(isOfferDeck(deck) && client ? { offer: offerIO(client, key) } : {}),
       savePrep: (k, patch) => {
         if (!client)
           throw Error(
@@ -223,7 +237,12 @@ export default function PresentPage({
     };
   }, [client, key, auth.email, auth.name, rehearse]);
 
-  if (deck !== "onboarding" && deck !== "launch" && deck !== "blueprint")
+  if (
+    deck !== "onboarding" &&
+    deck !== "launch" &&
+    deck !== "blueprint" &&
+    !isOfferDeck(deck)
+  )
     return <Navigate to={`/clients/${encodeURIComponent(key)}`} replace />;
 
   return (
@@ -243,7 +262,7 @@ export default function PresentPage({
       // The booking button books through CSM-gated calls: the Blueprint
       // opens the launch booking page in its own window instead (SPEC 0.1).
       book={
-        deck === "blueprint"
+        deck === "blueprint" || isOfferDeck(deck)
           ? undefined
           : (d, kind, label, onBooked, opts) => (
               <BookCallButton

@@ -21,6 +21,15 @@ SA=apps/sales-cockpit
 
 fails=0
 
+# The proposal preview must match the public page byte for byte. The cockpit
+# deploys on its own, so it carries these generated, checked source copies.
+for f in core.js offer.css strings.js offer.js; do
+  if ! cmp -s "sites/offer/$f" "apps/client-success-cockpit/src/pages/money/offers/proposal/page/$f"; then
+    echo "DRIFTED  offer page: $f (run apps/client-success-cockpit/scripts/offer-page-sync.mjs)"
+    fails=$((fails + 1))
+  fi
+done
+
 # Everything below the import block, which is the part that must match.
 body() {
   awk '

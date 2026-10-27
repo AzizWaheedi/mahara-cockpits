@@ -50,6 +50,8 @@ import {
   partText,
   replyText,
 } from "./launchControls";
+import { isOfferDeck } from "./offer/kinds";
+import { OfferNotes } from "./offer/OfferNotes";
 import { serviceNames } from "./services";
 import type { DeckKind } from "./sources";
 import { useCallFacts } from "./useCallFacts";
@@ -551,7 +553,8 @@ export function NotesWindow({
             Rehearsal: nothing is saved or sent.
           </div>
         ) : null}
-        {deck !== "blueprint" || (base.bp && !base.bp.readOnly) ? (
+        {!isOfferDeck(deck) &&
+        (deck !== "blueprint" || (base.bp && !base.bp.readOnly)) ? (
           <CallGuideLine
             deck={deck}
             taskId={d.taskId}
@@ -708,13 +711,15 @@ export function NotesWindow({
           </Section>
         ) : null}
 
-        <NotesVideos
-          d={d}
-          slideId={slide.id}
-          player={player}
-          hub={hub}
-          zoom={zoom}
-        />
+        {!isOfferDeck(deck) ? (
+          <NotesVideos
+            d={d}
+            slideId={slide.id}
+            player={player}
+            hub={hub}
+            zoom={zoom}
+          />
+        ) : null}
 
         <Section title="Only you see this">
           <ul className="space-y-1 text-muted-foreground">
@@ -724,7 +729,10 @@ export function NotesWindow({
                 slides keep what they had.
               </li>
             ) : null}
-            {[...model.loaded!.problems, ...d.notes].map(n => (
+            {[
+              ...model.loaded!.problems,
+              ...(isOfferDeck(deck) ? [] : d.notes),
+            ].map(n => (
               <li key={n}>{n}</li>
             ))}
             {slide.missing?.(d).map(n => (
@@ -738,7 +746,8 @@ export function NotesWindow({
           </ul>
         </Section>
 
-        {deck !== "blueprint" &&
+        {!isOfferDeck(deck) &&
+        deck !== "blueprint" &&
         (slide.id === "team" ||
           slide.id === "welcome" ||
           slide.id === "cover" ||
@@ -774,6 +783,8 @@ export function NotesWindow({
               reload={model.reload}
             />
           )
+        ) : isOfferDeck(deck) ? (
+          <OfferNotes offer={base.offer} model={model} />
         ) : deck === "launch" ? (
           <LaunchControls
             slideId={slide.id}

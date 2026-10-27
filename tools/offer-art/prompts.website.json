@@ -1,0 +1,46 @@
+{
+  "note": "Website offer art set v1, 26 Oct 2026 (docs/upsell-studio/ART.md). One finished house for the hero, then three quiet night backgrounds from the client's own world: the stone he builds with, the drawing he reads, the frame he puts up. Real photographs, never renders: no people, no screens, no writing. The grade (grade.ts) does the colour, so the prompts ask for plain, true light.",
+  "model": "marketing-studio/image/sunburst",
+  "body": { "resolution": "2k", "quality": "high", "aspect_ratio": "16:9" },
+  "cap": 12,
+  "closing": "A real photograph, not a render: true materials, natural light falloff, fine film grain, slightly imperfect. Nothing glows: no bloom, no lens flare, no haze, no light rays, no vignette. Empty and still: no people, no animals, no vehicles, no text, no letters, no numbers, no signage, no logos, no watermark, no screens.",
+  "variants": {
+    "hero-a": {
+      "slot": "hero",
+      "prompt": "Architectural photograph of a finished contemporary courtyard house in Kuwait, newly handed over, taken about twenty minutes after sunset when the sky is an even deep navy and the light is soft and cool. The camera stands on the street at eye level and looks along the house at an angle, in two-point perspective: the house fills the right half of the frame, and the left half is calm sky above a long plain wall of pale honed limestone that runs out of the frame. Flat roofs with thin parapets, deep-set windows, a tall gate of vertical timber slats set into the wall with one small warm lamp beside it; the rest of the house is lit only by the evening sky and most windows are dark. One mature date palm rises behind the wall. Clean pale paving, no pool, no water. Medium-format camera, 45 mm lens, verticals corrected, sharp, quiet and restrained, documentary architectural photography for a portfolio of built work."
+    },
+    "hero-b": {
+      "slot": "hero",
+      "prompt": "Architectural photograph, just after sunset under a deep navy sky, of the corner of a finished contemporary Gulf villa where two pale limestone volumes meet at different heights. The camera is close and low, looking slightly up at an angle: the stone corner and a deep recessed entrance with a solid timber door take the right third of the frame; the left two thirds is the plain, softly lit wall of the taller stone volume and the sky above it. One small warm wall light beside the door. Crisp stone joints and real texture, verticals corrected, 35 mm lens on a medium-format camera, calm and exact, photographed for an architecture monograph."
+    },
+    "hero-c": {
+      "slot": "hero",
+      "prompt": "Architectural photograph of a newly completed two-storey contemporary villa in the Gulf, sand-coloured lime plaster with a few small deep-set windows in the old Najdi manner and one tall narrow opening, seen at an angle across a wide forecourt of raked pale gravel in the last blue light after sunset. The house sits low and long in the right half of the frame; the left half is gravel and open sky. Two young olive trees in the forecourt. The windows are dark except one, softly lit from inside. 50 mm lens on a medium-format camera, verticals corrected, still and sharp, documentary architectural photography."
+    },
+    "stone-a": {
+      "slot": "stone",
+      "prompt": "Night photograph of a wall built from large honed limestone slabs with fine, precise joints, taken almost square-on from slightly left of centre. One low light source below the left edge of the frame grazes the stone, so its texture shows along the bottom edge and up the left third, then falls away into near-darkness. The upper two thirds and the right side of the frame are deep, quiet shadow with only a trace of stone texture. No light fixture in view, no water, no plants. 50 mm lens, sharp, true texture, documentary."
+    },
+    "stone-b": {
+      "slot": "stone",
+      "prompt": "Night photograph of the base of a pale limestone wall where it meets a dark honed stone floor, seen at a low angle along the wall. Soft light from the right edge of the frame skims across the floor and the bottom of the wall, picking out the joints and the fine pitting of the stone, and fades out before the centre. Above and to the left everything falls into deep, even shadow. No light fixture in view, no plants, no water. 35 mm lens, sharp, quiet, documentary."
+    },
+    "drawing-a": {
+      "slot": "drawing",
+      "prompt": "Close photograph of a printed architectural floor plan of a house, thin black linework on matte off-white paper, lying flat on a dark walnut table at night. One low lamp just off the left edge lights only the left third of the sheet; the drawing's walls, door swings and fine hatching fall away into deep shadow across the frame. Low oblique camera angle, shallow depth of field, the far edge of the sheet softly out of focus. Linework only: no words, no letters, no numbers, no dimensions, no title block, no stamps. No hands, no pencils, no rulers."
+    },
+    "drawing-b": {
+      "slot": "drawing",
+      "prompt": "Photograph from above, slightly angled, of two overlapping printed architectural drawings on a dark grey table at night: a house's floor plan on top of a building section, thin black lines on matte white paper. A narrow beam of light falls from the top left corner across one corner of the sheets; the rest of the frame is in deep shadow where the lines are only just visible. Linework only: no words, no letters, no numbers, no dimensions, no title block, no stamps. No hands, no pencils, no rulers. 50 mm macro lens, crisp paper grain, documentary."
+    },
+    "site-a": {
+      "slot": "site",
+      "prompt": "Photograph at dusk of a reinforced-concrete villa frame under construction in Kuwait, work finished for the day. Bare grey concrete columns, two slab edges and an unfinished stair rise in the left third of the frame, seen from ground level at an angle; the right two thirds is calm deep navy evening sky above a low block boundary wall. Timber formwork boards and steel props stacked neatly on clean sand. Quiet, orderly and real, no machinery and no cranes. 35 mm lens, verticals corrected, natural, documentary."
+    },
+    "site-b": {
+      "slot": "site",
+      "prompt": "Photograph at dusk from inside the bare concrete frame of a villa under construction in the Gulf: a row of square concrete columns recedes at an angle on the right, the rough underside of the slab above, and on the left a wide opening to a calm deep navy evening sky. Clean concrete floor, one neat stack of formwork boards, nothing else. Cool, even light from the sky only. Quiet, orderly and real, no machinery. 24 mm lens, verticals corrected, documentary."
+    }
+  },
+  "picks": {}
+}

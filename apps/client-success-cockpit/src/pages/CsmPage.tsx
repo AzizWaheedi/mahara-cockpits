@@ -148,6 +148,9 @@ import {
   PeriodBar,
 } from "./ClientPerformancePage";
 import { MeetingsPage } from "./MeetingsPage";
+import { OfferHotRow } from "./money/offers/OfferHotRow";
+import { MakeProposalButton } from "./money/offers/proposal/MakeProposalButton";
+import { ProposalsCard } from "./money/offers/proposal/ProposalsCard";
 
 /** Tickets the CSM raises. Picking the request picks the board — she never picks a team. */
 /** A ticket's team as people say it: "Media buyer", not media_buyer. */
@@ -1946,6 +1949,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                 stage={c.stage}
                 nextCallKind={c.nextCallKind}
               />
+              <MakeProposalButton taskId={String(c.taskId)} />
               <ReportIssue page={`client: ${c.name}`} />
             </div>
           </div>
@@ -2579,6 +2583,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               title="Hot list"
               sub="One upsell, referral or review conversation per client a month."
             >
+              <OfferHotRow c={c} />
               {isChurned(c) ? (
                 <p className="text-sm text-muted-foreground">
                   A client who has left is never an upsell, a review or a
@@ -2625,6 +2630,8 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                 Open the hot list
               </Link>
             </SectionCard>
+
+            <ProposalsCard taskId={String(c.taskId)} />
 
             <SectionCard
               title="Changing their plan"
