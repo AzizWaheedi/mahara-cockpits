@@ -6,6 +6,7 @@ import {
   Instagram,
   Loader2,
   MessageCircle,
+  PanelsTopLeft,
   Phone,
   RefreshCw,
   Route,
@@ -38,12 +39,15 @@ import {
   useFunnelStats,
 } from "@/lib/funnelClient";
 import { filteringCount, frictionSteps } from "@/lib/leadForm";
+import { pageLine, visitDays } from "@/lib/leadPageFunnel";
+import { type LeadPageRead, useLeadPage } from "@/lib/pageFormClient";
 import type { Range } from "@/lib/range";
 import { cn } from "@/lib/utils";
 import { ChangeReview } from "./ChangeReview";
 import { FormEditor } from "./FormEditor";
 import { FormPreview, type FormScreen } from "./FormPreview";
 import { JourneyRail } from "./JourneyRail";
+import { LeadPageJourney } from "./LeadPageJourney";
 
 const KIND: Record<
   FunnelKind,
@@ -74,11 +78,27 @@ const KIND: Record<
   },
 };
 
+/** A website destination that opens the client's own form page. */
+const LEAD_PAGE = {
+  name: "Lead page",
+  icon: PanelsTopLeft,
+  opened: "Clicked through",
+};
+
 type Loaded = ReturnType<typeof useFunnel>;
 
+/** The client's lead page behind this destination, once it is read. */
+function pageOf(d: FunnelDestination, lead?: LeadPageRead) {
+  return d.kind === "website" && d.url && lead?.url === d.url
+    ? lead.page
+    : undefined;
+}
+
 /** One line per destination, for the campaign panel. */
-function summary(d: FunnelDestination): string {
+function summary(d: FunnelDestination, lead?: LeadPageRead): string {
   const ads = `${d.ads.length} ad${d.ads.length === 1 ? "" : "s"}`;
+  const page = pageOf(d, lead);
+  if (page) return pageLine(page, d.ads.length);
   if (d.kind !== "form")
     return `${KIND[d.kind].name}${d.url ? ` · ${shortUrl(d.url)}` : ""} · ${ads}`;
   // The function's pageRefusal names an unshared Page; say it on the line.
@@ -152,6 +172,11 @@ export function FunnelLine({
   // the same destination first.
   const stats = useFunnelStats(campaignName, range);
   const d = ordered(funnel.data?.destinations ?? [], stats.data);
+  // A website ad that opens the client's own form page shows that page.
+  const lead = useLeadPage(
+    d.flatMap(x => (x.kind === "website" && x.url ? [x.url] : [])),
+    visitDays(range),
+  );
   return (
     <div className="ceo-root mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border px-3 py-2.5 text-sm sm:px-4">
       <Route className="size-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -167,7 +192,7 @@ export function FunnelLine({
         ) : d.length === 0 ? (
           "No live ads in this campaign."
         ) : (
-          d.map(summary).join("   /   ")
+          d.map(x => summary(x, lead)).join("   /   ")
         )}
       </span>
       {funnel.error && !funnel.data ? (
@@ -197,6 +222,7 @@ export function FunnelLine({
         range={range}
         funnel={funnel}
         stats={stats}
+        lead={lead}
       />
     </div>
   );
@@ -209,6 +235,7 @@ export function FunnelSheet({
   range,
   funnel,
   stats: given,
+  lead,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -217,6 +244,8 @@ export function FunnelSheet({
   funnel: Loaded;
   /** Numbers already read by the campaign line, or stored ones (the dev harness). */
   stats?: ReturnType<typeof useFunnelStats>;
+  /** The client's lead page behind a website destination, read by the campaign line. */
+  lead?: LeadPageRead;
 }) {
   const own = useFunnelStats(open && !given ? campaignName : null, range);
   const stats = given ?? own;
@@ -295,6 +324,7 @@ export function FunnelSheet({
               range={range}
               stats={stats.data}
               statsError={stats.error}
+              lead={lead}
               onChanged={() => {
                 funnel.reload();
                 stats.reload();
@@ -354,6 +384,7 @@ function Destination({
   range,
   stats,
   statsError,
+  lead,
   onChanged,
 }: {
   d: FunnelDestination;
@@ -361,12 +392,22 @@ function Destination({
   range: Range;
   stats?: FunnelStats;
   statsError: string | null;
+  lead?: LeadPageRead;
   onChanged: () => void;
 }) {
   const [screen, setScreen] = useState<FormScreen>("questions");
   const [editing, setEditing] = useState(false);
-  const kind = KIND[d.kind];
+  const page = pageOf(d, lead);
+  // A lead page reads as the instant form does: its own name, and Sent the form.
+  const kind = page ? LEAD_PAGE : KIND[d.kind];
   const Icon = kind.icon;
+  // Its page is still being read, or the read failed: never the "cannot read" line meanwhile.
+  const pageWaits =
+    d.kind === "website" &&
+    Boolean(d.url) &&
+    lead?.url === d.url &&
+    !page &&
+    !lead?.checked;
   const t = totalsFor(stats, d.ads);
   // The same reading as the campaign panel's Cost / booking cell: bookings
   // with no spend in the range, or a range after Meta's last day, read n/a
@@ -382,7 +423,7 @@ function Destination({
     ? [
         { label: kind.opened, value: t.linkClicks },
         {
-          label: d.kind === "form" ? "Sent the form" : "Became a lead",
+          label: d.kind === "form" || page ? "Sent the form" : "Became a lead",
           value: t.leads,
         },
         { label: "Booked a call", value: t.booked },
@@ -401,10 +442,12 @@ function Destination({
         <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted">
           <Icon className="size-4" aria-hidden />
         </span>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-[12rem] flex-1">
           <Kicker>{kind.name}</Kicker>
           <p className="mt-0.5 truncate text-[15px] font-semibold" dir="auto">
-            {d.form?.name ?? (d.url ? shortUrl(d.url) : kind.name)}
+            {page?.title ??
+              d.form?.name ??
+              (d.url ? shortUrl(d.url) : kind.name)}
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {d.ads.length} ad{d.ads.length === 1 ? "" : "s"} lead here
@@ -413,6 +456,7 @@ function Destination({
               ? ` · ${count(d.form.leadsAllTime)} leads through this form all time`
               : ""}
             {d.pageName ? ` · ${d.pageName}` : ""}
+            {page && d.url ? ` · ${shortUrl(d.url)}` : ""}
           </p>
         </div>
         {d.form && (
@@ -423,6 +467,12 @@ function Destination({
                 ? "Live form"
                 : sentenceCase(d.form.status)
             }
+          />
+        )}
+        {page && (
+          <StatusChip
+            tone="good"
+            label={`Live page · ${page.versions.find(v => v.live)?.label ?? "v1"}`}
           />
         )}
         {d.kind !== "form" && d.url && (
@@ -548,7 +598,28 @@ function Destination({
           </div>
         )}
 
-        {d.kind === "website" && (
+        {page && lead && <LeadPageJourney page={page} lead={lead} />}
+
+        {pageWaits && lead && (
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {lead.error ? (
+              <>
+                The client's lead page could not be read: {lead.error}{" "}
+                <button
+                  type="button"
+                  className="font-medium text-foreground underline"
+                  onClick={lead.reload}
+                >
+                  Try again
+                </button>
+              </>
+            ) : (
+              "Reading the client's lead page…"
+            )}
+          </p>
+        )}
+
+        {d.kind === "website" && !page && !pageWaits && (
           <p className="text-xs leading-relaxed text-muted-foreground">
             The thank-you page and any form on it live on the site itself, so
             the cockpit cannot read them. Open the page to check the steps a

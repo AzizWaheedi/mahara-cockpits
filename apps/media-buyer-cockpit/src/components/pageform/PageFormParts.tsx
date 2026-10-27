@@ -212,18 +212,21 @@ export function PagePreview({
   siteUrl,
   spec,
   screen,
+  frame = "editor",
 }: {
   siteUrl: string;
   spec: PageFormSpec;
   screen: number;
+  /** "phone": the instant form preview's own phone, so Open funnel shows both funnels alike. */
+  frame?: "editor" | "phone";
 }) {
-  const frame = useRef<HTMLIFrameElement>(null);
+  const frameRef = useRef<HTMLIFrameElement>(null);
   const [ready, setReady] = useState(false);
   const origin = new URL(siteUrl).origin;
 
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
-      if (e.source !== frame.current?.contentWindow) return;
+      if (e.source !== frameRef.current?.contentWindow) return;
       if (e.data?.type === "page-form-ready") setReady(true);
     };
     window.addEventListener("message", onMessage);
@@ -232,7 +235,7 @@ export function PagePreview({
 
   useEffect(() => {
     if (!ready) return;
-    frame.current?.contentWindow?.postMessage(
+    frameRef.current?.contentWindow?.postMessage(
       {
         type: "page-form-preview",
         spec: { ...spec, version: "preview" },
@@ -243,14 +246,14 @@ export function PagePreview({
   }, [ready, spec, screen, origin]);
 
   // The page is drawn at a phone's 390px and scaled into the frame.
-  return (
-    <div className="relative h-[620px] w-[290px] shrink-0 overflow-hidden rounded-[34px] border-[6px] border-foreground/85 bg-[#f2ede5] shadow-sm">
+  const page = (scale: number, height: number) => (
+    <>
       <iframe
-        ref={frame}
+        ref={frameRef}
         title="Live preview of the page"
         src={`${siteUrl.replace(/\/$/, "")}/?preview=1`}
-        className="absolute top-0 left-0 h-[853px] w-[390px] origin-top-left border-0"
-        style={{ transform: "scale(0.7128)" }}
+        className="absolute top-0 left-0 w-[390px] origin-top-left border-0"
+        style={{ height, transform: `scale(${scale})` }}
         sandbox="allow-scripts allow-same-origin"
       />
       {!ready && (
@@ -258,6 +261,20 @@ export function PagePreview({
           Loading the page…
         </p>
       )}
+    </>
+  );
+  if (frame === "phone")
+    // FormPreview's phone: 272px with an 8px bezel, a 254px by 540px screen.
+    return (
+      <div className="relative w-[272px] shrink-0 rounded-[2.4rem] border border-white/10 bg-[#05070d] p-2 shadow-[0_24px_60px_-20px_rgb(0_0_0/0.65)]">
+        <div className="relative h-[540px] overflow-hidden rounded-[1.95rem] bg-[#f2ede5]">
+          {page(254 / 390, Math.round(540 / (254 / 390)))}
+        </div>
+      </div>
+    );
+  return (
+    <div className="relative h-[620px] w-[290px] shrink-0 overflow-hidden rounded-[34px] border-[6px] border-foreground/85 bg-[#f2ede5] shadow-sm">
+      {page(0.7128, 853)}
     </div>
   );
 }
