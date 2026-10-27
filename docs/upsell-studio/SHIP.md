@@ -1,6 +1,6 @@
 # Client Offer Studio: verification and release record
 
-Updated 27 October 2026. This is the Website pilot, with seven catalog offers. It is implemented for internal review. No production migration, Edge deploy, site deploy, video upload or client send has occurred in this continuation.
+Updated 27 October 2026. This is the Website pilot, with seven catalog offers. It is implemented and verified. Aziz approved the Arabic wording for decks and proposal pages on 27 October 2026; guarded software release is in progress. No production migration, Edge deploy, site deploy, video upload or client send has occurred in this continuation.
 
 ## Scope and source
 
@@ -83,7 +83,7 @@ Rollback definitions are in the private Mac `~/.cache/mahara-ship/rollback/` dir
 ## Release sequence and boundaries
 
 1. Verification, reviewer fixes and latest-main integration are complete for internal review. Save the merge checkpoint and push the branch with a reviewable PR, without moving the shared checkout HEAD. Do not infer Arabic approval from implementation approval.
-2. Arabic copy needs the CEO's explicit batch approval before it reaches clients: [approval sheet](ARABIC-FOR-APPROVAL.md). Blank prices/videos and `door_live=false` are not an overall exposure switch. Keep review protected until approval or implement a real exposure boundary. Do not use those defaults as evidence of isolation.
+2. Arabic wording for decks and proposal pages was explicitly approved by Aziz on 27 October 2026: [approval record](ARABIC-FOR-APPROVAL.md). Video licensing, real clips and publication remain separate. Blank prices/videos and `door_live=false` are not an overall exposure switch.
 3. Apply guarded migrations u, v, w, x, then `20261027011000_upsell_monitor_web.sql`. This timestamp intentionally sorts after its `20261026n` dependency. Read back bodies, ACLs, catalog and receipts after each. Stop on guard drift.
 4. Deploy `cockpit-csm-api` with its current JWT setting and `offer-door` with JWT verification off, after dry bundle validation. Preserve all current imports/functions. Use a dedicated random `OFFER_IP_SALT`; never replace the shared `IP_SALT`. Read back versions, JWT settings and health. Verify `Deno.resolveDns` availability on an approved public host; absent/partial/timed-out DNS fails closed.
 5. Use unchanged `scripts/ship.sh client-success` in an isolated genuine VPS Git checkout of the exact pushed release SHA. Never use the dirty existing VPS clone or development mirror. Install required CLI/dependencies there, use the verified public cockpit anon key, and preserve all auth/main/production guards. `COCKPIT_SUPABASE_KEY` on the VPS is a service key and must never become a `VITE_*` value.

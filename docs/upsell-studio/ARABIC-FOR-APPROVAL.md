@@ -1,5 +1,7 @@
 # Arabic for approval: the upsell studio
 
+Approval record: Aziz approved the Arabic wording for decks and proposal pages on 27 October 2026, responding "Approve the Arabic wording" to this sheet at source commit `1764ea8accc917cbc0dfdfc6f3e40d6c56a2cf97`. This records wording approval only. Video licensing, real closing clips and final media publication remain separate.
+
 Every new Arabic line the upsell studio adds, beside its English, for the CEO's one-batch approval. Nothing here reaches a client until it is approved. Written 26 Oct 2026 under mahara-context's `aziz-kuwaiti-voice` (SKILL.md and references/master-context.md), fresh, never translated, and checked line by line by the client copy check (`cockpit_client_copy_problems`).
 
 Generated from the files that hold the words, so this sheet and the build cannot drift: `supabase/migrations/20261026x_upsell_catalog_copy.sql` (sections 1 to 7), `apps/client-success-cockpit/src/present/offer/content/website.ts`, `shared.ts` and `websiteVideo.ts`, and `sites/offer/strings.js`. `scripts/offer-copy.test.ts` fails if any Arabic line in those files is missing here.
