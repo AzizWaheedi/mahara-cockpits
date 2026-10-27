@@ -42,6 +42,7 @@ for (const k of [
     k === "window" ? win : (win as unknown as Record<string, unknown>)[k];
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 mock.module("@/auth/SupabaseAuthProvider", () => ({
+  getCockpitSupabaseClient: () => null,
   useCockpitAuth: () => ({ client: null }),
 }));
 
