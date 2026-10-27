@@ -16,7 +16,11 @@ for (const key of OFFER_KEYS) {
     const row = structuredClone(ALL_CATALOG[key]);
     const model = catalogPreviewModel(row);
     const slides = catalogQuickSlides(row, model);
-    expect(slides.map(s => s.id)).toEqual(["matters", "get", "runs", "next"]);
+    expect(slides.map(s => s.id)).toEqual(
+      key === "website"
+        ? ["matters", "get", "examples", "runs", "next"]
+        : ["matters", "get", "runs", "next"],
+    );
     expect(model.io).toBeUndefined();
     expect(model.prep).toEqual({});
     expect(model.goal).toBeNull();
