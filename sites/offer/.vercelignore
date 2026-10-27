@@ -3,3 +3,6 @@ README.md
 fixtures.ts
 dev-door.ts
 .vercel
+art/website/contact-sheet.html
+art/website/contact-sheet.css
+art/website/manifest.json
