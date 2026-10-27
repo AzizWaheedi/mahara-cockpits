@@ -1,6 +1,7 @@
 import "@/components/ceo/ceo.css";
 import { ArrowUpRight, ChevronLeft, TriangleAlert } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
 import { AppointmentFeedback } from "@/components/AppointmentFeedback";
 import {
   CallCentreSection,
@@ -16,6 +17,7 @@ import {
   StatusChip,
   type StatusTone,
 } from "@/components/ceo/StatusChip";
+import { FunnelSplit, FunnelTag } from "@/components/FunnelSplit";
 import { LostLeads } from "@/components/LostLeads";
 import { LeadPageSection } from "@/components/pageform/LeadPageSection";
 import { RangePicker } from "@/components/RangePicker";
@@ -52,6 +54,8 @@ import {
   cplTone,
   spendNotInWhy,
 } from "@/lib/costTone";
+import { cardsNotCounted, splitByFunnel } from "@/lib/funnelSplit";
+import { useCampaignFunnels } from "@/lib/funnelSplitClient";
 import { CPB_BAD, CPB_GATE, CPL_BAD, CPL_GATE } from "@/lib/kpi";
 import { everyBookingPlaced, pairedDay } from "@/lib/mediaStatsClient";
 import { usePageForms } from "@/lib/pageFormClient";
@@ -218,11 +222,14 @@ export function AccountView({
   renderPanel,
   onClose,
   accountIds,
+  boardCards,
 }: {
   client: string;
   clientTaskId?: string;
   /** The client's campaigns from the snapshot, running and off. */
   campaigns: Row[];
+  /** The ads board's cards (every client): a Live one not in these numbers yet is named on the Lead page. */
+  boardCards?: Row[];
   /**
    * The ad accounts the page was opened with (`?adAccounts=`): a client with
    * no campaign listed reads its own numbers by them, on any range.
@@ -566,14 +573,83 @@ export function AccountView({
   // or when the read failed, so a failure is never read as "no page".
   const pageForms = usePageForms(client);
   const showLeadPage = Boolean(pageForms.error || pageForms.data?.length);
+  const hasLeadPage = Boolean(pageForms.data?.length);
+  // Each campaign's funnel (20261026s), listed or stopped, and the client's
+  // numbers split by it (Muhammed, 2026-10-26: say whether they come from
+  // the instant form or the lead page). The rows are the same campaign
+  // figures the Campaigns list shows. A campaign Live on the board but not in
+  // these numbers yet (no full day) is read too, for the Lead page (20261026u).
+  const counted = [...names, ...notListed.map(c => String(c.campaignName))];
+  const notCounted = cardsNotCounted(
+    boardCards ?? [],
+    client,
+    campaigns.flatMap(c => (Array.isArray(c.tags) ? c.tags : [])),
+    counted,
+  );
+  const funnels = useCampaignFunnels(
+    [...counted, ...notCounted],
+    range.start,
+    range.end,
+  );
+  const funnelOf = (name: string) =>
+    funnels.data?.find(f => f.campaign === name);
+  const funnelLines = splitByFunnel(
+    [
+      ...names.map(n => ({
+        campaign: n,
+        spend: read(n) ? Number(read(n)?.total?.spend ?? 0) : null,
+        leads: read(n) ? Number(read(n)?.total?.leads ?? 0) : null,
+      })),
+      ...notListed.map(c => ({
+        campaign: c.campaignName,
+        spend: c.spend ?? null,
+        leads: c.leads ?? null,
+      })),
+    ],
+    funnels.data,
+    hasLeadPage,
+  );
+  // The website campaigns: their Meta clicks go beside the page's visits.
+  // The ones not in these numbers yet are named apart on the Lead page.
+  const websites = (funnels.data ?? []).filter(f => f.kind === "website");
+  const pageCampaigns = websites
+    .filter(f => !notCounted.includes(f.campaign))
+    .map(f => f.campaign);
+  const waitingCampaigns = websites
+    .filter(f => notCounted.includes(f.campaign))
+    .map(f => f.campaign);
+  const toLeadPage = () => {
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    document.getElementById("lead-page")?.scrollIntoView({
+      behavior: still ? "auto" : "smooth",
+      block: "start",
+    });
+  };
+  // The board's "Lead page" link opens this page with ?part=lead-page: go
+  // there once the part is drawn, then drop the parameter.
+  const [params, setParams] = useSearchParams();
+  const wantsLeadPage = params.get("part") === "lead-page";
+  useEffect(() => {
+    if (!wantsLeadPage || !showLeadPage) return;
+    document.getElementById("lead-page")?.scrollIntoView({ block: "start" });
+    setParams(
+      prev => {
+        const next = new URLSearchParams(prev);
+        next.delete("part");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [wantsLeadPage, showLeadPage, setParams]);
   // The contents bar: one pill per card, in page order. Lost leads and the
   // open campaign show only when the page has them.
   const parts: SectionNavPart[] = [
     { id: "account-numbers", label: "Numbers" },
-    { id: "account-feedback", label: "Client feedback" },
     ...(lost?.total && !callsHoldLost
       ? [{ id: "account-lost", label: "Lost leads", count: lost.total }]
       : []),
+    ...(showLeadPage ? [{ id: "lead-page", label: "Lead page" }] : []),
+    { id: "account-feedback", label: "Client feedback" },
     { id: "calls", label: "Calls" },
     { id: "account-ads", label: "Ads", count: cards.length },
     {
@@ -584,7 +660,6 @@ export function AccountView({
     ...(current
       ? [{ id: "account-campaign", label: String(current.campaignName) }]
       : []),
-    ...(showLeadPage ? [{ id: "lead-page", label: "Lead page" }] : []),
   ];
   // The last day every account's spend is in (pairedDay): before the
   // tracker sheet fills, it is behind yesterday, and the page says so.
@@ -910,6 +985,14 @@ export function AccountView({
         {ratesNote && !numbersLoading && total.hasData && (
           <p className="mt-2 text-xs text-muted-foreground">{ratesNote}</p>
         )}
+        {!numbersLoading && total.hasData && (
+          <FunnelSplit
+            lines={funnelLines}
+            loading={funnels.data === undefined && !funnels.error}
+            error={funnels.error}
+            onLeadPage={showLeadPage ? toLeadPage : undefined}
+          />
+        )}
 
         {trend.length >= 2 && whole && notListed.length > 0 && (
           <p className="mt-4 text-xs text-muted-foreground">
@@ -951,6 +1034,15 @@ export function AccountView({
           </div>
         )}
       </section>
+
+      {showLeadPage && (
+        <LeadPageSection
+          read={pageForms}
+          className={SECTION_OFFSET}
+          metaCampaigns={pageCampaigns}
+          waitingCampaigns={waitingCampaigns}
+        />
+      )}
 
       <div id="account-feedback" className={SECTION_OFFSET}>
         <AppointmentFeedback
@@ -1135,6 +1227,10 @@ export function AccountView({
                     {c.campaignName}
                   </span>
                   <span className="mt-0.5 block text-xs text-muted-foreground">
+                    <FunnelTag
+                      funnel={funnelOf(String(c.campaignName))}
+                      hasLeadPage={hasLeadPage}
+                    />
                     {facts.join(" · ")}
                   </span>
                 </button>
@@ -1172,6 +1268,10 @@ export function AccountView({
                   {c.campaignName}
                 </span>
                 <span className="mt-0.5 block text-xs text-muted-foreground">
+                  <FunnelTag
+                    funnel={funnelOf(c.campaignName)}
+                    hasLeadPage={hasLeadPage}
+                  />
                   {[
                     `${money(c.spend)} · ${c.leads ?? "n/a"} leads`,
                     !leadsOnly && c.bookings !== null
@@ -1203,10 +1303,6 @@ export function AccountView({
           </h3>
           {renderPanel(current)}
         </section>
-      )}
-
-      {showLeadPage && (
-        <LeadPageSection read={pageForms} className={SECTION_OFFSET} />
       )}
     </div>
   );

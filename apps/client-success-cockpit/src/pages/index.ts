@@ -17,6 +17,7 @@ export { LandingPage } from "./LandingPage";
 export { LoginPage } from "./LoginPage";
 export { MeetingsPage } from "./MeetingsPage";
 export { MoneyPage } from "./MoneyPage";
+export { NoticesPage } from "./NoticesPage";
 export { ProjectionsPage } from "./ProjectionsPage";
 export { SettingsPage } from "./SettingsPage";
 export { SignupPage } from "./SignupPage";

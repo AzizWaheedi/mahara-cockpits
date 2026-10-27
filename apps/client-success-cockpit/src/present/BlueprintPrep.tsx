@@ -9,7 +9,13 @@ import {
   QuestionField,
   said,
 } from "./BlueprintFields";
-import { type BpKey, type BpPart, labelOf, QUESTIONS } from "./blueprintForm";
+import {
+  type BpKey,
+  type BpPart,
+  has,
+  labelOf,
+  QUESTIONS,
+} from "./blueprintForm";
 import { part1Suggestions } from "./blueprintPrefill";
 import type { DeckData } from "./deckData";
 import type { BpModel } from "./useBlueprint";
@@ -75,7 +81,21 @@ export function BlueprintPrep({
   const pack = service ? bp.bundle?.settings.packs?.[service] : null;
   const part1Done = bp.missing(1).length === 0;
   const order: BpPart[] = [1, 2];
-  const missingAll = order.flatMap(p => bp.missing(p));
+  // Prep's own answers are set here, so the call's list leaves them out.
+  const PREP_OWN: string[] = [
+    "pack_url",
+    "daily_budget",
+    "destination",
+    "identity",
+    "dna_status",
+    "dna_missing",
+    "offer",
+  ];
+  const missingAll = order
+    .flatMap(p => bp.missing(p))
+    .filter(k => !PREP_OWN.includes(k));
+  const dnaQ = QUESTIONS.find(q => q.key === "dna_status");
+  const offerQ = QUESTIONS.find(q => q.key === "offer");
   const kickoff = d.kickoff.entry;
   return (
     <div className="space-y-5">
@@ -122,6 +142,18 @@ export function BlueprintPrep({
             fix="The card has no Brand DNA link."
           >
             Brand DNA doc on the card
+          </Check1>
+          <Check1
+            ok={has(bp.answers, "dna_status")}
+            fix="Set the Brand DNA status below. On the call it reads as one line."
+          >
+            Brand DNA status set
+          </Check1>
+          <Check1
+            ok={has(bp.answers, "offer")}
+            fix="Write an offer draft below. They correct it on slide 13."
+          >
+            Offer draft written
           </Check1>
         </ul>
         {bp.prefill.notes.map(n => (
@@ -176,6 +208,18 @@ export function BlueprintPrep({
           </Button>
         </section>
       ) : null}
+
+      <section className="space-y-4 rounded-xl border p-4">
+        <div className="space-y-1">
+          <h2 className="text-sm font-semibold">Set before the call</h2>
+          <p className="text-xs text-muted-foreground">
+            The notes window shows these as text on the call, so you type
+            nothing for them there.
+          </p>
+        </div>
+        {dnaQ ? <QuestionField bp={bp} q={dnaQ} /> : null}
+        {offerQ ? <QuestionField bp={bp} q={offerQ} /> : null}
+      </section>
 
       {missingAll.length ? (
         <section className="space-y-2 rounded-xl border p-4">

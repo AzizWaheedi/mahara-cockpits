@@ -12,6 +12,27 @@ const vite = args.url ? null : spawn("bunx",["vite","--port","5312","--strictPor
 const pause = ms => new Promise(r=>setTimeout(r,ms));
 let browser;
 const report = [];
+const mobileWidths = [320,375,414,768];
+// Inspect the actual glyph rectangles: html overflow-x:clip can conceal overflowing text.
+const textBounds = frame => frame.evaluate(async () => {
+  await document.fonts.ready;
+  const issues=[];
+  const root=document.querySelector(".of-proposal,.of-state");
+  if(!root) return ["No rendered proposal or state"];
+  const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);
+  for(let node=walker.nextNode();node;node=walker.nextNode()){
+    if(!node.textContent?.trim())continue;
+    const owner=node.parentElement?.closest("h1,h2,p,li,th,td,figcaption,a,button");
+    if(!owner || !owner.getClientRects().length)continue;
+    const range=document.createRange();range.selectNodeContents(node);
+    const box=owner.getBoundingClientRect();
+    for(const rect of range.getClientRects()){
+      if(rect.width && (rect.left < -1 || rect.right > innerWidth+1 || rect.left < box.left-2 || rect.right > box.right+2))
+        issues.push(`${owner.tagName}.${owner.className}: ${node.textContent.slice(0,80)}`);
+    }
+  }
+  return [...new Set(issues)];
+});
 try {
   for(let i=0;i<50;i++){try{if((await fetch(`${origin}/client-success/proposal-harness.html`)).ok)break;}catch{} if(i===49)throw Error("Proposal harness did not start");await pause(300);}
   browser = await chromium.launch({headless:true});
@@ -31,7 +52,7 @@ try {
     await page.getByRole("button",{name:"Desktop preview",exact:true}).click();
     const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1);if(overflow)throw Error(`Builder overflows ${lang}`);
     report.push({view:"builder",lang,overflow});
-    for(const width of [390,1280])for(const state of ["draft","open","expired","archived","unknown"]){
+    for(const width of [320,375,390,414,768,1280])for(const state of ["draft","open","expired","archived","unknown"]){
       await page.setViewportSize({width,height:1000});await navigate({lang,view:"page",state,w:String(width)});
       const frame=page.frameLocator("iframe");await frame.locator(state==="draft"||state==="open"?".of-proposal":".of-state").waitFor();
       const inner=page.frames().find(f=>f.parentFrame());
@@ -39,7 +60,27 @@ try {
       await page.locator("iframe").evaluate((el,h)=>el.style.height=`${h}px`,contentHeight);
       await page.screenshot({path:`${out}/page-${lang}-${state}-${width}.png`,fullPage:true});
       const over=await inner.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1);if(over)throw Error(`Client page overflows ${lang}/${state}/${width}`);
-      report.push({view:"page",lang,state,width,overflow:over});
+      const clipped=await textBounds(inner);if(clipped.length)throw Error(`Client text exceeds its bounds ${lang}/${state}/${width}: ${clipped.join("; ")}`);
+      report.push({view:"page",lang,state,width,overflow:over,textBounds:true});
+    }
+    for(const width of mobileWidths){
+      await page.setViewportSize({width,height:1000});await navigate({lang,view:"page",state:"open"});
+      const inner=page.frames().find(f=>f.parentFrame());
+      await inner.locator(".of-proposal").waitFor();
+      const word=lang==="ar" ? "تصميم".repeat(16) : "FictionalDesign".repeat(8);
+      const stress={lang,offer:"website",title:word,clientName:word+"Client",csmFirstName:word+"CSM",validUntil:"2026-11-09",logo:null,video:null,found:[],why:word,get:[word+"Scope"],work:[],steps:word,timing:null,investment:{parts:[{label:word+"LineItem",amountUsd:2000,cadence:"one_time"}],terms:word,split:null},button:{text:lang==="ar"?"نعم، نبدأ":"Yes, let's start",whatsapp:"https://wa.me/00000000000"}};
+      // Exercise the shipped parent-to-preview contract with synthetic data, no DOM substitution.
+      await page.evaluate(proposal=>document.querySelector("iframe").contentWindow.postMessage({type:"offer:preview",proposal},"*"),stress);
+      await inner.locator(".of-kicker").filter({hasText:stress.clientName}).waitFor();
+      const clipped=await textBounds(inner);if(clipped.length)throw Error(`Long proposal text clipped ${lang}/${width}: ${clipped.join("; ")}`);
+      const wrapped=await inner.evaluate(()=>[".of-heading h1",".of-kicker",".of-prepared",".of-deliverables li",".of-bill th"].map(selector=>{
+        const el=document.querySelector(selector);
+        const node=[...el.childNodes].find(n=>n.nodeType===Node.TEXT_NODE&&n.textContent.trim());
+        const range=document.createRange();range.selectNodeContents(node);
+        return {selector,lines:new Set([...range.getClientRects()].map(r=>Math.round(r.top))).size};
+      }));
+      if(wrapped.some(row=>row.lines<2))throw Error(`Long-text fixture did not exercise wrapping ${lang}/${width}: ${JSON.stringify(wrapped)}`);
+      report.push({view:"long-text",lang,width,textBounds:true,wrapped});
     }
   }
   // Test a real edit, server-confirmed preview and hidden item in the same shipped component.

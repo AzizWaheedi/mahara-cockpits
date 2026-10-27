@@ -58,8 +58,9 @@ Examples:
   explicitly changes them.
 - Read the actual implementation and current live evidence before diagnosing or
   changing cross-system behavior.
-- Run the smallest meaningful tests for the change, then review `git status`,
-  `git diff` and the exact staged files.
+- Run only the test files for the change (see "Tests: run only the files for
+  your change" below), then review `git status`, `git diff` and the exact
+  staged files.
 - Commit only the intended task files. Never commit credentials, `.env` files,
   private raw chats, sessions or unsupported claims.
 - Push the side branch and prepare a PR when completing an approved
@@ -70,6 +71,27 @@ Examples:
   remove the clean finished worktree and local task branch.
 - Record meaningful verified changes in the shared Mahara context during the
   same session.
+
+## Tests: run only the files for your change (26 October 2026)
+
+Several agent sessions share one laptop. On 26 October 2026, `bun test scripts`
+in `apps/media-buyer-cockpit` ran 2,863 tests from 194 files in one process for
+16.5 minutes and held about 11 GB of memory. The laptop ran out of memory and
+crashed.
+
+- Run only the test files that cover the files you changed. Name each file in
+  the command, for example `bun test scripts/launch-screen.test.tsx`.
+- To find those files, search the test files for the changed file's name.
+- Never run a whole app, folder or repository suite. That means no bare
+  `bun test`, no folder such as `bun test scripts`, `bun test src` or
+  `bun test supabase/functions`, no `bun run test:unit` in the media buyer
+  cockpit and no `bun run test` in the sales cockpit. A word after `bun test`
+  matches every test file whose path contains it, so one word can start
+  hundreds of files.
+- `scripts/ship.sh` already runs a fixed list of named test files. Run it as
+  usual.
+- Run a full suite only when Muhammed or Aziz asks for one in the session. Run
+  it alone, with the other sessions idle.
 
 ## Repository boundaries
 

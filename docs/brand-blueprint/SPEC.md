@@ -4,6 +4,8 @@ Spec, 2026-10-22, for branch `blueprint-1022` (from `origin/main` 396aee7d, with
 
 Nothing in this spec is built, applied, deployed or sent. Every write outside Supabase sits behind the creative outbox, with a rehearsal that shows the plan from reads only.
 
+**Stage 1 of the forms program (2026-10-25, `docs/forms/STAGE1-CONTRACT.md`) changed the close, the presses and the screens.** The close writes ClickUp only: `close_route` is fixed at `card_only`, and the team hears through the cockpit's notices (#csm-general tags the CSM; #media-general gets "Brand Blueprint completed"), sent by the Edge Function `cockpit-notices`, so a Slack problem never sends a close to `reconcile`. A server drain runs any press the browser left pending. The close leaves the Onboarding Map and the phase 5 paste alone when the map is already at phase 5 or later. The creative director's card shows a nudge for a held call with no record, the Slack stops and each refusal; the CSM's Onboarding panel shows the same nudge and the close's Slack stop. Where the notices post and who they tag are rows editors change in the client success cockpit, Settings, Notices and routing, never code. Sections 0, 3.1, 3.4 to 3.6, 4.1, 4.3, 4.5, 6.1 and 7 say so where it matters.
+
 ---
 
 ## 0. What this is, in one screen
@@ -14,7 +16,7 @@ Nothing in this spec is built, applied, deployed or sent. Every write outside Su
 | Where it is filled | On the call, inside the Blueprint deck: client-facing answers are typed on the slide (the client watches their words land), private ones in the notes window. Before the call, part 1 is confirmed in the prep view with one press. Part 3 is finished in the creative director (CD) cockpit 1 to 2 days later. |
 | The three presses | **Send to media** (part 1, by minute 10), **Close the call** (part 2, slide 14), **Lock the offer** (part 3, CD cockpit). Each queues one `cockpit_creative_outbox` row that `cockpit-creative-api` runs, exactly as the outbox runs a video request today. |
 | Part 1 effect | The media buyer's "{card} - New Client Campaign Launch 🚀" task on list `901816723196` from template `t-86ex8xaf1` (or a comment on an open one), tagged, assigned, due in 2 working days, with the brief; Templated Ads Status set; Creative Onboarding step 4 ticked. Never Launch Date, never Daily Budget. |
-| Make 14 "COCKPIT CLOSE" | **Not created.** The close has a switch, `close_route`, that starts at `card_only`: the cockpit writes the card fields and comments, and gives the CSM the phase 5 WhatsApp text to paste. `slack` (later, once the bot is in #media-general) adds the cockpit's own Slack post. `make` is built and tested but cannot fire until the route exists and the server flag is on. |
+| Make 14 "COCKPIT CLOSE" | **Not created.** The close writes the card only: `close_route` is fixed at `card_only` (Stage 1), so the cockpit writes the card fields and comments and gives the CSM the phase 5 WhatsApp text to paste. The team hears through the cockpit's notices, not the close: #csm-general (tags the CSM) and #media-general ("Brand Blueprint completed"). The `slack` and `make` routes are removed. |
 | Rehearsal | `?rehearse=1`, admins and the CEO: answers stay in memory and each press shows the planned ClickUp changes, built from ClickUp GETs only. |
 | The deck | A third deck kind, `blueprint`, in the existing engine (canvas, notes window, prep, EN/AR, still mode, harness). **14 slides, 45 minutes**, presented by the creative director. |
 | The look | **The Studio Wall, tamed**, with five grafts from the Editorial Issue (section 5.4). This overrides PLAN 3.6's editorial default, as both judges chose. |
@@ -195,7 +197,7 @@ Internal helpers (no grants): `cockpit_blueprint_value(p_key text, p_value jsonb
 **Settings validation:**
 - `pack.<service>`: `^https://drive\.google\.com/drive/(u/[0-9]/)?folders/[A-Za-z0-9_-]{10,100}(\?[A-Za-z0-9=&_.-]{0,100})?$`.
 - `launch_assignee`: `^[0-9]{3,12}$`, with `p_label` the member's ClickUp name as the picker showed it. The executor re-checks membership of list `901816723196` before every assignment.
-- `close_route`: `card_only`, `slack` or `make`.
+- `close_route`: `card_only` only since Stage 1 (`20261025o`; 3.6). It was `card_only`, `slack` or `make` before.
 
 **Answer validation (`cockpit_blueprint_value`):** the key must be on the allow-list (the keys in 1.2 to 1.4 plus `capacity_note`, `pack_changes`, `dna_missing`, `scripts_date`); text trimmed, a blank removes the key, `text` ≤ 300, `long` ≤ 4,000; choices exactly as listed; `lines` ≤ 12 items of ≤ 200, duplicates dropped; `money.amount` a number from 1 to 100,000,000 and `currency` one of `KWD`, `SAR`, `AED`, `QAR`, `BHD`, `OMR`, `USD`; `usd.usd` from 1 to 100,000, `said` ≤ 200; `pack_url` the Drive folder pattern; dates `YYYY-MM-DD` and real; `names` ≤ 15 of `{name ≤ 120, lose boolean}`; `rules` three lists of ≤ 12 lines of ≤ 200; `offer` as in 3.1, each part trimmed. `shot_list_due` and the meta are never accepted from a browser.
 
@@ -225,10 +227,13 @@ Internal helpers (no grants): `cockpit_blueprint_value(p_key text, p_value jsonb
   card: {templatedAds, canSelfRecord, adApproval, offerCreation},   -- creative snapshot clients row
   creativeOnboarding: {parentId, steps: {"2": {taskId, status}, "3": {...}, "4": {...}}} or null,
   settings: {packs, assignee, closeRoute},
-  blueprint: <row json> or null,
-  outbox: {"1": latest or null, "2": ..., "3": ...}
+  blueprint: <row json> or null,       -- each part's outbox object carries attempts (Stage 1)
+  outbox: {"1": latest or null, "2": ..., "3": ...},
+  blueprintCall: {heldAt, status, stage, mapPhase, nudge}   -- Stage 1 (20261025o), for the nudge in 4.1
 }
 ```
+
+`blueprintCall` (Stage 1): `heldAt` and `status` from the newest `cockpit_csm_calls` row for the card with `kind = 'blueprint'` that has started and is `held`, `showed`, `confirmed` or `booked`; `stage` the onboarding row's `client_status`; `mapPhase` the `phase=` number in its Onboarding Map link; `nudge` true when the stage is Brand Blueprint Booked or Ready For Launch, the map phase is 4 or lower (or unknown), a call is held and the record has no part 2. The gate is unchanged (creative writes, the CSM reads).
 
 Left out on purpose: billing notes, the payment plan, contract fields, the next payment amount, the kickoff's payment, the sales transcript, Meta ads and spend, leads and cost per lead. The Creative Onboarding steps come from `cockpit_creative_sources` table `creativeTasks`: the newest parent of kind `onboarding` whose `client_names` holds the card's name, then its children by `parentId` whose names start "2 ·", "3 ·" and "4 ·".
 
@@ -284,6 +289,13 @@ Left out on purpose: billing notes, the payment plan, contract fields, the next 
 3. `functions.invoke('cockpit-creative-api', {operation: 'clientAction', args: {id}, apply: true})`. `runClientAction` loads the row through `cockpit_creative_client_action('get')` (creative or the CEO; admins pass `cockpit_has_role`), fences it, journals it in `cockpit_media_actions`, claims it (`pending → sending`), runs the plan, and settles it (`done`, or `reconcile` once anything was written).
 4. **The browser shows the run** (notes window, CD cockpit): "Sent 10:12 · Making the launch task…" → "Launch task ready · Open it" (link), or "Saved, not confirmed · Run it again" (a `pending` row whose run never finished: the same ID runs again), or "Needs a look: {error}" (`reconcile`, never retried by itself).
 5. **On the slide** the Part 1 stamp fires when step 2 returns, from the record's stamp, not from ClickUp's speed (section 5.5).
+6. **A press the browser leaves `pending`** (a closed tab, a dropped connection) **is run by the server drain** (Stage 1, `20261025o_blueprint_close_drain.sql`):
+   - pg_cron `mahara-creative-drain` runs `cockpit_creative_drain_kick()` every 2 minutes. Only when a Blueprint press has waited over 2 minutes, it posts `{"operation":"cron","job":"drain","apply":true}` to `cockpit-creative-api` with `x-cron-secret` and the anon key (the function keeps its JWT check).
+   - `cockpit_creative_outbox_due(p_apply)` hands out up to 5 pending Blueprint presses between 2 and 30 minutes old with `attempts < 3`, and moves older ones to `failed` ("This press did not finish within 30 minutes. Press again."). With `p_apply = false` it writes nothing.
+   - `index.ts` checks the cron route's secret before `getUser()`. A real drain (`apply` true) answers 202 at once and runs in the background (`EdgeRuntime.waitUntil`), since a press takes longer than pg_net's 5 seconds; what each press did is on its row (state, attempts, error) and in the function's log. A dry run (`apply` false) writes nothing and answers 200 with its list. `runDrain` (`drain.ts`) runs each press through `runClientAction` with the service loader, `cockpit_creative_outbox_load_for_actor`, which returns what `get` returns after checking the presser's creative seat and client at that moment (`cockpit_blueprint_gate_for_actor`). The journal's request says `source: 'cron'`; the actor is the presser.
+   - A refusal while the plan is prepared, before anything is written, adds 1 to `attempts` and stores the sentence (`cockpit_creative_outbox_refused`); at 3 the press fails. A run that started writing settles as the browser's would (`done`, or `reconcile`).
+   - Every audit row of a drain run carries `source_system = 'cron'` (`cockpit_creative_outbox_audit`). The `x-cockpit-source: cron` header counts only on a service-key request: a signed-in seat's press (through `cockpit_blueprint_part_done`) that sends it is still recorded as theirs.
+   - A press still `sending` 10 minutes after it was made lost its run part way (a worker stopped by the wall clock or a deploy): nothing moves it on or posts its notice, so the guardian warns on it, and the RUNBOOK says how to check it and settle it by hand.
 
 **Code changes** in `supabase/functions/cockpit-creative-api`:
 - `outbox.ts`: `prepareOutbox` dispatches `blueprintLaunch`, `blueprintClose` and `blueprintOffer` to `prepareBlueprint` **before** its `sourceTask` check (a client card is not a creative task). `executeOutbox` runs the returned `MultiPlan` with `executePlan`, as it does for video requests. After a `blueprintLaunch` run, `runClientAction` calls `cockpit_blueprint_outbox_settled` with the admin client.
@@ -297,7 +309,7 @@ Left out on purpose: billing notes, the payment plan, contract fields, the next 
 Common: `{v: 1, part, press, card: {id, name}, answers: <that part's keys>, from: <meta.from of those keys>, previous: <parts.N.sent or null>, launchTaskId, sentAt, sentBy: first name, links: {drive, driveFolder, brandDna, offerSheet, research}}`.
 
 - **`blueprintLaunch`** adds `kickoff: {budgetSaid, platforms, adAccount, pageName, cardFunded, consultTypes, templatedStatus, facebookAccess}` (raw strings by ref), `cardBudget` (`handover.daily_budget`), `settings: {assignee, pack: pack.<service>}`, `step4: {taskId, parentId} or null`.
-- **`blueprintClose`** adds `service`, `offer` (3.1 if typed), `step2`, `launchCall: {startsAt} or null`, `closeRoute` (the setting at the press), `mapUrl` (`https://mahara-onboarding-map.vercel.app/?phase=5&cid=<card id>`, the form verified against Make 14 module [8] at build time), `csmFirstName`.
+- **`blueprintClose`** adds `service`, `offer` (3.1 if typed), `step2`, `launchCall: {startsAt} or null`, `closeRoute` (the setting at the press; always `card_only` since Stage 1, and the plan ignores it), `mapUrl` (`https://mahara-onboarding-map.vercel.app/?phase=5&cid=<card id>`, the form verified against Make 14 module [8] at build time), `csmFirstName`.
 - **`blueprintOffer`** adds `dna_status`, `dna_missing`, `step3`, `offerSheet`.
 
 ### 3.3 "Send to media" (`blueprintLaunch`)
@@ -347,20 +359,26 @@ Common: `{v: 1, part, press, card: {id, name}, answers: <that part's keys>, from
 
 Preparation reads the card (Ad Approval Needed?, Can Self-Record?, Onboarding Map, the CSM), the launch task (`launchTaskId`, else found as in 3.3; none → the launch-task comment is skipped and the CSM comment says so) and step 2.
 
+The close writes ClickUp only (Stage 1, D5). It has no Slack step and no Make step, whatever `close_route` says.
+
 | # | Step | When |
 |---|---|---|
 | 1 | Card **Ad Approval Needed?** := Yes for `every` or `first_batch`, No for `run_then_show` (the three-way answer stays in the record and the comments) | changed |
-| 2 | Card **Can Self-Record?** := `yes_studio` → "Yes - studio/cameraman", `yes_phone` → "Yes - phone only", `no` → "No", `unsure` → "Unsure" | `close_route` is not `make` (in `make`, Make stays this field's one writer) |
-| 3 | Card **Onboarding Map** := `mapUrl` | first press, `close_route` not `make` |
+| 2 | Card **Can Self-Record?** := `yes_studio` → "Yes - studio/cameraman", `yes_phone` → "Yes - phone only", `no` → "No", `unsure` → "Unsure" (by label) | always |
+| 3 | Card **Onboarding Map** := `mapUrl` | first press, unless the card's map is already at phase 5 or later |
 | 4 | Creative Onboarding step 2 → done | not already done |
 | 5 | Launch-task comment: approval mode, camera, content rating, shot list and its due date, the minimum project and the ad anchor (in the client's currency), the offer line if typed, events | always ("Updated from the Blueprint" on a later press) |
-| 6 | Client-card comment assigned to the CSM: 2.20 and 2.21, "Launch call booked for {day, time}" or "Launch call not booked yet", and, when `close_route` is not `make`, "Paste this in the client's WhatsApp group:" followed by the phase 5 message (3.6) | always ("Updated…" later, without the message again) |
-| 7 | Slack `chat.postMessage` to #media-general `C0AE8G5MT7Y`: "Brand Blueprint completed: {client}. Scripts and custom creative can start. {launch task link}" (`slackMessage` read-back) | first press, `close_route = slack` |
-| 8 | Make: `POST` to `MAKE_BLUEPRINT_HOOK` with `{source: "mahara-cockpit", key: MAKE_BLUEPRINT_KEY, event: "blueprint.call_closed", task_id, card_name, can_self_record, slack_text}`, exactly seven keys | first press, `close_route = make`, **and** the env flag `BLUEPRINT_MAKE_CLOSE = on`, **and** both secrets set |
+| 6 | Client-card comment assigned to the CSM: 2.20 and 2.21, "Launch call booked for {day, time}" or "Launch call not booked yet", and "Paste this in the client's WhatsApp group:" followed by the phase 5 message (3.6), unless the map is already at phase 5 or later | always ("Updated…" later, without the message again) |
 
-- **The Make step has no read-back.** It is the last step, sent once; a network failure after sending moves the row to `reconcile`, never to a retry, so a WhatsApp is never sent twice. The provider tool gains a `make` provider that posts only to the exact hook URL from the env, never a path from the payload.
-- **`make` chosen but not live** (flag off or a secret missing): the plan falls back to `card_only` (steps 2, 3 and 6's paste text) and its first line says "Make close is chosen but not switched on in the server: the CSM pastes the WhatsApp." No WhatsApp is ever lost.
-- **A later press** never posts to Slack, never calls Make and never repeats the WhatsApp text.
+- **The map phase** (first press only) is the integer in the card's current Onboarding Map value (`?phase=n`), or null when it cannot be read. At phase 5 or later there is no map step, the plan says "The Onboarding Map is already at phase {n}, so it is left as it is.", and the CSM comment leaves out the phase 5 paste: a client already past phase 5 never gets the phase 5 message again. At phase 4 or lower (or unreadable), steps 3 and 6 run as written.
+- **On a first press** the plan adds the line "On the first close the cockpit's notices tell the team in Slack (Settings, Notices and routing)."
+- **The result** stored on the outbox row is exactly `{kind: 'blueprintClose', launchTaskId: string|null, closeRoute: 'card_only', mapPhase: number|null, mapSkipped: boolean}`. The notices read `mapPhase` and `launchTaskId` from it.
+- **The notices** (`20261025n_slack_notices.sql`, sent by `cockpit-notices`). When the first close leaves `sending` (`done` or `reconcile`), a trigger on `cockpit_creative_outbox` queues two, each once per card (`blueprint:{task}:close`, `blueprint:{task}:media`):
+  - #csm-general, tagging the CSM: "*Brand Blueprint complete: {client}*", "Closed by the creative director on {day, time}. Scripts and custom creative can start.", "{the CSM's tag} next: send the phase 5 WhatsApp from your comment on the card, then book the launch call." and "Launch call booked for {day, time}." or "Launch call not booked yet." For a client already live (the map at phase 5 or later, or the card Active: the media notice's own rule, so the two posts agree) it reads instead "Brand Blueprint complete: {client}. The client is already live.", "Closed by ... The client is already live, so nothing new starts from this close.", and "... next: the Onboarding Map is already at phase {n}, so there is no phase 5 WhatsApp to send and no launch call to book." (Active below phase 5: "... next: there is no launch call to book. Check the card before you send the phase 5 WhatsApp from your comment."). Links: Open in the cockpit, Read the Blueprint, Open the ClickUp card.
+  - #media-general, tagging nobody (Make 14 module [5]'s post, at parity): "Brand Blueprint completed", the client, the service focus, the card and launch task links, and "Scripts and custom creative can start." (or "The client is already live; nothing new starts from this close." when the map is at phase 5 or later or the card is Active).
+  - A close that settled `reconcile` posts "Blueprint closed: {client}. The card update needs a check. Open the call page." instead, and when that close (or a later press) reaches `done`, a reply in its thread: "The card update is confirmed."
+  - The text builder is `cockpit-notices/text.ts`; `slackCloseText` and `makeClose` stay in `blueprintBrief.ts`, unused by the plan, and the close preview no longer quotes Slack text.
+- **A later press** never repeats the WhatsApp text, and the notices post once per card whatever the number of presses.
 
 ### 3.5 "Lock the offer" (`blueprintOffer`)
 
@@ -373,15 +391,15 @@ Preparation reads the card (Ad Approval Needed?, Can Self-Record?, Onboarding Ma
 
 The editor desk's rule (section 4.6) then reads the offer and Brand DNA doc text.
 
-### 3.6 The close switch and its fallback
+The first offer press that reaches `done` queues the notice `blueprint.offer` (`blueprint:{task}:offer`, Stage 1): a reply under the close's #csm-general notice, tagging nobody: "Offer locked by the creative director. Brand DNA is complete." (or "still missing"). If the close notice did not post, it posts at the top of the channel as "Offer locked: {client}".
 
-| `close_route` | Slack post | Card fields 2 and 3 | Phase 5 WhatsApp |
-|---|---|---|---|
-| `card_only` (default) | none | the cockpit writes them | the CSM pastes it (card comment and the CSM cockpit's copy button) |
-| `slack` (once the bot is in #media-general) | the cockpit, through the outbox | the cockpit | the CSM pastes it |
-| `make` (once Make 14's route exists and `BLUEPRINT_MAKE_CLOSE = on`) | Make | Make | Make sends it |
+### 3.6 The close route (fixed at `card_only`) and the phase 5 text
 
-- Only admins and the founders change it (CD Settings shows it read-only to the CD).
+Since Stage 1 (D5) there is one route. `close_route` stays `card_only`: the cockpit writes card fields 2 and 3, and the CSM pastes the phase 5 WhatsApp from the card comment or the CSM cockpit's copy button. The team hears through the notices (3.4), never through the close, so a Slack problem never sends a close to `reconcile`.
+
+- `20261025o_blueprint_close_drain.sql` replaces `cockpit_blueprint_settings_set`: a blank `close_route` is refused with "Choose card_only.", and any other value with "The close writes the card only. #csm-general and #media-general hear through the notices: Settings, Notices and routing in the client success cockpit." The migration sets the row back to `card_only` if it ever held anything else (a no-op on 2026-10-25). `cockpit_blueprint_settings_read` still returns `closeRoute`, read-only.
+- The old `slack` route only added the #media-general step, whose exact-text read-back failed on every real post; the `make` route waited on a Make 14 route that was never built. Both are gone from the plan, the settings function and the Settings screen.
+- Where the notices post and who they tag (the CSM for the close, nobody in #media-general) are rows in `cockpit_slack_notice_settings` that the CEO, an admin or a seat they add changes in the client success cockpit, Settings, Notices and routing.
 - **The phase 5 text** is Make 14 module [7]'s Arabic (its whapi-cloud text), copied verbatim from a read-only export of the scenario blueprint on 2026-10-22 into `PHASE5_WHATSAPP` in `blueprintBrief.ts`. Make's `{{9.custom_fields.`Onboarding Map`}}` (the card's map field) is the cockpit's map link (`?phase=5&cid=<card>`):
   ```
   أكملنا المرحلة الرابعة: بناء الهوية والعرض.
@@ -435,11 +453,17 @@ Brand Blueprint                                   [Run the Blueprint call]
                                                   [Lock the offer]
 ```
 
-- Each part shows one state: Not started · `In progress · n of m` · Ready to send · Sending… · Sent {time} · Saved, not confirmed (Run it again) · Needs a look: {error} (link to the outbox row) · Changed since sent (Send the changes).
+- Each part shows one state: Not started · `In progress · n of m` · Ready to send · Sending… · Sent {time} · Saved, not confirmed (Run it again) · Refused, trying again (the drain's retry, no button) · Needs a look: {error} (link to the outbox row) · Changed since sent (Send the changes).
 - **Run the Blueprint call** opens the prep view by name (`mahara-prep-{taskId}-blueprint`) at `${portalUrl()}/client-success/clients/{taskId}/present/blueprint?view=prep`, with the deck's `openNamed` logic copied into `src/lib/blueprint.ts` (15 lines; not pinned).
 - **Finish part 2** appears when part 2 is open after the call's time: it opens the same prep view at `#part2`, the whole form.
 - **Lock the offer** saves 3.1 and 3.4 through `cockpit_blueprint_save` (the same `p_changes` shape and session ID) and presses part 3 as in 3.1. Disabled with the reason while part 2 is open or 3.1 is incomplete.
-- `src/lib/blueprint.ts` holds the zod-checked calls (`readBlueprints`, `saveBlueprint`, `blueprintPartDone`, `runBlueprintPart`, `rehearseBlueprintPart`, `readBlueprintSettings`, `setBlueprintSetting`, `blueprintMembers`) and the part 3 labels.
+- `src/lib/blueprint.ts` holds the zod-checked calls (`readBlueprints`, `saveBlueprint`, `blueprintPartDone`, `runBlueprintPart`, `rehearseBlueprintPart`, `readBlueprintSettings`, `setBlueprintSetting`, `blueprintMembers`, and since Stage 1 `readBlueprintCall`) and the part 3 labels. The outbox object of each part carries `attempts`.
+
+**Since Stage 1** the card also shows:
+- **The nudge** (`cockpit_blueprint_sources(taskId).blueprintCall.nudge`): "Blueprint call held {Sun 18 Oct}. No Blueprint record yet. Open the call page.", linking the call page. It shows only for a card at Brand Blueprint Booked or Ready For Launch, with the Onboarding Map at phase 4 or lower, a `blueprint` call held (the newest `cockpit_csm_calls` row of that kind that has started and is held, showed, confirmed or booked), and no part 2. On 2026-10-25 that is three cards. The creative director's page reads it from `cockpit_blueprint_sources`, never from `cockpit_csm_calls` itself.
+- **The close's Slack stops** on the part 2 row, from `cockpit_slack_notice_read` (kinds `blueprint.close` and `blueprint.media`): "Posted in #csm-general at 14:03" and "#media-general at 14:03" ("on Sun 25 Oct 14:03" on another day than the close: each stop is dated against its part's own line, never the read's clock, in the card's one day format), or "Not posted in #{name}. {Reason}. Tell the tech lead." (an `unknown` notice reads "Not confirmed in #{name}. ...", since it may already be in Slack): the lead in the warning tone, the reason as a plain sentence. A queued notice reads "Waiting to post in #{name}." with the channel Settings names now. While one waits (or a read failed) the card reads the notices again every minute for 25 minutes, and with every read of the record. With no notice on record: "No client success notice is on record for this close." and "No media notice is on record for this close." (no channel written in code). Part 3's post is dated against the offer's line the same way.
+- **The offer's post** on the part 3 row: "Reply posted in #{name} at {time}" when it went in the close's thread; "Posted in #{name} at {time}" when the close did not post and the offer went top level.
+- **Refusals.** A pending press with `attempts` above 0 shows one state, "Refused, trying again" (no Run it again), and the line "{error}. The cockpit tries again in 2 minutes ({attempts} of 3)." (the error names the cause and its fix). A failed press after 3 refusals: "This press was refused: {error}. Fix it, then press {Send to media | Close the call} on the call again." A press failed after 30 minutes: "This press did not finish within 30 minutes. Press {Send to media | Close the call} on the call again." Both rows offer **Open part 1** or **Open part 2**, the way to that press. (A failed Lock the offer is pressed again from the offer slip.)
 
 ### 4.2 The dashboard sign-off
 
@@ -448,12 +472,12 @@ Brand Blueprint                                   [Run the Blueprint call]
 - **The offer row:** when part 2 is done and part 3 is not, the client's row reads "Offer waiting · Open the offer sheet · Lock the offer" (the last opens the client page at `#blueprint`). After 48 hours it turns orange. No new notification.
 - `brandDnaStatus`, `stillMissing`, `approvalNeeded` and `offerSheet` read the record (2.13, 2.12, the card link).
 
-### 4.3 Settings: Starter packs, the launch media buyer, the close switch
+### 4.3 Settings: Starter packs, the launch media buyer, after the close
 
 A "Brand Blueprint" section in `SettingsPage.tsx`:
 - **Starter packs:** five rows, one per main service in the kickoff's order and words, each a Drive folder link field with Save, "Preview" (the Drive folder view in a 480 x 300 frame, so the CD sees it render), and its last change ("Set 22 Oct by {first name}"). The hint: "Share each folder as Anyone with the link, Viewer, or the deck shows Open the pack instead." Until a service has one, part 1 asks for the link.
 - **Launch media buyer:** a picker of list `901816723196`'s members (`blueprintMembers`), saved as ID and name. Empty: "Launch tasks go out unassigned, so nobody is pinged."
-- **After Close the call:** the switch, read-only for the CD, editable for admins and the founders, with each option's line from 3.6.
+- **After Close the call** (since Stage 1, no switch): a read-only group, "The cockpit writes the card and its comments, and the CSM pastes the phase 5 WhatsApp from the card comment. The client success and media teams hear in Slack through the notices; where they post and who they tag is set on Notices and routing.", with the link "Open Notices and routing" to `https://cockpit.maharamedia.com/client-success/notices`, the page every seat may open (the server's gates decide what each seat sees and may change). `CLOSE_ROUTES` and `CloseRoute` are gone from `src/lib/blueprint.ts`, and `setBlueprintSetting` no longer takes `close_route`.
 
 ### 4.4 The Links page fix
 
@@ -462,6 +486,8 @@ In `src/lib/creativeLinks.ts`, group "The Brand Blueprint call": remove the bare
 ### 4.5 The sync's card fields
 
 `hermes/cockpit-sync/creativeProducer.ts` `CLIENT_FIELDS` gains `offerCreationStatus: "Offer Creation"`, `templatedAdsStatus: "Templated Ads Status"`, `canSelfRecord: "Can Self-Record?"`, `adApprovalNeeded: "Ad Approval Needed?"` (dropdowns resolve to their labels in `fieldsOf`). They are reads, so the cockpit and `cockpit_blueprint_sources` see what the outbox wrote. A VPS deploy of the sync, done by the person who ships.
+
+Checked 2026-10-25 (Stage 1, S6): the four keys are in `creativeProducer.ts` and `creative-fields.test.ts` passes; `cockpit_blueprint_sources` reads them by the same names (`cc->>'templatedAdsStatus'`, `'canSelfRecord'`, `'adApprovalNeeded'`, `'offerCreationStatus'`) into its `card` object, which the CSM side reads as `templatedAds`, `canSelfRecord`, `adApproval` and `offerCreation`. They reach production only with the VPS creative sync's native release (`docs/forms/PLAN.md` 1.7); until then the prefills that read them come back empty.
 
 ### 4.6 The editor desk (hermes)
 
@@ -727,9 +753,14 @@ Section 24 of `present.css`, on `.dk-root[data-deck="blueprint"]` (every colour 
 In `OnboardingKit.tsx` the "Brand Blueprint form" item becomes "Brand Blueprint", read through `cockpit_blueprint_read([taskId])`:
 - "Blueprint: starter ads sent 10:12 · call closed 10:44 · offer locked Sat 24 Oct", each part's time or "not yet", in the client's time zone.
 - "Open the Blueprint deck" (prep view, read-only for the CSM).
-- When part 2 is done and `close_route` is not `make`: "Copy the phase 5 message for the group" (the same text as the card comment, from `blueprintBrief.ts`).
+- When part 2 is done: "Copy the phase 5 message" (the same text as the card comment, from `blueprintBrief.ts`). The route is always `card_only` since Stage 1.
 - A Typeform Blueprint already on record (`forms.blueprint`, the older clients) keeps its "Read it".
 - The booking buttons stay as they are.
+
+**Since Stage 1:**
+- **The nudge,** the same rule as the creative director's (4.1) on the CSM's own reads (`blueprintNudge` in `src/lib/blueprintStatus.ts`): only when the stage is Brand Blueprint Booked or Ready For Launch and part 2 is absent does the item read the client's timeline (`readClientTimeline`); with the map at phase 4 or lower and a `blueprint` call held, it shows, in the warning tone, "Blueprint call held {Sun 18 Oct}. No Blueprint record yet. Ask the creative director to close the call.", with the existing Open the Blueprint deck button. (The CSM cannot open the call page or close the call; only the creative director's card says "Open the call page.")
+- **The close's Slack stop,** after part 2, from `cockpit_slack_notice_read` (kinds `blueprint.close` and `blueprint.media`): "Posted in #csm-general at 14:03" with Open in Slack, or "Not posted in #{name}. {Reason}. Tell the tech lead." ("Not confirmed in #{name}. ..." for an `unknown` notice), the lead in the warning tone and the reason plain. The phase 5 copy button stays away when the first close found the map already at phase 5 or later (`cockpit_blueprint_json.closeMapSkipped`, X11): the card comment has no paste then. It lives here, not in the deck: the deck that renders the close (`present/BlueprintFields.tsx`) is on the client's screen during the call, and is not changed.
+- **The kickoff item** gains "Copy the kickoff window's link" (`docs/csm-forms/KICKOFF.md` section 1).
 
 ### 6.2 What the launch deck reads
 
@@ -757,13 +788,13 @@ In `OnboardingKit.tsx` the "Brand Blueprint form" item becomes "Brand Blueprint"
 - `scripts/deck-launch.test.tsx` (extended): the four launch reads, and the launch deck unchanged with no Blueprint.
 
 **Edge Functions (`bun test supabase/functions/cockpit-creative-api supabase/functions/cockpit-media-api`):**
-- `blueprint.test.ts`: create when no open task (template path, tag, assignee, due date, brief); comment only when a tagged or named open task exists; two matches refuse before any write; a second press makes one "Updated" comment and no task; no step names Launch Date, Next Payment Date or Daily Budget; step 4 only for starter yes; the CSM comment only for Tight or No; the close's steps per `close_route` (`card_only`, `slack`, `make` with and without the flag); Make has no read-back and a send failure goes to `reconcile`; a later close never posts Slack or Make; the offer's step 3 rule; `describePlan` sentences; the GET-only provider throws on any other method; an unknown field ID or a renamed field refuses.
+- `blueprint.test.ts`: create when no open task (template path, tag, assignee, due date, brief); comment only when a tagged or named open task exists; two matches refuse before any write; a second press makes one "Updated" comment and no task; no step names Launch Date, Next Payment Date or Daily Budget; step 4 only for starter yes; the CSM comment only for Tight or No; the close's steps (since Stage 1: no Slack or Make step for any `close_route`, the result keys, the notices line, phase 6 skips the map and the paste, phase 4 keeps both); a later close never repeats the WhatsApp text; the offer's step 3 rule; `describePlan` sentences; the GET-only provider throws on any other method; an unknown field ID or a renamed field refuses.
 - `core.test.ts` (extended): `has` for tags and assignees.
 
 **SQL, PGlite (`apps/media-buyer-cockpit/scripts/blueprints-supabase.test.ts`, with `supabaseDefaultPrivileges`):**
 - no table grants to `anon` or `authenticated`; RLS on; each public function executable by `authenticated` only, internal ones by nobody but the owner (and the gate by `service_role`);
 - a creative seat with the client off its list is refused; a CSM reads but cannot save, press or set; `anon` gets nothing; an admin and a founder pass;
-- unknown key, oversize text, a bad choice, a bad Drive link, a bad assignee are refused; `close_route` by a creative seat is refused;
+- unknown key, oversize text, a bad choice, a bad Drive link, a bad assignee are refused; `close_route` by a creative seat is refused, and since Stage 1 any `close_route` other than `card_only` is refused for every seat;
 - required keys per part, with the conditions; part order;
 - a repeat request ID writes no row and no audit row; an unchanged second press returns the first row; one press writes exactly one `blueprint.part_done` audit row and one outbox row;
 - conflict detection: two sessions on one key conflict, one session never does, a matching `seen` applies, `p_base_revision` equal applies everything;
@@ -781,8 +812,8 @@ In `OnboardingKit.tsx` the "Brand Blueprint form" item becomes "Brand Blueprint"
    - one client **without** a kickoff: the same, with the notes saying "No kickoff on record";
    - confirm in `cockpit_audit_log`, `cockpit_creative_outbox` and `cockpit_media_actions` that nothing was written (row counts before and after, `sq.py` reads), and in `cockpit_media_provider_health` that only GETs went out.
 4. **ClickUp:** reads only (the plan's GETs). Nothing is created, edited or commented by the verification.
-5. **Make:** nothing. The route does not exist and `close_route` stays `card_only`.
-6. **The first real Blueprint call is the end-to-end test,** checked afterwards with reads: one `blueprint.part_done` row per part; one launch task, tagged, assigned, due; Templated Ads Status set and step 4 done; the media buyer cockpit shows the client as launching; after the close, Ad Approval Needed?, Can Self-Record? and Onboarding Map phase 5 on the card, step 2 done, the CSM's comment with the paste-ready WhatsApp; after part 3, Offer Creation = Done.
+5. **Make:** nothing. The route does not exist and `close_route` stays `card_only` (fixed there since Stage 1).
+6. **The first real Blueprint call is the end-to-end test,** checked afterwards with reads: one `blueprint.part_done` row per part; one launch task, tagged, assigned, due; Templated Ads Status set and step 4 done; the media buyer cockpit shows the client as launching; after the close, Ad Approval Needed?, Can Self-Record? and Onboarding Map phase 5 on the card (left as it is when it was already at phase 5 or later), step 2 done, the CSM's comment with the paste-ready WhatsApp, one `blueprint.close` notice posted in #csm-general and one `blueprint.media` in #media-general; after part 3, Offer Creation = Done and the offer's reply in the close's thread.
 
 ### 7.3 Ship steps (for the person who ships; the builder runs none of them)
 
@@ -795,7 +826,7 @@ In `OnboardingKit.tsx` the "Brand Blueprint form" item becomes "Brand Blueprint"
 7. The CD fills Settings: five Drive folder links, shared as Anyone with the link, Viewer, and the launch media buyer.
 8. Rehearse (7.2 step 3) on two clients.
 9. The first real call.
-10. Later, each on its own say-so: invite the Slack bot to #media-general and set `close_route = slack`; if the CEO approves Make 14's route, build it, set `MAKE_BLUEPRINT_HOOK`, `MAKE_BLUEPRINT_KEY` and `BLUEPRINT_MAKE_CLOSE = on`, read the scenario back, then set `close_route = make`. The editor desk rule (4.6) ships when ready.
+10. Superseded by Stage 1 (`docs/forms/STAGE1-CONTRACT.md`): there is no `slack` or `make` route to switch on. The Slack posts are notices (RUNBOOK, "Slack notices (kickoff and Brand Blueprint)"), the drain ships with `20261025o` (RUNBOOK, "Brand Blueprint press drain"), and the old Typeform path is retired (A1) once the first native close has settled `done`. The editor desk rule (4.6) ships when ready.
 
 ### 7.4 Build order
 
@@ -817,7 +848,7 @@ AI one-liners for the summaries (phase 2, through the Ask AI queue, each accepte
 2. 45 minutes, 14 slides; Part 1 by minute 10.
 3. Starter first: 1.3 is seeded Yes unless the kickoff said Declined.
 4. Close needs part 1 sent; Lock needs the call closed.
-5. `close_route = card_only` until the Slack bot is in #media-general.
+5. `close_route = card_only`, fixed since Stage 1: the team hears through the notices, whose channels and tags are editable in Settings, Notices and routing.
 6. A launch task goes out unassigned (with a loud line) rather than blocking the call when no launch media buyer is set.
 7. Specific numbers for the minimum and the anchor; a range only for where most projects land.
 8. 3.1 in three short lines, read back as one sentence.

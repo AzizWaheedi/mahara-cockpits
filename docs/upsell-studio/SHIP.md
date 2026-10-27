@@ -6,7 +6,7 @@ Updated 27 October 2026. This is the Website pilot, with seven catalog offers. I
 
 - Worktree: `~/mahara-worktrees/billing-pending`, branch `upsell-studio`.
 - Starting source: `054c5992fbd99ebc8918fb7e9ffe180a50179736`.
-- Latest main checked: `3f9f5c41fe569f9d6c8f93aad05bef318ef3dda9`. Integration is pending the final source checkpoint.
+- Latest main integrated: `3f9f5c41fe569f9d6c8f93aad05bef318ef3dda9`. The two conflicts preserve Blueprint closed/wrap visibility with OfferNotes, and preserve both Slack and web helpers. Initial implementation commit: `5a20ae8b`.
 - Preserved approved requirements: [PLAN](PLAN.md), [CONTRACT](CONTRACT.md).
 - Tracking: [Complete Client Offer Studio website pilot](https://app.clickup.com/t/z8xmdvknga).
 - Not in scope: sales AI drafting, payments, outbound messages, a second offer deck, changed eligibility policy, new voice subscriptions or synthetic Aziz media.
@@ -22,16 +22,21 @@ Verified on the continuation source:
 | Check | Result |
 | --- | --- |
 | Database tests across seven offer suites | 113 passed, 0 failed; includes repeat migration application, roles, source integrity, upload caps, sent snapshots, expiry and schema parity |
-| CSM API, public door and public page tests across nine files | 157 passed, 0 failed |
-| Proposal browser scenarios | 23 passed: EN/AR, desktop/phone, five states, viewports, retry, save and language changes |
+| CSM API, public door, public page and existing WhatsApp-probe tests | 162 passed, 0 failed |
+| Proposal browser scenarios | 71 passed: EN/AR at 320/375/390/414/768/1280 px, five states, editor viewports, retry/save/language changes and eight long-text stress cases with actual glyph-bound checks |
 | Shared copies and exact public-preview asset parity | Passed |
+| Offline Edge bundles, current merged source | Both cockpit-csm-api and offer-door passed with the reviewed import-map rewrite and deployment flags |
 | Offer-art typecheck and nine test files | Passed |
 | Video Python regressions | 14 passed |
 | Local-render dependency checks | Passed; only exact unused Docker/transcription/synthesis checks are exempted |
 
-The combined CSM run passed 549 tests, with one typecheck failure in a newly expanded fictional fixture. After correcting it, all 32 focused prep/website/Hot-row tests and the complete app production build passed. The full seven-fixture EN/AR matrix passed 648 measured canvas shots, plus private views and players, with no overlap, wrapping, overflow or browser errors. Post-main integration results must still be recorded below before release. Passing the mock/local suite does not verify provider deployment.
+Post-main integration passed 662 UI tests across 31 files plus 29 Blueprint-host tests (691 total), full app build, shared checks, 162 API/public/existing WhatsApp-probe tests, icon/asset checks and all 14 Python regressions. The seven-fixture EN/AR deck matrix passed 648 measured canvas shots, plus private views and players, with no overlap, wrapping, overflow or browser errors. The source merge was reviewed separately for lost Blueprint, prep, route and permission behavior.
 
-Evidence remains on the VPS under `~/upsell-build/media/{final-checks,acceptance-checks,shots}`. The development mirror is not a release checkout: it excludes `.git` and uses a placeholder browser key.
+The final public-page audit fixed long-word wrapping in headings, client/CSM names and scope rows. Its follow-up passed all 29 proposal unit tests, another full CSM build, and 71 browser scenarios. The stress checks measure text rectangles against both containers and viewport, so page-edge clipping cannot hide overflow. Public-preview CSS is byte-identical to the canonical site. These counts are separate named suites, not a claim that every application feature was tested. Passing the mock/local suite does not verify provider deployment.
+
+Offline bundles are recorded at VPS `~/upsell-build/offer-edge-bundles-1asvth73/results.json`: cockpit-csm-api has 24 modules, 212850 bytes, SHA256 `031979cb4ab289eae00c2f62014eedb3b057a8b5addaddac57e9a05920077842`; offer-door has 6 modules, 24859 bytes, SHA256 `5ec7bcd7f317946684fce9ac8a8fe986f4bdbaca7f95343fb6c994cb75b0759a`. The source manifests match the merged worktree. This is an offline compile, not a deployment receipt.
+
+Evidence remains on the VPS under `~/upsell-build/media/{final-checks,acceptance-checks,postmerge-checks,proposal-final,shots}`. The development mirror is not a release checkout: it excludes `.git` and uses a placeholder browser key.
 
 ## Internal review
 
@@ -77,7 +82,7 @@ Rollback definitions are in the private Mac `~/.cache/mahara-ship/rollback/` dir
 
 ## Release sequence and boundaries
 
-1. Complete verification, reviewer fixes, source checkpoint and merge latest main without moving the shared checkout HEAD. Re-run affected tests/build. Push the branch and reviewable PR. Do not infer Arabic approval from implementation approval.
+1. Verification, reviewer fixes and latest-main integration are complete for internal review. Save the merge checkpoint and push the branch with a reviewable PR, without moving the shared checkout HEAD. Do not infer Arabic approval from implementation approval.
 2. Arabic copy needs the CEO's explicit batch approval before it reaches clients: [approval sheet](ARABIC-FOR-APPROVAL.md). Blank prices/videos and `door_live=false` are not an overall exposure switch. Keep review protected until approval or implement a real exposure boundary. Do not use those defaults as evidence of isolation.
 3. Apply guarded migrations u, v, w, x, then `20261027011000_upsell_monitor_web.sql`. This timestamp intentionally sorts after its `20261026n` dependency. Read back bodies, ACLs, catalog and receipts after each. Stop on guard drift.
 4. Deploy `cockpit-csm-api` with its current JWT setting and `offer-door` with JWT verification off, after dry bundle validation. Preserve all current imports/functions. Use a dedicated random `OFFER_IP_SALT`; never replace the shared `IP_SALT`. Read back versions, JWT settings and health. Verify `Deno.resolveDns` availability on an approved public host; absent/partial/timed-out DNS fails closed.

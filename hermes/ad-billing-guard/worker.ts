@@ -1,11 +1,130 @@
 import {
+	ADS_LIST,
 	CLIENT_LIST,
+	IdentityDrift,
+	accountId,
+	accountsToRead,
 	activeTask,
 	bodies,
 	classify,
+	clientAdsTasks,
+	planAccountChange,
+	type AccountPlan,
 	type Binding,
+	type Task,
 } from "./core";
 import { ProviderError, Transport, type Delivery } from "./transport";
+// An account change needed an agent session each time (Marble 17 Oct, ARCWANI 26 Oct 2026). The worker now proves and
+// applies it itself. AD_BILLING_AUTO_MOVE "on" applies, "off" skips the check, anything else only logs (dry, the default).
+export type AutoMove = "on" | "off" | "dry";
+export const autoMoveMode = (value?: string): AutoMove =>
+	value === "on" || value === "off" ? value : "dry";
+interface MoveRun {
+	lease: string;
+	mode: AutoMove;
+	ads?: Promise<Task[]>;
+	taken: Record<string, string>;
+	tally: { mode: AutoMove; moved: number; would: number; blocked: number };
+}
+/** Plans one account change and, in "on" mode, saves it. Returns the binding to check; throws the panel's sentence. */
+async function changeAccount(
+	t: Transport,
+	b: Binding,
+	sheet: Promise<unknown[][]>,
+	run: MoveRun,
+	drift: IdentityDrift,
+	hold: { binding: Binding },
+): Promise<Binding> {
+	const at = () => new Date().toISOString();
+	let plan: AccountPlan;
+	try {
+		const [client, rows, ads] = await Promise.all([
+			t.task(b.client_task_id),
+			sheet,
+			(run.ads ??= t.tasks(ADS_LIST)),
+		]);
+		const tasks = clientAdsTasks(b, client.name ?? "", ads);
+		const names: Record<string, string | null> = {};
+		for (const id of accountsToRead(b, tasks)) {
+			try {
+				const m = await t.meta(id);
+				names[id] = accountId(m.id) === id && typeof m.name === "string" ? m.name : null;
+			} catch {
+				names[id] = null;
+			}
+		}
+		const taken = Object.fromEntries(
+			Object.entries(run.taken).filter(([account]) => account !== b.account_id),
+		);
+		plan = planAccountChange({ binding: b, sheet: rows, tasks, names, taken });
+	} catch (e) {
+		plan = {
+			kind: "blocked",
+			hint: `The account change check could not finish (${e instanceof Error ? e.message : "source error"}). The next run tries again.`,
+		};
+	}
+	console.log(
+		JSON.stringify({
+			at: at(),
+			auto_move: run.mode,
+			client: b.client_name,
+			...(plan.kind === "blocked"
+				? { plan: "blocked", hint: plan.hint }
+				: { plan: plan.kind, from: b.account_id, to: plan.account, ref: plan.ref, ads_tasks: plan.adsTasks }),
+		}),
+	);
+	const reason = drift.message.replace(/; review the binding$/, "");
+	if (plan.kind === "blocked") {
+		run.tally.blocked++;
+		throw run.mode === "on" ? new Error(`${reason}. ${plan.hint}`) : drift;
+	}
+	if (run.mode !== "on") {
+		run.tally.would++;
+		throw drift;
+	}
+	let result: { ok?: boolean; reason?: string; binding?: Binding } | null;
+	try {
+		result = await t.rpc("cockpit_ad_billing_move", {
+			p_lease: run.lease,
+			p_binding: b.id,
+			p_revision: b.revision,
+			p_kind: plan.kind,
+			p_account: plan.account,
+			p_ref: plan.ref,
+			p_ads_tasks: plan.adsTasks,
+			p_evidence: plan.evidence,
+		});
+	} catch (e) {
+		// The save may have landed before the answer was lost. The observe call needs the row's current revision.
+		const fresh = (await t.rows<Binding>("cockpit_ad_billing_bindings", `id=eq.${b.id}`).catch(() => []))[0];
+		if (fresh) hold.binding = fresh;
+		throw e;
+	}
+	if (!result?.ok || !result.binding) {
+		run.tally.blocked++;
+		throw new Error(
+			`${reason}. The automatic account change was refused: ${result?.reason ?? "no answer"}. The next run checks again.`,
+		);
+	}
+	run.tally.moved++;
+	hold.binding = result.binding;
+	delete run.taken[b.account_id];
+	run.taken[plan.account] = b.client_name;
+	try {
+		await t.notice(plan.notice);
+		console.log(JSON.stringify({ at: at(), auto_move_notice: "sent", client: b.client_name }));
+	} catch (e) {
+		console.error(
+			JSON.stringify({
+				at: at(),
+				auto_move_notice: "failed",
+				client: b.client_name,
+				error: e instanceof Error ? e.message : "Slack notice failed",
+			}),
+		);
+	}
+	return result.binding;
+}
 // A run that dies must still free its 10-minute lease, or the next two runs answer busy and check nothing. On
 // 14 Oct 2026 one database network error at 10:10 UTC also failed the finish call, so 10:15 and 10:20 were skipped.
 // The finish call meets the same short outage, so it is tried again after these waits.
@@ -16,6 +135,9 @@ export async function poll(t: Transport, finishWaits = FINISH_WAITS_MS) {
 		return { busy: true, checked: 0 };
 	let checked = 0,
 		failures = 0;
+	const began = Date.now();
+	let slowest: { client: string; eligibility_s: number; meta_s: number } | null = null;
+	let moves: MoveRun["tally"] | null = null;
 	try {
 		const roster = (await t.tasks(CLIENT_LIST))
 			.filter((c) => activeTask(c, c.id))
@@ -28,16 +150,37 @@ export async function poll(t: Transport, finishWaits = FINISH_WAITS_MS) {
 			"cockpit_ad_billing_bindings",
 			"enabled=eq.true",
 		);
+		// One Client Data read per run, not one per client (17 reads became 1, 26 Oct 2026). A failed read still
+		// fails each client's check, as before.
+		const sheet = t.sheet();
+		sheet.catch(() => {});
+		const mode = autoMoveMode(t.env.AD_BILLING_AUTO_MOVE);
+		const run: MoveRun = {
+			lease,
+			mode,
+			taken: Object.fromEntries(bindings.map((x) => [x.account_id, x.client_name])),
+			tally: { mode, moved: 0, would: 0, blocked: 0 },
+		};
+		moves = run.tally;
 		for (const b of bindings) {
+			const hold = { binding: b };
 			let signal: any = "unknown",
 				lastFour: string | null = null,
 				error: string | null = null;
+			// Slow runs (up to 251 s on 26 Oct 2026) had clients taking 16-20 s instead of 2 s, and nothing recorded
+			// which service stalled. The summary line names the slowest client and where its time went.
+			const start = Date.now();
+			let checkedAt: number | null = null;
 			try {
-				await t.eligibility(b);
-				({ signal, lastFour } = classify(
-					await t.meta(b.account_id),
-					b.account_id,
-				));
+				try {
+					await t.eligibility(b, sheet);
+				} catch (drift) {
+					if (!(drift instanceof IdentityDrift) || mode === "off") throw drift;
+					await t.eligibility(await changeAccount(t, b, sheet, run, drift, hold), sheet);
+				}
+				checkedAt = Date.now();
+				const account = hold.binding.account_id;
+				({ signal, lastFour } = classify(await t.meta(account), account));
 			} catch (e) {
 				error = e instanceof Error ? e.message : "Source verification failed";
 				failures++;
@@ -47,14 +190,19 @@ export async function poll(t: Transport, finishWaits = FINISH_WAITS_MS) {
 					JSON.stringify({ at: new Date().toISOString(), client: b.client_name, error }),
 				);
 			}
+			const end = Date.now(),
+				eligibility_s = ((checkedAt ?? end) - start) / 1000,
+				meta_s = checkedAt ? (end - checkedAt) / 1000 : 0;
+			if (!slowest || eligibility_s + meta_s > slowest.eligibility_s + slowest.meta_s)
+				slowest = { client: b.client_name, eligibility_s, meta_s };
 			const copy = bodies(
 				signal === "healthy" ? "recovered" : signal,
 				lastFour,
 			);
 			await t.rpc("cockpit_ad_billing_observe", {
 				p_lease: lease,
-				p_binding: b.id,
-				p_revision: b.revision,
+				p_binding: hold.binding.id,
+				p_revision: hold.binding.revision,
 				p_signal: signal,
 				p_last_four: lastFour,
 				p_error: error,
@@ -69,7 +217,14 @@ export async function poll(t: Transport, finishWaits = FINISH_WAITS_MS) {
 				? `${failures} binding checks failed. Review the billing panel.`
 				: null,
 		});
-		return { busy: false, checked, failures };
+		return {
+			busy: false,
+			checked,
+			failures,
+			secs: (Date.now() - began) / 1000,
+			slowest,
+			auto_move: moves,
+		};
 	} catch (error) {
 		for (const wait of finishWaits) {
 			if (wait) await new Promise((resolve) => setTimeout(resolve, wait));

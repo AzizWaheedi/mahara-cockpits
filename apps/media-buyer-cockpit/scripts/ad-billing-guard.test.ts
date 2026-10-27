@@ -14,6 +14,10 @@ import {
   classify,
   clientMessage,
   validateBinding,
+  planAccountChange,
+  clientAdsTasks,
+  IdentityDrift,
+  type Task,
   CLIENT_STATUS,
   CLIENT_LIST,
   ADS_LIST,
@@ -84,6 +88,7 @@ beforeAll(async () => {
   db = await cockpitTestDb({ supabaseDefaultPrivileges: true });
   await db.exec(migration("20261011174920_ad_billing_guard.sql"));
   await db.exec(migration("20261011192500_ad_billing_roster_safe_update.sql"));
+  await db.exec(migration("20261026p_ad_billing_auto_move.sql"));
   await member(db, uid, "buyer@example.test", ["media_buyer"]);
 });
 afterAll(async () => {
@@ -680,8 +685,338 @@ test("a crashed run frees its lease even when the first finish calls fail", asyn
   expect(run.finishes()).toBe(3);
 });
 
+// 26 Oct 2026: every client re-read the whole Client Data sheet, 17 reads a run. A run now reads it once.
+function sheetRun(sheetFails: boolean) {
+  const observed: { binding: string; signal: string; error: string | null }[] = [];
+  let sheets = 0;
+  const t = {
+    env: {},
+    rpc: async (name: string, args: Record<string, any>) => {
+      if (name === "cockpit_ad_billing_observe")
+        observed.push({ binding: args.p_binding, signal: args.p_signal, error: args.p_error });
+      return name === "cockpit_ad_billing_start" ? true : null;
+    },
+    tasks: async () => [],
+    rows: async () =>
+      ["1", "2", "3"].map((n) => ({ id: "b" + n, client_name: "client" + n, account_id: "12345" + n, revision: 1, ads_task_ids: [] })),
+    sheet: async () => {
+      sheets++;
+      if (sheetFails) throw new ProviderError("Google", 0, true);
+      return sheet;
+    },
+    eligibility: async (_b: Binding, rows: Promise<unknown[][]>) => {
+      expect(await rows).toBe(sheet);
+    },
+    meta: async (id: string) => ({ id: "act_" + id, account_status: 1 }),
+  };
+  return { t: t as unknown as Transport, observed, sheets: () => sheets };
+}
+
+test("a poll reads Client Data once and names its slowest client", async () => {
+  const run = sheetRun(false);
+  const result: any = await poll(run.t, [0]);
+  expect(run.sheets()).toBe(1);
+  expect(result).toMatchObject({ busy: false, checked: 3, failures: 0 });
+  expect(run.observed.map((o) => o.signal)).toEqual(["healthy", "healthy", "healthy"]);
+  expect(result.slowest.client).toMatch(/^client[123]$/);
+  expect(typeof result.secs).toBe("number");
+});
+
+test("a failed Client Data read fails each client's check without crashing the run", async () => {
+  const run = sheetRun(true);
+  const result: any = await poll(run.t, [0]);
+  expect(run.sheets()).toBe(1);
+  expect(result).toMatchObject({ busy: false, checked: 3, failures: 3 });
+  expect(run.observed.every((o) => o.signal === "unknown" && /Google/.test(o.error ?? ""))).toBe(true);
+});
+
 test("when every finish call fails, the run's own error still goes up", async () => {
   const run = crashingRun(99);
   await expect(poll(run.t, [0, 0, 0, 0])).rejects.toThrow("Database request failed (network).");
   expect(run.finishes()).toBe(4);
+});
+
+// 26 Oct 2026: an account change applies itself when four proofs hold. Marble (17 Oct) and ARCWANI (26 Oct) each
+// needed an agent session. These tests replay both real cases and every missing proof.
+const adsTask = (id: string, account: string | null, open = true, tags = ["synthetic client"]): Task => ({
+  id,
+  list: { id: ADS_LIST },
+  tags: tags.map((name) => ({ name })),
+  status: { type: open ? "open" : "closed" },
+  custom_fields: [
+    {
+      id: ADS_ACCOUNT,
+      value: account ? `https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${account}` : null,
+    },
+  ],
+});
+const clientData = (ref: string, task = "client1") => [
+  ["Clickup ID", "WA GROUP ID", "Ad Account - Meta"],
+  [task, "12345@g.us", ref],
+];
+function plan(
+  over: Partial<Binding>,
+  ref: string,
+  tasks: Task[],
+  names: Record<string, string | null>,
+  taken: Record<string, string> = {},
+) {
+  const b = { ...binding, ...over };
+  return planAccountChange({
+    binding: b,
+    sheet: clientData(ref, b.client_task_id),
+    tasks: clientAdsTasks(b, b.client_name, tasks),
+    names,
+    taken,
+  });
+}
+const hint = (p: ReturnType<typeof plan>) => (p.kind === "blocked" ? p.hint : "");
+
+test("only account and ads-task changes are marked for the account change check", () => {
+  expect(() => validateBinding(binding, client, [ad], clientData("Other"))).toThrow(IdentityDrift);
+  expect(() => validateBinding(binding, client, [], sheet)).toThrow(IdentityDrift);
+  let other: unknown;
+  try {
+    validateBinding({ ...binding, whatsapp_group: "999@g.us" }, client, [ad], sheet);
+  } catch (e) {
+    other = e;
+  }
+  expect(other).toBeInstanceOf(Error);
+  expect(other).not.toBeInstanceOf(IdentityDrift);
+});
+test("ARCWANI replay: the new account on the open ads task, named in Client Data, moves the binding", () => {
+  const arcwani = {
+    client_task_id: "86ey8w5m1",
+    client_name: "ARCWANI",
+    account_id: "1034584029438250",
+    ads_task_ids: ["86eyt006q"],
+    sheet_account_ref: "ARCWANI",
+  };
+  const p = plan(
+    arcwani,
+    "Arcwani Ad account",
+    [
+      adsTask("86eyt006q", "1034584029438250", false, ["arcwani"]),
+      adsTask("z8xmdvkdhf", "2325233444877544", true, ["arcwani"]),
+    ],
+    { "1034584029438250": "ARCWANI", "2325233444877544": "Arcwani Ad account" },
+  );
+  expect(p).toMatchObject({
+    kind: "move",
+    account: "2325233444877544",
+    ref: "Arcwani Ad account",
+    adsTasks: ["z8xmdvkdhf"],
+  });
+  expect(p.kind === "move" && p.notice).toContain("(was 1034584029438250)");
+});
+test("Marble replay: a blank link on the new ads task blocks the move until the link is there", () => {
+  const marble = {
+    client_task_id: "86eymcqdq",
+    client_name: "Marble and more",
+    account_id: "1639470257874847",
+    ads_task_ids: ["z8xmdve3h3"],
+    sheet_account_ref: "marblemore1",
+  };
+  const old = adsTask("z8xmdve3h3", "1639470257874847", false, ["marble and more"]);
+  const blank = plan(marble, "Marble ad account", [old, adsTask("z8xmdvhntx", null, true, ["marble and more"])], {
+    "1639470257874847": "marblemore1",
+  });
+  expect(hint(blank)).toContain("no open ads task links a different Meta account");
+  expect(hint(blank)).toContain("Meta Ad Account field");
+  const linked = plan(
+    marble,
+    "Marble ad account",
+    [old, adsTask("z8xmdvhntx", "2631767157271939", true, ["marble and more"])],
+    { "1639470257874847": "marblemore1", "2631767157271939": "Marble ad account" },
+  );
+  expect(linked).toMatchObject({ kind: "move", account: "2631767157271939", adsTasks: ["z8xmdvhntx"] });
+});
+test("a renamed account keeps its account and ads tasks; spacing and case do not matter", () => {
+  const p = plan({ sheet_account_ref: "Madana" }, "Madana Engineering Consulting", [adsTask("ads1", "123456")], {
+    "123456": "madana  Engineering Consulting ",
+  });
+  expect(p).toMatchObject({ kind: "rename", account: "123456", ref: "Madana Engineering Consulting", adsTasks: ["ads1"] });
+});
+test("a replaced ads task on the same account swaps in the open task that links it", () => {
+  expect(plan({}, "123456", [adsTask("ads2", "123456")], {})).toMatchObject({
+    kind: "tasks",
+    account: "123456",
+    adsTasks: ["ads2"],
+  });
+  expect(hint(plan({}, "123456", [adsTask("ads2", null)], {}))).toContain(
+    "No open ads task for Synthetic Client links Meta account 123456",
+  );
+});
+test("an account the worker's Meta token cannot read is never adopted", () => {
+  const p = plan(
+    { sheet_account_ref: "Old name" },
+    "New name",
+    [adsTask("ads1", "123456", false), adsTask("ads2", "654321")],
+    { "123456": "Old name", "654321": null },
+  );
+  expect(hint(p)).toContain("cannot read account 654321");
+});
+test("an account another client's binding has is never adopted", () => {
+  const p = plan(
+    { sheet_account_ref: "Old name" },
+    "New name",
+    [adsTask("ads2", "654321")],
+    { "123456": "Old name", "654321": "New name" },
+    { "654321": "Other Client" },
+  );
+  expect(hint(p)).toContain("already belongs to the billing watch for Other Client");
+});
+test("a linked account with another Meta name, two matches, or another client's tag is not adopted", () => {
+  expect(
+    hint(plan({ sheet_account_ref: "Old name" }, "New name", [adsTask("ads2", "654321")], { "123456": "Old name", "654321": "Shop" })),
+  ).toContain('654321 "Shop"');
+  expect(
+    hint(
+      plan({ sheet_account_ref: "Old name" }, "New name", [adsTask("ads2", "654321"), adsTask("ads3", "765432")], {
+        "123456": "Old name",
+        "654321": "New name",
+        "765432": "New Name",
+      }),
+    ),
+  ).toContain("2 linked accounts match it");
+  expect(
+    plan({ sheet_account_ref: "Old name" }, "New name", [adsTask("ads9", "654321", true, ["other client"])], {
+      "123456": "Old name",
+      "654321": "New name",
+    }).kind,
+  ).toBe("blocked");
+});
+
+class MoveWorld extends Transport {
+  notices: string[] = [];
+  ref = "Arcwani Ad account";
+  ads: Task[] = [adsTask("ads1", "123456", false), adsTask("ads2", "654321")];
+  names: Record<string, string | null> = { "123456": "ARCWANI", "654321": "Arcwani Ad account " };
+  constructor(mode?: string) {
+    super(mode ? { AD_BILLING_AUTO_MOVE: mode } : {});
+  }
+  override async rpc<T = any>(name: string, args: Record<string, unknown> = {}): Promise<T> {
+    const entries = Object.entries(args).map(([k, v]) => [k, k === "p_rows" ? JSON.stringify(v) : v] as const);
+    return (
+      await db.query<{ value: T }>(
+        `SELECT ${name}(${entries.map(([k], i) => `${k}=>$${i + 1}`).join(",")}) value`,
+        entries.map(([, v]) => v),
+      )
+    ).rows[0].value;
+  }
+  override async rows<T = any>(table: string, query = ""): Promise<T[]> {
+    const id = query.match(/(?:^|&)id=eq\.([\w-]+)/)?.[1];
+    return (await db.query<T & Record<string, unknown>>(`SELECT * FROM ${table}${id ? " WHERE id=$1" : ""}`, id ? [id] : []))
+      .rows;
+  }
+  override async task(id: string): Promise<Task> {
+    const found = id === "client1" ? { ...client, name: "Synthetic Client" } : this.ads.find((t) => t.id === id);
+    if (!found) throw new ProviderError("ClickUp", 404);
+    return found;
+  }
+  override async tasks(list: string): Promise<any[]> {
+    return list === CLIENT_LIST ? [{ ...client, name: "Synthetic Client", tags: [] }] : this.ads;
+  }
+  override async sheet() {
+    return clientData(this.ref);
+  }
+  override async meta(id: string) {
+    const name = this.names[id];
+    if (typeof name !== "string") throw new ProviderError("Meta", 400);
+    return { id: "act_" + id, name, account_status: 1 };
+  }
+  override async notice(text: string) {
+    this.notices.push(text);
+    return "1.1";
+  }
+}
+async function movePoll(world: MoveWorld) {
+  await owner(db);
+  await db.exec("UPDATE cockpit_ad_billing_config SET lease=NULL,lease_until=NULL");
+  return (await poll(world, [0])) as any;
+}
+const moveAudits = () =>
+  scalar("SELECT count(*)::int FROM cockpit_audit_log WHERE action LIKE 'billing.account_%'");
+const bindingRow = async () =>
+  (await db.query<any>("SELECT * FROM cockpit_ad_billing_bindings WHERE id=$1", [binding.id])).rows[0];
+
+test("on: a proven move saves once, audits old and new, posts one Slack line, and checks the new account", async () => {
+  await reset();
+  const audits = await moveAudits();
+  const world = new MoveWorld("on");
+  expect(await movePoll(world)).toMatchObject({ checked: 1, failures: 0, auto_move: { mode: "on", moved: 1 } });
+  expect(await bindingRow()).toMatchObject({
+    account_id: "654321",
+    sheet_account_ref: "Arcwani Ad account",
+    ads_task_ids: ["ads2"],
+    revision: 2,
+    signal: "healthy",
+    error: null,
+  });
+  const audit = (await db.query<any>("SELECT * FROM cockpit_audit_log WHERE action='billing.account_move'")).rows.at(-1);
+  expect(audit.before).toMatchObject({ account_id: "123456", ads_task_ids: ["ads1"], revision: 1 });
+  expect(audit.after).toMatchObject({ account_id: "654321", ads_task_ids: ["ads2"], revision: 2 });
+  expect(world.notices).toHaveLength(1);
+  expect(world.notices[0]).toContain("moved to Meta account 654321");
+  expect(await movePoll(world)).toMatchObject({ failures: 0, auto_move: { moved: 0 } });
+  expect(world.notices).toHaveLength(1);
+  expect(await moveAudits()).toBe((audits as number) + 1);
+});
+test("dry, the default: the worker logs the planned move and changes nothing", async () => {
+  await reset();
+  const audits = await moveAudits();
+  const world = new MoveWorld();
+  expect(await movePoll(world)).toMatchObject({ failures: 1, auto_move: { mode: "dry", would: 1, moved: 0 } });
+  expect(await bindingRow()).toMatchObject({
+    account_id: "123456",
+    revision: 1,
+    error: "Client Data account reference changed; review the binding",
+  });
+  expect(world.notices).toHaveLength(0);
+  expect(await moveAudits()).toBe(audits);
+});
+test("on: a missing proof changes nothing and the panel error says what to fix", async () => {
+  await reset();
+  const audits = await moveAudits();
+  const world = new MoveWorld("on");
+  world.ads = [adsTask("ads1", "123456", false), adsTask("ads2", null)];
+  expect(await movePoll(world)).toMatchObject({ failures: 1, auto_move: { blocked: 1, moved: 0 } });
+  const row = await bindingRow();
+  expect(row).toMatchObject({ account_id: "123456", revision: 1 });
+  expect(row.error).toBe(
+    'Client Data account reference changed. Client Data shows "Arcwani Ad account" for Synthetic Client, but no open ads task links a different Meta account. Put the new account\'s Ads Manager link in the Meta Ad Account field of the client\'s current ads task.',
+  );
+  expect(world.notices).toHaveLength(0);
+  expect(await moveAudits()).toBe(audits);
+});
+test("the move function refuses a stale revision, a taken account, a wrong kind, an expired lease and browsers", async () => {
+  await reset();
+  const move = async (revision: number, kind: string, account: string) =>
+    (
+      await db.query<{ v: any }>("SELECT cockpit_ad_billing_move($1,$2,$3,$4,$5,$6,$7,$8) v", [
+        lease,
+        binding.id,
+        revision,
+        kind,
+        account,
+        "New name",
+        ["ads2"],
+        "Synthetic proof for the move function",
+      ])
+    ).rows[0].v;
+  expect(await move(2, "move", "654321")).toEqual({ ok: false, reason: "the binding changed during the check" });
+  await expect(move(1, "rename", "654321")).rejects.toThrow("kind does not match");
+  await db.query(
+    "INSERT INTO cockpit_ad_billing_bindings(client_task_id,client_name,account_id,ads_task_ids,whatsapp_group,identity_evidence,identity_verified_at,sheet_account_ref) VALUES('client2','Other Client','654321',ARRAY['ads9'],'999@g.us','Synthetic test proof only',now(),'x')",
+  );
+  expect(await move(1, "move", "654321")).toEqual({
+    ok: false,
+    reason: "Meta account 654321 already belongs to Other Client",
+  });
+  await actor(db, uid);
+  await expect(move(1, "move", "765432")).rejects.toThrow();
+  await owner(db);
+  await db.exec("UPDATE cockpit_ad_billing_config SET lease_until=now()-interval '1 minute'");
+  await expect(move(1, "move", "765432")).rejects.toThrow("Monitor lease expired");
+  expect(await bindingRow()).toMatchObject({ account_id: "123456", revision: 1 });
 });

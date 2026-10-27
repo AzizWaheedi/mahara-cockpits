@@ -20,7 +20,14 @@ import { KICKOFF } from "@/forms/kickoff";
 import { cn } from "@/lib/utils";
 import { focusOf } from "./AdsStage";
 import { makeAddFiles } from "./adsActions";
-import { BlueprintNotes } from "./BlueprintNotes";
+import {
+  BlueprintDoHere,
+  BlueprintNotes,
+  BlueprintWhere,
+  BlueprintWrapUp,
+  fillLine,
+  fillPlaces,
+} from "./BlueprintNotes";
 import { CallGuideLine, PracticeNote } from "./CallGuide";
 import type { DeckMessage } from "./channel";
 import { DECK_NAME, t } from "./content";
@@ -346,6 +353,8 @@ export function NotesWindow({
   const zoomDone = useRef(false);
   /** The deck window closed: the recap takes the talk track's place. */
   const [deckClosed, setDeckClosed] = useState(false);
+  /** The Blueprint wrap-up, opened from slide 14 before the deck window closes. */
+  const [wrapOpen, setWrapOpen] = useState(false);
   /** "If they push back": stays as the CSM left it, open once opened. */
   const [pushOpen, setPushOpen] = useState(false);
   const drive = useDriveImports({
@@ -482,6 +491,15 @@ export function NotesWindow({
   const stopName = slide.stopName?.(tour, ctx);
   const stopNames = (n: number) => slide.stopName?.(n - 1, ctx)?.en ?? null;
   const nextSlide = slides[index + 1];
+  /** Where the next slide is filled, said before it is reached. */
+  const nextWhere =
+    deck === "blueprint" &&
+    base.bp &&
+    !base.bp.readOnly &&
+    tour + 1 >= stops &&
+    nextSlide
+      ? fillLine(fillPlaces(base.bp, nextSlide.id))
+      : null;
   const sl = saveLine(
     deck === "blueprint" ? (base.bp?.save ?? model.save) : model.save,
   );
@@ -525,6 +543,9 @@ export function NotesWindow({
               ? " · press Present to follow it here"
               : " · open the deck window to follow it here"}
         </div>
+        {deck === "blueprint" && !deckClosed && !wrapOpen ? (
+          <BlueprintWhere bp={base.bp} slideId={slide.id} />
+        ) : null}
         {made ? (
           <PracticeNote className="mt-1" />
         ) : deck === "blueprint" && base.bp?.rehearsal ? (
@@ -560,7 +581,24 @@ export function NotesWindow({
             ) : null}
           </section>
         ) : null}
-        <section className="space-y-2" hidden={deckClosed}>
+        {deck === "blueprint" ? (
+          deckClosed || wrapOpen ? (
+            <BlueprintWrapUp
+              bp={base.bp}
+              d={d}
+              onBack={deckClosed ? undefined : () => setWrapOpen(false)}
+            />
+          ) : (
+            <BlueprintDoHere
+              bp={base.bp}
+              d={d}
+              slideId={slide.id}
+              reload={model.reload}
+              onWrap={() => setWrapOpen(true)}
+            />
+          )
+        ) : null}
+        <section className="space-y-2" hidden={deckClosed || wrapOpen}>
           <h3 className="text-xs font-medium text-muted-foreground">Say</h3>
           <SayList
             lines={notes.say}
@@ -737,12 +775,14 @@ export function NotesWindow({
         ) : null}
 
         {deck === "blueprint" ? (
-          <BlueprintNotes
-            bp={base.bp}
-            d={d}
-            slideId={slide.id}
-            reload={model.reload}
-          />
+          deckClosed || wrapOpen ? null : (
+            <BlueprintNotes
+              bp={base.bp}
+              d={d}
+              slideId={slide.id}
+              reload={model.reload}
+            />
+          )
         ) : isOfferDeck(deck) ? (
           <OfferNotes offer={base.offer} model={model} />
         ) : deck === "launch" ? (
@@ -849,13 +889,20 @@ export function NotesWindow({
             <ArrowLeft aria-hidden />
             Back
           </Button>
-          <span className="min-w-0 truncate text-xs text-muted-foreground">
-            {tour + 1 < stops
-              ? // The next stop by its name, where the slide names its stops.
-                `Next: ${stopNames(tour + 2)?.replace(/^Next:\s*/, "") ?? `stop ${tour + 2} of ${stops}`}`
-              : nextSlide
-                ? `Next: ${t(titleFor(nextSlide, d), "en").replace("{name}", d.nameEn)}`
-                : "Last slide"}
+          <span className="min-w-0 text-xs text-muted-foreground">
+            <span className="block truncate">
+              {tour + 1 < stops
+                ? // The next stop by its name, where the slide names its stops.
+                  `Next: ${stopNames(tour + 2)?.replace(/^Next:\s*/, "") ?? `stop ${tour + 2} of ${stops}`}`
+                : nextSlide
+                  ? `Next: ${t(titleFor(nextSlide, d), "en").replace("{name}", d.nameEn)}`
+                  : "Last slide"}
+            </span>
+            {nextWhere ? (
+              <span className="block truncate text-foreground/80">
+                {nextWhere}
+              </span>
+            ) : null}
           </span>
           <Button onClick={() => hub.post({ type: "nav", to: "next" })}>
             Next

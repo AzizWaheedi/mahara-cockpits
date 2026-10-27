@@ -367,6 +367,33 @@ export function installAdsPageHarness(client: SupabaseClient): void {
       // Meta's payment checks: fresh, one account in its grace period.
       case "cockpit_ad_billing_panel":
         return ok(adsPageBilling(now));
+      // Each campaign's funnel (20261026s): the kitchens campaign sends
+      // people to a website, every other one to an instant form.
+      case "cockpit_media_campaign_funnels":
+        await wait(150);
+        return ok(
+          (Array.isArray(args.p_campaigns) ? args.p_campaigns : []).map(n => {
+            const web = String(n).includes("Kitchens");
+            const kind = web ? "website" : "form";
+            return {
+              campaign: String(n),
+              kind,
+              kinds: [{ kind, spend: 1 }],
+              linkClicks: web ? 412 : null,
+              landingPageViews: web ? 356 : null,
+            };
+          }),
+        );
+      // Cedar Stone has a lead page, so its board row links to it.
+      case "cockpit_page_forms_listed":
+        return ok([
+          {
+            slug: "cedar-stone",
+            client: "Cedar Stone Interiors",
+            title: "Cedar Stone lead page",
+            siteUrl: "https://example.test/cedar-stone",
+          },
+        ]);
       case "cockpit_media_native_read":
       case "cockpit_media_native_catalog_read":
         return nativeRead(args.p_operation, now);

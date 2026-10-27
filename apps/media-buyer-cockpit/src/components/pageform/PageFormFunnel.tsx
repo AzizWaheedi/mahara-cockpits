@@ -3,11 +3,14 @@ import { count, dateTime, pct, shortDate } from "@/components/ceo/format";
 import { STATUS_COLOR, StatusChip } from "@/components/ceo/StatusChip";
 import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { notCountedYet } from "@/lib/funnelSplit";
+import { useCampaignFunnels } from "@/lib/funnelSplitClient";
 import {
   type FunnelSource,
   type FunnelStep,
   usePageFormFunnel,
 } from "@/lib/pageFormClient";
+import { kuwaitDay } from "@/lib/range";
 import { cn } from "@/lib/utils";
 
 const RANGES = [7, 30, 90] as const;
@@ -15,8 +18,16 @@ const SOURCES: { value: FunnelSource; label: string }[] = [
   { value: "ads", label: "From ads" },
   { value: "all", label: "All visits" },
 ];
-/** What the ad's URL parameters need for a visit to count as from an ad. */
-const AD_PARAM = "ad_id={{ad.id}}";
+/**
+ * What a visit's link needs to count as from an ad: Meta's automatic URL
+ * parameters (utm_medium=paid with the campaign id and ad id, which Meta adds
+ * to a website ad's link), or the ad's own ad_id={{ad.id}} (20261026s).
+ */
+const AD_PARAM =
+  "utm_medium=paid with the campaign or ad id, or ad_id={{ad.id}}";
+
+const NO_WEBSITE =
+  "No website campaign of this client is on the ads board, so Meta's clicks are not shown beside these visits.";
 
 /** Visits lost at a step: the step before it, minus this one. */
 const lost = (steps: FunnelStep[], i: number) =>
@@ -33,16 +44,47 @@ export function PageFormFunnel({
   slug,
   liveLabel,
   tick,
+  metaCampaigns = [],
+  waitingCampaigns = [],
 }: {
   slug: string;
   liveLabel: string;
   /** Changes after a publish or switch, so the counts follow the live version. */
   tick: number;
+  /** The client's website campaigns on the ads board, for Meta's clicks. */
+  metaCampaigns?: string[];
+  /** Website campaigns on the ads board with no full day in the client's numbers yet. */
+  waitingCampaigns?: string[];
 }) {
   const [days, setDays] = useState<number>(30);
   const [version, setVersion] = useState<string | undefined>(undefined);
   const [source, setSource] = useState<FunnelSource>("ads");
   const funnel = usePageFormFunnel(slug, version, days, source, tick);
+  // Meta's side of the same days, today included: link clicks and landing
+  // page views on the website campaigns, beside the visits the page itself
+  // recorded. A campaign not in the client's numbers yet counts here once
+  // Meta has a day of it in these days, and is named (Muhammed, 2026-10-26).
+  const meta = useCampaignFunnels(
+    [...metaCampaigns, ...waitingCampaigns],
+    kuwaitDay(days),
+    kuwaitDay(0),
+  );
+  const joining = waitingCampaigns.filter(name =>
+    meta.data?.some(
+      r =>
+        r.campaign === name &&
+        (r.linkClicks !== null || r.landingPageViews !== null),
+    ),
+  );
+  const onMeta = metaCampaigns.length + joining.length;
+  const sumOf = (k: "linkClicks" | "landingPageViews") => {
+    const rows = meta.data ?? [];
+    return rows.some(r => r[k] !== null)
+      ? rows.reduce((s, r) => s + (r[k] ?? 0), 0)
+      : null;
+  };
+  const clicks = sumOf("linkClicks");
+  const views = sumOf("landingPageViews");
   const f = funnel.data;
   const steps = f?.steps ?? [];
   const opened = steps[0]?.visits ?? 0;
@@ -114,6 +156,18 @@ export function PageFormFunnel({
         </div>
       </div>
 
+      <p className="mt-2 text-xs text-muted-foreground">
+        {metaCampaigns.length + waitingCampaigns.length === 0
+          ? NO_WEBSITE
+          : meta.error
+            ? `Meta's clicks could not be read: ${meta.error}`
+            : !meta.data
+              ? "Reading Meta's clicks…"
+              : onMeta === 0
+                ? NO_WEBSITE
+                : `Meta, same ${days} days: ${clicks === null ? "n/a" : count(clicks)} link clicks and ${views === null ? "n/a" : count(views)} landing page views on ${onMeta === 1 ? "the website campaign" : `${onMeta} website campaigns`}${f?.counts ? `; the page recorded ${count(f.counts.ads)} ${f.counts.ads === 1 ? "visit" : "visits"} from ads` : ""}.${joining.length ? ` ${notCountedYet(joining)}` : ""}`}
+      </p>
+
       {funnel.error ? (
         <div className="callout-warn mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2 text-xs">
           <span>The drop-off counts could not be read: {funnel.error}</span>
@@ -137,7 +191,7 @@ export function PageFormFunnel({
             {(f.counts?.all ?? 0) > 0
               ? `${count(f.counts.all)} ${f.counts.all === 1 ? "visit" : "visits"} came without an ad link, such as the team's; choose All visits to see them. `
               : ""}
-            A visit counts as from an ad when the ad's URL parameters include{" "}
+            A visit counts as from an ad when its link carries{" "}
             <code className="text-xs">{AD_PARAM}</code>.
           </p>
         ) : (
@@ -203,9 +257,11 @@ export function PageFormFunnel({
           Each visit counts once per screen, on{" "}
           {f.hosts.length ? f.hosts.join(", ") : "no host yet"}, since{" "}
           {shortDate(f.since)}. From ads counts visits whose link carried a Meta
-          ad or campaign id (<code>{AD_PARAM}</code> in the ad's URL
-          parameters); All visits adds every other visit, such as the team's.
-          Test visits and the editor preview are never counted.{" "}
+          ad or campaign id (<code>{AD_PARAM}</code>); All visits adds every
+          other visit, such as the team's. Meta's clicks come from Meta's own
+          daily numbers, so they run a little above the page's visits: some
+          people leave before the page loads. Test visits and the editor preview
+          are never counted.{" "}
           {f.lastAt
             ? `Last ${f.source === "ads" ? "visit from an ad" : "visit"} recorded ${dateTime(Date.parse(f.lastAt))}.`
             : f.source === "ads"

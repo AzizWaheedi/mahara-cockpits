@@ -55,6 +55,27 @@ and a change-triggered fixer (the unattended fixer opens PRs; agents working wit
 - A new route, cron or worker that matters to users needs a freshness signal (last success timestamp and a stuck/failed count).
 - Never let a health route call providers, write data, or be cached.
 
+## Tests: run only the files for your change (26 October 2026)
+
+Several agent sessions share one laptop. On 26 October 2026, `bun test scripts`
+in `apps/media-buyer-cockpit` ran 2,863 tests from 194 files in one process for
+16.5 minutes and held about 11 GB of memory. The laptop ran out of memory and
+crashed.
+
+- Run only the test files that cover the files you changed. Name each file in
+  the command, for example `bun test scripts/launch-screen.test.tsx`.
+- To find those files, search the test files for the changed file's name.
+- Never run a whole app, folder or repository suite. That means no bare
+  `bun test`, no folder such as `bun test scripts`, `bun test src` or
+  `bun test supabase/functions`, no `bun run test:unit` in the media buyer
+  cockpit and no `bun run test` in the sales cockpit. A word after `bun test`
+  matches every test file whose path contains it, so one word can start
+  hundreds of files.
+- `scripts/ship.sh` already runs a fixed list of named test files. Run it as
+  usual.
+- Run a full suite only when Muhammed or Aziz asks for one in the session. Run
+  it alone, with the other sessions idle.
+
 ## Decisions and plans
 
 - Before you decide a design, stack, data rule or scope, search `context/DECISIONS.md` in the shared `mahara-context` repository (local: `D:/MaharaMedia/mahara-context`). Log each new durable decision there in the same session.

@@ -1,12 +1,13 @@
 import {launchCatalog} from './launchCatalog.ts';
-import {assertObjectScope, ADS_LIST, STATUS_FIELD, boardCardBody, type Provider, type Row, type Plan, type MultiPlan} from './core.ts';
+import {assertObjectScope, ADS_LIST, STATUS_FIELD, type Provider, type Row, type Plan, type MultiPlan} from './core.ts';
+import {cardDefaults,cardNamed,kuwaitDay,launchCardStep,liveCard,prepareLog} from './cardDetails.ts';
 import {budgetToUsd,budgetWords,usdToBudget,HUNDREDTHS} from './currency.ts';
 import {cleanTargeting} from './b2b.ts';
 import {copyableSpec,CREATIVE_FIELDS,storyOf,explainMeta} from './metaCreative.ts';
 import {fromMeta,problems,toMetaCreate} from '../../../apps/media-buyer-cockpit/src/lib/leadForm.ts';
 import {pages} from './funnel.ts';
 import {CPL_GATE} from '../../../apps/media-buyer-cockpit/src/lib/kpi.ts';
-export const DESK_OPERATIONS=['launch.readiness','launch.importCreatives','launch.copyIdeas','launch.switchOn','launch.copy','launch.rebuild','launch.new','launch.attachAccount'];
+export const DESK_OPERATIONS=['launch.readiness','launch.importCreatives','launch.copyIdeas','launch.switchOn','launch.copy','launch.rebuild','launch.new','launch.attachAccount','launch.logCampaign'];
 export const REHEARSAL='Rehearsal. No changes will be made to Meta or ClickUp.';
 export const UNPAID='This ad account owes Meta a payment. Meta refuses every change on it, pausing included, until the client pays in Ads Manager.';
 export const id=(v:unknown)=>{if(!/^[0-9]{5,25}$/.test(String(v??'')))throw Error('Choose a valid Meta object');return String(v);};
@@ -65,10 +66,6 @@ export async function readiness(s:Row,client:Row,p:Provider,applyEnabled=false):
  const routes=[{id:'switchOn',label:'Switch back on',reason:readonly??blocked??(!funded?'Add a payment method before switching on.':!callerReady?'Confirm the caller assignment before switching on.':!candidates.some(c=>c.owner.kind==='mahara')?'No campaign has a verified Mahara creator.':null)},{id:'copy',label:'Copy a past campaign',reason:readonly??blocked??(!candidates.some(c=>c.owner.kind==='mahara')?'No campaign has a verified Mahara creator.':null)},{id:'rebuild',label:'Rebuild on a clean account',reason:readonly??blocked??(!client.accounts?.some((a:Row)=>a.id!==account)?'Link a clean account and select it as the target.':null)},{id:'new',label:'New from the brief',reason:readonly??blocked??(!client.brief?.sentAt?'Send Blueprint part 1 first.':client.brief?.answers?.starter==='yes'&&!client.starterPack&&!client.brief?.answers?.pack_url?'The creative director needs to set the starter pack.':null)}].map(r=>({...r,available:!r.reason}));
  return {ok:true,account:live,checks,candidates,best:bestCampaign(candidates),routes,budget:{contractedUsd:contract,source:contractSource,cap:budgetLimit(budgetScope),currency:live.currency},applyEnabled,readAt:new Date().toISOString(),waitingBudgets:candidates.filter(c=>c.status==='ACTIVE').map(c=>({id:c.id,name:c.name,usd:budgetToUsd(Number(c.daily_budget),live.currency),owner:c.owner})),message:applyEnabled?null:REHEARSAL};
 }
-async function cardStep(name:string,client:string,status:string,p:Provider,cities:string[]=[]):Promise<Plan>{
- const fields=(await p.call('clickup','GET',`list/${ADS_LIST}/field`)).fields;const option=fields?.find((f:Row)=>f.id===STATUS_FIELD)?.type_config?.options?.find((o:Row)=>o.name.toLowerCase()===status.toLowerCase());if(!option)throw Error('ClickUp did not return the required Ad Status option');
- return {provider:'clickup',method:'POST',path:`list/${ADS_LIST}/task`,body:boardCardBody(name,client,option.id,cities),verifyPath:'task/$id',expected:{name,list:{id:ADS_LIST},field:STATUS_FIELD,value:option.id,aliases:[option.id,option.orderindex]},has:[{path:'tags',key:'name',value:client.toLowerCase()}]};
-}
 const metaCreate=(account:string,edge:string,body:Row,expected:Row):Plan=>({provider:'meta',method:'POST',path:`act_${account}/${edge}`,body,verifyPath:`$id?fields=id,${Object.keys(expected).join(',')}`,expected});
 function checkedList(rows:Row[],scope:Row){for(const r of rows)assertObjectScope(r,scope,id(r.id));return rows;}
 function promoted(raw:Row){return Object.fromEntries(['page_id','pixel_id','custom_event_type','custom_event_str','application_id'].filter(k=>raw?.[k]!=null).map(k=>[k,raw[k]]));}
@@ -80,6 +77,8 @@ export async function prepareDesk(operation:string,a:Row,s:Row,client:Row,p:Prov
   const current=await p.call('meta','GET',`act_${s.account}?fields=id,name,account_status,currency,business`);if(String(current.id).replace(/^act_/,'')!==s.account)throw Error('Meta returned a different account.');const issue=statusIssue(current.account_status);if(issue)throw Error(issue);
   return {steps:[],result:{clickupId:s.clickupId,locationId:s.locationId,accountId:s.account,clientName:s.client,campaignName:null,evidence:`Shared with Mahara business 767701513092162; ${String(found.name).slice(0,200)}`,did:'Linked the client ad account'}};
  }
+ if(operation==='launch.readiness'&&a.cardDetails)return {read:await cardDefaults(s,client,a,p)};
+ if(operation==='launch.logCampaign')return prepareLog(a,s,client,p);
  if(operation==='launch.readiness'&&a.sourceCampaignId){const source=id(a.sourceCampaignId);const sets=checkedList(list(await p.call('meta','GET',`${source}/adsets?fields=id,name,account_id,campaign_id&limit=100`),'ad sets'),{account:s.account,campaign:source});return {read:{ok:true,adsets:sets.map(x=>({id:x.id,name:x.name}))}};}
  if(operation==='launch.readiness'&&a.catalog)return {read:await launchCatalog(s,a,p)};
  const ready=await readiness(s,client,p,enabled);
@@ -112,9 +111,10 @@ export async function prepareDesk(operation:string,a:Row,s:Row,client:Row,p:Prov
    const value=a.dailyBudgetUsd??(Number(campaign.daily_budget)>0?budgetToUsd(Number(campaign.daily_budget),cur):sets.reduce((n,x)=>n+(budgetToUsd(Number(x.daily_budget),cur)??0),0));budgetCheck(value,budgetScope,cur);
    if(a.dailyBudgetUsd!==undefined){if(!Number(campaign.daily_budget)&&sets.length!==1)throw Error('This campaign has several ad-set budgets. Review them individually in Ads Manager.');const holder=Number(campaign.daily_budget)>0?campaign:sets[0];steps.push({provider:'meta',method:'POST',path:holder.id,body:{daily_budget:budgetCheck(value,budgetScope,cur)},verifyPath:`${holder.id}?fields=id,daily_budget`,expected:{daily_budget:budgetCheck(value,budgetScope,cur)},precondition:{daily_budget:holder.daily_budget}});}
    for(const obj of [...ads,...sets,campaign])steps.push({provider:'meta',method:'POST',path:id(obj.id),body:{status:'ACTIVE'},verifyPath:`${obj.id}?fields=id,status`,expected:{id:obj.id,status:'ACTIVE'},precondition:{status:obj.status}});
-   const card=(client.cards??[]).find((c:Row)=>(c.name??c.taskName)===campaign!.name);let cardId=s.launch?.card_task_id??card?.taskId;
+   let cardId=s.launch?.card_task_id??cardNamed(client,campaign.name)?.taskId??await liveCard(client,s,campaign.name,p);
    if(cardId){const fields=(await p.call('clickup','GET',`list/${ADS_LIST}/field`)).fields;const option=fields?.find((x:Row)=>x.id===STATUS_FIELD)?.type_config?.options?.find((x:Row)=>x.name==='Live');if(!option)throw Error('ClickUp Live status is unavailable');const actual=await p.call('clickup','GET',`task/${cardId}`);if(actual.list?.id!==ADS_LIST)throw Error('The card is not on Ads Management');steps.push({provider:'clickup',method:'POST',path:`task/${cardId}/field/${STATUS_FIELD}`,body:{value:option.id},verifyPath:`task/${cardId}`,expected:{field:STATUS_FIELD,value:option.id,aliases:[option.id,option.orderindex]}});}
-   else {cardId=`$step${steps.length}.id`;steps.push(await cardStep(campaign.name,s.client,'Live',p,client.cards?.flatMap((c:Row)=>c.advertisingCities??[])??[]));}
+   // No card yet: the card is made now, with every launch form answer, so Make sees the launch when it goes live.
+   else {cardId=`$step${steps.length}.id`;steps.push(await launchCardStep({name:campaign.name,s,client,details:a.details,spendUsd:Number(value),day:kuwaitDay(),campaignId:campaign.id},p));}
    // Snapshot today's real delivery so an old impression cannot mark a relaunch live.
    const delivery=list(await p.call('meta','GET',`${campaign.id}/insights?date_preset=today&fields=impressions,date_start&level=campaign&limit=1`),'campaign delivery');
    const baseline=delivery.reduce((n,x)=>n+Number(x.impressions??0),0);if(!Number.isFinite(baseline)||baseline<0)throw Error('Meta did not confirm current delivery. Refresh before switching on.');
@@ -169,8 +169,8 @@ export async function prepareDesk(operation:string,a:Row,s:Row,client:Row,p:Prov
   }
   const at=steps.length;steps.push(metaCreate(s.account,'ads',{name:ad.name,adset_id:'$step1.id',status:'PAUSED',creative:JSON.stringify({creative_id:creativeId})},{status:'PAUSED',adset_id:'$step1.id',account_id:s.account}));madeAds.push(`$step${at}.id`);
  }
- const card=`$step${steps.length}.id`;steps.push(await cardStep(name,s.client,'Paused',p,client.cards?.flatMap((c:Row)=>c.advertisingCities??[])??[]));
- const plan:MultiPlan={steps,result:{clickupId:s.clickupId,locationId:s.locationId,clientName:s.client,accountId:s.account,campaignName:name,budgetUsd:Number(value),budgetLevel:cbo?'campaign':'adset',sourceAccountId:campaign?sourceScope.account:null,sourceCampaignId:campaign?.id??null,metaCampaignId:'$step0.id',metaAdsetIds:['$step1.id'],metaAdIds:madeAds,cardTaskId:card,did:'Created paused. Review the campaign before switching on.',budgetWords:budgetWords(Number(value),cur)}};
+ // A paused build has no card. Switch on makes it, so Make never announces a campaign that is not running.
+ const plan:MultiPlan={steps,result:{clickupId:s.clickupId,locationId:s.locationId,clientName:s.client,accountId:s.account,campaignName:name,budgetUsd:Number(value),budgetLevel:cbo?'campaign':'adset',sourceAccountId:campaign?sourceScope.account:null,sourceCampaignId:campaign?.id??null,metaCampaignId:'$step0.id',metaAdsetIds:['$step1.id'],metaAdIds:madeAds,cardTaskId:null,did:'Created paused. Review the campaign before switching on. Its ClickUp card is made at switch on.',budgetWords:budgetWords(Number(value),cur)}};
  // Both the server flag and explicit check are required. Rehearsal never sends validate_only POSTs.
  if(a.check===true&&enabled)plan.check=await checkPlan(plan,p,campaign,adset,ads[0]);
  return plan;

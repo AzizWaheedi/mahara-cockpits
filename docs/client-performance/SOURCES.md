@@ -656,6 +656,49 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
 - **Checked against:** Meta account insights (equal: Khalida 146, Atlantis
   101, Liwan 51, Ideal Elite 31).
 
+### Funnel of a campaign (media buyer client page, 20261026s)
+
+- **Source of truth:** `cockpit_meta_ad_days.destination_type` and
+  `objective` per ad set, read by `cockpit_media_campaign_funnels` for the
+  campaigns in the cockpit's campaign list (`cockpit_media_campaign_allowed`)
+  and, since 20261026u, for a campaign with a card in the current board
+  snapshot (`boardCards`) of a client the seat may see, matched by the card's
+  tag.
+- **Rule:** `ON_AD` = instant form; a WhatsApp, Messenger or Instagram DM
+  destination is that chat; a lead objective with any other destination is a
+  website (Meta reports `UNDEFINED` for website lead campaigns), named "Lead
+  page" for a client that has one; a lead objective with no destination is
+  "Funnel not known"; any other objective is "Other ads". A campaign counts
+  whole under the funnel it spent most on; a second funnel with 10% or more
+  of its spend is named on the line.
+- **The numbers:** each funnel line adds up the client page's own campaign
+  figures (the tracker sheet), so the lines add up to the page's totals.
+  Meta's figures only decide the funnel.
+- **Checked against:** Merge Studio, 27 Sep to 25 Oct 2026: the instant form
+  campaign has $323.51 and 37 leads in both the tracker sheet and
+  `cockpit_meta_ad_days`.
+- **Known gaps:** the campaign list counts full days only (through yesterday)
+  and skips a campaign with under $0.50 in those 7 days, so a campaign that
+  first spent today is in no funnel line until the next morning update
+  (Merge Studio's web campaign on 26 Oct, card made at 17:36). The Lead page
+  shows Meta's clicks for it, today included, and says it has no full day in
+  the numbers above yet (20261026u). Triple Edge's `LEAD_GENERATION` campaign
+  reports `UNDEFINED` with no landing page views and reads as website ($19.91,
+  Aug to Oct 2026).
+
+### Lead page visits from ads (20261026s)
+
+- **Source of truth:** `cockpit_page_form_events` (Edge Function
+  `page-form-events`), counted by `cockpit_page_form_funnel`.
+- **Rule:** a visit is from an ad when its link carries `ad_id` or
+  `campaign_id`, or `utm_medium=paid` with a numeric campaign or ad id in
+  `utm_campaign` or `utm_content`. Meta adds these parameters to website ads
+  by itself. Before 20261026s only `ad_id` counted, so Merge Studio's 10 ad
+  visits on 26 Oct read as 0.
+- **Beside it:** Meta's link clicks and landing page views on the client's
+  website campaigns, same days, from `cockpit_meta_ad_days`. They run a little
+  above the page's own visits: some people leave before the page loads.
+
 ### Video: hook rate, plays, retention, ThruPlays, hold rate
 
 - **Source of truth:** `cockpit_meta_ad_days.video_3s` (actions video_view),

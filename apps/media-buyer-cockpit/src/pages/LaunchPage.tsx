@@ -22,7 +22,13 @@ import {
   clientState,
 } from "@/components/launch/ClientDirectory";
 import { ClientService } from "@/components/launch/ClientService";
+import {
+  type CardDetails,
+  cardDetailsMissing,
+  LaunchCardDetails,
+} from "@/components/launch/LaunchCardDetails";
 import { LaunchSetup } from "@/components/launch/LaunchSetup";
+import { LogLaunch } from "@/components/launch/LogLaunch";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -155,6 +161,7 @@ function LaunchDetail({
   const [linkAccount, setLinkAccount] = useState("");
   const [choices, setChoices] = useState<any>(null);
   const [setup, setSetup] = useState<Record<string, any>>({});
+  const [details, setDetails] = useState<CardDetails>({});
   const [linkPlan, setLinkPlan] = useState<any>(null);
   useEffect(() => {
     let ignore = false;
@@ -162,6 +169,7 @@ function LaunchDetail({
     setReadError("");
     setPlan(null);
     setSetup({});
+    setDetails({});
     if (!account) return;
     setReading(true);
     launchOperation(client, "launch.readiness", {
@@ -206,6 +214,19 @@ function LaunchDetail({
     history: c.history.filter(h => h.account_id === account),
   });
   const cap = ready?.budget?.cap;
+  // A switch on with no card makes the card, so it needs the launch form's answers first.
+  const switchName =
+    route === "switchOn"
+      ? (pending?.campaign_name ??
+        ready?.candidates?.find((x: any) => x.id === source)?.name)
+      : undefined;
+  const needsCard =
+    !!switchName &&
+    !pending?.card_task_id &&
+    !c.cards.some((x: any) => (x.name ?? x.taskName) === switchName);
+  const detailsMissing = needsCard
+    ? cardDetailsMissing(details, "switchOn")
+    : null;
   const applyEnabled =
     (ready?.applyEnabled === true || choices?.applyEnabled === true) &&
     !rehearse &&
@@ -224,6 +245,7 @@ function LaunchDetail({
           accountId: account,
           sourceCampaignId: source,
           ...(route === "switchOn" && pending ? { launchId: pending.id } : {}),
+          ...(needsCard ? { details } : {}),
           dailyBudgetUsd: Number(budget),
           check,
           rehearse,
@@ -654,8 +676,8 @@ function LaunchDetail({
               ))
             ) : (
               <p>
-                No ads card yet. A confirmed campaign build creates its card
-                with the same name.
+                No ads card yet. Switching a campaign on here, or logging one
+                launched in Ads Manager, makes its card with the same name.
               </p>
             )}
           </section>
@@ -878,6 +900,24 @@ function LaunchDetail({
                           · Limit ${cap}
                         </small>
                       </label>
+                      {needsCard && (
+                        <LaunchCardDetails
+                          key={`${account}-${pending?.id ?? source}`}
+                          mode="switchOn"
+                          client={client}
+                          c={c}
+                          account={account}
+                          campaignId={pending?.meta_campaign_id ?? source}
+                          campaignName={switchName}
+                          spendUsd={Number(budget) || undefined}
+                          rehearse={rehearse}
+                          value={details}
+                          onChange={v => {
+                            setDetails(v);
+                            setPlan(null);
+                          }}
+                        />
+                      )}
                       {route === "new" && (
                         <p className="launch-inline-note">
                           The plan needs approved copy, a Page, an audience and
@@ -907,7 +947,9 @@ function LaunchDetail({
                             <span>{i + 1}</span>
                             <div>
                               {s.provider === "clickup"
-                                ? "Update the Ads Management card"
+                                ? s.path?.endsWith("/task")
+                                  ? "Create the Ads Management card with the launch details"
+                                  : "Update the Ads Management card"
                                 : s.body?.status === "ACTIVE"
                                   ? "Switch on the selected object"
                                   : s.path.endsWith("/campaigns")
@@ -945,9 +987,10 @@ function LaunchDetail({
                   <div className="launch-plan-footer">
                     <span>
                       <ShieldCheck size={14} />
-                      {route === "switchOn"
-                        ? "First impressions confirm delivery."
-                        : "Created paused. Switch on is a separate step."}
+                      {detailsMissing ??
+                        (route === "switchOn"
+                          ? "First impressions confirm delivery."
+                          : "Created paused. The ClickUp card is made at switch on.")}
                     </span>
                     <div>
                       {applyEnabled && plan && (
@@ -964,6 +1007,7 @@ function LaunchDetail({
                           busy ||
                           reading ||
                           !activeRoute?.available ||
+                          !!detailsMissing ||
                           plan?.check?.ready === false
                         }
                         onClick={() => preview(applyEnabled && !!plan)}
@@ -980,6 +1024,18 @@ function LaunchDetail({
                     </div>
                   </div>
                 </section>
+              )}
+              {!c.readOnly && account && (
+                <LogLaunch
+                  key={account}
+                  client={client}
+                  c={c}
+                  account={account}
+                  ready={ready}
+                  applyEnabled={applyEnabled}
+                  rehearse={rehearse}
+                  refresh={refresh}
+                />
               )}
             </>
           )}

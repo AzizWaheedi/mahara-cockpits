@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from tests import fakes
+import checks as checks_mod
 from checks import edge_functions, pg_cron, queues, sections, supabase, syncs, whatsapp, worker_status
 from guard import engine
 from guard.context import SourceError
@@ -537,6 +538,166 @@ class Queues(unittest.TestCase):
         self.assertIn("1 Salma job(s)", r.summary)
         rows["social_jobs"][0]["updated_at"] = fakes.ago(30)
         self.assertEqual(queues.queue_check(q)(make(rows)).status, OK)
+
+
+def notice(state, minutes, **kw):
+    return {"id": f"n-{state}-{minutes}", "kind": "kickoff", "state": state, "created_at": fakes.ago(minutes), **kw}
+
+
+def press(state, minutes, kind="blueprintClose", **kw):
+    return {"id": f"p-{kind}-{state}-{minutes}", "kind": kind, "state": state, "client_name": "Sample client",
+            "created_at": fakes.ago(minutes), **kw}
+
+
+class StageOneQueues(unittest.TestCase):
+    """docs/forms/STAGE1-CONTRACT.md section 7: the Slack notices and the Brand Blueprint presses."""
+
+    def q(self, qid):
+        return next(x for x in queues.QUEUES if x.id == qid)
+
+    def run_q(self, qid, tables):
+        db = fakes.FakeDb(tables)
+        return queues.queue_check(self.q(qid))(make(db=db)), db
+
+    def test_the_rows_read_the_state_column_and_their_errors(self):
+        for qid, table in (("queue-slack-notices", "cockpit_slack_notices"),
+                           ("queue-creative-blueprint", "cockpit_creative_outbox"),
+                           ("queue-creative-reconcile", "cockpit_creative_outbox")):
+            q = self.q(qid)
+            self.assertEqual((q.table, q.status_col, q.owner), (table, "state", "the tech lead"), qid)
+            self.assertIn(table, queues.WITH_ERROR)
+            c = checks_mod.by_id()[qid]
+            self.assertIn("where state in", c.reads)
+        self.assertEqual(self.q("queue-slack-notices").states, ("queued", "sending", "unknown"))
+        self.assertEqual(self.q("queue-slack-notices").kind_col, "kind")
+        self.assertNotIn("kickoff.updated", self.q("queue-slack-notices").kinds)
+        self.assertIn("RUNBOOK, Slack notices", self.q("queue-slack-notices").action)
+        self.assertIn("RUNBOOK, Brand Blueprint press drain", self.q("queue-creative-blueprint").action)
+
+    def test_a_notice_waits_30_minutes_because_a_kickoff_waits_20_for_make(self):
+        q = self.q("queue-slack-notices")
+        self.assertEqual(q.limit_min, 30)
+        r, _ = self.run_q("queue-slack-notices", {"cockpit_slack_notices": [notice("queued", 19), notice("sending", 2)]})
+        self.assertEqual(r.status, OK)
+        self.assertIn("2 open", r.summary)
+
+    def test_a_notice_past_30_minutes_warns_with_its_state_and_error(self):
+        rows = {"cockpit_slack_notices": [
+            notice("unknown", 45, error="Slack did not confirm the post; it is not sent again in case it arrived."),
+            notice("queued", 5), notice("posted", 300), notice("skipped", 400)]}
+        r, _ = self.run_q("queue-slack-notices", rows)
+        self.assertEqual(r.status, WARN)
+        self.assertIn("1 Slack notice(s) waited past 30 min; the oldest is unknown for 45 min", r.summary)
+        self.assertIn("Slack did not confirm the post", r.summary)
+        self.assertEqual(r.evidence["oldest"]["status"], "unknown")
+        self.assertEqual(r.items, ["waiting"])
+
+    def test_a_failed_notice_in_24_hours_warns_by_its_finish_time(self):
+        rows = {"cockpit_slack_notices": [
+            notice("failed", 60, finished_at=fakes.ago(50),
+                   error="Slack says mahara-club-bot is not in #csm-general. Invite it there."),
+            notice("failed", 3000, finished_at=fakes.ago(2990), error="an old one")]}
+        r, _ = self.run_q("queue-slack-notices", rows)
+        self.assertEqual(r.status, WARN)
+        self.assertIn("1 Slack notice(s) failed in the last 24 h", r.summary)
+        self.assertIn("mahara-club-bot is not in #csm-general", r.summary)
+        self.assertNotIn("an old one", r.summary)
+        self.assertEqual(r.items, ["failed"])
+
+    def test_a_late_kickoffs_reply_waiting_for_the_comment_is_read_by_its_next_turn(self):
+        # The reply is requeued every 10 minutes while the card lacks its Kickoff Handoff comment: old by
+        # created_at, never late by next_attempt_at. The main row leaves it out.
+        waiting = notice("queued", 600, kind="kickoff.updated", next_attempt_at=fakes.ago(-8),
+                         error="Waiting for the card's Kickoff Handoff comment before saying the card is updated.")
+        r, _ = self.run_q("queue-slack-notices", {"cockpit_slack_notices": [waiting]})
+        self.assertEqual(r.status, OK)
+        r, _ = self.run_q("queue-slack-notice-replies", {"cockpit_slack_notices": [waiting]})
+        self.assertEqual(r.status, OK)
+        # The sender stopped picking it up: its turn passed 40 minutes ago.
+        stuck = {**waiting, "next_attempt_at": fakes.ago(40)}
+        r, _ = self.run_q("queue-slack-notice-replies", {"cockpit_slack_notices": [stuck, notice("queued", 600)]})
+        self.assertEqual(r.status, WARN)
+        self.assertIn("1 Kickoff card updated reply(s) waited past 30 min; the oldest is queued for 40 min", r.summary)
+        # An unknown reply still needs a person, and a failed one warns too.
+        r, _ = self.run_q("queue-slack-notice-replies", {"cockpit_slack_notices": [
+            notice("failed", 90, kind="kickoff.updated", finished_at=fakes.ago(30), error="Slack refused it (x)."),
+            notice("failed", 90, finished_at=fakes.ago(30), error="a kickoff's own failure")]})
+        self.assertEqual(r.status, WARN)
+        self.assertNotIn("a kickoff's own failure", r.summary)
+
+    def test_a_blueprint_press_stuck_sending_warns(self):
+        # A run stopped after its claim leaves the press sending: no notice, no retry, the card spinning.
+        q = self.q("queue-creative-blueprint")
+        self.assertEqual(q.states, ("pending", "sending"))
+        r, _ = self.run_q("queue-creative-blueprint", {"cockpit_creative_outbox": [press("sending", 3)]})
+        self.assertEqual(r.status, OK)
+        r, _ = self.run_q("queue-creative-blueprint", {"cockpit_creative_outbox": [press("sending", 240)]})
+        self.assertEqual(r.status, WARN)
+        self.assertIn("the oldest is sending for 4.0 h", r.summary)
+        self.assertIn("settle it by hand", q.action)
+
+    def test_a_blueprint_press_pending_past_10_minutes_warns(self):
+        r, _ = self.run_q("queue-creative-blueprint", {"cockpit_creative_outbox": [press("pending", 8)]})
+        self.assertEqual(r.status, OK)
+        r, _ = self.run_q("queue-creative-blueprint", {"cockpit_creative_outbox": [
+            press("pending", 14, kind="blueprintLaunch", error="The card already has two open launch tasks.")]})
+        self.assertEqual(r.status, WARN)
+        self.assertIn("1 Brand Blueprint press(s) waited past 10 min; the oldest is pending for 14 min", r.summary)
+        self.assertIn("two open launch tasks", r.summary)
+
+    def test_the_kind_filter_leaves_other_outbox_rows_out(self):
+        q = self.q("queue-creative-blueprint")
+        self.assertEqual(q.kinds, ("blueprintLaunch", "blueprintClose", "blueprintOffer"))
+        self.assertEqual(q.scope(), [("kind", "in", ["blueprintLaunch", "blueprintClose", "blueprintOffer"])])
+        others = [press("pending", 300, kind="touch"), press("failed", 60, kind="fieldWrite", settled_at=fakes.ago(30)),
+                  press("reconcile", 90, kind="fieldWrite")]
+        for qid in ("queue-creative-blueprint", "queue-creative-reconcile"):
+            r, _ = self.run_q(qid, {"cockpit_creative_outbox": others})
+            self.assertEqual(r.status, OK, qid)
+        self.assertEqual(self.q("queue-social-jobs").scope(), [])
+
+    def test_a_failed_press_in_24_hours_warns_by_its_settle_time(self):
+        rows = {"cockpit_creative_outbox": [
+            press("failed", 50, kind="blueprintOffer", settled_at=fakes.ago(20),
+                  error="This press did not finish within 30 minutes. Press again."),
+            press("failed", 50, kind="fieldWrite", settled_at=fakes.ago(20), error="not a Blueprint press")]}
+        r, _ = self.run_q("queue-creative-blueprint", rows)
+        self.assertEqual(r.status, WARN)
+        self.assertIn("1 Brand Blueprint press(s) failed in the last 24 h", r.summary)
+        self.assertIn("did not finish within 30 minutes", r.summary)
+        self.assertNotIn("not a Blueprint press", r.summary)
+
+    def test_any_press_in_reconcile_warns_at_once(self):
+        q = self.q("queue-creative-reconcile")
+        self.assertEqual((q.states, q.limit_min, q.failed_col), (("reconcile",), 0, None))
+        r, _ = self.run_q("queue-creative-reconcile", {"cockpit_creative_outbox": []})
+        self.assertEqual(r.status, OK)
+        self.assertEqual(r.summary, "No Brand Blueprint press needing a look is open.")
+        r, _ = self.run_q("queue-creative-reconcile", {"cockpit_creative_outbox": [
+            press("reconcile", 3, error="The card read back a different Onboarding Map.")]})
+        self.assertEqual(r.status, WARN)
+        self.assertIn("1 Brand Blueprint press needing a look(s) are open; the oldest is reconcile for 3 min", r.summary)
+        self.assertIn("different Onboarding Map", r.summary)
+        c = checks_mod.by_id()["queue-creative-reconcile"]
+        self.assertEqual(c.threshold, "Any open row: warn.")
+        self.assertNotIn("under a minute", c.means + c.threshold)
+
+    def test_no_client_name_is_read_or_shown(self):
+        r, _ = self.run_q("queue-creative-blueprint", {"cockpit_creative_outbox": [press("pending", 14)]})
+        self.assertNotIn("Sample client", r.summary)
+        self.assertNotIn("client_name", str(r.evidence))
+        self.assertNotIn("client_name", checks_mod.by_id()["queue-creative-blueprint"].reads)
+
+    def test_the_other_queues_still_read_status(self):
+        for q in queues.QUEUES:
+            if q.table not in ("cockpit_slack_notices", "cockpit_creative_outbox"):
+                self.assertEqual((q.status_col, q.kind_col, q.kinds), ("status", None, ()), q.id)
+
+    def test_the_sender_and_the_drain_are_expected(self):
+        self.assertIs(edge_functions.EXPECTED["cockpit-notices"], False)
+        self.assertIs(edge_functions.EXPECTED["cockpit-creative-api"], True)
+        self.assertIn("mahara-slack-notices", pg_cron.EXPECTED_JOBS)
+        self.assertIn("mahara-creative-drain", pg_cron.EXPECTED_JOBS)
 
 
 if __name__ == "__main__":

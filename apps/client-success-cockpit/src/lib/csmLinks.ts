@@ -142,11 +142,6 @@ export const LINK_GROUPS: LinkGroup[] = [
         label: "NPS survey",
         url: "https://maharamedia.typeform.com/to/fuPgs85S",
       },
-      {
-        label: "Card details form",
-        url: "https://maharamedia.typeform.com/to/Uju17Z13",
-        note: "Send it when they need to change the card the ads bill to",
-      },
     ],
   },
   {

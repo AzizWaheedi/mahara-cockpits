@@ -64,3 +64,23 @@
 .client-service-check > button { flex-shrink: 0; }
 .client-service-loading { display: flex; gap: 8px; align-items: center; }
 @media(max-width: 480px) { .client-service-choices { grid-template-columns: 1fr; } .client-service-check { flex-wrap: wrap; } .client-service-check > button { margin-left: 30px; } .client-service-campaigns li { flex-wrap: wrap; } }
+
+/* The ClickUp card the cockpit makes in place of the "Launch New Campaign" form: a quiet panel shaped like the card it creates. */
+.launch-card-form { display: grid; gap: 18px; padding: 18px; border-radius: 14px; background: color-mix(in oklch, var(--muted) 40%, transparent); }
+.launch-card-form-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.launch-card-form-head > div { min-width: 0; }
+.launch-card-form-head p:not(.launch-eyebrow) { font-size: 12px; line-height: 1.6; color: var(--muted-foreground); }
+.launch-card-form-head .launch-eyebrow { margin-bottom: 6px; }
+.launch-card-name { display: flex; align-items: center; gap: 8px; font: 12px var(--font-mono, monospace); color: var(--foreground) !important; overflow-wrap: anywhere; margin-bottom: 6px; }
+.launch-card-tag { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--border); background: var(--card); border-radius: 999px; padding: 3px 10px; font-size: 11px; color: var(--muted-foreground); }
+.launch-card-questions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.launch-card-questions label { display: grid; gap: 7px; font-size: 12px; align-content: start; min-width: 0; }
+.launch-card-questions .wide { grid-column: 1 / -1; }
+.launch-card-questions small { color: var(--muted-foreground); font-size: 11px; }
+.launch-card-questions textarea { width: 100%; min-height: 72px; border: 1px solid var(--border); border-radius: 9px; padding: 10px; background: var(--background); font-size: 13px; resize: vertical; }
+.launch-card-questions textarea:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.launch-section .launch-card-fixed { margin: 0; }
+.launch-card-fixed dd { overflow-wrap: anywhere; }
+.launch-card-fixed dd a { display: inline-flex; align-items: center; gap: 4px; }
+.launch-card-fixed > div:last-child { border-bottom: 0; }
+@media(max-width: 600px) { .launch-card-questions { grid-template-columns: minmax(0, 1fr); } .launch-card-form { padding: 14px; } .launch-card-form-head { flex-direction: column; } .launch-card-tag { max-width: 100%; } }

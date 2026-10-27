@@ -40,9 +40,15 @@ const when = (iso: string) =>
 export function LeadPageSection({
   read,
   className,
+  metaCampaigns = [],
+  waitingCampaigns = [],
 }: {
   read: PageFormsRead;
   className?: string;
+  /** The client's website campaigns: Meta's clicks on them go beside the page's visits. */
+  metaCampaigns?: string[];
+  /** Website campaigns on the ads board with no full day in the client's numbers yet. */
+  waitingCampaigns?: string[];
 }) {
   const pages = read.data ?? [];
   return (
@@ -73,7 +79,13 @@ export function LeadPageSection({
       ) : (
         <div className="mt-4 divide-y">
           {pages.map(page => (
-            <PageBlock key={page.slug} page={page} onChanged={read.reload} />
+            <PageBlock
+              key={page.slug}
+              page={page}
+              onChanged={read.reload}
+              metaCampaigns={metaCampaigns}
+              waitingCampaigns={waitingCampaigns}
+            />
           ))}
         </div>
       )}
@@ -84,9 +96,13 @@ export function LeadPageSection({
 function PageBlock({
   page,
   onChanged,
+  metaCampaigns,
+  waitingCampaigns,
 }: {
   page: PageFormPage;
   onChanged: () => void;
+  metaCampaigns: string[];
+  waitingCampaigns: string[];
 }) {
   const [editing, setEditing] = useState(false);
   const [target, setTarget] = useState<PageFormVersion | null>(null);
@@ -192,6 +208,8 @@ function PageBlock({
         slug={page.slug}
         liveLabel={liveLabel}
         tick={page.liveVersion}
+        metaCampaigns={metaCampaigns}
+        waitingCampaigns={waitingCampaigns}
       />
 
       {page.versions.length > 0 && (

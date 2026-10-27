@@ -464,6 +464,7 @@ export function PrepView({
                   d={d}
                   slideId={slide.id}
                   reload={model.reload}
+                  inPrep
                 />
               ) : isOfferDeck(deck) ? (
                 <OfferNotes offer={base.offer} model={model} />

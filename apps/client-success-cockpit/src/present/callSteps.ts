@@ -163,8 +163,8 @@ function blueprint(place: GuidePlace): GuideStep[] {
     {
       id: "prep",
       group: "before",
-      title: "Read the prep and draft the offer",
-      how: "Check what the kickoff already answered. Write your offer draft in their offer sheet before the call.",
+      title: "Confirm part 1 and draft the offer in prep",
+      how: "Confirm part 1, set the Brand DNA status and write your offer draft. On the call they read as text.",
       done: f => opened(f) || f.parts[1],
     },
     {
@@ -172,8 +172,8 @@ function blueprint(place: GuidePlace): GuideStep[] {
       group: "before",
       title: "Open the notes window on your second screen",
       how: place.hosted
-        ? "Use Open the notes window at the top of this page. You type their answers there, slide by slide."
-        : "You type their answers there, slide by slide.",
+        ? "Use Open the notes window at the top of this page. Its teal card says when to tap; the client's answers go on the slide."
+        : "Its teal card says when to tap; the client's answers go on the slide.",
       target: "notes",
       done: f => f.notesOpen || f.parts[1],
     },
@@ -193,7 +193,7 @@ function blueprint(place: GuidePlace): GuideStep[] {
       id: "part1",
       group: "call",
       title: "Send the starter ads to media",
-      how: "On the starter ads slide, pick the pack, then press Send to media in the notes window.",
+      how: "On the starter ads slide, get their yes on the slide, then press Send to media in the notes window.",
       target: "part1",
       done: f => f.parts[1],
     },
@@ -207,9 +207,9 @@ function blueprint(place: GuidePlace): GuideStep[] {
     },
     {
       id: "close",
-      group: "call",
-      title: "Book the launch call, then close the call",
-      how: "On the last slide, book the launch call with them, then press Close the call.",
+      group: "after",
+      title: "Book the launch call, then wrap up",
+      how: "Book the launch call on the last slide. After you hang up, the notes window opens the wrap-up: press Close the call there.",
       target: "part2",
       done: f => f.parts[2],
     },

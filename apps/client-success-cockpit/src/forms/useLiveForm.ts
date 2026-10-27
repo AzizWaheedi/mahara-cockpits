@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { readClientTimeline, type Timeline } from "@/lib/csmCalls";
+import { readNotices } from "@/lib/notices";
 import {
   readOnboardingKits,
   refreshOnboardingKits,
@@ -8,7 +9,13 @@ import {
 import type { KitsPage } from "@/lib/onboardingCore";
 import { type DeckSources, readDeckSources } from "@/present/sources";
 import { readFormSends, recordFormSend, type SendInput } from "./formClient";
-import type { FormConfig, FormContext, FormKey, FormSend } from "./formConfig";
+import type {
+  FormConfig,
+  FormContext,
+  FormKey,
+  FormSend,
+  NoticeRead,
+} from "./formConfig";
 import { announceForm, type FormNews } from "./OpenFormButton";
 import { formLink } from "./prefill";
 import type { FormIO } from "./useFormPanel";
@@ -50,6 +57,11 @@ export interface FormReads {
   record(input: SendInput): Promise<{ send: FormSend }>;
   /** The one-card refresh (onboarding.refresh). */
   refresh(): Promise<Pick<KitsPage, "rows" | "now" | "problem">>;
+  /**
+   * cockpit_slack_notice_read, this card: the trail's Slack stop. Only the
+   * kickoff window reads it; the deck, on the client's screen, does not.
+   */
+  notices?(): Promise<NoticeRead>;
   /** Tells the cockpit's own tab. */
   announce?(news: FormNews): void;
 }
@@ -59,12 +71,14 @@ export function formReads(
   client: SupabaseClient | null,
   taskId: string,
   form: FormKey,
+  /** `notices: true`: the trail's Slack stop (the kickoff window only). */
+  opts: { notices?: boolean } = {},
 ): FormReads {
   const need = () => {
     if (!client) throw Error("Sign in to the cockpit first.");
     return client;
   };
-  return {
+  const reads: FormReads = {
     kits: async () => readOnboardingKits(need(), [taskId]),
     deck: async () => readDeckSources(need(), taskId),
     timeline: async () => readClientTimeline(need(), taskId),
@@ -73,6 +87,8 @@ export function formReads(
     refresh: async () => refreshOnboardingKits(need(), taskId, [taskId]),
     announce: announceForm,
   };
+  if (opts.notices) reads.notices = async () => readNotices(need(), taskId);
+  return reads;
 }
 
 const said = (e: unknown) => String((e as Error)?.message ?? e ?? "").trim();
@@ -146,11 +162,12 @@ export function useLiveForm({
   }, []);
 
   const load = useCallback(async () => {
-    const [kits, deck, timeline, sends] = await Promise.allSettled([
+    const [kits, deck, timeline, sends, notices] = await Promise.allSettled([
       reads.kits(),
       reads.deck(),
       reads.timeline(),
       reads.sends(),
+      reads.notices ? reads.notices() : Promise.resolve(null),
     ]);
     if (kits.status === "rejected") {
       setState(blockedFor(kits.reason, cfg, taskId));
@@ -169,6 +186,7 @@ export function useLiveForm({
         deck: deck.status === "fulfilled" ? deck.value : null,
         timeline: timeline.status === "fulfilled" ? timeline.value : null,
         sends: sends.status === "fulfilled" ? sends.value.sends : [],
+        notices: notices.status === "fulfilled" ? notices.value : null,
         me,
         now: kits.value.now,
         readAt: Date.now(),
@@ -177,6 +195,10 @@ export function useLiveForm({
           timeline:
             timeline.status === "rejected" ? said(timeline.reason) : undefined,
           sends: sends.status === "rejected" ? said(sends.reason) : undefined,
+          notices:
+            notices.status === "rejected"
+              ? said(notices.reason) || "No reason was given."
+              : undefined,
         },
       },
     });
@@ -185,6 +207,24 @@ export function useLiveForm({
   useEffect(() => {
     void load();
   }, [load]);
+
+  // The notices again: a failed read keeps the last one and says so.
+  const readNoticesAgain = useCallback(async () => {
+    if (!reads.notices) return;
+    try {
+      const notices = await reads.notices();
+      update(ctx => ({
+        ...ctx,
+        notices,
+        failed: { ...ctx.failed, notices: undefined },
+      }));
+    } catch (e) {
+      update(ctx => ({
+        ...ctx,
+        failed: { ...ctx.failed, notices: said(e) || "No reason was given." },
+      }));
+    }
+  }, [reads, update]);
 
   // The client's row, prep (slide 4's service pick) and the call store are
   // read again when the window gets focus: a pick made on the deck shows up
@@ -195,6 +235,7 @@ export function useLiveForm({
     const onFocus = () => {
       if (Date.now() - lastFocusRead.current < 10_000) return;
       lastFocusRead.current = Date.now();
+      void readNoticesAgain();
       void Promise.allSettled([
         reads.deck(),
         reads.timeline(),
@@ -226,7 +267,7 @@ export function useLiveForm({
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [reads, taskId, update]);
+  }, [reads, taskId, update, readNoticesAgain]);
 
   const io = useMemo<FormIO>(
     () => ({
@@ -246,6 +287,7 @@ export function useLiveForm({
         const [timeline, sends] = await Promise.allSettled([
           reads.timeline(),
           reads.sends(),
+          readNoticesAgain(),
         ]);
         update(ctx => ({
           ...ctx,
@@ -271,8 +313,9 @@ export function useLiveForm({
         }));
       },
       announce: reads.announce,
+      ...(reads.notices ? { notices: readNoticesAgain } : {}),
     }),
-    [reads, taskId, update],
+    [reads, taskId, update, readNoticesAgain],
   );
 
   const refresh = useCallback(async () => {

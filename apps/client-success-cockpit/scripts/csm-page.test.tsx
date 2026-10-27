@@ -50,7 +50,7 @@ const KITS = {
   now: "2026-10-05T08:00:00.000Z",
 };
 
-let currentSnapshot: any = undefined;
+let currentSnapshot: any;
 let isSnapshotLoading = true;
 let snapshotError: Error | null = null;
 
@@ -226,6 +226,49 @@ const mockClient: any = {
               ]
             : [],
           now: "2026-10-05T08:00:00Z",
+        },
+        error: null,
+      });
+    }
+    // The Slack notices (docs/forms/STAGE1-CONTRACT.md 2.1): the close
+    // posted in #csm-general, its #media-general post refused.
+    if (name === "cockpit_slack_notice_read") {
+      return Promise.resolve({
+        data: {
+          taskId: _args.p_task_id,
+          now: "2026-10-05T08:00:00Z",
+          notices: [
+            {
+              id: "00000000-0000-4000-8000-0000000000a2",
+              kind: "blueprint.media",
+              state: "failed",
+              variant: null,
+              responseId: null,
+              outboxId: "00000000-0000-4000-8000-0000000000b1",
+              parentKind: null,
+              channel: { id: "C0AE8G5MT7Y", name: "media-general" },
+              at: "2026-10-05T07:45:00Z",
+              dueAt: null,
+              permalink: null,
+              reason:
+                "Slack says mahara-club-bot is not in that channel. Ask the tech lead to add it there and send the notice again.",
+            },
+            {
+              id: "00000000-0000-4000-8000-0000000000a1",
+              kind: "blueprint.close",
+              state: "posted",
+              variant: "done",
+              responseId: null,
+              outboxId: "00000000-0000-4000-8000-0000000000b1",
+              parentKind: null,
+              channel: { id: "C09RZ0GS0V9", name: "csm-general" },
+              at: "2026-10-05T07:45:00Z",
+              dueAt: null,
+              permalink:
+                "https://example-workspace.slack.com/archives/C09RZ0GS0V9/p1",
+              reason: null,
+            },
+          ],
         },
         error: null,
       });
@@ -1298,9 +1341,45 @@ test("an onboarding client's row and page show its onboarding steps", async () =
       "Starter ads sent 10:12 · call closed 10:44 · offer not locked yet",
     );
     expect(text).toContain("Open the Blueprint deck");
+    // The close's Slack stops (STAGE1-CONTRACT.md 6.1): where and when it
+    // posted, and what to do about the one that did not.
+    expect(text).toContain("Posted in #csm-general at 10:45");
+    // One label, the stop's own: the lead carries the warning, the reason
+    // is a plain sentence after it.
+    expect(text).toContain(
+      "Not posted in #media-general. Slack says mahara-club-bot is not in that channel. Ask the tech lead to add it there and send the notice again.",
+    );
+    expect(text).not.toMatch(/: Slack (says|refused it):/);
+    const lead = Array.from(page.querySelectorAll(".txt-warn")).find(
+      (e: any) => e.textContent === "Not posted in #media-general.",
+    );
+    expect(lead).toBeTruthy();
+    // Teal words in light mode use the ink token (index.css: --primary is about 1.9:1 on white).
+    const slackLink = Array.from(page.querySelectorAll("a")).find(
+      (a: any) => a.textContent === "Open in Slack",
+    ) as any;
+    expect(slackLink?.className).toContain("text-primary-ink");
+    const copyLink = Array.from(page.querySelectorAll("button")).find(
+      (b: any) =>
+        (b.textContent ?? "").includes("Copy the kickoff window's link"),
+    ) as any;
+    expect(copyLink?.className).toContain("text-primary-ink");
+    // The kickoff window's own address, to copy (PLAN.md S10).
+    expect(text).toContain("Copy the kickoff window's link");
     // Make 14 module [7]'s text is in the cockpit (PHASE5_WHATSAPP), so the
     // CSM copies the whole message, not only the map link.
-    expect(text).toContain("Copy the phase 5 message for the group");
+    expect(text).toContain("Copy the phase 5 message");
+    // Every teal word in this item is the same ink teal (one teal, legible
+    // on white), and a copy label that wraps keeps to the left.
+    const deckButton = Array.from(page.querySelectorAll("button")).find(
+      (b: any) => (b.textContent ?? "").includes("Open the Blueprint deck"),
+    ) as any;
+    expect(deckButton?.className).toContain("text-primary-ink");
+    const phase5 = Array.from(page.querySelectorAll("button")).find((b: any) =>
+      (b.textContent ?? "").includes("Copy the phase 5 message"),
+    ) as any;
+    expect(phase5?.className).toContain("text-left");
+    expect(phase5?.className).toContain("text-primary-ink");
     // The kickoff opens in its own window, by name, at the client's form
     // route (docs/csm-forms/KICKOFF.md 1): the record builds its client ID.
     const opened: string[][] = [];
