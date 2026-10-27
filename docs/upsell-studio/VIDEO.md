@@ -106,3 +106,32 @@ The manifest still blocks client delivery for the English take's unrecorded comm
 ## Current narration account and real-clip check
 
 Read-only provider check on 27 October 2026: ElevenLabs remains on the free tier with zero credits. The API has no explicit commercial-licence field; the [official policy](https://elevenlabs.io/docs/help-center/legal/can-i-publish-the-content-i-generate-on-the-platform) excludes free-tier output from commercial use, including takes made before an upgrade. A new licensed current-script take is required. Both documented `/home/hermes/upsell-build/media/real/aziz-close-{en,ar}.mp4` files are absent. No synthesis, purchase or upload was performed.
+
+
+## Nabarati narration and all-offer preparation, 27 October 2026
+
+The user resumed narration and pointed to an existing Nabarati subscription. The signed-in UI showed Professional with 597,378 points and one day remaining at the check. The official Nabarati FAQ states paid plans include commercial use for advertising and marketing content. No ElevenLabs plan, new subscription, purchase or renewal change was made.
+
+Six small auditions were generated from the earlier approved Website excerpt: Arabic Rakan, Adel and Sami; English Rakan, Sami and Hashem. The observed balance fell to 595,245, a total of 2,133 existing points. Exact input/audio hashes, settings and source-plan evidence are in `tools/offer-video/narration/v1/auditions.json`. WAV sources and level-matched 192 kbps MP3 comparisons remain versioned under `/home/hermes/upsell-studio-video/all-offers/narration-v1/auditions/`. This is genuine new paid-plan output, separate from the older free-plan English draft.
+
+All six WAVs are mono, 44.1 or 48 kHz, 8.68 to 10.48 seconds. Raw true peaks are below 0 dBTP; English Hashem has only 0.24 dB of headroom, so it needs limiting at mastering. Comparison MP3s measure about -16.6 to -17.1 LUFS and -1.7 dBTP. These are measurements, not a subjective quality approval. Nobody in this agent review has claimed to hear or phone-speaker-test them. OpenAI transcription returned HTTP429, so exact words and pronunciation were not automatically verified. No paid fallback transcription or model installation was added.
+
+`tools/offer-video/narration/v1/APPROVAL.md` contains the complete seven-offer English/Arabic narration batch. Its 14 TXT files and `scripts.json` are consistent. It removes client ad-spend language and avoids treating the weekly social graphics as extra posts. The new Arabic adaptation and proposed neutral Mahara logo ending remain approval-pending. The earlier real Aziz closing requirement remains in force until explicitly amended. Never synthesize Aziz or relabel a slate as real footage. Closer recruiting readiness remains separate.
+
+The provider-neutral importer `scripts/narration_import.py` makes no remote calls or purchases. It binds the exact export to its script, observed paid entitlement and explicit approval evidence, refuses overwrites, rejects credential material and starts every import with `clientReady:false`. Ten focused integrity tests passed on the VPS. No undocumented Nabarati API has been invented: the verified path currently uses its native browser export.
+
+`film/offer_series.py` prepares separate silent internal HyperFrames picture projects for all seven offers in both languages. It preserves the earlier Website v4 film. Its sources are genuine Mahara logo files, the reviewed fictional example imagery, the fictional Hosh site capture, the existing catalog and the new script batch. The versioned projects are a visual starting point, not final films or audio-aligned timelines. See `series/STORYLINES.md` and `series/SPEC.md` for the selected Project Album direction and scope.
+
+Next gates: explicit full-copy/closing approval; actual chosen-voice listening; full narration generation while entitlement is valid; script/transcript verification and actual cue timing; final picture, captions and mastered audio checks; final human/phone-speaker review. No new video has been published or marked client-ready by this preparation.
+
+The source-only picture checkpoint is in `tools/offer-video/series/REVIEW.md`. It records the sampled UGC Arabic evidence, the repaired blank detail transition, and remaining phone-size and pacing work. The transition repair has not yet been rendered. `narration/v1/TRANSCRIPTION.md` records a pinned optional CPU transcription dependency; no package or model was installed during the app build. Keep all current silent layouts internal and preserve them as historical review versions.
+
+### Full-batch approval and production start
+
+The user subsequently approved all seven bilingual narration scripts and the genuine Mahara logo ending. The exact prior approval-sheet SHA256 is `1270fc4f0efeaaedf6d2ce1dee859158699167bcba46a7e3136e4750d0fb768d`; its receipt is appended to `narration/v1/APPROVAL.md`. The logo amendment applies to the new series and does not authorize any synthetic Aziz voice or face. `scripts.json` is copy-approved but remains `clientReady:false`.
+
+The paid Nabarati Professional account was rechecked before production: 595,245 points remained, and the subscription page displayed 27 October 2026 as its expiry date with its existing monthly renewal. No subscription or renewal setting was changed. Full Rakan takes are being exported one at a time into `/home/hermes/upsell-studio-video/all-offers/narration-v1/takes/`, with immutable script/audio receipts. Final ASR, pronunciation/listening, captions, picture and mastered-audio checks remain incomplete. No film publication or client-slot change is implied.
+
+### 27 October 2026, production export stop
+
+All 14 approved Rakan full narrations were generated with existing Nabarati Professional credits. Eight takes are imported and hash-verified; six generated records remain in the provider. The user explicitly stopped further downloads, so no export retry, alternate route or new generation is in progress. The exact scoped list and 24,339-point usage are recorded in `tools/offer-video/narration/v1/PRODUCTION.md`. Current picture findings in `series/REVIEW.md` distinguish historical silent layouts from the unrendered current rewrite. The pinned offline ASR runtime/model and 13 tested evidence/alignment checks are prepared, but heavy inference and final renders remain held for the concurrent CSM release. No source-only check grants client readiness or a listening pass.

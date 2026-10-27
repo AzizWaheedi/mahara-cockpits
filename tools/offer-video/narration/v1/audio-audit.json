@@ -1,0 +1,91 @@
+{
+  "checkedAt": "2026-10-27T12:15:45.954080+00:00",
+  "auditions": [
+    {
+      "file": "ar-adel.wav",
+      "audioSha256": "c349953952cc73ea5dd9b73b066d61150663e3ccf45bd060b9f088fc69ab3c1b",
+      "bytes": 898604,
+      "duration": 9.36,
+      "codec": "pcm_s16le",
+      "sampleRate": 48000,
+      "channels": 1,
+      "integratedLufs": -19.55,
+      "truePeakDbtp": -2.16,
+      "loudnessRange": 1.9,
+      "transcriptionStatus": "blocked: existing OpenAI transcription returned HTTP429; no transcript or exact-word pass",
+      "reviewStatus": "automated measurements only; no subjective listen"
+    },
+    {
+      "file": "ar-rakan.wav",
+      "audioSha256": "145ad331c4ae88ddad854aada9ad0eaf12a628fa1c24178ea8a59190b0c53124",
+      "bytes": 924380,
+      "duration": 10.48,
+      "codec": "pcm_s16le",
+      "sampleRate": 44100,
+      "channels": 1,
+      "integratedLufs": -19.29,
+      "truePeakDbtp": -2.18,
+      "loudnessRange": 2.0,
+      "transcriptionStatus": "blocked: existing OpenAI transcription returned HTTP429; no transcript or exact-word pass",
+      "reviewStatus": "automated measurements only; no subjective listen"
+    },
+    {
+      "file": "ar-sami.wav",
+      "audioSha256": "1ae37a9b93f0b9e8e4befa3b45521b14ade5376e74f384a7e9abc496e4a31fb8",
+      "bytes": 979244,
+      "duration": 10.2,
+      "codec": "pcm_s16le",
+      "sampleRate": 48000,
+      "channels": 1,
+      "integratedLufs": -19.34,
+      "truePeakDbtp": -2.29,
+      "loudnessRange": 1.8,
+      "transcriptionStatus": "blocked: existing OpenAI transcription returned HTTP429; no transcript or exact-word pass",
+      "reviewStatus": "automated measurements only; no subjective listen"
+    },
+    {
+      "file": "en-hashem.wav",
+      "audioSha256": "028d5aba2d365bacd7546fc84a18b72620a59b49b335eff6c3acf189b0df4472",
+      "bytes": 906284,
+      "duration": 9.44,
+      "codec": "pcm_s16le",
+      "sampleRate": 48000,
+      "channels": 1,
+      "integratedLufs": -17.95,
+      "truePeakDbtp": -0.24,
+      "loudnessRange": 3.4,
+      "transcriptionStatus": "blocked: existing OpenAI transcription returned HTTP429; no transcript or exact-word pass",
+      "reviewStatus": "automated measurements only; no subjective listen"
+    },
+    {
+      "file": "en-rakan.wav",
+      "audioSha256": "ea732c7b203cd6d1169eeecc2752581b8ca68b0d3119e3f9f5f01b5d9bf5d01e",
+      "bytes": 841004,
+      "duration": 8.76,
+      "codec": "pcm_s16le",
+      "sampleRate": 48000,
+      "channels": 1,
+      "integratedLufs": -20.3,
+      "truePeakDbtp": -4.36,
+      "loudnessRange": 2.2,
+      "transcriptionStatus": "blocked: existing OpenAI transcription returned HTTP429; no transcript or exact-word pass",
+      "reviewStatus": "automated measurements only; no subjective listen"
+    },
+    {
+      "file": "en-sami.wav",
+      "audioSha256": "488b46512cbe748e18d45b6dd3961f6328ac6e500d5b110ff701e16e585f4519",
+      "bytes": 833324,
+      "duration": 8.68,
+      "codec": "pcm_s16le",
+      "sampleRate": 48000,
+      "channels": 1,
+      "integratedLufs": -21.81,
+      "truePeakDbtp": -4.48,
+      "loudnessRange": 3.0,
+      "transcriptionStatus": "blocked: existing OpenAI transcription returned HTTP429; no transcript or exact-word pass",
+      "reviewStatus": "automated measurements only; no subjective listen"
+    }
+  ],
+  "listened": false,
+  "clientReady": false
+}

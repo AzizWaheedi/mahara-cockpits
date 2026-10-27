@@ -1,0 +1,253 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-27",
+  "provider": "nabarati",
+  "pointsBefore": 597378,
+  "pointsAfter": 595245,
+  "pointsUsed": 2133,
+  "subscriptionExpiresUi": "1 day at account check",
+  "purpose": "Internal casting only",
+  "clientReady": false,
+  "subjectiveListen": false,
+  "transcriptionStatus": "Blocked by existing OpenAI HTTP429. No exact-word verification claimed.",
+  "failedAttempts": [
+    {
+      "voice": "Rashed / رشيد (package favorite)",
+      "result": "Invalid voice settings; no charge or audio"
+    },
+    {
+      "voice": "عارف - وثائقي فخم (باريتون)",
+      "result": "No successful project or charge observed; failure detail not retained"
+    }
+  ],
+  "auditions": [
+    {
+      "id": "ar-adel",
+      "sourceFile": "/home/hermes/upsell-studio-video/all-offers/narration-v1/auditions/ar-adel.wav",
+      "receipt": {
+        "schemaVersion": 1,
+        "provider": "nabarati",
+        "tool": "Nabra v4",
+        "voiceName": "المستشار عادل - متزن",
+        "language": "ar",
+        "purpose": "audition",
+        "textSha256": "932b83900a1bc79b3f4681a5082e22cd0440908f9f0a991f7e56af7153fa6e2b",
+        "audioSha256": "c349953952cc73ea5dd9b73b066d61150663e3ccf45bd060b9f088fc69ab3c1b",
+        "generationDate": "2026-10-27",
+        "sourceMode": "browser-export",
+        "entitlement": {
+          "paidPlanObserved": true,
+          "plan": "Professional",
+          "checkedAt": "2026-10-27",
+          "commercialPolicyUrl": "https://www.nabarati.ai/en",
+          "basis": "Signed-in subscription UI plus official paid-plan commercial-use FAQ. No subscription purchase or renewal change."
+        },
+        "settings": {
+          "mood": "Calm",
+          "speed": "Normal",
+          "clarity": "Very Clear",
+          "style": "Professional",
+          "accent": "Kuwaiti",
+          "conversion": "No Conversion",
+          "ultra": "not independently recorded; default not changed",
+          "direction": "Read exactly as written. Warm, restrained business narration. Natural Gulf delivery, short pauses, no exaggerated advertising voice. Do not add or rewrite words."
+        },
+        "copyApproval": {
+          "approved": true,
+          "textSha256": "932b83900a1bc79b3f4681a5082e22cd0440908f9f0a991f7e56af7153fa6e2b",
+          "evidence": "Parent authorized auditions using the previously approved Website lines. This does not approve the new full narration-v1 scripts."
+        }
+      }
+    },
+    {
+      "id": "ar-rakan",
+      "sourceFile": "/home/hermes/upsell-studio-video/all-offers/narration-v1/auditions/ar-rakan.wav",
+      "receipt": {
+        "schemaVersion": 1,
+        "provider": "nabarati",
+        "tool": "Nabra v4",
+        "voiceName": "راكان",
+        "language": "ar",
+        "purpose": "audition",
+        "textSha256": "932b83900a1bc79b3f4681a5082e22cd0440908f9f0a991f7e56af7153fa6e2b",
+        "audioSha256": "145ad331c4ae88ddad854aada9ad0eaf12a628fa1c24178ea8a59190b0c53124",
+        "generationDate": "2026-10-27",
+        "sourceMode": "browser-export",
+        "entitlement": {
+          "paidPlanObserved": true,
+          "plan": "Professional",
+          "checkedAt": "2026-10-27",
+          "commercialPolicyUrl": "https://www.nabarati.ai/en",
+          "basis": "Signed-in subscription UI plus official paid-plan commercial-use FAQ. No subscription purchase or renewal change."
+        },
+        "settings": {
+          "mood": "Calm",
+          "speed": "Normal",
+          "clarity": "Very Clear",
+          "style": "Professional",
+          "accent": "Kuwaiti",
+          "conversion": "No Conversion",
+          "ultra": "not independently recorded; default not changed",
+          "direction": "Read exactly as written. Warm, restrained business narration. Natural Gulf delivery, short pauses, no exaggerated advertising voice. Do not add or rewrite words."
+        },
+        "copyApproval": {
+          "approved": true,
+          "textSha256": "932b83900a1bc79b3f4681a5082e22cd0440908f9f0a991f7e56af7153fa6e2b",
+          "evidence": "Parent authorized auditions using the previously approved Website lines. This does not approve the new full narration-v1 scripts."
+        }
+      }
+    },
+    {
+      "id": "ar-sami",
+      "sourceFile": "/home/hermes/upsell-studio-video/all-offers/narration-v1/auditions/ar-sami.wav",
+      "receipt": {
+        "schemaVersion": 1,
+        "provider": "nabarati",
+        "tool": "Nabra v4",
+        "voiceName": "سامي",
+        "language": "ar",
+        "purpose": "audition",
+        "textSha256": "932b83900a1bc79b3f4681a5082e22cd0440908f9f0a991f7e56af7153fa6e2b",
+        "audioSha256": "1ae37a9b93f0b9e8e4befa3b45521b14ade5376e74f384a7e9abc496e4a31fb8",
+        "generationDate": "2026-10-27",
+        "sourceMode": "browser-export",
+        "entitlement": {
+          "paidPlanObserved": true,
+          "plan": "Professional",
+          "checkedAt": "2026-10-27",
+          "commercialPolicyUrl": "https://www.nabarati.ai/en",
+          "basis": "Signed-in subscription UI plus official paid-plan commercial-use FAQ. No subscription purchase or renewal change."
+        },
+        "settings": {
+          "mood": "Calm",
+          "speed": "Normal",
+          "clarity": "Very Clear",
+          "style": "Professional",
+          "accent": "Kuwaiti",
+          "conversion": "No Conversion",
+          "ultra": "not independently recorded; default not changed",
+          "direction": "Read exactly as written. Warm, restrained business narration. Natural Gulf delivery, short pauses, no exaggerated advertising voice. Do not add or rewrite words."
+        },
+        "copyApproval": {
+          "approved": true,
+          "textSha256": "932b83900a1bc79b3f4681a5082e22cd0440908f9f0a991f7e56af7153fa6e2b",
+          "evidence": "Parent authorized auditions using the previously approved Website lines. This does not approve the new full narration-v1 scripts."
+        }
+      }
+    },
+    {
+      "id": "en-hashem",
+      "sourceFile": "/home/hermes/upsell-studio-video/all-offers/narration-v1/auditions/en-hashem.wav",
+      "receipt": {
+        "schemaVersion": 1,
+        "provider": "nabarati",
+        "tool": "Nabra v4",
+        "voiceName": "هاشم",
+        "language": "en",
+        "purpose": "audition",
+        "textSha256": "e6d46d8aa6bbacbf2d279030710b80b6249c2e68cf17057e5ac5302160797e0e",
+        "audioSha256": "028d5aba2d365bacd7546fc84a18b72620a59b49b335eff6c3acf189b0df4472",
+        "generationDate": "2026-10-27",
+        "sourceMode": "browser-export",
+        "entitlement": {
+          "paidPlanObserved": true,
+          "plan": "Professional",
+          "checkedAt": "2026-10-27",
+          "commercialPolicyUrl": "https://www.nabarati.ai/en",
+          "basis": "Signed-in subscription UI plus official paid-plan commercial-use FAQ. No subscription purchase or renewal change."
+        },
+        "settings": {
+          "mood": "Calm",
+          "speed": "Normal",
+          "clarity": "Very Clear",
+          "style": "Professional",
+          "accent": null,
+          "conversion": null,
+          "ultra": "not independently recorded; default not changed",
+          "direction": "Read exactly as written. Warm, restrained business narration in clear natural English. Short pauses, no exaggerated advertising voice. Do not add or rewrite words."
+        },
+        "copyApproval": {
+          "approved": true,
+          "textSha256": "e6d46d8aa6bbacbf2d279030710b80b6249c2e68cf17057e5ac5302160797e0e",
+          "evidence": "Parent authorized auditions using the previously approved Website lines. This does not approve the new full narration-v1 scripts."
+        }
+      }
+    },
+    {
+      "id": "en-rakan",
+      "sourceFile": "/home/hermes/upsell-studio-video/all-offers/narration-v1/auditions/en-rakan.wav",
+      "receipt": {
+        "schemaVersion": 1,
+        "provider": "nabarati",
+        "tool": "Nabra v4",
+        "voiceName": "راكان",
+        "language": "en",
+        "purpose": "audition",
+        "textSha256": "e6d46d8aa6bbacbf2d279030710b80b6249c2e68cf17057e5ac5302160797e0e",
+        "audioSha256": "ea732c7b203cd6d1169eeecc2752581b8ca68b0d3119e3f9f5f01b5d9bf5d01e",
+        "generationDate": "2026-10-27",
+        "sourceMode": "browser-export",
+        "entitlement": {
+          "paidPlanObserved": true,
+          "plan": "Professional",
+          "checkedAt": "2026-10-27",
+          "commercialPolicyUrl": "https://www.nabarati.ai/en",
+          "basis": "Signed-in subscription UI plus official paid-plan commercial-use FAQ. No subscription purchase or renewal change."
+        },
+        "settings": {
+          "mood": "Calm",
+          "speed": "Normal",
+          "clarity": "Very Clear",
+          "style": "Professional",
+          "accent": null,
+          "conversion": null,
+          "ultra": "not independently recorded; default not changed",
+          "direction": "Read exactly as written. Warm, restrained business narration in clear natural English. Short pauses, no exaggerated advertising voice. Do not add or rewrite words."
+        },
+        "copyApproval": {
+          "approved": true,
+          "textSha256": "e6d46d8aa6bbacbf2d279030710b80b6249c2e68cf17057e5ac5302160797e0e",
+          "evidence": "Parent authorized auditions using the previously approved Website lines. This does not approve the new full narration-v1 scripts."
+        }
+      }
+    },
+    {
+      "id": "en-sami",
+      "sourceFile": "/home/hermes/upsell-studio-video/all-offers/narration-v1/auditions/en-sami.wav",
+      "receipt": {
+        "schemaVersion": 1,
+        "provider": "nabarati",
+        "tool": "Nabra v4",
+        "voiceName": "سامي",
+        "language": "en",
+        "purpose": "audition",
+        "textSha256": "e6d46d8aa6bbacbf2d279030710b80b6249c2e68cf17057e5ac5302160797e0e",
+        "audioSha256": "488b46512cbe748e18d45b6dd3961f6328ac6e500d5b110ff701e16e585f4519",
+        "generationDate": "2026-10-27",
+        "sourceMode": "browser-export",
+        "entitlement": {
+          "paidPlanObserved": true,
+          "plan": "Professional",
+          "checkedAt": "2026-10-27",
+          "commercialPolicyUrl": "https://www.nabarati.ai/en",
+          "basis": "Signed-in subscription UI plus official paid-plan commercial-use FAQ. No subscription purchase or renewal change."
+        },
+        "settings": {
+          "mood": "Calm",
+          "speed": "Normal",
+          "clarity": "Very Clear",
+          "style": "Professional",
+          "accent": null,
+          "conversion": null,
+          "ultra": "not independently recorded; default not changed",
+          "direction": "Read exactly as written. Warm, restrained business narration in clear natural English. Short pauses, no exaggerated advertising voice. Do not add or rewrite words."
+        },
+        "copyApproval": {
+          "approved": true,
+          "textSha256": "e6d46d8aa6bbacbf2d279030710b80b6249c2e68cf17057e5ac5302160797e0e",
+          "evidence": "Parent authorized auditions using the previously approved Website lines. This does not approve the new full narration-v1 scripts."
+        }
+      }
+    }
+  ]
+}
