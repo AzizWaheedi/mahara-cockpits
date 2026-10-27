@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { pageForUrl } from "./leadPageFunnel";
 import { mediaAction } from "./mediaActionsClient";
 import type { PageFormSpec } from "./pageForm";
 import { supabase } from "./supabase";
@@ -132,7 +133,8 @@ export async function readPageFormFunnel(args: {
 }
 
 export function usePageFormFunnel(
-  slug: string,
+  /** null reads nothing (a campaign whose ads open no client page). */
+  slug: string | null,
   version: string | undefined,
   days: number,
   source: FunnelSource,
@@ -146,6 +148,7 @@ export function usePageFormFunnel(
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: tick and again are reload triggers
   useEffect(() => {
+    if (!slug) return;
     const run = ++latest.current;
     setLoading(true);
     setError(null);
@@ -263,4 +266,49 @@ export function pageFormFor(
   return key
     ? list?.find(p => p.client.trim().toLowerCase() === key)
     : undefined;
+}
+
+export type LeadPageRead = {
+  /** The ad link that opens the page; null when no link opens a client page. */
+  url: string | null;
+  page: PageFormPage | undefined;
+  /** The client's pages were read; with no `page`, the link's page is not the client's. */
+  checked: boolean;
+  error: string | null;
+  loading: boolean;
+  reload: () => void;
+  /** Visits from ads over `days`, for the live version. */
+  visits: ReturnType<typeof usePageFormFunnel>;
+  days: number;
+};
+
+/**
+ * The client form page that a campaign's website ads open, for Open funnel:
+ * the page with its live questions and versions, and its visits from ads.
+ * Nothing is read for a campaign whose links open no client page.
+ */
+export function useLeadPage(urls: string[], days: number): LeadPageRead {
+  const list = usePageFormList();
+  const hit = urls
+    .map(url => ({ url, listed: pageForUrl(list, url) }))
+    .find(x => x.listed);
+  const read = usePageForms(hit?.listed?.client ?? null);
+  const page = read.data?.find(p => p.slug === hit?.listed?.slug);
+  const visits = usePageFormFunnel(
+    page?.slug ?? null,
+    undefined,
+    days,
+    "ads",
+    page?.liveVersion ?? 0,
+  );
+  return {
+    url: hit?.url ?? null,
+    page,
+    checked: read.data !== undefined,
+    error: read.error,
+    loading: read.loading,
+    reload: read.reload,
+    visits,
+    days,
+  };
 }

@@ -1,36 +1,11 @@
 import { ArrowUpRight } from "lucide-react";
 import { useState } from "react";
-import { toast } from "sonner";
-import { StatusChip } from "@/components/ceo/StatusChip";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import {
-  type PageFormPage,
-  type PageFormsRead,
-  type PageFormVersion,
-  switchPageForm,
-} from "@/lib/pageFormClient";
+import type { PageFormPage, PageFormsRead } from "@/lib/pageFormClient";
 import { cn } from "@/lib/utils";
 import { PageFormEditor } from "./PageFormEditor";
 import { PageFormFunnel } from "./PageFormFunnel";
-
-const when = (iso: string) =>
-  new Date(iso).toLocaleString("en-GB", {
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "Asia/Kuwait",
-  });
+import { PageVersions, when } from "./PageVersions";
 
 /**
  * Lead page on the client page: the questions on the client's own form page,
@@ -105,35 +80,9 @@ function PageBlock({
   waitingCampaigns: string[];
 }) {
   const [editing, setEditing] = useState(false);
-  const [target, setTarget] = useState<PageFormVersion | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const questions = page.current?.questions ?? [];
   const live = page.versions.find(v => v.live);
   const liveLabel = live?.label ?? "v1";
-
-  const switchBack = async () => {
-    if (!target) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const done = await switchPageForm({
-        slug: page.slug,
-        base: page.liveVersion,
-        version: target.version,
-      });
-      toast.success(`${done.label} is live again`, {
-        description: "Visitors see it within a minute.",
-      });
-      setTarget(null);
-      onChanged();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setTarget(null);
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <div className="py-4 first:pt-0 last:pb-0">
@@ -163,7 +112,7 @@ function PageBlock({
             disabled={!page.current}
             onClick={() => setEditing(true)}
           >
-            Edit questions
+            Edit form
           </Button>
         </div>
       </div>
@@ -173,12 +122,6 @@ function PageBlock({
           {page.currentUnreadable}
         </p>
       )}
-      {error && (
-        <p className="callout-warn mt-3 rounded-lg border px-3 py-2 text-xs">
-          {error}
-        </p>
-      )}
-
       {questions.length > 0 && (
         <ol className="mt-4 space-y-1.5">
           {questions.map((q, i) => (
@@ -217,44 +160,7 @@ function PageBlock({
           <summary className="cursor-pointer select-none text-sm font-medium">
             Versions ({page.versions.length})
           </summary>
-          <ul className="mt-2 divide-y">
-            {page.versions.map(v => (
-              <li
-                key={v.version}
-                className="flex flex-wrap items-center justify-between gap-2 py-2.5"
-              >
-                <div className="min-w-0">
-                  <p className="flex items-center gap-2 text-sm">
-                    <span className="font-medium tabular-nums">{v.label}</span>
-                    {v.live && <StatusChip tone="good" label="Live" />}
-                    {!v.wentLive && !v.live && (
-                      <StatusChip tone="warning" label="Never went live" />
-                    )}
-                  </p>
-                  <p
-                    className="mt-0.5 text-xs text-muted-foreground"
-                    dir="auto"
-                  >
-                    {v.summary}
-                    {v.source === "cockpit"
-                      ? ` · ${v.by ?? "unknown"} · ${when(v.at)}`
-                      : ""}
-                  </p>
-                </div>
-                {!v.live && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-8"
-                    disabled={busy}
-                    onClick={() => setTarget(v)}
-                  >
-                    Switch back
-                  </Button>
-                )}
-              </li>
-            ))}
-          </ul>
+          <PageVersions page={page} onChanged={onChanged} className="mt-2" />
         </details>
       )}
 
@@ -266,36 +172,6 @@ function PageBlock({
           onPublished={onChanged}
         />
       )}
-
-      <AlertDialog
-        open={Boolean(target)}
-        onOpenChange={o => !o && !busy && setTarget(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              Switch the live page to {target?.label}?
-            </AlertDialogTitle>
-            <AlertDialogDescription dir="auto">
-              {target?.summary}. Visitors see {target?.label}'s questions within
-              a minute. {liveLabel} stays in the list, so you can switch to it
-              again.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={busy}
-              onClick={e => {
-                e.preventDefault();
-                void switchBack();
-              }}
-            >
-              {busy ? "Switching…" : `Switch to ${target?.label ?? ""}`}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }
