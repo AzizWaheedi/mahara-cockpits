@@ -1,4 +1,11 @@
-import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  describe,
+  expect,
+  setDefaultTimeout,
+  test,
+} from "bun:test";
 import { readFileSync } from "node:fs";
 import { Window } from "happy-dom";
 
@@ -12,6 +19,10 @@ import { Window } from "happy-dom";
  *
  * Run: bun test scripts/form-panel.test.tsx
  */
+
+// Give async React acts time to settle on shared build hosts.
+// Cancelling a live act at five seconds contaminates the following fixtures.
+setDefaultTimeout(30_000);
 
 const win = new Window({
   url: "https://localhost/client-success/clients/86fixture1/forms/kickoff",

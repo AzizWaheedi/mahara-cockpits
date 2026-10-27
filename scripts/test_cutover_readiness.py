@@ -30,6 +30,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
+from typing import List, Tuple
 from unittest.mock import MagicMock, patch
 
 SCRIPT_DIR = Path(__file__).resolve().parent

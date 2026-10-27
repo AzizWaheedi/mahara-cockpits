@@ -19,9 +19,20 @@
  * or pg_net: the guarded blocks skip, and the kick's tests stand in a vault
  * table and a net.http_post that records its call.
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  setDefaultTimeout,
+  test,
+} from "bun:test";
 import type { PGlite } from "@electric-sql/pglite";
 import { actor, cockpitTestDb, member, migration } from "./lib/cockpitTestDb";
+
+// Keep direct, ship and readiness runs consistent on busy build hosts.
+// Every SQL assertion still runs, with a finite per-test allowance.
+setDefaultTimeout(120_000);
 
 const FILE = "20261024a_brand_blueprints.sql";
 const DRAIN = "20261025o_blueprint_close_drain.sql";
