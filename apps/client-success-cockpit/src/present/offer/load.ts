@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadDeck } from "../load";
 import type { Loaded } from "../useDeckModel";
+import { deckOfOffer, type OfferKey } from "./kinds";
 import {
   findLogos,
   listUpsellFiles,
@@ -15,7 +16,6 @@ import {
   uploadUpsellFile,
 } from "./sources";
 import type { OfferIO } from "./useOffer";
-import { deckOfOffer, type OfferKey } from "./kinds";
 export async function loadOfferDeck(
   client: SupabaseClient,
   taskId: string,

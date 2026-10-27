@@ -1,4 +1,3 @@
-import { BUILT_OFFER_DECKS, type OfferDeckKind } from "../present/offer/kinds";
 import type { Overrides } from "@/present/deckData";
 import { PRACTICE_NAME, PRACTICE_TASK } from "@/present/deckHost";
 import type { KickoffPort } from "@/present/KickoffSlide";
@@ -6,6 +5,7 @@ import type { PresentUrls } from "@/present/PresentApp";
 import { applyPatch } from "@/present/prep";
 import type { DeckKind, LaunchAd } from "@/present/sources";
 import type { DeckIO, Loaded } from "@/present/useDeckModel";
+import { BUILT_OFFER_DECKS, type OfferDeckKind } from "../present/offer/kinds";
 import {
   BP_NOW,
   blueprintLoaded,

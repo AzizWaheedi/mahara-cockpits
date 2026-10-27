@@ -1,5 +1,5 @@
-import type { OfferDeckKind } from "./offer/kinds";
 import { WEBSITE_DECK } from "./offer/content/website";
+import type { OfferDeckKind } from "./offer/kinds";
 /**
  * Everything the two client decks say, in English and in the client-facing
  * Gulf Arabic, in one place (docs/csm-decks/CONTENT.md and CONTENT-AR.md are

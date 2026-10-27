@@ -1,6 +1,6 @@
 import { Navigate, useParams } from "react-router";
 import PresentPage from "../PresentPage";
-import { isOfferKey, deckOfOffer } from "./kinds";
+import { deckOfOffer, isOfferKey } from "./kinds";
 export default function OfferPresentPage({
   notes = false,
 }: {

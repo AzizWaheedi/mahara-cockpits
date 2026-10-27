@@ -1,23 +1,23 @@
-import { useState } from "react";
 import {
-  Play,
-  Layers,
-  Search,
   Camera,
   Clapperboard,
-  Users,
+  Layers,
+  Play,
+  Search,
   Share2,
+  Users,
 } from "lucide-react";
+import { useState } from "react";
 import { digits, fill, VIDEO } from "../content";
 import type { SlideCtx, SlideDef } from "../deckContext";
 import { FRAME_ALLOW, FRAME_SANDBOX, usePlayerFrame } from "../VideoPlayer";
 import { OFFER_CHROME as C } from "./content/shared";
 import { WEBSITE_DECK as W } from "./content/website";
 import type { OfferKey } from "./kinds";
-import type { CatalogCopy } from "./sources";
 import { Bill } from "./slides/Bill";
 import { Capture } from "./slides/Capture";
-import { offerCopy, type OfferModel } from "./useOffer";
+import type { CatalogCopy } from "./sources";
+import { type OfferModel, offerCopy } from "./useOffer";
 import { offerVideoItems } from "./videos";
 import "./serviceDeck.css";
 

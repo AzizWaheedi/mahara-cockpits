@@ -1,4 +1,3 @@
-import { offerOfDeck } from "./offer/kinds";
 import { useMemo } from "react";
 import { Navigate, useLocation, useParams } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
@@ -15,7 +14,7 @@ import {
 import { useDeckReport } from "./DeckBoundary";
 import type { KickoffPort } from "./KickoffSlide";
 import { loadDeck } from "./load";
-import { isOfferDeck } from "./offer/kinds";
+import { isOfferDeck, offerOfDeck } from "./offer/kinds";
 import { loadOfferDeck, offerIO } from "./offer/load";
 import { PresentApp, type View } from "./PresentApp";
 import {
@@ -42,6 +41,7 @@ import type { DeckIO } from "./useDeckModel";
  */
 
 export { presentUrls } from "./presentUrls";
+
 import { presentUrls } from "./presentUrls";
 
 export default function PresentPage({

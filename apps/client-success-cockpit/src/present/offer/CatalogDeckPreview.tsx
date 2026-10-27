@@ -1,5 +1,5 @@
-import { lazy, Suspense, useState } from "react";
 import { Presentation } from "lucide-react";
+import { lazy, Suspense, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -8,8 +8,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { copyOf, type CatalogRow } from "./sources";
+import { type CatalogRow, copyOf } from "./sources";
 import "./serviceDeck.css";
+
 const Preview = lazy(() => import("./CatalogDeckCanvas"));
 export function CatalogDeckPreview({ row }: { row: CatalogRow }) {
   const [open, setOpen] = useState(false);
