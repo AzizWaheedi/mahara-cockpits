@@ -1,22 +1,14 @@
-import {
-  Camera,
-  Clapperboard,
-  Layers,
-  Play,
-  Search,
-  Share2,
-  Users,
-} from "lucide-react";
+import { Clapperboard, Play } from "lucide-react";
 import { useState } from "react";
 import { digits, fill, VIDEO } from "../content";
 import type { SlideCtx, SlideDef } from "../deckContext";
 import { FRAME_ALLOW, FRAME_SANDBOX, usePlayerFrame } from "../VideoPlayer";
-import { ART } from "./art";
 import { OFFER_CHROME as C } from "./content/shared";
 import { WEBSITE_DECK as W } from "./content/website";
 import { actorPoster, wistiaExample } from "./exampleMedia";
 import type { OfferKey } from "./kinds";
 import { OfferCover } from "./OfferCover";
+import { ScopeVisual } from "./ScopeVisual";
 import { Bill } from "./slides/Bill";
 import { Capture } from "./slides/Capture";
 import type { CatalogCopy } from "./sources";
@@ -25,14 +17,6 @@ import { offerVideoItems } from "./videos";
 import "./serviceDeck.css";
 
 export type ServiceOffer = Exclude<OfferKey, "website">;
-const ICONS = {
-  second_campaign: Layers,
-  seo_geo: Search,
-  smm: Share2,
-  cameraman: Camera,
-  ugc: Clapperboard,
-  closer: Users,
-};
 export const SERVICE_MAIN_SLIDES = [
   "saw",
   "matters",
@@ -144,124 +128,6 @@ export function ActorExamples({
     </div>
   );
 }
-function ScopeVisual({
-  kind,
-  copy,
-  ctx,
-  active,
-}: {
-  kind: ServiceOffer;
-  copy: CatalogCopy;
-  ctx: SlideCtx;
-  active: number;
-}) {
-  const Icon = ICONS[kind];
-  const stills = ctx.offer?.stills ?? [];
-  if (kind === "ugc") return <ActorExamples copy={copy} ctx={ctx} />;
-  if (kind === "second_campaign")
-    return (
-      <div className="dks-service-map">
-        <div className="dks-map-root">
-          <Icon aria-hidden />
-          <strong>{ctx.d.name}</strong>
-        </div>
-        <div className="dks-map-branches">
-          {copy.get.slice(0, 4).map((v, i) => (
-            <div data-active={active === i} key={v.key}>
-              <i aria-hidden />
-              <p>{v.text}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  if (kind === "seo_geo")
-    return (
-      <div className="dks-dossier">
-        {copy.get.slice(0, 3).map((v, i) => (
-          <article key={v.key} data-active={active === i}>
-            <Search aria-hidden />
-            <p>{v.text}</p>
-            <div className="dks-document-lines" aria-hidden>
-              <i />
-              <i />
-              <i />
-            </div>
-          </article>
-        ))}
-      </div>
-    );
-  if (kind === "smm")
-    return (
-      <div className="dks-editorial">
-        <div className="dks-platforms">
-          {Object.values(copy.platforms ?? {}).map(v => (
-            <span key={v}>{v}</span>
-          ))}
-        </div>
-        <div className="dks-contact-sheet">
-          {copy.get.slice(0, 6).map((v, i) => (
-            <article key={v.key} data-active={active === i}>
-              {stills[i % Math.max(stills.length, 1)]?.url ? (
-                <img src={stills[i % stills.length].url!} alt="" />
-              ) : (
-                <img
-                  src={
-                    ART.website!.backgrounds[
-                      i % ART.website!.backgrounds.length
-                    ].url
-                  }
-                  alt=""
-                  data-example-image
-                />
-              )}
-              <p>{v.text}</p>
-            </article>
-          ))}
-        </div>
-      </div>
-    );
-  if (kind === "cameraman")
-    return (
-      <div className="dks-storyboard">
-        {copy.get.slice(0, 3).map((v, i) => (
-          <figure key={v.key} data-active={active === i}>
-            <div>
-              {stills[i]?.url ? (
-                <img src={stills[i].url!} alt="" />
-              ) : (
-                <img
-                  src={
-                    i === 0
-                      ? ART.website!.hero!
-                      : ART.website!.backgrounds[
-                          (i - 1) % ART.website!.backgrounds.length
-                        ].url
-                  }
-                  alt=""
-                  data-example-image
-                />
-              )}
-              <span className="dks-shot-corner" aria-hidden />
-            </div>
-            <figcaption>{v.text}</figcaption>
-          </figure>
-        ))}
-      </div>
-    );
-  return (
-    <div className="dks-hiring">
-      {copy.get.map((v, i) => (
-        <article key={v.key} data-active={active === i}>
-          <span aria-hidden>
-            {digits(String(i + 1).padStart(2, "0"), ctx.lang)}
-          </span>
-          <p>{v.text}</p>
-        </article>
-      ))}
-    </div>
-  );
-}
 function ServiceCanvas({
   id,
   kind,
@@ -287,6 +153,7 @@ function ServiceCanvas({
       dir={ctx.lang === "ar" ? "rtl" : "ltr"}
       data-offer={kind}
       data-stop={ctx.tour}
+      data-still={ctx.still}
     >
       <header className="dko-slide-head">
         <span className="dko-eyebrow">{ctx.d.name}</span>
@@ -327,7 +194,11 @@ function ServiceCanvas({
       {id === "get" ? (
         <>
           <div className="dks-scope">
-            <ScopeVisual kind={kind} copy={copy} ctx={ctx} active={active} />
+            {kind === "ugc" ? (
+              <ActorExamples copy={copy} ctx={ctx} />
+            ) : (
+              <ScopeVisual kind={kind} copy={copy} ctx={ctx} active={active} />
+            )}
             <aside>
               {need ? (
                 <>
@@ -341,7 +212,9 @@ function ServiceCanvas({
               ) : (
                 <>
                   <span className="dko-eyebrow">{copy.name}</span>
-                  <h2>{active >= 0 ? copy.get[active]?.text : copy.line}</h2>
+                  <h2 key={active}>
+                    {active >= 0 ? copy.get[active]?.text : copy.line}
+                  </h2>
                   <div className="dks-scope-progress" aria-hidden>
                     {copy.get.map((v, i) => (
                       <i data-active={i === active} key={v.key} />

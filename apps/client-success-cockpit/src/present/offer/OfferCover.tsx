@@ -1,8 +1,8 @@
 import { Camera, FileText, Play, Search, UserRound } from "lucide-react";
-import { ART } from "./art";
 import { actorPoster } from "./exampleMedia";
 import type { OfferKey } from "./kinds";
 import type { CatalogCopy } from "./sources";
+import { visualPhoto } from "./visualArt";
 import "./quickPitch.css";
 
 /** Decorative service objects. Fictional images are never presented as client work. */
@@ -13,9 +13,7 @@ export function OfferCover({
   offer: OfferKey;
   copy: CatalogCopy | null;
 }) {
-  const art = ART.website!;
-  const photo = (i: number) =>
-    i === 0 ? art.hero! : art.backgrounds[(i - 1) % art.backgrounds.length].url;
+  const photo = (i: number) => visualPhoto(offer, i);
   return (
     <div
       className={`dkq-cover dkq-cover-${offer}`}

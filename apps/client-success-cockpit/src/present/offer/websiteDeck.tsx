@@ -8,6 +8,7 @@ import {
   WEBSITE_STOPS,
   type WebsiteSlideId,
 } from "./content/website";
+import { OfferCover } from "./OfferCover";
 import { formatMoney } from "./price";
 import { Bill } from "./slides/Bill";
 import { Capture } from "./slides/Capture";
@@ -16,6 +17,7 @@ import { ReturnCard } from "./slides/ReturnCard";
 import { SiteSketch } from "./slides/SiteSketch";
 import { type OfferModel, offerCopy } from "./useOffer";
 import { offerVideoItems } from "./videos";
+import { websiteExampleSlide } from "./WebsiteExample";
 import "./offer.css";
 
 function Canvas({ id, ctx }: { id: WebsiteSlideId; ctx: SlideCtx }) {
@@ -36,6 +38,7 @@ function Canvas({ id, ctx }: { id: WebsiteSlideId; ctx: SlideCtx }) {
       className={`dko-slide dko-${id}`}
       dir={ctx.lang === "ar" ? "rtl" : "ltr"}
       data-stop={stop}
+      data-still={ctx.still}
     >
       <header className="dko-slide-head">
         <span className="dko-eyebrow">{ctx.d.name}</span>
@@ -58,24 +61,29 @@ function Canvas({ id, ctx }: { id: WebsiteSlideId; ctx: SlideCtx }) {
         </>
       ) : null}
       {id === "matters" ? (
-        <div className="dko-words">
-          {ctx.tour === 0 && m?.goal ? (
-            <>
-              <span className="dko-eyebrow">
-                {s.lines?.[m.goal.key]?.[ctx.lang]}
-              </span>
-              <blockquote>{m.goal.answer}</blockquote>
-              {m.goal.on ? (
-                <small>
-                  {fill(C.fromAnswer[ctx.lang], {
-                    date: digits(m.goal.on, ctx.lang),
-                  })}
-                </small>
-              ) : null}
-            </>
-          ) : (
-            <h2>{ctx.tour === 0 ? s.lines?.words_empty?.[ctx.lang] : line}</h2>
-          )}
+        <div className="dsv-website-opening">
+          <OfferCover offer="website" copy={copy} />
+          <div className="dko-words">
+            {ctx.tour === 0 && m?.goal ? (
+              <>
+                <span className="dko-eyebrow">
+                  {s.lines?.[m.goal.key]?.[ctx.lang]}
+                </span>
+                <blockquote>{m.goal.answer}</blockquote>
+                {m.goal.on ? (
+                  <small>
+                    {fill(C.fromAnswer[ctx.lang], {
+                      date: digits(m.goal.on, ctx.lang),
+                    })}
+                  </small>
+                ) : null}
+              </>
+            ) : (
+              <h2>
+                {ctx.tour === 0 ? s.lines?.words_empty?.[ctx.lang] : line}
+              </h2>
+            )}
+          </div>
         </div>
       ) : null}
       {id === "get" ? (
@@ -174,7 +182,7 @@ function filledNotes(id: WebsiteSlideId, m?: OfferModel | null) {
   };
 }
 export function websiteSlides(m?: OfferModel | null): SlideDef[] {
-  return [...WEBSITE_SLIDES, "runs", "video"].map(key => {
+  const slides: SlideDef[] = [...WEBSITE_SLIDES, "runs", "video"].map(key => {
     const id = key as WebsiteSlideId;
     const missing =
       id === "saw" && !m?.captures.length
@@ -199,4 +207,6 @@ export function websiteSlides(m?: OfferModel | null): SlideDef[] {
       render: (ctx: SlideCtx) => <Canvas id={id} ctx={ctx} />,
     };
   });
+  slides.splice(3, 0, websiteExampleSlide());
+  return slides;
 }

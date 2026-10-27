@@ -6,7 +6,7 @@ import { emptyLive } from "../channel";
 import { CHROME, digits, type Lang, VIDEO } from "../content";
 import { DeckShell } from "../DeckShell";
 import { deckData } from "../deckData";
-import { offerSlides } from "../decks";
+import { offerSlides, prefersStill } from "../decks";
 import { type Pos, stepFrom } from "../engine";
 import { OFFER_CHROME } from "./content/shared";
 import { deckOfOffer } from "./kinds";
@@ -71,7 +71,7 @@ export function catalogQuickSlides(
   showListPrice = false,
 ) {
   if (!copyOf(row, "en") || !copyOf(row, "ar")) return [];
-  const order = ["matters", "get", "runs", "investment", "next"];
+  const order = ["matters", "get", "examples", "runs", "investment", "next"];
   return offerSlides(deckOfOffer(row.offerKey), model)
     .filter(
       s =>
@@ -139,7 +139,7 @@ export default function CatalogDeckCanvas({
     saveTo: () => {},
     live: emptyLive(),
     setLive: () => {},
-    still: false,
+    still: prefersStill(),
     presenting: true,
     offer: model,
   };

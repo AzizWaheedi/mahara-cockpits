@@ -49,9 +49,9 @@ describe("website canvas", () => {
   test("the main slides and stops retain the decided order", () => {
     expect(
       websiteSlides()
-        .slice(0, 5)
+        .slice(0, 6)
         .map(s => s.id),
-    ).toEqual(["saw", "matters", "get", "investment", "next"]);
+    ).toEqual(["saw", "matters", "get", "examples", "investment", "next"]);
     expect(WEBSITE_STOPS.get).toEqual([
       "drawn",
       "pages",
