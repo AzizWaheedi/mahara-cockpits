@@ -1,0 +1,615 @@
+{
+  "schemaVersion": 1,
+  "version": "narration-v1",
+  "createdAt": "2026-10-27",
+  "status": "copy-approved-production-pending",
+  "providerPreference": "nabarati",
+  "sourceCatalog": "supabase/migrations/20261026x_upsell_catalog_copy.sql",
+  "clientReady": false,
+  "closing": {
+    "proposal": "mahara-brand-slate",
+    "approved": true,
+    "currentContract": "Genuine Mahara logo closing slate approved for the new seven-offer film series; no real Aziz clip required for this series",
+    "never": "AI Aziz face or voice"
+  },
+  "offers": [
+    {
+      "kind": "website",
+      "clientReady": false,
+      "readiness": {
+        "arabicCopyApproved": true,
+        "voiceSelected": true,
+        "audioReviewed": false,
+        "closingApproved": true
+      },
+      "languages": {
+        "en": {
+          "text": "Someone sees your ad. Then they search your name.\n\nWhat they find should make it easy to see your work and get in touch.\n\nWe build you a site. Up to six pages, in Arabic and English. Your projects, shown properly. WhatsApp, an enquiry form, and tracking.\n\nSend the link before a first meeting, so they see your work before they meet you.\n\nThree things from you: your logo, photos of your projects, and your list of services.\n\nIt is live two weeks after we have them. The monthly care plan covers hosting, backups and an hour of edits.\n\nYour account manager will walk you through it.",
+          "textSha256": "08e25019f90368712865e9dcc5fe1ce4562637cc8d857b0aa4c2b674210845e0",
+          "segments": [
+            {
+              "id": "website-en-01",
+              "text": "Someone sees your ad. Then they search your name."
+            },
+            {
+              "id": "website-en-02",
+              "text": "What they find should make it easy to see your work and get in touch."
+            },
+            {
+              "id": "website-en-03",
+              "text": "We build you a site. Up to six pages, in Arabic and English. Your projects, shown properly. WhatsApp, an enquiry form, and tracking."
+            },
+            {
+              "id": "website-en-04",
+              "text": "Send the link before a first meeting, so they see your work before they meet you."
+            },
+            {
+              "id": "website-en-05",
+              "text": "Three things from you: your logo, photos of your projects, and your list of services."
+            },
+            {
+              "id": "website-en-06",
+              "text": "It is live two weeks after we have them. The monthly care plan covers hosting, backups and an hour of edits."
+            },
+            {
+              "id": "website-en-07",
+              "text": "Your account manager will walk you through it."
+            }
+          ],
+          "wordCount": 107,
+          "approval": "approved",
+          "notes": "Approved in the explicit seven-offer bilingual batch. Audio and film quality review remain separate.",
+          "approvalSheetSha256": "1270fc4f0efeaaedf6d2ce1dee859158699167bcba46a7e3136e4750d0fb768d"
+        },
+        "ar": {
+          "text": "أحد يشوف إعلانكم. وأول شي يسويه؟ يدور على اسمكم.\n\nخلّوا اللي يلقاه يوضح شغلكم، ويسهّل عليه التواصل معكم.\n\nنبني لكم موقع، لين ست صفحات، بالعربي والإنجليزي. مشاريعكم معروضة مثل ما تستاهل. وزر واتساب، ونموذج للاستفسارات، وتتبع.\n\nوترسلون الرابط قبل أول اجتماع، عشان يشوف شغلكم قبل لا يقابلكم.\n\nومنكم ثلاث أشياء بس: شعاركم، وصور مشاريعكم، وقائمة خدماتكم.\n\nوبعد أسبوعين من يوم توصلنا، الموقع شغال. والعناية الشهرية تشمل الاستضافة، والنسخ الاحتياطي، وساعة تعديلات.\n\nفريق نجاح العملاء بيمشي معاكم فيها، خطوة خطوة.",
+          "textSha256": "af979f0e12bc2d1ea947d3a19e860995c970401fbf992449d21ac65e7b077d9c",
+          "segments": [
+            {
+              "id": "website-ar-01",
+              "text": "أحد يشوف إعلانكم. وأول شي يسويه؟ يدور على اسمكم."
+            },
+            {
+              "id": "website-ar-02",
+              "text": "خلّوا اللي يلقاه يوضح شغلكم، ويسهّل عليه التواصل معكم."
+            },
+            {
+              "id": "website-ar-03",
+              "text": "نبني لكم موقع، لين ست صفحات، بالعربي والإنجليزي. مشاريعكم معروضة مثل ما تستاهل. وزر واتساب، ونموذج للاستفسارات، وتتبع."
+            },
+            {
+              "id": "website-ar-04",
+              "text": "وترسلون الرابط قبل أول اجتماع، عشان يشوف شغلكم قبل لا يقابلكم."
+            },
+            {
+              "id": "website-ar-05",
+              "text": "ومنكم ثلاث أشياء بس: شعاركم، وصور مشاريعكم، وقائمة خدماتكم."
+            },
+            {
+              "id": "website-ar-06",
+              "text": "وبعد أسبوعين من يوم توصلنا، الموقع شغال. والعناية الشهرية تشمل الاستضافة، والنسخ الاحتياطي، وساعة تعديلات."
+            },
+            {
+              "id": "website-ar-07",
+              "text": "فريق نجاح العملاء بيمشي معاكم فيها، خطوة خطوة."
+            }
+          ],
+          "wordCount": 79,
+          "approval": "approved",
+          "notes": "Approved in the explicit seven-offer bilingual batch. Audio and film quality review remain separate.",
+          "approvalSheetSha256": "1270fc4f0efeaaedf6d2ce1dee859158699167bcba46a7e3136e4750d0fb768d"
+        }
+      }
+    },
+    {
+      "kind": "second_campaign",
+      "clientReady": false,
+      "readiness": {
+        "arabicCopyApproved": true,
+        "voiceSelected": true,
+        "audioReviewed": false,
+        "closingApproved": true
+      },
+      "languages": {
+        "en": {
+          "text": "You offer more than one service. Give the next one its own campaign.\n\nWe agree the second service and how to present it. Then we create its ads, write its words, and build its own enquiry form.\n\nIt runs beside your first campaign, with the same support your current campaign already has.\n\nFrom you, we need photos of the service you want to grow.\n\nThe management is monthly, on top of your current plan. The new campaign starts once you approve its ads and form.\n\nYour account manager will help you choose the service and work through the next step.",
+          "textSha256": "d46f7cb00c54c673f63a7cb9214a9bc74894171ea012d287719b3ac1131ed600",
+          "segments": [
+            {
+              "id": "second_campaign-en-01",
+              "text": "You offer more than one service. Give the next one its own campaign."
+            },
+            {
+              "id": "second_campaign-en-02",
+              "text": "We agree the second service and how to present it. Then we create its ads, write its words, and build its own enquiry form."
+            },
+            {
+              "id": "second_campaign-en-03",
+              "text": "It runs beside your first campaign, with the same support your current campaign already has."
+            },
+            {
+              "id": "second_campaign-en-04",
+              "text": "From you, we need photos of the service you want to grow."
+            },
+            {
+              "id": "second_campaign-en-05",
+              "text": "The management is monthly, on top of your current plan. The new campaign starts once you approve its ads and form."
+            },
+            {
+              "id": "second_campaign-en-06",
+              "text": "Your account manager will help you choose the service and work through the next step."
+            }
+          ],
+          "wordCount": 100,
+          "approval": "approved",
+          "notes": "Approved in the explicit seven-offer bilingual batch. Audio and film quality review remain separate.",
+          "approvalSheetSha256": "1270fc4f0efeaaedf6d2ce1dee859158699167bcba46a7e3136e4750d0fb768d"
+        },
+        "ar": {
+          "text": "عندكم أكثر من خدمة؟ نعطي الخدمة الثانية حملتها الخاصة.\n\nنتفق معكم على الخدمة وطريقة عرضها. بعدها نسوي إعلاناتها، ونكتب كلامها، ونجهز لها نموذج استفسار خاص.\n\nوتمشي جنب حملتكم الأولى، بنفس المتابعة الموجودة بحملتكم الحالية.\n\nومنكم نحتاج صور للخدمة اللي تبون تكبرونها.\n\nالإدارة شهرية، فوق باقتكم الحالية. والحملة الجديدة تنطلق أول ما توافقون على إعلاناتها ونموذجها.\n\nفريق نجاح العملاء يساعدكم تختارون الخدمة، ويمشي معاكم بالخطوة الجاية.",
+          "textSha256": "46b006024598e4fa64089e6532985377a95f71f66bc79d79faed29e31b913911",
+          "segments": [
+            {
+              "id": "second_campaign-ar-01",
+              "text": "عندكم أكثر من خدمة؟ نعطي الخدمة الثانية حملتها الخاصة."
+            },
+            {
+              "id": "second_campaign-ar-02",
+              "text": "نتفق معكم على الخدمة وطريقة عرضها. بعدها نسوي إعلاناتها، ونكتب كلامها، ونجهز لها نموذج استفسار خاص."
+            },
+            {
+              "id": "second_campaign-ar-03",
+              "text": "وتمشي جنب حملتكم الأولى، بنفس المتابعة الموجودة بحملتكم الحالية."
+            },
+            {
+              "id": "second_campaign-ar-04",
+              "text": "ومنكم نحتاج صور للخدمة اللي تبون تكبرونها."
+            },
+            {
+              "id": "second_campaign-ar-05",
+              "text": "الإدارة شهرية، فوق باقتكم الحالية. والحملة الجديدة تنطلق أول ما توافقون على إعلاناتها ونموذجها."
+            },
+            {
+              "id": "second_campaign-ar-06",
+              "text": "فريق نجاح العملاء يساعدكم تختارون الخدمة، ويمشي معاكم بالخطوة الجاية."
+            }
+          ],
+          "wordCount": 65,
+          "approval": "approved",
+          "notes": "Approved in the explicit seven-offer bilingual batch. Audio and film quality review remain separate.",
+          "approvalSheetSha256": "1270fc4f0efeaaedf6d2ce1dee859158699167bcba46a7e3136e4750d0fb768d"
+        }
+      }
+    },
+    {
+      "kind": "seo_geo",
+      "clientReady": false,
+      "readiness": {
+        "arabicCopyApproved": true,
+        "voiceSelected": true,
+        "audioReviewed": false,
+        "closingApproved": true
+      },
+      "languages": {
+        "en": {
+          "text": "When someone searches for your service in your city, what do they find?\n\nOver ninety days, we work on your website, Google Business Profile and business listings.\n\nWe organise the information search engines read, and write service and question pages that AI answers can quote.\n\nEach month, you receive a report showing where your firm appears. If you have no website, we build one into the programme.\n\nWe need access to your site and Google profile. The price covers ninety days, and what we build stays yours. If we build a site, its monthly care starts on day ninety-one.\n\nSearch positions and AI mentions cannot be promised. Your account manager will explain the work and the next step.",
+          "textSha256": "21650e3ed8c04cf2d726221965fe8e38fdf75a7c8cd5216b2e1994c7a590107c",
+          "segments": [
+            {
+              "id": "seo_geo-en-01",
+              "text": "When someone searches for your service in your city, what do they find?"
+            },
+            {
+              "id": "seo_geo-en-02",
+              "text": "Over ninety days, we work on your website, Google Business Profile and business listings."
+            },
+            {
+              "id": "seo_geo-en-03",
+              "text": "We organise the information search engines read, and write service and question pages that AI answers can quote."
+            },
+            {
+              "id": "seo_geo-en-04",
+              "text": "Each month, you receive a report showing where your firm appears. If you have no website, we build one into the programme."
+            },
+            {
+              "id": "seo_geo-en-05",
+              "text": "We need access to your site and Google profile. The price covers ninety days, and what we build stays yours. If we build a site, its monthly care starts on day ninety-one."
+            },
+            {
+              "id": "seo_geo-en-06",
+              "text": "Search positions and AI mentions cannot be promised. Your account manager will explain the work and the next step."
+            }
+          ],
+          "wordCount": 118,
+          "approval": "approved",
+          "notes": "Approved in the explicit seven-offer bilingual batch. Audio and film quality review remain separate.",
+          "approvalSheetSha256": "1270fc4f0efeaaedf6d2ce1dee859158699167bcba46a7e3136e4750d0fb768d"
+        },
+        "ar": {
+          "text": "لما أحد يدور على خدمتكم في مدينتكم، شنو يلقى؟\n\nخلال تسعين يوم، نشتغل على موقعكم، وملف نشاطكم على قوقل، وقوائم شركتكم.\n\nنرتب المعلومات اللي تقراها محركات البحث، ونكتب صفحات للخدمات والأسئلة، تقدر إجابات الذكاء الاصطناعي تقتبس منها.\n\nوكل شهر يوصلكم تقرير يوضح وين تطلع شركتكم. وإذا ما عندكم موقع، نبنيه لكم ضمن البرنامج.\n\nنحتاج صلاحية الدخول لموقعكم وملفكم على قوقل. السعر يشمل تسعين يوم، واللي نبنيه يبقى لكم. وإذا بنينا موقع، تبدي عنايته الشهرية من اليوم الواحد والتسعين.\n\nما نوعد بترتيب معين أو ظهور بإجابات الذكاء الاصطناعي. فريق نجاح العملاء يوضح لكم الشغل والخطوة الجاية.",
+          "textSha256": "37ae03ae8ab6ce5bc4e40f2ce6afd0d78b50e84fbc28e234baafe510369e7724",
+          "segments": [
+            {
+              "id": "seo_geo-ar-01",
+              "text": "لما أحد يدور على خدمتكم في مدينتكم، شنو يلقى؟"
+            },
+            {
+              "id": "seo_geo-ar-02",
+              "text": "خلال تسعين يوم، نشتغل على موقعكم، وملف نشاطكم على قوقل، وقوائم شركتكم."
+            },
+            {
+              "id": "seo_geo-ar-03",
+              "text": "نرتب المعلومات اللي تقراها محركات البحث، ونكتب صفحات للخدمات والأسئلة، تقدر إجابات الذكاء الاصطناعي تقتبس منها."
+            },
+            {
+              "id": "seo_geo-ar-04",
+              "text": "وكل شهر يوصلكم تقرير يوضح وين تطلع شركتكم. وإذا ما عندكم موقع، نبنيه لكم ضمن البرنامج."
+            },
+            {
+              "id": "seo_geo-ar-05",
+              "text": "نحتاج صلاحية الدخول لموقعكم وملفكم على قوقل. السعر يشمل تسعين يوم، واللي نبنيه يبقى لكم. وإذا بنينا موقع، تبدي عنايته الشهرية من اليوم الواحد والتسعين."
+            },
+            {
+              "id": "seo_geo-ar-06",
+              "text": "ما نوعد بترتيب معين أو ظهور بإجابات الذكاء الاصطناعي. فريق نجاح العملاء يوضح لكم الشغل والخطوة الجاية."
+            }
+          ],
+          "wordCount": 95,
+          "approval": "approved",
+          "notes": "Approved in the explicit seven-offer bilingual batch. Audio and film quality review remain separate.",
+          "approvalSheetSha256": "1270fc4f0efeaaedf6d2ce1dee859158699167bcba46a7e3136e4750d0fb768d"
+        }
+      }
+    },
+    {
+      "kind": "smm",
+      "clientReady": false,
+      "readiness": {
+        "arabicCopyApproved": true,
+        "voiceSelected": true,
+        "audioReviewed": false,
+        "closingApproved": true
+      },
+      "languages": {
+        "en": {
+          "text": "When someone opens your social page, can they see your recent work?\n\nWe run your pages using the project material you already send us.\n\nThe monthly plan includes more than twenty posts and weekly stories.\n\nWe agree the look and the first month’s calendar with you. Then we publish from your project photos and footage.\n\nReels depend on the footage you send. They are an extra, rather than a promised number.\n\nEach month, we review the pages with you on a call and share a report.\n\nThis keeps your work visible on your pages. It does not promise a number of enquiries. Your account manager will help you plan the first month.",
+          "textSha256": "a9da83f0ecb92817b93652b97e1c5331c69c82cc2048f38e33912fa0a8aba9ef",
+          "segments": [
+            {
+              "id": "smm-en-01",
+              "text": "When someone opens your social page, can they see your recent work?"
+            },
+            {
+              "id": "smm-en-02",
+              "text": "We run your pages using the project material you already send us."
+            },
+            {
+              "id": "smm-en-03",
+              "text": "The monthly plan includes more than twenty posts and weekly stories."
+            },
+            {
+              "id": "smm-en-04",
+              "text": "We agree the look and the first month’s calendar with you. Then we publish from your project photos and footage."
+            },
+            {
+              "id": "smm-en-05",
+              "text": "Reels depend on the footage you send. They are an extra, rather than a promised number."
+            },
+            {
+              "id": "smm-en-06",
+              "text": "Each month, we review the pages with you on a call and share a report."
+            },
+            {
+              "id": "smm-en-07",
+              "text": "This keeps your work visible on your pages. It does not promise a number of enquiries. Your account manager will help you plan the first month."
+            }
+          ],
+          "wordCount": 112,
+          "approval": "approved",
+          "notes": "Approved in the explicit seven-offer bilingual batch. Audio and film quality review remain separate.",
+          "approvalSheetSha256": "1270fc4f0efeaaedf6d2ce1dee859158699167bcba46a7e3136e4750d0fb768d"
+        },
+        "ar": {
+          "text": "اللي يفتح صفحتكم اليوم، يشوف آخر شغلكم؟\n\nندير صفحاتكم من مواد المشاريع اللي ترسلونها لنا أصلاً.\n\nالخطة الشهرية فيها أكثر من عشرين بوست، وستوريات كل أسبوع.\n\nنتفق معكم على الشكل وجدول أول شهر. وبعدها ننشر من صور مشاريعكم والمواد اللي عندنا.\n\nوالريلز تعتمد على المواد اللي ترسلونها. تجي زيادة، وما نوعد بعدد معين منها.\n\nوكل شهر نراجع الصفحات معكم بمكالمة، ونشارككم التقرير.\n\nالهدف إن شغلكم يكون ظاهر بصفحاتكم، بدون وعد بعدد استفسارات. فريق نجاح العملاء يساعدكم نرتب أول شهر.",
+          "textSha256": "463d629ef032ae02346b7ab7d168a2af8bfa7e68d96e87da796e25b508271a9d",
+          "segments": [
+            {
+              "id": "smm-ar-01",
+              "text": "اللي يفتح صفحتكم اليوم، يشوف آخر شغلكم؟"
+            },
+            {
+              "id": "smm-ar-02",
+              "text": "ندير صفحاتكم من مواد المشاريع اللي ترسلونها لنا أصلاً."
+            },
+            {
+              "id": "smm-ar-03",
+              "text": "الخطة الشهرية فيها أكثر من عشرين بوست، وستوريات كل أسبوع."
+            },
+            {
+              "id": "smm-ar-04",
+              "text": "نتفق معكم على الشكل وجدول أول شهر. وبعدها ننشر من صور مشاريعكم والمواد اللي عندنا."
+            },
+            {
+              "id": "smm-ar-05",
+              "text": "والريلز تعتمد على المواد اللي ترسلونها. تجي زيادة، وما نوعد بعدد معين منها."
+            },
+            {
+              "id": "smm-ar-06",
+              "text": "وكل شهر نراجع الصفحات معكم بمكالمة، ونشارككم التقرير."
+            },
+            {
+              "id": "smm-ar-07",
+              "text": "الهدف إن شغلكم يكون ظاهر بصفحاتكم، بدون وعد بعدد استفسارات. فريق نجاح العملاء يساعدكم نرتب أول شهر."
+            }
+          ],
+          "wordCount": 79,
+          "approval": "approved",
+          "notes": "Approved in the explicit seven-offer bilingual batch. Audio and film quality review remain separate.",
+          "approvalSheetSha256": "1270fc4f0efeaaedf6d2ce1dee859158699167bcba46a7e3136e4750d0fb768d"
+        }
+      }
+    },
+    {
+      "kind": "cameraman",
+      "clientReady": false,
+      "readiness": {
+        "arabicCopyApproved": true,
+        "voiceSelected": true,
+        "audioReviewed": false,
+        "closingApproved": true
+      },
+      "languages": {
+        "en": {
+          "text": "One day on site, capturing the work you want clients to see.\n\nWe send a cameraman for a full day at a project, your office, or both.\n\nFinished work. Work in progress. Your team doing the job. And you on camera, only if you want to be.\n\nAll the footage is yours to keep. We use it across your ads and posts in the months after.\n\nThe aim is around three months of material from one day. How far it goes depends on what we can film.\n\nYou choose a suitable site and a date. The day is paid in full.\n\nYour account manager will help plan what is worth filming, and book the day with you.",
+          "textSha256": "fa13fa881855e386505df9ab5bc45d69bf49ec6c445b8205fa71d2a435022984",
+          "segments": [
+            {
+              "id": "cameraman-en-01",
+              "text": "One day on site, capturing the work you want clients to see."
+            },
+            {
+              "id": "cameraman-en-02",
+              "text": "We send a cameraman for a full day at a project, your office, or both."
+            },
+            {
+              "id": "cameraman-en-03",
+              "text": "Finished work. Work in progress. Your team doing the job. And you on camera, only if you want to be."
+            },
+            {
+              "id": "cameraman-en-04",
+              "text": "All the footage is yours to keep. We use it across your ads and posts in the months after."
+            },
+            {
+              "id": "cameraman-en-05",
+              "text": "The aim is around three months of material from one day. How far it goes depends on what we can film."
+            },
+            {
+              "id": "cameraman-en-06",
+              "text": "You choose a suitable site and a date. The day is paid in full."
+            },
+            {
+              "id": "cameraman-en-07",
+              "text": "Your account manager will help plan what is worth filming, and book the day with you."
+            }
+          ],
+          "wordCount": 117,
+          "approval": "approved",
+          "notes": "Approved in the explicit seven-offer bilingual batch. Audio and film quality review remain separate.",
+          "approvalSheetSha256": "1270fc4f0efeaaedf6d2ce1dee859158699167bcba46a7e3136e4750d0fb768d"
+        },
+        "ar": {
+          "text": "يوم بموقعكم، نوثق فيه الشغل اللي تبون الناس تشوفه.\n\nنرسل لكم مصور يوم كامل، بمشروع، أو بمكتبكم، أو الاثنين.\n\nمشاريع منتهية. وشغل قيد التنفيذ. وفريقكم وهو يشتغل. وأنتم قدام الكاميرا، بس إذا تبون.\n\nوكل المواد تبقى لكم. نستخدمها بإعلاناتكم وبوستاتكم بالشهور اللي بعدها.\n\nالهدف مواد تكفي حوالي ثلاثة شهور من يوم واحد. والمدة تعتمد على اللي نقدر نصوره.\n\nمنكم نحتاج موقع مناسب وتاريخ يناسبكم. ويوم التصوير دفعة وحدة كاملة.\n\nفريق نجاح العملاء يرتب معاكم شنو يستاهل التصوير، ويحجز اليوم معكم.",
+          "textSha256": "ac86d814886df9abd707f51417b508a344137b9b21787160d1d90d9137cf1015",
+          "segments": [
+            {
+              "id": "cameraman-ar-01",
+              "text": "يوم بموقعكم، نوثق فيه الشغل اللي تبون الناس تشوفه."
+            },
+            {
+              "id": "cameraman-ar-02",
+              "text": "نرسل لكم مصور يوم كامل، بمشروع، أو بمكتبكم، أو الاثنين."
+            },
+            {
+              "id": "cameraman-ar-03",
+              "text": "مشاريع منتهية. وشغل قيد التنفيذ. وفريقكم وهو يشتغل. وأنتم قدام الكاميرا، بس إذا تبون."
+            },
+            {
+              "id": "cameraman-ar-04",
+              "text": "وكل المواد تبقى لكم. نستخدمها بإعلاناتكم وبوستاتكم بالشهور اللي بعدها."
+            },
+            {
+              "id": "cameraman-ar-05",
+              "text": "الهدف مواد تكفي حوالي ثلاثة شهور من يوم واحد. والمدة تعتمد على اللي نقدر نصوره."
+            },
+            {
+              "id": "cameraman-ar-06",
+              "text": "منكم نحتاج موقع مناسب وتاريخ يناسبكم. ويوم التصوير دفعة وحدة كاملة."
+            },
+            {
+              "id": "cameraman-ar-07",
+              "text": "فريق نجاح العملاء يرتب معاكم شنو يستاهل التصوير، ويحجز اليوم معكم."
+            }
+          ],
+          "wordCount": 80,
+          "approval": "approved",
+          "notes": "Approved in the explicit seven-offer bilingual batch. Audio and film quality review remain separate.",
+          "approvalSheetSha256": "1270fc4f0efeaaedf6d2ce1dee859158699167bcba46a7e3136e4750d0fb768d"
+        }
+      }
+    },
+    {
+      "kind": "ugc",
+      "clientReady": false,
+      "readiness": {
+        "arabicCopyApproved": true,
+        "voiceSelected": true,
+        "audioReviewed": false,
+        "closingApproved": true
+      },
+      "languages": {
+        "en": {
+          "text": "Your company needs a clear story. You do not have to be the one on camera.\n\nWe write the scripts and cast a presenter who speaks your dialect. They present your firm, without pretending to be its owner.\n\nYou receive eight videos: five ads, one longer explanation of your offer, and two follow-up videos to send after an enquiry.\n\nThe five ads run in your campaign. The three longer videos are yours to keep and send.\n\nWe start with one call to agree the script. You approve it before filming, then review all eight videos.\n\nThe package is paid once, in full. Your account manager will walk you through the script and dates.",
+          "textSha256": "529583b0a89f166816606bcca82a1302098830a352bf57b863ea9bcb1c63f71c",
+          "segments": [
+            {
+              "id": "ugc-en-01",
+              "text": "Your company needs a clear story. You do not have to be the one on camera."
+            },
+            {
+              "id": "ugc-en-02",
+              "text": "We write the scripts and cast a presenter who speaks your dialect. They present your firm, without pretending to be its owner."
+            },
+            {
+              "id": "ugc-en-03",
+              "text": "You receive eight videos: five ads, one longer explanation of your offer, and two follow-up videos to send after an enquiry."
+            },
+            {
+              "id": "ugc-en-04",
+              "text": "The five ads run in your campaign. The three longer videos are yours to keep and send."
+            },
+            {
+              "id": "ugc-en-05",
+              "text": "We start with one call to agree the script. You approve it before filming, then review all eight videos."
+            },
+            {
+              "id": "ugc-en-06",
+              "text": "The package is paid once, in full. Your account manager will walk you through the script and dates."
+            }
+          ],
+          "wordCount": 113,
+          "approval": "approved",
+          "notes": "Approved in the explicit seven-offer bilingual batch. Audio and film quality review remain separate.",
+          "approvalSheetSha256": "1270fc4f0efeaaedf6d2ce1dee859158699167bcba46a7e3136e4750d0fb768d"
+        },
+        "ar": {
+          "text": "شركتكم تحتاج أحد يشرح شغلها. مو لازم تكونون أنتم قدام الكاميرا.\n\nنكتب السكربتات، ونختار مقدّم يتكلم بلهجتكم. يعرّف بشركتكم، وما يمثل إنه صاحبها.\n\nتستلمون ثمانية فيديوهات: خمسة إعلانات، وفيديو أطول يشرح عرضكم، وفيديوين متابعة ترسلونهم بعد الاستفسار.\n\nالإعلانات الخمسة تمشي بحملتكم. والفيديوهات الثلاثة الأطول تبقى لكم وتقدرون ترسلونها.\n\nنبدي بمكالمة وحدة نتفق فيها على السكربت. توافقون عليه قبل التصوير، وبعدها تراجعون الفيديوهات الثمانية.\n\nالباقة دفعة وحدة كاملة. فريق نجاح العملاء يمشي معاكم بالسكربت والتواريخ.",
+          "textSha256": "6695782d22acd7ca6871c742042fe9f98f838ba794bdd24cfa465f79896f4e38",
+          "segments": [
+            {
+              "id": "ugc-ar-01",
+              "text": "شركتكم تحتاج أحد يشرح شغلها. مو لازم تكونون أنتم قدام الكاميرا."
+            },
+            {
+              "id": "ugc-ar-02",
+              "text": "نكتب السكربتات، ونختار مقدّم يتكلم بلهجتكم. يعرّف بشركتكم، وما يمثل إنه صاحبها."
+            },
+            {
+              "id": "ugc-ar-03",
+              "text": "تستلمون ثمانية فيديوهات: خمسة إعلانات، وفيديو أطول يشرح عرضكم، وفيديوين متابعة ترسلونهم بعد الاستفسار."
+            },
+            {
+              "id": "ugc-ar-04",
+              "text": "الإعلانات الخمسة تمشي بحملتكم. والفيديوهات الثلاثة الأطول تبقى لكم وتقدرون ترسلونها."
+            },
+            {
+              "id": "ugc-ar-05",
+              "text": "نبدي بمكالمة وحدة نتفق فيها على السكربت. توافقون عليه قبل التصوير، وبعدها تراجعون الفيديوهات الثمانية."
+            },
+            {
+              "id": "ugc-ar-06",
+              "text": "الباقة دفعة وحدة كاملة. فريق نجاح العملاء يمشي معاكم بالسكربت والتواريخ."
+            }
+          ],
+          "wordCount": 74,
+          "approval": "approved",
+          "notes": "Approved in the explicit seven-offer bilingual batch. Audio and film quality review remain separate.",
+          "approvalSheetSha256": "1270fc4f0efeaaedf6d2ce1dee859158699167bcba46a7e3136e4750d0fb768d"
+        }
+      }
+    },
+    {
+      "kind": "closer",
+      "clientReady": false,
+      "readiness": {
+        "arabicCopyApproved": true,
+        "voiceSelected": true,
+        "audioReviewed": false,
+        "closingApproved": true
+      },
+      "languages": {
+        "en": {
+          "text": "Who follows up on your quotations while you run the business?\n\nWe recruit, train and manage a salesperson for your firm. They work in your tools and on your phone line.\n\nWe agree the role and pay with you, interview candidates, and train the hire using scripts written for your services.\n\nMonth one is training and ramp-up. After that, we review calls, coach and manage performance each month.\n\nYou provide a place to work, a phone line and your price list.\n\nPlacement is paid in full, followed by monthly management with a three-month minimum. If the hire does not work out within ninety days, we recruit a replacement at no cost.\n\nYour account manager will confirm recruitment readiness before starting the search.",
+          "textSha256": "dcd34f6973354635833daf07c3b577c4f307a9b8b1db16ed4fb89cb6244f98bb",
+          "segments": [
+            {
+              "id": "closer-en-01",
+              "text": "Who follows up on your quotations while you run the business?"
+            },
+            {
+              "id": "closer-en-02",
+              "text": "We recruit, train and manage a salesperson for your firm. They work in your tools and on your phone line."
+            },
+            {
+              "id": "closer-en-03",
+              "text": "We agree the role and pay with you, interview candidates, and train the hire using scripts written for your services."
+            },
+            {
+              "id": "closer-en-04",
+              "text": "Month one is training and ramp-up. After that, we review calls, coach and manage performance each month."
+            },
+            {
+              "id": "closer-en-05",
+              "text": "You provide a place to work, a phone line and your price list."
+            },
+            {
+              "id": "closer-en-06",
+              "text": "Placement is paid in full, followed by monthly management with a three-month minimum. If the hire does not work out within ninety days, we recruit a replacement at no cost."
+            },
+            {
+              "id": "closer-en-07",
+              "text": "Your account manager will confirm recruitment readiness before starting the search."
+            }
+          ],
+          "wordCount": 122,
+          "approval": "approved",
+          "notes": "Approved in the explicit seven-offer bilingual batch. Audio and film quality review remain separate.",
+          "approvalSheetSha256": "1270fc4f0efeaaedf6d2ce1dee859158699167bcba46a7e3136e4750d0fb768d"
+        },
+        "ar": {
+          "text": "عروض أسعاركم من يتابعها، وأنتم تديرون شغلكم؟\n\nنوظف لكم مندوب مبيعات، وندربه وندير أداءه. يشتغل على أدواتكم وعلى خط التلفون عندكم.\n\nنتفق معكم على الدور والراتب، ونسوي المقابلات، وندرب المندوب على سكربتات مكتوبة لخدماتكم.\n\nأول شهر للتدريب والتجهيز. وبعدها نراجع المكالمات، وندربه ونتابع أداءه كل شهر.\n\nمنكم نحتاج مكان يشتغل فيه، وخط تلفون، وقائمة أسعاركم.\n\nالتوظيف دفعة وحدة كاملة، وبعدها إدارة شهرية، وأقل مدة ثلاثة شهور. وإذا المندوب ما ناسب خلال تسعين يوم، نوظف بديل بدون تكلفة.\n\nفريق نجاح العملاء يتأكد من جاهزية التوظيف قبل لا نبدي البحث.",
+          "textSha256": "c20a49f9686cb0782f1832ac79c9d5d146286980c617020846e473561e005152",
+          "segments": [
+            {
+              "id": "closer-ar-01",
+              "text": "عروض أسعاركم من يتابعها، وأنتم تديرون شغلكم؟"
+            },
+            {
+              "id": "closer-ar-02",
+              "text": "نوظف لكم مندوب مبيعات، وندربه وندير أداءه. يشتغل على أدواتكم وعلى خط التلفون عندكم."
+            },
+            {
+              "id": "closer-ar-03",
+              "text": "نتفق معكم على الدور والراتب، ونسوي المقابلات، وندرب المندوب على سكربتات مكتوبة لخدماتكم."
+            },
+            {
+              "id": "closer-ar-04",
+              "text": "أول شهر للتدريب والتجهيز. وبعدها نراجع المكالمات، وندربه ونتابع أداءه كل شهر."
+            },
+            {
+              "id": "closer-ar-05",
+              "text": "منكم نحتاج مكان يشتغل فيه، وخط تلفون، وقائمة أسعاركم."
+            },
+            {
+              "id": "closer-ar-06",
+              "text": "التوظيف دفعة وحدة كاملة، وبعدها إدارة شهرية، وأقل مدة ثلاثة شهور. وإذا المندوب ما ناسب خلال تسعين يوم، نوظف بديل بدون تكلفة."
+            },
+            {
+              "id": "closer-ar-07",
+              "text": "فريق نجاح العملاء يتأكد من جاهزية التوظيف قبل لا نبدي البحث."
+            }
+          ],
+          "wordCount": 88,
+          "approval": "approved",
+          "notes": "Approved in the explicit seven-offer bilingual batch. Audio and film quality review remain separate.",
+          "approvalSheetSha256": "1270fc4f0efeaaedf6d2ce1dee859158699167bcba46a7e3136e4750d0fb768d"
+        }
+      }
+    }
+  ],
+  "approval": {
+    "approved": true,
+    "sheetSha256": "1270fc4f0efeaaedf6d2ce1dee859158699167bcba46a7e3136e4750d0fb768d",
+    "evidence": "User explicitly approved seven bilingual scripts and genuine Mahara logo ending; approval response relayed by orchestrator",
+    "recordedAt": "2026-10-27T12:39:14.925468+00:00"
+  }
+}

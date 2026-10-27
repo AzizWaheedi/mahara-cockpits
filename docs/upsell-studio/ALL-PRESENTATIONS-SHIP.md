@@ -1,6 +1,6 @@
 # All seven offer presentations, 27 October 2026
 
-Software release preparation. Provider deployment receipts will be added after verification.
+Public proposals and backend are verified live. The guarded Client Success deployment is running; its receipt will be added after canonical verification.
 
 ## What changes
 
@@ -28,4 +28,13 @@ Commit and merge the isolated `codex/offer-studio-all-presentations` branch. Rec
 
 ## Narration remains a separate deliverable
 
-Aziz suggested his existing Nabarati subscription instead of buying ElevenLabs. Six internal Arabic/English auditions were generated using 2,133 existing points. No new subscription was purchased. The seven bilingual scripts and a proposed genuine-logo ending are prepared for explicit approval; new Arabic wording and replacing the original real Aziz closing footage are not published. Silent internal picture layouts are not final videos. Do not point client video slots to an unfinished or unlicensed cut.
+Aziz suggested his existing Nabarati subscription instead of buying ElevenLabs. Six internal Arabic/English auditions were generated using 2,133 existing points. No new subscription was purchased. Aziz approved all seven bilingual scripts and the genuine Mahara logo ending on 27 October 2026, against review-sheet SHA256 `1270fc4f0efeaaedf6d2ce1dee859158699167bcba46a7e3136e4750d0fb768d`. This explicitly replaces the former real Aziz closing-footage requirement. All fourteen full narrations were generated. Eight takes are saved and imported; six remain in Nabarati awaiting export. Aziz asked to stop downloads, so exports, retries and alternate routes are held. Work can continue only with the eight saved takes. Final films, captions, playback and slot mappings still require verification. Silent internal picture layouts are not final videos. Do not point client video slots to an unfinished or unlicensed cut.
+
+## Verified receipts
+
+- Feature PR: [87](https://github.com/AzizWaheedi/mahara-cockpits/pull/87), merge `2c7693642124b15ee44721863f9a2970b3984cc0`.
+- Exact-title and fixture-isolation regression correction: [88](https://github.com/AzizWaheedi/mahara-cockpits/pull/88), merge `dd6684f807ff64cfb9910c84d8f4c0c21b2d46dd`. Five test files only; 260 named tests and 3,507 assertions pass. Concurrent Media Buyer PR86 remains in history.
+- Import organization correction: [89](https://github.com/AzizWaheedi/mahara-cockpits/pull/89), merge `85a87abaa3c3ad1933f786ace0dab3dae67d87af`. Twenty feature files, imports and whitespace only. The exact CSM Biome check passes across 390 files with zero errors; independent AST and diff review verified unchanged bodies and bindings. The prior frozen guard run passed fresh builds/typechecks for all five apps and all 105 offline suites before stopping at these import diagnostics.
+- Public proposal deployment: `dpl_BwyDtuAZKQtzwgKoss14QQFgHBM5`, READY, source `2c7693642124b15ee44721863f9a2970b3984cc0`, canonical `https://offer.maharamedia.com`. All 17 runtime assets match committed bytes and the upload receipt. Both genuine logos and the published header policies match. Explicitly synthetic English/Arabic mobile checks passed with zero real API requests or event posts. Nested excluded asset paths return 404; root excluded filenames return the generic app shell through the existing code rewrite, without exposing source.
+- Backend migration: source `20261027115820_offer_presentations_readiness.sql`, SHA256 `72ba22acf9eb36fb34b2ccb71b8539d4cc2a6f7185e5754bfffb578cd71f8df1`, provider receipt version `20261027153102`, name `offer_presentations_readiness_20261027115820`. Seven functions, ownership/search paths/grants, nine private tables, catalogue deltas and audit receipts read back. Prices, settings, issued proposals and access controls remain unchanged. No Edge Function deployment.
+- Client Success: normal guarded release in progress from `85a87abaa3c3ad1933f786ace0dab3dae67d87af`; not yet claimed live.
