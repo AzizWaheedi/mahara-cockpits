@@ -7,3 +7,7 @@ sites/webinar/webinar-schedule.js text eol=lf
 sites/webinar/schedule.json text eol=lf
 sites/webinar/index.html text eol=lf
 sites/webinar/thank-you.html text eol=lf
+
+# Migration tests compare file bytes and match "\n" in the SQL, so a Windows
+# checkout must not turn the newlines into "\r\n".
+supabase/migrations/*.sql text eol=lf
