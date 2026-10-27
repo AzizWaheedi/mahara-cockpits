@@ -187,6 +187,7 @@ function Harness() {
       onboarding: {},
       launch: {},
       blueprint: {},
+      offer_website: {},
     };
     const loaded = fixed.loaded;
     store.onboarding = loaded.prep.onboarding;

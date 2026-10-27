@@ -1,4 +1,6 @@
 import type { Overrides } from "./deckData";
+import { isOfferDeck } from "./offer/kinds";
+import { OFFER_PREP_KEYS } from "./offer/prepKeys";
 import type { DeckKind, SavedPrep } from "./sources";
 
 /**
@@ -65,6 +67,7 @@ export const PREP_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 const STAMPS = new Set([
+  "presented_at",
   "creative_agreed_at",
   "onboarding_presented_at",
   "service_chosen_at",
@@ -78,8 +81,10 @@ const LISTS =
   /^(red_lines|services|dos_donts_hidden|platforms_planned|hidden_slides|shown_slides)(_ar)?$/;
 
 /** A key the server would refuse, said plainly; null when it is kept. */
-export function refusedKey(key: string): string | null {
-  return PREP_KEYS.has(key) ? null : `Prep does not keep "${key}".`;
+const OFFER_KEY_SET: ReadonlySet<string> = new Set(OFFER_PREP_KEYS);
+export function refusedKey(key: string, deck?: DeckKind): string | null {
+  const keys = isOfferDeck(deck) ? OFFER_KEY_SET : PREP_KEYS;
+  return keys.has(key) ? null : `Prep does not keep "${key}".`;
 }
 
 /**
@@ -119,6 +124,7 @@ export function applyPatch(
 }
 
 export interface SaverOptions {
+  deck?: DeckKind;
   save: (patch: Overrides) => Promise<SavedPrep>;
   onSaved: (row: SavedPrep, sent: Overrides) => void;
   onError: (message: string, sent: Overrides) => void;
@@ -156,7 +162,7 @@ export class PrepSaver {
   /** Queue a patch; `now` sends at once (a tick, a button), else after the pause. */
   set(patch: Overrides, now = false): string | null {
     for (const k of Object.keys(patch)) {
-      const refused = refusedKey(k);
+      const refused = refusedKey(k, this.opts.deck);
       if (refused) return refused;
     }
     Object.assign(this.pending, patch);

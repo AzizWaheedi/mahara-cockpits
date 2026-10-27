@@ -1,3 +1,10 @@
+import { fill } from "./content";
+import { WEBSITE_DECK } from "./offer/content/website";
+import { isOfferDeck } from "./offer/kinds";
+import { OfferRefused } from "./offer/OfferRefused";
+import { copyOf } from "./offer/sources";
+import { useOffer } from "./offer/useOffer";
+import { websiteSlides } from "./offer/websiteDeck";
 import "./present.css";
 import {
   type ReactNode,
@@ -130,13 +137,65 @@ export function PresentApp({
   });
   const [closed, setClosed] = useState(false);
   const host = useHost(taskId, deck);
-  const all = useMemo(() => DECKS[deck](), [deck]);
+  const offer = useOffer({
+    enabled: isOfferDeck(deck),
+    loaded: model.loaded,
+    prep: model.prep[deck],
+    d: model.data,
+    io: io.offer,
+    flush: model.flush,
+    lang: model.lang,
+    writePrep: model.setPrep,
+  });
+  const all = useMemo(
+    () => (isOfferDeck(deck) ? websiteSlides(offer) : DECKS[deck]()),
+    [deck, offer],
+  );
+  const [offerPos, setOfferPos] = useState<Pos>({ index: 0, tour: 0 });
+  const [offerJump, setOfferJump] = useState(false);
   const d = model.data;
   const shown = useMemo(
     () => (d ? shownSlides(all, d, model.prep[deck]) : []),
     [all, d, model.prep, deck],
   );
 
+  useEffect(() => {
+    if (isOfferDeck(deck) && d)
+      document.title = fill(WEBSITE_DECK.tab[model.lang], { name: d.name });
+  }, [deck, d, model.lang]);
+  const offerKey = useCallback(
+    (key: string) => {
+      if (!isOfferDeck(deck) || key.toLowerCase() !== "h") return false;
+      const index = shown.findIndex(s => s.id === "runs");
+      if (index < 0) {
+        const current = Array.isArray(model.prep[deck].shown_slides)
+          ? (model.prep[deck].shown_slides as string[])
+          : [];
+        model.setPrep(deck, { shown_slides: [...current, "runs"] }, true);
+        setOfferJump(true);
+      } else setOfferPos({ index, tour: 0 });
+      return true;
+    },
+    [deck, model, shown],
+  );
+  useEffect(() => {
+    if (!offerJump) return;
+    const index = shown.findIndex(s => s.id === "runs");
+    if (index >= 0) {
+      setOfferPos({ index, tour: 0 });
+      setOfferJump(false);
+    }
+  }, [offerJump, shown]);
+  const positionedOffer = useRef(false);
+  useEffect(() => {
+    if (!isOfferDeck(deck) || !d || positionedOffer.current) return;
+    positionedOffer.current = true;
+    const p = new URLSearchParams(window.location.search),
+      id = p.get("slide") ?? window.location.hash.slice(1),
+      index = shown.findIndex(s => s.id === id),
+      tour = Math.max(0, Number(p.get("stop")) || 0);
+    if (index >= 0) setOfferPos({ index, tour });
+  }, [deck, d, shown]);
   const notesName = `mahara-notes-${taskId}-${deck}${own ? `-${own}` : ""}`;
   const openNotes = useCallback(
     () =>
@@ -194,6 +253,16 @@ export function PresentApp({
   const stamped = useRef(false);
   const onPos = useCallback(
     (_p: Pos, slideId: string) => {
+      if (
+        isOfferDeck(deck) &&
+        view === "present" &&
+        slideId === "next" &&
+        !stamped.current
+      ) {
+        stamped.current = true;
+        model.setPrep(deck, { presented_at: true }, true);
+        return;
+      }
       if (deck !== "onboarding" || view !== "present" || stamped.current)
         return;
       if (slideId !== "team" || model.prep.onboarding.onboarding_presented_at)
@@ -254,6 +323,22 @@ export function PresentApp({
 
   if (model.error && !d) return <Screen>{model.error}</Screen>;
   if (!d) return <Screen>Reading the deck…</Screen>;
+  if (offer?.refused)
+    return (
+      <OfferRefused
+        offer={offer}
+        model={model}
+        clientUrl={urls.client}
+        presenting={view === "present"}
+      />
+    );
+  if (offer?.row && !copyOf(offer.row, model.lang))
+    return (
+      <Screen>
+        The website wording is not ready yet. Read the catalogue again before
+        presenting.
+      </Screen>
+    );
   if (!all.length)
     return (
       <Screen>This deck is not built yet. The onboarding deck is ready.</Screen>
@@ -263,6 +348,7 @@ export function PresentApp({
     ...baseCtx(model, d, deck, still, view === "present"),
     ads: { add: addFiles },
     ...(deck === "blueprint" ? { bp } : {}),
+    ...(isOfferDeck(deck) ? { offer } : {}),
     // On the shared deck the live layer draws the kickoff's frame; until
     // its guard has read the client, the record says what is filled.
     ...(live
@@ -351,6 +437,9 @@ export function PresentApp({
       closed={closed}
       report={report}
       layer={layer}
+      onKey={isOfferDeck(deck) ? offerKey : undefined}
+      pos={isOfferDeck(deck) ? offerPos : undefined}
+      setPos={isOfferDeck(deck) ? setOfferPos : undefined}
     />
   );
 }

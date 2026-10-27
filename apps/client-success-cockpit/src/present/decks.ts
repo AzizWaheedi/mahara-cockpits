@@ -3,6 +3,7 @@ import type { SlideCtx, SlideDef } from "./deckContext";
 import type { DeckData, Overrides } from "./deckData";
 import { visible } from "./engine";
 import { launchSlides } from "./launchDeck";
+import { websiteSlides } from "./offer/websiteDeck";
 import { onboardingSlides } from "./onboardingDeck";
 import type { DeckKind } from "./sources";
 import type { DeckModel } from "./useDeckModel";
@@ -12,6 +13,7 @@ export const DECKS: Record<DeckKind, () => SlideDef[]> = {
   onboarding: onboardingSlides,
   launch: launchSlides,
   blueprint: blueprintSlides,
+  offer_website: websiteSlides,
 };
 
 /**
@@ -24,6 +26,7 @@ export const TARGET_MINUTES: Record<DeckKind, number> = {
   launch: 28,
   /** The Brand Blueprint call: 14 slides, 45 minutes (SPEC 5.2). */
   blueprint: 45,
+  offer_website: 8,
 };
 
 /** The slides the client sees: prep's hides and shows, and DESIGN 14's defaults. */

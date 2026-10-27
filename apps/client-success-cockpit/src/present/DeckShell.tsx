@@ -1,3 +1,5 @@
+import { isOfferDeck } from "./offer/kinds";
+import { OFFER_VIDEO_SLOTS, offerVideoItems } from "./offer/videos";
 import "./present.css";
 import {
   type CSSProperties,
@@ -181,8 +183,13 @@ export function DeckShell({
 
   // The slide's recorded videos (DESIGN 21.2): an empty slot has none.
   const videoItems = useMemo(
-    () => (slide ? filledOn(base.d, slide.id) : []),
-    [base.d, slide],
+    () =>
+      slide
+        ? isOfferDeck(base.deck)
+          ? offerVideoItems(base.d)
+          : filledOn(base.d, slide.id)
+        : [],
+    [base.deck, base.d, slide],
   );
   const opener = useRef<HTMLElement | null>(null);
   const openVideo = useCallback((item: ControlItem) => {
@@ -206,7 +213,9 @@ export function DeckShell({
   /** A slot's recording by id, in a given language (the notes window's offer). */
   const itemFor = useCallback(
     (id: string, lang?: VideoLang): ControlItem | null => {
-      const slot = VIDEO_SLOTS.find(s => slotId(s) === id);
+      const slot = [...VIDEO_SLOTS, ...OFFER_VIDEO_SLOTS].find(
+        s => slotId(s) === id,
+      );
       if (!slot) return null;
       if (!lang) return videoItems.find(v => v.slot === slot) ?? null;
       const row = base.d.videos.videos?.rows.find(

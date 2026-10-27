@@ -1,0 +1,22 @@
+{
+  "name": "offer-art",
+  "private": true,
+  "type": "module",
+  "description": "The offer art sets (website first): Higgsfield stills graded to the deck palette with ffmpeg, webp exports within budget, and the OfferIcon sprite. Runs on the VPS only.",
+  "scripts": {
+    "doctor": "bun doctor.ts",
+    "draw": "bun higgsfield.ts",
+    "review": "bun review.ts",
+    "grade": "bun grade.ts",
+    "export": "bun export.ts",
+    "sprite": "bun sprite.ts",
+    "sheet": "node sheet.mjs",
+    "check": "bash check.sh",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "@types/bun": "1.4.2",
+    "typescript": "5.9.3"
+  }
+}

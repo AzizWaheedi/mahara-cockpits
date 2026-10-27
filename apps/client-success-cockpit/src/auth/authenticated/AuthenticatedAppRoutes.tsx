@@ -27,6 +27,8 @@ import { DeckRouteBoundary } from "@/present/DeckBoundary";
 
 /** The client decks, loaded only when a deck window opens. */
 const PresentPage = lazy(() => import("@/present/PresentPage"));
+const OfferPresentPage = lazy(() => import("@/present/offer/OfferPresentPage"));
+const ProposalPage = lazy(() => import("@/pages/money/offers/ProposalPage"));
 /** A client's forms (the kickoff first), loaded only when a form window opens. */
 const FormWindow = lazy(() => import("@/forms/FormWindow"));
 /** The practice client (docs/call-guide/DESIGN.md): its page and its decks. */
@@ -126,6 +128,26 @@ export function AuthenticatedRoutes() {
         {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
         <Route element={<RoleRoute role="csm" />}>
           <Route
+            path="/clients/:key/present/offer/:offer"
+            element={
+              <DeckRouteBoundary>
+                <Suspense fallback={null}>
+                  <OfferPresentPage />
+                </Suspense>
+              </DeckRouteBoundary>
+            }
+          />
+          <Route
+            path="/clients/:key/present/offer/:offer/notes"
+            element={
+              <DeckRouteBoundary>
+                <Suspense fallback={null}>
+                  <OfferPresentPage notes />
+                </Suspense>
+              </DeckRouteBoundary>
+            }
+          />
+          <Route
             path="/clients/:key/present/:deck"
             element={
               <DeckRouteBoundary>
@@ -188,6 +210,16 @@ export function AuthenticatedRoutes() {
             <Route path="/inbox" element={<InboxPage />} />
             <Route path="/clients" element={<ClientsPage />} />
             <Route path="/clients/:key" element={<ClientPage />} />
+            <Route
+              path="/clients/:key/proposals/:id"
+              element={
+                <DeckRouteBoundary>
+                  <Suspense fallback={null}>
+                    <ProposalPage />
+                  </Suspense>
+                </DeckRouteBoundary>
+              }
+            />
             <Route path="/money" element={<MoneyPage />} />
             <Route path="/links" element={<KeyLinksPage />} />
             {/* Today's own pages. */}

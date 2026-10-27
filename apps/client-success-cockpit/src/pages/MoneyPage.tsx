@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { useSearchParams } from "react-router";
 import { PageHeader, Pill, PillRow } from "@/components/kit";
 import { BillingPage } from "./BillingPage";
@@ -5,6 +6,10 @@ import { ChurnPage } from "./ChurnPage";
 import { HotListPage, MyMoneyPage } from "./CsmPage";
 import { InvoicesPage } from "./InvoicesPage";
 import { ProjectionsPage } from "./ProjectionsPage";
+
+const OffersTab = lazy(() =>
+  import("./money/offers/OffersTab").then(m => ({ default: m.OffersTab })),
+);
 
 /**
  * Money: billing, the hot list, projections, churn, the CSM's own pay and
@@ -20,6 +25,7 @@ const TABS = [
   { key: "churn", label: "Churn" },
   { key: "mine", label: "My money" },
   { key: "invoices", label: "Invoices" },
+  { key: "offers", label: "Offers" },
 ] as const;
 type Tab = (typeof TABS)[number]["key"];
 
@@ -53,6 +59,11 @@ export function MoneyPage() {
       {tab === "churn" ? <ChurnPage embedded /> : null}
       {tab === "mine" ? <MyMoneyPage embedded /> : null}
       {tab === "invoices" ? <InvoicesPage embedded /> : null}
+      {tab === "offers" ? (
+        <Suspense fallback={<p>Loading offers</p>}>
+          <OffersTab />
+        </Suspense>
+      ) : null}
     </div>
   );
 }

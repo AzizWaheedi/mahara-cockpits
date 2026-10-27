@@ -1,0 +1,16 @@
+{
+  "note": "Example structure only, not approval. Keep completed evidence on the VPS media root as delivery-approvals.json. Record actual reviewer, date, licence reference and exact media hashes after review. Never fill this with invented evidence.",
+  "voices": {
+    "en": {"voiceId":null,"commercial":false,"licenseEvidence":null,"fileSha256":null,"scriptSha256":null,"reviewedBy":null,"reviewedAt":null},
+    "ar": {"voiceId":null,"commercial":false,"licenseEvidence":null,"fileSha256":null,"scriptSha256":null,"reviewedBy":null,"reviewedAt":null}
+  },
+  "closing": {
+    "en": {"real":false,"approved":false,"fileSha256":null,"reviewedBy":null,"reviewedAt":null},
+    "ar": {"real":false,"approved":false,"fileSha256":null,"reviewedBy":null,"reviewedAt":null}
+  },
+  "arabic": {"approved":false,"scriptSha256":null,"reviewedBy":null,"reviewedAt":null},
+  "review": {
+    "en": {"visual":false,"phoneSpeaker":false,"fileMd5":null,"reviewedBy":null,"reviewedAt":null},
+    "ar": {"visual":false,"phoneSpeaker":false,"fileMd5":null,"reviewedBy":null,"reviewedAt":null}
+  }
+}
