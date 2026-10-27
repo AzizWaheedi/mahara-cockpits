@@ -59,9 +59,12 @@ export function AnimatedSelect({
   name,
   required,
   title,
+  portalContainer,
   "aria-label": ariaLabel,
   ...rest
-}: React.SelectHTMLAttributes<HTMLSelectElement>) {
+}: React.SelectHTMLAttributes<HTMLSelectElement> & {
+  portalContainer?: HTMLElement | null;
+}) {
   const options = React.useMemo(() => readOptions(children), [children]);
   const [localValue, setLocalValue] = React.useState(
     String(defaultValue ?? ""),
@@ -166,7 +169,7 @@ export function AnimatedSelect({
             <ChevronDown aria-hidden="true" size={16} />
           </Select.Icon>
         </Select.Trigger>
-        <Select.Portal>
+        <Select.Portal container={portalContainer}>
           <Select.Content
             className="cockpit-animated-select-content"
             position="popper"

@@ -8,6 +8,7 @@ import {
   offerDeckUrl,
   proposalNewUrl,
 } from "./kinds";
+import { QuickPitchButton } from "./QuickPitchButton";
 import { type OfferClient, type OfferStatus, readOfferStatus } from "./sources";
 import "./offer.css";
 export function OfferPicker({
@@ -65,7 +66,7 @@ export function OfferPicker({
               target="_blank"
               rel="noreferrer"
             >
-              Prepare pitch deck
+              Prepare for client
             </a>
           }
         </div>
@@ -75,12 +76,21 @@ export function OfferPicker({
             : o.ready.missing.map(k => READY_WORDS[k]).join(" · ")}
         </p>
         {o.waitsOn ? <p className="dko-help">{o.waitsOn}</p> : null}
-        <a
-          href={proposalNewUrl(taskId, key)}
-          className="text-xs text-primary underline"
-        >
-          Make a proposal
-        </a>
+        <div className="flex flex-wrap items-center gap-4">
+          <QuickPitchButton
+            key={`${taskId}:${key}`}
+            taskId={taskId}
+            offer={key}
+            client={client}
+            hold={o.waitsOn}
+          />
+          <a
+            href={proposalNewUrl(taskId, key)}
+            className="text-xs text-primary underline"
+          >
+            Make a proposal
+          </a>
+        </div>
       </div>
     );
   };
@@ -100,17 +110,15 @@ export function OfferPicker({
               data.gate.reasons[0]?.text ??
               "No offer suggested right now."}
           </p>
-          <a
-            href={offerDeckUrl(taskId, "website", "prep")}
-            className="text-sm text-primary underline"
-            target="_blank"
-            rel="noreferrer"
-          >
-            The client asked about a website
-          </a>
+          <p className="dko-help">
+            Choose any service below for a quick overview or prepare its client
+            version.
+          </p>
         </div>
       )}
-      <h3 className="mt-6 text-xs font-medium text-muted-foreground">Later</h3>
+      <h3 className="mt-6 text-xs font-medium text-muted-foreground">
+        All services
+      </h3>
       {data.offers.filter(o => o.key !== data.thisMonth).map(o => row(o.key))}
     </div>
   );

@@ -11,9 +11,12 @@ import { useState } from "react";
 import { digits, fill, VIDEO } from "../content";
 import type { SlideCtx, SlideDef } from "../deckContext";
 import { FRAME_ALLOW, FRAME_SANDBOX, usePlayerFrame } from "../VideoPlayer";
+import { ART } from "./art";
 import { OFFER_CHROME as C } from "./content/shared";
 import { WEBSITE_DECK as W } from "./content/website";
+import { actorPoster, wistiaExample } from "./exampleMedia";
 import type { OfferKey } from "./kinds";
+import { OfferCover } from "./OfferCover";
 import { Bill } from "./slides/Bill";
 import { Capture } from "./slides/Capture";
 import type { CatalogCopy } from "./sources";
@@ -40,43 +43,8 @@ export const SERVICE_MAIN_SLIDES = [
 ] as const;
 export type ServiceSlide = (typeof SERVICE_MAIN_SLIDES)[number] | "video";
 
-/** These are the team's reviewed Wistia examples, never arbitrary provider frames. */
-export function wistiaExample(raw: string): string | null {
-  try {
-    const u = new URL(raw);
-    if (
-      u.protocol !== "https:" ||
-      u.username ||
-      u.password ||
-      u.port ||
-      u.search ||
-      u.hash
-    )
-      return null;
-    const match =
-      u.hostname === "maharamedia.wistia.com"
-        ? /^\/medias\/([a-z0-9]{10})\/?$/.exec(u.pathname)
-        : u.hostname === "fast.wistia.net"
-          ? /^\/embed\/iframe\/([a-z0-9]{10})\/?$/.exec(u.pathname)
-          : null;
-    return match ? `https://fast.wistia.net/embed/iframe/${match[1]}` : null;
-  } catch {
-    return null;
-  }
-}
-const ACTOR_POSTERS: Record<string, string> = {
-  qlwysqfu2g: "ee0de9394a4d688f85de81165e1ceb13870c55d2",
-  btp2dokvjr: "33e27b2faa619214d4961f7d833a94f98e7a3cdf",
-  nix1oq0h3a: "8ecea92509dfb94e6272f3b447f0d3a47aa401b4",
-};
-/** Full portrait files verified from Wistia media metadata; swatches are tiny blurred previews. */
-export function actorPoster(raw: string): string | null {
-  const embed = wistiaExample(raw),
-    id = embed?.split("/").pop();
-  return id && ACTOR_POSTERS[id]
-    ? `https://embed-ssl.wistia.com/deliveries/${ACTOR_POSTERS[id]}.jpg`
-    : null;
-}
+export { actorPoster, wistiaExample } from "./exampleMedia";
+
 function ExamplePlayer({
   url,
   title,
@@ -237,7 +205,15 @@ function ScopeVisual({
               {stills[i % Math.max(stills.length, 1)]?.url ? (
                 <img src={stills[i % stills.length].url!} alt="" />
               ) : (
-                <Share2 aria-hidden />
+                <img
+                  src={
+                    ART.website!.backgrounds[
+                      i % ART.website!.backgrounds.length
+                    ].url
+                  }
+                  alt=""
+                  data-example-image
+                />
               )}
               <p>{v.text}</p>
             </article>
@@ -254,7 +230,17 @@ function ScopeVisual({
               {stills[i]?.url ? (
                 <img src={stills[i].url!} alt="" />
               ) : (
-                <Camera aria-hidden />
+                <img
+                  src={
+                    i === 0
+                      ? ART.website!.hero!
+                      : ART.website!.backgrounds[
+                          (i - 1) % ART.website!.backgrounds.length
+                        ].url
+                  }
+                  alt=""
+                  data-example-image
+                />
               )}
               <span className="dks-shot-corner" aria-hidden />
             </div>
@@ -289,7 +275,6 @@ function ServiceCanvas({
   if (!copy) return null;
   const active = ctx.tour - 1;
   const need = ctx.tour > copy.get.length;
-  const Icon = ICONS[kind];
   const title =
     id === "matters"
       ? copy.deckTitle
@@ -310,8 +295,13 @@ function ServiceCanvas({
       {id === "saw" ? <Capture ctx={ctx} /> : null}
       {id === "matters" ? (
         <div className="dks-opening">
-          <div className="dks-offer-symbol">
-            <Icon aria-hidden />
+          <div className="dks-opening-object">
+            <OfferCover offer={kind} copy={copy} />
+            {kind !== "ugc" ? (
+              <span className="dks-example-label">
+                {fill(C.example[ctx.lang], { name: ctx.d.name })}
+              </span>
+            ) : null}
           </div>
           <div>
             {ctx.offer?.goal ? (
@@ -328,7 +318,9 @@ function ServiceCanvas({
             ) : (
               <h2>{copy.line}</h2>
             )}
-            <p>{ctx.offer?.goal ? copy.line : copy.why[0]?.text}</p>
+            {ctx.offer?.sources.gate.taskId !== "catalog-preview" ? (
+              <p>{ctx.offer?.goal ? copy.line : copy.why[0]?.text}</p>
+            ) : null}
           </div>
         </div>
       ) : null}

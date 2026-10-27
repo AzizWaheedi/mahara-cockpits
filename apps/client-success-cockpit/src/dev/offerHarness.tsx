@@ -111,6 +111,7 @@ function App() {
       now: () => new Date("2026-10-26T10:00:00Z"),
       presenterName: "Example account manager",
       savePrep: async (deck, patch) => {
+        harnessCalls.push("fixture:savePrep");
         loaded.prep[deck] = applyPatch(loaded.prep[deck] ?? {}, patch);
         loaded.offer!.prep!.overrides = loaded.prep[selectedDeck]!;
         if (patch.client_asked) {
@@ -129,6 +130,7 @@ function App() {
       },
       offer: {
         savePitch: async (id, patch) => {
+          harnessCalls.push("fixture:savePitch");
           pitch = fixturePitch(id, patch, pitch, loaded);
           loaded.offer!.pitches = [pitch];
           return pitch;
@@ -190,7 +192,7 @@ function App() {
         <OfferPicker
           taskId="fictional"
           status={offerStatus(fixture)}
-          client={null}
+          client={client}
         />
       </main>
     );
