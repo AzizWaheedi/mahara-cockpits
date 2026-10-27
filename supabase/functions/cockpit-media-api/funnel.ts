@@ -17,7 +17,7 @@ import {fromMeta,problems,toMetaCreate,versionName,type LeadFormSpec} from '../.
  */
 export const FUNNEL_OPERATIONS=['funnel.read','forms.publish','forms.switch'];
 const id=(x:unknown)=>{if(!/^\d{5,}$/.test(String(x??'')))throw new Error('A valid Meta id is required');return String(x);};
-const AD_FIELDS='id,name,account_id,campaign_id,effective_status,adset{destination_type},creative{id,name,object_story_spec,asset_feed_spec,link_url,url_tags,degrees_of_freedom_spec,object_type,object_story_id,effective_object_story_id}';
+const AD_FIELDS='id,name,account_id,campaign_id,effective_status,adset{destination_type,promoted_object},creative{id,name,object_story_spec,asset_feed_spec,link_url,url_tags,degrees_of_freedom_spec,object_type,object_story_id,effective_object_story_id}';
 // The full read first. legal_content names its parts or Meta returns only its id (2026-10-10:
 // every privacy link read back empty). A Graph version that lacks a field falls back a step.
 const FORM_READS=[
@@ -67,23 +67,38 @@ export function formIdOf(creative:Row|undefined):string|null{
 }
 
 export type Destination={kind:'form'|'website'|'whatsapp'|'messenger'|'instagram'|'call'|'unknown';formId?:string;url?:string};
+const PLACEHOLDER=/^https?:\/\/fb\.me\/?$/i;
+const linkOf=(ad:Row):string|undefined=>destinationLink(ad.creative)??(typeof ad.postCta?.value?.link==='string'?ad.postCta.value.link:undefined);
+/**
+ * The ad set counts its leads on a website: a pixel event, and the ad itself is
+ * not the destination. Its ads send people to their link even when the button
+ * still holds a form. Merge Studio, 27 Oct 2026: three ads copied from the
+ * instant form campaign kept its form beside the page link, Meta sent all 18
+ * clicks to the page, and the funnel showed the form.
+ */
+function countsOnWebsite(ad:Row):boolean{
+ const link=linkOf(ad);
+ return Boolean(ad.adset?.promoted_object?.pixel_id)&&!/ON_AD|LEAD_FORM/.test(String(ad.adset?.destination_type??'').toUpperCase())&&Boolean(link)&&!PLACEHOLDER.test(link!);
+}
+
 /** The form an ad sends people to, whether its creative or its existing post holds the button. */
 export function adForm(ad:Row):string|null{
+ if(countsOnWebsite(ad))return null;
  const fromPost=ad.postCta?.value?.lead_gen_form_id;
  return formIdOf(ad.creative)??(fromPost?String(fromPost):null);
 }
 
-/** What kind of place an ad leads to. A form wins over its placeholder link. */
+/** What kind of place an ad leads to. A form wins over its placeholder link, unless the ad set counts its leads on a website. */
 export function destinationOf(ad:Row):Destination{
  const creative=ad.creative,formId=adForm(ad);
  if(formId)return {kind:'form',formId};
- const link=destinationLink(creative)??(typeof ad.postCta?.value?.link==='string'?ad.postCta.value.link:undefined),type=String(ad.adset?.destination_type??'').toUpperCase();
+ const link=linkOf(ad),type=String(ad.adset?.destination_type??'').toUpperCase();
  const ctaType=String(storyOf(creative?.object_story_spec)?.data?.call_to_action?.type??ad.postCta?.type??'');
  if(type.includes('WHATSAPP')||/(wa\.me|whatsapp\.com)/i.test(link??''))return {kind:'whatsapp',url:link};
  if(type.includes('MESSENGER')||/\bm\.me\//i.test(link??''))return {kind:'messenger',url:link};
  if(type.includes('INSTAGRAM'))return {kind:'instagram',url:link};
  if(type.includes('PHONE')||ctaType==='CALL_NOW')return {kind:'call',url:link};
- if(link&&!/^https?:\/\/fb\.me\/?$/i.test(link))return {kind:'website',url:link};
+ if(link&&!PLACEHOLDER.test(link))return {kind:'website',url:link};
  return {kind:'unknown'};
 }
 
