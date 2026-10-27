@@ -84,7 +84,7 @@ export function catalogQuickSlides(
     )
     .sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id))
     .map(s =>
-      row.offerKey === "website" && s.id === "investment"
+      row.offerKey === "website" && (s.id === "investment" || s.id === "next")
         ? { ...s, stops: () => 1 }
         : s,
     );

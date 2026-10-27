@@ -9,6 +9,7 @@ import {
   type WebsiteSlideId,
 } from "./content/website";
 import { OfferCover } from "./OfferCover";
+import { OfferJourney } from "./OfferJourney";
 import { formatMoney } from "./price";
 import { Bill } from "./slides/Bill";
 import { Capture } from "./slides/Capture";
@@ -133,23 +134,21 @@ function Canvas({ id, ctx }: { id: WebsiteSlideId; ctx: SlideCtx }) {
         </>
       ) : null}
       {id === "next" ? (
-        <>
-          <Commit ctx={ctx} />
-          {ctx.tour >= 1 ? (
-            <div className="dko-sentence dko-teal">{copy?.close ?? line}</div>
-          ) : null}
-        </>
+        m?.sources.gate.taskId === "catalog-preview" && copy ? (
+          <div className="dko-quick-close">
+            <span>{copy.timing}</span>
+            <h2>{copy.close}</h2>
+          </div>
+        ) : (
+          <>
+            <Commit ctx={ctx} />
+            {ctx.tour >= 1 ? (
+              <div className="dko-sentence dko-teal">{copy?.close ?? line}</div>
+            ) : null}
+          </>
+        )
       ) : null}
-      {id === "runs" ? (
-        <ol className="dko-run">
-          {copy?.steps.map((v, i) => (
-            <li key={v.key}>
-              <b>{digits(String(i + 1).padStart(2, "0"), ctx.lang)}</b>
-              <p>{v.text}</p>
-            </li>
-          ))}
-        </ol>
-      ) : null}
+      {id === "runs" && copy ? <OfferJourney copy={copy} ctx={ctx} /> : null}
       {id === "video" ? (
         <button
           type="button"
@@ -196,7 +195,10 @@ export function websiteSlides(m?: OfferModel | null): SlideDef[] {
     return {
       id,
       title: W.slides[id].title,
-      stops: () => WEBSITE_STOPS[id].length,
+      stops: () =>
+        id === "runs"
+          ? Math.max(1, m ? (offerCopy(m, "en")?.steps.length ?? 1) : 1)
+          : WEBSITE_STOPS[id].length,
       stopName: (i: number) => W.slides[id].stops[WEBSITE_STOPS[id][i]] ?? null,
       defaultHidden: () =>
         id === "runs" || id === "video" || missing.length > 0,

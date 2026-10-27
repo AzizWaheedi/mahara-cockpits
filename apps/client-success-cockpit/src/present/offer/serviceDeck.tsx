@@ -8,6 +8,7 @@ import { WEBSITE_DECK as W } from "./content/website";
 import { actorPoster, wistiaExample } from "./exampleMedia";
 import type { OfferKey } from "./kinds";
 import { OfferCover } from "./OfferCover";
+import { OfferJourney } from "./OfferJourney";
 import { ScopeVisual } from "./ScopeVisual";
 import { Bill } from "./slides/Bill";
 import { Capture } from "./slides/Capture";
@@ -231,16 +232,7 @@ function ServiceCanvas({
           ) : null}
         </>
       ) : null}
-      {id === "runs" ? (
-        <div className="dks-process">
-          {copy.steps.map((v, i) => (
-            <article key={v.key} data-current={i === ctx.tour}>
-              <span>{digits(String(i + 1).padStart(2, "0"), ctx.lang)}</span>
-              <p>{v.text}</p>
-            </article>
-          ))}
-        </div>
-      ) : null}
+      {id === "runs" ? <OfferJourney copy={copy} ctx={ctx} /> : null}
       {id === "investment" ? (
         <div className="dks-investment">
           <Bill ctx={ctx} />
