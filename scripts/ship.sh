@@ -97,8 +97,11 @@ fi
 # states and triggers, the sender's text and receipts, the drain's refusals. Wrong is a
 # kickoff nobody hears about, a notice posted twice, or a press that never runs.
 if [ -f apps/media-buyer-cockpit/scripts/slack-notices-supabase.test.ts ]; then
-  (cd apps/media-buyer-cockpit && bun test scripts/slack-notices-supabase.test.ts scripts/blueprints-supabase.test.ts scripts/stage1-fit-supabase.test.ts >/dev/null 2>&1) \
-    || { echo "the Slack notices or Brand Blueprint database tests fail (cd apps/media-buyer-cockpit && bun test scripts/slack-notices-supabase.test.ts scripts/blueprints-supabase.test.ts scripts/stage1-fit-supabase.test.ts)"; exit 1; }
+  # The isolated PostgreSQL checks can take longer on a shared build host.
+  # Keep every assertion and a finite limit; a five-second default can cancel
+  # an in-flight query and cascade into unrelated failures in the same fixture.
+  (cd apps/media-buyer-cockpit && bun test --timeout 120000 scripts/slack-notices-supabase.test.ts scripts/blueprints-supabase.test.ts scripts/stage1-fit-supabase.test.ts >/dev/null 2>&1) \
+    || { echo "the Slack notices or Brand Blueprint database tests fail (cd apps/media-buyer-cockpit && bun test --timeout 120000 scripts/slack-notices-supabase.test.ts scripts/blueprints-supabase.test.ts scripts/stage1-fit-supabase.test.ts)"; exit 1; }
   (bun test supabase/functions/cockpit-notices supabase/functions/cockpit-creative-api supabase/functions/cockpit-media-api/slack.test.ts supabase/functions/cockpit-media-api/workflows.test.ts >/dev/null 2>&1) \
     || { echo "the notices sender, Blueprint drain or Slack receipt tests fail"; exit 1; }
   (cd apps/client-success-cockpit && bun test scripts/form-status.test.ts scripts/form-panel.test.tsx scripts/notices-routing.test.tsx scripts/blueprint-csm-line.test.ts >/dev/null 2>&1) \
