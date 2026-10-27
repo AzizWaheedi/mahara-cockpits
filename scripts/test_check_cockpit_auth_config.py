@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import pathlib
 import tempfile
@@ -136,7 +137,8 @@ class AuthConfigurationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             stored = pathlib.Path(folder) / "out.json"
             stored.write_text('{"successful": true, "data": {"result": [{"functions": ["cockpit_a", "cockpit_b"]}]}}')
-            printed = '{"successful": true, "storedInFile": true, "outputFilePath": "%s"}' % stored
+            # json.dumps, not "%s": a Windows path's backslashes are not valid JSON as plain text.
+            printed = json.dumps({"successful": True, "storedInFile": True, "outputFilePath": str(stored)})
             done = mock.Mock(returncode=0, stdout=printed)
             with mock.patch.object(MODULE.subprocess, "run", return_value=done):
                 rows = MODULE.composio_request("database/query", {"query": "select 1"})
