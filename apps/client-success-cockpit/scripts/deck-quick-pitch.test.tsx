@@ -58,6 +58,17 @@ for (const key of OFFER_KEYS) {
         tour: 0,
         setTour: () => {},
       };
+      expect(slides.find(s => s.id === "runs")!.stops?.(c)).toBe(
+        copyOf(row, lang)!.steps.length,
+      );
+      if (key === "website") {
+        const closing = slides.find(s => s.id === "next")!;
+        expect(closing.stops?.(c)).toBe(1);
+        const html = renderToStaticMarkup(closing.render(c));
+        expect(html).toContain(copyOf(row, lang)!.close);
+        expect(html).toContain(copyOf(row, lang)!.timing);
+        expect(html).not.toContain("dko-commit");
+      }
       for (const s of slides) {
         for (let tour = 0; tour < (s.stops?.(c) ?? 1); tour++) {
           const html = renderToStaticMarkup(s.render({ ...c, tour }));
