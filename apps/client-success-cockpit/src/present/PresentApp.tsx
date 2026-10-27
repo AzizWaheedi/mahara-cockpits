@@ -1,10 +1,10 @@
 import { fill } from "./content";
+import { offerSlides } from "./decks";
 import { WEBSITE_DECK } from "./offer/content/website";
 import { isOfferDeck } from "./offer/kinds";
 import { OfferRefused } from "./offer/OfferRefused";
 import { copyOf } from "./offer/sources";
 import { useOffer } from "./offer/useOffer";
-import { offerSlides } from "./decks";
 import "./present.css";
 import {
   type ReactNode,

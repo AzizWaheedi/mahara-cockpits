@@ -1,15 +1,15 @@
 import { useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { emptyLive } from "../channel";
 import { CHROME, digits, type Lang } from "../content";
-import { Button } from "@/components/ui/button";
-import { stepFrom, type Pos } from "../engine";
 import { DeckShell } from "../DeckShell";
 import { deckData } from "../deckData";
 import { offerSlides } from "../decks";
+import { type Pos, stepFrom } from "../engine";
 import { deckOfOffer } from "./kinds";
 import { openingOf } from "./price";
 import type { CatalogRow, OfferSources } from "./sources";
-import { priceProblem, type OfferModel } from "./useOffer";
+import { type OfferModel, priceProblem } from "./useOffer";
 /** Explicitly client-free: this model has no IO, prep saver, telemetry or record identity. */
 export function catalogPreviewModel(row: CatalogRow): OfferModel {
   const sources: OfferSources = {

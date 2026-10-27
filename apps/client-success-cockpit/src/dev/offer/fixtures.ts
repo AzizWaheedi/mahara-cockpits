@@ -1,5 +1,5 @@
 import { FIXTURES } from "../../practice/fixtures/fixtures";
-import { OFFER_KEYS, deckOfOffer } from "../../present/offer/kinds";
+import { deckOfOffer, OFFER_KEYS } from "../../present/offer/kinds";
 import { openingOf } from "../../present/offer/price";
 import type {
   CatalogRow,

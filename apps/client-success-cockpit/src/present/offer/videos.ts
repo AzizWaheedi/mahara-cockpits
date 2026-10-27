@@ -1,8 +1,8 @@
-import { BUILT_OFFER_DECKS, OFFER_NAMES, offerOfDeck } from "./kinds";
 import type { DeckData } from "../deckData";
 import type { VideoLang } from "../sources";
 import type { ControlItem } from "../VideoPlayer";
 import type { VideoSlot } from "../videos";
+import { BUILT_OFFER_DECKS, OFFER_NAMES, offerOfDeck } from "./kinds";
 export const OFFER_VIDEO_SLOTS: readonly VideoSlot[] = BUILT_OFFER_DECKS.map(
   deck => ({
     deck,

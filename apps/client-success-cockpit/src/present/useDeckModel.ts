@@ -1,4 +1,3 @@
-import { BUILT_OFFER_DECKS, type OfferDeckKind } from "./offer/kinds";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OnboardingRow } from "@/lib/onboardingCore";
 import type { Answers, BpPart } from "./blueprintForm";
@@ -27,6 +26,7 @@ import {
 } from "./deckData";
 import { langParam } from "./engine";
 import type { LaunchBlueprint } from "./launchData";
+import { BUILT_OFFER_DECKS, type OfferDeckKind } from "./offer/kinds";
 import type { OfferSources } from "./offer/sources";
 import type { OfferIO } from "./offer/useOffer";
 import { applyPatch, PrepSaver, prepAfterLoad } from "./prep";

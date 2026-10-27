@@ -1,6 +1,6 @@
+import { isOfferDeck, offerDeckUrl, offerOfDeck } from "./offer/kinds";
 import type { PresentUrls } from "./PresentApp";
 import type { DeckKind } from "./sources";
-import { isOfferDeck, offerOfDeck, offerDeckUrl } from "./offer/kinds";
 
 /** The app's base path; read when used (tests run without Vite's env). */
 const base = () =>

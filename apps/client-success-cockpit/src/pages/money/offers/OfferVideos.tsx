@@ -1,12 +1,12 @@
-import {
-  OFFER_KEYS,
-  OFFER_NAMES,
-  deckOfOffer,
-  type OfferKey,
-  type OfferDeckKind,
-} from "../../../present/offer/kinds";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  deckOfOffer,
+  OFFER_KEYS,
+  OFFER_NAMES,
+  type OfferDeckKind,
+  type OfferKey,
+} from "../../../present/offer/kinds";
 import { checkVideo, type OfferClient } from "../../../present/offer/sources";
 import {
   clearDeckVideo,

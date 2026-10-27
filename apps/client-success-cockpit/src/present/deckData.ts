@@ -1,4 +1,3 @@
-import type { OfferDeckKind } from "./offer/kinds";
 import { parseDosDonts } from "@/components/DosDonts";
 import {
   type Answered,
@@ -29,6 +28,7 @@ import {
   type LaunchData,
   launchData,
 } from "./launchData";
+import type { OfferDeckKind } from "./offer/kinds";
 import {
   isMain,
   resolveService,

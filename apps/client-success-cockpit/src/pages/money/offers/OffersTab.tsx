@@ -1,7 +1,7 @@
-import { CatalogDeckPreview } from "../../../present/offer/CatalogDeckPreview";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase";
+import { CatalogDeckPreview } from "../../../present/offer/CatalogDeckPreview";
 import {
   type Catalog,
   type OfferClient,

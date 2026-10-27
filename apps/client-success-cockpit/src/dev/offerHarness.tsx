@@ -1,14 +1,14 @@
-import { allOfferLoaded, ALL_CATALOG } from "./offer/allFixtures";
-import { deckOfOffer, isOfferKey } from "../present/offer/kinds";
 import { useMemo } from "react";
 import { createRoot } from "react-dom/client";
 import { OfferHotRow } from "../pages/money/offers/OfferHotRow";
 import { OffersTab } from "../pages/money/offers/OffersTab";
+import { deckOfOffer, isOfferKey } from "../present/offer/kinds";
 import { OfferPicker } from "../present/offer/OfferPicker";
 import type { OfferClient, Pitch, UpsellFile } from "../present/offer/sources";
 import { PresentApp, type View } from "../present/PresentApp";
 import { applyPatch } from "../present/prep";
 import type { DeckIO } from "../present/useDeckModel";
+import { ALL_CATALOG, allOfferLoaded } from "./offer/allFixtures";
 import {
   fixturePitch,
   OFFER_FIXTURES,

@@ -7,7 +7,7 @@ import type { OfferNotesCopy } from "./content/types";
 import { WEBSITE_DECK as W } from "./content/website";
 import { proposalNewUrl } from "./kinds";
 import { formatMoney } from "./price";
-import { offerCopy, type OfferModel } from "./useOffer";
+import { type OfferModel, offerCopy } from "./useOffer";
 export function OfferNotes({
   offer: m,
   model,

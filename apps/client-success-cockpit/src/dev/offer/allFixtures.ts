@@ -1,8 +1,9 @@
 // Fictional client and prices; approved catalog copy and explicitly supplied actor examples.
-import catalog from "./allCatalog.json";
-import { offerLoaded, offerModel, type OfferFixture } from "./fixtures";
+
 import { deckOfOffer, type OfferKey } from "../../present/offer/kinds";
 import type { CatalogRow } from "../../present/offer/sources";
+import catalog from "./allCatalog.json";
+import { type OfferFixture, offerLoaded, offerModel } from "./fixtures";
 export const ALL_CATALOG = catalog as Record<OfferKey, CatalogRow>;
 export function allOfferLoaded(key: OfferKey, fixture: OfferFixture = "full") {
   const out = offerLoaded(fixture);
