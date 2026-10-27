@@ -27,6 +27,31 @@ test('destinations read from either creative shape, and a form wins over its pla
  expect(destinationOf({adset:{destination_type:'WHATSAPP'},creative:{object_story_spec:{link_data:{link:'https://api.whatsapp.com/send',call_to_action:{type:'WHATSAPP_MESSAGE'}}}}}).kind).toBe('whatsapp');
 });
 
+// Merge Studio's web campaign, 27 Oct 2026: ads copied from the instant form campaign keep its form beside the page link.
+const WEB={destination_type:'UNDEFINED',promoted_object:{pixel_id:'851130950994550',custom_event_type:'LEAD'}};
+const copied=(adset:Row|undefined,link='https://merge.example/')=>({...ad('300401'),adset,creative:{id:'900002',object_story_spec:{page_id:PAGE,video_data:{video_id:'555',call_to_action:{type:'BOOK_TRAVEL',value:{lead_gen_form_id:'111111',link}}}}}});
+
+test('an ad set that counts its leads on a website leads to the link, even with a form left in a copied button',()=>{
+ expect(destinationOf(copied(WEB))).toEqual({kind:'website',url:'https://merge.example/'});
+ // An instant form ad set keeps the form, a pixel on it or not; so does an ad read without its ad set.
+ expect(destinationOf(copied({destination_type:'ON_AD',promoted_object:{page_id:PAGE}}))).toEqual({kind:'form',formId:'111111'});
+ expect(destinationOf(copied({destination_type:'ON_AD',promoted_object:{page_id:PAGE,pixel_id:'851130950994550'}}))).toEqual({kind:'form',formId:'111111'});
+ expect(destinationOf(copied(undefined))).toEqual({kind:'form',formId:'111111'});
+ // With only the placeholder link, the form is the only place the ad can lead.
+ expect(destinationOf(copied(WEB,'http://fb.me/'))).toEqual({kind:'form',formId:'111111'});
+});
+
+test('the funnel never reads or offers to change a form that a website ad set does not use',async()=>{
+ const p=meta([
+  [/^GET 222222\/ads/,()=>({data:[copied(WEB),{...copied(WEB),id:'300402'}]})],
+  [/^GET 777777\/leadgen_forms/,()=>({data:[{id:'111111',name:'Villa form'}]})],
+ ]);
+ const read=await readFunnel(scope,p as any);
+ expect(read.destinations.map((d:Row)=>[d.kind,d.url,d.ads.length])).toEqual([['website','https://merge.example/',2]]);
+ expect(p.calls.some(c=>c.path.startsWith('111111'))).toBe(false);
+ await expect(preparePublish({campaignName:scope.campaignName,fromFormId:'111111',spec},scope,p as any)).rejects.toThrow('No ad in this campaign uses that form');
+});
+
 test('a creative copy keeps everything but the form, and drops the thumbnail url Meta refuses',()=>{
  const made=withForm(story('111111'),'999999','Villa video · form v2');
  if(!made.ok)throw new Error(made.why);
