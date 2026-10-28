@@ -70,11 +70,17 @@ describe("delivery story keeps the full approved path and labelled evidence", ()
         }
       });
 
-  test("search changes to the actual ChatGPT capture for the AI writing step", () => {
+  test("search follows real Google, Business Profile and ChatGPT captures at the relevant steps", () => {
     const ctx = context("seo_geo", "en");
     const copy = offerCopy(ctx.offer!, "en")!;
     expect(journeyEvidence(copy, ctx, 0)).toMatchObject({
       label: "Google",
+      example: true,
+    });
+    const fix = copy.steps.findIndex(step => step.key === "fix");
+    expect(journeyEvidence(copy, ctx, fix)).toMatchObject({
+      label: "Google Business Profile",
+      shape: "screen",
       example: true,
     });
     const write = copy.steps.findIndex(step => step.key === "write");
