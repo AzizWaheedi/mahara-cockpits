@@ -1254,6 +1254,9 @@ export const VIDEO = {
     en: "The video didn't load. We'll send you the link in the group.",
     ar: "ما اشتغل الفيديو. بنرسل لكم الرابط بالقروب.",
   },
+  /** Under "didn't load": a fresh frame, then the link people open. */
+  retry: { en: "Try again", ar: "نحاول مرة ثانية" },
+  open: { en: "Open the video", ar: "فتح الفيديو" },
   blocked: {
     en: "This video can't play here. We'll send you the link in the group.",
     ar: "هالفيديو ما يشتغل هنا. بنرسل لكم الرابط بالقروب.",

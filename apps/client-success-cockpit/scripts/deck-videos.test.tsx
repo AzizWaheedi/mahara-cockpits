@@ -1042,6 +1042,79 @@ describe("the control and the player on the canvas", () => {
     expect(q(".dkv-veil")).toBeNull();
   });
 
+  // Live, 2026-10-28: Wistia took longer than 15 s once, the frame was
+  // removed, and Quick pitch (no notes window) had no way back but Close.
+  test("didn't load: Try again brings a fresh frame; the link people open is beside it", async () => {
+    const offline = async () => {
+      await act(async () => {
+        win.dispatchEvent(new win.Event("offline"));
+      });
+    };
+    await mount(data("full"), ["creative-freedom"]);
+    await press("v");
+    const src = q(".dkv-frame iframe")?.getAttribute("src");
+    expect(src).toBeTruthy();
+    await offline();
+    expect(q(".dkv-frame")?.getAttribute("data-phase")).toBe("failed");
+    expect(q(".dkv-frame iframe")).toBeNull();
+    expect(q(".dkv-line")?.textContent).toBe(
+      "The video didn't load. We'll send you the link in the group.",
+    );
+    const again = q(".dkv-acts button");
+    expect(again?.textContent).toBe("Try again");
+    const open = q(".dkv-acts a");
+    expect(open?.textContent).toBe("Open the video");
+    expect(open?.getAttribute("href")).toBe(
+      "https://www.loom.com/share/0f0e0d0c0b0a09080706050403020100",
+    );
+    expect(open?.getAttribute("target")).toBe("_blank");
+    expect(open?.getAttribute("rel")).toBe("noopener noreferrer");
+    await act(async () => {
+      (again as unknown as { click: () => void }).click();
+    });
+    expect(q(".dkv-frame")?.getAttribute("data-phase")).toBe("loading");
+    expect(q(".dkv-frame iframe")?.getAttribute("src")).toBe(src);
+    expect(q(".dkv-gone")).toBeNull();
+    // The keys stay with the deck: focus is back on the dialog.
+    expect(win.document.activeElement).toBe(q('[role="dialog"]'));
+    // The fresh frame listens again: a second failure shows the way back.
+    await offline();
+    expect(q(".dkv-acts button")?.textContent).toBe("Try again");
+    await press("Escape");
+    expect(q(".dkv-veil")).toBeNull();
+  });
+
+  test("didn't load, in Arabic", async () => {
+    await mount(data("full", "launch", "ar"), ["portal"]);
+    await press("v");
+    await act(async () => {
+      win.dispatchEvent(new win.Event("offline"));
+    });
+    expect(q(".dkv-line")?.textContent).toBe(
+      "ما اشتغل الفيديو. بنرسل لكم الرابط بالقروب.",
+    );
+    expect(q(".dkv-acts button")?.textContent).toBe("نحاول مرة ثانية");
+    expect(q(".dkv-acts a")?.textContent).toBe("فتح الفيديو");
+    expect(q(".dkv-acts a")?.getAttribute("href")).toBe(
+      "https://fast.wistia.net/embed/iframe/hyuxh7skjv",
+    );
+  });
+
+  test("a frame that loads shows only the provider's player, no way-back line", async () => {
+    await mount(data("full"), ["creative-freedom"]);
+    await press("v");
+    expect(q(".dkv-frame iframe")).not.toBeNull();
+    await act(async () => {
+      (
+        q(".dkv-frame iframe") as unknown as {
+          dispatchEvent: (e: Event) => void;
+        }
+      ).dispatchEvent(new win.Event("load") as unknown as Event);
+    });
+    expect(q(".dkv-frame")?.getAttribute("data-phase")).toBe("ready");
+    expect(q(".dkv-acts")).toBeNull();
+  });
+
   test("a done-for-you slot shows nothing on a done-with-you deck", async () => {
     const rows = seededVideos("launch", [row({ slotKey: "call-team" })]);
     await mount(data("dwy", "launch", "en", rows), ["call"]);

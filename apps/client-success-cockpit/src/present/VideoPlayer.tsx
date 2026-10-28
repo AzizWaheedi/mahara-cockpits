@@ -186,18 +186,17 @@ export function VideoPlayer({
   onPhase: (p: PlayerPhase) => void;
 }) {
   const { row, slot } = item;
-  const { src, frame, phase, slow, onLoad } = usePlayerFrame(
-    row,
-    true,
-    onPhase,
-  );
+  const [attempt, setAttempt] = useState(0);
   const dialog = useRef<HTMLDivElement>(null);
   useEffect(() => {
     dialog.current?.focus();
   }, []);
   const title = rowTitle(slot, row, lang);
   const length = lengthText(row.durationSeconds, lang);
-  const gone = phase === "failed" || phase === "blocked";
+  const retry = useCallback(() => {
+    setAttempt(n => n + 1);
+    dialog.current?.focus();
+  }, []);
   return (
     <div className="dkv-veil" data-still={still ? "" : undefined}>
       {/* A click on the veil around the frame closes it; Esc and V close
@@ -236,31 +235,90 @@ export function VideoPlayer({
             {t(VIDEO.close, lang)}
           </button>
         </div>
-        <div className="dkv-frame" data-phase={phase}>
-          {src && !gone ? (
-            <iframe
-              ref={frame}
-              src={src}
-              title={title}
-              sandbox={FRAME_SANDBOX}
-              allow={FRAME_ALLOW}
-              referrerPolicy="strict-origin-when-cross-origin"
-              onLoad={onLoad}
-            />
-          ) : null}
-          {phase === "loading" && slow ? (
-            <p className="dkv-line" data-quiet="">
-              {t(VIDEO.loading, lang)}
-            </p>
-          ) : null}
-          {phase === "failed" ? (
-            <p className="dkv-line">{t(VIDEO.failed, lang)}</p>
-          ) : null}
-          {phase === "blocked" ? (
-            <p className="dkv-line">{t(VIDEO.blocked, lang)}</p>
-          ) : null}
-        </div>
+        <PlayerFrame
+          key={attempt}
+          row={row}
+          title={title}
+          lang={lang}
+          onPhase={onPhase}
+          onRetry={retry}
+        />
       </div>
+    </div>
+  );
+}
+
+/**
+ * The player's frame and its lines (DESIGN 21.3). "Try again" mounts it
+ * afresh under a new key: a new frame, a new handshake and a new 15 s.
+ * Quick pitch has no notes window, so the way back is on the canvas.
+ */
+function PlayerFrame({
+  row,
+  title,
+  lang,
+  onPhase,
+  onRetry,
+}: {
+  row: VideoRow;
+  title: string;
+  lang: Lang;
+  onPhase: (p: PlayerPhase) => void;
+  onRetry: () => void;
+}) {
+  const { src, frame, phase, slow, onLoad } = usePlayerFrame(
+    row,
+    true,
+    onPhase,
+  );
+  const gone = phase === "failed" || phase === "blocked";
+  return (
+    <div className="dkv-frame" data-phase={phase}>
+      {src && !gone ? (
+        <iframe
+          ref={frame}
+          src={src}
+          title={title}
+          sandbox={FRAME_SANDBOX}
+          allow={FRAME_ALLOW}
+          referrerPolicy="strict-origin-when-cross-origin"
+          onLoad={onLoad}
+        />
+      ) : null}
+      {phase === "loading" && slow ? (
+        <p className="dkv-line" data-quiet="">
+          {t(VIDEO.loading, lang)}
+        </p>
+      ) : null}
+      {phase === "failed" ? (
+        <div className="dkv-gone">
+          <p className="dkv-line">{t(VIDEO.failed, lang)}</p>
+          <div className="dkv-acts">
+            {src ? (
+              <button
+                type="button"
+                className="dkv-act"
+                onClick={onRetry}
+                onPointerUp={letGo}
+              >
+                {t(VIDEO.retry, lang)}
+              </button>
+            ) : null}
+            <a
+              className="dkv-act"
+              href={row.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onPointerUp={letGo}
+            >
+              {t(VIDEO.open, lang)}
+            </a>
+          </div>
+        </div>
+      ) : null}
+      {phase === "blocked" ? (
+        <p className="dkv-line">{t(VIDEO.blocked, lang)}</p>
+      ) : null}
     </div>
   );
 }
