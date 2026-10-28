@@ -203,14 +203,15 @@ export default function CatalogDeckCanvas({
         e.metaKey ||
         e.ctrlKey ||
         e.altKey ||
-        target?.closest(
+        target?.closest?.(
           "input,select,textarea,[contenteditable]:not([contenteditable=false]),iframe,video,audio,[role=combobox],[role=listbox],[role=option],.dkv-dialog",
         )
       )
         return;
       const direction = offerSlideDirection(e.key, e.shiftKey);
       const space = e.key === " " || e.key === "Spacebar";
-      if (space && target?.closest("button,a,[role=button],[role=tab]")) return;
+      if (space && target?.closest?.("button,a,[role=button],[role=tab]"))
+        return;
       if (e.repeat) {
         if (direction || e.key.startsWith("Arrow")) e.preventDefault();
         return;
@@ -274,6 +275,7 @@ export default function CatalogDeckCanvas({
           setLang={setLang}
           hub={null}
           embedded
+          interactiveEmbedded
           endsInPlace
           onBack={onClose}
           pos={pos}

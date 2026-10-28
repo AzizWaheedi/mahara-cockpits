@@ -67,6 +67,8 @@ export interface ShellProps {
   onNotes?: () => void;
   /** A preview inside the prep view: no chrome, no keys, no address. */
   embedded?: boolean;
+  /** Quick pitch owns navigation but allows its embedded video shortcut. */
+  interactiveEmbedded?: boolean;
   /** Controlled position (the prep view's slide strip). */
   pos?: Pos;
   setPos?: (p: Pos) => void;
@@ -106,6 +108,7 @@ export function DeckShell({
   endsInPlace = false,
   onNotes,
   embedded = false,
+  interactiveEmbedded = false,
   pos: posIn,
   setPos: setPosIn,
   onKey,
@@ -435,9 +438,15 @@ export function DeckShell({
   );
 
   useEffect(() => {
+    if (embedded && !interactiveEmbedded) return;
     const onKeyDown = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
-      if (e.defaultPrevented && !(player && e.key === "Escape")) return;
+      if (
+        isOfferDeck(base.deck) &&
+        e.defaultPrevented &&
+        !(player && e.key === "Escape")
+      )
+        return;
       if (embedded && !player && e.key.toLowerCase() !== "v") return;
       const typing =
         el &&
@@ -445,7 +454,7 @@ export function DeckShell({
           el.tagName === "SELECT" ||
           el.tagName === "TEXTAREA" ||
           el.isContentEditable ||
-          !!el.closest(
+          !!el.closest?.(
             "[role=combobox],[role=listbox],[role=option],video,audio",
           ));
       if (typing) {
@@ -455,7 +464,7 @@ export function DeckShell({
       }
       if (
         (e.key === " " || e.key === "Spacebar") &&
-        el?.closest("a,button,[role=button],[role=tab]")
+        el?.closest?.("a,button,[role=button],[role=tab]")
       )
         return;
       if (e.repeat) {
