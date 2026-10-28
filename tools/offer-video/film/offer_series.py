@@ -61,8 +61,8 @@ STORIES = {
  "seo_geo": [
   ("search", [phrase("your service in your city", "خدمتكم في مدينتكم")]),
   ("dossier", [phrase("Over ninety days", "خلال تسعين يوم"), phrase("your website", "موقعكم"), phrase("Google Business Profile and business listings.", "ملف نشاطكم على قوقل، وقوائم شركتكم.")]),
-  ("answers", [phrase("the information search engines read", "المعلومات اللي تقراها محركات البحث"), phrase("service and question pages that AI answers can quote.", "صفحات للخدمات والأسئلة، تقدر إجابات الذكاء الاصطناعي تقتبس منها.")]),
-  ("report", [phrase("Each month, you receive a report", "وكل شهر يوصلكم تقرير"), phrase("If you have no website, we build one into the programme.", "وإذا ما عندكم موقع، نبنيه لكم ضمن البرنامج.")]),
+  ("answers", [phrase("the information search engines read", "المعلومات اللي تقراها محركات البحث"), phrase("pages that AI answers can quote.", "تقدر إجابات الذكاء الاصطناعي تقتبس منها.")]),
+  ("report", [phrase("Each month, you receive a report", "وكل شهر يوصلكم تقرير"), phrase("If you have no website", "وإذا ما عندكم موقع")]),
   ("ownership", [phrase("access to your site and Google profile.", "صلاحية الدخول لموقعكم وملفكم على قوقل."), phrase("what we build stays yours.", "واللي نبنيه يبقى لكم."), phrase("its monthly care starts on day ninety-one.", "تبدي عنايته الشهرية من اليوم الواحد والتسعين.")]),
   ("close", []),
  ],
@@ -264,7 +264,7 @@ def chunks(text, limit=54, max_words=8):
     if current: groups.append(" ".join(current))
     return groups
 
-def phases_for(segment, lines, lang, timing, token_offset):
+def phases_for(segment, lines, lang, timing, token_offset, *, closing=False):
     # Long approved sentences become successive exact phrases, never tiny type.
     lines = lines or [{lang: segment["text"]}]
     parts, seek = [], 0
@@ -272,7 +272,7 @@ def phases_for(segment, lines, lang, timing, token_offset):
         text = line[lang]
         base = segment["text"].index(text, seek)
         inner = 0
-        for part in chunks(text):
+        for part in chunks(text, limit=72 if closing else 54, max_words=12 if closing else 8):
             pos = text.index(part, inner)
             parts.append((part, semantic_index, base + pos))
             inner = pos + len(part)
@@ -377,19 +377,24 @@ def picture(visual, text, index, lang, sid, duration, media_offset=0):
         channel = "chatgpt" if visual == "answers" and index > 0 else "google"
         capture = "chatgpt-search.png" if channel == "chatgpt" else "google-web-search.png"
         label = "ChatGPT" if channel == "chatgpt" else "Google"
-        note = "مثال بحث حقيقي، وليس نتيجة لعميل" if lang == "ar" else "Real search example, not a client result"
-        body = h + f'<div class="frame" style="left:192px;top:350px;width:1536px;height:430px;background:#202124;border:2px solid #506179;border-radius:24px">{img(f"search/{capture}",0,0,1536,956 if channel == "google" else 680,"object-fit:contain;object-position:top")}</div>'
-        body += f'<div class="tag" style="font-size:52px;top:707px;max-width:1536px">{label} · {note}</div>'
-        return f'<div class="stage paper">{body}</div>', "page"
+        note = "مثال، وليس نتيجة لعميل" if lang == "ar" else "Example, not a client result"
+        # Preserve source pixels. Frame the first answer and its source link, and
+        # keep the disclosure outside the screenshot instead of covering it.
+        image = (img(f"search/{capture}",-665,-333,2470,1092.5,"object-fit:contain")
+                 if channel == "chatgpt" else
+                 img(f"search/{capture}",0,0,1536,956,"object-fit:contain;object-position:top"))
+        body = head(text, "font-size:82px") + f'<div class="frame" style="left:192px;top:250px;width:1536px;height:400px;background:#202124;border:2px solid #506179;border-radius:24px">{image}</div>'
+        body += f'<div class="tag" style="font-size:75px;top:665px;max-width:1536px">{label} · {note}</div>'
+        return f'<div class="stage paper">{body}</div>', "search-evidence"
     if visual in ("dossier", "report", "ownership"):
         body = h
         if visual == "dossier" and index == 0:
-            body += f'<div class="big" style="position:absolute;left:220px;top:390px">{number(90,lang)}</div>'
+            body += f'<div class="big" style="position:absolute;inset-inline-start:220px;top:390px">{number(90,lang)}</div>'
             body += svg(document(600, 10, 380, 400, True) + document(1020, 70, 420, 340))
         elif visual == "report" and index > 0:
             body += f'<div class="frame" style="left:192px;top:370px;width:1536px;height:400px">{img(f"cap/index-{lang}.png",0,0,1536,860,"object-position:top")}</div>'
         elif visual == "ownership" and index == 2:
-            body += f'<div class="big accent" style="position:absolute;left:192px;top:390px">{number(91,lang)}</div>'
+            body += f'<div class="big accent" style="position:absolute;inset-inline-start:192px;top:390px">{number(91,lang)}</div>'
             body += svg(document(650, 10, 760, 400, True))
         else:
             body += svg(document(50, 40, 420, 355) + document(550, 0, 430, 420, True) + document(1060, 65, 400, 330))
@@ -495,6 +500,8 @@ def component(sid, lang, body, motion="", duration=1):
     js = ""
     if motion == "page":
         js = f"tl.fromTo('#{sid}-moving',{{y:34}},{{y:0,duration:.6,ease:'power4.out'}},0);"
+    elif motion == "search-evidence":
+        js = f"tl.fromTo('#{sid}-moving .frame',{{y:12}},{{y:0,duration:.4,ease:'power3.out'}},0);"
     elif motion in ("branch", "dossier"):
         js = f"tl.fromTo('#{sid}-moving',{{x:{direction*38}}},{{x:0,duration:.55,ease:'power4.out'}},0);"
     elif motion == "camera":
@@ -576,7 +583,7 @@ def build(kind, lang, out, deps, media, timing_path=None, layout_only=False, act
     compositions.mkdir()
     hosts, beats, offset = [], [], 0
     for seq, ((visual, lines), segment) in enumerate(zip(STORIES[kind], timing["segments"])):
-        phases = phases_for(segment, lines, lang, timing, offset)
+        phases = phases_for(segment, lines, lang, timing, offset, closing=visual == "close")
         offset += len(segment["text"].split())
         next_start = timing["segments"][seq+1]["start"] if seq+1 < len(timing["segments"]) else timing["duration"]
         for j, (start, text, phase_index) in enumerate(phases):

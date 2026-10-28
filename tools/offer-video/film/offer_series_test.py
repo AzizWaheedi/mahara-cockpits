@@ -61,6 +61,27 @@ class PictureContract(unittest.TestCase):
             self.assertIn("ChatGPT", chatgpt)
             self.assertIn("not a client result" if lang == "en" else "ليس نتيجة لعميل", google)
 
+    def test_closing_keeps_the_final_sentence_and_observed_start(self):
+        script, raw = self.timing("seo_geo", "en")
+        timing = self.load(raw, script)
+        segment = timing["segments"][-1]
+        offset = sum(len(s["text"].split()) for s in timing["segments"][:-1])
+        phases = F.phases_for(segment, [], "en", timing, offset, closing=True)
+        self.assertEqual(phases[-1][1], "Your account manager will explain the work and the next step.")
+        word_index = next(i for i in range(offset, len(timing["words"])) if timing["words"][i]["text"] == "Your")
+        self.assertEqual(phases[-1][0], timing["words"][word_index]["start"])
+        self.assertEqual(" ".join(p[1] for p in phases), segment["text"])
+
+    def test_search_headlines_do_not_end_in_orphaned_fragments(self):
+        for lang in ("en", "ar"):
+            script = F.script_for("seo_geo", lang)
+            timing = F.layout_timing("seo_geo", lang, script)
+            for index in (2, 3):
+                lines = F.STORIES["seo_geo"][index][1]
+                phases = F.phases_for(timing["segments"][index], lines, lang, timing, 0)
+                self.assertEqual(len(phases), 2)
+                self.assertTrue(all(len(text.split()) >= 3 for _, text, _ in phases))
+
     def test_actual_take_flags_are_not_promoted(self):
         script,raw=self.timing()
         result=self.load(raw,script)
