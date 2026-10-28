@@ -64,7 +64,7 @@ test("the library does not load or autoplay a video before the presenter chooses
 });
 test("both languages use the same authentic source pixels, not invented localized results", () => {
   for (const lang of ["en", "ar"] as const)
-    for (const channel of ["google", "chatgpt"] as const) {
+    for (const channel of ["google", "profile", "chatgpt"] as const) {
       const html = renderToStaticMarkup(
         <SearchCapture channel={channel} lang={lang} />,
       );

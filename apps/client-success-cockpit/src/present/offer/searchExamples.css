@@ -1,12 +1,22 @@
 .dse-layout{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,1fr);gap:48px;align-items:center;flex:1;min-height:0}
 .dse-main{min-width:0;align-self:center;border:1px solid var(--dko-rule);border-radius:24px;overflow:hidden;background:#202124;box-shadow:0 28px 60px #0003}
 .dse-switch{display:flex;align-items:center;gap:12px;padding:15px 20px;background:var(--dko-panel);border-bottom:1px solid var(--dko-rule)}
-.dse-switch button{border:1px solid transparent;border-radius:14px;padding:11px 24px;color:var(--dko-muted);font-size:24px;cursor:pointer}
+.dse-switch button{display:flex;align-items:center;justify-content:center;gap:10px;white-space:nowrap;transition:background-color .24s,border-color .24s,color .24s;border:1px solid transparent;border-radius:14px;padding:11px 18px;color:var(--dko-muted);font-size:22px;cursor:pointer}
 .dse-switch button[aria-pressed=true]{border-color:var(--dko-teal);color:var(--dko-ink);background:#00cfc810}
 .dse-switch a{margin-inline-start:auto;display:flex;align-items:center;gap:8px;font-size:20px;color:var(--dko-muted)}
-.dse-switch a svg{width:22px;height:22px}
+.dse-switch svg{width:22px;height:22px;flex-shrink:0}
+.dse-switch button:hover{color:var(--dko-ink);background:#ffffff06}
 .dse-switch button:focus-visible,.dse-switch a:focus-visible{outline:3px solid var(--dko-teal);outline-offset:3px}
-.dse-screen{height:620px;display:grid;place-items:center;background:#202124;animation:dse-in 240ms ease-out both}
+.dse-screen{height:570px;display:grid;place-items:center;background:var(--dko-deep);overflow:hidden}
+.dse-capture-frame{width:100%;height:100%;min-height:0;display:grid;place-items:center;animation:dse-in 440ms cubic-bezier(.16,1,.3,1) both}
+.dse-capture-frame[data-shape=profile]{padding:16px}
+.dse-capture-frame[data-shape=profile] .dse-capture{width:auto;max-width:100%;border-radius:12px;box-shadow:0 16px 36px #0004}
+.dse-source-bar{display:flex;justify-content:space-between;gap:24px;padding:14px 22px;background:var(--dko-panel);border-top:1px solid var(--dko-rule);color:var(--dko-muted);font-size:19px;line-height:1.4}
+.dse-source-bar>span:last-child{font-family:var(--dko-mono);direction:ltr;flex-shrink:0}
+.dse-capture-fallback{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;color:var(--dko-muted);font-size:24px;padding:32px;text-align:center}
+.dse-capture-fallback svg{width:36px;height:36px;color:var(--dko-teal)}
+.dse-capture-fallback:focus-visible{outline:3px solid var(--dko-teal);outline-offset:8px}
+.dse-explanation{animation:dse-explain-in 360ms cubic-bezier(.16,1,.3,1) both}
 .dse-capture{display:block;width:100%;height:100%;object-fit:contain;direction:ltr}
 .dse-slide aside h2{font-size:44px;line-height:1.25;margin:20px 0 28px}
 .dse-slide aside p{font-size:28px;line-height:1.55;color:var(--dko-muted)}
@@ -14,12 +24,13 @@
 .dse-slide .dse-note{font-size:21px;line-height:1.4;color:var(--dko-muted);margin:0}
 .dse-scope-capture{height:490px;background:#202124;border-radius:18px;overflow:hidden;border:1px solid var(--dko-rule)}
 .dse-scope-caption{font-size:19px!important;line-height:1.4!important;color:var(--dko-muted);margin:12px 0 0!important}
-@keyframes dse-in{from{opacity:.35;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes dse-in{from{opacity:.25;transform:translateY(12px) scale(.992)}to{opacity:1;transform:none}}
+@keyframes dse-explain-in{from{opacity:.4;transform:translateY(6px)}to{opacity:1;transform:none}}
 .dk-root[data-offer-presentation] .dk-slide{animation:dse-slide-in 260ms cubic-bezier(.2,.7,.2,1) both}
 @keyframes dse-slide-in{from{opacity:0;translate:0 10px}to{opacity:1;translate:0 0}}
 .dkq-key-hint{margin:0;padding:0 16px 10px;text-align:center;font-size:12px;color:var(--muted-foreground)}
-@media(prefers-reduced-motion:reduce){.dse-screen,.dk-root[data-offer-presentation] .dk-slide{animation:none}}
-.dse-slide[data-still=true] .dse-screen,.dk-root[data-still][data-offer-presentation] .dk-slide{animation:none}
+@media(prefers-reduced-motion:reduce){.dse-slide *, .dse-slide *::before, .dse-slide *::after, .dse-scope-capture *, .dk-root[data-offer-presentation] .dk-slide{animation:none!important;transition:none!important}}
+.dse-slide[data-still=true] *, .dse-slide[data-still=true] *::before, .dse-slide[data-still=true] *::after, .dsv-scene[data-still=true] .dse-capture-frame, .dk-root[data-still][data-offer-presentation] .dk-slide{animation:none!important;transition:none!important}
 
 .dkov-poster,.dkov-player{position:relative;width:100%;aspect-ratio:16/9;overflow:hidden;border-radius:18px;background:#091333;border:1px solid #ffffff20}
 .dkov-poster{display:grid;place-items:center;cursor:pointer;color:#fff}

@@ -124,7 +124,13 @@ export function ScopeVisual({ kind, copy, ctx, active }: Props) {
         <>
           <div className="dse-scope-capture">
             <SearchCapture
-              channel={index === 4 ? "chatgpt" : "google"}
+              channel={
+                item?.key === "pages"
+                  ? "chatgpt"
+                  : item?.key === "profile"
+                    ? "profile"
+                    : "google"
+              }
               lang={ctx.lang}
             />
           </div>

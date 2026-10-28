@@ -16,5 +16,14 @@
     "sha256": "974c6989d396af710509ebfe86834831092d73aa4ff752cc0d89767c8b13bb08",
     "method": "Actual Chrome page screenshot, viewport crop only. Account chrome and private history excluded. Search pixels not altered.",
     "purpose": "Public example, not a Mahara client result, endorsement, ranking claim or promised outcome."
+  },
+  {
+    "file": "google-business-profile.jpg",
+    "source": "https://www.google.com/search?q=Decoria+Riyadh",
+    "query": "Decoria Riyadh",
+    "capturedAt": "2026-10-28",
+    "sha256": "9179b26f48e0ae8ff6a035d0726e311ac0b80703ab9fb0180f65242bdab538ef",
+    "method": "Actual Chrome screenshot of the public Google Business Profile, cropped to its knowledge panel only (x896,y152,width410,height494 from a 1470x662 viewport). Account controls and unrelated results excluded. UI content not altered.",
+    "purpose": "Public example of an interior-design business profile, not a Mahara client result, endorsement, ranking claim or promised outcome."
   }
 ]

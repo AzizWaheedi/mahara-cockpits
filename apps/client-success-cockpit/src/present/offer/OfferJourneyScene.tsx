@@ -65,7 +65,10 @@ export function journeyEvidence(
       example: true,
     };
   if (kind === "seo_geo") {
-    const source = SEARCH_CAPTURES[step === "write" ? "chatgpt" : "google"];
+    const source =
+      SEARCH_CAPTURES[
+        step === "write" ? "chatgpt" : step === "fix" ? "profile" : "google"
+      ];
     return {
       src: source.src,
       label: source.name,

@@ -61,6 +61,45 @@ class PictureContract(unittest.TestCase):
             self.assertIn("ChatGPT", chatgpt)
             self.assertIn("not a client result" if lang == "en" else "ليس نتيجة لعميل", google)
 
+    def test_search_sequence_keeps_real_profile_and_observed_transitions(self):
+        for lang in ("en", "ar"):
+            script, raw = self.timing("seo_geo", lang)
+            timing = self.load(raw, script)
+            cues, offset = [], 0
+            for seq, ((visual, lines), segment) in enumerate(zip(F.STORIES["seo_geo"][:3], timing["segments"][:3])):
+                phases = F.phases_for(segment, lines, lang, timing, offset)
+                offset += len(segment["text"].split())
+                for j, (start, text, index) in enumerate(phases):
+                    end = phases[j+1][0] if j+1 < len(phases) else timing["segments"][seq+1]["start"]
+                    cues.append(dict(id=f"seo-{seq}-{j}", visual=visual, phaseIndex=index, start=start, end=end, text=text))
+            source = F.seo_evidence_component(lang, cues)
+            self.assertIn("assets/search/google-business-profile.jpg", source)
+            self.assertIn("width:460px;height:510px;object-fit:contain", source)
+            self.assertIn("assets/search/google-web-search.png", source)
+            self.assertIn("assets/search/chatgpt-search.png", source)
+            self.assertIn("Google · ", source)
+            self.assertIn("ChatGPT · ", source)
+            self.assertIn("مثال، وليس نتيجة لعميل" if lang == "ar" else "Example, not a client result", source)
+            profile = next(c["start"] for c in cues if c["visual"] == "dossier" and c["phaseIndex"] == 2)
+            answer = next(c["start"] for c in cues if c["visual"] == "answers")
+            self.assertIn(f"ease:'power2.inOut'}},{profile:.3f}", source)
+            self.assertIn(f"ease:'power2.inOut'}},{answer:.3f}", source)
+            self.assertNotIn("repeat:", source)
+            self.assertNotIn("yoyo:", source)
+            self.assertNotIn("autoAlpha", source)
+            self.assertNotIn("tl.to('.head", source)
+            self.assertNotIn("tl.fromTo('.head", source)
+            self.assertIn('data-track-index="1"', source)
+            self.assertIn('window.__timelines["seo-evidence-sequence"]=tl', source)
+
+    def test_search_sequence_refuses_reordered_evidence(self):
+        cues = [
+            dict(id="profile", visual="dossier", phaseIndex=2, start=7.74, end=10.70, text="Profile"),
+            dict(id="answer", visual="answers", phaseIndex=0, start=4.0, end=12.0, text="Answer"),
+        ]
+        with self.assertRaises(ValueError):
+            F.seo_evidence_component("en", cues)
+
     def test_closing_keeps_the_final_sentence_and_observed_start(self):
         script, raw = self.timing("seo_geo", "en")
         timing = self.load(raw, script)

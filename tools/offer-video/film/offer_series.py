@@ -494,6 +494,88 @@ def picture(visual, text, index, lang, sid, duration, media_offset=0):
         return f'<div class="stage">{body}{image_tag}</div>', "process"
     raise ValueError(f"Unknown visual: {visual}")
 
+def seo_evidence_component(lang, cues):
+    """One readable stage, adapted from registry browser-device-stage/morph-swap.
+
+    Real source pixels remain intact. Three screen states share a stage, and
+    only the screen wrappers move. Headlines land without camera motion.
+    The compound timeline uses observed cue bounds in narrated builds.
+    """
+    sid = "seo-evidence-sequence"
+    duration = cues[-1]["end"]
+    profile_start = next(c["start"] for c in cues if c["visual"] == "dossier" and c["phaseIndex"] == 2)
+    ai_start = next(c["start"] for c in cues if c["visual"] == "answers")
+    if not 0 < profile_start < ai_start < duration:
+        raise ValueError("Search, profile and answer stages require ordered observed cues")
+    direction = -1 if lang == "ar" else 1
+    note = "مثال، وليس نتيجة لعميل" if lang == "ar" else "Example, not a client result"
+    titles = []
+    for cue in cues:
+        profile = cue["visual"] == "dossier" and cue["phaseIndex"] == 2
+        placement = "font-size:82px;top:210px;width:960px" if profile else "font-size:82px"
+        if profile and lang == "ar":
+            placement += ";left:768px"
+        titles.append(
+            f'<div id="{cue["id"]}-title" class="clip" data-start="{cue["start"]:.3f}" '
+            f'data-duration="{cue["end"]-cue["start"]:.3f}" data-track-index="1" '
+            f'style="position:absolute;inset:0">{head(cue["text"], placement)}</div>')
+    # The portrait profile is contained in its frame, never stretched or
+    # represented as a browser-wide result. No account or source UI is redrawn.
+    profile_x = 192 if lang == "ar" else 1268
+    frames = [
+        ("google", 'left:192px;top:250px;width:1536px;height:400px',
+         img("search/google-web-search.png",0,0,1536,956,"object-fit:contain;object-position:top")),
+        ("profile", f'left:{profile_x}px;top:140px;width:460px;height:510px',
+         img("search/google-business-profile.jpg",0,0,460,510,"object-fit:contain;object-position:center")),
+        ("chatgpt", 'left:192px;top:250px;width:1536px;height:400px',
+         img("search/chatgpt-search.png",-665,-333,2470,1092.5,"object-fit:contain")),
+    ]
+    screens = []
+    for track,(name,geometry,content) in enumerate(frames,2):
+        if name != "profile":
+            content = content.replace('<img class="photo"', '<img class="photo" data-layout-allow-overflow')
+        screens.append(
+            f'<div id="bds-seo-{name}-clip" class="clip" data-start="0" data-duration="{duration:.3f}" '
+            f'data-track-index="{track}" style="position:absolute;inset:0">'
+            f'<div id="msw-seo-{name}" class="frame" data-layout-allow-overlap '
+            f'style="{geometry};background:#202124;border:2px solid #506179;border-radius:24px;'
+            f'transform-origin:50% 50%">{content}</div></div>')
+    # Registry motion adapted to remove idle drift, synthetic UI and bounce.
+    # A source condenses towards the next stage. Its pixels disappear before
+    # the next source arrives, so even paused seams have no double exposure.
+    js = (
+        "gsap.set('#msw-seo-profile,#msw-seo-chatgpt',{opacity:0});"
+        "const tl=gsap.timeline({paused:true});"
+        "tl.fromTo('#msw-seo-google',{y:12},{y:0,duration:.5,ease:'power4.out'},0);"
+    )
+    for before,after,at in (("google","profile",profile_start),("profile","chatgpt",ai_start)):
+        to_profile = after == "profile"
+        outgoing_x = direction * (538 if to_profile else -538)
+        outgoing_y = -55 if to_profile else 55
+        incoming_x = 0 if to_profile else direction * 40
+        incoming_y = 22 if to_profile else 0
+        heading = next(c["id"] for c in cues if c["start"] == at)
+        js += (
+            f"gsap.set('#{heading}-title .head',{{opacity:0}});"
+            f"tl.to('#msw-seo-{before}',{{x:{outgoing_x},y:{outgoing_y},scale:{.3 if to_profile else .7},duration:.30,ease:'power2.inOut'}},{at:.3f});"
+            f"tl.to('#msw-seo-{before}',{{opacity:0,duration:.12,ease:'power2.in'}},{at+.18:.3f});"
+            f"tl.fromTo('#msw-seo-{after}',{{x:{incoming_x},y:{incoming_y},scale:.96,opacity:0}},"
+            f"{{x:0,y:0,scale:1,opacity:1,duration:.48,ease:'power4.out',immediateRender:false}},{at+.30:.3f});"
+            f"tl.fromTo('#{heading}-title .head',{{opacity:0}},{{opacity:1,duration:.18,ease:'power2.out',immediateRender:false}},{at+.30:.3f});"
+        )
+    js += f'window.__timelines["{sid}"]=tl;'
+    label_swap = ai_start + .30
+    labels = (
+        f'<div id="seo-google-label" class="clip tag" data-start="0" data-duration="{label_swap:.3f}" '
+        f'data-track-index="6" style="font-size:75px;top:665px;max-width:1536px">Google · {note}</div>'
+        f'<div id="seo-chatgpt-label" class="clip tag" data-start="{label_swap:.3f}" data-duration="{duration-label_swap:.3f}" '
+        f'data-track-index="6" style="font-size:75px;top:665px;max-width:1536px">ChatGPT · {note}</div>')
+    body = f'<div id="bds-seo-stage" class="stage paper">{"".join(screens)}{"".join(titles)}{labels}</div>'
+    return (f'<template><style>{CSS}</style><div id="root" dir="{"rtl" if lang=="ar" else "ltr"}" '
+            f'data-composition-id="{sid}" data-width="1920" data-height="1080">{body}</div>'
+            f'<script>(function(){{{js}}})();</script></template>')
+
+
 def component(sid, lang, body, motion="", duration=1):
     direction = 1 if lang == "ar" else -1
     # Only children move; the timed host is never hidden/faded by GSAP.
@@ -530,7 +612,7 @@ def build(kind, lang, out, deps, media, timing_path=None, layout_only=False, act
     needed = [media / "brand/mahara-logo-white.png"]
     search_assets = REPO / "apps/client-success-cockpit/src/present/offer/art/search"
     if kind == "seo_geo":
-        needed += [search_assets / name for name in ("google-web-search.png", "chatgpt-search.png", "provenance.json")]
+        needed += [search_assets / name for name in ("google-web-search.png", "google-business-profile.jpg", "chatgpt-search.png", "provenance.json")]
     if kind == "ugc":
         needed += [actors / f"{name}.mp4" for name in ACTORS] + [actors / "provenance.json"]
     if kind in ("website", "seo_geo"):
@@ -571,7 +653,7 @@ def build(kind, lang, out, deps, media, timing_path=None, layout_only=False, act
             copy_file(actors / f"{name}.mp4", out / f"assets/actors/{name}.mp4", assets)
         copy_file(actors / "provenance.json", out / "assets/actors/provenance.json", assets)
     if kind == "seo_geo":
-        for name in ("google-web-search.png", "chatgpt-search.png", "provenance.json"):
+        for name in ("google-web-search.png", "google-business-profile.jpg", "chatgpt-search.png", "provenance.json"):
             copy_file(search_assets / name, out / f"assets/search/{name}", assets)
     audio_html = ""
     if not layout_only:
@@ -582,6 +664,7 @@ def build(kind, lang, out, deps, media, timing_path=None, layout_only=False, act
     compositions = out / "compositions"
     compositions.mkdir()
     hosts, beats, offset = [], [], 0
+    seo_cues = []
     for seq, ((visual, lines), segment) in enumerate(zip(STORIES[kind], timing["segments"])):
         phases = phases_for(segment, lines, lang, timing, offset, closing=visual == "close")
         offset += len(segment["text"].split())
@@ -593,9 +676,25 @@ def build(kind, lang, out, deps, media, timing_path=None, layout_only=False, act
             if end <= start: raise ValueError("Picture cue has no duration")
             sid = f"{kind}-{seq+1:02d}-{j+1:02d}"
             body, motion = picture(visual, text, phase_index, lang, sid, end-start, max(0,start-segment["start"]))
-            (compositions / f"{sid}.html").write_text(component(sid, lang, body, ("close" if visual=="close" else motion) if j==0 else "", end-start))
-            hosts.append(f'<div id="{sid}" class="clip" data-composition-id="{sid}" data-composition-src="compositions/{sid}.html" data-start="{start:.3f}" data-duration="{end-start:.3f}" data-width="1920" data-height="1080" data-track-index="1" data-track-kind="graphics" style="inset:0"></div>')
+            if kind == "seo_geo" and seq < 3:
+                seo_cues.append({"id":sid,"visual":visual,"phaseIndex":phase_index,"start":start,"end":end,"text":text})
+            else:
+                (compositions / f"{sid}.html").write_text(component(sid, lang, body, ("close" if visual=="close" else motion) if j==0 else "", end-start))
+                hosts.append(f'<div id="{sid}" class="clip" data-composition-id="{sid}" data-composition-src="compositions/{sid}.html" data-start="{start:.3f}" data-duration="{end-start:.3f}" data-width="1920" data-height="1080" data-track-index="1" data-track-kind="graphics" style="inset:0"></div>')
             beats.append({"id":sid,"visual":visual,"start":round(start,3),"end":round(end,3),"text":text,"segmentId":segment["id"]})
+    if seo_cues:
+        sid = "seo-evidence-sequence"
+        (compositions / f"{sid}.html").write_text(seo_evidence_component(lang, seo_cues))
+        profile_at = next(c["start"] for c in seo_cues if c["visual"] == "dossier" and c["phaseIndex"] == 2)
+        ai_at = next(c["start"] for c in seo_cues if c["visual"] == "answers")
+        motion = {"assertions": [
+            {"kind":"appearsBy","selector":"#msw-seo-google","bySec":0.6},
+            {"kind":"appearsBy","selector":"#msw-seo-profile","bySec":profile_at+0.9},
+            {"kind":"appearsBy","selector":"#msw-seo-chatgpt","bySec":ai_at+0.9},
+            *({"kind":"staysInFrame","selector":f"#msw-seo-{name}"} for name in ("google","profile","chatgpt")),
+        ]}
+        (out / "index.motion.json").write_text(json.dumps(motion, indent=2)+"\n")
+        hosts.insert(0, f'<div id="{sid}" class="clip" data-composition-id="{sid}" data-composition-src="compositions/{sid}.html" data-start="0" data-duration="{seo_cues[-1]["end"]:.3f}" data-width="1920" data-height="1080" data-track-index="1" data-track-kind="graphics" style="inset:0"></div>')
     captions = captions_for(script,timing)
     if captions:
         vtt,srt=subtitle_files(captions)
