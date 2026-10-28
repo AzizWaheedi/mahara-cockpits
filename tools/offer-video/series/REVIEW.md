@@ -1,6 +1,10 @@
 # All-offer picture preparation checkpoint, 27 October 2026
 
-Current status: approved copy and genuine Mahara logo ending, with film production still pending. The user explicitly approved all seven bilingual scripts and the logo ending, bound to approved-sheet SHA `1270fc4f0efeaaedf6d2ce1dee859158699167bcba46a7e3136e4750d0fb768d`. This amends the real Aziz close requirement for the new seven-offer series only. Never use synthetic Aziz or label the logo slate as real footage. All 14 narrations were generated with the existing paid Nabarati subscription; eight are imported and six generated records remain export-held under the user's explicit stop. No further downloads, retries, alternate export routes or generation are authorized in this checkpoint. See `narration/v1/PRODUCTION.md` for the exact rows.
+## Status on 28 October 2026
+
+Film production started on 28 October. Three English films are live: Google and AI search, Second campaign, and Cameraman day. Presenter videos English is rendered and passed the HyperFrames check, the scene, phone and seam review, and a decoded-frame review. Its upload waits for the transcript sign-off. The other English and all Arabic films wait for a listening review. The sections below are the 27 October checkpoint and are kept as history.
+
+Current status (27 October): approved copy and genuine Mahara logo ending, with film production still pending. The user explicitly approved all seven bilingual scripts and the logo ending, bound to approved-sheet SHA `1270fc4f0efeaaedf6d2ce1dee859158699167bcba46a7e3136e4750d0fb768d`. This amends the real Aziz close requirement for the new seven-offer series only. Never use synthetic Aziz or label the logo slate as real footage. All 14 narrations were generated with the existing paid Nabarati subscription; eight are imported and six generated records remain export-held under the user's explicit stop. No further downloads, retries, alternate export routes or generation are authorized in this checkpoint. See `narration/v1/PRODUCTION.md` for the exact rows.
 
 ## Historical picture-layout evidence
 

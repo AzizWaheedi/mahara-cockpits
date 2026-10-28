@@ -114,3 +114,13 @@ Previous CSM production baseline, retained for rollback: project `prj_8U3cRoO4xw
 - Task-system prerequisites are present, but its writer remains in a one-card canary and three seats remain unlinked. This Offer Studio release record does not claim general ticketing delivery or full task-system acceptance.
 - The live client offer picker also loads all seven offers and its readiness explanation, including the existing client-happiness hold. Verification did not enter prep or create a proposal: those paths can have cleanup or write effects. The Offers tab had no application console errors; one unrelated Chrome extension authentication error was excluded.
 - No real client proposal was issued or sent, no price was adopted from the reference documents, and no video was published. The Website pilot's software completion is separate from client-ready video approval.
+
+## Releases and films, 28 October 2026
+
+- [PR #103](https://github.com/AzizWaheedi/mahara-cockpits/pull/103) (real website captures and a real Google Business Profile example) shipped as production `dpl_D6ye8WoR8eh9ksNf9kcjpQWGK6h3` from `8d645babbd45e6374a67d25f889bbf641a858f67`.
+- [PR #105](https://github.com/AzizWaheedi/mahara-cockpits/pull/105) shipped as production `dpl_VjMJ24N4norUD1BQEdV3C7Bv7yuu` from `478c452de3f3bebe6f7ff62d43dee08481c8615d`, entry `index-BAp8E122.js`. A video that does not load now offers "Try again" and "Open the video". The live bundle carries both labels. The signed-in check of the failure path in production is still to do.
+- [PR #107](https://github.com/AzizWaheedi/mahara-cockpits/pull/107) records Aziz's approval of the Arabic labels «نحاول مرة ثانية» and «فتح الفيديو». It changes documentation only.
+- Three English offer films are live in the Wistia Offer Studio folder and saved in the cockpit registry, each with exact English captions: Google and AI search (v7d, which Aziz confirmed), Second campaign, and Cameraman day with labelled photoreal examples.
+- Presenter videos English is rendered and measured. Its transcript sign-off and upload are pending.
+- Social media and Website English, and all seven Arabic takes, wait for a listening review. The exact-match aligner refuses each of them, and no timing is invented.
+- No Arabic offer film is published, so Arabic pitches and proposals show no video yet.
