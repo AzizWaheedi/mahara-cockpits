@@ -1,5 +1,11 @@
 import maharaMark from "@/assets/mahara-logo-dark.png";
 import maharaPrintMark from "@/assets/mahara-logo-light.png";
+import {
+  OFFER_KEYS_HINT,
+  offerSlideDirection,
+  offerSlideFrom,
+} from "./offer/navigation";
+import "./offer/searchExamples.css";
 import { isOfferDeck } from "./offer/kinds";
 import { OFFER_VIDEO_SLOTS, offerVideoItems } from "./offer/videos";
 import "./present.css";
@@ -256,6 +262,16 @@ export function DeckShell({
     lastSlot.current = playerSlot;
   }, [playerSlot, hub]);
   const railAt = slide?.rail?.(ctx) ?? null;
+  const navAvailable = (dir: 1 | -1) =>
+    isOfferDeck(base.deck)
+      ? offerSlideFrom({ index, tour }, dir, slides.length)
+      : stepFrom({ index, tour }, dir, stops);
+  const navigate = (dir: 1 | -1) => {
+    if (isOfferDeck(base.deck)) {
+      const next = navAvailable(dir);
+      if (next) go(next.index);
+    } else step(dir);
+  };
   const slideId = slide?.id ?? "";
   useEffect(() => {
     if (slideId) onPos?.({ index, tour }, slideId);
@@ -419,18 +435,32 @@ export function DeckShell({
   );
 
   useEffect(() => {
-    if (embedded) return;
     const onKeyDown = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
+      if (e.defaultPrevented && !(player && e.key === "Escape")) return;
+      if (embedded && !player && e.key.toLowerCase() !== "v") return;
       const typing =
         el &&
         (el.tagName === "INPUT" ||
           el.tagName === "SELECT" ||
           el.tagName === "TEXTAREA" ||
-          el.isContentEditable);
+          el.isContentEditable ||
+          !!el.closest(
+            "[role=combobox],[role=listbox],[role=option],video,audio",
+          ));
       if (typing) {
         // Esc in a field lets go of the field; it never leaves the deck.
         if (e.key === "Escape") el.blur();
+        return;
+      }
+      if (
+        (e.key === " " || e.key === "Spacebar") &&
+        el?.closest("a,button,[role=button],[role=tab]")
+      )
+        return;
+      if (e.repeat) {
+        if (offerSlideDirection(e.key, e.shiftKey) || e.key.startsWith("Arrow"))
+          e.preventDefault();
         return;
       }
       const asked = keyCommand({
@@ -473,7 +503,11 @@ export function DeckShell({
         return;
       }
       e.preventDefault();
-      if (cmd === "next") step(1);
+      const slideDirection = isOfferDeck(base.deck)
+        ? offerSlideDirection(e.key, e.shiftKey)
+        : null;
+      if (slideDirection) navigate(slideDirection);
+      else if (cmd === "next") step(1);
       else if (cmd === "prev") step(-1);
       else if (cmd === "first") go(0);
       else if (cmd === "last") go(slides.length - 1);
@@ -516,6 +550,7 @@ export function DeckShell({
       ref={rootRef}
       className="dk-root"
       data-deck={base.deck}
+      data-offer-presentation={isOfferDeck(base.deck) ? "" : undefined}
       data-idle={idle && !overview ? "" : undefined}
       data-still={base.still ? "" : undefined}
       data-embedded={embedded ? "" : undefined}
@@ -692,13 +727,9 @@ export function DeckShell({
           <div className="dk-chrome dk-nav" dir="ltr">
             <button
               type="button"
-              onClick={() => step(lang === "ar" ? 1 : -1)}
+              onClick={() => navigate(lang === "ar" ? 1 : -1)}
               onPointerUp={letGo}
-              disabled={
-                lang === "ar"
-                  ? !stepFrom({ index, tour }, 1, stops)
-                  : !stepFrom({ index, tour }, -1, stops)
-              }
+              disabled={lang === "ar" ? !navAvailable(1) : !navAvailable(-1)}
               aria-label={t(lang === "ar" ? CHROME.next : CHROME.prev, lang)}
             >
               ←
@@ -708,13 +739,9 @@ export function DeckShell({
             </span>
             <button
               type="button"
-              onClick={() => step(lang === "ar" ? -1 : 1)}
+              onClick={() => navigate(lang === "ar" ? -1 : 1)}
               onPointerUp={letGo}
-              disabled={
-                lang === "ar"
-                  ? !stepFrom({ index, tour }, -1, stops)
-                  : !stepFrom({ index, tour }, 1, stops)
-              }
+              disabled={lang === "ar" ? !navAvailable(-1) : !navAvailable(1)}
               aria-label={t(lang === "ar" ? CHROME.prev : CHROME.next, lang)}
             >
               →
@@ -729,7 +756,11 @@ export function DeckShell({
               <div className="dk-overview-in" dir={dir} lang={lang}>
                 <div className="dk-overview-head">
                   <h2>{t(CHROME.all, lang)}</h2>
-                  <p>{t(CHROME.keys, lang)}</p>
+                  <p>
+                    {isOfferDeck(base.deck)
+                      ? OFFER_KEYS_HINT[lang]
+                      : t(CHROME.keys, lang)}
+                  </p>
                 </div>
                 <div className="dk-overview-grid">
                   {slides.map((s, i) => (

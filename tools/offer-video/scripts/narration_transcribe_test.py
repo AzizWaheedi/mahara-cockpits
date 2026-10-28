@@ -2,6 +2,8 @@ import importlib.util
 import math
 from pathlib import Path
 import unittest
+from unittest.mock import patch
+import struct
 
 spec = importlib.util.spec_from_file_location("transcribe", Path(__file__).with_name("narration_transcribe.py"))
 module = importlib.util.module_from_spec(spec)
@@ -45,6 +47,23 @@ class TranscriptEvidenceTests(unittest.TestCase):
                       self.words("one", "two")[::-1]):
             with self.subTest(words=words), self.assertRaises(ValueError):
                 module.validate_words(words, 2)
+
+
+@unittest.skipUnless(importlib.util.find_spec("numpy"), "Needs the pinned ASR runtime")
+class AudioDecoderTests(unittest.TestCase):
+    def test_actual_sample_count_and_float_values_survive_decode(self):
+        pcm = struct.pack("<f", .25) * 16000
+        with patch.object(module.subprocess, "check_output", return_value=pcm) as run:
+            samples = module.decode_samples(Path("voice.wav"), 1)
+        self.assertEqual(samples.size, 16000)
+        self.assertEqual(float(samples[0]), .25)
+        self.assertEqual(run.call_args.kwargs["timeout"], 30)
+        self.assertIn("16000", run.call_args.args[0])
+
+    def test_empty_nonfinite_and_truncated_audio_are_rejected(self):
+        for pcm in (b"", struct.pack("<f", float("nan"))*16000, struct.pack("<f", 0)*8000):
+            with self.subTest(size=len(pcm)), patch.object(module.subprocess, "check_output", return_value=pcm), self.assertRaises(ValueError):
+                module.decode_samples(Path("voice.wav"), 1)
 
 
 if __name__ == "__main__":

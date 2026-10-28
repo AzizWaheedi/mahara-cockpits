@@ -1,0 +1,20 @@
+[
+  {
+    "file": "google-web-search.png",
+    "source": "https://www.google.com/search?q=interior+design+company+Dubai&hl=en&udm=14",
+    "query": "interior design company Dubai",
+    "capturedAt": "2026-10-28",
+    "sha256": "c6670e67456805c0fdfe88669646dd845ac4b830eb58de63ae4e11af330b291b",
+    "method": "Actual Chrome page screenshot, viewport crop only. Account chrome and private history excluded. Search pixels not altered.",
+    "purpose": "Public example, not a Mahara client result, endorsement, ranking claim or promised outcome."
+  },
+  {
+    "file": "chatgpt-search.png",
+    "source": "https://chatgpt.com/",
+    "query": "Search the web for interior design companies in Dubai. Show three examples with links to their websites. Keep it concise.",
+    "capturedAt": "2026-10-28",
+    "sha256": "974c6989d396af710509ebfe86834831092d73aa4ff752cc0d89767c8b13bb08",
+    "method": "Actual Chrome page screenshot, viewport crop only. Account chrome and private history excluded. Search pixels not altered.",
+    "purpose": "Public example, not a Mahara client result, endorsement, ranking claim or promised outcome."
+  }
+]

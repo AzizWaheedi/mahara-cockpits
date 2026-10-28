@@ -373,7 +373,15 @@ def picture(visual, text, index, lang, sid, duration, media_offset=0):
         if visual == "campaign_parts":
             body += f'<div class="folio" style="left:224px;top:720px;color:#506179">{number(index+1,lang)}</div>'
         return f'<div class="stage paper">{body}{image_tag}</div>', "branch"
-    if visual in ("search", "dossier", "answers", "report", "ownership"):
+    if visual == "search" or visual == "answers":
+        channel = "chatgpt" if visual == "answers" and index > 0 else "google"
+        capture = "chatgpt-search.png" if channel == "chatgpt" else "google-web-search.png"
+        label = "ChatGPT" if channel == "chatgpt" else "Google"
+        note = "مثال بحث حقيقي، وليس نتيجة لعميل" if lang == "ar" else "Real search example, not a client result"
+        body = h + f'<div class="frame" style="left:192px;top:350px;width:1536px;height:430px;background:#202124;border:2px solid #506179;border-radius:24px">{img(f"search/{capture}",0,0,1536,956 if channel == "google" else 680,"object-fit:contain;object-position:top")}</div>'
+        body += f'<div class="tag" style="font-size:52px;top:707px;max-width:1536px">{label} · {note}</div>'
+        return f'<div class="stage paper">{body}</div>', "page"
+    if visual in ("dossier", "report", "ownership"):
         body = h
         if visual == "dossier" and index == 0:
             body += f'<div class="big" style="position:absolute;left:220px;top:390px">{number(90,lang)}</div>'
@@ -513,6 +521,9 @@ def build(kind, lang, out, deps, media, timing_path=None, layout_only=False, act
         raise ValueError("Exact approved-word alignment is required before narrated assembly")
     actors = actors or media.parent / "all-offers/approved-presenter-examples"
     needed = [media / "brand/mahara-logo-white.png"]
+    search_assets = REPO / "apps/client-success-cockpit/src/present/offer/art/search"
+    if kind == "seo_geo":
+        needed += [search_assets / name for name in ("google-web-search.png", "chatgpt-search.png", "provenance.json")]
     if kind == "ugc":
         needed += [actors / f"{name}.mp4" for name in ACTORS] + [actors / "provenance.json"]
     if kind in ("website", "seo_geo"):
@@ -527,6 +538,12 @@ def build(kind, lang, out, deps, media, timing_path=None, layout_only=False, act
             rows = [x for x in provenance if x.get("label") == name and x.get("wistia_id") == expected[name]]
             if len(rows) != 1 or rows[0].get("sha256") != sha(actors / f"{name}.mp4"):
                 raise ValueError("Presenter bytes do not match the approved source provenance")
+    if kind == "seo_geo":
+        provenance = json.loads((search_assets / "provenance.json").read_text())
+        for name in ("google-web-search.png", "chatgpt-search.png"):
+            rows = [item for item in provenance if item.get("file") == name]
+            if len(rows) != 1 or rows[0].get("sha256") != sha(search_assets / name):
+                raise ValueError("Search screenshot bytes differ from their source receipt")
     out.mkdir(parents=True)
     assets = []
     for name in ("Geist-Regular", "Geist-SemiBold"):
@@ -546,6 +563,9 @@ def build(kind, lang, out, deps, media, timing_path=None, layout_only=False, act
         for name in ACTORS:
             copy_file(actors / f"{name}.mp4", out / f"assets/actors/{name}.mp4", assets)
         copy_file(actors / "provenance.json", out / "assets/actors/provenance.json", assets)
+    if kind == "seo_geo":
+        for name in ("google-web-search.png", "chatgpt-search.png", "provenance.json"):
+            copy_file(search_assets / name, out / f"assets/search/{name}", assets)
     audio_html = ""
     if not layout_only:
         source = timing["audioPath"]

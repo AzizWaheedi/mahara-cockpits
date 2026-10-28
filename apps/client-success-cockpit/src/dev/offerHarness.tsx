@@ -47,7 +47,24 @@ function App() {
                 v.offerKey === selectedOffer ? row : v,
               ),
               settings,
-              videos: [],
+              videos:
+                params.get("videos") === "examples"
+                  ? [
+                      {
+                        deck: selectedDeck,
+                        slotKey: "demo",
+                        lang: "any",
+                        provider: "wistia",
+                        url: "https://fast.wistia.net/embed/iframe/qlwysqfu2g",
+                        embedUrl:
+                          "https://fast.wistia.net/embed/iframe/qlwysqfu2g",
+                        title:
+                          "Playback test: supplied actor example, not an offer film",
+                        durationSeconds: 54,
+                        revision: 1,
+                      },
+                    ]
+                  : [],
               isCeo: params.get("role") === "ceo",
               at: "2026-10-26",
             },

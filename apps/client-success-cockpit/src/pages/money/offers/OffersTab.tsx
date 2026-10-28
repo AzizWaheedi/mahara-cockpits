@@ -55,7 +55,11 @@ export function OffersTab({
         </p>
         <div className="dkq-library">
           {data.rows.map(row => (
-            <CatalogDeckPreview key={row.offerKey} row={row} />
+            <CatalogDeckPreview
+              key={row.offerKey}
+              row={row}
+              recordings={data.videos}
+            />
           ))}
         </div>
       </section>
@@ -87,7 +91,7 @@ export function OffersTab({
           />
         ))}
       </section>
-      <OfferVideos client={client} isCeo={data.isCeo} />
+      <OfferVideos client={client} isCeo={data.isCeo} onChanged={reload} />
       <OfferSettings
         client={client}
         settings={data.settings}

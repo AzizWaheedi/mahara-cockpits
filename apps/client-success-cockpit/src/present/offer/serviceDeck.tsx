@@ -10,6 +10,7 @@ import type { OfferKey } from "./kinds";
 import { OfferCover } from "./OfferCover";
 import { OfferJourney } from "./OfferJourney";
 import { ScopeVisual } from "./ScopeVisual";
+import { searchExampleSlide } from "./SearchExamples";
 import { Bill } from "./slides/Bill";
 import { Capture } from "./slides/Capture";
 import type { CatalogCopy } from "./sources";
@@ -39,7 +40,7 @@ function ExamplePlayer({
   title: string;
   lang: "en" | "ar";
 }) {
-  const p = usePlayerFrame({ provider: "wistia", embedUrl: url }, false);
+  const p = usePlayerFrame({ provider: "wistia", embedUrl: url }, true);
   return (
     <div className="dks-example-player">
       {p.src && p.phase !== "failed" && p.phase !== "blocked" ? (
@@ -269,70 +270,74 @@ export function serviceSlides(
 ): SlideDef[] {
   const en = m?.row ? offerCopy(m, "en") : null;
   const ar = m?.row ? offerCopy(m, "ar") : null;
-  return [...SERVICE_MAIN_SLIDES, "video" as const].map(id => {
-    const total =
-      id === "get"
-        ? (en?.get.length ?? 0) + 2
-        : id === "runs"
-          ? Math.max(1, en?.steps.length ?? 1)
-          : id === "next"
-            ? 2
-            : 1;
-    const missing =
-      id === "saw" && !m?.captures.length
-        ? ["Add real evidence to use this slide."]
-        : id === "investment" && (!m?.opening || m.priceProblem)
-          ? [
-              m?.priceProblem ??
-                "Add an opening price before showing the investment.",
-            ]
-          : [];
-    const say =
-      id === "runs"
-        ? en?.steps.map(v => v.text)
-        : id === "get"
-          ? en?.get.map(v => v.text)
-          : id === "investment"
-            ? [en?.terms]
+  const slides: SlideDef[] = [...SERVICE_MAIN_SLIDES, "video" as const].map(
+    id => {
+      const total =
+        id === "get"
+          ? (en?.get.length ?? 0) + 2
+          : id === "runs"
+            ? Math.max(1, en?.steps.length ?? 1)
             : id === "next"
-              ? [en?.close]
-              : [en?.line];
-    const sayAr =
-      id === "runs"
-        ? ar?.steps.map(v => v.text)
-        : id === "get"
-          ? ar?.get.map(v => v.text)
-          : id === "investment"
-            ? [ar?.terms]
-            : id === "next"
-              ? [ar?.close]
-              : [ar?.line];
-    return {
-      id,
-      title:
-        id === "matters"
-          ? {
-              en: en?.deckTitle ?? "Your next step",
-              ar: ar?.deckTitle ?? W.slides.matters.title.ar,
-            }
-          : id === "video"
-            ? { en: en?.name ?? "", ar: ar?.name ?? "" }
-            : W.slides[id].title,
-      stops: () => total,
-      stopName: () => null,
-      defaultHidden: () => id === "video" || missing.length > 0,
-      hiddenWhy: missing[0] ?? "Open the video only when useful on the call.",
-      deep: id === "video",
-      missing: () => missing,
-      notes: {
-        say: (say ?? []).filter((v): v is string => !!v),
-        sayAr: (sayAr ?? []).filter((v): v is string => !!v),
-        push: [],
-        pushAr: [],
-      },
-      render: (ctx: SlideCtx) => (
-        <ServiceCanvas key={kind + id} id={id} kind={kind} ctx={ctx} />
-      ),
-    };
-  });
+              ? 2
+              : 1;
+      const missing =
+        id === "saw" && !m?.captures.length
+          ? ["Add real evidence to use this slide."]
+          : id === "investment" && (!m?.opening || m.priceProblem)
+            ? [
+                m?.priceProblem ??
+                  "Add an opening price before showing the investment.",
+              ]
+            : [];
+      const say =
+        id === "runs"
+          ? en?.steps.map(v => v.text)
+          : id === "get"
+            ? en?.get.map(v => v.text)
+            : id === "investment"
+              ? [en?.terms]
+              : id === "next"
+                ? [en?.close]
+                : [en?.line];
+      const sayAr =
+        id === "runs"
+          ? ar?.steps.map(v => v.text)
+          : id === "get"
+            ? ar?.get.map(v => v.text)
+            : id === "investment"
+              ? [ar?.terms]
+              : id === "next"
+                ? [ar?.close]
+                : [ar?.line];
+      return {
+        id,
+        title:
+          id === "matters"
+            ? {
+                en: en?.deckTitle ?? "Your next step",
+                ar: ar?.deckTitle ?? W.slides.matters.title.ar,
+              }
+            : id === "video"
+              ? { en: en?.name ?? "", ar: ar?.name ?? "" }
+              : W.slides[id].title,
+        stops: () => total,
+        stopName: () => null,
+        defaultHidden: () => id === "video" || missing.length > 0,
+        hiddenWhy: missing[0] ?? "Open the video only when useful on the call.",
+        deep: id === "video",
+        missing: () => missing,
+        notes: {
+          say: (say ?? []).filter((v): v is string => !!v),
+          sayAr: (sayAr ?? []).filter((v): v is string => !!v),
+          push: [],
+          pushAr: [],
+        },
+        render: (ctx: SlideCtx) => (
+          <ServiceCanvas key={kind + id} id={id} kind={kind} ctx={ctx} />
+        ),
+      };
+    },
+  );
+  if (kind === "seo_geo") slides.splice(3, 0, searchExampleSlide());
+  return slides;
 }
