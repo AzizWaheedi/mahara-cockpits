@@ -313,6 +313,9 @@ function PlayerFrame({
               href={row.url}
               target="_blank"
               rel="noopener noreferrer"
+              // Pointer up for every button (a middle-click or the menu's
+              // "Open in new tab" fires no click); click for Enter.
+              onPointerUp={onAway}
               onClick={onAway}
             >
               {t(VIDEO.open, lang)}

@@ -1146,6 +1146,32 @@ describe("the control and the player on the canvas", () => {
     expect(q(".dk-slide")?.getAttribute("data-slide")).toBe("creative-freedom");
   });
 
+  test("a middle-click on Open the video (no click event) still hands the keys back: Space closes the player", async () => {
+    await mount(data("full"), ["creative-freedom", "form"]);
+    await press("v");
+    await offline();
+    const open = q(".dkv-acts a") as unknown as HTMLElement;
+    open.focus();
+    // A middle-click, or the menu's "Open in new tab": pointer up, no click.
+    await act(async () => {
+      open.dispatchEvent(
+        new win.PointerEvent("pointerup", {
+          bubbles: true,
+          button: 1,
+        }) as unknown as Event,
+      );
+    });
+    expect(win.document.activeElement).toBe(q('[role="dialog"]'));
+    await act(async () => {
+      (win.document.activeElement ?? win.document.body).dispatchEvent(
+        new win.KeyboardEvent("keydown", { key: " ", bubbles: true }),
+      );
+    });
+    // One press, one change: the player closes and the slide stays.
+    expect(q(".dkv-veil")).toBeNull();
+    expect(q(".dk-slide")?.getAttribute("data-slide")).toBe("creative-freedom");
+  });
+
   test("the notes window's Play on screen after Didn't load starts a fresh frame", async () => {
     const handlers: Array<(m: unknown) => void> = [];
     const posts: Array<{ type: string; slot?: string; phase?: string }> = [];
