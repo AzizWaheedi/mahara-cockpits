@@ -1,5 +1,11 @@
 # Narration production checkpoint, 27 October 2026
 
+## Status on 28 October 2026
+
+All 14 takes are now in the private takes folder. They were recovered from existing files, with no new export, download retry or generation. The table below is the 27 October checkpoint and is kept as history.
+
+On 28 October three English films went live: `seo_geo`, `second_campaign` and `cameraman`. `ugc` English is rendered and waits for its transcript sign-off. `smm` and `website` English, and all seven Arabic takes, wait for a listening review, because the exact-match aligner refuses them. See `docs/upsell-studio/SHIP.md`.
+
 The user approved the seven bilingual scripts and genuine Mahara logo ending. The exact approved-sheet SHA is `1270fc4f0efeaaedf6d2ce1dee859158699167bcba46a7e3136e4750d0fb768d`.
 
 All 14 full recordings were generated using the existing Nabarati Professional subscription and the Rakan voice. The observed balance moved from 595,245 to 570,906 points, using 24,339 points. No purchase, subscription change or repeat synthesis was made.
