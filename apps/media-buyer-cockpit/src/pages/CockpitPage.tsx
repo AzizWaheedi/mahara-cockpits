@@ -3278,9 +3278,10 @@ function Cockpit({ view }: { view: View }) {
             )}
             <BuildPanel
               key={`${c.clientTag ?? c.accountName}:${c.metaAccountId}`}
-              clientTag={c.clientTag ?? c.accountName}
+              clientTag={c.clientTag}
               clientName={c.clientName ?? c.accountName}
               accountId={c.metaAccountId}
+              accountName={c.accountName}
               serviceType={c.serviceType}
               language={
                 /[؀-ۿ]/.test(c.clientName ?? c.accountName) ? "ar" : "en"

@@ -9,7 +9,7 @@ import {
   SERVICE_LINES,
   type ServiceLine,
 } from "@/lib/audiences";
-import { api, useMutation, useQuery } from "@/lib/cockpitApi";
+import { api, useMutation, useQuery, useQueryState } from "@/lib/cockpitApi";
 import { loadOptionalWinners } from "@/lib/optionalWinners";
 import { CreativePreview } from "./CreativePreview";
 import { Button } from "./ui/button";
@@ -27,6 +27,19 @@ function isArabic(s: string) {
   return /[\u0600-\u06FF]/.test(s);
 }
 
+/** Why the panel cannot build for this campaign, or undefined when it can. */
+export function buildBlockedReason(
+  clientTag: string | undefined,
+  accountName: string | undefined,
+  error: Error | null,
+): string | undefined {
+  if (!clientTag)
+    return `This campaign's ad account is not matched to a client on the Client Data sheet, so I cannot build for it yet. Write the account in the client's "Ad Account - Meta" cell exactly as ${accountName ? `"${accountName}"` : "the ad tracker names it"}. Building turns on after the next sync.`;
+  if (error)
+    return `I cannot build for this client right now: ${error.message}`;
+  return undefined;
+}
+
 /**
  * "Build me a campaign."
  *
@@ -39,16 +52,26 @@ export function BuildPanel({
   clientTag,
   clientName,
   accountId,
+  accountName,
   language,
   serviceType,
 }: {
-  clientTag: string;
+  clientTag?: string;
   clientName: string;
   accountId?: string;
+  accountName?: string;
   language?: string;
   serviceType?: string;
 }) {
-  const builds = useQuery(api.cockpit.buildsFor, { clientTag });
+  // The drafts read refuses a client whose current campaigns hold no ad
+  // account or two (cockpit_build_scope), and a campaign the sync could not
+  // match to a Client Data row has no tag at all. The panel says why and the
+  // client page keeps working: Smmim's page crashed on 2026-10-28.
+  const buildsRead = useQueryState(
+    api.cockpit.buildsFor,
+    clientTag ? { clientTag } : "skip",
+  );
+  const builds = buildsRead.data;
   const { session } = useCockpitAuth();
   const winnerKey = `${session?.user?.id ?? "signed-out"}:${clientTag}:${serviceType ?? ""}`;
   const [winnerResult, setWinnerResult] = useState<{
@@ -112,6 +135,17 @@ export function BuildPanel({
   // knows is whether an account id has been synced at all.
   const writable = Boolean(accountId);
   const latest = builds?.[0];
+  const blocked = buildBlockedReason(clientTag, accountName, buildsRead.error);
+
+  if (blocked)
+    return (
+      <div className="mt-4 rounded-xl bg-muted/40 p-3 sm:p-4">
+        <div className="text-sm font-semibold">Build me a campaign</div>
+        <p className="mt-2 rounded-lg border callout-warn p-2.5 text-xs">
+          {blocked}
+        </p>
+      </div>
+    );
 
   return (
     <div className="mt-4 rounded-xl bg-muted/40 p-3 sm:p-4">
