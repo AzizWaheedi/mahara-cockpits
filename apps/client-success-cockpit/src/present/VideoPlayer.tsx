@@ -186,18 +186,21 @@ export function VideoPlayer({
   onPhase: (p: PlayerPhase) => void;
 }) {
   const { row, slot } = item;
-  const { src, frame, phase, slow, onLoad } = usePlayerFrame(
-    row,
-    true,
-    onPhase,
-  );
+  const [attempt, setAttempt] = useState(0);
   const dialog = useRef<HTMLDivElement>(null);
   useEffect(() => {
     dialog.current?.focus();
   }, []);
   const title = rowTitle(slot, row, lang);
   const length = lengthText(row.durationSeconds, lang);
-  const gone = phase === "failed" || phase === "blocked";
+  /** The keys go back to the dialog, so Esc and the deck keys stay with the
+   *  player: a blur would leave them on the page, where Quick pitch's Esc
+   *  closes the whole pitch and Space moves the slide too. */
+  const home = useCallback(() => dialog.current?.focus(), []);
+  const retry = useCallback(() => {
+    setAttempt(n => n + 1);
+    home();
+  }, [home]);
   return (
     <div className="dkv-veil" data-still={still ? "" : undefined}>
       {/* A click on the veil around the frame closes it; Esc and V close
@@ -236,31 +239,93 @@ export function VideoPlayer({
             {t(VIDEO.close, lang)}
           </button>
         </div>
-        <div className="dkv-frame" data-phase={phase}>
-          {src && !gone ? (
-            <iframe
-              ref={frame}
-              src={src}
-              title={title}
-              sandbox={FRAME_SANDBOX}
-              allow={FRAME_ALLOW}
-              referrerPolicy="strict-origin-when-cross-origin"
-              onLoad={onLoad}
-            />
-          ) : null}
-          {phase === "loading" && slow ? (
-            <p className="dkv-line" data-quiet="">
-              {t(VIDEO.loading, lang)}
-            </p>
-          ) : null}
-          {phase === "failed" ? (
-            <p className="dkv-line">{t(VIDEO.failed, lang)}</p>
-          ) : null}
-          {phase === "blocked" ? (
-            <p className="dkv-line">{t(VIDEO.blocked, lang)}</p>
-          ) : null}
-        </div>
+        <PlayerFrame
+          key={attempt}
+          row={row}
+          title={title}
+          lang={lang}
+          onPhase={onPhase}
+          onRetry={retry}
+          onAway={home}
+        />
       </div>
+    </div>
+  );
+}
+
+/**
+ * The player's frame and its lines (DESIGN 21.3). "Try again" mounts it
+ * afresh under a new key: a new frame, a new handshake and a new 15 s.
+ * Quick pitch has no notes window, so the way back is on the canvas.
+ */
+function PlayerFrame({
+  row,
+  title,
+  lang,
+  onPhase,
+  onRetry,
+  onAway,
+}: {
+  row: VideoRow;
+  title: string;
+  lang: Lang;
+  onPhase: (p: PlayerPhase) => void;
+  onRetry: () => void;
+  /** After the link opens its tab: the keys go back to the dialog. */
+  onAway: () => void;
+}) {
+  const { src, frame, phase, slow, onLoad } = usePlayerFrame(
+    row,
+    true,
+    onPhase,
+  );
+  const gone = phase === "failed" || phase === "blocked";
+  return (
+    <div className="dkv-frame" data-phase={phase}>
+      {src && !gone ? (
+        <iframe
+          ref={frame}
+          src={src}
+          title={title}
+          sandbox={FRAME_SANDBOX}
+          allow={FRAME_ALLOW}
+          referrerPolicy="strict-origin-when-cross-origin"
+          onLoad={onLoad}
+        />
+      ) : null}
+      {phase === "loading" && slow ? (
+        <p className="dkv-line" data-quiet="">
+          {t(VIDEO.loading, lang)}
+        </p>
+      ) : null}
+      {phase === "failed" ? (
+        <div className="dkv-gone">
+          <p className="dkv-line">{t(VIDEO.failed, lang)}</p>
+          {/* Not letGo: a blur leaves the keys on the page, not the player. */}
+          <div className="dkv-acts">
+            {src ? (
+              <button type="button" className="dkv-act" onClick={onRetry}>
+                {t(VIDEO.retry, lang)}
+              </button>
+            ) : null}
+            <a
+              className="dkv-act"
+              href={row.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              // Pointer up for every button (a middle-click or the menu's
+              // "Open in new tab" fires no click); click for Enter.
+              onPointerUp={onAway}
+              onClick={onAway}
+            >
+              {t(VIDEO.open, lang)}
+            </a>
+          </div>
+        </div>
+      ) : null}
+      {phase === "blocked" ? (
+        <p className="dkv-line">{t(VIDEO.blocked, lang)}</p>
+      ) : null}
     </div>
   );
 }

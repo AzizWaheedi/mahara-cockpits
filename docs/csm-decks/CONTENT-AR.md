@@ -1023,6 +1023,7 @@ The company name is مهارة in Arabic, as the cockpit's first WhatsApp to a n
 | The overlay's close | Close | إغلاق |
 | The overlay, loading | Loading the video | نحمّل الفيديو |
 | The overlay, didn't load | The video didn't load. We'll send you the link in the group. | ما اشتغل الفيديو. بنرسل لكم الرابط بالقروب. |
+| The overlay, didn't load: its two controls (2026-10-28, pending Aziz's wording approval) | Try again · Open the video | نحاول مرة ثانية · فتح الفيديو |
 | The overlay, can't play here (only on the provider's own error, DESIGN 21.3) | This video can't play here. We'll send you the link in the group. | هالفيديو ما يشتغل هنا. بنرسل لكم الرابط بالقروب. |
 
 The length rounds to the nearest minute (2:40 is ٣ دقايق). The day-one lengths read: the welcome video دقيقتين (2:28), Meta access دقيقتين (1:34), WhatsApp and calendar ٤ دقايق (3:51), the Mahara OS guide ٥ دقايق (4:37 and 4:45), and the calendar video أقل من دقيقة (0:11). With two videos on one slide (O6), «شوفوا:» is said once, before both. The control shows only while the presenter's chrome is awake (DESIGN 21.2), in both languages.
@@ -1303,7 +1304,7 @@ The Latin "Sales crash course" left the middle of the sentence (the score round'
 | 12.1 closed screen | Deck closed | انتهى العرض |
 | 21.1 the field's labels | Next round · Your style change | الإعلانات الجاية · تعديلكم على الشكل |
 | 21.2 the video control | Watch: | شوفوا: |
-| 21.3 the overlay | Close · Loading the video | إغلاق · نحمّل الفيديو |
+| 21.3 the overlay | Close · Loading the video · Try again · Open the video | إغلاق · نحمّل الفيديو · نحاول مرة ثانية · فتح الفيديو |
 
 The thank-you default and the example form speak to the customer, so they are singular.
 

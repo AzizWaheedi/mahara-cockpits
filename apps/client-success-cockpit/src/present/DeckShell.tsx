@@ -133,6 +133,9 @@ export function DeckShell({
   const [idle, setIdle] = useState(!embedded);
   /** The video playing over the slide (never kept: a reload never reopens it). */
   const [player, setPlayer] = useState<ControlItem | null>(null);
+  /** Each open is a fresh player, so the notes window's "Play on screen"
+   *  after "Didn't load on screen" starts over (DESIGN 21.4). */
+  const [opens, setOpens] = useState(0);
   const [scale, setScale] = useState(1);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -208,6 +211,7 @@ export function DeckShell({
     opener.current =
       el instanceof HTMLElement && el.closest(".dkv-control") ? el : null;
     setPlayer(item);
+    setOpens(n => n + 1);
   }, []);
   const ctx: SlideCtx = { ...base, tour, setTour, playVideo: openVideo };
   ctxRef.current = ctx;
@@ -642,7 +646,7 @@ export function DeckShell({
           )}
           {player ? (
             <VideoPlayer
-              key={`${slotId(player.slot)}:${player.row.lang}`}
+              key={`${slotId(player.slot)}:${player.row.lang}:${opens}`}
               item={player}
               lang={lang}
               still={base.still}

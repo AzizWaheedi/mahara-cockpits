@@ -8611,8 +8611,10 @@ button.dkc-status:hover {
 [dir="rtl"] .dkv-head-len {
   font-size: 26px;
 }
-.dkv-close {
-  margin-inline-start: auto;
+/* Close, and "Try again" and "Open the video" under a frame that didn't
+   load: one quiet text style. */
+.dkv-close,
+.dkv-act {
   height: 40px;
   padding: 0;
   border: 0;
@@ -8627,16 +8629,37 @@ button.dkc-status:hover {
     color calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease),
     border-color calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease);
 }
-[dir="rtl"] .dkv-close {
+.dkv-close {
+  margin-inline-start: auto;
+}
+.dkv-act {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+[dir="rtl"] .dkv-close,
+[dir="rtl"] .dkv-act {
   font-size: 26px;
 }
-.dkv-close:hover {
+.dkv-close:hover,
+.dkv-act:hover {
   color: var(--dk-ink);
   border-bottom-color: var(--dk-edge);
 }
-.dkv-close:focus-visible {
+.dkv-close:focus-visible,
+.dkv-act:focus-visible {
   outline: 3px solid var(--dk-teal);
   outline-offset: 4px;
+}
+.dkv-gone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 40px;
+}
+.dkv-acts {
+  display: flex;
+  gap: 48px;
 }
 .dkv-frame {
   position: absolute;
