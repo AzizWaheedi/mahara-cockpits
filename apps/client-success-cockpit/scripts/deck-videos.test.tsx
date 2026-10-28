@@ -66,6 +66,7 @@ type SlideDef = import("../src/present/deckContext").SlideDef;
 type DeckKind = import("../src/present/sources").DeckKind;
 type DeckVideos = import("../src/present/sources").DeckVideos;
 type VideoRow = import("../src/present/sources").VideoRow;
+type DeckHub = import("../src/present/channel").DeckHub;
 
 const NOW = new Date("2026-10-19T09:00:00Z");
 const repo = resolve(import.meta.dir, "..", "..", "..");
@@ -893,6 +894,8 @@ afterAll(async () => {
   await act(async () => root.unmount());
 });
 
+/** Each mount is a fresh deck: nothing (an open player, a slide) carries over. */
+let mounts = 0;
 const plain = (id: string): SlideDef => ({
   id,
   title: { en: id, ar: id },
@@ -900,11 +903,18 @@ const plain = (id: string): SlideDef => ({
   render: () => <div className="probe">{id}</div>,
 });
 
-async function mount(d: DeckData, ids: string[], onBack = () => {}) {
+async function mount(
+  d: DeckData,
+  ids: string[],
+  onBack = () => {},
+  hub?: DeckHub,
+) {
   win.location.hash = "";
   await act(async () => {
+    mounts += 1;
     root.render(
       <DeckShell
+        key={mounts}
         slides={ids.map(plain)}
         base={{
           d,
@@ -921,6 +931,7 @@ async function mount(d: DeckData, ids: string[], onBack = () => {}) {
         }}
         setLang={() => {}}
         onBack={onBack}
+        hub={hub}
       />,
     );
   });
@@ -1044,52 +1055,137 @@ describe("the control and the player on the canvas", () => {
 
   // Live, 2026-10-28: Wistia took longer than 15 s once, the frame was
   // removed, and Quick pitch (no notes window) had no way back but Close.
-  test("didn't load: Try again brings a fresh frame; the link people open is beside it", async () => {
-    const offline = async () => {
-      await act(async () => {
-        win.dispatchEvent(new win.Event("offline"));
-      });
+  const offline = async () => {
+    await act(async () => {
+      win.dispatchEvent(new win.Event("offline"));
+    });
+  };
+  /** Esc where the keys are, as a presenter's press reaches the page. */
+  const escHere = async () => {
+    await act(async () => {
+      (win.document.activeElement ?? win.document.body).dispatchEvent(
+        new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+  };
+  type Timer = (fn: () => void, ms?: number, ...rest: unknown[]) => number;
+
+  test("didn't load in 15 s: Try again is a fresh frame with a fresh 15 s, and the keys stay with the player", async () => {
+    // The player's own 15 s lapse, caught so the test fires it.
+    const lapses: Array<() => void> = [];
+    const w = win as unknown as { setTimeout: Timer };
+    const real = w.setTimeout;
+    w.setTimeout = (fn, ms, ...rest) => {
+      if (ms === V.LOAD_TIMEOUT_MS) {
+        lapses.push(fn);
+        return 0;
+      }
+      return real.call(win, fn, ms, ...rest);
     };
+    try {
+      await mount(data("full"), ["creative-freedom"]);
+      await press("v");
+      const src = q(".dkv-frame iframe")?.getAttribute("src");
+      expect(src).toBeTruthy();
+      expect(lapses.length).toBe(1);
+      await act(async () => lapses[0]());
+      expect(q(".dkv-frame")?.getAttribute("data-phase")).toBe("failed");
+      expect(q(".dkv-frame iframe")).toBeNull();
+      expect(q(".dkv-line")?.textContent).toBe(
+        "The video didn't load. We'll send you the link in the group.",
+      );
+      const again = q(".dkv-acts button") as unknown as HTMLElement;
+      expect(again?.textContent).toBe("Try again");
+      const open = q(".dkv-acts a");
+      expect(open?.textContent).toBe("Open the video");
+      expect(open?.getAttribute("href")).toBe(
+        "https://www.loom.com/share/0f0e0d0c0b0a09080706050403020100",
+      );
+      expect(open?.getAttribute("target")).toBe("_blank");
+      expect(open?.getAttribute("rel")).toBe("noopener noreferrer");
+      // The presenter tabs to Try again and presses it.
+      again.focus();
+      expect(win.document.activeElement).toBe(again);
+      await act(async () => again.click());
+      expect(q(".dkv-frame")?.getAttribute("data-phase")).toBe("loading");
+      expect(q(".dkv-frame iframe")?.getAttribute("src")).toBe(src);
+      expect(q(".dkv-gone")).toBeNull();
+      // A fresh frame: its own 15 s, and the old lapse is spent.
+      expect(lapses.length).toBe(2);
+      // The pressed button is gone; the keys are back on the dialog.
+      expect(win.document.activeElement).toBe(q('[role="dialog"]'));
+      await act(async () => lapses[1]());
+      expect(q(".dkv-acts button")?.textContent).toBe("Try again");
+      await escHere();
+      expect(q(".dkv-veil")).toBeNull();
+    } finally {
+      w.setTimeout = real;
+    }
+  });
+
+  test("Open the video hands the keys back to the player, so Esc closes only the player", async () => {
     await mount(data("full"), ["creative-freedom"]);
     await press("v");
-    const src = q(".dkv-frame iframe")?.getAttribute("src");
-    expect(src).toBeTruthy();
     await offline();
-    expect(q(".dkv-frame")?.getAttribute("data-phase")).toBe("failed");
-    expect(q(".dkv-frame iframe")).toBeNull();
-    expect(q(".dkv-line")?.textContent).toBe(
-      "The video didn't load. We'll send you the link in the group.",
-    );
-    const again = q(".dkv-acts button");
-    expect(again?.textContent).toBe("Try again");
-    const open = q(".dkv-acts a");
-    expect(open?.textContent).toBe("Open the video");
-    expect(open?.getAttribute("href")).toBe(
-      "https://www.loom.com/share/0f0e0d0c0b0a09080706050403020100",
-    );
-    expect(open?.getAttribute("target")).toBe("_blank");
-    expect(open?.getAttribute("rel")).toBe("noopener noreferrer");
+    const open = q(".dkv-acts a") as unknown as HTMLElement;
+    // The browser focuses a link on mousedown; the test does the same.
+    open.focus();
+    expect(win.document.activeElement).toBe(open);
+    // No new tab in the test window.
+    const noTab = (e: Event) => e.preventDefault();
+    win.addEventListener("click", noTab as never, { capture: true });
+    try {
+      await act(async () => open.click());
+    } finally {
+      win.removeEventListener("click", noTab as never, { capture: true });
+    }
+    expect(win.document.activeElement).toBe(q('[role="dialog"]'));
+    expect(q(".dkv-veil")).not.toBeNull();
+    await escHere();
+    expect(q(".dkv-veil")).toBeNull();
+    expect(q(".dk-slide")?.getAttribute("data-slide")).toBe("creative-freedom");
+  });
+
+  test("the notes window's Play on screen after Didn't load starts a fresh frame", async () => {
+    const handlers: Array<(m: unknown) => void> = [];
+    const posts: Array<{ type: string; slot?: string; phase?: string }> = [];
+    const hub = {
+      on: (fn: (m: unknown) => void) => {
+        handlers.push(fn);
+        return () => {
+          const i = handlers.indexOf(fn);
+          if (i >= 0) handlers.splice(i, 1);
+        };
+      },
+      post: (m: { type: string }) => {
+        posts.push(m);
+      },
+    } as unknown as DeckHub;
+    const states = () => posts.filter(m => m.type === "video-state");
+    await mount(data("full"), ["creative-freedom"], () => {}, hub);
+    await press("v");
+    await offline();
+    const failed = states().at(-1);
+    expect(failed?.phase).toBe("failed");
+    // DESIGN 21.4: "press Play on screen again".
     await act(async () => {
-      (again as unknown as { click: () => void }).click();
+      for (const h of [...handlers]) h({ type: "video", slot: failed?.slot });
     });
     expect(q(".dkv-frame")?.getAttribute("data-phase")).toBe("loading");
-    expect(q(".dkv-frame iframe")?.getAttribute("src")).toBe(src);
-    expect(q(".dkv-gone")).toBeNull();
-    // The keys stay with the deck: focus is back on the dialog.
-    expect(win.document.activeElement).toBe(q('[role="dialog"]'));
-    // The fresh frame listens again: a second failure shows the way back.
-    await offline();
-    expect(q(".dkv-acts button")?.textContent).toBe("Try again");
-    await press("Escape");
+    expect(q(".dkv-frame iframe")).not.toBeNull();
+    expect(states().at(-1)).toEqual({
+      type: "video-state",
+      slot: failed?.slot,
+      phase: "loading",
+    });
+    await escHere();
     expect(q(".dkv-veil")).toBeNull();
   });
 
   test("didn't load, in Arabic", async () => {
     await mount(data("full", "launch", "ar"), ["portal"]);
     await press("v");
-    await act(async () => {
-      win.dispatchEvent(new win.Event("offline"));
-    });
+    await offline();
     expect(q(".dkv-line")?.textContent).toBe(
       "ما اشتغل الفيديو. بنرسل لكم الرابط بالقروب.",
     );

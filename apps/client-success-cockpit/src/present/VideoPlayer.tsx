@@ -193,10 +193,14 @@ export function VideoPlayer({
   }, []);
   const title = rowTitle(slot, row, lang);
   const length = lengthText(row.durationSeconds, lang);
+  /** The keys go back to the dialog, so Esc and the deck keys stay with the
+   *  player: a blur would leave them on the page, where Quick pitch's Esc
+   *  closes the whole pitch and Space moves the slide too. */
+  const home = useCallback(() => dialog.current?.focus(), []);
   const retry = useCallback(() => {
     setAttempt(n => n + 1);
-    dialog.current?.focus();
-  }, []);
+    home();
+  }, [home]);
   return (
     <div className="dkv-veil" data-still={still ? "" : undefined}>
       {/* A click on the veil around the frame closes it; Esc and V close
@@ -242,6 +246,7 @@ export function VideoPlayer({
           lang={lang}
           onPhase={onPhase}
           onRetry={retry}
+          onAway={home}
         />
       </div>
     </div>
@@ -259,12 +264,15 @@ function PlayerFrame({
   lang,
   onPhase,
   onRetry,
+  onAway,
 }: {
   row: VideoRow;
   title: string;
   lang: Lang;
   onPhase: (p: PlayerPhase) => void;
   onRetry: () => void;
+  /** After the link opens its tab: the keys go back to the dialog. */
+  onAway: () => void;
 }) {
   const { src, frame, phase, slow, onLoad } = usePlayerFrame(
     row,
@@ -293,14 +301,10 @@ function PlayerFrame({
       {phase === "failed" ? (
         <div className="dkv-gone">
           <p className="dkv-line">{t(VIDEO.failed, lang)}</p>
+          {/* Not letGo: a blur leaves the keys on the page, not the player. */}
           <div className="dkv-acts">
             {src ? (
-              <button
-                type="button"
-                className="dkv-act"
-                onClick={onRetry}
-                onPointerUp={letGo}
-              >
+              <button type="button" className="dkv-act" onClick={onRetry}>
                 {t(VIDEO.retry, lang)}
               </button>
             ) : null}
@@ -309,7 +313,7 @@ function PlayerFrame({
               href={row.url}
               target="_blank"
               rel="noopener noreferrer"
-              onPointerUp={letGo}
+              onClick={onAway}
             >
               {t(VIDEO.open, lang)}
             </a>
