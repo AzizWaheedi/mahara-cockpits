@@ -2,7 +2,7 @@
 """Bounded offline transcription evidence. Never grants publication readiness.
 
 Run only on the coordinated VPS using the pinned, pre-downloaded ASR runtime.
-No provider calls, model downloads, synthesis, resampling or video render occur.
+No provider calls, model downloads, synthesis, source changes or video render occur.
 """
 from __future__ import annotations
 
@@ -126,6 +126,21 @@ def preflight(audio: Path, script: Path, receipt_path: Path, language: str) -> t
     return text, receipt, duration
 
 
+def decode_samples(audio: Path, duration: float):
+    # Decode with the already-required FFmpeg. New PyAV releases removed the
+    # metadata_errors argument used by faster-whisper's file decoder. Passing
+    # actual 16 kHz PCM keeps inference independent of that incompatible wrapper.
+    import numpy as np
+    pcm = subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(audio),
+        "-f", "f32le", "-ac", "1", "-ar", "16000", "pipe:1"], timeout=30)
+    samples = np.frombuffer(pcm, dtype=np.float32)
+    if not samples.size or not np.isfinite(samples).all():
+        raise ValueError("Audio decode returned empty or non-finite samples")
+    if abs(samples.size / 16000 - duration) > .1:
+        raise ValueError("Decoded PCM duration differs from the source")
+    return samples
+
+
 def transcribe(args) -> dict:
     output = args.out.resolve()
     if output.exists():
@@ -138,7 +153,8 @@ def transcribe(args) -> dict:
     from faster_whisper import WhisperModel
     recognizer = WhisperModel(str(model), device="cpu", compute_type="int8",
         cpu_threads=args.cpu_threads, num_workers=1, local_files_only=True)
-    segments, info = recognizer.transcribe(str(args.audio), language=args.language,
+    samples = decode_samples(args.audio, duration)
+    segments, info = recognizer.transcribe(samples, language=args.language,
         beam_size=5, word_timestamps=True, condition_on_previous_text=False,
         vad_filter=False, initial_prompt=None)
     observed, words = [], []

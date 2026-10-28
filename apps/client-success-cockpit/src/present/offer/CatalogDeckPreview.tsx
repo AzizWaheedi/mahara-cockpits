@@ -22,8 +22,10 @@ export function QuickPitchDialog({
   onOpenChange,
   prepareHref,
   hold,
+  recordings,
 }: {
   row: CatalogRow;
+  recordings?: Record<string, unknown>[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   prepareHref?: string;
@@ -47,6 +49,11 @@ export function QuickPitchDialog({
       <DialogContent
         className={`dks-catalog-dialog dkq-dialog${expanded ? " dkq-expanded" : ""}`}
         onEscapeKeyDown={e => {
+          // Radix observes Escape before the inner player closes itself.
+          if (e.target instanceof Element && e.target.closest(".dkv-dialog")) {
+            e.preventDefault();
+            return;
+          }
           if (expanded) {
             e.preventDefault();
             setExpanded(false);
@@ -106,6 +113,7 @@ export function QuickPitchDialog({
               <Preview
                 key={row.offerKey}
                 row={row}
+                recordings={recordings}
                 showListPrice={listPrice && hasList}
                 expanded={expanded}
                 onExpandedChange={setExpanded}
@@ -118,7 +126,13 @@ export function QuickPitchDialog({
     </Dialog>
   );
 }
-export function CatalogDeckPreview({ row }: { row: CatalogRow }) {
+export function CatalogDeckPreview({
+  row,
+  recordings,
+}: {
+  row: CatalogRow;
+  recordings?: Record<string, unknown>[];
+}) {
   const [open, setOpen] = useState(false);
   const copy = copyOf(row, "en");
   return (
@@ -141,6 +155,7 @@ export function CatalogDeckPreview({ row }: { row: CatalogRow }) {
       </button>
       <QuickPitchDialog
         row={row}
+        recordings={recordings}
         open={open}
         onOpenChange={setOpen}
         hold={row.waitsOn}

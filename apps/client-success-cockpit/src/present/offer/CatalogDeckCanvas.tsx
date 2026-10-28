@@ -10,9 +10,15 @@ import { offerSlides, prefersStill } from "../decks";
 import { type Pos, stepFrom } from "../engine";
 import { OFFER_CHROME } from "./content/shared";
 import { deckOfOffer } from "./kinds";
+import {
+  OFFER_KEYS_HINT,
+  offerSlideDirection,
+  offerSlideFrom,
+} from "./navigation";
 import { openingOf } from "./price";
 import { type CatalogRow, copyOf, type OfferSources } from "./sources";
 import { type OfferModel, priceProblem } from "./useOffer";
+import { catalogDeckVideos } from "./videos";
 /** Explicitly client-free: this model has no IO, prep saver, telemetry or record identity. */
 export function catalogPreviewModel(row: CatalogRow): OfferModel {
   const sources: OfferSources = {
@@ -95,8 +101,10 @@ export default function CatalogDeckCanvas({
   showListPrice = false,
   expanded = false,
   onExpandedChange,
+  recordings,
 }: {
   row: CatalogRow;
+  recordings?: Record<string, unknown>[];
   onClose: () => void;
   showListPrice?: boolean;
   expanded?: boolean;
@@ -115,6 +123,7 @@ export default function CatalogDeckCanvas({
         deck,
         lang,
         sources: null,
+        videos: catalogDeckVideos(recordings ?? []),
         kit: null,
         prep: { onboarding: {}, launch: {} },
         ads: [],
@@ -123,7 +132,7 @@ export default function CatalogDeckCanvas({
       name: "Mahara Media",
       nameEn: "Mahara Media",
     }),
-    [deck, lang, row.updatedAt],
+    [deck, lang, row.updatedAt, recordings],
   );
   const slides = useMemo(
     () => catalogQuickSlides(row, model, showListPrice),
@@ -146,8 +155,12 @@ export default function CatalogDeckCanvas({
   const stops = slides.map(s =>
     Math.max(1, s.stops?.({ ...base, tour: 0, setTour: () => {} }) ?? 1),
   );
-  const previous = stepFrom(pos, -1, stops),
-    next = stepFrom(pos, 1, stops);
+  const previous = offerSlideFrom(pos, -1, slides.length),
+    next = offerSlideFrom(pos, 1, slides.length);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => container.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, []);
   // The list-price switch changes the story; it never changes the client or the catalogue.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset navigation when the optional price chapter changes.
   useEffect(() => {
@@ -186,21 +199,30 @@ export default function CatalogDeckCanvas({
     const key = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (
+        e.defaultPrevented ||
         e.metaKey ||
         e.ctrlKey ||
         e.altKey ||
         target?.closest(
-          "input,select,textarea,[contenteditable=true],iframe,[role=combobox],[role=listbox],[role=option]",
+          "input,select,textarea,[contenteditable]:not([contenteditable=false]),iframe,video,audio,[role=combobox],[role=listbox],[role=option],.dkv-dialog",
         )
       )
         return;
-      const space = e.key === " " && !target?.closest("button,a");
-      if (e.key === "ArrowRight" || e.key === "PageDown" || space) {
+      const direction = offerSlideDirection(e.key, e.shiftKey);
+      const space = e.key === " " || e.key === "Spacebar";
+      if (space && target?.closest("button,a,[role=button],[role=tab]")) return;
+      if (e.repeat) {
+        if (direction || e.key.startsWith("Arrow")) e.preventDefault();
+        return;
+      }
+      if (direction) {
         e.preventDefault();
-        if (next) setPos(next);
-      } else if (e.key === "ArrowLeft" || e.key === "PageUp") {
+        const move = offerSlideFrom(pos, direction, slides.length);
+        if (move) setPos(move);
+      } else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
         e.preventDefault();
-        if (previous) setPos(previous);
+        const move = stepFrom(pos, e.key === "ArrowRight" ? 1 : -1, stops);
+        if (move) setPos(move);
       } else if (e.key === "Home") {
         e.preventDefault();
         setPos({ index: 0, tour: 0 });
@@ -240,6 +262,7 @@ export default function CatalogDeckCanvas({
       className="dks-preview-layout"
       ref={container}
       data-quick-pitch={row.offerKey}
+      tabIndex={-1}
     >
       <div className="dkq-example-banner" dir={lang === "ar" ? "rtl" : "ltr"}>
         {OFFER_CHROME.example[lang].split(/[,،]/)[0]}
@@ -258,6 +281,15 @@ export default function CatalogDeckCanvas({
         />
       </div>
       <nav
+        onClick={e => {
+          if (
+            e.detail > 0 &&
+            e.target instanceof HTMLElement &&
+            e.target.closest("button") &&
+            !e.target.closest("[role=combobox]")
+          )
+            container.current?.focus();
+        }}
         className="dks-preview-controls dkq-controls"
         aria-label="Quick pitch controls"
         dir={lang === "ar" ? "rtl" : "ltr"}
@@ -320,6 +352,9 @@ export default function CatalogDeckCanvas({
           </Button>
         </div>
       </nav>
+      <p className="dkq-key-hint" dir={lang === "ar" ? "rtl" : "ltr"}>
+        {OFFER_KEYS_HINT[lang]}
+      </p>
       {screenError ? (
         <p className="dkq-screen-error" role="status">
           {screenError}

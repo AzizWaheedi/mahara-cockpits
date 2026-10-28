@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import {
   deckOfOffer,
@@ -7,6 +8,7 @@ import {
   type OfferDeckKind,
   type OfferKey,
 } from "../../../present/offer/kinds";
+import { OfferVideoPreview } from "../../../present/offer/OfferVideoPreview";
 import { checkVideo, type OfferClient } from "../../../present/offer/sources";
 import {
   clearDeckVideo,
@@ -17,9 +19,11 @@ import {
 export function OfferVideos({
   client,
   isCeo,
+  onChanged,
 }: {
   client: OfferClient;
   isCeo: boolean;
+  onChanged?: () => Promise<void>;
 }) {
   const [offer, setOffer] = useState<OfferKey>("website");
   const deck = deckOfOffer(offer);
@@ -54,9 +58,10 @@ export function OfferVideos({
   return (
     <section className="dko-panel">
       <h2>Offer videos</h2>
-      <label className="dko-field">
+      <label className="dko-field" htmlFor="offer-video-kind">
         Offer
-        <select
+        <AnimatedSelect
+          id="offer-video-kind"
           value={offer}
           onChange={e => setOffer(e.target.value as OfferKey)}
         >
@@ -65,7 +70,7 @@ export function OfferVideos({
               {OFFER_NAMES[k]}
             </option>
           ))}
-        </select>
+        </AnimatedSelect>
       </label>
       <p className="dko-help">
         The same video appears in the deck, recap and proposal. Only the CEO
@@ -82,7 +87,10 @@ export function OfferVideos({
               isCeo={isCeo}
               lang={lang}
               videos={videos}
-              reload={reload}
+              reload={async () => {
+                await reload();
+                await onChanged?.();
+              }}
             />
           ))}
         </div>
@@ -161,6 +169,12 @@ function VideoField({
           onChange={e => setUrl(e.target.value)}
         />
       </label>
+      {row ? (
+        <OfferVideoPreview
+          key={`${row.deck}:${row.lang}:${row.revision}`}
+          row={row}
+        />
+      ) : null}
       {row ? (
         <a
           href={row.url}

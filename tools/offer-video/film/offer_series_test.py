@@ -51,6 +51,16 @@ class PictureContract(unittest.TestCase):
                             body,_=F.picture(visual,text,index,lang,"test",5)
                             self.assertIn(F.esc(text),body)
 
+    def test_search_film_uses_real_captures_in_both_languages(self):
+        for lang in ("en", "ar"):
+            google, _ = F.picture("search", "Query", 0, lang, "search", 4)
+            chatgpt, _ = F.picture("answers", "Answer", 1, lang, "answer", 4)
+            self.assertIn("assets/search/google-web-search.png", google)
+            self.assertIn("assets/search/chatgpt-search.png", chatgpt)
+            self.assertIn("Google", google)
+            self.assertIn("ChatGPT", chatgpt)
+            self.assertIn("not a client result" if lang == "en" else "ليس نتيجة لعميل", google)
+
     def test_actual_take_flags_are_not_promoted(self):
         script,raw=self.timing()
         result=self.load(raw,script)

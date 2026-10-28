@@ -17,7 +17,7 @@ for (const key of OFFER_KEYS) {
     const model = catalogPreviewModel(row);
     const slides = catalogQuickSlides(row, model);
     expect(slides.map(s => s.id)).toEqual(
-      key === "website"
+      key === "website" || key === "seo_geo"
         ? ["matters", "get", "examples", "runs", "next"]
         : ["matters", "get", "runs", "next"],
     );

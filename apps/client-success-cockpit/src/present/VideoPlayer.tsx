@@ -209,6 +209,13 @@ export function VideoPlayer({
         aria-modal="true"
         aria-labelledby="dkv-title"
         tabIndex={-1}
+        onKeyDown={e => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            onClose();
+          }
+        }}
         onClick={e => {
           if (e.target === e.currentTarget) onClose();
         }}

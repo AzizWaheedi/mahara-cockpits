@@ -4,16 +4,15 @@ import {
   FileText,
   Globe2,
   Layers,
-  ListFilter,
   MessageCircle,
   Search,
   ShieldCheck,
-  Sparkles,
   UserRound,
   Video,
 } from "lucide-react";
 import { digits } from "../content";
 import type { SlideCtx } from "../deckContext";
+import { SearchCapture } from "./SearchExamples";
 import type { ServiceOffer } from "./serviceDeck";
 import type { CatalogCopy } from "./sources";
 import { visualPhoto } from "./visualArt";
@@ -123,57 +122,17 @@ export function ScopeVisual({ kind, copy, ctx, active }: Props) {
       ) : null}
       {kind === "seo_geo" ? (
         <>
-          <div className="dsv-search-window">
-            <div className="dsv-search-field">
-              <Search aria-hidden />
-              <span>{ctx.d.name}</span>
-            </div>
-            <div className="dsv-search-body" key={item?.key}>
-              <div className="dsv-search-source">
-                <Globe2 aria-hidden />
-                <span>{copy.name}</span>
-                <span className="dsv-source-lines" aria-hidden>
-                  <i />
-                  <i />
-                </span>
-              </div>
-              <div className="dsv-search-focus">
-                <span aria-hidden>
-                  {index === 3 ? (
-                    <Layers />
-                  ) : index === 4 ? (
-                    <Sparkles />
-                  ) : index === 5 ? (
-                    <ListFilter />
-                  ) : (
-                    <Search />
-                  )}
-                </span>
-                <div className="dsv-search-outline" aria-hidden>
-                  <i />
-                  <i />
-                  <i />
-                </div>
-              </div>
-              <div className="dsv-search-references" aria-hidden>
-                <div>
-                  <FileText />
-                  <i />
-                  <i />
-                </div>
-                <div>
-                  <Globe2 />
-                  <i />
-                  <i />
-                </div>
-                <div>
-                  <Layers />
-                  <i />
-                  <i />
-                </div>
-              </div>
-            </div>
+          <div className="dse-scope-capture">
+            <SearchCapture
+              channel={index === 4 ? "chatgpt" : "google"}
+              lang={ctx.lang}
+            />
           </div>
+          <p className="dse-scope-caption">
+            {ctx.lang === "en"
+              ? "Real example · 28 Oct 2026 · Not a client result"
+              : "مثال حقيقي · ٢٨ أكتوبر ٢٠٢٦ · ليس نتيجة لعميل"}
+          </p>
           {stepButtons("dsv-step-dock")}
         </>
       ) : null}

@@ -31,6 +31,7 @@ export function QuickPitchButton({
   const [result, setResult] = useState<{
     scope: string;
     row: CatalogRow;
+    recordings: Record<string, unknown>[];
   } | null>(null);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState<string | null>(null),
@@ -54,11 +55,8 @@ export function QuickPitchButton({
     setBusy(true);
     setError(null);
     try {
-      const found =
-        row ??
-        (client
-          ? (await readCatalog(client)).rows.find(r => r.offerKey === offer)
-          : null);
+      const catalog = client ? await readCatalog(client) : null;
+      const found = row ?? catalog?.rows.find(r => r.offerKey === offer);
       if (id !== request.current || scope !== latest.current) return;
       if (
         !found ||
@@ -69,7 +67,7 @@ export function QuickPitchButton({
         throw Error(
           "This deck's approved copy is unavailable. Try again or open preparation.",
         );
-      setResult({ scope, row: found });
+      setResult({ scope, row: found, recordings: catalog?.videos ?? [] });
       setOpen(true);
     } catch (e) {
       if (id === request.current && scope === latest.current)
@@ -98,6 +96,7 @@ export function QuickPitchButton({
         <QuickPitchDialog
           key={scope}
           row={result.row}
+          recordings={result.recordings}
           open={open}
           onOpenChange={setOpen}
           prepareHref={taskId ? offerDeckUrl(taskId, offer, "prep") : undefined}
