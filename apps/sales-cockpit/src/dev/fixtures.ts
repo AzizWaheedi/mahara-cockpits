@@ -278,7 +278,10 @@ export const APPOINTMENTS: Row[] = [
     demo_after_at: kw(19, 0, -1),
   },
   // An active client's demo, long held: listed, never moved.
-  { ...appt("a15", 23, "demo", kw(15, 0, -5), "u-omar", "showed"), lead_quality: 8 },
+  {
+    ...appt("a15", 23, "demo", kw(15, 0, -5), "u-omar", "showed"),
+    lead_quality: 8,
+  },
   // Yesterday's intro, held, no demo booked after it: the lead's quality
   // and why no demo are both asked (Today, the lead page, the end of day).
   appt("a16", 12, "intro", kw(11, 0, -1), "u-sara", "confirmed", {
