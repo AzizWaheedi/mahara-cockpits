@@ -1,8 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ThreadMessage } from "../components/Conversation";
 import type { Asset } from "./assets";
 import type { CallRow, LeadRow } from "./calls";
 import type { ClientFormSent } from "./clientForm";
 import type { GoalRow } from "./goals";
+import {
+  type InboxChannel,
+  type InboxCounts,
+  type InboxPage,
+  type InboxPerson,
+  type InboxState,
+  personParam,
+  readInboxCounts,
+  readInboxPage,
+} from "./messages";
 import { requestRead } from "./proposals";
 import { supabase } from "./supabase";
 import type {
@@ -1219,4 +1230,148 @@ export function useAssetSends(contactId: string) {
         .limit(50),
     [contactId],
   );
+}
+
+// ---------------------------------------------------------------------------
+// Messages: the cockpit's copy of every HighLevel conversation (20261029d)
+// ---------------------------------------------------------------------------
+
+export interface InboxFilter {
+  person: InboxPerson;
+  state: InboxState;
+  channel: InboxChannel | null;
+  account: string | null;
+  q: string;
+}
+
+function inboxArgs(f: InboxFilter) {
+  return {
+    p_person: personParam(f.person),
+    p_state: f.state,
+    p_channel: f.channel,
+    p_account: f.account,
+    p_q: f.q.trim() || null,
+  };
+}
+
+/** The first page of the list, read again every 20 seconds while it shows. */
+export function useInbox(f: InboxFilter): Loaded<InboxPage> {
+  const args = inboxArgs(f);
+  const key = JSON.stringify(args);
+  return useQuery<InboxPage>(
+    async () => {
+      const { data, error } = await supabase.rpc(
+        "cockpit_sales_conversations_list",
+        { ...args, p_limit: 40 },
+      );
+      if (error) return { data: null, error };
+      try {
+        return { data: readInboxPage(data), error: null };
+      } catch (e) {
+        return { data: null, error: { message: String((e as Error).message) } };
+      }
+    },
+    [key],
+    20_000,
+    { timeoutMs: 20_000 },
+  );
+}
+
+/** The page after the given row, for "Show more". */
+export async function readInboxAfter(
+  f: InboxFilter,
+  last: { sort_at: string; conversation_id: string },
+): Promise<InboxPage> {
+  const { data, error } = await supabase.rpc(
+    "cockpit_sales_conversations_list",
+    {
+      ...inboxArgs(f),
+      p_before_at: last.sort_at,
+      p_before_id: last.conversation_id,
+      p_limit: 40,
+    },
+  );
+  if (error) throw new Error(error.message);
+  return readInboxPage(data);
+}
+
+/** The numbers beside each filter, the people and inboxes, and how fresh the copy is. */
+export function useInboxCounts(
+  person: InboxPerson,
+  channel: InboxChannel | null,
+  account: string | null,
+  everyMs = 20_000,
+): Loaded<InboxCounts> {
+  return useQuery<InboxCounts>(
+    async () => {
+      const { data, error } = await supabase.rpc(
+        "cockpit_sales_conversations_counts",
+        {
+          p_person: personParam(person),
+          p_channel: channel,
+          p_account: account,
+        },
+      );
+      if (error) return { data: null, error };
+      try {
+        return { data: readInboxCounts(data), error: null };
+      } catch (e) {
+        return { data: null, error: { message: String((e as Error).message) } };
+      }
+    },
+    [person, channel, account],
+    everyMs,
+    { timeoutMs: 20_000 },
+  );
+}
+
+/**
+ * A lead's messages as the cockpit's copy holds them, newest 80, in the
+ * conversation view's shape: drawn at once while HighLevel is read live.
+ */
+export function useCopiedThread(
+  contactId: string | null,
+): Loaded<ThreadMessage[]> {
+  return useQuery<ThreadMessage[]>(async () => {
+    if (!contactId) return { data: [], error: null };
+    const { data, error } = await supabase
+      .from("cockpit_sales_conversation_messages")
+      .select(
+        "id,conversation_id,direction,channel,type,status,at,body,subject,attachments,error,source,copy",
+      )
+      .eq("contact_id", contactId)
+      .order("at", { ascending: false })
+      .limit(80);
+    if (error) return { data: null, error };
+    return {
+      data: (data ?? []).map(m => ({
+        id: String(m.id),
+        conversation_id: String(m.conversation_id),
+        direction:
+          m.direction === "inbound" || m.direction === "outbound"
+            ? m.direction
+            : null,
+        channel: ([
+          "whatsapp",
+          "email",
+          "sms",
+          "instagram",
+          "facebook",
+          "call",
+        ].includes(String(m.channel))
+          ? m.channel
+          : "other") as ThreadMessage["channel"],
+        type: m.type ?? null,
+        status: m.status ?? null,
+        at: m.at ?? null,
+        body: m.body ?? null,
+        subject: m.subject ?? null,
+        attachments: Array.isArray(m.attachments) ? m.attachments : [],
+        error: m.error ?? null,
+        source: m.source ?? null,
+        copy: m.copy === true,
+      })),
+      error: null,
+    };
+  }, [contactId]);
 }

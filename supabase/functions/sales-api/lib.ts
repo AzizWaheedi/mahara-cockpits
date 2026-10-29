@@ -346,7 +346,8 @@ export function applyFills(
 // Conversations: reading a lead's thread and sending on it
 // ---------------------------------------------------------------------------
 
-export type Channel = "whatsapp" | "sms" | "email";
+/** The channels the cockpit sends on. Instagram and Facebook are replies to a DM the lead sent. */
+export type Channel = "whatsapp" | "sms" | "email" | "instagram" | "facebook";
 
 export interface ThreadMessage {
   id: string;
@@ -361,16 +362,35 @@ export interface ThreadMessage {
   attachments: string[];
   error: string | null;
   source: string | null;
+  /**
+   * An SMS the WA2 Connector sent as the copy of a WhatsApp step (a custom
+   * SMS provider in the sales sub-account): kept so it can be shown on ask,
+   * never counted as a message.
+   */
+  copy: boolean;
 }
 
 /** HighLevel's messageType as the channel a rep would name. */
 export function channelOf(messageType: unknown): ThreadMessage["channel"] {
   const t = String(messageType ?? "").toUpperCase();
+  if (t.includes("COMMENT")) return "other";
   if (t.includes("WHATSAPP")) return "whatsapp";
+  if (t.includes("INSTAGRAM")) return "instagram";
+  if (t.includes("FACEBOOK")) return "facebook";
   if (t.includes("EMAIL")) return "email";
   if (t.includes("CALL") || t.includes("VOICEMAIL")) return "call";
   if (t.includes("SMS")) return "sms";
   return "other";
+}
+
+/** The WA2 Connector's provider id in the sales sub-account (sales-conversations/lib.ts CONNECTOR_PROVIDER). */
+export const CONNECTOR_PROVIDER = "67c822224c79561add263440";
+
+/** An outbound SMS the WA2 Connector sent: the copy of a WhatsApp step. */
+export function connectorCopyOf(m: Record<string, unknown>): boolean {
+  if (m.direction !== "outbound" || channelOf(m.messageType ?? m.type) !== "sms") return false;
+  if (String(m.conversationProviderId ?? "") === CONNECTOR_PROVIDER) return true;
+  return /\bwa2?\s*connector\b/i.test(String(m.from ?? ""));
 }
 
 /** A failure's reason, wherever HighLevel put it on this message. */
@@ -427,6 +447,7 @@ export function toThread(list: unknown, conversationId: string): ThreadMessage[]
       // A hard bounce HighLevel gives no reason for is still said as a bounce (m1 round 4).
       error: failedStatus(m.status) ? (errorOf(m) ?? (String(m.status).toLowerCase() === "bounced" ? "The email bounced" : null)) : null,
       source: m.source ? String(m.source) : null,
+      copy: connectorCopyOf(m),
     }];
   });
 }
@@ -462,13 +483,43 @@ export function whatsappWindow(lastInboundAt: string | null | undefined, now: nu
 }
 
 /**
+ * Instagram and Facebook take a reply for seven days after the lead's own
+ * last DM (HighLevel sends past the 24-hour window with Meta's human agent
+ * tag: 82 of 82 such replies in the sales sub-account were delivered,
+ * checked 2026-10-29).
+ */
+export const DM_WINDOW_HOURS = 168;
+export function dmWindow(lastInboundAt: string | null | undefined, now: number): {
+  open: boolean;
+  closes_at: string | null;
+  last_inbound_at: string | null;
+} {
+  const t = lastInboundAt ? Date.parse(String(lastInboundAt)) : Number.NaN;
+  if (!Number.isFinite(t)) return { open: false, closes_at: null, last_inbound_at: null };
+  const closes = t + DM_WINDOW_HOURS * 3_600_000;
+  return { open: now < closes, closes_at: new Date(closes).toISOString(), last_inbound_at: new Date(t).toISOString() };
+}
+
+/** The newest inbound message on one channel in a thread, or null. */
+export function lastInboundOn(thread: ThreadMessage[], channel: ThreadMessage["channel"]): string | null {
+  let best: number | null = null;
+  for (const m of thread)
+    if (m.direction === "inbound" && m.channel === channel && m.at) {
+      const t = Date.parse(m.at);
+      if (Number.isFinite(t) && (best === null || t > best)) best = t;
+    }
+  return best === null ? null : new Date(best).toISOString();
+}
+
+/**
  * Do-not-disturb for one channel, as HighLevel records it on the contact:
  * "active", and "permanent" (a contact who must never be messaged there),
  * the same two the sales desk honours.
  */
 export function dndFor(contact: Record<string, unknown>, channel: Channel): boolean {
   if (contact.dnd === true) return true;
-  const key = channel === "whatsapp" ? "WhatsApp" : channel === "email" ? "Email" : "SMS";
+  const key =
+    channel === "whatsapp" ? "WhatsApp" : channel === "email" ? "Email" : channel === "sms" ? "SMS" : "FB";
   const s = ((contact.dndSettings ?? {}) as Record<string, Record<string, unknown>>)[key];
   return ["active", "permanent"].includes(String(s?.status ?? "").toLowerCase());
 }
@@ -488,7 +539,8 @@ export function emailHtml(text: string): string {
 export function sendBody(channel: Channel, contactId: string, text: string, subject?: string | null) {
   if (channel === "email")
     return { type: "Email", contactId, subject: String(subject ?? "").trim(), html: emailHtml(text), message: text };
-  return { type: channel === "whatsapp" ? "WhatsApp" : "SMS", contactId, message: text };
+  const type = { whatsapp: "WhatsApp", sms: "SMS", instagram: "IG", facebook: "FB" }[channel];
+  return { type, contactId, message: text };
 }
 
 /** HighLevel's message status as the cockpit's send state. */

@@ -21,6 +21,7 @@ import {
   type Moment,
   snippetLine,
 } from "../lib/whatsapp";
+import { ChannelGlyph } from "./ChannelGlyph";
 import { buttonPrimary, field } from "./kit";
 import { SnippetPicker, TemplateComposer } from "./WhatsAppKit";
 
@@ -38,7 +39,9 @@ import { SnippetPicker, TemplateComposer } from "./WhatsAppKit";
  * dropped connection returns the first send instead of sending twice.
  */
 
-export type Channel = "whatsapp" | "sms" | "email";
+/** Instagram and Facebook are replies to a DM the lead sent (sales-api lib.ts Channel). */
+export type Channel = "whatsapp" | "sms" | "email" | "instagram" | "facebook";
+const isDm = (c: Channel) => c === "instagram" || c === "facebook";
 
 export interface ThreadMessage {
   id: string;
@@ -53,6 +56,8 @@ export interface ThreadMessage {
   attachments: string[];
   error: string | null;
   source: string | null;
+  /** An SMS the WA2 Connector sent as the copy of a WhatsApp step: hidden unless asked for. */
+  copy?: boolean;
 }
 
 interface ChannelState {
@@ -134,6 +139,8 @@ export function readConvo(v: unknown): ConvoData {
       whatsapp: channel(ch.whatsapp),
       sms: channel(ch.sms),
       email: channel(ch.email),
+      instagram: channel(ch.instagram),
+      facebook: channel(ch.facebook),
     },
     thread: v.thread.filter(
       (m): m is ThreadMessage => isObj(m) && typeof m.id === "string",
@@ -161,7 +168,10 @@ export function ConversationFailed() {
 }
 
 /** The conversation, read again every 30 seconds while the tab is open. */
-export function useConversation(contactId: string) {
+export function useConversation(
+  contactId: string,
+  seed?: ThreadMessage[] | null,
+) {
   const [data, setData] = useState<ConvoData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [older, setOlder] = useState<ThreadMessage[]>([]);
@@ -218,14 +228,14 @@ export function useConversation(contactId: string) {
   const thread = useMemo(() => {
     const seen = new Set<string>();
     const all: ThreadMessage[] = [];
-    for (const m of [...(data?.thread ?? []), ...older]) {
+    for (const m of [...(data?.thread ?? seed ?? []), ...older]) {
       if (seen.has(m.id)) continue;
       seen.add(m.id);
       all.push(m);
     }
     const t = (m: ThreadMessage) => (m.at ? Date.parse(m.at) : 0);
     return all.sort((a, b) => t(a) - t(b));
-  }, [data, older]);
+  }, [data, older, seed]);
 
   return {
     data,
@@ -242,6 +252,8 @@ const CHANNEL_WORD: Record<ThreadMessage["channel"], string> = {
   whatsapp: "WhatsApp",
   sms: "SMS",
   email: "Email",
+  instagram: "Instagram",
+  facebook: "Facebook",
   call: "Call",
   other: "Activity",
 };
@@ -264,6 +276,16 @@ function windowWords(c: ChannelState | undefined): string {
   if (w.open)
     return `WhatsApp is open until ${day(w.closes_at)} ${clock(w.closes_at)} (they wrote ${ago(w.last_inbound_at)}).`;
   return `They last wrote ${ago(w.last_inbound_at)}, so WhatsApp's free window is closed and only an approved template goes: write the line it carries.`;
+}
+
+function dmWords(c: Channel, s: ChannelState | undefined): string {
+  const w = s?.window;
+  const name = CHANNEL_WORD[c];
+  if (!w?.last_inbound_at)
+    return `They have never sent us a ${name} message, so there is no DM to answer.`;
+  if (w.open)
+    return `${name} takes a reply until ${day(w.closes_at)} ${clock(w.closes_at)} (they wrote ${ago(w.last_inbound_at)}).`;
+  return `${name} only takes a reply within 7 days of their last message; they wrote ${ago(w.last_inbound_at)}. Use WhatsApp or email.`;
 }
 
 function draftKey(contactId: string, channel: Channel) {
@@ -312,10 +334,19 @@ export function Conversation({
   callAt,
   country,
   prefill,
+  fill = false,
+  prefer,
+  onSent,
 }: {
   contactId: string;
   convo: ReturnType<typeof useConversation>;
   compact?: boolean;
+  /** Fill the height it is given (the Messages page): the thread scrolls, the box stays at the foot. */
+  fill?: boolean;
+  /** The channel to answer on when it is open: the one the lead last wrote on. */
+  prefer?: Channel | null;
+  /** Told after a message went (not after a failed one), so a list can stop saying "needs a reply". */
+  onSent?: () => void;
   /** The rep writing, for {rep} in a ready-made message. */
   rep?: string | null;
   /** The lead's booked call, for {day} and {time}. */
@@ -366,6 +397,8 @@ export function Conversation({
         ok: false,
         why: `This lead asked not to be contacted by ${CHANNEL_WORD[c]}.`,
       };
+    if (isDm(c))
+      return { ok: Boolean(s.reachable && s.window?.open), why: dmWords(c, s) };
     if (!s.reachable)
       return {
         ok: false,
@@ -387,7 +420,18 @@ export function Conversation({
     waReach?.on && !waReach.dnd && waReach.reachable && templatesLive,
   );
   const preferred: Channel =
-    usable("whatsapp").ok || waTemplate ? "whatsapp" : "email";
+    prefer && usable(prefer).ok
+      ? prefer
+      : usable("whatsapp").ok || waTemplate
+        ? "whatsapp"
+        : "email";
+  // The DM channels show only for a lead who wrote to us there.
+  const dms = (["instagram", "facebook"] as const).filter(
+    c => channels?.[c]?.reachable,
+  );
+  const [showCopies, setShowCopies] = useState(false);
+  const copies = thread.filter(m => m.copy).length;
+  const shown = showCopies ? thread : thread.filter(m => !m.copy);
   const [channel, setChannel] = useState<Channel>("whatsapp");
   const picked = useRef(false);
   useEffect(() => {
@@ -565,6 +609,7 @@ export function Conversation({
           subject: "",
           id: crypto.randomUUID(),
         });
+        onSent?.();
       }
       void convo.reload();
     } catch (err) {
@@ -583,7 +628,7 @@ export function Conversation({
   }
 
   return (
-    <div className="space-y-3">
+    <div className={fill ? "flex h-full min-h-0 flex-col gap-3" : "space-y-3"}>
       <div className="flex items-center justify-between gap-2">
         <p className="muted text-xs">
           {error
@@ -608,7 +653,7 @@ export function Conversation({
 
       <div
         ref={listRef}
-        className={`space-y-2 overflow-y-auto pe-1 ${compact ? "max-h-72" : "max-h-[28rem]"}`}
+        className={`space-y-2 overflow-y-auto pe-1 ${fill ? "min-h-0 flex-1" : compact ? "max-h-72" : "max-h-[28rem]"}`}
       >
         {convo.canLoadOlder ? (
           <button
@@ -620,21 +665,37 @@ export function Conversation({
             {convo.loadingOlder ? "Reading…" : "Earlier messages"}
           </button>
         ) : null}
-        {data && !thread.length ? (
+        {data && !shown.length ? (
           <p className="muted py-6 text-center text-sm">
             Nothing has been said to this lead yet.
           </p>
         ) : null}
-        {thread.map(m => (
+        {shown.map(m => (
           <Bubble key={m.id} m={m} sentBy={byId.get(m.id)?.sent_by ?? null} />
         ))}
       </div>
 
+      {copies ? (
+        <p className="muted text-center text-[11px]">
+          {showCopies
+            ? `${copies} SMS ${copies === 1 ? "copy" : "copies"} of WhatsApp steps shown (the WA2 Connector).`
+            : `${copies} SMS ${copies === 1 ? "copy" : "copies"} of WhatsApp steps hidden.`}{" "}
+          <button
+            type="button"
+            onClick={() => setShowCopies(v => !v)}
+            className="underline underline-offset-2"
+          >
+            {showCopies ? "Hide them" : "Show them"}
+          </button>
+        </p>
+      ) : null}
+
       <form onSubmit={send} className="space-y-2 border-t hairline pt-3">
         <div className="flex flex-wrap items-center gap-2">
-          {(["whatsapp", "email"] as const).map(c => {
+          {(["whatsapp", "email", ...dms] as Channel[]).map(c => {
             const u = usable(c);
-            const Icon = c === "whatsapp" ? MessageCircle : Mail;
+            const Icon =
+              c === "whatsapp" ? MessageCircle : c === "email" ? Mail : null;
             return (
               <button
                 key={c}
@@ -647,7 +708,12 @@ export function Conversation({
                 title={u.ok ? undefined : u.why}
                 className={`inline-flex h-7 items-center gap-1 rounded-full border hairline px-2.5 text-xs ${channel === c ? "bg-[color:var(--secondary)] font-medium" : "muted"} ${u.ok || (c === "whatsapp" && waTemplate) ? "" : "opacity-60"}`}
               >
-                <Icon className="size-3.5" aria-hidden /> {CHANNEL_WORD[c]}
+                {Icon ? (
+                  <Icon className="size-3.5" aria-hidden />
+                ) : (
+                  <ChannelGlyph channel={c} className="size-3.5" />
+                )}{" "}
+                {CHANNEL_WORD[c]}
               </button>
             );
           })}
@@ -686,13 +752,15 @@ export function Conversation({
               onKeyDown={onKey}
               rows={compact ? 3 : 4}
               aria-label={
-                channel === "whatsapp" ? "Message on WhatsApp" : "Email message"
+                channel === "email"
+                  ? "Email message"
+                  : `Message on ${CHANNEL_WORD[channel]}`
               }
               placeholder={
                 can.ok
-                  ? channel === "whatsapp"
-                    ? "Write to them on WhatsApp"
-                    : "Write the email"
+                  ? channel === "email"
+                    ? "Write the email"
+                    : `Write to them on ${CHANNEL_WORD[channel]}`
                   : "Pick a channel that is open"
               }
               className={`${field} h-auto py-2 leading-relaxed`}
@@ -709,7 +777,9 @@ export function Conversation({
                   />
                 ) : null}
                 <p className="muted text-xs">
-                  Goes out from the official line through HighLevel.
+                  {isDm(channel)
+                    ? "Goes out from the MaharaMedia page through HighLevel."
+                    : "Goes out from the official line through HighLevel."}
                   <span className="hidden md:pointer-fine:inline">
                     {" "}
                     Ctrl or ⌘ and Enter sends.
@@ -782,7 +852,11 @@ function Bubble({ m, sentBy }: { m: ThreadMessage; sentBy: string | null }) {
           </a>
         ))}
         <p className="muted mt-1 text-[11px]">
-          {CHANNEL_WORD[m.channel]}
+          {/* HighLevel files the WhatsApp connector's messages as SMS
+              (custom SMS): they were WhatsApp, read receipts and all. */}
+          {m.channel === "sms" && m.type === "TYPE_CUSTOM_SMS"
+            ? "WhatsApp (connector)"
+            : CHANNEL_WORD[m.channel]}
           {m.at ? ` · ${day(m.at)} ${clock(m.at)}` : ""}
           {ours && m.status ? ` · ${STATUS_WORD[m.status] ?? m.status}` : ""}
           {sentBy ? ` · ${sentBy.split("@")[0]}` : ""}

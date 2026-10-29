@@ -5,10 +5,11 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useMemo,
   useState,
 } from "react";
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
-import { MacOSDock } from "./components/MacOSDock";
+import { MacOSDock, SALES_DOCK_ITEMS } from "./components/MacOSDock";
 import { MacOSMenuBar } from "./components/MacOSMenuBar";
 import { PageBoundary } from "./components/PageBoundary";
 import { SalesBanner } from "./components/SalesBanner";
@@ -18,7 +19,13 @@ import { AlertsBell } from "./components/tasks/AlertsBell";
 import { TaskFocusHost } from "./components/tasks/TaskFocus";
 import { Wordmark } from "./components/Wordmark";
 import { SessionProvider, useWho } from "./lib/auth";
-import { useFollowupsWaiting, useMe, useOwed, useProposals } from "./lib/data";
+import {
+  useFollowupsWaiting,
+  useInboxCounts,
+  useMe,
+  useOwed,
+  useProposals,
+} from "./lib/data";
 import { portalUrl } from "./lib/portal";
 import { openSearch } from "./lib/search";
 import { Toaster } from "./lib/toast";
@@ -28,6 +35,7 @@ import TodayPage from "./pages/TodayPage";
 
 const CalendarPage = lazy(() => import("./pages/CalendarPage"));
 const LeadsPage = lazy(() => import("./pages/LeadsPage"));
+const MessagesPage = lazy(() => import("./pages/MessagesPage"));
 const LeadPage = lazy(() => import("./pages/LeadPage"));
 
 /**
@@ -189,7 +197,16 @@ export function Seated({
   const owed = useOwed(mine, 30, 120_000);
   const proposals = useProposals(me.manager ? null : (me.email ?? null));
   const followups = useFollowupsWaiting(me.email ?? null, Boolean(me.manager));
+  // Waiting on a reply: everyone's for a manager; a rep's own and the unassigned queue.
+  const inbox = useInboxCounts("everyone", null, null, 60_000);
+  const inboxMine = inbox.data
+    ? me.manager || !me.ghl_user_id
+      ? inbox.data.everyone.reply
+      : (inbox.data.people.find(p => p.ghl_user_id === me.ghl_user_id)?.reply ??
+          0) + inbox.data.unassigned.reply
+    : 0;
   const counts = {
+    messages: inboxMine,
     followups: (followups.data ?? []).length,
     owed: (owed.data ?? []).length,
     proposals: (proposals.data ?? []).filter(
@@ -316,14 +333,22 @@ export function Seated({
           </div>
         </header>
 
-        {/* Keyed by the address, so moving to another page clears an error. */}
-        <PageBoundary key={pathname}>
+        {/* Keyed by the address, so moving to another page clears an error.
+            Messages is one page whichever conversation is open, so opening
+            one keeps the list where it was. */}
+        <PageBoundary
+          key={pathname.startsWith("/messages/") ? "/messages" : pathname}
+        >
           <Suspense fallback={<Waiting text="Loading…" />}>
             <Routes>
               <Route path="/" element={<TodayPage me={me} />} />
               {/* The portal's door lands on /dashboard in every cockpit. */}
               <Route path="/dashboard" element={<Navigate to="/" replace />} />
               <Route path="/calendar" element={<CalendarPage me={me} />} />
+              <Route
+                path="/messages/:conversationId?"
+                element={<MessagesPage me={me} />}
+              />
               <Route path="/leads" element={<LeadsPage />} />
               <Route path="/lead/:contactId" element={<KeyedLead me={me} />} />
               <Route path="/call/:contactId" element={<CallPage me={me} />} />
@@ -368,7 +393,11 @@ export function Seated({
         </PageBoundary>
       </div>
 
-      <TabBar owed={counts.owed} onMore={() => setDrawer(true)} />
+      <TabBar
+        owed={counts.owed}
+        messages={counts.messages}
+        onMore={() => setDrawer(true)}
+      />
       <SearchBox isManager={Boolean(me.manager)} />
       {/* One task, in place, wherever the address has ?focus=. */}
       <TaskFocusHost />
@@ -377,11 +406,28 @@ export function Seated({
 }
 
 /** Below lg the rail becomes the authentic MacOS Floating Dock (SF-01): cosine magnification & click bounce. */
-function TabBar({ owed, onMore }: { owed: number; onMore: () => void }) {
+function TabBar({
+  owed,
+  messages,
+  onMore,
+}: {
+  owed: number;
+  messages: number;
+  onMore: () => void;
+}) {
+  // One list per count, so the dock's layout effect runs only when it changes.
+  const items = useMemo(
+    () =>
+      SALES_DOCK_ITEMS.map(i =>
+        i.to === "/messages" ? { ...i, badge: messages } : i,
+      ),
+    [messages],
+  );
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-3 z-30 flex justify-center px-2 lg:hidden">
       <div className="pointer-events-auto flex items-center gap-1.5">
         <MacOSDock
+          items={items}
           owedCount={owed}
           baseSize={36}
           maxScale={1.35}

@@ -45,6 +45,8 @@ import {
   type ThreadMessage,
   toThread,
   whatsappWindow,
+  dmWindow,
+  lastInboundOn,
   EOD_FIELDS,
   type EodRole,
   eodColumns,
@@ -196,6 +198,7 @@ import { makeZoomLinks } from "./zoomlinks.ts";
 import { makeGroups } from "./groups.ts";
 import { makeCallLinks } from "./calllinks.ts";
 import { makeCallOutcomes } from "./callOutcomes.ts";
+import { makeInbox } from "./inbox.ts";
 import {
   clockCountry,
   budgetCap,
@@ -1402,8 +1405,15 @@ async function settingSave(who: Who, b: Row) {
 // ---------------------------------------------------------------------------
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-const MAX_CHARS: Record<Channel, number> = { whatsapp: 4096, sms: 1600, email: 10000 };
-const CHANNEL_WORD: Record<Channel, string> = { whatsapp: "WhatsApp", sms: "SMS", email: "email" };
+const MAX_CHARS: Record<Channel, number> = { whatsapp: 4096, sms: 1600, email: 10000, instagram: 1000, facebook: 2000 };
+const CHANNEL_WORD: Record<Channel, string> = {
+  whatsapp: "WhatsApp",
+  sms: "SMS",
+  email: "email",
+  instagram: "Instagram",
+  facebook: "Facebook",
+};
+const isDm = (c: Channel): c is "instagram" | "facebook" => c === "instagram" || c === "facebook";
 
 function agoWords(iso: string | null): string {
   if (!iso) return "never";
@@ -1425,7 +1435,13 @@ function lastWhatsappIn(convs: Row[], thread: ThreadMessage[]): string | null {
 
 async function messagingSwitch(): Promise<Record<Channel, boolean>> {
   const v = (await setting<Row>("messaging")) ?? {};
-  return { whatsapp: v.whatsapp !== false, email: v.email !== false, sms: v.sms === true };
+  return {
+    whatsapp: v.whatsapp !== false,
+    email: v.email !== false,
+    sms: v.sms === true,
+    instagram: v.instagram !== false,
+    facebook: v.facebook !== false,
+  };
 }
 
 /**
@@ -1478,6 +1494,19 @@ async function convoRead(_who: Who, b: Row) {
       whatsapp: { on: switches.whatsapp, dnd: dndFor(c, "whatsapp"), reachable: Boolean(c.phone), window },
       email: { on: switches.email, dnd: dndFor(c, "email"), reachable: Boolean(c.email) },
       sms: { on: switches.sms, dnd: dndFor(c, "sms"), reachable: Boolean(c.phone) },
+      // A DM can only answer one the lead sent: reachable once they wrote there.
+      instagram: {
+        on: switches.instagram,
+        dnd: dndFor(c, "instagram"),
+        reachable: thread.some(m => m.channel === "instagram"),
+        window: dmWindow(lastInboundOn(thread, "instagram"), now),
+      },
+      facebook: {
+        on: switches.facebook,
+        dnd: dndFor(c, "facebook"),
+        reachable: thread.some(m => m.channel === "facebook"),
+        window: dmWindow(lastInboundOn(thread, "facebook"), now),
+      },
     },
     thread,
     cursors: Object.fromEntries(pages.filter(p => p.next).map(p => [p.cid, p.next])),
@@ -1727,7 +1756,7 @@ async function convoSendOnce(who: Who, b: Row, opts: SendOpts, taken: () => void
   const requestId = String(b.request_id ?? "");
   const text = String(b.body ?? "").replace(/\r\n/g, "\n").trim();
   if (!contactId) throw new Refusal("Which lead?");
-  if (!(channel in MAX_CHARS)) throw new Refusal("Send on WhatsApp or by email.");
+  if (!(channel in MAX_CHARS)) throw new Refusal("Send on WhatsApp, by email, or as an Instagram or Facebook reply.");
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId))
     throw new Refusal("Reload the page and send again.");
   if (!text) throw new Refusal("Write the message first.");
@@ -1739,6 +1768,7 @@ async function convoSendOnce(who: Who, b: Row, opts: SendOpts, taken: () => void
   if (channel === "email" && !subject) throw new Refusal("An email needs a subject.");
   const followupId = b.followup_id ? cleanText(b.followup_id, 40) : null;
   const assetId = await assetFor(b.asset_id);
+  if (assetId && isDm(channel)) throw new Refusal("Proof goes on WhatsApp or by email, not in a DM.");
 
   // An earlier try's row HighLevel was never asked about: it never went, so
   // this try sends (stress2 rounds 5 and 6).
@@ -1768,7 +1798,27 @@ async function convoSendOnce(who: Who, b: Row, opts: SendOpts, taken: () => void
   if (dndFor(contact, channel))
     throw new Refusal(`This lead asked not to be contacted by ${CHANNEL_WORD[channel]} (do not disturb is on in HighLevel).`, 409);
   if (channel === "email" && !contact.email) throw new Refusal("This lead has no email address in HighLevel.", 409);
-  if (channel !== "email" && !contact.phone) throw new Refusal("This lead has no phone number in HighLevel.", 409);
+  if ((channel === "whatsapp" || channel === "sms") && !contact.phone)
+    throw new Refusal("This lead has no phone number in HighLevel.", 409);
+  if (isDm(channel)) {
+    // The lead's own last DM decides, read live from every conversation they have.
+    const convs = conversationList(await ghl("GET", `/conversations/search?locationId=${LOCATION}&contactId=${enc(contactId)}&limit=20`));
+    const lists = await Promise.all(
+      convs.slice(0, 6).map(async cv => {
+        const m = (await ghl("GET", `/conversations/${enc(String(cv.id))}/messages?limit=40`)) as Row;
+        const inner = (m.messages ?? {}) as Row;
+        return toThread(Array.isArray(inner.messages) ? inner.messages : m.messages, String(cv.id));
+      }),
+    );
+    const w = dmWindow(lastInboundOn(lists.flat(), channel), Date.now());
+    if (!w.last_inbound_at)
+      throw new Refusal(`This lead has never sent us a ${CHANNEL_WORD[channel]} message, so there is no DM to answer.`, 409);
+    if (!w.open)
+      throw new Refusal(
+        `${CHANNEL_WORD[channel]} only takes a reply within 7 days of the lead's own last message; they last wrote ${agoWords(w.last_inbound_at)}. Use WhatsApp or email instead.`,
+        409,
+      );
+  }
   if (channel === "whatsapp") {
     // An answer with no list is not read (m1 round 2): never "the window is
     // shut" on a gateway's garbage; the send stops before anything went.
@@ -8292,6 +8342,7 @@ const groups = makeGroups({ svc, audit, ghl });
 const callLinks = makeCallLinks({ svc, audit, cockpitLead });
 // After the call (2026-10-29): the lead's quality and why an intro booked no demo.
 const callOutcomes = makeCallOutcomes({ svc, audit });
+const inbox = makeInbox({ svc, ghl, audit });
 
 const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   ...rooms.actions,
@@ -8301,6 +8352,7 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   ...groups.actions,
   ...callLinks.actions,
   ...callOutcomes.actions,
+  ...inbox.actions,
   mark,
   "mark.retry": markRetry,
   "note.add": noteAdd,
