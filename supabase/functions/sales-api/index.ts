@@ -199,6 +199,7 @@ import { makeGroups } from "./groups.ts";
 import { makeCallLinks } from "./calllinks.ts";
 import { makeCallOutcomes } from "./callOutcomes.ts";
 import { makeInbox } from "./inbox.ts";
+import { makeInvoices } from "./invoices.ts";
 import {
   clockCountry,
   budgetCap,
@@ -333,6 +334,39 @@ async function svcAll(path: string, cap = 50_000): Promise<Row[]> {
     if (page.length < 1000) break;
   }
   return out;
+}
+
+/**
+ * Each request's own sign-in, kept beside its seat for the few actions whose
+ * database functions must see the person (auth.uid()), never the service key.
+ */
+const userTokens = new WeakMap<Who, string>();
+
+/** A database function called as the signed-in rep; its refusal is passed on as said. */
+async function rpcAsUser(who: Who, fn: string, args: Row): Promise<unknown> {
+  const jwt = userTokens.get(who);
+  if (!jwt) throw new Refusal("Sign in again.", 401);
+  const res = await fetchWithin(`${env("SUPABASE_URL")}/rest/v1/rpc/${fn}`, {
+    method: "POST",
+    headers: {
+      apikey: env("SUPABASE_ANON_KEY"),
+      Authorization: `Bearer ${jwt}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(args),
+  }, SVC_MS, "The database");
+  const text = await res.text();
+  if (!res.ok) {
+    let said = "";
+    try {
+      said = String((JSON.parse(text) as Row)?.message ?? "");
+    } catch {
+      // not JSON
+    }
+    if (res.status >= 500) throw new Error(`the database answered ${res.status}: ${redact(said || text)}`);
+    throw new Refusal(redact(said) || `The database refused it (${res.status}).`, res.status === 401 ? 401 : 409);
+  }
+  return text ? JSON.parse(text) : null;
 }
 
 async function whoami(jwt: string): Promise<Who> {
@@ -8343,6 +8377,7 @@ const callLinks = makeCallLinks({ svc, audit, cockpitLead });
 // After the call (2026-10-29): the lead's quality and why an intro booked no demo.
 const callOutcomes = makeCallOutcomes({ svc, audit });
 const inbox = makeInbox({ svc, ghl, audit });
+const invoices = makeInvoices({ rpcAsUser });
 
 const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   ...rooms.actions,
@@ -8353,6 +8388,7 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   ...callLinks.actions,
   ...callOutcomes.actions,
   ...inbox.actions,
+  ...invoices.actions,
   mark,
   "mark.retry": markRetry,
   "note.add": noteAdd,
@@ -8564,6 +8600,7 @@ Deno.serve(async (req: Request) => {
   let who: Who;
   try {
     who = await whoami(jwt);
+    userTokens.set(who, jwt);
   } catch (e) {
     return reply({ ok: false, error: `The seat check failed: ${redact(String(e))}` }, 502);
   }

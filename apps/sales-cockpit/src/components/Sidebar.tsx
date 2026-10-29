@@ -193,13 +193,7 @@ export default function Sidebar({
       label: "Client performance",
       href: `${portalUrl()}/performance`,
     },
-    // Invoices for any client on the billing sheet: the client success
-    // cockpit's invoice page, opened to sales seats (18 Oct 2026).
-    {
-      key: "invoices",
-      label: "Invoices",
-      href: `${portalUrl()}/client-success/invoices`,
-    },
+    // Invoices are a page of this cockpit since 29 Oct 2026 (/invoices).
     ...otherCockpits(cockpits, isAdmin),
   ];
 

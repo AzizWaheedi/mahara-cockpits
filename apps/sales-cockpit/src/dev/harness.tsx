@@ -818,6 +818,21 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
     }
     case "inbox.seen":
       return { conversation_id: b.conversation_id, unread: 0 };
+    case "invoice.request":
+      return {
+        invoice: {
+          id: crypto.randomUUID(),
+          status: "queued",
+          ...(b.args as Row),
+        },
+      };
+    case "invoice.change":
+      return {
+        invoice: {
+          id: b.id,
+          status: b.change === "cancel" ? "cancelled" : "queued",
+        },
+      };
     case "inbox.done":
       return {
         conversation_id: b.conversation_id,
@@ -1149,6 +1164,9 @@ async function main() {
 
   const tables: Record<string, Row[]> = {
     cockpit_sales_leads: F.LEADS,
+    cockpit_invoices: (await import("./invoiceFake")).INVOICES,
+    cockpit_billing_accounts: (await import("./invoiceFake")).BILLING,
+    cockpit_invoice_desk_status: (await import("./invoiceFake")).DESK,
     cockpit_sales_conversation_messages: (
       await import("./inboxFake")
     ).copiedMessages(Date.now()),
@@ -1254,6 +1272,12 @@ async function main() {
     const path = url.pathname;
     if (path.endsWith("/rpc/cockpit_sales_whoami")) return json(F.ME);
     if (path.endsWith("/rpc/cockpit_sales_funnel")) return json(F.FUNNEL);
+    if (path.endsWith("/rpc/cockpit_invoice_payments"))
+      return json(
+        (await import("./invoiceFake")).payments(
+          (JSON.parse(String(init?.body ?? "{}")).p_ids ?? []) as string[],
+        ),
+      );
     if (path.endsWith("/rpc/cockpit_sales_conversations_list"))
       return json(
         (await import("./inboxFake")).inboxList(

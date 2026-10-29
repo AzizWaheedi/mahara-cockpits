@@ -70,6 +70,12 @@ same adAsIdea "$CD/convex/adAsIdea.ts" "$ED/src/lib/adAsIdea.ts"
 # did in their words) reads the same from the media buyer and from the CSM.
 same clientUpdate "$MB/src/lib/clientUpdate.ts" "apps/client-success-cockpit/src/lib/clientUpdate.ts"
 
+# The invoice a client gets looks the same whether the CSM or a closer made
+# it: the template, its filling and the preview are copied into sales.
+same invoiceTemplate "apps/client-success-cockpit/src/lib/invoiceTemplate.ts" "$SA/src/lib/invoiceTemplate.ts"
+same invoiceTemplateHtml "apps/client-success-cockpit/src/lib/invoice-template.html" "$SA/src/lib/invoice-template.html"
+same invoicePaper "apps/client-success-cockpit/src/components/invoices/InvoicePaper.tsx" "$SA/src/components/invoices/InvoicePaper.tsx"
+
 # A lost lead's note shows what the agent typed, never the power dialer's
 # system lines, the same way for the media buyer and for the CSM.
 same lostNotes "$MB/convex/lostNotes.ts" "apps/client-success-cockpit/src/lib/lostNotes.ts"
