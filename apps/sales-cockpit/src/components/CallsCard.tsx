@@ -1,5 +1,6 @@
 import { CalendarClock, MessageCircle, TriangleAlert } from "lucide-react";
 import { Fragment, type ReactNode, useRef, useState } from "react";
+import { heldCall, outcomeMissing } from "../lib/afterCall";
 import { isClient } from "../lib/clients";
 import { useLead, useUnverifiedMoves } from "../lib/data";
 import { ghlContactUrl } from "../lib/highlevel";
@@ -26,6 +27,7 @@ import {
 import { rowMoment } from "../lib/tellThem";
 import type { CalendarRow, Me } from "../lib/types";
 import type { Lang } from "../lib/zoomLink";
+import { AfterCall } from "./AfterCall";
 import { CallPicker, type PickerDone } from "./CallPicker";
 import { button, Failed, Reading, StatusChip, type Tone } from "./kit";
 import { CrmLine, MarkControls, type MarkHold } from "./MarkControls";
@@ -114,6 +116,18 @@ export function CallsCard({
     if (d.mode === "reschedule" && id) setMoved(m => ({ ...m, [id]: d.start }));
     reload();
   };
+
+  /** Under a held intro or demo: the lead's quality, and why no demo (lib/afterCall). */
+  const afterCall = (r: CalendarRow): ReactNode =>
+    heldCall(r) ? (
+      <div className="px-4 pb-3 sm:ps-[14rem] sm:pe-6">
+        <AfterCall
+          row={r}
+          canEdit={Boolean(me.manager) || r.assigned_user_id === me.ghl_user_id}
+          onSaved={reload}
+        />
+      </div>
+    ) : null;
 
   /** The picker or Tell them under a row, when that row's panel is open. */
   const under = (r: CalendarRow): ReactNode => {
@@ -319,7 +333,11 @@ export function CallsCard({
     body = <Reading what="the calls" className="px-4 py-4 text-sm sm:px-6" />;
   else {
     const n = groups.next;
-    const before = allBefore ? groups.before : groups.before.slice(0, 3);
+    // A held call still waiting on the lead's quality or why no demo stays
+    // in sight past the first three (2026-10-29).
+    const before = allBefore
+      ? groups.before
+      : groups.before.filter((r, i) => i < 3 || outcomeMissing(r));
     body = (
       <>
         {client ? (
@@ -418,20 +436,25 @@ export function CallsCard({
               now={now}
               chip={pastChip(r)}
               actions={actions(r)}
-              under={under(r)}
+              under={
+                <>
+                  {under(r)}
+                  {afterCall(r)}
+                </>
+              }
               past
               onRetried={reload}
             />
           )}
         </Group>
-        {groups.before.length > 3 && !allBefore ? (
+        {groups.before.length > before.length ? (
           <div className="px-4 pb-3 sm:px-6">
             <button
               type="button"
               onClick={() => setAllBefore(true)}
               className="muted text-xs underline underline-offset-2 hover:text-[color:var(--foreground)]"
             >
-              Show {groups.before.length - 3} more
+              Show {groups.before.length - before.length} more
             </button>
           </div>
         ) : null}

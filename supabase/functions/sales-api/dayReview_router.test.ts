@@ -80,6 +80,8 @@ beforeEach(() => {
       booked_at: start,
       assigned_user_id: "u-me",
       status: "showed",
+      lead_quality: 7,
+      no_demo_reason: "not_ready",
     },
     {
       appointment_id: "demo",
@@ -89,6 +91,7 @@ beforeEach(() => {
       booked_at: start,
       assigned_user_id: "u-me",
       status: "confirmed",
+      lead_quality: 8,
     },
     {
       appointment_id: "other",
@@ -138,6 +141,34 @@ test("a setter can review both intro and demo calls and file a closer report", a
   ]);
   expect(out.body.review.pending).toBe(1);
   expect(out.body.computed.demos_showed).toBe(0);
+});
+test("a held call waits on the lead's quality, and a held intro on why no demo", async () => {
+  db.t("cockpit_sales_calendar")[1]!.status = "showed";
+  const intro = db.t("cockpit_sales_calendar")[0]!;
+  intro.lead_quality = null;
+  let out = await call({ action: "eod.prefill", day, role: "closer" });
+  expect(out.body.review.pending).toBe(1);
+  intro.lead_quality = 6;
+  intro.no_demo_reason = null;
+  out = await call({ action: "eod.prefill", day, role: "closer" });
+  expect(out.body.review.pending).toBe(1);
+  const blocked = await call({
+    action: "eod.submit",
+    day,
+    role: "closer",
+    answers: answers(),
+    review_version: out.body.review.version,
+  });
+  expect(blocked.status).toBe(409);
+  expect(commits).toHaveLength(0);
+  // A demo booked after the intro, or a signature, is the answer itself.
+  intro.demo_after_at = start;
+  out = await call({ action: "eod.prefill", day, role: "closer" });
+  expect(out.body.review.pending).toBe(0);
+  intro.demo_after_at = null;
+  intro.signed_after = true;
+  out = await call({ action: "eod.prefill", day, role: "closer" });
+  expect(out.body.review.pending).toBe(0);
 });
 test("pending calls block before the outgoing transaction even with a forged version", async () => {
   const out = await call({

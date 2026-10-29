@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
+import { AfterCall } from "../components/AfterCall";
 import { RowButtons, RowPanel } from "../components/CallsCard";
 import {
   EmptyState,
@@ -23,6 +24,7 @@ import {
   type MarkHold,
 } from "../components/MarkControls";
 import { useScope } from "../components/Scope";
+import { heldCall } from "../lib/afterCall";
 import {
   type Loaded,
   useCalendar,
@@ -805,6 +807,17 @@ function CallRow({
           ) : null}
         </div>
       </div>
+      {heldCall(r) && open !== "reschedule" ? (
+        <div className="px-4 pb-3 sm:ps-[4.75rem]">
+          <AfterCall
+            row={r}
+            canEdit={
+              Boolean(me.manager) || r.assigned_user_id === me.ghl_user_id
+            }
+            onSaved={reload}
+          />
+        </div>
+      ) : null}
       {open && r.contact_id ? (
         <div className="px-3 pb-3 sm:ps-[4.75rem] sm:pe-4">
           <RowPanel

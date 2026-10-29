@@ -11,6 +11,7 @@ import type {
   CoachReview,
   Deal,
   Dial,
+  Funnel,
   InboxRow,
   Lead,
   Me,
@@ -282,6 +283,37 @@ export function useOwed(
         .gte("start_at", new Date(Date.now() - days * 86_400_000).toISOString())
         .order("start_at", { ascending: false })
         .limit(300);
+      if (ghlUserId) q = q.eq("assigned_user_id", ghlUserId);
+      return q;
+    },
+    [ghlUserId, days],
+    everyMs,
+  );
+}
+
+/**
+ * Intros and demos held in the last `days` that may still need the lead
+ * rated or a reason (lib/afterCall outcomeMissing decides), newest first.
+ */
+export function useAfterCall(
+  ghlUserId: string | null,
+  days = 7,
+  everyMs = 60_000,
+): Loaded<CalendarRow[]> {
+  return useQuery<CalendarRow[]>(
+    () => {
+      let q = supabase
+        .from("cockpit_sales_calendar")
+        .select("*")
+        .in("call_type", ["intro", "demo"])
+        .in("status", ["showed", "completed", "invalid"])
+        .or(
+          "lead_quality.is.null,and(call_type.eq.intro,no_demo_reason.is.null)",
+        )
+        .gte("start_at", new Date(Date.now() - days * 86_400_000).toISOString())
+        .lte("start_at", new Date().toISOString())
+        .order("start_at", { ascending: false })
+        .limit(200);
       if (ghlUserId) q = q.eq("assigned_user_id", ghlUserId);
       return q;
     },
@@ -877,6 +909,27 @@ export function useFollowupsWaiting(
       return q.or(`owner_email.eq."${email}",owner_email.is.null`);
     },
     [email, manager],
+    120_000,
+  );
+}
+
+/**
+ * Intros to demos for Kuwait days `from`..`to`: the team's, or one host's by
+ * their HighLevel user (a rep may read only their own; the function says so).
+ */
+export function useFunnel(
+  from: string,
+  to: string,
+  host: string | null,
+): Loaded<Funnel> {
+  return useQuery<Funnel>(
+    () =>
+      supabase.rpc("cockpit_sales_funnel", {
+        p_from: from,
+        p_to: to,
+        p_host: host,
+      }),
+    [from, to, host],
     120_000,
   );
 }

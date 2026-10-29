@@ -1,11 +1,13 @@
 import { Check, ChevronDown, Pencil } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
+import { heldCall } from "../lib/afterCall";
 import { api } from "../lib/api";
 import { type DayReview, reviewed } from "../lib/dayReview";
 import { clock, statusLabel } from "../lib/format";
 import { toast } from "../lib/toast";
 import type { CalendarRow } from "../lib/types";
+import { AfterCall } from "./AfterCall";
 import {
   AnimatedSelect,
   button,
@@ -33,7 +35,7 @@ export function DayCallReview({
         {!review.linked
           ? "Your HighLevel user needs to be linked on the Team page before we can check your calls."
           : pending.length
-            ? `${pending.length} ${pending.length === 1 ? "call needs" : "calls need"} an outcome. Your totals update as you save.`
+            ? `${pending.length} ${pending.length === 1 ? "call needs" : "calls need"} an outcome, or the lead rated and why no demo. Your totals update as you save.`
             : "Every call has an outcome. Your totals are ready to check."}
       </p>
       <div className="divide-y divide-white/10">
@@ -88,8 +90,17 @@ function ReviewRow({
   onChanged: () => Promise<void>;
   onBusy: (busy: boolean) => void;
 }) {
-  const [editing, setEditing] = useState(open);
   const current = String(row.marked_status ?? row.status ?? "");
+  // Marked already: only the after-call answers may be missing, and they
+  // sit under the row; the outcome stays behind its button.
+  const marked = [
+    "showed",
+    "completed",
+    "noshow",
+    "cancelled",
+    "invalid",
+  ].includes(current);
+  const [editing, setEditing] = useState(open && !marked);
   const [status, setStatus] = useState(
     ["showed", "noshow", "cancelled", "invalid"].includes(current)
       ? current
@@ -145,7 +156,7 @@ function ReviewRow({
             · {clock(row.start_at)}
           </p>
         </div>
-        {reviewed(row) ? (
+        {marked ? (
           <button
             type="button"
             onClick={() => setEditing(!editing)}
@@ -158,6 +169,11 @@ function ReviewRow({
           <span className="muted text-xs">Needs your review</span>
         )}
       </div>
+      {heldCall(row) && !editing ? (
+        <div className="mt-3">
+          <AfterCall row={row} canEdit onSaved={() => void onChanged()} />
+        </div>
+      ) : null}
       {editing ? (
         <div className="mt-3 space-y-3 rounded-2xl bg-muted/30 p-3 sm:p-4">
           <div className="flex flex-wrap items-center gap-2">

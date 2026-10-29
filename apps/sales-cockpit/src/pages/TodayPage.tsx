@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
+import { AfterCallCard } from "../components/AfterCall";
 import { RowButtons, RowPanel } from "../components/CallsCard";
 import { DayLine } from "../components/DayLine";
 import {
@@ -23,6 +24,7 @@ import { MarkControls, type MarkHold } from "../components/MarkControls";
 import { type ScopeView, useScope } from "../components/Scope";
 import { YourTasks } from "../components/tasks/YourTasks";
 import {
+  useAfterCall,
   useCalendar,
   useLeadsById,
   useMirrorRun,
@@ -76,6 +78,8 @@ export default function TodayPage({ me }: { me: Me }) {
   const todays = useCalendar(dayStart, dayEnd, mine);
   const coming = useCalendar(new Date(now).toISOString(), soonEnd, mine);
   const owed = useOwed(mine);
+  // Held calls still waiting on the lead's quality or why no demo (2026-10-29).
+  const after = useAfterCall(mine);
   const newLeads = useNewLeads(48);
   const replies = useReplies(48);
   const mirror = useMirrorRun();
@@ -100,6 +104,7 @@ export default function TodayPage({ me }: { me: Me }) {
     coming.reload();
     todays.reload();
     owed.reload();
+    after.reload();
   };
 
   const unlinked = view.kind === "mine" && !me.ghl_user_id;
@@ -165,6 +170,12 @@ export default function TodayPage({ me }: { me: Me }) {
             now={now}
             open={open}
             setOpen={setOpen}
+          />
+          <AfterCallCard
+            me={me}
+            rows={after.data}
+            reload={reloadCalls}
+            team={scope === "team"}
           />
           <WeekCard me={me} view={view} />
         </div>
