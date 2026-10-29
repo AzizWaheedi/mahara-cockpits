@@ -168,9 +168,17 @@ export default function MessagesPage({ me }: { me: Me }) {
     }
   };
 
+  // The open conversation keeps its row when the list lets it go (answered,
+  // marked no reply needed, or another filter): picked is the last row seen
+  // for it, from a click or a read.
   const picked = useRef<InboxRow | null>(null);
-  const selected =
+  const listed =
     rows.find(r => r.conversation_id === conversationId) ??
+    (list.data?.rows ?? []).find(r => r.conversation_id === conversationId) ??
+    null;
+  if (listed) picked.current = listed;
+  const selected =
+    listed ??
     (picked.current?.conversation_id === conversationId
       ? picked.current
       : null);
@@ -296,6 +304,17 @@ export default function MessagesPage({ me }: { me: Me }) {
               onAssigned={() => {
                 list.reload();
                 counts.reload();
+              }}
+              onDone={undo => {
+                const at = selected?.last_in_at ?? "";
+                setAnswered(a => {
+                  const m = new Map(a);
+                  if (undo) m.delete(conversationId);
+                  else m.set(conversationId, at);
+                  return m;
+                });
+                counts.reload();
+                if (undo) list.reload();
               }}
             />
           ) : (
@@ -852,6 +871,8 @@ function useOneRow(conversationId: string, row: InboxRow | null) {
         last_reply_at: null,
         last_reply_by: null,
         needs_reply: data.needs_reply === true,
+        cleared: false,
+        cleared_by: null,
         unread: Number(data.unread ?? 0),
         copies: Number(data.copies ?? 0),
         read: true,
@@ -874,6 +895,7 @@ function Thread({
   onSent,
   onSeen,
   onAssigned,
+  onDone,
 }: {
   conversationId: string;
   row: InboxRow | null;
@@ -883,6 +905,8 @@ function Thread({
   onSent: () => void;
   onSeen: () => void;
   onAssigned: () => void;
+  /** Marked "No reply needed" (or undone): the list stops (or starts) waiting on it. */
+  onDone: (undo: boolean) => void;
 }) {
   const row = useOneRow(conversationId, listed);
   const contactId = row?.contact_id ?? "";
@@ -910,7 +934,7 @@ function Thread({
 
   return (
     <>
-      <header className="flex shrink-0 items-center gap-3 border-b hairline px-4 py-3">
+      <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b hairline px-4 py-3">
         <button
           type="button"
           onClick={onBack}
@@ -945,7 +969,11 @@ function Thread({
             ) : null}
           </p>
         </div>
-        <Owner row={row} me={me} people={people} onAssigned={onAssigned} />
+        {/* On a phone the two actions take a row of their own. */}
+        <div className="flex shrink-0 items-center gap-2 max-sm:basis-full max-sm:justify-end">
+          <NoReplyNeeded row={row} onDone={onDone} />
+          <Owner row={row} me={me} people={people} onAssigned={onAssigned} />
+        </div>
       </header>
       <div className="min-h-0 flex-1 p-4">
         {contactId ? (
@@ -960,6 +988,59 @@ function Thread({
         ) : null}
       </div>
     </>
+  );
+}
+
+/**
+ * "No reply needed": the lead's "شكرًا" or "ok" leaves Needs reply until they
+ * write again. Shown while the lead is waiting, and as Undo right after.
+ */
+function NoReplyNeeded({
+  row,
+  onDone,
+}: {
+  row: InboxRow;
+  onDone: (undo: boolean) => void;
+}) {
+  const [marked, setMarked] = useState(row.cleared);
+  const [busy, setBusy] = useState(false);
+  if (!row.needs_reply && !marked) return null;
+  const press = async (undo: boolean) => {
+    setBusy(true);
+    try {
+      await api("inbox.done", { conversation_id: row.conversation_id, undo });
+      setMarked(!undo);
+      onDone(undo);
+      toast.success(
+        undo
+          ? "Back in Needs reply."
+          : "Marked: no reply needed. It comes back if they write again.",
+      );
+    } catch (e) {
+      toast.error(String((e as Error).message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return marked ? (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={() => void press(true)}
+      className="muted shrink-0 rounded-full border hairline px-3 py-1.5 text-xs hover:text-[color:var(--foreground)] disabled:opacity-60"
+    >
+      No reply needed · Undo
+    </button>
+  ) : (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={() => void press(false)}
+      title="Takes it out of Needs reply until they write again"
+      className="muted shrink-0 rounded-full border hairline px-3 py-1.5 text-xs hover:text-[color:var(--foreground)] disabled:opacity-60"
+    >
+      No reply needed
+    </button>
   );
 }
 
@@ -1010,7 +1091,7 @@ function Owner({
           value={owner ?? ""}
           disabled={busy}
           onChange={e => void move(e.target.value || null)}
-          className={`${field} h-8 max-w-[7.5rem] pe-7 text-xs sm:max-w-[9.5rem]`}
+          className={`${field} h-8 max-w-[11rem] pe-7 text-xs sm:max-w-[9.5rem]`}
         >
           <option value="">Unassigned</option>
           {people.map(p => (

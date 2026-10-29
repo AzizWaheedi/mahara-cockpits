@@ -1,6 +1,6 @@
 // bun test supabase/functions/sales-api/inbox.test.ts
 import { expect, test } from "bun:test";
-import { assignRefusal } from "./inbox.ts";
+import { assignRefusal, makeInbox } from "./inbox.ts";
 import { channelOf, dmWindow, dndFor, lastInboundOn, sendBody, toThread } from "./lib.ts";
 
 const rep = { signed_in: true, seat: true, ghl_user_id: "me" };
@@ -61,4 +61,30 @@ test("do not disturb on Facebook covers Instagram and Facebook replies", () => {
   expect(dndFor(c, "facebook")).toBe(true);
   expect(dndFor(c, "instagram")).toBe(true);
   expect(dndFor(c, "whatsapp")).toBe(false);
+});
+
+test("No reply needed marks the conversation and undo clears it, each audited", async () => {
+  const rows: Record<string, Record<string, unknown>> = {
+    v1: { conversation_id: "v1", contact_id: "c1", needs_reply: true, cleared_at: null, cleared_by: null, last_in_at: "2026-10-29T10:00:00Z" },
+    v2: { conversation_id: "v2", contact_id: "c2", needs_reply: false, cleared_at: null, cleared_by: null, last_in_at: null },
+  };
+  const audits: string[] = [];
+  const svc = async (path: string, init?: { method?: string; body?: unknown }) => {
+    const id = /conversation_id=eq\.([^&]+)/.exec(path)?.[1] ?? "";
+    const r = rows[id];
+    if (!r) return [];
+    if (init?.method === "PATCH") {
+      Object.assign(r, init.body as object);
+      r.needs_reply = r.cleared_at === null;
+    }
+    return [{ ...r }];
+  };
+  const { actions } = makeInbox({ svc, ghl: async () => ({}), audit: async (_w, a) => void audits.push(a) });
+  const who = { signed_in: true, seat: true, email: "rep@x.com" };
+  expect(await actions["inbox.done"](who, { conversation_id: "v1" })).toMatchObject({ cleared: true, needs_reply: false });
+  expect(rows.v1.cleared_by).toBe("rep@x.com");
+  expect(await actions["inbox.done"](who, { conversation_id: "v1", undo: true })).toMatchObject({ cleared: false, needs_reply: true });
+  expect(await actions["inbox.done"](who, { conversation_id: "v2" })).toMatchObject({ unchanged: true });
+  expect(audits).toEqual(["inbox.done", "inbox.undone"]);
+  await expect(actions["inbox.done"](who, { conversation_id: "nope" })).rejects.toThrow("not in the cockpit");
 });

@@ -1,7 +1,6 @@
 import {
   CalendarCheck2,
   ChevronRight,
-  MessageCircleReply,
   PhoneIncoming,
   TriangleAlert,
 } from "lucide-react";
@@ -23,6 +22,7 @@ import {
 import { MarkControls, type MarkHold } from "../components/MarkControls";
 import { type ScopeView, useScope } from "../components/Scope";
 import { YourTasks } from "../components/tasks/YourTasks";
+import { WaitingReplies } from "../components/WaitingReplies";
 import {
   useAfterCall,
   useCalendar,
@@ -32,7 +32,6 @@ import {
   useNow,
   useOwed,
   usePeople,
-  useReplies,
   useScoreRows,
   useSetting,
 } from "../lib/data";
@@ -50,7 +49,7 @@ import {
 } from "../lib/format";
 import { keepOpenRow } from "../lib/heldRows";
 import { liveChip } from "../lib/reschedule";
-import type { CalendarRow, InboxRow, Lead, Me } from "../lib/types";
+import type { CalendarRow, Lead, Me } from "../lib/types";
 
 /**
  * One panel open at a time (a Coming up row's picker or Tell them, an owed
@@ -81,7 +80,6 @@ export default function TodayPage({ me }: { me: Me }) {
   // Held calls still waiting on the lead's quality or why no demo (2026-10-29).
   const after = useAfterCall(mine);
   const newLeads = useNewLeads(48);
-  const replies = useReplies(48);
   const mirror = useMirrorRun();
 
   const [open, setOpen] = useState<Open>(null);
@@ -240,12 +238,7 @@ export default function TodayPage({ me }: { me: Me }) {
               />
             )}
           </SectionCard>
-          <RepliesCard
-            rows={replies.data}
-            error={replies.error}
-            reload={replies.reload}
-            now={now}
-          />
+          <WaitingReplies now={now} />
           <NewLeadsCard
             leads={newLeads.data}
             error={newLeads.error}
@@ -727,84 +720,6 @@ function WeekCard({ me, view }: { me: Me; view: ScopeView }) {
         Saturday to today, from the same rep scorecard the CEO cockpit reads. A
         call nobody marked counts as shown until it is marked.
       </p>
-    </SectionCard>
-  );
-}
-
-const CHANNEL_WORDS: [RegExp, string][] = [
-  [/WHATSAPP/i, "WhatsApp"],
-  [/EMAIL/i, "Email"],
-  [/SMS/i, "SMS"],
-  [/FACEBOOK/i, "Facebook"],
-  [/INSTAGRAM/i, "Instagram"],
-];
-
-/** Leads who wrote back and are waiting on us. */
-function RepliesCard({
-  rows,
-  error,
-  reload,
-  now,
-}: {
-  rows: InboxRow[] | null;
-  error: string | null;
-  reload: () => void;
-  now: number;
-}) {
-  const list = rows ?? [];
-  return (
-    <SectionCard
-      title="Replies waiting"
-      side={<span className="muted text-xs">Last 48 hours</span>}
-      flush
-    >
-      {error ? (
-        <div className="p-4">
-          <Failed what="Replies" error={error} retry={reload} />
-        </div>
-      ) : rows === null ? (
-        <Reading what="the replies" className="px-4 py-3 text-sm" />
-      ) : list.length ? (
-        <ul className="divide-y hairline">
-          {list.slice(0, 8).map(r => (
-            <li key={r.conversation_id}>
-              <Link
-                to={r.contact_id ? `/lead/${r.contact_id}` : "/leads"}
-                className="flex gap-3 px-4 py-2.5 hover:bg-[color:var(--secondary)]"
-              >
-                <MessageCircleReply
-                  className="muted mt-0.5 size-4 shrink-0"
-                  aria-hidden
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium" dir="auto">
-                    {r.contact_name ?? "A lead"}
-                  </p>
-                  <p className="muted text-xs">
-                    {CHANNEL_WORDS.find(([re]) =>
-                      re.test(String(r.last_type)),
-                    )?.[1] ?? "Message"}{" "}
-                    · {ago(r.last_message_at, now)}
-                    {r.unread ? ` · ${r.unread} unread` : ""}
-                  </p>
-                  {r.last_body ? (
-                    <p className="muted mt-0.5 line-clamp-2 text-xs" dir="auto">
-                      {r.last_body}
-                    </p>
-                  ) : null}
-                </div>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <EmptyState
-          compact
-          icon={MessageCircleReply}
-          title="Nobody is waiting on a reply"
-          text="When a lead writes back on WhatsApp, email or text it shows here within three minutes."
-        />
-      )}
     </SectionCard>
   );
 }
