@@ -13,6 +13,7 @@ import {
   Mic,
   PhoneCall,
   Presentation,
+  ReceiptText,
   Sun,
   Target,
   UserCog,
@@ -90,6 +91,13 @@ export const PAGES: Page[] = [
     icon: FileSignature,
     group: "day",
     words: "client contracts sign",
+  },
+  {
+    to: "/invoices",
+    label: "Invoices",
+    icon: ReceiptText,
+    group: "day",
+    words: "invoice deposit payment link ecom whop pdf bill",
   },
   {
     to: "/followups",

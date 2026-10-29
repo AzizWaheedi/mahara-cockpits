@@ -36,6 +36,7 @@ import TodayPage from "./pages/TodayPage";
 const CalendarPage = lazy(() => import("./pages/CalendarPage"));
 const LeadsPage = lazy(() => import("./pages/LeadsPage"));
 const MessagesPage = lazy(() => import("./pages/MessagesPage"));
+const InvoicesPage = lazy(() => import("./pages/InvoicesPage"));
 const LeadPage = lazy(() => import("./pages/LeadPage"));
 
 /**
@@ -357,6 +358,7 @@ export function Seated({
               <Route path="/intelligence" element={<IntelligencePage />} />
               <Route path="/proposals" element={<ProposalsPage me={me} />} />
               <Route path="/contracts" element={<ContractsPage me={me} />} />
+              <Route path="/invoices" element={<InvoicesPage me={me} />} />
               <Route path="/proposal/:id" element={<ProposalPage me={me} />} />
               <Route path="/numbers" element={<NumbersPage me={me} />} />
               <Route path="/goals" element={<GoalsPage me={me} />} />
