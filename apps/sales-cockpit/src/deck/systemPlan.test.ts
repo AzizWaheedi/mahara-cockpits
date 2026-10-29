@@ -8,6 +8,7 @@ import {
   type Box,
   bottomAt,
   CLOSING,
+  CONTRACT,
   DATA,
   DATA_LABEL_OPEN,
   DATA_LENS,
@@ -18,6 +19,7 @@ import {
   LEAD_COUNT,
   LEAD_WAYS,
   LENSES,
+  LOOP,
   LOOP_SAY,
   planLeads,
   restBox,
@@ -167,7 +169,7 @@ describe("the funnel's screens", () => {
   });
 
   test("the lenses under the funnel stay clear of its floor and of the loop's words", () => {
-    const under = [LENSES.sales!, LENSES.closing!, DATA_LENS.en, DATA_LENS.ar];
+    const under = [LENSES.sales!, DATA_LENS.en, DATA_LENS.ar];
     for (const { box: b } of under) {
       expect(b.y).toBeGreaterThan(bottomAt(b.x));
       expect(b.y + b.h).toBeLessThan(LOOP_SAY.y - 18);
@@ -175,6 +177,31 @@ describe("the funnel's screens", () => {
       expect(b.x + b.w).toBeLessThanOrEqual(1784);
     }
     expect(inFunnel(LENSES.filter!.box)).toBe(true);
+  });
+
+  test("the course opens large over the funnel, clear of the header and of the step names", () => {
+    const b = LENSES.closing!.box;
+    // The header stops at 1196 on the closing stop (deck.css); the course
+    // ends at the slide's margin.
+    expect(b.x).toBeGreaterThanOrEqual(1196 + 24);
+    expect(b.x + b.w).toBeLessThanOrEqual(1784);
+    expect(b.y).toBeGreaterThanOrEqual(100);
+    // Over the portal's name, whose Arabic line is about 36 tall.
+    expect(b.y + b.h + 40).toBeLessThanOrEqual(LABELS.data.y);
+    expect(b.w).toBeGreaterThan(LENSES.sales!.box.w);
+  });
+
+  test("the signed contract opens beside the call, past the spout, above the loop", () => {
+    const b = CONTRACT.box;
+    const call = CLOSING.open;
+    expect(b.x).toBeGreaterThanOrEqual(SPOUT_END + 8);
+    expect(b.x).toBeGreaterThanOrEqual(call.x + call.w + 16);
+    expect(b.x + b.w).toBeLessThanOrEqual(1784);
+    // Centred on the call, under the portal's name and over the loop's corner.
+    expect(Math.abs(b.y + b.h / 2 - (call.y + call.h / 2))).toBeLessThan(2);
+    expect(b.y).toBeGreaterThan(LABELS.data.y + 24);
+    const loopTop = Number(/^M\d+,(\d+)/.exec(LOOP)?.[1]);
+    expect(b.y + b.h).toBeLessThan(loopTop - 16);
   });
 
   test("the portal's lens sits beside the grown portal, clear of the time-wasters' way down", () => {
@@ -211,7 +238,8 @@ describe("the crops", () => {
     ["./assets/proof/jr-slack.webp", ALERT],
     ["./assets/proof/jr-form-3.webp", LENSES.filter!],
     ["./assets/proof/jr-booked.webp", LENSES.sales!],
-    ["./assets/proof/pcm-lesson.webp", LENSES.closing!],
+    ["./assets/proof/pcm-course.webp", LENSES.closing!],
+    ["./assets/proof/pcm-contract.webp", CONTRACT],
     ["./assets/portal-results-en.webp", DATA_LENS.en],
     ["./assets/portal-results-ar.webp", DATA_LENS.ar],
   ] as const;
@@ -241,11 +269,9 @@ describe("the crops", () => {
     expect(ALERT.crop.y + ALERT.crop.h).toBeLessThanOrEqual(166);
   });
 
-  test("the objections start below the course's misspelt first title", () => {
-    // pcm-lesson: that title ends at 926, "05: Closing Deposits" starts at 1150.
-    const { crop } = LENSES.closing!;
-    expect(crop.y).toBeGreaterThan(926);
-    expect(crop.y + crop.h).toBeLessThan(1150);
+  test("the course stops above the misspelt title in its second module", () => {
+    // pcm-course is pcm-lesson's top rows; that title starts at 880 there.
+    expect(webpSize("./assets/proof/pcm-course.webp").h).toBeLessThan(880);
   });
 });
 

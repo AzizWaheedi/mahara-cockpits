@@ -164,7 +164,7 @@ export const SALES: Screen = {
   rest: { x: 770, y: 555, s: 366 / 480 },
 };
 
-/** A check-in call with a partner (pcm-call), clear of both walls and inside the spout. */
+/** A consultant call with a partner (pcm-call), clear of both walls and inside the spout. */
 export const CLOSING: Screen = {
   open: { x: 1088, y: 514, w: 336, h: 181 },
   rest: { x: 1150, y: 544, s: 224 / 336 },
@@ -209,15 +209,28 @@ export const LENSES: Partial<Record<PillarKey, Lens>> = {
     746,
     500,
   ),
-  // The objections inside Project Closing Mastery (pcm-lesson), from the
-  // second: the first's title carries a typo in the course itself.
+  // The course drawn large (pcm-course, the top of its lesson page): the
+  // academy, its lessons and a video lesson. It sits over the funnel, in the
+  // corner the header leaves free, clear of the step names under it.
   closing: lens(
-    { img: { w: 1444, h: 1807 }, crop: { x: 50, y: 945, w: 450, h: 185 } },
-    1000,
-    728,
-    420,
+    { img: { w: 1444, h: 770 }, crop: { x: 0, y: 0, w: 1444, h: 770 } },
+    1224,
+    104,
+    560,
   ),
 };
+
+/**
+ * The closing step's second lens: a partner's signed contract (pcm-contract,
+ * the client's details blurred), beside the call, past the spout's end where
+ * a signed lead pours out. The portal under it has stepped back by then.
+ */
+export const CONTRACT: Lens = lens(
+  { img: { w: 1600, h: 913 }, crop: { x: 0, y: 0, w: 1600, h: 913 } },
+  1444,
+  503,
+  340,
+);
 
 /**
  * The portal's lens: the "Projects won" tile of its results screen, the
