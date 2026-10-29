@@ -61,7 +61,9 @@ interface Saved {
 /** Answered or read here since the lead's last message (the copy may not know yet). */
 function after(m: Map<string, string>, r: InboxRow) {
   const at = m.get(r.conversation_id);
-  return at !== undefined && (r.last_in_at ?? "") <= at;
+  if (at === undefined) return false;
+  const lead = r.last_in_at ? Date.parse(r.last_in_at) : 0;
+  return lead <= (at ? Date.parse(at) : 0);
 }
 
 function savedKey(me: Me) {
