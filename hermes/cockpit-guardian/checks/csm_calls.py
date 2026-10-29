@@ -138,6 +138,55 @@ def run_checkin_form(ctx: Context) -> Result:
     return ok(f"The newest 1-1 call notes form came in {ago(age)} ago.")
 
 
+PARITY_DAYS = 7
+PARITY_FIELDS = {"lastNoteOn": "the note's day", "defcon": "DEFCON", "priority": "priority", "notes": "the commitments"}
+PARITY_ACTION = ("Compare the client's newest fRokTITH response with cockpit_csm_call_forms; rerun the typeform source "
+                 f"({RUNBOOK}); roll release N4 back if the store is wrong.")
+
+
+def run_notes_parity(ctx: Context) -> Result:
+    """Release N4 (docs/forms/STAGE2B-CONTRACT.md 4.4): the native feed reads the 1-1 notes from the store and, until
+    the switch-over, compares them with Typeform fRokTITH on every client row (data.notesFrom, data.notesParity). G6
+    needs 7 clean days; cleanSince is the time since which no client has read differs.
+
+    Exactly the contract's four readings, so an incident of this check means only that the notes differ: G6 counts
+    every csm-notes-parity incident of the last 7 days. Whether the feed publishes at all is not this check's
+    question: native-source-producer fails after 90 minutes without a publication, and G6 itself holds while the
+    newest client row (max source_snapshot_at) is over an hour old. The publish time is read as evidence only."""
+    raw = ctx.rows("cockpit_csm_sources", "data,source_snapshot_at", where=[("table_name", "eq", "clients")])
+    pairs = [(r.get("data"), r.get("source_snapshot_at")) for r in raw]
+    pairs = [(d, at) for d, at in pairs if isinstance(d, dict) and d.get("notesFrom")]
+    rows = [d for d, _ in pairs]
+    if not rows:
+        return ok("The native feed still reads the 1-1 notes from Typeform: release N4 is not live.",
+                  evidence={"clients": 0})
+    readings = [(d, d.get("notesParity") if isinstance(d.get("notesParity"), dict) else {}) for d in rows]
+    count = {s: sum(1 for _, p in readings if p.get("state") == s) for s in ("same", "explained", "differs", "none", "off")}
+    stamps = [parse_time(p.get("cleanSince")) for _, p in readings]
+    since = max((t for t in stamps if t is not None), default=None)
+    # Evidence only (never a reading): a person reading "Day k of 7" can see when the rows were last published.
+    published = max((t for t in (parse_time(at) for _, at in pairs) if t is not None), default=None)
+    ev = {"clients": len(rows), **count, "cleanSince": since.isoformat() if since else None,
+          "publishedAt": published.isoformat() if published else None}
+    differs = [(d, p) for d, p in readings if p.get("state") == "differs"]
+    names = sorted(str(d.get("name") or d.get("taskId")) for d, _ in differs)
+    if differs:
+        ev["differing"] = names[:20]
+        order = list(PARITY_FIELDS)
+        fields = sorted({str(f) for _, p in differs for f in (p.get("fields") or [])},
+                        key=lambda f: (order.index(f) if f in order else len(order), f))
+        said = ", ".join(PARITY_FIELDS.get(f, f) for f in fields) or "a different newest form"
+        return warn(f"For {len(differs)} clients the 1-1 notes read from the store differ from Typeform: "
+                    f"{', '.join(names[:12])}{'…' if len(names) > 12 else ''} ({said}).", evidence=ev,
+                    items=[_tight(n) for n in names], action=PARITY_ACTION)
+    if count["off"] == len(rows):
+        return ok("The 1-1 notes are native; the Typeform comparison is off.", evidence=ev)
+    day = min(PARITY_DAYS, int((ctx.now - since).total_seconds() // 86400)) if since else 0
+    n = count["same"] + count["explained"]
+    return ok(f"Day {day} of {PARITY_DAYS}: the 1-1 notes read from the store match Typeform for {n} clients "
+              f"({count['explained']} explained by timing or a hand match).", evidence=ev)
+
+
 def _registered(detail: object) -> bool:
     """detail->>'registered' = 'true' on the fathom-webhook sync row (cockpit_forms_key_put and _mark write it)."""
     return isinstance(detail, dict) and str(detail.get("registered")).lower() == "true"
@@ -279,6 +328,14 @@ CHECKS = [
           reads="max(submitted_at) of cockpit_csm_call_forms with form_kind checkin",
           threshold=f"Older than {FORM_MAX_DAYS} days: warn.", run=run_checkin_form, owner="the CSM lead",
           confirm=2, action="Ask the CSMs for their notes; compare Typeform with the store."),
+    Check(id="csm-notes-parity", area="workers", name="1-1 notes from the store match Typeform",
+          means="The native feed reads the 1-1 notes from the store (release N4) and they read the same as Typeform "
+                "until the switch-over, for seven clean days before it.",
+          severity="medium",
+          reads="cockpit_csm_sources clients: data.notesFrom and data.notesParity (source_snapshot_at as evidence only)",
+          threshold="Any client whose notes read differs: warn. A feed that stops publishing is native-source-producer's "
+                    "question, not this one's.",
+          run=run_notes_parity, owner="the tech lead", confirm=3, action=PARITY_ACTION),
     Check(id="csm-fathom-webhook", area="workers", name="Fathom webhook delivers",
           means="Fathom pushes each Customer Success recording to the cockpit within minutes of the call.",
           severity="low",
