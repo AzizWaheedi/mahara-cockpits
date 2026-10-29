@@ -5,8 +5,9 @@
  * It reads git: the files changed since the build's base plus the untracked
  * ones. The base is where the branch leaves main (the merge-base with
  * origin/main: 86ee4e84 when the build began, 3f9f5c41 after the rebase of
- * 2026-10-26), so main's own commits are never counted as this build's. It
- * runs only on the build's own branch (tickets-1026), before the build is
+ * 2026-10-26; b642283b for the department map round), so main's own commits
+ * are never counted as this build's. It runs only on a build branch of this
+ * contract (tickets-1026, then tickets-look-1028), before that build is
  * committed onto main; on any other checkout it is skipped. Not in
  * scripts/ship.sh for that reason.
  */
@@ -15,15 +16,24 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
-const BRANCH = "tickets-1026";
+// Each build branch, with the base to use if git cannot find the merge-base.
+const BRANCHES: Record<string, string> = {
+  "tickets-1026": "3f9f5c41",
+  // The department map round (2026-10-28), from origin/main b642283b.
+  "tickets-look-1028": "b642283b",
+};
 
 function git(...args: string[]): string | null {
   const out = spawnSync("git", args, { cwd: ROOT, encoding: "utf8" });
   return out.status === 0 ? out.stdout : null;
 }
-const BASE = git("merge-base", "HEAD", "origin/main")?.trim() || "3f9f5c41";
+const BRANCH = git("rev-parse", "--abbrev-ref", "HEAD")?.trim() ?? "";
+const BASE =
+  git("merge-base", "HEAD", "origin/main")?.trim() ||
+  BRANCHES[BRANCH] ||
+  "3f9f5c41";
 const onBranch =
-  git("rev-parse", "--abbrev-ref", "HEAD")?.trim() === BRANCH &&
+  Object.hasOwn(BRANCHES, BRANCH) &&
   git("cat-file", "-e", `${BASE}^{commit}`) !== null;
 
 const APPS = [
@@ -43,6 +53,10 @@ const OWNERS: Record<string, string[]> = {
     "scripts/gen-request-types-seed.ts",
     "apps/media-buyer-cockpit/scripts/requests-supabase.test.ts",
     "apps/media-buyer-cockpit/scripts/request-types-seed.test.ts",
+    // tickets-look-1028 (2026-10-28): every seat reads each part's runs-when
+    // choices and SOP steps in cockpit_request_types_read.
+    "supabase/migrations/20261028a_request_types_read_routes.sql",
+    "apps/media-buyer-cockpit/scripts/request-routes-supabase.test.ts",
   ],
   writer: [
     "index.ts",
@@ -61,7 +75,11 @@ const OWNERS: Record<string, string[]> = {
     .map(f => `supabase/functions/clickup-writeback/${f}`)
     // Retest round 2: the comment watch never digests the writer's own card
     // comments (a request's link comment, any Cockpit ref).
-    .concat(["watch.ts", "watch.test.ts"].map(f => `supabase/functions/comment-watch/${f}`)),
+    .concat(
+      ["watch.ts", "watch.test.ts"].map(
+        f => `supabase/functions/comment-watch/${f}`,
+      ),
+    ),
   "mirror-alerts": [
     "supabase/migrations/20261026t_task_alerts.sql",
     "apps/media-buyer-cockpit/scripts/task-alerts-supabase.test.ts",
@@ -116,6 +134,12 @@ const OWNERS: Record<string, string[]> = {
       "requests-page.test.tsx",
       "requests-settings.test.tsx",
     ].map(f => `apps/media-buyer-cockpit/scripts/${f}`),
+    // tickets-look-1028 (2026-10-28): IBM Plex Sans Arabic follows Geist in
+    // --font-sans, for Arabic client names on requests and tasks, as in the
+    // other three apps; the media buyer app also loads it now (client
+    // success already did, in index.html).
+    "apps/client-success-cockpit/src/index.css",
+    "apps/media-buyer-cockpit/src/index.css",
   ],
   "cockpit-screens": [
     ...inAll([

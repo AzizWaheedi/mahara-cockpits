@@ -1,15 +1,61 @@
 import {
   ArrowUpRight,
+  Bell,
+  BookOpen,
+  Cable,
+  CalendarClock,
+  CalendarDays,
+  CalendarX,
+  Check,
+  ChevronRight,
   CircleAlert,
   CircleCheck,
   CircleDashed,
   Clock,
-  CornerDownRight,
+  Contact,
+  CreditCard,
+  FileExclamationPoint,
+  FileLock,
+  Funnel,
+  Headset,
+  HeartHandshake,
+  Inbox,
+  LayoutGrid,
+  List,
+  ListChecks,
   LoaderCircle,
+  Lock,
+  LogOut,
+  MapPin,
+  Megaphone,
+  MessageCircleWarning,
+  MessagesSquare,
+  Palette,
+  PanelsTopLeft,
+  Pause,
+  PenLine,
+  PhoneForwarded,
+  PhoneIncoming,
+  Play,
+  ReceiptText,
+  ScrollText,
   Search,
+  Send,
+  Share2,
+  Signpost,
+  SlidersHorizontal,
+  Split,
+  SquarePlus,
+  Target,
+  Ticket,
+  UserRoundMinus,
+  UserRoundPlus,
+  Wrench,
+  X,
 } from "lucide-react";
 import {
   type ReactNode,
+  type RefObject,
   useCallback,
   useEffect,
   useId,
@@ -24,71 +70,110 @@ import {
   previewRequest,
   readRequest,
   readRequestClients,
+  readRequests,
   readRequestTypes,
   submitRequest,
 } from "@/lib/requestsClient";
 import {
+  answerTeamLines,
+  bodyFields,
   CLICKUP_FORM_URL,
   type ClientOption,
   carriedDueOn,
+  choiceControl,
   cleanAnswers,
   clientField,
+  countWords,
   dayLabel,
-  deliveredNote,
+  display,
+  dueChoices,
   dueField,
+  everyType,
   type FieldView,
   fieldOfSentence,
-  groupTypes,
+  GENERAL_KEYS,
+  kuwaitClock,
   kuwaitToday,
+  type LaneWorks,
   LIMITS,
-  ownerNote,
+  markWords,
+  numberWord,
   PRIORITIES,
   type Priority,
-  partHeld,
-  partialNext,
   partMoving,
   priorityField,
+  questionGroups,
   REQUEST_SENTENCES,
+  type ReachPiece,
+  type RequestRow,
+  ROUTE_WORDS,
+  type RouteLane,
+  type RouteModel,
   type RoutePart,
   type RoutePreview,
+  reachPieces,
   requestsOpen,
+  routeModel,
+  routeNote,
+  routesKnown,
+  routingFields,
+  type SentLane,
+  type SentModel,
   type SubmitResult,
-  sentLines,
-  sentTone,
+  searchCountWords,
+  searchLeads,
+  searchTypes,
+  sentModel,
+  TEAM_LABEL,
+  TEAM_ORDER,
+  type Team,
+  type TypeFact,
   type TypesRead,
   type TypeView,
+  taskNameParts,
+  teamByAnswer,
+  teamExamples,
+  teamLook,
+  teamRelated,
+  teamTypes,
+  typeFacts,
+  typeLook,
   validateAnswers,
 } from "@/lib/requestsCore";
 import { useTaskSeat } from "@/lib/taskSeat";
 import "./requests.css";
 
 /*
- * Hallmark · component: request form · genre: modern-minimal (the cockpits')
- * · theme: each app's own tokens (docs/DESIGN.md is the locked system)
- * states: default · hover · focus · active · disabled · loading · error · success
- * pre-emit critique: P4 H5 E4 S5 R4 V4
+ * The department map (tickets-look-1028). The CEO, 2026-10-28: "make it ...
+ * easy for the team to understand what is for which department and what
+ * happens exactly ... Just don't make it like a boring form."
  *
- * Design plan (CONTRACT.md 6.1, 6.4; frontend-design and Hallmark, component
- * scope, no macrostructure):
- * - Subject: someone on a thirteen-person agency team asking another team
- *   for work. The job: pick the right request, answer only its questions,
- *   and know before pressing Send exactly where it lands.
- * - Tokens: the app's own. --primary (Mahara teal) for the one action and
- *   the chosen row, var(--tk-ink) (requests.css) for teal marks in
- *   light mode, --destructive for a refusal, --success for sent. No new
- *   colour, no gradient, no glow.
- * - Type: Geist; 14px inputs and rows, 13px route and help lines; Geist Mono
- *   only for the small group and route kickers. Client and task names sit in
- *   <bdi dir="auto"> so Arabic names keep their order.
- * - Layout: one column, no card of its own (the page or the client page
- *   gives it one). Pick, answer, due and priority, the route, Send.
- * - Signature: the route line. Under the questions, before Send, one line per
- *   task: Goes to Operations / Tech as "Acme - Client pause (Tech)". Owner:
- *   the systems manager. Uses the ClickUp template ... Due Wed 28 Oct. A
- *   CornerDownRight mark in teal starts each line, the way a routing slip
- *   points onward.
- * - Copy: plain and active. "Send request" becomes "Request sent." An error
- *   is the server's own sentence, under the field it names.
+ * Design plan (frontend-design skill; docs/DESIGN.md is the locked system):
+ * - Subject and job: a thirteen-person agency team asking another team for
+ *   work. Find the right team and request in seconds, answer only what it
+ *   needs, and know before and after Send where it lands, who owns it, what
+ *   they work from, by when and how you hear back.
+ * - Tokens: each app's own (--card, --foreground, --muted-foreground,
+ *   --border, --primary as the one accent, --success, --warning and
+ *   --destructive on marks only), mixed in requests.css. No department
+ *   colour: a department is a lucide mark in a seal, its ClickUp name, one
+ *   plain line and its place on the map.
+ * - Type: Geist; 20px plate and sent headings, 15-16px tile and lane names,
+ *   14px rows and inputs, 13px lines; Geist Mono only for the short
+ *   uppercase kickers and the "Checked 14:03" stamp.
+ * - Layout: container queries on the form's own width. The map in three,
+ *   two or one column; a chosen request as a plate, then the questions
+ *   beside the route from 880px (the route a sticky read-out; the held
+ *   note, the error summary and Send under the questions); one column
+ *   below, the route ending in Send. No box scrolls inside the page.
+ * - Signature: the route on the map. A vertical route of stops drawn in CSS
+ *   borders: Now, the held stop when it would be held, the decision at the
+ *   fork, one lane per department (dashed "May go to" lanes before the
+ *   deciding answer, side by side only for exactly two), How they do it,
+ *   Due, After that. After Send the same drawing becomes the tracker.
+ * - Copy: plain and active, the server's own sentences for every state,
+ *   each said once. "Send request" becomes "Save request" while a send
+ *   would be held.
  */
 
 export type RequestFormProps = {
@@ -121,7 +206,7 @@ export type RequestFormProps = {
    * ticket a teammate routed first is never asked for twice.
    */
   replacesIfOpen?: boolean;
-  /** Tighter spacing and a shorter type list, inside another card. */
+  /** Smaller tiles and two shortcuts a team, inside another card. */
   compact?: boolean;
   /** Called once a request is sent (not for a duplicate). */
   onSent?: (result: SubmitResult) => void;
@@ -146,6 +231,72 @@ type Carried = {
   priority?: Priority;
   dueOn?: string;
 };
+
+/** The lucide marks the looks name (requestsCore keeps names, not icons). */
+const ICONS: Record<string, typeof Ticket> = {
+  Cable,
+  CalendarClock,
+  CalendarX,
+  Contact,
+  CreditCard,
+  FileExclamationPoint,
+  FileLock,
+  Funnel,
+  Headset,
+  HeartHandshake,
+  Inbox,
+  ListChecks,
+  LogOut,
+  MapPin,
+  Megaphone,
+  MessageCircleWarning,
+  MessagesSquare,
+  Palette,
+  PanelsTopLeft,
+  Pause,
+  PenLine,
+  PhoneForwarded,
+  PhoneIncoming,
+  Play,
+  ReceiptText,
+  ScrollText,
+  Share2,
+  Signpost,
+  SlidersHorizontal,
+  SquarePlus,
+  Target,
+  Ticket,
+  UserRoundMinus,
+  UserRoundPlus,
+  Wrench,
+};
+
+function Mark({ name, className }: { name: string; className?: string }) {
+  const Icon = ICONS[name] ?? Ticket;
+  return <Icon aria-hidden className={className} />;
+}
+
+/** A department's or a request's mark in its seal. */
+function Seal({
+  icon,
+  size = "md",
+  dashed = false,
+}: {
+  icon: string;
+  size?: "sm" | "md" | "lg";
+  dashed?: boolean;
+}) {
+  return (
+    <span
+      className="rq-seal"
+      data-size={size}
+      data-dashed={dashed || undefined}
+      aria-hidden
+    >
+      <Mark name={icon} />
+    </span>
+  );
+}
 
 /**
  * Ask a team: the request form (CONTRACT.md 6.4). Shared byte for byte by
@@ -177,19 +328,57 @@ export function RequestForm({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [attempted, setAttempted] = useState(false);
+  // Each press of Send: the error summary is said again on every press.
+  const [presses, setPresses] = useState(0);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState<SubmitResult | null>(null);
   // Whether requests were open for the sent request: its words say "Saved"
   // until they are, never "Sending" or "In {list}".
   const [sentOpen, setSentOpen] = useState(true);
+  // The press, on this device, in Kuwait time ("Sent at 14:02").
+  const [sentAt, setSentAt] = useState<string | null>(null);
+  // Filed again, and its old form ticket was routed meanwhile.
+  const [sentAlone, setSentAlone] = useState(false);
+  // The sent view's reads: the last one, and whether the two minutes ran out.
+  const [checks, setChecks] = useState<{
+    at: string | null;
+    stopped: boolean;
+  }>({ at: null, stopped: false });
   const [duplicate, setDuplicate] = useState<SubmitResult | null>(null);
   const [preview, setPreview] = useState<Load<RoutePreview> | null>(null);
+  // What the shown preview was read for: its choices and its client. The
+  // route is drawn from these, never from answers a newer preview has not
+  // read yet, so it changes only when that preview lands (review BT-4).
+  const [readFor, setReadFor] = useState<{
+    choices: Record<string, string>;
+    client: string | null;
+  } | null>(null);
+  // The error summary, said once a press through a polite line that is on
+  // the page before it, filled once focus is on the first answer to fix;
+  // the visible summary is not live (review A11Y-02).
+  const [announce, setAnnounce] = useState("");
+  // Before the deciding answer: each answer's own preview, for the owners
+  // of the lanes that may run.
+  const [choicePreviews, setChoicePreviews] = useState<Record<
+    string,
+    RoutePart[]
+  > | null>(null);
   // True while a new preview is being read over the last one.
   const [previewBusy, setPreviewBusy] = useState(false);
+  const [recentRows, setRecentRows] = useState<RequestRow[]>([]);
   // One id per request: a retry of the same press reuses it (2.5 step 3).
   const requestId = useRef(newRequestId());
   const inFlight = useRef(false);
   const formRef = useRef<HTMLDivElement>(null);
+  const plateRef = useRef<HTMLHeadingElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const dupRef = useRef<HTMLHeadingElement>(null);
+  const retryRef = useRef<HTMLButtonElement>(null);
+  // Where focus goes after the next render: the chosen request's plate after
+  // a pick, the search after Change or "Ask for something else", the
+  // duplicate's heading when the request is already open (research 2.12):
+  // a keyboard never lands on the page body.
+  const focusNext = useRef<"plate" | "search" | "dup" | null>(null);
   const baseId = useId();
   // What the request this form starts from brings (Carried): it goes with
   // whichever type is picked, so a Change or a type that is off never drops
@@ -217,6 +406,21 @@ export function RequestForm({
     if (seat.ready && client) void loadTypes();
   }, [seat.ready, client, loadTypes]);
 
+  // The seat's own recent requests, for the row of shortcuts: one read, and
+  // a failed one changes nothing.
+  useEffect(() => {
+    if (!seat.ready || !client) return;
+    let live = true;
+    readRequests(client, "mine", 20)
+      .then(read => {
+        if (live) setRecentRows(read.rows);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [seat.ready, client]);
+
   // On a client page only the types that take a client make sense.
   const offered = useMemo(() => {
     if (types.status !== "ready") return [];
@@ -226,22 +430,48 @@ export function RequestForm({
       : all;
   }, [types, source, presetClient]);
   const type = offered.find(t => t.key === typeKey) ?? null;
+  // The client that goes with the request: only a type that asks for one
+  // takes one, so nothing else ever previews, sends or titles it.
+  const chosenClient = type && clientField(type) ? picked : null;
+  const chosenId = chosenClient?.taskId ?? null;
 
-  const choose = useCallback((next: TypeView | null) => {
-    setTypeKey(next?.key ?? null);
-    setErrors({});
-    setFormError(null);
-    setAttempted(false);
-    setPreview(null);
-    if (!next) return;
-    const kept = carried.current;
-    setDueOn(carriedDueOn(kept.dueOn) ?? next.dueDefault);
-    setPriority(
-      PRIORITIES.find(p => p.key === kept.priority)?.key ?? next.priority,
+  const recent = useMemo(() => {
+    const out: TypeView[] = [];
+    const rows = [...recentRows].sort((a, b) =>
+      b.createdAt.localeCompare(a.createdAt),
     );
-    setAnswers(startAnswers(next, kept.details, kept.answers));
-    setPresetOff(null);
-  }, []);
+    for (const r of rows) {
+      const t = offered.find(x => x.key === r.typeKey);
+      if (t && !out.includes(t)) out.push(t);
+      if (out.length === 3) break;
+    }
+    return out;
+  }, [recentRows, offered]);
+
+  const choose = useCallback(
+    (next: TypeView | null) => {
+      setTypeKey(next?.key ?? null);
+      setErrors({});
+      setFormError(null);
+      setAttempted(false);
+      setPreview(null);
+      setReadFor(null);
+      setChoicePreviews(null);
+      if (!next) return;
+      // A request that asks for no client sends none: a client picked for
+      // another request never goes with it (a fixed client never offers
+      // such a type).
+      if (!clientField(next)) setPicked(presetClient ?? null);
+      const kept = carried.current;
+      setDueOn(carriedDueOn(kept.dueOn) ?? next.dueDefault);
+      setPriority(
+        PRIORITIES.find(p => p.key === kept.priority)?.key ?? next.priority,
+      );
+      setAnswers(startAnswers(next, kept.details, kept.answers));
+      setPresetOff(null);
+    },
+    [presetClient],
+  );
 
   // The preset type, once the types are read. A type that is not on the
   // form is said once, and what the request brings waits for the type the
@@ -269,16 +499,39 @@ export function RequestForm({
     );
   }, [types, offered, presetType, choose]);
 
+  // Focus follows the person's own move: onto the plate after a pick, back
+  // to the search after Change. A target not on the page yet is waited for:
+  // after "Try again" the types are read first, then the search takes focus,
+  // or the next "Try again" if the read fails again (review T2-a11y-01).
+  useEffect(() => {
+    const next = focusNext.current;
+    if (!next) return;
+    const target =
+      next === "plate"
+        ? plateRef.current
+        : next === "dup"
+          ? dupRef.current
+          : (searchRef.current ?? retryRef.current);
+    if (!target) return;
+    focusNext.current = null;
+    target.focus();
+  });
+
   // Re-check a field once the person has pressed Send and then fixes it.
   useEffect(() => {
     if (!attempted || !type) return;
-    setErrors(validateAnswers(type, answers, picked?.taskId ?? null, dueOn));
-  }, [attempted, type, answers, picked, dueOn]);
+    setErrors(validateAnswers(type, answers, chosenId, dueOn));
+  }, [attempted, type, answers, chosenId, dueOn]);
+  // A fix silences the press's summary line: the visible summary shrinks
+  // quietly, and only the next press says it again.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: cleared on each change of these
+  useEffect(() => {
+    setAnnounce("");
+  }, [type, answers, chosenId, dueOn]);
 
-  // The route line: re-read when the type, the client or a choice changes
-  // (a choice is the only kind of answer a part's "runs when" reads).
-  // Only the choices decide which tasks run and where they go, so the
-  // preview is read again when one of them changes, not on every key press.
+  // The route: re-read when the type, the client or a choice changes (a
+  // choice is the only kind of answer a part's "runs when" reads), never on
+  // every key press.
   const choiceKey = useMemo(() => {
     if (!type) return "{}";
     const picks: Record<string, string> = {};
@@ -291,17 +544,37 @@ export function RequestForm({
     if (!client || !type) return;
     const seq = ++previewSeq.current;
     const choices = JSON.parse(choiceKey) as Record<string, string>;
+    // The one deciding question still unanswered, when the database says
+    // which tasks it decides: each of its answers is read too, so the lanes
+    // that may run name their real owner (never one that does not exist).
+    const deciding = routesKnown(type)
+      ? routingFields(type).filter(f => !choices[f.key])
+      : [];
+    const ask = deciding.length === 1 ? deciding[0] : null;
     setPreview(p => (p?.status === "ready" ? p : { status: "loading" }));
     setPreviewBusy(true);
     const timer = setTimeout(async () => {
+      const clientId = chosenId;
       try {
-        const data = await previewRequest(
-          client,
-          type.key,
-          picked?.taskId ?? null,
-          choices,
+        const [data, ...each] = await Promise.all([
+          previewRequest(client, type.key, clientId, choices),
+          ...(ask?.options ?? []).map(o =>
+            previewRequest(client, type.key, clientId, {
+              ...choices,
+              [ask?.key ?? ""]: o.id,
+            }).catch(() => null),
+          ),
+        ]);
+        if (seq !== previewSeq.current) return;
+        setPreview({ status: "ready", data });
+        setReadFor({ choices, client: clientId });
+        setChoicePreviews(
+          ask
+            ? Object.fromEntries(
+                (ask.options ?? []).map((o, i) => [o.id, each[i]?.parts ?? []]),
+              )
+            : null,
         );
-        if (seq === previewSeq.current) setPreview({ status: "ready", data });
       } catch (e) {
         if (seq === previewSeq.current)
           setPreview({ status: "error", error: errorWords(e) });
@@ -310,7 +583,7 @@ export function RequestForm({
       }
     }, 250);
     return () => clearTimeout(timer);
-  }, [client, type, picked?.taskId, choiceKey]);
+  }, [client, type, chosenId, choiceKey]);
 
   const writer =
     preview?.status === "ready"
@@ -326,8 +599,30 @@ export function RequestForm({
       ? !writer.held
       : requestsOpen(
           types.status === "ready" ? types.data.writer : null,
-          picked?.taskId ?? null,
+          chosenId,
         );
+  // The writer has not reported (mode unknown): held words follow the
+  // server's hedge, never "once requests open" (review CL-04).
+  const quiet =
+    ((writer as { mode?: string } | null)?.mode ??
+      (types.status === "ready" ? types.data.writer.mode : null)) === "unknown";
+
+  // Requests that stop being open to the seat partway through swap the
+  // questions for the writer's note: the control the person was on goes, so
+  // focus moves to the note that replaces it, never the page body (CONTRACT
+  // 6.7 Focus; review T3-a11y-behaviour-02).
+  const off = Boolean(writer && !writer.canSend);
+  const questionsShown = Boolean(type) && !off && !sent && !duplicate;
+  const offRef = useRef<HTMLDivElement>(null);
+  const hadQuestions = useRef(false);
+  useEffect(() => {
+    const before = hadQuestions.current;
+    hadQuestions.current = questionsShown;
+    if (!before || questionsShown || !type || !off || sent || duplicate) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && active.isConnected) return;
+    offRef.current?.focus();
+  }, [questionsShown, type, off, sent, duplicate]);
 
   // After a send, read the request again while a task is on its way, so the
   // panel says "In {list}" only once ClickUp has it. Every 5 seconds for two
@@ -342,6 +637,7 @@ export function RequestForm({
       reads += 1;
       if (reads > 24) {
         clearInterval(timer);
+        if (live) setChecks(c => ({ ...c, stopped: true }));
         return;
       }
       try {
@@ -349,6 +645,7 @@ export function RequestForm({
         if (!live) return;
         setSent(s => (s && s.id === sentId ? { ...s, parts: next.parts } : s));
         if (typeof next.held === "boolean") setSentOpen(!next.held);
+        setChecks({ at: new Date().toISOString(), stopped: false });
       } catch {
         // The panel keeps what it last knew.
       }
@@ -362,12 +659,25 @@ export function RequestForm({
   const setAnswer = (key: string, value: string) =>
     setAnswers(a => ({ ...a, [key]: value }));
 
-  const focusField = (key: string) => {
-    const el = formRef.current?.querySelector<HTMLElement>(
-      `[data-field="${key}"]`,
-    );
-    el?.focus();
+  // After the render that shows it (a due day's own date input opens with
+  // its error), so the field is there to take focus. `then` runs once focus
+  // has moved.
+  const focusField = (key: string, then?: () => void) => {
+    setTimeout(() => {
+      formRef.current
+        ?.querySelector<HTMLElement>(`[data-field="${key}"]`)
+        ?.focus();
+      then?.();
+    }, 0);
   };
+
+  // The fields in the order the form shows them, so the first error focused
+  // is the first one on screen.
+  const screenOrder = (t: TypeView) => [
+    ...(clientField(t) ? [clientField(t)?.key ?? ""] : []),
+    ...questionGroups(t).flatMap(g => g.fields.map(f => f.key)),
+    dueField(t)?.key ?? "",
+  ];
 
   async function send() {
     if (inFlight.current || !client) return;
@@ -376,17 +686,21 @@ export function RequestForm({
       return;
     }
     setAttempted(true);
+    setPresses(n => n + 1);
     setFormError(null);
-    const problems = validateAnswers(
-      type,
-      answers,
-      picked?.taskId ?? null,
-      dueOn,
-    );
+    const problems = validateAnswers(type, answers, chosenId, dueOn);
     setErrors(problems);
-    const first = Object.keys(problems)[0];
-    if (first) {
-      focusField(first);
+    const first = screenOrder(type).find(k => problems[k]);
+    if (first || Object.keys(problems).length) {
+      // Said after focus has moved, politely, so it waits behind the focused
+      // field's own error and a focus change never cuts it off; a second
+      // press with the same errors is told again (a trailing space).
+      const said = `${summaryWords(
+        problems,
+        screenOrder(type),
+        lostChoices(type).map(f => f.key),
+      )}${presses % 2 ? "\u00a0" : ""}`;
+      focusField(first ?? Object.keys(problems)[0], () => setAnnounce(said));
       return;
     }
     if (
@@ -394,7 +708,9 @@ export function RequestForm({
       preview.data.parts.length === 0 &&
       preview.data.note
     ) {
-      setFormError(preview.data.note);
+      // Said as the route says it: never "Pick ..." for a choice ClickUp no
+      // longer gives (review BT-6, S4).
+      setFormError(routeNote(type, preview.data.note));
       return;
     }
     inFlight.current = true;
@@ -403,7 +719,7 @@ export function RequestForm({
       const body = {
         requestId: requestId.current,
         typeKey: type.key,
-        clientTaskId: picked?.taskId ?? null,
+        clientTaskId: chosenId,
         answers: cleanAnswers(type, answers),
         dueOn: dueOn || null,
         priority,
@@ -427,19 +743,17 @@ export function RequestForm({
         result = await submitRequest(client, { ...body, replacesTaskId: null });
       }
       if (result.state === "duplicate") {
+        focusNext.current = "dup";
         setDuplicate(result);
       } else {
-        const reached = typeof result.held === "boolean" ? !result.held : open;
-        setSentOpen(reached);
+        // The sent view is the one voice for the event: focus moves to its
+        // heading, so no toast says it again, and a held request never shows
+        // a success mark.
+        setSentOpen(typeof result.held === "boolean" ? !result.held : open);
+        setSentAt(new Date().toISOString());
+        setSentAlone(alone);
+        setChecks({ at: null, stopped: false });
         setSent(result);
-        seat.toast.success(
-          alone
-            ? REQUEST_SENTENCES.sentAlone
-            : result.parts.length &&
-                result.parts.every(p => partHeld(p, reached))
-              ? REQUEST_SENTENCES.saved
-              : REQUEST_SENTENCES.sent,
-        );
         onSent?.(result);
       }
     } catch (e) {
@@ -457,10 +771,12 @@ export function RequestForm({
 
   function again() {
     requestId.current = newRequestId();
+    focusNext.current = "search";
     // Something else: nothing of the request this form started from.
     carried.current = {};
     setSent(null);
     setDuplicate(null);
+    setSentAlone(false);
     setPicked(presetClient ?? null);
     choose(null);
     setAnswers({});
@@ -490,13 +806,17 @@ export function RequestForm({
     return (
       <div className={root}>
         <div className="rq-alert" role="alert">
-          <CircleAlert aria-hidden className="rq-alert-icon" />
+          <CircleAlert aria-hidden />
           <div>
             <p>{types.error}</p>
             <button
+              ref={retryRef}
               type="button"
               className="rq-btn rq-btn-outline rq-btn-sm"
-              onClick={() => void loadTypes()}
+              onClick={() => {
+                focusNext.current = "search";
+                void loadTypes();
+              }}
             >
               Try again
             </button>
@@ -505,89 +825,63 @@ export function RequestForm({
       </div>
     );
 
-  if (sent) {
-    // The mark says where the request stands, never a success check beside
-    // a task that did not go: refused, on its way, saved until requests
-    // open, or in ClickUp.
-    const tone = sentTone(sent.parts, sentOpen);
-    const Mark =
-      tone === "failed"
-        ? CircleAlert
-        : tone === "moving"
-          ? CircleDashed
-          : tone === "held"
-            ? Clock
-            : CircleCheck;
-    const settled = tone === "failed" && !moving;
-    const landed = sent.parts.some(p => p.state === "delivered");
+  if (sent && type)
     return (
       <div className={root}>
-        <div className="rq-sent" data-tone={tone} role="status">
-          <Mark aria-hidden className="rq-sent-icon" />
-          <div className="rq-sent-body">
-            {sentLines(sent.parts, sentOpen).map((line, i) => {
-              const note = deliveredNote(sent.parts[i]);
-              return (
-                <div key={sent.parts[i]?.part ?? line}>
-                  <p className="rq-sent-line">{line}</p>
-                  {note ? (
-                    <p className="rq-muted rq-warn-note">{note}</p>
-                  ) : null}
-                </div>
-              );
-            })}
-            {settled ? (
-              <>
-                <p className="rq-muted">
-                  {landed ? partialNext(sent) : REQUEST_SENTENCES.sentFailed}
-                </p>
-                <a
-                  className="rq-link"
-                  href={CLICKUP_FORM_URL}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Open the ClickUp request form
-                  <ArrowUpRight aria-hidden className="rq-link-icon" />
-                </a>
-              </>
-            ) : null}
-          </div>
-        </div>
-        <div className="rq-actions">
-          <button
-            type="button"
-            className="rq-btn rq-btn-outline"
-            onClick={again}
-          >
-            Ask for something else
-          </button>
-          {tone === "failed" ? (
-            <PortalLink
-              to={`/requests?id=${encodeURIComponent(sent.id)}`}
-              className="rq-btn rq-btn-ghost"
-            >
-              Open the request
-            </PortalLink>
-          ) : (
-            <PortalLink
-              to="/requests?view=mine"
-              className="rq-btn rq-btn-ghost"
-            >
-              See it in My requests
-            </PortalLink>
-          )}
-        </div>
+        <SentView
+          type={type}
+          model={sentModel(sent.parts, sentOpen, {
+            stopped: checks.stopped,
+            quiet,
+          })}
+          sentId={sent.id}
+          client={chosenClient}
+          answers={answers}
+          dueOn={dueOn}
+          priority={priority}
+          sentAt={sentAt}
+          alone={sentAlone}
+          checks={checks}
+          moving={moving}
+          heldNote={writer?.note?.trim() || null}
+          quiet={quiet}
+          onAgain={again}
+        />
       </div>
     );
-  }
 
   if (duplicate)
     return (
       <div className={root}>
-        <div className="rq-alert" role="status">
-          <CircleAlert aria-hidden className="rq-alert-icon rq-warn" />
-          <p>{duplicate.note}</p>
+        {/* Focus goes to the heading, which carries the server's note as its
+            description: one voice, never a status inserted with its words
+            (review A11Y-05). */}
+        <div className="rq-dup">
+          <CircleAlert aria-hidden className="rq-dup-icon" />
+          <div>
+            <h3
+              ref={dupRef}
+              tabIndex={-1}
+              className="rq-sent-title"
+              aria-describedby={duplicate.note ? `${baseId}-dup` : undefined}
+            >
+              Already open
+              {type ? (
+                <>
+                  : {type.label}
+                  {chosenClient ? (
+                    <>
+                      {" "}
+                      for <bdi dir="auto">{chosenClient.name}</bdi>
+                    </>
+                  ) : null}
+                </>
+              ) : null}
+            </h3>
+            <p id={`${baseId}-dup`} className="rq-sent-sub">
+              <WithName text={duplicate.note ?? ""} name={chosenClient?.name} />
+            </p>
+          </div>
         </div>
         <div className="rq-actions">
           {duplicate.duplicateOf ? (
@@ -609,175 +903,229 @@ export function RequestForm({
       </div>
     );
 
-  const due = type ? dueField(type) : null;
-  const prio = type ? priorityField(type) : null;
   const today = kuwaitToday();
 
   // The writer's answer before anyone types (2.8): said once at the top
-  // until a type is picked, then in place of Send.
+  // until a type is picked, then in place of the questions and Send.
   const writerOff = writer && !writer.canSend ? writer : null;
   // A seat that may file while requests are not open (editors, admins, the
   // CEO in a dry run) is told the request is saved, not sent.
   const writerNote =
     writer?.canSend && writer.note?.trim() ? writer.note.trim() : null;
+  const held = Boolean(writer?.canSend) && !open;
   // The words a request brought that the picked type has no question for
   // (an old ticket made a "Card missing" request): shown, not dropped.
   const keptWords =
     type && !type.fields.some(f => f.kind === "details")
       ? (carried.current.details ?? null)
       : null;
+  // The answers given so far, kept on screen when requests stop being open
+  // to the seat partway through (review BT-7): a client the person picked
+  // and every question with an answer.
+  const given = type
+    ? bodyFields(type).filter(f => (answers[f.key] ?? "").trim())
+    : [];
+  const givenClient = presetClient ? null : chosenClient;
+  // A required choice with no option ClickUp gives cannot be answered, so
+  // the request cannot be sent here: the ClickUp request form becomes the
+  // one teal action, Send says why, and the route says only where it would
+  // go (review T3-design-clarity-05). Send still takes a press, so the
+  // summary can take focus to the lost choice and its sentence (A11Y-21).
+  const lost = type ? lostChoices(type) : [];
 
   return (
     <div className={root} ref={formRef}>
       {writerOff && !type ? <WriterOff note={writerOff.note} /> : null}
       {/* A held request's note (saved until requests open): said before
-          anything is picked, then above Send. */}
+          anything is picked; once a type is, on the route. */}
       {writerNote && !type ? (
-        <p className="rq-off rq-off-note" role="status">
-          {writerNote}
+        <p className="rq-off" role="status">
+          <Clock aria-hidden />
+          <span>{writerNote}</span>
         </p>
       ) : null}
       {presetOff && !type ? (
         <p className="rq-off" role="status">
-          {presetOff}
+          <CircleAlert aria-hidden />
+          <span>{presetOff}</span>
         </p>
       ) : null}
-      <TypePicker
-        types={offered}
-        chosen={type}
-        compact={compact}
-        onChoose={t => choose(t)}
-        error={formError === REQUEST_SENTENCES.noType ? formError : null}
-      />
 
-      {type ? (
+      {!type ? (
+        offered.length ? (
+          <Finder
+            types={offered}
+            compact={compact}
+            recent={recent}
+            searchRef={searchRef}
+            ahead={Boolean(writerOff)}
+            error={formError === REQUEST_SENTENCES.noType ? formError : null}
+            onChoose={t => {
+              focusNext.current = "plate";
+              choose(t);
+            }}
+          />
+        ) : (
+          <p className="rq-note">{REQUEST_SENTENCES.noTypes}</p>
+        )
+      ) : (
         <>
-          {type.fields.map(f => {
-            if (f.kind === "deadline" || f.kind === "priority") return null;
-            if (f.kind === "client")
-              return (
-                <ClientPicker
-                  key={f.key}
-                  field={f}
-                  baseId={baseId}
-                  locked={presetClient ?? null}
-                  picked={picked}
-                  onPick={setPicked}
-                  error={errors[f.key] ?? null}
-                />
-              );
-            return (
-              <FieldInput
-                key={f.key}
-                field={f}
-                baseId={baseId}
-                value={answers[f.key] ?? ""}
-                onChange={v => setAnswer(f.key, v)}
-                error={errors[f.key] ?? null}
-              />
-            );
-          })}
-
-          {keptWords ? (
-            <div className="rq-field">
-              <p className="rq-label">{REQUEST_SENTENCES.keptLabel}</p>
-              <p className="rq-quote" dir="auto">
-                {keptWords}
-              </p>
-              <p className="rq-help">
-                {replacesTaskId
-                  ? REQUEST_SENTENCES.keptRouted
-                  : REQUEST_SENTENCES.keptNotSent}
-              </p>
-            </div>
-          ) : null}
-
-          <div className="rq-pair">
-            {due ? (
-              <Labelled
-                id={`${baseId}-due`}
-                label={due.label}
-                help={
-                  dueOn
-                    ? `${dayLabel(dueOn, today)}, Kuwait time.`
-                    : "The day it should be done."
-                }
-                error={errors[due.key] ?? null}
-              >
-                <input
-                  id={`${baseId}-due`}
-                  data-field={due.key}
-                  type="date"
-                  className="rq-input"
-                  value={dueOn}
-                  min={today}
-                  required={due.required}
-                  aria-invalid={errors[due.key] ? true : undefined}
-                  aria-describedby={`${baseId}-due-note`}
-                  onChange={e => setDueOn(e.target.value)}
-                />
-              </Labelled>
-            ) : null}
-            {prio ? (
-              <Labelled id={`${baseId}-priority`} label={prio.label}>
-                <select
-                  id={`${baseId}-priority`}
-                  data-field={prio.key}
-                  className="rq-input rq-select"
-                  value={priority}
-                  onChange={e => setPriority(e.target.value as Priority)}
-                >
-                  {PRIORITIES.map(p => (
-                    <option key={p.key} value={p.key}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
-              </Labelled>
-            ) : null}
-          </div>
-
-          <RouteLines preview={preview} busy={previewBusy} dueOn={dueOn} />
-
-          {formError && formError !== REQUEST_SENTENCES.noType ? (
-            <div className="rq-alert" role="alert">
-              <CircleAlert aria-hidden className="rq-alert-icon" />
-              <p>{formError}</p>
-            </div>
-          ) : null}
-
+          <Plate
+            type={type}
+            plateRef={plateRef}
+            ahead={Boolean(writerOff)}
+            onChange={() => {
+              focusNext.current = "search";
+              choose(null);
+            }}
+          />
           {writerOff ? (
-            <WriterOff note={writerOff.note} />
-          ) : (
-            <div className="rq-actions">
-              {writerNote ? (
-                <p className="rq-off rq-off-note" role="status">
-                  {writerNote}
-                </p>
-              ) : null}
-              <button
-                type="button"
-                className="rq-btn rq-btn-primary"
-                data-state={sending ? "loading" : undefined}
-                aria-busy={sending || undefined}
-                disabled={sending}
-                onClick={() => void send()}
-              >
-                {sending ? (
+            <div className="rq-body">
+              <div className="rq-qs">
+                <WriterOff
+                  note={writerOff.note}
+                  focusRef={offRef}
+                  describedBy={`${baseId}-off-help`}
+                />
+                {given.length || givenClient ? (
                   <>
-                    <LoaderCircle aria-hidden className="rq-spin" />
-                    Sending
+                    <AnswerList
+                      title="Your answers so far"
+                      client={givenClient}
+                      fields={given}
+                      answers={answers}
+                    />
+                    <p className="rq-help" id={`${baseId}-off-help`}>
+                      {REQUEST_SENTENCES.offKept}
+                    </p>
                   </>
                 ) : (
-                  "Send request"
+                  <p className="rq-help" id={`${baseId}-off-help`}>
+                    {REQUEST_SENTENCES.offAsked}
+                  </p>
                 )}
-              </button>
+              </div>
+              <RouteView
+                type={type}
+                preview={preview}
+                choicePreviews={choicePreviews}
+                readFor={readFor}
+                client={chosenClient}
+                busy={previewBusy}
+                dueOn={dueOn}
+                priority={priority}
+                held={false}
+                heldNote={null}
+                quiet={quiet}
+                ahead
+              />
+            </div>
+          ) : (
+            <div className="rq-body">
+              <div className="rq-qs">
+                {clientField(type) ? (
+                  <ClientPicker
+                    field={clientField(type) as FieldView}
+                    baseId={baseId}
+                    locked={presetClient ?? null}
+                    lockedHelp={
+                      source === "client_page"
+                        ? "This page's client."
+                        : "Fixed for this request."
+                    }
+                    picked={picked}
+                    onPick={setPicked}
+                    error={errors[clientField(type)?.key ?? ""] ?? null}
+                  />
+                ) : null}
+                {questionGroups(type)
+                  .filter(g => g.fields.length)
+                  .map((g, i) => (
+                    <div
+                      key={g.title ?? `rest-${i}`}
+                      className="rq-qgroup"
+                      data-titled={g.title ? true : undefined}
+                    >
+                      {g.title ? (
+                        <h4 className="rq-qgroup-title">{g.title}</h4>
+                      ) : null}
+                      {g.fields.map(f => (
+                        <Question
+                          key={f.key}
+                          type={type}
+                          field={f}
+                          baseId={baseId}
+                          value={answers[f.key] ?? ""}
+                          onChange={v => setAnswer(f.key, v)}
+                          error={errors[f.key] ?? null}
+                        />
+                      ))}
+                    </div>
+                  ))}
+                {keptWords ? (
+                  <div className="rq-field">
+                    <p className="rq-label">{REQUEST_SENTENCES.keptLabel}</p>
+                    <p className="rq-quote" dir="auto">
+                      {keptWords}
+                    </p>
+                    <p className="rq-help">
+                      {replacesTaskId
+                        ? REQUEST_SENTENCES.keptRouted
+                        : REQUEST_SENTENCES.keptNotSent}
+                    </p>
+                  </div>
+                ) : null}
+                <hr className="rq-sep" />
+                <DueField
+                  key={type.key}
+                  type={type}
+                  baseId={baseId}
+                  dueOn={dueOn}
+                  today={today}
+                  onChange={setDueOn}
+                  error={errors[dueField(type)?.key ?? ""] ?? null}
+                />
+                <PriorityField
+                  type={type}
+                  baseId={baseId}
+                  value={priority}
+                  onChange={setPriority}
+                />
+              </div>
+              <RouteView
+                type={type}
+                preview={preview}
+                choicePreviews={choicePreviews}
+                readFor={readFor}
+                client={chosenClient}
+                busy={previewBusy}
+                dueOn={dueOn}
+                priority={priority}
+                held={held}
+                heldNote={held ? writerNote : null}
+                quiet={quiet}
+                blocked={lost.length > 0}
+              />
+              <SendBlock
+                errors={attempted ? errors : {}}
+                order={screenOrder(type)}
+                lost={lost}
+                announce={announce}
+                formError={
+                  formError && formError !== REQUEST_SENTENCES.noType
+                    ? formError
+                    : null
+                }
+                held={held}
+                quiet={quiet}
+                sending={sending}
+                onSend={() => void send()}
+                onFix={focusField}
+              />
             </div>
           )}
         </>
-      ) : formError && formError !== REQUEST_SENTENCES.noType ? (
-        <p className="rq-error">{formError}</p>
-      ) : null}
+      )}
     </div>
   );
 }
@@ -832,12 +1180,940 @@ function PortalLink({
   );
 }
 
-function Waiting({ text }: { text: string }) {
+/**
+ * Said, not shown, inside a link that opens a new tab: its arrow says so on
+ * screen (review A11Y-17).
+ */
+function NewTab() {
+  return <span className="rq-sr"> (opens in a new tab)</span>;
+}
+
+/** A wait, said politely unless something else speaks for it (`live`). */
+function Waiting({ text, live = true }: { text: string; live?: boolean }) {
   return (
-    <p className="rq-note" role="status">
+    <p className="rq-note" role={live ? "status" : undefined}>
       <LoaderCircle aria-hidden className="rq-spin" />
       {text}
     </p>
+  );
+}
+
+/** The required choices ClickUp lost: nothing can be picked for them. */
+function lostChoices(type: TypeView): FieldView[] {
+  return bodyFields(type).filter(
+    f => f.required && f.kind === "select" && !(f.options ?? []).length,
+  );
+}
+
+/**
+ * The error summary's lead: "Fix these two answers first:", or, when every
+ * answer in it is a choice ClickUp lost, that the request cannot be sent
+ * here yet (review T3-design-clarity-05).
+ */
+function summaryLead(keys: string[], lost: string[]) {
+  if (keys.length && keys.every(k => lost.includes(k)))
+    return REQUEST_SENTENCES.lostLead;
+  return keys.length === 1
+    ? "Fix this answer first:"
+    : `Fix these ${numberWord(keys.length)} answers first:`;
+}
+
+/** The error summary in words: "Fix these two answers first: ...". */
+function summaryWords(
+  errors: Record<string, string>,
+  order: string[],
+  lost: string[],
+) {
+  const keys = [
+    ...order.filter(k => errors[k]),
+    ...Object.keys(errors).filter(k => !order.includes(k)),
+  ];
+  return keys.length
+    ? `${summaryLead(keys, lost)} ${keys.map(k => errors[k]).join(" ")}`
+    : "";
+}
+
+/**
+ * A server sentence that names the client: the name alone in its own
+ * direction, so an Arabic name never reorders the words around it (review
+ * A11Y-19).
+ */
+function WithName({ text, name }: { text: string; name?: string | null }) {
+  if (!name || !text.includes(name)) return <>{text}</>;
+  const runs = text.split(name);
+  return (
+    <>
+      {runs.map((run, i) => (
+        <span key={`${i}-${run}`}>
+          {i > 0 ? <bdi dir="auto">{name}</bdi> : null}
+          {run}
+        </span>
+      ))}
+    </>
+  );
+}
+
+/**
+ * "Show the other {n}" goes once pressed, so focus moves to the first item
+ * it showed (the item's own button, or the item itself), never to the page
+ * body (research 2.12). Call the returned function with that item's index
+ * before the list grows.
+ */
+function useRevealFocus(
+  listRef: RefObject<HTMLElement | null>,
+  selector: string | null,
+) {
+  const from = useRef<number | null>(null);
+  useEffect(() => {
+    const at = from.current;
+    if (at === null) return;
+    from.current = null;
+    const item = listRef.current?.children[at] as HTMLElement | undefined;
+    (selector ? item?.querySelector<HTMLElement>(selector) : item)?.focus();
+  });
+  return (at: number) => {
+    from.current = at;
+  };
+}
+
+/** A sentence a search found its words in, the words in bold. */
+function Marked({ text, terms }: { text: string; terms: string[] }) {
+  if (!terms.length) return <>{text}</>;
+  return (
+    <>
+      {markWords(text, terms).map((run, i) =>
+        run.hit ? (
+          <b key={`${i}-${run.text}`} className="rq-hit">
+            {run.text}
+          </b>
+        ) : (
+          <span key={`${i}-${run.text}`}>{run.text}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+/** Where a request goes, each team name with its mark. */
+function Reach({ pieces }: { pieces: ReachPiece[] }) {
+  return (
+    <span className="rq-reach">
+      {pieces.map((p, i) =>
+        "text" in p ? (
+          <span key={`${i}-${p.text}`}>{p.text}</span>
+        ) : (
+          <span key={`${i}-${p.label}`} className="rq-team-tag">
+            <Mark name={teamLook(p.team).icon} />
+            {p.label}
+          </span>
+        ),
+      )}
+    </span>
+  );
+}
+
+function Facts({ facts }: { facts: TypeFact[] }) {
+  return (
+    <span className="rq-facts">
+      {facts.map(f => (
+        <span
+          key={`${f.kind}-${f.text}`}
+          className="rq-fact"
+          data-kind={f.kind}
+        >
+          {f.pieces ? (
+            <Reach pieces={f.pieces} />
+          ) : (
+            <>
+              {f.team !== undefined ? (
+                <Mark name={teamLook(f.team).icon} />
+              ) : null}
+              {f.text}
+            </>
+          )}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+// --- Finding the request: search, recent, the map, a team, A to Z -----------
+
+type FinderView =
+  | { kind: "map" }
+  | { kind: "team"; team: Team }
+  | { kind: "all" };
+
+/** "What do you need?": search on top, then the map of who does what. */
+function Finder({
+  types,
+  compact,
+  recent,
+  searchRef,
+  ahead,
+  error,
+  onChoose,
+}: {
+  types: TypeView[];
+  compact: boolean;
+  recent: TypeView[];
+  searchRef: RefObject<HTMLInputElement | null>;
+  /** Requests are not open to the seat: the reach words name the question. */
+  ahead: boolean;
+  error: string | null;
+  onChoose: (t: TypeView) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [view, setView] = useState<FinderView>({ kind: "map" });
+  const [more, setMore] = useState(false);
+  const headRef = useRef<HTMLHeadingElement>(null);
+  const moved = useRef(false);
+  const id = useId();
+  const found = useMemo(() => searchTypes(types, query), [types, query]);
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const searching = found.words.length > 0;
+  const teams = TEAM_ORDER.filter(t => teamTypes(types, t).length > 0);
+  // The count shows at once; a screen reader hears it once typing pauses,
+  // never once a key (review A11Y-08).
+  const count = searching ? searchCountWords(query, found) : "";
+  const [spoken, setSpoken] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setSpoken(count), 500);
+    return () => clearTimeout(timer);
+  }, [count]);
+
+  // A press that swaps the view takes focus to the new view's heading, so
+  // a keyboard never lands on the page body.
+  useEffect(() => {
+    if (!moved.current) return;
+    moved.current = false;
+    headRef.current?.focus();
+  });
+  const go = (next: FinderView) => {
+    moved.current = true;
+    setView(next);
+  };
+
+  return (
+    <div className="rq-finder">
+      <div className="rq-ask">
+        <label className="rq-label rq-ask-label" htmlFor={`${id}-q`}>
+          What do you need?
+        </label>
+        <div className="rq-search" data-filled={query ? true : undefined}>
+          <Search aria-hidden className="rq-search-icon" />
+          <input
+            ref={searchRef}
+            id={`${id}-q`}
+            type="search"
+            dir="auto"
+            className="rq-input rq-search-input"
+            placeholder="Search, for example: card declined"
+            value={query}
+            autoComplete="off"
+            enterKeyHint="search"
+            aria-invalid={error ? true : undefined}
+            aria-describedby={`${id}-count`}
+            onChange={e => {
+              setQuery(e.target.value);
+              setMore(false);
+            }}
+            onKeyDown={e => {
+              if (e.key === "Escape" && query) {
+                e.preventDefault();
+                setQuery("");
+              }
+              // Return opens the first request only when it leads; when two
+              // match as well, focus goes to the list to pick from.
+              if (e.key === "Enter" && searching && found.hits[0]) {
+                e.preventDefault();
+                if (searchLeads(found)) onChoose(found.hits[0].type);
+                else
+                  resultsRef.current
+                    ?.querySelector<HTMLElement>("button.rq-row")
+                    ?.focus();
+              }
+            }}
+          />
+          {query ? (
+            <button
+              type="button"
+              className="rq-search-clear"
+              aria-label="Clear the search"
+              onClick={() => {
+                setQuery("");
+                searchRef.current?.focus();
+              }}
+            >
+              <X aria-hidden />
+            </button>
+          ) : null}
+        </div>
+        {error ? (
+          <p className="rq-error" role="alert">
+            <CircleAlert aria-hidden />
+            <span>{error}</span>
+          </p>
+        ) : null}
+        {/* The one polite line for a search: the count, never the list,
+            said once typing pauses. */}
+        <p id={`${id}-count`} className={searching ? "rq-count" : "rq-sr"}>
+          {count}
+        </p>
+        <p className="rq-sr" role="status">
+          {spoken}
+        </p>
+      </div>
+
+      {searching ? (
+        <SearchResults
+          rootRef={resultsRef}
+          types={types}
+          found={found}
+          ahead={ahead}
+          more={more}
+          onMore={() => setMore(true)}
+          onChoose={onChoose}
+        />
+      ) : view.kind === "map" ? (
+        <>
+          {recent.length ? (
+            <div
+              className="rq-recent"
+              role="group"
+              aria-labelledby={`${id}-recent`}
+            >
+              <h3 id={`${id}-recent`} className="rq-kicker">
+                Your recent requests
+              </h3>
+              <ul className="rq-recent-list">
+                {recent.map(t => (
+                  <li key={t.key}>
+                    <button
+                      type="button"
+                      className="rq-chip rq-type"
+                      onClick={() => onChoose(t)}
+                    >
+                      <Mark name={typeLook(t).icon} />
+                      <span className="rq-type-name">{t.label}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          <section className="rq-map-wrap" aria-labelledby={`${id}-map`}>
+            <div className="rq-map-head">
+              <h3
+                id={`${id}-map`}
+                ref={headRef}
+                tabIndex={-1}
+                className="rq-kicker"
+              >
+                Who does what
+              </h3>
+              <p className="rq-muted">
+                {capitalWord(numberWord(teams.length))}{" "}
+                {teams.length === 1 ? "team takes" : "teams take"} requests.
+                Start from the team, or search above.
+              </p>
+              <button
+                type="button"
+                className="rq-every"
+                onClick={() => go({ kind: "all" })}
+              >
+                Every request, A to Z
+                <span className="rq-pill-count">{types.length}</span>
+                <ChevronRight aria-hidden />
+              </button>
+            </div>
+            <div className="rq-map">
+              {teams.map(team => (
+                <Tile
+                  key={team}
+                  team={team}
+                  types={types}
+                  compact={compact}
+                  onChoose={onChoose}
+                  onOpen={() => go({ kind: "team", team })}
+                />
+              ))}
+              <HelpTile types={types} onChoose={onChoose} />
+            </div>
+          </section>
+        </>
+      ) : (
+        <>
+          <TeamPills teams={teams} types={types} view={view} onGo={go} />
+          {view.kind === "team" ? (
+            <TeamList
+              team={view.team}
+              types={types}
+              headRef={headRef}
+              ahead={ahead}
+              onChoose={onChoose}
+            />
+          ) : (
+            <section className="rq-list" aria-labelledby={`${id}-all`}>
+              <div className="rq-list-head">
+                <h3
+                  id={`${id}-all`}
+                  ref={headRef}
+                  tabIndex={-1}
+                  className="rq-hero-name"
+                >
+                  Every request
+                </h3>
+                <p className="rq-dept-line">
+                  A to Z, each with the team it is filed under. {types.length}{" "}
+                  requests.
+                </p>
+              </div>
+              <ul className="rq-rows">
+                {everyType(types).map(t => (
+                  <li key={t.key}>
+                    <TypeRow type={t} named ahead={ahead} onChoose={onChoose} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+const capitalWord = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** One department on the map: its seal, name, line and shortcuts. */
+function Tile({
+  team,
+  types,
+  compact,
+  onChoose,
+  onOpen,
+}: {
+  team: Team;
+  types: TypeView[];
+  compact: boolean;
+  onChoose: (t: TypeView) => void;
+  onOpen: () => void;
+}) {
+  const look = teamLook(team);
+  const id = useId();
+  const examples = teamExamples(types, team, compact ? 2 : 3);
+  const all = teamTypes(types, team);
+  // A group, not a landmark: the map is the one region (review A11Y-18).
+  return (
+    <div className="rq-dept" role="group" aria-labelledby={id}>
+      <span className="rq-watermark" aria-hidden>
+        <Mark name={look.icon} />
+      </span>
+      <div className="rq-dept-head">
+        <Seal icon={look.icon} />
+        <div>
+          <h4 id={id} className="rq-group-label rq-dept-name">
+            {TEAM_LABEL[team]}
+          </h4>
+          {look.line ? <p className="rq-dept-line">{look.line}</p> : null}
+        </div>
+      </div>
+      {examples.length ? (
+        <ul className="rq-dept-list">
+          {examples.map(t => (
+            <li key={t.key}>
+              <button
+                type="button"
+                className="rq-pick rq-type"
+                onClick={() => onChoose(t)}
+              >
+                <Mark name={typeLook(t).icon} />
+                <span className="rq-type-name">{t.label}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {all.length > examples.length ? (
+        <button
+          type="button"
+          className="rq-dept-more"
+          aria-label={`See all ${all.length} ${TEAM_LABEL[team]} requests`}
+          onClick={onOpen}
+        >
+          See all {all.length}
+          <ChevronRight aria-hidden />
+        </button>
+      ) : null}
+      <Related types={types} team={team} onChoose={onChoose} />
+    </div>
+  );
+}
+
+/**
+ * A team's pointer to requests filed under another team that people often
+ * look for there (review CL-09): "Ads stopped because a payment card
+ * failed? Card missing for ads, under Client Success."
+ */
+function Related({
+  types,
+  team,
+  onChoose,
+}: {
+  types: TypeView[];
+  team: Team;
+  onChoose: (t: TypeView) => void;
+}) {
+  const related = teamRelated(types, team);
+  if (!related) return null;
+  const one = related.types.every(t => t.team === related.types[0].team);
+  return (
+    <p className="rq-related">
+      <Signpost aria-hidden />
+      <span>
+        {related.ask}{" "}
+        {related.types.map((t, i) => (
+          <span key={t.key}>
+            {i ? (one ? " or " : ", or ") : ""}
+            <button
+              type="button"
+              className="rq-inline"
+              onClick={() => onChoose(t)}
+            >
+              {t.label}
+            </button>
+            {one ? "" : `, under ${t.teamLabel}`}
+          </span>
+        ))}
+        {one ? `, under ${related.types[0].teamLabel}` : ""}.
+      </span>
+    </p>
+  );
+}
+
+/** The way out: the three general requests, and who to ask. */
+function HelpTile({
+  types,
+  onChoose,
+}: {
+  types: TypeView[];
+  onChoose: (t: TypeView) => void;
+}) {
+  const id = useId();
+  const general = GENERAL_KEYS.map(k => types.find(t => t.key === k)).filter(
+    (t): t is TypeView => Boolean(t),
+  );
+  return (
+    <div className="rq-dept rq-dept-help" role="group" aria-labelledby={id}>
+      <div className="rq-dept-head">
+        <Seal icon="Signpost" dashed />
+        <div>
+          <h4 id={id} className="rq-dept-name">
+            Not sure which team?
+          </h4>
+          <p className="rq-dept-line">
+            Pick the general request closest to it, or ask the systems manager.
+          </p>
+        </div>
+      </div>
+      {general.length ? (
+        <ul className="rq-dept-list">
+          {general.map(t => (
+            <li key={t.key}>
+              <button
+                type="button"
+                className="rq-pick rq-type"
+                onClick={() => onChoose(t)}
+              >
+                <Mark name={teamLook(t.team).icon} />
+                <span className="rq-type-name">{t.label}</span>
+                <span className="rq-pick-team">{t.teamLabel}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+/** The way between teams: back to the map, each team, every request. */
+function TeamPills({
+  teams,
+  types,
+  view,
+  onGo,
+}: {
+  teams: Team[];
+  types: TypeView[];
+  view: FinderView;
+  onGo: (v: FinderView) => void;
+}) {
+  // When the teams do not fit beside the two overviews they take a row of
+  // their own, which scrolls sideways where it must (review D8). The row
+  // never shows a cut sliver of a pill at its edge (review
+  // T3-design-clarity-09): it snaps to whole pills, and the room after its
+  // end is sized so that even scrolled to the end it starts on a whole
+  // pill. A current team already in view leaves the row as it is; one out
+  // of view is brought to the row's start (or as near as the end allows),
+  // the row alone scrolled, never the page.
+  const rowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const row = rowRef.current;
+    if (view.kind === "map" || !row) return;
+    const pad = () => Number.parseFloat(getComputedStyle(row).paddingLeft) || 0;
+    // The scroll that puts a pill at the row's start.
+    const startOf = (el: Element) =>
+      row.scrollLeft +
+      el.getBoundingClientRect().left -
+      row.getBoundingClientRect().left -
+      pad();
+    const fit = () => {
+      row.style.paddingInlineEnd = "";
+      const max = row.scrollWidth - row.clientWidth;
+      if (max <= 0) return;
+      const end = Math.min(
+        ...[...row.children].map(startOf).filter(s => s >= max - 1),
+      );
+      const room = Math.ceil(end - max);
+      if (room > 0) row.style.paddingInlineEnd = `${pad() + room}px`;
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    const on = row.querySelector<HTMLElement>('[aria-current="true"]');
+    const box = row.getBoundingClientRect();
+    const pill = on?.getBoundingClientRect();
+    if (
+      on &&
+      pill &&
+      row.scrollWidth > row.clientWidth &&
+      (pill.left < box.left + pad() - 1 || pill.right > box.right - pad() + 1)
+    ) {
+      const left = Math.min(startOf(on), row.scrollWidth - row.clientWidth);
+      const still = window.matchMedia?.(
+        "(prefers-reduced-motion: reduce)",
+      ).matches;
+      if (typeof row.scrollTo === "function")
+        row.scrollTo({ left, behavior: still ? "auto" : "smooth" });
+      else row.scrollLeft = left;
+    }
+    return () => window.removeEventListener("resize", fit);
+  }, [view]);
+  // The current view is marked as the current item of the Teams navigation,
+  // never as a toggle (review T3-a11y-behaviour-03).
+  const current = (on: boolean) => (on ? ("true" as const) : undefined);
+  return (
+    <nav className="rq-teams" aria-label="Teams">
+      {/* The two overviews first, outside the row that scrolls, so the way
+          back to the map and the A to Z list always show; the teams follow
+          on the same line when they fit, else on a line of their own
+          (review T3-design-clarity-01). */}
+      <button
+        type="button"
+        className="rq-pill rq-pill-home"
+        onClick={() => onGo({ kind: "map" })}
+      >
+        <LayoutGrid aria-hidden />
+        All teams
+      </button>
+      <button
+        type="button"
+        className="rq-pill rq-pill-home"
+        aria-current={current(view.kind === "all")}
+        onClick={() => onGo({ kind: "all" })}
+      >
+        <List aria-hidden />
+        Every request
+        <span className="rq-pill-count">{types.length}</span>
+      </button>
+      <div className="rq-teams-scroll" ref={rowRef}>
+        {teams.map(team => (
+          <button
+            key={team}
+            type="button"
+            className="rq-pill"
+            aria-current={current(view.kind === "team" && view.team === team)}
+            onClick={() => onGo({ kind: "team", team })}
+          >
+            <Mark name={teamLook(team).icon} />
+            {TEAM_LABEL[team]}
+            <span className="rq-pill-count">
+              {teamTypes(types, team).length}
+            </span>
+          </button>
+        ))}
+      </div>
+    </nav>
+  );
+}
+
+/** One team opened: its own requests, then those that also give it a task. */
+function TeamList({
+  team,
+  types,
+  headRef,
+  ahead,
+  onChoose,
+}: {
+  team: Team;
+  types: TypeView[];
+  headRef: RefObject<HTMLHeadingElement | null>;
+  ahead: boolean;
+  onChoose: (t: TypeView) => void;
+}) {
+  const look = teamLook(team);
+  const id = useId();
+  const all = teamTypes(types, team);
+  const own = all.filter(t => t.team === team).length;
+  const also = all.length - own;
+  // Those that give this team a task only for some answers are counted as
+  // such, so the line is true for every answer (review T3-design-clarity-02).
+  const some = teamByAnswer(types, team).length;
+  const others = !also
+    ? ""
+    : !some
+      ? `, and ${also} from other teams that also give it a task`
+      : `, and ${also} from other teams that can give it a task, ${
+          some === also
+            ? also === 1
+              ? "only for some answers"
+              : "each only for some answers"
+            : `${some} of them only for some answers`
+        }`;
+  return (
+    <section className="rq-list" aria-labelledby={id}>
+      <div className="rq-hero">
+        <span className="rq-watermark" aria-hidden>
+          <Mark name={look.icon} />
+        </span>
+        <Seal icon={look.icon} size="lg" />
+        <div>
+          <h3
+            id={id}
+            ref={headRef}
+            tabIndex={-1}
+            className="rq-group-label rq-hero-name"
+          >
+            {TEAM_LABEL[team]}
+          </h3>
+          <p className="rq-dept-line">
+            {look.line ? `${look.line}. ` : ""}
+            {own} request{own === 1 ? "" : "s"}
+            {others}.
+          </p>
+        </div>
+      </div>
+      <Related types={types} team={team} onChoose={onChoose} />
+      <ul className="rq-rows">
+        {all.map(t => (
+          <li key={t.key}>
+            <TypeRow
+              type={t}
+              viewTeam={team}
+              ahead={ahead}
+              onChoose={onChoose}
+            />
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** A request as a row: its mark, name, one line and its own facts. */
+function TypeRow({
+  type,
+  viewTeam = null,
+  named = false,
+  terms = [],
+  via = null,
+  ahead = false,
+  onChoose,
+}: {
+  type: TypeView;
+  viewTeam?: Team | null;
+  named?: boolean;
+  terms?: string[];
+  via?: string | null;
+  /** Requests are not open to the seat: the reach words name the question. */
+  ahead?: boolean;
+  onChoose: (t: TypeView) => void;
+}) {
+  const look = typeLook(type, ahead);
+  const id = useId();
+  // Named by its name, described by its line and facts (review A11Y-17).
+  return (
+    <button
+      type="button"
+      className="rq-row rq-type"
+      aria-labelledby={`${id}-name`}
+      aria-describedby={`${id}-more`}
+      onClick={() => onChoose(type)}
+    >
+      <Seal icon={look.icon} size="sm" />
+      <span className="rq-row-text">
+        <span className="rq-type-name" id={`${id}-name`}>
+          <Marked text={type.label} terms={terms} />
+        </span>
+        <span className="rq-row-more" id={`${id}-more`}>
+          {look.line ? (
+            <span className="rq-row-line">
+              <Marked text={look.line} terms={terms} />
+            </span>
+          ) : null}
+          {via ? (
+            <span className="rq-row-line">
+              Found by <b className="rq-hit">{via}</b>
+            </span>
+          ) : null}
+          <Facts facts={typeFacts(type, viewTeam, named, ahead)} />
+        </span>
+      </span>
+    </button>
+  );
+}
+
+/** A search's results, best first, then the general requests. */
+function SearchResults({
+  rootRef,
+  types,
+  found,
+  ahead,
+  more,
+  onMore,
+  onChoose,
+}: {
+  rootRef: RefObject<HTMLDivElement | null>;
+  types: TypeView[];
+  found: ReturnType<typeof searchTypes>;
+  ahead: boolean;
+  more: boolean;
+  onMore: () => void;
+  onChoose: (t: TypeView) => void;
+}) {
+  const FIRST = 6;
+  const shown = more ? found.hits : found.hits.slice(0, FIRST);
+  const rest = found.hits.length - shown.length;
+  const listRef = useRef<HTMLUListElement>(null);
+  const reveal = useRevealFocus(listRef, "button");
+  const general = GENERAL_KEYS.map(k => types.find(t => t.key === k)).filter(
+    (t): t is TypeView => Boolean(t),
+  );
+  return (
+    <div className="rq-results" ref={rootRef}>
+      {shown.length ? (
+        <ul className="rq-rows" ref={listRef}>
+          {shown.map(h => (
+            <li key={h.type.key}>
+              <TypeRow
+                type={h.type}
+                named
+                terms={found.words}
+                via={h.via}
+                ahead={ahead}
+                onChoose={onChoose}
+              />
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {rest > 0 ? (
+        <button
+          type="button"
+          className="rq-btn rq-btn-ghost rq-btn-sm rq-more"
+          onClick={() => {
+            reveal(shown.length);
+            onMore();
+          }}
+        >
+          Show the other {rest}
+        </button>
+      ) : null}
+      <div className="rq-notit">
+        <Signpost aria-hidden />
+        <div>
+          <p>
+            <strong>{shown.length ? "Not it?" : "Nothing fits?"}</strong> Pick
+            the general request closest to it, or ask the systems manager.
+          </p>
+          {general.length ? (
+            <ul className="rq-notit-list">
+              {general.map(t => (
+                <li key={t.key}>
+                  <button
+                    type="button"
+                    className="rq-inline"
+                    onClick={() => onChoose(t)}
+                  >
+                    <Mark name={teamLook(t.team).icon} />
+                    {t.label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- The chosen request ------------------------------------------------------
+
+/** The chosen request's plate: its mark, where it goes, its name and line. */
+function Plate({
+  type,
+  plateRef,
+  ahead,
+  onChange,
+}: {
+  type: TypeView;
+  plateRef: RefObject<HTMLHeadingElement | null>;
+  /**
+   * Requests are not open to the seat: the reach words name the deciding
+   * question, as the route under it does (review T2-clarity-04).
+   */
+  ahead: boolean;
+  onChange: () => void;
+}) {
+  const look = typeLook(type, ahead);
+  const id = useId();
+  return (
+    <section className="rq-plate" aria-labelledby={id}>
+      <Seal icon={look.icon} size="lg" />
+      <div className="rq-plate-text">
+        <p className="rq-plate-kicker" id={`${id}-reach`}>
+          <Reach pieces={reachPieces(type, ahead)} />
+        </p>
+        {/* Focused after a pick: it says where the request goes and what it
+            is for as its description (review A11Y-10). */}
+        <h3
+          id={id}
+          ref={plateRef}
+          tabIndex={-1}
+          className="rq-plate-name"
+          aria-describedby={
+            look.line ? `${id}-reach ${id}-line` : `${id}-reach`
+          }
+        >
+          {type.label}
+        </h3>
+        {look.line ? (
+          <p className="rq-plate-line" id={`${id}-line`}>
+            {look.line}
+          </p>
+        ) : null}
+      </div>
+      <button
+        type="button"
+        className="rq-btn rq-btn-outline rq-btn-sm"
+        aria-describedby={id}
+        onClick={onChange}
+      >
+        Change
+      </button>
+    </section>
   );
 }
 
@@ -863,134 +2139,43 @@ function Labelled({
         {optional ? <span className="rq-optional"> (optional)</span> : null}
       </label>
       {children}
-      {error ? (
-        <p id={`${id}-note`} className="rq-error" role="alert">
-          {error}
-        </p>
-      ) : help ? (
-        <p id={`${id}-note`} className="rq-help">
-          {help}
-        </p>
-      ) : null}
+      <Note id={`${id}-note`} help={help} error={error} />
     </div>
   );
 }
 
-/** "What do you need?": the types, grouped by team, searchable. */
-function TypePicker({
-  types,
-  chosen,
-  compact,
-  onChoose,
+/** A field's note: its error in ink with a red mark, else its help. */
+function Note({
+  id,
+  help,
   error,
 }: {
-  types: TypeView[];
-  chosen: TypeView | null;
-  compact: boolean;
-  onChoose: (t: TypeView | null) => void;
-  error: string | null;
+  id: string;
+  help?: string | null;
+  error?: string | null;
 }) {
-  const [search, setSearch] = useState("");
-  const searchId = useId();
-  const groups = useMemo(() => groupTypes(types, search), [types, search]);
-
-  if (chosen)
+  if (error)
     return (
-      <div className="rq-field">
-        <p className="rq-label">What do you need?</p>
-        <div className="rq-chosen">
-          <div className="rq-chosen-text">
-            <span className="rq-chosen-name">{chosen.label}</span>
-            <span className="rq-muted">{joinTeams(chosen)}</span>
-          </div>
-          <button
-            type="button"
-            className="rq-btn rq-btn-ghost rq-btn-sm"
-            onClick={() => onChoose(null)}
-          >
-            Change
-          </button>
-        </div>
-      </div>
+      <p id={id} className="rq-error">
+        <CircleAlert aria-hidden />
+        <span>{error}</span>
+      </p>
     );
-
-  if (!types.length)
-    return <p className="rq-note">{REQUEST_SENTENCES.noTypes}</p>;
-
-  return (
-    <div className="rq-field">
-      <label className="rq-label" htmlFor={searchId}>
-        What do you need?
-      </label>
-      <div className="rq-search">
-        <Search aria-hidden className="rq-search-icon" />
-        <input
-          id={searchId}
-          type="search"
-          className="rq-input rq-search-input"
-          placeholder="Search, for example pause or script"
-          value={search}
-          autoComplete="off"
-          aria-invalid={error ? true : undefined}
-          onChange={e => setSearch(e.target.value)}
-        />
-      </div>
-      {error ? (
-        <p className="rq-error" role="alert">
-          {error}
-        </p>
-      ) : null}
-      <div
-        className={`rq-types${compact ? " rq-types-short" : ""}`}
-        role="group"
-        aria-label="Request types"
-      >
-        {groups.length ? (
-          groups.map(g => (
-            <div key={g.team} className="rq-group">
-              <p className="rq-group-label">{g.teamLabel}</p>
-              {g.types.map(t => {
-                const also = t.parts
-                  .map(p => p.teamLabel)
-                  .filter((x, i, a) => x !== t.teamLabel && a.indexOf(x) === i);
-                return (
-                  <button
-                    key={t.key}
-                    type="button"
-                    className="rq-type"
-                    onClick={() => onChoose(t)}
-                  >
-                    <span className="rq-type-name">{t.label}</span>
-                    {also.length ? (
-                      <span className="rq-type-also">
-                        and {also.join(", ")}
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
-          ))
-        ) : (
-          <p className="rq-note rq-pad">{REQUEST_SENTENCES.noMatch}</p>
-        )}
-      </div>
-    </div>
-  );
+  if (help)
+    return (
+      <p id={id} className="rq-help">
+        {help}
+      </p>
+    );
+  return null;
 }
-
-const joinTeams = (t: TypeView) => {
-  const teams = t.parts
-    .map(p => p.teamLabel)
-    .filter((x, i, a) => a.indexOf(x) === i);
-  return teams.length ? teams.join(" and ") : t.teamLabel;
-};
 
 /** The client: picked from the cards this seat may raise a request for. */
 function ClientPicker({
   field,
   baseId,
   locked,
+  lockedHelp,
   picked,
   onPick,
   error,
@@ -998,6 +2183,8 @@ function ClientPicker({
   field: FieldView;
   baseId: string;
   locked: { taskId: string; name: string } | null;
+  /** Why the client is fixed: the page's, or the old ticket's or link's. */
+  lockedHelp: string;
   picked: { taskId: string; name: string } | null;
   onPick: (c: { taskId: string; name: string } | null) => void;
   error: string | null;
@@ -1006,15 +2193,37 @@ function ClientPicker({
   const id = `${baseId}-client`;
   const [search, setSearch] = useState("");
   const [stopped, setStopped] = useState(false);
+  const [all, setAll] = useState(false);
   // An optional client opens its list once the search is used, so a
   // request that needs no client stays short.
   const [browsing, setBrowsing] = useState(field.required);
+  // Each read keeps the search and the stopped switch it was for, so its
+  // count is never said for a newer search (review T3-a11y-behaviour-01).
   const [found, setFound] = useState<Load<{
     clients: ClientOption[];
     more: boolean;
+    q: string;
+    stopped: boolean;
   }> | null>(null);
+  const [pickedStatus, setPickedStatus] = useState<string | null>(null);
+  // The count is said aloud only once the person types; until then it is
+  // the search's description (review A11Y-08).
+  const [typed, setTyped] = useState(false);
   const seq = useRef(0);
   const open = !locked && !picked && browsing;
+  // The pressed control goes with the press: focus moves to what replaces
+  // it (the picked client's Change, or the search after Change).
+  const changeRef = useRef<HTMLButtonElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const after = useRef<"change" | "search" | null>(null);
+  useEffect(() => {
+    const next = after.current;
+    if (!next) return;
+    after.current = null;
+    (next === "change" ? changeRef.current : searchRef.current)?.focus();
+  });
+  const listRef = useRef<HTMLUListElement>(null);
+  const reveal = useRevealFocus(listRef, "button");
 
   useEffect(() => {
     if (!open || !seat.client) return;
@@ -1024,7 +2233,8 @@ function ClientPicker({
     const timer = setTimeout(async () => {
       try {
         const data = await readRequestClients(client, search, stopped);
-        if (n === seq.current) setFound({ status: "ready", data });
+        if (n === seq.current)
+          setFound({ status: "ready", data: { ...data, q: search, stopped } });
       } catch (e) {
         if (n === seq.current)
           setFound({ status: "error", error: errorWords(e) });
@@ -1037,11 +2247,17 @@ function ClientPicker({
     return (
       <div className="rq-field">
         <p className="rq-label">{field.label}</p>
-        <div className="rq-chosen">
-          <bdi dir="auto" className="rq-chosen-name">
-            {locked.name || `Client card ${locked.taskId}`}
-          </bdi>
+        <div className="rq-client">
+          <Lock aria-hidden className="rq-client-lock" />
+          {/* The name isolated inside a span that takes the row, so an
+              Arabic name starts where every name starts (review D9). */}
+          <span className="rq-client-name">
+            <bdi dir="auto">
+              {locked.name || `Client card ${locked.taskId}`}
+            </bdi>
+          </span>
         </div>
+        <p className="rq-help">{lockedHelp}</p>
       </div>
     );
 
@@ -1049,14 +2265,33 @@ function ClientPicker({
     return (
       <div className="rq-field">
         <p className="rq-label">{field.label}</p>
-        <div className="rq-chosen">
-          <bdi dir="auto" className="rq-chosen-name">
-            {picked.name}
-          </bdi>
+        <div className="rq-client">
+          <span className="rq-client-name">
+            <bdi id={`${id}-picked`} dir="auto">
+              {picked.name}
+            </bdi>
+          </span>
+          {pickedStatus ? (
+            <span className="rq-client-status" id={`${id}-status`}>
+              {pickedStatus}
+            </span>
+          ) : null}
+          {/* Named apart from the plate's Change, and described by the
+              client and its status, so the field and the client's state are
+              said with it (review T2-a11y-02). */}
           <button
+            ref={changeRef}
             type="button"
             className="rq-btn rq-btn-ghost rq-btn-sm"
-            onClick={() => onPick(null)}
+            aria-label="Change client"
+            aria-describedby={
+              pickedStatus ? `${id}-picked ${id}-status` : `${id}-picked`
+            }
+            onClick={() => {
+              setPickedStatus(null);
+              after.current = "search";
+              onPick(null);
+            }}
           >
             Change
           </button>
@@ -1064,36 +2299,69 @@ function ClientPicker({
       </div>
     );
 
+  const FIRST = 8;
+  const clients = found?.status === "ready" ? found.data.clients : [];
+  const shown = all ? clients : clients.slice(0, FIRST);
+  // The count's words follow the search its read was for: shown while a
+  // newer read waits, said only once the read for what is typed lands.
+  const total = clients.length;
+  const count =
+    found?.status === "ready"
+      ? total
+        ? found.data.more
+          ? "More clients match. Type more of the name."
+          : found.data.q.trim()
+            ? `${total} client${total === 1 ? " matches" : "s match"}.`
+            : `${total} client${total === 1 ? "" : "s"}.`
+        : REQUEST_SENTENCES.noClients
+      : "";
+  const settled =
+    found?.status === "ready" &&
+    found.data.q === search &&
+    found.data.stopped === stopped;
+  const described = [
+    error || field.help ? `${id}-note` : "",
+    browsing ? `${id}-count` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  // The note sits right under the search, before the list, so an error is
+  // next to its field (review A11Y-13).
   return (
-    <Labelled
-      id={id}
-      label={field.label}
-      optional={!field.required}
-      help={field.help}
-      error={error}
-    >
+    <div className="rq-field">
+      <label className="rq-label" htmlFor={id}>
+        {field.label}
+        {field.required ? null : (
+          <span className="rq-optional"> (optional)</span>
+        )}
+      </label>
       <div className="rq-search">
-        <Search aria-hidden className="rq-search-icon" />
+        <Search aria-hidden className="rq-search-icon rq-search-icon-sm" />
         <input
+          ref={searchRef}
           id={id}
           data-field={field.key}
           type="search"
-          className="rq-input rq-search-input"
+          dir="auto"
+          className="rq-input rq-search-input rq-search-client"
           placeholder="Search the client cards"
           value={search}
           autoComplete="off"
           aria-invalid={error ? true : undefined}
           aria-required={field.required || undefined}
-          aria-describedby={error || field.help ? `${id}-note` : undefined}
+          aria-describedby={described || undefined}
           onFocus={() => setBrowsing(true)}
           onChange={e => {
             setBrowsing(true);
+            setTyped(true);
+            setAll(false);
             setSearch(e.target.value);
           }}
         />
       </div>
+      <Note id={`${id}-note`} help={field.help} error={error} />
       {browsing ? (
-        <>
+        <div className="rq-clients">
           <label className="rq-check">
             <input
               type="checkbox"
@@ -1102,45 +2370,234 @@ function ClientPicker({
             />
             Show stopped clients
           </label>
-          <div className="rq-clients" aria-live="polite">
-            {!found || found.status === "loading" ? (
-              <Waiting text="Reading the client cards" />
-            ) : found.status === "error" ? (
-              <p className="rq-error">{found.error}</p>
-            ) : found.data.clients.length ? (
-              <>
-                {found.data.clients.map(c => (
+          {!found || found.status === "loading" ? (
+            <Waiting text="Reading the client cards" live={false} />
+          ) : found.status === "error" ? (
+            <p className="rq-error">
+              <CircleAlert aria-hidden />
+              <span>{found.error}</span>
+            </p>
+          ) : clients.length ? (
+            <ul className="rq-client-list" ref={listRef}>
+              {shown.map(c => (
+                <li key={c.taskId}>
                   <button
-                    key={c.taskId}
                     type="button"
-                    className="rq-type"
-                    onClick={() => onPick({ taskId: c.taskId, name: c.name })}
+                    className="rq-client-option"
+                    onClick={() => {
+                      setPickedStatus(c.status);
+                      after.current = "change";
+                      onPick({ taskId: c.taskId, name: c.name });
+                    }}
                   >
-                    <bdi dir="auto" className="rq-type-name">
-                      {c.name}
-                    </bdi>
+                    <span className="rq-client-name">
+                      <bdi dir="auto">{c.name}</bdi>
+                    </span>
                     {c.status ? (
-                      <span className="rq-type-also">{c.status}</span>
+                      <span className="rq-client-status">{c.status}</span>
                     ) : null}
                   </button>
-                ))}
-                {found.data.more ? (
-                  <p className="rq-note rq-pad">
-                    More clients match. Type more of the name.
-                  </p>
-                ) : null}
-              </>
-            ) : (
-              <p className="rq-note rq-pad">{REQUEST_SENTENCES.noClients}</p>
-            )}
-          </div>
-        </>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {clients.length > shown.length ? (
+            <button
+              type="button"
+              className="rq-btn rq-btn-ghost rq-btn-sm rq-more"
+              onClick={() => {
+                reveal(shown.length);
+                setAll(true);
+              }}
+            >
+              Show the other {clients.length - shown.length}
+            </button>
+          ) : null}
+          {/* The list is not read out as it changes; this line is, once
+              the person types. */}
+          <p
+            id={`${id}-count`}
+            className={found?.status === "ready" ? "rq-count" : "rq-sr"}
+          >
+            {count}
+          </p>
+          <p className="rq-sr" role="status">
+            {typed && settled ? count : ""}
+          </p>
+        </div>
       ) : null}
-    </Labelled>
+    </div>
   );
 }
 
-/** One question of the chosen type. */
+/** One question of the chosen type, in the control its choices call for. */
+function Question({
+  type,
+  field,
+  baseId,
+  value,
+  onChange,
+  error,
+}: {
+  type: TypeView;
+  field: FieldView;
+  baseId: string;
+  value: string;
+  onChange: (v: string) => void;
+  error: string | null;
+}) {
+  if (field.kind === "select" && choiceControl(field) !== "select")
+    return (
+      <ChoiceField
+        type={type}
+        field={field}
+        baseId={baseId}
+        value={value}
+        onChange={onChange}
+        error={error}
+      />
+    );
+  return (
+    <FieldInput
+      field={field}
+      baseId={baseId}
+      value={value}
+      onChange={onChange}
+      error={error}
+    />
+  );
+}
+
+/**
+ * A choice as pills (up to five short ones) or a list of radios (up to ten):
+ * native radios, the chosen one marked by React's own state. The question
+ * that decides where it goes says so, and each choice names the team it
+ * reaches. An optional choice can be cleared.
+ */
+function ChoiceField({
+  type,
+  field,
+  baseId,
+  value,
+  onChange,
+  error,
+}: {
+  type: TypeView;
+  field: FieldView;
+  baseId: string;
+  value: string;
+  onChange: (v: string) => void;
+  error: string | null;
+}) {
+  const id = `${baseId}-${field.key}`;
+  const options = field.options ?? [];
+  const control = choiceControl(field);
+  const deciding =
+    routesKnown(type) && routingFields(type).some(f => f.key === field.key);
+  const teamLines = deciding ? answerTeamLines(type, field) : null;
+  const decides = deciding
+    ? teamLines
+      ? "Decides where it goes"
+      : "Decides which task it makes"
+    : null;
+  const at = options.findIndex(o => o.id === value);
+  const focusAt = at >= 0 ? at : 0;
+  // Clear goes with the press: focus moves to the question's first choice.
+  const groupRef = useRef<HTMLDivElement>(null);
+  const cleared = useRef(false);
+  useEffect(() => {
+    if (!cleared.current) return;
+    cleared.current = false;
+    groupRef.current
+      ?.querySelector<HTMLElement>(`[data-field="${field.key}"]`)
+      ?.focus();
+  });
+  const described = [
+    decides ? `${id}-decides` : "",
+    error || field.help ? `${id}-note` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <div className="rq-field" data-question={field.key}>
+      <div className="rq-qhead">
+        <p className="rq-label" id={`${id}-label`}>
+          {field.label}
+          {field.required ? null : (
+            <span className="rq-optional"> (optional)</span>
+          )}
+        </p>
+        {decides ? (
+          <span className="rq-decides" id={`${id}-decides`}>
+            <Split aria-hidden />
+            {decides}
+          </span>
+        ) : null}
+        {!field.required && value ? (
+          <button
+            type="button"
+            className="rq-clear"
+            aria-label={`Clear ${field.label}`}
+            onClick={() => {
+              cleared.current = true;
+              onChange("");
+            }}
+          >
+            Clear
+          </button>
+        ) : null}
+      </div>
+      <div
+        ref={groupRef}
+        role="radiogroup"
+        className={control === "pills" ? "rq-choices" : "rq-radios"}
+        data-lines={teamLines ? 2 : undefined}
+        aria-labelledby={`${id}-label`}
+        aria-describedby={described || undefined}
+        aria-required={field.required || undefined}
+        aria-invalid={error ? true : undefined}
+      >
+        {options.map((o, i) => (
+          <label
+            key={o.id}
+            className="rq-choice"
+            data-on={o.id === value || undefined}
+          >
+            <input
+              type="radio"
+              className="rq-choice-input"
+              name={id}
+              value={o.id}
+              checked={o.id === value}
+              data-field={i === focusAt ? field.key : undefined}
+              aria-invalid={error ? true : undefined}
+              // On each radio too: a screen reader reads the focused
+              // control's description, not reliably its group's (A11Y-07).
+              aria-describedby={described || undefined}
+              onChange={() => onChange(o.id)}
+            />
+            <span className="rq-choice-face">
+              {control === "radios" ? (
+                <span className="rq-radio-dot" aria-hidden />
+              ) : (
+                <Check aria-hidden className="rq-tick" />
+              )}
+              <span className="rq-choice-text">
+                <span className="rq-choice-name">{o.name}</span>
+                {teamLines?.[o.id] ? (
+                  <span className="rq-choice-team">{teamLines[o.id]}</span>
+                ) : null}
+              </span>
+            </span>
+          </label>
+        ))}
+      </div>
+      <Note id={`${id}-note`} help={field.help} error={error} />
+    </div>
+  );
+}
+
+/** A question answered in words, a link, a number, or the native select. */
 function FieldInput({
   field,
   baseId,
@@ -1155,15 +2612,18 @@ function FieldInput({
   error: string | null;
 }) {
   const id = `${baseId}-${field.key}`;
+  const missingChoice =
+    field.kind === "select" && (field.options?.length ?? 0) === 0;
+  // A choice ClickUp lost says why under it, and that sentence describes the
+  // select it explains (review A11Y-21).
+  const help = missingChoice ? REQUEST_SENTENCES.missingChoice : field.help;
   const common = {
     id,
     "data-field": field.key,
     "aria-invalid": error ? true : undefined,
     "aria-required": field.required || undefined,
-    "aria-describedby": error || field.help ? `${id}-note` : undefined,
+    "aria-describedby": error || help ? `${id}-note` : undefined,
   } as const;
-  const missingChoice =
-    field.kind === "select" && (field.options?.length ?? 0) === 0;
   let input: ReactNode;
   if (field.kind === "longtext" || field.kind === "details")
     input = (
@@ -1183,8 +2643,12 @@ function FieldInput({
         {...common}
         className="rq-input rq-select"
         value={value}
-        disabled={missingChoice}
-        onChange={e => onChange(e.target.value)}
+        // Not disabled: a required choice ClickUp lost still takes focus
+        // from the error summary, with its sentence (review A11Y-21).
+        aria-disabled={missingChoice || undefined}
+        onChange={e => {
+          if (!missingChoice) onChange(e.target.value);
+        }}
       >
         <option value="">{missingChoice ? "Not available" : "Pick one"}</option>
         {(field.options ?? []).map(o => (
@@ -1222,7 +2686,7 @@ function FieldInput({
       id={id}
       label={field.label}
       optional={!field.required}
-      help={missingChoice ? REQUEST_SENTENCES.missingChoice : field.help}
+      help={help}
       error={error}
     >
       {input}
@@ -1230,102 +2694,1166 @@ function FieldInput({
   );
 }
 
-/** The route line, one per task, before Send (6.1's signature). */
-function RouteLines({
-  preview,
-  busy,
+/**
+ * Due: the usual day and the next working day as two choices, and "Pick a
+ * day", which opens the native date input. That input is always on the page,
+ * with the due day in it, and shows whenever a day is picked by hand, or
+ * when the day carried in matches neither choice.
+ */
+function DueField({
+  type,
+  baseId,
   dueOn,
+  today,
+  onChange,
+  error,
 }: {
-  preview: Load<RoutePreview> | null;
-  busy: boolean;
+  type: TypeView;
+  baseId: string;
   dueOn: string;
+  today: string;
+  onChange: (v: string) => void;
+  error: string | null;
 }) {
-  if (!preview) return null;
-  if (preview.status === "loading")
-    return (
-      <div className="rq-route">
-        <p className="rq-kicker">Where it goes</p>
-        <Waiting text={REQUEST_SENTENCES.previewWaiting} />
-      </div>
-    );
-  if (preview.status === "error")
-    return (
-      <div className="rq-route">
-        <p className="rq-kicker">Where it goes</p>
-        <p className="rq-note">{preview.error}</p>
-      </div>
-    );
-  const { parts, note } = preview.data;
+  const due = dueField(type);
+  const choices = dueChoices(type.dueDefault, today);
+  const quick = choices.some(c => c.iso === dueOn);
+  const [picking, setPicking] = useState(!quick);
+  if (!due) return null;
+  const id = `${baseId}-due`;
+  const showDate = picking || !quick || Boolean(error);
+  const usualDays = `${
+    type.dueDays <= 0
+      ? "The same day"
+      : `${type.dueDays} working day${type.dueDays === 1 ? "" : "s"}`
+  } is the usual for this type. Working days are Sunday to Thursday`;
+  const usual = `${usualDays}, Kuwait time.`;
   return (
-    <div
-      className="rq-route"
-      aria-live="polite"
-      aria-busy={busy || undefined}
-      data-busy={busy || undefined}
-    >
-      <p className="rq-kicker">Where it goes</p>
-      {parts.length ? (
-        <ul className="rq-route-list">
-          {parts.map(p => (
-            <RouteItem key={p.part} part={p} dueOn={dueOn || null} />
-          ))}
-        </ul>
-      ) : (
-        <p className="rq-note">{note ?? REQUEST_SENTENCES.previewFailed}</p>
-      )}
+    <div className="rq-field" data-question={due.key}>
+      <p className="rq-label" id={`${id}-label`}>
+        {due.label}
+      </p>
+      <div
+        role="radiogroup"
+        className="rq-choices rq-due"
+        aria-labelledby={`${id}-label`}
+        aria-describedby={`${id}-note`}
+      >
+        {choices.map(c => (
+          <label
+            key={c.iso}
+            className="rq-choice rq-day"
+            data-on={(!showDate && c.iso === dueOn) || undefined}
+          >
+            <input
+              type="radio"
+              className="rq-choice-input"
+              name={id}
+              checked={!showDate && c.iso === dueOn}
+              onChange={() => {
+                setPicking(false);
+                onChange(c.iso);
+              }}
+            />
+            <span className="rq-choice-face">
+              <Check aria-hidden className="rq-tick" />
+              <span className="rq-choice-text rq-day-text">
+                <span className="rq-day-date">{dayLabel(c.iso, today)}</span>
+                <span className="rq-day-tag">{c.tag}</span>
+              </span>
+            </span>
+          </label>
+        ))}
+        <label className="rq-choice rq-day" data-on={showDate || undefined}>
+          <input
+            type="radio"
+            className="rq-choice-input"
+            name={id}
+            checked={showDate}
+            onChange={() => setPicking(true)}
+          />
+          <span className="rq-choice-face">
+            {showDate ? (
+              <Check aria-hidden className="rq-tick" />
+            ) : (
+              <CalendarDays aria-hidden className="rq-day-icon" />
+            )}
+            <span className="rq-day-date" id={`${id}-pick`}>
+              Pick a day
+            </span>
+          </span>
+        </label>
+      </div>
+      <div className="rq-date" hidden={!showDate}>
+        <input
+          id={`${id}-day`}
+          data-field={due.key}
+          type="date"
+          className="rq-input rq-date-input"
+          value={dueOn}
+          min={today}
+          required={due.required}
+          aria-labelledby={`${id}-label ${id}-pick`}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={`${id}-note`}
+          onChange={e => onChange(e.target.value)}
+        />
+      </div>
+      <Note
+        id={`${id}-note`}
+        error={error}
+        help={
+          // "Kuwait time" said once (review D16, CL-11).
+          showDate && dueOn
+            ? `${dayLabel(dueOn, today)}, Kuwait time. ${usualDays}.`
+            : usual
+        }
+      />
     </div>
   );
 }
 
-function RouteItem({ part, dueOn }: { part: RoutePart; dueOn: string | null }) {
-  const note = ownerNote(part.owner);
-  const owner =
-    part.owner.how === "none" || !part.owner.label
-      ? "Owner: nobody yet."
-      : `Owner: ${part.owner.label}.`;
+/** Priority: four pills, the type's own marked "usual". */
+function PriorityField({
+  type,
+  baseId,
+  value,
+  onChange,
+}: {
+  type: TypeView;
+  baseId: string;
+  value: Priority;
+  onChange: (p: Priority) => void;
+}) {
+  const prio = priorityField(type);
+  if (!prio) return null;
+  const id = `${baseId}-priority`;
   return (
-    <li className="rq-route-line">
-      <CornerDownRight aria-hidden className="rq-route-mark" />
-      <div className="rq-route-text">
-        <p>
-          Goes to <strong>{part.listName}</strong> as "
-          <bdi dir="auto">{part.taskName}</bdi>". {owner}
-          {part.templateName ? (
-            <>
-              {" "}
-              Uses the ClickUp template{" "}
-              <bdi dir="auto">{part.templateName}</bdi>.
-            </>
-          ) : part.stepCount ? (
-            ` Adds ${part.stepCount} ${part.stepsDraft ? "draft " : ""}SOP step${part.stepCount === 1 ? "" : "s"}.`
-          ) : null}
-          {dueOn ? ` Due ${dayLabel(dueOn)}.` : null}
-        </p>
-        {note ? <p className="rq-muted">{note}</p> : null}
+    <div className="rq-field" data-question={prio.key}>
+      <p className="rq-label" id={`${id}-label`}>
+        {prio.label}
+      </p>
+      <div
+        role="radiogroup"
+        className="rq-choices rq-prio"
+        aria-labelledby={`${id}-label`}
+      >
+        {PRIORITIES.map(p => (
+          <label
+            key={p.key}
+            className="rq-choice"
+            data-on={p.key === value || undefined}
+          >
+            <input
+              type="radio"
+              className="rq-choice-input"
+              name={id}
+              value={p.key}
+              checked={p.key === value}
+              data-field={p.key === value ? prio.key : undefined}
+              onChange={() => onChange(p.key)}
+            />
+            <span className="rq-choice-face">
+              <Check aria-hidden className="rq-tick" />
+              <span className="rq-choice-text">
+                <span className="rq-choice-name">{p.label}</span>
+              </span>
+              {p.key === type.priority ? (
+                <span className="rq-usual">usual</span>
+              ) : null}
+            </span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// --- The route (the signature) -----------------------------------------------
+
+/** A task name with only its client in its own direction. */
+function TaskName({ name, client }: { name: string; client?: string | null }) {
+  const parts = taskNameParts(name, client);
+  if (!parts) return <bdi dir="auto">{name}</bdi>;
+  return (
+    <>
+      <bdi dir="auto">{parts.client}</bdi>
+      {parts.rest}
+    </>
+  );
+}
+
+/** One stop on the route: its mark, a short kicker, its words. */
+function Stop({
+  mark,
+  kicker,
+  children,
+  kind,
+}: {
+  mark: ReactNode;
+  kicker: string;
+  children: ReactNode;
+  kind?: string;
+}) {
+  return (
+    <li className="rq-stop" data-kind={kind}>
+      <span className="rq-stop-mark" aria-hidden>
+        {mark}
+      </span>
+      <div className="rq-stop-body">
+        <p className="rq-stop-when">{kicker}</p>
+        {children}
       </div>
     </li>
   );
 }
 
-/** In place of Send while the writer is not open to this seat (2.8, R6). */
-function WriterOff({ note }: { note: string | null }) {
+/** What the owner works from: the template, or the SOP steps as a checklist. */
+function Works({ works }: { works: LaneWorks }) {
+  const [all, setAll] = useState(false);
+  const listRef = useRef<HTMLOListElement>(null);
+  const reveal = useRevealFocus(listRef, null);
+  if (works.kind === "template") return <>{ROUTE_WORDS.template(works.name)}</>;
+  const FIRST = 2;
+  const steps = works.steps ?? [];
+  const shown = all ? steps : steps.slice(0, FIRST);
+  return (
+    <>
+      <span className="rq-works-count">
+        {ROUTE_WORDS.stepsAdded(works.count)}
+      </span>
+      {shown.length ? (
+        <ol className="rq-steps" ref={listRef}>
+          {shown.map((s, i) => (
+            // The first step the press showed takes focus, so it is read.
+            <li key={`${i}-${s}`} tabIndex={i === FIRST ? -1 : undefined}>
+              {s}
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      {steps.length > shown.length ? (
+        <button
+          type="button"
+          className="rq-inline rq-steps-more"
+          onClick={() => {
+            reveal(FIRST);
+            setAll(true);
+          }}
+        >
+          Show the other {steps.length - shown.length}
+        </button>
+      ) : null}
+      {works.draft ? (
+        <span className="rq-quiet-note">{ROUTE_WORDS.draft}</span>
+      ) : null}
+    </>
+  );
+}
+
+/** One department's lane on the route, before Send. */
+function Lane({
+  lane,
+  timing,
+  client,
+  ahead,
+}: {
+  lane: RouteLane;
+  timing: string;
+  client: string | null;
+  /** Requests are not open to the seat: no timing, and no client asked. */
+  ahead: boolean;
+}) {
+  return (
+    <>
+      <span className="rq-stop-mark rq-seal" data-kind={lane.kind} aria-hidden>
+        <Mark name={teamLook(lane.team).icon} />
+      </span>
+      <div className="rq-stop-body">
+        {/* "Goes to" is said once to a screen reader, by the lane's name. */}
+        <p
+          className="rq-stop-when rq-lane-when"
+          aria-hidden={
+            (timing === ROUTE_WORDS.goesTo && lane.kind === "plan") || undefined
+          }
+        >
+          {lane.kind === "may" ? ROUTE_WORDS.may : timing}
+        </p>
+        <p className="rq-lane-name">
+          {lane.kind === "plan" ? (
+            <span className="rq-sr">Goes to </span>
+          ) : null}
+          {lane.listName}
+        </p>
+        {lane.condition ? <p className="rq-lane-if">{lane.condition}</p> : null}
+        <dl className="rq-facts-dl">
+          <div>
+            <dt>Task</dt>
+            <dd>
+              {lane.taskName ? (
+                <q>
+                  <TaskName name={lane.taskName} client={client} />
+                </q>
+              ) : (
+                <span className="rq-quiet-note">
+                  {ahead ? ROUTE_WORDS.namedForClient : ROUTE_WORDS.pickClient}
+                </span>
+              )}
+            </dd>
+          </div>
+          {lane.owner ? (
+            <div>
+              <dt>Owner</dt>
+              <dd>
+                {lane.owner.label}
+                {lane.owner.note ? (
+                  <span className="rq-quiet-note">{lane.owner.note}</span>
+                ) : null}
+              </dd>
+            </div>
+          ) : null}
+          {lane.works ? (
+            <div>
+              <dt>Works from</dt>
+              <dd>
+                <Works works={lane.works} />
+              </dd>
+            </div>
+          ) : lane.byAnswer?.length ? (
+            <div>
+              <dt>Works from</dt>
+              <dd>
+                {/* One task per answer, said once: what each one works
+                    from, by the answer (review D7). */}
+                {lane.byAnswer.map(b => (
+                  <span key={b.answer} className="rq-works-by">
+                    <span className="rq-works-answer">{b.answer}:</span>{" "}
+                    {b.works ? <Works works={b.works} /> : null}
+                  </span>
+                ))}
+              </dd>
+            </div>
+          ) : null}
+        </dl>
+      </div>
+    </>
+  );
+}
+
+/** The lanes: side by side for exactly two, else one under the other. */
+function Lanes<L extends { part: string; kind?: string }>({
+  layout,
+  lanes,
+  fork,
+  render,
+}: {
+  layout: "pair" | "stack";
+  lanes: L[];
+  fork: string;
+  render: (lane: L) => ReactNode;
+}) {
+  if (layout === "pair")
+    return (
+      <li
+        className="rq-stop rq-stop-fork"
+        data-n={lanes.length}
+        data-kind={lanes.every(l => l.kind === "may") ? "may" : undefined}
+      >
+        <div className="rq-lanes">
+          <p className="rq-fork-note rq-stop-when">{fork}</p>
+          {lanes.map(l => (
+            <div
+              key={l.part}
+              className="rq-lane rq-route-line"
+              data-kind={l.kind}
+            >
+              {render(l)}
+            </div>
+          ))}
+        </div>
+      </li>
+    );
+  return (
+    <>
+      {lanes.map(l => (
+        <li key={l.part} className="rq-stop rq-route-line" data-kind={l.kind}>
+          {render(l)}
+        </li>
+      ))}
+    </>
+  );
+}
+
+/** What happens next, before Send: the route of stops. */
+function RouteView({
+  type,
+  preview,
+  choicePreviews,
+  readFor,
+  client,
+  busy,
+  dueOn,
+  priority,
+  held,
+  heldNote,
+  quiet,
+  ahead = false,
+  blocked = false,
+}: {
+  type: TypeView;
+  preview: Load<RoutePreview> | null;
+  choicePreviews: Record<string, RoutePart[]> | null;
+  /** What the shown preview was read for (review BT-4). */
+  readFor: { choices: Record<string, string>; client: string | null } | null;
+  client: { taskId: string; name: string } | null;
+  busy: boolean;
+  dueOn: string;
+  priority: Priority;
+  held: boolean;
+  heldNote: string | null;
+  /** The writer has not reported: the held words follow its hedge. */
+  quiet: boolean;
+  /** Requests are not open to this seat: where it would go, nothing else. */
+  ahead?: boolean;
+  /**
+   * A required choice ClickUp lost: the request cannot be sent here, so the
+   * route says only where it would go, as while requests are not open to
+   * the seat, with the questions still on the page (T3-design-clarity-05).
+   */
+  blocked?: boolean;
+}) {
+  const id = useId();
+  const ready = preview?.status === "ready" ? preview.data : null;
+  // Drawn from the answers and the client the preview was read for, so the
+  // lanes and the summary change only when its successor lands (BT-4).
+  const model: RouteModel | null = ready
+    ? routeModel({
+        type,
+        preview: ready,
+        choicePreviews,
+        answers: readFor?.choices ?? {},
+        clientPicked: Boolean(readFor?.client),
+        ahead,
+      })
+    : null;
+  // The timing words only while requests are open to the seat (6.7): held,
+  // "When requests open" ("Waits for the writer" while it is quiet); not
+  // open to the seat at all, or not sendable here, none ("Goes to").
+  const still = ahead || blocked;
+  // Nothing is saved for a request that cannot be sent here.
+  const keep = held && !blocked;
+  const timing = still
+    ? ROUTE_WORDS.goesTo
+    : held
+      ? quiet
+        ? ROUTE_WORDS.whenQuiet
+        : ROUTE_WORDS.whenOpen
+      : ROUTE_WORDS.soon;
+  const fork = model?.lanes.some(l => l.kind === "may")
+    ? ahead
+      ? ROUTE_WORDS.dependsOnAnswer
+      : "By your answer"
+    : still
+      ? countWords(model?.lanes.length ?? 0, "task")
+      : timing;
+  // The one polite line says only a settled answer; the first read's wait
+  // shows, unsaid, in its place (review A11Y-08).
+  const status =
+    !preview || preview.status === "loading"
+      ? ""
+      : preview.status === "error"
+        ? preview.error
+        : model?.summary
+          ? `${model.summary}${keep && model.lanes.length ? `, saved ${ROUTE_WORDS.savedUntil(quiet)}` : ""}`
+          : "";
+  return (
+    <section
+      className="rq-next"
+      aria-labelledby={id}
+      aria-busy={busy || undefined}
+      data-busy={busy || undefined}
+    >
+      <div className="rq-next-head">
+        <h3 id={id} className="rq-kicker">
+          {still ? ROUTE_WORDS.whereItGoes : "What happens next"}
+        </h3>
+        {preview?.status === "loading" ? (
+          <p className="rq-route-wait" aria-hidden>
+            {REQUEST_SENTENCES.previewWaiting}
+          </p>
+        ) : null}
+        <p className={status ? "rq-route-sum" : "rq-sr"} role="status">
+          {status}
+        </p>
+      </div>
+      {model ? (
+        <ol className="rq-stops">
+          {still ? null : (
+            <Stop mark={<Send />} kicker="Now" kind="send">
+              <p className="rq-stop-text">
+                {held ? ROUTE_WORDS.nowHeld : ROUTE_WORDS.now}
+              </p>
+            </Stop>
+          )}
+          {keep ? (
+            <Stop mark={<Clock />} kicker={ROUTE_WORDS.heldTitle} kind="held">
+              <p className="rq-stop-text">{ROUTE_WORDS.heldText}</p>
+              {heldNote ? <p className="rq-quiet-note">{heldNote}</p> : null}
+            </Stop>
+          ) : null}
+          {model.decision ? (
+            <Stop
+              mark={<span className="rq-diamond" />}
+              kicker="Your answer"
+              kind="decision"
+            >
+              <p className="rq-stop-text">
+                {model.decision.question}{" "}
+                <strong>{model.decision.answer}</strong>
+              </p>
+            </Stop>
+          ) : null}
+          {model.lanes.length ? (
+            <Lanes
+              layout={model.layout}
+              lanes={model.lanes}
+              fork={fork}
+              render={lane => (
+                <Lane
+                  lane={lane}
+                  timing={lane.kind === "may" ? ROUTE_WORDS.may : timing}
+                  client={client?.name ?? null}
+                  ahead={ahead}
+                />
+              )}
+            />
+          ) : (
+            <Stop mark={<Split />} kicker="Then" kind="note">
+              <p className="rq-stop-text">
+                {model.note ?? REQUEST_SENTENCES.previewFailed}
+              </p>
+            </Stop>
+          )}
+          {type.sopUrl ? (
+            <Stop mark={<BookOpen />} kicker="How they do it" kind="sop">
+              <a
+                className="rq-sop"
+                href={type.sopUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {ROUTE_WORDS.sopLink}
+                <NewTab />
+                <ArrowUpRight aria-hidden />
+              </a>
+            </Stop>
+          ) : null}
+          {still ? null : (
+            <>
+              {/* The day is said here once; a held request's kept due day
+                  is its quiet note (review CL-13, T3-design-clarity-04). */}
+              <Stop mark={<CalendarDays />} kicker="Due" kind="due">
+                <p className="rq-stop-text">
+                  {dueOn ? `${dayLabel(dueOn)}, ` : ""}
+                  {priority} priority
+                </p>
+                {held && dueOn ? (
+                  <p className="rq-quiet-note">{ROUTE_WORDS.heldDue}</p>
+                ) : null}
+              </Stop>
+              <Stop mark={<Bell />} kicker="After that" kind="bell">
+                <p className="rq-stop-text">{ROUTE_WORDS.bell}</p>
+                <p className="rq-quiet-note">
+                  {held ? ROUTE_WORDS.bellAfterHeld : ROUTE_WORDS.bellAfter}
+                </p>
+              </Stop>
+            </>
+          )}
+        </ol>
+      ) : null}
+      <ul className="rq-truths">
+        <li>{ROUTE_WORDS.byRule}</li>
+        {clientField(type) ? <li>{ROUTE_WORDS.noClient}</li> : null}
+        {still ? null : <li>{ROUTE_WORDS.cancel}</li>}
+      </ul>
+    </section>
+  );
+}
+
+/** Under the questions: the error summary, a refusal, and the one button. */
+function SendBlock({
+  errors,
+  order,
+  lost,
+  announce,
+  formError,
+  held,
+  quiet,
+  sending,
+  onSend,
+  onFix,
+}: {
+  errors: Record<string, string>;
+  order: string[];
+  /** Required choices ClickUp lost: the request cannot be sent here. */
+  lost: FieldView[];
+  /** The press's summary, said once through the polite line below. */
+  announce: string;
+  formError: string | null;
+  held: boolean;
+  quiet: boolean;
+  sending: boolean;
+  onSend: () => void;
+  onFix: (key: string) => void;
+}) {
+  const id = useId();
+  const keys = [
+    ...order.filter(k => errors[k]),
+    ...Object.keys(errors).filter(k => !order.includes(k)),
+  ];
+  const blocked = lost.length > 0;
+  return (
+    <div className="rq-send">
+      {/* On the page before any press, and filled only once focus is on the
+          first answer to fix, so a press's summary is said once, politely,
+          after that field says its own error; the visible summary is not
+          live, so each fix shrinks it quietly (review A11Y-02). */}
+      <p className="rq-sr" role="status">
+        {announce}
+      </p>
+      {keys.length ? (
+        <div className="rq-alert rq-summary">
+          <CircleAlert aria-hidden />
+          <div>
+            <p>
+              {summaryLead(
+                keys,
+                lost.map(f => f.key),
+              )}
+            </p>
+            <ul>
+              {keys.map(k => (
+                <li key={k}>
+                  <button
+                    type="button"
+                    className="rq-inline"
+                    onClick={() => onFix(k)}
+                  >
+                    {errors[k]}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      ) : null}
+      {formError ? (
+        <div className="rq-alert" role="alert">
+          <CircleAlert aria-hidden />
+          <p>{formError}</p>
+        </div>
+      ) : null}
+      {/* On the page before any press: the way out is the ClickUp request
+          form, the one teal action, as when requests are not open to the
+          seat (review T3-design-clarity-05). */}
+      {blocked ? (
+        <div className="rq-off rq-blocked">
+          <CircleAlert aria-hidden />
+          <div>
+            <p id={`${id}-blocked`}>
+              {REQUEST_SENTENCES.lostBlocked(lost[0].label)}
+            </p>
+            <a
+              className="rq-btn rq-btn-primary rq-off-action"
+              href={CLICKUP_FORM_URL}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open the ClickUp request form
+              <NewTab />
+              <ArrowUpRight aria-hidden />
+            </a>
+          </div>
+        </div>
+      ) : null}
+      <div className="rq-actions">
+        <button
+          type="button"
+          className={`rq-btn ${blocked ? "rq-btn-outline" : "rq-btn-primary"}`}
+          aria-describedby={blocked ? `${id}-blocked` : undefined}
+          data-state={sending ? "loading" : undefined}
+          aria-busy={sending || undefined}
+          // Not disabled while it sends, so focus stays on it; a second
+          // press does nothing (send() holds one press at a time).
+          aria-disabled={sending || undefined}
+          onClick={onSend}
+        >
+          {sending ? (
+            <>
+              <LoaderCircle aria-hidden className="rq-spin" />
+              {held ? "Saving" : "Sending"}
+            </>
+          ) : held ? (
+            "Save request"
+          ) : (
+            "Send request"
+          )}
+        </button>
+        {held ? (
+          <span className="rq-hint">
+            <Clock aria-hidden />
+            Saved here {ROUTE_WORDS.savedUntil(quiet)}.
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * In place of the questions while requests are not open to this seat (2.8,
+ * R6). Above the map it is a status; in place of the questions it is a
+ * group named by its sentence and described by the line under it, which the
+ * form moves focus to when it replaces the questions partway through
+ * (`focusRef`; review T3-a11y-behaviour-02), so the reason is never only a
+ * status inserted with its words.
+ */
+function WriterOff({
+  note,
+  focusRef,
+  describedBy,
+}: {
+  note: string | null;
+  focusRef?: RefObject<HTMLDivElement | null>;
+  describedBy?: string;
+}) {
+  const id = useId();
   const words =
     note ??
     "Requests are not switched on yet. Use the ClickUp request form until then.";
+  const body = (
+    <>
+      <Clock aria-hidden />
+      <div>
+        <p id={`${id}-words`}>{words}</p>
+        {/ClickUp request form/.test(words) ? (
+          <a
+            className="rq-btn rq-btn-primary rq-off-action"
+            href={CLICKUP_FORM_URL}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Open the ClickUp request form
+            <NewTab />
+            <ArrowUpRight aria-hidden />
+          </a>
+        ) : null}
+      </div>
+    </>
+  );
+  if (!focusRef)
+    return (
+      <div className="rq-off" role="status">
+        {body}
+      </div>
+    );
   return (
-    <div className="rq-off" role="status">
-      <p>{words}</p>
-      {/ClickUp request form/.test(words) ? (
-        <a
-          className="rq-link"
-          href={CLICKUP_FORM_URL}
-          target="_blank"
-          rel="noreferrer"
+    <div
+      className="rq-off"
+      ref={focusRef}
+      tabIndex={-1}
+      role="group"
+      aria-labelledby={`${id}-words`}
+      aria-describedby={describedBy}
+    >
+      {body}
+    </div>
+  );
+}
+
+// --- After Send: the same route as the tracker -------------------------------
+
+const TONE_ICON = {
+  done: CircleCheck,
+  moving: CircleDashed,
+  checking: CircleDashed,
+  held: Clock,
+  failed: CircleAlert,
+} as const;
+
+/** One department's lane after Send: its sentence, its task, its link. */
+function SentLaneView({
+  lane,
+  client,
+}: {
+  lane: SentLane;
+  client: string | null;
+}) {
+  // In ClickUp but not finished (its note says what to check): the warning
+  // mark in orange, never the success check (review T2-clarity-05).
+  const unfinished = lane.state === "done" && Boolean(lane.note);
+  const Icon = unfinished ? CircleAlert : TONE_ICON[lane.state];
+  return (
+    <>
+      <span
+        className="rq-stop-mark rq-seal"
+        data-state={lane.state}
+        aria-hidden
+      >
+        <Mark name={teamLook(lane.team).icon} />
+      </span>
+      <div className="rq-stop-body">
+        <p
+          className="rq-sent-line"
+          data-state={lane.state}
+          data-unfinished={unfinished || undefined}
         >
-          Open the ClickUp request form
-          <ArrowUpRight aria-hidden className="rq-link-icon" />
-        </a>
-      ) : null}
+          <Icon aria-hidden />
+          <span>{lane.line}</span>
+        </p>
+        <p className="rq-lane-task">
+          <q>
+            <TaskName name={lane.taskName} client={client} />
+          </q>
+        </p>
+        {lane.note ? (
+          <p className="rq-quiet-note rq-warn-note">{lane.note}</p>
+        ) : null}
+        {lane.url ? (
+          <a
+            className="rq-open"
+            href={lane.url}
+            target="_blank"
+            rel="noreferrer"
+            // Two tasks give two such links: each names its list and says
+            // it opens a new tab (review A11Y-17).
+            aria-label={`Open in ClickUp (${lane.listName}, opens in a new tab)`}
+          >
+            Open in ClickUp
+            <ArrowUpRight aria-hidden />
+          </a>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+/**
+ * What was asked, as a list: the client and each answer. Due and priority
+ * are the route's Due stop, said once (review T3-design-clarity-04).
+ */
+function AnswerList({
+  title,
+  client,
+  fields,
+  answers,
+}: {
+  title: string;
+  client: { taskId: string; name: string } | null;
+  fields: FieldView[];
+  answers: Answers;
+}) {
+  const id = useId();
+  return (
+    <section className="rq-answers" aria-labelledby={id}>
+      <h4 id={id} className="rq-kicker">
+        {title}
+      </h4>
+      <dl>
+        {client ? (
+          <div>
+            <dt>Client</dt>
+            <dd>
+              <bdi dir="auto">{client.name}</bdi>
+            </dd>
+          </div>
+        ) : null}
+        {fields.map(f => (
+          <div key={f.key}>
+            <dt>{f.label}</dt>
+            <dd>
+              <bdi dir="auto">{display(f, answers[f.key])}</bdi>
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
+/** The sent view: what was asked, where it is now, what happens next. */
+function SentView({
+  type,
+  model,
+  sentId,
+  client,
+  answers,
+  dueOn,
+  priority,
+  sentAt,
+  alone,
+  checks,
+  moving,
+  heldNote,
+  quiet,
+  onAgain,
+}: {
+  type: TypeView;
+  model: SentModel;
+  sentId: string;
+  client: { taskId: string; name: string } | null;
+  answers: Answers;
+  dueOn: string;
+  priority: Priority;
+  sentAt: string | null;
+  alone: boolean;
+  checks: { at: string | null; stopped: boolean };
+  moving: boolean;
+  heldNote: string | null;
+  quiet: boolean;
+  onAgain: () => void;
+}) {
+  const headRef = useRef<HTMLDivElement>(null);
+  const id = useId();
+  // The one voice for the event (research 4.1.3): focus to the heading.
+  useEffect(() => {
+    headRef.current?.focus();
+  }, []);
+  // A task in ClickUp that is not finished takes the heading's mark to the
+  // warning, as My requests' chip does; the heading's words stay (review
+  // T2-clarity-05).
+  const unfinished =
+    model.tone === "done" &&
+    model.lanes.some(l => l.state === "done" && l.note);
+  const Icon = unfinished ? CircleAlert : TONE_ICON[model.tone];
+  const held = model.tone === "held";
+  const clock = sentAt ? kuwaitClock(sentAt) : "";
+  const asked = bodyFields(type).filter(f => (answers[f.key] ?? "").trim());
+  // Where the page's own checking stands: the time of the last read in
+  // Geist Mono while it checks, then one sentence once it stops.
+  const stamp: { text: string; clock: boolean } | null =
+    checks.stopped && moving
+      ? { text: ROUTE_WORDS.stillOnItsWay, clock: false }
+      : checks.at
+        ? moving
+          ? { text: ROUTE_WORDS.checked(kuwaitClock(checks.at)), clock: true }
+          : { text: ROUTE_WORDS.stopped(kuwaitClock(checks.at)), clock: false }
+        : moving && !held
+          ? { text: ROUTE_WORDS.checksFor, clock: false }
+          : null;
+  // The focused block is named by its heading and described by the line
+  // under it (which carries a refusal's next step) and the routed-meanwhile
+  // note, so each is said with it (review A11Y-09).
+  const described = [`${id}-sub`, alone ? `${id}-alone` : ""]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <div
+      className="rq-sent"
+      data-tone={model.tone}
+      data-unfinished={unfinished || undefined}
+    >
+      <div className="rq-sent-top">
+        <div
+          className="rq-sent-head"
+          ref={headRef}
+          tabIndex={-1}
+          role="group"
+          aria-labelledby={`${id}-title`}
+          aria-describedby={described}
+        >
+          <Icon aria-hidden className="rq-sent-icon" />
+          <div>
+            <h3 className="rq-sent-title" id={`${id}-title`}>
+              {model.heading}: {type.label}
+              {client ? (
+                <>
+                  {" "}
+                  for <bdi dir="auto">{client.name}</bdi>
+                </>
+              ) : null}
+            </h3>
+            {/* Present from the first paint, so a change of state is read
+                out once, politely, and whole. A refusal that comes in while
+                the page reads the request is said with its next step, which
+                the panel below shows (review A11Y-09). */}
+            <p
+              className="rq-sent-sub"
+              id={`${id}-sub`}
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              {model.sub}
+              {model.next ? <span className="rq-sr"> {model.next}</span> : null}
+            </p>
+          </div>
+        </div>
+        {alone ? (
+          <p className="rq-off" id={`${id}-alone`}>
+            <CircleAlert aria-hidden />
+            <span>{REQUEST_SENTENCES.sentAlone}</span>
+          </p>
+        ) : null}
+        {model.next ? (
+          <div className="rq-next-step">
+            <CircleAlert aria-hidden />
+            <div>
+              <p>{model.next}</p>
+              <a
+                className="rq-link"
+                href={CLICKUP_FORM_URL}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open the ClickUp request form
+                <NewTab />
+                <ArrowUpRight aria-hidden />
+              </a>
+            </div>
+          </div>
+        ) : null}
+      </div>
+      {/* In the page where it is drawn on a phone, under the heading, so the
+          Tab order follows the screen; from 880px the grid puts it beside
+          (review A11Y-11). */}
+      <section className="rq-next rq-tracker" aria-labelledby={`${id}-now`}>
+        <div className="rq-next-head">
+          <h4 id={`${id}-now`} className="rq-kicker">
+            Where it is now
+          </h4>
+          {stamp ? (
+            <p className="rq-stamp" data-clock={stamp.clock || undefined}>
+              {stamp.text}
+            </p>
+          ) : null}
+        </div>
+        <ol className="rq-stops">
+          {/* Saved: one stop, the time and what happened to this request
+              (review D6). The writer's sentence before a send is a rule
+              ("What you send is saved ..."), so after Save it is kept only
+              while the writer is quiet, where it says what to check; the
+              heading's sub-line says when it goes (review
+              T3-design-clarity-08). */}
+          <Stop mark={<Send />} kicker={held ? "Saved" : "Sent"} kind="send">
+            <p className="rq-stop-text">
+              {clock
+                ? held
+                  ? ROUTE_WORDS.savedAt(clock)
+                  : ROUTE_WORDS.sentAt(clock)
+                : held
+                  ? "Saved."
+                  : "Sent."}
+            </p>
+            <p className="rq-quiet-note">
+              {held
+                ? ((quiet ? heldNote : null) ?? ROUTE_WORDS.keptHere)
+                : "The cockpit checked it and saved it."}
+            </p>
+          </Stop>
+          <Lanes
+            layout={model.layout}
+            lanes={model.lanes}
+            fork={
+              held
+                ? quiet
+                  ? ROUTE_WORDS.whenQuiet
+                  : ROUTE_WORDS.whenOpen
+                : model.refused
+                  ? countWords(model.lanes.length, "task")
+                  : ROUTE_WORDS.sentTogether
+            }
+            render={lane => (
+              <SentLaneView lane={lane} client={client?.name ?? null} />
+            )}
+          />
+          {type.sopUrl ? (
+            <Stop mark={<BookOpen />} kicker="How they do it" kind="sop">
+              <a
+                className="rq-sop"
+                href={type.sopUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {ROUTE_WORDS.sopLink}
+                <NewTab />
+                <ArrowUpRight aria-hidden />
+              </a>
+            </Stop>
+          ) : null}
+          {/* The due day and priority are said here once, never again in
+              "What you asked" (review T3-design-clarity-04). */}
+          <Stop mark={<CalendarDays />} kicker="Due" kind="due">
+            <p className="rq-stop-text">
+              {dueOn ? `${dayLabel(dueOn)}, ` : ""}
+              {priority} priority
+            </p>
+            {held && dueOn ? (
+              <p className="rq-quiet-note">{ROUTE_WORDS.heldDue}</p>
+            ) : null}
+          </Stop>
+          <Stop mark={<Bell />} kicker="After that" kind="bell">
+            {model.ended ? (
+              <>
+                <p className="rq-stop-text">{ROUTE_WORDS.endedBell}</p>
+                <p className="rq-quiet-note">{ROUTE_WORDS.endedBellNote}</p>
+              </>
+            ) : (
+              <>
+                <p className="rq-stop-text">{ROUTE_WORDS.bell}</p>
+                <p className="rq-quiet-note">
+                  {held ? ROUTE_WORDS.bellAfterHeld : ROUTE_WORDS.bellAfter}
+                </p>
+              </>
+            )}
+          </Stop>
+        </ol>
+      </section>
+      <div className="rq-sent-rest">
+        {client || asked.length ? (
+          <AnswerList
+            title="What you asked"
+            client={client}
+            fields={asked}
+            answers={answers}
+          />
+        ) : null}
+        <div className="rq-actions">
+          <button
+            type="button"
+            className="rq-btn rq-btn-outline"
+            onClick={onAgain}
+          >
+            Ask for something else
+          </button>
+          {model.tone === "failed" ? (
+            <PortalLink
+              to={`/requests?id=${encodeURIComponent(sentId)}`}
+              className="rq-btn rq-btn-ghost"
+            >
+              Open the request
+              <ChevronRight aria-hidden />
+            </PortalLink>
+          ) : (
+            <PortalLink
+              to="/requests?view=mine"
+              className="rq-btn rq-btn-ghost"
+            >
+              See it in My requests
+              <ChevronRight aria-hidden />
+            </PortalLink>
+          )}
+        </div>
+        <ul className="rq-truths">
+          <li>{ROUTE_WORDS.byRule}</li>
+          {/* Only when a client went with it (review D18). */}
+          {clientField(type) && client ? <li>{ROUTE_WORDS.noClient}</li> : null}
+          {model.delivered ? (
+            <li>{ROUTE_WORDS.changeInClickUp}</li>
+          ) : model.ended ? null : (
+            <li>{ROUTE_WORDS.cancel}</li>
+          )}
+        </ul>
+      </div>
     </div>
   );
 }

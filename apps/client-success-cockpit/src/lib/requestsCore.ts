@@ -54,6 +54,13 @@ export type FieldView = {
   help: string | null;
 };
 
+/**
+ * When a part runs (cockpit_request_types_read, migration 20261028a): the
+ * choice question that decides it and the choices that make it run, named as
+ * the form shows them.
+ */
+export type PartWhen = { fieldKey: string; options: Option[] };
+
 /** One task a type makes, in words (2.5 TypeView.parts). */
 export type TypePartView = {
   part: string;
@@ -64,6 +71,18 @@ export type TypePartView = {
   /** SOP steps added as a checklist when the part has no template. */
   stepCount: number | null;
   stepsDraft: boolean;
+  /**
+   * 20261028a, every seat: null when the part always runs, else the choices
+   * that make it run. A database from before it sends no key, and the form
+   * then draws no routing marks.
+   */
+  when?: PartWhen | null;
+  /**
+   * 20261028a, every seat: the SOP steps the writer adds as the checklist,
+   * in order (drafts included; stepsDraft says so); null with a ClickUp
+   * template. Absent from an older database: the form shows the count only.
+   */
+  steps?: string[] | null;
 };
 
 /** A part as stored (2.2 Target); editors read and save it. */
@@ -143,6 +162,8 @@ export type WriterMode = "apply" | "apply_limited" | "dry_run" | "unknown";
 export type WriterAnswer = {
   canSend: boolean;
   note: string | null;
+  /** The writer's mode (cockpit_request_writer_view sends it too). */
+  mode?: WriterMode;
   /**
    * A send now is saved but held until requests open (a dry run, or off
    * the test card). Absent from an older database: requestsOpen() decides.
@@ -403,6 +424,15 @@ export const REQUEST_SENTENCES = {
   noType: "Pick what you need first.",
   missingChoice:
     "This choice could not be read from ClickUp. Ask the systems manager.",
+  /**
+   * Above Send while a required choice has no option ClickUp gives: the
+   * request cannot be sent here, so the way out is the ClickUp request form
+   * (review T3-design-clarity-05).
+   */
+  lostBlocked: (question: string) =>
+    `This request cannot be sent here until ClickUp's choices for "${question}" are back. Use the ClickUp request form for now, or ask the systems manager.`,
+  /** The error summary's lead when every answer in it is a lost choice. */
+  lostLead: "This request cannot be sent here yet:",
   cardOwner: "The CSM named on the client card.",
   notLinked:
     "Your seat is not linked to a ClickUp user, so requests assigned to you cannot show. Ask the systems manager to link it.",
@@ -486,6 +516,16 @@ export const REQUEST_SENTENCES = {
    * the new task's description with a link back (cockpit_request_plan,
    * review round 3), since the old ticket is cancelled once routed.
    */
+  /**
+   * Under the writer's sentence once a type is picked while requests are not
+   * open to the seat. Worded for every refusal, a writer gone quiet after
+   * requests opened included, never "once requests are switched on" (review
+   * CL-04, BT-7); with answers already given, they stay on screen to copy.
+   */
+  offAsked:
+    "This request is made on the ClickUp request form for now, so the cockpit asks you nothing here. The same questions open here once the cockpit can send requests for you.",
+  offKept:
+    "This request is made on the ClickUp request form for now. Your answers stay here, to copy into it.",
   keptLabel: "What was asked",
   keptNotSent:
     "This type has no question for these words, so they are not sent with it.",
@@ -853,7 +893,9 @@ export function stateHint(
  * task that did not, keep the ones that did (filing the whole request again
  * would make them twice), and raise the missing one another way.
  */
-export function partialNext(row: Pick<RequestRow, "parts">): string {
+export function partialNext(row: {
+  parts: Pick<PartRow, "state" | "listName">[];
+}): string {
   const missing = [
     ...new Set(
       row.parts
@@ -1178,19 +1220,17 @@ export function sentLines(
   });
 }
 
-/** Types grouped by team, in the server's order, with a search applied. */
+/**
+ * Types grouped by team: in the server's order, or with a search applied, in
+ * the order searchTypes ranks them (the form's own search).
+ */
 export function groupTypes(
   types: TypeView[],
   search = "",
 ): { team: Team; teamLabel: string; types: TypeView[] }[] {
-  const words = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const hits = types.filter(t => {
-    if (!words.length) return true;
-    const hay = [t.label, t.teamLabel, ...t.parts.map(p => p.teamLabel)]
-      .join(" ")
-      .toLowerCase();
-    return words.every(w => hay.includes(w));
-  });
+  const hits = search.trim()
+    ? searchTypes(types, search).hits.map(h => h.type)
+    : types;
   const groups: { team: Team; teamLabel: string; types: TypeView[] }[] = [];
   for (const t of hits) {
     let g = groups.find(x => x.team === t.team);
@@ -1214,3 +1254,1962 @@ export const isOpen = (
   !row.done &&
   !["cancelled", "routed"].includes(row.state) &&
   !row.importHandled;
+
+// ---------------------------------------------------------------------------
+// The department map (tickets-look-1028; the CEO's ask of 2026-10-28: "easy
+// for the team to understand what is for which department and what happens
+// exactly"). How each team and each request looks, the search that forgives,
+// and the route before and after Send, as plain data and pure functions: the
+// form only draws them, and the tests read them without a DOM. Icons are
+// lucide names as strings, since this file imports nothing; the form maps
+// each name to its component and falls back to the neutral Ticket.
+
+/** The neutral mark, the cockpit's own requests icon. */
+export const NEUTRAL_ICON = "Ticket";
+
+/**
+ * A department on the map: its mark, one plain line, its featured requests,
+ * and a pointer to requests filed under another team that people often look
+ * for here (review CL-09): a question and type keys, shown only for the keys
+ * on offer and filed elsewhere, each with the team it is under.
+ */
+export type TeamLook = {
+  icon: string;
+  line: string;
+  examples: string[];
+  related?: { ask: string; keys: string[] };
+};
+
+/**
+ * The five departments, keyed by team. The five ClickUp lists are constants
+ * on the server, so editors cannot add one. The examples are type keys, and
+ * the form shows only those on offer whose own team is this one.
+ */
+export const TEAM_LOOK: Partial<Record<Team, TeamLook>> = {
+  client_success: {
+    icon: "HeartHandshake",
+    line: "Billing, payment cards, licences, WhatsApp and service changes for a client",
+    examples: ["card_missing", "whatsapp_connection", "ad_spend_invoice"],
+  },
+  tech: {
+    icon: "Wrench",
+    line: "Lead forms, missing leads, pages, client set-up changes and team access",
+    examples: ["missing_leads", "connect_lead_form", "client_pause"],
+  },
+  ads: {
+    icon: "Megaphone",
+    line: "Ad accounts and campaigns, and the ads side of a pause, relaunch or exit",
+    examples: ["create_ad_account", "edit_campaign", "ads_request"],
+    related: {
+      ask: "Ads stopped because a payment card failed?",
+      keys: ["card_missing"],
+    },
+  },
+  creative: {
+    icon: "Palette",
+    line: "Scripts, social media posts and WhatsApp campaigns",
+    examples: ["new_script", "social_media", "whatsapp_reactivation"],
+  },
+  call_center: {
+    icon: "Headset",
+    line: "Leads who do not book a call, or book one and do not show up",
+    examples: ["low_show_rate", "low_schedule_rate"],
+    related: {
+      ask: "Changing who calls a client's leads?",
+      keys: ["dfy_to_dwy", "dwy_to_dfy"],
+    },
+  },
+};
+
+/** The general requests, offered when nothing else fits. */
+export const GENERAL_KEYS = [
+  "general_tech",
+  "general_csm",
+  "general_marketing",
+];
+
+/** A request's own look, keyed by type.key (stable; editors cannot change it). */
+export type TypeLook = {
+  icon: string;
+  /** What it is for, in the asker's words: one line, no full stop. */
+  line: string;
+  /** Hidden search words; a phrase of two or more words outranks single words. */
+  words: string[];
+  /**
+   * Short headings over a long set of questions, each over the question keys
+   * it holds. Used only while each heading's questions still sit together in
+   * the order the server sends.
+   */
+  groups?: { title: string; keys: string[] }[];
+  /** How a deciding question's condition starts, by its key: "If the problem is". */
+  when?: Record<string, string>;
+  /**
+   * The request that does the opposite, and the phrases that say which way
+   * ("to dwy"): while both are found, Return opens this one only when the
+   * search holds one of these and none of the opposite's, since "our call
+   * centre" is said both to ask for it and to drop it (review T2-clarity-02).
+   */
+  opposite?: { key: string; toward: string[] };
+};
+
+export const TYPE_LOOK: Record<string, TypeLook> = {
+  ad_spend_invoice: {
+    icon: "ReceiptText",
+    line: "A client needs an invoice for their ad spend over a period",
+    words: [
+      "bill",
+      "billing",
+      "receipt",
+      "spend",
+      "ad spend",
+      "invoice for ads",
+    ],
+  },
+  whatsapp_connection: {
+    icon: "MessageCircleWarning",
+    line: "A client's WhatsApp is disconnected from the CRM and needs a new QR scan",
+    words: [
+      "qr",
+      "qr code",
+      "disconnected",
+      "reconnect",
+      "logged out",
+      "whats app",
+      "not connected",
+    ],
+  },
+  dfy_to_dwy: {
+    icon: "PhoneForwarded",
+    line: "Done for you to done with you: the client's own team calls their leads from now on",
+    // Where it goes to, never where it comes from: "to dwy", not "dfy".
+    words: [
+      "done with you",
+      "to done with you",
+      "to dwy",
+      "dwy",
+      "handover",
+      "hand over",
+      "hand over calls",
+      "own callers",
+      "own team",
+      "sales team",
+      "client takes over",
+      "client calls",
+      "client will call",
+      "calls their own leads",
+      "call leads themselves",
+      "client handles",
+      "handle calls",
+      "do the calls",
+      "do the calling",
+      "stop calling",
+      "stop call centre",
+      "stop call center",
+    ],
+    opposite: { key: "dwy_to_dfy", toward: ["to dwy", "done with you"] },
+  },
+  dwy_to_dfy: {
+    icon: "PhoneIncoming",
+    line: "Done with you to done for you: our call centre calls the client's leads again",
+    words: [
+      "done for you",
+      "to done for you",
+      "to dfy",
+      "dfy",
+      "take back calls",
+      "take back the calls",
+      "calls back",
+      "our team",
+      "we take over",
+      "we take back",
+      "we call",
+      "us to call",
+      "call the leads again",
+      "our callers",
+      "our call centre",
+      "our call center",
+    ],
+    opposite: { key: "dfy_to_dwy", toward: ["to dfy", "done for you"] },
+  },
+  csm_request: {
+    icon: "Contact",
+    line: "Ask the client's CSM to handle something for one client, such as a call",
+    words: ["account manager", "client call", "follow up", "check in", "csm"],
+  },
+  business_licence: {
+    icon: "FileExclamationPoint",
+    line: "A platform needs the client's commercial licence, for example for Meta verification",
+    words: [
+      "license",
+      "trade licence",
+      "trade license",
+      "commercial registration",
+      "verification",
+      "documents",
+    ],
+  },
+  card_missing: {
+    icon: "CreditCard",
+    line: "A client's ads stopped because their payment card is missing or failed",
+    words: [
+      "payment",
+      "card declined",
+      "declined",
+      "rejected",
+      "visa",
+      "billing",
+      "ads stopped",
+      "failed payment",
+      "payment failed",
+      "credit card",
+      "card expired",
+      "expired",
+      "payment method",
+      "add card",
+      "new card",
+      "update card",
+      "no card",
+      "card on the ad account",
+      "billing issue",
+      "billing problem",
+      "payment issue",
+      "payment problem",
+      "card problem",
+      "card not working",
+      "ads not running",
+    ],
+  },
+  general_csm: {
+    icon: "HeartHandshake",
+    line: "Client success work that fits no other request, with or without a client",
+    words: ["other", "question", "help", "anything", "csm"],
+  },
+  connect_lead_form: {
+    icon: "Cable",
+    line: "Connect a client's new Meta, TikTok or Snapchat lead form to the CRM",
+    words: [
+      "instant form",
+      "lead ads",
+      "crm",
+      "integration",
+      "tiktok",
+      "snapchat",
+      "meta",
+      "facebook",
+    ],
+  },
+  missing_leads: {
+    icon: "Inbox",
+    line: "New leads are not reaching the client's CRM or the dialer",
+    words: [
+      "no leads",
+      "no new leads",
+      "lost leads",
+      "zero leads",
+      "leads not",
+      "leads missing",
+      "leads stopped",
+      "stopped coming",
+      "disappeared",
+      "not arriving",
+      "not coming",
+      "not reaching",
+      "not getting",
+      "not receiving",
+      "not syncing",
+      "not showing",
+      "dialer",
+      "lead form",
+      "ghl",
+      "gohighlevel",
+    ],
+  },
+  employee_onboarding: {
+    icon: "UserRoundPlus",
+    line: "A new team member starts and needs Slack, ClickUp and CRM access",
+    words: [
+      "new hire",
+      "hire",
+      "hired someone",
+      "recruit",
+      "joiner",
+      "new joiner",
+      "joining the team",
+      "someone new",
+      "new person",
+      "colleague",
+      "new colleague",
+      "new team member",
+      "starter",
+      "new starter",
+      "new staff",
+      "new employee",
+      "onboard",
+      "access",
+      "set up accounts",
+      // A start, so "first day" is never only an offboarding's "last day"
+      // (review T2-clarity-01).
+      "first day",
+      "start date",
+      "starting",
+      "starts",
+    ],
+  },
+  employee_offboarding: {
+    icon: "UserRoundMinus",
+    line: "A team member leaves, and their access and seats must be removed",
+    words: [
+      "leaver",
+      "leaving",
+      "remove access",
+      "resign",
+      "resigned",
+      "quit",
+      "last day",
+    ],
+  },
+  privacy_policy: {
+    icon: "FileLock",
+    line: "A lead form, landing page, app or website needs a privacy policy page",
+    words: ["policy", "legal", "terms", "gdpr"],
+  },
+  qualification_questions: {
+    icon: "ListChecks",
+    line: "Add the client's own qualifying questions to their ad lead form",
+    words: ["survey", "screening", "qualify", "lead form questions"],
+  },
+  client_offboarding: {
+    icon: "LogOut",
+    line: "A client is leaving Mahara: wind down their systems and their ads",
+    words: [
+      "churn",
+      "cancel",
+      "terminate",
+      "exit",
+      "end contract",
+      "lost client",
+      // A client who quits or leaves, never only an employee's offboarding
+      // (review T2-clarity-01).
+      "quit",
+      "leave",
+      "leaving",
+      "client leaving",
+      "client quit",
+    ],
+  },
+  client_pause: {
+    icon: "Pause",
+    line: "Stop a client's ads and systems for a short break",
+    words: [
+      "hold",
+      "on hold",
+      "freeze",
+      "freeze account",
+      "stop ads",
+      "stop running ads",
+      "stop campaign",
+      "stop everything",
+      "break",
+      "taking a break",
+      "turn off ads",
+      "switch off ads",
+      "ads off",
+    ],
+  },
+  client_relaunch: {
+    icon: "Play",
+    line: "Bring a client's ads and systems back after a break",
+    words: [
+      "restart",
+      "resume",
+      "back live",
+      "turn back on",
+      "unpause",
+      "start ads again",
+    ],
+  },
+  company_name: {
+    icon: "PenLine",
+    line: "A client's company name changed and must be updated everywhere",
+    words: ["rename", "rebrand", "new name", "brand name"],
+  },
+  company_address: {
+    icon: "MapPin",
+    line: "A client's company address changed and must be updated",
+    words: ["move", "moved", "new address", "location", "office"],
+  },
+  funnel_intent: {
+    icon: "Funnel",
+    line: "Switch a client's funnel to high, mid or low intent",
+    words: [
+      "intent",
+      "lead quality",
+      "high intent",
+      "low intent",
+      "funnel swap",
+    ],
+  },
+  landing_page: {
+    icon: "PanelsTopLeft",
+    line: "Build a new landing page for a client's campaign",
+    words: ["page", "website", "web page", "funnel page", "lp"],
+  },
+  general_tech: {
+    icon: "Wrench",
+    line: "Tech or systems work that fits no other request, with or without a client",
+    words: [
+      "other",
+      "systems",
+      "automation",
+      "make",
+      "zapier",
+      "bug",
+      "broken",
+      "help",
+    ],
+  },
+  create_ad_account: {
+    icon: "SquarePlus",
+    line: "A client needs a new ad account on Meta, TikTok or Snapchat",
+    words: [
+      "new account",
+      "ad account",
+      "business manager",
+      "tiktok",
+      "snapchat",
+      "meta",
+      "facebook",
+    ],
+    when: { ads_platform: "If the platform is" },
+  },
+  ads_request: {
+    icon: "Target",
+    line: "Ads work for one client that fits no other request",
+    words: ["campaign", "ads change", "media buyer"],
+  },
+  edit_campaign: {
+    icon: "SlidersHorizontal",
+    line: "Change a live campaign's budget, audience, creative or form",
+    words: [
+      "budget",
+      "audience",
+      "targeting",
+      "change campaign",
+      "creative swap",
+      "edit ads",
+    ],
+  },
+  general_marketing: {
+    icon: "Megaphone",
+    line: "Marketing work that fits no other request, with or without a client",
+    words: ["other", "marketing", "help"],
+  },
+  whatsapp_reactivation: {
+    icon: "MessagesSquare",
+    line: "Win back a client's old leads with a WhatsApp message campaign",
+    words: [
+      "broadcast",
+      "old leads",
+      "reengage",
+      "re engage",
+      "win back",
+      "whats app",
+      "reactivate",
+    ],
+  },
+  new_script: {
+    icon: "ScrollText",
+    line: "A script for an ad, a reel, a video sales letter, a webinar or a message sequence",
+    words: ["copy", "copywriting", "reel", "vsl", "ugc", "video", "writing"],
+    groups: [
+      {
+        title: "The script",
+        keys: ["script_type", "script_style", "orientation", "script_quantity"],
+      },
+      {
+        title: "Filming and language",
+        keys: ["who_films", "script_language", "arabic_dialect"],
+      },
+    ],
+  },
+  social_media: {
+    icon: "Share2",
+    line: "A month of social media posts for a client with the social media upsell",
+    words: ["instagram", "facebook", "posts", "content", "smm", "social"],
+  },
+  low_show_rate: {
+    icon: "CalendarX",
+    line: "Leads book a call but do not show up for it",
+    words: [
+      "no show",
+      "no shows",
+      "show up",
+      "missed calls",
+      "appointments",
+      "show rate",
+    ],
+  },
+  low_schedule_rate: {
+    icon: "CalendarClock",
+    line: "Too few leads book a call, because of the ads, the calls or both",
+    words: ["booking rate", "bookings", "not booking", "booked", "schedule"],
+    when: { schedule_rate_issue: "If the problem is" },
+  },
+};
+
+const unique = <T>(xs: T[]) => xs.filter((x, i) => xs.indexOf(x) === i);
+const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** A team's look, or the neutral one for a team the map does not know. */
+export function teamLook(team: string | null | undefined): TeamLook {
+  return (
+    (team ? TEAM_LOOK[team as Team] : undefined) ?? {
+      icon: NEUTRAL_ICON,
+      line: "",
+      examples: [],
+    }
+  );
+}
+
+/**
+ * The owner rule no seat holds while no media buyer is named (facts 1.4):
+ * its tasks go to the systems manager, so it is never named as an owner
+ * (judge 0, mustFix 1; review CL-12, BT-12).
+ */
+const UNHELD_RULE = "the media buyer of record";
+
+/**
+ * A request's look by its key. A key the map does not know (a type a
+ * migration adds later) takes its team's mark, else the neutral one, and a
+ * line built from its own data: "Goes to {reach words}. Owner: {rule}", in
+ * the plate's and the row's own reach words, so it is true for every answer
+ * and never names a team no offered choice reaches (review BT-6, S4); the
+ * owner left out while its rule is one nobody holds. `ahead`: requests are
+ * not open to the seat, so the words name the deciding question, as the
+ * plate and the row do (reachPieces).
+ */
+export function typeLook(
+  t: Pick<TypeView, "key" | "team" | "teamLabel" | "fields" | "parts">,
+  ahead = false,
+): TypeLook {
+  const own = TYPE_LOOK[t.key];
+  if (own) return own;
+  const parts = reachableParts(t.parts);
+  const rules = unique(parts.map(p => p.ruleLabel).filter(Boolean));
+  if (rules.includes(UNHELD_RULE)) rules.length = 0;
+  return {
+    icon: TEAM_LOOK[t.team]?.icon ?? NEUTRAL_ICON,
+    line: parts.length
+      ? `Goes to ${reachText(t, ahead)}${rules.length ? `. Owner: ${joinWords(rules)}` : ""}`
+      : "",
+    words: [],
+  };
+}
+
+/** The team a ClickUp list name belongs to (one of the five lists), else null. */
+export const teamOfList = (name: string): Team | null =>
+  TARGET_LISTS.find(l => l.name === name)?.team ?? null;
+
+const NUMBER_WORDS = [
+  "no",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+  "ten",
+];
+
+/** "one" to "ten", then digits. */
+export const numberWord = (n: number) => NUMBER_WORDS[n] ?? String(n);
+
+/** "One task", "Two tasks", "Three tasks", for every number. */
+export const countWords = (n: number, one: string, many = `${one}s`) =>
+  capital(`${numberWord(n)} ${n === 1 ? one : many}`);
+
+/** "a", "a or b", "a, b or c". */
+export function joinOr(list: string[]): string {
+  if (list.length <= 1) return list[0] ?? "";
+  return `${list.slice(0, -1).join(", ")} or ${list.at(-1)}`;
+}
+
+/** Whole days, Sunday to Thursday, Kuwait time. */
+const weekdayOf = (iso: string) => new Date(dayMs(iso)).getUTCDay();
+
+/** The first working day (Sunday to Thursday) after a Kuwait day. */
+export function nextWorkingDay(iso: string): string {
+  let day = addDays(iso, 1);
+  while (weekdayOf(day) === 5 || weekdayOf(day) === 6) day = addDays(day, 1);
+  return day;
+}
+
+export type DueChoice = { iso: string; tag: "usual" | "sooner" | "later" };
+
+/**
+ * The due day's two quick choices: the type's usual day (TypeView.dueDefault,
+ * which the server counts) and the next working day; when those are the same
+ * day, the working day after it. "Pick a day" holds the native date input.
+ */
+export function dueChoices(
+  usual: string,
+  todayIso: string = kuwaitToday(),
+): DueChoice[] {
+  let other = nextWorkingDay(todayIso);
+  if (other === usual) other = nextWorkingDay(usual);
+  // In date order, the usual one tagged wherever it falls (review D16, CL-11).
+  return other < usual
+    ? [
+        { iso: other, tag: "sooner" },
+        { iso: usual, tag: "usual" },
+      ]
+    : [
+        { iso: usual, tag: "usual" },
+        { iso: other, tag: "later" },
+      ];
+}
+
+export type ChoiceControl = "pills" | "radios" | "select";
+
+/**
+ * The control a choice question gets, by its number of choices (research
+ * 2.6): pills for up to five short choices, a list of radios up to ten, and
+ * the native select beyond ten, or when ClickUp's choices could not be read.
+ */
+export function choiceControl(
+  field: Pick<FieldView, "options">,
+): ChoiceControl {
+  const options = field.options ?? [];
+  if (!options.length || options.length > 10) return "select";
+  if (options.length <= 5 && options.every(o => [...o.name].length <= 22))
+    return "pills";
+  return "radios";
+}
+
+/**
+ * Whether some answer the form can give makes the part run: always (when
+ * null or unknown), or for a choice still offered. A part whose `when` keeps
+ * no choice (ClickUp dropped every one it runs on, or lost the question;
+ * 20261028a sends options []) never runs, so no routing word or lane names
+ * its team (review BT-6, S4).
+ */
+export const partReachable = (p: Pick<TypePartView, "when">) =>
+  !p.when || p.when.options.length > 0;
+
+/** The parts some answer can make run (partReachable). */
+const reachableParts = <P extends Pick<TypePartView, "when">>(parts: P[]) =>
+  parts.filter(partReachable);
+
+/** The questions whose answer decides which tasks run, in the server's order. */
+export function routingFields(
+  type: Pick<TypeView, "fields" | "parts">,
+): FieldView[] {
+  const keys = new Set(
+    reachableParts(type.parts)
+      .map(p => p.when?.fieldKey ?? "")
+      .filter(Boolean),
+  );
+  return type.fields.filter(f => keys.has(f.key));
+}
+
+/** Whether the database says when every part runs (20261028a sends `when`). */
+export const routesKnown = (type: Pick<TypeView, "parts">) =>
+  type.parts.length > 0 && type.parts.every(p => p.when !== undefined);
+
+/** What each answer of a deciding question makes: its tasks and their lists. */
+export function answerRoutes(
+  type: Pick<TypeView, "parts">,
+  field: Pick<FieldView, "key" | "options">,
+): { option: Option; parts: TypePartView[]; lists: string[] }[] {
+  return (field.options ?? []).map(option => {
+    const parts = type.parts.filter(p =>
+      p.when === null
+        ? true
+        : p.when?.fieldKey === field.key &&
+          p.when.options.some(o => o.id === option.id),
+    );
+    return { option, parts, lists: unique(parts.map(p => p.listName)) };
+  });
+}
+
+/**
+ * The team each answer of a deciding question reaches, for the second line of
+ * its choice ("Ads issue / Marketing / ADs", "Both / Both teams"), by option
+ * id; null when every answer reaches the same teams.
+ */
+export function answerTeamLines(
+  type: Pick<TypeView, "parts">,
+  field: Pick<FieldView, "key" | "options">,
+): Record<string, string> | null {
+  const routes = answerRoutes(type, field);
+  if (unique(routes.map(r => r.lists.join("|"))).length < 2) return null;
+  const out: Record<string, string> = {};
+  for (const r of routes)
+    out[r.option.id] =
+      r.lists.length === 0
+        ? "No task"
+        : r.lists.length === 1
+          ? r.lists[0]
+          : r.lists.length === 2
+            ? "Both teams"
+            : `All ${numberWord(r.lists.length)} teams`;
+  return out;
+}
+
+/** A condition in words: "If the problem is Call Center Issue or Both". */
+export function conditionWords(
+  type: Pick<TypeView, "key" | "fields">,
+  when: PartWhen,
+): string {
+  const names = when.options.map(o => o.name);
+  if (!names.length) return "For a choice that could not be read from ClickUp";
+  const lead = TYPE_LOOK[type.key]?.when?.[when.fieldKey];
+  if (lead) return `${lead} ${joinOr(names)}`;
+  const label = type.fields.find(f => f.key === when.fieldKey)?.label;
+  return `If "${label ?? when.fieldKey}" is ${joinOr(names)}`;
+}
+
+/** Where a request goes, as text and team names (the form puts a mark on each name). */
+export type ReachPiece =
+  | { team: Team | null; label: string }
+  | { text: string };
+
+/**
+ * Where a request goes, in words true for every answer (judge 0, mustFix 1):
+ * "Operations / Tech and Marketing / ADs"; "Call Center, Marketing / ADs or
+ * both, by your answer"; "Operations / Tech, and Marketing / ADs for Ads
+ * issue or Both". A database from before 20261028a does not say which tasks
+ * depend on an answer, so the teams are joined with "and", as before.
+ * `ahead`: requests are not open to the seat, so no answer is asked here and
+ * the words name the deciding question as the route does ('or both,
+ * depending on the answer to "Where is the problem?"'; review T2-clarity-04).
+ */
+export function reachPieces(
+  type: Pick<TypeView, "teamLabel" | "fields" | "parts">,
+  ahead = false,
+): ReachPiece[] {
+  const parts = reachableParts(type.parts);
+  const lists = unique(parts.map(p => p.listName));
+  const team = (label: string): ReachPiece => ({
+    team: teamOfList(label),
+    label,
+  });
+  const joined = (labels: string[], word: "and" | "or"): ReachPiece[] =>
+    labels.flatMap((label, i) => [
+      ...(i === 0
+        ? []
+        : [{ text: i === labels.length - 1 ? ` ${word} ` : ", " }]),
+      team(label),
+    ]);
+  if (lists.length <= 1 || !routesKnown(type))
+    return joined(lists.length ? lists : [type.teamLabel], "and");
+  const always = unique(
+    parts.filter(p => p.when === null).map(p => p.listName),
+  );
+  const sometimes = lists.filter(l => !always.includes(l));
+  if (!sometimes.length) return joined(always, "and");
+  if (!always.length) {
+    const fields = routingFields(type);
+    const by = !ahead
+      ? "by your answer"
+      : fields.length === 1
+        ? ROUTE_WORDS.dependsOn(fields[0].label)
+        : "depending on the answers";
+    const routes = fields.length === 1 ? answerRoutes(type, fields[0]) : [];
+    if (fields.length !== 1 || !routes.some(r => r.lists.length > 1))
+      return [...joined(sometimes, "or"), { text: `, ${by}` }];
+    if (sometimes.length === 2)
+      return [
+        team(sometimes[0]),
+        { text: ", " },
+        team(sometimes[1]),
+        { text: ` or both, ${by}` },
+      ];
+    return [
+      { text: "One or more of " },
+      ...joined(sometimes, "and"),
+      { text: `, ${by}` },
+    ];
+  }
+  const out = joined(always, "and");
+  for (const label of sometimes) {
+    const names = unique(
+      parts
+        .filter(p => p.listName === label)
+        .flatMap(p => p.when?.options.map(o => o.name) ?? []),
+    );
+    out.push({ text: ", and " }, team(label), {
+      text: names.length ? ` for ${joinOr(names)}` : " for some answers",
+    });
+  }
+  return out;
+}
+
+/** reachPieces as one line of text. */
+export const reachText = (
+  type: Pick<TypeView, "teamLabel" | "fields" | "parts">,
+  ahead = false,
+) =>
+  reachPieces(type, ahead)
+    .map(p => ("text" in p ? p.text : p.label))
+    .join("");
+
+/** One fact on a request's row; `pieces` carries team names for their marks. */
+export type TypeFact = {
+  kind: "days" | "priority" | "home" | "also" | "reach" | "client";
+  text: string;
+  team?: Team | null;
+  pieces?: ReachPiece[];
+};
+
+/** "Due in 2 working days", "Due in 1 working day", "Due today". */
+export const workingDaysWords = (n: number) =>
+  n <= 0 ? "Due today" : `Due in ${n} working day${n === 1 ? "" : "s"}`;
+
+/**
+ * A request's own facts on its row: its team when the list is not one team's
+ * (`named`), its usual working days, a priority other than normal, its home
+ * team when it is listed under another team, where else it goes (true for
+ * every answer), and its client rule. `ahead`: requests are not open to the
+ * seat, so the reach words name the deciding question (reachPieces).
+ */
+export function typeFacts(
+  type: TypeView,
+  viewTeam: Team | null = null,
+  named = false,
+  ahead = false,
+): TypeFact[] {
+  const out: TypeFact[] = [];
+  const parts = reachableParts(type.parts);
+  const lists = unique(parts.map(p => p.listName));
+  const conditional =
+    routesKnown(type) &&
+    lists.length > 1 &&
+    parts.some(p => p.when) &&
+    lists.some(l => !parts.some(p => p.listName === l && p.when === null));
+  const pieces = conditional ? reachPieces(type, ahead) : null;
+  // The reach words already name the home team: said once (review D16).
+  const homeSaid = Boolean(
+    pieces?.some(p => "label" in p && p.label === type.teamLabel),
+  );
+  if (named && !homeSaid)
+    out.push({ kind: "home", text: type.teamLabel, team: type.team });
+  out.push({ kind: "days", text: workingDaysWords(type.dueDays) });
+  if (type.priority !== "normal")
+    out.push({
+      kind: "priority",
+      text:
+        type.priority === "urgent"
+          ? "Urgent"
+          : `${capital(type.priority)} priority`,
+    });
+  if (viewTeam && viewTeam !== type.team && !homeSaid)
+    out.push({
+      kind: "home",
+      text: `Filed under ${type.teamLabel}`,
+      team: type.team,
+    });
+  if (pieces) {
+    out.push({
+      kind: "reach",
+      text: pieces.map(p => ("text" in p ? p.text : p.label)).join(""),
+      pieces,
+    });
+  } else
+    for (const label of lists)
+      if (label !== type.teamLabel && teamOfList(label) !== viewTeam)
+        out.push({
+          kind: "also",
+          text: `Also ${label}`,
+          team: teamOfList(label),
+        });
+  const client = clientField(type);
+  if (!client) out.push({ kind: "client", text: "No client" });
+  else if (!client.required)
+    out.push({ kind: "client", text: "Client optional" });
+  return out;
+}
+
+/**
+ * The requests a team takes (graft 9): its own first, then every other
+ * request with a task for it (named with its home team on the row), each in
+ * the server's order.
+ */
+export function teamTypes(types: TypeView[], team: Team): TypeView[] {
+  const label = TEAM_LABEL[team];
+  return [
+    ...types.filter(t => t.team === team),
+    ...types.filter(
+      t =>
+        t.team !== team &&
+        reachableParts(t.parts).some(
+          p => p.listName === label || p.teamLabel === label,
+        ),
+    ),
+  ];
+}
+
+/**
+ * The requests filed under another team that give this team a task only for
+ * some answers (Low schedule rate's Marketing / ADs task runs on "Ads issue"
+ * or "Both"), so a team's page never says every one of them "also gives it a
+ * task" (review T3-design-clarity-02). Only a database that says when each
+ * task runs (routesKnown) can tell; an older one counts none.
+ */
+export function teamByAnswer(types: TypeView[], team: Team): TypeView[] {
+  const label = TEAM_LABEL[team];
+  return teamTypes(types, team).filter(t => {
+    if (t.team === team || !routesKnown(t)) return false;
+    const here = reachableParts(t.parts).filter(
+      p => p.listName === label || p.teamLabel === label,
+    );
+    if (!here.length || here.some(p => !p.when)) return false;
+    // Every task here runs on one question: it always makes one when its
+    // answers cover every choice of that question (one task per answer).
+    const keys = unique(here.map(p => p.when?.fieldKey ?? ""));
+    const field =
+      keys.length === 1 ? t.fields.find(f => f.key === keys[0]) : undefined;
+    const covered = new Set(
+      here.flatMap(p => (p.when?.options ?? []).map(o => o.id)),
+    );
+    return !(
+      field?.required &&
+      (field.options ?? []).length > 0 &&
+      (field.options ?? []).every(o => covered.has(o.id))
+    );
+  });
+}
+
+/**
+ * A team's pointer to requests filed under another team that people often
+ * look for there (TeamLook.related, review CL-09): those on offer, filed
+ * elsewhere and not in the team's own list, with the team each is under.
+ */
+export function teamRelated(
+  types: TypeView[],
+  team: Team,
+): { ask: string; types: TypeView[] } | null {
+  const related = teamLook(team).related;
+  if (!related) return null;
+  const listed = teamTypes(types, team);
+  const hits = related.keys
+    .map(k => types.find(t => t.key === k))
+    .filter(
+      (t): t is TypeView =>
+        Boolean(t) && t?.team !== team && !listed.includes(t as TypeView),
+    );
+  return hits.length ? { ask: related.ask, types: hits } : null;
+}
+
+/**
+ * A department tile's shortcuts: its featured requests on offer, then its
+ * other own requests, up to n. The general requests have their own tile.
+ */
+export function teamExamples(types: TypeView[], team: Team, n = 3): TypeView[] {
+  const own = types.filter(
+    t => t.team === team && !GENERAL_KEYS.includes(t.key),
+  );
+  const featured = teamLook(team)
+    .examples.map(k => own.find(t => t.key === k))
+    .filter((t): t is TypeView => Boolean(t));
+  return [...featured, ...own.filter(t => !featured.includes(t))].slice(0, n);
+}
+
+/** Every request on offer, A to Z: the flat list one click from the map. */
+export const everyType = (types: TypeView[]) =>
+  [...types].sort((a, b) => a.label.localeCompare(b.label, "en"));
+
+// --- Search that forgives (graft 8) ----------------------------------------
+
+/** Words a search ignores: they say nothing about which request it is. */
+const FILLER = new Set(
+  "a an the for on from will their them they to of in is are was it its my our we and or with at by be has have had this that these those you your me us his her he she please need needs want wants can could would should do does did get got some any so but if when then again also just too very all more not no what where which who how why there here about into after before up out off".split(
+    " ",
+  ),
+);
+
+/** Lower-case words: letters and digits, two or more of them. */
+const tokens = (text: string) =>
+  text
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(w => w.length > 1);
+
+/**
+ * Everyday words that say little about which request it is ("client",
+ * "issue", "new"): they add a little to the score but never count as a
+ * matched word, unless the search holds nothing else.
+ */
+const WEAK = new Set(
+  "client clients issue issues problem problems request requests new change changes someone person people today now".split(
+    " ",
+  ),
+);
+
+/**
+ * A word's root, so "calls", "calling" and "callers" meet, and "joining"
+ * meets "joiner": one ending taken off, never below three letters, then a
+ * doubled last letter ("stopped", "getting") and a last e ("receive").
+ */
+function stem(word: string): string {
+  let s = word;
+  if (s.length > 4 && s.endsWith("ies")) s = `${s.slice(0, -3)}y`;
+  else
+    for (const end of ["ings", "ing", "ers", "er", "ed", "es", "s"]) {
+      if (s.length - end.length < 3 || !s.endsWith(end)) continue;
+      if (end === "s" && /(ss|us|is)$/.test(s)) break;
+      s = s.slice(0, -end.length);
+      break;
+    }
+  if (s.length > 3 && /([b-df-hj-np-tv-z])\1$/.test(s)) s = s.slice(0, -1);
+  if (s.length > 3 && s.endsWith("e")) s = s.slice(0, -1);
+  return s;
+}
+
+/**
+ * A searched word finds a word that starts with it, a word of four letters
+ * or more that it starts with and ends at most three letters after, or a
+ * word with the same root: "stop" finds "stopped", "leads" finds "lead",
+ * "calls" finds "calling", but "whatsapp" never finds "what".
+ */
+const wordFinds = (q: string, w: string) =>
+  w.startsWith(q) ||
+  (w.length >= 4 && q.length - w.length <= 3 && q.startsWith(w)) ||
+  (q.length >= 3 && w.length >= 3 && stem(q) === stem(w));
+
+const samePhraseWord = (a: string, b: string) => a === b || stem(a) === stem(b);
+
+/**
+ * Whether the words searched hold a phrase in its order. Between two of its
+ * words may sit filler and everyday words ("stop the client's ads" holds
+ * "stop ads") and at most one other word ("handles the calls" holds "handle
+ * calls"); "dfy to dwy" holds "to dwy" but never "to dfy".
+ */
+function holdsPhrase(said: string[], phrase: string[]): boolean {
+  const next = (from: number, word: string) => {
+    let other = 0;
+    for (let j = from; j < said.length && j < from + 4; j++) {
+      if (samePhraseWord(said[j], word)) return j;
+      if (FILLER.has(said[j]) || WEAK.has(said[j])) continue;
+      if (++other > 1) return -1;
+    }
+    return -1;
+  };
+  for (let start = 0; start < said.length; start++) {
+    if (!samePhraseWord(said[start], phrase[0])) continue;
+    let at = start;
+    for (const word of phrase.slice(1)) {
+      at = next(at + 1, word);
+      if (at < 0) break;
+    }
+    if (at >= 0) return true;
+  }
+  return false;
+}
+
+/** One letter wrong, missing, extra, or two swapped. */
+function oneEdit(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  if (a.length === b.length)
+    return (
+      a.slice(i + 1) === b.slice(i + 1) ||
+      (a[i] === b[i + 1] &&
+        a[i + 1] === b[i] &&
+        a.slice(i + 2) === b.slice(i + 2))
+    );
+  return a.length < b.length
+    ? a.slice(i) === b.slice(i + 1)
+    : a.slice(i + 1) === b.slice(i);
+}
+
+/** A searched word of four letters or more, one letter off a word or its start. */
+const nearlyFinds = (q: string, w: string) =>
+  q.length >= 4 &&
+  (oneEdit(q, w) ||
+    (w.length > q.length &&
+      (oneEdit(q, w.slice(0, q.length)) ||
+        oneEdit(q, w.slice(0, q.length + 1)))));
+
+type Hay = {
+  label: string[];
+  words: string[];
+  line: string[];
+  questions: string[];
+  teams: string[];
+  phrases: string[][];
+};
+const FIELDS = ["label", "words", "line", "questions", "teams"] as const;
+const WEIGHT: Record<(typeof FIELDS)[number], number> = {
+  label: 8,
+  words: 5,
+  line: 3,
+  questions: 2,
+  teams: 1,
+};
+
+function hayOf(t: TypeView): Hay {
+  const look = typeLook(t);
+  const label = tokens(t.label);
+  return {
+    label,
+    words: look.words.flatMap(tokens),
+    line: tokens(look.line),
+    questions: bodyFields(t).flatMap(f => tokens(f.label)),
+    // A team no offered choice reaches finds nothing (review BT-6, S4).
+    teams: unique([
+      t.teamLabel,
+      ...reachableParts(t.parts).map(p => p.teamLabel),
+    ]).flatMap(tokens),
+    phrases: look.words.map(tokens).filter(p => p.length > 1),
+  };
+}
+
+/**
+ * The most words of a request's own name the search holds in their order,
+ * when two or more ("client offboarding", "new lead form"); else 0.
+ */
+function nameRun(said: string[], label: string[]): number {
+  for (let k = label.length; k > 1; k--)
+    for (let i = 0; i + k <= label.length; i++)
+      if (holdsPhrase(said, label.slice(i, i + k))) return k;
+  return 0;
+}
+
+/**
+ * How rare a word is across the requests on offer, from 0 (every request
+ * has it) to 1 (one request): a word most requests share ("ads", "lead")
+ * weighs little.
+ */
+function rarity(q: string, hays: Hay[]): number {
+  const n = hays.length;
+  if (n < 2) return 1;
+  const df = hays.filter(h =>
+    [h.label, h.words, h.line, h.questions].some(f =>
+      f.some(w => wordFinds(q, w)),
+    ),
+  ).length;
+  const r = Math.log((n + 1) / (df + 0.5)) / Math.log((n + 1) / 1.5);
+  return Math.min(1, Math.max(0, r));
+}
+
+export type SearchHit = {
+  type: TypeView;
+  /**
+   * How many of the searched words it matched (the first sort). An everyday
+   * word ("client", "issue", "new") counts only when the search has nothing
+   * else.
+   */
+  count: number;
+  /** How many words of its hidden phrases the search holds ("stop ads"). */
+  phrases: number;
+  /** The search says this request's way ("to dwy"; TypeLook.opposite). */
+  toward: boolean;
+  score: number;
+  /** What found it when its name and line show none of the words. */
+  via: string | null;
+};
+
+export type TypeSearch = {
+  /** The words searched, after filler is dropped and any fix is made. */
+  words: string[];
+  hits: SearchHit[];
+  /** Nothing matched as typed, and one wrong letter did: what was read. */
+  fixed: { from: string; to: string } | null;
+};
+
+/** The words a search looks for: no filler, no single letters. */
+export const searchTerms = (query: string) =>
+  tokens(query).filter(w => !FILLER.has(w));
+
+function rankTypes(
+  types: TypeView[],
+  terms: string[],
+  said: string[],
+): SearchHit[] {
+  const hits: (SearchHit & { at: number })[] = [];
+  const hays = types.map(hayOf);
+  const strong = terms.filter(q => !WEAK.has(q));
+  const counted = new Set(strong.length ? strong : terms);
+  const rare = new Map(terms.map(q => [q, rarity(q, hays)]));
+  types.forEach((type, at) => {
+    const hay = hays[at];
+    let count = 0;
+    let score = 0;
+    let seen = false;
+    let hidden: string | null = null;
+    for (const q of terms) {
+      const field = FIELDS.find(f => hay[f].some(w => wordFinds(q, w)));
+      if (!field) continue;
+      // The field's weight, more for the word as typed than for its root,
+      // more for a rare word, little for an everyday one; and one more for
+      // each other field that holds it too (the name and the hidden words).
+      const exact = hay[field].includes(q) ? 1 : 0.85;
+      const also = (["label", "words", "line"] as const).filter(
+        f => f !== field && hay[f].some(w => wordFinds(q, w)),
+      ).length;
+      score +=
+        (WEIGHT[field] * exact * (0.5 + 0.5 * (rare.get(q) ?? 1)) + also) *
+        (WEAK.has(q) ? 0.3 : 1);
+      // A team name alone counts only for a one-word search ("tech").
+      if (counted.has(q) && (field !== "teams" || terms.length === 1))
+        count += 1;
+      if (field === "label" || hay.line.some(w => wordFinds(q, w))) seen = true;
+      else if (!hidden)
+        hidden =
+          field === "words"
+            ? (typeLook(type).words.find(w =>
+                tokens(w).some(x => wordFinds(q, x)),
+              ) ?? null)
+            : field === "questions"
+              ? (bodyFields(type).find(f =>
+                  tokens(f.label).some(x => wordFinds(q, x)),
+                )?.label ?? null)
+              : null;
+    }
+    if (!count) return;
+    const phrases =
+      hay.phrases
+        .filter(p => holdsPhrase(said, p))
+        .reduce((n, p) => n + p.length, 0) + nameRun(said, hay.label);
+    hits.push({
+      type,
+      count,
+      phrases,
+      toward: Boolean(
+        TYPE_LOOK[type.key]?.opposite?.toward.some(p =>
+          holdsPhrase(said, tokens(p)),
+        ),
+      ),
+      score: score + phrases * 3,
+      via: seen ? null : hidden,
+      at,
+    });
+  });
+  hits.sort(
+    (a, b) =>
+      b.count - a.count ||
+      b.phrases - a.phrases ||
+      b.score - a.score ||
+      a.at - b.at,
+  );
+  // Two words: only what matches both. A sentence: one word fewer than the best.
+  const best = hits[0]?.count ?? 0;
+  const floor = Math.max(1, best >= 3 ? best - 1 : best);
+  return hits.filter(h => h.count >= floor).map(({ at: _at, ...h }) => h);
+}
+
+/**
+ * The form's search: filler words ignored; a request's name, hidden words,
+ * line, question labels and team names, in that weight; a word finds its
+ * own root ("calls" finds "calling"); ranked by how many of the words it
+ * matches (an everyday word such as "client" or "issue" not counted), then
+ * by the hidden phrases the search holds in their order ("stop ads" puts
+ * Client pause first, "dfy to dwy" puts Change from DFY to DWY first), then
+ * by weight, a rare word weighing more, then the server's order. For two
+ * words only what matches both stays, and for a sentence what matches one
+ * word fewer than the best. One wrong letter is allowed only when nothing
+ * matches as typed.
+ */
+export function searchTypes(types: TypeView[], query: string): TypeSearch {
+  const said = tokens(query);
+  const terms = said.filter(w => !FILLER.has(w));
+  if (!terms.length) return { words: [], hits: [], fixed: null };
+  const hits = rankTypes(types, terms, said);
+  if (hits.length) return { words: terms, hits, fixed: null };
+  const vocab = unique(
+    types.flatMap(t => {
+      const h = hayOf(t);
+      return [...h.label, ...h.words, ...h.line, ...h.questions, ...h.teams];
+    }),
+  );
+  let changed = false;
+  const fixedTerms = terms.map(q => {
+    const near = vocab.find(w => nearlyFinds(q, w));
+    if (!near || near === q) return q;
+    changed = true;
+    return near;
+  });
+  if (!changed) return { words: terms, hits: [], fixed: null };
+  const again = rankTypes(types, fixedTerms, fixedTerms);
+  if (!again.length) return { words: terms, hits: [], fixed: null };
+  return {
+    words: fixedTerms,
+    hits: again,
+    fixed: { from: query.trim(), to: fixedTerms.join(" ") },
+  };
+}
+
+/**
+ * Whether the first hit stands ahead of the next on the words it matched or
+ * the phrases it holds, so Return may open it. A lead only by weight or by
+ * the server's order is no lead: the list is shown for the person to pick.
+ * Nor is one of two opposite requests (the DFY and DWY switches) while the
+ * other is found too, unless the search says its way and not the other's:
+ * "client no longer wants our call centre" holds the opposite's "our call
+ * centre" (review T2-clarity-02).
+ */
+export function searchLeads(found: TypeSearch): boolean {
+  const [first, next] = found.hits;
+  if (!first) return false;
+  const opposite = TYPE_LOOK[first.type.key]?.opposite;
+  const other = opposite
+    ? found.hits.find(h => h.type.key === opposite.key)
+    : undefined;
+  if (other && (!first.toward || other.toward)) return false;
+  return !next || first.count > next.count || first.phrases > next.phrases;
+}
+
+/** The search's line: what matched, and what was read when a letter was off. */
+export function searchCountWords(query: string, found: TypeSearch): string {
+  const n = found.hits.length;
+  const match = (k: number) =>
+    `${k} request${k === 1 ? " matches" : "s match"}`;
+  if (found.fixed)
+    return `No match for "${found.fixed.from}". ${match(n)} "${found.fixed.to}".`;
+  if (!n) return `No request matches "${query.trim()}".`;
+  return `${match(n)} "${query.trim()}".`;
+}
+
+/** A text in runs, the words a search found marked (the form makes them bold). */
+export function markWords(
+  text: string,
+  terms: string[],
+): { text: string; hit: boolean }[] {
+  if (!terms.length || !text) return [{ text, hit: false }];
+  return text
+    .split(/([^\p{L}\p{N}]+)/u)
+    .filter(Boolean)
+    .map(part => {
+      const word = part.toLowerCase();
+      return {
+        text: part,
+        hit:
+          word.length > 1 &&
+          /[\p{L}\p{N}]/u.test(word) &&
+          terms.some(q => wordFinds(q, word)),
+      };
+    });
+}
+
+// --- The questions ----------------------------------------------------------
+
+export type QuestionGroup = { title: string | null; fields: FieldView[] };
+
+/**
+ * The type's own questions in the order the form asks them: the question
+ * that decides where it goes first (research 1.8), then the rest in the
+ * server's order. A long set gets its look's short headings (graft 7, by
+ * `type.key`, never by how many questions there are), only while each
+ * heading's questions still sit together in that order and two headings
+ * still hold questions. A
+ * question an editor added goes with the heading before it; any after the
+ * last heading's questions go last, without a heading.
+ */
+export function questionGroups(type: TypeView): QuestionGroup[] {
+  const deciding = new Set(routingFields(type).map(f => f.key));
+  const body = bodyFields(type);
+  const ordered = [
+    ...body.filter(f => deciding.has(f.key)),
+    ...body.filter(f => !deciding.has(f.key)),
+  ];
+  const plan = TYPE_LOOK[type.key]?.groups;
+  const flat = [{ title: null, fields: ordered }];
+  if (!plan?.length) return flat;
+  const own = ordered.map(f => plan.findIndex(g => g.keys.includes(f.key)));
+  const last = own.reduce((at, g, i) => (g >= 0 ? i : at), -1);
+  const resolved: number[] = [];
+  own.forEach((g, i) => {
+    resolved.push(g >= 0 ? g : i > last ? -1 : (resolved[i - 1] ?? -1));
+  });
+  const runs: { index: number; fields: FieldView[] }[] = [];
+  ordered.forEach((f, i) => {
+    const run = runs.at(-1);
+    if (run && run.index === resolved[i]) run.fields.push(f);
+    else runs.push({ index: resolved[i], fields: [f] });
+  });
+  const titled = runs.filter(r => r.index >= 0).map(r => r.index);
+  if (titled.length < 2 || unique(titled).length !== titled.length) return flat;
+  return runs.map(r => ({
+    title: r.index >= 0 ? plan[r.index].title : null,
+    fields: r.fields,
+  }));
+}
+
+// --- The route before Send (the signature) ----------------------------------
+
+/** A ClickUp template's name without its emoji ("Low Schedule Rate (Ads)"). */
+export function plainTemplateName(name: string): string {
+  const plain = name
+    .replace(
+      /\p{Extended_Pictographic}|\u{FE0F}|\u{200D}|\u{20E3}|\u{23CE}|[\u{1F3FB}-\u{1F3FF}]/gu,
+      "",
+    )
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+\)/g, ")")
+    .replace(/\(\s+/g, "(")
+    .trim();
+  return plain || name.trim();
+}
+
+/**
+ * A task name with its client prefix apart, so only the client sits in its
+ * own direction (an Arabic name keeps its order and the rest reads in the
+ * page's); null when the name does not start with "{client} - ".
+ */
+export function taskNameParts(
+  taskName: string,
+  clientName: string | null | undefined,
+): { client: string; rest: string } | null {
+  if (!clientName || !taskName.startsWith(`${clientName} - `)) return null;
+  return { client: clientName, rest: taskName.slice(clientName.length) };
+}
+
+/** What the owner works from: the ClickUp template, or the SOP steps. */
+export type LaneWorks =
+  | { kind: "template"; name: string }
+  | { kind: "steps"; count: number; steps: string[] | null; draft: boolean };
+
+export type RouteLane = {
+  part: string;
+  listName: string;
+  team: Team | null;
+  /** "plan": it runs; "may": it runs only for some answers, not given yet. */
+  kind: "plan" | "may";
+  /** For a lane that may run: "If the problem is Call Center Issue or Both". */
+  condition: string | null;
+  /** The task's name, or null until the client it is named for is picked. */
+  taskName: string | null;
+  owner: { label: string; note: string | null } | null;
+  works: LaneWorks | null;
+  /**
+   * Tasks that may run on one list for one owner, one per answer, drawn as
+   * one lane (review D7): what each answer's task works from, by the
+   * answer's name. `works` is then null.
+   */
+  byAnswer?: { answer: string; works: LaneWorks | null }[];
+};
+
+export type RouteModel = {
+  /** One short line, the route's polite status. */
+  summary: string;
+  lanes: RouteLane[];
+  /** Side by side only for exactly two lanes; stacked on the trunk otherwise. */
+  layout: "pair" | "stack";
+  /** The deciding question and its answer, marked at the fork. */
+  decision: { question: string; answer: string } | null;
+  /** The server's sentence when no lane can be drawn. */
+  note: string | null;
+};
+
+/** The route's own words (CONTRACT.md 6.6, the department map). */
+export const ROUTE_WORDS = {
+  soon: "Usually in a minute or two",
+  whenOpen: "When requests open",
+  may: "May go to",
+  /** A lane's kicker while requests are not open to the seat: no timing. */
+  goesTo: "Goes to",
+  /** The route's heading then: true in every writer state (review CL-04). */
+  whereItGoes: "Where it goes",
+  /** The fork's note then, for a pair that may run. */
+  dependsOnAnswer: "Depends on the answer",
+  dependsOn: (question: string) => `depending on the answer to "${question}"`,
+  /**
+   * In place of the server's "Pick ... to see where it goes." while requests
+   * are not open to the seat: the question is not on the page (review
+   * T2-clarity-03), and its name is never read out of that sentence.
+   */
+  dependsAhead: "Where it goes depends on the answer to one of its questions.",
+  /**
+   * In place of the server's "Pick ... to see where it goes." when every
+   * task an answer decides rests on a choice ClickUp no longer gives
+   * (20261028a sends when.options []): nothing can be picked, so the form
+   * says why, as the question's own help does (review BT-6, S4).
+   */
+  routeLost:
+    "Where it goes rests on a choice that could not be read from ClickUp. Ask the systems manager.",
+  pickClient: "Pick the client to see its name.",
+  /** The task's name while requests are not open: no client is asked here. */
+  namedForClient: "Named after the client it is for.",
+  now: "You send it. The cockpit checks it and saves it.",
+  nowHeld: "You save it. The cockpit checks it and keeps it here.",
+  heldTitle: "Saved, not sent",
+  heldText: "Waits in the cockpit.",
+  /** Under a held request's Saved stop after Save: what happened to it. */
+  keptHere: "The cockpit checked it and keeps it here.",
+  sopLink: "Read the SOP for this request",
+  bell: "You hear in the bell when it is done, or if it fails, while a cockpit tab is open.",
+  bellAfter: "My requests shows its ClickUp status until then.",
+  /**
+   * While a request is held, My requests shows the chip "Saved", not a
+   * ClickUp status, until it reaches ClickUp (facts 2.6; review
+   * T3-design-clarity-08).
+   */
+  bellAfterHeld:
+    "My requests shows it as Saved until it reaches ClickUp, then its ClickUp status.",
+  byRule: "The owner is chosen by rule, not picked here.",
+  noClient: "Nothing is sent to the client.",
+  cancel: "You can cancel it from the request until it reaches ClickUp.",
+  changeInClickUp: "To change it now, use the task in ClickUp.",
+  draft: "A draft until the systems manager checks them.",
+  stepsAdded: (n: number) =>
+    `${countWords(n, "SOP step")}, added as a checklist`,
+  template: (name: string) => `the ClickUp template ${name}`,
+  savedTitle: "Saved",
+  goesByItself: "It goes to ClickUp by itself once requests open.",
+  /**
+   * While the writer has not reported (mode unknown), held words follow the
+   * server's own hedge, "once it runs with requests open": its last mode may
+   * have been apply, so never "once requests open" (review CL-04).
+   */
+  goesByItselfQuiet:
+    "It goes to ClickUp by itself once the requests writer runs with requests open.",
+  /**
+   * A held task's own sentence after Send while the writer is quiet, in
+   * place of sentLines()' "when requests open"; sentLines() itself stays as
+   * pinned (review CL-04).
+   */
+  heldQuiet: (list: string) =>
+    `Saved. Goes to ${list} once the writer runs with requests open.`,
+  heldInListQuiet: (list: string) =>
+    `In ${list}, not finished yet. The cockpit finishes it once the writer runs with requests open.`,
+  whenQuiet: "Waits for the writer",
+  savedUntil: (quiet: boolean) =>
+    quiet ? "until the writer runs with requests open" : "until requests open",
+  /**
+   * A held request keeps its due day (the queue keeps the whole plan; CL-13),
+   * said under the Due stop, which names the day: the day is said once
+   * (review T3-design-clarity-04).
+   */
+  heldDue: "The due day stays, even if it reaches ClickUp later.",
+  /** After that, once nothing reached ClickUp and nothing moves (CL-05). */
+  endedBell: "Nothing more happens with it by itself.",
+  endedBellNote: "The bell keeps the failure.",
+  /** The fork after Send: "Sent together" only while no task failed. */
+  sentTogether: "Sent together",
+  checkingSub: "The cockpit is checking whether it reached ClickUp.",
+  sentAt: (clock: string) => `Sent at ${clock}, Kuwait time.`,
+  savedAt: (clock: string) => `Saved at ${clock}, Kuwait time.`,
+  checked: (clock: string) => `Checked ${clock}, Kuwait time`,
+  stopped: (clock: string) =>
+    `Stopped checking at ${clock}, Kuwait time. My requests shows where it stands.`,
+  stillOnItsWay:
+    "Still on its way. This page has stopped checking; My requests shows where it is.",
+  checksFor: "This page checks every few seconds for two minutes.",
+} as const;
+
+/**
+ * The server's sentence for a preview that names no task, unless every task
+ * an answer decides rests on a choice ClickUp no longer gives: then "Pick
+ * ... to see where it goes." would ask for what cannot be picked, and the
+ * form says why instead (ROUTE_WORDS.routeLost; review BT-6, S4).
+ */
+export function routeNote(
+  type: Pick<TypeView, "parts">,
+  note: string | null | undefined,
+): string | null {
+  if (!note) return null;
+  const decided = type.parts.filter(p => p.when);
+  return decided.length && !decided.some(partReachable)
+    ? ROUTE_WORDS.routeLost
+    : note;
+}
+
+const ownerOf = (o: Owner) => ({
+  label: o.how === "none" || !o.label ? "nobody yet" : o.label,
+  note: ownerNote(o),
+});
+
+function worksOf(
+  templateName: string | null,
+  stepCount: number | null,
+  draft: boolean,
+  steps: string[] | null | undefined,
+): LaneWorks | null {
+  if (templateName)
+    return { kind: "template", name: plainTemplateName(templateName) };
+  const list = Array.isArray(steps) && steps.length ? steps : null;
+  const count = list?.length ?? stepCount ?? 0;
+  return count ? { kind: "steps", count, steps: list, draft } : null;
+}
+
+/**
+ * The route before Send, from the preview and the type (graft 2, 3): a lane
+ * per task the preview says will run; before the deciding answer, a lane per
+ * task that may run, with its condition (from parts[].when, never from the
+ * preview's sentence) and its owner as the preview of that answer names it;
+ * after the answer, the question and the answer at the fork.
+ */
+export function routeModel(input: {
+  type: TypeView;
+  preview: Pick<RoutePreview, "parts" | "note"> | null;
+  /** The previews of each choice of the unanswered deciding question, by option id. */
+  choicePreviews?: Record<string, RoutePart[]> | null;
+  answers: Record<string, string | number | null | undefined>;
+  clientPicked: boolean;
+  /**
+   * Requests are not open to the seat: the route says where it would go,
+   * and the deciding question is named, never "your answer".
+   */
+  ahead?: boolean;
+}): RouteModel {
+  const { type, preview, answers } = input;
+  const needsClient =
+    Boolean(clientField(type)?.required) && !input.clientPicked;
+  const deciding = routesKnown(type) ? routingFields(type) : [];
+  const open = deciding.filter(f => empty(answers[f.key]));
+  const shown = preview?.parts ?? [];
+  const seenFor = (part: string) => {
+    for (const parts of Object.values(input.choicePreviews ?? {})) {
+      const hit = parts.find(p => p.part === part);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const lanes: RouteLane[] = [];
+  // The condition each lane that may run was drawn from, by its part.
+  const mayWhen = new Map<string, PartWhen>();
+  const plan = (p: RoutePart, steps?: string[] | null): RouteLane => ({
+    part: p.part,
+    listName: p.listName,
+    team: teamOfList(p.listName),
+    kind: "plan",
+    condition: null,
+    taskName: needsClient ? null : p.taskName,
+    owner: ownerOf(p.owner),
+    works: worksOf(p.templateName, p.stepCount, p.stepsDraft, steps),
+  });
+  for (const tp of type.parts) {
+    const hit = shown.find(p => p.part === tp.part);
+    if (hit) {
+      lanes.push(plan(hit, tp.steps));
+      continue;
+    }
+    const when = tp.when;
+    // A part no offered choice runs is never drawn (review BT-6, S4).
+    if (!when?.options.length || !open.some(f => f.key === when.fieldKey))
+      continue;
+    const seen = seenFor(tp.part);
+    mayWhen.set(tp.part, when);
+    lanes.push({
+      part: tp.part,
+      listName: tp.listName,
+      team: teamOfList(tp.listName),
+      kind: "may",
+      condition: conditionWords(type, when),
+      taskName: seen && !needsClient ? seen.taskName : null,
+      owner: seen ? ownerOf(seen.owner) : null,
+      works: worksOf(
+        seen?.templateName ?? tp.templateName,
+        seen?.stepCount ?? tp.stepCount,
+        seen?.stepsDraft ?? tp.stepsDraft,
+        tp.steps,
+      ),
+    });
+  }
+  for (const p of shown)
+    if (!type.parts.some(tp => tp.part === p.part)) lanes.push(plan(p));
+  mergeMayLanes(type, lanes, mayWhen);
+  const lists = unique(lanes.map(l => l.listName));
+  // With no lane to draw, the server's sentence is said once, on the route's
+  // own stop (`note`), never again as the summary (review CL-07).
+  let summary = "";
+  if (lanes.some(l => l.kind === "may")) {
+    const counts = open[0]
+      ? answerRoutes(type, open[0])
+          .map(r => r.parts.length)
+          .filter(n => n > 0)
+      : [];
+    const lo = Math.min(...counts);
+    const hi = Math.max(...counts);
+    const tasks = !counts.length
+      ? "Tasks"
+      : lo === hi
+        ? countWords(lo, "task")
+        : `${capital(numberWord(lo))} ${hi - lo === 1 ? "or" : "to"} ${numberWord(hi)} tasks`;
+    summary = `${tasks}${lists.length === 1 ? ` for ${lists[0]}` : ""}, ${
+      input.ahead && open[0]
+        ? ROUTE_WORDS.dependsOn(open[0].label)
+        : "by your answer"
+    }`;
+  } else if (lanes.length)
+    summary = `${countWords(lanes.length, "task")}, for ${joinWords(lists)}`;
+  const answered = deciding.find(f => !empty(answers[f.key]));
+  return {
+    summary,
+    lanes,
+    layout: lanes.length === 2 ? "pair" : "stack",
+    decision:
+      answered && lanes.length && lanes.every(l => l.kind === "plan")
+        ? {
+            question: answered.label,
+            answer: display(answered, answers[answered.key]),
+          }
+        : null,
+    note: lanes.length
+      ? null
+      : preview?.note
+        ? input.ahead
+          ? ROUTE_WORDS.dependsAhead
+          : routeNote(type, preview.note)
+        : null,
+  };
+}
+
+/**
+ * Tasks that may run on the same list, for the same owner, under the same
+ * name and on the same question, one per answer (Create an ad account: Meta,
+ * TikTok, Snapchat), become one lane (review D7): the answers joined in the
+ * question's own order, the task and owner said once, and what each answer's
+ * task works from. In place, keeping the first one's place.
+ */
+function mergeMayLanes(
+  type: Pick<TypeView, "key" | "fields">,
+  lanes: RouteLane[],
+  mayWhen: Map<string, PartWhen>,
+): void {
+  const keyOf = (l: RouteLane) =>
+    JSON.stringify([
+      l.listName,
+      l.owner?.label ?? null,
+      l.owner?.note ?? null,
+      l.taskName,
+      mayWhen.get(l.part)?.fieldKey ?? null,
+    ]);
+  const groups = new Map<string, RouteLane[]>();
+  for (const l of lanes)
+    if (l.kind === "may" && mayWhen.has(l.part))
+      groups.set(keyOf(l), [...(groups.get(keyOf(l)) ?? []), l]);
+  const out: RouteLane[] = [];
+  for (const l of lanes) {
+    const group = l.kind === "may" ? groups.get(keyOf(l)) : undefined;
+    if (!group || group.length < 2) {
+      out.push(l);
+      continue;
+    }
+    if (group[0] !== l) continue;
+    const fieldKey = mayWhen.get(l.part)?.fieldKey ?? "";
+    const order = (
+      type.fields.find(f => f.key === fieldKey)?.options ?? []
+    ).map(o => o.id);
+    const place = (id: string) => {
+      const at = order.indexOf(id);
+      return at < 0 ? order.length : at;
+    };
+    const options = group
+      .flatMap(g => mayWhen.get(g.part)?.options ?? [])
+      .filter((o, i, all) => all.findIndex(x => x.id === o.id) === i)
+      .sort((a, b) => place(a.id) - place(b.id));
+    const first = (g: RouteLane) =>
+      Math.min(...(mayWhen.get(g.part)?.options ?? []).map(o => place(o.id)));
+    const sameWorks = group.every(
+      g => JSON.stringify(g.works) === JSON.stringify(l.works),
+    );
+    out.push({
+      ...l,
+      part: group.map(g => g.part).join("+"),
+      condition: conditionWords(type, { fieldKey, options }),
+      works: sameWorks ? l.works : null,
+      ...(sameWorks
+        ? {}
+        : {
+            byAnswer: [...group]
+              .sort((a, b) => first(a) - first(b))
+              .map(g => ({
+                answer: joinOr(
+                  (mayWhen.get(g.part)?.options ?? []).map(o => o.name),
+                ),
+                works: g.works,
+              })),
+          }),
+    });
+  }
+  lanes.splice(0, lanes.length, ...out);
+}
+
+// --- The tracker after Send --------------------------------------------------
+
+export type SentLaneState = "done" | "moving" | "held" | "failed" | "checking";
+
+export type SentLane = {
+  part: string;
+  listName: string;
+  team: Team | null;
+  /** sentLines' sentence for the task, whole: never split, never repeated. */
+  line: string;
+  state: SentLaneState;
+  taskName: string;
+  /** "Open in ClickUp": only a delivered task's own link. */
+  url: string | null;
+  /** A delivered task the cockpit could not finish: what to check. */
+  note: string | null;
+};
+
+export type SentModel = {
+  tone: "failed" | "moving" | "held" | "done";
+  heading: "Sent" | "Saved" | "Not sent" | "Partly sent";
+  /** The line under the heading, by where the tasks are. */
+  sub: string;
+  lanes: SentLane[];
+  layout: "pair" | "stack";
+  /** Once nothing moves after a refusal: what to do next. */
+  next: string | null;
+  /** Some task is in ClickUp. */
+  delivered: boolean;
+  /** Some task did not reach ClickUp. */
+  refused: boolean;
+  /**
+   * Nothing reached ClickUp and nothing moves: no task will be done, so the
+   * tracker says nothing more happens by itself (review CL-05).
+   */
+  ended: boolean;
+};
+
+/**
+ * The sent view (graft 5): the heading, a line that follows the tasks, and a
+ * lane per task with the core's own sentence (sentLines), its mark's state
+ * and its ClickUp link once delivered. A held request reads "Saved", with no
+ * success mark anywhere.
+ */
+export function sentModel(
+  parts: Pick<
+    PartRow,
+    "part" | "listName" | "owner" | "state" | "error" | "url" | "taskName"
+  >[],
+  open: boolean,
+  opts: {
+    /** The page stopped reading the request (two minutes): no estimate. */
+    stopped?: boolean;
+    /** The writer has not reported (mode unknown): the server's hedge. */
+    quiet?: boolean;
+  } = {},
+): SentModel {
+  const tone = sentTone(parts, open);
+  const lines = sentLines(parts, open);
+  // While the writer has not reported, a held task's sentence follows its
+  // hedge as the line above it does, never "when requests open" (CL-04).
+  const lineOf = (p: (typeof parts)[number], i: number) =>
+    opts.quiet && partHeld(p, open)
+      ? p.url
+        ? ROUTE_WORDS.heldInListQuiet(p.listName)
+        : ROUTE_WORDS.heldQuiet(p.listName)
+      : lines[i];
+  const lanes: SentLane[] = parts.map((p, i) => ({
+    part: p.part,
+    listName: p.listName,
+    team: teamOfList(p.listName),
+    line: lineOf(p, i),
+    state: partHeld(p, open)
+      ? "held"
+      : p.state === "delivered"
+        ? "done"
+        : p.state === "failed" || p.state === "skipped"
+          ? "failed"
+          : p.state === "unknown"
+            ? "checking"
+            : "moving",
+    taskName: p.taskName,
+    url: p.state === "delivered" ? p.url : null,
+    note: deliveredNote(p),
+  }));
+  const n = lanes.length;
+  const done = lanes.filter(l => l.state === "done").length;
+  const failed = lanes.filter(l => l.state === "failed").length;
+  const checking = lanes.filter(l => l.state === "checking").length;
+  const moving = lanes.filter(l => l.state === "moving").length + checking;
+  const every = n === 2 ? "Both tasks" : `All ${numberWord(n)} tasks`;
+  const others = (k: number) =>
+    k === 1 ? "the other is on its way" : "the others are on their way";
+  // "Usually within a minute or two" only while every task on its way is
+  // queued or sending and the page still reads it: never beside a create in
+  // doubt, nor once the page stopped checking (review BT-5, CL-08).
+  const estimate =
+    checking || opts.stopped ? "" : ", usually within a minute or two";
+  let sub: string;
+  if (tone === "held")
+    sub = opts.quiet ? ROUTE_WORDS.goesByItselfQuiet : ROUTE_WORDS.goesByItself;
+  else if (failed && !moving)
+    sub = done
+      ? "Part of it reached ClickUp."
+      : n === 1
+        ? "It did not reach ClickUp."
+        : n === 2
+          ? "Neither task reached ClickUp."
+          : `None of the ${numberWord(n)} tasks reached ClickUp.`;
+  else if (failed)
+    sub = `${countWords(failed, "task")} did not reach ClickUp; ${others(moving)}.`;
+  else if (moving && !done)
+    sub =
+      checking && n === 1
+        ? ROUTE_WORDS.checkingSub
+        : checking
+          ? `${every} are on their way to ClickUp; the cockpit is checking whether ${
+              checking === 1 ? "one" : "some"
+            } reached it.`
+          : n === 1
+            ? `It is on its way to ClickUp${estimate}.`
+            : `${every} are on their way to ClickUp${estimate}.`;
+  else if (moving)
+    sub = `${countWords(done, "task")} ${done === 1 ? "is" : "are"} in ClickUp; ${others(moving)}.`;
+  else sub = n === 1 ? "It is in ClickUp." : `${every} are in ClickUp.`;
+  // A task in ClickUp that the cockpit could not finish: its note says what
+  // to check there, so the line points at it and never says "nothing else
+  // to do" (research 3.5).
+  // While another task is not in ClickUp, the sentence says which: the one
+  // in ClickUp (review T2-clarity-06).
+  const noted = lanes.filter(l => l.note).length;
+  const which =
+    done === n
+      ? noted === 1
+        ? "One is"
+        : `${capital(numberWord(noted))} are`
+      : noted === 1
+        ? done === 1
+          ? "The one in ClickUp is"
+          : "One of those in ClickUp is"
+        : noted === done
+          ? `The ${numberWord(noted)} in ClickUp are`
+          : `${capital(numberWord(noted))} of those in ClickUp are`;
+  if (noted)
+    sub =
+      n === 1
+        ? "It is in ClickUp, but not finished. The note under the task says what to check there."
+        : `${sub} ${which} not finished: the ${
+            noted === 1 ? "note under it says" : "notes under them say"
+          } what to check there.`;
+  // The quiet writer's own note asks an editor to check the Machine tab, so
+  // a held request then never says "Nothing else to do now" (review CL-04).
+  else if (tone !== "failed" && !(tone === "held" && opts.quiet))
+    sub = `Nothing else to do now. ${sub}`;
+  return {
+    tone,
+    // "Partly sent" as soon as a task is refused while another goes on
+    // (review CL-05); "Not sent" once nothing reached ClickUp and nothing
+    // moves.
+    heading:
+      tone === "held"
+        ? "Saved"
+        : failed && !moving && !done
+          ? "Not sent"
+          : failed
+            ? "Partly sent"
+            : "Sent",
+    sub,
+    lanes,
+    layout: n === 2 ? "pair" : "stack",
+    next:
+      tone === "failed" && !moving
+        ? done
+          ? partialNext({ parts })
+          : REQUEST_SENTENCES.sentFailed
+        : null,
+    delivered: done > 0,
+    refused: failed > 0,
+    ended: failed > 0 && !moving && !done,
+  };
+}

@@ -2,9 +2,11 @@
  * Requests and task alerts fit (docs/requests/CONTRACT.md section 9, the
  * orchestrator's read): the three migrations of this build,
  * 20261026r_requests.sql, 20261026s_request_types_seed.sql and
- * 20261026t_task_alerts.sql, applied twice in that order on one database
- * over the whole of Stage 1 (20261024a, 20261025n, 20261025o), and every
- * piece that crosses a builder's boundary driven through its real code:
+ * 20261026t_task_alerts.sql, and the department map round's types read
+ * (20261028a_request_types_read_routes.sql, 2026-10-28), applied twice in
+ * that order on one database over the whole of Stage 1 (20261024a,
+ * 20261025n, 20261025o), and every piece that crosses a builder's boundary
+ * driven through its real code:
  *
  *   the portal's own calls (src/lib/requestsClient.ts, tasksClient.ts, read
  *   with requestsCore.ts and tasksCore.ts, the screens' words)
@@ -23,6 +25,13 @@
  * pg_net, so the kicks write their notes and the jobs are run by hand. Every
  * person, client, card and task is invented, except the three owner ids the
  * seed itself names.
+ *
+ * 20261028a's two keys (each part's `when` and `steps`) are read through the
+ * portal's own readRequestTypes: the form's routes for every choice must be
+ * the parts the preview names, and the steps it lists the checklist the
+ * writer adds. The form on a database without 20261028a is read by putting
+ * 20261026r's types read back, as the migration's rollback does, and then
+ * applying 20261028a again.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { PGlite } from "@electric-sql/pglite";
@@ -52,6 +61,7 @@ import { actor, cockpitTestDb, member, migration } from "./lib/cockpitTestDb";
 const R = "20261026r_requests.sql";
 const S = "20261026s_request_types_seed.sql";
 const T = "20261026t_task_alerts.sql";
+const N = "20261028a_request_types_read_routes.sql";
 
 // Seats (auth ids).
 const CEO = "00000000-0000-4000-8000-0000000000c3";
@@ -452,6 +462,18 @@ const TYPE_VIEW = [
   "parts",
   "sopUrl",
 ];
+/** TypeView.parts before 20261028a (contract 2.5). */
+const OLD_PART_VIEW = [
+  "part",
+  "listName",
+  "teamLabel",
+  "ruleLabel",
+  "templateName",
+  "stepCount",
+  "stepsDraft",
+];
+/** TypeView.parts with 20261028a: when each part runs and the steps it adds. */
+const PART_VIEW = [...OLD_PART_VIEW, "when", "steps"];
 const PART_ROW = [
   "part",
   "listName",
@@ -779,11 +801,13 @@ beforeAll(async () => {
     [TEST_CARD, ACME],
   );
 
-  // Stage 1 whole, then this build's three files, twice in order.
+  // Stage 1 whole, then this build's three files and 20261028a, twice in
+  // order (r's second run puts the old types read back, and 20261028a's guard
+  // takes it again).
   await db.exec(migration("20261024a_brand_blueprints.sql"));
   await db.exec(migration("20261025n_slack_notices.sql"));
   await db.exec(migration("20261025o_blueprint_close_drain.sql"));
-  for (const file of [R, S, T, R, S, T]) await db.exec(migration(file));
+  for (const file of [R, S, T, N, R, S, T, N]) await db.exec(migration(file));
 }, 180000);
 afterAll(async () => {
   await Promise.allSettled(background);
@@ -791,7 +815,7 @@ afterAll(async () => {
 });
 
 describe("the migrations", () => {
-  test("r, s and t apply twice over Stage 1, and every browser function a screen calls exists by the names it sends", async () => {
+  test("r, s, t and 20261028a apply twice over Stage 1, and every browser function a screen calls exists by the names it sends", async () => {
     expect(
       (
         await q<{ n: number }>(
@@ -811,6 +835,113 @@ describe("the migrations", () => {
       ["cockpit_request_people", {}],
     ];
     for (const [name, args] of named) await rpcAs(SM, name, args);
+  });
+
+  test("20261028a: every seat's form reads when and steps on every part, and each choice of a deciding question makes the tasks the preview names", async () => {
+    const enabled = (
+      await q<{ n: number }>(
+        "SELECT count(*)::int n FROM public.cockpit_request_types WHERE enabled",
+      )
+    )[0].n;
+    expect(enabled).toBe(31);
+    for (const seat of [ceo, sm, csm]) {
+      const read = await RC.readRequestTypes(seat);
+      expect(read.types.length).toBe(enabled);
+      for (const t of read.types) {
+        expect(RQ.routesKnown(t), t.key).toBe(true);
+        for (const p of t.parts) hasKeys(p, PART_VIEW, `${t.key}.${p.part}`);
+      }
+    }
+    // The form's routes against the server's own: with nothing answered, the
+    // parts that always run; for each choice, the parts answerRoutes names,
+    // on the lists it names.
+    const types = (await RC.readRequestTypes(csm)).types;
+    let choices = 0;
+    for (const t of types) {
+      const none = await RC.previewRequest(csm, t.key, ACME, {});
+      expect({ type: t.key, parts: none.parts.map(p => p.part) }).toEqual({
+        type: t.key,
+        parts: t.parts.filter(p => p.when === null).map(p => p.part),
+      });
+      for (const f of RQ.routingFields(t))
+        for (const route of RQ.answerRoutes(t, f)) {
+          const preview = await RC.previewRequest(csm, t.key, ACME, {
+            [f.key]: route.option.id,
+          });
+          expect({
+            type: t.key,
+            choice: route.option.name,
+            parts: preview.parts.map(p => p.part),
+            lists: [...new Set(preview.parts.map(p => p.listName))],
+          }).toEqual({
+            type: t.key,
+            choice: route.option.name,
+            parts: route.parts.map(p => p.part),
+            lists: route.lists,
+          });
+          choices++;
+        }
+    }
+    // Low schedule rate's three choices and Create an ad account's three.
+    expect(choices).toBe(6);
+    const low = types.find(t => t.key === "low_schedule_rate") as RQ.TypeView;
+    expect(RQ.routingFields(low).map(f => f.key)).toEqual([
+      "schedule_rate_issue",
+    ]);
+    expect(
+      RQ.answerRoutes(low, RQ.routingFields(low)[0]).map(r => [
+        r.option.name,
+        r.parts.map(p => p.part),
+      ]),
+    ).toEqual([
+      ["Ads issue", ["ads"]],
+      ["Call Center Issue", ["call_center"]],
+      ["Both", ["call_center", "ads"]],
+    ]);
+  });
+
+  test("20261028a rolled back (20261026r's types read again): the same client reads neither key and the form falls back; applied again, both come back", async () => {
+    const grant = async () =>
+      (
+        await q<{ a: boolean; u: boolean; s: boolean }>(
+          `SELECT has_function_privilege('anon','public.cockpit_request_types_read()','EXECUTE') a,
+                  has_function_privilege('authenticated','public.cockpit_request_types_read()','EXECUTE') u,
+                  has_function_privilege('service_role','public.cockpit_request_types_read()','EXECUTE') s`,
+        )
+      )[0];
+    const was = await grant();
+    expect(was).toEqual({ a: false, u: true, s: false });
+    await asOwner();
+    await db.exec(
+      cut(
+        migration(R),
+        /CREATE OR REPLACE FUNCTION public\.cockpit_request_types_read\(\)[\s\S]*?END \$\$;/,
+        "types read",
+      ),
+    );
+    try {
+      // CREATE OR REPLACE keeps the grant, as the migration's rollback says.
+      expect(await grant()).toEqual(was);
+      for (const seat of [ceo, sm, csm]) {
+        const read = await RC.readRequestTypes(seat);
+        expect(read.types.length).toBe(31);
+        for (const t of read.types) {
+          expect(RQ.routesKnown(t), t.key).toBe(false);
+          expect(RQ.routingFields(t)).toEqual([]);
+          for (const p of t.parts) {
+            hasKeys(p, OLD_PART_VIEW, `${t.key}.${p.part}`);
+            expect("when" in p, `${t.key}.${p.part} when`).toBe(false);
+            expect("steps" in p, `${t.key}.${p.part} steps`).toBe(false);
+          }
+        }
+      }
+    } finally {
+      await asOwner();
+      await db.exec(migration(N));
+    }
+    expect(await grant()).toEqual(was);
+    const back = await RC.readRequestTypes(csm);
+    expect(back.types.every(t => RQ.routesKnown(t))).toBe(true);
   });
 });
 
@@ -875,6 +1006,9 @@ describe("a request on the canary card", () => {
     const types = await RC.readRequestTypes(ceo);
     const type = types.types.find(t => t.key === "general_tech") as RQ.TypeView;
     hasKeys(type, TYPE_VIEW, "TypeView");
+    hasKeys(type.parts[0], PART_VIEW, "TypePartView");
+    expect(type.parts[0].when).toBeNull();
+    expect(type.parts[0].steps?.length).toBe(type.parts[0].stepCount);
     const answers = { details: "The lead form stopped sending to the sheet." };
     const preview = await RC.previewRequest(
       ceo,
@@ -941,6 +1075,13 @@ describe("a request on the canary card", () => {
     expect(cardComment?.comment_text).toContain(task.url);
     // Each write went through tools.ts and left its receipts under the queue row's id.
     const [row] = await queueRows("request");
+    // The steps the form listed before Send (20261028a) are the checklist the
+    // writer was given and the one it made in ClickUp, in order.
+    expect(row.payload.sopStepsWhen).toBe("always");
+    expect(type.parts[0].steps).toEqual(row.payload.sopSteps);
+    expect(task.checklists[0].items.map((i: Row) => i.name)).toEqual(
+      type.parts[0].steps,
+    );
     const receipts = await q<Row>(
       "SELECT method, resource, phase FROM public.cockpit_media_provider_health WHERE action_id=$1",
       [row.id],
@@ -1063,7 +1204,9 @@ describe("a request on the canary card", () => {
       )
     )[0].ref;
     expect(ref).toMatch(/^T-[0-9a-f]{10}$/);
-    expect(ref).not.toBe(`T-${comment.actionId.replaceAll("-", "").slice(0, 10)}`);
+    expect(ref).not.toBe(
+      `T-${comment.actionId.replaceAll("-", "").slice(0, 10)}`,
+    );
     expect(said).toContain(`Cockpit ref ${ref}`);
     // The comment's words never reach the audit log (3.4), only how long it was.
     const leaked = await q<{ n: number }>(

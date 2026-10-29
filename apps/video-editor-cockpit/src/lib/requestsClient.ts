@@ -8,6 +8,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   type ClientsRead,
+  type Option,
+  type PartWhen,
   REQUEST_SENTENCES,
   type RequestDetail,
   type RequestRow,
@@ -16,6 +18,7 @@ import {
   type RoutePreview,
   type SubmitInput,
   type SubmitResult,
+  type TypePartView,
   type TypesRead,
 } from "@/lib/requestsCore";
 
@@ -122,9 +125,57 @@ export async function callRequests<T>(
   return answer.data as T;
 }
 
+const isOption = (o: unknown): o is Option =>
+  Boolean(o) &&
+  typeof (o as Option).id === "string" &&
+  typeof (o as Option).name === "string";
+
+/**
+ * A part's `when` and `steps` (migration 20261028a), read as optional: a key
+ * the database does not send stays absent, so the form draws no routing
+ * marks and shows only the step count; null is kept; anything else that is
+ * not the contract's shape is dropped, never trusted.
+ */
+export function partFacts(part: TypePartView): TypePartView {
+  const { when, steps, ...rest } = part as TypePartView & {
+    when?: unknown;
+    steps?: unknown;
+  };
+  const out: TypePartView = rest;
+  if (when === null) out.when = null;
+  else if (
+    when &&
+    typeof (when as PartWhen).fieldKey === "string" &&
+    Array.isArray((when as PartWhen).options)
+  )
+    out.when = {
+      fieldKey: (when as PartWhen).fieldKey,
+      options: (when as PartWhen).options
+        .filter(isOption)
+        .map(o => ({ id: o.id, name: o.name })),
+    };
+  if (steps === null) out.steps = null;
+  else if (Array.isArray(steps) && steps.every(s => typeof s === "string"))
+    out.steps = [...steps];
+  return out;
+}
+
 /** The types this seat may ask for, the seat and whether the writer is on. */
-export const readRequestTypes = (client: SupabaseClient) =>
-  callRequests<TypesRead>(client, "cockpit_request_types_read");
+export async function readRequestTypes(
+  client: SupabaseClient,
+): Promise<TypesRead> {
+  const read = await callRequests<TypesRead>(
+    client,
+    "cockpit_request_types_read",
+  );
+  return {
+    ...read,
+    types: (read.types ?? []).map(t => ({
+      ...t,
+      parts: (t.parts ?? []).map(partFacts),
+    })),
+  };
+}
 
 /** Client cards this seat may raise a request for, by name. */
 export const readRequestClients = (

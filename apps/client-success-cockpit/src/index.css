@@ -7,7 +7,8 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* IBM Plex Sans Arabic (loaded in index.html) carries Arabic client names. */
+  --font-sans: "Geist", "IBM Plex Sans Arabic", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   /* Brand palette (brand guidelines §2). Teal is an accent, never a large fill. */
   --color-mahara-teal: var(--mahara-teal);

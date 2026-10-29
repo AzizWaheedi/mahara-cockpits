@@ -21,11 +21,22 @@
  * cockpit_request_types_read sends them (contract 2.5, I1); `specs=0` leaves
  * them out, the shape of a database from before I1, where the type editor
  * keeps its questions locked. `delay=` sets the wait in ms (350 by default).
+ * Every seat reads when each part runs and the SOP steps it adds (the parts'
+ * `when` and `steps`, migration 20261028a); `routes=0` leaves them out, the
+ * shape of a database from before it, where the form draws no routing marks.
+ * `send=refuse` makes the writer's run after a send refuse its tasks,
+ * `send=partial` lands the first task and refuses the rest, so the sent
+ * view's refusals can be seen, and `send=note` lands every task with the
+ * first one's owner step refused (a delivered task with a note, CL-01).
+ * With `writer=unknown`, `lastMode=apply` (or apply_limited, dry_run) is the
+ * mode of the writer's last report, so a writer gone quiet after requests
+ * opened can be seen (review CL-04).
  *
- * The types are twelve of the 31 in docs/requests/request-types.json,
- * copied as they are (HARNESS_SEED at the end of this file); people,
- * clients and ClickUp task ids are invented. Never imported by the
- * production app.
+ * The layout harness serves all 31 types of docs/requests/request-types.json
+ * (ALL_TYPES_SEED, read from the binding file itself); `types=12` serves the
+ * twelve the screen tests use (HARNESS_SEED at the end of this file, copied
+ * as they are). People, clients and ClickUp task ids are invented. Never
+ * imported by the production app.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
@@ -52,6 +63,7 @@ import {
   validateAnswers,
   type WriterMode,
 } from "@/lib/requestsCore";
+import requestTypesJson from "../../../../docs/requests/request-types.json";
 
 // --- The seed's shape (docs/requests/request-types.json) --------------------
 
@@ -284,6 +296,7 @@ export function typeViewOf(
   editor: boolean,
   today: string,
   specs = true,
+  routes = true,
 ): TypeView {
   const view: TypeView = {
     key: t.key,
@@ -314,6 +327,14 @@ export function typeViewOf(
       stepCount: g.template_id ? null : (t.sop_steps?.length ?? 0),
       stepsDraft:
         !g.template_id && Boolean(t.sop_steps) && t.sop_steps_state === "draft",
+      // Migration 20261028a, every seat: the choices that make the part run,
+      // in the question's own order and names, and the steps it adds.
+      ...(routes
+        ? {
+            when: g.when ? whenOf(t, g.when, catalog) : null,
+            steps: g.template_id ? null : [...(t.sop_steps ?? [])],
+          }
+        : {}),
     })),
     sopUrl: t.sop_url,
   };
@@ -334,6 +355,26 @@ export function typeViewOf(
   });
   if (specs) view.fieldSpecs = JSON.parse(JSON.stringify(t.fields));
   return view;
+}
+
+/**
+ * A part's "when" as every seat reads it (20261028a): the deciding question's
+ * key and the choices that make the part run, with that question's own ids,
+ * names and order; a choice it no longer offers is left out.
+ */
+function whenOf(
+  t: SeedType,
+  when: NonNullable<TargetSpec["when"]>,
+  catalog: SeedCatalogField[],
+) {
+  const field = t.fields.find(f => f.key === when.field_key);
+  const choices = field ? (fieldOptions(field, catalog) ?? []) : [];
+  return {
+    fieldKey: when.field_key,
+    options: choices
+      .filter(o => when.options.includes(o.id))
+      .map(o => ({ id: o.id, name: o.name })),
+  };
 }
 
 const catalogView = (c: SeedCatalogField[]): CatalogField[] =>
@@ -401,6 +442,18 @@ export type FakeOptions = {
   specs?: boolean;
   /** Start with no requests. */
   empty?: boolean;
+  /**
+   * The parts' `when` and `steps` in every read (default true); false is a
+   * database from before migration 20261028a.
+   */
+  routes?: boolean;
+  /**
+   * While the mode is unknown (the writer has not reported in 15 minutes),
+   * the mode of its last report: apply or apply_limited gives a seat outside
+   * the editors, admins and the CEO the server's own refusal for a writer
+   * gone quiet (cockpit_request_send_gate, review round 3; review CL-04).
+   */
+  lastMode?: WriterMode;
 };
 
 export type RequestsFake = {
@@ -622,13 +675,21 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
               "Requests are not switched on yet. Use the ClickUp request form until then.",
             );
       default:
-        return lead
-          ? hold(
-              "The requests writer has not reported in the last 15 minutes. What you send is saved and goes to ClickUp once it runs with requests open. Check it on the Machine tab.",
-            )
-          : refuse(
-              "Requests are not switched on yet. Use the ClickUp request form until then.",
-            );
+        if (lead)
+          return hold(
+            "The requests writer has not reported in the last 15 minutes. What you send is saved and goes to ClickUp once it runs with requests open. Check it on the Machine tab.",
+          );
+        if (opts.lastMode === "apply")
+          return refuse(
+            "Requests cannot be sent just now: the requests writer has not reported in the last 15 minutes. Use the ClickUp request form, and tell the systems manager.",
+          );
+        if (opts.lastMode === "apply_limited")
+          return refuse(
+            "Requests are being tested. They open to everyone soon. Use the ClickUp request form until then.",
+          );
+        return refuse(
+          "Requests are not switched on yet. Use the ClickUp request form until then.",
+        );
     }
   }
 
@@ -1097,7 +1158,16 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
           TEAM_ORDER.indexOf(a.team) - TEAM_ORDER.indexOf(b.team) ||
           a.type_index - b.type_index,
       )
-      .map(t => typeViewOf(t, seed.field_catalog, editor, today(), specs));
+      .map(t =>
+        typeViewOf(
+          t,
+          seed.field_catalog,
+          editor,
+          today(),
+          specs,
+          opts.routes ?? true,
+        ),
+      );
     const data: Record<string, unknown> = {
       asOf: iso(),
       seat: {
@@ -1449,7 +1519,9 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
           : "Saved",
       row: JSON.parse(JSON.stringify(t)),
     });
-    const view = typeViewOf(t, seed.field_catalog, true, today(), specs);
+    // As cockpit_request_type_view answers a save or a restore: neither
+    // `when` nor `steps` (20261028a leaves that view as it was; review S5).
+    const view = typeViewOf(t, seed.field_catalog, true, today(), specs, false);
     return ok(
       restoreFrom === undefined
         ? view
@@ -1573,7 +1645,13 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
             ? null
             : `Pick ${whenLabel(t) ?? "the choices above"} to see where it goes.`,
           dueDefault: workingDaysAhead(today(), t.due_days),
-          writer: { canSend: g.allowed, held: g.held, note: g.note },
+          // cockpit_request_writer_view: the mode too, as the server sends it.
+          writer: {
+            mode: fake.mode,
+            canSend: g.allowed,
+            held: g.held,
+            note: g.note,
+          },
         });
       }
       case "cockpit_request_submit":
@@ -1809,9 +1887,11 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
 export function installRequestsHarness(client: SupabaseClient): void {
   const params = new URLSearchParams(window.location.search);
   const pick = params.get("requests") ?? "default";
+  const after = params.get("send");
   const delay = Number(params.get("delay") ?? 350);
   const seat = params.get("seat");
   const writer = params.get("writer") as WriterMode | null;
+  const last = params.get("lastMode") as WriterMode | null;
   const fake = createRequestsFake({
     seat: seat === "csm" || seat === "sales" ? seat : "ceo",
     mode:
@@ -1819,8 +1899,14 @@ export function installRequestsHarness(client: SupabaseClient): void {
       ["apply", "apply_limited", "dry_run", "unknown"].includes(writer)
         ? writer
         : "apply",
+    lastMode:
+      last && ["apply", "apply_limited", "dry_run"].includes(last)
+        ? last
+        : undefined,
     specs: params.get("specs") !== "0",
     empty: pick === "empty",
+    routes: params.get("routes") !== "0",
+    seed: params.get("types") === "12" ? HARNESS_SEED : ALL_TYPES_SEED,
   });
   // ?requests=partial: the pause's Media task refused for good at create
   // while its Tech task landed, so the panel names the missing task.
@@ -1866,10 +1952,40 @@ export function installRequestsHarness(client: SupabaseClient): void {
     const answer = fake.call(name, args);
     // The writer's next run, a few seconds after a send.
     if (name === "cockpit_request_submit" && !answer.error)
-      setTimeout(() => fake.advance(), 4000);
+      setTimeout(() => {
+        const sent = fake.requests.find(
+          r => r.id === (answer.data as { id?: string } | null)?.id,
+        );
+        if (sent && (after === "refuse" || after === "partial")) {
+          if (after === "partial") fake.advance();
+          sent.parts.forEach((p, i) => {
+            if (after === "partial" && i === 0) return;
+            p.state = "failed";
+            p.error =
+              "ClickUp refused the task: the template is not in ClickUp any more.";
+            p.url = null;
+            p.status = null;
+            p.statusType = null;
+          });
+          sent.state = after === "partial" ? "partial" : "failed";
+          return;
+        }
+        fake.advance();
+        // In ClickUp, but a later step refused (requests.ts STEP_REFUSED).
+        if (sent && after === "note" && sent.parts[0]?.state === "delivered")
+          sent.parts[0].error =
+            "ClickUp refused the owner, due day or priority. Set them on the task in ClickUp.";
+      }, 4000);
     return answer;
   };
 }
+
+/**
+ * All 31 types, read from the binding file itself (docs/requests/request-types.json,
+ * the seed migration 20261026s prints), so the layout harness shows every
+ * request as the database holds it after the seed.
+ */
+export const ALL_TYPES_SEED: Seed = requestTypesJson as unknown as Seed;
 
 // --- Twelve of the 31 seeded types, as docs/requests/request-types.json holds them
 

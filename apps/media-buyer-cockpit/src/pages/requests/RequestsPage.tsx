@@ -195,7 +195,10 @@ export function RequestsPage() {
       </div>
 
       {view === "ask" ? (
-        <section className="max-w-2xl rounded-2xl border bg-card p-4 sm:p-6">
+        // The page's full width (tickets-look-1028): the department map takes
+        // three columns, and a chosen request puts its route beside the
+        // questions. The form fits itself to the card (container queries).
+        <section className="rounded-2xl border bg-card p-4 sm:p-6">
           {route?.againOf ? (
             <p className="mb-4 rounded-xl bg-muted/40 p-3 text-[13px] text-muted-foreground">
               Filing again a request that did not reach ClickUp. Check the

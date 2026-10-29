@@ -1,15 +1,15 @@
 /*
- * Requests: the shared form's classes (CONTRACT.md 6.2), byte-identical in
- * all five apps. Only the tokens every app defines: --card, --border,
- * --foreground, --muted, --muted-foreground, --background, --primary,
- * --primary-foreground, --warning, --destructive, --success, --ring, and
- * var(--tk-ink) for teal text (below; only client success
- * and creative define --primary-ink). No Tailwind class, no new colour.
- *
- * Hallmark · component: request form · states: default · hover · focus ·
- * active · disabled · loading · error · success. Inputs keep a 1px border
- * in every state; focus is an outline in the reserved slot, so nothing
- * shifts.
+ * Requests, "the department map" (tickets-look-1028): the shared form's
+ * classes (CONTRACT.md 6.2), byte-identical in all five apps. Only the
+ * tokens every app defines: --background, --card, --foreground, --muted,
+ * --muted-foreground, --border, --primary, --primary-foreground, --success,
+ * --warning, --destructive, plus this file's own --tk-ink and --rq-* mixes
+ * of them. No new colour, no department colour, no glow: a department is a
+ * lucide mark in a seal, its ClickUp name, one plain line and its place on
+ * the map. Selected and focus states follow React's own state (data-on) or
+ * a sibling selector, never :has() alone. Text sits at 11 (mono kickers),
+ * 12, 13, 14, 15, 16, 18 or 20px on even lines; gaps and paddings on 4px
+ * steps, bar the route's drawn geometry (review D14).
  */
 
 /* Teal as text. Client success and creative define --primary-ink (a darker
@@ -24,18 +24,42 @@
     --primary-ink,
     color-mix(in oklab, var(--primary) 55%, var(--foreground))
   );
+  /* Orange for a mark on white: orange-500 alone is 2.9:1, this is 4.7:1. */
+  --rq-warn: color-mix(in oklab, var(--warning) 75%, var(--foreground));
 }
 :root.dark,
 .dark {
   --tk-ink: var(--primary-ink, var(--primary));
+  --rq-warn: var(--warning);
 }
 
-
 .rq-form {
+  /* Field, pill and route edges at 3:1 or better on the card, both themes. */
+  --rq-edge: color-mix(in oklab, var(--foreground) 45%, var(--card));
+  --rq-line: color-mix(in oklab, var(--foreground) 45%, var(--card));
+  /* The quiet panel (DESIGN.md: never a bordered card inside a card). */
+  --rq-quiet: color-mix(in oklab, var(--muted) 70%, transparent);
+  --rq-quiet-hover: var(--muted);
+  /* The seal: a department's or a request's mark. Opaque over the card. */
+  --rq-seal-bg: color-mix(in oklab, var(--foreground) 7%, var(--card));
+  --rq-seal-edge: color-mix(in oklab, var(--foreground) 18%, var(--card));
+  /* The department's large faint mark, on its map tile and its team page. */
+  --rq-mark: color-mix(in oklab, var(--foreground) 7%, transparent);
+  /* The active state: DESIGN.md's teal pill, drawn with a border. */
+  --rq-on: color-mix(in oklab, var(--primary) 15%, transparent);
+  --rq-on-edge: color-mix(in oklab, var(--tk-ink) 85%, var(--card));
+  /* Focus: the teal ink, 5.4:1 on white and 8.5:1 on the dark card. */
+  --rq-focus: var(--tk-ink);
+
+  container: rq / inline-size;
   display: grid;
-  gap: 20px;
+  /* One column that never grows past the card: a wide child (a button that
+     keeps its words on one line) overflows itself, never the whole form. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
   min-width: 0;
   font-size: 14px;
+  line-height: 20px;
   color: var(--foreground);
 }
 .rq-form.rq-compact {
@@ -46,15 +70,80 @@
 .rq-form *::after {
   box-sizing: border-box;
 }
-
-/* --- Fields -------------------------------------------------------------- */
-
-.rq-field {
-  display: grid;
-  align-content: start;
-  gap: 6px;
-  min-width: 0;
+/* Resets with no weight, so every class below wins over them. */
+:where(.rq-form) :where(h2, h3, h4, p, ul, ol, dl, dd, figure) {
+  margin: 0;
 }
+:where(.rq-form) :where(ul, ol) {
+  padding: 0;
+  list-style: none;
+}
+:where(.rq-form) :where(button) {
+  font: inherit;
+  color: inherit;
+}
+.rq-form svg {
+  flex-shrink: 0;
+}
+/* A control scrolled into view for focus stops clear of the floating Ask
+   Hermes button (WCAG 2.4.11): on a phone its top sits 116px above the
+   bottom (4.5rem plus 44px), so the end margin is that and a 20px gap. It
+   moves only a focused control; words at rest can sit under the button
+   until the page scrolls (review CL-06, A11Y-14). */
+.rq-form :is(input, select, textarea, button, a, [tabindex]) {
+  scroll-margin-block: 16px calc(136px + env(safe-area-inset-bottom, 0px));
+}
+.rq-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.rq-kicker,
+.rq-stop-when {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.rq-kicker:focus {
+  outline: none;
+}
+/* A heading that takes focus after a view change shows where it went,
+   as the plate's and the sent view's headings do (review A11Y-12). */
+.rq-kicker:focus-visible {
+  outline: 2px solid var(--rq-focus);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+.rq-muted,
+.rq-note,
+.rq-help,
+.rq-count {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+.rq-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rq-quiet-note {
+  display: block;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--muted-foreground);
+}
+
+/* --- Inputs ------------------------------------------------------------- */
+
 .rq-label {
   margin: 0;
   font-size: 14px;
@@ -66,42 +155,16 @@
   font-weight: 400;
   color: var(--muted-foreground);
 }
-.rq-help,
-.rq-error,
-.rq-note,
-.rq-muted {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-.rq-help,
-.rq-muted,
-.rq-note {
-  color: var(--muted-foreground);
-}
-.rq-error {
-  color: var(--destructive);
-}
-.rq-note {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.rq-pad {
-  padding: 12px;
-}
-
 .rq-input {
   display: block;
   width: 100%;
   min-width: 0;
   height: 40px;
   padding: 0 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--rq-edge);
   border-radius: 10px;
   outline: 2px solid transparent;
-  outline-offset: 1px;
+  outline-offset: 2px;
   background: var(--background);
   color: var(--foreground);
   font: inherit;
@@ -112,35 +175,80 @@
 .rq-input::placeholder {
   color: var(--muted-foreground);
 }
-@media (hover: hover) {
-  .rq-input:hover:not(:disabled) {
-    background: color-mix(in oklab, var(--foreground) 3%, var(--background));
-  }
-}
 .rq-input:focus-visible {
-  outline-color: var(--ring);
+  outline-color: var(--rq-focus);
 }
 .rq-input[aria-invalid="true"] {
   border-color: var(--destructive);
 }
-.rq-input:disabled {
+/* A choice ClickUp lost is aria-disabled, not disabled, so it can take
+   focus from the summary; it still looks unavailable, but shows at full
+   strength while focused, so its focus ring keeps its contrast (review
+   A11Y-21). */
+.rq-input:disabled,
+.rq-input[aria-disabled="true"] {
   opacity: 0.55;
   cursor: not-allowed;
 }
+.rq-input[aria-disabled="true"]:focus-visible {
+  opacity: 1;
+}
 .rq-textarea {
   height: auto;
-  min-height: 96px;
+  min-height: 88px;
   padding: 10px 12px;
   resize: vertical;
 }
 .rq-select {
   appearance: auto;
-  padding-right: 8px;
+  padding-inline-end: 8px;
 }
 input[type="date"].rq-input {
   font-variant-numeric: tabular-nums;
 }
+.rq-field {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+.rq-help {
+  margin: 0;
+}
+/* An error in ink: red only on its mark and on the field's edge. */
+.rq-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+.rq-error > svg {
+  width: 15px;
+  height: 15px;
+  margin-top: 1.5px;
+  color: var(--destructive);
+}
 
+/* --- Search and the recent row ------------------------------------------ */
+
+.rq-finder {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+.rq-ask {
+  display: grid;
+  gap: 8px;
+}
+.rq-ask-label {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
+}
 .rq-search {
   position: relative;
   min-width: 0;
@@ -148,17 +256,792 @@ input[type="date"].rq-input {
 .rq-search-icon {
   position: absolute;
   top: 50%;
-  left: 12px;
-  width: 16px;
-  height: 16px;
+  inset-inline-start: 14px;
+  width: 18px;
+  height: 18px;
   transform: translateY(-50%);
   color: var(--muted-foreground);
   pointer-events: none;
 }
 .rq-search-input {
-  padding-left: 36px;
+  height: 48px;
+  padding-inline: 44px 16px;
+  border-radius: 12px;
+  font-size: 15px;
+}
+/* Room for the clear button only while there is something to clear. */
+.rq-search[data-filled] .rq-search-input {
+  padding-inline-end: 44px;
+}
+.rq-search-input::-webkit-search-cancel-button {
+  appearance: none;
+}
+.rq-search-client {
+  height: 40px;
+  padding-inline: 40px 12px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+.rq-search-icon-sm {
+  inset-inline-start: 12px;
+  width: 16px;
+  height: 16px;
+}
+.rq-search-clear {
+  position: absolute;
+  top: 50%;
+  inset-inline-end: 6px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 8px;
+  outline: 2px solid transparent;
+  background: transparent;
+  color: var(--muted-foreground);
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+.rq-search-clear svg {
+  width: 16px;
+  height: 16px;
+}
+.rq-recent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.rq-recent-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.rq-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding-inline: 8px 12px;
+  border: 1px solid var(--rq-edge);
+  border-radius: 999px;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.rq-chip svg {
+  width: 15px;
+  height: 15px;
+  color: var(--muted-foreground);
 }
 
+/* --- The map: five departments and the way out --------------------------- */
+
+.rq-map-wrap {
+  display: grid;
+  gap: 12px;
+}
+.rq-map-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+.rq-map-head .rq-muted {
+  flex: 1 1 260px;
+}
+.rq-every {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 4px 0 8px;
+  border: 0;
+  border-radius: 8px;
+  outline: 2px solid transparent;
+  outline-offset: 0;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.rq-every svg {
+  width: 16px;
+  height: 16px;
+  color: var(--muted-foreground);
+}
+.rq-pill-count {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+.rq-map {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+@container rq (min-width: 540px) {
+  .rq-map {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container rq (min-width: 860px) {
+  .rq-map {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+  }
+}
+.rq-dept {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--rq-quiet);
+}
+/* The faint team mark, cropped in the tile's far corner, clear of words. */
+.rq-watermark {
+  position: absolute;
+  z-index: -1;
+  bottom: -46px;
+  inset-inline-end: -38px;
+  width: 132px;
+  height: 132px;
+  color: var(--rq-mark);
+  pointer-events: none;
+}
+.rq-watermark svg {
+  width: 100%;
+  height: 100%;
+  stroke-width: 1.1;
+}
+.rq-dept-head {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+.rq-seal {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--rq-seal-edge);
+  border-radius: 13px;
+  background: var(--rq-seal-bg);
+  color: var(--foreground);
+}
+.rq-seal svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 1.75;
+}
+.rq-seal[data-size="sm"] {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+}
+.rq-seal[data-size="sm"] svg {
+  width: 18px;
+  height: 18px;
+}
+.rq-seal[data-size="lg"] {
+  width: 52px;
+  height: 52px;
+  border-radius: 15px;
+}
+.rq-seal[data-size="lg"] svg {
+  width: 26px;
+  height: 26px;
+}
+.rq-seal[data-dashed] {
+  border-style: dashed;
+  border-color: var(--rq-edge);
+  background: transparent;
+}
+.rq-dept-name {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 22px;
+  letter-spacing: -0.01em;
+}
+.rq-dept-line {
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--muted-foreground);
+}
+.rq-dept-list {
+  display: grid;
+  gap: 2px;
+  margin-inline-end: 40px;
+}
+.rq-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% + 16px);
+  min-height: 36px;
+  margin-inline: -8px;
+  padding: 8px;
+  border: 0;
+  border-radius: 9px;
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+  background: transparent;
+  font-size: 14px;
+  line-height: 20px;
+  text-align: start;
+  cursor: pointer;
+}
+.rq-pick svg {
+  width: 16px;
+  height: 16px;
+  color: var(--muted-foreground);
+}
+.rq-pick-team {
+  margin-inline-start: auto;
+  padding-inline-start: 8px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.rq-dept-more {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 2px;
+  min-height: 32px;
+  margin-top: auto;
+  margin-inline-start: -8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  outline: 2px solid transparent;
+  outline-offset: 0;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.rq-dept-more svg {
+  width: 16px;
+  height: 16px;
+  color: var(--muted-foreground);
+}
+.rq-dept-help .rq-dept-list {
+  margin-inline-end: 0;
+}
+/* A team's pointer to a request filed under another team (review CL-09). */
+.rq-related {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-inline-end: 40px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--muted-foreground);
+}
+.rq-related > svg {
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+}
+.rq-related .rq-inline {
+  min-height: 0;
+  display: inline;
+  font-size: inherit;
+  line-height: inherit;
+}
+.rq-list > .rq-related {
+  margin-inline-end: 0;
+}
+/* On a tile the pointer ends the tile, so its words keep clear of the faint
+   mark in the corner: the mark is drawn a step smaller there (as on the
+   client page) and the words stop short of it. */
+.rq-dept > .rq-related {
+  margin-inline-end: 72px;
+}
+.rq-dept:has(> .rq-related) > .rq-watermark {
+  bottom: -34px;
+  inset-inline-end: -28px;
+  width: 104px;
+  height: 104px;
+}
+
+/* --- A team opened, every request, and search results -------------------- */
+
+/* The two overviews ("All teams", "Every request"), then the teams: one
+   calm row when it all fits (1440), else the teams take a line of their
+   own under the overviews, one row that scrolls sideways where it must and
+   snaps to whole pills, never a ragged wrap (review T3-design-clarity-01,
+   T3-design-clarity-09). The row's 4px inset keeps a focus ring clear of
+   its edge; the negative margin keeps the pills on the content's edge. */
+.rq-teams {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.rq-teams > .rq-pill {
+  flex: none;
+}
+.rq-teams-scroll {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  gap: 8px;
+  min-width: 0;
+  margin: -4px;
+  padding: 4px;
+  overflow-x: auto;
+  scroll-padding-inline: 4px;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+}
+.rq-teams-scroll > .rq-pill {
+  flex: none;
+  scroll-snap-align: start;
+}
+.rq-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.rq-pill svg {
+  width: 15px;
+  height: 15px;
+}
+.rq-pill-home {
+  border-color: var(--rq-edge);
+  color: var(--foreground);
+}
+/* The current view: the current item of the Teams navigation (review
+   T3-a11y-behaviour-03). */
+.rq-pill[aria-current="true"] {
+  border-color: var(--rq-on-edge);
+  background: var(--rq-on);
+  color: var(--foreground);
+}
+.rq-list {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.rq-list-head {
+  display: grid;
+  gap: 2px;
+}
+.rq-hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+  padding: 20px;
+  border-radius: 16px;
+  background: var(--rq-quiet);
+}
+.rq-hero .rq-watermark {
+  top: 50%;
+  bottom: auto;
+  inset-inline-end: 32px;
+  width: 128px;
+  height: 128px;
+  transform: translateY(-50%);
+}
+/* The words keep clear of the mark at every width (judge mustFix; review
+   D5): beside it while there is room, then with the mark cropped in the
+   hero's corner, as on a tile. */
+.rq-hero > div {
+  min-width: 0;
+  padding-inline-end: 176px;
+}
+@container rq (max-width: 760px) {
+  .rq-hero .rq-watermark {
+    top: auto;
+    bottom: -34px;
+    inset-inline-end: -28px;
+    width: 104px;
+    height: 104px;
+    transform: none;
+  }
+  .rq-hero > div {
+    padding-inline-end: 64px;
+  }
+}
+.rq-hero-name {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 26px;
+  letter-spacing: -0.015em;
+}
+.rq-hero-name:focus {
+  outline: none;
+}
+.rq-hero-name:focus-visible {
+  outline: 2px solid var(--rq-focus);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+.rq-rows {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+@container rq (min-width: 760px) {
+  .rq-rows {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.rq-rows > li {
+  min-width: 0;
+}
+.rq-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  width: 100%;
+  height: 100%;
+  padding: 12px 16px 12px 12px;
+  border: 0;
+  border-radius: 12px;
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+  background: var(--rq-quiet);
+  text-align: start;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+.rq-row-text,
+.rq-row-more {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.rq-row .rq-type-name {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.rq-row-line {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--muted-foreground);
+}
+.rq-hit {
+  font-weight: 600;
+  color: var(--foreground);
+}
+.rq-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--muted-foreground);
+}
+.rq-fact {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 4px;
+}
+.rq-fact svg {
+  width: 13px;
+  height: 13px;
+}
+/* Where a request goes: one run of words, each team name with its mark. */
+.rq-reach {
+  display: inline;
+  min-width: 0;
+}
+.rq-team-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+.rq-team-tag svg {
+  width: 13px;
+  height: 13px;
+}
+.rq-results {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.rq-more {
+  justify-self: start;
+}
+.rq-count {
+  margin: 0;
+}
+.rq-notit {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--rq-quiet);
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--muted-foreground);
+}
+.rq-notit > svg {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+}
+.rq-notit strong {
+  font-weight: 600;
+  color: var(--foreground);
+}
+.rq-notit-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 8px;
+}
+.rq-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  background: transparent;
+  font-weight: 500;
+  color: var(--foreground);
+  text-align: start;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--foreground) 35%, transparent);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.rq-inline svg {
+  width: 14px;
+  height: 14px;
+  color: var(--muted-foreground);
+}
+
+/* --- The chosen request: its plate --------------------------------------- */
+
+.rq-plate {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+  padding: 16px 20px;
+  border-radius: 16px;
+  background: var(--rq-quiet);
+}
+.rq-plate-text {
+  min-width: 0;
+}
+.rq-plate-kicker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-bottom: 4px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--muted-foreground);
+}
+.rq-plate-kicker .rq-team-tag {
+  font-weight: 500;
+  color: var(--foreground);
+}
+.rq-plate-kicker .rq-team-tag svg {
+  width: 14px;
+  height: 14px;
+}
+.rq-plate-name {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 26px;
+  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
+}
+.rq-plate-name:focus {
+  outline: none;
+}
+.rq-plate-name:focus-visible {
+  outline: 2px solid var(--rq-focus);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+.rq-plate-line {
+  margin-top: 4px;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--muted-foreground);
+}
+
+/* --- The questions beside what happens next ------------------------------ */
+
+.rq-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "qs" "route" "send";
+  gap: 24px;
+  align-items: start;
+}
+.rq-body > .rq-qs {
+  grid-area: qs;
+}
+.rq-body > .rq-next {
+  grid-area: route;
+}
+.rq-qs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  min-width: 0;
+}
+.rq-send {
+  grid-area: send;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.rq-next {
+  container: rq-next / inline-size;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+@container rq (min-width: 880px) {
+  .rq-body {
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 0.86fr);
+    grid-template-rows: auto 1fr;
+    grid-template-areas: "qs route" "send route";
+    column-gap: 0;
+  }
+  .rq-body > .rq-qs,
+  .rq-send {
+    padding-inline-end: 32px;
+  }
+  /* A read-out: it stays in view while the questions scroll. */
+  .rq-body > .rq-next {
+    position: sticky;
+    top: 16px;
+    padding-top: 2px;
+    padding-inline-start: 32px;
+    border-top: 0;
+    border-inline-start: 1px solid var(--border);
+  }
+}
+.rq-qgroup {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+.rq-qgroup + .rq-qgroup {
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+.rq-qgroup-title {
+  margin-bottom: -8px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.rq-sep {
+  height: 1px;
+  margin: 0;
+  border: 0;
+  background: var(--border);
+}
+.rq-quote {
+  max-height: 160px;
+  margin: 0;
+  padding: 8px 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: 10px;
+  background: var(--rq-quiet);
+  font-size: 13px;
+  line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The client. */
+.rq-client {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding-block: 4px;
+  padding-inline: 12px 4px;
+  border: 1px solid var(--rq-edge);
+  border-radius: 10px;
+  background: var(--background);
+}
+.rq-client-lock {
+  width: 15px;
+  height: 15px;
+  color: var(--muted-foreground);
+}
+/* A span that takes the row, with the name's bdi inline inside it: an
+   Arabic name keeps its own order and starts where every name starts
+   (review D9). */
+.rq-client-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+.rq-client-status {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.rq-clients {
+  display: grid;
+  gap: 8px;
+}
 .rq-check {
   display: inline-flex;
   align-items: center;
@@ -176,193 +1059,593 @@ input[type="date"].rq-input {
   accent-color: var(--primary);
 }
 .rq-check input:focus-visible {
-  outline: 2px solid var(--ring);
+  outline: 2px solid var(--rq-focus);
   outline-offset: 2px;
 }
-
-.rq-pair {
+.rq-client-list {
   display: grid;
-  gap: 16px;
-}
-@media (min-width: 640px) {
-  .rq-pair {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  }
-}
-
-/* --- The type list and the client list ----------------------------------- */
-
-.rq-types,
-.rq-clients {
-  max-height: 360px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  border: 1px solid var(--border);
   border-radius: 12px;
-  background: var(--card);
+  background: var(--rq-quiet);
+  overflow: hidden;
 }
-.rq-types-short,
-.rq-clients {
-  max-height: 264px;
-}
-.rq-group + .rq-group {
+.rq-client-list > li + li {
   border-top: 1px solid var(--border);
 }
-.rq-group-label {
-  margin: 0;
-  padding: 12px 12px 6px;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted-foreground);
-}
-.rq-type {
+.rq-client-option {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   width: 100%;
   min-height: 40px;
   padding: 8px 12px;
   border: 0;
-  border-radius: 0;
+  outline: 2px solid transparent;
+  outline-offset: -2px;
   background: transparent;
-  color: var(--foreground);
-  font: inherit;
   font-size: 14px;
   text-align: start;
   cursor: pointer;
 }
-.rq-clients > .rq-type + .rq-type {
-  border-top: 1px solid var(--border);
-}
-@media (hover: hover) {
-  .rq-type:hover {
-    background: color-mix(in oklab, var(--foreground) 5%, transparent);
-  }
-}
-.rq-type:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: -2px;
-}
-.rq-type:active {
-  background: color-mix(in oklab, var(--primary) 12%, transparent);
-}
-.rq-type-name {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.rq-type-also {
-  flex-shrink: 0;
-  font-size: 12px;
-  color: var(--muted-foreground);
-  white-space: nowrap;
+.rq-client-option .rq-client-name {
+  font-weight: 400;
 }
 
-.rq-chosen {
+/* Choices: pills for a few short ones, a list of radios for more. The
+   radio itself is the native one, kept in the page for the keyboard and
+   screen readers; its face is drawn next to it. */
+.rq-qhead {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 44px;
-  padding: 4px 4px 4px 12px;
-  border: 1px solid color-mix(in oklab, var(--primary) 45%, var(--border));
-  border-radius: 10px;
-  background: color-mix(in oklab, var(--primary) 8%, transparent);
+  gap: 4px 12px;
 }
-.rq-chosen-text {
-  display: grid;
-  min-width: 0;
-}
-.rq-chosen-name {
-  min-width: 0;
-  font-weight: 500;
-  overflow-wrap: anywhere;
-}
-.rq-chosen .rq-muted {
+.rq-decides {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
-}
-/* What a request brought that the picked type has no question for: the
-   words as they came, in a quiet panel, scrolling when long. */
-.rq-quote {
-  max-height: 160px;
-  margin: 0;
-  padding: 10px 12px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  border-radius: 10px;
-  background: color-mix(in oklab, var(--foreground) 4%, transparent);
-  font-size: 13px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-/* --- The route line (the signature) -------------------------------------- */
-
-.rq-route {
-  display: grid;
-  gap: 8px;
-  padding: 14px 16px;
-  border-radius: 12px;
-  background: color-mix(in oklab, var(--foreground) 4%, transparent);
-  transition: opacity 120ms ease;
-}
-.rq-route[data-busy="true"] {
-  opacity: 0.65;
-}
-.rq-kicker {
-  margin: 0;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-weight: 500;
   color: var(--muted-foreground);
 }
-.rq-route-list {
-  display: grid;
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.rq-decides svg {
+  width: 14px;
+  height: 14px;
 }
-.rq-route-line {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
+.rq-clear {
+  margin-inline-start: auto;
+  min-height: 24px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 4px;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.rq-choices {
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
-  font-size: 13px;
-  line-height: 1.55;
 }
-.rq-route-mark {
-  width: 16px;
-  height: 16px;
-  margin-top: 2px;
+.rq-radios {
+  display: grid;
+  gap: 2px;
+}
+.rq-choice {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+  cursor: pointer;
+  user-select: none;
+}
+/* The native radio covers its whole face, unseen: a screen reader on a
+   phone touches a real radio, and scrolling it into view clears the face
+   (review A11Y-14). The press lands on the face, which the label passes on. */
+.rq-choice-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.rq-choice-face {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--rq-edge);
+  border-radius: 999px;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 16px;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+.rq-choice[data-on] .rq-choice-face,
+.rq-choice-input:checked + .rq-choice-face {
+  border-color: var(--rq-on-edge);
+  background: var(--rq-on);
+}
+.rq-choice-input:focus-visible + .rq-choice-face {
+  outline-color: var(--rq-focus);
+}
+/* A choice in error: the red on the pills' edges, or on the radio list's
+   leading edge, as a text field's edge (review A11Y-13). */
+.rq-choices[aria-invalid="true"] .rq-choice-face {
+  border-color: var(--destructive);
+}
+.rq-radios[aria-invalid="true"] {
+  padding-inline-start: 8px;
+  border-inline-start: 2px solid var(--destructive);
+}
+.rq-tick {
+  width: 14px;
+  height: 14px;
+  margin-inline-start: -3px;
   color: var(--tk-ink);
 }
-.rq-route-text {
+.rq-choice:not([data-on]) .rq-tick {
+  display: none;
+}
+.rq-choice-text {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+}
+.rq-choice-team {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  color: var(--muted-foreground);
+}
+.rq-choices[data-lines="2"] .rq-choice-face {
+  min-height: 44px;
+  padding-block: 4px;
+}
+.rq-usual {
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+/* On a chosen face or a pressed pill the small muted words lean towards the
+   ink, so they keep 4.5:1 on the teal tint in both themes. */
+.rq-choice[data-on] :is(.rq-usual, .rq-day-tag, .rq-choice-team),
+.rq-pill[aria-current="true"] .rq-pill-count {
+  color: color-mix(in oklab, var(--muted-foreground) 55%, var(--foreground));
+}
+/* The list of radios: one row each, the round mark drawn by its face. */
+.rq-radios .rq-choice {
+  display: flex;
+}
+.rq-radios .rq-choice-face {
+  flex: 1;
+  gap: 8px;
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 10px;
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 20px;
+}
+.rq-radios .rq-choice[data-on] .rq-choice-face,
+.rq-radios .rq-choice-input:checked + .rq-choice-face {
+  background: var(--rq-on);
+}
+.rq-radio-dot {
+  position: relative;
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--rq-edge);
+  border-radius: 999px;
+  background: var(--background);
+}
+.rq-choice[data-on] .rq-radio-dot {
+  border-color: var(--rq-on-edge);
+}
+.rq-choice[data-on] .rq-radio-dot::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 999px;
+  background: var(--tk-ink);
+}
+/* Due: two day choices and "Pick a day", which opens the date input. The
+   chosen one carries the tick, as every chosen pill does: never colour
+   alone. */
+.rq-day .rq-choice-face {
+  min-height: 44px;
+  padding: 4px 12px;
+  border-radius: 14px;
+}
+.rq-day-text {
+  gap: 0;
+}
+.rq-day-date {
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.rq-day-tag {
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 16px;
+  color: var(--muted-foreground);
+}
+.rq-day-icon {
+  width: 15px;
+  height: 15px;
+  color: var(--muted-foreground);
+}
+.rq-date[hidden] {
+  display: none;
+}
+.rq-date-input {
+  max-width: 220px;
+}
+
+/* --- What happens next: the route (the signature) ------------------------ */
+
+.rq-next-head {
+  display: grid;
+  gap: 4px;
+}
+.rq-route-sum,
+.rq-route-wait {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
+}
+/* The first read's wait, shown in the summary's place and not said: the
+   summary line says only a settled answer (review A11Y-08). */
+.rq-route-wait {
+  color: var(--muted-foreground);
+}
+.rq-stops {
+  display: grid;
+  transition: opacity 120ms ease;
+}
+.rq-next[data-busy="true"] .rq-stops {
+  opacity: 0.75;
+}
+.rq-stop {
+  position: relative;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  column-gap: 16px;
+  padding-bottom: 20px;
+}
+.rq-stop:last-child {
+  padding-bottom: 0;
+}
+.rq-stop::before,
+.rq-lane::before {
+  content: "";
+  position: absolute;
+  top: 32px;
+  bottom: 0;
+  inset-inline-start: 15px;
+  border-inline-start: 2px solid var(--rq-line);
+}
+.rq-stop:last-child::before {
+  content: none;
+}
+/* Saved, not sent: the track after it waits, dashed in the line colour. */
+.rq-stop[data-kind="held"]::before,
+.rq-stop[data-kind="held"] ~ .rq-stop::before,
+.rq-stop[data-kind="held"] ~ .rq-stop .rq-lane::before {
+  border-inline-start-style: dashed;
+}
+.rq-stop-mark {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 2px solid var(--rq-line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted-foreground);
+}
+.rq-stop-mark svg {
+  width: 15px;
+  height: 15px;
+}
+.rq-stop[data-kind="held"] .rq-stop-mark {
+  color: var(--rq-warn);
+}
+/* The fork's mark: a diamond, never mistaken for a status circle. */
+.rq-stop[data-kind="decision"] .rq-stop-mark {
+  border: 0;
+  background: transparent;
+}
+.rq-diamond {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--rq-line);
+  border-radius: 2px;
+  background: var(--card);
+  transform: rotate(45deg);
+}
+.rq-stop-mark.rq-seal {
+  border: 1px solid var(--rq-seal-edge);
+  border-radius: 10px;
+  background: var(--rq-seal-bg);
+  color: var(--foreground);
+}
+.rq-stop-mark.rq-seal svg {
+  width: 17px;
+  height: 17px;
+}
+/* A lane that may run: its seal and its track dashed, its words in full. */
+.rq-stop-mark.rq-seal[data-kind="may"] {
+  border: 1px dashed var(--rq-edge);
+  background: var(--card);
+}
+.rq-route-line[data-kind="may"]::before,
+.rq-lane[data-kind="may"]::before {
+  border-inline-start-style: dashed;
+}
+.rq-stop-body {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  min-height: 32px;
+  font-size: 13px;
+  line-height: 20px;
+}
+.rq-stop-text {
+  font-size: 14px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.rq-stop-text strong {
+  font-weight: 600;
+}
+.rq-lane-name {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
+}
+.rq-lane-if {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--muted-foreground);
+}
+.rq-route-line {
+  overflow-wrap: anywhere;
+}
+.rq-route-line q,
+.rq-lane-task q {
+  quotes: "\201C" "\201D";
+  font-weight: 500;
+}
+.rq-facts-dl {
+  display: grid;
+  gap: 8px;
+  margin-top: 2px;
+}
+.rq-facts-dl > div {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 8px;
+}
+.rq-facts-dl dt {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.rq-facts-dl dd {
   display: grid;
   gap: 2px;
   min-width: 0;
-}
-.rq-route-text p {
-  margin: 0;
   overflow-wrap: anywhere;
 }
-.rq-route-text strong {
-  font-weight: 600;
+/* Each step's number sits inside its step, so the focus ring of a step that
+   "Show the other {n}" revealed takes in its number (review T2-a11y-03). The
+   list keeps list-style, so it stays a list to every screen reader. */
+.rq-steps {
+  display: grid;
+  gap: 2px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: decimal;
+  counter-reset: rq-step;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--muted-foreground);
 }
-.rq-route-text .rq-muted {
+.rq-steps li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  counter-increment: rq-step;
+  border-radius: 4px;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+.rq-steps li::before {
+  content: counter(rq-step) ".";
+  padding-inline-end: 4px;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+.rq-steps li:focus-visible {
+  outline-color: var(--rq-focus);
+}
+/* One task per answer, drawn as one lane: what each answer's task works
+   from (review D7). */
+.rq-works-by {
+  display: block;
+}
+.rq-works-answer {
+  font-weight: 500;
+}
+.rq-steps-more {
+  justify-self: start;
   font-size: 12px;
 }
+/* Two tasks: the route forks into two lanes and joins again, side by side
+   when the column has room, one under the other when it does not. */
+.rq-stop-fork {
+  grid-template-columns: minmax(0, 1fr);
+}
+.rq-stop-fork::before {
+  content: none;
+}
+.rq-lanes {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+}
+.rq-lane {
+  position: relative;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  column-gap: 16px;
+  align-content: start;
+}
+.rq-lane::before {
+  bottom: -20px;
+}
+.rq-fork-note {
+  display: none;
+}
+.rq-stop-fork:last-child .rq-lane:last-child::before {
+  content: none;
+}
+@container rq-next (min-width: 420px) {
+  .rq-stop-fork {
+    padding-top: 18px;
+  }
+  .rq-lanes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .rq-lane::before {
+    content: "";
+    bottom: 0;
+  }
+  /* A fork that ends the route: both lanes end at their seals, as the last
+     stacked lane does (review T2-design-1). */
+  .rq-stop-fork:last-child .rq-lane::before {
+    content: none;
+  }
+  /* Otherwise the trunk runs on from the first lane, past the join, to the
+     next stop: one line, so a dashed track keeps one rhythm and never a gap
+     (review D1, T2-design-2). */
+  .rq-stop-fork:not(:last-child) .rq-fork-note + .rq-lane::before {
+    bottom: -38px;
+  }
+  .rq-lanes::before,
+  .rq-lanes::after {
+    content: "";
+    position: absolute;
+    inset-inline-start: 15px;
+    width: calc(50% + 10px);
+    border: 0 solid var(--rq-line);
+  }
+  .rq-lanes::before {
+    top: -18px;
+    height: 20px;
+    border-top-width: 2px;
+    border-inline-start-width: 2px;
+    border-inline-end-width: 2px;
+    border-start-end-radius: 14px;
+  }
+  /* The join: the second lane bends back into the trunk the first lane
+     carries on. */
+  .rq-lanes::after {
+    bottom: -18px;
+    height: 20px;
+    border-bottom-width: 2px;
+    border-inline-end-width: 2px;
+    border-end-end-radius: 14px;
+  }
+  .rq-stop-fork:last-child .rq-lanes::after {
+    content: none;
+  }
+  .rq-stop[data-kind="held"] ~ .rq-stop-fork .rq-lanes::before,
+  .rq-stop[data-kind="held"] ~ .rq-stop-fork .rq-lanes::after,
+  .rq-stop-fork[data-kind="may"] .rq-lanes::before,
+  .rq-stop-fork[data-kind="may"] .rq-lanes::after {
+    border-style: dashed;
+  }
+  .rq-fork-note {
+    display: block;
+    position: absolute;
+    top: -27px;
+    inset-inline-start: 44px;
+    padding-inline: 4px;
+    background: var(--card);
+  }
+  .rq-stop-fork {
+    padding-bottom: 38px;
+  }
+  .rq-stop-fork:last-child {
+    padding-bottom: 0;
+  }
+  /* Side by side, the lanes share the fork's timing and stack their facts. */
+  .rq-lane .rq-lane-when {
+    display: none;
+  }
+  .rq-lane .rq-facts-dl > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}
+.rq-truths {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--muted-foreground);
+}
+.rq-sop,
+.rq-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  border-radius: 4px;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--foreground);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--foreground) 35%, transparent);
+  text-underline-offset: 3px;
+}
+.rq-sop svg,
+.rq-open svg {
+  width: 14px;
+  height: 14px;
+  color: var(--muted-foreground);
+}
 
-/* --- Buttons ------------------------------------------------------------- */
+/* --- Buttons, notes and alerts ------------------------------------------- */
 
 .rq-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 8px 16px;
 }
 .rq-btn {
   display: inline-flex;
@@ -375,7 +1658,6 @@ input[type="date"].rq-input {
   border-radius: 10px;
   outline: 2px solid transparent;
   outline-offset: 2px;
-  font: inherit;
   font-size: 14px;
   font-weight: 500;
   line-height: 1;
@@ -386,11 +1668,9 @@ input[type="date"].rq-input {
     background-color 120ms ease,
     border-color 120ms ease;
 }
-.rq-btn:focus-visible {
-  outline-color: var(--ring);
-}
-.rq-btn:active:not(:disabled) {
-  transform: translateY(1px);
+.rq-btn svg {
+  width: 16px;
+  height: 16px;
 }
 .rq-btn:disabled,
 .rq-btn[aria-disabled="true"] {
@@ -398,68 +1678,70 @@ input[type="date"].rq-input {
   cursor: not-allowed;
 }
 .rq-btn[data-state="loading"] {
-  opacity: 0.8;
+  opacity: 0.85;
   cursor: progress;
 }
 .rq-btn-sm {
   min-height: 32px;
-  padding: 0 10px;
+  padding: 0 12px;
   font-size: 13px;
 }
+/* Deep Space words on teal in both themes (9.3:1). */
 .rq-btn-primary {
+  min-height: 44px;
+  padding: 0 24px;
   background: var(--primary);
   color: var(--primary-foreground);
-}
-@media (hover: hover) {
-  .rq-btn-primary:hover:not(:disabled) {
-    background: color-mix(in oklab, var(--primary) 88%, var(--foreground));
-  }
-  .rq-btn-outline:hover:not(:disabled),
-  .rq-btn-ghost:hover:not(:disabled) {
-    background: color-mix(in oklab, var(--foreground) 6%, transparent);
-  }
+  font-weight: 600;
 }
 .rq-btn-outline {
-  border-color: var(--border);
+  border-color: var(--rq-edge);
   background: transparent;
   color: var(--foreground);
 }
 .rq-btn-ghost {
+  padding-inline: 12px;
   background: transparent;
-  color: var(--tk-ink);
+  color: var(--foreground);
 }
-@media (max-width: 639px) {
-  .rq-form:not(.rq-compact) .rq-actions > .rq-btn:not(.rq-btn-sm) {
-    flex: 1 1 100%;
-  }
+.rq-btn-ghost svg {
+  color: var(--muted-foreground);
 }
-
+.rq-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--muted-foreground);
+}
+.rq-hint svg {
+  width: 14px;
+  height: 14px;
+  color: var(--rq-warn);
+}
+/* One link style inside the card: ink, underlined, as "Open in ClickUp"
+   and the SOP link (review D17). */
 .rq-link {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   width: fit-content;
   border-radius: 4px;
-  color: var(--tk-ink);
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  color: var(--foreground);
   font-size: 13px;
   font-weight: 500;
-  text-decoration: none;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--foreground) 35%, transparent);
+  text-underline-offset: 3px;
 }
-@media (hover: hover) {
-  .rq-link:hover {
-    text-decoration: underline;
-    text-underline-offset: 3px;
-  }
-}
-.rq-link:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-.rq-link-icon {
+.rq-link svg {
   width: 14px;
   height: 14px;
+  color: var(--muted-foreground);
 }
-
 .rq-spin {
   width: 16px;
   height: 16px;
@@ -471,103 +1753,528 @@ input[type="date"].rq-input {
     transform: rotate(360deg);
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  .rq-spin {
-    animation-duration: 2.4s;
-  }
-  .rq-btn:active:not(:disabled) {
-    transform: none;
-  }
-}
-
-/* --- Panels: refused, writer off, sent ----------------------------------- */
-
-.rq-alert,
-.rq-sent,
-.rq-off {
+/* Notes and alerts are quiet panels inside the card, never a bordered box
+   in it: red only on an alert's mark (review D17). */
+.rq-off,
+.rq-alert {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: 12px;
-  font-size: 13px;
-  line-height: 1.5;
-}
-.rq-alert {
-  border: 1px solid color-mix(in oklab, var(--destructive) 35%, var(--border));
-}
-.rq-alert p,
-.rq-sent p,
-.rq-off p {
+  gap: 12px;
   margin: 0;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--rq-quiet);
+  color: var(--foreground);
+  font-size: 13px;
+  line-height: 20px;
   overflow-wrap: anywhere;
+}
+.rq-off > svg,
+.rq-alert > svg {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+}
+.rq-off > svg {
+  color: var(--rq-warn);
+}
+.rq-off > div {
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+}
+/* In place of the questions the note can take focus (review
+   T3-a11y-behaviour-02): it shows where focus went, as a heading does. */
+.rq-off[tabindex]:focus {
+  outline: none;
+}
+.rq-off[tabindex]:focus-visible {
+  outline: 2px solid var(--rq-focus);
+  outline-offset: 2px;
+}
+.rq-alert > svg {
+  color: var(--destructive);
 }
 .rq-alert > div {
   display: grid;
   gap: 8px;
   justify-items: start;
 }
-.rq-alert-icon,
-.rq-sent-icon {
-  width: 16px;
-  height: 16px;
-  margin-top: 2px;
-  flex-shrink: 0;
-  color: var(--destructive);
+.rq-alert ul {
+  display: grid;
+  gap: 2px;
 }
-.rq-alert-icon.rq-warn {
-  color: var(--warning);
+.rq-alert-warn > svg {
+  color: var(--rq-warn);
 }
-.rq-alert:has(.rq-warn) {
-  border-color: color-mix(in oklab, var(--warning) 40%, var(--border));
-}
+
+/* --- After Send: the sent view and the tracker ---------------------------- */
+
+/* The heading, then where it is now, then what was asked and what next;
+   from 880px the tracker stands beside both. */
 .rq-sent {
-  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "top" "track" "rest";
+  gap: 24px;
+  align-items: start;
+}
+.rq-sent-top,
+.rq-sent-rest {
+  display: grid;
+  gap: 20px;
+  align-content: start;
+  min-width: 0;
+}
+.rq-sent-top {
+  grid-area: top;
+}
+.rq-sent-rest {
+  grid-area: rest;
+}
+.rq-sent > .rq-tracker {
+  grid-area: track;
+}
+@container rq (min-width: 880px) {
+  .rq-sent {
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 0.95fr);
+    grid-template-rows: auto 1fr;
+    grid-template-areas: "top track" "rest track";
+    column-gap: 0;
+  }
+  .rq-sent-top,
+  .rq-sent-rest {
+    padding-inline-end: 32px;
+  }
+  .rq-sent .rq-tracker {
+    padding-top: 2px;
+    padding-inline-start: 32px;
+    border-top: 0;
+    border-inline-start: 1px solid var(--border);
+  }
+}
+/* Already open: the request and its client, the server's note under them. */
+.rq-dup {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.rq-dup-icon {
+  width: 26px;
+  height: 26px;
+  margin-top: 1px;
+  color: var(--rq-warn);
+}
+.rq-sent-head {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.rq-sent-head:focus,
+.rq-dup .rq-sent-title:focus {
+  outline: none;
+}
+.rq-sent-head:focus-visible,
+.rq-dup .rq-sent-title:focus-visible {
+  outline: 2px solid var(--rq-focus);
+  outline-offset: 4px;
+  border-radius: 6px;
 }
 .rq-sent-icon {
+  width: 26px;
+  height: 26px;
+  margin-top: 1px;
+  color: var(--muted-foreground);
+}
+.rq-sent[data-tone="done"] .rq-sent-icon {
   color: var(--success);
 }
-/* The sent panel's mark follows its tasks: refused, on the way, saved until
-   requests open; the success green only once every task is in ClickUp. */
-.rq-sent[data-tone="failed"] {
-  border: 1px solid color-mix(in oklab, var(--destructive) 35%, var(--border));
+.rq-sent[data-tone="held"] .rq-sent-icon {
+  color: var(--rq-warn);
 }
 .rq-sent[data-tone="failed"] .rq-sent-icon {
   color: var(--destructive);
 }
-.rq-sent[data-tone="moving"] .rq-sent-icon {
+/* In ClickUp, but a task is not finished: the warning, never the check. */
+.rq-sent[data-unfinished] .rq-sent-icon {
+  color: var(--rq-warn);
+}
+.rq-sent-title {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 26px;
+  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
+}
+.rq-sent-sub {
+  margin-top: 4px;
+  font-size: 14px;
+  line-height: 20px;
   color: var(--muted-foreground);
 }
-.rq-sent[data-tone="held"] .rq-sent-icon {
-  color: var(--warning);
+.rq-next-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--rq-quiet);
+  font-size: 13px;
+  line-height: 20px;
 }
-.rq-sent-body {
+.rq-next-step > svg {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--destructive);
+}
+.rq-next-step > div {
   display: grid;
-  gap: 4px;
+  gap: 8px;
+  justify-items: start;
+}
+.rq-answers {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--rq-quiet);
+}
+.rq-answers dl {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 20px;
+}
+.rq-answers dl > div {
+  display: grid;
+  grid-template-columns: minmax(96px, 0.42fr) minmax(0, 1fr);
+  gap: 16px;
+}
+.rq-answers dt {
+  color: var(--muted-foreground);
+}
+.rq-answers dd {
   min-width: 0;
+  overflow-wrap: anywhere;
+}
+.rq-stamp {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--muted-foreground);
+}
+.rq-stamp[data-clock] {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 16px;
 }
 .rq-sent-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   font-size: 14px;
   font-weight: 500;
+  line-height: 20px;
 }
-/* A task in ClickUp the cockpit could not finish: a quiet note under it,
-   the warning colour on its dot only. */
+.rq-sent-line svg {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--muted-foreground);
+}
+.rq-sent-line[data-state="done"] svg {
+  color: var(--success);
+}
+.rq-sent-line[data-state="held"] svg {
+  color: var(--rq-warn);
+}
+.rq-sent-line[data-state="failed"] svg {
+  color: var(--destructive);
+}
+.rq-sent-line[data-unfinished] svg {
+  color: var(--rq-warn);
+}
+.rq-lane-task {
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+/* A task in ClickUp the cockpit could not finish: the warning on its dot. */
 .rq-warn-note::before {
   content: "";
   display: inline-block;
   width: 6px;
   height: 6px;
-  margin-inline-end: 6px;
+  margin-inline-end: 4px;
   border-radius: 999px;
-  background: var(--warning);
+  /* The orange for a mark on white (4.7:1), as every orange mark here
+     (review T3-design-clarity-07). */
+  background: var(--rq-warn);
   vertical-align: 1px;
 }
-.rq-off-note {
-  flex: 1 1 100%;
+.rq-open {
+  margin-top: 2px;
 }
-.rq-off {
-  flex-direction: column;
+
+/* --- States: hover, focus, pressed ---------------------------------------- */
+
+/* A tile is not a target (its shortcuts and "See all" are), so it does not
+   light up as one (review D12). */
+@media (hover: hover) {
+  .rq-pick:hover,
+  .rq-dept-more:hover,
+  .rq-every:hover,
+  .rq-chip:hover,
+  .rq-pill:hover:not([aria-current="true"]),
+  .rq-btn-outline:hover:not(:disabled),
+  .rq-btn-ghost:hover:not(:disabled),
+  .rq-search-clear:hover,
+  .rq-client-option:hover,
+  .rq-radios .rq-choice:not([data-on]):hover .rq-choice-face,
+  .rq-choices .rq-choice:not([data-on]):hover .rq-choice-face {
+    background: color-mix(in oklab, var(--foreground) 7%, transparent);
+  }
+  .rq-row:hover {
+    background: var(--rq-quiet-hover);
+  }
+  .rq-btn-primary:hover:not(:disabled, [aria-disabled="true"]) {
+    background: color-mix(in oklab, var(--primary) 88%, var(--foreground));
+  }
+  .rq-input:hover:not(:disabled, [aria-disabled="true"]) {
+    background: color-mix(in oklab, var(--foreground) 3%, var(--background));
+  }
+  .rq-inline:hover,
+  .rq-sop:hover,
+  .rq-open:hover,
+  .rq-link:hover {
+    text-decoration-color: currentColor;
+  }
+}
+:is(
+    .rq-pick,
+    .rq-row,
+    .rq-chip,
+    .rq-pill,
+    .rq-every,
+    .rq-dept-more,
+    .rq-btn,
+    .rq-link,
+    .rq-sop,
+    .rq-open,
+    .rq-inline,
+    .rq-clear,
+    .rq-search-clear,
+    .rq-client-option
+  ):focus-visible {
+  outline-color: var(--rq-focus);
+}
+.rq-btn:active:not(:disabled, [aria-disabled="true"]) {
+  transform: translateY(1px);
+}
+
+/* Touch: 40px targets (DESIGN.md "Touch"); 16px text so iOS does not zoom. */
+@media (pointer: coarse) {
+  .rq-choice-face,
+  .rq-chip,
+  .rq-pill,
+  .rq-pick,
+  .rq-every,
+  .rq-dept-more,
+  .rq-btn-sm,
+  .rq-radios .rq-choice-face,
+  .rq-sop,
+  .rq-open,
+  .rq-link,
+  .rq-clear {
+    min-height: 40px;
+  }
+  .rq-search-clear {
+    width: 40px;
+    height: 40px;
+  }
+  .rq-input {
+    font-size: 16px;
+  }
+}
+
+/* Narrow: the plate's Change goes under the name; Send takes the width. */
+@container rq (max-width: 560px) {
+  .rq-plate,
+  .rq-hero {
+    grid-template-columns: 44px minmax(0, 1fr);
+    gap: 12px;
+    padding: 16px;
+  }
+  .rq-plate .rq-seal,
+  .rq-hero .rq-seal {
+    width: 44px;
+    height: 44px;
+    border-radius: 13px;
+  }
+  .rq-plate .rq-seal svg,
+  .rq-hero .rq-seal svg {
+    width: 22px;
+    height: 22px;
+  }
+  .rq-plate > .rq-btn {
+    grid-column: 2;
+    justify-self: start;
+  }
+  .rq-plate-name,
+  .rq-hero-name,
+  .rq-sent-title {
+    font-size: 18px;
+    line-height: 24px;
+  }
+  .rq-dept {
+    padding: 16px;
+  }
+  .rq-send .rq-actions > .rq-btn-primary {
+    flex: 1 1 100%;
+  }
+  /* "Open the ClickUp request form" takes the panel's width as Send does,
+     starting under the clock (16px mark and 12px gap), so it keeps one line
+     inside the panel at 390. */
+  .rq-off > div {
+    justify-items: stretch;
+  }
+  .rq-off-action {
+    margin-inline-start: -28px;
+  }
+  /* The pills keep 8px between them and draw a tick or mark 4px from their
+     words; the due days and the four priorities sit 8px inside their edge,
+     so each keeps one row down to a 360px phone (review
+     T3-design-clarity-03). */
+  .rq-choice-face {
+    gap: 4px;
+    padding-inline: 12px;
+  }
+  .rq-day .rq-choice-face,
+  .rq-prio .rq-choice-face {
+    padding-inline: 8px;
+  }
+  .rq-answers dl > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}
+
+/* Compact (the client page): smaller tiles, two shortcuts each. */
+.rq-compact .rq-dept {
   gap: 8px;
-  background: color-mix(in oklab, var(--foreground) 4%, transparent);
-  color: var(--foreground);
+  padding: 12px;
+  border-radius: 14px;
+}
+.rq-compact .rq-dept-head {
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 12px;
+}
+.rq-compact .rq-dept .rq-seal {
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+}
+.rq-compact .rq-dept .rq-seal svg {
+  width: 18px;
+  height: 18px;
+}
+.rq-compact .rq-dept-name {
+  font-size: 15px;
+}
+.rq-compact .rq-dept .rq-watermark {
+  bottom: -34px;
+  inset-inline-end: -28px;
+  width: 104px;
+  height: 104px;
+}
+.rq-compact .rq-search-input:not(.rq-search-client) {
+  height: 44px;
+}
+/* Under the client page's own "Ask a team" heading the question is the
+   search's label, not a second heading (review D15). */
+.rq-compact .rq-ask-label {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  color: var(--muted-foreground);
+}
+
+/* --- Forced colours (Windows contrast themes; review A11Y-15) --------------
+   The browser paints every edge and outline in its own colours, so the
+   transparent resting outline would show on every control at once and the
+   chosen radio's dot, a fill, would vanish. Outlines show only on focus, a
+   chosen face or pressed pill gets a thicker edge, and the dot is drawn as
+   an edge. */
+@media (forced-colors: active) {
+  /* Doubled for weight: it outranks every resting rule (.rq-steps li too). */
+  .rq-form.rq-form * {
+    outline-style: none;
+  }
+  .rq-form.rq-form :focus-visible,
+  .rq-form .rq-choice-input:focus-visible + .rq-choice-face {
+    outline: 3px solid var(--rq-focus);
+    outline-offset: 2px;
+  }
+  .rq-choice[data-on] .rq-choice-face,
+  .rq-pill[aria-current="true"] {
+    border-width: 2px;
+  }
+  .rq-radios .rq-choice[data-on] .rq-choice-face {
+    border: 2px solid var(--rq-on-edge);
+  }
+  .rq-choice[data-on] .rq-radio-dot::after {
+    inset: 2px;
+    border: 4px solid var(--tk-ink);
+  }
+}
+
+/* --- Motion: feedback and a change of state only (research 6) ------------- */
+
+@media (prefers-reduced-motion: no-preference) {
+  .rq-plate,
+  .rq-body,
+  .rq-list,
+  .rq-results,
+  .rq-sent,
+  .rq-dup {
+    animation: rq-arrive 180ms ease-out both;
+  }
+  .rq-lane,
+  .rq-route-line {
+    animation: rq-arrive 160ms ease-out both;
+  }
+  .rq-sent-line svg {
+    animation: rq-fade 140ms ease-out both;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rq-plate,
+  .rq-body,
+  .rq-list,
+  .rq-results,
+  .rq-sent,
+  .rq-lane,
+  .rq-route-line,
+  .rq-sent-line svg {
+    animation: rq-fade 120ms linear both;
+  }
+  .rq-spin {
+    animation-duration: 2.4s;
+  }
+  .rq-btn:active:not(:disabled, [aria-disabled="true"]) {
+    transform: none;
+  }
+}
+@keyframes rq-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes rq-fade {
+  from {
+    opacity: 0;
+  }
 }

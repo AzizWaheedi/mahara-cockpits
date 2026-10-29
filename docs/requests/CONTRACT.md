@@ -74,7 +74,7 @@ Global rules every role checks (repo `CLAUDE.md`, PLAN 4.5):
 
 | # | Decision | Why |
 |---|---|---|
-| R1 | Three migrations: `20261026r_requests.sql` (db), `20261026s_request_types_seed.sql` (db, generated), `20261026t_task_alerts.sql` (mirror-alerts). Applied in that order. | Names sort after every file in the repo and in other worktrees (`20261026n`, `20261026u_upsell_catalog.sql` in another worktree); none exists live. Splitting the SQL lets two builders work at once |
+| R1 | Three migrations: `20261026r_requests.sql` (db), `20261026s_request_types_seed.sql` (db, generated), `20261026t_task_alerts.sql` (mirror-alerts). Applied in that order. The department map round (2026-10-28) adds a fourth, `20261028a_request_types_read_routes.sql` (db), after them (section 21). | Names sort after every file in the repo and in other worktrees (`20261026n`, `20261026u_upsell_catalog.sql` in another worktree); none exists live. Splitting the SQL lets two builders work at once |
 | R2 | One request table pair: `cockpit_requests` (one row per request, the requester's seat) and `cockpit_request_parts` (one row per ClickUp task; two-task types have two). | PLAN 3.3 "two tasks"; owners and status are per task |
 | R3 | The 31 types live in `cockpit_request_types`, seeded from `docs/requests/request-types.json` (built for this contract from TS section 4, the folder fields and the template listing read today). Editors change any type; they cannot add or delete one (a type is a ClickUp Request Type option). | D17, D18 |
 | R4 | **The writer is `clickup-writeback`, job `requests`**, two new queue kinds `request` and `task_action`, its own switch **`CLICKUP_WRITEBACK_APPLY_REQUESTS`** (exactly `"true"`, default off) and canary **`CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS`** (rehearsal value `86eywg1cq`). The general switch does not open these kinds and this switch opens nothing else. | WR 10: the only writer that ever delivered a ticket; outbox, frozen steps, read-back, ledger |
@@ -98,6 +98,7 @@ Global rules every role checks (repo `CLAUDE.md`, PLAN 4.5):
 | 1 | `supabase/migrations/20261026r_requests.sql` | db | Field catalog, template cache, request types and versions, ClickUp members and seat links, requests and parts, the writeback queue changes (kinds, runs, claims, part sync trigger), the writer's mode, every request RPC, the requests kick and cron |
 | 2 | `supabase/migrations/20261026s_request_types_seed.sql` | db | Generated: 24 catalog fields, 34 template objects, 31 types and their version 1 rows |
 | 3 | `supabase/migrations/20261026t_task_alerts.sql` | mirror-alerts | Task mirror, alerts, alert rules, the mirror and alert RPCs, the request status mirror and request alerts, task actions, the mirror kicks and crons |
+| 4 | `supabase/migrations/20261028a_request_types_read_routes.sql` (the department map round, 2026-10-28; section 21) | db | `cockpit_request_types_read()` only, `CREATE OR REPLACE` of its live body plus one statement: every part of every type gains `when` and `steps` for every seat (2.5). A guard refuses any live body but 20261026r's or its own; the grant is given back as it is live. No table, row or other function changes |
 
 Checked today: no `cockpit_request*`, `cockpit_task_*`, `cockpit_member_clickup`
 or `cockpit_clickup_members` relation or function exists live (`to_regclass`,
@@ -408,7 +409,7 @@ Shapes (camelCase keys, ISO times, Kuwait `YYYY-MM-DD` days):
 ```
 TypeView = {key, label, team, teamLabel, enabled, dueDays, dueDefault, priority,
   fields: [{key, label, kind, required, options: [{id,name}] | null, help}],
-  parts: [{part, listName, teamLabel, ruleLabel, templateName, stepCount, stepsDraft}],
+  parts: [{part, listName, teamLabel, ruleLabel, templateName, stepCount, stepsDraft, when, steps}],
   sopUrl}
   + for editors: {version, typeIndex, clickupOptionName, targets, sopSteps, sopStepsState,
                   setRequestType, updatedByLabel, updatedAt,
@@ -417,6 +418,23 @@ TypeView = {key, label, team, teamLabel, enabled, dueDays, dueDefault, priority,
   ruleLabel: "the systems manager" | "the client's CSM" | "the creative strategist"
              | "the media buyer of record" | the person's role label
   stepCount: sop_steps length when the part has no template (else null)
+  when (migration 20261028a, every seat): null when the part always runs, else
+        {fieldKey, options: [{id, name}]}: fieldKey is the type's choice question that
+        decides the part (its stored targets[].when.field_key), options the choices of
+        that question that make it run, with the ids, names and order of that question's
+        own fields[].options in the same answer. A choice the question no longer offers
+        is left out, so options can be [] (ClickUp lost the question, or dropped every
+        choice the part runs on): then no choice on the form runs the part
+  steps (migration 20261028a, every seat): null when the part has a ClickUp template
+        (WhatsApp connection included: its fallback steps go only when its template
+        brings no checklist), else the type's sop_steps in order, drafts included
+        (stepsDraft says so), [] when it has none: the checklist the writer adds
+        (the request payload's sopSteps with sopStepsWhen 'always', 2.6). Its length
+        is stepCount
+  A database from before 20261028a sends neither key; the form then draws no routing
+  marks and shows only the step count (6.7). The TypeView that cockpit_request_type_save
+  and cockpit_request_type_restore return carries neither key (cockpit_request_type_view
+  is unchanged): re-read the types for them
 
 PartRow = {part, listName, teamLabel, taskName, owner: {label, how, note}, state, error,
   url, status, statusType, verifyState, verifyNote}
@@ -438,7 +456,7 @@ systems manager."
 
 | Function | Gate | Returns and rules |
 |---|---|---|
-| `cockpit_request_types_read()` | any active seat | `{asOf, seat: {label, link, teams, editor, all}, writer: {mode, canSend, held, note}, types: [TypeView]}`, and for editors only `catalog: [{clickupFieldId, clickupName, label, kind, options, state}]` and `templates: [{id, name, state}]` (the field catalog and the template cache the type editor picks from). Non-editors get enabled types only; the form offers enabled types only, to editors too. `all` is true for an editor, an admin or the CEO. Order: team (Client Success, Operations / Tech, Marketing / ADs, Media/Creative, Call Center), then `type_index` |
+| `cockpit_request_types_read()` | any active seat | `{asOf, seat: {label, link, teams, editor, all}, writer: {mode, canSend, held, note}, types: [TypeView]}`, and for editors only `catalog: [{clickupFieldId, clickupName, label, kind, options, state}]` and `templates: [{id, name, state}]` (the field catalog and the template cache the type editor picks from). Non-editors get enabled types only; the form offers enabled types only, to editors too. `all` is true for an editor, an admin or the CEO. Order: team (Client Success, Operations / Tech, Marketing / ADs, Media/Creative, Call Center), then `type_index`. Since 20261028a every part of every type carries `when` and `steps` (TypeView above), for every seat, editors included; nothing else in the answer changed |
 | `cockpit_request_clients(p_search text DEFAULT NULL, p_include_stopped boolean DEFAULT false)` | any active seat | `{clients: [{taskId, name, status}], more}` (`more` is true when over 30 cards match): `cockpit_client_onboarding` rows where `cockpit_client_allowed(client_name)`, name `ILIKE '%'||search||'%'`, Stopped and GHOSTED left out unless asked, ordered by name, 30 at most |
 | `cockpit_request_preview(p_type_key text, p_client_task_id text DEFAULT NULL, p_answers jsonb DEFAULT '{}')` | any active seat | `{parts: [{part, listName, teamLabel, taskName, templateName, stepCount, stepsDraft, owner}], note, dueDefault, writer: {canSend, held, note}}` (`owner.note` as the seat sees it, D12). When no target runs yet (its `when` field is unanswered), `parts` is empty and `note` is "Pick {field label} to see where it goes." Writes nothing |
 | `cockpit_request_submit(p_request_id uuid, p_type_key text, p_client_task_id text, p_answers jsonb, p_due_on date, p_priority text, p_source text, p_replaces_task_id text DEFAULT NULL)` | any active seat, then `cockpit_request_send_gate()->allowed` | See below. Returns `{id, state, reused, duplicateOf, note, held, parts: [PartRow]}`; a held request has `held: true` and `note` = the gate's sentence ("Requests are not open yet. What you send is saved and goes to ClickUp once they are.", review round 2) |
@@ -1341,12 +1359,16 @@ the build reports done.
   a row's left edge, `--destructive` when late, `--warning` when due today,
   none otherwise; it is the media buyer's own `.client-state-spine`
   (`components/launch/launch.css`), reused, not invented. `/requests`:
-  **the route line** under the form, before Send, saying exactly where the
-  ticket lands: "Goes to Operations / Tech as "Acme - Client pause (Tech)".
-  Owner: the systems manager. Uses the ClickUp template Client Pause ⏸️
-  (Tech). Due Wed 28 Oct." One line per part. This is the CEO's "routed
-  correctly, connected to the SOP template", made visible before anyone
-  presses Send.
+  until 2026-10-28 **the route line** under the form, before Send, saying
+  exactly where the ticket lands: "Goes to Operations / Tech as "Acme -
+  Client pause (Tech)". Owner: the systems manager. Uses the ClickUp
+  template Client Pause ⏸️ (Tech). Due Wed 28 Oct." One line per part.
+  This is the CEO's "routed correctly, connected to the SOP template", made
+  visible before anyone presses Send. Since the CEO's ask of 2026-10-28
+  (6.7) the same facts are drawn as **the route on the map**: one stop per
+  fact, one lane per task, and the same drawing becomes the tracker after
+  Send. `routeLine()` stays in the core with its words (the fit tests read
+  it).
 - **Not too busy.** Five rows; one line per row (title, then client hidden
   below `sm`, then the due word right-aligned); counts beside a title only
   when above zero; explanations longer than two lines fold.
@@ -1373,9 +1395,9 @@ prefixed `tk-` and `rq-`.
 | `src/components/tasks/AlertsBell.tsx` | cockpit-screens | `AlertsBell({variant: 'row' | 'icon', extra?: ExtraAlerts})`. `row`: a right-aligned outline button "Alerts" plus the unread count (as `.client-alert-bar`). `icon`: a 40px button whose `aria-label` says "Alerts, {n} unread"; inside `.tk-bell-compact` it is 28px with a 16px bell and a 14px count (review round 2). Opens `TaskPanel` with the list (6.5). `ExtraAlerts = {label, ready, note?, items: ExtraAlert[], markRead(items): Promise<void>}`, `ExtraAlert = {id, version, title, body, clientName?, href, external, read, at?}` |
 | `src/components/tasks/TaskFocus.tsx` | cockpit-screens | `TaskFocusHost()`: mounted once per layout; opens when the address has `?focus=<taskId>`, closes on Escape, Back or Close by removing the parameter (replace). The view itself (6.5) |
 | `src/components/tasks/tasks.css` | cockpit-screens | `tk-` classes on the tokens of 6.1 only, `var(--primary-ink, var(--primary))` for teal text |
-| `src/lib/requestsCore.ts` | portal-screens | Import-free. Types `TypeView`, `FieldView`, `PartRow`, `RequestRow` (2.5, exactly), `RoutePreview` (the answer of `cockpit_request_preview`) and `SubmitResult` (the answer of `cockpit_request_submit`); `validateAnswers(type, answers, clientTaskId, dueOn) -> Record<string, string>` (the same rules and sentences as 2.5 step 5, so the form says them before the server does); `display(field, value)`; `stateWords(row)`, `partWords(part)`, `routeLine(part, dueOn)`; `REQUEST_SENTENCES` (6.6) |
-| `src/lib/requestsClient.ts` | portal-screens | `readRequestTypes`, `readRequestClients`, `previewRequest`, `submitRequest`, `cancelRequest`, `readRequests`, `readRequest`: thin wrappers over 2.5 that throw the server's sentence |
-| `src/components/tasks/RequestForm.tsx` | portal-screens | `RequestForm({source: 'requests_page' | 'client_page', presetClient?: {taskId, name}, presetType?, presetDetails?, presetAnswers?, presetPriority?: Priority, presetDueOn?: string, replacesTaskId?, replacesIfOpen?, compact?, onSent?(result)})`. Review round 3: what a request brings (`presetDetails`, `presetAnswers`, `presetPriority`, `presetDueOn`) goes with whichever type is picked, Change included, until "Ask for something else"; a due day before today in Kuwait or more than 365 days ahead gives the type's default (`requestsCore` exports `carriedDueOn(dueOn, today)`); a `presetType` not offered says `presetOff` or `presetNoClient`, plus `presetKept` when it brought words; a picked type with no details question shows the brought details read-only under `keptLabel`, with `keptNotSent`, or `keptRouted` when it routes an old ticket (integration round 4: the database then adds them to the new task's description, X2). Uses `useTaskSeat()`. `presetAnswers` (review R1, D2): a request filed again starts from its own answers, as words. `replacesIfOpen` (retest round 2): a request filed again routes its old form ticket while it still waits; when the server answers "That old ticket was already routed." the same request id goes on its own, with the toast "Request sent. Its old ClickUp form ticket was already routed, so this one goes on its own." "Make it a request" leaves it off, so a ticket a teammate routed first is never asked for twice. 6.4 |
+| `src/lib/requestsCore.ts` | portal-screens | Import-free. Types `TypeView`, `FieldView`, `PartRow`, `RequestRow` (2.5, exactly), `RoutePreview` (the answer of `cockpit_request_preview`) and `SubmitResult` (the answer of `cockpit_request_submit`); `validateAnswers(type, answers, clientTaskId, dueOn) -> Record<string, string>` (the same rules and sentences as 2.5 step 5, so the form says them before the server does); `display(field, value)`; `stateWords(row)`, `partWords(part)`, `routeLine(part, dueOn)`; `REQUEST_SENTENCES` (6.6). Since 2026-10-28 (6.7) also the department map's looks and models: `TEAM_LOOK`, `TYPE_LOOK`, `GENERAL_KEYS`, `teamLook`, `typeLook` (by `type.key`, falling back to the team's mark, then `Ticket` with a line from the type's own data); `searchTypes`, `searchCountWords`, `markWords` (the search; `groupTypes` groups its results); `reachPieces`, `answerTeamLines`, `conditionWords`, `typeFacts`, `teamTypes`, `teamExamples`, `teamRelated`, `everyType`, `partReachable`; `choiceControl`, `questionGroups`, `dueChoices`, `nextWorkingDay`; `routeModel`, `sentModel`, `ROUTE_WORDS`; `plainTemplateName`, `taskNameParts`. `TypePartView` gains the optional `when` and `steps` of migration 20261028a |
+| `src/lib/requestsClient.ts` | portal-screens | `readRequestTypes`, `readRequestClients`, `previewRequest`, `submitRequest`, `cancelRequest`, `readRequests`, `readRequest`: thin wrappers over 2.5 that throw the server's sentence. `readRequestTypes` reads each part's `when` and `steps` as optional (`partFacts`): a key the database does not send stays absent, null is kept, a value of the wrong shape is dropped |
+| `src/components/tasks/RequestForm.tsx` | portal-screens | `RequestForm({source: 'requests_page' | 'client_page', presetClient?: {taskId, name}, presetType?, presetDetails?, presetAnswers?, presetPriority?: Priority, presetDueOn?: string, replacesTaskId?, replacesIfOpen?, compact?, onSent?(result)})`. Review round 3: what a request brings (`presetDetails`, `presetAnswers`, `presetPriority`, `presetDueOn`) goes with whichever type is picked, Change included, until "Ask for something else"; a due day before today in Kuwait or more than 365 days ahead gives the type's default (`requestsCore` exports `carriedDueOn(dueOn, today)`); a `presetType` not offered says `presetOff` or `presetNoClient`, plus `presetKept` when it brought words; a picked type with no details question shows the brought details read-only under `keptLabel`, with `keptNotSent`, or `keptRouted` when it routes an old ticket (integration round 4: the database then adds them to the new task's description, X2). Uses `useTaskSeat()`. Since 2026-10-28 it is the department map (6.7), and it raises no toast: the sent view is the one voice for a send. `presetAnswers` (review R1, D2): a request filed again starts from its own answers, as words. `replacesIfOpen` (retest round 2): a request filed again routes its old form ticket while it still waits; when the server answers "That old ticket was already routed." the same request id goes on its own, said in the sent view: "Request sent. Its old ClickUp form ticket was already routed, so this one goes on its own." "Make it a request" leaves it off, so a ticket a teammate routed first is never asked for twice. 6.4 |
 | `src/components/tasks/requests.css` | portal-screens | `rq-` classes, same token rule |
 
 Per app, not shared, one file each (cockpit-screens):
@@ -1448,24 +1470,29 @@ pills it shows, so a deep link (`?view=all`) scrolls the active pill into view
 `?id=<request id>` opens one request in `TaskPanel`,
 `?type=<key>&client=<taskId>` prefills the form.
 
-- *Ask a team* (`RequestForm`, `max-w-2xl`): 1. "What do you need?": a
-  searchable list of the types grouped by team label (`TypeView.team`
-  order of 2.5), each row the label and the team. 2. Only that type's
-  fields, in order: client picker (search over `cockpit_request_clients`,
-  "Show stopped clients" toggle; locked when `presetClient`), text,
-  longtext, url, number, select, details. 3. Due (prefilled
-  `dueDefault`) and priority (prefilled). 4. The route line
+- *Ask a team* (`RequestForm`, in a card at the page's full width since
+  2026-10-28; until then `max-w-2xl`): the department map of 6.7. In short:
+  1. "What do you need?": search on top, the seat's recent requests, and
+  the map of the five teams (`TypeView.team` order of 2.5), each team's
+  requests one click away, and every request A to Z. 2. The chosen
+  request's plate, then only that type's questions, in order: client
+  picker (search over `cockpit_request_clients`, "Show stopped clients";
+  locked when `presetClient`), text, longtext, url, number, a choice as
+  pills, radios or the native select by its number of choices, details.
+  3. Due (the usual day `dueDefault`, the next working day, "Pick a day")
+  and priority (prefilled, "usual" marked). 4. The route
   (`cockpit_request_preview`, re-read when the type, client or a `when`
-  field changes). 5. "Send request" (teal). While `writer.canSend` is false
-  the form shows `writer.note` in place of the button. After a send: a
-  quiet panel "Sent to {list}. Owner: {owner}." with "Ask for something
-  else" and "See it in My requests"; its mark follows `sentTone` (review
-  round 2): a task refused, `CircleAlert` with a border in `--destructive`;
-  on its way, a static `CircleDashed`, muted; saved until requests open,
-  `Clock` in `--warning`; every task in ClickUp, `CircleCheck` in
-  `--success`. On a refusal, once nothing is moving, the panel shows
-  `sentFailed` ("Open the request to file it again, or use the ClickUp
-  request form.") or `partialNext`, the form link, and "Open the request" to
+  field changes). 5. "Send request" (teal), "Save request" while a send
+  would be held. While `writer.canSend` is false the form shows
+  `writer.note` and the ClickUp form link in place of the questions and the
+  button. After a send: the sent view, rooted in `.rq-sent[data-tone]`; its
+  mark follows `sentTone` (review round 2): a task refused, `CircleAlert` in
+  `--destructive`; on its way, a static `CircleDashed`, muted; saved until
+  requests open, `Clock` in `--warning`; every task in ClickUp,
+  `CircleCheck` in `--success`. Each task's line is `sentLines()` printed
+  whole. On a refusal, once nothing is moving, the view shows `sentFailed`
+  ("Open the request to file it again, or use the ClickUp request form.")
+  or `partialNext`, the form link, and "Open the request" to
   `/requests?id=` in place of "See it in My requests". A `duplicate` answer
   shows its note and "Open it" only when `duplicateOf` is set (review round
   2). Inputs keep their values on an error; the field named in the sentence
@@ -1649,7 +1676,7 @@ cockpit-screens' `installTasksHarness`, and adds the `/requests` and
 | Focus, detail failed | the server's `detailNote` |
 | Focus, saving / saved / waiting | "Saving…" / "Saved" / "Waiting for ClickUp to confirm." |
 | Focus, done | "Mark done" becomes "Done" |
-| Form, sent | toast "Request sent." and the panel "Sent to {list}. Owner: {owner}." |
+| Form, sent | until 2026-10-28 the toast "Request sent." and the panel "Sent to {list}. Owner: {owner}."; since then no toast, and the sent view of 6.7: "Sent: {type} for {client}" (held "Saved:", a refusal "Not sent:" or "Partly sent:"), focus on that heading, and each task's `sentLines()` sentence |
 | Form, writer off | `writer.note` (2.8) |
 | Form, no type picked | "Pick what you need first." |
 | Request states | `sending` "Sending to ClickUp" · `dry_run` "Not in ClickUp: the writer is in its test run" · `delivered` "In ClickUp: {status}" · `partial` "Part of it did not reach ClickUp: {error}" · `failed` "Not in ClickUp: {error}" · `cancelled` "Cancelled" · `imported` "Came in through the old ClickUp form. Make it a request to route it." where `canRoute`, else "Came in through the old ClickUp form. Route it in ClickUp." (review round 2) · `routed` "Routed as a new request" · done "Done" |
@@ -1663,7 +1690,7 @@ cockpit-screens' `installTasksHarness`, and adds the `/requests` and
 | Sent panel, a task refused (`sentFailed`) | "Open the request to file it again, or use the ClickUp request form." |
 | Filed again, notice | "Sending it cancels the first one." / "The first one stays in the queue until the person who asked for it or the systems manager cancels it." (a routing request adds "It routes the same old ClickUp form ticket, unless someone routed it meanwhile.") |
 | Filed again, the first one not cancelled | toast "The new request is sent, but the first one is still open. Open it and cancel it." |
-| Filed again, its old ticket routed meanwhile (`sentAlone`, retest round 2) | toast "Request sent. Its old ClickUp form ticket was already routed, so this one goes on its own." |
+| Filed again, its old ticket routed meanwhile (`sentAlone`, retest round 2) | "Request sent. Its old ClickUp form ticket was already routed, so this one goes on its own.": a toast until 2026-10-28, since then a note in the sent view |
 | Request panel, old ticket handled in ClickUp (`oldHandledNext`, retest round 2) | "The old ClickUp form ticket was moved or closed in ClickUp while this request waited, so no task was made. Check the old ticket, and ask again only if the work is still needed." and "Open the old ticket in ClickUp" |
 | Type editor, going back a version that had Request Type on (retest round 2) | toast "Back to version {n}. " + the server's `restoreNote` |
 | Request types, runs-when (review round 3) | `when "{question}" is {a} or {b}`; "a choice that could not be read from ClickUp" / "{n} choices that could not be read from ClickUp" |
@@ -1676,6 +1703,446 @@ cockpit-screens' `installTasksHarness`, and adds the `/requests` and
 | Request panel, a task deleted in ClickUp (`againDeleted`, integration round 4) | "The task was deleted in ClickUp. File it again with the same answers, or use the ClickUp request form." |
 | A task in doubt (integration round 4) | "Checking whether it reached ClickUp." + the writer's note; handed back while requests are not open: "ClickUp did not answer. The cockpit checks whether it arrived once requests open" (`checkingHeld`) |
 | Bell, a failed part whose task was deleted (integration round 4) | "Deleted in ClickUp: {error}" |
+
+### 6.7 The department map: the request form as built (2026-10-28)
+
+The CEO, 2026-10-28: "Make sure to make the ticketing look as nice as
+possible and as easy as possible for the team to understand what is for
+which department and what happens exactly. This is a very obvious ticketing
+form, so through design parts, make it extremely solid, make it very easy,
+and make it the best, easiest, and visually nice as well. Just don't make it
+like a boring form. Make it visually nice for each task, depending on what
+the task is, and just make it amazing." And about every form: "make sure all
+the forms are perfect work really hard on everything with a solid backend
+and really easy to use and visually nice and user friendly use any skills
+and research that will help". Round tickets-look-1028 built the winning
+concept, "The department map", with every item of its three judges' must-fix
+lists and the grafts named below. It replaces the type list, the route line
+and the sent panel of 6.4; behaviour is unchanged except where this section
+says so.
+
+**The plan.** Tokens: each app's own, mixed in `requests.css` (`--rq-edge`,
+the 45% foreground edge at 3:1 for fields, pills and the route; `--rq-quiet`,
+the quiet panel; the seal; the 15% teal of the active state; `--rq-focus`,
+the teal ink, never plain `--ring`; `--rq-warn`, orange mixed with ink on
+white). No department colour: a department is a lucide mark in a seal, its
+ClickUp list name word for word, one plain line and its place on the map.
+Type: Geist; Geist Mono only for the short uppercase kickers and the
+"Checked 14:03" stamp; text at 11 (the kickers), 12, 13, 14, 15, 16, 18 or
+20px on even line heights, gaps and paddings on 4px steps, bar the route's
+drawn fork (review D14). Layout: container queries on the form's own width.
+Signature: the route on the map (6.1). One teal per view: Send, or the
+ClickUp form button while requests are not open to the seat.
+
+**What do you need?** A 48px search ("Search, for example: card
+declined"), then, while nothing is searched:
+- *Your recent requests*: up to three of the seat's own, newest first, from
+  one `readRequests(client, 'mine', 20)` that fails silently, filtered
+  through the types on offer (a client page never offers the employee
+  types).
+- *Who does what*: "Five teams take requests. Start from the team, or search
+  above." and "Every request, A to Z {n}". The map: a tile per team in the
+  server's order (three columns from 860px, two from 540px), each with its
+  seal, its ClickUp name (`.rq-group-label`, the five names only), its line,
+  its shortcuts (`TEAM_LOOK` examples filtered at render by what is offered
+  and by `type.team`, filled with the team's other requests, three; two on
+  the client page), and "See all {n}"; then "Not sure which team?" with the
+  three general requests and "ask the systems manager". The faint team mark
+  sits in a tile's corner and on a team's page only, and the hero's words
+  keep clear of it at every width (review D5). A tile is a group, not a
+  landmark (the map is the one region), and it does not light up on hover:
+  its shortcuts and "See all" are the targets (review A11Y-18, D12). Two
+  teams end in one quiet pointer to a request filed elsewhere that people
+  look for there (`TEAM_LOOK.related`, `teamRelated`, only for keys on offer
+  and filed under another team; review CL-09): "Ads stopped because a
+  payment card failed? Card missing for ads, under Client Success." and
+  "Changing who calls a client's leads? Change from DFY to DWY or Change
+  from DWY to DFY, under Client Success.", on the tile and the team's page.
+- *A team*: the Teams navigation: the two overviews, "All teams" and
+  "Every request {n}" (outlined), then the team pills with counts, on one
+  row when they fit (1440); else the teams take a line of their own under
+  the overviews, one row that scrolls sideways where it must and snaps to
+  whole pills, never a ragged wrap (review T3-design-clarity-01). A current
+  team out of view is brought to the row's start, the row alone scrolled
+  (review D8, T3-design-clarity-09). The current view is `aria-current`,
+  never a toggle (review T3-a11y-behaviour-03). Then the team's hero ("{n}
+  requests, and {m} from other teams that also give it a task", or, when
+  some of them give it a task only for some answers, "..., and {m} from
+  other teams that can give it a task, {k} of them only for some answers";
+  `teamByAnswer`, only on a database that says when each task runs; review
+  T3-design-clarity-02), its pointer, and every request that gives it a
+  task: its own first, then those filed under another team, each saying
+  "Filed under {team}" (graft 9) unless its reach words already name that
+  team (review D16).
+- *Every request*: A to Z, each row naming its team.
+- *A row*: the type's mark, its name (`.rq-type-name`), one line of what it is
+  for in the asker's words (`TYPE_LOOK`, by `type.key`), and its facts: "Due
+  in {n} working days", a priority other than normal, "Also {team}" or, when
+  a task depends on an answer, words true for every answer ("Call Center,
+  Marketing / ADs or both, by your answer"; while requests are not open to
+  the seat, 'Call Center, Marketing / ADs or both, depending on the answer
+  to "Where is the problem?"', on the rows and the plate alike, as the route
+  says it; review T2-clarity-04, 2026-10-29), "No client" or "Client
+  optional"; the home team is named once, never again when the reach words
+  name it (review D16). Only the three general requests wear their team's
+own mark, so a team's page never repeats it on its rows (review D13). A key
+the map does not know takes its team's mark,
+  else `Ticket`, and the line "Goes to {reach words}. Owner: {rule}", in the
+  plate's own reach words (so "Goes to Call Center, Marketing / ADs or both,
+  by your answer", never "and" for tasks an answer decides), the owner
+  left out while the rule is "the media buyer of record", which no seat
+  holds (review CL-12, BT-12). A task no offered choice can run (its `when`
+  keeps no option: ClickUp dropped them, or lost the question) never counts:
+  no team in the reach words, facts or that line, no owner from it, no place
+  on that team's list, no search hit on that team's name, no lane
+  (`partReachable`; review BT-6, S4). A row is named by its name and
+  described by its line and facts (review A11Y-17).
+
+**Search** (graft 8, `searchTypes`): the name, the hidden words, the line,
+the question labels and the team names, in that weight; filler words
+ignored; a word finds its own root ("calls" finds "calling", "joining"
+finds "joiner"); ranked by how many of the words match, an everyday word
+("client", "issue", "problem", "request", "new") not counted unless the
+search has nothing else, then by the words of the hidden phrases the search
+holds in their order ("stop ads" puts Client pause first; "dfy to dwy" puts
+Change from DFY to DWY first and "dwy to dfy" its opposite; filler such as
+"off" counts inside a phrase: "ads off"), the request's own name counting as
+a phrase ("new lead form"), then by weight, a word few requests share
+weighing more, then the server's order (review CL-02, 2026-10-28). Each of
+the DFY and DWY switches holds the words of where it goes, never of where it
+comes from. New employee onboarding also holds "first day", "start date"
+and "starting", and Client offboarding "quit", "leave" and "client
+leaving", so a start or a client's exit never finds only the opposite
+lifecycle request; "client" and "new" stay everyday words (review
+T2-clarity-01, 2026-10-29). For two words only what matches both stays;
+for a sentence, what matches one word fewer than the best. The line of
+Change from DFY to DWY says "the client's own team calls their leads from
+now on", so a new starter's "starts" is not its word. "pause" and
+"script" still find only their own request. One wrong letter is allowed
+only when nothing matches as typed, and said: 'No match for "watsapp". 2 requests match "whatsapp".' The
+count is the one polite status line; matched words are bold; a hit found by
+a hidden word says "Found by {word}"; Return opens the first only when it
+leads on matched words or phrases (`searchLeads`), and never one of the DFY
+and DWY switches while the other is listed too, unless the search says its
+way ("to dwy" or "done with you"; "to dfy" or "done for you") and not the
+other's, since "client no longer wants our call centre" holds the
+opposite's "our call centre" (`TypeLook.opposite`; review T2-clarity-02,
+2026-10-29); else focus moves to the first row to pick from; every list
+ends in "Not it? Pick the general request
+closest to it, or ask the systems manager." with the three general requests.
+
+**The chosen request.** A plate: the type's mark, where it goes (the reach
+words, a mark on each team), the name, the line and Change (focus moves to
+the plate after a pick, back to the search after Change). The usual due day
+is said once, by Due. Then, from 880px, the questions beside the route; below,
+one column that ends in the route, then Send.
+- *Questions*: the deciding question first, marked "Decides where it goes"
+  (or "Decides which task it makes"), each of its choices naming the team it
+  reaches ("Ads issue / Marketing / ADs", "Both / Both teams"; graft 1). A
+  choice is pills for up to five short ones, a list of radios up to ten, the
+  native select beyond; native radios whose chosen state follows React's own
+  state, `data-field` on the checked one (else the first). An optional choice
+  has "Clear". New script's questions sit under "The script" and "Filming
+  and language" (graft 7), only while those questions keep their order.
+- *Due*: the usual day (`TypeView.dueDefault`) and the next working day as
+  two choices in date order, the usual one tagged "usual" wherever it falls
+  and the other "sooner" or "later" (the day after when they are the same;
+  review D16, CL-11), and "Pick a day", which opens the native date input
+  that is always on the page with the due day in it (graft 10), labelled by
+  Due and "Pick a day". Help: "{n} working days is the usual for this type.
+  Working days are Sunday to Thursday, Kuwait time."; with a picked day,
+  "{day}, Kuwait time. {n} working days is the usual for this type. Working
+  days are Sunday to Thursday." ("Kuwait time" once).
+- *Priority*: four pills, the type's own marked "usual".
+- *Under the questions* (graft 12): the error summary ("Fix these {n}
+  answers first:", each entry a button to its field), a refusal, and the
+  button. Errors stay in ink under their field with a red mark and edge (a
+  choice question's pills take the red edge, a radio list a red rule at its
+  leading edge, and the client's note sits under its search, before the
+  list; review A11Y-13); each radio carries its question's error as its
+  description (review A11Y-07). The summary is said once a press, politely,
+  through a line already on the page, filled only once focus is on the
+  first answer to fix, so the focus change never cuts it off; the visible
+  summary is not live, so a fix shrinks it quietly and only the next press
+  says what is left (review A11Y-02; 2026-10-29). A required choice whose
+  options ClickUp lost is `aria-disabled`, so the summary can still take
+  focus to it; its sentence describes it and it still looks unavailable
+  (review A11Y-21).
+
+**The route** ("What happens next", a read-out that stays in view on wide
+screens): a polite summary ("Two tasks, for Call Center and Marketing /
+ADs"), then stops: *Now* ("You send it. The cockpit checks it and saves
+it."); *Saved, not sent* while a send would be held ("Waits in the cockpit."
+and the writer's own sentence, an orange clock, the track after it
+dashed; the button then says "Save request"; graft 4); *Your answer* at the fork (a
+diamond: "Where is the problem? Both"); a lane per task (its list, the task's
+name with only the client isolated, its owner and the server's note, what it
+works from: "the ClickUp template {name}" without emoji, or "{n} SOP steps,
+added as a checklist" with the first two steps, "Show the other {n}" and "A
+draft until the systems manager checks them."; graft 6); *How they do it*
+("Read the SOP for this request", where the type has one); *Due* ("Mon 2 Nov,
+normal priority", the day said once; while held, "The due day stays, even
+if it reaches ClickUp later." under it; review CL-13,
+T3-design-clarity-04); *After that* ("You hear in the bell when it is done,
+or if it fails, while a cockpit tab is open." and "My requests shows its
+ClickUp status until then."; while held, "My requests shows it as Saved
+until it reaches ClickUp, then its ClickUp status."; review
+T3-design-clarity-08); then "The owner is chosen by rule, not picked here.",
+"Nothing is sent to the client." (client types) and "You can cancel it from
+the request until it reaches ClickUp." Lanes sit side by side only for
+exactly two tasks, else they stack on the trunk (graft 3); side by side,
+the trunk runs on from the first lane past the join to the next stop, one
+line with one dash rhythm, and a pair that ends the route ends both lanes
+at their seals (review T2-design-1, T2-design-2, 2026-10-29). Before the
+deciding answer, each task that may run is a dashed "May go to" lane with its
+condition ("If the problem is Call Center Issue or Both") and the owner that
+answer's own preview names, under "One or two tasks, by your answer" (graft
+2): from `parts[].when` (migration 20261028a), never from the preview's
+sentence. A database from before 20261028a sends no `when` or `steps`: the
+form then shows the server's "Pick ... to see where it goes." (while
+requests are not open to the seat, "Where it goes depends on the answer to
+one of its questions." in its place, since that question is not on the
+page and its name is never read out of the server's sentence; review
+T2-clarity-03, 2026-10-29), joins the
+teams with "and" and shows only the step count. Before a client-required
+type has its client, a lane says "Pick the client to see its name." The
+timing words appear only while requests are open to the seat ("Usually in a
+minute or two"; "When requests open" while a send would be held, "Waits for
+the writer" while the writer has not reported, its mode `unknown`, when the
+hint by the button says "Saved here until the writer runs with requests
+open."; review CL-04). Tasks that may run on one list, for one owner, under
+one name and on one question, one per answer (Create an ad account), are one
+lane: the answers joined in the question's order, the task and owner said
+once, and under "Works from" what each answer's task works from
+("Facebook/Meta: the ClickUp template Create Meta Ad Account"; review D7).
+The route is drawn from the answers and client the shown preview was read
+for, so its lanes and summary change only when the new preview lands
+(review BT-4). The summary line is the one polite line and says only a
+settled answer: the first read's "Working out where it goes" shows in its
+place, unsaid (review A11Y-08). With no lane to draw, the server's "Pick ...
+to see where it goes." is said once, on its stop, never as the summary too
+(review CL-07). When every task an answer decides runs on a choice ClickUp no
+longer gives (the question lost, so 20261028a sends `when.options` []), that
+stop and Send say "Where it goes rests on a choice that could not be read
+from ClickUp. Ask the systems manager." instead, never "Pick ..." for what
+cannot be picked (`routeNote`, `ROUTE_WORDS.routeLost`; review BT-6, S4).
+While any required choice has no option ClickUp gives, the request cannot
+be sent here (review T3-design-clarity-05, 2026-10-29): above Send, before
+any press, a quiet panel with the orange mark says 'This request cannot be
+sent here until ClickUp's choices for "{question}" are back. Use the
+ClickUp request form for now, or ask the systems manager.' with "Open the
+ClickUp request form" as the one teal action; Send is outlined and
+described by that sentence, and still takes a press, so the summary takes
+focus to the lost choice (A11Y-21), led by "This request cannot be sent
+here yet:" when every answer in it is a lost choice; the route is "Where it
+goes" with no Now, held, Due or After that stop, no timing words and no
+cancel line, as ahead of requests opening, the questions still on the page.
+
+**Requests not open to the seat.** Before a pick, the writer's sentence and
+"Open the ClickUp request form" (teal) above the map (on a form 560px wide
+or less it takes the panel's width, as Send does, so it keeps one line
+inside the card at 390; the form's columns never grow past the card); after a pick, the plate,
+the same sentence and button in place of the questions, "This request is made
+on the ClickUp request form for now, so the cockpit asks you nothing here.
+The same questions open here once the cockpit can send requests for you."
+(`offAsked`; true for every refusal, a writer gone quiet after requests
+opened included), or, when answers were given before requests stopped being
+open to the seat, those answers under "Your answers so far" and "This
+request is made on the ClickUp request form for now. Your answers stay here,
+to copy into it." (`offKept`; review BT-7), and "Where it goes" (review
+CL-04): no Now, Due or After that stops, no timing words
+(a lane says "Goes to" or "May go to"; a pair's fork says "Two tasks", or
+"Depends on the answer" before the deciding question), a lane with no client
+says "Named after the client it is for." (no client is asked here), and the
+summary names the deciding question: 'One or two tasks, depending on the
+answer to "Where is the problem?"' (review BT-1 and CL-03, 2026-10-28); the
+plate and the rows name it the same way, never "by your answer" (review
+T2-clarity-04, 2026-10-29).
+
+**A client only with a request that asks for one** (review BT-2,
+2026-10-28). A client picked for one request stays through Change to
+another that asks for a client; a request that asks for none previews,
+sends and titles no client (`clientTaskId` null), and picking one clears
+it, so an HR request never lands on a client's card. A fixed client says
+"This page's client." on the client page and "Fixed for this request."
+elsewhere (review BT-12). A client's name is isolated inside a span that
+takes the row, so an Arabic name starts where every name starts, and both
+searches are `dir="auto"` (review D9, A11Y-19).
+
+**Focus** (research 2.12; review A11Y-01, 2026-10-28). A pressed control
+that goes takes focus to what replaces it, never the page body: a picked
+client to its Change (named "Change client", apart from the plate's Change,
+and described by the client's name and its status; review T2-a11y-02); the
+client's Change to the client search; Clear to the question's first choice;
+"Show the other {n}" (search, client list, SOP steps) to the first item it
+showed (a step's number sits inside the step, so its focus ring takes in
+the number; review T2-a11y-03); "Try again" after the request types fail
+to the search once they are read, or to the next "Try again" if the read
+fails again (review T2-a11y-01, 2026-10-29); "Ask for
+something else" to the search; an "Already open" answer to its heading,
+which the server's note describes, the client's name isolated in it, with
+no status inserted around it (review A11Y-05, A11Y-19). The plate's heading
+is described by the reach words and the line (review A11Y-10), and a
+heading that takes focus shows the focus ring (review A11Y-12). When
+requests stop being open to the seat partway through, the control the
+person was on goes with the questions, so focus moves to the writer's note
+that replaces them, a group named by its sentence and described by the
+line under it (`offKept` or `offAsked`), with a focus ring; above the map
+the note stays a status (review T3-a11y-behaviour-02). A search's
+count shows at once and is said once typing pauses; the client list's
+count is said only once the person types, and only once the read for what
+is typed lands: each read keeps the search it was for, the count shown
+keeps its read's words ("{n} clients." until the read for what is typed
+lands, then "{n} clients match.", "1 client matches." for one), and the
+polite line stays empty while a newer read
+waits, never an older search's count (review A11Y-08,
+T3-a11y-behaviour-01).
+Send stays focusable while it sends (`aria-disabled`, one press at a time),
+and focus stays on it after a refusal that names no field, which the alert
+above it says (review A11Y-06). A control scrolled into view for focus stops
+136px above the bottom (the floating Ask Hermes button's top on a phone,
+plus 20px), and the unseen native radio covers its whole face, so the face
+clears the button too (review A11Y-14). On a touch screen the SOP, "Open in
+ClickUp" and the inline links are 40px tall and the search's clear button
+40px wide (review A11Y-20). In forced colours (Windows contrast themes) a
+ring shows only on the focused control, a chosen face or current pill takes
+a thicker edge and the chosen radio's dot is drawn as an edge (review
+A11Y-15).
+The chosen due day carries the tick, as every chosen pill does, and the
+small muted words on a chosen face or current pill lean towards the ink, so
+they keep 4.5:1 on the teal tint in both themes (review A11Y-03, A11Y-04).
+
+**After Send** (graft 5; no toast, focus to the heading, the sub-line the one
+polite live line): "Sent: {type} for {client}" ("Saved:" while held;
+"Partly sent:" as soon as a task is refused while another reached ClickUp
+or is on its way, "Not sent:" when none did; review CL-05) and "Nothing
+else to do now." with where the tasks are ("It is on its way to ClickUp,
+usually within a minute or two.", "One task is in ClickUp; the other is on
+its way.", "Both tasks are in ClickUp.", "It goes to ClickUp by itself once
+requests open.", "Neither task reached ClickUp."). The minute or two is said
+only while every task on its way is queued or sending and the page still
+reads it; a create in doubt says "The cockpit is checking whether it
+reached ClickUp." (review BT-5, CL-08). While the writer has not reported, a
+held request says "It goes to ClickUp by itself once the requests writer
+runs with requests open." with no "Nothing else to do now.", since the
+writer's note asks an editor to check the Machine tab (review CL-04); each
+held task's line then says "Saved. Goes to {list} once the writer runs with
+requests open." (or "In {list}, not finished yet. The cockpit finishes it
+once the writer runs with requests open."; `ROUTE_WORDS.heldQuiet`,
+`heldInListQuiet`) in place of `sentLines()`' "when requests open";
+`sentLines()` itself stays as pinned (review CL-04, 2026-10-29). Nor
+while a task in ClickUp carries the writer's note (a refused later
+step): then the line points at the note:
+"It is in ClickUp, but not finished. The note under the task says what to
+check there.", or, with more tasks, where they are and "One is not
+finished: the note under it says what to check there." once every task is
+in ClickUp, else which one: "The one in ClickUp is not finished: ..."
+(review CL-01, 2026-10-28; T2-clarity-06, 2026-10-29). `sentTone`, the
+heading's words and `sentLines()` are unchanged, but such a task's mark,
+and the heading's, is the orange warning, never the green check, as My
+requests' chip is (review T2-clarity-05, 2026-10-29); the
+`sentAlone` sentence when it applies; after a refusal, the next step and the
+form link, a quiet panel with the red mark (review D17); the focused block
+is named by its heading and described by the sub-line and the `sentAlone`
+sentence; the sub-line is read whole (`aria-atomic`) and also says a
+refusal's next step to a screen reader, so a refusal that comes in while
+the page reads the request is said with it (review A11Y-09). Then "Where it is now" (beside
+from 880px; under the heading on a phone, and in the page right after the
+heading, so Tab follows the screen; review A11Y-11): "Sent at {14:02},
+Kuwait time." ("Saved at" while held: one stop, with the send mark as the
+route's Now, never a second held stop or clock; review D6; under it "The
+cockpit checked it and keeps it here.", or, while the writer is quiet, the
+writer's own sentence, which says what to check; the sentence said before
+a send, "What you send is saved ...", is a rule and is not repeated after
+Save; the kept due day is the Due stop's note; review CL-13,
+T3-design-clarity-04, T3-design-clarity-08); each
+task's `sentLines()` sentence whole, with its mark (green only on the
+check; orange on a task in ClickUp that is not finished), its name and
+"Open in ClickUp" from a delivered task's own `url`
+(named for its list and as opening a new tab; the SOP link and "Open the
+ClickUp request form" say "(opens in a new tab)" to a screen reader too;
+review A11Y-17), two tasks
+under "Sent together" only while no task failed, else "Two tasks" (review
+CL-05); then the SOP, Due and After that stops. Once nothing reached
+ClickUp and nothing moves, After that says "Nothing more happens with it by
+itself." and "The bell keeps the failure.", and the cancel line goes (review
+CL-05). Then "What you asked" (the client and the answers given; due and
+priority are the Due stop's, said once; review T3-design-clarity-04); "Ask
+for something else" and "See it in My
+requests" (or "Open the request", with its chevron); "The owner is chosen
+by rule, not picked here.", "Nothing is sent to the client." only when a
+client went with it (review D18), and the cancel line or, once a task is in
+ClickUp, where to change it. Links inside the card are ink, underlined
+(review D17). While the page reads the request (every 5 seconds, 24 reads at
+most) the stamp says "Checked {14:03}, Kuwait time"; after it, "Stopped
+checking at {14:04}, Kuwait time. My requests shows where it stands." or,
+with a task still on its way, "Still on its way. This page has stopped
+checking; My requests shows where it is." No held request shows a success
+mark. A lifecycle duplicate reads "Already open: {type} for {client}" with the
+server's note and "Open it".
+
+**Per app.** The portal's `RequestsPage.tsx` puts the form in a card at the
+page's width (the map's three columns and the route beside the questions
+need it; the form still works in a narrower card, in one column). The portal
+and client success name IBM Plex Sans Arabic after Geist (the portal also
+loads it), so an Arabic client name renders in the cockpit's Arabic face.
+The client page mounts the form as before (three props).
+
+**Tests** (only these files): `request-form.test.tsx` (the route before and
+after the deciding answer, three tasks, an older database, search, a team's
+list and the A to Z list, clearing an optional choice, the recent row, the
+held state, the sent view's stamps and link; the route while requests are
+not open to the seat, a client never sent with a request that asks for
+none, where focus goes after each control that goes, the chosen due day's
+tick; the error summary said once a press, the route kept until its
+preview lands, the owners of the lanes that run, one lane for three tasks
+on one list, a team's pointer, the duplicate's described heading, a
+refused request that has ended, "Two tasks" after a refusal, one Saved stop
+with the kept due day, a writer gone quiet, answers kept when requests stop
+being open to the seat; the plate and rows naming the deciding question
+and the route ahead of an older database while requests are not open to
+the seat, a client cleared by Change to a request that asks for none,
+"Try again"'s focus, the warning mark of a task that is not finished;
+Send focused while it sends and after a refusal that names no field, the
+summary said only once focus has moved, each radio's error sentence, the
+polite lines of a search, the route and the client list, the map's one
+region, the names of rows, Clear, the due day's date input and the links
+that open a new tab, the sent view in screen order, a refusal said with its
+next step, and a lost choice that still takes focus; review A11Y-02 to
+A11Y-21, 2026-10-29; a switch of answer that keeps the drawn route until
+its preview lands, the fixed client's words by page, and a lost question's
+route sentence; review BT-4, BT-12, BT-6 and S4, 2026-10-29; the team's
+hero true for every answer, the current pill as `aria-current`, the client
+count never said for an older search, focus on the writer's note when it
+replaces the questions, the kept due day and the held bell note on the Due
+and After that stops, the Saved stop without the rule said before Save,
+"What you asked" without due and priority, and a lost choice's panel, its
+outlined Send and its route; review T3-design-clarity-02, -04, -05, -08,
+T3-a11y-behaviour-01 to -03, 2026-10-29),
+`requests-core.test.ts` (the looks and their
+icons, only the general requests in a team's own mark, the judges'
+findability needs and their everyday rewordings,
+`searchLeads`, the DFY and DWY switches never opened on Return without
+their way, the lifecycle requests' starts and exits, `teamByAnswer`, the pinned "pause"
+and "script" outcomes against every
+look's words, `routeModel` and `sentModel` with one, two and three tasks,
+ahead of requests opening (the reach words and an older database's note
+too) and with a delivered task's note, `partFacts`;
+the due choices in date order, a part no choice runs (no lane, reach
+words, fact, line, owner or search hit, and the lost question's route
+sentence), the unheld owner,
+`teamRelated`, the sent words while checking, stopped, quiet, partly sent
+and ended, and the CSS's accessibility rules: the focus ring on headings
+that take focus, the red on a choice in error, the radio covering its face
+and the scroll margin, forced colours, the touch targets and the lost
+choice's look), `requests-page.test.tsx` (`sentAlone` in the sent view), and,
+for the `when` and `steps` keys the route is drawn from,
+`request-routes-supabase.test.ts` over migration
+`supabase/migrations/20261028a_request_types_read_routes.sql` (the db
+role's; its N1 to N7 in section 21, with `requests-fit-supabase.test.ts`).
+The layout harness's `send=note` lands every task with the first one's
+owner step refused, and `lastMode=` sets the last report of a writer gone
+quiet (`writer=unknown`).
 
 ---
 
@@ -1728,7 +2195,9 @@ cockpit-screens' `installTasksHarness`, and adds the `/requests` and
   and `bun test supabase/functions/clickup-writeback supabase/functions/cockpit-tasks supabase/functions/comment-watch/watch.test.ts`
   (the comment watch's test joined in the retest of round 2), each failing
   the ship with one plain line, as the block above it does. The block also
-  runs `scripts/requests-fit-supabase.test.ts` (section 13).
+  runs `scripts/requests-fit-supabase.test.ts` (section 13) and, since the
+  department map round, `scripts/request-routes-supabase.test.ts` (migration
+  20261028a, section 21), in the same command and its failure line.
 
 ---
 
@@ -1746,6 +2215,8 @@ five apps" means the same path under `apps/media-buyer-cockpit`,
 | `scripts/gen-request-types-seed.ts` (new) | db |
 | `apps/media-buyer-cockpit/scripts/requests-supabase.test.ts` (new) | db |
 | `apps/media-buyer-cockpit/scripts/request-types-seed.test.ts` (new) | db |
+| `supabase/migrations/20261028a_request_types_read_routes.sql` (new, the department map round, section 21) | db |
+| `apps/media-buyer-cockpit/scripts/request-routes-supabase.test.ts` (new, the department map round) | db |
 | `supabase/functions/clickup-writeback/index.ts` | writer |
 | `supabase/functions/clickup-writeback/run.ts` | writer |
 | `supabase/functions/clickup-writeback/run.test.ts` | writer |
@@ -1771,6 +2242,7 @@ five apps" means the same path under `apps/media-buyer-cockpit`,
 | `apps/media-buyer-cockpit/src/auth/authenticated/AuthenticatedAppRoutes.tsx` (the two routes only) | portal-screens |
 | `apps/media-buyer-cockpit/src/dev/requestsHarness.ts` (new), `apps/media-buyer-cockpit/src/dev/harness.tsx` | portal-screens |
 | `apps/media-buyer-cockpit/scripts/requests-core.test.ts`, `request-form.test.tsx`, `requests-page.test.tsx`, `requests-settings.test.tsx` (new) | portal-screens |
+| `apps/client-success-cockpit/src/index.css`, `apps/media-buyer-cockpit/src/index.css` (the department map round: IBM Plex Sans Arabic follows Geist in `--font-sans`, for Arabic client names; the media buyer app also adds it to its Google Fonts import, as creative director and video editor already load it there and client success and sales in `index.html`) | portal-screens |
 | `src/lib/tasksCore.ts`, `src/lib/tasksClient.ts`, `src/components/tasks/TaskPanel.tsx`, `YourTasks.tsx`, `AlertsBell.tsx`, `TaskFocus.tsx`, `tasks.css` in all five apps (new) | cockpit-screens |
 | `src/lib/taskSeat.ts` in all five apps (new) | cockpit-screens |
 | `src/lib/cockpits.ts` in all five apps (the `requests` icon only) | cockpit-screens |
@@ -1790,18 +2262,23 @@ five apps" means the same path under `apps/media-buyer-cockpit`,
 | `docs/requests/CONTRACT.md`, `docs/requests/request-types.json`, `docs/requests/maps/*` | the orchestrator (no builder edits them) |
 | `docs/requests/REVIEW-R1-raw.txt` (the round 1 findings and verdicts), `docs/forms/HANDOVER.md` (the forms handover) | the orchestrator |
 | `apps/media-buyer-cockpit/scripts/requests-ownership.test.ts` (new: every file this branch changes is in this table) | the orchestrator |
-| `apps/media-buyer-cockpit/scripts/requests-fit-supabase.test.ts` (new: the integration fit, section 13) | the orchestrator |
+| `apps/media-buyer-cockpit/scripts/requests-fit-supabase.test.ts` (new: the integration fit, section 13; in the department map round the db role added 20261028a to it, section 21) | the orchestrator |
 
 `requests-ownership.test.ts` compares this table with `git diff --name-only`
 from the merge-base with `origin/main` (3f9f5c41 after the rebase of
 2026-10-26; 86ee4e84 when the build began) plus the untracked files, so
 main's own commits are never counted as this build's (integration round 2).
+It runs on a build branch of this contract and skips itself on any other
+checkout. Until the department map round's last look it ran only on
+`tickets-1026`, so on `tickets-look-1028` (merge-base b642283b) it skipped
+itself and the two `index.css` files above went unlisted. It now runs on
+both branches.
 
 Not touched by anyone: `supabase/functions/cockpit-csm-api/*`,
 `cockpit-media-api/*`, `cockpit-creative-api/*`, `cockpit-notices/*`,
 `comment-watch/index.ts` and `deno.json`,
 `apps/media-buyer-cockpit/convex/*`, `hermes/task-assignment-alerts/*`,
-`hermes/cockpit-sync/*`, every migration but the three above.
+`hermes/cockpit-sync/*`, every migration but the four above.
 
 Hand-offs (build to the contract, not to each other's code):
 
@@ -1859,6 +2336,20 @@ the verify outcome; cancel before and after delivery; the type save
 after), restore and `rt_off`; member links by email (one, none, two;
 `manual` and `cleared` never overwritten); the import and "make it a
 request" routing; every write leaves its audit row.
+Since the department map round (2026-10-28) also
+`cd apps/media-buyer-cockpit && bun test scripts/request-routes-supabase.test.ts`
+(20261028a applied twice over r and s): the guard's two md5s and the header
+that names them; the body is the live one plus one statement; the function's
+settings, owner and grant unchanged, and the gate; `when` and `steps` on every
+part for every seat; Low schedule rate's and Create an ad account's parts named
+as their questions name their choices; exactly the five seeded routed parts read
+a `when`; `steps` equal `sop_steps` on the 13 parts without a template and null
+on template parts; both keys agree with `cockpit_request_plan` (the parts each
+choice runs, the checklist the writer adds); every other key of the answer is
+the old body's, byte for byte; an editor's reordered choices, a renamed, dropped
+or lost ClickUp choice, a part with no steps, a cockpit-only question, a type
+turned off and the type editor's save answer; the guard refuses a moved or
+missing body and its grant lines restore the exact grant.
 
 **writer**: `bun test supabase/functions/clickup-writeback`. With a fake
 ClickUp and a fake RPC: the gate (only `APPLY_REQUESTS` opens the two
@@ -2138,6 +2629,10 @@ round 3, CN11): each step with the read-back that proves it):
    report-only scan is green for `queue-clickup-requests` (held requests say
    "held until requests open"), the three `run_jobs` keys, the three
    `EXPECTED_JOBS` and `cockpit-tasks` with `verify_jwt` false.
+
+The department map round (2026-10-28) adds one database step, after r is
+applied (step 3; r, s and t were live from 2026-10-27) and before its five
+apps ship: migration 20261028a, with its dry run and read-backs in section 21.
 
 For the CEO's C3 batch, added to PLAN 5.2 (the build session carries out
 each on his yes, D16):
@@ -2434,3 +2929,65 @@ upsell studio); section 12 step 0 says what the rebase needs.
 
 Asked and left out on purpose: see section 11, "Not in this build". The
 known failures outside this build in section 15 stand.
+
+---
+
+## 21. The department map round, the database side (2026-10-28)
+
+One migration, `supabase/migrations/20261028a_request_types_read_routes.sql`
+(section 1, row 4), so the request form (6.7) can mark the question that
+decides where a request goes and list the steps an owner works through,
+before Send. It replaces only `cockpit_request_types_read()`. Before it, only
+editors read either fact (as `targets` and `sopSteps`), so the form could only
+guess from the preview's "Pick ... to see where it goes."
+
+| # | Settled | Proven by |
+|---|---|---|
+| N1 | Every part of every type in the types read carries `when` and `steps`, for every seat (2.5) | request-routes-supabase "a seat that is not an editor reads both keys on every part", "Low schedule rate: ...", "Create an ad account: ...", "a part that always runs reads when null ...", "steps: the type's SOP steps for a part with no template ..." |
+| N2 | `when` is the server's own routing and `steps` the writer's own checklist. For every choice of every deciding question, `cockpit_request_plan` runs exactly the parts whose `when` names it, plus those whose `when` is null; with nothing answered, only the latter. `steps` is the payload's `sopSteps` when its `sopStepsWhen` is `always`, `[]` when the part adds none, null with a template | request-routes-supabase "both keys say what the server makes ..."; requests-fit-supabase "20261028a: every seat's form reads when and steps on every part, and each choice of a deciding question makes the tasks the preview names" (the portal's own `readRequestTypes`, `answerRoutes` and `previewRequest`: six choices, and every type with nothing answered), and "the route line before Send matches what the writer makes in ClickUp ..." (General tech request's `steps` equal its queue row's `sopSteps` and the checklist the writer made in the made-up ClickUp) |
+| N3 | The body is the live one byte for byte, with one statement added after the types are read; nothing else in the answer changes, for any seat or writer mode | request-routes-supabase "the body is the live one with one statement added ...", "every other key is the old body's, byte for byte ..." |
+| N4 | The guard: the file refuses, and changes nothing, unless the live `prosrc` md5 is 20261026r's (`2f12d9541235919c176db2c0cc400f95`) or its own (`130d4b4d67d1e6ee32c9ed55f33c8f21`). Its REVOKE then GRANT gives back exactly the live grant (`authenticated` only) | request-routes-supabase "applies twice ...", "the grant and the function's settings are as they were", "the guard" |
+| N5 | On a database without 20261028a the portal's client reads neither key, `routesKnown` is false and the form falls back (6.7). The rollback (20261026r's types read again) keeps the grant, and the file applies over it again | requests-fit-supabase "20261028a rolled back (20261026r's types read again) ..." |
+| N6 | The four files apply twice in order over Stage 1 (r, s, t, 20261028a, then again: r's second run puts the old types read back, and the guard takes it) | requests-fit-supabase "r, s, t and 20261028a apply twice over Stage 1 ..." |
+| N7 | The ship gate's requests block runs `scripts/request-routes-supabase.test.ts` beside the fit test (section 7) | `bash -n scripts/ship.sh`; the block's command green |
+| N8 | Every file this round changed has one owner in section 8, the two `index.css` files included, and the ownership check runs on this round's branch instead of skipping itself | requests-ownership 3 pass on `tickets-look-1028` (it was 2 pass, 1 skip) |
+
+Shapes that changed: `TypeView.parts` gains `when` and `steps` (2.5), in the
+answer of `cockpit_request_types_read` only. Not changed:
+`cockpit_request_type_view` and every other function, so the preview, the
+send, the writer, the type editor's save and restore answers (which carry
+neither key) and the alerts are as before. No table, row or other grant
+changes. The SOP steps every seat can now read were checked live (read only,
+2026-10-28): 87 steps in all, of which every seat now reads 81 (WhatsApp
+connection issue's 6 stay with editors, since its part has a template); none
+holds an email address, a phone number, a link or a secret.
+
+Deploy (the main session; no builder does this). It is safe before the five
+apps ship, since the live form ignores the two keys and the new form only falls
+back without them, and it must go before them for the routing marks and the
+step lists to show. Read 2026-10-28: r, s and t are applied live, 20261028a is
+not.
+
+1. Check the live body has not moved:
+   `SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = 'public.cockpit_request_types_read()'::regprocedure;`
+   gives `2f12d9541235919c176db2c0cc400f95` (with `pg_get_functiondef` md5
+   `985e749039f893240dad242f967cc59a` and grant
+   `{postgres=X/postgres,authenticated=X/postgres}`, read 2026-10-28). Any
+   other value: stop, and rebase the file on the live body.
+2. Dry run as `BEGIN; <file without its own BEGIN;/COMMIT;> ROLLBACK;` through
+   the Composio Supabase connection, then apply it with its migration name
+   through `SUPABASE_APPLY_A_MIGRATION` (as section 12 step 3).
+3. Read-backs: `prosrc` md5 `130d4b4d67d1e6ee32c9ed55f33c8f21`; the grant
+   still `{postgres=X/postgres,authenticated=X/postgres}`; one
+   `cockpit_request_types_read` in `pg_proc`;
+   `supabase_migrations.schema_migrations` names
+   `20261028a_request_types_read_routes`; a seat's types read gives Low
+   schedule rate's two parts a `when` on `schedule_rate_issue` and General tech
+   request's part its `sop_steps` as `steps` (five, read 2026-10-28).
+4. The five apps then ship as section 12 steps 7 and 9 say. Read-back: a
+   seat's form shows the routing marks of Low schedule rate and Create an ad
+   account.
+
+Rollback: run 20261026r's types read definition again (its lines 1742 to
+1767; `CREATE OR REPLACE` keeps the grant), then `NOTIFY pgrst, 'reload
+schema'`. Nothing to re-run; the form falls back as N5 says.

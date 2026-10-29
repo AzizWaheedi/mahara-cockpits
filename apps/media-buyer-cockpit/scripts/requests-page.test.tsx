@@ -256,11 +256,7 @@ const rowsWith = (words: string) => rows().filter(r => text(r).includes(words));
  * One task of a stored request refused for good at create while the others
  * landed: the request reads "partial", as cockpit_request_refresh says.
  */
-function partial(
-  r: Fake["requests"][number],
-  part: string,
-  error: string,
-) {
+function partial(r: Fake["requests"][number], part: string, error: string) {
   let n = 50;
   for (const p of r.parts) {
     if (p.part === part) {
@@ -497,10 +493,21 @@ describe("/requests", () => {
     expect(String(row.className)).toContain(
       "sm:grid-cols-[8.25rem_minmax(0,1.2fr)_minmax(0,1fr)_6.5rem]",
     );
-    expect(cls("type")).toEqual(expect.arrayContaining(["col-start-1", "row-start-1", "sm:col-start-2", "sm:truncate"]));
+    expect(cls("type")).toEqual(
+      expect.arrayContaining([
+        "col-start-1",
+        "row-start-1",
+        "sm:col-start-2",
+        "sm:truncate",
+      ]),
+    );
     expect(cls("type")).not.toContain("truncate");
-    expect(cls("state")).toEqual(expect.arrayContaining(["col-start-1", "row-start-2", "sm:row-start-1"]));
-    expect(cls("due")).toEqual(expect.arrayContaining(["col-start-2", "row-start-1", "sm:col-start-4"]));
+    expect(cls("state")).toEqual(
+      expect.arrayContaining(["col-start-1", "row-start-2", "sm:row-start-1"]),
+    );
+    expect(cls("due")).toEqual(
+      expect.arrayContaining(["col-start-2", "row-start-1", "sm:col-start-4"]),
+    );
     // The chip keeps the whole ClickUp status, with room for it, and on a
     // phone the client follows it (its own column from sm).
     const state = row.querySelector('[data-cell="state"]');
@@ -718,7 +725,9 @@ describe("/requests", () => {
     const old = fake.requests.find(x => x.importedTaskId === "z8xharn01");
     if (!r || !old) throw new Error("The routing request was not filed");
     expect(old.state).toBe("routed");
-    r.parts[0].state = error.startsWith("The old ticket") ? "skipped" : "failed";
+    r.parts[0].state = error.startsWith("The old ticket")
+      ? "skipped"
+      : "failed";
     r.parts[0].error = error;
     r.state = "failed";
     return { r, old };
@@ -726,49 +735,63 @@ describe("/requests", () => {
 
   test("a routing request filed again routes its old ticket again; once routed meanwhile, it goes on its own (retest round 2)", async () => {
     // The database put the old ticket back in its queue when the first one failed.
-    const first = failedRouting("0000c0c0-0000-4000-8000-000000000001", "ClickUp refused the task: the list is full");
+    const first = failedRouting(
+      "0000c0c0-0000-4000-8000-000000000001",
+      "ClickUp refused the task: the list is full",
+    );
     first.old.state = "imported";
     first.old.routedTo = null;
     await render(`/requests?view=mine&id=${first.r.id}`);
     await flush(4);
     await click(buttonIn(dialog(), "File it again"));
     await settle();
-    expect(squash(page())).toContain("It routes the same old ClickUp form ticket, unless someone routed it meanwhile.");
+    expect(squash(page())).toContain(
+      "It routes the same old ClickUp form ticket, unless someone routed it meanwhile.",
+    );
     await click(buttonIn(container, "Send request"));
     await flush(8);
-    const sent = fake.calls.filter(c => c.name === "cockpit_request_submit").at(-1);
+    const sent = fake.calls
+      .filter(c => c.name === "cockpit_request_submit")
+      .at(-1);
     expect(sent?.args.p_replaces_task_id).toBe("z8xharn01");
-    expect(first.old).toMatchObject({ state: "routed", routedTo: sent?.args.p_request_id });
+    expect(first.old).toMatchObject({
+      state: "routed",
+      routedTo: sent?.args.p_request_id,
+    });
 
     // The CSM files again one the CEO raised, and its old ticket is still routed: the form sends it on its own.
     await act(async () => root.render(null));
     await flush(2);
     fake = createRequestsFake({ seat: "csm", now: () => NOW });
-    const { toast } = await import("sonner");
-    const said: string[] = [];
-    const realSuccess = toast.success;
-    toast.success = ((m: unknown) => {
-      said.push(String(m));
-      return 0;
-    }) as typeof toast.success;
-    try {
-      const second = failedRouting("0000c0c0-0000-4000-8000-000000000002", "ClickUp refused the task: the list is full");
-      second.r.requesterId = "m-ceo";
-      second.r.requesterLabel = "the CEO";
-      await render(`/requests?view=team&id=${second.r.id}`);
-      await flush(4);
-      await click(buttonIn(dialog(), "File it again"));
-      await settle();
-      await click(buttonIn(container, "Send request"));
-      await flush(8);
-      const tries = fake.calls.filter(c => c.name === "cockpit_request_submit").slice(-2);
-      expect(tries.map(c => c.args.p_replaces_task_id)).toEqual(["z8xharn01", null]);
-      expect(tries[0].args.p_request_id).toBe(tries[1].args.p_request_id);
-      expect(said.at(-1)).toBe("Request sent. Its old ClickUp form ticket was already routed, so this one goes on its own.");
-      expect(second.old).toMatchObject({ state: "routed", routedTo: second.r.id });
-    } finally {
-      toast.success = realSuccess;
-    }
+    const second = failedRouting(
+      "0000c0c0-0000-4000-8000-000000000002",
+      "ClickUp refused the task: the list is full",
+    );
+    second.r.requesterId = "m-ceo";
+    second.r.requesterLabel = "the CEO";
+    await render(`/requests?view=team&id=${second.r.id}`);
+    await flush(4);
+    await click(buttonIn(dialog(), "File it again"));
+    await settle();
+    await click(buttonIn(container, "Send request"));
+    await flush(8);
+    const tries = fake.calls
+      .filter(c => c.name === "cockpit_request_submit")
+      .slice(-2);
+    expect(tries.map(c => c.args.p_replaces_task_id)).toEqual([
+      "z8xharn01",
+      null,
+    ]);
+    expect(tries[0].args.p_request_id).toBe(tries[1].args.p_request_id);
+    // Tickets-look-1028: the sent view is the one voice for the event (focus
+    // moves to its heading, no toast), so the sentence is said there.
+    expect(text(container.querySelector(".rq-sent"))).toContain(
+      "Request sent. Its old ClickUp form ticket was already routed, so this one goes on its own.",
+    );
+    expect(second.old).toMatchObject({
+      state: "routed",
+      routedTo: second.r.id,
+    });
   });
 
   test("routing an old ticket a teammate routed first is refused, never sent twice (retest round 2)", async () => {
@@ -781,7 +804,11 @@ describe("/requests", () => {
     old.state = "routed";
     await click(buttonIn(container, "Send request"));
     await flush(8);
-    expect(fake.calls.filter(c => c.name === "cockpit_request_submit").map(c => c.args.p_replaces_task_id)).toEqual(["z8xharn01"]);
+    expect(
+      fake.calls
+        .filter(c => c.name === "cockpit_request_submit")
+        .map(c => c.args.p_replaces_task_id),
+    ).toEqual(["z8xharn01"]);
     expect(page()).toContain("That old ticket was already routed.");
   });
 
@@ -797,8 +824,12 @@ describe("/requests", () => {
       "The old ClickUp form ticket was moved or closed in ClickUp while this request waited, so no task was made. Check the old ticket, and ask again only if the work is still needed.",
     );
     expect(buttonIn(d, "File it again")).toBeUndefined();
-    const link = [...d.querySelectorAll("a")].find((a: any) => text(a).includes("Open the old ticket in ClickUp")) as any;
-    expect(link?.getAttribute("href")).toBe("https://app.clickup.com/t/z8xharn01");
+    const link = [...d.querySelectorAll("a")].find((a: any) =>
+      text(a).includes("Open the old ticket in ClickUp"),
+    ) as any;
+    expect(link?.getAttribute("href")).toBe(
+      "https://app.clickup.com/t/z8xharn01",
+    );
   });
 
   test("part of a request in ClickUp: the missing task is named, and it is never filed again whole", async () => {
@@ -971,7 +1002,10 @@ describe("/requests", () => {
     await render("/requests?view=mine&id=0000d0d0-0000-4000-8000-000000000001");
     await flush(4);
     const all = squash(text(dialog()));
-    expect(all.split("Saved, not sent yet. It goes to ClickUp once requests open").length).toBe(2);
+    expect(
+      all.split("Saved, not sent yet. It goes to ClickUp once requests open")
+        .length,
+    ).toBe(2);
     expect(all).not.toContain("It goes to ClickUp when requests open");
   });
 
@@ -983,7 +1017,9 @@ describe("/requests", () => {
     // The chip keeps the ClickUp status, in the warning tone.
     expect(squash(text(lp))).toContain("Review required");
     expect(lp.querySelector("svg.lucide-triangle-alert")).toBeTruthy();
-    expect(lp.getAttribute("title")).toBe(`In ClickUp: review required. ${note}`);
+    expect(lp.getAttribute("title")).toBe(
+      `In ClickUp: review required. ${note}`,
+    );
     expect(squash(text(lp))).toContain(`Not finished: ${note}`);
   });
 
@@ -1013,12 +1049,26 @@ describe("/requests", () => {
     });
     proto.getBoundingClientRect = function (this: any) {
       if (this.getAttribute?.("role") === "group")
-        return { left: 0, right: 358, top: 0, bottom: 32, width: 358, height: 32 };
+        return {
+          left: 0,
+          right: 358,
+          top: 0,
+          bottom: 32,
+          width: 358,
+          height: 32,
+        };
       const row = this.closest?.('[role="group"]');
       if (row && this.dataset?.chip) {
         const i = chipsIn(row).indexOf(this);
         const left = i * 110 - (row.scrollLeft ?? 0);
-        return { left, right: left + 100, top: 0, bottom: 32, width: 100, height: 32 };
+        return {
+          left,
+          right: left + 100,
+          top: 0,
+          bottom: 32,
+          width: 100,
+          height: 32,
+        };
       }
       return { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 };
     };
@@ -1067,7 +1117,9 @@ describe("/requests", () => {
       "The SOP steps did not save as a checklist in ClickUp. Add them on the task there.",
     );
     expect(all).not.toContain("Not sent");
-    expect(d.querySelector('[role="img"][aria-label="Not finished"]')).toBeTruthy();
+    expect(
+      d.querySelector('[role="img"][aria-label="Not finished"]'),
+    ).toBeTruthy();
   });
 
   test("an old ticket whose check found it handled says so once, in the next step", async () => {
@@ -1093,9 +1145,9 @@ describe("/requests", () => {
     await flush(4);
     await click(buttonIn(dialog(), "File it again"));
     await settle();
-    expect((container.querySelector('[data-field="priority"]') as any).value).toBe(
-      "urgent",
-    );
+    expect(
+      (container.querySelector('[data-field="priority"]') as any).value,
+    ).toBe("urgent");
     expect((container.querySelector('input[type="date"]') as any).value).toBe(
       "2026-10-29",
     );
@@ -1117,9 +1169,9 @@ describe("/requests", () => {
     expect((container.querySelector('input[type="date"]') as any).value).toBe(
       "2026-10-27",
     );
-    expect((container.querySelector('[data-field="priority"]') as any).value).toBe(
-      "high",
-    );
+    expect(
+      (container.querySelector('[data-field="priority"]') as any).value,
+    ).toBe("high");
   });
 
   test("Make it a request on a type that is turned off says so, and keeps the old ticket's words for the type picked", async () => {
@@ -1143,9 +1195,9 @@ describe("/requests", () => {
     expect(page()).not.toContain("is turned off");
     const words =
       "Client asked for a call about their invoice and the new campaign start date.";
-    expect((container.querySelector('[data-field="details"]') as any).value).toBe(
-      words,
-    );
+    expect(
+      (container.querySelector('[data-field="details"]') as any).value,
+    ).toBe(words);
     await click(buttonIn(container, "Send request"));
     await flush(6);
     const sent = fake.calls.find(c => c.name === "cockpit_request_submit");
@@ -1169,9 +1221,9 @@ describe("/requests", () => {
       ),
     );
     await settle();
-    expect((container.querySelector('[data-field="details"]') as any).value).toBe(
-      words,
-    );
+    expect(
+      (container.querySelector('[data-field="details"]') as any).value,
+    ).toBe(words);
     // Card missing has no details question: the words show, said not sent.
     await click(buttonIn(container, "Change"));
     await click(
@@ -1181,9 +1233,7 @@ describe("/requests", () => {
     );
     await settle();
     expect(container.querySelector(".rq-quote")?.textContent).toBe(words);
-    expect(squash(page())).toContain(
-      "What was asked",
-    );
+    expect(squash(page())).toContain("What was asked");
     expect(squash(page())).toContain(
       "This type has no question for these words, so the cockpit adds them to the new task's description, with a link to the old ticket.",
     );
