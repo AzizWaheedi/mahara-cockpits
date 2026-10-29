@@ -32,9 +32,12 @@ function git(...args: string[]): string | null {
   return out.status === 0 ? out.stdout : null;
 }
 const BASE = git("merge-base", "HEAD", "origin/main")?.trim() || "b642283b";
+// Once the branch is on main its merge-base is HEAD and the diff is empty, so
+// the check has nothing left to own (2026-10-29: it failed the readiness gate).
 const onBranch =
   git("rev-parse", "--abbrev-ref", "HEAD")?.trim() === BRANCH &&
-  git("cat-file", "-e", `${BASE}^{commit}`) !== null;
+  git("cat-file", "-e", `${BASE}^{commit}`) !== null &&
+  git("rev-parse", "HEAD")?.trim() !== BASE;
 
 const under = (dir: string, files: string[]) => files.map(f => `${dir}/${f}`);
 const CS_APP = "apps/client-success-cockpit";
