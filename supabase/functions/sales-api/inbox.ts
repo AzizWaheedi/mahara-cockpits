@@ -114,7 +114,16 @@ export function makeInbox(deps: InboxDeps) {
     ))[0];
     if (!row) throw new ApiRefusal("That conversation is not in the cockpit.", 404);
     if (!undo && !row.needs_reply) return { conversation_id: id, cleared: false, unchanged: true };
-    const after = undo ? { cleared_at: null, cleared_by: null } : { cleared_at: new Date().toISOString(), cleared_by: who.email ?? null };
+    // The mark is the lead's message the rep was looking at, never "now": a
+    // message that lands between the copy and the press stays waiting. A
+    // newer message than the one on the rep's screen is refused outright.
+    const seen = b.seen_in_at ? Date.parse(String(b.seen_in_at)) : Number.NaN;
+    const lastIn = row.last_in_at ? Date.parse(String(row.last_in_at)) : Number.NaN;
+    if (!undo && Number.isFinite(seen) && Number.isFinite(lastIn) && lastIn > seen)
+      throw new ApiRefusal("They wrote again since this opened. Read the new message first.", 409);
+    const after = undo
+      ? { cleared_at: null, cleared_by: null }
+      : { cleared_at: row.last_in_at ?? new Date().toISOString(), cleared_by: who.email ?? null };
     const saved = (await svc(`cockpit_sales_conversations?conversation_id=eq.${enc(id)}&select=needs_reply,cleared_at`, {
       method: "PATCH",
       body: after,

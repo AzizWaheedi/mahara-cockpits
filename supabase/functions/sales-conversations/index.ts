@@ -198,26 +198,34 @@ async function run(): Promise<Response> {
     const rows = list.map(c => conversationRow(c, at)).filter((r): r is Row => r !== null);
     if (!rows.length) return [];
     const ids = rows.map(r => String(r.conversation_id));
-    const stored = new Map<string, { ghl_last_at: string | null; messages_synced_at: string | null }>();
+    const stored = new Map<string, { ghl_last_at: string | null; messages_synced_at: string | null; read_failures: number }>();
     for (let i = 0; i < ids.length; i += 100) {
       const part = ids.slice(i, i + 100).map(id => `"${id}"`).join(",");
       for (const s of JSON.parse(
-        await rest(`cockpit_sales_conversations?conversation_id=in.(${part})&select=conversation_id,ghl_last_at,messages_synced_at`),
+        await rest(`cockpit_sales_conversations?conversation_id=in.(${part})&select=conversation_id,ghl_last_at,messages_synced_at,read_failures`),
       ) as Row[])
         stored.set(String(s.conversation_id), {
           ghl_last_at: (s.ghl_last_at as string) ?? null,
           messages_synced_at: (s.messages_synced_at as string) ?? null,
+          read_failures: Number(s.read_failures ?? 0),
         });
     }
     const need = needsMessages(
       rows.map(r => ({ conversation_id: String(r.conversation_id), ghl_last_at: (r.ghl_last_at as string) ?? null })),
       stored,
     );
-    // Keep the stored ghl_last_at for a conversation whose messages are not
-    // read yet, so a run that stops early reads it next time.
-    const now = rows.map(r => (need.includes(String(r.conversation_id)) && stored.has(String(r.conversation_id))
-      ? { ...r, ghl_last_at: stored.get(String(r.conversation_id))?.ghl_last_at ?? null }
-      : r));
+    // A conversation whose messages need reading keeps its stored ghl_last_at
+    // and goes back in the read-back queue (messages_synced_at null), so a run
+    // that stops early, or the full pass finding a change the newest-first
+    // read missed (a backdated message), always reads it later. Every row
+    // carries the same keys, so the batch upsert never mixes shapes.
+    const now = rows.map(r => {
+      const id = String(r.conversation_id);
+      const s = stored.get(id);
+      return need.includes(id)
+        ? { ...r, ghl_last_at: s ? s.ghl_last_at : r.ghl_last_at, messages_synced_at: null }
+        : { ...r, messages_synced_at: s?.messages_synced_at ?? null };
+    });
     await upsert("cockpit_sales_conversations", "conversation_id", now);
     for (const id of ids) touched.add(id);
     return need;
@@ -227,11 +235,13 @@ async function run(): Promise<Response> {
   let firstFailure: string | null = null;
   /**
    * Read and store a conversation's messages, then mark it read at
-   * HighLevel's time. A conversation HighLevel no longer has is dropped; one
-   * that fails otherwise is counted and passed over until it changes again,
-   * so a single bad thread never holds up the rest (a 429 still stops the run).
+   * HighLevel's time. A conversation HighLevel no longer has is dropped. A
+   * read that fails otherwise (a timeout, a 5xx) leaves it in the queue to
+   * be tried again, counted in read_failures; only after five failures in a
+   * row is it passed over until it changes again, so one bad thread never
+   * holds up the rest (a 429 still stops the run).
    */
-  const readMessages = async (id: string, limit: number, ghlLastAt: string | null) => {
+  const readMessages = async (id: string, limit: number, ghlLastAt: string | null, failures = 0) => {
     let rows: Row[];
     try {
       rows = await messagesOf(id, limit, at);
@@ -246,12 +256,20 @@ async function run(): Promise<Response> {
       }
       failedReads++;
       firstFailure ??= redact(String((e as Error).message ?? e));
+      if (failures + 1 < 5) {
+        await rest(`cockpit_sales_conversations?conversation_id=eq.${encodeURIComponent(id)}`, {
+          method: "PATCH",
+          body: { messages_synced_at: null, read_failures: failures + 1 },
+          prefer: "return=minimal",
+        });
+        return;
+      }
       rows = [];
     }
     if (rows.length) await upsert("cockpit_sales_conversation_messages", "id", rows);
     await rest(`cockpit_sales_conversations?conversation_id=eq.${encodeURIComponent(id)}`, {
       method: "PATCH",
-      body: { messages_synced_at: at, ...(ghlLastAt ? { ghl_last_at: ghlLastAt } : {}) },
+      body: { messages_synced_at: at, read_failures: 0, ...(ghlLastAt ? { ghl_last_at: ghlLastAt } : {}) },
       prefer: "return=minimal",
     });
     touched.add(id);
@@ -264,6 +282,9 @@ async function run(): Promise<Response> {
     const cursor = (state.cursor_at ? Date.parse(String(state.cursor_at)) : started - 86_400_000) - OVERLAP_MS;
     let after: string | null = null;
     let newest: string | null = null;
+    // True once the newest-first read reached the cursor (or the list's end):
+    // only then has every changed conversation been stored and queued.
+    let reachedCursor = false;
     for (let page = 0; page < NEW_PAGES && Date.now() < until; page++) {
       const { list, next } = await searchPage(after);
       if (!newest && list[0]) newest = conversationRow(list[0], at)?.ghl_last_at as string ?? null;
@@ -272,13 +293,17 @@ async function run(): Promise<Response> {
       for (const c of recent)
         if (need.includes(String(c.id)))
           changed.push({ id: String(c.id), last: conversationRow(c, at)?.ghl_last_at as string ?? null });
-      if (!next || recent.length < list.length) break;
+      if (!next || recent.length < list.length) {
+        reachedCursor = true;
+        break;
+      }
       after = next;
     }
     counts.changed = changed.length;
     await pool(changed.slice(0, CHANGED_PER_RUN), x => readMessages(x.id, 60, x.last), until, stop);
-    // The cursor moves only when every change was read.
-    if (newest && changed.length <= CHANGED_PER_RUN && !stop.why) patch.cursor_at = newest;
+    // The cursor moves once every change since it was stored. A change not
+    // read this run is already back in the read-back queue (storeConversations).
+    if (newest && reachedCursor && !stop.why) patch.cursor_at = newest;
   } catch (e) {
     if (e instanceof RateLimited) stop.why = e.message;
     else errors.push(`changes: ${redact(String((e as Error).message ?? e))}`);
@@ -289,12 +314,12 @@ async function run(): Promise<Response> {
     if (!stop.why && Date.now() < until - 8_000) {
       const queue = JSON.parse(
         await rest(
-          `cockpit_sales_conversations?messages_synced_at=is.null&select=conversation_id,ghl_last_at&order=ghl_last_at.desc.nullslast&limit=${BACKFILL_PER_RUN}`,
+          `cockpit_sales_conversations?messages_synced_at=is.null&select=conversation_id,ghl_last_at,read_failures&order=ghl_last_at.desc.nullslast&limit=${BACKFILL_PER_RUN}`,
         ),
       ) as Row[];
       let n = 0;
       await pool(queue, async q => {
-        await readMessages(String(q.conversation_id), 100, null);
+        await readMessages(String(q.conversation_id), 100, null, Number(q.read_failures ?? 0));
         n++;
       }, until - 5_000, stop);
       counts.backfill = n;

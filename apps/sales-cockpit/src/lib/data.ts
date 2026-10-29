@@ -1237,14 +1237,15 @@ function inboxArgs(f: InboxFilter) {
 }
 
 /** The first page of the list, read again every 20 seconds while it shows. */
-export function useInbox(f: InboxFilter): Loaded<InboxPage> {
+/** limit: how many rows the first read holds (40, up to 100 after Show more). */
+export function useInbox(f: InboxFilter, limit = 40): Loaded<InboxPage> {
   const args = inboxArgs(f);
-  const key = JSON.stringify(args);
+  const key = JSON.stringify([args, limit]);
   return useQuery<InboxPage>(
     async () => {
       const { data, error } = await supabase.rpc(
         "cockpit_sales_conversations_list",
-        { ...args, p_limit: 40 },
+        { ...args, p_limit: Math.min(100, Math.max(1, limit)) },
       );
       if (error) return { data: null, error };
       try {

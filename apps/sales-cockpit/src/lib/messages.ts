@@ -99,6 +99,7 @@ export interface InboxPage {
 export interface Tally {
   reply: number;
   all: number;
+  unread?: number;
 }
 
 export interface InboxCounts {
@@ -143,6 +144,7 @@ const isChannel = (v: unknown): v is InboxChannel =>
 const tally = (v: unknown): Tally => ({
   reply: n(isObj(v) ? v.reply : 0),
   all: n(isObj(v) ? v.all : 0),
+  unread: n(isObj(v) ? v.unread : 0),
 });
 
 /** The list function's answer, or a thrown error: a garbled answer is never an empty inbox. */
