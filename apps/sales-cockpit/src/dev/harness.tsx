@@ -523,6 +523,24 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
   switch (b.action) {
     case "script.save":
       return await scriptSave(b, now, signal);
+    case "call.outcome": {
+      // After the call: the answers land on the row every list reads.
+      const row = F.APPOINTMENTS.find(
+        a => a.appointment_id === String(b.appointment_id ?? ""),
+      );
+      if (!row) throw new Refusal("That call is not in the cockpit.", 404);
+      if (b.lead_quality !== undefined) {
+        row.lead_quality = Number(b.lead_quality);
+        row.quality_by = F.ME.email;
+        row.quality_role = F.ME.role;
+      }
+      if (b.no_demo_reason !== undefined) {
+        row.no_demo_reason = b.no_demo_reason;
+        row.no_demo_note =
+          b.no_demo_reason === "other" ? (b.no_demo_note ?? null) : null;
+      }
+      return { outcome: { ...row } };
+    }
     case "mark": {
       // The mark lands on the calendar row the lead page reads.
       const row = F.APPOINTMENTS.find(
@@ -1209,6 +1227,7 @@ async function main() {
       });
     const path = url.pathname;
     if (path.endsWith("/rpc/cockpit_sales_whoami")) return json(F.ME);
+    if (path.endsWith("/rpc/cockpit_sales_funnel")) return json(F.FUNNEL);
     if (path.startsWith("/functions/v1/sales-api")) {
       // The failure knobs: the server gone, a garbled yes, a lapsed sign-in.
       if (

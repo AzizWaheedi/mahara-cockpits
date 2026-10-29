@@ -375,7 +375,7 @@ function EodForm({
         </button>
         <p className="muted text-xs">
           {data.review.pending
-            ? "Save the remaining call outcomes to finish your day."
+            ? "Save the remaining call outcomes and lead ratings to finish your day."
             : "Check your numbers, then send. Your corrections are kept with the original totals."}
         </p>
       </div>

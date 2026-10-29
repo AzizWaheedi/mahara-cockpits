@@ -13,8 +13,29 @@ export const FINAL_OUTCOMES = new Set([
   "invalid",
 ]);
 
+/**
+ * What a held intro or demo still needs after the call (2026-10-29): the
+ * lead's quality, and for a held intro (not disqualified, whose mark says
+ * why) with no demo after it and no signature, why no demo was booked.
+ * cockpit_sales_outcome_missing (20261029a) is the same rule in SQL.
+ */
+export function outcomeMissing(r: ReviewCall): boolean {
+  const type = String(r.call_type ?? "");
+  if (type !== "intro" && type !== "demo") return false;
+  const status = String(r.marked_status ?? r.status ?? "");
+  if (!["showed", "completed", "invalid"].includes(status)) return false;
+  if (r.lead_quality == null) return true;
+  return (
+    type === "intro" &&
+    status !== "invalid" &&
+    r.demo_after_at == null &&
+    r.signed_after !== true &&
+    r.no_demo_reason == null
+  );
+}
+
 export function callReviewed(r: ReviewCall): boolean {
-  return FINAL_OUTCOMES.has(String(r.marked_status ?? r.status ?? ""));
+  return FINAL_OUTCOMES.has(String(r.marked_status ?? r.status ?? "")) && !outcomeMissing(r);
 }
 
 export function callAttended(r: ReviewCall): boolean {

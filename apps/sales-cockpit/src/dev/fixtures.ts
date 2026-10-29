@@ -271,10 +271,104 @@ export const APPOINTMENTS: Row[] = [
     ...appt("a13", 8, "demo", kw(16, 30, 1), "u-omar", "confirmed"),
     meet_url: "https://us06web.zoom.us/j/84455667788",
   },
-  appt("a14", 8, "intro", kw(11, 0, -3), "u-sara", "showed"),
+  {
+    ...appt("a14", 8, "intro", kw(11, 0, -3), "u-sara", "showed"),
+    // After the call (2026-10-29): the demo after it is the answer; only
+    // the lead's quality is asked.
+    demo_after_at: kw(19, 0, -1),
+  },
   // An active client's demo, long held: listed, never moved.
-  appt("a15", 23, "demo", kw(15, 0, -5), "u-omar", "showed"),
+  { ...appt("a15", 23, "demo", kw(15, 0, -5), "u-omar", "showed"), lead_quality: 8 },
+  // Yesterday's intro, held, no demo booked after it: the lead's quality
+  // and why no demo are both asked (Today, the lead page, the end of day).
+  appt("a16", 12, "intro", kw(11, 0, -1), "u-sara", "confirmed", {
+    status: "showed",
+    crm: "written",
+    by: "sara@example.com",
+  }),
+  // Two days ago, answered: one line with the gauge and the reason.
+  {
+    ...appt("a17", 13, "intro", kw(12, 30, -2), "u-sara", "confirmed", {
+      status: "showed",
+      crm: "written",
+      by: "sara@example.com",
+    }),
+    lead_quality: 4,
+    quality_by: "sara@example.com",
+    quality_role: "setter",
+    no_demo_reason: "not_decision_maker",
+  },
 ];
+
+/** cockpit_sales_funnel for the harness's Numbers page (a month like October 2026's). */
+export const FUNNEL = {
+  from: "2026-10-01",
+  to: "2026-10-29",
+  host: null,
+  as_of: new Date().toISOString(),
+  intros: {
+    booked: 61,
+    scheduled: 61,
+    due: 60,
+    shown: 23,
+    qualified: 20,
+    disqualified: 3,
+    noshow: 31,
+    cancelled: 6,
+    unmarked: 1,
+    ahead: 1,
+    advanced: 10,
+    signed: 2,
+    stalled: 11,
+    quality: { held: 23, rated: 6, average: 6.2 },
+  },
+  demos: {
+    booked: 33,
+    scheduled: 30,
+    due: 28,
+    shown: 14,
+    qualified: 12,
+    disqualified: 2,
+    noshow: 10,
+    cancelled: 4,
+    unmarked: 0,
+    ahead: 2,
+    quality: { held: 14, rated: 4, average: 7.3 },
+  },
+  reasons: [
+    { why: "none", n: 5 },
+    { why: "disqualified", n: 3 },
+    { why: "not_decision_maker", n: 2 },
+    { why: "other", n: 1 },
+  ],
+  disqualified_why: [
+    { why: "Not a fit for what we do", n: 1 },
+    { why: "Wrong or fake details", n: 1 },
+    { why: "Other", n: 1 },
+  ],
+  others: [
+    {
+      note: "Moving offices first, call in January",
+      start_at: kw(12, 0, -4),
+      contact_id: "lead-14",
+      contact_name: LEADS[13].name,
+    },
+  ],
+  missing: [12, 15, 16].map((lead, i) => ({
+    appointment_id: `m${i}`,
+    contact_id: LEADS[lead].contact_id,
+    contact_name: LEADS[lead].name,
+    start_at: kw(11, 0, -1 - i * 3),
+    status: i === 2 ? "confirmed" : "showed",
+    host: "Sara Khalil",
+  })),
+  quality_by_role: [
+    { role: "closer", call_type: "intro", rated: 2, average: 7 },
+    { role: "setter", call_type: "intro", rated: 4, average: 5.8 },
+    { role: "closer", call_type: "demo", rated: 4, average: 7.3 },
+  ],
+  closes: 5,
+};
 
 export const DIALS: Row[] = [
   {

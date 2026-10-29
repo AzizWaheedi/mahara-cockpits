@@ -195,6 +195,7 @@ import { bookingUrl, makeScriptNotes } from "./scriptnotes.ts";
 import { makeZoomLinks } from "./zoomlinks.ts";
 import { makeGroups } from "./groups.ts";
 import { makeCallLinks } from "./calllinks.ts";
+import { makeCallOutcomes } from "./callOutcomes.ts";
 import {
   clockCountry,
   budgetCap,
@@ -8289,6 +8290,8 @@ const zoomLinks = makeZoomLinks({ svc, audit, fetchWithin, env, background });
 const groups = makeGroups({ svc, audit, ghl });
 // A closer links their own sales call to a lead by hand (2026-10-21).
 const callLinks = makeCallLinks({ svc, audit, cockpitLead });
+// After the call (2026-10-29): the lead's quality and why an intro booked no demo.
+const callOutcomes = makeCallOutcomes({ svc, audit });
 
 const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   ...rooms.actions,
@@ -8297,6 +8300,7 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   ...zoomLinks.actions,
   ...groups.actions,
   ...callLinks.actions,
+  ...callOutcomes.actions,
   mark,
   "mark.retry": markRetry,
   "note.add": noteAdd,

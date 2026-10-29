@@ -26,6 +26,7 @@ import {
 } from "react";
 import { Link, useSearchParams } from "react-router";
 import { AdOrigin } from "../components/AdOrigin";
+import { AfterCall } from "../components/AfterCall";
 import { ProofToSend } from "../components/AssetPicker";
 import { CallNotesList, useCallNotes } from "../components/CallNotes";
 import { CallPicker } from "../components/CallPicker";
@@ -65,6 +66,7 @@ import {
   VideoPicker,
 } from "../components/VideoLink";
 import { ZoomLinkButton } from "../components/ZoomLink";
+import { heldRow } from "../lib/afterCall";
 import { ApiError, api, uncertain } from "../lib/api";
 import { assetStage, objectionsFrom } from "../lib/assets";
 import { CLIENT_NOTE, isClient } from "../lib/clients";
@@ -2468,6 +2470,23 @@ function CallPane({
           <NextStep
             title="The intro is marked held. What next?"
             text="Book the demo while they are warm, or set when to call them back."
+            after={
+              appt?.id ? (
+                // After the call (2026-10-29): rate the lead here, and say
+                // why when no demo comes of it.
+                <div className="pt-2">
+                  <AfterCall
+                    row={heldRow({
+                      ...appt,
+                      contact_id: l?.contact_id ?? null,
+                      contact_name: l?.name ?? null,
+                    })}
+                    canEdit
+                    whyWords="No demo? Say why"
+                  />
+                </div>
+              ) : null
+            }
           >
             <button
               type="button"

@@ -3,6 +3,7 @@ import {
   callAttended,
   callReviewed,
   dayBounds,
+  outcomeMissing,
   reviewVersion,
 } from "./dayReview.ts";
 test("a passed confirmation is not attended or reviewed", () => {
@@ -51,3 +52,24 @@ test("the workday query uses Kuwait boundaries", () =>
     from: "2026-10-21T21:00:00.000Z",
     to: "2026-10-22T21:00:00.000Z",
   }));
+test("a held intro or demo needs the lead's quality; a held intro with no demo needs a reason", () => {
+  const intro = { appointment_id: "i", call_type: "intro", status: "showed" };
+  expect(outcomeMissing(intro)).toBe(true);
+  expect(outcomeMissing({ ...intro, lead_quality: 7 })).toBe(true);
+  expect(outcomeMissing({ ...intro, lead_quality: 7, no_demo_reason: "not_ready" })).toBe(false);
+  expect(outcomeMissing({ ...intro, lead_quality: 7, demo_after_at: "2026-10-30T10:00:00Z" })).toBe(false);
+  expect(outcomeMissing({ ...intro, lead_quality: 7, signed_after: true })).toBe(false);
+  // Disqualified: the mark's own reason says why.
+  expect(outcomeMissing({ ...intro, status: "invalid", lead_quality: 3 })).toBe(false);
+  expect(outcomeMissing({ ...intro, status: "invalid" })).toBe(true);
+  // The rep's mark wins over HighLevel's status.
+  expect(outcomeMissing({ ...intro, status: "showed", marked_status: "noshow" })).toBe(false);
+  const demo = { appointment_id: "d", call_type: "demo", status: "showed" };
+  expect(outcomeMissing(demo)).toBe(true);
+  expect(outcomeMissing({ ...demo, lead_quality: 9 })).toBe(false);
+  for (const status of ["noshow", "cancelled", "confirmed", "new"])
+    expect(outcomeMissing({ ...intro, status })).toBe(false);
+  expect(outcomeMissing({ appointment_id: "f", call_type: "follow_up", status: "showed" })).toBe(false);
+  expect(callReviewed(intro)).toBe(false);
+  expect(callReviewed({ ...intro, lead_quality: 5, no_demo_reason: "thinking" })).toBe(true);
+});
