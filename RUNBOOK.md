@@ -661,6 +661,347 @@ Going live (the lead session, in this order):
    offers a close route, and the Blueprint card shows refusals and the Slack
    stops.
 
+## 1-1 notes in the cockpit (Stage 2a)
+
+The CSM's 1-1 call notes (Typeform `fRokTITH`) move into the client success
+cockpit, filled from Fathom's own record (`docs/forms/STAGE2-CONTRACT.md`). In
+Stage 2a the cockpit's 1-1 notes window runs only as a shadow run beside the
+Typeform, which stays the record: Make `9209179` and `9523861` still post the
+to-do comment, set Client Happiness and Last POC, grade the call and send the
+recap. A shadow send saves its notes and eight planned effects in the forms
+tables and nothing else: no ClickUp write, no Slack post, no client message, no
+`cockpit_csm_call_forms` row, no change to `cockpit_csm_calls`.
+
+- Migrations `20261027f_forms_core.sql` (the forms registry, responses,
+  effects, drafts, the WhatsApp outbox table and the window's RPCs),
+  `20261027g_fathom_intake.sql` (the Fathom store's class, room and candidate
+  columns, the privacy strip and trigger, the keys in the vault, webhook
+  deliveries, the ingest and the match inputs) and
+  `20261027h_checkin_plans.sql` (the shadow planner).
+- `cockpit_forms` row `checkin`: provider `typeform`, every effect owned by
+  `shadow`. One registry change flips every entry point at the cut-over (2b),
+  never in 2a. Check it: `select key, provider, effects from public.cockpit_forms;`
+  and `select state, count(*) from public.cockpit_form_effects group by 1;`
+  (only `dry_run` and `skipped` in 2a).
+- Edge Functions `cockpit-forms-api` (JWT check on: the window's call list,
+  drafts, transcript and Typeform check, key saves and the doctor) and
+  `fathom-webhook` (JWT check off: Fathom signs each delivery, an unsigned post
+  gets 401).
+- The worker `hermes/csm-calls` keeps the CSM's impromptu client-side
+  recordings as candidates, reads action items and transcripts and keeps sales
+  and team meetings stripped; its rows are in `hermes/csm-calls/RUNBOOK.md`.
+
+**Keys.** They live in the vault; `cockpit_forms_keys` holds metadata only and
+no role can read it. The CEO pastes the Fathom and DeepSeek keys (and the
+Anthropic key, B4) on the CEO cockpit, Client success, Connections for 1-1
+notes; a pasted key is tested, stored on the server and never shown back.
+`scripts/dev/forms_key.py` runs on the VPS, where the keys live:
+
+```sh
+ssh -o ControlMaster=auto -o ControlPath=/Users/abdulazizwaheedi/.ssh/cm-%r@%h-%p -o ControlPersist=20m -o ConnectTimeout=20 187.77.156.166 'python3 - <command>' < scripts/dev/forms_key.py
+```
+
+| Command | Does | Who |
+| --- | --- | --- |
+| `status` | Each key's state, last 4 and when it was saved (Kuwait time), and whether the webhook is registered; never a secret | anyone on duty |
+| `doctor` | The `cockpit-forms-api` doctor as JSON (it holds no secret); exits non-zero unless it answers `ok` true. `ok` needs a saved Fathom key and both Fathom reads good (`fathom.admin`, `fathom.csList`); a missing model key is reported in `models` and the note, not a failure | anyone on duty |
+| `fathom` | Tests `FATHOM_API_KEY` from `/opt/data/bibi/api-keys.env` (the users list, which only an account admin's key reads, then one page of the Customer Success team's last 24 hours, which must hold that team only) and saves it | the CEO, or with his permission |
+| `deepseek` | Tests `DEEPSEEK_API_KEY` from the same file (the model list must hold `deepseek-flash`) and saves it | the CEO, or with his permission |
+| `register-webhook` | Registers `fathom-webhook` with Fathom (`shared_team_recordings`, with transcript, summary and action items) and saves the signing secret it answers with | the CEO, or with his permission |
+| `probe-webhook` | Posts one wrongly signed delivery (expects 401) and one signed `Probe` delivery (expects 200 and a delivery row `ignored`), then marks the webhook key connected | anyone on duty |
+| `unregister-webhook` | Deletes the webhook in Fathom (a 404 counts as already gone) and marks the registration off | the CEO, or with his permission |
+
+Every Fathom and DeepSeek call the script makes writes an intent receipt
+before it and a response or unknown receipt after it into
+`cockpit_csm_provider_health` (`run_key` `forms-key:{uuid}`), and a call whose
+intent receipt cannot be saved is not made
+(`The receipt for {method} {resource} could not be saved, so the call was not made.`).
+A receipt that cannot be saved after its call does not stop the run, because a
+webhook just created must still be saved or deleted; the run then ends non-zero
+with `{n} receipts after a provider call could not be saved; cockpit_csm_provider_health is missing them.`
+The calls to our own functions (`probe-webhook`, `doctor`) write none; the
+doctor writes its own.
+
+**Which Fathom key each path uses.** The VPS holds two different
+`FATHOM_API_KEY` values. The worker (the 15-minute read and its backfills)
+reads the one in the native runtime file
+(`/home/hermes/.cockpit-native-state/runtime-<current>.json`). The Edge path
+(the read when the notes open, the drafts' summary and transcript reads, the
+doctor) uses the vault copy, which `forms_key.py fathom` copies from
+`/opt/data/bibi/api-keys.env` or the CEO pastes in Connections.
+`register-webhook` and `unregister-webhook` use the `api-keys.env` copy itself,
+never the vault's. Heavy reads are limited to 10 a minute per key, so the worker
+and the Edge path never share that budget; the `api-keys.env` copy is also the
+one the editor desk, the sales desk and the webinar pull use.
+
+**The webhook.** Register it only after the new worker's first good run
+(contract section 12, step 12), then run `probe-webhook`. `register-webhook`
+refuses while a registration is on
+(`A webhook is already registered (id ending {last 4}). Run unregister-webhook first.`).
+When Fathom answers with a webhook id but the secret is missing, refused, or
+cannot be saved, the script deletes the webhook at once, prints both statuses
+and exits non-zero; only when that delete fails too does it print
+`Delete the webhook ending {last 4} in Fathom's settings, then run this again.`
+(Fathom has no list call, so a webhook whose id was not saved can only be
+removed from the CEO's login). An answer with no id says
+`Fathom answered without the webhook id. Check Fathom's settings for a new webhook to this function.`,
+and a post Fathom never answers says
+`Fathom did not answer. Check Fathom's settings for a new webhook to this function before you run this again.`
+After a registration replaces an older one, a running copy of the function
+keeps the old secret for up to 5 minutes; a delivery signed with the new one
+gets 401 meanwhile and Fathom retries it. `unregister-webhook` turns the
+registration detail (`cockpit_sync_state` key `fathom-webhook`,
+`detail.registered`) to false, so the guardian stops expecting deliveries.
+Until the webhook is registered, and once it is unregistered, Connections shows
+`Not registered: calls arrive by the 15-minute read and when the notes open.`
+while a Fathom key is saved (in any state), and
+`Not registered: calls arrive by the 15-minute read.` with none (B7 open):
+the notes pull Fathom on open only with a saved key (contract 2.2 and 8.7).
+The guardian's check passes with `Not registered yet: …` or
+`Unregistered at {Kuwait time}: …`. After the CEO rotates his Fathom key, the
+webhook commands need the new key in `api-keys.env`; then run
+`forms_key.py fathom`, `unregister-webhook` (a 404 counts as already gone),
+`register-webhook` and `probe-webhook`. Deliveries, never their bodies:
+
+```sql
+select webhook_id, outcome, reason, recording_id, receipts, first_at, last_at
+  from public.cockpit_fathom_webhook_deliveries order by last_at desc limit 20;
+```
+
+`stored` is a Customer Success recording, now in the store. `ignored` is
+`Not a Customer Success recording.` (another team's call, or one shared with no
+team: nothing of it is kept) or `Not a meeting.` (no recording id in the body).
+`failed` names the step and the database's error code, never a value, as in
+`Failed at the ingest step (22023).`: Fathom retries with the same
+`webhook-id`, and the retry runs again. A `received` row older than 5 minutes
+was cut off before it settled; Fathom's next retry runs it. A delivery refused
+before it is recorded (a wrong method, a missing header, too large, no secret
+or no database, a bad or stale signature) leaves no row, only the function's
+one log line, `fathom-webhook {first 8 of webhook-id} {outcome}`;
+`supabase/functions/fathom-webhook/README.md` lists every step, answer and
+outcome. The latest outcome is also the note of `cockpit_sync_state`
+`fathom-webhook` (`Last delivery {outcome} at {Kuwait time}`).
+
+**The read when the notes open.** With a Fathom key saved, `checkin.calls`
+makes one light Fathom read (the Customer Success team since 00:00 Kuwait
+yesterday) at most once a minute, every 15 seconds after a failure; with none
+it reads only the store (the first row of the table below). A 429 shows
+`Fathom is busy. Check again in a minute.` Any other failure leaves the note
+`Fathom could not be read just now ({status}).`, which the window shows as
+`Fathom could not be read just now: {status}. Check again, paste the Fathom link, or choose No recording.`
+Either way the window still answers from the store. The light list carries no
+summary, so the pull never turns a stored `client` or `candidate` recording
+`internal`: only the worker and the webhook, which see summaries, change a
+stored class.
+`select key, ok, note, detail, rows_seen, last_run_at, last_ok_at from public.cockpit_sync_state where key in ('fathom-pull','fathom-webhook');`
+
+**The store.** The worker's gone pass marks a recording gone when two complete
+reads 60 minutes apart miss it (its summary, action items and transcript are
+cleared; it comes back if Fathom returns it). More than 3 missing, or more than
+10% of the window, marks nothing and turns `csm-fathom` `ok` false with
+`Fathom returned {n} fewer recordings than stored; nothing was marked gone.`
+The store pass runs every worker run: a recording the sales desk has indexed
+since, at any age, becomes `sales`, its call row loses its summary and
+transcript text, and its transcript object is removed, at most 20 objects a run
+(the rest on the next run); `csm-fathom`'s note says
+`{n} stripped, {m} transcript objects removed`. The one-off
+`backfill --source fathom-actions` has no cap and reads, merges and writes each
+meeting's `raw`, so it runs under the run lock. It starts detached, in the
+background with its own log and exit-code file: the lock wait alone can take 10
+minutes, and a run tied to the ssh call dies with it, leaving half its writes
+and no health row (contract section 12, step 7; A8.9). The line first removes
+the last start's exit-code file, inside the same ssh quote, so a second start
+never reads the old code as its own (A7.17):
+
+```sh
+ssh … 'rm -f ~/.csm-calls/actions-<sha8>.rc; nohup sh -c "flock -w 600 -E 75 ~/.csm-calls/run.lock ~/csm-calls-current/hermes/csm-calls/run.sh backfill --source fathom-actions --apply --report ~/.csm-calls/actions-<sha8>.json > ~/.csm-calls/actions-<sha8>.log 2>&1; echo \$? > ~/.csm-calls/actions-<sha8>.rc" >/dev/null 2>&1 </dev/null & echo started'
+ssh … 'cat ~/.csm-calls/actions-<sha8>.rc'
+```
+
+Read the `.rc` with short ssh calls, a minute apart, until it exists, then the
+report and the last lines of the log. `75` means a cron tick held the lock for
+10 minutes and nothing ran: start the whole line again (its `rm -f` clears the
+old `75`). Never start it while the `.rc` is still missing: that run is still
+waiting on the lock or running.
+
+The meetings privacy trigger
+(`cockpit_fathom_meetings_privacy`, before every insert and update) keeps an
+`internal` or `sales` meeting without its summary and without the summary,
+action items, highlights and transcript in `raw`, whoever writes (the worker,
+a rollback release, the ingest, a person with the service key), and gives a
+meeting written without a class one by the rule. It never touches
+`transcript_path`.
+
+**Candidates and the queue.** The CSM's impromptu client-side recording of 5
+minutes or more (or shorter with a summary), shared with a team, is a
+candidate: a call row with `candidate` true and up to 3 hints, and a queue row
+the recorder hosts, with
+`Impromptu recording with no client yet. Put it on its client here, or paste its Fathom link in the 1-1 form.`
+In 2a a pick in the cockpit's window is a shadow run and never puts a recording
+on a client; the 1-1 form's link and the queue do. "This is {client}" puts it on
+the client, links the client's booking (the same room within 90 minutes, else
+the booking within 30 minutes) and takes the booking's kind. "Not a 1-1 call"
+(part of another call, an onboarding call, a Blueprint call, not a client) sets
+it aside: it stays on no client, leaves the queue and the guardian's unmatched
+share, and the worker never matches it again; putting it on a client later
+undoes that. A candidate Fathom no longer has (`gone`) leaves the queue by
+itself.
+
+**Drafts.** We owe and They owe come from Fathom's action items with no model.
+Client notes draft on DeepSeek; the DEFCON and priority suggestions, the call
+grade and the recap draft on Anthropic. Until the CEO pastes an Anthropic key
+(B4), DEFCON and priority say
+`AI drafts are off: no Anthropic key. Pick it yourself.` and the CSM picks them
+by hand, the recap step says `AI drafts are off: no Anthropic key.`, and the
+doctor's note says `No Anthropic key: suggestions, grades and recaps are off.`
+Without the DeepSeek key, client notes say
+`AI drafts are off: no DeepSeek key. Fill this by hand.` Right after a call,
+the model drafts wait for Fathom's summary and transcript (the two
+`still writing` sentences in the table below).
+
+**A refused key and the native monitor.** Before a pasted key is saved,
+`keys.save` tests it and writes those receipts into `cockpit_forms_key_checks`
+(provider, `GET`, the resource, the phase, the status, `run_key` `keys:{uuid}`),
+not into `cockpit_csm_provider_health`, so a mistyped paste never turns the
+native monitor red. A saved key that later fails does: the monitor turns a
+provider red for up to 24 hours on its latest unsuccessful receipt per
+provider and resource (`20261026n:128-157`). Paste a working key, then run
+`forms_key.py doctor`: its good reads clear the reds on
+`api.fathom.ai/external/v1/users`, `.../meetings`, `api.deepseek.com` and
+`api.anthropic.com`. A red on `api.fathom.ai/external/v1/recordings/:id/summary`
+clears only on the next good summary read (the drafts make it), one on
+`.../recordings/:id/transcript` on the worker's next good transcript read.
+
+**The shadow replay.** `apps/media-buyer-cockpit/scripts/checkin-replay.ts`
+plans the last ten real `fRokTITH` responses with the real planner in PGlite and
+compares them with what Make wrote (contract 7.4). Run it on the Mac after the
+action items backfill (deploy step 7):
+
+```sh
+cd apps/media-buyer-cockpit && bun scripts/checkin-replay.ts --live \
+  --fixture /Users/abdulazizwaheedi/mahara-cockpits/notes/stage2/fixtures/replay-10.json \
+  --out /Users/abdulazizwaheedi/mahara-cockpits/notes/stage2/replay
+```
+
+It reads production through `sq.py`, read only and in memory: an address
+leaves the database with its local part hashed, a meeting room hashed, a
+contact name never, and Fathom's action items and the Typeform's client notes
+only as hashes. It
+rebuilds what the matcher knew as of each submit (no form's own link, no
+form-taught match) and writes `replay-report.json` and `replay-report.md`: per
+response the card, the business name, the signal that picked the call, the
+to-do counts and a verdict per effect (same, better, differs, missing), never
+comment text, answer text or a contact. It exits 0 when the passes of 7.4
+hold. `--shadow <response id>,<response id> --out <folder>` compares real
+shadow runs, on calls the CSM also noted in Typeform, with what Make wrote for
+the same cards: one ssh call runs a GET-only script on the VPS with the keys
+by name (`CLICKUP_API_KEY`, `SLACK_BOT_TOKEN` from `/opt/data/bibi/api-keys.env`;
+`--clickup-key` and `--slack-key` name others) and prints shapes only (the
+comment's line counts and whether the recording link is on line 1, the Client
+Happiness option, the Last POC day, the grade's parts in #client-call-feedback,
+which read `not_in_channel` until that bot is in the channel). It writes
+`shadow-report.json` and `shadow-report.md`, and exits 1 on any `differs` or
+`missing`. Gate G3 of 2b needs five such runs with no unexplained difference.
+
+**The worker release and its rollback.** The csm-calls release is its own
+(`hermes/csm-calls/RUNBOOK.md`, Release / rollback; contract section 12, step
+6, as A8 left it). A folder `/home/hermes/.csm-calls-releases-hermes/<sha8>` is
+staged from the commit on main, and its doctor and dry run run with the native
+bun directly (never the staged `run.sh`, which always runs the current
+release). The doctor fails until `20261027f` and `20261027g` are applied. Every
+`csm-*` source already failing is recorded first: a dry run passes when
+`csm-ghl-calls`, `csm-checkin-form`, `csm-forms-history` and `csm-fathom` are
+ok and every other failure is a recorded one with the same cause; with a
+recorded failure it still exits 1 and prints `csm-calls run FAILED`, which is
+expected (A8.2). The run lock is held from step 3 by a `flock -o` holder
+(`nohup flock -o ~/.csm-calls/run.lock sleep 5400 >/dev/null 2>&1 & echo $!`,
+its pid recorded), so cron's `flock -n` skips the old release; with `-o`,
+killing that pid frees the lock (A8.1). Then, on the VPS, each line one short
+ssh call (`ssh … '<line>'`):
+
+```sh
+pgrep -P <pid> -x sleep
+flock -n ~/.csm-calls/run.lock true; echo $?
+D=/home/hermes/.csm-calls-releases-hermes/<sha8> && test -f "$D/hermes/csm-calls/run.sh" && ln -sfn "$D" ~/csm-calls-current.next && mv -T ~/csm-calls-current.next ~/csm-calls-current
+readlink -f ~/csm-calls-current
+pgrep -P <pid> -x sleep && kill <pid>
+flock -n ~/.csm-calls/run.lock true; echo $?
+rm -f ~/.csm-calls/first-<sha8>.rc; nohup sh -c "flock -w 600 -E 75 ~/.csm-calls/run.lock ~/csm-calls-current/hermes/csm-calls/run.sh run --apply --report ~/.csm-calls/first-<sha8>.json > ~/.csm-calls/first-<sha8>.log 2>&1; echo \$? > ~/.csm-calls/first-<sha8>.rc" >/dev/null 2>&1 </dev/null & echo started
+cat ~/.csm-calls/first-<sha8>.rc
+```
+
+The first two lines check the step-3 holder right before the swap: `pgrep`
+prints one pid and `flock -n` prints `1`. If either fails (its 90 minutes ran
+out, or the stop rule or a rollback released it), take a new holder with step
+3's command and both its read-backs, never the apply, and use its pid from
+then on (A8.8). The swap runs while the holder holds, with no flock of its own
+(a `flock -w` would only wait for the holder and time out), and its read-back
+prints `/home/hermes/.csm-calls-releases-hermes/<sha8>`; until it does,
+contract section 12's stop rule holds every later step (A8.4). The holder is
+killed only while `pgrep` still shows its `sleep` (a pid with no `sleep` child
+is never killed), and the read-back after it prints `0` (`1` only if a cron
+tick of the new release has just started). The first run then starts at once,
+detached under `nohup` so that it outlives the ssh call; its line first
+removes an exit-code file left by an earlier try (the `rm -f`, inside the same
+ssh quote), so the read below waits for this run's code (A7.17). Its `.rc`,
+report and log are read with short ssh calls, a minute apart, until the `.rc`
+exists (A8.9). `0`, or `1` with only the recorded failures in the report, is a good
+first run; `75` means a cron tick of the new release held the lock for 10
+minutes, so read that tick's `~/.csm-calls/last-run.json` as the first run.
+Keep the previous release and the rollback folder.
+
+A rollback points the link, under the run lock, at the staged `rollback-<sha8>`
+(release `2cacdca5` plus `hermes/csm-calls/rollback/2cacdca5.patch`), then runs
+its doctor. Never point it at the bare `2cacdca5`: its loops would put
+candidates on a client by a name in their title and download the stripped sales
+transcripts again. The rollback release makes no candidate rows and runs no
+store pass or gone pass, and, like `2cacdca5`, it writes every meeting of its
+window without action items and every meeting with no external invitee,
+candidates included, without its summary. Rolling forward, the new worker's
+first run restores its 7-day window; for older candidates run
+`backfill --source fathom-actions --since <7 days before the rollback> --apply`
+for their action items, under the run lock and detached like the backfill in
+The store (above), and `backfill --source fathom --apply` (heavy, from 1 Jul)
+for their summaries.
+
+**Going live** is contract section 12 (the main session), with these
+decisions (A7.10, A8): the action items backfill runs under the run lock and
+detached, as above; each function's `--extra` is exactly what
+`python3 scripts/dev/fn_extras.py . <function>` lists; the guardian goes to the
+VPS only once `20261027g` and both functions are live (before them
+`csm-calls-unmatched` cannot read the new columns and `edge-functions` misses
+two functions); the production proof stays the PGlite proof plus read-only
+read-backs (A3). `forms_key.py fathom`, `deepseek` and `register-webhook` wait
+for the CEO (A3): B7 asks for his yes in the deploy session's chat before step
+8, with `probe-webhook` right after the registration, and if he would rather
+paste the keys, the ask follows the Connections card, which ships at step 16
+(A8.3, A8.7); whatever of B7 is still open goes in step 18's batch. Until then the window uses the keys pasted in Connections, or
+says which key is missing, and calls arrive without the webhook.
+
+**Rolling back** (contract section 12): `forms_key.py unregister-webhook`
+first, so the guardian stops expecting deliveries; then the worker to the
+rollback release (above). The two functions are new: redeploy nothing, and
+delete them only on the CEO's word. No migration is reverted (the four replaced
+function bodies saved before the apply can be re-applied): the privacy strip
+stays (Fathom still holds the content, and its audit row records what was
+removed), the trigger keeps the rollback release from writing content back onto
+an `internal` or `sales` meeting, and the registry's `checkin` stays
+`typeform`, so the Typeform stays the record. Sites: ship the previous commit.
+
+| Symptom | What to do | Who |
+| --- | --- | --- |
+| The window says `Fathom isn't connected, so calls come only from the 15-minute read.`, then `Paste the Fathom key in CEO > Client success > Connections for 1-1 notes.` for the CEO, or `Ask the CEO to connect it.` for anyone else | The vault has no Fathom key, so the window cannot read Fathom itself. The recordings the worker's 15-minute read stored are still offered (picked, and listed under Recordings since yesterday), and a pasted Fathom link is still found in the store; a call that read has not reached yet waits for it, and Check again shows it once the next read brings it. Paste the key in CEO, Client success, Connections for 1-1 notes, or run `forms_key.py fathom` (the CEO, or with his permission) | the CEO |
+| Connections says `{provider} refused this key. Paste a new one.` | Paste a working key, then run `forms_key.py doctor` so the native monitor's red clears (above) | the CEO, then the tech lead |
+| `Fathom is busy. Check again in a minute.` | A 429 on the vault key; it clears in a minute. If it keeps coming, paste a key of its own in Connections: the `api-keys.env` copy that `forms_key.py fathom` saves is shared with the editor desk, the sales desk and the webinar pull | the CEO |
+| The guardian's "Fathom webhook delivers" warns | Registered, a Customer Success recording first seen in the last 24 hours that holds a summary and is shared with a team (the only ones Fathom pushes), and no stored delivery in that time. The 15-minute read still brings every call. Read the deliveries (above), check the webhook in Fathom's settings, or unregister and register it again | the tech lead; Fathom's settings: the CEO |
+| `forms_key.py` prints `Delete the webhook ending {last 4} in Fathom's settings, then run this again.` | Fathom made a webhook whose secret was not saved, and deleting it failed. Delete it in Fathom's settings, then run `register-webhook` again | the CEO |
+| `csm-fathom` reads `Fathom returned {n} fewer recordings than stored; nothing was marked gone.` | The cap held, so no client lost a call. Check in Fathom whether they were deleted or unshared, or whether the key lost access; the next run marks them one by one once the count is back under the cap | the tech lead |
+| A candidate in the CSM's queue is not a check-in | "Not a 1-1 call", with its reason | the CSM |
+| A recording is on the wrong client | The window lists it disabled with `On {client}. If that is wrong, ask an admin to move it.`, and a save is refused with `That recording is on {client}. If that is wrong, ask an admin to move it.` In 2a an admin fixes the call row's client in SQL, with a `cockpit_csm_match_audit` row; a Move it here button comes in 2b | an admin |
+| `AI drafts are off: no Anthropic key.` | Expected until B4: the CEO pastes an Anthropic key in Connections | the CEO |
+| DEFCON, Client notes or the recap step says `Fathom is still writing this call's summary. Drafts start when it is ready.` or `Fathom is still writing this call's transcript. Drafts start when it is ready.` | Expected for a few minutes after a call: Fathom lists a meeting within seconds, but its summary and transcript come later. We owe and They owe never wait. The window asks again every 60 seconds (the recap step every 15 seconds for 3 minutes, then every 60), up to 15 minutes, and again each time the notes open. A transcript read that gives no text is not repeated for that recording until its wait ends: Fathom's `retry-after`, else `ratelimit-reset` on a 429, else 2 minutes, at most 10 minutes, per recording and per running copy (isolate) of `cockpit-forms-api` (A7.16); meanwhile View transcript answers `No transcript yet. Open the call in Fathom.` without calling Fathom. She can fill the fields by hand and send without waiting. Still waiting after 15 minutes while Fathom shows the summary and transcript: read the receipts on `api.fathom.ai/external/v1/recordings/:id/summary` and `.../transcript` in `cockpit_csm_provider_health` (a run of 429s is the busy key, as in `Fathom is busy.` above) | the CSM; a lasting wait: the tech lead |
+| A row in `cockpit_form_effects` is in any state but `dry_run` or `skipped` | Never in 2a: a table CHECK keeps shadow and Make effects out of every other state. Stop and tell the tech lead | the tech lead |
+
 ## Requests writer (clickup-writeback job requests)
 
 Every request the team sends from `/requests` (or the CSM client page's Ask a

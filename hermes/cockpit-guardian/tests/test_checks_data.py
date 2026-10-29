@@ -484,6 +484,19 @@ class EdgeFunctions(unittest.TestCase):
         self.assertEqual(r.status, FAIL)
         self.assertIn("sales-live is missing", r.summary)
 
+    def test_the_1_1_notes_functions_are_expected(self):
+        """docs/forms/STAGE2-CONTRACT.md section 9: cockpit-forms-api signed in, fathom-webhook signed by Fathom."""
+        self.assertIs(edge_functions.EXPECTED["cockpit-forms-api"], True)
+        self.assertIs(edge_functions.EXPECTED["fathom-webhook"], False)
+        jwt_on = [dict(f, verify_jwt=True) if f["slug"] == "fathom-webhook" else f for f in self.listed()]
+        r = edge_functions.run_functions(make(db=fakes.FakeDb(functions=jwt_on)))
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("fathom-webhook has verify_jwt True (should be False)", r.summary)
+        gone = [f for f in self.listed() if f["slug"] != "cockpit-forms-api"]
+        r = edge_functions.run_functions(make(db=fakes.FakeDb(functions=gone)))
+        self.assertIn("cockpit-forms-api is missing", r.summary)
+        self.assertIn("cockpit-forms-api", checks_mod.by_id()["edge-functions"].means)
+
     def test_without_token_only_sales_api_is_checked(self):
         web = fakes.FakeWeb({"https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/sales-api": fakes.resp(401)})
         r = edge_functions.run_functions(make(web=web))
@@ -790,6 +803,54 @@ class RequestsAndTaskMirror(unittest.TestCase):
         self.assertEqual(sections.run_jobs(make({"cockpit_sync_state": rows})).items, ["task-mirror:delta"])
         rows = [r for r in rows if r["key"] != "clickup-writeback:requests"]
         self.assertIn("clickup-writeback:requests", sections.run_jobs(make({"cockpit_sync_state": rows})).items)
+
+
+class OneOneNotesReadings(unittest.TestCase):
+    """docs/forms/STAGE2-CONTRACT.md section 9: the three CSM readings the 1-1 notes change, through the registry."""
+
+    def reading(self, check_id, tables):
+        return checks_mod.by_id()[check_id].run(make(tables))
+
+    def test_candidates_and_settled_rows_do_not_count_as_unmatched(self):
+        def row(i, task_id=None, **kw):
+            return {"id": i, "task_id": task_id, "source": "fathom", "starts_at": fakes.ago(120), "candidate": False,
+                    "settled_reason": None, **kw}
+
+        calls = [row(i, task_id="task-a") for i in range(5)]
+        calls += [row(10 + i, candidate=True) for i in range(6)] + [row(20, settled_reason="blueprint")]
+        r = self.reading("csm-calls-unmatched", {"cockpit_csm_calls": calls})
+        self.assertEqual(r.status, OK, r.summary)
+        self.assertEqual((r.evidence["unmatched"], r.evidence["candidates"], r.evidence["settled"]), (0, 6, 1))
+
+    def test_the_form_check_passes_on_a_cockpit_checkin_row(self):
+        forms = [{"form_id": "cockpit-checkin", "form_kind": "checkin", "submitted_at": fakes.ago(90)},
+                 {"form_id": "fRokTITH", "form_kind": "checkin", "submitted_at": fakes.ago(12 * 1440)}]
+        r = self.reading("csm-checkin-form", {"cockpit_csm_call_forms": forms})
+        self.assertEqual(r.status, OK)
+        self.assertIn("1.5 h ago", r.summary)
+
+    def test_the_webhook_check_warns_and_passes_by_its_registration(self):
+        meetings = [{"recording_id": "196100001", "recorder_team": "Customer Success", "first_seen_at": fakes.ago(60),
+                     "summary": "An invented summary.", "raw": {"shared_with": "all_teams"}}]
+
+        def run(detail, deliveries=(), stored=meetings):
+            state = [{"key": "fathom-webhook", "note": "Registered webhook ending 9876", "detail": detail}]
+            return self.reading("csm-fathom-webhook", {"cockpit_sync_state": state, "cockpit_fathom_meetings": stored,
+                                                       "cockpit_fathom_webhook_deliveries": list(deliveries)})
+
+        self.assertEqual(run({"registered": True}).status, WARN)
+        delivered = [{"webhook_id": "msg_a", "outcome": "stored", "last_at": fakes.ago(55)}]
+        self.assertEqual(run({"registered": True}, delivered).status, OK)
+        # After a rollback unregisters it, nothing is expected.
+        self.assertEqual(run({"registered": False, "unregisteredAt": fakes.ago(30)}).status, OK)
+        self.assertEqual(self.reading("csm-fathom-webhook", {"cockpit_fathom_meetings": meetings}).status, OK)
+        # A7 item 8: a day of short (no summary) or unshared calls is nothing Fathom pushes, so it no longer warns.
+        short = dict(meetings[0], recording_id="196100002", summary=None)
+        unshared = dict(meetings[0], recording_id="196100003", raw={"shared_with": "no_teams"})
+        r = run({"registered": True}, stored=[short, unshared])
+        self.assertEqual(r.status, OK, r.summary)
+        self.assertEqual((r.evidence["csRecordings24h"], r.evidence["due24h"]), (2, 0))
+        self.assertEqual(run({"registered": True}, stored=[short, unshared] + meetings).status, WARN)
 
 
 class TestSectionsJobKeys:

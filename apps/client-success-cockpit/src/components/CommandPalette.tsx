@@ -13,6 +13,7 @@ import {
 import { LINK_GROUPS } from "@/lib/csmLinks";
 import { TEMPLATE_TITLES } from "@/lib/csmTemplates";
 import { displayLabel } from "@/lib/format";
+import { useCheckinEntry } from "@/lib/formsRegistry";
 import { matchScore, onOpenSearch } from "@/lib/search";
 import { useCsmSnapshot } from "@/lib/useCsmSnapshot";
 
@@ -143,6 +144,14 @@ const ACTIONS: { act: string; label: string; ask: string; keywords: string }[] =
       label: "Send a message (SOP template)",
       ask: "Message which client?",
       keywords: `message template whatsapp sop draft ${TEMPLATE_TITLES.join(" ")}`,
+    },
+    {
+      // Opens the 1-1 notes in the same click (docs/forms/STAGE2-CONTRACT.md
+      // 8.6): the Typeform until the cut-over, then the cockpit's window.
+      act: "notes",
+      label: "Write 1-1 notes",
+      ask: "Write notes for which client?",
+      keywords: "1-1 notes call summary defcon fathom recap",
     },
     {
       act: "log",
@@ -340,6 +349,7 @@ function CommandPaletteContent({ actor }: { actor: string }) {
   const [reading, setReading] = useState(false);
   const navigate = useNavigate();
   const auth = useCockpitAuth();
+  const entry = useCheckinEntry();
   const { snap, error, loading } = useCsmSnapshot(
     reading ? auth.client : null,
     auth.clients,
@@ -497,6 +507,37 @@ function CommandPaletteContent({ actor }: { actor: string }) {
             </CommandItem>
             {clients.map(c => {
               const hit = clientHit(c);
+              if (pickFor.act === "notes")
+                return (
+                  <CommandItem
+                    key={`notes:${c.taskId}`}
+                    value={`pick:${c.taskId}`}
+                    keywords={hit.keywords}
+                    onSelect={() => {
+                      show(false);
+                      entry.open(
+                        String(c.taskId),
+                        c.lastCallAt ?? c.lastCall ?? null,
+                      );
+                    }}
+                    className="items-start gap-3"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span
+                        className="block truncate text-left font-medium"
+                        dir="auto"
+                      >
+                        {hit.label}
+                      </span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {pickFor.label}
+                      </span>
+                    </span>
+                    <span className="mt-0.5 shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+                      {hit.kind}
+                    </span>
+                  </CommandItem>
+                );
               return row({
                 ...hit,
                 value: `pick:${c.taskId}`,

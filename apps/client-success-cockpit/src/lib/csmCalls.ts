@@ -14,9 +14,24 @@ export type CallSummary = {
   nextCallAt?: string | null;
   nextCallKind?: string | null;
   nextCallStatus?: string | null;
+  /** The next call's meeting link (https only); undefined from an older summary. */
+  nextCallJoinUrl?: string | null;
+  /**
+   * The booking to join (docs/forms/STAGE2-CONTRACT.md 2.2, 8.3): the
+   * earliest booked or confirmed one that has not ended, so a call in
+   * progress keeps its Join after nextCallAt has moved on. Before any call
+   * starts it is the next call. Undefined from an older summary.
+   */
+  joinCallAt?: string | null;
+  /** Its end; null when the booking gives none (the header then allows an hour). */
+  joinCallEndsAt?: string | null;
+  /** Its meeting link (https only). */
+  joinCallUrl?: string | null;
   lastCall?: string | null;
   lastCallKind?: string | null;
   lastCallSource?: string | null;
+  /** The newest check-in form in the store (docs/forms/STAGE2-CONTRACT.md 2.2). */
+  lastNoteAt?: string | null;
 };
 export type SourceHealth = {
   key: string;
@@ -88,6 +103,39 @@ export const kuwaitDayOf = (iso?: string | null) =>
   iso && Number.isFinite(Date.parse(iso))
     ? new Date(Date.parse(iso) + 3 * 3_600_000).toISOString().slice(0, 10)
     : undefined;
+
+/**
+ * The header's Join (docs/forms/STAGE2-CONTRACT.md 8.3, Y24): the summary's
+ * booking to join, from 15 minutes before its start until its end (an hour
+ * when the booking gives none). It is read apart from the next call, which
+ * drops a booking at its start, so a CSM late to her call still has it.
+ * Beside the next call it reads "Join"; once that call has started and the
+ * next call line names a later booking, or none, it names its own start.
+ * Null when there is nothing to join now.
+ */
+export function joinLink(
+  c: {
+    joinCallAt?: string | null;
+    joinCallUrl?: string | null;
+    joinCallEndsAt?: string | null;
+    nextCallAt?: string | null;
+  },
+  now: number,
+): { href: string; label: string } | null {
+  if (!c.joinCallAt || !c.joinCallUrl) return null;
+  const start = Date.parse(c.joinCallAt);
+  if (!Number.isFinite(start)) return null;
+  const end = Date.parse(String(c.joinCallEndsAt ?? "")) || start + 3_600_000;
+  if (now < start - 15 * 60_000 || now > end) return null;
+  const isNext =
+    Boolean(c.nextCallAt) && Date.parse(String(c.nextCallAt)) === start;
+  const hhmm = new Date(start + 3 * 3_600_000).toISOString().slice(11, 16);
+  return {
+    href: c.joinCallUrl,
+    label:
+      isNext || now < start ? "Join" : `Join the call that started at ${hhmm}`,
+  };
+}
 
 const LIMITS: Record<string, number> = {
   "csm-ghl-calls": 45,
@@ -161,10 +209,16 @@ export async function readCallsSummary(client: SupabaseClient) {
   } as const;
 }
 
+/** Calls with a form of their own: their notes are not 1-1 notes. */
+const OWN_FORMS = new Set(["onboarding", "blueprint"]);
+
 /**
  * The client row with the store's next and last call. The store wins over the
  * board's own field when it is newer; call days follow, so the cadence flags
- * (call due, notes missing) use the real last call.
+ * (call due, notes missing) use the real last call. The last note is the
+ * newer of the card's and the store's, and notes are missing when the last
+ * call is newer than it, unless that call has a form of its own (onboarding,
+ * Blueprint) or was the 1-1 form itself.
  */
 export function withCallSummary<T extends Row>(
   c: T,
@@ -176,10 +230,26 @@ export function withCallSummary<T extends Row>(
   // The store read succeeded: no valid booking clears an older board date (cancelled or gone).
   out.nextCallAt = s.nextCallAt ?? null;
   out.nextCallKind = s.nextCallAt ? s.nextCallKind : null;
+  // Undefined while the summary does not carry it yet: unknown, not "no link".
+  if (s.nextCallJoinUrl !== undefined)
+    out.nextCallJoinUrl = s.nextCallAt ? (s.nextCallJoinUrl ?? null) : null;
+  // The call to join may have started, so it is read on its own, not from
+  // nextCallAt (which drops a booking at its start).
+  if (s.joinCallAt !== undefined) {
+    out.joinCallAt = s.joinCallAt ?? null;
+    out.joinCallEndsAt = s.joinCallAt ? (s.joinCallEndsAt ?? null) : null;
+    out.joinCallUrl = s.joinCallAt ? (s.joinCallUrl ?? null) : null;
+  }
   const last = kuwaitDayOf(s.lastCall);
-  if (last && (!c.lastCall || String(c.lastCall).slice(0, 10) < last)) {
-    out.lastCall = last;
+  const board = c.lastCall ? String(c.lastCall).slice(0, 10) : "";
+  if (last && (!board || board <= last)) {
+    // The same day is the same call: the store knows its kind and source.
+    out.lastCallAt = s.lastCall;
+    out.lastCallKind = s.lastCallKind ?? null;
     out.lastCallSource = s.lastCallSource;
+  }
+  if (last && (!board || board < last)) {
+    out.lastCall = last;
     out.callDays = Math.max(
       0,
       Math.round(
@@ -187,13 +257,18 @@ export function withCallSummary<T extends Row>(
           86_400_000,
       ),
     );
-    // The 1-1 form is the record of the call: a call newer than the newest note means notes are missing.
-    out.noteMissing = Boolean(
-      out.lastCall &&
-        (!c.lastNoteOn || String(c.lastNoteOn).slice(0, 10) < last) &&
-        s.lastCallSource !== "checkin_form",
-    );
   }
+  const note = kuwaitDayOf(s.lastNoteAt);
+  if (note && (!c.lastNoteOn || String(c.lastNoteOn).slice(0, 10) < note))
+    out.lastNoteOn = note;
+  // The 1-1 form is the record of the call: a call newer than the newest note means notes are missing.
+  const lastDay = out.lastCall ? String(out.lastCall).slice(0, 10) : "";
+  out.noteMissing = Boolean(
+    lastDay &&
+      (!out.lastNoteOn || String(out.lastNoteOn).slice(0, 10) < lastDay) &&
+      !OWN_FORMS.has(String(out.lastCallKind ?? "")) &&
+      out.lastCallSource !== "checkin_form",
+  );
   return out as T;
 }
 
@@ -254,13 +329,18 @@ export type Unmatched = {
   reason: string;
   hint?: string;
   host?: string;
+  /** An impromptu recording with no client yet (docs/forms/STAGE2-CONTRACT.md 2.2). */
+  candidate: boolean;
 };
 export async function readUnmatched(
   client: SupabaseClient,
 ): Promise<Unmatched[]> {
   const { data, error } = await client.rpc("cockpit_csm_unmatched_list");
   if (error) throw Error(error.message);
-  return (data ?? []) as Unmatched[];
+  return ((data ?? []) as Unmatched[]).map(u => ({
+    ...u,
+    candidate: u.candidate === true,
+  }));
 }
 export async function matchUnmatched(
   client: SupabaseClient,
@@ -273,6 +353,33 @@ export async function matchUnmatched(
   });
   if (error) throw Error(error.message);
   return data as { ok: boolean; clientName?: string };
+}
+
+/** Why an impromptu recording is not a 1-1 call (cockpit_csm_candidate_settle). */
+export type SettleReason =
+  | "part_of_call"
+  | "onboarding"
+  | "blueprint"
+  | "not_client";
+
+/**
+ * "Not a 1-1 call": sets an impromptu recording aside from the queue. It
+ * stays on no client; `sameAs` (the other half of a call recorded twice) is
+ * kept in the audit row only.
+ */
+export async function settleCandidate(
+  client: SupabaseClient,
+  id: number,
+  reason: SettleReason,
+  sameAs: string | null = null,
+) {
+  const { data, error } = await client.rpc("cockpit_csm_candidate_settle", {
+    p_unmatched_id: id,
+    p_reason: reason,
+    p_same_as: sameAs,
+  });
+  if (error) throw Error(error.message);
+  return data as { ok: boolean; callId?: number; reason?: string };
 }
 
 /** Fetch a short-lived signed link only after the call belongs to this member's client. */

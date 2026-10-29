@@ -30,6 +30,11 @@ const PROVIDERS: Record<string, string> = {
 /** The EOD Reports sheet: the only spreadsheet this worker may read. */
 export const EOD_SHEET = "1EhPp7x0jZfV8dNjUvmuWv_alNvduMGpe_COjUAB13bw";
 
+/** The Fathom paths this worker may read: the meetings list, and one recording's summary or transcript. */
+export function fathomPathAllowed(pathname: string): boolean {
+  return pathname === "/external/v1/meetings" || /^\/external\/v1\/recordings\/\d+\/(summary|transcript)$/.test(pathname);
+}
+
 export type Receipt = {
   method: string;
   resource: string;
@@ -67,8 +72,8 @@ export function makeTransport(
     const u = new URL(url);
     const provider = PROVIDERS[u.hostname];
     if (!provider || u.protocol !== "https:") throw new Error("Unapproved provider URL");
-    if (provider === "fathom" && u.pathname !== "/external/v1/meetings")
-      throw new Error("Only Fathom /external/v1/meetings is permitted");
+    if (provider === "fathom" && !fathomPathAllowed(u.pathname))
+      throw new Error("Only Fathom meetings and recording summaries or transcripts are permitted");
     if (provider === "google" && !u.pathname.startsWith(`/v4/spreadsheets/${EOD_SHEET}`))
       throw new Error("Only the EOD Reports sheet is permitted");
     if (provider === "slack" && u.pathname !== "/api/conversations.history")
@@ -174,6 +179,12 @@ export function makeTransport(
       }),
     fathom: (params: URLSearchParams) =>
       get(`https://api.fathom.ai/external/v1/meetings?${params}`, { "X-Api-Key": need("FATHOM_API_KEY") }),
+    /** One recording's summary or transcript (a heavy read: Fathom allows 10 a minute per key). */
+    fathomRecording: (id: string, part: "summary" | "transcript") => {
+      if (!/^\d{3,20}$/.test(String(id))) throw new Error("A Fathom recording id is 3 to 20 digits");
+      if (part !== "summary" && part !== "transcript") throw new Error("Only a recording's summary or transcript can be read");
+      return get(`https://api.fathom.ai/external/v1/recordings/${id}/${part}`, { "X-Api-Key": need("FATHOM_API_KEY") });
+    },
     typeform: (path: string, params: Record<string, string> = {}) =>
       get(`https://api.typeform.com/${path}${Object.keys(params).length ? "?" + new URLSearchParams(params) : ""}`, {
         Authorization: `Bearer ${need("TYPEFORM_TOKEN")}`,
@@ -263,6 +274,19 @@ export function makeDb(env: Env, request: typeof fetch = fetch) {
         signal: AbortSignal.timeout(60_000),
       });
       if (!res.ok) throw new Error(`Transcript upload failed (${res.status})`);
+    },
+    /** Removes one transcript object. An object that is not there counts as removed. */
+    async storageRemove(path: string) {
+      if (!/^fathom\/\d{1,20}\.txt$/.test(path)) throw new Error("Only a Fathom transcript object can be removed");
+      const res = await request(`${base}/storage/v1/object/csm-call-transcripts/${path}`, {
+        method: "DELETE",
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(60_000),
+      });
+      const text = await res.text().catch(() => "");
+      // Storage answers a missing object with 404, or with 400 and statusCode 404 in the body.
+      if (res.ok || res.status === 404 || (res.status === 400 && /"statusCode"\s*:\s*"?404\b/.test(text))) return;
+      throw new Error(`Transcript removal failed (${res.status})`);
     },
     async ping() {
       await call("GET", "/rest/v1/cockpit_sync_state?select=key&limit=1");

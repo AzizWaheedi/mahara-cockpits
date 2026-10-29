@@ -1549,21 +1549,26 @@ test("an onboarding client's row and page show its onboarding steps", async () =
       };
     };
     try {
-      // The header's outline button and the panel's teal one: one name, one
-      // window.
+      // The panel's teal button opens the kickoff's own window, by name. The
+      // header's moved into the "Write 1-1 notes" menu, the client's one
+      // form control (docs/forms/STAGE2-CONTRACT.md 8.3, Y18), whose item
+      // opens the same window (scripts/forms-button.test.tsx).
       const fills = [...page.querySelectorAll("button")].filter(
         b => (b.textContent ?? "").trim() === "Fill the kickoff",
       );
-      expect(fills.length).toBe(2);
-      await reactAct(async () => fills[1]?.click());
+      expect(fills.length).toBe(1);
+      expect(
+        page.querySelector(
+          'button[aria-label="More ways to fill this client\'s forms"]',
+        ),
+      ).toBeTruthy();
+      await reactAct(async () => fills[0]?.click());
       expect(opened).toEqual([["", "mahara-form-86exnk0v4-kickoff"]]);
       expect(replaced).toEqual([
         "/client-success/clients/86exnk0v4/forms/kickoff",
       ]);
       // A window of its own, so Zoom can share the form alone.
       expect(features[0]).toMatch(/^popup,width=\d+,height=\d+/);
-      await reactAct(async () => fills[0]?.click());
-      expect(opened[1]).toEqual(["", "mahara-form-86exnk0v4-kickoff"]);
     } finally {
       win.open = open;
     }
@@ -1693,6 +1698,168 @@ test("closing a commitment is not contact with the client", async () => {
     await reactAct(async () => root.unmount());
     host.remove();
   }
+});
+
+/**
+ * The header's Join (docs/forms/STAGE2-CONTRACT.md 2.2 and 8.3, dbp-4): the
+ * summary drops a booking from nextCallAt at its start, so Join comes from
+ * the booking to join (joinCallAt, joinCallUrl, joinCallEndsAt) and stays
+ * through a call in progress, until it ends. The links are placeholders.
+ */
+test("the header's Join stays while a call runs, after the next call has moved on, and goes when it ends", async () => {
+  const { joinLink, withCallSummary } = await import("../src/lib/csmCalls");
+  const NOW_LINK = "https://meeting.example.com/join/TEST-NOW";
+  const NEXT_LINK = "https://meeting.example.com/join/TEST-NEXT";
+  const now = Date.now();
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const kuwaitHHMM = (ms: number) =>
+    new Date(ms + 3 * 3_600_000).toISOString().slice(11, 16);
+  const started = now - 2 * 60_000;
+  const nextWeek = iso(now + 7 * 86_400_000);
+  const summary = {
+    nextCallAt: nextWeek,
+    nextCallKind: "checkin",
+    nextCallStatus: "booked",
+    nextCallJoinUrl: NEXT_LINK,
+    joinCallAt: iso(started),
+    joinCallEndsAt: iso(started + 30 * 60_000),
+    joinCallUrl: NOW_LINK,
+  };
+  // The store's read carries the booking to join beside the next call.
+  const row = withCallSummary(
+    { taskId: GREYSTONE } as Record<string, unknown>,
+    summary,
+    "2026-10-06",
+  );
+  expect(row).toMatchObject({
+    nextCallAt: nextWeek,
+    nextCallJoinUrl: NEXT_LINK,
+    joinCallAt: iso(started),
+    joinCallEndsAt: iso(started + 30 * 60_000),
+    joinCallUrl: NOW_LINK,
+  });
+  // An older summary without the keys leaves them unknown.
+  expect(
+    "joinCallAt" in
+      withCallSummary(
+        { taskId: GREYSTONE } as Record<string, unknown>,
+        { nextCallAt: null },
+        "2026-10-06",
+      ),
+  ).toBe(false);
+
+  // The window: 15 minutes before the start until the end, an hour with none.
+  const at = Date.parse("2026-10-29T07:30:00Z");
+  const booking = {
+    joinCallAt: iso(at),
+    joinCallUrl: NOW_LINK,
+    joinCallEndsAt: null,
+    nextCallAt: iso(at),
+  };
+  expect(joinLink(booking, at - 15 * 60_000 - 1)).toBeNull();
+  expect(joinLink(booking, at - 15 * 60_000)).toEqual({
+    href: NOW_LINK,
+    label: "Join",
+  });
+  expect(joinLink({ ...booking, nextCallAt: null }, at + 60_000)?.label).toBe(
+    "Join the call that started at 10:30",
+  );
+  expect(joinLink(booking, at + 3_600_000)?.label).toBe("Join");
+  expect(joinLink(booking, at + 3_600_001)).toBeNull();
+  expect(joinLink({ ...booking, joinCallUrl: null }, at)).toBeNull();
+
+  /** The header's meeting links for Greystone with these call fields. */
+  const joins = async (calls: Record<string, unknown>) => {
+    const host = win.document.createElement("div");
+    win.document.body.appendChild(host);
+    const root = createRoot(host as any);
+    currentSnapshot = {
+      ...snapshot,
+      clients: snapshot.clients.map((c: Record<string, unknown>) =>
+        c.taskId === GREYSTONE ? { ...c, ...calls } : c,
+      ),
+    };
+    isSnapshotLoading = false;
+    snapshotError = null;
+    try {
+      await reactAct(async () => {
+        root.render(
+          createElement(
+            MemoryRouter,
+            { initialEntries: [`/clients/${GREYSTONE}`] },
+            pageFor("client"),
+          ),
+        );
+      });
+      const text = (host.textContent ?? "").replace(/\s+/g, " ");
+      const links = [...host.querySelectorAll("a")]
+        .filter(a => [NOW_LINK, NEXT_LINK].includes(a.getAttribute("href")!))
+        .map(a => [(a.textContent ?? "").trim(), a.getAttribute("href")]);
+      return { text, links };
+    } finally {
+      await reactAct(async () => root.unmount());
+      host.remove();
+      currentSnapshot = snapshot;
+    }
+  };
+
+  // Started 2 minutes ago, with next week's booking as the next call: Join
+  // stays and names its start, so it is not read as next week's link.
+  const running = await joins(row);
+  expect(running.text).toContain("Next: Check-in call");
+  expect(running.links).toEqual([
+    [`Join the call that started at ${kuwaitHHMM(started)}`, NOW_LINK],
+  ]);
+  // No booking after it: still there.
+  const last = await joins({
+    ...row,
+    nextCallAt: null,
+    nextCallKind: null,
+    nextCallJoinUrl: null,
+  });
+  expect(last.text).toContain("no call booked");
+  expect(last.links).toEqual([
+    [`Join the call that started at ${kuwaitHHMM(started)}`, NOW_LINK],
+  ]);
+  // Ten minutes before the start the booking to join is the next call: one
+  // plain Join beside it.
+  const soon = iso(now + 10 * 60_000);
+  const before = await joins({
+    nextCallAt: soon,
+    nextCallKind: "checkin",
+    nextCallJoinUrl: NOW_LINK,
+    joinCallAt: soon,
+    joinCallEndsAt: null,
+    joinCallUrl: NOW_LINK,
+  });
+  expect(before.links).toEqual([["Join", NOW_LINK]]);
+  // Ended ten minutes ago (a summary read before the end): no Join.
+  const ended = await joins({
+    ...row,
+    joinCallAt: iso(now - 70 * 60_000),
+    joinCallEndsAt: iso(now - 10 * 60_000),
+  });
+  expect(ended.links).toEqual([]);
+  // No end on the booking: an hour from the start, then gone.
+  const noEnd = await joins({
+    ...row,
+    joinCallAt: iso(now - 61 * 60_000),
+    joinCallEndsAt: null,
+  });
+  expect(noEnd.links).toEqual([]);
+  // A booked next call with no link still says what to do.
+  const noLink = await joins({
+    nextCallAt: nextWeek,
+    nextCallKind: "checkin",
+    nextCallJoinUrl: null,
+    joinCallAt: nextWeek,
+    joinCallEndsAt: null,
+    joinCallUrl: null,
+  });
+  expect(noLink.text).toContain(
+    "No meeting link yet. Confirm the booking in GoHighLevel.",
+  );
+  expect(noLink.links).toEqual([]);
 });
 
 /**

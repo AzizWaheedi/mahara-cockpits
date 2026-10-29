@@ -1,6 +1,7 @@
 """The CSM call store (hermes/csm-calls, migration 20261011c): every call, call form and media buyer change
-per client reaches the client success cockpit, day by day. Report-only: the guardian names what is missing,
-a person (or the worker's next run) fixes it.
+per client reaches the client success cockpit, day by day, and since Stage 2a Fathom's webhook pushes each
+Customer Success recording too (supabase/functions/fathom-webhook). Report-only: the guardian names what is
+missing, a person (or the worker's next run) fixes it.
 
 Aziz, 2026-10-11: "make sure that it never breaks and it's actually syncing."
 """
@@ -95,15 +96,23 @@ def run_coverage(ctx: Context) -> Result:
 
 
 def run_unmatched(ctx: Context) -> Result:
+    """Calls with no client over 7 days. An impromptu recording still waiting for its client (a candidate) and one
+    the CSM set aside as not a 1-1 call (settled) are left out of the share and counted in the evidence
+    (docs/forms/STAGE2-CONTRACT.md section 9): the CSM's impromptu calls alone would push it over the line."""
     since = (ctx.now - timedelta(days=7)).isoformat()
-    calls = ctx.rows("cockpit_csm_calls", "id,task_id,source",
-                     where=[("starts_at", "gte", since), ("starts_at", "lte", ctx.now.isoformat()),
-                            ("source", "in", ["ghl_appointment", "fathom", "checkin_form"])])
+    rows = ctx.rows("cockpit_csm_calls", "id,task_id,source,candidate,settled_reason",
+                    where=[("starts_at", "gte", since), ("starts_at", "lte", ctx.now.isoformat()),
+                           ("source", "in", ["ghl_appointment", "fathom", "checkin_form"])])
+    candidates = [c for c in rows if c.get("candidate") is True]
+    settled = [c for c in rows if c.get("candidate") is not True and c.get("settled_reason")]
+    calls = [c for c in rows if c.get("candidate") is not True and not c.get("settled_reason")]
     if not calls:
-        return unknown("No call in the last 7 days to measure.")
+        return unknown("No call in the last 7 days to measure.",
+                       evidence={"calls": 0, "candidates": len(candidates), "settled": len(settled)})
     un = [c for c in calls if not c.get("task_id")]
     share = len(un) / len(calls)
-    ev = {"calls": len(calls), "unmatched": len(un), "share": round(share, 3)}
+    ev = {"calls": len(calls), "unmatched": len(un), "share": round(share, 3), "candidates": len(candidates),
+          "settled": len(settled)}
     if share > UNMATCHED_MAX:
         return warn(f"{len(un)} of {len(calls)} calls in the last 7 days ({share:.0%}) matched no client, over the "
                     f"{UNMATCHED_MAX:.0%} line.", evidence=ev,
@@ -113,7 +122,9 @@ def run_unmatched(ctx: Context) -> Result:
 
 
 def run_checkin_form(ctx: Context) -> Result:
-    rows = ctx.rows("cockpit_csm_call_forms", "submitted_at", where=[("form_id", "eq", "fRokTITH")],
+    # By kind, not by form: the Typeform fRokTITH rows today, the cockpit's own cockpit-checkin rows after the
+    # cut-over (docs/forms/STAGE2-CONTRACT.md 1.3).
+    rows = ctx.rows("cockpit_csm_call_forms", "submitted_at", where=[("form_kind", "eq", "checkin")],
                     order="submitted_at.desc", limit=1)
     if not rows:
         return fail("No 1-1 call notes form is stored.", action=f"Run the typeform source by hand ({RUNBOOK}).")
@@ -127,12 +138,61 @@ def run_checkin_form(ctx: Context) -> Result:
     return ok(f"The newest 1-1 call notes form came in {ago(age)} ago.")
 
 
+def _registered(detail: object) -> bool:
+    """detail->>'registered' = 'true' on the fathom-webhook sync row (cockpit_forms_key_put and _mark write it)."""
+    return isinstance(detail, dict) and str(detail.get("registered")).lower() == "true"
+
+
+def _pushed(meeting: dict) -> bool:
+    """A recording Fathom's webhook fires for: it holds a summary and is shared with a team (fathom-intake 6.3)."""
+    raw = meeting.get("raw") if isinstance(meeting.get("raw"), dict) else {}
+    return bool(str(meeting.get("summary") or "").strip()) and raw.get("shared_with") != "no_teams"
+
+
+def run_fathom_webhook(ctx: Context) -> Result:
+    """Fathom's push of each Customer Success recording (supabase/functions/fathom-webhook). Until the CEO registers
+    the webhook, or once it is unregistered, nothing is due: a note, never a warning (docs/forms/STAGE2-CONTRACT.md
+    A3, section 9). The 15-minute read brings the same recordings meanwhile. The pull when the notes open does too,
+    but only once the Fathom key is saved, and the guardian cannot read the vault (cockpit_forms_keys has no grant,
+    2.2), so the note never names the pull: with B7 open it would be false. Fathom pushes a recording only once its summary is ready, and only one shared with a team, so only those count
+    (A7 item 8): a day of short or unshared calls is nothing to deliver."""
+    rows = ctx.rows("cockpit_sync_state", "key,note,detail", where=[("key", "eq", "fathom-webhook")])
+    row = rows[0] if rows else {}
+    detail = row.get("detail") if isinstance(row.get("detail"), dict) else {}
+    if not _registered(detail):
+        off = parse_time(detail.get("unregisteredAt"))
+        lead = f"Unregistered at {kuwait(off)}" if off else "Not registered yet"
+        return ok(f"{lead}: calls arrive by the 15-minute read.", evidence={"registered": False})
+    since = (ctx.now - timedelta(hours=24)).isoformat()
+    seen = ctx.rows("cockpit_fathom_meetings", "recording_id,summary,raw",
+                    where=[("recorder_team", "eq", "Customer Success"), ("first_seen_at", "gte", since)])
+    due = [m for m in seen if _pushed(m)]
+    deliveries = ctx.rows("cockpit_fathom_webhook_deliveries", "outcome,last_at", where=[("last_at", "gte", since)])
+    count = {o: sum(1 for d in deliveries if d.get("outcome") == o) for o in ("stored", "ignored", "failed")}
+    n, stored = len(due), count["stored"]
+    ev = {"registered": True, "webhookIdLast4": detail.get("webhookIdLast4"), "csRecordings24h": len(seen),
+          "due24h": n, "stored24h": stored, "ignored24h": count["ignored"], "failed24h": count["failed"],
+          "note": clean(row.get("note"), 160)}
+    if n and not stored:
+        k = count["failed"]
+        failed = f" {k} deliver{'y' if k == 1 else 'ies'} failed in that time." if k else ""
+        return warn(f"The Fathom webhook stored no delivery in 24 h, while {n} Customer Success recording"
+                    f"{'' if n == 1 else 's'} with a summary, shared with a team, reached the store by the 15-minute "
+                    f"read or the pull.{failed}", evidence=ev)
+    return ok(f"The Fathom webhook stored {stored} deliver{'y' if stored == 1 else 'ies'} in 24 h; {n} Customer Success "
+              f"recording{'' if n == 1 else 's'} with a summary, shared with a team, reached the store.", evidence=ev)
+
+
 def run_evidence(ctx: Context) -> Result:
-    """Held calls in the last 7 days with a recording or a 1-1 form linked."""
+    """Held calls in the last 7 days with a recording or a 1-1 form linked. Only bookings on a client count, and that
+    is decided here, not by a filter: no filter op says IS NOT NULL, and ("task_id", "neq", None) is task_id <> null
+    through the read-only SQL door, which matches no row (the REST door's neq.None matched only by accident)."""
     since = (ctx.now - timedelta(days=7)).isoformat()
-    appts = ctx.rows("cockpit_csm_calls", "id,status,ends_at,starts_at",
-                     where=[("source", "eq", "ghl_appointment"), ("task_id", "neq", None), ("starts_at", "gte", since),
-                            ("starts_at", "lte", ctx.now.isoformat()), ("status", "in", ["confirmed", "showed", "held"])])
+    appts = [a for a in ctx.rows("cockpit_csm_calls", "id,task_id,status,ends_at,starts_at",
+                                 where=[("source", "eq", "ghl_appointment"), ("starts_at", "gte", since),
+                                        ("starts_at", "lte", ctx.now.isoformat()),
+                                        ("status", "in", ["confirmed", "showed", "held"])])
+             if a.get("task_id")]
     if not appts:
         return unknown("No held call in the last 7 days to measure.")
     ids = {a["id"] for a in appts}
@@ -209,14 +269,27 @@ CHECKS = [
           owner="the CSM lead", confirm=2, action="Book the listed clients."),
     Check(id="csm-calls-unmatched", area="workers", name="Calls matched to a client",
           means="Calls land on a client page rather than in the unmatched queue.", severity="medium",
-          reads="cockpit_csm_calls over 7 days", threshold=f"Over {UNMATCHED_MAX:.0%} unmatched: warn.",
+          reads="cockpit_csm_calls over 7 days, leaving out candidates (impromptu recordings waiting for a client) "
+                "and recordings set aside as not a 1-1 call",
+          threshold=f"Over {UNMATCHED_MAX:.0%} unmatched: warn.",
           run=run_unmatched, owner="the CSM lead", confirm=3,
           action="Work the queue; fix the Client ID field on the GoHighLevel contacts it names."),
     Check(id="csm-checkin-form", area="workers", name="1-1 call notes keep coming",
           means="The 1-1 call notes form is sent after calls and reaches the store.", severity="medium",
-          reads="max(submitted_at) of cockpit_csm_call_forms fRokTITH",
+          reads="max(submitted_at) of cockpit_csm_call_forms with form_kind checkin",
           threshold=f"Older than {FORM_MAX_DAYS} days: warn.", run=run_checkin_form, owner="the CSM lead",
           confirm=2, action="Ask the CSMs for their notes; compare Typeform with the store."),
+    Check(id="csm-fathom-webhook", area="workers", name="Fathom webhook delivers",
+          means="Fathom pushes each Customer Success recording to the cockpit within minutes of the call.",
+          severity="low",
+          reads="cockpit_sync_state fathom-webhook (detail.registered), cockpit_fathom_webhook_deliveries, and the "
+                "Customer Success rows of cockpit_fathom_meetings first seen in 24 h that hold a summary and whose "
+                "raw shared_with is not no_teams (Fathom pushes only those)",
+          threshold="Registered, a Customer Success recording first seen in the last 24 h that holds a summary and is "
+                    "shared with a team, and no stored delivery in 24 h: warn.",
+          run=run_fathom_webhook, owner="the tech lead", confirm=2,
+          action="The poll still runs every 15 minutes. Check the webhook in Fathom's settings, or register it again "
+                 "(RUNBOOK, 1-1 notes in the cockpit)."),
     Check(id="csm-call-evidence", area="workers", name="Held calls have a recording or notes",
           means="Most held calls carry a Fathom recording or a 1-1 form.", severity="low",
           reads="held GoHighLevel calls over 7 days and their linked recordings and forms",

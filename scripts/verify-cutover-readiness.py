@@ -152,6 +152,45 @@ RELEVANT_TEST_FILES = [
     "apps/creative-director-cockpit/scripts/blueprint.test.tsx",
     "apps/creative-director-cockpit/scripts/blueprint-notices.test.tsx",
     "hermes/cockpit-sync/creative-fields.test.ts",
+    # The 1-1 notes in the cockpit (docs/forms/STAGE2-CONTRACT.md sections 9 and 11, 2026-10-28): each passes
+    # as `bun test <path>` from the repo root, and test_forms_key.py through the unittest path below. The
+    # guardian's Python tests stay out for the reason above; form-contract, csm-page and workflows are listed.
+    "apps/media-buyer-cockpit/scripts/forms-core-supabase.test.ts",
+    "apps/media-buyer-cockpit/scripts/fathom-intake-supabase.test.ts",
+    "apps/media-buyer-cockpit/scripts/checkin-plans-supabase.test.ts",
+    "apps/media-buyer-cockpit/scripts/checkin-replay.test.ts",
+    # The three migrations applied twice with one shadow submit through the real planner, every changed file owned
+    # (section 10), and the worker, the pull and the webhook writing the same call row (A7.2).
+    "apps/media-buyer-cockpit/scripts/stage2a-fit-supabase.test.ts",
+    "apps/media-buyer-cockpit/scripts/stage2a-ownership.test.ts",
+    "apps/media-buyer-cockpit/scripts/stage2a-writers.test.ts",
+    "apps/media-buyer-cockpit/scripts/forms-connections.test.tsx",
+    "hermes/csm-calls/callMatch.test.ts",
+    "hermes/csm-calls/fathomRules.test.ts",
+    "hermes/csm-calls/lib.test.ts",
+    "hermes/csm-calls/sources.test.ts",
+    "hermes/csm-calls/match.test.ts",
+    "hermes/csm-calls/rollback.test.ts",
+    "supabase/functions/fathom-webhook/verify.test.ts",
+    "supabase/functions/fathom-webhook/handler.test.ts",
+    "supabase/functions/cockpit-forms-api/door.test.ts",
+    "supabase/functions/cockpit-forms-api/calls.test.ts",
+    "supabase/functions/cockpit-forms-api/drafts.test.ts",
+    "supabase/functions/cockpit-forms-api/prompts.test.ts",
+    "supabase/functions/cockpit-forms-api/recapRules.test.ts",
+    "supabase/functions/cockpit-forms-api/transcript.test.ts",
+    "supabase/functions/cockpit-forms-api/doctor.test.ts",
+    "supabase/functions/cockpit-forms-api/typeform.test.ts",
+    "supabase/functions/cockpit-media-api/model.test.ts",
+    "scripts/dev/test_forms_key.py",
+    "apps/client-success-cockpit/scripts/checkin-form.test.ts",
+    "apps/client-success-cockpit/scripts/field-saver.test.ts",
+    "apps/client-success-cockpit/scripts/checkin-trail.test.ts",
+    "apps/client-success-cockpit/scripts/checkin-window.test.tsx",
+    "apps/client-success-cockpit/scripts/after-calls.test.tsx",
+    "apps/client-success-cockpit/scripts/forms-button.test.tsx",
+    "apps/client-success-cockpit/scripts/client-calls.test.tsx",
+    "apps/client-success-cockpit/scripts/blueprint-saver.test.ts",
 ]
 
 MANDATORY_EVIDENCE_SUBCHECKS: Dict[str, List[str]] = {

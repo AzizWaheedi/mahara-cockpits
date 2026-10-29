@@ -50,6 +50,53 @@ export function PageHeader({
   );
 }
 
+/** A card with a title row, for the list screens. */
+export function SectionCard({
+  title,
+  count,
+  sub,
+  action,
+  children,
+  flush,
+}: {
+  title: ReactNode;
+  count?: number;
+  sub?: ReactNode;
+  action?: ReactNode;
+  children: ReactNode;
+  /** The body is a divided list that runs edge to edge under a divider. */
+  flush?: boolean;
+}) {
+  return (
+    <section className="rounded-2xl border bg-card">
+      <div
+        className={cn(
+          "flex flex-wrap items-start justify-between gap-x-3 gap-y-2 px-4 pt-4 sm:px-6 sm:pt-6",
+          flush ? "border-b pb-4" : "",
+        )}
+      >
+        <div className="min-w-0">
+          <h2 className="text-[15px] font-semibold">
+            {title}
+            {count !== undefined ? (
+              <span className="ml-1.5 font-normal text-muted-foreground tabular-nums">
+                {count}
+              </span>
+            ) : null}
+          </h2>
+          {sub ? (
+            <p className="mt-1 text-xs text-muted-foreground">{sub}</p>
+          ) : null}
+        </div>
+        {action}
+      </div>
+      <div className={flush ? "divide-y" : "px-4 pt-4 pb-4 sm:px-6 sm:pb-6"}>
+        {children}
+      </div>
+    </section>
+  );
+}
+
 /**
  * One stat tile: a label, the number in Geist, an optional line under it.
  * `plain` is for tiles that sit inside a card (a quiet panel, no border).
@@ -224,23 +271,29 @@ export function ExtLink({
   );
 }
 
-/** The mono kicker above a group of rows: three words at most. */
+/**
+ * The mono kicker above a group of rows: three words at most. `as` makes it
+ * a heading with the same look, where it names a section a screen reader
+ * should find (the 1-1 notes window's sections).
+ */
 export function Kicker({
   children,
   className,
+  as: Tag = "div",
 }: {
   children: ReactNode;
   className?: string;
+  as?: "div" | "h2" | "h3";
 }) {
   return (
-    <div
+    <Tag
       className={cn(
         "font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground",
         className,
       )}
     >
       {children}
-    </div>
+    </Tag>
   );
 }
 

@@ -20,6 +20,7 @@ import {
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AdBillingDailyTask } from "@/components/AdBillingReview";
+import { AfterCalls, NotesNudge, TypeformMark } from "@/components/AfterCalls";
 import {
   ClientCallerChip,
   ClientCallerLine,
@@ -36,6 +37,7 @@ import {
 } from "@/components/ClientCalls";
 import { ClientCheckIn } from "@/components/ClientCheckIn";
 import { ClientWhatsApp } from "@/components/ClientWhatsApp";
+import { FormsButton } from "@/components/FormsButton";
 import {
   Chip,
   Dot,
@@ -45,6 +47,7 @@ import {
   PageHeader,
   Pill,
   PillRow,
+  SectionCard,
   StatTile,
   type Tone,
 } from "@/components/kit";
@@ -59,13 +62,13 @@ import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
-import { FillFormButton, useFormNews } from "@/forms/OpenFormButton";
+import { useFormNews } from "@/forms/OpenFormButton";
 import { useFormSend } from "@/forms/useFormSend";
 import { type Caller, useClientCallers } from "@/lib/callCentreClient";
 import { readChurnPage } from "@/lib/churnClient";
 import type { MonthRow } from "@/lib/churnCore";
 import { useClientWhatsApp } from "@/lib/clientWhatsApp";
-import { kuwaitDayOf, logCall, staleSentence } from "@/lib/csmCalls";
+import { joinLink, kuwaitDayOf, logCall, staleSentence } from "@/lib/csmCalls";
 import { opportunitiesFor, rankOpportunities } from "@/lib/csmHotList";
 import { LINK_GROUPS } from "@/lib/csmLinks";
 import {
@@ -114,16 +117,13 @@ import {
   sentence,
   shortDay,
 } from "@/lib/format";
+import { useCheckinEntry } from "@/lib/formsRegistry";
 import { useNotCalled } from "@/lib/notCalled";
 import {
   readOnboardingKits,
   refreshOnboardingKits,
 } from "@/lib/onboardingClient";
-import {
-  checkinFormLink,
-  type KitsPage,
-  type OnboardingRow,
-} from "@/lib/onboardingCore";
+import type { KitsPage, OnboardingRow } from "@/lib/onboardingCore";
 import { publishOpenClient } from "@/lib/openClient";
 import { fetchClientProfile } from "@/lib/performance";
 import { eodDeliveryNote } from "@/lib/personalEod";
@@ -475,53 +475,6 @@ function LevelDot({ level }: { level?: string }) {
   );
 }
 
-/** A card with a title row, for the list screens. */
-function SectionCard({
-  title,
-  count,
-  sub,
-  action,
-  children,
-  flush,
-}: {
-  title: ReactNode;
-  count?: number;
-  sub?: ReactNode;
-  action?: ReactNode;
-  children: ReactNode;
-  /** The body is a divided list that runs edge to edge under a divider. */
-  flush?: boolean;
-}) {
-  return (
-    <section className="rounded-2xl border bg-card">
-      <div
-        className={cn(
-          "flex flex-wrap items-start justify-between gap-x-3 gap-y-2 px-4 pt-4 sm:px-6 sm:pt-6",
-          flush ? "border-b pb-4" : "",
-        )}
-      >
-        <div className="min-w-0">
-          <h2 className="text-[15px] font-semibold">
-            {title}
-            {count !== undefined ? (
-              <span className="ml-1.5 font-normal text-muted-foreground tabular-nums">
-                {count}
-              </span>
-            ) : null}
-          </h2>
-          {sub ? (
-            <p className="mt-1 text-xs text-muted-foreground">{sub}</p>
-          ) : null}
-        </div>
-        {action}
-      </div>
-      <div className={flush ? "divide-y" : "px-4 pt-4 pb-4 sm:px-6 sm:pb-6"}>
-        {children}
-      </div>
-    </section>
-  );
-}
-
 // biome-ignore lint/suspicious/noExplicitAny: snapshot payload is untyped by design
 type Client = any;
 
@@ -849,15 +802,13 @@ function TemplatePicker({
           </span>
         )}
         {c.noteMissing && (
-          <a
+          <NotesNudge
+            taskId={String(c.taskId)}
+            lastCall={c.lastCallAt ?? c.lastCall ?? null}
             className="inline-flex items-center gap-1.5 font-medium txt-bad underline-offset-4 hover:underline"
-            href={checkinFormLink(c.taskId)}
-            target="_blank"
-            rel="noreferrer"
           >
             1-1 notes missing for the last call
-            <ArrowUpRight aria-hidden className="size-3.5" />
-          </a>
+          </NotesNudge>
         )}
       </div>
       {justSent && (
@@ -1442,6 +1393,8 @@ function kitErrorText(error: unknown): string {
 function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
   const auth = useCockpitAuth();
   const sb = useCsmSnapshot(auth.client, auth.clients);
+  /** Where 1-1 notes go: the Typeform until the cut-over, then the cockpit. */
+  const entry = useCheckinEntry();
   const {
     snap,
     toggleCheck,
@@ -1686,6 +1639,11 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
   useFormNews(news => {
     if (news.type === "sent") toast.success(news.say);
     setKitNews(n => n + 1);
+    // 1-1 notes: the client's calls and Today's flags read again.
+    if (news.form === "checkin") {
+      calls.reload();
+      void sb.refetch();
+    }
   });
   // biome-ignore lint/correctness/useExhaustiveDependencies: kitNews only asks for a fresh read
   useEffect(() => {
@@ -2161,23 +2119,27 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                   See this client's data
                 </a>
               ) : null}
-              {/* The kickoff, a click away while it is still to fill
-                  (docs/csm-forms/KICKOFF.md 1): not once it is on record
-                  or sent from the cockpit. */}
+              {/* The client's forms in one control (docs/forms/STAGE2-
+                  CONTRACT.md 8.6): "Write 1-1 notes", and in its menu the
+                  kickoff while it is still to fill (docs/csm-forms/
+                  KICKOFF.md 1): not once it is on record or sent from the
+                  cockpit. */}
               {(() => {
                 const kit = kitOf(c);
-                return kit !== undefined &&
-                  !kit?.forms?.kickoff &&
-                  !kickSend &&
-                  (kit ? kit.in_onboarding : c.bucket === "onboarding") ? (
-                  <FillFormButton
+                return (
+                  <FormsButton
                     taskId={String(c.taskId)}
-                    form="kickoff"
-                    variant="outline"
-                  >
-                    Fill the kickoff
-                  </FillFormButton>
-                ) : null;
+                    noteMissing={Boolean(c.noteMissing)}
+                    lastCall={c.lastCall ?? null}
+                    lastCallAt={c.lastCallAt ?? null}
+                    kickoff={
+                      kit !== undefined &&
+                      !kit?.forms?.kickoff &&
+                      !kickSend &&
+                      (kit ? kit.in_onboarding : c.bucket === "onboarding")
+                    }
+                  />
+                );
               })()}
               <PresentButton
                 taskId={String(c.taskId)}
@@ -2220,10 +2182,17 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               <>
                 {" · "}
                 <NextCallLine at={c.nextCallAt} kind={c.nextCallKind} />
+                {/* Undefined from an older summary: unknown, not "no link". */}
+                {c.nextCallJoinUrl !== undefined && !c.nextCallJoinUrl
+                  ? " · No meeting link yet. Confirm the booking in GoHighLevel."
+                  : null}
               </>
             ) : (
               " · no call booked"
             )}
+            {/* Outside the next call: a call in progress has left nextCallAt
+                but keeps its Join until it ends. */}
+            <JoinLine c={c} />
             {" · 1-1 notes "}
             {c.lastNoteOn ? shortDay(c.lastNoteOn) : "none"}
             {sm.dwy ? "" : " · report "}
@@ -2314,8 +2283,24 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                 dir="auto"
               />
               <div className="flex flex-wrap gap-2">
+                {/* The record of the call, and the one writer of Last POC
+                    and Last Check-in Call (docs/forms/STAGE2-CONTRACT.md
+                    8.6, Y28). */}
                 <Button
                   size="sm"
+                  onClick={() =>
+                    entry.open(
+                      String(c.taskId),
+                      c.lastCallAt ?? c.lastCall ?? null,
+                    )
+                  }
+                >
+                  Write 1-1 notes
+                  <TypeformMark entry={entry} />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
                   onClick={async () => {
                     if (!auth.client) return;
                     try {
@@ -2341,7 +2326,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                     }
                   }}
                 >
-                  Log the call and summary
+                  Log the call without notes
                 </Button>
                 <Button
                   size="sm"
@@ -2364,11 +2349,9 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                 />
               </div>
               <p className="text-xs text-muted-foreground">
-                The call summary form is still the record of the call:{" "}
-                <ExtLink href={checkinFormLink(c.taskId)}>
-                  1-1 call summary form
-                </ExtLink>
-                .
+                {entry.provider === "native"
+                  ? "1-1 notes are the record of the call: they update the card, post the grade and draft the client's recap."
+                  : "1-1 notes are the record of the call. Until the switch-over they go through the Typeform."}
               </p>
             </div>
           )}
@@ -3055,6 +3038,8 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
 
       {section === "today" && <TodaysCalls snap={snap} />}
 
+      {section === "today" && <AfterCalls snap={snap} />}
+
       {section === "today" && <CallList />}
 
       {section === "today" && (
@@ -3208,6 +3193,15 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                           >
                             Open the client
                           </Link>
+                          {/1-1 call notes form not submitted/i.test(l) ? (
+                            <NotesNudge
+                              taskId={String(c.taskId)}
+                              lastCall={c.lastCallAt ?? c.lastCall ?? null}
+                              className="text-primary underline-offset-4 hover:underline"
+                            >
+                              Write 1-1 notes
+                            </NotesNudge>
+                          ) : null}
                           {c.taskUrl ? (
                             <ExtLink href={c.taskUrl}>ClickUp card</ExtLink>
                           ) : null}
@@ -4371,6 +4365,31 @@ function apptTime(iso: string): string {
   // GHL already returns Kuwait time, so the clock in the string is the clock on the wall.
   const hhmm = iso.slice(11, 16);
   return hhmm || iso;
+}
+
+/**
+ * The meeting link in the header line (docs/forms/STAGE2-CONTRACT.md 8.3,
+ * Y24): `joinLink` on the summary's booking to join, checked again every 30
+ * seconds, so it shows 15 minutes before the call and goes when it ends. A
+ * booked call with no link says so beside the next call, not here.
+ */
+function JoinLine({ c }: { c: Parameters<typeof joinLink>[0] }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
+  const link = joinLink(c, now);
+  if (!link) return null;
+  return (
+    <>
+      {" · "}
+      {/* The ink teal: Mahara Teal is about 1.8:1 on the light page. */}
+      <ExtLink href={link.href} className="text-primary-ink">
+        {link.label}
+      </ExtLink>
+    </>
+  );
 }
 
 /**

@@ -1,9 +1,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { CalendarClock, FileText, Mic, Video } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Chip, ExtLink, Kicker, type Tone } from "@/components/kit";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   answerText,
   CALL_NAMES,
@@ -13,7 +19,9 @@ import {
   readClientTimeline,
   readTranscript,
   readUnmatched,
+  type SettleReason,
   type SourceHealth,
+  settleCandidate,
   staleSentence,
   type Timeline,
   type TimelineCall,
@@ -448,6 +456,17 @@ export function FormsHistory({ timeline }: { timeline: Timeline | null }) {
   );
 }
 
+/**
+ * Why an impromptu recording is not a 1-1 call (docs/forms/STAGE2-CONTRACT.md
+ * 8.3): set aside, it leaves the queue and stays on no client.
+ */
+export const NOT_A_CHECKIN: { reason: SettleReason; label: string }[] = [
+  { reason: "part_of_call", label: "Part of another call" },
+  { reason: "onboarding", label: "An onboarding call" },
+  { reason: "blueprint", label: "A Blueprint call" },
+  { reason: "not_client", label: "Not a client" },
+];
+
 /** Calls and forms that matched no client: one click puts each on this client. */
 export function UnmatchedQueue({
   client,
@@ -469,7 +488,38 @@ export function UnmatchedQueue({
       .catch(() => setItems(null));
   }, [client]);
   useEffect(load, [load]);
-  if (!items?.length) return null;
+  // A row that leaves (put here, or set aside) takes its buttons with it:
+  // focus goes to the same place in the next row, else the row before, else
+  // the line that says nothing is left. While a row's call runs its buttons
+  // stay focusable (said unavailable), so a menu that closes gives focus back.
+  const listRef = useRef<HTMLUListElement>(null);
+  const doneRef = useRef<HTMLParagraphElement>(null);
+  const [refocus, setRefocus] = useState<number | null>(null);
+  const [cleared, setCleared] = useState(false);
+  useEffect(() => {
+    if (refocus === null) return;
+    setRefocus(null);
+    const rows = Array.from(listRef.current?.children ?? []);
+    const row = rows[Math.min(refocus, rows.length - 1)];
+    (row?.querySelector("button") ?? doneRef.current)?.focus();
+  }, [refocus]);
+  const leave = (id: number) => {
+    const list = items ?? [];
+    const at = list.findIndex(x => x.id === id);
+    if (list.length === 1 && at === 0) setCleared(true);
+    setItems(v => (v ?? []).filter(x => x.id !== id));
+    setRefocus(Math.max(0, at));
+  };
+  if (!items?.length)
+    return cleared ? (
+      <p
+        ref={doneRef}
+        tabIndex={-1}
+        className="rounded-2xl border bg-card px-4 py-3 text-sm text-muted-foreground outline-none sm:px-6"
+      >
+        No calls or forms left to place.
+      </p>
+    ) : null;
   return (
     <details className="group rounded-2xl border bg-card">
       <summary className="flex cursor-pointer flex-wrap items-baseline gap-2 px-4 py-3 text-sm sm:px-6">
@@ -482,7 +532,7 @@ export function UnmatchedQueue({
           If one is {clientName}, put it here.
         </span>
       </summary>
-      <ul className="divide-y border-t">
+      <ul ref={listRef} className="divide-y border-t">
         {items.map(u => (
           <li
             key={u.id}
@@ -503,27 +553,76 @@ export function UnmatchedQueue({
                 {u.hint ? ` · ${u.hint}` : ""} · {u.reason}
               </div>
             </div>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy === u.id}
-              onClick={async () => {
-                if (!client) return;
-                setBusy(u.id);
-                try {
-                  await matchUnmatched(client, u.id, taskId);
-                  toast.success(`Saved on ${clientName}`);
-                  setItems(v => (v ?? []).filter(x => x.id !== u.id));
-                  onMatched();
-                } catch (e) {
-                  toast.error((e as Error).message);
-                } finally {
-                  setBusy(null);
-                }
-              }}
-            >
-              This is {clientName}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="aria-disabled:opacity-50"
+                aria-disabled={busy === u.id || undefined}
+                onClick={async () => {
+                  if (!client || busy !== null) return;
+                  setBusy(u.id);
+                  try {
+                    await matchUnmatched(client, u.id, taskId);
+                    toast.success(`Saved on ${clientName}`);
+                    leave(u.id);
+                    onMatched();
+                  } catch (e) {
+                    toast.error((e as Error).message);
+                  } finally {
+                    setBusy(null);
+                  }
+                }}
+              >
+                This is {clientName}
+              </Button>
+              {/* An impromptu recording that is no check-in (a Blueprint call
+                  in an impromptu room, its second half, a supplier) leaves
+                  the queue without a client. */}
+              {u.candidate ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="aria-disabled:opacity-50"
+                      aria-disabled={busy === u.id || undefined}
+                      // While the row's call runs the menu does not open.
+                      onPointerDown={e => {
+                        if (busy !== null) e.preventDefault();
+                      }}
+                      onKeyDown={e => {
+                        if (busy !== null) e.preventDefault();
+                      }}
+                    >
+                      Not a 1-1 call
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {NOT_A_CHECKIN.map(r => (
+                      <DropdownMenuItem
+                        key={r.reason}
+                        onSelect={async () => {
+                          if (!client || busy !== null) return;
+                          setBusy(u.id);
+                          try {
+                            await settleCandidate(client, u.id, r.reason);
+                            toast.success("Set aside: not a 1-1 call.");
+                            leave(u.id);
+                          } catch (e) {
+                            toast.error((e as Error).message);
+                          } finally {
+                            setBusy(null);
+                          }
+                        }}
+                      >
+                        {r.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
+            </div>
           </li>
         ))}
       </ul>

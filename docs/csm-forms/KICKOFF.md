@@ -531,6 +531,8 @@ And the CSS the panel's class names need, beyond Tailwind's own:
 the card's Client Happiness or Last POC changed after the send (Make 06,
 route 1).
 
+Superseded: the 1-1 notes are native (PLAN D7, docs/forms/STAGE2-CONTRACT.md).
+
 ---
 
 ## 3. The side panel during the call

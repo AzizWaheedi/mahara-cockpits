@@ -329,3 +329,80 @@ export function webTools(health:(row:Record<string,unknown>)=>Promise<void>,requ
   }finally{clearTimeout(timer);}
  }};
 }
+
+/**
+ * Fathom reads for the 1-1 notes (docs/forms/STAGE2-CONTRACT.md 6.3): the
+ * meetings list, one recording's summary or transcript, and the users list
+ * that proves the key is an admin's. GET only, on four fixed paths. The query
+ * is written by hand so teams[] and recorded_by[] keep their brackets (Fathom
+ * ignores a filter without them and answers with the CEO's private meetings),
+ * and only values are encoded. Every call writes an intent row before it
+ * leaves and one response or unknown row after; a row that cannot be saved
+ * throws, so no call goes out without one. The resource is the worker's form
+ * (api.fathom.ai/external/v1/recordings/:id/summary), so its good receipts and
+ * these clear the same native monitor rows. A 4xx (429 included) is a refusal
+ * with Fathom's rate headers; a 5xx, a timeout or a body that is not a JSON
+ * object is unknown. meetings() also drops every item outside the teams or
+ * recorders asked for, and says how many it dropped (body.dropped).
+ */
+export type FathomHealthRow={provider:'fathom';method:'GET';resource:string;phase:'intent'|'response'|'unknown';http_status?:number|null;object_id?:string|null};
+export type FathomLimit={limit:number|null;remaining:number|null;reset:number|null};
+export type FathomAnswer=
+ |{kind:'ok';body:Record<string,unknown>;limit:FathomLimit}
+ |{kind:'refused';status:number;retryAfter:number|null;limit:FathomLimit}
+ |{kind:'unknown'};
+const FATHOM_API='https://api.fathom.ai/external/v1';
+const FATHOM_PATH=/^\/(?:meetings|users|recordings\/\d{3,20}\/(?:summary|transcript))$/;
+const fathomObj=(v:unknown):v is Record<string,unknown>=>typeof v==='object'&&v!==null&&!Array.isArray(v);
+const fathomNum=(v:string|null):number|null=>{if(v===null||v.trim()==='')return null;const n=Number(v);return Number.isFinite(n)?n:null;};
+export function fathomTools(key:string,health:(row:FathomHealthRow)=>Promise<void>,request:typeof fetch=fetch){
+ if(!key)throw Error('FATHOM key is not configured');
+ async function get(path:string,query:[string,string][]):Promise<FathomAnswer>{
+  if(!FATHOM_PATH.test(path))throw Error('Invalid Fathom resource');
+  const row={provider:'fathom' as const,method:'GET' as const,resource:`api.fathom.ai/external/v1${path.replace(/\/\d{3,20}(?=\/)/,'/:id')}`,object_id:null};
+  await health({...row,phase:'intent'});
+  const qs=query.map(([k,v])=>`${k}=${encodeURIComponent(v)}`).join('&');
+  let response:Response;
+  try{response=await request(`${FATHOM_API}${path}${qs?`?${qs}`:''}`,{method:'GET',redirect:'error',headers:{'X-Api-Key':key,Accept:'application/json'},signal:AbortSignal.timeout(25000)});}
+  catch{await health({...row,phase:'unknown'});return {kind:'unknown'};}
+  const limit={limit:fathomNum(response.headers.get('ratelimit-limit')),remaining:fathomNum(response.headers.get('ratelimit-remaining')),reset:fathomNum(response.headers.get('ratelimit-reset'))};
+  if(response.status>=400&&response.status<500){
+   await response.body?.cancel().catch(()=>{});
+   await health({...row,phase:'response',http_status:response.status});
+   const after=fathomNum(response.headers.get('retry-after'));
+   return {kind:'refused',status:response.status,retryAfter:after!==null&&after>0?Math.ceil(after):null,limit};
+  }
+  let body:unknown=null;
+  if(response.ok){try{body=await response.json();}catch{body=null;}}else await response.body?.cancel().catch(()=>{});
+  if(!response.ok||!fathomObj(body)){await health({...row,phase:'unknown',http_status:response.status});return {kind:'unknown'};}
+  await health({...row,phase:'response',http_status:response.status});
+  return {kind:'ok',body,limit};
+ }
+ return {
+  async meetings(q:{createdAfter:string;createdBefore?:string;teams?:string[];recordedBy?:string[];includeActionItems?:boolean;includeSummary?:boolean;includeTranscript?:boolean;cursor?:string}):Promise<FathomAnswer>{
+   const query:[string,string][]=[['created_after',q.createdAfter]];
+   if(q.createdBefore)query.push(['created_before',q.createdBefore]);
+   for(const t of q.teams??[])query.push(['teams[]',t]);
+   for(const e of q.recordedBy??[])query.push(['recorded_by[]',e]);
+   if(q.includeActionItems)query.push(['include_action_items','true']);
+   if(q.includeSummary)query.push(['include_summary','true']);
+   if(q.includeTranscript)query.push(['include_transcript','true']);
+   if(q.cursor)query.push(['cursor',q.cursor]);
+   const answer=await get('/meetings',query);
+   if(answer.kind!=='ok')return answer;
+   const teams=q.teams?.length?new Set(q.teams):null,people=q.recordedBy?.length?new Set(q.recordedBy.map(e=>e.trim().toLowerCase())):null;
+   const items=Array.isArray(answer.body.items)?answer.body.items:[];
+   const kept=items.filter(m=>{
+    const by=fathomObj(m)&&fathomObj(m.recorded_by)?m.recorded_by:{};
+    return (!teams||teams.has(String(by.team??'')))&&(!people||people.has(String(by.email??'').trim().toLowerCase()));
+   });
+   return {...answer,body:{...answer.body,items:kept,dropped:items.length-kept.length}};
+  },
+  recording(id:string,part:'summary'|'transcript'):Promise<FathomAnswer>{
+   if(!/^\d{3,20}$/.test(id)||(part!=='summary'&&part!=='transcript'))throw Error('Invalid Fathom resource');
+   return get(`/recordings/${id}/${part}`,[]);
+  },
+  users():Promise<FathomAnswer>{return get('/users',[]);},
+ };
+}
+export type FathomTools=ReturnType<typeof fathomTools>;

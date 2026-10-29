@@ -75,6 +75,7 @@ import type {
   RenewalEvidence,
   TermClient,
 } from "@/types/ceo/payloads";
+import { FormsConnections } from "./FormsConnections";
 import type { CeoTabProps } from "./types";
 import {
   clientNumbers,
@@ -441,6 +442,10 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
     </SectionCard>
   );
 
+  // The keys of the 1-1 notes (docs/forms/STAGE2-CONTRACT.md 8.7): its own
+  // reads, so it shows whether or not the roster has numbers yet.
+  const connections = <FormsConnections order={1} />;
+
   // One empty state for the whole roster, not six stacked ones.
   if (!payload)
     return (
@@ -448,6 +453,7 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
         <SectionCard title="Clients" section={clients}>
           {() => null}
         </SectionCard>
+        {connections}
         {portalCard}
         <NotMeasured order={8} />
       </div>
@@ -472,6 +478,8 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
         >
           {p => <Book payload={p} high={high} medium={medium} />}
         </SectionCard>
+
+        {connections}
 
         <SectionCard
           kicker="Right now"

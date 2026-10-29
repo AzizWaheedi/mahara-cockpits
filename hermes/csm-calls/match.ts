@@ -1,8 +1,11 @@
 /**
  * Pure rules for the CSM calls worker: who a call or form belongs to, what kind
  * of call it is, its status, and which media buyer changes belong on a client.
- * No I/O here, so every rule has a test (match.test.ts).
+ * No I/O here, so every rule has a test (match.test.ts). The one import is the
+ * matcher's room rule, with its extension: an Edge Function bundles this file.
  */
+import { normalizeRoom, SAME_ROOM_WINDOW_MIN } from "./callMatch.ts";
+
 export type Row = Record<string, any>;
 
 /** A client card. `stopped` is a card whose stage says the work has ended. */
@@ -175,9 +178,14 @@ export type Appt = {
   taskId?: string | null;
   startsAt: number;
   emails: string[];
+  /** The booking's room, normalizeRoom of its join link; null when it has none or is gone. */
+  room?: string | null;
 };
 
-/** Fathom meeting: appointment time with an invitee's email, then email/domain, then name. */
+/**
+ * Fathom meeting: the same room as one client's booking, then appointment time
+ * with an invitee's email, then email/domain, then name.
+ */
 export function matchMeeting(
   meeting: Row,
   appts: Appt[],
@@ -193,6 +201,21 @@ export function matchMeeting(
   const start = Date.parse(
     meeting.recording_start_time ?? meeting.scheduled_start_time ?? meeting.created_at,
   );
+  // Rooms are reused on other days (personal rooms, recurring links), so a room
+  // proves the call only within SAME_ROOM_WINDOW_MIN of the booking, and only when
+  // every booking in that window with that room is one client's (the closest wins).
+  const room = normalizeRoom(meeting.meeting_url);
+  if (room && Number.isFinite(start)) {
+    const same = appts
+      .filter(a => a.room === room && Math.abs(a.startsAt - start) <= SAME_ROOM_WINDOW_MIN * 60_000)
+      .sort(
+        (a, b) =>
+          Math.abs(a.startsAt - start) - Math.abs(b.startsAt - start) || a.startsAt - b.startsAt || a.id - b.id,
+      );
+    const best = same[0];
+    if (best?.taskId && same.every(a => a.taskId === best.taskId))
+      return { taskId: best.taskId, method: "same_room", confidence: 1, apptId: best.id };
+  }
   if (Number.isFinite(start)) {
     const near = appts
       .filter(

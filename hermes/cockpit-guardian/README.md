@@ -399,6 +399,7 @@ the box.
 | Kickoff card updated reply queue | A late kickoff's reply (`kickoff.updated`) whose turn passed over 30 minutes ago, one sending or unknown that long, or one failed in 24 h. It waits on purpose, checking every 10 minutes for the card's Kickoff Handoff comment for up to 48 hours, so it is read by `next_attempt_at`, not by when it was made | the tech lead | The sender is not running: as the row above. A reply that waits is not a fault; the late notice above it is what the team acts on |
 | Brand Blueprint press queue | A Brand Blueprint press in `cockpit_creative_outbox` stayed pending, or sending, over 10 minutes (the drain runs every 2 minutes; a run takes seconds), or one failed in 24 h | the tech lead | Read the press's error on the Blueprint card and `creative-drain-kick` in `cockpit_sync_state`. A press that failed after 30 minutes or 3 refusals is pressed again from the card once its cause is fixed. One still `sending` lost its run part way: check the card against its journal, then settle it by hand (`RUNBOOK.md`, Brand Blueprint press drain) |
 | Brand Blueprint press needing a look | A press is in `reconcile`: ClickUp took the writes but the read-back did not match. Nothing retries it | the tech lead | Check the card in ClickUp against the press first, then settle the row by hand. Never press again before looking |
+| Fathom webhook delivers | The webhook is registered, a Customer Success recording with a summary and shared with a team reached the store in the last 24 h (Fathom pushes only those, so a day of short or unshared calls is nothing due), and no delivery was stored in that time: Fathom stopped pushing, or the function refuses or fails its deliveries (the webhook deleted in Fathom's settings, the function down). Not registered yet, or unregistered: a note, nothing is due | the tech lead | Nothing is lost: the 15-minute read still brings every recording. Read the newest rows of `cockpit_fathom_webhook_deliveries` and the `fathom-webhook` note in `cockpit_sync_state`, check the webhook in Fathom's settings, or register it again with `scripts/dev/forms_key.py` (`RUNBOOK.md`, 1-1 notes in the cockpit) |
 
 ## Files
 
@@ -416,10 +417,13 @@ the box.
 Generated with `python3 guardian.py checks --json`.
 
 Two checks read a list in the code rather than a threshold. `edge-functions`
-expects 20 functions (`checks/edge_functions.py`); since Stage 1 of the forms
+expects 23 functions (`checks/edge_functions.py`); since Stage 1 of the forms
 program (`docs/forms/STAGE1-CONTRACT.md`) that includes `cockpit-notices` with
 verify_jwt off (pg_cron calls it with `x-cron-secret`) and
-`cockpit-creative-api` with it on. `pg-cron-jobs` expects 24 jobs
+`cockpit-creative-api` with it on, and since Stage 2a
+(`docs/forms/STAGE2-CONTRACT.md`) `cockpit-forms-api` with it on (the 1-1
+notes window's signed-in seats) and `fathom-webhook` with it off (Fathom signs
+each delivery and sends no JWT). `pg-cron-jobs` expects 24 jobs
 (`checks/pg_cron.py`), including `mahara-slack-notices` (20261025n, every
 minute) and `mahara-creative-drain` (20261025o, every 2 minutes). Both fail
 until those functions are deployed and those migrations applied, so the
@@ -440,6 +444,7 @@ kinds `blueprintLaunch`, `blueprintClose` and `blueprintOffer`.
 | `native-jobs` | C3 | ok false, or older than 3 times its interval (45 min at least): fail. `clickup-writeback:kpi` and `:dosdonts` run only 03:00-19:00 UTC, so only those hours count. |  |
 | `native-sources` | C7 | Any ok false: fail. |  |
 | `ask-ai-queue` | H12 | Jobs waiting while nothing finished for 20 min: fail; 10 or more new failures in an hour: warn. |  |
+| `csm-fathom-webhook` |  | Registered, a Customer Success recording first seen in the last 24 h that holds a summary and is shared with a team, and no stored delivery in 24 h: warn. |  |
 | `vps-memory` | H7 | Under 1024 MB available: warn; under 700 MB: fail (urgent with no swap); 3 scans in a row; clears only above 1536 MB, two scans in a row. |  |
 | `vps-tunnels` |  | More than 50: warn. |  |
 | `vps-disk` | H8 | Over 85%: warn; over 90%: fail (urgent). | gzip hermes's own logs over 50 MB (every line kept) |
