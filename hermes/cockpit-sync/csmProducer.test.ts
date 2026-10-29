@@ -22,6 +22,19 @@ test('cadence keeps inactive clients and excludes lost sales leads',()=>{
  assert.equal(result.clients.length,1); assert.equal(result.clients[0].bucket,'inactive'); assert.equal(result.clients[0].level,'blue');
 });
 
+test('every client past the first win gets the review ask, happy or not; the referral stays with happy clients',()=>{
+ const pick=(id:string,name:string)=>({id,value:0,type_config:{options:[{orderindex:0,name}]}});
+ const task=(id:string,happiness?:string)=>({id,name:id,url:'https://app.clickup.com/t/'+id,custom_fields:[pick(CF.status,'Active'),{id:CF.launchDate,value:String(Date.parse('2026-09-01T00:00:00Z'))},...happiness?[pick(CF.happiness,happiness)]:[]]});
+ const result=buildSnapshot({today:'2026-10-29',now:1,exts:[],notes:[],clientTasks:[task('happy','Happy'),task('atrisk','At Risk'),task('unrated')],csTasks:[],liveWatch:[],campaigns:[],changeLog:[]});
+ const kinds=(id:string)=>result.clients.find(c=>c.taskId===id||c.name===id)?.hot.map((h:{kind:string})=>h.kind);
+ assert.deepEqual(kinds('happy'),['Upsell','Referral','Google review']);
+ assert.deepEqual(kinds('atrisk'),['Google review']);
+ assert.deepEqual(kinds('unrated'),['Google review']);
+ const text=JSON.stringify(result.clients.map(c=>c.hot));
+ assert.ok(!/1,000 payout|testimonial-ready/.test(text));
+ assert.match(text,/\$500 for the first firm/);
+});
+
 test('sheet outcomes keep blank distinct from no and ignore future appointments for chase',()=>{
  const rows=appointmentRows([['Alpha','10/1/2026','10/8/2026'],['Beta','10/1/2026','10/2/2026','','','','','','','No']],{y:2026,m:10,d:4});
  const sums=summarise(rows); assert.equal(sums.upcoming,1); assert.equal(sums.noshows,1); assert.equal(sums.unknownOutcome,0);

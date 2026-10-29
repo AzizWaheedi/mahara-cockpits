@@ -10,7 +10,13 @@
  *
  * Every opportunity carries an opening ask and an objection-handling line, in English
  * and Arabic, drawn from the Client Communication SOP. Pitch wording is ours; the
- * commercial terms are his: referral pays $1,000 per closed construction or design firm.
+ * commercial terms are his: the referral programme pays $500 for the first firm, $750 for
+ * the second and the third, and $1,000 for each one after that, once the firm has been
+ * with us a month (the MaharaMedia Referral Program document).
+ *
+ * The Google review ask goes to every active client the same way and offers nothing back.
+ * Google removes reviews from a business that picks who to ask by how happy they are, or
+ * that gives anything for one, a review in return included.
  */
 
 import { type Client, humaniseDeep, type Lang, LINKS } from "./csmTemplates";
@@ -51,9 +57,9 @@ function happyClient(c: Client): boolean {
 }
 
 /**
- * Ask for the review and the referral only when the relationship has earned it: active,
+ * Ask for the referral and the podcast only when the relationship has earned it: active,
  * live over a month, happy on the record, and no money problem open. Asking a struggling
- * client for a referral is how you lose both.
+ * client for a referral is how you lose both. The review is not gated this way (reviewDue).
  */
 function earned(c: Client): boolean {
   return (
@@ -65,6 +71,14 @@ function earned(c: Client): boolean {
   );
 }
 
+/**
+ * Every active client past their first month gets the same review ask, happy or not.
+ * Asking only the happy ones is review gating, which Google's policy forbids.
+ */
+function reviewDue(c: Client): boolean {
+  return active(c) && (c.liveDays ?? 0) > 30;
+}
+
 export function opportunitiesFor(c: Client): Opportunity[] {
   return humaniseDeep(opportunitiesRaw(c));
 }
@@ -74,33 +88,37 @@ function opportunitiesRaw(c: Client): Opportunity[] {
   const n = first(c.name);
   const happy = happyClient(c);
 
-  if (earned(c)) {
+  if (reviewDue(c)) {
     out.push({
       key: `${c.taskId}:review`,
       client: c,
       name: c.name,
       type: "Review",
-      leadType: "Hot",
-      why: `Green for ${c.liveDays} days live, happiness ${c.happiness ?? "good"}, ask now while it's true`,
+      // The same warmth for every client, so the list never ranks the happy ones first.
+      leadType: "Warm",
+      why: `Live ${c.liveDays} days. Every active client gets the same review ask, happy or not`,
       pitch: lang =>
         lang === "ar"
-          ? `السلام عليكم ${n}، عساكم بخير.\n\nحبيت أتواصل معك بسرعة، الأمور ماشية زين وإحنا على الطريق الصح. تقدر تكتب لنا تقييم سريع على قوقل؟ شي بسيط عن تجربتك مع الدعم والتواصل والنتائج.\n\nوعشان تكون بالمثل، يسعدني أسوي نفس الشي لك إذا عندك مكان التقييمات تفيدك فيه.\n\nمافي أي ضغط، بس مثل ما تعرف السمعة كل شي لشركات مثلنا. إذا تمام عندك، هذا اللينك: ${LINKS.review}`
-          : `Hey ${n}, hope you're doing well.\n\nI wanted to reach out quickly since things are running smoothly and we're on the right track. Would you be open to leaving us a quick review on Google? Just something based on your experience with the support, the communication and the results.\n\nAnd to make it fair, I'd happily do the same for you if you have somewhere reviews help.\n\nNo pressure at all, but as you know reputation is everything for businesses like ours. If you're good with it, here's the link: ${LINKS.review}`,
+          ? `السلام عليكم ${n}، عساكم بخير.\n\nتقدر تكتب لنا تقييم على قوقل؟ كم سطر بصراحة عن تجربتك معانا، الدعم والتواصل والنتائج. هالشي يساعد الشركات اللي تفكر تشتغل معانا تقرر.\n\nما ياخذ أكثر من دقيقة: ${LINKS.review}`
+          : `Hey ${n}, hope you're doing well.\n\nWould you leave us a short review on Google? A few honest lines about working with us, the support, the communication and the results, help other firms decide.\n\nIt takes about a minute: ${LINKS.review}`,
       objection: {
         likely: "\u201cSure, send it later\u201d, then it never happens",
         answer: lang =>
           lang === "ar"
-            ? `تمام، أرسل لك اللينك الحين عشان ما ينسى: ${LINKS.review}, ثلاث أسطر تكفي، وأنا أسوي لك نفس الشي.`
-            : `Perfect, sending the link now so it doesn't get lost: ${LINKS.review}, three lines is plenty, and I'll do the same for you.`,
+            ? `أكيد، هذا اللينك الحين عشان ما يضيع: ${LINKS.review}. سطرين ثلاثة بصراحة تكفي.`
+            : `Of course, here's the link now so it doesn't get lost: ${LINKS.review}. Two or three honest lines are plenty.`,
       },
     });
+  }
+
+  if (earned(c)) {
     out.push({
       key: `${c.taskId}:podcast`,
       client: c,
       name: c.name,
       type: "Upsell - Service", // podcast guest, the detail is in why
       leadType: "Warm",
-      why: "Already happy and reviewing, the bigger ask lands best right after the small one",
+      why: "Happy on the record and live over a month, a bigger ask lands while that is true",
       pitch: lang =>
         lang === "ar"
           ? `أدري إن هذا طلب أكبر، بس إحنا نطور جانب البودكاست عندنا، ونتكلم فيه عن النمو مع أصحاب شركات مقاولات وتصميم. ممكن تكون فرصة زينة إن اسمك يوصل لناس أكثر. تقدر تعطينا من ١٠ إلى ٢٠ دقيقة مكالمة مع عزيز؟`
@@ -113,9 +131,6 @@ function opportunitiesRaw(c: Client): Opportunity[] {
             : `No camera needed, audio only if you prefer, and 15 minutes max. You'll get the questions beforehand.`,
       },
     });
-  }
-
-  if (earned(c)) {
     out.push({
       key: `${c.taskId}:referral`,
       client: c,
@@ -123,11 +138,11 @@ function opportunitiesRaw(c: Client): Opportunity[] {
       type: "Referral",
       leadType: "Hot",
       why: `Live ${c.liveDays} days, green, no money open, the referral ask is owed`,
-      amount: "$1,000 to them per closed firm",
+      amount: "$500, $750, $750, then $1,000 a firm",
       pitch: lang =>
         lang === "ar"
-          ? `السلام عليكم ${n}، حبيت أذكرك إن عندنا برنامج إحالة. تاخذ ١٠٠٠ دولار عن كل شركة مقاولات أو تصميم ترشحها لنا وتشتغل معانا.\n\nفيه أحد يجي ببالك نقدر نتواصل معاه؟\n\nتفاصيل البرنامج: ${LINKS.referralDoc}`
-          : `Hey ${n}, just wanted to remind you we have a referral programme. You get paid $1,000 for every construction or design business you send us that ends up working with us.\n\nAnyone come to mind we could connect with?\n\nHere's how it works: ${LINKS.referralDoc}`,
+          ? `السلام عليكم ${n}، حبيت أذكرك إن عندنا برنامج إحالة. عرّفنا على شركة مقاولات أو تصميم، وبعد ما يكملون معانا شهر ندفع لك: ٥٠٠ دولار عن أول شركة، ٧٥٠ عن الثانية، ٧٥٠ عن الثالثة، و١٠٠٠ دولار عن كل شركة بعدها.\n\nفيه أحد ايي ببالك نقدر نتواصل معاه؟\n\nتفاصيل البرنامج: ${LINKS.referralDoc}`
+          : `Hey ${n}, just wanted to remind you we have a referral programme. Introduce us to a construction or design firm, and once they have been with us for a month we pay you: $500 for the first firm, $750 for the second, $750 for the third and $1,000 for every one after that.\n\nAnyone come to mind we could connect with?\n\nHere's how it works: ${LINKS.referralDoc}`,
       objection: {
         likely: "\u201cI don't want to refer a competitor\u201d",
         answer: lang =>

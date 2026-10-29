@@ -175,7 +175,7 @@ export const LINK_GROUPS: LinkGroup[] = [
       "Refer, resell, renew, review. Fill the form the same day it happens, no form, no commission.",
     rows: [
       {
-        label: "Google review link (send to happy clients)",
+        label: "Google review link (the same ask for every client)",
         url: "https://g.page/r/CeRMcUwFPpe7EAI/review",
         note: "Then log it in the client review form",
       },

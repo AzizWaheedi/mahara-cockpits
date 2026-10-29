@@ -394,14 +394,16 @@ export function buildSnapshot(input: {today:string;now:number;exts:Extension[];n
         });
         hot.push({
           kind: "Referral",
-          why: "Happy client past the first win, ask for one introduction ($1,000 payout).",
+          why: "Happy client past the first win, ask for one introduction ($500 for the first firm, up to $1,000 from the fourth).",
         });
-        if (happiness === "Very Happy (testimonial)")
-          hot.push({
-            kind: "Google review",
-            why: "Marked testimonial-ready, ask on the next call.",
-          });
       }
+      // The review ask is the same for every client past the first win, happy or not:
+      // Google removes reviews from a business that picks who to ask.
+      if (won)
+        hot.push({
+          kind: "Google review",
+          why: "Past the first win. Every client gets the same review ask, happy or not.",
+        });
 
       // Call notes for this client, newest first.
       const myNotes = notes
