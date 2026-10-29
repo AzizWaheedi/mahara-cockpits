@@ -81,6 +81,9 @@ export interface InboxRow {
   last_reply_at: string | null;
   last_reply_by: string | null;
   needs_reply: boolean;
+  /** Marked "No reply needed" since the lead's last message. */
+  cleared: boolean;
+  cleared_by: string | null;
   unread: number;
   copies: number;
   /** False while the worker has not read this conversation's messages yet. */
@@ -180,6 +183,8 @@ export function readInboxPage(v: unknown): InboxPage {
         last_reply_at: str(r.last_reply_at),
         last_reply_by: str(r.last_reply_by),
         needs_reply: r.needs_reply === true,
+        cleared: r.cleared === true,
+        cleared_by: str(r.cleared_by),
         unread: n(r.unread),
         copies: n(r.copies),
         read: r.read !== false,

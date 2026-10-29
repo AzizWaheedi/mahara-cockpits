@@ -8,6 +8,8 @@
 //   never taken from them by a stale screen.
 // inbox.seen: HighLevel's unread count to 0, the way opening a conversation
 //   in HighLevel does; only when there was something unread.
+// inbox.done: "No reply needed" (the lead's "شكرًا" or "ok"): out of Needs
+//   reply until the lead writes again; undo clears it. Cockpit-only, any seat.
 // Each change leaves an audit row.
 
 import { cleanText, type Who } from "./lib.ts";
@@ -103,10 +105,31 @@ export function makeInbox(deps: InboxDeps) {
     return { conversation_id: id, unread: 0 };
   }
 
+  async function done(who: Who, b: Row): Promise<Row> {
+    const id = cleanText(b.conversation_id, 80);
+    if (!id) throw new ApiRefusal("Which conversation?");
+    const undo = b.undo === true;
+    const row = (await svc(
+      `cockpit_sales_conversations?conversation_id=eq.${enc(id)}&select=conversation_id,contact_id,needs_reply,cleared_at,cleared_by,last_in_at`,
+    ))[0];
+    if (!row) throw new ApiRefusal("That conversation is not in the cockpit.", 404);
+    if (!undo && !row.needs_reply) return { conversation_id: id, cleared: false, unchanged: true };
+    const after = undo ? { cleared_at: null, cleared_by: null } : { cleared_at: new Date().toISOString(), cleared_by: who.email ?? null };
+    const saved = (await svc(`cockpit_sales_conversations?conversation_id=eq.${enc(id)}&select=needs_reply,cleared_at`, {
+      method: "PATCH",
+      body: after,
+      prefer: "return=representation",
+    }))[0];
+    await audit(who, undo ? "inbox.undone" : "inbox.done", "cockpit_sales_conversations", id,
+      { cleared_at: row.cleared_at ?? null, cleared_by: row.cleared_by ?? null }, after, { contact_id: row.contact_id });
+    return { conversation_id: id, cleared: !undo, needs_reply: saved?.needs_reply ?? null };
+  }
+
   return {
     actions: {
       "inbox.assign": assign,
       "inbox.seen": seen,
+      "inbox.done": done,
     } as Record<string, (who: Who, b: Row) => Promise<Row>>,
   };
 }

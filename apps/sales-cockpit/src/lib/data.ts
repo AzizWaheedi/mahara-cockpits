@@ -23,7 +23,6 @@ import type {
   Deal,
   Dial,
   Funnel,
-  InboxRow,
   Lead,
   Me,
   MirrorRun,
@@ -1138,23 +1137,6 @@ export function useLatest<T>(value: T) {
 }
 
 /** Leads whose last message was theirs, in the last `hours`, newest first. */
-export function useReplies(hours = 48, everyMs = 60_000): Loaded<InboxRow[]> {
-  return useQuery<InboxRow[]>(
-    () =>
-      supabase
-        .from("cockpit_sales_inbox")
-        .select("*")
-        .eq("last_direction", "inbound")
-        .gte(
-          "last_message_at",
-          new Date(Date.now() - hours * 3_600_000).toISOString(),
-        )
-        .order("last_message_at", { ascending: false })
-        .limit(50),
-    [hours],
-    everyMs,
-  );
-}
 
 // ---------------------------------------------------------------------------
 // WhatsApp: the ready-made messages and the template routes (lib/whatsapp.ts)

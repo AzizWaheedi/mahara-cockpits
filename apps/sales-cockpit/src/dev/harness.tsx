@@ -818,6 +818,12 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
     }
     case "inbox.seen":
       return { conversation_id: b.conversation_id, unread: 0 };
+    case "inbox.done":
+      return {
+        conversation_id: b.conversation_id,
+        cleared: b.undo !== true,
+        needs_reply: b.undo === true,
+      };
     case "inbox.assign":
       return { contact_id: b.contact_id, assigned_to: b.user_id ?? null };
     case "convo.send":
