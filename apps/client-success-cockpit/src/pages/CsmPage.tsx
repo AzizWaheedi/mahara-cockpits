@@ -26,6 +26,7 @@ import {
   ClientCallerLine,
 } from "@/components/CallCentreSection";
 import { ClientAdsTab } from "@/components/ClientAds";
+import { ClientAsks } from "@/components/ClientAsks";
 import { ClientBrief, useCardNotes } from "@/components/ClientBrief";
 import {
   CallsTimeline,
@@ -1271,6 +1272,7 @@ const ACTIONS = [
   { key: "log", label: "Log a call" },
   { key: "update", label: "Update the board" },
   { key: "task", label: "Add a task" },
+  { key: "ask", label: "Ask for a review or referral" },
   { key: "leave", label: "Leave it" },
 ] as const;
 type Panel = (typeof ACTIONS)[number]["key"] | "link";
@@ -2600,6 +2602,8 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               </div>
             </div>
           )}
+
+          {panel === "ask" && <ClientAsks taskId={String(c.taskId)} />}
 
           {panel === "leave" && (
             <div className="space-y-3 rounded-2xl border bg-card p-4 text-sm sm:p-6">
