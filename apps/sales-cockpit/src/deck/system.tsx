@@ -1,4 +1,4 @@
-import type { MouseEvent, ReactNode } from "react";
+import type { CSSProperties, MouseEvent, ReactNode } from "react";
 import adKitchen from "./assets/proof/ad-kitchen.webp";
 import adOwner from "./assets/proof/ad-owner.webp";
 import adReno from "./assets/proof/ad-reno.webp";
@@ -7,8 +7,10 @@ import jrForm3 from "./assets/proof/jr-form-3.webp";
 import jrLandingPhone from "./assets/proof/jr-landing-phone.webp";
 import jrSlack from "./assets/proof/jr-slack.webp";
 import pcmCall from "./assets/proof/pcm-call.webp";
-import pcmLesson from "./assets/proof/pcm-lesson.webp";
+import pcmContract from "./assets/proof/pcm-contract.webp";
+import pcmCourse from "./assets/proof/pcm-course.webp";
 import {
+  type L,
   type Lang,
   PILLARS,
   type PillarKey,
@@ -24,6 +26,7 @@ import {
   BODY,
   bottomAt,
   CLOSING,
+  CONTRACT,
   type Cut,
   DATA,
   DATA_LABEL_OPEN,
@@ -34,6 +37,7 @@ import {
   LABELS,
   LEAD_COUNT,
   LENS_PAD,
+  type Lens,
   LOOP,
   LOOP_HEAD,
   LOOP_SAY,
@@ -55,7 +59,7 @@ import { PORTAL_TOUR } from "./tour";
  * see the whole funnel ... this is the client journey and a bit of a preview
  * of each ... and then how we scale it"). The overview is one funnel: real
  * ads at its wide mouth, the partner's landing page, the five-minute alert,
- * a real check-in call, and the portal it pours into, with the time-wasters
+ * a real consultant call, and the portal it pours into, with the time-wasters
  * leaving through its floor and a loop from the portal back to the ads.
  * → walks the five steps on the same drawing: each step's screen opens to a
  * size that reads on a shared screen, the others step back, and the last
@@ -90,11 +94,45 @@ const LENS_PIC: Partial<
     src: both(jrBooked),
     alt: "A booking, with its budget and timeline",
   },
-  closing: { src: both(pcmLesson), alt: "Objections, in the closing course" },
+  closing: {
+    src: both(pcmCourse),
+    alt: "The closing course: its lessons beside a video lesson",
+  },
   data: {
     src: RESULTS_SRC,
     alt: "Projects won, on the portal's results screen, in a demo workspace",
   },
+};
+
+/**
+ * Words on a picture. Placed (`at`), they sit over a part of the picture
+ * that says nothing; the pictures are never mirrored, so the places are not
+ * either. Unplaced, they take the portal's corner.
+ */
+interface Tag {
+  words: L;
+  at?: CSSProperties;
+}
+
+/**
+ * The closing step names its three pictures, in the order the step runs:
+ * the course (its top bar: the search box's end and the alerts), the calls
+ * (the fourth square, the note-taker's) and the contract (its middle,
+ * between the letterhead and the signatures).
+ */
+const CLOSING_TAGS = {
+  course: { words: SYSTEM.course, at: { top: 24, right: 24 } },
+  call: { words: SYSTEM.calls, at: { bottom: 10, right: 10 } },
+  contract: {
+    words: SYSTEM.signed,
+    at: { top: "34%", left: "50%", transform: "translateX(-50%)" },
+  },
+} satisfies Record<string, Tag>;
+
+/** The words a lens carries. The portal's figures read there, so its lens says whose they are. */
+const LENS_TAG: Partial<Record<PillarKey, Tag>> = {
+  closing: CLOSING_TAGS.course,
+  data: { words: SYSTEM.demo },
 };
 
 /** A screenshot cut to the part that matters, drawn at a width. */
@@ -162,6 +200,8 @@ function Funnel({ ctx }: { ctx: DeckCtx }) {
     if (at === 0 || at === i) return 1;
     // On the last stop the loop ends at the ads: they stay in sight.
     if (at === 5 && i === 1) return 0.55;
+    // On the closing stop the signed contract takes the portal's place.
+    if (at === 4 && i === 5) return 0;
     return at === 5 ? 0.12 : 0.1;
   };
 
@@ -201,14 +241,22 @@ function Funnel({ ctx }: { ctx: DeckCtx }) {
     );
   };
 
-  /** The second screen a step brings in when it is open. */
-  const lens = (key: PillarKey, i: number) => {
-    const l = lensFor(key, lang);
-    const pic = LENS_PIC[key];
-    if (!l || !pic) return null;
+  /**
+   * A screen a step brings in when it is open, its words on it. A second one
+   * comes in a beat after the first.
+   */
+  const card = (
+    key: string,
+    i: number,
+    l: Lens,
+    pic: { src: string; alt: string },
+    tag?: Tag,
+    delay = 260,
+  ) => {
     const open = at === i;
     return (
       <div
+        key={key}
         className="dk-sys-lens"
         aria-hidden={!open}
         style={{
@@ -219,23 +267,35 @@ function Funnel({ ctx }: { ctx: DeckCtx }) {
           padding: LENS_PAD,
           opacity: open ? 1 : 0,
           transform: open ? "none" : "translateY(18px) scale(0.97)",
-          transitionDelay: open ? "260ms" : "0ms",
+          transitionDelay: open ? `${delay}ms` : "0ms",
           // Open, it takes its own clicks, so pointing at it opens nothing under it.
           pointerEvents: open ? "auto" : "none",
         }}
       >
         <Crop
-          src={pic.src[lang]}
+          src={pic.src}
           alt={pic.alt}
           cut={l}
           width={l.box.w - 2 * LENS_PAD}
         />
-        {/* The portal's figures read here, so the lens says whose they are. */}
-        {key === "data" ? (
-          <span className="dk-sys-demo">{t(SYSTEM.demo, lang)}</span>
+        {tag ? (
+          <span
+            className={tag.at ? "dk-sys-tag" : "dk-sys-demo"}
+            style={tag.at}
+          >
+            {t(tag.words, lang)}
+          </span>
         ) : null}
       </div>
     );
+  };
+
+  /** The second screen a step brings in when it is open. */
+  const lens = (key: PillarKey, i: number) => {
+    const l = lensFor(key, lang);
+    const pic = LENS_PIC[key];
+    if (!l || !pic) return null;
+    return card(key, i, l, { src: pic.src[lang], alt: pic.alt }, LENS_TAG[key]);
   };
 
   const steps: { key: PillarKey; body: ReactNode }[] = [
@@ -291,12 +351,26 @@ function Funnel({ ctx }: { ctx: DeckCtx }) {
             CLOSING,
             4,
             "call",
-            "A check-in call with a partner",
+            "A consultant call with a partner",
             <span className="dk-sys-shot">
               <img src={pcmCall} alt="" />
+              <span className="dk-sys-tag" style={CLOSING_TAGS.call.at}>
+                {t(CLOSING_TAGS.call.words, lang)}
+              </span>
             </span>,
           )}
           {lens("closing", 4)}
+          {card(
+            "contract",
+            4,
+            CONTRACT,
+            {
+              src: pcmContract,
+              alt: "A partner's signed contract, the client's details blurred",
+            },
+            CLOSING_TAGS.contract,
+            420,
+          )}
         </>
       ),
     },
@@ -478,8 +552,11 @@ function Funnel({ ctx }: { ctx: DeckCtx }) {
         <Rv i={3} className="dk-sys-layer">
           {PILLARS.map((p, k) => {
             const i = k + 1;
-            // On the last stop the grown portal takes the closing name's place.
-            const gone = at === 5 && p.key === "closing";
+            // On the last stop the grown portal takes the closing name's
+            // place; on the closing stop the contract takes the portal's.
+            const gone =
+              (at === 5 && p.key === "closing") ||
+              (at === 4 && p.key === "data");
             const spot =
               at === 5 && p.key === "data" ? DATA_LABEL_OPEN : LABELS[p.key];
             return (

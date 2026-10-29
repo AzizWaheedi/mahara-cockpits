@@ -139,6 +139,12 @@ export const SYSTEM = {
   minutes: { en: "5 min", ar: "٥ دقايق" },
   match: { en: "Answers your challenge", ar: "يحل مشكلتك" },
   demo: { en: "Demo workspace", ar: "حساب تجريبي" },
+  // The closing step's three pictures, in the order the step runs (the CEO,
+  // 2026-10-29: a bigger course, the consultant calls labelled, and a
+  // partner's signed contract).
+  course: { en: "The course", ar: "الكورس" },
+  calls: { en: "Consultant calls", ar: "مكالمات مع مستشارك" },
+  signed: { en: "Signed contract", ar: "عقد موقّع" },
 } satisfies Record<string, L>;
 
 // ------------------------------------------------------ the problem picker

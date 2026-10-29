@@ -3118,19 +3118,28 @@ button.dk-devices {
   object-fit: cover;
   object-position: top center;
 }
-.dk-sys-demo {
+.dk-sys-demo,
+.dk-sys-tag {
   position: absolute;
-  bottom: 14px;
-  inset-inline-end: 14px;
   padding: 6px 16px;
   border-radius: 999px;
   background: rgba(9, 19, 51, 0.88);
   color: var(--dk-ink);
   font-size: 20px;
   line-height: 1.25;
+  white-space: nowrap;
 }
-[dir="rtl"] .dk-sys-demo {
+.dk-sys-demo {
+  bottom: 14px;
+  inset-inline-end: 14px;
+}
+[dir="rtl"] :is(.dk-sys-demo, .dk-sys-tag) {
   font-size: 21px;
+}
+/* A step's words on its own picture ("Consultant calls"): placed by the
+   picture (system.tsx), with the teal edge the open lens has. */
+.dk-sys-tag {
+  box-shadow: 0 0 0 1px rgba(0, 207, 200, 0.5);
 }
 /* On the portal's lens, inside the tile it marks. */
 .dk-sys-lens .dk-sys-demo {
@@ -3290,6 +3299,11 @@ button.dk-devices {
   flex-direction: column;
   gap: 14px;
   max-width: 1180px;
+}
+/* On the closing stop the course opens in the corner beside the header
+   (systemPlan.ts LENSES.closing, from 1220): the header stops short of it. */
+.dk-sys[data-at="4"] + .dk-sys-head {
+  max-width: 1060px;
 }
 .dk-sys-line {
   font-size: 44px;
