@@ -9,6 +9,7 @@ import {
   Link2,
   type LucideIcon,
   MessageSquareText,
+  MessagesSquare,
   Mic,
   PhoneCall,
   Presentation,
@@ -30,7 +31,7 @@ export interface Page {
   icon: LucideIcon;
   group: "day" | "going" | "more";
   /** The key in the sidebar's counts whose number, above zero, earns a badge. */
-  badge?: "owed" | "proposals" | "followups";
+  badge?: "owed" | "proposals" | "followups" | "messages";
   managerOnly?: boolean;
   /** Other words people use for it, for the search box. */
   words?: string;
@@ -38,6 +39,14 @@ export interface Page {
 
 export const PAGES: Page[] = [
   { to: "/", label: "Today", icon: Sun, group: "day", words: "agenda home" },
+  {
+    to: "/messages",
+    label: "Messages",
+    icon: MessagesSquare,
+    group: "day",
+    badge: "messages",
+    words: "inbox conversations whatsapp email instagram facebook dm reply",
+  },
   {
     to: "/dialer",
     label: "Dialer",
@@ -161,11 +170,11 @@ export const GROUP_LABELS: Record<Page["group"], string> = {
  */
 export const DOCK = [
   "/",
+  "/messages",
   "/dialer",
   "/calendar",
   "/leads",
   "/pipeline",
-  "/proposals",
 ];
 
 /** A page's name, for the menu bar along the top. */
@@ -173,6 +182,7 @@ export function pageTitle(pathname: string): string {
   const page = PAGES.find(p => p.to === pathname);
   if (page) return page.label;
   if (pathname.startsWith("/lead/")) return "Lead";
+  if (pathname.startsWith("/messages/")) return "Messages";
   if (pathname.startsWith("/call/")) return "Call";
   if (pathname.startsWith("/proposal/")) return "Proposal";
   if (pathname.startsWith("/recording/")) return "Recording";

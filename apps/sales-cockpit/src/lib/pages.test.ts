@@ -15,7 +15,11 @@ const routes = [
   ),
 ]
   .map(m => m[1])
-  .filter(p => p !== "*");
+  .filter(p => p !== "*")
+  // An optional last segment ("/messages/:conversationId?") is two pages.
+  .flatMap(p =>
+    p.endsWith("?") ? [p.replace(/\/:[A-Za-z]+\?$/, ""), p.slice(0, -1)] : [p],
+  );
 
 describe("page names", () => {
   test("every page in the app has its one name", () => {

@@ -43,8 +43,11 @@ const FULL_EVERY_MS = 20 * 60_000;
 const NEW_PAGES = 10;
 const FULL_PAGES_PER_RUN = 8;
 const CHANGED_PER_RUN = 80;
-const BACKFILL_PER_RUN = 150;
-const PARALLEL = 5;
+const BACKFILL_PER_RUN = 90;
+// Three at a time: HighLevel allows about 100 requests in 10 seconds for the
+// whole sub-account, and the reps' own sends share it (a 429 on 2026-10-29
+// at five).
+const PARALLEL = 3;
 
 function env(name: string): string {
   return (Deno.env.get(name) ?? "").trim();
