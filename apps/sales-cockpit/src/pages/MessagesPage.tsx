@@ -117,9 +117,16 @@ export default function MessagesPage({ me }: { me: Me }) {
   }, [saved, me]);
   const set = (p: Partial<Saved>) => setSaved(s => ({ ...s, ...p }));
 
-  const filter: InboxFilter = { ...saved, q };
-  const list = useInbox(filter);
-  const counts = useInboxCounts(saved.person, saved.channel, saved.account);
+  // In Automations only, threads have no platform, so its filters step aside.
+  const filter: InboxFilter =
+    saved.state === "auto"
+      ? { ...saved, channel: null, account: null, q }
+      : { ...saved, q };
+  // Show more widens the first read (up to 100) so the 20-second refresh
+  // keeps every row in step; only past 100 are pages added after it.
+  const [limit, setLimit] = useState(40);
+  const list = useInbox(filter, limit);
+  const counts = useInboxCounts(saved.person, filter.channel, filter.account);
 
   // "Show more": pages after the first, kept until a filter changes.
   const [older, setOlder] = useState<InboxRow[]>([]);
@@ -130,6 +137,7 @@ export default function MessagesPage({ me }: { me: Me }) {
   useEffect(() => {
     setOlder([]);
     setOlderMore(null);
+    setLimit(40);
   }, [filterKey]);
 
   // Rows a rep just answered or opened, by the lead's last message at the
@@ -154,6 +162,10 @@ export default function MessagesPage({ me }: { me: Me }) {
   const more = olderMore ?? list.data?.more ?? false;
 
   const showMore = async () => {
+    if (limit < 100) {
+      setLimit(l => Math.min(100, l + 40));
+      return;
+    }
     const last = rows.at(-1);
     if (!last) return;
     setLoadingMore(true);
@@ -362,7 +374,12 @@ function ListHead({
   const stateCount = (s: InboxState) => counts?.states[s];
   const channelCount = (c: InboxChannel) => {
     const t = counts?.channels[c];
-    return t ? (saved.state === "reply" ? t.reply : t.all) : 0;
+    if (!t) return 0;
+    return saved.state === "reply"
+      ? t.reply
+      : saved.state === "unread"
+        ? (t.unread ?? 0)
+        : t.all;
   };
   const channels = FILTER_CHANNELS;
   const accounts = (counts?.accounts ?? []).filter(
@@ -485,9 +502,11 @@ function ListHead({
         </button>
       </div>
 
+      {/* Automations-only threads have no platform: the chips step aside. */}
       <div
         role="radiogroup"
         aria-label="Channel"
+        hidden={saved.state === "auto"}
         className="-mx-4 flex gap-1.5 overflow-x-auto px-4 [scrollbar-width:none]"
       >
         <ChannelChip
@@ -529,7 +548,7 @@ function ListHead({
             type="search"
           />
         </label>
-        {accounts.length > 0 ? (
+        {accounts.length > 0 && saved.state !== "auto" ? (
           <label className="shrink-0">
             <span className="sr-only">Inbox</span>
             <select
@@ -827,20 +846,37 @@ function EmptyList({
 // ---------------------------------------------------------------------------
 
 /** A conversation opened by its link (or no longer in the list): read on its own. */
-function useOneRow(conversationId: string, row: InboxRow | null) {
+function useOneRow(
+  conversationId: string,
+  row: InboxRow | null,
+): { row: InboxRow | null; problem: string | null; retry: () => void } {
   const [own, setOwn] = useState<InboxRow | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: tick reads again
   useEffect(() => {
     if (row) return;
     let alive = true;
+    setProblem(null);
     void (async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("cockpit_sales_conversations")
         .select(
           "conversation_id,contact_id,contact_name,phone,email,assigned_to,channels,accounts,last_at,last_channel,last_in_at,last_in_channel,needs_reply,unread,copies",
         )
         .eq("conversation_id", conversationId)
         .maybeSingle();
-      if (!alive || !data) return;
+      if (!alive) return;
+      if (error) {
+        setProblem(`The conversation could not be read: ${error.message}`);
+        return;
+      }
+      if (!data) {
+        setProblem(
+          "This conversation is not in the cockpit's copy yet. New messages arrive within a minute; open it again from the list.",
+        );
+        return;
+      }
       const { data: lead } = await supabase
         .from("cockpit_sales_leads")
         .select("name,stage_name")
@@ -882,8 +918,12 @@ function useOneRow(conversationId: string, row: InboxRow | null) {
     return () => {
       alive = false;
     };
-  }, [conversationId, row]);
-  return row ?? own;
+  }, [conversationId, row, tick]);
+  return {
+    row: row ?? own,
+    problem: row ? null : problem,
+    retry: () => setTick(t => t + 1),
+  };
 }
 
 function Thread({
@@ -908,7 +948,8 @@ function Thread({
   /** Marked "No reply needed" (or undone): the list stops (or starts) waiting on it. */
   onDone: (undo: boolean) => void;
 }) {
-  const row = useOneRow(conversationId, listed);
+  const one = useOneRow(conversationId, listed);
+  const row = one.row;
   const contactId = row?.contact_id ?? "";
   const copied = useCopiedThread(contactId || null);
   const convo = useConversation(contactId, copied.data);
@@ -927,8 +968,28 @@ function Thread({
 
   if (!row)
     return (
-      <div className="flex flex-1 items-center justify-center p-6">
-        <p className="muted text-sm">Opening the conversation…</p>
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+        <p className="muted max-w-sm text-sm">
+          {one.problem ?? "Opening the conversation…"}
+        </p>
+        {one.problem ? (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={one.retry}
+              className="rounded-full border hairline px-3 py-1.5 text-xs"
+            >
+              Try again
+            </button>
+            <button
+              type="button"
+              onClick={onBack}
+              className="rounded-full border hairline px-3 py-1.5 text-xs"
+            >
+              Back to the messages
+            </button>
+          </div>
+        ) : null}
       </div>
     );
 
@@ -1003,12 +1064,19 @@ function NoReplyNeeded({
   onDone: (undo: boolean) => void;
 }) {
   const [marked, setMarked] = useState(row.cleared);
+  // A new message from the lead clears the mark: the button comes back.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: follows the lead's last message
+  useEffect(() => setMarked(row.cleared), [row.cleared, row.last_in_at]);
   const [busy, setBusy] = useState(false);
   if (!row.needs_reply && !marked) return null;
   const press = async (undo: boolean) => {
     setBusy(true);
     try {
-      await api("inbox.done", { conversation_id: row.conversation_id, undo });
+      await api("inbox.done", {
+        conversation_id: row.conversation_id,
+        undo,
+        seen_in_at: row.last_in_at,
+      });
       setMarked(!undo);
       onDone(undo);
       toast.success(

@@ -75,14 +75,18 @@ test("No reply needed marks the conversation and undo clears it, each audited", 
     if (!r) return [];
     if (init?.method === "PATCH") {
       Object.assign(r, init.body as object);
-      r.needs_reply = r.cleared_at === null;
+      r.needs_reply = r.cleared_at === null || String(r.cleared_at) < String(r.last_in_at);
     }
     return [{ ...r }];
   };
   const { actions } = makeInbox({ svc, ghl: async () => ({}), audit: async (_w, a) => void audits.push(a) });
   const who = { signed_in: true, seat: true, email: "rep@x.com" };
-  expect(await actions["inbox.done"](who, { conversation_id: "v1" })).toMatchObject({ cleared: true, needs_reply: false });
+  // A message newer than the one on the rep's screen is refused.
+  await expect(actions["inbox.done"](who, { conversation_id: "v1", seen_in_at: "2026-10-29T09:00:00Z" })).rejects.toThrow("wrote again");
+  expect(await actions["inbox.done"](who, { conversation_id: "v1", seen_in_at: "2026-10-29T10:00:00Z" })).toMatchObject({ cleared: true, needs_reply: false });
   expect(rows.v1.cleared_by).toBe("rep@x.com");
+  // The mark is the lead's message time, so a later message brings it back.
+  expect(rows.v1.cleared_at).toBe("2026-10-29T10:00:00Z");
   expect(await actions["inbox.done"](who, { conversation_id: "v1", undo: true })).toMatchObject({ cleared: false, needs_reply: true });
   expect(await actions["inbox.done"](who, { conversation_id: "v2" })).toMatchObject({ unchanged: true });
   expect(audits).toEqual(["inbox.done", "inbox.undone"]);
