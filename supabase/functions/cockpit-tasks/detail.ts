@@ -50,7 +50,8 @@ export async function runDetail(deps: DetailDeps, jwt: string, input: { taskId: 
   let note: string | null = null;
   try {
     if (!deps.env("CLICKUP_API_TOKEN")?.trim()) throw new Error("CLICKUP_API_TOKEN is not set");
-    const cu = new ClickUpReader(deps, deps.uuid());
+    // A person is waiting: not paced, and one more try after ClickUp's 429.
+    const cu = new ClickUpReader(deps, deps.uuid(), { interactive: true });
     const task = await cu.get(`task/${input.taskId}?include_markdown_description=true&include_subtasks=true`);
     const comments = await cu.get(`task/${input.taskId}/comment`);
     const row = mirrorTask(task);

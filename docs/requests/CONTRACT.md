@@ -79,7 +79,7 @@ Global rules every role checks (repo `CLAUDE.md`, PLAN 4.5):
 | R3 | The 31 types live in `cockpit_request_types`, seeded from `docs/requests/request-types.json` (built for this contract from TS section 4, the folder fields and the template listing read today). Editors change any type; they cannot add or delete one (a type is a ClickUp Request Type option). | D17, D18 |
 | R4 | **The writer is `clickup-writeback`, job `requests`**, two new queue kinds `request` and `task_action`, its own switch **`CLICKUP_WRITEBACK_APPLY_REQUESTS`** (exactly `"true"`, default off) and canary **`CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS`** (rehearsal value `86eywg1cq`). The general switch does not open these kinds and this switch opens nothing else. | WR 10: the only writer that ever delivered a ticket; outbox, frozen steps, read-back, ledger |
 | R5 | The old `log` claim stops taking the new kinds in the same migration that adds them; the requests job has its own claim with one lane per task. | Otherwise the deployed `log` job would claim rows it cannot build |
-| R6 | While the writer is not live, `/requests` does not take requests from the team: the form says so and points to the ClickUp form. Editors, admins and the CEO may still file: the request is **held** (saved, its queue rows stay queued, said plainly) and goes to ClickUp once requests open; on the canary card it goes at once. (Review R1, 2026-10-26: replaces "their rows become dry runs".) | A dry-run row was never claimed again (WR 3.2), so a request filed in a dry run sat dead; a held row waits and goes by itself |
+| R6 | While the writer is not live, `/requests` does not take requests from the team: the form says so and points to the ClickUp form. (2026-10-29, `20261029p`, docs/requests/CLICKUP-DOWNGRADE.md: superseded. Every seat may file and is held; no ClickUp form is linked anywhere in the cockpit.) Editors, admins and the CEO may still file: the request is **held** (saved, its queue rows stay queued, said plainly) and goes to ClickUp once requests open; on the canary card it goes at once. (Review R1, 2026-10-26: replaces "their rows become dry runs".) | A dry-run row was never claimed again (WR 3.2), so a request filed in a dry run sat dead; a held row waits and goes by itself |
 | R7 | Owner rules: the systems manager, the creative strategist and the media buyer of record take the named person first; the client's CSM takes the card's CSM first. Every rule falls back to the systems manager with a visible note; nobody is ever assigned in silence. | TS finding 6 (no media buyer of record today), CT F3 |
 | R8 | Request Type is written last and only where `set_request_type` is on. It is on at seed for the 11 types that have no folder rule (nothing can fire) and off for the 20 that have one, until the `[TEST]` rehearsal clears them. The 2-minute check turns it off by itself if ClickUp moved or renamed the task, when it runs on time (within 15 minutes of its due time; a later check changes nothing). Going back to an older type version never turns it on, and no question may map to the Request Type field (review round 2). | WR 8, CT F2 |
 | R9 | One task mirror for every seat, in Supabase, filled by a new Edge Function `cockpit-tasks` (verify_jwt off): a workspace delta every 2 minutes, a full per-seat read, members, fields and templates every hour, and the live focus-view read. It also mirrors request status and imports the old form's unrouted tickets from All Tasks. | AT 8.1 option B; one mirror serves "Your tasks" and "My requests" |
@@ -673,18 +673,28 @@ Review R1 (2026-10-26, binding): a request the writer will not send now is
 **held**, never a dead dry run. `cockpit_request_send_gate` answers
 `{allowed, held, note}`:
 
+Since `20261029p` (2026-10-29, docs/requests/CLICKUP-DOWNGRADE.md 4.2)
+**every seat** may file: a request the writer will not send now is held for
+anyone, `allowed` is always true, and no note names a ClickUp form (the
+cockpit's own form replaced it, so the CEO can move to ClickUp Business):
+
 | Mode | Seat | Answer |
 |---|---|---|
 | `apply` | any | sends (`allowed`, not held, note null) |
-| `apply_limited` | editor, admin or CEO, card in `onlyCards` | sends |
-| `apply_limited` | editor, admin or CEO, another card or none | held: "Requests are being tested on the internal test card only, where they go to ClickUp at once. Anything else you send is saved and goes to ClickUp once they open to everyone." |
-| `apply_limited` | anyone else | refused: "Requests are being tested. They open to everyone soon. Use the ClickUp request form until then." |
-| `dry_run` | editor, admin or CEO | held: "Requests are not open yet. What you send is saved and goes to ClickUp once they are." |
-| `dry_run` | anyone else | refused: "Requests are not switched on yet. Use the ClickUp request form until then." |
-| `unknown`, last report `apply` (`lastMode`) | anyone else | refused: "Requests cannot be sent just now: the requests writer has not reported in the last 15 minutes. Use the ClickUp request form, and tell the systems manager." (review round 3) |
-| `unknown`, last report `apply_limited` | anyone else | refused: "Requests are being tested. They open to everyone soon. Use the ClickUp request form until then." (review round 3) |
-| `unknown`, no report or last report `dry_run` | anyone else | refused: "Requests are not switched on yet. Use the ClickUp request form until then." |
-| `unknown` | editor, admin or CEO | held: "The requests writer has not reported in the last 15 minutes. What you send is saved and goes to ClickUp once it runs with requests open. Check it on the Machine tab." |
+| `apply_limited`, card in `onlyCards` | any | sends |
+| `apply_limited`, another card or none | any | held: "Requests are being tested on the internal test card only, where they go to ClickUp at once. Anything else you send is saved and goes to ClickUp by itself once they open to everyone." |
+| `dry_run` | any | held: "Requests are not open yet. What you send is saved and goes to ClickUp by itself once they are." |
+| `unknown` | editor, admin or CEO | held: "The requests writer has not reported in the last 15 minutes. What you send is saved and goes to ClickUp by itself once it runs with requests open. Check it on the Machine tab." |
+| `unknown`, last report `apply` (`lastMode`) | anyone else | held: "The requests writer has not reported in the last 15 minutes. What you send is saved and goes to ClickUp by itself when the writer is back." |
+| `unknown`, last report `apply_limited` | anyone else | held: on a canary card (`cockpit_request_writer_silent` is true for it), the quiet-writer note "…goes to ClickUp by itself when the writer is back.", the same as the row's held note; on another card or none, the `apply_limited` note above |
+| `unknown`, no report or last report `dry_run` | anyone else | held: the `dry_run` note above |
+
+Before 20261029p a seat that was not an editor, an admin or the CEO was
+refused in every mode but `apply` (and `apply_limited` on the test card) and
+told to use the ClickUp request form (review R1, round 3). The form still
+draws a refusal (`canSend` false) for a database that has not taken
+20261029p, in its own words when the note is empty: "Requests cannot be
+sent from this seat just now. Tell the systems manager."
 
 The form shows a held note before anything is sent and beside Send, so none
 begins "Saved." (review round 2); the request itself still says "Saved, not
@@ -1072,9 +1082,10 @@ helpers; `service_role` for 3.5; `authenticated` for 3.3.
 - Live: a `request` when `apply` and (no `onlyCards`, or its `clientTaskId`
   is listed); a `task_action` likewise by its `clientTaskId`; a `verify`
   when `apply`.
-- Pace: its own pacer, `CLICKUP_REQUESTS_CALLS_PER_MINUTE`, default 120
-  (the token's limit read on 2026-10-26 is 1,000 a minute, AT 7.1). Claim
-  limit 6 a run.
+- Pace: its own pacer, `CLICKUP_REQUESTS_CALLS_PER_MINUTE`, default 25,
+  60 at most (2026-10-29: ClickUp Business allows 100 a minute for the
+  shared token, docs/requests/CLICKUP-DOWNGRADE.md; it was 120 while the
+  token's limit was 1,000 a minute, AT 7.1). Claim limit 6 a run.
 - `runDoctor` in `run.ts` adds `requestsMode` and the canary list to its
   note.
 
@@ -1238,7 +1249,9 @@ each target list has a status of type `done` (`GET list/{id}`). Writes
 Every ClickUp call goes through `providerTools` with the service-key insert
 into `cockpit_media_provider_health` and `action_id` = the run's uuid (a
 detail read gets its own uuid); a receipt that cannot be saved stops the
-call. Pace `CLICKUP_TASKS_CALLS_PER_MINUTE`, default 120. Only GETs: this
+call. Pace `CLICKUP_TASKS_CALLS_PER_MINUTE`, default 30, 60 at most
+(2026-10-29, ClickUp Business; it was 120); a focus-view or doctor read is
+not paced, a person is waiting. Only GETs: this
 function never writes to ClickUp. Secrets read by name:
 `CLICKUP_API_TOKEN`, `TASKS_CRON_SECRET`, `SUPABASE_URL`,
 `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
@@ -1483,16 +1496,19 @@ pills it shows, so a deep link (`?view=all`) scrolls the active pill into view
   and priority (prefilled, "usual" marked). 4. The route
   (`cockpit_request_preview`, re-read when the type, client or a `when`
   field changes). 5. "Send request" (teal), "Save request" while a send
-  would be held. While `writer.canSend` is false the form shows
-  `writer.note` and the ClickUp form link in place of the questions and the
-  button. After a send: the sent view, rooted in `.rq-sent[data-tone]`; its
+  would be held. While `writer.canSend` is false (a database without
+  20261029p) the form shows `writer.note`, or "Requests cannot be sent from
+  this seat just now. Tell the systems manager.", in place of the questions
+  and the button, with no link (2026-10-29: no ClickUp form). After a send:
+  the sent view, rooted in `.rq-sent[data-tone]`; its
   mark follows `sentTone` (review round 2): a task refused, `CircleAlert` in
   `--destructive`; on its way, a static `CircleDashed`, muted; saved until
-  requests open, `Clock` in `--warning`; every task in ClickUp,
+  requests open, `Clock` in the teal ink (`--tk-ink`; `--warning` until
+  2026-10-29, the held mark of 6.7); every task in ClickUp,
   `CircleCheck` in `--success`. Each task's line is `sentLines()` printed
   whole. On a refusal, once nothing is moving, the view shows `sentFailed`
-  ("Open the request to file it again, or use the ClickUp request form.")
-  or `partialNext`, the form link, and "Open the request" to
+  ("Open the request to file it again with the same answers.")
+  or `partialNext`, no link, and "Open the request" to
   `/requests?id=` in place of "See it in My requests". A `duplicate` answer
   shows its note and "Open it" only when `duplicateOf` is set (review round
   2). Inputs keep their values on an error; the field named in the sentence
@@ -1538,12 +1554,13 @@ pills it shows, so a deep link (`?view=all`) scrolls the active pill into view
   ClickUp form. It was moved or closed in ClickUp, so it needs no routing
   here." (integration round 4). The next step, said once above the tasks
   (review round 2): `failed`, "Nothing reached ClickUp. File it again with
-  the same answers, or use the ClickUp request form." (`againFailed`, true for
+  the same answers." (`againFailed`, true for
   every `failed` the writer settles but a task deleted in ClickUp, review
   round 3; a failed task that keeps its ClickUp link was deleted there and
   reads "The task was deleted in ClickUp. File it again with the same
-  answers, or use the ClickUp request form.", `againDeleted`, integration
-  round 4), "File it again" and the ClickUp form link; after the new request is sent the first one is
+  answers if the work is still needed.", `againDeleted`, integration
+  round 4), "File it again" and no other link (2026-10-29: no ClickUp
+  form); after the new request is sent the first one is
   cancelled with "Filed again as a new request." when the seat may, and the
   notice above the form reads "Sending it cancels the first one." or "The
   first one stays in the queue until the person who asked for it or the
@@ -1552,7 +1569,7 @@ pills it shows, so a deep link (`?view=all`) scrolls the active pill into view
   filed again carries its `replacesTaskId` and `replacesIfOpen` (the notice
   adds "It routes the same old ClickUp form ticket, unless someone routed it
   meanwhile."; retest round 2). `partial` (done or not): no re-file, the
-  `partialNext` sentence and the form link. A `failed` routing request whose
+  `partialNext` sentence, with no link (2026-10-29). A `failed` routing request whose
   task error is the writer's old-ticket check ("The old ticket was already
   moved or closed in ClickUp ..."): no "File it again", the sentence "The old
   ClickUp form ticket was moved or closed in ClickUp while this request
@@ -1677,7 +1694,7 @@ cockpit-screens' `installTasksHarness`, and adds the `/requests` and
 | Focus, saving / saved / waiting | "Saving…" / "Saved" / "Waiting for ClickUp to confirm." |
 | Focus, done | "Mark done" becomes "Done" |
 | Form, sent | until 2026-10-28 the toast "Request sent." and the panel "Sent to {list}. Owner: {owner}."; since then no toast, and the sent view of 6.7: "Sent: {type} for {client}" (held "Saved:", a refusal "Not sent:" or "Partly sent:"), focus on that heading, and each task's `sentLines()` sentence |
-| Form, writer off | `writer.note` (2.8) |
+| Form, writer off | `writer.note` (2.8), or when it is empty "Requests cannot be sent from this seat just now. Tell the systems manager." (2026-10-29) |
 | Form, no type picked | "Pick what you need first." |
 | Request states | `sending` "Sending to ClickUp" · `dry_run` "Not in ClickUp: the writer is in its test run" · `delivered` "In ClickUp: {status}" · `partial` "Part of it did not reach ClickUp: {error}" · `failed` "Not in ClickUp: {error}" · `cancelled` "Cancelled" · `imported` "Came in through the old ClickUp form. Make it a request to route it." where `canRoute`, else "Came in through the old ClickUp form. Route it in ClickUp." (review round 2) · `routed` "Routed as a new request" · done "Done" |
 | Owner how | `card` "The CSM named on the client card." · `fallback`, `none` the server's note |
@@ -1685,9 +1702,12 @@ cockpit-screens' `installTasksHarness`, and adds the `/requests` and
 | Rail, palette, search | "Ask a team" |
 | Tab bar | "Requests" |
 | Alert settings, status (review round 2) | hint "When its status changes, also when you move it in ClickUp yourself."; `alertWords('status')` "Your task moves" |
-| Request panel, nothing reached ClickUp (`againFailed`) | "Nothing reached ClickUp. File it again with the same answers, or use the ClickUp request form." |
-| Request panel and sent panel, part of it reached ClickUp (`partialNext`) | "The {list} task did not reach ClickUp; the one that did stays there. Raise the missing task with the ClickUp request form, or ask the systems manager to make it." (plural: "tasks", "the ones that did stay there", "them") |
-| Sent panel, a task refused (`sentFailed`) | "Open the request to file it again, or use the ClickUp request form." |
+| Request panel, nothing reached ClickUp (`againFailed`) | "Nothing reached ClickUp. File it again with the same answers." (the panel adds "If it fails again, tell the systems manager.") |
+| Request panel and sent panel, part of it reached ClickUp (`partialNext`) | "The {list} task did not reach ClickUp; the one that did stays there. Ask the systems manager to make the missing task. Filing the whole request again would make the one that arrived twice." (plural: "tasks", "the ones that did stay there", "the ones that arrived") |
+| Sent panel, a task refused (`sentFailed`) | "Open the request to file it again with the same answers." |
+| Form, a required choice ClickUp lost (`lostBlocked`, 2026-10-29) | 'ClickUp's choices for "{question}" could not be read, so this request cannot be sent from here yet. Tell the systems manager; the cockpit reads ClickUp again at 11 minutes past each hour. If it cannot wait, make the task on the {list} list in ClickUp.' and "Open the {list} list in ClickUp". {list} and the links come from the lists the type's tasks go to (`handLists`), never its team alone. Tasks on more than one list: "... If it cannot wait, make it on the {list} or {list} list in ClickUp, or on both, as the request needs." ("or on more than one" past two), or, when every task always runs, "... make a task on each of the {list} and {list} lists in ClickUp."; one "Open the {list} list in ClickUp" per list (clickup-diet-1029) |
+| Form, requests cannot be sent from the seat (`offAsked`, `offKept`, 2026-10-29) | "Requests cannot be sent from this seat just now, so the cockpit asks you nothing here. The questions open here as soon as they can be sent." / "Your answers stay on this screen until requests can be sent from this seat." |
+| Requests functions missing (`missingFunction`, 2026-10-29) | "Requests cannot be read: the database does not have them yet. Tell the systems manager." |
 | Filed again, notice | "Sending it cancels the first one." / "The first one stays in the queue until the person who asked for it or the systems manager cancels it." (a routing request adds "It routes the same old ClickUp form ticket, unless someone routed it meanwhile.") |
 | Filed again, the first one not cancelled | toast "The new request is sent, but the first one is still open. Open it and cancel it." |
 | Filed again, its old ticket routed meanwhile (`sentAlone`, retest round 2) | "Request sent. Its old ClickUp form ticket was already routed, so this one goes on its own.": a toast until 2026-10-28, since then a note in the sent view |
@@ -1698,9 +1718,9 @@ cockpit-screens' `installTasksHarness`, and adds the `/requests` and
 | Form, a brought type not offered (review round 3) | "The request type it came with is turned off. Pick another type." / "The request type it came with does not take a client card, so it is not offered here. Pick another type."; appended when it brought words: "What was asked is kept." |
 | Form, kept words (review round 3; integration round 4) | label "What was asked"; "This type has no question for these words, so they are not sent with it."; routing an old ticket: "This type has no question for these words, so the cockpit adds them to the new task's description, with a link to the old ticket." (`keptRouted`) |
 | A seat an editor cleared (review round 3) | Your tasks: "Your seat has no ClickUp user, so no ClickUp tasks show here. Requests you raise show under My requests." · bell: "Your seat has no ClickUp user, so only request alerts show here." · focus view: "Your seat has no ClickUp user, so you cannot tick, comment or mark done here. Ask the task's owner." · Assigned to me: "Your seat has no ClickUp user, so nothing is assigned to you here. Requests you raise show under My requests." |
-| A writer gone quiet after requests opened (review round 3) | form, anyone but an editor, an admin or the CEO: "Requests cannot be sent just now: the requests writer has not reported in the last 15 minutes. Use the ClickUp request form, and tell the systems manager." · held request: "Saved, not sent yet: the requests writer has not reported in the last 15 minutes. It goes to ClickUp once the writer runs again." · focus view: "Changes from the cockpit cannot be sent just now: the requests writer has not reported in the last 15 minutes. Open the task in ClickUp." |
+| A writer gone quiet after requests opened (review round 3) | form, anyone but an editor, an admin or the CEO (since 20261029p, held): "The requests writer has not reported in the last 15 minutes. What you send is saved and goes to ClickUp by itself when the writer is back." · held request: "Saved, not sent yet: the requests writer has not reported in the last 15 minutes. It goes to ClickUp once the writer runs again." · focus view: "Changes from the cockpit cannot be sent just now: the requests writer has not reported in the last 15 minutes. Open the task in ClickUp." |
 | An old form ticket handled in ClickUp (`importHandled`, integration round 4) | "Came in through the old ClickUp form. It was moved or closed in ClickUp, so it needs no routing here." |
-| Request panel, a task deleted in ClickUp (`againDeleted`, integration round 4) | "The task was deleted in ClickUp. File it again with the same answers, or use the ClickUp request form." |
+| Request panel, a task deleted in ClickUp (`againDeleted`, integration round 4) | "The task was deleted in ClickUp. File it again with the same answers if the work is still needed." |
 | A task in doubt (integration round 4) | "Checking whether it reached ClickUp." + the writer's note; handed back while requests are not open: "ClickUp did not answer. The cockpit checks whether it arrived once requests open" (`checkingHeld`) |
 | Bell, a failed part whose task was deleted (integration round 4) | "Deleted in ClickUp: {error}" |
 
@@ -1731,8 +1751,13 @@ Type: Geist; Geist Mono only for the short uppercase kickers and the
 "Checked 14:03" stamp; text at 11 (the kickers), 12, 13, 14, 15, 16, 18 or
 20px on even line heights, gaps and paddings on 4px steps, bar the route's
 drawn fork (review D14). Layout: container queries on the form's own width.
-Signature: the route on the map (6.1). One teal per view: Send, or the
-ClickUp form button while requests are not open to the seat.
+Signature: the route on the map (6.1). One teal per view: Send (none while
+a lost choice blocks it, 2026-10-29). The held mark (2026-10-29,
+clickup-diet-1029): saved, not sent yet, is the cockpit keeping the request,
+so its clock is drawn in the teal ink in each place it shows (the note
+before Send, the hint beside "Save request", the route's held stop, the
+Saved heading), and My requests' "Saved" chip takes the neutral on-its-way
+mark "Sending" has; orange stays for what a person must check.
 
 **What do you need?** A 48px search ("Search, for example: card
 declined"), then, while nothing is searched:
@@ -1873,7 +1898,7 @@ one column that ends in the route, then Send.
 screens): a polite summary ("Two tasks, for Call Center and Marketing /
 ADs"), then stops: *Now* ("You send it. The cockpit checks it and saves
 it."); *Saved, not sent* while a send would be held ("Waits in the cockpit."
-and the writer's own sentence, an orange clock, the track after it
+and the writer's own sentence, a teal-ink clock (orange until 2026-10-29), the track after it
 dashed; the button then says "Save request"; graft 4); *Your answer* at the fork (a
 diamond: "Where is the problem? Both"); a lane per task (its list, the task's
 name with only the client isolated, its owner and the server's note, what it
@@ -1910,7 +1935,13 @@ timing words appear only while requests are open to the seat ("Usually in a
 minute or two"; "When requests open" while a send would be held, "Waits for
 the writer" while the writer has not reported, its mode `unknown`, when the
 hint by the button says "Saved here until the writer runs with requests
-open."; review CL-04). Tasks that may run on one list, for one owner, under
+open."; review CL-04). Those quiet words are a lead seat's (an editor, an
+admin or the CEO: `seat.all`). A plain seat's follow its own held note
+(`heldWait`, clickup-diet-1029): "when the writer is back" after requests
+opened ("Saved here until the writer is back.", the summary's "saved until
+the writer is back"), "When requests open" and "Saved here until requests
+open." when its note says requests are not open yet or are tested on one
+card; a note the form does not know keeps the hedge. Tasks that may run on one list, for one owner, under
 one name and on one question, one per answer (Create an ad account), are one
 lane: the answers joined in the question's order, the task and owner said
 once, and under "Works from" what each answer's task works from
@@ -1928,28 +1959,40 @@ from ClickUp. Ask the systems manager." instead, never "Pick ..." for what
 cannot be picked (`routeNote`, `ROUTE_WORDS.routeLost`; review BT-6, S4).
 While any required choice has no option ClickUp gives, the request cannot
 be sent here (review T3-design-clarity-05, 2026-10-29): above Send, before
-any press, a quiet panel with the orange mark says 'This request cannot be
-sent here until ClickUp's choices for "{question}" are back. Use the
-ClickUp request form for now, or ask the systems manager.' with "Open the
-ClickUp request form" as the one teal action; Send is outlined and
+any press, a quiet panel with the orange mark says 'ClickUp's choices for
+"{question}" could not be read, so this request cannot be sent from here
+yet. Tell the systems manager; the cockpit reads ClickUp again at 11
+minutes past each hour. If it cannot wait, make the task on the {list}
+list in ClickUp.' ({list} the list the type's tasks go to, `handLists`;
+when they go to more than one, every list is named, since the lost answer
+may be what picks among them: "make it on the Call Center or Marketing /
+ADs list in ClickUp, or on both, as the request needs.", or "make a task on
+each of the ... lists" when every task always runs; clickup-diet-1029) with
+"Open the {list} list in ClickUp", one per list, as an outlined link to that list
+(`app.clickup.com/90182518398/v/li/{listId}`, a new tab; none for a team
+with no list of its own; clickup-diet-1029: no ClickUp form, and only a
+real change in ClickUp loses a choice, so it does not come back in a
+minute); Send is outlined and
 described by that sentence, and still takes a press, so the summary takes
 focus to the lost choice (A11Y-21), led by "This request cannot be sent
 here yet:" when every answer in it is a lost choice; the route is "Where it
 goes" with no Now, held, Due or After that stop, no timing words and no
 cancel line, as ahead of requests opening, the questions still on the page.
 
-**Requests not open to the seat.** Before a pick, the writer's sentence and
-"Open the ClickUp request form" (teal) above the map (on a form 560px wide
-or less it takes the panel's width, as Send does, so it keeps one line
-inside the card at 390; the form's columns never grow past the card); after a pick, the plate,
-the same sentence and button in place of the questions, "This request is made
-on the ClickUp request form for now, so the cockpit asks you nothing here.
-The same questions open here once the cockpit can send requests for you."
+**Requests not open to the seat.** Since 20261029p every seat is held
+instead (2.8): the held note above the map with the held mark, the
+questions, "Save request" and the held stop, as for an editor. A database
+without 20261029p may still refuse: before a pick, the writer's sentence
+above the map, with no link (2026-10-29: no ClickUp form; the form's
+columns never grow past the card); after a pick, the plate,
+the same sentence in place of the questions, "Requests cannot be sent from
+this seat just now, so the cockpit asks you nothing here. The questions
+open here as soon as they can be sent."
 (`offAsked`; true for every refusal, a writer gone quiet after requests
 opened included), or, when answers were given before requests stopped being
-open to the seat, those answers under "Your answers so far" and "This
-request is made on the ClickUp request form for now. Your answers stay here,
-to copy into it." (`offKept`; review BT-7), and "Where it goes" (review
+open to the seat, those answers under "Your answers so far" and "Your
+answers stay on this screen until requests can be sent from this seat."
+(`offKept`; review BT-7), and "Where it goes" (review
 CL-04): no Now, Due or After that stops, no timing words
 (a lane says "Goes to" or "May go to"; a pair's fork says "Two tasks", or
 "Depends on the answer" before the deciding question), a lane with no client
@@ -2024,8 +2067,15 @@ only while every task on its way is queued or sending and the page still
 reads it; a create in doubt says "The cockpit is checking whether it
 reached ClickUp." (review BT-5, CL-08). While the writer has not reported, a
 held request says "It goes to ClickUp by itself once the requests writer
-runs with requests open." with no "Nothing else to do now.", since the
-writer's note asks an editor to check the Machine tab (review CL-04); each
+runs with requests open." with no "Nothing else to do now." for an editor,
+an admin or the CEO, since their note asks them to check the Machine tab
+(review CL-04; `sentModel`'s `asks`). A plain seat's note asks nothing, so
+it keeps "Nothing else to do now." and says the gate's own words: "Nothing
+else to do now. It goes to ClickUp by itself when the writer is back.",
+each task "Saved. Goes to {list} when the writer is back." (or "In {list},
+not finished yet. The cockpit finishes it when the writer is back.";
+`ROUTE_WORDS.goesByItselfBack`, `heldBack`, `heldInListBack`; with
+`wait: "back"`, clickup-diet-1029). For a lead seat each
 held task's line then says "Saved. Goes to {list} once the writer runs with
 requests open." (or "In {list}, not finished yet. The cockpit finishes it
 once the writer runs with requests open."; `ROUTE_WORDS.heldQuiet`,
@@ -2041,8 +2091,8 @@ in ClickUp, else which one: "The one in ClickUp is not finished: ..."
 heading's words and `sentLines()` are unchanged, but such a task's mark,
 and the heading's, is the orange warning, never the green check, as My
 requests' chip is (review T2-clarity-05, 2026-10-29); the
-`sentAlone` sentence when it applies; after a refusal, the next step and the
-form link, a quiet panel with the red mark (review D17); the focused block
+`sentAlone` sentence when it applies; after a refusal, the next step (no
+link since 2026-10-29), a quiet panel with the red mark (review D17); the focused block
 is named by its heading and described by the sub-line and the `sentAlone`
 sentence; the sub-line is read whole (`aria-atomic`) and also says a
 refusal's next step to a screen reader, so a refusal that comes in while
@@ -2060,7 +2110,7 @@ task's `sentLines()` sentence whole, with its mark (green only on the
 check; orange on a task in ClickUp that is not finished), its name and
 "Open in ClickUp" from a delivered task's own `url`
 (named for its list and as opening a new tab; the SOP link and "Open the
-ClickUp request form" say "(opens in a new tab)" to a screen reader too;
+{list} list in ClickUp" say "(opens in a new tab)" to a screen reader too;
 review A11Y-17), two tasks
 under "Sent together" only while no task failed, else "Two tasks" (review
 CL-05); then the SOP, Due and After that stops. Once nothing reached
@@ -2463,7 +2513,7 @@ in place; `?focus=` opens the view and Escape closes it; a tick goes
 | X3 | PLAN 3.3 row 21: template `t-86ex6fdwu` | No template, 5 draft steps | The template sends the retired card-number form (TS finding 3) |
 | X4 | WR 8: Request Type only after a rehearsal clears the type | On at seed for the 11 types with no folder rule | No rule can fire for them (CT F2); the 2-minute check still turns it off if ClickUp moves a task |
 | X5 | PLAN 4.2 and WR 10.3: `CLICKUP_WRITEBACK_APPLY_FORMS` / `APPLY_REQUESTS` | `CLICKUP_WRITEBACK_APPLY_REQUESTS` and `CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS` | WR: `APPLY_FORMS` does not exist; forms are a later stage |
-| X6 | WR 10.4: the requests job paces at 40 a minute | 120 a minute, its own setting | The token's limit is 1,000 a minute (AT 7.1); 6 requests a run fit one invocation |
+| X6 | WR 10.4: the requests job paces at 40 a minute | 120 a minute, its own setting (2026-10-29: 25, for ClickUp Business; docs/requests/CLICKUP-DOWNGRADE.md) | The token's limit is 1,000 a minute (AT 7.1); 6 requests a run fit one invocation |
 | X7 | AT 8.1: the mirror as a `clickup-writeback` job | Its own function `cockpit-tasks` | One owner per file for parallel builders, and the focus view needs a signed-in door that `clickup-writeback` does not have |
 | X8 | PLAN 3.3: a 10-minute request mirror job | The task mirror's delta (2 minutes) updates request parts | One mirror, one poll |
 | X9 | PLAN D19 and AT 8.6: Slack DM per seat | Not in this build; `slack_dm` held false | R10 |
@@ -2492,7 +2542,9 @@ in place; `?focus=` opens the view and Escape closes it; a tick goes
 - The "Log a call" exact-millisecond read-back in `cockpit-csm-api`
   (WR 4) and the same check in `blueprint.ts:91` and `outbox.ts:17, 27`.
 - Closing the ClickUp form `2kzmr1ky-1178` and the create-time list rules
-  (C3, two weeks after go-live).
+  (C3, two weeks after go-live). Since 2026-10-29 nothing in the cockpit
+  links the form; closing it is the CEO's step in
+  docs/requests/CLICKUP-DOWNGRADE.md section 7.
 - Asked by the round 2 fixers and left out on purpose (retest round 2):
   - A `p_again_of` argument on `cockpit_request_submit` (re-plan only an
     original's failed parts, retire it in the same transaction). A partial

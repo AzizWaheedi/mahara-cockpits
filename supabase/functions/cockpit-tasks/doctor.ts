@@ -1,10 +1,13 @@
 /**
  * The doctor (contract 5.5): which secrets are set (names only, never a
  * value), one GET user to prove the token works and read its rate limit,
- * how many seats are linked, and the last delta and seats runs. Reads only;
- * it writes no state row.
+ * the task mirror's own pace beside it, how many seats are linked, and the
+ * last delta and seats runs. Reads only; it writes no state row.
  */
-import { ClickUpReader, type Deps, type Row, sentence } from "./clickup.ts";
+import { ClickUpReader, callsPerMinute, type Deps, type Row, sentence } from "./clickup.ts";
+
+/** The task mirror's pace may take at most this share of the limit ClickUp reports for the shared token. */
+export const PACE_SHARE = 0.6;
 
 export const SECRETS = ["CLICKUP_API_TOKEN", "TASKS_CRON_SECRET", "SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"] as const;
 
@@ -13,6 +16,8 @@ export type Doctor = {
   note: string;
   secrets: Record<string, boolean>;
   rateLimit: number | null;
+  /** The calls a minute the delta and seats readers keep to (callsPerMinute). */
+  pace: number;
   linked: number | null;
   notLinked: number | null;
   lastDelta: Row | null;
@@ -25,9 +30,11 @@ export async function runDoctor(deps: Deps): Promise<Doctor> {
   const problems: string[] = [];
   for (const [name, present] of Object.entries(secrets)) if (!present) problems.push(`${name} is not set on cockpit-tasks.`);
   let rateLimit: number | null = null;
+  const pace = callsPerMinute(deps.env);
   if (secrets.CLICKUP_API_TOKEN) {
     try {
-      const cu = new ClickUpReader(deps, deps.uuid());
+      // A person is waiting: not paced, and one more try after ClickUp's 429.
+      const cu = new ClickUpReader(deps, deps.uuid(), { interactive: true });
       const me = await cu.get("user");
       if (!me?.user?.id) throw new Error("ClickUp answered without a user");
       rateLimit = cu.rateLimit;
@@ -35,6 +42,10 @@ export async function runDoctor(deps: Deps): Promise<Doctor> {
       problems.push(`ClickUp did not accept the token: ${sentence(e)}`);
     }
   }
+  if (rateLimit && pace > rateLimit * PACE_SHARE)
+    problems.push(
+      `The task mirror is set to ${pace} calls a minute, more than 60% of the ${rateLimit} ClickUp allows this token. Lower CLICKUP_TASKS_CALLS_PER_MINUTE.`,
+    );
   let linked: number | null = null;
   let notLinked: number | null = null;
   let lastDelta: Row | null = null;
@@ -55,7 +66,7 @@ export async function runDoctor(deps: Deps): Promise<Doctor> {
   else if (lastSeats.ok === false) problems.push(`The last seats read failed: ${lastSeats.note ?? "no note"}`);
   const ok = problems.length === 0;
   const note = ok
-    ? `ClickUp answers${rateLimit ? ` (${rateLimit} calls a minute allowed)` : ""}; ${linked} seats linked, ${notLinked ?? 0} not linked.`
+    ? `ClickUp answers${rateLimit ? ` (${rateLimit} calls a minute allowed; the task mirror reads at ${pace} a minute)` : ""}; ${linked} seats linked, ${notLinked ?? 0} not linked.`
     : problems.join(" ");
-  return { ok, note, secrets, rateLimit, linked, notLinked, lastDelta, lastSeats, problems };
+  return { ok, note, secrets, rateLimit, pace, linked, notLinked, lastDelta, lastSeats, problems };
 }

@@ -2,8 +2,9 @@
 //
 // Replaces the media Convex jobs commentWatch.scan and commentWatch.apply
 // (apps/media-buyer-cockpit/convex/commentWatch.ts), which stopped with the
-// Convex pause on 2026-10-07. pg_cron posts here at minute 7, 22, 37 and 52
-// (migration 20261009i). One run:
+// Convex pause on 2026-10-07. pg_cron posts here at minute 13, 29, 43 and 59,
+// off the native cycle's minutes (migration 20261029q; 20261009i set 7, 22,
+// 37 and 52). One run:
 //
 // 1. opens a run row (cockpit_comment_watch_begin; busy if one is open);
 // 2. runs the tick (cockpit_ai_watch_tick): Hermes answers into the ledger,
@@ -15,13 +16,19 @@
 //    task ids) narrows a live run to those cards for a one-card check;
 // 4. reads the comments on every current client card (Clients - Mahara) and
 //    records the new ones (cockpit_comment_watch_record). Each one worth
-//    reading becomes a comment_digest job for Hermes, once per comment id;
+//    reading becomes a comment_digest job for Hermes, once per comment id.
+//    The cards are read in a fixed order (by card id) starting after the last
+//    card the previous run read (counts.resume_after on its run row), so when
+//    time runs out the cards left unread are the first ones read next run;
 // 5. closes the run with its counts and a plain note, and records its
 //    freshness in cockpit_sync_state under 'comment-watch'.
 //
 // Every ClickUp call goes through cockpit-csm-api/tools.ts, so it lands in
-// cockpit_csm_provider_health. Calls are spaced under ClickUp's 100 a minute
-// per token; reads are retried on a 429 or a 5xx while time allows.
+// cockpit_csm_provider_health. Calls are 2 s apart, 30 a minute: ClickUp
+// Business allows 100 a minute for the one token the Supabase functions and the
+// VPS workers share (docs/requests/CLICKUP-DOWNGRADE.md). Reads are retried on
+// a 429 or a 5xx while time allows (paced below), so the helper's own 429 retry
+// is not taken.
 
 import {cleanDosDonts, CLIENTS_LIST, DOS_DONTS_FIELD, NOTES_MARK} from '../clickup-writeback/rules.ts';
 import {providerTools, type Provider} from '../cockpit-csm-api/tools.ts';
@@ -41,8 +48,20 @@ export const BACKFILL_DAYS = 21;
 export const DIGEST_LIMIT = 10;
 /** Digests whose rules are checked against their card per run. */
 export const RULES_LIMIT = 15;
-/** About 86 ClickUp calls a minute; ClickUp allows 100 per token. */
-export const CLICKUP_GAP_MS = 700;
+/**
+ * 30 ClickUp calls a minute; ClickUp Business allows 100 for the token the VPS shares. The rules step runs
+ * first, for at most RULES_BUDGET_MS; the card scan has the rest of SCAN_BUDGET_MS. 28 cards and two list pages
+ * are 60 s at this gap, so with a full rules step (to about 33 s) they end by about 91 s. A run reads about 30
+ * cards after a full rules step and about 46 with no rules to check; the cards it leaves are read first next
+ * run (scan).
+ */
+export const CLICKUP_GAP_MS = 2_000;
+/**
+ * No new rule is checked after this, so the card scan keeps its share of the run. At the 2 s gap a rule written
+ * to its card is 4 calls (8 s), so a run checks 3 or 4 of them and about 12 that only need a read; the rest
+ * wait for the next run.
+ */
+export const RULES_BUDGET_MS = 25_000;
 /** No new card is read after this. */
 export const SCAN_BUDGET_MS = 95_000;
 /** No call or retry starts after this (the Edge Function stops at 150 s). */
@@ -211,6 +230,8 @@ export type Store = {
   seen(ids: string[]): Promise<Set<string>>;
   record(items: RecordItem[]): Promise<Recorded>;
   finish(run: number, ok: boolean, note: string, counts: Row, planned: Row[]): Promise<void>;
+  /** The last card the previous run read (its counts.resume_after), so this run starts after it. */
+  resumeAfter?(): Promise<string | null>;
   /** Read-only extras for a dry run's report. */
   preview?(): Promise<Row>;
 };
@@ -279,7 +300,27 @@ async function listClientTasks(clickup: Provider): Promise<Any[]> {
   return out;
 }
 
-type Ctx = {store: Store; clickup: Provider; g: Gate; dryRun: boolean; clock: Clock; start: number; counts: Record<string, number>; planned: Row[]; problems: string[]};
+type Ctx = {
+  store: Store; clickup: Provider; g: Gate; dryRun: boolean; clock: Clock; start: number; counts: Record<string, number>; planned: Row[]; problems: string[];
+  /** The last card read, by the previous run when this one starts and then by this one. */
+  resumeAfter: string | null;
+};
+
+/** "Acme, Beta and Gamma", or the first three and how many more. */
+function names(cards: Any[], max = 3): string {
+  const shown = cards.slice(0, max).map(t => String(t.name).trim().slice(0, 60));
+  const more = cards.length - shown.length;
+  if (more > 0) return `${shown.join(', ')} and ${more} more`;
+  return shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown.at(-1)}` : (shown[0] ?? '');
+}
+
+/** The current cards in a fixed order (by id), starting with the first one after `after`. */
+export function rotation<T extends {id?: unknown}>(cards: T[], after: string | null): T[] {
+  const sorted = [...cards].sort((a, b) => (String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0));
+  if (!after) return sorted;
+  const from = sorted.findIndex(t => String(t.id) > after);
+  return from <= 0 ? sorted : [...sorted.slice(from), ...sorted.slice(0, from)];
+}
 
 /** Step 3: new rules onto the cards. A transient failure leaves the digest pending for the next run. */
 async function applyRules(c: Ctx): Promise<void> {
@@ -288,9 +329,10 @@ async function applyRules(c: Ctx): Promise<void> {
     .filter(item => item.state === null || live(item.taskId))
     .slice(0, RULES_LIMIT);
   const read = async (taskId: string) => fieldValue(await c.clickup.call('GET', `task/${taskId}`));
-  for (const item of pending) {
-    if (c.clock.now() >= c.start + SCAN_BUDGET_MS) {
-      c.problems.push('Time ran out before every new rule was checked; the rest wait for the next run.');
+  for (const [i, item] of pending.entries()) {
+    if (c.clock.now() >= c.start + RULES_BUDGET_MS) {
+      const left = pending.length - i;
+      c.problems.push(`${plural(left, 'card waits', 'cards wait')} for ${left === 1 ? 'its' : 'their'} new rules until the next run, so the comment scan keeps its time.`);
       break;
     }
     const entry = {commentId: item.commentId, taskId: item.taskId, clientName: item.clientName, field: "Do's & Don'ts"};
@@ -374,15 +416,25 @@ async function scan(c: Ctx): Promise<RecordItem[]> {
   if (!tasks.length) throw new Plain('ClickUp returned no client cards, so nothing was read. Check that the token can still see the Clients - Mahara list.');
   const found = new Map<string, Found>();
   const errors: string[] = [];
-  for (const t of current) {
+  // Where the last run stopped: when time runs out the cards left unread go first next run, so none is skipped run
+  // after run.
+  const order = rotation(current, c.resumeAfter);
+  let reached = 0;
+  let last = c.resumeAfter;
+  for (const t of order) {
     if (c.clock.now() >= c.start + SCAN_BUDGET_MS) {
-      c.problems.push(`Time ran out after ${plural(c.counts.clients_read, 'client', 'clients')} of ${current.length}; the rest are read next run.`);
+      const unread = order.slice(reached);
+      c.problems.push(
+        `Time ran out after ${plural(c.counts.clients_read, 'client', 'clients')} of ${current.length}; ${names(unread)} ${unread.length === 1 ? 'is' : 'are'} read first next run.`,
+      );
       break;
     }
     try {
       const body = await c.clickup.call('GET', `task/${t.id}/comment`);
       if (!body || !Array.isArray(body.comments)) throw new Plain('no comment list');
       c.counts.clients_read++;
+      reached++;
+      last = String(t.id);
       const rules = cleanDosDonts(fieldValue(t)).text;
       for (const cm of body.comments as Any[]) {
         const commentId = String(cm?.id ?? '');
@@ -395,11 +447,15 @@ async function scan(c: Ctx): Promise<RecordItem[]> {
     } catch (e) {
       if (['time', 'config', 'ledger'].includes(classify(e))) throw e;
       c.counts.card_errors++;
+      reached++;
+      last = String(t.id);
       errors.push(`${String(t.name).slice(0, 60)}: ${redact(message(e)).slice(0, 120)}`);
     }
   }
   if (errors.length)
-    c.problems.push(`The comments on ${plural(errors.length, 'card', 'cards')} could not be read and are read again next run (${errors.slice(0, 3).join('; ')}).`);
+    c.problems.push(
+      `The comments on ${plural(errors.length, 'card', 'cards')} could not be read and are read again ${reached === order.length ? 'next run' : 'when the scan comes back to them'} (${errors.slice(0, 3).join('; ')}).`,
+    );
   c.counts.comments = found.size;
   const all = [...found.values()];
   const seen = new Set<string>();
@@ -429,8 +485,12 @@ async function scan(c: Ctx): Promise<RecordItem[]> {
     c.counts.skipped += r.skipped;
     c.counts.deferred += r.deferred;
   }
+  // The place moves on only once what was read is saved: a failed save reads the same cards again next run.
+  c.resumeAfter = last;
   if (c.counts.deferred)
-    c.problems.push(`${plural(c.counts.deferred, 'comment waits', 'comments wait')} for the next run, so Hermes is never handed more than one run of work at a time.`);
+    c.problems.push(
+      `${plural(c.counts.deferred, 'comment waits', 'comments wait')} for ${reached === order.length ? 'the next run' : 'the scan to come back to ' + (c.counts.deferred === 1 ? 'its card' : 'their cards')}, so Hermes is never handed more than one run of work at a time.`,
+    );
   return items;
 }
 
@@ -465,8 +525,14 @@ export async function runWatch(store: Store, sources: Sources, g: Gate, clock: C
     ok = false;
     problems.push(clickupProblem(e));
   }
-  if (clickup) {
-    const ctx: Ctx = {store, clickup, g, dryRun, clock, start, counts, planned, problems};
+  let resumeAfter: string | null = null;
+  try {
+    resumeAfter = (await store.resumeAfter?.()) ?? null;
+  } catch {
+    problems.push("The last run's place in the card list could not be read, so this run started from the first card.");
+  }
+  const ctx: Ctx | undefined = clickup ? {store, clickup, g, dryRun, clock, start, counts, planned, problems, resumeAfter} : undefined;
+  if (ctx) {
     for (const [step, label] of [[applyRules, 'rules'], [scan, 'comments']] as const) {
       try {
         const out = await step(ctx);
@@ -489,7 +555,8 @@ export async function runWatch(store: Store, sources: Sources, g: Gate, clock: C
     ? `${plural(counts.rules_written, 'card', 'cards')} got new rules`
     : `${plural(counts.rules_planned, 'card change', 'card changes')} planned, nothing written to ClickUp`;
   const note = `${plural(counts.clients_read, 'client', 'clients')} read, ${plural(counts.recorded, 'new comment', 'new comments')} (${counts.queued} for a digest, ${counts.skipped} skipped); ${rulesNote}; ${Number(tick?.settled ?? 0)} digests settled, ${Number(tick?.commentsPublished ?? 0)} published.${problems.length ? ` ${problems.join(' ')}` : ''}`;
-  if (!dryRun) await store.finish((begun as {run: number}).run, ok, note, {...counts, tick: tick ?? null} as Row, planned);
+  // The place in the card list goes on even from a run that read no card, so the next run keeps it.
+  if (!dryRun) await store.finish((begun as {run: number}).run, ok, note, {...counts, tick: tick ?? null, resume_after: ctx?.resumeAfter ?? resumeAfter} as Row, planned);
   const result: Result = {ok, run: dryRun ? undefined : (begun as {run: number}).run, mode: dryRun ? 'dry_run' : g.mode, counts: {...counts, tick: tick ?? null} as Row, note};
   if (dryRun) {
     result.planned = planned;
@@ -548,6 +615,19 @@ export function supabaseStore(admin: Admin): Store {
     async finish(run, ok, note, counts, planned) {
       await call(admin, 'cockpit_comment_watch_finish', {p_run: run, p_ok: ok, p_note: note, p_counts: counts, p_planned: planned});
     },
+    async resumeAfter() {
+      // The newest finished run that kept a place (service role: SELECT on cockpit_comment_watch_runs, 20261009i).
+      const {data, error} = await admin
+        .from('cockpit_comment_watch_runs')
+        .select('counts')
+        .not('finished_at', 'is', null)
+        .not('counts->>resume_after', 'is', null)
+        .order('started_at', {ascending: false})
+        .limit(1);
+      if (error) throw new DatabaseError(`cockpit_comment_watch_runs: ${error.message}`);
+      const after = Array.isArray(data) ? data[0]?.counts?.resume_after : null;
+      return typeof after === 'string' && ID.test(after) ? after : null;
+    },
     async preview() {
       return {
         callBriefs: await call<Row>(admin, 'cockpit_call_brief_enqueue', {p_limit: 100, p_dry_run: true}),
@@ -567,6 +647,7 @@ export function dryRunStore(real: Store): Store {
     seen: ids => real.seen(ids),
     record: async items => ({recorded: items.length, queued: items.filter(i => i.prompt).length, skipped: items.filter(i => !i.prompt).length, known: 0, deferred: 0}),
     finish: async () => undefined,
+    resumeAfter: real.resumeAfter,
     preview: real.preview,
   };
 }

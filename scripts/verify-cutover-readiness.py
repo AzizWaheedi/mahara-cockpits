@@ -191,6 +191,17 @@ RELEVANT_TEST_FILES = [
     "apps/client-success-cockpit/scripts/forms-button.test.tsx",
     "apps/client-success-cockpit/scripts/client-calls.test.tsx",
     "apps/client-success-cockpit/scripts/blueprint-saver.test.ts",
+    # ClickUp Business (docs/requests/CLICKUP-DOWNGRADE.md, 2026-10-29): the send gate that holds every seat's
+    # request, the two pg_cron moves, the one retry after ClickUp's 429 and the key links without the old ticket
+    # form. Each passes as `bun test <path>` from the repo root. The guardian's tests/test_clickup_budget.py stays
+    # out for the reason above; scripts/ship.sh runs it from hermes/cockpit-guardian.
+    "apps/media-buyer-cockpit/scripts/request-held-gate-supabase.test.ts",
+    "apps/media-buyer-cockpit/scripts/clickup-cron-spread-supabase.test.ts",
+    "supabase/functions/_shared/clickupRetry.test.ts",
+    "supabase/functions/cockpit-media-api/tools.test.ts",
+    "supabase/functions/cockpit-csm-api/tools.test.ts",
+    "supabase/functions/cockpit-ceo-api/tools.test.ts",
+    "apps/creative-director-cockpit/scripts/key-links.test.ts",
 ]
 
 MANDATORY_EVIDENCE_SUBCHECKS: Dict[str, List[str]] = {

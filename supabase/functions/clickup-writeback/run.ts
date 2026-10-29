@@ -123,6 +123,28 @@ export const redact = (s: string) =>
 
 const NO_TOKEN = "CLICKUP_API_TOKEN is not set on this Edge Function. Add it under Edge Functions, Secrets, in the Supabase dashboard. Nothing was read or written.";
 
+/** The requests jobs' pace when CLICKUP_REQUESTS_CALLS_PER_MINUTE is not set (or is not a positive number). */
+export const REQUESTS_CALLS_PER_MINUTE = 25;
+/** Every other job's pace when CLICKUP_CALLS_PER_MINUTE is not set (or is not a positive number). */
+export const CALLS_PER_MINUTE = 30;
+/** No setting takes a job above this, nor below the floor. */
+export const CALLS_MAX = 60;
+export const CALLS_MIN = 5;
+
+/**
+ * ClickUp calls a minute for one job. ClickUp Business allows 100 a minute for the one token the Supabase
+ * functions and the VPS workers share, and no job takes more than 60 (docs/requests/CLICKUP-DOWNGRADE.md).
+ * requests and requests_doctor read CLICKUP_REQUESTS_CALLS_PER_MINUTE (25 by default); kpi, log, dosdonts and
+ * doctor read CLICKUP_CALLS_PER_MINUTE (30 by default). A missing, non-numeric or non-positive value gives the
+ * default; the result is always 5 to 60.
+ */
+export function writebackPerMinute(job: string, env: Deps["env"]): number {
+  const requestsJob = job === "requests" || job === "requests_doctor";
+  const set = Number(env(requestsJob ? "CLICKUP_REQUESTS_CALLS_PER_MINUTE" : "CLICKUP_CALLS_PER_MINUTE"));
+  const pace = Number.isFinite(set) && set > 0 ? set : requestsJob ? REQUESTS_CALLS_PER_MINUTE : CALLS_PER_MINUTE;
+  return Math.floor(Math.min(CALLS_MAX, Math.max(CALLS_MIN, pace)));
+}
+
 /** Rolling-window limiter: at most `perMinute` calls in any 60 seconds. */
 export function pacer(perMinute: number, now: () => number = Date.now, sleep = (ms: number) => new Promise(r => setTimeout(r, ms))) {
   const calls: number[] = [];
@@ -469,6 +491,33 @@ export async function runDoctor(deps: Deps): Promise<JobResult & { secrets: Row;
 export const REQUESTS_RUN_BUDGET_MS = 100_000;
 const HELD = "Held for the next run, so this run ends inside its time limit.";
 const NOT_STARTED = "The requests run could not start, so this waits for the next run.";
+/**
+ * One requests run sends at a time, so CLICKUP_REQUESTS_CALLS_PER_MINUTE is the whole job's pace, not one Edge
+ * Function call's (docs/requests/CLICKUP-DOWNGRADE.md 1.3). Every submit, every focus-view press and the minute
+ * cron each start a run, and runs claim different rows, so without this three runs close together would make
+ * three times the pace. A run that finds another one open hands back what it claimed, its tries untouched.
+ */
+export const BUSY_HELD = "Another requests run is still sending, so this waits for the next run.";
+export const anotherRunNote = (n: number) =>
+  `Another requests run is still sending, so this one handed back the ${n === 1 ? "row" : `${n} rows`} it claimed; the next run takes ${n === 1 ? "it" : "them"}.`;
+/**
+ * A run still open after this many minutes on the Kuwait clock stopped without reporting back (a live run stops
+ * taking rows at 100 s and ends by about 150 s), so it no longer keeps the next one waiting. The database closes
+ * it at 15 minutes (cockpit_clickup_writeback_begin).
+ */
+export const STALE_RUN_MINUTES = 4;
+/**
+ * Minutes since the open run named in cockpit_clickup_writeback_begin's busy note started ("A requests run that
+ * started at 14:05 Kuwait is still running."), on the Kuwait clock (UTC+3, no daylight saving); null when the
+ * note does not say.
+ */
+export function openRunMinutes(note: unknown, now: number): number | null {
+  const m = /started at ([01]\d|2[0-3]):([0-5]\d) Kuwait is still running/.exec(String(note ?? ""));
+  if (!m) return null;
+  const kuwait = new Date(now + 3 * 3_600_000);
+  const nowMinute = kuwait.getUTCHours() * 60 + kuwait.getUTCMinutes();
+  return (nowMinute - (Number(m[1]) * 60 + Number(m[2])) + 1440) % 1440;
+}
 const GAVE_UP = "Gave up after the retry ladder.";
 /** A row the switch keeps out of ClickUp is handed back for this long, so the next rows in the queue get their turn. */
 export const HOLD_MS = 5 * 60_000;
@@ -544,34 +593,54 @@ export async function runRequests(deps: Deps, limit = 6): Promise<JobResult> {
   const planned: Planned[] = [];
   const save = (id: string, patch: Row) => deps.rpc("cockpit_clickup_writeback_save", { p_id: id, p_token: token, p_patch: patch });
   /**
-   * Hand a row the switch keeps out of ClickUp back to the queue without counting a try:
-   * cockpit_clickup_writeback_release puts it back as it was (queued, or retry when it has ClickUp
-   * progress) with the claim's attempt taken off. On a database without it, the row goes to retry
-   * with its progress kept and progress.held counting the claims that were not tries (triesOf).
+   * Hand a row this run will not send back to the queue without counting a try: the switch keeps it out of
+   * ClickUp, the run's time is spent, a secret is missing, or another run is sending.
+   * cockpit_clickup_writeback_release puts it back as it was (queued, or retry when it has ClickUp progress)
+   * with the claim's attempt taken off. On a database without it, the row goes to retry with its progress
+   * kept and progress.held counting the claims that were not tries (triesOf), so a row held back never loses
+   * a rung of the retry ladder. `plan` null keeps the row's plan as it is.
    */
-  const hold = async (item: RequestsItem, plan: Planned[], note: string) => {
-    const next = new Date(deps.now() + HOLD_MS).toISOString();
+  const hold = async (item: RequestsItem, plan: Planned[] | null, note: string, waitMs = HOLD_MS) => {
+    const next = new Date(deps.now() + waitMs).toISOString();
     try {
-      await db.release(item.id, token, plan, note, next);
+      // A null plan reaches the release as JSON null, which keeps the row's plan (migration 20261026r).
+      await db.release(item.id, token, plan as unknown[], note, next);
       return;
     } catch {
       // Not there yet (or refused): the save below keeps the row retryable either way.
     }
     const progress = { ...(item.progress ?? {}), held: (Number(item.progress?.held ?? 0) || 0) + 1 };
-    await save(item.id, { state: "retry", planned: plan, progress, error: note, next_attempt_at: next });
+    await save(item.id, { state: "retry", ...(plan ? { planned: plan } : {}), progress, error: note, next_attempt_at: next });
   };
   let runId: string | null = null;
   let stop = "";
+  let went = "";
   try {
     let run: Row | null = null;
     try {
-      run = await deps.rpc("cockpit_clickup_writeback_begin", { p_job: "requests", p_mode: g.mode, p_exclusive: false });
+      // Exclusive: one requests run sends at a time, so the pace covers the whole job (BUSY_HELD).
+      run = await deps.rpc("cockpit_clickup_writeback_begin", { p_job: "requests", p_mode: g.mode, p_exclusive: true });
+      const age = run?.id ? null : openRunMinutes(run?.note, deps.now());
+      if (age !== null && age >= STALE_RUN_MINUTES) {
+        // The open run stopped without reporting back: it no longer holds the job up.
+        const since = /started at (\d{2}:\d{2})/.exec(String(run?.note))?.[1] ?? "";
+        run = await deps.rpc("cockpit_clickup_writeback_begin", { p_job: "requests", p_mode: g.mode, p_exclusive: false });
+        went = `A requests run that started at ${since} Kuwait never reported back, so this one went ahead.`;
+      }
     } catch (e) {
       run = { note: redact(String(e instanceof Error ? e.message : e)) };
     }
     if (!run?.id) {
-      // Nothing was written: hand every claimed item back at once instead of leaving it claimed for ten minutes.
-      for (const item of items) await save(item.id, { state: "retry", next_attempt_at: new Date(deps.now()).toISOString(), error: NOT_STARTED }).catch(() => {});
+      const busy = openRunMinutes(run?.note, deps.now()) !== null;
+      // Nothing was sent: hand every claimed item back at once, its try not counted, instead of leaving it
+      // claimed for ten minutes.
+      for (const item of items) await hold(item, null, busy ? BUSY_HELD : NOT_STARTED, 0).catch(() => {});
+      if (busy) {
+        // Another run is sending: it, or the next minute's run, takes these rows. Not a failure.
+        const note = anotherRunNote(items.length);
+        await report(true, note, { claimed: items.length, handedBack: items.length });
+        return { ok: true, job: "requests", mode: g.mode, note, counts: { claimed: items.length, handedBack: items.length } };
+      }
       throw new Error(`${NOT_STARTED} ${String(run?.note ?? "")}`.trim());
     }
     runId = String(run.id);
@@ -582,8 +651,9 @@ export async function runRequests(deps: Deps, limit = 6): Promise<JobResult> {
       claimed[kind] += 1;
       if (stop || deps.now() - started > REQUESTS_RUN_BUDGET_MS) {
         counts.held += 1;
-        // A held item that cannot be handed back is claimed again after ten minutes; the run goes on.
-        await save(item.id, { state: "retry", next_attempt_at: new Date(deps.now()).toISOString(), error: stop || HELD }).catch(() => {});
+        // Back to the queue for the next run, the claim's try taken off: nothing was sent for it. A held item
+        // that cannot be handed back is claimed again after ten minutes; the run goes on.
+        await hold(item, null, stop || HELD, 0).catch(() => {});
         continue;
       }
       try {
@@ -671,6 +741,7 @@ export async function runRequests(deps: Deps, limit = 6): Promise<JobResult> {
       counts.skipped ? `${counts.skipped} skipped.` : "",
       counts.held ? `${counts.held} held for the next run.` : "",
       stop ? `Stopped: ${stop}` : "",
+      went,
     ].filter(Boolean).join(" ");
     const note = !g.apply
       ? `Dry run: ${itemsWords(dry, claimed)} planned. Nothing was written to ClickUp. ${counts.dryRun === 1 ? "It waits" : "They wait"} in the queue for the switch.`

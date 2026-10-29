@@ -50,7 +50,7 @@ Deno.serve(async(req:Request)=>{
    admin=createClient(url,service,{auth:{persistSession:false}});
    const rpc=async(name:string,params:Row)=>{const r=await admin.rpc(name,params);if(r.error)throw Error(r.error.message);return r.data;};
    const scope=async()=>{const r=await userClient.rpc('cockpit_client_lifecycle_scope',{p_client:args.clickupId});if(r.error)throw Error(r.error.message);return r.data;};
-   const provider=providerTools(env,async(row:Row)=>{if(row.phase==='intent'&&row.method!=='GET'&&!launchEnabled(env,args.rehearse))throw Error(REHEARSAL);const r=await admin.from('cockpit_media_provider_health').insert({...row,action_id:actionId??null});if(r.error)throw Error('Could not save provider health receipt');});
+   const provider=providerTools(env,async(row:Row)=>{if(row.phase==='intent'&&row.method!=='GET'&&!launchEnabled(env,args.rehearse))throw Error(REHEARSAL);const r=await admin.from('cockpit_media_provider_health').insert({...row,action_id:actionId??null});if(r.error)throw Error('Could not save provider health receipt');},fetch,{retry429:true});
    return json(await lifecycleOperation(operation,args,input.apply===true,input.requestId,{
     scope,env,provider,
     client:async()=>{const r=await userClient.rpc('cockpit_launch_pipeline',{p_clickup_id:args.clickupId});if(r.error)throw Error(r.error.message);if(!r.data?.clients?.[0])throw Error('This client is unavailable.');return r.data.clients[0];},
@@ -77,7 +77,8 @@ Deno.serve(async(req:Request)=>{
    const {error}=await admin.from('cockpit_media_provider_health').insert({...row,action_id:actionId??null});
    if(error) throw new Error('Could not save provider health receipt');
   };
-  const provider=providerTools(env,health);
+  // A person is waiting: one more try after ClickUp's 429 (_shared/clickupRetry.ts); other providers never retry.
+  const provider=providerTools(env,health,fetch,{retry429:true});
   if(operation==='previews.fresh'){
    const format=args.format??'MOBILE_FEED_STANDARD';
    const {data:cached,error:cacheError}=await admin.from('cockpit_ad_preview_cache').select('payload,account_id,campaign_id').eq('ad_id',args.adId).eq('format',format).maybeSingle();

@@ -62,7 +62,7 @@ describe("the focus view's read", () => {
     const s = setup();
     const r = await runDetail(s.deps, JWT, { taskId: "abc123", refresh: false });
     expect(r.status).toBe(200);
-    // The cache was written during this read (the pacer's half second is on the fake clock).
+    // The cache was written during this read (the focus view's reader is interactive: not paced, no wait).
     expect(Date.parse(r.body.detail.at)).toBeGreaterThanOrEqual(NOW);
     expect(s.k.clickup.calls.map(c => [c.method, c.path, c.query.get("include_markdown_description"), c.query.get("include_subtasks")])).toEqual([
       ["GET", "task/abc123", "true", "true"],
@@ -112,6 +112,30 @@ describe("the focus view's read", () => {
     const never = setup();
     never.k.clickup.fail.set("task/abc123", 404);
     expect((await runDetail(never.deps, JWT, { taskId: "abc123", refresh: false })).body.detailNote).toBe(NOT_READ);
+  });
+
+  test("a person is waiting: the read is not paced, and ClickUp's 429 is tried once more after its wait", async () => {
+    const s = setup();
+    const slept: number[] = [];
+    s.deps.sleep = async ms => {
+      slept.push(ms);
+    };
+    const real = s.k.clickup.fetch;
+    let first = true;
+    s.deps.clickupFetch = async (input, init) => {
+      if (first) {
+        first = false;
+        return new Response('{"err":"Rate limit reached","ECODE":"APP_002"}', { status: 429, headers: { "Retry-After": "1" } });
+      }
+      return real(input, init);
+    };
+    const r = await runDetail(s.deps, JWT, { taskId: "abc123", refresh: true });
+    expect(r.status).toBe(200);
+    expect(r.body.detailNote).toBeNull();
+    // One wait for ClickUp's 429 and none between the task and its comments.
+    expect(slept).toEqual([1_000]);
+    expect(s.k.clickup.calls.map(c => c.path)).toEqual(["task/abc123", "task/abc123/comment"]);
+    expect(s.k.receipts.filter(x => x.phase === "response").map(x => x.http_status)).toEqual([429, 200, 200]);
   });
 
   test("only GETs reach ClickUp, with no token there is no read but the view still answers", async () => {

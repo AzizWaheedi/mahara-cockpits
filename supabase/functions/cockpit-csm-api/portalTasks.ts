@@ -87,7 +87,7 @@ export async function runPortalTasks(
   const clickup = providerTools(env('CLICKUP_API_TOKEN') ?? '', async row => {
     const saved = await admin.from('cockpit_csm_provider_health').insert({...row, provider: 'clickup', action_id: null});
     if (saved.error) throw Error('Provider health could not be saved. Stop the portal-task read.');
-  }, request);
+  }, request, {retry429: true});
   const get = async (path: string) => {
     await guard();
     return clickup.call('GET', path);

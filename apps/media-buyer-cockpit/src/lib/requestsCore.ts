@@ -171,6 +171,36 @@ export type WriterAnswer = {
   held?: boolean;
 };
 
+/**
+ * When a held request goes, said as the send gate's note says it
+ * (20261029p): "open" once requests open; "writer" once the writer runs
+ * with requests open (the hedge while it has not reported); "back" when the
+ * writer is back (a plain seat's note when its last report was apply).
+ */
+export type HeldWait = "open" | "writer" | "back";
+
+/**
+ * The held words for this seat. Until the writer goes quiet, "open". Then a
+ * lead seat (editor, admin or the CEO: the types read's seat.all) keeps the
+ * hedge, its note naming the Machine tab; a plain seat's words follow its
+ * own note, which says what the server knows: "when the writer is back"
+ * after requests opened, requests not open yet or tested on one card
+ * otherwise ("open"). A note the form does not know keeps the hedge, which
+ * is true in every case (review CL-04; clickup-diet-1029).
+ */
+export function heldWait(
+  quiet: boolean,
+  lead: boolean,
+  note: string | null | undefined,
+): HeldWait {
+  if (!quiet) return "open";
+  const said = note?.trim() ?? "";
+  if (lead || !said) return "writer";
+  if (said.includes("when the writer is back")) return "back";
+  if (/not open yet|tested on the internal test card/.test(said)) return "open";
+  return "writer";
+}
+
 /** The answer of cockpit_request_types_read (2.5). */
 export type TypesRead = {
   asOf: string;
@@ -358,10 +388,6 @@ export function requestsOpen(
   return false;
 }
 
-/** The public ClickUp request form, while the writer is not live (R6). */
-export const CLICKUP_FORM_URL =
-  "https://forms.clickup.com/90182518398/f/2kzmr1ky-1178/R1O1N5QXYLUTJOWQ3E";
-
 export const PRIORITIES: { key: Priority; label: string }[] = [
   { key: "urgent", label: "Urgent" },
   { key: "high", label: "High" },
@@ -396,6 +422,55 @@ export const TARGET_LISTS: { listId: string; team: Team; name: string }[] = [
   { listId: "901816723206", team: "call_center", name: "Call Center" },
 ];
 
+/**
+ * A team's own list in ClickUp (TARGET_LISTS, workspace 90182518398): where
+ * the task can be made by hand when a request cannot be sent from here (a
+ * choice ClickUp lost). Null for a team with no list of its own. There is no
+ * ClickUp form to fall back on: the cockpit's request form replaced it
+ * (docs/requests/CLICKUP-DOWNGRADE.md).
+ */
+export function teamList(team: Team): { name: string; url: string } | null {
+  const list = TARGET_LISTS.find(l => l.team === team);
+  return list
+    ? {
+        name: list.name,
+        url: `https://app.clickup.com/90182518398/v/li/${list.listId}`,
+      }
+    : null;
+}
+
+/**
+ * Where a request that cannot be sent from here can be made by hand (a
+ * choice ClickUp lost): every list its tasks go to, in the order of its
+ * parts, each with its link (null for a list that is not one of the five),
+ * else the team's own list, else the team's name with no link. `each` when
+ * the lists are more than one and every task always runs, so the person
+ * makes one on each; otherwise an answer picks among them (Low schedule
+ * rate: Call Center, Marketing / ADs or both), so the person makes the ones
+ * the request needs. Built from the parts, never the type's team alone,
+ * which names only one of them (review clickup-diet-1029).
+ */
+export function handLists(
+  type: Pick<TypeView, "team" | "teamLabel" | "parts">,
+): {
+  lists: { name: string; url: string | null }[];
+  each: boolean;
+} {
+  const names = unique(type.parts.map(p => p.listName).filter(Boolean));
+  if (!names.length) {
+    const own = teamList(type.team);
+    return { lists: [own ?? { name: type.teamLabel, url: null }], each: false };
+  }
+  const lists = names.map(name => {
+    const team = teamOfList(name);
+    return { name, url: (team && teamList(team)?.url) ?? null };
+  });
+  return {
+    lists,
+    each: lists.length > 1 && type.parts.every(p => !p.when),
+  };
+}
+
 /** The text limits of 2.5 step 5, shared by the inputs and the checks. */
 export const LIMITS = {
   text: 500,
@@ -426,11 +501,26 @@ export const REQUEST_SENTENCES = {
     "This choice could not be read from ClickUp. Ask the systems manager.",
   /**
    * Above Send while a required choice has no option ClickUp gives: the
-   * request cannot be sent here, so the way out is the ClickUp request form
-   * (review T3-design-clarity-05).
+   * request cannot be sent here (review T3-design-clarity-05). Only a real
+   * change in ClickUp does this (the hourly seats read at :11 keeps the
+   * catalog as it was when a read fails), so the systems manager is the way
+   * out, and the lists its tasks go to in ClickUp when it cannot wait
+   * (handLists): one list by name; more, each named, with "each" when every
+   * task always runs, else the ones the request needs, since the lost answer
+   * may be what picks among them (review clickup-diet-1029).
    */
-  lostBlocked: (question: string) =>
-    `This request cannot be sent here until ClickUp's choices for "${question}" are back. Use the ClickUp request form for now, or ask the systems manager.`,
+  lostBlocked: (question: string, lists: string | string[], each = false) => {
+    const names = typeof lists === "string" ? [lists] : lists;
+    const way =
+      names.length <= 1
+        ? `make the task on the ${names[0] ?? ""} list in ClickUp.`
+        : each
+          ? `make a task on each of the ${joinWords(names)} lists in ClickUp.`
+          : `make it on the ${joinOr(names)} list in ClickUp, or on ${
+              names.length === 2 ? "both" : "more than one"
+            }, as the request needs.`;
+    return `ClickUp's choices for "${question}" could not be read, so this request cannot be sent from here yet. Tell the systems manager; the cockpit reads ClickUp again at 11 minutes past each hour. If it cannot wait, ${way}`;
+  },
   /** The error summary's lead when every answer in it is a lost choice. */
   lostLead: "This request cannot be sent here yet:",
   cardOwner: "The CSM named on the client card.",
@@ -453,7 +543,7 @@ export const REQUEST_SENTENCES = {
       "ClickUp moved this task after its Request Type was set. Request Type is now off for this type.",
   } as Record<VerifyState, string | null>,
   missingFunction:
-    "Requests are not on the database yet. Use the ClickUp request form until they are.",
+    "Requests cannot be read: the database does not have them yet. Tell the systems manager.",
   /**
    * An old form ticket a seat may not make a request of here (canRoute
    * false: requests are not open to the seat yet, or the ticket is not its
@@ -468,14 +558,13 @@ export const REQUEST_SENTENCES = {
   importHandled:
     "Came in through the old ClickUp form. It was moved or closed in ClickUp, so it needs no routing here.",
   /** The next step on a request where nothing reached ClickUp. */
-  againFailed:
-    "Nothing reached ClickUp. File it again with the same answers, or use the ClickUp request form.",
+  againFailed: "Nothing reached ClickUp. File it again with the same answers.",
   /**
    * The next step on a request whose task was deleted in ClickUp: it did
    * reach ClickUp, so the panel never says nothing did (review round 3).
    */
   againDeleted:
-    "The task was deleted in ClickUp. File it again with the same answers, or use the ClickUp request form.",
+    "The task was deleted in ClickUp. File it again with the same answers if the work is still needed.",
   /**
    * A task whose create went out and lost its answer, handed back while
    * requests are not open: it may be in ClickUp, and is checked first.
@@ -483,8 +572,7 @@ export const REQUEST_SENTENCES = {
   checkingHeld:
     "ClickUp did not answer. The cockpit checks whether it arrived once requests open",
   /** The sent panel's next step when nothing reached ClickUp. */
-  sentFailed:
-    "Open the request to file it again, or use the ClickUp request form.",
+  sentFailed: "Open the request to file it again with the same answers.",
   /** The server's refusal when the old form ticket a request routes is already routed (contract 2.5, step 8). */
   oldTicketRouted: "That old ticket was already routed.",
   /**
@@ -517,15 +605,17 @@ export const REQUEST_SENTENCES = {
    * review round 3), since the old ticket is cancelled once routed.
    */
   /**
-   * Under the writer's sentence once a type is picked while requests are not
-   * open to the seat. Worded for every refusal, a writer gone quiet after
-   * requests opened included, never "once requests are switched on" (review
-   * CL-04, BT-7); with answers already given, they stay on screen to copy.
+   * Under the writer's sentence once a type is picked while requests cannot
+   * be sent from the seat. Since 20261029p the database holds every seat's
+   * request instead of refusing it, so this shows only on a database that
+   * still refuses; worded for every refusal, never "once requests are
+   * switched on" (review CL-04, BT-7), and never a ClickUp form: there is
+   * none to go to. With answers already given, they stay on screen.
    */
   offAsked:
-    "This request is made on the ClickUp request form for now, so the cockpit asks you nothing here. The same questions open here once the cockpit can send requests for you.",
+    "Requests cannot be sent from this seat just now, so the cockpit asks you nothing here. The questions open here as soon as they can be sent.",
   offKept:
-    "This request is made on the ClickUp request form for now. Your answers stay here, to copy into it.",
+    "Your answers stay on this screen until requests can be sent from this seat.",
   keptLabel: "What was asked",
   keptNotSent:
     "This type has no question for these words, so they are not sent with it.",
@@ -890,8 +980,9 @@ export function stateHint(
 
 /**
  * What to do about a request part of which reached ClickUp: name the
- * task that did not, keep the ones that did (filing the whole request again
- * would make them twice), and raise the missing one another way.
+ * task that did not, keep the ones that did, and have the systems manager
+ * make the missing one (filing the whole request again would make the ones
+ * that arrived twice).
  */
 export function partialNext(row: {
   parts: Pick<PartRow, "state" | "listName">[];
@@ -915,7 +1006,7 @@ export function partialNext(row: {
   const what = missing.length
     ? `The ${joinWords(missing)} ${many ? "tasks" : "task"} did not reach ClickUp`
     : "Part of this request did not reach ClickUp";
-  return `${what}; ${kept}. Raise the missing ${many ? "tasks" : "task"} with the ClickUp request form, or ask the systems manager to make ${many ? "them" : "it"}.`;
+  return `${what}; ${kept}. Ask the systems manager to make the missing ${many ? "tasks" : "task"}. Filing the whole request again would make ${landed === 1 ? "the one that arrived" : "the ones that arrived"} twice.`;
 }
 
 /**
@@ -945,12 +1036,14 @@ export function stateChip(
 } {
   if (row.done && row.state !== "cancelled")
     return { label: "Done", tone: "good" };
-  if (requestHeld(row)) return { label: "Saved", tone: "warning" };
+  // Saved, not sent yet: it goes to ClickUp by itself, so the chip is the
+  // calm on-its-way mark Sending has, never the warning (clickup-diet-1029).
+  if (requestHeld(row)) return { label: "Saved", tone: "neutral" };
   switch (row.state) {
     case "sending":
       return { label: "Sending", tone: "neutral" };
     case "dry_run":
-      return { label: "Saved", tone: "warning" };
+      return { label: "Saved", tone: "neutral" };
     case "delivered": {
       // Two tasks at different statuses read "In ClickUp"; the panel and
       // the row's hint name each one. A task the cockpit could not finish
@@ -1032,7 +1125,7 @@ export function partChip(
   part: PartRow,
   held = false,
 ): { label: string; tone: Tone } {
-  if (partHeld(part, !held)) return { label: "Saved", tone: "warning" };
+  if (partHeld(part, !held)) return { label: "Saved", tone: "neutral" };
   switch (part.state) {
     case "delivered":
       if (part.statusType && DONE_TYPES.includes(part.statusType))
@@ -1044,7 +1137,7 @@ export function partChip(
         tone: "neutral",
       };
     case "dry_run":
-      return { label: "Saved", tone: "warning" };
+      return { label: "Saved", tone: "neutral" };
     case "skipped":
       return { label: "Not sent", tone: "serious" };
     case "failed":
@@ -2778,9 +2871,22 @@ export const ROUTE_WORDS = {
     `Saved. Goes to ${list} once the writer runs with requests open.`,
   heldInListQuiet: (list: string) =>
     `In ${list}, not finished yet. The cockpit finishes it once the writer runs with requests open.`,
+  /**
+   * A plain seat's held words while the writer is quiet after requests
+   * opened, in the gate's own "when the writer is back" (20261029p), so the
+   * panel says one calm sentence (review clickup-diet-1029).
+   */
+  goesByItselfBack: "It goes to ClickUp by itself when the writer is back.",
+  heldBack: (list: string) => `Saved. Goes to ${list} when the writer is back.`,
+  heldInListBack: (list: string) =>
+    `In ${list}, not finished yet. The cockpit finishes it when the writer is back.`,
   whenQuiet: "Waits for the writer",
-  savedUntil: (quiet: boolean) =>
-    quiet ? "until the writer runs with requests open" : "until requests open",
+  savedUntil: (wait: HeldWait) =>
+    wait === "back"
+      ? "until the writer is back"
+      : wait === "writer"
+        ? "until the writer runs with requests open"
+        : "until requests open",
   /**
    * A held request keeps its due day (the queue keeps the whole plan; CL-13),
    * said under the Due stop, which names the day: the day is said once
@@ -3085,19 +3191,35 @@ export function sentModel(
   opts: {
     /** The page stopped reading the request (two minutes): no estimate. */
     stopped?: boolean;
-    /** The writer has not reported (mode unknown): the server's hedge. */
-    quiet?: boolean;
+    /**
+     * When a held request goes, in the gate's words (heldWait): "writer"
+     * follows the server's hedge while the writer has not reported, "back"
+     * a plain seat's "when the writer is back". Absent: once requests open.
+     */
+    wait?: HeldWait;
+    /**
+     * The held note asks for action (the lead seat's note while the writer
+     * is quiet names the Machine tab), so the line never says "Nothing else
+     * to do now" (review CL-04; clickup-diet-1029).
+     */
+    asks?: boolean;
   } = {},
 ): SentModel {
   const tone = sentTone(parts, open);
   const lines = sentLines(parts, open);
-  // While the writer has not reported, a held task's sentence follows its
-  // hedge as the line above it does, never "when requests open" (CL-04).
+  const wait = opts.wait ?? "open";
+  // While the writer has not reported, a held task's sentence follows the
+  // gate's words as the line above it does, never "when requests open"
+  // (CL-04).
   const lineOf = (p: (typeof parts)[number], i: number) =>
-    opts.quiet && partHeld(p, open)
+    wait !== "open" && partHeld(p, open)
       ? p.url
-        ? ROUTE_WORDS.heldInListQuiet(p.listName)
-        : ROUTE_WORDS.heldQuiet(p.listName)
+        ? wait === "back"
+          ? ROUTE_WORDS.heldInListBack(p.listName)
+          : ROUTE_WORDS.heldInListQuiet(p.listName)
+        : wait === "back"
+          ? ROUTE_WORDS.heldBack(p.listName)
+          : ROUTE_WORDS.heldQuiet(p.listName)
       : lines[i];
   const lanes: SentLane[] = parts.map((p, i) => ({
     part: p.part,
@@ -3132,7 +3254,12 @@ export function sentModel(
     checking || opts.stopped ? "" : ", usually within a minute or two";
   let sub: string;
   if (tone === "held")
-    sub = opts.quiet ? ROUTE_WORDS.goesByItselfQuiet : ROUTE_WORDS.goesByItself;
+    sub =
+      wait === "back"
+        ? ROUTE_WORDS.goesByItselfBack
+        : wait === "writer"
+          ? ROUTE_WORDS.goesByItselfQuiet
+          : ROUTE_WORDS.goesByItself;
   else if (failed && !moving)
     sub = done
       ? "Part of it reached ClickUp."
@@ -3182,9 +3309,11 @@ export function sentModel(
         : `${sub} ${which} not finished: the ${
             noted === 1 ? "note under it says" : "notes under them say"
           } what to check there.`;
-  // The quiet writer's own note asks an editor to check the Machine tab, so
-  // a held request then never says "Nothing else to do now" (review CL-04).
-  else if (tone !== "failed" && !(tone === "held" && opts.quiet))
+  // The lead seat's note while the writer is quiet asks them to check the
+  // Machine tab, so a held request then never says "Nothing else to do now"
+  // (review CL-04); a plain seat's note asks nothing, so it does
+  // (clickup-diet-1029).
+  else if (tone !== "failed" && !(tone === "held" && opts.asks))
     sub = `Nothing else to do now. ${sub}`;
   return {
     tone,

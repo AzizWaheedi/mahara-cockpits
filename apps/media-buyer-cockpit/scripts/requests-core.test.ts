@@ -39,6 +39,8 @@ import {
   fieldOfSentence,
   GENERAL_KEYS,
   groupTypes,
+  handLists,
+  heldWait,
   isOpen,
   kuwaitClock,
   kuwaitToday,
@@ -75,12 +77,14 @@ import {
   stateChip,
   stateHint,
   stateWords,
+  TARGET_LISTS,
   TEAM_LOOK,
   TYPE_LOOK,
   type TypeView,
   taskNameParts,
   teamByAnswer,
   teamExamples,
+  teamList,
   teamRelated,
   teamTypes,
   typeFacts,
@@ -615,7 +619,9 @@ describe("the route line (6.1's signature)", () => {
     expect(stateWords(flagged)).toBe(
       "Saved. It goes to ClickUp when requests open",
     );
-    expect(stateChip(flagged)).toEqual({ label: "Saved", tone: "warning" });
+    // Saved reads calm: the on-its-way mark Sending has, never the warning
+    // (clickup-diet-1029).
+    expect(stateChip(flagged)).toEqual({ label: "Saved", tone: "neutral" });
     // The writer's note on every task not yet in ClickUp.
     const noted = row({
       state: "sending",
@@ -628,7 +634,7 @@ describe("the route line (6.1's signature)", () => {
     );
     expect(partChip(noted.parts[0])).toEqual({
       label: "Saved",
-      tone: "warning",
+      tone: "neutral",
     });
     // A held request's tasks say so, not "Sending to ClickUp".
     expect(partWords(queued, true)).toBe(
@@ -751,6 +757,182 @@ describe("the route line (6.1's signature)", () => {
     );
   });
 
+  test("no sentence sends anyone to a ClickUp form; a lost choice names the type's own list (CLICKUP-DOWNGRADE.md 4.3)", () => {
+    const said = Object.values(REQUEST_SENTENCES).flatMap(v =>
+      typeof v === "string"
+        ? [v]
+        : typeof v === "function"
+          ? [(v as (...a: string[]) => string)("{a}", "{b}")]
+          : Object.values(v ?? {}).filter(x => typeof x === "string"),
+    );
+    for (const words of said)
+      expect({
+        words,
+        form: /ClickUp request form|forms\.clickup/.test(words),
+      }).toEqual({
+        words,
+        form: false,
+      });
+    expect(
+      REQUEST_SENTENCES.lostBlocked("Ad platform", "Marketing / ADs"),
+    ).toBe(
+      'ClickUp\'s choices for "Ad platform" could not be read, so this request cannot be sent from here yet. Tell the systems manager; the cockpit reads ClickUp again at 11 minutes past each hour. If it cannot wait, make the task on the Marketing / ADs list in ClickUp.',
+    );
+    expect(REQUEST_SENTENCES.missingFunction).toBe(
+      "Requests cannot be read: the database does not have them yet. Tell the systems manager.",
+    );
+    expect(REQUEST_SENTENCES.againFailed).toBe(
+      "Nothing reached ClickUp. File it again with the same answers.",
+    );
+    expect(REQUEST_SENTENCES.againDeleted).toBe(
+      "The task was deleted in ClickUp. File it again with the same answers if the work is still needed.",
+    );
+    expect(REQUEST_SENTENCES.sentFailed).toBe(
+      "Open the request to file it again with the same answers.",
+    );
+    expect(REQUEST_SENTENCES.offAsked).toBe(
+      "Requests cannot be sent from this seat just now, so the cockpit asks you nothing here. The questions open here as soon as they can be sent.",
+    );
+    expect(REQUEST_SENTENCES.offKept).toBe(
+      "Your answers stay on this screen until requests can be sent from this seat.",
+    );
+    // Each of the five teams has its own list, linked in the workspace.
+    expect(teamList("ads")).toEqual({
+      name: "Marketing / ADs",
+      url: "https://app.clickup.com/90182518398/v/li/901816723196",
+    });
+    for (const l of TARGET_LISTS)
+      expect(teamList(l.team)).toEqual({
+        name: l.name,
+        url: `https://app.clickup.com/90182518398/v/li/${l.listId}`,
+      });
+    // All Tasks is no team's own list: no link.
+    expect(teamList("all_tasks")).toBeNull();
+  });
+
+  test("a lost choice names every list the request's tasks go to, never the team's alone (clickup-diet-1029)", () => {
+    const link = (id: string) =>
+      `https://app.clickup.com/90182518398/v/li/${id}`;
+    // Low schedule rate (team call_center): the lost answer picks Call
+    // Center, Marketing / ADs or both, so both are named and linked.
+    const low = handLists(typeOf("low_schedule_rate"));
+    expect(low).toEqual({
+      lists: [
+        { name: "Call Center", url: link("901816723206") },
+        { name: "Marketing / ADs", url: link("901816723196") },
+      ],
+      each: false,
+    });
+    expect(
+      REQUEST_SENTENCES.lostBlocked(
+        "Where is the problem?",
+        low.lists.map(l => l.name),
+        low.each,
+      ),
+    ).toBe(
+      'ClickUp\'s choices for "Where is the problem?" could not be read, so this request cannot be sent from here yet. Tell the systems manager; the cockpit reads ClickUp again at 11 minutes past each hour. If it cannot wait, make it on the Call Center or Marketing / ADs list in ClickUp, or on both, as the request needs.',
+    );
+    // Every task always runs on two lists: one on each.
+    const pause = handLists(typeOf("client_pause"));
+    expect(pause.lists.map(l => l.name)).toEqual([
+      "Operations / Tech",
+      "Marketing / ADs",
+    ]);
+    expect(pause.each).toBe(true);
+    expect(
+      REQUEST_SENTENCES.lostBlocked(
+        "Q",
+        pause.lists.map(l => l.name),
+        pause.each,
+      ),
+    ).toEndWith(
+      "If it cannot wait, make a task on each of the Operations / Tech and Marketing / ADs lists in ClickUp.",
+    );
+    // Three lists an answer picks among: "more than one".
+    expect(
+      REQUEST_SENTENCES.lostBlocked("Q", [
+        "Call Center",
+        "Operations / Tech",
+        "Marketing / ADs",
+      ]),
+    ).toEndWith(
+      "If it cannot wait, make it on the Call Center, Operations / Tech or Marketing / ADs list in ClickUp, or on more than one, as the request needs.",
+    );
+    // One list, however many tasks: the single-list sentence as before.
+    const ad = handLists(typeOf("create_ad_account"));
+    expect(ad).toEqual({
+      lists: [{ name: "Marketing / ADs", url: link("901816723196") }],
+      each: false,
+    });
+    expect(
+      REQUEST_SENTENCES.lostBlocked(
+        "Ad platform",
+        ad.lists.map(l => l.name),
+        ad.each,
+      ),
+    ).toBe(REQUEST_SENTENCES.lostBlocked("Ad platform", "Marketing / ADs"));
+    // The parts' lists, not the team's: a call_center type whose only task
+    // goes to Marketing / ADs names Marketing / ADs.
+    const low1 = typeOf("low_schedule_rate");
+    expect(
+      handLists({ ...low1, parts: low1.parts.filter(p => p.part === "ads") })
+        .lists,
+    ).toEqual([{ name: "Marketing / ADs", url: link("901816723196") }]);
+    // No parts read: the team's own list, else its name with no link.
+    expect(handLists({ ...low1, parts: [] }).lists).toEqual([
+      { name: "Call Center", url: link("901816723206") },
+    ]);
+    expect(
+      handLists({
+        team: "all_tasks",
+        teamLabel: "All Tasks",
+        parts: [],
+      }).lists,
+    ).toEqual([{ name: "All Tasks", url: null }]);
+  });
+
+  test("held words follow the gate's note for each seat while the writer is quiet (clickup-diet-1029)", () => {
+    const lead =
+      "The requests writer has not reported in the last 15 minutes. What you send is saved and goes to ClickUp by itself once it runs with requests open. Check it on the Machine tab.";
+    const back =
+      "The requests writer has not reported in the last 15 minutes. What you send is saved and goes to ClickUp by itself when the writer is back.";
+    const notOpen =
+      "Requests are not open yet. What you send is saved and goes to ClickUp by itself once they are.";
+    const tested =
+      "Requests are being tested on the internal test card only, where they go to ClickUp at once. Anything else you send is saved and goes to ClickUp by itself once they open to everyone.";
+    // The writer reports: requests open, whatever the note.
+    expect(heldWait(false, true, lead)).toBe("open");
+    expect(heldWait(false, false, notOpen)).toBe("open");
+    // An editor, an admin or the CEO keeps the hedge.
+    expect(heldWait(true, true, lead)).toBe("writer");
+    // A plain seat follows its own note: the writer is back after apply;
+    // requests not open, or tested on one card, otherwise.
+    expect(heldWait(true, false, back)).toBe("back");
+    expect(heldWait(true, false, notOpen)).toBe("open");
+    expect(heldWait(true, false, tested)).toBe("open");
+    // A note the form does not know, or none: the hedge, true in every case.
+    expect(heldWait(true, false, "Something else.")).toBe("writer");
+    expect(heldWait(true, false, null)).toBe("writer");
+    // The gate's notes, word for word, as 20261029p has them.
+    const gate = readFileSync(
+      path.join(
+        ROOT,
+        "supabase/migrations/20261029p_requests_held_for_every_seat.sql",
+      ),
+      "utf8",
+    );
+    for (const note of [lead, back, notOpen, tested])
+      expect({ note, inGate: gate.includes(note) }).toEqual({
+        note,
+        inGate: true,
+      });
+    expect(ROUTE_WORDS.savedUntil("open")).toBe("until requests open");
+    expect(ROUTE_WORDS.savedUntil("writer")).toBe(
+      "until the writer runs with requests open",
+    );
+    expect(ROUTE_WORDS.savedUntil("back")).toBe("until the writer is back");
+  });
+
   test("a partial request names the task that did not go, and keeps the ones that did", () => {
     const tech = part({ part: "tech", listName: "Operations / Tech" });
     const media = (over: Partial<PartRow> = {}) =>
@@ -758,9 +940,9 @@ describe("the route line (6.1's signature)", () => {
     expect(
       partialNext({ parts: [tech, media({ state: "failed", error: "x" })] }),
     ).toBe(
-      "The Marketing / ADs task did not reach ClickUp; the one that did stays there. Raise the missing task with the ClickUp request form, or ask the systems manager to make it.",
+      "The Marketing / ADs task did not reach ClickUp; the one that did stays there. Ask the systems manager to make the missing task. Filing the whole request again would make the one that arrived twice.",
     );
-    // Two refused, one landed: both named, "them".
+    // Two refused, one landed: both named, "tasks".
     expect(
       partialNext({
         parts: [
@@ -770,17 +952,19 @@ describe("the route line (6.1's signature)", () => {
         ],
       }),
     ).toBe(
-      "The Marketing / ADs and Call Center tasks did not reach ClickUp; the one that did stays there. Raise the missing tasks with the ClickUp request form, or ask the systems manager to make them.",
+      "The Marketing / ADs and Call Center tasks did not reach ClickUp; the one that did stays there. Ask the systems manager to make the missing tasks. Filing the whole request again would make the one that arrived twice.",
     );
-    // Two landed: "the ones that did stay there".
-    expect(
-      partialNext({
-        parts: [tech, part({ part: "b" }), media({ state: "failed" })],
-      }),
-    ).toContain("; the ones that did stay there.");
+    // Two landed: "the ones that did stay there", "the ones that arrived".
+    const two = partialNext({
+      parts: [tech, part({ part: "b" }), media({ state: "failed" })],
+    });
+    expect(two).toContain("; the ones that did stay there.");
+    expect(two).toContain(
+      "Filing the whole request again would make the ones that arrived twice.",
+    );
     // No task named as refused (an older state): still a next step.
     expect(partialNext({ parts: [tech] })).toBe(
-      "Part of this request did not reach ClickUp; the one that did stays there. Raise the missing task with the ClickUp request form, or ask the systems manager to make it.",
+      "Part of this request did not reach ClickUp; the one that did stays there. Ask the systems manager to make the missing task. Filing the whole request again would make the one that arrived twice.",
     );
     for (const words of [
       partialNext({ parts: [tech, media({ state: "failed" })] }),
@@ -1836,11 +2020,12 @@ describe("the department map (tickets-look-1028)", () => {
       "Nothing else to do now. Both tasks are on their way to ClickUp; the cockpit is checking whether one reached it.",
     );
     // CL-04: a quiet writer's held request follows its hedge, with no
-    // "Nothing else to do now" (its note asks to check the Machine tab).
+    // "Nothing else to do now" when the lead seat's note asks to check the
+    // Machine tab.
     const quietHeld = sentModel(
       [part({ state: "queued", url: null, status: null })],
       false,
-      { quiet: true },
+      { wait: "writer", asks: true },
     );
     expect(quietHeld.sub).toBe(
       "It goes to ClickUp by itself once the requests writer runs with requests open.",
@@ -1853,10 +2038,41 @@ describe("the department map (tickets-look-1028)", () => {
       sentModel(
         [part({ state: "queued", url: "https://app.clickup.com/t/86harn001" })],
         false,
-        { quiet: true },
+        { wait: "writer", asks: true },
       ).lanes[0].line,
     ).toBe(
       "In Operations / Tech, not finished yet. The cockpit finishes it once the writer runs with requests open.",
+    );
+    // clickup-diet-1029: a plain seat's note asks nothing, so its held
+    // request keeps "Nothing else to do now", and every line says the gate's
+    // own "when the writer is back".
+    const backHeld = sentModel(
+      [part({ state: "queued", url: null, status: null })],
+      false,
+      { wait: "back" },
+    );
+    expect(backHeld.sub).toBe(
+      "Nothing else to do now. It goes to ClickUp by itself when the writer is back.",
+    );
+    expect(backHeld.lanes[0].line).toBe(
+      "Saved. Goes to Operations / Tech when the writer is back.",
+    );
+    expect(
+      sentModel(
+        [part({ state: "queued", url: "https://app.clickup.com/t/86harn001" })],
+        false,
+        { wait: "back" },
+      ).lanes[0].line,
+    ).toBe(
+      "In Operations / Tech, not finished yet. The cockpit finishes it when the writer is back.",
+    );
+    // The hedge alone, with nothing asked, still says nothing else to do.
+    expect(
+      sentModel([part({ state: "queued", url: null, status: null })], false, {
+        wait: "writer",
+      }).sub,
+    ).toBe(
+      "Nothing else to do now. It goes to ClickUp by itself once the requests writer runs with requests open.",
     );
     // CL-05: refused tasks are named as such at once, and a request that
     // reached nothing and moves no more has ended.

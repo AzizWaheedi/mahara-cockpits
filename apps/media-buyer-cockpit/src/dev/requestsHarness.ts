@@ -449,9 +449,9 @@ export type FakeOptions = {
   routes?: boolean;
   /**
    * While the mode is unknown (the writer has not reported in 15 minutes),
-   * the mode of its last report: apply or apply_limited gives a seat outside
-   * the editors, admins and the CEO the server's own refusal for a writer
-   * gone quiet (cockpit_request_send_gate, review round 3; review CL-04).
+   * the mode of its last report: it picks the held note a seat outside the
+   * editors, admins and the CEO is given (cockpit_request_send_gate as
+   * 20261029p has it; review round 3, CL-04).
    */
   lastMode?: WriterMode;
 };
@@ -639,10 +639,11 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
   const allOf = (s: HarnessSeat) => s.editor || s.admin || s.ceo;
 
   /**
-   * Who may file now and whether it is held (cockpit_request_send_gate, as
-   * the review of 2026-10-26 changed it): apply sends at once; otherwise a
-   * lead (editor, admin, CEO) may file and the request is held until
-   * requests open, and anyone else is pointed to the ClickUp form.
+   * Whether a send goes now or is held (cockpit_request_send_gate as
+   * 20261029p has it, docs/requests/CLICKUP-DOWNGRADE.md 4.2): every seat
+   * may file; apply sends at once, as apply_limited does for the test card;
+   * otherwise the request is saved and goes to ClickUp by itself once the
+   * writer takes its card. No note names a ClickUp form.
    */
   function gate(clientTaskId: string | null): {
     allowed: boolean;
@@ -651,45 +652,31 @@ export function createRequestsFake(opts: FakeOptions = {}): RequestsFake {
   } {
     const s = fake.seat;
     const lead = s.editor || s.admin || s.ceo;
-    const refuse = (note: string) => ({ allowed: false, held: false, note });
     const hold = (note: string) => ({ allowed: true, held: true, note });
+    const tested =
+      "Requests are being tested on the internal test card only, where they go to ClickUp at once. Anything else you send is saved and goes to ClickUp by itself once they open to everyone.";
+    const notOpen =
+      "Requests are not open yet. What you send is saved and goes to ClickUp by itself once they are.";
     switch (fake.mode) {
       case "apply":
         return { allowed: true, held: false, note: null };
       case "apply_limited":
-        if (!lead)
-          return refuse(
-            "Requests are being tested. They open to everyone soon. Use the ClickUp request form until then.",
-          );
         if (takes(clientTaskId))
           return { allowed: true, held: false, note: null };
-        return hold(
-          "Requests are being tested on the internal test card only, where they go to ClickUp at once. Anything else you send is saved and goes to ClickUp once they open to everyone.",
-        );
+        return hold(tested);
       case "dry_run":
-        return lead
-          ? hold(
-              "Requests are not open yet. What you send is saved and goes to ClickUp once they are.",
-            )
-          : refuse(
-              "Requests are not switched on yet. Use the ClickUp request form until then.",
-            );
+        return hold(notOpen);
       default:
         if (lead)
           return hold(
-            "The requests writer has not reported in the last 15 minutes. What you send is saved and goes to ClickUp once it runs with requests open. Check it on the Machine tab.",
+            "The requests writer has not reported in the last 15 minutes. What you send is saved and goes to ClickUp by itself once it runs with requests open. Check it on the Machine tab.",
           );
         if (opts.lastMode === "apply")
-          return refuse(
-            "Requests cannot be sent just now: the requests writer has not reported in the last 15 minutes. Use the ClickUp request form, and tell the systems manager.",
+          return hold(
+            "The requests writer has not reported in the last 15 minutes. What you send is saved and goes to ClickUp by itself when the writer is back.",
           );
-        if (opts.lastMode === "apply_limited")
-          return refuse(
-            "Requests are being tested. They open to everyone soon. Use the ClickUp request form until then.",
-          );
-        return refuse(
-          "Requests are not switched on yet. Use the ClickUp request form until then.",
-        );
+        if (opts.lastMode === "apply_limited") return hold(tested);
+        return hold(notOpen);
     }
   }
 

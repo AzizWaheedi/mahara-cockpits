@@ -241,6 +241,21 @@ describe('rate limits and the time limit', () => {
     expect(w.receipts.some(x => x.provider === 'clickup' && x.http_status === 429)).toBe(true);
   });
 
+  test('ClickUp calls are 2 s apart, 30 a minute, and a run of 205 cards still ends well inside its budget', async () => {
+    // ClickUp Business allows 100 a minute for the token the VPS shares (docs/requests/CLICKUP-DOWNGRADE.md 1.4).
+    expect(CLICKUP_GAP_MS).toBe(2_000);
+    const w = world({pages: [{tasks: cards(1, 100), last_page: false}, {tasks: cards(101, 100), last_page: false}, {tasks: cards(201, 5), last_page: true}]});
+    const m = memoryStore();
+    const result = await syncAll(m.store, w.sources, w.clock);
+    expect(result.ok).toBe(true);
+    const clickup = w.calls.filter(c => c.url.hostname === 'api.clickup.com').map(c => c.at);
+    expect(clickup.length).toBe(4);
+    // The field read, then (after Typeform) the three card pages back to back, each 2 s after the last.
+    expect(clickup.slice(1).map((t, i) => t - clickup[i]).every(g => g >= CLICKUP_GAP_MS)).toBe(true);
+    expect(clickup.slice(2).map((t, i) => t - clickup[i + 1])).toEqual([CLICKUP_GAP_MS, CLICKUP_GAP_MS]);
+    expect(clickup.at(-1)! - 1_000_000).toBeLessThan(BUDGET_MS);
+  });
+
   test('a slow run stops starting pages at the budget and the next run continues from there', async () => {
     const pages = Array.from({length: 6}, (_, p) => ({tasks: cards(p * 100 + 1, 100), last_page: p === 5}));
     const slow = (url: URL) => (url.pathname.endsWith('/task') ? 30_000 : 200);

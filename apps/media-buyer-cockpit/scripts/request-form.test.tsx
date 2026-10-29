@@ -248,6 +248,33 @@ const stop = (kind: string) =>
 const sentPanel = () => container.querySelector(".rq-sent") as any;
 const submits = () =>
   fake.calls.filter(c => c.name === "cockpit_request_submit");
+/** Links to a ClickUp form: there are none any more (CLICKUP-DOWNGRADE.md 4). */
+const formLinks = () =>
+  [...container.querySelectorAll("a")].filter((a: any) =>
+    /forms\.clickup\.com|ClickUp request form/.test(
+      `${a.getAttribute("href") ?? ""} ${text(a)}`,
+    ),
+  );
+/**
+ * A database whose send gate still refuses this seat (as before 20261029p):
+ * the writer's answer in the types read and in every preview says it cannot
+ * send, with the server's own note (none by default, so the form's own
+ * words show). The store behind it is unchanged.
+ */
+function refusing(note: string | null = null) {
+  before = (name, args) => {
+    if (
+      name !== "cockpit_request_types_read" &&
+      name !== "cockpit_request_preview"
+    )
+      return null;
+    const answer = fake.call(name, args);
+    const data = answer.data as any;
+    if (data?.writer)
+      data.writer = { ...data.writer, canSend: false, held: false, note };
+    return answer;
+  };
+}
 
 async function render(props: Record<string, unknown> = {}) {
   await act(async () => {
@@ -275,10 +302,14 @@ async function pickClient(name: string) {
 }
 
 afterEach(async () => {
+  // In whatever state the test left the form: never a ClickUp form link
+  // (read before the reset, said after it so a failure cannot leak).
+  const left = formLinks().map((a: any) => a.getAttribute("href"));
   await act(async () => root.render(null));
   await flush(2);
   fake = createRequestsFake({ seat: "csm", now: () => NOW });
   before = () => null;
+  expect(left).toEqual([]);
 });
 
 afterAll(async () => {
@@ -632,23 +663,62 @@ describe("the request form", () => {
     expect(text(note?.querySelector("bdi"))).toBe("Harbour Interiors");
   });
 
-  test("while the writer is not open to this seat, its note stands in for Send", async () => {
+  test("a plain seat while requests are not open: its request is saved and goes by itself, never sent to a ClickUp form (20261029p)", async () => {
     fake = createRequestsFake({ seat: "csm", mode: "dry_run", now: () => NOW });
     await render();
     const note =
-      "Requests are not switched on yet. Use the ClickUp request form until then.";
+      "Requests are not open yet. What you send is saved and goes to ClickUp by itself once they are.";
+    // Said before anyone types, as the cockpit keeping the request: the held
+    // mark (a clock), a polite status, never an alert.
+    const top = container.querySelector(".rq-off") as any;
+    expect(text(top)).toBe(note);
+    expect(top.className).toContain("rq-off-held");
+    expect(top.getAttribute("role")).toBe("status");
+    expect(top.querySelector("svg.lucide-clock")).toBeTruthy();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(formLinks()).toEqual([]);
+    await pick("General tech request");
+    await type(field("details"), "The CRM sync stopped.");
+    // The questions stay, and the button says what it does.
+    expect(button("Send request")).toBeUndefined();
+    expect(button("Save request")).toBeTruthy();
+    expect(page()).toContain("Saved here until requests open.");
+    expect(stop("held")).toContain(note);
+    expect(page()).not.toContain("cannot be sent");
+    expect(formLinks()).toEqual([]);
+    await click(button("Save request"));
+    await flush(4);
+    expect(submits().length).toBe(1);
+    expect(text(container.querySelector(".rq-sent-title"))).toBe(
+      "Saved: General tech request",
+    );
+    expect(sentPanel()?.getAttribute("data-tone")).toBe("held");
+    expect(page()).toContain(
+      "It goes to ClickUp by itself once requests open.",
+    );
+    const stored = fake.requests.find(
+      r => r.id === submits()[0].args.p_request_id,
+    );
+    expect(stored?.parts.every(p => p.state === "queued")).toBe(true);
+  });
+
+  test("a database that still refuses the seat: the form's own words stand in for Send, with no ClickUp form", async () => {
+    fake = createRequestsFake({ seat: "csm", mode: "dry_run", now: () => NOW });
+    refusing();
+    await render();
+    const note =
+      "Requests cannot be sent from this seat just now. Tell the systems manager.";
     // Said before anyone types.
     expect(page()).toContain(note);
-    const link = [...container.querySelectorAll("a")].find((a: any) =>
-      text(a).includes("Open the ClickUp request form"),
-    ) as any;
-    expect(link?.getAttribute("href")).toContain(
-      "forms.clickup.com/90182518398/f/2kzmr1ky-1178",
-    );
+    expect(container.querySelector(".rq-off a")).toBeNull();
+    expect(container.querySelector(".rq-off-held")).toBeNull();
     await pick("General tech request");
     expect(button("Send request")).toBeUndefined();
+    expect(button("Save request")).toBeUndefined();
     expect(page()).toContain(note);
     expect(page().split(note).length).toBe(2); // said once
+    expect(container.querySelector(".rq-off a")).toBeNull();
+    expect(formLinks()).toEqual([]);
   });
 
   test("a client page fixes the client and offers only the types that take one", async () => {
@@ -796,7 +866,7 @@ describe("the request form", () => {
     expect(panel?.querySelector("svg.lucide-circle-check")).toBeNull();
     expect(panel?.querySelector("svg.lucide-circle-alert")).toBeTruthy();
     expect(text(panel)).toContain(
-      "Open the request to file it again, or use the ClickUp request form.",
+      "Open the request to file it again with the same answers.",
     );
     // A11Y-09: the refusal came in while the page read the request, so the
     // one polite line says it whole, with its next step, and it describes
@@ -805,7 +875,7 @@ describe("the request form", () => {
     expect(sub?.getAttribute("aria-live")).toBe("polite");
     expect(sub?.getAttribute("aria-atomic")).toBe("true");
     expect(squash(text(sub))).toBe(
-      "It did not reach ClickUp. Open the request to file it again, or use the ClickUp request form.",
+      "It did not reach ClickUp. Open the request to file it again with the same answers.",
     );
     expect(
       String(
@@ -814,11 +884,11 @@ describe("the request form", () => {
           ?.getAttribute("aria-describedby"),
       ).split(" "),
     ).toContain(sub.id);
-    const formLink = [...(panel?.querySelectorAll("a") ?? [])].find((a: any) =>
-      text(a).includes("Open the ClickUp request form"),
-    ) as any;
-    expect(formLink?.getAttribute("href")).toContain("forms.clickup.com");
-    expect(text(formLink)).toContain("(opens in a new tab)");
+    // The next step is words only: no ClickUp form to send anyone to.
+    expect(
+      container.querySelector(".rq-next-step a, .rq-next-step .rq-link"),
+    ).toBeNull();
+    expect(formLinks()).toEqual([]);
     // The request itself, where "File it again" is, in place of My requests.
     const open = [...container.querySelectorAll("a")].find(
       (a: any) => text(a) === "Open the request",
@@ -864,8 +934,9 @@ describe("the request form", () => {
     expect(panel?.getAttribute("data-tone")).toBe("failed");
     expect(text(panel)).toContain("In Call Center. Owner:");
     expect(text(panel)).toContain(
-      "The Marketing / ADs task did not reach ClickUp; the one that did stays there. Raise the missing task with the ClickUp request form, or ask the systems manager to make it.",
+      "The Marketing / ADs task did not reach ClickUp; the one that did stays there. Ask the systems manager to make the missing task. Filing the whole request again would make the one that arrived twice.",
     );
+    expect(container.querySelector(".rq-next-step a")).toBeNull();
     // CL-05: "Sent together" only while no task failed.
     expect(text(panel?.querySelector(".rq-fork-note"))).toBe("Two tasks");
     expect(text(panel)).not.toContain("Sent together");
@@ -881,7 +952,7 @@ describe("the request form", () => {
     // The database's note for a held request, above Send (F3/F5). It is
     // shown before anything is sent, so it never begins "Saved." (review round 2).
     const note =
-      "Requests are not open yet. What you send is saved and goes to ClickUp once they are.";
+      "Requests are not open yet. What you send is saved and goes to ClickUp by itself once they are.";
     expect(page()).toContain(note);
     // Tickets-look-1028: the button says what it does, and the route stops
     // at the held stop, with the writer's own sentence.
@@ -949,7 +1020,8 @@ describe("the request form", () => {
     expect(page()).not.toContain("Sent to");
     expect(page()).not.toContain("Sending to");
     expect(page()).not.toContain("Owner:");
-    // Saved, not sent: the waiting mark in the warning colour, no check.
+    // Saved, not sent: the held mark (a clock, in the teal ink since
+    // clickup-diet-1029), no check.
     expect(sentPanel()?.getAttribute("data-tone")).toBe("held");
     expect(sentPanel()?.querySelector("svg.lucide-clock")).toBeTruthy();
     expect(sentPanel()?.querySelector("svg.lucide-circle-check")).toBeNull();
@@ -975,7 +1047,7 @@ describe("the request form", () => {
     });
     await pick("Card missing for ads");
     expect(page()).toContain(
-      "Requests are being tested on the internal test card only, where they go to ClickUp at once. Anything else you send is saved and goes to ClickUp once they open to everyone.",
+      "Requests are being tested on the internal test card only, where they go to ClickUp at once. Anything else you send is saved and goes to ClickUp by itself once they open to everyone.",
     );
     await click(button("Save request"));
     await flush(4);
@@ -1245,8 +1317,10 @@ describe("the request form", () => {
     expect(page()).toContain("Who does what");
   });
 
-  test("while requests are not open to the seat, the route says where it goes, with no timing and no client asked (BT-1, CL-03)", async () => {
+  test("while requests cannot be sent from the seat, the route says where it goes, with no timing and no client asked (BT-1, CL-03)", async () => {
+    // A database whose gate still refuses the seat (before 20261029p).
     fake = createRequestsFake({ seat: "csm", mode: "dry_run", now: () => NOW });
+    refusing();
     await render();
     await pick("General tech request");
     expect(button("Send request")).toBeUndefined();
@@ -1255,7 +1329,7 @@ describe("the request form", () => {
       "Where it goes",
     );
     expect(page()).toContain(
-      "This request is made on the ClickUp request form for now, so the cockpit asks you nothing here. The same questions open here once the cockpit can send requests for you.",
+      "Requests cannot be sent from this seat just now, so the cockpit asks you nothing here. The questions open here as soon as they can be sent.",
     );
     // The timing words appear only while requests are open to the seat.
     expect(page()).not.toContain("minute or two");
@@ -1312,7 +1386,7 @@ describe("the request form", () => {
     expect(page()).not.toContain("Pick ");
   });
 
-  test("a writer gone quiet: held words follow its hedge, refused seats are never told requests are off (CL-04)", async () => {
+  test("a writer gone quiet: held words follow its hedge for every seat, and no seat is told requests are off (CL-04)", async () => {
     // An editor while the writer has not reported: saved, and it goes once
     // the writer runs with requests open, never "once requests open".
     fake = createRequestsFake({ seat: "ceo", mode: "unknown", now: () => NOW });
@@ -1340,9 +1414,18 @@ describe("the request form", () => {
       "Saved. Goes to Operations / Tech once the writer runs with requests open.",
     ]);
     expect(page()).not.toMatch(/when requests open/i);
-    // Anyone else, with the writer's last report apply: the server's own
-    // refusal, and the cockpit's words never say requests are switched off.
-    await act(async () => root.render(null));
+    // While the writer is quiet, the Saved stop keeps the lead seat's note,
+    // which asks them to check the Machine tab.
+    expect(
+      squash(text(sentPanel().querySelector('.rq-stop[data-kind="send"]'))),
+    ).toContain("Check it on the Machine tab.");
+  });
+
+  test("a plain seat whose writer went quiet after requests opened: one calm sentence, the gate's own, everywhere (clickup-diet-1029)", async () => {
+    // Held too since 20261029p, in the server's own words, which never say
+    // requests are switched off nor send anyone to a ClickUp form. Its note
+    // asks nothing, so the panel says "Nothing else to do now." and every
+    // line says "when the writer is back", never the editors' hedge.
     fake = createRequestsFake({
       seat: "csm",
       mode: "unknown",
@@ -1350,18 +1433,74 @@ describe("the request form", () => {
       now: () => NOW,
     });
     await render();
-    expect(page()).toContain(
-      "Requests cannot be sent just now: the requests writer has not reported in the last 15 minutes.",
-    );
-    await pick("Low schedule rate");
+    const quietNote =
+      "The requests writer has not reported in the last 15 minutes. What you send is saved and goes to ClickUp by itself when the writer is back.";
+    expect(text(container.querySelector(".rq-off-held"))).toBe(quietNote);
+    expect(formLinks()).toEqual([]);
+    await pick("General tech request");
+    await type(field("details"), "Check the CRM sync.");
     expect(text(container.querySelector(".rq-next .rq-kicker"))).toBe(
-      "Where it goes",
+      "What happens next",
     );
+    expect(lanes()[0]).toContain("Waits for the writer");
+    expect(stop("held")).toContain(quietNote);
+    expect(button("Save request")).toBeTruthy();
+    expect(page()).toContain("Saved here until the writer is back.");
+    expect(text(container.querySelector(".rq-next .rq-route-sum"))).toContain(
+      "saved until the writer is back",
+    );
+    expect(page()).not.toContain("runs with requests open.");
     expect(page()).not.toContain("switched on");
     expect(page()).not.toContain("once requests open");
+    await click(button("Save request"));
+    await flush(4);
+    expect(submits().length).toBe(1);
+    expect(text(container.querySelector(".rq-sent-sub"))).toBe(
+      "Nothing else to do now. It goes to ClickUp by itself when the writer is back.",
+    );
+    expect(
+      [...container.querySelectorAll(".rq-sent-line")].map(el =>
+        squash(text(el)),
+      ),
+    ).toEqual(["Saved. Goes to Operations / Tech when the writer is back."]);
+    // The Saved stop keeps the writer's sentence, in the same words.
+    expect(
+      squash(text(sentPanel().querySelector('.rq-stop[data-kind="send"]'))),
+    ).toContain(quietNote);
+    expect(page()).not.toContain("runs with requests open");
+    expect(page()).not.toContain("Machine tab");
   });
 
-  test("answers given before requests stop being open to the seat stay on screen to copy (BT-7)", async () => {
+  test("a plain seat whose writer went quiet before requests opened: the gate says not open yet, and so does every line (clickup-diet-1029)", async () => {
+    fake = createRequestsFake({
+      seat: "csm",
+      mode: "unknown",
+      lastMode: "dry_run",
+      now: () => NOW,
+    });
+    await render();
+    const note =
+      "Requests are not open yet. What you send is saved and goes to ClickUp by itself once they are.";
+    expect(text(container.querySelector(".rq-off-held"))).toBe(note);
+    await pick("General tech request");
+    await type(field("details"), "Check the CRM sync.");
+    expect(lanes()[0]).toContain("When requests open");
+    expect(page()).toContain("Saved here until requests open.");
+    expect(page()).not.toContain("the writer");
+    await click(button("Save request"));
+    await flush(4);
+    expect(text(container.querySelector(".rq-sent-sub"))).toBe(
+      "Nothing else to do now. It goes to ClickUp by itself once requests open.",
+    );
+  });
+
+  test("a plain seat whose writer stops partway keeps its questions and saves instead (20261029p)", async () => {
+    // Requests open, the writer's last report apply.
+    fake = createRequestsFake({
+      seat: "csm",
+      lastMode: "apply",
+      now: () => NOW,
+    });
     await render();
     await pick("Low schedule rate");
     await pickClient("Dune Build Co");
@@ -1369,9 +1508,36 @@ describe("the request form", () => {
       field("additional_notes"),
       "Bookings fell this month, and the leads look weaker",
     );
-    // The writer stops taking requests from this seat; the next preview
-    // (read on a choice) says so.
+    expect(button("Send request")).toBeTruthy();
+    // The writer stops reporting; the next preview (read on a choice) holds
+    // the request instead of refusing it.
+    fake.mode = "unknown";
+    await choose("schedule_rate_issue", "Both");
+    await settle();
+    expect(button("Send request")).toBeUndefined();
+    expect(button("Save request")).toBeTruthy();
+    expect(container.querySelector(".rq-qs .rq-off")).toBeNull();
+    expect(field("additional_notes").value).toBe(
+      "Bookings fell this month, and the leads look weaker",
+    );
+    expect(stop("held")).toContain(
+      "The requests writer has not reported in the last 15 minutes.",
+    );
+    expect(formLinks()).toEqual([]);
+  });
+
+  test("answers given before requests stop being sendable from the seat stay on screen (BT-7)", async () => {
+    await render();
+    await pick("Low schedule rate");
+    await pickClient("Dune Build Co");
+    await type(
+      field("additional_notes"),
+      "Bookings fell this month, and the leads look weaker",
+    );
+    // A database that still refuses the seat stops taking its requests; the
+    // next preview (read on a choice) says so.
     fake.mode = "dry_run";
+    refusing();
     const both = choiceLabel("schedule_rate_issue", "Both")?.querySelector(
       'input[type="radio"]',
     );
@@ -1391,14 +1557,14 @@ describe("the request form", () => {
         win.document.getElementById(offNote.getAttribute("aria-labelledby")),
       ),
     ).toBe(
-      "Requests are not switched on yet. Use the ClickUp request form until then.",
+      "Requests cannot be sent from this seat just now. Tell the systems manager.",
     );
     expect(
       text(
         win.document.getElementById(offNote.getAttribute("aria-describedby")),
       ),
     ).toBe(
-      "This request is made on the ClickUp request form for now. Your answers stay here, to copy into it.",
+      "Your answers stay on this screen until requests can be sent from this seat.",
     );
     const kept = squash(text(container.querySelector(".rq-answers")));
     expect(kept).toContain("Your answers so far");
@@ -1407,9 +1573,10 @@ describe("the request form", () => {
       "Bookings fell this month, and the leads look weaker",
     );
     expect(page()).toContain(
-      "This request is made on the ClickUp request form for now. Your answers stay here, to copy into it.",
+      "Your answers stay on this screen until requests can be sent from this seat.",
     );
     expect(page()).not.toContain("the cockpit asks you nothing here");
+    expect(offNote.querySelector("a")).toBeNull();
   });
 
   test("a client picked for one request never goes with a request that asks for none (BT-2)", async () => {
@@ -1881,18 +2048,21 @@ describe("the request form", () => {
       "This choice could not be read from ClickUp. Ask the systems manager.",
     );
     // T3-design-clarity-05: before any press the form says it cannot be
-    // sent here and offers the ClickUp request form as the one teal action;
-    // Send is outlined and described by that sentence.
+    // sent here, to tell the systems manager, and, when it cannot wait, to
+    // make it on the lists its tasks go to in ClickUp, outlined links (no
+    // ClickUp form since clickup-diet-1029); Send is outlined and described
+    // by that sentence, so nothing on the page is the one teal action.
     const blocked =
-      'This request cannot be sent here until ClickUp\'s choices for "Where is the problem?" are back. Use the ClickUp request form for now, or ask the systems manager.';
+      'ClickUp\'s choices for "Where is the problem?" could not be read, so this request cannot be sent from here yet. Tell the systems manager; the cockpit reads ClickUp again at 11 minutes past each hour. If it cannot wait, make it on the Call Center or Marketing / ADs list in ClickUp, or on both, as the request needs.';
     const way = container.querySelector(".rq-send .rq-blocked") as any;
     expect(squash(text(way?.querySelector("p")))).toBe(blocked);
-    const form = way?.querySelector("a") as any;
-    expect(form?.getAttribute("href")).toContain(
-      "forms.clickup.com/90182518398/f/2kzmr1ky-1178",
-    );
-    expect(form?.className).toContain("rq-btn-primary");
-    expect(container.querySelectorAll(".rq-btn-primary").length).toBe(1);
+    for (const list of [...way.querySelectorAll("a")] as any[]) {
+      expect(list.getAttribute("target")).toBe("_blank");
+      expect(list.className).toContain("rq-btn-outline");
+      expect(list.className).toContain("rq-off-action");
+    }
+    expect(container.querySelectorAll(".rq-btn-primary").length).toBe(0);
+    expect(formLinks()).toEqual([]);
     const sendButton = button("Send request");
     expect(sendButton.className).toContain("rq-btn-outline");
     expect(
@@ -1920,6 +2090,88 @@ describe("the request form", () => {
     await click(entry);
     await flush(2);
     expect(win.document.activeElement).toBe(field("schedule_rate_issue"));
+  });
+
+  test("a lost choice that picks the list names every list: Low schedule rate opens Call Center and Marketing / ADs (clickup-diet-1029)", async () => {
+    // Live: low_schedule_rate is team call_center, and its required
+    // "Where is the problem?" decides between a Call Center task, a
+    // Marketing / ADs task or both. With that choice lost, the way out
+    // names both lists and links each, never Call Center alone.
+    before = name => {
+      if (name !== "cockpit_request_types_read") return null;
+      const read = fake.call(name, {});
+      (read.data as any).types
+        .find((t: any) => t.key === "low_schedule_rate")
+        .fields.find((f: any) => f.key === "schedule_rate_issue").options = [];
+      return read;
+    };
+    await render();
+    await pick("Low schedule rate");
+    await pickClient("Dune Build Co");
+    const way = container.querySelector(".rq-send .rq-blocked") as any;
+    expect(squash(text(way?.querySelector("p")))).toBe(
+      'ClickUp\'s choices for "Where is the problem?" could not be read, so this request cannot be sent from here yet. Tell the systems manager; the cockpit reads ClickUp again at 11 minutes past each hour. If it cannot wait, make it on the Call Center or Marketing / ADs list in ClickUp, or on both, as the request needs.',
+    );
+    expect(squash(text(way?.querySelector("p")))).not.toContain(
+      "make the task on the Call Center list",
+    );
+    const links = [...way.querySelectorAll("a")] as any[];
+    expect(
+      links.map(a => ({
+        words: squash(text(a)),
+        href: a.getAttribute("href"),
+        target: a.getAttribute("target"),
+        rel: a.getAttribute("rel"),
+        outlined:
+          a.className.includes("rq-btn-outline") &&
+          a.className.includes("rq-off-action"),
+      })),
+    ).toEqual([
+      {
+        words: "Open the Call Center list in ClickUp (opens in a new tab)",
+        href: "https://app.clickup.com/90182518398/v/li/901816723206",
+        target: "_blank",
+        rel: "noreferrer",
+        outlined: true,
+      },
+      {
+        words: "Open the Marketing / ADs list in ClickUp (opens in a new tab)",
+        href: "https://app.clickup.com/90182518398/v/li/901816723196",
+        target: "_blank",
+        rel: "noreferrer",
+        outlined: true,
+      },
+    ]);
+    expect(container.querySelectorAll(".rq-btn-primary").length).toBe(0);
+    expect(formLinks()).toEqual([]);
+  });
+
+  test("a lost choice names the type's own list: Create an ad account opens Marketing / ADs in ClickUp", async () => {
+    before = name => {
+      if (name !== "cockpit_request_types_read") return null;
+      const read = fake.call(name, {});
+      (read.data as any).types
+        .find((t: any) => t.key === "create_ad_account")
+        .fields.find((f: any) => f.key === "ads_platform").options = [];
+      return read;
+    };
+    await render();
+    await pick("Create an ad account");
+    const way = container.querySelector(".rq-send .rq-blocked") as any;
+    expect(squash(text(way?.querySelector("p")))).toBe(
+      'ClickUp\'s choices for "Ad platform" could not be read, so this request cannot be sent from here yet. Tell the systems manager; the cockpit reads ClickUp again at 11 minutes past each hour. If it cannot wait, make the task on the Marketing / ADs list in ClickUp.',
+    );
+    const list = way?.querySelector("a") as any;
+    expect(squash(text(list))).toBe(
+      "Open the Marketing / ADs list in ClickUp (opens in a new tab)",
+    );
+    expect(list?.getAttribute("href")).toBe(
+      "https://app.clickup.com/90182518398/v/li/901816723196",
+    );
+    expect(list?.getAttribute("rel")).toBe("noreferrer");
+    // Its three tasks all go to Marketing / ADs: one list, one link.
+    expect(way.querySelectorAll("a").length).toBe(1);
+    expect(formLinks()).toEqual([]);
   });
 
   test("a question ClickUp lost: the route says why, never asks to pick it (BT-6, S4)", async () => {

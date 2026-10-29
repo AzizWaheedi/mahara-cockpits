@@ -1,3 +1,5 @@
+import {clickupBusy,clickupRetryWait,type RetryOptions,realSleep} from '../_shared/clickupRetry.ts';
+
 // This credential is read-only. The host and resources are fixed; no mutation API exists.
 export async function payerSources(env:(name:string)=>string|undefined,health:(row:Record<string,unknown>)=>Promise<void>,request:typeof fetch=fetch){
  const token=env('B2B_READ_ONLY_KEY');
@@ -148,7 +150,12 @@ export async function metaGraphPost(
 
 /**
  * ClickUp through CLICKUP_API_TOKEN. `label` names the resource in the health
- * ledger when the path carries a task ID. No automatic retry after a response.
+ * ledger when the path carries a task ID. One automatic retry, only after
+ * ClickUp's 429, which ClickUp refuses before doing anything: the same request
+ * goes again after ClickUp's own wait of 1 to 5 s, with its own intent and
+ * response rows (_shared/clickupRetry.ts). Always on: both callers (the CEO's
+ * Extension write and the hourly extension pass) are low volume. No retry after
+ * any other response. `options` takes a fake clock in the tests.
  */
 export async function clickupRequest(
  env:(name:string)=>string|undefined,
@@ -158,29 +165,38 @@ export async function clickupRequest(
  path:string,
  body?:JsonObject,
  label?:string,
+ options:Pick<RetryOptions,'sleep'|'now'>={},
 ):Promise<JsonObject> {
  const receipt={provider:'clickup',method,resource:label??path.split('?')[0]};
  const token=env('CLICKUP_API_TOKEN');
  if(!token){await health({...receipt,phase:'failed'});throw Error('CLICKUP_API_TOKEN is not configured. Add it to the cockpit-ceo-api secrets.');}
  if(!path||path.includes('://')||path.includes('..')||path.startsWith('/')){await health({...receipt,phase:'failed'});throw Error('Invalid ClickUp resource.');}
- await health({...receipt,phase:'intent'});
- let response:Response;
- try{
-  response=await request(`https://api.clickup.com/api/v2/${path}`,{method,headers:{Authorization:token,'Content-Type':'application/json',Accept:'application/json'},body:body===undefined?undefined:JSON.stringify(body),redirect:'error',signal:AbortSignal.timeout(25000)});
- }catch{
-  await health({...receipt,phase:'unknown'});
-  throw Error(method==='GET'?'ClickUp could not be reached.':'ClickUp did not confirm the write. Check the card before trying again.');
+ const sleep=options.sleep??realSleep,now=options.now??Date.now;
+ // Encoded once, inside the first try's guard, so a second try sends the very same body.
+ let sent:string|undefined|null=null;
+ for(let attempt=1;;attempt++){
+  await health({...receipt,phase:'intent'});
+  let response:Response;
+  try{
+   if(sent===null)sent=body===undefined?undefined:JSON.stringify(body);
+   response=await request(`https://api.clickup.com/api/v2/${path}`,{method,headers:{Authorization:token,'Content-Type':'application/json',Accept:'application/json'},body:sent,redirect:'error',signal:AbortSignal.timeout(25000)});
+  }catch{
+   await health({...receipt,phase:'unknown'});
+   throw Error(method==='GET'?'ClickUp could not be reached.':'ClickUp did not confirm the write. Check the card before trying again.');
+  }
+  await health({...receipt,phase:'response',http_status:response.status});
+  const text=await response.text();
+  let parsed:unknown={};
+  if(text){try{parsed=JSON.parse(text);}catch{throw Error(`ClickUp returned an unreadable response (${response.status}).`);}}
+  if(!isJsonObject(parsed))throw Error(`ClickUp returned an invalid response (${response.status}).`);
+  if(!response.ok||parsed.err!==undefined){
+   if(response.status===429&&attempt===1){await sleep(clickupRetryWait(response.headers,now()));continue;}
+   const reason=typeof parsed.err==='string'?`: ${parsed.err.replaceAll(token,'[redacted]').slice(0,140)}`:'';
+   const sentence=`ClickUp refused the request (${response.status})${reason}.`;
+   throw Error(response.status===429?clickupBusy(sentence):sentence);
+  }
+  return parsed;
  }
- await health({...receipt,phase:'response',http_status:response.status});
- const text=await response.text();
- let parsed:unknown={};
- if(text){try{parsed=JSON.parse(text);}catch{throw Error(`ClickUp returned an unreadable response (${response.status}).`);}}
- if(!isJsonObject(parsed))throw Error(`ClickUp returned an invalid response (${response.status}).`);
- if(!response.ok||parsed.err!==undefined){
-  const reason=typeof parsed.err==='string'?`: ${parsed.err.replaceAll(token,'[redacted]').slice(0,140)}`:'';
-  throw Error(`ClickUp refused the request (${response.status})${reason}.`);
- }
- return parsed;
 }
 
 /** A Typeform read through TYPEFORM_TOKEN; forms and their responses only. */

@@ -1,14 +1,39 @@
 import {z} from 'zod';
+import {clickupBusy,clickupRetryWait,type RetryOptions,realSleep} from '../_shared/clickupRetry.ts';
 export type Provider={call:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<any>};
-export function providerTools(token:string,health:(row:Record<string,unknown>)=>Promise<void>,request:typeof fetch=fetch):Provider{
+/**
+ * ClickUp through CLICKUP_API_TOKEN. Every try writes an intent row before it leaves and one response or unknown
+ * row after. No automatic retry, except one after ClickUp's 429 when the caller passes retry429 (a person is
+ * waiting): ClickUp refuses before doing anything, so the same request goes again after ClickUp's own wait of
+ * 1 to 5 s (_shared/clickupRetry.ts). A second 429 speaks for that call only, and says so when an earlier
+ * write through this provider (the same press) already went through. Background jobs keep their own retries
+ * and do not pass it.
+ */
+export function providerTools(token:string,health:(row:Record<string,unknown>)=>Promise<void>,request:typeof fetch=fetch,opts:RetryOptions={}):Provider{
  if(!token)throw Error('CLICKUP_API_TOKEN is not configured');
+ const retry=opts.retry429===true,sleep=opts.sleep??realSleep,now=opts.now??Date.now;
+ // An earlier write through this provider got a success answer: part of the press is already in ClickUp.
+ let landed=false;
  return {async call(method,path,body){
   if(path.includes('://')||path.includes('..')||path.startsWith('/'))throw Error('Invalid ClickUp resource');
-  const row={method,resource:path.split('?')[0]};await health({...row,phase:'intent'});
-  let response:Response;try{response=await request('https://api.clickup.com/api/v2/'+path,{method,headers:{Authorization:token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(25000)});}catch{await health({...row,phase:'unknown'});throw Error('ClickUp response is unknown. Reconcile this action before retrying.');}
-  const text=await response.text();let data:any;try{data=text?JSON.parse(text):{};}catch{await health({...row,phase:'response',http_status:response.status});throw Error('ClickUp response could not be read. Reconcile before retrying.');}
-  await health({...row,phase:'response',http_status:response.status,object_id:data.id?String(data.id):null});
-  if(!response.ok||data.err)throw Error(`ClickUp rejected the request (${response.status}); inspect its receipt.`);return data;
+  const row={method,resource:path.split('?')[0]};
+  // Encoded once, inside the first try's guard, so a second try sends the very same body.
+  let sent:string|undefined|null=null;
+  for(let attempt=1;;attempt++){
+   await health({...row,phase:'intent'});
+   let response:Response;try{if(sent===null)sent=body?JSON.stringify(body):undefined;response=await request('https://api.clickup.com/api/v2/'+path,{method,headers:{Authorization:token,'Content-Type':'application/json'},body:sent,signal:AbortSignal.timeout(25000)});}catch{await health({...row,phase:'unknown'});throw Error('ClickUp response is unknown. Reconcile this action before retrying.');}
+   const text=await response.text();let data:any;try{data=text?JSON.parse(text):{};}catch{await health({...row,phase:'response',http_status:response.status});throw Error('ClickUp response could not be read. Reconcile before retrying.');}
+   await health({...row,phase:'response',http_status:response.status,object_id:data.id?String(data.id):null});
+   if(!response.ok||data.err){
+    const sentence=`ClickUp rejected the request (${response.status}); inspect its receipt.`;
+    if(!retry||response.status!==429)throw Error(sentence);
+    if(attempt>1)throw Error(clickupBusy(sentence,landed));
+    await sleep(clickupRetryWait(response.headers,now()));
+    continue;
+   }
+   if(method!=='GET')landed=true;
+   return data;
+  }
  }};
 }
 

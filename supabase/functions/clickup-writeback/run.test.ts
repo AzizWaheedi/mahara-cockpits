@@ -1,6 +1,30 @@
 import { describe, expect, it } from "bun:test";
-import { boardAge, cardList, type Deps, gate, kpiGate, noJobNote, pacer, runDoctor, runDosDonts, runKpi, runLog, unknownJobNote } from "./run";
-import type { Provider } from "./queue";
+import {
+  anotherRunNote,
+  boardAge,
+  BUSY_HELD,
+  CALLS_MAX,
+  cardList,
+  type Deps,
+  gate,
+  kpiGate,
+  noJobNote,
+  openRunMinutes,
+  pacer,
+  REQUESTS_RUN_BUDGET_MS,
+  runDoctor,
+  runDosDonts,
+  runKpi,
+  runLog,
+  runRequests,
+  STALE_RUN_MINUTES,
+  triesOf,
+  unknownJobNote,
+  writebackPerMinute,
+} from "./run";
+import { type Provider, RETRY_MINUTES } from "./queue";
+import type { RequestsItem } from "./requests";
+import { harness as requestsHarness, LIVE, rejected, requestPayload } from "./requestsTestkit";
 import { ADS_LIST, CLIENTS_LIST, DOS_DONTS_FIELD, FIELD, NOTES_MARK } from "./rules";
 
 const NOW = Date.parse("2026-10-09T09:00:00Z");
@@ -435,6 +459,223 @@ describe("doctor and pacing", () => {
     const pace = pacer(2, () => t, async ms => { slept.push(ms); t += ms; });
     await pace(); await pace(); await pace();
     expect(slept).toEqual([60_005]);
+  });
+});
+
+describe("the pace on ClickUp Business (docs/requests/CLICKUP-DOWNGRADE.md 1.4)", () => {
+  const env = (vars: Record<string, string>) => (name: string) => vars[name];
+
+  it("requests and requests_doctor default to 25, every other job to 30", () => {
+    expect(writebackPerMinute("requests", env({}))).toBe(25);
+    expect(writebackPerMinute("requests_doctor", env({}))).toBe(25);
+    for (const job of ["kpi", "log", "dosdonts", "doctor", ""]) expect(writebackPerMinute(job, env({}))).toBe(30);
+  });
+
+  it("each job reads only its own setting", () => {
+    const both = env({ CLICKUP_REQUESTS_CALLS_PER_MINUTE: "20", CLICKUP_CALLS_PER_MINUTE: "40" });
+    expect(writebackPerMinute("requests", both)).toBe(20);
+    expect(writebackPerMinute("kpi", both)).toBe(40);
+    expect(writebackPerMinute("requests", env({ CLICKUP_CALLS_PER_MINUTE: "40" }))).toBe(25);
+    expect(writebackPerMinute("log", env({ CLICKUP_REQUESTS_CALLS_PER_MINUTE: "20" }))).toBe(30);
+  });
+
+  it("no value takes a job above 60 or below 5; junk gives the default", () => {
+    // An old value left in the secrets (120, 1000) is held at 60, under ClickUp Business's 100 for the shared token.
+    expect(writebackPerMinute("requests", env({ CLICKUP_REQUESTS_CALLS_PER_MINUTE: "120" }))).toBe(CALLS_MAX);
+    expect(writebackPerMinute("kpi", env({ CLICKUP_CALLS_PER_MINUTE: "1000" }))).toBe(60);
+    expect(writebackPerMinute("kpi", env({ CLICKUP_CALLS_PER_MINUTE: "2" }))).toBe(5);
+    for (const junk of ["", " ", "x", "0", "-30", "NaN", "Infinity"]) {
+      expect(writebackPerMinute("requests", env({ CLICKUP_REQUESTS_CALLS_PER_MINUTE: junk }))).toBe(25);
+      expect(writebackPerMinute("log", env({ CLICKUP_CALLS_PER_MINUTE: junk }))).toBe(30);
+    }
+    expect(writebackPerMinute("log", env({ CLICKUP_CALLS_PER_MINUTE: "29.9" }))).toBe(29);
+  });
+
+  it("a requests run at 25 a minute with six 18-call requests stops taking items after 100 s and ends inside the 150 s wall", async () => {
+    const h = requestsHarness(LIVE);
+    // Ten SOP steps: 18 ClickUp calls a request, the worst request type on record (Social media, no template).
+    const steps = Array.from({ length: 10 }, (_, i) => `Step ${i + 1}.`);
+    for (let i = 0; i < 6; i++)
+      h.db.enqueue("request", requestPayload({ requestId: `${i}a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d`, ref: `R-${i}a2b3c4d5e-main`, sopSteps: steps }));
+    const sleeps: number[] = [];
+    h.deps.pace = pacer(writebackPerMinute("requests", h.deps.env), h.deps.now, async ms => {
+      sleeps.push(ms);
+      h.advance(ms);
+    });
+    const at: { actionId: string; t: number }[] = [];
+    const real = h.deps.providerFor;
+    h.deps.providerFor = actionId => {
+      const p = real(actionId);
+      return { call: (provider, method, path, body) => { at.push({ actionId, t: h.deps.now() }); return p.call(provider, method, path, body); } };
+    };
+    const start = h.deps.now();
+    const out = await h.run(6);
+    const items = [...new Set(at.map(c => c.actionId))].filter(id => id !== "run-1");
+    const first = (id: string) => Math.min(...at.filter(c => c.actionId === id).map(c => c.t));
+    const perItem = items.map(id => at.filter(c => c.actionId === id).length);
+    expect(perItem.every(n => n === 18)).toBe(true);
+    // Never more than 25 calls inside any 60 seconds.
+    for (const c of at) expect(at.filter(x => x.t >= c.t && x.t < c.t + 60_000).length).toBeLessThanOrEqual(25);
+    // Every item it took was started inside the run budget; the rest wait for the next run.
+    expect(items.length).toBeGreaterThan(0);
+    for (const id of items) expect(first(id) - start).toBeLessThanOrEqual(REQUESTS_RUN_BUDGET_MS);
+    expect(out.counts).toMatchObject({ claimed: 6, delivered: items.length, held: 6 - items.length });
+    expect(out.counts?.held).toBeGreaterThan(0);
+    // The last call is made before the Edge Function's 150 s wall clock.
+    expect(Math.max(...at.map(c => c.t)) - start).toBeLessThan(150_000);
+    expect(sleeps.length).toBeGreaterThan(0);
+  });
+
+  // The fake database's begin opens every run it is asked for. These tests put back what 20261026r's
+  // cockpit_clickup_writeback_begin does under the job's advisory lock: runs open longer than 15 minutes are
+  // closed, and an exclusive begin returns no id while a run of the job is open, with the open run's start.
+  const kuwaitHHMI = (ms: number) => new Date(ms + 3 * 3_600_000).toISOString().slice(11, 16);
+  function liveBegin(h: ReturnType<typeof requestsHarness>) {
+    const open = new Map<string, number>();
+    const exclusive: boolean[] = [];
+    const base = h.deps.rpc;
+    let seq = 0;
+    h.deps.rpc = async (name, params = {}) => {
+      if (name === "cockpit_clickup_writeback_begin" && params.p_job === "requests") {
+        exclusive.push(Boolean(params.p_exclusive));
+        const now = h.deps.now();
+        for (const [id, at] of open) if (at <= now - 15 * 60_000) open.delete(id);
+        if (params.p_exclusive && open.size) {
+          const latest = Math.max(...open.values());
+          return { id: null, note: `A requests run that started at ${kuwaitHHMI(latest)} Kuwait is still running.` };
+        }
+        // Checked and opened in one step, as one transaction under the lock does.
+        const held = `opening-${++seq}`;
+        open.set(held, now);
+        const run = await base(name, params);
+        open.delete(held);
+        open.set(String(run.id), now);
+        return run;
+      }
+      if (name === "cockpit_clickup_writeback_finish") open.delete(String(params.p_run));
+      return base(name, params);
+    };
+    return { open, exclusive };
+  }
+  const tenSteps = Array.from({ length: 10 }, (_, i) => `Step ${i + 1}.`);
+  const queueRequests = (h: ReturnType<typeof requestsHarness>, n: number) =>
+    Array.from({ length: n }, (_, i) =>
+      h.db.enqueue("request", requestPayload({ requestId: `${i}a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d`, ref: `R-${i}a2b3c4d5e-main`, sopSteps: tenSteps })),
+    );
+  /** Each ClickUp call's time, through the provider, as index.ts wires it. */
+  function timeCalls(h: ReturnType<typeof requestsHarness>) {
+    const at: { actionId: string; t: number }[] = [];
+    const real = h.deps.providerFor;
+    h.deps.providerFor = actionId => {
+      const p = real(actionId);
+      return { call: (provider, method, path, body) => { at.push({ actionId, t: h.deps.now() }); return p.call(provider, method, path, body); } };
+    };
+    return at;
+  }
+  const busiestMinute = (at: { t: number }[]) => Math.max(0, ...at.map(c => at.filter(x => x.t >= c.t && x.t < c.t + 60_000).length));
+
+  it("three runs started together (three submits close together) make at most 25 calls a minute between them", async () => {
+    const h = requestsHarness(LIVE);
+    liveBegin(h);
+    const rows = queueRequests(h, 3);
+    const at = timeCalls(h);
+    // Each run is its own Edge Function call, with its own pacer, as index.ts builds them.
+    const one = () => {
+      const pace = pacer(writebackPerMinute("requests", h.deps.env), h.deps.now, async ms => h.advance(ms));
+      return runRequests({ ...h.deps, pace }, 1);
+    };
+    const outs = await Promise.all([one(), one(), one()]);
+    expect(busiestMinute(at)).toBeLessThanOrEqual(25);
+    // One run sent its request; the two that found it open handed theirs back, their tries untouched.
+    const sent = outs.filter(o => o.counts?.delivered === 1);
+    const back = outs.filter(o => o.counts?.handedBack === 1);
+    expect([sent.length, back.length]).toEqual([1, 2]);
+    for (const o of back) expect(o).toMatchObject({ ok: true, note: anotherRunNote(1) });
+    const waiting = rows.filter(r => r.state !== "delivered");
+    expect(waiting.length).toBe(2);
+    for (const r of waiting) expect(r).toMatchObject({ state: "queued", attempts: 0, error: BUSY_HELD, claim_token: null });
+    // The next runs take them, one run at a time, still inside 25 a minute.
+    h.advance(60_000);
+    await one();
+    h.advance(60_000);
+    await one();
+    expect(rows.every(r => r.state === "delivered")).toBe(true);
+    expect(busiestMinute(at)).toBeLessThanOrEqual(25);
+    expect(rows.every(r => r.attempts === 1)).toBe(true);
+  });
+
+  it("a run left open by a function that stopped holds the job up for at most 4 minutes", async () => {
+    const h = requestsHarness(LIVE);
+    const { open, exclusive } = liveBegin(h);
+    const [row] = queueRequests(h, 1);
+    // A run that started 2 minutes ago is still sending: this run hands its row back.
+    open.set("run-alive", h.deps.now() - 2 * 60_000);
+    const waited = await h.run(1);
+    expect(waited).toMatchObject({ ok: true, counts: { claimed: 1, handedBack: 1 } });
+    expect(row).toMatchObject({ state: "queued", attempts: 0 });
+    expect(h.clickup.calls).toEqual([]);
+    // The same run, 5 minutes after it started, never reported back: the next run goes ahead and says so.
+    h.advance(3 * 60_000);
+    const went = await h.run(1);
+    expect(row.state).toBe("delivered");
+    expect(went.note).toContain(`A requests run that started at ${kuwaitHHMI(h.deps.now() - 5 * 60_000)} Kuwait never reported back, so this one went ahead.`);
+    // Exclusive asks each time; only the run that found the stale one opened its row without it.
+    expect(exclusive).toEqual([true, true, false]);
+    expect(h.db.begun.map(b => b.p_exclusive)).toEqual([false]);
+  });
+
+  it("reads the open run's start from the database's busy note on the Kuwait clock", () => {
+    // NOW in the requests testkit is 09:00 UTC, 12:00 Kuwait.
+    const at = Date.parse("2026-10-26T09:00:30Z");
+    expect(openRunMinutes("A requests run that started at 11:58 Kuwait is still running.", at)).toBe(2);
+    expect(openRunMinutes("A requests run that started at 12:00 Kuwait is still running.", at)).toBe(0);
+    expect(openRunMinutes("A requests run that started at 23:59 Kuwait is still running.", Date.parse("2026-10-26T21:01:00Z"))).toBe(2);
+    for (const junk of [undefined, null, "", "Supabase 503: upstream", "A requests run that started at 25:61 Kuwait is still running."])
+      expect(openRunMinutes(junk, at)).toBeNull();
+    expect(STALE_RUN_MINUTES).toBe(4);
+  });
+
+  it("a row the run's time budget holds back spends no rung of the retry ladder", async () => {
+    const h = requestsHarness(LIVE);
+    const rows = queueRequests(h, 6);
+    h.deps.pace = pacer(writebackPerMinute("requests", h.deps.env), h.deps.now, async ms => h.advance(ms));
+    const out = await h.run(6);
+    const held = rows.filter(r => r.state !== "delivered");
+    expect(out.counts?.held).toBe(held.length);
+    expect(held.length).toBeGreaterThan(0);
+    for (const r of held) {
+      expect(r).toMatchObject({ state: "queued", attempts: 0, error: "Held for the next run, so this run ends inside its time limit." });
+      expect(triesOf(r as unknown as RequestsItem)).toBe(0);
+    }
+    // Its first real try that ClickUp refuses waits the ladder's first step, one minute, not the second.
+    const saves: { t: number; id: string; patch: Record<string, any> }[] = [];
+    const base = h.deps.rpc;
+    h.deps.rpc = async (name, params = {}) => {
+      if (name === "cockpit_clickup_writeback_save") saves.push({ t: h.deps.now(), id: String(params.p_id), patch: params.p_patch as Record<string, any> });
+      return base(name, params);
+    };
+    h.clickup.fail = c => (c.method === "POST" && /^list\/[^/]+\/task$/.test(c.path) ? rejected(429) : undefined);
+    h.advance(60_000);
+    await h.run(1);
+    const first = held[0];
+    const retry = saves.find(s => s.id === first.id && s.patch.state === "retry");
+    expect(retry).toBeDefined();
+    expect(Date.parse(retry!.patch.next_attempt_at) - retry!.t).toBe(RETRY_MINUTES[0] * 60_000);
+    expect(first).toMatchObject({ state: "retry", attempts: 1 });
+  });
+
+  it("without the database's release a held row keeps its tries uncounted through progress.held", async () => {
+    const h = requestsHarness(LIVE);
+    h.db.withRelease = false;
+    const rows = queueRequests(h, 6);
+    h.deps.pace = pacer(writebackPerMinute("requests", h.deps.env), h.deps.now, async ms => h.advance(ms));
+    await h.run(6);
+    const held = rows.filter(r => r.state !== "delivered");
+    expect(held.length).toBeGreaterThan(0);
+    for (const r of held) {
+      expect(r).toMatchObject({ state: "retry", attempts: 1 });
+      expect(triesOf(r as unknown as RequestsItem)).toBe(0);
+    }
   });
 });
 

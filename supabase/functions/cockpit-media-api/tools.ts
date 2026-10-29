@@ -1,8 +1,17 @@
+import {clickupBusy,clickupRetryWait,type RetryOptions,realSleep} from '../_shared/clickupRetry.ts';
 import type {Provider,Row} from './core.ts';
-// One provider request, never an automatic write retry. Credentials never enter a receipt.
+// One provider request, never an automatic write retry, except one after ClickUp's 429, which ClickUp refuses
+// before doing anything: only with opts.retry429 (callers a person is waiting on), only for ClickUp, after
+// ClickUp's own wait of 1 to 5 s, each try with its own intent and response rows (_shared/clickupRetry.ts). A
+// second 429 speaks for that call only, and says so when an earlier write through this provider (the same
+// request, any provider) already went through. Meta, Slack, GoHighLevel and Make never retry. Credentials never
+// enter a receipt.
 // `as.token` is a Page access token fetched for this one request (lead forms are
 // Page objects); it is used only in the header and is never stored.
-export function providerTools(env:(name:string)=>string|undefined,health:(row:Row)=>Promise<void>,request:typeof fetch=fetch):Provider {
+export function providerTools(env:(name:string)=>string|undefined,health:(row:Row)=>Promise<void>,request:typeof fetch=fetch,opts:RetryOptions={}):Provider {
+ const sleep=opts.sleep??realSleep,now=opts.now??Date.now;
+ // An earlier write through this provider got a success answer, from any provider: part of the action is in place.
+ let landed=false;
  return {async call(provider,method,path,body,as) {
   // Make: only the Brand Blueprint close hook, by its exact URL from the server's env, never a path from a
   // payload, and only while BLUEPRINT_MAKE_CLOSE is on. The key joins the body here, so no plan holds it.
@@ -19,6 +28,7 @@ export function providerTools(env:(name:string)=>string|undefined,health:(row:Ro
    await response.text().catch(()=>'');
    await health({...receipt,phase:'response',http_status:response.status,object_id:null});
    if(!response.ok)throw new Error(`Make rejected the close (${response.status}). Check the client's WhatsApp group before sending again.`);
+   landed=true;
    return {ok:true,status:response.status};
   }
   const key=provider==='meta'?'META_SYSTEM_TOKEN':provider==='slack'?'SLACK_BOT_TOKEN':provider==='ghl'?'GHL_MAHARA_PIT':'CLICKUP_API_TOKEN';
@@ -31,26 +41,35 @@ export function providerTools(env:(name:string)=>string|undefined,health:(row:Ro
   const ghlContact=provider==='ghl'&&method==='GET'&&/^contacts\/[A-Za-z0-9_-]{1,64}$/.test(path);
   if(provider==='ghl'&&!(method==='POST'&&path==='conversations/messages')&&!ghlContact)throw new Error('Unsupported custom WhatsApp provider resource');
   const receipt={provider,method,resource:path.split('?')[0]};
-  await health({...receipt,phase:'intent'});
-  let response:Response;
-  try {
-   const encoded=body?(provider==='meta'?new URLSearchParams(Object.fromEntries(Object.entries(body).filter(([,v])=>v!==undefined).map(([k,v])=>[k,typeof v==='object'?JSON.stringify(v):String(v)]))).toString():JSON.stringify(body)):undefined;
-   response=await request(base+path,{method,headers:{Authorization:provider==='clickup'?token:`Bearer ${token}`,'Content-Type':provider==='meta'?'application/x-www-form-urlencoded':'application/json',...(provider==='ghl'?{Version:ghlContact?'2021-07-28':'2023-02-21'}:{})},body:encoded,signal:AbortSignal.timeout(25000)});
-  } catch {
-   await health({...receipt,phase:'unknown'});
-   throw new Error('Provider response is unknown. Reconcile before retrying.');
+  const retry=opts.retry429===true&&provider==='clickup';
+  // Encoded once, inside the first try's guard, so a second try sends the very same body.
+  let encoded:string|undefined|null=null;
+  for(let attempt=1;;attempt++){
+   await health({...receipt,phase:'intent'});
+   let response:Response;
+   try {
+    if(encoded===null)encoded=body?(provider==='meta'?new URLSearchParams(Object.fromEntries(Object.entries(body).filter(([,v])=>v!==undefined).map(([k,v])=>[k,typeof v==='object'?JSON.stringify(v):String(v)]))).toString():JSON.stringify(body)):undefined;
+    response=await request(base+path,{method,headers:{Authorization:provider==='clickup'?token:`Bearer ${token}`,'Content-Type':provider==='meta'?'application/x-www-form-urlencoded':'application/json',...(provider==='ghl'?{Version:ghlContact?'2021-07-28':'2023-02-21'}:{})},body:encoded,signal:AbortSignal.timeout(25000)});
+   } catch {
+    await health({...receipt,phase:'unknown'});
+    throw new Error('Provider response is unknown. Reconcile before retrying.');
+   }
+   const raw=await response.text(); let result:Row={};
+   try {result=raw?JSON.parse(raw):{};} catch {await health({...receipt,phase:'response',http_status:response.status});throw new Error('Provider returned an unreadable response. Reconcile before retrying.');}
+   const image=Object.values(result.images??{})[0] as Row|undefined;
+   await health({...receipt,phase:'response',http_status:response.status,object_id:provider==='ghl'&&typeof result.messageId==='string'?result.messageId:result.id?String(result.id):result.ts?String(result.ts):image?.hash?String(image.hash):null});
+   if(!response.ok||result.error||result.ok===false){
+    const busy=retry&&response.status===429;
+    if(busy&&attempt===1){await sleep(clickupRetryWait(response.headers,now()));continue;}
+    if(provider==='ghl')throw new Error(`The custom WhatsApp provider rejected the request (${response.status}). Review provider health.`);
+    const rawDetail=result.error?.error_user_msg??result.error?.message??result.error??result.err;
+    const detail=(typeof rawDetail==='string'?rawDetail:'').replaceAll(token,'[redacted]').replaceAll(system,'[redacted]').replace(/Bearer\s+\S+/gi,'Bearer [redacted]').slice(0,280);
+    const code=result.error?.code?` code ${result.error.code}${result.error.error_subcode?`/${result.error.error_subcode}`:''}`:'';
+    const sentence=`${provider} rejected the request (${response.status}${code})${detail?`: ${detail}`:'. Inspect the provider receipt.'}`;
+    throw new Error(busy?clickupBusy(sentence,landed):sentence);
+   }
+   if(method!=='GET')landed=true;
+   return result;
   }
-  const raw=await response.text(); let result:Row={};
-  try {result=raw?JSON.parse(raw):{};} catch {await health({...receipt,phase:'response',http_status:response.status});throw new Error('Provider returned an unreadable response. Reconcile before retrying.');}
-  const image=Object.values(result.images??{})[0] as Row|undefined;
-  await health({...receipt,phase:'response',http_status:response.status,object_id:provider==='ghl'&&typeof result.messageId==='string'?result.messageId:result.id?String(result.id):result.ts?String(result.ts):image?.hash?String(image.hash):null});
-  if(!response.ok||result.error||result.ok===false){
-   if(provider==='ghl')throw new Error(`The custom WhatsApp provider rejected the request (${response.status}). Review provider health.`);
-   const rawDetail=result.error?.error_user_msg??result.error?.message??result.error??result.err;
-   const detail=(typeof rawDetail==='string'?rawDetail:'').replaceAll(token,'[redacted]').replaceAll(system,'[redacted]').replace(/Bearer\s+\S+/gi,'Bearer [redacted]').slice(0,280);
-   const code=result.error?.code?` code ${result.error.code}${result.error.error_subcode?`/${result.error.error_subcode}`:''}`:'';
-   throw new Error(`${provider} rejected the request (${response.status}${code})${detail?`: ${detail}`:'. Inspect the provider receipt.'}`);
-  }
-  return result;
  }};
 }

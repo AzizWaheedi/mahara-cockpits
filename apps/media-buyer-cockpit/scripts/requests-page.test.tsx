@@ -195,6 +195,13 @@ const text = (el: any) => String(el?.textContent ?? "");
 const squash = (s: string) => s.replace(/\s+/g, " ").trim();
 const page = () => text(container);
 const dialog = () => win.document.querySelector('[role="dialog"]') as any;
+/** Links to a ClickUp form, on the page or in its panel: none any more. */
+const formLinks = () =>
+  [...win.document.querySelectorAll("a")].filter((a: any) =>
+    /forms\.clickup\.com|ClickUp request form/.test(
+      `${a.getAttribute("href") ?? ""} ${text(a)}`,
+    ),
+  );
 const buttonIn = (scope: any, label: string) =>
   [...(scope ?? container).querySelectorAll("button")].find(
     (b: any) =>
@@ -278,10 +285,14 @@ function partial(r: Fake["requests"][number], part: string, error: string) {
 }
 
 afterEach(async () => {
+  // In whatever state the test left the page: never a ClickUp form link
+  // (read before the reset, said after it so a failure cannot leak).
+  const left = formLinks().map((a: any) => a.getAttribute("href"));
   await act(async () => root.render(null));
   await flush(2);
   fake = createRequestsFake({ seat: "ceo", now: () => NOW });
   before = () => null;
+  expect(left).toEqual([]);
 });
 
 afterAll(async () => {
@@ -571,7 +582,7 @@ describe("/requests", () => {
     expect(rows().length).toBe(7);
   });
 
-  test("before the functions are on the database, the page says what to use", async () => {
+  test("before the functions are on the database, the page says who to tell", async () => {
     before = name =>
       fake.handles(name)
         ? {
@@ -581,8 +592,9 @@ describe("/requests", () => {
         : null;
     await render("/requests?view=mine");
     expect(page()).toContain(
-      "Requests are not on the database yet. Use the ClickUp request form until they are.",
+      "Requests cannot be read: the database does not have them yet. Tell the systems manager.",
     );
+    expect(formLinks()).toEqual([]);
   });
 
   test("status chips take their colours from the page's ceo-root, in the panel too (D1)", async () => {
@@ -627,13 +639,12 @@ describe("/requests", () => {
     expect(all.split(reason).length).toBe(2); // said once
     expect(all.split("Not sent").length).toBe(2); // one chip
     expect(all).toContain(
-      "Nothing reached ClickUp. File it again with the same answers, or use the ClickUp request form.",
+      "Nothing reached ClickUp. File it again with the same answers. If it fails again, tell the systems manager.",
     );
-    expect(all).toContain("If it fails again, tell the systems manager.");
-    const form = [...d.querySelectorAll("a")].find((a: any) =>
-      text(a).includes("Open the ClickUp request form"),
-    ) as any;
-    expect(form?.getAttribute("href")).toContain("forms.clickup.com");
+    // File it again is the one way on: no ClickUp form beside it.
+    const next = d.querySelector('[aria-label="What to do next"]') as any;
+    expect(next?.querySelectorAll("a").length).toBe(0);
+    expect(formLinks()).toEqual([]);
     // File it again: the form, prefilled with its type and client.
     await click(buttonIn(d, "File it again"));
     await settle();
@@ -858,14 +869,13 @@ describe("/requests", () => {
     const d = dialog();
     const all = squash(text(d));
     expect(all).toContain(
-      "The Marketing / ADs task did not reach ClickUp; the one that did stays there. Raise the missing task with the ClickUp request form, or ask the systems manager to make it.",
+      "The Marketing / ADs task did not reach ClickUp; the one that did stays there. Ask the systems manager to make the missing task. Filing the whole request again would make the one that arrived twice.",
     );
     expect(buttonIn(d, "File it again")).toBeUndefined();
     expect(all).not.toContain("File the rest again");
-    const form = [...d.querySelectorAll("a")].find((a: any) =>
-      text(a).includes("Open the ClickUp request form"),
-    ) as any;
-    expect(form?.getAttribute("href")).toContain("forms.clickup.com");
+    const next = d.querySelector('[aria-label="What to do next"]') as any;
+    expect(next?.querySelectorAll("a, button").length).toBe(0);
+    expect(formLinks()).toEqual([]);
     // The reason is said once, on the task that did not go.
     expect(
       all.split("ClickUp refused the task: the template is gone").length,
@@ -901,10 +911,36 @@ describe("/requests", () => {
     );
   });
 
-  test("an old form ticket a seat cannot route says to route it in ClickUp", async () => {
-    // Before requests open, only an editor, an admin or the CEO may make an
-    // old ticket a request (the send gate behind canRoute).
+  test("a plain seat may make an old form ticket a request while requests are not open (20261029p)", async () => {
+    // The send gate behind canRoute holds every seat's request now, so a
+    // CSM routes its team's old ticket in a dry run too; it waits, saved.
     fake = createRequestsFake({ seat: "csm", mode: "dry_run", now: () => NOW });
+    await render("/requests?view=team");
+    const old = rowWith("General CSM ticket");
+    expect(old?.getAttribute("title")).not.toBe(
+      REQUEST_SENTENCES.importedElsewhere,
+    );
+    await click(old);
+    await flush(4);
+    const d = dialog();
+    expect(buttonIn(d, "Make it a request")).toBeTruthy();
+    expect(squash(text(d))).not.toContain("Route it in ClickUp");
+  });
+
+  test("an old form ticket a seat cannot route says to route it in ClickUp", async () => {
+    // The server says the seat cannot route it (canRoute false: the ticket
+    // is not its team's, or a database that still refuses the seat).
+    fake = createRequestsFake({ seat: "csm", mode: "dry_run", now: () => NOW });
+    const unroutable = (answer: Answer): Answer => {
+      const data = answer.data as any;
+      for (const r of [...(data?.rows ?? []), data])
+        if (r && typeof r === "object" && "canRoute" in r) r.canRoute = false;
+      return answer;
+    };
+    before = (name, args) =>
+      name === "cockpit_requests_read" || name === "cockpit_request_get"
+        ? unroutable(fake.call(name, args))
+        : null;
     await render("/requests?view=team");
     const old = rowWith("General CSM ticket");
     expect(old?.getAttribute("title")).toBe(
@@ -961,7 +997,7 @@ describe("/requests", () => {
     const d = dialog();
     const all = squash(text(d));
     expect(all).toContain(
-      "The task was deleted in ClickUp. File it again with the same answers, or use the ClickUp request form.",
+      "The task was deleted in ClickUp. File it again with the same answers if the work is still needed.",
     );
     expect(all).not.toContain("Nothing reached ClickUp");
     expect(buttonIn(d, "File it again")).toBeTruthy();

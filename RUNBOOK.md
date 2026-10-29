@@ -36,6 +36,7 @@ last error and this fix next to it.
 | Meta Ads | `Meta 4/17/32/613` rate limit | Clears on the next run; nothing to do | nobody |
 | ClickUp | `HTTP 401` | New API token (ClickUp Settings, Apps), set `CLICKUP_API_TOKEN` | Aziz |
 | ClickUp | `HTTP 404` on a list | The list or task was deleted or moved; check ids in SOURCES.md | Client success |
+| ClickUp | `HTTP 429`, or the guardian's "ClickUp calls a minute" warns (a minute over 80) or fails (over 95) | Since the move to ClickUp Business, one token shared by the Supabase functions and the VPS workers may make 100 calls a minute. Read the busiest minute's split in the guardian's evidence. A cockpit job: lower its pacing secret (`CLICKUP_REQUESTS_CALLS_PER_MINUTE` 25, `CLICKUP_CALLS_PER_MINUTE` 30, `CLICKUP_TASKS_CALLS_PER_MINUTE` 30; 60 at most). The native cycle: ask Hermes to pace it. A press in the cockpit tries once more after ClickUp's wait; if ClickUp refuses again it says ClickUp refused that step, and when an earlier step of the same press went through it says to check what that changed before trying again. Background jobs retry by themselves. Plan: `docs/requests/CLICKUP-DOWNGRADE.md` | the systems manager |
 | Google Sheets | `HTTP 403` | Share the sheet with `claude@studied-handler-508106-m5.iam.gserviceaccount.com` | Client success |
 | Google Sheets | `HTTP 429` "Quota exceeded ... Read requests" | The service account is allowed 60 reads a minute and everything (the cockpits, Hermes's morning sheet, Make) shares it. The cockpits now pace their reads (one every 1.3 s) and cache each client sheet for 25 minutes, so a 429 from them should be rare; it clears on the next run. If it keeps happening, raise the quota once: Google Cloud console, project 195153154932, APIs & Services, Google Sheets API, Quotas, "Read requests per minute per user", edit to 300. | Aziz (quota) |
 | Google Docs / Calendar | "API has not been used" | Enable that API on the service account's Google project | Aziz |
@@ -107,8 +108,9 @@ dashboard, then `scripts/ship.sh media-buyer`.
 
 The client comment watch runs natively since the Convex pause (migration
 `20261009i_ai_comment_watch_call_briefs.sql`). The Edge Function
-`comment-watch` (pg_cron at minute 7, 22, 37 and 52) reads the comments on
-current client cards in Clients - Mahara. Call summaries, kickoff handoffs,
+`comment-watch` (pg_cron at minute 13, 29, 43 and 59 since `20261029q`, off
+the VPS native cycle's runs and every */2, */3 and */5 job) reads the
+comments on current client cards in Clients - Mahara. Call summaries, kickoff handoffs,
 briefs and typed notes go to Hermes as `comment_digest` jobs. The tick
 (`cockpit_ai_watch_tick`, every 5 minutes) puts each digest in the
 clientComments feed, so it shows as "Latest from the ClickUp card" in all three
@@ -1022,26 +1024,32 @@ kind `task_action` (migration `20261026t`), and every delivered part gets a
 - Each run reports its mode in `cockpit_sync_state` key
   `clickup-writeback:requests` (`detail.mode`: `dry_run`, `apply` or
   `apply_limited`, and `detail.onlyCards`). The form and the focus view read it:
-  older than 15 minutes means "unknown": editors, admins and the CEO may still
-  file (held), and nobody else can send. When the last report was `apply`, the
-  team is told the writer is down ("Requests cannot be sent just now: the
-  requests writer has not reported in the last 15 minutes. Use the ClickUp
-  request form, and tell the systems manager."), a held request says it goes
-  "once the writer runs again", and the focus view says changes "cannot be sent
-  just now" (review round 3); before requests ever opened it still says they
-  are not switched on yet.
+  older than 15 minutes means "unknown": every seat may still file, and the
+  request is held (since `20261029p`; before it only editors, admins and the
+  CEO could, and everyone else was sent to the ClickUp request form). When the
+  last report was `apply`, or `apply_limited` with the request's card on the
+  canary list (`cockpit_request_writer_silent`, the test the request's own held
+  note uses), the team is told "The requests writer has not
+  reported in the last 15 minutes. What you send is saved and goes to ClickUp
+  by itself when the writer is back."; editors, admins and the CEO are also
+  asked to check it on the Machine tab. A held request says it goes "once the
+  writer runs again", and the focus view says changes "cannot be sent just now"
+  (review round 3); before requests ever opened it says they are not open yet.
 - Nothing reaches ClickUp unless the function secret
   `CLICKUP_WRITEBACK_APPLY_REQUESTS` is exactly `true`. The canary
   `CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS` (comma-separated client card ids, the
   rehearsal uses the internal test card `86eywg1cq`) narrows it to those cards.
   The general `CLICKUP_WRITEBACK_APPLY` does not open these kinds and this
-  switch opens nothing else. Pace: `CLICKUP_REQUESTS_CALLS_PER_MINUTE` (120).
-- While the writer is a dry run, `/requests` tells the team to use the ClickUp
-  request form; editors, admins and the CEO may still file, and their request is
-  held: saved, its rows `queued` and never claimed, said plainly on the form
-  and the request ("Saved, not sent yet. It goes to ClickUp once requests
-  open."). It goes on its own on the first run after requests open; on the
-  canary card it goes at once. Nothing is ever saved `dry_run` by this job.
+  switch opens nothing else. Pace: `CLICKUP_REQUESTS_CALLS_PER_MINUTE` (25;
+  ClickUp Business allows 100 a minute for the shared token).
+- While the writer is a dry run (or on the canary, off its card), every seat
+  may still file, and the request is held: saved, its rows `queued` and never
+  claimed, said plainly on the form and the request ("Saved, not sent yet. It
+  goes to ClickUp once requests open."). No sentence in the cockpit sends
+  anyone to the ClickUp request form (`20261029p`; form 1178 closes with the
+  move to ClickUp Business, `docs/requests/CLICKUP-DOWNGRADE.md`). It goes on
+  its own on the first run after requests open; on the canary card it goes at
+  once. Nothing is ever saved `dry_run` by this job.
   During the canary a request that routes an old form ticket goes only when
   that ticket's own card is a canary card, so the rehearsal never closes a real
   ticket on All Tasks; any other waits until requests open to everyone.

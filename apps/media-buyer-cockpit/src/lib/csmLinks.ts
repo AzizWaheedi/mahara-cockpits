@@ -45,11 +45,6 @@ export const LINK_GROUPS: LinkGroup[] = [
         url: "https://maharamedia.typeform.com/to/fRokTITH",
         note: "After every client call, same day",
       },
-      {
-        label: "Client ticketing form",
-        url: "https://forms.clickup.com/90182518398/f/2kzmr1ky-1178/R1O1N5QXYLUTJOWQ3E",
-        note: "Any work a client needs from tech, media or ads, one ticket each",
-      },
     ],
   },
   {

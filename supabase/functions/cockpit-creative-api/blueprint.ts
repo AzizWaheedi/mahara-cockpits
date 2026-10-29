@@ -177,14 +177,14 @@ export async function rehearseBlueprint(args:Row,client:any,admin:any,env:Env,no
  const {data,error}=await client.rpc('cockpit_blueprint_rehearse_payload',{p_task_id:args.taskId,p_part:part,p_answers:args.answers});if(error)throw new Error(error.message);
  const missing:string[]=Array.isArray(data?.missing)?data.missing:[];
  if(missing.length)return {dryRun:true,missing,plan:null,lines:[`Still missing: ${missing.join(', ')}.`]};
- const provider=readOnly(tools(env,async(event:Row)=>{const {error}=await admin.from('cockpit_media_provider_health').insert({...event,action_id:null});if(error)throw new Error('Could not save provider receipt');}));
+ const provider=readOnly(tools(env,async(event:Row)=>{const {error}=await admin.from('cockpit_media_provider_health').insert({...event,action_id:null});if(error)throw new Error('Could not save provider receipt');},fetch,{retry429:true}));
  const plan=await prepareBlueprint({id:'rehearsal',kind:data.kind,task_id:data.taskId,client_name:data.clientName,payload:data.payload},provider,env,now);
  return {dryRun:true,missing,plan,lines:describePlan(plan)};
 }
 // The Settings picker: the members of Marketing/ADs, by ClickUp ID and name, read only.
 export async function blueprintMembers(client:any,admin:any,env:Env,tools=providerTools){
  const {error}=await client.rpc('cockpit_blueprint_settings_read');if(error)throw new Error(error.message);
- const provider=readOnly(tools(env,async(event:Row)=>{const {error}=await admin.from('cockpit_media_provider_health').insert({...event,action_id:null});if(error)throw new Error('Could not save provider receipt');}));
+ const provider=readOnly(tools(env,async(event:Row)=>{const {error}=await admin.from('cockpit_media_provider_health').insert({...event,action_id:null});if(error)throw new Error('Could not save provider receipt');},fetch,{retry429:true}));
  const res=await provider.call('clickup','GET',`list/${B.LAUNCH_LIST}/member`);
  const members=(Array.isArray(res.members)?res.members:[]).filter((m:Row)=>m&&/^\d{3,12}$/.test(String(m.id))).map((m:Row)=>({id:String(m.id),name:String(m.username??m.initials??'').trim()||'Unnamed member'}));
  return {members:members.sort((x:Row,y:Row)=>x.name.localeCompare(y.name))};

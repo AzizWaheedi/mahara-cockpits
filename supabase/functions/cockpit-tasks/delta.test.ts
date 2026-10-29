@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { COMMENT_MAX, commentRow, commentText, cut, detailCache, mirrorTask, NO_TOKEN, pacer, type Row } from "./clickup";
-import { COMMENT_TASKS, mostFailed, OVERLAP_MS, REPLY_READS, runDelta, TRUNCATED } from "./delta";
+import { COMMENT_TASKS, DELTA_PAGES, mostFailed, OVERLAP_MS, REPLY_READS, runDelta, TRUNCATED } from "./delta";
 import { cuTask, kit, NOW, TOKEN } from "./testkit";
 
 const tasksAt = (n: number, from = NOW - 3_600_000) =>
@@ -79,6 +79,13 @@ describe("the delta", () => {
     expect((await runDelta(k2.deps)).cursorMs).toBeNull();
   });
 
+  test("a full run is at most 40 ClickUp calls: 80 s at 30 a minute, inside the 2 minutes before the next", () => {
+    // ClickUp Business allows 100 a minute for the shared token (docs/requests/CLICKUP-DOWNGRADE.md 1.4).
+    expect(DELTA_PAGES + COMMENT_TASKS + REPLY_READS).toBeLessThanOrEqual(40);
+    expect(COMMENT_TASKS).toBe(25);
+    expect(REPLY_READS).toBe(5);
+  });
+
   test("the comments of the tasks the database names, with their reply threads, capped", async () => {
     const k = kit();
     const due = Array.from({ length: COMMENT_TASKS }, (_, i) => ({ taskId: `c${i}`, sinceMs: NOW - 600_000 }));
@@ -99,7 +106,7 @@ describe("the delta", () => {
       ]);
     k.clickup.replies.set("002", [{ id: "r1", comment_text: "a reply", date: String(NOW - 30_000), user: { id: 113688800 }, comment: [] }]);
     const r = await runDelta(k.deps);
-    expect(k.db.of("cockpit_task_mirror_comment_due")[0].args).toEqual({ p_limit: 40 });
+    expect(k.db.of("cockpit_task_mirror_comment_due")[0].args).toEqual({ p_limit: COMMENT_TASKS });
     expect(k.clickup.gets("task/").filter(c => c.path.endsWith("/comment")).length).toBe(COMMENT_TASKS);
     const replyReads = k.clickup.gets("comment/");
     expect(replyReads.length).toBe(REPLY_READS);

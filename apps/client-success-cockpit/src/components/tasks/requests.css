@@ -1364,8 +1364,13 @@ input[type="date"].rq-input {
   width: 15px;
   height: 15px;
 }
+/* The held mark (clickup-diet-1029): saved, not sent yet, and it goes to
+   ClickUp by itself. Every seat may now be held (20261029p), so the clock
+   is drawn in the teal ink, the cockpit keeping the request, the same in
+   each place it shows (the note before Send, the hint beside Save, this
+   stop, the Saved heading); orange stays for what a person must check. */
 .rq-stop[data-kind="held"] .rq-stop-mark {
-  color: var(--rq-warn);
+  color: var(--tk-ink);
 }
 /* The fork's mark: a diamond, never mistaken for a status circle. */
 .rq-stop[data-kind="decision"] .rq-stop-mark {
@@ -1718,7 +1723,7 @@ input[type="date"].rq-input {
 .rq-hint svg {
   width: 14px;
   height: 14px;
-  color: var(--rq-warn);
+  color: var(--tk-ink);
 }
 /* One link style inside the card: ink, underlined, as "Open in ClickUp"
    and the SOP link (review D17). */
@@ -1778,10 +1783,21 @@ input[type="date"].rq-input {
 .rq-off > svg {
   color: var(--rq-warn);
 }
+.rq-off-held > svg {
+  color: var(--tk-ink);
+}
 .rq-off > div {
   display: grid;
   gap: 12px;
   justify-items: start;
+}
+/* A list's name can be long ("Open the Operations / Tech list in ClickUp"):
+   the way out wraps inside the panel rather than run past it. */
+.rq-off-action {
+  white-space: normal;
+  line-height: 20px;
+  padding-block: 10px;
+  text-align: center;
 }
 /* In place of the questions the note can take focus (review
    T3-a11y-behaviour-02): it shows where focus went, as a heading does. */
@@ -1892,7 +1908,7 @@ input[type="date"].rq-input {
   color: var(--success);
 }
 .rq-sent[data-tone="held"] .rq-sent-icon {
-  color: var(--rq-warn);
+  color: var(--tk-ink);
 }
 .rq-sent[data-tone="failed"] .rq-sent-icon {
   color: var(--destructive);
@@ -2134,9 +2150,9 @@ input[type="date"].rq-input {
   .rq-send .rq-actions > .rq-btn-primary {
     flex: 1 1 100%;
   }
-  /* "Open the ClickUp request form" takes the panel's width as Send does,
-     starting under the clock (16px mark and 12px gap), so it keeps one line
-     inside the panel at 390. */
+  /* The way out ("Open the {list} list in ClickUp") takes the panel's width,
+     starting under the mark (16px mark and 12px gap), so it keeps one line
+     inside the panel at 390 where the list's name allows. */
   .rq-off > div {
     justify-items: stretch;
   }

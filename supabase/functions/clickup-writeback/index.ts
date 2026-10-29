@@ -3,7 +3,8 @@
 //
 // Jobs (POST body {"job": ...}), each started by pg_cron with the shared
 // secret from the vault (migration 20261009f_clickup_writeback_native.sql):
-//   kpi       hourly at :05, 03-18 UTC  board KPI columns (convex writeback.pushMetrics)
+//   kpi       hourly at :23, 03-18 UTC  board KPI columns (convex writeback.pushMetrics);
+//                                       moved from :05 off the native cycle's minute (20261029q)
 //   log       every 2 minutes           decision / change comments, Ad Status moves and
 //                                       cockpit billing edits on Clients - Mahara cards (billing.ts, 20261009j)
 //   dosdonts  hourly at :35, 03-18 UTC  Do's & Don'ts clean format (convex dosDonts.tidyClient)
@@ -30,14 +31,21 @@
 // Secrets read by name: CLICKUP_API_TOKEN, META_SYSTEM_TOKEN (Ad Status
 // read-back), CRON_SECRET, optional META_GRAPH_VERSION,
 // CLICKUP_WRITEBACK_ONLY_TASKS (comma-separated task ids for a one-card live
-// check; it narrows APPLY and APPLY_KPI, not client success tickets) and
-// CLICKUP_CALLS_PER_MINUTE (CLICKUP_REQUESTS_CALLS_PER_MINUTE for the two
-// requests jobs, default 120). Every provider
-// call goes through cockpit-media-api/tools.ts and lands in
-// cockpit_media_provider_health. Nothing here logs a key.
+// check; it narrows APPLY and APPLY_KPI, not client success tickets) and the
+// pace: CLICKUP_REQUESTS_CALLS_PER_MINUTE for the two requests jobs (default
+// 25) and CLICKUP_CALLS_PER_MINUTE for the others (default 30), never above 60
+// (run.ts writebackPerMinute). Each pace is one Edge Function call's; the
+// requests job opens one run at a time (an exclusive begin, run.ts BUSY_HELD),
+// so its pace is also the whole job's, however many submits and presses start
+// a run in the same minute. ClickUp Business allows 100 calls a minute for
+// the one token the Supabase functions and the VPS workers share
+// (docs/requests/CLICKUP-DOWNGRADE.md). Every provider call goes through
+// cockpit-media-api/tools.ts and lands in cockpit_media_provider_health. These
+// jobs keep their own retries (queue.ts), so they do not take the helper's 429
+// retry. Nothing here logs a key.
 
 import { providerTools } from "../cockpit-media-api/tools.ts";
-import { type Deps, noJobNote, pacer, redact, runDoctor, runDosDonts, runKpi, runLog, runRequests, runRequestsDoctor, unknownJobNote } from "./run.ts";
+import { type Deps, noJobNote, pacer, redact, runDoctor, runDosDonts, runKpi, runLog, runRequests, runRequestsDoctor, unknownJobNote, writebackPerMinute } from "./run.ts";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
@@ -74,9 +82,6 @@ Deno.serve(async (req: Request) => {
   } catch {
     return json({ ok: false, note: noJobNote }, 400);
   }
-  const requestsJob = job === "requests" || job === "requests_doctor";
-  // The requests jobs pace on their own setting: the token allows 1,000 calls a minute (read 2026-10-26).
-  const perMinute = requestsJob ? Number(env("CLICKUP_REQUESTS_CALLS_PER_MINUTE")) || 120 : Number(env("CLICKUP_CALLS_PER_MINUTE")) || 90;
   const deps: Deps = {
     env,
     rpc: (name, params = {}) => rest(url, service, `rpc/${name}`, params),
@@ -87,8 +92,9 @@ Deno.serve(async (req: Request) => {
       }),
     now: () => Date.now(),
     uuid: () => crypto.randomUUID(),
-    // ClickUp allows 100 calls a minute per token on Business plans; stay under it unless told otherwise.
-    pace: pacer(Math.min(1000, Math.max(10, perMinute))),
+    // ClickUp Business allows 100 calls a minute for the shared token; each job keeps to its own pace, 60 at most.
+    // This pacer is this call's; one requests run sends at a time, so for requests it is the job's too.
+    pace: pacer(writebackPerMinute(job, env)),
     // One health row by key, merged on conflict (the tap-charges-sync pattern).
     syncState: (key, row) => rest(url, service, "cockpit_sync_state?on_conflict=key", [{ key, ...row }], "resolution=merge-duplicates,return=minimal"),
   };

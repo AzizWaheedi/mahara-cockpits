@@ -38,7 +38,7 @@ export async function runBuild(input:Row,client:any,admin:any,env:(key:string)=>
  const scopeRead=async()=>{const result=await client.rpc('cockpit_build_scope',{p_tag:draft.clientTag});if(result.error)throw new Error(result.error.message);return result.data;};
  const scope=await scopeRead();const scopeKey=canonical(scope);const check=async()=>{if(canonical(await scopeRead())!==scopeKey)throw new Error('Client access or account mapping changed. Check this draft before retrying');};
  const health=async(row:Row)=>{if(row.phase==='intent'&&row.method!=='GET')await check();const {error}=await admin.from('cockpit_media_provider_health').insert({...row,action_id:started?requestId:null});if(error)throw new Error('Could not save provider receipt');};
- const provider=providerTools(env,health);
+ const provider=providerTools(env,health,fetch,{retry429:true});
  try{
   const clean=launching?draft:validateBuild(args,scope);
   let plan:MultiPlan|undefined;if(launching)plan=await launchBuildPlan(draft,scope,provider);

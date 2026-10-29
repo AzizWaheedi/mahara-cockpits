@@ -145,7 +145,8 @@ describe("the doctor", () => {
     expect(d.secrets).toEqual({ CLICKUP_API_TOKEN: true, TASKS_CRON_SECRET: true, SUPABASE_URL: true, SUPABASE_ANON_KEY: true, SUPABASE_SERVICE_ROLE_KEY: true });
     expect(d.rateLimit).toBe(1000);
     expect(d).toMatchObject({ linked: 1, notLinked: 4 });
-    expect(d.note).toBe("ClickUp answers (1000 calls a minute allowed); 1 seats linked, 4 not linked.");
+    expect(d.note).toBe("ClickUp answers (1000 calls a minute allowed; the task mirror reads at 30 a minute); 1 seats linked, 4 not linked.");
+    expect(d.pace).toBe(30);
     expect(k.clickup.calls.map(c => [c.method, c.path])).toEqual([["GET", "user"]]);
     expect(JSON.stringify(d)).not.toContain(TOKEN);
     expect(JSON.stringify(d)).not.toContain("service-key-fixture");

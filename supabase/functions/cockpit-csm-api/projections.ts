@@ -103,7 +103,7 @@ export async function runProjectionOperation(client: SupabaseClient, admin: Supa
   if(prior?.state==='confirmed') return prior.result;
   let actionId=prior?.id;
   const health=async(row:Record<string,unknown>)=>{const {error}=await admin.from('cockpit_csm_provider_health').insert({...row,action_id:actionId??null});if(error) throw Error('Could not save the provider health receipt.');};
-  const ghl=ghlTools(env('GHL_MAHARA_PIT')??'',health), clickup=providerTools(env('CLICKUP_API_TOKEN')??'',health);
+  const ghl=ghlTools(env('GHL_MAHARA_PIT')??'',health), clickup=providerTools(env('CLICKUP_API_TOKEN')??'',health,fetch,{retry429:true});
   const finish=async(result:Result)=>{
     await checkScope();
     const {data,error}=await admin.rpc('cockpit_csm_projection_finish_booking',{p_id:actionId,p_result:result});

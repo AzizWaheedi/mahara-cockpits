@@ -103,7 +103,8 @@ describe("a run under every switch but the requests switch", () => {
     expect((row.planned as any[]).map(p => p.field)).toEqual(["new task on Operations / Tech", "SOP steps (draft)", "tag", "Lead list", "comment"]);
     expect((row.planned as any[])[0].new).toMatchObject({ name: "Acme Interiors - General tech request", owner: "the systems manager", ownerClickupId: PEOPLE.systemsManager, dueOn: "2026-10-28", priority: "normal" });
     expect(h.db.finished[0]).toMatchObject({ p_ok: true, p_counts: { claimed: 1, dryRun: 1 } });
-    expect(h.db.begun[0]).toEqual({ p_job: "requests", p_mode: "dry_run", p_exclusive: false });
+    // One requests run sends at a time (run.ts BUSY_HELD, docs/requests/CLICKUP-DOWNGRADE.md 1.3).
+    expect(h.db.begun[0]).toEqual({ p_job: "requests", p_mode: "dry_run", p_exclusive: true });
   });
 });
 
@@ -154,7 +155,8 @@ describe("one run's bookkeeping (contract 4.2)", () => {
     h.db.fail = name => (name === "cockpit_clickup_writeback_begin" ? new Error("Supabase 400: Unsupported writeback run") : undefined);
     const out = await h.run();
     expect(out.ok).toBe(false);
-    expect(row).toMatchObject({ state: "retry", claim_token: null });
+    // Handed back with the claim's try taken off: nothing was sent, so no rung of the retry ladder is spent.
+    expect(row).toMatchObject({ state: "queued", claim_token: null, attempts: 0 });
     expect(row.error).toBe("The requests run could not start, so this waits for the next run.");
     expect(h.clickup.calls).toEqual([]);
     expect(h.db.lastState()?.p_ok).toBe(false);
@@ -167,7 +169,7 @@ describe("one run's bookkeeping (contract 4.2)", () => {
     h.clickup.onCreate = () => h.advance(101_000);
     const out = await h.run();
     expect(first.state).toBe("delivered");
-    expect(second).toMatchObject({ state: "retry", error: "Held for the next run, so this run ends inside its time limit." });
+    expect(second).toMatchObject({ state: "queued", attempts: 0, error: "Held for the next run, so this run ends inside its time limit." });
     expect(out.note).toBe("1 request delivered, 0 to retry, 0 failed. 1 held for the next run.");
   });
 

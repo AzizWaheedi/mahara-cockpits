@@ -2,8 +2,8 @@ import {describe, expect, test} from 'bun:test';
 import {cardCommentText} from '../clickup-writeback/requests.ts';
 import {CLIENTS_LIST, DOS_DONTS_FIELD, NOTES_MARK} from '../clickup-writeback/rules.ts';
 import {
-  type Admin, type Clock, DIGEST_LIMIT, digestPrompt, gate, handle, isCurrent, kindOf, liveSources, mergeRules, nearDuplicate,
-  type PendingRule, type RecordItem, runWatch, type Store,
+  type Admin, CLICKUP_GAP_MS, type Clock, DatabaseError, DIGEST_LIMIT, digestPrompt, gate, handle, isCurrent, kindOf, liveSources, mergeRules,
+  nearDuplicate, type PendingRule, type RecordItem, rotation, RULES_BUDGET_MS, runWatch, SCAN_BUDGET_MS, type Store, supabaseStore,
 } from './watch.ts';
 
 // The native comment watch: which comments it reads, what it queues for
@@ -300,6 +300,129 @@ describe('one run', () => {
     expect(state.recorded.map(i => i.commentId)).toEqual(['b1']);
     expect(result.counts?.card_errors).toBe(1);
     expect(result.note).toContain('could not be read');
+  });
+
+  test('30 calls a minute: 28 current cards on two list pages are read 2 s apart, inside the scan budget', async () => {
+    // ClickUp Business allows 100 a minute for the token the VPS shares (docs/requests/CLICKUP-DOWNGRADE.md 1.4).
+    expect(CLICKUP_GAP_MS).toBe(2_000);
+    const current = Array.from({length: 28}, (_, i) => card(`a${i}`, `Client ${i}`));
+    const stopped = Array.from({length: 80}, (_, i) => card(`s${i}`, `Former ${i}`, {status: 'Stopped'}));
+    const all = [...current, ...stopped];
+    const at: {path: string; t: number}[] = [];
+    const w: ReturnType<typeof world> = world({
+      cards: all,
+      respond: (_m, url) => {
+        at.push({path: url.pathname.replace('/api/v2/', ''), t: w.clock.t});
+        if (!url.pathname.endsWith(`list/${CLIENTS_LIST}/task`)) return undefined;
+        const page = Number(url.searchParams.get('page'));
+        const tasks = all.slice(page * 100, page * 100 + 100);
+        return new Response(JSON.stringify({tasks, last_page: page === 1}), {status: 200});
+      },
+    });
+    const start = w.clock.t;
+    const {store, state} = memoryStore();
+    const result = await runWatch(store, w.sources, gate(() => undefined), w.clock);
+    expect(result.ok).toBe(true);
+    expect(at.filter(c => c.path === `list/${CLIENTS_LIST}/task`).length).toBe(2);
+    expect(result.counts).toMatchObject({clients: 28, clients_read: 28, card_errors: 0});
+    expect(at.length).toBe(30);
+    const gaps = at.slice(1).map((c, i) => c.t - at[i].t);
+    expect(gaps.every(g => g === CLICKUP_GAP_MS)).toBe(true);
+    expect(at.at(-1)!.t - start).toBeLessThan(SCAN_BUDGET_MS);
+    expect(state.finished?.note ?? '').not.toContain('Time ran out');
+  });
+
+  test('28 cards and 15 new rules to write: the rules take their share and every card is still read', async () => {
+    const current = Array.from({length: 28}, (_, i) => card(`a${String(i).padStart(2, '0')}`, `Client ${i}`));
+    const w = world({cards: current, env: {COMMENT_WATCH_APPLY: 'true'}});
+    const pending = current.slice(0, 15).map((c, i) => rule({commentId: `r${i}`, taskId: c.id, clientName: c.name}));
+    const {store, state} = memoryStore({pending});
+    const start = w.clock.t;
+    const result = await runWatch(store, w.sources, gate(n => w.env[n as keyof typeof w.env]), w.clock);
+    expect(result.counts).toMatchObject({clients: 28, clients_read: 28, card_errors: 0});
+    // A written rule is 4 calls, 2 s apart: 3 or 4 fit the rules step's 25 s; the rest wait for the next run.
+    const written = Number(result.counts?.rules_written);
+    expect(written).toBeGreaterThanOrEqual(3);
+    expect(written).toBeLessThanOrEqual(4);
+    expect(state.results.filter(r => r.state === 'written').length).toBe(written);
+    expect(pending.filter(p => p.state === null).length).toBe(15 - written);
+    expect(result.note).toContain(`${15 - written} cards wait for their new rules until the next run, so the comment scan keeps its time.`);
+    expect(result.note).not.toContain('Time ran out');
+    const firstScan = w.calls.findIndex(c => c.url.pathname.endsWith(`list/${CLIENTS_LIST}/task`));
+    expect(firstScan).toBe(written * 4);
+    expect(w.clock.t - start).toBeLessThan(SCAN_BUDGET_MS);
+    expect(RULES_BUDGET_MS).toBe(25_000);
+  });
+
+  test('50 cards: a run that runs out of time names the cards left, and the next run reads them first', async () => {
+    const current = Array.from({length: 50}, (_, i) => card(`a${String(i).padStart(2, '0')}`, `Client ${i}`));
+    const w = world({cards: current});
+    const {store, state} = memoryStore();
+    let place: string | null = null;
+    const places: (string | null)[] = [];
+    const rotating: Store = {
+      ...store,
+      resumeAfter: async () => place,
+      finish: async (run, ok, note, counts, planned) => {
+        await store.finish(run, ok, note, counts, planned);
+        place = (counts.resume_after as string | null) ?? null;
+        places.push(place);
+      },
+    };
+    const reads = () => w.calls.map(c => /task\/([^/]+)\/comment$/.exec(c.url.pathname)?.[1]).filter((id): id is string => Boolean(id));
+    const first = await runWatch(rotating, w.sources, gate(() => undefined), w.clock);
+    const firstReads = reads();
+    expect(firstReads.length).toBeLessThan(50);
+    const left = current.map(c => c.id).filter(id => !firstReads.includes(id));
+    expect(first.note).toContain(`Time ran out after ${firstReads.length} clients of 50;`);
+    const named = left.map(id => `Client ${Number(id.slice(1))}`);
+    const list = named.length > 3 ? `${named.slice(0, 3).join(', ')} and ${named.length - 3} more` : `${named.slice(0, -1).join(', ')} and ${named.at(-1)}`;
+    expect(left.length).toBeGreaterThan(1);
+    expect(first.note).toContain(`Time ran out after ${firstReads.length} clients of 50; ${list} are read first next run.`);
+    expect(places[0]).toBe(firstReads.at(-1));
+    w.clock.t += 15 * 60_000;
+    const before = w.calls.length;
+    await runWatch(rotating, w.sources, gate(() => undefined), w.clock);
+    const secondReads = reads().slice(firstReads.length);
+    // The cards the first run left are the first ones read, and two runs between them read every card.
+    expect(secondReads.slice(0, left.length)).toEqual(left);
+    expect(new Set([...firstReads, ...secondReads]).size).toBe(50);
+    expect(w.calls.length).toBeGreaterThan(before);
+    expect(state.finished?.counts.resume_after).toBe(secondReads.at(-1));
+  });
+
+  test('a failed save keeps the place, so the same cards are read again next run', async () => {
+    const current = Array.from({length: 3}, (_, i) => card(`a${i}`, `Client ${i}`));
+    const w = world({cards: current, comments: {a1: [cmt('c1', CALL)]}});
+    const {store, state} = memoryStore();
+    const failing: Store = {...store, resumeAfter: async () => 'a0', record: async () => {throw new DatabaseError('cockpit_comment_watch_record: down');}};
+    const result = await runWatch(failing, w.sources, gate(() => undefined), w.clock);
+    expect(result.ok).toBe(false);
+    expect(state.finished?.counts.resume_after).toBe('a0');
+  });
+
+  test('the card order is fixed by id and starts after the last card read, wrapping round', () => {
+    const cards = ['c3', 'a1', 'b2', 'd4'].map(id => ({id}));
+    expect(rotation(cards, null).map(c => c.id)).toEqual(['a1', 'b2', 'c3', 'd4']);
+    expect(rotation(cards, 'b2').map(c => c.id)).toEqual(['c3', 'd4', 'a1', 'b2']);
+    expect(rotation(cards, 'd4').map(c => c.id)).toEqual(['a1', 'b2', 'c3', 'd4']);
+    // A card that is no longer current: the next one after it in the order.
+    expect(rotation(cards, 'b9').map(c => c.id)).toEqual(['c3', 'd4', 'a1', 'b2']);
+  });
+
+  test('the store reads the place from the newest finished run that kept one', async () => {
+    const asked: unknown[][] = [];
+    const chain: Record<string, (...args: unknown[]) => unknown> = {};
+    for (const m of ['select', 'not', 'order']) chain[m] = (...args: unknown[]) => (asked.push([m, ...args]), chain);
+    chain.limit = async (...args: unknown[]) => (asked.push(['limit', ...args]), {data: [{counts: {resume_after: '86abc12'}}], error: null});
+    const admin: Admin = {rpc: async () => ({data: null, error: null}), from: (table: string) => (asked.push(['from', table]), chain)};
+    expect(await supabaseStore(admin).resumeAfter!()).toBe('86abc12');
+    expect(asked).toEqual([
+      ['from', 'cockpit_comment_watch_runs'], ['select', 'counts'], ['not', 'finished_at', 'is', null], ['not', 'counts->>resume_after', 'is', null],
+      ['order', 'started_at', {ascending: false}], ['limit', 1],
+    ]);
+    chain.limit = async () => ({data: [{counts: {resume_after: '../x'}}], error: null});
+    expect(await supabaseStore(admin).resumeAfter!()).toBeNull();
   });
 
   test('a missing ClickUp key is said plainly; the publish step still runs', async () => {

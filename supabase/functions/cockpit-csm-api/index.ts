@@ -75,7 +75,7 @@ Deno.serve(async(req:Request)=>{
    if(priorError)throw Error('Could not inspect the prior action receipt');
    if(prior){if(prior.state==='confirmed'&&prior.operation===operation&&canonical(prior.request)===canonical(args))return json(prior.result);throw Error('This request may have reached ClickUp. Reconcile it before retrying.');}
   }
-  const provider=providerTools(Deno.env.get('CLICKUP_API_TOKEN')??'',async row=>{const {error}=await admin.from('cockpit_csm_provider_health').insert({...row,action_id:actionId??null});if(error)throw Error('Could not save provider health receipt');});
+  const provider=providerTools(Deno.env.get('CLICKUP_API_TOKEN')??'',async row=>{const {error}=await admin.from('cockpit_csm_provider_health').insert({...row,action_id:actionId??null});if(error)throw Error('Could not save provider health receipt');},fetch,{retry429:true});
   const plan=await prepareCsm(operation,args,context,provider);
   if(input.apply!==true)return json({dryRun:true,plan});
   if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.requestId??''))throw Error('An action request id is required');

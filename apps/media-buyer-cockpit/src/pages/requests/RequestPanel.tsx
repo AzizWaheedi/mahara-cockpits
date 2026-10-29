@@ -5,7 +5,6 @@ import { TaskPanel } from "@/components/tasks/TaskPanel";
 import { Button } from "@/components/ui/button";
 import { cancelRequest, errorWords, readRequest } from "@/lib/requestsClient";
 import {
-  CLICKUP_FORM_URL,
   dayLabel,
   deliveredNote,
   isOpen,
@@ -574,11 +573,11 @@ function Facts({ detail }: { detail: RequestDetail }) {
 
 /**
  * What to do when a request did not reach ClickUp. Nothing reached it: file
- * it again with the same answers, or use the ClickUp request form. Part of
- * it did: name the missing task and raise only that one, with the form or
- * through the systems manager (the cockpit files a whole request, and the
- * tasks that landed must not be made twice). Said once, under the state;
- * the reason is on the task itself.
+ * it again with the same answers. Part of it did: name the missing task and
+ * have the systems manager make only that one (the cockpit files a whole
+ * request, and the tasks that landed must not be made twice). There is no
+ * ClickUp form to send anyone to (docs/requests/CLICKUP-DOWNGRADE.md). Said
+ * once, under the state; the reason is on the task itself.
  */
 function NextStep({
   detail,
@@ -627,22 +626,13 @@ function NextStep({
           </>
         )}
       </p>
-      <div className="flex flex-wrap items-center gap-2">
-        {onAgain ? (
+      {onAgain ? (
+        <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" onClick={onAgain}>
             File it again
           </Button>
-        ) : null}
-        <a
-          href={CLICKUP_FORM_URL}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[13px] font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          Open the ClickUp request form
-          <ArrowUpRight aria-hidden className="size-3.5" />
-        </a>
-      </div>
+        </div>
+      ) : null}
     </section>
   );
 }

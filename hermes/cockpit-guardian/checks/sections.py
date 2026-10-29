@@ -20,7 +20,7 @@ from .claude_proxy import signed_out_text
 
 SECTION_LIMIT_MIN = 45
 EXPECTED_SECTIONS = 14
-# Jobs that run only in set UTC hours (pg_cron '5 3-18 * * *' and '35 3-18 * * *'): their lateness counts the
+# Jobs that run only in set UTC hours (pg_cron '23 3-18 * * *' (20261029q) and '35 3-18 * * *'): their lateness counts the
 # minutes inside those hours, so the night with no run is not "late" (19, 20 and 21 Oct 2026, 22:25-07:35 Kuwait).
 SCHEDULED_HOURS_UTC = {"clickup-writeback:kpi": (3, 19), "clickup-writeback:dosdonts": (3, 19)}
 

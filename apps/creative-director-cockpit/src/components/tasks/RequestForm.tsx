@@ -77,7 +77,6 @@ import {
 import {
   answerTeamLines,
   bodyFields,
-  CLICKUP_FORM_URL,
   type ClientOption,
   carriedDueOn,
   choiceControl,
@@ -92,6 +91,9 @@ import {
   type FieldView,
   fieldOfSentence,
   GENERAL_KEYS,
+  type HeldWait,
+  handLists,
+  heldWait,
   kuwaitClock,
   kuwaitToday,
   type LaneWorks,
@@ -602,10 +604,16 @@ export function RequestForm({
           chosenId,
         );
   // The writer has not reported (mode unknown): held words follow the
-  // server's hedge, never "once requests open" (review CL-04).
+  // gate's own note, never "once requests open" where requests had opened
+  // (review CL-04). Only a lead seat's note then asks for action (check the
+  // Machine tab), so only it holds back "Nothing else to do now"; a plain
+  // seat's reads "when the writer is back" everywhere (clickup-diet-1029).
   const quiet =
     ((writer as { mode?: string } | null)?.mode ??
       (types.status === "ready" ? types.data.writer.mode : null)) === "unknown";
+  const lead = types.status === "ready" && Boolean(types.data.seat.all);
+  const wait: HeldWait = heldWait(quiet, lead, writer?.note);
+  const asks = quiet && lead;
 
   // Requests that stop being open to the seat partway through swap the
   // questions for the writer's note: the control the person was on goes, so
@@ -832,7 +840,8 @@ export function RequestForm({
           type={type}
           model={sentModel(sent.parts, sentOpen, {
             stopped: checks.stopped,
-            quiet,
+            wait,
+            asks,
           })}
           sentId={sent.id}
           client={chosenClient}
@@ -844,7 +853,7 @@ export function RequestForm({
           checks={checks}
           moving={moving}
           heldNote={writer?.note?.trim() || null}
-          quiet={quiet}
+          wait={wait}
           onAgain={again}
         />
       </div>
@@ -927,19 +936,24 @@ export function RequestForm({
     : [];
   const givenClient = presetClient ? null : chosenClient;
   // A required choice with no option ClickUp gives cannot be answered, so
-  // the request cannot be sent here: the ClickUp request form becomes the
-  // one teal action, Send says why, and the route says only where it would
-  // go (review T3-design-clarity-05). Send still takes a press, so the
-  // summary can take focus to the lost choice and its sentence (A11Y-21).
+  // the request cannot be sent here: the sentence says to tell the systems
+  // manager, the lists its tasks go to in ClickUp are the way when it cannot
+  // wait (there is no ClickUp form any more; every list, since the lost
+  // answer may be what picks among them: clickup-diet-1029), Send says why,
+  // and the route says only where it would go (review
+  // T3-design-clarity-05). Send still takes a press, so the summary can take
+  // focus to the lost choice (A11Y-21).
   const lost = type ? lostChoices(type) : [];
 
   return (
     <div className={root} ref={formRef}>
       {writerOff && !type ? <WriterOff note={writerOff.note} /> : null}
       {/* A held request's note (saved until requests open): said before
-          anything is picked; once a type is, on the route. */}
+          anything is picked; once a type is, on the route. Every seat may
+          now be held (20261029p), so it reads as the cockpit keeping the
+          request, with the held mark, never as a warning. */}
       {writerNote && !type ? (
-        <p className="rq-off" role="status">
+        <p className="rq-off rq-off-held" role="status">
           <Clock aria-hidden />
           <span>{writerNote}</span>
         </p>
@@ -1016,7 +1030,7 @@ export function RequestForm({
                 priority={priority}
                 held={false}
                 heldNote={null}
-                quiet={quiet}
+                wait={wait}
                 ahead
               />
             </div>
@@ -1103,13 +1117,14 @@ export function RequestForm({
                 priority={priority}
                 held={held}
                 heldNote={held ? writerNote : null}
-                quiet={quiet}
+                wait={wait}
                 blocked={lost.length > 0}
               />
               <SendBlock
                 errors={attempted ? errors : {}}
                 order={screenOrder(type)}
                 lost={lost}
+                hand={handLists(type)}
                 announce={announce}
                 formError={
                   formError && formError !== REQUEST_SENTENCES.noType
@@ -1117,7 +1132,7 @@ export function RequestForm({
                     : null
                 }
                 held={held}
-                quiet={quiet}
+                wait={wait}
                 sending={sending}
                 onSend={() => void send()}
                 onFix={focusField}
@@ -3096,7 +3111,7 @@ function RouteView({
   priority,
   held,
   heldNote,
-  quiet,
+  wait,
   ahead = false,
   blocked = false,
 }: {
@@ -3111,8 +3126,8 @@ function RouteView({
   priority: Priority;
   held: boolean;
   heldNote: string | null;
-  /** The writer has not reported: the held words follow its hedge. */
-  quiet: boolean;
+  /** When a held request goes, in the gate's words (heldWait). */
+  wait: HeldWait;
   /** Requests are not open to this seat: where it would go, nothing else. */
   ahead?: boolean;
   /**
@@ -3145,9 +3160,9 @@ function RouteView({
   const timing = still
     ? ROUTE_WORDS.goesTo
     : held
-      ? quiet
-        ? ROUTE_WORDS.whenQuiet
-        : ROUTE_WORDS.whenOpen
+      ? wait === "open"
+        ? ROUTE_WORDS.whenOpen
+        : ROUTE_WORDS.whenQuiet
       : ROUTE_WORDS.soon;
   const fork = model?.lanes.some(l => l.kind === "may")
     ? ahead
@@ -3164,7 +3179,7 @@ function RouteView({
       : preview.status === "error"
         ? preview.error
         : model?.summary
-          ? `${model.summary}${keep && model.lanes.length ? `, saved ${ROUTE_WORDS.savedUntil(quiet)}` : ""}`
+          ? `${model.summary}${keep && model.lanes.length ? `, saved ${ROUTE_WORDS.savedUntil(wait)}` : ""}`
           : "";
   return (
     <section
@@ -3285,10 +3300,11 @@ function SendBlock({
   errors,
   order,
   lost,
+  hand,
   announce,
   formError,
   held,
-  quiet,
+  wait,
   sending,
   onSend,
   onFix,
@@ -3297,11 +3313,18 @@ function SendBlock({
   order: string[];
   /** Required choices ClickUp lost: the request cannot be sent here. */
   lost: FieldView[];
+  /**
+   * The lists in ClickUp where the request can be made by hand (handLists):
+   * every list its tasks go to, each with its link (none for a list that is
+   * not one of the five).
+   */
+  hand: { lists: { name: string; url: string | null }[]; each: boolean };
   /** The press's summary, said once through the polite line below. */
   announce: string;
   formError: string | null;
   held: boolean;
-  quiet: boolean;
+  /** When a held request goes, in the gate's words (heldWait). */
+  wait: HeldWait;
   sending: boolean;
   onSend: () => void;
   onFix: (key: string) => void;
@@ -3353,26 +3376,37 @@ function SendBlock({
           <p>{formError}</p>
         </div>
       ) : null}
-      {/* On the page before any press: the way out is the ClickUp request
-          form, the one teal action, as when requests are not open to the
-          seat (review T3-design-clarity-05). */}
+      {/* On the page before any press: tell the systems manager, or, when
+          it cannot wait, make it on the lists its tasks go to in ClickUp,
+          every one named (the lost answer may be what picks among them),
+          one outlined link per list beside the outlined Send (review
+          T3-design-clarity-05; clickup-diet-1029). */}
       {blocked ? (
         <div className="rq-off rq-blocked">
           <CircleAlert aria-hidden />
           <div>
             <p id={`${id}-blocked`}>
-              {REQUEST_SENTENCES.lostBlocked(lost[0].label)}
+              {REQUEST_SENTENCES.lostBlocked(
+                lost[0].label,
+                hand.lists.map(l => l.name),
+                hand.each,
+              )}
             </p>
-            <a
-              className="rq-btn rq-btn-primary rq-off-action"
-              href={CLICKUP_FORM_URL}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Open the ClickUp request form
-              <NewTab />
-              <ArrowUpRight aria-hidden />
-            </a>
+            {hand.lists.map(l =>
+              l.url ? (
+                <a
+                  key={l.name}
+                  className="rq-btn rq-btn-outline rq-off-action"
+                  href={l.url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open the {l.name} list in ClickUp
+                  <NewTab />
+                  <ArrowUpRight aria-hidden />
+                </a>
+              ) : null,
+            )}
           </div>
         </div>
       ) : null}
@@ -3402,7 +3436,7 @@ function SendBlock({
         {held ? (
           <span className="rq-hint">
             <Clock aria-hidden />
-            Saved here {ROUTE_WORDS.savedUntil(quiet)}.
+            Saved here {ROUTE_WORDS.savedUntil(wait)}.
           </span>
         ) : null}
       </div>
@@ -3411,12 +3445,15 @@ function SendBlock({
 }
 
 /**
- * In place of the questions while requests are not open to this seat (2.8,
- * R6). Above the map it is a status; in place of the questions it is a
- * group named by its sentence and described by the line under it, which the
- * form moves focus to when it replaces the questions partway through
- * (`focusRef`; review T3-a11y-behaviour-02), so the reason is never only a
- * status inserted with its words.
+ * In place of the questions while requests cannot be sent from this seat
+ * (2.8). Since 20261029p the database holds every seat's request rather
+ * than refuse it, so this shows only on a database that still refuses; it
+ * names no ClickUp form, as there is none to go to. Above the map it is a
+ * status; in place of the questions it is a group named by its sentence and
+ * described by the line under it, which the form moves focus to when it
+ * replaces the questions partway through (`focusRef`; review
+ * T3-a11y-behaviour-02), so the reason is never only a status inserted with
+ * its words.
  */
 function WriterOff({
   note,
@@ -3430,24 +3467,12 @@ function WriterOff({
   const id = useId();
   const words =
     note ??
-    "Requests are not switched on yet. Use the ClickUp request form until then.";
+    "Requests cannot be sent from this seat just now. Tell the systems manager.";
   const body = (
     <>
       <Clock aria-hidden />
       <div>
         <p id={`${id}-words`}>{words}</p>
-        {/ClickUp request form/.test(words) ? (
-          <a
-            className="rq-btn rq-btn-primary rq-off-action"
-            href={CLICKUP_FORM_URL}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Open the ClickUp request form
-            <NewTab />
-            <ArrowUpRight aria-hidden />
-          </a>
-        ) : null}
       </div>
     </>
   );
@@ -3595,7 +3620,7 @@ function SentView({
   checks,
   moving,
   heldNote,
-  quiet,
+  wait,
   onAgain,
 }: {
   type: TypeView;
@@ -3610,7 +3635,8 @@ function SentView({
   checks: { at: string | null; stopped: boolean };
   moving: boolean;
   heldNote: string | null;
-  quiet: boolean;
+  /** When a held request goes, in the gate's words (heldWait). */
+  wait: HeldWait;
   onAgain: () => void;
 }) {
   const headRef = useRef<HTMLDivElement>(null);
@@ -3694,21 +3720,13 @@ function SentView({
             <span>{REQUEST_SENTENCES.sentAlone}</span>
           </p>
         ) : null}
+        {/* The next step in words; "Open the request" (where "File it
+            again" is) follows in the actions. */}
         {model.next ? (
           <div className="rq-next-step">
             <CircleAlert aria-hidden />
             <div>
               <p>{model.next}</p>
-              <a
-                className="rq-link"
-                href={CLICKUP_FORM_URL}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Open the ClickUp request form
-                <NewTab />
-                <ArrowUpRight aria-hidden />
-              </a>
             </div>
           </div>
         ) : null}
@@ -3731,9 +3749,10 @@ function SentView({
           {/* Saved: one stop, the time and what happened to this request
               (review D6). The writer's sentence before a send is a rule
               ("What you send is saved ..."), so after Save it is kept only
-              while the writer is quiet, where it says what to check; the
-              heading's sub-line says when it goes (review
-              T3-design-clarity-08). */}
+              while the writer is quiet, where it says why it waits and, for
+              a lead seat, what to check; the heading's sub-line says when it
+              goes, in the same words (review T3-design-clarity-08;
+              clickup-diet-1029). */}
           <Stop mark={<Send />} kicker={held ? "Saved" : "Sent"} kind="send">
             <p className="rq-stop-text">
               {clock
@@ -3746,7 +3765,7 @@ function SentView({
             </p>
             <p className="rq-quiet-note">
               {held
-                ? ((quiet ? heldNote : null) ?? ROUTE_WORDS.keptHere)
+                ? ((wait === "open" ? null : heldNote) ?? ROUTE_WORDS.keptHere)
                 : "The cockpit checked it and saved it."}
             </p>
           </Stop>
@@ -3755,9 +3774,9 @@ function SentView({
             lanes={model.lanes}
             fork={
               held
-                ? quiet
-                  ? ROUTE_WORDS.whenQuiet
-                  : ROUTE_WORDS.whenOpen
+                ? wait === "open"
+                  ? ROUTE_WORDS.whenOpen
+                  : ROUTE_WORDS.whenQuiet
                 : model.refused
                   ? countWords(model.lanes.length, "task")
                   : ROUTE_WORDS.sentTogether

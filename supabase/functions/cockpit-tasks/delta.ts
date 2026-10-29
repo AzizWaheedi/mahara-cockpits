@@ -23,9 +23,12 @@
  */
 import { chunks, ClickUpReader, commentRow, type Deps, mirrorTask, ms, NO_TOKEN, type Row, sentence, TEAM_ID } from "./clickup.ts";
 
+// At 30 calls a minute (callsPerMinute) a full run is at most 10 pages, 25 threads and 5 reply reads: 40 calls,
+// about 80 s, inside the 2 minutes before the next run. The due queue rotates (cockpit_task_mirror_comment_due),
+// so a busy minute only delays a comment alert by one run (docs/requests/CLICKUP-DOWNGRADE.md section 1.4).
 export const DELTA_PAGES = 10;
-export const COMMENT_TASKS = 40;
-export const REPLY_READS = 10;
+export const COMMENT_TASKS = 25;
+export const REPLY_READS = 5;
 export const OVERLAP_MS = 600_000;
 export const FIRST_LOOK_MS = 24 * 3600_000;
 export const TRUNCATED = "More than 1,000 tasks changed in one read; the next run goes on.";

@@ -6,6 +6,12 @@
  * and a receipt that cannot be saved stops the call. This file has no way to
  * send anything else: the reader exposes get() only.
  *
+ * The delta and seats readers are paced (callsPerMinute) and do not retry: a
+ * failed read keeps the cursor or steps back, and the next run goes on. A
+ * reader a person is waiting on (the focus view, the doctor) is interactive:
+ * not paced, and it tries once more after ClickUp's 429
+ * (_shared/clickupRetry.ts; docs/requests/CLICKUP-DOWNGRADE.md).
+ *
  * The mapping functions turn ClickUp's task and comment shapes into the rows
  * the database functions of 20261026t take (MirrorTask, the comment list,
  * the focus view's cache).
@@ -42,9 +48,21 @@ export type Deps = {
 
 export const NO_TOKEN = "CLICKUP_API_TOKEN is not set on cockpit-tasks, so nothing was read from ClickUp. Add it to the function's secrets.";
 
-/** Calls a minute, CLICKUP_TASKS_CALLS_PER_MINUTE, 120 by default (the token allows 1,000). */
+/** The task mirror's pace when CLICKUP_TASKS_CALLS_PER_MINUTE is not set (or is not a positive number). */
+export const TASKS_CALLS_PER_MINUTE = 30;
+/** No setting takes the task mirror above this, nor below the floor. */
+export const TASKS_CALLS_MAX = 60;
+export const TASKS_CALLS_MIN = 5;
+
+/**
+ * Calls a minute for the paced readers: CLICKUP_TASKS_CALLS_PER_MINUTE, 30 by default, 5 to 60. ClickUp Business
+ * allows 100 a minute for the one token the Supabase functions and the VPS workers share, and the cockpit's own
+ * jobs aim at 40 together at their busiest minute (docs/requests/CLICKUP-DOWNGRADE.md section 1).
+ */
 export function callsPerMinute(env: Env): number {
-  return Math.min(1000, Math.max(10, Number(env("CLICKUP_TASKS_CALLS_PER_MINUTE")) || 120));
+  const set = Number(env("CLICKUP_TASKS_CALLS_PER_MINUTE"));
+  const pace = Number.isFinite(set) && set > 0 ? set : TASKS_CALLS_PER_MINUTE;
+  return Math.floor(Math.min(TASKS_CALLS_MAX, Math.max(TASKS_CALLS_MIN, pace)));
 }
 
 /** Spaces calls evenly: at most `perMinute` a minute. */
@@ -59,23 +77,35 @@ export function pacer(perMinute: number, now: () => number, sleep: (ms: number) 
   };
 }
 
-/** A read-only ClickUp for one run: GETs only, paced, each one receipted under the run's action id. */
+/**
+ * A read-only ClickUp for one run: GETs only, each one receipted under the run's action id. Paced, with no retry,
+ * unless `interactive` (a person is waiting): then not paced, and one more try after ClickUp's 429.
+ */
 export class ClickUpReader {
   calls = 0;
   /** X-RateLimit-Limit from the last answer (the doctor reports it). */
   rateLimit: number | null = null;
+  /** The calls a minute this reader keeps to; null when it is interactive and not paced. */
+  readonly perMinute: number | null;
   private provider: ReturnType<typeof providerTools>;
   private pace: () => Promise<void>;
 
-  constructor(deps: Deps, actionId: string) {
+  constructor(deps: Deps, actionId: string, opts: { interactive?: boolean } = {}) {
     const tap: typeof fetch = async (input, init) => {
       const res = await deps.clickupFetch(input, init);
       const limit = Number(res.headers.get("x-ratelimit-limit"));
       if (Number.isFinite(limit) && limit > 0) this.rateLimit = limit;
       return res;
     };
-    this.provider = providerTools(deps.env, row => deps.health({ ...row, action_id: actionId }), tap);
-    this.pace = pacer(callsPerMinute(deps.env), deps.now, deps.sleep);
+    const interactive = opts.interactive === true;
+    this.provider = providerTools(
+      deps.env,
+      row => deps.health({ ...row, action_id: actionId }),
+      tap,
+      interactive ? { retry429: true, sleep: deps.sleep, now: deps.now } : {},
+    );
+    this.perMinute = interactive ? null : callsPerMinute(deps.env);
+    this.pace = this.perMinute === null ? async () => {} : pacer(this.perMinute, deps.now, deps.sleep);
   }
 
   async get(path: string): Promise<Row> {
