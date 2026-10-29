@@ -1177,6 +1177,72 @@ describe("checkin.calls: another client's recording", () => {
   });
 });
 
+// ---------------------------------------------------------------- Move it here (2b build 11, 3.8)
+
+describe("checkin.calls: movable (3.8)", () => {
+  const theirs = (over: Record<string, unknown> = {}) =>
+    storeItem({ recordingId: "191610999", startsAt: "2026-10-28T04:00:00.000Z", endsAt: "2026-10-28T04:30:00.000Z", onTask: "86exMARBL", onTaskMethod: "invitee_email", ...over });
+  const view = async (actor: typeof csmActor, opts: { switch?: unknown; item?: Record<string, unknown> } = {}) => {
+    const f = setup({ inputs: { store: [theirs(opts.item)] } });
+    if ("switch" in opts) f.service.handlers.cockpit_forms_switch = opts.switch;
+    const a = await checkinCalls(opOf(f.deps, actor), body());
+    return { v: [a.picked, ...a.others].find(x => x?.recordingId === "191610999"), f };
+  };
+  const MOVABLE = "On Marble 10-12. If this is City Wood's call, move it here.";
+  const AS_TODAY = "On Marble 10-12. If that is wrong, ask an admin to move it.";
+
+  test("an admin or the CEO with the switch on: movable, with the move sentence naming both clients", async () => {
+    for (const actor of [adminActor, ceoActor]) {
+      const { v, f } = await view(actor, { switch: true });
+      expect(v).toMatchObject({ movable: true, blocked: MOVABLE, onClient: "other", otherClient: "Marble 10-12" });
+      // One service read of the switch per checkin.calls.
+      expect(f.service.named("cockpit_forms_switch").map(c => c.args)).toEqual([{ p_key: "move_recording" }]);
+    }
+  });
+
+  test("the CSM never: today's A7.3 sentence, and the switch is not even read", async () => {
+    const { v, f } = await view(csmActor, { switch: true });
+    expect(v).toMatchObject({ movable: false, blocked: AS_TODAY });
+    expect(f.service.named("cockpit_forms_switch")).toHaveLength(0);
+  });
+
+  test("switch off, unreadable or not live yet: never movable, today's sentence", async () => {
+    const refused = () => {
+      throw new RpcError("permission denied for function cockpit_forms_switch", "42501");
+    };
+    for (const sw of [false, null, "true", { on: true }, refused]) {
+      const { v } = await view(adminActor, { switch: sw });
+      expect(v).toMatchObject({ movable: false, blocked: AS_TODAY });
+    }
+    // Before 20261029z the function is not there at all.
+    const f = setup({ inputs: { store: [theirs()] } });
+    delete f.service.handlers.cockpit_forms_switch;
+    const a = await checkinCalls(opOf(f.deps, adminActor), body());
+    expect([a.picked, ...a.others].find(x => x?.recordingId === "191610999")).toMatchObject({ movable: false, blocked: AS_TODAY });
+  });
+
+  test("a recording with 1-1 notes, gone, or a team meeting is never movable", async () => {
+    expect((await view(adminActor, { switch: true, item: { notes: { at: "2026-10-28T05:00:00.000Z", source: "typeform" } } })).v).toMatchObject({ movable: false, blocked: AS_TODAY });
+    const gone = await view(adminActor, { switch: true, item: { gone: true } });
+    expect(gone.v?.movable ?? false).toBe(false);
+    const team = await view(adminActor, { switch: true, item: { class: "internal" } });
+    expect(team.v?.movable ?? false).toBe(false);
+  });
+
+  test("every other view reads movable false", async () => {
+    const inputs = {
+      store: [
+        storeItem({ recordingId: "191603145", startsAt: "2026-10-28T06:00:00.000Z", onTask: "86exCITYW", onTaskMethod: "same_room" }),
+        storeItem({ recordingId: "191610368", startsAt: "2026-10-28T05:00:00.000Z", recorderEmail: TEAM_EMAIL }),
+      ],
+    };
+    const f = setup({ inputs });
+    f.service.handlers.cockpit_forms_switch = true;
+    const a = await checkinCalls(opOf(f.deps, adminActor), body());
+    for (const v of [a.picked, ...a.others].filter(Boolean)) expect(v?.movable).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------- checkin.transcript (6.2)
 
 describe("checkin.transcript", () => {

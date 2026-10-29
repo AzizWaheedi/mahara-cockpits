@@ -1,10 +1,11 @@
 # cockpit-notices
 
-The cockpit's Slack notices for the kickoff and the Brand Blueprint
-(`docs/forms/PLAN.md` 1.3, `docs/forms/STAGE1-CONTRACT.md` section 4). One
-outbox, `cockpit_slack_notices` (migration `20261025n_slack_notices.sql`),
-queued by database triggers and a sweep, sent by this function only, as
-mahara-club-bot.
+The cockpit's Slack notices for the kickoff, the Brand Blueprint and the 1-1
+notes (`docs/forms/PLAN.md` 1.3, `docs/forms/STAGE1-CONTRACT.md` section 4,
+`docs/forms/STAGE2B-CONTRACT.md` 4.2). One outbox, `cockpit_slack_notices`
+(migrations `20261025n_slack_notices.sql` and
+`20261029u_forms_checkin_notices.sql`), queued by database triggers and
+sweeps, sent by this function only, as mahara-club-bot.
 
 | Notice | Posts in | Tags (default, changed in Settings) |
 |---|---|---|
@@ -16,6 +17,21 @@ mahara-club-bot.
 | Brand Blueprint completed, for media | #media-general | nobody |
 | Blueprint card confirmed (a reply) | its thread | nobody |
 | Offer locked (a reply) | its thread | nobody |
+| Call grade (the stored grade of a recorded 1-1 call, once per call) | #client-call-feedback, a private channel only | nobody, ever |
+| Recap not sent (a 1-1 recap still waiting in the cockpit 24 hours after the call) | #csm-general | nobody |
+
+The two 1-1 notes notices are dark until the switch-over: only the 2b
+dispatch queues a call grade, and only a live response's cockpit-owned recap
+queues a reminder, so while the checkin registry is `shadow` neither can
+exist (the registry owner is the switch; Settings, Notices and routing is the
+kill switch). The call grade is the one notice whose words do not come from
+facts: the claim reads the stored grade from `cockpit_form_drafts` by the
+draft id in its facts (`live.grade`), and refuses it unless the cockpit still
+owns the grade (the owner gate), the recording is still a client call, the
+grade is stored and the channel is checked as private. Its outbox row keeps
+the one-line text (client, score, colour, Ref) and never the blocks, so no
+grade words are stored outside the draft. Each of its three sections is cut
+at a word to 2,900 characters, so it is always one message.
 
 Where each posts, whether it is on and who it tags are rows in
 `cockpit_slack_notice_settings`, changed on the client success cockpit's

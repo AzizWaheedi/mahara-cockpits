@@ -1173,28 +1173,61 @@ function damaged(s: string): boolean {
   return words.filter(w => w.length <= 2).length / words.length > 0.4;
 }
 
-/** 1-1 notes, split into lines: by newline and by inline " - " lists. */
+/**
+ * 1-1 notes, split into lines: by newline and by inline " - " lists. A line
+ * that starts with an owner label ("Mahara:", "Client:") is one to-do and
+ * stays whole, however short: the rest of its own line after an inline " - "
+ * stays on it, up to the next label. Only unlabelled fragments join a
+ * neighbour, and a fragment from a later line never joins a labelled one.
+ */
 function noteLines(text: string): string[] {
-  const parts = text
-    .split(/\r?\n|\s+-\s+(?=\S)|\s+•\s+|(?<=\.)\s+(?=\d+[.)]\s)/)
-    .map(clean)
-    .filter(t => t.length >= 3 && !/[:：]$/.test(t));
-  // A fragment of a word or two means nothing alone: join it to the next.
-  const out: string[] = [];
+  // Each part keeps the number of the newline line it came from: a separator
+  // that holds a newline starts the next one.
+  const pieces = text.split(
+    /(\r?\n|\s+-\s+(?=\S)|\s+•\s+|(?<=\.)\s+(?=\d+[.)]\s))/,
+  );
+  const parts: { text: string; row: number }[] = [];
+  let row = 0;
+  pieces.forEach((piece, i) => {
+    if (i % 2) {
+      if (piece.includes("\n")) row++;
+      return;
+    }
+    const t = clean(piece);
+    if (t.length >= 3 && !/[:：]$/.test(t)) parts.push({ text: t, row });
+  });
+  const labelled = (t: string) => OWNER_OURS.test(t) || OWNER_THEIRS.test(t);
+  const out: { text: string; labelled: boolean; row: number }[] = [];
+  // A short fragment goes onto the line before when that line is unlabelled, else alone.
+  const settle = (carry: string, at: number) => {
+    const last = out[out.length - 1];
+    if (last && !last.labelled) last.text = `${last.text} - ${carry}`;
+    else out.push({ text: carry, labelled: false, row: at });
+  };
   let carry = "";
   for (const p of parts) {
-    const t = carry ? `${carry} - ${p}` : p;
+    if (labelled(p.text)) {
+      if (carry) settle(carry, p.row);
+      carry = "";
+      out.push({ text: p.text, labelled: true, row: p.row });
+      continue;
+    }
+    // "Mahara: Send the April report - by Thursday": the tail is the same to-do.
+    const last = out[out.length - 1];
+    if (!carry && last?.labelled && last.row === p.row) {
+      last.text = `${last.text} - ${p.text}`;
+      continue;
+    }
+    // A fragment of a word or two means nothing alone: join it to the next.
+    const t = carry ? `${carry} - ${p.text}` : p.text;
     if (t.split(/\s+/).length < 4) carry = t;
     else {
-      out.push(t);
+      out.push({ text: t, labelled: false, row: p.row });
       carry = "";
     }
   }
-  if (carry) {
-    if (out.length) out[out.length - 1] = `${out[out.length - 1]} - ${carry}`;
-    else out.push(carry);
-  }
-  return out;
+  if (carry) settle(carry, row);
+  return out.map(l => l.text);
 }
 
 /** Content words, roughly stemmed, for comparing two lines. */
@@ -1744,9 +1777,10 @@ export function buildBrief(input: BriefInput): Brief {
 
     // The CSM's own notes: the recap of the call, and to-dos by side.
     const recap: string[] = [];
-    for (const t of noteLines(
-      `${formAnswers(notedForm, /^client notes/i).join("\n")}\n${formAnswers(notedForm, /additional notes/i).join("\n")}`,
-    )) {
+    for (const t of [
+      ...noteLines(formAnswers(notedForm, /^client notes/i).join("\n")),
+      ...noteLines(formAnswers(notedForm, /additional notes/i).join("\n")),
+    ]) {
       if (
         OWNER_THEIRS.test(t) ||
         /^(?:\d+[.)]\s*)?(you need to|please|connect your|give us|share your|upload your|scan)\b/i.test(

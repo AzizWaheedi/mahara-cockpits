@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { SERVICE_LABEL as BRIEF_SERVICE_LABEL } from "../../../apps/client-success-cockpit/src/present/blueprintBrief";
+import { CRITERIA as GRADE_CRITERIA } from "../cockpit-forms-api/prompts/grade.ts";
 import {
-  cleanStatus, escapeSlack, kuwaitClock, kuwaitDay, kuwaitWhen, NOTICE_KINDS, type NoticeFacts, type NoticeKind, noticeLinks, noticeText, sampleFacts, SERVICE_LABEL,
-  type SlackBlock, type TextMention, VARIANTS, type Variant,
+  CRITERIA, cleanStatus, cutAtWord, escapeSlack, kuwaitClock, kuwaitDay, kuwaitWhen, NOTICE_KINDS, type NoticeFacts, type NoticeKind, noticeLinks, noticeText, sampleFacts,
+  SECTION_MAX, SERVICE_LABEL, type SlackBlock, type TextMention, VARIANTS, type Variant,
 } from "./text";
 
 // Every client, card and person here is invented. 2026-10-25 is a Sunday; 11:02Z is 14:02 in Kuwait.
@@ -14,7 +15,8 @@ const SYSTEMS: TextMention = { label: "the systems manager", slackId: "U0AS90SHM
 const base = (extra: Record<string, unknown> = {}): NoticeFacts => ({ ref: REF, taskId: TASK, client: "Acme Interiors", ...extra });
 
 const section = (blocks: SlackBlock[]) => ((blocks[0] as { text: { text: string } }).text.text);
-const contexts = (blocks: SlackBlock[]) => blocks.slice(1).map(b => ((b as { elements: { text: string }[] }).elements[0].text));
+const contexts = (blocks: SlackBlock[]) => blocks.slice(1).filter(b => b.type === "context").map(b => ((b as { elements: { text: string }[] }).elements[0].text));
+const sections = (blocks: SlackBlock[]) => blocks.filter(b => b.type === "section").map(b => (b as { text: { text: string } }).text.text);
 const lines = (blocks: SlackBlock[]) => section(blocks).split("\n");
 const L = noticeLinks(TASK);
 
@@ -41,10 +43,23 @@ describe("Kuwait time and the small helpers", () => {
       cockpit: "https://cockpit.maharamedia.com/client-success/clients/task0001?tab=onboarding",
       card: "https://app.clickup.com/t/task0001",
       blueprint: "https://cockpit.maharamedia.com/client-success/clients/task0001/present/blueprint?view=prep",
+      messages: "https://cockpit.maharamedia.com/client-success/clients/task0001?tab=overview#messages",
     });
   });
   test("SERVICE_LABEL is blueprintBrief.ts's, key for key", () => {
     expect(SERVICE_LABEL).toEqual(BRIEF_SERVICE_LABEL);
+  });
+  test("CRITERIA is the grade prompt's, name for name and in its order", () => {
+    expect([...CRITERIA]).toEqual([...GRADE_CRITERIA]);
+  });
+  test("cutAtWord cuts at a word with an ellipsis, never inside a word or an entity", () => {
+    expect(cutAtWord("short", 10)).toBe("short");
+    expect(cutAtWord("alpha beta gamma delta", 14)).toBe("alpha beta…");
+    const long = `${"word &amp; ".repeat(400)}end`;
+    const cut = cutAtWord(long);
+    expect(cut.length).toBeLessThanOrEqual(SECTION_MAX);
+    expect(cut.endsWith("…")).toBe(true);
+    expect(cut).not.toMatch(/&[a-z]*…$/);
   });
 });
 
@@ -265,8 +280,11 @@ describe("rules every notice keeps", () => {
       expect(section(blocks).startsWith("[Rehearsal] ")).toBe(true);
       expect(JSON.stringify(blocks)).not.toContain("<@");
       expect(JSON.stringify(blocks)).not.toContain("https://");
-      expect(section(blocks)).toContain("This would tag the CSM and the systems manager.");
-      const hadLinks = contexts(noticeText(kind, variant, { ...sampleFacts(kind), ref: REF }).blocks).some(c => c.includes("https://")) || kind === "blueprint.media";
+      // The call grade tags nobody, so a test of it names nobody either.
+      if (kind === "checkin.grade") expect(JSON.stringify(blocks)).not.toContain("would tag");
+      else expect(section(blocks)).toContain("This would tag the CSM and the systems manager.");
+      const plain = noticeText(kind, variant, { ...sampleFacts(kind), ref: REF }).blocks;
+      const hadLinks = JSON.stringify(plain).includes("https://");
       expect(contexts(blocks).includes("Links are left out of a test.")).toBe(hadLinks);
     }
   });
@@ -279,5 +297,81 @@ describe("rules every notice keeps", () => {
   });
   test("a client with no name still reads as a sentence", () => {
     expect(noticeText("blueprint.offer", "top", base({ client: "  " })).text).toBe(`Offer locked: an unnamed card. Ref ${REF}`);
+  });
+});
+
+describe("the 1-1 notes notices (docs/forms/STAGE2B-CONTRACT.md 4.2)", () => {
+  const twelve = CRITERIA.map((name, i) => ({ name, score: (i % 10) + 1, note: `Invented note ${i + 1} & <more>.` }));
+  const gradeFacts = base({
+    takenByRole: "the CSM",
+    callAt: "2026-10-25T11:02:00Z",
+    shareUrl: "https://fathom.video/share/abc-123_x",
+    recordingShown: true,
+    grade: { criteria: [...twelve].reverse(), overall: "Invented overall: steady & clear.", color: "Orange", score: 5.5, draftId: "d1" },
+  });
+
+  test("the call grade: three sections in the criteria's order, the context line, and a one-line text", () => {
+    const { text, blocks } = noticeText("checkin.grade", "grade", gradeFacts);
+    expect(text).toBe(`Call grade: Acme Interiors, 5.5/10, Orange. Ref ${REF}`);
+    expect(sections(blocks)).toEqual([
+      "*Call grade: Acme Interiors*\nTaken by the CSM on Sun 25 Oct, 14:02. Score 5.5/10, Orange.\n<https://fathom.video/share/abc-123_x|Watch the recording>",
+      twelve.map((c, i) => `*${c.name}* ${c.score}/10. Invented note ${i + 1} &amp; &lt;more&gt;.`).join("\n"),
+      "*Overall*\nInvented overall: steady &amp; clear.",
+    ]);
+    expect(contexts(blocks)).toEqual([`Client success · Graded once per call · Ref ${REF}`]);
+    expect(blocks).toHaveLength(4);
+  });
+
+  test("the call grade without a stored link, with a link that is not Fathom's, a missing recorder or score", () => {
+    const none = noticeText("checkin.grade", "grade", { ...gradeFacts, shareUrl: null });
+    expect(sections(none.blocks)[0].split("\n")[2]).toBe("No recording link was stored.");
+    const odd = noticeText("checkin.grade", "grade", { ...gradeFacts, shareUrl: "https://example.test/x|<!channel>" });
+    expect(sections(odd.blocks)[0]).not.toContain("example.test");
+    expect(sections(odd.blocks)[0].split("\n")[2]).toBe("No recording link was stored.");
+    const bare = noticeText("checkin.grade", "grade", { ...gradeFacts, takenByRole: null, callAt: null, grade: { criteria: [], overall: "", color: "", score: null } });
+    expect(sections(bare.blocks)).toEqual([
+      "*Call grade: Acme Interiors*\nTaken by a team member. Score no score, no colour.\n<https://fathom.video/share/abc-123_x|Watch the recording>",
+      "*Overall*\nNo overall feedback was stored.",
+    ]);
+    expect(bare.text).toBe(`Call grade: Acme Interiors, no score, no colour. Ref ${REF}`);
+  });
+
+  test("the call grade tags nobody, whatever mentions are passed", () => {
+    const { text, blocks } = noticeText("checkin.grade", "grade", { ...gradeFacts, mentions: [CSM, SYSTEMS, { label: "the creative director", slackId: null }] });
+    expect(`${text}${JSON.stringify(blocks)}`).not.toContain("<@");
+    expect(JSON.stringify(blocks)).not.toContain("the creative director");
+    expect(JSON.stringify(blocks)).not.toContain("would tag");
+  });
+
+  test("a long grade is cut at a word in each section, so the post is always one message", () => {
+    const long = "word ".repeat(700);
+    const { blocks } = noticeText("checkin.grade", "grade", {
+      ...gradeFacts,
+      grade: { criteria: twelve.map(c => ({ ...c, note: long })), overall: long, color: "Red", score: 2 },
+    });
+    for (const text of sections(blocks)) expect(text.length).toBeLessThanOrEqual(SECTION_MAX);
+    expect(sections(blocks)[1].endsWith("word…")).toBe(true);
+    expect(sections(blocks)[2].endsWith("word…")).toBe(true);
+    expect(sections(blocks)[1].startsWith("*Rapport* 1/10. word word")).toBe(true);
+  });
+
+  test("the recap reminder: the waiting line with its tags, the Messages link and the footer", () => {
+    const f = base({ callAt: "2026-10-25T11:02:00Z", dueAt: "2026-10-26T11:02:00Z", mentions: [CSM] });
+    const { text, blocks } = noticeText("checkin.recap_late", "late", f);
+    expect(text).toBe(`Recap not sent: Acme Interiors, call Sun 25 Oct. Open in the cockpit. Ref ${REF}`);
+    expect(lines(blocks)).toEqual([
+      "*Recap not sent: Acme Interiors*",
+      "The recap for the call on Sun 25 Oct is still waiting in the cockpit. <@U0C5JHUCTPG>",
+    ]);
+    expect(contexts(blocks)).toEqual([`<${L.messages}|Open in the cockpit>`, `Client success · Ref ${REF}`]);
+    const nobody = noticeText("checkin.recap_late", "late", { ...f, mentions: [] });
+    expect(lines(nobody.blocks)[1]).toBe("The recap for the call on Sun 25 Oct is still waiting in the cockpit.");
+  });
+
+  test("the variants: grade for the call grade, late for the recap reminder, and nothing else", () => {
+    expect(VARIANTS["checkin.grade"]).toEqual(["grade"]);
+    expect(VARIANTS["checkin.recap_late"]).toEqual(["late"]);
+    expect(() => noticeText("checkin.grade", "late", gradeFacts)).toThrow("There is no late wording for checkin.grade.");
+    expect(NOTICE_KINDS).toHaveLength(8);
   });
 });

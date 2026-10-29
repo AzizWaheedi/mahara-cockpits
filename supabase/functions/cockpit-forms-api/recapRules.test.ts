@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { BOOKING_BLOCK, checkRecap, recapText } from "./recapRules.ts";
+import { BOOKING_BLOCK, checkRecap, recapText, splitRecap } from "./recapRules.ts";
 
 const CLEAN = "هلا! شكرًا على وقتك اليوم.\n\nالمطلوب من جهتكم:\n- ترسلون ملفات الشعار\n- تأكدون موعد التصوير\n\nفريق مهارة";
 const refusal = (m: string, opts?: Parameters<typeof checkRecap>[1]) => checkRecap(m, opts).refusal;
@@ -73,5 +73,29 @@ describe("the 14 recap checks", () => {
 
   test("the first refusal is the draft's sentence", () => {
     expect(refusal("وصلتكم ليدز بـ ٥٠٠ دولار")).toBe("The recap mentioned leads or cost per lead, which client messages never do. Draft again.");
+  });
+});
+
+describe("splitRecap (2b, recap.approve)", () => {
+  test("a reviewer's full text splits back into the message and Make's block, byte for byte", () => {
+    expect(splitRecap(recapText(CLEAN))).toEqual([CLEAN, BOOKING_BLOCK]);
+    const spaced = `${CLEAN}  \n\n${BOOKING_BLOCK}`;
+    expect(splitRecap(spaced)).toEqual([`${CLEAN}  `, BOOKING_BLOCK]);
+  });
+
+  test("no block at the end, an edited block or one after a single line break: the text whole and no block", () => {
+    expect(splitRecap(CLEAN)).toEqual([CLEAN, null]);
+    expect(splitRecap(`${CLEAN}\n${BOOKING_BLOCK}`)).toEqual([`${CLEAN}\n${BOOKING_BLOCK}`, null]);
+    const edited = `${CLEAN}\n\n${BOOKING_BLOCK.replace("لين الحين", "الحين")}`;
+    expect(splitRecap(edited)).toEqual([edited, null]);
+    expect(splitRecap(`${recapText(CLEAN)} `)[1]).toBeNull();
+  });
+
+  test("a doubled block keeps one in the message, which the booking rule then refuses", () => {
+    const doubled = `${recapText(CLEAN)}\n\n${BOOKING_BLOCK}`;
+    const [message, block] = splitRecap(doubled);
+    expect(block).toBe(BOOKING_BLOCK);
+    expect(message).toBe(recapText(CLEAN));
+    expect(checkRecap(message, { text: doubled, stored: doubled }).refusal).toBe("The booking link must appear exactly once, at the end. Draft again.");
   });
 });

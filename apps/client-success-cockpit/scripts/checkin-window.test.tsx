@@ -20,6 +20,9 @@ import { Window } from "happy-dom";
  * run and a rehearsal book nothing. And A7's decisions: a blocked recording
  * is never picked, pasted or not (3); the recap preview is the stored text
  * (4); an ID kept for this seat's discarded notes opens new ones (5).
+ * Stage 2b (docs/forms/STAGE2B-CONTRACT.md 4.15 item 1, 5.1, 5.3): a live
+ * send's recap step approves the message the cockpit made; an admin moves
+ * a recording from another client with Move it here.
  *
  * Run: bun test scripts/checkin-window.test.tsx
  */
@@ -114,7 +117,17 @@ const { act } = await import("react");
 const { CheckinWindowView } = await import("../src/forms/CheckinWindow");
 const { whySentence } = await import("../src/forms/CheckinCall");
 const { hintFor, valueText } = await import("../src/forms/CheckinFields");
-const { BOOKING_BLOCK } = await import("../src/forms/CheckinRecap");
+const {
+  BOOKING_BLOCK,
+  CheckinRecap,
+  GETTING_READY,
+  NOT_READY_YET,
+  RECAP_TOO_LATE,
+  RECAP_UNUSABLE,
+} = await import("../src/forms/CheckinRecap");
+const { MESSAGES_FAILED } = await import("../src/lib/clientMessages");
+const { stateLine } = await import("../src/forms/RecapApproval");
+const { callOf } = await import("../src/forms/checkinForm");
 const { callView } = await import("../src/forms/checkinClient");
 const { BookCallButton } = await import("../src/components/ClientCheckIn");
 const { useCheckin, GATE_LOST } = await import("../src/forms/useCheckin");
@@ -252,12 +265,14 @@ function Harness({
   rehearse,
   clock,
   live,
+  messages,
 }: {
   fake: ReturnType<typeof fx.fakeCheckin>;
   seat: "csm" | "admin";
   rehearse: boolean;
   clock: Clock;
   live?: boolean;
+  messages?: any;
 }) {
   const m = useCheckin({
     taskId: fx.TASK,
@@ -272,6 +287,7 @@ function Harness({
     <CheckinWindowView
       m={m}
       clock={clock}
+      messages={messages ?? null}
       onTypeform={() => {
         opened += 1;
       }}
@@ -291,7 +307,7 @@ function Harness({
 
 async function mount(
   scenario: Scenario = {},
-  opts: { rehearse?: boolean; seat?: "csm" | "admin" } = {},
+  opts: { rehearse?: boolean; seat?: "csm" | "admin"; messages?: any } = {},
 ) {
   const fake = fx.fakeCheckin(scenario);
   const t = fakeClock();
@@ -307,6 +323,7 @@ async function mount(
         rehearse={Boolean(opts.rehearse)}
         clock={t.clock}
         live={scenario.mode === "live"}
+        messages={opts.messages}
       />,
     ),
   );
@@ -2838,5 +2855,651 @@ describe("screen readers", () => {
     expect(dialog?.textContent).toContain(
       "In a shadow run nothing reaches this card",
     );
+  });
+});
+
+// ------------------------------------------------------------ Stage 2b
+
+/** A live send whose recap is the cockpit's: the effect queued once its row exists. */
+const liveSent = (over: Partial<Scenario> = {}): Scenario => ({
+  mode: "live",
+  open: "submitted",
+  answers: fx.FILLED,
+  recap: [fx.RECAP_READY],
+  effects: (a, at) =>
+    fx
+      .cockpitEffects(a, at)
+      .map(e => (e.key === "recap" ? { ...e, state: "queued" as const } : e)),
+  ...over,
+});
+const recapStep = () =>
+  win.document.body.querySelector(
+    '[aria-label="The recap for the client"]',
+  ) as any;
+
+describe("the recap step after the switch-over (4.15 item 1, 5.1)", () => {
+  test("a live send: the live header, never Make's line, and the shared approval for its row", async () => {
+    const messages = fx.fakeMessages([fx.messageFixture()]);
+    await mount(liveSent(), { messages });
+    expect(page()).toContain(
+      "Approve the recap here or on the client's Messages card. The client gets it only after someone approves it.",
+    );
+    expect(page()).not.toContain("Make still sends");
+    expect(messages.calls[0]).toEqual({ name: "read", args: fx.TASK });
+    const step = recapStep();
+    // The exact-bytes surface and the three actions, primary last.
+    expect(step.querySelector('[dir="rtl"][lang="ar"]')?.textContent).toBe(
+      fx.RECAP_BODY.replace(/\*/g, ""),
+    );
+    const names = Array.from(step.querySelectorAll("button")).map((b: any) =>
+      (b.textContent ?? "").trim(),
+    );
+    expect(names).toEqual(["Edit", "Skip", "Approve and send"]);
+    // The one live region of the step.
+    expect(step.querySelectorAll('[role="status"]').length).toBe(1);
+    const link = Array.from(step.querySelectorAll("a")).find((a: any) =>
+      (a.textContent ?? "").includes("Open the Messages card"),
+    ) as any;
+    expect(link?.getAttribute("href")).toBe(
+      "/client-success/clients/86exfix01?tab=overview#messages",
+    );
+    // Every button in the window keeps the 3:1 ring.
+    for (const b of Array.from(step.querySelectorAll("button")) as any[])
+      expect(String(b.className)).toContain("focus-visible:ring-primary-ink");
+    await click(button("Approve and send"));
+    expect(messages.calls.find(c => c.name === "approve")?.args).toEqual({
+      messageId: fx.MESSAGE_ID,
+      body: fx.RECAP_BODY,
+      acceptWarnings: false,
+    });
+    expect(toasts).toContain("Approved. It sends within about 3 minutes.");
+    expect(page()).toContain("Sends within about 3 minutes.");
+    const region = step.querySelector('[role="status"]');
+    expect(region.textContent).toBe(
+      "1-1 recap · call Sun 25 Oct: Sends within about 3 minutes.",
+    );
+    expect(step.querySelectorAll('[role="status"]').length).toBe(1);
+  });
+
+  test("a recap sent: the rail's Messages card link has the in-app mark and says it opens a new tab, as the step's does", async () => {
+    const messages = fx.fakeMessages([fx.messageStates().sent]);
+    await mount(
+      liveSent({
+        effects: (a, at) =>
+          fx
+            .cockpitEffects(a, at)
+            .map(e =>
+              e.key === "recap" ? { ...e, state: "delivered" as const } : e,
+            ),
+      }),
+      { messages },
+    );
+    const trail = win.document.body.querySelector(
+      '[role="status"] > ol',
+    ) as any;
+    const link = (root: any, label: string) =>
+      (Array.from(root?.querySelectorAll("a") ?? []) as any[]).find(a =>
+        (a.textContent ?? "").includes(label),
+      );
+    const rail = link(trail, "Open the Messages card");
+    expect(rail?.getAttribute("href")).toBe(
+      "/client-success/clients/86exfix01?tab=overview#messages",
+    );
+    expect(rail.querySelector("svg.lucide-chevron-right")).toBeTruthy();
+    expect(rail.querySelector("svg.lucide-arrow-up-right")).toBeNull();
+    expect(rail.querySelector(".sr-only")?.textContent).toBe(
+      " (opens in a new tab)",
+    );
+    // One destination, one mark and one name wherever it is on screen.
+    const step = link(recapStep(), "Open the Messages card");
+    expect(step).toBeTruthy();
+    expect(rail.getAttribute("href")).toBe(step.getAttribute("href"));
+    expect((rail.textContent ?? "").trim()).toBe(
+      (step.textContent ?? "").trim(),
+    );
+    expect(step.querySelector("svg.lucide-chevron-right")).toBeTruthy();
+    // The card leaves the cockpit: the outbound arrow, nothing else.
+    const card = link(trail, "Open the card");
+    expect(card?.getAttribute("href")).toBe(
+      "https://app.clickup.com/t/86exfix01",
+    );
+    expect(card.querySelector("svg.lucide-arrow-up-right")).toBeTruthy();
+    expect(card.querySelector("svg.lucide-chevron-right")).toBeNull();
+    expect(card.querySelector(".sr-only")).toBeNull();
+    // The trail's links take the measured link ink, as the step's does.
+    const ink =
+      "text-[color:color-mix(in_oklab,var(--primary-ink)_90%,var(--foreground))]";
+    expect(String(rail.className)).toContain(ink);
+    expect(String(card.className)).toContain(ink);
+  });
+
+  test("between the draft turning ready and the row appearing it says so", async () => {
+    const messages = fx.fakeMessages([]);
+    const { t } = await mount(liveSent(), { messages });
+    // The recap draft is read on the step's own poll.
+    await t.advance(16_000);
+    const region = recapStep().querySelector('[role="status"]');
+    expect(region.textContent).toBe("Getting the recap ready to approve…");
+    expect(String(region.className)).not.toContain("sr-only");
+    expect(button("Approve and send")).toBeUndefined();
+  });
+
+  test("the row comes minutes after the send: the step keeps asking through empty reads and shows the approval", async () => {
+    const inner = fx.fakeMessages([fx.messageFixture()]);
+    const reads = () => inner.calls.filter(c => c.name === "read").length;
+    let made = false;
+    const messages = {
+      ...inner,
+      read: async (taskId: string) => {
+        const rows = await inner.read(taskId);
+        return made ? rows : [];
+      },
+    };
+    const { t } = await mount(liveSent(), { messages });
+    // Each read finds nothing, which changes nothing on the screen: every
+    // one must still schedule the next.
+    await t.advance(16_000);
+    await t.advance(16_000);
+    await t.advance(16_000);
+    await t.advance(16_000);
+    expect(reads()).toBeGreaterThanOrEqual(4);
+    expect(button("Approve and send")).toBeUndefined();
+    expect(page()).toContain("Getting the recap ready to approve…");
+    made = true;
+    await t.advance(16_000);
+    expect(button("Approve and send")).toBeTruthy();
+    expect(page()).not.toContain("Getting the recap ready to approve…");
+  });
+
+  test("the same read failure twice keeps asking too, and the step stops 15 minutes after approving turned on", async () => {
+    const inner = fx.fakeMessages([fx.messageFixture()]);
+    const reads = () => inner.calls.filter(c => c.name === "read").length;
+    let mode: "fail" | "empty" | "row" = "fail";
+    const messages = {
+      ...inner,
+      read: async (taskId: string) => {
+        const rows = await inner.read(taskId);
+        if (mode === "fail") throw Error("The messages could not be read.");
+        return mode === "row" ? rows : [];
+      },
+    };
+    const { t } = await mount(liveSent(), { messages });
+    await t.advance(16_000);
+    await t.advance(16_000);
+    await t.advance(16_000);
+    const failing = reads();
+    expect(failing).toBeGreaterThanOrEqual(3);
+    // The card's sentence, what to do next, never the read's own words.
+    expect(recapStep().querySelector('[role="status"]').textContent).toBe(
+      MESSAGES_FAILED,
+    );
+    // Answered again, it says it is getting the recap ready; once the 15
+    // minutes are over it stops asking and says where to look instead of
+    // promising the recap for ever.
+    mode = "empty";
+    await t.advance(16_000);
+    expect(page()).toContain("Getting the recap ready to approve…");
+    await t.advance(20 * 60_000);
+    const stopped = reads();
+    await t.advance(5 * 60_000);
+    expect(reads()).toBe(stopped);
+    expect(page()).not.toContain("Getting the recap ready to approve…");
+    expect(recapStep().querySelector('[role="status"]').textContent).toBe(
+      NOT_READY_YET,
+    );
+    expect(
+      Array.from(recapStep().querySelectorAll("a")).some((a: any) =>
+        (a.textContent ?? "").includes("Open the Messages card"),
+      ),
+    ).toBe(true);
+  });
+
+  test("the live header goes once the row is decided or no recap is coming, so it never tells her to approve what she cannot", async () => {
+    const messages = fx.fakeMessages([fx.messageFixture()]);
+    await mount(liveSent(), { messages });
+    expect(page()).toContain("Approve the recap here");
+    await click(button("Approve and send"));
+    expect(page()).toContain("Sends within about 3 minutes.");
+    expect(page()).not.toContain("Approve the recap here");
+    expect(page()).not.toContain("Make still sends");
+    // Back to a draft: the header is true again.
+    await click(button("Edit again"));
+    expect(page()).toContain("Approve the recap here");
+  });
+
+  test("the dispatch could not make the message: its own sentence", async () => {
+    const reason =
+      "The recap draft is empty or over 4,096 characters. Draft it again.";
+    await mount(
+      liveSent({
+        effects: (a, at) =>
+          fx
+            .cockpitEffects(a, at)
+            .map(e =>
+              e.key === "recap"
+                ? { ...e, state: "failed" as const, reason }
+                : e,
+            ),
+      }),
+      { messages: fx.fakeMessages([]) },
+    );
+    expect(recapStep().querySelector('[role="status"]').textContent).toBe(
+      reason,
+    );
+  });
+
+  test("a draft the dispatch cannot use: its sentence with Draft again, and the new draft reaches the approval (Z28)", async () => {
+    expect(RECAP_UNUSABLE).toBe(
+      "The recap draft is empty or over 4,096 characters. Draft it again.",
+    );
+    // 3.5: the stored text is over 4,096 characters, so the dispatch failed
+    // the effect after reading it, and made no message row.
+    const long = {
+      ...fx.RECAP_READY,
+      output: { ...(fx.RECAP_READY.output as object), text: "x".repeat(4097) },
+    };
+    const fresh = { ...fx.RECAP_READY, attempt: 2, at: "2026-10-25T08:32:00Z" };
+    const inner = fx.fakeMessages([fx.messageFixture()]);
+    // No row until the dispatch makes one from the new draft.
+    let made = false;
+    const messages = {
+      ...inner,
+      read: async (taskId: string) => {
+        if (made) return inner.read(taskId);
+        inner.calls.push({ name: "read", args: taskId });
+        return [];
+      },
+    };
+    const { fake, t } = await mount(
+      liveSent({
+        recap: [long],
+        again: { recap: fresh },
+        // Everything else has ended, so the trail alone would not be read again.
+        effects: (a, at) =>
+          fx.cockpitEffects(a, at).map(e =>
+            e.key === "recap"
+              ? {
+                  ...e,
+                  state: "failed" as const,
+                  reason: RECAP_UNUSABLE,
+                  at: "2026-10-25T08:31:00Z",
+                }
+              : e.key === "grade_notice"
+                ? { ...e, state: "delivered" as const }
+                : e,
+          ),
+      }),
+      { messages },
+    );
+    // The step's first read of the recap draft; the trail has ended.
+    await t.advance(1_000);
+    const settled = fake.count("read");
+    await t.advance(60_000);
+    expect(fake.count("read")).toBe(settled);
+    const step = recapStep();
+    const region = () => step.querySelector('[role="status"]');
+    expect(region().textContent).toBe(RECAP_UNUSABLE);
+    // Drawn once beside the button, hidden from screen readers; the region says it.
+    expect(String(region().className)).toContain("sr-only");
+    expect(step.querySelector("p[aria-hidden]")?.textContent).toBe(
+      RECAP_UNUSABLE,
+    );
+    const again = button("Draft again");
+    expect(again).toBeTruthy();
+    expect(String(again.className)).toContain("focus-visible:ring-primary-ink");
+    await act(async () => again.focus());
+    await click(again);
+    expect(
+      fake.calls.filter(c => c.name === "draftAgain").map(c => c.args),
+    ).toEqual([{ id: fx.SENT_RESPONSE_ID, kind: "recap" }]);
+    // The new draft is followed: the old failure is not said again, and
+    // focus goes to the step, not the page.
+    expect(button("Draft again")).toBeUndefined();
+    expect(region().textContent).toBe(GETTING_READY);
+    expect(step.textContent).not.toContain("over 4,096 characters");
+    expect(win.document.activeElement?.getAttribute("aria-label")).toBe(
+      "The recap for the client",
+    );
+    // The dispatch makes the row from the new draft; the step reads it on
+    // its own poll, and the trail is read again so the rail follows.
+    const reads = fake.count("read");
+    made = true;
+    await t.advance(16_000);
+    expect(fake.count("read")).toBeGreaterThan(reads);
+    expect(button("Approve and send")).toBeTruthy();
+    expect(region().textContent).toBe(stateLine(fx.messageFixture()));
+  });
+
+  test("Draft again after the step stopped reading messages: the new draft reads the row again at once", async () => {
+    const long = {
+      ...fx.RECAP_READY,
+      output: { ...(fx.RECAP_READY.output as object), text: "x".repeat(4097) },
+    };
+    const fresh = { ...fx.RECAP_READY, attempt: 2, at: "2026-10-25T08:52:00Z" };
+    const inner = fx.fakeMessages([fx.messageFixture()]);
+    let made = false;
+    const messages = {
+      ...inner,
+      read: async (taskId: string) => {
+        if (made) return inner.read(taskId);
+        inner.calls.push({ name: "read", args: taskId });
+        return [];
+      },
+    };
+    const { t } = await mount(
+      liveSent({
+        recap: [long],
+        again: { recap: fresh },
+        effects: (a, at) =>
+          fx.cockpitEffects(a, at).map(e =>
+            e.key === "recap"
+              ? {
+                  ...e,
+                  state: "failed" as const,
+                  reason: RECAP_UNUSABLE,
+                  at: "2026-10-25T08:31:00Z",
+                }
+              : e,
+          ),
+      }),
+      { messages },
+    );
+    // Twenty minutes on: the step's 15 minutes of message reads are over.
+    await t.advance(20 * 60_000);
+    const before = inner.calls.filter(c => c.name === "read").length;
+    await t.advance(60_000);
+    expect(inner.calls.filter(c => c.name === "read").length).toBe(before);
+    made = true;
+    await click(button("Draft again"));
+    // The new draft is read at once, with no wait for a timer.
+    expect(inner.calls.filter(c => c.name === "read").length).toBeGreaterThan(
+      before,
+    );
+    expect(button("Approve and send")).toBeTruthy();
+  });
+
+  test("past 24 hours from the send no Draft again is offered: it says to send the recap by hand (Z28)", async () => {
+    const long = {
+      ...fx.RECAP_READY,
+      output: { ...(fx.RECAP_READY.output as object), text: "x".repeat(4097) },
+    };
+    const asked: string[] = [];
+    const host = win.document.createElement("div");
+    win.document.body.append(host);
+    const root = createRoot(host as unknown as Element);
+    roots.push(root);
+    const late = fakeClock(Date.parse("2026-10-26T08:11:00Z"));
+    await act(async () =>
+      root.render(
+        <CheckinRecap
+          recap={long}
+          call={callOf(fx.FILLED.call)}
+          effect={{
+            key: "recap",
+            label: "Recap to the client",
+            owner: "cockpit",
+            delivery: "client_message",
+            state: "failed",
+            at: "2026-10-25T08:31:00Z",
+            reason: RECAP_UNUSABLE,
+            lines: [],
+          }}
+          onDraftAgain={() => asked.push("recap")}
+          live
+          messages={fx.fakeMessages([])}
+          taskId={fx.TASK}
+          responseId={fx.SENT_RESPONSE_ID}
+          sentAt="2026-10-25T08:10:00Z"
+          clock={late.clock}
+        />,
+      ),
+    );
+    await settle();
+    expect(RECAP_TOO_LATE).toBe(
+      "The send was over 24 hours ago, so the cockpit no longer makes this recap. Send it by hand in the group if it is still needed.",
+    );
+    expect(recapStep().querySelector('[role="status"]').textContent).toBe(
+      `The recap draft is empty or over 4,096 characters. ${RECAP_TOO_LATE}`,
+    );
+    expect(button("Draft again")).toBeUndefined();
+    expect(asked).toEqual([]);
+  });
+
+  test("the step's live region follows the row once its poll moves it on, never keeping the action's old line", async () => {
+    let sentNow = false;
+    const inner = fx.fakeMessages([fx.messageFixture()]);
+    const asSent = (m: any) => ({
+      ...m,
+      state: "sent",
+      sentAt: "2026-10-25T08:33:00Z",
+      readBack: { by: "message_id", at: "2026-10-25T08:34:00Z" },
+      effectState: "delivered",
+    });
+    const messages = {
+      ...inner,
+      read: async (taskId: string) => {
+        const rows = await inner.read(taskId);
+        return sentNow ? rows.map(asSent) : rows;
+      },
+    };
+    const { t } = await mount(liveSent(), { messages });
+    await click(button("Approve and send"));
+    const region = () => recapStep().querySelector('[role="status"]');
+    expect(region().textContent).toBe(
+      "1-1 recap · call Sun 25 Oct: Sends within about 3 minutes.",
+    );
+    sentNow = true;
+    // The step reads an approved row again on its 20-second poll.
+    await t.advance(21_000);
+    expect(page()).toContain("Read back from WhatsApp at");
+    expect(region().textContent).toBe(stateLine(asSent(fx.messageFixture())));
+    expect(region().textContent).not.toContain("Sends within");
+    expect(recapStep().querySelectorAll('[role="status"]').length).toBe(1);
+  });
+
+  test("a shadow send keeps today's lines and reads no message", async () => {
+    const messages = fx.fakeMessages([fx.messageFixture()]);
+    const { t } = await mount(
+      { open: "submitted", answers: fx.FILLED, recap: [fx.RECAP_READY] },
+      { messages },
+    );
+    await t.advance(16_000);
+    expect(page()).toContain(
+      "Make still sends 1-1 recaps until the switch-over, so this one is not sent from here.",
+    );
+    expect(page()).not.toContain("Approve the recap here");
+    expect(page()).toContain(
+      "This is what the cockpit would send to the client's WhatsApp group.",
+    );
+    expect(messages.calls.length).toBe(0);
+    expect(recapStep().querySelectorAll('[role="status"]').length).toBe(1);
+  });
+
+  test("the card writer's 15-minute line reads the window's clock", async () => {
+    const { t } = await mount(
+      liveSent({
+        effects: (a, at) =>
+          fx
+            .cockpitEffects(a, at)
+            .map(e =>
+              e.key === "todo_comment"
+                ? { ...e, state: "queued" as const, at: fx.NOW }
+                : e,
+            ),
+      }),
+      { messages: fx.fakeMessages([fx.messageFixture()]) },
+    );
+    expect(page()).toContain("Posting the to-do comment on the card…");
+    await t.advance(16 * 60_000);
+    expect(page()).toContain(
+      "Still waiting for the card writer. The tech lead is told after 15 minutes.",
+    );
+  });
+});
+
+describe("Move it here (5.3)", () => {
+  const movable = { others: [fx.VIEWS.other_movable], drafts: READY };
+  /** The movable recording, as its Move it here is described. */
+  const MOVABLE_SAID = `Impromptu Google Meet Sun 25 Oct 10:34–11:08 · 34 min By the account manager · On ${fx.OTHER}. If this is ${fx.NAME}'s call, move it here.`;
+  const moveButton = () => button("Move it here");
+  const dialog = () =>
+    win.document.body.querySelector('[role="alertdialog"]') as any;
+
+  test("an admin sees it beside the disabled row; it confirms, moves, toasts, re-reads and picks the moved call", async () => {
+    const { fake } = await mount(movable, { seat: "admin" });
+    await click(button("Change"));
+    expect(page()).toContain(
+      `On ${fx.OTHER}. If this is ${fx.NAME}'s call, move it here.`,
+    );
+    const row = buttons().find(b =>
+      (b.textContent ?? "").includes(`If this is ${fx.NAME}'s call`),
+    );
+    expect(row?.disabled).toBe(true);
+    // A sibling of the disabled row, in the same list item.
+    expect(moveButton()?.closest("li")).toBe(row?.closest("li"));
+    expect(String(moveButton().className)).toContain(
+      "focus-visible:ring-primary-ink",
+    );
+    // The disabled row cannot take focus, so the button says which
+    // recording it moves: its title, its time and the row's sentence.
+    expect(described(moveButton())).toBe(MOVABLE_SAID);
+    await click(moveButton());
+    expect(dialog()).toBeTruthy();
+    expect(dialog().textContent).toContain(
+      `Move this recording to ${fx.NAME}?`,
+    );
+    expect(dialog().textContent).toContain(
+      `It leaves ${fx.OTHER}'s Calls card and goes on ${fx.NAME}'s. The move is recorded with your name.`,
+    );
+    const actions = Array.from(dialog().querySelectorAll("button")).map(
+      (b: any) => (b.textContent ?? "").trim(),
+    );
+    expect(actions).toEqual([`Keep it on ${fx.OTHER}`, "Move it here"]);
+    const calls = fake.count("calls");
+    const go = Array.from(dialog().querySelectorAll("button")).find(
+      (b: any) => (b.textContent ?? "").trim() === "Move it here",
+    );
+    await click(go);
+    expect(fake.calls.find(c => c.name === "move")?.args).toEqual({
+      recordingId: fx.VIEWS.other_movable.recordingId,
+      taskId: fx.TASK,
+    });
+    expect(toasts).toContain(`Moved to ${fx.NAME}.`);
+    expect(fake.count("calls")).toBe(calls + 1);
+    // The sheet closed on the call card, now teal with the store's sentence.
+    expect(page()).not.toContain("Pick the call");
+    expect(thisCall()?.textContent).toContain(
+      `On ${fx.NAME} in the call store.`,
+    );
+    expect(String(thisCall()?.className)).toContain("glow-teal");
+  });
+
+  test("two movable recordings: each Move it here is described by its own recording", async () => {
+    const second = {
+      ...fx.VIEWS.other_movable,
+      ref: "fathom:190000199",
+      recordingId: "190000199",
+      callId: 60099,
+      title: "Showroom walkthrough",
+      startsAt: "2026-10-24T11:00:00Z",
+      endsAt: "2026-10-24T11:20:00Z",
+      minutes: 20,
+    };
+    await mount(
+      { others: [fx.VIEWS.other_movable, second], drafts: READY },
+      { seat: "admin" },
+    );
+    await click(button("Change"));
+    const moves = buttons().filter(
+      b => (b.textContent ?? "").trim() === "Move it here",
+    );
+    expect(moves.length).toBe(2);
+    // The visible words stay the same; the description tells them apart.
+    expect(moves.map(b => described(b))).toEqual([
+      MOVABLE_SAID,
+      `Showroom walkthrough Sat 24 Oct 14:00–14:20 · 20 min By the account manager · On ${fx.OTHER}. If this is ${fx.NAME}'s call, move it here.`,
+    ]);
+    for (const b of moves) expect(b.getAttribute("aria-label")).toBeNull();
+  });
+
+  test("the confirm takes focus on opening, on its safe answer, Keep it", async () => {
+    await mount(movable, { seat: "admin" });
+    await click(button("Change"));
+    const trigger = moveButton();
+    await act(async () => trigger.focus());
+    await click(trigger);
+    const keep = Array.from(dialog().querySelectorAll("button")).find(
+      (b: any) => (b.textContent ?? "").trim() === `Keep it on ${fx.OTHER}`,
+    );
+    expect(keep).toBeTruthy();
+    // Not left on the trigger behind the modal, where a screen reader
+    // never hears the dialog and Tab walks the Change sheet first.
+    expect(win.document.activeElement).not.toBe(trigger);
+    expect(dialog().contains(win.document.activeElement)).toBe(true);
+    expect(win.document.activeElement).toBe(keep);
+  });
+
+  test("Keep it closes the confirm and moves nothing", async () => {
+    const { fake } = await mount(movable, { seat: "admin" });
+    await click(button("Change"));
+    await click(moveButton());
+    const keep = Array.from(dialog().querySelectorAll("button")).find(
+      (b: any) => (b.textContent ?? "").trim() === `Keep it on ${fx.OTHER}`,
+    );
+    await click(keep);
+    expect(dialog()).toBeNull();
+    expect(fake.count("move")).toBe(0);
+  });
+
+  test("a refusal shows the server's sentence under the row, and focus stays on Move it here", async () => {
+    const said = `That recording has 1-1 notes on ${fx.OTHER}. If those notes are on the wrong client too, tell the tech lead.`;
+    await mount({ ...movable, move: { refused: said } }, { seat: "admin" });
+    await click(button("Change"));
+    await click(moveButton());
+    const go = Array.from(dialog().querySelectorAll("button")).find(
+      (b: any) => (b.textContent ?? "").trim() === "Move it here",
+    );
+    await click(go);
+    await settle();
+    expect(dialog()).toBeNull();
+    const alert = moveButton()?.closest("li")?.querySelector('[role="alert"]');
+    expect(alert?.textContent).toBe(said);
+    // The recording first, then the server's sentence.
+    expect(described(moveButton())).toBe(`${MOVABLE_SAID} ${said}`);
+    expect(win.document.activeElement).toBe(moveButton());
+    expect(toasts).toEqual([]);
+  });
+
+  test("not in the database yet: said plainly", async () => {
+    await mount({ ...movable, move: "not_live" }, { seat: "admin" });
+    await click(button("Change"));
+    await click(moveButton());
+    const go = Array.from(dialog().querySelectorAll("button")).find(
+      (b: any) => (b.textContent ?? "").trim() === "Move it here",
+    );
+    await click(go);
+    expect(page()).toContain("Moving a recording is not live yet.");
+  });
+
+  test("never for the CSM, a rehearsal, a recording the door does not mark movable, or while sending", async () => {
+    await mount(movable, { seat: "csm" });
+    await click(button("Change"));
+    expect(moveButton()).toBeUndefined();
+    for (const r of roots.splice(0)) await act(async () => r.unmount());
+    win.document.body.innerHTML = "";
+    await mount(movable, { seat: "admin", rehearse: true });
+    await click(button("Change"));
+    expect(moveButton()).toBeUndefined();
+    for (const r of roots.splice(0)) await act(async () => r.unmount());
+    win.document.body.innerHTML = "";
+    await mount(
+      { others: [fx.VIEWS.other_client], drafts: READY },
+      { seat: "admin" },
+    );
+    await click(button("Change"));
+    expect(moveButton()).toBeUndefined();
+    // An older door answer has no flag: it parses as not movable.
+    const { movable: _drop, ...older } = fx.VIEWS.other_movable;
+    expect(callView.parse(older).movable).toBe(false);
   });
 });

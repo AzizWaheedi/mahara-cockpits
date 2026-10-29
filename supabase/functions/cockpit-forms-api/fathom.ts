@@ -224,6 +224,12 @@ export const OUTSIDE_CS_LIKELY = "That recording is from outside Customer Succes
 export const NOT_IN_COCKPIT = "That recording is not in the cockpit yet. Check again in a minute.";
 /** The window's line for a recording on another client (A7.3); the client is named only for a seat that may see it. */
 export const onOther = (name: string | null) => `On ${name ?? "another client"}. If that is wrong, ask an admin to move it.`;
+/**
+ * The window's line for a recording on another client when an admin or the CEO may move it here (2b build 11,
+ * 3.8): the other client and this one, both named, since such a seat sees every client.
+ */
+export const onOtherMovable = (other: string | null, client: string | null) =>
+  `On ${other ?? "another client"}. If this is ${client ? `${client}'s` : "this client's"} call, move it here.`;
 /** The same refusal in the save's words (3.2), for the drafts and the transcript. */
 export const onOtherClient = (name: string | null) => `That recording is on ${name ?? "another client"}. If that is wrong, ask an admin to move it.`;
 

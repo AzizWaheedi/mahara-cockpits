@@ -6,11 +6,15 @@ from pathlib import Path
 from checks import by_id, csm_calls
 from guard import db as db_mod
 from guard.model import FAIL, OK, UNKNOWN, WARN
+from guard.redact import clean, clean_obj
 from tests import fakes
 
 
+TYPEFORM = {"key": "checkin", "provider": "typeform", "provider_since": None, "updated_at": fakes.ago(1440)}
+
+
 def ctx(tables):
-    return on(fakes.FakeDb(tables))
+    return on(fakes.FakeDb({"cockpit_forms": [TYPEFORM], **tables}))
 
 
 def on(db):
@@ -108,7 +112,8 @@ class OneOneNotes(unittest.TestCase):
         # 1 of 5 is on the line, not over it; counted with the candidates it would be 5 of 9.
         self.assertEqual(r.status, OK, r.summary)
         self.assertIn("1 of 5 calls", r.summary)
-        self.assertEqual(r.evidence, {"calls": 5, "unmatched": 1, "share": 0.2, "candidates": 4, "settled": 2})
+        self.assertEqual(r.evidence, {"calls": 5, "unmatched": 1, "share": 0.2, "candidates": 4, "settled": 2,
+                                      "candidates_without_notes_24h": None})
         calls.append(call(5, task_id=None))
         r = csm_calls.run_unmatched(ctx({"cockpit_csm_calls": calls}))
         self.assertEqual(r.status, WARN)
@@ -118,7 +123,7 @@ class OneOneNotes(unittest.TestCase):
         calls = [call(1, task_id=None, candidate=True), call(2, task_id=None, settled_reason="onboarding")]
         r = csm_calls.run_unmatched(ctx({"cockpit_csm_calls": calls}))
         self.assertEqual(r.status, UNKNOWN)
-        self.assertEqual(r.evidence, {"calls": 0, "candidates": 1, "settled": 1})
+        self.assertEqual(r.evidence, {"calls": 0, "candidates": 1, "settled": 1, "candidates_without_notes_24h": None})
 
     def test_the_checkin_form_check_reads_the_kind(self):
         def run(forms):
@@ -385,3 +390,242 @@ class NotesParity(unittest.TestCase):
 
         csm_calls.run_notes_parity(on(Spy({"cockpit_csm_sources": [roster_row("Client A", "task-a", self.parity("same"))]})))
         self.assertEqual(seen, [("cockpit_csm_sources", "data,source_snapshot_at")])
+
+
+CUTOVER_MIN = 10 * 1440   # the switch-over, ten days before the tests' clock
+
+
+def native(minutes_ago=CUTOVER_MIN):
+    return {"key": "checkin", "provider": "native", "provider_since": fakes.ago(minutes_ago), "updated_at": fakes.ago(1)}
+
+
+def candidate(rid, hours_ago=30, **kw):
+    return {"id": f"fathom:{rid}", "source": "fathom", "source_id": rid, "candidate": True, "starts_at": fakes.ago(hours_ago * 60),
+            "status": "held", "settled_reason": None, "task_id": None, "host_email": "recorder@example.invalid",
+            "title": "An invented title", **kw}
+
+
+class Spy(fakes.FakeDb):
+    """Remembers each read's table and columns, for the checks that promise what they never read."""
+
+    def __init__(self, tables):
+        super().__init__(tables)
+        self.selects = []
+
+    def rows(self, table, select="*", where=(), order=None, limit=None):
+        self.selects.append((table, select))
+        return super().rows(table, select, where, order, limit)
+
+
+class ImpromptuNotes(unittest.TestCase):
+    """docs/forms/STAGE2B-CONTRACT.md 4.10: an impromptu call needs a client and notes, or to be set aside."""
+
+    def run_it(self, calls, form=None):
+        return csm_calls.run_impromptu(on(fakes.FakeDb({"cockpit_forms": [form or native()], "cockpit_csm_calls": calls})))
+
+    def test_the_check_is_as_the_contract_says(self):
+        c = by_id()["csm-impromptu-notes"]
+        self.assertEqual((c.area, c.name, c.severity, c.confirm, c.owner, c.fix),
+                         ("workers", "Impromptu calls get a client", "medium", 2, "the CSM lead", None))
+        self.assertEqual(c.means, "Every impromptu call the CSM records gets a client and 1-1 notes, or is set aside as "
+                                  "not a 1-1 call.")
+
+    def test_before_the_cut_over_nothing_is_read_or_counted(self):
+        db = Spy({"cockpit_forms": [TYPEFORM], "cockpit_csm_calls": [candidate("197103123")]})
+        r = csm_calls.run_impromptu(on(db))
+        self.assertEqual(r.status, OK)
+        self.assertEqual(r.summary, "Counted from the switch-over to 1-1 notes in the cockpit; not switched yet.")
+        self.assertEqual(r.evidence["candidates_without_notes_24h"], None)
+        self.assertNotIn("cockpit_csm_calls", [t for t, _ in db.selects])
+
+    def test_a_registry_without_the_checkin_row_is_not_read_as_not_switched(self):
+        with self.assertRaises(csm_calls.SourceError):
+            csm_calls.run_impromptu(on(fakes.FakeDb({"cockpit_csm_calls": [candidate("197103123")]})))
+
+    def test_none_left_reads_ok(self):
+        r = self.run_it([])
+        self.assertEqual(r.status, OK)
+        self.assertEqual(r.summary, "0 impromptu calls since the switch-over all have 1-1 notes or a client.")
+        self.assertEqual(r.evidence["candidates_without_notes_24h"], 0)
+
+    def test_what_is_left_out(self):
+        uncounted = [
+            candidate("1", hours_ago=23),                                     # under a day: still time
+            candidate("2", hours_ago=CUTOVER_MIN / 60 + 1),                   # before the switch-over
+            candidate("3", status="gone"),                                    # the recording is gone
+            candidate("4", settled_reason="not_client"),                      # set aside as not a 1-1 call
+            candidate("5", candidate=False),                                  # placed, or its notes attached it
+            candidate("6", source="ghl_appointment"),                         # not a recording
+        ]
+        r = self.run_it(uncounted)
+        self.assertEqual(r.status, OK, r.summary)
+        self.assertEqual(r.evidence["candidates_without_notes_24h"], 0)
+
+    def test_a_candidate_over_a_day_old_warns_with_its_day_and_id(self):
+        r = self.run_it([candidate("197103123", hours_ago=26)])
+        self.assertEqual(r.status, WARN)
+        # The tests' clock is 3 Oct 17:00 Kuwait; 26 hours before it is 2 Oct.
+        self.assertEqual(r.summary, "1 impromptu call older than a day has no client and no 1-1 notes: 2 Oct. Put each on its "
+                                    "client and write its notes, or mark it Not a 1-1 call.")
+        self.assertEqual(r.items, ["fathom_197103123"])
+        self.assertEqual(r.action, "Open Today: each impromptu call has Place it and Not a 1-1 call.")
+
+    def test_a_recording_id_survives_what_the_store_does_to_items_and_evidence(self):
+        # guard/store.py runs clean() on items and clean_obj() on evidence: a bare 9-digit id reads as a phone number.
+        r = self.run_it([candidate("197103123"), candidate("197103124")])
+        self.assertEqual(sorted({clean(i, 120) for i in r.items}), ["fathom_197103123", "fathom_197103124"])
+        self.assertEqual(clean_obj(r.evidence)["recordingIds"], ["fathom_197103123", "fathom_197103124"])
+
+    def test_many_read_oldest_first_with_ten_ids_at_most_and_nothing_private(self):
+        calls = [candidate(str(197103100 + i), hours_ago=26 + 24 * (i % 3)) for i in range(12)]
+        db = Spy({"cockpit_forms": [native()], "cockpit_csm_calls": calls})
+        r = csm_calls.run_impromptu(on(db))
+        self.assertEqual(r.status, WARN)
+        self.assertTrue(r.summary.startswith("12 impromptu calls older than a day have no client and no 1-1 notes: "
+                                             "30 Sep, 1 Oct, 2 Oct."), r.summary)
+        self.assertEqual(len(r.items), 12)
+        self.assertEqual(set(r.evidence), {"cutoverAt", "candidates_without_notes_24h", "oldestDay", "recordingIds"})
+        self.assertEqual(r.evidence["oldestDay"], "2026-09-30")
+        self.assertEqual(len(r.evidence["recordingIds"]), 10)
+        said = str(r.evidence) + r.summary
+        self.assertNotIn("example.invalid", said)
+        self.assertNotIn("invented title", said)
+        self.assertIn(("cockpit_csm_calls", "id,source_id,starts_at,status,settled_reason"), db.selects)
+        self.assertNotIn("cockpit_form_responses", [t for t, _ in db.selects])
+
+    def test_the_share_check_carries_the_count_and_keeps_its_own_reading(self):
+        calls = [call(i) for i in range(4)] + [candidate("197103123", hours_ago=26, task_id=None)]
+        r = csm_calls.run_unmatched(on(fakes.FakeDb({"cockpit_forms": [native()], "cockpit_csm_calls": calls})))
+        self.assertEqual(r.status, OK)
+        self.assertEqual(r.evidence["candidates_without_notes_24h"], 1)
+        self.assertEqual(csm_calls.run_unmatched(ctx({"cockpit_csm_calls": calls})).evidence["candidates_without_notes_24h"], None)
+        only = [candidate("197103123", hours_ago=26)]
+        r = csm_calls.run_unmatched(on(fakes.FakeDb({"cockpit_forms": [native()], "cockpit_csm_calls": only})))
+        self.assertEqual(r.status, UNKNOWN)
+        self.assertEqual(r.evidence["candidates_without_notes_24h"], 1)
+
+
+def late_form(token, minutes_ago, task_id=None, typed=None):
+    return {"token": token, "form_id": "fRokTITH", "form_kind": "checkin_late", "task_id": task_id, "typed_client": typed,
+            "submitted_at": fakes.ago(minutes_ago), "answers": {"notes": "An invented answer"}}
+
+
+class LateTypeformNotes(unittest.TestCase):
+    """docs/forms/STAGE2B-CONTRACT.md 4.9: csm-checkin-form warns about 1-1 notes sent in Typeform after the switch-over."""
+
+    FRESH = {"form_id": "cockpit-checkin", "form_kind": "checkin", "submitted_at": fakes.ago(60)}
+    BOARD = [{"table_name": "clients", "data": {"taskId": "task-a", "name": "City Wood", "bucket": "management"}}]
+
+    def run_it(self, forms, form=None):
+        return csm_calls.run_checkin_form(on(fakes.FakeDb({
+            "cockpit_forms": [form or native()], "cockpit_csm_call_forms": forms, "cockpit_csm_sources": self.BOARD})))
+
+    def test_a_late_form_warns_with_the_contract_s_sentence(self):
+        r = self.run_it([self.FRESH, late_form("tokenAAAA", 90, task_id="task-a"), late_form("tokenBBBB", 2000, typed="Typed Co")])
+        self.assertEqual(r.status, WARN)
+        # 90 minutes before the tests' clock is 3 Oct 15:30 Kuwait.
+        self.assertEqual(r.summary, "2 1-1 notes arrived in Typeform after the switch-over, newest 3 Oct 15:30 Kuwait time: City "
+                                    "Wood, Typed Co. Re-enter them in the 1-1 notes in the cockpit and check that fRokTITH is "
+                                    "closed.")
+        self.assertEqual(sorted(r.items), ["tokenAAAA", "tokenBBBB"])
+        self.assertEqual(r.evidence["late"], 2)
+        self.assertNotIn("invented answer", str(r.evidence))
+
+    def test_one_late_form_reads_in_the_singular_and_a_form_naming_no_client_says_so(self):
+        r = self.run_it([self.FRESH, late_form("tokenAAAA", 90)])
+        self.assertTrue(r.summary.startswith("1 1-1 note arrived in Typeform after the switch-over"), r.summary)
+        self.assertIn("no client named", r.summary)
+
+    def test_only_the_last_14_days_after_the_cut_over_count(self):
+        old = late_form("tokenOLD1", 15 * 1440, task_id="task-a")
+        since_long_ago = native(30 * 1440)
+        r = self.run_it([self.FRESH, old], since_long_ago)
+        self.assertEqual(r.status, OK, r.summary)
+        self.assertEqual(r.evidence["late"], 0)
+        # A second switch-over: what came before it is not late under it.
+        r = self.run_it([self.FRESH, late_form("tokenOLD2", 2 * 1440)], native(1440))
+        self.assertEqual(r.status, OK, r.summary)
+
+    def test_before_the_cut_over_the_late_rows_are_not_read(self):
+        db = Spy({"cockpit_forms": [TYPEFORM], "cockpit_csm_call_forms": [self.FRESH, late_form("tokenAAAA", 90)]})
+        r = csm_calls.run_checkin_form(on(db))
+        self.assertEqual(r.status, OK)
+        self.assertEqual(r.evidence["late"], None)
+        self.assertEqual([s for t, s in db.selects if t == "cockpit_csm_call_forms"], ["submitted_at"])
+
+    def test_freshness_keeps_reading_checkin_only(self):
+        stale = dict(self.FRESH, submitted_at=fakes.ago(8 * 1440))
+        r = self.run_it([stale, late_form("tokenAAAA", 90)])
+        self.assertEqual(r.status, WARN)
+        self.assertIn("after the switch-over", r.summary)
+        self.assertIn("came in 8.0 days ago", r.summary)
+        self.assertEqual(self.run_it([late_form("tokenAAAA", 90)]).status, FAIL)
+        self.assertEqual(self.run_it([stale]).status, WARN)
+        self.assertNotIn("switch-over", self.run_it([stale]).summary)
+
+
+class KickoffWebhook(unittest.TestCase):
+    """docs/forms/STAGE2B-CONTRACT.md section 6: forms-kickoff-webhook, low, confirm 2."""
+
+    def state(self, registered_min=7 * 1440, **detail):
+        return {"key": "forms-door:kickoff", "note": "The kickoff webhook is registered.",
+                "detail": {"registered": True, "registeredAt": fakes.ago(registered_min), "lastDelivery": fakes.ago(5),
+                           "outcome": "recorded", **detail}}
+
+    def kickoff(self, i, minutes_ago, source="typeform_sync", form_key="kickoff"):
+        return {"id": f"response-{i}", "form_key": form_key, "source": source, "submitted_at": fakes.ago(minutes_ago),
+                "hidden": {"onboarding_client_id": "task-a"}, "answers": {"token": "tokenAAAA"}}
+
+    def run_it(self, state, responses):
+        db = Spy({"cockpit_sync_state": [state] if state else [], "cockpit_form_responses": responses})
+        return csm_calls.run_kickoff_webhook(on(db)), db
+
+    def test_the_check_is_as_the_contract_says(self):
+        c = by_id()["forms-kickoff-webhook"]
+        self.assertEqual((c.severity, c.confirm, c.fix), ("low", 2, None))
+
+    def test_not_registered_reads_ok_and_reads_no_response(self):
+        for state in (None, {"key": "forms-door:kickoff", "note": "n", "detail": {"registered": False}}):
+            r, db = self.run_it(state, [self.kickoff(1, 90)])
+            self.assertEqual(r.status, OK)
+            self.assertEqual(r.summary, "Not registered yet: kickoffs arrive by the 15-minute read.")
+            self.assertNotIn("cockpit_form_responses", [t for t, _ in db.selects])
+
+    def test_a_kickoff_the_read_stored_warns(self):
+        r, db = self.run_it(self.state(), [self.kickoff(1, 90), self.kickoff(2, 120)])
+        self.assertEqual(r.status, WARN)
+        self.assertEqual(r.summary, "Typeform's webhook missed 2 kickoffs in 24 h; the 15-minute read stored them.")
+        self.assertEqual(sorted(r.items), ["response-1", "response-2"])
+        self.assertIn(("cockpit_form_responses", "id,submitted_at"), db.selects)
+
+    def test_what_is_not_a_missed_kickoff(self):
+        for row in (self.kickoff(1, 90, source="typeform_webhook"),       # the webhook stored it
+                    self.kickoff(2, 20),                                  # under 30 minutes: the read may have won by a hair
+                    self.kickoff(3, 25 * 60),                             # over 24 hours
+                    self.kickoff(4, 90, form_key="checkin")):             # not a kickoff
+            r, _ = self.run_it(self.state(), [row])
+            self.assertEqual(r.status, OK, row)
+        self.assertEqual(self.run_it(self.state(), [])[0].summary, "Typeform's webhook missed no kickoff in 24 h.")
+
+    def test_kickoffs_stored_before_registering_came_by_the_read_on_purpose(self):
+        r, _ = self.run_it(self.state(registered_min=60), [self.kickoff(1, 90)])
+        self.assertEqual(r.status, OK, r.summary)
+        r, _ = self.run_it(self.state(registered_min=100), [self.kickoff(1, 90)])
+        self.assertEqual(r.status, WARN)
+        self.assertEqual(r.summary, "Typeform's webhook missed 1 kickoff in 24 h; the 15-minute read stored it.")
+
+    def test_a_registration_with_no_time_counts_the_whole_24_hours(self):
+        state = self.state()
+        del state["detail"]["registeredAt"]
+        self.assertEqual(self.run_it(state, [self.kickoff(1, 90)])[0].status, WARN)
+
+    def test_csm_forms_record_is_watched(self):
+        self.assertEqual(csm_calls.CSM_KEYS["csm-forms-record"],
+                         (45, "kickoff and Blueprint records in the forms tables"))
+        rows = [{"key": k, "ok": True, "last_ok_at": fakes.ago(2), "note": "ok"} for k in csm_calls.CSM_KEYS]
+        self.assertEqual(csm_calls.run_freshness(ctx({"cockpit_sync_state": rows})).status, OK)
+        late = [dict(r, last_ok_at=fakes.ago(50)) if r["key"] == "csm-forms-record" else r for r in rows]
+        r = csm_calls.run_freshness(ctx({"cockpit_sync_state": late}))
+        self.assertEqual((r.status, r.items), (FAIL, ["csm-forms-record-stale"]))
+        absent = [r for r in rows if r["key"] != "csm-forms-record"]
+        self.assertEqual(csm_calls.run_freshness(ctx({"cockpit_sync_state": absent})).items, ["csm-forms-record-never-run"])

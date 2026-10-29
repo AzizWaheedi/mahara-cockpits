@@ -11,11 +11,12 @@
  * queue (or fails, with no token at all) with a sentence for the tech lead.
  */
 import { checkChannel, recordChannel } from "./doctor.ts";
-import { cachedLookup, type ClaimMentions, type Mention, mentionsFor, type PersonLooked, resolveMentions } from "./mentions.ts";
+import { cachedLookup, type ClaimMentions, type Mention, type PersonLooked, resolveMentions } from "./mentions.ts";
 import { findRef, readUnknown, reconcileUnknowns } from "./reconcile.ts";
 import {
   botGate, type ClaimedRow, type Gate, kickoffComment, type NoticeDeps, pickVariant, readClaimed, rememberPeople, sendClaimed, sendContext, type SendResult, settleAll,
   slackFor,
+  wantedMentions,
 } from "./send.ts";
 import { isNoticeKind, isVariantOf, type NoticeKind, noticeText, type SlackBlock, type Variant } from "./text.ts";
 
@@ -223,7 +224,7 @@ export async function runDryRun(deps: NoticeDeps, job: DryRunJob): Promise<DryRu
   const token = deps.slackToken().trim();
   const lookup = token ? cachedLookup(email => slackFor(deps, token, "dry-run").lookupByEmail(email)) : null;
   const mentions = isObj(raw.mentions) || Array.isArray(raw.mentions) ? (raw.mentions as ClaimMentions | Mention[]) : [];
-  const resolved = await resolveMentions(mentionsFor(variant, mentions, facts.second === true), lookup);
+  const resolved = await resolveMentions(wantedMentions(kind, variant, mentions, facts.second === true), lookup);
   const built = noticeText(kind, variant, {
     ...facts, ...live, ...sendFacts,
     ref: typeof raw.ref === "string" ? raw.ref : "CN-dryrun00",

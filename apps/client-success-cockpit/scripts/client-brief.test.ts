@@ -1880,6 +1880,112 @@ describe("who they are", () => {
       "Send them a QR code to scan.",
     ]);
   });
+
+  /** A brief from one Typeform 1-1 form on a held call, with these Client Notes and Additional Notes. */
+  const noted = (clientNotes: string | null, additionalNotes: string | null) =>
+    buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      timeline: timeline({
+        calls: [
+          call({
+            source: "checkin_form",
+            status: "held",
+            startsAt: "2026-10-05T10:00:00Z",
+            endsAt: "2026-10-05T10:00:00Z",
+          }),
+        ],
+        forms: [
+          {
+            token: "c1",
+            formId: "fRokTITH",
+            kind: "checkin",
+            submittedAt: "2026-10-05T10:00:00Z",
+            answers: [
+              ...(clientNotes === null
+                ? []
+                : [{ title: "Client Notes", value: clientNotes }]),
+              ...(additionalNotes === null
+                ? []
+                : [{ title: "Additional Notes", value: additionalNotes }]),
+            ],
+          },
+        ],
+      }),
+    });
+  const texts = (lines: { text: string }[]) => lines.map(l => l.text);
+
+  test("a Typeform to-do of one word stays whole on its side (Client: Pay is theirs)", () => {
+    const b = noted(
+      "We went through the April leads and the new offer.",
+      "Mahara: Send the April report by Thursday\nClient: Pay",
+    );
+    expect(texts(b.promises.ours)).toEqual([
+      "Send the April report by Thursday",
+    ]);
+    expect(texts(b.promises.theirs)).toEqual(["Pay"]);
+    expect(texts(b.call.lines)).toEqual([
+      "We went through the April leads and the new offer.",
+    ]);
+  });
+
+  test("a two-word unlabelled fragment before a labelled to-do joins the line before, never the to-do", () => {
+    const b = noted(
+      "We went through the April leads and the new offer\nAll good\nMahara: Send the invoice",
+      null,
+    );
+    expect(texts(b.call.lines)).toEqual([
+      "We went through the April leads and the new offer - All good",
+    ]);
+    expect(texts(b.promises.ours)).toEqual(["Send the invoice"]);
+    expect(texts(b.promises.theirs)).toEqual([]);
+  });
+
+  test("a short Client Notes line alone stays the recap; Additional Notes' first line stays a promise", () => {
+    const b = noted(
+      "Very happy.",
+      "Mahara: Send the invoice\nClient: Pay the deposit",
+    );
+    expect(texts(b.call.lines)).toEqual(["Very happy."]);
+    expect(texts(b.promises.ours)).toEqual(["Send the invoice"]);
+    expect(texts(b.promises.theirs)).toEqual(["Pay the deposit"]);
+  });
+
+  test("a labelled to-do keeps the rest of its own line after an inline dash, however short; a fragment on a later line does not join it", () => {
+    const b = noted(
+      "We went through the April leads and the new offer.",
+      "Client: Pay the deposit\nMahara: Send the April report - by Thursday",
+    );
+    expect(texts(b.promises.ours)).toEqual([
+      "Send the April report - by Thursday",
+    ]);
+    expect(texts(b.promises.theirs)).toEqual(["Pay the deposit"]);
+    expect(texts(b.call.lines)).toEqual([
+      "We went through the April leads and the new offer.",
+    ]);
+    // A longer tail on the same line is still that one to-do; a second label
+    // on the line starts a to-do of its own.
+    const two = noted(
+      null,
+      "Mahara: Send the April report - with the cost per lead for each campaign - Client: Pay the deposit",
+    );
+    expect(texts(two.promises.ours)).toEqual([
+      "Send the April report - with the cost per lead for each campaign",
+    ]);
+    expect(texts(two.promises.theirs)).toEqual(["Pay the deposit"]);
+    // Build 12's rule is unchanged for a fragment on a later line: it never
+    // joins a labelled line, so it stays a line of its own.
+    const later = noted(
+      "We went through the April leads and the new offer.",
+      "Mahara: Send the April report\nby Thursday",
+    );
+    expect(texts(later.promises.ours)).toEqual(["Send the April report"]);
+    expect(texts(later.call.lines)).toEqual([
+      "We went through the April leads and the new offer.",
+      "by Thursday",
+    ]);
+  });
 });
 
 describe("mood and billing carry-overs", () => {

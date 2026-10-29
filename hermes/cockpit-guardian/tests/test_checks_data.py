@@ -6,7 +6,7 @@ from pathlib import Path
 
 from tests import fakes
 import checks as checks_mod
-from checks import edge_functions, pg_cron, queues, sections, supabase, syncs, whatsapp, worker_status
+from checks import client_messages, edge_functions, pg_cron, queues, sections, supabase, syncs, whatsapp, worker_status
 from guard import engine
 from guard.context import SourceError
 from guard.model import FAIL, NOT_DEPLOYED, OK, PAUSED, UNKNOWN, WARN, Result
@@ -15,7 +15,9 @@ SIGNED_OUT = "The Claude sign-in on the VPS has lapsed, so nothing can be drafte
 
 
 # The requests writer and the task mirror (docs/requests/CONTRACT.md section 7).
-REQUEST_JOBS = ("clickup-writeback:requests", "task-mirror:delta", "task-mirror:seats")
+# The request writer's rows and, since Stage 2b, the 1-1 notes machinery's: every run_jobs key added after 2a.
+REQUEST_JOBS = ("clickup-writeback:requests", "task-mirror:delta", "task-mirror:seats", "clickup-writeback:forms",
+                "forms-effects-kick", "csm-forms-record")
 
 
 def make(tables=None, **kw):
@@ -707,7 +709,8 @@ class StageOneQueues(unittest.TestCase):
 
     def test_the_other_queues_still_read_status(self):
         for q in queues.QUEUES:
-            if q.table not in ("cockpit_slack_notices", "cockpit_creative_outbox", "cockpit_clickup_writeback_queue"):
+            if q.table not in ("cockpit_slack_notices", "cockpit_creative_outbox", "cockpit_clickup_writeback_queue",
+                               "cockpit_form_effects", "cockpit_client_messages"):
                 self.assertEqual((q.status_col, q.kind_col, q.kinds), ("status", None, ()), q.id)
 
     def test_the_sender_and_the_drain_are_expected(self):
@@ -809,7 +812,8 @@ class OneOneNotesReadings(unittest.TestCase):
     """docs/forms/STAGE2-CONTRACT.md section 9: the three CSM readings the 1-1 notes change, through the registry."""
 
     def reading(self, check_id, tables):
-        return checks_mod.by_id()[check_id].run(make(tables))
+        registry = {"cockpit_forms": [{"key": "checkin", "provider": "typeform", "provider_since": None}]}
+        return checks_mod.by_id()[check_id].run(make({**registry, **tables}))
 
     def test_candidates_and_settled_rows_do_not_count_as_unmatched(self):
         def row(i, task_id=None, **kw):
@@ -863,3 +867,332 @@ class TestSectionsJobKeys:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---- Stage 2b: the 1-1 notes queues and the WhatsApp recap sender (docs/forms/STAGE2B-CONTRACT.md section 6) ----
+
+
+def form_row(state, minutes, task_id="86eywg1cq", **kw):
+    return {"id": f"f-{state}-{minutes}-{task_id}", "kind": "form", "state": state, "task_id": task_id,
+            "created_at": fakes.ago(minutes), **kw}
+
+
+def effect(state, minutes, delivery="clickup_queue", **kw):
+    return {"id": f"e-{delivery}-{state}-{minutes}", "delivery": delivery, "state": state, "created_at": fakes.ago(minutes),
+            "updated_at": fakes.ago(minutes), **kw}
+
+
+def message(state, minutes, **kw):
+    return {"id": f"m-{state}-{minutes}", "kind": "recap_checkin", "state": state, "updated_at": fakes.ago(minutes),
+            "body": "An invented recap that must never be read.", **kw}
+
+
+class StageTwoBQueues(unittest.TestCase):
+    def q(self, qid):
+        return next(x for x in queues.QUEUES if x.id == qid)
+
+    def run_q(self, qid, tables):
+        db = fakes.FakeDb(tables)
+        return queues.queue_check(self.q(qid))(make(db=db)), db
+
+    def test_the_five_rows_as_the_contract_writes_them(self):
+        f = self.q("queue-clickup-forms")
+        self.assertEqual((f.table, f.label, f.states, f.time_col, f.limit_min, f.owner, f.status_col, f.kind_col, f.kinds,
+                          f.failed_col, f.held_unless, f.held_label, f.limited),
+                         ("cockpit_clickup_writeback_queue", "1-1 notes write bound for ClickUp",
+                          ("queued", "sending", "retry", "unknown"), "created_at", 15, "the tech lead", "state", "kind",
+                          ("form",), "updated_at", ("clickup-writeback:forms", "mode", "apply"),
+                          "until the 1-1 notes writer opens", ("apply_limited", "onlyCards", "task_id")))
+        self.assertIn("forms_doctor", f.action)
+        self.assertIn("Cockpit ref F-", f.action)
+        e = self.q("queue-form-effects")
+        self.assertEqual((e.table, e.states, e.time_col, e.limit_min, e.kind_col, e.kinds, e.status_col, e.failed_col),
+                         ("cockpit_form_effects", ("planned", "queued", "unknown"), "created_at", 30, "delivery",
+                          ("clickup_queue", "slack_notice", "sql"), "state", "updated_at"))
+        self.assertEqual(e.action, "Read the effect's reason in the 1-1 notes trail; the dispatch sweep runs every minute "
+                                   "(RUNBOOK, 1-1 notes dispatch).")
+        r = self.q("queue-form-recap")
+        self.assertEqual((r.table, r.states, r.kinds, r.limit_min, r.kind_col), ("cockpit_form_effects", ("planned", "unknown"),
+                                                                                  ("client_message",), 30, "delivery"))
+        m = self.q("queue-client-messages")
+        self.assertEqual((m.table, m.states, m.time_col, m.limit_min, m.failed_col, m.status_col),
+                         ("cockpit_client_messages", ("approved", "claimed", "sending"), "updated_at", 15, "updated_at", "state"))
+        self.assertEqual(m.action, "Run the client-messages doctor on the VPS (RUNBOOK, Client messages).")
+        u = self.q("queue-client-messages-unknown")
+        self.assertEqual((u.states, u.limit_min), (("unknown",), 0))
+        self.assertEqual(u.action, "Look in the client's WhatsApp group for the message; the cockpit never sends it twice "
+                                   "(RUNBOOK, Client messages).")
+        for qid in ("queue-clickup-forms", "queue-form-effects", "queue-form-recap", "queue-client-messages",
+                    "queue-client-messages-unknown"):
+            self.assertIs(checks_mod.by_id()[qid].fix, None)
+        self.assertIn("checkin.grade", queues.NOTICE_KINDS)
+        self.assertIn("checkin.recap_late", queues.NOTICE_KINDS)
+        self.assertEqual(queues.ERROR_COLUMN, {"cockpit_client_messages": "reason", "cockpit_form_effects": "reason"})
+
+    def test_the_requests_row_still_reads_as_before(self):
+        q = self.q("queue-clickup-requests")
+        self.assertEqual((q.held_label, q.limited), ("until requests open", None))
+
+    def test_a_forms_row_is_held_until_the_writer_opens_and_live_for_the_canary_card_when_limited(self):
+        rows = [form_row("queued", 400, "86eywg1cq"), form_row("queued", 300, "86ewvnqh5"), form_row("retry", 9)]
+
+        def run(detail):
+            state = [] if detail is None else [{"key": "clickup-writeback:forms", "detail": detail}]
+            db = fakes.FakeDb({"cockpit_clickup_writeback_queue": rows, "cockpit_sync_state": state})
+            return queues.queue_check(self.q("queue-clickup-forms"))(make(db=db))
+
+        for detail in (None, {"mode": "dry_run"}, {"mode": "unknown"}):
+            r = run(detail)
+            self.assertEqual(r.status, OK, detail)
+            self.assertIn("2 held until the 1-1 notes writer opens.", r.summary)
+            self.assertEqual(r.evidence["held"], 2)
+        # Limited to the canary card: its old queued row is live (and warns), the other card's is held.
+        r = run({"mode": "apply_limited", "onlyCards": ["86eywg1cq"]})
+        self.assertEqual(r.status, WARN)
+        self.assertEqual(r.evidence["held"], 1)
+        self.assertEqual(r.evidence["oldest"]["id"], "f-queued-400-86eywg1cq")
+        # Limited to another card: both queued rows are held.
+        r = run({"mode": "apply_limited", "onlyCards": ["86eother"]})
+        self.assertEqual((r.status, r.evidence["held"]), (OK, 2))
+        r = run({"mode": "apply_limited", "onlyCards": "86eywg1cq"})
+        self.assertEqual((r.status, r.evidence["held"]), (OK, 2))
+        # Open: every queued row counts.
+        r = run({"mode": "apply", "onlyCards": []})
+        self.assertEqual((r.status, r.evidence["held"]), (WARN, 0))
+        self.assertIn("the oldest is queued", r.summary)
+        # Rows of other kinds are not this row's.
+        db = fakes.FakeDb({"cockpit_clickup_writeback_queue": [queued("unknown", 400)], "cockpit_sync_state": []})
+        self.assertEqual(queues.queue_check(self.q("queue-clickup-forms"))(make(db=db)).status, OK)
+        self.assertIn("or apply_limited for the rows whose task_id is in its onlyCards",
+                      checks_mod.by_id()["queue-clickup-forms"].reads)
+
+    def test_an_unknown_forms_row_warns_whatever_the_mode(self):
+        db = fakes.FakeDb({"cockpit_clickup_writeback_queue": [form_row("unknown", 30, error="ClickUp did not answer.")],
+                           "cockpit_sync_state": [{"key": "clickup-writeback:forms", "detail": {"mode": "dry_run"}}]})
+        r = queues.queue_check(self.q("queue-clickup-forms"))(make(db=db))
+        self.assertEqual(r.status, WARN)
+        self.assertIn("ClickUp did not answer.", r.summary)
+
+    def test_effects_read_their_reason_and_leave_the_recap_out(self):
+        rows = {"cockpit_form_effects": [effect("planned", 45, reason="Waiting for the grade.", delivery="slack_notice"),
+                                         effect("queued", 600, delivery="client_message", reason="Waiting on a person."),
+                                         effect("delivered", 900)]}
+        r, _ = self.run_q("queue-form-effects", rows)
+        self.assertEqual(r.status, WARN)
+        self.assertIn("1 1-1 notes effect(s) waited past 30 min; the oldest is planned for 45 min", r.summary)
+        self.assertIn("Waiting for the grade.", r.summary)
+        # A queued recap waits on a person by design (Z36): the recap row counts only planned and unknown.
+        r, _ = self.run_q("queue-form-recap", rows)
+        self.assertEqual(r.status, OK)
+        rows["cockpit_form_effects"].append(effect("unknown", 50, delivery="client_message", reason="WhatsApp did not confirm."))
+        r, _ = self.run_q("queue-form-recap", rows)
+        self.assertEqual(r.status, WARN)
+        self.assertIn("WhatsApp did not confirm.", r.summary)
+
+    def test_a_failed_effect_in_24_hours_warns_by_its_reason(self):
+        rows = {"cockpit_form_effects": [effect("failed", 90, updated_at=fakes.ago(30), reason="No grade: the grader did not answer.")]}
+        r, _ = self.run_q("queue-form-effects", rows)
+        self.assertEqual(r.status, WARN)
+        self.assertIn("No grade: the grader did not answer.", r.summary)
+
+    def test_messages_read_their_reason_never_their_body(self):
+        rows = {"cockpit_client_messages": [message("approved", 20, reason="Approved by csm."), message("draft", 900)]}
+        r, db = self.run_q("queue-client-messages", rows)
+        self.assertEqual(r.status, WARN)
+        self.assertIn("1 client WhatsApp message(s) waited past 15 min; the oldest is approved for 20 min", r.summary)
+        self.assertNotIn("invented recap", r.summary + str(r.evidence))
+        r, _ = self.run_q("queue-client-messages-unknown", {"cockpit_client_messages": [message("unknown", 2,
+                          reason="The sender stopped while sending. Look in the group before anything else.")]})
+        self.assertEqual(r.status, WARN)
+        self.assertIn("1 WhatsApp message with an unknown outcome(s) are open", r.summary)
+        self.assertIn("Look in the group before anything else.", r.summary)
+        r, _ = self.run_q("queue-client-messages-unknown", {"cockpit_client_messages": []})
+        self.assertEqual(r.summary, "No WhatsApp message with an unknown outcome is open.")
+        for qid in ("queue-client-messages", "queue-client-messages-unknown"):
+            self.assertNotIn("body", checks_mod.by_id()[qid].reads)
+
+    def test_the_door_is_expected_with_verify_jwt_off(self):
+        self.assertIs(edge_functions.EXPECTED["forms-door"], False)
+        listed = [{"slug": s, "status": "ACTIVE", "verify_jwt": j} for s, j in edge_functions.EXPECTED.items()]
+        gone = [f for f in listed if f["slug"] != "forms-door"]
+        r = edge_functions.run_functions(make(db=fakes.FakeDb(functions=gone)))
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("forms-door is missing", r.summary)
+
+
+def sender(minutes=1, ok=True, note="Nothing approved to send. Sending is off until the switch-over.", **detail):
+    return {"key": "client-messages", "ok": ok, "note": note, "last_run_at": fakes.ago(minutes),
+            "last_ok_at": fakes.ago(minutes), "detail": {"mode": "dry", "kinds": ["recap_checkin"], "onlyCards": [],
+                                                          "approved": 0, **detail}}
+
+
+class ClientMessagesChecks(unittest.TestCase):
+    def test_registered_report_only(self):
+        for cid in ("client-messages", "client-messages-read-back", "client-messages-g5"):
+            c = checks_mod.by_id()[cid]
+            self.assertIs(c.fix, None)
+            self.assertEqual(c.owner, "the tech lead")
+        self.assertIs(checks_mod.by_id()["client-messages-g5"].alert, False)
+
+    def test_no_row_reads_ok_before_d14(self):
+        r = client_messages.run_sender(make({}))
+        self.assertEqual(r.status, OK)
+        self.assertEqual(r.summary, "Not installed yet: the client messages cron starts at deploy D14.")
+
+    def test_modes(self):
+        r = client_messages.run_sender(make({"cockpit_sync_state": [sender()]}))
+        self.assertEqual((r.status, r.summary), (OK, "Dry: sending is off until the switch-over."))
+        r = client_messages.run_sender(make({"cockpit_sync_state": [sender(mode="apply", onlyCards=["86eywg1cq"])]}))
+        self.assertEqual((r.status, r.summary), (OK, "Sending is open only for the test card."))
+        r = client_messages.run_sender(make({"cockpit_sync_state": [sender(mode="apply")]}))
+        self.assertEqual((r.status, r.summary), (OK, "Sending is open for every client."))
+        r = client_messages.run_sender(make({"cockpit_sync_state": [sender(mode="apply_limited")]}))
+        self.assertEqual(r.status, WARN)
+
+    def test_a_hold_reads_as_held_in_either_mode_never_as_a_failed_run(self):
+        # As hermes/client-messages writes a hold: ok false, the sentence in detail.held and as the note.
+        hold = "The old senders could not be read (no answer), so the recaps wait."
+        for mode in ("apply", "dry"):
+            with self.subTest(mode=mode):
+                r = client_messages.run_sender(make({"cockpit_sync_state": [sender(
+                    ok=False, note=hold, mode=mode, approved=2, held=hold)]}))
+                self.assertEqual(r.status, WARN)
+                self.assertEqual(r.summary, f"2 approved recaps held: {hold}")
+                self.assertNotIn("failed its last run", r.summary)
+                self.assertEqual(r.evidence["held"], hold)
+        r = client_messages.run_sender(make({"cockpit_sync_state": [sender(
+            ok=False, note="Client Data's group column moved.", mode="apply", approved=1, held="Client Data's group column moved.")]}))
+        self.assertEqual(r.summary, "1 approved recap held: Client Data's group column moved.")
+        # A held flag without its sentence falls back to the note; a count that is not a number is never read as 0.
+        r = client_messages.run_sender(make({"cockpit_sync_state": [sender(
+            ok=False, note="Make's recap sender is still on.", mode="apply", approved=None, held=True)]}))
+        self.assertEqual(r.summary, "The approved recaps are held: Make's recap sender is still on.")
+        # No hold: ok false is a failed run.
+        r = client_messages.run_sender(make({"cockpit_sync_state": [sender(
+            ok=False, note="Client Data could not be read, so nothing was sent: no answer.", mode="apply", approved=1, held=None)]}))
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("failed its last run: Client Data could not be read", r.summary)
+
+    def test_stale_after_ten_minutes_and_a_failed_run_fails(self):
+        self.assertEqual(client_messages.run_sender(make({"cockpit_sync_state": [sender(minutes=9)]})).status, OK)
+        r = client_messages.run_sender(make({"cockpit_sync_state": [sender(minutes=11)]}))
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("has not run for 11 min (limit 10 min)", r.summary)
+        r = client_messages.run_sender(make({"cockpit_sync_state": [sender(ok=False, note="Supabase GET failed (503)")]}))
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("failed its last run: Supabase GET failed (503)", r.summary)
+
+    def test_a_provider_answer_the_ledger_lost_warns_in_either_mode_never_as_ok(self):
+        # As hermes/client-messages writes it: the run stays ok, the count is in detail.receiptsMissing and the note
+        # ends with RECEIPTS_LOST.
+        lost = ("Sent 1 recap. The health ledger is missing the answer to 1 provider call that had already left. "
+                "Check that the database takes provider receipts (RUNBOOK, Client messages).")
+        r = client_messages.run_sender(make({"cockpit_sync_state": [sender(
+            note=lost, mode="apply", approved=1, sent=1, receiptsMissing=1)]}))
+        self.assertEqual(r.status, WARN)
+        self.assertEqual(r.summary, "1 provider call left without its answer saved in the health ledger.")
+        self.assertEqual(r.action, "Check that the database takes provider receipts, then run the client-messages "
+                                   "doctor (hermes/client-messages/RUNBOOK.md).")
+        self.assertEqual(r.evidence["receiptsMissing"], 1)
+        # A dry run calls providers too (Client Data, ClickUp), and a test-card run is no exception.
+        for mode, cards in (("dry", []), ("apply", ["86eywg1cq"])):
+            with self.subTest(mode=mode, cards=cards):
+                r = client_messages.run_sender(make({"cockpit_sync_state": [sender(
+                    mode=mode, onlyCards=cards, receiptsMissing=3)]}))
+                self.assertEqual(r.status, WARN)
+                self.assertEqual(r.summary, "3 provider calls left without their answers saved in the health ledger.")
+        # The next run that saves every answer reads 0 and clears it.
+        r = client_messages.run_sender(make({"cockpit_sync_state": [sender(mode="apply", receiptsMissing=0)]}))
+        self.assertEqual((r.status, r.summary), (OK, "Sending is open for every client."))
+        self.assertEqual(r.evidence["receiptsMissing"], 0)
+        # No count (a sender from before receiptsMissing) or one that is not a whole number is not read, never as
+        # lost and never as 0.
+        for odd in (None, True, "2", 1.5, -1):
+            with self.subTest(receiptsMissing=odd):
+                r = client_messages.run_sender(make({"cockpit_sync_state": [sender(receiptsMissing=odd)]}))
+                self.assertEqual((r.status, r.summary), (OK, "Dry: sending is off until the switch-over."))
+        r = client_messages.run_sender(make({"cockpit_sync_state": [sender()]}))
+        self.assertNotIn("receiptsMissing", r.evidence)
+        # A hold and a failed run still read as themselves first.
+        hold = "Make's recap sender is still on."
+        r = client_messages.run_sender(make({"cockpit_sync_state": [sender(
+            ok=False, note=hold, mode="apply", approved=1, held=hold, receiptsMissing=2)]}))
+        self.assertEqual((r.status, r.summary), (WARN, f"1 approved recap held: {hold}"))
+        r = client_messages.run_sender(make({"cockpit_sync_state": [sender(
+            ok=False, note="Supabase GET failed (503)", mode="apply", receiptsMissing=2)]}))
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("failed its last run", r.summary)
+        # A stale row is stale, whatever its last run lost.
+        r = client_messages.run_sender(make({"cockpit_sync_state": [sender(minutes=11, receiptsMissing=2)]}))
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("has not run for 11 min", r.summary)
+        self.assertIn("detail.receiptsMissing", checks_mod.by_id()["client-messages"].reads)
+
+    def test_a_sent_recap_with_no_read_back_after_an_hour_warns(self):
+        rows = [{"id": "m1", "state": "sent", "sent_at": fakes.ago(90), "read_back_at": None, "body": "never read"},
+                {"id": "m2", "state": "sent", "sent_at": fakes.ago(30), "read_back_at": None},
+                {"id": "m3", "state": "sent", "sent_at": fakes.ago(300), "read_back_at": fakes.ago(299)}]
+        r = client_messages.run_read_back(make({"cockpit_client_messages": rows}))
+        self.assertEqual(r.status, WARN)
+        self.assertIn("1 sent recap not read back after 60 min", r.summary)
+        self.assertEqual(r.items, ["m1"])
+        self.assertNotIn("never read", r.summary + str(r.evidence))
+        self.assertEqual(client_messages.run_read_back(make({"cockpit_client_messages": rows[1:]})).status, OK)
+
+    def test_g5_warns_until_it_reads_same_number(self):
+        self.assertEqual(client_messages.run_g5(make({})).status, WARN)
+        g5 = {"key": "client-messages-g5", "ok": False, "note": "not proven", "last_run_at": fakes.ago(5)}
+        r = client_messages.run_g5(make({"cockpit_sync_state": [g5]}))
+        self.assertEqual(r.status, WARN)
+        self.assertIn("not proven", r.summary)
+        r = client_messages.run_g5(make({"cockpit_sync_state": [{**g5, "ok": True, "note": "same number"}]}))
+        self.assertEqual(r.status, OK)
+
+
+class FormsMachineryIsWatched(unittest.TestCase):
+    """Round 1 of the 2b review: the 1-1 notes machinery's cron job and health rows had no watch, so a stopped forms
+    cron would read as nothing wrong until a row queued after the cut-over."""
+
+    def rows(self, **ages):
+        return [{"key": k, "ok": True, "last_ok_at": fakes.ago(ages.get(k.replace(":", "_").replace("-", "_"), 1))}
+                for k in TestSectionsJobKeys.ALL]
+
+    def test_the_forms_cron_job_is_expected(self):
+        self.assertIn("mahara-clickup-writeback-forms", pg_cron.EXPECTED_JOBS)
+        jobs = [{"jobid": i, "jobname": n, "schedule": "* * * * *", "active": n != "mahara-clickup-writeback-forms"}
+                for i, n in enumerate(pg_cron.EXPECTED_JOBS)]
+        r = pg_cron.run_jobs(make(db=fakes.FakeDb(probe={"cron_jobs": jobs})))
+        self.assertEqual(r.status, FAIL)
+        self.assertEqual(r.items, ["mahara-clickup-writeback-forms"])
+
+    def test_each_forms_row_is_watched_and_a_missing_one_is_late_never_zero(self):
+        for key in ("clickup-writeback:forms", "forms-effects-kick", "csm-forms-record"):
+            rows = [r for r in self.rows() if r["key"] != key]
+            self.assertEqual(sections.run_jobs(make({"cockpit_sync_state": rows})).items, [key])
+
+    def test_an_idle_forms_writer_reporting_every_ten_minutes_is_not_late(self):
+        # cockpit_clickup_forms_kick (20261029t) posts an idle run only once the last report is over ten minutes old, so
+        # the row can be 11 minutes old between healthy reports (D5's read-back waits 11 minutes for the same reason).
+        self.assertEqual(sections.run_jobs(make({"cockpit_sync_state": self.rows(clickup_writeback_forms=12)})).status, OK)
+        late = sections.run_jobs(make({"cockpit_sync_state": self.rows(clickup_writeback_forms=16)}))
+        self.assertEqual(late.items, ["clickup-writeback:forms"])
+
+    def test_the_dispatch_kick_runs_every_minute_and_the_record_every_15(self):
+        self.assertEqual(sections.run_jobs(make({"cockpit_sync_state": self.rows(forms_effects_kick=11)})).items,
+                         ["forms-effects-kick"])
+        self.assertEqual(sections.run_jobs(make({"cockpit_sync_state": self.rows(csm_forms_record=44)})).status, OK)
+        self.assertEqual(sections.run_jobs(make({"cockpit_sync_state": self.rows(csm_forms_record=46)})).items,
+                         ["csm-forms-record"])
+
+    def test_a_dispatch_that_fails_reads_failed(self):
+        rows = self.rows()
+        next(r for r in rows if r["key"] == "forms-effects-kick")["ok"] = False
+        self.assertEqual(sections.run_jobs(make({"cockpit_sync_state": rows})).items, ["forms-effects-kick"])
+
+    def test_the_readme_lists_every_stage_2b_row(self):
+        readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+        for check_id in ("queue-clickup-forms", "queue-form-effects", "queue-form-recap", "queue-client-messages",
+                         "queue-client-messages-unknown", "client-messages", "client-messages-read-back",
+                         "client-messages-g5", "csm-impromptu-notes", "forms-kickoff-webhook", "csm-checkin-form"):
+            self.assertIn(f"| `{check_id}` |", readme)
+

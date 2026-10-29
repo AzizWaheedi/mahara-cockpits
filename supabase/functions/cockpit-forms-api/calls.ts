@@ -40,6 +40,7 @@ import {
   matchCtx,
   type MatchInputs,
   onOther,
+  onOtherMovable,
   outsideOf,
   pullFathom,
   seesClient,
@@ -82,6 +83,13 @@ export type CallView = {
    * save holds too; OUTSIDE_CS_LIKELY when its call row is on this client by a likely sign, A7.14's sentences).
    */
   blocked: string | null;
+  /**
+   * An admin or the CEO may move this recording onto this client from the window (2b build 11, 3.8): true only
+   * for such a seat, with cockpit_settings forms.move_recording on, when the view's one refusal is "on another
+   * client" (a client or candidate recording, not gone, not a tie refusal) and no 1-1 notes stand for it. Then
+   * `blocked` reads onOtherMovable's sentence.
+   */
+  movable: boolean;
   notesAlready: { at: string; source: "cockpit" | "typeform" } | null;
   duplicateOf: string | null;
 };
@@ -136,10 +144,25 @@ function parse(body: Record<string, unknown>): Body {
   return { taskId, responseId, shareUrl: link || null, refresh: body.refresh === true };
 }
 
+/**
+ * Whether Move it here is switched on (cockpit_forms_switch('move_recording'), 20261029z), read once per
+ * checkin.calls and only for an admin or the CEO. Anything but a plain true (off, a refusal, the function not
+ * live yet) reads as off: a recording is never offered to move on a guess.
+ */
+export async function moveSwitch(op: Pick<OpCtx, "deps" | "actor">): Promise<boolean> {
+  if (!op.actor.admin && !op.actor.ceo) return false;
+  try {
+    return (await op.deps.rpc("cockpit_forms_switch", { p_key: "move_recording" })) === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function checkinCalls(op: OpCtx, raw: Record<string, unknown>): Promise<CallsAnswer> {
   const body = parse(raw);
   const { deps, actor } = op;
   await deps.rpc("cockpit_csm_client_gate_for_actor", { p_actor: actor.actorId, p_task_id: body.taskId });
+  const move = await moveSwitch(op);
   const now = deps.now();
   const nowIso = now.toISOString();
   const from = kuwaitYesterday(now);
@@ -190,7 +213,7 @@ export async function checkinCalls(op: OpCtx, raw: Record<string, unknown>): Pro
   // that would be listed (a sign names this client) or that were pasted.
   const asks = tieAsks(inputs, body.taskId, now.getTime(), pasted);
   const tied = asks.length ? await tiedIds(op, body.taskId, asks, { actor: actor.actorId }) : new Set<string>();
-  const { picked, others, waitingBookings, otherTasks } = viewsFor(inputs, body.taskId, now.getTime(), actor, pasted, tied);
+  const { picked, others, waitingBookings, otherTasks } = viewsFor(inputs, body.taskId, now.getTime(), actor, pasted, tied, move);
   // Another client's recording names that client, its title and its link only to a seat that may see that client.
   const hidden = new Set<string>();
   for (const t of new Set(otherTasks.values())) if (!(await seesClient(op, t))) hidden.add(t);
@@ -211,6 +234,7 @@ function unnamed(v: CallView): CallView {
     hasTranscript: false,
     otherClient: null,
     blocked: v.blocked === GONE || v.blocked === TEAM_MEETING ? v.blocked : onOther(null),
+    movable: false,
     notesAlready: null,
   };
 }
@@ -314,6 +338,7 @@ export function viewsFor(
   viewer: Viewer,
   pasted: StoreItem | null,
   tied: ReadonlySet<string>,
+  move = false,
 ): { picked: CallView | null; others: CallView[]; waitingBookings: boolean; otherTasks: Map<string, string> } {
   const viewerEmail = viewer.email;
   const { items, recs, pastedRaw, bookings, clients, ctx } = sceneOf(inputs, taskId, now, viewerEmail, pasted);
@@ -353,7 +378,11 @@ export function viewsFor(
   const view = (s: StoreItem, as: Shown & { bookingId?: number }): CallView => {
     const rec = toRecording(s);
     const elsewhere = elsewhereOf(rec, taskId, bookings, ctx);
-    const blocked = refusal(rec);
+    const why = checksOf(rec, taskId, bookings, ctx);
+    // Move it here (3.8): only for a seat the switch lets move, only when "on another client" is the one
+    // refusal and no 1-1 notes stand for the recording.
+    const movable = move && why?.reason === "other" && !untied.has(rec.recordingId) && !s.notes;
+    const blocked = movable ? onOtherMovable(name(why?.otherTask as string), name(taskId)) : refusal(rec);
     const isPasted = rec.recordingId === pastedId;
     if (elsewhere) otherTasks.set(`fathom:${s.recordingId}`, elsewhere);
     // The pasted call reads as pasted whatever else the matcher found for it (A7.3). A refused one has no why
@@ -386,6 +415,7 @@ export function viewsFor(
       onClient: elsewhere ? "other" : s.onTask === taskId ? "this" : "none",
       otherClient: elsewhere ? (name(elsewhere) ?? null) : null,
       blocked,
+      movable,
       notesAlready: s.notes ?? null,
       duplicateOf: null,
     };
@@ -538,6 +568,7 @@ function bookingViews(inputs: MatchInputs, taskId: string, now: number, covered:
         onClient: "this",
         otherClient: null,
         blocked: null,
+        movable: false,
         notesAlready: null,
         duplicateOf: null,
       } satisfies CallView;

@@ -20,6 +20,7 @@ import {
   type NoticeSetting,
   noAccess,
   noticeStop,
+  PRIVATE_ONLY_KINDS,
   readNoticeSettings,
   readProblem,
   rehearseNotice,
@@ -109,7 +110,20 @@ export const NOTICE_ROWS: Record<
     label: "Offer locked",
     hint: "A reply under the close when the offer is locked.",
   },
+  // The 1-1 notes' two (docs/forms/STAGE2B-CONTRACT.md 5.4).
+  "checkin.grade": {
+    label: "Call grade",
+    hint: "The grade of each recorded 1-1 call, posted once per call. Tags nobody.",
+  },
+  "checkin.recap_late": {
+    label: "Recap not sent",
+    hint: "A client recap still not sent 24 hours after the call.",
+  },
 };
+
+/** The Call grade row's line where the tag editor would be (5.4). */
+export const GRADE_TAGS_NOBODY =
+  "Tags nobody. A grade is about a person's call.";
 
 const SAVED = "Saved. The next notice uses it.";
 /** Beside a disabled test while the fold holds a change: the test is built from the saved row. */
@@ -120,7 +134,7 @@ export const NOTICES_PAGE = "/client-success/notices";
 export const NOTICES_PAGE_TITLE = "notices-page-title";
 /** What the card is, under its title (on Settings) or the page's h1. */
 export const NOTICES_SUB =
-  "Where the cockpit posts in Slack when a kickoff or a Brand Blueprint is done, and who it tags. A change applies to the next notice.";
+  "Where the cockpit posts in Slack after a kickoff, a Brand Blueprint or a 1-1 call, and who it tags. A change applies to the next notice.";
 const TEST_SENT =
   "Test on its way. It reaches your Slack direct messages within a minute.";
 const CHANNEL_ID = /^[CG][A-Z0-9]{8,12}$/;
@@ -562,9 +576,7 @@ function LastStop({ n, now }: { n: NoticeSetting; now: string }) {
         {stop.href ? (
           <>
             {" "}
-            <ExtLink href={stop.href} className="text-primary-ink">
-              Open in Slack
-            </ExtLink>
+            <ExtLink href={stop.href}>Open in Slack</ExtLink>
           </>
         ) : null}
       </span>
@@ -616,7 +628,12 @@ function Change({
     setPicked(people);
   }, [seen]);
 
-  const ok = read.channels.filter(c => c.state === "ok");
+  // The Call grade lists only channels the cockpit has checked as private,
+  // and tags nobody, so it has no tag editor (STAGE2B-CONTRACT.md 5.4).
+  const privateOnly = PRIVATE_ONLY_KINDS.has(n.kind);
+  const ok = read.channels.filter(
+    c => c.state === "ok" && (!privateOnly || c.private === true),
+  );
   const patch: SettingsPatch = {};
   if (n.shape === "post" && channel && channel !== (n.channel?.id ?? null))
     patch.channel = channel;
@@ -682,7 +699,11 @@ function Change({
         />
         {/* Only a post row has a channel to choose; replies and the kickoff's
             variant lines choose tags only. */}
-        {n.shape === "post" ? "Change where and who" : "Change who"}
+        {privateOnly
+          ? "Change where"
+          : n.shape === "post"
+            ? "Change where and who"
+            : "Change who"}
       </summary>
       <div className="mt-3 space-y-4 border-l pl-3">
         {n.shape === "post" ? (
@@ -704,9 +725,16 @@ function Change({
               </div>
             ) : (
               <p className="text-xs text-muted-foreground">
-                No channel is ready yet. Add one under Channels below.
+                {privateOnly
+                  ? "No private channel is ready yet. Add one under Channels below; the cockpit checks whether it is private."
+                  : "No channel is ready yet. Add one under Channels below."}
               </p>
             )}
+            {privateOnly && ok.length ? (
+              <p className="text-xs text-muted-foreground">
+                Only channels the cockpit has checked as private are listed.
+              </p>
+            ) : null}
           </fieldset>
         ) : (
           <p className="text-xs text-muted-foreground">
@@ -716,70 +744,74 @@ function Change({
           </p>
         )}
 
-        <fieldset className="space-y-1.5">
-          <legend className="text-xs text-muted-foreground">Tags</legend>
-          <div className="flex flex-wrap gap-1.5">
-            {SEAT_RULES.map(r => (
-              <Choice
-                key={r}
-                active={rules.includes(r)}
-                disabled={saving}
-                onClick={() =>
-                  setRules(x =>
-                    x.includes(r) ? x.filter(y => y !== r) : [...x, r],
-                  )
-                }
-              >
-                {SEAT_LABEL[r].replace(/^the /, "The ")}
-              </Choice>
-            ))}
-          </div>
-          {picked.length ? (
-            <ul className="flex flex-wrap gap-1.5" aria-label="Named people">
-              {picked.map(id => (
-                <li key={id}>
-                  <span className="inline-flex h-8 items-center gap-1 rounded-full bg-primary/15 pr-1 pl-3 text-xs font-medium ring-1 ring-inset ring-primary/40">
-                    {byId.get(id) ?? `Person ${id}`}
-                    <button
-                      type="button"
-                      disabled={saving}
-                      aria-label={`Stop tagging ${byId.get(id) ?? `person ${id}`}`}
-                      onClick={() => setPicked(x => x.filter(y => y !== id))}
-                      className="grid size-6 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
-                    >
-                      <X aria-hidden className="size-3.5" />
-                    </button>
-                  </span>
-                </li>
+        {privateOnly ? (
+          <p className="text-xs text-muted-foreground">{GRADE_TAGS_NOBODY}</p>
+        ) : (
+          <fieldset className="space-y-1.5">
+            <legend className="text-xs text-muted-foreground">Tags</legend>
+            <div className="flex flex-wrap gap-1.5">
+              {SEAT_RULES.map(r => (
+                <Choice
+                  key={r}
+                  active={rules.includes(r)}
+                  disabled={saving}
+                  onClick={() =>
+                    setRules(x =>
+                      x.includes(r) ? x.filter(y => y !== r) : [...x, r],
+                    )
+                  }
+                >
+                  {SEAT_LABEL[r].replace(/^the /, "The ")}
+                </Choice>
               ))}
-            </ul>
-          ) : null}
-          {others.length ? (
-            <details className="group/people">
-              <summary className="no-marker inline-flex cursor-pointer items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-                <Plus aria-hidden className="size-3.5" />
-                Tag someone by name
-              </summary>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {others.map(p => (
-                  <Choice
-                    key={p.id}
-                    active={false}
-                    disabled={saving || picked.length >= 10}
-                    onClick={() => setPicked(x => [...x, p.id])}
-                  >
-                    {p.label}
-                  </Choice>
+            </div>
+            {picked.length ? (
+              <ul className="flex flex-wrap gap-1.5" aria-label="Named people">
+                {picked.map(id => (
+                  <li key={id}>
+                    <span className="inline-flex h-8 items-center gap-1 rounded-full bg-primary/15 pr-1 pl-3 text-xs font-medium ring-1 ring-inset ring-primary/40">
+                      {byId.get(id) ?? `Person ${id}`}
+                      <button
+                        type="button"
+                        disabled={saving}
+                        aria-label={`Stop tagging ${byId.get(id) ?? `person ${id}`}`}
+                        onClick={() => setPicked(x => x.filter(y => y !== id))}
+                        className="grid size-6 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
+                      >
+                        <X aria-hidden className="size-3.5" />
+                      </button>
+                    </span>
+                  </li>
                 ))}
-              </div>
-              {picked.length >= 10 ? (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Ten people at most.
-                </p>
-              ) : null}
-            </details>
-          ) : null}
-        </fieldset>
+              </ul>
+            ) : null}
+            {others.length ? (
+              <details className="group/people">
+                <summary className="no-marker inline-flex cursor-pointer items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                  <Plus aria-hidden className="size-3.5" />
+                  Tag someone by name
+                </summary>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {others.map(p => (
+                    <Choice
+                      key={p.id}
+                      active={false}
+                      disabled={saving || picked.length >= 10}
+                      onClick={() => setPicked(x => [...x, p.id])}
+                    >
+                      {p.label}
+                    </Choice>
+                  ))}
+                </div>
+                {picked.length >= 10 ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Ten people at most.
+                  </p>
+                ) : null}
+              </details>
+            ) : null}
+          </fieldset>
+        )}
 
         {error ? (
           <p role="alert" className="txt-bad text-xs">

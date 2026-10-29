@@ -6,10 +6,13 @@ import { type Db, ProviderError, type Transport } from "./lib";
 import type { Client, Row } from "./match";
 import {
   type Ctx,
+  checkinCutover,
   fathomActionsBackfill,
   fathomSource,
+  formsRecord,
   ghlSource,
   keepManual,
+  LATE_NO_CLIENT,
   linkTypeforms,
   metaAccounts,
   readTypeforms,
@@ -505,7 +508,7 @@ describe("fathomSource: candidates", () => {
     for (const how of ["this run", "the store"]) {
       const fake = store(
         seedOf({
-          cockpit_csm_call_forms: [{ token: "tok-a", form_id: "fRokTITH", task_id: CITY.taskId, answers: [{ ref: TRANSCRIPT_REF, type: "long_text", value: `Notes ${link}?timestamp=12` }] }],
+          cockpit_csm_call_forms: [{ token: "tok-a", form_id: "fRokTITH", form_kind: "checkin", task_id: CITY.taskId, answers: [{ ref: TRANSCRIPT_REF, type: "long_text", value: `Notes ${link}?timestamp=12` }] }],
         }),
       );
       const ctx = ctxOf(fake, fathomApi([m]).t, { shareToTask: how === "this run" ? new Map([[link, CITY.taskId]]) : new Map() });
@@ -514,6 +517,25 @@ describe("fathomSource: candidates", () => {
       await unmatchedQueue(ctx);
       expect(fake.rows("cockpit_csm_unmatched")).toHaveLength(0);
     }
+  });
+
+  test("a late 1-1 form's link places nothing: the stored forms are read by the checkin kind (docs/forms/STAGE2B-CONTRACT.md 4.9)", async () => {
+    const m = meeting(900000107, T0);
+    const link = "https://fathom.video/share/TEST900000107";
+    const asked: string[] = [];
+    const fake = store(
+      seedOf({
+        cockpit_csm_call_forms: [{ token: "tok-late", form_id: "fRokTITH", form_kind: "checkin_late", task_id: CITY.taskId, answers: [{ ref: TRANSCRIPT_REF, type: "long_text", value: `Notes ${link}` }] }],
+      }),
+    );
+    const all = fake.db.all;
+    (fake.db as unknown as { all: typeof all }).all = async (table: string, query: string) => {
+      asked.push(`${table}?${query}`);
+      return all(table, query);
+    };
+    await fathomSource(ctxOf(fake, fathomApi([m]).t), SINCE);
+    expect(callOf(fake, 900000107)).toMatchObject({ task_id: null, candidate: true });
+    expect(asked).toContain("cockpit_csm_call_forms?select=task_id,answers&form_id=eq.fRokTITH&task_id=not.is.null&form_kind=eq.checkin");
   });
 
   test("a same-room match sets the booking and its kind; the same room beats the invitee's booked time", async () => {
@@ -1277,5 +1299,184 @@ describe("typeformSource: the 1-1 form link", () => {
     await typeformSource(ctxOf(fake, typeform));
     expect(fake.one("cockpit_csm_call_forms", f => f.token === "tok-1")?.linked_call_id).toBe(48);
     expect(fake.one("cockpit_csm_calls", r => r.id === 601)).toMatchObject({ status: "gone", linked_call_id: 48 });
+  });
+});
+
+// ---------------------------------------------------------------- late 1-1 forms (docs/forms/STAGE2B-CONTRACT.md 4.9)
+
+describe("late Typeform 1-1 forms after the switch-over", () => {
+  const CUTOVER = NOW - 6 * HOUR;
+  const link = (n: number) => `https://fathom.video/share/TEST90000030${n}`;
+  const item = (token: string, at: number, taskId: string | null, n = 1) => ({
+    token,
+    submitted_at: iso(at),
+    hidden: taskId ? { task_id: taskId } : {},
+    answers: [{ field: { ref: TRANSCRIPT_REF, type: "long_text" }, type: "text", text: `Invented notes. ${link(n)}` }],
+  });
+  const typeformOf = (items: Row[]) =>
+    ({
+      receipts: [],
+      typeform: async (path: string) => {
+        if (path === "forms/fRokTITH/responses") return { items: clone(items), total_items: items.length };
+        if (path.endsWith("/responses")) return { items: [], total_items: 0 };
+        return { fields: [{ ref: TRANSCRIPT_REF, title: "Fathom link and notes" }] };
+      },
+    }) as unknown as Transport;
+  const native = (over: Row = {}) => [{ key: "checkin", provider: "native", provider_since: iso(CUTOVER), updated_at: iso(CUTOVER + HOUR), ...over }];
+  const seedWith = (forms: Row[], extra: Record<string, Row[]> = {}) =>
+    seedOf({
+      cockpit_forms: forms,
+      cockpit_csm_calls: [
+        booking(70, CITY, NOW - 5 * HOUR),
+        booking(71, MAKERS, CUTOVER - 4 * HOUR),
+        // A late form's own held call from an older release's run (the 93bbd2d4 rollback): never retired here.
+        { id: 702, source: "checkin_form", source_id: "tok-late", task_id: CITY.taskId, match_method: "form_task_id", kind: "checkin", status: "held", starts_at: iso(NOW - 3 * HOUR), linked_call_id: null },
+      ],
+      ...extra,
+    });
+  const formOf = (fake: Fake, token: string) => fake.one("cockpit_csm_call_forms", f => f.token === token)!;
+
+  test("while Typeform fills the notes nothing is late and the plan has no switch-over time", async () => {
+    const fake = store(seedWith([{ key: "checkin", provider: "typeform", provider_since: null, updated_at: iso(NOW - 30 * DAY) }]));
+    const ctx = ctxOf(fake, typeformOf([item("tok-late", NOW - 3 * HOUR, CITY.taskId)]));
+    const [health] = await typeformSource(ctx);
+    expect(ctx.plan.cutover).toBeNull();
+    expect(ctx.plan.typeform.fRokTITH.late).toEqual({ sinceCutover: 0, last14d: 0, newest: null });
+    expect(formOf(fake, "tok-late")).toMatchObject({ form_kind: "checkin", linked_call_id: 70 });
+    expect(health.note).not.toContain("after the switch-over");
+  });
+
+  test("after the switch-over a form is stored late: no share link, no call link, no call of its own, nothing retired; an earlier form links as before", async () => {
+    const fake = store(seedWith(native()));
+    const ctx = ctxOf(fake, typeformOf([item("tok-late", NOW - 3 * HOUR, CITY.taskId, 1), item("tok-before", CUTOVER - 3 * HOUR, MAKERS.taskId, 2)]));
+    const [health] = await typeformSource(ctx);
+    expect(ctx.plan.cutover).toBe(iso(CUTOVER));
+    expect(formOf(fake, "tok-late")).toMatchObject({ form_kind: "checkin_late", task_id: CITY.taskId, linked_call_id: null });
+    expect(formOf(fake, "tok-before")).toMatchObject({ form_kind: "checkin", task_id: MAKERS.taskId, linked_call_id: 71 });
+    expect([...ctx.shareToTask.keys()]).toEqual([link(2)]);
+    expect(fake.one("cockpit_csm_calls", r => r.id === 702)).toMatchObject({ status: "held", linked_call_id: null });
+    expect(fake.rows("cockpit_csm_calls").filter(r => r.source === "checkin_form")).toHaveLength(1);
+    expect(fake.writes.some(w => w.op === "patch" && w.table === "cockpit_csm_call_forms" && w.filter?.includes("tok-late"))).toBe(false);
+    expect(ctx.plan.typeform.fRokTITH.late).toEqual({ sinceCutover: 1, last14d: 1, newest: iso(NOW - 3 * HOUR) });
+    // The row stays ok (Z15) and says how many came late and when the newest did.
+    expect(health.ok).toBe(true);
+    expect(health.note).toEndWith(" 1 1-1 notes arrived in Typeform after the switch-over (newest 2026-10-28).");
+    expect(health.detail.late).toEqual({ sinceCutover: 1, last14d: 1, newest: iso(NOW - 3 * HOUR) });
+  });
+
+  test("late is sticky: a form already stored late stays late after the registry goes back to Typeform", async () => {
+    const fake = store(
+      seedWith([{ key: "checkin", provider: "typeform", provider_since: iso(CUTOVER), updated_at: iso(NOW - HOUR) }], {
+        cockpit_csm_call_forms: [{ token: "tok-late", form_id: "fRokTITH", form_kind: "checkin_late", task_id: CITY.taskId, matched_by: "hidden_field", linked_call_id: null }],
+      }),
+    );
+    const ctx = ctxOf(fake, typeformOf([item("tok-late", NOW - 3 * HOUR, CITY.taskId)]));
+    await typeformSource(ctx);
+    expect(formOf(fake, "tok-late")).toMatchObject({ form_kind: "checkin_late", linked_call_id: null });
+    expect(ctx.shareToTask.size).toBe(0);
+    expect(ctx.plan.typeform.fRokTITH.late.sinceCutover).toBe(1);
+  });
+
+  test("a late form with no client waits in the queue with its own sentence", async () => {
+    const fake = store(seedWith(native()));
+    const ctx = ctxOf(fake, typeformOf([item("tok-none", NOW - 2 * HOUR, null)]));
+    await typeformSource(ctx);
+    expect(ctx.reasons.get("form:tok-none")?.reason).toBe(LATE_NO_CLIENT);
+    expect(LATE_NO_CLIENT).toBe("1-1 notes sent in Typeform after the switch-over, with no client on the board.");
+    expect(formOf(fake, "tok-none")).toMatchObject({ form_kind: "checkin_late", task_id: null });
+  });
+
+  test("the switch-over time is provider_since, else the row's updated_at, as the database reads it; a missing registry row stops the read", async () => {
+    expect(await checkinCutover(store(seedWith(native())).db)).toBe(CUTOVER);
+    expect(await checkinCutover(store(seedWith(native({ provider_since: null }))).db)).toBe(CUTOVER + HOUR);
+    expect(await checkinCutover(store(seedWith([{ key: "checkin", provider: "typeform", provider_since: iso(CUTOVER) }])).db)).toBeNull();
+    await expect(checkinCutover(store(seedWith([])).db)).rejects.toThrow("The 1-1 notes registry row (cockpit_forms checkin) is missing");
+    const asked: string[] = [];
+    await checkinCutover(fakeDb({ cockpit_forms: native() }, asked));
+    expect(asked).toEqual(["cockpit_forms?select=provider,provider_since,updated_at&key=eq.checkin"]);
+  });
+});
+
+// ---------------------------------------------------------------- kickoff and Blueprint records (4.8)
+
+describe("formsRecord: kickoff and Blueprint in the forms tables", () => {
+  const answer = (over: Row = {}) => ({
+    apply: true,
+    kickoff: { recorded: 8, already: 0 },
+    blueprint: { recorded: 0 },
+    effects: { delivered: 0, skipped: 8, waiting: 0 },
+    errors: 0,
+    ...over,
+  });
+  const rpcDb = (reply: unknown, calls: { name: string; args: Row }[] = []) =>
+    ({
+      rpc: async (name: string, args: Row) => {
+        calls.push({ name, args });
+        return reply;
+      },
+    }) as unknown as Db;
+
+  test("one sweep call, with p_apply as the run's apply, and its counts in the health row", async () => {
+    const calls: { name: string; args: Row }[] = [];
+    const ctx = ctxOf(store(seedOf()), {} as Transport, { db: rpcDb(answer(), calls) });
+    const health = await formsRecord(ctx);
+    expect(calls).toEqual([{ name: "cockpit_form_record_sweep", args: { p_apply: true } }]);
+    expect(health).toEqual({
+      key: "csm-forms-record",
+      ok: true,
+      rows: 8,
+      note: "Forms tables: 8 kickoffs and 0 Brand Blueprint presses recorded, 0 Stage 1 deliveries linked, 0 waiting for Stage 1.",
+      detail: answer(),
+    });
+    expect(ctx.plan.formsRecord).toEqual(answer());
+    const dry: { name: string; args: Row }[] = [];
+    await formsRecord(ctxOf(store(seedOf()), {} as Transport, { apply: false, db: rpcDb(answer({ apply: false }), dry) }));
+    expect(dry).toEqual([{ name: "cockpit_form_record_sweep", args: { p_apply: false } }]);
+  });
+
+  test("one of each reads in the singular", async () => {
+    const one = answer({ kickoff: { recorded: 1, already: 7 }, blueprint: { recorded: 1 }, effects: { delivered: 1, skipped: 0, waiting: 1 } });
+    const health = await formsRecord(ctxOf(store(seedOf()), {} as Transport, { db: rpcDb(one) }));
+    expect(health.note).toBe("Forms tables: 1 kickoff and 1 Brand Blueprint press recorded, 1 Stage 1 delivery linked, 1 waiting for Stage 1.");
+  });
+
+  test("an answer without its counts fails the source, never reads as zero", async () => {
+    for (const bad of [
+      null,
+      {},
+      answer({ kickoff: { recorded: 8 } }),
+      answer({ effects: { delivered: 0, skipped: 0 } }),
+      answer({ blueprint: { recorded: -1 } }),
+      answer({ kickoff: { recorded: "8", already: null } }),
+      answer({ errors: undefined }),
+      answer({ errors: null }),
+      answer({ errors: 1.5 }),
+      answer({ errors: -1 }),
+    ])
+      await expect(formsRecord(ctxOf(store(seedOf()), {} as Transport, { db: rpcDb(bad) }))).rejects.toThrow("The forms record sweep answered without");
+  });
+
+  test("rows the sweep could not record are counted in the note and the detail, and the row stays ok (Z15)", async () => {
+    const two = answer({ errors: 2 });
+    const ctx = ctxOf(store(seedOf()), {} as Transport, { db: rpcDb(two) });
+    const health = await formsRecord(ctx);
+    expect(health.ok).toBe(true);
+    expect(health.note).toBe(
+      "Forms tables: 8 kickoffs and 0 Brand Blueprint presses recorded, 0 Stage 1 deliveries linked, 0 waiting for Stage 1. 2 rows could not be recorded; the next read tries again.",
+    );
+    expect(health.detail.errors).toBe(2);
+    expect(ctx.plan.formsRecord.errors).toBe(2);
+    const one = await formsRecord(ctxOf(store(seedOf()), {} as Transport, { db: rpcDb(answer({ errors: 1 })) }));
+    expect(one.note).toEndWith(" 1 row could not be recorded; the next read tries again.");
+    const none = await formsRecord(ctxOf(store(seedOf()), {} as Transport, { db: rpcDb(answer()) }));
+    expect(none.note).not.toContain("could not be recorded");
+  });
+
+  test("the worker runs the record after the EODs by default and its doctor asks the sweep with p_apply false", () => {
+    const run = readFileSync(join(import.meta.dir, "worker.ts"), "utf8");
+    expect(run).toContain('(arg("--only") ?? "ghl,typeform,fathom,meta,changes,eods,forms").split(",")');
+    expect(run.indexOf('guard("csm-eod-mentions"')).toBeLessThan(run.indexOf('guard("csm-forms-record", () => formsRecord(ctx))'));
+    expect(run).toContain('db.rpc("cockpit_form_record_sweep", { p_apply: false })');
+    expect(run).toContain('db.all("cockpit_forms", "select=provider,provider_since&key=eq.checkin")');
   });
 });

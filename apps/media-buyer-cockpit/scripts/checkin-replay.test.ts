@@ -5,8 +5,12 @@
  * SQL returns (addresses with their local part hashed, action items and client
  * notes as hashes), the plans made by the real migrations in PGlite and the
  * to-dos by the real todoItems. Then --shadow on synthetic plans and synthetic
- * Make answers, the readers' plumbing and the VPS script. Every card, client,
- * person, recording and room is invented; nothing is read live.
+ * Make answers, the readers' plumbing and the VPS script. Stage 2b's They owe
+ * fix (docs/forms/STAGE2B-CONTRACT.md 4.13): an assignee name leaves the SQL
+ * as a staff name or a contact hash, each response counts whom Fathom
+ * assigned its open items to, and every to-do comment difference carries its
+ * explaining sentence. Every card, client, person, recording and room is
+ * invented; nothing is read live.
  */
 import {
   afterAll,
@@ -17,11 +21,13 @@ import {
   test,
 } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import {
+  assigneesOf,
   EFFECTS,
   judge,
   kuwaitMidnight,
@@ -30,6 +36,7 @@ import {
   londonDay,
   type MakeRead,
   maskEmail,
+  maskNameSql,
   maskRoom,
   maskRoomSql,
   maskSql,
@@ -43,6 +50,7 @@ import {
   runLive,
   runShadow,
   sqReader,
+  TODO_EXPLAINED,
   VPS_SCRIPT,
   vpsReader,
   writeReport,
@@ -65,6 +73,9 @@ const AT_RISK = "f0623c2a-161d-4aa2-8833-d1337c69e1c2";
 const NEUTRAL = "46e595a3-17d7-4835-80f9-8a4c578b72a3";
 const HAPPY = "c5d6b01f-5f2b-40c1-afac-5b9f1efab213";
 const m = maskEmail;
+/** A contact's name as the SQL lets it leave the database (maskNameSql). */
+const contact = (name: string) =>
+  `Contact ${createHash("md5").update(name.trim().toLowerCase()).digest("hex").slice(0, 8)}`;
 
 /** The fixture's shape (notes/stage2/fixtures/replay-10.json), invented values. */
 const FIXTURE = {
@@ -119,6 +130,7 @@ const item = (
   o: {
     email?: string | null;
     team?: string | null;
+    name?: string | null;
     done?: boolean;
     at?: string;
   } = {},
@@ -126,7 +138,11 @@ const item = (
   description,
   completed: o.done ?? false,
   recording_timestamp: o.at ?? "00:01:05",
-  assignee: { email: o.email ?? null, team: o.team ?? null },
+  assignee: {
+    email: o.email ?? null,
+    team: o.team ?? null,
+    name: o.name ?? null,
+  },
 });
 const meeting = (o: Row) => ({
   room: null,
@@ -260,13 +276,25 @@ const LIVE: Record<string, Row[]> = {
         item("Item a1a1a1a1a1a1", {
           email: m(CSM),
           team: "Customer Success",
+          name: "Noura Test",
           at: "00:12:34",
         }),
-        item("Item a2a2a2a2a2a2", { email: m(CONTACT_1) }),
-        item("Item a3a3a3a3a3a3"),
-        item("Item a4a4a4a4a4a4", { email: m(CSM), done: true }),
+        item("Item a2a2a2a2a2a2", {
+          email: m(CONTACT_1),
+          name: contact("Layla Invented"),
+        }),
+        // A name with no address or team, off the staff list: They owe, unsure.
+        item("Item a3a3a3a3a3a3", { name: contact("Faris Invented") }),
+        item("Item a4a4a4a4a4a4", {
+          email: m(CSM),
+          name: "Noura Test",
+          done: true,
+        }),
         item("Item a5a5a5a5a5a5", { team: "Customer Success" }),
-        item("Item a6a6a6a6a6a6", { email: m(CONTACT_1) }),
+        item("Item a6a6a6a6a6a6", {
+          email: m(CONTACT_1),
+          name: contact("Layla Invented"),
+        }),
       ],
       call_id: 601,
       task_id: R1,
@@ -294,8 +322,14 @@ const LIVE: Record<string, Row[]> = {
       title: "Invented call with Huda",
       created_at: "2026-10-13T11:26:30Z",
       action_items: [
-        item("Item b1b1b1b1b1b1", { email: m(CONTACT_2) }),
-        item("Item b2b2b2b2b2b2", { email: m(CONTACT_2) }),
+        item("Item b1b1b1b1b1b1", {
+          email: m(CONTACT_2),
+          name: contact("Huda Invented"),
+        }),
+        item("Item b2b2b2b2b2b2", {
+          email: m(CONTACT_2),
+          name: contact("Huda Invented"),
+        }),
       ],
     }),
     // Listed by Fathom only after the submit: never seen as of it.
@@ -413,6 +447,8 @@ const SECRET_TEXT = [
   "fathom.video",
   "Layla",
   "Huda",
+  "Faris",
+  "Contact ",
   "abc-defg-hij",
   "kln-opqr-stu",
   "room:",
@@ -460,9 +496,12 @@ describe("--live, offline on two synthetic entries", () => {
       expect(sql).not.toMatch(
         /\b(INSERT|UPDATE|DELETE|TRUNCATE|ALTER|CREATE|GRANT)\b/i,
       );
-      // Contact names (invitees, assignees, the recorder's) are never read;
-      // the roster's business name is.
-      expect(sql).not.toMatch(
+      // Contact names (invitees, the recorder's) are never read, and an
+      // assignee's only through the name mask (a staff name or a hash); the
+      // roster's business name is.
+      expect(
+        sql.split(maskNameSql("x->'assignee'->>'name'")).join(""),
+      ).not.toMatch(
         /summary|transcript|\bi->>'name'|assignee'->>'name'|recorded_by_name/i,
       );
       // A JSON address is always read through the mask: md5 of the local part, the domain kept.
@@ -473,6 +512,9 @@ describe("--live, offline on two synthetic entries", () => {
     }
     expect(reads[2]).toContain(
       "md5(lower(btrim(regexp_replace(x->>'description'",
+    );
+    expect(reads[2]).toContain(
+      "'Contact ' || left(md5(lower(btrim(x->'assignee'->>'name'))), 8)",
     );
     expect(reads[0]).toContain("'Client notes ' || left(md5(");
   });
@@ -531,13 +573,21 @@ describe("--live, offline on two synthetic entries", () => {
     ]);
   });
 
-  test("the to-do counts come from the imported todoItems, with the unsure count", () => {
+  test("the to-do counts come from the imported todoItems, with the unsure count and whom Fathom assigned", () => {
+    // a3, a name off the staff list with no address or team, is They owe and unsure (2b 4.13).
     expect(live.responses[0].todos).toEqual({
       items: 5,
-      ours: 3,
-      theirs: 2,
+      ours: 2,
+      theirs: 3,
       unsure: 1,
       cut: 0,
+      assignees: {
+        recorder: 1,
+        staff: 1,
+        clientEmail: 2,
+        nameOnly: 1,
+        none: 0,
+      },
       makeBulletLines: 10,
       makeComments: 1,
     });
@@ -546,7 +596,48 @@ describe("--live, offline on two synthetic entries", () => {
       ours: 0,
       theirs: 2,
       unsure: 0,
+      assignees: {
+        recorder: 0,
+        staff: 0,
+        clientEmail: 2,
+        nameOnly: 0,
+        none: 0,
+      },
     });
+  });
+
+  test("whom Fathom assigned each open item to: the recorder, staff by address, team or name, a client address, a name off the list, no one", () => {
+    const staff = [
+      { name: "Noura Test", email: m(CSM), role: "Client success manager" },
+      { name: "Testa Staff", email: m("testa@maharamedia.com"), role: null },
+    ];
+    const a = (o: Row) => ({
+      description: "Item",
+      assigneeEmail: null,
+      assigneeName: null,
+      assigneeTeam: null,
+      seconds: null,
+      playbackUrl: null,
+      completed: false,
+      ...o,
+    });
+    expect(
+      assigneesOf(
+        [
+          a({ assigneeEmail: m(CSM), assigneeName: "Noura Test" }),
+          a({ assigneeEmail: m(CSM), completed: true }),
+          a({ assigneeEmail: m("testa@maharamedia.com") }),
+          a({ assigneeTeam: "Media Buying" }),
+          a({ assigneeName: "Testa Staff" }),
+          a({ assigneeEmail: m(CONTACT_1), assigneeName: "Noura Test" }),
+          a({ assigneeName: contact("Layla Invented") }),
+          a({ assigneeName: "Speaker 2" }),
+          a({}),
+        ],
+        m(CSM),
+        staff,
+      ),
+    ).toEqual({ recorder: 1, staff: 3, clientEmail: 1, nameOnly: 2, none: 1 });
   });
 
   test("every verdict, each with its reason", () => {
@@ -570,8 +661,9 @@ describe("--live, offline on two synthetic entries", () => {
       "The Typeform row links its own checkin_form row; the plan links the booking (call 501): one call on the card instead of two.",
     );
     expect(one.todo_comment.reason).toBe(
-      "The plan has 5 lines (3 ours, 2 theirs), the recording link on line 1; Make's comment had 10 bullet lines and no link on line 1.",
+      "The plan has 5 lines (2 ours, 3 theirs), the recording link on line 1; Make's comment had 10 bullet lines and no link on line 1.",
     );
+    expect(one.todo_comment.explained).toBeUndefined();
     expect(one.happiness.reason).toBe(`Option ${AT_RISK}, as Make wrote.`);
     expect(one.last_poc.reason).toBe("2026-10-11, the day Make's write keeps.");
     expect(one.last_checkin_call.reason).toBe(
@@ -600,8 +692,9 @@ describe("--live, offline on two synthetic entries", () => {
       "DEFCON, priority and the recording link equal the Typeform row's; the row links the recording once call_match has put it on the client.",
     );
     expect(two.todo_comment.reason).toBe(
-      "The plan has 2 lines (0 ours, 2 theirs): We owe is empty.",
+      "The plan has 2 lines (0 ours, 2 theirs): We owe is empty. Make's comment is GPT's list from the whole transcript and the Additional Notes ([3]); the plan is Fathom's 2 action items, which the CSM edits before she sends.",
     );
+    expect(two.todo_comment.explained).toBe(true);
     expect(two.happiness.reason).toBe(
       `The plan sets option ${NEUTRAL}; Make wrote ${HAPPY}.`,
     );
@@ -619,6 +712,12 @@ describe("--live, offline on two synthetic entries", () => {
       [2, 2, true],
       [2, 2, true],
       [2, 2, true],
+      [2, 2, true],
+      [2, 2, true],
+    ]);
+    expect(live.passes.slice(-2).map(p => p.check)).toEqual([
+      "to-dos: ours + theirs = the stored action items not completed",
+      "every to-do comment difference explained",
     ]);
     expect(live.pass).toBe(false);
   });
@@ -641,6 +740,12 @@ describe("--live, offline on two synthetic entries", () => {
     }
     expect(md).toContain("| todo_comment | planned | better |");
     expect(md).toContain("Replay Interiors");
+    expect(md).toContain(
+      "| every to-do comment difference explained | 2 of 2 | yes |",
+    );
+    expect(md).toContain(
+      "Fathom assigned 5 open action items: 1 to the recorder, 1 to other staff, 2 to a client address, 1 to a name off the staff list.",
+    );
   });
 
   test("a pinned recording the store does not hold is missing everywhere", async () => {
@@ -907,6 +1012,158 @@ describe("--live, offline on two synthetic entries", () => {
     ).toBe("same");
   });
 
+  test("a to-do comment difference is explained only when the replay knows whom Fathom assigned the items to", () => {
+    const todo = (o: Row, state = "planned", reason: string | null = null) => [
+      {
+        effect: "todo_comment",
+        state,
+        reason,
+        plan: {
+          notify_all: false,
+          items: 3,
+          sides: { ours: 3, theirs: 0 },
+          ...o,
+        },
+      },
+    ];
+    const compare = (o: Row = {}) => ({
+      card: R1,
+      makeComments: [{ lines: 20, bulletLines: 14, linkFirst: false }],
+      makeHappiness: null,
+      makeLastPocDay: null,
+      makeGradeParts: null,
+      makeRecapSends: null,
+      cardLastCheckinDay: null,
+      typeform: null,
+      meetingUrl: null,
+      storedActionItems: 3,
+      calls: new Map(),
+      nativeLinkFirst: true,
+      ...o,
+    });
+    const to = (plans: Row[], c = compare()) =>
+      judge(plans, c).find(j => j.effect === "todo_comment");
+    const recorder = {
+      recorder: 3,
+      staff: 0,
+      clientEmail: 0,
+      nameOnly: 0,
+      none: 0,
+    };
+    // Every open item assigned to the recorder: They owe is empty, explained.
+    expect(to(todo({}), compare({ todoAssignees: recorder }))).toEqual({
+      effect: "todo_comment",
+      state: "planned",
+      verdict: "differs",
+      reason: `The plan has 3 lines (3 ours, 0 theirs). ${TODO_EXPLAINED.recorder(3)}`,
+      explained: true,
+    });
+    expect(TODO_EXPLAINED.recorder(3)).toBe(
+      "They owe is empty: Fathom assigned all 3 action items to the recorder; none names the client side.",
+    );
+    // One to other staff: They owe is still empty, but GPT's list explains it.
+    const mixed = { ...recorder, recorder: 2, staff: 1 };
+    expect(to(todo({}), compare({ todoAssignees: mixed }))).toMatchObject({
+      verdict: "differs",
+      explained: true,
+      reason: `The plan has 3 lines (3 ours, 0 theirs): They owe is empty. ${TODO_EXPLAINED.gpt(3)}`,
+    });
+    // They owe empty although Fathom gave open items to a client address or a
+    // name off the staff list: the defect G3 guards (client items in We owe),
+    // never explained, whether or not the line count matches.
+    const toClient = { ...recorder, recorder: 1, clientEmail: 2 };
+    const toName = { ...recorder, recorder: 2, nameOnly: 1 };
+    for (const todoAssignees of [toClient, toName])
+      expect(to(todo({}), compare({ todoAssignees }))).toEqual({
+        effect: "todo_comment",
+        state: "planned",
+        verdict: "differs",
+        reason: "The plan has 3 lines (3 ours, 0 theirs): They owe is empty.",
+      });
+    // We owe empty: explained (GPT's list) only when Fathom gave no open item
+    // to the recorder, other staff or no one.
+    const allClient = { ...recorder, recorder: 0, clientEmail: 2, nameOnly: 1 };
+    const theirsOnly = todo({ sides: { ours: 0, theirs: 3 } });
+    expect(to(theirsOnly, compare({ todoAssignees: allClient }))).toEqual({
+      effect: "todo_comment",
+      state: "planned",
+      verdict: "differs",
+      reason: `The plan has 3 lines (0 ours, 3 theirs): We owe is empty. ${TODO_EXPLAINED.gpt(3)}`,
+      explained: true,
+    });
+    for (const todoAssignees of [
+      { ...allClient, nameOnly: 0, recorder: 1 },
+      { ...allClient, nameOnly: 0, staff: 1 },
+      { ...allClient, nameOnly: 0, none: 1 },
+    ])
+      expect(to(theirsOnly, compare({ todoAssignees }))).toEqual({
+        effect: "todo_comment",
+        state: "planned",
+        verdict: "differs",
+        reason: "The plan has 3 lines (0 ours, 3 theirs): We owe is empty.",
+      });
+    // Both sides empty while Fathom holds open items: never explained.
+    expect(
+      to(
+        todo({ items: 0, sides: { ours: 0, theirs: 0 } }),
+        compare({ todoAssignees: recorder }),
+      ),
+    ).toEqual({
+      effect: "todo_comment",
+      state: "planned",
+      verdict: "differs",
+      reason: "The plan has 0 lines (0 ours, 0 theirs): both sides are empty.",
+    });
+    // Both sides planned but far fewer lines than Make's bullets: GPT's list.
+    const both = { ...recorder, recorder: 1, clientEmail: 2 };
+    expect(
+      to(
+        todo({ sides: { ours: 1, theirs: 2 } }),
+        compare({ todoAssignees: both }),
+      ),
+    ).toMatchObject({
+      verdict: "differs",
+      explained: true,
+      reason: `The plan has 3 lines (1 ours, 2 theirs); Make's comment had 14 bullet lines. ${TODO_EXPLAINED.gpt(3)}`,
+    });
+    expect(TODO_EXPLAINED.gpt(3)).toBe(
+      "Make's comment is GPT's list from the whole transcript and the Additional Notes ([3]); the plan is Fathom's 3 action items, which the CSM edits before she sends.",
+    );
+    // Whom Fathom assigned the items to unknown (no stored recording, in --live
+    // or --shadow), or a shadow run's list the CSM edited away from Fathom's
+    // items: the difference stays unexplained. --shadow passes the counts only
+    // while the CSM's list is still Fathom's (the --shadow describe below
+    // proves both sides end to end).
+    const unknown = to(todo({}), compare({ todoAssignees: null }));
+    expect([unknown?.verdict, unknown?.explained, unknown?.reason]).toEqual([
+      "differs",
+      undefined,
+      "The plan has 3 lines (3 ours, 0 theirs): They owe is empty.",
+    ]);
+    // A comment that would notify everyone, or a skip with stored items, is never explained.
+    expect(
+      to(todo({ notify_all: true }), compare({ todoAssignees: recorder }))
+        ?.explained,
+    ).toBeUndefined();
+    expect(
+      to(
+        todo({}, "skipped", "No stored action item."),
+        compare({ todoAssignees: recorder }),
+      ),
+    ).toMatchObject({
+      verdict: "differs",
+      reason: expect.stringContaining(
+        "although the recording has 3 stored action items",
+      ),
+    });
+    expect(
+      to(
+        todo({}, "skipped", "No stored action item."),
+        compare({ todoAssignees: recorder }),
+      )?.explained,
+    ).toBeUndefined();
+  });
+
   test("the fixture and the pinned picks must name the same responses and cards", () => {
     expect(() => loadEntries(FIXTURE, { picks: [PINS.picks[0]] })).toThrow(
       `The response ${T2.slice(0, 10)} has no pinned pick.`,
@@ -1001,8 +1258,9 @@ describe("--live's SQL on a production-shaped database", () => {
         [
           item(SPOKEN[0], CSM, "Noura Test", "Customer Success", "00:12:34"),
           item(SPOKEN[1], CONTACT_1, "Layla Invented", null, "00:01:05"),
-          item(SPOKEN[2], null, "Someone", null, "00:01:05"),
-          item(SPOKEN[3], CSM, "Noura Test", null, "00:01:05", true),
+          item(SPOKEN[2], null, "Faris Invented", null, "00:01:05"),
+          // A staff first name alone, in capitals: it leaves as the staff name.
+          item(SPOKEN[3], CSM, "  NOURA ", null, "00:01:05", true),
           item(SPOKEN[4], null, null, "Customer Success", "00:01:05"),
           item(SPOKEN[5], CONTACT_1, "Layla Invented", null, "00:01:05"),
         ],
@@ -1239,6 +1497,8 @@ describe("--live's SQL on a production-shaped database", () => {
       "kln-opqr-stu",
       "Layla Invented",
       "Huda Invented",
+      "Faris",
+      "NOURA",
       CONTACT_1,
       CONTACT_2,
       "Layla sounded worried",
@@ -1250,6 +1510,23 @@ describe("--live's SQL on a production-shaped database", () => {
       expect(all).not.toContain(text);
     // The staff's own addresses come back for the role lookup; contacts only masked.
     expect(all).toContain(m(CONTACT_1) as string);
+  });
+
+  test("an assignee leaves the SQL as the staff member's own name or as a contact hash, never as the contact's name", () => {
+    const rows = JSON.parse(
+      crossed.find(t => t.includes('"recording_id":"900000301"')) ?? "[]",
+    ) as Row[];
+    const names = rows
+      .find(r => r.recording_id === "900000301")
+      ?.action_items.map((x: Row) => x.assignee.name);
+    expect(names).toEqual([
+      "Noura Test",
+      contact("Layla Invented"),
+      contact("Faris Invented"),
+      "Noura Test",
+      null,
+      contact("Layla Invented"),
+    ]);
   });
 });
 
@@ -1398,6 +1675,39 @@ describe("--shadow, on synthetic plans and synthetic Make answers", () => {
         priority: "High",
       },
     ],
+    // S1's recording as readRecordings' SQL returns it (addresses through
+    // maskSql, names through maskNameSql, descriptions hashed): six open items,
+    // four ours and two theirs, as the plan holds them. S2's recording is not
+    // stored, so its counts are unknown.
+    shadow_meetings: [
+      {
+        recording_id: "900000901",
+        recorder_email: m(CSM),
+        action_items: [
+          item("Item c1c1c1c1c1c1", {
+            email: m(CSM),
+            team: "Customer Success",
+            name: "Noura Test",
+          }),
+          item("Item c2c2c2c2c2c2", {
+            email: m(CSM),
+            team: "Customer Success",
+          }),
+          item("Item c3c3c3c3c3c3", {
+            email: m(CSM),
+            team: "Customer Success",
+          }),
+          item("Item c4c4c4c4c4c4", { name: "Noura Test" }),
+          item("Item c5c5c5c5c5c5", {
+            email: m(CONTACT_1),
+            name: contact("Layla Invented"),
+          }),
+          item("Item c6c6c6c6c6c6", { email: m(CONTACT_1) }),
+          item("Item c7c7c7c7c7c7", { email: m(CSM), done: true }),
+        ],
+      },
+    ],
+    shadow_staff: [{ name: "Noura Test" }],
   };
   const asks: { card: string; after: number }[][] = [];
   const make = async (
@@ -1439,12 +1749,19 @@ describe("--shadow, on synthetic plans and synthetic Make answers", () => {
     });
   });
 
-  test("reads the plans and the Typeform rows once each, and asks the VPS only for the call that has a Typeform row", () => {
+  test("reads the plans, the Typeform rows, the runs' recordings and the staff names once each, and asks the VPS only for the call that has a Typeform row", () => {
     expect(reads.map(sql => /^-- replay:([a-z_]+)/.exec(sql)?.[1])).toEqual([
       "shadow",
       "shadow_forms",
+      "shadow_meetings",
+      "shadow_staff",
     ]);
     expect(reads[0]).toContain("e.plan - 'comment_text'");
+    // Only the runs' own recordings, masked as --live masks them.
+    expect(reads[2]).toContain("IN ('900000901', '900000911')");
+    expect(reads[2]).toContain(maskSql("m.recorded_by_email"));
+    expect(reads[2]).toContain(maskNameSql("x->'assignee'->>'name'"));
+    expect(reads[2]).not.toContain("m.raw->'action_items' AS");
     expect(asks).toEqual([
       [
         {
@@ -1478,6 +1795,13 @@ describe("--shadow, on synthetic plans and synthetic Make answers", () => {
     expect(one.todo_comment.reason).toBe(
       "The plan has 6 lines (4 ours, 2 theirs), the recording link on line 1; Make's comment had 8 bullet lines and no link on line 1.",
     );
+    // Whom Fathom assigned the run's open items to, counted as --live counts
+    // them; unknown for a run whose recording is not stored.
+    expect(shadow.responses.map(r => r.todos.assignees)).toEqual([
+      { recorder: 3, staff: 1, clientEmail: 2, nameOnly: 0, none: 0 },
+      null,
+      null,
+    ]);
     const two = byEffect(shadow, 1);
     expect(two.happiness.verdict).toBe("missing");
     expect(two.happiness.reason).toBe(
@@ -1512,6 +1836,143 @@ describe("--shadow, on synthetic plans and synthetic Make answers", () => {
     ]);
   });
 
+  test("a to-do comment difference is explained only while the CSM's list is still Fathom's open items", async () => {
+    const open = (n: number, o: Parameters<typeof item>[1]) =>
+      Array.from({ length: n }, (_, i) => item(`Item d${i}d${i}d${i}d${i}`, o));
+    const recorderItem = { email: m(CSM), team: "Customer Success" };
+    const clientItem = { email: m(CONTACT_1) };
+    /** S1 with this to-do comment plan, its recording's action items (null: not stored), and Make's comment of 22 bullet lines. */
+    const run = async (
+      sides: { ours: number; theirs: number },
+      items: Row[] | null,
+    ) => {
+      const rows: Record<string, Row[]> = {
+        ...SHADOW,
+        shadow: [
+          {
+            ...SHADOW.shadow[0],
+            effects: SHADOW.shadow[0].effects.map((e: Row) =>
+              e.effect === "todo_comment"
+                ? {
+                    ...e,
+                    plan: {
+                      ...e.plan,
+                      items: sides.ours + sides.theirs,
+                      sides,
+                    },
+                  }
+                : e,
+            ),
+          },
+        ],
+        shadow_meetings:
+          items === null
+            ? []
+            : [
+                {
+                  recording_id: "900000901",
+                  recorder_email: m(CSM),
+                  action_items: items,
+                },
+              ],
+      };
+      const report = await runShadow({
+        ids: [S1],
+        read: fakeRead(rows, []),
+        make: async cards =>
+          cards.map(c => ({
+            card: c.card,
+            after: c.after,
+            task: { status: 200, happinessOption: AT_RISK },
+            comment: {
+              status: 200,
+              found: 1,
+              shapes: [
+                {
+                  lines: 30,
+                  bulletLines: 22,
+                  linkFirst: true,
+                  ours: true,
+                  theirs: true,
+                },
+              ],
+            },
+            grade: { status: 200, parts: 2 },
+          })),
+      });
+      const todo = byEffect(report, 0).todo_comment;
+      return {
+        verdict: todo.verdict,
+        explained: todo.explained,
+        reason: todo.reason,
+        assignees: report.responses[0].todos.assignees,
+      };
+    };
+
+    // The CSM kept Fathom's three items, all the recorder's: They owe is empty, explained.
+    expect(await run({ ours: 3, theirs: 0 }, open(3, recorderItem))).toEqual({
+      verdict: "differs",
+      explained: true,
+      reason: `The plan has 3 lines (3 ours, 0 theirs). ${TODO_EXPLAINED.recorder(3)}`,
+      assignees: {
+        recorder: 3,
+        staff: 0,
+        clientEmail: 0,
+        nameOnly: 0,
+        none: 0,
+      },
+    });
+    // The CSM kept Fathom's three items on both sides, far fewer than Make's
+    // bullets: GPT's list explains it.
+    const mixed = [...open(1, recorderItem), ...open(2, clientItem)];
+    expect(await run({ ours: 1, theirs: 2 }, mixed)).toMatchObject({
+      verdict: "differs",
+      explained: true,
+      reason: `The plan has 3 lines (1 ours, 2 theirs); Make's comment had 22 bullet lines. ${TODO_EXPLAINED.gpt(3)}`,
+    });
+    // The CSM dropped all three client items and wrote one of her own: the
+    // plan is not Fathom's list, so the difference stays unexplained, and no
+    // sentence claims the plan is Fathom's.
+    const dropped = await run({ ours: 1, theirs: 0 }, open(3, clientItem));
+    expect(dropped).toEqual({
+      verdict: "differs",
+      explained: undefined,
+      reason: "The plan has 1 line (1 ours, 0 theirs): They owe is empty.",
+      assignees: {
+        recorder: 0,
+        staff: 0,
+        clientEmail: 3,
+        nameOnly: 0,
+        none: 0,
+      },
+    });
+    // The same number of lines with a client item moved to We owe: edited.
+    expect(await run({ ours: 2, theirs: 1 }, mixed)).toEqual({
+      verdict: "differs",
+      explained: undefined,
+      reason:
+        "The plan has 3 lines (2 ours, 1 theirs); Make's comment had 22 bullet lines.",
+      assignees: {
+        recorder: 1,
+        staff: 0,
+        clientEmail: 2,
+        nameOnly: 0,
+        none: 0,
+      },
+    });
+    // One more line than Fathom's open items (the CSM added one): edited.
+    expect(
+      (await run({ ours: 2, theirs: 2 }, mixed)).explained,
+    ).toBeUndefined();
+    // The recording is not stored: whom Fathom assigned the items to is unknown.
+    expect(await run({ ours: 3, theirs: 0 }, null)).toEqual({
+      verdict: "differs",
+      explained: undefined,
+      reason: "The plan has 3 lines (3 ours, 0 theirs): They owe is empty.",
+      assignees: null,
+    });
+  });
+
   test("writes shadow-report.json and .md, shapes and values only", () => {
     const files = writeReport(out, shadow);
     expect(files.map(f => f.slice(out.length + 1))).toEqual([
@@ -1526,9 +1987,16 @@ describe("--shadow, on synthetic plans and synthetic Make answers", () => {
         "At Risk",
         "High",
         "comment_text",
+        "Item c",
+        "Noura",
+        "Layla",
+        "Contact ",
       ])
         expect(text).not.toContain(secret);
     }
+    expect(readFileSync(files[1], "utf8")).toContain(
+      "Fathom assigned 6 open action items: 3 to the recorder, 1 to other staff, 2 to a client address.",
+    );
   });
 });
 

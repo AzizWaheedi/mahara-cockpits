@@ -13,6 +13,7 @@ import {
   sha256,
   summarySections,
   SUMMARY_WAIT,
+  TODOS_VERSION,
   TRANSCRIPT_WAIT,
   todosOutput,
 } from "./drafts.ts";
@@ -309,7 +310,7 @@ describe("checkin.drafts: keys and begin", () => {
     await w.run();
     const begins = w.f.service.named("cockpit_form_draft_begin").map(c => c.args.p);
     expect(begins.map(p => [p.kind, p.provider, p.promptVersion])).toEqual([
-      ["todos", "none", "checkin.todos.v1"],
+      ["todos", "none", "checkin.todos.v2"],
       ["client_notes", "deepseek", "checkin.client_notes.v1"],
       ["defcon_priority", "anthropic", "checkin.defcon_priority.v1"],
       ["grade", "anthropic", "checkin.grade.v1"],
@@ -549,13 +550,13 @@ describe("We owe / They owe (todos.ts through the drafts)", () => {
   const lines = labelLines(parseTranscript(TRANSCRIPT), { recorderEmail: CSM_EMAIL, recorderName: "Csm Seat", staff: STAFF });
   const bundle = { recordingId: "194756343", taskId: "86exCITYW", summary: SUMMARY, transcript: TRANSCRIPT, lines, actionItems: ACTION_ITEMS, share: "https://fathom.video/share/TESTshareAAA1", staff: STAFF, client: { name: "City Wood", stage: null, happiness: null }, lastForm: null, sections: summarySections(SUMMARY), theyOwe: [] };
 
-  test("sides by email, team and speaker; owner from the staff role; unsure without a speaker; completed dropped; the href shape", () => {
+  test("sides by email, team and speaker; owner from the staff role; a name off the staff list is theirs, unsure; completed dropped; the href shape", () => {
     const out = todosOutput(bundle as any) as { items: Record<string, unknown>[]; nextSteps: Record<string, unknown>[] };
     expect(out.items).toEqual([
       { side: "we", text: "Send the new designs", owner: "the creative director", at: 62, href: "https://fathom.video/share/TESTshareAAA1?tab=summary&timestamp=62", unsure: false },
-      { side: "we", text: "Check the spend plan", owner: null, at: 40, href: "https://fathom.video/share/TESTshareAAA1?tab=summary&timestamp=40", unsure: true },
       { side: "they", text: "Send the logo files", owner: null, at: 150, href: "https://fathom.video/share/TESTshareAAA1?tab=summary&timestamp=150", unsure: false },
       { side: "they", text: "Book the next shoot day", owner: null, at: 12, href: "https://fathom.video/share/TESTshareAAA1?tab=summary&timestamp=12", unsure: false },
+      { side: "they", text: "Check the spend plan", owner: null, at: 40, href: "https://fathom.video/share/TESTshareAAA1?tab=summary&timestamp=40", unsure: true },
     ]);
     expect(out.nextSteps).toEqual([{ text: "Send the logo files", at: 150, href: "https://fathom.video/share/TESTshareAAA1?tab=summary&timestamp=150" }]);
   });
@@ -570,8 +571,111 @@ describe("We owe / They owe (todos.ts through the drafts)", () => {
     );
     expect(items.map(i => [i.side, i.unsure, i.href])).toEqual([
       ["we", false, null],
-      ["we", true, null],
+      ["they", true, null],
     ]);
+  });
+
+  /** One name-only item (no email, no team) as Fathom lists it. */
+  const named = (assigneeName: string | null, description = "Share the stock list") =>
+    ({ description, assigneeEmail: null, assigneeName, assigneeTeam: null, seconds: 30, playbackUrl: null, completed: false });
+
+  test("a staff member's full name is ours and sure; the owner stays empty for the CSM to fill", () => {
+    const items = todoItems([named("Team Member"), named("csm seat", "Book the shoot")], { shareUrl: null, staff: STAFF });
+    expect(items.map(i => [i.text, i.side, i.unsure, i.owner])).toEqual([
+      ["Share the stock list", "we", false, null],
+      ["Book the shoot", "we", false, null],
+    ]);
+  });
+
+  test("a staff first name alone is ours; a name sharing only a surname is not", () => {
+    const items = todoItems([named("Ceo"), named("Other Seat")], { shareUrl: null, staff: STAFF });
+    expect(items.map(i => [i.side, i.unsure])).toEqual([
+      ["we", false],
+      ["they", true],
+    ]);
+  });
+
+  test("Fathom's unnamed speaker (Speaker 2) with no transcript is not on the staff list: theirs, unsure, so the window asks", () => {
+    const items = todoItems([named("Speaker 2")], { shareUrl: null, staff: STAFF });
+    expect(items.map(i => [i.text, i.side, i.unsure])).toEqual([["Share the stock list", "they", true]]);
+  });
+
+  test("Fathom's unnamed speaker who speaks in the transcript is still unsure: the drafts' own path asks Who owes this?", () => {
+    // The transcript labels every speaker it cannot place Client, and an in-room call can put our staff under
+    // "Speaker 2", so a placeholder never takes a firm side from it. A real name the transcript knows still does.
+    const transcript = [
+      "[00:00:01] Csm Seat: Hello.",
+      "[00:00:05] Speaker 2: I will share the stock list.",
+      "[00:00:09] Speaker: Thanks.",
+      "[00:00:20] Omar Testcontact: And I will approve the copy.",
+    ].join("\n");
+    const spoken = labelLines(parseTranscript(transcript), { recorderEmail: CSM_EMAIL, recorderName: "Csm Seat", staff: STAFF });
+    expect(spoken.map(l => [l.speaker, l.label])).toEqual([["Csm Seat", "CSM"], ["Speaker 2", "Client"], ["Speaker", "Client"], ["Omar Testcontact", "Client"]]);
+    const fathom = (description: string, name: string, stamp: string) =>
+      ({ description, assignee: { email: null, name, team: null }, recording_timestamp: stamp, completed: false });
+    const out = todosOutput({
+      ...bundle,
+      transcript,
+      lines: spoken,
+      actionItems: [
+        fathom("Share the stock list", "Speaker 2", "00:00:05"),
+        fathom("Send the price sheet", "speaker  3", "00:00:07"),
+        fathom("Confirm the date", "Speaker", "00:00:09"),
+        fathom("Approve the copy", "Omar Testcontact", "00:00:20"),
+      ],
+    } as any) as { items: Record<string, unknown>[] };
+    expect(out.items.map(i => [i.text, i.side, i.unsure])).toEqual([
+      ["Share the stock list", "they", true],
+      ["Send the price sheet", "they", true],
+      ["Confirm the date", "they", true],
+      ["Approve the copy", "they", false],
+    ]);
+    // A name that only starts with the word stays a name: the transcript or the staff list decides it.
+    const sideOfName = (name: string) => (name === "Speakerman Two" ? ("we" as const) : null);
+    expect(todoItems([named("Speakerman Two"), named("Speaker 2")], { shareUrl: null, staff: STAFF, sideOfName }).map(i => [i.side, i.unsure])).toEqual([
+      ["we", false],
+      ["they", true],
+    ]);
+  });
+
+  test("no name at all stays ours and unsure; an empty or blank name counts as none", () => {
+    const items = todoItems([named(null), named("   "), named("")], { shareUrl: null, staff: STAFF });
+    expect(items.map(i => [i.side, i.unsure])).toEqual([
+      ["we", true],
+      ["we", true],
+      ["we", true],
+    ]);
+  });
+
+  test("the transcript wins over the staff list, both ways", () => {
+    const sideOfName = (name: string) => (name === "Team Member" ? ("they" as const) : name === "Omar Testcontact" ? ("we" as const) : null);
+    const items = todoItems([named("Team Member"), named("Omar Testcontact"), named("Someone Else")], { shareUrl: null, staff: STAFF, sideOfName });
+    expect(items.map(i => [i.side, i.unsure])).toEqual([
+      ["they", false],
+      ["we", false],
+      ["they", true],
+    ]);
+  });
+
+  test("nothing invented or dropped: every open item stays one line in Fathom's words, emails and teams as before", () => {
+    const items = todoItems(
+      [
+        { description: "Send the invoice", assigneeEmail: "Seat@MaharaMedia.com", assigneeName: "Somebody New", assigneeTeam: null, seconds: 1, playbackUrl: null, completed: false },
+        { description: "Pay the invoice", assigneeEmail: "owner@citywood.example", assigneeName: "Team Member", assigneeTeam: null, seconds: 2, playbackUrl: null, completed: false },
+        named("Omar Testcontact", "  Approve   the copy  "),
+        { ...named("Omar Testcontact", "Done already"), completed: true },
+      ],
+      { shareUrl: null, staff: STAFF },
+    );
+    expect(items.map(i => [i.text, i.side, i.unsure])).toEqual([
+      ["Send the invoice", "we", false],
+      ["Pay the invoice", "they", false],
+      ["Approve the copy", "they", true],
+    ]);
+  });
+
+  test("the to-dos rule is version 2", () => {
+    expect(TODOS_VERSION).toBe("checkin.todos.v2");
   });
 
   test("summary lines: links become their words, timestamps leave, the section headings in English or Arabic", () => {

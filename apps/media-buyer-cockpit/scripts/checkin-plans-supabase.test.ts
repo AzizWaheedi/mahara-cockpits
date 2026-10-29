@@ -10,10 +10,10 @@
  * dedupe, the call_form link and ownCall), the write-through answers of 7.2
  * read through the client brief's exported code only (buildBrief and
  * formAnswer; OWNER_OURS, OWNER_THEIRS and noteLines are private to
- * clientBrief.ts), with short and Arabic items, and eleven cases the brief
- * still reads wrong marked test.failing (open before 2b: an item or a last
- * Client Notes line of one or two words joins its neighbour, on the other side
- * or into one line on its own side), one shadow submit end
+ * clientBrief.ts), with short and Arabic items, and the eleven cases Stage 2b
+ * build 12 fixed (each labelled to-do stays whole on its side however short,
+ * and a short last Client Notes line no longer takes a to-do into the recap;
+ * docs/forms/STAGE2B-CONTRACT.md 4.12, G11), one shadow submit end
  * to end as the CSM (eight effect rows,
  * dry_run or skipped, nothing outside the forms tables), and, with the
  * registry flipped in a rolled-back transaction, v's executor writing the
@@ -1087,25 +1087,19 @@ describe("the write-through answers (7.2)", () => {
     expect(brief.promises.ours).toHaveLength(2);
   });
 
-  // Open before 2b (Stage 2a review, dbp-1). The brief's noteLines
-  // (clientBrief.ts, which no builder owns) joins a line of fewer than four
-  // words to the next one (a last one to the one before), whatever its label,
-  // and reads Client Notes and Additional Notes as one text. So an item of one
-  // or two words lands with its neighbour: on the neighbour's side when the
-  // neighbour is the other side's, and as one line with a stray "Mahara:" or
-  // "Client:" inside it when the neighbour is on the same side (two to-dos
-  // become one, and the rail's "We owed n things", checkinRail.ts's weOwed =
-  // promises.ours.length, counts one). A short last Client Notes line takes
-  // the first to-do into the recap. x writes each item as its own labelled
-  // line (the short or Arabic item test above); what is left is the brief's.
-  // These hold what 11 asks for: every We owe text in promises.ours and every
-  // They owe text in promises.theirs, each its own line, so two items on one
-  // side stay two.
-  // They fail until the brief changes; when one passes, bun reports it: drop
-  // its `.failing`. A fix that only stops a join across two labels turns the
-  // first six green and leaves the five same-side cases after them failing:
-  // keep those marked until the brief keeps every labelled line whole.
-  test.failing("open before 2b: a short last We owe item keeps its side (We owe ['Send invoice'], They owe ['Pay deposit'])", async () => {
+  // Fixed in 2b (build 12, dbp-1, G11; docs/forms/STAGE2B-CONTRACT.md 4.12).
+  // Before it, the brief's noteLines joined a line of fewer than four words
+  // to the next one (a last one to the one before), whatever its label, and
+  // read Client Notes and Additional Notes as one text, so an item of one or
+  // two words landed with its neighbour and a short last Client Notes line
+  // took the first to-do into the recap. Now a line with an owner label
+  // ("Mahara:", "Client:") is never joined, and the two answers are read
+  // apart. These hold what G11 asks for: every We owe text in promises.ours
+  // and every They owe text in promises.theirs, each its own line, so two
+  // items on one side stay two (the rail's "We owed n things",
+  // checkinRail.ts's weOwed = promises.ours.length, counts both). Their titles
+  // keep "open before 2b" as the record of when each was open.
+  test("open before 2b: a short last We owe item keeps its side (We owe ['Send invoice'], They owe ['Pay deposit'])", async () => {
     const { ours, theirs } = await briefOf({
       ...bare,
       we_owe: [todo("Send invoice")],
@@ -1117,7 +1111,7 @@ describe("the write-through answers (7.2)", () => {
     });
   });
 
-  test.failing("open before 2b: a short item between long ones keeps its side", async () => {
+  test("open before 2b: a short item between long ones keeps its side", async () => {
     const { ours, theirs } = await briefOf({
       ...bare,
       we_owe: [todo("Send the April report by Thursday"), todo("Book shoot")],
@@ -1129,7 +1123,7 @@ describe("the write-through answers (7.2)", () => {
     });
   });
 
-  test.failing("open before 2b: short Arabic items keep their sides", async () => {
+  test("open before 2b: short Arabic items keep their sides", async () => {
     const { ours, theirs } = await briefOf({
       ...bare,
       we_owe: [todo("إرسال الفاتورة")],
@@ -1141,7 +1135,7 @@ describe("the write-through answers (7.2)", () => {
     });
   });
 
-  test.failing("open before 2b: a one-word last They owe item keeps its side", async () => {
+  test("open before 2b: a one-word last They owe item keeps its side", async () => {
     const { ours, theirs } = await briefOf({
       ...bare,
       we_owe: [todo("Send the new ad drafts by Thursday")],
@@ -1153,7 +1147,7 @@ describe("the write-through answers (7.2)", () => {
     });
   });
 
-  test.failing("open before 2b: a short last Client Notes line keeps the first to-do out of the recap", async () => {
+  test("open before 2b: a short last Client Notes line keeps the first to-do out of the recap", async () => {
     const { ours, recap } = await briefOf({
       ...bare,
       we_owe: [todo("Send the new ad drafts by Thursday")],
@@ -1169,7 +1163,7 @@ describe("the write-through answers (7.2)", () => {
   });
 
   // The They owe side of the case above.
-  test.failing("open before 2b: a short last Client Notes line keeps a They owe item out of the recap", async () => {
+  test("open before 2b: a short last Client Notes line keeps a They owe item out of the recap", async () => {
     const { theirs, recap } = await briefOf({
       ...bare,
       they_owe: [todo("Share the showroom photos with the team")],
@@ -1183,7 +1177,7 @@ describe("the write-through answers (7.2)", () => {
 
   // Two items on one side stay two (a fix that only stops a join across two
   // labels leaves these as one line). weOwed is what the rail counts.
-  test.failing("open before 2b: a short We owe item before a long one stays its own line", async () => {
+  test("open before 2b: a short We owe item before a long one stays its own line", async () => {
     const { ours, brief } = await briefOf({
       ...bare,
       we_owe: [todo("Invoice"), todo("Send the April report by Thursday")],
@@ -1194,7 +1188,7 @@ describe("the write-through answers (7.2)", () => {
     });
   });
 
-  test.failing("open before 2b: a short last We owe item stays its own line", async () => {
+  test("open before 2b: a short last We owe item stays its own line", async () => {
     const { ours, brief } = await briefOf({
       ...bare,
       we_owe: [todo("Send the April report by Thursday"), todo("Invoice")],
@@ -1205,7 +1199,7 @@ describe("the write-through answers (7.2)", () => {
     });
   });
 
-  test.failing("open before 2b: two short We owe items stay two lines", async () => {
+  test("open before 2b: two short We owe items stay two lines", async () => {
     const { ours, brief } = await briefOf({
       ...bare,
       we_owe: [todo("Invoice"), todo("Book shoot")],
@@ -1216,7 +1210,7 @@ describe("the write-through answers (7.2)", () => {
     });
   });
 
-  test.failing("open before 2b: two short Arabic We owe items stay two lines", async () => {
+  test("open before 2b: two short Arabic We owe items stay two lines", async () => {
     const { ours, brief } = await briefOf({
       ...bare,
       we_owe: [todo("إرسال الفاتورة"), todo("حجز التصوير")],
@@ -1227,7 +1221,7 @@ describe("the write-through answers (7.2)", () => {
     });
   });
 
-  test.failing("open before 2b: a short They owe item before a long one stays its own line", async () => {
+  test("open before 2b: a short They owe item before a long one stays its own line", async () => {
     const { theirs } = await briefOf({
       ...bare,
       they_owe: [todo("Pay"), todo("Share the showroom photos with the team")],

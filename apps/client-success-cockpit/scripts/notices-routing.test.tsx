@@ -234,7 +234,7 @@ describe("each notice reads as one sentence", () => {
 });
 
 describe("read only", () => {
-  test("a viewer sees the eight sentences, their last stops, and who may change them", async () => {
+  test("a viewer sees the ten sentences, their last stops, and who may change them", async () => {
     const read = settingsReadFixture({ edit: false });
     const host = await draw(
       <NoticesRouting io={fakeNoticesIO(read)} initial={read} />,
@@ -242,7 +242,7 @@ describe("read only", () => {
     const t = text(host);
     expect(t).toContain("Notices and routing");
     expect(t).toContain(
-      "Where the cockpit posts in Slack when a kickoff or a Brand Blueprint is done, and who it tags. A change applies to the next notice.",
+      "Where the cockpit posts in Slack after a kickoff, a Brand Blueprint or a 1-1 call, and who it tags. A change applies to the next notice.",
     );
     const labels = Array.from(host.querySelectorAll("li[data-kind] h3")).map(
       (h: any) => h.textContent,
@@ -256,6 +256,8 @@ describe("read only", () => {
       "Brand Blueprint completed, for media",
       "Blueprint card confirmed",
       "Offer locked",
+      "Call grade",
+      "Recap not sent",
     ]);
     expect(text(row(host, "kickoff"))).toContain(
       "Posts in #csm-general and tags the creative director.",
@@ -534,7 +536,9 @@ describe("as an editor", () => {
     expect(t).toContain(
       "Refused: Invite @mahara-club-bot to #client-call-feedback, then add it again.",
     );
-    expect(t).toContain("Used by Kickoff complete and Brand Blueprint closed.");
+    expect(t).toContain(
+      "Used by Kickoff complete, Brand Blueprint closed and Recap not sent.",
+    );
 
     const id = host.querySelector("#notice-channel-id");
     const name = host.querySelector("#notice-channel-name");
@@ -611,6 +615,155 @@ describe("as an editor", () => {
     );
     expect(text(host2)).not.toContain("Who can change these");
     expect(buttonIn(host2, "Send a test to me")).toBeTruthy();
+  });
+});
+
+describe("the 1-1 notes' two rows (STAGE2B-CONTRACT.md 5.4)", () => {
+  test("Call grade and Recap not sent read as sentences, each with its hint", async () => {
+    const read = settingsReadFixture({ edit: false });
+    const host = await draw(
+      <NoticesRouting io={fakeNoticesIO(read)} initial={read} />,
+    );
+    const grade = row(host, "checkin.grade");
+    expect(text(grade)).toContain("Call grade");
+    expect(text(grade)).toContain("Posts in #call-grades and tags nobody.");
+    expect(text(grade)).toContain(
+      "The grade of each recorded 1-1 call, posted once per call. Tags nobody.",
+    );
+    expect(text(grade)).toContain("No notice of this kind has gone out yet.");
+    const late = row(host, "checkin.recap_late");
+    expect(text(late)).toContain("Recap not sent");
+    expect(text(late)).toContain("Posts in #csm-general and tags nobody.");
+    expect(text(late)).toContain(
+      "A client recap still not sent 24 hours after the call.",
+    );
+    // A viewer sees their state, never a control.
+    expect(grade.querySelector('[role="switch"]')).toBeNull();
+    expect(text(grade)).toContain("On");
+  });
+
+  test("the Call grade has no tag editor and lists only private channels; Recap not sent keeps both", async () => {
+    const read = settingsReadFixture();
+    const io = fakeNoticesIO(read);
+    const host = await draw(<NoticesRouting io={io} initial={read} />);
+    const grade = row(host, "checkin.grade");
+    expect(text(grade.querySelector("summary"))).toBe("Change where");
+    expect(text(grade)).toContain(
+      "Tags nobody. A grade is about a person's call.",
+    );
+    // No tag pills, no "Tag someone by name".
+    expect(buttonIn(grade, "The CSM")).toBeUndefined();
+    expect(buttonIn(grade, "The creative director")).toBeUndefined();
+    expect(text(grade)).not.toContain("Tag someone by name");
+    expect(grade.querySelector("legend")?.textContent).toBe("Posts in");
+    expect(
+      Array.from(grade.querySelectorAll("fieldset legend")).map(
+        (l: any) => l.textContent,
+      ),
+    ).toEqual(["Posts in"]);
+    // Private and ready only: the public #team-wins and the refused channel are left out.
+    const choices = Array.from(grade.querySelectorAll("fieldset button")).map(
+      (b: any) => text(b),
+    );
+    expect(choices).toEqual(["#csm-general", "#media-general", "#call-grades"]);
+    expect(text(grade)).toContain(
+      "Only channels the cockpit has checked as private are listed.",
+    );
+    // Every other post row still lists the public channel and keeps its tags.
+    const late = row(host, "checkin.recap_late");
+    expect(text(late.querySelector("summary"))).toBe("Change where and who");
+    expect(buttonIn(late, "#team-wins")).toBeTruthy();
+    expect(buttonIn(late, "The CSM")).toBeTruthy();
+    expect(text(late)).not.toContain("A grade is about a person's call.");
+    // A move to another private channel saves the channel alone.
+    await click(buttonIn(grade, "#csm-general"));
+    await click(buttonIn(grade, "Save"));
+    await flush();
+    expect(io.calls.at(-1)).toEqual({
+      fn: "set",
+      args: ["checkin.grade", { channel: "C09RZ0GS0V9" }],
+    });
+    expect(text(row(host, "checkin.grade"))).toContain(
+      "Posts in #csm-general and tags nobody.",
+    );
+  });
+
+  test("with no private channel ready, the Call grade says what to do", async () => {
+    const read = settingsReadFixture();
+    const open = {
+      ...read,
+      channels: read.channels.map(c => ({ ...c, private: false })),
+    };
+    const host = await draw(
+      <NoticesRouting io={fakeNoticesIO(open)} initial={open} />,
+    );
+    const grade = row(host, "checkin.grade");
+    expect(grade.querySelectorAll("fieldset button").length).toBe(0);
+    expect(text(grade)).toContain(
+      "No private channel is ready yet. Add one under Channels below; the cockpit checks whether it is private.",
+    );
+  });
+
+  test("the server's Call grade refusals show under the control, in its words", async () => {
+    const read = settingsReadFixture();
+    const io = fakeNoticesIO(read);
+    // The server refuses a public channel and a tag, whatever a page sends.
+    await expect(
+      io.set("checkin.grade", { channel: "C0EXAMPLE03" }),
+    ).rejects.toThrow(
+      "The call grade posts only in a private channel. Choose one the cockpit has checked as private.",
+    );
+    await expect(
+      io.set("checkin.grade", { mentionRule: ["seat:csm"] }),
+    ).rejects.toThrow("The call grade tags nobody.");
+    const refusing = {
+      ...io,
+      set: async () => {
+        throw new NoticeError(
+          "The call grade posts only in a private channel. Choose one the cockpit has checked as private.",
+          "22023",
+        );
+      },
+    };
+    const host = await draw(<NoticesRouting io={refusing} initial={read} />);
+    const grade = row(host, "checkin.grade");
+    await click(buttonIn(grade, "#media-general"));
+    await click(buttonIn(grade, "Save"));
+    await flush();
+    expect(grade.querySelector('[role="alert"]')?.textContent).toBe(
+      "The call grade posts only in a private channel. Choose one the cockpit has checked as private.",
+    );
+    // Removing the Call grade's channel is refused while it posts there.
+    const remove = Array.from(host.querySelectorAll("button")).find(
+      (b: any) => b.getAttribute("aria-label") === "Remove #call-grades",
+    );
+    const host2 = await draw(<NoticesRouting io={io} initial={read} />);
+    const remove2 = Array.from(host2.querySelectorAll("button")).find(
+      (b: any) => b.getAttribute("aria-label") === "Remove #call-grades",
+    );
+    expect(remove).toBeTruthy();
+    await click(remove2);
+    await flush();
+    expect(text(host2)).toContain(
+      "The Call grade notice posts there. Choose another channel for it first.",
+    );
+    expect(text(host2)).toContain("Used by Call grade.");
+  });
+
+  test("the switch is the Call grade's kill switch, and says so in its own words", async () => {
+    const read = settingsReadFixture();
+    const io = fakeNoticesIO(read);
+    const host = await draw(<NoticesRouting io={io} initial={read} />);
+    await click(row(host, "checkin.grade").querySelector('[role="switch"]'));
+    await flush();
+    expect(io.calls.at(-1)).toEqual({
+      fn: "set",
+      args: ["checkin.grade", { on: false }],
+    });
+    expect(toasts).toContain(
+      'Turned off. The "Call grade" notice does not post until it is on again.',
+    );
+    expect(text(row(host, "checkin.grade"))).toContain("Off.");
   });
 });
 
@@ -702,7 +855,7 @@ describe("the RPC clients", () => {
       },
     };
     const read = await readNoticeSettings(client as never);
-    expect(read.notices).toHaveLength(8);
+    expect(read.notices).toHaveLength(10);
     expect(asked[0]).toEqual(["cockpit_slack_notice_settings_read", undefined]);
     await expect(
       setNoticeSetting(client as never, "kickoff", { mentionRule: [] }),

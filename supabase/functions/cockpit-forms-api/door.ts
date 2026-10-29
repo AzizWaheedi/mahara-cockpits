@@ -2,18 +2,25 @@
  * The door of cockpit-forms-api (docs/forms/STAGE2-CONTRACT.md 6.2), deployed with
  * the JWT check on. POST only; a bearer token is required; the user comes from
  * Supabase Auth and the seat from cockpit_forms_actor. A service-role token (the
- * gateway has checked its signature) runs the doctor and nothing else. Every op
+ * gateway has checked its signature) runs the doctor and nothing else. A request
+ * carrying x-cron-secret (cockpit_form_effects_kick, 2b build 0) runs the 1-1
+ * notes sweep and nothing else, when the secret equals NOTICES_CRON_SECRET
+ * (both trimmed, as cockpit-notices compares them, then compared in constant
+ * time; no new secret, Z11); a wrong one is 401. Every op
  * gates itself again in the database: checkin.calls and checkin.typeformSent
  * through the client gate, the draft and transcript ops through the response's
- * own gate (read with the seat's token), keys.save and the doctor for the CEO.
+ * own gate (read with the seat's token), recap.approve through the message's
+ * gate and again in its service RPC, keys.save and the doctor for the CEO.
  * An error answers {"error": "<one sentence>"} with 400, 403 or 404: never a
  * stack, a key or a provider's body.
  */
 import { type Rpc, RpcError } from "../cockpit-hours-sync/db.ts";
 import { checkinCalls } from "./calls.ts";
-import { checkinDrafts, type Kind } from "./drafts.ts";
-import { transcriptOp } from "./fathom.ts";
 import { runDoctor } from "./doctor.ts";
+import { checkinDrafts, type Kind } from "./drafts.ts";
+import { sweepEffects } from "./effects.ts";
+import { transcriptOp } from "./fathom.ts";
+import { approveRecap } from "./messages.ts";
 import { saveKey } from "./keys.ts";
 import { typeformSent } from "./typeform.ts";
 
@@ -80,6 +87,16 @@ export function tokenRole(token: string): string | null {
   }
 }
 
+/** Whether a given secret equals the expected one, in time that does not depend on where they differ. An empty expected secret matches nothing. */
+export function sameSecret(given: string, expected: string): boolean {
+  if (!expected) return false;
+  const a = new TextEncoder().encode(given);
+  const b = new TextEncoder().encode(expected);
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
+  return diff === 0;
+}
+
 /** An error as the browser may see it: its sentence and status, or a plain sentence that names nothing inside. */
 export function answerFor(error: unknown): { status: number; message: string } {
   if (error instanceof DoorError) return { status: error.status, message: error.message };
@@ -106,6 +123,15 @@ export function makeDoor(deps: Deps): (req: Request) => Promise<Response> {
     }
     const op = typeof body.op === "string" ? body.op : "";
     try {
+      // The 1-1 notes sweep's cron (2b build 0): its secret runs effects.sweep and nothing else. Both sides are
+      // trimmed as cockpit-notices trims them, so a secret saved with a trailing newline opens both doors alike
+      // (review round 3: the kick never reads the post's answer, so a 401 here would go unseen).
+      const cron = req.headers.get("x-cron-secret");
+      if (cron !== null) {
+        if (!sameSecret(cron.trim(), (deps.env("NOTICES_CRON_SECRET") ?? "").trim())) return json({ error: "Not allowed." }, 401);
+        if (op !== "effects.sweep") return json({ error: "The cron secret runs the 1-1 notes sweep only." }, 403);
+        return json(await sweepEffects(deps));
+      }
       if ((deps.serviceKey && token === deps.serviceKey) || tokenRole(token) === "service_role") {
         if (op !== "doctor") return json({ error: "The service key runs the doctor only." }, 403);
         return json(await runDoctor({ deps }));
@@ -129,6 +155,8 @@ export function makeDoor(deps: Deps): (req: Request) => Promise<Response> {
           return json(await transcriptOp(ctx, body));
         case "checkin.typeformSent":
           return json(await typeformSent(ctx, body));
+        case "recap.approve":
+          return json(await approveRecap(ctx, body));
         case "keys.save":
           if (!actor.ceo) return json({ error: "Only the CEO can change the 1-1 notes connections." }, 403);
           return json(await saveKey(ctx, body));

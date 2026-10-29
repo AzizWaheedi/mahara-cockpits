@@ -288,7 +288,8 @@ class Registered(unittest.TestCase):
         self.assertEqual(c.threshold, "Any minute in the last hour over 80: warn; over 95: fail. Any 429 in the hour: "
                                       "warn; 10 or more: fail.")
         for name in ("CLICKUP_REQUESTS_CALLS_PER_MINUTE", "CLICKUP_CALLS_PER_MINUTE",
-                     "CLICKUP_TASKS_CALLS_PER_MINUTE", "docs/requests/CLICKUP-DOWNGRADE.md"):
+                     "CLICKUP_TASKS_CALLS_PER_MINUTE", "CLICKUP_FORMS_CALLS_PER_MINUTE",
+                     "docs/requests/CLICKUP-DOWNGRADE.md"):
             self.assertIn(name, c.action)
         for table in (MEDIA, CSM, CEO, BOARD, RUNS):
             self.assertIn(table, c.reads)

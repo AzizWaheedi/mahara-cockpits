@@ -284,7 +284,8 @@ CHECKS = [
                   "fail.",
         run=run_budget, owner="the systems manager", confirm=2, clear=2,
         action="Read the busiest minute's split in the evidence. A cockpit job: lower its pacing secret "
-               "(CLICKUP_REQUESTS_CALLS_PER_MINUTE, CLICKUP_CALLS_PER_MINUTE, CLICKUP_TASKS_CALLS_PER_MINUTE). "
+               "(CLICKUP_REQUESTS_CALLS_PER_MINUTE, CLICKUP_CALLS_PER_MINUTE, CLICKUP_TASKS_CALLS_PER_MINUTE, "
+               "CLICKUP_FORMS_CALLS_PER_MINUTE). "
                "The native cycle: ask Hermes to pace it. Plan: docs/requests/CLICKUP-DOWNGRADE.md.",
     ),
 ]

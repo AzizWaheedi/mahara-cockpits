@@ -270,7 +270,8 @@ export function tiedRpc(db: {
 
 /** Everything a door or an op needs, faked, with what they wrote kept for the asserts. */
 export function fakeDeps(opts: { rpc?: Record<string, Handler>; seat?: Record<string, Handler>; routes?: Route[]; env?: Record<string, string>; storage?: Record<string, string>; signed?: boolean; now?: Date } = {}) {
-  const service = fakeRpc(opts.rpc ?? {});
+  // Move it here is off unless a test switches it on (cockpit_forms_switch, 20261029z).
+  const service = fakeRpc({ cockpit_forms_switch: false, ...(opts.rpc ?? {}) });
   const seat = fakeRpc(opts.seat ?? {});
   const net = fakeFetch(...(opts.routes ?? []));
   const health: Record<string, unknown>[] = [];

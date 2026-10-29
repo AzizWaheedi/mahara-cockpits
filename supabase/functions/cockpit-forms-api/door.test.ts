@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { RpcError } from "../cockpit-hours-sync/db.ts";
-import { answerFor, DoorError, makeDoor, tokenRole } from "./door.ts";
+import { answerFor, DoorError, makeDoor, sameSecret, tokenRole } from "./door.ts";
 import { ceoActor, csmActor, fakeDeps, jwt, SEAT_TOKEN, SERVICE_KEY } from "./testkit.ts";
 
 const post = (body: unknown, auth: string | null = SEAT_TOKEN, method = "POST") =>
@@ -145,5 +145,50 @@ describe("the door", () => {
     expect(text).not.toContain("secret");
     expect(text).not.toContain("sk-test");
     expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+  });
+});
+
+describe("the door: 2b ops", () => {
+  const cron = (body: unknown, secret: string) =>
+    new Request("https://example.test/functions/v1/cockpit-forms-api", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt({ role: "anon" })}`, "x-cron-secret": secret },
+      body: JSON.stringify(body),
+    });
+
+  test("sameSecret: equal only when every byte is; an empty expected secret matches nothing", () => {
+    expect(sameSecret("abc123", "abc123")).toBe(true);
+    for (const [a, b] of [["abc123", "abc124"], ["abc12", "abc123"], ["abc1234", "abc123"], ["", ""], ["x", ""], ["", "x"]]) expect(sameSecret(a, b)).toBe(false);
+    expect(sameSecret("سر", "سر")).toBe(true);
+  });
+
+  test("x-cron-secret is checked before any seat or service key: wrong is 401, another op 403, nothing called", async () => {
+    const f = fakeDeps({ env: { NOTICES_CRON_SECRET: "invented-secret-abc" }, rpc: { cockpit_forms_actor: csmActor } });
+    const door = makeDoor(f.deps);
+    const wrong = await door(cron({ op: "effects.sweep" }, "invented-secret-abd"));
+    expect([wrong.status, await wrong.json()]).toEqual([401, { error: "Not allowed." }]);
+    const other = await door(cron({ op: "checkin.calls", taskId: "86exCITYW" }, "invented-secret-abc"));
+    expect([other.status, await other.json()]).toEqual([403, { error: "The cron secret runs the 1-1 notes sweep only." }]);
+    expect(f.service.calls).toEqual([]);
+    expect(f.seat.calls).toEqual([]);
+  });
+
+  test("recap.approve is a seat op: the seat comes first, the service key never runs it", async () => {
+    const f = fakeDeps({ rpc: { cockpit_forms_actor: csmActor } });
+    const res = await makeDoor(f.deps)(post({ op: "recap.approve", messageId: "not-a-uuid", body: "x" }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Open the recap from the client page." });
+    expect(f.service.named("cockpit_forms_actor")).toHaveLength(1);
+    const svc = await makeDoor(fakeDeps().deps)(post({ op: "recap.approve" }, `Bearer ${SERVICE_KEY}`));
+    expect(svc.status).toBe(403);
+  });
+
+  test("the service key runs the doctor and it names NOTICES_CRON_SECRET as a boolean", async () => {
+    const f = fakeDeps({ env: { NOTICES_CRON_SECRET: "invented-secret-abc" }, rpc: doctorRpc });
+    const res = await makeDoor(f.deps)(post({ op: "doctor" }, `Bearer ${SERVICE_KEY}`));
+    expect(res.status).toBe(200);
+    const d = await res.json();
+    expect(d.secrets).toEqual({ NOTICES_CRON_SECRET: true });
+    expect(JSON.stringify(d)).not.toContain("invented-secret-abc");
   });
 });

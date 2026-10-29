@@ -11,7 +11,7 @@ import re
 from datetime import timedelta
 
 from guard.context import Context, SourceError
-from guard.model import Check, Result, age_min, ago, fail, kuwait, ok, parse_time, unknown, warn
+from guard.model import KUWAIT, Check, Result, age_min, ago, fail, kuwait, ok, parse_time, unknown, warn
 from guard.redact import brief_error, clean
 
 # key: (minutes its last good run may be old, what it carries)
@@ -19,6 +19,7 @@ CSM_KEYS = {
     "csm-ghl-calls": (45, "booked calls from GoHighLevel"),
     "csm-checkin-form": (45, "the 1-1 call notes form"),
     "csm-forms-history": (45, "the onboarding, kickoff and Blueprint forms"),
+    "csm-forms-record": (45, "kickoff and Blueprint records in the forms tables"),
     "csm-fathom": (45, "Fathom recordings"),
     "csm-meta-activities": (45, "Meta's activity log"),
     "csm-media-changes": (45, "media buyer changes"),
@@ -30,6 +31,8 @@ CALL_GAP_DAYS = 21
 FORM_MAX_DAYS = 7
 EVIDENCE_MIN = 0.70
 CHANGE_GAP_DAYS = 3
+LATE_DAYS = 14
+KICKOFF_GRACE_MIN = 30
 RUNBOOK = "hermes/csm-calls/RUNBOOK.md"
 
 
@@ -95,11 +98,37 @@ def run_coverage(ctx: Context) -> Result:
     return ok(f"All {len(clients)} live clients have a call within {CALL_GAP_DAYS} days.", evidence=ev)
 
 
+def _cutover(ctx: Context):
+    """When the 1-1 notes moved to the cockpit, or None while Typeform still takes them. Native only, and read as the
+    database reads it (cockpit_form_native_since: provider_since, else the row's updated_at). No checkin row in the
+    registry is could-not-be-checked, never "not switched yet"."""
+    rows = ctx.rows("cockpit_forms", "provider,provider_since,updated_at", where=[("key", "eq", "checkin")], limit=1)
+    if not rows:
+        raise SourceError("The forms registry has no checkin row.")
+    if rows[0].get("provider") != "native":
+        return None
+    return parse_time(rows[0].get("provider_since")) or parse_time(rows[0].get("updated_at"))
+
+
+def _candidates_without_notes(ctx: Context, cutover) -> list[dict]:
+    """Impromptu recordings since the cut-over, over a day old, still on no client. It reads the calls alone, plain
+    columns only: a native send whose recording was a candidate delivers call_match, whose attach sets candidate
+    false (20261027f_forms_core.sql), so a candidate still standing after 24 hours has no notes. It never reads
+    cockpit_form_responses, whose answers hold the CSM's notes (docs/forms/STAGE2B-CONTRACT.md 4.10)."""
+    rows = ctx.rows("cockpit_csm_calls", "id,source_id,starts_at,status,settled_reason",
+                    where=[("source", "eq", "fathom"), ("candidate", "eq", True), ("starts_at", "gte", cutover.isoformat()),
+                           ("starts_at", "lt", (ctx.now - timedelta(hours=24)).isoformat())], order="starts_at.asc")
+    return [r for r in rows if r.get("status") != "gone" and not r.get("settled_reason")]
+
+
 def run_unmatched(ctx: Context) -> Result:
     """Calls with no client over 7 days. An impromptu recording still waiting for its client (a candidate) and one
     the CSM set aside as not a 1-1 call (settled) are left out of the share and counted in the evidence
-    (docs/forms/STAGE2-CONTRACT.md section 9): the CSM's impromptu calls alone would push it over the line."""
+    (docs/forms/STAGE2-CONTRACT.md section 9): the CSM's impromptu calls alone would push it over the line.
+    candidates_without_notes_24h is csm-impromptu-notes' count, null before the cut-over."""
     since = (ctx.now - timedelta(days=7)).isoformat()
+    cutover = _cutover(ctx)
+    without_notes = len(_candidates_without_notes(ctx, cutover)) if cutover else None
     rows = ctx.rows("cockpit_csm_calls", "id,task_id,source,candidate,settled_reason",
                     where=[("starts_at", "gte", since), ("starts_at", "lte", ctx.now.isoformat()),
                            ("source", "in", ["ghl_appointment", "fathom", "checkin_form"])])
@@ -108,11 +137,12 @@ def run_unmatched(ctx: Context) -> Result:
     calls = [c for c in rows if c.get("candidate") is not True and not c.get("settled_reason")]
     if not calls:
         return unknown("No call in the last 7 days to measure.",
-                       evidence={"calls": 0, "candidates": len(candidates), "settled": len(settled)})
+                       evidence={"calls": 0, "candidates": len(candidates), "settled": len(settled),
+                                 "candidates_without_notes_24h": without_notes})
     un = [c for c in calls if not c.get("task_id")]
     share = len(un) / len(calls)
     ev = {"calls": len(calls), "unmatched": len(un), "share": round(share, 3), "candidates": len(candidates),
-          "settled": len(settled)}
+          "settled": len(settled), "candidates_without_notes_24h": without_notes}
     if share > UNMATCHED_MAX:
         return warn(f"{len(un)} of {len(calls)} calls in the last 7 days ({share:.0%}) matched no client, over the "
                     f"{UNMATCHED_MAX:.0%} line.", evidence=ev,
@@ -121,21 +151,55 @@ def run_unmatched(ctx: Context) -> Result:
     return ok(f"{len(un)} of {len(calls)} calls in the last 7 days matched no client ({share:.0%}).", evidence=ev)
 
 
+def _late_forms(ctx: Context, cutover) -> list[dict]:
+    """1-1 notes sent in Typeform after the switch-over, newest first (docs/forms/STAGE2B-CONTRACT.md 4.9). No answers:
+    the late row's notes are the person's to re-enter."""
+    since = max(cutover, ctx.now - timedelta(days=LATE_DAYS)).isoformat()
+    return ctx.rows("cockpit_csm_call_forms", "token,task_id,typed_client,submitted_at",
+                    where=[("form_kind", "eq", "checkin_late"), ("submitted_at", "gte", since)],
+                    order="submitted_at.desc")
+
+
+def _late_clients(ctx: Context, late: list[dict]) -> list[str]:
+    """Each late form's client as the board names it, else as typed. A form naming neither says so, never a blank."""
+    board = {d.get("taskId"): d.get("name") for d in (r.get("data") or {} for r in ctx.rows(
+        "cockpit_csm_sources", "data", where=[("table_name", "eq", "clients")]))}
+    return sorted({clean(board.get(f.get("task_id")) or f.get("typed_client"), 60) or "no client named" for f in late})
+
+
 def run_checkin_form(ctx: Context) -> Result:
     # By kind, not by form: the Typeform fRokTITH rows today, the cockpit's own cockpit-checkin rows after the
-    # cut-over (docs/forms/STAGE2-CONTRACT.md 1.3).
+    # cut-over (docs/forms/STAGE2-CONTRACT.md 1.3). Freshness reads checkin only; a late Typeform form is its own
+    # reading (4.9, Z15: the worker's row stays ok, so this warning is where a person hears of it).
     rows = ctx.rows("cockpit_csm_call_forms", "submitted_at", where=[("form_kind", "eq", "checkin")],
                     order="submitted_at.desc", limit=1)
     if not rows:
         return fail("No 1-1 call notes form is stored.", action=f"Run the typeform source by hand ({RUNBOOK}).")
     age = age_min(rows[0].get("submitted_at"), ctx.now)
-    if age is None or age > FORM_MAX_DAYS * 1440:
-        return warn(f"The newest 1-1 call notes form came in {ago(age)} ago (limit {FORM_MAX_DAYS} days): calls are "
-                    "happening without notes, or the form stopped reaching the store.",
-                    since=parse_time(rows[0].get("submitted_at")),
+    stale = age is None or age > FORM_MAX_DAYS * 1440
+    old = (f"The newest 1-1 call notes form came in {ago(age)} ago (limit {FORM_MAX_DAYS} days): calls are happening "
+           "without notes, or the form stopped reaching the store.")
+    cutover = _cutover(ctx)
+    late = _late_forms(ctx, cutover) if cutover else []
+    if late:
+        clients = _late_clients(ctx, late)
+        newest = parse_time(late[0].get("submitted_at"))
+        n = len(late)
+        said = "1 1-1 note" if n == 1 else f"{n} 1-1 notes"
+        sentence = (f"{said} arrived in Typeform after the switch-over, newest {kuwait(newest)}: "
+                    f"{', '.join(clients[:12])}{'…' if len(clients) > 12 else ''}. Re-enter them in the 1-1 notes in the "
+                    "cockpit and check that fRokTITH is closed.")
+        return warn(sentence + (f" {old}" if stale else ""), since=parse_time(late[-1].get("submitted_at")),
+                    evidence={"cutoverAt": cutover.isoformat(), "late": n, "newest": late[0].get("submitted_at"),
+                              "clients": clients[:20], "stale": stale},
+                    items=[str(f.get("token")) for f in late],
+                    action="Late Typeform 1-1 notes in RUNBOOK.md says what to do with each one.")
+    if stale:
+        return warn(old, since=parse_time(rows[0].get("submitted_at")),
                     action="Ask the CSMs to send the 1-1 form after every call; if they did, check Typeform fRokTITH "
                            "against csm-checkin-form.")
-    return ok(f"The newest 1-1 call notes form came in {ago(age)} ago.")
+    return ok(f"The newest 1-1 call notes form came in {ago(age)} ago.",
+              evidence={"cutoverAt": cutover.isoformat() if cutover else None, "late": 0 if cutover else None})
 
 
 PARITY_DAYS = 7
@@ -232,6 +296,62 @@ def run_fathom_webhook(ctx: Context) -> Result:
               f"recording{'' if n == 1 else 's'} with a summary, shared with a team, reached the store.", evidence=ev)
 
 
+def run_kickoff_webhook(ctx: Context) -> Result:
+    """Typeform's push of each kickoff (supabase/functions/forms-door, docs/forms/STAGE2B-CONTRACT.md section 6). Until
+    it is registered nothing is due. Once it is, a kickoff the 15-minute read stored first (source typeform_sync) is one
+    the webhook missed, counted only from the registration: everything stored before it came by the read on purpose.
+    Nothing is lost either way, so this is low and never reads a kickoff's content."""
+    rows = ctx.rows("cockpit_sync_state", "key,note,detail", where=[("key", "eq", "forms-door:kickoff")])
+    row = rows[0] if rows else {}
+    detail = row.get("detail") if isinstance(row.get("detail"), dict) else {}
+    if not _registered(detail):
+        return ok("Not registered yet: kickoffs arrive by the 15-minute read.", evidence={"registered": False})
+    registered = parse_time(detail.get("registeredAt"))
+    since = ctx.now - timedelta(hours=24)
+    since = max(since, registered) if registered else since
+    missed = ctx.rows("cockpit_form_responses", "id,submitted_at",
+                      where=[("form_key", "eq", "kickoff"), ("source", "eq", "typeform_sync"),
+                             ("submitted_at", "gte", since.isoformat()),
+                             ("submitted_at", "lt", (ctx.now - timedelta(minutes=KICKOFF_GRACE_MIN)).isoformat())],
+                      order="submitted_at.asc")
+    n = len(missed)
+    ev = {"registered": True, "registeredAt": detail.get("registeredAt"), "missed24h": n,
+          "lastDelivery": detail.get("lastDelivery"), "outcome": detail.get("outcome"), "note": clean(row.get("note"), 160)}
+    if n:
+        return warn(f"Typeform's webhook missed {n} kickoff{'' if n == 1 else 's'} in 24 h; the 15-minute read stored "
+                    f"{'it' if n == 1 else 'them'}.", since=parse_time(missed[0].get("submitted_at")), evidence=ev,
+                    items=[str(m.get("id")) for m in missed],
+                    action="The 15-minute read still stores every kickoff. Run forms_key.py status and probe-typeform "
+                           "kickoff, then register it again (RUNBOOK, Kickoff and Blueprint records).")
+    return ok("Typeform's webhook missed no kickoff in 24 h.", evidence=ev)
+
+
+def run_impromptu(ctx: Context) -> Result:
+    """Every impromptu call the CSM records gets a client and 1-1 notes, or is set aside (docs/forms/STAGE2B-CONTRACT.md
+    4.10, Z17). Counted from the cut-over: before it, Typeform takes the notes and a candidate says nothing. Evidence
+    holds recording ids only, never a host, a title or an answer."""
+    cutover = _cutover(ctx)
+    if cutover is None:
+        return ok("Counted from the switch-over to 1-1 notes in the cockpit; not switched yet.",
+                  evidence={"cutoverAt": None, "candidates_without_notes_24h": None})
+    rows = _candidates_without_notes(ctx, cutover)
+    n = len(rows)
+    # The prefix keeps each id whole: the store runs clean() on items and evidence, and clean() reads a bare 9-digit
+    # Fathom recording id as a phone number, so every recording would fold into one "<number>" item.
+    ids = [f"fathom_{r.get('source_id') or r.get('id')}" for r in rows]
+    starts = [t.astimezone(KUWAIT) for t in (parse_time(r.get("starts_at")) for r in rows) if t is not None]
+    ev = {"cutoverAt": cutover.isoformat(), "candidates_without_notes_24h": n,
+          "oldestDay": starts[0].strftime("%Y-%m-%d") if starts else None, "recordingIds": ids[:10]}
+    if not n:
+        return ok(f"{n} impromptu calls since the switch-over all have 1-1 notes or a client.", evidence=ev)
+    days = list(dict.fromkeys(f"{k.day} {k.strftime('%b')}" for k in starts))
+    said = "1 impromptu call older than a day has" if n == 1 else f"{n} impromptu calls older than a day have"
+    return warn(f"{said} no client and no 1-1 notes: {', '.join(days)}. Put each on its client and write its notes, or "
+                "mark it Not a 1-1 call.",
+                since=parse_time(rows[0].get("starts_at")), evidence=ev, items=ids,
+                action="Open Today: each impromptu call has Place it and Not a 1-1 call.")
+
+
 def run_evidence(ctx: Context) -> Result:
     """Held calls in the last 7 days with a recording or a 1-1 form linked. Only bookings on a client count, and that
     is decided here, not by a filter: no filter op says IS NOT NULL, and ("task_id", "neq", None) is task_id <> null
@@ -325,8 +445,10 @@ CHECKS = [
           action="Work the queue; fix the Client ID field on the GoHighLevel contacts it names."),
     Check(id="csm-checkin-form", area="workers", name="1-1 call notes keep coming",
           means="The 1-1 call notes form is sent after calls and reaches the store.", severity="medium",
-          reads="max(submitted_at) of cockpit_csm_call_forms with form_kind checkin",
-          threshold=f"Older than {FORM_MAX_DAYS} days: warn.", run=run_checkin_form, owner="the CSM lead",
+          reads="max(submitted_at) of cockpit_csm_call_forms with form_kind checkin; once the registry says native, "
+                f"its checkin_late rows of the last {LATE_DAYS} days since the cut-over",
+          threshold=f"Older than {FORM_MAX_DAYS} days, or any 1-1 notes that arrived in Typeform after the switch-over: "
+                    "warn.", run=run_checkin_form, owner="the CSM lead",
           confirm=2, action="Ask the CSMs for their notes; compare Typeform with the store."),
     Check(id="csm-notes-parity", area="workers", name="1-1 notes from the store match Typeform",
           means="The native feed reads the 1-1 notes from the store (release N4) and they read the same as Typeform "
@@ -347,6 +469,23 @@ CHECKS = [
           run=run_fathom_webhook, owner="the tech lead", confirm=2,
           action="The poll still runs every 15 minutes. Check the webhook in Fathom's settings, or register it again "
                  "(RUNBOOK, 1-1 notes in the cockpit)."),
+    Check(id="csm-impromptu-notes", area="workers", name="Impromptu calls get a client",
+          means="Every impromptu call the CSM records gets a client and 1-1 notes, or is set aside as not a 1-1 call.",
+          severity="medium",
+          reads="cockpit_forms checkin (provider, provider_since) and cockpit_csm_calls: Fathom candidates since the "
+                "cut-over and over 24 h old, id, source_id, starts_at, status and settled_reason only",
+          threshold="Any such candidate not gone and not set aside: warn. Before the cut-over: ok.",
+          run=run_impromptu, owner="the CSM lead", confirm=2,
+          action="Open Today: each impromptu call has Place it and Not a 1-1 call."),
+    Check(id="forms-kickoff-webhook", area="workers", name="Typeform kickoff webhook delivers",
+          means="Typeform pushes each kickoff to the cockpit; the 15-minute read stores any it misses.", severity="low",
+          reads="cockpit_sync_state forms-door:kickoff (detail.registered, detail.registeredAt) and the kickoff rows of "
+                "cockpit_form_responses: id, source, submitted_at (never the answers)",
+          threshold=f"Registered, and a kickoff of the last 24 h since registering, over {KICKOFF_GRACE_MIN} min old, "
+                    "stored by the read and not the webhook: warn. Not registered: ok.",
+          run=run_kickoff_webhook, owner="the tech lead", confirm=2,
+          action="The 15-minute read still stores every kickoff. Check the webhook with forms_key.py (RUNBOOK, Kickoff "
+                 "and Blueprint records)."),
     Check(id="csm-call-evidence", area="workers", name="Held calls have a recording or notes",
           means="Most held calls carry a Fathom recording or a 1-1 form.", severity="low",
           reads="held GoHighLevel calls over 7 days and their linked recordings and forms",

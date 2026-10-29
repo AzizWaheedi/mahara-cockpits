@@ -26,7 +26,8 @@
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
-  /* Teal as text: links and small type. Fills and rings keep --primary. */
+  /* Teal as text: links and small type. Fills keep --primary; the focus
+     ring (--ring) is this ink on the light page. */
   --color-primary-ink: var(--primary-ink);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
@@ -105,13 +106,16 @@
   --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(0.91 0.008 250);
   --input: oklch(0.91 0.008 250);
-  --ring: var(--mahara-teal);
+  /* The focus ring on the light page is the ink teal (4.6:1 on the page,
+     4.18:1 at the lowest, on accent): Mahara Teal reads 1.87:1 there and
+     fails 3:1 (docs/DESIGN.md, Focus; docs/forms/STAGE2B-CONTRACT.md O1a). */
+  --ring: var(--primary-ink);
   --sidebar: oklch(0.975 0.004 250);
   --sidebar-foreground: oklch(0.2 0.045 270);
   --sidebar-accent: oklch(0.94 0.02 195);
   --sidebar-accent-foreground: oklch(0.2 0.045 270);
   --sidebar-border: oklch(0.91 0.008 250);
-  --sidebar-ring: var(--mahara-teal);
+  --sidebar-ring: var(--primary-ink);
 
   /* Section-label teal that still passes contrast on white. */
   --color-teal-600: #0a9e98;
@@ -170,7 +174,14 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring;
+  }
+  /* Every control shows a 2px --ring outline set 2px off it on the page
+     colour. Zero specificity, so a control that draws its own ring (the
+     buttons, the 1-1 notes window's FOCUS) keeps it. */
+  :where(a[href], button, summary, [role="button"], [role="tab"], [role="menuitem"], [tabindex]:not([tabindex="-1"])):focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
   body {
     @apply bg-background text-foreground antialiased;

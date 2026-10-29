@@ -45,6 +45,19 @@ export function recapText(message: string): string {
 }
 
 /**
+ * A reviewer's full text split back into the message and Make's booking block (2b,
+ * recap.approve): the message is the text less its final blank line and block. A
+ * text that does not end with the block comes back whole with no block, so
+ * checkRecap's booking rule refuses it; a doubled block leaves one in the message,
+ * which the same rule refuses (the link appears twice).
+ */
+export function splitRecap(body: string): [message: string, block: string | null] {
+  const text = String(body ?? "");
+  const tail = `\n\n${BOOKING_BLOCK}`;
+  return text.endsWith(tail) ? [text.slice(0, -tail.length), BOOKING_BLOCK] : [text, null];
+}
+
+/**
  * The verdict on one recap. `text` is the full text with the booking block (by
  * default the message's own recapText), `stored` what the draft row holds, and
  * `teamToday` whether the group already had a team message today (2b; null in

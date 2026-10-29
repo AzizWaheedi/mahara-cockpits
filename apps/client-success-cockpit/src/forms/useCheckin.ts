@@ -10,6 +10,7 @@ import {
   type DraftsAnswer,
   type DraftView,
   type EffectView,
+  type MoveAnswer,
   OFFLINE,
   type OpenAnswer,
   offline,
@@ -98,6 +99,11 @@ export interface CheckinIO {
     responseId: string,
     recordingId: string,
   ): Promise<TranscriptAnswer>;
+  /**
+   * Move it here (docs/forms/STAGE2B-CONTRACT.md 4.11, 5.3): an admin or
+   * the CEO moves a recording from another client onto this one.
+   */
+  move?(a: { recordingId: string; taskId: string }): Promise<MoveAnswer>;
   timeline(): Promise<Timeline>;
   announce?(news: FormNews): void;
 }
@@ -253,6 +259,14 @@ export interface CheckinModel {
   pickNone(): void;
   pasteLink(url: string): Promise<boolean>;
   checkAgain(): void;
+  /**
+   * Move it here: the recording moves onto this client, then the calls are
+   * read again and the moved recording is picked. True when it moved.
+   */
+  moveHere(view: CallView): Promise<boolean>;
+  /** The move on its way, or its refusal in the server's words, for one row. */
+  move: { busy: boolean; error: string | null; ref: string | null };
+  clearMove(): void;
   choose(key: "defcon" | "priority", label: string): void;
   takeSuggestion(key: "defcon" | "priority"): void;
   setTodos(key: "we_owe" | "they_owe", items: TodoItem[]): void;
@@ -308,6 +322,8 @@ export interface CheckinModel {
 
 export const NOT_LIVE =
   "The cockpit's 1-1 notes are not live yet. Use the 1-1 form in Typeform for now.";
+/** The move RPC is not in the database yet (5.3). */
+export const MOVE_NOT_LIVE = "Moving a recording is not live yet.";
 export const STARTED_SHADOW =
   "These notes were started as a shadow run. Discard them and start again.";
 export const GATE_LOST =
@@ -472,6 +488,7 @@ function viewOf(call: CallAnswer | null): CallView | null {
       blocked: null,
       notesAlready: null,
       duplicateOf: null,
+      movable: false,
     };
   return {
     ref: `fathom:${call.recordingId}`,
@@ -498,6 +515,7 @@ function viewOf(call: CallAnswer | null): CallView | null {
     blocked: null,
     notesAlready: null,
     duplicateOf: null,
+    movable: false,
   };
 }
 
@@ -658,6 +676,8 @@ export function useCheckin({
   const [recapAsking, setRecapAsking] = useState(false);
   const [recapError, setRecapError] = useState<string | null>(null);
   const [recapRefused, setRecapRefused] = useState(false);
+  /** Recap Draft agains answered: each reads the trail again (Z28). */
+  const [recapRedrafts, setRecapRedrafts] = useState(0);
   const [startedShadow, setStartedShadow] = useState(false);
   const [otherDismissed, setOtherDismissed] = useState(false);
   const [transcript, setTranscript] = useState<CheckinModel["transcript"]>({
@@ -1159,6 +1179,69 @@ export function useCheckin({
 
   const checkAgain = useCallback(() => void readCallsNow(true), [readCallsNow]);
 
+  const [move, setMove] = useState<CheckinModel["move"]>({
+    busy: false,
+    error: null,
+    ref: null,
+  });
+  const moveHere = useCallback(
+    async (v: CallView) => {
+      const io = ioRef.current;
+      if (rehearse || !v.recordingId || !io.move) return false;
+      setMove({ busy: true, error: null, ref: v.ref });
+      try {
+        await io.move({ recordingId: v.recordingId, taskId });
+      } catch (e) {
+        const said = message(e);
+        if (!live.current) return false;
+        setMove({
+          busy: false,
+          // The function is not in the database yet: said plainly (5.3).
+          error:
+            codeOf(e) === "PGRST202" ||
+            /not live yet|could not find the function/i.test(said)
+              ? MOVE_NOT_LIVE
+              : said,
+          ref: v.ref,
+        });
+        return false;
+      }
+      if (!live.current) return false;
+      setMove({ busy: false, error: null, ref: null });
+      // Read the calls again and pick the moved recording: it is on this
+      // client now, so the store lists it as this client's.
+      try {
+        const answer = await io.calls({
+          taskId,
+          responseId: responseRef.current?.id ?? null,
+          shareUrl: null,
+          refresh: false,
+        });
+        if (!live.current) return true;
+        applyCalls(answer, answer.now);
+        const moved = views(answer).find(
+          x => x.kind === "fathom" && x.recordingId === v.recordingId,
+        );
+        // Picked as the store now has it (matched on this client), so the
+        // call card says where it is, in teal (5.3).
+        const a = moved && !blockedOf(moved) ? answerFor(moved) : null;
+        if (a) {
+          saveCall(a, "pick");
+          if (a.kind === "fathom") void readDraftsNow().catch(() => {});
+        }
+      } catch (e) {
+        if (live.current)
+          setCalls(c => ({ ...c, error: message(e), checking: false }));
+      }
+      return true;
+    },
+    [rehearse, taskId, applyCalls, saveCall, readDraftsNow],
+  );
+  const clearMove = useCallback(
+    () => setMove({ busy: false, error: null, ref: null }),
+    [],
+  );
+
   // ------------------------------------------------------------ answers
 
   const choose = useCallback(
@@ -1551,6 +1634,7 @@ export function useCheckin({
       setRecap(null);
       setRecapError(null);
       setRecapRefused(false);
+      setRecapRedrafts(0);
       setStartedShadow(false);
       setOtherDismissed(false);
       setCalls({
@@ -1567,8 +1651,16 @@ export function useCheckin({
 
   // ------------------------------------------------------------ after the send
 
+  // A failed recap is made again from a newer ready draft within 24 hours
+  // of the send (Z28): after Draft again the trail is read again until the
+  // recap effect leaves failed (or the poll's 25 minutes end), so the rail
+  // follows the step instead of keeping the old failure.
+  const trailOpen = (effects: EffectView[]) =>
+    !trailSettled(effects) ||
+    (recapRedrafts > 0 &&
+      effects.some(e => e.key === "recap" && e.state === "failed"));
   usePoll(
-    Boolean(sent) && !trailSettled(sent?.effects ?? []),
+    Boolean(sent) && trailOpen(sent?.effects ?? []),
     POLLS.trail,
     async () => {
       const r = responseRef.current;
@@ -1576,10 +1668,10 @@ export function useCheckin({
       const read = await ioRef.current.read(r.id);
       if (!live.current) return false;
       setSent({ response: read.response, effects: read.effects });
-      return !trailSettled(read.effects);
+      return trailOpen(read.effects);
     },
     clock,
-    `trail:${sent?.response.id ?? ""}`,
+    `trail:${sent?.response.id ?? ""}:${recapRedrafts}`,
   );
 
   const recapAgain = useCallback(() => {
@@ -1594,8 +1686,9 @@ export function useCheckin({
       .draftAgain(r.id, "recap")
       .then(
         answer => {
-          if (live.current)
-            setRecap(answer.drafts.find(d => d.kind === "recap") ?? null);
+          if (!live.current) return;
+          setRecap(answer.drafts.find(d => d.kind === "recap") ?? null);
+          setRecapRedrafts(n => n + 1);
         },
         e => {
           if (!live.current) return;
@@ -1726,6 +1819,9 @@ export function useCheckin({
     pickNone,
     pasteLink,
     checkAgain,
+    moveHere,
+    move,
+    clearMove,
     choose,
     takeSuggestion,
     setTodos,

@@ -16,6 +16,9 @@ import {
 export const NOTICE_NOW = "2026-10-22T10:30:00.000Z"; // 13:30 in Kuwait
 export const CSM_GENERAL = { id: "C09RZ0GS0V9", name: "csm-general" };
 export const MEDIA_GENERAL = { id: "C0AE8G5MT7Y", name: "media-general" };
+/** Invented: a private channel for the Call grade, and a public one it may not use (STAGE2B 5.4). */
+export const CALL_GRADES = { id: "C0EXAMPLE02", name: "call-grades" };
+export const TEAM_WINS = { id: "C0EXAMPLE03", name: "team-wins" };
 
 let n = 0;
 export function noticeFixture(
@@ -267,6 +270,31 @@ export function settingsReadFixture(
         ...migration,
         last: null,
       },
+      // The 1-1 notes' two rows, seeded on by the migration (STAGE2B 2.5, 5.4).
+      {
+        kind: "checkin.grade",
+        shape: "post",
+        on: true,
+        fixedOn: false,
+        channel: CALL_GRADES,
+        mentionRule: [],
+        mentionPeople: [],
+        tags: [],
+        ...migration,
+        last: null,
+      },
+      {
+        kind: "checkin.recap_late",
+        shape: "post",
+        on: true,
+        fixedOn: false,
+        channel: CSM_GENERAL,
+        mentionRule: [],
+        mentionPeople: [],
+        tags: [],
+        ...migration,
+        last: null,
+      },
     ],
     channels: [
       {
@@ -292,6 +320,22 @@ export function settingsReadFixture(
         state: "refused",
         note: "Invite @mahara-club-bot to #client-call-feedback, then add it again.",
         checkedAt: ago(now, 1),
+        inUse: false,
+      },
+      {
+        ...CALL_GRADES,
+        private: true,
+        state: "ok",
+        note: "mahara-club-bot is in it.",
+        checkedAt: ago(now, 24),
+        inUse: true,
+      },
+      {
+        ...TEAM_WINS,
+        private: false,
+        state: "ok",
+        note: "mahara-club-bot is in it.",
+        checkedAt: ago(now, 24),
         inUse: false,
       },
     ],
@@ -391,6 +435,21 @@ export function fakeNoticesIO(
           );
         row.on = patch.on;
       }
+      // The Call grade's rules, as settings_set refuses them (STAGE2B 4.2).
+      if (
+        kind === "checkin.grade" &&
+        ((patch.mentionRule?.length ?? 0) > 0 ||
+          (patch.mentionPeople?.length ?? 0) > 0)
+      )
+        refuse("The call grade tags nobody.");
+      if (
+        kind === "checkin.grade" &&
+        patch.channel !== undefined &&
+        mem.channels.find(x => x.id === patch.channel)?.private !== true
+      )
+        refuse(
+          "The call grade posts only in a private channel. Choose one the cockpit has checked as private.",
+        );
       if (patch.channel !== undefined) {
         if (row.shape !== "post")
           refuse("Replies post in their first notice's thread.");
@@ -457,6 +516,10 @@ export function fakeNoticesIO(
       calls.push({ fn: "removeChannel", args: [id] });
       await pause();
       const user = mem.notices.find(x => x.channel?.id === id);
+      if (user?.kind === "checkin.grade")
+        refuse(
+          "The Call grade notice posts there. Choose another channel for it first.",
+        );
       if (user)
         refuse(
           `The ${user.kind} notice posts there. Choose another channel for it first.`,

@@ -400,7 +400,7 @@ the box.
 | Brand Blueprint press queue | A Brand Blueprint press in `cockpit_creative_outbox` stayed pending, or sending, over 10 minutes (the drain runs every 2 minutes; a run takes seconds), or one failed in 24 h | the tech lead | Read the press's error on the Blueprint card and `creative-drain-kick` in `cockpit_sync_state`. A press that failed after 30 minutes or 3 refusals is pressed again from the card once its cause is fixed. One still `sending` lost its run part way: check the card against its journal, then settle it by hand (`RUNBOOK.md`, Brand Blueprint press drain) |
 | Brand Blueprint press needing a look | A press is in `reconcile`: ClickUp took the writes but the read-back did not match. Nothing retries it | the tech lead | Check the card in ClickUp against the press first, then settle the row by hand. Never press again before looking |
 | Fathom webhook delivers | The webhook is registered, a Customer Success recording with a summary and shared with a team reached the store in the last 24 h (Fathom pushes only those, so a day of short or unshared calls is nothing due), and no delivery was stored in that time: Fathom stopped pushing, or the function refuses or fails its deliveries (the webhook deleted in Fathom's settings, the function down). Not registered yet, or unregistered: a note, nothing is due | the tech lead | Nothing is lost: the 15-minute read still brings every recording. Read the newest rows of `cockpit_fathom_webhook_deliveries` and the `fathom-webhook` note in `cockpit_sync_state`, check the webhook in Fathom's settings, or register it again with `scripts/dev/forms_key.py` (`RUNBOOK.md`, 1-1 notes in the cockpit) |
-| ClickUp calls a minute | A minute in the last hour held over 80 ClickUp calls (over 95 fails), or ClickUp refused calls with 429 (10 or more fail). Since the move to ClickUp Business, the one token the Supabase functions and the VPS workers share may make 100 calls a minute. It counts the four provider ledgers (media, CSM, CEO, board); the VPS workers outside them add more, so the count is a floor. The native cycle stamps every receipt of a run with its publish time, so each run's calls are counted in every minute of its run (`cockpit_native_media_runs` `created_at` to `published_at`; a run not found there, the 15 minutes before its receipts): the busiest minute reads "up to" when a run is in it. That table unreadable, or no row at all in the hour, reads unknown, never zero | the systems manager | Read the busiest minute's split in the evidence. A cockpit job: lower its pacing secret (`CLICKUP_REQUESTS_CALLS_PER_MINUTE` 25, `CLICKUP_CALLS_PER_MINUTE` 30, `CLICKUP_TASKS_CALLS_PER_MINUTE` 30; 60 at most). The native cycle or the CEO refresh: ask Hermes to pace it. A press in the cockpit tries once more after ClickUp's wait; background jobs retry by themselves (`RUNBOOK.md`, What to do, by system, ClickUp; plan `docs/requests/CLICKUP-DOWNGRADE.md`) |
+| ClickUp calls a minute | A minute in the last hour held over 80 ClickUp calls (over 95 fails), or ClickUp refused calls with 429 (10 or more fail). Since the move to ClickUp Business, the one token the Supabase functions and the VPS workers share may make 100 calls a minute. It counts the four provider ledgers (media, CSM, CEO, board); the VPS workers outside them add more, so the count is a floor. The native cycle stamps every receipt of a run with its publish time, so each run's calls are counted in every minute of its run (`cockpit_native_media_runs` `created_at` to `published_at`; a run not found there, the 15 minutes before its receipts): the busiest minute reads "up to" when a run is in it. That table unreadable, or no row at all in the hour, reads unknown, never zero | the systems manager | Read the busiest minute's split in the evidence. A cockpit job: lower its pacing secret (`CLICKUP_REQUESTS_CALLS_PER_MINUTE` 25, `CLICKUP_CALLS_PER_MINUTE` 30, `CLICKUP_TASKS_CALLS_PER_MINUTE` 30, `CLICKUP_FORMS_CALLS_PER_MINUTE` 10; 60 at most). The native cycle or the CEO refresh: ask Hermes to pace it. A press in the cockpit tries once more after ClickUp's wait; background jobs retry by themselves (`RUNBOOK.md`, What to do, by system, ClickUp; plan `docs/requests/CLICKUP-DOWNGRADE.md`) |
 
 ## Files
 
@@ -418,19 +418,33 @@ the box.
 Generated with `python3 guardian.py checks --json`.
 
 Two checks read a list in the code rather than a threshold. `edge-functions`
-expects 23 functions (`checks/edge_functions.py`); since Stage 1 of the forms
+expects 24 functions (`checks/edge_functions.py`); since Stage 1 of the forms
 program (`docs/forms/STAGE1-CONTRACT.md`) that includes `cockpit-notices` with
 verify_jwt off (pg_cron calls it with `x-cron-secret`) and
 `cockpit-creative-api` with it on, and since Stage 2a
 (`docs/forms/STAGE2-CONTRACT.md`) `cockpit-forms-api` with it on (the 1-1
 notes window's signed-in seats) and `fathom-webhook` with it off (Fathom signs
-each delivery and sends no JWT). `pg-cron-jobs` expects 24 jobs
+each delivery and sends no JWT). `pg-cron-jobs` expects 28 jobs
 (`checks/pg_cron.py`), including `mahara-slack-notices` (20261025n, every
 minute) and `mahara-creative-drain` (20261025o, every 2 minutes). Both fail
 until those functions are deployed and those migrations applied, so the
 guardian copy on the VPS is updated after them, not before. The three queue
 rows read `state`, not `status`, and the two Blueprint rows count only the
 kinds `blueprintLaunch`, `blueprintClose` and `blueprintOffer`.
+
+Stage 2b (`docs/forms/STAGE2B-CONTRACT.md`, dark until the cut-over) adds
+`forms-door` with verify_jwt off (Typeform signs each kickoff) to
+`edge-functions` and `mahara-clickup-writeback-forms` (20261029t, every minute)
+to `pg-cron-jobs`; `native-jobs` also reads `clickup-writeback:forms` (15 min: an
+idle writer reports every ten), `forms-effects-kick` (10 min) and
+`csm-forms-record` (45 min), and `csm-calls-sync` reads `csm-forms-record`. All
+of it fails until deploy steps D5, D8, D11 and D13 ran, so this copy lands at
+D15, after them. Every 2b row is report-only. `csm-impromptu-notes` and the late
+reading of `csm-checkin-form` count nothing before the cut-over. The `client-messages`
+row reads `detail.receiptsMissing` as well: a provider call that left and whose
+answer the health ledger lost warns, because the sender keeps that run ok and
+never repeats the call. `queue-form-recap` leaves out a `queued` recap, which
+waits on a person in Messages by design (Z36).
 
 | Check | Catalogue | Threshold | Safe fix |
 | --- | --- | --- | --- |
@@ -447,6 +461,12 @@ kinds `blueprintLaunch`, `blueprintClose` and `blueprintOffer`.
 | `ask-ai-queue` | H12 | Jobs waiting while nothing finished for 20 min: fail; 10 or more new failures in an hour: warn. |  |
 | `csm-fathom-webhook` |  | Registered, a Customer Success recording first seen in the last 24 h that holds a summary and is shared with a team, and no stored delivery in 24 h: warn. |  |
 | `csm-notes-parity` |  | Any client whose 1-1 notes from the store read `differs` from Typeform: warn (confirm 3). No `notesFrom` on the client rows reads ok (release N4 not live); all `off` reads ok (the notes are native); otherwise ok with the day of 7 counted from `notesParity.cleanSince` (G6, `docs/forms/STAGE2B-CONTRACT.md` 4.4). Only these four readings: G6 counts every incident of this check in 7 days, so its incidents mean only that the notes differ. A feed that stops publishing is `native-source-producer`'s (fail after 90 min), and G6 also holds while the newest `source_snapshot_at` is over an hour old; the publish time shows here as evidence only. |  |
+| `csm-checkin-form` |  | Older than 7 days, or any 1-1 notes that arrived in Typeform after the switch-over: warn. |  |
+| `csm-impromptu-notes` |  | Any such candidate not gone and not set aside: warn. Before the cut-over: ok. |  |
+| `forms-kickoff-webhook` |  | Registered, and a kickoff of the last 24 h since registering, over 30 min old, stored by the read and not the webhook: warn. Not registered: ok. |  |
+| `client-messages` |  | No run for 10 min once the row exists, or ok false without a hold: fail; approved recaps held (detail.held, either mode), provider calls whose answer the health ledger lost (detail.receiptsMissing above 0, either mode) or a mode other than dry or apply: warn. No row (before deploy D14): ok. |  |
+| `client-messages-read-back` |  | A sent recap with no read-back after 60 min: warn. |  |
+| `client-messages-g5` |  | Anything but ok with the note same number: warn. |  |
 | `vps-memory` | H7 | Under 1024 MB available: warn; under 700 MB: fail (urgent with no swap); 3 scans in a row; clears only above 1536 MB, two scans in a row. |  |
 | `vps-tunnels` |  | More than 50: warn. |  |
 | `vps-disk` | H8 | Over 85%: warn; over 90%: fail (urgent). | gzip hermes's own logs over 50 MB (every line kept) |
@@ -530,6 +550,11 @@ kinds `blueprintLaunch`, `blueprintClose` and `blueprintOffer`.
 | `queue-slack-notice-replies` |  | Any row waiting over 30 min, or any row failed in 24 h: warn. |  |
 | `queue-creative-blueprint` |  | Any row waiting over 10 min, or any row failed in 24 h: warn. |  |
 | `queue-creative-reconcile` |  | Any open row: warn. |  |
+| `queue-clickup-forms` |  | Any row waiting over 15 min, or any row failed in 24 h: warn. |  |
+| `queue-form-effects` |  | Any row waiting over 30 min, or any row failed in 24 h: warn. |  |
+| `queue-form-recap` |  | Any row waiting over 30 min: warn. |  |
+| `queue-client-messages` |  | Any row waiting over 15 min, or any row failed in 24 h: warn. |  |
+| `queue-client-messages-unknown` |  | Any open row: warn. |  |
 | `issue-reports` |  | Any open: warn (summary only). |  |
 | `site-cockpit` | V2 | Not 200, the wrong title, or the script not 200: fail. |  |
 | `site-ceo` | V2 | Not 200, the wrong title, or the script not 200: fail. |  |

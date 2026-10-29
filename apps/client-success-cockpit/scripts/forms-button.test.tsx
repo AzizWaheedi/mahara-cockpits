@@ -78,6 +78,8 @@ for (const k of DOM)
 let entry: "typeform" | "native" | "fails" = "typeform";
 let sentAnswer: Record<string, { sent: boolean | null; at: string | null }> =
   {};
+/** Every checkin.typeformSent asked (2b: none once native). */
+const typeformAsks: unknown[] = [];
 
 const client = {
   auth: {
@@ -112,16 +114,19 @@ const client = {
     };
   },
   functions: {
-    invoke: async (_fn: string, { body }: { body: any }) => ({
-      data: {
-        items: body.items.map((i: { taskId: string }) => ({
-          taskId: i.taskId,
-          ...(sentAnswer[i.taskId] ?? { sent: false, at: null }),
-        })),
-        now: "2026-10-25T08:30:00Z",
-      },
-      error: null,
-    }),
+    invoke: async (_fn: string, { body }: { body: any }) => {
+      typeformAsks.push(body);
+      return {
+        data: {
+          items: body.items.map((i: { taskId: string }) => ({
+            taskId: i.taskId,
+            ...(sentAnswer[i.taskId] ?? { sent: false, at: null }),
+          })),
+          now: "2026-10-25T08:30:00Z",
+        },
+        error: null,
+      };
+    },
   },
 };
 
@@ -145,7 +150,7 @@ mock.module("@/auth/SupabaseAuthProvider", () => ({
 const { createRoot } = await import("react-dom/client");
 const { act } = await import("react");
 const { FormsButton } = await import("../src/components/FormsButton");
-const { ENTRY_FAILED, forgetFormsRegistry } = await import(
+const { ENTRY_FAILED, forgetFormsRegistry, markTypeformOpened } = await import(
   "../src/lib/formsRegistry"
 );
 
@@ -320,6 +325,37 @@ describe("the entry rule", () => {
     ]);
     await openMenu();
     expect(items()).toEqual(["Fill the kickoff"]);
+  });
+
+  test("2b, native (4.15 item 2): Typeform is asked nothing, a stored marker is ignored, the missing call still shows", async () => {
+    entry = "native";
+    setSystemTime(new Date(NOW));
+    stubOpen();
+    typeformAsks.length = 0;
+    markTypeformOpened(TASK, "2026-10-25", NOW - 5 * 60_000);
+    await mount();
+    expect(typeformAsks).toEqual([]);
+    // The marker means nothing once native: the dot and the missing line stay.
+    expect(
+      win.document.body.querySelector(
+        '[aria-label="1-1 notes missing for the last call"]',
+      ),
+    ).toBeTruthy();
+    await openMenu();
+    expect(page()).not.toContain("1-1 form opened at");
+    expect(items()[0]).toBe("Missing for the 25 Oct call");
+    await act(async () => {
+      win.document.body.dispatchEvent(
+        new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    await settle();
+    await act(async () => main().click());
+    await settle();
+    expect(opens[0]?.sentTo).toEqual([
+      `/client-success/clients/${TASK}/forms/checkin`,
+    ]);
+    expect(typeformAsks).toEqual([]);
   });
 
   test("a failed read keeps the Typeform, offers no shadow item, and says why", async () => {

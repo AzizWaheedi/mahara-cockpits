@@ -33,6 +33,7 @@ let slots: string[];
 let posts: any[];
 let outcome: "ok" | "timeout" | "refused" | "incomplete";
 let clickupCustomFields: Array<{ id: string; value: unknown }>;
+let nextPocBodies: unknown[];
 let clickupComments: Array<{ id: string; comment_text: string }>;
 let clickupStage: string;
 let stageWrites: string[];
@@ -72,6 +73,7 @@ beforeEach(async () => {
   posts = [];
   outcome = "ok";
   clickupCustomFields = [];
+  nextPocBodies = [];
   clickupComments = [];
   clickupStage = "Active";
   stageWrites = [];
@@ -161,6 +163,7 @@ function createSyntheticFetch(): typeof fetch {
           stageWrites.push(clickupStage);
           return new Response(JSON.stringify({ok:true}),{status:200});
         }
+        if (fieldId === NEXT_POC_FIELD) nextPocBodies.push(body);
         clickupCustomFields = clickupCustomFields.filter(f => f.id !== fieldId);
         clickupCustomFields.push({ id: fieldId, value: body.value });
         return new Response(JSON.stringify({ ok: true }), {
@@ -433,8 +436,10 @@ describe("confirmed booking, receipts and retry protection", () => {
     expect(overrides[0].data.nextCallAt).toBe("2026-10-04T10:00:00.000Z");
     expect(overrides[0].data.nextPoc).toBe("2026-10-04");
 
+    // Next POC is date-only noon Kuwait (09:00 UTC) with value_options.time false (2b build 5).
     const fieldUpdate = clickupCustomFields.find(f => f.id === NEXT_POC_FIELD);
-    expect(fieldUpdate?.value).toBe(Date.parse("2026-10-04T09:00:00+03:00"));
+    expect(fieldUpdate?.value).toBe(Date.parse("2026-10-04T09:00:00Z"));
+    expect(nextPocBodies).toEqual([{ value: Date.parse("2026-10-04T09:00:00Z"), value_options: { time: false } }]);
     expect(clickupComments).toHaveLength(1);
   });
 

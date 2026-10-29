@@ -130,3 +130,28 @@ test("storageRemove refuses anything but a Fathom transcript object, before any 
     await expect(db.storageRemove(path)).rejects.toThrow("Only a Fathom transcript object can be removed");
   expect(asked).toBe(0);
 });
+
+test("rpc posts one cockpit_ function with its arguments and answers its JSON (docs/forms/STAGE2B-CONTRACT.md 4.8)", async () => {
+  const calls: { url: string; method: string; body: unknown; auth: string | null }[] = [];
+  const fake = (async (url: string, init: RequestInit = {}) => {
+    calls.push({ url, method: init.method ?? "GET", body: JSON.parse(String(init.body ?? "null")), auth: new Headers(init.headers).get("Authorization") });
+    return new Response(JSON.stringify({ apply: false, kickoff: { recorded: 8, already: 0 } }));
+  }) as unknown as typeof fetch;
+  const db = makeDb({ SUPABASE_SERVICE_ROLE_KEY: "service-test" }, fake);
+  expect(await db.rpc("cockpit_form_record_sweep", { p_apply: false })).toEqual({ apply: false, kickoff: { recorded: 8, already: 0 } });
+  expect(calls).toEqual([{ url: `${SUPABASE}/rest/v1/rpc/cockpit_form_record_sweep`, method: "POST", body: { p_apply: false }, auth: "Bearer service-test" }]);
+});
+
+test("rpc refuses any name but a cockpit_ function, before any request, and names a refusal's status", async () => {
+  let asked = 0;
+  const counted = (async () => {
+    asked++;
+    return new Response("{\"message\":\"permission denied\"}", { status: 403 });
+  }) as unknown as typeof fetch;
+  const db = makeDb({ SUPABASE_SERVICE_ROLE_KEY: "service-test" }, counted);
+  for (const name of ["", "pg_sleep", "cockpit_x;drop", "cockpit_Form", "rpc/cockpit_form_record_sweep", "../cockpit_form_record_sweep", "Cockpit_form"])
+    await expect(db.rpc(name, {})).rejects.toThrow("Only a cockpit_ function can be called");
+  expect(asked).toBe(0);
+  await expect(db.rpc("cockpit_form_record_sweep", { p_apply: true })).rejects.toThrow("Supabase POST /rest/v1/rpc/cockpit_form_record_sweep failed (403)");
+  expect(asked).toBe(1);
+});

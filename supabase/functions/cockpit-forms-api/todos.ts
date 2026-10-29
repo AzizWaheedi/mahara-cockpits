@@ -1,23 +1,35 @@
 /**
  * We owe / They owe from Fathom's action items, with no model
- * (docs/forms/STAGE2-CONTRACT.md 6.1 and the todos row of 6.5). This is the one
- * copy of the rule: drafts.ts calls it with sideOfName from transcript.ts, and the
- * shadow replay (apps/media-buyer-cockpit/scripts/checkin-replay.ts) imports it
- * and calls it without one, so it imports nothing but the ActionItem type.
+ * (docs/forms/STAGE2-CONTRACT.md 6.1 and the todos row of 6.5, amended by
+ * docs/forms/STAGE2B-CONTRACT.md 4.13 and Z24). This is the one copy of the rule:
+ * drafts.ts calls it with sideOfName from transcript.ts, and the shadow replay
+ * (apps/media-buyer-cockpit/scripts/checkin-replay.ts) imports it and calls it
+ * without one. It imports sameName from transcript.ts and the ActionItem type.
  *
  * A completed item is dropped. An assignee at maharamedia.com, or one in a Fathom
  * team, is ours, and the owner is that email's role on the staff list; any other
- * email is the client's; with no email the transcript's speaker side decides, else
- * the line is ours and marked unsure for the CSM to check. Each line fits the 1-1
- * form's to-do item (3.1): one line of 300 characters at most, an owner of 80 at
- * most, a time inside the call, and a link only into this call's Fathom page.
+ * email is the client's. With no email and no team, a name decides: the
+ * transcript's speaker side when it knows the name; else a name on the staff list
+ * is ours; else the line is the client's and marked unsure, because "not on our
+ * list" is not certainty and the window's "Who owes this?" still asks. Fathom's
+ * label for a speaker it could not name ("Speaker", "Speaker 2") is no name the
+ * transcript can know: the transcript labels every such speaker Client, though an
+ * in-room call can put our own staff under it, so the line is the client's and
+ * marked unsure, with or without a transcript. No name at all: ours, marked
+ * unsure. Nothing is invented or dropped: one Fathom item stays
+ * one line in Fathom's words, only its side moves. Each line fits the 1-1 form's
+ * to-do item (3.1): one line of 300 characters at most, an owner of 80 at most, a
+ * time inside the call, and a link only into this call's Fathom page.
  */
 import type { ActionItem } from "../../../hermes/csm-calls/fathomRules.ts";
+import { sameName } from "./transcript.ts";
 
 const OURS = /@maharamedia\.com$/i;
 const MAX_TEXT = 300;
 const MAX_OWNER = 80;
 const MAX_SECONDS = 86_400;
+/** Fathom's label for a speaker it could not name: "Speaker", "Speaker 2" (23 of 41 open name-only items, 2026-10-29). */
+const UNNAMED = /^speaker(?:\s+\d+)?$/i;
 
 export function todoItems(items: ActionItem[], ctx: { shareUrl: string | null;
   staff: { name: string; email: string | null; role: string | null }[];
@@ -43,9 +55,14 @@ export function todoItems(items: ActionItem[], ctx: { shareUrl: string | null;
     else if (mail) side = "they";
     else {
       const name = String(item.assigneeName ?? "").trim();
-      const said = name && ctx.sideOfName ? ctx.sideOfName(name) : null;
+      const unnamed = UNNAMED.test(name);
+      const said = name && !unnamed && ctx.sideOfName ? ctx.sideOfName(name) : null;
       if (said === "we" || said === "they") side = said;
-      else unsure = true;
+      else if (!name) unsure = true;
+      else if (unnamed || !(ctx.staff ?? []).some(s => sameName(name, s?.name))) {
+        side = "they";
+        unsure = true;
+      }
     }
     out.push({
       side,

@@ -250,6 +250,16 @@ const myRequestRows = [
  * replaces the old Ask a team only once requests are open (review F6).
  */
 let writerModeNow = "apply";
+/**
+ * cockpit_form_entry's answer (Stage 2b tests only); left null, the read
+ * fails as it always has here and the page keeps the Typeform path.
+ */
+let entryAnswer: any = null;
+/** cockpit_csm_unmatched_list's rows (Stage 2b, impromptu calls on Today). */
+let unmatchedNow: any[] = [];
+/** Every RPC the Stage 2b tests watch, and every function invoked. */
+const watched: { name: string; args: any }[] = [];
+const invoked: { fn: string; body: any }[] = [];
 /** The rows cockpit_requests_read answers; a test may swap them. */
 let requestRowsNow: any[] = myRequestRows;
 const requestReads: Record<string, unknown>[] = [];
@@ -272,6 +282,26 @@ const mockClient: any = {
     signOut: async () => ({ error: null }),
   },
   rpc: (name: string, _args: any) => {
+    // Stage 2b (docs/forms/STAGE2B-CONTRACT.md 4.10, 5.1): the entry rule,
+    // the queue of calls with no client and its writer, the recaps waiting.
+    if (name === "cockpit_form_entry" && entryAnswer)
+      return Promise.resolve({ data: entryAnswer, error: null });
+    if (name === "cockpit_csm_unmatched_list") {
+      watched.push({ name, args: _args });
+      return Promise.resolve({ data: unmatchedNow, error: null });
+    }
+    if (name === "cockpit_csm_manual_match") {
+      watched.push({ name, args: _args });
+      return Promise.resolve({ data: { ok: true }, error: null });
+    }
+    if (name === "cockpit_client_messages_waiting")
+      return Promise.resolve({ data: [], error: null });
+    if (name === "cockpit_client_messages_read")
+      return Promise.resolve({ data: [], error: null });
+    if (name === "cockpit_csm_log_manual_call") {
+      watched.push({ name, args: _args });
+      return Promise.resolve({ data: { ok: true }, error: null });
+    }
     // Requests and Your tasks on Today (2026-10-26). This seat has no
     // ClickUp link in the fake, so the card says so instead of showing zero.
     if (name === "cockpit_requests_read") {
@@ -518,6 +548,7 @@ const mockClient: any = {
   }),
   functions: {
     invoke: async (name: string, _args: any) => {
+      invoked.push({ fn: name, body: _args?.body });
       throw new Error(`Unexpected function invocation: ${name}`);
     },
   },
@@ -2500,9 +2531,7 @@ test("the read starts at today's start in Kuwait, or at 04:00 of the end of day'
   // 10:00 Kuwait on 27 Oct: the calendar day and the EOD day are both the 27th.
   const morning = Date.parse("2026-10-27T07:00:00Z");
   expect(requestsSince(null, morning)).toBe("2026-10-26T21:00:00.000Z");
-  expect(requestsSince("2026-10-27", morning)).toBe(
-    "2026-10-26T21:00:00.000Z",
-  );
+  expect(requestsSince("2026-10-27", morning)).toBe("2026-10-26T21:00:00.000Z");
   // 02:00 Kuwait on 27 Oct: the EOD still files the 26th, from 04:00 that day.
   const night = Date.parse("2026-10-26T23:00:00Z");
   expect(requestsSince(null, night)).toBe("2026-10-26T01:00:00.000Z");
@@ -2510,4 +2539,156 @@ test("the read starts at today's start in Kuwait, or at 04:00 of the end of day'
   const turn = Date.parse("2026-10-27T01:05:00Z");
   expect(requestsSince("2026-10-26", turn)).toBe("2026-10-26T01:00:00.000Z");
   expect(requestsSince("not a day", turn)).toBe("2026-10-26T21:00:00.000Z");
+});
+
+// ------------------------------------------------------------ Stage 2b
+
+const click2b = (el: any) =>
+  reactAct(async () => {
+    el?.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+  });
+const wait2b = (n = 6) =>
+  reactAct(async () => {
+    for (let i = 0; i < n; i++) await new Promise(r => setTimeout(r, 5));
+  });
+
+/**
+ * Build 5's screens part (docs/forms/STAGE2B-CONTRACT.md 4.5): on the Log a
+ * call panel, Write 1-1 notes only opens the notes (the record), and Log the
+ * call without notes is the one that calls the act.
+ */
+test("Log a call: Write 1-1 notes only opens the notes; Log the call without notes calls the act", async () => {
+  const host = win.document.createElement("div");
+  win.document.body.appendChild(host);
+  const root = createRoot(host as any);
+  currentSnapshot = snapshot;
+  isSnapshotLoading = false;
+  snapshotError = null;
+  sent.length = 0;
+  invoked.length = 0;
+  watched.length = 0;
+  const open = win.open;
+  const opened: string[] = [];
+  (win as any).open = (url: string) => {
+    opened.push(url);
+    return {
+      opener: {},
+      location: { href: url, replace: (u: string) => opened.push(u) },
+      close: () => {},
+      focus: () => {},
+    };
+  };
+  try {
+    await reactAct(async () => {
+      root.render(
+        createElement(
+          MemoryRouter,
+          { initialEntries: [`/clients/${GREYSTONE}`] },
+          pageFor("client"),
+        ),
+      );
+    });
+    const action = [...host.querySelectorAll("button")].find(
+      b => (b.textContent ?? "").trim() === "Log a call",
+    );
+    await click2b(action);
+    const panel = [...host.querySelectorAll("textarea")]
+      .find(t =>
+        (t.getAttribute("placeholder") ?? "").startsWith("Call summary"),
+      )
+      ?.closest("div.rounded-2xl") as any;
+    expect(panel).toBeTruthy();
+    const inPanel = (name: string) =>
+      [...panel.querySelectorAll("button")].find(
+        (b: any) => (b.textContent ?? "").trim() === name,
+      ) as any;
+    await click2b(inPanel("Write 1-1 notes"));
+    await wait2b();
+    // The notes opened (the Typeform until the switch-over), and nothing else.
+    expect(opened.length).toBeGreaterThan(0);
+    expect(invoked.filter(i => i.fn === "cockpit-csm-api")).toEqual([]);
+    expect(sent.filter(([n]) => n === "act")).toEqual([]);
+    expect(
+      watched.filter(w => w.name === "cockpit_csm_log_manual_call"),
+    ).toEqual([]);
+    await click2b(inPanel("Log the call without notes"));
+    await wait2b();
+    const act = invoked.find(i => i.fn === "cockpit-csm-api");
+    expect(act?.body?.operation).toBe("act");
+    expect(act?.body?.args).toMatchObject({ taskId: GREYSTONE, kind: "call" });
+  } finally {
+    win.open = open;
+    await reactAct(async () => root.unmount());
+    host.remove();
+  }
+});
+
+/**
+ * Build 10 (4.10): Today lists the seat's impromptu calls once the 1-1
+ * notes are native, and placing one reads the snapshot again, so its client
+ * row takes the call's place. (This file imports the page before it sets up
+ * the DOM, so Radix portals never mount here and the Place sheet's pick is
+ * proven in after-calls.test.tsx, which calls `onPlaced` once; here the page
+ * is shown to pass `sb.refetch` as `onPlaced`.)
+ */
+test("Today: the impromptu row shows once native, and onPlaced refetches the snapshot", async () => {
+  const host = win.document.createElement("div");
+  win.document.body.appendChild(host);
+  const root = createRoot(host as any);
+  currentSnapshot = snapshot;
+  isSnapshotLoading = false;
+  snapshotError = null;
+  watched.length = 0;
+  entryAnswer = {
+    key: "checkin",
+    title: "1-1 call notes",
+    provider: "native",
+    typeformId: "fRokTITH",
+    version: 1,
+    native: true,
+    mode: "live",
+    now: new Date().toISOString(),
+  };
+  unmatchedNow = [
+    {
+      id: 901,
+      kind: "call",
+      title: "Impromptu Google Meet Meeting",
+      at: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+      reason: "No booking, invitee or name matched",
+      host: "csm@maharamedia.com",
+      candidate: true,
+    },
+  ];
+  const { forgetFormsRegistry } = await import("../src/lib/formsRegistry");
+  forgetFormsRegistry();
+  try {
+    await reactAct(async () => {
+      root.render(createElement(MemoryRouter, null, pageFor("today")));
+    });
+    await wait2b(10);
+    expect(watched.some(w => w.name === "cockpit_csm_unmatched_list")).toBe(
+      true,
+    );
+    expect(host.textContent ?? "").toContain("no client yet");
+    expect(
+      [...host.querySelectorAll("button")].some(b =>
+        (b.getAttribute("aria-label") ?? "").startsWith(
+          "Place the impromptu call on",
+        ),
+      ),
+    ).toBe(true);
+    const src = await Bun.file(
+      new URL("../src/pages/CsmPage.tsx", import.meta.url),
+    ).text();
+    expect(src.replace(/\s+/g, " ")).toContain(
+      "<AfterCalls snap={snap} onPlaced={() => void sb.refetch()} />",
+    );
+  } finally {
+    entryAnswer = null;
+    unmatchedNow = [];
+    forgetFormsRegistry();
+    await reactAct(async () => root.unmount());
+    host.remove();
+  }
 });
