@@ -398,8 +398,8 @@ export const SHEET_COLUMNS: SheetColumn[] = [
     "sales_marketing",
     "x",
     "up",
-    ratio(["contracted"], ["spend"]),
-    "Contracted over lead-gen spend.",
+    ratio(["contracted"], ["spend", "spendRetargeting"]),
+    "Contracted over all of Mahara's ad spend, his definition (30 Oct).",
   ),
   col(
     "cac",
@@ -407,8 +407,8 @@ export const SHEET_COLUMNS: SheetColumn[] = [
     "sales_marketing",
     "usd",
     "down",
-    ratio(["spend"], ["closes"]),
-    "Lead-gen spend over deals. Payroll is not in it.",
+    ratio(["spend", "spendRetargeting"], ["closes"]),
+    "All of Mahara's ad spend over deals, his definition (30 Oct). Payroll is not in it.",
   ),
 
   // Client success.
@@ -1076,8 +1076,10 @@ export function planNumbers(i: PlanInputs): {
     cashShare: i.cashShare,
     aov: i.aov,
     roasFrontEnd: ok(p.newCash) && marketing ? p.newCash / marketing : null,
-    roasContracted: p.roasContracted,
-    cac: p.cac,
+    roasContracted:
+      ok(p.contracted) && marketing ? p.contracted / marketing : null,
+    cac:
+      ok(p.closes) && p.closes > 0 && marketing ? marketing / p.closes : null,
     mrrProjected: i.mrrDue,
     mrrCollected: p.backEndCash,
     mrrCollectionRate: i.mrrCollectionRate,
