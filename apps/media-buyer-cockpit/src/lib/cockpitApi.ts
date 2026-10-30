@@ -14,6 +14,14 @@ import {
   setWebinarPitches,
 } from "./ceoEndpointsClient";
 import {
+  addSheetMetric,
+  lockMonth,
+  readGoalSheet,
+  removeSheetMetric,
+  saveLockInRow,
+  saveSheetCells,
+} from "./ceoGoalSheetClient";
+import {
   copyGoalPlan,
   goalCatalogue,
   readGoalsBoard,
@@ -184,6 +192,7 @@ const READ_VERBS: Record<string, true> = {
   clientOptions: true,
   catalogue: true,
   board: true,
+  sheet: true,
   read: true,
   requestsList: true,
   watchlistList: true,
@@ -508,6 +517,18 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
           return copyGoalPlan(supabase, args);
         case "catalogue":
           return goalCatalogue(supabase);
+        case "sheet":
+          return readGoalSheet(supabase, args);
+        case "saveCells":
+          return saveSheetCells(supabase, args);
+        case "addMetric":
+          return addSheetMetric(supabase, args);
+        case "removeMetric":
+          return removeSheetMetric(supabase, args);
+        case "saveLockIn":
+          return saveLockInRow(supabase, args);
+        case "lockMonth":
+          return lockMonth(supabase, args);
         default:
           throw new Error(`Unknown goals operation: ${rest.join(".")}`);
       }

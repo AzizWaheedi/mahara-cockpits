@@ -44,6 +44,13 @@ const harnessExtra = () =>
     .then(r => (r.ok ? r.json() : null))
     .catch(() => null));
 
+/** The Goals sheet, from tmp/harness/goalsheet.json (real context, git-ignored), changed in memory only. */
+let goalSheetFile: Promise<Record<string, any> | null> | null = null;
+const harnessGoalSheet = () =>
+  (goalSheetFile ??= fetch("/tmp/harness/goalsheet.json")
+    .then(r => (r.ok ? r.json() : null))
+    .catch(() => null));
+
 /** The morning note's switch (A372), made up and held in memory. */
 const nudge = {
   on: false,
@@ -231,6 +238,55 @@ export function installCeoHarness(client: SupabaseClient): void {
               }
             : file,
         );
+      }
+      case "cockpit_ceo_goal_sheet_context": {
+        const f = await harnessGoalSheet();
+        return f?.[String(args.p_month)]
+          ? ok(f[String(args.p_month)])
+          : refuse("No goal sheet fixture for this month");
+      }
+      case "cockpit_ceo_call_center_report": {
+        const r = await fetch("/tmp/harness/callreport.json").then(x =>
+          x.ok ? x.json() : null,
+        );
+        return r
+          ? ok({ ...r, from: args.p_from, to: args.p_to })
+          : refuse("No call report fixture");
+      }
+      case "cockpit_ceo_goals_context": {
+        const f = await harnessGoalSheet();
+        return f?.board ? ok(f.board) : refuse("No goals fixture");
+      }
+      case "cockpit_ceo_goal_sheet_save_cells": {
+        const f = await harnessGoalSheet();
+        const cells = args.p_cells as Record<string, any>[];
+        for (const m of ["2026-10", "2026-11"]) {
+          const tab = f?.[m];
+          if (!tab) continue;
+          for (const c of cells) {
+            tab.cells = tab.cells.filter(
+              (x: any) =>
+                !(x.day === c.day && x.key === c.key && x.kind === c.kind),
+            );
+            if (c.value !== null) tab.cells.push({ ...c, by: "harness" });
+          }
+        }
+        return ok({ saved: cells.length });
+      }
+      case "cockpit_ceo_goal_save_targets": {
+        const f = await harnessGoalSheet();
+        const rows = args.p_targets as Record<string, any>[];
+        const tab = f?.["2026-11"];
+        for (const r of rows) {
+          const old = tab?.targets.find(
+            (t: any) => t.metric_key === r.metricKey,
+          );
+          if (old) {
+            old.target = r.target;
+            old.note = r.note;
+          }
+        }
+        return ok({ saved: rows.length });
       }
       case "cockpit_ceo_action":
         return ceoAction(

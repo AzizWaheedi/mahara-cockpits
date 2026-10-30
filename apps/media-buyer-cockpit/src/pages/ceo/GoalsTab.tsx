@@ -35,6 +35,7 @@ import {
   worstThree,
 } from "./goalsKit";
 import { NextMonth } from "./goalsNext";
+import { GoalsSheet } from "./goalsSheet";
 import type { CeoTabProps } from "./types";
 
 /**
@@ -520,6 +521,8 @@ export function GoalsTab({ sections, goTab }: CeoTabProps) {
           }}
         />
       ) : null}
+
+      <GoalsSheet onChanged={() => void load(planId)} />
 
       {(board.groups ?? []).map((g, i) => (
         <Group

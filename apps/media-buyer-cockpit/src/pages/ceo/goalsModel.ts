@@ -33,6 +33,7 @@ export type DriverKey =
   | "leadToBooked"
   | "introShowRate"
   | "introToDemo"
+  | "directDemos"
   | "demoShowRate"
   | "qualifiedDemoShare"
   | "closeRate"
@@ -69,6 +70,7 @@ export const DRIVERS: Record<
   leadToBooked: { unit: "rate", better: "up" },
   introShowRate: { unit: "rate", better: "up" },
   introToDemo: { unit: "rate", better: "up" },
+  directDemos: { unit: "count", better: null },
   demoShowRate: { unit: "rate", better: "up" },
   qualifiedDemoShare: { unit: "rate", better: "up" },
   closeRate: { unit: "rate", better: "up" },
@@ -135,7 +137,13 @@ export function project(d: Drivers): Projection {
   const leads = over(d.spend, d.cpl);
   const introsBooked = times(leads, d.leadToBooked);
   const introsShown = times(introsBooked, d.introShowRate);
-  const demosBooked = times(introsShown, d.introToDemo);
+  // Not every demo comes from a held intro: 17 of October's 29 demo leads had
+  // none. Those are planned on their own line, so the rate stays the rate.
+  const fromIntros = times(introsShown, d.introToDemo);
+  const demosBooked =
+    fromIntros === null
+      ? null
+      : fromIntros + (ok(d.directDemos) ? d.directDemos : 0);
   const demosShown = times(demosBooked, d.demoShowRate);
   const closes = times(demosShown, d.closeRate);
   const contracted = times(closes, d.aov);
@@ -201,7 +209,8 @@ export function driversFromTargets(t: ByKey): Drivers {
     qualifiedShare: over(t.bookableLeads, t.leads),
     leadToBooked: t.leadToBooked ?? over(t.introsBooked, t.leads),
     introShowRate: t.introShowRate ?? over(t.introsShown, t.introsBooked),
-    introToDemo: over(t.demosBooked, t.introsShown),
+    introToDemo: t.introToDemo ?? over(t.demosBooked, t.introsShown),
+    directDemos: t.directDemos ?? null,
     demoShowRate: t.demoShowRate ?? over(t.demosShown, t.demosBooked),
     qualifiedDemoShare: over(t.demosQualified, t.demosShown),
     closeRate: t.closeRate ?? over(t.closes, t.demosShown),
@@ -245,6 +254,7 @@ export function driversFromActuals(
     leadToBooked: pick(m.leadToBooked, "leadToBooked"),
     introShowRate: pick(m.introShowRate, "introShowRate"),
     introToDemo: pick(over(m.demosBooked, m.introsShown), "introToDemo"),
+    directDemos: fallback.directDemos,
     demoShowRate: pick(m.demoShowRate, "demoShowRate"),
     qualifiedDemoShare: pick(
       over(m.demosQualified, m.demosShown),
@@ -357,8 +367,10 @@ export function modelTargets(
     [
       "demosBooked",
       p.demosBooked,
-      `${r(d.introToDemo)} of ${n(p.introsShown)} intros held book a demo.`,
+      `${r(d.introToDemo)} of ${n(p.introsShown)} intros held book a demo${ok(d.directDemos) && d.directDemos > 0 ? `, plus ${n(d.directDemos)} booked straight from a lead` : ""}.`,
     ],
+    ["introToDemo", d.introToDemo, null],
+    ["directDemos", d.directDemos, null],
     ["costPerDemoBooked", p.costPerDemoBooked, null],
     ["demoShowRate", d.demoShowRate, null],
     [

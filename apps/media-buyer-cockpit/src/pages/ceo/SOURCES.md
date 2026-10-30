@@ -276,6 +276,26 @@ The CEO, 2026-10-18: "Just make it really easy to add to the team and payroll ..
 | **Call centre: new client leads, bookings made, lead to booking** | `public.mahara_call_center_report` for exactly the plan's days. | Provisional and unclassified bookings. |
 | **Next month's plan** | Worked out in the browser from the inputs (`goalsModel.ts`), each target with a note saying how. Its payroll is the Costs page's (`ceoGoalsClient.ts` reads the same roster, commission and approved pay-plan parts), so both pages give the same next-month labour. | People on a pay plan with no approved month yet are named; their bonuses are not in. |
 
+
+### Monthly sheet (2026-10-30)
+
+One tab per month, days down the side, the metrics of the CEO's outline across (`goalsSheetModel.ts`, tested in `scripts/goals-sheet.test.ts`). Read through `cockpit_ceo_goal_sheet_context`, founder only.
+
+| Number | Where it comes from | What it leaves out |
+|---|---|---|
+| Targets | `cockpit_goal_targets` on the month's plan, so the board and the sheet read one row. Inputs are typed; the rest is `goalsModel.project` worked forward, or back from Total new cash through `solveSpend`. | |
+| Sales and marketing days | `growth.daily` (the Goals board's own series). Unique link clicks and intro to demo are B2B's window, whole months only. | Rolling rows read n/a for those two. |
+| Rates over a range | The totals divided. His sheet averages each day's rate, which is how October's Offer % read 113%. | |
+| Total new cash | `money.attribution.transactions`, every payment in, by day. | Bank lines matched to nobody, as on the Money tab. The Goals board's `totalCash` still counts them (September: $36,934 against $17,081). |
+| Clients churned | `cockpit_churn_departures` under the register's rule. | Finished terms, and any stop nobody logged. |
+| Projected MRR, collection | `money.book`. | Split-pay second halves and renewals. |
+| Client CPL, CPB | `delivery.daily`: the same days and rule as CEO Delivery. | Delivery's month adds today's spend before today's bookings; the sheet stops at yesterday. |
+| Client CPM, link CTR, opt in | `cockpit_media_daily_stats`. | Ads the media sync does not hold. |
+| Call centre | `cockpit_ceo_call_center_report` by day; lead quality and closes from `cockpit_client_days`. | Appointments nobody marked. |
+| Creative, offers, extensions, upsells, referrals | Typed in `cockpit_goal_sheet_cells`. | Anything nobody typed: empty, never zero. |
+
+The lock-in (`cockpit_goal_lockin_rows`) stores each line with its source and what it leaves out. Lines with a `metric_key` show the sheet's live number until the month is locked.
+
 ## Costs tab
 
 | Number | Where it comes from | What it leaves out |
