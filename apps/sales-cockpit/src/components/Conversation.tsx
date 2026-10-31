@@ -20,6 +20,7 @@ import {
   leadLanguage,
   type Moment,
   snippetLine,
+  templateLive,
 } from "../lib/whatsapp";
 import { ChannelGlyph } from "./ChannelGlyph";
 import { buttonPrimary, field } from "./kit";
@@ -272,10 +273,10 @@ const STATUS_WORD: Record<string, string> = {
 function windowWords(c: ChannelState | undefined): string {
   const w = c?.window;
   if (!w?.last_inbound_at)
-    return "They have never written on WhatsApp, so only an approved template goes: write the line it carries.";
+    return "They have never written on WhatsApp, so only an approved template goes: pick one below.";
   if (w.open)
     return `WhatsApp is open until ${day(w.closes_at)} ${clock(w.closes_at)} (they wrote ${ago(w.last_inbound_at)}).`;
-  return `They last wrote ${ago(w.last_inbound_at)}, so WhatsApp's free window is closed and only an approved template goes: write the line it carries.`;
+  return `They last wrote ${ago(w.last_inbound_at)}, so WhatsApp's free window is closed and only an approved template goes: pick one below.`;
 }
 
 function dmWords(c: Channel, s: ChannelState | undefined): string {
@@ -412,9 +413,7 @@ export function Conversation({
     return { ok: true, why: c === "whatsapp" ? windowWords(s) : "" };
   };
   const waReach = channels?.whatsapp;
-  const templatesLive = (templates.data ?? []).some(
-    t => t.active && t.workflow_id,
-  );
+  const templatesLive = (templates.data ?? []).some(templateLive);
   // WhatsApp first: free inside the window, a template outside it.
   const waTemplate = Boolean(
     waReach?.on && !waReach.dnd && waReach.reachable && templatesLive,

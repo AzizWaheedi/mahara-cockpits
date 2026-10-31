@@ -793,6 +793,33 @@ export function renderTemplate(
   });
 }
 
+/** The values for a template's {{n}} slots, in slot order, each flattened to one line for Meta. */
+export function templateParams(
+  variables: readonly string[],
+  values: Partial<Record<TemplateVariable, string | null>>,
+): string[] {
+  return variables.map(name => templateLine(values[name as TemplateVariable] ?? "", 700));
+}
+
+/** The body of HighLevel's POST /conversations/messages for a template sent by name (tested 2026-10-31). */
+export function directTemplateBody(
+  contactId: string,
+  route: Pick<TemplateRoute, "name" | "language">,
+  text: string,
+  params: string[],
+) {
+  return {
+    type: "WhatsApp",
+    contactId,
+    message: text,
+    whatsapp: {
+      type: "template",
+      template: { name: route.name, lang: route.language },
+      placeholders: { body: params },
+    },
+  };
+}
+
 /**
  * Text bound for Slack (an alert to #sales-alerts, an offer to a closer)
  * with every angle bracket made harmless: Slack reads <!channel>, <!here>,
@@ -861,6 +888,8 @@ export interface TemplateRoute {
   sort: number;
   /** The URL button's variable (join_code), when the template has one. Saved only when the save names it. */
   button_variable?: "join_code" | null;
+  /** Sent by name through the conversations API, no workflow. Saved only when the save names it. */
+  direct?: boolean;
 }
 
 /** A template route as a manager saves it, or why it cannot be saved. */
@@ -886,7 +915,9 @@ export function checkTemplateRoute(b: Record<string, unknown>): { ok: true; valu
   if (workflow && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(workflow))
     return { ok: false, error: "That is not a HighLevel workflow id." };
   const active = b.active === true;
-  if (active && !workflow) return { ok: false, error: "Pick the workflow that sends it before switching it on." };
+  const direct = b.direct === true;
+  if (active && !workflow && !direct)
+    return { ok: false, error: "Pick the workflow that sends it, or mark it as sent directly, before switching it on." };
   const segments = (Array.isArray(b.segments) ? b.segments : []).map(s => String(s)) as FollowupSegment[];
   if (segments.some(s => !(FOLLOWUP_SEGMENTS as readonly string[]).includes(s)))
     return { ok: false, error: "That is not a kind of follow-up." };
@@ -897,7 +928,9 @@ export function checkTemplateRoute(b: Record<string, unknown>): { ok: true; valu
   if ("button_variable" in b && b.button_variable !== null && b.button_variable !== "join_code")
     return { ok: false, error: "The button takes the room code (join_code) or nothing." };
   const button = "button_variable" in b ? { button_variable: (b.button_variable === "join_code" ? "join_code" : null) as TemplateRoute["button_variable"] } : {};
-  return { ok: true, value: { key, name, language, purpose, preview, variables, workflow_id: workflow, active, segments, sort, ...button } };
+  // Same for direct: a save that does not name it never clears it.
+  const directPart = "direct" in b ? { direct } : {};
+  return { ok: true, value: { key, name, language, purpose, preview, variables, workflow_id: workflow, active, segments, sort, ...button, ...directPart } };
 }
 
 /** A ready-made message as a manager saves it, or why it cannot be saved. */

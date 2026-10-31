@@ -28,7 +28,9 @@ import {
   REFERENCE_ASK_STATES,
   renderTemplate,
   type TemplateRoute,
+  directTemplateBody,
   templateLine,
+  templateParams,
   cors,
   crmDecision,
   type CrmSettings,
@@ -2181,7 +2183,7 @@ async function templateRoute(key: string): Promise<TemplateRoute> {
   // A setup fault, not the lead's: every send of this template waits (code
   // setup, hold_all), so the desk leaves its batch in the queue.
   if (!r) throw new Refusal("That WhatsApp template is not in the cockpit.", 404, { code: "setup", hold_all: true });
-  if (!r.active || !r.workflow_id)
+  if (!r.active || (!r.workflow_id && !r.direct))
     throw new Refusal(
       `The ${r.name} template is not set up yet. A manager picks the HighLevel workflow that sends it, under Follow-ups, WhatsApp library.`,
       409,
@@ -2405,10 +2407,12 @@ async function signatureFor(contactId: string, who: Who, language: "ar" | "en"):
 }
 
 /**
- * Send an approved WhatsApp template to a lead. HighLevel's API cannot send
- * a template itself, so the line and the signature go into the contact's
- * two cockpit fields and the lead is enrolled in the one-step workflow that
- * sends the template with them. Written first (request_id is unique, so a
+ * Send an approved WhatsApp template to a lead. A template marked direct goes
+ * straight through HighLevel's conversations API, by name, with its values
+ * (tested 2026-10-31). The others go through their one-step workflow: the
+ * line and the signature go into the contact's two cockpit fields and the
+ * lead is enrolled in the workflow that sends the template with them.
+ * Written first (request_id is unique, so a
  * retry never sends twice), then read back from the conversation, because a
  * template HighLevel accepts can still fail at Meta.
  */
@@ -2443,6 +2447,13 @@ async function sendTemplateOnce(
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(o.requestId))
     throw new Refusal("Reload the page and send again.");
   const route = await templateRoute(o.key);
+  const direct = route.direct === true;
+  // A URL button's room code travels in a contact field, which only the workflow reads.
+  if (direct && route.button_variable)
+    throw new Refusal("This template has a button and is sent directly; it can only go through its workflow.", 409, {
+      code: "setup",
+      hold_all: true,
+    });
   const needsLine = route.variables.includes("line");
   const line = needsLine ? templateLine(o.line) : "";
   if (needsLine && line.length < 2) throw new Refusal("Write the line that goes in the message.");
@@ -2506,9 +2517,10 @@ async function sendTemplateOnce(
     throw new Refusal("This template's button opens a room, and no room code was given.", 409);
   const text = renderTemplate(route.preview, route.variables, { first_name: firstName, rep_name: signature, line, call_time: callTime });
   const fields = (await setting<{ line?: { id: string }; rep?: { id: string }; join?: { id: string | null }; when?: { id: string | null } }>("wa_fields")) ?? {};
-  if ((needsLine && !fields.line?.id) || (route.variables.includes("rep_name") && !fields.rep?.id))
+  // A direct send writes no contact field, so it needs none of them.
+  if (!direct && ((needsLine && !fields.line?.id) || (route.variables.includes("rep_name") && !fields.rep?.id)))
     throw new Refusal("The cockpit's two HighLevel contact fields are not set (setting wa_fields).", 409, { code: "setup", hold_all: true });
-  if ((button && !fields.join?.id) || (callTime && !fields.when?.id))
+  if (!direct && ((button && !fields.join?.id) || (callTime && !fields.when?.id)))
     throw new Refusal("The HighLevel contact fields for the room code and the call's time are not set (setting wa_fields, join and when).", 409, {
       code: "setup",
       hold_all: true,
@@ -2518,9 +2530,11 @@ async function sendTemplateOnce(
     request_id: o.requestId,
     contact_id: o.contactId,
     channel: "whatsapp",
+    // via stays "workflow" for a direct send too: it marks a template send, and the
+    // per-lead, per-day and monthly ceilings count by it.
     via: "workflow",
     template_key: route.key,
-    workflow_id: route.workflow_id,
+    workflow_id: direct ? null : route.workflow_id,
     body: text,
     source: o.source ?? (o.followupId ? "followup" : "rep"),
     followup_id: o.followupId,
@@ -2581,7 +2595,7 @@ async function sendTemplateOnce(
     ...(callTime ? [{ id: fields.when?.id, field_value: callTime }] : []),
   ];
   try {
-    if (customFields.length) await ghl("PUT", `/contacts/${enc(o.contactId)}`, { customFields }, "2021-07-28");
+    if (!direct && customFields.length) await ghl("PUT", `/contacts/${enc(o.contactId)}`, { customFields }, "2021-07-28");
   } catch (e) {
     return await fail(e, false);
   }
@@ -2595,9 +2609,18 @@ async function sendTemplateOnce(
     throw e;
   }
   const startedAt = Date.now();
+  let sent: Row | null = null;
   try {
-    await ghl("POST", `/contacts/${enc(o.contactId)}/workflow/${enc(String(route.workflow_id))}`,
-      { eventStartTime: new Date(startedAt).toISOString() }, "2021-07-28");
+    if (direct) {
+      // The one call that sends, so a timeout or a 5xx is unclear, never failed.
+      sent = (await ghl("POST", "/conversations/messages",
+        directTemplateBody(o.contactId, route, text,
+          templateParams(route.variables, { first_name: firstName, rep_name: signature, line, call_time: callTime })),
+        "2021-04-15")) as Row;
+    } else {
+      await ghl("POST", `/contacts/${enc(o.contactId)}/workflow/${enc(String(route.workflow_id))}`,
+        { eventStartTime: new Date(startedAt).toISOString() }, "2021-07-28");
+    }
   } catch (e) {
     return await fail(e, true);
   }
@@ -2624,10 +2647,10 @@ async function sendTemplateOnce(
       method: "PATCH",
       body: {
         state,
-        provider_status: seen ? seen.status : "enrolled",
+        provider_status: seen ? seen.status : direct ? "accepted" : "enrolled",
         error: state === "failed" ? (seen?.error ?? "HighLevel marked it failed without a reason") : null,
-        ghl_message_id: seen?.id ?? null,
-        ghl_conversation_id: seen?.conversation_id ?? null,
+        ghl_message_id: seen?.id ?? (direct ? sent?.messageId : null) ?? null,
+        ghl_conversation_id: seen?.conversation_id ?? (direct ? sent?.conversationId : null) ?? null,
         updated_at: new Date().toISOString(),
       },
       prefer: "return=representation",
@@ -2637,7 +2660,7 @@ async function sendTemplateOnce(
     throw new Refusal(`${MAY_HAVE_GONE} (${redact(String((e as Error)?.message ?? e))})`, 502, { unclear: true });
   }
   await audit(who, "wa.template", "cockpit_sales_messages", String(row.id), null,
-    { template: route.key, workflow: route.workflow_id, state, seen: Boolean(seen), followup_id: o.followupId,
+    { template: route.key, workflow: route.workflow_id, direct, state, seen: Boolean(seen), followup_id: o.followupId,
       asset_id: o.assetId ?? null, source: o.source ?? null },
     { lead: lead.name ?? null });
   if (o.assetId && state !== "failed") await assetSent(who, o.assetId, o.contactId, "whatsapp", String(row.id));

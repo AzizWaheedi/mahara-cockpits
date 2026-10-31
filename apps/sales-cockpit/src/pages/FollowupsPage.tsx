@@ -34,7 +34,7 @@ import { toast } from "../lib/toast";
 import type { Me } from "../lib/types";
 import { guardOpen } from "../lib/videoLink";
 import { agentOff, agentWorkOff, sourcePause } from "../lib/waves";
-import { firstWord, renderTemplate } from "../lib/whatsapp";
+import { firstWord, renderTemplate, templateLive } from "../lib/whatsapp";
 
 /**
  * The follow-up agent's drafts, waiting for a rep's yes, hottest first.
@@ -629,7 +629,7 @@ function DraftCard({
             Boolean(settled) ||
             !body.trim() ||
             (channel === "whatsapp_template" &&
-              !(template?.active && template.workflow_id))
+              !(template && templateLive(template)))
           }
           className={buttonPrimary}
         >

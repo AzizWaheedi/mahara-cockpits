@@ -16,6 +16,7 @@ import {
   type Moment,
   type Snippet,
   type TemplateRoute,
+  templateLive,
 } from "../lib/whatsapp";
 import {
   button,
@@ -119,7 +120,8 @@ function TemplateRow({
   const [v, setV] = useState(t);
   const [busy, setBusy] = useState(false);
   const flow = workflows.find(w => w.id === t.workflow_id) ?? null;
-  const live = t.active && Boolean(t.workflow_id);
+  const live = templateLive(t);
+  const direct = t.direct === true;
 
   async function save(next: TemplateRoute) {
     setBusy(true);
@@ -142,11 +144,15 @@ function TemplateRow({
           <p className="flex flex-wrap items-center gap-2 text-sm font-semibold">
             <span dir="ltr">{t.name}</span>
             <StatusChip
-              tone={live ? "good" : t.workflow_id ? "neutral" : "warning"}
+              tone={
+                live ? "good" : direct || t.workflow_id ? "neutral" : "warning"
+              }
               label={
                 live
-                  ? "Live"
-                  : t.workflow_id
+                  ? direct
+                    ? "Live, sent directly"
+                    : "Live"
+                  : direct || t.workflow_id
                     ? "Off"
                     : "Waiting for its workflow"
               }
@@ -196,35 +202,42 @@ function TemplateRow({
           }}
           className="mt-3 grid gap-3 border-t hairline pt-3 sm:grid-cols-2"
         >
-          <label className="block space-y-1 text-sm sm:col-span-2">
-            <span className="muted block text-xs">
-              The HighLevel workflow that sends it
-            </span>
-            {workflowsError ? (
-              <span className="block text-xs">
-                The workflows could not be read: {workflowsError}
+          {direct ? (
+            <p className="muted text-xs sm:col-span-2">
+              Sent straight from the cockpit through HighLevel. No workflow
+              needed.
+            </p>
+          ) : (
+            <label className="block space-y-1 text-sm sm:col-span-2">
+              <span className="muted block text-xs">
+                The HighLevel workflow that sends it
               </span>
-            ) : null}
-            <select
-              value={v.workflow_id ?? ""}
-              onChange={e =>
-                setV({
-                  ...v,
-                  workflow_id: e.target.value || null,
-                  active: e.target.value ? v.active : false,
-                })
-              }
-              className={field}
-            >
-              <option value="">Not chosen yet</option>
-              {workflows.map(w => (
-                <option key={w.id} value={w.id}>
-                  {w.name}
-                  {w.status === "published" ? "" : " (draft)"}
-                </option>
-              ))}
-            </select>
-          </label>
+              {workflowsError ? (
+                <span className="block text-xs">
+                  The workflows could not be read: {workflowsError}
+                </span>
+              ) : null}
+              <select
+                value={v.workflow_id ?? ""}
+                onChange={e =>
+                  setV({
+                    ...v,
+                    workflow_id: e.target.value || null,
+                    active: e.target.value ? v.active : false,
+                  })
+                }
+                className={field}
+              >
+                <option value="">Not chosen yet</option>
+                {workflows.map(w => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                    {w.status === "published" ? "" : " (draft)"}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="block space-y-1 text-sm sm:col-span-2">
             <span className="muted block text-xs">
               The approved text, exactly as HighLevel shows it
@@ -258,7 +271,7 @@ function TemplateRow({
             <input
               type="checkbox"
               checked={v.active}
-              disabled={!v.workflow_id}
+              disabled={!(v.workflow_id || v.direct)}
               onChange={e => setV({ ...v, active: e.target.checked })}
             />
             Live: reps and the follow-up agent send it

@@ -7,7 +7,24 @@ import {
   leadLanguage,
   renderTemplate,
   snippetLine,
+  templateLive,
 } from "./whatsapp";
+
+describe("when a template is live", () => {
+  test("direct, or tied to a workflow, and switched on", () => {
+    expect(
+      templateLive({ active: true, workflow_id: null, direct: true }),
+    ).toBe(true);
+    expect(templateLive({ active: true, workflow_id: "wf-1" })).toBe(true);
+    expect(
+      templateLive({ active: false, workflow_id: "wf-1", direct: true }),
+    ).toBe(false);
+    expect(
+      templateLive({ active: true, workflow_id: null, direct: false }),
+    ).toBe(false);
+    expect(templateLive({ active: true, workflow_id: null })).toBe(false);
+  });
+});
 
 // Thursday 24 September 2026, 14:00 in Kuwait.
 const NOW = Date.parse("2026-09-24T11:00:00Z");

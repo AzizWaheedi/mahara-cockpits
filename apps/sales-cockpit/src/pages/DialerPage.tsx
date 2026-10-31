@@ -172,7 +172,12 @@ import {
   videoAppointmentId,
   videoLinkGate,
 } from "../lib/videoLink";
-import { firstWord, leadLanguage, type Moment } from "../lib/whatsapp";
+import {
+  firstWord,
+  leadLanguage,
+  type Moment,
+  templateLive,
+} from "../lib/whatsapp";
 
 /**
  * The power dialer, level with the call centre's (mahara-power-dialer): the
@@ -1566,9 +1571,7 @@ function useWaKit(): WaKit {
   const snippets = useSnippets();
   return useMemo(
     () => ({
-      templatesLive: templates.data
-        ? templates.data.some(t => t.active && Boolean(t.workflow_id))
-        : null,
+      templatesLive: templates.data ? templates.data.some(templateLive) : null,
       moments: snippets.data ? new Set(snippets.data.map(s => s.moment)) : null,
     }),
     [templates.data, snippets.data],
