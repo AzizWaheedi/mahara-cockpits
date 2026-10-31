@@ -345,7 +345,8 @@ begin
           url := 'https://slack.com/api/chat.postMessage',
           body := jsonb_build_object('channel', chan,
                                      'text', 'Sales watchdog: ' || replace(replace(replace(rec.message, '&', '&amp;'), '<', '&lt;'), '>', '&gt;')),
-          headers := jsonb_build_object('Content-Type', 'application/json; charset=utf-8', 'Authorization', 'Bearer ' || bot),
+          -- pg_net accepts only the exact 'application/json' (31 Oct 2026).
+          headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || bot),
           timeout_milliseconds := 5000);
       end if;
       update public.cockpit_sales_alerts as a
