@@ -2320,7 +2320,8 @@ describe("the shared files (6.2)", () => {
   });
 
   test("the form's CSS keeps its accessibility rules (A11Y-12 to A11Y-21)", () => {
-    const css = read("media-buyer-cockpit", FILES[3]);
+    // A Windows checkout has CRLF line ends; the rules below match on \n.
+    const css = read("media-buyer-cockpit", FILES[3]).replace(/\r\n/g, "\n");
     /** The declarations of the rule whose selector list is exactly `sel`. */
     const rule = (sel: string) => {
       const at = css.indexOf(`\n${sel} {\n`);
