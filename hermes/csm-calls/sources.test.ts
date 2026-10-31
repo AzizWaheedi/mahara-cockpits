@@ -13,6 +13,7 @@ import {
   linkTypeforms,
   metaAccounts,
   readTypeforms,
+  reconcile,
   recordingOf,
   storePass,
   typeformSource,
@@ -44,6 +45,36 @@ test("name matches still count, and the billing watch's task id wins over a name
   }), clients);
   expect(accounts.get("568262692064148")).toBe("ocean");
   expect(accounts.get("999999999")).toBe("b");
+});
+
+test("a stopped client's live campaign row does not bring its account back", async () => {
+  const clients = [card("a", "Alpha Interiors"), card("stop1", "Atlantis Contracting", [], true)];
+  const accounts = await metaAccounts(fakeDb({
+    cockpit_campaigns: [
+      { client_name: "Alpha Interiors", meta_account_id: "111" },
+      { client_name: "Atlantis Contracting", meta_account_id: "290802986" },
+    ],
+  }), clients);
+  expect([...accounts.keys()]).toEqual(["111"]);
+});
+
+test("reconcile reads only the accounts the main sync reads, not every stored account", async () => {
+  // 27 Oct 2026: Atlantis Contracting removed Mahara's Meta access; its stored rows kept the nightly check red.
+  const clients = [card("act1", "Active Co"), card("stop1", "Atlantis Contracting", [], true)];
+  const read: string[] = [];
+  const t = {
+    ghl: async () => ({ calendars: [] }),
+    fathom: async () => ({ items: [] }),
+    typeform: async () => ({ total_items: 0 }),
+    meta: async (path: string) => (read.push(path), { data: [] }),
+  };
+  const db = fakeDb({
+    clients: [{ name: "Active Co", meta_ad_account_id: "act_111" }, { name: "Atlantis Contracting", meta_ad_account_id: "act_290802986" }],
+    cockpit_csm_meta_activities: [{ account_id: "111" }, { account_id: "290802986" }],
+  });
+  const health = await reconcile({ t, db, clients, now: Date.parse("2026-10-31T12:00:00+03:00") } as unknown as Ctx);
+  expect(read).toEqual(["act_111/activities"]);
+  expect(health.ok).toBe(true);
 });
 
 test("a manual match cannot reattach its recording to another client's appointment", () => {

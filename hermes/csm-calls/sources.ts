@@ -1075,7 +1075,7 @@ export async function metaAccounts(db: Db, clients: Client[]): Promise<Map<strin
   }
   for (const c of await db.all("cockpit_campaigns", "select=client_name,meta_account_id&source_deleted=is.false")) {
     const card = clients.find(k => isClientOf(c.client_name, k));
-    if (card && c.meta_account_id) accounts.set(String(c.meta_account_id).replace(/^act_/, ""), card.taskId);
+    if (card && !card.stopped && c.meta_account_id) accounts.set(String(c.meta_account_id).replace(/^act_/, ""), card.taskId);
   }
   // `clients.name` is the Meta account's own name, so a name match misses an
   // account named unlike its client. Safad's "Safad Consulting" dropped out on
@@ -1360,8 +1360,9 @@ export async function reconcile(ctx: Ctx): Promise<Health> {
   }
   // Meta: independent source-against-store check for yesterday, per account.
   // An account returning 403 or an unfinished cursor is a mismatch, not zero.
-  const accountRows = await db.all("cockpit_csm_meta_activities", "select=account_id");
-  const accountIds = [...new Set(accountRows.map(r => String(r.account_id)).filter(Boolean))];
+  // Only the accounts the main sync reads: a stopped client's account may be unshared
+  // (Atlantis Contracting, 27 Oct 2026), and every stored account used to be re-read.
+  const accountIds = [...(await metaAccounts(db, ctx.clients)).keys()];
   const storedMeta = await db.all("cockpit_csm_meta_activities", `select=account_id,event_time,object_id,event_type&event_time=gte.${iso(from)}&event_time=lt.${iso(to)}`);
   const storedMetaKeys = new Set(storedMeta.map(r => [r.account_id, String(Date.parse(r.event_time)), r.object_id, r.event_type].join("|")));
   const missingMeta: string[] = [];
