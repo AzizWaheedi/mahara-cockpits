@@ -380,8 +380,9 @@ export function viewsFor(
     const elsewhere = elsewhereOf(rec, taskId, bookings, ctx);
     const why = checksOf(rec, taskId, bookings, ctx);
     // Move it here (3.8): only for a seat the switch lets move, only when "on another client" is the one
-    // refusal and no 1-1 notes stand for the recording.
-    const movable = move && why?.reason === "other" && !untied.has(rec.recordingId) && !s.notes;
+    // refusal, no 1-1 notes stand for the recording, and its call row sits on the other client: an exact sign that names
+    // another client before the worker places the recording is "on another client" too, but the move has no row to move yet.
+    const movable = move && why?.reason === "other" && !untied.has(rec.recordingId) && !s.notes && Boolean(rec.onTask);
     const blocked = movable ? onOtherMovable(name(why?.otherTask as string), name(taskId)) : refusal(rec);
     const isPasted = rec.recordingId === pastedId;
     if (elsewhere) otherTasks.set(`fathom:${s.recordingId}`, elsewhere);

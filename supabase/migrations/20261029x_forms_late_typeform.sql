@@ -29,12 +29,20 @@ BEGIN;
 -- ---------------------------------------------------------------------------
 -- 1. The kind
 
+-- Widened only from the definition the contract read: another session's value
+-- would be dropped here without a word and fail its writer later, so any other
+-- definition stops the file (the CHECK's own drift guard, as Z61's for bodies).
 DO $$
+DECLARE
+  v_def text;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c
-                  WHERE c.conrelid = 'public.cockpit_csm_call_forms'::regclass
-                    AND c.conname = 'cockpit_csm_call_forms_form_kind_check'
-                    AND pg_catalog.pg_get_constraintdef(c.oid) LIKE '%checkin_late%') THEN
+  SELECT pg_catalog.pg_get_constraintdef(c.oid) INTO v_def FROM pg_catalog.pg_constraint c
+   WHERE c.conrelid = 'public.cockpit_csm_call_forms'::regclass
+     AND c.conname = 'cockpit_csm_call_forms_form_kind_check';
+  IF v_def IS DISTINCT FROM 'CHECK ((form_kind = ANY (ARRAY[''checkin''::text, ''onboarding''::text, ''kickoff''::text, ''kickoff_old''::text, ''blueprint''::text, ''checkin_late''::text])))' THEN
+    IF v_def IS DISTINCT FROM 'CHECK ((form_kind = ANY (ARRAY[''checkin''::text, ''onboarding''::text, ''kickoff''::text, ''kickoff_old''::text, ''blueprint''::text])))' THEN
+      RAISE EXCEPTION 'cockpit_csm_call_forms_form_kind_check changed since the 2b contract read it; stop and re-read it.' USING ERRCODE = '55000';
+    END IF;
     ALTER TABLE public.cockpit_csm_call_forms DROP CONSTRAINT IF EXISTS cockpit_csm_call_forms_form_kind_check;
     ALTER TABLE public.cockpit_csm_call_forms ADD CONSTRAINT cockpit_csm_call_forms_form_kind_check
       CHECK (form_kind = ANY (ARRAY['checkin','onboarding','kickoff','kickoff_old','blueprint','checkin_late']));

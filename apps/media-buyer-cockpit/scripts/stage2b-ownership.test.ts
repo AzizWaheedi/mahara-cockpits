@@ -8,7 +8,7 @@
  * written there, so the test and the contract cannot drift; the table's own
  * file counts ("db 10; writers 30; ...") are the second source. It reads git
  * only (never writes): the files changed since the branch left main (the
- * merge-base with origin/main, ca8fe4bf since the rebase of 2026-10-30, Z79),
+ * merge-base with origin/main, f80130d0 since the second rebase of 2026-10-30, Z79),
  * committed or not, plus the untracked ones. It runs only on the build's branch (stage2b-1029) and
  * skips once the branch is on main, as 2a's does; not in scripts/ship.sh for
  * that reason.
@@ -30,7 +30,7 @@ function git(...args: string[]): string | null {
 }
 /** Where 2b was first cut from, before the rebase: never the base again (Z79). */
 const FIRST_BASE = "0889803b";
-const BASE = git("merge-base", "HEAD", "origin/main")?.trim() || "ca8fe4bf";
+const BASE = git("merge-base", "HEAD", "origin/main")?.trim() || "f80130d0";
 // Once the branch is on main its merge-base is HEAD and the diff is empty, so
 // the check has nothing left to own (2a's lesson of 2026-10-29).
 const onBranch =

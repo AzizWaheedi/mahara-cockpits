@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ledgerFetch, type Receipt } from "./ledger.ts";
@@ -21,6 +21,8 @@ const ENV = {
 type World = {
   webhooks: unknown[] | "fail";
   scenarios: Record<string, boolean | "fail">;
+  /** Typeform's raw 200 answer, instead of `{items: webhooks}`. */
+  typeformBody?: string;
 };
 function fakeWorld(world: World) {
   const calls: { url: string; method: string; auth: string }[] = [];
@@ -34,6 +36,8 @@ function fakeWorld(world: World) {
       ),
     });
     if (url === "https://api.typeform.com/forms/fRokTITH/webhooks") {
+      if (world.typeformBody !== undefined)
+        return new Response(world.typeformBody);
       return world.webhooks === "fail"
         ? new Response("{}", { status: 500 })
         : new Response(JSON.stringify({ items: world.webhooks }));
@@ -241,6 +245,128 @@ describe("the old senders", () => {
       scenarios: { "9209179": "unread", "9523861": "unread" },
       held: true,
     });
+  });
+
+  test("a 200 from Typeform that is not its list of webhooks is unread and holds; so is a webhook it cannot read", async () => {
+    for (const body of [
+      "{}",
+      '{"error":"x"}',
+      '{"items":null}',
+      '{"items":"nope"}',
+      "[]",
+      "not json",
+      '{"items":[null]}',
+      '{"items":["https://hook.eu2.make.com/abc"]}',
+      '{"items":[{"enabled":true}]}',
+      '{"items":[{"enabled":true,"url":7}]}',
+      '{"items":[{"enabled":true,"url":"not a url"}]}',
+    ]) {
+      const s = await readOldSenders({
+        env: ENV,
+        fetch: fakeWorld({ ...off, typeformBody: body }).fetch,
+        now: () => NOW,
+        cachePath: null,
+      });
+      expect([body, s.typeform, s.held]).toEqual([body, "unread", true]);
+      expect(s.sentence).toBe(
+        "The cockpit could not read the 1-1 Typeform's webhooks, so it holds the recaps. It reads them again within 10 minutes.",
+      );
+    }
+  });
+
+  test("a make.com webhook is on unless it says exactly enabled false", async () => {
+    const read = async (webhook: Record<string, unknown>) =>
+      readOldSenders({
+        env: ENV,
+        fetch: fakeWorld({ ...off, webhooks: [webhook] }).fetch,
+        now: () => NOW,
+        cachePath: null,
+      });
+    const url = "https://hook.eu2.make.com/abc";
+    for (const enabled of ["true", 1, null, "false", 0]) {
+      const s = await read({ url, enabled });
+      expect([enabled, s.typeform, s.held]).toEqual([enabled, "on", true]);
+    }
+    expect((await read({ url })).typeform).toBe("on");
+    expect((await read({ url, enabled: false })).typeform).toBe("off");
+    // A webhook to anywhere else never feeds Make, whatever it says.
+    for (const enabled of [true, "true", undefined]) {
+      expect(
+        (await read({ url: "https://example.test/hook", enabled })).typeform,
+      ).toBe("off");
+    }
+  });
+
+  test("a cache file that does not say all of it, or disagrees with itself, is read again and never passes as not held", async () => {
+    const cachePath = join(dir, "partial.json");
+    const at = NOW.toISOString();
+    const allOff = { "9209179": "off", "9523861": "off" };
+    const allOn = { "9209179": "on", "9523861": "on" };
+    for (const file of [
+      // No held at all: `if (old.held)` would read this as not held.
+      { at, typeform: "on", scenarios: allOn },
+      { at, typeform: "off", scenarios: allOff },
+      { at, typeform: "on", scenarios: allOn, held: "true" },
+      { at, typeform: "on", scenarios: allOn, held: null },
+      // A held that its own switches contradict.
+      { at, typeform: "on", scenarios: allOff, held: false },
+      { at, typeform: "off", scenarios: allOn, held: false },
+      { at, typeform: "off", scenarios: allOff, held: true },
+      // A switch missing, or not one of the three.
+      { at, scenarios: allOff, held: false },
+      { at, typeform: "maybe", scenarios: allOff, held: false },
+      { at, typeform: "off", scenarios: {}, held: false },
+      { at, typeform: "off", scenarios: { "9209179": "off" }, held: false },
+      {
+        at,
+        typeform: "off",
+        scenarios: { "9209179": "off", "9523861": "nope" },
+        held: false,
+      },
+    ]) {
+      writeFileSync(cachePath, JSON.stringify(file));
+      const w = fakeWorld({
+        ...off,
+        scenarios: { "9209179": true, "9523861": true },
+      });
+      const s = await oldSenders({
+        env: ENV,
+        fetch: w.fetch,
+        now: () => NOW,
+        cachePath,
+      });
+      expect([file, s.cached, s.held, w.calls.length]).toEqual([
+        file,
+        false,
+        true,
+        3,
+      ]);
+    }
+    // A whole file still counts; a held one keeps holding, with its sentence.
+    writeFileSync(
+      cachePath,
+      JSON.stringify({
+        at,
+        typeform: "on",
+        scenarios: allOff,
+        held: true,
+        sentence: null,
+      }),
+    );
+    const w = fakeWorld(off);
+    const s = await oldSenders({
+      env: ENV,
+      fetch: w.fetch,
+      now: () => NOW,
+      cachePath,
+    });
+    expect(s).toMatchObject({
+      cached: true,
+      held: true,
+      sentence:
+        "The 1-1 Typeform still sends to Make. The cockpit sends 1-1 recaps only after the switch-over.",
+    });
+    expect(w.calls).toEqual([]);
   });
 
   test("cached for 10 minutes; read again after", async () => {

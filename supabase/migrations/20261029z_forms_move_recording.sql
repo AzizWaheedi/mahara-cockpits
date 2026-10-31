@@ -124,6 +124,15 @@ BEGIN
   END IF;
   -- 4. The target client, for this seat.
   v_client := public.cockpit_csm_client_gate_for_actor(v_seat, p_task_id)->>'clientName';
+  -- 4b. Any draft naming this recording, held: the send holds its response from
+  --     its own step 2, so the move waits for a send in flight and step 8 then
+  --     reads it, and a later send waits for this move and its value check
+  --     refuses the moved recording. Before the call row because a send takes
+  --     them in that order (its attach locks the call row), so the two cannot
+  --     deadlock.
+  PERFORM 1 FROM public.cockpit_form_responses r
+    WHERE r.form_key = 'checkin' AND r.state = 'draft' AND r.answers->'call'->>'recordingId' = p_recording_id
+      FOR UPDATE;
   -- 5. The Fathom call row, held against a second mover.
   SELECT * INTO c FROM public.cockpit_csm_calls x WHERE x.source = 'fathom' AND x.source_id = p_recording_id FOR UPDATE;
   -- 6.

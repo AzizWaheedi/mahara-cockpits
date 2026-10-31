@@ -140,8 +140,10 @@ grade or recap effect younger than 30 minutes has no drafting or ready draft,
 `{"op":"effects.sweep"}` here with `x-cron-secret` (the vault's
 `cockpit_notices_cron_secret`, equal to the project-wide `NOTICES_CRON_SECRET`;
 Z11) and the anon key as its bearer, at most once every two minutes.
-`sweepEffects` reads `cockpit_form_effects_waiting()`, takes at most four rows
-inside a 100-second budget, gets each response's own seat from
+`sweepEffects` reads `cockpit_form_effects_waiting()`, walks them inside a
+100-second budget until four rows have begun drafts (a row that begins nothing,
+such as a recording with no Fathom summary yet, uses no slot, so it never holds
+up a later call), gets each response's own seat from
 `cockpit_forms_actor` (a refused seat skips its row with a log line naming only
 the effect and the kind) and calls `draftsForResponse` (`drafts.ts`) with that
 response, its one kind and a drafts reader over the service RPC

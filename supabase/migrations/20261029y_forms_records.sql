@@ -20,7 +20,9 @@
 --    stored kickoff with no response, every Blueprint press with no response,
 --    and each cockpit-owned effect recorded from its Stage 1 row's outcome
 --    (delivered, skipped with Stage 1's reason, or waiting while Stage 1 is
---    in flight). p_apply false writes nothing.
+--    in flight). p_apply false writes nothing. A row it cannot record is left
+--    for the next call and counted; firstError is the first one's SQLSTATE
+--    (the code only, never a message that could hold a row's text), or null.
 -- 4. cockpit_forms_door_seen: the forms door's last delivery and outcome in
 --    cockpit_sync_state forms-door:kickoff. That row fails only on a real
 --    fault of the door, never because it exists or an outsider posted to it.
@@ -59,12 +61,20 @@ END $$;
 -- 1. The kickoff form's signing key
 
 -- One literal, no pattern: no other form's key can be saved in 2b (Z58).
+-- Widened only from the definition the contract read: another session's value
+-- would be dropped here without a word and fail its writer later, so any other
+-- definition stops the file (the CHECK's own drift guard, as Z61's for bodies).
 DO $$
+DECLARE
+  v_def text;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c
-                  WHERE c.conrelid = 'public.cockpit_forms_keys'::regclass
-                    AND c.conname = 'cockpit_forms_keys_provider_check'
-                    AND pg_catalog.pg_get_constraintdef(c.oid) LIKE '%typeform_kickoff%') THEN
+  SELECT pg_catalog.pg_get_constraintdef(c.oid) INTO v_def FROM pg_catalog.pg_constraint c
+   WHERE c.conrelid = 'public.cockpit_forms_keys'::regclass
+     AND c.conname = 'cockpit_forms_keys_provider_check';
+  IF v_def IS DISTINCT FROM 'CHECK ((provider = ANY (ARRAY[''fathom''::text, ''fathom_webhook''::text, ''anthropic''::text, ''deepseek''::text, ''typeform_kickoff''::text])))' THEN
+    IF v_def IS DISTINCT FROM 'CHECK ((provider = ANY (ARRAY[''fathom''::text, ''fathom_webhook''::text, ''anthropic''::text, ''deepseek''::text])))' THEN
+      RAISE EXCEPTION 'cockpit_forms_keys_provider_check changed since the 2b contract read it; stop and re-read it.' USING ERRCODE = '55000';
+    END IF;
     ALTER TABLE public.cockpit_forms_keys DROP CONSTRAINT IF EXISTS cockpit_forms_keys_provider_check;
     ALTER TABLE public.cockpit_forms_keys ADD CONSTRAINT cockpit_forms_keys_provider_check
       CHECK (provider IN ('fathom','fathom_webhook','anthropic','deepseek','typeform_kickoff'));
@@ -464,6 +474,9 @@ END $$;
 -- One cockpit-owned kickoff or Blueprint effect recorded from its Stage 1
 -- row (internal): Stage 1 sent it, delivered with the row it recorded; it
 -- ended unsent, skipped with Stage 1's own reason; in flight, nothing yet.
+-- A failed notice is not final: a person can requeue it (cockpit_slack_notice_fix)
+-- and it then posts, and an effect row is never revisited. So it waits, as one in
+-- flight does, until 48 hours after the response, then skips with Stage 1's reason.
 -- Answers 'delivered', 'skipped' or 'waiting'.
 CREATE OR REPLACE FUNCTION public.cockpit_form_record_effect(p_response public.cockpit_form_responses, p_effect jsonb,
   p_table text, p_id text, p_dedupe text, p_state text, p_reason text, p_what text)
@@ -475,7 +488,8 @@ DECLARE
 BEGIN
   IF p_table = 'cockpit_slack_notices' THEN
     v_state := CASE WHEN p_state = 'posted' THEN 'delivered'
-                    WHEN p_state IN ('skipped','muted','failed') THEN 'skipped' END;
+                    WHEN p_state IN ('skipped','muted') THEN 'skipped'
+                    WHEN p_state = 'failed' AND p_response.submitted_at <= now() - interval '48 hours' THEN 'skipped' END;
     v_reason := CASE WHEN v_state = 'skipped'
                      THEN 'Stage 1 did not send it: ' || coalesce(nullif(btrim(p_reason), ''), 'the notice ended ' || p_state || '.') END;
   ELSIF p_table = 'cockpit_creative_outbox' THEN
@@ -541,6 +555,7 @@ DECLARE
   v_skipped integer := 0;
   v_waiting integer := 0;
   v_errors integer := 0;
+  v_first_error text;
   v_prev_action text := current_setting('cockpit.forms_action', true);
   v_prev_actor text := current_setting('cockpit.audit_actor', true);
   v_prev_source text := current_setting('cockpit.audit_source', true);
@@ -565,6 +580,7 @@ BEGIN
           v_budget := v_budget - 1;
         EXCEPTION WHEN OTHERS THEN
           v_errors := v_errors + 1;
+          v_first_error := coalesce(v_first_error, SQLSTATE);
         END;
       END IF;
     END LOOP;
@@ -604,6 +620,7 @@ BEGIN
         v_budget := v_budget - 1;
       EXCEPTION WHEN OTHERS THEN
         v_errors := v_errors + 1;
+        v_first_error := coalesce(v_first_error, SQLSTATE);
       END;
     END LOOP;
     PERFORM set_config('cockpit.audit_actor', 'typeform', true);
@@ -661,6 +678,7 @@ BEGIN
           END IF;
         EXCEPTION WHEN OTHERS THEN
           v_errors := v_errors + 1;
+          v_first_error := coalesce(v_first_error, SQLSTATE);
         END;
       END LOOP;
     END LOOP;
@@ -680,7 +698,8 @@ BEGIN
     'kickoff', jsonb_build_object('recorded', v_recorded, 'already', v_already),
     'blueprint', jsonb_build_object('recorded', v_presses),
     'effects', jsonb_build_object('delivered', v_delivered, 'skipped', v_skipped, 'waiting', v_waiting),
-    'errors', v_errors);
+    'errors', v_errors,
+    'firstError', v_first_error);
 END $$;
 
 -- ---------------------------------------------------------------------------

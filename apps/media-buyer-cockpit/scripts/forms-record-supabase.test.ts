@@ -913,6 +913,60 @@ describe("the migration", () => {
     });
   });
 
+  test("the keys CHECK's drift guard refuses a CHECK it did not read, and widens only the one it read", async () => {
+    const block = (() => {
+      const sql = migration(Y);
+      const from = sql.indexOf("-- 1. The kickoff form's signing key");
+      const to = sql.indexOf("-- 20261027g's four key functions");
+      expect(from).toBeGreaterThan(0);
+      expect(to).toBeGreaterThan(from);
+      return sql.slice(from, to);
+    })();
+    const NAME = "cockpit_forms_keys_provider_check";
+    const where = `conrelid = 'public.cockpit_forms_keys'::regclass AND conname = '${NAME}'`;
+    const def = () =>
+      one<string | null>(
+        `SELECT pg_get_constraintdef(oid) AS r FROM pg_constraint WHERE ${where}`,
+      );
+    const oid = () =>
+      one<string>(`SELECT oid::text AS r FROM pg_constraint WHERE ${where}`);
+    const list = (...providers: string[]) =>
+      ex(
+        `ALTER TABLE public.cockpit_forms_keys DROP CONSTRAINT IF EXISTS ${NAME};
+         ALTER TABLE public.cockpit_forms_keys ADD CONSTRAINT ${NAME}
+           CHECK (provider IN (${providers.map(k => `'${k}'`).join(",")}));`,
+      );
+    const READ = ["fathom", "fathom_webhook", "anthropic", "deepseek"];
+    const refused = {
+      code: "55000",
+      message: `${NAME} changed since the 2b contract read it; stop and re-read it.`,
+    };
+    const widened = `CHECK ((provider = ANY (ARRAY[${[...READ, "typeform_kickoff"].map(k => `'${k}'::text`).join(", ")}])))`;
+    await rolledBack(async () => {
+      // Already widened: nothing is dropped.
+      const before = await oid();
+      await ex(block);
+      expect(await oid()).toBe(before);
+      expect(await def()).toBe(widened);
+      // What the contract read is widened.
+      await list(...READ);
+      await ex(block);
+      expect(await def()).toBe(widened);
+      // Another session's provider stays, and the file stops.
+      await list(...READ, "another_session");
+      const theirs = await def();
+      expect(await refusal(() => ex(block))).toEqual(refused);
+      expect(await def()).toBe(theirs);
+      await list(...READ, "typeform_kickoff", "another_session");
+      expect(await refusal(() => ex(block))).toEqual(refused);
+      // No constraint at all is not what the contract read either.
+      await ex(
+        `ALTER TABLE public.cockpit_forms_keys DROP CONSTRAINT ${NAME};`,
+      );
+      expect(await refusal(() => ex(block))).toEqual(refused);
+    });
+  });
+
   test("grants: the key functions keep their live grants; the record RPCs are the service key's; the helpers no role's", async () => {
     const acl = (sig: string) =>
       one<string | null>(
@@ -1694,6 +1748,7 @@ describe("the record sweep", () => {
         blueprint: { recorded: 0 },
         effects: { delivered: 1, skipped: 2, waiting: 2 },
         errors: 0,
+        firstError: null,
       });
       expect(await stage1()).toEqual(before);
       const notice = async (k: keyof typeof t) => {
@@ -1746,6 +1801,102 @@ describe("the record sweep", () => {
           "SELECT count(*) n FROM public.cockpit_form_effects WHERE state IN ('planned','queued')",
         ),
       ).toBe(0);
+    });
+  });
+
+  test("a failed notice waits for its 48 hours: a requeue that posts records delivered; still failed at the close, skipped with Stage 1's reason", async () => {
+    await rolledBack(async () => {
+      const t = {
+        requeued: token(),
+        stuck: token(),
+        old: token(),
+        bare: token(),
+      };
+      await storedKickoff(t.requeued, { at: ago(30) });
+      await storedKickoff(t.stuck, { at: ago(60 * 47) });
+      await storedKickoff(t.old, { at: ago(60 * 49) });
+      await storedKickoff(t.bare, { at: ago(60 * 49) });
+      const REASON = "Slack refused the post: channel_not_found.";
+      const requeued = await kickoffNotice(t.requeued, "failed", REASON);
+      await kickoffNotice(t.stuck, "failed", REASON);
+      const old = await kickoffNotice(t.old, "failed", REASON);
+      await kickoffNotice(t.bare, "failed", null);
+      const notice = async (k: keyof typeof t) => {
+        const [r] = await response("external_id = $1", [t[k]]);
+        return (await effectsOf(r.id)).kickoff_notice;
+      };
+      expect((await sweep()).effects).toEqual({
+        delivered: 0,
+        skipped: 2,
+        waiting: 2,
+      });
+      // Under 48 hours it has no effect row, so nothing says it was not sent.
+      expect(await notice("requeued")).toBeUndefined();
+      expect(await notice("stuck")).toBeUndefined();
+      expect(await notice("old")).toMatchObject({
+        state: "skipped",
+        delivery_ref: null,
+        reason: `Stage 1 did not send it: ${REASON}`,
+      });
+      expect((await notice("old")).plan.stage1).toEqual({
+        table: "cockpit_slack_notices",
+        id: old,
+        dedupeKey: `kickoff:${t.old}`,
+        state: "failed",
+      });
+      expect(await notice("bare")).toMatchObject({
+        state: "skipped",
+        reason: "Stage 1 did not send it: the notice ended failed.",
+      });
+      // A person requeues it, as the runbook says: it waits, then posts, and the record says so.
+      await as(
+        "service",
+        "SELECT public.cockpit_slack_notice_fix($1::uuid, 'requeue', 'Slack is back.') AS r",
+        [requeued],
+      );
+      expect((await sweep()).effects).toEqual({
+        delivered: 0,
+        skipped: 0,
+        waiting: 2,
+      });
+      expect(await notice("requeued")).toBeUndefined();
+      for (const state of ["sending", "posted"])
+        await q(
+          `UPDATE public.cockpit_slack_notices SET state = $2,
+              slack_ts = CASE WHEN $2 = 'posted' THEN '1730000000.000500' END,
+              channel = CASE WHEN $2 = 'posted' THEN 'C09RZ0GS0V9' END
+            WHERE id = $1::uuid`,
+          [requeued, state],
+        );
+      expect((await sweep()).effects).toEqual({
+        delivered: 1,
+        skipped: 0,
+        waiting: 1,
+      });
+      expect(await notice("requeued")).toMatchObject({
+        state: "delivered",
+        delivery_ref: requeued,
+        reason: null,
+      });
+      // The one left failed reaches the close: skipped once, with its reason, and never again.
+      await q(
+        "UPDATE public.cockpit_form_responses SET submitted_at = $2::timestamptz WHERE external_id = $1",
+        [t.stuck, ago(60 * 48 + 1)],
+      );
+      expect((await sweep()).effects).toEqual({
+        delivered: 0,
+        skipped: 1,
+        waiting: 0,
+      });
+      expect(await notice("stuck")).toMatchObject({
+        state: "skipped",
+        reason: `Stage 1 did not send it: ${REASON}`,
+      });
+      expect((await sweep()).effects).toEqual({
+        delivered: 0,
+        skipped: 0,
+        waiting: 0,
+      });
     });
   });
 
@@ -1875,6 +2026,80 @@ describe("the record sweep", () => {
           "SELECT current_setting('cockpit.forms_record', true) || current_setting('cockpit.forms_action', true) AS r",
         ),
       ).toBe("");
+    });
+  });
+
+  test("a row it cannot record is counted, and firstError is the first one's code alone, from each of the three steps", async () => {
+    const SECRET = "Refused for Acme Interiors Trading";
+    // Runs as the sweep's own SECURITY DEFINER owner; the code is the trigger's argument.
+    await rolledBack(async () => {
+      await ex(
+        `CREATE FUNCTION public.test_refuse_row() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN RAISE EXCEPTION '${SECRET}' USING ERRCODE = TG_ARGV[0]; END $$;`,
+      );
+      const refuse = (
+        name: string,
+        table: string,
+        when: string,
+        code: string,
+      ) =>
+        ex(
+          `CREATE TRIGGER ${name} BEFORE INSERT ON public.${table} FOR EACH ROW
+             WHEN (${when}) EXECUTE FUNCTION public.test_refuse_row('${code}');`,
+        );
+      const stop = (name: string, table: string) =>
+        ex(`DROP TRIGGER ${name} ON public.${table};`);
+      const STEP = {
+        kickoff: "NEW.form_key = 'kickoff'",
+        press: "NEW.form_key = 'blueprint'",
+        effect: "NEW.owner = 'cockpit'",
+      };
+
+      // (a) A stored kickoff refused.
+      await storedKickoff(token());
+      await refuse("t_a", "cockpit_form_responses", STEP.kickoff, "P0T01");
+      const a = await sweep();
+      expect(a.errors).toBe(1);
+      expect(a.firstError).toBe("P0T01");
+      expect(a.kickoff.recorded).toBe(0);
+      await stop("t_a", "cockpit_form_responses");
+      expect((await sweep()).firstError).toBeNull();
+
+      // (b) A Blueprint press refused.
+      await press("blueprintOffer", A, "sending");
+      await refuse("t_b", "cockpit_form_responses", STEP.press, "P0T02");
+      const b = await sweep();
+      expect(b.errors).toBe(1);
+      expect(b.firstError).toBe("P0T02");
+      expect(b.blueprint.recorded).toBe(0);
+      await stop("t_b", "cockpit_form_responses");
+      await sweep();
+
+      // (c) An effect from its Stage 1 row refused.
+      const t = token();
+      await storedKickoff(t);
+      await kickoffNotice(t, "posted");
+      await refuse("t_c", "cockpit_form_effects", STEP.effect, "P0T03");
+      const c = await sweep();
+      expect(c.errors).toBe(1);
+      expect(c.firstError).toBe("P0T03");
+      expect(c.kickoff.recorded).toBe(1);
+      expect(c.effects.delivered).toBe(0);
+      await stop("t_c", "cockpit_form_effects");
+
+      // Refused in two steps: the first code stays, every row is counted, the
+      // dry run answers the same, and no message reaches the answer.
+      await storedKickoff(token());
+      await storedKickoff(token());
+      await press("blueprintOffer", B, "sending");
+      await refuse("t_d", "cockpit_form_responses", STEP.kickoff, "P0T04");
+      await refuse("t_e", "cockpit_form_responses", STEP.press, "P0T05");
+      const dry = await sweep(false);
+      const real = await sweep(true);
+      expect(real.errors).toBe(3);
+      expect(real.firstError).toBe("P0T04");
+      expect({ ...real, apply: false }).toEqual(dry);
+      expect(JSON.stringify(real)).not.toContain(SECRET);
     });
   });
 

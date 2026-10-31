@@ -52,11 +52,17 @@ export const NOT_LEFT =
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
-/** One WhatsApp message as the list returns it, kept to what the sender reads. */
+/**
+ * One WhatsApp message as the list returns it, kept to what the sender reads.
+ * A message we sent through Whapi that holds a URL comes back as `type:
+ * link_preview`, with no `text` and no top-level `body`: its whole text is in
+ * `link_preview.body` (read from real payloads on the VPS, 2026-10-30). Every
+ * recap ends with the booking link, so every recap reads back this way.
+ */
 export function readMessage(v: unknown): WaMessage | null {
   const m = v as Record<string, any> | null;
   if (!m || typeof m !== "object" || typeof m.id !== "string") return null;
-  const body = str(m.text?.body) || str(m.body);
+  const body = str(m.text?.body) || str(m.link_preview?.body) || str(m.body);
   const at =
     typeof m.timestamp === "number" ? m.timestamp : Number(m.timestamp) || null;
   return {

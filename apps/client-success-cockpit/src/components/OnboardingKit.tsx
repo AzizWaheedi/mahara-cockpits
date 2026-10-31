@@ -298,9 +298,7 @@ function NoticeLine({
         {stop.href ? (
           <>
             {" "}
-            <ExtLink href={stop.href} className="text-primary-ink">
-              Open in Slack
-            </ExtLink>
+            <ExtLink href={stop.href}>Open in Slack</ExtLink>
           </>
         ) : null}
       </span>

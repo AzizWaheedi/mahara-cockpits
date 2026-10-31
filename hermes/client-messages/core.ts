@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 
 /** A WhatsApp group id, as the guard's transport checks it before any send. */
 export const GROUP_JID = /^\d+(?:-\d+)?@g\.us$/;
-/** The card's custom field that holds its WhatsApp group (the guard reads the same field). */
+/** The card's custom field that holds its WhatsApp group: text, filled by hand, nothing writes it (docs/forms/maps/repo-forms.md F.5). Empty passes; a different group refuses. */
 export const CARD_GROUP_FIELD = "b1d54dfb-19e9-4c0f-88a3-4f6145f53265";
 /** Client Data's WA GROUP ID column, where the team keeps it: F. */
 export const GROUP_COLUMN = 5;
@@ -88,12 +88,33 @@ export function cardGroup(task: unknown): string | null {
   return v || null;
 }
 
+/**
+ * Whether ClickUp's answer really lists the card's fields. An empty group field
+ * is known only from a card that lists its fields; a 200 with no list, or a
+ * group field holding something that is no text, says nothing about the group.
+ */
+export function cardRead(task: unknown): boolean {
+  const fields = (task as { custom_fields?: unknown } | null)?.custom_fields;
+  if (!Array.isArray(fields)) return false;
+  const value = (
+    fields.find(x => (x as { id?: unknown })?.id === CARD_GROUP_FIELD) as
+      | { value?: unknown }
+      | undefined
+  )?.value;
+  return value === undefined || value === null || typeof value === "string";
+}
+
 export type Verdict = "same" | "empty" | "differs";
 
 /** Client Data against the card: an empty card field or the same group passes; a different one is refused. */
 export function groupVerdict(sheet: string, card: string | null): Verdict {
   if (!card) return "empty";
   return card.trim() === sheet.trim() ? "same" : "differs";
+}
+
+/** The card's verdict from ClickUp's answer: `unread` when the answer does not list its fields, which never passes. */
+export function cardVerdict(sheet: string, task: unknown): Verdict | "unread" {
+  return cardRead(task) ? groupVerdict(sheet, cardGroup(task)) : "unread";
 }
 
 /** The text as WhatsApp may hand it back: one line ending, no trailing spaces, the same Unicode form. */

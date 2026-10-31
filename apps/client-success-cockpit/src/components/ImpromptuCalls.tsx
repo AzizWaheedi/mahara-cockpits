@@ -28,7 +28,8 @@ import {
 } from "@/components/ui/sheet";
 import { kuwaitWeekday } from "@/forms/checkinRail";
 import { kuwaitTime } from "@/forms/formTime";
-import { NO_REASON } from "@/lib/clientMessages";
+import { BROWSER_CLOCK, type PollClock } from "@/forms/RecapApproval";
+import { ACTION_DEADLINE_MS, answerBy, NO_REASON } from "@/lib/clientMessages";
 import {
   matchUnmatched,
   readUnmatched,
@@ -69,11 +70,29 @@ import { cn } from "@/lib/utils";
 
 /** The queue could not be read: said in the card, never counted as zero. */
 export const IMPROMPTU_FAILED =
-  "The calls with no client could not be read, so an impromptu call may be missing here.";
+  "The calls with no client could not be read, so an impromptu call may be missing here. Reload the page; if it stays, tell the tech lead.";
 export const PLACE_TITLE = "Whose call was this?";
+/** The Place sheet with no client to pick: she still has a call to answer. */
+export const NO_CLIENTS =
+  "No clients are on your list, so this call cannot be placed here. Ask an admin to place it, or mark it Not a 1-1 call.";
 export const PLACE_DESCRIPTION =
   "Pick the client. The call goes on their page, then you can write the 1-1 notes.";
 export const SET_ASIDE = "Set aside: not a 1-1 call.";
+/** Place or Not a 1-1 call got no answer in time: what is known, what to do next. */
+export const CALL_NO_ANSWER =
+  "No answer came back, so this may or may not have saved. Reload the page to see where the call stands.";
+
+/**
+ * A refusal in the server's words. A dropped connection comes back as the
+ * browser's own error, and the call may have landed before the answer was
+ * lost, so it says the same as no answer at all.
+ */
+export function callSaid(e: unknown): string {
+  const said = (e as Error)?.message ?? "";
+  if (/Failed to fetch|NetworkError|Load failed/i.test(said))
+    return CALL_NO_ANSWER;
+  return said || NO_REASON;
+}
 
 /** The keys that open a menu from its trigger (Radix: Enter, Space, the arrows). */
 const MENU_KEYS = new Set(["Enter", " ", "ArrowDown", "ArrowUp"]);
@@ -128,10 +147,8 @@ export function useImpromptuIO(given?: ImpromptuIO | null): ImpromptuIO | null {
 export interface ImpromptuCalls {
   /** The seat's impromptu recordings with no client, newest first. */
   items: Unmatched[];
-  /** The queue was asked and did not answer. */
+  /** The queue was asked and refused, or gave no answer in time. */
   failed: boolean;
-  /** The queue has answered at least once (or is not asked). */
-  ready: boolean;
   /** A row that was placed or set aside leaves the list. */
   remove(id: number): void;
 }
@@ -145,26 +162,32 @@ export function useImpromptuCalls(
   enabled: boolean,
   readKey?: unknown,
   given?: ImpromptuIO | null,
+  clock: PollClock = BROWSER_CLOCK,
 ): ImpromptuCalls {
   const io = useImpromptuIO(given);
   const [items, setItems] = useState<Unmatched[]>([]);
   const [failed, setFailed] = useState(false);
-  const [ready, setReady] = useState(!enabled);
+  const timer = useRef(clock);
+  timer.current = clock;
   // biome-ignore lint/correctness/useExhaustiveDependencies: readKey marks a new snapshot
   useEffect(() => {
     if (!enabled) {
       setItems([]);
       setFailed(false);
-      setReady(true);
       return;
     }
     if (!io) {
       setFailed(true);
-      setReady(true);
       return;
     }
     let live = true;
-    io.read().then(
+    // A read with no answer is a failed read: said, never zero.
+    answerBy(
+      io.read(),
+      ACTION_DEADLINE_MS,
+      timer.current,
+      IMPROMPTU_FAILED,
+    ).then(
       all => {
         if (!live) return;
         setItems(
@@ -173,14 +196,12 @@ export function useImpromptuCalls(
           ),
         );
         setFailed(false);
-        setReady(true);
       },
       () => {
         if (!live) return;
         // Missing is never zero: the rows already read stay, and the card
         // says the read failed.
         setFailed(true);
-        setReady(true);
       },
     );
     return () => {
@@ -191,7 +212,7 @@ export function useImpromptuCalls(
     (id: number) => setItems(list => list.filter(u => u.id !== id)),
     [],
   );
-  return { items, failed, ready, remove };
+  return { items, failed, remove };
 }
 
 // ------------------------------------------------------------ the row
@@ -207,6 +228,7 @@ export function ImpromptuRow({
   onPlace,
   onSettled,
   lampCol,
+  clock = BROWSER_CLOCK,
 }: {
   item: Unmatched;
   io: ImpromptuIO | null;
@@ -216,6 +238,8 @@ export function ImpromptuRow({
   onSettled: (u: Unmatched) => void;
   /** The list's lamp column, so client rows below line up with this one. */
   lampCol: string;
+  /** The action's deadline; the tests pass their own. */
+  clock?: PollClock;
 }) {
   const [settling, setSettling] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -227,12 +251,17 @@ export function ImpromptuRow({
     setSettling(true);
     setError(null);
     try {
-      await io.settle(item.id, reason);
+      await answerBy(
+        io.settle(item.id, reason),
+        ACTION_DEADLINE_MS,
+        clock,
+        CALL_NO_ANSWER,
+      );
       toast.success(SET_ASIDE);
       onSettled(item);
     } catch (e) {
       // A refusal keeps the row, with the server's sentence under it.
-      setError((e as Error).message || NO_REASON);
+      setError(callSaid(e));
     } finally {
       setSettling(false);
     }
@@ -361,6 +390,7 @@ export function PlaceSheet({
   onOpenChange,
   onPlaced,
   onCloseFocus,
+  clock = BROWSER_CLOCK,
 }: {
   /** The call being placed; null closes the sheet. */
   item: Unmatched | null;
@@ -371,6 +401,8 @@ export function PlaceSheet({
   onPlaced: (u: Unmatched, c: PlaceClient) => void;
   /** Where focus goes when the sheet closes. */
   onCloseFocus: () => void;
+  /** The pick's deadline; the tests pass their own. */
+  clock?: PollClock;
 }) {
   const id = useId();
   const searchRef = useRef<HTMLInputElement>(null);
@@ -391,17 +423,30 @@ export function PlaceSheet({
     setSaving(c.taskId);
     setError(null);
     try {
-      await io.place(item.id, c.taskId);
+      await answerBy(
+        io.place(item.id, c.taskId),
+        ACTION_DEADLINE_MS,
+        clock,
+        CALL_NO_ANSWER,
+      );
       toast.success(`Saved on ${c.name}.`);
       onPlaced(item, c);
     } catch (e) {
-      setError((e as Error).message || NO_REASON);
+      setError(callSaid(e));
     } finally {
       setSaving(null);
     }
   }
   return (
-    <Sheet open={Boolean(item)} onOpenChange={onOpenChange}>
+    <Sheet
+      open={Boolean(item)}
+      onOpenChange={open => {
+        // While a pick saves, the sheet stays: its answer comes here, and it
+        // always comes (the deadline above).
+        if (!open && saving) return;
+        onOpenChange(open);
+      }}
+    >
       <SheetContent
         side="right"
         className="flex w-full flex-col gap-0 overflow-y-auto sm:max-w-md"
@@ -426,7 +471,7 @@ export function PlaceSheet({
               </span>
               <span className="min-w-0">
                 Impromptu call on {callDay(item)},{" "}
-                <span className="font-mono text-xs tabular-nums">
+                <span className="font-mono text-[11px] tabular-nums">
                   {callClock(item)}
                 </span>
                 {item.hint ? (
@@ -450,45 +495,52 @@ export function PlaceSheet({
                 dir="auto"
                 value={query}
                 onChange={e => setQuery(e.target.value)}
-                aria-controls={`${id}-list`}
+                aria-controls={shown.length ? `${id}-list` : undefined}
                 className="h-9 w-full rounded-lg border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
-            {shown.length ? (
-              <ul
-                id={`${id}-list`}
-                aria-label="Clients"
-                className="-mx-2 max-h-[55dvh] space-y-0.5 overflow-y-auto"
-              >
-                {shown.map(c => (
-                  <li key={c.taskId}>
-                    <button
-                      type="button"
-                      onClick={() => void pick(c)}
-                      aria-disabled={saving !== null || undefined}
-                      className="w-full rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
-                    >
-                      <bdi dir="auto">{c.name}</bdi>
-                      {saving === c.taskId ? (
-                        <span className="ml-2 text-xs text-muted-foreground">
-                          Saving…
-                        </span>
-                      ) : null}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : (
+            {/* The region is always here and empty while the list shows, so
+                a search that empties the list is read out (a region that
+                arrives holding its text is often not). Empty, it takes no
+                height inside this plain wrapper. */}
+            <div>
+              {shown.length ? (
+                <ul
+                  id={`${id}-list`}
+                  aria-label="Clients"
+                  className="-mx-2 max-h-[55dvh] space-y-0.5 overflow-y-auto"
+                >
+                  {shown.map(c => (
+                    <li key={c.taskId}>
+                      <button
+                        type="button"
+                        onClick={() => void pick(c)}
+                        aria-disabled={saving !== null || undefined}
+                        className="w-full rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+                      >
+                        <bdi dir="auto">{c.name}</bdi>
+                        {saving === c.taskId ? (
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            Saving…
+                          </span>
+                        ) : null}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
               <p
-                id={`${id}-list`}
                 className="text-sm text-muted-foreground"
                 role="status"
+                aria-live="polite"
               >
-                {query.trim()
-                  ? `No client matches "${query.trim()}".`
-                  : "No clients are on your list."}
+                {shown.length
+                  ? ""
+                  : query.trim()
+                    ? `No client matches "${query.trim()}".`
+                    : NO_CLIENTS}
               </p>
-            )}
+            </div>
             {error ? (
               <p className="flex gap-2 text-sm" role="alert">
                 <span className="flex h-5 shrink-0 items-center">

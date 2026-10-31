@@ -15,7 +15,11 @@ import { approveAnswer } from "@/lib/clientMessages";
 
 export type FormClient = Pick<SupabaseClient, "rpc" | "auth" | "functions">;
 
-const NOT_LIVE = "The cockpit's 1-1 notes are not live yet.";
+/** The door or an RPC is not there yet (before the deploy, or rolled back). */
+export const NOTES_NOT_LIVE = "The cockpit's 1-1 notes are not live yet.";
+/** The door or an RPC answered something this window cannot read. */
+export const NOTES_SHAPE =
+  "The 1-1 notes came back in a shape this window does not read.";
 
 /**
  * A request that never reached the cockpit (the Wi-Fi dropped, the laptop
@@ -348,14 +352,11 @@ async function rpc<T extends z.ZodType>(
       if (!code && offline(error.message))
         throw new CheckinError(OFFLINE, null, null);
       if (notLive(`${error.message} ${code ?? ""}`))
-        throw new CheckinError(NOT_LIVE, code, null);
+        throw new CheckinError(NOTES_NOT_LIVE, code, null);
       throw new CheckinError(error.message, code, null);
     }
     const parsed = shape.safeParse(data);
-    if (!parsed.success)
-      throw Error(
-        "The 1-1 notes came back in a shape this window does not read.",
-      );
+    if (!parsed.success) throw Error(NOTES_SHAPE);
     return parsed.data;
   } finally {
     actor.release();
@@ -396,14 +397,11 @@ async function door<T extends z.ZodType>(
     if (error) {
       const raw = answer as { message?: string; code?: string } | null;
       if (status === 404 || notLive(`${raw?.message ?? ""} ${raw?.code ?? ""}`))
-        throw new CheckinError(NOT_LIVE, raw?.code ?? null, status);
+        throw new CheckinError(NOTES_NOT_LIVE, raw?.code ?? null, status);
       throw new CheckinError(error.message, null, status);
     }
     const parsed = shape.safeParse(answer);
-    if (!parsed.success)
-      throw Error(
-        "The 1-1 notes came back in a shape this window does not read.",
-      );
+    if (!parsed.success) throw Error(NOTES_SHAPE);
     return parsed.data;
   } finally {
     actor.release();

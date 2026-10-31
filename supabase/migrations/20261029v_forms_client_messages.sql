@@ -16,6 +16,10 @@
 -- 3. The service RPCs: approve (only through cockpit-forms-api's
 --    recap.approve, with the verified seat, Z27), and the sender's claim,
 --    intent, result, sweep, work, fix and team_today.
+-- 4. A person's outcome: the fix records what a person saw in the group, not
+--    there (not_sent) or there (seen_in_group), after the sender has stopped
+--    looking. A recap a person saw has no WhatsApp id to store, so the sent
+--    row's CHECK widens for that one read-back.
 --
 -- Nothing here sends anything, and while the checkin registry keeps the
 -- recap effect shadow no message row can exist (the 2b dispatch creates the
@@ -102,6 +106,38 @@ BEGIN
 END $$;
 
 -- ---------------------------------------------------------------------------
+-- 1b. A sent message holds WhatsApp's id, unless a person saw it in the group
+--     (the fix's seen_in_group): an id made up to fill the column would be false.
+
+--     Widened only from the definition the contract read (the CHECK's own drift
+--     guard, as in t, u, x and y): another session's tighter rule would be dropped
+--     here without a word, so any other definition, or none, stops the file, and
+--     a second apply finds the widened one and changes nothing.
+
+DO $$
+DECLARE v_old text; v_new text;
+BEGIN
+  SELECT pg_catalog.pg_get_constraintdef(c.oid) INTO v_new FROM pg_catalog.pg_constraint c
+   WHERE c.conrelid = 'public.cockpit_client_messages'::regclass
+     AND c.conname = 'cockpit_client_messages_sent_provider_check';
+  IF v_new IS NOT NULL THEN
+    IF v_new IS DISTINCT FROM 'CHECK (((state <> ''sent''::text) OR (provider_id IS NOT NULL) OR (COALESCE((read_back ->> ''by''::text), ''''::text) = ''person''::text)))' THEN
+      RAISE EXCEPTION 'cockpit_client_messages_sent_provider_check changed since the 2b contract read it; stop and re-read it.' USING ERRCODE = '55000';
+    END IF;
+  ELSE
+    SELECT pg_catalog.pg_get_constraintdef(c.oid) INTO v_old FROM pg_catalog.pg_constraint c
+     WHERE c.conrelid = 'public.cockpit_client_messages'::regclass
+       AND c.conname = 'cockpit_client_messages_check1';
+    IF v_old IS DISTINCT FROM 'CHECK (((state <> ''sent''::text) OR (provider_id IS NOT NULL)))' THEN
+      RAISE EXCEPTION 'cockpit_client_messages_check1 changed since the 2b contract read it; stop and re-read it.' USING ERRCODE = '55000';
+    END IF;
+    ALTER TABLE public.cockpit_client_messages DROP CONSTRAINT cockpit_client_messages_check1;
+    ALTER TABLE public.cockpit_client_messages ADD CONSTRAINT cockpit_client_messages_sent_provider_check
+      CHECK (state <> 'sent' OR provider_id IS NOT NULL OR coalesce(read_back->>'by', '') = 'person');
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
 -- 2. Indexes
 
 CREATE INDEX IF NOT EXISTS cockpit_client_messages_open
@@ -117,7 +153,9 @@ CREATE INDEX IF NOT EXISTS cockpit_client_messages_response
 -- One message as a screen sees it: who approved it as a role, never an
 -- address; never its claim token or WhatsApp's message id. callAt is the
 -- call's end, else its start; owner is the registry's owner of the recap
--- effect now; effectState is the state of the effect that points at it.
+-- effect now; effectState is the state of the effect that points at it;
+-- triesUsedUp is true once the count the intent refuses at is reached, and a
+-- reopen keeps the count, so the screen offers Skip and not Try again.
 CREATE OR REPLACE FUNCTION public.cockpit_client_message_view(p_row public.cockpit_client_messages)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE v_call text; v_form text; v_effect text;
@@ -150,7 +188,8 @@ BEGIN
     'readBack', CASE WHEN p_row.read_back_at IS NOT NULL
                      THEN jsonb_build_object('by', p_row.read_back->>'by', 'at', p_row.read_back_at) END,
     'owner', CASE WHEN v_form IS NOT NULL THEN public.cockpit_form_effect_owner(v_form, 'recap') END,
-    'effectState', v_effect);
+    'effectState', v_effect,
+    'triesUsedUp', p_row.attempts >= 3);
 END $$;
 
 -- ---------------------------------------------------------------------------
@@ -278,8 +317,8 @@ END $$;
 
 -- Reopen: back to a draft to edit and approve again, the approval, claim and
 -- expiry cleared. A failed message reopens as a person's fix (forms_fix),
--- which also puts its effect back in the queue. The tries WhatsApp refused
--- are kept, so a fourth is still refused at intent (Z66).
+-- which also puts its effect back in the queue. Every try is kept, whatever
+-- stopped it, so a fourth is still refused at intent (Z66).
 CREATE OR REPLACE FUNCTION public.cockpit_client_message_reopen(p_id uuid)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE v_seat jsonb; m public.cockpit_client_messages;
@@ -491,9 +530,10 @@ END $$;
 
 -- Just before the one POST (Z66): the owner gate again, because 30 to 120
 -- seconds have passed since the claim; a refusal goes back to approved, and
--- the next claim's gate skips it with the reason. A fourth try is refused
--- with a sentence, so nothing loops. Else it is sending, one more try. The
--- sender posts only on ok true.
+-- the next sweep's gate skips it with the reason. A fourth try is refused
+-- with a sentence, so nothing loops, and answers refused true: only that answer
+-- moved the row to refused, and the sender counts it. Else it is sending, one
+-- more try. The sender posts only on ok true.
 CREATE OR REPLACE FUNCTION public.cockpit_client_message_intent(p_id uuid, p_claim uuid)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE m public.cockpit_client_messages; g jsonb; v_reason text;
@@ -512,11 +552,11 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'reason', coalesce(nullif(g->>'reason', ''), 'Make owns this again.'));
   END IF;
   IF m.attempts >= 3 THEN
-    v_reason := 'WhatsApp refused this recap three times. Send it by hand in the group if it is still needed, then skip it here.';
+    v_reason := 'This recap was tried three times and did not go. Send it by hand in the group if it is still needed, then skip it here.';
     PERFORM set_config('cockpit.forms_action', 'forms.message_refused', true);
     UPDATE public.cockpit_client_messages SET state = 'refused', reason = v_reason WHERE id = m.id;
     PERFORM set_config('cockpit.forms_action', '', true);
-    RETURN jsonb_build_object('ok', false, 'reason', v_reason);
+    RETURN jsonb_build_object('ok', false, 'reason', v_reason, 'refused', true);
   END IF;
   PERFORM set_config('cockpit.forms_action', 'forms.message_sending', true);
   UPDATE public.cockpit_client_messages SET state = 'sending', intent_at = now(), attempts = m.attempts + 1 WHERE id = m.id;
@@ -614,12 +654,20 @@ END $$;
 
 -- The second source behind the sender: a send that stopped part way is
 -- unknown (never sent again; a person looks in the group), a claim with no
--- intent after 10 minutes goes back to approved, and an approval older than
--- 24 hours goes back to a draft. A database-only move; it sends nothing, and
--- runs in dry mode too (Z67).
+-- intent after 10 minutes goes back to approved, an approved recap the owner
+-- gate now refuses is skipped with the gate's reason (after a rollback nothing
+-- claims it, so nothing else would settle it, and its effect must not wait on
+-- a person), and an approval older than 24 hours goes back to a draft. A
+-- database-only move; it sends nothing, and runs in dry mode too (Z67).
 CREATE OR REPLACE FUNCTION public.cockpit_client_message_sweep()
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
-DECLARE v_unknown integer := 0; v_released integer := 0; v_expired integer := 0;
+DECLARE
+  v_unknown integer := 0;
+  v_released integer := 0;
+  v_skipped integer := 0;
+  v_expired integer := 0;
+  g jsonb;
+  m public.cockpit_client_messages;
 BEGIN
   PERFORM public.cockpit_hours_require_service();
   PERFORM set_config('cockpit.audit_source', 'client-messages', true);
@@ -633,6 +681,23 @@ BEGIN
      SET state = 'approved', claim_token = NULL, claimed_at = NULL
    WHERE x.state = 'claimed' AND x.intent_at IS NULL AND x.claimed_at < now() - interval '10 minutes';
   GET DIAGNOSTICS v_released = ROW_COUNT;
+  -- The gate before the expiry: a recap Make owns again never asks a person to
+  -- approve it again. It runs after the release, so a claim put back above settles now.
+  PERFORM set_config('cockpit.forms_action', 'forms.message_skipped', true);
+  FOR m IN
+    SELECT * FROM public.cockpit_client_messages x
+     WHERE x.state = 'approved'
+     ORDER BY x.approved_at, x.id
+     FOR UPDATE SKIP LOCKED
+  LOOP
+    g := public.cockpit_form_effect_gate('client_message', m.id::text);
+    IF NOT coalesce((g->>'ok')::boolean, false) THEN
+      UPDATE public.cockpit_client_messages
+         SET state = 'skipped', reason = left(coalesce(nullif(g->>'reason', ''), 'Make owns this again.'), 240)
+       WHERE id = m.id;
+      v_skipped := v_skipped + 1;
+    END IF;
+  END LOOP;
   PERFORM set_config('cockpit.forms_action', 'forms.message_expired', true);
   UPDATE public.cockpit_client_messages x
      SET state = 'draft', approved_by = NULL, approved_at = NULL, expires_at = NULL,
@@ -640,7 +705,7 @@ BEGIN
    WHERE x.state = 'approved' AND (x.expires_at IS NULL OR x.expires_at <= now());
   GET DIAGNOSTICS v_expired = ROW_COUNT;
   PERFORM set_config('cockpit.forms_action', '', true);
-  RETURN jsonb_build_object('unknown', v_unknown, 'released', v_released, 'expired', v_expired);
+  RETURN jsonb_build_object('unknown', v_unknown, 'released', v_released, 'skipped', v_skipped, 'expired', v_expired);
 END $$;
 
 -- What the sender reads, writing nothing: unknowns of the last 24 hours to
@@ -675,19 +740,40 @@ BEGIN
                ORDER BY m.approved_at, m.id LIMIT 20) x), '[]'::jsonb));
 END $$;
 
--- The runbook's hand fix, for a person who looked in the group: an unknown
--- that is not there becomes failed, with what they saw.
+-- The runbook's hand fix, for a person who looked in the group. not_sent: an
+-- unknown that is not there becomes failed, with what they saw. seen_in_group:
+-- an unknown that is there becomes sent, and a sent recap never read back gets
+-- its read-back, by 'person', with what they saw. The sender stops looking after
+-- 24 hours, so this is the only true way to close either after that. It is
+-- never a send: nothing here reaches WhatsApp.
 CREATE OR REPLACE FUNCTION public.cockpit_client_message_fix(p_id uuid, p_what text, p_note text)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE m public.cockpit_client_messages;
 BEGIN
   PERFORM public.cockpit_hours_require_service();
-  IF p_what IS DISTINCT FROM 'not_sent' THEN
-    RAISE EXCEPTION 'Choose not_sent.' USING ERRCODE = '22023';
+  IF p_what IS NULL OR p_what NOT IN ('not_sent','seen_in_group') THEN
+    RAISE EXCEPTION 'Choose not_sent or seen_in_group.' USING ERRCODE = '22023';
   END IF;
   SELECT * INTO m FROM public.cockpit_client_messages x WHERE x.id = p_id FOR UPDATE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'There is no message with that ID.' USING ERRCODE = '22023';
+  END IF;
+  IF p_what = 'seen_in_group' THEN
+    IF m.state = 'sent' AND m.read_back_at IS NOT NULL THEN
+      RAISE EXCEPTION 'This recap was already read back, so nothing changed.' USING ERRCODE = '55000';
+    END IF;
+    IF m.state NOT IN ('unknown','sent') THEN
+      RAISE EXCEPTION 'A message goes from % to sent only through the sender', m.state USING ERRCODE = '55000';
+    END IF;
+    PERFORM set_config('cockpit.audit_source', 'client-messages', true);
+    PERFORM set_config('cockpit.forms_action', 'forms.message_seen_in_group', true);
+    UPDATE public.cockpit_client_messages
+       SET state = 'sent', sent_at = coalesce(m.sent_at, m.intent_at, now()),
+           reason = left(rtrim('Checked by a person: in the group. ' || coalesce(btrim(p_note), '')), 240),
+           read_back_at = now(), read_back = jsonb_build_object('by', 'person', 'at', now())
+     WHERE id = m.id RETURNING * INTO m;
+    PERFORM set_config('cockpit.forms_action', '', true);
+    RETURN public.cockpit_client_message_view(m);
   END IF;
   IF m.state <> 'unknown' THEN
     RAISE EXCEPTION 'A message goes from % to failed only through the sender', m.state USING ERRCODE = '55000';

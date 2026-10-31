@@ -296,8 +296,10 @@ const mockClient: any = {
     }
     if (name === "cockpit_client_messages_waiting")
       return Promise.resolve({ data: [], error: null });
-    if (name === "cockpit_client_messages_read")
+    if (name === "cockpit_client_messages_read") {
+      watched.push({ name, args: _args });
       return Promise.resolve({ data: [], error: null });
+    }
     if (name === "cockpit_csm_log_manual_call") {
       watched.push({ name, args: _args });
       return Promise.resolve({ data: { ok: true }, error: null });
@@ -1540,7 +1542,9 @@ test("an onboarding client's row and page show its onboarding steps", async () =
     const slackLink = Array.from(page.querySelectorAll("a")).find(
       (a: any) => a.textContent === "Open in Slack",
     ) as any;
-    expect(slackLink?.className).toContain("text-primary-ink");
+    // A link reads the kit's measured mix of the ink (LINK_INK), never the bare ink.
+    expect(slackLink?.className).toContain("var(--primary-ink)_90%");
+    expect(slackLink?.className).not.toContain("text-primary-ink");
     const copyLink = Array.from(page.querySelectorAll("button")).find(
       (b: any) =>
         (b.textContent ?? "").includes("Copy the kickoff window's link"),
@@ -2690,5 +2694,94 @@ test("Today: the impromptu row shows once native, and onPlaced refetches the sna
     forgetFormsRegistry();
     await reactAct(async () => root.unmount());
     host.remove();
+  }
+});
+
+/**
+ * D12's read-back (Z93): at the deploy values (checkin provider typeform, no
+ * message row) a client page reads its messages, gets an empty list and
+ * draws no Messages card, and Today draws no Client recaps card. Once the
+ * provider is native, the same page shows the card with its empty line.
+ */
+test("dark until native: no Messages card or Client recaps at provider typeform; the card shows once native", async () => {
+  const { forgetFormsRegistry } = await import("../src/lib/formsRegistry");
+  const { MESSAGES_EMPTY } = await import("../src/components/ClientMessages");
+  const entry = (provider: string) => ({
+    key: "checkin",
+    title: "1-1 call notes",
+    provider,
+    typeformId: "fRokTITH",
+    version: 1,
+    native: provider === "native",
+    mode: "live",
+    now: new Date().toISOString(),
+  });
+  const render = async (provider: string, el: any, at?: string) => {
+    const host = win.document.createElement("div");
+    win.document.body.appendChild(host);
+    const root = createRoot(host as any);
+    currentSnapshot = snapshot;
+    isSnapshotLoading = false;
+    snapshotError = null;
+    watched.length = 0;
+    entryAnswer = entry(provider);
+    forgetFormsRegistry();
+    await reactAct(async () => {
+      root.render(
+        createElement(
+          MemoryRouter,
+          at ? { initialEntries: [at] } : null,
+          el,
+        ),
+      );
+    });
+    await wait2b(10);
+    return {
+      host,
+      done: async () => {
+        await reactAct(async () => root.unmount());
+        host.remove();
+      },
+    };
+  };
+  try {
+    const dark = await render(
+      "typeform",
+      pageFor("client"),
+      `/clients/${GREYSTONE}`,
+    );
+    try {
+      expect(
+        watched.some(w => w.name === "cockpit_client_messages_read"),
+      ).toBe(true);
+      expect(dark.host.querySelector("#messages")).toBeNull();
+      expect(dark.host.textContent ?? "").not.toContain(MESSAGES_EMPTY);
+    } finally {
+      await dark.done();
+    }
+    const today = await render("typeform", pageFor("today"));
+    try {
+      const titles = [...today.host.querySelectorAll("h2")].map(h =>
+        (h.textContent ?? "").trim(),
+      );
+      expect(titles.length).toBeGreaterThan(0);
+      expect(titles.some(t => t.startsWith("Client recaps"))).toBe(false);
+    } finally {
+      await today.done();
+    }
+    const live = await render(
+      "native",
+      pageFor("client"),
+      `/clients/${GREYSTONE}`,
+    );
+    try {
+      expect(live.host.querySelector("#messages")).toBeTruthy();
+      expect(live.host.textContent ?? "").toContain(MESSAGES_EMPTY);
+    } finally {
+      await live.done();
+    }
+  } finally {
+    entryAnswer = null;
+    forgetFormsRegistry();
   }
 });

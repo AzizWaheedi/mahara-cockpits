@@ -5,16 +5,16 @@ import {
   boardAge,
   BUSY_HELD,
   CALLS_MAX,
+  CALLS_MIN,
   cardList,
   type Deps,
   FORMS_BUSY_HELD,
   FORMS_CALLS_PER_MINUTE,
   FORMS_RUN_BUDGET_MS,
-  FORMS_STALE_RUN_MINUTES,
   formsAnotherRunNote,
   formsPerMinute,
-  formsRunAgeMinutes,
   gate,
+  HOLD_MS,
   JOBS,
   kpiGate,
   noJobNote,
@@ -34,7 +34,7 @@ import {
   writebackPerMinute,
 } from "./run";
 import { type Provider, RETRY_MINUTES } from "./queue";
-import type { RequestsItem } from "./requests";
+import { type RequestsItem, SAY } from "./requests";
 import { actionPayload, harness as requestsHarness, LISTS, LIVE, PEOPLE, rejected, requestPayload } from "./requestsTestkit";
 import { ADS_LIST, CLIENTS_LIST, DOS_DONTS_FIELD, FIELD, NOTES_MARK } from "./rules";
 
@@ -1021,7 +1021,8 @@ describe("the forms job beside the others", () => {
     expect(first.saves().some(s => s.state === "unknown")).toBe(false);
     const last = formsHarness(LIVE, [row("happiness", CARD, { attempts: 6 })], { fail });
     await runForms(last.deps);
-    expect(last.saves().at(-1)).toMatchObject({ state: "failed", error: "Gave up after the retry ladder. clickup rejected the request (502). Inspect the provider receipt." });
+    expect(last.saves().at(-1)).toMatchObject({ state: "failed", error: "Gave up after the retry ladder." });
+    expect(last.saves().at(-1)?.progress.lastDetail).toBe("clickup rejected the request (502). Inspect the provider receipt.");
     expect(last.saves().at(-1)?.error).not.toContain("check it in ClickUp");
   });
 
@@ -1035,7 +1036,7 @@ describe("the forms job beside the others", () => {
     const first = formsHarness(LIVE, [row("happiness", CARD), row("last_poc", CARD)], { fail });
     const out = await runForms(first.deps);
     expect(first.writes()).toHaveLength(1);
-    expect(first.saves().find(s => s.state)).toMatchObject({ state: "unknown", error: "clickup rejected the request (429). Inspect the provider receipt." });
+    expect(first.saves().find(s => s.state)).toMatchObject({ state: "unknown", error: SAY_FORMS.notConfirmed, progress: { lastDetail: "clickup rejected the request (429). Inspect the provider receipt." } });
     expect(first.releases().map(r => [r.p_id, r.p_note])).toEqual([
       [`q-last_poc-${CARD}`, "ClickUp asked the cockpit to slow down (429), so the rest waits for the next run."],
     ]);
@@ -1043,7 +1044,7 @@ describe("the forms job beside the others", () => {
     posted = false;
     const last = formsHarness(LIVE, [row("happiness", CARD, { attempts: 6 })], { fail });
     await runForms(last.deps);
-    expect(last.saves().at(-1)?.error).toMatch(/^Gave up after the retry ladder\. An earlier try may have reached the card, so check it in ClickUp\. clickup rejected the request \(429\)/);
+    expect(last.saves().at(-1)?.error).toBe("Gave up after the retry ladder. An earlier try may have reached the card, so check it in ClickUp.");
   });
 
   it("a 502 on the read-back after a started write stays unknown, and at the end of the ladder says to check the card", async () => {
@@ -1060,7 +1061,233 @@ describe("the forms job beside the others", () => {
     const last = formsHarness(LIVE, [row("happiness", CARD, { attempts: 6 })], { fail });
     await runForms(last.deps);
     expect(last.saves().at(-1)).toMatchObject({ state: "failed" });
-    expect(last.saves().at(-1)?.error).toMatch(/^Gave up after the retry ladder\. An earlier try may have reached the card, so check it in ClickUp\. clickup rejected the request \(502\)/);
+    expect(last.saves().at(-1)?.error).toBe("Gave up after the retry ladder. An earlier try may have reached the card, so check it in ClickUp.");
+  });
+
+  describe("a token ClickUp refuses (finish review)", () => {
+    const TOKEN = "clickup rejected the request (401): Token invalid";
+    const bad = () => new Error(TOKEN);
+
+    it("a 401 the check of the token confirms: two calls, no row fails, no try used, the rest handed back", async () => {
+      const h = formsHarness(LIVE, [row("happiness", "86card0001"), row("last_poc", "86card0002"), row("happiness", "86card0003")], { fail: bad });
+      const out = await runForms(h.deps);
+      expect(h.calls.map(c => `${c.method} ${c.path}`)).toEqual(["GET task/86card0001", `GET list/${CLIENTS_LIST}/field`]);
+      // The check lands in the ledger under the row's own action, as every call of the row does.
+      expect(h.calls[1].actionId).toBe("q-happiness-86card0001");
+      expect(h.saves().filter(s => s.state)).toEqual([]);
+      // The release takes the claim's try off (20261029t); the refused row waits, so one card never heads the queue.
+      expect(h.releases().map(r => [r.p_id, r.p_note, r.p_next_attempt_at])).toEqual([
+        ["q-happiness-86card0001", SAY_FORMS.tokenRefused, new Date(NOW + HOLD_MS).toISOString()],
+        ["q-last_poc-86card0002", SAY_FORMS.tokenRefused, new Date(NOW).toISOString()],
+        ["q-happiness-86card0003", SAY_FORMS.tokenRefused, new Date(NOW).toISOString()],
+      ]);
+      expect(out.counts).toMatchObject({ claimed: 3, delivered: 0, failed: 0, retry: 0, unknown: 0, held: 3, heldNext: 3 });
+      expect(out.ok).toBe(false);
+      expect(out.note).toBe(`0 writes reached ClickUp, 0 to retry, 0 failed. 3 writes held for the next run. Stopped: ${SAY_FORMS.tokenRefused} Last detail: ${TOKEN}`);
+    });
+
+    it("on the last rung too the row stays open", async () => {
+      const h = formsHarness(LIVE, [row("happiness", CARD, { attempts: 6 })], { fail: bad });
+      const out = await runForms(h.deps);
+      expect(out.counts).toMatchObject({ failed: 0, heldNext: 1 });
+      expect(h.saves().filter(s => s.state)).toEqual([]);
+      expect(h.releases()).toHaveLength(1);
+    });
+
+    it("a 401 on the POST saves the step clean, so the next try starts it fresh", async () => {
+      const h = formsHarness(LIVE, [row("happiness", CARD)], { fail: c => (c.method === "POST" || c.path.startsWith("list/") ? bad() : undefined) });
+      await runForms(h.deps);
+      expect(h.writes()).toHaveLength(1);
+      expect(h.saves().at(-1)).toEqual({ progress: { steps: {} } });
+      expect(h.releases()).toHaveLength(1);
+    });
+
+    describe("the token answers, so the card is what refuses it", () => {
+      const onCards = (c: Call) => (c.path.startsWith("task/86card0001") ? bad() : undefined);
+
+      it("the row climbs the ladder with its try used, and the run goes on to the next card, not stopped", async () => {
+        const h = formsHarness(LIVE, [row("happiness", "86card0001"), row("happiness", "86card0002")], { fail: onCards });
+        const out = await runForms(h.deps);
+        expect(h.releases()).toEqual([]);
+        const first = h.saves().find(s => s.state === "retry");
+        expect(first).toMatchObject({ state: "retry", error: TOKEN, next_attempt_at: new Date(NOW + 60_000).toISOString() });
+        expect(h.saves().some(s => s.state === "delivered")).toBe(true);
+        expect(out.counts).toMatchObject({ retry: 1, delivered: 1, failed: 0, held: 0, heldNext: 0 });
+        expect(out.ok).toBe(true);
+        expect(out.note).not.toContain("Stopped:");
+        expect(out.note).not.toContain("CLICKUP_API_TOKEN");
+        expect(out.note).toContain("ClickUp refused the cockpit's token on card 86card0001.");
+      });
+
+      it("on the last rung the row is failed with the plain sentence, ClickUp's wording kept on progress and in the note", async () => {
+        const h = formsHarness(LIVE, [row("happiness", "86card0001", { attempts: 6 })], { fail: onCards });
+        const out = await runForms(h.deps);
+        expect(h.releases()).toEqual([]);
+        expect(h.saves().at(-1)).toMatchObject({ state: "failed", error: "ClickUp refused this card to the cockpit's token, so nothing was written." });
+        expect(h.saves().at(-1)?.progress?.lastDetail).toBe(TOKEN);
+        expect(out.counts).toMatchObject({ failed: 1 });
+        expect(out.ok).toBe(false);
+        expect(out.note).toContain(`Last detail: ${TOKEN}`);
+      });
+
+      it("checks the token once a run: a second refused card costs no second check", async () => {
+        const h = formsHarness(LIVE, [row("happiness", "86card0001"), row("happiness", "86card0001b"), row("last_poc", "86card0001c")], { fail: onCards });
+        const out = await runForms(h.deps);
+        expect(h.calls.filter(c => c.path === `list/${CLIENTS_LIST}/field`)).toHaveLength(1);
+        expect(out.counts).toMatchObject({ retry: 3 });
+      });
+
+      it("a 401 on the read-back after a write that went through is unknown: it may be on the card", async () => {
+        let posted = false;
+        const fail = (c: Call) => {
+          if (c.method === "POST") posted = true;
+          else if (posted && c.path.startsWith("task/")) return bad();
+          return undefined;
+        };
+        const h = formsHarness(LIVE, [row("happiness", "86card0001")], { fail });
+        const out = await runForms(h.deps);
+        expect(h.saves().at(-1)).toMatchObject({ state: "unknown", error: SAY_FORMS.readRefused });
+        expect(out.counts).toMatchObject({ unknown: 1, retry: 0 });
+        const last = formsHarness(LIVE, [row("happiness", "86card0001", { attempts: 6, progress: { steps: { happiness: { state: "started", at: new Date(NOW).toISOString() } } }, steps: undefined })], {
+          fail: c => (c.path.startsWith("task/") ? bad() : undefined),
+        });
+        await runForms(last.deps);
+        expect(last.saves().at(-1)).toMatchObject({ state: "failed", error: "Gave up after the retry ladder. An earlier try may have reached the card, so check it in ClickUp." });
+      });
+    });
+
+    describe("the check of the token tells nothing: no try used, the run stops", () => {
+      const cases: [string, Error | null, string][] = [
+        ["a 429", new Error("clickup rejected the request (429): Rate limit reached"), "ClickUp asked the cockpit to slow down (429), so the rest waits for the next run."],
+        ["a 500", new Error("clickup rejected the request (500). Inspect the provider receipt."), SAY_FORMS.tokenUnsure],
+        ["no answer", new Error("network connection lost"), SAY_FORMS.tokenUnsure],
+        ["a 404", new Error("clickup rejected the request (404). Inspect the provider receipt."), SAY_FORMS.tokenUnsure],
+      ];
+      for (const [name, answer, sentence] of cases)
+        it(`${name} on the check`, async () => {
+          const h = formsHarness(LIVE, [row("happiness", "86card0001", { attempts: 6 }), row("happiness", "86card0002")], {
+            fail: c => (c.path.startsWith("list/") ? (answer as Error) : bad()),
+          });
+          const out = await runForms(h.deps);
+          expect(h.calls).toHaveLength(2);
+          expect(h.saves().filter(s => s.state)).toEqual([]);
+          expect(h.releases().map(r => [r.p_id, r.p_note])).toEqual([
+            ["q-happiness-86card0001", sentence],
+            ["q-happiness-86card0002", sentence],
+          ]);
+          expect(h.releases()[0].p_next_attempt_at).toBe(new Date(NOW + HOLD_MS).toISOString());
+          expect(out.ok).toBe(false);
+          expect(out.note).toContain(`Stopped: ${sentence}`);
+        });
+    });
+  });
+
+  describe("the pace floor keeps a run inside the Edge wall (break-it)", () => {
+    for (const set of ["1", "4", "5"])
+      it(`CLICKUP_FORMS_CALLS_PER_MINUTE=${set}: eight rows, the last ClickUp call is before 150 s`, async () => {
+        let t = NOW;
+        const stamps: number[] = [];
+        const env = { ...LIVE, CLICKUP_FORMS_CALLS_PER_MINUTE: set };
+        const rows = Array.from({ length: 8 }, (_, i) => row("happiness", `86card000${i}`));
+        const h = formsHarness(env, rows, {
+          now: () => t,
+          // A first row of one call (a card off the list), so a field row's three calls straddle the budget at 100 s.
+          fail: c => {
+            t += 500;
+            stamps.push(t - NOW);
+            return c.path === "task/86card0000" ? new Error("clickup rejected the request (404). Inspect the provider receipt.") : undefined;
+          },
+        });
+        h.deps.pace = pacer(formsPerMinute(k => (env as Record<string, string>)[k]), () => t, async ms => {
+          t += ms;
+        });
+        const out = await runForms(h.deps);
+        expect(Math.max(...stamps)).toBeLessThan(150_000);
+        // The time ran out before the rows did, and the rest go back with no try used.
+        expect(out.counts?.heldNext).toBeGreaterThan(0);
+      });
+  });
+
+  describe("the stop holds on the last rung (finish review)", () => {
+    it("a 429 that ends a row's ladder still stops the run: no second call on the shared token, and the next row keeps its try", async () => {
+      const h = formsHarness(LIVE, [row("happiness", CARD, { attempts: 6 }), row("last_poc", "86card0002")], {
+        fail: () => new Error("clickup rejected the request (429): Rate limit reached"),
+      });
+      const out = await runForms(h.deps);
+      expect(h.calls.map(c => `${c.method} ${c.path}`)).toEqual([`GET task/${CARD}`]);
+      expect(out.counts).toMatchObject({ failed: 1, retry: 0, heldNext: 1 });
+      expect(h.releases().map(r => [r.p_id, r.p_note])).toEqual([["q-last_poc-86card0002", "ClickUp asked the cockpit to slow down (429), so the rest waits for the next run."]]);
+      expect(out.note).toContain("Stopped: ClickUp asked the cockpit to slow down (429)");
+    });
+
+    it("a missing secret on the last rung stops it too", async () => {
+      const h = formsHarness(LIVE, [row("happiness", CARD, { attempts: 6 }), row("last_poc", "86card0002")], {
+        fail: () => new Error("CLICKUP_API_TOKEN is not configured"),
+      });
+      const out = await runForms(h.deps);
+      expect(h.calls).toHaveLength(1);
+      expect(out.counts).toMatchObject({ failed: 1, heldNext: 1 });
+      expect(h.releases().map(r => r.p_id)).toEqual(["q-last_poc-86card0002"]);
+    });
+  });
+
+  describe("ClickUp's wording stays off the row's error, so off the CSM's trail (finish review)", () => {
+    const FIVE = "clickup rejected the request (500). Inspect the provider receipt.";
+
+    it("a 500 on the POST: the row says not confirmed, the wording goes to progress and the run's note", async () => {
+      const h = formsHarness(LIVE, [row("happiness", CARD)], { fail: c => (c.method === "POST" ? new Error(FIVE) : undefined) });
+      const out = await runForms(h.deps);
+      const settle = h.saves().find(s => s.state);
+      expect(settle).toMatchObject({ state: "unknown", error: SAY_FORMS.notConfirmed, progress: { lastDetail: FIVE } });
+      expect(settle?.error).not.toMatch(/rejected the request|provider receipt/);
+      expect(out.note).toBe(`0 writes reached ClickUp, 1 to retry, 0 failed. Last detail: ${FIVE}`);
+    });
+
+    it("a 429 at the end of the ladder: no raw sentence on the row, and the wording is still in the run's note", async () => {
+      const h = formsHarness(LIVE, [row("happiness", CARD, { attempts: 6 })], { fail: () => new Error("clickup rejected the request (429): Rate limit reached") });
+      const out = await runForms(h.deps);
+      const settle = h.saves().at(-1);
+      expect(settle).toMatchObject({ state: "failed", error: "Gave up after the retry ladder.", progress: { lastDetail: "clickup rejected the request (429): Rate limit reached" } });
+      expect(out.note).toContain("Last detail: clickup rejected the request (429): Rate limit reached");
+    });
+
+    it("a resumed row on a card that left the list settles failed with the check-the-card sentence, never nothing was written", async () => {
+      const resumed = { progress: { steps: { happiness: { state: "started", at: new Date(NOW - 60_000).toISOString() } } } };
+      const gone = formsHarness(LIVE, [row("happiness", CARD, resumed)], { fail: c => (c.method === "GET" && c.path === `task/${CARD}` ? new Error("clickup rejected the request (404): Task not found") : undefined) });
+      await runForms(gone.deps);
+      expect(gone.saves().find(s => s.state)).toMatchObject({ state: "failed", error: SAY_FORMS.offListStarted });
+    });
+
+    it("a POST refused with a 404 reads as the field steps read; a 403 reads as refused", async () => {
+      const gone = formsHarness(LIVE, [row("happiness", CARD)], { fail: c => (c.method === "POST" ? new Error("clickup rejected the request (404): Task not found") : undefined) });
+      await runForms(gone.deps);
+      expect(gone.saves().find(s => s.state)).toMatchObject({ state: "failed", error: SAY_FORMS.offList });
+      const no = formsHarness(LIVE, [row("happiness", CARD)], { fail: c => (c.method === "POST" ? new Error("clickup rejected the request (403): Forbidden") : undefined) });
+      await runForms(no.deps);
+      expect(no.saves().find(s => s.state)).toMatchObject({ state: "failed", error: SAY_FORMS.refused });
+    });
+
+    it("a row still on retry keeps the wording for the tech lead: its error reaches no effect", async () => {
+      const h = formsHarness(LIVE, [row("happiness", CARD)], { fail: c => (c.method === "POST" ? new Error("clickup rejected the request (429): Rate limit reached") : undefined) });
+      const out = await runForms(h.deps);
+      expect(h.saves().find(s => s.state)).toMatchObject({ state: "retry", error: "clickup rejected the request (429): Rate limit reached" });
+      expect(out.note).not.toContain("Last detail");
+    });
+
+    it("our own bookkeeping failing says the cockpit's sentence, not the database's", async () => {
+      const h = formsHarness(LIVE, [row("happiness", CARD)]);
+      const real = h.deps.rpc;
+      let n = 0;
+      h.deps.rpc = async (name, params) => {
+        // The freeze goes through; the next save, the step's "started", fails, and the save of the outcome goes through.
+        if (name === "cockpit_clickup_writeback_save" && ++n === 2) throw new Error("Supabase 503: upstream unavailable");
+        return real(name, params);
+      };
+      const out = await runForms(h.deps);
+      const settle = h.saves().find(s => s.state);
+      expect(settle).toMatchObject({ state: "unknown", error: SAY.bookkeeping });
+      expect(out.note).toContain("Supabase 503");
+    });
   });
 
   it("one run at a time: a run that finds another open hands every claimed row back uncounted, calls nothing and is not a failure", async () => {
@@ -1111,13 +1338,13 @@ describe("the forms job beside the others", () => {
     expect(h.calls).toEqual([]);
   });
 
-  it("formsRunAgeMinutes reads the begin's busy note on the Kuwait clock", () => {
+  it("openRunMinutes reads the forms job's busy note too, on the Kuwait clock", () => {
     const at = Date.parse("2026-10-26T09:00:00Z"); // 12:00 Kuwait
-    expect(formsRunAgeMinutes("A forms run that started at 11:58 Kuwait is still running.", at)).toBe(2);
-    expect(formsRunAgeMinutes("A forms run that started at 12:00 Kuwait is still running.", at)).toBe(0);
-    expect(formsRunAgeMinutes("A forms run that started at 23:59 Kuwait is still running.", Date.parse("2026-10-26T21:01:00Z"))).toBe(2);
-    for (const junk of [undefined, null, "", "Unsupported writeback run", "started at 25:00 Kuwait is still running"]) expect(formsRunAgeMinutes(junk, at)).toBeNull();
-    expect(FORMS_STALE_RUN_MINUTES).toBe(4);
+    expect(openRunMinutes("A forms run that started at 11:58 Kuwait is still running.", at)).toBe(2);
+    expect(openRunMinutes("A forms run that started at 12:00 Kuwait is still running.", at)).toBe(0);
+    expect(openRunMinutes("A forms run that started at 23:59 Kuwait is still running.", Date.parse("2026-10-26T21:01:00Z"))).toBe(2);
+    for (const junk of [undefined, null, "", "Unsupported writeback run", "started at 25:00 Kuwait is still running"]) expect(openRunMinutes(junk, at)).toBeNull();
+    expect(STALE_RUN_MINUTES).toBe(4);
   });
 
   it("the pace is the job's: two runs posted together send one run's calls, within 10 a minute, and the pacer never waits", async () => {
@@ -1219,6 +1446,9 @@ describe("the forms job beside the others", () => {
     expect(formsPerMinute(k => (k === "CLICKUP_FORMS_CALLS_PER_MINUTE" ? "60" : undefined))).toBe(60);
     for (const v of ["61", "100", "5000"]) expect(formsPerMinute(k => (k === "CLICKUP_FORMS_CALLS_PER_MINUTE" ? v : undefined))).toBe(60);
     for (const v of ["0", "-3", "fast", ""]) expect(formsPerMinute(k => (k === "CLICKUP_FORMS_CALLS_PER_MINUTE" ? v : undefined))).toBe(10);
+    // Never below the floor of every other ClickUp pace.
+    for (const v of ["0.5", "0.9", "1", "2", "4", "4.9"]) expect(formsPerMinute(k => (k === "CLICKUP_FORMS_CALLS_PER_MINUTE" ? v : undefined))).toBe(CALLS_MIN);
+    expect(formsPerMinute(k => (k === "CLICKUP_FORMS_CALLS_PER_MINUTE" ? "5" : undefined))).toBe(5);
   });
 
   // The real index.ts, its Deno.serve caught and fetch answered here, so no call leaves this file: what it proves is
@@ -1336,21 +1566,21 @@ describe("the forms job beside the others", () => {
     const LIVE_BOTH = { CLICKUP_WRITEBACK_APPLY_FORMS: "true", CLICKUP_WRITEBACK_APPLY_REQUESTS: "true" };
 
     it("a forms run waiting on its own pace does not hold a requests run up, and requests never read the forms pace", async () => {
-      const w = world({ ...LIVE_BOTH, CLICKUP_FORMS_CALLS_PER_MINUTE: "1" }, cards(2));
+      const w = world({ ...LIVE_BOTH, CLICKUP_FORMS_CALLS_PER_MINUTE: "5" }, cards(2));
       const forms = w.post("forms");
       let formsDone = false;
       void forms.then(() => {
         formsDone = true;
       });
-      // One call a minute: the card read went, the write waits on the pacer.
+      // Five calls a minute: the first five went, the sixth waits on the pacer.
       await w.until(() => w.waits.length === 1);
-      expect(w.formsCalls).toEqual(["GET task/86card0"]);
+      expect(w.formsCalls).toHaveLength(5);
       expect(w.waits[0]).toBeGreaterThan(58_000);
       expect(w.waits[0]).toBeLessThanOrEqual(60_005);
       const out = await w.post("requests");
       expect(out).toMatchObject({ ok: true, job: "requests", counts: { delivered: 1 } });
       expect(w.action.state).toBe("delivered");
-      // Three calls in one go at a forms pace of 1 a minute: this run had its own pacer, and it never waited.
+      // Three calls in one go with the forms pace spent: this run had its own pacer, and it never waited.
       expect(w.requestsCalls.length).toBeGreaterThanOrEqual(3);
       expect(w.waits).toHaveLength(1);
       expect(w.begins).toEqual([
@@ -1359,7 +1589,7 @@ describe("the forms job beside the others", () => {
       ]);
       expect(formsDone).toBe(false);
       expect([...w.open]).toEqual(["forms"]);
-      expect(w.formsCalls).toEqual(["GET task/86card0"]);
+      expect(w.formsCalls).toHaveLength(5);
     });
 
     it("a requests run still sending does not hold a forms run up", async () => {
@@ -1396,10 +1626,11 @@ describe("the forms job beside the others", () => {
     });
 
     it("forms_doctor keeps the forms pace too, and the forms secret does not reach another job's pace", async () => {
-      const doctor = world({ CLICKUP_FORMS_CALLS_PER_MINUTE: "1", CLICKUP_WRITEBACK_FORMS_ONLY_CARDS: "86card0" });
+      // Set to 1, so the floor of 5 is the pace: the field list and four of the six cards, then the pacer.
+      const doctor = world({ CLICKUP_FORMS_CALLS_PER_MINUTE: "1", CLICKUP_WRITEBACK_FORMS_ONLY_CARDS: "86card0,86card1,86card2,86card3,86card4,86card5" });
       void doctor.post("forms_doctor");
       await doctor.until(() => doctor.waits.length === 1);
-      expect(doctor.formsCalls).toHaveLength(1);
+      expect(doctor.formsCalls).toHaveLength(5);
       expect(writebackPerMinute("requests", k => (k === "CLICKUP_FORMS_CALLS_PER_MINUTE" ? "6" : undefined))).toBe(25);
       expect(writebackPerMinute("log", k => (k === "CLICKUP_FORMS_CALLS_PER_MINUTE" ? "6" : undefined))).toBe(30);
     });

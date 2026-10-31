@@ -9,7 +9,7 @@ import {
   readPairs,
 } from "./g5.ts";
 import type { Receipt } from "./ledger.ts";
-import type { WaMessage } from "./whapi.ts";
+import { readMessage, type WaMessage } from "./whapi.ts";
 
 // Every card, group, number and message here is invented.
 const G1 = "120363000000000001@g.us";
@@ -83,6 +83,34 @@ describe("G5", () => {
       channelLast4: null,
     });
     expect(d.asked[0]).toBe(`${G1} ${t(AT1) - 180} ${t(AT1) + 180} 0`);
+  });
+
+  test("the shape Whapi really returns, link_preview with no text, is found and read", async () => {
+    const at = t(AT1, 20);
+    const shaped = (fromMe: boolean, from: string) =>
+      readMessage({
+        id: "wamid-lp",
+        from,
+        from_me: fromMe,
+        source: "api",
+        type: "link_preview",
+        timestamp: at,
+        link_preview: {
+          body: recap("x", at, fromMe).body,
+          url: `https://api.leadconnectorhq.com/widget/booking/${BOOKING_ID}`,
+        },
+      }) as WaMessage;
+    const same = await checkG5(deps({ [G1]: [shaped(true, "96550001111")] }), [
+      { task: "86abc0001", at: AT1 },
+    ]);
+    expect(same.verdict).toBe("same number");
+    expect(same.checked[0]).toMatchObject({ found: true, fromMe: true });
+    const other = await checkG5(
+      deps({ [G1]: [shaped(false, "96550003333")] }),
+      [{ task: "86abc0001", at: AT1 }],
+    );
+    expect(other.verdict).toBe("different number");
+    expect(other.checked[0].fromLast4).toBe("3333");
   });
 
   test("a recap from another number: different number, with both numbers' last four only", async () => {

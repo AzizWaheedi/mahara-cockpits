@@ -1147,6 +1147,37 @@ describe("the write-through answers (7.2)", () => {
     });
   });
 
+  test("a We owe and a They owe item of two characters each keep their sides", async () => {
+    const { ours, theirs } = await briefOf({
+      ...bare,
+      we_owe: [todo("QA")],
+      they_owe: [todo("PR")],
+    });
+    expect({ ours, theirs }).toEqual({ ours: ["QA"], theirs: ["PR"] });
+  });
+
+  test("a They owe item with an inline number stays whole on their side", async () => {
+    const { ours, theirs } = await briefOf({
+      ...bare,
+      they_owe: [todo("Send the logo. 2. Book the shoot day")],
+    });
+    expect({ ours, theirs }).toEqual({
+      ours: [],
+      theirs: ["Send the logo. 2. Book the shoot day"],
+    });
+  });
+
+  test("a We owe item with an inline number stays whole on our side", async () => {
+    const { ours, theirs } = await briefOf({
+      ...bare,
+      we_owe: [todo("Send the invoice. 2. Please pay the deposit")],
+    });
+    expect({ ours, theirs }).toEqual({
+      ours: ["Send the invoice. 2. Please pay the deposit"],
+      theirs: [],
+    });
+  });
+
   test("open before 2b: a short last Client Notes line keeps the first to-do out of the recap", async () => {
     const { ours, recap } = await briefOf({
       ...bare,
@@ -1227,6 +1258,18 @@ describe("the write-through answers (7.2)", () => {
       they_owe: [todo("Pay"), todo("Share the showroom photos with the team")],
     });
     expect(theirs).toEqual(["Pay", "Share the showroom photos with the team"]);
+  });
+
+  test("a We owe and a They owe line that share their words each keep their side (We owe ['Send the April invoice'], They owe ['Pay the April invoice'])", async () => {
+    const { ours, theirs } = await briefOf({
+      ...bare,
+      we_owe: [todo("Send the April invoice")],
+      they_owe: [todo("Pay the April invoice")],
+    });
+    expect({ ours, theirs }).toEqual({
+      ours: ["Send the April invoice"],
+      theirs: ["Pay the April invoice"],
+    });
   });
 });
 

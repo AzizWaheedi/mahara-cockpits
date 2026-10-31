@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   CARD_GROUP_FIELD,
   cardGroup,
+  cardRead,
+  cardVerdict,
   columnLetter,
   groupOf,
   groupVerdict,
@@ -130,6 +132,43 @@ describe("the card's group and the verdict", () => {
     ).toBeNull();
     expect(cardGroup({})).toBeNull();
     expect(cardGroup(null)).toBeNull();
+  });
+  test("an answer that does not list the card's fields is unread, never empty; a card that lists them can be empty", () => {
+    for (const answer of [
+      {},
+      null,
+      undefined,
+      "x",
+      { err: "Team not authorized" },
+      { id: "abc", custom_fields: "x" },
+      { id: "abc", custom_fields: null },
+      { custom_fields: [{ id: CARD_GROUP_FIELD, value: 120363 }] },
+      { custom_fields: [{ id: CARD_GROUP_FIELD, value: { group: G1 } }] },
+    ]) {
+      expect([answer, cardRead(answer), cardVerdict(G1, answer)]).toEqual([
+        answer,
+        false,
+        "unread",
+      ]);
+    }
+    for (const answer of [
+      { custom_fields: [] },
+      { custom_fields: [{ id: "other", value: G2 }] },
+      { custom_fields: [{ id: CARD_GROUP_FIELD }] },
+      { custom_fields: [{ id: CARD_GROUP_FIELD, value: null }] },
+      { custom_fields: [{ id: CARD_GROUP_FIELD, value: "" }] },
+    ]) {
+      expect([answer, cardRead(answer), cardVerdict(G1, answer)]).toEqual([
+        answer,
+        true,
+        "empty",
+      ]);
+    }
+    const on = (value: string) => ({
+      custom_fields: [{ id: CARD_GROUP_FIELD, value }],
+    });
+    expect(cardVerdict(G1, on(G1))).toBe("same");
+    expect(cardVerdict(G1, on(G2))).toBe("differs");
   });
   test("empty or the same passes; a different group is refused", () => {
     expect(groupVerdict(G1, null)).toBe("empty");

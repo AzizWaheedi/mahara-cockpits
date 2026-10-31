@@ -28,7 +28,8 @@
 --
 -- The drift guard (section 2.1, Z61) opens the file: each replaced body must
 -- still be the one the contract read (the live body md5) or this file's own
--- (the after md5, a second apply); otherwise nothing here applies.
+-- (the after md5, a second apply); otherwise nothing here applies. The three
+-- CHECKs of step 1 carry the same guard on their definitions.
 BEGIN;
 
 -- ---------------------------------------------------------------------------
@@ -66,14 +67,21 @@ BEGIN
 END $$;
 
 -- ---------------------------------------------------------------------------
--- 1. The two kinds in the CHECKs (each re-added only while it lacks them)
+-- 1. The two kinds in the CHECKs, each widened only from the definition the
+--    contract read: another session's kind would be dropped here without a
+--    word and fail its writer later, so any other definition, or none, stops
+--    the file (the CHECKs' own drift guard, as Z61's for bodies). Already
+--    widened changes nothing.
 
 DO $$
 DECLARE v_def text;
 BEGIN
   SELECT pg_get_constraintdef(c.oid) INTO v_def FROM pg_catalog.pg_constraint c
    WHERE c.conrelid = 'public.cockpit_slack_notice_settings'::regclass AND c.conname = 'cockpit_slack_notice_settings_kind_check';
-  IF v_def IS NULL OR v_def NOT LIKE '%checkin.recap_late%' THEN
+  IF v_def IS DISTINCT FROM 'CHECK ((kind = ANY (ARRAY[''kickoff''::text, ''kickoff.late''::text, ''kickoff.second''::text, ''kickoff.updated''::text, ''blueprint.close''::text, ''blueprint.updated''::text, ''blueprint.media''::text, ''blueprint.offer''::text, ''checkin.grade''::text, ''checkin.recap_late''::text])))' THEN
+    IF v_def IS DISTINCT FROM 'CHECK ((kind = ANY (ARRAY[''kickoff''::text, ''kickoff.late''::text, ''kickoff.second''::text, ''kickoff.updated''::text, ''blueprint.close''::text, ''blueprint.updated''::text, ''blueprint.media''::text, ''blueprint.offer''::text])))' THEN
+      RAISE EXCEPTION 'cockpit_slack_notice_settings_kind_check changed since the 2b contract read it; stop and re-read it.' USING ERRCODE = '55000';
+    END IF;
     ALTER TABLE public.cockpit_slack_notice_settings DROP CONSTRAINT IF EXISTS cockpit_slack_notice_settings_kind_check;
     ALTER TABLE public.cockpit_slack_notice_settings ADD CONSTRAINT cockpit_slack_notice_settings_kind_check
       CHECK (kind IN ('kickoff','kickoff.late','kickoff.second','kickoff.updated',
@@ -85,7 +93,10 @@ BEGIN
   v_def := NULL;
   SELECT pg_get_constraintdef(c.oid) INTO v_def FROM pg_catalog.pg_constraint c
    WHERE c.conrelid = 'public.cockpit_slack_notice_settings'::regclass AND c.conname = 'cockpit_slack_notice_settings_check';
-  IF v_def IS NULL OR v_def NOT LIKE '%checkin.recap_late%' THEN
+  IF v_def IS DISTINCT FROM 'CHECK (((kind = ANY (ARRAY[''kickoff''::text, ''blueprint.close''::text, ''blueprint.media''::text, ''checkin.grade''::text, ''checkin.recap_late''::text])) = (channel IS NOT NULL)))' THEN
+    IF v_def IS DISTINCT FROM 'CHECK (((kind = ANY (ARRAY[''kickoff''::text, ''blueprint.close''::text, ''blueprint.media''::text])) = (channel IS NOT NULL)))' THEN
+      RAISE EXCEPTION 'cockpit_slack_notice_settings_check changed since the 2b contract read it; stop and re-read it.' USING ERRCODE = '55000';
+    END IF;
     ALTER TABLE public.cockpit_slack_notice_settings DROP CONSTRAINT IF EXISTS cockpit_slack_notice_settings_check;
     ALTER TABLE public.cockpit_slack_notice_settings ADD CONSTRAINT cockpit_slack_notice_settings_check
       CHECK ((kind IN ('kickoff','blueprint.close','blueprint.media','checkin.grade','checkin.recap_late')) = (channel IS NOT NULL));
@@ -94,7 +105,10 @@ BEGIN
   v_def := NULL;
   SELECT pg_get_constraintdef(c.oid) INTO v_def FROM pg_catalog.pg_constraint c
    WHERE c.conrelid = 'public.cockpit_slack_notices'::regclass AND c.conname = 'cockpit_slack_notices_kind_check';
-  IF v_def IS NULL OR v_def NOT LIKE '%checkin.recap_late%' THEN
+  IF v_def IS DISTINCT FROM 'CHECK ((kind = ANY (ARRAY[''kickoff''::text, ''kickoff.updated''::text, ''blueprint.close''::text, ''blueprint.updated''::text, ''blueprint.media''::text, ''blueprint.offer''::text, ''rehearsal''::text, ''checkin.grade''::text, ''checkin.recap_late''::text])))' THEN
+    IF v_def IS DISTINCT FROM 'CHECK ((kind = ANY (ARRAY[''kickoff''::text, ''kickoff.updated''::text, ''blueprint.close''::text, ''blueprint.updated''::text, ''blueprint.media''::text, ''blueprint.offer''::text, ''rehearsal''::text])))' THEN
+      RAISE EXCEPTION 'cockpit_slack_notices_kind_check changed since the 2b contract read it; stop and re-read it.' USING ERRCODE = '55000';
+    END IF;
     ALTER TABLE public.cockpit_slack_notices DROP CONSTRAINT IF EXISTS cockpit_slack_notices_kind_check;
     ALTER TABLE public.cockpit_slack_notices ADD CONSTRAINT cockpit_slack_notices_kind_check
       CHECK (kind IN ('kickoff','kickoff.updated','blueprint.close','blueprint.updated',
@@ -945,7 +959,9 @@ END $$;
 
 -- A check-in recap the cockpit owns (the effect row and the registry both say
 -- so, and the provider is native: an effect row alone never queues a post, and
--- Slack has no second switch), on a live response, still waiting (its
+-- Slack has no second switch), on a live response sent since the registry went
+-- native (the rule the dispatch and the waiting list use, so a first-hour recap
+-- is not reminded after a second cut-over), still waiting (its
 -- effect planned or queued, or failed with its message failed; its message
 -- none yet, a draft, approved, refused or failed) 24 hours after the later of
 -- the call's end (else its start) and the send, queues one checkin.recap_late
@@ -970,7 +986,7 @@ BEGIN
              ON m.id = CASE WHEN e.delivery_ref ~ '^[0-9a-fA-F-]{36}$' THEN e.delivery_ref::uuid END
      WHERE e.effect_key = 'recap' AND e.delivery = 'client_message' AND e.owner = 'cockpit'
        AND public.cockpit_form_effect_owner('checkin', e.effect_key) = 'cockpit'
-       AND public.cockpit_form_native_since('checkin') IS NOT NULL
+       AND r.submitted_at >= public.cockpit_form_native_since('checkin')
        AND r.form_key = 'checkin' AND r.mode = 'live' AND r.state IN ('submitted','confirmed')
        AND (e.state IN ('planned','queued') OR (e.state = 'failed' AND m.state = 'failed'))
        AND (m.id IS NULL OR m.state IN ('draft','approved','refused','failed'))

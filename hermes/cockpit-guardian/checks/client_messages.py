@@ -21,7 +21,17 @@ KEY = "client-messages"
 G5_KEY = "client-messages-g5"
 STALE_MIN = 10
 READ_BACK_MIN = 60
+# The sender's own limit (20261029v, cockpit_client_message_work: sent_at > now() - interval '24 hours'). Past it nothing
+# reads the recap back and only a person's seen_in_group closes the row, so the warning stops there and the stopped check
+# reports it once.
+READ_BACK_STOPS_MIN = 24 * 60
+STOPPED_REPORT_MIN = 24 * 60
 RUNBOOK = "hermes/client-messages/RUNBOOK.md"
+READ_BACK_ACTION = ("Look in the client's WhatsApp group for the recap; the sender keeps reading back for 24 hours and "
+                    f"never sends it again. If it is there, record seen_in_group ({RUNBOOK}, Recording what a person saw).")
+STOPPED_ACTION = ("Look in the client's WhatsApp group for the recap; if it is there, record seen_in_group "
+                  f"({RUNBOOK}, Recording what a person saw). It is never sent again. This reading clears by itself "
+                  "after a day.")
 
 
 def _row(ctx: Context, key: str) -> dict | None:
@@ -46,8 +56,9 @@ def run_sender(ctx: Context) -> Result:
                     since=parse_time(r.get("last_run_at")), evidence=ev,
                     action=f"Read ~/.client-messages/cron.log on the VPS and run the doctor ({RUNBOOK}).")
     # A hold (an old sender on or unread, Client Data's column moved) stops every approved recap on purpose. The
-    # sender writes it ok false with the sentence in detail.held, in either mode: it is read as a hold, never as a
-    # failed run.
+    # sender writes it only in apply mode, ok false with the sentence in detail.held: it is read as a hold, never as a
+    # failed run. A dry run sends nothing and writes no hold, so with sending off this row says nothing about the old
+    # senders: the doctor and the dry run's plan do.
     held = detail.get("held")
     if held:
         approved = detail.get("approved") if isinstance(detail.get("approved"), int) else None
@@ -85,17 +96,42 @@ def run_sender(ctx: Context) -> Result:
 def run_read_back(ctx: Context) -> Result:
     """A sent recap is read back by its message id, else by its text's fingerprint, for 24 hours."""
     cutoff = (ctx.now - timedelta(minutes=READ_BACK_MIN)).isoformat()
+    stops = (ctx.now - timedelta(minutes=READ_BACK_STOPS_MIN)).isoformat()
     rows = ctx.rows("cockpit_client_messages", "id,state,sent_at,read_back_at",
-                    where=[("state", "eq", "sent"), ("read_back_at", "is", None), ("sent_at", "lt", cutoff)],
+                    where=[("state", "eq", "sent"), ("read_back_at", "is", None), ("sent_at", "lt", cutoff),
+                           ("sent_at", "gt", stops)],
                     order="sent_at.asc", limit=50)
     if not rows:
-        return ok(f"Every recap sent over {ago(READ_BACK_MIN)} ago was read back in its group.", evidence={"unread": 0})
+        return ok(f"Every recap sent {ago(READ_BACK_MIN)} to 24 h ago was read back in its group.", evidence={"unread": 0})
     oldest = parse_time(rows[0].get("sent_at"))
     return warn(f"{len(rows)} sent recap{'' if len(rows) == 1 else 's'} not read back after {ago(READ_BACK_MIN)}; the oldest "
                 f"was sent {kuwait(oldest)}.", since=oldest, evidence={"unread": len(rows)},
                 items=[clean(r.get("id"), 40) for r in rows[:10]],
-                action="Look in the client's WhatsApp group for the recap; the sender keeps reading back for 24 hours and "
-                       f"never sends it again ({RUNBOOK}).")
+                action=READ_BACK_ACTION)
+
+
+def run_read_back_stopped(ctx: Context) -> Result:
+    """A recap the sender stopped reading back: reported for one day, so one daily summary carries it, then only counted.
+
+    Only the sender or a person's seen_in_group closes such a row, and the sender has stopped, so a warning with no end
+    would keep the check amber for good. Rows older than the day are still counted in the ok sentence: gone from the
+    warning is not the same as read back."""
+    stops = ctx.now - timedelta(minutes=READ_BACK_STOPS_MIN)
+    report_from = stops - timedelta(minutes=STOPPED_REPORT_MIN)
+    unread = [("state", "eq", "sent"), ("read_back_at", "is", None)]
+    rows = ctx.rows("cockpit_client_messages", "id,state,sent_at,read_back_at",
+                    where=[*unread, ("sent_at", "lte", stops.isoformat()), ("sent_at", "gt", report_from.isoformat())],
+                    order="sent_at.asc", limit=50)
+    older = ctx.rows("cockpit_client_messages", "id", where=[*unread, ("sent_at", "lte", report_from.isoformat())], limit=50)
+    ev = {"stopped": len(rows), "older": len(older)}
+    if not rows:
+        also = f" {len(older)} older recap{' was' if len(older) == 1 else 's were'} never read back." if older else ""
+        return ok(f"No recap ran out of its 24 h read-back in the last day.{also}", evidence=ev)
+    oldest = parse_time(rows[0].get("sent_at"))
+    return warn(f"{len(rows)} sent recap{'' if len(rows) == 1 else 's'} not read back in 24 h, and the sender has stopped "
+                f"trying; the oldest was sent {kuwait(oldest)}.", since=oldest, evidence=ev,
+                items=[clean(r.get("id"), 40) for r in rows[:10]],
+                action=STOPPED_ACTION)
 
 
 def run_g5(ctx: Context) -> Result:
@@ -120,7 +156,7 @@ CHECKS = [
           reads=f"cockpit_sync_state {KEY}: last_run_at, ok, note, detail.mode, detail.onlyCards, detail.held and "
                 "detail.receiptsMissing",
           threshold=f"No run for {STALE_MIN} min once the row exists, or ok false without a hold: fail; approved "
-                    "recaps held (detail.held, either mode), provider calls whose answer the health ledger lost "
+                    "recaps held (detail.held, written only in apply mode), provider calls whose answer the health ledger lost "
                     "(detail.receiptsMissing above 0, either mode) or a mode other than dry or apply: warn. No row "
                     "(before deploy D14): ok.",
           run=run_sender, owner="the tech lead", confirm=2,
@@ -128,8 +164,17 @@ CHECKS = [
     Check(id="client-messages-read-back", area="workers", name="Sent recaps read back",
           means="Every WhatsApp recap the cockpit sent is found again in the client's group.", severity="medium",
           reads="cockpit_client_messages: id, state, sent_at, read_back_at (never the text)",
-          threshold=f"A sent recap with no read-back after {READ_BACK_MIN} min: warn.", run=run_read_back,
-          owner="the tech lead", action="Look in the client's WhatsApp group for the recap; it is never sent twice."),
+          threshold=f"A sent recap with no read-back, {READ_BACK_MIN} min to 24 h after it was sent: warn.",
+          run=run_read_back, owner="the tech lead",
+          action=READ_BACK_ACTION),
+    Check(id="client-messages-read-back-stopped", area="workers", name="Sent recaps the sender stopped reading back",
+          means="A sent recap that was not found again in 24 hours, when the sender stops looking, is reported once.",
+          severity="low",
+          reads="cockpit_client_messages: id, state, sent_at, read_back_at (never the text)",
+          threshold="A sent recap with no read-back, 24 to 48 h after it was sent: warn, carried by one daily summary. "
+                    "Older ones are counted in the reading only.",
+          run=run_read_back_stopped, owner="the tech lead", alert=False,
+          action=STOPPED_ACTION),
     Check(id="client-messages-g5", area="workers", name="WhatsApp phone check (G5)",
           means="The number the cockpit would send recaps from is the one Make sends them from today.", severity="low",
           reads=f"cockpit_sync_state {G5_KEY}: ok and note", threshold="Anything but ok with the note same number: warn.",

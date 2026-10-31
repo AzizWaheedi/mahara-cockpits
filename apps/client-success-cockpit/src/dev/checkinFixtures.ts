@@ -45,8 +45,23 @@ import { displayLabel, shortDay } from "@/lib/format";
 export const TASK = "86exfix01";
 export const NAME = "Cedar & Stone Interiors";
 export const OTHER = "Harbor Glassworks";
+/** Made up, at the length of the longest live client name. */
+export const LONG_OTHER =
+  "Harbor Glassworks & Marina Interior Fit-Out Contracts";
 /** Sunday 25 October 2026, 11:30 in Kuwait. */
 export const NOW = "2026-10-25T08:30:00Z";
+/**
+ * A clock that starts at NOW and runs on real timers, so a fixture row's age
+ * reads as it was written (an approval a minute old, not a week old).
+ */
+export function fixtureClock() {
+  const started = Date.now();
+  return {
+    now: () => Date.parse(NOW) + (Date.now() - started),
+    set: (fn: () => void, ms: number): unknown => setTimeout(fn, ms),
+    clear: (h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>),
+  };
+}
 export const RESPONSE_ID = "0b5f7c9e-1d2a-4c3b-9e8f-7a6b5c4d3e2f";
 export const NEW_ID = "4e1d2c3b-5a69-4f78-8e9d-0a1b2c3d4e5f";
 
@@ -243,6 +258,26 @@ export const VIEWS = {
     onClient: "other",
     otherClient: OTHER,
     blocked: `On ${OTHER}. If this is ${NAME}'s call, move it here.`,
+    movable: true,
+  }),
+  /** The same on a client whose name runs long (53 characters, as live has). */
+  other_movable_long: view({
+    ref: "fathom:44444444-0000-4000-8000-000000000053",
+    recordingId: "44444444-0000-4000-8000-000000000053",
+    callId: 60053,
+    title: "Impromptu Google Meet",
+    startsAt: "2026-10-25T06:34:00Z",
+    endsAt: "2026-10-25T07:08:00Z",
+    minutes: 34,
+    why: "picked",
+    label: "hint",
+    whyText: "",
+    booking: null,
+    recorder: "team",
+    recorderRole: "the account manager",
+    onClient: "other",
+    otherClient: LONG_OTHER,
+    blocked: `On ${LONG_OTHER}. If this is ${NAME}'s call, move it here.`,
     movable: true,
   }),
   /** No sign for this client (why picked, no why line), recorded by the team. */
@@ -467,6 +502,8 @@ export type Scenario = {
    * server's words, or not in the database yet.
    */
   move?: "ok" | "not_live" | { refused: string };
+  /** Reading the response back fails with this sentence, or never answers. */
+  readError?: string | "never";
 };
 
 // ------------------------------------------------------------ drafts
@@ -1079,6 +1116,8 @@ export function fakeCheckin(s: Scenario = {}): Fake {
     async read(id) {
       log("read", id);
       await lag();
+      if (s.readError === "never") await new Promise(() => {});
+      if (s.readError) throw Error(s.readError);
       if (!response) throw Error("No notes are open.");
       return { response, effects, drafts: draftsNow(), now: NOW };
     },
@@ -1212,6 +1251,7 @@ export function messageFixture(over: Partial<MessageView> = {}): MessageView {
     readBack: null,
     owner: "cockpit",
     effectState: "queued",
+    triesUsedUp: null,
     ...over,
   };
 }
@@ -1286,6 +1326,15 @@ export function messageStates(now = NOW): Record<string, MessageView> {
       state: "skipped",
       reason: "Skipped by the CSM.",
       effectState: "skipped",
+    }),
+    /** After a rollback: the draft stays, and Make owns the recap again. */
+    "handed-back": row({ owner: "make" }),
+    /** Refused at its fourth try, in the sender's sentence. */
+    "tries-used-up": row({
+      state: "refused",
+      reason:
+        "This recap was tried three times and did not go. Send it by hand in the group if it is still needed, then skip it here.",
+      triesUsedUp: true,
     }),
   };
 }

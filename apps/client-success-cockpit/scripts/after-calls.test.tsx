@@ -97,6 +97,10 @@ let refuseMatch: string | null = null;
 let refuseSettle: string | null = null;
 /** The settle never answers: a row caught while its call runs. */
 let holdSettle = false;
+/** The queue's read never answers. */
+let holdQueue = false;
+/** The pick waits here, and the test answers it when it wants to. */
+let placeHeld: Promise<any> | null = null;
 const rpcs: { name: string; args: any }[] = [];
 
 const client = {
@@ -112,6 +116,9 @@ const client = {
   },
   rpc: async (name: string, args?: any) => {
     rpcs.push({ name, args });
+    if (name === "cockpit_csm_unmatched_list" && holdQueue)
+      return new Promise(() => {});
+    if (name === "cockpit_csm_manual_match" && placeHeld) return placeHeld;
     if (name === "cockpit_csm_unmatched_list")
       return queueFails
         ? { data: null, error: { message: "Failed to fetch" } }
@@ -267,6 +274,8 @@ afterEach(async () => {
   refuseMatch = null;
   refuseSettle = null;
   holdSettle = false;
+  holdQueue = false;
+  placeHeld = null;
   rpcs.length = 0;
   setSystemTime();
 });
@@ -862,6 +871,20 @@ describe("impromptu calls on Today (4.10, 5.2)", () => {
     ).toBeTruthy();
   });
 
+  test("Place it with no client on her list: what she can still do with the call", async () => {
+    setSystemTime(new Date(NOW));
+    provider = "native";
+    queue = QUEUE;
+    await mount(<AfterCalls snap={{ clients: [], callStoreError: null }} />);
+    await act(async () =>
+      byLabel("Place the impromptu call on Sun 25 Oct, 10:34")?.click(),
+    );
+    await settle();
+    expect(page()).toContain(
+      "No clients are on your list, so this call cannot be placed here. Ask an admin to place it, or mark it Not a 1-1 call.",
+    );
+  });
+
   test("Escape and the X return focus to Place it", async () => {
     setSystemTime(new Date(NOW));
     provider = "native";
@@ -1016,14 +1039,292 @@ describe("impromptu calls on Today (4.10, 5.2)", () => {
     ).toBe(1);
   });
 
+  const CALL_NO_ANSWER =
+    "No answer came back, so this may or may not have saved. Reload the page to see where the call stands.";
+
+  describe("a call that never answers (no row rests for ever)", () => {
+    /** Real timers, with the 30 seconds shortened and recorded. */
+    const short = (waited: number[]) => ({
+      now: () => Date.now(),
+      set: (fn: () => void, ms: number): unknown => {
+        waited.push(ms);
+        return setTimeout(fn, ms === 30_000 ? 10 : ms);
+      },
+      clear: (h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>),
+    });
+    const pickCity = async () => {
+      await act(async () =>
+        byLabel("Place the impromptu call on Sun 25 Oct, 10:34")?.click(),
+      );
+      await settle();
+      await search("city");
+      await act(async () =>
+        (
+          win.document.body.querySelector(
+            'ul[aria-label="Clients"] button',
+          ) as any
+        ).click(),
+      );
+      await act(async () => {});
+    };
+    const sheetAlert = () =>
+      win.document.body.querySelector('[role="dialog"] [role="alert"]');
+    const pressEscape = async () => {
+      const input = win.document.body.querySelector(
+        'input[type="search"]',
+      ) as any;
+      await act(async () => {
+        input.dispatchEvent(
+          new win.KeyboardEvent("keydown", {
+            key: "Escape",
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+      await settle(2);
+    };
+
+    test("Not a 1-1 call: the buttons come back after 30 seconds with what is known, and nothing is retried", async () => {
+      setSystemTime(new Date(NOW));
+      provider = "native";
+      queue = QUEUE;
+      holdSettle = true;
+      const waited: number[] = [];
+      await mount(
+        <AfterCalls
+          snap={{ clients: [], callStoreError: null }}
+          clock={short(waited)}
+        />,
+      );
+      const label = "Not a 1-1 call: the impromptu call on Sun 25 Oct, 10:34";
+      await openMenu(label);
+      await act(async () => menuItem("Not a client")?.click());
+      await settle();
+      expect(waited).toContain(30_000);
+      const row = win.document.body.querySelector(
+        "[data-impromptu='801']",
+      ) as any;
+      expect(row.querySelector('[role="alert"]')?.textContent).toBe(
+        CALL_NO_ANSWER,
+      );
+      expect(byLabel(label).getAttribute("aria-disabled")).toBeNull();
+      expect(
+        byLabel("Place the impromptu call on Sun 25 Oct, 10:34").getAttribute(
+          "aria-disabled",
+        ),
+      ).toBeNull();
+      expect(toasts).toEqual([]);
+      expect(
+        rpcs.filter(r => r.name === "cockpit_csm_candidate_settle").length,
+      ).toBe(1);
+    });
+
+    test("Place it: the sheet says what is known after 30 seconds, and takes another pick", async () => {
+      setSystemTime(new Date(NOW));
+      provider = "native";
+      queue = QUEUE;
+      placeHeld = new Promise(() => {});
+      await mount(
+        <AfterCalls
+          snap={{ clients: CLIENTS, callStoreError: null }}
+          clock={short([])}
+        />,
+      );
+      await pickCity();
+      await settle();
+      expect(sheetAlert()?.textContent).toBe(CALL_NO_ANSWER);
+      expect(page()).not.toContain("Saving…");
+      expect(
+        (
+          win.document.body.querySelector(
+            'ul[aria-label="Clients"] button',
+          ) as any
+        ).getAttribute("aria-disabled"),
+      ).toBeNull();
+      expect(toasts).toEqual([]);
+      expect(
+        win.document.body.querySelector("[data-impromptu='801']"),
+      ).toBeTruthy();
+    });
+
+    test("closing the sheet during a save waits: a refusal is never lost", async () => {
+      setSystemTime(new Date(NOW));
+      provider = "native";
+      queue = QUEUE;
+      let answer: (v: any) => void = () => {};
+      placeHeld = new Promise(r => {
+        answer = r;
+      });
+      await mount(
+        <AfterCalls snap={{ clients: CLIENTS, callStoreError: null }} />,
+      );
+      await pickCity();
+      await settle(2);
+      expect(page()).toContain("Saving…");
+      // Escape and the X both wait for the answer.
+      await pressEscape();
+      expect(page()).toContain("Whose call was this?");
+      const x = buttons().find(
+        b =>
+          b.closest('[role="dialog"]') &&
+          (b.textContent ?? "").trim() === "Close",
+      );
+      await act(async () => x.click());
+      await settle(2);
+      expect(page()).toContain("Saving…");
+      const said = "That client is not on your access list";
+      await act(async () => answer({ data: null, error: { message: said } }));
+      await settle();
+      expect(sheetAlert()?.textContent).toBe(said);
+      // With the answer in, the sheet closes as ever.
+      await pressEscape();
+      expect(page()).not.toContain("Whose call was this?");
+    });
+
+    test("a queue that never answers: said, with no rows and beside client rows", async () => {
+      provider = "native";
+      holdQueue = true;
+      const FAILED =
+        "The calls with no client could not be read, so an impromptu call may be missing here. Reload the page; if it stays, tell the tech lead.";
+      await mount(
+        <AfterCalls
+          snap={{ clients: [], callStoreError: null }}
+          clock={short([])}
+        />,
+      );
+      await settle();
+      expect(page()).toContain("After your calls");
+      expect(page()).toContain(FAILED);
+      for (const r of roots.splice(0)) await act(async () => r.unmount());
+      win.document.body.innerHTML = "";
+      await mount(
+        <AfterCalls
+          snap={{ clients: CLIENTS, callStoreError: null }}
+          clock={short([])}
+        />,
+      );
+      await settle();
+      expect(page()).toContain(FAILED);
+      expect(page()).toContain("no 1-1 notes");
+    });
+  });
+
   test("a queue it could not read keeps the card with its sentence", async () => {
     provider = "native";
     queueFails = true;
     await mount(<AfterCalls snap={{ clients: [], callStoreError: null }} />);
     expect(page()).toContain("After your calls");
     expect(page()).toContain(
-      "The calls with no client could not be read, so an impromptu call may be missing here.",
+      "The calls with no client could not be read, so an impromptu call may be missing here. Reload the page; if it stays, tell the tech lead.",
     );
+  });
+
+  test("a dropped connection on a pick: it may have landed, so it says so and to reload", async () => {
+    setSystemTime(new Date(NOW));
+    provider = "native";
+    queue = QUEUE;
+    refuseMatch = "TypeError: Failed to fetch";
+    await mount(
+      <AfterCalls snap={{ clients: CLIENTS, callStoreError: null }} />,
+    );
+    await act(async () =>
+      byLabel("Place the impromptu call on Sun 25 Oct, 10:34")?.click(),
+    );
+    await settle();
+    await search("city");
+    await act(async () =>
+      (
+        win.document.body.querySelector(
+          'ul[aria-label="Clients"] button',
+        ) as any
+      ).click(),
+    );
+    await settle();
+    expect(
+      win.document.body.querySelector('[role="dialog"] [role="alert"]')
+        ?.textContent,
+    ).toBe(CALL_NO_ANSWER);
+    expect(page()).not.toContain("Failed to fetch");
+  });
+
+  test("a dropped connection on Not a 1-1 call: the row says the same, in any browser's words", async () => {
+    for (const said of [
+      "TypeError: Failed to fetch",
+      "NetworkError when attempting to fetch resource.",
+      "Load failed",
+    ]) {
+      setSystemTime(new Date(NOW));
+      provider = "native";
+      queue = QUEUE;
+      refuseSettle = said;
+      await mount(<AfterCalls snap={{ clients: [], callStoreError: null }} />);
+      await openMenu("Not a 1-1 call: the impromptu call on Sun 25 Oct, 10:34");
+      await act(async () => menuItem("Not a client")?.click());
+      await settle();
+      const row = win.document.body.querySelector(
+        "[data-impromptu='801']",
+      ) as any;
+      expect(row.querySelector('[role="alert"]')?.textContent).toBe(
+        CALL_NO_ANSWER,
+      );
+      for (const r of roots.splice(0)) await act(async () => r.unmount());
+      win.document.body.innerHTML = "";
+    }
+  });
+
+  test("the search's region is there before it has anything to say, and the list keeps aria-controls", async () => {
+    setSystemTime(new Date(NOW));
+    provider = "native";
+    queue = QUEUE;
+    await mount(
+      <AfterCalls snap={{ clients: CLIENTS, callStoreError: null }} />,
+    );
+    await act(async () =>
+      byLabel("Place the impromptu call on Sun 25 Oct, 10:34")?.click(),
+    );
+    await settle();
+    const region = () =>
+      win.document.body.querySelector(
+        '[role="dialog"] [role="status"][aria-live="polite"]',
+      ) as any;
+    const held = region();
+    expect(held?.textContent).toBe("");
+    const input = win.document.body.querySelector(
+      'input[type="search"]',
+    ) as any;
+    const list = () =>
+      win.document.body.querySelector('ul[aria-label="Clients"]') as any;
+    expect(input.getAttribute("aria-controls")).toBe(list().id);
+    await search("zzz");
+    expect(Boolean(list())).toBe(false);
+    // The same node: a region that arrives holding its text is often not read.
+    expect(region() === held).toBe(true);
+    expect(held.textContent).toBe('No client matches "zzz".');
+    expect(input.getAttribute("aria-controls")).toBeNull();
+    await search("city");
+    expect(region() === held).toBe(true);
+    expect(held.textContent).toBe("");
+    expect(input.getAttribute("aria-controls")).toBe(list().id);
+  });
+
+  test("the Place sheet's clock is the row's: Geist Mono 11, tabular", async () => {
+    setSystemTime(new Date(NOW));
+    provider = "native";
+    queue = QUEUE;
+    await mount(
+      <AfterCalls snap={{ clients: CLIENTS, callStoreError: null }} />,
+    );
+    await act(async () =>
+      byLabel("Place the impromptu call on Sun 25 Oct, 10:34")?.click(),
+    );
+    await settle();
+    const clock = win.document.body.querySelector(
+      '[role="dialog"] span.font-mono',
+    ) as any;
+    expect(clock.textContent).toBe("10:34");
+    expect(String(clock.className)).toContain("text-[11px]");
+    expect(String(clock.className)).toContain("tabular-nums");
   });
 
   test("the last row gone: the card says nothing is left, and focus goes to its heading", async () => {
@@ -1034,9 +1335,11 @@ describe("impromptu calls on Today (4.10, 5.2)", () => {
     await openMenu("Not a 1-1 call: the impromptu call on Sun 25 Oct, 10:34");
     await act(async () => menuItem("Not a client")?.click());
     await settle();
-    expect((win.document.activeElement?.textContent ?? "").trim()).toBe(
-      "After your calls",
-    );
+    const head = win.document.activeElement as any;
+    expect((head?.textContent ?? "").trim()).toBe("After your calls");
+    // Focus that moved here can be seen: the base rule leaves tabindex=-1 out.
+    expect(String(head.className)).toContain("focus-visible:ring-2");
+    expect(String(head.className)).toContain("focus-visible:ring-primary-ink");
     expect(page()).toContain("Nothing left from your calls.");
   });
 });

@@ -425,7 +425,14 @@ function expectedCall(stage: string, heldKinds: Set<string>) {
 const OWNER_OURS =
   /^(mahara(?: ?media)?|مهارة|we|our team|csm|account manager|systems manager|media buyer|video editor|creative director|strategist|tech|call cent(?:er|re)|creative|ads|مركز الاتصال|فريق مهارة)(?:\s*\([^)]{1,30}\))?\s*[:：-]\s*/i;
 const OWNER_THEIRS = /^(client|the client|العميل|your side|you)\s*[:：-]\s*/i;
+/** A note line that opens with one of these is a to-do on that side, with no label. */
+const STEP_THEIRS =
+  /^(?:\d+[.)]\s*)?(you need to|please|connect your|give us|share your|upload your|scan)\b/i;
+const STEP_OURS =
+  /^(?:\d+[.)]\s*)?(send|book|share|add|follow up|we need to|we will|we'll)\b/i;
 const BOTH = /^(both|everyone|all|all parties|كلاهما|الجميع|الطرفان)$/i;
+/** The source of a line taken from the CSM's own 1-1 notes. */
+const NOTES_SOURCE = "Your 1-1 notes";
 
 /**
  * Meta's change kinds, most significant first. Library image events come
@@ -1176,9 +1183,20 @@ function damaged(s: string): boolean {
 /**
  * 1-1 notes, split into lines: by newline and by inline " - " lists. A line
  * that starts with an owner label ("Mahara:", "Client:") is one to-do and
- * stays whole, however short: the rest of its own line after an inline " - "
- * stays on it, up to the next label. Only unlabelled fragments join a
- * neighbour, and a fragment from a later line never joins a labelled one.
+ * stays whole, however short. One tail joins it: a part after an inline " - "
+ * on the same line, of fewer than four words, that does not itself open a
+ * to-do ("Mahara: Send the report - by Thursday"). Any other part keeps the
+ * rule for unlabelled parts: four words or more is its own line, so a to-do
+ * listed after a label still reaches its own side. Only unlabelled fragments
+ * join a neighbour, and a fragment never joins into a labelled line. A label
+ * written with a dash ("Client - Pay") is a label too: the split takes its
+ * separator away, so a bare owner word and the part after it on the same line
+ * are read back as one labelled part, and an owner word never folds into
+ * another owner's line. A part after an inline number ("Client: Send the logo.
+ * 2. Book the shoot day") stays inside the to-do on its own line, number and
+ * all, whatever it says, because a native item can hold one and the SQL leaves
+ * it: only its own label starts another. A labelled part may end with a colon
+ * ("Client: Send these:"), and stays as long as a to-do follows the label.
  */
 function noteLines(text: string): string[] {
   // Each part keeps the number of the newline line it came from: a separator
@@ -1186,7 +1204,20 @@ function noteLines(text: string): string[] {
   const pieces = text.split(
     /(\r?\n|\s+-\s+(?=\S)|\s+•\s+|(?<=\.)\s+(?=\d+[.)]\s))/,
   );
-  const parts: { text: string; row: number }[] = [];
+  const parts: {
+    text: string;
+    row: number;
+    afterDash: boolean;
+    /** The number an inline-number separator left at its start: "2.". */
+    number: string | null;
+  }[] = [];
+  const labelled = (t: string) => OWNER_OURS.test(t) || OWNER_THEIRS.test(t);
+  /** Too short or a heading to stand alone; a labelled to-do never is. */
+  const readable = (t: string) =>
+    t.length >= 3 &&
+    (!/[:：]$/.test(t) ||
+      (labelled(t) &&
+        t.replace(OWNER_OURS, "").replace(OWNER_THEIRS, "").length > 0));
   let row = 0;
   pieces.forEach((piece, i) => {
     if (i % 2) {
@@ -1194,9 +1225,34 @@ function noteLines(text: string): string[] {
       return;
     }
     const t = clean(piece);
-    if (t.length >= 3 && !/[:：]$/.test(t)) parts.push({ text: t, row });
+    const before = i > 0 ? pieces[i - 1] : "";
+    // The third separator is bare space: its number is still on this piece.
+    const number =
+      /^\s+$/.test(before) && !before.includes("\n")
+        ? (/^\s*(\d+[.)])/.exec(piece)?.[1] ?? null)
+        : null;
+    // A numbered part waits for the loop below: it may belong to a labelled to-do.
+    if (readable(t) || (number && t))
+      parts.push({
+        text: t,
+        row,
+        afterDash: /^\s+-\s+$/.test(before),
+        number,
+      });
   });
-  const labelled = (t: string) => OWNER_OURS.test(t) || OWNER_THEIRS.test(t);
+  const bareOwner = (t: string) => labelled(`${t}: x`) && !labelled(t);
+  // "Client - Pay": the inline dash split a label from its to-do.
+  for (let i = 0; i + 1 < parts.length; i++) {
+    const [a, b] = [parts[i], parts[i + 1]];
+    if (
+      bareOwner(a.text) &&
+      b.afterDash &&
+      b.row === a.row &&
+      !bareOwner(b.text) &&
+      !labelled(b.text)
+    )
+      parts.splice(i, 2, { ...a, text: `${a.text} - ${b.text}` });
+  }
   const out: { text: string; labelled: boolean; row: number }[] = [];
   // A short fragment goes onto the line before when that line is unlabelled, else alone.
   const settle = (carry: string, at: number) => {
@@ -1212,15 +1268,39 @@ function noteLines(text: string): string[] {
       out.push({ text: p.text, labelled: true, row: p.row });
       continue;
     }
-    // "Mahara: Send the April report - by Thursday": the tail is the same to-do.
     const last = out[out.length - 1];
-    if (!carry && last?.labelled && last.row === p.row) {
+    // "Client: Send the logo. 2. Book the shoot day": one to-do, on its side.
+    if (p.number && !carry && last?.labelled && last.row === p.row) {
+      last.text = `${last.text} ${p.number} ${p.text}`;
+      continue;
+    }
+    if (!readable(p.text)) continue;
+    // "Mahara: Send the April report - by Thursday": the tail is the same to-do.
+    if (
+      !carry &&
+      last?.labelled &&
+      last.row === p.row &&
+      p.afterDash &&
+      p.text.split(/\s+/).length < 4 &&
+      !bareOwner(p.text) &&
+      !STEP_THEIRS.test(p.text) &&
+      !STEP_OURS.test(p.text)
+    ) {
       last.text = `${last.text} - ${p.text}`;
       continue;
     }
+    // An owner word opens a to-do of its own, so nothing carried folds it in.
+    if (carry && bareOwner(p.text)) {
+      settle(carry, p.row);
+      carry = "";
+    }
     // A fragment of a word or two means nothing alone: join it to the next.
     const t = carry ? `${carry} - ${p.text}` : p.text;
-    if (t.split(/\s+/).length < 4) carry = t;
+    // An owner alone on its line, then its to-do on the next: a label, however short.
+    if (labelled(t)) {
+      out.push({ text: t, labelled: true, row: p.row });
+      carry = "";
+    } else if (t.split(/\s+/).length < 4) carry = t;
     else {
       out.push({ text: t, labelled: false, row: p.row });
       carry = "";
@@ -1781,22 +1861,12 @@ export function buildBrief(input: BriefInput): Brief {
       ...noteLines(formAnswers(notedForm, /^client notes/i).join("\n")),
       ...noteLines(formAnswers(notedForm, /additional notes/i).join("\n")),
     ]) {
-      if (
-        OWNER_THEIRS.test(t) ||
-        /^(?:\d+[.)]\s*)?(you need to|please|connect your|give us|share your|upload your|scan)\b/i.test(
-          t,
-        )
-      )
+      if (OWNER_THEIRS.test(t) || STEP_THEIRS.test(t))
         callSteps.push({
           owner: "Client",
           text: capitalise(t.replace(OWNER_THEIRS, "")),
         });
-      else if (
-        OWNER_OURS.test(t) ||
-        /^(?:\d+[.)]\s*)?(send|book|share|add|follow up|we need to|we will|we'll)\b/i.test(
-          t,
-        )
-      )
+      else if (OWNER_OURS.test(t) || STEP_OURS.test(t))
         callSteps.push({
           owner: "Mahara",
           text: capitalise(t.replace(OWNER_OURS, "")),
@@ -1812,7 +1882,7 @@ export function buildBrief(input: BriefInput): Brief {
       .sort((a, b) => a.i - b.i)
       .map(({ text }) => ({
         text,
-        source: "Your 1-1 notes",
+        source: NOTES_SOURCE,
         day: notedDay,
         href: recHref,
       }));
@@ -1909,18 +1979,24 @@ export function buildBrief(input: BriefInput): Brief {
     day: string,
     label?: string,
   ) => {
-    if (text.length < 3) return;
+    // The CSM's own to-do stays whatever its length (G11); only an empty one goes.
+    if (text.length < (source === NOTES_SOURCE ? 1 : 3)) return;
     const all = [
       ...brief.promises.ours,
       ...brief.promises.theirs,
       ...brief.promises.steps,
     ];
-    if (
-      all.some(
-        l => norm(l.text) === norm(text) || sharedWords(l.text, text) >= 0.6,
-      )
-    )
-      return;
+    // Near-duplicates fold only across sources and only on one side, because
+    // "Send the April invoice" and "Pay the April invoice" share their words.
+    // A step with no side claims nothing, so it still folds into a line that
+    // says it. Two lines of the CSM's own notes are two to-dos unless they say
+    // the same thing on the same side.
+    const repeats = (l: BriefLine) =>
+      source === NOTES_SOURCE && l.source === NOTES_SOURCE
+        ? list.includes(l) && norm(l.text) === norm(text)
+        : (list === brief.promises.steps || list.includes(l)) &&
+          (norm(l.text) === norm(text) || sharedWords(l.text, text) >= 0.6);
+    if (all.some(repeats)) return;
     list.push({ text, source, day, label });
   };
   /** A step that only schedules or attends a meeting that a later call or its date has passed. */
@@ -2005,9 +2081,7 @@ export function buildBrief(input: BriefInput): Brief {
       if (meetingDone(s.text, notedTime)) continue;
       const owner = s.owner?.trim();
       const source =
-        s.owner === "Client" || s.owner === "Mahara"
-          ? "Your 1-1 notes"
-          : "Fathom";
+        s.owner === "Client" || s.owner === "Mahara" ? NOTES_SOURCE : "Fathom";
       const side = owner ? ownerSide(owner) : "both";
       if (side === "ours")
         pushStep(brief.promises.ours, s.text, source, notedDay);
@@ -2860,8 +2934,8 @@ export function buildBrief(input: BriefInput): Brief {
           source: "ClickUp card",
         })),
       ...brief.call.lines
-        .filter(l => l.source === "Your 1-1 notes")
-        .map(l => ({ text: l.text, at: lastTime, source: "Your 1-1 notes" })),
+        .filter(l => l.source === NOTES_SOURCE)
+        .map(l => ({ text: l.text, at: lastTime, source: NOTES_SOURCE })),
       ...waInbound
         .filter(x => x.m.at >= sinceStart)
         .map(x => ({

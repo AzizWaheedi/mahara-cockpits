@@ -27,7 +27,8 @@
  * Make effects never dispatched; kickoff and Blueprint never dispatched by
  * the submit, the sweep or the drafts trigger; what a rolled-back hour left
  * open refused at the next cut-over, so nothing old reaches the writer or is
- * approved (Z70); the 30-minute sentences and
+ * approved (Z70); the cut-over refusing a writer that reads apply, through the
+ * hour's steps and a rollback; the 30-minute sentences and
  * an off grade's reason; idempotence; a refused queue insert keeping the
  * notes; the registry taking an effect back; the submit's body as 2a's plus
  * one line; a failed recap requeued within 24 hours only; grants; a dispatch
@@ -106,6 +107,8 @@ const SENTENCE = {
     `The 1-1 notes dispatch failed: ${e.slice(0, 200)}. The notes are saved; the sweep tries again every minute.`,
   noVault:
     "The vault has no cockpit_notices_cron_secret, so the 1-1 notes sweep did not run. Add it to the vault.",
+  noAnon:
+    "The vault has no cockpit_anon_key, so the 1-1 notes sweep did not run. Add it to the vault.",
 };
 
 let db: PGlite;
@@ -605,10 +608,10 @@ const VAULT_AND_NET = `
       FROM vault.secrets s;
   REVOKE ALL ON SCHEMA vault FROM PUBLIC;
   CREATE SCHEMA net;
-  CREATE TABLE net.posted (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, url text, body jsonb, headers jsonb);
+  CREATE TABLE net.posted (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, url text, body jsonb, headers jsonb, timeout_ms integer);
   CREATE FUNCTION net.http_post(url text, body jsonb DEFAULT '{}'::jsonb, params jsonb DEFAULT '{}'::jsonb,
     headers jsonb DEFAULT '{}'::jsonb, timeout_milliseconds integer DEFAULT 5000) RETURNS bigint LANGUAGE sql AS
-    $$ INSERT INTO net.posted(url, body, headers) VALUES (url, body, headers) RETURNING id $$;
+    $$ INSERT INTO net.posted(url, body, headers, timeout_ms) VALUES (url, body, headers, timeout_milliseconds) RETURNING id $$;
   REVOKE ALL ON SCHEMA net FROM PUBLIC;`;
 
 /** What w reads from a 2b file not in the tree yet (applied once, after 20261029s). */
@@ -2375,6 +2378,93 @@ describe("a rollback's leftovers at a later cut-over (Z70)", () => {
   });
 });
 
+describe("the cut-over and the writer's mode, through the hour's steps", () => {
+  const OPEN =
+    "Limit the 1-1 notes writer to the test card at step 6 first: it last reported apply, which writes on every client's card.";
+  const TEST_CARD = "86eywg1cq";
+
+  test("apply is refused and writes nothing, step 6's limit passes, and a rollback then a second hour runs once the writer is limited again", async () => {
+    await rolledBack(async () => {
+      const cutover = () =>
+        one<Row>("SELECT public.cockpit_form_checkin_cutover() AS r");
+      const refused = async () => {
+        const before = await count(
+          "SELECT count(*) n FROM public.cockpit_audit_log",
+        );
+        expect(await refusal(cutover)).toEqual({
+          code: "55000",
+          message: OPEN,
+        });
+        expect(
+          await count("SELECT count(*) n FROM public.cockpit_audit_log"),
+        ).toBe(before);
+        expect(
+          await one(
+            "SELECT provider AS r FROM public.cockpit_forms WHERE key = 'checkin'",
+          ),
+        ).toBe("typeform");
+      };
+      const writer = (mode: string, cards: string[] | null = null) =>
+        as(
+          "service",
+          "SELECT public.cockpit_clickup_forms_state(true, 'Nothing to write.', $1, $2::text[], '{}'::jsonb) AS r",
+          [mode, cards],
+        );
+      const reads = () =>
+        one<Row>("SELECT public.cockpit_clickup_forms_mode() AS r");
+      const rollback = () =>
+        one(
+          `SELECT public.cockpit_form_registry_apply('checkin', '{"provider":"typeform","owners":"shadow"}'::jsonb,
+             '{"via":"cutover-rollback","email":"cut-over"}'::jsonb) AS r`,
+        );
+      await q(
+        `INSERT INTO public.cockpit_csm_call_forms(token, form_id, form_kind, task_id, matched_by, submitted_at)
+         VALUES ('tf-placed-0002', 'fRokTITH', 'checkin', $1, 'hidden_field', $2)`,
+        [A, ago(600)],
+      );
+
+      // The secret is on and the canary list is not.
+      await writer("apply");
+      expect((await reads()).mode).toBe("apply");
+      await refused();
+      // The report goes stale: the mode reads unknown, the writer has not closed.
+      await q(
+        `UPDATE public.cockpit_sync_state
+            SET last_run_at = now() - interval '20 minutes',
+                detail = detail || jsonb_build_object('at', now() - interval '20 minutes')
+          WHERE key = 'clickup-writeback:forms'`,
+      );
+      expect(await reads()).toMatchObject({
+        mode: "unknown",
+        lastMode: "apply",
+      });
+      await refused();
+
+      // Step 6, then 7b.
+      await writer("apply_limited", [TEST_CARD]);
+      expect(await reads()).toMatchObject({
+        mode: "apply_limited",
+        onlyCards: [TEST_CARD],
+      });
+      expect((await cutover()).registry.provider).toBe("native");
+
+      // Step 9 opens it to all; the hour is rolled back with the secret still set.
+      await writer("apply");
+      await rollback();
+      await refused();
+      // 11.3 unsets the secret: the next report is dry_run. A second hour starts at step 6.
+      await writer("dry_run");
+      await writer("apply_limited", [TEST_CARD]);
+      expect((await cutover()).registry.provider).toBe("native");
+
+      // A rollback before step 9 leaves the limit on, and the next hour passes on it.
+      await rollback();
+      expect((await reads()).mode).toBe("apply_limited");
+      expect((await cutover()).registry.provider).toBe("native");
+    });
+  });
+});
+
 describe("the forms door's readers and the kick", () => {
   test("cockpit_form_drafts_service answers as cockpit_form_drafts_read does, for the service key only", async () => {
     await rolledBack(async () => {
@@ -2562,6 +2652,11 @@ describe("the forms door's readers and the kick", () => {
           },
         },
       ]);
+      // The door answers when its sweep ends, up to about 100 s (effects.ts
+      // SWEEP_BUDGET_MS), so the post outlasts that run rather than hanging up on it.
+      expect(await q("SELECT timeout_ms FROM net.posted")).toEqual([
+        { timeout_ms: 150000 },
+      ]);
       expect(await health()).toMatchObject({
         ok: true,
         note: "Asked the drafts for one set of 1-1 notes.",
@@ -2584,6 +2679,49 @@ describe("the forms door's readers and the kick", () => {
       ).not.toBeNull();
       expect(await count("SELECT count(*) n FROM net.posted")).toBe(2);
       expect((await health()).note).toBe("Asked the drafts for 2 1-1 notes.");
+    });
+  });
+
+  test("the kick: a vault with only the cron secret, or a blank anon key, posts nothing and reads not ok, because the forms door checks the JWT (D11)", async () => {
+    await rolledBack(async () => {
+      const kick = () => one("SELECT public.cockpit_form_effects_kick() AS r");
+      const refusedPlainly = async () => {
+        expect(await kick()).toBeNull();
+        expect(await count("SELECT count(*) n FROM net.posted")).toBe(0);
+        expect(await health()).toMatchObject({
+          ok: false,
+          note: SENTENCE.noAnon,
+          detail: { waiting: 1 },
+        });
+      };
+      await flip();
+      await liveSend();
+      await q(
+        "INSERT INTO vault.secrets(name, secret) VALUES ('cockpit_notices_cron_secret', 'cron-secret-for-tests')",
+      );
+      await refusedPlainly();
+      await q(
+        "INSERT INTO vault.secrets(name, secret) VALUES ('cockpit_anon_key', '   ')",
+      );
+      await refusedPlainly();
+      // Added to the vault: the next minute's kick posts, with the header the door asks for.
+      await q(
+        "UPDATE vault.secrets SET secret = 'anon-key-for-tests' WHERE name = 'cockpit_anon_key'",
+      );
+      expect(await kick()).not.toBeNull();
+      expect(await q("SELECT headers FROM net.posted")).toEqual([
+        {
+          headers: {
+            "Content-Type": "application/json",
+            "x-cron-secret": "cron-secret-for-tests",
+            Authorization: "Bearer anon-key-for-tests",
+          },
+        },
+      ]);
+      expect(await health()).toMatchObject({
+        ok: true,
+        note: "Asked the drafts for one set of 1-1 notes.",
+      });
     });
   });
 

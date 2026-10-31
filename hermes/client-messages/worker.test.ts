@@ -9,19 +9,25 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ProviderError, Transport } from "../ad-billing-guard/transport.ts";
 import { CARD_GROUP_FIELD, sha256, type Verdict } from "./core.ts";
 import type { Db, Health } from "./db.ts";
 import type { OldSenders } from "./oldSenders.ts";
-import type { SendOutcome, WaMessage } from "./whapi.ts";
+import { readMessage, type SendOutcome, type WaMessage } from "./whapi.ts";
 import {
   BAD_GROUP,
+  CARD_BAD_ID,
   CARD_CACHE_MS,
   CARD_LATER,
+  CARD_NO_FIELDS,
+  CARD_NO_GROUP_FIELD,
+  CARD_NOT_SERVED,
   type CardCache,
   CLAIM_BY_MS,
   CLICKUP_UNREAD,
   COLUMN_MOVED,
   cardKey,
+  cardRefusal,
   DRY_NOTHING,
   doctor,
   fileCardCache,
@@ -41,6 +47,7 @@ import {
   STOPPED,
   SWITCH_TWICE,
   SWITCH_UNKNOWN,
+  SWITCHED_OFF,
   type Switches,
   TOO_LATE,
   WAIT_SLACK_MS,
@@ -96,9 +103,13 @@ const claimRow = {
 type World = {
   work?: { unknowns: any[]; unread: any[]; approved: any[] };
   claim?: { busy: boolean; rows: any[] };
-  intent?: { ok: boolean; reason?: string } | "crash";
+  intent?: { ok: boolean; reason?: string; refused?: boolean } | "crash";
   sheet?: unknown[][] | "fail";
   card?: string | null | "fail";
+  /** What ClickUp's read throws, a card's own answer or a passing one. */
+  cardError?: unknown;
+  /** ClickUp's raw 200 answer, instead of a card with its fields. */
+  taskAnswer?: unknown;
   send?: SendOutcome | "crash";
   messages?: WaMessage[];
   old?: OldSenders;
@@ -116,6 +127,10 @@ type World = {
   now?: Date;
   cardCache?: CardCache;
   switches?: Switches;
+  /** The switches read again after the wait; the run's own unless given. */
+  reread?: () => Switches;
+  /** What happens during a wait, a person editing a file for one. */
+  onSleep?: () => void;
   /** The send's response receipt is lost after the POST left, as the real ledger counts it. */
   loseSendReceipt?: boolean;
 };
@@ -166,6 +181,8 @@ function world(w: World = {}) {
       keys.push(`${runKey} task ${id}`);
       clock += w.taskMs ?? 0;
       if (w.card === "fail") throw new Error("ClickUp request failed (500).");
+      if (w.cardError !== undefined) throw w.cardError;
+      if ("taskAnswer" in w) return w.taskAnswer as any;
       return {
         id,
         custom_fields: [
@@ -204,6 +221,7 @@ function world(w: World = {}) {
     providers,
     oldSenders: async () => w.old ?? OFF,
     switches: w.switches ?? APPLY,
+    rereadSwitches: w.reread ?? (() => w.switches ?? APPLY),
     envFrom: {
       SUPABASE_URL: "/home/hermes/.cockpit-native-state/runtime-x.json",
     },
@@ -211,6 +229,7 @@ function world(w: World = {}) {
     sleep: async ms => {
       sleeps.push(ms);
       clock += ms + (w.sleepOverrunMs ?? 0);
+      w.onSleep?.();
     },
     elapsedMs: () => clock,
     random: () => w.random ?? 0.5,
@@ -389,6 +408,117 @@ describe("a run in apply mode", () => {
     expect(r).toMatchObject({ ok: false, note: CLICKUP_UNREAD });
   });
 
+  test("a card ClickUp will not serve is refused, so the next approval goes on the next run", async () => {
+    // Two approved recaps and the claim's own rule: the oldest approval still approved, one a run.
+    const B = "86abc0002";
+    const M2 = "00000000-0000-4000-8000-0000000000a2";
+    const queue = [
+      { ...claimRow, state: "approved" },
+      {
+        ...claimRow,
+        id: M2,
+        taskId: B,
+        approvedAt: "2026-10-29T09:55:00Z",
+        state: "approved",
+      },
+    ];
+    const sheet = [...SHEET, ["Beta Build", "", "", "", B, G2]];
+    // ClickUp itself, through the real Transport: a 404 for the deleted card, a card for the healthy one.
+    const clickup = new Transport({ CLICKUP_API_TOKEN: "invented" }, (async (
+      input: RequestInfo | URL,
+    ) =>
+      String(input).endsWith(`/${A}`)
+        ? new Response("{}", { status: 404 })
+        : Response.json({
+            custom_fields: [{ id: CARD_GROUP_FIELD, value: G2 }],
+          })) as typeof fetch);
+    const run = async () => {
+      const w = world({ sheet });
+      const rpc = w.deps.db.rpc;
+      w.deps.db.rpc = (async (name: string, args: any = {}) => {
+        if (name === "cockpit_client_message_claim") {
+          const next = queue.find(q => q.state === "approved");
+          if (next) next.state = "claimed";
+          await rpc(name, args);
+          return { busy: false, rows: next ? [next] : [] };
+        }
+        if (name === "cockpit_client_message_result") {
+          const held = queue.find(q => q.id === args.p_id);
+          if (held && args.p_outcome === "refused") held.state = "refused";
+          if (held && args.p_outcome === "release") held.state = "approved";
+          if (held && args.p_outcome === "sent") held.state = "sent";
+        }
+        return rpc(name, args);
+      }) as Db["rpc"];
+      const providers = w.deps.providers;
+      w.deps.providers = key => ({
+        ...providers(key),
+        task: (id: string) => clickup.task(id),
+      });
+      return { w, r: await runOnce(w.deps) };
+    };
+
+    const first = await run();
+    const reason = CARD_NOT_SERVED(A, 404);
+    expect(first.r).toMatchObject({ ok: true, note: reason });
+    expect(first.r.detail.refused).toBe(1);
+    expect(first.w.rpcs.at(-1)?.args).toMatchObject({
+      p_id: M1,
+      p_outcome: "refused",
+      p_reason: reason,
+    });
+    expect(reason.length).toBeLessThanOrEqual(240);
+    expect(first.w.sends).toEqual([]);
+    expect(queue.map(q => q.state)).toEqual(["refused", "approved"]);
+
+    const second = await run();
+    expect(second.w.sends).toEqual([{ group: G2, body: BODY }]);
+    expect(queue.map(q => q.state)).toEqual(["refused", "sent"]);
+  });
+
+  test("a card's own 4xx is refused; 401, 408, 429, 5xx and a timeout keep the release and post nothing", async () => {
+    for (const status of [400, 403, 404, 410]) {
+      const w = world({ cardError: new ProviderError("ClickUp", status) });
+      const r = await runOnce(w.deps);
+      expect(r).toMatchObject({ ok: true, note: CARD_NOT_SERVED(A, status) });
+      expect(r.detail.refused).toBe(1);
+      expect(w.rpcs.at(-1)?.args).toMatchObject({
+        p_outcome: "refused",
+        p_reason: CARD_NOT_SERVED(A, status),
+      });
+      expect(w.sends).toEqual([]);
+    }
+    for (const status of [401, 408, 429, 500, 503, 0]) {
+      const w = world({
+        cardError: new ProviderError("ClickUp", status, status !== 401),
+      });
+      const r = await runOnce(w.deps);
+      expect(r).toMatchObject({ ok: false, note: CLICKUP_UNREAD });
+      expect(r.detail.refused).toBe(0);
+      expect(w.rpcs.at(-1)?.args).toMatchObject({ p_outcome: "release" });
+      expect(w.sends).toEqual([]);
+    }
+  });
+
+  test("the real Transport's answers: an id it rejects is the card's fault, a missing key is not", async () => {
+    const net = (async () => new Response("{}")) as unknown as typeof fetch;
+    const reject = await new Transport({ CLICKUP_API_TOKEN: "invented" }, net)
+      .task("not a card")
+      .catch(e => e);
+    expect(cardRefusal("not a card", reject)).toBe(CARD_BAD_ID("not a card"));
+    const noKey = await new Transport({}, net).task(A).catch(e => e);
+    expect(noKey).toBeInstanceOf(Error);
+    expect(cardRefusal(A, noKey)).toBeNull();
+
+    const w = world({ cardError: reject });
+    const r = await runOnce(w.deps);
+    expect(r.detail.refused).toBe(1);
+    expect(w.rpcs.at(-1)?.args).toMatchObject({
+      p_outcome: "refused",
+      p_reason: CARD_BAD_ID(A),
+    });
+  });
+
   test("refusals: no group on Client Data, two rows, a bad id, or a card that differs; none is sent", async () => {
     for (const [sheet, card, reason] of [
       [[SHEET[0]], G1, NO_GROUP],
@@ -418,6 +548,141 @@ describe("a run in apply mode", () => {
     const empty = world({ card: null });
     await runOnce(empty.deps);
     expect(empty.sends).toHaveLength(1);
+  });
+
+  test("ClickUp's 200 that does not list the card's fields is refused with a sentence and posts nothing: only a person can fix it", async () => {
+    for (const taskAnswer of [
+      {},
+      { err: "Team not authorized" },
+      { id: "abc", custom_fields: "x" },
+      {
+        id: "abc",
+        custom_fields: [{ id: CARD_GROUP_FIELD, value: { not: "text" } }],
+      },
+    ]) {
+      const w = world({ taskAnswer });
+      const r = await runOnce(w.deps);
+      expect(r).toMatchObject({ ok: true, note: CARD_NO_GROUP_FIELD(A) });
+      expect(r.detail.refused).toBe(1);
+      expect(w.rpcs.at(-1)?.args).toMatchObject({
+        p_outcome: "refused",
+        p_reason: CARD_NO_GROUP_FIELD(A),
+      });
+      expect(w.names()).toEqual(["sweep", "work", "claim", "result"]);
+      expect(w.sends).toEqual([]);
+      expect(w.sleeps).toEqual([]);
+    }
+    // A card that lists its fields, without this one, is still empty, and goes.
+    const empty = world({ taskAnswer: { custom_fields: [] } });
+    await runOnce(empty.deps);
+    expect(empty.sends).toHaveLength(1);
+  });
+
+  test("the kill switch holds during the wait: edited to false in the file, the recap goes back and nothing is posted", async () => {
+    const path = join(dir, "switches-during-wait.env");
+    const on = "CLIENT_MESSAGES_APPLY=true\n";
+    for (const [edit, ok, note] of [
+      ["CLIENT_MESSAGES_APPLY=false\n", true, SWITCHED_OFF],
+      // The line deleted: a file with no switch reads off.
+      ["", true, SWITCHED_OFF],
+      // The canary narrowed so this card is no longer on it.
+      [`${on}CLIENT_MESSAGES_ONLY_CARDS=86other\n`, true, SWITCHED_OFF],
+      // A line appended under the old true: not trusted, so the run stops.
+      [
+        `${on}CLIENT_MESSAGES_APPLY=false\n`,
+        false,
+        SWITCH_TWICE(["CLIENT_MESSAGES_APPLY"]),
+      ],
+      [`${on}CLIENT_MESSAGES_ONLY_CARDS=a;b\n`, false, NOT_A_CARD],
+    ] as const) {
+      writeFileSync(path, on);
+      const w = world({
+        switches: readSwitches(path),
+        reread: () => readSwitches(path),
+        onSleep: () => writeFileSync(path, edit),
+      });
+      const r = await runOnce(w.deps);
+      expect([edit, r.ok, r.note]).toEqual([edit, ok, note]);
+      expect(w.names()).toEqual(["sweep", "work", "claim", "result"]);
+      expect(w.rpcs.at(-1)?.args).toMatchObject({
+        p_id: M1,
+        p_claim: T1,
+        p_outcome: "release",
+      });
+      expect(w.sends).toEqual([]);
+      expect(w.sleeps).toHaveLength(1);
+      expect(w.healths[0]).toMatchObject({ ok, note });
+    }
+    // The file gone during the wait reads off too.
+    writeFileSync(path, on);
+    const gone = world({
+      switches: readSwitches(path),
+      reread: () => readSwitches(path),
+      onSleep: () => rmSync(path, { force: true }),
+    });
+    expect((await runOnce(gone.deps)).note).toBe(SWITCHED_OFF);
+    expect(gone.sends).toEqual([]);
+    // Unchanged, or edited in a way that still allows the card, it goes once.
+    for (const edit of [on, `${on}CLIENT_MESSAGES_ONLY_CARDS=${A}\n`]) {
+      writeFileSync(path, on);
+      const w = world({
+        switches: readSwitches(path),
+        reread: () => readSwitches(path),
+        onSleep: () => writeFileSync(path, edit),
+      });
+      await runOnce(w.deps);
+      expect(w.sends).toHaveLength(1);
+      expect(w.names()).toContain("intent");
+    }
+  });
+
+  test("the switches are read again after the wait, not before it", async () => {
+    const order: string[] = [];
+    const w = world({
+      reread: () => {
+        order.push("reread");
+        return APPLY;
+      },
+      onSleep: () => void order.push("wait"),
+    });
+    await runOnce(w.deps);
+    // The second wait is the read-back's, after the send.
+    expect(order).toEqual(["wait", "reread", "wait"]);
+  });
+
+  test("an unknown that Whapi returns as link_preview, the shape of every real recap, is reconciled by its fingerprint", async () => {
+    const unknown = {
+      id: "u1",
+      claimToken: "tok-u1",
+      taskId: A,
+      kind: "recap_checkin",
+      body: BODY,
+      bodySha256: sha256(BODY),
+      claimedAt: "2026-10-29T09:00:00Z",
+    };
+    const w = world({
+      work: { unknowns: [unknown], unread: [], approved: [] },
+      messages: [
+        readMessage({
+          id: "wamid-lp",
+          from: "96550000099",
+          from_me: true,
+          source: "api",
+          type: "link_preview",
+          timestamp: 1_790_000_000,
+          link_preview: { body: BODY, url: "https://example.test/booking" },
+        }) as WaMessage,
+      ],
+    });
+    const r = await runOnce(w.deps);
+    expect(w.rpcs.at(-1)?.args).toMatchObject({
+      p_id: "u1",
+      p_outcome: "reconciled",
+      p_provider_id: "wamid-lp",
+      p_read_back: { by: "body_sha256" },
+    });
+    expect(r.reconciled).toBe(1);
+    expect(w.sends).toEqual([]);
   });
 
   test("an unknown is never sent again: found in the group by its fingerprint it is reconciled, else it stays", async () => {
@@ -526,6 +791,19 @@ describe("a run in apply mode", () => {
     expect(w.sends).toEqual([]);
     expect(w.names()).toEqual(["sweep", "work", "claim", "intent"]);
     expect(r.note).toBe("Make owns this again.");
+    // The gate only released it: nothing was refused.
+    expect(r.detail.refused).toBe(0);
+  });
+
+  test("a fourth try the intent refuses is counted as refused, and nothing is posted", async () => {
+    const reason =
+      "This recap was tried three times and did not go. Send it by hand in the group if it is still needed, then skip it here.";
+    const w = world({ intent: { ok: false, reason, refused: true } });
+    const r = await runOnce(w.deps);
+    expect(w.sends).toEqual([]);
+    expect(r).toMatchObject({ ok: true, note: reason });
+    expect(r.detail.refused).toBe(1);
+    expect(w.healths[0].detail.refused).toBe(1);
   });
 
   test("no claim with under 200 seconds of the run left", async () => {
@@ -536,11 +814,17 @@ describe("a run in apply mode", () => {
     expect(w.sends).toEqual([]);
   });
 
+  test("the margin names every limit between the intent and the stored answer", () => {
+    // The intent, the POST, the response receipt the ledger awaits after it, the result.
+    expect(SEND_MARGIN_MS).toBe(30_000 + 20_000 + 30_000 + 30_000);
+    expect(SEND_BY_MS).toBe(190_000);
+  });
+
   test("the wait is cut so the intent and the POST still start before the send limit", async () => {
-    // Claimed at 99 s, a card read of 63 s (three 20 s tries and their pauses), the longest wait drawn.
-    const w = world({ elapsed: 99_000, taskMs: 63_000, random: 0.999999 });
+    // Claimed at 99 s, a slow card read of 20 s, the longest wait drawn.
+    const w = world({ elapsed: 99_000, taskMs: 20_000, random: 0.999999 });
     const r = await runOnce(w.deps);
-    const waitUpTo = SEND_BY_MS - WAIT_SLACK_MS - 162_000;
+    const waitUpTo = SEND_BY_MS - WAIT_SLACK_MS - 119_000;
     expect(w.sleeps[0]).toBe(waitUpTo);
     expect(w.sleeps[0]).toBeGreaterThanOrEqual(30_000);
     expect(w.at.intent).toBeLessThanOrEqual(SEND_BY_MS);
@@ -553,14 +837,15 @@ describe("a run in apply mode", () => {
     expect(usual.sleeps[0]).toBe(120_000);
   });
 
-  test("the slowest intent, POST and result of a run at the send limit still end before the cron's kill", async () => {
-    // Each at its own limit: db.ts aborts at 30 s and the POST at 20 s.
+  test("the slowest intent, POST, response receipt and result of a run at the send limit still end before the cron's kill", async () => {
+    // Each at its own limit: db.ts aborts at 30 s, the POST at 20 s, and the ledger
+    // awaits the response receipt (db.ts again, 30 s) before the POST returns.
     const w = world({
       elapsed: 99_000,
-      taskMs: 63_000,
+      taskMs: 20_000,
       random: 0.999999,
       intentMs: 30_000,
-      sendMs: 20_000,
+      sendMs: 20_000 + 30_000,
       resultMs: 30_000,
     });
     const r = await runOnce(w.deps);
@@ -570,7 +855,8 @@ describe("a run in apply mode", () => {
   });
 
   test("too little left for even a 30 s wait: the claim is released at once and nothing is posted", async () => {
-    const w = world({ elapsed: 99_000, taskMs: 130_000 });
+    // A card read of 63 s (three 20 s tries and their pauses) after a claim at 99 s leaves 26 s.
+    const w = world({ elapsed: 99_000, taskMs: 63_000 });
     const r = await runOnce(w.deps);
     expect(w.names()).toEqual(["sweep", "work", "claim", "result"]);
     expect(w.rpcs.at(-1)?.args).toMatchObject({ p_outcome: "release" });
@@ -581,10 +867,10 @@ describe("a run in apply mode", () => {
   });
 
   test("a run past the send limit after its wait releases the claim and posts nothing", async () => {
-    // The wait itself ran 60 s late (a paused host): the intent would start past 255 s.
+    // The wait itself ran 60 s late (a paused host): the intent would start past 190 s.
     const w = world({
       elapsed: 99_000,
-      taskMs: 63_000,
+      taskMs: 20_000,
       sleepOverrunMs: 60_000,
     });
     const r = await runOnce(w.deps);
@@ -676,6 +962,68 @@ describe("dry mode, the keys and the switches", () => {
         why: "Would send once sending is on.",
       },
     ]);
+  });
+
+  test("dry mode's plan holds when Client Data's column moved, as apply mode does, and the guardian reads the hold", async () => {
+    const sheet = [
+      ["Client", "", "", "", "ClickUp ID", "Phone", "WA Group ID"],
+      ["Acme Interiors", "", "", "", A, "", G1],
+    ];
+    const dry = world({ switches: DRY, sheet });
+    const r = await runOnce(dry.deps);
+    expect(r.plan).toEqual([
+      {
+        id: M1,
+        taskId: A,
+        group: "present, 0001",
+        card: "same",
+        oldSenders: "off",
+        wouldSend: false,
+        why: COLUMN_MOVED,
+      },
+    ]);
+    expect(r).toMatchObject({ ok: false, note: COLUMN_MOVED });
+    expect(r.detail.held).toBe(COLUMN_MOVED);
+    expect(dry.healths[0]).toMatchObject({
+      ok: false,
+      note: COLUMN_MOVED,
+      detail: { mode: "dry", held: COLUMN_MOVED },
+    });
+    expect(dry.names()).toEqual(["sweep", "work"]);
+    expect(dry.sends).toEqual([]);
+
+    // Apply mode says the same on the same sheet.
+    const apply = await runOnce(world({ sheet }).deps);
+    expect(apply.detail.held).toBe(COLUMN_MOVED);
+
+    // Client Data unread is not a move: no hold, and no row would send.
+    const unread = await runOnce(world({ switches: DRY, sheet: "fail" }).deps);
+    expect(unread.detail.held).toBeNull();
+    expect(unread.plan[0]).toMatchObject({ group: "unread", wouldSend: false });
+
+    // The column where it belongs: no hold.
+    const fine = await runOnce(world({ switches: DRY }).deps);
+    expect(fine.detail.held).toBeNull();
+    expect(fine.plan[0].wouldSend).toBe(true);
+  });
+
+  test("dry mode reads ClickUp's 200 without the card's fields as unread: it would not send, and the answer is not cached", async () => {
+    const cache = memoryCache();
+    const w = world({ switches: DRY, taskAnswer: {}, cardCache: cache });
+    const r = await runOnce(w.deps);
+    expect(r.plan).toEqual([
+      {
+        id: M1,
+        taskId: A,
+        group: "present, 0001",
+        card: "unread",
+        oldSenders: "off",
+        wouldSend: false,
+        why: "Client Data or the card could not be read.",
+      },
+    ]);
+    expect(cache.map.size).toBe(0);
+    expect(w.sends).toEqual([]);
   });
 
   test("dry mode reads at most one ClickUp card a run; the cache and the turn cover every row within five runs", async () => {
@@ -928,6 +1276,91 @@ describe("dry mode, the keys and the switches", () => {
     });
   });
 
+  test("a stray quote never widens a card list or reads as true; only a matched pair of quotes is taken off", async () => {
+    const path = join(dir, "switches.env");
+    // A quoted space and every half-quoted list: a value was written and no card came of it.
+    for (const cards of [
+      '" "',
+      "' '",
+      '"',
+      "'",
+      "\"'",
+      "'\"",
+      '"86eywg1cq',
+      '86eywg1cq"',
+      "'86eywg1cq",
+      "\"86eywg1cq'",
+      '""86eywg1cq""',
+      '"86eywg1cq", "86eywg1cr"',
+    ]) {
+      writeFileSync(
+        path,
+        `CLIENT_MESSAGES_APPLY=true\nCLIENT_MESSAGES_ONLY_CARDS=${cards}\n`,
+      );
+      const s = readSwitches(path);
+      expect([cards, s.error, s.apply]).toEqual([cards, NOT_A_CARD, false]);
+      const w = world({ switches: s });
+      const r = await runOnce(w.deps);
+      expect(w.names()).toEqual(["sweep"]);
+      expect(w.sends).toEqual([]);
+      expect(r).toMatchObject({ ok: false, note: NOT_A_CARD });
+    }
+    // A matched pair is still read, the empty pair as every card, by design.
+    for (const [cards, onlyCards] of [
+      ['"86eywg1cq"', ["86eywg1cq"]],
+      ["'86eywg1cq, 86eywg1cr'", ["86eywg1cq", "86eywg1cr"]],
+      ['""', []],
+      ["''", []],
+    ] as const) {
+      writeFileSync(
+        path,
+        `CLIENT_MESSAGES_APPLY=true\nCLIENT_MESSAGES_ONLY_CARDS=${cards}\n`,
+      );
+      expect(readSwitches(path)).toMatchObject({
+        apply: true,
+        onlyCards,
+        error: null,
+      });
+    }
+    // Half-quoted, or quoted around more than the word: off.
+    for (const apply of [
+      '"true',
+      'true"',
+      "'true",
+      "true'",
+      "\"true'",
+      "'true\"",
+      '""true""',
+      '" true "',
+    ]) {
+      writeFileSync(path, `CLIENT_MESSAGES_APPLY=${apply}\n`);
+      const s = readSwitches(path);
+      expect([apply, s.apply]).toEqual([apply, false]);
+    }
+    for (const apply of ['"true"', "'true'"]) {
+      writeFileSync(path, `CLIENT_MESSAGES_APPLY=${apply}\n`);
+      expect([apply, readSwitches(path).apply]).toEqual([apply, true]);
+    }
+    // A half-quoted kind is no kind 2b sends, so the run stops, off.
+    for (const kinds of ['"recap_checkin', "recap_checkin'", '" "']) {
+      writeFileSync(
+        path,
+        `CLIENT_MESSAGES_APPLY=true\nCLIENT_MESSAGES_KINDS=${kinds}\n`,
+      );
+      const s = readSwitches(path);
+      expect([kinds, s.apply, s.error === null]).toEqual([kinds, false, false]);
+    }
+    writeFileSync(
+      path,
+      'CLIENT_MESSAGES_APPLY=true\nCLIENT_MESSAGES_KINDS="recap_checkin"\n',
+    );
+    expect(readSwitches(path)).toMatchObject({
+      apply: true,
+      kinds: ["recap_checkin"],
+      error: null,
+    });
+  });
+
   test("a switch written twice stops the run, off: a kill switch appended below an old true never leaves sending on", async () => {
     const path = join(dir, "switches.env");
     writeFileSync(
@@ -1158,6 +1591,25 @@ describe("the doctor", () => {
     expect(called).toBe(false);
   });
 
+  test("a channel that is not signed in fails the doctor: Whapi answers 200 for it too", async () => {
+    const signedIn = await ok();
+    expect(signedIn.checks.whatsapp).toBe("ok, channel ending 1234");
+    const qr = await ok({
+      health: async () => ({ status: "QR", channelLast4: null }),
+    });
+    expect(qr.ok).toBe(false);
+    expect(qr.checks.whatsapp).toBe(
+      "failed: the WhatsApp channel reads QR, so it cannot send. Sign the channel in again.",
+    );
+    const none = await ok({
+      health: async () => ({ status: null, channelLast4: "1234" }),
+    });
+    expect(none.ok).toBe(false);
+    expect(none.checks.whatsapp).toBe(
+      "failed: the WhatsApp channel reads no status, so it cannot send. Sign the channel in again.",
+    );
+  });
+
   test("a misspelt switch fails the doctor with the line to fix", async () => {
     const dir = mkdtempSync(join(tmpdir(), "client-messages-doctor-"));
     const path = join(dir, "switches.env");
@@ -1229,5 +1681,21 @@ describe("the doctor", () => {
       cardField: "present, 0001",
     });
     expect(JSON.stringify(none)).not.toContain(G1);
+  });
+
+  test("--task says unread for ClickUp's 200 without the card's fields, in both paths, never empty", async () => {
+    const providers = world({ taskAnswer: { err: "Team not authorized" } }).deps
+      .providers;
+    const unread = `unread: ${CARD_NO_FIELDS}`;
+    expect((await ok({ providers, task: A })).task).toEqual({
+      card: A,
+      clientData: "present, 0001",
+      cardField: unread,
+    });
+    expect((await ok({ providers, task: "86nogroup1" })).task).toEqual({
+      card: "86nogroup1",
+      clientData: "none",
+      cardField: unread,
+    });
   });
 });

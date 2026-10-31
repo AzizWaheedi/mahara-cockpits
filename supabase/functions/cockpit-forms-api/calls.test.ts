@@ -1229,6 +1229,19 @@ describe("checkin.calls: movable (3.8)", () => {
     expect(team.v?.movable ?? false).toBe(false);
   });
 
+  test("an exact sign names another client but the call row is on no card: not movable, today's sentence, because the move has no row to move", async () => {
+    const f = setup({
+      inputs: {
+        store: [storeItem({ recordingId: "191610999", startsAt: "2026-10-28T04:00:00.000Z", endsAt: "2026-10-28T04:30:00.000Z", room: "meet:abc-defg-hij", onTask: null, onTaskMethod: null })],
+        bookings: [booking({ taskId: "86exMARBL", clientName: "Marble 10-12", room: "meet:abc-defg-hij", startsAt: "2026-10-28T04:00:00.000Z", endsAt: "2026-10-28T04:30:00.000Z" })],
+      },
+    });
+    f.service.handlers.cockpit_forms_switch = true;
+    const a = await checkinCalls(opOf(f.deps, adminActor), body());
+    const v = [a.picked, ...a.others].find(x => x?.recordingId === "191610999");
+    expect(v).toMatchObject({ movable: false, blocked: AS_TODAY, onClient: "other" });
+  });
+
   test("every other view reads movable false", async () => {
     const inputs = {
       store: [

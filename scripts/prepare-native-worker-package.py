@@ -80,6 +80,8 @@ REQUIRED=(
  'hermes/cockpit-guardian/checks/__init__.py',
  'hermes/cockpit-guardian/checks/ad_billing.py',
  'hermes/cockpit-guardian/checks/claude_proxy.py',
+ 'hermes/cockpit-guardian/checks/clickup_budget.py',
+ 'hermes/cockpit-guardian/checks/client_messages.py',
  'hermes/cockpit-guardian/checks/csm_calls.py',
  'hermes/cockpit-guardian/checks/edge_functions.py',
  'hermes/cockpit-guardian/checks/guardian_self.py',

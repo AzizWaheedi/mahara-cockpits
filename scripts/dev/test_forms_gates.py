@@ -5,6 +5,7 @@ this Mac: cd scripts/dev && python3 -m unittest test_forms_gates"""
 from __future__ import annotations
 
 import io
+import itertools
 import json
 import sys
 import tempfile
@@ -37,7 +38,7 @@ READY = {
     "G2": [{"anthropic": "connected", "runs": "3"}],
     "G4": [{
         "migrations": json.dumps([f"20261029{l}_forms_{s}" for l, s in zip(LETTERS, STEMS)]),
-        "rows": [{"key": k, "ok": True} for k in ("client-messages", "clickup-writeback:forms", "forms-effects-kick")],
+        "rows": [{"key": k, "ok": True} for k in ("client-messages", "clickup-writeback:forms", "csm-forms-record", "forms-effects-kick")],
     }],
     "G5": [{"ok": True, "note": "same number (last 4 1234 on both)"}],
     "G6": [{"clients": 19, "store": 19, "differs": 0, "off": 0, "days": 8, "seven": True, "fresh": True, "incidents": 0}],
@@ -92,8 +93,11 @@ def replay_report(count: int, of: int = 10) -> dict:
     ], "responses": [{} for _ in range(of)]}
 
 
+_RUN_IDS = itertools.count(1)
+
+
 def shadow_run(*verdicts: dict, pick: str = "same", planned: bool = True) -> dict:
-    return {"planned": planned, "pick": {"effect": "pick", "verdict": pick}, "effects": list(verdicts)}
+    return {"response": f"{next(_RUN_IDS):08x}", "planned": planned, "pick": {"effect": "pick", "verdict": pick}, "effects": list(verdicts)}
 
 
 SAME = {"effect": "happiness", "verdict": "same"}
@@ -121,6 +125,14 @@ class Reads(unittest.TestCase):
         self.assertIn("provider = 'anthropic'", fg.QUERIES["G2"])
         self.assertIn("key = 'client-messages-g5'", fg.QUERIES["G5"])
         self.assertIn("check_id = 'csm-notes-parity' and last_seen_at > now() - interval '7 days'", fg.QUERIES["G6"])
+        # An incident at level unknown only means the check could not read: it never saw the notes differ, so it must
+        # not restart the 7 days. store.touch moves a level to warn on a real difference and an unknown reading leaves
+        # the level as it was, so `unknown` here always means no difference was seen.
+        self.assertIn("and level <> 'unknown'", fg.QUERIES["G6"])
+        # A person checks G6 by hand from section 10 at the cut-over: the report and that query count the same incidents.
+        section10 = next(l for l in (fg.ROOT / "docs/forms/STAGE2B-CONTRACT.md").read_text(encoding="utf-8").splitlines() if l.startswith("| G6 | waiting"))
+        self.assertIn("last_seen_at > now() - interval '7 days' and level <> 'unknown'", section10)
+        self.assertNotIn("counts every one of its incidents", (fg.ROOT / "hermes/cockpit-sync/RUNBOOK.md").read_text(encoding="utf-8"))
         self.assertIn("coalesce(max(source_snapshot_at) > now() - interval '1 hour', false) as fresh", fg.QUERIES["G6"])
         self.assertIn("kind in ('kickoff', 'blueprint.close', 'blueprint.media')", fg.QUERIES["G7"])
         self.assertIn("'csm' = any(m.roles) and not 'admin' = any(m.roles) and not 'ceo' = any(m.roles)", fg.QUERIES["G9"])
@@ -164,20 +176,27 @@ class Ready(unittest.TestCase):
     def test_every_gate_green_only_with_the_session_notes_confirmations(self):
         clean = [shadow_run(SAME, EXPLAINED) for _ in range(5)]
         with Folder(replay=replay_report(10), shadow={"responses": clean}) as f:
-            result = fg.gates(reader(READY), f.root, f.replay, ["G2", "G3", "G8", "G9", "G10"])
+            result = fg.gates(reader(READY), f.root, f.replay, ["G2", "G3", "G4", "G8", "G9", "G10"])
             self.assertEqual([g.line() for g in result][:11], [f"G{n} green" for n in range(1, 12)])
             self.assertEqual(fg.exit_code(result), 0)
             # Without the note, each human part still waits on people, with what it waits for.
             unconfirmed = {g.gate: g for g in fg.gates(reader(READY), f.root, f.replay)}
-            for gate in ("G2", "G3", "G8", "G9", "G10"):
+            for gate in ("G2", "G3", "G4", "G8", "G9", "G10"):
                 self.assertEqual(unconfirmed[gate].state, "people", gate)
+            self.assertEqual(unconfirmed["G4"].line(), "G4 waiting on people: the session note confirms D1 to D18 and section 8")
             self.assertIn("approval of the DEFCON and priority text", unconfirmed["G2"].detail)
-            self.assertEqual(unconfirmed["G9"].line(), "G9 waiting on people: 4 of 3 CSM shadow runs; the CEO's reading goes in the session note")
+            # The count never prints above its target, as G2's does not.
+            self.assertEqual(unconfirmed["G9"].line(), "G9 waiting on people: 3 of 3 CSM shadow runs; the CEO's reading goes in the session note")
+            five = fg.g9(lambda q: [{"runs": 5}], False)
+            self.assertEqual(five.line(), "G9 waiting on people: 3 of 3 CSM shadow runs; the CEO's reading goes in the session note")
+            self.assertEqual(fg.g9(lambda q: [{"runs": 2}], False).line(), "G9 waiting on people: 2 of 3 CSM shadow runs")
+            self.assertEqual(fg.g9(lambda q: [{"runs": 5}], True).line(), "G9 green")
             self.assertIn("A1", unconfirmed["G10"].detail)
 
     def test_a_confirmation_never_turns_a_measured_gap_green(self):
         with Folder() as f:
-            got = {g.gate: g.line() for g in fg.gates(reader(TODAY), f.root, f.replay, ["G2", "G3", "G9", "G10"])}
+            got = {g.gate: g.line() for g in fg.gates(reader(TODAY), f.root, f.replay, ["G2", "G3", "G4", "G9", "G10"])}
+            self.assertEqual(got["G4"], "G4 waiting: 0 of 8 2b migrations applied")
             self.assertEqual(got["G2"], "G2 waiting on people: 0 of 3 shadow runs with the grade, DEFCON and priority, and recap drafts ready")
             self.assertEqual(got["G9"], "G9 waiting on people: 0 of 3 CSM shadow runs")
             self.assertTrue(got["G10"].startswith("G10 waiting on people: no native"))
@@ -203,13 +222,38 @@ class EachGate(unittest.TestCase):
         self.assertEqual(self.gate("G3", {}, Folder(replay=replay_report(7))), "G3 waiting: the replay explains 7 of 10 to-do comment differences")
         runs = [shadow_run(SAME, EXPLAINED), shadow_run(SAME), shadow_run(UNEXPLAINED), shadow_run(SAME, pick="missing"), shadow_run(SAME, planned=False)]
         self.assertEqual(self.gate("G3", {}, Folder(replay=replay_report(10), shadow={"responses": runs})),
-                         "G3 waiting on people: 3 of 5 shadow runs compared with Make (checkin-replay.ts --shadow)")
-        five = [shadow_run(SAME, EXPLAINED)] * 4 + [shadow_run(UNEXPLAINED)]
+                         "G3 waiting on people: 3 of 5 shadow runs compared with Make (checkin-replay.ts --shadow); 1 run with an effect not compared (missing)")
+        # A dispatch that failed after the submit (Z53) leaves no effects rows: every effect reads missing and the run
+        # compared nothing, however clean its pick, as does a run with no effects listed at all.
+        all_missing = [{"effect": e, "verdict": "missing"} for e in
+                       ("call_form", "call_match", "todo_comment", "happiness", "last_poc", "last_checkin_call", "grade_notice", "recap")]
+        failed = [shadow_run(*all_missing) for _ in range(5)]
+        self.assertEqual(self.gate("G3", {}, Folder(replay=replay_report(10), shadow={"responses": failed}), ["G3"]),
+                         "G3 waiting on people: 0 of 5 shadow runs compared with Make (checkin-replay.ts --shadow); 5 runs with an effect not compared (missing)")
+        one_gap = [shadow_run(SAME, EXPLAINED) for _ in range(4)] + [shadow_run(SAME, {"effect": "recap", "verdict": "missing"})]
+        self.assertEqual(self.gate("G3", {}, Folder(replay=replay_report(10), shadow={"responses": one_gap}), ["G3"]),
+                         "G3 waiting on people: 4 of 5 shadow runs compared with Make (checkin-replay.ts --shadow); 1 run with an effect not compared (missing)")
+        empty = [shadow_run(SAME, EXPLAINED) for _ in range(4)] + [shadow_run()]
+        self.assertEqual(self.gate("G3", {}, Folder(replay=replay_report(10), shadow={"responses": empty}), ["G3"]),
+                         "G3 waiting on people: 4 of 5 shadow runs compared with Make (checkin-replay.ts --shadow); 1 run with an effect not compared (missing)")
+        five = [shadow_run(SAME, EXPLAINED) for _ in range(4)] + [shadow_run(UNEXPLAINED)]
         self.assertEqual(self.gate("G3", {}, Folder(replay=replay_report(10), shadow={"responses": five})),
                          "G3 waiting on people: 5 shadow runs compared; 1 run with a difference to explain; the session note confirms the five runs")
-        clean = [shadow_run(SAME, EXPLAINED)] * 5
+        # A run ClickUp refused to answer compared nothing, however clean its other effects read.
+        refused = [shadow_run(SAME, EXPLAINED) for _ in range(4)] + [{**shadow_run(SAME, EXPLAINED), "unread": True}]
+        self.assertEqual(self.gate("G3", {}, Folder(replay=replay_report(10), shadow={"responses": refused})),
+                         "G3 waiting on people: 4 of 5 shadow runs compared with Make (checkin-replay.ts --shadow)")
+        clean = [shadow_run(SAME, EXPLAINED) for _ in range(5)]
         self.assertEqual(self.gate("G3", {}, Folder(replay=replay_report(10), shadow={"responses": clean})),
                          "G3 waiting on people: 5 shadow runs compared; the session note confirms the five runs")
+        # One real run listed five times is one run, and its open difference is one to explain.
+        repeated = [shadow_run(UNEXPLAINED)] * 5
+        self.assertEqual(self.gate("G3", {}, Folder(replay=replay_report(10), shadow={"responses": repeated}), ["G3"]),
+                         "G3 waiting on people: 1 of 5 shadow runs compared with Make (checkin-replay.ts --shadow)")
+        # A row with no response id cannot be told from another.
+        no_id = [{k: v for k, v in shadow_run(SAME).items() if k != "response"} for _ in range(5)]
+        self.assertEqual(self.gate("G3", {}, Folder(replay=replay_report(10), shadow={"responses": no_id})),
+                         "G3 waiting on people: 0 of 5 shadow runs compared with Make (checkin-replay.ts --shadow)")
         self.assertEqual(self.gate("G3", {}, Folder(replay=replay_report(10), shadow={"responses": five}), ["G3"]), "G3 green")
         # A report without the 2b pass (written before the They owe fix) explains nothing.
         old = {"passes": [{"check": "the grade notice planned", "count": 10, "of": 10, "pass": True}], "responses": [{}] * 10}
@@ -221,9 +265,22 @@ class EachGate(unittest.TestCase):
         # The letter rule may move the block to the next free date and letters.
         moved = [f"20261030{l}_forms_{s}" for l, s in zip("abcdefgh", STEMS)]
         self.assertEqual(self.gate("G4", {"G4": [{"migrations": moved, "rows": [{"key": "forms-effects-kick", "ok": True}]}]}),
-                         "G4 waiting: no health row yet for clickup-writeback:forms, client-messages")
+                         "G4 waiting: no health row yet for clickup-writeback:forms, client-messages, csm-forms-record")
         rows = [{"key": k, "ok": k != "client-messages"} for k in fg.DEPLOY_ROWS]
         self.assertEqual(self.gate("G4", {"G4": [{"migrations": moved, "rows": rows}]}), "G4 waiting: not ok: client-messages")
+        self.assertIn("'csm-forms-record'", fg.QUERIES["G4"])
+        # Every key of DEPLOY_ROWS is read, or the gate would wait on a row its query never asks for.
+        for key in fg.DEPLOY_ROWS:
+            self.assertIn(f"'{key}'", fg.QUERIES["G4"])
+        # D13's row is part of the gate: the other three alone are not enough, even with the note.
+        three = [{"key": k, "ok": True} for k in fg.DEPLOY_ROWS if k != "csm-forms-record"]
+        self.assertEqual(self.gate("G4", {"G4": [{"migrations": moved, "rows": three}]}, confirmed=["G4"]),
+                         "G4 waiting: no health row yet for csm-forms-record")
+        # Every measured part holds: the migrations and rows cannot show D10 to D12, D15, D17 or section 8.
+        ok = [{"key": k, "ok": True} for k in fg.DEPLOY_ROWS]
+        self.assertEqual(self.gate("G4", {"G4": [{"migrations": moved, "rows": ok}]}),
+                         "G4 waiting on people: the session note confirms D1 to D18 and section 8")
+        self.assertEqual(self.gate("G4", {"G4": [{"migrations": moved, "rows": ok}]}, confirmed=["G4"]), "G4 green")
 
     def test_g5_the_whatsapp_phone_check(self):
         self.assertEqual(self.gate("G5", {"G5": [{"ok": False, "note": "not proven"}]}),
@@ -243,8 +300,8 @@ class EachGate(unittest.TestCase):
                          "G6 green: the 1-1 notes are native; the Typeform comparison is off")
 
     def test_g6_a_feed_that_stopped_publishing_holds_the_days(self):
-        # cleanSince only moves when a cycle publishes: without this, a stopped feed's days would run on uncompared.
-        stale = "G6 waiting: the native feed has not published for over an hour; hours without a comparison do not count"
+        # This holds G6 only while the feed is down. cleanSince carries across the gap, so the sentence says those hours count (Z77).
+        stale = "G6 waiting: the native feed has not published for over an hour; G6 waits until it publishes again, and the hours it was down still count (Z77)"
         base = {"clients": 19, "store": 19, "differs": 0, "off": 0, "incidents": 0, "days": 9, "seven": True}
         for fresh in (False, "f", "false", None):
             self.assertEqual(self.gate("G6", {"G6": [{**base, "fresh": fresh}]}), stale, fresh)
@@ -352,12 +409,18 @@ class CommandLine(unittest.TestCase):
         self.assertEqual(out.getvalue().strip(), "The gate report cannot read the database (ValueError). Set COCKPIT_MANAGEMENT_TOKEN or pass --env-file, or connect Composio's Supabase.")
 
     def test_several_confirmations_in_one_flag(self):
-        with Folder(replay=replay_report(10), shadow={"responses": [shadow_run(SAME)] * 5}) as f, mock.patch.object(fg, "ROOT", f.root):
+        with Folder(replay=replay_report(10), shadow={"responses": [shadow_run(SAME) for _ in range(5)]}) as f, mock.patch.object(fg, "ROOT", f.root):
             out = io.StringIO()
             with redirect_stdout(out):
-                code = fg.main(["--replay-dir", str(f.replay), "--confirmed", "G2", "G3", "G8", "--confirmed", "G9", "G10"], read=reader(READY))
+                code = fg.main(["--replay-dir", str(f.replay), "--confirmed", "G2", "G3", "G4", "G8", "--confirmed", "G9", "G10"], read=reader(READY))
         self.assertEqual(code, 0)
         self.assertEqual(out.getvalue().splitlines()[:11], [f"G{n} green" for n in range(1, 12)])
+
+    def test_the_runbook_row_names_every_gate_a_person_confirms(self):
+        # Following the row a person reads first has to reach thirteen greens.
+        row = next(l for l in (fg.ROOT / "RUNBOOK.md").read_text(encoding="utf-8").splitlines() if l.startswith("| Someone asks whether the hour can run |"))
+        for gate in sorted(fg.PEOPLE):
+            self.assertRegex(row, rf"--confirmed[^.]*\b{gate}\b")
 
     def test_only_the_human_gates_can_be_confirmed(self):
         with self.assertRaises(SystemExit), redirect_stdout(io.StringIO()), mock.patch("sys.stderr", io.StringIO()):

@@ -61,6 +61,7 @@ TYPEFORM = "https://api.typeform.com"
 # The one form with a cockpit Typeform webhook in 2b (Z58), its signing key's provider, and the webhook's tag.
 TYPEFORM_FORMS = {"kickoff": "typeform_kickoff"}
 ONLY_KICKOFF = "Only the kickoff form has a cockpit webhook in 2b."
+TYPEFORM_ID = re.compile(r"^[A-Za-z0-9]{4,32}$")
 WEBHOOK_TAG = "cockpit"
 DEEPSEEK_MODELS = "https://api.deepseek.com/models"
 CS_TEAM = "Customer Success"
@@ -334,8 +335,8 @@ def door_url(run: Run, form: str) -> str:
     return f"{run.url}/functions/v1/forms-door/typeform/{form}"
 
 
-def typeform_form_id(run: Run, form: str) -> str:
-    """The registry's Typeform id for the form, which must still be filled in Typeform (forms-door refuses otherwise)."""
+def form_row(run: Run, form: str) -> dict:
+    """The form's row of the forms registry."""
     try:
         status, text = run.supabase("GET", f"/rest/v1/cockpit_forms?select=provider,typeform_id&key=eq.{form}")
         rows = json.loads(text) if status == 200 else None
@@ -344,9 +345,28 @@ def typeform_form_id(run: Run, form: str) -> str:
     row = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else None
     if row is None:
         raise Stop(f"The {form} row of the forms registry could not be read.")
+    return row
+
+
+def typeform_form_id(run: Run, form: str) -> str:
+    """The registry's Typeform id for a form to register, which must still be filled in Typeform (forms-door refuses otherwise)."""
+    row = form_row(run, form)
     form_id = str(row.get("typeform_id") or "")
-    if row.get("provider") != "typeform" or not re.match(r"^[A-Za-z0-9]{4,32}$", form_id):
+    if row.get("provider") != "typeform" or not TYPEFORM_ID.match(form_id):
         raise Stop(f"The {form} form is no longer filled in Typeform, so it gets no cockpit webhook.")
+    return form_id
+
+
+def registered_form_id(run: Run, form: str, meta: dict) -> str:
+    """The Typeform form to remove the webhook from: the one register-typeform saved on the key, else the registry's id.
+    The form need not still be filled in Typeform: once it moves, the door answers 404 and the webhook most needs removing."""
+    saved = str(meta.get("formId") or "")
+    if TYPEFORM_ID.match(saved):
+        return saved
+    form_id = str(form_row(run, form).get("typeform_id") or "")
+    if not TYPEFORM_ID.match(form_id):
+        raise Stop(f"Neither the {form} signing key nor the forms registry names a Typeform form. Nothing was changed. "
+                   "Look for the cockpit webhook in Typeform's settings and delete it there.")
     return form_id
 
 
@@ -360,17 +380,27 @@ def typeform_key(run: Run, form: str) -> Optional[dict]:
     return key
 
 
-def typeform_hooks(run: Run, key: str, form_id: str) -> list:
-    """The form's webhooks (GET /forms/{id}/webhooks), receipted; a refusal stops before anything changes."""
-    status, text = run.call("typeform", "GET", f"{TYPEFORM}/forms/{form_id}/webhooks", "api.typeform.com/forms/:id/webhooks",
-                            typeform_headers(key))
+def read_back_failed(done: str, kept: str, command: str, form: str) -> str:
+    """What a failed read says once the write has gone: the write stands, whatever the read did."""
+    return (f"The webhook was {done} on Typeform but could not be read back, so {kept}. "
+            f"Read the {form} form's webhooks in Typeform, then run {command} {form} again.")
+
+
+def typeform_hooks(run: Run, key: str, form_id: str, failed: str = "Nothing was changed.") -> list:
+    """The form's webhooks (GET /forms/{id}/webhooks), receipted. A failed read stops and ends with `failed`: the read
+    before a write leaves it at nothing changed, and the read-back after one passes what that write left behind."""
+    try:
+        status, text = run.call("typeform", "GET", f"{TYPEFORM}/forms/{form_id}/webhooks", "api.typeform.com/forms/:id/webhooks",
+                                typeform_headers(key))
+    except NoReceipt as e:
+        raise Stop(f"{e} {failed}") from None
     if status == 0:
-        raise Stop("Typeform did not answer the webhooks read. Nothing was changed.")
+        raise Stop(f"Typeform did not answer the webhooks read. {failed}")
     if status != 200:
-        raise Stop(f"typeform refused the webhooks read: HTTP {status}. Nothing was changed.")
+        raise Stop(f"typeform refused the webhooks read: HTTP {status}. {failed}")
     items = items_of(text)
     if items is None:
-        raise Stop("Typeform answered the webhooks read without a list. Nothing was changed.")
+        raise Stop(f"Typeform answered the webhooks read without a list. {failed}")
     return items
 
 
@@ -681,7 +711,7 @@ def cmd_register_typeform(run: Run, form: str) -> int:
     except ValueError:
         answer = {}
     answer = answer if isinstance(answer, dict) else {}
-    after = typeform_hooks(run, key, form_id)
+    after = typeform_hooks(run, key, form_id, read_back_failed("put", "the key was not marked connected", "register-typeform", form))
     hook = cockpit_hook(after)
     if not hook or hook.get("url") != url or hook.get("enabled") is not True:
         raise Stop(f"Typeform's list does not show the cockpit webhook enabled to forms-door. Read the {form} form's "
@@ -723,10 +753,10 @@ def cmd_probe_typeform(run: Run, form: str) -> int:
 
 
 def cmd_unregister_typeform(run: Run, form: str) -> int:
-    form_id = typeform_form_id(run, form)
     current = typeform_key(run, form)
     meta = (current or {}).get("meta")
     meta = meta if isinstance(meta, dict) else {}
+    form_id = registered_form_id(run, form, meta)
     key = typeform_token(run)
     before = typeform_hooks(run, key, form_id)
     if cockpit_hook(before) is None and not registered(meta):
@@ -738,7 +768,8 @@ def cmd_unregister_typeform(run: Run, form: str) -> int:
         run.say(f"Typeform's answer to deleting the webhook: {answered(status)}{' (already gone)' if status == 404 else ''}.")
         if not (200 <= status < 300 or status == 404):
             raise Stop("Typeform did not delete the webhook, so the registration was not marked off.")
-        after = typeform_hooks(run, key, form_id)
+        after = typeform_hooks(run, key, form_id,
+                               read_back_failed("deleted", "the registration was not marked off", "unregister-typeform", form))
         if cockpit_hook(after) is not None:
             raise Stop("Typeform still lists the cockpit webhook, so the registration was not marked off.")
         if others_of(after) != others_of(before):

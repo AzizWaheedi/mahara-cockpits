@@ -1425,7 +1425,7 @@ describe("formsRecord: kickoff and Blueprint in the forms tables", () => {
       key: "csm-forms-record",
       ok: true,
       rows: 8,
-      note: "Forms tables: 8 kickoffs and 0 Brand Blueprint presses recorded, 0 Stage 1 deliveries linked, 0 waiting for Stage 1.",
+      note: "Forms tables: 8 kickoffs recorded (8 new this read), 0 new Brand Blueprint presses, 0 Stage 1 deliveries linked this read, 0 waiting for Stage 1.",
       detail: answer(),
     });
     expect(ctx.plan.formsRecord).toEqual(answer());
@@ -1437,7 +1437,18 @@ describe("formsRecord: kickoff and Blueprint in the forms tables", () => {
   test("one of each reads in the singular", async () => {
     const one = answer({ kickoff: { recorded: 1, already: 7 }, blueprint: { recorded: 1 }, effects: { delivered: 1, skipped: 0, waiting: 1 } });
     const health = await formsRecord(ctxOf(store(seedOf()), {} as Transport, { db: rpcDb(one) }));
-    expect(health.note).toBe("Forms tables: 1 kickoff and 1 Brand Blueprint press recorded, 1 Stage 1 delivery linked, 1 waiting for Stage 1.");
+    expect(health.note).toBe("Forms tables: 8 kickoffs recorded (1 new this read), 1 new Brand Blueprint press, 1 Stage 1 delivery linked this read, 1 waiting for Stage 1.");
+    const first = answer({ kickoff: { recorded: 1, already: 0 } });
+    const alone = await formsRecord(ctxOf(store(seedOf()), {} as Transport, { db: rpcDb(first) }));
+    expect(alone.note).toStartWith("Forms tables: 1 kickoff recorded (1 new this read), ");
+  });
+
+  test("a later read that records nothing still says the kickoffs held, never zero", async () => {
+    const steady = answer({ kickoff: { recorded: 0, already: 8 }, effects: { delivered: 0, skipped: 0, waiting: 0 } });
+    const health = await formsRecord(ctxOf(store(seedOf()), {} as Transport, { db: rpcDb(steady) }));
+    expect(health.note).toBe("Forms tables: 8 kickoffs recorded (0 new this read), 0 new Brand Blueprint presses, 0 Stage 1 deliveries linked this read, 0 waiting for Stage 1.");
+    expect(health.rows).toBe(0);
+    expect(health.detail.kickoff).toEqual({ recorded: 0, already: 8 });
   });
 
   test("an answer without its counts fails the source, never reads as zero", async () => {
@@ -1462,7 +1473,7 @@ describe("formsRecord: kickoff and Blueprint in the forms tables", () => {
     const health = await formsRecord(ctx);
     expect(health.ok).toBe(true);
     expect(health.note).toBe(
-      "Forms tables: 8 kickoffs and 0 Brand Blueprint presses recorded, 0 Stage 1 deliveries linked, 0 waiting for Stage 1. 2 rows could not be recorded; the next read tries again.",
+      "Forms tables: 8 kickoffs recorded (8 new this read), 0 new Brand Blueprint presses, 0 Stage 1 deliveries linked this read, 0 waiting for Stage 1. 2 rows could not be recorded; the next read tries again.",
     );
     expect(health.detail.errors).toBe(2);
     expect(ctx.plan.formsRecord.errors).toBe(2);
@@ -1470,6 +1481,19 @@ describe("formsRecord: kickoff and Blueprint in the forms tables", () => {
     expect(one.note).toEndWith(" 1 row could not be recorded; the next read tries again.");
     const none = await formsRecord(ctxOf(store(seedOf()), {} as Transport, { db: rpcDb(answer()) }));
     expect(none.note).not.toContain("could not be recorded");
+  });
+
+  test("the sweep's first SQLSTATE reaches the detail for the guardian, and nothing but a code does", async () => {
+    const coded = await formsRecord(ctxOf(store(seedOf()), {} as Transport, { db: rpcDb(answer({ errors: 2, firstError: "23505" })) }));
+    expect(coded.detail.firstError).toBe("23505");
+    expect(coded.note).toEndWith(" 2 rows could not be recorded; the next read tries again.");
+    for (const odd of ["duplicate key for a client", "", null, 23505]) {
+      const health = await formsRecord(ctxOf(store(seedOf()), {} as Transport, { db: rpcDb(answer({ errors: 2, firstError: odd })) }));
+      expect("firstError" in health.detail).toBe(false);
+    }
+    // Before the sweep gives one, the detail is what it was.
+    const before = await formsRecord(ctxOf(store(seedOf()), {} as Transport, { db: rpcDb(answer({ errors: 2 })) }));
+    expect("firstError" in before.detail).toBe(false);
   });
 
   test("the worker runs the record after the EODs by default and its doctor asks the sweep with p_apply false", () => {

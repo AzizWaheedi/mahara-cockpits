@@ -386,10 +386,15 @@ END $$;
 -- Cut-over step 7b (section 11): run as the owner through SQL, never from a
 -- seat. Refuses, writing nothing, when the 1-1 notes already open in the
 -- cockpit, when the store holds no Typeform 1-1 notes (missing is not placed),
--- when the newest of them are on no client, or when an effect's delivery path
--- is missing. It checks the database only: the gates, B1, B2, Make, the
--- Typeform webhook and step 6's canary switches stay the people's to check
--- before this SELECT (RUNBOOK). It does not refuse on live check-in
+-- when the newest of them are on no client or on a card off the client roster,
+-- when an effect's delivery path is missing, or while the 1-1 notes writer
+-- last reported apply, fresh or stale (20261029t, read by name at run time):
+-- step 6 leaves it at apply_limited, and a card-wide writer at this flip would
+-- write on every client's card with no canary. apply_limited passes, and so
+-- do dry_run and never reported, which write nothing. It checks the database
+-- only: the gates, B1, B2, Make, the Typeform webhook, which cards step 6
+-- limited the writer to and the WhatsApp sender's switches stay the people's
+-- to check before this SELECT (RUNBOOK). It does not refuse on live check-in
 -- responses already stored (a rollback keeps them as records, Z65), so a
 -- second hour runs it again with all its checks. Then it closes the shadow
 -- drafts and flips the registry in this one transaction. Every audit row it
@@ -407,6 +412,7 @@ DECLARE
   v_voided integer;
   v_registry jsonb;
   v_audit uuid;
+  v_writer jsonb;
   v_prev_actor text := current_setting('cockpit.audit_actor', true);
   v_prev_source text := current_setting('cockpit.audit_source', true);
 BEGIN
@@ -427,12 +433,23 @@ BEGIN
   IF t.task_id IS NULL THEN
     RAISE EXCEPTION 'Put the newest Typeform notes on their client from the queue first.' USING ERRCODE = '55000';
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.cockpit_csm_sources s
+                  WHERE s.table_name = 'clients' AND s.data->>'taskId' = t.task_id) THEN
+    RAISE EXCEPTION 'The newest Typeform notes are on card %, which is not on the client roster. Refresh the roster, or put the notes on a client on it, then run this again.', t.task_id
+      USING ERRCODE = '55000';
+  END IF;
   FOR e IN SELECT q FROM jsonb_array_elements(f.effects) WITH ORDINALITY z(q, o) ORDER BY o LOOP
     v_clause := public.cockpit_form_delivery_ready('checkin', e->>'key');
     IF v_clause IS NOT NULL THEN
       RAISE EXCEPTION '% cannot move to the cockpit yet: %.', e->>'label', v_clause USING ERRCODE = '55000';
     END IF;
   END LOOP;
+  -- An apply report older than 15 minutes reads unknown, and that writer has not closed.
+  v_writer := public.cockpit_clickup_forms_mode();
+  IF v_writer->>'mode' = 'apply' OR (v_writer->>'mode' = 'unknown' AND v_writer->>'lastMode' = 'apply') THEN
+    RAISE EXCEPTION 'Limit the 1-1 notes writer to the test card at step 6 first: it last reported apply, which writes on every client''s card.'
+      USING ERRCODE = '55000';
+  END IF;
 
   v_voided := public.cockpit_form_shadow_close('checkin');
   v_registry := public.cockpit_form_registry_apply('checkin', '{"provider":"native","owners":"cockpit"}'::jsonb,

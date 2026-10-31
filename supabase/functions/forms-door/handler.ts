@@ -24,7 +24,11 @@
 // response row holds a pointer only (3.9); the record RPC keeps the content in
 // cockpit_csm_call_forms alone.
 
-import { fieldTitles, formAnswers, recordingIn } from "../../../hermes/csm-calls/match.ts";
+import {
+  fieldTitles,
+  formAnswers,
+  recordingIn,
+} from "../../../hermes/csm-calls/match.ts";
 import { type Rpc, restRpc } from "../cockpit-hours-sync/db.ts";
 import { signedByTypeform } from "../team-onboarding-intake/signature.ts";
 
@@ -56,14 +60,37 @@ export const MISSING_SECRET_TTL_MS = 30_000;
 export const UNSIGNED_SEEN_TTL_MS = 30_000;
 /** Each database call gives up after this long; Typeform retries a delivery that was not answered. */
 const DB_TIMEOUT_MS = 15_000;
-const HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
+const HEADERS = {
+  "content-type": "application/json; charset=utf-8",
+  "cache-control": "no-store",
+};
 /** The outcomes cockpit_forms_door_seen takes (3.9), and what the log line can say besides. */
-export type Seen = "recorded" | "repeat" | "ignored" | "probe" | "unsigned" | "failed";
-type Outcome = Seen | "path" | "method" | "form" | "too_large" | "no_database" | "not_typeform";
+export type Seen =
+  | "recorded"
+  | "repeat"
+  | "ignored"
+  | "probe"
+  | "unsigned"
+  | "failed";
+type Outcome =
+  | Seen
+  | "path"
+  | "method"
+  | "form"
+  | "too_large"
+  | "no_database"
+  | "not_typeform";
 type Row = Record<string, any>;
 
-function json(body: unknown, status: number, extra: Record<string, string> = {}): Response {
-  return new Response(JSON.stringify(body), { status, headers: { ...HEADERS, ...extra } });
+function json(
+  body: unknown,
+  status: number,
+  extra: Record<string, string> = {},
+): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...HEADERS, ...extra },
+  });
 }
 
 /**
@@ -71,7 +98,9 @@ function json(body: unknown, status: number, extra: Record<string, string> = {})
  * its path with the function's name in front ("/forms-door/typeform/kickoff"); a local run may add /functions/v1.
  */
 export function formKeyOf(pathname: string): string | null {
-  const m = /^(?:\/functions\/v1)?\/forms-door\/typeform\/([^/]+)\/?$/.exec(pathname);
+  const m = /^(?:\/functions\/v1)?\/forms-door\/typeform\/([^/]+)\/?$/.exec(
+    pathname,
+  );
   if (!m) return null;
   try {
     return decodeURIComponent(m[1]);
@@ -129,7 +158,12 @@ function responseOf(raw: string): Row | null {
  */
 export function recordInput(formKey: string, response: Row): Row {
   const answers = formAnswers(response, fieldTitles(response.definition ?? {}));
-  const hidden = response.hidden && typeof response.hidden === "object" && !Array.isArray(response.hidden) ? response.hidden : {};
+  const hidden =
+    response.hidden &&
+    typeof response.hidden === "object" &&
+    !Array.isArray(response.hidden)
+      ? response.hidden
+      : {};
   return {
     formKey,
     token: String(response.token ?? ""),
@@ -151,7 +185,10 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
   const seenAt = new Map<string, number>();
 
   const timed = ((input: RequestInfo | URL, init?: RequestInit) =>
-    deps.fetch(input, { ...init, signal: AbortSignal.timeout(DB_TIMEOUT_MS) })) as typeof fetch;
+    deps.fetch(input, {
+      ...init,
+      signal: AbortSignal.timeout(DB_TIMEOUT_MS),
+    })) as typeof fetch;
   const base = () => env("SUPABASE_URL").replace(/\/+$/, "");
   const serviceKey = () => env("SUPABASE_SERVICE_ROLE_KEY");
 
@@ -165,13 +202,24 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
   /** The registry row of the form (cockpit_forms: provider, typeform_id), read with the service key, kept 5 minutes. */
   async function registryOf(formKey: string): Promise<Row | null> {
     const now = deps.now();
-    if (registryCache && now - registryCache.at < SECRET_TTL_MS) return registryCache.row;
-    const res = await timed(`${base()}/rest/v1/cockpit_forms?select=provider,typeform_id&key=eq.${encodeURIComponent(formKey)}`, {
-      headers: { apikey: serviceKey(), Authorization: `Bearer ${serviceKey()}`, Accept: "application/json" },
-    });
+    if (registryCache && now - registryCache.at < SECRET_TTL_MS)
+      return registryCache.row;
+    const res = await timed(
+      `${base()}/rest/v1/cockpit_forms?select=provider,typeform_id&key=eq.${encodeURIComponent(formKey)}`,
+      {
+        headers: {
+          apikey: serviceKey(),
+          Authorization: `Bearer ${serviceKey()}`,
+          Accept: "application/json",
+        },
+      },
+    );
     if (!res.ok) throw new Error(`The registry read answered ${res.status}`);
     const rows = (await res.json()) as unknown;
-    const row = Array.isArray(rows) && rows[0] && typeof rows[0] === "object" ? (rows[0] as Row) : null;
+    const row =
+      Array.isArray(rows) && rows[0] && typeof rows[0] === "object"
+        ? (rows[0] as Row)
+        : null;
     registryCache = { row, at: now };
     return row;
   }
@@ -182,23 +230,39 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
    */
   async function secretOf(db: Rpc, fresh = false): Promise<string | null> {
     const now = deps.now();
-    if (!fresh && secretCache && now - secretCache.at < (secretCache.secret ? SECRET_TTL_MS : MISSING_SECRET_TTL_MS)) return secretCache.secret;
-    const key = (await db("cockpit_forms_key_get", { p_provider: "typeform_kickoff" })) as Row | null;
-    const secret = typeof key?.secret === "string" && key.secret ? key.secret : null;
+    if (
+      !fresh &&
+      secretCache &&
+      now - secretCache.at <
+        (secretCache.secret ? SECRET_TTL_MS : MISSING_SECRET_TTL_MS)
+    )
+      return secretCache.secret;
+    const key = (await db("cockpit_forms_key_get", {
+      p_provider: "typeform_kickoff",
+    })) as Row | null;
+    const secret =
+      typeof key?.secret === "string" && key.secret ? key.secret : null;
     secretCache = { secret, at: now };
     return secret;
   }
 
   return async req => {
     let formKey = "-";
-    const answer = (outcome: Outcome, status: number, body: Row, extra: Record<string, string> = {}): Response => {
+    const answer = (
+      outcome: Outcome,
+      status: number,
+      body: Row,
+      extra: Record<string, string> = {},
+    ): Response => {
       deps.log(`forms-door ${formKey} ${outcome}`);
       return json(body, status, extra);
     };
     const key = formKeyOf(new URL(req.url).pathname);
     if (key === null) return answer("path", 404, { ok: false });
-    if (req.method !== "POST") return answer("method", 405, { ok: false }, { allow: "POST" });
-    if (!(FORM_KEYS as readonly string[]).includes(key)) return answer("form", 404, { ok: false });
+    if (req.method !== "POST")
+      return answer("method", 405, { ok: false }, { allow: "POST" });
+    if (!(FORM_KEYS as readonly string[]).includes(key))
+      return answer("form", 404, { ok: false });
     formKey = key;
     const raw = await readBody(req, MAX_BODY_BYTES);
     if (raw === null) return answer("too_large", 413, { ok: false });
@@ -208,7 +272,11 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     // The last delivery and its outcome in cockpit_sync_state forms-door:kickoff, best effort: a failed write never
     // changes the answer Typeform gets.
     const seen = (outcome: Seen, reason: string | null) =>
-      db("cockpit_forms_door_seen", { p_form_key: formKey, p_outcome: outcome, p_reason: reason }).catch(() => {});
+      db("cockpit_forms_door_seen", {
+        p_form_key: formKey,
+        p_outcome: outcome,
+        p_reason: reason,
+      }).catch(() => {});
     // The two outcomes anyone can cause without the key are written at most once in 30 seconds.
     const seenAtMost = async (outcome: Seen, reason: string) => {
       const now = deps.now();
@@ -225,8 +293,10 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     } catch {
       return answer("no_database", 503, { ok: false });
     }
-    const formId = typeof registry?.typeform_id === "string" ? registry.typeform_id : "";
-    if (!formId || registry?.provider !== "typeform") return answer("not_typeform", 404, { ok: false });
+    const formId =
+      typeof registry?.typeform_id === "string" ? registry.typeform_id : "";
+    if (!formId || registry?.provider !== "typeform")
+      return answer("not_typeform", 404, { ok: false });
 
     // Nothing of the body is read before the signature holds: no key, or a key that cannot be read, is a 503.
     let secret: string | null;
@@ -246,7 +316,12 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     // signature that fails against a key read 30 seconds ago or more reads the key once more and checks again. At most
     // once in 30 seconds per isolate, so anyone without the key still costs one read in 30 seconds.
     const t = deps.now();
-    if (!signed && secretCache && t - secretCache.at >= MISSING_SECRET_TTL_MS && t - rereadAt >= MISSING_SECRET_TTL_MS) {
+    if (
+      !signed &&
+      secretCache &&
+      t - secretCache.at >= MISSING_SECRET_TTL_MS &&
+      t - rereadAt >= MISSING_SECRET_TTL_MS
+    ) {
       rereadAt = t;
       try {
         secret = await secretOf(db, true);
@@ -257,7 +332,10 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       signed = await signedByTypeform(secret, raw, signature);
     }
     if (!signed) {
-      await seenAtMost("unsigned", "The signature was missing or did not match.");
+      await seenAtMost(
+        "unsigned",
+        "The signature was missing or did not match.",
+      );
       return answer("unsigned", 401, { ok: false });
     }
     if (req.headers.get("x-forms-door-probe") === "1") {
@@ -270,13 +348,24 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       return answer("ignored", 202, { ignored: true });
     }
     try {
-      const out = (await db("cockpit_form_record_typeform", { p: recordInput(formKey, response) })) as Row | null;
-      if (typeof out?.inserted !== "boolean") throw new Error("cockpit_form_record_typeform answered without inserted");
+      const out = (await db("cockpit_form_record_typeform", {
+        p: recordInput(formKey, response),
+      })) as Row | null;
+      if (typeof out?.inserted !== "boolean")
+        throw new Error(
+          "cockpit_form_record_typeform answered without inserted",
+        );
       await seen(out.inserted ? "recorded" : "repeat", null);
-      return answer(out.inserted ? "recorded" : "repeat", 200, { ok: true, inserted: out.inserted });
+      return answer(out.inserted ? "recorded" : "repeat", 200, {
+        ok: true,
+        inserted: out.inserted,
+      });
     } catch (e) {
       // The database's error code only: an error's text can carry a value from the body.
-      const code = typeof (e as { code?: unknown })?.code === "string" ? ` (${(e as { code: string }).code})` : "";
+      const code =
+        typeof (e as { code?: unknown })?.code === "string"
+          ? ` (${(e as { code: string }).code})`
+          : "";
       await seen("failed", `The store refused the response${code}.`);
       return answer("failed", 500, { ok: false });
     }

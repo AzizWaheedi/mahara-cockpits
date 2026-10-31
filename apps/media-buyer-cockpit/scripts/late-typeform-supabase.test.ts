@@ -743,6 +743,89 @@ describe("the migration", () => {
         ),
       ).toBe("{postgres=X/postgres}");
   });
+
+  test("the kind's drift guard refuses a CHECK it did not read, and widens only the one it read", async () => {
+    const block = (() => {
+      const sql = migration(X);
+      const from = sql.indexOf("-- 1. The kind");
+      const to = sql.indexOf("-- 2. Late is decided here");
+      expect(from).toBeGreaterThan(0);
+      expect(to).toBeGreaterThan(from);
+      return sql.slice(from, to);
+    })();
+    const apply = () =>
+      guarded(async () => {
+        await asOwner();
+        await db.exec(block);
+      });
+    const refusal = async (fn: () => Promise<unknown>) => {
+      try {
+        await fn();
+      } catch (e) {
+        const x = e as { code?: string; message: string };
+        return { code: x.code ?? "", message: x.message };
+      }
+      throw new Error("Expected a refusal");
+    };
+    const NAME = "cockpit_csm_call_forms_form_kind_check";
+    const def = () =>
+      one<string | null>(
+        `SELECT pg_get_constraintdef(oid) AS r FROM pg_constraint
+          WHERE conrelid = 'public.cockpit_csm_call_forms'::regclass AND conname = '${NAME}'`,
+      );
+    const oid = () =>
+      one<string>(
+        `SELECT oid::text AS r FROM pg_constraint
+          WHERE conrelid = 'public.cockpit_csm_call_forms'::regclass AND conname = '${NAME}'`,
+      );
+    const list = (...kinds: string[]) =>
+      guarded(async () => {
+        await asOwner();
+        await db.exec(
+          `ALTER TABLE public.cockpit_csm_call_forms DROP CONSTRAINT IF EXISTS ${NAME};
+           ALTER TABLE public.cockpit_csm_call_forms ADD CONSTRAINT ${NAME}
+             CHECK (form_kind = ANY (ARRAY[${kinds.map(k => `'${k}'`).join(",")}]));`,
+        );
+      });
+    const READ = [
+      "checkin",
+      "onboarding",
+      "kickoff",
+      "kickoff_old",
+      "blueprint",
+    ];
+    const refused = {
+      code: "55000",
+      message: `${NAME} changed since the 2b contract read it; stop and re-read it.`,
+    };
+    const widened = `CHECK ((form_kind = ANY (ARRAY[${[...READ, "checkin_late"].map(k => `'${k}'::text`).join(", ")}])))`;
+    await rolledBack(async () => {
+      // Already widened: nothing is dropped.
+      const before = await oid();
+      await apply();
+      expect(await oid()).toBe(before);
+      expect(await def()).toBe(widened);
+      // What the contract read is widened.
+      await list(...READ);
+      await apply();
+      expect(await def()).toBe(widened);
+      // Another session's kind stays, and the file stops.
+      await list(...READ, "another_session");
+      const theirs = await def();
+      expect(await refusal(apply)).toEqual(refused);
+      expect(await def()).toBe(theirs);
+      await list(...READ, "checkin_late", "another_session");
+      expect(await refusal(apply)).toEqual(refused);
+      // No constraint at all is not what the contract read either.
+      await guarded(async () => {
+        await asOwner();
+        await db.exec(
+          `ALTER TABLE public.cockpit_csm_call_forms DROP CONSTRAINT ${NAME};`,
+        );
+      });
+      expect(await refusal(apply)).toEqual(refused);
+    });
+  });
 });
 
 describe("before the switch-over", () => {

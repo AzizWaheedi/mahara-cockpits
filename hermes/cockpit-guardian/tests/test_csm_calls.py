@@ -1,9 +1,10 @@
 """CSM sync checks catch a stopped source and a new stall inside an open incident."""
+import re
 import tempfile
 import unittest
 from pathlib import Path
 
-from checks import by_id, csm_calls
+from checks import all_checks as checks_all, by_id, csm_calls
 from guard import db as db_mod
 from guard.model import FAIL, OK, UNKNOWN, WARN
 from guard.redact import clean, clean_obj
@@ -295,7 +296,15 @@ class NotesParity(unittest.TestCase):
         r = csm_calls.run_notes_parity(ctx({"cockpit_csm_sources": [roster_row("Client A", "task-a", notes_from=None)]}))
         self.assertEqual(r.status, OK)
         self.assertEqual(r.summary, "The native feed still reads the 1-1 notes from Typeform: release N4 is not live.")
-        self.assertEqual(csm_calls.run_notes_parity(ctx({})).status, OK)
+
+    def test_an_empty_roster_could_not_compare_and_never_reads_ok(self):
+        # Missing is never zero, and an ok here would clear an open parity incident.
+        r = csm_calls.run_notes_parity(ctx({}))
+        self.assertEqual(r.status, UNKNOWN)
+        self.assertEqual(r.summary, "The client roster lists no client, so the 1-1 notes cannot be compared.")
+        self.assertEqual(r.evidence, {"clients": 0})
+        self.assertNotIn("not live", r.summary)
+        self.assertIn("No client row at all: unknown", by_id()["csm-notes-parity"].threshold)
 
     def test_every_client_matching_counts_the_clean_days(self):
         rows = [roster_row("Client A", "task-a", self.parity("same")),
@@ -339,9 +348,9 @@ class NotesParity(unittest.TestCase):
         self.assertEqual(r.summary, "The 1-1 notes are native; the Typeform comparison is off.")
 
     def test_a_feed_that_stopped_publishing_is_not_a_notes_difference(self):
-        # G6 counts every csm-notes-parity incident of 7 days, and native-source-producer already fails after 90 min
-        # without a publication. A feed outage (here three days, and the 55 minutes that would have opened an incident
-        # at confirm 3) must not warn here, or an outage unrelated to the notes would restart G6's 7 days.
+        # G6 counts every csm-notes-parity warn or fail incident of 7 days, and native-source-producer already fails
+        # after 90 min without a publication. A feed outage (here three days, and the 55 minutes that would have opened
+        # an incident at confirm 3) must not warn here, or an outage unrelated to the notes would restart G6's 7 days.
         for published_min in (3 * 1440, 600, 55, 46):
             rows = [roster_row("Client A", "task-a", self.parity("same", 8), published_min=published_min)]
             r = csm_calls.run_notes_parity(ctx({"cockpit_csm_sources": rows}))
@@ -629,3 +638,70 @@ class KickoffWebhook(unittest.TestCase):
         self.assertEqual((r.status, r.items), (FAIL, ["csm-forms-record-stale"]))
         absent = [r for r in rows if r["key"] != "csm-forms-record"]
         self.assertEqual(csm_calls.run_freshness(ctx({"cockpit_sync_state": absent})).items, ["csm-forms-record-never-run"])
+
+    @staticmethod
+    def synced(**detail):
+        rows = [{"key": k, "ok": True, "last_ok_at": fakes.ago(2), "note": "ok", "detail": {}} for k in csm_calls.CSM_KEYS]
+        for r in rows:
+            if r["key"] == "csm-forms-record":
+                r["detail"] = detail
+                r["note"] = "Forms tables: 8 rows could not be recorded; the next read tries again."
+        return rows
+
+    def test_rows_the_sweep_could_not_record_warn_while_the_row_stays_ok(self):
+        # The sweep counts per-row failures and the worker keeps the row ok (Z15). Before this, 8 refused rows on every
+        # run read "All 9 CSM call sources synced on time."
+        r = csm_calls.run_freshness(ctx({"cockpit_sync_state": self.synced(errors=8)}))
+        self.assertEqual((r.status, r.items), (WARN, ["csm-forms-record-errors"]))
+        self.assertEqual(r.summary, "CSM call sync: 8 kickoff or Blueprint rows were not recorded in the forms tables on "
+                                    "the last read; every source synced on time.")
+        self.assertEqual(r.evidence["csm-forms-record"]["errors"], 8)
+        self.assertIn("Kickoff and Blueprint records", r.action)
+        self.assertIn("Nothing was sent", r.action)
+        one = csm_calls.run_freshness(ctx({"cockpit_sync_state": self.synced(errors=1)}))
+        self.assertIn("1 kickoff or Blueprint row was not recorded", one.summary)
+
+    def test_the_warning_names_the_sweeps_first_code_and_nothing_else(self):
+        r = csm_calls.run_freshness(ctx({"cockpit_sync_state": self.synced(errors=2, firstError="23505")}))
+        self.assertIn("on the last read (first error 23505);", r.summary)
+        for odd in ("duplicate key for a client", 23505, None, ""):
+            with self.subTest(firstError=odd):
+                r = csm_calls.run_freshness(ctx({"cockpit_sync_state": self.synced(errors=2, firstError=odd)}))
+                self.assertEqual(r.status, WARN)
+                self.assertNotIn("first error", r.summary)
+                self.assertNotIn("duplicate", r.summary)
+
+    def test_no_errors_or_a_count_that_is_not_one_reads_as_synced(self):
+        for detail in ({"errors": 0}, {}, {"errors": None}, {"errors": True}, {"errors": "8"}, {"errors": 1.5}, {"errors": -1}):
+            with self.subTest(detail=detail):
+                r = csm_calls.run_freshness(ctx({"cockpit_sync_state": self.synced(**detail)}))
+                self.assertEqual((r.status, r.summary), (OK, f"All {len(csm_calls.CSM_KEYS)} CSM call sources synced on time."))
+        rows = self.synced()
+        next(x for x in rows if x["key"] == "csm-forms-record")["detail"] = "not an object"
+        self.assertEqual(csm_calls.run_freshness(ctx({"cockpit_sync_state": rows})).status, OK)
+
+    def test_a_failed_source_still_fails_and_the_errors_are_named_beside_it(self):
+        rows = self.synced(errors=3)
+        next(x for x in rows if x["key"] == "csm-fathom").update(ok=False, note="Fathom failed (503)")
+        r = csm_calls.run_freshness(ctx({"cockpit_sync_state": rows}))
+        self.assertEqual((r.status, r.items), (FAIL, ["csm-fathom-failing", "csm-forms-record-errors"]))
+        self.assertIn("3 kickoff or Blueprint rows were not recorded", r.summary)
+        # A record row that failed reads as failed: its old count is not read.
+        rows = self.synced(errors=3)
+        next(x for x in rows if x["key"] == "csm-forms-record").update(ok=False, note="Supabase failed (404)")
+        r = csm_calls.run_freshness(ctx({"cockpit_sync_state": rows}))
+        self.assertEqual((r.status, r.items), (FAIL, ["csm-forms-record-failing"]))
+        self.assertNotIn("not recorded", r.summary)
+
+
+class ReadmeOrder(unittest.TestCase):
+    """The README's table says it is generated from guardian.py checks --json; __init__.py says order is the report's."""
+
+    def test_stage_2b_rows_read_in_the_order_the_code_reports_them(self):
+        text = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf8")
+        listed = [m.group(1) for m in re.finditer(r"^\| `([a-z0-9-]+)` \|", text, re.M)]
+        code = [c.id for c in checks_all()]
+        want = ["csm-checkin-form", "csm-notes-parity", "csm-fathom-webhook", "csm-impromptu-notes", "forms-kickoff-webhook",
+                "client-messages", "client-messages-read-back", "client-messages-read-back-stopped", "client-messages-g5"]
+        self.assertEqual([c for c in code if c in want], want)
+        self.assertEqual([c for c in listed if c in want], want)

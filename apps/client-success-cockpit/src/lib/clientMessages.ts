@@ -69,6 +69,11 @@ export const messageView = z.object({
   owner: nul(z.enum(["make", "shadow", "cockpit"])),
   /** The recap effect's state. */
   effectState: nul(z.string()),
+  /**
+   * Three tries are spent (`attempts` at 3): the next one is refused at
+   * intent however often the row is reopened, so a screen offers no retry.
+   */
+  triesUsedUp: nul(z.boolean()),
 });
 export type MessageView = z.output<typeof messageView>;
 
@@ -111,6 +116,57 @@ export const NO_WHATSAPP_REASON =
 export const MESSAGES_FAILED =
   "The messages could not be read, so a recap may be missing here. Reload the page; if it stays, tell the tech lead.";
 
+/** The door or an RPC answered something this page cannot read. */
+export const MESSAGES_SHAPE =
+  "The messages came back in a shape this page does not read. Reload the page; if it stays, tell the tech lead.";
+
+/**
+ * How long an action or a read waits for its answer. A call that never
+ * answers cannot leave a seat with every button at rest, or a list that looks
+ * empty: the wait ends and says what is known. Nothing is ever retried by
+ * itself, because the call may have landed.
+ */
+export const ACTION_DEADLINE_MS = 30_000;
+/** Said when an action on a recap got no answer in time. */
+export const NO_ANSWER = {
+  approve:
+    "No answer came back, so the approval may or may not have gone through. Reload the page to see where the recap stands.",
+  skip: "No answer came back, so the skip may or may not have gone through. Reload the page to see where the recap stands.",
+  reopen:
+    "No answer came back, so reopening the recap may or may not have gone through. Reload the page to see where it stands.",
+} as const;
+
+/** The timer `answerBy` runs on; the window's tests pass their own. */
+type Timer = {
+  set: (fn: () => void, ms: number) => unknown;
+  clear: (h: unknown) => void;
+};
+
+/**
+ * The call's own answer, or a refusal in `said` once `ms` pass with none. A
+ * later answer is dropped here: the sentence has already told her to reload.
+ */
+export function answerBy<T>(
+  call: Promise<T>,
+  ms: number,
+  timer: Timer,
+  said: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const h = timer.set(() => reject(new MessageError(said)), ms);
+    call.then(
+      v => {
+        timer.clear(h);
+        resolve(v);
+      },
+      e => {
+        timer.clear(h);
+        reject(e);
+      },
+    );
+  });
+}
+
 function plain(error: { message?: string; code?: string } | null): never {
   const m = String(error?.message ?? "").trim();
   const code = error?.code ?? null;
@@ -122,7 +178,7 @@ function plain(error: { message?: string; code?: string } | null): never {
     throw new MessageError("Sign in again, then try once more.", code);
   if (/Failed to fetch|NetworkError|Load failed|network/i.test(m))
     throw new MessageError(
-      "The connection dropped. Nothing was changed; try again when you are back online.",
+      "The connection dropped, so this may not have saved. Reload the page to see where it stands.",
       code,
     );
   throw new MessageError(m || NO_REASON, code);
@@ -139,10 +195,7 @@ async function call<T>(
     : client.rpc(fn, args));
   if (error) plain(error);
   const out = schema.safeParse(data);
-  if (!out.success)
-    throw new MessageError(
-      "The messages came back in a shape this page does not read. Reload the page; if it stays, tell the tech lead.",
-    );
+  if (!out.success) throw new MessageError(MESSAGES_SHAPE);
   return out.data;
 }
 
@@ -235,6 +288,46 @@ export const messagesPath = (taskId: string) =>
 export const messagesHref = (taskId: string) =>
   `${base()}${messagesPath(taskId)}`;
 
+/** A row Make owns again, after a rollback: approving it can only be refused. */
+export const MAKE_AGAIN =
+  "Make sends 1-1 recaps again, so this one is not sent from here. Skip it.";
+/** A row with its three tries spent: pressing Try again could never send it. */
+export const TRIES_USED_UP =
+  "This recap was tried three times and did not go. Send it by hand in the group if it is still needed, then skip it here.";
+/** What the cockpit says on a row a person closed with Skip. */
+export const MESSAGE_SKIPPED = "Skipped. Nothing was sent.";
+
+/** A draft the cockpit no longer owns (3.7's `owner`). */
+export const handedBack = (m: Pick<MessageView, "state" | "owner">) =>
+  m.state === "draft" && Boolean(m.owner) && m.owner !== "cockpit";
+
+/** A row still open to a person whose tries are spent; sending and sent rows move on their own. */
+export const triesSpent = (m: Pick<MessageView, "state" | "triesUsedUp">) =>
+  m.triesUsedUp === true &&
+  (m.state === "draft" || m.state === "refused" || m.state === "failed");
+
+/** The one thing left on such a row is Skip: no edit, no approval, no retry. */
+export const skipOnly = (
+  m: Pick<MessageView, "state" | "owner" | "triesUsedUp">,
+) => handedBack(m) || triesSpent(m);
+
+const stop = (s: string) => (/[.!?…]$/.test(s) ? s : `${s}.`);
+
+/**
+ * Why a message did not go, as one or two sentences: the reason, then, when
+ * its tries are spent and the reason does not say so, what is left to do.
+ */
+export function notSentLine(
+  m: Pick<MessageView, "state" | "reason" | "triesUsedUp">,
+): string {
+  const reason = m.reason?.trim() ?? "";
+  if (!triesSpent(m)) return reason ? stop(reason) : NO_WHATSAPP_REASON;
+  if (!reason) return TRIES_USED_UP;
+  return /three times/i.test(reason)
+    ? stop(reason)
+    : `${stop(reason)} ${TRIES_USED_UP}`;
+}
+
 /** A message that waits on a person (Today's rows, the reminder). */
 export const WAITING_STATES: ReadonlySet<MessageState> = new Set([
   "draft",
@@ -246,12 +339,12 @@ export const WAITING_STATES: ReadonlySet<MessageState> = new Set([
 /** The sentence of one Today row (5.1). */
 export function todayLine(m: MessageView): string {
   const client = m.clientName?.trim() || "this client";
-  if (m.state === "draft")
+  if (handedBack(m)) return `Recap waiting: ${client}. ${MAKE_AGAIN}`;
+  if (m.state === "draft" && !triesSpent(m))
     return `Recap waiting: ${client}. Read it, then approve or skip it.`;
   if (m.state === "unknown")
     return `Recap not confirmed: ${client}. Look in the group before anything else.`;
-  const reason = m.reason?.trim() || NO_WHATSAPP_REASON;
-  return `Recap not sent: ${client}. ${/[.!?]$/.test(reason) ? reason : `${reason}.`}`;
+  return `Recap not sent: ${client}. ${notSentLine(m)}`;
 }
 
 /**
@@ -260,7 +353,7 @@ export function todayLine(m: MessageView): string {
  */
 export type Piece = { text: string; bold: boolean };
 const BOLD =
-  /(^|[\s(،.,!?;:"'])\*(?=[^\s*])([^*\n]*?[^\s*])\*(?=$|[\s)،.,!?;:"'])/gu;
+  /(^|[\s(،؟؛.,!?;:"'])\*(?=[^\s*])([^*\n]*?[^\s*])\*(?=$|[\s)،؟؛.,!?;:"'])/gu;
 export function whatsappPieces(body: string): Piece[] {
   const out: Piece[] = [];
   let last = 0;

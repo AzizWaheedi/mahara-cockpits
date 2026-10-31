@@ -12,7 +12,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import type { MessagesIO } from "@/lib/clientMessages";
+import type { MessageState, MessagesIO } from "@/lib/clientMessages";
 import { readClientTimeline } from "@/lib/csmCalls";
 import { displayLabel, plural, shortDay } from "@/lib/format";
 import { openTypeform } from "@/lib/formsRegistry";
@@ -50,6 +50,8 @@ import {
   railFacts,
 } from "./checkinRail";
 import {
+  STEPS_READING,
+  STEPS_UNREAD,
   type StopTone,
   type TrailStop,
   trailNote,
@@ -196,6 +198,11 @@ export function CheckinWindowView({
   const titleRef = useRef<HTMLHeadingElement>(null);
   const changeRef = useRef<HTMLButtonElement>(null);
   const [sheet, setSheet] = useState(initialSheet);
+  // The recap's message as the step last read it: the trail reads its stop by it.
+  const [recapRow, setRecapRow] = useState<{
+    responseId: string;
+    state: MessageState | null;
+  } | null>(null);
   const transcriptFocus = useReturnFocus(() => titleRef.current);
   const desk = useMinWidth(1024);
   const name = m.client?.name ?? "";
@@ -355,8 +362,11 @@ export function CheckinWindowView({
         submittedAt: m.sent.response.submittedAt,
         // The card writer's 15-minute line reads the browser's clock (Z47).
         now: clock?.now() ?? Date.now(),
+        recapMessage:
+          recapRow?.responseId === m.sent.response.id ? recapRow.state : null,
       })
     : null;
+  const troubled = stops?.filter(s => s.problem) ?? [];
   const rail = <Rail m={m} facts={facts} stops={stops} />;
 
   // From lg the window is one screen tall and each column scrolls on its
@@ -399,6 +409,12 @@ export function CheckinWindowView({
                   call={callOf(m.sent.response.answers.call)}
                   effect={m.sent.effects.find(e => e.key === "recap") ?? null}
                   onDraftAgain={m.rehearse ? undefined : m.recapAgain}
+                  effectsUnread={m.sent.unread ?? null}
+                  onMessageMoved={state => {
+                    if (m.sent)
+                      setRecapRow({ responseId: m.sent.response.id, state });
+                    m.recapMoved();
+                  }}
                   asking={m.recapAsking}
                   error={m.recapError}
                   refused={m.recapRefused}
@@ -449,14 +465,29 @@ export function CheckinWindowView({
                   aria-hidden
                   className="size-4 shrink-0 text-muted-foreground transition-transform group-open/fold:rotate-90 motion-reduce:transition-none"
                 />
+                {/* A step that needs a person is said on the fold itself: closed,
+                    this line is all a phone shows of the trail. */}
+                {m.sent?.unread === "failed" ? (
+                  <Dot tone="warn" />
+                ) : troubled.length ? (
+                  <Dot
+                    tone={troubled.some(s => s.tone === "bad") ? "bad" : "warn"}
+                  />
+                ) : null}
                 <span className="min-w-0 truncate">
-                  {stops
-                    ? `After the send · ${plural(stops.length, "step")}`
-                    : `What the cockpit knows${
-                        facts?.last
-                          ? ` · last 1-1 ${shortDay(facts.last.day)}`
-                          : ""
-                      }`}
+                  {m.sent?.unread
+                    ? `After the send · ${m.sent.unread === "failed" ? "could not be read" : "reading"}`
+                    : stops
+                      ? `After the send · ${plural(stops.length, "step")}${
+                          troubled.length
+                            ? ` · ${troubled.length} ${troubled.length === 1 ? "needs" : "need"} a person`
+                            : ""
+                        }`
+                      : `What the cockpit knows${
+                          facts?.last
+                            ? ` · last 1-1 ${shortDay(facts.last.day)}`
+                            : ""
+                        }`}
                 </span>
               </summary>
               <div className="relative max-h-[55dvh] overflow-y-auto border-t">
@@ -469,7 +500,11 @@ export function CheckinWindowView({
       <CallSheet
         m={m}
         open={sheet}
-        onOpenChange={setSheet}
+        onOpenChange={open => {
+          setSheet(open);
+          // A refused move's sentence is about that try: it goes with the sheet.
+          if (!open) m.clearMove();
+        }}
         returnFocus={() => changeRef.current ?? titleRef.current}
       />
       <Sheet
@@ -960,6 +995,23 @@ const STOP_DOT: Record<StopTone, string> = {
 
 function Trail({ m, stops }: { m: CheckinModel; stops: TrailStop[] }) {
   const note = trailNote(m.sent?.effects ?? []);
+  const unread = m.sent?.unread;
+  if (unread)
+    return (
+      <section className="space-y-3">
+        <Kicker as="h2">After the send</Kicker>
+        <p role="status" aria-live="polite" className="flex gap-2 text-xs">
+          {unread === "failed" ? (
+            <span className="flex h-4 shrink-0 items-center">
+              <Dot tone="warn" />
+            </span>
+          ) : null}
+          <span className="min-w-0">
+            {unread === "failed" ? STEPS_UNREAD : STEPS_READING}
+          </span>
+        </p>
+      </section>
+    );
   return (
     <section className="space-y-3">
       <Kicker as="h2">After the send</Kicker>

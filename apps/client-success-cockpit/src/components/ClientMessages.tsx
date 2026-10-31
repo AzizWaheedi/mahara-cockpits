@@ -4,13 +4,19 @@ import { Link } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Dot, Kicker, SectionCard, type Tone } from "@/components/kit";
 import {
+  BROWSER_CLOCK,
   messageKey,
   messageLead,
   messagesIO,
+  onItsWay,
+  type PollClock,
+  RECAP_WORDS,
   RecapApproval,
   stateLine,
 } from "@/forms/RecapApproval";
 import {
+  ACTION_DEADLINE_MS,
+  answerBy,
   MESSAGES_FAILED,
   type MessagesIO,
   type MessageView,
@@ -41,13 +47,6 @@ export const MESSAGES_KICKER = "To the client's WhatsApp group";
 export const RECAPS_FAILED =
   "The recaps waiting on you could not be read, so one may be missing here. Reload the page; if it stays, tell the tech lead.";
 
-/** A message whose state can still change by itself (the sender, the read-back). */
-const moving = (m: MessageView) =>
-  m.state === "approved" ||
-  m.state === "claimed" ||
-  m.state === "sending" ||
-  (m.state === "sent" && !m.readBack?.at);
-
 /** How often the card reads again while a message is on its way, and for how long. */
 export const MESSAGES_POLL = { every: 20_000, for: 15 * 60_000 } as const;
 
@@ -59,13 +58,18 @@ export type MessagesRead =
 /**
  * One client's messages, newest first: read on mount, then every 20 s for
  * 15 minutes while one is on its way (approved, sending, or sent and not
- * yet read back). `put` keeps a row in step after an action.
+ * yet read back). `put` keeps a row in step after an action. `stopped` says
+ * the 15 minutes ran out with a row still on its way: nothing reads it again.
  */
 export function useClientMessages(
   io: MessagesIO | null,
   taskId: string,
-  opts: { every?: number; for?: number } = {},
-): MessagesRead & { put: (m: MessageView) => void; reload: () => void } {
+  opts: { every?: number; for?: number; clock?: PollClock } = {},
+): MessagesRead & {
+  put: (m: MessageView) => void;
+  reload: () => void;
+  stopped: boolean;
+} {
   const every = opts.every ?? MESSAGES_POLL.every;
   const span = opts.for ?? MESSAGES_POLL.for;
   const [read, setRead] = useState<MessagesRead>({
@@ -73,7 +77,13 @@ export function useClientMessages(
     messages: [],
   });
   const [tick, setTick] = useState(0);
-  const since = useRef(Date.now());
+  const [stopped, setStopped] = useState(false);
+  const clock = useRef(opts.clock ?? BROWSER_CLOCK);
+  clock.current = opts.clock ?? BROWSER_CLOCK;
+  const since = useRef(clock.current.now());
+  // A read sent before an action and answered after it is older than the
+  // action's own answer: dropped, so the row never steps back.
+  const gen = useRef(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: tick reads again
   useEffect(() => {
     if (!io) {
@@ -81,12 +91,21 @@ export function useClientMessages(
       return;
     }
     let live = true;
-    io.read(taskId).then(
+    const asked = gen.current;
+    // A read with no answer lands in `failed`, like one refused: never
+    // "Reading the messages…" for ever, and the next poll still runs.
+    answerBy(
+      io.read(taskId),
+      ACTION_DEADLINE_MS,
+      clock.current,
+      MESSAGES_FAILED,
+    ).then(
       messages => {
-        if (live) setRead({ status: "ready", messages });
+        if (live && asked === gen.current)
+          setRead({ status: "ready", messages });
       },
       e => {
-        if (!live) return;
+        if (!live || asked !== gen.current) return;
         // Missing is never zero: rows already read stay on screen.
         setRead(r => ({
           status: "failed",
@@ -99,16 +118,25 @@ export function useClientMessages(
       live = false;
     };
   }, [io, taskId, tick]);
-  const anyMoving = read.messages.some(moving);
+  const anyMoving = read.messages.some(m => onItsWay(m, clock.current.now()));
   // biome-ignore lint/correctness/useExhaustiveDependencies: each read schedules the next
   useEffect(() => {
-    if (!anyMoving) return;
-    if (Date.now() - since.current > span) return;
-    const t = window.setTimeout(() => setTick(x => x + 1), every);
-    return () => window.clearTimeout(t);
+    if (!anyMoving) {
+      setStopped(false);
+      return;
+    }
+    const c = clock.current;
+    if (c.now() - since.current > span) {
+      setStopped(true);
+      return;
+    }
+    setStopped(false);
+    const t = c.set(() => setTick(x => x + 1), every);
+    return () => c.clear(t);
   }, [anyMoving, every, span, read]);
   const put = useCallback((m: MessageView) => {
-    since.current = Date.now();
+    since.current = clock.current.now();
+    gen.current += 1;
     setRead(r => ({
       ...r,
       messages: r.messages.some(x => x.id === m.id)
@@ -117,7 +145,7 @@ export function useClientMessages(
     }));
   }, []);
   const reload = useCallback(() => setTick(x => x + 1), []);
-  return { ...read, put, reload };
+  return { ...read, put, reload, stopped };
 }
 
 /** The Messages card on the client page's overview tab. */
@@ -126,6 +154,7 @@ export function ClientMessages({
   native,
   io: given,
   poll,
+  clock = BROWSER_CLOCK,
 }: {
   taskId: string;
   /** The 1-1 notes are filled in the cockpit (the registry's provider). */
@@ -133,13 +162,17 @@ export function ClientMessages({
   /** Stand-ins for the harness and the tests. */
   io?: MessagesIO;
   poll?: { every?: number; for?: number };
+  /** The rows' age, the reads' 15 minutes and the actions' deadline. */
+  clock?: PollClock;
 }) {
   const auth = useCockpitAuth();
   const io = useMemo(
     () => given ?? (auth.client ? messagesIO(auth.client) : null),
     [given, auth.client],
   );
-  const read = useClientMessages(io, taskId, poll);
+  const read = useClientMessages(io, taskId, { ...poll, clock });
+  const now = clock.now();
+  const stopped = (m: MessageView) => read.stopped && onItsWay(m, now);
   // The last action's sentence and the row it was about, as the action
   // left it. While that row reads the same, the region keeps the sentence;
   // once a read moves it on (approved to sent, read back), the region says
@@ -151,12 +184,16 @@ export function ClientMessages({
   } | null>(null);
   const acted = useRef<MessageView | null>(null);
   const saidRow = said ? read.messages.find(x => x.id === said.id) : undefined;
-  const region =
+  const region = [
     !said || !saidRow
       ? ""
-      : messageKey(saidRow) === said.key
+      : messageKey(saidRow, now) === said.key
         ? said.text
-        : `${messageLead(saidRow)}: ${stateLine(saidRow)}`;
+        : `${messageLead(saidRow)}: ${stateLine(saidRow, now)}`,
+    read.messages.some(stopped) ? RECAP_WORDS.stoppedChecking : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   const cardRef = useRef<HTMLDivElement>(null);
   // Opened from a link to #messages (the reminder, Today, the window): the
   // card comes into view once it has something to show.
@@ -196,6 +233,8 @@ export function ClientMessages({
               <RecapApproval
                 message={m}
                 io={io as MessagesIO}
+                stopped={stopped(m)}
+                clock={clock}
                 onChange={next => {
                   acted.current = next;
                   read.put(next);
@@ -203,9 +242,13 @@ export function ClientMessages({
                 announce={text => {
                   // Its answer, or the row as it stands when the action
                   // changed nothing (warnings to confirm).
-                  const now = acted.current?.id === m.id ? acted.current : m;
+                  const row = acted.current?.id === m.id ? acted.current : m;
                   acted.current = null;
-                  setSaid({ id: m.id, text, key: messageKey(now) });
+                  setSaid({
+                    id: m.id,
+                    text,
+                    key: messageKey(row, clock.now()),
+                  });
                 }}
               />
             </div>
@@ -237,12 +280,15 @@ export function RecapsWaiting({
   io: given,
   readKey,
   native,
+  clock = BROWSER_CLOCK,
 }: {
   io?: MessagesIO;
   /** Read again when this changes (the page read its snapshot again). */
   readKey?: unknown;
   /** The 1-1 notes are filled in the cockpit; until then only rows are shown. */
   native: boolean;
+  /** The read's deadline; the tests pass their own. */
+  clock?: PollClock;
 }) {
   const auth = useCockpitAuth();
   const io = useMemo(
@@ -251,11 +297,19 @@ export function RecapsWaiting({
   );
   const [rows, setRows] = useState<MessageView[]>([]);
   const [failed, setFailed] = useState(false);
+  const timer = useRef(clock);
+  timer.current = clock;
   // biome-ignore lint/correctness/useExhaustiveDependencies: readKey reads again
   useEffect(() => {
     if (!io) return;
     let live = true;
-    io.waiting().then(
+    // A read with no answer is a failed read: said, never zero.
+    answerBy(
+      io.waiting(),
+      ACTION_DEADLINE_MS,
+      timer.current,
+      RECAPS_FAILED,
+    ).then(
       list => {
         if (!live) return;
         setRows(list);

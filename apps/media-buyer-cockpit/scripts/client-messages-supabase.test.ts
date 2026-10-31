@@ -878,6 +878,7 @@ const VIEW_KEYS = [
   "sentAt",
   "state",
   "taskId",
+  "triesUsedUp",
 ];
 
 beforeAll(async () => {
@@ -1084,11 +1085,96 @@ describe("the guard", () => {
       rows: await count(
         "SELECT count(*) n FROM public.cockpit_client_messages",
       ),
+      // The oid too: a second apply must not drop and re-add the sent row's CHECK.
+      checks: await q(
+        "SELECT c.oid::text i, c.conname, pg_get_constraintdef(c.oid) d FROM pg_constraint c WHERE c.conrelid='public.cockpit_client_messages'::regclass AND c.contype='c' ORDER BY 2",
+      ),
     });
     const before = await snapshot();
     await asOwner();
     await db.exec(migration(V));
     expect(await snapshot()).toEqual(before);
+  });
+
+  describe("the sent row's CHECK widens only from the definition the contract read", () => {
+    const TABLE = "public.cockpit_client_messages";
+    const NEW_NAME = "cockpit_client_messages_sent_provider_check";
+    const OLD_NAME = "cockpit_client_messages_check1";
+    const LIVE = `ALTER TABLE ${TABLE} DROP CONSTRAINT ${NEW_NAME};
+      ALTER TABLE ${TABLE} ADD CONSTRAINT ${OLD_NAME} CHECK (state <> 'sent' OR provider_id IS NOT NULL);`;
+    const checks = async () =>
+      (
+        await q(
+          `SELECT c.conname, pg_get_constraintdef(c.oid) d FROM pg_constraint c
+            WHERE c.conrelid='${TABLE}'::regclass AND c.contype='c'
+              AND pg_get_constraintdef(c.oid) LIKE '%provider_id%' ORDER BY 1`,
+        )
+      ).map(r => [r.conname, r.d]);
+    const applyAfter = async (setUp: string) => {
+      await asOwner();
+      let error: { code?: string; message: string } | null = null;
+      let after: unknown[][] = [];
+      try {
+        await db.exec(`BEGIN;\n${setUp}\n${inner(V)}`);
+        after = await checks();
+      } catch (e) {
+        error = e as { code?: string; message: string };
+      }
+      await db.exec("ROLLBACK");
+      return { error, after };
+    };
+    const WIDENED =
+      "CHECK (((state <> 'sent'::text) OR (provider_id IS NOT NULL) OR (COALESCE((read_back ->> 'by'::text), ''::text) = 'person'::text)))";
+
+    test("from the live definition: check1 goes and the new one comes; another CHECK naming provider_id stays", async () => {
+      const r = await applyAfter(
+        `${LIVE}
+         ALTER TABLE ${TABLE} ADD CONSTRAINT another_session_rule CHECK (state <> 'failed' OR provider_id IS NOT NULL) NOT VALID;`,
+      );
+      expect(r.error).toBeNull();
+      expect(r.after).toEqual([
+        [
+          "another_session_rule",
+          "CHECK (((state <> 'failed'::text) OR (provider_id IS NOT NULL))) NOT VALID",
+        ],
+        [NEW_NAME, WIDENED],
+      ]);
+    });
+
+    test("check1 tightened by another session stops the file, and nothing applies", async () => {
+      const before = await checks();
+      const r = await applyAfter(
+        `ALTER TABLE ${TABLE} DROP CONSTRAINT ${NEW_NAME};
+         ALTER TABLE ${TABLE} ADD CONSTRAINT ${OLD_NAME}
+           CHECK (state <> 'sent' OR (provider_id IS NOT NULL AND sent_at IS NOT NULL)) NOT VALID;`,
+      );
+      expect(r.error?.code).toBe("55000");
+      expect(r.error?.message).toBe(
+        "cockpit_client_messages_check1 changed since the 2b contract read it; stop and re-read it.",
+      );
+      expect(await checks()).toEqual(before);
+    });
+
+    test("neither constraint there stops the file: missing is never a pass", async () => {
+      const r = await applyAfter(
+        `ALTER TABLE ${TABLE} DROP CONSTRAINT ${NEW_NAME};`,
+      );
+      expect(r.error?.code).toBe("55000");
+      expect(r.error?.message).toBe(
+        "cockpit_client_messages_check1 changed since the 2b contract read it; stop and re-read it.",
+      );
+    });
+
+    test("the widened one changed stops the file too", async () => {
+      const r = await applyAfter(
+        `ALTER TABLE ${TABLE} DROP CONSTRAINT ${NEW_NAME};
+         ALTER TABLE ${TABLE} ADD CONSTRAINT ${NEW_NAME} CHECK (state <> 'sent' OR provider_id IS NOT NULL) NOT VALID;`,
+      );
+      expect(r.error?.code).toBe("55000");
+      expect(r.error?.message).toBe(
+        "cockpit_client_messages_sent_provider_check changed since the 2b contract read it; stop and re-read it.",
+      );
+    });
   });
 });
 
@@ -1731,6 +1817,48 @@ describe("the sender's claim and intent", () => {
     });
   });
 
+  test("the view says the tries are used up from the third attempt, before and after a reopen", async () => {
+    await rolledBack(async () => {
+      await owners(["recap"], "cockpit");
+      const m = await recap("approved");
+      const read = () =>
+        one<Row>(CSM, "SELECT public.cockpit_client_message_read($1) r", [
+          m.id,
+        ]);
+      expect((await read()).triesUsedUp).toBe(false);
+      await q(
+        "UPDATE public.cockpit_client_messages SET attempts = 2 WHERE id=$1",
+        [m.id],
+      );
+      expect((await read()).triesUsedUp).toBe(false);
+      await q(
+        "UPDATE public.cockpit_client_messages SET attempts = 3 WHERE id=$1",
+        [m.id],
+      );
+      expect((await read()).triesUsedUp).toBe(true);
+      const token = (await claimOne()).rows[0].claimToken;
+      await svc(
+        `SELECT public.cockpit_client_message_intent('${m.id}', '${token}') AS r`,
+      );
+      expect(await read()).toMatchObject({
+        state: "refused",
+        triesUsedUp: true,
+      });
+      expect(
+        await one<Row>(
+          CSM,
+          "SELECT public.cockpit_client_message_reopen($1) r",
+          [m.id],
+        ),
+      ).toMatchObject({ state: "draft", triesUsedUp: true });
+      expect(await read()).toMatchObject({
+        state: "draft",
+        triesUsedUp: true,
+      });
+      expect(await row(m.id)).toMatchObject({ attempts: 3 });
+    });
+  });
+
   test("a fourth try is refused with the sentence, and the sweep never loops it back", async () => {
     await rolledBack(async () => {
       await owners(["recap"], "cockpit");
@@ -1741,12 +1869,12 @@ describe("the sender's claim and intent", () => {
       );
       const token = (await claimOne()).rows[0].claimToken;
       const sentence =
-        "WhatsApp refused this recap three times. Send it by hand in the group if it is still needed, then skip it here.";
+        "This recap was tried three times and did not go. Send it by hand in the group if it is still needed, then skip it here.";
       expect(
         await svc(
           `SELECT public.cockpit_client_message_intent('${m.id}', '${token}') AS r`,
         ),
-      ).toEqual({ ok: false, reason: sentence });
+      ).toEqual({ ok: false, reason: sentence, refused: true });
       expect(await row(m.id)).toMatchObject({
         state: "refused",
         reason: sentence,
@@ -1974,7 +2102,7 @@ describe("the sender's result, sweep, work and fix", () => {
       );
       expect(
         await svc("SELECT public.cockpit_client_message_sweep() AS r"),
-      ).toEqual({ unknown: 1, released: 1, expired: 1 });
+      ).toEqual({ unknown: 1, released: 1, skipped: 0, expired: 1 });
       expect(await row(stopped.id)).toMatchObject({
         state: "unknown",
         reason:
@@ -1990,7 +2118,61 @@ describe("the sender's result, sweep, work and fix", () => {
       });
       expect(
         await svc("SELECT public.cockpit_client_message_sweep() AS r"),
-      ).toEqual({ unknown: 0, released: 0, expired: 0 });
+      ).toEqual({ unknown: 0, released: 0, skipped: 0, expired: 0 });
+    });
+  });
+
+  test("the sweep after a rollback: an approved recap is skipped with the gate's reason, with no claim, audited, even past its 24 hours", async () => {
+    await rolledBack(async () => {
+      await owners(["recap"], "cockpit");
+      const stale = await recap("approved");
+      await claimOne();
+      await q(
+        "UPDATE public.cockpit_client_messages SET claimed_at = now() - interval '11 minutes' WHERE id=$1",
+        [stale.id],
+      );
+      const waiting = await recap("approved");
+      const old = await recap("approved");
+      await q(
+        "UPDATE public.cockpit_client_messages SET expires_at = now() - interval '1 minute' WHERE id=$1",
+        [old.id],
+      );
+      const audited = () =>
+        count(
+          "SELECT count(*) n FROM public.cockpit_audit_log WHERE action='forms.message_skipped'",
+        );
+      const before = await audited();
+      await owners(["recap"], "shadow");
+      const swept = await svc(
+        "SELECT public.cockpit_client_message_sweep() AS r",
+      );
+      expect(swept).toEqual({
+        unknown: 0,
+        released: 1,
+        skipped: 3,
+        expired: 0,
+      });
+      for (const id of [waiting.id, old.id, stale.id]) {
+        expect(await row(id)).toMatchObject({
+          state: "skipped",
+          reason: "Make owns this again.",
+        });
+      }
+      expect(await audited()).toBe(before + 3);
+      expect(
+        await svc("SELECT public.cockpit_client_message_sweep() AS r"),
+      ).toEqual({ unknown: 0, released: 0, skipped: 0, expired: 0 });
+    });
+  });
+
+  test("the sweep leaves an approved recap the gate still passes, so the kill switch alone never skips one", async () => {
+    await rolledBack(async () => {
+      await owners(["recap"], "cockpit");
+      const m = await recap("approved");
+      expect(
+        await svc("SELECT public.cockpit_client_message_sweep() AS r"),
+      ).toEqual({ unknown: 0, released: 0, skipped: 0, expired: 0 });
+      expect((await row(m.id)).state).toBe("approved");
     });
   });
 
@@ -2053,13 +2235,162 @@ describe("the sender's result, sweep, work and fix", () => {
             `SELECT public.cockpit_client_message_fix('${m.id}', 'requeue', NULL)`,
           )
         ).message,
-      ).toBe("Choose not_sent.");
+      ).toBe("Choose not_sent or seen_in_group.");
       expect(
         await count(
           "SELECT count(*) n FROM public.cockpit_audit_log WHERE action='forms.message_fixed' AND entity_id=$1",
           [m.id],
         ),
       ).toBe(1);
+    });
+  });
+
+  const seen = (id: string, note: string | null) =>
+    svc<Row>(
+      "SELECT public.cockpit_client_message_fix($1, 'seen_in_group', $2) AS r",
+      [id, note],
+    );
+  const seenRefused = (id: string) =>
+    svcRefused(
+      "SELECT public.cockpit_client_message_fix($1, 'seen_in_group', NULL)",
+      [id],
+    );
+  const auditOf = (id: string) =>
+    q<Row>(
+      "SELECT action, after FROM public.cockpit_audit_log WHERE action='forms.message_seen_in_group' AND entity_id=$1",
+      [id],
+    );
+
+  test("fix seen_in_group: an unknown a person found in the group is sent, read back by person, with no WhatsApp id and an audit row", async () => {
+    await rolledBack(async () => {
+      const m = await sending();
+      await result(m.id, m.token, "unknown", null, null, null);
+      const intentAt = (await row(m.id)).intent_at;
+      const view = await seen(m.id, "Seen in the group at 14:20.");
+      expect(view).toMatchObject({
+        state: "sent",
+        reason:
+          "Checked by a person: in the group. Seen in the group at 14:20.",
+        readBack: { by: "person" },
+      });
+      expect(view.readBack.at).toBeTruthy();
+      const stored = await row(m.id);
+      expect(stored).toMatchObject({ state: "sent", provider_id: null });
+      expect(stored.sent_at).toEqual(intentAt);
+      expect(stored.read_back.by).toBe("person");
+      expect(Object.keys(stored.read_back).sort()).toEqual(["at", "by"]);
+      const audit = await auditOf(m.id);
+      expect(audit).toHaveLength(1);
+      expect(JSON.stringify(audit)).toContain("Seen in the group at 14:20.");
+      expect(JSON.stringify(audit)).not.toContain(m.body);
+      // Written once: a second person's answer changes nothing.
+      expect(await seenRefused(m.id)).toMatchObject({
+        code: "55000",
+        message: "This recap was already read back, so nothing changed.",
+      });
+      expect(await auditOf(m.id)).toHaveLength(1);
+      // The sender's own late read-back is no change either, and no failure.
+      expect(
+        await result(m.id, m.token, "read_back", null, null, {
+          by: "body_sha256",
+          providerId: "wamid-late",
+        }),
+      ).toMatchObject({ readBack: { by: "person" } });
+      expect((await row(m.id)).provider_id).toBeNull();
+    });
+  });
+
+  test("fix seen_in_group: a sent recap never read back gets its read-back by person, long after the sender stopped; the guardian's rows clear", async () => {
+    await rolledBack(async () => {
+      const m = await sending();
+      await result(m.id, m.token, "sent", "wamid-7", null, null);
+      await q(
+        "UPDATE public.cockpit_client_messages SET sent_at = now() - interval '30 days' WHERE id=$1",
+        [m.id],
+      );
+      const before = await row(m.id);
+      // Past 24 hours the sender no longer sees it: only a person can close it.
+      const work = await svc<Row>(
+        "SELECT public.cockpit_client_message_work(5) AS r",
+      );
+      expect(work.unread).toEqual([]);
+      const view = await seen(m.id, null);
+      expect(view).toMatchObject({
+        state: "sent",
+        reason: "Checked by a person: in the group.",
+        readBack: { by: "person" },
+      });
+      const stored = await row(m.id);
+      expect(stored.provider_id).toBe("wamid-7");
+      expect(stored.sent_at).toEqual(before.sent_at);
+      expect(stored.read_back_at).toBeTruthy();
+      expect(await auditOf(m.id)).toHaveLength(1);
+      // What the guardian's read-back check reads.
+      expect(
+        await count(
+          "SELECT count(*) n FROM public.cockpit_client_messages WHERE state='sent' AND read_back_at IS NULL AND id=$1",
+          [m.id],
+        ),
+      ).toBe(0);
+      expect(await seenRefused(m.id)).toMatchObject({
+        message: "This recap was already read back, so nothing changed.",
+      });
+    });
+  });
+
+  test("fix seen_in_group: no state but unknown or an unread sent can use it, and a note cannot overrun the reason", async () => {
+    await rolledBack(async () => {
+      await owners(["recap"], "cockpit");
+      for (const state of [
+        "draft",
+        "approved",
+        "refused",
+        "failed",
+        "skipped",
+      ]) {
+        const m = await recap(state as Parameters<typeof recap>[0]);
+        const before = await row(m.id);
+        expect([state, await seenRefused(m.id)]).toEqual([
+          state,
+          {
+            code: "55000",
+            message: `A message goes from ${state} to sent only through the sender`,
+          },
+        ]);
+        expect(await row(m.id)).toEqual(before);
+      }
+      // A note cannot overrun the reason's 240.
+      const long = await recap("unknown");
+      const view = await seen(long.id, "x".repeat(500));
+      expect(view.reason).toHaveLength(240);
+    });
+  });
+
+  test("a sent row with no WhatsApp id is refused unless a person's read-back says why", async () => {
+    await rolledBack(async () => {
+      const m = await sending();
+      await result(m.id, m.token, "unknown", null, null, null);
+      for (const set of [
+        "state='sent'",
+        `state='sent', read_back_at=now(), read_back='{"by":"body_sha256"}'`,
+        `state='sent', read_back_at=now(), read_back='{}'`,
+      ]) {
+        const refused = await ownerRefused(
+          `UPDATE public.cockpit_client_messages SET ${set} WHERE id=$1`,
+          [m.id],
+        );
+        expect([set, refused.code]).toEqual([set, "23514"]);
+      }
+      // The sender's own path still needs the id.
+      expect(
+        (
+          await resultRefused(m.id, m.token, "reconciled", null, null, {
+            by: "body_sha256",
+          })
+        ).message,
+      ).toBe(
+        "A reconciled message needs WhatsApp's message id and a read-back by its fingerprint.",
+      );
     });
   });
 
@@ -2141,6 +2472,54 @@ describe("with 20261029w: the settle trigger follows the message (contract 3.6)"
           "SELECT count(*) n FROM public.cockpit_audit_log WHERE action='forms.settle_refused' AND after::text LIKE '%skipped%'",
         ),
       ).toBe(0);
+    });
+  });
+
+  test("a person's seen_in_group delivers an unknown recap's effect; a sent one's stays delivered", async () => {
+    await rolledBack(async () => {
+      await owners(["recap"], "cockpit");
+      const fix = (id: string) =>
+        svc<Row>(
+          "SELECT public.cockpit_client_message_fix($1, 'seen_in_group', NULL) AS r",
+          [id],
+        );
+      const stuck = await recap("unknown");
+      expect((await effectOf(stuck.effectId)).state).toBe("unknown");
+      expect(await fix(stuck.id)).toMatchObject({
+        state: "sent",
+        effectState: "delivered",
+      });
+      expect(await effectOf(stuck.effectId)).toEqual({
+        state: "delivered",
+        reason: null,
+      });
+      const sent = await recap("sent");
+      expect((await effectOf(sent.effectId)).state).toBe("delivered");
+      await fix(sent.id);
+      expect((await effectOf(sent.effectId)).state).toBe("delivered");
+      expect(
+        await count(
+          "SELECT count(*) n FROM public.cockpit_audit_log WHERE action='forms.settle_refused'",
+        ),
+      ).toBe(0);
+    });
+  });
+
+  test("after a rollback the sweep skips an approved recap and its effect, so nothing waits on a person", async () => {
+    await rolledBack(async () => {
+      await owners(["recap"], "cockpit");
+      const m = await recap("approved");
+      expect((await effectOf(m.effectId)).state).toBe("queued");
+      await owners(["recap"], "shadow");
+      await svc("SELECT public.cockpit_client_message_sweep() AS r");
+      expect(await row(m.id)).toMatchObject({
+        state: "skipped",
+        reason: "Make owns this again.",
+      });
+      expect(await effectOf(m.effectId)).toEqual({
+        state: "skipped",
+        reason: "Make owns this again.",
+      });
     });
   });
 

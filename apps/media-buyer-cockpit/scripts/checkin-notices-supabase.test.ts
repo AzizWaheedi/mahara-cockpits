@@ -1865,6 +1865,41 @@ describe("the recap reminder (the sweep, step 1d)", () => {
     });
   });
 
+  test("a recap sent before the latest cut-over is never reminded: the second window does not take in the first hour's rows", async () => {
+    const lateFor = (id: string) =>
+      count(
+        "SELECT count(*) n FROM public.cockpit_slack_notices WHERE dedupe_key = 'recap_late:' || $1",
+        [id],
+      );
+    await rolledBack(async () => {
+      // A first-hour recap and one from the new window, both past due and in the 24 hours.
+      const old = await waiting({ endedMin: 30 * 60, submittedMin: 29 * 60 });
+      const fresh = await waiting({ endedMin: 26 * 60, submittedMin: 25 * 60 });
+      await q(
+        "UPDATE public.cockpit_forms SET provider_since = now() - interval '27 hours' WHERE key = 'checkin'",
+      );
+      expect(await sweep()).toEqual({ queued: 1 });
+      expect(await lateFor(old.id)).toBe(0);
+      expect(await lateFor(fresh.id)).toBe(1);
+      // The rule the dispatch and the waiting list use: at the very moment is inside.
+      await q(
+        "UPDATE public.cockpit_forms SET provider_since = (SELECT submitted_at FROM public.cockpit_form_responses WHERE id = $1) WHERE key = 'checkin'",
+        [old.id],
+      );
+      expect(await sweep()).toEqual({ queued: 1 });
+      expect(await lateFor(old.id)).toBe(1);
+    });
+    // A rollback and a second cut-over after both: nothing.
+    await rolledBack(async () => {
+      await waiting();
+      await q(
+        "UPDATE public.cockpit_forms SET provider_since = now() - interval '1 minute' WHERE key = 'checkin'",
+      );
+      expect(await sweep()).toEqual({ queued: 0 });
+      expect(await lates()).toEqual([]);
+    });
+  });
+
   test("the claim skips it once the recap was sent or skipped, or Make owns the recap again", async () => {
     for (const [state, owner, error] of [
       ["sent", "cockpit", "The recap was sent before this reminder went out."],
@@ -2127,6 +2162,149 @@ describe("the bodies, the grants and the drift guard", () => {
     expect(
       await q("SELECT public.cockpit_slack_notice_shape('rehearsal') s"),
     ).toEqual([{ s: "test" }]);
+  });
+
+  test("each CHECK's drift guard refuses a definition it did not read, and widens only the one it read", async () => {
+    const block = (() => {
+      const sql = migration(U);
+      const from = sql.indexOf("-- 1. The two kinds in the CHECKs");
+      const to = sql.indexOf("-- 2. #client-call-feedback");
+      expect(from).toBeGreaterThan(0);
+      expect(to).toBeGreaterThan(from);
+      return sql.slice(from, to);
+    })();
+    const apply = () =>
+      guarded(async () => {
+        await asOwner();
+        await db.exec(block);
+      });
+    const typed = (kinds: string[]) =>
+      kinds.map(k => `'${k}'::text`).join(", ");
+    const named = (kinds: string[]) => kinds.map(k => `'${k}'`).join(",");
+    const NEW_KINDS = ["checkin.grade", "checkin.recap_late"];
+    const SETTINGS = "public.cockpit_slack_notice_settings";
+    const CHECKS = [
+      {
+        table: SETTINGS,
+        name: "cockpit_slack_notice_settings_kind_check",
+        read: "CHECK ((kind = ANY (ARRAY['kickoff'::text, 'kickoff.late'::text, 'kickoff.second'::text, 'kickoff.updated'::text, 'blueprint.close'::text, 'blueprint.updated'::text, 'blueprint.media'::text, 'blueprint.offer'::text])))",
+        kinds: [
+          "kickoff",
+          "kickoff.late",
+          "kickoff.second",
+          "kickoff.updated",
+          "blueprint.close",
+          "blueprint.updated",
+          "blueprint.media",
+          "blueprint.offer",
+        ],
+        rule: (list: string) => `kind IN (${list})`,
+        def: (list: string) => `CHECK ((kind = ANY (ARRAY[${list}])))`,
+      },
+      {
+        table: SETTINGS,
+        name: "cockpit_slack_notice_settings_check",
+        read: "CHECK (((kind = ANY (ARRAY['kickoff'::text, 'blueprint.close'::text, 'blueprint.media'::text])) = (channel IS NOT NULL)))",
+        kinds: ["kickoff", "blueprint.close", "blueprint.media"],
+        rule: (list: string) => `(kind IN (${list})) = (channel IS NOT NULL)`,
+        def: (list: string) =>
+          `CHECK (((kind = ANY (ARRAY[${list}])) = (channel IS NOT NULL)))`,
+      },
+      {
+        table: "public.cockpit_slack_notices",
+        name: "cockpit_slack_notices_kind_check",
+        read: "CHECK ((kind = ANY (ARRAY['kickoff'::text, 'kickoff.updated'::text, 'blueprint.close'::text, 'blueprint.updated'::text, 'blueprint.media'::text, 'blueprint.offer'::text, 'rehearsal'::text])))",
+        kinds: [
+          "kickoff",
+          "kickoff.updated",
+          "blueprint.close",
+          "blueprint.updated",
+          "blueprint.media",
+          "blueprint.offer",
+          "rehearsal",
+        ],
+        rule: (list: string) => `kind IN (${list})`,
+        def: (list: string) => `CHECK ((kind = ANY (ARRAY[${list}])))`,
+      },
+    ];
+    type Guarded = (typeof CHECKS)[number];
+    const def = async (c: Guarded) =>
+      (
+        await q<{ d: string }>(
+          `SELECT pg_get_constraintdef(oid) d FROM pg_constraint
+            WHERE conrelid = '${c.table}'::regclass AND conname = '${c.name}'`,
+        )
+      )[0]?.d ?? null;
+    const oid = async (c: Guarded) =>
+      (
+        await q<{ o: string }>(
+          `SELECT oid::text o FROM pg_constraint
+            WHERE conrelid = '${c.table}'::regclass AND conname = '${c.name}'`,
+        )
+      )[0]?.o ?? null;
+    const set = (c: Guarded, kinds: string[]) =>
+      guarded(async () => {
+        await asOwner();
+        await db.exec(
+          `ALTER TABLE ${c.table} DROP CONSTRAINT IF EXISTS ${c.name};
+           ALTER TABLE ${c.table} ADD CONSTRAINT ${c.name} CHECK (${c.rule(named(kinds))});`,
+        );
+      });
+    const widened = (c: Guarded) => c.def(typed([...c.kinds, ...NEW_KINDS]));
+    const refusal = (c: Guarded) =>
+      refusalOf(async () => {
+        await asOwner();
+        await db.exec(block);
+      }, c.name);
+
+    await rolledBack(async () => {
+      // Already widened: nothing is dropped.
+      for (const c of CHECKS) {
+        const before = await oid(c);
+        await apply();
+        expect(await oid(c)).toBe(before);
+        expect(await def(c)).toBe(widened(c));
+      }
+      // What the contract read is widened. The seeded rows go first: the read
+      // CHECKs do not allow them. Each read text here is live's, word for word.
+      await guarded(async () => {
+        await asOwner();
+        await db.exec(
+          `ALTER TABLE ${SETTINGS} DISABLE TRIGGER USER;
+           DELETE FROM ${SETTINGS} WHERE kind LIKE 'checkin.%';
+           ALTER TABLE ${SETTINGS} ENABLE TRIGGER USER;`,
+        );
+      });
+      for (const c of CHECKS) {
+        await set(c, c.kinds);
+        expect(await def(c)).toBe(c.read);
+      }
+      await apply();
+      for (const c of CHECKS) expect(await def(c)).toBe(widened(c));
+
+      const refused = (c: Guarded) => ({
+        code: "55000",
+        message: `${c.name} changed since the 2b contract read it; stop and re-read it.`,
+      });
+      for (const c of CHECKS) {
+        // Another session's kind stays, and the file stops.
+        await set(c, [...c.kinds, "another_session"]);
+        const theirs = await def(c);
+        expect(await refusal(c)).toEqual(refused(c));
+        expect(await def(c)).toBe(theirs);
+        await set(c, [...c.kinds, ...NEW_KINDS, "another_session"]);
+        expect(await refusal(c)).toEqual(refused(c));
+        // No constraint at all is not what the contract read either.
+        await guarded(async () => {
+          await asOwner();
+          await db.exec(`ALTER TABLE ${c.table} DROP CONSTRAINT ${c.name};`);
+        });
+        expect(await refusal(c)).toEqual(refused(c));
+        // Back to widened, so the next CHECK's refusal is its own.
+        await set(c, [...c.kinds, ...NEW_KINDS]);
+        expect(await def(c)).toBe(widened(c));
+      }
+    });
   });
 
   test("applying the file again changes no function, grant, row or seed", async () => {

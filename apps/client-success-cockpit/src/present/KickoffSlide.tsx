@@ -708,7 +708,7 @@ export function KickoffNotes({
             </Button>
           ) : null}
           {view.blocked?.plain && !view.rehearse ? (
-            <ExtLink href={view.blocked.plain} className="text-primary-ink">
+            <ExtLink href={view.blocked.plain}>
               Open the plain kickoff (card ID only)
             </ExtLink>
           ) : null}
@@ -745,9 +745,7 @@ export function KickoffNotes({
               Read what was filled
             </Button>
           ) : null}
-          <ExtLink href={KICKOFF.resultsUrl} className="text-primary-ink">
-            Open Typeform's results
-          </ExtLink>
+          <ExtLink href={KICKOFF.resultsUrl}>Open Typeform's results</ExtLink>
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t pt-3">
           <span className="text-xs text-muted-foreground">
@@ -792,10 +790,8 @@ export function KickoffNotes({
           The form has not loaded on the deck.{" "}
           {view.fallback ? (
             <>
-              <ExtLink href={view.fallback} className="text-primary-ink">
-                Open it in Typeform
-              </ExtLink>
-              : it carries the same client and answers.
+              <ExtLink href={view.fallback}>Open it in Typeform</ExtLink>: it
+              carries the same client and answers.
             </>
           ) : (
             "Reload the deck window to try again."

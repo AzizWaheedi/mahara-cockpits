@@ -16,8 +16,8 @@ It never writes, and never prints an address, a name or a secret: counts, days,
 states and health keys only. A read that fails prints `unknown`, never a zero.
 
 What only people can confirm (G2's approval of the DEFCON and priority text,
-G3's five shadow runs, G8's answer to B6, G9's reading by the CEO, G10's A1) is
-written in the session note; pass --confirmed for each gate the note confirms,
+G3's five shadow runs, G4's deploy read-backs and section 8, G8's answer to B6,
+G9's reading by the CEO, G10's A1) is written in the session note; pass --confirmed for each gate the note confirms,
 and that gate turns green only when its measured part holds as well.
 
 Exit 0 when every gate is green, 1 when any waits, 2 when a read failed.
@@ -50,9 +50,10 @@ MIGRATIONS = (
     "forms_records",
     "forms_move_recording",
 )
-# Health rows the dark deploy writes (section 3.11; D5, D8, D14).
-DEPLOY_ROWS = ("clickup-writeback:forms", "forms-effects-kick", "client-messages")
-PEOPLE = {"G2", "G3", "G8", "G9", "G10"}
+# Health rows the dark deploy writes (section 3.11; D5, D8, D13, D14). They are the part of G4 a query can see; the
+# rest of the gate (D10 and D12's ship, D11's functions, D15's guardian copy, D17, section 8 green) only the session note can.
+DEPLOY_ROWS = ("clickup-writeback:forms", "forms-effects-kick", "client-messages", "csm-forms-record")
+PEOPLE = {"G2", "G3", "G4", "G8", "G9", "G10"}
 
 Read = Callable[[str], List[Dict[str, Any]]]
 
@@ -88,7 +89,7 @@ QUERIES: Dict[str, str] = {
                  where m.name ~ '^2026[0-9]{4}[a-z]_forms_(registry|clickup_writeback|checkin_notices|client_messages|dispatch|late_typeform|records|move_recording)$') as migrations,
                (select coalesce(jsonb_agg(jsonb_build_object('key', s.key, 'ok', s.ok) order by s.key), '[]'::jsonb)
                   from public.cockpit_sync_state s
-                 where s.key in ('clickup-writeback:forms', 'forms-effects-kick', 'client-messages')) as rows
+                 where s.key in ('clickup-writeback:forms', 'forms-effects-kick', 'client-messages', 'csm-forms-record')) as rows
         """,
     ),
     "G5": sql("G5", "select ok, note from public.cockpit_sync_state where key = 'client-messages-g5'"),
@@ -103,7 +104,8 @@ QUERIES: Dict[str, str] = {
                coalesce(min((data->'notesParity'->>'cleanSince')::timestamptz) <= now() - interval '7 days', false) as seven,
                coalesce(max(source_snapshot_at) > now() - interval '1 hour', false) as fresh,
                (select count(*) from public.cockpit_guardian_incidents
-                 where check_id = 'csm-notes-parity' and last_seen_at > now() - interval '7 days') as incidents
+                 where check_id = 'csm-notes-parity' and last_seen_at > now() - interval '7 days'
+                   and level <> 'unknown') as incidents
           from public.cockpit_csm_sources where table_name = 'clients'
         """,
     ),
@@ -217,22 +219,35 @@ def explained_differences(replay_dir: Path) -> Optional[Dict[str, Any]]:
 
 
 def shadow_runs(replay_dir: Path) -> Dict[str, int]:
-    """Shadow runs compared with Make (shadow-report.json): those with a Typeform row to compare, and how many of
-    them still carry a difference no sentence explains (a person explains those in the session note)."""
+    """Shadow runs compared with Make (shadow-report.json): those with a Typeform row to compare, every ClickUp read
+    answered (a refused read compared nothing) and no verdict `missing`, and how many of them still carry a difference no
+    sentence explains (a person explains those in the session note). A `missing` pick or effect is a run with nothing to
+    compare there: a dispatch that failed after the submit (Z53) leaves no effects rows, and every effect then reads
+    `missing`; `--shadow` exits 1 on the same rule, so it never counts as compared (`incomplete` counts those runs). A
+    response counts once however many times it is listed, and a row with no response id cannot be told from another, so
+    it does not count: G3 asks for five real runs."""
     path = replay_dir / "shadow-report.json"
     if not path.is_file():
-        return {"compared": 0, "open": 0}
+        return {"compared": 0, "open": 0, "incomplete": 0}
     report = json.loads(path.read_text(encoding="utf-8"))
-    compared = 0
+    seen = set()
+    incomplete = set()
     open_ = 0
     for r in report.get("responses") or []:
-        if not r.get("planned") or (r.get("pick") or {}).get("verdict") == "missing":
+        if not r.get("planned") or r.get("unread"):
             continue
-        compared += 1
-        verdicts = [r.get("pick") or {}] + list(r.get("effects") or [])
+        response = r.get("response")
+        if not response or response in seen:
+            continue
+        effects = [e for e in (r.get("effects") or []) if isinstance(e, dict)]
+        verdicts = [r.get("pick") or {}] + effects
+        if not effects or any(v.get("verdict") in (None, "missing") for v in verdicts):
+            incomplete.add(response)
+            continue
+        seen.add(response)
         if any(v.get("verdict") == "differs" and v.get("explained") is not True for v in verdicts):
             open_ += 1
-    return {"compared": compared, "open": open_}
+    return {"compared": len(seen), "open": open_, "incomplete": len(incomplete - seen)}
 
 
 def g3(replay_dir: Path, confirmed: bool) -> Gate:
@@ -243,14 +258,15 @@ def g3(replay_dir: Path, confirmed: bool) -> Gate:
         return Gate("G3", "waiting", f"the replay explains {num(replay.get('count')) or 0} of {num(replay.get('of')) or 0} to-do comment differences")
     runs = shadow_runs(replay_dir)
     if runs["compared"] < 5:
-        return Gate("G3", "people", f"{runs['compared']} of 5 shadow runs compared with Make (checkin-replay.ts --shadow)")
+        gap = f"; {plural(runs['incomplete'], 'run')} with an effect not compared (missing)" if runs["incomplete"] else ""
+        return Gate("G3", "people", f"{runs['compared']} of 5 shadow runs compared with Make (checkin-replay.ts --shadow){gap}")
     if not confirmed:
         left = f"; {plural(runs['open'], 'run')} with a difference to explain" if runs["open"] else ""
         return Gate("G3", "people", f"{runs['compared']} shadow runs compared{left}; the session note confirms the five runs")
     return Gate("G3", "green")
 
 
-def g4(read: Read) -> Gate:
+def g4(read: Read, confirmed: bool) -> Gate:
     row = one(read, "G4")
     names = {str(n).split("_", 1)[1] for n in json_list(row.get("migrations")) if "_" in str(n)}
     applied = sum(1 for m in MIGRATIONS if m in names)
@@ -263,6 +279,8 @@ def g4(read: Read) -> Gate:
     failing = [k for k in DEPLOY_ROWS if not seen[k]]
     if failing:
         return Gate("G4", "waiting", "not ok: " + ", ".join(failing))
+    if not confirmed:
+        return Gate("G4", "people", "the session note confirms D1 to D18 and section 8")
     return Gate("G4", "green")
 
 
@@ -293,11 +311,14 @@ def g6(read: Read) -> Gate:
         return Gate("G6", "waiting", f"{clients - store} of {clients} clients do not read their 1-1 notes from the store")
     if off and off == clients:
         return Gate("G6", "green", "the 1-1 notes are native; the Typeform comparison is off")
-    # cleanSince only moves when the feed publishes, so a stopped feed would let the days run on with
-    # nothing compared. csm-notes-parity watches only the notes (its incidents restart G6); a stopped feed is
-    # native-source-producer's (fail after 90 min). This clause holds G6 meanwhile. No publish time at all reads as not fresh.
+    # cleanSince only moves when the feed publishes and carries across a gap, so the hours a stopped feed compared
+    # nothing still count toward the 7 days once it publishes again (Z77: a stopped feed must not restart them).
+    # This clause only holds G6 while the feed is down, so it never turns green on a feed that is not running.
+    # csm-notes-parity watches only the notes (its warn or fail incidents restart G6; one at level unknown only could
+    # not read, saw no difference, and the query leaves it out, as Z77 does for a stopped feed); a stopped feed is
+    # native-source-producer's (fail after 90 min). No publish time at all reads as not fresh.
     if not truthy(row.get("fresh")):
-        return Gate("G6", "waiting", "the native feed has not published for over an hour; hours without a comparison do not count")
+        return Gate("G6", "waiting", "the native feed has not published for over an hour; G6 waits until it publishes again, and the hours it was down still count (Z77)")
     if differs:
         return Gate("G6", "waiting", f"{plural(differs, 'client')} read differently from Typeform; the 7 days restart when they agree")
     if incidents:
@@ -333,7 +354,7 @@ def g9(read: Read, confirmed: bool) -> Gate:
     if runs < 3:
         return Gate("G9", "people", f"{runs} of 3 CSM shadow runs")
     if not confirmed:
-        return Gate("G9", "people", f"{runs} of 3 CSM shadow runs; the CEO's reading goes in the session note")
+        return Gate("G9", "people", "3 of 3 CSM shadow runs; the CEO's reading goes in the session note")
     return Gate("G9", "green")
 
 
@@ -365,7 +386,7 @@ def gates(read: Read, root: Path = ROOT, replay_dir: Path = REPLAY_DIR, confirme
         "G1": lambda: g1(read),
         "G2": lambda: g2(read, "G2" in yes),
         "G3": lambda: g3(replay_dir, "G3" in yes),
-        "G4": lambda: g4(read),
+        "G4": lambda: g4(read, "G4" in yes),
         "G5": lambda: g5(read),
         "G6": lambda: g6(read),
         "G7": lambda: g7(read),
@@ -422,7 +443,7 @@ def main(argv: Optional[Sequence[str]] = None, read: Optional[Read] = None) -> i
     parser.add_argument("--env-file", help="read the named management token locally; never printed")
     parser.add_argument("--replay-dir", default=str(REPLAY_DIR), help="the folder holding replay-report.json and shadow-report.json")
     parser.add_argument("--confirmed", action="extend", nargs="+", default=[], choices=sorted(PEOPLE, key=lambda g: int(g[1:])),
-                        help="the gates whose human part the session note confirms (G2 G3 G8 G9 G10)")
+                        help="the gates whose human part the session note confirms (G2 G3 G4 G8 G9 G10)")
     args = parser.parse_args(argv)
     if read is None:
         try:

@@ -24,8 +24,11 @@
  * gate's answers, and an earlier switch-over's rows refused at a later one
  * (Z70); the cut-over function's refusals (no Typeform notes in the store among
  * them: missing is never a pass), its answer, every audit row of the
- * hour (step 7a's own SELECT included) credited to the cut-over, and a second
- * hour after a rollback with a live canary send in between; exact grants.
+ * hour (step 7a's own SELECT included) credited to the cut-over, a second
+ * hour after a rollback with a live canary send in between, the writer's mode
+ * (a stand-in here; forms-dispatch-supabase.test.ts drives the real one
+ * through the hour's steps) and the newest notes' card on the roster; exact
+ * grants.
  * The CEO's address is read from the CEO gate migration, never written here;
  * every other person, client and recording is invented.
  */
@@ -105,7 +108,11 @@ const SENTENCE = {
   none: "No 1-1 notes effect points at this write, so nothing was written.",
   settled: "This write was settled in the cockpit, so nothing was written.",
   make: "Make owns this again.",
+  writerOpen:
+    "Limit the 1-1 notes writer to the test card at step 6 first: it last reported apply, which writes on every client's card.",
 };
+const offRoster = (card: string) =>
+  `The newest Typeform notes are on card ${card}, which is not on the client roster. Refresh the roster, or put the notes on a client on it, then run this again.`;
 
 let db: PGlite;
 type Row = Record<string, any>;
@@ -678,7 +685,9 @@ async function standIns(
       ALTER TABLE public.cockpit_clickup_writeback_queue ADD CONSTRAINT cockpit_clickup_writeback_queue_kind_check
         CHECK (kind IN ('decision','manual_change','provider_action','tracking_backlog','billing','request','task_action','form'));
       CREATE OR REPLACE FUNCTION public.cockpit_clickup_writeback_claim_forms(p_token uuid, p_limit integer DEFAULT 8)
-        RETURNS jsonb LANGUAGE sql AS $$ SELECT '[]'::jsonb $$;`);
+        RETURNS jsonb LANGUAGE sql AS $$ SELECT '[]'::jsonb $$;
+      CREATE OR REPLACE FUNCTION public.cockpit_clickup_forms_mode()
+        RETURNS jsonb LANGUAGE sql AS $$ SELECT '{"mode":"dry_run","lastMode":"dry_run"}'::jsonb $$;`);
   if (only.includes("grade"))
     await ex(`
       ALTER TABLE public.cockpit_slack_notices DROP CONSTRAINT cockpit_slack_notices_kind_check;
@@ -1658,6 +1667,132 @@ describe("cockpit_form_checkin_cutover", () => {
           one("SELECT public.cockpit_form_checkin_cutover() AS r"),
         ),
       ).toEqual({ code: "55000", message: SENTENCE.already });
+    });
+  });
+
+  test("refuses with nothing written while the writer reads apply, or a stale apply, and passes it limited, dry or never reported", async () => {
+    /** What cockpit_clickup_forms_mode() answers, as 20261029t shapes it. */
+    const writerReads = (mode: string, lastMode: string | null) =>
+      ex(`CREATE OR REPLACE FUNCTION public.cockpit_clickup_forms_mode()
+        RETURNS jsonb LANGUAGE sql AS $$ SELECT '${JSON.stringify({ mode, lastMode })}'::jsonb $$`);
+    for (const [mode, last] of [
+      ["apply", "apply"],
+      ["unknown", "apply"], // apply, reported over 15 minutes ago
+    ] as const)
+      await rolledBack(async () => {
+        await standIns();
+        await placedNotes();
+        const draft = rid();
+        await as(
+          CSM,
+          "SELECT public.cockpit_form_open('checkin', $1, $2::uuid) AS r",
+          [A, draft],
+        );
+        await writerReads(mode, last);
+        const before = await count(
+          "SELECT count(*) n FROM public.cockpit_audit_log",
+        );
+        expect(
+          await refusal(() =>
+            one("SELECT public.cockpit_form_checkin_cutover() AS r"),
+          ),
+        ).toEqual({ code: "55000", message: SENTENCE.writerOpen });
+        expect(
+          await count("SELECT count(*) n FROM public.cockpit_audit_log"),
+        ).toBe(before);
+        expect((await checkin()).provider).toBe("typeform");
+        expect(
+          await one(
+            "SELECT state AS r FROM public.cockpit_form_responses WHERE id = $1::uuid",
+            [draft],
+          ),
+        ).toBe("draft");
+      });
+    for (const [mode, last] of [
+      ["apply_limited", "apply_limited"], // what step 6 leaves it at
+      ["dry_run", "dry_run"],
+      ["unknown", "apply_limited"],
+      ["unknown", "dry_run"],
+      ["unknown", null], // never reported
+    ] as const)
+      await rolledBack(async () => {
+        await standIns();
+        await placedNotes();
+        await writerReads(mode, last);
+        const out = await one<Row>(
+          "SELECT public.cockpit_form_checkin_cutover() AS r",
+        );
+        expect(out.registry.provider).toBe("native");
+      });
+    // A mode nobody can read is no pass.
+    await rolledBack(async () => {
+      await standIns();
+      await placedNotes();
+      await ex("DROP FUNCTION public.cockpit_clickup_forms_mode()");
+      expect(
+        (
+          await refusal(() =>
+            one("SELECT public.cockpit_form_checkin_cutover() AS r"),
+          )
+        ).code,
+      ).toBe("42883");
+      expect((await checkin()).provider).toBe("typeform");
+    });
+  });
+
+  test("refuses with nothing written when the newest Typeform notes are on a card off the roster, and only the newest counts", async () => {
+    await rolledBack(async () => {
+      await standIns();
+      await placedNotes();
+      const draft = rid();
+      await as(
+        CSM,
+        "SELECT public.cockpit_form_open('checkin', $1, $2::uuid) AS r",
+        [A, draft],
+      );
+      await q(
+        `INSERT INTO public.cockpit_csm_call_forms(token, form_id, form_kind, task_id, matched_by, submitted_at)
+         VALUES ('tf-gone-0003', 'fRokTITH', 'checkin', 'taskGone9', 'hidden_field', $1)`,
+        [ago(300)],
+      );
+      // The same card in another source table is not the roster.
+      await q(
+        `INSERT INTO public.cockpit_csm_sources(table_name, source_id, data, source_snapshot_at)
+         SELECT s.table_name, 'not-a-client', '{"_id":"not-a-client","taskId":"taskGone9"}'::jsonb, now()
+           FROM public.cockpit_csm_source_state s WHERE s.table_name <> 'clients' LIMIT 1`,
+      );
+      const before = await count(
+        "SELECT count(*) n FROM public.cockpit_audit_log",
+      );
+      expect(
+        await refusal(() =>
+          one("SELECT public.cockpit_form_checkin_cutover() AS r"),
+        ),
+      ).toEqual({ code: "55000", message: offRoster("taskGone9") });
+      expect(
+        await count("SELECT count(*) n FROM public.cockpit_audit_log"),
+      ).toBe(before);
+      expect((await checkin()).provider).toBe("typeform");
+      expect(
+        await one(
+          "SELECT state AS r FROM public.cockpit_form_responses WHERE id = $1::uuid",
+          [draft],
+        ),
+      ).toBe("draft");
+      // A newer row on a client on the roster: the old off-roster row no longer counts.
+      await q(
+        `INSERT INTO public.cockpit_csm_call_forms(token, form_id, form_kind, task_id, matched_by, submitted_at)
+         VALUES ('tf-back-0004', 'fRokTITH', 'checkin', $1, 'manual', $2)`,
+        [B, ago(100)],
+      );
+      const out = await one<Row>(
+        "SELECT public.cockpit_form_checkin_cutover() AS r",
+      );
+      expect(out.newestTypeform).toMatchObject({
+        token: "tf-back-0004",
+        taskId: B,
+      });
+      expect(out.registry.provider).toBe("native");
     });
   });
 

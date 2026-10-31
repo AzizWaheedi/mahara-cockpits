@@ -19,6 +19,7 @@ import {
 import { Dot, SectionCard } from "@/components/kit";
 import { Button } from "@/components/ui/button";
 import { kuwaitWeekday } from "@/forms/checkinRail";
+import type { PollClock } from "@/forms/RecapApproval";
 import type { Unmatched } from "@/lib/csmCalls";
 import {
   type CheckinEntry,
@@ -183,6 +184,7 @@ export function AfterCalls({
   snap,
   onPlaced,
   impromptuIO,
+  clock,
 }: {
   snap:
     | { clients?: Client[]; callStoreError?: string | null }
@@ -195,6 +197,8 @@ export function AfterCalls({
   onPlaced?: () => void;
   /** Stand-ins for the harness: the queue's read and its two writers. */
   impromptuIO?: ImpromptuIO;
+  /** The read's and the two actions' deadline; the tests pass their own. */
+  clock?: PollClock;
 }) {
   const entry = useCheckinEntry();
   const io = useImpromptuIO(impromptuIO);
@@ -204,7 +208,7 @@ export function AfterCalls({
   );
   // Dark until the switch-over (Z17): the queue is read only once the 1-1
   // notes are native, again whenever the snapshot is read again.
-  const impromptu = useImpromptuCalls(notesNative(entry), snap, io);
+  const impromptu = useImpromptuCalls(notesNative(entry), snap, io, clock);
   const rows = useMemo(
     () => cardRows(clientRows, impromptu.items),
     [clientRows, impromptu.items],
@@ -278,7 +282,11 @@ export function AfterCalls({
   return (
     <SectionCard
       title={
-        <span ref={headRef} tabIndex={-1} className="rounded-sm outline-none">
+        <span
+          ref={headRef}
+          tabIndex={-1}
+          className="rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-primary-ink"
+        >
           After your calls
         </span>
       }
@@ -319,6 +327,7 @@ export function AfterCalls({
                 io={io}
                 busy={placing !== null}
                 lampCol={lampCol}
+                clock={clock}
                 onPlace={place}
                 onSettled={leave}
               />
@@ -339,7 +348,7 @@ export function AfterCalls({
         <div className="px-4 py-3 sm:px-6">
           <button
             type="button"
-            className="text-xs text-primary-ink underline-offset-4 hover:underline"
+            className="-my-1 py-1 text-xs text-primary-ink underline-offset-4 hover:underline"
             onClick={() => setAll(true)}
           >
             See all {rows.length}
@@ -350,6 +359,7 @@ export function AfterCalls({
         item={placing}
         io={io}
         clients={placeClients}
+        clock={clock}
         onOpenChange={open => {
           if (!open) setPlacing(null);
         }}

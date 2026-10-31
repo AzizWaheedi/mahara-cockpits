@@ -528,6 +528,10 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
  * call of cockpit_form_record_sweep, which records every stored tG7dnxBn response and every Blueprint press with no
  * response yet, and records each cockpit-owned effect from its Stage 1 row's outcome. Records only: it never makes a
  * delivery row. A dry run asks the same sweep with p_apply false, which writes nothing.
+ *
+ * The sweep's recorded, Blueprint and delivered counts are this read's only, and from the second read on they are 0
+ * in a healthy run, so the note says "this read" and carries the kickoffs held (new plus already). The sweep gives no
+ * such total for the presses or the deliveries, so those read as new. Waiting is the state now.
  */
 export async function formsRecord(ctx: Ctx): Promise<Health> {
   const r = await ctx.db.rpc("cockpit_form_record_sweep", { p_apply: ctx.apply });
@@ -543,7 +547,9 @@ export async function formsRecord(ctx: Ctx): Promise<Health> {
   const skipped = count(r?.effects?.skipped, "its skipped count");
   const waiting = count(r?.effects?.waiting, "its waiting count");
   const errors = count(r?.errors, "its count of rows it could not record");
-  const detail = { apply: r.apply === true, kickoff: { recorded: kickoffs, already }, blueprint: { recorded: presses }, effects: { delivered, skipped, waiting }, errors };
+  // The sweep's first SQLSTATE, once it gives one: a code and nothing else reaches the row, so the guardian's warning can name it.
+  const firstError = typeof r.firstError === "string" && /^[0-9A-Z]{5}$/.test(r.firstError) ? { firstError: r.firstError } : {};
+  const detail = { apply: r.apply === true, kickoff: { recorded: kickoffs, already }, blueprint: { recorded: presses }, effects: { delivered, skipped, waiting }, errors, ...firstError };
   ctx.plan.formsRecord = detail;
   return {
     key: "csm-forms-record",
@@ -551,7 +557,7 @@ export async function formsRecord(ctx: Ctx): Promise<Health> {
     // (Z15): ok false would stop last_ok_at and make every run exit FAILED over a record that delivers nothing.
     ok: true,
     rows: kickoffs + presses,
-    note: `Forms tables: ${plural(kickoffs, "kickoff", "kickoffs")} and ${plural(presses, "Brand Blueprint press", "Brand Blueprint presses")} recorded, ${plural(delivered, "Stage 1 delivery", "Stage 1 deliveries")} linked, ${waiting} waiting for Stage 1.${errors ? ` ${plural(errors, "row", "rows")} could not be recorded; the next read tries again.` : ""}`,
+    note: `Forms tables: ${plural(kickoffs + already, "kickoff", "kickoffs")} recorded (${kickoffs} new this read), ${plural(presses, "new Brand Blueprint press", "new Brand Blueprint presses")}, ${plural(delivered, "Stage 1 delivery", "Stage 1 deliveries")} linked this read, ${waiting} waiting for Stage 1.${errors ? ` ${plural(errors, "row", "rows")} could not be recorded; the next read tries again.` : ""}`,
     detail,
   };
 }

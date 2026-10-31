@@ -64,20 +64,32 @@ END $$;
 -- ---------------------------------------------------------------------------
 -- 1. The queue takes 1-1 notes rows and the runs take the forms job
 
+-- Widened only from the definition the contract read: another session's value
+-- would be dropped here without a word and fail its writer later, so any other
+-- definition, or none, stops the file (the CHECK's own drift guard, as Z61's for
+-- bodies; a second apply finds the widened one and changes nothing).
 DO $$
+DECLARE
+  v_def text;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c
-                  WHERE c.conrelid = 'public.cockpit_clickup_writeback_queue'::regclass
-                    AND c.conname = 'cockpit_clickup_writeback_queue_kind_check'
-                    AND pg_catalog.pg_get_constraintdef(c.oid) LIKE '%''form''%') THEN
+  SELECT pg_catalog.pg_get_constraintdef(c.oid) INTO v_def FROM pg_catalog.pg_constraint c
+   WHERE c.conrelid = 'public.cockpit_clickup_writeback_queue'::regclass
+     AND c.conname = 'cockpit_clickup_writeback_queue_kind_check';
+  IF v_def IS DISTINCT FROM 'CHECK ((kind = ANY (ARRAY[''decision''::text, ''manual_change''::text, ''provider_action''::text, ''tracking_backlog''::text, ''billing''::text, ''request''::text, ''task_action''::text, ''form''::text])))' THEN
+    IF v_def IS DISTINCT FROM 'CHECK ((kind = ANY (ARRAY[''decision''::text, ''manual_change''::text, ''provider_action''::text, ''tracking_backlog''::text, ''billing''::text, ''request''::text, ''task_action''::text])))' THEN
+      RAISE EXCEPTION 'cockpit_clickup_writeback_queue_kind_check changed since the 2b contract read it; stop and re-read it.' USING ERRCODE = '55000';
+    END IF;
     ALTER TABLE public.cockpit_clickup_writeback_queue DROP CONSTRAINT IF EXISTS cockpit_clickup_writeback_queue_kind_check;
     ALTER TABLE public.cockpit_clickup_writeback_queue ADD CONSTRAINT cockpit_clickup_writeback_queue_kind_check
       CHECK (kind IN ('decision','manual_change','provider_action','tracking_backlog','billing','request','task_action','form'));
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c
-                  WHERE c.conrelid = 'public.cockpit_clickup_writeback_runs'::regclass
-                    AND c.conname = 'cockpit_clickup_writeback_runs_job_check'
-                    AND pg_catalog.pg_get_constraintdef(c.oid) LIKE '%''forms''%') THEN
+  SELECT pg_catalog.pg_get_constraintdef(c.oid) INTO v_def FROM pg_catalog.pg_constraint c
+   WHERE c.conrelid = 'public.cockpit_clickup_writeback_runs'::regclass
+     AND c.conname = 'cockpit_clickup_writeback_runs_job_check';
+  IF v_def IS DISTINCT FROM 'CHECK ((job = ANY (ARRAY[''kpi''::text, ''log''::text, ''dosdonts''::text, ''requests''::text, ''forms''::text])))' THEN
+    IF v_def IS DISTINCT FROM 'CHECK ((job = ANY (ARRAY[''kpi''::text, ''log''::text, ''dosdonts''::text, ''requests''::text])))' THEN
+      RAISE EXCEPTION 'cockpit_clickup_writeback_runs_job_check changed since the 2b contract read it; stop and re-read it.' USING ERRCODE = '55000';
+    END IF;
     ALTER TABLE public.cockpit_clickup_writeback_runs DROP CONSTRAINT IF EXISTS cockpit_clickup_writeback_runs_job_check;
     ALTER TABLE public.cockpit_clickup_writeback_runs ADD CONSTRAINT cockpit_clickup_writeback_runs_job_check
       CHECK (job IN ('kpi','log','dosdonts','requests','forms'));
@@ -484,7 +496,7 @@ BEGIN
     ON CONFLICT (key) DO UPDATE SET last_run_at = now(), ok = false, note = EXCLUDED.note, updated_at = now();
     RETURN NULL;
   END IF;
-  -- clickup-writeback answers when its run ends (up to about 100 seconds), so the post waits as the requests kick's does.
+  -- clickup-writeback answers when its run ends (about two minutes at most at the default pace; the run stops taking rows at 100 s), so the post waits as the requests kick's does.
   EXECUTE 'SELECT net.http_post(url := $1, body := $2, headers := $3, timeout_milliseconds := 150000)' INTO v_request
     USING v_url, jsonb_build_object('job', 'forms'),
           jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret', v_secret);

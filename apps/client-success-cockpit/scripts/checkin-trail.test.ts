@@ -10,6 +10,7 @@ import {
   cardLine,
   MAKE_DOES,
   RECAP_QUEUED,
+  RECAP_TOO_LATE,
   stopFor,
   type TrailContext,
   trailDone,
@@ -403,9 +404,45 @@ describe("the recap's stops once the cockpit sends it (STAGE2B-CONTRACT.md 3.6, 
         }),
         CTX,
       ).line,
-    ).toBe(
-      "Not done: No recap: the drafter did not answer. Tell the tech lead.",
+    ).toBe("Not done: The drafter did not answer. Tell the tech lead.");
+  });
+
+  test("past 24 hours the rail stops saying Draft again, as the step does", () => {
+    const failed = recap({
+      state: "failed",
+      reason:
+        "The recap draft is empty or over 4,096 characters. Draft it again.",
+    });
+    const sent = Date.parse("2026-10-25T08:10:00Z");
+    const after = (ms: number) => ({ ...CTX, now: sent + ms });
+    const DAY = 24 * 60 * 60_000;
+    // One minute short of the mark: the step still offers it.
+    expect(stopFor(failed, after(DAY - 60_000)).line).toBe(
+      "Not done: The recap draft is empty or over 4,096 characters. Draft it again.",
     );
+    // At the mark, and after it: what is left, and still a problem.
+    for (const ms of [DAY, 2 * DAY]) {
+      const s = stopFor(failed, after(ms));
+      expect(s.line).toBe(
+        `Not done: The recap draft is empty or over 4,096 characters. ${RECAP_TOO_LATE}`,
+      );
+      expect(s.problem).toBe(true);
+      expect(s.line).not.toMatch(/Draft (it )?again/);
+    }
+    // A sent time it cannot read says nothing about the 24 hours.
+    expect(
+      stopFor(failed, { ...CTX, submittedAt: null, now: sent + 2 * DAY }).line,
+    ).toContain("Draft it again.");
+    // A reason that was never the step's to offer still goes to the tech lead.
+    expect(
+      stopFor(
+        recap({
+          state: "failed",
+          reason: "No recap: the drafter did not answer.",
+        }),
+        after(2 * DAY),
+      ).line,
+    ).toBe("Not done: The drafter did not answer. Tell the tech lead.");
   });
 
   test("delivered: sent, done, and a way to the Messages card marked as inside the cockpit", () => {
@@ -431,5 +468,68 @@ describe("the recap's stops once the cockpit sends it (STAGE2B-CONTRACT.md 3.6, 
       stopFor(effect({ key: "grade_notice", state: "delivered" }), CTX).link
         ?.internal,
     ).toBeUndefined();
+  });
+});
+
+describe("the recap's stop reads as one sentence, and as she left it", () => {
+  const recap = (over: Partial<EffectView>) =>
+    effect({
+      key: "recap",
+      label: "Recap to the client",
+      delivery: "client_message",
+      ...over,
+    });
+
+  test("a reason's own label does not sit behind the rail's: one label, then the point", () => {
+    expect(
+      stopFor(
+        recap({
+          state: "failed",
+          reason:
+            "No recap: The recap mentioned leads or cost per lead, which client messages never do. Draft again.",
+        }),
+        CTX,
+      ).line,
+    ).toBe(
+      "Not done: The recap mentioned leads or cost per lead, which client messages never do. Draft again.",
+    );
+    expect(
+      stopFor(
+        effect({
+          key: "grade_notice",
+          label: "Call grade",
+          state: "failed",
+          reason: "No grade: no transcript for this call.",
+        }),
+        CTX,
+      ).line,
+    ).toBe("Not done: No transcript for this call. Tell the tech lead.");
+  });
+
+  test("a failed recap she skipped: the words of the step, quiet, and no one to tell", () => {
+    const failed = recap({
+      state: "failed",
+      reason: "WhatsApp refused the recap (400). Nothing was sent.",
+    });
+    expect(stopFor(failed, CTX).problem).toBe(true);
+    expect(stopFor(failed, { ...CTX, recapMessage: "failed" }).problem).toBe(
+      true,
+    );
+    const s = stopFor(failed, { ...CTX, recapMessage: "skipped" });
+    expect(s.line).toBe("Skipped. Nothing was sent.");
+    expect(s.tone).toBe("quiet");
+    expect(s.problem).toBe(false);
+    expect(s.done).toBe(false);
+    // Another effect's failure is still the tech lead's.
+    expect(
+      stopFor(
+        effect({
+          key: "todo_comment",
+          state: "failed",
+          reason: "ClickUp 500.",
+        }),
+        { ...CTX, recapMessage: "skipped" },
+      ).problem,
+    ).toBe(true);
   });
 });

@@ -164,8 +164,9 @@ QUEUES = (
           status_col="state", failed_col="updated_at"),
     # An unknown message may be in the client's group: nothing sends it again, a person looks first.
     Queue("queue-client-messages-unknown", "cockpit_client_messages", "WhatsApp message with an unknown outcome",
-          ("unknown",), "updated_at", 0, "the tech lead", "Look in the client's WhatsApp group for the message; the "
-          "cockpit never sends it twice (RUNBOOK, Client messages).", status_col="state"),
+          ("unknown",), "updated_at", 0, "the tech lead", "Look in the client's WhatsApp group for the message, then "
+          "record seen_in_group or not_sent; the cockpit never sends it twice (RUNBOOK, Client messages).",
+          status_col="state"),
 )
 
 

@@ -14,6 +14,7 @@ export const SCENARIOS = ["9209179", "9523861"] as const;
 export const CACHE_MS = 10 * 60_000;
 
 export type Switch = "on" | "off" | "unread";
+const SWITCHES: readonly unknown[] = ["on", "off", "unread"];
 export type OldSenders = {
   at: string;
   typeform: Switch;
@@ -93,7 +94,27 @@ export function holdSentence(
   return null;
 }
 
-/** Fresh reads of the three senders; a read that fails is unread, which holds like on. */
+/**
+ * Whether the webhooks Typeform listed include one still feeding Make. Only a
+ * plain `enabled: false` reads off: any other value on a make.com webhook is on.
+ * An item this cannot read throws, so the outer catch makes the list unread: a
+ * wrong `off` lifts the hold while Typeform may still feed Make's queue.
+ */
+function feedsMake(items: unknown[]): boolean {
+  return items
+    .map(w => {
+      if (!isObj(w) || typeof w.url !== "string")
+        throw new Error("a webhook without a url");
+      const host = new URL(w.url).host.toLowerCase();
+      return (
+        (host === "make.com" || host.endsWith(".make.com")) &&
+        w.enabled !== false
+      );
+    })
+    .some(Boolean);
+}
+
+/** Fresh reads of the three senders; a read that fails, or an answer that is not the list asked for, is unread, which holds like on. */
 export async function readOldSenders(
   deps: OldSendersDeps,
 ): Promise<OldSenders> {
@@ -107,19 +128,8 @@ export async function readOldSenders(
         Authorization: `Bearer ${deps.env.TYPEFORM_TOKEN}`,
       },
     );
-    const items: unknown[] = Array.isArray(data?.items) ? data.items : [];
-    typeform = items.some(w => {
-      if (!isObj(w) || w.enabled !== true || typeof w.url !== "string")
-        return false;
-      try {
-        const host = new URL(w.url).host.toLowerCase();
-        return host === "make.com" || host.endsWith(".make.com");
-      } catch {
-        return false;
-      }
-    })
-      ? "on"
-      : "off";
+    if (!Array.isArray(data?.items)) throw new Error("no list of webhooks");
+    typeform = feedsMake(data.items) ? "on" : "off";
   } catch {
     typeform = "unread";
   }
@@ -143,6 +153,11 @@ export async function readOldSenders(
   return { ...out, held: sentence !== null, sentence };
 }
 
+/**
+ * A cache file counts only when it says all of it and agrees with itself: a
+ * file with no `held`, or one whose `held` differs from its own switches, is
+ * read again, so it can never pass as not held.
+ */
 function readCache(path: string | null, now: Date): OldSenders | null {
   if (!path) return null;
   try {
@@ -151,7 +166,15 @@ function readCache(path: string | null, now: Date): OldSenders | null {
       return null;
     const age = now.getTime() - Date.parse(v.at);
     if (!Number.isFinite(age) || age < 0 || age >= CACHE_MS) return null;
-    return v as OldSenders;
+    if (
+      typeof v.held !== "boolean" ||
+      !SWITCHES.includes(v.typeform) ||
+      !SCENARIOS.every(id => SWITCHES.includes(v.scenarios[id]))
+    )
+      return null;
+    const sentence = holdSentence(v as OldSenders);
+    if (v.held !== (sentence !== null)) return null;
+    return { ...(v as OldSenders), sentence };
   } catch {
     return null;
   }

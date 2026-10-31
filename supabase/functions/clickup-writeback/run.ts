@@ -66,6 +66,8 @@ import {
 } from "./requests.ts";
 import { executeTaskAction, planTaskAction, taskActionStepKeys } from "./taskActions.ts";
 import {
+  cardRefused,
+  checkToken,
   executeForm,
   type FormItem,
   formStep,
@@ -526,13 +528,14 @@ export const anotherRunNote = (n: number) =>
 /**
  * A run still open after this many minutes on the Kuwait clock stopped without reporting back (a live run stops
  * taking rows at 100 s and ends by about 150 s), so it no longer keeps the next one waiting. The database closes
- * it at 15 minutes (cockpit_clickup_writeback_begin).
+ * it at 15 minutes (cockpit_clickup_writeback_begin). The requests and forms jobs share this rule, and the forms
+ * kick waits on an open run for the same 4 minutes.
  */
 export const STALE_RUN_MINUTES = 4;
 /**
  * Minutes since the open run named in cockpit_clickup_writeback_begin's busy note started ("A requests run that
- * started at 14:05 Kuwait is still running."), on the Kuwait clock (UTC+3, no daylight saving); null when the
- * note does not say.
+ * started at 14:05 Kuwait is still running.", or "A forms run ..."), on the Kuwait clock (UTC+3, no daylight
+ * saving); null when the note does not say.
  */
 export function openRunMinutes(note: unknown, now: number): number | null {
   const m = /started at ([01]\d|2[0-3]):([0-5]\d) Kuwait is still running/.exec(String(note ?? ""));
@@ -837,15 +840,18 @@ export async function runRequestsDoctor(deps: Deps): Promise<JobResult & { probl
 export const FORMS_RUN_BUDGET_MS = 100_000;
 /**
  * The forms jobs' pace, CLICKUP_FORMS_CALLS_PER_MINUTE: 10 calls a minute unless set, never more than 60 and never
- * less than 1. The Business plan gives the one token every caller shares 100 calls a minute, the callers together
+ * less than 5, the floor of every other ClickUp pace: below it a run outlasts the Edge wall clock (FORMS_RUN_BUDGET_MS
+ * stops new rows at 100 s, the row in hand still sends, and at 5 a minute the last call is by about 125 s). The Business plan gives the one token every caller shares 100 calls a minute, the callers together
  * aim at about 80, and no single job takes more than 60 (docs/requests/CLICKUP-DOWNGRADE.md). About 11 calls write
  * one response's four rows, so the default writes a response in a little over a minute.
  */
 export const FORMS_CALLS_PER_MINUTE = 10;
 export const FORMS_CALLS_PER_MINUTE_MAX = 60;
 export function formsPerMinute(env: Deps["env"]): number {
-  const n = Math.floor(Number(env("CLICKUP_FORMS_CALLS_PER_MINUTE")));
-  return Number.isFinite(n) && n > 0 ? Math.min(FORMS_CALLS_PER_MINUTE_MAX, n) : FORMS_CALLS_PER_MINUTE;
+  // writebackPerMinute's shape: tested before it is floored, so 0.5 reads as the floor of 5 and never as the default of 10.
+  const set = Number(env("CLICKUP_FORMS_CALLS_PER_MINUTE"));
+  const pace = Number.isFinite(set) && set > 0 ? set : FORMS_CALLS_PER_MINUTE;
+  return Math.floor(Math.min(FORMS_CALLS_PER_MINUTE_MAX, Math.max(CALLS_MIN, pace)));
 }
 const FORMS_NOT_STARTED = "The 1-1 notes run could not start, so this waits for the next run.";
 const FORMS_SLOW_DOWN = "ClickUp asked the cockpit to slow down (429), so the rest waits for the next run.";
@@ -860,24 +866,6 @@ const FORMS_CHECK_CARD = "An earlier try may have reached the card, so check it 
 export const FORMS_BUSY_HELD = "Another 1-1 notes run is still sending, so this waits for the next run.";
 export const formsAnotherRunNote = (n: number) =>
   `Another 1-1 notes run is still sending, so this one handed back the ${n === 1 ? "write" : `${n} writes`} it claimed; the next run takes ${n === 1 ? "it" : "them"}.`;
-/**
- * An open forms run this many minutes old on the Kuwait clock stopped without reporting back (a live run stops taking
- * rows at 100 s and ends by about 150 s), so it no longer holds the job up. The database closes it at 15 minutes
- * (cockpit_clickup_writeback_begin); the kick waits on an open run for the same 4 minutes.
- */
-export const FORMS_STALE_RUN_MINUTES = 4;
-/**
- * Minutes since the open run named in cockpit_clickup_writeback_begin's busy note started ("A forms run that started
- * at 14:05 Kuwait is still running."), on the Kuwait clock (UTC+3, no daylight saving); null when the note does not
- * say. Named apart from the requests job's helper so the two branches merge without a clash.
- */
-export function formsRunAgeMinutes(note: unknown, now: number): number | null {
-  const m = /started at ([01]\d|2[0-3]):([0-5]\d) Kuwait is still running/.exec(String(note ?? ""));
-  if (!m) return null;
-  const kuwait = new Date(now + 3 * 3_600_000);
-  const nowMinute = kuwait.getUTCHours() * 60 + kuwait.getUTCMinutes();
-  return (nowMinute - (Number(m[1]) * 60 + Number(m[2])) + 1440) % 1440;
-}
 const writesWord = (n: number) => `${n} ${n === 1 ? "write" : "writes"}`;
 const isoAt = (ms: number) => new Date(ms).toISOString();
 
@@ -956,13 +944,18 @@ export async function runForms(deps: Deps, limit = 8): Promise<JobResult> {
   let runId: string | null = null;
   let stop = "";
   let went = "";
+  // The provider's last wording this run, for the tech lead: the row and its effect carry a plain sentence instead.
+  let lastSaid = "";
+  // One check of the token a run is enough once it answers: further 401s in this run are their own cards'.
+  let tokenAnswers = false;
+  const refusedCards = new Set<string>();
   try {
     let run: Row | null = null;
     try {
       // Exclusive: one forms run sends at a time, so the pace covers the whole job (FORMS_BUSY_HELD).
       run = await deps.rpc("cockpit_clickup_writeback_begin", { p_job: "forms", p_mode: g.mode, p_exclusive: true });
-      const age = run?.id ? null : formsRunAgeMinutes(run?.note, deps.now());
-      if (age !== null && age >= FORMS_STALE_RUN_MINUTES) {
+      const age = run?.id ? null : openRunMinutes(run?.note, deps.now());
+      if (age !== null && age >= STALE_RUN_MINUTES) {
         // The open run stopped without reporting back: it no longer holds the job up.
         const since = /started at (\d{2}:\d{2})/.exec(String(run?.note))?.[1] ?? "";
         run = await deps.rpc("cockpit_clickup_writeback_begin", { p_job: "forms", p_mode: g.mode, p_exclusive: false });
@@ -972,7 +965,7 @@ export async function runForms(deps: Deps, limit = 8): Promise<JobResult> {
       run = { note: redact(String(e instanceof Error ? e.message : e)) };
     }
     if (!run?.id) {
-      const busy = formsRunAgeMinutes(run?.note, deps.now()) !== null;
+      const busy = openRunMinutes(run?.note, deps.now()) !== null;
       // Nothing was written: every claimed row goes back at once, its try not counted, instead of staying claimed
       // for ten minutes.
       for (const item of items) await handBack(item, busy ? FORMS_BUSY_HELD : FORMS_NOT_STARTED, 0);
@@ -1013,46 +1006,73 @@ export async function runForms(deps: Deps, limit = 8): Promise<JobResult> {
         // Freeze the write before the first call, so a retry posts exactly the same text.
         if (!item.steps?.length) await save(item.id, { steps: [step] });
         const provider = paced(deps.providerFor(item.id), deps.pace);
-        const o = await executeForm(item, step, provider, async patch => {
+        let o = await executeForm(item, step, provider, async patch => {
           await save(item.id, patch);
         }, deps.now);
+        if (o.tokenRefused) {
+          const check = tokenAnswers ? "good" : await checkToken(provider);
+          tokenAnswers = check === "good";
+          if (check !== "good") {
+            // The token, or no way to tell: the row goes back with no try used and every later row waits. This row
+            // waits out HOLD_MS; the rest are due at once. A bad token costs two calls a run (the refused call and the
+            // check), so the mistake reads not ok until someone fixes it.
+            await save(item.id, { progress: o.progress });
+            stop = check === "refused" ? SAY_FORMS.tokenRefused : check === "slow" ? FORMS_SLOW_DOWN : SAY_FORMS.tokenUnsure;
+            lastSaid = redact(o.error ?? "");
+            counts.held += 1;
+            counts.heldNext += 1;
+            await handBack(item, stop, HOLD_MS);
+            continue;
+          }
+          // The token answers, so this card refuses it: the ladder settles the row and the run goes on (forms.ts).
+          o = cardRefused(o, step.key);
+          if (item.task_id) refusedCards.add(item.task_id);
+        }
         const now = deps.now();
         const tries = Math.max(0, Number(item.attempts ?? 0));
         const gaveUp = o.state !== "delivered" && o.state !== "skipped" && o.state !== "failed" && tries > RETRY_MINUTES.length;
+        // The row's error is what the effect's trail prints (3.6). ClickUp's own wording, or the database's when our
+        // save failed, stays out of it: it goes on progress.lastDetail and in the run's note. A retry row's error
+        // reaches no effect, so it keeps the wording.
+        const closing = o.state === "failed" || o.state === "unknown" || gaveUp;
+        if (closing && o.plain) lastSaid = redact(o.error ?? "");
+        const progress = closing && o.plain ? { ...o.progress, lastDetail: redact(o.error ?? "") } : o.progress;
         const settle: Row =
           o.state === "delivered"
-            ? { state: "delivered", progress: o.progress, delivered_at: isoAt(now), error: null }
+            ? { state: "delivered", progress, delivered_at: isoAt(now), error: null }
             : o.state === "skipped"
-              ? { state: "skipped", progress: o.progress, error: o.error ? redact(o.error) : null }
+              ? { state: "skipped", progress, error: o.error ? redact(o.error) : null }
               : o.state === "failed"
-                ? { state: "failed", progress: o.progress, error: redact(o.error ?? GAVE_UP) }
+                ? { state: "failed", progress, error: redact(o.plain ?? o.error ?? GAVE_UP) }
                 : gaveUp
-                  ? { state: "failed", progress: o.progress, error: redact(`${GAVE_UP} ${o.state === "unknown" ? FORMS_CHECK_CARD : ""} ${o.error ?? ""}`.replace(/\s+/g, " ").trim()) }
+                  ? { state: "failed", progress, error: redact(o.endsAs ?? `${GAVE_UP} ${o.state === "unknown" ? FORMS_CHECK_CARD : ""} ${o.plain ? "" : (o.error ?? "")}`.replace(/\s+/g, " ").trim()) }
                   : {
                       state: o.state,
-                      progress: o.progress,
-                      error: o.error ? redact(o.error) : null,
+                      progress,
+                      error: redact((o.state === "unknown" ? o.plain : undefined) ?? o.error ?? "") || null,
                       next_attempt_at: isoAt(now + RETRY_MINUTES[Math.min(Math.max(tries - 1, 0), RETRY_MINUTES.length - 1)] * 60_000),
                     };
         await save(item.id, settle);
         const settled = settle.state as "delivered" | "skipped" | "failed" | "retry" | "unknown";
         counts[settled] += 1;
-        if (settled === "retry" || settled === "unknown") {
-          if (o.stop) stop = redact(o.error ?? "A provider secret is missing.");
-          // A 429 on the token every caller shares: stop calling ClickUp for the rest of this run.
-          else if (/rejected the request \(429/.test(o.error ?? "")) stop = FORMS_SLOW_DOWN;
-        }
+        // Whatever the row settled as, its last rung included: a 429 on the token every caller shares, or a missing
+        // secret, stops ClickUp calls for the rest of this run.
+        if (o.stop) stop = redact(o.error ?? "A provider secret is missing.");
+        else if (/rejected the request \(429/.test(o.error ?? "")) stop = FORMS_SLOW_DOWN;
       } catch (e) {
         // Our own bookkeeping failed. The write may have reached ClickUp, so it is read back next time.
         counts.unknown += 1;
-        await save(item.id, { state: "unknown", error: redact(String(e instanceof Error ? e.message : e)), next_attempt_at: isoAt(deps.now() + 60_000) }).catch(() => {});
+        lastSaid = redact(String(e instanceof Error ? e.message : e));
+        await save(item.id, { state: "unknown", error: SAY.bookkeeping, next_attempt_at: isoAt(deps.now() + 60_000) }).catch(() => {});
       }
     }
     const toRetry = counts.retry + counts.unknown;
     const tail = [
       counts.skipped ? `${counts.skipped} kept as ClickUp has them.` : "",
       went,
+      refusedCards.size ? `ClickUp refused the cockpit's token on ${refusedCards.size === 1 ? "card" : "cards"} ${[...refusedCards].join(", ")}.` : "",
       stop ? `Stopped: ${stop}` : "",
+      lastSaid ? `Last detail: ${lastSaid}` : "",
     ].filter(Boolean).join(" ");
     const heldNext = counts.heldNext ? ` ${writesWord(counts.heldNext)} held for the next run.` : "";
     const note = !g.apply

@@ -34,14 +34,28 @@ CHANGE_GAP_DAYS = 3
 LATE_DAYS = 14
 KICKOFF_GRACE_MIN = 30
 RUNBOOK = "hermes/csm-calls/RUNBOOK.md"
+RECORD_KEY = "csm-forms-record"
 
 
 def _tight(s: object) -> str:
     return re.sub(r"[^\w]", "", str(s or "").lower())
 
 
+def _record_errors(r: dict | None) -> str | None:
+    """The sentence for rows the forms record sweep could not record on its last read, or None. The row stays ok on
+    purpose (Z15), so without this a sweep that fails on every row would read as synced on time. A row that failed reads
+    as failed, and a count that is not a whole number is not read, never taken as 0 or as errors."""
+    detail = r.get("detail") if r and r.get("ok") is True and isinstance(r.get("detail"), dict) else {}
+    n = detail.get("errors")
+    if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
+        return None
+    code = detail.get("firstError")
+    first = f" (first error {code})" if isinstance(code, str) and re.fullmatch(r"[0-9A-Z]{5}", code) else ""
+    return f"{n} kickoff or Blueprint row{' was' if n == 1 else 's were'} not recorded in the forms tables on the last read{first}"
+
+
 def run_freshness(ctx: Context) -> Result:
-    rows = {r.get("key"): r for r in ctx.rows("cockpit_sync_state", "key,ok,note,last_run_at,last_ok_at",
+    rows = {r.get("key"): r for r in ctx.rows("cockpit_sync_state", "key,ok,note,detail,last_run_at,last_ok_at",
                                               where=[("key", "in", list(CSM_KEYS))])}
     problems, names, since = [], [], []
     for key, (limit, label) in CSM_KEYS.items():
@@ -60,12 +74,24 @@ def run_freshness(ctx: Context) -> Result:
             since.append(parse_time(r.get("last_ok_at")) or parse_time(r.get("last_run_at")))
     ev = {k: {"ok": r.get("ok"), "last_ok_at": r.get("last_ok_at"), "note": clean(r.get("note"), 160)}
           for k, r in rows.items()}
+    not_recorded = _record_errors(rows.get(RECORD_KEY))
+    if not_recorded:
+        ev[RECORD_KEY]["errors"] = rows[RECORD_KEY]["detail"]["errors"]
     if problems:
+        if not_recorded:
+            problems.append(not_recorded)
+            names.append(f"{RECORD_KEY}-errors")
         known = [t for t in since if t is not None]
         return fail("CSM call sync: " + "; ".join(problems) + ".", since=min(known) if known else None,
                     evidence=ev, items=sorted(names),
                     action=f"Read ~/.csm-calls/cron.log on the VPS and the row's note; {RUNBOOK} says how to rerun "
                            "each source.")
+    if not_recorded:
+        return warn(f"CSM call sync: {not_recorded}; every source synced on time.", evidence=ev,
+                    items=[f"{RECORD_KEY}-errors"],
+                    action="Read csm-forms-record's note. Nothing was sent and the next read tries again; still there an "
+                           "hour later, the root RUNBOOK's Kickoff and Blueprint records section has the two queries that "
+                           "find the row.")
     return ok(f"All {len(CSM_KEYS)} CSM call sources synced on time.", evidence=ev)
 
 
@@ -213,11 +239,16 @@ def run_notes_parity(ctx: Context) -> Result:
     the switch-over, compares them with Typeform fRokTITH on every client row (data.notesFrom, data.notesParity). G6
     needs 7 clean days; cleanSince is the time since which no client has read differs.
 
-    Exactly the contract's four readings, so an incident of this check means only that the notes differ: G6 counts
-    every csm-notes-parity incident of the last 7 days. Whether the feed publishes at all is not this check's
-    question: native-source-producer fails after 90 minutes without a publication, and G6 itself holds while the
-    newest client row (max source_snapshot_at) is over an hour old. The publish time is read as evidence only."""
+    Exactly the contract's four readings of rows that exist, so a warn incident of this check means the notes differ:
+    G6 counts those of the last 7 days and leaves out one at level unknown, which only could not read. No client row
+    at all is that case: it says nothing about N4, and an ok would clear an open incident. Whether the feed publishes at
+    all is not this check's question: native-source-producer fails after 90 minutes without a publication, and G6
+    itself holds while the newest client row (max source_snapshot_at) is over an hour old. The publish time is read as
+    evidence only."""
     raw = ctx.rows("cockpit_csm_sources", "data,source_snapshot_at", where=[("table_name", "eq", "clients")])
+    if not raw:
+        return unknown("The client roster lists no client, so the 1-1 notes cannot be compared.",
+                       evidence={"clients": 0})
     pairs = [(r.get("data"), r.get("source_snapshot_at")) for r in raw]
     pairs = [(d, at) for d, at in pairs if isinstance(d, dict) and d.get("notesFrom")]
     rows = [d for d, _ in pairs]
@@ -428,7 +459,8 @@ CHECKS = [
     Check(id="csm-calls-sync", area="workers", name="CSM call sync",
           means="Calls, call forms, recordings and media buyer changes reach the client success cockpit.",
           severity="high", reads="cockpit_sync_state keys " + ", ".join(CSM_KEYS),
-          threshold="Any key with ok false, never run, or no good run within 45 min (26 h for csm-reconcile): fail.",
+          threshold="Any key with ok false, never run, or no good run within 45 min (26 h for csm-reconcile): fail. "
+                    f"{RECORD_KEY} detail.errors above 0: warn.",
           run=run_freshness, owner="Hermes", confirm=2,
           action=f"Read ~/.csm-calls/cron.log; {RUNBOOK}."),
     Check(id="csm-calls-coverage", area="workers", name="Every live client has a recent call",
@@ -455,8 +487,8 @@ CHECKS = [
                 "until the switch-over, for seven clean days before it.",
           severity="medium",
           reads="cockpit_csm_sources clients: data.notesFrom and data.notesParity (source_snapshot_at as evidence only)",
-          threshold="Any client whose notes read differs: warn. A feed that stops publishing is native-source-producer's "
-                    "question, not this one's.",
+          threshold="Any client whose notes read differs: warn. No client row at all: unknown, never ok. A feed that "
+                    "stops publishing is native-source-producer's question, not this one's.",
           run=run_notes_parity, owner="the tech lead", confirm=3, action=PARITY_ACTION),
     Check(id="csm-fathom-webhook", area="workers", name="Fathom webhook delivers",
           means="Fathom pushes each Customer Success recording to the cockpit within minutes of the call.",

@@ -437,7 +437,8 @@ Stage 2b (`docs/forms/STAGE2B-CONTRACT.md`, dark until the cut-over) adds
 `edge-functions` and `mahara-clickup-writeback-forms` (20261029t, every minute)
 to `pg-cron-jobs`; `native-jobs` also reads `clickup-writeback:forms` (15 min: an
 idle writer reports every ten), `forms-effects-kick` (10 min) and
-`csm-forms-record` (45 min), and `csm-calls-sync` reads `csm-forms-record`. All
+`csm-forms-record` (45 min), and `csm-calls-sync` reads `csm-forms-record`,
+warning when its `detail.errors` is above 0 (the row stays ok on purpose, Z15). All
 of it fails until deploy steps D5, D8, D11 and D13 ran, so this copy lands at
 D15, after them. Every 2b row is report-only. `csm-impromptu-notes` and the late
 reading of `csm-checkin-form` count nothing before the cut-over. The `client-messages`
@@ -459,13 +460,14 @@ waits on a person in Messages by design (Z36).
 | `native-jobs` | C3 | ok false, or older than 3 times its interval (45 min at least): fail. `clickup-writeback:kpi` and `:dosdonts` run only 03:00-19:00 UTC, so only those hours count. |  |
 | `native-sources` | C7 | Any ok false: fail. |  |
 | `ask-ai-queue` | H12 | Jobs waiting while nothing finished for 20 min: fail; 10 or more new failures in an hour: warn. |  |
-| `csm-fathom-webhook` |  | Registered, a Customer Success recording first seen in the last 24 h that holds a summary and is shared with a team, and no stored delivery in 24 h: warn. |  |
-| `csm-notes-parity` |  | Any client whose 1-1 notes from the store read `differs` from Typeform: warn (confirm 3). No `notesFrom` on the client rows reads ok (release N4 not live); all `off` reads ok (the notes are native); otherwise ok with the day of 7 counted from `notesParity.cleanSince` (G6, `docs/forms/STAGE2B-CONTRACT.md` 4.4). Only these four readings: G6 counts every incident of this check in 7 days, so its incidents mean only that the notes differ. A feed that stops publishing is `native-source-producer`'s (fail after 90 min), and G6 also holds while the newest `source_snapshot_at` is over an hour old; the publish time shows here as evidence only. |  |
 | `csm-checkin-form` |  | Older than 7 days, or any 1-1 notes that arrived in Typeform after the switch-over: warn. |  |
+| `csm-notes-parity` |  | Any client whose 1-1 notes from the store read `differs` from Typeform: warn (confirm 3). No `notesFrom` on the client rows reads ok (release N4 not live); all `off` reads ok (the notes are native); otherwise ok with the day of 7 counted from `notesParity.cleanSince` (G6, `docs/forms/STAGE2B-CONTRACT.md` 4.4). Only these four readings of rows that exist: G6 counts every incident of this check in 7 days, so its incidents mean only that the notes differ. No client row at all reads unknown, never ok: it could not compare, it clears nothing, and G6 leaves it out. A feed that stops publishing is `native-source-producer`'s (fail after 90 min), and G6 also holds while the newest `source_snapshot_at` is over an hour old; the publish time shows here as evidence only. |  |
+| `csm-fathom-webhook` |  | Registered, a Customer Success recording first seen in the last 24 h that holds a summary and is shared with a team, and no stored delivery in 24 h: warn. |  |
 | `csm-impromptu-notes` |  | Any such candidate not gone and not set aside: warn. Before the cut-over: ok. |  |
 | `forms-kickoff-webhook` |  | Registered, and a kickoff of the last 24 h since registering, over 30 min old, stored by the read and not the webhook: warn. Not registered: ok. |  |
-| `client-messages` |  | No run for 10 min once the row exists, or ok false without a hold: fail; approved recaps held (detail.held, either mode), provider calls whose answer the health ledger lost (detail.receiptsMissing above 0, either mode) or a mode other than dry or apply: warn. No row (before deploy D14): ok. |  |
-| `client-messages-read-back` |  | A sent recap with no read-back after 60 min: warn. |  |
+| `client-messages` |  | No run for 10 min once the row exists, or ok false without a hold: fail; approved recaps held (detail.held, written only in apply mode), provider calls whose answer the health ledger lost (detail.receiptsMissing above 0, either mode) or a mode other than dry or apply: warn. No row (before deploy D14): ok. |  |
+| `client-messages-read-back` |  | A sent recap with no read-back, 60 min to 24 h after it was sent: warn. |  |
+| `client-messages-read-back-stopped` |  | A sent recap with no read-back, 24 to 48 h after it was sent: warn, carried by one daily summary. Older ones are counted in the reading only. |  |
 | `client-messages-g5` |  | Anything but ok with the note same number: warn. |  |
 | `vps-memory` | H7 | Under 1024 MB available: warn; under 700 MB: fail (urgent with no swap); 3 scans in a row; clears only above 1536 MB, two scans in a row. |  |
 | `vps-tunnels` |  | More than 50: warn. |  |

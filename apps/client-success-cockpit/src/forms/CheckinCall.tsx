@@ -606,7 +606,6 @@ function MoveHere({
             </Button>
           </AlertDialogTrigger>
           <AlertDialogContent
-            className="motion-reduce:animate-none!"
             onOpenAutoFocus={e => {
               e.preventDefault();
               keepRef.current?.focus();
@@ -625,10 +624,13 @@ function MoveHere({
               <Button
                 ref={keepRef}
                 variant="outline"
-                // Rests while the move runs: dimmed, the pointer says no.
+                // Rests while the move runs: dimmed, the pointer says no. A long
+                // client name wraps inside the dialog: this is the safe answer,
+                // so its name is never cut off.
                 className={cn(
                   FOCUS,
                   "aria-disabled:cursor-not-allowed aria-disabled:opacity-60",
+                  "h-auto min-h-9 whitespace-normal py-2 text-center",
                 )}
                 aria-disabled={busy || undefined}
                 onClick={() => {
@@ -636,7 +638,7 @@ function MoveHere({
                 }}
               >
                 {/* One flex item, so the button's gap never splits the words. */}
-                <span>
+                <span className="min-w-0 break-words">
                   Keep it on <bdi>{other}</bdi>
                 </span>
               </Button>
@@ -678,9 +680,14 @@ function Row({
 }) {
   const blocked = blockedOf(v);
   // One that cannot be picked says why instead of its why line; a
-  // recording with no sign for this client has no why line.
+  // recording with no sign for this client has no why line. The door does not
+  // know about a rehearsal, so its "move it here" is replaced while the button
+  // is off: never an instruction with no control to carry it out.
   const said =
-    blocked ?? whySentence(v, m.seat, m.client?.name ?? "").replace(ASK, "");
+    v.movable && m.rehearse
+      ? `On ${v.otherClient || "another client"}. Moving a recording is off in a rehearsal.`
+      : (blocked ??
+        whySentence(v, m.seat, m.client?.name ?? "").replace(ASK, ""));
   // Who recorded it, unless the why line already says so ("The sales
   // closer's recording ..."). A disabled row always keeps it: a refusal
   // sentence never names the recorder, and every one says "ask an admin",
@@ -711,13 +718,18 @@ function Row({
           current
             ? "bg-primary/10 ring-1 ring-inset ring-primary/40"
             : "hover:bg-muted/60 active:bg-muted",
-          blocked && "opacity-70",
         )}
       >
         <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          {/* Only the title quiets on a row that cannot be picked: its sentence
+              says why (and what to do), so it keeps the muted ink's full
+              contrast. A faded row read 3.2:1 on the light sheet. */}
           <span
             id={`${id}-title`}
-            className="min-w-0 text-sm font-medium"
+            className={cn(
+              "min-w-0 text-sm font-medium",
+              blocked && "text-muted-foreground",
+            )}
             dir="auto"
           >
             {v.kind === "booking"

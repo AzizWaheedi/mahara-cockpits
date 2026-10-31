@@ -39,6 +39,12 @@ import {
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import type { PGlite } from "@electric-sql/pglite";
+import { SAY_FORMS } from "../../../supabase/functions/clickup-writeback/forms.ts";
+import {
+  type Deps,
+  HOLD_MS,
+  runForms,
+} from "../../../supabase/functions/clickup-writeback/run.ts";
 import { cockpitTestDb, member, migration } from "./lib/cockpitTestDb";
 
 // Keep direct, ship and readiness runs consistent on busy build hosts.
@@ -1060,6 +1066,85 @@ describe("the drift guard (2.1, Z61)", () => {
       );
     });
   });
+
+  test("each CHECK's guard refuses a CHECK it did not read, and widens only the one it read", async () => {
+    const block = () =>
+      cut(
+        migration(WRITEBACK),
+        /DO \$\$\nDECLARE\n {2}v_def text;[\s\S]*?\nEND \$\$;/,
+        "the CHECK guard",
+      );
+    const checks = [
+      {
+        table: "public.cockpit_clickup_writeback_queue",
+        name: "cockpit_clickup_writeback_queue_kind_check",
+        column: "kind",
+        read: [
+          "decision",
+          "manual_change",
+          "provider_action",
+          "tracking_backlog",
+          "billing",
+          "request",
+          "task_action",
+        ],
+        added: "form",
+      },
+      {
+        table: "public.cockpit_clickup_writeback_runs",
+        name: "cockpit_clickup_writeback_runs_job_check",
+        column: "job",
+        read: ["kpi", "log", "dosdonts", "requests"],
+        added: "forms",
+      },
+    ];
+    for (const c of checks) {
+      const where = `conrelid = '${c.table}'::regclass AND conname = '${c.name}'`;
+      const row = async () =>
+        (
+          await q<{ def: string; oid: string }>(
+            `SELECT pg_get_constraintdef(oid) AS def, oid::text AS oid FROM pg_constraint WHERE ${where}`,
+          )
+        )[0];
+      const list = async (values: string[]) => {
+        await q(`ALTER TABLE ${c.table} DROP CONSTRAINT IF EXISTS ${c.name}`);
+        await q(
+          `ALTER TABLE ${c.table} ADD CONSTRAINT ${c.name}
+             CHECK (${c.column} IN (${values.map(v => `'${v}'`).join(",")}))`,
+        );
+      };
+      const refused = {
+        code: "55000",
+        message: `${c.name} changed since the 2b contract read it; stop and re-read it.`,
+      };
+      const stops = async () => {
+        const r = await refusal("owner", block());
+        expect({ code: r.code, message: r.message }).toEqual(refused);
+      };
+      const widened = `CHECK ((${c.column} = ANY (ARRAY[${[...c.read, c.added].map(v => `'${v}'::text`).join(", ")}])))`;
+      await rolledBack(async () => {
+        // Already widened: nothing is dropped.
+        const before = await row();
+        expect(before?.def).toBe(widened);
+        await q(block());
+        expect((await row())?.oid).toBe(before?.oid);
+        // What the contract read is widened.
+        await list(c.read);
+        await q(block());
+        expect((await row())?.def).toBe(widened);
+        // Another session's value stays, and the file stops.
+        await list([...c.read, "another_session"]);
+        const theirs = (await row())?.def;
+        await stops();
+        expect((await row())?.def).toBe(theirs);
+        await list([...c.read, c.added, "another_session"]);
+        await stops();
+        // No constraint at all is not what the contract read either.
+        await q(`ALTER TABLE ${c.table} DROP CONSTRAINT ${c.name}`);
+        await stops();
+      });
+    }
+  });
 });
 
 describe("the log claim never takes a form row", () => {
@@ -1699,6 +1784,272 @@ describe.skipIf(!(HAS_S && HAS_W))(
           ],
         );
         expect((await effectRow(effectId)).state).toBe("delivered");
+      });
+    });
+  },
+);
+
+describe.skipIf(!(HAS_S && HAS_W))(
+  "runForms over the real SQL: a bad token, the stop and the trail's reason (finish review)",
+  () => {
+    const CASTS: Record<string, string> = {
+      p_id: "uuid",
+      p_token: "uuid",
+      p_run: "uuid",
+      p_limit: "integer",
+      p_patch: "jsonb",
+      p_planned: "jsonb",
+      p_counts: "jsonb",
+      p_only_cards: "text[]",
+      p_next_attempt_at: "timestamptz",
+      p_note: "text",
+      p_mode: "text",
+      p_job: "text",
+      p_ok: "boolean",
+      p_exclusive: "boolean",
+    };
+    /** The writer's own run, its RPCs over the service role and ClickUp a stand-in that answers `answer`. */
+    function writer(answer: (method: string, path: string) => Error | Row) {
+      const calls: string[] = [];
+      let n = 0;
+      const deps: Deps = {
+        env: k =>
+          ({ CLICKUP_API_TOKEN: "x", CLICKUP_WRITEBACK_APPLY_FORMS: "true" })[
+            k
+          ],
+        now: () => Date.now(),
+        uuid: () => nextId("7a900000"),
+        rpc: async (name, params = {}) => {
+          const keys = Object.keys(params);
+          const args = keys.map(
+            (k, i) => `${k} := $${i + 1}::${CASTS[k] ?? "text"}`,
+          );
+          const values = keys.map(k => {
+            const v = (params as Row)[k];
+            return CASTS[k] === "jsonb" ? JSON.stringify(v) : v;
+          });
+          return svc(`SELECT public.${name}(${args.join(", ")}) AS r`, values);
+        },
+        providerFor: () => ({
+          call: async (_p, method, path) => {
+            calls.push(`${method} ${path}`);
+            n += 1;
+            const said = answer(method, path);
+            if (said instanceof Error) throw said;
+            return said;
+          },
+        }),
+      };
+      return { deps, calls, count: () => n };
+    }
+    const openRows = async (ids: string[]) =>
+      Promise.all(ids.map(id => queueRow(id)));
+
+    test("one 401 the check of the token confirms: two calls, settles nothing, every row stays open, its tries and its effect untouched", async () => {
+      await rolledBack(async () => {
+        await clearLanes();
+        await owners("cockpit");
+        await mode("apply");
+        const rows = await fourRows(await response(A), A, 5);
+        const w = writer(
+          () => new Error("clickup rejected the request (401): Token invalid"),
+        );
+        const before = Date.now();
+        const out = await runForms(w.deps);
+        expect(w.calls).toEqual([
+          `POST task/${A}/comment`,
+          "GET list/901816559981/field",
+        ]);
+        expect(out.ok).toBe(false);
+        expect(out.counts).toMatchObject({
+          claimed: 4,
+          failed: 0,
+          delivered: 0,
+          held: 4,
+          heldNext: 4,
+        });
+        const ids = ORDER.map(k => rows[k].queueId);
+        for (const row of await openRows(ids))
+          expect(row).toMatchObject({
+            state: "queued",
+            attempts: 0,
+            error: SAY_FORMS.tokenRefused,
+            claim_token: null,
+          });
+        // The refused row waits; the rest are due at once, so one refused card never heads the queue.
+        const [first, ...rest] = await openRows(ids);
+        expect(Date.parse(first.next_attempt_at)).toBeGreaterThanOrEqual(
+          before + HOLD_MS - 5_000,
+        );
+        for (const row of rest)
+          expect(Date.parse(row.next_attempt_at)).toBeLessThanOrEqual(
+            Date.now() + 5_000,
+          );
+        for (const k of ORDER)
+          expect((await effectRow(rows[k].effectId)).state).toBe("queued");
+        const [state] = await q(
+          "SELECT ok, note FROM public.cockpit_sync_state WHERE key = 'clickup-writeback:forms'",
+        );
+        expect(state.ok).toBe(false);
+        expect(state.note).toContain(SAY_FORMS.tokenRefused);
+      });
+    });
+
+    test("a 401 on one card while the token answers: the ladder ends each row failed with the plain sentence, and the newer response behind it moves", async () => {
+      await rolledBack(async () => {
+        await clearLanes();
+        await owners("cockpit");
+        await mode("apply");
+        const rows = await fourRows(await response(A), A, 20);
+        const newer = await fourRows(await response(A), A, 5);
+        const w = writer((_m, path) =>
+          path.startsWith("list/")
+            ? { fields: [] }
+            : new Error(
+                "clickup rejected the request (401): Team not authorized",
+              ),
+        );
+        const ids = ORDER.map(k => rows[k].queueId);
+        const dueNow = async () => {
+          for (const id of ids)
+            await q(
+              "UPDATE public.cockpit_clickup_writeback_queue SET next_attempt_at = now() - interval '1 minute' WHERE id = $1 AND state = 'retry'",
+              [id],
+            );
+        };
+        // Five tries climb the ladder: each uses a try, the effect stays queued, and the token is never blamed.
+        for (let tries = 1; tries <= 5; tries += 1) {
+          const out = await runForms(w.deps);
+          expect(out.ok).toBe(true);
+          expect(out.counts).toMatchObject({ claimed: 4, retry: 4, held: 0 });
+          expect(out.note).not.toContain("CLICKUP_API_TOKEN");
+          for (const row of await openRows(ids))
+            expect(row).toMatchObject({ state: "retry", attempts: tries });
+          for (const k of ORDER)
+            expect((await effectRow(rows[k].effectId)).state).toBe("queued");
+          for (const k of ORDER)
+            expect(await queueRow(newer[k].queueId)).toMatchObject({
+              state: "queued",
+              attempts: 0,
+            });
+          await dueNow();
+        }
+        // The sixth claim is the ladder's end.
+        const last = await runForms(w.deps);
+        expect(last.ok).toBe(false);
+        expect(last.counts).toMatchObject({ claimed: 4, failed: 4 });
+        for (const row of await openRows(ids))
+          expect(row).toMatchObject({
+            state: "failed",
+            error: SAY_FORMS.cardRefused,
+          });
+        for (const k of ORDER)
+          expect(await effectRow(rows[k].effectId)).toMatchObject({
+            state: "failed",
+            reason: SAY_FORMS.cardRefused,
+          });
+        // The lane is open: the newer response's rows are claimed on the next run.
+        const after = await runForms(w.deps);
+        expect(after.counts).toMatchObject({ claimed: 4 });
+        for (const k of ORDER)
+          expect((await queueRow(newer[k].queueId)).attempts).toBe(1);
+      });
+    });
+
+    test("a 401 on a card and the check says the token too: the row keeps its try, on the last rung as well", async () => {
+      await rolledBack(async () => {
+        await clearLanes();
+        await owners("cockpit");
+        await mode("apply");
+        const rows = await fourRows(await response(A), A, 5);
+        const id = rows.todo_comment.queueId;
+        await q(
+          "UPDATE public.cockpit_clickup_writeback_queue SET attempts = 5 WHERE id = $1",
+          [id],
+        );
+        const out = await runForms(
+          writer(
+            () =>
+              new Error("clickup rejected the request (401): Token invalid"),
+          ).deps,
+        );
+        expect(out.counts).toMatchObject({ failed: 0, heldNext: 4 });
+        expect(await queueRow(id)).toMatchObject({
+          state: "queued",
+          attempts: 5,
+          error: SAY_FORMS.tokenRefused,
+        });
+      });
+    });
+
+    test("a 500 on the comment: the effect's reason is plain, ClickUp's wording stays on the row's progress and in the run's note", async () => {
+      await rolledBack(async () => {
+        await clearLanes();
+        await owners("cockpit");
+        await mode("apply");
+        const rows = await fourRows(await response(A), A, 5);
+        const said =
+          "clickup rejected the request (500). Inspect the provider receipt.";
+        const out = await runForms(writer(() => new Error(said)).deps);
+        const comment = await queueRow(rows.todo_comment.queueId);
+        expect(comment).toMatchObject({
+          state: "unknown",
+          error: SAY_FORMS.notConfirmed,
+        });
+        expect(comment.progress.lastDetail).toBe(said);
+        const effect = await effectRow(rows.todo_comment.effectId);
+        expect(effect).toMatchObject({
+          state: "unknown",
+          reason: SAY_FORMS.notConfirmed,
+        });
+        expect(effect.reason).not.toMatch(
+          /rejected the request|provider receipt/,
+        );
+        expect(out.note).toContain(`Last detail: ${said}`);
+        // A card read ClickUp never answered: a plain retry, whose wording reaches no effect.
+        expect(await queueRow(rows.happiness.queueId)).toMatchObject({
+          state: "retry",
+          error: said,
+        });
+        expect(await effectRow(rows.happiness.effectId)).toMatchObject({
+          state: "queued",
+        });
+      });
+    });
+
+    test("a 429 on a row's last rung fails it in plain words and still stops the run: the next row keeps its try", async () => {
+      await rolledBack(async () => {
+        await clearLanes();
+        await owners("cockpit");
+        await mode("apply");
+        const rows = await fourRows(await response(A), A, 5);
+        await q(
+          "UPDATE public.cockpit_clickup_writeback_queue SET attempts = 5 WHERE id = $1",
+          [rows.todo_comment.queueId],
+        );
+        const w = writer(
+          () =>
+            new Error("clickup rejected the request (429): Rate limit reached"),
+        );
+        const out = await runForms(w.deps);
+        expect(w.calls).toEqual([`POST task/${A}/comment`]);
+        expect(await queueRow(rows.todo_comment.queueId)).toMatchObject({
+          state: "failed",
+          attempts: 6,
+          error: "Gave up after the retry ladder.",
+        });
+        expect(await effectRow(rows.todo_comment.effectId)).toMatchObject({
+          state: "failed",
+          reason: "Gave up after the retry ladder.",
+        });
+        expect(await queueRow(rows.happiness.queueId)).toMatchObject({
+          state: "queued",
+          attempts: 0,
+        });
+        expect(out.counts).toMatchObject({ failed: 1, heldNext: 3 });
+        expect(out.note).toContain(
+          "Stopped: ClickUp asked the cockpit to slow down (429)",
+        );
       });
     });
   },

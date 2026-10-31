@@ -17,7 +17,9 @@
  * or none, the inherited kind dropped, the queue row resolved, one match
  * audit and one csm.recording_moved row; after a move the tie rule and the
  * CSM's save take the recording on its new client and not on its old one;
- * the switch read; the settings audit for seed, set and removal; grants.
+ * the drafts naming the recording held before the call row, with the send
+ * after the move refused; the switch read; the settings audit for seed, set
+ * and removal; grants.
  * The CEO's address is read from the CEO gate migration, never written here;
  * every other person, client, recording and room is invented.
  */
@@ -1054,6 +1056,81 @@ describe("cockpit_csm_move_recording", () => {
           message: sentence,
         });
       expect(await written()).toEqual(before);
+    });
+  });
+
+  test("a move holds the drafts naming the recording before its call row, so a send in flight is waited for and a later send is refused", async () => {
+    await rolledBack(async () => {
+      await switchOn(true);
+      const r = await recording();
+      const other = await recording();
+      const draft = async (seat: string, rec: string) =>
+        (
+          await q<{ id: string }>(
+            `INSERT INTO public.cockpit_form_responses(form_key, form_version, source, task_id, client_name, mode, state, answers,
+               created_by, created_by_id)
+             VALUES ('checkin', 1, 'cockpit', $1, 'Acme Interiors', 'shadow', 'draft', $2::jsonb, 'csm@tests.invalid', $3::uuid)
+             RETURNING id`,
+            [
+              A,
+              JSON.stringify({
+                call: {
+                  kind: "fathom",
+                  recordingId: rec,
+                  why: "picked",
+                  confirmed: true,
+                },
+                defcon: "At Risk",
+                priority: "Invented priority",
+              }),
+              seat,
+            ],
+          )
+        )[0].id;
+      // A row lock leaves xmax set, even for the transaction that took it, and
+      // PGlite's one connection cannot show the wait itself.
+      const held = (id: string) =>
+        one<boolean>(
+          "SELECT xmax::text <> '0' AS r FROM public.cockpit_form_responses WHERE id = $1::uuid",
+          [id],
+        );
+      const mine = await draft(CSM, r.rec);
+      const second = await draft(ADMIN, r.rec);
+      const elsewhere = await draft(CEO, other.rec);
+      expect(await held(mine)).toBe(false);
+
+      await move(ADMIN, r.rec, B);
+      expect(await held(mine)).toBe(true);
+      expect(await held(second)).toBe(true);
+      expect(await held(elsewhere)).toBe(false);
+
+      // The lock comes first: the send holds its response, then the attach
+      // takes the call row, so the other order could deadlock with it.
+      const body = await one<string>(
+        "SELECT p.prosrc AS r FROM pg_proc p WHERE p.proname = 'cockpit_csm_move_recording'",
+      );
+      const drafts = body.indexOf("r.state = 'draft'");
+      expect(drafts).toBeGreaterThan(0);
+      expect(drafts).toBeLessThan(body.indexOf("public.cockpit_csm_calls x"));
+
+      // The send that was waiting on that lock now reads the moved recording.
+      expect(
+        await refusal(() =>
+          as(CSM, "SELECT public.cockpit_form_submit($1::uuid, NULL) AS r", [
+            mine,
+          ]),
+        ),
+      ).toEqual({
+        code: "22023",
+        message:
+          "That recording is on Beta Build. If that is wrong, ask an admin to move it.",
+      });
+      expect(
+        await one(
+          "SELECT state AS r FROM public.cockpit_form_responses WHERE id = $1::uuid",
+          [mine],
+        ),
+      ).toBe("draft");
     });
   });
 

@@ -231,6 +231,43 @@ describe("O1a: the focus ring", () => {
   });
 });
 
+describe("what the 2b screens' first look found (2026-10-30)", () => {
+  test("the warning callout's words are 4.5:1 or more on its own tint, on the page and on a card, in both themes", () => {
+    const rule = /\.callout-warn \{([^}]+)\}/.exec(css)?.[1] ?? "";
+    const value = (prop: string, theme: Record<string, string>) => {
+      const raw = new RegExp(`(?:^|\\s)${prop}:\\s*([^;]+);`).exec(rule)?.[1];
+      if (!raw) throw Error(`.callout-warn has no ${prop}`);
+      return raw.replace(/var\((--[\w-]+)\)/g, (_, n) => token(theme, n));
+    };
+    // --warning is Tailwind's orange, which index.css does not hold.
+    const ORANGE = {
+      "--color-orange-500": "oklch(0.705 0.213 47.604)",
+      "--color-orange-400": "oklch(0.75 0.183 55.934)",
+    };
+    for (const [name, base] of Object.entries(THEMES)) {
+      const theme = { ...base, ...ORANGE };
+      const tint = parse(value("background-color", theme));
+      const ink = parse(value("color", theme)).rgb;
+      for (const where of ["page", "card"] as const) {
+        const r = contrast(ink, over(tint, surfaces(theme)[where]));
+        expect([name, where, r >= 4.5]).toEqual([name, where, true]);
+      }
+    }
+  });
+
+  test("a sheet's close control is a 40 px target around its icon; a full-width sheet has no overlay left to tap", () => {
+    expect(read("src/components/ui/sheet.tsx")).toContain(
+      "before:absolute before:-inset-3",
+    );
+  });
+
+  test("the recap's state line takes focus with its ring off the first letter", () => {
+    expect(read("src/forms/RecapApproval.tsx")).toContain(
+      "-mx-1.5 flex gap-2 rounded-sm px-1.5 text-sm outline-none",
+    );
+  });
+});
+
 describe("O1b: outside links", () => {
   test("LINK_INK is the ink teal mixed 90% with the text colour, and PANEL_INK is the same string", () => {
     expect(LINK_INK).toBe(
@@ -287,13 +324,9 @@ describe("O1b: outside links", () => {
       .filter(f => readFileSync(f, "utf8").match(drops))
       .map(f => relative(app, f))
       .sort();
-    // Outside the files 2b may change; each moves on its owner's next pass.
-    // Nothing else may join them.
-    const later = [
-      "src/components/OnboardingKit.tsx",
-      "src/forms/FormPanel.tsx",
-      "src/present/KickoffSlide.tsx",
-    ];
+    // Outside the files 2b may change; it moves on its owner's next pass.
+    // Nothing else may join it.
+    const later = ["src/forms/FormPanel.tsx"];
     expect(found.filter(f => !later.includes(f))).toEqual([]);
   });
 });
@@ -319,6 +352,10 @@ describe("O1c: reduced motion", () => {
       2,
     );
     has("src/components/ui/tooltip.tsx", "motion-reduce:animate-none!");
+    // Its overlay and its content, in the one place both are built, so the
+    // Move confirm needs no class of its own.
+    has("src/components/ui/alert-dialog.tsx", "motion-reduce:animate-none!", 2);
+    has("src/forms/CheckinCall.tsx", "motion-reduce:animate-none!", 0);
   });
 });
 

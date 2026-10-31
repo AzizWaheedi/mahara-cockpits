@@ -135,6 +135,81 @@ describe("what may leave", () => {
     expect(half.state.failures).toBe(1);
   });
 
+  test("the body is read before the response receipt, and the caller gets the same status, headers and bytes", async () => {
+    const order: string[] = [];
+    const net = fake(
+      () =>
+        new Response(
+          new ReadableStream(
+            {
+              pull(c) {
+                order.push("body read");
+                c.enqueue(new TextEncoder().encode('{"sent":true}'));
+                c.close();
+              },
+            },
+            { highWaterMark: 0 },
+          ),
+          { status: 201, headers: { "X-Invented": "kept" } },
+        ),
+    );
+    const ledger = ledgerFetch({
+      insert: async r => void order.push(r.phase),
+      runKey: "client-messages:m1",
+      fetch: net.fetch,
+    });
+    const res = await ledger.fetch("https://gate.whapi.cloud/health");
+    expect(order).toEqual(["intent", "body read", "response"]);
+    expect(res.status).toBe(201);
+    expect(res.headers.get("X-Invented")).toBe("kept");
+    expect(await res.json()).toEqual({ sent: true });
+  });
+
+  test("a status that may not carry a body comes back without one", async () => {
+    const rows: Receipt[] = [];
+    const ledger = ledgerFetch({
+      insert: async r => void rows.push(r),
+      runKey: "client-messages:m1",
+      fetch: fake(() => new Response(null, { status: 204 })).fetch,
+    });
+    const res = await ledger.fetch("https://gate.whapi.cloud/health");
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe("");
+    expect(rows.map(r => `${r.phase} ${r.http_status}`)).toEqual([
+      "intent null",
+      "response 204",
+    ]);
+  });
+
+  test("a body that breaks on the way stays left and unconfirmed: an unknown receipt with the status, and the error", async () => {
+    const rows: Receipt[] = [];
+    const ledger = ledgerFetch({
+      insert: async r => void rows.push(r),
+      runKey: "client-messages:m1",
+      fetch: fake(
+        () =>
+          new Response(
+            new ReadableStream({
+              pull(c) {
+                c.error(new TypeError("reset"));
+              },
+            }),
+            { status: 200 },
+          ),
+      ).fetch,
+    });
+    await expect(
+      ledger.fetch("https://gate.whapi.cloud/messages/text", {
+        method: "POST",
+        body: "{}",
+      }),
+    ).rejects.toThrow("reset");
+    expect(rows.map(r => `${r.phase} ${r.http_status}`)).toEqual([
+      "intent null",
+      "unknown 200",
+    ]);
+  });
+
   test("one state shared by two ledgers counts every receipt lost after its call left, the unknown one included", async () => {
     const state = { failures: 0 };
     const loseAfter = async (r: Receipt) => {

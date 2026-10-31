@@ -41,7 +41,7 @@ import {
 } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { PGlite } from "@electric-sql/pglite";
 import {
@@ -1961,5 +1961,49 @@ describe("the 2b set", () => {
     );
     expect(out.status).toBe(0);
     expect(pinned).toBe(out.stdout.trim());
+  });
+
+  // Section 9's read-back list is drawn from section 2's tables (Z89).
+  test("section 2 names every function the 2b migrations create", () => {
+    const tables = contract
+      .split(/^## 2\. The migrations$/m)[1]
+      .split(/^## 3\. /m)[0];
+    const dir = `${ROOT}supabase/migrations/`;
+    const made = readdirSync(dir)
+      .filter(f => /^20261029[s-z]_forms_.*\.sql$/.test(f))
+      .flatMap(f => [
+        ...readFileSync(`${dir}${f}`, "utf8").matchAll(
+          /CREATE (?:OR REPLACE )?FUNCTION public\.([a-z0-9_]+)/g,
+        ),
+      ])
+      .map(m => m[1]);
+    expect(made.length).toBeGreaterThan(30);
+    expect(
+      [...new Set(made)].filter(n => !new RegExp(`\\b${n}\\b`).test(tables)),
+    ).toEqual([]);
+  });
+
+  test("D8 and D9 read the ACLs of the four internal helpers", () => {
+    const row = (d: string) =>
+      contract.split("\n").find(l => l.startsWith(`| ${d} |`)) ?? "";
+    const reads = (name: string) =>
+      new RegExp(`\`${name}\`[^;]*\`\\{postgres=X/postgres\\}\``);
+    expect(row("D8")).toMatch(reads("cockpit_form_effects_health"));
+    expect(row("D9")).toMatch(reads("cockpit_form_record_effect"));
+    expect(row("D9")).toContain("`cockpit_form_record_kickoff`");
+    expect(row("D9")).toMatch(reads("cockpit_forms_switch_on"));
+  });
+
+  test("2.10 states the settings audit's actor as the migration writes it (Z88)", () => {
+    const clause =
+      "coalesce(nullif(current_setting('cockpit.audit_actor', true), ''), nullif(btrim(v_by), ''), session_user::text)";
+    expect(
+      readFileSync(
+        `${ROOT}supabase/migrations/20261029z_forms_move_recording.sql`,
+        "utf8",
+      ),
+    ).toContain(clause);
+    expect(contract).toContain(clause);
+    expect(contract).not.toContain("NEW.updated_by, current_user");
   });
 });

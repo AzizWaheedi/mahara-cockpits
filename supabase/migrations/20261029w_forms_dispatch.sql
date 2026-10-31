@@ -863,6 +863,10 @@ BEGIN
   END IF;
   IF v_secret IS NULL OR btrim(v_secret) = '' THEN
     v_note := 'The vault has no cockpit_notices_cron_secret, so the 1-1 notes sweep did not run. Add it to the vault.';
+  -- cockpit-forms-api checks the JWT (D11), so a post with no key would be
+  -- answered 401 and nothing would be asked.
+  ELSIF v_anon IS NULL OR btrim(v_anon) = '' THEN
+    v_note := 'The vault has no cockpit_anon_key, so the 1-1 notes sweep did not run. Add it to the vault.';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc f JOIN pg_catalog.pg_namespace ns ON ns.oid = f.pronamespace
                      WHERE ns.nspname = 'net' AND f.proname = 'http_post') THEN
     v_note := 'pg_net is not installed, so the 1-1 notes sweep did not run.';
@@ -875,11 +879,11 @@ BEGIN
         || CASE WHEN v_failed IS NOT NULL THEN jsonb_build_object('blocked', v_note) ELSE '{}'::jsonb END);
     RETURN NULL;
   END IF;
-  v_headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret', v_secret);
-  IF nullif(btrim(v_anon), '') IS NOT NULL THEN
-    v_headers := v_headers || jsonb_build_object('Authorization', 'Bearer ' || btrim(v_anon));
-  END IF;
-  EXECUTE 'SELECT net.http_post(url := $1, body := $2, headers := $3, timeout_milliseconds := 5000)' INTO v_request
+  v_headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret', v_secret,
+                                  'Authorization', 'Bearer ' || btrim(v_anon));
+  -- The forms door answers when its sweep ends (up to about 100 seconds), so the
+  -- post waits 150 s, as the requests kick does, rather than dropping the run at 5 s.
+  EXECUTE 'SELECT net.http_post(url := $1, body := $2, headers := $3, timeout_milliseconds := 150000)' INTO v_request
     USING v_url, jsonb_build_object('op', 'effects.sweep'), v_headers;
   PERFORM public.cockpit_form_effects_health(v_failed IS NULL, coalesce(v_failed,
     'Asked the drafts for ' || CASE WHEN v_n = 1 THEN 'one set of 1-1 notes' ELSE v_n || ' 1-1 notes' END || '.'),

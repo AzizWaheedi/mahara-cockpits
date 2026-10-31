@@ -32,17 +32,22 @@ sending off and the health row says `CLIENT_MESSAGES_APPLY is written more
 than once in switches.env, so nothing is sent.`, until one line is left. The
 same stop, off, comes from anything else the worker cannot read for certain:
 a kind other than `recap_checkin`, a card list holding anything but card ids
-(an inline `# comment`, a `;` between ids), or any line that is not one of the
+(an inline `# comment`, a `;` between ids, a stray quote, a quoted space), or any line that is not one of the
 three switches (a misspelt `CLIENT_MESSAGES_ONLY_CARD=86x`). That last one
 reads `Line 2 of switches.env is not one of the three switches, so nothing is
 sent.`: open that line, correct it or delete it. A card list is never widened
-to every client. A line starting `#` is a comment and is ignored, as is a blank
+to every client. Quotes come off a value only as a matched pair, so a
+half-quoted `CLIENT_MESSAGES_APPLY` reads as off. A line starting `#` is a comment and is ignored, as is a blank
 line. A stopped run still runs the database sweep (it sends nothing), so a stopped send still
 becomes `unknown` for a person to read.
 
-Kill switch: edit the line to `CLIENT_MESSAGES_APPLY=false` (takes effect at
-the next minute) or move the recap's owner back off `cockpit` (the owner gate
-refuses at claim and again just before the POST).
+Kill switch: edit the line to `CLIENT_MESSAGES_APPLY=false` or move the recap's
+owner back off `cockpit` (the owner gate refuses at claim and again just before
+the POST). The next run reads the line, and a run already in its 30 to 120 second
+wait reads it again before the send: the recap goes back to approved, nothing is
+sent, and the note says `The switches changed during the wait and no longer
+allow this recap, so nothing was sent. It stays approved.` A POST already on its
+way cannot be called back.
 
 ## Keys
 
@@ -75,7 +80,8 @@ senders (the 1-1 Typeform's webhooks to Make, Make scenarios 9209179 and
 that fails is a failed check). It fails unless `SUPABASE_URL` is exactly
 `https://bldgtotkfmhoxmlzowdx.supabase.co`. With `--task` it prints that card's
 Client Data group (`none` or `present, <last 4>`) and whether the card's own
-group field is the same, empty or differs. Every call writes an intent receipt
+group field is the same, empty or differs, or `unread` when ClickUp answered
+without the card's fields. Every call writes an intent receipt
 in `cockpit_csm_provider_health` first (`run_key client-messages:doctor`).
 
 ## A run
@@ -87,7 +93,8 @@ Cron, one line:
 ```
 
 Dry mode (the default) runs the database sweep (a stopped send becomes
-unknown, a stale claim goes back, an old approval returns to a draft) and
+unknown, a stale claim goes back, an approved recap the owner gate now refuses
+is skipped with the gate's reason, an old approval returns to a draft) and
 writes only the health row `client-messages`: `Nothing approved to send.
 Sending is off until the switch-over.`, `detail.mode = 'dry'`. With
 `--report <path>` it also writes a plan per approved recap (group last 4, the
@@ -99,20 +106,40 @@ run`. So after the kill switch, while approved recaps wait for their 24 hours
 to run out, dry mode makes one ClickUp read a minute at most, and none while
 every planned card is cached.
 
+After a rollback, the registry back to `typeform`, the sweep settles every
+approved recap as `skipped` with `Make owns this again.`, and its effect with it,
+in either mode, so none waits for its 24 hours or for a person.
+
 Apply mode, at most one message a run: the sweep; up to 5 unknowns looked for
 in the group by their fingerprint (found: `reconciled`; not found: left for a
 person, never sent again); up to 5 sent recaps read back (by WhatsApp's id,
 else the fingerprint; for 24 hours); then, if a recap is approved and the old
 senders are all off and Client Data's column F is where it was: claim one (only
 while 200 of the run's 300 seconds remain), Client Data's group (none:
-refused), the card's group field (different: refused; ClickUp unreadable: the
-claim is released, never sent unchecked), the wait, the owner gate again (Z66),
+refused), the card's group field (different: refused; a 4xx about this card, an
+id ClickUp rejects, or a 200 with no readable group field: refused with a
+sentence, so it waits on a person and not at the head of the queue; a 401, 408,
+429, 5xx or timeout: the claim is released for the next run, never sent
+unchecked), the wait, the switches read again (no longer allowed: the claim is
+released), the owner gate again (Z66),
 one POST (`{to, body}`, the approved text byte for byte, no reference line),
 the result, a read-back 10 seconds later. ClickUp is read at most once a run.
 
-The owner gate and the POST start only while at least 80 of the run's 300 seconds
-remain (the intent's 30, the POST's 20 and the result's 30, each at its own
-limit), so the cron's kill never lands mid-send or before the answer is stored. The 30 to 120 second wait is cut to fit; with too
+Past 24 hours nothing reads a recap back. The guardian's
+`client-messages-read-back-stopped` reports it for a day. Look in the group and
+record `seen_in_group` if it is there; it is never sent again.
+
+Whapi returns a message we sent that holds a URL as `type: link_preview`, with
+its whole text in `link_preview.body` and no `text`; every recap ends with the
+booking link, so that is where the sender reads a recap's text.
+
+The old senders hold unless each one reads off for certain: an answer from
+Typeform without its list of webhooks, a webhook it cannot read, or a make.com
+webhook whose `enabled` is anything but `false` holds the recaps.
+
+The owner gate and the POST start only while at least 110 of the run's 300 seconds
+remain (the intent's 30, the POST's 20, the response receipt's 30 and the result's
+30, each at its own limit), so the cron's kill never lands mid-send or before the answer is stored. The 30 to 120 second wait is cut to fit; with too
 little left for even 30 seconds, or a wait that ran late, the claim is
 released and the run ends `Too little of this run was left to send safely;
 the next run sends it.`
@@ -146,15 +173,60 @@ An `unknown` recap may be in the group. The cockpit never sends it twice; the
 CEO and the admins see it on Today as `Recap not confirmed`.
 
 1. Look in the client's WhatsApp group for the recap (sent a few minutes after
-   its `claimed_at`). A later run reconciles it by its fingerprint if it is
-   there and was sent from the cockpit's number.
-2. Not there: record what you saw, through the service key:
-   `select public.cockpit_client_message_fix('<message id>', 'not_sent', 'Checked the group at 14:20.');`
-   It becomes `failed` with `Checked by a person: not in the group. ...`.
-3. Then, if the client still needs it, the CSM presses `Try again` on the
-   Messages card (reopen), edits if needed and approves it again. A recap
-   WhatsApp refused three times is refused at the fourth try: send it by hand
-   in the group and skip it on the card.
+   its `claimed_at`). For 24 hours after the claim, a later run finds it by its
+   fingerprint if it is there and was sent from the cockpit's number. After that
+   the sender stops looking and only a person can close it.
+2. Record what you saw with `cockpit_client_message_fix` (the call is below):
+   - In the group: `p_what` `seen_in_group`. It becomes `sent`, read back by
+     `person`, with `Checked by a person: in the group. ...`.
+   - Not there: `p_what` `not_sent`. It becomes `failed`, with `Checked by a
+     person: not in the group. ...`.
+3. Not there and the client still needs it: the CSM presses `Try again` on the
+   Messages card (reopen), edits if needed and approves it again. Every try
+   counts, whatever stopped it, and Try again keeps the count, so a recap
+   tried three times is refused at the fourth (`This recap was tried three times
+   and did not go. ...`): send it by hand in the group and skip it on the card.
+   Once the tries are spent the card offers only Skip, not Try again.
+
+## A sent recap never read back
+
+WhatsApp confirmed the send, but the sender did not find the recap in the group.
+It reads back by WhatsApp's id, else by the fingerprint, for 24 hours after
+`sent_at`, then stops. The guardian warns from 60 minutes to 24 hours (`Sent
+recaps read back`). Then `client-messages-read-back-stopped` (`Sent recaps the
+sender stopped reading back`) warns for one day, in the daily summary only, and
+clears by itself. The row is still unread after that: the check's ok sentence
+keeps counting it, so a clear reading is not a read-back.
+
+1. Look in the client's WhatsApp group for the recap.
+2. There: record it with `p_what` `seen_in_group` (the call is below). The row
+   stays `sent`, with its read-back by `person`, and the warning clears.
+3. Not there: never reopen it, a `sent` row stays `sent`. If the client still
+   needs it, send it by hand in the group, then record `seen_in_group` with a
+   note saying so (`Sent by hand at 14:20.`). If the client does not need it,
+   do nothing more: the row stays `sent` and unread, because no state says
+   "sent, then gone".
+
+## Recording what a person saw
+
+On the VPS, with the service key from the native runtime file, never printed:
+
+```
+release="$(basename "$(readlink -f /home/hermes/cockpit-native-current)")"
+key="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["SUPABASE_SERVICE_ROLE_KEY"], end="")' "/home/hermes/.cockpit-native-state/runtime-${release}.json")"
+printf 'header = "apikey: %s"\nheader = "Authorization: Bearer %s"\n' "$key" "$key" \
+  | curl -sS -K - -X POST -H 'Content-Type: application/json' \
+      https://bldgtotkfmhoxmlzowdx.supabase.co/rest/v1/rpc/cockpit_client_message_fix \
+      -d '{"p_id":"<message id>","p_what":"not_sent","p_note":"Checked the group at 14:20."}' \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("state") or d.get("message") or "no answer")'
+unset key
+```
+
+It prints the message's new state, or the refusal in a sentence. A SQL console
+cannot do this: the function starts with the service check, so `select
+public.cockpit_client_message_fix(...)` there is refused with 42501 and changes
+nothing. Each call leaves an audit row (`forms.message_fixed` or
+`forms.message_seen_in_group`) holding the note, and sends nothing.
 
 ## The release
 
@@ -188,5 +260,6 @@ bun test hermes/client-messages
 ```
 
 Fakes only (WhatsApp, Client Data, ClickUp, Typeform, Make, the database);
-nothing touches a network. The database side is
+nothing leaves this machine. One send test answers from a server on its own
+loopback, so a time limit aborts as it does in production. The database side is
 `apps/media-buyer-cockpit/scripts/client-messages-supabase.test.ts`.

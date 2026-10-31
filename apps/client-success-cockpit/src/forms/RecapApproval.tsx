@@ -12,20 +12,39 @@ import { toast } from "sonner";
 import { Chip, Dot, type Tone } from "@/components/kit";
 import { Button } from "@/components/ui/button";
 import {
+  ACTION_DEADLINE_MS,
+  answerBy,
+  handedBack,
+  MAKE_AGAIN,
+  MESSAGE_SKIPPED,
+  MESSAGES_FAILED,
+  MESSAGES_SHAPE,
+  MessageError,
   type MessageState,
   type MessagesIO,
   type MessageView,
+  NO_ANSWER,
   NO_REASON,
   NO_WHATSAPP_REASON,
+  NOT_LIVE,
+  notSentLine,
   readClientMessages,
   readMessagesWaiting,
   reopenClientMessage,
   skipClientMessage,
+  skipOnly,
+  triesSpent,
   whatsappPieces,
 } from "@/lib/clientMessages";
 import { cn } from "@/lib/utils";
 import { FOCUS, NOTES_FONT } from "./CheckinFields";
-import { approveRecap, type FormClient } from "./checkinClient";
+import {
+  approveRecap,
+  type FormClient,
+  NOTES_NOT_LIVE,
+  NOTES_SHAPE,
+  OFFLINE,
+} from "./checkinClient";
 import { kuwaitWeekday } from "./checkinRail";
 import { kuwaitTime } from "./formTime";
 import type { Clock } from "./useCheckin";
@@ -89,11 +108,20 @@ export const RECAP_WORDS = {
   draft: "This is exactly what the group gets. Edit it if you need to.",
   approvedToast: "Approved. It sends within about 3 minutes.",
   approved: "Sends within about 3 minutes.",
+  /** Approved over 15 minutes ago and the sender has not taken it (Z decision). */
+  approvedLate: (at: string) =>
+    `Approved at ${at} and not sent yet. Tell the tech lead if it stays.`,
   sending: "Sending now.",
   checking: "Checking it arrived…",
+  /** The worker stopped looking for WhatsApp's copy, 24 hours after the send. */
+  notFound: (at: string) =>
+    `Sent at ${at}. WhatsApp's copy was not found. Look in the group if it matters.`,
+  /** The page stopped asking while the row could still move by itself. */
+  stoppedChecking:
+    "This page stopped checking. Reload it to see where the recap stands.",
   unknown:
     "Not confirmed: WhatsApp did not answer. The cockpit never sends it twice. Look in the group; the tech lead settles it.",
-  skipped: "Skipped. Nothing was sent.",
+  skipped: MESSAGE_SKIPPED,
   reopened: "Reopened. Edit it, then approve it.",
   noReason: NO_WHATSAPP_REASON,
   warnings: "Check these before it goes:",
@@ -114,22 +142,67 @@ const CHIP: Record<MessageState, { tone: Tone; text: string }> = {
 const sentence = (s: string) =>
   /[.!?…]$/.test(s.trim()) ? s.trim() : `${s.trim()}.`;
 
-/** The state line of 5.1's table for a message as it stands. */
-export function stateLine(m: MessageView): string {
+/** After this the 3-minute promise is no longer true: the worker is held or down. */
+const APPROVED_LATE_MS = 15 * 60_000;
+/** The read-back is retried for 24 hours after the send (20261029v, the worker). */
+const READ_BACK_MS = 24 * 60 * 60_000;
+
+const olderThan = (at: string | null, ms: number, now: number | undefined) => {
+  const t = Date.parse(at ?? "");
+  return now !== undefined && Number.isFinite(t) && now - t > ms;
+};
+const approvedLate = (m: MessageView, now?: number) =>
+  m.state === "approved" && olderThan(m.approvedAt, APPROVED_LATE_MS, now);
+const readBackOver = (m: MessageView, now?: number) =>
+  m.state === "sent" &&
+  !m.readBack?.at &&
+  olderThan(m.sentAt, READ_BACK_MS, now);
+
+/**
+ * A message whose state can still change by itself (the sender, the
+ * read-back), so a page keeps asking. A send the worker stopped reading back
+ * after 24 hours will not change, so it is not on its way.
+ */
+export function onItsWay(m: MessageView, now?: number): boolean {
+  return (
+    m.state === "approved" ||
+    m.state === "claimed" ||
+    m.state === "sending" ||
+    (m.state === "sent" && !m.readBack?.at && !readBackOver(m, now))
+  );
+}
+
+/**
+ * The state line of 5.1's table for a message as it stands. `now` adds its
+ * age: an approval the sender has not taken in 15 minutes, a send no longer
+ * being read back. Left out, the line is the table's own words.
+ */
+export function stateLine(m: MessageView, now?: number): string {
   switch (m.state) {
     case "draft":
+      // Approving it can only be refused: said before the button is looked for.
+      if (handedBack(m)) return MAKE_AGAIN;
+      if (triesSpent(m)) return notSentLine(m);
       // After expiry, or an approver who lost the client: the server's
       // sentence, which ends "Approve it again."
       return m.reason?.trim() ? sentence(m.reason) : RECAP_WORDS.draft;
     case "approved":
-      return RECAP_WORDS.approved;
+      return approvedLate(m, now)
+        ? RECAP_WORDS.approvedLate(kuwaitTime(m.approvedAt))
+        : RECAP_WORDS.approved;
     case "claimed":
     case "sending":
       return RECAP_WORDS.sending;
     case "sent": {
+      if (readBackOver(m, now))
+        return RECAP_WORDS.notFound(
+          `${kuwaitWeekday(m.sentAt)} ${kuwaitTime(m.sentAt)}`,
+        );
       const sent = m.sentAt ? `Sent at ${kuwaitTime(m.sentAt)}.` : "Sent.";
       const back = m.readBack?.at
-        ? `Read back from WhatsApp at ${kuwaitTime(m.readBack.at)}.`
+        ? m.readBack.by === "person"
+          ? `Seen in the group by a person at ${kuwaitTime(m.readBack.at)}.`
+          : `Read back from WhatsApp at ${kuwaitTime(m.readBack.at)}.`
         : RECAP_WORDS.checking;
       return `${sent} ${back}`;
     }
@@ -137,7 +210,7 @@ export function stateLine(m: MessageView): string {
       return RECAP_WORDS.unknown;
     case "refused":
     case "failed":
-      return m.reason?.trim() ? sentence(m.reason) : RECAP_WORDS.noReason;
+      return notSentLine(m);
     case "skipped":
       return RECAP_WORDS.skipped;
   }
@@ -148,8 +221,22 @@ export function stateLine(m: MessageView): string {
  * true while this is unchanged, and goes stale once a read moves the row
  * on (approved to sent, read back, expired).
  */
-export function messageKey(m: MessageView): string {
-  return `${m.id}|${m.state}|${stateLine(m)}`;
+export function messageKey(m: MessageView, now?: number): string {
+  return `${m.id}|${m.state}|${stateLine(m, now)}`;
+}
+
+/**
+ * A failed approval in the recap's words. It goes through the window's door,
+ * whose sentences are about the 1-1 notes; the card and the step show them
+ * beside a recap. A dropped connection may have lost the answer after the
+ * approval landed, so it says what is known and what to do next.
+ */
+export function approvalSaid(e: unknown): unknown {
+  const said = (e as Error)?.message;
+  if (said === OFFLINE) return new MessageError(NO_ANSWER.approve);
+  if (said === NOTES_NOT_LIVE) return new MessageError(NOT_LIVE);
+  if (said === NOTES_SHAPE) return new MessageError(MESSAGES_SHAPE);
+  return e;
 }
 
 /** The calls the approval makes, through the signed-in seat's own client. */
@@ -169,7 +256,9 @@ export function messagesIO(
         a.messageId,
         a.body,
         a.acceptWarnings,
-      ),
+      ).catch(e => {
+        throw approvalSaid(e);
+      }),
     skip: id => skipClientMessage(need(), id),
     reopen: id => reopenClientMessage(need(), id),
   };
@@ -216,7 +305,35 @@ export function MessageSurface({ body, id }: { body: string; id?: string }) {
   );
 }
 
+const CLOCK_TIME = /(\b\d{1,2}:\d{2}\b)/;
+
+/** A line with each clock time in the plan's Geist Mono 11 tabular. */
+function Clocked({ text }: { text: string }) {
+  return (
+    <>
+      {text.split(CLOCK_TIME).map((p, i) =>
+        i % 2 === 1 ? (
+          <span key={i} className="font-mono text-[11px] tabular-nums">
+            {p}
+          </span>
+        ) : (
+          p
+        ),
+      )}
+    </>
+  );
+}
+
 type Busy = null | "approve" | "skip" | "reopen";
+
+/** The timer the page's reads and actions run on; the tests pass their own. */
+export type PollClock = Pick<Clock, "now" | "set" | "clear">;
+
+export const BROWSER_CLOCK: PollClock = {
+  now: () => Date.now(),
+  set: (fn, ms) => window.setTimeout(fn, ms),
+  clear: h => window.clearTimeout(h as number),
+};
 
 /**
  * One message: its lead and chip, the exact-bytes surface while it waits
@@ -231,6 +348,8 @@ export function RecapApproval({
   announce,
   lead = true,
   extra,
+  stopped = false,
+  clock,
 }: {
   message: MessageView;
   io: MessagesIO;
@@ -242,8 +361,16 @@ export function RecapApproval({
   lead?: boolean;
   /** Under the actions: the window's "Open the Messages card". */
   extra?: ReactNode;
+  /** The parent stopped asking while this row could still move by itself. */
+  stopped?: boolean;
+  /** The row's age and the actions' deadline; left out, the browser's and no age. */
+  clock?: PollClock;
 }) {
   const id = useId();
+  const now = clock?.now();
+  // No call rests every button for ever: the wait ends and says what is known.
+  const timed = <T,>(call: Promise<T>, said: string) =>
+    answerBy(call, ACTION_DEADLINE_MS, clock ?? BROWSER_CLOCK, said);
   const statusRef = useRef<HTMLParagraphElement>(null);
   const fieldRef = useRef<HTMLTextAreaElement>(null);
   const [text, setText] = useState(message.body);
@@ -260,23 +387,29 @@ export function RecapApproval({
     setWarnings(null);
     if (message.state !== "draft") setEditing(false);
   }, [message.id, message.body, message.state]);
+  // An action's error is about the state it was pressed in. Once the row has
+  // moved on, the state line speaks; a new body alone keeps the error.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the row and its state are the trigger
+  useEffect(() => {
+    setError(null);
+  }, [message.id, message.state]);
   useEffect(() => {
     if (!focusNext) return;
     setFocusNext(false);
     statusRef.current?.focus();
   }, [focusNext]);
 
-  const line = stateLine(message);
+  const line = stateLine(message, now);
   const chip = CHIP[message.state];
   const edited = text !== message.body;
   const settle = useCallback(
     (next: MessageView, toastText: string | null) => {
       onChange(next);
       if (toastText) toast.success(toastText);
-      announce?.(`${messageLead(next)}: ${stateLine(next)}`);
+      announce?.(`${messageLead(next)}: ${stateLine(next, now)}`);
       setFocusNext(true);
     },
-    [onChange, announce],
+    [onChange, announce, now],
   );
 
   async function approve(acceptWarnings: boolean) {
@@ -284,11 +417,14 @@ export function RecapApproval({
     setBusy("approve");
     setError(null);
     try {
-      const out = await io.approve({
-        messageId: message.id,
-        body: text,
-        acceptWarnings,
-      });
+      const out = await timed(
+        io.approve({
+          messageId: message.id,
+          body: text,
+          acceptWarnings,
+        }),
+        NO_ANSWER.approve,
+      );
       if ("needsConfirm" in out) {
         setWarnings(out.warnings);
         announce?.(`${RECAP_WORDS.warnings} ${out.warnings.join(" ")}`);
@@ -314,7 +450,10 @@ export function RecapApproval({
     setBusy("skip");
     setError(null);
     try {
-      settle(await io.skip(message.id), RECAP_WORDS.skipped);
+      settle(
+        await timed(io.skip(message.id), NO_ANSWER.skip),
+        RECAP_WORDS.skipped,
+      );
     } catch (e) {
       setError((e as Error).message || NO_REASON);
       setFocusNext(true);
@@ -328,7 +467,7 @@ export function RecapApproval({
     setBusy("reopen");
     setError(null);
     try {
-      const next = await io.reopen(message.id);
+      const next = await timed(io.reopen(message.id), NO_ANSWER.reopen);
       setEditing(true);
       settle(next, RECAP_WORDS.reopened);
     } catch (e) {
@@ -340,6 +479,8 @@ export function RecapApproval({
   }
 
   const draft = message.state === "draft";
+  // After a rollback, or with its three tries spent: Skip is all that is left.
+  const closing = skipOnly(message);
   const describedBy = [`${id}-status`, error ? `${id}-error` : null]
     .filter(Boolean)
     .join(" ");
@@ -358,7 +499,19 @@ export function RecapApproval({
   };
 
   let actions: ReactNode = null;
-  if (draft && warnings)
+  if (closing)
+    actions = (
+      <Button
+        key="skip"
+        size="sm"
+        variant="outline"
+        className={cn(ACTION, "w-full sm:w-auto")}
+        {...press(() => void skip())}
+      >
+        {busy === "skip" ? "Skipping…" : "Skip"}
+      </Button>
+    );
+  else if (draft && warnings)
     actions = (
       <>
         <Button
@@ -464,7 +617,7 @@ export function RecapApproval({
       ) : null}
 
       {draft ? (
-        editing ? (
+        editing && !closing ? (
           <div className="space-y-1">
             <label htmlFor={`${id}-text`} className="sr-only">
               The message to the client's group
@@ -477,7 +630,11 @@ export function RecapApproval({
               style={NOTES_FONT}
               value={text}
               rows={rows}
+              // While a call runs the field rests, so the text it answers
+              // about is the text on the screen. Focus stays in the field.
+              readOnly={busy !== null}
               onChange={e => {
+                if (busy !== null) return;
                 setText(e.target.value);
                 setWarnings(null);
               }}
@@ -491,11 +648,16 @@ export function RecapApproval({
                 {edited ? (
                   <button
                     type="button"
-                    className="rounded-sm underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ink"
+                    aria-disabled={busy !== null || undefined}
+                    className="rounded-sm underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ink aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
                     onClick={() => {
+                      if (busy !== null) return;
                       setText(message.body);
                       setWarnings(null);
                       setError(null);
+                      // This button goes with the edit, so focus stays with
+                      // the text instead of falling to the page.
+                      fieldRef.current?.focus();
                     }}
                   >
                     Undo my edits
@@ -510,7 +672,7 @@ export function RecapApproval({
             </p>
           </div>
         ) : (
-          <MessageSurface body={text} />
+          <MessageSurface body={closing ? message.body : text} />
         )
       ) : (
         <details className="group/message text-sm">
@@ -528,8 +690,10 @@ export function RecapApproval({
         id={`${id}-status`}
         tabIndex={-1}
         className={cn(
-          "flex gap-2 rounded-sm text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary-ink",
-          draft && !message.reason ? "text-muted-foreground" : "",
+          // The side padding keeps the ring off the first letter; the margin
+          // keeps the line where it was.
+          "-mx-1.5 flex gap-2 rounded-sm px-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary-ink",
+          draft && !message.reason && !closing ? "text-muted-foreground" : "",
         )}
       >
         {!lead ? (
@@ -537,9 +701,18 @@ export function RecapApproval({
             <Dot tone={chip.tone} label={chip.text} />
           </span>
         ) : null}
-        <span className="min-w-0">{line}</span>
+        <span className="min-w-0">
+          <Clocked text={line} />
+        </span>
       </p>
-      {message.state === "approved" && message.approvedAt ? (
+      {message.state === "approved" && approvedLate(message, now) ? (
+        // The line above already says when; who is all this one adds.
+        message.approvedBy ? (
+          <p className="-mt-2 text-xs text-muted-foreground">
+            {`Approved by ${message.approvedBy}.`}
+          </p>
+        ) : null
+      ) : message.state === "approved" && message.approvedAt ? (
         <p className="-mt-2 text-xs text-muted-foreground">
           {`Approved${message.approvedBy ? ` by ${message.approvedBy}` : ""} at `}
           <span className="font-mono text-[11px] tabular-nums">
@@ -548,8 +721,13 @@ export function RecapApproval({
           .
         </p>
       ) : null}
+      {stopped ? (
+        <p className="-mt-2 text-xs text-muted-foreground">
+          {RECAP_WORDS.stoppedChecking}
+        </p>
+      ) : null}
 
-      {draft && warnings?.length ? (
+      {draft && !closing && warnings?.length ? (
         <div className="space-y-1.5 rounded-xl px-1 text-sm">
           <p className="font-medium">{RECAP_WORDS.warnings}</p>
           <ul className="space-y-1">
@@ -586,15 +764,6 @@ export function RecapApproval({
 
 // ------------------------------------------------------------ the window's row
 
-/** The timer the window's polls run on; the window's tests pass their own. */
-export type PollClock = Pick<Clock, "now" | "set" | "clear">;
-
-const BROWSER_CLOCK: PollClock = {
-  now: () => Date.now(),
-  set: (fn, ms) => window.setTimeout(fn, ms),
-  clear: h => window.clearTimeout(h as number),
-};
-
 /**
  * The message the cockpit made for one sent response, for the 1-1 notes
  * window's recap step (STAGE2B-CONTRACT.md 4.15 item 1, Z46): read by task
@@ -624,7 +793,7 @@ export function useRecapMessage(
 ): {
   message: MessageView | null;
   failed: string | null;
-  /** The 15 minutes ran out with the row still not there, and asking stopped. */
+  /** The 15 minutes ran out with the row missing or still moving, and asking stopped. */
   stopped: boolean;
   put: (m: MessageView) => void;
 } {
@@ -661,7 +830,14 @@ export function useRecapMessage(
     if (!on || !io || !responseId) return;
     let live = true;
     const asked = gen.current;
-    io.read(taskId).then(
+    // A read with no answer ends like a read refused, so the next one is
+    // scheduled and the step says it, instead of waiting for ever.
+    answerBy(
+      io.read(taskId),
+      ACTION_DEADLINE_MS,
+      clock.current,
+      MESSAGES_FAILED,
+    ).then(
       list => {
         if (!live) return;
         if (asked === gen.current) {
@@ -682,15 +858,15 @@ export function useRecapMessage(
   }, [on, io, taskId, responseId, tick]);
   const wait = !message
     ? waitEvery
-    : message.state === "approved" ||
-        message.state === "claimed" ||
-        message.state === "sending" ||
-        (message.state === "sent" && !message.readBack?.at)
+    : onItsWay(message, clock.current.now())
       ? moveEvery
       : null;
   // biome-ignore lint/correctness/useExhaustiveDependencies: each read that comes back, and each action, schedules the next
   useEffect(() => {
-    if (!on || wait === null) return;
+    if (!on || wait === null) {
+      setStopped(false);
+      return;
+    }
     const c = clock.current;
     if (since.current !== null && c.now() - since.current > span) {
       setStopped(true);

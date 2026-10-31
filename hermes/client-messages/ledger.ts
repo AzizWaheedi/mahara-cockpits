@@ -13,6 +13,11 @@
  * receipt was written) throws `NotSent`, so the WhatsApp send can tell "never
  * left" (failed, try again) from "left and unconfirmed" (unknown): whapi.ts's
  * `sendText` notes it in its own fetcher, before Transport.json wraps it.
+ *
+ * The caller's time limit covers the whole fetch, the body read included, and a
+ * response receipt can take up to 30 s (db.ts). So the body is read first and
+ * the caller gets a rebuilt response: a slow receipt can never fire the limit
+ * over an unread answer and turn WhatsApp's `sent: true` into `unknown`.
  */
 
 export type Receipt = {
@@ -60,6 +65,9 @@ export function resourceOf(url: URL): string {
   });
   return `${url.host}${parts.join("/")}`.slice(0, 200);
 }
+
+/** The statuses a Response may not carry a body with. */
+const NO_BODY = new Set([101, 204, 205, 304]);
 
 /** A call stopped before it left: nothing reached the provider. */
 export class NotSent extends Error {}
@@ -152,10 +160,25 @@ export function ledgerFetch(opts: {
       });
       throw e;
     }
+    // The body before the receipt: the limit never fires while the answer is unread.
+    let body: ArrayBuffer;
+    try {
+      body = await res.arrayBuffer();
+    } catch (e) {
+      // The call left and its answer was lost on the way: left and unconfirmed.
+      await opts.insert(row("unknown", res.status)).catch(() => {
+        state.failures += 1;
+      });
+      throw e;
+    }
     await opts.insert(row("response", res.status)).catch(() => {
       state.failures += 1;
     });
-    return res;
+    return new Response(NO_BODY.has(res.status) ? null : body, {
+      status: res.status,
+      statusText: res.statusText,
+      headers: res.headers,
+    });
   }) as typeof fetch;
   return { fetch: wrapped, state };
 }

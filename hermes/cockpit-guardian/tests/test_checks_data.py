@@ -920,8 +920,8 @@ class StageTwoBQueues(unittest.TestCase):
         self.assertEqual(m.action, "Run the client-messages doctor on the VPS (RUNBOOK, Client messages).")
         u = self.q("queue-client-messages-unknown")
         self.assertEqual((u.states, u.limit_min), (("unknown",), 0))
-        self.assertEqual(u.action, "Look in the client's WhatsApp group for the message; the cockpit never sends it twice "
-                                   "(RUNBOOK, Client messages).")
+        self.assertEqual(u.action, "Look in the client's WhatsApp group for the message, then record seen_in_group or "
+                                   "not_sent; the cockpit never sends it twice (RUNBOOK, Client messages).")
         for qid in ("queue-clickup-forms", "queue-form-effects", "queue-form-recap", "queue-client-messages",
                     "queue-client-messages-unknown"):
             self.assertIs(checks_mod.by_id()[qid].fix, None)
@@ -1028,7 +1028,8 @@ def sender(minutes=1, ok=True, note="Nothing approved to send. Sending is off un
 
 class ClientMessagesChecks(unittest.TestCase):
     def test_registered_report_only(self):
-        for cid in ("client-messages", "client-messages-read-back", "client-messages-g5"):
+        for cid in ("client-messages", "client-messages-read-back", "client-messages-read-back-stopped",
+                    "client-messages-g5"):
             c = checks_mod.by_id()[cid]
             self.assertIs(c.fix, None)
             self.assertEqual(c.owner, "the tech lead")
@@ -1049,17 +1050,27 @@ class ClientMessagesChecks(unittest.TestCase):
         r = client_messages.run_sender(make({"cockpit_sync_state": [sender(mode="apply_limited")]}))
         self.assertEqual(r.status, WARN)
 
-    def test_a_hold_reads_as_held_in_either_mode_never_as_a_failed_run(self):
-        # As hermes/client-messages writes a hold: ok false, the sentence in detail.held and as the note.
+    def test_a_dry_run_writes_no_hold_and_the_check_never_claims_to_read_one(self):
+        # As hermes/client-messages writes a dry run with approved recaps, whatever the old senders say: ok true and
+        # held null. The old senders' state is in the doctor and the run's plan.
+        r = client_messages.run_sender(make({"cockpit_sync_state": [sender(
+            note="2 approved to send. Sending is off until the switch-over.", approved=2, held=None)]}))
+        self.assertEqual((r.status, r.summary), (OK, "Dry: sending is off until the switch-over."))
+        threshold = checks_mod.by_id()["client-messages"].threshold
+        self.assertIn("detail.held, written only in apply mode", threshold)
+        self.assertNotIn("detail.held, either mode", threshold)
+        readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+        self.assertIn(threshold, readme)
+
+    def test_a_hold_reads_as_held_never_as_a_failed_run(self):
+        # As hermes/client-messages writes a hold, only in apply mode: ok false, the sentence in detail.held and as the note.
         hold = "The old senders could not be read (no answer), so the recaps wait."
-        for mode in ("apply", "dry"):
-            with self.subTest(mode=mode):
-                r = client_messages.run_sender(make({"cockpit_sync_state": [sender(
-                    ok=False, note=hold, mode=mode, approved=2, held=hold)]}))
-                self.assertEqual(r.status, WARN)
-                self.assertEqual(r.summary, f"2 approved recaps held: {hold}")
-                self.assertNotIn("failed its last run", r.summary)
-                self.assertEqual(r.evidence["held"], hold)
+        r = client_messages.run_sender(make({"cockpit_sync_state": [sender(
+            ok=False, note=hold, mode="apply", approved=2, held=hold)]}))
+        self.assertEqual(r.status, WARN)
+        self.assertEqual(r.summary, f"2 approved recaps held: {hold}")
+        self.assertNotIn("failed its last run", r.summary)
+        self.assertEqual(r.evidence["held"], hold)
         r = client_messages.run_sender(make({"cockpit_sync_state": [sender(
             ok=False, note="Client Data's group column moved.", mode="apply", approved=1, held="Client Data's group column moved.")]}))
         self.assertEqual(r.summary, "1 approved recap held: Client Data's group column moved.")
@@ -1138,6 +1149,70 @@ class ClientMessagesChecks(unittest.TestCase):
         self.assertEqual(r.items, ["m1"])
         self.assertNotIn("never read", r.summary + str(r.evidence))
         self.assertEqual(client_messages.run_read_back(make({"cockpit_client_messages": rows[1:]})).status, OK)
+
+    @staticmethod
+    def unread(mid, hours):
+        return {"id": mid, "state": "sent", "sent_at": fakes.ago(hours * 60), "read_back_at": None, "body": "never read"}
+
+    def test_the_read_back_warning_stops_where_the_sender_stops(self):
+        # The sender reads back only sent_at > now() - 24 hours (20261029v): past that only a person's seen_in_group
+        # closes the row, so one old row must not keep this check amber for good, nor hide a new one behind it.
+        old = self.unread("m-old", 25)
+        r = client_messages.run_read_back(make({"cockpit_client_messages": [old]}))
+        self.assertEqual((r.status, r.evidence), (OK, {"unread": 0}))
+        self.assertEqual(r.summary, "Every recap sent 60 min to 24 h ago was read back in its group.")
+        # A row of 23 hours still warns, in its own words, and alone beside the old row.
+        r = client_messages.run_read_back(make({"cockpit_client_messages": [old, self.unread("m-new", 23)]}))
+        self.assertEqual((r.status, r.items), (WARN, ["m-new"]))
+        self.assertIn("1 sent recap not read back after 60 min", r.summary)
+        self.assertEqual(r.action, "Look in the client's WhatsApp group for the recap; the sender keeps reading back for "
+                                   "24 hours and never sends it again. If it is there, record seen_in_group "
+                                   "(hermes/client-messages/RUNBOOK.md, Recording what a person saw).")
+        self.assertEqual(checks_mod.by_id()["client-messages-read-back"].action, r.action)
+        # The limit is the sender's: exactly 24 hours old is no longer read back.
+        r = client_messages.run_read_back(make({"cockpit_client_messages": [self.unread("m-edge", 24)]}))
+        self.assertEqual(r.status, OK)
+
+    def test_a_recap_the_sender_stopped_reading_back_is_reported_for_one_day(self):
+        c = checks_mod.by_id()["client-messages-read-back-stopped"]
+        self.assertEqual((c.severity, c.alert, c.fix, c.owner), ("low", False, None, "the tech lead"))
+        for hours in (24, 25, 47.9):
+            with self.subTest(hours=hours):
+                r = client_messages.run_read_back_stopped(make({"cockpit_client_messages": [self.unread("m-old", hours)]}))
+                self.assertEqual((r.status, r.items), (WARN, ["m-old"]))
+                self.assertIn("1 sent recap not read back in 24 h, and the sender has stopped trying", r.summary)
+                self.assertEqual(r.action, "Look in the client's WhatsApp group for the recap; if it is there, record "
+                                           "seen_in_group (hermes/client-messages/RUNBOOK.md, Recording what a person "
+                                           "saw). It is never sent again. This reading clears by itself after a day.")
+                self.assertEqual(c.action, r.action)
+                self.assertNotIn("never read", r.summary + str(r.evidence))
+        # Not its business: still inside the sender's 24 hours, read back, or not a sent row.
+        rows = [self.unread("m-new", 23), {**self.unread("m-read", 30), "read_back_at": fakes.ago(30 * 60 - 1)},
+                {**self.unread("m-unknown", 30), "state": "unknown"}]
+        r = client_messages.run_read_back_stopped(make({"cockpit_client_messages": rows}))
+        self.assertEqual((r.status, r.summary), (OK, "No recap ran out of its 24 h read-back in the last day."))
+        self.assertEqual(r.evidence, {"stopped": 0, "older": 0})
+
+    def test_a_persons_seen_in_group_closes_the_row_in_both_checks(self):
+        # cockpit_client_message_fix writes read_back_at with read_back {by: person} (20261029v); the sender's answer does too.
+        for hours, run in ((23, client_messages.run_read_back), (30, client_messages.run_read_back_stopped)):
+            with self.subTest(hours=hours):
+                row = self.unread("m-seen", hours)
+                self.assertEqual(run(make({"cockpit_client_messages": [row]})).status, WARN)
+                seen = {**row, "read_back_at": fakes.ago(5), "read_back": {"by": "person"}}
+                self.assertEqual(run(make({"cockpit_client_messages": [seen]})).status, OK)
+
+    def test_a_recap_past_the_day_is_counted_never_read_as_read_back(self):
+        one = [self.unread("m-1", 49)]
+        r = client_messages.run_read_back_stopped(make({"cockpit_client_messages": one}))
+        self.assertEqual(r.status, OK)
+        self.assertEqual(r.summary, "No recap ran out of its 24 h read-back in the last day. 1 older recap was never read back.")
+        self.assertEqual(r.evidence, {"stopped": 0, "older": 1})
+        two = [*one, self.unread("m-2", 200), self.unread("m-3", 30)]
+        r = client_messages.run_read_back_stopped(make({"cockpit_client_messages": two}))
+        self.assertEqual((r.status, r.items, r.evidence), (WARN, ["m-3"], {"stopped": 1, "older": 2}))
+        r = client_messages.run_read_back_stopped(make({"cockpit_client_messages": two[:2]}))
+        self.assertIn("2 older recaps were never read back.", r.summary)
 
     def test_g5_warns_until_it_reads_same_number(self):
         self.assertEqual(client_messages.run_g5(make({})).status, WARN)

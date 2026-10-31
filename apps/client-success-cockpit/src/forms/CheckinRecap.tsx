@@ -4,21 +4,27 @@ import { Dot, Kicker, LINK_INK } from "@/components/kit";
 import { Button } from "@/components/ui/button";
 import {
   MESSAGES_FAILED,
+  type MessageState,
   type MessagesIO,
   messagesHref,
+  skipOnly,
 } from "@/lib/clientMessages";
 import { cn } from "@/lib/utils";
 import { FOCUS, NOTES_FONT } from "./CheckinFields";
 import type { DraftView, EffectView } from "./checkinClient";
 import type { CallAnswer } from "./checkinForm";
+import { RECAP_TOO_LATE, REQUEUE_MS, withoutAgain } from "./checkinTrail";
 import {
+  BROWSER_CLOCK,
   messageKey,
+  onItsWay,
   type PollClock,
+  RECAP_WORDS,
   RecapApproval,
   stateLine,
   useRecapMessage,
 } from "./RecapApproval";
-import { stillWriting } from "./useCheckin";
+import { POLLS, stillWriting } from "./useCheckin";
 
 /**
  * The recap step (docs/forms/STAGE2-CONTRACT.md 8.5; in 2a a preview only):
@@ -60,6 +66,12 @@ export const GETTING_READY = "Getting the recap ready to approve…";
 /** The row still has not come when the step stops asking, after 15 minutes. */
 export const NOT_READY_YET =
   "The recap has not reached this window after 15 minutes. Look on the client's Messages card; if it is not there, tell the tech lead.";
+/** A recap this window only previews: the same 15 minutes, with no card to look at yet. */
+export const DRAFT_WAIT_OVER =
+  "The recap draft has not come after 15 minutes, so this window stopped checking. Reload the page to check again.";
+/** A live recap the cockpit owns with no AI key: nothing will reach the client from here. */
+export const RECAP_OFF_LIVE =
+  "AI drafts are off, so no recap is coming from the cockpit. Tell the tech lead, and send the recap by hand in the group if it is needed.";
 /**
  * The dispatch's sentence for a ready recap it cannot make a message from
  * (STAGE2B-CONTRACT.md 3.5): the step says it as soon as it reads the
@@ -67,14 +79,12 @@ export const NOT_READY_YET =
  */
 export const RECAP_UNUSABLE =
   "The recap draft is empty or over 4,096 characters. Draft it again.";
-/**
- * After 24 hours from the send the dispatch no longer makes a failed
- * recap's message from a new draft (Z28), so the step stops offering Draft
- * again and says what is left.
- */
-export const RECAP_TOO_LATE =
-  "The send was over 24 hours ago, so the cockpit no longer makes this recap. Send it by hand in the group if it is still needed.";
-const REQUEUE_MS = 24 * 60 * 60_000;
+/** A live window reopened on sent notes, before it knows who sends the recap. */
+export const RECAP_READING = "Reading where the recap stands…";
+/** That read failed: a recap may be waiting here, so it never reads as no steps. */
+export const RECAP_UNREAD =
+  "The steps after the send could not be read, so the recap may be waiting here. Reload the page; if it stays, tell the tech lead.";
+export { RECAP_TOO_LATE };
 
 /**
  * 3.5: the dispatch makes the message from the draft's stored text only
@@ -85,10 +95,6 @@ export function fitsMessage(d: DraftView): boolean {
   const t = d.output?.text;
   return typeof t === "string" && t !== "" && [...t].length <= 4096;
 }
-
-/** A reason without its closing "Draft again.", for a step that no longer offers it. */
-const withoutAgain = (s: string) =>
-  s.replace(/\s*Draft (it )?again\.\s*$/, "").trim();
 
 /**
  * The recap's text as it would go: the stored text byte for byte (A7.4: the
@@ -117,6 +123,8 @@ export function CheckinRecap({
   responseId = null,
   sentAt = null,
   clock,
+  onMessageMoved,
+  effectsUnread = null,
 }: {
   recap: DraftView | null;
   /** The call the notes were sent for. */
@@ -148,6 +156,13 @@ export function CheckinRecap({
   sentAt?: string | null;
   /** The window's clock, for the message reads and the 24 hours; the browser's when left out. */
   clock?: PollClock;
+  /** The message row changed state: the window's trail reads again and takes its state. */
+  onMessageMoved?: (state: MessageState | null) => void;
+  /**
+   * The response's effects are not read yet, or the read failed: `effect` is
+   * null and that says nothing about who sends the recap.
+   */
+  effectsUnread?: "reading" | "failed" | null;
 }) {
   const errorId = useId();
   // The cockpit sends this recap: the registry gives its effect to the
@@ -165,7 +180,8 @@ export function CheckinRecap({
   const [said, setSaid] = useState<{ text: string; key: string } | null>(null);
   const acted = useRef<string | null>(null);
   const stepRef = useRef<HTMLElement>(null);
-  const now = (clock ?? Date).now();
+  const timer = clock ?? BROWSER_CLOCK;
+  const now = timer.now();
   // The step's one live region (8.1, 8.5): mounted for the whole step, so
   // the recap's outcome is said when it arrives (the waiting line used to
   // be the region and went with it). Where the outcome is one sentence, the
@@ -185,6 +201,44 @@ export function CheckinRecap({
   const wait = recap?.state === "skipped" ? stillWriting(recap.reason) : null;
   const message = approving ? row.message : null;
   const sentMs = Date.parse(sentAt ?? "");
+  // The step asks about a draft for 15 minutes (POLLS.recap), from when this
+  // page opened it or from the newest draft (Draft again). Past that nothing
+  // reads it again here, so the waiting lines say so instead of holding for
+  // ever. A reload asks again, for 15 minutes more.
+  const stillDrafting =
+    call?.kind === "fathom" &&
+    (!recap ||
+      recap.state === "drafting" ||
+      (recap.state === "skipped" && recap.reason === AFTER_SEND) ||
+      Boolean(wait));
+  const opened = useRef(now);
+  const draftAt = Date.parse(recap?.at ?? "");
+  const previewEnds =
+    Math.max(opened.current, Number.isFinite(draftAt) ? draftAt : 0) +
+    POLLS.recap.until;
+  const [, wake] = useState(0);
+  useEffect(() => {
+    if (approving || !stillDrafting) return;
+    const left = previewEnds - timer.now();
+    if (left <= 0) return;
+    const h = timer.set(() => wake(n => n + 1), left);
+    return () => timer.clear(h);
+  }, [approving, stillDrafting, previewEnds, timer]);
+  const waitEnded = approving
+    ? row.stopped
+      ? NOT_READY_YET
+      : null
+    : now >= previewEnds
+      ? DRAFT_WAIT_OVER
+      : null;
+  // The trail beside the step follows each change of the row's state.
+  const rowState = message ? `${message.id}:${message.state}` : "";
+  const sawRow = useRef(rowState);
+  useEffect(() => {
+    if (sawRow.current === rowState) return;
+    sawRow.current = rowState;
+    onMessageMoved?.(message?.state ?? null);
+  }, [rowState, onMessageMoved, message?.state]);
   // Z28: the dispatch makes a failed recap's message from a newer ready
   // draft for 24 hours after the send, and not after.
   const late =
@@ -269,33 +323,80 @@ export function CheckinRecap({
       <span className="sr-only"> (opens in a new tab)</span>
     </a>
   );
-  if (message) {
-    approvalAhead =
-      message.state === "draft" ||
-      message.state === "refused" ||
-      message.state === "failed";
-    // The step is the approval: its line is the row's own, said once here
-    // (the step's one live region) whenever an action changes it.
-    status =
-      said && said.key === messageKey(message) ? said.text : stateLine(message);
+  // A line that needs a person (a read that failed, a wait that ended, no
+  // recap coming) carries the warn dot, as the rail beside it does, so it
+  // never reads like the grey waiting lines. The region says it once; this
+  // copy is for the eye.
+  const needsPerson = (text: string, after: ReactNode = null) => {
     statusShown = false;
     body = (
-      <RecapApproval
-        message={message}
-        io={messages as MessagesIO}
-        onChange={next => {
-          acted.current = messageKey(next);
-          row.put(next);
-        }}
-        announce={text => {
-          // Bound to the row as the action left it (its answer, or the row
-          // as it stands when an action changed nothing, like warnings).
-          setSaid({ text, key: acted.current ?? messageKey(message) });
-          acted.current = null;
-        }}
-        lead={false}
-        extra={messagesLink}
-      />
+      <>
+        <p aria-hidden className="flex gap-2 text-sm">
+          <span className="flex h-5 shrink-0 items-center">
+            <Dot tone="warn" />
+          </span>
+          <span className="min-w-0">{text}</span>
+        </p>
+        {after}
+      </>
+    );
+  };
+  if (live && effectsUnread) {
+    // Who sends this recap is what the unread effects say, so neither the
+    // preview nor the live header can be right yet.
+    approvalAhead = false;
+    status = effectsUnread === "failed" ? RECAP_UNREAD : RECAP_READING;
+    if (effectsUnread === "failed") needsPerson(RECAP_UNREAD);
+  } else if (message) {
+    approvalAhead =
+      (message.state === "draft" ||
+        message.state === "refused" ||
+        message.state === "failed") &&
+      !skipOnly(message);
+    // The step is the approval: its line is the row's own, said once here
+    // (the step's one live region) whenever an action changes it.
+    const stopped = row.stopped && onItsWay(message, now);
+    status =
+      said && said.key === messageKey(message, now)
+        ? said.text
+        : stateLine(message, now);
+    if (stopped) status = `${status} ${RECAP_WORDS.stoppedChecking}`;
+    // Missing is never zero: the row stays, and its line may be out of date.
+    if (row.failed) status = `${status} ${MESSAGES_FAILED}`;
+    statusShown = false;
+    body = (
+      <>
+        <RecapApproval
+          message={message}
+          io={messages as MessagesIO}
+          stopped={stopped}
+          clock={timer}
+          onChange={next => {
+            acted.current = messageKey(next, timer.now());
+            row.put(next);
+          }}
+          announce={text => {
+            // Bound to the row as the action left it (its answer, or the row
+            // as it stands when an action changed nothing, like warnings).
+            setSaid({
+              text,
+              key: acted.current ?? messageKey(message, timer.now()),
+            });
+            acted.current = null;
+          }}
+          lead={false}
+          extra={messagesLink}
+        />
+        {row.failed ? (
+          // The sr-only region above says it; this is for the eye.
+          <p aria-hidden className="flex gap-2 text-sm">
+            <span className="flex h-5 shrink-0 items-center">
+              <Dot tone="warn" />
+            </span>
+            <span className="min-w-0">{MESSAGES_FAILED}</span>
+          </p>
+        ) : null}
+      </>
     );
   } else if (late && (effectFailed || unusable)) {
     // Past the 24 hours nothing will make this recap's message: say why
@@ -342,11 +443,19 @@ export function CheckinRecap({
     !recap ||
     recap.state === "drafting" ||
     (recap.state === "skipped" && recap.reason === AFTER_SEND)
-  )
-    status = DRAFTING;
-  else if (recap.state === "off") {
+  ) {
+    // Still asking: the waiting line. Asking over: where to look instead.
+    status = waitEnded ?? DRAFTING;
+    if (waitEnded) {
+      approvalAhead = false;
+      needsPerson(waitEnded, approving ? messagesLink : null);
+    }
+  } else if (recap.state === "off") {
     approvalAhead = false;
-    status = "AI drafts are off: no Anthropic key.";
+    status = approving
+      ? RECAP_OFF_LIVE
+      : "AI drafts are off: no Anthropic key.";
+    if (approving) needsPerson(RECAP_OFF_LIVE);
   } else if (recap.state === "failed") {
     approvalAhead = !late;
     const reason = recap.reason?.trim() || "The recap draft failed.";
@@ -354,11 +463,16 @@ export function CheckinRecap({
     status = late ? `${withoutAgain(reason)} ${RECAP_TOO_LATE}` : reason;
     statusShown = false;
     body = againRow(status, !late && Boolean(onDraftAgain));
-  } else if (wait)
+  } else if (wait) {
     // Fathom has not finished the summary or the transcript yet: the step
-    // keeps asking, so this is a wait in the server's words, not a verdict.
-    status = wait;
-  else if (recap.state === "skipped") {
+    // keeps asking, so this is a wait in the server's words, not a verdict,
+    // until the asking ends.
+    status = waitEnded ?? wait;
+    if (waitEnded) {
+      approvalAhead = false;
+      needsPerson(waitEnded, approving ? messagesLink : null);
+    }
+  } else if (recap.state === "skipped") {
     // The model's own skip reads as 8.5's line; any other reason (not a
     // client call, not in the cockpit) is the server's sentence.
     approvalAhead = false;

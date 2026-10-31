@@ -68,6 +68,9 @@ class Net:
         self.hooks = [{"id": "01HMAKEHOOK", "form_id": "tG7dnxBn", "tag": "WHTP3992232", "url": "https://hook.eu1.make.com/invented",
                        "enabled": True, "verify_ssl": True}]
         self.door_status = {}                 # forms-door's sync row detail
+        self.wrote = False                    # a PUT or DELETE of the cockpit webhook has reached Typeform
+        self.read_back = None                 # what the webhooks read answers once it has, set by a test
+        self.read_back_no_receipt = False     # the database refuses every intent receipt once it has
 
     # what the tests read
     def made(self, prefix, method=None):
@@ -110,7 +113,8 @@ class Net:
     def route(self, method, url, headers, body, data):
         if url == f"{DB}/rest/v1/cockpit_csm_provider_health":
             assert headers["authorization"] == "Bearer " + SERVICE_KEY
-            return (400, {"message": "refused"}) if body["phase"] in self.receipt_fails else (201, "")
+            refused = body["phase"] in self.receipt_fails or (self.wrote and self.read_back_no_receipt and body["phase"] == "intent")
+            return (400, {"message": "refused"}) if refused else (201, "")
         if url.startswith(f"{DB}/rest/v1/rpc/"):
             assert headers["apikey"] == SERVICE_KEY and headers["authorization"] == "Bearer " + SERVICE_KEY
             name = url.rsplit("/", 1)[1]
@@ -158,7 +162,11 @@ class Net:
         assert headers["authorization"] == "Bearer " + TYPEFORM_TOKEN
         path = urllib.parse.urlsplit(url).path
         if method == "GET" and path == "/forms/tG7dnxBn/webhooks":
+            if self.wrote and self.read_back is not None:
+                return self.read_back
             return 200, {"items": self.hooks}
+        if path == "/forms/tG7dnxBn/webhooks/cockpit" and method in ("PUT", "DELETE"):
+            self.wrote = True
         if path == "/forms/tG7dnxBn/webhooks/cockpit" and method == "PUT":
             hook = {"id": "01HCOCKPITHOOK", "form_id": "tG7dnxBn", "tag": "cockpit", "url": body["url"], "enabled": body["enabled"],
                     "verify_ssl": body["verify_ssl"], "event_types": body["event_types"]}
@@ -697,6 +705,72 @@ class FormsKey(unittest.TestCase):
         self.assertIn("does not show the cockpit webhook enabled", out)
         self.assertEqual(self.net.rpcs("cockpit_forms_key_mark"), [])
 
+    # A write that has gone stands whatever the read after it does, so the read's failure never says nothing changed.
+    READ_BACK_FAILURES = (((500, {"code": "DOWN"}), "typeform refused the webhooks read: HTTP 500. "),
+                          (NO_ANSWER, "Typeform did not answer the webhooks read. "),
+                          ((200, {"unexpected": True}), "Typeform answered the webhooks read without a list. "))
+
+    def assert_read_back_stop(self, command, write, wrote_sentence, want_reason):
+        code, out = self.run_cmd(command, "kickoff")
+        self.assertEqual(code, 1, out)
+        self.assertIn(want_reason + wrote_sentence, out)
+        self.assertNotIn("Nothing was changed", out)
+        self.assertEqual(len(self.net.made("https://api.typeform.com/forms/tG7dnxBn/webhooks/cockpit", write)), 1)
+        self.assertEqual(self.net.rpcs("cockpit_forms_key_mark"), [])
+
+    PUT_NOT_READ = ("The webhook was put on Typeform but could not be read back, so the key was not marked connected. "
+                    "Read the kickoff form's webhooks in Typeform, then run register-typeform kickoff again.")
+    DELETE_NOT_READ = ("The webhook was deleted on Typeform but could not be read back, so the registration was not marked off. "
+                       "Read the kickoff form's webhooks in Typeform, then run unregister-typeform kickoff again.")
+
+    def cockpit_hook_on_typeform(self):
+        self.net.keys["typeform_kickoff"] = self.kickoff_row(webhookId="01HCOCKPITHOOK", formId="tG7dnxBn")
+        self.net.hooks.append({"id": "01HCOCKPITHOOK", "form_id": "tG7dnxBn", "tag": "cockpit",
+                               "url": f"{DB}/functions/v1/forms-door/typeform/kickoff", "enabled": True})
+
+    def test_a_failed_read_back_after_the_put_says_the_webhook_is_on_typeform(self):
+        for answer, reason in self.READ_BACK_FAILURES:
+            with self.subTest(reason):
+                self.net = Net()
+                self.net.keys["typeform_kickoff"] = self.kickoff_row()
+                self.net.read_back = answer
+                self.assert_read_back_stop("register-typeform", "PUT", self.PUT_NOT_READ, reason)
+                self.assertEqual(self.net.hooks[-1]["tag"], "cockpit")
+
+    def test_a_failed_read_back_after_the_delete_says_the_webhook_was_deleted(self):
+        for answer, reason in self.READ_BACK_FAILURES:
+            with self.subTest(reason):
+                self.net = Net()
+                self.cockpit_hook_on_typeform()
+                self.net.read_back = answer
+                self.assert_read_back_stop("unregister-typeform", "DELETE", self.DELETE_NOT_READ, reason)
+                self.assertEqual([h["tag"] for h in self.net.hooks], ["WHTP3992232"])
+
+    def test_a_read_back_refused_its_receipt_is_not_made_and_still_says_what_the_write_did(self):
+        reason = "The receipt for GET api.typeform.com/forms/:id/webhooks could not be saved, so the call was not made. "
+        self.net.keys["typeform_kickoff"] = self.kickoff_row()
+        self.net.read_back_no_receipt = True
+        self.assert_read_back_stop("register-typeform", "PUT", self.PUT_NOT_READ, reason)
+        self.assertEqual([r["method"] for r in self.net.provider_calls()], ["GET", "PUT"])
+        self.net = Net()
+        self.cockpit_hook_on_typeform()
+        self.net.read_back_no_receipt = True
+        self.assert_read_back_stop("unregister-typeform", "DELETE", self.DELETE_NOT_READ, reason)
+        self.assertEqual([r["method"] for r in self.net.provider_calls()], ["GET", "DELETE"])
+
+    def test_a_failed_read_before_any_write_still_says_nothing_was_changed(self):
+        read = ("GET", "https://api.typeform.com/forms/tG7dnxBn/webhooks")
+        self.net.keys["typeform_kickoff"] = self.kickoff_row(webhookId="01HCOCKPITHOOK", formId="tG7dnxBn")
+        for command in ("register-typeform", "unregister-typeform"):
+            for answer, reason in self.READ_BACK_FAILURES:
+                with self.subTest(command=command, reason=reason):
+                    self.net.requests.clear()
+                    self.net.answers[read] = answer
+                    code, out = self.run_cmd(command, "kickoff")
+                    self.assertEqual(code, 1, out)
+                    self.assertIn(reason + "Nothing was changed.", out)
+                    self.assertEqual([r["method"] for r in self.net.provider_calls()], ["GET"])
+
     def test_probe_typeform_sends_an_unsigned_and_a_signed_probe(self):
         self.net.keys["typeform_kickoff"] = self.kickoff_row()
         code, out = self.run_cmd("probe-typeform", "kickoff")
@@ -738,6 +812,57 @@ class FormsKey(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("No cockpit webhook is registered on the kickoff form, so there is nothing to delete.", out)
         self.assertEqual([r["method"] for r in self.net.provider_calls()], ["GET"])
+        self.assertEqual(self.net.rpcs("cockpit_forms_key_mark"), [])
+
+    def test_unregister_typeform_removes_the_webhook_after_the_form_has_left_typeform(self):
+        self.cockpit_hook_on_typeform()
+        self.net.registry = [{"provider": "native", "typeform_id": None}]
+        code, out = self.run_cmd("unregister-typeform", "kickoff")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("no longer filled in Typeform", out)
+        self.assertEqual([r["method"] for r in self.net.provider_calls()], ["GET", "DELETE", "GET"])
+        self.assertEqual([h["tag"] for h in self.net.hooks], ["WHTP3992232"])
+        self.assertEqual(self.net.made(f"{DB}/rest/v1/cockpit_forms?"), [])
+        [mark] = self.net.rpcs("cockpit_forms_key_mark")
+        self.assertEqual(mark["p"]["state"], "refused")
+        self.assertIn("The cockpit webhook of the kickoff form is unregistered.", out)
+
+    def test_unregister_typeform_works_from_the_key_when_the_registry_cannot_be_read(self):
+        self.cockpit_hook_on_typeform()
+        self.net.answers[("GET", f"{DB}/rest/v1/cockpit_forms?")] = (500, {"message": "down"})
+        code, out = self.run_cmd("unregister-typeform", "kickoff")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(self.net.made("https://api.typeform.com/forms/tG7dnxBn/webhooks/cockpit", "DELETE")), 1)
+
+    def test_unregister_typeform_prefers_the_form_the_key_saved_over_the_registry(self):
+        # The fake Typeform knows only tG7dnxBn, so a request to the registry's newer id would fail this test.
+        self.cockpit_hook_on_typeform()
+        self.net.registry = [{"provider": "typeform", "typeform_id": "NewForm99"}]
+        code, out = self.run_cmd("unregister-typeform", "kickoff")
+        self.assertEqual(code, 0, out)
+        self.assertEqual([h["tag"] for h in self.net.hooks], ["WHTP3992232"])
+
+    def test_unregister_typeform_falls_back_to_the_registry_id_whatever_the_provider(self):
+        # A failed read-back leaves a live webhook on a key that saved no form id; the row may have moved since.
+        for meta in ({}, {"formId": "../../other"}):
+            for provider in ("typeform", "native"):
+                with self.subTest(meta=meta, provider=provider):
+                    self.net = Net()
+                    self.net.keys["typeform_kickoff"] = self.kickoff_row(webhookId="01HCOCKPITHOOK", **meta)
+                    self.net.registry = [{"provider": provider, "typeform_id": "tG7dnxBn"}]
+                    self.net.hooks.append({"id": "01HCOCKPITHOOK", "form_id": "tG7dnxBn", "tag": "cockpit",
+                                           "url": f"{DB}/functions/v1/forms-door/typeform/kickoff", "enabled": True})
+                    code, out = self.run_cmd("unregister-typeform", "kickoff")
+                    self.assertEqual(code, 0, out)
+                    self.assertEqual([h["tag"] for h in self.net.hooks], ["WHTP3992232"])
+
+    def test_unregister_typeform_with_no_form_id_anywhere_says_where_to_go(self):
+        self.net.keys["typeform_kickoff"] = self.kickoff_row(webhookId="01HCOCKPITHOOK")
+        self.net.registry = [{"provider": "native", "typeform_id": None}]
+        code, out = self.run_cmd("unregister-typeform", "kickoff")
+        self.assertEqual(code, 1)
+        self.assertIn("Neither the kickoff signing key nor the forms registry names a Typeform form. Nothing was changed.", out)
+        self.assertEqual(self.net.provider_calls(), [])
         self.assertEqual(self.net.rpcs("cockpit_forms_key_mark"), [])
 
     def test_status_lists_the_typeform_key_last_4_only_with_its_last_delivery(self):

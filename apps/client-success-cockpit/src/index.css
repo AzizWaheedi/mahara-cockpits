@@ -279,7 +279,11 @@
   .callout-warn {
     background-color: color-mix(in oklch, var(--warning) 12%, transparent);
     border-color: color-mix(in oklch, var(--warning) 45%, transparent);
-    color: color-mix(in oklch, var(--warning) 80%, var(--foreground));
+    /* 60% in oklab: at 80% in oklch the words were 3.6:1 on the light page's tint
+       (the 1-1 notes' "Not saved" line, 2026-10-30), and oklch turns orange and
+       navy magenta on the way between them. design-tokens.test.ts measures both
+       themes. */
+    color: color-mix(in oklab, var(--warning) 60%, var(--foreground));
   }
   /* A row of chips that scrolls sideways on a phone instead of wrapping. */
   .no-scrollbar {

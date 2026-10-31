@@ -2,9 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { Transport } from "../ad-billing-guard/transport.ts";
 import { ledgerFetch, type Receipt } from "./ledger.ts";
-import { makeWhapi, NOT_CONFIRMED, NOT_LEFT, SEND_URL } from "./whapi.ts";
+import {
+  makeWhapi,
+  NOT_CONFIRMED,
+  NOT_LEFT,
+  readMessage,
+  SEND_URL,
+} from "./whapi.ts";
 
-// A fake WhatsApp stands in for gate.whapi.cloud; nothing touches a network. Every group and text is invented.
+// A fake WhatsApp stands in for gate.whapi.cloud; nothing leaves this machine. Every group and text is invented.
 const GROUP = "120363000000000001@g.us";
 const ENV = {
   AD_BILLING_WHAPI_TOKEN: "test-whapi-token",
@@ -218,6 +224,41 @@ describe("sendText: one POST, the stored text byte for byte", () => {
   });
 });
 
+describe("a slow response receipt", () => {
+  test("a delivered send stays sent when the receipt outlasts the send's time limit", async () => {
+    // A real HTTP answer on this machine's loopback, so the abort behaves as it does in production: nothing leaves it.
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () =>
+        Response.json({ sent: true, message: { id: "wamid-delivered" } }),
+    });
+    const rows: Receipt[] = [];
+    const ledger = ledgerFetch({
+      insert: async row => {
+        rows.push(row);
+        if (row.phase === "response") await Bun.sleep(300); // longer than the limit below
+      },
+      runKey: "client-messages:msg-5",
+      fetch: ((_input: RequestInfo | URL, init?: RequestInit) =>
+        fetch(server.url, init)) as typeof fetch,
+    });
+    const realTimeout = AbortSignal.timeout;
+    AbortSignal.timeout = () => realTimeout.call(AbortSignal, 100); // the 20 s, shorter
+    try {
+      expect(await makeWhapi(ENV, ledger.fetch).sendText(GROUP, BODY)).toEqual({
+        state: "sent",
+        providerId: "wamid-delivered",
+        status: 200,
+      });
+    } finally {
+      AbortSignal.timeout = realTimeout;
+      server.stop(true);
+    }
+    expect(rows.map(r => r.phase)).toEqual(["intent", "response"]);
+  });
+});
+
 describe("the guard's send is never this worker's", () => {
   test("pin: Transport.send still appends its reference marker to a WhatsApp body", async () => {
     const net = fake(() =>
@@ -263,6 +304,49 @@ describe("the guard's send is never this worker's", () => {
 });
 
 describe("reads", () => {
+  test("a message we sent holding a URL comes back as link_preview with its text in link_preview.body", async () => {
+    // The shape of real from_me payloads on the VPS (keys read 2026-10-30); the values are invented.
+    const payload = {
+      id: "wamid-lp-1",
+      chat_id: GROUP,
+      device_id: 1,
+      from: "96550000099",
+      from_me: true,
+      link_preview: {
+        body: BODY,
+        description: "Invented",
+        preview: "",
+        title: "Invented",
+        url: "https://api.leadconnectorhq.com/widget/booking/SHjlq0UjeR11maltYNyh",
+      },
+      source: "api",
+      starred: false,
+      status: "sent",
+      timestamp: 1_790_000_000,
+      type: "link_preview",
+    };
+    const want = {
+      id: "wamid-lp-1",
+      fromMe: true,
+      from: "96550000099",
+      body: BODY,
+      at: 1_790_000_000,
+    };
+    expect(readMessage(payload)).toEqual(want);
+    // Through the list a run uses.
+    const net = fake(() => json({ messages: [payload] }));
+    expect(
+      await makeWhapi(ENV, net.fetch).listMessages(GROUP, 1_790_000_000),
+    ).toEqual([want]);
+    // text.body still comes first, and a top-level body still reads.
+    expect(
+      readMessage({ id: "a", text: { body: "t" }, link_preview: { body: "l" } })
+        ?.body,
+    ).toBe("t");
+    expect(readMessage({ id: "b", body: "top" })?.body).toBe("top");
+    expect(readMessage({ id: "c", link_preview: { body: 7 } })?.body).toBe("");
+  });
+
   test("listMessages pages by 100 to 500, keeps the fields the sender reads, and may retry a read", async () => {
     let n = 0;
     const net = fake(call => {
