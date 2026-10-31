@@ -446,6 +446,7 @@ kinds `blueprintLaunch`, `blueprintClose` and `blueprintOffer`.
 | `native-sources` | C7 | Any ok false: fail. |  |
 | `ask-ai-queue` | H12 | Jobs waiting while nothing finished for 20 min: fail; 10 or more new failures in an hour: warn. |  |
 | `csm-fathom-webhook` |  | Registered, a Customer Success recording first seen in the last 24 h that holds a summary and is shared with a team, and no stored delivery in 24 h: warn. |  |
+| `csm-notes-parity` |  | Any client whose 1-1 notes from the store read `differs` from Typeform: warn (confirm 3). No `notesFrom` on the client rows reads ok (release N4 not live); all `off` reads ok (the notes are native); otherwise ok with the day of 7 counted from `notesParity.cleanSince` (G6, `docs/forms/STAGE2B-CONTRACT.md` 4.4). Only these four readings: G6 counts every incident of this check in 7 days, so its incidents mean only that the notes differ. A feed that stops publishing is `native-source-producer`'s (fail after 90 min), and G6 also holds while the newest `source_snapshot_at` is over an hour old; the publish time shows here as evidence only. |  |
 | `vps-memory` | H7 | Under 1024 MB available: warn; under 700 MB: fail (urgent with no swap); 3 scans in a row; clears only above 1536 MB, two scans in a row. |  |
 | `vps-tunnels` |  | More than 50: warn. |  |
 | `vps-disk` | H8 | Over 85%: warn; over 90%: fail (urgent). | gzip hermes's own logs over 50 MB (every line kept) |

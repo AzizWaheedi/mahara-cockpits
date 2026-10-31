@@ -259,3 +259,129 @@ class CallEvidence(unittest.TestCase):
         self.assertTrue(sent[0].startswith("select id, task_id, status, ends_at, starts_at from public.cockpit_csm_calls "
                                            "where source = 'ghl_appointment' and "), sent[0])
         self.assertNotRegex(sent[0], r"(=|<>|<|>)\s*null")
+
+
+def roster_row(name, task_id, parity=None, notes_from="store", published_min=10):
+    """A client row as the native feed publishes it; every publish stamps source_snapshot_at with its cycle's time."""
+    data = {"name": name, "taskId": task_id, "bucket": "management"}
+    if notes_from:
+        data["notesFrom"] = notes_from
+    if parity is not None:
+        data["notesParity"] = parity
+    row = {"table_name": "clients", "data": data}
+    if published_min is not None:
+        row["source_snapshot_at"] = fakes.ago(published_min)
+    return row
+
+
+class NotesParity(unittest.TestCase):
+    """docs/forms/STAGE2B-CONTRACT.md 4.4: csm-notes-parity reads the notes the native feed takes from the store."""
+
+    def parity(self, state, days_clean=2.5, **kw):
+        return {"state": state, "at": fakes.ago(60), "cleanSince": fakes.ago(days_clean * 1440), **kw}
+
+    def test_the_check_is_registered_report_only_with_three_confirmations(self):
+        check = by_id()["csm-notes-parity"]
+        self.assertIs(check.fix, None)
+        self.assertEqual((check.area, check.severity, check.confirm, check.owner),
+                         ("workers", "medium", 3, "the tech lead"))
+
+    def test_before_n4_no_row_carries_notes_from(self):
+        r = csm_calls.run_notes_parity(ctx({"cockpit_csm_sources": [roster_row("Client A", "task-a", notes_from=None)]}))
+        self.assertEqual(r.status, OK)
+        self.assertEqual(r.summary, "The native feed still reads the 1-1 notes from Typeform: release N4 is not live.")
+        self.assertEqual(csm_calls.run_notes_parity(ctx({})).status, OK)
+
+    def test_every_client_matching_counts_the_clean_days(self):
+        rows = [roster_row("Client A", "task-a", self.parity("same")),
+                roster_row("Client B", "task-b", self.parity("explained", why="fresh")),
+                roster_row("Client C", "task-c", self.parity("explained", why="manual")),
+                roster_row("Client D", "task-d", self.parity("none"))]
+        r = csm_calls.run_notes_parity(ctx({"cockpit_csm_sources": rows}))
+        self.assertEqual(r.status, OK)
+        self.assertEqual(r.summary, "Day 2 of 7: the 1-1 notes read from the store match Typeform for 3 clients "
+                                    "(2 explained by timing or a hand match).")
+        self.assertEqual((r.evidence["same"], r.evidence["explained"], r.evidence["none"]), (1, 2, 1))
+
+    def test_the_first_cycle_reads_day_0_and_the_count_stops_at_7(self):
+        r = csm_calls.run_notes_parity(ctx({"cockpit_csm_sources": [roster_row("Client A", "task-a", self.parity("same", 0))]}))
+        self.assertTrue(r.summary.startswith("Day 0 of 7:"), r.summary)
+        r = csm_calls.run_notes_parity(ctx({"cockpit_csm_sources": [roster_row("Client A", "task-a", self.parity("same", 12))]}))
+        self.assertTrue(r.summary.startswith("Day 7 of 7:"), r.summary)
+
+    def test_any_differing_client_warns_with_its_name_and_fields(self):
+        rows = [roster_row("Client A", "task-a", self.parity("same", 0)),
+                roster_row("Client B", "task-b", self.parity("differs", 0, fields=["notes", "lastNoteOn"])),
+                roster_row("Client C", "task-c", self.parity("differs", 0, fields=["defcon"]))]
+        r = csm_calls.run_notes_parity(ctx({"cockpit_csm_sources": rows}))
+        self.assertEqual(r.status, WARN)
+        self.assertEqual(r.summary, "For 2 clients the 1-1 notes read from the store differ from Typeform: Client B, "
+                                    "Client C (the note's day, DEFCON, the commitments).")
+        self.assertEqual(r.items, ["clientb", "clientc"])
+        self.assertIn("roll release N4 back", r.action)
+        self.assertIn("hermes/csm-calls/RUNBOOK.md", r.action)
+
+    def test_a_different_newest_form_with_equal_fields_still_warns(self):
+        rows = [roster_row("Client B", "task-b", self.parity("differs", 0, fields=[]))]
+        r = csm_calls.run_notes_parity(ctx({"cockpit_csm_sources": rows}))
+        self.assertEqual(r.status, WARN)
+        self.assertIn("(a different newest form)", r.summary)
+
+    def test_native_turns_the_comparison_off(self):
+        rows = [roster_row("Client A", "task-a", self.parity("off")), roster_row("Client B", "task-b", self.parity("off"))]
+        r = csm_calls.run_notes_parity(ctx({"cockpit_csm_sources": rows}))
+        self.assertEqual(r.status, OK)
+        self.assertEqual(r.summary, "The 1-1 notes are native; the Typeform comparison is off.")
+
+    def test_a_feed_that_stopped_publishing_is_not_a_notes_difference(self):
+        # G6 counts every csm-notes-parity incident of 7 days, and native-source-producer already fails after 90 min
+        # without a publication. A feed outage (here three days, and the 55 minutes that would have opened an incident
+        # at confirm 3) must not warn here, or an outage unrelated to the notes would restart G6's 7 days.
+        for published_min in (3 * 1440, 600, 55, 46):
+            rows = [roster_row("Client A", "task-a", self.parity("same", 8), published_min=published_min)]
+            r = csm_calls.run_notes_parity(ctx({"cockpit_csm_sources": rows}))
+            self.assertEqual(r.status, OK, published_min)
+            self.assertEqual(r.summary, "Day 7 of 7: the 1-1 notes read from the store match Typeform for 1 clients "
+                                        "(0 explained by timing or a hand match).")
+            self.assertFalse(r.items)
+            self.assertEqual(r.evidence["publishedAt"], fakes.ago(published_min))
+
+    def test_a_missing_publish_time_is_evidence_not_a_reading(self):
+        rows = [roster_row("Client A", "task-a", self.parity("same", 3), published_min=None)]
+        r = csm_calls.run_notes_parity(ctx({"cockpit_csm_sources": rows}))
+        self.assertEqual(r.status, OK)
+        self.assertTrue(r.summary.startswith("Day 3 of 7:"), r.summary)
+        self.assertIsNone(r.evidence["publishedAt"])
+        rows = [roster_row("Client A", "task-a", self.parity("same", 8), published_min=2 * 1440),
+                roster_row("Client B", "task-b", self.parity("same", 8), published_min=5)]
+        self.assertEqual(csm_calls.run_notes_parity(ctx({"cockpit_csm_sources": rows})).evidence["publishedAt"],
+                         fakes.ago(5))
+
+    def test_only_a_differing_client_warns_however_old_the_feed(self):
+        rows = [roster_row("Client A", "task-a", self.parity("same", 0), published_min=600),
+                roster_row("Client B", "task-b", self.parity("differs", 0, fields=["defcon"]), published_min=600)]
+        r = csm_calls.run_notes_parity(ctx({"cockpit_csm_sources": rows}))
+        self.assertEqual(r.status, WARN)
+        self.assertEqual(r.summary, "For 1 clients the 1-1 notes read from the store differ from Typeform: Client B "
+                                    "(DEFCON).")
+        self.assertEqual((r.items, r.evidence["differing"]), (["clientb"], ["Client B"]))
+        rows = [roster_row("Client A", "task-a", self.parity("off"), published_min=3 * 1440)]
+        self.assertEqual(csm_calls.run_notes_parity(ctx({"cockpit_csm_sources": rows})).summary,
+                         "The 1-1 notes are native; the Typeform comparison is off.")
+
+    def test_the_check_has_the_contract_s_four_readings_and_no_feed_threshold(self):
+        check = by_id()["csm-notes-parity"]
+        self.assertFalse(hasattr(csm_calls, "PARITY_FEED_MAX_MIN"))
+        self.assertNotRegex(check.threshold, r"\d+ ?min")
+        self.assertIn("native-source-producer", check.threshold)
+
+    def test_the_check_reads_the_publish_time_with_the_rows(self):
+        seen = []
+
+        class Spy(fakes.FakeDb):
+            def rows(self, table, select="*", where=(), order=None, limit=None):
+                seen.append((table, select))
+                return super().rows(table, select, where, order, limit)
+
+        csm_calls.run_notes_parity(on(Spy({"cockpit_csm_sources": [roster_row("Client A", "task-a", self.parity("same"))]})))
+        self.assertEqual(seen, [("cockpit_csm_sources", "data,source_snapshot_at")])

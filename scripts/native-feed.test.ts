@@ -8,6 +8,7 @@ import type {Row} from '../hermes/cockpit-sync/runtime';
 import {calculate,bookingsInWindow} from '../hermes/cockpit-sync/worker';
 import {prepareTables} from '../hermes/cockpit-sync/capture';
 import {collectCsm} from '../hermes/cockpit-sync/csmProducer';
+import {STORE_SQL} from '../hermes/cockpit-sync/csmProviders';
 import {collectCreative,gatherFunnels} from '../hermes/cockpit-sync/creativeProducer';
 import {CF} from '../hermes/cockpit-sync/csmCadence';
 import {storeStills} from '../hermes/cockpit-sync/stills';
@@ -39,6 +40,10 @@ function plan(s:Row):Row {
 }
 function recount(p:Row){for(const [family,rows]of Object.entries({tables:p.tables,csm:p.csm,creative:p.creative}) as [string,Record<string,Row[]>][])for(const [key,value]of Object.entries(rows))p.counts[(family==='tables'?'':family+'_')+key]=value.length;}
 const sha=(p:Row)=>createHash('sha256').update(JSON.stringify(p)).digest('hex');
+// The importer runs on whichever Python the host has. `python` first, as on the VPS; then a 3.11 or later, because
+// Python 3.9 and 3.10's fromisoformat refuse a Postgres time with 1 to 5 fractional digits (about one run in three);
+// `python3` last, for a host with nothing newer.
+const IMPORTER_PYTHON=['python','python3.13','python3.12','python3.11','python3'].find(p=>Bun.which(p))??'python';
 async function publish(db:Db,c:Row,p:Row,receipts:Row[]=[]){return (await db.query<{r:Row}>('SELECT public.cockpit_native_media_publish($1,$2,$3,$4,$5) r',[c.run_id,c.lease_token,p,sha(p),receipts])).rows[0].r;}
 
 test('canonical sources require initialized, exact complete counts; RPC permissions execute as real roles',async()=>{
@@ -422,6 +427,18 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
   const monthName=new Intl.DateTimeFormat('en-US',{month:'long',timeZone:'Asia/Kuwait'}).format(new Date());
   const call={id:'appt1',contactId:'contact1',title:'Call with Alpha',startTime:`${yesterday}T10:00:00+03:00`,endTime:`${yesterday}T11:00:00+03:00`,appointmentStatus:'confirmed'};
   const insights={data:[{spend:'120',actions:[{action_type:'lead',value:'10'}]}]};
+  // Alpha's newest 1-1 note, in Typeform and in the store (as hermes/csm-calls writes it): the notes come from the
+  // store, Typeform is the comparator, and the two read the same.
+  const noteAt=new Date(Date.parse(`${yesterday}T12:00:00+03:00`)).toISOString();
+  const noteText='Send the new Ramadan creative to the client by Thursday';
+  const typeformNote={token:'note-token-1',submitted_at:noteAt,hidden:{task_id:'cu1'},answers:[
+   {type:'text',text:noteText,field:{ref:'82a6b434-15d9-4a14-8496-c20c94628536',type:'long_text'}},
+   {type:'choice',choice:{label:'Happy'},field:{ref:'ff7970f7-9fad-4fa5-b12b-4d719dfb7587',type:'multiple_choice'}},
+   {type:'choice',choice:{label:'High'},field:{ref:'c9f99fb1-fec9-47e7-9baa-c5554733723d',type:'multiple_choice'}}]};
+  const storedNote={task_id:'cu1',token:'note-token-1',form_id:'fRokTITH',matched_by:'hidden_field',submitted_at:`${yesterday} 12:00:00+03`,answers:[
+   {ref:'82a6b434-15d9-4a14-8496-c20c94628536',type:'long_text',title:'Additional Notes',value:noteText},
+   {ref:'ff7970f7-9fad-4fa5-b12b-4d719dfb7587',type:'multiple_choice',title:'Defcon Status',value:'Happy'},
+   {ref:'c9f99fb1-fec9-47e7-9baa-c5554733723d',type:'multiple_choice',title:'Task Priority',value:'High'}]};
   const reads:Reads={
    async graph(path){
     if(path.endsWith('/owned_ad_accounts'))return {data:[{id:'act_222222',name:'Alpha',account_status:1,currency:'USD'}]};
@@ -451,10 +468,14 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
      ])};
      // Campaigns ever written to cockpit_campaigns (publishedCampaigns): Mahara's, stopped ones included.
      if(args.query.includes('from public.cockpit_campaigns'))return {result:JSON.stringify([{name:'Alpha campaign'}])};
+     // Release N4 (docs/forms/STAGE2B-CONTRACT.md 4.4): the 1-1 notes from the store, the marks and the registry.
+     if(args.query===STORE_SQL.newest)return {result:JSON.stringify([storedNote])};
+     if(args.query===STORE_SQL.marks)return {result:'[]'};
+     if(args.query===STORE_SQL.registry)return {result:JSON.stringify([{provider:'typeform'}])};
      throw new Error('Unexpected fixture SQL source');
     }
     const url=new URL(args.url);
-    if(name==='pd_typeform_proxy_get')return {items:[],total_items:0};
+    if(name==='pd_typeform_proxy_get')return url.pathname.includes('fRokTITH')?{items:[typeformNote],total_items:1}:{items:[],total_items:0};
     if(name==='native_fathom_get')return {items:[{title:'Alpha recorded call',scheduled_start_time:new Date().toISOString(),url:'https://fathom.video/manual-call',default_summary:{markdown_formatted:'Current factual provider summary'}},{title:'Alpha second call',scheduled_start_time:new Date().toISOString(),url:'https://fathom.video/recorded-call'}]};
     if(name==='native_csm_ghl_get'){
      if(url.pathname==='/calendars/')return {calendars:[{id:'cal1',name:'Client Success Check-In'}]};
@@ -632,6 +653,13 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
   expect(p.creative.campaigns[0]._id).toBe('legacy-creative-campaign');
   expect(p.tables.campaigns[0]._id).not.toBe('legacy-creative-campaign');
   expect(p.csm.clientProfiles[0].adLeads.allTime).toBe(10);
+  // N4: the cadence's note is the store's, every client row says so, and the store reads the same as Typeform.
+  const alpha=p.csm.clients.find((r:Row)=>r.taskId==='cu1');
+  expect(alpha).toMatchObject({lastNoteOn:yesterday,defcon:'Happy',callPriority:'High',notesFrom:'store'});
+  expect(alpha.commitments.map((x:Row)=>x.text)).toEqual([noteText]);
+  expect(alpha.notesParity).toMatchObject({state:'same'});
+  expect(alpha.notesParity.cleanSince).toBe(alpha.notesParity.at);
+  expect(p.csm.clients.every((r:Row)=>r.notesFrom==='store'&&typeof r.notesParity?.state==='string')).toBe(true);
   expect(p.csm.kpi.find(r=>r.key==='churn')?.numeric).toBe(20);
   expect(p.csm.appointments).toHaveLength(1);
   expect(p.csm.appointments[0]).toMatchObject({apptId:'appt1',clientName:'Alpha',kind:'checkin',status:'confirmed'});
@@ -696,6 +724,10 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
   expect(stored.callsBrief).toBe('Original recorded overall summary');
   expect(stored.calls.find((call:Row)=>call.url==='https://fathom.video/manual-call').brief).toBe('Keep original manual annotation');
   expect(stored.ads7d).toEqual(week);
+  // The publish accepts N4's two fields on the client rows as they are.
+  const publishedClient=(await db.query<{data:Row}>("SELECT data FROM cockpit_csm_sources WHERE table_name='clients'")).rows.map(r=>r.data).find(d=>d.taskId==='cu1');
+  expect(publishedClient?.notesFrom).toBe('store');
+  expect(publishedClient?.notesParity).toEqual(alpha.notesParity);
   // The next cycle on what was published, with the client's week changed (it now books for the
   // client), publishes too: ads7d is a free field on its three rows, and the daily grain keeps one
   // row per ad-day, now with its accountId.
@@ -705,6 +737,8 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
   expect((await publish(db,await claim(db),next)).status).toBe('published');
   await owner(db);
   const nextWeek=next.tables.clientLinks.find((r:Row)=>r.taskId==='cu1').ads7d;
+  // The next cycle carries cleanSince and the unchanged reading's time from the published row.
+  expect(next.csm.clients.find((r:Row)=>r.taskId==='cu1').notesParity).toEqual(alpha.notesParity);
   expect(nextWeek).toMatchObject({bookings:2,costPerBooking:60,offBoardSpend:15});
   expect((await db.query<{data:Row}>("SELECT data FROM cockpit_media_sources WHERE table_name='clientLinks'")).rows[0].data.ads7d).toEqual(nextWeek);
   expect((await db.query<{data:Row}>("SELECT data FROM cockpit_creative_sources WHERE table_name='clients'")).rows[0].data.ads7d).toEqual(nextWeek);
@@ -1120,7 +1154,7 @@ test('actual finite importer publishes nonempty CSM human history with original 
   const make=async()=>{
    await service(db);const inventory=(await db.query<{r:Row}>('SELECT cockpit_native_bootstrap_inventory() r')).rows[0].r;
    const script=`import importlib.util,json,sys\nspec=importlib.util.spec_from_file_location('imp','scripts/import-cockpit-runtime-sources.py')\nimp=importlib.util.module_from_spec(spec);spec.loader.exec_module(imp)\nx=json.load(sys.stdin)\ns={'app':'client-success','deployment':'original-csm','sha256':'a'*64,'captured_at':x['inventory']['captured_at'],'tables':x['records'],'table_hashes':{k:imp.content_hash(v) for k,v in x['records'].items()}}\nprint(json.dumps(imp.build_plan([s],x['inventory'],x['scope'])))`;
-   const proc=Bun.spawn(['python','-c',script],{cwd:fileURLToPath(new URL('..',import.meta.url)),stdin:'pipe',stdout:'pipe',stderr:'pipe'});
+   const proc=Bun.spawn([IMPORTER_PYTHON,'-c',script],{cwd:fileURLToPath(new URL('..',import.meta.url)),stdin:'pipe',stdout:'pipe',stderr:'pipe'});
    proc.stdin.write(JSON.stringify({inventory,records,scope}));proc.stdin.end();
    const [out,err,code]=await Promise.all([new Response(proc.stdout).text(),new Response(proc.stderr).text(),proc.exited]);
    if(code!==0)throw new Error(err);

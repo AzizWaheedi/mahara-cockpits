@@ -2,7 +2,7 @@ import {type Row, unwrap, allAdAccounts, callTool, assertNativeFence, retainShee
 import {buildSnapshot, CLIENTS_LIST, CS_LIST} from './csmCadence';
 import {adLeadsByClient, adLeadsFor, adsForClient, adsAccess, liveCounts, metaAccountFor, normTight, gapsFor, callsFor, mergeCalls, pool, PROFILE_CF, cfById, drop, isoDate, cleanDosDonts} from './csmProfileCalculations';
 import {payingState, stateOf, rosterDiff, ROSTER_KINDS, rosterEventId} from './csmRoster';
-import {cadenceInputs, sheetPerformance, lostLeads, provisionalFor, fathomCalls, churnValues, staffAppointments} from './csmProviders';
+import {cadenceInputs, sheetPerformance, lostLeads, provisionalFor, fathomCalls, churnValues, staffAppointments, type NoteParity, type NotesParity} from './csmProviders';
 import {stableId} from './capture';
 import {type ClientWeeks, clientWeekFor} from './calculator';
 import {latestUpdates} from './clientUpdates';
@@ -232,6 +232,43 @@ export function fathomSince(syncRuns: Row[], now: number, optionalSeed?: string)
   throw new Error('Verified checkpoint required: no successful native_fathom or health record found and no valid seed provided');
 }
 
+/** The 1-1 notes reading a client row carries since release N4 (docs/forms/STAGE2B-CONTRACT.md 3.10). */
+export type NotesParityRow = NoteParity & { at: string; cleanSince: string };
+
+/**
+ * Every client row says where its 1-1 notes came from (the store, since N4) and how the store compares with
+ * Typeform this cycle. `cleanSince` is the time since which no client has read `differs`. It moves at most twice
+ * per differs episode: to this cycle's time when a client first differs (no previous row differed), and again on
+ * the first cycle after it with no client differing (the true start of the clean run). Otherwise it is carried
+ * from the previous published rows, and the first cycle sets it. While clients differ, G6 is held by its
+ * `differs = 0` clause, so the carried value never counts toward the 7 days.
+ * `at` is when this client's reading last changed, carried while it holds, so a cycle that changes nothing
+ * changes no row (and writes no audit row), a cycle inside a differs episode included.
+ */
+export function attachNotesParity(clients: Row[], parity: NotesParity, previous: Row[], now: number): Row[] {
+  const at = new Date(now).toISOString();
+  const valid = (v: unknown) => typeof v === 'string' && Number.isFinite(Date.parse(v)) && Date.parse(v) <= now;
+  const reading = (c: Row): NoteParity =>
+    parity.native ? { state: 'off' } : parity.byTask[String(c.taskId ?? '')] ?? { state: 'none' };
+  const readings = clients.map(reading);
+  const before = (previous ?? []).map(p => p?.notesParity?.cleanSince).filter(valid).map(v => Date.parse(String(v)));
+  const carried = before.length ? new Date(Math.max(...before)).toISOString() : undefined;
+  const differsNow = readings.some(r => r.state === 'differs');
+  const differedBefore = (previous ?? []).some(p => p?.notesParity?.state === 'differs');
+  // differs now and before: carry; differs first now: this cycle; clean now after differs: this cycle; else carry.
+  const cleanSince = carried !== undefined && differsNow === differedBefore ? carried : at;
+  const same = (a: Row | undefined, b: NoteParity) =>
+    !!a && a.state === b.state && a.why === b.why && JSON.stringify(a.fields ?? []) === JSON.stringify(b.fields ?? []);
+  clients.forEach((c, i) => {
+    const r = readings[i];
+    const prior = (previous ?? []).find(p => p?.taskId && p.taskId === c.taskId)?.notesParity;
+    const row: NotesParityRow = { ...r, at: same(prior, r) && valid(prior?.at) ? String(prior.at) : at, cleanSince };
+    c.notesFrom = 'store';
+    c.notesParity = row;
+  });
+  return clients;
+}
+
 export interface PerformanceSnapshotResult {
   performance: Row | undefined;
   performanceSyncedAt: number | undefined;
@@ -287,13 +324,15 @@ export async function collectCsm(state: Row, tables: Record<string, Row[]>, seed
   const parsed = parseClientData(sheet.values);
   // Missing credentials/identity columns cannot be converted to empty account collections.
   if (parsed.omissions.length) throw new Error(`Client Data columns missing: ${parsed.omissions.join(', ')}`);
-  // A 1-1 form's hidden task_id counts only when it is a client card, as in csm-calls.
-  const {notes,exts} = await cadenceInputs(new Set(clientTasks.map((t:Row)=>String(t.id))));
+  // A 1-1 form's hidden task_id counts only when it is a client card, as in csm-calls. Since release N4 the notes
+  // come from the store (cockpit_csm_call_forms), with Typeform read beside them until the switch-over.
+  const {notes,exts,parity} = await cadenceInputs(new Set(clientTasks.map((t:Row)=>String(t.id))),now);
   const fieldResponse = unwrap(await callTool('pd_clickup_proxy_get',{url:`https://api.clickup.com/api/v2/list/${CLIENTS_LIST}/field`}));
   if (!Array.isArray(fieldResponse.fields)) throw new Error('Client custom-field collection missing');
   const reportFieldId = fieldResponse.fields.find((f:Row)=>String(f.name).toLowerCase()==='last report sent')?.id;
   const renewalFieldId = fieldResponse.fields.find((f:Row)=>String(f.name).toLowerCase()==='contract end date')?.id;
   const snapshot = buildSnapshot({today,now,exts,notes,reportFieldId,renewalFieldId,clientTasks,csTasks,liveWatch:tables.launchWatch,campaigns:tables.campaigns,changeLog:state.mediaDecisions});
+  attachNotesParity(snapshot.clients,parity,state.csm.clients,now);
   for (const c of snapshot.clients) {
     const row = parsed.rows.find(r => r.clickupId === c.taskId) ?? parsed.rows.find(r => normTight(r.clientName) === normTight(c.name));
     if (row?.serviceMode) { c.service = /dwy|done with/i.test(row.serviceMode) ? 'DWY' : row.serviceMode; c.dwy = /dwy|done with/i.test(row.serviceMode); }
