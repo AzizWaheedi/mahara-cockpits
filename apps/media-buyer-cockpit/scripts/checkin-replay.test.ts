@@ -1542,8 +1542,13 @@ describe("the readers, the VPS script and the command line", () => {
     const read = sqReader({ home: "/home/test", run });
     expect(await read("-- replay:x\nSELECT 1")).toEqual([{ a: 1 }, { a: 2 }]);
     expect(calls[0]).toMatchObject({
-      cmd: "/home/test/.cache/mahara-ship/pybin/python",
-      args: ["/home/test/.cache/mahara-ship/sq.py", "-- replay:x\nSELECT 1"],
+      // Windows checkout: join() builds paths with backslashes there.
+      cmd: join("/home/test", ".cache", "mahara-ship", "pybin", "python"),
+      // Windows checkout: join() builds paths with backslashes there.
+      args: [
+        join("/home/test", ".cache", "mahara-ship", "sq.py"),
+        "-- replay:x\nSELECT 1",
+      ],
       opts: { cwd: "/home/test", stdio: ["ignore", "pipe", "pipe"] },
     });
     const failing = sqReader({
@@ -1602,7 +1607,8 @@ describe("the readers, the VPS script and the command line", () => {
     expect(VPS_SCRIPT).not.toMatch(/print\([^)]*(CLICKUP|SLACK)\b/);
     expect(VPS_SCRIPT).not.toMatch(/comment_text"\)\s*[,}]|"text":/);
     const parsed = spawnSync(
-      "python3",
+      // Windows checkout: there is no python3 command, only python.
+      process.platform === "win32" ? "python" : "python3",
       ["-c", "import ast, sys; ast.parse(sys.stdin.read())"],
       {
         input: VPS_SCRIPT,
