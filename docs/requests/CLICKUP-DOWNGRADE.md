@@ -86,6 +86,7 @@ their resources (a seats run reads `team`).
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | requests: a request (every minute, only with work) | 5 (the 27 Oct rehearsal) | 13 / 18 / 18 | 43 (5 filed at once) | 120 | **25** | 18 calls: one window, about 15 s. Worst type (Social media, 10 SOP steps, no template) about 22: one window. 5 at once (70 calls): 3 windows, about 2.5 min over two runs | run budget 100 s (`clickup-writeback/run.ts:469`), Edge wall 150 s: worst item started at 100 s waits for the next window and ends by about 135 s. One requests run sends at a time (section 1.3), so 25 is the job's pace, not one run's |
 | requests: a focus-view press | 8 | 1 / 3 / 3 | 3 | 120 | **25** | 3 calls | every minute |
+| 1-1 notes, job `forms` (every minute, only with work; dark until the 1-1 notes cut-over, `docs/forms/STAGE2B-CONTRACT.md` 4.1) | 0 | about 11 for one response (not yet run live) | 0 | new | **10** (`CLICKUP_FORMS_CALLS_PER_MINUTE`, 5 to 60, one run at a time) | none yet; one response takes a little over a minute | every minute |
 | kpi (`5 3-18`, moving to `23 3-18`) | 66 in the ledger, 78 apply runs in 7 days (avg 10.3 s, max 44.8 s) | 18 / 41 / 51 (the 06:05 Kuwait run; 75 once, a manual run on 24 Oct) | 51 | 90 | **30** | 51 calls: 2 windows, about 70 s. 75 calls: 3 windows, about 130 s | hourly; Edge 150 s |
 | log (`*/2`) | 13 items | 1 / 2 / 2 | 4 | 90 | **30** | claim of 15 items, about 30 calls: one window | 2 min |
 | dosdonts (`35 3-18`) | 60 | 1 / 1 / 1 (dry run) | 1 | 90 | **30** | 1 call | hourly |

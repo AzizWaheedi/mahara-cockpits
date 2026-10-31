@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Dot, Kicker } from "@/components/kit";
+import { Dot, Kicker, LINK_INK } from "@/components/kit";
 import { Button } from "@/components/ui/button";
 import { displayLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -48,12 +48,10 @@ export const FIELD_FOCUS =
 
 /**
  * Teal words on a tinted panel (bg-muted/40: the This call card, the boxes of
- * Fathom's items). The ink teal is 4.47:1 there in light, under 4.5:1 for
- * 12px text, so it leans 10% toward the text colour: 5.2:1 in light, and a
- * touch lighter on Deep Space (9.3:1). The same token, never a new colour.
+ * Fathom's items): the kit's LINK_INK, the ink teal leaning 10% toward the
+ * text colour (5.2:1 there in light, 9.3:1 on Deep Space).
  */
-export const PANEL_INK =
-  "text-[color:color-mix(in_oklab,var(--primary-ink)_90%,var(--foreground))]";
+export const PANEL_INK = LINK_INK;
 
 /**
  * The small Add buttons on those boxes: the words keep their 16px line, but

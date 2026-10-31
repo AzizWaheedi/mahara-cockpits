@@ -23,6 +23,8 @@ export type Doctor = {
   fathom: { admin: boolean; csList: boolean; limit: { limit: number | null; remaining: number | null } };
   models: { deepseek: boolean; anthropic: boolean };
   store: { csRecordings24h: number; candidates7d: number; lastPull: string | null; lastDelivery: string | null };
+  /** Function secrets by name, never a value: NOTICES_CRON_SECRET lets the 1-1 notes sweep start drafts (2b build 0). */
+  secrets: { NOTICES_CRON_SECRET: boolean };
   note: string;
 };
 
@@ -65,6 +67,10 @@ export async function runDoctor(op: Pick<OpCtx, "deps">): Promise<Doctor> {
   notes.push(deepseek?.secret ? (models.deepseek ? "DeepSeek works." : "DeepSeek did not answer with deepseek-flash.") : "No DeepSeek key: client notes drafts are off.");
   notes.push(anthropic?.secret ? (models.anthropic ? "Anthropic works." : "Anthropic did not answer with claude-opus-5-5.") : "No Anthropic key: suggestions, grades and recaps are off.");
 
+  // Trimmed, as the door compares it: a value of only spaces or a newline opens nothing.
+  const sweepSecret = !!deps.env("NOTICES_CRON_SECRET")?.trim();
+  if (!sweepSecret) notes.push("No NOTICES_CRON_SECRET: the 1-1 notes sweep cannot start drafts.");
+
   const store = ((await deps.rpc("cockpit_forms_doctor_store", {})) ?? {}) as Doctor["store"];
   const meta = webhook?.meta ?? {};
   return {
@@ -79,6 +85,7 @@ export async function runDoctor(op: Pick<OpCtx, "deps">): Promise<Doctor> {
     models,
     // As the store counted them: missing is never zero.
     store: { csRecordings24h: store.csRecordings24h, candidates7d: store.candidates7d, lastPull: store.lastPull ?? null, lastDelivery: store.lastDelivery ?? null },
+    secrets: { NOTICES_CRON_SECRET: sweepSecret },
     note: notes.join(" "),
   };
 }

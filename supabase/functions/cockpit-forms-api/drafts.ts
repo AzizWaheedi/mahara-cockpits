@@ -18,7 +18,7 @@
 import { actionItems as fathomActionItems } from "../../../hermes/csm-calls/fathomRules.ts";
 import { RpcError } from "../cockpit-hours-sync/db.ts";
 import { type ModelEnv, ModelError, type ModelOptions, structuredJsonDetailed } from "../cockpit-media-api/model.ts";
-import { DoorError, type OpCtx } from "./door.ts";
+import { type Actor, type Deps, DoorError, type OpCtx } from "./door.ts";
 import {
   clientNameOf,
   type DraftInputs,
@@ -44,7 +44,7 @@ import { cut, labelLines, type Line, parseTranscript, sideOfNameFrom } from "./t
 
 export const KINDS = ["todos", "client_notes", "defcon_priority", "grade", "recap"] as const;
 export type Kind = (typeof KINDS)[number];
-export const TODOS_VERSION = "checkin.todos.v1";
+export const TODOS_VERSION = "checkin.todos.v2";
 export const ANTHROPIC_MODEL = "claude-opus-5-5";
 export const DEEPSEEK_MODEL = "deepseek-flash";
 const PROVIDER: Record<Kind, "none" | "deepseek" | "anthropic"> = {
@@ -350,10 +350,23 @@ async function runModel(op: OpCtx, kind: Exclude<Kind, "todos">, id: string, b: 
 
 // ---------------------------------------------------------------- checkin.drafts and checkin.draftAgain
 
-async function readDrafts(op: OpCtx, responseId: string): Promise<{ recordingId: string | null; drafts: DraftView[] }> {
-  const r = (await op.userRpc("cockpit_form_drafts_read", { p_response_id: responseId })) as { recordingId?: string | null; drafts?: DraftView[] } | null;
-  return { recordingId: r?.recordingId ?? null, drafts: Array.isArray(r?.drafts) ? r.drafts : [] };
+/** A response's stored drafts: the seat's own read in the window, the service read on the sweep (2b, Z56). */
+export type DraftsReader = (responseId: string) => Promise<{ recordingId: string | null; drafts: DraftView[] }>;
+
+/** The drafts answer of cockpit_form_drafts_read or cockpit_form_drafts_service, each the same shape. */
+export function draftsOf(r: unknown): { recordingId: string | null; drafts: DraftView[] } {
+  const v = (r ?? null) as { recordingId?: string | null; drafts?: DraftView[] } | null;
+  return { recordingId: v?.recordingId ?? null, drafts: Array.isArray(v?.drafts) ? v.drafts : [] };
 }
+
+async function readDrafts(op: OpCtx, responseId: string): Promise<{ recordingId: string | null; drafts: DraftView[] }> {
+  return draftsOf(await op.userRpc("cockpit_form_drafts_read", { p_response_id: responseId }));
+}
+
+/** The seat-less ctx a cron path drafts with: a seat's own RPC is never called there (2b 4.0). */
+const NO_SEAT_RPC = async (): Promise<never> => {
+  throw new Error("The 1-1 notes sweep reads nothing with a seat's token.");
+};
 
 async function keyOf(op: OpCtx, provider: "fathom" | "deepseek" | "anthropic"): Promise<string | null> {
   const row = (await op.deps.rpc("cockpit_forms_key_get", { p_provider: provider })) as { secret?: string } | null;
@@ -362,57 +375,80 @@ async function keyOf(op: OpCtx, provider: "fathom" | "deepseek" | "anthropic"): 
 
 /**
  * checkin.drafts (again = null) and checkin.draftAgain (again = the kind). The
- * grade is never drafted again; the recap only for sent notes.
+ * grade is never drafted again; the recap only for sent notes. The response is
+ * read with the seat's token (its gate), then draftsForResponse drafts it, its
+ * stored drafts read with the same token.
  */
 export async function checkinDrafts(op: OpCtx, body: Record<string, unknown>, again: Kind | null): Promise<DraftsAnswer> {
   const responseId = String(body.responseId ?? "");
   if (!UUID.test(responseId)) throw new DoorError("Open the notes from the client page.", 400);
   if (again === "grade") throw new DoorError("A call is graded once.", 400);
   const read = (await op.userRpc("cockpit_form_responses_read", { p_response_id: responseId })) as { response?: Record<string, any> } | null;
-  const response = read?.response ?? {};
+  const response: Record<string, any> = { ...(read?.response ?? {}), id: responseId };
   const sent = response.state === "submitted" || response.state === "confirmed";
   if (again === "recap" && !sent) throw new DoorError(RECAP_AFTER_SEND, 400);
-  const nowIso = op.deps.now().toISOString();
+  const kinds = KINDS.filter(k => (sent ? !FIELDS.has(k) : true));
+  return draftsForResponse(op, response, kinds, id => readDrafts(op, id), again);
+}
+
+/**
+ * The drafts of one response already read (2b 4.0, Z42): checkinDrafts passes the window's
+ * response and the seat's reader; the effects sweep (effects.ts) passes the service read of
+ * the response, one kind, and a reader over cockpit_form_drafts_service, because a cron
+ * request has no seat token. `kinds` are the kinds to begin; the answer lists every kind.
+ * `again` is checkin.draftAgain's kind (null otherwise); the sweep never passes it.
+ */
+export async function draftsForResponse(
+  op: { deps: Deps; actor: Actor },
+  response: Record<string, any>,
+  kinds: Kind[],
+  readDrafts: DraftsReader,
+  again: Kind | null = null,
+): Promise<DraftsAnswer> {
+  const ctx: OpCtx = { deps: op.deps, actor: op.actor, userRpc: NO_SEAT_RPC };
+  const responseId = String(response.id ?? "");
+  if (!UUID.test(responseId)) throw new DoorError("Open the notes from the client page.", 400);
+  const sent = response.state === "submitted" || response.state === "confirmed";
+  const nowIso = ctx.deps.now().toISOString();
   const call = response.answers?.call;
   const recordingId = call?.kind === "fathom" && /^\d{3,20}$/.test(String(call.recordingId ?? "")) ? String(call.recordingId) : null;
   if (!recordingId) return { recordingId: null, drafts: KINDS.map(k => answered(k, "skipped", NO_RECORDING, nowIso)), started: [], now: nowIso };
   const taskId = String(response.taskId ?? "");
-  const d = (await op.deps.rpc("cockpit_form_draft_inputs", { p_task_id: taskId, p_recording_id: recordingId })) as DraftInputs;
+  const d = (await ctx.deps.rpc("cockpit_form_draft_inputs", { p_task_id: taskId, p_recording_id: recordingId })) as DraftInputs;
   const skipAll = (reason: string): DraftsAnswer => ({ recordingId, drafts: KINDS.map(k => answered(k, "skipped", reason, nowIso)), started: [], now: nowIso });
   if ((d.class !== "client" && d.class !== "candidate") || d.gone) return skipAll(NOT_CLIENT_CALL);
   // Before any content is read, the recording must still be one this client's notes can use: on no
   // other client, and, when it was made outside Customer Success (a prospect's sales call reads client
   // until the sales desk indexes it), tied to this client for the seat whose response saved it (the
   // database's tie rule, A7.14: rule 4 reads the response's own seat, never the one asking).
-  const found = await recordingFor(op, taskId, recordingId, d.startsAt);
+  const found = await recordingFor(ctx, taskId, recordingId, d.startsAt);
   if (!found.item) return skipAll(NOT_IN_COCKPIT);
   const refusal = await savedCallRefusal(
-    op,
+    ctx,
     toRecording(found.item),
     taskId,
     found.inputs.bookings.map(toBooking),
-    matchCtx(found.inputs, op.deps.now().getTime()),
+    matchCtx(found.inputs, ctx.deps.now().getTime()),
     responseId,
   );
   if (refusal?.reason === "other") {
     const other = refusal.otherTask as string;
-    return skipAll(onOtherClient((await seesClient(op, other)) ? clientNameOf(found.inputs, other) : null));
+    return skipAll(onOtherClient((await seesClient(ctx, other)) ? clientNameOf(found.inputs, other) : null));
   }
   // The tie rule's sentence: OUTSIDE_CS_LIKELY when its call row is on this client by a likely sign (A7.18).
   if (refusal) return skipAll(isTieRefusal(refusal) ? tieSentence(refusal) : NOT_CLIENT_CALL);
 
-  const kinds = KINDS.filter(k => (sent ? !FIELDS.has(k) : true));
   const keys: Record<"deepseek" | "anthropic", string | null> = {
-    deepseek: kinds.includes("client_notes") ? await keyOf(op, "deepseek") : null,
-    anthropic: kinds.some(k => PROVIDER[k] === "anthropic") ? await keyOf(op, "anthropic") : null,
+    deepseek: kinds.includes("client_notes") ? await keyOf(ctx, "deepseek") : null,
+    anthropic: kinds.some(k => PROVIDER[k] === "anthropic") ? await keyOf(ctx, "anthropic") : null,
   };
   const hasKey = (k: Kind) => PROVIDER[k] === "none" || !!keys[PROVIDER[k] as "deepseek" | "anthropic"];
-  const fathomKey = await keyOf(op, "fathom");
+  const fathomKey = await keyOf(ctx, "fathom");
   // The reads before any draft exists (the hash needs them) are receipted under the response.
   const draftRun = `drafts:${responseId}`;
   let summary = d.summary;
   if (!summary && fathomKey && kinds.some(k => NEEDS_SUMMARY.has(k) && hasKey(k) && (k !== "recap" || sent))) {
-    const fresh = await readSummary(op, fathomKey, d, draftRun);
+    const fresh = await readSummary(ctx, fathomKey, d, draftRun);
     // Unshared since the store saw it: no longer a client call, so nothing is drafted from it.
     if (fresh.internal) return skipAll(NOT_CLIENT_CALL);
     summary = fresh.text;
@@ -420,8 +456,8 @@ export async function checkinDrafts(op: OpCtx, body: Record<string, unknown>, ag
   const live = (k: Kind) => (k !== "recap" || sent) && (!NEEDS_SUMMARY.has(k) || !!summary) && hasKey(k);
   let transcript: string | null = null;
   if (kinds.some(live)) {
-    if (d.transcriptPath) transcript = await op.deps.storage.read(d.transcriptPath);
-    if (!transcript && fathomKey) transcript = await readTranscript(op, fathomKey, recordingId, draftRun);
+    if (d.transcriptPath) transcript = await ctx.deps.storage.read(d.transcriptPath);
+    if (!transcript && fathomKey) transcript = await readTranscript(ctx, fathomKey, recordingId, draftRun);
   }
   const lines = labelLines(parseTranscript(transcript), { recorderEmail: d.recorderEmail, recorderName: d.recorderName, staff: d.staff ?? [] });
   const bundle: Bundle = {
@@ -442,7 +478,7 @@ export async function checkinDrafts(op: OpCtx, body: Record<string, unknown>, ag
   };
 
   // One `off` row records a missing key; the newest attempt says whether it is there already.
-  const before = new Map(kinds.some(k => !hasKey(k)) ? (await readDrafts(op, responseId)).drafts.map(v => [v.kind, v] as const) : []);
+  const before = new Map(kinds.some(k => !hasKey(k)) ? (await readDrafts(responseId)).drafts.map(v => [v.kind, v] as const) : []);
   const said = new Map<Kind, DraftView>();
   const started: Kind[] = [];
   const background: Promise<void>[] = [];
@@ -464,7 +500,7 @@ export async function checkinDrafts(op: OpCtx, body: Record<string, unknown>, ag
     if (!hasKey(kind) && before.get(kind)?.state === "off") continue;
     let begun: { id: string; existing: boolean; state: string; attempt: number };
     try {
-      begun = (await op.deps.rpc("cockpit_form_draft_begin", {
+      begun = (await ctx.deps.rpc("cockpit_form_draft_begin", {
         p: {
           formKey: "checkin",
           taskId,
@@ -475,7 +511,7 @@ export async function checkinDrafts(op: OpCtx, body: Record<string, unknown>, ag
           promptVersion: VERSION[kind],
           inputSha256: await sha256(canonical(inputOf(kind, bundle))),
           again: again === kind,
-          actorEmail: op.actor.email,
+          actorEmail: ctx.actor.email,
         },
       })) as typeof begun;
     } catch (e) {
@@ -489,17 +525,17 @@ export async function checkinDrafts(op: OpCtx, body: Record<string, unknown>, ag
     }
     if (begun.existing || begun.state !== "drafting") continue;
     if (!hasKey(kind)) {
-      await op.deps.rpc("cockpit_form_draft_finish", { p_id: begun.id, p: { state: "off", reason: OFF[provider as "deepseek" | "anthropic"], actorEmail: op.actor.email } });
+      await ctx.deps.rpc("cockpit_form_draft_finish", { p_id: begun.id, p: { state: "off", reason: OFF[provider as "deepseek" | "anthropic"], actorEmail: ctx.actor.email } });
       continue;
     }
     started.push(kind);
     if (kind === "todos")
-      await op.deps.rpc("cockpit_form_draft_finish", { p_id: begun.id, p: { state: "ready", output: todosOutput(bundle), actorEmail: op.actor.email } });
-    else background.push(runModel(op, kind, begun.id, bundle, keys[provider as "deepseek" | "anthropic"] as string));
+      await ctx.deps.rpc("cockpit_form_draft_finish", { p_id: begun.id, p: { state: "ready", output: todosOutput(bundle), actorEmail: ctx.actor.email } });
+    else background.push(runModel(ctx, kind, begun.id, bundle, keys[provider as "deepseek" | "anthropic"] as string));
   }
-  if (background.length) op.deps.waitUntil(Promise.allSettled(background));
+  if (background.length) ctx.deps.waitUntil(Promise.allSettled(background));
 
-  const after = await readDrafts(op, responseId);
+  const after = await readDrafts(responseId);
   const stored = new Map(after.drafts.map(v => [v.kind, v] as const));
   const drafts = KINDS.flatMap(k => {
     const s = stored.get(k);

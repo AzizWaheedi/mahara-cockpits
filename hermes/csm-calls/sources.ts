@@ -287,8 +287,25 @@ async function recordingsByLink(db: Db, links: string[]) {
   return out;
 }
 
-/** A 1-1 form as read, waiting to be linked to its call. */
-type Checkin = { row: Row; transcript: string | null; reason?: string; link?: string };
+/** A 1-1 form as read, waiting to be linked to its call. A late one (after the switch-over) is never linked. */
+type Checkin = { row: Row; transcript: string | null; reason?: string; link?: string; late?: boolean };
+
+/** The queue's sentence for a late 1-1 form with no client (docs/forms/STAGE2B-CONTRACT.md 4.9). */
+export const LATE_NO_CLIENT = "1-1 notes sent in Typeform after the switch-over, with no client on the board.";
+
+/**
+ * When the 1-1 notes moved to the cockpit, from the registry (docs/forms/STAGE2B-CONTRACT.md 4.9, Z13): null while
+ * Typeform fills them. The time is cockpit_forms.provider_since, else the row's updated_at, exactly as the database's
+ * cockpit_form_native_since reads it, so the worker and the late trigger (20261029x) call the same forms late.
+ */
+export async function checkinCutover(db: Db): Promise<number | null> {
+  const rows = await db.all("cockpit_forms", "select=provider,provider_since,updated_at&key=eq.checkin");
+  if (rows.length !== 1) throw new Error("The 1-1 notes registry row (cockpit_forms checkin) is missing");
+  if (rows[0].provider !== "native") return null;
+  const at = Date.parse(rows[0].provider_since ?? rows[0].updated_at ?? "");
+  if (!Number.isFinite(at)) throw new Error("The 1-1 notes are native but the registry has no switch-over time");
+  return at;
+}
 /** Every Typeform response read and matched to a client, before the 1-1 forms are linked to their calls. */
 export type FormsRead = { formRows: Row[]; checkins: Checkin[]; counts: Record<string, Row> };
 
@@ -300,8 +317,12 @@ export type FormsRead = { formRows: Row[]; checkins: Checkin[]; counts: Record<s
 export async function readTypeforms(ctx: Ctx): Promise<FormsRead> {
   const { t, db } = ctx;
   const valid = new Set(ctx.clients.map(c => c.taskId));
+  // A 1-1 form sent in Typeform after the switch-over is late (docs/forms/STAGE2B-CONTRACT.md 4.9): stored as
+  // checkin_late, never a share link, never linked to a call. Once late, always late (the trigger keeps it so too).
+  const cutover = await checkinCutover(db);
+  ctx.plan.cutover = cutover == null ? null : iso(cutover);
   const priorForms = new Map(
-    (await db.all("cockpit_csm_call_forms", "select=token,task_id,matched_by,linked_call_id")).map(r => [String(r.token), r]),
+    (await db.all("cockpit_csm_call_forms", "select=token,task_id,matched_by,linked_call_id,form_kind")).map(r => [String(r.token), r]),
   );
   const formRows: Row[] = [];
   const counts: Record<string, Row> = {};
@@ -315,6 +336,7 @@ export async function readTypeforms(ctx: Ctx): Promise<FormsRead> {
     const byMethod: Record<string, number> = {};
     let disagree = 0;
     let newest = "";
+    const late = { sinceCutover: 0, last14d: 0, newest: null as string | null };
     for (const item of items) {
       if (!item?.token || !Number.isFinite(Date.parse(item.submitted_at))) continue;
       const answers = formAnswers(item, titles);
@@ -339,6 +361,13 @@ export async function readTypeforms(ctx: Ctx): Promise<FormsRead> {
         task = prior.task_id;
         by = "manual";
       }
+      const isLate =
+        form === "fRokTITH" && (prior?.form_kind === "checkin_late" || (cutover != null && Date.parse(item.submitted_at) >= cutover));
+      if (isLate) {
+        late.sinceCutover++;
+        if (ctx.now - Date.parse(item.submitted_at) <= 14 * DAY) late.last14d++;
+        if (!late.newest || item.submitted_at > late.newest) late.newest = item.submitted_at;
+      }
       if (task) {
         matched++;
         if (by) byMethod[by] = (byMethod[by] ?? 0) + 1;
@@ -347,7 +376,7 @@ export async function readTypeforms(ctx: Ctx): Promise<FormsRead> {
       const row: Row = {
         token: String(item.token),
         form_id: form,
-        form_kind: kind,
+        form_kind: isLate ? "checkin_late" : kind,
         task_id: task,
         typed_client: typed,
         matched_by: by,
@@ -362,8 +391,8 @@ export async function readTypeforms(ctx: Ctx): Promise<FormsRead> {
         const transcript = (item.answers ?? []).find((a: Row) => a.field?.ref === TRANSCRIPT_REF)?.text;
         const share = /https:\/\/fathom\.video\/share\/[A-Za-z0-9_-]+/.exec(String(transcript ?? ""))?.[0];
         // The form's Fathom link: the one in the transcript answer, else the first in any answer.
-        checkins.push({ row, transcript: transcript ? String(transcript) : null, reason, link: share ?? SHARE.exec(JSON.stringify(answers))?.[0] });
-        if (share && task) ctx.shareToTask.set(share, task);
+        checkins.push({ row, transcript: transcript ? String(transcript) : null, reason, link: share ?? SHARE.exec(JSON.stringify(answers))?.[0], late: isLate });
+        if (share && task && !isLate) ctx.shareToTask.set(share, task);
       }
     }
     counts[form] = {
@@ -373,7 +402,7 @@ export async function readTypeforms(ctx: Ctx): Promise<FormsRead> {
       unmatched: items.length - matched,
       newest,
       bad: bad.slice(0, 10),
-      ...(form === "fRokTITH" ? { byMethod, disagree } : {}),
+      ...(form === "fRokTITH" ? { byMethod, disagree, late } : {}),
     };
   }
   ctx.plan.typeform = counts;
@@ -395,13 +424,14 @@ export async function linkTypeforms(ctx: Ctx, read: FormsRead): Promise<Health[]
   // takes the form's client. Else the client's check-in appointment within 48 h, else a held call of its own.
   const calls = (await db.all("cockpit_csm_calls", "select=id,task_id,kind,starts_at,status&source=eq.ghl_appointment&task_id=not.is.null"))
     .map(c => ({ id: Number(c.id), taskId: c.task_id, kind: c.kind, startsAt: Date.parse(c.starts_at), status: c.status }));
-  const recorded = await recordingsByLink(db, checkins.filter(c => c.row.task_id && c.link).map(c => String(c.link)));
+  const recorded = await recordingsByLink(db, checkins.filter(c => c.row.task_id && c.link && !c.late).map(c => String(c.link)));
   const priorFormCalls = await existing(db, "checkin_form");
   const own: Row[] = [];
   let linked = 0,
     toRecording = 0;
-  for (const { row, transcript, link } of checkins) {
-    if (!row.task_id) continue;
+  for (const { row, transcript, link, late } of checkins) {
+    // A late form keeps no link, no call of its own and retires nothing: the cockpit's notes are the record now.
+    if (!row.task_id || late) continue;
     const rec = link ? recorded.get(link) : undefined;
     if (rec && rec.taskId === row.task_id) {
       const parent = rec.linkedCallId == null ? undefined : calls.find(c => c.id === rec.linkedCallId);
@@ -452,20 +482,25 @@ export async function linkTypeforms(ctx: Ctx, read: FormsRead): Promise<Health[]
         if (stale && stale.status !== "gone")
           await db.patch("cockpit_csm_calls", `id=eq.${stale.id}`, { status: "gone", linked_call_id: row.linked_call_id, updated_at: iso(ctx.now) });
       }
-    for (const { row: r, reason } of checkins)
+    for (const { row: r, reason, late } of checkins)
       if (!r.task_id)
         ctx.reasons.set(`form:${r.token}`, {
-          reason: reason ?? "No client on the board",
+          reason: late ? LATE_NO_CLIENT : (reason ?? "No client on the board"),
           title: "1-1 call notes form",
           at: r.submitted_at,
         });
   }
   const ck = counts.fRokTITH;
+  // Late forms keep this row ok (Z15): ok false would stop last_ok_at and fail csm-calls-sync, masking real
+  // failures; the guardian's csm-checkin-form warns and names the clients instead.
+  const lateNote = ck.late?.sinceCutover
+    ? ` ${ck.late.sinceCutover} 1-1 notes arrived in Typeform after the switch-over (newest ${kuwaitDay(Date.parse(ck.late.newest))}).`
+    : "";
   out.push({
     key: "csm-checkin-form",
     ok: true,
     rows: ck.stored,
-    note: `${ck.stored} of ${ck.total} 1-1 forms stored, ${ck.matched} matched to a client (${ck.byMethod.hidden_field ?? 0} by the client page's link, ${ck.byMethod.typed_task_id ?? 0} by the typed ID${ck.byMethod.manual ? `, ${ck.byMethod.manual} by hand` : ""}; ${toRecording} linked to their recording, ${linked} to a booked check-in, ${own.length} on their own), ${ck.unmatched} with no client link and no typed ID on the board${ck.disagree ? `, ${ck.disagree} where the link and the typed ID differ` : ""}. Newest ${String(ck.newest).slice(0, 10)}.`,
+    note: `${ck.stored} of ${ck.total} 1-1 forms stored, ${ck.matched} matched to a client (${ck.byMethod.hidden_field ?? 0} by the client page's link, ${ck.byMethod.typed_task_id ?? 0} by the typed ID${ck.byMethod.manual ? `, ${ck.byMethod.manual} by hand` : ""}; ${toRecording} linked to their recording, ${linked} to a booked check-in, ${own.length} on their own), ${ck.unmatched} with no client link and no typed ID on the board${ck.disagree ? `, ${ck.disagree} where the link and the typed ID differ` : ""}. Newest ${String(ck.newest).slice(0, 10)}.${lateNote}`,
     detail: { ...ck, linked, toRecording, ownCalls: own.length },
   });
   const others = Object.entries(counts).filter(([f]) => f !== "fRokTITH");
@@ -482,6 +517,49 @@ export async function linkTypeforms(ctx: Ctx, read: FormsRead): Promise<Health[]
 /** Read and link in one go, for a run of the Typeform source alone (worker.ts runs the Fathom source in between). */
 export async function typeformSource(ctx: Ctx): Promise<Health[]> {
   return linkTypeforms(ctx, await readTypeforms(ctx));
+}
+
+// ---------------------------------------------------------------- kickoff and Blueprint in the forms tables
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * Kickoff and Brand Blueprint responses in the forms tables (docs/forms/STAGE2B-CONTRACT.md 4.8, build 8): one
+ * call of cockpit_form_record_sweep, which records every stored tG7dnxBn response and every Blueprint press with no
+ * response yet, and records each cockpit-owned effect from its Stage 1 row's outcome. Records only: it never makes a
+ * delivery row. A dry run asks the same sweep with p_apply false, which writes nothing.
+ *
+ * The sweep's recorded, Blueprint and delivered counts are this read's only, and from the second read on they are 0
+ * in a healthy run, so the note says "this read" and carries the kickoffs held (new plus already). The sweep gives no
+ * such total for the presses or the deliveries, so those read as new. Waiting is the state now.
+ */
+export async function formsRecord(ctx: Ctx): Promise<Health> {
+  const r = await ctx.db.rpc("cockpit_form_record_sweep", { p_apply: ctx.apply });
+  const count = (v: unknown, what: string) => {
+    const n = Number(v);
+    if (v == null || !Number.isInteger(n) || n < 0) throw new Error(`The forms record sweep answered without ${what}`);
+    return n;
+  };
+  const kickoffs = count(r?.kickoff?.recorded, "its kickoff count");
+  const already = count(r?.kickoff?.already, "its count of kickoffs already recorded");
+  const presses = count(r?.blueprint?.recorded, "its Blueprint count");
+  const delivered = count(r?.effects?.delivered, "its delivered count");
+  const skipped = count(r?.effects?.skipped, "its skipped count");
+  const waiting = count(r?.effects?.waiting, "its waiting count");
+  const errors = count(r?.errors, "its count of rows it could not record");
+  // The sweep's first SQLSTATE, once it gives one: a code and nothing else reaches the row, so the guardian's warning can name it.
+  const firstError = typeof r.firstError === "string" && /^[0-9A-Z]{5}$/.test(r.firstError) ? { firstError: r.firstError } : {};
+  const detail = { apply: r.apply === true, kickoff: { recorded: kickoffs, already }, blueprint: { recorded: presses }, effects: { delivered, skipped, waiting }, errors, ...firstError };
+  ctx.plan.formsRecord = detail;
+  return {
+    key: "csm-forms-record",
+    // Rows the sweep could not record stay ok with their count in the note, as csm-checkin-form does with late forms
+    // (Z15): ok false would stop last_ok_at and make every run exit FAILED over a record that delivers nothing.
+    ok: true,
+    rows: kickoffs + presses,
+    note: `Forms tables: ${plural(kickoffs + already, "kickoff", "kickoffs")} recorded (${kickoffs} new this read), ${plural(presses, "new Brand Blueprint press", "new Brand Blueprint presses")}, ${plural(delivered, "Stage 1 delivery", "Stage 1 deliveries")} linked this read, ${waiting} waiting for Stage 1.${errors ? ` ${plural(errors, "row", "rows")} could not be recorded; the next read tries again.` : ""}`,
+    detail,
+  };
 }
 
 // ---------------------------------------------------------------- Fathom
@@ -571,7 +649,8 @@ async function bookingsOf(ctx: Ctx) {
 /** Fathom share link to client from the stored 1-1 forms, for a run in which the Typeform source did not read them. */
 async function storedFormLinks(db: Db): Promise<Map<string, string>> {
   const links = new Map<string, string>();
-  for (const f of await db.all("cockpit_csm_call_forms", "select=task_id,answers&form_id=eq.fRokTITH&task_id=not.is.null")) {
+  // The checkin kind only: a late form's link places nothing (docs/forms/STAGE2B-CONTRACT.md 4.9).
+  for (const f of await db.all("cockpit_csm_call_forms", "select=task_id,answers&form_id=eq.fRokTITH&task_id=not.is.null&form_kind=eq.checkin")) {
     const transcript = (f.answers ?? []).find((a: Row) => a.ref === TRANSCRIPT_REF)?.value;
     const share = SHARE.exec(String(transcript ?? ""))?.[0];
     if (share) links.set(share, String(f.task_id));

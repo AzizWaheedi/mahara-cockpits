@@ -1,6 +1,16 @@
 import { RefreshCw } from "lucide-react";
 import { type RefObject, useEffect, useId, useRef, useState } from "react";
+import { toast } from "sonner";
 import { Dot, ExtLink, Kicker } from "@/components/kit";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -516,22 +526,168 @@ export function CheckinCall({
 
 // ------------------------------------------------------------ the Change sheet
 
+/**
+ * Move it here (docs/forms/STAGE2B-CONTRACT.md 4.11, 5.3): beside a
+ * recording on another client, for an admin or the CEO while the switch is
+ * on (the door's `movable`), a sibling of the disabled row (a disabled
+ * button cannot hold a button) and an explicit confirm.
+ */
+export function canMove(v: CallView, m: CheckinModel): boolean {
+  return (
+    v.movable &&
+    m.seat === "admin" &&
+    !m.rehearse &&
+    m.send.kind !== "sending" &&
+    v.kind === "fathom" &&
+    Boolean(v.recordingId)
+  );
+}
+
+function MoveHere({
+  v,
+  m,
+  onMoved,
+  describedBy,
+}: {
+  v: CallView;
+  m: CheckinModel;
+  /** Moved and picked: the sheet closes on the call card, now teal. */
+  onMoved: () => void;
+  /**
+   * The ids of the row's title, time and sentence. The row is a disabled
+   * button, which Tab skips, so this is how a screen reader hears which
+   * recording this button moves when two say "Move it here".
+   */
+  describedBy: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const client = m.client?.name || "this client";
+  const other = v.otherClient || "another client";
+  const busy = m.move.busy && m.move.ref === v.ref;
+  const error = !m.move.busy && m.move.ref === v.ref ? m.move.error : null;
+  const errorId = useId();
+  // The confirm's safe answer takes focus when it opens. Radix's alert
+  // dialog focuses only an AlertDialogCancel, and Keep is a plain button
+  // (it must stay while a move runs), so without this focus stays on the
+  // trigger behind the modal, where a screen reader never hears the dialog.
+  const keepRef = useRef<HTMLButtonElement>(null);
+  async function go() {
+    if (m.move.busy) return;
+    const moved = await m.moveHere(v);
+    setOpen(false);
+    if (moved) {
+      toast.success(`Moved to ${client}.`);
+      onMoved();
+    }
+  }
+  return (
+    <div className="space-y-1.5 px-3 pb-2.5">
+      <div className="flex justify-end">
+        <AlertDialog
+          open={open}
+          onOpenChange={o => {
+            // While it moves, the dialog stays: the answer comes to it.
+            if (!busy) setOpen(o);
+            if (o) m.clearMove();
+          }}
+        >
+          <AlertDialogTrigger asChild>
+            <Button
+              size="sm"
+              variant="outline"
+              className={FOCUS}
+              aria-describedby={
+                [describedBy, error ? errorId : null]
+                  .filter(Boolean)
+                  .join(" ") || undefined
+              }
+            >
+              Move it here
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent
+            onOpenAutoFocus={e => {
+              e.preventDefault();
+              keepRef.current?.focus();
+            }}
+          >
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                Move this recording to <bdi>{client}</bdi>?
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                It leaves <bdi>{other}</bdi>'s Calls card and goes on{" "}
+                <bdi>{client}</bdi>'s. The move is recorded with your name.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <Button
+                ref={keepRef}
+                variant="outline"
+                // Rests while the move runs: dimmed, the pointer says no. A long
+                // client name wraps inside the dialog: this is the safe answer,
+                // so its name is never cut off.
+                className={cn(
+                  FOCUS,
+                  "aria-disabled:cursor-not-allowed aria-disabled:opacity-60",
+                  "h-auto min-h-9 whitespace-normal py-2 text-center",
+                )}
+                aria-disabled={busy || undefined}
+                onClick={() => {
+                  if (!busy) setOpen(false);
+                }}
+              >
+                {/* One flex item, so the button's gap never splits the words. */}
+                <span className="min-w-0 break-words">
+                  Keep it on <bdi>{other}</bdi>
+                </span>
+              </Button>
+              <Button
+                className={cn(FOCUS, "aria-disabled:opacity-70")}
+                aria-disabled={busy || undefined}
+                onClick={() => void go()}
+              >
+                {busy ? "Moving…" : "Move it here"}
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+      {error ? (
+        <p id={errorId} className="flex gap-2 text-xs" role="alert">
+          <span className="flex h-4 shrink-0 items-center">
+            <Dot tone="bad" />
+          </span>
+          <span className="min-w-0">{error}</span>
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function Row({
   v,
   m,
   current,
   onPick,
+  onMoved,
 }: {
   v: CallView;
   m: CheckinModel;
   current: boolean;
   onPick: (v: CallView) => void;
+  onMoved: () => void;
 }) {
   const blocked = blockedOf(v);
   // One that cannot be picked says why instead of its why line; a
-  // recording with no sign for this client has no why line.
+  // recording with no sign for this client has no why line. The door does not
+  // know about a rehearsal, so its "move it here" is replaced while the button
+  // is off: never an instruction with no control to carry it out.
   const said =
-    blocked ?? whySentence(v, m.seat, m.client?.name ?? "").replace(ASK, "");
+    v.movable && m.rehearse
+      ? `On ${v.otherClient || "another client"}. Moving a recording is off in a rehearsal.`
+      : (blocked ??
+        whySentence(v, m.seat, m.client?.name ?? "").replace(ASK, ""));
   // Who recorded it, unless the why line already says so ("The sales
   // closer's recording ..."). A disabled row always keeps it: a refusal
   // sentence never names the recorder, and every one says "ask an admin",
@@ -547,6 +703,8 @@ function Row({
       ? `By ${v.recorderRole}`
       : null;
   const line = [role, said].filter(Boolean).join(" · ");
+  // Move it here is described by this row's title, time and sentence.
+  const id = useId();
   return (
     <li>
       <button
@@ -560,16 +718,28 @@ function Row({
           current
             ? "bg-primary/10 ring-1 ring-inset ring-primary/40"
             : "hover:bg-muted/60 active:bg-muted",
-          blocked && "opacity-70",
         )}
       >
         <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-          <span className="min-w-0 text-sm font-medium" dir="auto">
+          {/* Only the title quiets on a row that cannot be picked: its sentence
+              says why (and what to do), so it keeps the muted ink's full
+              contrast. A faded row read 3.2:1 on the light sheet. */}
+          <span
+            id={`${id}-title`}
+            className={cn(
+              "min-w-0 text-sm font-medium",
+              blocked && "text-muted-foreground",
+            )}
+            dir="auto"
+          >
             {v.kind === "booking"
               ? `Booked ${kindWord(v.booking?.kind ?? "checkin")}`
               : v.title || "Fathom recording"}
           </span>
-          <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+          <span
+            id={`${id}-time`}
+            className="font-mono text-[11px] tabular-nums text-muted-foreground"
+          >
             {span(v)}
             {length(v) ? ` · ${length(v)}` : ""}
           </span>
@@ -581,11 +751,24 @@ function Row({
           ) : null}
         </span>
         {line ? (
-          <span className="mt-0.5 block text-xs text-muted-foreground">
+          <span
+            id={`${id}-line`}
+            className="mt-0.5 block text-xs text-muted-foreground"
+          >
             {line}
           </span>
         ) : null}
       </button>
+      {blocked && canMove(v, m) ? (
+        <MoveHere
+          v={v}
+          m={m}
+          onMoved={onMoved}
+          describedBy={[`${id}-title`, `${id}-time`, line ? `${id}-line` : null]
+            .filter(Boolean)
+            .join(" ")}
+        />
+      ) : null}
     </li>
   );
 }
@@ -645,6 +828,7 @@ export function CallSheet({
                     m={m}
                     current={v.ref === current}
                     onPick={pickAndClose}
+                    onMoved={() => onOpenChange(false)}
                   />
                 ))}
               </ul>
@@ -672,6 +856,7 @@ export function CallSheet({
                     m={m}
                     current={v.ref === current}
                     onPick={pickAndClose}
+                    onMoved={() => onOpenChange(false)}
                   />
                 ))}
               </ul>

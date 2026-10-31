@@ -292,6 +292,14 @@ export function makeDb(env: Env, request: typeof fetch = fetch) {
       await call("GET", "/rest/v1/cockpit_sync_state?select=key&limit=1");
       return true;
     },
+    /**
+     * One cockpit service RPC (POST /rest/v1/rpc/{name}), its answer as JSON. Only cockpit_ functions: the
+     * forms record sweep (docs/forms/STAGE2B-CONTRACT.md 4.8) is the first caller.
+     */
+    async rpc(name: string, args: Row = {}): Promise<any> {
+      if (!/^cockpit_[a-z0-9_]+$/.test(name)) throw new Error("Only a cockpit_ function can be called");
+      return call("POST", `/rest/v1/rpc/${name}`, args);
+    },
   };
 }
 export type Db = ReturnType<typeof makeDb>;

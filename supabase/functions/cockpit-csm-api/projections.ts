@@ -29,7 +29,8 @@ export function bookingPlan(rawArgs: unknown, rawContext: unknown, now = Date.no
   const name = context.clientName.replace(/\S*(upgrad|up-?sell|renew)\S*/gi,' ').replace(/\s{2,}/g,' ').replace(/^[\s:,.-]+|[\s:,.-]+$/g,'').trim();
   const title = name ? 'Results and strategy review: '+name : 'Results and strategy review';
   if(/upgrad|up-?sell|renew/i.test(title)) throw Error('A client call cannot have a sales title.');
-  return {taskId:context.taskId,when,title,end:new Date(start + minutes * 60000).toISOString().replace(/\.\d{3}Z$/, '+00:00'),nextPoc:args.day,nextPocValue:Date.parse(args.day+'T09:00:00+03:00')};
+  // Next POC is a date-only field: noon Kuwait (09:00 UTC), written with value_options.time false (build 5).
+  return {taskId:context.taskId,when,title,end:new Date(start + minutes * 60000).toISOString().replace(/\.\d{3}Z$/, '+00:00'),nextPoc:args.day,nextPocValue:Date.parse(`${args.day}T09:00:00Z`)};
 }
 
 export function appointmentMatches(rawEvent: unknown, plan: Pick<Plan,'calendarId'|'contactId'|'title'|'when'|'end'>) {
@@ -37,10 +38,20 @@ export function appointmentMatches(rawEvent: unknown, plan: Pick<Plan,'calendarI
   const event=parsed.data;
   return Boolean(event.id) && event.calendarId === plan.calendarId && event.contactId === plan.contactId && event.title === plan.title && Date.parse(event.startTime) === Date.parse(plan.when) && Date.parse(event.endTime) === Date.parse(plan.end) && event.appointmentStatus === 'confirmed';
 }
-function fieldMatches(rawTask: unknown, plan: Pick<Plan,'taskId'|'nextPocValue'>) {
+/** The Kuwait calendar day of a ClickUp millisecond value, or null. */
+export function kuwaitDay(value: unknown): string | null {
+  const n=Number(value);
+  return (typeof value==='string'||typeof value==='number') && Number.isFinite(n) && n>0 ? new Date(n+10800000).toISOString().slice(0,10) : null;
+}
+/**
+ * Next POC reads back by the Kuwait day: ClickUp keeps a date-only value at its own hour (03:00Z or 04:00Z),
+ * so a millisecond compare failed every booking it had kept (build 5). A receipt saved before build 5 still
+ * reconciles: its nextPoc day is the same.
+ */
+export function fieldMatches(rawTask: unknown, plan: Pick<Plan,'taskId'|'nextPoc'>) {
   const task=z.object({id:z.string(),custom_fields:z.array(z.object({id:z.string(),value:z.unknown().optional()}))}).parse(rawTask);
   const field=task.custom_fields.find(x=>x.id===NEXT_POC);
-  return task.id===plan.taskId && (typeof field?.value==='string'||typeof field?.value==='number') && Number(field.value)===plan.nextPocValue;
+  return task.id===plan.taskId && kuwaitDay(field?.value)===plan.nextPoc;
 }
 function appointmentResponse(raw: unknown) {
   const body=z.object({appointment:z.unknown().optional(),event:z.unknown().optional()}).passthrough().parse(raw);
@@ -148,7 +159,7 @@ export async function runProjectionOperation(client: SupabaseClient, admin: Supa
     if(!appointmentMatches(appointmentResponse(await ghl.call('GET','calendars/events/appointments/'+encodeURIComponent(plan.eventId))),plan)) throw Error('GoHighLevel appointment read-back did not match. Reconcile before retrying.');
     await checkScope();
     plan.phase='clickup'; await checkpoint(plan);
-    await clickup.call('POST',`task/${plan.taskId}/field/${NEXT_POC}`,{value:plan.nextPocValue});
+    await clickup.call('POST',`task/${plan.taskId}/field/${NEXT_POC}`,{value:plan.nextPocValue,value_options:{time:false}});
     if(!fieldMatches(await clickup.call('GET','task/'+plan.taskId),plan)) throw Error('ClickUp next-contact read-back was not confirmed.');
     plan.phase='verified'; await checkpoint(plan);
     return await finish({ok:true,eventId:plan.eventId,when:plan.when,title:plan.title});

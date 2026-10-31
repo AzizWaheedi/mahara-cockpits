@@ -1,8 +1,11 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
-  prepareCsm,
   executeCsm,
+  fieldDay,
+  fieldMatches,
+  prepareCsm,
 } from "../../../supabase/functions/cockpit-csm-api/core";
+import { logCall } from "../src/lib/csmCalls";
 import { performAct } from "../src/lib/useCsmSnapshot";
 
 // Stage and happiness reach the client's ClickUp card through cockpit-csm-api;
@@ -191,4 +194,346 @@ test("a field ClickUp did not keep fails the read-back", async () => {
     provider,
   );
   await expect(executeCsm(plan, provider)).rejects.toThrow("read-back");
+});
+
+// --- Build 5 (docs/forms/STAGE2B-CONTRACT.md 4.5): the card's dates as date-only noon Kuwait --------
+
+const LAST_POC = "e183f2ce-8b7a-491a-b160-2287a247758b";
+const LAST_CALL = "032203ad-e327-4d76-a0ce-c07496da6486";
+const NEXT_POC = "c48c1323-ca6a-465f-84cb-8c24f0f62df3";
+const REPORT = "f1e2d3c4-0000-4000-8000-00000000report";
+const noon = (d: string) => Date.parse(`${d}T09:00:00Z`);
+
+/** A Clients board that keeps a date-only value at ClickUp's own hour (03:00Z or 04:00Z) on its day. */
+function datedBoard(
+  opts: { hour?: number; shift?: number; commentBack?: string } = {},
+) {
+  const posts: { path: string; body: any }[] = [];
+  const values: Record<string, unknown> = {};
+  const calls: string[] = [];
+  const comments: any[] = [];
+  let comment = "";
+  const provider: any = {
+    async call(method: string, path: string, body?: any) {
+      calls.push(`${method} ${path}`);
+      if (path === "list/901816559981/field")
+        return {
+          fields: [{ id: REPORT, name: "Last Report Sent ", type: "date" }],
+        };
+      const set = path.match(/^task\/task-a\/field\/(.+)$/);
+      if (method === "POST" && set) {
+        posts.push({ path, body });
+        const day = new Date(Number(body.value)).toISOString().slice(0, 10);
+        const kept = new Date(
+          Date.parse(`${day}T00:00:00Z`) + (opts.shift ?? 0) * 86_400_000,
+        )
+          .toISOString()
+          .slice(0, 10);
+        values[set[1]] = String(
+          Date.parse(`${kept}T0${opts.hour ?? 3}:00:00Z`),
+        );
+        return {};
+      }
+      if (method === "GET" && path === "task/task-a")
+        return {
+          custom_fields: Object.entries(values).map(([id, value]) => ({
+            id,
+            value,
+          })),
+        };
+      if (method === "POST" && path === "task/task-a/comment") {
+        comment = body.comment_text;
+        comments.push(body);
+        return { id: "c1" };
+      }
+      if (path === "task/task-a/comment")
+        return {
+          comments: [
+            {
+              id: "c1",
+              comment_text: opts.commentBack ?? comment,
+            },
+          ],
+        };
+      throw Error(`unexpected ${method} ${path}`);
+    },
+  };
+  return { provider, posts, values, calls, comments };
+}
+
+describe("build 5: the card's dates", () => {
+  test("Log a call writes Last POC and Last Check-in Call as date-only noon Kuwait", async () => {
+    const { provider, posts } = datedBoard();
+    const plan = await prepareCsm(
+      "act",
+      { kind: "call", action: "Held a call" },
+      context,
+      provider,
+    );
+    expect(plan.updates).toEqual([
+      { field: LAST_POC, value: noon("2026-10-12"), day: "2026-10-12" },
+      { field: LAST_CALL, value: noon("2026-10-12"), day: "2026-10-12" },
+    ]);
+    await executeCsm(plan, provider);
+    expect(posts).toEqual([
+      {
+        path: `task/task-a/field/${LAST_POC}`,
+        body: { value: noon("2026-10-12"), value_options: { time: false } },
+      },
+      {
+        path: `task/task-a/field/${LAST_CALL}`,
+        body: { value: noon("2026-10-12"), value_options: { time: false } },
+      },
+    ]);
+  });
+
+  // Z90: the read-back used to throw before the comment, so a date act has never reached it live. It reaches it from
+  // D11. The comment is kept and named, so this pins exactly what the card gets: the CSM's typed note, once, silently.
+  test("a confirmed call act posts one comment with the CSM's note, notify_all false, and reads it back", async () => {
+    const { provider, calls, comments } = datedBoard();
+    const plan = await prepareCsm(
+      "act",
+      { kind: "call", action: "Held a call", note: "typed by the CSM" },
+      context,
+      provider,
+    );
+    const done = await executeCsm(plan, provider);
+    expect(calls).toEqual([
+      `POST task/task-a/field/${LAST_POC}`,
+      `POST task/task-a/field/${LAST_CALL}`,
+      "GET task/task-a",
+      "POST task/task-a/comment",
+      "GET task/task-a/comment",
+    ]);
+    expect(comments).toEqual([
+      {
+        comment_text:
+          "Call logged\nClient: City Wood\nWhy: Check-in due\nNote: typed by the CSM",
+        notify_all: false,
+      },
+    ]);
+    expect(done.result.commentId).toBe("c1");
+  });
+
+  test("every other date act posts one comment too, after its date reads back", async () => {
+    const acts: [Record<string, unknown>, string][] = [
+      [{ kind: "touchpoint", action: "Touchpoint" }, "Touchpoint logged"],
+      [
+        { kind: "booked", action: "Check-in booked", value: "2026-10-20" },
+        "Check-in booked",
+      ],
+      [{ kind: "report", action: "Report sent" }, "Report sent"],
+    ];
+    for (const [args, first] of acts) {
+      const { provider, calls, comments } = datedBoard();
+      const plan = await prepareCsm("act", args, context, provider);
+      await executeCsm(plan, provider);
+      expect(comments).toHaveLength(1);
+      expect(comments[0].notify_all).toBe(false);
+      expect(comments[0].comment_text.split("\n")[0]).toBe(first);
+      expect(calls.indexOf("GET task/task-a")).toBeLessThan(
+        calls.indexOf("POST task/task-a/comment"),
+      );
+    }
+  });
+
+  test("a date that does not read back posts no comment; a comment that does not read back fails the act", async () => {
+    const wrongDay = datedBoard({ shift: -1 });
+    await expect(
+      executeCsm(
+        await prepareCsm(
+          "act",
+          { kind: "call", action: "Held a call", note: "typed by the CSM" },
+          context,
+          wrongDay.provider,
+        ),
+        wrongDay.provider,
+      ),
+    ).rejects.toThrow("read-back");
+    expect(wrongDay.comments).toEqual([]);
+    const reworded = datedBoard({ commentBack: "something else" });
+    await expect(
+      executeCsm(
+        await prepareCsm(
+          "act",
+          { kind: "call", action: "Held a call", note: "typed by the CSM" },
+          context,
+          reworded.provider,
+        ),
+        reworded.provider,
+      ),
+    ).rejects.toThrow("Comment read-back was not confirmed");
+    expect(reworded.comments).toHaveLength(1);
+  });
+
+  for (const hour of [3, 4])
+    test(`the read-back passes when ClickUp keeps the day at 0${hour}:00Z`, async () => {
+      const { provider, values } = datedBoard({ hour });
+      const plan = await prepareCsm(
+        "act",
+        { kind: "call", action: "Held a call" },
+        context,
+        provider,
+      );
+      const done = await executeCsm(plan, provider);
+      expect(done.result.ok).toBe(true);
+      expect(values[LAST_POC]).toBe(
+        String(Date.parse(`2026-10-12T0${hour}:00:00Z`)),
+      );
+    });
+
+  test("the read-back still rejects another day", async () => {
+    const { provider } = datedBoard({ shift: -1 });
+    const plan = await prepareCsm(
+      "act",
+      { kind: "touchpoint", action: "Touchpoint" },
+      context,
+      provider,
+    );
+    await expect(executeCsm(plan, provider)).rejects.toThrow("read-back");
+    expect(
+      fieldMatches(
+        {
+          custom_fields: [
+            { id: LAST_POC, value: String(Date.parse("2026-10-11T03:00:00Z")) },
+          ],
+        },
+        LAST_POC,
+        noon("2026-10-12"),
+        "2026-10-12",
+      ),
+    ).toBe(false);
+    expect(
+      fieldMatches(
+        {
+          custom_fields: [
+            { id: LAST_POC, value: String(Date.parse("2026-10-12T04:00:00Z")) },
+          ],
+        },
+        LAST_POC,
+        noon("2026-10-12"),
+        "2026-10-12",
+      ),
+    ).toBe(true);
+    expect(
+      fieldMatches(
+        { custom_fields: [{ id: LAST_POC }] },
+        LAST_POC,
+        noon("2026-10-12"),
+        "2026-10-12",
+      ),
+    ).toBe(false);
+  });
+
+  test("a touchpoint writes Last POC only; booked writes Next POC; report writes Last report sent", async () => {
+    const touch = datedBoard();
+    await executeCsm(
+      await prepareCsm(
+        "act",
+        { kind: "touchpoint", action: "Touchpoint" },
+        context,
+        touch.provider,
+      ),
+      touch.provider,
+    );
+    expect(touch.posts.map(p => p.path)).toEqual([
+      `task/task-a/field/${LAST_POC}`,
+    ]);
+    const booked = datedBoard();
+    await executeCsm(
+      await prepareCsm(
+        "act",
+        { kind: "booked", action: "Booked", value: "2026-10-20" },
+        context,
+        booked.provider,
+      ),
+      booked.provider,
+    );
+    expect(booked.posts).toEqual([
+      {
+        path: `task/task-a/field/${NEXT_POC}`,
+        body: { value: noon("2026-10-20"), value_options: { time: false } },
+      },
+    ]);
+    const report = datedBoard();
+    const plan = await prepareCsm(
+      "act",
+      { kind: "report", action: "Report sent" },
+      context,
+      report.provider,
+    );
+    expect(plan.updates).toEqual([
+      { field: REPORT, value: noon("2026-10-12"), day: "2026-10-12" },
+    ]);
+    await executeCsm(plan, report.provider);
+    expect(report.posts[0].body).toEqual({
+      value: noon("2026-10-12"),
+      value_options: { time: false },
+    });
+  });
+
+  test("an option field keeps its plain body; task due dates stay 09:00 Kuwait", async () => {
+    const { provider, calls } = board();
+    const plan = await prepareCsm(
+      "act",
+      { kind: "stage", action: "Moved to Active", value: "Active" },
+      context,
+      provider,
+    );
+    expect(plan.updates).toEqual([{ field: STATUS, value: "opt-active" }]);
+    await executeCsm(plan, provider);
+    expect(calls).toContain(`POST task/task-a/field/${STATUS}`);
+    const planned = await prepareCsm(
+      "plan",
+      {
+        items: [
+          { text: "Follow up", clientName: "City Wood", dueDate: "2026-10-14" },
+        ],
+      },
+      context,
+      provider,
+    );
+    expect(planned.tasks[0].due_date).toBe(
+      Date.parse("2026-10-14T09:00:00+03:00"),
+    );
+    const ticket = await prepareCsm(
+      "act",
+      { kind: "ticket", action: "Fix the form", department: "tech" },
+      context,
+      provider,
+    );
+    expect(ticket.ticket?.due_date).toBe(
+      Date.parse("2026-10-14T09:00:00+03:00"),
+    );
+  });
+
+  test("fieldDay validates the day as before", () => {
+    expect(fieldDay("2026-10-12")).toBe(noon("2026-10-12"));
+    expect(() => fieldDay("2026-02-30")).toThrow("Choose a valid date");
+    expect(() => fieldDay("12 Oct")).toThrow("Choose a valid date");
+  });
+
+  test("logCall sends kind call with no notes key", async () => {
+    for (const note of ["", "  Talked about the new offer.  "]) {
+      const { client, invoked, rpcs } = fakeClient();
+      expect(
+        await logCall(
+          client,
+          { taskId: "86eyt1d33", _id: "c-1", name: "City Wood" },
+          note,
+        ),
+      ).toBe("Saved, ClickUp updated");
+      expect(invoked).toHaveLength(1);
+      expect(invoked[0].args.kind).toBe("call");
+      expect("notes" in invoked[0].args).toBe(false);
+      expect(invoked[0].args).toEqual({
+        clientId: "c-1",
+        taskId: "86eyt1d33",
+        action: "Held a call",
+        kind: "call",
+        ...(note.trim() ? { note: note.trim() } : {}),
+      });
+      expect(rpcs[0].name).toBe("cockpit_csm_log_manual_call");
+    }
+  });
 });

@@ -1,16 +1,23 @@
 # cockpit-forms-api: the 1-1 notes window's server
 
-Stage 2a of the forms plan (`docs/forms/STAGE2-CONTRACT.md`, section 6). In 2a
-the window runs only as a shadow run beside Typeform `fRokTITH`, which stays the
-record: nothing here reaches a client, a ClickUp card or Slack, and nothing here
-writes a client onto a recording.
+Stage 2a of the forms plan (`docs/forms/STAGE2-CONTRACT.md`, section 6), with
+Stage 2b's three additions (`docs/forms/STAGE2B-CONTRACT.md`: the sweep's drafts,
+the recap approval and Move it here's flag). Until the cut-over hour the window
+runs only as a shadow run beside Typeform `fRokTITH`, which stays the record:
+nothing here reaches a client, a ClickUp card or Slack, and nothing here writes a
+client onto a recording. `recap.approve` stores an approval only; the WhatsApp
+sender (`hermes/client-messages`) sends, behind its own switch.
 
 ## Interface
 
 POST with the seat's Supabase bearer token and `{"op": ..., ...}`. Deployed with
 the JWT check **on**. The user comes from `auth.getUser`, the seat from
-`cockpit_forms_actor`. A service-role token runs `doctor` and nothing else.
-Errors answer `{"error": "<one sentence>"}` with 400, 403 or 404, never a stack,
+`cockpit_forms_actor`. A service-role token runs `doctor` and nothing else. A
+request carrying `x-cron-secret` runs `effects.sweep` and nothing else when the
+secret equals `NOTICES_CRON_SECRET` (both sides trimmed as `cockpit-notices`
+trims them, then a constant-time compare; any other op 403
+`The cron secret runs the 1-1 notes sweep only.`, a wrong secret 401 `Not
+allowed.`). Errors answer `{"error": "<one sentence>"}` with 400, 403 or 404, never a stack,
 a key or a provider's body.
 
 | Op | Gate | Answer |
@@ -19,6 +26,8 @@ a key or a provider's body.
 | `checkin.drafts`, `checkin.draftAgain` | the response's own gate (`cockpit_form_responses_read` with the seat's token) | `{recordingId, drafts, started, now}` |
 | `checkin.transcript` | the same; the recording, the saved call included, passes the save's checks again and the tie rule below for the seat whose response saved it, and one that is not the saved call is a Customer Success recording | `{url}` (60 s, its own `fathom/{id}.txt` only) or `{text}`; 404 when there is none |
 | `checkin.typeformSent` | the client gate per item | `{items: [{taskId, sent, at}], now}` |
+| `recap.approve` (2b) | the message's gate (`cockpit_client_message_read` with the seat's token), then `cockpit_client_message_approve` (service only: the seat's client gate and the owner gate, 3.1) | `{message, warnings}` (the stored row's `MessageView`, 3.7) or `{needsConfirm: true, warnings}`; a refused text is 400 with the rule's sentence ending `Edit the text, then approve again.` |
+| `effects.sweep` (2b) | the cron secret only (`cockpit_form_effects_kick`, 20261029w) | `{ok, begun, skipped}` |
 | `keys.save` | the CEO | `{ok, state, text, last4}` |
 | `doctor` | the CEO or the service key | the Doctor (6.7) |
 
@@ -33,7 +42,9 @@ a key or a provider's body.
 | `drafts.ts` | `checkin.drafts` and the runner: begin, the input hash, the model calls, the checks, finish |
 | `todos.ts` | We owe / They owe from Fathom's action items (the one copy of the rule; the shadow replay imports it) |
 | `transcript.ts` | the numbered, role-labelled lines and the quote check |
-| `recapRules.ts` | the 14 recap checks and Make [23]'s booking block |
+| `recapRules.ts` | the 14 recap checks, Make [23]'s booking block and `splitRecap` |
+| `messages.ts` | `recap.approve` (2b): the read through the seat's gate, the checks on the exact text, the sha256 of its bytes, the service approval as the verified seat |
+| `effects.ts` | `effects.sweep` (2b): the waiting grade and recap effects' drafts, begun as the response's own seat with no seat token |
 | `prompts/*.ts` | the client notes (DeepSeek), DEFCON and priority, the grade and the recap (Anthropic), each with its `VERSION` |
 | `typeform.ts` | `checkin.typeformSent` |
 | `keys.ts`, `doctor.ts` | `keys.save` and its key tests; the doctor |
@@ -121,6 +132,38 @@ and the client on the invite names only a client on the clients list unless its
 booking is within 30 minutes (`clientIds`, A7.13). A person's match and a call
 set aside as not a 1-1 call are kept by the ingest.
 
+## The 1-1 notes sweep (2b build 0)
+
+A live check-in's grade and recap effects wait for their drafts. When a planned
+grade or recap effect younger than 30 minutes has no drafting or ready draft,
+`cockpit_form_effects_kick` (every minute, from the notices kick) posts
+`{"op":"effects.sweep"}` here with `x-cron-secret` (the vault's
+`cockpit_notices_cron_secret`, equal to the project-wide `NOTICES_CRON_SECRET`;
+Z11) and the anon key as its bearer, at most once every two minutes.
+`sweepEffects` reads `cockpit_form_effects_waiting()`, walks them inside a
+100-second budget until four rows have begun drafts (a row that begins nothing,
+such as a recording with no Fathom summary yet, uses no slot, so it never holds
+up a later call), gets each response's own seat from
+`cockpit_forms_actor` (a refused seat skips its row with a log line naming only
+the effect and the kind) and calls `draftsForResponse` (`drafts.ts`) with that
+response, its one kind and a drafts reader over the service RPC
+`cockpit_form_drafts_service`, because `cockpit_form_drafts_read` gates on the
+seat's own token, which a cron request does not have (Z42, Z56). No seat RPC is
+ever called on that path. The drafts' own guards keep one grade per recording
+and one recap per response, and a missing key still writes one `off` row only.
+The doctor names `NOTICES_CRON_SECRET` as a boolean (`secrets`), read trimmed
+as the door compares it, so a value of only whitespace reads `false`.
+
+## Move it here (2b build 11)
+
+`CallView.movable` is true only for an admin or the CEO, with
+`cockpit_forms_switch('move_recording')` reading exactly true (one service read
+per `checkin.calls`; off, refused or not live yet reads false), when the view's
+one refusal is "on another client" and no 1-1 notes stand for the recording.
+Then `blocked` reads `fathom.ts` `onOtherMovable`: `On {other}. If this is
+{client}'s call, move it here.` Every other view keeps the A7.3 sentence. The move
+itself is the browser RPC `cockpit_csm_move_recording` (20261029z), not an op here.
+
 ## Keys and receipts
 
 No new function secret. The Fathom, DeepSeek and Anthropic keys come from the
@@ -145,7 +188,7 @@ per call, not one a minute.
 ## Tests
 
 ```
-bun test supabase/functions/cockpit-forms-api/door.test.ts supabase/functions/cockpit-forms-api/calls.test.ts supabase/functions/cockpit-forms-api/drafts.test.ts supabase/functions/cockpit-forms-api/prompts.test.ts supabase/functions/cockpit-forms-api/recapRules.test.ts supabase/functions/cockpit-forms-api/transcript.test.ts supabase/functions/cockpit-forms-api/doctor.test.ts supabase/functions/cockpit-forms-api/typeform.test.ts
+bun test supabase/functions/cockpit-forms-api/door.test.ts supabase/functions/cockpit-forms-api/effects.test.ts supabase/functions/cockpit-forms-api/messages.test.ts supabase/functions/cockpit-forms-api/calls.test.ts supabase/functions/cockpit-forms-api/drafts.test.ts supabase/functions/cockpit-forms-api/prompts.test.ts supabase/functions/cockpit-forms-api/recapRules.test.ts supabase/functions/cockpit-forms-api/transcript.test.ts supabase/functions/cockpit-forms-api/doctor.test.ts supabase/functions/cockpit-forms-api/typeform.test.ts
 ```
 
 then the bundle check of section 11, which rebuilds the deploy outside the repo.

@@ -11,9 +11,18 @@ where the keys live:
   probe-webhook       send fathom-webhook one wrongly signed and one signed test delivery
   unregister-webhook  delete the webhook in Fathom and mark the registration off
 
+  Since Stage 2b (docs/forms/STAGE2B-CONTRACT.md 4.8), the kickoff form's signed Typeform webhook to forms-door.
+  <form> is kickoff, the only form with a cockpit webhook in 2b (Z58); any other exits 2:
+  typeform-secret <form>      make a signing key (32 random bytes, base64url) and save it; never printed
+  register-typeform <form>    read the form's webhooks, put the cockpit one, read it back, mark the key connected
+  probe-typeform <form>       send forms-door one unsigned and one signed probe (401, then 200)
+  unregister-typeform <form>  delete the cockpit webhook in Typeform, read back, mark the registration off
+
 fathom, deepseek, register-webhook and unregister-webhook change the CEO's keys or his Fathom account, so
 the CEO runs them, or someone with his permission (contract A3). status, doctor and probe-webhook change
-nothing in Fathom.
+nothing in Fathom. register-typeform and unregister-typeform change only the cockpit webhook of the kickoff
+form (B3, which the 2b contract gives the session at deploy step D17, Z22); every other webhook of the form is
+read before and after and never touched.
 
 The Fathom key is the api-keys.env copy, not the one in the native runtime file that hermes/csm-calls
 reads (the two values differ, and heavy reads are 10 a minute per key); the webhook is registered and
@@ -21,7 +30,9 @@ deleted with it too. The Supabase service key comes from the native runtime file
 and are never printed: every message replaces them with [key]. Every Fathom and DeepSeek call writes an
 intent receipt before it and a response or unknown receipt after it into cockpit_csm_provider_health
 (run_key forms-key:{uuid}), and a call whose intent receipt cannot be saved is not made. The calls to our
-own functions (probe-webhook, doctor) write none: the doctor writes its own.
+own functions (probe-webhook, doctor) write none: the doctor writes its own. Every Typeform call does the same
+under provider typeform (Y55), with TYPEFORM_TOKEN read by name from the native runtime file; the probes of
+forms-door, our own function, write none.
 """
 from __future__ import annotations
 
@@ -46,13 +57,19 @@ NATIVE_CURRENT = "/home/hermes/cockpit-native-current"
 NATIVE_STATE = "/home/hermes/.cockpit-native-state"
 SUPABASE = "https://bldgtotkfmhoxmlzowdx.supabase.co"
 FATHOM = "https://api.fathom.ai/external/v1"
+TYPEFORM = "https://api.typeform.com"
+# The one form with a cockpit Typeform webhook in 2b (Z58), its signing key's provider, and the webhook's tag.
+TYPEFORM_FORMS = {"kickoff": "typeform_kickoff"}
+ONLY_KICKOFF = "Only the kickoff form has a cockpit webhook in 2b."
+TYPEFORM_ID = re.compile(r"^[A-Za-z0-9]{4,32}$")
+WEBHOOK_TAG = "cockpit"
 DEEPSEEK_MODELS = "https://api.deepseek.com/models"
 CS_TEAM = "Customer Success"
 PROVIDERS = ("fathom", "fathom_webhook", "deepseek", "anthropic")
 TIMEOUT = 30
 KUWAIT = timezone(timedelta(hours=3))
 # Anything shaped like a key is hidden too, whoever's it is (a webhook secret, an sk- key, a JWT, a new Supabase key).
-KEY_SHAPES = re.compile(r"whsec_[A-Za-z0-9+/=_-]{8,}|sk-[A-Za-z0-9_-]{16,}|sb_secret_[A-Za-z0-9_-]{8,}"
+KEY_SHAPES = re.compile(r"whsec_[A-Za-z0-9+/=_-]{8,}|sk-[A-Za-z0-9_-]{16,}|sb_secret_[A-Za-z0-9_-]{8,}|tfp_[A-Za-z0-9_-]{8,}"
                         r"|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")
 # A Probe team meeting: fathom-webhook settles it ignored before anything of it is stored (contract 4.4 step 6).
 PROBE_MEETING = {"recording_id": "000000001", "title": "Webhook probe", "shared_with": "all_teams",
@@ -168,14 +185,20 @@ def read_env() -> dict:
     return env
 
 
-def runtime() -> tuple[str, str]:
-    """SUPABASE_URL and the service key from the current native release's runtime file."""
+def runtime_file() -> dict:
+    """The current native release's private runtime file (keys by name)."""
     cur = pathlib.Path(NATIVE_CURRENT)
     path = pathlib.Path(NATIVE_STATE) / f"runtime-{cur.resolve().name}.json"
     try:
         rt = json.loads(path.read_text())
     except (OSError, ValueError):
         raise Stop("The native runtime file could not be read, so the Supabase service key is unknown.") from None
+    return rt if isinstance(rt, dict) else {}
+
+
+def runtime() -> tuple[str, str]:
+    """SUPABASE_URL and the service key from the current native release's runtime file."""
+    rt = runtime_file()
     service = rt.get("SUPABASE_SERVICE_ROLE_KEY")
     if not service:
         raise Stop("The native runtime file has no SUPABASE_SERVICE_ROLE_KEY.")
@@ -293,6 +316,121 @@ def save(run: Run, p: dict) -> tuple[int, Any]:
     return run.rpc("cockpit_forms_key_put", {"p": p})
 
 
+# ---------------------------------------------------------------- the kickoff form's Typeform webhook (2b, 4.8)
+
+def typeform_token(run: Run) -> str:
+    """TYPEFORM_TOKEN from the native runtime file, as hermes/csm-calls reads it; never printed."""
+    key = str(runtime_file().get("TYPEFORM_TOKEN") or "")
+    if not key:
+        raise Stop("The native runtime file has no TYPEFORM_TOKEN.")
+    run.hide(key)
+    return key
+
+
+def typeform_headers(key: str) -> dict:
+    return {"Authorization": "Bearer " + key, "Accept": "application/json", "Content-Type": "application/json"}
+
+
+def door_url(run: Run, form: str) -> str:
+    return f"{run.url}/functions/v1/forms-door/typeform/{form}"
+
+
+def form_row(run: Run, form: str) -> dict:
+    """The form's row of the forms registry."""
+    try:
+        status, text = run.supabase("GET", f"/rest/v1/cockpit_forms?select=provider,typeform_id&key=eq.{form}")
+        rows = json.loads(text) if status == 200 else None
+    except (NoAnswer, ValueError):
+        rows = None
+    row = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else None
+    if row is None:
+        raise Stop(f"The {form} row of the forms registry could not be read.")
+    return row
+
+
+def typeform_form_id(run: Run, form: str) -> str:
+    """The registry's Typeform id for a form to register, which must still be filled in Typeform (forms-door refuses otherwise)."""
+    row = form_row(run, form)
+    form_id = str(row.get("typeform_id") or "")
+    if row.get("provider") != "typeform" or not TYPEFORM_ID.match(form_id):
+        raise Stop(f"The {form} form is no longer filled in Typeform, so it gets no cockpit webhook.")
+    return form_id
+
+
+def registered_form_id(run: Run, form: str, meta: dict) -> str:
+    """The Typeform form to remove the webhook from: the one register-typeform saved on the key, else the registry's id.
+    The form need not still be filled in Typeform: once it moves, the door answers 404 and the webhook most needs removing."""
+    saved = str(meta.get("formId") or "")
+    if TYPEFORM_ID.match(saved):
+        return saved
+    form_id = str(form_row(run, form).get("typeform_id") or "")
+    if not TYPEFORM_ID.match(form_id):
+        raise Stop(f"Neither the {form} signing key nor the forms registry names a Typeform form. Nothing was changed. "
+                   "Look for the cockpit webhook in Typeform's settings and delete it there.")
+    return form_id
+
+
+def typeform_key(run: Run, form: str) -> Optional[dict]:
+    status, key = run.rpc("cockpit_forms_key_get", {"p_provider": TYPEFORM_FORMS[form]})
+    if status != 200:
+        raise Stop(f"The {form} signing key could not be read ({db_error(status, key)}).")
+    if not isinstance(key, dict):
+        return None
+    run.hide(key.get("secret"))
+    return key
+
+
+def read_back_failed(done: str, kept: str, command: str, form: str) -> str:
+    """What a failed read says once the write has gone: the write stands, whatever the read did."""
+    return (f"The webhook was {done} on Typeform but could not be read back, so {kept}. "
+            f"Read the {form} form's webhooks in Typeform, then run {command} {form} again.")
+
+
+def typeform_hooks(run: Run, key: str, form_id: str, failed: str = "Nothing was changed.") -> list:
+    """The form's webhooks (GET /forms/{id}/webhooks), receipted. A failed read stops and ends with `failed`: the read
+    before a write leaves it at nothing changed, and the read-back after one passes what that write left behind."""
+    try:
+        status, text = run.call("typeform", "GET", f"{TYPEFORM}/forms/{form_id}/webhooks", "api.typeform.com/forms/:id/webhooks",
+                                typeform_headers(key))
+    except NoReceipt as e:
+        raise Stop(f"{e} {failed}") from None
+    if status == 0:
+        raise Stop(f"Typeform did not answer the webhooks read. {failed}")
+    if status != 200:
+        raise Stop(f"typeform refused the webhooks read: HTTP {status}. {failed}")
+    items = items_of(text)
+    if items is None:
+        raise Stop(f"Typeform answered the webhooks read without a list. {failed}")
+    return items
+
+
+def others_of(hooks: list) -> list:
+    """Every webhook but the cockpit one, as (tag, url, enabled), to prove it was not touched."""
+    return sorted((str(h.get("tag") or ""), str(h.get("url") or ""), bool(h.get("enabled")))
+                  for h in hooks if h.get("tag") != WEBHOOK_TAG)
+
+
+def cockpit_hook(hooks: list) -> Optional[dict]:
+    return next((h for h in hooks if h.get("tag") == WEBHOOK_TAG), None)
+
+
+def typeform_sign(secret: str, body: str) -> str:
+    """The Typeform-Signature forms-door checks: "sha256=" + base64 HMAC-SHA256 of the raw body."""
+    return "sha256=" + base64.b64encode(hmac.new(secret.encode(), body.encode(), hashlib.sha256).digest()).decode()
+
+
+def post_door(url: str, body: str, headers: dict) -> tuple[int, Any]:
+    """One request to forms-door (our own function: no receipt). Status 0 when it did not answer."""
+    try:
+        status, text = http("POST", url, {"Content-Type": "application/json", **headers}, body.encode())
+    except NoAnswer:
+        return 0, None
+    try:
+        return status, json.loads(text) if text else None
+    except ValueError:
+        return status, None
+
+
 # ---------------------------------------------------------------- commands
 
 def cmd_status(run: Run) -> int:
@@ -309,7 +447,41 @@ def cmd_status(run: Run) -> int:
         if provider == "fathom_webhook":
             line += ", registered" if registered(key.get("meta")) else ", not registered"
         run.say(line)
-    return 0
+    # The Typeform signing keys, as cockpit_forms_keys_status lists them under typeform (Z57): that function is for
+    # the CEO's signed-in seat only, so this reads the same fields through the service RPC and the forms-door sync row.
+    # A sync row that could not be read says so and exits 1: it never reads as "no delivery yet".
+    unread = 0
+    for form, provider in TYPEFORM_FORMS.items():
+        status, key = run.rpc("cockpit_forms_key_get", {"p_provider": provider})
+        if status != 200:
+            raise Stop(f"The keys could not be read ({db_error(status, key)}).")
+        if not isinstance(key, dict):
+            run.say(f"typeform {form}: not saved")
+            continue
+        run.hide(key.get("secret"))
+        why = None
+        try:
+            code, text = run.supabase("GET", f"/rest/v1/cockpit_sync_state?select=detail&key=eq.forms-door:{form}")
+            rows = json.loads(text) if code == 200 else None
+            if code != 200:
+                why = f"HTTP {code}"
+            elif not isinstance(rows, list):
+                why = "an answer without a list"
+        except NoAnswer:
+            why = "no answer"
+        except ValueError:
+            why = "an answer that was not JSON"
+        if why:
+            unread += 1
+            last = f"its last delivery could not be read ({why})"
+        else:
+            detail = rows[0].get("detail") if rows and isinstance(rows[0], dict) else None
+            detail = detail if isinstance(detail, dict) else {}
+            last = (f"last delivery {kuwait(detail.get('lastDelivery'))} ({detail.get('outcome') or 'no outcome'})"
+                    if detail.get("lastDelivery") else "no delivery yet")
+        run.say(f"typeform {form}: {key.get('state') or 'unknown'}, key ending ····{ending(key.get('last4'))}, "
+                f"saved {kuwait(key.get('savedAt'))}, {'registered' if registered(key.get('meta')) else 'not registered'}, {last}")
+    return 1 if unread else 0
 
 
 def cmd_doctor(run: Run) -> int:
@@ -500,15 +672,139 @@ def cmd_unregister(run: Run) -> int:
     return 0
 
 
+def cmd_typeform_secret(run: Run, form: str) -> int:
+    current = typeform_key(run, form)
+    meta = (current or {}).get("meta")
+    if registered(meta):
+        raise Stop(f"The cockpit webhook of the {form} form is registered with the saved key. Run unregister-typeform "
+                   f"{form} first, then typeform-secret and register-typeform again.")
+    secret = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
+    run.hide(secret)
+    status, out = save(run, {"provider": TYPEFORM_FORMS[form], "secret": secret, "savedBy": "server", "state": "unchecked",
+                             "stateNote": f"Made on the server for the {form} form's Typeform webhook.",
+                             "meta": {"form": form, "tag": WEBHOOK_TAG}})
+    if status != 200 or not isinstance(out, dict) or not out.get("ok"):
+        raise Stop(f"The signing key was not saved ({db_error(status, out)}).")
+    run.say(f"typeform {form}: a new signing key is saved, ending ····{ending(out.get('last4'))}. "
+            f"Next: register-typeform {form}.")
+    return 0
+
+
+def cmd_register_typeform(run: Run, form: str) -> int:
+    form_id = typeform_form_id(run, form)
+    current = typeform_key(run, form)
+    secret = (current or {}).get("secret")
+    if not isinstance(secret, str) or not secret:
+        raise Stop(f"No signing key is saved for the {form} form. Run typeform-secret {form} first.")
+    key = typeform_token(run)
+    before = typeform_hooks(run, key, form_id)
+    url = door_url(run, form)
+    body = {"url": url, "enabled": True, "secret": secret, "verify_ssl": True, "event_types": {"form_response": True}}
+    status, text = run.call("typeform", "PUT", f"{TYPEFORM}/forms/{form_id}/webhooks/{WEBHOOK_TAG}",
+                            "api.typeform.com/forms/:id/webhooks/:tag", typeform_headers(key), body)
+    if status == 0:
+        raise Stop(f"Typeform did not answer. Read the {form} form's webhooks in Typeform before you run this again.")
+    if not 200 <= status < 300:
+        raise Stop(f"typeform refused the webhook: HTTP {status}. Nothing was registered.")
+    try:
+        answer = json.loads(text) if text else {}
+    except ValueError:
+        answer = {}
+    answer = answer if isinstance(answer, dict) else {}
+    after = typeform_hooks(run, key, form_id, read_back_failed("put", "the key was not marked connected", "register-typeform", form))
+    hook = cockpit_hook(after)
+    if not hook or hook.get("url") != url or hook.get("enabled") is not True:
+        raise Stop(f"Typeform's list does not show the cockpit webhook enabled to forms-door. Read the {form} form's "
+                   "webhooks in Typeform; the key was not marked connected.")
+    if others_of(after) != others_of(before):
+        raise Stop(f"The {form} form's other webhooks changed while this ran. Read them in Typeform; the key was not "
+                   "marked connected.")
+    webhook_id = str(hook.get("id") or answer.get("id") or WEBHOOK_TAG)
+    status, out = run.rpc("cockpit_forms_key_mark", {"p": {
+        "provider": TYPEFORM_FORMS[form], "state": "connected", "savedAt": current.get("savedAt"),
+        "note": f"Registered on Typeform from the server: tag {WEBHOOK_TAG}, read back enabled.",
+        "meta": {"webhookId": webhook_id, "tag": WEBHOOK_TAG, "formId": form_id, "destination": url,
+                 "registeredAt": now_iso(), "unregisteredAt": None}}})
+    if status != 200 or not isinstance(out, dict) or not out.get("ok"):
+        raise Stop(f"The webhook is on Typeform, but the key was not marked connected ({mark_error(status, out)}). "
+                   f"Run register-typeform {form} again.")
+    n = len(others_of(after))
+    run.say(f"Typeform webhook {WEBHOOK_TAG} registered on {form_id}, read back enabled; "
+            f"{plural(n, 'other webhook')} of the form unchanged. Next: probe-typeform {form}.")
+    return 0
+
+
+def cmd_probe_typeform(run: Run, form: str) -> int:
+    current = typeform_key(run, form)
+    secret = (current or {}).get("secret")
+    if not isinstance(secret, str) or not secret:
+        raise Stop(f"No signing key is saved for the {form} form. Run typeform-secret {form} first.")
+    url = door_url(run, form)
+    body = json.dumps({"event_type": "probe", "probe": True})
+    first, _ = post_door(url, body, {"x-forms-door-probe": "1"})
+    run.say(f"Unsigned probe: {answered(first)} (expected HTTP 401).")
+    second, answer = post_door(url, body, {"x-forms-door-probe": "1", "Typeform-Signature": typeform_sign(secret, body)})
+    probed = isinstance(answer, dict) and answer.get("probe") is True
+    run.say(f"Signed probe: {answered(second)}{' with the probe answer' if probed else ''} (expected HTTP 200).")
+    if first != 401 or second != 200 or not probed:
+        raise Stop("The forms-door probe did not pass.")
+    run.say(f"forms-door checks the {form} form's signature.")
+    return 0
+
+
+def cmd_unregister_typeform(run: Run, form: str) -> int:
+    current = typeform_key(run, form)
+    meta = (current or {}).get("meta")
+    meta = meta if isinstance(meta, dict) else {}
+    form_id = registered_form_id(run, form, meta)
+    key = typeform_token(run)
+    before = typeform_hooks(run, key, form_id)
+    if cockpit_hook(before) is None and not registered(meta):
+        run.say(f"No cockpit webhook is registered on the {form} form, so there is nothing to delete.")
+        return 0
+    if cockpit_hook(before) is not None:
+        status, _ = run.call("typeform", "DELETE", f"{TYPEFORM}/forms/{form_id}/webhooks/{WEBHOOK_TAG}",
+                             "api.typeform.com/forms/:id/webhooks/:tag", typeform_headers(key))
+        run.say(f"Typeform's answer to deleting the webhook: {answered(status)}{' (already gone)' if status == 404 else ''}.")
+        if not (200 <= status < 300 or status == 404):
+            raise Stop("Typeform did not delete the webhook, so the registration was not marked off.")
+        after = typeform_hooks(run, key, form_id,
+                               read_back_failed("deleted", "the registration was not marked off", "unregister-typeform", form))
+        if cockpit_hook(after) is not None:
+            raise Stop("Typeform still lists the cockpit webhook, so the registration was not marked off.")
+        if others_of(after) != others_of(before):
+            run.say(f"The {form} form's other webhooks changed while this ran; read them in Typeform.")
+    if current is None:
+        run.say("No signing key is saved, so there is no registration to mark off.")
+        return 0
+    # Marking it refused with unregisteredAt turns forms-door:kickoff detail.registered false, so the guardian stops
+    # expecting deliveries.
+    status, out = run.rpc("cockpit_forms_key_mark", {"p": {
+        "provider": TYPEFORM_FORMS[form], "state": "refused", "note": "Unregistered from the server.",
+        "meta": {"unregisteredAt": now_iso()}, "savedAt": current.get("savedAt")}})
+    if status != 200 or not isinstance(out, dict) or not out.get("ok"):
+        raise Stop(f"Typeform has no cockpit webhook, but the registration was not marked off ({mark_error(status, out)}). "
+                   f"Run unregister-typeform {form} again.")
+    run.say(f"The cockpit webhook of the {form} form is unregistered.")
+    return 0
+
+
 COMMANDS = {"status": cmd_status, "doctor": cmd_doctor, "fathom": cmd_fathom, "deepseek": cmd_deepseek,
             "register-webhook": cmd_register, "probe-webhook": cmd_probe, "unregister-webhook": cmd_unregister}
+# The commands that take a form; only kickoff has a cockpit webhook in 2b (Z58).
+FORM_COMMANDS = {"typeform-secret": cmd_typeform_secret, "register-typeform": cmd_register_typeform,
+                 "probe-typeform": cmd_probe_typeform, "unregister-typeform": cmd_unregister_typeform}
 
 
 def main(argv: Optional[list] = None) -> int:
     args = sys.argv[1:] if argv is None else list(argv)
     name = args[0] if args else ""
-    if name not in COMMANDS:
-        print("Name one command: " + ", ".join(COMMANDS) + ".")
+    if name not in COMMANDS and name not in FORM_COMMANDS:
+        print("Name one command: " + ", ".join([*COMMANDS, *(f"{c} <form>" for c in FORM_COMMANDS)]) + ".")
+        return 2
+    form = args[1] if len(args) > 1 else ""
+    if name in FORM_COMMANDS and form not in TYPEFORM_FORMS:
+        print(ONLY_KICKOFF)
         return 2
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")
@@ -516,7 +812,7 @@ def main(argv: Optional[list] = None) -> int:
     try:
         url, service = runtime()
         run = Run(url, service)
-        code = COMMANDS[name](run)
+        code = FORM_COMMANDS[name](run, form) if name in FORM_COMMANDS else COMMANDS[name](run)
     except Stop as e:
         print(run.redact(e) if run else KEY_SHAPES.sub("[key]", str(e)))
         code = 1

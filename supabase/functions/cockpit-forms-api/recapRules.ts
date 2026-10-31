@@ -17,23 +17,28 @@ export const RECAP_MAX = 1200;
 export type RecapCheck = { rule: string; ok: boolean; note: string | null };
 export type RecapVerdict = { checks: RecapCheck[]; refusal: string | null; warnings: string[] };
 
-/** 1. The wa_send_rules regex (20261012f_wa_send_rules.sql:77), ported: leads, CPL, cost per lead, ليد/ليدز/ليدات, عملاء محتملين. */
+/** 1. The wa_send_rules regex (20261012f_wa_send_rules.sql:77), ported: leads, CPL, cost per lead, ليد/ليدز/ليدات, عملاء محتملين; and the singular عميل محتمل, which that regex misses (break-it). */
 export const LEADS =
-  /(^|[^ء-ي٠-٩A-Za-z0-9_])([وف]?(ال|لل|[بكل]|[بك]ال))?ليد(ز|ات)?(كم|كن|هم|هن|ها|ه|نا|ك)?($|[^ء-ي٠-٩A-Za-z0-9_])|(ال)?عملاء\s+(ال)?محتمل(ين|ون)|\bleads?\b|\bcpls?\b|\bcost\s+per\s+lead\b/i;
+  /(^|[^ء-ي٠-٩A-Za-z0-9_])([وف]?(ال|لل|[بكل]|[بك]ال))?ليد(ز|ات)?(كم|كن|هم|هن|ها|ه|نا|ك)?($|[^ء-ي٠-٩A-Za-z0-9_])|(ال)?عملاء\s+(ال)?محتمل(ين|ون)|(ال)?عميل\s+(ال)?محتمل|\bleads?\b|\bcpls?\b|\bcost\s+per\s+lead\b/i;
 const DIGITS = "[0-9٠-٩۰-۹]+(?:[.,٫٬][0-9٠-٩۰-۹]+)*";
-const SCALE = "(?:\\s*(?:k|m|ألف|آلاف|الف|مليون|ملايين|thousand|million))?";
-const MONEY_WORD = "(?:\\$|usd|kwd|sar|cpb|costs?|\\S*دولار\\S*|\\S*دينار\\S*|\\S*ريال\\S*|\\S*تكلف\\S*|\\S*تكاليف\\S*)";
-/** 2. A digit beside a currency or cost word, either side. */
-export const MONEY = new RegExp(`${DIGITS}${SCALE}\\s*[:\\-]?\\s*${MONEY_WORD}|${MONEY_WORD}\\s*[:\\-]?\\s*${DIGITS}`, "i");
+const SCALE = "(?:\\s*(?:k|m|ألف|آلاف|الاف|الف|مليون|ملايين|thousand|million))?";
+// KD, k.d, AED and د.ك stand alone, so a name that ends in those letters ("Raed 5") is not money; 500kd still reads as money.
+const MONEY_WORD =
+  "(?:\\$|usd|kwd|sar|(?<![a-z])(?:kd|k\\.d\\.?|aed)(?![a-z])|(?<![ء-ي])د\\.ك\\.?|cpb|costs?|\\S*دولار\\S*|\\S*دينار\\S*|\\S*دنانير\\S*|\\S*ريال\\S*|\\S*درهم\\S*|\\S*دراهم\\S*|\\S*تكلف\\S*|\\S*تكاليف\\S*)";
+/** A spelled amount has no digit: عشرة آلاف دولار. The word stands alone or with a prefix (بألف), so تحالف does not read as ألف. */
+const SPELLED_AMOUNT = "(?<![ء-ي])[وبلف]{0,2}(?:ال)?(?:ألف|آلاف|الاف|الف|ألفين|الفين|مليون|ملايين|مليونين)\\s+\\S*(?:دولار|دينار|دنانير|ريال|درهم|دراهم)";
+/** 2. A digit beside a currency or cost word, either side, or a spelled amount of a currency. */
+export const MONEY = new RegExp(`${DIGITS}${SCALE}\\s*[:\\-]?\\s*${MONEY_WORD}|${MONEY_WORD}\\s*[:\\-]?\\s*${DIGITS}|${SPELLED_AMOUNT}`, "i");
 /** 3. A promised result (refused) and ضمان, which can be a warranty (a warning). */
-export const GUARANTEE = /نضمن|مضمون|\bguarantee(?:d|s)?\b/i;
+// تضامن (solidarity) holds the letters of ضامن and promises nothing.
+export const GUARANTEE = /[نأ]ضمن|(?<!ت)ضامن|مضمون|\bguarantee(?:d|s)?\b/i;
 export const WARRANTY = /ضمان/;
 /** 4. Internal names, in Latin script and as the team writes them in Arabic. Make is the tool's capitalised name. */
 const INTERNAL_MAKE = /\bMake\b/;
 const INTERNAL_REST = /\bclick\s?up\b|\btype\s?form\b|\bfathom\b|\bforms?\b|\btranscripts?\b|\bdefcon\b|\bgrade[sd]?\b|فورم|فاثوم|تايب\s?فورم|كليك\s?اب|ترانسكربت|ديفكون/i;
 /** 5 to 8. */
 const MARKDOWN = /\*\*|#/;
-const DASHES = /[—«»‹›]/;
+const DASHES = /[—–―«»‹›]/;
 const FOREIGN = /[\p{Script=Hangul}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Cyrillic}]/u;
 const CONTRACTOR = /مقاول/;
 /** 12. The guard's reference line (hermes/ad-billing-guard transport.ts) must never ride along. */
@@ -42,6 +47,19 @@ const REFERENCE = /^\s*(?:مرجع المتابعة|Reference|Ref)\s*:/im;
 /** The text the client would get: the message, a blank line, the booking block. */
 export function recapText(message: string): string {
   return `${message.trim()}\n\n${BOOKING_BLOCK}`;
+}
+
+/**
+ * A reviewer's full text split back into the message and Make's booking block (2b,
+ * recap.approve): the message is the text less its final blank line and block. A
+ * text that does not end with the block comes back whole with no block, so
+ * checkRecap's booking rule refuses it; a doubled block leaves one in the message,
+ * which the same rule refuses (the link appears twice).
+ */
+export function splitRecap(body: string): [message: string, block: string | null] {
+  const text = String(body ?? "");
+  const tail = `\n\n${BOOKING_BLOCK}`;
+  return text.endsWith(tail) ? [text.slice(0, -tail.length), BOOKING_BLOCK] : [text, null];
 }
 
 /**
@@ -73,7 +91,7 @@ export function checkRecap(
   warn("warranty", !GUARANTEE.test(m) && WARRANTY.test(m), "The recap says ضمان. Check that it means a warranty, not a promised result.");
   refuse("internal", INTERNAL_MAKE.test(m) || INTERNAL_REST.test(m), "The recap named an internal tool or word. Draft again.");
   refuse("markdown", MARKDOWN.test(m), "The recap used ** or #, which WhatsApp shows as symbols. Draft again.");
-  refuse("dashes", DASHES.test(m), "The recap used an em dash or guillemets. Draft again.");
+  refuse("dashes", DASHES.test(m), "The recap used a long dash or guillemets. Draft again.");
   refuse("script", FOREIGN.test(m), "The recap has letters from another script. Draft again.");
   refuse("contractor", CONTRACTOR.test(m), "The recap calls the client مقاول. Draft again.");
   warn("length", [...m.trim()].length > RECAP_MAX, "The recap is longer than 1,200 characters before the booking block.");

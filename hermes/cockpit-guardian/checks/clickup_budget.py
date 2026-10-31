@@ -17,7 +17,8 @@ four provider ledgers hold (one row per call, phase response or unknown):
   for is taken to have run for the 15 minutes before its receipts (the cycle
   is */15; the longest run on record took 805 s).
 - cockpit_csm_provider_health: comment watch, onboarding and billing syncs,
-  notices and the client success presses.
+  notices, the client success presses, and the VPS client messages sender, at
+  most one card a run.
 - cockpit_ceo_provider_health: the VPS CEO refresh (rows with refresh_id or
   run_id) and the CEO's own presses and extensions sync.
 - cockpit_board_provider_health: the board levers (every row is ClickUp; the
@@ -284,7 +285,8 @@ CHECKS = [
                   "fail.",
         run=run_budget, owner="the systems manager", confirm=2, clear=2,
         action="Read the busiest minute's split in the evidence. A cockpit job: lower its pacing secret "
-               "(CLICKUP_REQUESTS_CALLS_PER_MINUTE, CLICKUP_CALLS_PER_MINUTE, CLICKUP_TASKS_CALLS_PER_MINUTE). "
+               "(CLICKUP_REQUESTS_CALLS_PER_MINUTE, CLICKUP_CALLS_PER_MINUTE, CLICKUP_TASKS_CALLS_PER_MINUTE, "
+               "CLICKUP_FORMS_CALLS_PER_MINUTE). "
                "The native cycle: ask Hermes to pace it. Plan: docs/requests/CLICKUP-DOWNGRADE.md.",
     ),
 ]

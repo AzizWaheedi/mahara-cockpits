@@ -3,7 +3,7 @@ import { ArrowUpRight, ChevronRight, RefreshCw, X } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { BookCallButton } from "@/components/ClientCheckIn";
-import { Dot, Kicker } from "@/components/kit";
+import { Dot, Kicker, LINK_INK } from "@/components/kit";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -12,6 +12,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import type { MessageState, MessagesIO } from "@/lib/clientMessages";
 import { readClientTimeline } from "@/lib/csmCalls";
 import { displayLabel, plural, shortDay } from "@/lib/format";
 import { openTypeform } from "@/lib/formsRegistry";
@@ -31,6 +32,7 @@ import {
   discardCheckin,
   draftAgain,
   type FormClient,
+  moveRecording,
   openCheckin,
   readCalls,
   readResponse,
@@ -48,6 +50,8 @@ import {
   railFacts,
 } from "./checkinRail";
 import {
+  STEPS_READING,
+  STEPS_UNREAD,
   type StopTone,
   type TrailStop,
   trailNote,
@@ -56,6 +60,7 @@ import {
 import { Seal } from "./FormPanel";
 import { kuwaitDay, kuwaitShortDay, kuwaitTime } from "./formTime";
 import { announceForm } from "./OpenFormButton";
+import { messagesIO } from "./RecapApproval";
 import {
   type CheckinIO,
   type CheckinModel,
@@ -77,8 +82,6 @@ import {
  * Until the cut-over every response is a shadow run: saved, sent, every
  * effect planned and nothing delivered. The seal says so on itself.
  */
-
-const INK = "text-primary-ink";
 
 /**
  * The teal buttons' focus. button.tsx draws a 1px ring in the fill's own
@@ -104,6 +107,7 @@ export function checkinIO(
     draftAgain: (id, kind) => draftAgain(client, id, kind),
     calls: a => readCalls(client, a),
     transcript: (id, rec) => readTranscriptLink(client, id, rec),
+    move: a => moveRecording(client, a),
     timeline: async () => {
       if (!client) throw Error("Sign in to the cockpit first.");
       return readClientTimeline(client as SupabaseClient, taskId);
@@ -122,11 +126,13 @@ export default function CheckinWindow({
   const auth = useCockpitAuth();
   const client = auth.client as FormClient | null;
   const io = useMemo(() => checkinIO(client, taskId), [client, taskId]);
+  const messages = useMemo(() => messagesIO(client), [client]);
   const seat: Seat = auth.isAdmin || auth.isCeo ? "admin" : "csm";
   const m = useCheckin({ taskId, rehearse, seat, io });
   return (
     <CheckinWindowView
       m={m}
+      messages={messages}
       onTypeform={lastCall => openTypeform(client, taskId, lastCall)}
       book={p => (
         <BookCallButton
@@ -166,10 +172,18 @@ export interface CheckinWindowViewProps {
   onTypeform: (lastCall: string | null) => void;
   /** The cockpit's booking button; a live response only. */
   book?: (p: BookSlot) => ReactNode;
-  /** The polls' clock, for the rail's "now"; the harness passes its own. */
-  clock?: Pick<Clock, "now">;
+  /**
+   * The polls' clock, for the rail's "now" and the recap step's message
+   * reads; the tests pass their own. Left out, the browser's.
+   */
+  clock?: Pick<Clock, "now" | "set" | "clear">;
   /** The harness opens on the Change sheet. */
   initialSheet?: boolean;
+  /**
+   * The client's messages, for a live response's recap step
+   * (docs/forms/STAGE2B-CONTRACT.md 4.15 item 1); the harness passes its own.
+   */
+  messages?: MessagesIO | null;
 }
 
 /** The window as drawn: header, banners, the form column, the rail, the send bar. */
@@ -179,10 +193,16 @@ export function CheckinWindowView({
   book,
   clock,
   initialSheet = false,
+  messages = null,
 }: CheckinWindowViewProps) {
   const titleRef = useRef<HTMLHeadingElement>(null);
   const changeRef = useRef<HTMLButtonElement>(null);
   const [sheet, setSheet] = useState(initialSheet);
+  // The recap's message as the step last read it: the trail reads its stop by it.
+  const [recapRow, setRecapRow] = useState<{
+    responseId: string;
+    state: MessageState | null;
+  } | null>(null);
   const transcriptFocus = useReturnFocus(() => titleRef.current);
   const desk = useMinWidth(1024);
   const name = m.client?.name ?? "";
@@ -340,8 +360,13 @@ export function CheckinWindowView({
         clientName: name,
         answers: m.sent.response.answers,
         submittedAt: m.sent.response.submittedAt,
+        // The card writer's 15-minute line reads the browser's clock (Z47).
+        now: clock?.now() ?? Date.now(),
+        recapMessage:
+          recapRow?.responseId === m.sent.response.id ? recapRow.state : null,
       })
     : null;
+  const troubled = stops?.filter(s => s.problem) ?? [];
   const rail = <Rail m={m} facts={facts} stops={stops} />;
 
   // From lg the window is one screen tall and each column scrolls on its
@@ -384,9 +409,21 @@ export function CheckinWindowView({
                   call={callOf(m.sent.response.answers.call)}
                   effect={m.sent.effects.find(e => e.key === "recap") ?? null}
                   onDraftAgain={m.rehearse ? undefined : m.recapAgain}
+                  effectsUnread={m.sent.unread ?? null}
+                  onMessageMoved={state => {
+                    if (m.sent)
+                      setRecapRow({ responseId: m.sent.response.id, state });
+                    m.recapMoved();
+                  }}
                   asking={m.recapAsking}
                   error={m.recapError}
                   refused={m.recapRefused}
+                  live={m.sent.response.mode === "live"}
+                  messages={m.rehearse ? null : messages}
+                  taskId={m.taskId}
+                  responseId={m.sent.response.id}
+                  sentAt={m.sent.response.submittedAt}
+                  clock={clock}
                 />
               ) : (
                 <>
@@ -428,14 +465,29 @@ export function CheckinWindowView({
                   aria-hidden
                   className="size-4 shrink-0 text-muted-foreground transition-transform group-open/fold:rotate-90 motion-reduce:transition-none"
                 />
+                {/* A step that needs a person is said on the fold itself: closed,
+                    this line is all a phone shows of the trail. */}
+                {m.sent?.unread === "failed" ? (
+                  <Dot tone="warn" />
+                ) : troubled.length ? (
+                  <Dot
+                    tone={troubled.some(s => s.tone === "bad") ? "bad" : "warn"}
+                  />
+                ) : null}
                 <span className="min-w-0 truncate">
-                  {stops
-                    ? `After the send · ${plural(stops.length, "step")}`
-                    : `What the cockpit knows${
-                        facts?.last
-                          ? ` · last 1-1 ${shortDay(facts.last.day)}`
-                          : ""
-                      }`}
+                  {m.sent?.unread
+                    ? `After the send · ${m.sent.unread === "failed" ? "could not be read" : "reading"}`
+                    : stops
+                      ? `After the send · ${plural(stops.length, "step")}${
+                          troubled.length
+                            ? ` · ${troubled.length} ${troubled.length === 1 ? "needs" : "need"} a person`
+                            : ""
+                        }`
+                      : `What the cockpit knows${
+                          facts?.last
+                            ? ` · last 1-1 ${shortDay(facts.last.day)}`
+                            : ""
+                        }`}
                 </span>
               </summary>
               <div className="relative max-h-[55dvh] overflow-y-auto border-t">
@@ -448,7 +500,11 @@ export function CheckinWindowView({
       <CallSheet
         m={m}
         open={sheet}
-        onOpenChange={setSheet}
+        onOpenChange={open => {
+          setSheet(open);
+          // A refused move's sentence is about that try: it goes with the sheet.
+          if (!open) m.clearMove();
+        }}
         returnFocus={() => changeRef.current ?? titleRef.current}
       />
       <Sheet
@@ -939,6 +995,23 @@ const STOP_DOT: Record<StopTone, string> = {
 
 function Trail({ m, stops }: { m: CheckinModel; stops: TrailStop[] }) {
   const note = trailNote(m.sent?.effects ?? []);
+  const unread = m.sent?.unread;
+  if (unread)
+    return (
+      <section className="space-y-3">
+        <Kicker as="h2">After the send</Kicker>
+        <p role="status" aria-live="polite" className="flex gap-2 text-xs">
+          {unread === "failed" ? (
+            <span className="flex h-4 shrink-0 items-center">
+              <Dot tone="warn" />
+            </span>
+          ) : null}
+          <span className="min-w-0">
+            {unread === "failed" ? STEPS_UNREAD : STEPS_READING}
+          </span>
+        </p>
+      </section>
+    );
   return (
     <section className="space-y-3">
       <Kicker as="h2">After the send</Kicker>
@@ -997,12 +1070,21 @@ function Trail({ m, stops }: { m: CheckinModel; stops: TrailStop[] }) {
                     target="_blank"
                     rel="noreferrer"
                     className={cn(
-                      INK,
+                      LINK_INK,
                       "inline-flex items-center gap-1 rounded-sm text-xs underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ink",
                     )}
                   >
                     {s.link.label}
-                    <ArrowUpRight aria-hidden className="size-3.5" />
+                    {s.link.internal ? (
+                      // Another page of the cockpit: the in-app mark, and
+                      // the new tab said, as the recap step's same link.
+                      <>
+                        <ChevronRight aria-hidden className="size-3.5" />
+                        <span className="sr-only"> (opens in a new tab)</span>
+                      </>
+                    ) : (
+                      <ArrowUpRight aria-hidden className="size-3.5" />
+                    )}
                   </a>
                 ) : null}
               </div>

@@ -4,7 +4,7 @@
  * touches the native media feed.
  *
  *   bun hermes/csm-calls/worker.ts doctor
- *   bun hermes/csm-calls/worker.ts run [--apply] [--report <path>] [--only ghl,typeform,fathom,meta,changes]
+ *   bun hermes/csm-calls/worker.ts run [--apply] [--report <path>] [--only ghl,typeform,fathom,meta,changes,eods,forms]
  *   bun hermes/csm-calls/worker.ts backfill --source ghl|fathom|meta|eods [--apply] [--report <path>]
  *   bun hermes/csm-calls/worker.ts backfill --source fathom-actions [--since YYYY-MM-DD] [--apply] [--report <path>]
  *   bun hermes/csm-calls/worker.ts seed [--apply]
@@ -27,6 +27,7 @@ import {
   fathomActionsBackfill,
   metaSource,
   changesSource,
+  formsRecord,
   unmatchedQueue,
   seed,
   reconcile,
@@ -82,7 +83,10 @@ async function doctor(env: Env) {
   await probe("store", () => db.all("cockpit_csm_calls", "select=id&limit=1"));
   // The Fathom intake's columns and the 1-1 notes registry (migrations 20261027f and 20261027g).
   await probe("intake store", () => db.all("cockpit_csm_calls", "select=candidate,hints,settled_reason,room&limit=1"));
-  await probe("forms registry", () => db.all("cockpit_forms", "select=provider&key=eq.checkin"));
+  // Since Stage 2b: the switch-over time (20261029s) and the kickoff and Blueprint record sweep (20261029y), asked
+  // with p_apply false, which writes nothing.
+  await probe("forms registry", () => db.all("cockpit_forms", "select=provider,provider_since&key=eq.checkin"));
+  await probe("forms record", () => db.rpc("cockpit_form_record_sweep", { p_apply: false }));
   await probe("eod sheet", () => t.sheetTabs());
   await probe("slack eods", () => t.slackHistory({ channel: "C09RQS2TFST", limit: "1" }));
   await probe("eod store", () => db.all("cockpit_csm_eod_mentions", "select=id&limit=1"));
@@ -137,7 +141,7 @@ async function main() {
     const last = Date.parse(ctx.stateOf(key)?.last_ok_at ?? "");
     return Number.isFinite(last) ? Math.min(last - overlapDays * DAY, now - overlapDays * DAY) : now - fallbackDays * DAY;
   };
-  const only = (arg("--only") ?? "ghl,typeform,fathom,meta,changes,eods").split(",");
+  const only = (arg("--only") ?? "ghl,typeform,fathom,meta,changes,eods,forms").split(",");
 
   if (cmd === "run") {
     if (only.includes("ghl")) await guard("csm-ghl-calls", () => ghlSource(ctx, now - 30 * DAY, now + 60 * DAY));
@@ -170,6 +174,8 @@ async function main() {
     if (only.includes("changes")) await guard("csm-media-changes", () => changesSource(ctx));
     // EODs are rewritten or corrected after posting: re-read the last 3 days every tick.
     if (only.includes("eods")) await guard("csm-eod-mentions", () => eodSource(ctx, Math.min(lookback("csm-eod-mentions", 3, 3), now - 3 * DAY)));
+    // Kickoff and Blueprint responses into the forms tables (docs/forms/STAGE2B-CONTRACT.md 4.8): records only.
+    if (only.includes("forms")) await guard("csm-forms-record", () => formsRecord(ctx));
   } else if (cmd === "backfill") {
     const source = arg("--source");
     if (source === "ghl") {

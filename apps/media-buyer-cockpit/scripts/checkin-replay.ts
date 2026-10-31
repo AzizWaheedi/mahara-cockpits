@@ -15,15 +15,24 @@
  * the matcher would have read before each submit, rebuilt as of the submit.
  * An email leaves the database only with its local part hashed (the domain
  * stays, so the matcher's domain rules hold), a room only hashed, a contact
- * name never, and
+ * name never (an action item's assignee leaves as the active staff member's
+ * own name when transcript.ts sameName calls them the same person, so a contact
+ * who only shares a staff first name stays a contact, else as `Contact ` and 8
+ * characters of a hash, docs/forms/STAGE2B-CONTRACT.md 4.13), and
  * Fathom's action items and the Typeform's client notes only as hashes, so a
  * plan keeps its counts and sides but no text. The answers are built from
  * those rows, with todoItems from cockpit-forms-api's todos.ts (the one copy
- * of the rule), and planned on the canonical migrations.
+ * of the rule), and planned on the canonical migrations. Each response counts
+ * whom Fathom assigned its open action items to, and a to-do comment
+ * difference from Make's comment carries the sentence that explains it when
+ * one does; an empty side Fathom gave open items to never is explained.
  *
- * --shadow reads real shadow runs' plans (sq.py) and, for the same cards, what
- * Make wrote, through the VPS GET route: one GET-only script over ssh that
- * reads the keys by name and prints shapes only. Both write a report under
+ * --shadow reads real shadow runs' plans (sq.py), each run's recording's
+ * action items through the same masks as --live (so the run counts whom Fathom
+ * assigned them to; a to-do comment difference carries its sentence only while
+ * the CSM's list is still Fathom's items, else it stays unexplained), and,
+ * for the same cards, what Make wrote, through the VPS GET route: one GET-only
+ * script over ssh that reads the keys by name and prints shapes only. Both write a report under
  * --out: replay-report.json and .md for --live, shadow-report.json and .md for
  * --shadow.
  */
@@ -44,6 +53,7 @@ import {
 } from "../../../hermes/csm-calls/callMatch.ts";
 import { actionItems } from "../../../hermes/csm-calls/fathomRules.ts";
 import { todoItems } from "../../../supabase/functions/cockpit-forms-api/todos.ts";
+import { sameName } from "../../../supabase/functions/cockpit-forms-api/transcript.ts";
 import { cockpitTestDb, migration } from "./lib/cockpitTestDb";
 
 type Row = Record<string, any>;
@@ -427,6 +437,41 @@ export const maskRoomSql = (e: string) =>
 /** The same mask in SQL, applied before an address leaves the database. */
 export const maskSql = (e: string) =>
   `CASE WHEN position('@' IN lower(btrim(${e}))) > 1 THEN md5(split_part(lower(btrim(${e})), '@', 1)) || '@' || split_part(lower(btrim(${e})), '@', 2) END`;
+/** A name's words in SQL as transcript.ts nameWords splits them: NFKC, lower case, punctuation as spaces. */
+const nameWordsSql = (e: string) =>
+  `string_to_array(btrim(regexp_replace(regexp_replace(lower(normalize(${e}, NFKC)), '[[:punct:]]', ' ', 'g'), '\\s+', ' ', 'g')), ' ')`;
+/**
+ * An assignee's name as it may leave the database (docs/forms/STAGE2B-CONTRACT.md
+ * 4.13): the active cockpit_people name that transcript.ts sameName calls the
+ * same person (two full names agree on their first two words; a lone name, of
+ * two letters or more, on the other's first word), else 'Contact ' and 8
+ * characters of the name's md5; NULL for no name. A contact who only shares a
+ * staff first name stays a contact, as todoItems reads it in production. No
+ * contact's name crosses; todoItems still tells staff apart.
+ */
+export const maskNameSql = (e: string) =>
+  `CASE WHEN nullif(btrim(${e}), '') IS NULL THEN NULL ELSE coalesce((SELECT btrim(p.name) FROM public.cockpit_people p, LATERAL (SELECT ${nameWordsSql("p.name")} AS staff, ${nameWordsSql(e)} AS named) w WHERE p.active AND nullif(btrim(p.name), '') IS NOT NULL AND CASE WHEN cardinality(w.staff) >= 2 AND cardinality(w.named) >= 2 THEN w.staff[1] = w.named[1] AND w.staff[2] = w.named[2] ELSE char_length(w.named[1]) >= 2 AND w.staff[1] = w.named[1] END ORDER BY p.id LIMIT 1), 'Contact ' || left(md5(lower(btrim(${e}))), 8)) END`;
+/** A to-do line as it may leave the database: 'Item ' and 12 characters of its md5, whitespace and case ignored. */
+const itemHashSql = (e: string) =>
+  `'Item ' || left(md5(lower(btrim(regexp_replace(${e}, '\\s+', ' ', 'g')))), 12)`;
+/**
+ * A meeting's Fathom action items as they may leave the database, for --live
+ * and --shadow alike: each description only as a hash, each assignee's email
+ * through maskSql and name through maskNameSql; NULL when the meeting holds no
+ * action item list. `m` is the cockpit_fathom_meetings alias.
+ */
+export const actionItemsSql = (
+  m: string,
+) => `CASE WHEN jsonb_typeof(${m}.raw->'action_items') = 'array' THEN coalesce((
+         SELECT jsonb_agg(jsonb_build_object(
+                  'description', CASE WHEN nullif(btrim(x->>'description'), '') IS NULL THEN ''
+                                      ELSE ${itemHashSql("x->>'description'")} END,
+                  'completed', x->'completed', 'recording_timestamp', x->'recording_timestamp',
+                  'assignee', jsonb_build_object('email', ${maskSql("x->'assignee'->>'email'")}, 'team', x->'assignee'->'team',
+                                                 'name', ${maskNameSql("x->'assignee'->>'name'")}))
+                ORDER BY q.o)
+           FROM jsonb_array_elements(${m}.raw->'action_items') WITH ORDINALITY q(x, o) WHERE jsonb_typeof(q.x) = 'object'),
+         '[]'::jsonb) END`;
 const iso = (e: string) =>
   `to_char((${e}) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
 function lit(v: string, pattern: RegExp): string {
@@ -530,15 +575,7 @@ SELECT m.recording_id, ${iso("m.starts_at")} AS starts_at, ${iso("m.ends_at")} A
        coalesce((SELECT jsonb_agg(DISTINCT ${maskSql("i->>'email'")})
                    FROM jsonb_array_elements(CASE WHEN jsonb_typeof(m.invitees) = 'array' THEN m.invitees ELSE '[]'::jsonb END) i
                   WHERE nullif(btrim(i->>'email'), '') IS NOT NULL), '[]'::jsonb) AS invitee_emails,
-       CASE WHEN m.recording_id IN (${pinned}) AND jsonb_typeof(m.raw->'action_items') = 'array' THEN coalesce((
-         SELECT jsonb_agg(jsonb_build_object(
-                  'description', CASE WHEN nullif(btrim(x->>'description'), '') IS NULL THEN ''
-                                      ELSE 'Item ' || left(md5(lower(btrim(regexp_replace(x->>'description', '\\s+', ' ', 'g')))), 12) END,
-                  'completed', x->'completed', 'recording_timestamp', x->'recording_timestamp',
-                  'assignee', jsonb_build_object('email', ${maskSql("x->'assignee'->>'email'")}, 'team', x->'assignee'->'team'))
-                ORDER BY q.o)
-           FROM jsonb_array_elements(m.raw->'action_items') WITH ORDINALITY q(x, o) WHERE jsonb_typeof(q.x) = 'object'),
-         '[]'::jsonb) END AS action_items,
+       CASE WHEN m.recording_id IN (${pinned}) THEN ${actionItemsSql("m")} END AS action_items,
        c.id AS call_id, c.task_id, c.client_name, c.match_method, c.match_confidence, c.linked_call_id, c.status AS call_status,
        c.settled_reason, c.kind AS call_kind, ${iso("c.starts_at")} AS call_starts_at
   FROM public.cockpit_fathom_meetings m
@@ -735,6 +772,55 @@ export function pickAsOf(s: Snapshot, e: Entry, staff: Staff[]): Pick {
 // ---------------------------------------------------------------------------
 // The plans, in PGlite (7.4 steps 2 and 3).
 
+/** Whom Fathom assigned a response's open (not completed) action items to. */
+export type Assignees = {
+  /** The recording's recorder, by address. */
+  recorder: number;
+  /** Another staff member: a maharamedia.com address, a Fathom team, or a staff name with neither. */
+  staff: number;
+  /** An address outside Mahara. */
+  clientEmail: number;
+  /** A name with no address or team that is not on the staff list. */
+  nameOnly: number;
+  /** No address, team or name. */
+  none: number;
+};
+export const NO_ASSIGNEES: Assignees = {
+  recorder: 0,
+  staff: 0,
+  clientEmail: 0,
+  nameOnly: 0,
+  none: 0,
+};
+
+/** The counts of Assignees for one recording's stored action items (masked as the SQL leaves them). */
+export function assigneesOf(
+  items: ReturnType<typeof actionItems>,
+  recorderEmail: unknown,
+  staff: Staff[],
+): Assignees {
+  const out = { ...NO_ASSIGNEES };
+  const recorder = String(recorderEmail ?? "")
+    .trim()
+    .toLowerCase();
+  for (const i of items) {
+    if (i.completed) continue;
+    const mail = String(i.assigneeEmail ?? "")
+      .trim()
+      .toLowerCase();
+    const name = String(i.assigneeName ?? "").trim();
+    if (mail && mail === recorder) out.recorder++;
+    else if (/@maharamedia\.com$/.test(mail) || i.assigneeTeam) out.staff++;
+    else if (mail) out.clientEmail++;
+    else if (!name) out.none++;
+    else if (staff.some(s => sameName(name, s.name))) out.staff++;
+    else out.nameOnly++;
+  }
+  return out;
+}
+const openOf = (a: Assignees) =>
+  a.recorder + a.staff + a.clientEmail + a.nameOnly + a.none;
+
 export type Planned = {
   plans: Row[] | null;
   reason: string | null;
@@ -744,6 +830,7 @@ export type Planned = {
     theirs: number;
     unsure: number;
     cut: number;
+    assignees: Assignees | null;
   };
 };
 
@@ -888,9 +975,9 @@ export async function loadStore(
  * normalised by the real cockpit_form_checkin_value and confirmed; DEFCON and
  * priority from the Typeform; We owe and They owe from the stored action
  * items through todoItems (no speaker side: the replay has no labelled
- * transcript, so an item without an email is ours and unsure); the client
- * notes. Then the response is stored submitted, in shadow, and planned.
- * loadStore runs first.
+ * transcript, so a name-only item is ours when the name is on the staff list,
+ * else theirs and unsure, 2b 4.13); the client notes. Then the response is
+ * stored submitted, in shadow, and planned. loadStore runs first.
  */
 export async function planEntries(
   db: PGlite,
@@ -906,11 +993,21 @@ export async function planEntries(
       .sort()[0] ?? null;
   const planned = new Map<string, Planned>();
   for (const e of entries) {
-    const todos = { items: 0, ours: 0, theirs: 0, unsure: 0, cut: 0 };
     const form = s.forms.find(f => f.token === e.token);
     const meeting = s.meetings.find(
       m => String(m.recording_id) === e.recording,
     );
+    const stored = actionItems({ action_items: arr(meeting?.action_items) });
+    const todos: Planned["todos"] = {
+      items: 0,
+      ours: 0,
+      theirs: 0,
+      unsure: 0,
+      cut: 0,
+      assignees: meeting
+        ? assigneesOf(stored, meeting.recorder_email, staff)
+        : null,
+    };
     const pick = picks.get(e.token);
     if (!form || !meeting) {
       planned.set(e.token, {
@@ -933,10 +1030,10 @@ export async function planEntries(
         { kind: "fathom", recordingId: e.recording, why, confirmed: true },
         e.card,
       );
-      const items = todoItems(
-        actionItems({ action_items: arr(meeting.action_items) }),
-        { shareUrl: call?.shareUrl ?? null, staff },
-      ).map(i => ({ ...i, from: "fathom" }));
+      const items = todoItems(stored, {
+        shareUrl: call?.shareUrl ?? null,
+        staff,
+      }).map(i => ({ ...i, from: "fathom" }));
       todos.unsure = items.filter(i => i.unsure).length;
       const side = (s: "we" | "they") => {
         const list = items
@@ -1004,6 +1101,16 @@ export type Judged = {
   state: string | null;
   verdict: Verdict;
   reason: string;
+  /** A difference whose cause is known and named in the reason (2b 4.13, to-do comments only). */
+  explained?: true;
+};
+
+/** The two sentences that explain a to-do comment difference (docs/forms/STAGE2B-CONTRACT.md 4.13), word for word. */
+export const TODO_EXPLAINED = {
+  recorder: (n: number) =>
+    `They owe is empty: Fathom assigned all ${n} action items to the recorder; none names the client side.`,
+  gpt: (n: number) =>
+    `Make's comment is GPT's list from the whole transcript and the Additional Notes ([3]); the plan is Fathom's ${n} action items, which the CSM edits before she sends.`,
 };
 
 /** The London date ClickUp keeps for a date-only value. */
@@ -1069,6 +1176,8 @@ export type Compare = {
   /** The pinned meeting's /calls/{n} page, which a Typeform row may hold instead of the share link. */
   meetingUrl: string | null;
   storedActionItems: number | null;
+  /** Whom Fathom assigned the open action items to: --live always; --shadow only while the CSM's list still equals Fathom's open items, side by side; null when unknown or edited. */
+  todoAssignees?: Assignees | null;
   calls: CardCalls;
   nativeLinkFirst: boolean | null;
 };
@@ -1086,6 +1195,14 @@ export function judge(plans: Row[] | null, c: Compare): Judged[] {
     reason: string,
     state = el(effect)?.state ?? null,
   ) => out.push({ effect, state, verdict, reason });
+  const explained = (effect: string, reason: string) =>
+    out.push({
+      effect,
+      state: el(effect)?.state ?? null,
+      verdict: "differs",
+      reason,
+      explained: true,
+    });
   if (!plans) {
     for (const k of EFFECTS)
       add(k, "missing", "No plan: the response could not be planned.", null);
@@ -1198,20 +1315,48 @@ export function judge(plans: Row[] | null, c: Compare): Judged[] {
       const ours = Number(p.plan?.sides?.ours ?? 0);
       const theirs = Number(p.plan?.sides?.theirs ?? 0);
       const counts = `The plan has ${plural(items, "line")} (${ours} ours, ${theirs} theirs)`;
+      // A content difference is explained when the replay knows whom Fathom
+      // assigned the open items to and the plan is those items (--live always;
+      // --shadow only while the CSM's list is still Fathom's). An empty side
+      // is explained only when Fathom assigned it nothing: They owe when no
+      // open item went to a client address or a name off the staff list (all
+      // to the recorder: the recorder sentence; to other staff too: GPT's
+      // list), We owe when none went to the recorder, other staff or no one.
+      // Both sides empty, or an empty side Fathom gave items to, stays an
+      // unexplained difference: it is the defect G3 guards (client items in
+      // We owe), not GPT's list. Fewer lines than Make's bullets with both
+      // sides planned is GPT's own list (module [3]).
+      const a = c.todoAssignees ?? null;
+      const open = a ? openOf(a) : 0;
+      const gpt = (said: string) =>
+        a && open
+          ? explained("todo_comment", `${said} ${TODO_EXPLAINED.gpt(open)}`)
+          : add("todo_comment", "differs", said);
+      const emptySide = (said: string) => {
+        if (!a || !open || (!ours && !theirs))
+          add("todo_comment", "differs", said);
+        else if (!theirs)
+          a.clientEmail + a.nameOnly
+            ? add("todo_comment", "differs", said)
+            : a.recorder === open
+              ? explained(
+                  "todo_comment",
+                  `${counts}. ${TODO_EXPLAINED.recorder(open)}`,
+                )
+              : gpt(said);
+        else
+          a.recorder + a.staff + a.none
+            ? add("todo_comment", "differs", said)
+            : gpt(said);
+      };
       if (p.plan?.notify_all !== false)
         add("todo_comment", "differs", `${counts} but would notify everyone.`);
       else if (!ours || !theirs)
-        add(
-          "todo_comment",
-          "differs",
+        emptySide(
           `${counts}: ${!ours && !theirs ? "both sides are" : !ours ? "We owe is" : "They owe is"} empty.`,
         );
       else if (bullets !== null && items * 2 < bullets)
-        add(
-          "todo_comment",
-          "differs",
-          `${counts}; Make's comment had ${plural(bullets, "bullet line")}.`,
-        );
+        gpt(`${counts}; Make's comment had ${plural(bullets, "bullet line")}.`);
       else if (make.length >= 2)
         add(
           "todo_comment",
@@ -1370,10 +1515,15 @@ export type ResponseReport = {
   planned: boolean;
   reason: string | null;
   pick: Judged;
-  todos: Planned["todos"] & {
+  todos: Omit<Planned["todos"], "unsure"> & {
+    /** Lines the run marks unsure; null when they were not read, never 0. */
+    unsure: number | null;
     makeBulletLines: number | null;
-    makeComments: number;
+    /** Make's comments for the response; null when they were not read, never 0. */
+    makeComments: number | null;
   };
+  /** --shadow: ClickUp did not answer this card's read, so the run compared nothing on it. */
+  unread?: true;
   effects: Judged[];
 };
 export type Pass = { check: string; count: number; of: number; pass: boolean };
@@ -1425,6 +1575,30 @@ export function passesOf(rs: ResponseReport[]): Pass[] {
         ["same", "better"].includes(eff(r, "call_form")?.verdict ?? ""),
       ),
     ],
+    [
+      "to-dos: ours + theirs = the stored action items not completed",
+      count(
+        r =>
+          r.planned &&
+          r.todos.assignees !== null &&
+          r.todos.ours + r.todos.theirs === openOf(r.todos.assignees),
+      ),
+    ],
+    [
+      "every to-do comment difference explained",
+      // Only a compared comment can be explained: a response with no plan, or
+      // no to-do comment verdict, or one that reads `missing`, compared nothing
+      // and never counts (G3 reads this pass).
+      count(r => {
+        const todo = eff(r, "todo_comment");
+        return (
+          r.planned &&
+          !!todo &&
+          todo.verdict !== "missing" &&
+          (todo.verdict !== "differs" || todo.explained === true)
+        );
+      }),
+    ],
   ];
   return checks.map(([check, n]) => ({
     check,
@@ -1452,6 +1626,23 @@ export function reportOf(
 }
 
 const cell = (s: unknown) => String(s ?? "").replace(/\|/g, "/");
+/** " Fathom assigned the n open action items: ..." for the report, or nothing when unknown. */
+function assigneeLine(a: Assignees | null | undefined): string {
+  if (!a) return "";
+  const parts = (
+    [
+      [a.recorder, "to the recorder"],
+      [a.staff, "to other staff"],
+      [a.clientEmail, "to a client address"],
+      [a.nameOnly, "to a name off the staff list"],
+      [a.none, "to no one"],
+    ] as const
+  )
+    .filter(([n]) => n > 0)
+    .map(([n, to]) => `${n} ${to}`);
+  const open = openOf(a);
+  return ` Fathom assigned ${plural(open, "open action item")}${parts.length ? `: ${parts.join(", ")}` : ""}.`;
+}
 export function reportMarkdown(r: Report): string {
   const lines = [
     `# 1-1 notes shadow replay (${r.mode})`,
@@ -1473,7 +1664,7 @@ export function reportMarkdown(r: Report): string {
       "",
       `Recording ${x.recording ?? "none"}. ${x.planned ? "Planned." : `Not planned: ${cell(x.reason)}`}`,
       "",
-      `To-dos: ${x.todos.items} planned (${x.todos.ours} ours, ${x.todos.theirs} theirs, ${x.todos.unsure} unsure${x.todos.cut ? `, ${x.todos.cut} over 30 left out` : ""}); Make's comment had ${x.todos.makeBulletLines ?? "no"} bullet lines (${plural(x.todos.makeComments, "comment")}).`,
+      `To-dos: ${x.todos.items} planned (${x.todos.ours} ours, ${x.todos.theirs} theirs, ${x.todos.unsure === null ? "unsure not read" : `${x.todos.unsure} unsure`}${x.todos.cut ? `, ${x.todos.cut} over 30 left out` : ""}); ${x.todos.makeComments === null ? "Make's comment was not read" : `Make's comment had ${x.todos.makeBulletLines ?? "no"} bullet lines (${plural(x.todos.makeComments, "comment")})`}.${assigneeLine(x.todos.assignees)}`,
       "",
       "| Effect | Plan | Verdict | Why |",
       "| --- | --- | --- | --- |",
@@ -1481,7 +1672,7 @@ export function reportMarkdown(r: Report): string {
     );
     for (const e of x.effects)
       lines.push(
-        `| ${e.effect} | ${cell(e.state ?? "none")} | ${e.verdict} | ${cell(e.reason)} |`,
+        `| ${e.effect} | ${cell(e.state ?? "none")} | ${e.verdict} | ${e.explained ? "Explained: " : ""}${cell(e.reason)} |`,
       );
     lines.push("");
   }
@@ -1552,7 +1743,14 @@ export async function runLive(opts: {
           e.recording,
         ),
         todos: {
-          ...(p?.todos ?? { items: 0, ours: 0, theirs: 0, unsure: 0, cut: 0 }),
+          ...(p?.todos ?? {
+            items: 0,
+            ours: 0,
+            theirs: 0,
+            unsure: 0,
+            cut: 0,
+            assignees: null,
+          }),
           makeBulletLines: e.make.comments[0]?.bulletLines ?? null,
           makeComments: e.make.comments.length,
         },
@@ -1576,6 +1774,7 @@ export async function runLive(opts: {
           storedActionItems: meeting?.action_items
             ? arr(meeting.action_items).length
             : null,
+          todoAssignees: p?.todos.assignees ?? null,
           calls,
           nativeLinkFirst:
             typeof comment === "string"
@@ -1785,6 +1984,11 @@ export function vpsReader(
   };
 }
 
+/** One side's to-do lines of a shadow run, each only as its hash, in the mask actionItemsSql gives Fathom's descriptions. */
+const ownedLinesSql = (key: "we_owe" | "they_owe") =>
+  `coalesce((SELECT jsonb_agg(${itemHashSql("q.x->>'text'")}) FROM jsonb_path_query(r.answers, '$.${key}[*]') q(x)
+              WHERE nullif(btrim(q.x->>'text'), '') IS NOT NULL), '[]'::jsonb)`;
+
 /** The shadow runs' plans and the Typeform rows of the same cards (read only). */
 export async function readShadow(read: Reader, ids: string[]) {
   const wanted = list(ids, UUID);
@@ -1793,6 +1997,9 @@ SELECT r.id::text AS id, r.task_id, r.client_name, r.mode, r.state, ${iso("r.sub
        r.answers->'call'->>'kind' AS call_kind, r.answers->'call'->>'recordingId' AS recording_id,
        r.answers->'call'->>'shareUrl' AS share_url, r.answers->'call'->>'why' AS why,
        r.answers->'call'->>'startsAt' AS call_starts_at, r.answers->>'defcon' AS defcon, r.answers->>'priority' AS priority,
+       ${ownedLinesSql("we_owe")} AS we_owe_lines, ${ownedLinesSql("they_owe")} AS they_owe_lines,
+       jsonb_array_length(jsonb_path_query_array(r.answers, '$.we_owe[*] ? (@.unsure == true)'))
+         + jsonb_array_length(jsonb_path_query_array(r.answers, '$.they_owe[*] ? (@.unsure == true)')) AS unsure_lines,
        coalesce((SELECT jsonb_agg(jsonb_build_object('effect', e.effect_key, 'state', e.state, 'owner', e.owner,
            'reason', e.reason,
            'plan', CASE e.effect_key
@@ -1817,15 +2024,47 @@ SELECT r.id::text AS id, r.task_id, r.client_name, r.mode, r.state, ${iso("r.sub
   const since = runs
     .map(r => ms(r.call_starts_at) ?? ms(r.submitted_at))
     .filter((t): t is number => t !== null);
-  const forms = cards.length
-    ? await read(`-- replay:shadow_forms
+  // A draft with no call yet has no time to read from: runShadow says so.
+  const forms =
+    cards.length && since.length
+      ? await read(`-- replay:shadow_forms
 SELECT f.token, f.task_id, ${iso("f.submitted_at")} AS submitted_at, f.recording_url, f.linked_call_id,
        ${answerSql(REF.defcon)} AS defcon, ${answerSql(REF.priority)} AS priority
   FROM public.cockpit_csm_call_forms f
  WHERE f.form_id = 'fRokTITH' AND f.task_id IN (${list(cards, CARD)})
    AND f.submitted_at >= ${lit(stamp(Math.min(...since) - DAY), STAMP)}`)
-    : [];
-  return { runs, forms };
+      : [];
+  const { meetings, staff } = await readRecordings(
+    read,
+    runs.map(r => String(r.recording_id ?? "")),
+  );
+  return { runs, forms, meetings, staff };
+}
+
+/**
+ * The shadow runs' recordings as --live reads its pinned ones (read only): the
+ * recorder's address through maskSql and the action items through
+ * actionItemsSql, so no contact's name or address and no item text leaves the
+ * database; and the active staff names that assigneesOf tells staff by. Ids that
+ * are not recording ids are left out; with none, nothing is read.
+ */
+export async function readRecordings(
+  read: Reader,
+  ids: string[],
+): Promise<{ meetings: Row[]; staff: Staff[] }> {
+  const wanted = [...new Set(ids.filter(id => DIGITS.test(id)))];
+  if (!wanted.length) return { meetings: [], staff: [] };
+  const meetings = await read(`-- replay:shadow_meetings
+SELECT m.recording_id, ${maskSql("m.recorded_by_email")} AS recorder_email, ${actionItemsSql("m")} AS action_items
+  FROM public.cockpit_fathom_meetings m
+ WHERE m.recording_id IN (${list(wanted, DIGITS)})`);
+  const staff = await read(`-- replay:shadow_staff
+SELECT btrim(p.name) AS name FROM public.cockpit_people p
+ WHERE p.active AND nullif(btrim(p.name), '') IS NOT NULL ORDER BY p.id`);
+  return {
+    meetings,
+    staff: staff.map(p => ({ name: String(p.name), email: null, role: null })),
+  };
 }
 
 /** The Typeform row for the shadow run's call: its link, else the first one sent after the call began. */
@@ -1847,13 +2086,27 @@ function typeformFor(run: Row, forms: Row[]): Row | null {
   );
 }
 
+/** The effects the card's task read answers; the comment read answers todo_comment. */
+const TASK_EFFECTS = ["happiness", "last_poc", "last_checkin_call"];
+
+/** A run's to-do line hashes are exactly these items' masked descriptions, in any order; lines not read never match. */
+function sameLines(lines: unknown, items: { text: string }[]): boolean {
+  if (!Array.isArray(lines)) return false;
+  const a = lines.map(String).sort();
+  const b = items.map(i => i.text).sort();
+  return a.length === b.length && a.every((h, i) => h === b[i]);
+}
+
 export async function runShadow(opts: {
   ids: string[];
   read: Reader;
   make: MakeReader;
   now?: Date;
 }): Promise<Report> {
-  const { runs, forms } = await readShadow(opts.read, opts.ids);
+  const { runs, forms, meetings, staff } = await readShadow(
+    opts.read,
+    opts.ids,
+  );
   const pairs = runs.map(r => ({ run: r, form: typeformFor(r, forms) }));
   const asks = pairs
     .filter(p => p.form)
@@ -1885,10 +2138,11 @@ export async function runShadow(opts: {
           items: 0,
           ours: 0,
           theirs: 0,
-          unsure: 0,
+          unsure: null,
           cut: 0,
+          assignees: null,
           makeBulletLines: null,
-          makeComments: 0,
+          makeComments: null,
         },
         effects: judge(null, emptyCompare()),
       };
@@ -1914,7 +2168,48 @@ export async function runShadow(opts: {
         });
     }
     const todo = plans.find(p => p.effect === "todo_comment")?.plan ?? {};
-    const shapes = make?.comment?.shapes ?? null;
+    // Whom Fathom assigned the run's recording's open action items to, as --live
+    // counts them, for the report's count line. No stored recording: unknown.
+    const meeting = meetings.find(
+      m => String(m.recording_id) === String(run.recording_id ?? ""),
+    );
+    const stored = meeting
+      ? actionItems({ action_items: arr(meeting.action_items) })
+      : null;
+    const assignees = stored
+      ? assigneesOf(stored, meeting?.recorder_email, staff)
+      : null;
+    // A shadow run's plan is the CSM's own list, not Fathom's. The recorder and
+    // GPT sentences (2b 4.13) say the plan is Fathom's open items, so they
+    // explain a to-do comment difference only while the plan still holds
+    // exactly what todoItems makes of those items, side by side: the same line
+    // hashes on each side, in any order. A list the CSM edited (a line moved,
+    // added, dropped or replaced) stays an unexplained difference for a person
+    // to read, and so does a run whose lines were not read.
+    const fromFathom = stored
+      ? todoItems(stored, { shareUrl: null, staff })
+      : [];
+    const planOurs = Number(todo.sides?.ours ?? 0);
+    const planTheirs = Number(todo.sides?.theirs ?? 0);
+    const asFathom =
+      assignees !== null &&
+      Number(todo.items ?? 0) === planOurs + planTheirs &&
+      planOurs + planTheirs === openOf(assignees) &&
+      planOurs === fromFathom.filter(i => i.side === "we").length &&
+      planTheirs === fromFathom.filter(i => i.side === "they").length &&
+      sameLines(
+        run.we_owe_lines,
+        fromFathom.filter(i => i.side === "we"),
+      ) &&
+      sameLines(
+        run.they_owe_lines,
+        fromFathom.filter(i => i.side === "they"),
+      );
+    // A read ClickUp refused is not an empty card: it compares nothing (missing
+    // is never zero), so no sentence below may say Make wrote nothing.
+    const taskRead = make?.task?.status === 200 ? make.task : null;
+    const commentRead = make?.comment?.status === 200 ? make.comment : null;
+    const shapes = commentRead?.shapes ?? null;
     const comments =
       shapes?.map(s => ({
         lines: s.lines,
@@ -1951,12 +2246,12 @@ export async function runShadow(opts: {
     const effects = judge(plans, {
       card: String(run.task_id),
       makeComments: comments,
-      makeHappiness: make?.task?.happinessOption ?? null,
-      makeLastPocDay: make?.task?.lastPocDay ?? null,
+      makeHappiness: taskRead?.happinessOption ?? null,
+      makeLastPocDay: taskRead?.lastPocDay ?? null,
       makeGradeParts: make?.grade?.parts ?? null,
       makeGradeError: make?.grade?.error ?? null,
       makeRecapSends: null,
-      cardLastCheckinDay: make?.task?.lastCheckinDay ?? null,
+      cardLastCheckinDay: taskRead?.lastCheckinDay ?? null,
       typeform: form
         ? {
             defcon: form.defcon ?? null,
@@ -1966,28 +2261,43 @@ export async function runShadow(opts: {
           }
         : null,
       meetingUrl: null,
-      storedActionItems: null,
+      storedActionItems: meeting?.action_items
+        ? arr(meeting.action_items).length
+        : null,
+      todoAssignees: asFathom ? assignees : null,
       calls,
       nativeLinkFirst:
         typeof todo.linkFirst === "boolean" ? todo.linkFirst : null,
-    }).map(j =>
-      form
-        ? j
-        : [
-              "call_form",
-              "todo_comment",
-              "happiness",
-              "last_poc",
-              "grade_notice",
-            ].includes(j.effect)
+    }).map((j): Judged => {
+      if (!form)
+        return [
+          "call_form",
+          "todo_comment",
+          "happiness",
+          "last_poc",
+          "grade_notice",
+        ].includes(j.effect)
           ? {
               ...j,
               verdict: "missing" as const,
               reason:
                 "No Typeform row for this call yet, so Make's writes cannot be read.",
             }
-          : j,
-    );
+          : j;
+      if (j.verdict === "missing") return j;
+      const refused = TASK_EFFECTS.includes(j.effect)
+        ? !taskRead && { status: make?.task?.status }
+        : j.effect === "todo_comment" &&
+          !commentRead && { status: make?.comment?.status };
+      if (!refused) return j;
+      return {
+        effect: j.effect,
+        state: j.state,
+        verdict: "missing",
+        reason: `ClickUp did not answer this card's read (status ${refused.status ?? "none"}), so it is not compared.`,
+      };
+    });
+    const unsure = Number(run.unsure_lines);
     return {
       response: id.slice(0, 8),
       card: String(run.task_id),
@@ -2000,11 +2310,14 @@ export async function runShadow(opts: {
         items: Number(todo.items ?? 0),
         ours: Number(todo.sides?.ours ?? 0),
         theirs: Number(todo.sides?.theirs ?? 0),
-        unsure: 0,
+        unsure:
+          run.unsure_lines != null && Number.isFinite(unsure) ? unsure : null,
         cut: 0,
+        assignees,
         makeBulletLines: comments?.[0]?.bulletLines ?? null,
-        makeComments: comments?.length ?? 0,
+        makeComments: comments?.length ?? null,
       },
+      ...(form && (!taskRead || !commentRead) ? { unread: true as const } : {}),
       effects,
     };
   });
@@ -2067,9 +2380,14 @@ export function parseArgs(argv: string[]): Args {
     if (flag === "--live") mode = "live";
     else if (flag === "--shadow") {
       mode = "shadow";
-      a.ids = value()
-        .split(/[\s,]+/)
-        .filter(Boolean);
+      // One response named twice is one run: G3 counts runs.
+      a.ids = [
+        ...new Set(
+          value()
+            .split(/[\s,]+/)
+            .filter(Boolean),
+        ),
+      ];
     } else if (flag === "--fixture") a.fixture = value();
     else if (flag === "--picks") a.picks = value();
     else if (flag === "--out") a.out = value();
@@ -2089,6 +2407,39 @@ export function parseArgs(argv: string[]): Args {
       throw new Error("Each shadow response id is a uuid.");
   }
   return a;
+}
+
+/**
+ * What the command prints and returns. G3's bar is no unexplained difference, so
+ * --shadow fails on one of those or on anything missing, and an explained one is
+ * counted but passes; forms_gates.py reads the JSON by the same rule. --live
+ * answers to its passes.
+ */
+export function summaryOf(
+  report: Report,
+  files: string[] = [],
+): { line: string; code: number } {
+  const verdicts = report.responses.flatMap(r => [r.pick, ...r.effects]);
+  const differ = verdicts.filter(v => v.verdict === "differs");
+  const explained = differ.filter(v => v.explained === true).length;
+  const missing = verdicts.filter(v => v.verdict === "missing").length;
+  const said =
+    differ.length === 1
+      ? `1 differs, of which ${explained} ${explained === 1 ? "is" : "are"} explained`
+      : differ.length
+        ? `${differ.length} differ, of which ${explained} ${explained === 1 ? "is" : "are"} explained`
+        : "0 differ";
+  return {
+    line: `${report.mode} replay: ${plural(report.responses.length, "response")}, ${said}, ${missing} missing${report.passes.length ? `, passes ${report.pass ? "hold" : "do not hold yet"}` : ""}. Report: ${files.join(", ")}`,
+    code:
+      report.mode === "live"
+        ? report.pass
+          ? 0
+          : 1
+        : differ.length - explained + missing
+          ? 1
+          : 0,
+  };
 }
 
 export async function main(argv: string[]): Promise<number> {
@@ -2113,19 +2464,9 @@ export async function main(argv: string[]): Promise<number> {
           }),
         });
   const files = writeReport(a.out, report);
-  const verdicts = report.responses.flatMap(r => [r.pick, ...r.effects]);
-  const differs = verdicts.filter(v => v.verdict === "differs").length;
-  const missing = verdicts.filter(v => v.verdict === "missing").length;
-  console.log(
-    `${report.mode} replay: ${plural(report.responses.length, "response")}, ${differs} differs, ${missing} missing${report.passes.length ? `, passes ${report.pass ? "hold" : "do not hold yet"}` : ""}. Report: ${files.join(", ")}`,
-  );
-  return report.mode === "live"
-    ? report.pass
-      ? 0
-      : 1
-    : differs + missing
-      ? 1
-      : 0;
+  const summary = summaryOf(report, files);
+  console.log(summary.line);
+  return summary.code;
 }
 
 if (import.meta.main)

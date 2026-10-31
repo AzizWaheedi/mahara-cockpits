@@ -959,8 +959,11 @@ for (const order of ORDERS)
         const admin = await CSN.readNoticeSettings(client(ADMIN) as never);
         expect(admin.can).toEqual({ edit: true, editors: true });
         // The server lists them in its seed order; the card orders its own rows.
+        // This file applies Stage 1's migrations only, so the two kinds 2b's
+        // 20261029u seeds are not in its database (stage2b-fit proves those).
+        const inStage2b = ["checkin.grade", "checkin.recap_late"];
         expect(admin.notices.map(n => n.kind).sort()).toEqual(
-          [...CSN.NOTICE_KINDS].sort(),
+          [...CSN.NOTICE_KINDS].filter(k => !inStage2b.includes(k)).sort(),
         );
         const kickoff = admin.notices.find(n => n.kind === "kickoff")!;
         expect(kickoff).toMatchObject({

@@ -436,12 +436,34 @@ export function nudgeFor(
   return { kind: "button" };
 }
 
-/** The nudges of several clients, kept fresh as markers age and answers come. */
+/**
+ * The 1-1 notes are filled in the cockpit: the registry's provider is
+ * `native`. Not the entry answer's `native` flag, which says the cockpit
+ * has a window for this form and is true for `checkin` from the seed
+ * (cockpit_form_entry, 20261027f_forms_core.sql:1343), so it cannot key
+ * anything that must stay dark until the switch-over
+ * (docs/forms/STAGE2B-CONTRACT.md 1.4, "follow the registry").
+ */
+export const notesNative = (e: Pick<CheckinEntry, "provider">) =>
+  e.provider === "native";
+
+/**
+ * The nudges of several clients, kept fresh as markers age and answers come.
+ * Once the 1-1 notes are native (docs/forms/STAGE2B-CONTRACT.md 4.15 item 2)
+ * Typeform is asked nothing and a marker means nothing: every nudge is the
+ * button, and the button opens the cockpit's window.
+ */
 export function useCheckinNudges(
   items: { taskId: string; lastCall?: string | null }[],
 ): Record<string, Nudge> {
+  const entry = useCheckinEntry();
+  const native = notesNative(entry);
+  // Asked once the entry has answered (or failed, which keeps the Typeform
+  // path): a native registry asks Typeform nothing.
   const sent = useTypeformSent(
-    items.map(i => ({ taskId: i.taskId, since: sinceOf(i.lastCall) })),
+    entry.ready && !native
+      ? items.map(i => ({ taskId: i.taskId, since: sinceOf(i.lastCall) }))
+      : [],
   );
   const tick = useSyncExternalStore(
     fn => {
@@ -467,9 +489,11 @@ export function useCheckinNudges(
   return useMemo(() => {
     const out: Record<string, Nudge> = {};
     for (const i of items)
-      out[i.taskId] = nudgeFor(i.taskId, i.lastCall, sent[i.taskId]);
+      out[i.taskId] = native
+        ? { kind: "button" }
+        : nudgeFor(i.taskId, i.lastCall, sent[i.taskId]);
     return out;
-  }, [key, sent, tick]);
+  }, [key, sent, tick, native]);
 }
 
 // ------------------------------------------------------------ the Typeform path

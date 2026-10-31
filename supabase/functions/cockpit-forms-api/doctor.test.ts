@@ -155,3 +155,29 @@ describe("keys.save", () => {
     expect(f.sent).toHaveLength(0);
   });
 });
+
+describe("the doctor: the 1-1 notes sweep's secret (2b build 0)", () => {
+  test("NOTICES_CRON_SECRET is a boolean, never a value; missing is said, not a failure", async () => {
+    const rpc = { cockpit_forms_key_get: (a: Record<string, any>) => keyRow(a.p_provider), cockpit_forms_doctor_store: STORE };
+    const set = fakeDeps({ env: { NOTICES_CRON_SECRET: "invented-secret-xyz" }, rpc, routes: [fathomApi({ pages: [[meeting()]] }), models()] });
+    const on = await runDoctor({ deps: set.deps });
+    expect(on.secrets).toEqual({ NOTICES_CRON_SECRET: true });
+    expect(JSON.stringify(on)).not.toContain("invented-secret-xyz");
+    expect(on.note).not.toContain("NOTICES_CRON_SECRET");
+    const unset = fakeDeps({ rpc, routes: [fathomApi({ pages: [[meeting()]] }), models()] });
+    const off = await runDoctor({ deps: unset.deps });
+    expect(off).toMatchObject({ ok: true, secrets: { NOTICES_CRON_SECRET: false } });
+    expect(off.note).toContain("No NOTICES_CRON_SECRET: the 1-1 notes sweep cannot start drafts.");
+  });
+
+  test("NOTICES_CRON_SECRET is read trimmed, as the door compares it: only whitespace is no secret, a trailing newline is one", async () => {
+    // Review round 3: the doctor said true for a value the door could never match.
+    const rpc = { cockpit_forms_key_get: (a: Record<string, any>) => keyRow(a.p_provider), cockpit_forms_doctor_store: STORE };
+    const blank = fakeDeps({ env: { NOTICES_CRON_SECRET: " \n" }, rpc, routes: [fathomApi({ pages: [[meeting()]] }), models()] });
+    const off = await runDoctor({ deps: blank.deps });
+    expect(off.secrets).toEqual({ NOTICES_CRON_SECRET: false });
+    expect(off.note).toContain("No NOTICES_CRON_SECRET: the 1-1 notes sweep cannot start drafts.");
+    const newline = fakeDeps({ env: { NOTICES_CRON_SECRET: "invented-secret-xyz\n" }, rpc, routes: [fathomApi({ pages: [[meeting()]] }), models()] });
+    expect((await runDoctor({ deps: newline.deps })).secrets).toEqual({ NOTICES_CRON_SECRET: true });
+  });
+});

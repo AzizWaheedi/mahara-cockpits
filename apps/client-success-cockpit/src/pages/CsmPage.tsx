@@ -37,6 +37,7 @@ import {
   useClientTimeline,
 } from "@/components/ClientCalls";
 import { ClientCheckIn } from "@/components/ClientCheckIn";
+import { ClientMessages, RecapsWaiting } from "@/components/ClientMessages";
 import { ClientWhatsApp } from "@/components/ClientWhatsApp";
 import { FormsButton } from "@/components/FormsButton";
 import {
@@ -118,7 +119,7 @@ import {
   sentence,
   shortDay,
 } from "@/lib/format";
-import { useCheckinEntry } from "@/lib/formsRegistry";
+import { notesNative, useCheckinEntry } from "@/lib/formsRegistry";
 import { useNotCalled } from "@/lib/notCalled";
 import {
   readOnboardingKits,
@@ -2680,6 +2681,12 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                   ?.scrollIntoView({ behavior: "smooth", block: "start" })
               }
             />
+            {/* The one message the client's group reads after a 1-1, said
+                yes to or skipped here (STAGE2B-CONTRACT.md 5.1, Z45). */}
+            <ClientMessages
+              taskId={String(c.taskId)}
+              native={notesNative(entry)}
+            />
             <ClientWhatsApp
               team={cardNotes?.teamActors ?? []}
               client={auth.client}
@@ -3042,7 +3049,15 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
 
       {section === "today" && <TodaysCalls snap={snap} />}
 
-      {section === "today" && <AfterCalls snap={snap} />}
+      {section === "today" && (
+        <AfterCalls snap={snap} onPlaced={() => void sb.refetch()} />
+      )}
+
+      {/* Client recaps waiting on a person (docs/forms/STAGE2B-CONTRACT.md
+          5.1): each opens the client's Messages card. */}
+      {section === "today" && (
+        <RecapsWaiting readKey={snap} native={notesNative(entry)} />
+      )}
 
       {section === "today" && <CallList />}
 
@@ -4388,10 +4403,7 @@ function JoinLine({ c }: { c: Parameters<typeof joinLink>[0] }) {
   return (
     <>
       {" · "}
-      {/* The ink teal: Mahara Teal is about 1.8:1 on the light page. */}
-      <ExtLink href={link.href} className="text-primary-ink">
-        {link.label}
-      </ExtLink>
+      <ExtLink href={link.href}>{link.label}</ExtLink>
     </>
   );
 }

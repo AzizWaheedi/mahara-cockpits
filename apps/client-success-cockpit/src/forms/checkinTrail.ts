@@ -1,3 +1,8 @@
+import {
+  MESSAGE_SKIPPED,
+  type MessageState,
+  messagesHref,
+} from "@/lib/clientMessages";
 import { displayLabel, shortDay } from "@/lib/format";
 import type { EffectView } from "./checkinClient";
 import type { Answers } from "./checkinForm";
@@ -27,7 +32,16 @@ export interface TrailStop {
   quiet: boolean;
   /** Failed or not confirmed: a person looks at it. */
   problem: boolean;
-  link?: { href: string; label: string };
+  link?: {
+    href: string;
+    label: string;
+    /**
+     * Another page of the cockpit (opened in a new tab beside the window):
+     * the rail draws ChevronRight, never the outbound ArrowUpRight
+     * (docs/DESIGN.md, One arrow per action), as the recap step does.
+     */
+    internal?: true;
+  };
 }
 
 export interface TrailContext {
@@ -36,7 +50,32 @@ export interface TrailContext {
   /** The answers as sent: the card fields' line reads them. */
   answers: Answers;
   submittedAt: string | null;
+  /** The browser's clock, for the card writer's 15-minute line; now when left out. */
+  now?: number;
+  /**
+   * The state of the recap's message, once the step beside the trail has
+   * read it. A person pressing Skip on a failed message leaves the effect
+   * failed (3.6, Z55), so only the message knows she closed it.
+   */
+  recapMessage?: MessageState | null;
 }
+
+/**
+ * A ClickUp write still queued 15 minutes after its effect's time
+ * (docs/forms/STAGE2B-CONTRACT.md 4.15 item 4, Z47): computed here from
+ * `EffectView.at`, so missing is never zero with no 2a view replaced. The
+ * guardian's queue-clickup-forms row tells the tech lead at the same mark.
+ */
+export const CARD_WRITER_LATE =
+  "Still waiting for the card writer. The tech lead is told after 15 minutes.";
+const CARD_WRITER_LATE_MS = 15 * 60_000;
+
+/**
+ * A queued recap effect (STAGE2B-CONTRACT.md 3.6): true whether the message
+ * waits for approval, is approved, sending, or was refused.
+ */
+export const RECAP_QUEUED =
+  "On the client's Messages card until WhatsApp takes it.";
 
 /** The channel the grade posts to (7.1 grade_notice's target). */
 export const GRADE_CHANNEL = "C09SVG6FHGU";
@@ -44,11 +83,36 @@ export const GRADE_CHANNEL = "C09SVG6FHGU";
 const CARD_FIELDS = new Set(["happiness", "last_poc", "last_checkin_call"]);
 const FINAL = new Set(["dry_run", "delivered", "skipped", "failed"]);
 
-/** A reason inside a sentence: its own full stop goes, the sentence adds one. */
-const clause = (s: string | null | undefined) =>
-  String(s ?? "")
+/**
+ * A reason inside a sentence: its own full stop goes, the sentence adds one.
+ * So does a label of its own (3.12's "No recap: "), because the line that
+ * holds it already leads with one.
+ */
+const clause = (s: string | null | undefined) => {
+  const said = String(s ?? "")
     .trim()
     .replace(/\.\s*$/, "");
+  const rest = said.replace(/^No (recap|grade):\s*/, "");
+  return rest === said ? said : rest.charAt(0).toUpperCase() + rest.slice(1);
+};
+
+/** The effects of a window reopened on sent notes, while they are not read yet. */
+export const STEPS_READING = "Reading the steps after the send…";
+/** Those effects could not be read: said, never as no steps. */
+export const STEPS_UNREAD =
+  "The steps after the send could not be read. Reload the page; if it stays, tell the tech lead.";
+
+/**
+ * After 24 hours from the send the dispatch no longer makes a failed recap's
+ * message from a new draft (Z28), so neither the recap step nor the rail
+ * offers Draft again, and both say what is left.
+ */
+export const RECAP_TOO_LATE =
+  "The send was over 24 hours ago, so the cockpit no longer makes this recap. Send it by hand in the group if it is still needed.";
+export const REQUEUE_MS = 24 * 60 * 60_000;
+/** A reason without its closing "Draft again.", for a place that no longer offers it. */
+export const withoutAgain = (s: string) =>
+  s.replace(/\s*Draft (it )?again\.\s*$/, "").trim();
 
 /** What Make does instead, while it owns an effect (owner `make`, skipped). */
 export const MAKE_DOES: Record<string, string> = {
@@ -76,7 +140,13 @@ function working(e: EffectView, ctx: TrailContext): string {
         ? "Waiting to post in #client-call-feedback."
         : "Grading the call…";
     case "recap":
-      return "Drafting the client's recap…";
+      // Queued: its message row exists. The effect stays queued while the
+      // message waits, is approved, is sending or was refused (3.6, Z9), so
+      // the line holds for all of them; the recap step beside the trail
+      // says which.
+      return e.state === "queued"
+        ? RECAP_QUEUED
+        : "Drafting the client's recap…";
     case "call_form":
       return "Saving the notes…";
     case "call_match":
@@ -163,15 +233,57 @@ export function stopFor(e: EffectView, ctx: TrailContext): TrailStop {
     );
   switch (e.state) {
     case "planned":
-    case "queued":
-      return stop(working(e, ctx), "wait");
-    case "failed":
+    case "queued": {
+      const since = Date.parse(e.at);
+      const late =
+        e.state === "queued" &&
+        e.delivery === "clickup_queue" &&
+        Number.isFinite(since) &&
+        (ctx.now ?? Date.now()) - since >= CARD_WRITER_LATE_MS;
+      return stop(late ? CARD_WRITER_LATE : working(e, ctx), "wait");
+    }
+    case "failed": {
+      // She closed it: the effect stays failed on purpose, and nothing is
+      // left for the tech lead to hear about.
+      if (e.key === "recap" && ctx.recapMessage === "skipped")
+        return stop(MESSAGE_SKIPPED, "quiet", { quiet: true });
+      // A recap the step can draft again (its reason ends "Draft again.")
+      // names its own next step; the rest go to the tech lead.
+      const why = clause(e.reason) || "the cockpit gave no reason";
+      const own = e.key === "recap" && /\bDraft (it )?again$/.test(why);
+      const sent = Date.parse(ctx.submittedAt ?? "");
+      if (
+        own &&
+        Number.isFinite(sent) &&
+        (ctx.now ?? Date.now()) - sent >= REQUEUE_MS
+      ) {
+        const kept = withoutAgain(`${why}.`);
+        return stop(
+          `Not done: ${kept ? `${kept} ` : ""}${RECAP_TOO_LATE}`,
+          "bad",
+          { problem: true },
+        );
+      }
       return stop(
-        `Not done: ${clause(e.reason) || "the cockpit gave no reason"}. Tell the tech lead.`,
+        own ? `Not done: ${why}.` : `Not done: ${why}. Tell the tech lead.`,
         "bad",
         { problem: true },
       );
+    }
     case "unknown":
+      // A recap is never sent twice (4.3): no retry is coming, so the CSM
+      // looks in the group (5.1's line when WhatsApp gave no reason).
+      if (e.key === "recap") {
+        const why = clause(e.reason) || "WhatsApp did not answer";
+        const look = /look in the group/i.test(why)
+          ? ""
+          : " Look in the group; the tech lead settles it.";
+        return stop(
+          `Not confirmed: ${why}. The cockpit never sends it twice.${look}`,
+          "warn",
+          { problem: true },
+        );
+      }
       return stop(
         `Not confirmed: ${clause(e.reason) || "no answer came back"}. The cockpit checks before it tries again.`,
         "warn",
@@ -209,9 +321,15 @@ export function stopFor(e: EffectView, ctx: TrailContext): TrailStop {
           "good",
           { done: true },
         );
+      // Delivered: WhatsApp took the approved message (STAGE2B 3.6).
       if (e.key === "recap")
-        return stop("Waiting for your approval in the cockpit.", "good", {
+        return stop(`Sent to the client's WhatsApp group at ${at}.`, "good", {
           done: true,
+          link: {
+            href: messagesHref(ctx.taskId),
+            label: "Open the Messages card",
+            internal: true,
+          },
         });
       return stop("Done.", "good", { done: true });
     }

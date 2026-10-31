@@ -21,6 +21,11 @@ import {
 import type { Change, SaveResult } from "@/forms/fieldSaver";
 import { kuwaitDay } from "@/forms/formTime";
 import type { CheckinIO } from "@/forms/useCheckin";
+import type {
+  ApproveAnswer,
+  MessagesIO,
+  MessageView,
+} from "@/lib/clientMessages";
 import type { Timeline } from "@/lib/csmCalls";
 import { displayLabel, shortDay } from "@/lib/format";
 
@@ -40,8 +45,23 @@ import { displayLabel, shortDay } from "@/lib/format";
 export const TASK = "86exfix01";
 export const NAME = "Cedar & Stone Interiors";
 export const OTHER = "Harbor Glassworks";
+/** Made up, at the length of the longest live client name. */
+export const LONG_OTHER =
+  "Harbor Glassworks & Marina Interior Fit-Out Contracts";
 /** Sunday 25 October 2026, 11:30 in Kuwait. */
 export const NOW = "2026-10-25T08:30:00Z";
+/**
+ * A clock that starts at NOW and runs on real timers, so a fixture row's age
+ * reads as it was written (an approval a minute old, not a week old).
+ */
+export function fixtureClock() {
+  const started = Date.now();
+  return {
+    now: () => Date.parse(NOW) + (Date.now() - started),
+    set: (fn: () => void, ms: number): unknown => setTimeout(fn, ms),
+    clear: (h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>),
+  };
+}
 export const RESPONSE_ID = "0b5f7c9e-1d2a-4c3b-9e8f-7a6b5c4d3e2f";
 export const NEW_ID = "4e1d2c3b-5a69-4f78-8e9d-0a1b2c3d4e5f";
 
@@ -92,6 +112,7 @@ const view = (over: Partial<CallView>): CallView => ({
   blocked: null,
   notesAlready: null,
   duplicateOf: null,
+  movable: false,
   ...over,
 });
 
@@ -215,6 +236,49 @@ export const VIEWS = {
     onClient: "other",
     otherClient: OTHER,
     blocked: `On ${OTHER}. If that is wrong, ask an admin to move it.`,
+  }),
+  /**
+   * On another client, for an admin with Move it here switched on
+   * (STAGE2B-CONTRACT.md 3.8): the door's `onOtherMovable` sentence.
+   */
+  other_movable: view({
+    ref: `fathom:${REC3}`,
+    recordingId: REC3,
+    callId: 60003,
+    title: "Impromptu Google Meet",
+    startsAt: "2026-10-25T07:34:00Z",
+    endsAt: "2026-10-25T08:08:00Z",
+    minutes: 34,
+    why: "picked",
+    label: "hint",
+    whyText: "",
+    booking: null,
+    recorder: "team",
+    recorderRole: "the account manager",
+    onClient: "other",
+    otherClient: OTHER,
+    blocked: `On ${OTHER}. If this is ${NAME}'s call, move it here.`,
+    movable: true,
+  }),
+  /** The same on a client whose name runs long (53 characters, as live has). */
+  other_movable_long: view({
+    ref: "fathom:44444444-0000-4000-8000-000000000053",
+    recordingId: "44444444-0000-4000-8000-000000000053",
+    callId: 60053,
+    title: "Impromptu Google Meet",
+    startsAt: "2026-10-25T06:34:00Z",
+    endsAt: "2026-10-25T07:08:00Z",
+    minutes: 34,
+    why: "picked",
+    label: "hint",
+    whyText: "",
+    booking: null,
+    recorder: "team",
+    recorderRole: "the account manager",
+    onClient: "other",
+    otherClient: LONG_OTHER,
+    blocked: `On ${LONG_OTHER}. If this is ${NAME}'s call, move it here.`,
+    movable: true,
   }),
   /** No sign for this client (why picked, no why line), recorded by the team. */
   team: view({
@@ -433,6 +497,13 @@ export type Scenario = {
   hold?: ("open" | "save" | "submit")[];
   /** A save that fails the way a dropped connection does. */
   saveError?: string;
+  /**
+   * Move it here (STAGE2B-CONTRACT.md 4.11): moved, refused in the
+   * server's words, or not in the database yet.
+   */
+  move?: "ok" | "not_live" | { refused: string };
+  /** Reading the response back fails with this sentence, or never answers. */
+  readError?: string | "never";
 };
 
 // ------------------------------------------------------------ drafts
@@ -766,6 +837,8 @@ export function fakeCheckin(s: Scenario = {}): Fake {
   let response: ResponseView | null = null;
   let effects: EffectView[] = [];
   let recapPolls = 0;
+  /** The recording Move it here put on this client. */
+  let moved: string | null = null;
   const draftPolls: Partial<Record<DraftKind, number>> = {};
   const lag = () => wait(s.latency ?? 0);
   const held = (name: "open" | "save" | "submit") =>
@@ -847,9 +920,24 @@ export function fakeCheckin(s: Scenario = {}): Fake {
         : kind === "team_meeting" || kind === "gone" || kind === "other_client"
           ? [{ ...VIEWS[kind], why: "pasted" }]
           : [];
+    // A moved recording is this client's now: listed as on it, teal.
+    const here = (v: CallView): CallView =>
+      v.recordingId && v.recordingId === moved
+        ? {
+            ...v,
+            why: "matched",
+            label: "exact",
+            whyText: `On ${NAME} in the call store.`,
+            onClient: "this",
+            otherClient: null,
+            blocked: null,
+            movable: false,
+          }
+        : v;
+    const picked = s.picked === undefined ? VIEWS.same_room : s.picked;
     return {
-      picked: s.picked === undefined ? VIEWS.same_room : s.picked,
-      others: [...(s.others ?? []), ...pasted],
+      picked: picked ? here(picked) : picked,
+      others: [...(s.others ?? []), ...pasted].map(here),
       fathom: s.fathom ?? { state: "ok", checkedAt: NOW, note: null },
       now: NOW,
     };
@@ -1028,6 +1116,8 @@ export function fakeCheckin(s: Scenario = {}): Fake {
     async read(id) {
       log("read", id);
       await lag();
+      if (s.readError === "never") await new Promise(() => {});
+      if (s.readError) throw Error(s.readError);
       if (!response) throw Error("No notes are open.");
       return { response, effects, drafts: draftsNow(), now: NOW };
     },
@@ -1054,6 +1144,25 @@ export function fakeCheckin(s: Scenario = {}): Fake {
       log("calls", a);
       await lag();
       return callsAnswer(a.shareUrl);
+    },
+    async move(a) {
+      log("move", a);
+      await lag();
+      if (s.move === "not_live")
+        throw new CheckinError(
+          "The cockpit's 1-1 notes are not live yet.",
+          "PGRST202",
+          null,
+        );
+      if (s.move && typeof s.move === "object")
+        throw new CheckinError(s.move.refused, "22023", null);
+      moved = a.recordingId;
+      return {
+        ok: true as const,
+        callId: 60003,
+        fromTaskId: "86exfix02",
+        taskId: a.taskId,
+      };
     },
     async transcript(id, rec) {
       log("transcript", { id, rec });
@@ -1114,3 +1223,233 @@ export const FILLED: Answers = {
   client_notes:
     "Calm about the leads, worried about the budget for December. Wants the new offer before the weekend.",
 };
+
+// ------------------------------------------------------------ the client's messages (2b)
+
+/** The stored recap text: the 2a draft's message, a blank line, Make's block. */
+export const RECAP_BODY = `${RECAP_MESSAGE}\n\n${RECAP_BOOKING}`;
+export const MESSAGE_ID = "33333333-0000-4000-8000-000000000001";
+/** The window's response, whose recap message the step approves. */
+export const SENT_RESPONSE_ID = RESPONSE_ID;
+
+/** One message row as MessageView (STAGE2B-CONTRACT.md 3.7); invented. */
+export function messageFixture(over: Partial<MessageView> = {}): MessageView {
+  return {
+    id: MESSAGE_ID,
+    kind: "recap_checkin",
+    state: "draft",
+    taskId: TASK,
+    clientName: NAME,
+    responseId: RESPONSE_ID,
+    body: RECAP_BODY,
+    reason: null,
+    callAt: REC_END,
+    approvedBy: null,
+    approvedAt: null,
+    expiresAt: null,
+    sentAt: null,
+    readBack: null,
+    owner: "cockpit",
+    effectState: "queued",
+    triesUsedUp: null,
+    ...over,
+  };
+}
+
+/** The 5.1 states, by name, as the card shows them. */
+export function messageStates(now = NOW): Record<string, MessageView> {
+  const at = (min: number) =>
+    new Date(Date.parse(now) + min * 60_000).toISOString();
+  // Each state its own fixed ID, the draft the window's MESSAGE_ID.
+  let n = 0;
+  const row = (over: Partial<MessageView> = {}) => {
+    n += 1;
+    return messageFixture(
+      n === 1
+        ? over
+        : {
+            id: `33333333-0000-4000-8000-${String(n).padStart(12, "0")}`,
+            ...over,
+          },
+    );
+  };
+  return {
+    draft: row(),
+    expired: row({
+      reason: "The approval ran out after 24 hours. Approve it again.",
+    }),
+    approved: row({
+      state: "approved",
+      approvedBy: "the CSM",
+      approvedAt: at(-1),
+      expiresAt: at(24 * 60 - 1),
+    }),
+    sending: row({
+      state: "sending",
+      approvedBy: "the CSM",
+      approvedAt: at(-3),
+    }),
+    sent: row({
+      state: "sent",
+      approvedBy: "the CSM",
+      approvedAt: at(-6),
+      sentAt: at(-4),
+      readBack: { by: "message_id", at: at(-3) },
+      effectState: "delivered",
+    }),
+    "sent-checking": row({
+      state: "sent",
+      approvedBy: "the CSM",
+      approvedAt: at(-2),
+      sentAt: at(-1),
+      effectState: "delivered",
+    }),
+    unknown: row({
+      state: "unknown",
+      approvedBy: "the CSM",
+      approvedAt: at(-20),
+      reason:
+        "The sender stopped while sending. Look in the group before anything else.",
+      effectState: "unknown",
+    }),
+    refused: row({
+      state: "refused",
+      reason:
+        "No WhatsApp group on Client Data for this card. Add it to Client Data column F, then try again.",
+    }),
+    failed: row({
+      state: "failed",
+      reason: "WhatsApp answered 400. Check the group on Client Data.",
+      effectState: "failed",
+    }),
+    skipped: row({
+      state: "skipped",
+      reason: "Skipped by the CSM.",
+      effectState: "skipped",
+    }),
+    /** After a rollback: the draft stays, and Make owns the recap again. */
+    "handed-back": row({ owner: "make" }),
+    /** Refused at its fourth try, in the sender's sentence. */
+    "tries-used-up": row({
+      state: "refused",
+      reason:
+        "This recap was tried three times and did not go. Send it by hand in the group if it is still needed, then skip it here.",
+      triesUsedUp: true,
+    }),
+  };
+}
+
+/** One week of a client's messages: the newest waiting, an older one sent. */
+export function messagesWeek(now = NOW): MessageView[] {
+  const st = messageStates(now);
+  return [
+    st.draft,
+    {
+      ...st.sent,
+      id: "33333333-0000-4000-8000-0000000000b2",
+      responseId: "11111111-0000-4000-8000-0000000000b2",
+      callAt: "2026-10-22T08:00:00Z",
+      sentAt: "2026-10-22T11:12:00Z",
+      readBack: { by: "message_id", at: "2026-10-22T11:13:00Z" },
+    },
+  ];
+}
+
+export type MessagesScenario = {
+  /** The first approve answers with warnings to confirm. */
+  warn?: string[];
+  /** The approve is refused by the check, in its words. */
+  refuse?: string;
+  /** The read fails. */
+  readError?: string;
+  /** Rows Today lists (cockpit_client_messages_waiting). */
+  waiting?: MessageView[];
+  latency?: number;
+};
+
+/**
+ * The messages in memory, answering as recap.approve and the RPCs do:
+ * warnings first when asked, the check's refusal, approve to approved
+ * (+24 hours), Skip, reopen. Nothing leaves the page.
+ */
+export function fakeMessages(
+  start: MessageView[],
+  s: MessagesScenario = {},
+): MessagesIO & { calls: { name: string; args: unknown }[] } {
+  let rows = start.map(m => ({ ...m }));
+  const calls: { name: string; args: unknown }[] = [];
+  const lag = () => wait(s.latency ?? 0);
+  let warned = false;
+  const find = (id: string) => {
+    const m = rows.find(x => x.id === id);
+    if (!m) throw new CheckinError("There is no such message.", "22023", null);
+    return m;
+  };
+  const put = (m: MessageView) => {
+    rows = rows.map(x => (x.id === m.id ? m : x));
+    return { ...m };
+  };
+  return {
+    calls,
+    async read(taskId) {
+      calls.push({ name: "read", args: taskId });
+      await lag();
+      if (s.readError) throw Error(s.readError);
+      return rows.filter(m => m.taskId === taskId).map(m => ({ ...m }));
+    },
+    async waiting() {
+      calls.push({ name: "waiting", args: null });
+      await lag();
+      if (s.readError) throw Error(s.readError);
+      return (s.waiting ?? []).map(m => ({ ...m }));
+    },
+    async approve(a): Promise<ApproveAnswer> {
+      calls.push({ name: "approve", args: a });
+      await lag();
+      const m = find(a.messageId);
+      if (m.state !== "draft")
+        throw new CheckinError(
+          "This message is not waiting for approval.",
+          null,
+          400,
+        );
+      if (s.refuse) throw new CheckinError(s.refuse, null, 400);
+      if (s.warn?.length && !a.acceptWarnings && !warned) {
+        warned = true;
+        return { needsConfirm: true, warnings: s.warn };
+      }
+      const now = new Date(Date.parse(NOW) + 60_000).toISOString();
+      return {
+        message: put({
+          ...m,
+          body: a.body,
+          state: "approved",
+          reason: null,
+          approvedBy: "the CSM",
+          approvedAt: now,
+          expiresAt: new Date(Date.parse(now) + 24 * 3_600_000).toISOString(),
+        }),
+        warnings: a.acceptWarnings ? (s.warn ?? []) : [],
+      };
+    },
+    async skip(id) {
+      calls.push({ name: "skip", args: id });
+      await lag();
+      const m = find(id);
+      return put({ ...m, state: "skipped", reason: "Skipped by the CSM." });
+    },
+    async reopen(id) {
+      calls.push({ name: "reopen", args: id });
+      await lag();
+      const m = find(id);
+      return put({
+        ...m,
+        state: "draft",
+        reason: null,
+        approvedBy: null,
+        approvedAt: null,
+        expiresAt: null,
+      });
+    },
+  };
+}

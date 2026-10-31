@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ACTION_DEADLINE_MS, answerBy } from "@/lib/clientMessages";
 import type { Timeline } from "@/lib/csmCalls";
 import { sessionId } from "@/present/blueprintSaver";
 import {
@@ -10,6 +11,7 @@ import {
   type DraftsAnswer,
   type DraftView,
   type EffectView,
+  type MoveAnswer,
   OFFLINE,
   type OpenAnswer,
   offline,
@@ -36,7 +38,7 @@ import {
   WHYS,
   type Why,
 } from "./checkinForm";
-import { trailSettled } from "./checkinTrail";
+import { STEPS_UNREAD, trailSettled } from "./checkinTrail";
 import { type Change, FieldSaver, type SaveResult } from "./fieldSaver";
 import type { FormNews } from "./formConfig";
 
@@ -98,6 +100,11 @@ export interface CheckinIO {
     responseId: string,
     recordingId: string,
   ): Promise<TranscriptAnswer>;
+  /**
+   * Move it here (docs/forms/STAGE2B-CONTRACT.md 4.11, 5.3): an admin or
+   * the CEO moves a recording from another client onto this one.
+   */
+  move?(a: { recordingId: string; taskId: string }): Promise<MoveAnswer>;
   timeline(): Promise<Timeline>;
   announce?(news: FormNews): void;
 }
@@ -239,7 +246,15 @@ export interface CheckinModel {
   save: SaveState;
   rail: { timeline: Timeline | null; error: string | null; loading: boolean };
   send: SendState;
-  sent: { response: ResponseView; effects: EffectView[] } | null;
+  /**
+   * `unread`: the notes were reopened as sent and their effects are not read
+   * yet, or the read failed. Then `effects` is empty and that says nothing.
+   */
+  sent: {
+    response: ResponseView;
+    effects: EffectView[];
+    unread?: "reading" | "failed";
+  } | null;
   recap: DraftView | null;
   block: string | null;
   /** Unsent notes for an older call (`day`), and the newer call the store picked. */
@@ -253,6 +268,14 @@ export interface CheckinModel {
   pickNone(): void;
   pasteLink(url: string): Promise<boolean>;
   checkAgain(): void;
+  /**
+   * Move it here: the recording moves onto this client, then the calls are
+   * read again and the moved recording is picked. True when it moved.
+   */
+  moveHere(view: CallView): Promise<boolean>;
+  /** The move on its way, or its refusal in the server's words, for one row. */
+  move: { busy: boolean; error: string | null; ref: string | null };
+  clearMove(): void;
   choose(key: "defcon" | "priority", label: string): void;
   takeSuggestion(key: "defcon" | "priority"): void;
   setTodos(key: "we_owe" | "they_owe", items: TodoItem[]): void;
@@ -294,6 +317,8 @@ export interface CheckinModel {
   rereading: boolean;
   /** The recap of sent notes, drafted again (it failed). */
   recapAgain(): void;
+  /** The recap's message row changed in the step: the trail reads again. */
+  recapMoved(): void;
   recapAsking: boolean;
   /** Draft again for the recap refused or not reached: the server's sentence. */
   recapError: string | null;
@@ -308,6 +333,17 @@ export interface CheckinModel {
 
 export const NOT_LIVE =
   "The cockpit's 1-1 notes are not live yet. Use the 1-1 form in Typeform for now.";
+/** The move RPC is not in the database yet (5.3). */
+export const MOVE_NOT_LIVE = "Moving a recording is not live yet.";
+/** The move got no answer in time: what is known, and what to do next. */
+export const MOVE_NO_ANSWER =
+  "No answer came back, so the move may or may not have gone through. Reload the page to see where the recording is.";
+/** Draft again got no answer in time: what is known, and what to do next. */
+export const DRAFT_AGAIN_NO_ANSWER =
+  "No answer came back, so the new draft may or may not have started. Reload the page to see where the recap stands.";
+/** The move answered, and the list of calls after it did not. */
+export const MOVED_NO_LIST =
+  "The recording moved, but the list of calls did not come back. Reload the page to see it here.";
 export const STARTED_SHADOW =
   "These notes were started as a shadow run. Discard them and start again.";
 export const GATE_LOST =
@@ -472,6 +508,7 @@ function viewOf(call: CallAnswer | null): CallView | null {
       blocked: null,
       notesAlready: null,
       duplicateOf: null,
+      movable: false,
     };
   return {
     ref: `fathom:${call.recordingId}`,
@@ -498,6 +535,7 @@ function viewOf(call: CallAnswer | null): CallView | null {
     blocked: null,
     notesAlready: null,
     duplicateOf: null,
+    movable: false,
   };
 }
 
@@ -654,10 +692,18 @@ export function useCheckin({
   });
   const [send, setSend] = useState<SendState>({ kind: "idle" });
   const [sent, setSent] = useState<CheckinModel["sent"]>(null);
+  /** The effects read failed while they were still unread: said, never as no steps. */
+  const effectsNotRead = useCallback(
+    () => setSent(s => (s?.unread ? { ...s, unread: "failed" } : s)),
+    [],
+  );
   const [recap, setRecap] = useState<DraftView | null>(null);
   const [recapAsking, setRecapAsking] = useState(false);
   const [recapError, setRecapError] = useState<string | null>(null);
   const [recapRefused, setRecapRefused] = useState(false);
+  /** Recap Draft agains answered: each reads the trail again (Z28). */
+  const [recapRedrafts, setRecapRedrafts] = useState(0);
+  const [recapMoves, setRecapMoves] = useState(0);
   const [startedShadow, setStartedShadow] = useState(false);
   const [otherDismissed, setOtherDismissed] = useState(false);
   const [transcript, setTranscript] = useState<CheckinModel["transcript"]>({
@@ -994,15 +1040,24 @@ export function useCheckin({
       );
       setPhase({ kind: "ready" });
       if (r && (r.state === "submitted" || r.state === "confirmed")) {
-        setSent({ response: r, effects: [] });
+        setSent({ response: r, effects: [], unread: "reading" });
         setSend({ kind: "sent" });
-        void ioRef.current
-          .read(r.id)
-          .then(read => {
+        // The trail's poll also asks while they stay unread, so this one
+        // read is not the only chance; it ends by its deadline either way.
+        answerBy(
+          ioRef.current.read(r.id),
+          ACTION_DEADLINE_MS,
+          clock,
+          STEPS_UNREAD,
+        ).then(
+          read => {
             if (current && live.current)
               setSent({ response: read.response, effects: read.effects });
-          })
-          .catch(() => {});
+          },
+          () => {
+            if (current && live.current) effectsNotRead();
+          },
+        );
       }
       void readCallsNow(false);
       void readDraftsNow().catch(() => {});
@@ -1158,6 +1213,95 @@ export function useCheckin({
   );
 
   const checkAgain = useCallback(() => void readCallsNow(true), [readCallsNow]);
+
+  const [move, setMove] = useState<CheckinModel["move"]>({
+    busy: false,
+    error: null,
+    ref: null,
+  });
+  const moveHere = useCallback(
+    async (v: CallView) => {
+      const io = ioRef.current;
+      if (rehearse || !v.recordingId || !io.move) return false;
+      setMove({ busy: true, error: null, ref: v.ref });
+      try {
+        await answerBy(
+          io.move({ recordingId: v.recordingId, taskId }),
+          ACTION_DEADLINE_MS,
+          clock,
+          MOVE_NO_ANSWER,
+        );
+      } catch (e) {
+        const said = message(e);
+        if (!live.current) return false;
+        setMove({
+          busy: false,
+          // The function is not in the database yet: said plainly (5.3).
+          error:
+            codeOf(e) === "PGRST202" ||
+            /not live yet|could not find the function/i.test(said)
+              ? MOVE_NOT_LIVE
+              : // The answer may have been lost after the move landed.
+                said === OFFLINE
+                ? MOVE_NO_ANSWER
+                : said,
+          ref: v.ref,
+        });
+        return false;
+      }
+      if (!live.current) return false;
+      // A pasted link's sentence ("On Atlantis Contracting…") was about where
+      // the recording was. It is here now.
+      setPaste({ busy: false, error: null, unknown: false });
+      // Read the calls again and pick the moved recording: it is on this
+      // client now, so the store lists it as this client's. The move stays
+      // busy through this read, so the confirm's two answers rest until the
+      // sheet closes: the move has already happened.
+      try {
+        const answer = await answerBy(
+          io.calls({
+            taskId,
+            responseId: responseRef.current?.id ?? null,
+            shareUrl: null,
+            refresh: false,
+          }),
+          ACTION_DEADLINE_MS,
+          clock,
+          MOVED_NO_LIST,
+        );
+        if (!live.current) return true;
+        applyCalls(answer, answer.now);
+        const moved = views(answer).find(
+          x => x.kind === "fathom" && x.recordingId === v.recordingId,
+        );
+        // Picked as the store now has it (matched on this client), so the
+        // call card says where it is, in teal (5.3).
+        const a = moved && !blockedOf(moved) ? answerFor(moved) : null;
+        if (a) {
+          saveCall(a, "pick");
+          if (a.kind === "fathom") void readDraftsNow().catch(() => {});
+        }
+      } catch (e) {
+        if (live.current) {
+          setCalls(c => ({ ...c, error: message(e), checking: false }));
+          // The sheet closes on the toast, so the call card says it too.
+          setCallError(MOVED_NO_LIST);
+        }
+      } finally {
+        if (live.current) setMove({ busy: false, error: null, ref: null });
+      }
+      return true;
+    },
+    [rehearse, taskId, clock, applyCalls, saveCall, readDraftsNow],
+  );
+  // A move on its way keeps its rest: its answer always comes (the deadline).
+  const clearMove = useCallback(
+    () =>
+      setMove(was =>
+        was.busy ? was : { busy: false, error: null, ref: null },
+      ),
+    [],
+  );
 
   // ------------------------------------------------------------ answers
 
@@ -1551,6 +1695,8 @@ export function useCheckin({
       setRecap(null);
       setRecapError(null);
       setRecapRefused(false);
+      setRecapRedrafts(0);
+      setRecapMoves(0);
       setStartedShadow(false);
       setOtherDismissed(false);
       setCalls({
@@ -1567,20 +1713,45 @@ export function useCheckin({
 
   // ------------------------------------------------------------ after the send
 
+  // A failed recap is made again from a newer ready draft within 24 hours
+  // of the send (Z28): after Draft again the trail is read again until the
+  // recap effect leaves failed (or the poll's 25 minutes end), so the rail
+  // follows the step instead of keeping the old failure.
+  const trailOpen = (effects: EffectView[]) =>
+    !trailSettled(effects) ||
+    (recapRedrafts > 0 &&
+      effects.some(e => e.key === "recap" && e.state === "failed"));
   usePoll(
-    Boolean(sent) && !trailSettled(sent?.effects ?? []),
+    Boolean(sent) && (Boolean(sent?.unread) || trailOpen(sent?.effects ?? [])),
     POLLS.trail,
     async () => {
       const r = responseRef.current;
       if (!r) return false;
-      const read = await ioRef.current.read(r.id);
+      let read: Awaited<ReturnType<CheckinIO["read"]>>;
+      try {
+        // A read with no answer ends, or the poll would wait on it for ever.
+        read = await answerBy(
+          ioRef.current.read(r.id),
+          ACTION_DEADLINE_MS,
+          clock,
+          STEPS_UNREAD,
+        );
+      } catch (e) {
+        if (live.current) effectsNotRead();
+        throw e;
+      }
       if (!live.current) return false;
       setSent({ response: read.response, effects: read.effects });
-      return !trailSettled(read.effects);
+      return trailOpen(read.effects);
     },
     clock,
-    `trail:${sent?.response.id ?? ""}`,
+    `trail:${sent?.response.id ?? ""}:${recapRedrafts}:${recapMoves}`,
   );
+
+  // The recap's message row changed in the step beside the trail (an
+  // approval, or the sender moving it on): the trail reads again, even after
+  // its 25 minutes, so the rail and the fold's count follow the step.
+  const recapMoved = useCallback(() => setRecapMoves(n => n + 1), []);
 
   const recapAgain = useCallback(() => {
     const r = responseRef.current;
@@ -1590,12 +1761,17 @@ export function useCheckin({
     setRecapAsking(true);
     setRecapError(null);
     // The answer's recap (drafting, or already done) restarts the poll below.
-    ioRef.current
-      .draftAgain(r.id, "recap")
+    answerBy(
+      ioRef.current.draftAgain(r.id, "recap"),
+      ACTION_DEADLINE_MS,
+      clock,
+      DRAFT_AGAIN_NO_ANSWER,
+    )
       .then(
         answer => {
-          if (live.current)
-            setRecap(answer.drafts.find(d => d.kind === "recap") ?? null);
+          if (!live.current) return;
+          setRecap(answer.drafts.find(d => d.kind === "recap") ?? null);
+          setRecapRedrafts(n => n + 1);
         },
         e => {
           if (!live.current) return;
@@ -1606,7 +1782,7 @@ export function useCheckin({
       .finally(() => {
         if (live.current) setRecapAsking(false);
       });
-  }, [rehearse, recapAsking, recapRefused]);
+  }, [rehearse, recapAsking, recapRefused, clock]);
 
   const sentCall = callOf(sent?.response.answers.call ?? null);
   // A recap that waits for Fathom's summary or transcript is not final: the
@@ -1726,6 +1902,9 @@ export function useCheckin({
     pickNone,
     pasteLink,
     checkAgain,
+    moveHere,
+    move,
+    clearMove,
     choose,
     takeSuggestion,
     setTodos,
@@ -1755,6 +1934,7 @@ export function useCheckin({
     readAgain,
     rereading,
     recapAgain,
+    recapMoved,
     recapAsking,
     recapError,
     recapRefused,

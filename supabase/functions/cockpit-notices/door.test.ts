@@ -87,6 +87,15 @@ describe("the door", () => {
     expect(readJob({ job: "rehearse", kind: "blueprint.media", to: "U09305KE2KS" })).toEqual({ job: "rehearse", input: { kind: "blueprint.media", to: "U09305KE2KS" } });
     expect(readJob({ job: "watch" })).toBe(SEND);
   });
+  test("the 1-1 notes kinds: a dry run and a rehearsal take them; any other kind is refused with the plain sentence", () => {
+    expect(readJob({ job: "dryRun", kind: "checkin.recap_late", taskId: "86ex70t90", facts: { client: "Acme Interiors" }, variant: "late" }))
+      .toEqual({ job: "dryRun", input: { kind: "checkin.recap_late", taskId: "86ex70t90", facts: { client: "Acme Interiors" }, variant: "late" } });
+    expect(readJob({ job: "rehearse", kind: "checkin.grade", to: "U09305KE2KS" })).toEqual({ job: "rehearse", input: { kind: "checkin.grade", to: "U09305KE2KS" } });
+    expect(readJob({ job: "dryRun", kind: "checkin.grade", taskId: "86ex70t90", facts: {}, variant: "late" }))
+      .toBe(`variant must be one of grade for checkin.grade. ${SEND}`);
+    expect(readJob({ job: "dryRun", kind: "checkin.other", taskId: "86ex70t90", facts: {} })).toBe(`kind must be one of the notices. ${SEND}`);
+    expect(readJob({ job: "rehearse", kind: "checkin.other" })).toBe(`kind must be one of the notices. ${SEND}`);
+  });
 });
 
 describe("routing", () => {

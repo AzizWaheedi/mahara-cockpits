@@ -22,6 +22,11 @@ import { Window } from "happy-dom";
  * marker holds the row, then the button comes back; a storage that throws
  * shows the button. Supabase and Typeform are a stand-in here.
  *
+ * Stage 2b (docs/forms/STAGE2B-CONTRACT.md 4.10, 4.15, 5.2): once the 1-1
+ * notes are native, Typeform is asked nothing and every row opens the
+ * window; the seat's impromptu calls with no client join the list, each
+ * placed on its client from a sheet or set aside as not a 1-1 call.
+ *
  * Run: bun test scripts/after-calls.test.tsx
  */
 
@@ -39,6 +44,7 @@ const DOM = [
   "HTMLElement",
   "HTMLButtonElement",
   "HTMLAnchorElement",
+  "HTMLInputElement",
   "Element",
   "Node",
   "Event",
@@ -55,6 +61,11 @@ const DOM = [
   "sessionStorage",
   "localStorage",
   "StorageEvent",
+  "InputEvent",
+  "ResizeObserver",
+  "DOMRect",
+  "requestAnimationFrame",
+  "cancelAnimationFrame",
 ];
 const before = new Map(
   DOM.map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]),
@@ -79,6 +90,18 @@ const asked: { taskId: string; since: string }[][] = [];
 let entryFails = false;
 /** Where the registry says 1-1 notes go. */
 let provider: "typeform" | "native" = "typeform";
+/** The queue of calls and forms with no client (cockpit_csm_unmatched_list). */
+let queue: any[] = [];
+let queueFails = false;
+let refuseMatch: string | null = null;
+let refuseSettle: string | null = null;
+/** The settle never answers: a row caught while its call runs. */
+let holdSettle = false;
+/** The queue's read never answers. */
+let holdQueue = false;
+/** The pick waits here, and the test answers it when it wants to. */
+let placeHeld: Promise<any> | null = null;
+const rpcs: { name: string; args: any }[] = [];
 
 const client = {
   auth: {
@@ -91,7 +114,28 @@ const client = {
       data: { subscription: { unsubscribe: () => {} } },
     }),
   },
-  rpc: async (name: string) => {
+  rpc: async (name: string, args?: any) => {
+    rpcs.push({ name, args });
+    if (name === "cockpit_csm_unmatched_list" && holdQueue)
+      return new Promise(() => {});
+    if (name === "cockpit_csm_manual_match" && placeHeld) return placeHeld;
+    if (name === "cockpit_csm_unmatched_list")
+      return queueFails
+        ? { data: null, error: { message: "Failed to fetch" } }
+        : { data: queue, error: null };
+    if (name === "cockpit_csm_manual_match")
+      return refuseMatch
+        ? { data: null, error: { message: refuseMatch } }
+        : { data: { ok: true, clientName: "City Wood" }, error: null };
+    if (name === "cockpit_csm_candidate_settle" && holdSettle)
+      return new Promise(() => {});
+    if (name === "cockpit_csm_candidate_settle")
+      return refuseSettle
+        ? { data: null, error: { message: refuseSettle } }
+        : {
+            data: { ok: true, callId: 9001, reason: args?.p_reason },
+            error: null,
+          };
     if (name !== "cockpit_form_entry") throw Error(`Unexpected RPC ${name}`);
     if (entryFails)
       return { data: null, error: { message: "Failed to fetch", code: "" } };
@@ -103,7 +147,7 @@ const client = {
         typeformId: "fRokTITH",
         version: 1,
         native: true,
-        mode: "shadow",
+        mode: provider === "native" ? "live" : "shadow",
         now: "2026-10-25T08:30:00Z",
       },
       error: null,
@@ -142,7 +186,11 @@ mock.module("sonner", () => ({
 mock.module("@/auth/SupabaseAuthProvider", () => ({
   getCockpitSupabaseClient: () => client,
   SupabaseAuthProvider: ({ children }: { children: unknown }) => children,
-  useCockpitAuth: () => ({ client, session: { user: { id: "seat-1" } } }),
+  useCockpitAuth: () => ({
+    client,
+    session: { user: { id: "seat-1" } },
+    email: "CSM@example.test",
+  }),
 }));
 
 const { createRoot } = await import("react-dom/client");
@@ -221,6 +269,14 @@ afterEach(async () => {
   toasts.length = 0;
   entryFails = false;
   provider = "typeform";
+  queue = [];
+  queueFails = false;
+  refuseMatch = null;
+  refuseSettle = null;
+  holdSettle = false;
+  holdQueue = false;
+  placeHeld = null;
+  rpcs.length = 0;
   setSystemTime();
 });
 afterAll(async () => {
@@ -493,5 +549,797 @@ describe("Typeform is asked first", () => {
     expect(toasts).toContain(
       "1-1 form sent at 11:20. It reaches the cockpit at the next sync.",
     );
+  });
+});
+
+// ------------------------------------------------------------ Stage 2b
+
+/** The queue as the RPC lists it: this seat's two candidates, and what never shows. */
+const QUEUE = [
+  {
+    id: 801,
+    kind: "call",
+    title: "Impromptu Google Meet Meeting",
+    at: "2026-10-25T07:34:00Z",
+    reason: "No booking, invitee or name matched",
+    hint: "4 min before City Wood's booked call",
+    host: "csm@example.test",
+    candidate: true,
+  },
+  {
+    id: 802,
+    kind: "call",
+    title: "Impromptu Zoom Meeting",
+    at: "2026-10-23T12:05:00Z",
+    reason: "No booking, invitee or name matched",
+    host: "csm@example.test",
+    candidate: true,
+  },
+  // Another recorder's candidate, a call that is no candidate, a form.
+  {
+    id: 803,
+    kind: "call",
+    title: "Impromptu Google Meet Meeting",
+    at: "2026-10-24T09:00:00Z",
+    reason: "No booking, invitee or name matched",
+    host: "other@example.test",
+    candidate: true,
+  },
+  {
+    id: 804,
+    kind: "call",
+    title: "Booked check-in",
+    at: "2026-10-24T10:00:00Z",
+    reason: "No client matched the booking",
+    host: "csm@example.test",
+    candidate: false,
+  },
+  {
+    id: 805,
+    kind: "form",
+    title: "1-1 call notes form",
+    at: "2026-10-24T11:00:00Z",
+    reason: "The Client ID matched no card",
+    host: "csm@example.test",
+    candidate: true,
+  },
+];
+const CLIENTS = [
+  row("86exfix01", "Cedar & Stone Interiors", 0),
+  row("86exfix02", "Harbor Glassworks", 2),
+  { taskId: "86excw01", name: "City Wood", noteMissing: false },
+  { taskId: "86exar01", name: "شركة الأمل للديكور", noteMissing: false },
+];
+const menuItem = (name: string) =>
+  (
+    Array.from(win.document.body.querySelectorAll('[role="menuitem"]')) as any[]
+  ).find(i => (i.textContent ?? "").trim() === name);
+const byLabel = (label: string) =>
+  buttons().find(b => b.getAttribute("aria-label") === label);
+async function openMenu(label: string) {
+  const trigger = byLabel(label);
+  expect(trigger).toBeTruthy();
+  await act(async () => {
+    trigger.dispatchEvent(
+      new win.PointerEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        pointerType: "mouse",
+      }),
+    );
+  });
+  await settle();
+}
+async function search(value: string) {
+  const input = win.document.body.querySelector('input[type="search"]') as any;
+  await act(async () => {
+    const set = Object.getOwnPropertyDescriptor(
+      win.HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    set?.call(input, value);
+    input.dispatchEvent(new win.Event("input", { bubbles: true }));
+  });
+  await settle(2);
+}
+const rowTexts = () =>
+  (
+    Array.from(win.document.body.querySelectorAll("[data-rows] > div")) as any[]
+  ).map(d => (d.textContent ?? "").replace(/\s+/g, " ").trim());
+
+describe("once the 1-1 notes are native (4.15 item 2)", () => {
+  test("Typeform is asked nothing, a stored marker is ignored, and every row opens the window", async () => {
+    setSystemTime(new Date(NOW));
+    provider = "native";
+    // The window is asked for by name (openNamed): a blank one, then sent.
+    const windows: { name: string; sentTo: string[] }[] = [];
+    (win as any).open = (_u: string, name: string) => {
+      const w = { name, sentTo: [] as string[] };
+      windows.push(w);
+      return {
+        location: {
+          href: "about:blank",
+          replace: (u: string) => w.sentTo.push(u),
+        },
+        focus: () => {},
+      };
+    };
+    markTypeformOpened("86exfix01", "2026-10-25", NOW - 5 * 60_000);
+    await mount(
+      <>
+        <AfterCalls
+          snap={{
+            clients: [
+              row("86exfix01", "Cedar & Stone Interiors", 0),
+              row("86exfix02", "Harbor Glassworks", 1),
+            ],
+            callStoreError: null,
+          }}
+        />
+        <NotesNudge taskId="86exfix01" lastCall="2026-10-25">
+          Write the notes
+        </NotesNudge>
+      </>,
+    );
+    expect(asked.length).toBe(0);
+    expect(page()).not.toContain("1-1 form opened at");
+    expect(named("Write 1-1 notes").length).toBe(2);
+    expect(named("Write the notes").length).toBe(1);
+    await act(async () => named("Write 1-1 notes")[0]?.click());
+    await settle();
+    expect(windows).toEqual([
+      {
+        name: "mahara-form-86exfix01-checkin",
+        sentTo: ["/client-success/clients/86exfix01/forms/checkin"],
+      },
+    ]);
+    expect(asked.length).toBe(0);
+  });
+});
+
+describe("impromptu calls on Today (4.10, 5.2)", () => {
+  test("provider typeform: the queue is never read", async () => {
+    queue = QUEUE;
+    await mount(
+      <AfterCalls snap={{ clients: CLIENTS, callStoreError: null }} />,
+    );
+    expect(rpcs.some(r => r.name === "cockpit_csm_unmatched_list")).toBe(false);
+    expect(page()).not.toContain("Impromptu call");
+  });
+
+  test("native: the seat's own candidates only, in one list newest first, counted with the rest", async () => {
+    setSystemTime(new Date(NOW));
+    provider = "native";
+    queue = QUEUE;
+    await mount(
+      <AfterCalls snap={{ clients: CLIENTS, callStoreError: null }} />,
+    );
+    expect(
+      rpcs.filter(r => r.name === "cockpit_csm_unmatched_list").length,
+    ).toBe(1);
+    expect(rowTexts()).toEqual([
+      "Impromptu call on Sun 25 Oct, no client yet10:34 · 4 min before City Wood's booked callPlace itNot a 1-1 call",
+      "Cedar & Stone Interiors · check-in call on Sun 25 Oct · no 1-1 notesWrite 1-1 notes",
+      "Impromptu call on Fri 23 Oct, no client yet15:05Place itNot a 1-1 call",
+      "Harbor Glassworks · check-in call on Fri 23 Oct · no 1-1 notesWrite 1-1 notes",
+    ]);
+    // The count covers both kinds.
+    expect(
+      (win.document.body.querySelector("h2")?.textContent ?? "").replace(
+        /\s+/g,
+        "",
+      ),
+    ).toBe("Afteryourcalls4");
+    // The clock in mono; the orange lamp; no teal on the row.
+    const first = win.document.body.querySelector(
+      "[data-impromptu='801']",
+    ) as any;
+    expect(first.querySelector(".font-mono")?.textContent).toBe("10:34");
+    expect(first.querySelector(".bg-warning")).toBeTruthy();
+    expect(first.innerHTML).not.toMatch(/bg-primary\b|text-primary-ink/);
+    // Each button is named with its day and time.
+    expect(
+      byLabel("Place the impromptu call on Sun 25 Oct, 10:34"),
+    ).toBeTruthy();
+    expect(
+      byLabel("Not a 1-1 call: the impromptu call on Sun 25 Oct, 10:34"),
+    ).toBeTruthy();
+    expect(
+      byLabel("Place the impromptu call on Fri 23 Oct, 15:05"),
+    ).toBeTruthy();
+    expect(page()).not.toContain("Booked check-in");
+    expect(page()).not.toContain("1-1 call notes form");
+    expect(rowTexts().length).toBe(4);
+  });
+
+  test("Place it: the sheet, focus in Find a client, Arabic search, a pick saved, the row gone, focus moved", async () => {
+    setSystemTime(new Date(NOW));
+    provider = "native";
+    queue = QUEUE;
+    let placed = 0;
+    await mount(
+      <AfterCalls
+        snap={{ clients: CLIENTS, callStoreError: null }}
+        onPlaced={() => {
+          placed += 1;
+        }}
+      />,
+    );
+    await act(async () =>
+      byLabel("Place the impromptu call on Sun 25 Oct, 10:34")?.click(),
+    );
+    await settle();
+    expect(page()).toContain("Whose call was this?");
+    expect(page()).toContain(
+      "Pick the client. The call goes on their page, then you can write the 1-1 notes.",
+    );
+    expect(page()).toContain(
+      "Fathom's hint: 4 min before City Wood's booked call",
+    );
+    const input = win.document.body.querySelector(
+      'input[type="search"]',
+    ) as any;
+    expect(win.document.activeElement).toBe(input);
+    expect(
+      win.document.body.querySelector(`label[for="${input.id}"]`)?.textContent,
+    ).toBe("Find a client");
+    // The hint is never chosen for her: every client is listed, none pressed.
+    const listed = () =>
+      (
+        Array.from(
+          win.document.body.querySelectorAll('ul[aria-label="Clients"] button'),
+        ) as any[]
+      ).map(b => (b.textContent ?? "").trim());
+    expect(listed()).toEqual([
+      "Cedar & Stone Interiors",
+      "City Wood",
+      "Harbor Glassworks",
+      "شركة الأمل للديكور",
+    ]);
+    // Arabic folded: taa marbuta and the hamza on the alef.
+    await search("شركه الامل");
+    expect(listed()).toEqual(["شركة الأمل للديكور"]);
+    expect(
+      win.document.body
+        .querySelector('ul[aria-label="Clients"] bdi')
+        ?.getAttribute("dir"),
+    ).toBe("auto");
+    await search("zzz");
+    expect(page()).toContain('No client matches "zzz".');
+    await search("city");
+    const pick = (
+      Array.from(
+        win.document.body.querySelectorAll('ul[aria-label="Clients"] button'),
+      ) as any[]
+    )[0];
+    await act(async () => pick.click());
+    await settle();
+    expect(rpcs.find(r => r.name === "cockpit_csm_manual_match")?.args).toEqual(
+      {
+        p_unmatched_id: 801,
+        p_task_id: "86excw01",
+      },
+    );
+    expect(toasts).toContain("Saved on City Wood.");
+    expect(placed).toBe(1);
+    expect(page()).not.toContain("Whose call was this?");
+    expect(
+      win.document.body.querySelector("[data-impromptu='801']"),
+    ).toBeNull();
+    // Focus moves to the row that took its place.
+    expect((win.document.activeElement?.textContent ?? "").trim()).toBe(
+      "Cedar & Stone Interiors",
+    );
+  });
+
+  test("a refused pick keeps the sheet and the row, with the server's sentence", async () => {
+    setSystemTime(new Date(NOW));
+    provider = "native";
+    queue = QUEUE;
+    refuseMatch = "That client is not on your access list";
+    let placed = 0;
+    await mount(
+      <AfterCalls
+        snap={{ clients: CLIENTS, callStoreError: null }}
+        onPlaced={() => {
+          placed += 1;
+        }}
+      />,
+    );
+    await act(async () =>
+      byLabel("Place the impromptu call on Sun 25 Oct, 10:34")?.click(),
+    );
+    await settle();
+    await search("city");
+    await act(async () =>
+      (
+        win.document.body.querySelector(
+          'ul[aria-label="Clients"] button',
+        ) as any
+      ).click(),
+    );
+    await settle();
+    expect(
+      win.document.body.querySelector('[role="dialog"] [role="alert"]')
+        ?.textContent,
+    ).toBe("That client is not on your access list");
+    expect(placed).toBe(0);
+    expect(toasts).toEqual([]);
+    expect(
+      win.document.body.querySelector("[data-impromptu='801']"),
+    ).toBeTruthy();
+  });
+
+  test("Place it with no client on her list: what she can still do with the call", async () => {
+    setSystemTime(new Date(NOW));
+    provider = "native";
+    queue = QUEUE;
+    await mount(<AfterCalls snap={{ clients: [], callStoreError: null }} />);
+    await act(async () =>
+      byLabel("Place the impromptu call on Sun 25 Oct, 10:34")?.click(),
+    );
+    await settle();
+    expect(page()).toContain(
+      "No clients are on your list, so this call cannot be placed here. Ask an admin to place it, or mark it Not a 1-1 call.",
+    );
+  });
+
+  test("Escape and the X return focus to Place it", async () => {
+    setSystemTime(new Date(NOW));
+    provider = "native";
+    queue = QUEUE;
+    const label = "Place the impromptu call on Fri 23 Oct, 15:05";
+    await mount(
+      <AfterCalls snap={{ clients: CLIENTS, callStoreError: null }} />,
+    );
+    const open = async () => {
+      const trigger = byLabel(label);
+      await act(async () => trigger.focus());
+      await act(async () => trigger.click());
+      await settle();
+      expect(page()).toContain("Whose call was this?");
+      const input = win.document.body.querySelector(
+        'input[type="search"]',
+      ) as any;
+      expect(win.document.activeElement).toBe(input);
+      return input;
+    };
+    const closed = () => {
+      expect(page()).not.toContain("Whose call was this?");
+      // The row stays, and focus is back on its own Place it, never the page.
+      expect(
+        win.document.body.querySelector("[data-impromptu='802']"),
+      ).toBeTruthy();
+      expect(win.document.activeElement).toBe(byLabel(label));
+    };
+    // Escape, from the search field.
+    const input = await open();
+    await act(async () => {
+      input.dispatchEvent(
+        new win.KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await settle();
+    closed();
+    // The sheet's X.
+    await open();
+    const x = buttons().find(
+      b =>
+        b.closest('[role="dialog"]') &&
+        (b.textContent ?? "").trim() === "Close",
+    );
+    expect(x).toBeTruthy();
+    await act(async () => x.click());
+    await settle();
+    closed();
+    expect(rpcs.some(r => r.name === "cockpit_csm_manual_match")).toBe(false);
+  });
+
+  test("Not a 1-1 call: each reason sets it aside; a refusal keeps the row", async () => {
+    setSystemTime(new Date(NOW));
+    provider = "native";
+    const reasons: [string, string][] = [
+      ["Part of another call", "part_of_call"],
+      ["An onboarding call", "onboarding"],
+      ["A Blueprint call", "blueprint"],
+      ["Not a client", "not_client"],
+    ];
+    for (const [label, reason] of reasons) {
+      queue = QUEUE;
+      rpcs.length = 0;
+      toasts.length = 0;
+      await mount(<AfterCalls snap={{ clients: [], callStoreError: null }} />);
+      await openMenu("Not a 1-1 call: the impromptu call on Sun 25 Oct, 10:34");
+      await act(async () => menuItem(label)?.click());
+      await settle();
+      expect(
+        rpcs.find(r => r.name === "cockpit_csm_candidate_settle")?.args,
+      ).toEqual({
+        p_unmatched_id: 801,
+        p_reason: reason,
+        p_same_as: null,
+      });
+      expect(toasts).toContain("Set aside: not a 1-1 call.");
+      expect(
+        win.document.body.querySelector("[data-impromptu='801']"),
+      ).toBeNull();
+      for (const r of roots.splice(0)) await act(async () => r.unmount());
+      win.document.body.innerHTML = "";
+    }
+    queue = QUEUE;
+    refuseSettle = "Only the CSM who recorded it can set it aside.";
+    await mount(<AfterCalls snap={{ clients: [], callStoreError: null }} />);
+    await openMenu("Not a 1-1 call: the impromptu call on Sun 25 Oct, 10:34");
+    await act(async () => menuItem("Not a client")?.click());
+    await settle();
+    const kept = win.document.body.querySelector(
+      "[data-impromptu='801']",
+    ) as any;
+    expect(kept).toBeTruthy();
+    expect(kept.querySelector('[role="alert"]')?.textContent).toBe(
+      "Only the CSM who recorded it can set it aside.",
+    );
+  });
+
+  test("while its call runs, the menu's keys are held but Tab still moves on", async () => {
+    setSystemTime(new Date(NOW));
+    provider = "native";
+    queue = QUEUE;
+    holdSettle = true;
+    await mount(<AfterCalls snap={{ clients: [], callStoreError: null }} />);
+    const label = "Not a 1-1 call: the impromptu call on Sun 25 Oct, 10:34";
+    await openMenu(label);
+    await act(async () => menuItem("Not a client")?.click());
+    await settle();
+    const trigger = byLabel(label);
+    expect(trigger.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => trigger.focus());
+    const press = (key: string, shiftKey = false) => {
+      const e = new win.KeyboardEvent("keydown", {
+        key,
+        shiftKey,
+        bubbles: true,
+        cancelable: true,
+      });
+      trigger.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    let held: Record<string, boolean> = {};
+    await act(async () => {
+      held = {
+        Tab: press("Tab"),
+        "Shift+Tab": press("Tab", true),
+        Escape: press("Escape"),
+        Enter: press("Enter"),
+        Space: press(" "),
+        ArrowDown: press("ArrowDown"),
+        ArrowUp: press("ArrowUp"),
+      };
+    });
+    await settle();
+    // Tab's default is focus moving on: never held, so focus is not trapped.
+    expect(held).toEqual({
+      Tab: false,
+      "Shift+Tab": false,
+      Escape: false,
+      Enter: true,
+      Space: true,
+      ArrowDown: true,
+      ArrowUp: true,
+    });
+    // The keys that open the menu did not open it.
+    expect(win.document.body.querySelector('[role="menu"]')).toBeNull();
+    expect(
+      rpcs.filter(r => r.name === "cockpit_csm_candidate_settle").length,
+    ).toBe(1);
+  });
+
+  const CALL_NO_ANSWER =
+    "No answer came back, so this may or may not have saved. Reload the page to see where the call stands.";
+
+  describe("a call that never answers (no row rests for ever)", () => {
+    /** Real timers, with the 30 seconds shortened and recorded. */
+    const short = (waited: number[]) => ({
+      now: () => Date.now(),
+      set: (fn: () => void, ms: number): unknown => {
+        waited.push(ms);
+        return setTimeout(fn, ms === 30_000 ? 10 : ms);
+      },
+      clear: (h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>),
+    });
+    const pickCity = async () => {
+      await act(async () =>
+        byLabel("Place the impromptu call on Sun 25 Oct, 10:34")?.click(),
+      );
+      await settle();
+      await search("city");
+      await act(async () =>
+        (
+          win.document.body.querySelector(
+            'ul[aria-label="Clients"] button',
+          ) as any
+        ).click(),
+      );
+      await act(async () => {});
+    };
+    const sheetAlert = () =>
+      win.document.body.querySelector('[role="dialog"] [role="alert"]');
+    const pressEscape = async () => {
+      const input = win.document.body.querySelector(
+        'input[type="search"]',
+      ) as any;
+      await act(async () => {
+        input.dispatchEvent(
+          new win.KeyboardEvent("keydown", {
+            key: "Escape",
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+      await settle(2);
+    };
+
+    test("Not a 1-1 call: the buttons come back after 30 seconds with what is known, and nothing is retried", async () => {
+      setSystemTime(new Date(NOW));
+      provider = "native";
+      queue = QUEUE;
+      holdSettle = true;
+      const waited: number[] = [];
+      await mount(
+        <AfterCalls
+          snap={{ clients: [], callStoreError: null }}
+          clock={short(waited)}
+        />,
+      );
+      const label = "Not a 1-1 call: the impromptu call on Sun 25 Oct, 10:34";
+      await openMenu(label);
+      await act(async () => menuItem("Not a client")?.click());
+      await settle();
+      expect(waited).toContain(30_000);
+      const row = win.document.body.querySelector(
+        "[data-impromptu='801']",
+      ) as any;
+      expect(row.querySelector('[role="alert"]')?.textContent).toBe(
+        CALL_NO_ANSWER,
+      );
+      expect(byLabel(label).getAttribute("aria-disabled")).toBeNull();
+      expect(
+        byLabel("Place the impromptu call on Sun 25 Oct, 10:34").getAttribute(
+          "aria-disabled",
+        ),
+      ).toBeNull();
+      expect(toasts).toEqual([]);
+      expect(
+        rpcs.filter(r => r.name === "cockpit_csm_candidate_settle").length,
+      ).toBe(1);
+    });
+
+    test("Place it: the sheet says what is known after 30 seconds, and takes another pick", async () => {
+      setSystemTime(new Date(NOW));
+      provider = "native";
+      queue = QUEUE;
+      placeHeld = new Promise(() => {});
+      await mount(
+        <AfterCalls
+          snap={{ clients: CLIENTS, callStoreError: null }}
+          clock={short([])}
+        />,
+      );
+      await pickCity();
+      await settle();
+      expect(sheetAlert()?.textContent).toBe(CALL_NO_ANSWER);
+      expect(page()).not.toContain("Saving…");
+      expect(
+        (
+          win.document.body.querySelector(
+            'ul[aria-label="Clients"] button',
+          ) as any
+        ).getAttribute("aria-disabled"),
+      ).toBeNull();
+      expect(toasts).toEqual([]);
+      expect(
+        win.document.body.querySelector("[data-impromptu='801']"),
+      ).toBeTruthy();
+    });
+
+    test("closing the sheet during a save waits: a refusal is never lost", async () => {
+      setSystemTime(new Date(NOW));
+      provider = "native";
+      queue = QUEUE;
+      let answer: (v: any) => void = () => {};
+      placeHeld = new Promise(r => {
+        answer = r;
+      });
+      await mount(
+        <AfterCalls snap={{ clients: CLIENTS, callStoreError: null }} />,
+      );
+      await pickCity();
+      await settle(2);
+      expect(page()).toContain("Saving…");
+      // Escape and the X both wait for the answer.
+      await pressEscape();
+      expect(page()).toContain("Whose call was this?");
+      const x = buttons().find(
+        b =>
+          b.closest('[role="dialog"]') &&
+          (b.textContent ?? "").trim() === "Close",
+      );
+      await act(async () => x.click());
+      await settle(2);
+      expect(page()).toContain("Saving…");
+      const said = "That client is not on your access list";
+      await act(async () => answer({ data: null, error: { message: said } }));
+      await settle();
+      expect(sheetAlert()?.textContent).toBe(said);
+      // With the answer in, the sheet closes as ever.
+      await pressEscape();
+      expect(page()).not.toContain("Whose call was this?");
+    });
+
+    test("a queue that never answers: said, with no rows and beside client rows", async () => {
+      provider = "native";
+      holdQueue = true;
+      const FAILED =
+        "The calls with no client could not be read, so an impromptu call may be missing here. Reload the page; if it stays, tell the tech lead.";
+      await mount(
+        <AfterCalls
+          snap={{ clients: [], callStoreError: null }}
+          clock={short([])}
+        />,
+      );
+      await settle();
+      expect(page()).toContain("After your calls");
+      expect(page()).toContain(FAILED);
+      for (const r of roots.splice(0)) await act(async () => r.unmount());
+      win.document.body.innerHTML = "";
+      await mount(
+        <AfterCalls
+          snap={{ clients: CLIENTS, callStoreError: null }}
+          clock={short([])}
+        />,
+      );
+      await settle();
+      expect(page()).toContain(FAILED);
+      expect(page()).toContain("no 1-1 notes");
+    });
+  });
+
+  test("a queue it could not read keeps the card with its sentence", async () => {
+    provider = "native";
+    queueFails = true;
+    await mount(<AfterCalls snap={{ clients: [], callStoreError: null }} />);
+    expect(page()).toContain("After your calls");
+    expect(page()).toContain(
+      "The calls with no client could not be read, so an impromptu call may be missing here. Reload the page; if it stays, tell the tech lead.",
+    );
+  });
+
+  test("a dropped connection on a pick: it may have landed, so it says so and to reload", async () => {
+    setSystemTime(new Date(NOW));
+    provider = "native";
+    queue = QUEUE;
+    refuseMatch = "TypeError: Failed to fetch";
+    await mount(
+      <AfterCalls snap={{ clients: CLIENTS, callStoreError: null }} />,
+    );
+    await act(async () =>
+      byLabel("Place the impromptu call on Sun 25 Oct, 10:34")?.click(),
+    );
+    await settle();
+    await search("city");
+    await act(async () =>
+      (
+        win.document.body.querySelector(
+          'ul[aria-label="Clients"] button',
+        ) as any
+      ).click(),
+    );
+    await settle();
+    expect(
+      win.document.body.querySelector('[role="dialog"] [role="alert"]')
+        ?.textContent,
+    ).toBe(CALL_NO_ANSWER);
+    expect(page()).not.toContain("Failed to fetch");
+  });
+
+  test("a dropped connection on Not a 1-1 call: the row says the same, in any browser's words", async () => {
+    for (const said of [
+      "TypeError: Failed to fetch",
+      "NetworkError when attempting to fetch resource.",
+      "Load failed",
+    ]) {
+      setSystemTime(new Date(NOW));
+      provider = "native";
+      queue = QUEUE;
+      refuseSettle = said;
+      await mount(<AfterCalls snap={{ clients: [], callStoreError: null }} />);
+      await openMenu("Not a 1-1 call: the impromptu call on Sun 25 Oct, 10:34");
+      await act(async () => menuItem("Not a client")?.click());
+      await settle();
+      const row = win.document.body.querySelector(
+        "[data-impromptu='801']",
+      ) as any;
+      expect(row.querySelector('[role="alert"]')?.textContent).toBe(
+        CALL_NO_ANSWER,
+      );
+      for (const r of roots.splice(0)) await act(async () => r.unmount());
+      win.document.body.innerHTML = "";
+    }
+  });
+
+  test("the search's region is there before it has anything to say, and the list keeps aria-controls", async () => {
+    setSystemTime(new Date(NOW));
+    provider = "native";
+    queue = QUEUE;
+    await mount(
+      <AfterCalls snap={{ clients: CLIENTS, callStoreError: null }} />,
+    );
+    await act(async () =>
+      byLabel("Place the impromptu call on Sun 25 Oct, 10:34")?.click(),
+    );
+    await settle();
+    const region = () =>
+      win.document.body.querySelector(
+        '[role="dialog"] [role="status"][aria-live="polite"]',
+      ) as any;
+    const held = region();
+    expect(held?.textContent).toBe("");
+    const input = win.document.body.querySelector(
+      'input[type="search"]',
+    ) as any;
+    const list = () =>
+      win.document.body.querySelector('ul[aria-label="Clients"]') as any;
+    expect(input.getAttribute("aria-controls")).toBe(list().id);
+    await search("zzz");
+    expect(Boolean(list())).toBe(false);
+    // The same node: a region that arrives holding its text is often not read.
+    expect(region() === held).toBe(true);
+    expect(held.textContent).toBe('No client matches "zzz".');
+    expect(input.getAttribute("aria-controls")).toBeNull();
+    await search("city");
+    expect(region() === held).toBe(true);
+    expect(held.textContent).toBe("");
+    expect(input.getAttribute("aria-controls")).toBe(list().id);
+  });
+
+  test("the Place sheet's clock is the row's: Geist Mono 11, tabular", async () => {
+    setSystemTime(new Date(NOW));
+    provider = "native";
+    queue = QUEUE;
+    await mount(
+      <AfterCalls snap={{ clients: CLIENTS, callStoreError: null }} />,
+    );
+    await act(async () =>
+      byLabel("Place the impromptu call on Sun 25 Oct, 10:34")?.click(),
+    );
+    await settle();
+    const clock = win.document.body.querySelector(
+      '[role="dialog"] span.font-mono',
+    ) as any;
+    expect(clock.textContent).toBe("10:34");
+    expect(String(clock.className)).toContain("text-[11px]");
+    expect(String(clock.className)).toContain("tabular-nums");
+  });
+
+  test("the last row gone: the card says nothing is left, and focus goes to its heading", async () => {
+    setSystemTime(new Date(NOW));
+    provider = "native";
+    queue = [QUEUE[0]];
+    await mount(<AfterCalls snap={{ clients: [], callStoreError: null }} />);
+    await openMenu("Not a 1-1 call: the impromptu call on Sun 25 Oct, 10:34");
+    await act(async () => menuItem("Not a client")?.click());
+    await settle();
+    const head = win.document.activeElement as any;
+    expect((head?.textContent ?? "").trim()).toBe("After your calls");
+    // Focus that moved here can be seen: the base rule leaves tabindex=-1 out.
+    expect(String(head.className)).toContain("focus-visible:ring-2");
+    expect(String(head.className)).toContain("focus-visible:ring-primary-ink");
+    expect(page()).toContain("Nothing left from your calls.");
   });
 });

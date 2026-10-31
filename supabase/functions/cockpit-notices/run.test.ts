@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { DOCTOR_NO_TOKEN, runDoctor } from "./doctor";
 import { CLAIM_LIMIT, JobError, OUT_OF_TIME, runDryRun, runNotices, runRehearse } from "./run";
-import { BAD_TOKEN, NO_SLACK_ID, NO_TOKEN, REPLY_RECHECK_SEC, UNKNOWN, WAITING, WAITING_CARD, WAITING_REPLY, WRONG_BOT } from "./send";
+import { BAD_TOKEN, NO_GRADE, NO_SLACK_ID, NO_TOKEN, REPLY_RECHECK_SEC, UNKNOWN, WAITING, WAITING_CARD, WAITING_REPLY, wantedMentions, WRONG_BOT } from "./send";
+import { CRITERIA } from "./text";
 import {
   BOT_USER, claimed, CREATIVE, CSM, CSM_GENERAL, deps, FakeClickUp, FakeSlack, fakeRpc, ID, MEDIA_GENERAL, mention, minutesAgo, NOW, receiptsRecorder, ref, SYSTEMS,
 } from "./testkit";
@@ -694,4 +695,162 @@ test("the clock the tests use is a Sunday afternoon in Kuwait", () => {
   expect(NOW.toISOString()).toBe("2026-10-25T11:30:00.000Z");
   expect(new FakeClickUp().comments.size).toBe(0);
   expect(receiptsRecorder().rows).toEqual([]);
+});
+
+describe("the 1-1 notes notices (docs/forms/STAGE2B-CONTRACT.md 4.2)", () => {
+  const FEEDBACK = "C09SVG6FHGU";
+  const grade = {
+    criteria: CRITERIA.map((name, i) => ({ name, score: 5 + (i % 5), note: `Invented note on ${name}.` })),
+    overall: "INVENTED-OVERALL: a calm call with one clear next step.",
+    color: "Orange",
+    score: 6.8,
+    draftId: "00000000-0000-4000-8000-0000000000d7",
+  };
+  const gradeRow = (over: Record<string, unknown> = {}) =>
+    claimed({
+      kind: "checkin.grade",
+      target: FEEDBACK,
+      facts: { responseId: ID(30), recordingId: "900000777", draftId: grade.draftId, taskId: "task0001", effectId: ID(31), client: "Acme Interiors", submittedAt: minutesAgo(10) },
+      live: { grade, takenByRole: "the CSM", callAt: minutesAgo(70), shareUrl: "https://fathom.video/share/invented-call", recordingShown: true },
+      // Whatever the settings row says, the grade tags nobody.
+      mentions: { main: [CSM, SYSTEMS] },
+      ...over,
+    });
+
+  test("the call grade posts once to its private channel with the stored grade, tags nobody, and keeps no grade words in the outbox", async () => {
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(gradeRow()) }) });
+    kit.slack.channels.set(FEEDBACK, { name: "client-call-feedback", is_private: true, is_member: true });
+    const result = await runNotices(kit.deps);
+    expect(result).toMatchObject({ ok: true, claimed: 1, posted: 1, failed: 0 });
+    const posts = kit.slack.posts();
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body).toMatchObject({ channel: FEEDBACK, text: `Call grade: Acme Interiors, 6.8/10, Orange. Ref ${ref(ID(1))}` });
+    const blocks = JSON.stringify(posts[0].body?.blocks);
+    expect(blocks).toContain("*Call grade: Acme Interiors*");
+    expect(blocks).toContain("INVENTED-OVERALL");
+    expect(blocks).toContain("*Creating Urgency* 6/10. Invented note on Creating Urgency.");
+    expect(blocks).toContain("<https://fathom.video/share/invented-call|Watch the recording>");
+    expect(`${posts[0].body?.text}${blocks}`).not.toContain("<@");
+    // No ClickUp read, and no tag warning row: nobody was wanted.
+    expect(kit.net.calls.some(c => c.url.host === "api.clickup.com")).toBe(false);
+    expect(kit.receipts.rows.filter(r => r.resource === "notices/mentions")).toEqual([]);
+    const r = lastResult(kit);
+    expect(r).toMatchObject({ p_outcome: "posted", p_channel: FEEDBACK });
+    const d = detailOf(r);
+    expect(d.variant).toBe("grade");
+    expect(d.text).toBe(posts[0].body?.text);
+    expect(d.blocks).toBeUndefined();
+    expect(JSON.stringify(r)).not.toContain("INVENTED-OVERALL");
+  });
+
+  test("a grade row with no stored grade fails with the sentence and calls no Slack post", async () => {
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(gradeRow({ live: { takenByRole: "the CSM", recordingShown: true } })) }) });
+    await runNotices(kit.deps);
+    expect(lastResult(kit)).toMatchObject({ p_outcome: "failed", p_error: NO_GRADE });
+    expect(kit.slack.posts()).toHaveLength(0);
+  });
+
+  test("the recap reminder posts its late wording with the Messages link and the row's tags", async () => {
+    const row = claimed({
+      kind: "checkin.recap_late",
+      facts: { taskId: "task0001", client: "Acme Interiors", responseId: ID(40), callAt: "2026-10-24T09:00:00Z", dueAt: minutesAgo(5) },
+      live: { recap: { effectState: "queued", messageState: "draft" } },
+      mentions: { main: [CSM] },
+    });
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(row) }) });
+    await runNotices(kit.deps);
+    const posts = kit.slack.posts();
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body).toMatchObject({ channel: CSM_GENERAL, text: `Recap not sent: Acme Interiors, call Sat 24 Oct. Open in the cockpit. Ref ${ref(ID(1))}` });
+    const blocks = JSON.stringify(posts[0].body?.blocks);
+    expect(blocks).toContain("The recap for the call on Sat 24 Oct is still waiting in the cockpit. <@U0C5JHUCTPG>");
+    expect(blocks).toContain("https://cockpit.maharamedia.com/client-success/clients/task0001?tab=overview#messages|Open in the cockpit");
+    const d = detailOf(lastResult(kit));
+    expect(d.variant).toBe("late");
+    expect(blocksText(d)).toContain("Recap not sent");
+  });
+
+  test("one tag choice for the post and its dry run: the grade tags nobody, the reminder its row's main list, a late kickoff its late list", () => {
+    const m = { main: [CSM], late: [SYSTEMS], second: [CREATIVE] };
+    expect(wantedMentions("checkin.grade", "grade", m, true)).toEqual([]);
+    expect(wantedMentions("checkin.grade", "grade", [CSM, SYSTEMS], false)).toEqual([]);
+    // The reminder's only variant is "late", but its tags are never the late kickoff's list.
+    expect(wantedMentions("checkin.recap_late", "late", m, false)).toEqual([CSM]);
+    expect(wantedMentions("checkin.recap_late", "late", { main: [CSM], late: [] }, false)).toEqual([CSM]);
+    expect(wantedMentions("kickoff", "late", m, false)).toEqual([SYSTEMS]);
+    expect(wantedMentions("kickoff", "late", m, true)).toEqual([SYSTEMS, CREATIVE]);
+    expect(wantedMentions("kickoff", "complete", m, false)).toEqual([CSM]);
+    expect(wantedMentions("blueprint.close", "done", m, true)).toEqual([CSM]);
+  });
+
+  test("a test of the call grade goes to a person, tags nobody, names nobody, and leaves the recording link out", async () => {
+    const row = claimed({
+      kind: "rehearsal", taskId: null, clientName: null, target: "U0TESTER001",
+      facts: { of: "checkin.grade", variant: null, sample: true, requestedBy: "cron" },
+      live: {}, mentions: { main: [] }, rehearsal: { of: "checkin.grade", lookupEmail: null },
+    });
+    const settings = { cockpit_slack_notice_doctor_inputs: () => ({ channels: [], settings: [{ kind: "checkin.grade", enabled: true, channel: FEEDBACK, mentions: [CSM] }] }) };
+    const kit = deps({ rpc: fakeRpc({ ...settings, cockpit_slack_notice_claim: claimOnce(row) }) });
+    await runNotices(kit.deps);
+    const d = detailOf(lastResult(kit));
+    expect(lastResult(kit)).toMatchObject({ p_outcome: "posted", p_channel: "D0TESTDM001" });
+    expect(String(d.text)).toStartWith("[Rehearsal] Call grade: Sample client, 7.5/10, Green.");
+    const posted = JSON.stringify(kit.slack.posts()[0].body?.blocks);
+    expect(posted).toContain("Links are left out of a test.");
+    expect(posted).not.toContain("https://");
+    expect(posted).not.toContain("would tag");
+    expect(posted).not.toContain("<@");
+  });
+
+  test("a dry run of the recap reminder tags the people the real post tags (a preview is the post)", async () => {
+    const mentions = { main: [CSM], late: [SYSTEMS], second: [CREATIVE] };
+    const facts = { client: "Acme Interiors", callAt: "2026-10-24T09:00:00Z", dueAt: minutesAgo(60), taskId: "task0001", responseId: ID(30) };
+    const live = { recap: { effectState: "queued", messageState: "draft" } };
+    const rpc = fakeRpc({
+      cockpit_slack_notice_inputs: () => ({
+        kind: "checkin.recap_late", taskId: "task0001", clientName: "Acme Interiors", ref: "CN-dryrun00",
+        facts, live, target: CSM_GENERAL, threadTs: null, mentions,
+      }),
+    });
+    const dry = await runDryRun(deps({ rpc }).deps, { kind: "checkin.recap_late", taskId: "task0001", facts: { client: "Acme Interiors" } });
+    expect(dry.tags).toEqual([{ label: "the CSM", tagged: true }]);
+    expect(JSON.stringify(dry.blocks)).toContain("<@U0C5JHUCTPG>");
+    expect(JSON.stringify(dry.blocks)).not.toContain("<@U0AS90SHMH8>");
+
+    // The real post of the same row tags the same person.
+    const real = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(claimed({ kind: "checkin.recap_late", target: CSM_GENERAL, clientName: "Acme Interiors", facts, live, mentions })) }) });
+    await runNotices(real.deps);
+    const posted = blocksText(detailOf(lastResult(real)));
+    expect(posted).toContain("<@U0C5JHUCTPG>");
+    expect(posted).not.toContain("<@U0AS90SHMH8>");
+  });
+
+  test("a dry run of the call grade reports nobody tagged, whatever the settings row names", async () => {
+    const rpc = fakeRpc({
+      cockpit_slack_notice_inputs: () => ({
+        kind: "checkin.grade", taskId: "task0001", clientName: "Acme Interiors", ref: "CN-dryrun00",
+        facts: { client: "Acme Interiors", draftId: ID(32) },
+        live: { grade: { criteria: [], overall: "Invented overall feedback.", color: "Orange", score: 6.8, draftId: ID(32) }, takenByRole: "the CSM", callAt: minutesAgo(70), shareUrl: null, recordingShown: true },
+        target: "C0FEEDBACK1", threadTs: null, mentions: { main: [CSM, SYSTEMS] },
+      }),
+    });
+    const dry = await runDryRun(deps({ rpc }).deps, { kind: "checkin.grade", taskId: "task0001", facts: { client: "Acme Interiors" } });
+    expect(dry).toMatchObject({ ok: true, kind: "checkin.grade", variant: "grade", tags: [] });
+    expect(JSON.stringify(dry.blocks)).not.toContain("<@");
+  });
+
+  test("a dry run builds the recap reminder from given facts and posts nothing", async () => {
+    const rpc = fakeRpc({
+      cockpit_slack_notice_inputs: () => ({
+        kind: "checkin.recap_late", taskId: "task0001", clientName: "Acme Interiors", ref: "CN-dryrun00",
+        facts: { client: "Acme Interiors", callAt: "2026-10-24T09:00:00Z" }, live: { recap: { effectState: "queued", messageState: "draft" } },
+        target: CSM_GENERAL, threadTs: null, mentions: { main: [] },
+      }),
+    });
+    const kit = deps({ rpc });
+    const out = await runDryRun(kit.deps, { kind: "checkin.recap_late", taskId: "task0001", facts: { client: "Acme Interiors" } });
+    expect(out).toMatchObject({ ok: true, kind: "checkin.recap_late", variant: "late", target: CSM_GENERAL, commentCheck: null });
+    expect(out.text).toBe("Recap not sent: Acme Interiors, call Sat 24 Oct. Open in the cockpit. Ref CN-dryrun00");
+    expect(kit.slack.posts()).toHaveLength(0);
+  });
 });

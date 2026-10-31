@@ -120,6 +120,11 @@ def run_jobs(ctx: Context) -> Result:
         # The requests writer reports every minute; the task mirror every 2 minutes and its seats read hourly
         # (20261026r, 20261026t, docs/requests/CONTRACT.md section 7).
         "clickup-writeback:requests": 10, "task-mirror:delta": 10, "task-mirror:seats": 90,
+        # The 1-1 notes machinery, dark until the cut-over and still reporting (docs/forms/STAGE2B-CONTRACT.md 3.11). An
+        # idle forms writer reports every ten minutes, so 10 would read a healthy one as late: 15, where its own mode
+        # function reads unknown (20261029t). The dispatch kick rides the notices kick, every minute. This copy lands at
+        # deploy D15, after D5, D8 and D13 write these rows.
+        "clickup-writeback:forms": 15, "forms-effects-kick": 10, "csm-forms-record": 45,
     }
     rows = {r.get("key"): r for r in ctx.rows("cockpit_sync_state", "key,ok,note,last_ok_at", where=[("key", "in", list(keys))])}
     bad = []

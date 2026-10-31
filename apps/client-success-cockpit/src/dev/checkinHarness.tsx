@@ -7,6 +7,12 @@
  * The cockpit tab's parts are state=today, today-failed and queue;
  * state=header-join is the client header's call line with its Join.
  *
+ * Stage 2b (docs/forms/STAGE2B-CONTRACT.md section 5): the Messages card
+ * (messages-*), Today's recap rows (today-recap-rows), the window's recap
+ * approval (window-recap-approval), impromptu calls on Today
+ * (today-impromptu, today-impromptu-failed, today-place-sheet) and Move it
+ * here (sheet-admin-move).
+ *
  * Nothing leaves the page: the backend is src/dev/checkinFixtures.ts in
  * memory, booking is a stand-in button, and the Typeform links only log.
  */
@@ -18,12 +24,15 @@ import { MemoryRouter } from "react-router";
 import { Toaster } from "sonner";
 import { AfterCalls } from "@/components/AfterCalls";
 import { NextCallLine, UnmatchedQueue } from "@/components/ClientCalls";
+import { ClientMessages, RecapsWaiting } from "@/components/ClientMessages";
 import { FormsButton } from "@/components/FormsButton";
+import type { ImpromptuIO } from "@/components/ImpromptuCalls";
 import { ExtLink } from "@/components/kit";
 import { Button } from "@/components/ui/button";
 import { CheckinWindowView } from "@/forms/CheckinWindow";
 import { useCheckin } from "@/forms/useCheckin";
-import { joinLink } from "@/lib/csmCalls";
+import { type MessageView, NO_ANSWER } from "@/lib/clientMessages";
+import { joinLink, type Unmatched } from "@/lib/csmCalls";
 import {
   markTypeformOpened,
   primeCheckinEntry,
@@ -36,7 +45,13 @@ import {
   draft,
   FILLED,
   fakeCheckin,
+  fakeMessages,
+  fixtureClock,
+  type MessagesScenario,
   makeEffects,
+  messageFixture,
+  messageStates,
+  messagesWeek,
   NOTES_AGAIN,
   NOTES_ARABIC,
   NOTES_READY,
@@ -69,7 +84,15 @@ type Act =
   | "choose"
   | "again"
   | "replace";
-type Entry = { scenario: Scenario; rehearse?: boolean; act?: Act };
+type Entry = {
+  scenario: Scenario;
+  rehearse?: boolean;
+  act?: Act;
+  /** The client's messages, for a live response's recap step (2b). */
+  messages?: MessageView[];
+  /** The window's clock runs a thousand times fast: a 15-minute wait ends in a second. */
+  fast?: boolean;
+};
 
 const READY = {
   todos: TODOS_READY,
@@ -638,7 +661,260 @@ const STATES: Record<string, Entry> = {
   live: {
     scenario: { mode: "live", drafts: READY, timeline: { ...emptyTimeline() } },
   },
+  // 2b, 5.1: a live send's recap step approves the message the cockpit made
+  "window-recap-approval": {
+    scenario: {
+      mode: "live",
+      open: "submitted",
+      answers: FILLED,
+      effects: (a, at) =>
+        cockpitEffects(a, at).map(e =>
+          e.key === "recap" ? { ...e, state: "queued" as const } : e,
+        ),
+      recap: [RECAP_READY],
+    },
+    messages: [messageFixture()],
+  },
+  // 2b: a live window reopened on sent notes whose steps could not be read
+  "trail-unread": {
+    scenario: {
+      mode: "live",
+      open: "submitted",
+      answers: FILLED,
+      recap: [RECAP_READY],
+      readError: "Failed to fetch",
+    },
+    messages: [messageFixture()],
+  },
+  // 2b: the same while that read has not answered yet
+  "trail-reading": {
+    scenario: {
+      mode: "live",
+      open: "submitted",
+      answers: FILLED,
+      recap: [RECAP_READY],
+      readError: "never",
+    },
+    messages: [messageFixture()],
+  },
+  // 2b: a recap draft that has not come after the 15 minutes of asking
+  "recap-wait-over": {
+    scenario: {
+      open: "submitted",
+      answers: FILLED,
+      recap: [draft("recap", "drafting")],
+    },
+    fast: true,
+  },
+  // 2b: a live recap whose three tries are spent: Skip is all that is left
+  "window-recap-tries-used-up": {
+    scenario: {
+      mode: "live",
+      open: "submitted",
+      answers: FILLED,
+      // A refused message leaves the effect queued (3.6).
+      effects: (a, at) =>
+        cockpitEffects(a, at).map(e =>
+          e.key === "recap" ? { ...e, state: "queued" as const } : e,
+        ),
+      recap: [RECAP_READY],
+    },
+    messages: [messageStates()["tries-used-up"]],
+  },
+  // 2b, 5.3: an admin's Change sheet, a recording on another client
+  "sheet-admin-move": {
+    scenario: {
+      seat: "admin",
+      others: [VIEWS.other_movable, VIEWS.other_movable_long, VIEWS.no_sign],
+      drafts: READY,
+    },
+    act: "sheet",
+  },
 };
+
+/** The Messages card's states of 5.1, by name: rows and how the fake answers. */
+const MESSAGE_STATES: Record<
+  string,
+  {
+    rows: MessageView[];
+    scenario?: MessagesScenario;
+    press?: string;
+    poll?: { every?: number; for?: number };
+  }
+> = (() => {
+  const st = messageStates();
+  const ago = (min: number) =>
+    new Date(Date.parse(NOW) - min * 60_000).toISOString();
+  return {
+    "messages-empty": { rows: [] },
+    "messages-read-failed": {
+      rows: [],
+      scenario: { readError: "Failed to fetch" },
+    },
+    "messages-draft": { rows: messagesWeek() },
+    "messages-warnings": {
+      rows: [st.draft],
+      scenario: { warn: ["The group already had a team message today."] },
+      press: "Approve and send",
+    },
+    "messages-refused-check": {
+      rows: [st.draft],
+      scenario: {
+        refuse:
+          "The recap quoted a money figure. Client messages carry no amounts. Edit the text, then approve again.",
+      },
+      press: "Approve and send",
+    },
+    "messages-expired": { rows: [st.expired] },
+    "messages-approved": { rows: [st.approved] },
+    "messages-sending": { rows: [st.sending] },
+    "messages-sent": { rows: [st["sent-checking"], st.sent] },
+    "messages-unknown": { rows: [st.unknown] },
+    "messages-not-sent": { rows: [st.refused, st.failed] },
+    "messages-skipped": { rows: [st.skipped] },
+    "messages-handed-back": { rows: [st["handed-back"]] },
+    "messages-tries-used-up": { rows: [st["tries-used-up"]] },
+    // Approved 20 minutes ago and the sender has not taken it
+    "messages-approved-late": {
+      rows: [{ ...st.approved, approvedAt: ago(20) }],
+    },
+    // Sent 25 hours ago, and WhatsApp's copy was never found
+    "messages-not-found": {
+      rows: [
+        { ...st["sent-checking"], approvedAt: ago(1502), sentAt: ago(1500) },
+      ],
+    },
+    // Seen in the group by a person, not read back by id
+    "messages-person-seen": {
+      rows: [{ ...st.sent, readBack: { by: "person", at: ago(2) } }],
+    },
+    // The approval got no answer in time
+    "messages-no-answer": {
+      rows: [st.draft],
+      scenario: { refuse: NO_ANSWER.approve },
+      press: "Approve and send",
+    },
+    // The 15 minutes of asking ran out with a row still on its way
+    "messages-stopped": { rows: [st.approved], poll: { every: 200, for: 0 } },
+  };
+})();
+
+/** The fixtures' own time, so an approved or sent row reads its real age. */
+const MESSAGES_CLOCK = fixtureClock();
+
+/** The Messages card alone, on the overview column's width. */
+function MessagesCard({ name }: { name: string }) {
+  const entry = MESSAGE_STATES[name];
+  const io = useMemo(
+    () => fakeMessages(entry.rows, { ...entry.scenario, latency: 400 }),
+    [entry],
+  );
+  useEffect(() => {
+    if (!entry.press) return;
+    const t = setTimeout(() => {
+      const b = Array.from(document.querySelectorAll("button")).find(
+        x => x.textContent?.trim() === entry.press,
+      );
+      b?.click();
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [entry]);
+  return (
+    <MemoryRouter>
+      <div className="mx-auto w-full max-w-4xl space-y-6 p-4 sm:p-6 lg:p-8">
+        <ClientMessages
+          taskId={TASK}
+          native
+          io={io}
+          clock={MESSAGES_CLOCK}
+          poll={entry.poll}
+        />
+      </div>
+    </MemoryRouter>
+  );
+}
+
+/** Today's recap rows: one waiting, one refused, one not confirmed (an admin). */
+function RecapRows() {
+  const io = useMemo(() => {
+    const st = messageStates();
+    return fakeMessages([], {
+      waiting: [
+        st.draft,
+        {
+          ...st.refused,
+          id: "33333333-0000-4000-8000-0000000000c2",
+          taskId: "86exfix02",
+          clientName: "Harbor Glassworks",
+        },
+        {
+          ...st.unknown,
+          id: "33333333-0000-4000-8000-0000000000c3",
+          taskId: "86exfix03",
+          clientName: "Juniper Kitchens",
+        },
+      ],
+    });
+  }, []);
+  return (
+    <MemoryRouter>
+      <div className="mx-auto w-full max-w-6xl space-y-6 p-4 sm:p-6 lg:p-8">
+        <RecapsWaiting io={io} native />
+      </div>
+    </MemoryRouter>
+  );
+}
+
+/** The seat's own impromptu recordings, answered here (5.2). */
+const IMPROMPTU: Unmatched[] = [
+  {
+    id: 801,
+    kind: "call",
+    title: "Impromptu Google Meet Meeting",
+    at: "2026-10-25T07:34:00Z",
+    reason: "No booking, invitee or name matched",
+    hint: "4 min before Cedar & Stone Interiors's booked call",
+    host: "csm@example.test",
+    candidate: true,
+  },
+  {
+    id: 802,
+    kind: "call",
+    title: "Impromptu Zoom Meeting",
+    at: "2026-10-23T12:05:00Z",
+    reason: "No booking, invitee or name matched",
+    host: "csm@example.test",
+    candidate: true,
+  },
+  // Another recorder's: never listed on this seat's Today.
+  {
+    id: 803,
+    kind: "call",
+    title: "Impromptu Google Meet Meeting",
+    at: "2026-10-24T09:00:00Z",
+    reason: "No booking, invitee or name matched",
+    host: "other@example.test",
+    candidate: true,
+  },
+];
+const impromptuIO = (failed: boolean, dropped = false): ImpromptuIO => ({
+  email: "csm@example.test",
+  read: async () => {
+    await new Promise(r => setTimeout(r, 300));
+    if (failed) throw Error("Failed to fetch");
+    return IMPROMPTU;
+  },
+  place: async () => {
+    await new Promise(r => setTimeout(r, 400));
+    if (dropped) throw Error("Failed to fetch");
+    return { ok: true };
+  },
+  settle: async () => {
+    await new Promise(r => setTimeout(r, 400));
+    if (dropped) throw Error("Failed to fetch");
+    return { ok: true };
+  },
+});
 
 function emptyTimeline() {
   return {
@@ -652,8 +928,27 @@ function emptyTimeline() {
   };
 }
 
+/** The fixtures' time at a thousand times: fifteen minutes pass in under a second. */
+function fastClock() {
+  const started = Date.now();
+  return {
+    now: () => Date.parse(NOW) + (Date.now() - started) * 1000,
+    set: (fn: () => void, ms: number): unknown => setTimeout(fn, ms / 1000),
+    clear: (h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>),
+  };
+}
+
 function Window({ entry, name }: { entry: Entry; name: string }) {
   const fake = useMemo(() => fakeCheckin(entry.scenario), [entry]);
+  const clock = useMemo(
+    () => (entry.fast ? fastClock() : MESSAGES_CLOCK),
+    [entry],
+  );
+  const messages = useMemo(
+    () =>
+      entry.messages ? fakeMessages(entry.messages, { latency: 400 }) : null,
+    [entry],
+  );
   const m = useCheckin({
     taskId: TASK,
     rehearse: Boolean(entry.rehearse),
@@ -705,6 +1000,8 @@ function Window({ entry, name }: { entry: Entry; name: string }) {
     <CheckinWindowView
       key={name}
       m={m}
+      messages={messages}
+      clock={clock}
       initialSheet={entry.act === "sheet"}
       onTypeform={() => console.info("The 1-1 form would open in Typeform.")}
       book={() => (
@@ -747,23 +1044,59 @@ const queueClient = {
   },
 } as unknown as SupabaseClient;
 
-function Today({ failed }: { failed: boolean }) {
+function Today({
+  failed,
+  impromptu,
+}: {
+  failed: boolean;
+  /** 2b, 5.2: the 1-1 notes native, with the seat's impromptu calls. */
+  impromptu?: "rows" | "failed" | "sheet" | "dropped" | "sheet-empty";
+}) {
   useMemo(() => {
     primeCheckinEntry({
       key: "checkin",
       title: "1-1 call notes",
-      provider: "typeform",
+      provider: impromptu ? "native" : "typeform",
       typeformId: "fRokTITH",
       version: 1,
       native: true,
-      mode: "shadow",
+      mode: impromptu ? "live" : "shadow",
       now: NOW,
     });
     markTypeformOpened("86exfix03", "2026-10-23", Date.now() - 4 * 60_000);
     primeTypeformSent("86exfix04", "2026-10-22", true, "2026-10-22T12:20:00Z");
-  }, []);
+  }, [impromptu]);
+  const io = useMemo(
+    () =>
+      impromptu
+        ? impromptuIO(impromptu === "failed", impromptu === "dropped")
+        : undefined,
+    [impromptu],
+  );
+  useEffect(() => {
+    if (impromptu !== "sheet" && impromptu !== "sheet-empty") return;
+    const t = setTimeout(() => {
+      const b = Array.from(document.querySelectorAll("button")).find(
+        x => x.textContent?.trim() === "Place it",
+      );
+      b?.click();
+    }, 700);
+    return () => clearTimeout(t);
+  }, [impromptu]);
+  const snap = useMemo(
+    () => ({
+      clients: impromptu === "sheet-empty" ? [] : todayClients(),
+      callStoreError: failed ? "Failed to fetch" : null,
+    }),
+    [failed, impromptu],
+  );
+  return <TodayPage snap={snap} io={io} />;
+}
+
+/** The invented clients of Today's card. */
+function todayClients() {
   const day = (n: number) => `2026-10-${String(25 - n).padStart(2, "0")}`;
-  const clients = [
+  return [
     ["86exfix01", "Cedar & Stone Interiors", "checkin"],
     ["86exfix02", "Harbor Glassworks", "checkin"],
     ["86exfix03", "Juniper Kitchens", "checkin"],
@@ -779,6 +1112,18 @@ function Today({ failed }: { failed: boolean }) {
     lastCall: day(i),
     lastCallKind: kind,
   }));
+}
+
+function TodayPage({
+  snap,
+  io,
+}: {
+  snap: {
+    clients: ReturnType<typeof todayClients>;
+    callStoreError: string | null;
+  };
+  io: ImpromptuIO | undefined;
+}) {
   return (
     <MemoryRouter>
       <div className="mx-auto w-full max-w-6xl space-y-6 p-4 sm:p-6 lg:p-8">
@@ -796,10 +1141,11 @@ function Today({ failed }: { failed: boolean }) {
           </div>
         </div>
         <AfterCalls
-          snap={{
-            clients,
-            callStoreError: failed ? "Failed to fetch" : null,
-          }}
+          snap={snap}
+          impromptuIO={io}
+          onPlaced={() =>
+            console.info("The page would read its snapshot again.")
+          }
         />
         <UnmatchedQueue
           client={queueClient}
@@ -892,9 +1238,7 @@ function HeaderJoin() {
               {join ? (
                 <>
                   {" · "}
-                  <ExtLink href={join.href} className="text-primary-ink">
-                    {join.label}
-                  </ExtLink>
+                  <ExtLink href={join.href}>{join.label}</ExtLink>
                 </>
               ) : null}
               {" · 1-1 notes 22 Oct"}
@@ -915,9 +1259,16 @@ function Index() {
       <ul className="columns-2 gap-8 text-sm sm:columns-3">
         {[
           ...Object.keys(STATES),
+          ...Object.keys(MESSAGE_STATES),
           "today",
           "today-failed",
           "queue",
+          "today-recap-rows",
+          "today-impromptu",
+          "today-impromptu-failed",
+          "today-place-sheet",
+          "today-impromptu-dropped",
+          "today-place-sheet-empty",
           "header-join",
         ].map(k => (
           <li key={k}>
@@ -945,6 +1296,18 @@ function App() {
   }, []);
   if (state === "today" || state === "queue") return <Today failed={false} />;
   if (state === "today-failed") return <Today failed />;
+  if (state === "today-impromptu")
+    return <Today failed={false} impromptu="rows" />;
+  if (state === "today-impromptu-failed")
+    return <Today failed={false} impromptu="failed" />;
+  if (state === "today-place-sheet")
+    return <Today failed={false} impromptu="sheet" />;
+  if (state === "today-impromptu-dropped")
+    return <Today failed={false} impromptu="dropped" />;
+  if (state === "today-place-sheet-empty")
+    return <Today failed={false} impromptu="sheet-empty" />;
+  if (state === "today-recap-rows") return <RecapRows />;
+  if (MESSAGE_STATES[state]) return <MessagesCard name={state} />;
   if (state === "header-join") return <HeaderJoin />;
   const entry = STATES[state];
   if (!entry) return <Index />;

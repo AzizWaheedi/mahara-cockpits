@@ -66,7 +66,7 @@ export function readJob(body: unknown): Job | string {
       return { job: "dryRun", input: { responseId: b.responseId } };
     }
     if (!only(b, ["job", "kind", "taskId", "facts", "variant"])) return `A dry run takes a responseId alone, or kind, taskId and facts. ${SEND}`;
-    if (!isNoticeKind(b.kind)) return `kind must be one of the six notices. ${SEND}`;
+    if (!isNoticeKind(b.kind)) return `kind must be one of the notices. ${SEND}`;
     const kind: NoticeKind = b.kind;
     if (typeof b.taskId !== "string" || !TASK_ID.test(b.taskId)) return `taskId must be a ClickUp task ID. ${SEND}`;
     if (!isObj(b.facts) || JSON.stringify(b.facts).length > 16384) return `facts must be an object under 16 KB. ${SEND}`;
@@ -77,7 +77,7 @@ export function readJob(body: unknown): Job | string {
   }
   if (b.job === "rehearse") {
     if (!only(b, ["job", "kind", "to"])) return `A rehearsal takes kind and to only. ${SEND}`;
-    if (b.kind !== undefined && !isNoticeKind(b.kind)) return `kind must be one of the six notices. ${SEND}`;
+    if (b.kind !== undefined && !isNoticeKind(b.kind)) return `kind must be one of the notices. ${SEND}`;
     if (b.to !== undefined && !(typeof b.to === "string" && PERSON.test(b.to))) return `to must be a person's Slack id (U or W). ${SEND}`;
     return { job: "rehearse", input: { kind: (b.kind as NoticeKind | undefined) ?? "kickoff", to: (b.to as string | undefined) ?? null } };
   }

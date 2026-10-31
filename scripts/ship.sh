@@ -134,6 +134,87 @@ if [ -f apps/media-buyer-cockpit/scripts/forms-core-supabase.test.ts ]; then
   (cd apps/client-success-cockpit && bun test scripts/checkin-form.test.ts scripts/field-saver.test.ts scripts/checkin-trail.test.ts scripts/checkin-window.test.tsx scripts/after-calls.test.tsx scripts/forms-button.test.tsx scripts/client-calls.test.tsx >/dev/null 2>&1) \
     || { echo "the 1-1 notes window tests fail (cd apps/client-success-cockpit && bun test scripts/checkin-form.test.ts scripts/field-saver.test.ts scripts/checkin-trail.test.ts scripts/checkin-window.test.tsx scripts/after-calls.test.tsx scripts/forms-button.test.tsx scripts/client-calls.test.tsx)"; exit 1; }
 fi
+# The 1-1 notes cut-over machinery, built and deployed dark (docs/forms/STAGE2B-CONTRACT.md section 8):
+# the registry and owner gate, the effect dispatch, the ClickUp forms job, the check-in notices, the
+# WhatsApp recap sender, kickoff records, late Typeform forms, moving a recording, the brief's short
+# to-dos and They owe. Wrong is a client message or card write before the switch-over, a delivery
+# sent twice, or notes lost on submit. The live replay, the guardian's and the Python unit tests and
+# stage2b-ownership.test.ts run outside this script (section 8).
+if [ -f apps/media-buyer-cockpit/scripts/forms-dispatch-supabase.test.ts ]; then
+  # bun passes a run whose named file is missing, so every 2b test file is checked first: missing is never zero.
+  for suite in apps/media-buyer-cockpit/scripts/forms-registry-supabase.test.ts apps/media-buyer-cockpit/scripts/forms-dispatch-supabase.test.ts apps/media-buyer-cockpit/scripts/late-typeform-supabase.test.ts apps/media-buyer-cockpit/scripts/forms-record-supabase.test.ts apps/media-buyer-cockpit/scripts/forms-move-supabase.test.ts apps/media-buyer-cockpit/scripts/forms-writeback-supabase.test.ts apps/media-buyer-cockpit/scripts/checkin-notices-supabase.test.ts apps/media-buyer-cockpit/scripts/client-messages-supabase.test.ts apps/media-buyer-cockpit/scripts/stage2b-fit-supabase.test.ts supabase/functions/clickup-writeback/forms.test.ts supabase/functions/cockpit-forms-api/effects.test.ts supabase/functions/cockpit-forms-api/messages.test.ts hermes/client-messages/core.test.ts hermes/client-messages/whapi.test.ts hermes/client-messages/ledger.test.ts hermes/client-messages/oldSenders.test.ts hermes/client-messages/worker.test.ts hermes/client-messages/g5.test.ts supabase/functions/forms-door/handler.test.ts apps/client-success-cockpit/scripts/client-messages.test.tsx apps/client-success-cockpit/scripts/design-tokens.test.ts; do
+    [ -f "$suite" ] || { echo "the 1-1 notes test file $suite is missing (docs/forms/STAGE2B-CONTRACT.md section 8)"; exit 1; }
+  done
+  (cd apps/media-buyer-cockpit && bun test scripts/forms-registry-supabase.test.ts scripts/forms-dispatch-supabase.test.ts scripts/late-typeform-supabase.test.ts scripts/forms-record-supabase.test.ts scripts/forms-move-supabase.test.ts >/dev/null 2>&1) \
+    || { echo "the 1-1 notes registry, dispatch, late form, record or move database tests fail (cd apps/media-buyer-cockpit && bun test scripts/forms-registry-supabase.test.ts scripts/forms-dispatch-supabase.test.ts scripts/late-typeform-supabase.test.ts scripts/forms-record-supabase.test.ts scripts/forms-move-supabase.test.ts)"; exit 1; }
+  (cd apps/media-buyer-cockpit && bun test scripts/forms-core-supabase.test.ts scripts/fathom-intake-supabase.test.ts scripts/stage2a-writers.test.ts >/dev/null 2>&1) \
+    || { echo "the Stage 2a forms database or writers tests fail after 2b (cd apps/media-buyer-cockpit && bun test scripts/forms-core-supabase.test.ts scripts/fathom-intake-supabase.test.ts scripts/stage2a-writers.test.ts)"; exit 1; }
+  # requests-supabase.test.ts and supabase/functions/clickup-writeback, the rest of section 8's writers line, run once, in the requests block above.
+  (cd apps/media-buyer-cockpit && bun test scripts/forms-writeback-supabase.test.ts >/dev/null 2>&1) \
+    || { echo "the ClickUp forms writer database tests fail (cd apps/media-buyer-cockpit && bun test scripts/forms-writeback-supabase.test.ts)"; exit 1; }
+  (bun test supabase/functions/cockpit-forms-api/door.test.ts supabase/functions/cockpit-forms-api/effects.test.ts supabase/functions/cockpit-forms-api/messages.test.ts supabase/functions/cockpit-forms-api/recapRules.test.ts supabase/functions/cockpit-forms-api/calls.test.ts supabase/functions/cockpit-forms-api/doctor.test.ts supabase/functions/cockpit-forms-api/prompts.test.ts supabase/functions/cockpit-forms-api/transcript.test.ts supabase/functions/cockpit-forms-api/typeform.test.ts >/dev/null 2>&1) \
+    || { echo "the 1-1 notes door, effects, messages or recap rules tests fail (bun test supabase/functions/cockpit-forms-api/door.test.ts supabase/functions/cockpit-forms-api/effects.test.ts supabase/functions/cockpit-forms-api/messages.test.ts supabase/functions/cockpit-forms-api/recapRules.test.ts supabase/functions/cockpit-forms-api/calls.test.ts supabase/functions/cockpit-forms-api/doctor.test.ts supabase/functions/cockpit-forms-api/prompts.test.ts supabase/functions/cockpit-forms-api/transcript.test.ts supabase/functions/cockpit-forms-api/typeform.test.ts)"; exit 1; }
+  (bun test supabase/functions/cockpit-forms-api/drafts.test.ts >/dev/null 2>&1) \
+    || { echo "the 1-1 notes drafts and They owe tests fail (bun test supabase/functions/cockpit-forms-api/drafts.test.ts)"; exit 1; }
+  (bun test supabase/functions/cockpit-csm-api/projections.test.ts >/dev/null 2>&1) \
+    || { echo "the Log a call date tests fail (bun test supabase/functions/cockpit-csm-api/projections.test.ts)"; exit 1; }
+  (cd apps/client-success-cockpit && bun test scripts/csm-act-route.test.ts scripts/check-in.test.ts scripts/csm-read-model.test.ts >/dev/null 2>&1) \
+    || { echo "the CSM act, check-in or read model tests fail (cd apps/client-success-cockpit && bun test scripts/csm-act-route.test.ts scripts/check-in.test.ts scripts/csm-read-model.test.ts)"; exit 1; }
+  (bun test supabase/functions/cockpit-board-api >/dev/null 2>&1) \
+    || { echo "the board API tests fail after the cockpit-csm-api change (bun test supabase/functions/cockpit-board-api)"; exit 1; }
+  for fn in clickup-writeback cockpit-forms-api cockpit-csm-api; do
+    extras=$("$py_bin" scripts/dev/fn_extras.py . "$fn") \
+      || { echo "the import list of $fn cannot be read ($py_bin scripts/dev/fn_extras.py . $fn)"; exit 1; }
+    for extra in $extras; do
+      [ -f "$extra" ] || { echo "$fn imports $extra, which does not exist ($py_bin scripts/dev/fn_extras.py . $fn)"; exit 1; }
+    done
+  done
+  extras=$("$py_bin" scripts/dev/fn_extras.py . forms-door) \
+    || { echo "the import list of forms-door cannot be read ($py_bin scripts/dev/fn_extras.py . forms-door)"; exit 1; }
+  [ "$extras" = "hermes/csm-calls/callMatch.ts hermes/csm-calls/match.ts supabase/functions/_shared/clickupRetry.ts supabase/functions/cockpit-ceo-api/tools.ts supabase/functions/cockpit-hours-sync/db.ts supabase/functions/team-onboarding-intake/signature.ts" ] \
+    || { echo "forms-door imports other files than its six extras ($py_bin scripts/dev/fn_extras.py . forms-door)"; exit 1; }
+  (cd apps/media-buyer-cockpit && bun test scripts/checkin-notices-supabase.test.ts scripts/client-messages-supabase.test.ts scripts/slack-notices-supabase.test.ts >/dev/null 2>&1) \
+    || { echo "the check-in notices or client messages database tests fail (cd apps/media-buyer-cockpit && bun test scripts/checkin-notices-supabase.test.ts scripts/client-messages-supabase.test.ts scripts/slack-notices-supabase.test.ts)"; exit 1; }
+  # E5 (contract 4.2): the Slack notices suite cannot load the 2a base, so the proof that 20261029u leaves Stage 1 as it was is checkin-notices-supabase.test.ts's body-diff case, run above.
+  (bun test supabase/functions/cockpit-notices >/dev/null 2>&1) \
+    || { echo "the notices sender tests fail (bun test supabase/functions/cockpit-notices)"; exit 1; }
+  (bun test hermes/client-messages >/dev/null 2>&1) \
+    || { echo "the WhatsApp recap sender tests fail (bun test hermes/client-messages)"; exit 1; }
+  # native-feed.test.ts runs the importer with `python`. A Mac with only python3 gets a one-line
+  # `python` for this run alone, in a temporary folder removed after. It points at the newest
+  # python3.11 or later found, because 3.9's fromisoformat refuses Postgres times with 4 or 5
+  # fraction digits, which fails the importer's freshness check about one run in ten.
+  py_shim=""
+  if ! command -v python >/dev/null 2>&1; then
+    native_py=$(command -v "$py_bin")
+    for cand in python3.13 python3.12 python3.11; do
+      if command -v "$cand" >/dev/null 2>&1; then native_py=$(command -v "$cand"); break; fi
+    done
+    py_shim=$(mktemp -d)
+    printf '#!/bin/sh\nexec "%s" "$@"\n' "$native_py" >"$py_shim/python"
+    chmod +x "$py_shim/python"
+  fi
+  native_ok=1
+  (PATH="${py_shim:+$py_shim:}$PATH" bun test hermes/cockpit-sync/csm-checkin-task.test.ts hermes/cockpit-sync/csmProducer.test.ts scripts/native-feed.test.ts >/dev/null 2>&1) || native_ok=0
+  [ -z "$py_shim" ] || rm -rf "$py_shim"
+  [ "$native_ok" = 1 ] \
+    || { echo "the native feed's 1-1 notes tests fail (bun test hermes/cockpit-sync/csm-checkin-task.test.ts hermes/cockpit-sync/csmProducer.test.ts scripts/native-feed.test.ts)"; exit 1; }
+  (bun test hermes/csm-calls/sources.test.ts hermes/csm-calls/lib.test.ts hermes/csm-calls/match.test.ts hermes/csm-calls/callMatch.test.ts hermes/csm-calls/fathomRules.test.ts hermes/csm-calls/eods.test.ts hermes/csm-calls/rollback.test.ts >/dev/null 2>&1) \
+    || { echo "the CSM calls worker tests fail (bun test hermes/csm-calls/sources.test.ts hermes/csm-calls/lib.test.ts hermes/csm-calls/match.test.ts hermes/csm-calls/callMatch.test.ts hermes/csm-calls/fathomRules.test.ts hermes/csm-calls/eods.test.ts hermes/csm-calls/rollback.test.ts)"; exit 1; }
+  (bun test supabase/functions/forms-door >/dev/null 2>&1) \
+    || { echo "the kickoff webhook tests fail (bun test supabase/functions/forms-door)"; exit 1; }
+  (cd apps/client-success-cockpit && bun test scripts/after-calls.test.tsx scripts/client-messages.test.tsx scripts/checkin-window.test.tsx scripts/csm-page.test.tsx scripts/notices-routing.test.tsx scripts/forms-button.test.tsx scripts/design-tokens.test.ts scripts/checkin-trail.test.ts scripts/form-panel.test.tsx scripts/form-contract.test.ts scripts/checkin-form.test.ts >/dev/null 2>&1) \
+    || { echo "the 1-1 notes screens tests fail (cd apps/client-success-cockpit && bun test scripts/after-calls.test.tsx scripts/client-messages.test.tsx scripts/checkin-window.test.tsx scripts/csm-page.test.tsx scripts/notices-routing.test.tsx scripts/forms-button.test.tsx scripts/design-tokens.test.ts scripts/checkin-trail.test.ts scripts/form-panel.test.tsx scripts/form-contract.test.ts scripts/checkin-form.test.ts)"; exit 1; }
+  (cd apps/client-success-cockpit && bun test scripts/client-brief.test.ts >/dev/null 2>&1) \
+    || { echo "the client brief tests fail (cd apps/client-success-cockpit && bun test scripts/client-brief.test.ts)"; exit 1; }
+  (cd apps/media-buyer-cockpit && bun test scripts/checkin-plans-supabase.test.ts scripts/checkin-replay.test.ts scripts/stage2b-fit-supabase.test.ts >/dev/null 2>&1) \
+    || { echo "the 1-1 notes plans, replay or 2b fit tests fail (cd apps/media-buyer-cockpit && bun test scripts/checkin-plans-supabase.test.ts scripts/checkin-replay.test.ts scripts/stage2b-fit-supabase.test.ts)"; exit 1; }
+  # bun counts a failing marked case as a pass, so G11 reads the file (the pattern never names the marker whole).
+  [ "$(grep -c 'test[.]failing' apps/media-buyer-cockpit/scripts/checkin-plans-supabase.test.ts || true)" = "0" ] \
+    || { echo "a case in checkin-plans-supabase.test.ts is still marked failing (grep -c 'test[.]failing' apps/media-buyer-cockpit/scripts/checkin-plans-supabase.test.ts)"; exit 1; }
+  bash -n scripts/ship.sh \
+    || { echo "scripts/ship.sh does not parse (bash -n scripts/ship.sh)"; exit 1; }
+fi
 if [ -f apps/client-success-cockpit/scripts/check-in.test.ts ]; then
   (cd apps/client-success-cockpit && bun test scripts/check-in.test.ts >/dev/null 2>&1) \
     || { echo "the client check-in booking tests fail"; exit 1; }

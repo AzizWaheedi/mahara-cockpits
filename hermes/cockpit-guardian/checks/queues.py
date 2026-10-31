@@ -54,6 +54,12 @@ class Queue:
     # Set: a queued row is held on purpose, not stuck, unless the cockpit_sync_state row named here says the worker
     # takes queued rows now: (key, its detail field, the value that means it does).
     held_unless: Optional[tuple[str, str, str]] = None
+    # What the reading says of held rows: "{n} held {held_label}."
+    held_label: str = "until requests open"
+    # Set with held_unless: (the detail value that means the worker runs limited to some cards, the detail field that
+    # lists them, the row column that holds a row's card). In that mode a queued row on a listed card is live (the
+    # canary card's rows are watched) and every other queued row is held (docs/forms/STAGE2B-CONTRACT.md section 6).
+    limited: Optional[tuple[str, str, str]] = None
 
     def scope(self) -> list[tuple[str, str, Any]]:
         """The kind filter, as a where clause (empty when the queue reads every row)."""
@@ -63,10 +69,15 @@ class Queue:
 # The creative outbox's Brand Blueprint presses (20261024a, 20261025o); its other kinds are not drained.
 BLUEPRINT_KINDS = ("blueprintLaunch", "blueprintClose", "blueprintOffer")
 # The Slack notices other than a late kickoff's "Kickoff card updated" reply, which has its own row.
-NOTICE_KINDS = ("kickoff", "blueprint.close", "blueprint.updated", "blueprint.media", "blueprint.offer", "rehearsal")
+NOTICE_KINDS = ("kickoff", "blueprint.close", "blueprint.updated", "blueprint.media", "blueprint.offer", "rehearsal",
+                "checkin.grade", "checkin.recap_late")
 REPLY_KINDS = ("kickoff.updated",)
 # The writeback queue's requests and focus view presses (20261026r); the log job's kinds are its own.
 REQUEST_KINDS = ("request", "task_action")
+# The 1-1 notes' effects (docs/forms/STAGE2B-CONTRACT.md section 6): every delivery but the WhatsApp recap, whose
+# queued effect waits on a person by design (Z36) and has its own row.
+EFFECT_KINDS = ("clickup_queue", "slack_notice", "sql")
+RECAP_KINDS = ("client_message",)
 
 
 QUEUES = (
@@ -125,33 +136,83 @@ QUEUES = (
           "Run the requests doctor (clickup-writeback job requests_doctor); an unknown needs a person to look in ClickUp "
           "for its Cockpit ref (RUNBOOK, Requests writer).", "", status_col="state", kind_col="kind", kinds=REQUEST_KINDS,
           failed_col="updated_at", held_unless=("clickup-writeback:requests", "mode", "apply")),
+    # The 1-1 notes writer (docs/forms/STAGE2B-CONTRACT.md 4.1 and section 6): clickup-writeback job forms writes the
+    # four check-in effects of a response to its card. Until the writer reports mode apply its queued rows are held on
+    # purpose; while it runs limited to the canary card (apply_limited, cut-over step 6), that card's rows are live.
+    Queue("queue-clickup-forms", "cockpit_clickup_writeback_queue", "1-1 notes write bound for ClickUp",
+          ("queued", "sending", "retry", "unknown"), "created_at", 15, "the tech lead",
+          "Run the forms doctor (clickup-writeback job forms_doctor); an unknown needs a person to look in ClickUp for its "
+          "Cockpit ref F- (RUNBOOK, 1-1 notes writer).", status_col="state", kind_col="kind", kinds=("form",),
+          failed_col="updated_at", held_unless=("clickup-writeback:forms", "mode", "apply"),
+          held_label="until the 1-1 notes writer opens", limited=("apply_limited", "onlyCards", "task_id")),
+    # The 1-1 notes dispatch (20261029w): the sweep runs every minute and fails a waiting effect with a sentence after
+    # 30 minutes, so one still planned, queued or unknown past 30 minutes is stuck. Only cockpit-owned effects can be
+    # in these states (the table's CHECK), so a shadow run never shows here.
+    Queue("queue-form-effects", "cockpit_form_effects", "1-1 notes effect", ("planned", "queued", "unknown"), "created_at",
+          30, "the tech lead", "Read the effect's reason in the 1-1 notes trail; the dispatch sweep runs every minute "
+          "(RUNBOOK, 1-1 notes dispatch).", status_col="state", kind_col="delivery", kinds=EFFECT_KINDS,
+          failed_col="updated_at"),
+    # The WhatsApp recap's effect: a queued one waits on a person in Messages (Z36), so only planned and unknown count.
+    Queue("queue-form-recap", "cockpit_form_effects", "1-1 notes recap effect", ("planned", "unknown"), "created_at", 30,
+          "the tech lead", "Read the recap's reason in the 1-1 notes trail; a recap that waits on a person shows on the "
+          "client's Messages card, not here (RUNBOOK, 1-1 notes dispatch).", status_col="state", kind_col="delivery",
+          kinds=RECAP_KINDS),
+    # hermes/client-messages (docs/forms/STAGE2B-CONTRACT.md 4.3): it runs every minute and sends one approved recap a
+    # run after a 30 to 120 second wait, so an approved, claimed or sending message past 15 minutes is stuck.
+    Queue("queue-client-messages", "cockpit_client_messages", "client WhatsApp message", ("approved", "claimed", "sending"),
+          "updated_at", 15, "the tech lead", "Run the client-messages doctor on the VPS (RUNBOOK, Client messages).",
+          status_col="state", failed_col="updated_at"),
+    # An unknown message may be in the client's group: nothing sends it again, a person looks first.
+    Queue("queue-client-messages-unknown", "cockpit_client_messages", "WhatsApp message with an unknown outcome",
+          ("unknown",), "updated_at", 0, "the tech lead", "Look in the client's WhatsApp group for the message, then "
+          "record seen_in_group or not_sent; the cockpit never sends it twice (RUNBOOK, Client messages).",
+          status_col="state"),
 )
 
 
 WITH_ERROR = ("eod_outbox", "team_calendar_ops", "cockpit_post_jobs", "editor_requests", "ideation_requests", "social_jobs",
               "cockpit_sales_requests", "cockpit_slack_notices", "cockpit_creative_outbox", "cockpit_clickup_writeback_queue")
+# Tables whose plain-sentence error column has another name (docs/forms/STAGE2B-CONTRACT.md section 6). A message's body
+# is never read: only its reason.
+ERROR_COLUMN = {"cockpit_client_messages": "reason", "cockpit_form_effects": "reason"}
 
 
-def _as_status(r: dict[str, Any], col: str) -> dict[str, Any]:
-    """A row read by its own state column, reported as status."""
-    return r if col == "status" else {**{k: v for k, v in r.items() if k != col}, "status": r.get(col)}
+def _error_col(table: str) -> Optional[str]:
+    return ERROR_COLUMN.get(table) or ("error" if table in WITH_ERROR else None)
+
+
+def _as_status(r: dict[str, Any], col: str, err: Optional[str] = None) -> dict[str, Any]:
+    """A row read by its own state column, reported as status (and its error column, reported as error)."""
+    out = r if col == "status" else {**{k: v for k, v in r.items() if k != col}, "status": r.get(col)}
+    if err and err != "error":
+        out = {**{k: v for k, v in out.items() if k != err}, "error": r.get(err)}
+    return out
 
 
 def queue_check(q: Queue) -> Callable[[Context], Result]:
     def run(ctx: Context) -> Result:
-        err_col = ",error" if q.table in WITH_ERROR else ""
+        err = _error_col(q.table)
+        err_col = f",{err}" if err else ""
+        card_col = f",{q.limited[2]}" if q.limited else ""
         st = q.status_col
-        rows = ctx.rows(q.table, f"{q.id_col},{st},{q.time_col}{err_col}",
+        rows = ctx.rows(q.table, f"{q.id_col},{st},{q.time_col}{err_col}{card_col}",
                         where=[(st, "in", list(q.states))] + q.scope(), order=f"{q.time_col}.asc", limit=50)
-        rows = [_as_status(r, st) for r in rows]
+        rows = [_as_status(r, st, err) for r in rows]
         held = 0
         if q.held_unless and any(r.get("status") == "queued" for r in rows):
             key, field, value = q.held_unless
             state = ctx.rows("cockpit_sync_state", "key,detail", where=[("key", "eq", key)], limit=1)
             detail = state[0].get("detail") if state else None
-            if not (isinstance(detail, dict) and detail.get(field) == value):
-                held = sum(1 for r in rows if r.get("status") == "queued")
-                rows = [r for r in rows if r.get("status") != "queued"]
+            mode = detail.get(field) if isinstance(detail, dict) else None
+            if mode != value:
+                live: set[str] = set()
+                if q.limited and mode == q.limited[0]:
+                    cards = detail.get(q.limited[1]) if isinstance(detail, dict) else None
+                    live = {str(c) for c in cards} if isinstance(cards, list) else set()
+                card = q.limited[2] if q.limited else ""
+                kept = [r for r in rows if r.get("status") != "queued" or (card and str(r.get(card)) in live)]
+                held = len(rows) - len(kept)
+                rows = kept
         old = []
         for r in rows:
             age = age_min(r.get(q.time_col), ctx.now)
@@ -163,11 +224,11 @@ def queue_check(q: Queue) -> Callable[[Context], Result]:
             failed = ctx.rows(q.table, f"{q.id_col},{st},{q.failed_col}{err_col}",
                               where=[(st, "eq", "failed"), (q.failed_col, "gt", since)] + q.scope(),
                               order=f"{q.failed_col}.desc", limit=50)
-            failed = [_as_status(r, st) for r in failed]
+            failed = [_as_status(r, st, err) for r in failed]
         ev = {"waiting": len(rows), "over_limit": len(old), "failed_24h": len(failed)}
         if q.held_unless:
             ev["held"] = held
-        held_note = f" {held} held until requests open." if held else ""
+        held_note = f" {held} held {q.held_label}." if held else ""
         if not old and not failed:
             if not q.limit_min:
                 return ok(f"No {q.label} is open" + (" and none failed in 24 h." if q.failed_col else ".") + held_note,
@@ -335,7 +396,8 @@ CHECKS = [
                 + (f" and {q.kind_col} in ({', '.join(q.kinds)})" if q.scope() else "") + f", by {q.time_col}"
                 + (f"; and {q.status_col} failed by {q.failed_col} in 24 h" if q.failed_col else "")
                 + (f"; queued rows count only while cockpit_sync_state {q.held_unless[0]} has {q.held_unless[1]} "
-                   f"{q.held_unless[2]}" if q.held_unless else ""),
+                   f"{q.held_unless[2]}" if q.held_unless else "")
+                + (f", or {q.limited[0]} for the rows whose {q.limited[2]} is in its {q.limited[1]}" if q.limited else ""),
           threshold=_threshold(q), run=queue_check(q), owner=q.owner, action=q.action)
     for q in QUEUES
 ] + [

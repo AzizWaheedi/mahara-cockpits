@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import { approveAnswer } from "@/lib/clientMessages";
 
 /**
  * The 1-1 notes window's calls (docs/forms/STAGE2-CONTRACT.md 2.1, 2.2,
@@ -14,7 +15,11 @@ import { z } from "zod";
 
 export type FormClient = Pick<SupabaseClient, "rpc" | "auth" | "functions">;
 
-const NOT_LIVE = "The cockpit's 1-1 notes are not live yet.";
+/** The door or an RPC is not there yet (before the deploy, or rolled back). */
+export const NOTES_NOT_LIVE = "The cockpit's 1-1 notes are not live yet.";
+/** The door or an RPC answered something this window cannot read. */
+export const NOTES_SHAPE =
+  "The 1-1 notes came back in a shape this window does not read.";
 
 /**
  * A request that never reached the cockpit (the Wi-Fi dropped, the laptop
@@ -150,6 +155,12 @@ export const callView = z.object({
   otherClient: nul(z.string()),
   /** The 3.2 sentence when this recording cannot be picked here (A7.3). */
   blocked: nul(z.string()),
+  /**
+   * An admin or the CEO may move this recording here from another client
+   * (docs/forms/STAGE2B-CONTRACT.md 3.8, 4.11): an older door answer has no
+   * flag and reads as false.
+   */
+  movable: z.boolean().default(false),
   notesAlready: nul(
     z.object({ at: z.string(), source: z.enum(["cockpit", "typeform"]) }),
   ),
@@ -341,14 +352,11 @@ async function rpc<T extends z.ZodType>(
       if (!code && offline(error.message))
         throw new CheckinError(OFFLINE, null, null);
       if (notLive(`${error.message} ${code ?? ""}`))
-        throw new CheckinError(NOT_LIVE, code, null);
+        throw new CheckinError(NOTES_NOT_LIVE, code, null);
       throw new CheckinError(error.message, code, null);
     }
     const parsed = shape.safeParse(data);
-    if (!parsed.success)
-      throw Error(
-        "The 1-1 notes came back in a shape this window does not read.",
-      );
+    if (!parsed.success) throw Error(NOTES_SHAPE);
     return parsed.data;
   } finally {
     actor.release();
@@ -389,14 +397,11 @@ async function door<T extends z.ZodType>(
     if (error) {
       const raw = answer as { message?: string; code?: string } | null;
       if (status === 404 || notLive(`${raw?.message ?? ""} ${raw?.code ?? ""}`))
-        throw new CheckinError(NOT_LIVE, raw?.code ?? null, status);
+        throw new CheckinError(NOTES_NOT_LIVE, raw?.code ?? null, status);
       throw new CheckinError(error.message, null, status);
     }
     const parsed = shape.safeParse(answer);
-    if (!parsed.success)
-      throw Error(
-        "The 1-1 notes came back in a shape this window does not read.",
-      );
+    if (!parsed.success) throw Error(NOTES_SHAPE);
     return parsed.data;
   } finally {
     actor.release();
@@ -547,4 +552,54 @@ export function readTypeformSent(
   items: { taskId: string; since: string }[],
 ) {
   return door(client, { op: "checkin.typeformSent", items }, sentAnswer);
+}
+
+/**
+ * recap.approve (docs/forms/STAGE2B-CONTRACT.md 4.3, Z27): the text the
+ * reviewer saw, checked on the server by recapRules.ts, then approved by
+ * the service RPC with the verified seat. Warnings come back as
+ * `needsConfirm` and approve nothing until `acceptWarnings`.
+ */
+export function approveRecap(
+  client: FormClient | null,
+  messageId: string,
+  body: string,
+  acceptWarnings = false,
+) {
+  return door(
+    client,
+    {
+      op: "recap.approve",
+      messageId,
+      body,
+      ...(acceptWarnings ? { acceptWarnings: true } : {}),
+    },
+    approveAnswer,
+  );
+}
+
+const moveAnswer = z.object({
+  ok: z.literal(true),
+  callId: z.number(),
+  fromTaskId: nul(z.string()),
+  taskId: z.string(),
+});
+export type MoveAnswer = z.output<typeof moveAnswer>;
+
+/**
+ * Move it here (docs/forms/STAGE2B-CONTRACT.md 4.11, Z16): an admin or the
+ * CEO moves a recording the worker put on the wrong client, by an explicit
+ * confirmed gesture. The RPC checks the seat, the switch, the target, the
+ * notes guard, and writes both audit rows.
+ */
+export function moveRecording(
+  client: FormClient | null,
+  a: { recordingId: string; taskId: string },
+) {
+  return rpc(
+    client,
+    "cockpit_csm_move_recording",
+    { p_recording_id: a.recordingId, p_task_id: a.taskId },
+    moveAnswer,
+  );
 }

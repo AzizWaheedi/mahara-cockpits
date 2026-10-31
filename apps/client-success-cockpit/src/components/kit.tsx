@@ -245,6 +245,15 @@ export function PillRow({
   );
 }
 
+/**
+ * Teal link words, 4.5:1 or more wherever a link sits: the ink teal leans
+ * 10% toward the text colour (4.85:1 at the lowest, on accent in light;
+ * plain --primary-ink is 4.18:1 there). One measured mix, never a new
+ * colour (docs/DESIGN.md, External links).
+ */
+export const LINK_INK =
+  "text-[color:color-mix(in_oklab,var(--primary-ink)_90%,var(--foreground))]";
+
 /** A link that leaves the app: one trailing arrow, teal text. */
 export function ExtLink({
   href,
@@ -261,7 +270,8 @@ export function ExtLink({
       target="_blank"
       rel="noreferrer"
       className={cn(
-        "inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline",
+        "inline-flex items-center gap-1 rounded-sm underline-offset-4 hover:underline",
+        LINK_INK,
         className,
       )}
     >

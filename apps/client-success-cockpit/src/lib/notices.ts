@@ -111,7 +111,10 @@ const noticeRead: z.ZodType<NoticeRead> = z.object({
   notices: z.array(noticeView),
 });
 
-/** The eight notice kinds, in the settings' order (contract 2.1). */
+/**
+ * The ten notice kinds, in the settings' order: Stage 1's eight (contract
+ * 2.1), then the 1-1 notes' two (docs/forms/STAGE2B-CONTRACT.md 4.2, 5.4).
+ */
 export const NOTICE_KINDS = [
   "kickoff",
   "kickoff.late",
@@ -121,7 +124,18 @@ export const NOTICE_KINDS = [
   "blueprint.media",
   "blueprint.updated",
   "blueprint.offer",
+  "checkin.grade",
+  "checkin.recap_late",
 ] as const;
+
+/**
+ * The Call grade posts only in a private channel and tags nobody: the
+ * server refuses anything else (STAGE2B-CONTRACT.md 4.2, settings_set), and
+ * the card offers nothing else.
+ */
+export const PRIVATE_ONLY_KINDS: ReadonlySet<string> = new Set([
+  "checkin.grade",
+]);
 export type NoticeKind = (typeof NOTICE_KINDS)[number];
 
 /** The three seats a notice may tag. */

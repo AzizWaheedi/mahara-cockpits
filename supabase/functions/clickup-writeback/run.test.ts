@@ -1,12 +1,21 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { FORMS_NOT_A_CARD, HAPPINESS_OPTIONS, SAY_FORMS, sha256 } from "./forms";
 import {
   anotherRunNote,
   boardAge,
   BUSY_HELD,
   CALLS_MAX,
+  CALLS_MIN,
   cardList,
   type Deps,
+  FORMS_BUSY_HELD,
+  FORMS_CALLS_PER_MINUTE,
+  FORMS_RUN_BUDGET_MS,
+  formsAnotherRunNote,
+  formsPerMinute,
   gate,
+  HOLD_MS,
+  JOBS,
   kpiGate,
   noJobNote,
   openRunMinutes,
@@ -14,6 +23,8 @@ import {
   REQUESTS_RUN_BUDGET_MS,
   runDoctor,
   runDosDonts,
+  runForms,
+  runFormsDoctor,
   runKpi,
   runLog,
   runRequests,
@@ -23,8 +34,8 @@ import {
   writebackPerMinute,
 } from "./run";
 import { type Provider, RETRY_MINUTES } from "./queue";
-import type { RequestsItem } from "./requests";
-import { harness as requestsHarness, LIVE, rejected, requestPayload } from "./requestsTestkit";
+import { type RequestsItem, SAY } from "./requests";
+import { actionPayload, harness as requestsHarness, LISTS, LIVE, PEOPLE, rejected, requestPayload } from "./requestsTestkit";
 import { ADS_LIST, CLIENTS_LIST, DOS_DONTS_FIELD, FIELD, NOTES_MARK } from "./rules";
 
 const NOW = Date.parse("2026-10-09T09:00:00Z");
@@ -715,9 +726,9 @@ describe("the requests switch beside the other jobs (contract 4.1)", () => {
     expect(k.writes()).toEqual([]);
   });
 
-  it("the unknown-job sentence names all six jobs", () => {
-    expect(unknownJobNote("forms")).toBe('Unknown job "forms". Use kpi, log, dosdonts, doctor, requests or requests_doctor.');
-    expect(noJobNote).toBe("Send a JSON body with a job: kpi, log, dosdonts, doctor, requests or requests_doctor.");
+  it("the unknown-job sentence names all eight jobs", () => {
+    expect(unknownJobNote("checkins")).toBe('Unknown job "checkins". Use kpi, log, dosdonts, doctor, requests, requests_doctor, forms or forms_doctor.');
+    expect(noJobNote).toBe("Send a JSON body with a job: kpi, log, dosdonts, doctor, requests, requests_doctor, forms or forms_doctor.");
   });
 
   it("the doctor names the requests mode and the canary cards", async () => {
@@ -729,5 +740,903 @@ describe("the requests switch beside the other jobs (contract 4.1)", () => {
     expect(canary.note).toContain("Requests and task changes: apply_limited to the cards 86eywg1cq (CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS).");
     // The general switch does not open requests.
     expect((await runDoctor(harness({ CLICKUP_WRITEBACK_APPLY: "true" }).deps)).requestsMode).toBe("dry_run");
+  });
+});
+
+// --- forms (docs/forms/STAGE2B-CONTRACT.md build 1) ------------------------------------------------
+
+describe("the forms job beside the others", () => {
+  const CARD = "86card0001";
+  const TEST_CARD = "86eywg1cq";
+  const RESPONSE = "5b1e2c3d-4f50-4a61-8b72-9c83d4e5f601";
+  const HAPPY_FIELD = "4e3924e3-4898-4e98-aca1-cc1ac3015b73";
+  const POC_FIELD = "e183f2ce-8b7a-491a-b160-2287a247758b";
+  const OPTIONS = Object.entries(HAPPINESS_OPTIONS).map(([name, oid], orderindex) => ({ id: oid, name, orderindex }));
+  const cardTask = (id: string, poc?: string, happy = 2) => ({
+    id,
+    list: { id: CLIENTS_LIST },
+    custom_fields: [
+      { id: HAPPY_FIELD, type: "drop_down", type_config: { options: OPTIONS }, value: happy },
+      { id: POC_FIELD, type: "date", value: poc },
+    ],
+  });
+  /** A claimed row as cockpit_clickup_writeback_claim_forms returns it. */
+  const row = (key: "happiness" | "last_poc", task = CARD, over: Record<string, any> = {}) => {
+    const plan =
+      key === "happiness"
+        ? { taskId: task, field: HAPPY_FIELD, label: "Happy", value: HAPPINESS_OPTIONS.Happy }
+        : { taskId: task, field: POC_FIELD, day: "2026-10-25", value: Date.parse("2026-10-25T09:00:00Z"), value_options: { time: false }, rule: "forward_only" };
+    return {
+      id: `q-${key}-${task}`,
+      kind: "form",
+      attempts: 1,
+      created_at: new Date(NOW - 60_000).toISOString(),
+      task_id: task,
+      steps: null,
+      progress: {},
+      payload: { formKey: "checkin", responseId: RESPONSE, effectId: `e-${key}`, effectKey: key, taskId: task, clientName: "Acme Interiors", ...plan },
+      effect: { id: `e-${key}`, state: "queued", plan },
+      ...over,
+    };
+  };
+  /** The forms job's own harness: its claim, release, state and save, and a card that keeps what it is sent. */
+  function formsHarness(
+    env: Record<string, string>,
+    items: any[],
+    opts: { now?: () => number; fail?: (c: Call) => Error | undefined; begin?: (params: any) => any; inputs?: () => any } = {},
+  ) {
+    const calls: Call[] = [];
+    const rpcs: { name: string; params: any }[] = [];
+    const days = new Map<string, string | undefined>();
+    const happy = new Map<string, number>();
+    let queue = items;
+    const deps: Deps = {
+      env: k => env[k],
+      now: opts.now ?? (() => NOW),
+      uuid: () => "11111111-2222-3333-4444-555555555555",
+      rpc: async (name, params = {}) => {
+        rpcs.push({ name, params: structuredClone(params) });
+        if (name === "cockpit_clickup_writeback_claim_forms") {
+          const out = queue;
+          queue = [];
+          return out;
+        }
+        if (name === "cockpit_clickup_writeback_begin") {
+          if (opts.begin) return opts.begin(params);
+          return { id: "run-forms" };
+        }
+        if (name === "cockpit_clickup_writeback_release") return { id: params.p_id, state: "queued" };
+        if (name === "cockpit_clickup_forms_doctor_inputs") return opts.inputs ? opts.inputs() : { owners: { happiness: "shadow" }, queue: {} };
+        return null;
+      },
+      providerFor: (actionId: string): Provider => ({
+        async call(provider, method, path, body) {
+          const c = { actionId, provider, method, path, body };
+          calls.push(c);
+          const failure = opts.fail?.(c);
+          if (failure) throw failure;
+          const task = /^task\/([^/]+)$/.exec(path)?.[1];
+          if (method === "GET" && task) return cardTask(task, days.get(task), happy.get(task));
+          // ClickUp keeps a date-only value at 03:00Z on its day and answers a dropdown with its orderindex.
+          if (method === "POST" && path.includes(`/field/${POC_FIELD}`)) days.set(path.split("/")[1], String(Number(body?.value) - 6 * 3_600_000));
+          if (method === "POST" && path.includes(`/field/${HAPPY_FIELD}`)) happy.set(path.split("/")[1], OPTIONS.findIndex(o => o.id === body?.value));
+          if (method === "GET" && path === `list/${CLIENTS_LIST}/field`) return { fields: cardTask(CARD).custom_fields.concat([{ id: "032203ad-e327-4d76-a0ce-c07496da6486", type: "date", value: undefined }]) };
+          return {};
+        },
+      }),
+      syncState: async (key, r) => {
+        rpcs.push({ name: `syncState:${key}`, params: structuredClone(r) });
+      },
+    };
+    const writes = () => calls.filter(c => c.method !== "GET");
+    const saves = () => rpcs.filter(r => r.name === "cockpit_clickup_writeback_save").map(r => r.params.p_patch);
+    const releases = () => rpcs.filter(r => r.name === "cockpit_clickup_writeback_release").map(r => r.params);
+    const state = () => rpcs.filter(r => r.name === "cockpit_clickup_forms_state").at(-1)?.params;
+    return { deps, calls, rpcs, writes, saves, releases, state };
+  }
+  const LIVE = { CLICKUP_API_TOKEN: "x", CLICKUP_WRITEBACK_APPLY_FORMS: "true" };
+
+  it("JOBS adds forms and forms_doctor", () => {
+    expect(JOBS).toEqual(["kpi", "log", "dosdonts", "doctor", "requests", "requests_doctor", "forms", "forms_doctor"]);
+  });
+
+  it("a dry run claims nothing and reports dry_run: Nothing to write.", async () => {
+    const h = formsHarness({ CLICKUP_API_TOKEN: "x" }, []);
+    expect(await runForms(h.deps)).toEqual({ ok: true, job: "forms", mode: "dry_run", note: "Nothing to write." });
+    expect(h.state()).toMatchObject({ p_ok: true, p_note: "Nothing to write.", p_mode: "dry_run", p_only_cards: [] });
+    expect(h.rpcs.find(r => r.name === "cockpit_clickup_writeback_claim_forms")?.params).toEqual({ p_token: "11111111-2222-3333-4444-555555555555", p_limit: 8 });
+    expect(h.rpcs.some(r => r.name === "cockpit_clickup_writeback_begin")).toBe(false);
+    expect(h.calls).toEqual([]);
+  });
+
+  it("nothing claimed while form rows are open never reads as Nothing to write: it says what waits and why", async () => {
+    // Review round 3: the claim settles every row the owner gate refuses first, so what is still open waits.
+    const dry = formsHarness({ CLICKUP_API_TOKEN: "x" }, [], { inputs: () => ({ queue: { queued: 3, retry: 1, delivered: 9 }, oldestDue: new Date(NOW - 60_000).toISOString() }) });
+    expect((await runForms(dry.deps)).note).toBe("Nothing written: 4 writes wait in the queue while the 1-1 notes writer is off.");
+    expect(dry.state()).toMatchObject({ p_ok: true, p_mode: "dry_run", p_counts: { waiting: 4 } });
+    // A row on the retry ladder: the next try's time, on the Kuwait clock.
+    const later = formsHarness(LIVE, [], { inputs: () => ({ queue: { retry: 1 }, oldestDue: "2026-10-26T10:05:00Z" }) });
+    expect((await runForms(later.deps)).note).toBe("Nothing to write now: 1 write waits for a later try, the next at 13:05 Kuwait.");
+    // Due but not taken: behind an older call on the card (one lane per card), or for the next run.
+    const lane = formsHarness(LIVE, [], { inputs: () => ({ queue: { queued: 2, unknown: 1 }, oldestDue: new Date(NOW - 60_000).toISOString() }) });
+    expect((await runForms(lane.deps)).note).toBe("Nothing to write now: 3 writes wait behind an older call on their card, or for the next run.");
+    const canary = formsHarness({ ...LIVE, CLICKUP_WRITEBACK_FORMS_ONLY_CARDS: TEST_CARD }, [], { inputs: () => ({ queue: { queued: 1 }, oldestDue: new Date(NOW).toISOString() }) });
+    expect((await runForms(canary.deps)).note).toBe("Nothing to write now: 1 write waits on the other cards, behind an older call on their card, or for the next run.");
+    // Missing is never zero: a count that cannot be read is said.
+    const unread = formsHarness(LIVE, [], {
+      inputs: () => {
+        throw new Error("Supabase 503");
+      },
+    });
+    const out = await runForms(unread.deps);
+    expect(out.note).toBe("Nothing to write now. The 1-1 notes queue could not be counted, so it is not reported as empty.");
+    expect(unread.state()?.p_counts).toEqual({});
+    const shapeless = formsHarness(LIVE, [], { inputs: () => null });
+    expect((await runForms(shapeless.deps)).note).not.toBe("Nothing to write.");
+    // No open row: the contract's sentence, word for word.
+    const empty = formsHarness(LIVE, [], { inputs: () => ({ queue: { delivered: 4, skipped: 2 }, oldestDue: null }) });
+    expect((await runForms(empty.deps)).note).toBe("Nothing to write.");
+    expect(empty.state()?.p_counts).toEqual({ waiting: 0 });
+  });
+
+  it("with the switch off, a claimed row is released, never saved dry_run, and nothing reaches ClickUp", async () => {
+    // The writer last reported apply, then the switch was turned off: the claim still hands rows over.
+    const h = formsHarness({ CLICKUP_API_TOKEN: "x", CLICKUP_WRITEBACK_APPLY: "true", CLICKUP_WRITEBACK_APPLY_REQUESTS: "true" }, [row("happiness"), row("last_poc")]);
+    const out = await runForms(h.deps);
+    expect(out).toMatchObject({ ok: true, mode: "dry_run", counts: { claimed: 2, held: 2, delivered: 0 } });
+    expect(out.note).toBe("Dry run: 2 writes held. Nothing was written to ClickUp: the 1-1 notes writer is off until the switch-over.");
+    expect(h.releases().map(r => [r.p_id, r.p_note])).toEqual([
+      ["q-happiness-86card0001", SAY_FORMS.heldOff],
+      ["q-last_poc-86card0001", SAY_FORMS.heldOff],
+    ]);
+    expect(h.saves().some(s => s.state === "dry_run")).toBe(false);
+    expect(h.saves()).toEqual([]);
+    expect(h.calls).toEqual([]);
+    expect(h.rpcs.find(r => r.name === "cockpit_clickup_writeback_begin")?.params).toEqual({ p_job: "forms", p_mode: "dry_run", p_exclusive: true });
+  });
+
+  it("a card list that cannot be read holds every row, writes nothing and reads not ok on the health row", async () => {
+    for (const cards of [",", " , ,", " ", "taskA1;taskB1"]) {
+      // The writer last reported live, so the database still hands the rows over; a good test card is among them.
+      const env = { ...LIVE, CLICKUP_WRITEBACK_FORMS_ONLY_CARDS: cards };
+      const h = formsHarness(env, [row("happiness", CARD), row("happiness", TEST_CARD)]);
+      const out = await runForms(h.deps);
+      expect(h.calls).toEqual([]);
+      expect(out).toMatchObject({ ok: false, mode: "dry_run", counts: { claimed: 2, held: 2, heldOff: 2, delivered: 0 } });
+      expect(out.note.startsWith(`${FORMS_NOT_A_CARD} Dry run: 2 writes held.`)).toBe(true);
+      expect(h.state()).toMatchObject({ p_ok: false, p_mode: "dry_run", p_only_cards: [], p_note: out.note });
+      expect(h.releases().map(r => r.p_note)).toEqual([FORMS_NOT_A_CARD, FORMS_NOT_A_CARD]);
+      expect(h.rpcs.find(r => r.name === "cockpit_clickup_writeback_begin")?.params.p_mode).toBe("dry_run");
+      expect(h.rpcs.find(r => r.name === "cockpit_clickup_writeback_finish")?.params).toMatchObject({ p_ok: false, p_note: out.note });
+      // Nothing claimed: the sentence still reaches the row, and an empty queue is not a clean bill.
+      const idle = formsHarness(env, [], { inputs: () => ({ queue: {}, oldestDue: null }) });
+      const quiet = await runForms(idle.deps);
+      expect(quiet).toMatchObject({ ok: false, mode: "dry_run", note: `${FORMS_NOT_A_CARD} Nothing to write.` });
+      expect(idle.state()).toMatchObject({ p_ok: false, p_mode: "dry_run", p_only_cards: [], p_note: quiet.note });
+      // The doctor lists it as a problem, reads only the test card, and never puts the value in a path.
+      const doc = formsHarness(env, []);
+      const checked = await runFormsDoctor(doc.deps);
+      expect(checked).toMatchObject({ ok: false, mode: "dry_run", onlyCards: [] });
+      expect(checked.problems).toContain(FORMS_NOT_A_CARD);
+      expect(checked.note).toContain("1-1 notes writes: off, because CLICKUP_WRITEBACK_FORMS_ONLY_CARDS is not a list of card ids.");
+      expect(doc.writes()).toEqual([]);
+      expect(doc.calls.filter(c => c.path.startsWith("task/")).map(c => c.path)).toEqual([`task/${TEST_CARD}`]);
+      const general = await runDoctor(harness({ CLICKUP_WRITEBACK_APPLY_FORMS: "true", CLICKUP_WRITEBACK_FORMS_ONLY_CARDS: cards }).deps);
+      expect(general).toMatchObject({ formsMode: "dry_run", formsOnlyCards: [] });
+      expect(general.note).toContain("1-1 notes writes: off, because CLICKUP_WRITEBACK_FORMS_ONLY_CARDS is not a list of card ids.");
+    }
+  });
+
+  it("apply_limited writes the test card's rows and holds another card's", async () => {
+    const h = formsHarness({ ...LIVE, CLICKUP_WRITEBACK_FORMS_ONLY_CARDS: TEST_CARD }, [row("happiness", CARD), row("happiness", TEST_CARD)]);
+    const out = await runForms(h.deps);
+    expect(h.releases().map(r => [r.p_id, r.p_note])).toEqual([["q-happiness-86card0001", SAY_FORMS.heldLimited]]);
+    expect(h.writes()).toEqual([expect.objectContaining({ method: "POST", path: `task/${TEST_CARD}/field/${HAPPY_FIELD}` })]);
+    expect(out.note).toBe("Testing on the test card: 1 written to ClickUp, 0 to retry, 0 failed. 1 write held for the other cards.");
+    expect(h.state()).toMatchObject({ p_mode: "apply_limited", p_only_cards: [TEST_CARD], p_counts: { claimed: 2, delivered: 1, held: 1, heldOff: 1, heldNext: 0 } });
+  });
+
+  it("apply_limited names the rows the switch holds apart from the test card's rows a stop holds for the next run", async () => {
+    // Review round 2: a test-card row handed back by a 429 or the budget is waiting for the next run, not "for the other cards".
+    const h = formsHarness({ ...LIVE, CLICKUP_WRITEBACK_FORMS_ONLY_CARDS: TEST_CARD }, [row("happiness", CARD), row("happiness", TEST_CARD), row("last_poc", TEST_CARD)], {
+      fail: c => (c.method === "POST" ? new Error("clickup rejected the request (429). Inspect the provider receipt.") : undefined),
+    });
+    const out = await runForms(h.deps);
+    expect(h.releases().map(r => [r.p_id, r.p_note])).toEqual([
+      ["q-happiness-86card0001", SAY_FORMS.heldLimited],
+      [`q-last_poc-${TEST_CARD}`, "ClickUp asked the cockpit to slow down (429), so the rest waits for the next run."],
+    ]);
+    expect(out.note).toBe(
+      "Testing on the test card: 0 written to ClickUp, 1 to retry, 0 failed. 1 write held for the other cards. 1 write held for the next run. Stopped: ClickUp asked the cockpit to slow down (429), so the rest waits for the next run.",
+    );
+    expect(h.state()?.p_counts).toMatchObject({ claimed: 3, retry: 1, held: 2, heldOff: 1, heldNext: 1 });
+    // Only the test card's rows: nothing held "for the other cards".
+    const own = formsHarness({ ...LIVE, CLICKUP_WRITEBACK_FORMS_ONLY_CARDS: TEST_CARD }, [row("happiness", TEST_CARD), row("last_poc", TEST_CARD)], {
+      fail: c => (c.method === "POST" ? new Error("clickup rejected the request (429). Inspect the provider receipt.") : undefined),
+    });
+    const second = await runForms(own.deps);
+    expect(second.note).toBe(
+      "Testing on the test card: 0 written to ClickUp, 1 to retry, 0 failed. 1 write held for the next run. Stopped: ClickUp asked the cockpit to slow down (429), so the rest waits for the next run.",
+    );
+    expect(second.note).not.toContain("other cards");
+  });
+
+  it("live: freezes the step before the write and settles by the ladder", async () => {
+    const h = formsHarness(LIVE, [row("last_poc")]);
+    const out = await runForms(h.deps);
+    expect(out).toMatchObject({ ok: true, mode: "apply", note: "1 write reached ClickUp, 0 to retry, 0 failed." });
+    const [freeze, ...rest] = h.saves();
+    expect(freeze).toEqual({ steps: [{ key: "last_poc", type: "date", taskId: CARD, fieldId: POC_FIELD, day: "2026-10-25", value: Date.parse("2026-10-25T09:00:00Z") }] });
+    expect(rest.at(-1)).toMatchObject({ state: "delivered", error: null });
+    expect(h.writes()).toEqual([
+      { actionId: "q-last_poc-86card0001", provider: "clickup", method: "POST", path: `task/${CARD}/field/${POC_FIELD}`, body: { value: Date.parse("2026-10-25T09:00:00Z"), value_options: { time: false } } },
+    ]);
+    expect(h.rpcs.find(r => r.name === "cockpit_clickup_writeback_finish")?.params).toMatchObject({ p_run: "run-forms", p_ok: true });
+  });
+
+  it("a plan that does not match its row fails with no call", async () => {
+    const bad = row("happiness");
+    bad.payload.taskId = "86elsewhere";
+    const h = formsHarness(LIVE, [bad]);
+    const out = await runForms(h.deps);
+    expect(h.saves()).toEqual([{ state: "failed", error: SAY_FORMS.mismatch }]);
+    expect(h.calls).toEqual([]);
+    expect(out.ok).toBe(false);
+  });
+
+  it("past the 100-second budget the rest goes back to the queue uncounted", async () => {
+    let t = NOW;
+    const h = formsHarness(LIVE, [row("happiness"), row("last_poc")], { now: () => (t += 60_000) });
+    const out = await runForms(h.deps);
+    expect(FORMS_RUN_BUDGET_MS).toBe(100_000);
+    expect(out.counts).toMatchObject({ delivered: 1, held: 1 });
+    expect(h.releases().map(r => r.p_id)).toEqual(["q-last_poc-86card0001"]);
+    expect(h.releases()[0].p_note).toBe("Held for the next run, so this run ends inside its time limit.");
+  });
+
+  it("a 429 retries on the ladder and stops the run, so the shared token gets its breath", async () => {
+    const h = formsHarness(LIVE, [row("happiness"), row("last_poc")], {
+      fail: c => (c.method === "POST" ? new Error("clickup rejected the request (429). Inspect the provider receipt.") : undefined),
+    });
+    const out = await runForms(h.deps);
+    const settle = h.saves().find(s => s.state);
+    expect(settle).toMatchObject({ state: "retry" });
+    expect(Date.parse(settle?.next_attempt_at)).toBe(NOW + 60_000);
+    expect(h.releases().map(r => [r.p_id, r.p_note])).toEqual([
+      ["q-last_poc-86card0001", "ClickUp asked the cockpit to slow down (429), so the rest waits for the next run."],
+    ]);
+    expect(out.ok).toBe(false);
+    expect(out.note).toContain("Stopped: ClickUp asked the cockpit to slow down (429)");
+  });
+
+  it("a card read ClickUp never answered, before any write, is a plain retry and never says to check the card", async () => {
+    // Review round 2: nothing was sent to the card, so the row is not unknown and its effect stays queued.
+    const fail = (c: Call) => (c.method === "GET" ? new Error("clickup rejected the request (502). Inspect the provider receipt.") : undefined);
+    const first = formsHarness(LIVE, [row("happiness", CARD)], { fail });
+    await runForms(first.deps);
+    expect(first.writes()).toEqual([]);
+    const settle = first.saves().at(-1);
+    expect(settle).toMatchObject({ state: "retry", error: "clickup rejected the request (502). Inspect the provider receipt." });
+    expect(Date.parse(settle?.next_attempt_at)).toBe(NOW + 60_000);
+    expect(first.saves().some(s => s.state === "unknown")).toBe(false);
+    const last = formsHarness(LIVE, [row("happiness", CARD, { attempts: 6 })], { fail });
+    await runForms(last.deps);
+    expect(last.saves().at(-1)).toMatchObject({ state: "failed", error: "Gave up after the retry ladder." });
+    expect(last.saves().at(-1)?.progress.lastDetail).toBe("clickup rejected the request (502). Inspect the provider receipt.");
+    expect(last.saves().at(-1)?.error).not.toContain("check it in ClickUp");
+  });
+
+  it("a 429 on the read-back after a write that went through settles unknown, still stops the run, and at the end of the ladder says to check the card", async () => {
+    // Review round 3: the write is on the card, so the row is not a plain retry; the run still gives the shared token its breath.
+    let posted = false;
+    const fail = (c: Call) => {
+      if (c.method === "POST") posted = true;
+      return c.method === "GET" && posted ? new Error("clickup rejected the request (429). Inspect the provider receipt.") : undefined;
+    };
+    const first = formsHarness(LIVE, [row("happiness", CARD), row("last_poc", CARD)], { fail });
+    const out = await runForms(first.deps);
+    expect(first.writes()).toHaveLength(1);
+    expect(first.saves().find(s => s.state)).toMatchObject({ state: "unknown", error: SAY_FORMS.notConfirmed, progress: { lastDetail: "clickup rejected the request (429). Inspect the provider receipt." } });
+    expect(first.releases().map(r => [r.p_id, r.p_note])).toEqual([
+      [`q-last_poc-${CARD}`, "ClickUp asked the cockpit to slow down (429), so the rest waits for the next run."],
+    ]);
+    expect(out.note).toContain("Stopped: ClickUp asked the cockpit to slow down (429)");
+    posted = false;
+    const last = formsHarness(LIVE, [row("happiness", CARD, { attempts: 6 })], { fail });
+    await runForms(last.deps);
+    expect(last.saves().at(-1)?.error).toBe("Gave up after the retry ladder. An earlier try may have reached the card, so check it in ClickUp.");
+  });
+
+  it("a 502 on the read-back after a started write stays unknown, and at the end of the ladder says to check the card", async () => {
+    let posted = false;
+    const fail = (c: Call) => {
+      if (c.method === "POST") posted = true;
+      return c.method === "GET" && posted ? new Error("clickup rejected the request (502). Inspect the provider receipt.") : undefined;
+    };
+    const first = formsHarness(LIVE, [row("happiness", CARD)], { fail });
+    await runForms(first.deps);
+    expect(first.writes()).toHaveLength(1);
+    expect(first.saves().at(-1)).toMatchObject({ state: "unknown" });
+    posted = false;
+    const last = formsHarness(LIVE, [row("happiness", CARD, { attempts: 6 })], { fail });
+    await runForms(last.deps);
+    expect(last.saves().at(-1)).toMatchObject({ state: "failed" });
+    expect(last.saves().at(-1)?.error).toBe("Gave up after the retry ladder. An earlier try may have reached the card, so check it in ClickUp.");
+  });
+
+  describe("a token ClickUp refuses (finish review)", () => {
+    const TOKEN = "clickup rejected the request (401): Token invalid";
+    const bad = () => new Error(TOKEN);
+
+    it("a 401 the check of the token confirms: two calls, no row fails, no try used, the rest handed back", async () => {
+      const h = formsHarness(LIVE, [row("happiness", "86card0001"), row("last_poc", "86card0002"), row("happiness", "86card0003")], { fail: bad });
+      const out = await runForms(h.deps);
+      expect(h.calls.map(c => `${c.method} ${c.path}`)).toEqual(["GET task/86card0001", `GET list/${CLIENTS_LIST}/field`]);
+      // The check lands in the ledger under the row's own action, as every call of the row does.
+      expect(h.calls[1].actionId).toBe("q-happiness-86card0001");
+      expect(h.saves().filter(s => s.state)).toEqual([]);
+      // The release takes the claim's try off (20261029t); the refused row waits, so one card never heads the queue.
+      expect(h.releases().map(r => [r.p_id, r.p_note, r.p_next_attempt_at])).toEqual([
+        ["q-happiness-86card0001", SAY_FORMS.tokenRefused, new Date(NOW + HOLD_MS).toISOString()],
+        ["q-last_poc-86card0002", SAY_FORMS.tokenRefused, new Date(NOW).toISOString()],
+        ["q-happiness-86card0003", SAY_FORMS.tokenRefused, new Date(NOW).toISOString()],
+      ]);
+      expect(out.counts).toMatchObject({ claimed: 3, delivered: 0, failed: 0, retry: 0, unknown: 0, held: 3, heldNext: 3 });
+      expect(out.ok).toBe(false);
+      expect(out.note).toBe(`0 writes reached ClickUp, 0 to retry, 0 failed. 3 writes held for the next run. Stopped: ${SAY_FORMS.tokenRefused} Last detail: ${TOKEN}`);
+    });
+
+    it("on the last rung too the row stays open", async () => {
+      const h = formsHarness(LIVE, [row("happiness", CARD, { attempts: 6 })], { fail: bad });
+      const out = await runForms(h.deps);
+      expect(out.counts).toMatchObject({ failed: 0, heldNext: 1 });
+      expect(h.saves().filter(s => s.state)).toEqual([]);
+      expect(h.releases()).toHaveLength(1);
+    });
+
+    it("a 401 on the POST saves the step clean, so the next try starts it fresh", async () => {
+      const h = formsHarness(LIVE, [row("happiness", CARD)], { fail: c => (c.method === "POST" || c.path.startsWith("list/") ? bad() : undefined) });
+      await runForms(h.deps);
+      expect(h.writes()).toHaveLength(1);
+      expect(h.saves().at(-1)).toEqual({ progress: { steps: {} } });
+      expect(h.releases()).toHaveLength(1);
+    });
+
+    describe("the token answers, so the card is what refuses it", () => {
+      const onCards = (c: Call) => (c.path.startsWith("task/86card0001") ? bad() : undefined);
+
+      it("the row climbs the ladder with its try used, and the run goes on to the next card, not stopped", async () => {
+        const h = formsHarness(LIVE, [row("happiness", "86card0001"), row("happiness", "86card0002")], { fail: onCards });
+        const out = await runForms(h.deps);
+        expect(h.releases()).toEqual([]);
+        const first = h.saves().find(s => s.state === "retry");
+        expect(first).toMatchObject({ state: "retry", error: TOKEN, next_attempt_at: new Date(NOW + 60_000).toISOString() });
+        expect(h.saves().some(s => s.state === "delivered")).toBe(true);
+        expect(out.counts).toMatchObject({ retry: 1, delivered: 1, failed: 0, held: 0, heldNext: 0 });
+        expect(out.ok).toBe(true);
+        expect(out.note).not.toContain("Stopped:");
+        expect(out.note).not.toContain("CLICKUP_API_TOKEN");
+        expect(out.note).toContain("ClickUp refused the cockpit's token on card 86card0001.");
+      });
+
+      it("on the last rung the row is failed with the plain sentence, ClickUp's wording kept on progress and in the note", async () => {
+        const h = formsHarness(LIVE, [row("happiness", "86card0001", { attempts: 6 })], { fail: onCards });
+        const out = await runForms(h.deps);
+        expect(h.releases()).toEqual([]);
+        expect(h.saves().at(-1)).toMatchObject({ state: "failed", error: "ClickUp refused this card to the cockpit's token, so nothing was written." });
+        expect(h.saves().at(-1)?.progress?.lastDetail).toBe(TOKEN);
+        expect(out.counts).toMatchObject({ failed: 1 });
+        expect(out.ok).toBe(false);
+        expect(out.note).toContain(`Last detail: ${TOKEN}`);
+      });
+
+      it("checks the token once a run: a second refused card costs no second check", async () => {
+        const h = formsHarness(LIVE, [row("happiness", "86card0001"), row("happiness", "86card0001b"), row("last_poc", "86card0001c")], { fail: onCards });
+        const out = await runForms(h.deps);
+        expect(h.calls.filter(c => c.path === `list/${CLIENTS_LIST}/field`)).toHaveLength(1);
+        expect(out.counts).toMatchObject({ retry: 3 });
+      });
+
+      it("a 401 on the read-back after a write that went through is unknown: it may be on the card", async () => {
+        let posted = false;
+        const fail = (c: Call) => {
+          if (c.method === "POST") posted = true;
+          else if (posted && c.path.startsWith("task/")) return bad();
+          return undefined;
+        };
+        const h = formsHarness(LIVE, [row("happiness", "86card0001")], { fail });
+        const out = await runForms(h.deps);
+        expect(h.saves().at(-1)).toMatchObject({ state: "unknown", error: SAY_FORMS.readRefused });
+        expect(out.counts).toMatchObject({ unknown: 1, retry: 0 });
+        const last = formsHarness(LIVE, [row("happiness", "86card0001", { attempts: 6, progress: { steps: { happiness: { state: "started", at: new Date(NOW).toISOString() } } }, steps: undefined })], {
+          fail: c => (c.path.startsWith("task/") ? bad() : undefined),
+        });
+        await runForms(last.deps);
+        expect(last.saves().at(-1)).toMatchObject({ state: "failed", error: "Gave up after the retry ladder. An earlier try may have reached the card, so check it in ClickUp." });
+      });
+    });
+
+    describe("the check of the token tells nothing: no try used, the run stops", () => {
+      const cases: [string, Error | null, string][] = [
+        ["a 429", new Error("clickup rejected the request (429): Rate limit reached"), "ClickUp asked the cockpit to slow down (429), so the rest waits for the next run."],
+        ["a 500", new Error("clickup rejected the request (500). Inspect the provider receipt."), SAY_FORMS.tokenUnsure],
+        ["no answer", new Error("network connection lost"), SAY_FORMS.tokenUnsure],
+        ["a 404", new Error("clickup rejected the request (404). Inspect the provider receipt."), SAY_FORMS.tokenUnsure],
+      ];
+      for (const [name, answer, sentence] of cases)
+        it(`${name} on the check`, async () => {
+          const h = formsHarness(LIVE, [row("happiness", "86card0001", { attempts: 6 }), row("happiness", "86card0002")], {
+            fail: c => (c.path.startsWith("list/") ? (answer as Error) : bad()),
+          });
+          const out = await runForms(h.deps);
+          expect(h.calls).toHaveLength(2);
+          expect(h.saves().filter(s => s.state)).toEqual([]);
+          expect(h.releases().map(r => [r.p_id, r.p_note])).toEqual([
+            ["q-happiness-86card0001", sentence],
+            ["q-happiness-86card0002", sentence],
+          ]);
+          expect(h.releases()[0].p_next_attempt_at).toBe(new Date(NOW + HOLD_MS).toISOString());
+          expect(out.ok).toBe(false);
+          expect(out.note).toContain(`Stopped: ${sentence}`);
+        });
+    });
+  });
+
+  describe("the pace floor keeps a run inside the Edge wall (break-it)", () => {
+    for (const set of ["1", "4", "5"])
+      it(`CLICKUP_FORMS_CALLS_PER_MINUTE=${set}: eight rows, the last ClickUp call is before 150 s`, async () => {
+        let t = NOW;
+        const stamps: number[] = [];
+        const env = { ...LIVE, CLICKUP_FORMS_CALLS_PER_MINUTE: set };
+        const rows = Array.from({ length: 8 }, (_, i) => row("happiness", `86card000${i}`));
+        const h = formsHarness(env, rows, {
+          now: () => t,
+          // A first row of one call (a card off the list), so a field row's three calls straddle the budget at 100 s.
+          fail: c => {
+            t += 500;
+            stamps.push(t - NOW);
+            return c.path === "task/86card0000" ? new Error("clickup rejected the request (404). Inspect the provider receipt.") : undefined;
+          },
+        });
+        h.deps.pace = pacer(formsPerMinute(k => (env as Record<string, string>)[k]), () => t, async ms => {
+          t += ms;
+        });
+        const out = await runForms(h.deps);
+        expect(Math.max(...stamps)).toBeLessThan(150_000);
+        // The time ran out before the rows did, and the rest go back with no try used.
+        expect(out.counts?.heldNext).toBeGreaterThan(0);
+      });
+  });
+
+  describe("the stop holds on the last rung (finish review)", () => {
+    it("a 429 that ends a row's ladder still stops the run: no second call on the shared token, and the next row keeps its try", async () => {
+      const h = formsHarness(LIVE, [row("happiness", CARD, { attempts: 6 }), row("last_poc", "86card0002")], {
+        fail: () => new Error("clickup rejected the request (429): Rate limit reached"),
+      });
+      const out = await runForms(h.deps);
+      expect(h.calls.map(c => `${c.method} ${c.path}`)).toEqual([`GET task/${CARD}`]);
+      expect(out.counts).toMatchObject({ failed: 1, retry: 0, heldNext: 1 });
+      expect(h.releases().map(r => [r.p_id, r.p_note])).toEqual([["q-last_poc-86card0002", "ClickUp asked the cockpit to slow down (429), so the rest waits for the next run."]]);
+      expect(out.note).toContain("Stopped: ClickUp asked the cockpit to slow down (429)");
+    });
+
+    it("a missing secret on the last rung stops it too", async () => {
+      const h = formsHarness(LIVE, [row("happiness", CARD, { attempts: 6 }), row("last_poc", "86card0002")], {
+        fail: () => new Error("CLICKUP_API_TOKEN is not configured"),
+      });
+      const out = await runForms(h.deps);
+      expect(h.calls).toHaveLength(1);
+      expect(out.counts).toMatchObject({ failed: 1, heldNext: 1 });
+      expect(h.releases().map(r => r.p_id)).toEqual(["q-last_poc-86card0002"]);
+    });
+  });
+
+  describe("ClickUp's wording stays off the row's error, so off the CSM's trail (finish review)", () => {
+    const FIVE = "clickup rejected the request (500). Inspect the provider receipt.";
+
+    it("a 500 on the POST: the row says not confirmed, the wording goes to progress and the run's note", async () => {
+      const h = formsHarness(LIVE, [row("happiness", CARD)], { fail: c => (c.method === "POST" ? new Error(FIVE) : undefined) });
+      const out = await runForms(h.deps);
+      const settle = h.saves().find(s => s.state);
+      expect(settle).toMatchObject({ state: "unknown", error: SAY_FORMS.notConfirmed, progress: { lastDetail: FIVE } });
+      expect(settle?.error).not.toMatch(/rejected the request|provider receipt/);
+      expect(out.note).toBe(`0 writes reached ClickUp, 1 to retry, 0 failed. Last detail: ${FIVE}`);
+    });
+
+    it("a 429 at the end of the ladder: no raw sentence on the row, and the wording is still in the run's note", async () => {
+      const h = formsHarness(LIVE, [row("happiness", CARD, { attempts: 6 })], { fail: () => new Error("clickup rejected the request (429): Rate limit reached") });
+      const out = await runForms(h.deps);
+      const settle = h.saves().at(-1);
+      expect(settle).toMatchObject({ state: "failed", error: "Gave up after the retry ladder.", progress: { lastDetail: "clickup rejected the request (429): Rate limit reached" } });
+      expect(out.note).toContain("Last detail: clickup rejected the request (429): Rate limit reached");
+    });
+
+    it("a resumed row on a card that left the list settles failed with the check-the-card sentence, never nothing was written", async () => {
+      const resumed = { progress: { steps: { happiness: { state: "started", at: new Date(NOW - 60_000).toISOString() } } } };
+      const gone = formsHarness(LIVE, [row("happiness", CARD, resumed)], { fail: c => (c.method === "GET" && c.path === `task/${CARD}` ? new Error("clickup rejected the request (404): Task not found") : undefined) });
+      await runForms(gone.deps);
+      expect(gone.saves().find(s => s.state)).toMatchObject({ state: "failed", error: SAY_FORMS.offListStarted });
+    });
+
+    it("a POST refused with a 404 reads as the field steps read; a 403 reads as refused", async () => {
+      const gone = formsHarness(LIVE, [row("happiness", CARD)], { fail: c => (c.method === "POST" ? new Error("clickup rejected the request (404): Task not found") : undefined) });
+      await runForms(gone.deps);
+      expect(gone.saves().find(s => s.state)).toMatchObject({ state: "failed", error: SAY_FORMS.offList });
+      const no = formsHarness(LIVE, [row("happiness", CARD)], { fail: c => (c.method === "POST" ? new Error("clickup rejected the request (403): Forbidden") : undefined) });
+      await runForms(no.deps);
+      expect(no.saves().find(s => s.state)).toMatchObject({ state: "failed", error: SAY_FORMS.refused });
+    });
+
+    it("a row still on retry keeps the wording for the tech lead: its error reaches no effect", async () => {
+      const h = formsHarness(LIVE, [row("happiness", CARD)], { fail: c => (c.method === "POST" ? new Error("clickup rejected the request (429): Rate limit reached") : undefined) });
+      const out = await runForms(h.deps);
+      expect(h.saves().find(s => s.state)).toMatchObject({ state: "retry", error: "clickup rejected the request (429): Rate limit reached" });
+      expect(out.note).not.toContain("Last detail");
+    });
+
+    it("our own bookkeeping failing says the cockpit's sentence, not the database's", async () => {
+      const h = formsHarness(LIVE, [row("happiness", CARD)]);
+      const real = h.deps.rpc;
+      let n = 0;
+      h.deps.rpc = async (name, params) => {
+        // The freeze goes through; the next save, the step's "started", fails, and the save of the outcome goes through.
+        if (name === "cockpit_clickup_writeback_save" && ++n === 2) throw new Error("Supabase 503: upstream unavailable");
+        return real(name, params);
+      };
+      const out = await runForms(h.deps);
+      const settle = h.saves().find(s => s.state);
+      expect(settle).toMatchObject({ state: "unknown", error: SAY.bookkeeping });
+      expect(out.note).toContain("Supabase 503");
+    });
+  });
+
+  it("one run at a time: a run that finds another open hands every claimed row back uncounted, calls nothing and is not a failure", async () => {
+    const busy = "A forms run that started at 11:59 Kuwait is still running.";
+    const h = formsHarness(LIVE, [row("happiness"), row("last_poc")], { begin: p => (p.p_exclusive ? { id: null, note: busy } : { id: "run-forms" }) });
+    const out = await runForms(h.deps);
+    expect(h.rpcs.filter(r => r.name === "cockpit_clickup_writeback_begin").map(r => r.params)).toEqual([{ p_job: "forms", p_mode: "apply", p_exclusive: true }]);
+    expect(h.calls).toEqual([]);
+    expect(h.saves()).toEqual([]);
+    expect(h.releases().map(r => [r.p_id, r.p_note, r.p_next_attempt_at])).toEqual([
+      ["q-happiness-86card0001", FORMS_BUSY_HELD, new Date(NOW).toISOString()],
+      ["q-last_poc-86card0001", FORMS_BUSY_HELD, new Date(NOW).toISOString()],
+    ]);
+    expect(out).toEqual({ ok: true, job: "forms", mode: "apply", note: formsAnotherRunNote(2), counts: { claimed: 2, handedBack: 2 } });
+    expect(out.note).toBe("Another 1-1 notes run is still sending, so this one handed back the 2 writes it claimed; the next run takes them.");
+    expect(formsAnotherRunNote(1)).toBe("Another 1-1 notes run is still sending, so this one handed back the write it claimed; the next run takes it.");
+    expect(h.state()).toMatchObject({ p_ok: true, p_note: formsAnotherRunNote(2), p_mode: "apply" });
+    expect(h.rpcs.some(r => r.name === "cockpit_clickup_writeback_finish")).toBe(false);
+  });
+
+  it("an open run 4 minutes old stopped without reporting back: the run goes ahead and says so", async () => {
+    // NOW is 12:00 Kuwait.
+    const stale = formsHarness(LIVE, [row("last_poc")], {
+      begin: p => (p.p_exclusive ? { id: null, note: "A forms run that started at 11:56 Kuwait is still running." } : { id: "run-forms" }),
+    });
+    const out = await runForms(stale.deps);
+    expect(stale.rpcs.filter(r => r.name === "cockpit_clickup_writeback_begin").map(r => r.params.p_exclusive)).toEqual([true, false]);
+    expect(out).toMatchObject({ ok: true, counts: { delivered: 1 } });
+    expect(out.note).toBe("1 write reached ClickUp, 0 to retry, 0 failed. A 1-1 notes run that started at 11:56 Kuwait never reported back, so this one went ahead.");
+    // Three minutes old: still writing, so this run hands back.
+    const fresh = formsHarness(LIVE, [row("last_poc")], {
+      begin: p => (p.p_exclusive ? { id: null, note: "A forms run that started at 11:57 Kuwait is still running." } : { id: "run-forms" }),
+    });
+    expect((await runForms(fresh.deps)).note).toBe(formsAnotherRunNote(1));
+    expect(fresh.calls).toEqual([]);
+  });
+
+  it("a begin that fails for another reason hands the rows back and reports the run could not start", async () => {
+    const h = formsHarness(LIVE, [row("happiness")], {
+      begin: () => {
+        throw new Error("Supabase 503: upstream unavailable");
+      },
+    });
+    const out = await runForms(h.deps);
+    expect(out).toMatchObject({ ok: false, mode: "apply" });
+    expect(out.note).toBe("The 1-1 notes run could not start, so this waits for the next run. Supabase 503: upstream unavailable");
+    expect(h.releases().map(r => r.p_note)).toEqual(["The 1-1 notes run could not start, so this waits for the next run."]);
+    expect(h.calls).toEqual([]);
+  });
+
+  it("openRunMinutes reads the forms job's busy note too, on the Kuwait clock", () => {
+    const at = Date.parse("2026-10-26T09:00:00Z"); // 12:00 Kuwait
+    expect(openRunMinutes("A forms run that started at 11:58 Kuwait is still running.", at)).toBe(2);
+    expect(openRunMinutes("A forms run that started at 12:00 Kuwait is still running.", at)).toBe(0);
+    expect(openRunMinutes("A forms run that started at 23:59 Kuwait is still running.", Date.parse("2026-10-26T21:01:00Z"))).toBe(2);
+    for (const junk of [undefined, null, "", "Unsupported writeback run", "started at 25:00 Kuwait is still running"]) expect(openRunMinutes(junk, at)).toBeNull();
+    expect(STALE_RUN_MINUTES).toBe(4);
+  });
+
+  it("the pace is the job's: two runs posted together send one run's calls, within 10 a minute, and the pacer never waits", async () => {
+    // Review round 2's scratch case: each run builds its own pacer as index.ts does, three rows on three cards each.
+    const open = new Set<string>();
+    const calls: Call[] = [];
+    const happy = new Map<string, number>();
+    let seq = 0;
+    const one = (cards: string[]) => {
+      let queue = cards.map(t => row("happiness", t));
+      const rpcs: { name: string; params: any }[] = [];
+      const deps: Deps = {
+        env: k => (LIVE as Record<string, string>)[k],
+        now: () => NOW,
+        uuid: () => `00000000-0000-4000-8000-00000000000${++seq}`,
+        rpc: async (name, params = {}) => {
+          rpcs.push({ name, params: structuredClone(params) });
+          if (name === "cockpit_clickup_writeback_claim_forms") {
+            const out = queue;
+            queue = [];
+            return out;
+          }
+          if (name === "cockpit_clickup_writeback_begin") {
+            // The live begin under its advisory lock: exclusive gives no id while a forms run is open.
+            if (params.p_exclusive && open.size) return { id: null, note: "A forms run that started at 12:00 Kuwait is still running." };
+            const id = `run-${++seq}`;
+            open.add(id);
+            return { id };
+          }
+          if (name === "cockpit_clickup_writeback_finish") open.delete(params.p_run);
+          if (name === "cockpit_clickup_writeback_release") return { id: params.p_id, state: "queued" };
+          return null;
+        },
+        providerFor: (actionId: string): Provider => ({
+          async call(provider, method, path, body) {
+            calls.push({ actionId, provider, method, path, body });
+            const task = /^task\/([^/]+)$/.exec(path)?.[1];
+            if (method === "GET" && task) return cardTask(task, undefined, happy.get(task));
+            if (method === "POST") happy.set(path.split("/")[1], OPTIONS.findIndex(o => o.id === body?.value));
+            return {};
+          },
+        }),
+        pace: pacer(formsPerMinute(k => (LIVE as Record<string, string>)[k]), () => NOW, async () => {
+          throw new Error("the pacer had to wait");
+        }),
+      };
+      return { deps, rpcs };
+    };
+    const a = one(["86cardA", "86cardB", "86cardC"]);
+    const b = one(["86cardD", "86cardE", "86cardF"]);
+    const [ra, rb] = await Promise.all([runForms(a.deps), runForms(b.deps)]);
+    expect(formsPerMinute(() => undefined)).toBe(10);
+    expect(calls.length).toBeLessThanOrEqual(FORMS_CALLS_PER_MINUTE);
+    expect(calls).toHaveLength(9);
+    const sent = [ra, rb].find(r => r.counts?.delivered === 3);
+    const handed = [ra, rb].find(r => r.note === formsAnotherRunNote(3));
+    expect(sent).toMatchObject({ ok: true });
+    expect(handed).toMatchObject({ ok: true, counts: { claimed: 3, handedBack: 3 } });
+    // Every call belongs to the run that sent; the other one's rows went back with the busy note.
+    const loser = handed === ra ? a : b;
+    expect(loser.rpcs.filter(r => r.name === "cockpit_clickup_writeback_release").map(r => r.params.p_note)).toEqual([FORMS_BUSY_HELD, FORMS_BUSY_HELD, FORMS_BUSY_HELD]);
+    expect(new Set(calls.map(c => c.actionId.split("-").at(-1)))).toEqual(new Set(handed === ra ? ["86cardD", "86cardE", "86cardF"] : ["86cardA", "86cardB", "86cardC"]));
+  });
+
+  it("without the ClickUp token it reports and claims nothing", async () => {
+    const h = formsHarness({ CLICKUP_WRITEBACK_APPLY_FORMS: "true" }, [row("happiness")]);
+    expect(await runForms(h.deps)).toMatchObject({ ok: false, mode: "apply" });
+    expect(h.rpcs.some(r => r.name === "cockpit_clickup_writeback_claim_forms")).toBe(false);
+    expect(h.state()?.p_ok).toBe(false);
+  });
+
+  it("the forms doctor reads only, names secrets as booleans and lands in clickup-writeback:forms-doctor", async () => {
+    const h = formsHarness({ CLICKUP_API_TOKEN: "x", CRON_SECRET: "s" }, []);
+    const out = await runFormsDoctor(h.deps);
+    expect(out.ok).toBe(true);
+    expect(out.note).toBe(
+      "Ready. 1-1 notes writes: dry run (they are written only when CLICKUP_WRITEBACK_APPLY_FORMS is true). Client Happiness has its six options and Last POC and Last Check-in Call are date fields on Clients - Mahara. The test card 86eywg1cq is on Clients - Mahara.",
+    );
+    expect(out.secrets).toEqual({ CLICKUP_API_TOKEN: true, CRON_SECRET: true, CLICKUP_WRITEBACK_APPLY_FORMS: false, CLICKUP_WRITEBACK_FORMS_ONLY_CARDS: false });
+    expect(h.writes()).toEqual([]);
+    const saved = h.rpcs.find(r => r.name === "syncState:clickup-writeback:forms-doctor")?.params;
+    expect(saved).toMatchObject({ ok: true, detail: { mode: "dry_run", onlyCards: [], owners: { happiness: "shadow" } } });
+    expect(JSON.stringify(saved)).not.toContain('"x"');
+  });
+
+  it("the general doctor names the 1-1 notes switch from the environment only", async () => {
+    const off = await runDoctor(harness({ CLICKUP_API_TOKEN: "x", CRON_SECRET: "s" }).deps);
+    expect(off).toMatchObject({ formsMode: "dry_run", formsOnlyCards: [] });
+    expect(off.note).toContain("1-1 notes writes: dry run (they are written only when CLICKUP_WRITEBACK_APPLY_FORMS is true).");
+    const canary = await runDoctor(harness({ CLICKUP_WRITEBACK_APPLY_FORMS: "true", CLICKUP_WRITEBACK_FORMS_ONLY_CARDS: TEST_CARD }).deps);
+    expect(canary).toMatchObject({ formsMode: "apply_limited", formsOnlyCards: [TEST_CARD] });
+    expect((await runDoctor(harness({ CLICKUP_WRITEBACK_APPLY_REQUESTS: "true", CLICKUP_WRITEBACK_APPLY: "true" }).deps)).formsMode).toBe("dry_run");
+  });
+
+  it("the forms pace: 10 a minute by default, CLICKUP_FORMS_CALLS_PER_MINUTE tunes it, 60 at most", () => {
+    expect(FORMS_CALLS_PER_MINUTE).toBe(10);
+    expect(formsPerMinute(() => undefined)).toBe(10);
+    expect(formsPerMinute(k => (k === "CLICKUP_FORMS_CALLS_PER_MINUTE" ? "6" : undefined))).toBe(6);
+    expect(formsPerMinute(k => (k === "CLICKUP_FORMS_CALLS_PER_MINUTE" ? "60" : undefined))).toBe(60);
+    for (const v of ["61", "100", "5000"]) expect(formsPerMinute(k => (k === "CLICKUP_FORMS_CALLS_PER_MINUTE" ? v : undefined))).toBe(60);
+    for (const v of ["0", "-3", "fast", ""]) expect(formsPerMinute(k => (k === "CLICKUP_FORMS_CALLS_PER_MINUTE" ? v : undefined))).toBe(10);
+    // Never below the floor of every other ClickUp pace.
+    for (const v of ["0.5", "0.9", "1", "2", "4", "4.9"]) expect(formsPerMinute(k => (k === "CLICKUP_FORMS_CALLS_PER_MINUTE" ? v : undefined))).toBe(CALLS_MIN);
+    expect(formsPerMinute(k => (k === "CLICKUP_FORMS_CALLS_PER_MINUTE" ? "5" : undefined))).toBe(5);
+  });
+
+  // The real index.ts, its Deno.serve caught and fetch answered here, so no call leaves this file: what it proves is
+  // the wiring (which pace a job gets, that each call has its own pacer). The begin below is the live one's rule, job
+  // by job, which forms-writeback-supabase.test.ts proves against the SQL.
+  describe("index.ts: a forms run and a requests run side by side", () => {
+    const WORK_TASK = "86work0001";
+    const realFetch = globalThis.fetch;
+    const realTimeout = globalThis.setTimeout;
+    const realDeno = (globalThis as any).Deno;
+    const env: Record<string, string> = {};
+    let handler: (req: Request) => Promise<Response>;
+    beforeAll(async () => {
+      (globalThis as any).Deno = {
+        env: { get: (k: string) => env[k] },
+        serve: (h: (req: Request) => Promise<Response>) => {
+          handler = h;
+        },
+      };
+      await import("./index.ts");
+    });
+    afterEach(() => {
+      globalThis.fetch = realFetch;
+      globalThis.setTimeout = realTimeout;
+    });
+    afterAll(() => {
+      (globalThis as any).Deno = realDeno;
+    });
+    /** One function deployment: its secrets, the forms queue, the requests fake, and the pacers' waits held, never fired. */
+    function world(secrets: Record<string, string>, formRows: any[] = []) {
+      for (const k of Object.keys(env)) delete env[k];
+      Object.assign(env, { SUPABASE_URL: "https://db.invented.test", SUPABASE_SERVICE_ROLE_KEY: "svc", CRON_SECRET: "s", CLICKUP_API_TOKEN: "x", ...secrets });
+      const requests = requestsHarness({ CLICKUP_API_TOKEN: "x", CLICKUP_WRITEBACK_APPLY_REQUESTS: "true" });
+      requests.clickup.addTask({
+        id: WORK_TASK,
+        name: "Acme Interiors - General tech request",
+        listId: LISTS.tech,
+        assignees: [{ id: PEOPLE.systemsManager }],
+        status: { status: "in progress", type: "custom" },
+        checklists: [{ id: "cl0001", name: "SOP steps", date_created: "1", items: [{ id: "it0002", name: "Make the change", resolved: false, orderindex: 1 }] }],
+      });
+      const action = requests.db.enqueue("task_action", actionPayload("tick", { checklistId: "cl0001", itemId: "it0002", itemName: "Make the change", from: false, to: true }));
+      let queue = formRows;
+      const open = new Set<string>();
+      const begins: { job: string; exclusive: boolean; id: string | null }[] = [];
+      const happy = new Map<string, number>();
+      const formsCalls: string[] = [];
+      const requestsCalls: string[] = [];
+      const waits: number[] = [];
+      const gate: { hold: Promise<void> | null } = { hold: null };
+      const answer = (body: unknown, status = 200) => new Response(body === null || body === undefined ? "" : JSON.stringify(body), { status });
+      const rpc = async (name: string, params: Record<string, any>): Promise<unknown> => {
+        if (name === "cockpit_clickup_writeback_begin") {
+          const job = String(params.p_job);
+          if (params.p_exclusive && open.has(job)) {
+            begins.push({ job, exclusive: true, id: null });
+            return { id: null, note: `A ${job} run that started at 12:00 Kuwait is still running.` };
+          }
+          open.add(job);
+          begins.push({ job, exclusive: Boolean(params.p_exclusive), id: `run-${job}` });
+          return { id: `run-${job}` };
+        }
+        if (name === "cockpit_clickup_writeback_finish") {
+          open.delete(String(params.p_run).replace("run-", ""));
+          return null;
+        }
+        if (name === "cockpit_clickup_writeback_claim_forms") {
+          const out = queue;
+          queue = [];
+          return out;
+        }
+        if (name === "cockpit_clickup_forms_doctor_inputs") return { owners: { happiness: "shadow" }, queue: {} };
+        if (name === "cockpit_clickup_forms_state") return null;
+        if (String(params.p_id ?? "").startsWith("q-")) return { id: params.p_id };
+        return requests.deps.rpc(name, params);
+      };
+      const clickup = async (method: string, path: string, body: any): Promise<Response> => {
+        const task = /^task\/(86card[^/]*)/.exec(path)?.[1];
+        const isList = path.startsWith(`list/${CLIENTS_LIST}`);
+        if (task || isList) {
+          formsCalls.push(`${method} ${path}`);
+          if (isList) return answer({ fields: [] });
+          if (method === "GET") return answer(cardTask(task as string, undefined, happy.get(task as string)));
+          happy.set(task as string, OPTIONS.findIndex(o => o.id === body?.value));
+          return answer({});
+        }
+        requestsCalls.push(`${method} ${path}`);
+        if (gate.hold) await gate.hold;
+        return answer(await requests.clickup.provider("beside").call("clickup", method, path, body));
+      };
+      globalThis.fetch = (async (input: any, init: any = {}) => {
+        const url = String(input);
+        const body = init.body ? JSON.parse(init.body) : undefined;
+        if (url.startsWith("https://api.clickup.com/api/v2/")) return clickup(String(init.method), url.slice("https://api.clickup.com/api/v2/".length), body);
+        const called = /^https:\/\/db\.invented\.test\/rest\/v1\/(.+)$/.exec(url)?.[1];
+        if (!called) throw new Error(`A call left the test: ${url}`);
+        if (called.startsWith("rpc/")) return answer(await rpc(called.slice(4), body));
+        return answer(null, 201); // the provider ledger's row
+      }) as typeof fetch;
+      globalThis.setTimeout = ((fn: () => void, ms?: number, ...rest: unknown[]) => {
+        if (Number(ms) >= 1000) {
+          waits.push(Number(ms));
+          return 0;
+        }
+        return (realTimeout as any)(fn, ms, ...rest);
+      }) as unknown as typeof setTimeout;
+      const post = (job: string) => handler(new Request("https://fn.invented.test/", { method: "POST", headers: { "x-cron-secret": "s" }, body: JSON.stringify({ job }) })).then(r => r.json() as Promise<Record<string, any>>);
+      const until = async (done: () => boolean) => {
+        for (let i = 0; i < 2000 && !done(); i++) await new Promise(r => realTimeout(r, 1));
+        expect(done()).toBe(true);
+      };
+      return { action, begins, open, formsCalls, requestsCalls, waits, gate, post, until };
+    }
+    const cards = (n: number) => Array.from({ length: n }, (_, i) => row("happiness", `86card${i}`, { id: `q-${i}` }));
+    const LIVE_BOTH = { CLICKUP_WRITEBACK_APPLY_FORMS: "true", CLICKUP_WRITEBACK_APPLY_REQUESTS: "true" };
+
+    it("a forms run waiting on its own pace does not hold a requests run up, and requests never read the forms pace", async () => {
+      const w = world({ ...LIVE_BOTH, CLICKUP_FORMS_CALLS_PER_MINUTE: "5" }, cards(2));
+      const forms = w.post("forms");
+      let formsDone = false;
+      void forms.then(() => {
+        formsDone = true;
+      });
+      // Five calls a minute: the first five went, the sixth waits on the pacer.
+      await w.until(() => w.waits.length === 1);
+      expect(w.formsCalls).toHaveLength(5);
+      expect(w.waits[0]).toBeGreaterThan(58_000);
+      expect(w.waits[0]).toBeLessThanOrEqual(60_005);
+      const out = await w.post("requests");
+      expect(out).toMatchObject({ ok: true, job: "requests", counts: { delivered: 1 } });
+      expect(w.action.state).toBe("delivered");
+      // Three calls in one go with the forms pace spent: this run had its own pacer, and it never waited.
+      expect(w.requestsCalls.length).toBeGreaterThanOrEqual(3);
+      expect(w.waits).toHaveLength(1);
+      expect(w.begins).toEqual([
+        { job: "forms", exclusive: true, id: "run-forms" },
+        { job: "requests", exclusive: true, id: "run-requests" },
+      ]);
+      expect(formsDone).toBe(false);
+      expect([...w.open]).toEqual(["forms"]);
+      expect(w.formsCalls).toHaveLength(5);
+    });
+
+    it("a requests run still sending does not hold a forms run up", async () => {
+      const w = world(LIVE_BOTH, cards(1));
+      let free: () => void = () => {};
+      w.gate.hold = new Promise<void>(r => {
+        free = r;
+      });
+      const requests = w.post("requests");
+      await w.until(() => w.requestsCalls.length === 1);
+      expect([...w.open]).toEqual(["requests"]);
+      const out = await w.post("forms");
+      expect(out).toMatchObject({ ok: true, job: "forms", counts: { delivered: 1 } });
+      expect(w.formsCalls).toHaveLength(3);
+      expect([...w.open]).toEqual(["requests"]);
+      free();
+      expect(await requests).toMatchObject({ ok: true, job: "requests", counts: { delivered: 1 } });
+      expect(w.open.size).toBe(0);
+      expect(w.waits).toEqual([]);
+    });
+
+    it("the pace a forms run uses is formsPerMinute: 10 unless set, whatever the other jobs' secrets say", async () => {
+      // Four rows are 12 calls, so the pacer stops the run where the pace says.
+      const other = { CLICKUP_CALLS_PER_MINUTE: "60", CLICKUP_REQUESTS_CALLS_PER_MINUTE: "60" };
+      const byDefault = world({ ...LIVE_BOTH, ...other }, cards(4));
+      void byDefault.post("forms");
+      await byDefault.until(() => byDefault.waits.length === 1);
+      expect(byDefault.formsCalls).toHaveLength(formsPerMinute(() => undefined));
+      expect(byDefault.formsCalls).toHaveLength(10);
+      const tuned = world({ ...LIVE_BOTH, ...other, CLICKUP_FORMS_CALLS_PER_MINUTE: "6" }, cards(4));
+      void tuned.post("forms");
+      await tuned.until(() => tuned.waits.length === 1);
+      expect(tuned.formsCalls).toHaveLength(6);
+    });
+
+    it("forms_doctor keeps the forms pace too, and the forms secret does not reach another job's pace", async () => {
+      // Set to 1, so the floor of 5 is the pace: the field list and four of the six cards, then the pacer.
+      const doctor = world({ CLICKUP_FORMS_CALLS_PER_MINUTE: "1", CLICKUP_WRITEBACK_FORMS_ONLY_CARDS: "86card0,86card1,86card2,86card3,86card4,86card5" });
+      void doctor.post("forms_doctor");
+      await doctor.until(() => doctor.waits.length === 1);
+      expect(doctor.formsCalls).toHaveLength(5);
+      expect(writebackPerMinute("requests", k => (k === "CLICKUP_FORMS_CALLS_PER_MINUTE" ? "6" : undefined))).toBe(25);
+      expect(writebackPerMinute("log", k => (k === "CLICKUP_FORMS_CALLS_PER_MINUTE" ? "6" : undefined))).toBe(30);
+    });
+  });
+
+  it("the sha256 the payload carries is the hex of the text's UTF-8 bytes", async () => {
+    expect(await sha256("abc")).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
   });
 });
