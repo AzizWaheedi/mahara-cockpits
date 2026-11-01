@@ -1292,7 +1292,11 @@ export const clients = {
             for (const k of [l.name, ...(l.aliases ?? [])])
                 addName(k, l.taskId);
         }
-        const manual = data.manualPayments ?? [];
+        // Checked money (20261101n): a hand-logged payment is paid money once finance or the CEO
+        // checked it against the bank; a logged one, or one with no state, waits and is counted apart.
+        const manualAll = data.manualPayments ?? [];
+        const manual = manualAll.filter((m) => m.checkState === "checked" || m.check_state === "checked");
+        const manualWaiting = manualAll.filter((m) => (m.checkState ?? m.check_state ?? "logged") === "logged").length;
         let manualTied = 0;
         for (const m of manual) {
             const usd = num(m.amountUsd);
@@ -1403,8 +1407,8 @@ export const clients = {
                     },
                     {
                         level: "info",
-                        text: manual.length
-                            ? `A hand-logged payment counts when a ClickUp client was picked on the entry, or when the typed name matches exactly one card: ${manualTied} of ${plural(manual.length, "live entry", "live entries")} ${manualTied === 1 ? "is" : "are"} tied to a client${manualTied < manual.length ? ", the rest do not count" : ""}.${data.manualCapped ? " Only the first 5,000 entries were read." : ""}`
+                        text: manual.length || manualWaiting
+                            ? `A hand-logged payment counts once it is checked against the bank, when a ClickUp client was picked on the entry or the typed name matches exactly one card: ${manualTied} of ${plural(manual.length, "checked entry", "checked entries")} ${manualTied === 1 ? "is" : "are"} tied to a client${manualTied < manual.length ? ", the rest do not count" : ""}.${manualWaiting ? ` ${plural(manualWaiting, "logged payment")} ${manualWaiting === 1 ? "waits" : "wait"} on a check and ${manualWaiting === 1 ? "is" : "are"} not counted yet.` : ""}${data.manualCapped ? " Only the first 5,000 entries were read." : ""}`
                             : "No payment has been logged by hand yet, so a bank transfer, cheque, cash or Tap payment is not renewal evidence until it is logged on the Money tab.",
                     },
                     {
