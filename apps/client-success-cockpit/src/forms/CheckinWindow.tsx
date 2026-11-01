@@ -168,7 +168,7 @@ function useMinWidth(px: number) {
 
 export interface CheckinWindowViewProps {
   m: CheckinModel;
-  /** Opens the client's 1-1 form in Typeform (the record until the cut-over). */
+  /** Opens the client's 1-1 form in Typeform, used only after a rollback to `typeform` (11.3). */
   onTypeform: (lastCall: string | null) => void;
   /** The cockpit's booking button; a live response only. */
   book?: (p: BookSlot) => ReactNode;

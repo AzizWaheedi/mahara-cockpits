@@ -2352,9 +2352,9 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                 />
               </div>
               <p className="text-xs text-muted-foreground">
-                {entry.provider === "native"
-                  ? "1-1 notes are the record of the call: they update the card, post the grade and draft the client's recap."
-                  : "1-1 notes are the record of the call. Until the switch-over they go through the Typeform."}
+                {entry.provider === "typeform"
+                  ? "1-1 notes are the record of the call. For now they go through the Typeform."
+                  : "1-1 notes are the record of the call: they update the card, post the grade and draft the client's recap."}
               </p>
             </div>
           )}
