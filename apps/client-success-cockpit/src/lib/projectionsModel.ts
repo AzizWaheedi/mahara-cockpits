@@ -93,15 +93,22 @@ function cashSource(s: Sources, weekStart: string): Source {
         ? `The billing ledger has not been refreshed since ${shortDay(kuwaitDay(ledgerAt))}.`
         : "The billing ledger has never been refreshed.",
     };
-  const value = f.payments
-    .filter(
-      p =>
-        p.side === "back_end" &&
-        p.day >= weekStart &&
-        p.day <= weekEnd &&
-        s.inScope(p.clientName),
-    )
-    .reduce((t, p) => t + p.usd, 0);
+  const inWeek = (p: {
+    side?: string | null;
+    day: string;
+    clientName: string;
+  }) =>
+    p.side === "back_end" &&
+    p.day >= weekStart &&
+    p.day <= weekEnd &&
+    s.inScope(p.clientName);
+  const value = f.payments.filter(inWeek).reduce((t, p) => t + p.usd, 0);
+  // Receipts logged by hand and not yet checked are said apart, never added in.
+  const waiting = (f.logged ?? []).filter(inWeek);
+  const waitingUsd = waiting.reduce((t, p) => t + p.usd, 0);
+  const waitingLine = waiting.length
+    ? ` Receipt in, not checked: ${usdWords(waitingUsd)} in ${waiting.length === 1 ? "1 payment" : `${waiting.length} payments`} this week, waiting on finance's check and not counted here.`
+    : "";
   return {
     ok: true,
     value: Math.round(value * 100) / 100,
@@ -109,7 +116,27 @@ function cashSource(s: Sources, weekStart: string): Source {
     // front end (docs/money/MONEY-ATTRIBUTION.md rules 1 and 2), so past
     // weeks hold less back end than before (the figures are in
     // apps/media-buyer-cockpit/src/pages/ceo/SOURCES.md, 2026-10-18).
-    note: "Back-end client payments in the billing ledger, by payment day. Since 18 Oct 2026 a payment made inside a deal's term (up to 120 days after signing, until its contract is paid) is the closer's front-end cash and is not counted here.",
+    note: `Back-end client payments in the billing ledger, by payment day. Since 18 Oct 2026 a payment made inside a deal's term (up to 120 days after signing, until its contract is paid) is the closer's front-end cash and is not counted here.${waitingLine}`,
+  };
+}
+
+const usdWords = (n: number) =>
+  `$${Math.round(n).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+
+/** A client's hand-logged receipts finance has not checked, as one fact beside Paid so far, or nothing. */
+function waitingFact(
+  feed: Feed,
+  c: { taskId: string; name: string },
+): Fact | null {
+  if (!feed?.okAt) return null;
+  const mine = (feed.logged ?? []).filter(
+    p => p.taskId === c.taskId || norm(p.clientName) === norm(c.name),
+  );
+  if (!mine.length) return null;
+  return {
+    label: "Receipt in, not checked",
+    value: usdWords(mine.reduce((t, p) => t + p.usd, 0)),
+    source: `billing ledger, ${mine.length === 1 ? "1 payment" : `${mine.length} payments`} logged by hand and waiting on finance's check; not in Paid so far`,
   };
 }
 
@@ -200,11 +227,18 @@ function liveFacts(
   const profile = profiles.find(
     p => norm(p.clientName ?? p.client_name ?? "") === norm(c.name),
   );
-  return whereTheyAre(
+  const facts = whereTheyAre(
     c,
     profile?.performance ?? null,
     paidOf(feed, { taskId: c.taskId, name: c.name }),
   );
+  const waiting = waitingFact(feed, { taskId: c.taskId, name: c.name });
+  if (!waiting) return facts;
+  // Right after Paid so far when there is one, else at the end.
+  const at = facts.findIndex(f => f.label === "Paid so far");
+  return at < 0
+    ? [...facts, waiting]
+    : [...facts.slice(0, at + 1), waiting, ...facts.slice(at + 1)];
 }
 function planOf(p: ProjectionPlan | null | undefined) {
   return {

@@ -768,6 +768,10 @@ function Panel({
                       onChange={e => setReference(e.target.value)}
                       placeholder="Invoice or transfer number"
                     />
+                    <span className="text-xs text-muted-foreground">
+                      The CEO's entry with the bank's reference counts as
+                      checked at once; any other waits for the bank check.
+                    </span>
                   </>
                 )}
               </Field>
@@ -1200,15 +1204,28 @@ function partOf(d: Record<string, unknown>): string {
   }
 }
 
+// The seat as cockpit_billing_detail stores it (a code) said as a role.
+const SEAT_WORDS: Record<string, string> = {
+  csm: "The CSM",
+  ceo: "The CEO",
+  finance: "Finance",
+  system: "The cockpit",
+};
+
+export function seatWords(role: string): string {
+  return SEAT_WORDS[role] ?? role.charAt(0).toUpperCase() + role.slice(1);
+}
+
 function sentenceOf(e: EventRow): string {
   const d = (e.detail ?? {}) as Record<string, unknown>;
-  // The staff forms and the daily step carry the seat as a role (20261101p).
+  // The staff forms and the daily step carry the seat as words ("the CSM",
+  // 20261101p); the churn confirm and the canary as a code ("csm").
   const role = typeof d.seat_role === "string" ? d.seat_role : null;
   const who =
     e.source === "system"
       ? "The cockpit"
       : role
-        ? role.charAt(0).toUpperCase() + role.slice(1)
+        ? seatWords(role)
         : e.source === "maher"
           ? "Maher"
           : String(e.by_whom).split("@")[0];

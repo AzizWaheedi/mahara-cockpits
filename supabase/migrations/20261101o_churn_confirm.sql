@@ -586,8 +586,10 @@ SELECT
   late.days_late,
   CASE
     WHEN b.client_status = 'Paused' AND b.paused_on IS NOT NULL AND k.today - b.paused_on >= 14 THEN 'pause_day14'
+    -- A live extension holds both reviews (cockpit_billing_ladder_due says the same).
+    WHEN x.until >= k.today THEN 'none'
     WHEN late.days_late >= ladder.cancel_day THEN 'cancel_review'
-    WHEN late.days_late >= ladder.pause_day AND (x.until IS NULL OR x.until < k.today) THEN 'pause_review'
+    WHEN late.days_late >= ladder.pause_day THEN 'pause_review'
     ELSE 'none'
   END AS ladder_step
 FROM public.cockpit_billing_accounts b
@@ -747,6 +749,24 @@ ON CONFLICT (key) DO UPDATE
                     THEN public.cockpit_settings.value ELSE '{}'::jsonb END || '{"churn":true}'::jsonb,
        updated_by = 'migration 20261101o', updated_at = now()
  WHERE NOT (public.cockpit_settings.value @> '{"churn":true}'::jsonb);
+
+-- 10b. The billing log, scoped by client ----------------------------------------------------
+--
+-- From here on cockpit_billing_events.detail holds a form's free text (why a client left, how to
+-- stop it; from 20261101p also why more time was given, what would prevent it, at-risk, a pause's
+-- consent). The read RPCs scope it by client (cockpit_billing_reader_ok); the table's own seat
+-- policy let any active seat read every client's rows. This restrictive policy holds a direct read
+-- to the same rule: the CEO, finance, or a CSM on their own client (the sheet's fetch already
+-- filters by the CSM's clients, so its rows do not change). The balance-kinds policy stays as it is.
+DO $rls$
+BEGIN
+  IF to_regclass('public.cockpit_billing_events') IS NULL THEN RETURN; END IF;
+  EXECUTE 'DROP POLICY IF EXISTS cockpit_billing_events_client_scope ON public.cockpit_billing_events';
+  EXECUTE $p$CREATE POLICY cockpit_billing_events_client_scope ON public.cockpit_billing_events
+    AS RESTRICTIVE FOR SELECT TO authenticated
+    USING ((SELECT public.cockpit_is_ceo()) OR (SELECT public.cockpit_has_role('finance'))
+           OR ((SELECT public.cockpit_has_role('csm')) AND public.cockpit_client_allowed(client_name)))$p$;
+END $rls$;
 
 -- 11. Privileges ------------------------------------------------------------------------------
 

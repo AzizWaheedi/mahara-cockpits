@@ -47,6 +47,8 @@ export type FieldDef = {
   /** The value a fresh sheet starts from when nothing was prefilled. */
   initial?: (today: string) => unknown;
   placeholder?: string;
+  /** An optional call pick's way back to none ("No exit call"). */
+  noneLabel?: string;
 };
 
 export type FormKey =
@@ -69,8 +71,8 @@ export type FormDef = {
   tone?: "primary" | "destructive";
   /** The card writes, as the held step names them: "extensions". */
   cardWords: string;
-  /** The ticket a person opens after this decision, or null. */
-  ticket: { type: string; label: string } | null;
+  /** The ticket a person opens after this decision, or null: its action and, until opened, the step's sentence. */
+  ticket: { type: string; label: string; waiting: string } | null;
   /** The trail's line when there is no ticket. */
   ticketNone: string;
   /** False when the form posts no Slack notice (Set MRR). */
@@ -246,7 +248,7 @@ export function shown(f: FieldDef, a: Answers): boolean {
   return f.showIf ? f.showIf(a) : true;
 }
 
-function required(f: FieldDef, a: Answers): boolean {
+export function required(f: FieldDef, a: Answers): boolean {
   return typeof f.required === "function" ? f.required(a) : f.required === true;
 }
 
@@ -337,7 +339,8 @@ export function seedAnswers(
 export function prefillLine(p: Prefill): string {
   if (p.value === null || p.value === undefined || p.value === "")
     return p.source;
-  return `${prefillValue(p)} · from ${p.source}`;
+  // A sentence value drops its full stop before the source: "… an extension · from …".
+  return `${prefillValue(p).replace(/\.$/, "")} · from ${p.source}`;
 }
 
 /** A prefilled value in words: dollars for *Usd keys, "16 Nov" for days, "yes"/"no" for flags. */
@@ -494,7 +497,7 @@ function noticeStep(t: FormTrailRow, def: FormDef | null): TrailStep {
         key: "notice",
         state: "skipped",
         label: err
-          ? `Not posted: ${err.replace(/^not posted:\s*/i, "")}`
+          ? `Not posted: ${err.replace(/^not posted:\s*/i, "").replace(/\.?$/, ".")}`
           : "Not posted.",
       };
     default:
@@ -524,11 +527,12 @@ export function trailFrom(
             : undefined,
         }
       : { key: "stored", state: "waiting", label: "Saving in the cockpit" };
+  // The step says where the ticket stands; opening it is the action, said once.
   const ticket: TrailStep = def?.ticket
     ? {
         key: "ticket",
         state: "none",
-        label: def.ticket.label,
+        label: def.ticket.waiting,
         action: {
           label: def.ticket.label,
           href: ticketHref ? ticketHref(def.ticket.type) : "",

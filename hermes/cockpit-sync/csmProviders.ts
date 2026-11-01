@@ -316,14 +316,16 @@ export async function fathomCalls(sinceArg?: string): Promise<Call[]> {
 // read cockpit_churn_months and cockpit_churn_departures instead of the Churn Tracker sheet. One select, no limit.
 export const CHURN_SQL=`select m.month, m.active_at_start, m.lost_before_register,
  (select count(*) from public.cockpit_churn_departures d where d.removed_at is null and to_char(d.left_on, 'YYYY-MM') = m.month
-   and d.reason <> 'Completed term, did not renew') as departed
+   and coalesce(to_jsonb(d)->>'churn_type', case when d.reason = 'Completed term, did not renew' then 'completed' end)
+       is distinct from 'completed') as departed
  from public.cockpit_churn_months m order by m.month`;
 const MONTH_NAMES=['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 /**
  * The register as tab 01 read: a header, then one row per month, newest twelve months only (the sheet keyed rows by
  * month name), [month name, clients at start, clients lost, (blank), churn %]. Lost is the register's departures in
- * the month, a finished term left out (the CEO's count of 30 Oct, as the goal sheet counts), plus the count kept
+ * the month, a completed term left out (the confirm's churn type decides; with no type, a finished-term reason;
+ * the same rule as the goal sheet and ceo-refresh), plus the count kept
  * from before the register. A month with no start count gives no rate, never 0%: parseKpi then says it is not
  * published. Pure, for the tests.
  */

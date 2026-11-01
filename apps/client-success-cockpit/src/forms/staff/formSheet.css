@@ -329,7 +329,9 @@
   gap: 8px;
 }
 .fs-call {
-  display: block;
+  /* Grid, not block: a block would give the zero-size radio its own line box
+     (20px of empty line above every card); .fs-pill avoids it the same way. */
+  display: grid;
   cursor: pointer;
 }
 .fs-call-body {

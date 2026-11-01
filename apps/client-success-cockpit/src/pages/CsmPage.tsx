@@ -23,6 +23,10 @@ import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AdBillingDailyTask } from "@/components/AdBillingReview";
 import { AfterCalls, NotesNudge, TypeformMark } from "@/components/AfterCalls";
 import {
+  type ChecksApi,
+  ChecksWaitingView,
+} from "@/components/billing/ChecksWaiting";
+import {
   ClientCallerChip,
   ClientCallerLine,
 } from "@/components/CallCentreSection";
@@ -85,12 +89,10 @@ import {
   kuwaitDay as dayWords,
   dueHint,
   type FormKey,
-  kwdWithUsd,
   type Prefill,
 } from "@/forms/staff/formSheetCore";
 import {
   answerNotice,
-  checkPayment,
   confirmChurn,
   type Doors,
   formDoors,
@@ -176,6 +178,7 @@ import {
 } from "@/lib/onboardingClient";
 import type { KitsPage, OnboardingRow } from "@/lib/onboardingCore";
 import { publishOpenClient } from "@/lib/openClient";
+import { checkManualPayment, manualPaymentsToCheck } from "@/lib/paymentChecks";
 import { fetchClientProfile } from "@/lib/performance";
 import { eodDeliveryNote } from "@/lib/personalEod";
 import { portalUrl } from "@/lib/portal";
@@ -4856,6 +4859,22 @@ const SENDERS: Record<
 };
 
 /** FormSheet for one door: reads the prefill once per open, sends through lifecycleClient. */
+/** The prefill read's card in a few words: "Active · due 2 Nov", or null when it says nothing. */
+function cardStatus(
+  card: Record<string, unknown> | null | undefined,
+): string | null {
+  const val = (k: string) => {
+    const v = (card?.[k] as { value?: unknown } | undefined)?.value;
+    return typeof v === "string" && v ? v : null;
+  };
+  const status = val("status");
+  const next = val("nextDate");
+  if (!status && !next) return null;
+  return [status, next ? `due ${dayWords(next)}` : null]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 export function DoorSheet({
   door,
   client,
@@ -4973,8 +4992,8 @@ export function DoorSheet({
       prefill={prefill}
       calls={read?.calls ?? []}
       hints={read?.hints ?? []}
-      // The card read carries its own state with its source; until then the list's.
-      status={read?.card ? undefined : door.status}
+      // The card read's own state once it lands ("Active · due 2 Nov"); until then the list's.
+      status={cardStatus(read?.card) ?? door.status}
       loading={loading}
       prefillError={error}
       submit={(a, requestId) =>
@@ -5159,9 +5178,8 @@ function BandRow({
         {fact ? (
           <>
             {" "}
-            <span className="font-mono text-xs text-muted-foreground">
-              {fact}
-            </span>
+            {/* The row's key fact (the day, the amount) reads at the sentence's own size. */}
+            <span className="font-mono text-sm text-foreground">{fact}</span>
           </>
         ) : null}
       </p>
@@ -5272,7 +5290,8 @@ function PickCard({
       <label htmlFor={id} className="sr-only">
         The client's card
       </label>
-      <div className="w-full min-w-0 max-w-xs">
+      {/* The select at the small buttons' size: 14px words, 32px tall. */}
+      <div className="w-full min-w-0 max-w-xs text-sm [&_[data-cockpit-select]]:min-h-8! [&_[data-cockpit-select]]:py-1!">
         <AnimatedSelect
           id={id}
           className="w-full"
@@ -5316,97 +5335,6 @@ function PickCard({
   );
 }
 
-/** Check a receipt against the bank (reference), or reject it (reason). */
-function CheckActions({
-  client,
-  row,
-  onDone,
-}: {
-  client: SupabaseClient | null;
-  row: PaymentToCheck;
-  onDone: () => void;
-}) {
-  const [mode, setMode] = useState<"checked" | "rejected" | null>(null);
-  const [ref, setRef] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  if (!mode)
-    return (
-      <>
-        <Button size="sm" onClick={() => setMode("checked")}>
-          Check
-        </Button>
-        <Button size="sm" variant="outline" onClick={() => setMode("rejected")}>
-          Reject
-        </Button>
-      </>
-    );
-  const id = `check-${row.id}`;
-  const word = mode === "checked" ? "Check" : "Reject";
-  return (
-    <form
-      className="flex w-full flex-wrap items-center gap-2"
-      onSubmit={async e => {
-        e.preventDefault();
-        if (!client) return;
-        if (ref.trim().length < 3) {
-          setError(
-            mode === "checked"
-              ? "Name the bank reference or pick the statement line, so the check reads back."
-              : "Say why it is rejected.",
-          );
-          return;
-        }
-        setBusy(true);
-        setError(null);
-        try {
-          await checkPayment(client, row.id, mode, ref);
-          toast.success(mode === "checked" ? "Checked" : "Rejected");
-          onDone();
-        } catch (err) {
-          setError(String((err as Error)?.message ?? err));
-        } finally {
-          setBusy(false);
-        }
-      }}
-    >
-      <label htmlFor={id} className="sr-only">
-        {mode === "checked" ? "Bank reference" : "Why it is rejected"}
-      </label>
-      <Input
-        id={id}
-        value={ref}
-        onChange={e => setRef(e.target.value)}
-        placeholder={
-          mode === "checked" ? "Bank reference" : "Why it is rejected"
-        }
-        className="h-8 min-w-0 flex-1 text-sm"
-        aria-invalid={error ? true : undefined}
-        autoFocus
-      />
-      <Button size="sm" type="submit" disabled={busy}>
-        {busy ? "Saving…" : word}
-      </Button>
-      <Button
-        size="sm"
-        variant="ghost"
-        type="button"
-        onClick={() => {
-          setMode(null);
-          setError(null);
-        }}
-      >
-        Cancel
-      </Button>
-      {error ? (
-        <p className="basis-full text-xs txt-bad" role="alert">
-          {error}
-        </p>
-      ) : null}
-    </form>
-  );
-}
-
 /** Today's bands (5.4): rows a person acts on, each with its ticket button. */
 export function TodayBands({
   client,
@@ -5435,6 +5363,21 @@ export function TodayBands({
   onChanged: () => void;
 }) {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
+  // Checks waiting reads through this page's own client; its ticket opens this page's request sheet.
+  const checksApi = useMemo<ChecksApi | null>(
+    () =>
+      client
+        ? {
+            // The band shows only with the door open (useTodayBands), so it is not read again.
+            door: async () => Boolean(doors?.checks),
+            list: () => manualPaymentsToCheck(client),
+            check: p => checkManualPayment(client, p),
+            ticketType: async () =>
+              Boolean(types?.has("payment_receipt_check")),
+          }
+        : null,
+    [client, types, doors?.checks],
+  );
   if (!doors) return null;
   const hide = (key: string) => {
     setHidden(h => new Set(h).add(key));
@@ -5519,8 +5462,7 @@ export function TodayBands({
                   </>
                 }
               >
-                Notice in: <bdi>{n.clientName}</bdi> sent the termination survey
-                on
+                <bdi>{n.clientName}</bdi> sent the termination survey on
               </BandRow>
             ) : (
               <BandRow
@@ -5588,7 +5530,7 @@ export function TodayBands({
                   </>
                 }
               >
-                Pause request in: <bdi>{n.clientName}</bdi> asked to pause on
+                <bdi>{n.clientName}</bdi> asked to pause on
               </BandRow>
             ) : (
               <BandRow
@@ -5761,69 +5703,40 @@ export function TodayBands({
       ) : null}
 
       {bands.wantChecks ? (
+        // One Checks waiting everywhere (5.7): the billing page's own list, so finance and the CEO get the
+        // same two-field check (bank reference or statement line), amounts and sentence on Today.
         <SectionCard
           title="Checks waiting"
           count={bands.checks.rows ? checks.length : undefined}
-          sub="Hand-logged payments count as cash only once they are checked against the bank."
           flush
         >
-          {bands.checks.error ? (
-            <p className="px-4 py-3 text-sm txt-bad sm:px-6" role="alert">
-              Checks could not be read: {bands.checks.error}
-            </p>
-          ) : bands.checks.rows === null ? (
-            <p className="px-4 py-3 text-sm text-muted-foreground sm:px-6">
-              Reading the payments…
-            </p>
-          ) : checks.length === 0 ? (
-            <p className="px-4 py-3 text-sm text-muted-foreground sm:px-6">
-              Nothing waiting on a check.
-            </p>
-          ) : (
-            checks.map(r => {
-              const amount =
-                r.currency === "KWD"
-                  ? kwdWithUsd(r.amount, r.amountUsd)
-                  : kwdWithUsd(null, r.amountUsd ?? r.amount);
-              return (
-                <BandRow
-                  key={r.id}
-                  fact={`${amount} on ${dayWords(r.day) || "a day not recorded"}${r.daysWaiting !== null ? `, waiting ${r.daysWaiting} ${r.daysWaiting === 1 ? "day" : "days"}` : ""}`}
-                  actions={
-                    <>
-                      <CheckActions
-                        client={client}
-                        row={r}
-                        onDone={() => hide(r.id)}
-                      />
-                      {r.evidenceUrl ? (
-                        <ExtLink href={r.evidenceUrl} className="text-xs">
-                          Receipt
-                        </ExtLink>
-                      ) : null}
-                      {r.taskId ? (
-                        <TicketButton
-                          type="payment_receipt_check"
-                          types={types}
-                          label="Open the receipt check"
-                          onOpen={() =>
-                            onTicket({
-                              type: "payment_receipt_check",
-                              taskId: String(r.taskId),
-                              name: r.clientName,
-                              details: `${r.clientName}: ${amount} on ${dayWords(r.day) || "a day not recorded"}${r.rail ? ` by ${r.rail}` : ""}${r.reference ? `, reference ${r.reference}` : ""}. Check it against the bank statement.`,
-                            })
-                          }
-                        />
-                      ) : null}
-                    </>
-                  }
-                >
-                  Receipt to check: <bdi>{r.clientName}</bdi>,
-                </BandRow>
-              );
-            })
-          )}
+          <div className="px-4 py-3 sm:px-6">
+            {checksApi ? (
+              <ChecksWaitingView
+                api={checksApi}
+                canCheck={checker}
+                framed={false}
+                onChecked={onChanged}
+                renderTicket={row =>
+                  row.taskId ? (
+                    <TicketButton
+                      type="payment_receipt_check"
+                      types={types}
+                      label="Open the receipt check"
+                      onOpen={() =>
+                        onTicket({
+                          type: "payment_receipt_check",
+                          taskId: String(row.taskId),
+                          name: row.clientName,
+                          details: `${row.clientName}: ${row.amount.toLocaleString("en-US")} ${row.currency} on ${dayWords(row.day) || "a day not recorded"}${row.reference ? `, reference ${row.reference}` : ""}. Check it against the bank statement.`,
+                        })
+                      }
+                    />
+                  ) : null
+                }
+              />
+            ) : null}
+          </div>
         </SectionCard>
       ) : null}
 

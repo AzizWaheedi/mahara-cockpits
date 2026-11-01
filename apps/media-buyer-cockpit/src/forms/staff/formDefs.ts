@@ -38,7 +38,7 @@ export const CHURN_REASONS = [
 /** The card's Churn Type options, by the register's value. */
 export const CHURN_TYPES = [
   { value: "mid_programme", label: "Mid-programme loss (counts as churn)" },
-  { value: "completed", label: "Completed term (does NOT count as churn)" },
+  { value: "completed", label: "Completed term (not counted as churn)" },
 ];
 
 const opts = (list: readonly string[]) =>
@@ -167,7 +167,11 @@ const pause: FormDef = {
   title: "Pause this client",
   tone: "destructive",
   cardWords: "pauses",
-  ticket: { type: "client_pause", label: "Open the pause tickets" },
+  ticket: {
+    type: "client_pause",
+    label: "Open the pause tickets",
+    waiting: "The pause needs its tickets",
+  },
   ticketNone: "No ticket for a pause",
   notice: true,
   doneLabel: "Paused",
@@ -250,7 +254,11 @@ const resume: FormDef = {
   version: 1,
   title: "Resume this client",
   cardWords: "resumes",
-  ticket: { type: "client_relaunch", label: "Open the relaunch ticket" },
+  ticket: {
+    type: "client_relaunch",
+    label: "Open the relaunch ticket",
+    waiting: "The relaunch needs its ticket",
+  },
   ticketNone: "No ticket for a resume",
   notice: true,
   doneLabel: "Resumed",
@@ -279,7 +287,11 @@ const churnConfirm: FormDef = {
   title: "Client is leaving",
   tone: "destructive",
   cardWords: "churn",
-  ticket: { type: "client_offboarding", label: "Open the offboarding ticket" },
+  ticket: {
+    type: "client_offboarding",
+    label: "Open the offboarding ticket",
+    waiting: "The offboarding needs its ticket",
+  },
   ticketNone: "No ticket for a churn",
   notice: true,
   doneLabel: "Churn confirmed",
@@ -344,6 +356,7 @@ const churnConfirm: FormDef = {
       key: "exitCallId",
       label: "The exit call",
       type: "call",
+      noneLabel: "No exit call",
     },
     {
       key: "surveyState",

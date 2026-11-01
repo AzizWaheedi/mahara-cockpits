@@ -1333,6 +1333,15 @@ END $$;
 -- matched (W12). A new termination survey queues its "Termination notice in"
 -- for the CSM; a pause request queues nothing (its Today row is the signal,
 -- W18); a backfilled row queues nothing at all (3.4).
+--
+-- The Typeform signature proves Typeform delivered the response, not who
+-- filled it or which card it is for: the hidden id is in a public link anyone
+-- can edit. So a card found that way is kept as hidden_id_unverified in
+-- answer_meta, and the survey is never attached to a departure here: a
+-- person attaches it (the churn confirm's survey pick, or
+-- cockpit_form_legacy_match on an unmatched row). Signed links (an HMAC of
+-- the card id in a second hidden field) would lift this; until they are
+-- issued, the notice still reaches the card's CSM to check.
 CREATE OR REPLACE FUNCTION public.cockpit_form_record_legacy(p jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -1414,13 +1423,16 @@ BEGIN
     answers, answer_meta, hidden, created_by, submitted_by, submitted_at)
   VALUES (v_form, f.version, CASE WHEN v_backfill THEN 'typeform_sync' ELSE 'typeform_webhook' END, v_token, v_task,
           coalesce(v_client, v_form_client), 'live', 'legacy',
-          v_answers, jsonb_build_object('notice_on', v_day), v_hidden, 'forms-door', 'typeform', v_at)
+          v_answers,
+          jsonb_build_object('notice_on', v_day)
+            || CASE WHEN v_task IS NOT NULL THEN jsonb_build_object('match', 'hidden_id_unverified') ELSE '{}'::jsonb END,
+          v_hidden, 'forms-door', 'typeform', v_at)
   ON CONFLICT (form_key, external_id) DO NOTHING
   RETURNING id INTO v_id;
   IF v_id IS NOT NULL THEN
     v_inserted := true;
     IF v_form = 'exit_survey' THEN
-      v_matched := public.cockpit_form_survey_link(v_id, v_task, 'forms-door');
+      -- Not attached to a departure here (the card is unverified, above); v_matched stays false.
       IF NOT v_backfill THEN
         -- Matched: the CSM of the card is tagged by name of the client.
         -- Unmatched: no card and no client, so every CSM seat is tagged and

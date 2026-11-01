@@ -199,6 +199,9 @@ export function ChecksWaitingView({
   const [done, setDone] = useState<Record<string, Done>>({});
   const today = kuwaitToday();
 
+  // Whether a ticket can render, not which function draws it: a caller passing a fresh renderTicket each render
+  // must not read the list again each render.
+  const wantsTicket = Boolean(renderTicket);
   const load = useCallback(async () => {
     setBusy(true);
     setError(null);
@@ -208,7 +211,7 @@ export function ChecksWaitingView({
       if (!open) return;
       const [list, hasTicket] = await Promise.all([
         api.list(),
-        renderTicket ? api.ticketType() : Promise.resolve(false),
+        wantsTicket ? api.ticketType() : Promise.resolve(false),
       ]);
       setRows(list);
       setTicket(hasTicket);
@@ -218,7 +221,7 @@ export function ChecksWaitingView({
     } finally {
       setBusy(false);
     }
-  }, [api, renderTicket]);
+  }, [api, wantsTicket]);
   useEffect(() => {
     void load();
   }, [load]);

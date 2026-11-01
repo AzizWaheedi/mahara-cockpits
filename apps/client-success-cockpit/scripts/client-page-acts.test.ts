@@ -715,6 +715,8 @@ describe("doors and bands wait on cockpit_form_doors (4.6.4)", () => {
         "cockpit_form_doors",
         "cockpit_form_notices_in",
         "cockpit_manual_payments_to_check",
+        // Checks waiting reads its own list (the shared list of the billing page), beside the band's count.
+        "cockpit_manual_payments_to_check",
       ].sort(),
     );
     const doorsText = buttons(host.querySelector(".doors"));
@@ -726,18 +728,20 @@ describe("doors and bands wait on cockpit_form_doors (4.6.4)", () => {
     expect(text(host)).not.toContain(page.NOT_YET);
     const all = text(host);
     expect(all).toContain(
-      "Notice in: Liwan Limited sent the termination survey on 30 Oct",
+      "Liwan Limited sent the termination survey on 30 Oct",
     );
     expect(all).toContain(
       "Not matched to a card: Atlantis Homes sent the termination survey on 29 Oct",
     );
-    expect(all).toContain(
-      "Pause request in: Liwan Limited asked to pause on 31 Oct",
-    );
+    expect(all).toContain("Liwan Limited asked to pause on 31 Oct");
     expect(all).toContain("Pause review: Liwan Limited is 5 days late");
     expect(all).toContain("Cancel review: Marble Works is 17 days late");
+    // The billing page's own Checks waiting, the same rows, amounts and sentence on Today (5.7).
     expect(all).toContain(
-      "Receipt to check: Liwan Limited, 1,500 KWD ($4,890) on 28 Oct, waiting 4 days",
+      "Liwan Limited1,500.000 KWD$4,890Received 28 Oct · Transfer · no reference given · logged by the CSM · waiting 4 days",
+    );
+    expect(all).toContain(
+      "Payments logged by hand. Check each one against the bank: until then it is not cash, pay or LTV.",
     );
     const labels = buttons(host);
     for (const b of [

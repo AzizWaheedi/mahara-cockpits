@@ -203,7 +203,7 @@ describe("the month's lifecycle", () => {
     await db.exec(LIFECYCLE);
     await db.exec(`
       INSERT INTO public.cockpit_extensions_v(grant_id,clickup_task_id,client_name,granted_on,weeks,from_date,until,ours,at_risk,reason,seat_role,state) VALUES
-        (115,'86ewvnqj5','Liwan Limited','2026-10-19',2,'2026-10-19','2026-11-02',NULL,NULL,'Ad account broke, on our side',NULL,'ended'),
+        (115,'86ewvnqj5','Liwan Limited','2026-10-19',2,'2026-10-19','2026-11-02',NULL,NULL,'Ad account broke, on our side','the CSM','ended'),
         (301,'86eyurepc','Ardon','2026-11-03',2,'2026-11-27','2026-12-11',true,false,'Launch slipped','csm','live'),
         (302,'86ey8w5m1','ARCWANI','2026-11-04',1,'2026-11-04','2026-11-11',false,true,'Budget','ceo','replaced');
       INSERT INTO public.cockpit_late_payments_v(clickup_task_id,client_name,due_on,amount_usd,ended_on,closed_how,paid_on,days_late) VALUES
@@ -276,7 +276,8 @@ describe("the month's lifecycle", () => {
     const c = await context("2026-10");
     expect(c.lifecycle.extensions.map((e: any) => e.grantId)).toEqual([115]);
     expect(c.lifecycle.extensions[0].source).toBe(
-      "Given in the cockpit on 19 Oct on the billing sheet; the grant ended 2 Nov.",
+      // The view's words for the seat ("the CSM"), as the codes, read as the role; never "on the billing sheet".
+      "Given in the cockpit on 19 Oct by the CSM; the grant ended 2 Nov.",
     );
     expect(c.lifecycle.departures.map((d: any) => d.client)).toEqual([
       "October one",
@@ -470,6 +471,34 @@ describe("the CEO refresh reads extensions from the view, by card id", () => {
     expect(life.departures.map((d: any) => [d.id, d.counts, d.confirmed])).toEqual([[20, true, true], [23, false, true]]);
     expect(life.latePayments[0]).toMatchObject({ daysLate: 34, amountUsd: null, endedOn: null });
     expect(() => ext.lifecycleOf([{ id: 1, left_on: "soon" }], [])).toThrow(/departure/);
+  });
+
+  test("one churn rule in all three readers: the confirm's type decides, a finished-term reason only when there is none", async () => {
+    // September, so the other tests' months are untouched: a completed term that was cancelled (the day-90 default
+    // can say completed for any reason), a finished term with no type yet, and a finished-term reason the CSM
+    // confirmed as a mid-programme loss.
+    await owner(db);
+    await db.exec(`
+      INSERT INTO public.cockpit_churn_departures(client,clickup_task_id,left_on,reason,churn_type,survey_state) VALUES
+        ('Done Co','86eysep01','2026-09-10','Cancelled','completed','not_sent'),
+        ('Finished Co','86eysep02','2026-09-12','Completed term, did not renew',NULL,'not_sent'),
+        ('Kept Co','86eysep03','2026-09-14','Completed term, did not renew','mid_programme','not_sent'),
+        ('Lost Co','86eysep04','2026-09-16','Cancelled','mid_programme','not_sent');
+      INSERT INTO public.cockpit_churn_months(month, active_at_start, lost_before_register) VALUES ('2026-09', 20, 0)
+        ON CONFLICT (month) DO NOTHING;`);
+    const counted = ["Kept Co", "Lost Co"];
+    // The goal sheet (q).
+    const sheet = (await context("2026-09")).churned.map((d: any) => d.client).filter((c: string) => c.endsWith(" Co"));
+    expect(sheet).toEqual(counted);
+    // The CSM KPI (cockpit-sync's CHURN_SQL).
+    const { CHURN_SQL } = await import("../../../hermes/cockpit-sync/csmProviders.ts");
+    const sep = (await db.query<{ month: string; departed: number }>(CHURN_SQL)).rows.find(r => r.month === "2026-09");
+    expect(Number(sep?.departed)).toBe(counted.length);
+    // The CEO metric (ceo-refresh's lifecycleOf over its own select).
+    const ext = await import("../../../hermes/ceo-refresh/native/extensions.js");
+    const rows = (await db.query(ext.LIFECYCLE_SQL.departures)).rows;
+    const life = ext.lifecycleOf(rows, []);
+    expect(life.departures.filter((d: any) => d.leftOn.startsWith("2026-09") && d.counts).map((d: any) => d.client)).toEqual(counted);
   });
 
   test("projected MRR is the card sum over active monthly cards (integrity, 11.2-g: $11,333 over 7)", async () => {

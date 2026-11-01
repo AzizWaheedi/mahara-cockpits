@@ -94,7 +94,7 @@ const FIELDS = [
   { id: "9cfdb353-1111-2222-3333-444455556666", name: "Will not continue if billed on schedule", type: "checkbox" },
 ];
 
-async function fixture() {
+async function fixture(opts: { fields?: boolean } = {}) {
   const db = await base();
   await db.exec(rails());
   await member(db, CEO, "aziz@maharamedia.com", []);
@@ -105,7 +105,7 @@ async function fixture() {
     UPDATE cockpit_members SET clients=ARRAY['Acme'] WHERE email='sara@tests.invalid';
     INSERT INTO cockpit_billing_accounts(clickup_task_id,client_name,stage,stage_group,client_status,payment_method,next_payment_usd,next_payment_date,synced_at)
       VALUES('task_a','Acme','Active','active','Active','Bank transfer',1500,(now() AT TIME ZONE 'Asia/Kuwait')::date+10,now());`);
-  await putFields(db, FIELDS);
+  if (opts.fields !== false) await putFields(db, FIELDS);
   return db;
 }
 
@@ -289,7 +289,8 @@ test("Completed term maps to the card's option; Other and a reason missing from 
     expect(await val(db, "SELECT cockpit_churn_reason_card('cancelled')")).toBe("Cancelled");
     const other = await event(db, { kind: "churn", from: "Active", detail: await detail(db, "churn", { leftOn: "2026-10-30", reason: "Other", churnType: "mid_programme", seatRole: "ceo" }) });
     expect(other.item.payload.writes.map((w: any) => w.field)).toEqual(["churnDate", "status", "churnType"]);
-    expect(other.item.payload.comment).toContain("Reason: Other\nNot on the card's list, so the field is left empty.");
+    expect(other.item.payload.comment).toContain("Reason: Other\nReason Other: the card's Churn Reason is left as it is.");
+    expect(other.item.payload.comment).not.toContain("left empty");
     // Someone removed "Ghosted" from the card's list: the next read is the map, and only that field is skipped.
     await putFields(db, FIELDS.map(f => (f.name === "❌ Churn Reason" ? { ...f, type_config: { options: opts("cr", CHURN_REASONS.filter(r => r !== "Ghosted")) } } : f)));
     expect(await val(db, "SELECT cockpit_churn_reason_card('Ghosted')")).toBeNull();
@@ -300,13 +301,27 @@ test("Completed term maps to the card's option; Other and a reason missing from 
       { field: "status", value: "Stopped", old: "Active" },
       { field: "churnType", value: "Completed term (does NOT count as churn)" },
     ]);
-    expect(ghosted.item.payload.comment).toContain("Reason: Ghosted\nNot on the card's list, so the field is left empty.");
+    expect(ghosted.item.payload.comment).toContain("Reason: Ghosted\nNot on the card's list, so the card's Churn Reason is left as it is.");
     // Without the card's own "Completed term, did not renew" option, Completed term is left empty too.
     await putFields(db, FIELDS.map(f => (f.name === "❌ Churn Reason" ? { ...f, type_config: { options: opts("cr", ["Cancelled", "Refund"]) } } : f)));
     expect(await val(db, "SELECT cockpit_churn_reason_card('Completed term')")).toBeNull();
     // An older event with no card_reason key is looked up when it is written.
     const legacy = await event(db, { kind: "churn", source: "ceo", from: "Active", detail: { left_on: "2026-10-29", reason: "Refund" } });
     expect(legacy.item.payload.writes).toContainEqual({ field: "churnReason", value: "Refund" });
+  } finally {
+    await db.close();
+  }
+});
+
+test("with no stored field map, a reason goes on as named and clickup-writeback judges it against the live list", async () => {
+  const db = await fixture({ fields: false });
+  try {
+    expect(await val(db, "SELECT cockpit_churn_reason_card('Cancelled')")).toBe("Cancelled");
+    expect(await val(db, "SELECT cockpit_churn_reason_card('Completed term')")).toBe("Completed term, did not renew");
+    expect(await val(db, "SELECT cockpit_churn_reason_card('Other')")).toBeNull();
+    const ev = await event(db, { kind: "churn", from: "Active", detail: await detail(db, "churn", { leftOn: "2026-10-30", reason: "Cancelled", churnType: "mid_programme", seatRole: "csm" }) });
+    expect(ev.item.payload.writes).toContainEqual({ field: "churnReason", value: "Cancelled" });
+    expect(ev.item.payload.comment).not.toContain("left as it is");
   } finally {
     await db.close();
   }
@@ -623,7 +638,10 @@ test("held_release replans, records fresh, closes or voids one held edit of an o
     const fresh = await release(db, b.id, "fresh", "Card changed since; Ardon still lacks 11-27");
     expect(fresh).toMatchObject({ itemId: b.item.id, how: "fresh", state: "queued" });
     const copy = await one(db, "SELECT kind, from_value, to_value, source, by_whom, detail, at > now() - interval '1 minute' AS now FROM cockpit_billing_events WHERE id=$1", [fresh.newEventId]);
-    expect(copy).toEqual({ kind: "date", from_value: "2026-10-27", to_value: "2026-11-27", source: "csm", by_whom: "sara@tests.invalid", now: true, detail: { inbox: 5, replaces_event_id: b.id, released_by: "the CEO's default" } });
+    const { granted_at, ...kept } = copy.detail;
+    expect({ ...copy, detail: kept }).toEqual({ kind: "date", from_value: "2026-10-27", to_value: "2026-11-27", source: "csm", by_whom: "sara@tests.invalid", now: true, detail: { inbox: 5, replaces_event_id: b.id, released_by: "the CEO's default" } });
+    // The copy keeps the first event's time, so a grant's month does not move (cockpit_extensions_v reads it).
+    expect(await val(db, "SELECT ($1::text)::timestamptz = (SELECT at FROM cockpit_billing_events WHERE id=$2)", [granted_at, b.id])).toBe(true);
     expect(await one(db, "SELECT state, error FROM cockpit_clickup_writeback_queue WHERE id=$1", [b.item.id])).toEqual({
       state: "skipped", error: "Voided in the cockpit: Recorded again at the kind opening: Card changed since; Ardon still lacks 11-27",
     });

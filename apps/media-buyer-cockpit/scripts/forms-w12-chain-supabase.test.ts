@@ -1046,4 +1046,190 @@ describe("the block in deploy order", () => {
       expect(String(item[0].payload.comment)).toContain("By: the CEO");
     });
   });
+
+  test("a live grant holds the overdue reviews on the client page as on Today, while the card still shows the old date", async () => {
+    await rolledBack(async () => {
+      const today = await kuwaitToday();
+      const day = (n: number) =>
+        new Date(Date.parse(`${today}T00:00:00Z`) + n * 86_400_000)
+          .toISOString()
+          .slice(0, 10);
+      // Acme 16 days late on its card, every day in the snapshots.
+      await ex(
+        `UPDATE public.cockpit_billing_accounts SET next_payment_date='${day(-16)}' WHERE clickup_task_id='${A}'`,
+      );
+      for (let n = 16; n >= 0; n--)
+        await ex(`INSERT INTO public.cockpit_client_billing_days(day,clickup_task_id,client_name,stage,next_payment_date,next_payment_usd)
+          VALUES('${day(-n)}','${A}','Acme Interiors','Active','${day(-16)}',2000)`);
+      const step = () =>
+        one<string>(
+          "SELECT ladder_step AS r FROM public.cockpit_client_lifecycle_v WHERE clickup_task_id=$1",
+          [A],
+        );
+      expect(await step()).toBe("cancel_review");
+      const out = await as(
+        CSM_A,
+        "SELECT public.cockpit_billing_write('edit', $1::jsonb) AS r",
+        [
+          JSON.stringify({
+            taskId: A,
+            source: "csm",
+            edit: {
+              kind: "extension",
+              weeks: 2,
+              reason: "Their bank holds transfers until the 10th",
+              ours: false,
+              limitations: ["Budget"],
+              atRisk: false,
+              callId: null,
+              noCall: true,
+              noCallReason: "Agreed on WhatsApp with the owner",
+              prevent: "Bill on the 10th from next month",
+              requestId: rid(),
+            },
+          }),
+        ],
+      );
+      // The card write is held, so the mirror follows the card back to the old date.
+      await ex(
+        `UPDATE public.cockpit_billing_accounts SET next_payment_date='${day(-16)}' WHERE clickup_task_id='${A}'`,
+      );
+      expect(await step()).toBe("none");
+      const due = await as<Row[]>(
+        CSM_A,
+        "SELECT public.cockpit_billing_ladder_due() AS r",
+      );
+      expect(due.map(r => r.taskId)).not.toContain(A);
+      // The grant answers the run: extended, the days stopping at the grant.
+      expect(
+        await q(
+          "SELECT closed_how, days_late FROM public.cockpit_late_payments_v WHERE clickup_task_id=$1",
+          [A],
+        ),
+      ).toEqual([{ closed_how: "extended", days_late: 16 }]);
+      // Taken back, the run is late again and both readers say so.
+      await ex(
+        `INSERT INTO public.cockpit_billing_event_voids(event_id, reason, voided_by) VALUES (${Number(out.eventId)}, 'test void', 'test')`,
+      );
+      expect(await step()).toBe("cancel_review");
+      const dueAgain = await as<Row[]>(
+        CSM_A,
+        "SELECT public.cockpit_billing_ladder_due() AS r",
+      );
+      expect(dueAgain.find(r => r.taskId === A)?.step).toBe("cancel_review");
+    });
+  });
+
+  test("a direct read of the billing log keeps to the client rule: the CEO, finance, a CSM on their own client", async () => {
+    await rolledBack(async () => {
+      // The live table: authenticated may select, under the seat policy and o's client scope.
+      await ex(`GRANT SELECT ON public.cockpit_billing_events TO authenticated;
+        INSERT INTO public.cockpit_billing_events(clickup_task_id, client_name, kind, reason, detail, source, by_whom) VALUES
+          ('${A}', 'Acme Interiors', 'extension', 'Their bank holds transfers', '{"weeks":2,"at_risk":true,"prevent":"Bill on the 10th"}', 'csm', 'csm.a@tests.invalid'),
+          ('${B}', 'Beta Build', 'churn', 'Cancelled', '{"why_detail":"The owner moved the budget"}', 'csm', 'csm.b@tests.invalid');`);
+      const seen = (who: string) =>
+        as<string[] | null>(
+          who,
+          "SELECT array_agg(DISTINCT clickup_task_id ORDER BY clickup_task_id) AS r FROM public.cockpit_billing_events",
+        );
+      expect(await seen(CEO)).toEqual([A, B]);
+      expect(await seen(FINANCE)).toEqual([A, B]);
+      expect(await seen(CSM_A)).toEqual([A]);
+      expect(await seen(CSM_B)).toEqual([B]);
+      expect(await seen(CREATIVE)).toBeNull();
+      expect(await seen(NOBODY)).toBeNull();
+    });
+  });
+
+  test("the canary queues the same card writes as a real Give more time and a real Client is leaving", async () => {
+    await rolledBack(async () => {
+      const writesOf = async (eventId: number) =>
+        (
+          await q<{ payload: Row }>(
+            "SELECT payload FROM public.cockpit_clickup_writeback_queue WHERE dedupe_key = $1",
+            [`billing:${eventId}`],
+          )
+        )[0]?.payload.writes as Row[];
+      const real = await as(
+        CSM_A,
+        "SELECT public.cockpit_billing_write('edit', $1::jsonb) AS r",
+        [
+          JSON.stringify({
+            taskId: A,
+            source: "csm",
+            edit: {
+              kind: "extension",
+              weeks: 2,
+              reason: "Their bank holds transfers until the 10th",
+              ours: false,
+              limitations: ["Budget"],
+              atRisk: false,
+              callId: null,
+              noCall: true,
+              noCallReason: "Agreed on WhatsApp with the owner",
+              prevent: "Bill on the 10th from next month",
+              requestId: rid(),
+            },
+          }),
+        ],
+      );
+      const realExt = await q<{
+        from_value: string;
+        to_value: string;
+        detail: Row;
+      }>(
+        "SELECT from_value, to_value, detail FROM public.cockpit_billing_events WHERE id=$1",
+        [real.eventId],
+      );
+      const canaryExt = await one<number>(
+        "SELECT public.cockpit_billing_canary('extension', $1::jsonb) AS r",
+        [
+          JSON.stringify({
+            weeks: 2,
+            from: realExt[0].from_value,
+            newDate: realExt[0].to_value,
+            atRisk: false,
+            ours: false,
+          }),
+        ],
+      );
+      const strip = (w: Row[]) => w.map(({ old: _old, ...x }) => x);
+      expect(strip(await writesOf(canaryExt))).toEqual(
+        strip(await writesOf(Number(real.eventId))),
+      );
+
+      const churn = {
+        requestId: rid(),
+        leftOn: "2026-10-20",
+        noticeOn: null,
+        reason: "Cancelled",
+        churnType: "mid_programme",
+        whyDetail: "The owner moved the budget to a showroom fit-out.",
+        howToStop: "Agree the second campaign before day 45.",
+        mrrLostUsd: 1500,
+        exitCallId: null,
+        surveyState: "not_sent",
+        surveyResponseId: null,
+      };
+      const realChurn = await as(
+        CEO,
+        "SELECT public.cockpit_client_lifecycle_confirm('churn', $1::jsonb) AS r",
+        [JSON.stringify({ ...churn, taskId: B })],
+      );
+      const canaryChurn = await one<number>(
+        "SELECT public.cockpit_billing_canary('churn', $1::jsonb) AS r",
+        [
+          JSON.stringify({
+            leftOn: churn.leftOn,
+            reason: churn.reason,
+            churnType: churn.churnType,
+            from: "Active",
+          }),
+        ],
+      );
+      expect(strip(await writesOf(canaryChurn))).toEqual(
+        strip(await writesOf(Number(realChurn.eventId))),
+      );
+    });
+  });
 });

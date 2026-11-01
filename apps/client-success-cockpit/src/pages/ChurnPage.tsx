@@ -1420,7 +1420,7 @@ function Register({
               Send exit survey
             </Button>
             <span className="text-xs text-muted-foreground">
-              Client forms arrive with the portal (wave 3).
+              Client forms come with the client portal.
             </span>
           </div>
         ) : null}

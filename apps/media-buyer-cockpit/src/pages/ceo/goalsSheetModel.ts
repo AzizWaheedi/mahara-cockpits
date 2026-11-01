@@ -1288,7 +1288,7 @@ const SURVEY_WORDS: Record<string, string> = {
 };
 const CLOSED_WORDS: Record<string, string> = {
   open: "still late",
-  extended: "an extension moved the date",
+  extended: "an extension was given",
   stopped: "the client stopped",
   date_moved: "the date moved on the card",
 };

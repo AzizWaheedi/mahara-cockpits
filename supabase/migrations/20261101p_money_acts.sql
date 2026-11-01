@@ -49,7 +49,7 @@ DECLARE
   r record;
 BEGIN
   FOR r IN SELECT * FROM (VALUES
-      ('cockpit_billing_write(text,jsonb)', '8d499d5faa361ea51b86905e3ff0998c', 'aca02cdfda3338958e4c681a38687461'),
+      ('cockpit_billing_write(text,jsonb)', '8d499d5faa361ea51b86905e3ff0998c', 'f242a30ad19da10c9f6c9e45e82affde'),
       ('cockpit_settings_forms_audit()', 'ae654764bf7e86bd914d9df4cbbd089c', '62e182efea828afc7b2fca393bf58b51')
     ) AS x(fn, live, after) LOOP
     SELECT md5(regexp_replace(p.prosrc, '\s+', ' ', 'g')) INTO v
@@ -288,16 +288,21 @@ WITH ev AS (
   SELECT e.* FROM public.cockpit_billing_events e
    WHERE e.kind = 'extension'
      AND NOT EXISTS (SELECT 1 FROM public.cockpit_billing_event_voids v WHERE v.event_id = e.id)
-), g AS (
-  SELECT ev.*, (ev.at AT TIME ZONE 'Asia/Kuwait')::date AS granted_on, (ev.detail->>'weeks')::integer AS weeks
+), t AS (
+  -- A grant recorded again at a kind opening (cockpit_billing_held_release 'fresh') keeps its first time.
+  SELECT ev.*, coalesce(CASE WHEN ev.detail->>'granted_at' ~ '^\d{4}-\d{2}-\d{2}' THEN (ev.detail->>'granted_at')::timestamptz END,
+                        ev.at) AS g_at
     FROM ev
+), g AS (
+  SELECT ev.*, (ev.g_at AT TIME ZONE 'Asia/Kuwait')::date AS granted_on, (ev.detail->>'weeks')::integer AS weeks
+    FROM t AS ev
    WHERE ev.source IN ('ceo','csm','maher') AND ev.detail->>'weeks' IN ('1','2','4')
 )
 SELECT
   g.id AS grant_id,
   g.clickup_task_id,
   g.client_name,
-  g.at AS granted_at,
+  g.g_at AS granted_at,
   g.granted_on,
   g.weeks,
   coalesce(public.cockpit_billing_iso_day(g.detail->>'from'), public.cockpit_billing_iso_day(g.from_value), g.granted_on) AS from_date,
@@ -341,6 +346,15 @@ GRANT SELECT ON public.cockpit_extensions_v TO service_role;
 -- Date, with the date unchanged. A missing snapshot day (2026-10-08) sits
 -- between two present days with the same stage and date, so it never splits a
 -- spell.
+--
+-- The card snapshots trail the cockpit's own log (a held card write leaves the
+-- old date on the card for days), so the log decides two things the snapshots
+-- cannot: a person's extension granted from three days before the due day to
+-- the spell's end closes the spell as extended, and the days late stop at the
+-- grant; a run paid (checked) or extended on or before its due day was never
+-- late and is left out, unless the daily step already opened a late record for
+-- it, which then stays until it closes. An open run whose grant has already
+-- ended (the card never moved) is late again and counts from the due day.
 
 CREATE OR REPLACE VIEW public.cockpit_late_payments_v WITH (security_invoker = true) AS
 WITH d AS (
@@ -375,7 +389,17 @@ WITH d AS (
   SELECT ended.*,
          (SELECT min(p.day) FROM public.cockpit_client_payments p
            WHERE p.clickup_task_id = ended.clickup_task_id AND p.active AND p.checked
-             AND p.day BETWEEN ended.due_on - 3 AND coalesce(ended.ended_on, (now() AT TIME ZONE 'Asia/Kuwait')::date)) AS paid_on
+             AND p.day BETWEEN ended.due_on - 3 AND coalesce(ended.ended_on, (now() AT TIME ZONE 'Asia/Kuwait')::date)) AS paid_on,
+         -- The first grant that answers this due day (the log, not the card): from three days before it to the
+         -- spell's end; on an open spell only while the grant runs.
+         (SELECT min(x.granted_on) FROM public.cockpit_extensions_v x
+           WHERE x.clickup_task_id = ended.clickup_task_id
+             AND x.granted_on BETWEEN ended.due_on - 3 AND coalesce(ended.ended_on, (now() AT TIME ZONE 'Asia/Kuwait')::date)
+             AND (ended.ended_on IS NOT NULL OR x.until >= (now() AT TIME ZONE 'Asia/Kuwait')::date)) AS granted_on,
+         (SELECT min(e.id) FROM public.cockpit_billing_events e
+           WHERE e.clickup_task_id = ended.clickup_task_id AND e.kind = 'late' AND e.detail->>'due' = ended.due_on::text
+             AND NOT (e.detail ? 'closes')
+             AND NOT EXISTS (SELECT 1 FROM public.cockpit_billing_event_voids v WHERE v.event_id = e.id)) AS late_event_id
     FROM ended
 )
 SELECT
@@ -385,26 +409,22 @@ SELECT
   -- NULL stays NULL: "amount missing", never 0.
   paid.amount_usd,
   paid.ended_on,
-  CASE WHEN paid.ended_on IS NULL THEN 'open'
+  CASE WHEN paid.granted_on IS NOT NULL THEN 'extended'
+       WHEN paid.ended_on IS NULL THEN 'open'
        WHEN paid.next_stage IS DISTINCT FROM 'Active' THEN 'stopped'
-       WHEN EXISTS (SELECT 1 FROM public.cockpit_billing_events e
-                     WHERE e.clickup_task_id = paid.clickup_task_id AND e.kind = 'extension'
-                       AND e.source IN ('ceo','csm','maher')
-                       AND abs((e.at AT TIME ZONE 'Asia/Kuwait')::date - paid.ended_on) <= 1
-                       AND NOT EXISTS (SELECT 1 FROM public.cockpit_billing_event_voids v WHERE v.event_id = e.id)) THEN 'extended'
        ELSE 'date_moved' END AS closed_how,
   paid.paid_on,
   -- A payment that landed in the three days before the due date counts as on
-  -- time, never as negative days.
-  greatest(0, coalesce(paid.paid_on, paid.ended_on, (now() AT TIME ZONE 'Asia/Kuwait')::date) - paid.due_on) AS days_late,
-  (SELECT min(e.id) FROM public.cockpit_billing_events e
-    WHERE e.clickup_task_id = paid.clickup_task_id AND e.kind = 'late' AND e.detail->>'due' = paid.due_on::text
-      AND NOT (e.detail ? 'closes')
-      AND NOT EXISTS (SELECT 1 FROM public.cockpit_billing_event_voids v WHERE v.event_id = e.id)) AS late_event_id
-FROM paid;
+  -- time, never as negative days; a grant stops the count on its day.
+  greatest(0, least(paid.paid_on, paid.granted_on, paid.ended_on, (now() AT TIME ZONE 'Asia/Kuwait')::date) - paid.due_on) AS days_late,
+  paid.late_event_id
+FROM paid
+-- Paid or extended by the due day: never late (a record the daily step already opened stays until it closes).
+WHERE paid.late_event_id IS NOT NULL
+   OR NOT (coalesce(paid.paid_on <= paid.due_on, false) OR coalesce(paid.granted_on <= paid.due_on, false));
 
 COMMENT ON VIEW public.cockpit_late_payments_v IS
-  'Late payments as spells over cockpit_client_billing_days (W10): due_on, amount on the first late day (NULL is missing, never 0), ended_on (first snapshot after the spell), closed_how open / extended / stopped / date_moved, paid_on (earliest checked rail payment from due_on - 3), days_late, and the daily step''s open late event.';
+  'Late payments as spells over cockpit_client_billing_days (W10): due_on, amount on the first late day (NULL is missing, never 0), ended_on (first snapshot after the spell), closed_how open / extended (a person''s grant from due_on - 3 to the spell''s end, from the billing log) / stopped / date_moved, paid_on (earliest checked rail payment from due_on - 3), days_late (to the payment, the grant or the end, whichever is first), and the daily step''s open late event. A run paid or extended by its due day is left out.';
 REVOKE ALL ON public.cockpit_late_payments_v FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT ON public.cockpit_late_payments_v TO service_role;
 
@@ -448,10 +468,14 @@ SELECT
   d.confirmed_at AS churn_confirmed_at,
   d.survey_state,
   late.days_late,
+  -- The same rule as cockpit_billing_ladder_due, so the client page, the cadence and Today agree: an open run on
+  -- an Active card whose date has not moved since, with no live extension, counted from the due day.
   CASE
     WHEN b.client_status = 'Paused' AND b.paused_on IS NOT NULL AND k.today - b.paused_on >= 14 THEN 'pause_day14'
-    WHEN late.days_late >= ladder.cancel_day THEN 'cancel_review'
-    WHEN late.days_late >= ladder.pause_day AND x.until IS NULL THEN 'pause_review'
+    WHEN late.due_on IS NULL OR x.until IS NOT NULL OR b.client_status IS DISTINCT FROM 'Active'
+         OR b.next_payment_date IS DISTINCT FROM late.due_on THEN 'none'
+    WHEN k.today - late.due_on >= ladder.cancel_day THEN 'cancel_review'
+    WHEN k.today - late.due_on >= ladder.pause_day THEN 'pause_review'
     ELSE 'none'
   END AS ladder_step
 FROM public.cockpit_billing_accounts b
@@ -473,7 +497,7 @@ LEFT JOIN LATERAL (
    ORDER BY dd.left_on DESC, dd.id DESC LIMIT 1
 ) d ON true
 LEFT JOIN LATERAL (
-  SELECT l.days_late FROM public.cockpit_late_payments_v l
+  SELECT l.days_late, l.due_on FROM public.cockpit_late_payments_v l
    WHERE l.clickup_task_id = b.clickup_task_id AND l.closed_how = 'open'
    ORDER BY l.due_on DESC LIMIT 1
 ) late ON true
@@ -938,11 +962,15 @@ BEGIN
 
     -- The CEO cockpit logs straight into the ledger the Money tab reads, with
     -- its duplicate check, Tap guard and history gate (Convex manualPayments.add).
+    -- One rule with the Money tab (checked money, 20261101n): the CEO's bank
+    -- reference of 3 or more characters makes the entry checked at once; with
+    -- none (or a shorter one, kept in the note) it is logged, not checked.
     v_ledger := public.cockpit_ceo_manual_payment_add(
       jsonb_build_object('day', v_day::text, 'amount', p_args->'amount', 'currency', v_currency, 'rail', v_rail,
         'clientName', v_acc.client_name, 'clickupTaskId', v_task,
-        'note', nullif(concat_ws('; ', 'ref ' || v_ref, v_note, 'receipt ' || v_evidence), ''),
-        'allowRepeat', coalesce(p_args->'allowRepeat' = 'true'::jsonb, false)),
+        'note', nullif(concat_ws('; ', CASE WHEN char_length(v_ref) < 3 THEN 'ref ' || v_ref END, v_note, 'receipt ' || v_evidence), ''),
+        'allowRepeat', coalesce(p_args->'allowRepeat' = 'true'::jsonb, false))
+      || CASE WHEN char_length(v_ref) >= 3 THEN jsonb_build_object('reference', v_ref) ELSE '{}'::jsonb END,
       gen_random_uuid());
     IF v_next_day IS NOT NULL AND v_next_day IS DISTINCT FROM v_acc.next_payment_date THEN
       UPDATE public.cockpit_billing_accounts SET next_payment_date = v_next_day, source = 'ceo', synced_at = now()
@@ -1247,7 +1275,7 @@ BEGIN
      AND coalesce(r.submitted_at, r.created_at) >= now() - interval '30 days'
    ORDER BY coalesce(r.submitted_at, r.created_at) DESC LIMIT 1;
   IF v_checkin.id IS NOT NULL AND v_checkin.answers::text ILIKE '%extension%' THEN
-    v_hints := v_hints || jsonb_build_array(jsonb_build_object('text', 'The last 1-1 notes mention an extension.',
+    v_hints := v_hints || jsonb_build_array(jsonb_build_object('text', 'The last 1-1 notes mention an extension',
       'source', 'the 1-1 notes, ' || public.cockpit_billing_day_words((v_checkin.at AT TIME ZONE 'Asia/Kuwait')::date)));
   END IF;
 
@@ -1307,7 +1335,9 @@ BEGIN
       CASE WHEN v_survey IS NOT NULL THEN jsonb_build_object('key', 'surveyState', 'value', 'filled',
                   'source', 'the termination survey, ' || public.cockpit_billing_day_words((v_survey->>'noticeOn')::date))
            ELSE jsonb_build_object('key', 'surveyState', 'value', NULL, 'source', 'No termination survey from this client.') END,
-      CASE WHEN v_last IS NOT NULL THEN jsonb_build_object('key', 'exitCallId', 'value', v_last->>'id', 'source', v_last->>'source')
+      -- Never preselected: the latest call is not the exit call unless the CSM says so.
+      CASE WHEN v_last IS NOT NULL THEN jsonb_build_object('key', 'exitCallId', 'value', NULL,
+                  'source', 'Pick the exit call if there was one; the calls of the last 30 days are listed.')
            ELSE jsonb_build_object('key', 'exitCallId', 'value', NULL, 'source', 'No call or 1-1 notes on this client in the last 30 days.') END);
   WHEN 'mrr' THEN
     v_values := jsonb_build_array(

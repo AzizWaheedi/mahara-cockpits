@@ -49,7 +49,7 @@ export type ExtensionGrant = {
   from: string | null;
   until: string;
   state: 'live' | 'ended' | 'replaced';
-  /** The seat that gave it ('csm', 'finance', 'ceo'); null on the two grants of 19 Oct, logged by hand. */
+  /** The seat that gave it, in words ('the CSM', 'finance', 'the CEO', 'the billing agent': cockpit_extensions_v reads the words the acts store, or the source's words when a grant has none); a code ('csm', 'ceo') only on an event cockpit_billing_detail built. */
   seatRole: string | null;
 };
 export type Card = { taskId: string; name: string; stage?: string | null };

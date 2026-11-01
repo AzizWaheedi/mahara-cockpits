@@ -29,7 +29,7 @@ BEGIN
   SELECT md5(regexp_replace(p.prosrc, '\s+', ' ', 'g')) INTO v
     FROM pg_catalog.pg_proc p
    WHERE p.oid = 'public.cockpit_ceo_goal_sheet_context(text)'::regprocedure;
-  IF v IS DISTINCT FROM '8ca5e4d3281f5035bf7fec046c4fef15' AND v IS DISTINCT FROM '0bfea71f5d53ebf6246f84f351cfc97a' THEN
+  IF v IS DISTINCT FROM '8ca5e4d3281f5035bf7fec046c4fef15' AND v IS DISTINCT FROM '5be4703416750ab41d8a6032916ed97f' THEN
     RAISE EXCEPTION 'cockpit_ceo_goal_sheet_context changed since the waves 1-2 contract read it; stop and re-read it.'
       USING ERRCODE = '55000';
   END IF;
@@ -74,7 +74,12 @@ BEGIN
         'seatRole', e.seat_role,
         'source', format('Given in the cockpit on %s%s; the grant %s.',
           to_char(e.granted_on, 'FMDD Mon'),
-          CASE e.seat_role WHEN 'csm' THEN ' by the CSM' WHEN 'finance' THEN ' by finance' WHEN 'ceo' THEN ' by the CEO' ELSE ' on the billing sheet' END,
+          -- The seat as the code (cockpit_billing_detail) or as the words (20261101p's acts and the view's fallback).
+          CASE WHEN e.seat_role IN ('csm', 'the CSM') THEN ' by the CSM'
+               WHEN e.seat_role = 'finance' THEN ' by finance'
+               WHEN e.seat_role IN ('ceo', 'the CEO') THEN ' by the CEO'
+               WHEN e.seat_role = 'the billing agent' THEN ' by the billing agent'
+               ELSE '' END,
           CASE e.state WHEN 'live' THEN format('runs to %s', to_char(e.until, 'FMDD Mon'))
                        WHEN 'replaced' THEN 'was replaced by a longer one'
                        ELSE format('ended %s', to_char(e.until, 'FMDD Mon')) END))
@@ -94,7 +99,7 @@ BEGIN
         'source', format('The card''s next payment date in the daily snapshots: due %s, %s%s.',
           to_char(l.due_on, 'FMDD Mon'),
           CASE l.closed_how WHEN 'open' THEN format('still late, %s days', l.days_late)
-                            WHEN 'extended' THEN 'an extension moved the date'
+                            WHEN 'extended' THEN 'an extension was given'
                             WHEN 'stopped' THEN 'the client stopped'
                             ELSE 'the date moved on the card' END,
           CASE WHEN l.paid_on IS NOT NULL THEN format('; paid %s on the rails', to_char(l.paid_on, 'FMDD Mon'))
@@ -167,9 +172,11 @@ BEGIN
         FROM public.cockpit_client_days d WHERE d.day BETWEEN from_day AND last_day GROUP BY 1) x),
     'churned', (SELECT coalesce(jsonb_agg(jsonb_build_object('leftOn',d.left_on,'client',d.client,'reason',d.reason)),'[]'::jsonb)
       FROM public.cockpit_churn_departures d WHERE d.removed_at IS NULL AND d.left_on BETWEEN from_day AND last_day
-        -- The CEO's count (30 Oct): every departure but a finished term. Joe and Sera is on the
-        -- register as non-payment, so it counts here though the Churn page's day-90 rule files it apart.
-        AND d.reason <> 'Completed term, did not renew'),
+        -- One rule with ceo-refresh and the CSM KPI (plan 3.5): the confirm's churn type decides
+        -- (completed does not count); with no type yet, a finished-term reason is completed. Read
+        -- through to_jsonb so the list still works before 20261101o adds the column.
+        AND coalesce(to_jsonb(d)->>'churn_type', CASE WHEN d.reason = 'Completed term, did not renew' THEN 'completed' END)
+            IS DISTINCT FROM 'completed'),
     'churnMonths', (SELECT coalesce(jsonb_agg(jsonb_build_object('month',m.month,'activeAtStart',m.active_at_start,'lostBefore',m.lost_before_register)),'[]'::jsonb)
       FROM public.cockpit_churn_months m WHERE m.month IN (p_month, to_char(from_day,'YYYY-MM'))),
     'softwareMonthly', (SELECT round(sum(l.unit_price * coalesce(l.seats,1) / CASE WHEN l.billing='yearly' THEN 12 ELSE 1 END),2)

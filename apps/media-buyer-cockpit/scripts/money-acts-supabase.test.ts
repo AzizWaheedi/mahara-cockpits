@@ -1440,18 +1440,6 @@ test("late spells: one run across a missing day, how each closed, the checked pa
       pauseDays: 14,
       pausedOn: addDays(today, -14),
     });
-    // A live extension takes the card off the ladder.
-    await db.exec(`INSERT INTO cockpit_billing_events(clickup_task_id,client_name,kind,from_value,to_value,reason,detail,source,by_whom)
-      VALUES('late4','Four Days','extension','${addDays(today, -4)}','${addDays(today, 10)}','x','{"weeks":2,"movedDate":true}','maher','maher')`);
-    expect(
-      (
-        await call<Record<string, unknown>[]>(
-          db,
-          CEO,
-          "cockpit_billing_ladder_due()",
-        )
-      ).map(r => r.taskId),
-    ).toEqual(["late15", "paused"]);
     expect(
       await call<unknown[]>(db, OTHER_CSM, "cockpit_billing_ladder_due()"),
     ).toEqual([]);
@@ -1498,6 +1486,25 @@ test("late spells: one run across a missing day, how each closed, the checked pa
         )
       )[0].id,
     ).toBeGreaterThan(0);
+    // A live extension, given today in the log (the card still shows the old date: its write is held), takes
+    // the card off the ladder and the client page's step, and stops the count on the grant's day.
+    await db.exec(`INSERT INTO cockpit_billing_events(clickup_task_id,client_name,kind,from_value,to_value,reason,detail,source,by_whom)
+      VALUES('late4','Four Days','extension','${addDays(today, -4)}','${addDays(today, 10)}','x','{"weeks":2,"movedDate":true}','maher','maher')`);
+    expect(
+      (
+        await call<Record<string, unknown>[]>(
+          db,
+          CEO,
+          "cockpit_billing_ladder_due()",
+        )
+      ).map(r => r.taskId),
+    ).toEqual(["late15", "paused"]);
+    expect(
+      await rows(
+        db,
+        "SELECT closed_how, days_late FROM cockpit_late_payments_v WHERE clickup_task_id='late4'",
+      ),
+    ).toEqual([{ closed_how: "extended", days_late: 4 }]);
     // The card's run ends (the date moved): the next run closes the record, once.
     await snapshots(db, today, "late4", "Four Days", [
       [-1, "Active", 30, 2000],
@@ -1520,10 +1527,10 @@ test("late spells: one run across a missing day, how each closed, the checked pa
     expect(closed[0].detail).toMatchObject({
       due: addDays(today, -4),
       closed_how: "extended",
-      days_late: 5,
+      days_late: 4,
     });
     expect(closed[0].reason).toMatch(
-      /^Late 5 days: due \d{1,2} [A-Z][a-z]{2}, extension moved the date$/,
+      /^Late 4 days: due \d{1,2} [A-Z][a-z]{2}, extension moved the date$/,
     );
     expect(
       (
@@ -1570,6 +1577,49 @@ test("late spells: one run across a missing day, how each closed, the checked pa
   }
 });
 
+test("late spells follow the billing log: October's Liwan, Marble and Ardon (the card trailed the log)", async () => {
+  const { db, today } = await fixture();
+  try {
+    await owner(db);
+    // Today is 1 Nov in these days: Liwan due 15 Oct, Marble due 19 Oct, both given two weeks on 19 Oct in the log,
+    // their cards moved only on 29 Oct; Ardon due 27 Oct and paid (checked) that day, its card moved on 29 Oct.
+    await db.exec(`
+      INSERT INTO cockpit_billing_accounts(clickup_task_id,client_name,stage,stage_group,client_status,payment_plan,next_payment_usd,next_payment_date,synced_at)
+        VALUES('liwan','Liwan','Active','active','Active','Monthly',1333,'${addDays(today, 1)}',now()),
+              ('marble','Marble','Active','active','Active','Monthly',2000,'${addDays(today, 1)}',now()),
+              ('ardon','Ardon','Active','active','Active','Monthly',1500,'${addDays(today, 26)}',now());`);
+    const run = (from: number, to: number, due: number): [number, string, number, number][] =>
+      Array.from({ length: from - to + 1 }, (_, i) => [from - i, "Active", due, 1000]);
+    await snapshots(db, today, "liwan", "Liwan", [...run(25, 4, -17), ...run(3, 0, 1)]);
+    await snapshots(db, today, "marble", "Marble", [...run(20, 4, -13), ...run(3, 0, 1)]);
+    await snapshots(db, today, "ardon", "Ardon", [...run(8, 4, -5), ...run(3, 0, 26)]);
+    const at = (ago: number) => `(('${addDays(today, -ago)}')::date + time '15:50') AT TIME ZONE 'Asia/Kuwait'`;
+    await db.exec(`
+      INSERT INTO cockpit_billing_events(clickup_task_id,client_name,kind,from_value,to_value,reason,detail,source,by_whom,at)
+        VALUES('liwan','Liwan','extension','${addDays(today, -17)}','${addDays(today, 1)}','Ad account broke','{"weeks":2,"movedDate":true,"ours":true}','csm','csm',${at(13)}),
+              ('marble','Marble','extension','${addDays(today, -13)}','${addDays(today, 1)}','Ad account issue','{"weeks":2,"movedDate":true,"ours":true}','csm','csm',${at(13)});
+      INSERT INTO cockpit_client_payments(payment_id,clickup_task_id,client_name,day,usd,rail,side,kind,active,checked)
+        VALUES('manual:ardon','ardon','Ardon','${addDays(today, -5)}',1500,'manual','back_end','client',true,true);`);
+    // Liwan was late four days, then extended; Marble was extended on its due day and Ardon paid on it: never late.
+    expect(
+      await rows(
+        db,
+        "SELECT clickup_task_id AS t, due_on::text, ended_on::text, closed_how, paid_on::text, days_late FROM cockpit_late_payments_v ORDER BY 1",
+      ),
+    ).toEqual([
+      { t: "liwan", due_on: addDays(today, -17), ended_on: addDays(today, -3), closed_how: "extended", paid_on: null, days_late: 4 },
+    ]);
+    // A void takes the grant back: Liwan's run reads as the date moving, and its days run to the card's move.
+    await db.exec(`INSERT INTO cockpit_billing_event_voids(event_id, reason, voided_by)
+      SELECT id, 'test void', 'test' FROM cockpit_billing_events WHERE clickup_task_id='liwan' AND kind='extension'`);
+    expect(
+      await rows(db, "SELECT closed_how, days_late FROM cockpit_late_payments_v WHERE clickup_task_id='liwan'"),
+    ).toEqual([{ closed_how: "date_moved", days_late: 14 }]);
+  } finally {
+    await db.close();
+  }
+});
+
 test("cockpit_form_prefill: the gate, each value's source, NULL with a sentence, 30 days of calls", async () => {
   const { db, today } = await fixture();
   try {
@@ -1605,7 +1655,7 @@ test("cockpit_form_prefill: the gate, each value's source, NULL with a sentence,
     expect(p.calls[1].source).toMatch(/^Fathom, \d{1,2} [A-Z][a-z]{2}$/);
     expect(p.hints).toEqual([
       {
-        text: "The last 1-1 notes mention an extension.",
+        text: "The last 1-1 notes mention an extension",
         source: expect.stringMatching(/^the 1-1 notes, /),
       },
     ]);

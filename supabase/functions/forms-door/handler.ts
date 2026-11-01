@@ -12,8 +12,11 @@
 //   client's pause request, CTUjv6l3), waves 1-2 (C4a-2, W18): stored through
 //   cockpit_form_record_legacy as a legacy response, matched to a card only by
 //   the form's own hidden onboarding_client_id (never by a name, W12). The
-//   database queues the "Termination notice in" for the CSM; a pause request
-//   is a row on Today. No card field changes (D11).
+//   signature proves Typeform sent it, not which card it is for: the hidden id
+//   sits in a public link, so the database keeps the match as
+//   hidden_id_unverified and never attaches the survey to a departure (a
+//   person does). It queues the "Termination notice in" for the CSM; a pause
+//   request is a row on Today. No card field changes (D11).
 //
 // It never delivers anything itself. Everything that touches the network or
 // the clock comes in through Deps, so `bun test` runs it offline.

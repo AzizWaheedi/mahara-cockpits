@@ -59,7 +59,8 @@ BEGIN
       ('cockpit_ceo_manual_payment_add(jsonb,uuid)', '272114d96de1b84e7c53f7eee8a1a1fb', '50981d2ef217a95980fb7efc4ca93e7e'),
       ('cockpit_finish_finance_refresh(uuid,jsonb,text)', '49223dfc3d24eb5cdc0bd11f8c7fb13b', '991d4a15915820c4025f5b30b5472164'),
       ('cockpit_billing_deal_rails_held(text,text)', '745278bd6a3bf712b9b7eeee2084babf', '3e82c670b0f93c88ebb6723b8ed23705'),
-      ('cockpit_billing_balances_read()', '411d7ff4533e3d827743e30b2995501d', 'abb1d695835c99779da110e7d132fdf3'),
+      ('cockpit_billing_deal_rails(text,text)', 'adaf26b318db2b4cdd85d29b11f84c2c', 'e7942d446446fe7985f797ee44de2ad7'),
+      ('cockpit_billing_balances_read()', '411d7ff4533e3d827743e30b2995501d', 'cfd508625131949f69ca153ef457e2d3'),
       ('cockpit_billing_deal_assignments()', 'eb1a61f0aca100e728815a2aad81456e', 'c0930161e6da777d0ef944e7ff0b21ac'),
       ('cockpit_csm_projection_facts(jsonb)', '587087c9805f7b307cbda006f0a839a5', '0b0c77cb58c4a815234a65ba9c4f2761'),
       ('cockpit_csm_projection_refresh_billing()', '9e77236725e5f3e65e082fac970dab70', 'f1949f20d77991a04d01ff005dc3b59a'),
@@ -533,6 +534,39 @@ AS $function$
   SELECT * FROM card
 $function$;
 
+-- What counts for a deal: checked money only (the CK rule), less what the CEO
+-- left out of program money. The confirm cap and a confirmation's proof in
+-- cockpit_billing_balance_write read this, so a receipt nobody has checked
+-- neither lowers "what the rails have not shown" nor proves a confirmation.
+-- Same columns as before, so its callers keep working.
+CREATE OR REPLACE FUNCTION public.cockpit_billing_deal_rails(p_deal text, p_task text)
+ RETURNS TABLE(payment_id text, day date, usd numeric, rail text, from_ledger boolean, kind text, recorded_at timestamp with time zone)
+ LANGUAGE sql
+ STABLE
+ SET search_path = ''
+AS $function$
+  SELECT h.payment_id, h.day, h.usd, h.rail, h.from_ledger, h.kind, h.recorded_at
+  FROM public.cockpit_billing_deal_rails_held(p_deal, p_task) h
+  WHERE h.checked
+    AND NOT EXISTS (SELECT 1 FROM public.cockpit_billing_payment_exclusions x
+                    WHERE x.payment_id = h.payment_id AND x.deal_response_id = p_deal AND x.withdrawn_at IS NULL)
+$function$;
+
+-- What the pending-payments read shows for a deal: every payment it holds,
+-- checked or not, with the flag, less the exclusions. The screen lists a
+-- logged one apart ("Receipt in, not checked") and never sums it.
+CREATE OR REPLACE FUNCTION public.cockpit_billing_deal_rails_shown(p_deal text, p_task text)
+ RETURNS TABLE(payment_id text, day date, usd numeric, rail text, from_ledger boolean, kind text, recorded_at timestamp with time zone, checked boolean)
+ LANGUAGE sql
+ STABLE
+ SET search_path = ''
+AS $function$
+  SELECT h.payment_id, h.day, h.usd, h.rail, h.from_ledger, h.kind, h.recorded_at, h.checked
+  FROM public.cockpit_billing_deal_rails_held(p_deal, p_task) h
+  WHERE NOT EXISTS (SELECT 1 FROM public.cockpit_billing_payment_exclusions x
+                    WHERE x.payment_id = h.payment_id AND x.deal_response_id = p_deal AND x.withdrawn_at IS NULL)
+$function$;
+
 CREATE OR REPLACE FUNCTION public.cockpit_billing_balances_read()
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -655,11 +689,11 @@ BEGIN
     'dealResponseId', dc.deal_response_id, 'paymentId', r.payment_id, 'day', r.day, 'usd', r.usd,
     'rail', r.rail, 'kind', r.kind, 'fromLedger', r.from_ledger,
     -- checked money (20261101n): false for a hand-logged payment finance has not checked.
-    'checked', public.cockpit_payment_row_checked(r.payment_id),
+    'checked', r.checked,
     'byHand', r.rail IN ('manual', 'transfer', 'bank') OR r.payment_id ~ '^(manual|transfer|bank):')
     ORDER BY dc.deal_response_id, r.day, r.payment_id), '[]'::jsonb) INTO v_rails
   FROM public.cockpit_billing_deal_cards() dc
-  CROSS JOIN LATERAL public.cockpit_billing_deal_rails(dc.deal_response_id, dc.clickup_task_id) r
+  CROSS JOIN LATERAL public.cockpit_billing_deal_rails_shown(dc.deal_response_id, dc.clickup_task_id) r
   WHERE dc.clickup_task_id = ANY (v_tasks);
 
   -- Onboarding calls ----------------------------------------------------------
@@ -851,10 +885,10 @@ BEGIN
       'rails', (SELECT coalesce(jsonb_agg(jsonb_build_object(
                   'dealResponseId', d.response_id, 'paymentId', r.payment_id, 'day', r.day, 'usd', r.usd, 'rail', r.rail,
                   'kind', r.kind, 'fromLedger', r.from_ledger,
-                  'checked', public.cockpit_payment_row_checked(r.payment_id),
+                  'checked', r.checked,
                   'byHand', r.rail IN ('manual', 'transfer', 'bank') OR r.payment_id ~ '^(manual|transfer|bank):')
                   ORDER BY r.day, r.payment_id), '[]'::jsonb)
-                FROM public.cockpit_billing_deal_rails(d.response_id, NULL) r))
+                FROM public.cockpit_billing_deal_rails_shown(d.response_id, NULL) r))
       ORDER BY d.submitted_at DESC, d.response_id), '[]'::jsonb) INTO v_unlinked
     FROM public.cockpit_billing_deal_assignments() x
     JOIN public.cockpit_sales_deals d ON d.response_id = x.deal_response_id
@@ -886,10 +920,10 @@ BEGIN
         SELECT coalesce(jsonb_agg(jsonb_build_object(
           'dealResponseId', d.response_id, 'paymentId', r.payment_id, 'day', r.day, 'usd', r.usd, 'rail', r.rail,
           'kind', r.kind, 'fromLedger', r.from_ledger,
-          'checked', public.cockpit_payment_row_checked(r.payment_id),
+          'checked', r.checked,
           'byHand', r.rail IN ('manual', 'transfer', 'bank') OR r.payment_id ~ '^(manual|transfer|bank):')
           ORDER BY r.day, r.payment_id), '[]'::jsonb)
-        FROM public.cockpit_billing_deal_rails(d.response_id, a.clickup_task_id) r) END)
+        FROM public.cockpit_billing_deal_rails_shown(d.response_id, a.clickup_task_id) r) END)
       ORDER BY a.client_name, a.clickup_task_id), '[]'::jsonb) INTO v_sales
     FROM public.cockpit_billing_accounts a
     LEFT JOIN public.cockpit_billing_deal_cards() dc ON dc.clickup_task_id = a.clickup_task_id
@@ -1236,6 +1270,8 @@ REVOKE ALL ON FUNCTION
   public.cockpit_ceo_manual_payment_add(jsonb, uuid),
   public.cockpit_finish_finance_refresh(uuid, jsonb, text),
   public.cockpit_billing_deal_rails_held(text, text),
+  public.cockpit_billing_deal_rails(text, text),
+  public.cockpit_billing_deal_rails_shown(text, text),
   public.cockpit_billing_balances_read(),
   public.cockpit_billing_deal_assignments(),
   public.cockpit_csm_projection_facts(jsonb),

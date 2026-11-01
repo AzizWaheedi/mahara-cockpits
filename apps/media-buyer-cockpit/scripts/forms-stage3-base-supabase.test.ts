@@ -1413,7 +1413,11 @@ describe("cockpit_form_record_legacy (3.1, 4.4)", () => {
         state: "legacy",
         created_by: "forms-door",
       });
-      expect(r.answer_meta).toEqual({ notice_on: "2026-11-01" });
+      // The card came from the link's hidden id, which nobody signs: kept, and said to be unverified.
+      expect(r.answer_meta).toEqual({
+        notice_on: "2026-11-01",
+        match: "hidden_id_unverified",
+      });
       // Only the form's two hidden fields are kept; nothing else of the delivery.
       expect(r.hidden).toEqual({
         client_name: "Acme Interiors",
@@ -1505,7 +1509,7 @@ describe("cockpit_form_record_legacy (3.1, 4.4)", () => {
     });
   });
 
-  test("before 20261101o the departure is left alone; with o's columns the open one is filled", async () => {
+  test("a hidden id is no proof: the departure is never filled from it, before or after 20261101o's columns", async () => {
     await rolledBack(async () => {
       await ex(`INSERT INTO public.cockpit_churn_departures(client, clickup_task_id, left_on, reason, created_by)
                 VALUES ('Acme Interiors', '${A}', '2026-10-30', 'Cancelled', 'test')`);
@@ -1513,8 +1517,14 @@ describe("cockpit_form_record_legacy (3.1, 4.4)", () => {
       expect(before.matched).toBe(false);
       await ex(`ALTER TABLE public.cockpit_churn_departures ADD COLUMN survey_response_id uuid, ADD COLUMN survey_state text NOT NULL DEFAULT 'not_sent',
                 ADD COLUMN confirmed_at timestamptz`);
+      // Anyone holding a client's link can change the card id in it, so a person attaches the survey
+      // (the churn confirm's pick); the notice still reaches the card's CSM to check.
       const after = await legacy(survey("tok00000007"));
-      expect(after.matched).toBe(true);
+      expect(after).toMatchObject({
+        matched: false,
+        noticeQueued: true,
+        taskId: A,
+      });
       expect(
         (
           await q(
@@ -1522,9 +1532,9 @@ describe("cockpit_form_record_legacy (3.1, 4.4)", () => {
           )
         )[0],
       ).toEqual({
-        survey_response_id: after.responseId,
-        survey_state: "filled",
-        updated_by: "forms-door",
+        survey_response_id: null,
+        survey_state: "not_sent",
+        updated_by: null,
       });
       // A departure already confirmed is never touched.
       await ex(

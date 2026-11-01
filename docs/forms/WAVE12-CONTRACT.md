@@ -1134,3 +1134,44 @@ contract took one and says why; the options not taken are recorded here so nobod
 
 Not applied: none.
 
+
+### 11.4 Review of the integrated branch, 2026-11-01: what changed
+
+Twenty-five findings on the integrated `forms-w12` (after `a6e96dba`) were checked against the
+live database and the code. Each held, and each is applied; where a finding offered a choice, the
+one taken is named here.
+
+- **Late spells follow the billing log** (`p` 5). A person's grant from three days before the due
+  day to the spell's end closes the spell as `extended` and stops the days late at the grant; a
+  run paid (checked) or extended on or before its due day is left out unless the daily step already
+  opened a late record for it. Read against live data on 1 Nov (the new rule as a `SELECT`): Marble
+  and Ardon are gone, Liwan reads extended after 4 days; October-due spells are Arcturus, نهوض نجد,
+  Castello, Safad (all on the CEO's 20261101h list), Atlantis's 12 Oct run (stopped), شركة العلا (paid
+  20 Oct, 7 days late) and Liwan. The three extras differ from the lock-in by definition (the lock-in
+  counts what was unpaid on 1 Nov), so its "measured" lines show them; re-read at D-P1.
+- **One ladder rule** (`o` and `p` 5b): the client page's step uses `cockpit_billing_ladder_due`'s
+  predicate (open run, Active card, date not moved, no live grant, counted from the due day).
+- **Seat words**: `q`'s source sentence and the billing sheet's log read both the code and the
+  words. The detail builder's claim is corrected; the chain test compares canary and real card
+  writes for an extension and a churn instead.
+- **One churn rule** in the goal sheet, the CSM KPI and ceo-refresh: the confirm's `churn_type`
+  decides; with none, a finished-term reason is completed.
+- **Checked money**: projections show "Receipt in, not checked" beside Paid so far and in the cash
+  note, never summed; `cockpit_billing_deal_rails` counts only checked money (the confirm cap and
+  proof), `cockpit_billing_deal_rails_shown` keeps the logged rows for the pending screen; the CEO's
+  bank reference on the billing sheet marks the entry checked, as on the Money tab.
+- **Churn reason**: with no stored field map the reason goes on as named and clickup-writeback's
+  live list decides; "Other" and a reason off the list say the card's field is left as it is.
+- **A fresh release keeps its grant day** (`detail.granted_at`, read by `cockpit_extensions_v`).
+- **Billing log row security** (`o` 10b): a restrictive select policy holds a direct read to the
+  CEO, finance, or a CSM on their own client.
+- **Unsigned hidden ids** (`l`): a survey's card from the link's hidden id is kept as
+  `hidden_id_unverified` and never attached to a departure by the door; a person attaches it. The
+  HMAC-signed link (option not taken now) needs the Termination Form Link reissued on every card.
+- **Screens**: the sheet's status comes from the card read; call cards are grid (no empty line);
+  the ticket step says where it stands and its action once, or "from the client page" when the
+  billing sheet cannot open it; Today mounts the shared Checks waiting; "(optional)" follows
+  conditional requirements; the exit call is never preselected ("No exit call"); the header after a
+  send reads "Where it has reached"; copy fixes; the layout harness gains `state=staff`, `bands`
+  and `checks` (`src/dev/formHarness.tsx`). The billing sheet and churn tracker have no harness
+  scenario yet.

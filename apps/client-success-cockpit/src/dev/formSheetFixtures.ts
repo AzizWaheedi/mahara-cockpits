@@ -151,3 +151,88 @@ export const TRAIL_ROWS: Record<string, FormTrailRow> = {
     notice: { state: "none" },
   },
 };
+
+/**
+ * What Today's bands read (cockpit_form_notices_in, cockpit_billing_ladder_due,
+ * cockpit_manual_payments_to_check), for the harness's state=bands and
+ * state=checks: a matched and an unmatched termination survey, a pause request,
+ * a pause review and a cancel review, and one hand-logged receipt in dinars.
+ */
+export const BAND_RPCS: Record<string, unknown> = {
+  cockpit_form_doors: ALL_DOORS,
+  cockpit_form_notices_in: [
+    {
+      kind: "termination",
+      responseId: "s-1",
+      taskId: "86ewvnqj5",
+      clientName: "Liwan Limited",
+      noticeOn: "2026-10-30",
+      submittedAt: "2026-10-30T09:00:00Z",
+      matched: true,
+      departureId: null,
+    },
+    {
+      kind: "termination",
+      responseId: "s-2",
+      taskId: null,
+      clientName: "Atlantis Homes",
+      noticeOn: "2026-10-29",
+      submittedAt: null,
+      matched: false,
+      departureId: null,
+    },
+    {
+      kind: "pause_request",
+      responseId: "p-1",
+      taskId: "86ewvnqj5",
+      clientName: "Liwan Limited",
+      noticeOn: "2026-10-31",
+      submittedAt: null,
+      matched: true,
+      departureId: null,
+    },
+  ],
+  cockpit_billing_ladder_due: [
+    {
+      taskId: "86ewvnqj5",
+      clientName: "Liwan Limited",
+      step: "pause_review",
+      dueOn: "2026-10-27",
+      daysLate: 5,
+      amountUsd: null,
+      extendedUntil: null,
+      pausedOn: null,
+    },
+    {
+      taskId: "86eymcqdq",
+      clientName: "Marble Works",
+      step: "cancel_review",
+      dueOn: "2026-10-15",
+      daysLate: 17,
+      amountUsd: 1200,
+      extendedUntil: null,
+      pausedOn: null,
+    },
+  ],
+  cockpit_manual_payments_to_check: [
+    {
+      id: "mp-1",
+      day: "2026-10-28",
+      clientName: "Liwan Limited",
+      taskId: "86ewvnqj5",
+      amount: 1500,
+      currency: "KWD",
+      amountUsd: 4890,
+      rail: "transfer",
+      reference: null,
+      evidenceUrl: null,
+      addedBy: "the CSM",
+      daysWaiting: 4,
+    },
+  ],
+  cockpit_manual_payment_check: {
+    id: "mp-1",
+    state: "checked",
+    checkedAt: "2026-11-01T08:00:00Z",
+  },
+};

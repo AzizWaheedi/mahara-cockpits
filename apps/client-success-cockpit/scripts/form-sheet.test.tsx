@@ -591,12 +591,14 @@ describe("the after-send trail reads 5.1's sentences", () => {
       href: "/requests?type=client_pause",
       type: "client_pause",
     });
+    // The step says where the ticket stands; "Open the … ticket" is only its action, said once.
     expect(core.trailFrom({}, defs.FORM_DEFS.resume)[3].label).toBe(
-      "Open the relaunch ticket",
+      "The relaunch needs its ticket",
     );
-    expect(core.trailFrom({}, defs.FORM_DEFS.churn_confirm)[3].label).toBe(
-      "Open the offboarding ticket",
-    );
+    expect(core.trailFrom({}, defs.FORM_DEFS.churn_confirm)[3]).toMatchObject({
+      label: "The offboarding needs its ticket",
+      action: { label: "Open the offboarding ticket" },
+    });
     expect(
       core
         .trailFrom({}, defs.FORM_DEFS.mrr)
@@ -677,6 +679,81 @@ describe("the sheet", () => {
     await setWidth(1280);
   });
 
+  test("a requirement that hangs on another answer reads optional when it is; an optional call can go back to none", async () => {
+    const { root } = await draw(
+      createElement(FormBody, {
+        def: defs.FORM_DEFS.pause,
+        client: fx.CLIENT,
+        prefill: [
+          { key: "pauseKind", value: "non_payment", source: "the test" },
+        ],
+        calls: fx.CALLS,
+        submit: async () => ({ message: "", ref: { eventId: 1 } }),
+        trail: async () => fx.TRAIL_ROWS.held,
+      }),
+    );
+    const restart = [...body().querySelectorAll(".fs-label")].find((l: any) =>
+      text(l).startsWith("Restart"),
+    );
+    expect(text(restart)).toContain("(optional)");
+    await act(async () => root.unmount());
+
+    const churn = await draw(
+      createElement(FormBody, {
+        def: defs.FORM_DEFS.churn_confirm,
+        client: fx.CLIENT,
+        prefill: fx.CHURN_PREFILL,
+        calls: fx.CALLS,
+        submit: async () => ({ message: "", ref: { eventId: 1 } }),
+        trail: async () => fx.TRAIL_ROWS.held,
+      }),
+    );
+    // The latest call is never the exit call by default: "No exit call" is picked until the CSM picks one.
+    const none = [...body().querySelectorAll(".fs-call")].find((l: any) =>
+      text(l).includes("No exit call"),
+    ) as any;
+    expect(none).toBeTruthy();
+    expect(none.querySelector("input").checked).toBe(true);
+    await act(async () => churn.root.unmount());
+  });
+
+  test("after a send the header drops the card's old state; a ticket with no way to open it says where to", async () => {
+    const def = defs.FORM_DEFS.resume;
+    const { root } = await draw(
+      createElement(FormSheet, {
+        open: true,
+        onOpenChange: () => {},
+        def,
+        client: fx.CLIENT,
+        prefill: [{ key: "nextDate", value: "2026-11-20", source: "the test" }],
+        status: "Paused · due 2 Nov",
+        submit: async () => ({
+          message: "1 Nov, next payment 20 Nov",
+          ref: { eventId: 9 },
+        }),
+        trail: async () => ({ stored: { state: "done" } }),
+      }),
+    );
+    try {
+      expect(text(body().querySelector(".fs-status"))).toBe(
+        "Paused · due 2 Nov",
+      );
+      await click(button("Resume this client"));
+      await flush();
+      expect(body().querySelector(".fs-status")).toBeNull();
+      expect(text(body().querySelector(".fs-lede"))).toBe(
+        "Where it has reached",
+      );
+      const ticket = [...body().querySelectorAll(".fs-step")].at(-1) as any;
+      expect(text(ticket)).toContain("The relaunch needs its ticket");
+      expect(text(ticket)).toContain(
+        "Open the relaunch ticket from the client page.",
+      );
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
   test("one request id per open sheet, kept through a retry; a new open is a new id; the draft clears", async () => {
     const ids: string[] = [];
     let fail = true;
@@ -728,7 +805,9 @@ describe("the sheet", () => {
     );
     expect(steps[0]).toContain("Saved in the cockpit");
     expect(steps[1]).toContain("Queued for the ClickUp card");
+    expect(steps[3]).toContain("The relaunch needs its ticket");
     expect(steps[3]).toContain("Open the relaunch ticket");
+    expect(steps[3].split("Open the relaunch ticket")).toHaveLength(2);
     expect(
       win.localStorage.getItem(core.draftKey(def, fx.CLIENT.taskId)),
     ).toBeNull();

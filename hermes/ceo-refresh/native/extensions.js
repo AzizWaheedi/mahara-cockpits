@@ -286,8 +286,9 @@ export function lifecycleOf(departureRows, lateRows) {
             leftOn,
             reason: String(r?.reason ?? ""),
             churnType,
-            // The CEO's count (30 Oct, the goal sheet's rule): every departure but a finished term.
-            counts: churnType !== "completed" && String(r?.reason ?? "") !== COMPLETED_REASON,
+            // One rule with the goal sheet and the CSM KPI (plan 3.5): the confirm's churn type decides; with no
+            // type yet, a finished-term reason is completed.
+            counts: (churnType ?? (String(r?.reason ?? "") === COMPLETED_REASON ? "completed" : null)) !== "completed",
             confirmed: r?.confirmed === true || r?.confirmed === "t" || r?.confirmed === "true",
             confirmedOn: ISO_DAY.test(String(r?.confirmed_on ?? "")) ? String(r.confirmed_on) : null,
         };

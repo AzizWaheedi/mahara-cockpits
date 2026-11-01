@@ -1276,6 +1276,33 @@ describe("inside the billing sheet", () => {
       by_whom: "ceo@example.test",
       at: "2026-10-23T14:00:00Z",
     },
+    // The churn confirm stores the seat as a code, the money acts as words.
+    {
+      id: 8,
+      clickup_task_id: tables.accounts[0].clickup_task_id,
+      client_name: tables.accounts[0].client_name,
+      kind: "churn",
+      from_value: "Active",
+      to_value: "Stopped",
+      reason: "Cancelled",
+      detail: { seat_role: "csm", left_on: "2026-10-22" },
+      source: "csm",
+      by_whom: "sara@example.test",
+      at: "2026-10-22T15:00:00Z",
+    },
+    {
+      id: 9,
+      clickup_task_id: tables.accounts[0].clickup_task_id,
+      client_name: tables.accounts[0].client_name,
+      kind: "extension",
+      from_value: "2026-10-20",
+      to_value: "2026-11-03",
+      reason: "Ad account broke",
+      detail: { seat_role: "the CEO", weeks: 2, new_date: "2026-11-03" },
+      source: "ceo",
+      by_whom: "ceo@example.test",
+      at: "2026-10-22T14:00:00Z",
+    },
     {
       id: 5,
       clickup_task_id: tables.accounts[0].clickup_task_id,
@@ -1344,6 +1371,10 @@ describe("inside the billing sheet", () => {
     expect(t).not.toMatch(
       /: (confirm|unconfirm|link|unlink|exclude|unexclude)[.,]/,
     );
+    // A seat code reads as its role, never "Csm".
+    expect(t).toContain("The CSM confirmed the client has left: Cancelled");
+    expect(t).toContain("The CEO gave 2 weeks to 3 Nov: Ad account broke");
+    expect(t).not.toContain("Csm ");
     // A payment row with no amount on record says so, never "$NaN".
     expect(t).toContain("Maher logged a payment.");
     expect(t).not.toContain("NaN");

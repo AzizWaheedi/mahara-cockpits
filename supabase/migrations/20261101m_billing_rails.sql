@@ -273,8 +273,12 @@ END $$;
 -- "Completed term, did not renew") is the card's "Completed term, did not
 -- renew"; Other is never written; any other reason is the option of the same
 -- name when the stored Churn Reason field (796f25e7) has it, else NULL, and
--- the churn writes skip that one field. Kept equal to clickup-writeback's
--- churnReasonCard (billing.ts) by billing-rails-supabase.test.ts.
+-- the churn writes skip that one field. With no stored map at all (the billing
+-- doctor has not read the field yet, or its read failed) nothing is decided
+-- here: the reason goes on as named and clickup-writeback's softMissing judges
+-- it against the live list at write time, so a valid reason is never dropped
+-- for good. Kept equal to clickup-writeback's churnReasonCard (billing.ts) by
+-- billing-rails-supabase.test.ts.
 CREATE OR REPLACE FUNCTION public.cockpit_churn_reason_card(p_reason text)
 RETURNS text LANGUAGE plpgsql STABLE SET search_path = '' AS $$
 DECLARE v_reason text := nullif(btrim(coalesce(p_reason, '')), ''); v_target text; v_field jsonb; v_name text;
@@ -283,7 +287,7 @@ BEGIN
   v_target := CASE WHEN lower(v_reason) IN ('completed term', 'completed term, did not renew')
                    THEN 'Completed term, did not renew' ELSE v_reason END;
   v_field := public.cockpit_clickup_field('796f25e7');
-  IF v_field IS NULL THEN RETURN NULL; END IF;
+  IF v_field IS NULL THEN RETURN v_target; END IF;
   SELECT o->>'name' INTO v_name FROM jsonb_array_elements(v_field->'options') o
    WHERE lower(btrim(o->>'name')) = lower(v_target) LIMIT 1;
   RETURN v_name;
@@ -395,7 +399,7 @@ BEGIN
   RETURN d || v_extra;
 END $$;
 COMMENT ON FUNCTION public.cockpit_billing_detail(text, jsonb) IS
-  'The one builder of a billing event''s detail (waves 1-2 3.1, 3.3), from the camelCase keys a screen sends. cockpit_billing_canary (m), cockpit_client_lifecycle_confirm (o) and cockpit_billing_write (p) all call it, so the canary and the real path cannot differ.';
+  'The builder of a billing event''s detail (waves 1-2 3.1, 3.3), from the camelCase keys a screen sends; the canary (cockpit_billing_canary) builds its detail with it. cockpit_client_lifecycle_confirm (o) and cockpit_billing_write (p) build theirs by hand to the same snake_case keys (p stores the seat in words, this the code; every reader takes both), and forms-w12-chain-supabase.test.ts checks that a canary and a real Give more time and Client is leaving queue the same card writes.';
 
 -- ---------------------------------------------------------------------------
 -- 6. What one billing event writes on the card (3.3; replaces 20261009j)
@@ -514,8 +518,11 @@ BEGIN
     l := l || ('CHURN CONFIRMED: left ' || coalesce(d->>'left_on', 'on a day not recorded'));
     IF d ? 'reason' THEN
       l := l || ('Reason: ' || (d->>'reason'));
-      IF d ? 'card_reason' AND d->>'card_reason' IS NULL THEN
-        l := l || 'Not on the card''s list, so the field is left empty.'::text;
+      -- No write reaches the field in either case, so the card keeps whatever reason it holds.
+      IF lower(btrim(d->>'reason')) = 'other' THEN
+        l := l || 'Reason Other: the card''s Churn Reason is left as it is.'::text;
+      ELSIF d ? 'card_reason' AND d->>'card_reason' IS NULL THEN
+        l := l || 'Not on the card''s list, so the card''s Churn Reason is left as it is.'::text;
       END IF;
     END IF;
     IF coalesce(d->>'card_type', d->>'churn_type') IS NOT NULL THEN
@@ -787,8 +794,11 @@ BEGIN
     PERFORM public.cockpit_billing_event_void_do(p_event_id, left('Recorded again at the kind opening: ' || v_reason, 300), v_actor, 'deploy');
     INSERT INTO public.cockpit_billing_events(clickup_task_id, client_name, kind, from_value, to_value, reason, detail, source, by_whom)
     VALUES (v_event.clickup_task_id, v_event.client_name, v_event.kind, v_event.from_value, v_event.to_value, v_event.reason,
+            -- The copy is new (its at is now, so the stale check still holds), but the grant keeps its own day:
+            -- cockpit_extensions_v reads granted_at, so the month the grant counts in does not move.
             CASE WHEN jsonb_typeof(v_event.detail) = 'object' THEN v_event.detail ELSE '{}'::jsonb END
-              || jsonb_build_object('replaces_event_id', v_event.id, 'released_by', v_actor),
+              || jsonb_build_object('replaces_event_id', v_event.id, 'released_by', v_actor,
+                                    'granted_at', coalesce(v_event.detail->>'granted_at', v_event.at::text)),
             v_event.source, v_event.by_whom)
     RETURNING id INTO v_new;
     SELECT q.state INTO v_state FROM public.cockpit_clickup_writeback_queue q
@@ -810,8 +820,8 @@ COMMENT ON FUNCTION public.cockpit_billing_held_release(bigint, text, text, text
   'The held-edit review of waves 1-2 W20, owner only: one dry_run billing item of an open kind is replanned, recorded fresh, closed or voided, a person deciding each. One audit row each. The general log edits are never touched.';
 
 -- ---------------------------------------------------------------------------
--- 9. The canary (W14): one billing event on the test card, built exactly as
---    the real door builds it
+-- 9. The canary (W14): one billing event on the test card, its card writes
+--    the same as the real door's
 
 CREATE OR REPLACE FUNCTION public.cockpit_billing_canary(p_kind text, p_args jsonb)
 RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
@@ -861,7 +871,7 @@ BEGIN
   RETURN v_id;
 END $$;
 COMMENT ON FUNCTION public.cockpit_billing_canary(text, jsonb) IS
-  'Owner only, deploy steps D-B3, D-C1, D-C2, D-P3: inserts one billing event on the test card 86eywg1cq (never another card), its detail built by cockpit_billing_detail exactly as the real door builds it. Never used by a screen.';
+  'Owner only, deploy steps D-B3, D-C1, D-C2, D-P3: inserts one billing event on the test card 86eywg1cq (never another card), its detail built by cockpit_billing_detail to the keys the real doors write (the card writes match; the seat is the code here, words on a real act). Never used by a screen.';
 
 -- ---------------------------------------------------------------------------
 -- 10. The daily field read (only where pg_cron exists; the PGlite test strips

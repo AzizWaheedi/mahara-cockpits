@@ -56,6 +56,7 @@ import {
   kuwaitIso,
   type Prefill,
   prefillLine,
+  required,
   type SubmitRef,
   seedAnswers,
   sendError,
@@ -300,8 +301,9 @@ export function FormBody(p: BodyProps) {
         setTrailNote(null);
       } catch (e) {
         if (stopped) return;
+        const fast = Date.now() - started < POLL_FAST_FOR_MS;
         setTrailNote(
-          `The trail could not be read (${e instanceof Error ? e.message : String(e)}). It reads again in a minute.`,
+          `The trail could not be read (${e instanceof Error ? e.message : String(e)}). It reads again in ${fast ? "a few seconds" : "a minute"}.`,
         );
       }
       if (stopped) return;
@@ -349,9 +351,18 @@ export function FormBody(p: BodyProps) {
         <Title className="fs-title">{def.title}</Title>
         <div className="fs-client">
           <bdi className="fs-client-name">{client.name}</bdi>
-          {p.status ? <span className="fs-status">{p.status}</span> : null}
+          {/* The card as it was read; after a send the trail says what changed. */}
+          {p.status && phase !== "sent" ? (
+            <span className="fs-status">{p.status}</span>
+          ) : null}
         </div>
-        {p.inSheet ? (
+        {phase === "sent" ? (
+          p.inSheet ? (
+            <SheetDescription className="fs-lede">
+              Where it has reached
+            </SheetDescription>
+          ) : null
+        ) : p.inSheet ? (
           <SheetDescription className="fs-lede">
             {def.lede ?? "The ClickUp card updates itself after you send."}
           </SheetDescription>
@@ -525,6 +536,11 @@ export function Trail({
             </span>
             <span className="fs-step-text">
               <span className="fs-step-label">{s.label}</span>
+              {s.key === "ticket" && s.action && !onTicket && !s.action.href ? (
+                <span className="fs-hint">
+                  {s.action.label} from the client page.
+                </span>
+              ) : null}
               {s.action && (onTicket || s.action.href) ? (
                 s.key === "ticket" && onTicket && s.action.type ? (
                   <button
@@ -561,6 +577,7 @@ export function Trail({
 function FieldShell({
   id,
   f,
+  answers,
   error,
   from,
   children,
@@ -568,12 +585,14 @@ function FieldShell({
 }: {
   id: string;
   f: FieldDef;
+  answers: Answers;
   error?: string;
   from?: string;
   children: ReactNode;
   group?: boolean;
 }) {
-  const optional = !f.required;
+  // A requirement that hangs on another answer (a Non-payment pause's restart) is read for these answers.
+  const optional = !required(f, answers);
   const head = (
     <>
       {f.label}
@@ -662,7 +681,14 @@ function Field({
       { value: "no", label: "No" },
     ];
     return (
-      <FieldShell id={id} f={f} error={error} from={from} group>
+      <FieldShell
+        id={id}
+        f={f}
+        answers={answers}
+        error={error}
+        from={from}
+        group
+      >
         <div className="fs-pills">
           {options.map((o, i) => (
             <label key={o.value} className="fs-pill">
@@ -686,7 +712,14 @@ function Field({
   if (f.type === "multi") {
     const picked = Array.isArray(value) ? (value as string[]) : [];
     return (
-      <FieldShell id={id} f={f} error={error} from={from} group>
+      <FieldShell
+        id={id}
+        f={f}
+        answers={answers}
+        error={error}
+        from={from}
+        group
+      >
         <div className="fs-pills">
           {(f.options ?? []).map((o, i) => {
             const on = picked.includes(o.value);
@@ -743,9 +776,32 @@ function Field({
 
   if (f.type === "call") {
     return (
-      <FieldShell id={id} f={f} error={error} from={from} group>
+      <FieldShell
+        id={id}
+        f={f}
+        answers={answers}
+        error={error}
+        from={from}
+        group
+      >
         {calls.length ? (
           <div className="fs-calls">
+            {/* An optional pick can go back to none: the latest call is not the exit call by default. */}
+            {f.noneLabel && !required(f, answers) ? (
+              <label className="fs-call" data-none>
+                <input
+                  type="radio"
+                  name={id}
+                  value=""
+                  checked={str === ""}
+                  onChange={() => onChange(null)}
+                  {...aria}
+                />
+                <span className="fs-call-body">
+                  <span className="fs-call-kind">{f.noneLabel}</span>
+                </span>
+              </label>
+            ) : null}
             {calls.map((c, i) => (
               <label key={c.id} className="fs-call">
                 <input
@@ -791,7 +847,7 @@ function Field({
 
   if (f.type === "longtext")
     return (
-      <FieldShell id={id} f={f} error={error} from={from}>
+      <FieldShell id={id} f={f} answers={answers} error={error} from={from}>
         <textarea
           id={id}
           className="fs-input fs-textarea"
@@ -806,7 +862,7 @@ function Field({
     );
 
   return (
-    <FieldShell id={id} f={f} error={error} from={from}>
+    <FieldShell id={id} f={f} answers={answers} error={error} from={from}>
       <input
         id={id}
         className="fs-input"
