@@ -89,7 +89,7 @@ BEGIN
       ('public.cockpit_forms_key_mark(jsonb)', '1075daac5191d53bae1e17c87b296160', '8e13ca6391b8545ff452f344783c70da'),
       ('public.cockpit_forms_key_label(text)', '85af18f124fd053ef832cca3eae6eb2b', 'f8d864c78e69f1c7e7d09c5412dcaa2e'),
       ('public.cockpit_forms_keys_status()', '695113cef48b9994447a539ae5fd7949', '32ee90fd277e2c3c2f66e443a5470fff'),
-      ('public.cockpit_form_record_legacy(jsonb)', '50c4257c579f6269e2f8b8318086c743', 'd1395c10eaaaee29b1047bb8a1534a06')
+      ('public.cockpit_form_record_legacy(jsonb)', '50c4257c579f6269e2f8b8318086c743', '0c58ecc6de3d27a56d618e20ecffdfc3')
     ) AS x(fn, live_md5, after_md5)
   LOOP
     v_now := NULL;
@@ -370,7 +370,7 @@ DECLARE
   v_facts jsonb;
 BEGIN
   v_facts := jsonb_strip_nulls(jsonb_build_object(
-    'taskId', r.task_id, 'client', v_client, 'responseId', r.id, 'formKey', r.form_key,
+    'taskId', r.task_id, 'client', v_client, 'responseId', r.id, 'form', r.form_key,
     'score', p_score, 'results', p_results, 'round', p_round, 'survey', p_survey,
     'submittedAt', public.cockpit_slack_notice_iso(r.submitted_at)));
   PERFORM public.cockpit_form_voice_queue(p_kind, split_part(p_kind, '.', 1) || ':' || r.id::text, r.task_id, v_client,
@@ -1064,7 +1064,7 @@ BEGIN
   IF v_response IS NOT NULL THEN
     v_inserted := true;
     PERFORM public.cockpit_slack_notice_queue('feedback.received', 'feedback:' || v_response::text, p_clickup_id, v_client,
-      jsonb_build_object('taskId', p_clickup_id, 'client', v_client, 'responseId', v_response, 'kind', v_kind, 'topic', v_topic,
+      jsonb_build_object('taskId', p_clickup_id, 'client', v_client, 'responseId', v_response, 'feedbackKind', v_kind, 'topic', v_topic,
                          'submittedAt', public.cockpit_slack_notice_iso(coalesce(v_at, now()))),
       NULL, NULL, NULL);
   ELSE
@@ -1750,7 +1750,7 @@ BEGIN
       PERFORM public.cockpit_slack_notice_queue('legacy.received', 'legacy:' || v_id::text, v_task,
         CASE WHEN v_task IS NOT NULL THEN v_client END,
         jsonb_strip_nulls(jsonb_build_object(
-          'responseId', v_id, 'formKey', v_form, 'matched', v_task IS NOT NULL,
+          'responseId', v_id, 'form', v_form, 'matched', v_task IS NOT NULL, 'taskId', v_task,
           'client', CASE WHEN v_task IS NOT NULL THEN v_client END,
           'submittedAt', public.cockpit_slack_notice_iso(v_at))),
         NULL, NULL, NULL);

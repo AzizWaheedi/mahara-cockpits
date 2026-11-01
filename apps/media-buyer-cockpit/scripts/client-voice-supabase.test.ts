@@ -2196,11 +2196,15 @@ describe("the NPS and CSAT hooks", () => {
         client: "Client six",
         round: 1,
         survey: "NPS survey",
+        form: "nps",
+        taskId: "six",
       });
       const csat = await notices("csat.received");
       expect(csat.map(n => [n.task_id, n.facts.score])).toEqual([["csat6", 6]]);
       expect(csat[0].dedupe_key).toStartWith("csat:");
       const low = await notices("voice.low");
+      // voice.low names its survey by facts.form, as cockpit-notices/text.ts reads it.
+      expect(low.map(n => n.facts.form)).toEqual(["nps", "csat"]);
       expect(low.map(n => [n.task_id, n.facts.score, n.facts.survey])).toEqual([
         ["six", 6, "NPS survey"],
         ["csat6", 6, "onboarding survey"],
@@ -2730,10 +2734,12 @@ describe("portal_feedback_record", () => {
         client_name: "Acme Interiors",
         state: "queued",
       });
+      // The fact names cockpit-notices/text.ts renders (feedbackKind, topic).
       expect(n[0].facts).toMatchObject({
-        kind: "problem",
+        feedbackKind: "problem",
         topic: "results",
         client: "Acme Interiors",
+        taskId: A,
       });
       expect(JSON.stringify(n[0].facts)).not.toContain("blank page");
       expect(JSON.stringify(n[0].facts)).not.toContain("@");
@@ -3123,8 +3129,9 @@ describe("the replaced forms-door functions", () => {
         client_name: "Acme Interiors",
       });
       expect(n[0].facts).toMatchObject({
-        formKey: "exit_survey",
+        form: "exit_survey",
         matched: true,
+        taskId: A,
       });
       expect((await notices("termination.notice")).length).toBe(2);
     });
