@@ -18,10 +18,15 @@
 //                                       on a client card, forms.ts
 //   forms_doctor  on demand             reads only: the six Client Happiness options, the two
 //                                       date fields and the test card on Clients - Mahara
+//   billing_doctor  daily at 03:41 UTC  reads only: the Clients - Mahara fields, stored as the field
+//                   (20261101m)         map (cockpit_clickup_fields), checked against what the
+//                                       billing writes need (Client Status, Churn Type and Reason
+//                                       options, the dates, MRR, LTV, the 9cfdb353 checkbox)
 //
-// Dry run by default. Five secrets open writes to ClickUp, each only when it
+// Dry run by default. Six secrets open writes to ClickUp, each only when it
 // is exactly "true" (run.ts OUTWARD SAFETY):
-//   CLICKUP_WRITEBACK_APPLY              the log and Do's & Don'ts
+//   CLICKUP_WRITEBACK_APPLY              the log and Do's & Don'ts, never a billing
+//                                        edit (waves 1-2 W2)
 //   CLICKUP_WRITEBACK_APPLY_CSM_TICKETS  client success tickets in the log, on
 //                                        their own (live since 2026-10-12)
 //   CLICKUP_WRITEBACK_APPLY_KPI          the board KPI columns; the general
@@ -34,6 +39,12 @@
 //                                        them and this one opens nothing else.
 //                                        CLICKUP_WRITEBACK_FORMS_ONLY_CARDS (client card
 //                                        ids) narrows it to a canary card (86eywg1cq).
+//   CLICKUP_WRITEBACK_APPLY_BILLING      billing edits in the log only, and only of the event
+//                                        kinds in CLICKUP_WRITEBACK_BILLING_KINDS (comma list,
+//                                        empty means none); CLICKUP_WRITEBACK_BILLING_ONLY_CARDS
+//                                        (client card ids) narrows it to a canary card
+//                                        (86eywg1cq). Every log run reports the switch in
+//                                        cockpit_sync_state clickup-writeback:billing.
 // The kpi job reports ok=false while it is a dry run, on a run limited to
 // CLICKUP_WRITEBACK_ONLY_TASKS, when no card had Last Updated written and when
 // a write failed, so the health line never says ok over frozen numbers.
@@ -65,6 +76,7 @@ import {
   runDoctor,
   runDosDonts,
   runForms,
+  runBillingDoctor,
   runFormsDoctor,
   runKpi,
   runLog,
@@ -137,6 +149,7 @@ Deno.serve(async (req: Request) => {
       : job === "requests_doctor" ? await runRequestsDoctor(deps)
       : job === "forms" ? await runForms(deps)
       : job === "forms_doctor" ? await runFormsDoctor(deps)
+      : job === "billing_doctor" ? await runBillingDoctor(deps)
       : null;
     if (!result) return json({ ok: false, note: unknownJobNote(job) }, 400);
     console.log(`clickup-writeback ${job} ${result.ok ? "ok" : "FAILED"}: ${result.note}`);
