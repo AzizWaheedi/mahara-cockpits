@@ -332,7 +332,7 @@ export interface CheckinModel {
 }
 
 export const NOT_LIVE =
-  "The cockpit's 1-1 notes are not live yet. Use the 1-1 form in Typeform for now.";
+  "The cockpit's 1-1 notes could not open. Try again in a minute.";
 /** The move RPC is not in the database yet (5.3). */
 export const MOVE_NOT_LIVE = "Moving a recording is not live yet.";
 /** The move got no answer in time: what is known, and what to do next. */

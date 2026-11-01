@@ -21,10 +21,11 @@ import {
 /**
  * "Write 1-1 notes", the client header's one form control (docs/forms/
  * STAGE2-CONTRACT.md 8.6, on the Present button's pattern): the main action
- * follows the registry (the Typeform with the card ID until the cut-over,
- * then the cockpit's window), and the menu holds the rest: the call whose
- * notes are missing, the kickoff while it is due, and the cockpit's window
- * as a shadow run for every client-success seat until the cut-over.
+ * follows the registry (the cockpit's window since the cut-over, and after a
+ * failed read; the Typeform with the card ID only after a rollback to it),
+ * and the menu holds the rest: the call whose notes are missing, the kickoff
+ * while it is due, and the cockpit's window as a shadow run for every
+ * client-success seat while the Typeform is the record.
  */
 export function FormsButton({
   taskId,
@@ -54,9 +55,9 @@ export function FormsButton({
   const menu = noteMissing || kickoff || shadow;
   const title = entryFailed(entry)
     ? ENTRY_FAILED
-    : entry.provider === "native"
-      ? "Opens the 1-1 notes in their own window"
-      : "Opens the 1-1 form in Typeform, the record until the switch-over";
+    : entry.provider === "typeform"
+      ? "Opens the 1-1 form in Typeform, the record for now"
+      : "Opens the 1-1 notes in their own window";
   const main = (
     <Button
       size="sm"
@@ -70,7 +71,7 @@ export function FormsButton({
       {missing ? (
         <Dot tone="warn" label="1-1 notes missing for the last call" />
       ) : null}
-      {/* It leaves for Typeform in a new tab until the cut-over. */}
+      {/* It leaves for Typeform in a new tab only after a rollback to it. */}
       <TypeformMark entry={entry} />
     </Button>
   );

@@ -34,7 +34,6 @@ export const LINKS = {
     "https://api.leadconnectorhq.com/widget/booking/z1Ne59rohCCj87KhcXoi",
   checkInCall:
     "https://api.leadconnectorhq.com/widget/booking/SHjlq0UjeR11maltYNyh",
-  callSummaryForm: "https://maharamedia.typeform.com/to/fRokTITH",
   // The client's onboarding form is per client (onboardingFormLink, with the
   // card id). The kickoff form is the CSM's, filled on the onboarding call:
   // never send it to a client (BbJy6xg4 was retired on 2026-08-31).

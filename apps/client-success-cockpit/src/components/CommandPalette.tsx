@@ -147,7 +147,8 @@ const ACTIONS: { act: string; label: string; ask: string; keywords: string }[] =
     },
     {
       // Opens the 1-1 notes in the same click (docs/forms/STAGE2-CONTRACT.md
-      // 8.6): the Typeform until the cut-over, then the cockpit's window.
+      // 8.6): the cockpit's window, or the Typeform only after a rollback to
+      // `typeform` (STAGE2B-CONTRACT.md 11.3).
       act: "notes",
       label: "Write 1-1 notes",
       ask: "Write notes for which client?",

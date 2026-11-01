@@ -2612,7 +2612,13 @@ test("Log a call: Write 1-1 notes only opens the notes; Log the call without not
       ) as any;
     await click2b(inPanel("Write 1-1 notes"));
     await wait2b();
-    // The notes opened (the Typeform until the switch-over), and nothing else.
+    // A failed entry read: the line under the buttons names the cockpit's
+    // notes, never the Typeform (11.4; the Typeform only at provider typeform).
+    expect(panel.textContent ?? "").toContain(
+      "they update the card, post the grade and draft the client's recap",
+    );
+    expect(panel.textContent ?? "").not.toContain("Typeform");
+    // The notes opened (the cockpit's window), and nothing else.
     expect(opened.length).toBeGreaterThan(0);
     expect(invoked.filter(i => i.fn === "cockpit-csm-api")).toEqual([]);
     expect(sent.filter(([n]) => n === "act")).toEqual([]);

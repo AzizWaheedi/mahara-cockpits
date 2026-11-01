@@ -4,6 +4,8 @@
  * Sourced from the Client Journey SOP, the Client Exit Process doc and #csm-general —
  * never invented. If a link is not in one of those, it does not belong here.
  * The coaching logs are deliberately absent: those are leadership's own tools, not his.
+ * So is the 1-1 call summary form: since 2026-11-01 the 1-1 notes are written in
+ * the client success cockpit, and the Typeform is closed.
  */
 
 export type LinkRow = { label: string; url: string; note?: string };
@@ -33,17 +35,6 @@ export const LINK_GROUPS: LinkGroup[] = [
         label: "Client check-in call",
         url: "https://api.leadconnectorhq.com/widget/booking/SHjlq0UjeR11maltYNyh",
         note: "The recurring one, weekly for their first month, then every 2 weeks",
-      },
-    ],
-  },
-  {
-    title: "Forms I have to fill",
-    blurb: "If it is not in a form, it did not happen.",
-    rows: [
-      {
-        label: "1-1 call summary form",
-        url: "https://maharamedia.typeform.com/to/fRokTITH",
-        note: "After every client call, same day",
       },
     ],
   },

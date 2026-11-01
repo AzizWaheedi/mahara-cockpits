@@ -34,7 +34,7 @@ KEY_LINKS = {
     "brand blueprint call booking": "https://api.leadconnectorhq.com/widget/booking/x84ET6KnA8odlsjYiVLq",
     "launch call booking": "https://api.leadconnectorhq.com/widget/booking/5E1EVxLJbGiDM3iYl2kL",
     "check-in call booking": "https://api.leadconnectorhq.com/widget/booking/SHjlq0UjeR11maltYNyh",
-    "1-1 call notes form (CSM fills)": "https://maharamedia.typeform.com/to/fRokTITH",
+    "1-1 call notes (CSM writes them in the cockpit)": "https://cockpit.maharamedia.com/client-success/",
     "client ticketing form (CSM fills)": "https://forms.clickup.com/90182518398/f/2kzmr1ky-1178/R1O1N5QXYLUTJOWQ3E",
     "pause request form": "https://maharamedia.typeform.com/to/CTUjv6l3",
     "extension form": "https://maharamedia.typeform.com/to/gqBcyK6g",
