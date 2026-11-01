@@ -220,7 +220,8 @@ describe("what the person running the hour reads", () => {
     expect(m, "section 8 no longer lists forms-door's files").not.toBeNull();
     const listed = [...(m?.[2] ?? "").matchAll(/`([^`]+)`/g)].map(x => x[1]);
     const out = spawnSync(
-      "python3",
+      // Windows checkout: there is no python3 command, only python.
+      process.platform === "win32" ? "python" : "python3",
       ["scripts/dev/fn_extras.py", ".", "forms-door"],
       { cwd: ROOT, encoding: "utf8" },
     );
