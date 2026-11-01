@@ -64,9 +64,11 @@ import {
  *   lines: name and amount; part and due; the full-width ribbon.
  * - Signature: the contract ribbon. One 6px bar per client cut at the
  *   plan's real parts in proportion to their dollars, 2px gaps between
- *   parts, a 1px tick before the part due next. Teal for rail money, teal
- *   hatch for a confirmation, red for due and not seen, orange hatch for
- *   another source, a quiet track for not due.
+ *   parts, a 1px tick before the part due next. Teal for rail money, amber
+ *   with fine upright ticks for a receipt logged by hand that nobody has
+ *   checked against the bank (20261101n: "Receipt in, not checked", never
+ *   "Paid"), teal hatch for a confirmation, red for due and not seen,
+ *   orange hatch for another source, a quiet track for not due.
  * - Against the template. Not one percentage bar, not a red "Overdue" pill,
  *   not "Mark as paid": the bar is cut at the plan's parts, a person's word
  *   and another source each get a hatch, and the button is Confirm paid,
@@ -162,10 +164,14 @@ const TONE: Record<Tone, string> = {
 
 const hatch = (token: string) =>
   `repeating-linear-gradient(135deg, ${token} 0 1.5px, transparent 1.5px 4px), color-mix(in srgb, ${token} 22%, transparent)`;
+/** Near solid, cut by fine upright ticks: money that arrived on paper, not yet on the bank. Reads apart from the hatches in grey too. */
+const ticks = (token: string) =>
+  `repeating-linear-gradient(90deg, ${token} 0 3px, color-mix(in srgb, ${token} 45%, transparent) 3px 4px)`;
 
 /** The ribbon's fills, by name only: the roles live in the sheet's STYLE block. */
 const FILL: Record<RibbonState, string> = {
   rails: "var(--b-rail, var(--primary))",
+  logged: ticks("var(--b-logged, var(--b-warning, var(--warning)))"),
   person: hatch("var(--b-person, var(--primary))"),
   notSeen: "var(--b-due, var(--destructive))",
   another: hatch("var(--b-another, var(--warning))"),
@@ -273,10 +279,19 @@ function Field({
 function ribbonLabel(r: PendingRow, today: string): string {
   const head = `On a rail ${usdText(r.railsUsd)} of ${usdText(r.contractUsd)}.`;
   const parts = r.parts
-    .filter(p => p.notSeen > 0 || p.another > 0 || p.person > 0 || p.next)
+    .filter(
+      p =>
+        p.notSeen > 0 ||
+        p.another > 0 ||
+        p.logged > 0 ||
+        p.person > 0 ||
+        p.next,
+    )
     .map(p => {
       const bits: string[] = [];
       if (p.notSeen > 0) bits.push(`${usdText(p.notSeen)} not seen`);
+      if (p.logged > 0)
+        bits.push(`${usdText(p.logged)} receipt in, not checked`);
       if (p.another > 0)
         bits.push(`${usdText(p.another)} another source says paid`);
       if (p.person > 0) bits.push(`${usdText(p.person)} confirmed by a person`);
@@ -483,6 +498,13 @@ function Figures({ view }: { view: PendingView }) {
           title="Another source says paid"
           figure={f.another}
         />
+        {f.logged.count > 0 ? (
+          <FigureItem
+            state="logged"
+            title="Receipt in, not checked"
+            figure={f.logged}
+          />
+        ) : null}
         <FigureItem
           state="person"
           title="Confirmed by a person"
@@ -1082,6 +1104,12 @@ function partWords(p: Part): string {
   const bits: string[] = [];
   if (p.rails > 0)
     bits.push(p.rails >= p.usd ? "on a rail" : `${usdText(p.rails)} on a rail`);
+  if (p.logged > 0)
+    bits.push(
+      p.logged >= p.usd
+        ? "receipt in, not checked"
+        : `${usdText(p.logged)} receipt in, not checked`,
+    );
   if (p.person > 0) bits.push(`${usdText(p.person)} confirmed by a person`);
   if (p.notSeen > 0)
     bits.push(
@@ -1099,6 +1127,7 @@ function partWords(p: Part): string {
 function partState(p: Part): RibbonState {
   if (p.notSeen > 0) return "notSeen";
   if (p.another > 0) return "another";
+  if (p.logged > 0) return "logged";
   if (p.person > 0) return "person";
   if (p.rails > 0 && p.notDue === 0) return "rails";
   return p.rails > 0 ? "rails" : "notDue";

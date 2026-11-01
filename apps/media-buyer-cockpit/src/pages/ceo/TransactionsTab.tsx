@@ -8,11 +8,13 @@ import { FilterChips, type FilterOption } from "@/components/ceo/FilterChips";
 import { count, money, plural, shortDate } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
+import { StatusChip } from "@/components/ceo/StatusChip";
 import { TabLink } from "@/components/ceo/TabLink";
 import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { useTimeframe } from "@/components/ceo/timeframe";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { api, useAction, useMutation } from "@/lib/cockpitApi";
+import { isUnchecked } from "@/lib/paymentChecks";
 import { cn } from "@/lib/utils";
 import type { MoneyAttribution, Note } from "@/types/ceo/payloads";
 import { AttributeSheet } from "./money/AttributeSheet";
@@ -43,6 +45,10 @@ import type { CeoTabProps } from "./types";
  * row has an Attribute action that ties it, or every payment from its payer,
  * to a signed deal, a client card or "not client money"
  * (docs/money/MONEY-ATTRIBUTION.md section 2).
+ *
+ * A payment logged by hand that nobody has checked against the bank
+ * (20261101n) is listed with a "Not checked" chip and added into none of the
+ * totals above the list; it counts once finance or the CEO checks it.
  */
 
 const VIEW_KEYS = [
@@ -165,6 +171,15 @@ function Credit({
           )}
         >
           {statement ? "Statement line" : sideWords(t)}
+          {isUnchecked(t) ? (
+            <span className="ml-2 inline-flex align-middle">
+              <StatusChip
+                tone="warning"
+                label="Not checked"
+                hint="Logged by hand and not checked against the bank yet. It is in no total until finance or the CEO checks it under Checks waiting on the Money tab."
+              />
+            </span>
+          ) : null}
         </span>
         {/* Beside the side on a wide table; under the credit on a narrow one. */}
         {attribute("hidden @xl:inline")}
@@ -382,7 +397,18 @@ export function TransactionsTab({ sections, goTab }: CeoTabProps) {
       );
     return inWindow.filter(t => t.side === view);
   }, [inWindow, view]);
-  const windowTotals = useMemo(() => moneyTotals(inWindow), [inWindow]);
+  // The totals are checked money; a payment not checked is said apart.
+  const windowTotals = useMemo(
+    () => moneyTotals(inWindow.filter(t => !isUnchecked(t))),
+    [inWindow],
+  );
+  const notChecked = useMemo(() => {
+    const rows = inWindow.filter(t => t.direction === "in" && isUnchecked(t));
+    return {
+      count: rows.length,
+      usd: Math.round(rows.reduce((n, t) => n + t.usd, 0) * 100) / 100,
+    };
+  }, [inWindow]);
   const columns = useMemo(
     () => [...columnsFor(setAttributing, pending), RECLASSIFY_COLUMN],
     [pending],
@@ -437,7 +463,7 @@ export function TransactionsTab({ sections, goTab }: CeoTabProps) {
         actions={<TabLink tab="money" label="Money" goTab={goTab} />}
         order={0}
       >
-        {() => <Totals a={a} t={windowTotals} />}
+        {() => <Totals a={a} t={windowTotals} notChecked={notChecked} />}
       </SectionCard>
 
       <SectionCard
@@ -496,7 +522,15 @@ export function TransactionsTab({ sections, goTab }: CeoTabProps) {
   );
 }
 
-function Totals({ a, t }: { a: MoneyAttribution; t: MoneyTotals }) {
+function Totals({
+  a,
+  t,
+  notChecked,
+}: {
+  a: MoneyAttribution;
+  t: MoneyTotals;
+  notChecked: { count: number; usd: number };
+}) {
   const mtd = a.mtd;
   // What the money refresh did with the CEO's ties this run (since 2026-10-18).
   const ties = a.ties;
@@ -548,6 +582,14 @@ function Totals({ a, t }: { a: MoneyAttribution; t: MoneyTotals }) {
           {
             label: "This month, not attributed",
             value: `${money(a.mtd.unattributed)} (${plural(a.mtd.unattributedCount, "payment")})`,
+          },
+          {
+            label: "Logged, not checked",
+            value:
+              notChecked.count > 0
+                ? `${money(notChecked.usd)} (${plural(notChecked.count, "payment")})`
+                : null,
+            hint: "Payments logged by hand that nobody has checked against the bank yet: listed with a Not checked chip, in none of the totals above.",
           },
           {
             label: "Not client money",
