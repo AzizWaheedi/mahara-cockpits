@@ -1,5 +1,5 @@
 import type {Row} from './core.ts';
-import {clean,describeChange,problems,type PageFormSpec} from '../../../apps/media-buyer-cockpit/src/lib/pageForm.ts';
+import {clean,describeChange,problems,savedQuestions,type PageFormSpec} from '../../../apps/media-buyer-cockpit/src/lib/pageForm.ts';
 
 /**
  * The questions on a client's own form page (Merge Studio first), read and
@@ -64,10 +64,10 @@ export async function builtQuestions(form:FormRow,d:PageFormDeps):Promise<PageFo
  try{const data=await response.json();return Array.isArray(data?.questions)?{version:String(data.version??'v1'),questions:data.questions}:null;}catch{return null;}
 }
 
-/** Keys of questions removed in an earlier version: never reused for a new question. */
-export function retiredKeys(versions:VersionRow[],live:PageFormSpec|null){
+/** Keys of questions removed in an earlier version: never reused for a new question. A key with its own CRM field (bindings) is never retired: it is saved, and the editor can add it back (Muhammed, 2026-11-01). */
+export function retiredKeys(versions:VersionRow[],live:PageFormSpec|null,bindings:Record<string,string>={}){
  const now=new Set((live?.questions??[]).map(q=>q.key));
- return [...new Set(versions.flatMap(v=>(v.spec?.questions??[]).map(q=>q.key)))].filter(k=>!now.has(k));
+ return [...new Set(versions.flatMap(v=>(v.spec?.questions??[]).map(q=>q.key)))].filter(k=>!now.has(k)&&!bindings[k]);
 }
 
 /** pageForms.read: the client's pages, each with its live questions and history. */
@@ -87,7 +87,9 @@ export async function readPageForms(args:Row,d:PageFormDeps){
    // What the editor starts from: the live version, or the built questions before any publish.
    current:live?{version:label(live.version),questions:live.spec.questions}:built,
    currentUnreadable:!live&&!built?'The page did not return the questions it was built with. Check that the page is deployed, then reload.':undefined,
-   retired:retiredKeys(versions,live?.spec??built),
+   retired:retiredKeys(versions,live?.spec??built,form.bindings),
+   // Questions with their own CRM field that are off the page, newest wording first; the editor can add them back.
+   saved:savedQuestions([...[...versions].sort((a,b)=>b.version-a.version).map(v=>v.spec),...(built?[built]:[])],live?.spec??built,form.bindings),
    versions:versions.map(v=>({version:v.version,label:label(v.version),summary:v.summary,source:v.source,by:v.actor_email,at:v.created_at,wentLive:v.first_live_at,live:v.version===form.live_version})),
   };
  }))};
@@ -148,7 +150,7 @@ export async function publishPageForm(args:Row,apply:boolean,requestId:string|un
  const baseline=live?null:await builtQuestions(form,d);
  if(!live&&!baseline)fail('The page did not return the questions it was built with, so the first publish cannot keep them as version 1. Check that the page is deployed.');
  const draft=args.spec as PageFormSpec;
- const wrong=problems(draft,{photos:form.photos,retired:retiredKeys(versions,live?.spec??baseline)});
+ const wrong=problems(draft,{photos:form.photos,retired:retiredKeys(versions,live?.spec??baseline,form.bindings)});
  if(wrong.length)return {ok:false,dryRun:!apply,problems:wrong,error:wrong[0]};
  const spec=clean(draft,form.bindings);
  // Both sides cleaned the same way, so a field the build carries (ghl_field) is not read as an edit.
