@@ -1,6 +1,15 @@
 import type { User as AuthUser } from "@supabase/supabase-js";
-import { ChevronRight, Loader2, Moon, Palette, Sun, User } from "lucide-react";
+import {
+  ChevronRight,
+  ClipboardList,
+  Loader2,
+  Moon,
+  Palette,
+  Sun,
+  User,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import {
   cockpitAuthError,
@@ -149,7 +158,7 @@ export function SettingsPage() {
     <div className="mx-auto w-full max-w-6xl space-y-6">
       <PageHeader
         title="Settings"
-        sub="Your account, how the cockpit looks, and where it posts in Slack"
+        sub="Your account, how the cockpit looks, where it posts in Slack, and the client forms"
       />
 
       <div className="max-w-2xl space-y-6">
@@ -254,6 +263,29 @@ export function SettingsPage() {
         {/* D17: who hears in Slack, and who is tagged, changed here and
             never in code. Seats without the right to see it see nothing. */}
         <NoticesRouting />
+
+        {/* The forms editor (waves 3-4, ED): the client forms' questions,
+            words and schedules, in data. The page itself tells a seat that
+            is not an admin or the CEO that it cannot edit. */}
+        <section className="rounded-2xl border bg-card p-4 sm:p-6">
+          <h2 className="flex items-center gap-2 text-[15px] font-semibold">
+            <ClipboardList className="size-4 text-muted-foreground" />
+            Client forms
+          </h2>
+          <Link
+            to="/forms-editor"
+            className="mt-4 flex w-full items-center justify-between rounded-xl bg-muted/40 p-4 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <div>
+              <p className="text-sm font-medium">Open the forms editor</p>
+              <p className="text-sm text-muted-foreground">
+                Change the questions and words clients see, and when surveys go.
+                Admins and the CEO.
+              </p>
+            </div>
+            <ChevronRight className="size-4 text-muted-foreground" />
+          </Link>
+        </section>
       </div>
 
       {emailPasswordAvailable && (
