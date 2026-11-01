@@ -36,6 +36,11 @@ export const LINK_GROUPS: LinkGroup[] = [
         note: "Every screen, and how to use it",
       },
       {
+        label: "Offers: pitch an offer and send a proposal (video)",
+        url: COCKPIT_GUIDES.csm.offers!,
+        note: "Under three minutes, silent: Money → Offers, step by step. Watch it before your first pitch",
+      },
+      {
         label: "Client success cockpit, how to use it",
         url: COCKPIT_SOP.csm,
         note: "The SOP for this cockpit, in ClickUp",
