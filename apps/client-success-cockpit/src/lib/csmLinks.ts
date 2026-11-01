@@ -20,7 +20,7 @@ export const LINK_GROUPS: LinkGroup[] = [
   {
     title: "How this cockpit works",
     blurb:
-      "Watch the demo once, then keep the simple SOP open beside you while you learn the day.",
+      "Watch the demo once, then keep the simple SOP open beside you while you learn the day. Before your first onboarding call, launch call or pitch, watch its short video.",
     rows: [
       {
         label: "Watch the demo",
@@ -38,8 +38,18 @@ export const LINK_GROUPS: LinkGroup[] = [
         note: "Every screen, and how to use it",
       },
       {
+        label: "Onboarding call: run the deck and the kickoff form (video)",
+        url: COCKPIT_GUIDES.csm.howTo.onboarding,
+        note: "Three minutes, silent: prep, present with your notes, then submit the kickoff with the client so the Brand Blueprint is booked",
+      },
+      {
+        label: "Launch call: run the launch deck (video)",
+        url: COCKPIT_GUIDES.csm.howTo.launch,
+        note: "Three minutes, silent: from prep to the client's green light",
+      },
+      {
         label: "Offers: pitch an offer and send a proposal (video)",
-        url: COCKPIT_GUIDES.csm.offers!,
+        url: COCKPIT_GUIDES.csm.howTo.offers,
         note: "Under three minutes, silent: Money → Offers, step by step. Watch it before your first pitch",
       },
       {

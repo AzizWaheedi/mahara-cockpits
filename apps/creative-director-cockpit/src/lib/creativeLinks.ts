@@ -69,6 +69,11 @@ export const LINK_GROUPS: LinkGroup[] = [
         note: "Why the call exists, the 15 minute prep, and the run of the call",
       },
       {
+        label: "Brand Blueprint call: run it in this cockpit (video)",
+        url: COCKPIT_GUIDES.creative.howTo.blueprint,
+        note: "Three minutes, silent: from the client's card to the locked offer, the whole call in this cockpit. Watch it before your first one",
+      },
+      {
         label: "Brand Blueprint booking link",
         url: "https://api.leadconnectorhq.com/widget/booking/x84ET6KnA8odlsjYiVLq",
         note: "Booked on the onboarding call. Send this if it needs rebooking",

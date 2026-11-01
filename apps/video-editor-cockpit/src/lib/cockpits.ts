@@ -57,21 +57,23 @@ export const COCKPIT_SOP: Record<string, string> = {
  * maharamedia.com accounts. A re-recording replaces each file in place, so
  * these addresses stay the same.
  *
- * `offers` is client success only: the silent how-to for Money → Offers,
- * pitching an offer and sending a proposal (2026-11-01), in "Cockpit SOPs /
- * Team how-to videos (October 2026)".
+ * `howTo` holds a cockpit's silent how-to videos, one call or task each, in
+ * "Cockpit SOPs / Team how-to videos (October 2026)": client success has the
+ * onboarding call, the launch call (2026-10-24) and Money → Offers
+ * (2026-11-01); the creative director has the Brand Blueprint call.
  */
 const DRIVE_FILE = "https://drive.google.com/file/d";
 const GOOGLE_DOC = "https://docs.google.com/document/d";
-export const COCKPIT_GUIDES: Record<
-  string,
-  { video: string; simple: string; deep: string; offers?: string }
-> = {
+export const COCKPIT_GUIDES = {
   csm: {
     video: `${DRIVE_FILE}/1RUlOhQZUtFExNiu-nKtY9bYLSEihwnDS/view`,
     simple: `${GOOGLE_DOC}/1BpbtA5i2kwuIxKZsomRLLXrhxNXh5S34ThFmghj6RoI/edit`,
     deep: `${GOOGLE_DOC}/1_9lZfD4KSHV54NPhIPU0rkfLvFIxMFiexiAwz8q2xz8/edit`,
-    offers: `${DRIVE_FILE}/1fJ2aj62n1uCkxj5HO17Uxd9nqw97xuC2/view`,
+    howTo: {
+      onboarding: `${DRIVE_FILE}/1AuD8qBlwRJHdUHF_teerPlLJI856WgTG/view`,
+      launch: `${DRIVE_FILE}/1A-4eHbzNXXA2DiH5bZJzfn19LlgGKYdJ/view`,
+      offers: `${DRIVE_FILE}/1fJ2aj62n1uCkxj5HO17Uxd9nqw97xuC2/view`,
+    },
   },
   media_buyer: {
     video: `${DRIVE_FILE}/181jbsAfHy4vghtfGQ2gOZk7StWojCvHC/view`,
@@ -82,6 +84,9 @@ export const COCKPIT_GUIDES: Record<
     video: `${DRIVE_FILE}/1ivCH-Ubog1R4Y-zS7B-S4xe2iLFSwF9m/view`,
     simple: `${GOOGLE_DOC}/19JKDh3TJGlxT1yLZP-LSP3a5hP5iYYK7EvHzTmSrF3M/edit`,
     deep: `${GOOGLE_DOC}/1Z1cusU9lNQh8u5i1to3kmmB3ZB7eZGa0osLFSuRnigw/edit`,
+    howTo: {
+      blueprint: `${DRIVE_FILE}/11Lry1EYCxCxlfc96QESOSTuH5KVI6coi/view`,
+    },
   },
   editor: {
     video: `${DRIVE_FILE}/1ubzMoMQPvOPbmjL9BWrhqMM1LY-xhnH6/view`,
@@ -93,4 +98,12 @@ export const COCKPIT_GUIDES: Record<
     simple: `${GOOGLE_DOC}/1-tpPls6rTKLaGMw4svWeAD6DdgRvTgBxSGEEUFE_qV4/edit`,
     deep: `${GOOGLE_DOC}/1tDDpvBjwmWiomypTpBmh5-qLMzkhYH94dsV6aJbXgyI/edit`,
   },
-};
+} satisfies Record<
+  string,
+  {
+    video: string;
+    simple: string;
+    deep: string;
+    howTo?: Record<string, string>;
+  }
+>;
