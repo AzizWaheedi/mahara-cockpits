@@ -38,7 +38,6 @@ KEY_LINKS = {
     "client ticketing form (CSM fills)": "https://forms.clickup.com/90182518398/f/2kzmr1ky-1178/R1O1N5QXYLUTJOWQ3E",
     "pause request form": "https://maharamedia.typeform.com/to/CTUjv6l3",
     "extension form": "https://maharamedia.typeform.com/to/gqBcyK6g",
-    "reactivate ads after a failed payment": "https://maharamedia.typeform.com/to/ecJQ5Z5C",
     "cancellation survey": "https://maharamedia.typeform.com/to/knIe4eF3",
     "referral form": "https://maharamedia.typeform.com/to/bAmbMKM2",
     "client review form": "https://maharamedia.typeform.com/to/ETEynRgb",

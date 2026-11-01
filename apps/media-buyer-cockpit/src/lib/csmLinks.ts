@@ -166,7 +166,7 @@ export const LINK_GROUPS: LinkGroup[] = [
     ],
   },
   {
-    title: "Changing a client's plan, pause, extend, reactivate, cancel",
+    title: "Changing a client's plan, pause, extend, cancel",
     blurb:
       "One form per change. Never agree to any of these over WhatsApp, get them on a call first.",
     rows: [
@@ -176,14 +176,11 @@ export const LINK_GROUPS: LinkGroup[] = [
         note: "Client wants to freeze. A freeze over 14 days counts as churn",
       },
       {
-        label: "Client extension form",
-        url: "https://maharamedia.typeform.com/to/gqBcyK6g",
-        note: "Only with a real reason, each extension costs you $50",
-      },
-      {
-        label: "Card declined, reactivate their ads",
-        url: "https://maharamedia.typeform.com/to/ecJQ5Z5C",
-        note: "Use when a client's card fails and the ads stop. Admin only, not an earner",
+        // The extension Typeform closes at the C1 window: Give more time on the
+        // client's page writes the card itself (WAVE12-CONTRACT.md 4.7.4, Q7).
+        label: "Give more time (in the cockpit)",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Give more time. The ClickUp card updates itself.",
       },
       {
         label: "Contract termination survey (cancellation form)",

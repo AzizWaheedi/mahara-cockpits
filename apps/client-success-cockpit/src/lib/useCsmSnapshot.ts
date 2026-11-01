@@ -374,8 +374,37 @@ export async function executeAct(
  * go through cockpit-csm-api, which sets the field, reads it back, comments on
  * the client's task and records the decision itself. Every other kind is saved
  * in the cockpit; a ticket reaches its team through the ClickUp log.
+ *
+ * booked, touchpoint, report and service joined on 2026-11-01
+ * (docs/forms/WAVE12-CONTRACT.md 4.6, plan 5.11): the server already wrote
+ * all four, but the page sent them to the cockpit-only log, so "They booked,
+ * save it to ClickUp" never reached the card.
  */
-export const CLICKUP_ACT_KINDS = new Set(["stage", "happiness"]);
+export const CLICKUP_ACT_KINDS = new Set([
+  "stage",
+  "happiness",
+  "booked",
+  "touchpoint",
+  "report",
+  "service",
+]);
+
+/** The toast once the card shows the act (4.6.1), by kind. */
+export const ACT_SAVED: Record<string, string> = {
+  stage: "Saved, ClickUp updated",
+  happiness: "Saved, ClickUp updated",
+  booked: "Booking saved to the card",
+  touchpoint: "Touchpoint saved to the card",
+  report: "Report date saved to the card",
+  service: "Service saved to the card",
+};
+
+/** Under a failed card act: the server's sentence, then that the card is as it was. */
+export function actFailed(e: unknown): string {
+  const said = String((e as Error)?.message ?? e ?? "").trim();
+  const sentence = said && !/[.!?]$/.test(said) ? `${said}.` : said;
+  return `${sentence || "ClickUp did not confirm this."} Nothing changed on the card.`;
+}
 
 export async function performAct(
   client: SupabaseClient | null,
@@ -387,11 +416,15 @@ export async function performAct(
     throw new Error(
       "This client has no ClickUp card, so the change cannot be saved",
     );
+  // The note rides along (the card's comment and the decision's reason);
+  // left out when empty, so a repeat press sends the same request.
+  const note = typeof args.note === "string" ? args.note.trim() : "";
   return executeCsmAction(client, "act", {
     taskId: String(args.taskId),
     kind: args.kind,
     action: args.action.trim(),
     value: String(args.value ?? ""),
+    ...(note ? { note } : {}),
   });
 }
 
