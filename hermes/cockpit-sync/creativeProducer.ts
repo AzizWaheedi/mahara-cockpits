@@ -3,6 +3,7 @@ import {type Row, callTool, graph, unwrap, recordLog, assertNativeFence} from '.
 import {CLIENTS_LIST, CREATIVE_LIST, VIDEO_LIST, CONTENT_LIST, type ClientWeeks, clientWeekFor} from './calculator';
 import {latestUpdates} from './clientUpdates';
 import {withoutExcludedAds} from './excludedAds';
+import {PAUSED_FORM_REASON, formsToRead} from './funnelForms';
 const TRACKER = '1pBEyClUxPLc4-RdXR8gZ0MxsLkLLFkWJwkiVqVf2rro';
 async function clickup(path: string): Promise<Row> { const data = unwrap(await callTool('pd_clickup_proxy_get', {url: `https://api.clickup.com/api/v2/${path}`})); if (!Array.isArray(data.tasks)) throw new Error('ClickUp did not return a complete task collection'); return data; }
 async function sheet(id: string, range: string): Promise<string[][]> { const data = unwrap(await callTool('pd_google_sheets_proxy_get', {url: `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}`})); if (!Array.isArray(data.values)) throw new Error('Tracker sheet is unavailable'); return data.values; }
@@ -420,7 +421,7 @@ export async function gatherFunnels(prior:Row[]=[]): Promise<Row[]> {
     return [];
   }
   const fields =
-    "name,effective_status,creative{object_story_spec,asset_feed_spec,link_url,effective_object_story_id},adset{destination_type,name}";
+    "name,effective_status,creative{object_story_spec,asset_feed_spec,link_url,effective_object_story_id},adset{destination_type,name},campaign{effective_status}";
   const meta: Record<string, Row> = {};
   for (let i = 0; i < live.length; i += 40) {
     try {
@@ -438,7 +439,6 @@ export async function gatherFunnels(prior:Row[]=[]): Promise<Row[]> {
     }
   }
   const groups = new Map<string, Row>();
-  const formIds = new Set<string>();
   for (const [adId, ad] of Object.entries(meta)) {
     const row = ads.get(adId);
     if (!row) continue;
@@ -461,10 +461,11 @@ export async function gatherFunnels(prior:Row[]=[]): Promise<Row[]> {
       status: ad.effective_status ?? row.status,
     });
     groups.set(key, g);
-    if (d.formId) formIds.add(d.formId);
   }
   const forms: Record<string, Row> = {};
-  const fl = [...formIds].sort();
+  const withRows: Record<string, Row> = {};
+  for (const [adId, ad] of Object.entries(meta)) if (ads.has(adId)) withRows[adId] = ad;
+  const {read: fl, paused: pausedForms} = formsToRead(withRows, adId => destination(withRows[adId]).formId);
   for (let i = 0; i < fl.length; i += 40) {
     try {
       Object.assign(
@@ -485,7 +486,8 @@ export async function gatherFunnels(prior:Row[]=[]): Promise<Row[]> {
   const out: Row[] = [];
   for (const g of groups.values()) {
     const form = forms[g.formId ?? ""] ?? {};
-    const unavailable=form.nativeMetadataUnavailable===true;
+    const pausedForm=!!g.formId&&pausedForms.has(g.formId);
+    const unavailable=pausedForm||form.nativeMetadataUnavailable===true;
     const old=unavailable?prior.find(r=>r.account===g.account&&r.formId===g.formId):undefined;
     const questions = unavailable?structuredClone(old?.questions??[]):((form.questions ?? []) as Row[]).map(q => {
       const label = String(q.label ?? q.key ?? "");
@@ -514,7 +516,7 @@ export async function gatherFunnels(prior:Row[]=[]): Promise<Row[]> {
       questions,
       gates: unavailable?old?.gates:questions.filter((q:Row) => q.isGate).length,
       formCheckedAt: unavailable?old?.formCheckedAt:g.formId?Date.now():undefined,
-      staleReason: unavailable?'Form metadata is unavailable. Stored questions are retained. Check Meta access before using them.':undefined,
+      staleReason: pausedForm?PAUSED_FORM_REASON:unavailable?'Form metadata is unavailable. Stored questions are retained. Check Meta access before using them.':undefined,
       spend: Math.round(g.spend * 100) / 100,
       leads: g.leads,
       cpl: g.leads ? Math.round((g.spend / g.leads) * 100) / 100 : undefined,
