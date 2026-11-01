@@ -364,7 +364,8 @@ python3 guardian.py --dry-run --state-dir /tmp/guardian-mac report
 
 The VPS is read once over ssh (the snapshot script piped to `python3 -`:
 key names and set/empty only, process counts and ages only, never a value
-or a process's arguments); Creative Triage through the Management API with
+or a process's arguments except a gateway run's command line, cut to 200
+characters); Creative Triage through the Management API with
 `read_only`. Nothing is written, posted or fixed. Key probes that need a
 value (Slack, DeepSeek, OpenAI, the Meta ad account) are coverage gaps off
 the box.
@@ -473,6 +474,7 @@ waits on a person in Messages by design (Z36).
 | `vps-tunnels` |  | More than 50: warn. |  |
 | `vps-disk` | H8 | Over 85%: warn; over 90%: fail (urgent). | gzip hermes's own logs over 50 MB (every line kept) |
 | `vps-code-copy` | H11 | Older than 7 days or any local change: warn (daily summary only). |  |
+| `hermes-gateway-dup` |  | A gateway run by root or from /opt/hermes-host: fail (urgent). |  |
 | `vps-crontab` | H4 | A manifest job missing: fail (urgent); a schedule changed: warn; commented out on purpose: paused. | back up the crontab and write the proposed restore (not installed) |
 | `vps-hung-runs` | H6 | Older than 4 times the job's interval (at least 60 min) and no CPU time for 15 min: fail; past that age but still working: warn. | stop the hung copy-only cron run once its CPU time has stopped moving (SIGTERM, then SIGKILL after 30 s) |
 | `log-eod-out` | H5 | No write for 15 min: fail; a Python traceback written since the last scan: warn. |  |
