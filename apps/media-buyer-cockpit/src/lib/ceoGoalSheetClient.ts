@@ -30,6 +30,13 @@ export type LockInRow = {
 
 export type SheetContext = {
   today: string;
+  /**
+   * The month's lifecycle from the cockpit's own records (20261101q): read
+   * loosely through goalsSheetModel's lifecycleOf. Absent before q is live.
+   */
+  lifecycle?: Record<string, unknown> | null;
+  /** Hand-logged payments not checked yet (20261101q); absent before q is live. */
+  manualLogged?: Record<string, unknown> | null;
   month: string;
   plan: Record<string, any> | null;
   plans: {

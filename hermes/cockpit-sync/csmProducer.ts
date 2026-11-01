@@ -99,9 +99,9 @@ export function parseKpi(rows: string[][], today: string, now: number): Row[] {
   const matching=rows.filter(row=>String(row[0]??'').trim()===name);
   if(matching.length>1)throw new Error('Churn tracker month is ambiguous');
   const row=matching[0]??[],start=String(row[1]??'').trim(),lost=String(row[2]??'').trim();
-  const source=`Churn Tracker sheet, tab 01, ${name} row`;
+  const source=`Churn register (cockpit_churn_months, cockpit_churn_departures), ${name} row`;
   const note=start&&lost
-    ? 'Churn = clients lost this month divided by clients at the start of the month; the sheet is a cross-check against the recorded roster.'
+    ? 'Churn = clients lost this month divided by clients at the start of the month; the register is a cross-check against the recorded roster.'
     : `Not published: the ${name} row is missing ${[!lost?'clients lost':'',!start?'clients at start of month':''].filter(Boolean).join(' and ')}. An empty formula result is not zero churn.`;
   const proposed=[
     {key:'churn',label:'Churn this month',value:start&&lost?String(row[4]??'').trim():'',note},

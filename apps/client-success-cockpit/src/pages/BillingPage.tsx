@@ -107,7 +107,9 @@ export function BillingPage({ embedded = false }: { embedded?: boolean }) {
         sub="Who pays next, how they pay, and what the billing SOP says to do today. Every change is made on the ClickUp card."
       />
       {doors?.checks && auth.client ? (
-        <ChecksWaiting client={auth.client} />
+        <ChecksWaiting
+          canCheck={auth.isCeo || auth.roles.includes("finance")}
+        />
       ) : null}
       <BillingSheet api={wired} />
     </div>

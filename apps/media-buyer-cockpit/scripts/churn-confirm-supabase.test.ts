@@ -67,6 +67,8 @@ const CSM_EMAIL = "csm@tests.invalid";
 
 const LIVE_READ_MD5 = "b008dbe49a35e451bd8979424b5fcdb3";
 const LIVE_GUARD_MD5 = "168ce29dc03c2867603af6a488da2790";
+/** 20261101l's guard (its drift guard's after value): o stands on its 'answer' carve-out. */
+const L_GUARD_MD5 = "e05e4baa2c0059d9fd04a98684963bbb";
 
 let db: PGlite;
 type Row = Record<string, any>;
@@ -598,7 +600,14 @@ async function siblings() {
   if (has(L)) {
     const sql = migration(L);
     await db.exec(STAND_IN_L); // its notice-kind CHECK and the three registry rows `o` needs
+    // What l's records stand on: the seat reader (20261027f) and l's column probe.
+    for (const name of ["cockpit_form_seat", "cockpit_form_actor"])
+      await db.exec(
+        fnFrom(migration("20261027f_forms_core.sql"), name) as string,
+      );
     for (const name of [
+      "cockpit_form_column_exists",
+      "cockpit_form_responses_guard",
       "cockpit_form_staff_record",
       "cockpit_form_notices_in",
     ]) {
@@ -702,9 +711,9 @@ describe(`20261101o applies on ${SIBLINGS.l} and ${SIBLINGS.m}`, () => {
     expect(after("cockpit_csm_churn_read")).toBe(
       await md5("cockpit_csm_churn_read"),
     );
-    expect(after("cockpit_form_responses_guard")).toBe(
-      await md5("cockpit_form_responses_guard"),
-    );
+    // o no longer replaces the guard: l's body (with the answer carve-out) stays.
+    expect(after("cockpit_form_responses_guard")).toBeUndefined();
+    expect(await md5("cockpit_form_responses_guard")).toBe(L_GUARD_MD5);
   });
 
   test("the live bodies it replaces are the repo's, so the guard's live values are real", async () => {
@@ -716,19 +725,12 @@ describe(`20261101o applies on ${SIBLINGS.l} and ${SIBLINGS.m}`, () => {
           "read",
         ),
       );
-      await ex(
-        fnFrom(
-          migration("20261027f_forms_core.sql"),
-          "cockpit_form_responses_guard",
-        ) as string,
-      );
       const md5 = async (name: string) =>
         one<string>(
           `SELECT md5(regexp_replace(prosrc, '\\s+', ' ', 'g')) AS r FROM pg_proc WHERE proname=$1`,
           [name],
         );
       expect(await md5("cockpit_csm_churn_read")).toBe(LIVE_READ_MD5);
-      expect(await md5("cockpit_form_responses_guard")).toBe(LIVE_GUARD_MD5);
       // and the file applies over the live bodies
       await ex(inTx(O));
     });
@@ -747,6 +749,24 @@ describe(`20261101o applies on ${SIBLINGS.l} and ${SIBLINGS.m}`, () => {
     });
     await rolledBack(async () => {
       await ex("DROP FUNCTION public.cockpit_form_notices_in()");
+      const r = await refusal(() => ex(inTx(O)));
+      expect(r.message).toBe(
+        "20261101o needs 20261101l and 20261101m applied first; apply them, then this file.",
+      );
+    });
+    // The live guard (20261027f, before l) has no answer carve-out: o waits for l.
+    await rolledBack(async () => {
+      await ex(
+        fnFrom(
+          migration("20261027f_forms_core.sql"),
+          "cockpit_form_responses_guard",
+        ) as string,
+      );
+      expect(
+        await one<string>(
+          `SELECT md5(regexp_replace(prosrc, '\\s+', ' ', 'g')) AS r FROM pg_proc WHERE proname='cockpit_form_responses_guard'`,
+        ),
+      ).toBe(LIVE_GUARD_MD5);
       const r = await refusal(() => ex(inTx(O)));
       expect(r.message).toBe(
         "20261101o needs 20261101l and 20261101m applied first; apply them, then this file.",
@@ -1477,7 +1497,7 @@ describe("cockpit_form_notice_answer", () => {
         ),
       );
       expect(r.message).toBe("Sent notes keep their answers");
-      await ex("SELECT set_config('cockpit.notice_answer','on',true)");
+      await ex("SELECT set_config('cockpit.forms_legacy','answer',true)");
       const twice = await refusal(() =>
         q(
           `UPDATE cockpit_form_responses SET answer_meta = '{}' WHERE id=$1::uuid`,

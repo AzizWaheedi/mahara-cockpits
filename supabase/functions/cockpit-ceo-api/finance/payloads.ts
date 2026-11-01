@@ -33,6 +33,8 @@ export type Transaction = {
   bankKind?: string;
   /** The statement line's own id, so it can be reclassified from the Transactions tab. */
   bankLineId?: number;
+  /** False for a hand-logged payment not checked against the bank yet (20261101n): listed, in no total. */
+  checked?: boolean;
 };
 
 export type AttributionKind = "deposit" | "remainder" | "client" | "none";
@@ -269,6 +271,15 @@ export type MoneyPayload = {
      * transfer a statement line covers, count once, on the bank rail.
      */
     total: CashRail;
+    /** Hand-logged payments not checked against the bank yet (20261101n): beside the rails, never in the total. */
+    manualLogged?: { count: number; usd: number; oldestDay: string | null };
+  };
+  /** Each hand-logged row's check state over twelve months, for the manual list's chips (20261101n). */
+  manualChecks?: { id: string; state: "logged" | "checked" | "rejected"; at: string | null; ref: string | null }[];
+  /** Rail cash per card over the last two full months, for the MRR check (20261101n, money-acts' cockpit_mrr_read). */
+  mrrCheck?: {
+    asOf: string;
+    rows: { taskId: string; railMonthlyUsd: number; months: number; rails: string[]; note: string }[];
   };
   /**
    * This month's hand-logged payments for the Money tab, newest `day` first,

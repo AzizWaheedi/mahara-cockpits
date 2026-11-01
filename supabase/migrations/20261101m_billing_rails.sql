@@ -457,14 +457,19 @@ COMMENT ON FUNCTION public.cockpit_billing_writeback_writes(text,text,text,jsonb
 
 -- The silent comment one event posts on the card (3.3), or NULL. Roles, never
 -- names or emails: the seat_role words are the CSM, finance, the CEO and the
--- cockpit. A line whose value the event does not carry is left out.
+-- cockpit. The detail holds the code (csm, finance, ceo, system) as
+-- cockpit_billing_detail writes it, or already the words (20261101p's money
+-- acts store the words); both read the same. A line whose value the event
+-- does not carry is left out.
 CREATE OR REPLACE FUNCTION public.cockpit_billing_writeback_comment(p_kind text, p_from text, p_to text, p_detail jsonb, p_client text)
 RETURNS text LANGUAGE plpgsql IMMUTABLE SET search_path = '' AS $$
 DECLARE
   d jsonb := CASE WHEN jsonb_typeof(p_detail) = 'object' THEN p_detail ELSE '{}'::jsonb END;
   l text[] := '{}';
   v_by text := CASE d->>'seat_role' WHEN 'csm' THEN 'the CSM' WHEN 'finance' THEN 'finance'
-                                    WHEN 'ceo' THEN 'the CEO' WHEN 'system' THEN 'the cockpit' END;
+                                    WHEN 'ceo' THEN 'the CEO' WHEN 'system' THEN 'the cockpit'
+                                    WHEN 'the CSM' THEN 'the CSM' WHEN 'the CEO' THEN 'the CEO'
+                                    WHEN 'the cockpit' THEN 'the cockpit' END;
   v_why text := nullif(concat_ws(': ', nullif(btrim(coalesce(d->>'reason_cat', '')), ''),
                                        nullif(btrim(coalesce(d->>'reason', '')), '')), '');
   v_n integer;

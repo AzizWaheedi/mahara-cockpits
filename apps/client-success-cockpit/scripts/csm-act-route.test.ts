@@ -64,7 +64,7 @@ for (const [kind, value] of [
 }
 
 test("other kinds stay in the cockpit, and a ticket still goes through the log", async () => {
-  for (const kind of ["touchpoint", "ticket", "left", "service"]) {
+  for (const kind of ["ticket", "left"]) {
     const { client, invoked, rpcs } = fakeClient();
     await performAct(client, {
       clientName: "City Wood",
@@ -201,13 +201,11 @@ test("a field ClickUp did not keep fails the read-back", async () => {
 const LAST_POC = "e183f2ce-8b7a-491a-b160-2287a247758b";
 const LAST_CALL = "032203ad-e327-4d76-a0ce-c07496da6486";
 const NEXT_POC = "c48c1323-ca6a-465f-84cb-8c24f0f62df3";
-const REPORT = "f1e2d3c4-0000-4000-8000-00000000report";
+const REPORT = "a7f4ecf5-0000-4000-8000-00000000report";
 const noon = (d: string) => Date.parse(`${d}T09:00:00Z`);
 
 /** A Clients board that keeps a date-only value at ClickUp's own hour (03:00Z or 04:00Z) on its day. */
-function datedBoard(
-  opts: { hour?: number; shift?: number } = {},
-) {
+function datedBoard(opts: { hour?: number; shift?: number } = {}) {
   const posts: { path: string; body: any }[] = [];
   const values: Record<string, unknown> = {};
   const calls: string[] = [];

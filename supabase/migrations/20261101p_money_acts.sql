@@ -32,6 +32,8 @@
 --    late records. Off until billing.daily is on (D-P3).
 -- 7. Settings seeds; forms.doors gains money; cockpit_settings_forms_audit
 --    audits billing.% keys too.
+-- 8. 20261101o's cockpit_client_lifecycle_v is repointed to the two views
+--    above, with the same columns (section 5b).
 --
 -- Every function is SECURITY DEFINER with an empty search path, revoked from
 -- all four roles, then granted as contract 2.7 says. The views are
@@ -405,6 +407,82 @@ COMMENT ON VIEW public.cockpit_late_payments_v IS
   'Late payments as spells over cockpit_client_billing_days (W10): due_on, amount on the first late day (NULL is missing, never 0), ended_on (first snapshot after the spell), closed_how open / extended / stopped / date_moved, paid_on (earliest checked rail payment from due_on - 3), days_late, and the daily step''s open late event.';
 REVOKE ALL ON public.cockpit_late_payments_v FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT ON public.cockpit_late_payments_v TO service_role;
+
+-- ---------------------------------------------------------------------------
+-- 5b. 20261101o's cockpit_client_lifecycle_v, repointed (contract 3.2): the
+--     live extension's end comes from cockpit_extensions_v and the days late
+--     from the open spell in cockpit_late_payments_v, with the same columns.
+--     Only when o's view is there (o applies before this file in the deploy;
+--     a database without it keeps nothing to repoint).
+
+DO $repoint$
+BEGIN
+  IF to_regclass('public.cockpit_client_lifecycle_v') IS NULL THEN
+    RETURN;
+  END IF;
+  EXECUTE $view$
+CREATE OR REPLACE VIEW public.cockpit_client_lifecycle_v WITH (security_invoker = true) AS
+WITH k AS (SELECT (now() AT TIME ZONE 'Asia/Kuwait')::date AS today),
+ladder AS (
+  SELECT coalesce((SELECT (s.value->>'pauseReviewDay')::integer FROM public.cockpit_settings s
+                    WHERE s.key = 'billing.ladder' AND s.value->>'pauseReviewDay' ~ '^[0-9]{1,2}$'), 4) AS pause_day,
+         coalesce((SELECT (s.value->>'cancelReviewDay')::integer FROM public.cockpit_settings s
+                    WHERE s.key = 'billing.ladder' AND s.value->>'cancelReviewDay' ~ '^[0-9]{1,2}$'), 15) AS cancel_day
+),
+ev AS (
+  SELECT e.* FROM public.cockpit_billing_events e
+   WHERE NOT EXISTS (SELECT 1 FROM public.cockpit_billing_event_voids v WHERE v.event_id = e.id)
+)
+SELECT
+  b.clickup_task_id,
+  b.client_name,
+  b.client_status,
+  b.paused_on,
+  p.id AS pause_event_id,
+  CASE WHEN p.detail->>'pause_kind' IN ('client_request', 'non_payment') THEN p.detail->>'pause_kind' END AS pause_kind,
+  CASE WHEN p.detail->>'restart' ~ '^\d{4}-\d{2}-\d{2}$' THEN (p.detail->>'restart')::date END AS pause_restart,
+  CASE WHEN b.client_status = 'Paused' AND b.paused_on IS NOT NULL THEN k.today - b.paused_on END AS pause_days,
+  x.until AS extension_until,
+  d.id AS departure_id,
+  d.left_on,
+  d.confirmed_at AS churn_confirmed_at,
+  d.survey_state,
+  late.days_late,
+  CASE
+    WHEN b.client_status = 'Paused' AND b.paused_on IS NOT NULL AND k.today - b.paused_on >= 14 THEN 'pause_day14'
+    WHEN late.days_late >= ladder.cancel_day THEN 'cancel_review'
+    WHEN late.days_late >= ladder.pause_day AND x.until IS NULL THEN 'pause_review'
+    ELSE 'none'
+  END AS ladder_step
+FROM public.cockpit_billing_accounts b
+CROSS JOIN k
+CROSS JOIN ladder
+LEFT JOIN LATERAL (
+  SELECT e.id, e.detail FROM ev e
+   WHERE e.clickup_task_id = b.clickup_task_id AND e.kind = 'pause' AND b.client_status = 'Paused'
+     AND NOT EXISTS (SELECT 1 FROM ev r WHERE r.clickup_task_id = e.clickup_task_id AND r.kind = 'resume' AND r.at > e.at)
+   ORDER BY e.at DESC, e.id DESC LIMIT 1
+) p ON true
+LEFT JOIN LATERAL (
+  SELECT max(g.until) AS until FROM public.cockpit_extensions_v g
+   WHERE g.clickup_task_id = b.clickup_task_id AND g.state = 'live'
+) x ON true
+LEFT JOIN LATERAL (
+  SELECT dd.id, dd.left_on, dd.confirmed_at, dd.survey_state FROM public.cockpit_churn_departures dd
+   WHERE dd.clickup_task_id = b.clickup_task_id AND dd.removed_at IS NULL
+   ORDER BY dd.left_on DESC, dd.id DESC LIMIT 1
+) d ON true
+LEFT JOIN LATERAL (
+  SELECT l.days_late FROM public.cockpit_late_payments_v l
+   WHERE l.clickup_task_id = b.clickup_task_id AND l.closed_how = 'open'
+   ORDER BY l.due_on DESC LIMIT 1
+) late ON true
+$view$;
+  EXECUTE $c$COMMENT ON VIEW public.cockpit_client_lifecycle_v IS
+  'One row per mirrored card: pause (event, kind, Resume On, days), the live extension''s end (cockpit_extensions_v), the latest departure and its confirm, the days late of the open spell (cockpit_late_payments_v, over the daily card snapshots) and the ladder step. NULL means nobody holds that value, never zero. Browser reads go through cockpit_client_lifecycle_read.'$c$;
+  EXECUTE 'REVOKE ALL ON public.cockpit_client_lifecycle_v FROM PUBLIC, anon, authenticated, service_role';
+  EXECUTE 'GRANT SELECT ON public.cockpit_client_lifecycle_v TO service_role';
+END $repoint$;
 
 -- ---------------------------------------------------------------------------
 -- 6. cockpit_billing_write: the staff forms and Set MRR (4.7 to 4.9)

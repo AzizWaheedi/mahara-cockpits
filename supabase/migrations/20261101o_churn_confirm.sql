@@ -19,8 +19,9 @@
 --    live (task, left_on) index stays the rule, so a client who resumes and
 --    later leaves again gets a second departure and past months keep theirs (W21).
 -- 3. The card's Churn Type options, and the day-90 default (3.5).
--- 4. cockpit_form_responses_guard: the one change a legacy notice allows,
---    answer_meta.answered, inside cockpit_form_notice_answer only.
+-- 4. (No guard change here: 20261101l's cockpit_form_responses_guard already
+--    lets a legacy notice gain answer_meta.answered once, under
+--    cockpit.forms_legacy = 'answer', which cockpit_form_notice_answer sets.)
 -- 5. cockpit_client_lifecycle_confirm('churn', ...) (3.1).
 -- 6. cockpit_form_notice_answer: "Not leaving" and "Handled" (3.1).
 -- 7. cockpit_churn_backfill_confirm: the 6-row backfill door (owner only, a
@@ -44,8 +45,7 @@ DECLARE v_md5 text; v_name text; v_ok text[];
 BEGIN
   FOR v_name, v_ok IN VALUES
     -- live body read 2026-11-01 (contract 11.2-c), then this file's own body.
-    ('cockpit_csm_churn_read', ARRAY['b008dbe49a35e451bd8979424b5fcdb3', '8f19c5b1488146d73f72e8d8aa1aba07']),
-    ('cockpit_form_responses_guard', ARRAY['168ce29dc03c2867603af6a488da2790', '14e3e7099cd9a7860b700807353635cb'])
+    ('cockpit_csm_churn_read', ARRAY['b008dbe49a35e451bd8979424b5fcdb3', '8f19c5b1488146d73f72e8d8aa1aba07'])
   LOOP
     SELECT md5(regexp_replace(p.prosrc, '\s+', ' ', 'g')) INTO v_md5
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
@@ -61,6 +61,9 @@ BEGIN
      OR to_regprocedure('public.cockpit_billing_detail(text,jsonb)') IS NULL
      OR to_regprocedure('public.cockpit_churn_reason_card(text)') IS NULL
      OR to_regclass('public.cockpit_billing_event_voids') IS NULL
+     -- l's guard carries the notice answer's carve-out (cockpit.forms_legacy = 'answer').
+     OR NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid = to_regprocedure('public.cockpit_form_responses_guard()')
+                     AND p.prosrc LIKE '%cockpit.forms_legacy%')
      OR NOT EXISTS (SELECT 1 FROM pg_constraint c
                      WHERE c.conrelid = 'public.cockpit_slack_notices'::regclass
                        AND c.conname = 'cockpit_slack_notices_kind_check'
@@ -151,40 +154,6 @@ RETURNS jsonb LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
              AND coalesce(btrim(f->>'title'), '') <> ''
            ORDER BY n LIMIT 4) x
 $$;
-
--- 4. The one change a legacy notice allows -----------------------------------------------
-
--- 20261027f's guard, unchanged but for the answer_meta branch: inside
--- cockpit_form_notice_answer (the transaction-local cockpit.notice_answer
--- setting), a legacy exit_survey or pause_request row may gain
--- answer_meta.answered once, and nothing else.
-CREATE OR REPLACE FUNCTION public.cockpit_form_responses_guard()
-RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
-BEGIN
-  IF NEW.id IS DISTINCT FROM OLD.id OR NEW.form_key IS DISTINCT FROM OLD.form_key
-     OR NEW.form_version IS DISTINCT FROM OLD.form_version OR NEW.source IS DISTINCT FROM OLD.source
-     OR NEW.task_id IS DISTINCT FROM OLD.task_id OR NEW.mode IS DISTINCT FROM OLD.mode
-     OR NEW.created_by_id IS DISTINCT FROM OLD.created_by_id OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
-    RAISE EXCEPTION 'A response keeps its form, version, source, card, mode, seat and creation time' USING ERRCODE = '55000';
-  END IF;
-  IF OLD.state <> 'draft' AND (NEW.answers IS DISTINCT FROM OLD.answers OR NEW.answer_meta IS DISTINCT FROM OLD.answer_meta) THEN
-    IF NOT (coalesce(current_setting('cockpit.notice_answer', true), '') = 'on'
-            AND OLD.state = 'legacy' AND OLD.form_key IN ('exit_survey','pause_request')
-            AND NEW.answers IS NOT DISTINCT FROM OLD.answers
-            AND NOT (OLD.answer_meta ? 'answered')
-            AND jsonb_typeof(NEW.answer_meta->'answered') = 'object'
-            AND (NEW.answer_meta - 'answered') IS NOT DISTINCT FROM OLD.answer_meta) THEN
-      RAISE EXCEPTION 'Sent notes keep their answers' USING ERRCODE = '55000';
-    END IF;
-  END IF;
-  IF NEW.state IS DISTINCT FROM OLD.state AND NOT (
-       (OLD.state = 'draft' AND NEW.state IN ('submitted','void'))
-    OR (OLD.state = 'submitted' AND NEW.state = 'confirmed')) THEN
-    RAISE EXCEPTION 'A response goes from % to % only through the cockpit', OLD.state, NEW.state USING ERRCODE = '55000';
-  END IF;
-  NEW.updated_at := now();
-  RETURN NEW;
-END $$;
 
 -- 5. The churn confirm -------------------------------------------------------------------
 
@@ -436,6 +405,7 @@ DECLARE
   v_note text := left(btrim(regexp_replace(coalesce(p_note, ''), '\s+', ' ', 'g')), 500);
   v_role text;
   v_answered jsonb;
+  v_prev_legacy text;
 BEGIN
   IF v_uid IS NULL THEN RAISE EXCEPTION 'Sign in before answering a notice.' USING ERRCODE = '42501'; END IF;
   v_ceo := coalesce(public.cockpit_is_ceo(), false);
@@ -472,11 +442,13 @@ BEGIN
 
   v_role := CASE WHEN v_ceo THEN 'the CEO' ELSE 'the CSM' END;
   v_answered := jsonb_build_object('answer', p_answer, 'note', v_note, 'by', v_role, 'at', now());
-  PERFORM set_config('cockpit.notice_answer', 'on', true);
+  -- 20261101l's guard allows this one change under its 'answer' carve-out.
+  v_prev_legacy := current_setting('cockpit.forms_legacy', true);
+  PERFORM set_config('cockpit.forms_legacy', 'answer', true);
   UPDATE public.cockpit_form_responses
      SET answer_meta = answer_meta || jsonb_build_object('answered', v_answered)
    WHERE id = v_r.id;
-  PERFORM set_config('cockpit.notice_answer', '', true);
+  PERFORM set_config('cockpit.forms_legacy', coalesce(v_prev_legacy, ''), true);
 
   INSERT INTO public.cockpit_churn_log(by_whom, what, detail)
   VALUES (v_who, 'Answered the notice: ' || p_answer,
@@ -672,6 +644,8 @@ BEGIN
              'seatRole', CASE coalesce(e.detail->>'seat_role', e.source)
                WHEN 'ceo' THEN 'the CEO' WHEN 'csm' THEN 'the CSM' WHEN 'finance' THEN 'finance'
                WHEN 'maher' THEN 'the billing agent' WHEN 'clickup' THEN 'ClickUp' WHEN 'system' THEN 'the cockpit'
+               -- 20261101p's money acts store the words themselves.
+               WHEN 'the CEO' THEN 'the CEO' WHEN 'the CSM' THEN 'the CSM'
                ELSE 'the cockpit' END,
              'voided', EXISTS (SELECT 1 FROM public.cockpit_billing_event_voids vv WHERE vv.event_id = e.id))
            ORDER BY e.at DESC, e.id DESC)
@@ -784,7 +758,6 @@ REVOKE ALL ON FUNCTION
   public.cockpit_churn_type_from_card(text),
   public.cockpit_churn_type_default(text, date),
   public.cockpit_churn_survey_ratings(jsonb),
-  public.cockpit_form_responses_guard(),
   public.cockpit_client_lifecycle_confirm(text, jsonb),
   public.cockpit_form_notice_answer(uuid, text, text),
   public.cockpit_churn_backfill_confirm(bigint),

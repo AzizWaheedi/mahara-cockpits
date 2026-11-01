@@ -366,10 +366,9 @@ if [ -f "$CS/src/forms/staff/formSheet.css" ]; then
 fi
 
 # Checks waiting (checked money, WAVE12-CONTRACT.md 4.2.5): the list and its
-# calls are the same in both cockpits. Compared once either copy exists; a
-# copy in one app only is a miss.
+# calls are the same in both cockpits; both copies must exist.
 for f in src/components/billing/ChecksWaiting.tsx src/lib/paymentChecks.ts; do
-  if [ -f "$CS/$f" ] || [ -f "$MB/$f" ]; then same "$f" "$MB/$f" "$CS/$f"; fi
+  same "$f" "$MB/$f" "$CS/$f"
 done
 
 if [ "$fails" -ne 0 ]; then

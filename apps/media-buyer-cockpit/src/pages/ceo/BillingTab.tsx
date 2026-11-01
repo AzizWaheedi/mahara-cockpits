@@ -175,9 +175,7 @@ export function BillingTab({ sections, goTab }: CeoTabProps) {
 
   return (
     <>
-      {doors?.checks && auth.client ? (
-        <ChecksWaiting client={auth.client} />
-      ) : null}
+      {doors?.checks && auth.client ? <ChecksWaiting canCheck /> : null}
       <BillingSheet api={wired} />
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <OverdueSteps open={doors === null ? null : doors.reviews} />

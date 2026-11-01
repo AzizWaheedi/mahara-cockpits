@@ -213,7 +213,7 @@ export function transport(env:Env,request:typeof fetch=fetch,wait=(ms:number)=>n
    return json(url.href,{headers:{Authorization:`Bearer ${needed('GHL_CLIENT_PIT')}`,Version:args.version,Accept:'application/json'}});
   }
   if(name==='pd_typeform_proxy_get'){
-   if(url.hostname!=='api.typeform.com'||!/^\/forms\/(fRokTITH|gqBcyK6g)\/responses$/.test(url.pathname))throw new Error('Unexpected Typeform resource');
+   if(url.hostname!=='api.typeform.com'||!/^\/forms\/fRokTITH\/responses$/.test(url.pathname))throw new Error('Unexpected Typeform resource');
    const items:Row[]=[];let previous:string|undefined;
    for(let page=0;page<100;page++){
     const result=await json(url.href,{headers:{Authorization:`Bearer ${needed('TYPEFORM_TOKEN')}`}});
