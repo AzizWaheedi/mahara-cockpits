@@ -24,6 +24,18 @@ const SECTIONS: { key: string; title: string; blurb?: string }[] = [
       "The form goes after the exit call, never instead of it. A submitted form marks the card Stopped by itself.",
   },
   { key: "retained", title: "Client success: retained clients" },
+  {
+    key: "extensions",
+    title: "Client success: extensions",
+    blurb:
+      "Every extension goes on the Extension form, so the card's weeks and next payment date move with it.",
+  },
+  {
+    key: "late_payments",
+    title: "Client success: late payments",
+    blurb:
+      "Due and unpaid at the end of the month, checked against Whop, Tap and the payments logged by hand.",
+  },
   { key: "upsells", title: "Client success: upsells" },
   { key: "client_data", title: "Client success: client data" },
   { key: "sales", title: "Sales" },
@@ -45,6 +57,14 @@ const ANSWERS: Record<string, { key: string; label: string; rows?: number }[]> =
     retained: [
       { key: "why", label: "Why they continued", rows: 2 },
       { key: "keep", label: "How we can continue to retain them", rows: 2 },
+    ],
+    extensions: [
+      { key: "why", label: "Why we gave it", rows: 2 },
+      { key: "next", label: "What happens when it ends", rows: 2 },
+    ],
+    late_payments: [
+      { key: "why", label: "Why it is late", rows: 2 },
+      { key: "plan", label: "How we collect it", rows: 2 },
     ],
     upsells: [
       { key: "potential", label: "Potential upsell", rows: 2 },
