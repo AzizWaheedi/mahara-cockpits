@@ -56,17 +56,22 @@ export const COCKPIT_SOP: Record<string, string> = {
  * (every screen). In the Drive folder "Cockpit SOPs" (2026-10-07), open to
  * maharamedia.com accounts. A re-recording replaces each file in place, so
  * these addresses stay the same.
+ *
+ * `offers` is client success only: the silent how-to for Money → Offers,
+ * pitching an offer and sending a proposal (2026-11-01), in "Cockpit SOPs /
+ * Team how-to videos (October 2026)".
  */
 const DRIVE_FILE = "https://drive.google.com/file/d";
 const GOOGLE_DOC = "https://docs.google.com/document/d";
 export const COCKPIT_GUIDES: Record<
   string,
-  { video: string; simple: string; deep: string }
+  { video: string; simple: string; deep: string; offers?: string }
 > = {
   csm: {
     video: `${DRIVE_FILE}/1RUlOhQZUtFExNiu-nKtY9bYLSEihwnDS/view`,
     simple: `${GOOGLE_DOC}/1BpbtA5i2kwuIxKZsomRLLXrhxNXh5S34ThFmghj6RoI/edit`,
     deep: `${GOOGLE_DOC}/1_9lZfD4KSHV54NPhIPU0rkfLvFIxMFiexiAwz8q2xz8/edit`,
+    offers: `${DRIVE_FILE}/1fJ2aj62n1uCkxj5HO17Uxd9nqw97xuC2/view`,
   },
   media_buyer: {
     video: `${DRIVE_FILE}/181jbsAfHy4vghtfGQ2gOZk7StWojCvHC/view`,
