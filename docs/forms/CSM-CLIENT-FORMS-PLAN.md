@@ -8,11 +8,11 @@ Audience: the CEO first (sections 1, 2, 6, 7, 10), then the build sessions (sect
 
 ## 1. What you need to know
 
-- **Live today:** ticketing for the whole team (since 10-27), task alerts and "Your tasks", the kickoff form inside the CSM cockpit, the cockpit's own Brand Blueprint, the billing sheet with Pending payments, money attribution, the churn tracker, and the review/referral button that pops up in the client portal.
-- **Built, but never proven or still switched off:** the kickoff and Blueprint Slack notices (30 kickoff notices were skipped and none posted; the cockpit Blueprint has never been closed for real), the 1-1 notes filled from Fathom (switched off until 7 Nov at the earliest), and four billing edits held back from ClickUp (two extensions, one pause, one date move).
+- **Live today:** the 1-1 notes in the cockpit, filled from Fathom (since 2026-11-01 15:31), ticketing for the whole team (since 10-27), task alerts and "Your tasks", the kickoff form inside the CSM cockpit, the cockpit's own Brand Blueprint, the billing sheet with Pending payments, money attribution, the churn tracker, and the review/referral button that pops up in the client portal.
+- **Built, but never proven or still switched off:** the kickoff and Blueprint Slack notices (30 kickoff notices were skipped and none posted; the cockpit Blueprint has never been closed for real), four billing edits held back from ClickUp (two extensions, one pause, one date move).
 - **Missing:** extension, pause, cancellation, NPS, CSAT and "Log a win" as cockpit forms; any client form inside the portal; one writer per money field on the card; a record of late payments; a way to tell a hand-logged transfer from checked money.
 - **The one yes needed today (Q1):** stop the termination form from marking a client Stopped on the card the moment the client submits. Its card comment and Slack post keep working, and Typeform keeps every answer.
-- **The waves and their rough size:** 0 this week (small): stop that card write and prove the kickoff and Blueprint path. 1 (medium): safe card writes, the churn confirm, and storing termination answers. 2 (medium): extension, pause, MRR. 3 (large): client forms in the portal and by WhatsApp link. 4 (medium): NPS, CSAT, portal feedback, onboarding. 5 (medium to large): wins, upsell cash, LTV. 6 (large): the rest and Stage 4. The 1-1 notes switch-over runs on its own date (after 7 Nov), beside waves 2 and 3.
+- **The waves and their rough size:** 0 this week (small): stop that card write and prove the kickoff and Blueprint path. 1 (medium): safe card writes, the churn confirm, and storing termination answers. 2 (medium): extension, pause, MRR. 3 (large): client forms in the portal and by WhatsApp link. 4 (medium): NPS, CSAT, portal feedback, onboarding. 5 (medium to large): wins, upsell cash, LTV. 6 (large): the rest and Stage 4. The 1-1 notes are live since 2026-11-01.
 - **When clients see forms in the portal:** wave 3 (pause consent, exit survey), then wave 4 (NPS, CSAT, feedback).
 - **One rule from the 25 Oct plan you will see named:** D11, "the client never changes the card; the CSM decides." §3 onward names tables, switches and codes; it is for the build sessions.
 
@@ -41,6 +41,7 @@ Audience: the CEO first (sections 1, 2, 6, 7, 10), then the build sessions (sect
 | E17 | **The billing agent gets its own login that can do one thing:** record billing events through one checked door. It loses the master key, makes no direct table writes and no direct ClickUp writes. | The standing rule: every action is gated on the server and every write is audited. Today it uses the master key, so its "who did this" cannot be proven. |
 | E18 | **Forms, routing, notices, schedules and the overdue steps are all editable without code** by you, the systems manager or anyone given the right. Each form version can be published, previewed and restored. | The old plan's D17, your 10-25 words. |
 | E19 | **Each old form is switched off on its own day.** Its Make scenario is turned off and checked off before the cockpit takes over each card field, the switch happens in the same hour, and an answer that still comes through the old link is kept, never lost. | The old plan's D13 and D16. You said on 11-01 that the Typeform and Make subscriptions stay, so switching off single scenarios is in bounds. |
+| E20 | **Every client form has two triggers: its date and the CSM.** The schedule sends it by itself when its day comes, and the CSM can send any client form from the client page at any time. NPS goes out by itself on day 60 after launch. The onboarding survey pops up in the portal once the client is launched, until they fill it. The exit survey and the pause consent are sent by the CSM's action (Client is leaving, the pause). Every schedule is editable (E18), and it skips Paused and Stopped clients and anyone with the same form already open. | Your 11-01 words: "Client forms should trigger based on the date and if the CSM triggers it from his side. On day 60, we send the NPS survey anyway." |
 
 ---
 
@@ -520,13 +521,13 @@ Each section follows the same order: Today · Target · Fields · Data written �
 
 - **Today:**
   - 36 responses; the newest is 10-27. Make `9209179` was edited 10-28 after 14 errors and now runs on Claude modules. No doc records that.
-  - The native `checkin` row has 8 effects in shadow, with 0 responses and 0 shadow runs. It is held by the STAGE2B gates G2/3/9 (shadow runs), G6 (not before 2026-11-07 18:18 Kuwait), G7/G10, B1 and B2. In this plan, G-numbers mean only these STAGE2B gates.
+  - **Live since 2026-11-01 15:31 Kuwait** on your word ("just get everything done and launch it"): the registry is native with all 8 effects owned by the cockpit, `fRokTITH` is closed with its webhook off, Make `9209179` and `9523861` are off, the card writer and the client-messages worker are in apply for every card, and "Move it here" is on. The test-card canary was not run (no cockpit sign-in); the CSM's first real send is watched instead. Log: `notes/stage2/deploy/2b-cutover-20261101.md`. In this plan, G-numbers mean only the STAGE2B gates.
 - **Target:**
   - Unchanged from STAGE2B. The response becomes the "call" that the extension, pause, churn confirm and Log a win point to (`call_id`, `response_id`).
   - Commitments (5.11) read its stored answers.
   - The form queue writes Happiness `4e3924e3`, Last POC `e183f2ce` and Last Check-in Call `032203ad`. No date-act comment (11-01).
 - **Retirement (2b cut-over):** Make `9209179` and `9523861` off and read back, then the owner flips; remove `WHTP4114295`; repoint `csmLinks.ts:77`, `csmTemplates.ts:37`, `onboardingCore.ts:106`, and media buyer `csmLinks.ts:45` and `csmTemplates.ts:34`. Re-baseline the shadow diff against the 10-28 mapping.
-- **Order:** you put this form second on 25 Oct, right after kickoff and Blueprint. Its cut-over is gated by time and real shadow runs, not by later waves, so it runs on its own track as soon as the STAGE2B gates pass (G6 not before 2026-11-07 18:18 Kuwait), beside waves 2 and 3. Waves 3–5 do not block it.
+- **Order:** you put this form second on 25 Oct, right after kickoff and Blueprint. It went live on 2026-11-01, ahead of the 7 Nov gate date, on your word. What remains is the links follow-up (11.4) and watching the first real sends.
 - **Client recaps:** the WhatsApp recaps after a check-in, kickoff and Blueprint (`recap_checkin`, `recap_kickoff`, `recap_blueprint`) and the phase-5 message are owned by hermes/client-messages, with the CSM approving each one, from the 2b cut-over. Today no client receives an automatic kickoff or Blueprint recap: the kickoff's `postcallsummary` webhook to Make 06 was switched off on 10-26 (A3), and the recaps were then moved out of 2b without a new owner. Until the cut-over the CSM sends the recap by hand from the client page (Q22).
 - **Size:** S here. Depends on the STAGE2B gates.
 
@@ -564,7 +565,9 @@ Size S, with no dependencies (commitments wait on 2b). Until 2b, Last POC has tw
   - Legacy Make `8068892` is still active according to the audit (not re-checked).
 - **Target:**
   - A portal card (members may fill it), with the token link as fallback.
-  - Due on day 60 after the first Launch Date `2e744484`, then every 90 days (editable). It appears as a CSM Today row "NPS due: {client}", and one tap issues it. It is never sent automatically, and it skips Paused, Stopped and onboarding cards.
+  - **Sent by itself on day 60 after the first Launch Date `2e744484`** (your 11-01 words: "On day 60, we send the NPS survey anyway"), then every 90 days by default (editable). A daily schedule step issues the invite: a portal card and pop-up for signed-in clients, and the WhatsApp link through `hermes/client-messages` for clients with no live session in 14 days. It skips Paused and Stopped cards, cards with no launch date, and cards with an open NPS invite.
+  - **The CSM can also send it at any time** from the client page ("Send a form to the client", 5.9). A manual send resets the 90-day clock.
+  - The CSM's Today shows "NPS sent: {client}" on the day it goes, and "NPS not answered: {client}" after 7 days, with one tap to resend.
 - **Fields:** recommend, **true 0–10** (required); results so far, 0–10 (optional, the 10-28 question); communication, 1–10 (optional); "What should we start or stop doing?" (optional, retitled). **TODO Arabic.**
 - **Data written:** the response `nps`, named by card. The 2 old responses are imported with no card, and the 10-28 response is **not** guessed onto a card by timing.
 - **Card:** NPS Survey Sent = the issue date, through the form queue (opened for `nps` by the forms-key switch in F0), read back.
@@ -583,7 +586,9 @@ Size S, with no dependencies (commitments wait on 2b). Until 2b, Last POC has tw
 
 - **Today:** 1 response (03-30), anonymous. Make `8962387` posts to Slack only.
 - **Target:**
-  - The same pipeline as NPS, sent once on day 7 after launch.
+  - **It pops up in the portal once the client is launched** (first Launch Date `2e744484` set), and keeps showing on each visit until they fill it (your 11-01 words: "after they get launched, would pop up if they haven't done it already"). "Not now" hides it for 3 days; there is no "No thanks". Clients with no live portal session in 14 days get the WhatsApp link once, 3 days after launch.
+  - The CSM can send it at any time from the client page; a client who has filled it is never asked again.
+  - It skips Paused and Stopped cards.
   - `forms` is allowed while the workspace is locked, so the onboarding gate does not block it.
 - **Fields:** onboarding 1–10 (required); liked (optional); did not like (optional). The name block is dropped. **TODO Arabic.**
 - **Data written:** the response; #nps-survey-feedback; the same low-score request at 6 or less. No card field.
@@ -680,7 +685,7 @@ The Typeform inventory lists 43 forms. This plan covers every CSM and client lif
 | **0: today or tomorrow** | C4a-1 (block Make 9805538's card write; comment, Slack and both webhooks kept); **PV, prove step 1** (a recorded kickoff payload and a cockpit Blueprint close on `86eywg1cq`, with the pass condition in §4.2); settle the 2 `reconcile` call acts; remove the reactivate links; Liwan written as history once B0 ships (Q2) | your yes on Q1; PV needs no yes (Q18 default) | D11 holds from that hour; your first 25 Oct ask proven or its gap named | S |
 | **1: the rails and the churn confirm** | B0 (billing switch by kind and card; Resume On, churn, MRR, LTV and checkbox fields; `system` source; option map), canary on `86eywg1cq`, then the held rows on fresh plans; CK (checked-money state); F0 starting with **F0a**, then **C4a-2** (termination answers stored, `client_notice` raised); **L0 churn confirm** + kind `churn` + the 6-row backfill canary (Q5); the honest client-page buttons (5.11); S0 rows once the bot is in | Wave 0 | Churn marked in the cockpit and on the card without the form (your 11-01 ask); every card write after this | M |
 | **2: the CSM's money acts** | Extension native + C1 (with Make 9585358 and `--next` off in the same window) + `cockpit_extensions_v` + clear-on-end; the staff side of pause + the ladder (LD) + late-payment records; MRR edit + suggestion + the rail-cash check; FormSheet (FS) shared folder | B0, F0, S0 | Liwan-style grants count everywhere; resume reminders fire; MRR has one writer; late payments logged | M |
-| **2b (own track, from 2026-11-07 18:18 Kuwait)** | 1-1 notes cut-over and commitments; client recaps owned by hermes/client-messages with CSM approval (5.10) | the STAGE2B gates only; not blocked by waves 3–5 | Your second 25 Oct item, Fathom-filled notes | S |
+| **2b: done 2026-11-01** | 1-1 notes cut-over and commitments; client recaps owned by hermes/client-messages with CSM approval (5.10) | the STAGE2B gates only; not blocked by waves 3–5 | Your second 25 Oct item, Fathom-filled notes | S |
 | **3: the client channel** | F1 in both repos (invites, renderer, `/f/{token}`, bucket, `form_invite` kind, portal release); pause consent + C2; exit-survey page + C4b | B0, F0, portal release lane | Client forms in the portal and over WhatsApp | L |
 | **4: client voice and onboarding** | NPS + CSAT + C5; feedback bridge; onboarding webhook C6 + portal gate evidence; New Client Form registry; the editor screen (ED) | F1, S0 | CEO NPS metric; your 10-23 feedback ask; onboarding stored at once | M |
 | **5: wins and cash** | Wins ledger (WL) + Log a win + upsell stages + back-end rule for `win_id` ties + pay proposals + C7; one LTV writer + the agent login (AG) + Confirm paid moving the date + C8; bank receipt invite | B0, CK, F0, F1 | Pay and goals from data, not typing; upsell cash; LTV correct | M–L |
@@ -703,6 +708,7 @@ The Typeform inventory lists 43 forms. This plan covers every CSM and client lif
 | Q9 | Who is the media buyer of record for pause tickets? | The ads team's default owner rule in `/requests`. |
 | Q10 | The overdue steps. | Pause review day 4, cancel review day 15 (your 09-19 words). The billing agent moves from day 3 to day 4. |
 | Q11 | Portal first with a WhatsApp link, instead of `forms.maharamedia.com`? | Yes (E1). |
+| Q11b | **Answered 11-01:** client forms trigger by date and by the CSM (E20). NPS goes by itself on day 60; the onboarding survey pops up after launch until filled. Open detail: repeat NPS every 90 days after the first? | Yes, every 90 days, editable. |
 | Q12 | Upload the client-income bank statement every month. | By the 3rd. The CEO Money tab nags until then. |
 | Q13 | May a CSM lower MRR without you? | Yes, with a reason; every downgrade is listed for you. |
 | Q14 | Does submitting the termination survey still start the notice period? | Yes. The notice date is the submit date; the card waits for the CSM. |
@@ -718,7 +724,7 @@ The Typeform inventory lists 43 forms. This plan covers every CSM and client lif
 
 **What waits on people or time:**
 
-- The 2b cut-over is not before 2026-11-07 18:18 Kuwait (STAGE2B gate G6), and needs shadow runs from real check-ins.
+- The 1-1 notes went live on 2026-11-01; its first real sends are being watched.
 - Each old form's scenarios need 14 days with no answer through the old link before they move to the Make 09 Archive.
 - The onboarding webhook needs 14 days of receipts against the poll.
 - The first native Blueprint close is needed before A1.
@@ -775,6 +781,9 @@ The Typeform inventory lists 43 forms. This plan covers every CSM and client lif
 
 | When | Your words | How this plan honours it |
 |---|---|---|
+| 2026-11-01 | "Client forms should trigger based on the date and if the CSM triggers it from his side. On day 60, we send the NPS survey anyway." | E20: every client form has a schedule and a CSM send; NPS goes by itself on day 60 after launch (5.13). |
+| 2026-11-01 | "the onboarding survey, after they get launched, would pop up if they haven't done it already" | 5.14: it pops up in the portal from launch until filled, with a WhatsApp link for clients who never sign in. |
+| 2026-11-01 | "One-to-one notes: just get everything done and launch it." | 5.10 and wave 2b: the 1-1 notes switch-over is run now, not held for the 7 Nov date. |
 | 2026-10-25 | "Make sure that all of the brand blueprint form and the kickoff form, once submitted, completely work and trigger everything they should trigger" | Not yet proven: PV in wave 0 runs one kickoff and one Blueprint close end to end on the test card, with a named pass condition, and records the result in §9. |
 | 2026-10-25 | "start working on them one by one so we can move them and embed them into the Cockpit with all of the backend features" | One form per section, one window each, every old effect kept (§5, §6), including the client recaps, which now have a named owner (5.10). |
 | 2026-10-25 | "you can tie all the forms in together to a backend" | One responses table, one invite object, one queue to the card (§3). |
