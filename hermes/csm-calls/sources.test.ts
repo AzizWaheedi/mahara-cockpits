@@ -16,6 +16,8 @@ import {
   LATE_NO_CLIENT,
   linkTypeforms,
   metaAccounts,
+  NATIVE_FORMS,
+  readNativeForms,
   readTypeforms,
   reconcile,
   recordingOf,
@@ -1225,6 +1227,51 @@ describe("readTypeforms: the termination survey joins the client's timeline (wav
     ]);
     expect(read.checkins.some(c => c.row.form_id === "knIe4eF3")).toBe(false);
     expect(read.counts.knIe4eF3).toMatchObject({ total: 2, stored: 2, matched: 1, unmatched: 1 });
+  });
+});
+
+describe("readTypeforms: the client's own NPS, onboarding survey and portal feedback join the timeline (waves 3-4, 4.6.5)", () => {
+  const emptyTypeform = { receipts: [], typeform: async (path: string) => (path.endsWith("/responses") ? { items: [], total_items: 0 } : { fields: [] }) } as unknown as Transport;
+  const answers = [
+    { id: "r-nps", form_key: "nps", task_id: CITY.taskId, mode: "live", state: "submitted", submitted_at: iso(NOW - 2 * HOUR),
+      answers: { recommend: 9, results: 7, startStop: "Invented: more reels" }, answer_meta: { invite_id: "i1" } },
+    { id: "r-csat", form_key: "csat", task_id: MAKERS.taskId, mode: "live", state: "submitted", submitted_at: iso(NOW - HOUR),
+      answers: { onboarding: 6, liked: "", disliked: null }, answer_meta: {} },
+    { id: "r-fb", form_key: "portal_feedback", task_id: SMMIM.taskId, mode: "live", state: "submitted", submitted_at: iso(NOW - HOUR),
+      answers: { kind: "idea", topic: "portal", rating: 4, message: "Invented message", contactOk: true }, answer_meta: {} },
+    // Never on the timeline: a canary answer, a shadow one, a legacy Typeform row with no card, another form.
+    { id: "r-canary", form_key: "nps", task_id: "86eywg1cq", mode: "live", state: "submitted", submitted_at: iso(NOW), answers: { recommend: 5 }, answer_meta: { canary: true } },
+    { id: "r-shadow", form_key: "nps", task_id: "86eywg1cq", mode: "shadow", state: "submitted", submitted_at: iso(NOW), answers: { recommend: 5 }, answer_meta: {} },
+    { id: "r-legacy", form_key: "nps", task_id: null, mode: "live", state: "legacy", submitted_at: iso(NOW), answers: { fields: [] }, answer_meta: {} },
+    { id: "r-exit", form_key: "exit_survey", task_id: CITY.taskId, mode: "live", state: "submitted", submitted_at: iso(NOW), answers: {}, answer_meta: {} },
+  ];
+
+  test("once 20261102c is live, each answer is a call-store row under its own form id, matched by the cockpit, with titled answers", async () => {
+    const fake = store(seedOf({ cockpit_settings: [{ key: "forms.doors", value: { voice: true } }], cockpit_form_responses: answers }));
+    const read = await readTypeforms(ctxOf(fake, emptyTypeform));
+    const native = read.formRows.filter(r => String(r.token).startsWith("cockpit:"));
+    expect(native.map(r => [r.token, r.form_id, r.form_kind, r.task_id, r.matched_by])).toEqual([
+      ["cockpit:r-nps", "cockpit-nps", "nps", CITY.taskId, "cockpit_form"],
+      ["cockpit:r-csat", "cockpit-csat", "csat", MAKERS.taskId, "cockpit_form"],
+      ["cockpit:r-fb", "cockpit-feedback", "portal_feedback", SMMIM.taskId, "cockpit_form"],
+    ]);
+    expect(native[0].answers).toEqual([
+      { ref: "recommend", type: "opinion_scale", title: NATIVE_FORMS.nps.labels[0][1], value: 9 },
+      { ref: "results", type: "opinion_scale", title: "How happy are you with the results so far?", value: 7 },
+      { ref: "startStop", type: "long_text", title: "What should we start or stop doing?", value: "Invented: more reels" },
+    ]);
+    expect(native[1].answers).toEqual([{ ref: "onboarding", type: "opinion_scale", title: "How would you rate getting started with Mahara?", value: 6 }]);
+    expect(native.every(r => r.recording_url === null && JSON.stringify(r.hidden) === "{}")).toBe(true);
+    expect(read.counts.native).toEqual({ total: 3, onBoard: 3, byForm: { nps: 1, csat: 1, portal_feedback: 1 } });
+    expect(read.checkins.some(c => String(c.row.token).startsWith("cockpit:"))).toBe(false);
+  });
+
+  test("before 20261102c is live nothing native is read or written, and the count says why", async () => {
+    const fake = store(seedOf({ cockpit_settings: [{ key: "forms.doors", value: { money: true } }], cockpit_form_responses: answers }));
+    const out = await readNativeForms(ctxOf(fake, emptyTypeform));
+    expect(out).toEqual({ rows: [], count: { total: 0, skipped: "Client voice is not live yet (20261102c)." } });
+    const none = await readNativeForms(ctxOf(store(seedOf({})), emptyTypeform));
+    expect(none.rows).toEqual([]);
   });
 });
 

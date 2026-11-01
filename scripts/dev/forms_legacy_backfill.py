@@ -1,16 +1,25 @@
-"""The old answers of the two client Typeforms into the cockpit, once (docs/forms/WAVE12-CONTRACT.md 4.4, deploy step
-D-F4 for the termination survey, D-C2 for the pause request). Runs ON THE VPS, like forms_key.py, where the keys live:
+"""The old answers of the client Typeforms into the cockpit, once (docs/forms/WAVE12-CONTRACT.md 4.4, deploy step
+D-F4 for the termination survey, D-C2 for the pause request; docs/forms/WAVE34-CONTRACT.md 4.5.6, 4.7 and 4.8, steps
+D-C5 for NPS and CSAT, D-C6 for onboarding, D-NCF for the New Client Form). Runs ON THE VPS, like forms_key.py, where
+the keys live:
 
   ssh -o ControlMaster=auto -o ControlPath=/Users/abdulazizwaheedi/.ssh/cm-%r@%h-%p -o ControlPersist=20m -o ConnectTimeout=20 187.77.156.166 'python3 - exit_survey --dry' < scripts/dev/forms_legacy_backfill.py
 
   exit_survey [--dry]     the termination survey (knIe4eF3)
   pause_request [--dry]   the client's pause request (CTUjv6l3)
+  nps [--dry]             the old NPS survey (fuPgs85S): legacy rows with no card, kept out of the NPS number (V17)
+  csat [--dry]            the old onboarding survey (KbcbPA73): the same
+  onboarding [--dry]      the client's onboarding form (KFRCXPFx), still live: stored submitted, Make keeps every effect
+  new_client [--dry]      the New Client Form (BTzMwXiw), still live: recorded only; nothing here submits it
 
-It reads every response of the form through Typeform's responses API, builds each one exactly as forms-door does
-(supabase/functions/forms-door/handler.ts legacyInput: no email or phone answer, only the hidden client_name and
-onboarding_client_id, the card from the hidden id) and posts it to cockpit_form_record_legacy with backfill true, so
-no notice is queued for a month-old survey and a response already stored is left as it is. --dry reads and counts and
-writes nothing. It prints counts only, never an answer, a name, a token or a key:
+It reads every response of the form through Typeform's responses API (read only) and builds each one exactly as
+forms-door does: the termination survey, the pause request, NPS and CSAT as legacyInput (no email or phone answer,
+only the hidden client_name and onboarding_client_id, the card from the hidden id; never a card for NPS and CSAT),
+posted to cockpit_form_record_legacy; onboarding as the onboarding sync's formEntry (onboardingCore.ts, ported below
+and held to the same golden file as forms-door's test) and the New Client Form as legacyInput with its three hidden
+ids, posted to cockpit_form_record_make. Always with backfill true, so no notice is queued for an old answer and a
+response already stored is left as it is. --dry reads and counts and writes nothing. It prints counts only, never an
+answer, a name, a token or a key:
 
   read 4, stored 4, already there 0, unmatched 1
 
@@ -34,8 +43,14 @@ from typing import Any, Optional
 NATIVE_CURRENT = "/home/hermes/cockpit-native-current"
 NATIVE_STATE = "/home/hermes/.cockpit-native-state"
 TYPEFORM = "https://api.typeform.com"
-# The two forms stored as legacy records, each as the forms registry names it.
-FORMS = ("exit_survey", "pause_request")
+# The forms stored as legacy records, and the two Make-owned live forms recorded only, as the forms registry names them.
+LEGACY_FORMS = ("exit_survey", "pause_request", "nps", "csat")
+MAKE_FORMS = ("onboarding", "new_client")
+FORMS = LEGACY_FORMS + MAKE_FORMS
+# The old NPS and CSAT rows are seeded native (20261102a) but keep their Typeform ids for this one read.
+NATIVE_OK = ("nps", "csat")
+# The forms whose old answers are never put on a card (V17).
+NO_CARD = ("nps", "csat", "new_client")
 PAGE = 1000
 TIMEOUT = 30
 TYPEFORM_ID = re.compile(r"^[A-Za-z0-9]{4,32}$")
@@ -45,9 +60,14 @@ CARD_ID = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 CONTACT_TYPES = {"email", "phone_number", "contact_info"}
 # The only hidden fields the two forms set (inventory 3.3, 3.4; handler.ts LEGACY_HIDDEN).
 LEGACY_HIDDEN = ("client_name", "onboarding_client_id")
+# The New Client Form's hidden fields (handler.ts NEW_CLIENT_HIDDEN; cockpit_sales_client_forms.hidden).
+NEW_CLIENT_HIDDEN = ("contact_id", "closer", "setter")
+ONBOARDING_FORM_ID = "KFRCXPFx"
+ARABIC = re.compile(r"[\u0600-\u06ff]")
 KEY_SHAPES = re.compile(r"sk-[A-Za-z0-9_-]{16,}|sb_secret_[A-Za-z0-9_-]{8,}|tfp_[A-Za-z0-9_-]{8,}"
                         r"|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")
-USAGE = "Name the form: exit_survey or pause_request, then --dry to read and count without writing."
+USAGE = ("Name the form: exit_survey, pause_request, nps, csat, onboarding or new_client, then --dry to read and "
+         "count without writing.")
 
 
 class Stop(Exception):
@@ -201,8 +221,118 @@ def legacy_input(form: str, item: dict, titles: dict) -> dict:
     card = hidden.get("onboarding_client_id")
     return {"formKey": form, "externalId": str(item.get("token") or item.get("response_id") or ""),
             "submittedAt": str(item.get("submitted_at") or ""), "answers": {"fields": fields}, "hidden": hidden,
-            "taskId": card if isinstance(card, str) and CARD_ID.match(card) else None,
+            "taskId": card if form not in NO_CARD and isinstance(card, str) and CARD_ID.match(card) else None,
             "clientName": hidden.get("client_name"), "backfill": True}
+
+
+# ---------------------------------------------------------------- onboarding, as the onboarding sync shapes it
+
+def _text(v: Any) -> str:
+    return v.strip() if isinstance(v, str) else ""
+
+
+def questions_of(definition: Any) -> list:
+    """The form's questions in order, groups opened up, statements left out (onboardingCore.ts questionsOf)."""
+    out: list = []
+
+    def walk(fields: Any) -> None:
+        for f in fields if isinstance(fields, list) else []:
+            if not isinstance(f, dict):
+                continue
+            props = f.get("properties") if isinstance(f.get("properties"), dict) else {}
+            inner = props.get("fields")
+            if isinstance(inner, list) and inner:
+                walk(inner)
+                continue
+            if f.get("type") == "statement" or not f.get("ref"):
+                continue
+            out.append({"ref": str(f["ref"]), "title": "" if f.get("title") is None else str(f.get("title"))})
+
+    walk(definition.get("fields") if isinstance(definition, dict) else None)
+    return out
+
+
+def question_title(raw: Any, hidden: dict) -> str:
+    """A question's title as the CSM reads it (onboardingCore.ts questionTitle)."""
+    t = re.sub(r"\{\{hidden:([A-Za-z0-9_]+)\}\}", lambda m: hidden.get(m.group(1)) or "\u2026", "" if raw is None else str(raw))
+    t = re.sub(r"This question is required\.?", " ", t, flags=re.I)
+    t = re.sub(r"\*{1,2}([^*]+)\*{1,2}", r"\1", t)
+    parts = [p for p in (re.sub(r"\s+", " ", x).strip() for x in t.split("|")) if p]
+    if len(parts) > 1:
+        english = next((p for p in parts if re.search(r"[A-Za-z]", p) and not ARABIC.search(p)), None)
+        t = english if english is not None else parts[0]
+    t = re.sub(r"\s+", " ", t).strip()
+    return t[:157].rstrip() + "\u2026" if len(t) > 160 else t
+
+
+def onboarding_value(a: Any) -> str:
+    """One answer as text (onboardingCore.ts answerValue)."""
+    if not isinstance(a, dict):
+        return ""
+    kind = a.get("type")
+    if kind in ("text", "email", "phone_number", "url", "file_url"):
+        return _text(a.get(kind))
+    if kind == "number":
+        n = a.get("number")
+        return "" if n is None else (str(int(n)) if isinstance(n, float) and n.is_integer() else str(n))
+    if kind == "boolean":
+        return "Yes" if a.get("boolean") else "No"
+    if kind == "choice":
+        c = a.get("choice") or {}
+        return _text(c.get("label") if c.get("label") is not None else c.get("other"))
+    if kind == "choices":
+        c = a.get("choices") or {}
+        items = [*(c.get("labels") or []), *([c["other"]] if c.get("other") else [])]
+        return ", ".join(s for s in (str(x).strip() for x in items) if s)
+    if kind == "date":
+        return _text(a.get("date"))[:10]
+    if kind == "payment":
+        p = a.get("payment") or {}
+        return str(p["amount"]) if p.get("amount") else ""
+    return ""
+
+
+def onboarding_answers(definition: Any, item: dict) -> list:
+    """formEntry's answers: the form's order, titled, empty answers left out, each value at most 4,000 characters."""
+    by_ref = {}
+    for a in item.get("answers") or []:
+        if isinstance(a, dict):
+            by_ref[str((a.get("field") or {}).get("ref"))] = a
+    given = item.get("hidden") if isinstance(item.get("hidden"), dict) else {}
+    hidden = {k: "" if v is None else str(v) for k, v in given.items()}
+    out = []
+    for q in questions_of(definition):
+        a = by_ref.get(q["ref"])
+        if a is None:
+            continue
+        value = onboarding_value(a)
+        if not value:
+            continue
+        out.append({"ref": q["ref"], "title": question_title(q["title"], hidden), "value": value[:4000]})
+    return out
+
+
+def _pick(given: Any, keys: tuple) -> dict:
+    given = given if isinstance(given, dict) else {}
+    out = {}
+    for k in keys:
+        v = given.get(k).strip() if isinstance(given.get(k), str) else ""
+        if v:
+            out[k] = v
+    return out
+
+
+def make_input(form: str, item: dict, titles: dict, definition: Any) -> dict:
+    """cockpit_form_record_make's input for one response (handler.ts makeInput, backfill true)."""
+    base = {"formKey": form, "externalId": str(item.get("token") or item.get("response_id") or ""),
+            "submittedAt": str(item.get("submitted_at") or ""), "backfill": True}
+    if form == "onboarding":
+        hidden = _pick(item.get("hidden"), ("client_name", "onboarding_client_id"))
+        card = hidden.get("onboarding_client_id")
+        return {**base, "answers": {"fields": onboarding_answers(definition, item)}, "hidden": hidden,
+                "taskId": card if isinstance(card, str) and CARD_ID.match(card) else None}
+    legacy = legacy_input(form, item, titles)
+    return {**base, "answers": legacy["answers"], "hidden": _pick(item.get("hidden"), NEW_CLIENT_HIDDEN), "taskId": None}
 
 
 # ---------------------------------------------------------------- the run
@@ -218,7 +348,8 @@ def form_id(run: Run, form: str) -> str:
     if row is None:
         raise Stop(f"The {form} row of the forms registry could not be read. Apply 20261101l first.")
     fid = str(row.get("typeform_id") or "")
-    if row.get("provider") != "typeform" or not TYPEFORM_ID.match(fid):
+    filled = row.get("provider") == "typeform" or (form in NATIVE_OK and row.get("provider") == "native")
+    if not filled or not TYPEFORM_ID.match(fid):
         raise Stop(f"The {form} form is no longer filled in Typeform, so there is nothing to read from it.")
     return fid
 
@@ -243,16 +374,21 @@ def responses(run: Run, fid: str) -> list:
             return out
 
 
-def card_ids(run: Run) -> set:
-    """The cards on the billing sheet, for --dry's unmatched count (the database keeps a card only when it is there)."""
-    try:
-        status, text = run.supabase("GET", "/rest/v1/cockpit_billing_accounts?select=clickup_task_id")
-        rows = json.loads(text) if status == 200 else None
-    except (NoAnswer, ValueError):
-        rows = None
-    if not isinstance(rows, list):
-        raise Stop("The billing sheet's cards could not be read, so the unmatched count would be a guess. Nothing was written.")
-    return {r.get("clickup_task_id") for r in rows if isinstance(r, dict)}
+def card_ids(run: Run, onboarding: bool = False) -> set:
+    """The cards on the billing sheet (and, for onboarding, the onboarding read model), for --dry's unmatched count
+    (the database keeps a card only when it mirrors it)."""
+    ids: set = set()
+    for path in ["/rest/v1/cockpit_billing_accounts?select=clickup_task_id",
+                 *(["/rest/v1/cockpit_client_onboarding?select=clickup_task_id"] if onboarding else [])]:
+        try:
+            status, text = run.supabase("GET", path)
+            rows = json.loads(text) if status == 200 else None
+        except (NoAnswer, ValueError):
+            rows = None
+        if not isinstance(rows, list):
+            raise Stop("The mirrored cards could not be read, so the unmatched count would be a guess. Nothing was written.")
+        ids |= {r.get("clickup_task_id") for r in rows if isinstance(r, dict)}
+    return ids
 
 
 def backfill(run: Run, form: str, dry: bool) -> int:
@@ -260,20 +396,25 @@ def backfill(run: Run, form: str, dry: bool) -> int:
     definition = run.typeform(f"/forms/{fid}", "api.typeform.com/forms/:id")
     titles = field_titles(definition)
     items = responses(run, fid)
-    records = [legacy_input(form, item, titles) for item in items]
+    make = form in MAKE_FORMS
+    records = [make_input(form, item, titles, definition) if make else legacy_input(form, item, titles) for item in items]
     bad = [r for r in records if not TOKEN.match(r["externalId"]) or not r["submittedAt"]]
     records = [r for r in records if r not in bad]
+    rpc = "cockpit_form_record_make" if make else "cockpit_form_record_legacy"
     if dry:
-        cards = card_ids(run)
-        unmatched = sum(1 for r in records if r["taskId"] not in cards)
+        if form in NO_CARD:
+            unmatched = len(records)
+        else:
+            cards = card_ids(run, onboarding=form == "onboarding")
+            unmatched = sum(1 for r in records if r["taskId"] not in cards)
         print(f"read {len(items)}, would store up to {len(records)}, unmatched {unmatched}"
               + (f", unreadable {len(bad)}" if bad else "") + " (dry run: nothing written)")
         return 0
-    stored = repeat = unmatched = 0
+    stored = repeat = unmatched = filled = 0
     failed: list = []
     for r in records:
         try:
-            status, text = run.supabase("POST", "/rest/v1/rpc/cockpit_form_record_legacy", {"p": r})
+            status, text = run.supabase("POST", f"/rest/v1/rpc/{rpc}", {"p": r})
             out = json.loads(text) if text else None
         except NoAnswer:
             status, out = 0, None
@@ -290,7 +431,11 @@ def backfill(run: Run, form: str, dry: bool) -> int:
             repeat += 1
         if not out.get("taskId"):
             unmatched += 1
+        if out.get("readModel") == "written":
+            filled += 1
     line = f"read {len(items)}, stored {stored}, already there {repeat}, unmatched {unmatched}"
+    if form == "onboarding":
+        line += f", read model filled {filled}"
     if bad:
         line += f", unreadable {len(bad)}"
     if failed:

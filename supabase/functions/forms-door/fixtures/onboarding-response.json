@@ -1,0 +1,39 @@
+{
+  "_note": "A client onboarding (KFRCXPFx) webhook delivery in Typeform's shape, every value invented: forms-door's handler.test.ts and scripts/dev/test_forms_legacy_backfill.py both read it, so the webhook and the backfill shape the same answers.",
+  "event_id": "01JTESTONBOARD",
+  "event_type": "form_response",
+  "form_response": {
+    "form_id": "KFRCXPFx",
+    "token": "onb0000token0001",
+    "response_id": "onb0000token0001",
+    "submitted_at": "2026-10-30T07:15:00Z",
+    "landed_at": "2026-10-30T06:58:00Z",
+    "hidden": { "onboarding_client_id": "86exc1tyw", "client_name": "City Wood", "utm_source": "welcome" },
+    "definition": {
+      "id": "KFRCXPFx",
+      "title": "Client onboarding",
+      "fields": [
+        { "id": "o0", "ref": "intro-ref", "type": "statement", "title": "Welcome to Mahara | أهلاً فيك" },
+        { "id": "o1", "ref": "company-ref", "type": "short_text", "title": "Company name | اسم الشركة" },
+        { "id": "g1", "ref": "contact-ref", "type": "group", "title": "Contact", "properties": { "fields": [
+          { "id": "o2", "ref": "email-ref", "type": "email", "title": "Your email for {{hidden:client_name}}" },
+          { "id": "o3", "ref": "phone-ref", "type": "phone_number", "title": "**WhatsApp number** This question is required." }
+        ] } },
+        { "id": "o4", "ref": "services-ref", "type": "multiple_choice", "title": "Main services | الخدمات" },
+        { "id": "o5", "ref": "budget-ref", "type": "number", "title": "Monthly budget (KWD)" },
+        { "id": "o6", "ref": "site-ref", "type": "website", "title": "Website" },
+        { "id": "o7", "ref": "open-ref", "type": "date", "title": "Showroom opening date" },
+        { "id": "o8", "ref": "skipped-ref", "type": "long_text", "title": "Anything else?" }
+      ]
+    },
+    "answers": [
+      { "type": "text", "text": "City Wood Interiors", "field": { "id": "o1", "ref": "company-ref", "type": "short_text" } },
+      { "type": "email", "email": "owner@citywood.example", "field": { "id": "o2", "ref": "email-ref", "type": "email" } },
+      { "type": "phone_number", "phone_number": "+965 0000 0001", "field": { "id": "o3", "ref": "phone-ref", "type": "phone_number" } },
+      { "type": "choices", "choices": { "labels": ["Interior design", "Fit out and renovation"], "other": "Kitchens" }, "field": { "id": "o4", "ref": "services-ref", "type": "multiple_choice" } },
+      { "type": "number", "number": 900, "field": { "id": "o5", "ref": "budget-ref", "type": "number" } },
+      { "type": "url", "url": "https://citywood.example", "field": { "id": "o6", "ref": "site-ref", "type": "website" } },
+      { "type": "date", "date": "2026-12-01T00:00:00Z", "field": { "id": "o7", "ref": "open-ref", "type": "date" } }
+    ]
+  }
+}

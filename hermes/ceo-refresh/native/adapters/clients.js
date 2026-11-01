@@ -10,6 +10,7 @@ import { nameKey } from "../manualMatch.js";
 import { B2B, num, sql, TRIAGE } from "../sb.js";
 import { addDays, KUWAIT_OFFSET_MS, kuwaitDay, monthStart } from "../time.js";
 import { MANUAL_RAIL_LABEL } from "../writeGuard.js";
+import { readVoice, voiceSourceNote } from "../voice.js";
 /**
  * Clients: the roster, each client's health signals and a transparent risk
  * score. The roster and campaign numbers are native cockpit tables the media buyer
@@ -973,6 +974,9 @@ export const clients = {
         // The departures with their confirm and the late spells (waves 1-2 4.11.4),
         // which metrics.ts reads from the payload's `lifecycle`.
         const lifecycleRead = readLifecycle();
+        // The client's voice (waves 3-4 4.6.4): NPS, the onboarding survey and portal feedback, which metrics.ts reads
+        // from the payload's `voice`.
+        const voiceRead = readVoice(today);
         const billingRead = ctx.repository.billing().then((rows) => ({ ok: true, rows }), (e) => ({ ok: false, error: errText(e) }));
         // The clients' cost per lead lines, for the no-lead risk point
         // (decision 4): the same read and fallback as Delivery's rows.
@@ -1584,6 +1588,22 @@ export const clients = {
                 text: `The confirmed departures and late payments could not be read this run (${life.error}), so confirmed churn, the churn rate and late payments are missing, not zero.`,
             });
         }
+        // --- The client's voice (20261102c): NPS with its second source, CSAT apart, invite counts.
+        const heard = await voiceRead;
+        let voice;
+        if (heard.ok) {
+            voice = heard.payload;
+            sources.push({ name: "Client voice (cockpit_client_voice_v, cockpit_form_invites_daily_v)", ok: true, note: `${plural(voice.answers.length, "answer")} in 400 days` });
+            notes.push({ level: "info", text: voiceSourceNote(voice) });
+            const month = voice.windows.mtd?.nps;
+            if (month && month.n > 0 && month.cardsAnswered !== month.n)
+                notes.push({ level: "warn", text: `Client voice this month: ${month.note}` });
+        }
+        else {
+            voice = { read: false, error: heard.error };
+            sources.push({ name: "Client voice (cockpit_client_voice_v, cockpit_form_invites_daily_v)", ok: false, note: heard.error });
+            notes.push({ level: "warn", text: voiceSourceNote(voice) });
+        }
         // --- Spend, leads and bookings per client per day (A127).
         const media = await dailyRead;
         let dailyFrom = null;
@@ -1630,6 +1650,7 @@ export const clients = {
             churn,
             churnRegister,
             lifecycle,
+            voice,
             dailyFrom,
             dailyTo,
             extensions,
