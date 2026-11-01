@@ -1,6 +1,6 @@
 # Waves 3 and 4 build contract: client forms in the portal and by link, the client's voice, onboarding evidence, the forms editor
 
-Written 2026-11-01 (Kuwait evening, the day waves 1 and 2 went live) for branch `forms-w34` in
+Written 2026-11-01 (Kuwait evening, the day waves 1 and 2 went live; revision 2 the same night after review, 11.3) for branch `forms-w34` in
 two repos:
 
 - **cockpits:** worktree `/Users/abdulazizwaheedi/mahara-worktrees/forms-w34`, cut from origin/main
@@ -99,7 +99,7 @@ in the slice report). `scripts/check-shared.sh` pairs stay identical. Portal: re
 
 | Item | Who |
 |---|---|
-| Invite the Slack bot to #nps-survey-feedback `C09TTGBRQ0G` (Q4; the channel row reads `refused`, 11.2-e). Until then `nps.received` and `csat.received` read "Not posted" and nothing else is blocked | the CEO |
+| Invite the Slack bot to #nps-survey-feedback `C09TTGBRQ0G` (Q4; the channel row reads `refused`, 11.2-e). **D-C5 waits for it** (plan C5 starts with the invite, `PLAN.md:580,842`): until the channel row reads `ok` and the notices doctor passes, NPS and CSAT stay on Typeform and Make 8962328/8962387 keep posting in the channel | the CEO |
 | Create the Request Type option "Client low score" on ClickUp field `e9fd8024` (D-R2) | the systems manager, or the session at D-R2 on Q17's standing rule (as D-R1 did) |
 | A client's first real portal answer, link answer, pause consent and exit survey | clients; watched after each go-live, never imitated |
 | A CSM's first real "Send a form" to a live client and first WhatsApp approval | the CSM |
@@ -114,7 +114,7 @@ in the slice report). `scripts/check-shared.sh` pairs stay identical. Portal: re
 | The automatic schedule (NPS day 60 and every 90 days, CSAT after launch) | `forms.schedule` `{"on":bool,"maxPerRun":3,"hourKuwait":10}` and each `cockpit_form_schedules.on` | database | `on:false`; both schedule rows `on:true` (inert while the master is off) | D-C5 step 7 |
 | WhatsApp sends of invite links | `CLIENT_MESSAGES_KINDS` must list `form_invite` in `~/.client-messages/switches.env` (and `CLIENT_MESSAGES_APPLY=true`, already on for recaps since 2b) | VPS file | `recap_checkin` only (form_invite rows wait approved, then fall back to draft after 24 h) | D-WA, canary card first through `CLIENT_MESSAGES_ONLY_CARDS=86eywg1cq` |
 | Card comment on an exit survey (`survey`) and NPS Survey Sent (`nps_sent`) | the kind in `CLICKUP_WRITEBACK_BILLING_KINDS` (W12's billing gate) | Edge secrets of `clickup-writeback` | neither listed (items `dry_run`) | `survey` at D-C4B, `nps_sent` at D-C5; each opening runs W20's held-edit review (none expected) |
-| Notice kinds `pause.consent`, `nps.received`, `csat.received`, `voice.low`, `feedback.received`, `legacy.received` | the kind's settings row `enabled` and its channel row `ok` | database | all seeded enabled; `nps.received`/`csat.received` fail closed "Not posted: the bot is not in #nps-survey-feedback" until Q4 | when the CEO invites the bot |
+| Notice kinds `pause.consent`, `nps.received`, `csat.received`, `voice.low`, `feedback.received`, `legacy.received` | the kind's settings row `enabled` and its channel row `ok` | database | all seeded enabled; `nps.received`/`csat.received` would fail closed "Not posted: the bot is not in #nps-survey-feedback" until Q4, which is why D-C5 waits for Q4 | when the CEO invites the bot (before D-C5) |
 | `termination.submitted` (#csm-announcements) | its settings row | database | disabled (W4: Make 9805538 [5] still posts) | D-C4B, in the hour Make 9805538 goes off |
 | Feedback bridge | `portal_feedback` in `forms.client.live` | database | refused with `{recorded:false,reason:'not_live'}`; the portal's own save is never affected | D-FB |
 | Onboarding webhook | the cockpit webhook on `KFRCXPFx` and key `typeform_onboarding` | Typeform and the vault | not registered | D-C6 |
@@ -188,7 +188,7 @@ saves `pg_get_functiondef` of each to
 | `cockpit_client_message_approve(uuid,text,text,uuid,text[])` | `528d7d0f273333ed734480ed947211c2` | service_role | `a` | `form_invite`: the body holds `{form_link}` exactly once, passes `cockpit_client_text_ok`, ≤ 1,000 characters; wording "message", not "recap", for that kind |
 | `cockpit_client_message_claim(text[],text[],integer)` | `66c32c23fa588801b2cccbd3ec6e5f40` | service_role | `a` | `form_invite` joins the allowed kinds |
 | `cockpit_client_message_view(cockpit_client_messages)` | `3f04490fe00e1d627896c21a4530e1f2` | owner | `a` | form label for `form_invite` (`v_form` from the invite) |
-| `cockpit_form_effect_gate(text,text)` | `e498f48795c2644fb037df056828c736` | owner | `a` | its `client_message` branch first asks `cockpit_form_invite_gate(message id)` for a `form_invite` row (open, not expired, form live or a canary invite, card not Stopped on the mirror; a card the mirror does not hold, the test card, passes); every other branch byte for byte |
+| `cockpit_form_effect_gate(text,text)` | `e498f48795c2644fb037df056828c736` | owner | `a` | its `client_message` branch first asks `cockpit_form_invite_gate(message id)` for a `form_invite` row (open, not expired, form live or a canary invite, and `cockpit_form_card_allows(task, form_key)` true: `nps`, `csat`, `pause_consent` need the mirror's `client_status = 'Active'` and no open departure; `exit_survey` is exempt, it goes to clients who left; a card the mirror does not hold, the test card, passes); every other branch byte for byte |
 | `cockpit_form_doors()` | `2ceb94ae0589b54ce53b6810e3eac87c` | authenticated | `a` | adds `invites`, `voice`, `editor` (3.3) |
 | `cockpit_form_responses_guard()` | `38fa9795b15dbc93494a691f88766b0f` | owner | `b` | the "answer the notice" carve-out (`answer_meta.answered`, once, under `cockpit.forms_legacy='answer'`) also covers `state='submitted'` rows of `exit_survey` and `pause_consent`; nothing else changes |
 | `cockpit_billing_write(text,jsonb)` | `8bdd972146ee2dfc0a5e1c6c0c5c47e4` | authenticated | `b` | the pause's consent branch reads `cockpit_form_client_live('pause_consent')` instead of the registry row alone, and then needs `consentResponseId` (4.3) |
@@ -238,14 +238,17 @@ saves `pg_get_functiondef` of each to
 | `cockpit_form_schema_check(p_schema jsonb) RETURNS text` | function, `IMMUTABLE` | none | NULL when the schema is valid v1 (3.1), else the first problem as a sentence |
 | `cockpit_form_answers_check(p_schema jsonb, p_answers jsonb, p_context jsonb) RETURNS jsonb` | function, `IMMUTABLE` | none | `{ok bool, errors:{fieldKey: code}}` (3.1) |
 | `cockpit_form_client_live(p_form_key text) RETURNS boolean` | function, `STABLE` | none | registry native + client + in `forms.client.live` |
-| `cockpit_form_client_go_live(p_form_key text, p_on boolean, p_actor text) RETURNS jsonb` | function | none (owner, deploy only) | adds or removes the key in `forms.client.live`; going live checks the published schema with `cockpit_form_schema_check` and, for `exit_survey`, moves the provider `typeform` → `native` (keeping `typeform_id`, V16); going off withdraws every open invite of that form with reason `Form switched off`; audit row |
+| `cockpit_form_client_go_live(p_form_key text, p_on boolean, p_actor text) RETURNS jsonb` | function | none (owner, deploy only) | adds or removes the key in `forms.client.live`; going live checks the schema of `cockpit_form_client_version(key)` with `cockpit_form_schema_check` and, for `exit_survey`, moves the provider `typeform` → `native` and the registry `schema`/`version` to that version in the same statement (keeping `typeform_id`, V16); going off withdraws every open invite of that form with reason `Form switched off`; audit row |
 | `cockpit_form_invite_gate(p_message_id uuid) RETURNS jsonb` | function, `STABLE` | none | `{ok, reason}` for a `form_invite` message |
+| `cockpit_form_card_allows(p_task_id text, p_form_key text) RETURNS text` | function, `STABLE` | none | NULL when the card may receive the form, else the refusal sentence. `nps`, `csat`, `pause_consent`: the mirror's `client_status = 'Active'` (an allowlist: `Stopped`, `GHOSTED`, `SALES TEAM TO CONTACT`, `Brand Blueprint Booked` and anything new are refused, 11.2-q) and no open departure (W12 W21: not removed, not confirmed, no later resume) → else `{client} is not an active client, so this form does not go to them.` / `{client} is leaving. Send the exit survey instead.`; `exit_survey`: an open or confirmed departure (not removed, no later resume) or `client_status = 'Stopped'` → else `Mark Client is leaving first, then send the exit survey.` A card the mirror does not hold (the test card) passes. Read by issue, the system issuer, the gate, every portal display and token path, and the schedule sweep |
+| `cockpit_form_client_version(p_form_key text) RETURNS integer` | function, `STABLE` | none | the newest `cockpit_form_versions.version` of the form whose schema has `v = 1` (the client schema of 3.1); NULL when none. Issue, the canary and go-live use it, so `exit_survey` can be invited (canary) and go live on version 2 while the registry still reads version 1 (2.4) |
 | `cockpit_form_invite_view`, `_issue`, `_withdraw`, `_link`, `cockpit_form_invites_today`, `cockpit_form_answer_read` | browser RPCs | `authenticated` | 3.3 |
 | `portal_form_for_person`, `portal_form_list`, `portal_form_get`, `portal_form_invite_record`, `portal_form_submit`, `portal_form_token_open`, `portal_form_token_submit`, `portal_form_preview`, `portal_form_invites_push_claim`, `portal_form_invite_push_done`, `portal_form_invite_display`, `portal_form_presence_put` | portal RPCs | `service_role` | 3.3 |
 | `cockpit_client_message_invite_link(p_id uuid, p_claim uuid)` | worker RPC | `service_role` | 3.3 (name matches the worker's `RPC_NAME`) |
 | `cockpit_form_client_submitted(p_response_id uuid)` and `cockpit_form_client_issued(p_invite_id uuid)` | functions | none | the dispatchers (V19): common steps, then `cockpit_form_hook_<key>` / `cockpit_form_issue_hook_<key>` when `to_regprocedure` finds them |
-| `cockpit_form_invites_expire()` | function | none | open invites past `expires_at` → `expired`, their tokens revoked; called at the top of every invite read and by the schedule run |
+| `cockpit_form_invites_expire()` | function, `VOLATILE` | none | open invites past `expires_at` → `expired`, their tokens revoked, their unsent `draft`/`approved` messages skipped; called by the schedule run's sweep and at the top of every **write** path (`_issue`, `_withdraw`, `_link`, `portal_form_get`, `portal_form_submit`, `portal_form_token_open`, `_token_submit`, `portal_form_invites_push_claim`). Never called by a `STABLE` read: PostgREST runs `STABLE` functions in a read-only transaction. Every read treats `state = 'open' AND expires_at <= now()` as expired without writing (V25) |
 | `cockpit_form_invite_issue_system(...)`, `cockpit_form_invite_canary(...)` | functions | none (owner) | 3.10 |
+| `cockpit_form_invites_withdraw_ineligible()` | function | none | withdraws every open invite whose card `cockpit_form_card_allows` now refuses (reason `The client is no longer active.` or `The client is leaving.`), revokes its tokens, skips its `draft`/`approved` message; called by the schedule run's sweep; the portal paths refuse such an invite at once (`withdrawn`) without waiting for the sweep |
 | `cockpit_form_client_live_list() RETURNS text[]` | browser RPC, `STABLE` | `authenticated` | the live keys, for the client page's Links rows (4.11) |
 | `cockpit_request_type_add` is reused (live, W12 `l`) for `client_low_score` at D-R2; no new function | | | |
 
@@ -253,7 +256,7 @@ saves `pg_get_functiondef` of each to
 
 | Object | Kind | Grant | Notes |
 |---|---|---|---|
-| `cockpit_forms` row `pause_consent` (native, audience client, seats `{csm}`) and version 1; `exit_survey` version 2 (the client schema of 3.1/5.6, published by `migration 20261102b`), registry `version` 2, provider still `typeform` | seed / update guarded (`WHERE version = 1`) | | `pause_consent` is not live (1.4), so the old two-tick path keeps working |
+| `cockpit_forms` row `pause_consent` (native, audience client, seats `{csm}`) and version 1; `exit_survey` version 2 in `cockpit_form_versions` (the client schema of 3.1/5.6, published by `migration 20261102b`). The **registry row stays** `version` 1, schema `{lives:'typeform'}`, provider `typeform` until `cockpit_form_client_go_live('exit_survey', true)` moves provider, schema and version together to `cockpit_form_client_version('exit_survey')` | seed guarded (`ON CONFLICT DO NOTHING`) | | `pause_consent` is not live (1.4), so the old two-tick path keeps working; the live `cockpit_form_record_legacy` keeps stamping Typeform termination answers with version 1 until C4b, and `c`'s replacement pins them to the newest `lives:'typeform'` version after it (2.5) |
 | `cockpit_billing_events_kind_check` gains `survey`, `nps_sent` | CHECK swap | | guarded |
 | trigger `cockpit_billing_events_clickup_writeback` | dropped and recreated | | `WHEN` adds `(NEW.source = 'system' AND NEW.kind IN ('extension','ltv','late','survey','nps_sent'))` to W12's condition, unchanged otherwise |
 | `cockpit_billing_writeback_writes`, `_comment`, `cockpit_billing_detail`, `cockpit_billing_canary`, `cockpit_billing_write`, `cockpit_form_responses_guard`, `cockpit_form_notices_in`, `cockpit_form_prefill`, `cockpit_csm_churn_read` | replaced | as 2.2 | |
@@ -265,7 +268,7 @@ saves `pg_get_functiondef` of each to
 
 | Object | Kind | Grant | Notes |
 |---|---|---|---|
-| `cockpit_form_schedules` (`form_key text PRIMARY KEY REFERENCES cockpit_forms(key)`, `on boolean NOT NULL`, `rule jsonb NOT NULL CHECK (jsonb_typeof(rule)='object' AND octet_length(rule::text) <= 2048)`, `updated_by text NOT NULL`, `updated_at timestamptz NOT NULL DEFAULT now()`) | table | service_role `SELECT, INSERT, UPDATE` | seeds `nps` `{"firstDay":60,"everyDays":90,"remindAfterDays":7}` and `csat` `{"afterLaunchDays":0,"whatsappAfterDays":3,"snoozeDays":3,"reissues":3}`, both `on:true`; audit |
+| `cockpit_form_schedules` (`form_key text PRIMARY KEY REFERENCES cockpit_forms(key)`, `on boolean NOT NULL`, `rule jsonb NOT NULL CHECK (jsonb_typeof(rule)='object' AND octet_length(rule::text) <= 2048)`, `updated_by text NOT NULL`, `updated_at timestamptz NOT NULL DEFAULT now()`) | table | service_role `SELECT, INSERT, UPDATE` | seeds `nps` `{"firstDay":60,"everyDays":90,"remindAfterDays":7}` and `csat` `{"afterLaunchDays":0,"whatsappAfterDays":3,"snoozeDays":3,"reissues":3,"retryAfterDays":7,"maxAgeDays":60}`, both `on:true`; audit. The run reads every key by name and treats a missing or non-integer key as a refusal for that form (`skipped.ruleNotSet`, said in the run's note as `The {form} rule has no {key}. Set it in the forms editor.`), never as NULL or a default |
 | `cockpit_settings` `forms.schedule` `{"on":false,"maxPerRun":3,"hourKuwait":10}`, `voice.low_score` `{"max":6}`; `forms.doors` merged with `{"voice":true}` | seed | | `cockpit_settings_forms_audit` already audits `forms.%` (read its live body; if it does not, `c` does not replace it and the schedule run writes its own audit rows) |
 | `cockpit_form_schedule_run(p_now timestamptz DEFAULT now(), p_apply boolean DEFAULT true) RETURNS jsonb` | function | `service_role` | 4.5; returns the plan when `p_apply` is false |
 | pg_cron `mahara-form-schedule` at `0 7 * * *` (UTC, 10:00 Kuwait) calling `cockpit_form_schedule_run()` | cron block | | writes `cockpit_sync_state` `form-schedule`; does nothing but the sweep while `forms.schedule.on` is false, and says so |
@@ -278,7 +281,7 @@ saves `pg_get_functiondef` of each to
 | `cockpit_forms` rows `onboarding` (typeform `KFRCXPFx`, audience client, every effect `make`) and `new_client` (typeform `BTzMwXiw`, audience team, seats `{sales}`, every effect `make`) and version 1 | seed | | effects listed in 4.7, 4.8, each `owner:'make'` |
 | `cockpit_form_record_make(p jsonb) RETURNS jsonb` | function | `service_role` | 4.7 (forms-door's writer for make-owned live Typeforms) |
 | `portal_form_status(p_location_id text, p_clickup_id text, p_form_key text) RETURNS jsonb` | portal RPC | `service_role` | 4.7 |
-| the forms-door and forms-key functions and `cockpit_form_record_legacy` | replaced | as 2.2 | |
+| the forms-door and forms-key functions and `cockpit_form_record_legacy` | replaced | as 2.2 | `cockpit_form_record_legacy` stamps each legacy row with the newest version of the form whose schema has `lives = 'typeform'` (1 for `exit_survey` and `pause_request`), else the registry version (`nps`, `csat`: no Typeform-shaped version exists; `cockpit_form_answer_read` shows a `legacy` row's raw keys, never a client schema's labels) |
 
 ### 2.6 `20261102d_forms_editor.sql` (forms-editor)
 
@@ -315,7 +318,9 @@ None in a database. The portal adds keys to its own storage (`readState`/`transa
   "intro":  {"en": "...", "ar": "..."} | null,    // ≤ 600 chars
   "minutes": 1,                                   // 1..10, shown on the pop-up
   "audience": "any" | "admin",                    // admin: only the workspace admin sees it in the portal (V9)
-  "signer": "session" | "typed",                  // typed: the token path asks "Your full name"; the portal path uses the session
+  "signer": "none" | "typed",                     // typed: the token path asks "Your full name" (pause_consent, exit_survey);
+                                                  // none: no name on either path (nps, csat). The portal path always records the session person.
+                                                  // ED never changes audience or signer of a published form (4.9.3)
   "context": [ { "key": "restart", "type": "date", "label": {...} } ],   // read-only facts shown from invite.context
   "fields": [ {
       "key": "recommend",                         // ^[a-z][a-zA-Z0-9]{1,30}$, unique, immutable once published
@@ -362,14 +367,14 @@ every invite note, passes `cockpit_client_text_ok` at seed, at publish and at is
 | `task_id text NOT NULL` | `^[A-Za-z0-9_-]{1,40}$`; on the billing sheet |
 | `client_name text NOT NULL` | from `cockpit_billing_accounts` |
 | `location_id text` | `portal_data.workspaces.location_id` when exactly one workspace carries the card, else NULL |
-| `form_key text NOT NULL REFERENCES cockpit_forms(key)`, `form_version integer NOT NULL` | FK `(form_key, form_version)` to `cockpit_form_versions`; the version published at issue, kept for the answer |
+| `form_key text NOT NULL REFERENCES cockpit_forms(key)`, `form_version integer NOT NULL` | FK `(form_key, form_version)` to `cockpit_form_versions`; `cockpit_form_client_version(form_key)` at issue (2.3), kept for the answer |
 | `purpose text NOT NULL CHECK (purpose IN ('pause_consent','exit_survey','nps','csat'))` | equals `form_key` in waves 3 and 4; wave 5 widens the list |
-| `context jsonb NOT NULL DEFAULT '{}'` | object, `octet_length ≤ 4096`; checked per purpose: `pause_consent` `{start (date, today), restart (date, after start), reasonCat, callId, over14 bool}`; `exit_survey` `{departureId?}`; `nps` `{round int ≥ 1}`; `csat` `{try int 1..4}` |
+| `context jsonb NOT NULL DEFAULT '{}'` | object, `octet_length ≤ 4096`; checked per purpose: `pause_consent` `{start (date, today to today + 14, plan 5.2), restart (date, after start), reasonCat, callId, over14 bool (restart − start > 14)}`; `exit_survey` `{departureId?}`; `nps` `{round int ≥ 1}`; `csat` `{try int 1..4}` |
 | `channels text[] NOT NULL` | non-empty, `<@ {portal,whatsapp,copy}` |
 | `audience text NOT NULL CHECK (audience IN ('any','admin'))` | from the schema |
 | `note text` | ≤ 280, client-facing (shown under the title), passes the text rule |
 | `lang text NOT NULL CHECK (lang IN ('ar','en'))` | the WhatsApp text's language (default `ar`) |
-| `origin text NOT NULL CHECK (origin IN ('csm','schedule','pause','churn'))` | |
+| `origin text NOT NULL CHECK (origin IN ('csm','schedule','pause','churn','canary'))` | set by `p_origin` on `_issue` (seats: `csm`, `pause`, `churn`), `schedule` by the system issuer, `canary` by the canary door |
 | `state text NOT NULL DEFAULT 'open' CHECK (state IN ('open','answered','withdrawn','expired'))` | |
 | `issued_by uuid`, `issued_by_email text`, `issued_by_role text NOT NULL` | NULL / NULL / `the cockpit` for the schedule; roles in screens and cards, emails for the audit only |
 | `issued_at timestamptz NOT NULL DEFAULT now()`, `expires_at timestamptz NOT NULL` | `issued_at + 14 days` |
@@ -380,7 +385,7 @@ every invite note, passes `cockpit_client_text_ok` at seed, at publish and at is
 
 `cockpit_form_invite_events`: `id bigint GENERATED ALWAYS AS IDENTITY`, `invite_id uuid NOT NULL REFERENCES cockpit_form_invites(id)`,
 `at timestamptz NOT NULL DEFAULT now()`, `source text NOT NULL CHECK (source IN ('cockpit','schedule','portal','token','push','worker'))`,
-`event text NOT NULL CHECK (event IN ('issued','shown','opened','later','answered','withdrawn','expired','link_made','link_sent','refused'))`,
+`event text NOT NULL CHECK (event IN ('issued','shown','opened','later','answered','withdrawn','expired','link_made','link_sent','refused','hook_failed'))`,
 `person text` (lowercased email for `portal`, NULL otherwise), `detail jsonb NOT NULL DEFAULT '{}'` (object, ≤ 2 KB, never a token or an answer).
 
 `cockpit_form_invite_tokens`: `id bigint GENERATED ALWAYS AS IDENTITY`, `invite_id uuid NOT NULL REFERENCES cockpit_form_invites(id)`,
@@ -400,6 +405,26 @@ Index `(net_hash, at)`, `(browser_hash, at)`.
 
 ### 3.3 RPC signatures
 
+**Volatility (V25).** `STABLE` (read only, never call `cockpit_form_invites_expire`, treat an open
+invite past `expires_at` as expired in what they return): `cockpit_form_invite_view`,
+`cockpit_form_invites_today`, `cockpit_form_answer_read`, `cockpit_form_client_live_list`,
+`portal_form_for_person`, `portal_form_list`, `portal_form_preview`, `cockpit_client_voice_read`,
+`cockpit_client_voice_today`, `cockpit_client_voice_summary`, `portal_form_status`, the editor reads.
+`VOLATILE` (they write): `_issue`, `_withdraw`, `_link`, `portal_form_get` (records `opened`),
+`portal_form_invite_record`, `portal_form_submit`, `portal_form_token_open` (logs the open),
+`_token_submit`, the three push functions, `portal_form_presence_put`, `portal_feedback_record`,
+`cockpit_client_message_invite_link`, the editor writes. A PGlite test calls every `STABLE` one inside
+`SET TRANSACTION READ ONLY`.
+
+**Skipping an unsent message (every path that closes an invite: answer, withdraw, expiry, go-live
+off, ineligible sweep).** Only a `form_invite` message in `draft` or `approved` is moved to
+`skipped` (the live `cockpit_client_messages_guard`, md5 `c676efff216517fc709ec927ca9edc55`, allows
+nothing else). A `claimed` or `sending` row is left alone: `cockpit_form_invite_gate` refuses a
+closed invite, so `cockpit_client_message_intent` moves it to `refused` with the gate's reason, and
+the next schedule sweep moves `refused` rows of closed invites to `skipped` (allowed by the guard).
+A row already past intent sends a link that answers `answered`/`withdrawn`, which is the honest
+outcome. No path raises on a message state.
+
 Every browser RPC: `SECURITY DEFINER SET search_path = ''`, gate first (`cockpit_csm_client_gate(task)`
 for a card, or `cockpit_form_seat(auth.uid())` for CEO/admin), an audit row for every write,
 refusals as plain sentences with `ERRCODE` `42501` (who) or `22023` (what). Every portal RPC:
@@ -416,45 +441,59 @@ cockpit_form_invite_view(p_task_id text) RETURNS jsonb                     -- au
       presence: {lastSessionAt|null, admins, members, pushedAt|null, note},
       problem: 'no_workspace'|'two_workspaces'|'workspace_closed'|'no_recent_session'|null,
       defaultChannels: ['portal'] | ['portal','whatsapp'] | ['whatsapp'],
-      forms: [{key, title:{en,ar}, live bool, sendable bool, why|null, audience}],   -- why: "Opens to clients after its switch-on." / "Sent from Pause this client." (pause_consent) / "They already filled it on {date}." (csat)
+      forms: [{key, title:{en,ar}, live bool, sendable bool, why|null, audience, defaultChannels}],   -- why: "Opens to clients after its switch-on." / "Sent from Pause this client." (pause_consent) / "They already filled it on {date}." (csat) / the cockpit_form_card_allows sentence (e.g. exit_survey "Mark Client is leaving first, then send the exit survey.")
       open: [InviteRow], history: [InviteRow] (last 10, newest first),
       templates: {formKey: {en, ar}}}
   InviteRow = {id, formKey, title, state, channels, origin, issuedAt, issuedByRole, expiresAt,
                opened bool, openedAt|null, answeredAt|null, responseId|null, messageState|null,
                linkMade bool, closedReason|null}
-  Default channel rule (never the sheet status alone): no workspace or closed workspace -> whatsapp;
-  presence with a live session in the last 14 days -> portal; otherwise portal + whatsapp.
+  Default channel rule, per form (never the sheet status alone): no workspace or closed workspace ->
+  whatsapp; a form with audience 'any' and presence members + admins > 0 with a live session in the
+  last 14 days -> portal; a form with audience 'admin' (pause_consent, exit_survey) and
+  presence.admins > 0 -> portal; otherwise portal + whatsapp; presence not reported yet (before D-PR)
+  -> portal + whatsapp. The top-level defaultChannels is the NPS form's. The presence note for an
+  admin form with members only reads "No admin has opened the portal in 14 days, so the WhatsApp
+  link goes too." (5.1).
 cockpit_form_invite_issue(p_task_id text, p_form_key text, p_channels text[], p_note text,
-  p_lang text, p_push boolean, p_context jsonb, p_request_id uuid) RETURNS jsonb  -- authenticated
+  p_lang text, p_push boolean, p_context jsonb, p_request_id uuid, p_origin text DEFAULT 'csm')
+  RETURNS jsonb                                                               -- authenticated
+  p_origin in ('csm','pause','churn') for seats (anything else: 'Pick where this form is sent from.').
   Gate: CEO, or a CSM allowed on the client. The form live (else 'This form opens to clients after
-  its switch-on.'); pause_consent only with origin 'pause' context (called by the pause sheet;
+  its switch-on.'); pause_consent only with p_origin 'pause' (called by the pause sheet;
   else 'Send the pause consent from Pause this client.'); csat refused when a submitted csat
   exists ('They already filled the onboarding survey on {date}.'); one open invite per card, form
   and purpose ('A {form} is already out to {client}, sent {date}. Withdraw it to send a new one.');
-  card Stopped refused for nps/csat/pause_consent ('{client} has left. Only the exit survey goes to
-  a client who left.'); 'portal' needs a workspace that is not closed ('{client} has no open Mahara OS
+  cockpit_form_card_allows(task, form) refuses with its sentence (2.3: nps/csat/pause_consent only
+  to an Active card with no open departure; exit_survey only with a departure or a Stopped card);
+  'portal' needs a workspace that is not closed ('{client} has no open Mahara OS
   workspace. Send the WhatsApp link.'); note through cockpit_client_text_ok. Inserts the invite
   (expires +14 days), event 'issued'; with 'whatsapp' inserts the cockpit_client_messages row
   (kind form_invite, state draft, body = the registry template with {client} filled and {form_link}
   kept, dedupe 'invite:'||id, group_source 'client_data_f', invite_id) and sets message_id;
   push_state 'waiting' when p_push and 'portal' is a channel; calls cockpit_form_client_issued.
-  Repeat request id returns the first result. -> {inviteId, messageId|null, view}.
+  Repeat request id returns the first result. -> {inviteId, messageId|null, delivered: 'portal' |
+  'waiting_approval', view} ('portal' when the portal is a channel; 5.1 toasts from it).
 cockpit_form_invite_withdraw(p_task_id text, p_invite_id uuid, p_reason text) RETURNS jsonb
-  Reason 4..240. Only an open invite. Revokes its tokens, skips its unsent message
-  ('Withdrawn in the cockpit: {reason}'), event 'withdrawn'. -> view.
+  Reason 4..240. Only an open invite. Revokes its tokens, skips its unsent message when it is
+  draft or approved (the skip rule above; 'Withdrawn in the cockpit: {reason}'), event 'withdrawn'
+  with detail {by:'seat'} (the schedule reads it, 4.5.4). -> view.
 cockpit_form_invite_link(p_task_id text, p_invite_id uuid) RETURNS jsonb   -- authenticated
   Only an open invite of a live form. Revokes the invite's unrevoked copy token, mints a new one
   (3.6), event 'link_made'. -> {url ('https://portal.maharamedia.com/f#'||token), expiresAt}.
   The only place a raw token leaves the database for a seat; shown once, never stored.
 cockpit_form_invites_today() RETURNS jsonb                                 -- authenticated, STABLE
-  -> [{kind: 'sent_today'|'not_answered'|'approve_link'|'answered', inviteId, taskId, clientName,
-       formKey, title, at, days, messageId|null}]; CSM: allowed clients; CEO: all.
+  -> [{kind: 'sent_today'|'not_answered'|'approve_link'|'answered'|'exit_survey_due', inviteId|null,
+       taskId, clientName, formKey, title, at, days, messageId|null, departureId|null}]; CSM: allowed
+       clients; CEO: all. Canary invites (origin 'canary') never appear.
   not_answered: open, issued ≥ schedule remindAfterDays (7) ago, not opened or opened and not
   answered. approve_link: its message is 'draft'. answered: answered in the last 24 hours.
+  exit_survey_due (plan 5.8): a departure that is open or confirmed (not removed, no later resume)
+  with survey_state 'not_sent' and no open exit_survey invite; one row per departure.
 cockpit_form_answer_read(p_response_id uuid) RETURNS jsonb                 -- authenticated, STABLE
   Gate on the response's card. -> {formKey, title, submittedAt, source, signer (portal: role
-  words 'the client admin'|'a client member'; token: the typed name), lang, fields:[{key, label (en),
-  value, display}]}; never an email.
+  words 'the client admin'|'a client member'; token: the typed name, or 'someone with the link' when
+  the form asks no name), lang, fields:[{key, label (en), value, display}]}; never an email. A
+  `legacy` row shows its raw keys (2.5). Shadow (canary) rows are read only for the test card.
 
 -- a, portal (service_role)
 portal_form_for_person(p_location_id text, p_clickup_id text, p_person text, p_access_role text,
@@ -463,9 +502,14 @@ portal_form_for_person(p_location_id text, p_clickup_id text, p_person text, p_a
   The pop-up pick: open invites of live forms for this card, audience 'any' or (admin and
   p_access_role='admin'), oldest first; skipped when this person 'later'd it within snoozeDays (csat 3,
   others 3); none when this person saw any ask or invite pop-up for this workspace within 20 hours
-  (both event tables, V8), unless p_invite_id (the phone alert's deep link).
+  (both event tables, V8), unless p_invite_id (the phone alert's deep link). The cap is checked
+  first and returns reason 'shown_today' whenever any ask or invite pop-up was shown to this person
+  in this workspace within 20 hours, **even when no invite is open**, so `/api/asks` stops there and
+  never reaches the live `portal_client_ask_for_person` (which reads ask events only and is not
+  replaced). Invites whose card cockpit_form_card_allows refuses are skipped.
   PortalInvite = {id, formKey, version, title:{en,ar}, minutes, note|null, from (first name of the
-  issuing seat, or null for the schedule), issuedAt, expiresAt, audience}
+  issuing seat, or null for the schedule: the portal then shows "From your Mahara team", 5.10),
+  issuedAt, expiresAt, audience, lang (the invite's lang: the renderer's default on the token page)}
 portal_form_list(p_location_id, p_clickup_id, p_person, p_access_role) RETURNS jsonb
   -> {forms: [PortalInvite & {state: 'open'|'answered', answeredAt|null}]} (open ones, plus those
   answered in the last 7 days so the page can say "Sent"), filtered by audience.
@@ -484,13 +528,16 @@ portal_form_submit(p_location_id, p_clickup_id, p_person, p_access_role, p_invit
   external_id 'portal:'||p_request_id, task_id, client_name, mode 'live', state 'submitted',
   answers (checked), answer_meta {invite_id, person_role}, hidden {}, created_by 'portal',
   submitted_by the person's email, submitted_at now(), invite_id, signer NULL, lang); sets the
-  invite answered, revokes its tokens, skips its unsent message ('Answered in the portal'), event
-  'answered', calls cockpit_form_client_submitted. Repeat request id returns the first result.
+  invite answered, revokes its tokens, skips its unsent message only when draft or approved (the
+  skip rule above; 'Answered in the portal'), event 'answered', calls cockpit_form_client_submitted.
+  Repeat request id returns the first result. A canary invite's answer is stored mode 'shadow' with
+  answer_meta.canary true (3.10).
   -> {ok:true, responseId, done:{en,ar}} | {ok:false, reason, errors?}.
 portal_form_token_open(p_token_sha256 text, p_net text, p_browser text) RETURNS jsonb
   Rate limits first (3.6). -> {ok:true, invite: PortalInvite & {schema, context, clientName,
-  signer:'typed'|'none'}} | {ok:false, reason: 'limited'|'unknown'|'expired'|'answered'|'withdrawn'|
-  'not_live'}. Increments the token's opens. Logs one cockpit_form_token_opens row.
+  signer: the schema's 'typed'|'none'}} | {ok:false, reason: 'limited'|'unknown'|'expired'|
+  'answered'|'withdrawn'|'not_live'}. Increments the token's opens. Logs one
+  cockpit_form_token_opens row. PortalInvite.lang is the renderer's starting language.
 portal_form_token_submit(p_token_sha256, p_net, p_browser, p_answers jsonb, p_signer text,
   p_request_id uuid, p_lang text) RETURNS jsonb
   As portal_form_submit with source 'public', external_id 'token:'||p_request_id, signer the typed
@@ -529,14 +576,19 @@ cockpit_client_voice_read(p_task_id text) RETURNS jsonb                    -- au
       csat: {score|null, liked|null, disliked|null, at|null},
       feedback: [{kind, topic, rating|null, message, at}] (last 5),
       open: [InviteRow of nps/csat], source: 'From the client''s own answers in the portal or by
-      link. Typeform answers before the portal had no client, so they are left out.'}
+      link. The 2 old Typeform answers could not be matched to a client, so they are left out.'}
 cockpit_client_voice_today() RETURNS jsonb                                 -- authenticated, STABLE
   -> [{kind:'low_score', responseId, taskId, clientName, formKey, score, at, ticketOpen bool}]
-  a response of nps (recommend) or csat (onboarding) at or under voice.low_score.max in the last
-  14 days with no `client_low_score` request raised for it (cockpit_requests.detail->>'response_id').
+  a live (not shadow) response of nps (recommend) or csat (onboarding) at or under
+  voice.low_score.max in the last 14 days. ticketOpen = a `cockpit_requests` row with
+  `type_key = 'client_low_score'`, `client_task_id` = the response's card, `created_at` at or after
+  the response's `submitted_at`, and `state` not cancelled (real columns, 11.2-r; the unchanged
+  prefilled request opener already sets `client_task_id`). One ticket covers every low score of
+  that card before it.
 cockpit_client_voice_summary(p_from date, p_to date) RETURNS jsonb         -- authenticated, STABLE
   CEO and CSM seats. -> {nps:{score|null, n, promoters, passives, detractors, from, to, note},
-  csat:{average|null, n, note}, invites:{nps:{sent, answered}, csat:{sent, answered}}}
+  csat:{average|null, n, note}, invites:{nps:{sent, answered, cardsAnswered}, csat:{sent, answered}}}
+  (the second source of 3.5 compares nps.n with invites.nps.cardsAnswered)
 portal_feedback_record(...)                                                -- service_role
 portal_form_status(p_location_id, p_clickup_id, p_form_key) RETURNS jsonb  -- service_role
   p_form_key 'onboarding' only. -> {submitted: bool, submittedAt|null, reference (response id)|null,
@@ -575,14 +627,19 @@ free-text answer. Dedupe keys: `consent:{response id}`, `nps:{id}`, `csat:{id}`,
 round (nps context round, else NULL), submitted_at, submitted_day (Kuwait), source ('portal'|'public'),
 score integer (nps: recommend 0..10; csat: onboarding 1..10; portal_feedback: rating 1..5 or NULL),
 results integer, communication integer, band ('promoter' 9-10 | 'passive' 7-8 | 'detractor' 0-6 | NULL
-for csat and feedback)`. Only `state IN ('submitted','confirmed')`, `mode = 'live'`, task not NULL.
-Legacy Typeform answers (state `legacy`) are left out (V17).
+for csat and feedback)`. Only `state IN ('submitted','confirmed')`, `mode = 'live'`, task not NULL,
+`answer_meta.canary` not true. Legacy Typeform answers (state `legacy`) are left out (V17); canary
+answers are `mode = 'shadow'` (3.10), so they never reach this view, `cockpit_form_invites_daily_v`
+(which also drops origin `canary`), `cockpit_client_voice_today`, `cockpit_form_notices_in` or the
+CEO metric.
 
 The NPS number (`clients.nps`, a window): per card, the latest NPS answer in the window counts
 once; NPS = round(100 × (promoters − detractors) / n); `n = 0` → NULL with "No scores yet". Second
-source: the count of `answered` NPS invite events in the same window must equal n (both from the
-database, two tables, written by different steps); a mismatch puts "Invites answered {x}, answers
-{n}" in the note and the guardian warns.
+source, like with like: the count of **distinct cards** with an `answered` NPS invite event (non-canary
+invite) in the same window must equal n (both from the database, two tables, written by different
+steps); a mismatch puts "Cards with an answered invite {x}, cards with an answer {n}" in the note and
+the guardian warns. A card answering twice in the window (day 60 and day 150, or Send again) counts
+once on both sides.
 
 ### 3.6 Tokens and security (one place)
 
@@ -637,9 +694,14 @@ cockpit_form_invite_canary(p_form_key text, p_context jsonb, p_channels text[] D
   says, origin 'canary', channels {copy} or {copy,whatsapp} (whatsapp makes a draft form_invite
   message on the test card), location NULL; returns {inviteId, url, messageId|null} (a copy token,
   shown once). Canary invites pass every live check (issue, token open and submit, the message
-  gate) and nothing else does. A canary answer runs the form's hooks, but its notices are inserted already 'muted'
-  ("Canary on the test card: not posted") and its billing events carry by_whom 'canary', so the
-  deploy voids them by record after the read-back (W12's lesson).
+  gate) and nothing else does. A canary answer is stored `mode = 'shadow'` with
+  `answer_meta.canary = true` (the live guard keeps mode fixed, and a submitted row can never become
+  void, so it is marked at insert). It runs the form's hooks, but its notices are inserted already
+  'muted' ("Canary on the test card: not posted") and its billing events carry by_whom 'canary', so
+  the deploy voids them by record after the read-back (W12's lesson). Every client-voice reader,
+  `cockpit_form_invites_today`, `cockpit_form_notices_in` and the daily view leave shadow answers
+  and canary invites out; `cockpit_pause_consent_for` and `cockpit_form_answer_read` read them only
+  for card `86eywg1cq` (the read-backs), which is not on the billing sheet, so no pause can use one.
 ```
 
 `cockpit_form_invites.origin` CHECK is `('csm','schedule','pause','churn','canary')`.
@@ -657,7 +719,7 @@ Files: migration `a`; `supabase/functions/cockpit-notices/{text.ts,send.ts,docto
 `apps/media-buyer-cockpit/scripts/forms-invites-supabase.test.ts`.
 
 1. SQL per 2.3, 3.1 to 3.3, 3.6, 3.9, 3.10. `cockpit_form_answers_check` and `cockpit_form_schema_check` are pure and table-driven (one `CASE` per field type), so the portal's mirror (`client-form-schema.ts`, 4.2) can be tested against the same fixtures (`apps/media-buyer-cockpit/scripts/fixtures/client-form-answers.json`, written by this slice, copied byte for byte by portal-forms into `tests/fixtures/client-form-answers.json`; D0 compares the two files with `cmp`).
-2. The dispatchers (V19): `cockpit_form_client_submitted(response)` runs, in order: the invite to `answered`, tokens revoked, unsent message skipped, event `answered`, then `cockpit_form_hook_<form_key>(response_id)` when `to_regprocedure('public.cockpit_form_hook_'||key||'(uuid)')` finds it (else nothing more). `cockpit_form_client_issued(invite)` likewise calls `cockpit_form_issue_hook_<form_key>(uuid)`. A hook that raises rolls the whole submit back, and the portal shows "Not sent ... nothing is sent twice" (5.13), so a broken hook never loses an answer silently.
+2. The dispatchers (V19): `cockpit_form_client_submitted(response)` runs, in order: the invite to `answered`, tokens revoked, unsent message skipped, event `answered`, then `cockpit_form_hook_<form_key>(response_id)` when `to_regprocedure('public.cockpit_form_hook_'||key||'(uuid)')` finds it (else nothing more). `cockpit_form_client_issued(invite)` likewise calls `cockpit_form_issue_hook_<form_key>(uuid)`; an **issue** hook that raises rolls the issue back (it is a rule, e.g. "This client is already paused"). A **submit** hook runs inside its own `BEGIN ... EXCEPTION WHEN OTHERS` block after the response is stored and the invite closed: a raise is caught, the hook's partial writes roll back to that savepoint, an invite event `hook_failed` is written (detail `{hook, sqlstate}`, never the message text or an answer) and the client still gets `ok:true` (E19: an answer is kept, never lost). The guardian's `hook-failed` check (6.2) warns on any such event, and the runbook row says how to re-run the hook by response id (`cockpit_form_client_submitted` is idempotent per hook through each hook's dedupe keys). Answer validation still refuses before anything is stored.
 3. Every client response row stores `answer_meta.notice_on` (the Kuwait day of the answer) and `answer_meta.invite_id` at insert (the guard forbids later changes; 2.2's carve-out is only for the notice answer).
 4. Notices: the six kinds of 3.4 in the SQL functions, `text.ts` (renderer and `NOTICE_KINDS`), `notices.ts` and `NoticesRouting.tsx` (labels and blurbs, 5.12). `cockpit-notices` doctor names them.
 5. `cockpit-forms-api`: a seat op `invite.approve` beside `recap.approve` (`{op, messageId, body}`): reads the message with the seat's token through `cockpit_client_message_read`, refuses a kind other than `form_invite` (`Approve recaps from the Messages card.`), runs the leads/CPL figure check the recap path uses, computes the sha and calls `cockpit_client_message_approve` with the service key and the seat's id, exactly as `recap.approve` does. `recap.approve` refuses a `form_invite` message (`Approve a form link from Send a form.`). The door routes it as a seat op (the service key never runs it).
@@ -669,15 +731,15 @@ Files: listed in section 7 (portal-forms). Read `node_modules/next/dist/docs/` f
 
 1. **`src/lib/client-form-schema.ts`** (no `server-only`, imported by browser and server): the v1 types of 3.1, `validateAnswers(schema, answers, context)` mirroring `cockpit_form_answers_check` code for code, `isVisible(field, answers)`, `t(text, lang)`, and `errorSentence(code, field, lang)` with the 5.13 sentences. It never decides alone: the database checks again.
 2. **`src/lib/client-forms.ts`** (`server-only`): `formRpc(name, body)` on the asks pattern (`MAHARA_OUTCOME_STORAGE_KEY || MAHARA_BUSINESS_STORAGE_KEY`, 15 s timeout, `redirect:'error'`, `cache:'no-store'`, `form_invite_not_in_workspace` → `FormForbidden`); typed wrappers for every `portal_form_*` RPC of 3.3; `formsConfigured()`. Every value coming back is validated (ids are UUIDs, schemas pass a zod v1 schema, texts are bounded); an incomplete answer throws `FormStoreError` (503 to the browser, never a guess).
-3. **`src/lib/form-token.ts`** (`server-only`): `hashToken(token)` (sha256 hex; refuses anything not matching `^f1[A-Za-z0-9_-]{43}$` before hashing), `netHash(req)` (HMAC of `form-net:`+IP with `SESSION_SECRET` through the existing `key()` in `auth.ts`, exported for this use only), `browserHash(req)` and the `mahara_form_b` cookie (3.6).
+3. **`src/lib/form-token.ts`** (`server-only`): `hashToken(token)` (sha256 hex; refuses anything not matching `^f1[A-Za-z0-9_-]{43}$` before hashing), `netHash(req)` (HMAC of `form-net:`+IP with `SESSION_SECRET`, read by `form-token.ts` itself with `auth.ts`'s production rule; `auth.ts` is not touched, section 7), `browserHash(req)` and the `mahara_form_b` cookie (3.6).
 4. **`/api/forms` (`src/app/api/forms/route.ts`)**, through `apiRoute`:
    - `GET ?clientId=` — signed-in client: `portal_form_list` for the person (role from `identity().accessRole`); staff with `&formPreview=<key>[&draft=1]`: `portal_form_preview` with `preview:true`; share links: `{forms:[]}`. Same cross-site refusal as `/api/asks`. Works while the workspace is locked (no `onboardingAccess`).
    - `GET ?clientId=&invite=<uuid>` — `portal_form_get`; a refusal reason becomes `{reason}` with 200 so the page can say it (5.13).
    - `POST {clientId, inviteId, requestId, answers, lang}` — same origin, client role, own workspace; body limit 32 KB; `portal_form_submit`. Staff get `{ok:true, preview:true}` and nothing is recorded.
-5. **The token path.** `src/app/f/page.tsx` (exports `metadata` with `robots: {index:false, follow:false}`) renders `TokenForm` (client component): reads and clears the fragment (3.6), posts `{action:'open', token}` to `/api/forms/token`, shows the form in the renderer with the typed-name field when `signer:'typed'`, posts `{action:'submit', token, requestId, answers, signer, lang}`. The token stays in component memory only (never `localStorage`); a reload therefore asks for the link again (5.13 wording). `src/app/api/forms/token/route.ts`: same-origin, never `identity()`, body ≤ 32 KB, hashes the token, sets the browser cookie, calls `portal_form_token_open`/`_submit`. `next.config.ts` adds the headers of 3.6 for `/f` and `/api/forms/token`. A test proves `[[...path]]` does not serve `/f` (the route resolves to `src/app/f/page.tsx`) and that no response or log line from either route contains the token or its hash.
+5. **The token path.** `src/app/f/page.tsx` (exports `metadata` with `robots: {index:false, follow:false}`) renders `TokenForm` (client component): reads and clears the fragment (3.6), posts `{action:'open', token}` to `/api/forms/token`, shows the form in the renderer with the typed-name field when `signer:'typed'`, posts `{action:'submit', token, requestId, answers, signer, lang}`. The token stays in component memory only (never `localStorage` or `sessionStorage`, and neither is its hash); a reload therefore asks for the link again (5.10 wording), and reopening the link restores the answers from a 1-hour `sessionStorage` draft keyed `mahara-form-draft:<invite id>` (answers and typed name only; try/catch; cleared on success). The page uses `PortalInvite.lang` as its starting language. `src/app/api/forms/token/route.ts`: same-origin, never `identity()`, body ≤ 32 KB, hashes the token, sets the browser cookie, calls `portal_form_token_open`/`_submit`. `next.config.ts` adds the headers of 3.6 for `/f` and `/api/forms/token`. A test proves `[[...path]]` does not serve `/f` (the route resolves to `src/app/f/page.tsx`) and that no response or log line from either route contains the token or its hash.
 6. **The pop-up (the `form_invite` ask kind, V20).** `/api/asks` GET asks `portal_form_for_person` first; an invite comes back as `{ask:{kind:'form_invite', id, formKey, title, minutes, note, from, askedAt, stage:'ask'}}`; reason `shown_today` returns `{ask:null, reason:'shown_today'}` without asking for a review or referral; otherwise the route falls through to today's ask path unchanged. Staff `?askPreview=form_invite&form=<key>` previews it. `client-asks.ts` `validAskView` accepts the `form_invite` variant (no link: its button opens `/forms?clientId=…&invite=<id>` inside the portal). `ClientAsk.tsx` renders it with the same calm rules (once a visit, 2.5 s after the page settles, never over another dialog or a field in use, corner card on a computer, bottom sheet at 760 px or narrower), with "Open the form" and "Not now" (5.13); events go through `POST /api/asks` with `kind:'form_invite'`, which calls `portal_form_invite_record`. The answer itself never happens in the pop-up: it opens the forms page.
 7. **"Forms waiting for you" and the `forms` page.** `FormsForYou.tsx` (a card on home and getting started when the list is non-empty) and `FormsPage.tsx` (`page==='forms'`: the list, then one invite at a time in `FormRenderer`). `Portal.tsx` and `workspace-navigation.ts` allow `forms` while the workspace is locked (beside `getting-started` and `feedback`), never on share links. The sidebar shows "Forms" with a count badge only while one is open.
-8. **`FormRenderer.tsx` + `FormRenderer.module.css`**: one component for the page, the token page and both previews. Props `{schema, context, lang, signer, preview, onSubmit, onLang}`; `dir` from `lang`; Arabic by default (`lang` from the person's portal setting, else `ar`); an "English / عربي" toggle at the top; fields in schema order with `showIf`; the scale as a row of keys (5.10); validation sentences under each field from `client-form-schema.ts`; one request id per open form (`crypto.randomUUID()`), reused on retry; the submit stays enabled and says what is missing instead of greying out (the portal's 10-29 lesson); a 1-hour draft in `sessionStorage` (try/catch, never required, cleared on success, never on the token page).
+8. **`FormRenderer.tsx` + `FormRenderer.module.css`**: one component for the page, the token page and both previews. Props `{schema, context, lang, signer, preview, onSubmit, onLang}`; `dir` from `lang`; Arabic by default (`lang` from the person's portal setting, else `ar`); an "English / عربي" toggle at the top; fields in schema order with `showIf`; the scale as a row of keys (5.10); validation sentences under each field from `client-form-schema.ts`; one request id per open form (`crypto.randomUUID()`), reused on retry; the submit stays enabled and says what is missing instead of greying out (the portal's 10-29 lesson); a 1-hour draft in `sessionStorage` keyed by invite id (try/catch, never required, cleared on success; on the token page too, holding answers only, never the token or its hash; a test scans storage for both). Starting language: the person's portal setting, else the invite's `lang`, else `ar`.
 9. **Phone alerts** (`src/lib/form-notifications.ts`): the asks' pattern for invites (`portal_form_invites_push_claim`, the journal's `formDeliveries`, `portal_form_invite_push_done`, display check through `/api/notifications/display` with topic `tasks` and a form delivery id). Text from the schema's `invite.push[lang]`. Runs second in `/api/cron/client-tasks`, after asks, never throws; log line `{"event":"form_invite_push","ok":…,"claimed":…,"sent":…,"noDevice":…,"failed":…,"unfinished":…}`.
 10. **Presence push** (`src/lib/form-presence.ts`): in the same cron, every run, reads the portal's own state once (`readState()`), counts per client workspace the unrevoked, unexpired client sessions active in the last 14 days (by `authenticatedAt`, `verifiedAt` or `created`, whichever is newest), split admin/member by the access grant, and calls `portal_form_presence_put` with counts only (≤ 200 rows a run). `{ok:false,reason:'off'}` is normal before D-PR and logs `{"event":"form_presence","ok":true,"off":true}`; anything else logs `ok:false` with a reason code.
 11. **Staff preview**: `/?clientId=<workspace>&formPreview=<key>[&draft=1]` opens the forms page with the preview banner and the sample context; submit answers `Preview: nothing was sent.` The development preview `src/app/preview/client-form/page.tsx` (`?form=&lang=&theme=dark&state=open|done|expired|answered|limited`) uses fixed fixtures and answers 404 in production like the other `/preview/*` pages.
@@ -686,10 +748,10 @@ Files: listed in section 7 (portal-forms). Read `node_modules/next/dist/docs/` f
 
 ### 4.3 Pause consent and C2, client side (client-lifecycle for SQL; cockpit-screens for the sheet)
 
-1. Registry row `pause_consent` with the schema of 5.5 (`audience:'admin'`, `signer:'session'` in the portal and `typed` by link: the renderer takes `signer` from the RPC answer, 3.3).
-2. `cockpit_form_issue_hook_pause_consent(invite)`: refuses (raises, so the issue rolls back) when the card is already Paused (`This client is already paused. Resume them first.`), or the context fails 3.2's rule (`Pick the restart day, after today.`); sets `context.over14 = (restart - start) > 14`.
+1. Registry row `pause_consent` with the schema of 5.5 (`audience:'admin'`, `signer:'typed'`: the token path asks the name, the portal path records the session admin).
+2. `cockpit_form_issue_hook_pause_consent(invite)`: refuses (raises, so the issue rolls back) when the card is already Paused (`This client is already paused. Resume them first.`), or the context fails 3.2's rule (`The pause starts today or within 14 days.` / `Pick the restart day, after the start.`); sets `context.over14 = (restart - start) > 14`.
 3. `cockpit_form_hook_pause_consent(response)`: queues `pause.consent` (variant `dates_wrong` when `answers.datesWrong`), dedupe `consent:`||id. Nothing on the card (D11).
-4. `cockpit_pause_consent_for(task)` → `{state:'none'|'sent'|'signed'|'dates_wrong'|'expired', inviteId, sentAt, responseId, signedAt, via ('portal'|'link'), restart, datesNote}` from the card's latest `pause_consent` invite and its answer; `signed` only when answered within 14 days, `datesWrong` not true, and no `pause` billing event after it.
+4. `cockpit_pause_consent_for(task)` → `{state:'none'|'sent'|'signed'|'dates_wrong'|'expired', inviteId, sentAt, responseId, signedAt, via ('portal'|'link'), signer ('the client admin' or the typed name), start, restart, datesNote}` from the card's latest `pause_consent` invite and its answer; `signed` only when answered within 14 days, `datesWrong` not true, and no `pause` billing event after it.
 5. `cockpit_billing_write('edit',{kind:'pause', pauseKind:'client_request', ...})`: when `cockpit_form_client_live('pause_consent')`, it needs `consentResponseId` equal to the signed consent's response (`Send the pause consent from this sheet, then confirm once the client signs.` / `The client has not signed the pause consent in the last 14 days. Send it again.` / `The client says these dates are wrong. Change the restart and send a new consent.` / `The client signed a restart of {date}. Use that date or send a new consent.`) and writes `consent {kind:'signed', response_id, signed_at, via, call_id}`. When not live, W12's two-tick path runs unchanged. Non-payment pauses never need a consent. Everything else in the function is byte for byte.
 6. The pause sheet (cockpit-screens, `formDefs.ts` `pause` and `lifecycleClient.ts`): reads `prefill.consent`; for a client request with the form live, the two tick fields are replaced by a read-only consent row and a "Send the pause consent" action that calls `cockpit_form_invite_issue` with origin `pause` and the sheet's restart, reason and call (5.2); Confirm stays disabled until `consent.state='signed'`, and sends `consentResponseId`.
 7. `cockpit_form_notices_in()` gains `kind:'pause_consent'` rows (signed or dates wrong, not yet followed by a pause event) for the Today band.
@@ -697,7 +759,7 @@ Files: listed in section 7 (portal-forms). Read `node_modules/next/dist/docs/` f
 
 ### 4.4 The exit survey and C4b (client-lifecycle for SQL; cockpit-screens for the screens)
 
-1. `exit_survey` version 2 (5.6), `audience:'admin'`, `signer:'typed'` by link. Its default channel is the link whenever the workspace is closed, missing, or without a live session in 14 days (3.3 rule).
+1. `exit_survey` version 2 (5.6), `audience:'admin'`, `signer:'typed'` (the token path asks the name). Issue needs a departure or a Stopped card (`cockpit_form_card_allows`, 2.3). Its default channel is the link whenever the workspace is closed, missing, or without a live session in 14 days (3.3 rule).
 2. `cockpit_form_issue_hook_exit_survey(invite)`: when the card has an open departure (W12 W21: not removed, not confirmed or confirmed, no later resume) with `survey_state='not_sent'`, sets it `sent` (under the departures' own guard rules: the builder reads the triggers on `cockpit_churn_departures` and uses its transaction-local setting if one is needed) and stores `context.departureId`.
 3. `cockpit_form_hook_exit_survey(response)`: queues `termination.notice` (dedupe `termination:`||id) and `termination.submitted` (dedupe `termination-sub:`||id; it posts only once its setting is enabled at D-C4B); inserts billing event `survey` (source `system`, `by_whom 'the cockpit'`, detail 3.8) so the comment lands on the card through the rails; sets the departure's `survey_response_id` and `survey_state='filled'` when one is open. No card field changes.
 4. `cockpit_form_notices_in()` lists native exit surveys (state `submitted`, card verified by the invite) under the same rule as legacy ones; `cockpit_form_notice_answer` ("Not leaving") works on them through the guard carve-out (2.2).
@@ -706,20 +768,20 @@ Files: listed in section 7 (portal-forms). Read `node_modules/next/dist/docs/` f
 
 ### 4.5 NPS, CSAT and their triggers (client-voice for SQL; cockpit-screens for the screens)
 
-1. Registry rows `nps` and `csat` (seeded in `a` with 5.7 and 5.8's schemas; `audience:'any'`, `signer:'none'` by link: anyone in the client group may answer once).
+1. Registry rows `nps` and `csat` (seeded in `a` with 5.7 and 5.8's schemas; `audience:'any'`, `signer:'none'`: no name on either path; by link anyone in the client group may answer once).
 2. `cockpit_form_issue_hook_nps(invite)`: sets `context.round` (the card's highest NPS round + 1) and inserts billing event `nps_sent` (source `system`, detail `{invite_id, on, round}`), which writes NPS Survey Sent once the kind is open (canary first). `cockpit_form_issue_hook_csat(invite)`: sets `context.try` (previous CSAT invites for the card + 1).
 3. `cockpit_form_hook_nps(response)` / `_csat`: queue `nps.received` / `csat.received`; when the score (`recommend` / `onboarding`) is at or under `voice.low_score.max` (6), queue `voice.low` (dedupe `low:`||id). The low-score row on Today comes from `cockpit_client_voice_today()` and carries the ticket button (W5 pattern, V11).
 4. **The schedule** `cockpit_form_schedule_run(p_now, p_apply)` (cron 07:00 UTC):
-   1. Sweep: `cockpit_form_invites_expire()`; delete token opens older than 2 days.
+   1. Sweep: `cockpit_form_invites_expire()`; `cockpit_form_invites_withdraw_ineligible()` (open NPS/CSAT/consent invites of cards no longer Active or now leaving); `refused` `form_invite` messages of closed invites → `skipped`; delete token opens older than 2 days.
    2. Off (`forms.schedule.on` false): write `form-schedule` `{ran:false, why:'The schedule is off.'}` and stop.
-   3. Candidates: cards in `cockpit_billing_accounts` whose `client_status` is `Active` (Paused and Stopped skipped), first launch = `min(launch_date)` over `cockpit_client_billing_days` for the card (cards with none skipped, said as "no launch date on the card").
+   3. Candidates: cards for which `cockpit_form_card_allows(task, form)` is NULL (mirror `Active`, no open departure; every other status and a leaving card skipped), first launch = `min(launch_date)` over `cockpit_client_billing_days` for the card (cards with none skipped, said as "no launch date on the card").
    4. NPS (row on and `nps` live): due when `first_launch + firstDay ≤ today` and no open NPS invite and (no NPS invite ever, or the newest NPS invite of any origin was issued `everyDays` or more ago). A manual send is an invite, so it resets the clock (V21).
-   5. CSAT (row on and `csat` live): due when `first_launch + afterLaunchDays ≤ today`, `today − first_launch ≤ maxAgeDays` (60, V24), no CSAT answer ever, no open CSAT invite, and fewer than `1 + reissues` CSAT invites so far.
-   6. Channels: `portal` when the workspace is open and presence shows a live session in 14 days; otherwise `portal` + `whatsapp` (no workspace: `whatsapp` only). CSAT adds `whatsapp` only on its first try and only from `whatsappAfterDays` (3) after launch; later tries are portal only. Every `whatsapp` channel makes a draft message the CSM approves (V7); the schedule never approves.
-   7. At most `maxPerRun` (3) new invites per form per run, oldest launch first; issued through `cockpit_form_invite_issue_system`. Idempotent per day (an invite issued today for the card and form is a skip).
-   8. Writes `cockpit_sync_state` `form-schedule` `{ran:true, issued:{nps, csat}, skipped:{paused, stopped, noLaunch, open, notLive, filled, tooOld, cap}, at}` and a plain note.
-5. **The CSM's Send** (5.3): any client form from the client page, any time, through `cockpit_form_invite_issue` (pause consent only from the pause sheet; CSAT refused once filled). WhatsApp goes through the approval and the worker (4.1), never a test send to a real client.
-6. **C5** (deploy, D-C5): go-live `nps` and `csat`; open billing kind `nps_sent` (canary first); turn the schedule on; remove `WHTP4007419` and `WHTP4007430`; switch off Make `8962328` and `8962387` and read each back; read Make `8068892` first (the audit says active, not re-checked) and switch it off only if it is the NPS Slack scenario; close `fuPgs85S` and `KbcbPA73`; import their 2 old answers with `forms_legacy_backfill.py nps` and `csat` as legacy with no card (V17).
+   5. CSAT (row on and `csat` live): due when `first_launch + afterLaunchDays ≤ today`, `today − first_launch ≤ maxAgeDays` (60, V24), no CSAT answer ever, no open CSAT invite, fewer than `1 + reissues` CSAT invites so far, **no CSAT invite of the card ever withdrawn by a seat** (event `withdrawn` with `{by:'seat'}` and a reason other than `Sent again`: a CSM's withdraw is final for the schedule, V26), and the last CSAT invite closed `retryAfterDays` (7) or more ago.
+   6. Channels: `portal` when the workspace is open and presence shows a live session in 14 days (any person: NPS and CSAT are audience `any`); otherwise `portal` + `whatsapp` (no workspace: `whatsapp` only). **CSAT's first try** for a card with a live session is issued from `afterLaunchDays` with `portal` only; for a card **without** a live session in 14 days (or with no workspace, or presence not reported yet) the first try **waits** until `first_launch + whatsappAfterDays` (3) and is issued with `portal` + `whatsapp` (`whatsapp` only with no workspace), so the plan's "WhatsApp link once, 3 days after launch" holds (5.14). Later tries are portal only (a card with no workspace gets no later tries: `skipped.noPortal`). Every `whatsapp` channel makes a draft message the CSM approves (V7); the schedule never approves.
+   7. At most `maxPerRun` (3) new invites per form per run, oldest launch first, and **at most one client form per card per run** (CSAT before NPS; the other waits for the next day: `skipped.oneFormToday`); issued through `cockpit_form_invite_issue_system`. Idempotent per day (an invite issued today for the card and form is a skip).
+   8. Writes `cockpit_sync_state` `form-schedule` `{ran:true, issued:{nps, csat}, skipped:{notActive, leaving, noLaunch, open, notLive, filled, tooOld, cap, withdrawnBySeat, tooSoon, waitingForWhatsAppDay, noPortal, oneFormToday, ruleNotSet}, withdrawn:{ineligible}, at}` and a plain note.
+5. **The CSM's Send** (5.1): any client form from the client page, any time, through `cockpit_form_invite_issue` (pause consent only from the pause sheet; CSAT refused once filled; NPS and CSAT only to an Active card that is not leaving; the exit survey only with a departure or a Stopped card). WhatsApp goes through the approval and the worker (4.1), never a test send to a real client.
+6. **C5** (deploy, D-C5, only once `cockpit_slack_channels` `nps-survey-feedback` reads `ok` and the notices doctor passes, Q4): go-live `nps` and `csat`; open billing kind `nps_sent` (canary first); turn the schedule on; remove `WHTP4007419` and `WHTP4007430`; switch off Make `8962328` and `8962387` and read each back; read Make `8068892` first (the audit says active, not re-checked) and switch it off only if it is the NPS Slack scenario; close `fuPgs85S` and `KbcbPA73`; import their 2 old answers with `forms_legacy_backfill.py nps` and `csat` as legacy with no card (V17).
 
 ### 4.6 The feedback bridge and the CEO NPS metric (portal-bridges; client-voice)
 
@@ -732,7 +794,7 @@ Files: listed in section 7 (portal-forms). Read `node_modules/next/dist/docs/` f
 ### 4.7 Onboarding C6 and the portal gate evidence (client-voice; portal-bridges)
 
 1. Registry row `onboarding` (typeform `KFRCXPFx`), effects all `owner:'make'`: `card_fields` (clickup_queue), `client_data_row` (sql, labelled "Client Data sheet row (Make)"), `phase3_whatsapp` (client_message), `brand_dna_task` (clickup_queue), `github_dispatch` (sql, "GitHub dispatch (Make)"). Nothing in the cockpit performs them.
-2. `forms-door`: `FORM_KEYS` gains `onboarding` and `new_client`; both store through `cockpit_form_record_make` after the signature (W12's order of checks unchanged). `onboarding` answers are shaped by the same mapping the onboarding sync uses (`readFormData` in `supabase/functions/cockpit-csm-api/onboarding.ts`, imported, not copied), and the card is the hidden `onboarding_client_id` when it names a mirrored card (kept as `hidden_id_unverified`, W12 rule).
+2. `forms-door`: `FORM_KEYS` gains `onboarding` and `new_client`; both store through `cockpit_form_record_make` after the signature (W12's order of checks unchanged). `onboarding` answers are shaped by the same mapping the onboarding sync uses: forms-door builds a `FormData` from the webhook's `form_response` and `definition` (one response, no Typeform API call, no token) and calls `formsFor(taskId, data)` from `apps/client-success-cockpit/src/lib/onboardingCore.ts` (imported, not copied; it imports nothing). It never imports `cockpit-csm-api/onboarding.ts` (`readFormData` pages the Typeform API and pulls in `tools.ts` and `zod`). D-C2 deploys with `--extra apps/client-success-cockpit/src/lib/onboardingCore.ts`, proven by a `--dry` bundle in D0; if `forms-door` needs `zod` later, `forms-door/deno.json` maps it as `cockpit-csm-api/deno.json` does. The card is the hidden `onboarding_client_id` when it names a mirrored card (kept as `hidden_id_unverified`, W12 rule).
 3. `cockpit_form_record_make(p)`: `{formKey:'onboarding'|'new_client', externalId, submittedAt, answers, hidden, taskId|null, backfill}` → response state `submitted`, source `typeform_webhook` (or `typeform_sync` for the backfill), `ON CONFLICT (form_key, external_id) DO NOTHING`, no notice (V23). For `onboarding` with a card: writes `cockpit_client_onboarding.forms.onboarding = {form_id:'KFRCXPFx', answers, response_id, submitted_at}` only when that key is empty or holds an older `submitted_at` (never overwrites a newer answer; the 10-minute poll keeps writing the same shape). No onboarding-sync change (V14).
 4. `portal_form_status(location, clickupId, 'onboarding')` → the card's newest stored onboarding answer (3.3).
 5. Portal (`src/lib/onboarding-cockpit-evidence.ts`, `onboarding-state.ts`): inside `refreshOnboarding`'s existing claimed check (never more often than it already reads ClickUp), when the record has no `form` yet, ask `portal_form_status`; `submitted:true` becomes `{form:{at:submittedAt, source:'Cockpit stored onboarding form', reference}}` through `recordCompletion` (the same trust as `responseEvidence`, which accepts a Typeform answer by its hidden id today). Failures keep the current state and say nothing new to the client. `onboarding-policy.ts` gains `cockpitEvidence(status)` (pure) beside `responseEvidence`. The portal's own receiver `/api/onboarding/typeform` stays unregistered (one receiver only).
@@ -753,8 +815,8 @@ in the same step (V15), every other webhook read before and after.
 ### 4.9 The forms editor, ED (forms-editor)
 
 1. Who: an admin seat or the CEO (`cockpit_form_seat`). Everyone else gets `Only an admin or the CEO edits forms.`
-2. What can be edited: every client form (`audience='client'`, provider native or about to be: `exit_survey` v2 before C4b): title, intro, minutes, each field's label, hint, required, options (add, relabel, remove; stored answers keep the value they were given), scale ends, show-if, order, new fields; `invite.whatsapp` and `invite.push` texts; and routing: the notice channel and mentions (the live notices editor, linked), the schedule rows (NPS first day 30..180, repeat 30..365; CSAT WhatsApp after 0..14 days, snooze 1..14, re-tries 0..5, max age 14..120), `voice.low_score.max` (0..8). Keys of published fields never change.
-3. The field guard: `cockpit_form_publish` refuses removing (or hiding behind a new `showIf`) a field listed in `reads` for an effect: `{field label} is read by {effect label}. Remove that effect first.` The hooks read only the keys in `reads` (tests prove it).
+2. What can be edited: every client form (`audience='client'`, provider native or about to be: `exit_survey` v2 before C4b; while its provider is still `typeform`, publish adds a version row and leaves the registry `schema`/`version` alone, and go-live takes the newest `v:1` version): title, intro, minutes, each field's label, hint, required, options (add, relabel, remove; stored answers keep the value they were given), scale ends, show-if, order, new fields; `invite.whatsapp` and `invite.push` texts; and routing: the notice channel and mentions (the live notices editor, linked), the schedule rows (NPS first day 30..180, repeat 30..365; CSAT WhatsApp after 0..14 days, snooze 1..14, re-tries 0..5, retry after 1..30 days, max age 14..120; every key always present, so a save never leaves a rule key missing), `voice.low_score.max` (0..8). Keys of published fields never change.
+3. The field guard: `cockpit_form_publish` refuses removing (or hiding behind a new `showIf`) a field listed in `reads` for an effect: `{field label} is read by {effect label}. Remove that effect first.` For a field named in `reads` it also freezes `type`, `min`, `max`, `required` and the option **values** (labels stay editable): `{field label} is read by {effect label}, so its type, range and choices stay as they are.` The schema's `audience` and `signer` never change once published (`Who answers this form is set in the cockpit's code.`). The hooks read only the keys in `reads` (tests prove it).
 4. `cockpit_form_publish(key, note, base)`: draft → `cockpit_form_schema_check` → `cockpit_client_text_ok` on every text → new `cockpit_form_versions` row (`published_by` the seat's email, `note`) → registry `schema` and `version` → draft removed → audit. Open invites keep the version they were issued with (answers stay valid against it).
 5. `cockpit_form_restore(key, version, note)`: publishes that version's schema as a new version (`Restored version {n}`), same checks.
 6. Staff forms (`extension`, `pause`, `resume`, `churn_confirm`, `mrr`), `checkin`, `kickoff`, `blueprint`, `onboarding`, `new_client`: listed read only with `Set in the cockpit's code; the SQL checks these fields word for word.` or `Lives in Typeform; Make owns its effects until Stage 4.` (V13).
@@ -775,7 +837,7 @@ termination, read 2026-11-01) and `apps/media-buyer-cockpit/src/lib/csmLinks.ts`
 form. It goes to their portal, or by WhatsApp link."}` pointing to the client page route; the pause
 row's note reads `Open the client, then Pause this client. The client signs the consent in their
 portal or by link.`; the termination row `Open the client, then Client is leaving or Send a form.`
-`viktor-side-scripts/csm/csm_assistant.py:39,41-42`: the pause and cancellation Typeform links are
+`viktor-side-scripts/csm/csm_assistant.py:39,41` (39 pause, 41 cancellation; line 42 is the referral form and stays): the pause and cancellation Typeform links are
 replaced by the same sentences (the VPS copy changes at its next release). Each row changes in the
 same ship as its form's go-live is planned; until a form is live the row says so: `Opens with the
 portal forms (after the switch-on).`, keeping the Typeform link visible below it as `Old form, still
@@ -844,12 +906,12 @@ interactive element shows its eight states in the slice's preview page; results 
 | Element | Copy |
 |---|---|
 | Action on the client page | `Send a form` |
-| Presence line | `Opened the portal {n} days ago · {k} people` / `Has not opened the portal in 14 days, so the WhatsApp link goes too.` / `No Mahara OS workspace: the WhatsApp link goes.` / `Workspace closed: send the link by WhatsApp.` / `Presence is not reported yet; both doors are picked.` (before D-PR) |
-| Form chips | `NPS survey`, `Onboarding survey`, `Exit survey`; disabled with the `why` of 3.3 (`Opens to clients after its switch-on.`, `They already filled it on {date}.`, `Sent from Pause this client.`) |
+| Presence line | `Opened the portal {n} days ago · {k} people` / `Has not opened the portal in 14 days, so the WhatsApp link goes too.` / `No admin has opened the portal in 14 days, so the WhatsApp link goes too.` (an admin-only form with members only) / `No Mahara OS workspace: the WhatsApp link goes.` / `Workspace closed: send the link by WhatsApp.` / `We can't see portal visits yet, so it goes to the portal and by WhatsApp.` (before D-PR) |
+| Form chips | `NPS survey`, `Onboarding survey`, `Exit survey`; disabled with the `why` of 3.3 (`Opens to clients after its switch-on.`, `They already filled it on {date}.`, `Sent from Pause this client.`, `Mark Client is leaving first, then send the exit survey.`, `{client} is not an active client, so this form does not go to them.`, `{client} is leaving. Send the exit survey instead.`) |
 | Channel chips | `Portal`, `WhatsApp link`; `Phone alert to people who turned alerts on` |
 | Note | label `A line for the client (optional)`, hint `Shown under the form's title. No numbers about leads or cost.` |
 | WhatsApp text | label `WhatsApp text`, language picker `Arabic` / `English`, hint `The link is added when it sends.` |
-| Submit | `Send the {form}` → toast `Sent` |
+| Submit | `Send the {form}` → toast `Sent` when `delivered = 'portal'`; `Saved. Approve the WhatsApp message to send it.` when the portal is not a channel |
 | After send with WhatsApp | `The WhatsApp message waits for your approval.` + `Approve and send` → `Approved. It sends within about 3 minutes.` |
 | Refusals | the SQL sentences of 3.3, word for word |
 | Network error | `Not sent. Check your connection and press Send the {form} again.` |
@@ -866,7 +928,8 @@ with Send a form.` States in words: `Waiting for approval`, `Sent {date}`, `Seen
 
 Pause sheet, client request, form live: the consent row replaces the two ticks:
 `Client consent` + state line `Not sent yet.` / `Waiting for the client's signed consent. Sent
-{date}.` / `Signed {date} {in the portal | by link}. Confirm the pause.` / `The client says the dates
+{date}.` / `Signed by the client admin in the portal on {date}. Confirm the pause.` or `Signed by
+link by {typed name} on {date}. Check the name, then confirm the pause.` / `The client says the dates
 are wrong: "{their note}". Change the restart and send a new consent.`; action `Send the pause
 consent` → `Sent`; Confirm label `Confirm pause` stays disabled with the hint `Confirm opens once the
 client signs.`
@@ -878,8 +941,10 @@ Compact `SectionCard` bands under Today, hidden when empty: `NPS sent: {client}`
 {form} for {client}` → `Approve and send`; `Answered: {form} from {client}` → `Read the answer`;
 `Low score: {client} gave {score}/10 on the {survey}` → `Open the low-score ticket` (prefilled request
 form, type `client_low_score`, requester the presser, source `client_page`; hidden until D-R2) and
-`Open the client`; `Pause consent signed: {client}` → `Confirm pause`; `Pause dates wrong: {client}`
-→ `Open the pause`; native termination rows reuse W12's `Notice in` band.
+`Open the client`; `Pause consent signed: {client} ({in the portal by the client admin | by link by
+{typed name}})` → `Confirm pause`; `Pause dates wrong: {client}` → `Open the pause`; `Send the exit
+survey to {client}` (kind `exit_survey_due`) → `Send exit survey` (opens Send a form preset to the
+exit survey); native termination rows reuse W12's `Notice in` band.
 
 ### 5.4 Client voice card (cockpit, client page) and the brief line
 
@@ -895,17 +960,17 @@ form.` The brief (`clientBrief.ts`) gains one line when an NPS or CSAT answer is
 | Key | Type | EN | AR |
 |---|---|---|---|
 | title | | Confirm your pause | أكّد الإيقاف المؤقت |
-| intro | | Your account manager set up this pause after your call. Check the dates, then confirm. | مدير حسابك جهّز هالإيقاف بعد مكالمتكم. شيّك على التواريخ وبعدها أكّد. |
+| intro | | Your account manager set up this pause after your call. Check the dates, then confirm. | مدير حسابك جهّز هالإيقاف بعد المكالمة. شيّك على التواريخ وبعدها أكّد. |
 | context `start` | date | Pause starts | يبدأ الإيقاف |
 | context `restart` | date | Campaign restarts | ترجع الحملة |
 | `datesWrong` | tick, optional | These dates are wrong | التواريخ هذي غلط |
 | `datesNote` | longtext, required, showIf datesWrong | What should they be? | شنو التواريخ الصح؟ |
-| `reason` | choice, required | Why are you pausing? | ليش بتوقفون؟ |
+| `reason` | choice, required | Why are you pausing? | ليش تبي توقف الحملة؟ |
 | options | | Travel · Temporary closure · We are at capacity · Ramadan or a season · Something else | سفر · سكّرنا مؤقتاً · عندنا شغل فوق طاقتنا · رمضان أو موسم · شي ثاني |
 | `details` | longtext, required | Tell us a little more | قول لنا أكثر شوي |
 | `consentTerm` | tick, required, showIf datesWrong = false | I understand the 90-day term keeps running during the pause. | أدري إن مدة العقد ٩٠ يوم تظل تمشي خلال الإيقاف. |
 | `consentOver14` | tick, required, showIf datesWrong = false, boldIf over14 | I understand that a pause longer than 14 days ends our agreement. | أدري إن الإيقاف إذا زاد عن ١٤ يوم ينتهي فيه الاتفاق بيننا. |
-| `anythingElse` | longtext, optional | Anything else for your team? | تبي تقول شي ثاني للفريق؟ |
+| `anythingElse` | longtext, optional | Anything else for your Mahara team? | تبي تقول شي ثاني لفريق مهارة؟ |
 | submit | | Confirm the pause | أكّد الإيقاف |
 | done | | Confirmed. Your account manager takes it from here. | تم التأكيد. مدير حسابك بيكمل الباقي. |
 | done (dates wrong) | | Sent. Your account manager will fix the dates and send it again. | وصل. مدير حسابك بيعدّل التواريخ ويرسله لك مرة ثانية. |
@@ -918,22 +983,22 @@ form.` The brief (`clientBrief.ts`) gains one line when an NPS or CSAT answer is
 
 | Key | Type | EN | AR |
 |---|---|---|---|
-| title | | Before you go | قبل لا تمشون |
-| intro | | We are sorry to see you go. Your answers reach your account manager and our CEO, and help us do better. | يعز علينا تمشون. ردودكم توصل لمدير حسابكم وللمدير التنفيذي، وتساعدنا نتحسن. |
-| `reasons` | multi, required | Why are you leaving? | ليش قررتوا توقفون؟ |
+| title | | Before you go | قبل لا تمشي |
+| intro | | We are sorry to see you go. Your answers reach your account manager and our CEO, and help us do better. | يعز علينا تمشي. ردودك توصل لمدير حسابك وللمدير التنفيذي، وتساعدنا نتحسن. |
+| `reasons` | multi, required | Why are you leaving? | ليش قررت توقف؟ |
 | options | | The results · Changes in our company · A cheaper provider · Moving it in-house · Something else | النتائج · تغييرات بشركتنا · لقينا أحد أرخص · بنسويه داخل الشركة · شي ثاني |
-| `ads` | scale 1–10, required | The ads we ran for you | الإعلانات اللي سويناها لكم |
-| `people` | scale 1–10, required | The people who reached you through the ads | الناس اللي تواصلوا معاكم من الإعلانات |
+| `ads` | scale 1–10, required | The ads we ran for you | الإعلانات اللي سويناها لك |
+| `people` | scale 1–10, required | The people who reached you through the ads | الناس اللي تواصلوا معاك من الإعلانات |
 | `comms` | scale 1–10, required | Communication with our team | التواصل مع فريقنا |
 | scale ends (1–10) | | 1 = Poor · 10 = Excellent | ١ = ضعيف · ١٠ = ممتاز |
-| `recommend` | scale 0–10, required | How likely are you to recommend Mahara to another business owner? | شكثر ممكن تنصحون فينا صاحب شركة ثاني؟ |
+| `recommend` | scale 0–10, required | How likely are you to recommend Mahara to another business owner? | شكثر ممكن تنصح فينا صاحب شركة ثاني؟ |
 | scale ends (0–10) | | 0 = Not at all · 10 = Definitely | ٠ = أبد · ١٠ = أكيد |
-| `keptUs` | longtext, optional | What would have kept you with us? | شنو كان ممكن يخليكم تكملون معانا؟ |
-| `comments` | longtext, optional | Anything else you want us to know? | في شي ثاني تبون نعرفه؟ |
+| `keptUs` | longtext, optional | What would have kept you with us? | شنو كان ممكن يخليك تكمل معانا؟ |
+| `comments` | longtext, optional | Anything else you want us to know? | في شي ثاني تبينا نعرفه؟ |
 | submit | | Send | أرسل |
-| done | | Thank you. Your account manager will be in touch. | مشكورين. مدير حسابكم بيتواصل معاكم. |
+| done | | Thank you. Your account manager will be in touch. | مشكور. مدير حسابك بيتواصل معاك. |
 | WhatsApp | | Hi {client} team, thank you for the time we worked together. Two minutes of honest feedback would help us a lot: {form_link} | هلا فريق {client}، شكراً على الفترة اللي اشتغلنا فيها سوا. دقيقتين من رأيكم الصريح تفرق معانا وايد: {form_link} |
-| push | | Your account manager sent a short survey. Tap to open it. | مدير حسابكم أرسل لكم استبيان قصير. اضغطوا وافتحوه. |
+| push | | Your account manager sent a short survey. Tap to open it. | مدير حسابك أرسل لك استبيان قصير. اضغط وافتحه. |
 
 `reads`: `card_comment` → `reasons`, `ads`, `people`, `comms`, `recommend`, `keptUs`, `comments`. The
 recommend score here is kept out of NPS (plan 5.8).
@@ -948,7 +1013,7 @@ recommend score here is kept out of NPS (plan 5.8).
 | ends | | 0 = Not at all likely · 10 = Extremely likely | ٠ = أبد · ١٠ = أكيد |
 | `results` | scale 0–10, optional | How happy are you with the results so far? | شكثر راضي عن النتائج لين الحين؟ |
 | ends | | 0 = Not happy · 10 = Very happy | ٠ = مو راضي · ١٠ = راضي وايد |
-| `communication` | scale 1–10, optional | How is communication with your team at Mahara? | شلون التواصل مع فريقك بمهارة؟ |
+| `communication` | scale 1–10, optional | How is communication with your Mahara team? | شلون التواصل مع فريق مهارة؟ |
 | ends | | 1 = Poor · 10 = Excellent | ١ = ضعيف · ١٠ = ممتاز |
 | `startStop` | longtext, optional | What should we start or stop doing? | شنو تبينا نبدي فيه أو نوقفه؟ |
 | submit | | Send | أرسل |
@@ -963,13 +1028,13 @@ recommend score here is kept out of NPS (plan 5.8).
 | Key | Type | EN | AR |
 |---|---|---|---|
 | title | | How was getting started? | شلون كانت البداية معانا؟ |
-| intro | | Your campaign is live. Tell us how the first steps felt. | حملتكم اشتغلت. قولوا لنا شلون كانت أول الخطوات. |
+| intro | | Your campaign is live. Tell us how the first steps felt. | حملتك اشتغلت. قول لنا شلون كانت أول الخطوات. |
 | `onboarding` | scale 1–10, required | How would you rate getting started with Mahara? | من ١ لين ١٠، شكثر تعطي البداية معانا؟ |
 | ends | | 1 = Poor · 10 = Excellent | ١ = ضعيف · ١٠ = ممتاز |
 | `liked` | longtext, optional | What did you like? | شنو عجبك؟ |
 | `disliked` | longtext, optional | What could we have done better? | شنو كان ممكن نسويه أحسن؟ |
 | submit | | Send | أرسل |
-| done | | Thank you. This helps the next client too. | مشكورين. هذا يساعدنا مع العميل الياي بعد. |
+| done | | Thank you. This helps the next client too. | مشكور. هذا يساعدنا مع العميل الياي بعد. |
 | WhatsApp | | Hi {client} team, now that your campaign is live, how was getting started with us? Tell us in a minute: {form_link} | هلا فريق {client}، الحين حملتكم اشتغلت. شلون كانت البداية معانا؟ قولوا لنا بدقيقة: {form_link} |
 | push | | How was getting started? Tell your Mahara team in a minute. | شلون كانت البداية؟ قول لفريق مهارة بدقيقة. |
 
@@ -985,16 +1050,19 @@ records the bridged fields `kind`, `topic`, `message`, `rating`, `contactOk` so 
 
 | Where | EN | AR |
 |---|---|---|
-| Pop-up title | Your team needs a minute of your time | فريقك يبي منك دقيقة |
-| Pop-up body | {form title}. It takes about {n} minute(s). | {form title}. ياخذ تقريباً {n} دقايق. |
+| Pop-up title | Your Mahara team needs a minute of your time | فريق مهارة يبي منك دقيقة |
+| Pop-up body, minutes 1 | {form title}. It takes about 1 minute. | {form title}. ياخذ دقيقة وحدة بس. |
+| Pop-up body, minutes 2 | {form title}. It takes about 2 minutes. | {form title}. ياخذ تقريباً دقيقتين. |
+| Pop-up body, minutes 3–10 | {form title}. It takes about {n} minutes. | {form title}. ياخذ تقريباً {n} دقايق. |
 | Pop-up from line | From {first name} at Mahara | من {first name} بمهارة |
+| Pop-up from line, schedule (`from` null) | From your Mahara team | من فريق مهارة |
 | Pop-up buttons | Open the form · Not now | افتح الفورم · مو الحين |
 | Home card title | Forms waiting for you | فورمات تنطرك |
 | Card row | {title} · sent {date} | {title} · انرسل {date} |
 | Card button | Open | افتح |
 | Sidebar | Forms | الفورمات |
-| Page empty | Nothing waiting. When your team sends a form, it shows here. | ماكو شي ينطرك. لما يرسل لك فريقك فورم بيطلع هني. |
-| Answered row | Sent {date}. Thank you. | انرسل {date}. مشكورين. |
+| Page empty | Nothing waiting. When your Mahara team sends a form, it shows here. | ماكو شي ينطرك. لما يرسل لك فريق مهارة فورم بيطلع هني. |
+| Answered row | Sent {date}. Thank you. | انرسل {date}. مشكور. |
 | Language toggle | English · عربي | English · عربي |
 | Required mark | required | مطلوب |
 | Optional mark | optional | اختياري |
@@ -1007,8 +1075,8 @@ records the bridged fields `kind`, `topic`, `message`, `rating`, `contactOk` so 
 | Sending | Sending… | قاعد ينرسل… |
 | Network error | Not sent. Check your connection and press Send again. Nothing is sent twice. | ما انرسل. شيّك على النت واضغط أرسل مرة ثانية. ما راح ينرسل مرتين. |
 | Expired | This link has ended. Message your account manager for a new one. | هالرابط انتهى. كلّم مدير حسابك يرسل لك رابط يديد. |
-| Answered | This form was already sent. Thank you. | هالفورم انرسل من قبل. مشكورين. |
-| Withdrawn | Your team no longer needs this form. Message your account manager if you have a question. | فريقك ما عاد يحتاج هالفورم. إذا عندك سؤال كلّم مدير حسابك. |
+| Answered | This form was already sent. Thank you. | هالفورم انرسل من قبل. مشكور. |
+| Withdrawn | Your Mahara team no longer needs this form. Message your account manager if you have a question. | فريق مهارة ما عاد يحتاج هالفورم. إذا عندك سؤال كلّم مدير حسابك. |
 | Not live / unknown | This link does not open a form. Message your account manager. | هالرابط ما يفتح أي فورم. كلّم مدير حسابك. |
 | Limited | Too many tries. Wait a minute, then open the link again. | محاولات وايد. انطر دقيقة وبعدها افتح الرابط مرة ثانية. |
 | Reloaded token page | Open the link from your WhatsApp message again. | افتح الرابط من رسالة الواتساب مرة ثانية. |
@@ -1017,7 +1085,12 @@ records the bridged fields `kind`, `topic`, `message`, `rating`, `contactOk` so 
 | Staff preview banner | Team preview: this is what the client sees. Nothing is recorded. | معاينة للفريق: هذا اللي يشوفه العميل، وما ينحفظ شي. |
 | Staff preview submit | Preview: nothing was sent. | معاينة: ما انرسل شي. |
 
-Arabic rules applied (aziz-kuwaiti-voice): spoken Kuwaiti, polite, no em dashes, no quote marks,
+Address rule (V27): text drawn in the portal or on the link page speaks to the one person
+answering, in the singular (مدير حسابك، قول، مشكور), as the portal's existing Arabic does (مواعيدك،
+فريقك); WhatsApp texts to the client group stay plural (هلا فريق {client}، شيّكوا، تنصحون). "Your
+team" in client copy is always "your Mahara team" / "فريق مهارة", because in the portal "your team"
+already means the client's own staff (تم التحويل لفريقك). The renderer picks the minutes line by
+number (a test covers 1, 2 and 5). Arabic rules applied (aziz-kuwaiti-voice): spoken Kuwaiti, polite, no em dashes, no quote marks,
 Arabic-Indic digits, "دولار" never "$" (no money appears in these forms), loanwords as he says them
 (فورم). Nothing promises results; nothing quotes leads or cost per lead (the `people` rating asks
 about the people who reached them, not a count).
@@ -1025,7 +1098,8 @@ about the people who reached them, not a count).
 ### 5.11 Churn tracker (cockpit, ChurnPage)
 
 `Send exit survey` is enabled on each departure (opens Send a form preset to the exit survey, link
-by default when the workspace is closed); the row shows `Exit survey sent {date} · {portal | link}`,
+by default when the workspace is closed); the Client is leaving sheet's after-send trail offers the
+same `Send exit survey` button; the row shows `Exit survey sent {date} · {portal | link}`,
 `Exit survey answered {date}` (with `Read the answer`) or `Not sent`. The W12 line `Client forms
 arrive with the portal (wave 3).` goes. A native survey in the Notice in band shows its ratings in
 Geist Mono with `Confirm churn`, `Not leaving`, `Open the notice ticket`.
@@ -1072,13 +1146,14 @@ read-only lines of 4.9.6; empty draft: `No changes yet.`
 | Check id | Reads | Warn / fail |
 |---|---|---|
 | `form-schedule` | `cockpit_sync_state` `form-schedule` | fail when older than 26 h while `forms.schedule.on`; warn when a run issued 0 and skipped any for `notLive` |
-| `invites-expiry` | `cockpit_form_invites` | warn when an `open` invite is past `expires_at` by more than 1 h (the sweep is not running) |
+| `invites-expiry` | `cockpit_form_invites` | warn when an `open` invite is past `expires_at` by more than 26 h (the daily sweep is not running; reads already treat it as expired, V25) |
 | `invite-push` | invites `push_state='sending'` | warn when older than 15 min |
 | `invite-links` | `cockpit_client_messages` kind `form_invite` | warn on any `unknown`; warn on a draft older than 48 h ("{n} form links wait for a CSM's approval") |
 | `token-limits` | `cockpit_form_token_opens` | warn when more than 50 `limited` in an hour |
 | `presence` | `cockpit_portal_presence.pushed_at` | warn when the newest push is older than 30 min while `forms.client.presence` |
-| `voice-count` | `cockpit_client_voice_summary` (service SQL) vs `cockpit_form_invites_daily_v` | warn when answered invites ≠ answers for the last 30 days |
-| `low-score-open` | `cockpit_client_voice_today` (service SQL) | warn when a low score waits more than 1 business day with no ticket |
+| `voice-count` | `cockpit_client_voice_v` (distinct cards with an NPS answer in the last 30 days) vs `cockpit_form_invite_events` joined to non-canary NPS invites (distinct cards with `answered` in the same window), both over REST with the service key (the browser RPCs are seat-gated and refuse the guardian) | warn when the two card counts differ |
+| `low-score-open` | `cockpit_client_voice_v` (score at or under `voice.low_score.max` from `cockpit_settings`, last 14 days) and `cockpit_requests` (`type_key='client_low_score'`, same card, created at or after the answer), over REST | warn when a low score waits more than 1 business day with no ticket |
+| `hook-failed` | `cockpit_form_invite_events` event `hook_failed` | warn on any in the last 7 days: "{n} client answers were stored but a follow-up step failed. Re-run it from the runbook." |
 | `legacy-24h` | responses state `legacy` in 24 h for a form whose provider is native | warn: "{form} came through the old link {n} times today" |
 | `onboarding-webhook` | read model `forms.onboarding.response_id` (submitted since D-C6) vs stored `onboarding` responses | for 14 days after D-C6: warn on a poll-only answer older than 30 min; after day 14 the check reads "compared for 14 days" |
 | `forms-door-make` | `forms-door:onboarding`, `forms-door:new_client` | fail on the last outcome `failed`; quiet forms are normal and said so |
@@ -1094,17 +1169,21 @@ from anywhere); "Turn the schedule on or off" and "Why did NPS not go to {client
 reasons); "Low score" (the ticket, the call); "Presence looks wrong" (the portal cron, the switch);
 "The onboarding webhook" (`forms_key.py` status/probe/unregister; the poll keeps the read model);
 "The New Client Form webhook" (records only; never submit the form); "Undo a published form version"
-(Go back to version n); "Roll back a migration with screens on it" (W12's row, now for `a` to `d`).
+(Go back to version n); "Roll back a migration with screens on it" (W12's row, now for `a` to `d`,
+with D-B1's `pause_consent` registry step); "A client answer's follow-up step failed" (`hook_failed`
+events: read the hook and sqlstate, fix, re-run `cockpit_form_client_submitted` for the response as
+the owner; the dedupe keys stop doubles).
 
 ### 6.4 SOURCES.md rows (client-voice)
 
 NPS (`clients.nps`: "From the client's own answers in the portal or by WhatsApp link since {first
 day}; each client counts once per window with their latest answer; promoters 9–10 minus detractors
-0–6, over n answers; the 2 Typeform answers before the portal had no client and are left out;
+0–6, over n answers; the 2 old Typeform answers could not be matched to a client and are left out;
 checked against the count of answered invites"); CSAT ("average of onboarding answers 1–10, shown
 apart from NPS"); Portal feedback ("counted apart; its 1–5 rating never enters NPS").
 
 ---
+
 ## 7. File ownership
 
 Seven slices, each in **one repo**. A file appears under exactly one slice. Pairs that
@@ -1146,12 +1225,12 @@ to `r` (the existing test helper's live chain) then its own file(s) twice. Every
 
 | Slice | Tests |
 |---|---|
-| invites-core | `cd apps/media-buyer-cockpit && bun test scripts/forms-invites-supabase.test.ts scripts/forms-stage3-base-supabase.test.ts` (the second unchanged and green); `cd supabase/functions/cockpit-notices && bun test`; `cd supabase/functions/cockpit-forms-api && bun test`; `cd hermes/client-messages && bun test`. Asserts: `a` applies twice; the drift guard refuses a changed body; every new table has row security, no browser grant, refuses delete; the seat gate (a CSM on another client refused by `_view`, `_issue`, `_withdraw`, `_link`, `_answer_read`; anon refused everywhere); a form not live refuses issue; one open invite per card, form and purpose; a repeated request id returns the first invite; CSAT refused once filled; a Stopped card refused for NPS, CSAT and pause consent; the portal channel refused without an open workspace; notes and templates through `cockpit_client_text_ok` (an English "leads", an Arabic "ليدز", "CPL", "guarantee" and "نضمن" each refused, "the people who reached you" allowed); `cockpit_form_answers_check` on every row of the fixture (codes exact); `cockpit_form_schema_check` refuses `file`, a missing Arabic text, a duplicate key, a `showIf` to a later field; tokens: the raw token never appears in any table, audit row or event (scan every text column after a mint); `_link` revokes the previous copy token; `portal_form_token_open` refuses unknown, expired, answered, withdrawn, not-live tokens with their codes; the 30-a-minute browser limit, the 120-a-minute network limit and the 10-unknown limit each return `limited`; `portal_form_submit` and `_token_submit` store one answer per invite (a second submit from the other channel answers `answered`), revoke tokens, skip the unsent message, refuse an admin-only form for a member, refuse a hidden field's answer; a workspace mismatch raises `form_invite_not_in_workspace`; a closed workspace refuses the portal path while the token works; `portal_form_for_person` respects the 20-hour shared cap with an ask shown, `later` snoozes 3 days, the deep link passes the cap; `portal_form_presence_put` refused while off; the effect gate passes an open live `form_invite` message and refuses an expired or withdrawn one with its reason; approve refuses a body without `{form_link}` or with it twice; claim accepts `form_invite`; `cockpit_client_message_invite_link` mints once per message and answers `already_made` after; the worker replaces the placeholder in the sent text only, records `unknown` on `already_made`, masks the link in group searches and never writes the URL to its report; `recap.approve` refuses a `form_invite` message and `invite.approve` a recap; the six notice kinds render 3.4's texts and carry no email, answer text or token; the canary door refuses any card but `86eywg1cq` and mutes its notices; `cockpit_form_client_go_live` moves `exit_survey` to native and withdraws open invites when switched off. |
-| client-lifecycle | `cd apps/media-buyer-cockpit && bun test scripts/client-lifecycle-supabase.test.ts scripts/money-acts-supabase.test.ts scripts/churn-confirm-supabase.test.ts` (the last two unchanged and green); `cd supabase/functions/clickup-writeback && bun test billing.test.ts`; `cd supabase/functions/billing-sync && bun test`. Asserts: `b` applies twice after `a`; the trigger queues `system` `survey` and `nps_sent` and still refuses `system` pause; `nps_sent` writes NPS Survey Sent (read back against a stubbed ClickUp) and `survey` writes no field and posts 3.8's comment with no email; the pause with `pause_consent` not live keeps W12's ticks (a live-body replay of the old billing sheet shape still pauses); with it live: refused without `consentResponseId`, refused on a consent over 14 days old, refused on `datesWrong`, refused on a different restart, accepted with the signed one, and the consent detail and comment say "signed"; non-payment pauses need no consent; the issue hook refuses a Paused card; the exit-survey issue hook marks an open departure `sent`; the submit hook queues `termination.notice` and `termination.submitted` once each, inserts one `survey` event, marks the departure `filled`; `cockpit_form_notices_in` lists a native survey and a signed consent and drops the consent after a pause event; "Not leaving" answers a native survey once (guard carve-out) and a second answer is refused; `cockpit_csm_churn_read` carries `surveyInvite`; the canary accepts `survey` and `nps_sent` on the test card only. |
-| client-voice | `cd apps/media-buyer-cockpit && bun test scripts/client-voice-supabase.test.ts scripts/forms-stage3-base-supabase.test.ts`; `cd supabase/functions/forms-door && bun test`; `python3 -m unittest scripts/dev/test_forms_key.py scripts/dev/test_forms_legacy_backfill.py`; `cd hermes/ceo-refresh && bun test`; `cd hermes/csm-calls && bun test sources.test.ts`; `cd hermes/cockpit-guardian && python3 -m unittest discover -s tests`. Asserts: `c` applies twice after `a` and `b`; the schedule with a fake clock: off does only the sweep; on issues NPS at day 60 exactly, not at day 59, again at 60 + 90 and not before, skips Paused, Stopped, no launch date, an open invite, a form not live; a manual send resets the 90 days; CSAT goes after launch, only within 60 days of launch, never after an answer, WhatsApp once from day 3, portal re-tries up to 3; at most 3 per form per run, oldest launch first; idempotent on a second run the same day; first launch is the minimum over the snapshots; the NPS issue hook writes one `nps_sent` event with the round; hooks queue `nps.received`/`csat.received` and `voice.low` at 6 and not at 7; `cockpit_client_voice_v` excludes legacy rows and feedback ratings from bands; the NPS number on a fixture (3 promoters, 1 passive, 1 detractor = 40, n 5; a card answering twice counts once); n 0 gives NULL and "No scores yet", never 0; `supabase_read_only_user` can select both views (the helpers granted); `portal_feedback_record` refused while not live, idempotent on the feedback id, queues `feedback.received`; forms-door: `onboarding` and `new_client` bad signature 401 before any parse, a good one stores state `submitted` with no notice, kickoff/exit_survey/pause_request behave exactly as before; a Typeform delivery for native `exit_survey` stores legacy and queues `legacy.received`; `cockpit_form_record_make` writes the onboarding read model only when empty or older, with the same `answers` shape as `readFormData` on the same recorded payload; `portal_form_status` returns the newest answer with `unverified`; `forms_key.py` handles the two new forms and `register-typeform` reads every other webhook before and after; the backfill prints counts only and stores `nps`/`csat` with no card; metrics: `clients.nps` and `clients.csat` from a fixture payload, missing read is said, not 0; the guardian checks read "not set up yet" as ok and their warn/fail rules of 6.2. |
-| forms-editor | `cd apps/media-buyer-cockpit && bun test scripts/forms-editor-supabase.test.ts`; `cd apps/client-success-cockpit && bun test scripts/forms-editor.test.tsx`. Asserts: `d` applies twice after `a` to `c`; only an admin or the CEO reads or writes; a stale base refused; publish runs the schema check, the text rule on every text, and the field guard (removing `recommend` from `nps` refused naming the effect; hiding it behind a `showIf` refused); a published key cannot be renamed; publish adds one version, updates the registry, removes the draft, writes an audit row; open invites keep their version and their answers still pass the check; restore publishes an old schema as a new version; staff and Make forms refuse publish with 4.9.6's sentences; `cockpit_form_registry_apply` keeps W19's refusals and refuses client forms with `Edit client forms in the forms editor.`; routing bounds of 4.9.2; the screen at 375 and 1280 px through the layout harness; no literal colour in its CSS. |
-| cockpit-screens | `cd apps/client-success-cockpit && bun test scripts/client-forms.test.tsx scripts/client-voice.test.tsx scripts/form-sheet.test.tsx scripts/churn.test.ts scripts/guide-links.test.ts`; `scripts/check-shared.sh`. Asserts: Send a form shows the presence line and default channels from `_view`, the `why` of each disabled form, the SQL refusal sentences word for word; one request id per open panel survives a retry; the WhatsApp approval goes through `invite.approve`; Forms out maps every state to its words and the delivery line's rings; Copy a link shows the URL once and never stores it (no `localStorage`, no state after close); Today bands render each row kind with its button and hide when empty; the low-score ticket button is hidden until the type exists; the pause sheet with the form live replaces the ticks with the consent row and keeps Confirm disabled until `signed`, and sends `consentResponseId`; without it live the ticks stay; the churn tracker enables Send exit survey and shows its states; Client voice renders the empty state and a full fixture; the brief line appears under 30 days only; csmLinks rows follow `cockpit_form_client_live_list()` on the client page; every door hides with "Opens after the next cockpit update." when its flag is false and makes no call; the FormSheet pair stays identical; layout harness scenarios `forms`, `voice` and `consent` at 375 and 1280 px, light and dark. |
-| portal-forms | `npm test` (all), with the new tests: `client-form-schema` (every fixture row, codes equal the SQL's; `showIf` hides and un-requires; a missing tick reads false); `client-forms-route` (401 without a session; share links get nothing; a member never receives an admin-only form; staff preview records nothing; locked workspaces still list forms; a `form_invite_not_in_workspace` becomes 403; a malformed RPC answer becomes 503); `form-token-route` (the route never calls `identity()`; refuses a cross-origin POST; a token not matching the format is refused before hashing; the RPC receives only the hash; no response body, header or log line holds the token or its hash; the cookie is HttpOnly, Secure, SameSite=Strict, Path=/api/forms; `/f` resolves to `src/app/f/page.tsx`, not `[[...path]]`; the headers of 3.6 on both routes); `form-renderer` (renders every form of section 5 in Arabic and English; `dir` correct; scale order 0..10 in the DOM with direction by CSS; folded rows under 420 px; the submit says what is missing; the request id is reused on retry; nothing is stored on the token page); `client-ask-form-invite` (the ask route returns a form invite first, honours `shown_today` without asking for a review, falls through to asks otherwise; the pop-up keeps the calm rules and opens the forms page); `form-notifications` (claims, never sends twice, uncertain stays uncertain, counts only back); `form-presence` (counts per workspace from a state fixture, no email leaves, `off` logs ok). The `/preview/client-form` page answers 404 in production. Screenshots of section 5's portal screens at 320/375/414/768/1280, Arabic and English, light and dark, through the Hallmark gates. |
+| invites-core | `cd apps/media-buyer-cockpit && bun test scripts/forms-invites-supabase.test.ts scripts/forms-stage3-base-supabase.test.ts` (the second unchanged and green); `cd supabase/functions/cockpit-notices && bun test`; `cd supabase/functions/cockpit-forms-api && bun test`; `cd hermes/client-messages && bun test`. Asserts: `a` applies twice; the drift guard refuses a changed body; every new table has row security, no browser grant, refuses delete; the seat gate (a CSM on another client refused by `_view`, `_issue`, `_withdraw`, `_link`, `_answer_read`; anon refused everywhere); a form not live refuses issue; one open invite per card, form and purpose; a repeated request id returns the first invite; CSAT refused once filled; a Stopped card refused for NPS, CSAT and pause consent; the portal channel refused without an open workspace; notes and templates through `cockpit_client_text_ok` (an English "leads", an Arabic "ليدز", "CPL", "guarantee" and "نضمن" each refused, "the people who reached you" allowed); `cockpit_form_answers_check` on every row of the fixture (codes exact); `cockpit_form_schema_check` refuses `file`, a missing Arabic text, a duplicate key, a `showIf` to a later field; tokens: the raw token never appears in any table, audit row or event (scan every text column after a mint); `_link` revokes the previous copy token; `portal_form_token_open` refuses unknown, expired, answered, withdrawn, not-live tokens with their codes; the 30-a-minute browser limit, the 120-a-minute network limit and the 10-unknown limit each return `limited`; `portal_form_submit` and `_token_submit` store one answer per invite (a second submit from the other channel answers `answered`), revoke tokens, skip the unsent message, refuse an admin-only form for a member, refuse a hidden field's answer; a workspace mismatch raises `form_invite_not_in_workspace`; a closed workspace refuses the portal path while the token works; `portal_form_for_person` respects the 20-hour shared cap with an ask shown, `later` snoozes 3 days, the deep link passes the cap; `portal_form_presence_put` refused while off; the effect gate passes an open live `form_invite` message and refuses an expired or withdrawn one with its reason; approve refuses a body without `{form_link}` or with it twice; claim accepts `form_invite`; `cockpit_client_message_invite_link` mints once per message and answers `already_made` after; the worker replaces the placeholder in the sent text only, records `unknown` on `already_made`, masks the link in group searches and never writes the URL to its report; `recap.approve` refuses a `form_invite` message and `invite.approve` a recap; the six notice kinds render 3.4's texts and carry no email, answer text or token; the canary door refuses any card but `86eywg1cq` and mutes its notices; `cockpit_form_client_go_live` moves `exit_survey` to native and withdraws open invites when switched off. Added by the review: every `STABLE` RPC runs inside `SET TRANSACTION READ ONLY` and still reports an invite past `expires_at` as expired; submitting while the invite's message is `claimed` (and again while `sending`) succeeds, leaves the message as it was, and the gate then refuses it so intent moves it to `refused`, and the sweep to `skipped`; a `draft`/`approved` message is skipped on submit, withdraw and go-live off; `cockpit_form_card_allows`: NPS, CSAT and pause consent refused for `GHOSTED`, `SALES TEAM TO CONTACT`, `Stopped` and an Active card with an open departure, the exit survey refused for an Active card with no departure and allowed for a Stopped card and for an open departure; the gate passes an exit-survey message to a Stopped card; an open NPS invite of a card that turns Stopped answers `withdrawn` in `portal_form_get` and the token path; `p_origin` other than `pause` refuses pause consent and an unknown origin is refused; the default channel for pause consent with members only (no admin session) is portal + WhatsApp; a canary answer is stored `shadow` with `answer_meta.canary` and never reaches `cockpit_form_invites_today` or `cockpit_form_notices_in`; a submit hook that raises still stores the answer, closes the invite, writes `hook_failed` and returns `ok:true`; `portal_form_for_person` returns `shown_today` after an ask pop-up even when no invite is open; `cockpit_form_schema_check` accepts `signer:'none'` and refuses any other value; `PortalInvite.lang` equals the invite's `lang`; `cockpit_form_client_version('exit_survey')` is the newest `v:1` version. |
+| client-lifecycle | `cd apps/media-buyer-cockpit && bun test scripts/client-lifecycle-supabase.test.ts scripts/money-acts-supabase.test.ts scripts/churn-confirm-supabase.test.ts` (the last two unchanged and green); `cd supabase/functions/clickup-writeback && bun test billing.test.ts`; `cd supabase/functions/billing-sync && bun test`. Asserts: `b` applies twice after `a`; the trigger queues `system` `survey` and `nps_sent` and still refuses `system` pause; `nps_sent` writes NPS Survey Sent (read back against a stubbed ClickUp) and `survey` writes no field and posts 3.8's comment with no email; the pause with `pause_consent` not live keeps W12's ticks (a live-body replay of the old billing sheet shape still pauses); with it live: refused without `consentResponseId`, refused on a consent over 14 days old, refused on `datesWrong`, refused on a different restart, accepted with the signed one, and the consent detail and comment say "signed"; non-payment pauses need no consent; the issue hook refuses a Paused card; the exit-survey issue hook marks an open departure `sent`; the submit hook queues `termination.notice` and `termination.submitted` once each, inserts one `survey` event, marks the departure `filled`; `cockpit_form_notices_in` lists a native survey and a signed consent and drops the consent after a pause event; "Not leaving" answers a native survey once (guard carve-out) and a second answer is refused; `cockpit_csm_churn_read` carries `surveyInvite`; the canary accepts `survey` and `nps_sent` on the test card only. Added by the review: the pause consent context accepts a start up to today + 14 and refuses today + 15; `cockpit_pause_consent_for` returns the signer; the registry `exit_survey` stays version 1 / `typeform` after `b` and a Typeform delivery through the live `cockpit_form_record_legacy` body is stamped version 1; **rollback**: after restoring the saved `cockpit_billing_write` body and running D-B1's registry step, a client-request pause with the two ticks succeeds on the old body. |
+| client-voice | `cd apps/media-buyer-cockpit && bun test scripts/client-voice-supabase.test.ts scripts/forms-stage3-base-supabase.test.ts`; `cd supabase/functions/forms-door && bun test`; `python3 -m unittest scripts/dev/test_forms_key.py scripts/dev/test_forms_legacy_backfill.py`; `cd hermes/ceo-refresh && bun test`; `cd hermes/csm-calls && bun test sources.test.ts`; `cd hermes/cockpit-guardian && python3 -m unittest discover -s tests`. Asserts: `c` applies twice after `a` and `b`; the schedule with a fake clock: off does only the sweep; on issues NPS at day 60 exactly, not at day 59, again at 60 + 90 and not before, skips every card that is not Active (GHOSTED, SALES TEAM TO CONTACT, Stopped) and an Active card with an open departure, no launch date, an open invite, a form not live; a manual send resets the 90 days; CSAT goes after launch, only within 60 days of launch, never after an answer, WhatsApp once from day 3, portal re-tries up to 3; at most 3 per form per run, oldest launch first; idempotent on a second run the same day; first launch is the minimum over the snapshots; the NPS issue hook writes one `nps_sent` event with the round; hooks queue `nps.received`/`csat.received` and `voice.low` at 6 and not at 7; `cockpit_client_voice_v` excludes legacy rows and feedback ratings from bands; the NPS number on a fixture (3 promoters, 1 passive, 1 detractor = 40, n 5; a card answering twice counts once); n 0 gives NULL and "No scores yet", never 0; `supabase_read_only_user` can select both views (the helpers granted); `portal_feedback_record` refused while not live, idempotent on the feedback id, queues `feedback.received`; forms-door: `onboarding` and `new_client` bad signature 401 before any parse, a good one stores state `submitted` with no notice, kickoff/exit_survey/pause_request behave exactly as before; a Typeform delivery for native `exit_survey` stores legacy and queues `legacy.received`; `cockpit_form_record_make` writes the onboarding read model only when empty or older, with the same `answers` shape as `readFormData` on the same recorded payload; `portal_form_status` returns the newest answer with `unverified`; `forms_key.py` handles the two new forms and `register-typeform` reads every other webhook before and after; the backfill prints counts only and stores `nps`/`csat` with no card; metrics: `clients.nps` and `clients.csat` from a fixture payload, missing read is said, not 0; the guardian checks read "not set up yet" as ok and their warn/fail rules of 6.2. Added by the review: a canary answer (shadow) never reaches `cockpit_client_voice_v`, the daily view or `clients.nps`; a card answering NPS twice in the window counts once on both sides of the second source (no mismatch note); a missing `maxAgeDays` or `retryAfterDays` in the CSAT rule skips CSAT with `ruleNotSet`, never sends; CSAT: a card with a live session gets a portal invite on day 0, a card without one gets nothing on days 0 to 2 and a portal + WhatsApp invite on day 3, a card with no workspace a WhatsApp-only invite on day 3 and no later tries; a seat-withdrawn CSAT is never re-issued; a retry waits 7 days after the last close; one run never issues NPS and CSAT to the same card; the sweep withdraws open NPS/CSAT invites of a card that is no longer Active or has an open departure; `ticketOpen` turns true once a `client_low_score` request for the card exists after the answer; forms-door's onboarding mapping equals `formsFor` on the recorded payload with no Typeform call; the guardian's `voice-count` and `low-score-open` read the views and tables, never the seat RPCs, and `hook-failed` warns on one event; `cockpit_form_record_legacy` stamps an `exit_survey` delivery after go-live with version 1. |
+| forms-editor | `cd apps/media-buyer-cockpit && bun test scripts/forms-editor-supabase.test.ts`; `cd apps/client-success-cockpit && bun test scripts/forms-editor.test.tsx`. Asserts: `d` applies twice after `a` to `c`; only an admin or the CEO reads or writes; a stale base refused; publish runs the schema check, the text rule on every text, and the field guard (removing `recommend` from `nps` refused naming the effect; hiding it behind a `showIf` refused); a published key cannot be renamed; publish adds one version, updates the registry, removes the draft, writes an audit row; open invites keep their version and their answers still pass the check; restore publishes an old schema as a new version; for a field in `reads` a change of type, min, max, required or an option value is refused while a label change publishes; a change of `audience` or `signer` is refused; staff and Make forms refuse publish with 4.9.6's sentences; `cockpit_form_registry_apply` keeps W19's refusals and refuses client forms with `Edit client forms in the forms editor.`; routing bounds of 4.9.2; the screen at 375 and 1280 px through the layout harness; no literal colour in its CSS. |
+| cockpit-screens | `cd apps/client-success-cockpit && bun test scripts/client-forms.test.tsx scripts/client-voice.test.tsx scripts/form-sheet.test.tsx scripts/churn.test.ts scripts/guide-links.test.ts`; `scripts/check-shared.sh`. Asserts: Send a form shows the presence line and default channels from `_view` (per form), the `why` of each disabled form (the exit survey disabled without a departure), the SQL refusal sentences word for word, and the toast from `delivered`; one request id per open panel survives a retry; the WhatsApp approval goes through `invite.approve`; Forms out maps every state to its words and the delivery line's rings; Copy a link shows the URL once and never stores it (no `localStorage`, no state after close); Today bands render each row kind with its button and hide when empty; the low-score ticket button is hidden until the type exists; the pause sheet with the form live replaces the ticks with the consent row and keeps Confirm disabled until `signed`, and sends `consentResponseId`; without it live the ticks stay; the churn tracker enables Send exit survey and shows its states; Client voice renders the empty state and a full fixture; the brief line appears under 30 days only; csmLinks rows follow `cockpit_form_client_live_list()` on the client page; every door hides with "Opens after the next cockpit update." when its flag is false and makes no call; the FormSheet pair stays identical; layout harness scenarios `forms`, `voice` and `consent` at 375 and 1280 px, light and dark. |
+| portal-forms | `npm test` (all), with the new tests: `client-form-schema` (every fixture row, codes equal the SQL's; `showIf` hides and un-requires; a missing tick reads false); `client-forms-route` (401 without a session; share links get nothing; a member never receives an admin-only form; staff preview records nothing; locked workspaces still list forms; a `form_invite_not_in_workspace` becomes 403; a malformed RPC answer becomes 503); `form-token-route` (the route never calls `identity()`; refuses a cross-origin POST; a token not matching the format is refused before hashing; the RPC receives only the hash; no response body, header or log line holds the token or its hash; the cookie is HttpOnly, Secure, SameSite=Strict, Path=/api/forms; `/f` resolves to `src/app/f/page.tsx`, not `[[...path]]`; the headers of 3.6 on both routes); `form-renderer` (renders every form of section 5 in Arabic and English; `dir` correct; the minutes line for 1, 2 and 5 in both languages; the token page starts in the invite's `lang`; the token page's draft survives a reload and storage never holds the token or its hash; scale order 0..10 in the DOM with direction by CSS; folded rows under 420 px; the submit says what is missing; the request id is reused on retry; nothing is stored on the token page); `client-ask-form-invite` (the ask route returns a form invite first, honours `shown_today` without asking for a review, falls through to asks otherwise; the pop-up keeps the calm rules and opens the forms page); `form-notifications` (claims, never sends twice, uncertain stays uncertain, counts only back); `form-presence` (counts per workspace from a state fixture, no email leaves, `off` logs ok). The `/preview/client-form` page answers 404 in production. Screenshots of section 5's portal screens at 320/375/414/768/1280, Arabic and English, light and dark, through the Hallmark gates. |
 | portal-bridges | `npm test` (all), with: `feedback-bridge` (called after a saved feedback; a bridge failure or timeout never changes the client's 201; `not_live` logs ok; no id or text in the log line); `onboarding-cockpit-evidence` (a submitted cockpit answer completes `form` evidence once through `recordCompletion`; a failed read changes nothing; the check runs only inside the existing claimed refresh, never on every poll; `cockpitEvidence` is pure). |
 
 No test submits a Typeform, posts to Slack, writes ClickUp, calls Make, sends WhatsApp or reaches
@@ -1178,14 +1257,14 @@ the portal page, the staff preview); never a real client.
 
 | # | Step | Read-back | Rollback |
 |---|---|---|---|
-| D0 | Pre-checks: letter rule; md5 of every 2.2 function equals the table; `before-*.sql` saved; the whole chain `a` to `d` applied in one transaction against live and rolled back; `cmp` of the two answer fixtures; portal `origin/main` equals `VERSION.json` `productionSourceCommit`'s tree plus docs | all pass, or the step that failed is fixed on the branch first | none (nothing changed) |
+| D0 | Pre-checks: letter rule; md5 of every 2.2 function equals the table; `before-*.sql` saved; the whole chain `a` to `d` applied in one transaction against live and rolled back; `cmp` of the two answer fixtures; `deploy_composio.py forms-door --rev <sha> --extra apps/client-success-cockpit/src/lib/onboardingCore.ts --dry` bundles; portal `origin/main` equals `VERSION.json` `productionSourceCommit`'s tree plus docs | all pass, or the step that failed is fixed on the branch first | none (nothing changed) |
 | D-A1 | Apply `20261102a` | new tables with row security and no browser grant; the six kinds in all four notice CHECKs; `form_invite` in the message kind CHECK; `portal` in the response source CHECK; registry rows `nps`, `csat`, `portal_feedback` and versions; `forms.client` = `{"live":[],"presence":false}`; `forms.doors.invites` true; `select cockpit_form_client_live('nps')` false; effect gate md5 = the file's after | flip `forms.doors.invites` false; restore saved bodies; tables stay (inert) |
 | D-A2 | Deploy `cockpit-notices` (`--verify-jwt off`) and `cockpit-forms-api` (`--verify-jwt on`) | notices doctor names the six kinds, `#nps-survey-feedback` still `refused`; `invite.approve` with the service key 403; a seat call on a recap id answers `Approve recaps from the Messages card.` | previous versions (ids recorded) |
 | D-A3 | Release `hermes/client-messages` (file-scoped: `worker.ts`, `core.ts`, their tests, RUNBOOK) under its run lock; doctor; dry run; `switches.env` untouched | doctor ok; the next runs end `Nothing approved to send.` or send recaps exactly as before | link back to the previous folder under the lock |
 | D-B0 | Deploy `clickup-writeback` and `billing-sync` (`--verify-jwt off`), **before D-B1**, so the writer knows `npsSent` before any `nps_sent` item can exist | `clickup-writeback:billing` mode `apply` with W12's kinds unchanged; billing-sync next run ok | previous versions |
-| D-B1 | Apply `20261102b` | kinds CHECK; trigger `WHEN` text; `select cockpit_billing_writeback_writes('nps_sent', null, null, '{"on":"2026-11-03"}')` returns the `npsSent` write; `pause_consent` row native, `cockpit_form_client_live('pause_consent')` false; `exit_survey` version 2 with provider `typeform`; `forms.doors.lifecycle` true; the live billing sheet's client-request pause still takes the two ticks (the first real press is watched, not faked) | flip `forms.doors.lifecycle` false; saved bodies; trigger recreated from its saved definition |
+| D-B1 | Apply `20261102b` | kinds CHECK; trigger `WHEN` text; `select cockpit_billing_writeback_writes('nps_sent', null, null, '{"on":"2026-11-03"}')` returns the `npsSent` write; `pause_consent` row native, `cockpit_form_client_live('pause_consent')` false; `exit_survey` version 2 with provider `typeform`; `forms.doors.lifecycle` true; the live billing sheet's client-request pause still takes the two ticks (the first real press is watched, not faked) | in one transaction: flip `forms.doors.lifecycle` false; restore the saved bodies; set the `pause_consent` registry row to `provider = 'typeform'`, `typeform_id = 'CTUjv6l3'` (the form it replaces; the provider CHECK needs a Typeform id, and the restored live body refuses every client-request pause while a **native** `pause_consent` row exists, `20261101p:846-851`); trigger recreated from its saved definition; read back a client-request pause with the two ticks in a rolled-back DO block |
 | D-C1 | Apply `20261102c` | schedules seeded; `forms.schedule.on` false; cron `mahara-form-schedule` active; both views selectable as `supabase_read_only_user` through the management API read-only path (as `20261101r` was checked); provider CHECK lists the two keys; registry `onboarding`, `new_client`; `forms.doors.voice` true | flip `forms.doors.voice` false; unschedule the cron; saved bodies |
-| D-C2 | Deploy `forms-door` (`--verify-jwt off`) | `/typeform/other` 404, GET 405; kickoff unsigned 401, signed probe 200; `exit_survey`, `pause_request` probes 200 as before; `onboarding`, `new_client` 503 (no key yet) | previous version |
+| D-C2 | Deploy `forms-door` (`--verify-jwt off`) | deployed with `--extra apps/client-success-cockpit/src/lib/onboardingCore.ts` (D0's `--dry` bundle); `/typeform/other` 404, GET 405; kickoff unsigned 401, signed probe 200; `exit_survey`, `pause_request` probes 200 as before; `onboarding`, `new_client` 503 (no key yet) | previous version |
 | D-D1 | Apply `20261102d` | functions; `forms.doors.editor` true; `cockpit_form_registry_apply` md5 = the file's after | flip the marker; saved body |
 | D-S1 | Ship client-success and media-buyer from the merged main, **only after D-A1 to D-D1** | live bundle check (memory: vercel-deploys); `to_regprocedure` non-NULL for every RPC the bundle names (`clientForms.ts`, `clientVoice.ts`, `formsEditor.ts`, `lifecycleClient.ts`, `churnClient.ts`); doors true; the Links rows still show the Typeform links (no form live) | `vercel rollback` to the recorded deployments; the migrations stay (the old bundles never call the new RPCs) |
 | D-P1 | Portal release (after D-C1): `npm test`, `tsc`, commit on origin/main, `git archive`, `vercel deploy --prod --skip-domain`, CI "Verify portal", note the live id (rollback), `vercel promote`, `node scripts/check-login-origin.mjs` 17/17, receipt `docs/releases/2026-11-0x-client-forms.json`, top entry in `docs/CURRENT-STATE.md`, `VERSION.json` | `/f` 200 with `X-Robots-Tag: noindex, nofollow`, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`; `POST /api/forms/token` with a well-formed unknown token answers `{ok:false,reason:'unknown'}` and the Vercel log line holds no token; `/api/forms` 401 without a session; signed in as staff (built-in browser), `?clientId=<an Active workspace>&formPreview=nps` shows the banner and the form in Arabic and English, and `select count(*) from cockpit_form_invite_events` is unchanged; `/preview/client-form` 404; the asks pop-up still behaves (`?askPreview=review`) | `vercel promote <previous id>`; the cockpit stays |
@@ -1195,7 +1274,7 @@ the portal page, the staff preview); never a real client.
 | D-WA | WhatsApp doctor for the test card (`worker.ts doctor --task 86eywg1cq`). **If it has a group:** check no approved recap waits; set `CLIENT_MESSAGES_KINDS=recap_checkin,form_invite` and `CLIENT_MESSAGES_ONLY_CARDS=86eywg1cq` (edit the lines, never append); `cockpit_form_invite_canary('nps', '{"round":1}')` with the WhatsApp channel (the door makes a draft on the test card); approve it as the owner with the CEO's seat id and the note "canary"; watch the worker send; read back by message id; open the link in the built-in browser (the NPS form renders); withdraw; clear `ONLY_CARDS` (≤ 30 minutes in all). **If it has none:** set the kinds line only and watch the first real approval (never a test send to a client) | the message `sent` with a provider id; its stored body still holds `{form_link}`; no URL in the worker's report; `link_sent` event; after withdraw the link answers `withdrawn` | `CLIENT_MESSAGES_KINDS=recap_checkin` |
 | D-C2C | **Pause consent live (C2 client side, one hour):** (1) canary: `cockpit_form_invite_canary('pause_consent', {start, restart: +7 days, reasonCat:'client_asked'})`, open the URL in the built-in browser, check Arabic and English and right to left, submit with the typed name "Mahara test" → response source `public`, `pause.consent` muted, `cockpit_pause_consent_for('86eywg1cq')` = `signed`; (2) a rolled-back DO block as a real CSM seat on a real Active card (issue → token submit → `cockpit_billing_write` pause with the consent → read the queued item → `RAISE` with the results; nothing commits); (3) `cockpit_form_client_go_live('pause_consent', true, 'deploy D-C2C')`; (4) save and close Typeform `CTUjv6l3` (`is_public:false`), remove `WHTP4371898` (read the webhook list before and after: the cockpit webhook stays) | each read-back above; the live list `["pause_consent"]`; Typeform reads closed | go-live off (withdraws open consents); reopen the form from its saved definition; re-add the webhook with its saved URL |
 | D-C4B | **Exit survey live (C4b, one hour):** (1) save Make 9805538's blueprint; (2) canary invite `exit_survey` on the test card, submit by link (typed name), with `CLICKUP_WRITEBACK_BILLING_KINDS` + `survey` and `BILLING_ONLY_CARDS=86eywg1cq`: the `survey` item delivered, the comment read back on the card, both notices muted; void the canary event by record; (3) `cockpit_form_client_go_live('exit_survey', true, ...)` (provider moves to native); (4) enable `termination.submitted`; (5) switch off Make 9805538, read back `isActive=false`; (6) remove `WHTP4371873`; (7) close `knIe4eF3`; (8) clear `BILLING_ONLY_CARDS` (kinds keep `survey`); held-edit review for `survey` (none expected) | each read-back; the cockpit webhook still on `knIe4eF3`; `heldOpenKind` 0 | go-live off; Make back on from its blueprint; webhook re-added; `termination.submitted` disabled; remove `survey` from the kinds |
-| D-C5 | **NPS and CSAT live (C5):** (1) canary NPS invite on the test card with kinds + `nps_sent` and `BILLING_ONLY_CARDS=86eywg1cq`: NPS Survey Sent read back on the card; submit a 5 by link: `nps.received` and `voice.low` muted; canary CSAT likewise (no card write); void the canary events by record; (2) go-live `nps` and `csat`; (3) clear the card list (kinds keep `nps_sent`); (4) remove `WHTP4007419` and `WHTP4007430`; (5) save, switch off and read back Make 8962328 and 8962387; read Make 8068892 and switch it off only if it is the NPS Slack scenario; (6) close `fuPgs85S` and `KbcbPA73`; `forms_legacy_backfill.py nps` and `csat` (`--dry` first): 2 rows, no card; (7) `cockpit_form_schedule_run(now(), false)` (the plan: expect NPS for the 7 clients past day 60 and CSAT for the clients launched within 60 days, 3 of each a day), then `forms.schedule.on=true` | each read-back; the dry plan matches 11.2-g's list; the first 07:00 UTC run issues at most 3 of each and `form-schedule` says so; WhatsApp drafts wait for the CSM | `forms.schedule.on=false`; go-live off; scenarios back on from their blueprints; webhooks re-added |
+| D-C5 | **NPS and CSAT live (C5). Precondition (Q4, plan C5):** `cockpit_slack_channels` `nps-survey-feedback` reads `ok` and the `cockpit-notices` doctor passes; until then this row does not start and NPS/CSAT stay on Typeform and Make. (1) canary NPS invite on the test card with kinds + `nps_sent` and `BILLING_ONLY_CARDS=86eywg1cq`: NPS Survey Sent read back on the card; submit a 5 by link: the response stored `mode = 'shadow'`, `nps.received` and `voice.low` muted, `cockpit_client_voice_v` and the CEO metric unchanged; canary CSAT likewise (no card write); void the canary billing events by record; (2) go-live `nps` and `csat`; (3) clear the card list (kinds keep `nps_sent`); (4) remove `WHTP4007419` and `WHTP4007430`; (5) save, switch off and read back Make 8962328 and 8962387; read Make 8068892 and switch it off only if it is the NPS Slack scenario; (6) close `fuPgs85S` and `KbcbPA73`; `forms_legacy_backfill.py nps` and `csat` (`--dry` first): 2 rows, no card; (7) `cockpit_form_schedule_run(now(), false)` (the plan: expect NPS for the 7 clients past day 60 and CSAT for the clients launched within 60 days, 3 of each a day), then `forms.schedule.on=true` | each read-back; the dry plan matches 11.2-g's list; the first 07:00 UTC run issues at most 3 of each and `form-schedule` says so; WhatsApp drafts wait for the CSM | `forms.schedule.on=false`; go-live off; scenarios back on from their blueprints; webhooks re-added |
 | D-FB | **Feedback bridge live:** go-live `portal_feedback` | the next real "Share feedback" in any portal stores one `portal_feedback` response and posts `feedback.received` (watched, never faked); before it, the release-test feedback is not imported | go-live off (the portal keeps saving its own copy) |
 | D-C6 | **Onboarding webhook:** `forms_key.py typeform-secret onboarding`, `register-typeform onboarding` (every other webhook on `KFRCXPFx` read before and after), `probe-typeform onboarding` (401 then 200); `forms_legacy_backfill.py onboarding --dry` then without | `forms-door:onboarding` registered; stored answers equal the form's response count (46 on 11-01, plus any since); the read model unchanged for cards the poll already filled; the portal's receiver still unregistered | `unregister-typeform onboarding`; rows stay |
 | D-NCF | **New Client Form:** save the form's webhook list; `typeform-secret new_client`, `register-typeform new_client`, probe; disable `WHTP4096881` (`enabled:false`, read back); backfill `new_client --dry` then without | 4 other webhooks byte-identical before and after (Cortana, Make 4014052, HighLevel) and `WHTP4096881` disabled; stored answers = the form's count (55 on 11-01, plus any since); the 3 `cockpit_sales_client_forms` response ids found | `unregister-typeform new_client`; re-enable `WHTP4096881` |
@@ -1210,7 +1289,7 @@ after D-S1 and D-P1.
 
 ## 10. What waits on the CEO or on people
 
-- **Q4:** invite the bot to #nps-survey-feedback. Until then the NPS and CSAT notices read "Not posted"; scores are still stored, shown on the client page and counted in the CEO metric.
+- **Q4:** invite the bot to #nps-survey-feedback. **D-C5 waits for it** (plan C5 starts with the invite): native NPS and CSAT go live, and Make 8962328/8962387 go off, only once the channel row reads `ok` and the notices doctor passes, so every answer keeps reaching the channel.
 - **The Request Type option "Client low score"** (D-R2): the systems manager, or the session under Q17's standing rule.
 - **Arabic wording:** every client-facing Arabic line in section 5 was drafted under `aziz-kuwaiti-voice` and is used as is; the CEO changes any of them in the forms editor (no code). The closing line of the retired Typeforms cannot be set through Typeform's API (D-C1 of waves 1-2 found this), so a closed form shows Typeform's standard page; the bilingual line ("This form has moved. Message your account manager." / "هالفورم انتقل. كلّم مدير حسابك وهو يرتّب لك.") is recorded for the cards' link fields.
 - **The "Client Exit Process" doc** (plan 5.8): the CEO edits it once the exit survey is live; the session lists the sentences to change in the after-report.
@@ -1251,6 +1330,12 @@ after D-S1 and D-P1.
 | V22 | A pause consent with "These dates are wrong" never counts; the restart at confirm must equal the signed one | The client agreed to dates; a pause on other dates is not what they signed. |
 | V23 | Answers of Make-owned live Typeforms (onboarding, New Client Form) are stored `submitted` through `cockpit_form_record_make`, with no notice | They are the live forms, not old links; Make keeps every effect until Stage 4 (D2, D14). |
 | V24 | CSAT goes only to clients launched within the last 60 days | An onboarding survey to a client launched 174 days ago (11.2-g) asks about a memory; NPS covers them. Editable in ED (`maxAgeDays`). |
+| V25 | Reads are `STABLE` and never expire invites; they treat an open invite past `expires_at` as expired; the actual expiry is the daily sweep and the write paths | PostgREST runs `STABLE` functions in a read-only transaction, so an UPDATE inside a read fails, and a `STABLE` caller would not see the rows it expired anyway. |
+| V26 | A CSM's withdraw of a CSAT is final for the schedule; retries wait 7 days after the last close; at most one client form per card per run | A withdraw usually means the client asked not to be bothered; a schedule that re-issues the next morning overrides the person. Two forms in one day reads as nagging. |
+| V27 | Client copy addresses the person answering in the singular; WhatsApp to the group stays plural; "your team" is always "your Mahara team" / "فريق مهارة" | One voice per surface; in the portal "your team" already means the client's own staff. |
+| V28 | NPS, CSAT and pause consent go only to Active cards with no open departure (an allowlist); the exit survey only with a departure or a Stopped card; open NPS/CSAT invites are withdrawn when a card stops qualifying | The mirror holds GHOSTED, SALES TEAM TO CONTACT and Brand Blueprint Booked cards beside Stopped (11.2-q); a blocklist of "Stopped" let surveys reach former clients, and an exit survey to a live client is damaging. |
+| V29 | Canary answers are stored `mode = 'shadow'` | The live guard keeps mode fixed and never lets a submitted row become void, so a canary marked only by its notices would stay in the client's voice and the CEO metric for good. |
+| V30 | A submit hook's failure is recorded (`hook_failed`) and the answer kept; an issue hook's refusal still rolls the issue back | E19: an answer is kept, never lost; an issue hook is a rule, not a follow-up. |
 
 ### 11.2 Checked for this contract (read only, 2026-11-01)
 
@@ -1269,4 +1354,55 @@ after D-S1 and D-P1.
 - **m** pg_cron: `mahara-onboarding-sync` `4-59/10`, `mahara-slack-notices` every minute, `mahara-clickup-writeback-forms` every minute, `mahara-billing-daily` `10 5`. pgcrypto in schema `extensions`.
 - **n** The test card `86eywg1cq` is not on the billing sheet mirror and has no portal workspace; the only test workspace is "TEST - Viktor Submission (ignore)" on card `86eyt06wu`, status Removed from sheet. Hence the owner-only invite canary door (3.10) and the staff preview for the portal page.
 - **o** Portal at `79a5800`: `src/app/[[...path]]/page.tsx` catch-all; `workspace-navigation.ts:13` and `Portal.tsx:143` allow only `getting-started` and `feedback` while locked; `ClientAsk.tsx` mounted in `Portal.tsx:201`; `/api/cron/client-tasks` runs `runAskNotifications` first; `next.config.ts` sets `Referrer-Policy: strict-origin-when-cross-origin` globally; `globals.css` tokens as 5.0; `MaharaFeedback` saves to the portal's own store only; `onboarding-policy.ts` `responseEvidence` accepts `KFRCXPFx` answers by hidden id.
-- **p** Code anchors in the cockpits at `6acf392d`: `csmLinks.ts` client success `:144` CSAT, `:149` NPS, `:222` pause, `:234` termination; media buyer `:97`, `:102`, `:175`, `:187`; `csm_assistant.py:39,41`; `20261012f_wa_send_rules.sql:77` the leads/CPL pattern; `cockpit-forms-api/door.ts:158` `recap.approve`; `hermes/client-messages/worker.ts:85` `KINDS_2B`, `:683` the body sha check.
+- **q** `select client_status, count(*) from cockpit_billing_accounts group by 1`: Active 15, Stopped 31, SALES TEAM TO CONTACT 14, GHOSTED 5, Brand Blueprint Booked 3.
+- **r** `information_schema.columns` of `cockpit_requests`: `id, type_key, ..., client_task_id, client_name, answers, ..., state, created_at, ...`; no `detail` column. Live `cockpit_client_messages_guard` md5 `c676efff216517fc709ec927ca9edc55`: `claimed` → only `sending`/`approved`/`refused`, `sending` → only `sent`/`failed`/`unknown`, `refused` → `draft`/`skipped`. Live `cockpit_form_responses_guard`: state moves only `draft`→`submitted`/`void` and `submitted`→`confirmed`; mode fixed. `cockpit_form_responses_mode_check` allows `live`, `shadow`. `cockpit_forms_provider_check` `native, typeform, clickup` with `typeform` needing a `typeform_id`. Live `cockpit_form_record_legacy` inserts `form_version = f.version` (the registry's). Live `portal_client_ask_for_person` reads `cockpit_client_ask_events` only for its 20-hour cap. `docs/forms/PLAN.md:580,842`: C5 starts with the bot invite.
+- **p** Code anchors in the cockpits at `6acf392d`: `csmLinks.ts` client success `:144` CSAT, `:149` NPS, `:222` pause, `:234` termination; media buyer `:97`, `:102`, `:175`, `:187`; `csm_assistant.py:39` (pause), `:41` (cancellation), `:42` referral (not retired); `20261012f_wa_send_rules.sql:77` the leads/CPL pattern; `cockpit-forms-api/door.ts:158` `recap.approve`; `hermes/client-messages/worker.ts:85` `KINDS_2B`, `:683` the body sha check.
+
+### 11.3 Review findings, 2026-11-01 (revision 2)
+
+Thirty-six findings were checked against the live database (read only, 11.2-q and r) and the code.
+Applied (each in the section named): canary answers stored `shadow` and kept out of every client-voice
+reader (3.3, 3.5, 3.10, 9 D-C5; V29); an Active-only allowlist with no open departure for NPS, CSAT and
+pause consent, the exit survey only with a departure or a Stopped card, ineligible invites withdrawn
+and refused at display, the gate exempting the exit survey (2.2, 2.3, 3.3, 4.5.4, 5.1; V28); D-C5 waits
+for the bot invite and a green notices doctor (1.3, 1.4, 4.5.6, 9, 10); reads `STABLE` without
+expiring, expiry by the sweep and write paths, volatility listed (2.3, 3.3, 6.2; V25); message skips
+only from `draft`/`approved` (3.3); D-B1's rollback moves the `pause_consent` registry row off native
+(9); the low-score ticket link on real `cockpit_requests` columns (3.3, 6.2); the NPS second source on
+distinct cards (3.3, 3.5, 6.2); the guardian reads views and tables, not seat RPCs (6.2); forms-door
+calls `formsFor` from `onboardingCore.ts` with the exact `--extra` (4.7.2, 9 D0/D-C2); `signer:'none'`
+in the v1 enum and `maxAgeDays`/`retryAfterDays` seeded with a missing key refused (2.5, 3.1, 4.3,
+4.5.1); the editor freezes type, range, required and option values of read fields and the schema's
+audience and signer (4.9.3); the exit survey's registry stays version 1 until go-live and legacy rows
+are pinned to the Typeform-shaped version (2.3, 2.4, 2.5, 4.9.2); a CSM's CSAT withdraw is final and
+retries are spaced (4.5.4; V26); the 20-hour cap answers `shown_today` with no open invite (3.3); submit
+hook failures recorded, answers kept (4.1.2, 6.2, 6.3; V30); the `auth.ts` and `csm_assistant.py`
+anchors (4.2.3, 4.11, 11.2-p); CSAT's first WhatsApp try held to day 3 for clients without a portal
+session (4.5.4.6); admin-form defaults read admin presence (3.3, 5.1); the minutes line by number,
+the singular address rule, "فريق مهارة" (5.5 to 5.8, 5.10; V27); the `exit_survey_due` Today row and
+the leaving sheet's button (3.3, 5.3, 5.11); the invite's `lang` on the link page (3.3, 4.2); the link
+page's answers draft (4.2.5, 4.2.8); the consent start within 14 days (3.2, 4.3); the Send toast by
+delivery (3.3, 5.1); the schedule's from line (3.3, 5.10); the consent row names the signer (4.3, 5.2,
+5.3); `p_origin` on `_issue` (3.2, 3.3); one client form per card per run (4.5.4.7); the two plain-copy
+lines (3.3, 5.1). The duplicated findings (NPS second source twice, `signer:'none'` twice,
+`maxAgeDays` twice) are each applied once.
+
+Rejected, in part, with reasons:
+- **Excluding canary answers from `cockpit_pause_consent_for`** (part of the canary finding): kept
+  for card `86eywg1cq` only, because D-C2C's read-back needs it and that card is not on the billing
+  sheet, so no pause can ever use a canary consent; every aggregate reader excludes them.
+- **Allowing pause consent to a Paused card** (offered as optional in the stopped-card finding): not
+  taken; the issue hook already refuses a Paused card (`This client is already paused. Resume them
+  first.`).
+- **Allowing the exit survey on an unanswered termination notice alone** (part of the exit-survey
+  finding): not taken; the Notice in band's `Confirm churn`/`Client is leaving` opens the departure,
+  and the exit survey then opens, so the CSM confirms who is leaving before the client is asked why.
+- **Running issue hooks in a caught sub-block too** (implied by the hook finding): not taken; an
+  issue hook is a rule (a Paused card, a bad restart), and swallowing it would issue a form that
+  should not go.
+- **Replacing `portal_client_ask_for_person`** (the second fix offered for the one-way cap): not
+  taken; `portal_form_for_person` answering `shown_today` first keeps a live function unreplaced.
+
+Ownership after the revision is unchanged and disjoint (section 7): the new helpers
+(`cockpit_form_card_allows`, `cockpit_form_client_version`, `cockpit_form_invites_withdraw_ineligible`)
+are invites-core's in migration `a`; `forms-door/deno.json` stays client-voice's (`forms-door/**`).
