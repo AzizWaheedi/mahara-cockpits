@@ -57,11 +57,11 @@ test('action server derives client and rejects wrong role, scope and dates',asyn
  await expect(db.query(sql,['plan',{items:[{text:'Task',clientName:'Client B'}]}])).rejects.toThrow('outside');
  await actor(db,OTHER);await expect(db.query(sql,['act',{taskId:'task-a',kind:'call',action:'Logged call'}])).rejects.toThrow('access');
 });
-test('ClickUp transport verifies fields and comment before successful result',async()=>{
+test('ClickUp transport verifies fields before successful result, and a call posts no card comment (2026-11-01)',async()=>{
  const fields:any[]=[];let text='',calls:string[]=[];
  const provider:any={async call(method:string,path:string,body:any){calls.push(method+' '+path);if(method==='POST'&&path.includes('/field/')){fields.push({id:path.split('/').at(-1),value:body.value});return{};}if(path==='task/task-a'&&method==='GET')return {custom_fields:fields};if(method==='POST'&&path.endsWith('/comment')){text=body.comment_text;return{id:'comment1'};}if(method==='GET'&&path.endsWith('/comment'))return{comments:[{id:'comment1',comment_text:text}]};throw Error('Unexpected request');}};
  const plan=await prepareCsm('act',{kind:'call',action:'Call logged'},{day:'2026-09-27',taskId:'task-a',clientName:'Client A',evidence:'Needs call'},provider);expect(calls).toEqual([]);
- const done=await executeCsm(plan,provider);expect(done.result.ok).toBe(true);expect(done.patch.callDays).toBe(0);expect(done.result.commentId).toBe('comment1');expect(calls.filter(c=>c.startsWith('POST')).length).toBe(3);
+ const done=await executeCsm(plan,provider);expect(done.result.ok).toBe(true);expect(done.patch.callDays).toBe(0);expect(done.result.commentId).toBeUndefined();expect(calls.filter(c=>c.startsWith('POST')).length).toBe(2);expect(calls.filter(c=>c.endsWith('/comment'))).toEqual([]);
  const bad:any={call:async(method:string,path:string)=>method==='GET'?{custom_fields:[]}:({})};await expect(executeCsm(plan,bad)).rejects.toThrow('read-back');
 });
 
@@ -74,6 +74,17 @@ test('confirmed CSM actions write decisions only after provider proof and refuse
  await db.query('SELECT cockpit_finish_csm_action($1,$2,$3)',[actionId,{ok:true,commentId:'one'},{lastCall:'2026-09-27'}]);await owner(db);expect((await db.query('SELECT * FROM cockpit_decisions')).rows.length).toBe(1);expect((await db.query<any>('SELECT reason,logged_at FROM cockpit_decisions')).rows[0].reason).toBe('Human note');
  const second='10000000-0000-4000-8000-000000000002';await db.query("INSERT INTO cockpit_csm_actions(id,operation,actor_id,actor_email,context,request) VALUES($1,'act',$2,$3,$4,$5)",[second,A,context.email,context,args]);await db.query('UPDATE cockpit_members SET clients=$1 WHERE auth_user_id=$2',[['Client B'],A]);await db.exec('SET ROLE service_role');await expect(db.query('SELECT cockpit_finish_csm_action($1,$2)',[second,{ok:true,commentId:'two'}])).rejects.toThrow('access changed');await owner(db);await db.query('UPDATE cockpit_members SET clients=$1 WHERE auth_user_id=$2',[['Client A'],A]);
 });
+test('a date act confirms with no card comment; every other act still needs its comment (2026-11-01)',async()=>{
+ await owner(db);await db.exec(migration('20261101a_csm_date_acts_no_comment.sql'));
+ await actor(db,A);const context=(await db.query<any>("SELECT cockpit_csm_action_context('act',$1) AS context",[{taskId:'task-a',kind:'call',action:'Call logged'}])).rows[0].context;
+ await owner(db);await db.exec('SET ROLE service_role');const stage='10000000-0000-4000-8000-000000000003',call='10000000-0000-4000-8000-000000000004';
+ await db.query("INSERT INTO cockpit_csm_actions(id,operation,actor_id,actor_email,context,request) VALUES($1,'act',$2,$3,$4,$5)",[stage,A,context.email,context,{taskId:'task-a',kind:'stage',action:'Moved to Active',value:'Active'}]);
+ await db.query("INSERT INTO cockpit_csm_actions(id,operation,actor_id,actor_email,context,request) VALUES($1,'act',$2,$3,$4,$5)",[call,A,context.email,context,{taskId:'task-a',kind:'call',action:'Call logged'}]);
+ await expect(db.query('SELECT cockpit_finish_csm_action($1,$2)',[stage,{ok:true}])).rejects.toThrow('comment');
+ expect((await db.query<any>('SELECT cockpit_finish_csm_action($1,$2) AS result',[call,{ok:true}])).rows[0].result.receiptId).toBe(call);
+ await owner(db);
+});
+
 test('planned task readback must confirm intended board, name and due date',async()=>{
  const context={actorId:A,email:'csm-a@tests.invalid',day:'2026-09-27'};let saved:any;
  const provider:any={async call(method:string,path:string,body:any){if(method==='POST'){saved=body;return{id:'new-task'};}return{id:'new-task',name:saved.name,list:{id:'901816723211'},due_date:saved.due_date,url:'https://app.clickup.com/t/new-task'};}};

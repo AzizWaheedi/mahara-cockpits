@@ -2279,7 +2279,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
           {panel === "log" && (
             <div className="space-y-3 rounded-2xl border bg-card p-4 sm:p-6">
               <Textarea
-                placeholder="Call summary or what you said to them (optional, goes on the ClickUp card)"
+                placeholder="Call summary or what you said to them (optional, saved with the call on this page)"
                 value={note}
                 onChange={e => setNote(e.target.value)}
                 rows={3}

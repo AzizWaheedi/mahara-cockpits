@@ -440,7 +440,8 @@ describe("confirmed booking, receipts and retry protection", () => {
     const fieldUpdate = clickupCustomFields.find(f => f.id === NEXT_POC_FIELD);
     expect(fieldUpdate?.value).toBe(Date.parse("2026-10-04T09:00:00Z"));
     expect(nextPocBodies).toEqual([{ value: Date.parse("2026-10-04T09:00:00Z"), value_options: { time: false } }]);
-    expect(clickupComments).toHaveLength(1);
+    // A booked date posts no comment on the card (the CEO, 2026-11-01).
+    expect(clickupComments).toHaveLength(0);
   });
 
   test("concurrent clicks and repeated requests create only one appointment", async () => {

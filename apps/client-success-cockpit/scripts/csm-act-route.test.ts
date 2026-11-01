@@ -206,7 +206,7 @@ const noon = (d: string) => Date.parse(`${d}T09:00:00Z`);
 
 /** A Clients board that keeps a date-only value at ClickUp's own hour (03:00Z or 04:00Z) on its day. */
 function datedBoard(
-  opts: { hour?: number; shift?: number; commentBack?: string } = {},
+  opts: { hour?: number; shift?: number } = {},
 ) {
   const posts: { path: string; body: any }[] = [];
   const values: Record<string, unknown> = {};
@@ -251,7 +251,7 @@ function datedBoard(
           comments: [
             {
               id: "c1",
-              comment_text: opts.commentBack ?? comment,
+              comment_text: comment,
             },
           ],
         };
@@ -287,57 +287,27 @@ describe("build 5: the card's dates", () => {
     ]);
   });
 
-  // Z90: the read-back used to throw before the comment, so a date act has never reached it live. It reaches it from
-  // D11. The comment is kept and named, so this pins exactly what the card gets: the CSM's typed note, once, silently.
-  test("a confirmed call act posts one comment with the CSM's note, notify_all false, and reads it back", async () => {
-    const { provider, calls, comments } = datedBoard();
-    const plan = await prepareCsm(
-      "act",
+  // Z90, the CEO 2026-11-01 ("Drop the comment"): a date act changes only its date on the card. No comment is posted
+  // or read, and the act still confirms.
+  test("a confirmed date act posts no comment on the card", async () => {
+    const acts: Record<string, unknown>[] = [
       { kind: "call", action: "Held a call", note: "typed by the CSM" },
-      context,
-      provider,
-    );
-    const done = await executeCsm(plan, provider);
-    expect(calls).toEqual([
-      `POST task/task-a/field/${LAST_POC}`,
-      `POST task/task-a/field/${LAST_CALL}`,
-      "GET task/task-a",
-      "POST task/task-a/comment",
-      "GET task/task-a/comment",
-    ]);
-    expect(comments).toEqual([
-      {
-        comment_text:
-          "Call logged\nClient: City Wood\nWhy: Check-in due\nNote: typed by the CSM",
-        notify_all: false,
-      },
-    ]);
-    expect(done.result.commentId).toBe("c1");
-  });
-
-  test("every other date act posts one comment too, after its date reads back", async () => {
-    const acts: [Record<string, unknown>, string][] = [
-      [{ kind: "touchpoint", action: "Touchpoint" }, "Touchpoint logged"],
-      [
-        { kind: "booked", action: "Check-in booked", value: "2026-10-20" },
-        "Check-in booked",
-      ],
-      [{ kind: "report", action: "Report sent" }, "Report sent"],
+      { kind: "touchpoint", action: "Touchpoint", note: "typed by the CSM" },
+      { kind: "booked", action: "Check-in booked", value: "2026-10-20" },
+      { kind: "report", action: "Report sent" },
     ];
-    for (const [args, first] of acts) {
+    for (const args of acts) {
       const { provider, calls, comments } = datedBoard();
       const plan = await prepareCsm("act", args, context, provider);
-      await executeCsm(plan, provider);
-      expect(comments).toHaveLength(1);
-      expect(comments[0].notify_all).toBe(false);
-      expect(comments[0].comment_text.split("\n")[0]).toBe(first);
-      expect(calls.indexOf("GET task/task-a")).toBeLessThan(
-        calls.indexOf("POST task/task-a/comment"),
-      );
+      const done = await executeCsm(plan, provider);
+      expect(done.result.ok).toBe(true);
+      expect(done.result.commentId).toBeUndefined();
+      expect(comments).toEqual([]);
+      expect(calls.filter(c => c.includes("/comment"))).toEqual([]);
     }
   });
 
-  test("a date that does not read back posts no comment; a comment that does not read back fails the act", async () => {
+  test("a date that does not read back still fails the act, with no comment", async () => {
     const wrongDay = datedBoard({ shift: -1 });
     await expect(
       executeCsm(
@@ -351,19 +321,6 @@ describe("build 5: the card's dates", () => {
       ),
     ).rejects.toThrow("read-back");
     expect(wrongDay.comments).toEqual([]);
-    const reworded = datedBoard({ commentBack: "something else" });
-    await expect(
-      executeCsm(
-        await prepareCsm(
-          "act",
-          { kind: "call", action: "Held a call", note: "typed by the CSM" },
-          context,
-          reworded.provider,
-        ),
-        reworded.provider,
-      ),
-    ).rejects.toThrow("Comment read-back was not confirmed");
-    expect(reworded.comments).toHaveLength(1);
   });
 
   for (const hour of [3, 4])

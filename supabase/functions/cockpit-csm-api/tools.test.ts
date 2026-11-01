@@ -214,7 +214,8 @@ describe("a second 429 speaks for its own step (one press makes several calls)",
       },
       updates: [{ field: FIELD, value: "2026-11-02" }],
       ticket: null,
-      args: { kind: "touchpoint" },
+      // A date act posts no comment (2026-11-01), so a stage act carries the comment this test refuses.
+      args: { kind: "stage", action: "Moved to Active" },
       patch: {},
     } as unknown as Parameters<typeof executeCsm>[0];
     const message = await executeCsm(plan, r.tools).catch(
