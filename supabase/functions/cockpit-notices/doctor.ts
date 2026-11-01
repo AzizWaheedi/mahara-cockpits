@@ -67,6 +67,8 @@ export type Doctor = {
   missingScopes: string[];
   channels: { id: string; name: string | null; private: boolean | null; member: boolean; ok: boolean; note: string }[];
   mentions: { kind: string; rule: string; people: { label: string; slack: "ok" | "not_found" | "refused" | "unknown" | "none" }[]; ok: boolean }[];
+  /** Every notice kind in the settings' order, where it posts and whether that channel is ready (waves 1-2 adds six). */
+  kinds: { kind: string; enabled: boolean; channel: string | null; ready: boolean | null }[];
   secrets: { SLACK_BOT_TOKEN: boolean; CLICKUP_API_TOKEN: boolean; NOTICES_CRON_SECRET: boolean };
   note: string;
 };
@@ -94,11 +96,17 @@ export async function runDoctor(deps: NoticeDeps): Promise<Doctor> {
     inputs = readInputs(await deps.rpc("cockpit_slack_notice_doctor_inputs", {}));
   } catch (e) {
     return {
-      ok: false, bot: { userId: null, ok: false }, missingScopes: [], channels: [], mentions: [], secrets,
+      ok: false, bot: { userId: null, ok: false }, missingScopes: [], channels: [], mentions: [], kinds: [], secrets,
       note: `The notice settings could not be read (${e instanceof Error ? e.message.slice(0, 160) : "no answer"}). Check the migration 20261025n is applied.`,
     };
   }
   const listed = (note: string) => inputs.channels.map(c => ({ id: c.id, name: c.name, private: c.private, member: false, ok: false, note }));
+  // Where each kind posts, read from the settings; `ready` is the channel's check (null when not checked this run).
+  const kindsOf = (checked: Map<string, boolean> | null): Doctor["kinds"] =>
+    inputs.settings.map(s => ({
+      kind: s.kind, enabled: s.enabled, channel: s.channel,
+      ready: s.channel === null ? null : checked ? (checked.get(s.channel) ?? false) : null,
+    }));
   const notChecked = () => inputs.settings.flatMap(s => byRule(s.mentions).map(([rule, ms]) => ({
     kind: s.kind, rule,
     people: ms.filter(m => !m.missing).map(m => ({ label: labelOf(m), slack: m.slackId ? ("ok" as const) : ("none" as const) })),
@@ -106,7 +114,7 @@ export async function runDoctor(deps: NoticeDeps): Promise<Doctor> {
   })));
 
   if (!token) {
-    return { ok: false, bot: { userId: null, ok: false }, missingScopes: [], channels: listed("Not checked: SLACK_BOT_TOKEN is not set."), mentions: notChecked(), secrets, note: DOCTOR_NO_TOKEN };
+    return { ok: false, bot: { userId: null, ok: false }, missingScopes: [], channels: listed("Not checked: SLACK_BOT_TOKEN is not set."), mentions: notChecked(), kinds: kindsOf(null), secrets, note: DOCTOR_NO_TOKEN };
   }
   const slack = slackFor(deps, token, "doctor");
   const auth = await slack.authTest();
@@ -115,7 +123,7 @@ export async function runDoctor(deps: NoticeDeps): Promise<Doctor> {
     const note = !auth.ok
       ? isTokenCode(auth.code) ? DOCTOR_BAD_TOKEN : `Slack did not answer the token check (${auth.code}). Run the doctor again.`
       : `The Slack token is ${auth.userId ?? "an unknown user"}, not mahara-club-bot (${deps.botUser()}), so nothing is posted. The tech lead sets SLACK_BOT_TOKEN again.`;
-    return { ok: false, bot: { userId: auth.ok ? auth.userId : null, ok: false }, missingScopes: [], channels: listed("Not checked: the token is not mahara-club-bot."), mentions: notChecked(), secrets, note };
+    return { ok: false, bot: { userId: auth.ok ? auth.userId : null, ok: false }, missingScopes: [], channels: listed("Not checked: the token is not mahara-club-bot."), mentions: notChecked(), kinds: kindsOf(null), secrets, note };
   }
 
   const scopes = auth.scopes;
@@ -149,12 +157,20 @@ export async function runDoctor(deps: NoticeDeps): Promise<Doctor> {
   if (!scopes) problems.push("Slack did not list the token's scopes, so they could not be checked.");
   if (missingScopes.length) problems.push(`The Slack app lacks ${missingScopes.join(", ")}. The tech lead adds ${missingScopes.length === 1 ? "it" : "them"}.`);
   for (const c of channels) if (!c.ok) problems.push(`#${c.name ?? c.id}: ${c.note}`);
+  // The notices that wait on a channel the bot is not in (the S0 rows until the CEO invites it, Q4), by kind.
+  const kinds = kindsOf(new Map(channels.map(c => [c.id, c.ok])));
+  const waiting = new Map<string, string[]>();
+  for (const k of kinds) if (k.enabled && k.channel && k.ready === false) waiting.set(k.channel, [...(waiting.get(k.channel) ?? []), k.kind]);
+  for (const [id, list] of waiting) {
+    const name = channels.find(c => c.id === id)?.name ?? id;
+    problems.push(`Not posted until the bot is in #${name}: ${list.join(", ")}.`);
+  }
   for (const m of mentions) {
     if (m.ok) continue;
     problems.push(m.people.length ? `The ${m.kind} notice cannot tag ${m.people.find(p => p.slack !== "ok")?.label ?? "everyone"} in Slack.` : `Nobody is in the seat the ${m.kind} notice tags (${m.rule}).`);
   }
   const ok = problems.length === 0;
-  return { ok, bot: { userId: auth.userId, ok: true }, missingScopes, channels, mentions, secrets, note: ok ? "Everything the notices need is in place." : problems.join(" ").slice(0, 1000) };
+  return { ok, bot: { userId: auth.userId, ok: true }, missingScopes, channels, mentions, kinds, secrets, note: ok ? "Everything the notices need is in place." : problems.join(" ").slice(0, 1000) };
 }
 
 /** The mentions of a settings row grouped by rule, in first-seen order. */

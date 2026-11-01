@@ -17,6 +17,12 @@
  * `cockpit_form_drafts` by the claim, through `live.grade`, never from the
  * outbox's facts, and only for a private channel; the grade tags nobody,
  * whatever mentions are passed, because it is about a person's call.
+ *
+ * The client lifecycle notices (docs/forms/WAVE12-CONTRACT.md 3.4): names and
+ * dates only, never an amount, a lead count, an email or a phone. A
+ * termination survey that came with no card id is "unmatched": it names the
+ * client as the form gave it and points at the churn tracker, where a CSM
+ * picks the card.
  */
 
 export type NoticeKind =
@@ -27,8 +33,16 @@ export type NoticeKind =
   | "blueprint.media"
   | "blueprint.offer"
   | "checkin.grade"
-  | "checkin.recap_late";
-export type Variant = "complete" | "late" | "done" | "reconcile" | "typeform" | "new" | "live" | "thread" | "top" | "grade";
+  | "checkin.recap_late"
+  | "termination.notice"
+  | "termination.submitted"
+  | "churn.confirmed"
+  | "extension.granted"
+  | "pause.agreed"
+  | "client.resumed";
+export type Variant =
+  | "complete" | "late" | "done" | "reconcile" | "typeform" | "new" | "live" | "thread" | "top" | "grade"
+  | "matched" | "unmatched" | "post";
 export type TextMention = { label: string; slackId: string | null };
 export type NoticeFacts = Record<string, unknown> & {
   ref: string;
@@ -48,6 +62,22 @@ export const NOTICE_KINDS: readonly NoticeKind[] = [
   "blueprint.offer",
   "checkin.grade",
   "checkin.recap_late",
+  "termination.notice",
+  "termination.submitted",
+  "churn.confirmed",
+  "extension.granted",
+  "pause.agreed",
+  "client.resumed",
+];
+
+/** The client lifecycle kinds (waves 1-2, 3.4), in the settings' order. */
+export const LIFECYCLE_KINDS: readonly NoticeKind[] = [
+  "termination.notice",
+  "termination.submitted",
+  "churn.confirmed",
+  "extension.granted",
+  "pause.agreed",
+  "client.resumed",
 ];
 
 /** The variants each kind has wording for. */
@@ -60,7 +90,25 @@ export const VARIANTS: Record<NoticeKind, readonly Variant[]> = {
   "blueprint.offer": ["thread", "top"],
   "checkin.grade": ["grade"],
   "checkin.recap_late": ["late"],
+  "termination.notice": ["matched", "unmatched"],
+  "termination.submitted": ["post"],
+  "churn.confirmed": ["post"],
+  "extension.granted": ["post"],
+  "pause.agreed": ["post"],
+  "client.resumed": ["post"],
 };
+
+/** The churn register's eight reasons (20261001a): the only reason words a notice ever shows. */
+export const CHURN_REASONS: readonly string[] = [
+  "Cancelled",
+  "Refund",
+  "Chargeback",
+  "Non-payment 14+ days",
+  "Paused past 14 days",
+  "Ghosted",
+  "Completed term, did not renew",
+  "Other",
+];
 
 /** The five main services, as client-success-cockpit/src/present/blueprintBrief.ts SERVICE_LABEL (a test pins them equal). */
 export const SERVICE_LABEL: Record<string, string> = {
@@ -119,9 +167,15 @@ export function cleanStatus(s: string): string {
   return String(s).replace(/[^\p{L}\p{N} -]/gu, " ").replace(/\s+/g, " ").trim();
 }
 
-export function noticeLinks(taskId: string): { cockpit: string; card: string; blueprint: string; messages: string } {
+export function noticeLinks(taskId: string): {
+  cockpit: string; card: string; blueprint: string; messages: string; client: string; churn: string;
+} {
   const id = encodeURIComponent(taskId);
   return {
+    /** The client page (its overview), where the lifecycle acts live. */
+    client: `https://cockpit.maharamedia.com/client-success/clients/${id}`,
+    /** The churn tracker (Money, Churn), where an unmatched survey gets its card. */
+    churn: "https://cockpit.maharamedia.com/client-success/money?tab=churn",
     cockpit: `https://cockpit.maharamedia.com/client-success/clients/${id}?tab=onboarding`,
     card: `https://app.clickup.com/t/${id}`,
     blueprint: `https://cockpit.maharamedia.com/client-success/clients/${id}/present/blueprint?view=prep`,
@@ -364,6 +418,55 @@ function recapLate(f: NoticeFacts): Built {
   };
 }
 
+/** A calendar day ("2026-11-16") or a time, as "Mon 16 Nov"; "a day not recorded" when there is none. */
+function dayWords(v: unknown): string {
+  const s = str(v).trim();
+  if (!s) return "a day not recorded";
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T09:00:00Z` : s;
+  const d = kuwaitDay(day);
+  return d === "an unknown day" ? "a day not recorded" : d;
+}
+
+// The client lifecycle notices (waves 1-2, 3.4). Names and dates only.
+function lifecycle(kind: NoticeKind, variant: Variant, f: NoticeFacts): Built {
+  const client = escapeSlack(f.client);
+  const open = [{ url: noticeLinks(f.taskId).client, words: "Open the client" }];
+  const post = (header: string, sentence: string, links = open): Built => ({
+    text: sentence,
+    lines: [`*${header}*`, sentence],
+    links,
+    inline: false,
+    footer: "Client success",
+    placed: false,
+  });
+  if (kind === "termination.notice") {
+    if (variant === "unmatched") {
+      const named = escapeSlack(str(f.formClientName).trim() || "A client");
+      return post(
+        "Termination notice in, not matched to a card",
+        `${named} sent the termination survey. It is not matched to a card yet: pick the card in the cockpit.`,
+        [{ url: noticeLinks("").churn, words: "Open the churn tracker" }],
+      );
+    }
+    return post(`Termination notice in: ${client}`, `${client} sent the termination survey. Confirm churn or answer the notice in the cockpit.`);
+  }
+  if (kind === "termination.submitted") return post(`Termination survey sent: ${client}`, `${client} sent the termination survey.`);
+  if (kind === "churn.confirmed") {
+    const reason = CHURN_REASONS.includes(str(f.reason)) ? str(f.reason) : "no reason on the register's list";
+    return post(`Client has left: ${client}`, `${client} has left: ${escapeSlack(reason)}.`);
+  }
+  if (kind === "extension.granted") {
+    const n = Number(f.weeks);
+    const weeks = Number.isInteger(n) && n >= 1 && n <= 12 ? `${n}-week` : "an";
+    return post(`Extension given: ${client}`, `${client}: ${weeks} extension to ${dayWords(f.until)}.`);
+  }
+  if (kind === "pause.agreed") {
+    const restart = str(f.restart).trim() ? `, restarts ${dayWords(f.restart)}` : "";
+    return post(`Pause agreed: ${client}`, `${client}: paused from ${dayWords(f.on)}${restart}.`);
+  }
+  return post(`Client resumed: ${client}`, `${client}: resumed ${dayWords(f.on)}.`);
+}
+
 const context = (text: string): SlackBlock => ({ type: "context", elements: [{ type: "mrkdwn", text }] });
 
 /** The twelve criteria of the call grade, in its order (cockpit-forms-api/prompts/grade.ts CRITERIA; a test pins them equal). */
@@ -461,6 +564,7 @@ export function noticeText(kind: NoticeKind, variant: Variant, facts: NoticeFact
     : kind === "blueprint.media" ? media(variant, f, rehearsal)
     : kind === "blueprint.updated" ? updated(variant, f)
     : kind === "checkin.recap_late" ? recapLate(f)
+    : (LIFECYCLE_KINDS as readonly string[]).includes(kind) ? lifecycle(kind, variant, f)
     : offer(variant, f);
   const lines = [...built.lines];
   if (!built.placed && who.mentions.length) lines[lines.length - 1] = tail(lines[lines.length - 1], who);
@@ -518,5 +622,15 @@ export function sampleFacts(kind: NoticeKind, now: Date = new Date()): NoticeFac
       score: 7.5,
     },
     dueAt: at(0),
+    // The client lifecycle notices: an invented survey, departure and billing change.
+    responseId: "00000000-0000-4000-8000-000000000000",
+    matched: true,
+    formClientName: "Sample client",
+    noticeOn: at(0).slice(0, 10),
+    reason: "Cancelled",
+    weeks: 2,
+    until: at(14 * 24 * 60).slice(0, 10),
+    on: at(0).slice(0, 10),
+    restart: at(10 * 24 * 60).slice(0, 10),
   };
 }
