@@ -2,9 +2,10 @@
 // three doctors), with every dependency injected so the tests can run them end
 // to end without a network.
 //
-// OUTWARD SAFETY. Five Edge Function secrets open writes to ClickUp, each
+// OUTWARD SAFETY. Six Edge Function secrets open writes to ClickUp, each
 // only when it is exactly "true":
-//   CLICKUP_WRITEBACK_APPLY              the log and Do's & Don'ts
+//   CLICKUP_WRITEBACK_APPLY              the log and Do's & Don'ts, never a
+//                                        billing edit (waves 1-2 W2)
 //   CLICKUP_WRITEBACK_APPLY_CSM_TICKETS  client success tickets in the log, on
 //                                        their own while the rest of the log
 //                                        stays a dry run (live since 2026-10-12)
@@ -22,6 +23,12 @@
 //                                        Check-in Call), and nothing else (forms.ts
 //                                        formsGate). CLICKUP_WRITEBACK_FORMS_ONLY_CARDS
 //                                        narrows it to listed client cards (a canary)
+//   CLICKUP_WRITEBACK_APPLY_BILLING      billing edits in the log (kind billing), and
+//                                        only those whose event kind is listed in
+//                                        CLICKUP_WRITEBACK_BILLING_KINDS (comma list,
+//                                        empty means none); CLICKUP_WRITEBACK_BILLING_ONLY_CARDS
+//                                        narrows it to listed client cards (the canary
+//                                        86eywg1cq). No other switch opens them (billingGate).
 // With its switch off a job reads what it needs and records, in
 // cockpit_clickup_writeback_runs (and on each queue item), exactly what it
 // would write: task id, field, old value, new value.
@@ -65,6 +72,7 @@ import {
   SAY,
 } from "./requests.ts";
 import { executeTaskAction, planTaskAction, taskActionStepKeys } from "./taskActions.ts";
+import { billingDb, billingDoctorChecks } from "./billing.ts";
 import {
   cardRefused,
   checkToken,
@@ -94,7 +102,7 @@ export type Deps = {
 };
 
 /** The jobs index.ts runs, in the order the unknown-job sentence names them. */
-export const JOBS = ["kpi", "log", "dosdonts", "doctor", "requests", "requests_doctor", "forms", "forms_doctor"] as const;
+export const JOBS = ["kpi", "log", "dosdonts", "doctor", "requests", "requests_doctor", "forms", "forms_doctor", "billing_doctor"] as const;
 const jobList = `${JOBS.slice(0, -1).join(", ")} or ${JOBS.at(-1)}`;
 export const unknownJobNote = (job: string) => `Unknown job "${job.slice(0, 40)}". Use ${jobList}.`;
 export const noJobNote = `Send a JSON body with a job: ${jobList}.`;
@@ -118,6 +126,38 @@ export function gate(env: Deps["env"]) {
     csmTickets,
     mode: !apply ? "dry_run" : only.size ? "apply_limited" : "apply",
     live: (taskId: string | null | undefined) => apply && (only.size === 0 || (taskId ? only.has(taskId) : false)),
+  };
+}
+
+const list = (v: string | undefined) =>
+  new Set(
+    String(v ?? "")
+      .split(",")
+      .map(s => s.trim())
+      .filter(Boolean),
+  );
+
+/**
+ * Billing edits' own gate (waves 1-2 1.4, W2): CLICKUP_WRITEBACK_APPLY_BILLING exactly "true", the event kind in
+ * CLICKUP_WRITEBACK_BILLING_KINDS, and the card in CLICKUP_WRITEBACK_BILLING_ONLY_CARDS when that is set. The
+ * general CLICKUP_WRITEBACK_APPLY never opens a billing item, so card writes for money open one kind at a time.
+ */
+export function billingGate(env: Deps["env"]) {
+  const apply = env("CLICKUP_WRITEBACK_APPLY_BILLING") === "true";
+  const kinds = list(env("CLICKUP_WRITEBACK_BILLING_KINDS"));
+  const only = list(env("CLICKUP_WRITEBACK_BILLING_ONLY_CARDS"));
+  const mode = !apply || kinds.size === 0 ? "dry_run" : only.size ? "apply_limited" : "apply";
+  // What the run reports (cockpit_billing_mode reads it): no kind is open while the switch is off.
+  const open = mode === "dry_run" ? [] : [...kinds].sort();
+  return {
+    apply,
+    kinds,
+    only,
+    mode,
+    open,
+    live: (item: { payload?: Row | null }) =>
+      apply && kinds.has(String(item.payload?.kind ?? "")) && (only.size === 0 || only.has(String(item.payload?.taskId ?? ""))),
+    words: `billing: ${mode} (${open.length ? open.join(", ") : "no kinds"})${mode === "apply_limited" ? ` on ${[...only].join(", ")}` : ""}`,
   };
 }
 
@@ -341,14 +381,68 @@ export async function runKpi(deps: Deps): Promise<JobResult> {
 
 const stepTasks = (steps: Step[]) => steps.flatMap(s => ("taskId" in s && s.taskId !== "$ticket" ? [s.taskId] : []));
 
+/** Billing items of one log run, for the run note and clickup-writeback:billing. */
+type BillingCounts = { claimed: number; delivered: number; held: number; failed: number };
+
+/**
+ * The billing switch and this run's billing items, saved every log run as cockpit_sync_state
+ * clickup-writeback:billing (cockpit_billing_mode reads it; the guardian warns on heldOpenKind, W20). A failed save
+ * never stops the log: the run note still carries the mode.
+ */
+async function reportBilling(deps: Deps, bg: ReturnType<typeof billingGate>, bc: BillingCounts, note: string): Promise<void> {
+  let held: Row | null = null;
+  try {
+    held = await billingDb(deps.rpc).held(bg.open);
+  } catch {
+    // Before 20261101m is applied there is no count; the row says so instead of a zero.
+  }
+  const heldOpenKind = held && Number.isFinite(Number(held.heldOpenKind)) ? Number(held.heldOpenKind) : null;
+  const at = new Date(deps.now()).toISOString();
+  const waiting =
+    heldOpenKind === null
+      ? " The held count could not be read."
+      : heldOpenKind
+        ? ` ${heldOpenKind} held ${heldOpenKind === 1 ? "edit" : "edits"} of an open kind wait for the review: release or close each one.`
+        : "";
+  try {
+    await deps.syncState?.("clickup-writeback:billing", {
+      last_run_at: at,
+      last_ok_at: at,
+      ok: true,
+      note: `${bg.words[0].toUpperCase()}${bg.words.slice(1)}. ${note}${waiting}`.slice(0, 500),
+      detail: {
+        mode: bg.mode,
+        kinds: bg.open,
+        onlyCards: [...bg.only],
+        ...bc,
+        heldTotal: held && Number.isFinite(Number(held.held)) ? Number(held.held) : null,
+        heldOpenKind,
+        heldByKind: held?.byKind ?? null,
+        at,
+      },
+      updated_at: at,
+    });
+  } catch {
+    // The run's own note and cockpit_clickup_writeback_runs keep the mode when this row cannot be written.
+  }
+}
+
 export async function runLog(deps: Deps, limit = 15): Promise<JobResult> {
   const g = gate(deps.env);
-  if (!deps.env("CLICKUP_API_TOKEN")) return idle(deps, "log", false, NO_TOKEN);
+  const bg = billingGate(deps.env);
+  const bc: BillingCounts = { claimed: 0, delivered: 0, held: 0, failed: 0 };
+  if (!deps.env("CLICKUP_API_TOKEN")) {
+    await reportBilling(deps, bg, bc, "CLICKUP_API_TOKEN is not set, so nothing was read or written.");
+    return idle(deps, "log", false, NO_TOKEN);
+  }
   const enqueued = Number(await deps.rpc("cockpit_clickup_writeback_sweep", {})) || 0;
   const token = deps.uuid();
   const items = ((await deps.rpc("cockpit_clickup_writeback_claim", { p_token: token, p_limit: limit })) ?? []) as QueueItem[];
-  if (!items.length) return idle(deps, "log", true, `The ClickUp log queue is empty${enqueued ? ` after enqueuing ${enqueued}` : ""}.`);
-  const mode = !g.apply && g.csmTickets ? "apply_limited" : g.mode;
+  if (!items.length) {
+    await reportBilling(deps, bg, bc, "No billing edit was waiting.");
+    return idle(deps, "log", true, `The ClickUp log queue is empty${enqueued ? ` after enqueuing ${enqueued}` : ""}.`);
+  }
+  const mode = !g.apply && (g.csmTickets || bg.mode !== "dry_run") ? "apply_limited" : g.mode;
   const run = await deps.rpc("cockpit_clickup_writeback_begin", { p_job: "log", p_mode: mode, p_exclusive: false });
   const counts = { claimed: items.length, delivered: 0, dryRun: 0, skipped: 0, retry: 0, unknown: 0, failed: 0 };
   const planned: Planned[] = [];
@@ -378,13 +472,18 @@ export async function runLog(deps: Deps, limit = 15): Promise<JobResult> {
         const tasks = stepTasks(built.steps);
         const createsTask = built.steps.some(s => s.type === "create_task");
         const csmTicket = item.kind === "decision" && item.payload?.role === "csm";
-        const live =
-          (csmTicket && g.csmTickets) ||
-          (g.apply && tasks.every(t => g.live(t)) && (!createsTask || g.only.size === 0 || tasks.length > 0));
+        const billing = item.kind === "billing";
+        if (billing) bc.claimed += 1;
+        // A billing edit is live only by its own gate (W2); the general switch and ONLY_TASKS never open it.
+        const live = billing
+          ? bg.live(item)
+          : (csmTicket && g.csmTickets) ||
+            (g.apply && tasks.every(t => g.live(t)) && (!createsTask || g.only.size === 0 || tasks.length > 0));
         if (!live) {
           const plan = await planItem(item, built.steps, provider, boardFields, clientFields);
           planned.push(...plan);
           counts.dryRun += 1;
+          if (billing) bc.held += 1;
           await save(item.id, { state: "dry_run", planned: plan, task_id: tasks[0] ?? null });
           continue;
         }
@@ -394,12 +493,14 @@ export async function runLog(deps: Deps, limit = 15): Promise<JobResult> {
         const now = deps.now();
         if (outcome.state === "delivered") {
           counts.delivered += 1;
+          if (billing) bc.delivered += 1;
           await save(item.id, { state: "delivered", progress: outcome.progress, delivered_at: new Date(now).toISOString(), error: null });
         } else if (outcome.state === "skipped") {
           counts.skipped += 1;
           await save(item.id, { state: "skipped", progress: outcome.progress, error: outcome.error ?? null });
         } else if (outcome.state === "failed" || item.attempts > RETRY_MINUTES.length) {
           counts.failed += 1;
+          if (billing) bc.failed += 1;
           await save(item.id, { state: "failed", progress: outcome.progress, error: outcome.error ?? "Gave up after the retry ladder." });
         } else {
           counts[outcome.state] += 1;
@@ -413,15 +514,21 @@ export async function runLog(deps: Deps, limit = 15): Promise<JobResult> {
         await save(item.id, { state: "unknown", error: redact(String(e instanceof Error ? e.message : e)), next_attempt_at: new Date(deps.now() + 60_000).toISOString() }).catch(() => {});
       }
     }
+    const billingNote = `${bg.words[0].toUpperCase()}${bg.words.slice(1)}${bc.claimed ? `: ${bc.delivered} delivered, ${bc.held} held, ${bc.failed} failed` : ""}.`;
+    const stopped = stop ? ` Stopped: ${redact(stop)}` : "";
     const note = g.apply
-      ? `${counts.delivered} delivered, ${counts.retry + counts.unknown} to retry, ${counts.failed} failed, ${counts.skipped} stay in the cockpit${counts.dryRun ? `, ${counts.dryRun} held as dry runs outside the allowed cards` : ""}.${stop ? ` Stopped: ${redact(stop)}` : ""}`
+      ? `${counts.delivered} delivered, ${counts.retry + counts.unknown} to retry, ${counts.failed} failed, ${counts.skipped} stay in the cockpit${counts.dryRun ? `, ${counts.dryRun} held as dry runs outside the allowed cards or kinds` : ""}.${stopped} ${billingNote}`
       : `Dry run: ${counts.dryRun} log entries planned, ${counts.skipped} stay in the cockpit. ${
           g.csmTickets
-            ? `Client success tickets are live: ${counts.delivered} delivered, ${counts.retry + counts.unknown} to retry, ${counts.failed} failed.${stop ? ` Stopped: ${redact(stop)}` : ""}`
-            : "Nothing was written to ClickUp."
-        }`;
-    return finish(deps, run.id, "log", mode, counts.failed === 0 && !stop, note, counts, planned);
+            ? `Client success tickets are live: ${counts.delivered} delivered, ${counts.retry + counts.unknown} to retry, ${counts.failed} failed.${stopped}`
+            : bg.mode !== "dry_run"
+              ? `Only billing edits of the open kinds are written.${stopped}`
+              : "Nothing was written to ClickUp."
+        } ${billingNote}`;
+    await reportBilling(deps, bg, bc, billingNote);
+    return finish(deps, run.id, "log", mode, counts.failed === 0 && !stop, note, { ...counts, billing: bc }, planned);
   } catch (e) {
+    await reportBilling(deps, bg, bc, "The run stopped before it finished.");
     return finish(deps, run.id, "log", g.mode, false, redact(String(e instanceof Error ? e.message : e)), counts, planned);
   }
 }
@@ -478,9 +585,21 @@ function requestsWords(env: Deps["env"]) {
 
 /** Configuration and queue health, with no provider call and no write. */
 export async function runDoctor(deps: Deps): Promise<
-  JobResult & { secrets: Row; queue: unknown; kpiMode: string; requestsMode: string; requestsOnlyCards: string[]; formsMode: string; formsOnlyCards: string[] }
+  JobResult & {
+    secrets: Row;
+    queue: unknown;
+    kpiMode: string;
+    requestsMode: string;
+    requestsOnlyCards: string[];
+    formsMode: string;
+    formsOnlyCards: string[];
+    billingMode: string;
+    billingKinds: string[];
+    billingOnlyCards: string[];
+  }
 > {
   const g = gate(deps.env);
+  const bg = billingGate(deps.env);
   const kpi = kpiGate(deps.env);
   const rq = requestsWords(deps.env);
   // The 1-1 notes switch, from the environment only (no database read).
@@ -499,9 +618,16 @@ export async function runDoctor(deps: Deps): Promise<
     requestsOnlyCards: rq.cards,
     formsMode: fw.mode,
     formsOnlyCards: fw.cards,
+    billingMode: bg.mode,
+    billingKinds: bg.open,
+    billingOnlyCards: [...bg.only],
     note: `${missing.length ? `Missing secrets: ${missing.join(", ")}.` : `Ready. Mode: ${g.mode}.`} KPI columns: ${
       kpi.apply ? kpi.mode : "dry run (they are written only when CLICKUP_WRITEBACK_APPLY_KPI is true)"
-    }. Requests and task changes: ${rq.text}. 1-1 notes writes: ${fw.text}.`,
+    }. Requests and task changes: ${rq.text}. 1-1 notes writes: ${fw.text}. Billing edits: ${
+      bg.mode === "dry_run"
+        ? "dry run (written only when CLICKUP_WRITEBACK_APPLY_BILLING is true and the kind is in CLICKUP_WRITEBACK_BILLING_KINDS)"
+        : bg.words.replace(/^billing: /, "")
+    }.`,
     secrets,
     queue,
   };
@@ -1145,4 +1271,60 @@ export async function runFormsDoctor(deps: Deps): Promise<JobResult & { problems
     problems.push(`The doctor's result could not be saved: ${redact(String(e instanceof Error ? e.message : e))}`);
   }
   return { ok: ok && problems.length === 0, job: "forms_doctor", mode: fw.mode, note, problems, secrets, onlyCards: fw.cards, counts };
+}
+
+// --- billing_doctor (waves 1-2 4.1 step 2) ------------------------------------------------------------------
+// Daily at 03:41 UTC (pg_cron mahara-clickup-writeback-billing-doctor, 20261101m). One read of the
+// Clients - Mahara fields through the paced provider (so it lands in the health ledger), stored as the field map
+// (cockpit_clickup_fields_put), then checked against what the billing writes need. Reads ClickUp only; never
+// writes there. A gap is a plain sentence in clickup-writeback:billing-doctor, never a stop: the guardian warns on
+// each one. ok=false only when the read or the save failed.
+
+export async function runBillingDoctor(deps: Deps): Promise<JobResult & { gaps: string[]; churnReasonOptions: string[] }> {
+  const bg = billingGate(deps.env);
+  const problems: string[] = [];
+  let gaps: string[] = [];
+  let churnReasonOptions: string[] = [];
+  let reasonMap: Row = {};
+  let stored: number | null = null;
+  let willNotContinue: string | null = null;
+  if (!deps.env("CLICKUP_API_TOKEN")) problems.push(NO_TOKEN);
+  else {
+    try {
+      const provider = paced(deps.providerFor(deps.uuid()), deps.pace);
+      const fields = (await provider.call("clickup", "GET", `list/${CLIENTS_LIST}/field`)).fields;
+      if (!Array.isArray(fields) || !fields.length) throw new Error("ClickUp returned no fields for Clients - Mahara, so the stored field map was kept.");
+      const checked = billingDoctorChecks(fields as Row[]);
+      ({ gaps, churnReasonOptions, reasonMap, willNotContinue } = checked);
+      try {
+        stored = Number(await billingDb(deps.rpc).putFields(CLIENTS_LIST, fields as Row[])) || 0;
+      } catch (e) {
+        problems.push(`The field map could not be saved: ${redact(String(e instanceof Error ? e.message : e))}`);
+      }
+    } catch (e) {
+      problems.push(`Could not read the Clients - Mahara fields: ${redact(String(e instanceof Error ? e.message : e))}`);
+    }
+  }
+  const ok = problems.length === 0;
+  const head = `Billing edits: ${bg.words.replace(/^billing: /, "")}.`;
+  const reasons = churnReasonOptions.length ? ` Churn Reason options: ${churnReasonOptions.join(", ")}.` : "";
+  const note = !ok
+    ? `${problems.join(" ")} ${head}`
+    : gaps.length
+      ? `${gaps.length} ${gaps.length === 1 ? "gap" : "gaps"} on Clients - Mahara. ${gaps.join(" ")} ${head}${reasons}`
+      : `Ready. ${stored} fields stored. Client Status, Churn Type, Churn Reason, the dates, MRR, LTV and the will-not-continue checkbox are all there. ${head}${reasons}`;
+  const at = new Date(deps.now()).toISOString();
+  try {
+    await deps.syncState?.("clickup-writeback:billing-doctor", {
+      last_run_at: at,
+      ...(ok ? { last_ok_at: at } : {}),
+      ok,
+      note: note.slice(0, 500),
+      detail: { gaps, problems, churnReasonOptions, reasonMap, willNotContinue, stored, mode: bg.mode, kinds: bg.open, at },
+      updated_at: at,
+    });
+  } catch (e) {
+    problems.push(`The doctor's result could not be saved: ${redact(String(e instanceof Error ? e.message : e))}`);
+  }
+  return { ok: ok && problems.length === 0, job: "billing_doctor", mode: bg.mode, note, gaps, churnReasonOptions, counts: { stored, gaps: gaps.length } };
 }
