@@ -114,6 +114,25 @@ class PausedClients(unittest.TestCase):
         self.assertEqual(result.evidence['stale_clients'], 1)
         self.assertIn('Other', result.summary)
 
+    def test_a_paused_clients_waiting_card_does_not_page(self):
+        card = {'id': 'card', 'state': 'queued', 'created_at': fakes.ago(60), 'attempts': 0, 'provider_id': None,
+                'binding_id': 'b1'}
+        result = ad_billing.run(context(bindings=[binding(good=90, error=ad_billing.NOT_ACTIVE, id='b1')],
+                                        deliveries=[card]))
+        self.assertEqual(result.status, 'ok')
+
+    def test_a_paused_clients_failed_send_still_pages(self):
+        card = {'id': 'card', 'state': 'failed', 'created_at': fakes.ago(60), 'attempts': 1, 'provider_id': None,
+                'binding_id': 'b1'}
+        result = ad_billing.run(context(bindings=[binding(good=90, error=ad_billing.NOT_ACTIVE, id='b1')],
+                                        deliveries=[card]))
+        self.assertEqual(result.status, 'fail')
+
+    def test_an_active_clients_old_queued_card_still_pages(self):
+        card = {'id': 'card', 'state': 'queued', 'created_at': fakes.ago(60), 'attempts': 0, 'provider_id': None,
+                'binding_id': 'b1'}
+        self.assertEqual(ad_billing.run(context(bindings=[binding(good=2, id='b1')], deliveries=[card])).status, 'fail')
+
     def test_a_client_back_to_active_is_watched_again(self):
         # The next run clears the error and refreshes last_good_at; a lasting other error pages as before.
         self.assertEqual(ad_billing.run(context(bindings=[binding(good=2)])).status, 'ok')
