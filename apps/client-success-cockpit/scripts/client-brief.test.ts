@@ -13,6 +13,11 @@ import type { Timeline, TimelineCall, TimelineEod } from "../src/lib/csmCalls";
 const NOW = Date.parse("2026-10-12T13:00:00Z");
 const DAY_MS = 86_400_000;
 const OK = new Date(NOW - 5 * 60_000).toISOString();
+// September's short name depends on the runtime's date data: "Sep" on some, "Sept" on newer ones.
+const SEP = new Date(Date.UTC(2026, 8, 15, 12)).toLocaleDateString("en-GB", {
+  timeZone: "Asia/Kuwait",
+  month: "short",
+});
 
 const FATHOM = [
   "## الغرض من الاجتماع",
@@ -159,7 +164,7 @@ describe("the brief for a live client", () => {
         ],
       }),
     });
-    expect(b.call.heading).toBe("Last call with notes, Mon 28 Sep");
+    expect(b.call.heading).toBe(`Last call with notes, Mon 28 ${SEP}`);
     expect(b.call.empty).toBe("The 11 Oct call has no recording or notes.");
     expect(b.call.lines.length).toBe(2);
   });
@@ -1027,7 +1032,7 @@ describe("EODs: only what names the client", () => {
       }),
     });
     expect(b.since.team.map(l => `${l.text} [${l.source}]`)).toEqual([
-      "Cost per booking: $249 (15 Sep) → $89 (7 Oct) [Media buyer cockpit (auto)]",
+      `Cost per booking: $249 (15 ${SEP}) → $89 (7 Oct) [Media buyer cockpit (auto)]`,
       "Created the reactivation campaign for City Wood's old leads. [Muhammed, systems manager]",
     ]);
   });
@@ -1140,7 +1145,7 @@ describe("stopped and paused: why, in their own sentence", () => {
       "Stopped. No stop reason is on record. Last on record: Requested a meeting about City Wood renewal and no response till now.",
     );
     expect(b.raise[1].text).toBe(
-      "Last activity on record, 23 Sep: Client updated: shared the week's result.",
+      `Last activity on record, 23 ${SEP}: Client updated: shared the week's result.`,
     );
     // A request with no reply is not a held meeting.
     expect(b.call.empty).toBe("No call with them is on record since 1 Jun.");
@@ -1254,7 +1259,7 @@ describe("last contact and calls", () => {
       }),
     });
     expect(b.raise.find(l => l.text.startsWith("Still onboarding"))?.text).toBe(
-      "Still onboarding. Last call on record 29 Jul; the systems manager's EOD records a meeting on 13 Sep. Nothing is booked: book their launch call.",
+      `Still onboarding. Last call on record 29 Jul; the systems manager's EOD records a meeting on 13 ${SEP}. Nothing is booked: book their launch call.`,
     );
   });
 
@@ -1434,9 +1439,9 @@ describe("the raise list", () => {
       }),
     });
     expect(
-      b.raise.find(l => l.text.startsWith("From the 15 Sep call"))?.text,
+      b.raise.find(l => l.text.startsWith(`From the 15 ${SEP} call`))?.text,
     ).toBe(
-      "From the 15 Sep call: Billing: a dispute over the invoice period. Since then: Corrected the City Wood invoice to $1,450 and prepared the payment link. (Muhammed, systems manager, 3 Oct) Check it was paid.",
+      `From the 15 ${SEP} call: Billing: a dispute over the invoice period. Since then: Corrected the City Wood invoice to $1,450 and prepared the payment link. (Muhammed, systems manager, 3 Oct) Check it was paid.`,
     );
   });
 
@@ -2481,7 +2486,7 @@ describe("mood and billing carry-overs", () => {
     });
     const texts = b.raise.map(l => l.text);
     expect(texts).toContain(
-      "They were marked ready for a testimonial on 14 Sep. Ask for it.",
+      `They were marked ready for a testimonial on 14 ${SEP}. Ask for it.`,
     );
     expect(texts.some(t => t.startsWith("Their mood was last recorded"))).toBe(
       false,

@@ -1955,7 +1955,8 @@ describe("the 2b set", () => {
   test("ship.sh's pinned forms-door import list is what fn_extras prints", () => {
     const pinned = /\[ "\$extras" = "([^"]+)" \]/.exec(ship)?.[1];
     const out = spawnSync(
-      "python3",
+      // Windows checkout: there is no python3 command, only python.
+      process.platform === "win32" ? "python" : "python3",
       ["scripts/dev/fn_extras.py", ".", "forms-door"],
       { cwd: ROOT, encoding: "utf8" },
     );
