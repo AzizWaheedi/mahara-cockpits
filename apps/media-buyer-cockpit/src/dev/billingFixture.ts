@@ -24,6 +24,12 @@
  *   error      the read is refused (the sheet still loads)
  *   slow       the read answers after four seconds
  * &write=refuse makes every Confirm paid come back with the server's refusal.
+ *
+ * The staff forms (20261101p): Give more time, Pause, Resume and Set MRR save
+ * in memory and answer as cockpit_billing_write does, the trail shows the
+ * card write held (billing writes are off at deploy) and the notice not
+ * posted (the bot is not in #csm-announcements yet). The MRR band reads the
+ * cards. &doors=closed shows every door closed, as before 20261101p is live.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
@@ -344,8 +350,57 @@ export function installBillingHarness(client: SupabaseClient): void {
   let nextId = 9100;
 
   const before = c.rpc;
+  const doorsOpen = param("doors") !== "closed";
+  let ladder = { pauseReviewDay: 4, cancelReviewDay: 15 };
   c.rpc = async (name, args = {}) => {
     switch (name) {
+      case "cockpit_form_doors":
+        return ok({
+          churnConfirm: doorsOpen,
+          extension: doorsOpen,
+          pause: doorsOpen,
+          mrr: doorsOpen,
+          reviews: doorsOpen,
+          checks: false,
+          prefill: doorsOpen,
+        });
+      case "cockpit_billing_ladder_read":
+        return ok({ ...ladder, canEdit: read.ceo });
+      case "cockpit_billing_ladder_set": {
+        const p = (args.p ?? {}) as Row;
+        const next = {
+          pauseReviewDay: Number(p.pauseReviewDay),
+          cancelReviewDay: Number(p.cancelReviewDay),
+        };
+        if (next.cancelReviewDay <= next.pauseReviewDay)
+          return refuse("The cancel review comes after the pause review.");
+        ladder = next;
+        return ok({ ...ladder, saved: true });
+      }
+      case "cockpit_mrr_read":
+        return ok(mrrRead());
+      case "cockpit_form_prefill":
+        return ok(
+          prefill(String(args.p_task_id ?? ""), String(args.p_form_key ?? "")),
+        );
+      case "cockpit_form_trail":
+        return ok({
+          stored: { state: "done", at: new Date().toISOString() },
+          card: {
+            state: "held",
+            mode: "dry_run",
+            error: null,
+            at: new Date().toISOString(),
+          },
+          notice: {
+            kind: "extension.granted",
+            state: "failed",
+            channelName: "csm-announcements",
+            error:
+              "Not posted: the bot is not in #csm-announcements. Ask the CEO to invite it.",
+            permalink: null,
+          },
+        });
       case "cockpit_billing_balances_read":
         if (scenario === "error")
           return refuse(
@@ -582,6 +637,108 @@ export function installBillingHarness(client: SupabaseClient): void {
     return refuse("That is not a pending payments action.");
   }
 
+  /** cockpit_mrr_read over the harness cards (contract 3.1). */
+  function mrrRead() {
+    const rows = tables.accounts
+      .filter(x => x.stage_group === "active")
+      .map(x => {
+        const monthly = x.payment_plan === "Monthly";
+        const mrr =
+          x.mrr_usd === null || x.mrr_usd === undefined
+            ? null
+            : Number(x.mrr_usd);
+        const next =
+          x.next_payment_usd === null || x.next_payment_usd === undefined
+            ? null
+            : Number(x.next_payment_usd);
+        const suggested = monthly ? next : null;
+        const flag =
+          mrr === null
+            ? "missing"
+            : !monthly
+              ? "not_recurring"
+              : suggested !== null &&
+                  suggested > 0 &&
+                  Math.abs(mrr - suggested) > suggested / 10
+                ? "differs_suggestion"
+                : "ok";
+        return {
+          taskId: x.clickup_task_id,
+          clientName: x.client_name,
+          plan: x.payment_plan ?? null,
+          mrrUsd: mrr,
+          suggestedUsd: suggested,
+          suggestionWhy: monthly
+            ? "The card's Next Payment Amount on a monthly plan."
+            : "Not a monthly plan, so no suggestion.",
+          railMonthlyUsd: null,
+          railNote:
+            "No recurring rail payment is tied to this card over the last two full months.",
+          flag,
+        };
+      });
+    const monthly = rows.filter(r => r.plan === "Monthly");
+    return {
+      asOf: new Date().toISOString(),
+      tolerancePct: 10,
+      railNote: null,
+      rows,
+      totals: {
+        onBooks: monthly.some(r => r.mrrUsd !== null)
+          ? monthly.reduce((t, r) => t + (r.mrrUsd ?? 0), 0)
+          : null,
+        onBooksCards: monthly.filter(r => r.mrrUsd !== null).length,
+        suggested: rows.some(r => r.suggestedUsd !== null)
+          ? rows.reduce((t, r) => t + (r.suggestedUsd ?? 0), 0)
+          : null,
+        noSuggestion: rows.filter(r => r.suggestedUsd === null).length,
+        missing: rows.filter(r => r.flag === "missing").length,
+        differ: rows.filter(r => r.flag === "differs_suggestion").length,
+      },
+      downgrades: [],
+    };
+  }
+
+  /** cockpit_form_prefill, the few values the harness can vouch for. */
+  function prefill(taskId: string, formKey: string) {
+    const acc = tables.accounts.find(x => x.clickup_task_id === taskId);
+    const card = "the ClickUp card";
+    return {
+      // As cockpit_form_prefill: each form gets only its own values.
+      values:
+        formKey === "mrr"
+          ? [
+              {
+                key: "mrrUsd",
+                value: acc?.mrr_usd ?? null,
+                source:
+                  acc?.mrr_usd === null || acc?.mrr_usd === undefined
+                    ? "The card has no MRR yet."
+                    : card,
+              },
+            ]
+          : formKey === "extension" || formKey === "pause"
+            ? [
+                {
+                  key: "callId",
+                  value: null,
+                  source:
+                    "No call or 1-1 notes on this client in the last 30 days.",
+                },
+              ]
+            : [],
+      calls: [],
+      hints: [],
+      card: {
+        status: { value: acc?.client_status ?? null, source: card },
+        nextDate: { value: acc?.next_payment_date ?? null, source: card },
+      },
+      grant: null,
+      survey: null,
+      churnTypeDefault: null,
+    };
+  }
+
   async function sheetWrite(action: string, a: Row): Promise<Answer> {
     await new Promise(r => setTimeout(r, 500));
     const taskId = String(a.taskId ?? "");
@@ -595,6 +752,57 @@ export function installBillingHarness(client: SupabaseClient): void {
     }
     if (action === "edit") {
       const e = (a.edit ?? {}) as Row;
+      // The staff forms: the same write, in memory (20261101p).
+      if (["extension", "pause", "resume", "mrr"].includes(String(e.kind))) {
+        const today = new Date(Date.now() + 3 * 3600_000)
+          .toISOString()
+          .slice(0, 10);
+        if (e.kind === "extension") {
+          const base =
+            acc.next_payment_date && acc.next_payment_date > today
+              ? acc.next_payment_date
+              : today;
+          acc.next_payment_date = new Date(
+            Date.parse(`${base}T00:00:00Z`) + Number(e.weeks) * 7 * 86_400_000,
+          )
+            .toISOString()
+            .slice(0, 10);
+          acc.extension_weeks = Number(e.weeks);
+        }
+        if (e.kind === "pause") {
+          acc.client_status = "Paused";
+          acc.stage = "Paused";
+          acc.stage_group = "paused";
+          acc.paused_on = today;
+        }
+        if (e.kind === "resume") {
+          acc.client_status = "Active";
+          acc.stage = "Active";
+          acc.stage_group = "active";
+          acc.paused_on = null;
+          if (e.nextDate) acc.next_payment_date = String(e.nextDate);
+        }
+        if (e.kind === "mrr") acc.mrr_usd = Number(e.value);
+        const eventId = nextId;
+        logEvent(taskId, String(e.kind), {
+          to_value:
+            e.kind === "mrr"
+              ? String(e.value)
+              : (acc.next_payment_date ?? null),
+          reason: (e.reason as string | undefined) ?? null,
+          detail: {
+            weeks: e.weeks,
+            seat_role: read.ceo ? "the CEO" : "the CSM",
+          },
+        });
+        return ok({
+          ...acc,
+          eventId,
+          responseId: crypto.randomUUID(),
+          newDate: acc.next_payment_date,
+          cardState: "held",
+        });
+      }
       if (e.kind === "amount") acc.next_payment_usd = Number(e.value);
       if (e.kind === "date") acc.next_payment_date = String(e.value);
       logEvent(taskId, String(e.kind ?? "note"), {

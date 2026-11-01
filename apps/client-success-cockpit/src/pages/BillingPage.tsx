@@ -1,17 +1,20 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import {
   type BillingApi,
   BillingSheet,
 } from "@/components/billing/BillingSheet";
+import { ChecksWaiting } from "@/components/billing/ChecksWaiting";
 import type { PendingApi } from "@/components/billing/PendingPayments";
 import { PageHeader } from "@/components/kit";
+import { type Doors, formDoors } from "@/forms/staff/lifecycleClient";
 import {
   confirmPaid,
   editBillingAccount,
   fetchBillingSheet,
   fetchPendingPayments,
   logBillingPayment,
+  staffForms,
   withdrawConfirmation,
 } from "@/lib/billing";
 
@@ -24,6 +27,10 @@ import {
  * clients who signed and have not finished paying, with Confirm paid. The
  * server gives a success manager only their own clients and none of the
  * CEO's groups; linking a deal to a card stays in the CEO cockpit.
+ *
+ * Give more time, Pause, Resume and Set MRR open the staff forms in place
+ * (20261101p); Checks waiting sits on top once 20261101n is live (a success
+ * manager reads their own clients' receipts there; finance checks them).
  */
 export function BillingPage({ embedded = false }: { embedded?: boolean }) {
   const auth = useCockpitAuth();
@@ -72,9 +79,23 @@ export function BillingPage({ embedded = false }: { embedded?: boolean }) {
       ledgerLine:
         "It waits for the CEO cockpit's next refresh, then counts toward cash and the client's LTV; a payment already in the ledger is caught, not counted twice.",
       pending,
+      forms: auth.client ? staffForms(auth.client, "csm") : undefined,
     }),
     [auth.client, auth.clients, auth.email, pending],
   );
+
+  // The new doors, once per page load; any error reads as all closed.
+  const [doors, setDoors] = useState<Doors | null>(null);
+  useEffect(() => {
+    if (!auth.client) return;
+    let live = true;
+    void formDoors(auth.client).then(d => {
+      if (live) setDoors(d);
+    });
+    return () => {
+      live = false;
+    };
+  }, [auth.client]);
 
   return (
     <div
@@ -85,6 +106,9 @@ export function BillingPage({ embedded = false }: { embedded?: boolean }) {
         title="Billing"
         sub="Who pays next, how they pay, and what the billing SOP says to do today. Every change is made on the ClickUp card."
       />
+      {doors?.checks && auth.client ? (
+        <ChecksWaiting client={auth.client} />
+      ) : null}
       <BillingSheet api={wired} />
     </div>
   );
