@@ -1232,6 +1232,8 @@ function Cockpit({ view }: { view: View }) {
   const [adsTab, setAdsTab] = useState<"running" | "off" | "nothing">(
     "running",
   );
+  // The board shows three everyday filters; the rest sit behind this toggle.
+  const [moreFilters, setMoreFilters] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatText, setChatText] = useState("");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -3665,6 +3667,14 @@ function Cockpit({ view }: { view: View }) {
               {ADS_FILTERS.map(f => {
                 const reading = Boolean(f.ranged) && rangeReading > 0;
                 const n = running.filter(c => passes(f.label, c)).length;
+                // Keep the everyday filters and the picked one in reach; the
+                // rest wait behind "More filters".
+                const shown =
+                  Boolean(f.primary) ||
+                  moreFilters ||
+                  f.label === filter ||
+                  (f.label === PAYMENT_FILTER && n > 0);
+                if (!shown) return null;
                 if (
                   n === 0 &&
                   !reading &&
@@ -3689,6 +3699,14 @@ function Cockpit({ view }: { view: View }) {
                   </button>
                 );
               })}
+              <button
+                type="button"
+                onClick={() => setMoreFilters(v => !v)}
+                aria-expanded={moreFilters}
+                className={pill(false)}
+              >
+                {moreFilters ? "Fewer filters" : "More filters"}
+              </button>
             </div>
           )}
           {/* The container lets an opened campaign's panel be exactly as wide as
@@ -3890,6 +3908,33 @@ function Cockpit({ view }: { view: View }) {
                                 )}
                               </div>
                             ) : null}
+                            {!c.internal && (
+                              // One click on the row turns the campaign on or
+                              // off, on the same rule the open panel uses.
+                              <span
+                                className="mt-1 flex"
+                                onClick={e => e.stopPropagation()}
+                              >
+                                <StatusToggle
+                                  metaId={c.metaCampaignId}
+                                  level="campaign"
+                                  name={c.campaignName}
+                                  clientTag={c.clientTag}
+                                  campaignName={c.campaignName}
+                                  compact
+                                  active={
+                                    Boolean(c.justLaunched) ||
+                                    (snap.metaTree ?? []).some(
+                                      (t: Campaign) =>
+                                        t.campaignName === c.campaignName &&
+                                        t.kind === "ad" &&
+                                        (t.effectiveStatus ?? t.status) ===
+                                          "ACTIVE",
+                                    )
+                                  }
+                                />
+                              </span>
+                            )}
                           </td>
                           <td className="px-2 tabular-nums font-semibold">
                             {cell(moneyOr(ok?.spend))}
