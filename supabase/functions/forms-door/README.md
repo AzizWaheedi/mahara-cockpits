@@ -1,12 +1,15 @@
 # forms-door
 
-Typeform's push of each response of three forms into the forms tables:
-kickoff (`tG7dnxBn`, `docs/forms/STAGE2B-CONTRACT.md` 4.8, build 8), and since
+Typeform's push of each response of five forms into the forms tables:
+kickoff (`tG7dnxBn`, `docs/forms/STAGE2B-CONTRACT.md` 4.8, build 8), since
 waves 1-2 (`docs/forms/WAVE12-CONTRACT.md` 4.4) the termination survey
 (`knIe4eF3`, form key `exit_survey`) and the client's pause request
-(`CTUjv6l3`, form key `pause_request`). Each form has its own signing key, its
-own registry row and its own health row; the sections below describe kickoff
-first, then what differs for the two client forms.
+(`CTUjv6l3`, form key `pause_request`), and since waves 3-4
+(`docs/forms/WAVE34-CONTRACT.md` 4.7, 4.8) the client's onboarding form
+(`KFRCXPFx`, form key `onboarding`) and the New Client Form (`BTzMwXiw`, form
+key `new_client`). Each form has its own signing key, its own registry row and
+its own health row; the sections below describe kickoff first, then what
+differs for the other forms.
 
 ## Kickoff
 
@@ -107,6 +110,35 @@ The old answers come in once with
 `scripts/dev/forms_legacy_backfill.py {exit_survey|pause_request}` (`--dry`
 first): the same `legacyInput` rules, `backfill: true`, counts only.
 
+## Client onboarding and the New Client Form (waves 3-4)
+
+Make owns every effect of both forms (card fields, the Client Data sheet, the
+phase 3 WhatsApp, the Brand DNA task and the GitHub dispatch for onboarding;
+the sub-account, Mahara OS, the welcome, the card, the CSM post, HighLevel,
+Cortana and the B2B closed deals for the New Client Form). The door **records
+only**, through `cockpit_form_record_make`: one `submitted` response per
+Typeform token, no notice (V23), and nothing ever submits either form; tests
+use the recorded-shape payloads in `fixtures/`.
+
+- `onboarding`: the answers are shaped by the onboarding sync's own mapping,
+  `formsFor` in `apps/client-success-cockpit/src/lib/onboardingCore.ts`
+  (imported, never copied; one response and its definition, no Typeform API
+  call), so the database can fill `cockpit_client_onboarding.forms.onboarding`
+  with exactly the entry the 10-minute read writes, when that key is empty or
+  older. The card is the hidden `onboarding_client_id` when the cockpit mirrors
+  it (`hidden_id_unverified`).
+- `new_client`: the legacy mapping (no email or phone answer) and the form's
+  three hidden ids (`contact_id`, `closer`, `setter`); no card (Make makes it).
+- A termination survey through the old link after the exit survey turned
+  native (C4b) is still stored: the registry row keeps its Typeform id, so the
+  door accepts a native `exit_survey` or `pause_request` row and the database
+  posts "Old form link used" (V16). Kickoff still needs its Typeform row.
+
+`fixtures/onboarding-expected.json` and `fixtures/new-client-expected.json`
+are the golden inputs: the handler test holds `makeInput` to them, and
+`scripts/dev/test_forms_legacy_backfill.py` holds the backfill's Python port
+to the same files.
+
 ## Register, probe, unregister (B3, deploy step D17)
 
 From the Mac, through the read-only ssh pattern of 2a 4.5 (keys by name, values
@@ -140,8 +172,9 @@ on it, because the 15-minute read records every kickoff. Rollback:
 
 ## Deploy
 
-`verify_jwt` off; the bundle carries six files from outside the folder
+`verify_jwt` off; the bundle carries seven files from outside the folder
 (`python3 scripts/dev/fn_extras.py . forms-door`):
+`apps/client-success-cockpit/src/lib/onboardingCore.ts` (since waves 3-4, D-C2),
 `hermes/csm-calls/callMatch.ts`, `hermes/csm-calls/match.ts`,
 `supabase/functions/_shared/clickupRetry.ts`,
 `supabase/functions/cockpit-ceo-api/tools.ts`,
@@ -157,4 +190,6 @@ RPCs): before that a signed delivery would answer 500 and Typeform would retry.
 `bun test supabase/functions/forms-door`: every route and refusal, a rotated
 key accepted at once, the answer mapping of a signed body, the record call's keys, each recorded outcome, and no
 body, answer or hidden value in any log line; for the two client forms, their own keys, the legacy record's
-input with no email or phone, an unmatched survey, and a pause request on the same path.
+input with no email or phone, an unmatched survey, and a pause request on the same path; for the two Make forms,
+their own keys, `formsFor`'s entry on the recorded payload, the New Client Form's hidden ids with no contact
+details, the native exit survey's old link, and the golden inputs the backfill shares.

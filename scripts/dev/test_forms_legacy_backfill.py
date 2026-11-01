@@ -86,6 +86,8 @@ class Net:
         self.cards = [{"clickup_task_id": "86eyjkdc8"}]
         self.receipt_fails = set()
         self.refuse = None  # (status, body) the record RPC answers when set
+        self.forms = {}  # other Typeform forms: form id -> (definition, items)
+        self.onboarding_rows = []  # cockpit_client_onboarding cards
 
     def made(self, prefix, method=None):
         return [r for r in self.requests if r["url"].startswith(prefix) and (method is None or r["method"] == method)]
@@ -111,6 +113,16 @@ class Net:
             return 200, self.registry
         if url.startswith(f"{DB}/rest/v1/cockpit_billing_accounts?"):
             return 200, self.cards
+        if url.startswith(f"{DB}/rest/v1/cockpit_client_onboarding?"):
+            return 200, self.onboarding_rows
+        if url == f"{DB}/rest/v1/rpc/cockpit_form_record_make":
+            p = body["p"]
+            inserted = p["externalId"] not in self.stored
+            self.stored.add(p["externalId"])
+            known = {c["clickup_task_id"] for c in self.cards + self.onboarding_rows}
+            card = p["taskId"] if p["taskId"] in known else None
+            return 200, {"inserted": inserted, "responseId": "33333333-3333-4333-8333-333333333333", "taskId": card,
+                         "readModel": "written" if card and inserted else ("no_card" if not card else "newer_kept")}
         if url == f"{DB}/rest/v1/rpc/cockpit_form_record_legacy":
             if self.refuse:
                 return self.refuse
@@ -124,6 +136,11 @@ class Net:
             assert headers["authorization"] == "Bearer " + TYPEFORM_TOKEN
             path = urllib.parse.urlsplit(url).path
             query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+            for fid, (definition, items) in self.forms.items():
+                if path == f"/forms/{fid}":
+                    return 200, definition
+                if path == f"/forms/{fid}/responses":
+                    return 200, {"items": items, "total_items": len(items)}
             if path == "/forms/knIe4eF3":
                 return 200, DEFINITION
             if path == "/forms/knIe4eF3/responses":
@@ -259,6 +276,82 @@ class Backfill(unittest.TestCase):
                                               "hidden": {"onboarding_client_id": " bad id! ", "client_name": "  ", "email": EMAIL}}, {})
         self.assertEqual(p, {"formKey": "pause_request", "externalId": "t", "submittedAt": "s", "answers": {"fields": []},
                              "hidden": {"onboarding_client_id": "bad id!"}, "taskId": None, "clientName": None, "backfill": True})
+
+
+    # ---------------------------------------------------------------- waves 3-4: NPS, CSAT and the two Make forms
+
+    def fixture(self, name):
+        path = Path(__file__).resolve().parents[2] / "supabase" / "functions" / "forms-door" / "fixtures" / name
+        return json.loads(path.read_text())
+
+    def made_make(self):
+        return [r["json"]["p"] for r in self.net.made(f"{DB}/rest/v1/rpc/cockpit_form_record_make")]
+
+    def test_the_backfill_builds_onboarding_and_the_new_client_form_exactly_as_forms_door_does(self):
+        # The same golden files forms-door's handler.test.ts holds makeInput to.
+        for payload, form, golden in (("onboarding-response.json", "onboarding", "onboarding-expected.json"),
+                                      ("new-client-response.json", "new_client", "new-client-expected.json")):
+            item = self.fixture(payload)["form_response"]
+            definition = item["definition"]
+            self.assertEqual(fb.make_input(form, item, fb.field_titles(definition), definition), self.fixture(golden)["p"])
+
+    def test_onboarding_is_recorded_through_record_make_and_says_how_many_read_model_rows_it_filled(self):
+        item = self.fixture("onboarding-response.json")["form_response"]
+        definition = item.pop("definition")
+        self.net.registry = [{"provider": "typeform", "typeform_id": "KFRCXPFx"}]
+        self.net.forms = {"KFRCXPFx": (definition, [item, {**item, "token": "onb0000token0002", "hidden": {}}])}
+        self.net.onboarding_rows = [{"clickup_task_id": "86exc1tyw"}]
+        code, out = self.run_cmd("onboarding", "--dry")
+        self.assertEqual(out.strip(), "read 2, would store up to 2, unmatched 1 (dry run: nothing written)")
+        self.assertEqual(self.made_make(), [])
+        code, out = self.run_cmd("onboarding")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out.strip(), "read 2, stored 2, already there 0, unmatched 1, read model filled 1")
+        self.assertEqual([p["taskId"] for p in self.made_make()], ["86exc1tyw", None])
+        self.assertTrue(all(p["backfill"] is True for p in self.made_make()))
+        self.assertNotIn("owner@citywood.example", out)
+        self.assertNotIn("City Wood", out)
+
+    def test_the_new_client_form_is_recorded_only_with_no_card_and_no_contact_details(self):
+        item = self.fixture("new-client-response.json")["form_response"]
+        definition = item.pop("definition")
+        self.net.registry = [{"provider": "typeform", "typeform_id": "BTzMwXiw"}]
+        self.net.forms = {"BTzMwXiw": (definition, [item])}
+        code, out = self.run_cmd("new_client")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out.strip(), "read 1, stored 1, already there 0, unmatched 1")
+        [p] = self.made_make()
+        self.assertEqual(p["hidden"], {"contact_id": "ghlContact0001", "closer": "Closer Test", "setter": "Setter Test"})
+        self.assertIsNone(p["taskId"])
+        self.assertNotIn("owner@harbour.example", json.dumps(p))
+        self.assertEqual(self.records(), [])
+        # Read only: nothing here posts to Typeform.
+        self.assertEqual([r for r in self.net.requests if r["url"].startswith("https://api.typeform.com/") and r["method"] != "GET"], [])
+
+    def test_the_old_nps_and_csat_answers_are_read_from_their_native_rows_and_never_get_a_card(self):
+        for form, fid in (("nps", "fuPgs85S"), ("csat", "KbcbPA73")):
+            self.net.registry = [{"provider": "native", "typeform_id": fid}]
+            self.net.forms = {fid: ({"id": fid, "fields": [{"id": "s1", "ref": "score-ref", "type": "opinion_scale", "title": "Score"}]},
+                                    [{"token": f"{form}Old00000001", "submitted_at": "2026-10-28T08:00:00Z",
+                                      "hidden": {"onboarding_client_id": "86eyjkdc8"},
+                                      "answers": [{"type": "number", "number": 8, "field": {"id": "s1", "ref": "score-ref", "type": "opinion_scale"}}]}])}
+            code, out = self.run_cmd(form, "--dry")
+            self.assertEqual(out.strip(), "read 1, would store up to 1, unmatched 1 (dry run: nothing written)")
+            code, out = self.run_cmd(form)
+            self.assertEqual(code, 0, out)
+            self.assertEqual(out.strip(), "read 1, stored 1, already there 0, unmatched 1")
+        self.assertEqual([(p["formKey"], p["taskId"], p["backfill"]) for p in self.records()],
+                         [("nps", None, True), ("csat", None, True)])
+
+    def test_onboarding_values_and_titles_follow_the_sync(self):
+        self.assertEqual(fb.question_title("**Name** | الاسم This question is required.", {}), "Name")
+        self.assertEqual(fb.question_title("For {{hidden:client_name}} and {{hidden:missing}}", {"client_name": "Acme"}),
+                         "For Acme and \u2026")
+        self.assertEqual(fb.question_title("x" * 200, {}), "x" * 157 + "\u2026")
+        self.assertEqual(fb.onboarding_value({"type": "boolean", "boolean": False}), "No")
+        self.assertEqual(fb.onboarding_value({"type": "number", "number": 9.5}), "9.5")
+        self.assertEqual(fb.onboarding_value({"type": "payment", "payment": {"amount": "0"}}), "0")
+        self.assertEqual(fb.onboarding_value({"type": "dropdown"}), "")
 
 
 if __name__ == "__main__":

@@ -980,6 +980,33 @@ export const DEFINITIONS: MetricDefinition[] = [
     "A spell that started before 2026-10-07 has no earlier snapshot, so its first days are not seen. A payment off the rails reads as the date moving.",
   ),
   d(
+    "clients.nps",
+    "clients",
+    "NPS",
+    "Net promoter score from the clients' own NPS answers (0 to 10, how likely they are to recommend Mahara) in the window: each client counts once with their latest answer; promoters (9 or 10) minus detractors (0 to 6), over the answers, times 100. No answers in the window is no score, never 0.",
+    `${TRIAGE} cockpit_client_voice_v (answers in the portal or by WhatsApp link), checked against cockpit_form_invite_events (cards with an answered NPS invite)`,
+    "ratio",
+    "The 2 old Typeform answers could not be matched to a client and are left out. Canary answers on the test card, the exit survey's recommend score and portal feedback ratings never count.",
+  ),
+  d(
+    "clients.nps.responses",
+    "clients",
+    "NPS answers",
+    "Clients who answered the NPS survey in the window, each once (the n behind clients.nps).",
+    `${TRIAGE} cockpit_client_voice_v`,
+    "count",
+    "A second answer from the same client in the window; old Typeform answers with no client; canary answers.",
+  ),
+  d(
+    "clients.csat",
+    "clients",
+    "Onboarding survey",
+    "Average of the clients' onboarding survey answers (1 to 10, how getting started felt) in the window, shown apart from NPS.",
+    `${TRIAGE} cockpit_client_voice_v (form csat)`,
+    "ratio",
+    "Clients launched more than 60 days ago are not asked. Old Typeform answers with no client; canary answers.",
+  ),
+  d(
     "clients.average_retainer",
     "clients",
     "Average retainer",
@@ -1387,6 +1414,37 @@ export function lifecycleValues(p: ClientsPayload): MetricValue[] {
   return out;
 }
 
+type VoiceWindow = {
+  from: string;
+  to: string;
+  nps?: { score: number | null; n: number };
+  csat?: { average: number | null; n: number };
+};
+
+/**
+ * The client voice metrics (WAVE34-CONTRACT 4.6.4): clients.nps (NULL when no
+ * client answered: no score, never 0), clients.nps.responses and clients.csat
+ * for each window the refresh summarised. A voice the payload does not carry,
+ * or a read that failed, writes nothing: missing is never zero.
+ */
+export function voiceValues(p: ClientsPayload): MetricValue[] {
+  // biome-ignore lint/suspicious/noExplicitAny: `voice` is the Client success adapter's waves 3-4 key
+  const voice = (p as any)?.voice;
+  const out: MetricValue[] = [];
+  if (voice?.read !== true || !voice.windows || typeof voice.windows !== "object") return out;
+  for (const [w, raw] of Object.entries(voice.windows as Record<string, VoiceWindow>)) {
+    if (!raw || typeof raw.from !== "string" || typeof raw.to !== "string") continue;
+    const at = { windowFrom: raw.from, windowTo: raw.to };
+    if (raw.nps && typeof raw.nps.n === "number") {
+      out.push({ metric: "clients.nps", scope: "company", window: w, value: raw.nps.n > 0 ? r(raw.nps.score) : null, ...at });
+      out.push({ metric: "clients.nps.responses", scope: "company", window: w, value: raw.nps.n, ...at });
+    }
+    if (raw.csat && typeof raw.csat.n === "number")
+      out.push({ metric: "clients.csat", scope: "company", window: w, value: raw.csat.n > 0 ? r(raw.csat.average) : null, ...at });
+  }
+  return out;
+}
+
 export function extractClients(p: ClientsPayload): MetricValue[] {
   const out: MetricValue[] = [];
   const v = (
@@ -1414,6 +1472,7 @@ export function extractClients(p: ClientsPayload): MetricValue[] {
   v("clients.average_days_to_launch", "all", p.launch?.averageDays);
   v("clients.extension_weeks", "mtd", p.extensions?.totalWeeks);
   out.push(...lifecycleValues(p));
+  out.push(...voiceValues(p));
   v("clients.average_retainer", "snapshot", p.retainer?.averageUsd);
   for (const row of p.rows ?? []) {
     const scope = `client:${row.clickupTaskId}`;
