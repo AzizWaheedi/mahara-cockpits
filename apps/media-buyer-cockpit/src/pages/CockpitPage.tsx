@@ -3911,10 +3911,7 @@ function Cockpit({ view }: { view: View }) {
                             {!c.internal && (
                               // One click on the row turns the campaign on or
                               // off, on the same rule the open panel uses.
-                              <span
-                                className="mt-1 flex"
-                                onClick={e => e.stopPropagation()}
-                              >
+                              <span className="mt-1 flex">
                                 <StatusToggle
                                   metaId={c.metaCampaignId}
                                   level="campaign"
@@ -4167,42 +4164,48 @@ function Cockpit({ view }: { view: View }) {
           once each. */}
       {view === "sod" && (
         <>
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
-            <div className="min-w-0 space-y-6">
-              {/* Exception alerts (plan 4.1): the clients whose numbers
-                  broke, first, so the day starts where the money is. */}
-              <ExceptionAlerts />
-              {sprint}
-              <div id="tasks" className="scroll-mt-6 space-y-6">
-                <LaunchToday data={launch.data} />
-                <Onboardings
-                  onBuild={name => {
-                    const c = launch.data?.clients.find(
-                      c => c.name.toLowerCase() === name.toLowerCase(),
+          <div className="space-y-6">
+            {/* Exception alerts (plan 4.1): the clients whose numbers
+                broke, first, so the day starts where the money is. */}
+            <ExceptionAlerts />
+            {sprint}
+            <div id="tasks" className="scroll-mt-6 space-y-6">
+              <LaunchToday data={launch.data} />
+              <Onboardings
+                onBuild={name => {
+                  const c = launch.data?.clients.find(
+                    c => c.name.toLowerCase() === name.toLowerCase(),
+                  );
+                  if (c)
+                    window.location.assign(
+                      `/clients?client=${encodeURIComponent(c.id)}&tab=launch`,
                     );
-                    if (c)
-                      window.location.assign(
-                        `/clients?client=${encodeURIComponent(c.id)}&tab=launch`,
-                      );
-                    else window.location.assign("/clients");
-                  }}
-                />
-                {tasksCard}
-              </div>
-              <div id="touchpoints" className="scroll-mt-6">
-                {touch}
-              </div>
-              {watch}
-              {accounts}
+                  else window.location.assign("/clients");
+                }}
+              />
+              {tasksCard}
             </div>
-            <div className="min-w-0 space-y-6">
+            <div id="touchpoints" className="scroll-mt-6">
+              {touch}
+            </div>
+            {watch}
+            {accounts}
+          </div>
+          {/* The first screen is the work list in the morning order. The rest
+              of today folds here (Muhammed, 1 November 2026). */}
+          <details className="rounded-2xl border px-4 py-3 sm:px-6">
+            <summary className="cursor-pointer text-sm font-medium">
+              More from today: meetings, what you planned, change log, the
+              numbers
+            </summary>
+            <div className="mt-4 space-y-6">
               <TodayMeetings />
               {planned}
               {changeLog}
+              {tiles}
+              <PortfolioTrends />
             </div>
-          </div>
-          {tiles}
-          <PortfolioTrends />
+          </details>
         </>
       )}
 
