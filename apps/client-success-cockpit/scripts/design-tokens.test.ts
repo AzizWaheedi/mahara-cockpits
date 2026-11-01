@@ -322,7 +322,8 @@ describe("O1b: outside links", () => {
       /<ExtLink\b[^>]*?className=(?:"[^"]*text-primary-ink|\{[^}]*\bINK\b)/g;
     const found = files
       .filter(f => readFileSync(f, "utf8").match(drops))
-      .map(f => relative(app, f))
+      // Windows gives back slashes; the list below uses forward ones.
+      .map(f => relative(app, f).replaceAll("\\", "/"))
       .sort();
     // Outside the files 2b may change; it moves on its owner's next pass.
     // Nothing else may join it.

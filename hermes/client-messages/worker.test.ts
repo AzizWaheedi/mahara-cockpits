@@ -1124,7 +1124,8 @@ describe("dry mode, the keys and the switches", () => {
     const text = readFileSync(path, "utf8");
     expect(text).not.toContain("@g.us");
     expect(text).not.toContain("120363");
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    // Windows files keep no Unix permission bits; the worker runs on Linux, where this holds.
+    if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600);
     now = new Date(now.getTime() + CARD_CACHE_MS - 1000);
     expect(cache.get(key)).toBe("same");
     now = new Date(now.getTime() + 2000);
