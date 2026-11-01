@@ -410,9 +410,10 @@ describe("opening", () => {
         "Try again",
       ],
       [
+        // Since the cut-over the Typeform is closed: no way out to it (4.15 item 3).
         "The cockpit's 1-1 notes are not live yet.",
-        "The cockpit's 1-1 notes are not live yet. Use the 1-1 form in Typeform for now.",
-        "Open the 1-1 form",
+        "The cockpit's 1-1 notes could not open. Try again in a minute.",
+        "Try again",
       ],
       [
         "Failed to fetch",
@@ -424,6 +425,7 @@ describe("opening", () => {
       await mount({ open: "fail", openError: error });
       expect(page()).toContain(text);
       expect(button(action)).toBeTruthy();
+      expect(button("Open the 1-1 form")).toBeUndefined();
       for (const r of roots.splice(0)) await act(async () => r.unmount());
       win.document.body.innerHTML = "";
     }
@@ -2842,13 +2844,6 @@ describe("keyboard focus", () => {
       "max-lg:grid-rows-[auto_minmax(0,1fr)]",
     );
     await fillAndSend();
-    expect(teal(button("Open the 1-1 form"))).toBe(true);
-    for (const r of roots.splice(0)) await act(async () => r.unmount());
-    win.document.body.innerHTML = "";
-    await mount({
-      open: "fail",
-      openError: "The cockpit's 1-1 notes are not live yet.",
-    });
     expect(teal(button("Open the 1-1 form"))).toBe(true);
   });
 });

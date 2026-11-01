@@ -7,6 +7,8 @@
  * So is the team's ClickUp ticketing form: a ticket goes from the client's page
  * ("Add a task", Ask a team), which files the same task with the client on it
  * (the simplification audit, approved 2026-10-06).
+ * And the 1-1 call summary form: since 2026-11-01 the 1-1 notes are written
+ * in the cockpit (Write 1-1 notes on the client's page), and the Typeform is closed.
  */
 
 import { COCKPIT_GUIDES, COCKPIT_SOP } from "./cockpits";
@@ -70,17 +72,6 @@ export const LINK_GROUPS: LinkGroup[] = [
         label: "Client check-in call",
         url: "https://api.leadconnectorhq.com/widget/booking/SHjlq0UjeR11maltYNyh",
         note: "The recurring one, weekly for their first month, then every 2 weeks",
-      },
-    ],
-  },
-  {
-    title: "Forms to fill in",
-    blurb: "If it is not in a form, it did not happen.",
-    rows: [
-      {
-        label: "1-1 call summary form",
-        url: "https://maharamedia.typeform.com/to/fRokTITH",
-        note: "After every client call, same day",
       },
     ],
   },

@@ -358,11 +358,16 @@ describe("the entry rule", () => {
     expect(typeformAsks).toEqual([]);
   });
 
-  test("a failed read keeps the Typeform, offers no shadow item, and says why", async () => {
+  test("a failed read opens the cockpit's notes, offers no shadow item, and says why", async () => {
     entry = "fails";
     stubOpen();
     await mount({ noteMissing: false });
     expect(main().getAttribute("title")).toBe(ENTRY_FAILED);
+    expect(ENTRY_FAILED).toBe(
+      "The cockpit could not read where 1-1 notes go, so this opens the cockpit's notes.",
+    );
+    // It stays in the cockpit, so no external-link mark.
+    expect(main().querySelector("svg.lucide-arrow-up-right")).toBeNull();
     expect(
       win.document.body.querySelector(
         'button[aria-label="More ways to fill this client\'s forms"]',
@@ -370,7 +375,11 @@ describe("the entry rule", () => {
     ).toBeNull();
     await act(async () => main().click());
     await settle();
-    expect(opens[0]?.sentTo).toEqual([TYPEFORM]);
+    // 4.15 item 3: the Typeform is closed, so the fallback is the window.
+    expect(opens[0]?.sentTo).toEqual([
+      `/client-success/clients/${TASK}/forms/checkin`,
+    ]);
+    expect(typeformAsks).toEqual([]);
   });
 });
 

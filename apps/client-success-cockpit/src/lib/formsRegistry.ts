@@ -9,16 +9,16 @@ import {
 } from "@/forms/checkinClient";
 import { kuwaitDay, kuwaitTime } from "@/forms/formTime";
 import { openForm } from "@/forms/OpenFormButton";
-import { checkinFormLink } from "./onboardingCore";
 
 /**
  * Where the 1-1 notes open (docs/forms/STAGE2-CONTRACT.md 8.4 and 8.6). One
- * registry value decides every entry point: while `cockpit_forms.provider`
- * of `checkin` is `typeform`, every entry's main action opens the Typeform
- * with the card ID (the record), and every client-success seat may also try
- * the cockpit's window as a shadow run; once it is `native`, every entry
- * opens the window. A failed read keeps the Typeform path: the record never
- * blocks.
+ * registry value decides every entry point: since the cut-over (2026-11-01)
+ * `cockpit_forms.provider` of `checkin` is `native` and every entry opens
+ * the cockpit's window. A failed read opens the window too, and the button's
+ * title says why (docs/forms/STAGE2B-CONTRACT.md 4.15 item 3). Only a
+ * rollback to `typeform` (11.3, which reopens the form) brings back the
+ * Typeform with the card ID as the main action, with the window as a shadow
+ * run for every client-success seat.
  *
  * The Typeform response reaches the cockpit only through the 15-minute
  * syncs, so after an entry opens the Typeform, that client's nudges say so
@@ -32,7 +32,7 @@ export type CheckinEntry = {
   provider: "typeform" | "native" | null;
   native: boolean;
   mode: "live" | "shadow" | null;
-  /** The record path: the Typeform until the cut-over, then the window. */
+  /** The record path: the window, or the Typeform after a rollback to it. */
   open(taskId: string, lastCall?: string | null): void;
   /** The window as a shadow run, for every client-success seat while `mode` is shadow. */
   openShadow(taskId: string): void;
@@ -40,7 +40,7 @@ export type CheckinEntry = {
 
 /** The main button's title after a failed read (8.4). */
 export const ENTRY_FAILED =
-  "The cockpit could not read where 1-1 notes go, so this opens the Typeform.";
+  "The cockpit could not read where 1-1 notes go, so this opens the cockpit's notes.";
 
 const STALE_MS = 5 * 60_000;
 
@@ -164,8 +164,9 @@ export function useCheckinEntry(): CheckinEntry {
       native: read?.native ?? false,
       mode: read?.mode ?? null,
       open: (taskId: string, lastCall?: string | null) => {
-        if (provider === "native") void openForm(taskId, "checkin");
-        else openTypeform(client, taskId, lastCall ?? null);
+        if (provider === "typeform")
+          openTypeform(client, taskId, lastCall ?? null);
+        else void openForm(taskId, "checkin");
       },
       openShadow: (taskId: string) => void openForm(taskId, "checkin"),
     }),
@@ -173,7 +174,7 @@ export function useCheckinEntry(): CheckinEntry {
   );
 }
 
-/** The entry read failed: the button opens the Typeform and its title says why. */
+/** The entry read failed: the button opens the cockpit's window and its title says why. */
 export const entryFailed = (e: CheckinEntry) => e.ready && e.provider === null;
 
 // ------------------------------------------------------------ the browser marker
@@ -449,19 +450,20 @@ export const notesNative = (e: Pick<CheckinEntry, "provider">) =>
 
 /**
  * The nudges of several clients, kept fresh as markers age and answers come.
- * Once the 1-1 notes are native (docs/forms/STAGE2B-CONTRACT.md 4.15 item 2)
- * Typeform is asked nothing and a marker means nothing: every nudge is the
- * button, and the button opens the cockpit's window.
+ * Once the 1-1 notes are native (docs/forms/STAGE2B-CONTRACT.md 4.15 item 2),
+ * or the entry read failed (item 3), Typeform is asked nothing and a marker
+ * means nothing: every nudge is the button, and the button opens the
+ * cockpit's window.
  */
 export function useCheckinNudges(
   items: { taskId: string; lastCall?: string | null }[],
 ): Record<string, Nudge> {
   const entry = useCheckinEntry();
-  const native = notesNative(entry);
-  // Asked once the entry has answered (or failed, which keeps the Typeform
-  // path): a native registry asks Typeform nothing.
+  const inCockpit = notesNative(entry) || entryFailed(entry);
+  // Asked once the entry has answered typeform (a rollback): otherwise the
+  // button opens the window and Typeform is asked nothing.
   const sent = useTypeformSent(
-    entry.ready && !native
+    entry.ready && !inCockpit
       ? items.map(i => ({ taskId: i.taskId, since: sinceOf(i.lastCall) }))
       : [],
   );
@@ -489,14 +491,26 @@ export function useCheckinNudges(
   return useMemo(() => {
     const out: Record<string, Nudge> = {};
     for (const i of items)
-      out[i.taskId] = native
+      out[i.taskId] = inCockpit
         ? { kind: "button" }
         : nudgeFor(i.taskId, i.lastCall, sent[i.taskId]);
     return out;
-  }, [key, sent, tick, native]);
+  }, [key, sent, tick, inCockpit]);
 }
 
 // ------------------------------------------------------------ the Typeform path
+
+/**
+ * The 1-1 form (fRokTITH) for one client, kept only for a rollback of the
+ * registry to `typeform` (docs/forms/STAGE2B-CONTRACT.md 11.3 reopens the
+ * form). The card id rides in the hidden field task_id, so the response is
+ * tied to the client without typing; no id, the bare link.
+ */
+function typeformLink(taskId: string): string {
+  const base = "https://maharamedia.typeform.com/to/fRokTITH";
+  const id = taskId.trim();
+  return id ? `${base}#task_id=${encodeURIComponent(id)}` : base;
+}
 
 /**
  * Opens the client's 1-1 form in Typeform, unless Typeform says it was
@@ -508,7 +522,7 @@ export function openTypeform(
   taskId: string,
   lastCall: string | null,
 ): void {
-  const url = checkinFormLink(taskId);
+  const url = typeformLink(taskId);
   const since = sinceOf(lastCall);
   const known = sentFor(taskId, since);
   if (known?.sent === true && Date.now() - known.checkedAt < SENT_MS) {

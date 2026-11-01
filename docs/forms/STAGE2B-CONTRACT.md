@@ -1907,6 +1907,8 @@ doc "Important Forms" (a provider write: the session on the CEO's standing
 instruction, else the CEO). Owner for that session: screens (cockpit files)
 and parity (docs).
 
+Done on 2026-11-01 in branch `checkin-links-1101` (cockpit files: the links rows, `LINKS.callSummaryForm`, `checkinFormLink` and 4.15 item 3; the Typeform link stays only for a rollback to `typeform`, 11.3; `csm_assistant.py` and the ClickUp doc not touched).
+
 ### 11.5 Stage 2 done (PLAN 2.9), each with its check
 
 | # | Criterion | Check |

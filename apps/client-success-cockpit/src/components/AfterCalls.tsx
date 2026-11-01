@@ -70,13 +70,14 @@ const dayOf = (v: string | null) =>
 
 /**
  * The external-link mark (docs/DESIGN.md: one trailing ArrowUpRight) on a
- * "Write 1-1 notes" while it leaves the cockpit for Typeform in a new tab;
- * once the registry says native it opens the cockpit's own window, unmarked.
+ * "Write 1-1 notes" while it leaves the cockpit for Typeform in a new tab,
+ * which is only when the registry says typeform (a rollback); otherwise it
+ * opens the cockpit's own window, unmarked.
  */
 export function TypeformMark({ entry }: { entry: CheckinEntry }) {
-  return entry.provider === "native" ? null : (
+  return entry.provider === "typeform" ? (
     <ArrowUpRight aria-hidden className="size-3.5 shrink-0" />
-  );
+  ) : null;
 }
 
 /** The clients the card lists: notes missing for a call that takes 1-1 notes. */

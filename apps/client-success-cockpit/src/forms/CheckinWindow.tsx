@@ -326,15 +326,6 @@ export function CheckinWindowView({
                   >
                     Close this window
                   </Button>
-                ) : m.phase.reason === "live" ? (
-                  <Button
-                    size="sm"
-                    className={TEAL_FOCUS}
-                    onClick={() => onTypeform(null)}
-                  >
-                    Open the 1-1 form
-                    <ArrowUpRight aria-hidden />
-                  </Button>
                 ) : (
                   <Button
                     size="sm"

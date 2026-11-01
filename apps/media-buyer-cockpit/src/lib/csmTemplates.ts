@@ -31,7 +31,6 @@ export const LINKS = {
     "https://api.leadconnectorhq.com/widget/booking/z1Ne59rohCCj87KhcXoi",
   checkInCall:
     "https://api.leadconnectorhq.com/widget/booking/SHjlq0UjeR11maltYNyh",
-  callSummaryForm: "https://maharamedia.typeform.com/to/fRokTITH",
   kickoffForm: "https://maharamedia.typeform.com/to/BbJy6xg4",
   calculator: "http://calculator.maharamedia.com",
   review: "https://g.page/r/CeRMcUwFPpe7EAI/review",
