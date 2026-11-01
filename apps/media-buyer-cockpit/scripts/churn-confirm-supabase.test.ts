@@ -68,7 +68,7 @@ const CSM_EMAIL = "csm@tests.invalid";
 const LIVE_READ_MD5 = "b008dbe49a35e451bd8979424b5fcdb3";
 const LIVE_GUARD_MD5 = "168ce29dc03c2867603af6a488da2790";
 /** 20261101l's guard (its drift guard's after value): o stands on its 'answer' carve-out. */
-const L_GUARD_MD5 = "e05e4baa2c0059d9fd04a98684963bbb";
+const L_GUARD_MD5 = "38fa9795b15dbc93494a691f88766b0f";
 
 let db: PGlite;
 type Row = Record<string, any>;
@@ -1728,5 +1728,125 @@ describe("the CEO reads the confirm", () => {
     ).toBe("1 of 2 confirmed · 1 logged, not confirmed");
     expect(churnView({ months: [month] }, "2026-10")?.confirmed).toBeNull();
     expect(churnView([month], "2026-10")?.confirmed).toBeNull();
+  });
+});
+
+// --- A survey found only by the link's hidden id (review, wave 12) ------------------------
+
+const UNVERIFIED =
+  'This survey came with the client\'s link, and nobody has checked it is theirs. Tick "This survey is from this client" if it is, or send the form without the survey.';
+
+describe("a survey matched only by the link's hidden id waits for a person's tick", () => {
+  const unverified = (token: string, task = "taskAcme") =>
+    one<string>(
+      `INSERT INTO cockpit_form_responses(form_key,form_version,source,external_id,task_id,client_name,mode,state,answers,answer_meta,created_by,submitted_at)
+       VALUES ('exit_survey',1,'typeform_webhook',$1,$2,'Acme Interiors','live','legacy','{}',
+               '{"notice_on":"2026-10-30","match":"hidden_id_unverified"}','forms-door',now()) RETURNING id::text AS r`,
+      [token, task],
+    );
+
+  test("refused without the tick (or with anything but true); nothing is written", async () => {
+    await rolledBack(async () => {
+      const resp = await unverified("tokU1");
+      for (const over of [
+        { surveyResponseId: resp, surveyState: "filled" },
+        { surveyResponseId: resp, surveyConfirmed: "yes" },
+        { surveyResponseId: resp, surveyConfirmed: false },
+      ]) {
+        const r = await refusal(() =>
+          confirmAs(CSM, confirmArgs("taskAcme", over)),
+        );
+        expect(r).toEqual({ code: "22023", message: UNVERIFIED });
+      }
+      expect(
+        await one(
+          "SELECT count(*)::int AS r FROM cockpit_churn_departures WHERE clickup_task_id='taskAcme'",
+        ),
+      ).toBe(0);
+      expect(
+        await one(
+          "SELECT answer_meta->>'match' AS r FROM cockpit_form_responses WHERE id=$1::uuid",
+          [resp],
+        ),
+      ).toBe("hidden_id_unverified");
+      // Without the survey the confirm goes through, and the survey stays unchecked.
+      const plain = await confirmAs(CSM, confirmArgs("taskAcme"));
+      expect(
+        (
+          await q(
+            "SELECT survey_state, survey_response_id FROM cockpit_churn_departures WHERE id=$1",
+            [plain.departureId],
+          )
+        )[0],
+      ).toEqual({ survey_state: "not_sent", survey_response_id: null });
+    });
+  });
+
+  test("with the tick: attached, marked confirmed by a person (role, never an address), in the audit", async () => {
+    await rolledBack(async () => {
+      const resp = await unverified("tokU2");
+      const r = await confirmAs(
+        CSM,
+        confirmArgs("taskAcme", {
+          surveyResponseId: resp,
+          surveyConfirmed: true,
+        }),
+      );
+      expect(
+        (
+          await q(
+            "SELECT survey_state, survey_response_id::text AS s FROM cockpit_churn_departures WHERE id=$1",
+            [r.departureId],
+          )
+        )[0],
+      ).toEqual({ survey_state: "filled", s: resp });
+      const meta = await one<Row>(
+        "SELECT answer_meta AS r FROM cockpit_form_responses WHERE id=$1::uuid",
+        [resp],
+      );
+      expect(meta.match).toBe("confirmed_by_person");
+      expect(meta.notice_on).toBe("2026-10-30");
+      expect(meta.matched).toMatchObject({
+        by: "the CSM",
+        via: "churn_confirm",
+        taskId: "taskAcme",
+      });
+      expect(JSON.stringify(meta)).not.toContain("@");
+      const audit = await one<Row>(
+        "SELECT metadata AS r FROM cockpit_audit_log WHERE action='churn.confirm' AND entity_id=$1",
+        [String(r.departureId)],
+      );
+      expect(audit.survey_confirmed).toBe(true);
+      expect(audit.survey_response_id).toBe(resp);
+      // Confirmed once: the mark is a person's word now, and a second tick changes nothing.
+      expect(
+        (
+          await refusal(() =>
+            q(
+              `UPDATE cockpit_form_responses SET answer_meta = answer_meta || '{"match":"hidden_id_unverified"}' WHERE id=$1::uuid`,
+              [resp],
+            ),
+          )
+        ).message,
+      ).toBe("Sent notes keep their answers");
+    });
+  });
+
+  test("a checked survey (no hidden-id mark) needs no tick, as before", async () => {
+    await rolledBack(async () => {
+      const resp =
+        await one(`INSERT INTO cockpit_form_responses(form_key,form_version,source,external_id,task_id,client_name,mode,state,answers,answer_meta,created_by,submitted_at)
+        VALUES ('exit_survey',1,'typeform_webhook','tokU3','taskAcme','Acme Interiors','live','legacy','{}','{"match":"confirmed_by_person"}','forms-door',now()) RETURNING id::text AS r`);
+      const r = await confirmAs(
+        CSM,
+        confirmArgs("taskAcme", { surveyResponseId: resp }),
+      );
+      expect(
+        await one(
+          "SELECT survey_response_id::text AS r FROM cockpit_churn_departures WHERE id=$1",
+          [r.departureId],
+        ),
+      ).toBe(resp);
+    });
   });
 });

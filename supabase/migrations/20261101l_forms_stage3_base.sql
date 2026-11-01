@@ -68,7 +68,7 @@ BEGIN
       ('public.cockpit_forms_door_seen(text,text,text)', 'f300e9a2184fba75d8b4f5693cb20e83', '063bd0689f11f79aeebc6270b370d28a'),
       ('public.cockpit_form_registry_apply(text,jsonb,jsonb)', 'af5e541b7f489b9871e4ad49a6c32460', '73a88dc6513b074e54d76ec4472d3539'),
       -- Not in 2.2's table: the legacy match needs its carve-out (section 6 above).
-      ('public.cockpit_form_responses_guard()', '168ce29dc03c2867603af6a488da2790', 'e05e4baa2c0059d9fd04a98684963bbb')
+      ('public.cockpit_form_responses_guard()', '168ce29dc03c2867603af6a488da2790', '38fa9795b15dbc93494a691f88766b0f')
     ) AS x(fn, live_md5, after_md5)
   LOOP
     v_now := NULL;
@@ -1255,18 +1255,30 @@ END $$;
 CREATE OR REPLACE FUNCTION public.cockpit_form_responses_guard()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
-  -- Waves 1-2: two carve-outs for a stored termination survey or pause
+  -- Waves 1-2: carve-outs for a stored termination survey or pause
   -- request (state legacy), each only under its transaction-local
-  -- setting: a person's match to a card (task_id from none, set by
-  -- cockpit_form_legacy_match) and the one answer to its notice
-  -- (answer_meta.answered, added once, by 20261101o's notice answer).
+  -- setting: a person's match to a card (task_id from none, or off a card
+  -- found only by the link's hidden id, set by cockpit_form_legacy_match),
+  -- a person's word that such a card is right (answer_meta.match from
+  -- hidden_id_unverified to confirmed_by_person with answer_meta.matched,
+  -- once, by the match or 20261101o's churn confirm), and the one answer to
+  -- its notice (answer_meta.answered, added once, by 20261101o's notice answer).
   v_legacy boolean := OLD.state = 'legacy' AND OLD.form_key IN ('exit_survey','pause_request');
+  v_setting text := coalesce(current_setting('cockpit.forms_legacy', true), '');
+  v_unverified boolean := coalesce(OLD.answer_meta->>'match', '') = 'hidden_id_unverified';
   v_match boolean := false;
+  v_mark boolean := false;
   v_answer boolean := false;
 BEGIN
-  v_match := v_legacy AND coalesce(current_setting('cockpit.forms_legacy', true), '') = 'match'
-             AND OLD.task_id IS NULL AND NEW.task_id IS NOT NULL;
-  v_answer := v_legacy AND coalesce(current_setting('cockpit.forms_legacy', true), '') = 'answer'
+  v_mark := v_legacy AND v_setting IN ('match','confirm') AND v_unverified
+            AND NOT (OLD.answer_meta ? 'matched')
+            AND coalesce(NEW.answer_meta->>'match', '') = 'confirmed_by_person'
+            AND jsonb_typeof(NEW.answer_meta->'matched') = 'object'
+            AND (NEW.answer_meta - 'match' - 'matched') = (OLD.answer_meta - 'match');
+  -- A card moves only with the person's mark in the same write.
+  v_match := v_legacy AND v_setting = 'match' AND NEW.task_id IS NOT NULL
+             AND (OLD.task_id IS NULL OR v_mark);
+  v_answer := v_legacy AND v_setting = 'answer'
               AND NOT (OLD.answer_meta ? 'answered') AND jsonb_typeof(NEW.answer_meta->'answered') = 'object'
               AND (NEW.answer_meta - 'answered') = OLD.answer_meta;
   IF NEW.id IS DISTINCT FROM OLD.id OR NEW.form_key IS DISTINCT FROM OLD.form_key
@@ -1276,7 +1288,7 @@ BEGIN
     RAISE EXCEPTION 'A response keeps its form, version, source, card, mode, seat and creation time' USING ERRCODE = '55000';
   END IF;
   IF OLD.state <> 'draft' AND (NEW.answers IS DISTINCT FROM OLD.answers
-                              OR (NEW.answer_meta IS DISTINCT FROM OLD.answer_meta AND NOT v_answer)) THEN
+                              OR (NEW.answer_meta IS DISTINCT FROM OLD.answer_meta AND NOT (v_answer OR v_mark))) THEN
     RAISE EXCEPTION 'Sent notes keep their answers' USING ERRCODE = '55000';
   END IF;
   IF NEW.state IS DISTINCT FROM OLD.state AND NOT (
@@ -1458,7 +1470,12 @@ BEGIN
 END $$;
 
 -- A person picks the card of a survey that arrived with none (W12, W22):
--- the CEO, or a CSM, only for one of their own clients.
+-- the CEO, or a CSM, only for one of their own clients. A survey on a card
+-- found only by the link's hidden id (hidden_id_unverified) can be moved to
+-- the right card, or confirmed on its own, once: a CSM needs both the card
+-- it sits on and the new one. The person's word is kept in answer_meta
+-- (match confirmed_by_person, matched: by role, when, from which card) and
+-- the audit row. A survey a departure already holds is not moved here.
 CREATE OR REPLACE FUNCTION public.cockpit_form_legacy_match(p_response_id uuid, p_task_id text)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -1466,6 +1483,9 @@ DECLARE
   r public.cockpit_form_responses;
   a public.cockpit_billing_accounts;
   v_ceo boolean;
+  v_unverified boolean;
+  v_old_name text;
+  v_held boolean := false;
   v_matched boolean := false;
   v_prev_action text := current_setting('cockpit.forms_action', true);
   v_prev_legacy text := current_setting('cockpit.forms_legacy', true);
@@ -1482,7 +1502,9 @@ BEGIN
   IF NOT FOUND OR r.form_key NOT IN ('exit_survey','pause_request') OR r.state <> 'legacy' THEN
     RAISE EXCEPTION 'Only a stored termination survey or pause request is matched here.' USING ERRCODE = '22023';
   END IF;
-  IF r.task_id IS NOT NULL THEN
+  v_unverified := r.task_id IS NOT NULL AND coalesce(r.answer_meta->>'match', '') = 'hidden_id_unverified'
+                  AND NOT (r.answer_meta ? 'matched');
+  IF r.task_id IS NOT NULL AND NOT v_unverified THEN
     RAISE EXCEPTION 'This survey is already matched to a card.' USING ERRCODE = '22023';
   END IF;
   SELECT * INTO a FROM public.cockpit_billing_accounts x WHERE x.clickup_task_id = p_task_id;
@@ -1492,9 +1514,32 @@ BEGIN
   IF NOT v_ceo AND NOT coalesce(public.cockpit_client_allowed(a.client_name), false) THEN
     RAISE EXCEPTION '% is not one of your clients. Ask its CSM or the CEO to match it.', a.client_name USING ERRCODE = '42501';
   END IF;
+  IF v_unverified THEN
+    SELECT x.client_name INTO v_old_name FROM public.cockpit_billing_accounts x WHERE x.clickup_task_id = r.task_id;
+    v_old_name := coalesce(v_old_name, r.client_name);
+    IF NOT v_ceo AND NOT coalesce(public.cockpit_client_allowed(v_old_name), false) THEN
+      RAISE EXCEPTION 'This survey sits on %, not one of your clients. Ask its CSM or the CEO to move it.',
+        coalesce(v_old_name, 'another card') USING ERRCODE = '42501';
+    END IF;
+    -- 20261101o's survey column, read by name: before o no departure holds a survey.
+    IF public.cockpit_form_column_exists('cockpit_churn_departures', 'survey_response_id') THEN
+      EXECUTE 'SELECT EXISTS (SELECT 1 FROM public.cockpit_churn_departures d WHERE d.survey_response_id = $1)'
+        INTO v_held USING r.id;
+    END IF;
+    IF v_held THEN
+      RAISE EXCEPTION 'A departure already holds this survey. Open that departure to change its survey.' USING ERRCODE = '22023';
+    END IF;
+  END IF;
   PERFORM set_config('cockpit.forms_action', 'forms.legacy_match', true);
   PERFORM set_config('cockpit.forms_legacy', 'match', true);
-  UPDATE public.cockpit_form_responses x SET task_id = a.clickup_task_id, client_name = a.client_name
+  UPDATE public.cockpit_form_responses x SET task_id = a.clickup_task_id, client_name = a.client_name,
+         answer_meta = CASE WHEN v_unverified THEN x.answer_meta || jsonb_build_object(
+           'match', 'confirmed_by_person',
+           'matched', jsonb_strip_nulls(jsonb_build_object(
+             'by', CASE WHEN v_ceo THEN 'the CEO' ELSE 'the CSM' END, 'at', now(), 'via', 'legacy_match',
+             'taskId', a.clickup_task_id,
+             'from', CASE WHEN r.task_id IS DISTINCT FROM a.clickup_task_id THEN r.task_id END)))
+           ELSE x.answer_meta END
    WHERE x.id = r.id;
   PERFORM set_config('cockpit.forms_legacy', coalesce(v_prev_legacy, ''), true);
   IF r.form_key = 'exit_survey' THEN
@@ -1502,7 +1547,9 @@ BEGIN
   END IF;
   PERFORM set_config('cockpit.forms_action', coalesce(v_prev_action, ''), true);
   RETURN jsonb_build_object('responseId', r.id, 'taskId', a.clickup_task_id, 'clientName', a.client_name,
-    'matched', v_matched);
+    'matched', v_matched)
+    || CASE WHEN v_unverified AND r.task_id IS DISTINCT FROM a.clickup_task_id
+            THEN jsonb_build_object('movedFrom', r.task_id) ELSE '{}'::jsonb END;
 END $$;
 
 -- The record of a staff form (extension, pause, resume, churn_confirm, mrr),
@@ -1571,7 +1618,9 @@ END $$;
 
 -- FormSheet's after-send trail (contract 3.1, 5.1): where one saved staff
 -- form, billing change, survey or departure has got to. Names, states and
--- plain sentences only: never a token, an address or a request body.
+-- plain sentences only: never a token, an address or a request body. The
+-- references given together are one client's: the gate checks one card, so
+-- references on two cards (or a card and none) are refused.
 CREATE OR REPLACE FUNCTION public.cockpit_form_trail(p_ref jsonb)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -1581,6 +1630,7 @@ DECLARE
   q public.cockpit_clickup_writeback_queue;
   n public.cockpit_slack_notices;
   v_event bigint;
+  v_event_in bigint;
   v_dep bigint;
   v_resp uuid;
   v_task text;
@@ -1607,6 +1657,7 @@ BEGIN
   IF v_event IS NULL AND v_dep IS NULL AND v_resp IS NULL THEN
     RAISE EXCEPTION 'Say which saved form to follow.' USING ERRCODE = '22023';
   END IF;
+  v_event_in := v_event;
   IF v_dep IS NOT NULL THEN
     SELECT * INTO d FROM public.cockpit_churn_departures x WHERE x.id = v_dep;
     -- The confirm's own billing event (20261101o), read by name.
@@ -1619,6 +1670,13 @@ BEGIN
   END IF;
   IF v_resp IS NOT NULL THEN
     SELECT * INTO r FROM public.cockpit_form_responses x WHERE x.id = v_resp;
+  END IF;
+
+  -- One client's references only: each one given must be on the same card.
+  IF (v_event_in IS NOT NULL AND v_dep IS NOT NULL AND e.clickup_task_id IS DISTINCT FROM d.clickup_task_id)
+     OR (v_event_in IS NOT NULL AND v_resp IS NOT NULL AND e.clickup_task_id IS DISTINCT FROM r.task_id)
+     OR (v_dep IS NOT NULL AND v_resp IS NOT NULL AND d.clickup_task_id IS DISTINCT FROM r.task_id) THEN
+    RAISE EXCEPTION 'Those references are for different clients. Follow one at a time.' USING ERRCODE = '22023';
   END IF;
 
   -- The gate: the CEO, finance, or a CSM allowed on the card (any CSM for a
@@ -1726,6 +1784,9 @@ BEGIN
            'noticeOn', z.answer_meta->>'notice_on',
            'submittedAt', z.submitted_at,
            'matched', z.task_id IS NOT NULL,
+           -- On its card only by the link's hidden id, and no person has checked it yet.
+           'unverified', z.task_id IS NOT NULL AND coalesce(z.answer_meta->>'match', '') = 'hidden_id_unverified'
+                         AND NOT (z.answer_meta ? 'matched'),
            'departureId', CASE WHEN z.form_key = 'exit_survey' AND z.task_id IS NOT NULL
                                THEN (v_open->>z.task_id)::bigint END)
          ORDER BY z.submitted_at DESC, z.id), '[]'::jsonb)

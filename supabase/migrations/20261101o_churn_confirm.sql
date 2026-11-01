@@ -62,8 +62,9 @@ BEGIN
      OR to_regprocedure('public.cockpit_churn_reason_card(text)') IS NULL
      OR to_regclass('public.cockpit_billing_event_voids') IS NULL
      -- l's guard carries the notice answer's carve-out (cockpit.forms_legacy = 'answer').
+     -- and the person's word on a survey found by the link's hidden id (confirmed_by_person).
      OR NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid = to_regprocedure('public.cockpit_form_responses_guard()')
-                     AND p.prosrc LIKE '%cockpit.forms_legacy%')
+                     AND p.prosrc LIKE '%cockpit.forms_legacy%' AND p.prosrc LIKE '%confirmed_by_person%')
      OR NOT EXISTS (SELECT 1 FROM pg_constraint c
                      WHERE c.conrelid = 'public.cockpit_slack_notices'::regclass
                        AND c.conname = 'cockpit_slack_notices_kind_check'
@@ -174,7 +175,9 @@ DECLARE
   v_mrr numeric; v_call text; v_survey text; v_survey_id uuid; v_launch date;
   v_clear boolean; v_seat text; v_source text;
   v_resp uuid; v_event bigint; v_detail jsonb; v_built jsonb; v_card text;
-  v_answers jsonb;
+  v_answers jsonb; v_survey_mark boolean := false;
+  v_prev_action text := current_setting('cockpit.forms_action', true);
+  v_prev_legacy text := current_setting('cockpit.forms_legacy', true);
 BEGIN
   IF v_uid IS NULL THEN RAISE EXCEPTION 'Sign in before confirming a churn.' USING ERRCODE = '42501'; END IF;
   IF p_kind IS DISTINCT FROM 'churn' THEN
@@ -276,6 +279,14 @@ BEGIN
          WHERE r.id = v_survey_id AND r.form_key = 'exit_survey' AND r.task_id = v_task) THEN
       RAISE EXCEPTION 'That termination survey is not this client''s. Pick the card on the survey first.' USING ERRCODE = '22023';
     END IF;
+    -- A card found only by the link's hidden id (20261101l) is no proof: a
+    -- person ticks that the survey is this client's before it is attached.
+    SELECT coalesce(r.answer_meta->>'match', '') = 'hidden_id_unverified' AND NOT (r.answer_meta ? 'matched')
+      INTO v_survey_mark FROM public.cockpit_form_responses r WHERE r.id = v_survey_id;
+    IF v_survey_mark AND p_args->'surveyConfirmed' IS DISTINCT FROM 'true'::jsonb THEN
+      RAISE EXCEPTION 'This survey came with the client''s link, and nobody has checked it is theirs. Tick "This survey is from this client" if it is, or send the form without the survey.'
+        USING ERRCODE = '22023';
+    END IF;
     v_survey := 'filled';
   END IF;
 
@@ -328,6 +339,20 @@ BEGIN
     RAISE EXCEPTION 'This client already has a departure on %; confirm that one.', to_char(v_left, 'FMDD Mon YYYY')
       USING ERRCODE = '22023';
   END;
+
+  -- The person's tick on a survey found by the link's hidden id: kept on the
+  -- survey (by role, never an address) and in its audit row.
+  IF v_survey_mark THEN
+    PERFORM set_config('cockpit.forms_action', 'forms.survey_confirmed', true);
+    PERFORM set_config('cockpit.forms_legacy', 'confirm', true);
+    UPDATE public.cockpit_form_responses r SET answer_meta = r.answer_meta || jsonb_build_object(
+             'match', 'confirmed_by_person',
+             'matched', jsonb_build_object('by', CASE WHEN v_ceo THEN 'the CEO' ELSE 'the CSM' END, 'at', now(),
+                                           'via', 'churn_confirm', 'taskId', v_task, 'departureId', v_dep.id))
+     WHERE r.id = v_survey_id;
+    PERFORM set_config('cockpit.forms_legacy', coalesce(v_prev_legacy, ''), true);
+    PERFORM set_config('cockpit.forms_action', coalesce(v_prev_action, ''), true);
+  END IF;
 
   -- The staff form's record (20261101l): one response per request id.
   v_answers := jsonb_strip_nulls(jsonb_build_object(
@@ -383,14 +408,16 @@ BEGIN
   VALUES ('churn.confirm', 'cockpit_churn_departures', v_dep.id::text, v_who,
           CASE WHEN v_ceo THEN 'media-buyer-cockpit' ELSE 'client-success-cockpit' END, 'supabase',
           CASE WHEN v_before.id IS NOT NULL THEN to_jsonb(v_before) END, to_jsonb(v_dep),
-          jsonb_build_object('event_id', v_event, 'response_id', v_resp, 'request_id', v_req));
+          jsonb_build_object('event_id', v_event, 'response_id', v_resp, 'request_id', v_req)
+            || CASE WHEN v_survey_mark THEN jsonb_build_object('survey_confirmed', true, 'survey_response_id', v_survey_id)
+                    ELSE '{}'::jsonb END);
 
   SELECT q.state INTO v_card FROM public.cockpit_clickup_writeback_queue q WHERE q.dedupe_key = 'billing:' || v_event;
   RETURN jsonb_build_object('departureId', v_dep.id, 'eventId', v_event, 'responseId', v_resp,
     'cardState', CASE WHEN v_card IS NULL THEN 'none' WHEN v_card = 'dry_run' THEN 'held' ELSE v_card END);
 END $$;
 COMMENT ON FUNCTION public.cockpit_client_lifecycle_confirm(text, jsonb) IS
-  'Client is leaving / Confirm churn (contract 3.1): the CEO, or a CSM allowed on the client. Updates the card''s open departure (not removed, not confirmed, no later resume) or inserts one; records the churn_confirm response; inserts one billing event of kind churn (the card write, 20261101m); queues churn.confirmed; churn log and audit rows. A repeated requestId returns the first result.';
+  'Client is leaving / Confirm churn (contract 3.1): the CEO, or a CSM allowed on the client. A survey on the card only by the link''s hidden id needs surveyConfirmed: true (the person''s tick), which marks it confirmed_by_person. Updates the card''s open departure (not removed, not confirmed, no later resume) or inserts one; records the churn_confirm response; inserts one billing event of kind churn (the card write, 20261101m); queues churn.confirmed; churn log and audit rows. A repeated requestId returns the first result.';
 
 -- 6. "Not leaving" and "Handled" -----------------------------------------------------------
 
@@ -756,8 +783,24 @@ ON CONFLICT (key) DO UPDATE
 -- stop it; from 20261101p also why more time was given, what would prevent it, at-risk, a pause's
 -- consent). The read RPCs scope it by client (cockpit_billing_reader_ok); the table's own seat
 -- policy let any active seat read every client's rows. This restrictive policy holds a direct read
--- to the same rule: the CEO, finance, or a CSM on their own client (the sheet's fetch already
--- filters by the CSM's clients, so its rows do not change). The balance-kinds policy stays as it is.
+-- to the same rule: the CEO, finance, or a CSM on their own client. The client is the event's
+-- card (the sheet's fetch filters by card): the card's current name on the billing sheet decides,
+-- so a rename or a row logged with no name stays with its CSM; the name stored on the event only
+-- when its card is not on the sheet. The balance-kinds policy stays as it is; the service key and
+-- the SECURITY DEFINER functions bypass row security as before.
+CREATE OR REPLACE FUNCTION public.cockpit_billing_event_client_ok(p_task text, p_client text)
+RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE v_name text;
+BEGIN
+  SELECT a.client_name INTO v_name FROM public.cockpit_billing_accounts a WHERE a.clickup_task_id = p_task;
+  IF FOUND THEN RETURN coalesce(public.cockpit_client_allowed(v_name), false); END IF;
+  RETURN coalesce(public.cockpit_client_allowed(p_client), false);
+END $$;
+COMMENT ON FUNCTION public.cockpit_billing_event_client_ok(text, text) IS
+  'The billing log''s client rule (policy cockpit_billing_events_client_scope): the card''s current name on the billing sheet, else the name stored on the event.';
+REVOKE ALL ON FUNCTION public.cockpit_billing_event_client_ok(text, text) FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.cockpit_billing_event_client_ok(text, text) TO authenticated;
+
 DO $rls$
 BEGIN
   IF to_regclass('public.cockpit_billing_events') IS NULL THEN RETURN; END IF;
@@ -765,7 +808,8 @@ BEGIN
   EXECUTE $p$CREATE POLICY cockpit_billing_events_client_scope ON public.cockpit_billing_events
     AS RESTRICTIVE FOR SELECT TO authenticated
     USING ((SELECT public.cockpit_is_ceo()) OR (SELECT public.cockpit_has_role('finance'))
-           OR ((SELECT public.cockpit_has_role('csm')) AND public.cockpit_client_allowed(client_name)))$p$;
+           OR ((SELECT public.cockpit_has_role('csm'))
+               AND public.cockpit_billing_event_client_ok(clickup_task_id, client_name)))$p$;
 END $rls$;
 
 -- 11. Privileges ------------------------------------------------------------------------------

@@ -1100,13 +1100,13 @@ describe("the block in deploy order", () => {
         "SELECT public.cockpit_billing_ladder_due() AS r",
       );
       expect(due.map(r => r.taskId)).not.toContain(A);
-      // The grant answers the run: extended, the days stopping at the grant.
+      // The grant answers the run while it runs: still open (the card has not moved), the days stopping at the grant.
       expect(
         await q(
           "SELECT closed_how, days_late FROM public.cockpit_late_payments_v WHERE clickup_task_id=$1",
           [A],
         ),
-      ).toEqual([{ closed_how: "extended", days_late: 16 }]);
+      ).toEqual([{ closed_how: "open", days_late: 16 }]);
       // Taken back, the run is late again and both readers say so.
       await ex(
         `INSERT INTO public.cockpit_billing_event_voids(event_id, reason, voided_by) VALUES (${Number(out.eventId)}, 'test void', 'test')`,
@@ -1117,6 +1117,53 @@ describe("the block in deploy order", () => {
         "SELECT public.cockpit_billing_ladder_due() AS r",
       );
       expect(dueAgain.find(r => r.taskId === A)?.step).toBe("cancel_review");
+    });
+  });
+
+  test("the billing sheet live before the staff forms still extends, pauses and resumes over the whole block", async () => {
+    await rolledBack(async () => {
+      const today = await kuwaitToday();
+      const day = (n: number) =>
+        new Date(Date.parse(`${today}T00:00:00Z`) + n * 86_400_000)
+          .toISOString()
+          .slice(0, 10);
+      const sheet = (edit: Row) =>
+        as<Row>(
+          CSM_A,
+          "SELECT public.cockpit_billing_write('edit', $1::jsonb) AS r",
+          [JSON.stringify({ taskId: A, edit, source: "csm" })],
+        );
+      // editBillingAccount's three payloads at 658c5a97, with no requestId.
+      expect(
+        await sheet({ kind: "extension", weeks: 2, reason: "Their launch slipped a week", ours: true, moveDate: true }),
+      ).toMatchObject({
+        extension_weeks: 2,
+        // From the later of the card's date (5 Nov in the seed) and today.
+        next_payment_date: today > "2026-11-05" ? day(14) : "2026-11-19",
+      });
+      expect(await sheet({ kind: "pause", reason: "Client asked for a month off" })).toMatchObject({
+        client_status: "Paused",
+        paused_on: today,
+      });
+      expect(await sheet({ kind: "resume", nextDate: day(20) })).toMatchObject({
+        client_status: "Active",
+        next_payment_date: day(20),
+      });
+      const events = await q<{ id: number; kind: string; detail: Row }>(
+        "SELECT id, kind, detail FROM public.cockpit_billing_events WHERE clickup_task_id=$1 ORDER BY id",
+        [A],
+      );
+      expect(events.map(e => e.kind)).toEqual(["extension", "pause", "resume"]);
+      expect(events[0].detail).toEqual({ weeks: 2, ours: true, movedDate: true });
+      // Each still queues its card write.
+      expect(
+        (
+          await q(
+            "SELECT 1 FROM public.cockpit_clickup_writeback_queue WHERE dedupe_key = ANY($1)",
+            [events.map(e => `billing:${e.id}`)],
+          )
+        ).length,
+      ).toBe(3);
     });
   });
 
@@ -1230,6 +1277,102 @@ describe("the block in deploy order", () => {
       expect(strip(await writesOf(canaryChurn))).toEqual(
         strip(await writesOf(Number(realChurn.eventId))),
       );
+    });
+  });
+});
+
+describe("the review's follow-ups on o, in deploy order (wave 12)", () => {
+  test("the billing log follows the card, not the name stored on the event: a renamed client and a nameless row stay its CSM's", async () => {
+    await rolledBack(async () => {
+      await ex(`GRANT SELECT ON public.cockpit_billing_events TO authenticated;
+        INSERT INTO public.cockpit_billing_events(clickup_task_id, client_name, kind, reason, detail, source, by_whom) VALUES
+          ('${A}', 'Acme Old Name', 'extension', 'Logged before the rename', '{"weeks":1}', 'csm', 'csm.a@tests.invalid'),
+          ('${A}', NULL, 'extension', 'Logged with no name', '{"weeks":1}', 'csm', 'csm.a@tests.invalid'),
+          ('${B}', 'Acme Interiors', 'extension', 'Beta''s row under Acme''s name', '{"weeks":1}', 'csm', 'csm.b@tests.invalid'),
+          ('taskOffSheet', 'Acme Interiors', 'extension', 'A card not on the sheet', '{"weeks":1}', 'csm', 'csm.a@tests.invalid');`);
+      const reasons = (who: string) =>
+        as<string[] | null>(
+          who,
+          "SELECT array_agg(reason ORDER BY reason) AS r FROM public.cockpit_billing_events WHERE reason IS NOT NULL AND detail->>'weeks' = '1'",
+        );
+      // The card's current name decides; the stored name only when the row has no card on the sheet.
+      expect(await reasons(CSM_A)).toEqual([
+        "A card not on the sheet",
+        "Logged before the rename",
+        "Logged with no name",
+      ]);
+      expect(await reasons(CSM_B)).toEqual(["Beta's row under Acme's name"]);
+      expect((await reasons(CEO))?.length).toBe(4);
+      expect((await reasons(FINANCE))?.length).toBe(4);
+      expect(await reasons(CREATIVE)).toBeNull();
+      const can = (role: string) =>
+        one<boolean>(
+          "SELECT has_function_privilege($1, 'public.cockpit_billing_event_client_ok(text,text)', 'EXECUTE') AS r",
+          [role],
+        );
+      expect(await can("authenticated")).toBe(true);
+      expect(await can("anon")).toBe(false);
+    });
+  });
+
+  test("an unchecked survey goes on a departure only with the tick, and the audit names the step", async () => {
+    await rolledBack(async () => {
+      const id = await one<string>(
+        `INSERT INTO cockpit_form_responses(form_key,form_version,source,external_id,task_id,client_name,mode,state,answers,hidden,answer_meta,created_by,submitted_at)
+         VALUES ('exit_survey',1,'typeform_webhook','tokChainU',$1,'Acme Interiors','live','legacy','{"fields":[]}',
+                 '{"client_name":"Acme Interiors","onboarding_client_id":"${A}"}','{"notice_on":"2026-10-30","match":"hidden_id_unverified"}','forms-door',now()) RETURNING id::text AS r`,
+        [A],
+      );
+      const args = (over: Row) =>
+        JSON.stringify({
+          taskId: A,
+          requestId: rid(),
+          leftOn: "2026-10-20",
+          noticeOn: "2026-10-18",
+          reason: "Cancelled",
+          churnType: "mid_programme",
+          whyDetail: "The owner moved the budget to a showroom fit-out.",
+          howToStop: "Agree the second campaign before day 45.",
+          mrrLostUsd: 2000,
+          exitCallId: null,
+          surveyState: "filled",
+          surveyResponseId: id,
+          ...over,
+        });
+      const confirm = (over: Row) =>
+        as<Row>(
+          CSM_A,
+          "SELECT public.cockpit_client_lifecycle_confirm('churn', $1::jsonb) AS r",
+          [args(over)],
+        );
+      expect((await refusal(() => confirm({}))).message).toContain(
+        'Tick "This survey is from this client"',
+      );
+      const r = await confirm({ surveyConfirmed: true });
+      expect(
+        await one(
+          "SELECT survey_response_id::text AS r FROM cockpit_churn_departures WHERE id = $1",
+          [r.departureId],
+        ),
+      ).toBe(id);
+      // The forms audit names the step and the seat; the churn's own audit row says the survey was ticked.
+      const audit = await q(
+        "SELECT actor_email FROM cockpit_audit_log WHERE action = 'forms.survey_confirmed' AND entity_id = $1",
+        [id],
+      );
+      expect(audit).toEqual([{ actor_email: "csm.a@tests.invalid" }]);
+      expect(
+        await one(
+          "SELECT metadata->>'survey_confirmed' AS r FROM cockpit_audit_log WHERE action = 'churn.confirm' AND entity_id = $1",
+          [String(r.departureId)],
+        ),
+      ).toBe("true");
+      expect(
+        await one(
+          "SELECT answer_meta->>'match' AS r FROM cockpit_form_responses WHERE id = $1::uuid",
+          [id],
+        ),
+      ).toBe("confirmed_by_person");
     });
   });
 });

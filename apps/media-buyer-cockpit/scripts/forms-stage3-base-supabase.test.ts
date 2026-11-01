@@ -2250,3 +2250,176 @@ describe("anon and a seat with no role are refused everywhere", () => {
     ).toBe("42501");
   });
 });
+
+describe("the review's follow-ups on the match and the trail (wave 12)", () => {
+  const MATCH = "SELECT public.cockpit_form_legacy_match($1::uuid, $2) AS r";
+
+  test("a survey on a card only by the link's hidden id can be moved by a person, once, with an audit row", async () => {
+    await rolledBack(async () => {
+      const out = await legacy(survey("tok00000030"));
+      expect(out.taskId).toBe(A);
+      // A CSM of the new card only may not take it off a client who is not theirs.
+      expect(
+        await refusal(() => as(CSM_B, MATCH, [out.responseId, B])),
+      ).toEqual({
+        code: "42501",
+        message:
+          "This survey sits on Acme Interiors, not one of your clients. Ask its CSM or the CEO to move it.",
+      });
+      // The old card's CSM may not put it on a client who is not theirs.
+      expect(
+        await refusal(() => as(CSM_A, MATCH, [out.responseId, B])),
+      ).toEqual({
+        code: "42501",
+        message:
+          "Beta Build is not one of your clients. Ask its CSM or the CEO to match it.",
+      });
+      const moved = await as<Row>(CEO, MATCH, [out.responseId, B]);
+      expect(moved).toEqual({
+        responseId: out.responseId,
+        taskId: B,
+        clientName: "Beta Build",
+        matched: false,
+        movedFrom: A,
+      });
+      const row = (
+        await q(
+          "SELECT task_id, client_name, answer_meta FROM public.cockpit_form_responses WHERE id = $1",
+          [out.responseId],
+        )
+      )[0];
+      expect(row.task_id).toBe(B);
+      expect(row.client_name).toBe("Beta Build");
+      expect(row.answer_meta.match).toBe("confirmed_by_person");
+      expect(row.answer_meta.notice_on).toBe("2026-11-01");
+      expect(row.answer_meta.matched).toMatchObject({
+        by: "the CEO",
+        via: "legacy_match",
+        from: A,
+        taskId: B,
+      });
+      const audit = await q(
+        "SELECT before->>'task_id' AS b, after->>'task_id' AS a FROM public.cockpit_audit_log WHERE action = 'forms.legacy_match' AND entity_id = $1",
+        [out.responseId],
+      );
+      expect(audit).toEqual([{ b: A, a: B }]);
+      // A person's pick is final here: moving it again is refused.
+      expect(
+        (await refusal(() => as(CEO, MATCH, [out.responseId, A]))).message,
+      ).toBe("This survey is already matched to a card.");
+    });
+  });
+
+  test("the card's own CSM confirms it in place; a survey already on a departure is not moved", async () => {
+    await rolledBack(async () => {
+      const out = await legacy(survey("tok00000031"));
+      const same = await as<Row>(CSM_A, MATCH, [out.responseId, A]);
+      expect(same).toEqual({
+        responseId: out.responseId,
+        taskId: A,
+        clientName: "Acme Interiors",
+        matched: false,
+      });
+      expect(
+        await one(
+          "SELECT answer_meta->>'match' AS r FROM public.cockpit_form_responses WHERE id = $1",
+          [out.responseId],
+        ),
+      ).toBe("confirmed_by_person");
+      // An unchecked survey a departure already holds (a confirm from before this fix) stays where it is.
+      const held = await legacy(survey("tok00000032"));
+      await ex(`ALTER TABLE public.cockpit_churn_departures ADD COLUMN IF NOT EXISTS survey_response_id uuid;
+                INSERT INTO public.cockpit_churn_departures(client, clickup_task_id, left_on, reason, created_by, survey_response_id)
+                VALUES ('Acme Interiors', '${A}', '2026-10-30', 'Cancelled', 'test', '${held.responseId}')`);
+      expect(await refusal(() => as(CEO, MATCH, [held.responseId, B]))).toEqual(
+        {
+          code: "22023",
+          message:
+            "A departure already holds this survey. Open that departure to change its survey.",
+        },
+      );
+    });
+  });
+
+  test("the notices in say which card came only from the link, until a person checks it", async () => {
+    await rolledBack(async () => {
+      const linked = await legacy(survey("tok00000035"));
+      const row = async () =>
+        (
+          await as<Row[]>(CSM_A, "SELECT public.cockpit_form_notices_in() AS r")
+        ).find(r => r.responseId === linked.responseId);
+      expect(await row()).toMatchObject({ matched: true, unverified: true });
+      await as(CSM_A, MATCH, [linked.responseId, A]);
+      expect(await row()).toMatchObject({ matched: true, unverified: false });
+      const lost = await legacy(
+        survey("tok00000036", {
+          taskId: null,
+          hidden: { client_name: "Gamma Homes" },
+        }),
+      );
+      expect(
+        (
+          await as<Row[]>(CSM_A, "SELECT public.cockpit_form_notices_in() AS r")
+        ).find(r => r.responseId === lost.responseId),
+      ).toMatchObject({ matched: false, unverified: false });
+    });
+  });
+
+  test("the trail follows one client at a time: references for two cards are refused", async () => {
+    await rolledBack(async () => {
+      await ex(`INSERT INTO public.cockpit_billing_events(id, clickup_task_id, client_name, kind, from_value, to_value, detail, source, by_whom)
+                VALUES (931, '${A}', 'Acme Interiors', 'extension', '2026-11-05', '2026-11-19', '{"weeks":2}', 'csm', 'csm.a@tests.invalid'),
+                       (932, '${B}', 'Beta Build', 'extension', '2026-11-09', '2026-11-23', '{"weeks":2}', 'csm', 'csm.b@tests.invalid')`);
+      const beta = await legacy(
+        survey("tok00000033", {
+          taskId: B,
+          hidden: { client_name: "Beta Build", onboarding_client_id: B },
+        }),
+      );
+      const lost = await legacy(
+        survey("tok00000034", {
+          taskId: null,
+          hidden: { client_name: "Gamma Homes" },
+        }),
+      );
+      await ex(`INSERT INTO public.cockpit_churn_departures(id, client, clickup_task_id, left_on, reason, created_by)
+                VALUES (933, 'Beta Build', '${B}', '2026-10-30', 'Cancelled', 'test')`);
+      const trail = (who: string, ref: Row) =>
+        as<Row>(who, "SELECT public.cockpit_form_trail($1::jsonb) AS r", [
+          JSON.stringify(ref),
+        ]);
+      const MIXED = {
+        code: "22023",
+        message:
+          "Those references are for different clients. Follow one at a time.",
+      };
+      // Their own event with another client's survey, departure, or an unmatched survey.
+      for (const ref of [
+        { eventId: 931, responseId: beta.responseId },
+        { eventId: 931, departureId: 933 },
+        { eventId: 931, responseId: lost.responseId },
+      ])
+        expect(
+          await refusal(() => trail(CSM_A, ref)),
+          JSON.stringify(ref),
+        ).toEqual(MIXED);
+      // The CEO is refused the same mix: the rule is one client, not one seat.
+      expect(
+        await refusal(() =>
+          trail(CEO, { eventId: 932, responseId: lost.responseId }),
+        ),
+      ).toEqual(MIXED);
+      // One client's references together still read.
+      expect(
+        (
+          await trail(CSM_B, {
+            eventId: 932,
+            responseId: beta.responseId,
+            departureId: 933,
+          })
+        ).stored.state,
+      ).toBe("done");
+      expect((await trail(CSM_A, { eventId: 931 })).stored.state).toBe("done");
+    });
+  });
+});

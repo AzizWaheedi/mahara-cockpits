@@ -77,6 +77,8 @@ export type SendOptions = {
   replacesGrantId?: number | null;
   /** Client is leaving: the termination survey this confirm answers. */
   surveyResponseId?: string | null;
+  /** The CSM ticked that a survey found only by the link's hidden id is this client's. */
+  surveyConfirmed?: boolean;
 };
 
 function sendResult(data: Any, message: string): SendResult {
@@ -167,6 +169,7 @@ export function churnArgs(
   a: Answers,
   requestId: string,
   surveyResponseId?: string | null,
+  surveyConfirmed?: boolean,
 ) {
   return {
     taskId,
@@ -181,6 +184,10 @@ export function churnArgs(
     exitCallId: text(a.exitCallId),
     surveyState: text(a.surveyState) ?? "not_sent",
     surveyResponseId: surveyResponseId ?? null,
+    // Only with a survey and the person's tick (20261101o refuses an unchecked one without it).
+    ...(surveyResponseId && surveyConfirmed === true
+      ? { surveyConfirmed: true }
+      : {}),
   };
 }
 
@@ -287,7 +294,13 @@ export async function confirmChurn(
 ): Promise<SendResult> {
   const data = await rpc(c, "cockpit_client_lifecycle_confirm", {
     p_kind: "churn",
-    p_args: churnArgs(taskId, a, requestId, o.surveyResponseId),
+    p_args: churnArgs(
+      taskId,
+      a,
+      requestId,
+      o.surveyResponseId,
+      o.surveyConfirmed,
+    ),
   });
   return sendResult(data, `left ${dayWords(a.leftOn) ?? "today"}`);
 }
@@ -312,7 +325,12 @@ export type PrefillRead = {
     weeks: number | null;
   } | null;
   card: Record<string, unknown> | null;
-  survey: { responseId: string | null; submittedAt: string | null } | null;
+  /** The card's latest termination survey; unverified when only the link's hidden id put it there. */
+  survey: {
+    responseId: string | null;
+    submittedAt: string | null;
+    unverified: boolean;
+  } | null;
   churnTypeDefault: string | null;
 };
 
@@ -371,6 +389,7 @@ export async function formPrefill(
       ? {
           responseId: text(s.responseId ?? s.id),
           submittedAt: text(s.submittedAt ?? s.submitted_at),
+          unverified: s.unverified === true,
         }
       : null,
     churnTypeDefault,
@@ -433,6 +452,8 @@ export type NoticeIn = {
   noticeOn: string | null;
   submittedAt: string | null;
   matched: boolean;
+  /** On its card only by the link's hidden id: nobody has checked it is this client's. */
+  unverified: boolean;
   departureId: number | null;
 };
 
@@ -454,6 +475,7 @@ export async function noticesIn(c: SupabaseClient): Promise<NoticeIn[]> {
       noticeOn: text(r.noticeOn),
       submittedAt: text(r.submittedAt),
       matched: r.matched === true && Boolean(text(r.taskId)),
+      unverified: r.unverified === true,
       departureId: number(r.departureId),
     }));
 }

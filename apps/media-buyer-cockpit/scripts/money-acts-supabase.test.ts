@@ -1487,7 +1487,8 @@ test("late spells: one run across a missing day, how each closed, the checked pa
       )[0].id,
     ).toBeGreaterThan(0);
     // A live extension, given today in the log (the card still shows the old date: its write is held), takes
-    // the card off the ladder and the client page's step, and stops the count on the grant's day.
+    // the card off the ladder and the client page's step, and stops the count on the grant's day; the run stays
+    // open until the card moves, so the step neither closes its record nor opens another meanwhile.
     await db.exec(`INSERT INTO cockpit_billing_events(clickup_task_id,client_name,kind,from_value,to_value,reason,detail,source,by_whom)
       VALUES('late4','Four Days','extension','${addDays(today, -4)}','${addDays(today, 10)}','x','{"weeks":2,"movedDate":true}','maher','maher')`);
     expect(
@@ -1504,8 +1505,8 @@ test("late spells: one run across a missing day, how each closed, the checked pa
         db,
         "SELECT closed_how, days_late FROM cockpit_late_payments_v WHERE clickup_task_id='late4'",
       ),
-    ).toEqual([{ closed_how: "extended", days_late: 4 }]);
-    // The card's run ends (the date moved): the next run closes the record, once.
+    ).toEqual([{ closed_how: "open", days_late: 4 }]);
+    // The card's run ends (the date moved) within the grant: extended, and the next run closes the record, once.
     await snapshots(db, today, "late4", "Four Days", [
       [-1, "Active", 30, 2000],
     ]);
@@ -1620,6 +1621,247 @@ test("late spells follow the billing log: October's Liwan, Marble and Ardon (the
   }
 });
 
+test("a payment never hides an open run: the last run's late payment and a top-up before the due day", async () => {
+  const { db, today } = await fixture();
+  try {
+    await owner(db);
+    await db.exec(`
+      INSERT INTO cockpit_billing_accounts(clickup_task_id,client_name,stage,stage_group,client_status,payment_plan,next_payment_usd,next_payment_date,synced_at)
+        VALUES('again','Again Co','Active','active','Active','Monthly',1000,'${addDays(today, -5)}',now()),
+              ('topup','Topup Co','Active','active','Active','Monthly',800,'${addDays(today, -6)}',now());`);
+    // Again Co: the last run (due 31 days ago) was paid late 7 days ago and the card moved that day to a date
+    // 5 days ago; that date then passed with nothing paid.
+    await snapshots(db, today, "again", "Again Co", [
+      ...Array.from({ length: 23 }, (_, i) => [30 - i, "Active", -31, 1000] as [number, string, number, number]),
+      ...Array.from({ length: 8 }, (_, i) => [7 - i, "Active", -5, 1000] as [number, string, number, number]),
+    ]);
+    // Topup Co: a checked top-up two days before the due day, then nothing; six days late.
+    await snapshots(db, today, "topup", "Topup Co",
+      Array.from({ length: 9 }, (_, i) => [8 - i, "Active", -6, 800] as [number, string, number, number]));
+    await db.exec(`
+      INSERT INTO cockpit_client_payments(payment_id,clickup_task_id,client_name,day,usd,rail,side,kind,active,checked)
+        VALUES('again:oct','again','Again Co','${addDays(today, -7)}',1000,'manual','back_end','client',true,true),
+              ('topup:1','topup','Topup Co','${addDays(today, -8)}',300,'manual','back_end','client',true,true);`);
+    const v = await rows(
+      db,
+      "SELECT clickup_task_id AS t, due_on::text, closed_how, paid_on::text, days_late FROM cockpit_late_payments_v ORDER BY 1, 2",
+    );
+    expect(v).toEqual([
+      // The last run: paid 24 days late, the card moved the same day.
+      { t: "again", due_on: addDays(today, -31), closed_how: "date_moved", paid_on: addDays(today, -7), days_late: 24 },
+      // That payment answered the last run, not this one: open, counted from the due day.
+      { t: "again", due_on: addDays(today, -5), closed_how: "open", paid_on: null, days_late: 5 },
+      // A payment while the card has not moved does not end the run.
+      { t: "topup", due_on: addDays(today, -6), closed_how: "open", paid_on: addDays(today, -8), days_late: 6 },
+    ]);
+    const due = await call<Record<string, unknown>[]>(db, CEO, "cockpit_billing_ladder_due()");
+    expect(due.map(r => [r.taskId, r.step, r.daysLate])).toEqual([
+      ["topup", "pause_review", 6],
+      ["again", "pause_review", 5],
+    ]);
+    await db.exec(`UPDATE cockpit_settings SET value='{"on":true}', updated_by='test' WHERE key='billing.daily'`);
+    expect(
+      (await db.query<{ r: Record<string, unknown> }>("SELECT cockpit_billing_daily() AS r")).rows[0].r,
+    ).toMatchObject({ lateOpened: 2 });
+    expect(
+      await rows(db, "SELECT clickup_task_id AS t, detail->>'due' AS due FROM cockpit_billing_events WHERE kind='late' ORDER BY 1"),
+    ).toEqual([
+      { t: "again", due: addDays(today, -5) },
+      { t: "topup", due: addDays(today, -6) },
+    ]);
+  } finally {
+    await db.close();
+  }
+});
+
+test("a grant answers an ended run only when the run was settled within it", async () => {
+  const { db, today } = await fixture();
+  try {
+    await owner(db);
+    await db.exec(`
+      INSERT INTO cockpit_billing_accounts(clickup_task_id,client_name,stage,stage_group,client_status,payment_plan,next_payment_usd,next_payment_date,synced_at)
+        VALUES('late40','Forty Co','Active','active','Active','Monthly',1000,'${addDays(today, -40)}',now()),
+              ('early','Early Co','Active','active','Active','Monthly',1000,'${addDays(today, -35)}',now());`);
+    const late = (from: number, due: number) =>
+      Array.from({ length: from }, (_, i) => [from - i, "Active", due, 1000] as [number, string, number, number]);
+    await snapshots(db, today, "late40", "Forty Co", late(40, -40));
+    await snapshots(db, today, "early", "Early Co", late(35, -35));
+    const at = (ago: number) => `(('${addDays(today, -ago)}')::date + time '12:00') AT TIME ZONE 'Asia/Kuwait'`;
+    // Forty Co: one week given on day 4 (to day 11); Early Co: one week given two days before its due day.
+    // Neither card moved (the writes were held) and neither client paid within the week.
+    await db.exec(`
+      INSERT INTO cockpit_billing_events(clickup_task_id,client_name,kind,from_value,to_value,reason,detail,source,by_whom,at)
+        VALUES('late40','Forty Co','extension','${addDays(today, -40)}','${addDays(today, -29)}','x','{"weeks":1,"movedDate":true}','csm','csm',${at(36)}),
+              ('early','Early Co','extension','${addDays(today, -35)}','${addDays(today, -30)}','x','{"weeks":1,"movedDate":true}','csm','csm',${at(37)});`);
+    const read = () =>
+      rows(db, "SELECT clickup_task_id AS t, closed_how, paid_on::text, days_late FROM cockpit_late_payments_v ORDER BY 1");
+    // The grants ran out with the cards unmoved: late again, counted from the due day.
+    expect(await read()).toEqual([
+      { t: "early", closed_how: "open", paid_on: null, days_late: 35 },
+      { t: "late40", closed_how: "open", paid_on: null, days_late: 40 },
+    ]);
+    // Both pay today and the cards move: paid weeks after the grants ended, so neither reads extended.
+    await snapshots(db, today, "late40", "Forty Co", [[0, "Active", 30, 1000]]);
+    await snapshots(db, today, "early", "Early Co", [[0, "Active", 30, 1000]]);
+    await db.exec(`
+      INSERT INTO cockpit_client_payments(payment_id,clickup_task_id,client_name,day,usd,rail,side,kind,active,checked)
+        VALUES('late40:1','late40','Forty Co','${today}',1000,'whop','back_end','client',true,true),
+              ('early:1','early','Early Co','${today}',1000,'whop','back_end','client',true,true);`);
+    expect(await read()).toEqual([
+      { t: "early", closed_how: "date_moved", paid_on: today, days_late: 35 },
+      { t: "late40", closed_how: "date_moved", paid_on: today, days_late: 40 },
+    ]);
+  } finally {
+    await db.close();
+  }
+});
+
+test("an open run stays open while its grant runs; the record stays open when the grant ends unpaid; a closed record reopens", async () => {
+  const { db, today } = await fixture();
+  try {
+    await owner(db);
+    await db.exec(`
+      INSERT INTO cockpit_billing_accounts(clickup_task_id,client_name,stage,stage_group,client_status,payment_plan,next_payment_usd,next_payment_date,synced_at)
+        VALUES('held','Held Co','Active','active','Active','Monthly',1000,'${addDays(today, -10)}',now()),
+              ('g6','Six Co','Active','active','Active','Monthly',600,'${addDays(today, -6)}',now()),
+              ('back','Back Co','Active','active','Active','Monthly',500,'${addDays(today, -9)}',now());`);
+    const late = (from: number, due: number) =>
+      Array.from({ length: from + 1 }, (_, i) => [from - i, "Active", due, 1000] as [number, string, number, number]);
+    await snapshots(db, today, "held", "Held Co", late(10, -10));
+    await snapshots(db, today, "g6", "Six Co", late(6, -6));
+    await snapshots(db, today, "back", "Back Co", late(9, -9));
+    await db.exec(`UPDATE cockpit_settings SET value='{"on":true}', updated_by='test' WHERE key='billing.daily'`);
+    // Six Co was given a week on its day 2, so it is held off the ladder and gets no record while the week runs.
+    const at = (ago: number) => `(('${addDays(today, -ago)}')::date + time '12:00') AT TIME ZONE 'Asia/Kuwait'`;
+    await db.exec(`
+      INSERT INTO cockpit_billing_events(clickup_task_id,client_name,kind,from_value,to_value,reason,detail,source,by_whom,at)
+        VALUES('g6','Six Co','extension','${addDays(today, -6)}','${addDays(today, 3)}','x','{"weeks":1,"movedDate":true}','csm','csm',${at(4)});`);
+    // Back Co's record for this due day was closed (a step that ran early), but the run is still open.
+    const old = await rows<{ id: number }>(db, `
+      INSERT INTO cockpit_billing_events(clickup_task_id,client_name,kind,from_value,to_value,reason,detail,source,by_whom)
+        VALUES('back','Back Co','late',NULL,'${addDays(today, -9)}','Late payment','{"due":"${addDays(today, -9)}","spell_day":4}','system','the cockpit')
+        RETURNING id`);
+    await db.exec(`
+      INSERT INTO cockpit_billing_events(clickup_task_id,client_name,kind,from_value,to_value,reason,detail,source,by_whom)
+        VALUES('back','Back Co','late','${addDays(today, -9)}','extended','Late 4 days','{"closes":${old[0].id},"due":"${addDays(today, -9)}","days_late":4,"closed_how":"extended"}','system','the cockpit')`);
+    const run = async () =>
+      (await db.query<{ r: Record<string, unknown> }>("SELECT cockpit_billing_daily() AS r")).rows[0].r;
+    expect(await run()).toMatchObject({ lateOpened: 2, lateClosed: 0 });
+    const opened = await rows<{ t: string; id: number }>(
+      db,
+      "SELECT clickup_task_id AS t, id FROM cockpit_billing_events WHERE kind='late' AND NOT (detail ? 'closes') ORDER BY id",
+    );
+    expect(opened.map(r => r.t)).toEqual(["back", "back", "held"]);
+    const first = opened[2].id;
+    expect(
+      (await rows<{ id: number }>(db, "SELECT late_event_id AS id FROM cockpit_late_payments_v WHERE clickup_task_id='back'"))[0].id,
+    ).toBe(opened[1].id);
+
+    // A week is given to Held Co on its day 10; the card write is held, so the card keeps the old date.
+    await db.exec(`
+      INSERT INTO cockpit_billing_events(clickup_task_id,client_name,kind,from_value,to_value,reason,detail,source,by_whom)
+        VALUES('held','Held Co','extension','${addDays(today, -10)}','${addDays(today, 7)}','x','{"weeks":1,"movedDate":true,"new_date":"${addDays(today, 7)}"}','csm','csm')`);
+    const view = () =>
+      rows(db, "SELECT closed_how, days_late, late_event_id AS id FROM cockpit_late_payments_v WHERE clickup_task_id='held'");
+    expect(await view()).toEqual([{ closed_how: "open", days_late: 10, id: first }]);
+    expect((await call<Record<string, unknown>[]>(db, CEO, "cockpit_billing_ladder_due()")).map(r => r.taskId)).toEqual(["back"]);
+    // While the week runs, the step neither closes the record nor opens another.
+    expect(await run()).toMatchObject({ lateOpened: 0, lateClosed: 0 });
+    // The week ends with the card unmoved and unpaid: late again from the due day, the same record still open.
+    await db.exec(`UPDATE cockpit_billing_events SET detail = detail || jsonb_build_object('new_date', '${addDays(today, -1)}')
+      WHERE clickup_task_id='held' AND kind='extension'`);
+    expect(await view()).toEqual([{ closed_how: "open", days_late: 10, id: first }]);
+    expect(await run()).toMatchObject({ lateOpened: 0, lateClosed: 0 });
+    expect(
+      (await rows(db, "SELECT 1 FROM cockpit_billing_events WHERE kind='late' AND detail->>'closes' = $1", [String(first)])).length,
+    ).toBe(0);
+    // Paid today, the card moves tomorrow: the record closes on what really happened.
+    await db.exec(`INSERT INTO cockpit_client_payments(payment_id,clickup_task_id,client_name,day,usd,rail,side,kind,active,checked)
+      VALUES('held:1','held','Held Co','${today}',1000,'whop','back_end','client',true,true)`);
+    await snapshots(db, today, "held", "Held Co", [[-1, "Active", 20, 1000]]);
+    expect(
+      (await db.query<{ r: Record<string, unknown> }>("SELECT cockpit_billing_daily_run($1::date) AS r", [addDays(today, 1)])).rows[0].r,
+    ).toMatchObject({ lateClosed: 1 });
+    const closed = await rows<{ detail: Record<string, unknown>; reason: string }>(
+      db,
+      "SELECT detail, reason FROM cockpit_billing_events WHERE kind='late' AND detail->>'closes' = $1",
+      [String(first)],
+    );
+    expect(closed[0].detail).toMatchObject({ closed_how: "date_moved", days_late: 10, paid_on: today });
+    expect(closed[0].reason).toMatch(/^Late 10 days: due \d{1,2} [A-Z][a-z]{2}, paid \d{1,2} [A-Z][a-z]{2}$/);
+  } finally {
+    await db.close();
+  }
+});
+
+test("the billing sheet live before the staff forms still extends, pauses and resumes; the staff forms keep their fields", async () => {
+  const { db, today } = await fixture();
+  try {
+    // The live sheet's three payloads, exactly as editBillingAccount sends them (no requestId).
+    const ext = await write(db, CSM, {
+      taskId: "task_a",
+      edit: { kind: "extension", weeks: 2, reason: "Their launch slipped a week", ours: true, moveDate: true },
+      source: "csm",
+    });
+    expect(ext).toMatchObject({ extension_weeks: 2, next_payment_date: addDays(today, 24) });
+    const noMove = await write(db, CEO, {
+      taskId: "task_a",
+      edit: { kind: "extension", weeks: 1, reason: "Bank holiday on their side", ours: false, moveDate: false },
+      source: "ceo",
+    });
+    expect(noMove).toMatchObject({ extension_weeks: 1, next_payment_date: addDays(today, 24) });
+    const paused = await write(db, CSM, {
+      taskId: "task_a",
+      edit: { kind: "pause", reason: "Client asked for a month off" },
+      source: "csm",
+    });
+    expect(paused).toMatchObject({ client_status: "Paused", paused_on: today });
+    const resumed = await write(db, CSM, {
+      taskId: "task_a",
+      edit: { kind: "resume", nextDate: addDays(today, 20) },
+      source: "csm",
+    });
+    expect(resumed).toMatchObject({ client_status: "Active", paused_on: null, next_payment_date: addDays(today, 20) });
+    // Each leaves the event it left before the staff forms, and no form response.
+    expect(
+      await rows(db, "SELECT kind, detail, source FROM cockpit_billing_events WHERE clickup_task_id='task_a' ORDER BY id"),
+    ).toEqual([
+      { kind: "extension", detail: { weeks: 2, ours: true, movedDate: true }, source: "csm" },
+      { kind: "extension", detail: { weeks: 1, ours: false, movedDate: false }, source: "ceo" },
+      { kind: "pause", detail: { on: today }, source: "csm" },
+      { kind: "resume", detail: { nextDate: addDays(today, 20) }, source: "csm" },
+    ]);
+    expect((await rows(db, "SELECT 1 FROM cockpit_form_responses WHERE task_id='task_a'")).length).toBe(0);
+    expect(
+      await writeRefused(db, CSM, { taskId: "task_a", edit: { kind: "extension", weeks: 3, reason: "x long enough", ours: true } }),
+    ).toBe("An extension is one, two or four weeks, as on the extension form.");
+
+    // The staff forms' own shape, under edit or flat, still needs the request id and every field.
+    const callId = await addCall(db, "task_a", 3);
+    const { taskId, requestId, ...staff } = extensionArgs(callId, { replacesGrantId: undefined });
+    expect(await writeRefused(db, CSM, { taskId, source: "csm", edit: staff })).toBe(
+      "That form is out of date. Reload the page and send it again.",
+    );
+    expect(await writeRefused(db, CSM, { taskId, ...staff })).toBe(
+      "That form is out of date. Reload the page and send it again.",
+    );
+    expect(
+      await writeRefused(db, CSM, { taskId, source: "csm", edit: { ...staff, atRisk: undefined, requestId: uuid() } }),
+    ).toBe("Say whether they will stop if billed on schedule.");
+    expect(
+      await writeRefused(db, CSM, { taskId, edit: { kind: "pause", reason: "Client asked for a break", pauseKind: "client_request" } }),
+    ).toBe("That form is out of date. Reload the page and send it again.");
+    expect(
+      await writeRefused(db, CSM, { taskId, requestId: uuid(), edit: { kind: "pause", reason: "Client asked for a break" } }),
+    ).toBe("Say whether the client asked or is not paying.");
+    expect(await writeRefused(db, CSM, { taskId, edit: { kind: "mrr", value: 1200, reasonCat: "upsell" } })).toBe(
+      "That form is out of date. Reload the page and send it again.",
+    );
+  } finally {
+    await db.close();
+  }
+});
+
 test("cockpit_form_prefill: the gate, each value's source, NULL with a sentence, 30 days of calls", async () => {
   const { db, today } = await fixture();
   try {
@@ -1728,6 +1970,40 @@ test("cockpit_form_prefill: the gate, each value's source, NULL with a sentence,
     expect(r.values[1].source).toMatch(
       /^the ClickUp card: its date \d{1,2} [A-Z][a-z]{2} plus 5 paused days$/,
     );
+  } finally {
+    await db.close();
+  }
+});
+
+test("cockpit_form_prefill: a survey matched only by the link's hidden id is marked unverified and fills nothing", async () => {
+  const { db, today } = await fixture();
+  try {
+    const survey = (meta: string, daysAgo: number) =>
+      rows<{ id: string }>(db, `INSERT INTO cockpit_form_responses(form_key,form_version,source,task_id,client_name,mode,state,answers,answer_meta,created_by,submitted_at)
+        VALUES('exit_survey',1,'import','task_a','Acme','live','submitted','{}','${meta}','typeform',now() - make_interval(days => ${daysAgo})) RETURNING id::text`);
+    const read = async () => {
+      const c = await call<Record<string, any>>(db, CSM, "cockpit_form_prefill('churn_confirm','task_a')");
+      return { survey: c.survey, byKey: Object.fromEntries((c.values as any[]).map(v => [v.key, v])) };
+    };
+    const unverified = await survey(`{"match":"hidden_id_unverified","notice_on":"${addDays(today, -3)}"}`, 3);
+    let r = await read();
+    expect(r.survey).toMatchObject({ responseId: unverified[0].id, unverified: true });
+    expect(r.byKey.noticeOn).toEqual({
+      key: "noticeOn",
+      value: null,
+      source: "The termination survey's card came from its link, not checked: pick the notice day if it is this client's.",
+    });
+    expect(r.byKey.surveyState).toEqual({
+      key: "surveyState",
+      value: null,
+      source: "The termination survey's card came from its link, not checked: say whether this client filled it.",
+    });
+    // A matched survey fills both, as before.
+    const matched = await survey(`{"notice_on":"${addDays(today, -1)}"}`, 1);
+    r = await read();
+    expect(r.survey).toMatchObject({ responseId: matched[0].id, unverified: false });
+    expect(r.byKey.noticeOn.value).toBe(addDays(today, -1));
+    expect(r.byKey.surveyState.value).toBe("filled");
   } finally {
     await db.close();
   }

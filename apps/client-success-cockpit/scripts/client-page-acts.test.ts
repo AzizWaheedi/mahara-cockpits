@@ -787,3 +787,230 @@ describe("doors and bands wait on cockpit_form_doors (4.6.4)", () => {
     ]);
   });
 });
+
+describe("a survey found only by the link's hidden id waits for the CSM's tick (review, wave 12)", () => {
+  const TASK = "86eyjkdc8";
+  const SURVEY = "5e000000-0000-4000-8000-000000000009";
+  const doc = () => win.document.body as any;
+  // The open sheet only: earlier tests' bands also hold a "Confirm churn".
+  const sheet = () => [...doc().querySelectorAll(".fs-root")].at(-1) as any;
+  const tickBox = () =>
+    sheet()?.querySelector("input[type=checkbox][data-survey-tick]") ?? null;
+  const ALL_DOORS = {
+    churnConfirm: true,
+    extension: true,
+    pause: true,
+    mrr: true,
+    reviews: true,
+    checks: true,
+    prefill: true,
+  };
+  /** A full, valid draft: the sheet restores it, so the send needs no typing. */
+  const seedDraft = () =>
+    win.localStorage.setItem(
+      `mahara.formsheet.churn_confirm.v1.${TASK}`,
+      JSON.stringify({
+        answers: {
+          leftOn: "2026-10-31",
+          reason: "Cancelled",
+          churnType: "mid_programme",
+          whyDetail: "Budget moved to a showroom.",
+          howToStop: "Agree six months of budget at kickoff.",
+          surveyState: "not_sent",
+        },
+        at: Date.now(),
+      }),
+    );
+  async function openDoor(
+    survey: Record<string, unknown> | null,
+    values: unknown[] = [],
+  ) {
+    seedDraft();
+    const { client, rpcs } = fakeClient({
+      cockpit_form_prefill: {
+        values,
+        calls: [],
+        hints: [],
+        grant: null,
+        card: { status: { value: "Active" } },
+        survey,
+        churnTypeDefault: null,
+      },
+      cockpit_client_lifecycle_confirm: {
+        departureId: 31,
+        eventId: 901,
+        responseId: "r-31",
+        cardState: "held",
+      },
+      cockpit_form_trail: {},
+    });
+    const host = win.document.createElement("div");
+    win.document.body.append(host);
+    const root = createRoot(host as unknown as Element);
+    await act(async () =>
+      root.render(
+        createElement(page.DoorSheet, {
+          door: { form: "churn_confirm", taskId: TASK, name: "Liwan Limited" },
+          client,
+          doors: ALL_DOORS,
+          asCeo: false,
+          onClose: () => {},
+          onTicket: () => {},
+          onSent: () => {},
+        }),
+      ),
+    );
+    await flush();
+    const send = async () => {
+      const b = [...sheet().querySelectorAll("button")].find(
+        (x: any) => text(x) === "Confirm churn",
+      ) as any;
+      expect(b).toBeTruthy();
+      await act(async () => b.click());
+      await flush();
+      return rpcs.find(r => r.name === "cockpit_client_lifecycle_confirm")?.args
+        .p_args;
+    };
+    const close = async () => {
+      await act(async () => root.unmount());
+      host.remove();
+      win.localStorage.clear();
+    };
+    return { send, close };
+  }
+
+  test("unticked: the plain line and the box show; the survey and its notice day stay out of the send", async () => {
+    const d = await openDoor({
+      responseId: SURVEY,
+      submittedAt: "2026-10-30T09:00:00+03:00",
+      unverified: true,
+    });
+    expect(text(sheet())).toContain(
+      "A termination survey came in with this client's link, but nobody has checked it is theirs.",
+    );
+    expect(tickBox()).toBeTruthy();
+    expect(tickBox().checked).toBe(false);
+    expect(text(tickBox().closest("label"))).toBe(
+      "This survey is from this client",
+    );
+    expect(text(sheet())).not.toContain("from the termination survey");
+    const args = await d.send();
+    expect(args.surveyResponseId).toBeNull();
+    expect(args.surveyConfirmed).toBeUndefined();
+    await d.close();
+  });
+
+  test("ticked: the survey goes with surveyConfirmed true", async () => {
+    const d = await openDoor({
+      responseId: SURVEY,
+      submittedAt: "2026-10-30T09:00:00+03:00",
+      unverified: true,
+    });
+    await act(async () => tickBox().click());
+    await flush();
+    expect(tickBox().checked).toBe(true);
+    const args = await d.send();
+    expect(args.surveyResponseId).toBe(SURVEY);
+    expect(args.surveyConfirmed).toBe(true);
+    await d.close();
+  });
+
+  test("ticked: the server's empty notice-day row gives way to the survey's day", async () => {
+    // 20261101p sends noticeOn NULL with a sentence for an unchecked survey.
+    const d = await openDoor(
+      {
+        responseId: SURVEY,
+        submittedAt: "2026-10-30T09:00:00+03:00",
+        unverified: true,
+      },
+      [
+        {
+          key: "noticeOn",
+          value: null,
+          source:
+            "The termination survey's card came from its link, not checked: pick the notice day if it is this client's.",
+        },
+      ],
+    );
+    // Unticked, the empty row stays empty.
+    expect((await d.send()).noticeOn ?? null).toBeNull();
+    await d.close();
+    const e = await openDoor(
+      {
+        responseId: SURVEY,
+        submittedAt: "2026-10-30T09:00:00+03:00",
+        unverified: true,
+      },
+      [
+        {
+          key: "noticeOn",
+          value: null,
+          source:
+            "The termination survey's card came from its link, not checked: pick the notice day if it is this client's.",
+        },
+      ],
+    );
+    await act(async () => tickBox().click());
+    await flush();
+    const args = await e.send();
+    expect(args.noticeOn).toBe("2026-10-30");
+    expect(args.surveyResponseId).toBe(SURVEY);
+    await e.close();
+  });
+
+  test("a checked survey: no box, sent as before", async () => {
+    const d = await openDoor({
+      responseId: SURVEY,
+      submittedAt: "2026-10-30T09:00:00+03:00",
+    });
+    expect(tickBox()).toBeNull();
+    expect(text(sheet())).not.toContain("nobody has checked it is theirs");
+    const args = await d.send();
+    expect(args.surveyResponseId).toBe(SURVEY);
+    expect(args.surveyConfirmed).toBeUndefined();
+    await d.close();
+  });
+
+  test("the reads carry the mark: the prefill's survey and Today's notice rows", async () => {
+    const { client } = fakeClient({
+      cockpit_form_prefill: {
+        values: [],
+        survey: {
+          responseId: SURVEY,
+          submittedAt: "2026-10-30",
+          unverified: true,
+        },
+      },
+      cockpit_form_notices_in: [
+        {
+          kind: "termination",
+          responseId: SURVEY,
+          taskId: TASK,
+          clientName: "Liwan Limited",
+          noticeOn: "2026-10-30",
+          submittedAt: "2026-10-30T09:00:00+03:00",
+          matched: true,
+          unverified: true,
+          departureId: null,
+        },
+      ],
+    });
+    expect(
+      (await lc.formPrefill(client, "churn_confirm", TASK)).survey,
+    ).toEqual({
+      responseId: SURVEY,
+      submittedAt: "2026-10-30",
+      unverified: true,
+    });
+    expect((await lc.noticesIn(client))[0].unverified).toBe(true);
+    expect(lc.churnArgs(TASK, {}, "req-2", SURVEY, true).surveyConfirmed).toBe(
+      true,
+    );
+    expect("surveyConfirmed" in lc.churnArgs(TASK, {}, "req-3", SURVEY)).toBe(
+      false,
+    );
+    expect(
+      "surveyConfirmed" in lc.churnArgs(TASK, {}, "req-4", null, true),
+    ).toBe(false);
+  });
+});

@@ -20,6 +20,9 @@
 --    Each records its response (cockpit_form_staff_record), writes one event
 --    whose detail is the shape of contract 3.3, queues its notice and an audit
 --    row. requestId makes a repeat return the first result.
+--    The billing sheet live before these forms (extension, pause, resume
+--    under "edit", no requestId, no staff-form key) keeps its 20261009a rules,
+--    so its buttons work until the new sheet ships and after a rollback of it.
 -- 2. cockpit_extensions_v (grants from the billing log only, W9) and
 --    cockpit_late_payments_v (late spells over the daily card snapshots, W10),
 --    each read by the browser through a gated function.
@@ -49,7 +52,7 @@ DECLARE
   r record;
 BEGIN
   FOR r IN SELECT * FROM (VALUES
-      ('cockpit_billing_write(text,jsonb)', '8d499d5faa361ea51b86905e3ff0998c', 'f242a30ad19da10c9f6c9e45e82affde'),
+      ('cockpit_billing_write(text,jsonb)', '8d499d5faa361ea51b86905e3ff0998c', '8bdd972146ee2dfc0a5e1c6c0c5c47e4'),
       ('cockpit_settings_forms_audit()', 'ae654764bf7e86bd914d9df4cbbd089c', '62e182efea828afc7b2fca393bf58b51')
     ) AS x(fn, live, after) LOOP
     SELECT md5(regexp_replace(p.prosrc, '\s+', ' ', 'g')) INTO v
@@ -348,16 +351,29 @@ GRANT SELECT ON public.cockpit_extensions_v TO service_role;
 -- spell.
 --
 -- The card snapshots trail the cockpit's own log (a held card write leaves the
--- old date on the card for days), so the log decides two things the snapshots
--- cannot: a person's extension granted from three days before the due day to
--- the spell's end closes the spell as extended, and the days late stop at the
--- grant; a run paid (checked) or extended on or before its due day was never
--- late and is left out, unless the daily step already opened a late record for
--- it, which then stays until it closes. An open run whose grant has already
--- ended (the card never moved) is late again and counts from the due day.
+-- old date on the card for days), so the log decides what the snapshots
+-- cannot:
+-- - A payment answers a run only once the run has ended (the card moved): an
+--   open run is never dropped or stopped on a payment. Only client money paid
+--   after the card's previous run ended counts, so the payment that answered
+--   the last run (or one the CEO tied as not client money) never answers this
+--   one. A run that ended and was paid (checked) on or before its due day was
+--   never late and is left out.
+-- - A person's extension granted from three days before the due day answers
+--   an open run while the grant runs: the run stays open (the ladder and the
+--   daily step hold it through their own live-grant checks) and its days stop
+--   at the grant. A grant given on or before the due day leaves the run out
+--   while it runs. When the grant ends with the card unmoved, the run counts
+--   from the due day again.
+-- - An ended run reads extended, its days stopping at the grant, only when it
+--   was settled (paid or the card moved) by the grant's last day; one settled
+--   later counts to the payment or the card's move, as if no grant.
+-- - A run the daily step opened a late record for stays, whatever the rules
+--   above say, so its record can close.
 
 CREATE OR REPLACE VIEW public.cockpit_late_payments_v WITH (security_invoker = true) AS
-WITH d AS (
+WITH k AS (SELECT (now() AT TIME ZONE 'Asia/Kuwait')::date AS today),
+d AS (
   SELECT b.clickup_task_id, b.client_name, b.day, b.stage, b.next_payment_date, b.next_payment_usd,
          coalesce(b.stage = 'Active' AND b.day > b.next_payment_date, false) AS late
     FROM public.cockpit_client_billing_days b
@@ -385,46 +401,68 @@ WITH d AS (
     LEFT JOIN LATERAL (SELECT d2.day, d2.stage FROM d d2
                         WHERE d2.clickup_task_id = sp.clickup_task_id AND d2.day > sp.last_day
                         ORDER BY d2.day LIMIT 1) nx ON true
-), paid AS (
+), prior AS (
+  -- The day the card's previous run ended: what came before it answered that run.
   SELECT ended.*,
-         (SELECT min(p.day) FROM public.cockpit_client_payments p
-           WHERE p.clickup_task_id = ended.clickup_task_id AND p.active AND p.checked
-             AND p.day BETWEEN ended.due_on - 3 AND coalesce(ended.ended_on, (now() AT TIME ZONE 'Asia/Kuwait')::date)) AS paid_on,
-         -- The first grant that answers this due day (the log, not the card): from three days before it to the
-         -- spell's end; on an open spell only while the grant runs.
-         (SELECT min(x.granted_on) FROM public.cockpit_extensions_v x
-           WHERE x.clickup_task_id = ended.clickup_task_id
-             AND x.granted_on BETWEEN ended.due_on - 3 AND coalesce(ended.ended_on, (now() AT TIME ZONE 'Asia/Kuwait')::date)
-             AND (ended.ended_on IS NOT NULL OR x.until >= (now() AT TIME ZONE 'Asia/Kuwait')::date)) AS granted_on,
-         (SELECT min(e.id) FROM public.cockpit_billing_events e
-           WHERE e.clickup_task_id = ended.clickup_task_id AND e.kind = 'late' AND e.detail->>'due' = ended.due_on::text
-             AND NOT (e.detail ? 'closes')
-             AND NOT EXISTS (SELECT 1 FROM public.cockpit_billing_event_voids v WHERE v.event_id = e.id)) AS late_event_id
+         (SELECT max(e2.ended_on) FROM ended e2
+           WHERE e2.clickup_task_id = ended.clickup_task_id AND e2.spell_no < ended.spell_no) AS prev_ended_on
     FROM ended
+), paid AS (
+  SELECT prior.*,
+         (SELECT min(p.day) FROM public.cockpit_client_payments p
+           WHERE p.clickup_task_id = prior.clickup_task_id AND p.active AND p.checked
+             AND p.side IS DISTINCT FROM 'not_client' AND p.kind IS DISTINCT FROM 'none'
+             AND p.day BETWEEN greatest(prior.due_on - 3, prior.prev_ended_on + 1) AND coalesce(prior.ended_on, k.today)) AS paid_on,
+         (SELECT min(e.id) FROM public.cockpit_billing_events e
+           WHERE e.clickup_task_id = prior.clickup_task_id AND e.kind = 'late' AND e.detail->>'due' = prior.due_on::text
+             AND NOT (e.detail ? 'closes')
+             AND NOT EXISTS (SELECT 1 FROM public.cockpit_billing_event_voids v WHERE v.event_id = e.id)) AS recorded_id
+    FROM prior CROSS JOIN k
+), granted AS (
+  SELECT paid.*,
+         -- The first grant that answers this due day (the log, not the card): from three days before it (and after
+         -- the previous run ended) to the run's end; on an open run while the grant runs, on an ended run when it
+         -- was settled (paid or the card moved) by the grant's last day.
+         (SELECT min(x.granted_on) FROM public.cockpit_extensions_v x
+           WHERE x.clickup_task_id = paid.clickup_task_id
+             AND x.granted_on BETWEEN greatest(paid.due_on - 3, paid.prev_ended_on + 1) AND coalesce(paid.ended_on, k.today)
+             AND CASE WHEN paid.ended_on IS NULL THEN x.until >= k.today
+                      ELSE least(paid.paid_on, paid.ended_on) <= x.until END) AS granted_on,
+         -- The daily step's late record for this run while it is open: one already closed is left out, so a run
+         -- that is late again gets a new one.
+         (SELECT min(e.id) FROM public.cockpit_billing_events e
+           WHERE e.clickup_task_id = paid.clickup_task_id AND e.kind = 'late' AND e.detail->>'due' = paid.due_on::text
+             AND NOT (e.detail ? 'closes')
+             AND NOT EXISTS (SELECT 1 FROM public.cockpit_billing_event_voids v WHERE v.event_id = e.id)
+             AND NOT EXISTS (SELECT 1 FROM public.cockpit_billing_events c
+                              WHERE c.kind = 'late' AND c.detail->>'closes' = e.id::text
+                                AND NOT EXISTS (SELECT 1 FROM public.cockpit_billing_event_voids cv WHERE cv.event_id = c.id))) AS late_event_id
+    FROM paid CROSS JOIN k
 )
 SELECT
-  paid.clickup_task_id,
-  paid.client_name,
-  paid.due_on,
+  g.clickup_task_id,
+  g.client_name,
+  g.due_on,
   -- NULL stays NULL: "amount missing", never 0.
-  paid.amount_usd,
-  paid.ended_on,
-  CASE WHEN paid.granted_on IS NOT NULL THEN 'extended'
-       WHEN paid.ended_on IS NULL THEN 'open'
-       WHEN paid.next_stage IS DISTINCT FROM 'Active' THEN 'stopped'
+  g.amount_usd,
+  g.ended_on,
+  CASE WHEN g.ended_on IS NULL THEN 'open'
+       WHEN g.granted_on IS NOT NULL THEN 'extended'
+       WHEN g.next_stage IS DISTINCT FROM 'Active' THEN 'stopped'
        ELSE 'date_moved' END AS closed_how,
-  paid.paid_on,
+  g.paid_on,
   -- A payment that landed in the three days before the due date counts as on
-  -- time, never as negative days; a grant stops the count on its day.
-  greatest(0, least(paid.paid_on, paid.granted_on, paid.ended_on, (now() AT TIME ZONE 'Asia/Kuwait')::date) - paid.due_on) AS days_late,
-  paid.late_event_id
-FROM paid
--- Paid or extended by the due day: never late (a record the daily step already opened stays until it closes).
-WHERE paid.late_event_id IS NOT NULL
-   OR NOT (coalesce(paid.paid_on <= paid.due_on, false) OR coalesce(paid.granted_on <= paid.due_on, false));
+  -- time, never as negative days; a payment stops the count only once the run
+  -- ended; a grant that answers the run stops it on its day.
+  greatest(0, least(CASE WHEN g.ended_on IS NOT NULL THEN g.paid_on END, g.granted_on, g.ended_on, k.today) - g.due_on) AS days_late,
+  g.late_event_id
+FROM granted g CROSS JOIN k
+-- Paid by the due day (once ended) or extended by it: never late (a run the daily step opened a record for stays).
+WHERE g.recorded_id IS NOT NULL
+   OR NOT (coalesce(g.ended_on IS NOT NULL AND g.paid_on <= g.due_on, false) OR coalesce(g.granted_on <= g.due_on, false));
 
 COMMENT ON VIEW public.cockpit_late_payments_v IS
-  'Late payments as spells over cockpit_client_billing_days (W10): due_on, amount on the first late day (NULL is missing, never 0), ended_on (first snapshot after the spell), closed_how open / extended (a person''s grant from due_on - 3 to the spell''s end, from the billing log) / stopped / date_moved, paid_on (earliest checked rail payment from due_on - 3), days_late (to the payment, the grant or the end, whichever is first), and the daily step''s open late event. A run paid or extended by its due day is left out.';
+  'Late payments as spells over cockpit_client_billing_days (W10): due_on, amount on the first late day (NULL is missing, never 0), ended_on (first snapshot after the spell), closed_how open / extended (a person''s grant from due_on - 3, from the billing log, with the run settled by the grant''s last day) / stopped / date_moved, paid_on (earliest checked client payment from due_on - 3 and after the previous run ended), days_late (to the payment once ended, the answering grant or the end, whichever is first; an open run counts to today unless a live grant stops it), and the daily step''s open late event (one not closed yet). A run paid (once ended) or extended by its due day is left out unless the daily step opened a record for it.';
 REVOKE ALL ON public.cockpit_late_payments_v FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT ON public.cockpit_late_payments_v TO service_role;
 
@@ -541,7 +579,7 @@ DECLARE
   v_role text; v_answers jsonb; v_response uuid; v_message text; v_notice text; v_facts jsonb;
   v_grant record; v_replaces bigint; v_base date; v_call text; v_ours boolean; v_risk boolean;
   v_limits jsonb; v_lim text; v_pkind text; v_restart date; v_cat text; v_consent jsonb; v_term boolean; v_over boolean;
-  v_effective date; v_old_mrr numeric;
+  v_effective date; v_old_mrr numeric; v_legacy boolean := false;
 BEGIN
   IF v_uid IS NULL THEN RAISE EXCEPTION 'Sign in before changing billing.' USING ERRCODE='42501'; END IF;
   v_ceo := coalesce(public.cockpit_is_ceo(), false);
@@ -604,7 +642,6 @@ BEGIN
                    WHEN p_args ? 'kind' THEN p_args - 'taskId' - 'source' - 'requestId' END;
     IF jsonb_typeof(v_edit) IS DISTINCT FROM 'object' THEN RAISE EXCEPTION 'Say what to change.' USING ERRCODE='22023'; END IF;
     v_kind := coalesce(v_edit->>'kind', '');
-    v_staff := v_kind IN ('extension', 'pause', 'resume', 'mrr');
 
     -- One request, one change: a repeat (a double press, a retry after a
     -- dropped connection) returns what the first one did and writes nothing.
@@ -612,6 +649,15 @@ BEGIN
     IF v_req IS NOT NULL AND v_req !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN
       RAISE EXCEPTION 'That change could not be read. Reload the page and try again.' USING ERRCODE='22023';
     END IF;
+    -- The billing sheet live before the staff forms sends {kind:'extension',
+    -- weeks, reason, ours, moveDate}, {kind:'pause', reason} and {kind:'resume',
+    -- nextDate} under "edit", with no requestId. Those keep the 20261009a rules
+    -- unchanged until the new sheet ships, and after a rollback of it. A
+    -- requestId or any staff-form key makes it the staff form, every field required.
+    v_legacy := jsonb_typeof(p_args->'edit') = 'object' AND v_req IS NULL AND v_kind IN ('extension', 'pause', 'resume')
+                AND NOT (v_edit ?| ARRAY['atRisk', 'limitations', 'callId', 'noCall', 'noCallReason', 'prevent', 'replacesGrantId',
+                                        'pauseKind', 'reasonCat', 'restart', 'consent', 'consentTerm', 'consentOver14']);
+    v_staff := v_kind IN ('extension', 'pause', 'resume', 'mrr') AND NOT v_legacy;
     IF v_staff AND v_req IS NULL THEN
       RAISE EXCEPTION 'That form is out of date. Reload the page and send it again.' USING ERRCODE='22023';
     END IF;
@@ -629,6 +675,39 @@ BEGIN
     END IF;
     v_role := public.cockpit_billing_seat_role(v_acc.client_name);
 
+    IF v_legacy THEN
+      -- The 20261009a branches, unchanged.
+      CASE v_kind
+      WHEN 'extension' THEN
+        IF jsonb_typeof(v_edit->'weeks') IS DISTINCT FROM 'number' OR (v_edit->>'weeks') NOT IN ('1', '2', '4') THEN
+          RAISE EXCEPTION 'An extension is one, two or four weeks, as on the extension form.' USING ERRCODE='22023';
+        END IF;
+        v_weeks := (v_edit->>'weeks')::integer;
+        v_reason := public.cockpit_manual_clean_text(v_edit->>'reason', 400);
+        IF coalesce(length(v_reason), 0) < 4 THEN RAISE EXCEPTION 'Say why, so the extension log reads back.' USING ERRCODE='22023'; END IF;
+        v_next.extension_weeks := v_weeks;
+        IF v_edit->'moveDate' = 'true'::jsonb THEN
+          -- Cover runs from today or the date already set, whichever is later.
+          v_next.next_payment_date := greatest(coalesce(v_acc.next_payment_date, v_today), v_today) + v_weeks * 7;
+          v_moved := true;
+        END IF;
+        v_from := v_acc.next_payment_date::text; v_to := v_next.next_payment_date::text;
+        v_detail := jsonb_build_object('weeks', v_weeks, 'ours', coalesce(v_edit->'ours' = 'true'::jsonb, false), 'movedDate', v_moved);
+      WHEN 'pause' THEN
+        v_reason := public.cockpit_manual_clean_text(v_edit->>'reason', 400);
+        IF coalesce(length(v_reason), 0) < 4 THEN RAISE EXCEPTION 'Say why, so the pause reads back in a month.' USING ERRCODE='22023'; END IF;
+        v_day := coalesce(public.cockpit_billing_day(v_edit->>'on'), v_today);
+        v_next.client_status := 'Paused'; v_next.stage := 'Paused'; v_next.stage_group := 'paused'; v_next.paused_on := v_day;
+        v_from := v_acc.client_status; v_to := 'Paused'; v_detail := jsonb_build_object('on', v_day);
+      ELSE
+        v_next.client_status := 'Active'; v_next.stage := 'Active'; v_next.stage_group := 'active'; v_next.paused_on := NULL;
+        v_day := public.cockpit_billing_day(v_edit->>'nextDate');
+        IF v_day IS NOT NULL THEN
+          v_next.next_payment_date := v_day; v_detail := jsonb_build_object('nextDate', v_day);
+        END IF;
+        v_from := v_acc.client_status; v_to := 'Active';
+      END CASE;
+    ELSE
     CASE v_kind
     WHEN 'method' THEN
       IF coalesce(v_edit->>'value', '') NOT IN ('Card on file', 'Bank transfer', 'Tap link', 'Whop link', 'Check') THEN
@@ -862,6 +941,7 @@ BEGIN
     ELSE
       RAISE EXCEPTION 'That is not a change the billing sheet makes.' USING ERRCODE='22023';
     END CASE;
+    END IF;
 
     -- An older tab's change keeps its own detail; its request id still guards a repeat.
     IF NOT v_staff AND v_req IS NOT NULL THEN
@@ -993,7 +1073,7 @@ BEGIN
   RAISE EXCEPTION 'That is not a billing action.' USING ERRCODE='22023';
 END $$;
 COMMENT ON FUNCTION public.cockpit_billing_write(text, jsonb) IS
-  'Every billing change from a cockpit: edit, payment, assign. CSM, finance or CEO seat; a CSM only on their portal clients; CEO-only for the CEO cockpit and for tying a payer. Each write leaves a cockpit_billing_events row and a cockpit_audit_log row; the trigger queues card writes for ClickUp. Since 20261101p the staff forms (extension, pause, resume) and Set MRR record their response, carry requestId (a repeat returns the first result) and queue their notice.';
+  'Every billing change from a cockpit: edit, payment, assign. CSM, finance or CEO seat; a CSM only on their portal clients; CEO-only for the CEO cockpit and for tying a payer. Each write leaves a cockpit_billing_events row and a cockpit_audit_log row; the trigger queues card writes for ClickUp. Since 20261101p the staff forms (extension, pause, resume) and Set MRR record their response, carry requestId (a repeat returns the first result) and queue their notice. The older billing sheet''s extension, pause and resume (under edit, no requestId, no staff-form key) keep the 20261009a rules until the new sheet ships.';
 REVOKE ALL ON FUNCTION public.cockpit_billing_write(text, jsonb) FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.cockpit_billing_write(text, jsonb) TO authenticated;
 
@@ -1284,8 +1364,11 @@ BEGIN
     FROM public.cockpit_extensions_v x WHERE x.clickup_task_id = p_task_id AND x.state = 'live'
    ORDER BY x.grant_id DESC LIMIT 1;
 
+  -- unverified: the card came only from the link's unsigned hidden id (20261101l), so the survey fills
+  -- nothing until the CSM says it is this client's.
   SELECT jsonb_build_object('responseId', r.id, 'submittedAt', r.submitted_at, 'state', r.state,
-           'noticeOn', coalesce(r.answer_meta->>'notice_on', ((r.submitted_at AT TIME ZONE 'Asia/Kuwait')::date)::text)) INTO v_survey
+           'noticeOn', coalesce(r.answer_meta->>'notice_on', ((r.submitted_at AT TIME ZONE 'Asia/Kuwait')::date)::text),
+           'unverified', coalesce(r.answer_meta->>'match' = 'hidden_id_unverified', false)) INTO v_survey
     FROM public.cockpit_form_responses r
    WHERE r.form_key = 'exit_survey' AND r.task_id = p_task_id AND r.state <> 'void'
    ORDER BY r.submitted_at DESC NULLS LAST LIMIT 1;
@@ -1322,7 +1405,10 @@ BEGIN
     END IF;
     v_values := jsonb_build_array(
       jsonb_build_object('key', 'leftOn', 'value', NULL, 'source', 'Nobody holds this yet: pick the day they left.'),
-      CASE WHEN v_survey IS NOT NULL
+      CASE WHEN v_survey->'unverified' = 'true'::jsonb
+           THEN jsonb_build_object('key', 'noticeOn', 'value', NULL,
+                  'source', 'The termination survey''s card came from its link, not checked: pick the notice day if it is this client''s.')
+           WHEN v_survey IS NOT NULL
            THEN jsonb_build_object('key', 'noticeOn', 'value', v_survey->>'noticeOn',
                   'source', 'the termination survey, ' || public.cockpit_billing_day_words((v_survey->>'noticeOn')::date))
            ELSE jsonb_build_object('key', 'noticeOn', 'value', NULL, 'source', 'No termination survey from this client.') END,
@@ -1332,7 +1418,10 @@ BEGIN
            ELSE jsonb_build_object('key', 'churnType', 'value', NULL, 'source', 'The day-90 rule is not live yet: pick the type.') END,
       CASE WHEN a.mrr_usd IS NOT NULL THEN jsonb_build_object('key', 'mrrLostUsd', 'value', a.mrr_usd, 'source', v_card)
            ELSE jsonb_build_object('key', 'mrrLostUsd', 'value', NULL, 'source', 'The card has no MRR.') END,
-      CASE WHEN v_survey IS NOT NULL THEN jsonb_build_object('key', 'surveyState', 'value', 'filled',
+      CASE WHEN v_survey->'unverified' = 'true'::jsonb
+           THEN jsonb_build_object('key', 'surveyState', 'value', NULL,
+                  'source', 'The termination survey''s card came from its link, not checked: say whether this client filled it.')
+           WHEN v_survey IS NOT NULL THEN jsonb_build_object('key', 'surveyState', 'value', 'filled',
                   'source', 'the termination survey, ' || public.cockpit_billing_day_words((v_survey->>'noticeOn')::date))
            ELSE jsonb_build_object('key', 'surveyState', 'value', NULL, 'source', 'No termination survey from this client.') END,
       -- Never preselected: the latest call is not the exit call unless the CSM says so.
@@ -1363,7 +1452,7 @@ BEGIN
     'churnTypeDefault', CASE WHEN p_form_key = 'churn_confirm' AND jsonb_typeof(v_type) = 'string' THEN v_type #>> '{}' END);
 END $$;
 COMMENT ON FUNCTION public.cockpit_form_prefill(text, text) IS
-  'One read per staff form open (contract 3.1): each prefill value with its source sentence (NULL with a sentence when nobody holds it, never 0), the card''s calls and 1-1 notes of the last 30 days, hints, the card facts, the live grant, the latest termination survey and the day-90 default for a churn. A CSM on their own client, finance or the CEO.';
+  'One read per staff form open (contract 3.1): each prefill value with its source sentence (NULL with a sentence when nobody holds it, never 0), the card''s calls and 1-1 notes of the last 30 days, hints, the card facts, the live grant, the latest termination survey (unverified when its card came only from the link''s hidden id, which then prefills nothing) and the day-90 default for a churn. A CSM on their own client, finance or the CEO.';
 
 -- ---------------------------------------------------------------------------
 -- 11. The daily step (contract 4.10): clear ended grants, open and close late records
@@ -1413,11 +1502,14 @@ BEGIN
     v_cleared := v_cleared + 1;
   END LOOP;
 
-  -- (2) Open a late record for each run that reached the pause review day.
+  -- (2) Open a late record for each run that reached the pause review day,
+  --     unless a grant still runs for the card (it opens when the grant ends unpaid).
   FOR l IN
     SELECT v.clickup_task_id, v.client_name, v.due_on, v.amount_usd
       FROM public.cockpit_late_payments_v v
      WHERE v.closed_how = 'open' AND v.late_event_id IS NULL AND v_today - v.due_on >= v_p
+       AND NOT EXISTS (SELECT 1 FROM public.cockpit_extensions_v x
+                        WHERE x.clickup_task_id = v.clickup_task_id AND x.replaced_by IS NULL AND x.until >= v_today)
   LOOP
     INSERT INTO public.cockpit_billing_events(clickup_task_id, client_name, kind, from_value, to_value, reason, detail, source, by_whom)
     VALUES (l.clickup_task_id, l.client_name, 'late', NULL, l.due_on::text,
@@ -1434,7 +1526,8 @@ BEGIN
       JOIN public.cockpit_late_payments_v v ON v.clickup_task_id = e.clickup_task_id AND v.due_on::text = e.detail->>'due'
      WHERE e.kind = 'late' AND NOT (e.detail ? 'closes') AND v.closed_how <> 'open'
        AND NOT EXISTS (SELECT 1 FROM public.cockpit_billing_event_voids x WHERE x.event_id = e.id)
-       AND NOT EXISTS (SELECT 1 FROM public.cockpit_billing_events c WHERE c.kind = 'late' AND c.detail->>'closes' = e.id::text)
+       AND NOT EXISTS (SELECT 1 FROM public.cockpit_billing_events c WHERE c.kind = 'late' AND c.detail->>'closes' = e.id::text
+                         AND NOT EXISTS (SELECT 1 FROM public.cockpit_billing_event_voids cv WHERE cv.event_id = c.id))
   LOOP
     INSERT INTO public.cockpit_billing_events(clickup_task_id, client_name, kind, from_value, to_value, reason, detail, source, by_whom)
     VALUES (o.clickup_task_id, o.client_name, 'late', o.due_on::text, coalesce(o.paid_on::text, o.closed_how),

@@ -97,6 +97,8 @@ export type FormSheetProps = {
   ticketHref?: (type: string) => string;
   /** Called once a send is confirmed, with its message (the page may refresh). */
   onSent?: (message: string) => void;
+  /** Above the fields: a line and a choice the form's answers do not hold (the survey tick). */
+  aside?: ReactNode;
 };
 
 type BodyProps = Omit<FormSheetProps, "open" | "onOpenChange"> & {
@@ -416,6 +418,7 @@ export function FormBody(p: BodyProps) {
                 ))}
               </ul>
             ) : null}
+            {p.aside ?? null}
             {def.fields
               .filter(f => shown(f, answers))
               .map(f => (

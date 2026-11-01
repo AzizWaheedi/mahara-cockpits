@@ -4830,6 +4830,8 @@ type DoorOpen = {
   liveUntil?: string | null;
   /** Client is leaving from a termination notice: the survey it answers. */
   surveyResponseId?: string | null;
+  /** That survey is on the card only by the link's hidden id (nobody has checked it). */
+  surveyUnverified?: boolean;
   noticeOn?: string | null;
 };
 
@@ -4895,12 +4897,15 @@ export function DoorSheet({
   const [read, setRead] = useState<PrefillRead | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // The CSM's word that a survey found only by the link's hidden id is this client's.
+  const [surveyTicked, setSurveyTicked] = useState(false);
   const sent = useRef<{ done: string; message: string } | null>(null);
   const form = door?.form ?? null;
   const taskId = door?.taskId ?? null;
   useEffect(() => {
     setRead(null);
     setError(null);
+    setSurveyTicked(false);
     sent.current = null;
     if (!client || !form || !taskId) return;
     if (!doors.prefill) {
@@ -4925,19 +4930,43 @@ export function DoorSheet({
   }, [client, form, taskId, doors.prefill]);
 
   const today = kuwaitToday();
+  // The survey this confirm would attach: the notice's, else the card's latest.
+  // One on the card only by the link's hidden id goes (and fills the form) only
+  // after the CSM ticks that it is this client's; a checked one as before.
+  const surveyId =
+    form === "churn_confirm"
+      ? (door?.surveyResponseId ?? read?.survey?.responseId ?? null)
+      : null;
+  const surveyUnverified = Boolean(
+    surveyId &&
+      (door?.surveyResponseId
+        ? door.surveyUnverified === true ||
+          (read?.survey?.responseId === door.surveyResponseId &&
+            read.survey.unverified)
+        : read?.survey?.unverified),
+  );
+  const useSurvey = Boolean(surveyId) && (!surveyUnverified || surveyTicked);
   const prefill = useMemo((): Prefill[] => {
     const rows = [...(read?.prefill ?? [])];
     const has = (k: string) => rows.some(r => r.key === k);
-    if (form === "churn_confirm") {
+    if (form === "churn_confirm" && useSurvey) {
+      // After the tick, the server's empty rows for an unchecked survey give way.
+      const held = (k: string) =>
+        rows.some(r => r.key === k && r.value !== null);
+      const put = (row: Prefill) => {
+        const i = rows.findIndex(r => r.key === row.key);
+        if (i >= 0) rows[i] = row;
+        else rows.push(row);
+      };
       const on = door?.noticeOn ?? read?.survey?.submittedAt?.slice(0, 10);
-      if (on && !has("noticeOn"))
-        rows.push({
+      if (on && !held("noticeOn"))
+        put({
           key: "noticeOn",
           value: on.slice(0, 10),
           source: `the termination survey, ${dayWords(on)}`,
         });
-      if ((door?.surveyResponseId || read?.survey) && !has("surveyState"))
-        rows.push({
+      if (!held("surveyState"))
+        put({
           key: "surveyState",
           value: "filled",
           source: "the termination survey",
@@ -4958,7 +4987,7 @@ export function DoorSheet({
         });
     }
     return rows;
-  }, [read, form, door?.noticeOn, door?.surveyResponseId, today]);
+  }, [read, form, door?.noticeOn, useSurvey, today]);
 
   const liveUntil = read?.grant?.until ?? door?.liveUntil ?? null;
   const def = useMemo(
@@ -4974,8 +5003,28 @@ export function DoorSheet({
   const options: SendOptions = {
     source: asCeo ? "ceo" : "csm",
     replacesGrantId: read?.grant?.grantId ?? null,
-    surveyResponseId: door.surveyResponseId ?? read?.survey?.responseId ?? null,
+    surveyResponseId: useSurvey ? surveyId : null,
+    ...(useSurvey && surveyUnverified ? { surveyConfirmed: true } : {}),
   };
+  const surveyCheck =
+    surveyId && surveyUnverified ? (
+      <div className="fs-field fs-tick">
+        <p className="fs-note fs-note-warn">
+          A termination survey came in with this client's link, but nobody has
+          checked it is theirs. It stays out of this form until you tick the
+          box.
+        </p>
+        <label className="fs-tick-row">
+          <input
+            type="checkbox"
+            data-survey-tick
+            checked={surveyTicked}
+            onChange={e => setSurveyTicked(e.target.checked)}
+          />
+          <span>This survey is from this client</span>
+        </label>
+      </div>
+    ) : null;
   return (
     <FormSheet
       key={`${door.form}:${door.taskId}`}
@@ -5000,6 +5049,7 @@ export function DoorSheet({
         SENDERS[door.form](client, door.taskId, a, requestId, options)
       }
       trail={ref => formTrail(client, ref)}
+      aside={surveyCheck}
       onTicket={onTicket}
       onSent={message => {
         sent.current = { done: def.doneLabel, message };
@@ -5429,6 +5479,7 @@ export function TodayBands({
                             n.clientName,
                             {
                               surveyResponseId: n.responseId,
+                              surveyUnverified: n.unverified,
                               noticeOn: n.noticeOn ?? n.submittedAt,
                             },
                           )
@@ -5462,6 +5513,11 @@ export function TodayBands({
                   </>
                 }
               >
+                {n.unverified ? (
+                  <span className="text-muted-foreground">
+                    Card from the link, not checked:{" "}
+                  </span>
+                ) : null}
                 <bdi>{n.clientName}</bdi> sent the termination survey on
               </BandRow>
             ) : (
