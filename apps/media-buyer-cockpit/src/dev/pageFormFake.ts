@@ -9,6 +9,7 @@ import {
   describeChange,
   type PageFormSpec,
   problems,
+  savedQuestions,
 } from "@/lib/pageForm";
 import { supabase } from "@/lib/supabase";
 
@@ -58,7 +59,7 @@ export function fakeServer(
     return [
       ...new Set(
         [built, ...versions.map(v => v.spec)].flatMap(s =>
-          s.questions.map(q => q.key).filter(k => !now.has(k)),
+          s.questions.map(q => q.key).filter(k => !now.has(k) && !bindings[k]),
         ),
       ),
     ];
@@ -73,6 +74,11 @@ export function fakeServer(
     liveVersion: live,
     current: { ...spec(), version: `v${live || 1}` },
     retired: retired(),
+    saved: savedQuestions(
+      [...[...versions].reverse().map(v => v.spec), built],
+      spec(),
+      bindings,
+    ),
     versions: [...versions].reverse().map(v => ({
       version: v.version,
       label: `v${v.version}`,

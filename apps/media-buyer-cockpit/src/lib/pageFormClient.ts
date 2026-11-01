@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { pageForUrl } from "./leadPageFunnel";
 import { mediaAction } from "./mediaActionsClient";
-import type { PageFormSpec } from "./pageForm";
+import type { PageFormSpec, PageQuestion } from "./pageForm";
 import { supabase } from "./supabase";
 
 /**
@@ -36,6 +36,8 @@ export type PageFormPage = {
   current: (PageFormSpec & { version: string }) | null;
   currentUnreadable?: string;
   retired: string[];
+  /** Questions with their own CRM field that are off the page, newest wording first; the editor can add them back. Missing from a server older than 2026-11-01. */
+  saved?: PageQuestion[];
   versions: PageFormVersion[];
 };
 

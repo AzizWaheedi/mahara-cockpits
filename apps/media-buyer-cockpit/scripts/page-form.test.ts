@@ -7,6 +7,7 @@ import {
   newQuestionKey,
   type PageFormSpec,
   problems,
+  savedQuestions,
 } from "../src/lib/pageForm";
 
 // Merge Studio's launch questions, cut down to two (olivar-landing form.json).
@@ -195,4 +196,61 @@ test("every icon the launch form uses exists", () => {
     "plan-xl",
   ])
     expect(ICONS[name]).toBeTruthy();
+});
+
+test("savedQuestions lists launch questions off the page, newest wording first", () => {
+  const bindings = {
+    project_type: "ms_project_type",
+    timing: "ms_timing",
+    help: "ms_help",
+  };
+  const ask = (key: string, label: string, extra = {}) => ({
+    key,
+    name: `CRM ${key}`,
+    label,
+    style: "list",
+    options: [{ value: "A" }, { value: "B" }],
+    ...extra,
+  });
+  const built = {
+    questions: [
+      ask("project_type", "Project type?"),
+      ask("help", "Old help?", { ghl_field: "Help field" }),
+      ask("timing", "When?"),
+      ask("budget", "Budget?"),
+    ],
+  } as PageFormSpec;
+  const v2 = {
+    questions: [
+      ask("project_type", "Project type?"),
+      ask("help", "New help?"),
+      ask("timing", "When?"),
+    ],
+  } as PageFormSpec;
+  const v3 = {
+    questions: [ask("project_type", "Project type?"), ask("timing", "When?")],
+  } as PageFormSpec;
+  const out = savedQuestions([v3, v2, built], v3, bindings);
+  expect(out.map(q => q.key)).toEqual(["help"]);
+  expect(out[0].label).toBe("New help?");
+  expect(out[0].param).toBe("ms_help");
+  expect(out[0]).not.toHaveProperty("ghl_field");
+});
+
+test("savedQuestions skips keys without a CRM field and keys never seen", () => {
+  const bindings = { project_type: "ms_project_type", size: "ms_size" };
+  const ask = (key: string, label: string) => ({
+    key,
+    name: `CRM ${key}`,
+    label,
+    style: "list",
+    options: [{ value: "A" }, { value: "B" }],
+  });
+  const built = {
+    questions: [ask("project_type", "Project type?"), ask("budget", "Budget?")],
+  } as PageFormSpec;
+  const current = {
+    questions: [ask("project_type", "Project type?")],
+  } as PageFormSpec;
+  expect(savedQuestions([built], current, bindings)).toEqual([]);
 });

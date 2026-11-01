@@ -126,7 +126,8 @@ export function newQuestionKey(taken: Iterable<string>): string {
 /**
  * Everything wrong with a draft, in words the media buyer can act on. Empty
  * means it can be published. `photos` is the page's photo library; `retired`
- * holds keys of questions removed in an earlier version, which are never reused.
+ * holds keys of questions removed in an earlier version that have no CRM field
+ * of their own; those keys are never reused.
  */
 export function problems(
   spec: PageFormSpec,
@@ -242,6 +243,33 @@ export function clean(
       return out;
     }),
   };
+}
+
+/**
+ * Launch questions (the ones with their own CRM field) that are not on the page
+ * now, each in its newest wording. They are never retired: the editor lists them
+ * under Saved questions and adds one back with the same key and CRM field
+ * (Muhammed, 2026-11-01: keep all of the questions that existed in the old form;
+ * the media buyer chooses which ones the page shows). `history` is every stored
+ * version, newest first, then the questions the page was built with.
+ */
+export function savedQuestions(
+  history: PageFormSpec[],
+  current: PageFormSpec | null,
+  bindings: Record<string, string>,
+): PageQuestion[] {
+  const now = new Set((current?.questions ?? []).map(q => q.key));
+  const seen = new Set<string>();
+  const out: PageQuestion[] = [];
+  for (const spec of history) {
+    for (const q of spec?.questions ?? []) {
+      if (!q || !bindings[q.key]) continue;
+      if (now.has(q.key) || seen.has(q.key)) continue;
+      seen.add(q.key);
+      out.push(clean({ questions: [q] }, bindings).questions[0]);
+    }
+  }
+  return out;
 }
 
 /** What changed between two versions, as a short sentence for the history and the audit log. */
