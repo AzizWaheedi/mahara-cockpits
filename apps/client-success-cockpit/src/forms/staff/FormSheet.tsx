@@ -99,6 +99,18 @@ export type FormSheetProps = {
   onSent?: (message: string) => void;
   /** Above the fields: a line and a choice the form's answers do not hold (the survey tick). */
   aside?: ReactNode;
+  /**
+   * Below the fields, drawn from the answers: a row the answers do not hold
+   * (the pause's client consent, WAVE34-CONTRACT.md 4.3.6, 5.2).
+   */
+  after?: (a: Answers) => ReactNode;
+  /**
+   * The primary action waits while this says why (the pause consent not yet
+   * signed: "Confirm opens once the client signs."); null when it may go.
+   */
+  blocked?: (a: Answers) => string | null;
+  /** Under the after-send trail: the next step this decision opens (Send exit survey). */
+  afterSent?: ReactNode;
 };
 
 type BodyProps = Omit<FormSheetProps, "open" | "onOpenChange"> & {
@@ -258,9 +270,10 @@ export function FormBody(p: BodyProps) {
   );
 
   const label = def.submitLabel(answers);
+  const waitFor = p.blocked ? p.blocked(answers) : null;
 
   const send = async () => {
-    if (phase === "sending") return;
+    if (phase === "sending" || waitFor) return;
     const found = validate(def, answers, today);
     setErrors(found);
     const first = def.fields.find(f => found[f.key]);
@@ -382,6 +395,7 @@ export function FormBody(p: BodyProps) {
             </p>
             <Trail steps={steps} onTicket={p.onTicket} />
             {trailNote ? <p className="fs-note">{trailNote}</p> : null}
+            {p.afterSent ?? null}
           </section>
         ) : (
           <form
@@ -435,6 +449,7 @@ export function FormBody(p: BodyProps) {
                   onChange={v => set(f.key, v)}
                 />
               ))}
+            {p.after ? p.after(answers) : null}
             {/* Enter in a text box sends, like any form. */}
             <button type="submit" hidden tabIndex={-1} aria-hidden />
           </form>
@@ -478,6 +493,8 @@ export function FormBody(p: BodyProps) {
                     ? "One answer needs a fix above."
                     : `${errorCount} answers need a fix above.`}
                 </span>
+              ) : waitFor ? (
+                <span data-blocked>{waitFor}</span>
               ) : draftSaved ? (
                 "Draft saved"
               ) : null}
@@ -487,7 +504,7 @@ export function FormBody(p: BodyProps) {
               className="fs-btn"
               data-tone={destructive ? "destructive" : "primary"}
               data-busy={phase === "sending" || undefined}
-              disabled={phase === "sending"}
+              disabled={phase === "sending" || Boolean(waitFor)}
               onClick={() => void send()}
             >
               {phase === "sending" ? (

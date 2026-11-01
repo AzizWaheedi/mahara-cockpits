@@ -19,6 +19,7 @@ import type {
   CallPick,
   FormKey,
   FormTrailRow,
+  PauseConsent,
   Prefill,
   SubmitRef,
 } from "./formSheetCore";
@@ -79,6 +80,11 @@ export type SendOptions = {
   surveyResponseId?: string | null;
   /** The CSM ticked that a survey found only by the link's hidden id is this client's. */
   surveyConfirmed?: boolean;
+  /**
+   * Pause for a client request once the client signs it (WAVE34-CONTRACT.md
+   * 4.3.5): the signed consent's response, in place of the two ticks.
+   */
+  consentResponseId?: string | null;
 };
 
 function sendResult(data: Any, message: string): SendResult {
@@ -122,9 +128,19 @@ export function extensionEdit(
   };
 }
 
-/** The pause edit (4.8): the call is the consent, with the CSM's two ticks (W8). */
-export function pauseEdit(a: Answers, requestId: string) {
+/**
+ * The pause edit (4.8): the call is the consent, with the CSM's two ticks
+ * (W8). Once the client signs the pause consent (waves 3-4, 4.3.5) the
+ * signed response goes instead of the ticks, and the database writes the
+ * signed consent itself.
+ */
+export function pauseEdit(
+  a: Answers,
+  requestId: string,
+  consentResponseId?: string | null,
+) {
   const request = a.pauseKind === "client_request";
+  const signed = request && Boolean(consentResponseId);
   return {
     kind: "pause",
     pauseKind: text(a.pauseKind),
@@ -132,13 +148,15 @@ export function pauseEdit(a: Answers, requestId: string) {
     reasonCat: text(a.reasonCat),
     reason: text(a.reason),
     callId: request ? text(a.callId) : null,
-    consent: request
-      ? {
-          kind: "call",
-          term_runs: a.consentTerm === true,
-          over_14_ends: a.consentOver14 === true,
-        }
-      : null,
+    consent:
+      request && !signed
+        ? {
+            kind: "call",
+            term_runs: a.consentTerm === true,
+            over_14_ends: a.consentOver14 === true,
+          }
+        : null,
+    ...(signed ? { consentResponseId } : {}),
     requestId,
   };
 }
@@ -235,7 +253,7 @@ export async function pauseClient(
   const data = await billingEdit(
     c,
     taskId,
-    pauseEdit(a, requestId),
+    pauseEdit(a, requestId, o.consentResponseId),
     o.source ?? "csm",
   );
   const back = dayWords(a.restart);
@@ -332,7 +350,29 @@ export type PrefillRead = {
     unverified: boolean;
   } | null;
   churnTypeDefault: string | null;
+  /** The pause's client consent (waves 3-4, 4.3.4); null before migration 20261102b. */
+  consent?: PauseConsent | null;
 };
+
+const CONSENT_STATES = ["none", "sent", "signed", "dates_wrong", "expired"];
+
+/** cockpit_pause_consent_for's answer, read defensively; null when there is none. */
+export function pauseConsentOf(v: unknown): PauseConsent | null {
+  const o = v && typeof v === "object" ? (v as Any) : null;
+  if (!o || !CONSENT_STATES.includes(o.state)) return null;
+  return {
+    state: o.state,
+    inviteId: text(o.inviteId ?? o.invite_id),
+    sentAt: text(o.sentAt ?? o.sent_at),
+    responseId: text(o.responseId ?? o.response_id),
+    signedAt: text(o.signedAt ?? o.signed_at),
+    via: o.via === "link" || o.via === "portal" ? o.via : null,
+    signer: text(o.signer),
+    start: text(o.start),
+    restart: text(o.restart),
+    datesNote: text(o.datesNote ?? o.dates_note),
+  };
+}
 
 const prefillRows = (v: unknown): Prefill[] =>
   (Array.isArray(v) ? v : [])
@@ -393,6 +433,7 @@ export async function formPrefill(
         }
       : null,
     churnTypeDefault,
+    consent: pauseConsentOf(d.consent),
   };
 }
 
@@ -445,7 +486,7 @@ export async function answerNotice(
 }
 
 export type NoticeIn = {
-  kind: "termination" | "pause_request";
+  kind: "termination" | "pause_request" | "pause_consent";
   responseId: string;
   taskId: string | null;
   clientName: string;
@@ -455,17 +496,20 @@ export type NoticeIn = {
   /** On its card only by the link's hidden id: nobody has checked it is this client's. */
   unverified: boolean;
   departureId: number | null;
+  /** A native exit survey (waves 3-4): its ratings, numbers only. */
+  ratings?: { title: string; value: number }[];
+  /** A pause consent row (4.3.7): signed or the dates said wrong, and how it was signed. */
+  consent?: PauseConsent | null;
 };
 
-/** The derived "Notice in" and "Pause request in" rows (cockpit_form_notices_in). */
+const NOTICE_KINDS = ["termination", "pause_request", "pause_consent"];
+
+/** The derived "Notice in", "Pause request in" and pause consent rows (cockpit_form_notices_in). */
 export async function noticesIn(c: SupabaseClient): Promise<NoticeIn[]> {
   const d = await rpc(c, "cockpit_form_notices_in");
   return (Array.isArray(d) ? d : [])
     .filter(
-      (r: Any) =>
-        r &&
-        (r.kind === "termination" || r.kind === "pause_request") &&
-        text(r.responseId),
+      (r: Any) => r && NOTICE_KINDS.includes(r.kind) && text(r.responseId),
     )
     .map((r: Any) => ({
       kind: r.kind,
@@ -477,6 +521,30 @@ export async function noticesIn(c: SupabaseClient): Promise<NoticeIn[]> {
       matched: r.matched === true && Boolean(text(r.taskId)),
       unverified: r.unverified === true,
       departureId: number(r.departureId),
+      ...(Array.isArray(r.ratings)
+        ? {
+            ratings: r.ratings
+              .filter(
+                (x: Any) =>
+                  x && typeof x.title === "string" && number(x.value) !== null,
+              )
+              .slice(0, 5)
+              .map((x: Any) => ({ title: x.title, value: Number(x.value) })),
+          }
+        : {}),
+      ...(r.kind === "pause_consent"
+        ? {
+            consent: pauseConsentOf({
+              ...r,
+              state: CONSENT_STATES.includes(r.state)
+                ? r.state
+                : r.datesWrong === true
+                  ? "dates_wrong"
+                  : "signed",
+              responseId: r.responseId,
+            }),
+          }
+        : {}),
     }));
 }
 

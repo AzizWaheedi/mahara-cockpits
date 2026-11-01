@@ -895,3 +895,182 @@ describe("the sheet", () => {
     await act(async () => root.unmount());
   });
 });
+
+// Waves 3-4 (docs/forms/WAVE34-CONTRACT.md 4.3.6, 5.2, 5.11): the pause
+// consent in the shared sheet. With the form live the two ticks give way to
+// a row the page draws (`after`), the action reads Confirm pause and waits
+// (`blocked`) until the client signs, and the send carries consentResponseId;
+// without it the ticks stay exactly as before. `afterSent` puts the next
+// step (Send exit survey) under the trail.
+describe("the pause consent in the sheet (waves 3-4)", () => {
+  const lc = () => import("../src/forms/staff/lifecycleClient");
+  const signed: any = {
+    state: "signed",
+    inviteId: "i1",
+    sentAt: "2026-10-31T07:00:00Z",
+    responseId: "r-signed",
+    signedAt: "2026-11-01T07:00:00Z",
+    via: "portal",
+    signer: "the client admin",
+    start: "2026-11-01",
+    restart: "2026-11-20",
+    datesNote: null,
+  };
+
+  test("the consent variant keeps the registry's keys, hides the ticks and reads Confirm pause", () => {
+    const def = defs.pauseConsentDef(signed);
+    expect(def.fields.map(f => f.key)).toEqual(defs.formKeys("pause"));
+    const a = { pauseKind: "client_request" };
+    for (const k of ["consentTerm", "consentOver14"]) {
+      const f = def.fields.find(x => x.key === k) as any;
+      expect(core.shown(f, a)).toBe(false);
+      expect(core.required(f, a)).toBe(false);
+    }
+    expect(def.submitLabel(a)).toBe("Confirm pause");
+    expect(def.submitLabel({ pauseKind: "non_payment" })).toBe(
+      "Pause this client",
+    );
+    // The plain pause is untouched.
+    expect(defs.FORM_DEFS.pause.submitLabel(a)).toBe("Pause this client");
+    const restart = def.fields.find(x => x.key === "restart") as any;
+    expect(restart.check("2026-11-21", a, "2026-11-01")).toBe(
+      "The client signed a restart of 20 Nov. Use that date or send a new consent.",
+    );
+    expect(restart.check("2026-11-20", a, "2026-11-01")).toBeNull();
+    expect(restart.check("2026-11-01", a, "2026-11-01")).toBe(
+      "Pick the restart date, after today.",
+    );
+  });
+
+  test("the edit sends consentResponseId and no ticks once signed; the ticks without it", async () => {
+    const { pauseEdit } = await lc();
+    const a = {
+      pauseKind: "client_request",
+      restart: "2026-11-20",
+      reasonCat: "client_asked",
+      reason: "Travel",
+      callId: "c1",
+      consentTerm: true,
+      consentOver14: false,
+    };
+    expect(pauseEdit(a, "q1", "r-signed")).toMatchObject({
+      consent: null,
+      consentResponseId: "r-signed",
+    });
+    const old = pauseEdit(a, "q1");
+    expect(old.consent).toEqual({
+      kind: "call",
+      term_runs: true,
+      over_14_ends: false,
+    });
+    expect("consentResponseId" in old).toBe(false);
+    // A non-payment pause needs no consent either way.
+    expect(
+      pauseEdit({ ...a, pauseKind: "non_payment" }, "q1", "r-signed"),
+    ).toMatchObject({
+      consent: null,
+      callId: null,
+    });
+    expect(
+      "consentResponseId" in
+        pauseEdit({ ...a, pauseKind: "non_payment" }, "q1", "r"),
+    ).toBe(false);
+  });
+
+  test("the prefill's consent and a pause consent notice are read defensively", async () => {
+    const { pauseConsentOf } = await lc();
+    expect(pauseConsentOf(signed)).toEqual(signed);
+    expect(pauseConsentOf({ state: "weird" })).toBeNull();
+    expect(pauseConsentOf(null)).toBeNull();
+  });
+
+  test("every consent state reads 5.2's words", () => {
+    expect(core.consentLine(null)).toBe("Not sent yet.");
+    expect(core.consentLine({ ...signed, state: "sent" })).toBe(
+      "Waiting for the client's signed consent. Sent 31 Oct.",
+    );
+    expect(core.consentLine(signed)).toBe(
+      "Signed by the client admin in the portal on 1 Nov. Confirm the pause.",
+    );
+    expect(
+      core.consentLine({ ...signed, via: "link", signer: "Fahad Al-Ali" }),
+    ).toBe(
+      "Signed by link by Fahad Al-Ali on 1 Nov. Check the name, then confirm the pause.",
+    );
+    expect(
+      core.consentLine({ ...signed, state: "dates_wrong", datesNote: "1 Dec" }),
+    ).toBe(
+      'The client says the dates are wrong: "1 Dec". Change the restart and send a new consent.',
+    );
+    expect(core.CONSENT_WAIT).toBe("Confirm opens once the client signs.");
+  });
+
+  test("blocked keeps the action disabled with its sentence and sends nothing; after draws the row", async () => {
+    win.localStorage.clear();
+    const sent: any[] = [];
+    const { root } = await draw(
+      createElement(FormBody, {
+        def: defs.pauseConsentDef({ ...signed, state: "sent" }),
+        client: fx.CLIENT,
+        prefill: [
+          { key: "pauseKind", value: "client_request", source: "the test" },
+        ],
+        calls: fx.CALLS,
+        submit: async (a: any) => {
+          sent.push(a);
+          return { message: "", ref: { eventId: 1 } };
+        },
+        trail: async () => fx.TRAIL_ROWS.held,
+        after: (a: any) =>
+          a.pauseKind === "client_request"
+            ? createElement("div", { "data-row": "consent" }, "Client consent")
+            : null,
+        blocked: (a: any) =>
+          a.pauseKind === "client_request" ? core.CONSENT_WAIT : null,
+      }),
+    );
+    expect(body().querySelector("[data-row=consent]")).toBeTruthy();
+    expect(text(body())).not.toContain(defs.CONSENT_TERM);
+    const go = button("Confirm pause");
+    expect(go.disabled).toBe(true);
+    expect(text(body().querySelector("[data-blocked]"))).toBe(
+      core.CONSENT_WAIT,
+    );
+    await click(go);
+    expect(sent).toEqual([]);
+    await act(async () => root.unmount());
+  });
+
+  test("afterSent shows under the trail once the send is saved", async () => {
+    win.localStorage.clear();
+    const sent: any[] = [];
+    // A form with nothing to fill, so the press goes straight to Saved.
+    const def = {
+      ...defs.FORM_DEFS.resume,
+      fields: [],
+      submitLabel: () => "Resume now",
+    };
+    const { host, root } = await draw(
+      createElement(FormBody, {
+        def,
+        client: fx.CLIENT,
+        prefill: [],
+        submit: async (a: any) => {
+          sent.push(a);
+          return { message: "today", ref: { eventId: 1 } };
+        },
+        trail: async () => fx.TRAIL_ROWS.held,
+        afterSent: createElement(
+          "button",
+          { type: "button", "data-next": "" },
+          "Send exit survey",
+        ),
+      }),
+    );
+    expect(host.querySelector("[data-next]")).toBeNull();
+    await click(button("Resume now", host));
+    expect(sent).toHaveLength(1);
+    expect(host.querySelector("[data-next]")).toBeTruthy();
+    await act(async () => root.unmount());
+  });
+});

@@ -13,8 +13,29 @@
 
 import { COCKPIT_GUIDES, COCKPIT_SOP } from "./cockpits";
 
-export type LinkRow = { label: string; url: string; note?: string };
+export type LinkRow = {
+  label: string;
+  url: string;
+  note?: string;
+  /**
+   * A client form that moves into the cockpit (WAVE34-CONTRACT.md 4.11): its
+   * registry key, and the Typeform it replaces. Until the key is live the
+   * row says so and keeps the old link below it; once live, the old link
+   * goes.
+   */
+  form?: { key: string; oldUrl: string };
+};
 export type LinkGroup = { title: string; blurb: string; rows: LinkRow[] };
+
+/** The client page, where Send a form and the staff doors live. */
+const CLIENT_PAGE = "https://cockpit.maharamedia.com/client-success/clients";
+/** Said on a form's row until its switch-on. */
+export const NOT_LIVE_YET =
+  "Opens with the portal forms (after the switch-on).";
+/** The words above the old link while the Typeform still runs. */
+export const OLD_FORM = "Old form, still live:";
+const SEND_NOTE =
+  "Open the client, then Send a form. It goes to their portal, or by WhatsApp link.";
 
 export const LINK_GROUPS: LinkGroup[] = [
   {
@@ -140,13 +161,22 @@ export const LINK_GROUPS: LinkGroup[] = [
     blurb: "The client fills these in, not you.",
     rows: [
       {
-        label: "Onboarding experience survey",
-        url: "https://maharamedia.typeform.com/to/KbcbPA73",
-        note: "Send once onboarding is done",
+        label: "Onboarding survey (in the cockpit)",
+        url: CLIENT_PAGE,
+        note: SEND_NOTE,
+        form: {
+          key: "csat",
+          oldUrl: "https://maharamedia.typeform.com/to/KbcbPA73",
+        },
       },
       {
-        label: "NPS survey",
-        url: "https://maharamedia.typeform.com/to/fuPgs85S",
+        label: "NPS survey (in the cockpit)",
+        url: CLIENT_PAGE,
+        note: SEND_NOTE,
+        form: {
+          key: "nps",
+          oldUrl: "https://maharamedia.typeform.com/to/fuPgs85S",
+        },
       },
     ],
   },
@@ -218,9 +248,13 @@ export const LINK_GROUPS: LinkGroup[] = [
       "One form per change. Never agree to any of these over WhatsApp, get them on a call first.",
     rows: [
       {
-        label: "Pause request form",
-        url: "https://maharamedia.typeform.com/to/CTUjv6l3",
-        note: "Client wants to freeze. A freeze over 14 days counts as churn",
+        label: "Pause consent (in the cockpit)",
+        url: CLIENT_PAGE,
+        note: "Open the client, then Pause this client. The client signs the consent in their portal or by link.",
+        form: {
+          key: "pause_consent",
+          oldUrl: "https://maharamedia.typeform.com/to/CTUjv6l3",
+        },
       },
       {
         // The extension Typeform closes at the C1 window: Give more time on the
@@ -230,9 +264,13 @@ export const LINK_GROUPS: LinkGroup[] = [
         note: "Open the client, then Give more time. The ClickUp card updates itself.",
       },
       {
-        label: "Contract termination survey (cancellation form)",
-        url: "https://maharamedia.typeform.com/to/knIe4eF3",
-        note: "After the exit call only, never instead of it",
+        label: "Exit survey (in the cockpit)",
+        url: CLIENT_PAGE,
+        note: "Open the client, then Client is leaving or Send a form.",
+        form: {
+          key: "exit_survey",
+          oldUrl: "https://maharamedia.typeform.com/to/knIe4eF3",
+        },
       },
       {
         label: "Client exit process",
@@ -266,3 +304,27 @@ export const LINK_GROUPS: LinkGroup[] = [
     ],
   },
 ];
+
+/**
+ * The Links rows as they stand today (4.11): a client form's row reads its
+ * cockpit words once cockpit_form_client_live_list() lists it; until then
+ * (or while the list cannot be read, `live` null) the row says it opens
+ * with the portal forms and keeps the Typeform as the old form, still live.
+ */
+export function linkGroupsFor(
+  live: readonly string[] | null,
+  groups: LinkGroup[] = LINK_GROUPS,
+): LinkGroup[] {
+  return groups.map(g => ({
+    ...g,
+    rows: g.rows.map(r => {
+      if (!r.form || live?.includes(r.form.key)) return r;
+      return { ...r, note: `${r.note ?? ""} ${NOT_LIVE_YET}`.trim() };
+    }),
+  }));
+}
+
+/** The old Typeform still to show under a row, or null once its form is live. */
+export function oldFormOf(r: LinkRow, live: readonly string[] | null) {
+  return r.form && !live?.includes(r.form.key) ? r.form.oldUrl : null;
+}

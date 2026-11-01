@@ -42,7 +42,17 @@ import {
   useClientTimeline,
 } from "@/components/ClientCalls";
 import { ClientCheckIn } from "@/components/ClientCheckIn";
+import {
+  FormBands,
+  FormsOut,
+  PauseConsentRow,
+  SendFormSheet,
+  type SendPreset,
+  useFormBands,
+  useInviteView,
+} from "@/components/ClientForms";
 import { ClientMessages, RecapsWaiting } from "@/components/ClientMessages";
+import { ClientVoiceCard, useClientVoice } from "@/components/ClientVoice";
 import { ClientWhatsApp } from "@/components/ClientWhatsApp";
 import { FormsButton } from "@/components/FormsButton";
 import {
@@ -82,10 +92,12 @@ import { FormSheet } from "@/forms/staff/FormSheet";
 import {
   extensionDef,
   FORM_DEFS,
+  pauseConsentDef,
   suggestedNextDate,
 } from "@/forms/staff/formDefs";
 import {
   type Answers,
+  CONSENT_WAIT,
   kuwaitDay as dayWords,
   dueHint,
   type FormKey,
@@ -95,7 +107,6 @@ import {
   answerNotice,
   confirmChurn,
   type Doors,
-  formDoors,
   formPrefill,
   formTrail,
   giveMoreTime,
@@ -120,10 +131,18 @@ import { useFormSend } from "@/forms/useFormSend";
 import { type Caller, useClientCallers } from "@/lib/callCentreClient";
 import { readChurnPage } from "@/lib/churnClient";
 import type { MonthRow } from "@/lib/churnCore";
+import {
+  type FormsIO,
+  formsIO,
+  type MoreDoors,
+  readAllDoors,
+} from "@/lib/clientForms";
+import { signerWords } from "@/lib/clientFormsCore";
+import { readLowScores, readVoice, voiceForBrief } from "@/lib/clientVoice";
 import { useClientWhatsApp } from "@/lib/clientWhatsApp";
 import { joinLink, kuwaitDayOf, logCall, staleSentence } from "@/lib/csmCalls";
 import { opportunitiesFor, rankOpportunities } from "@/lib/csmHotList";
-import { LINK_GROUPS } from "@/lib/csmLinks";
+import { linkGroupsFor, OLD_FORM, oldFormOf } from "@/lib/csmLinks";
 import {
   BASE_USD,
   CHURN_TARGET,
@@ -1803,15 +1822,70 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
     checker,
     lifeVersion,
   );
+  // Waves 3-4 (WAVE34-CONTRACT.md 4.10): client forms, the client's voice and
+  // the pause consent, each read only once its door is open.
+  const more = useMoreDoors(auth.client);
   // The request types, read only once a door that offers a ticket is open.
   const ticketTypes = useTicketTypes(
     auth.client,
-    Boolean(
+    (Boolean(
       doors &&
         (doors.churnConfirm || doors.pause || doors.reviews || doors.checks),
-    ) &&
+    ) ||
+      Boolean(more?.voice)) &&
       (section === "today" || section === "client"),
   );
+  const fio = useMemo(
+    () => (auth.client ? formsIO(auth.client) : null),
+    [auth.client],
+  );
+  const [sendOpen, setSendOpen] = useState<{
+    taskId: string;
+    name: string;
+    preset?: SendPreset;
+  } | null>(null);
+  const clientTaskId = clientRow ? String(clientRow.taskId) : null;
+  const inviteRead = useInviteView(
+    fio,
+    clientTaskId,
+    section === "client" && Boolean(more?.invites),
+  );
+  const liveList = useLiveForms(
+    fio,
+    Boolean(more?.invites) &&
+      (section === "client" || section === "links" || Boolean(door)),
+  );
+  const voiceReader = useMemo(
+    () =>
+      auth.client
+        ? (t: string) => readVoice(auth.client as SupabaseClient, t)
+        : null,
+    [auth.client],
+  );
+  const voice = useClientVoice(
+    voiceReader,
+    clientTaskId,
+    section === "client" && Boolean(more?.voice),
+    lifeVersion,
+  );
+  const lowReader = useMemo(
+    () =>
+      auth.client && more?.voice
+        ? () => readLowScores(auth.client as SupabaseClient)
+        : null,
+    [auth.client, more?.voice],
+  );
+  const formBands = useFormBands(
+    more?.invites ? fio : null,
+    lowReader,
+    section === "today" && Boolean(more?.invites || more?.voice),
+    lifeVersion,
+  );
+  // The brief says the client's own newest score (5.4); the row carries it.
+  const briefRow = useMemo(() => {
+    const v = voice?.status === "ready" ? voiceForBrief(voice.voice) : null;
+    return clientRow && v?.length ? { ...clientRow, voice: v } : clientRow;
+  }, [clientRow, voice]);
   if (sb.error) {
     return (
       <div className="p-10 text-sm text-muted-foreground" role="alert">
@@ -2412,6 +2486,21 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                 {a.label}
               </Button>
             ))}
+            {more?.invites ? (
+              <Button
+                size="sm"
+                variant="outline"
+                data-send-form-door
+                onClick={() =>
+                  setSendOpen({
+                    taskId: String(c.taskId),
+                    name: String(c.name),
+                  })
+                }
+              >
+                Send a form
+              </Button>
+            ) : null}
             <ClientDoors
               c={c}
               doors={doors}
@@ -2420,6 +2509,11 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                 openDoor(form, String(c.taskId), String(c.name), extra)
               }
             />
+            {more && !more.invites ? (
+              <span className="basis-full text-xs text-muted-foreground">
+                Send a form: {NOT_YET}
+              </span>
+            ) : null}
           </div>
 
           {panel === "message" && (
@@ -2829,7 +2923,11 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
           <>
             <ClientBrief
               client={auth.client}
-              row={c}
+              row={
+                briefRow && String(briefRow.taskId) === String(c.taskId)
+                  ? briefRow
+                  : c
+              }
               timeline={calls.timeline}
               profile={profile ?? null}
               error={calls.error}
@@ -2849,6 +2947,20 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               taskId={String(c.taskId)}
               native={notesNative(entry)}
             />
+            {/* Client forms and the client's voice (WAVE34-CONTRACT.md 5.2, 5.4). */}
+            {more?.invites ? (
+              <FormsOut
+                io={fio}
+                read={inviteRead}
+                onSend={() =>
+                  setSendOpen({
+                    taskId: String(c.taskId),
+                    name: String(c.name),
+                  })
+                }
+              />
+            ) : null}
+            {more?.voice ? <ClientVoiceCard state={voice} /> : null}
             <ClientWhatsApp
               team={cardNotes?.teamActors ?? []}
               client={auth.client}
@@ -3047,8 +3159,9 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               flush
             >
               {(
-                LINK_GROUPS.find(g => /changing a client/i.test(g.title))
-                  ?.rows ?? []
+                linkGroupsFor(liveList).find(g =>
+                  /changing a client/i.test(g.title),
+                )?.rows ?? []
               ).map(r => (
                 <div
                   key={r.url + r.label}
@@ -3062,6 +3175,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                       {r.note}
                     </span>
                   ) : null}
+                  <OldForm url={oldFormOf(r, liveList)} />
                 </div>
               ))}
               <div className="px-4 py-3 sm:px-6">
@@ -3118,10 +3232,44 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
 
   return (
     <div className={wrap}>
+      <SendFormSheet
+        io={fio}
+        open={sendOpen !== null}
+        taskId={sendOpen?.taskId ?? ""}
+        clientName={sendOpen?.name ?? ""}
+        preset={sendOpen?.preset}
+        view={
+          sendOpen && sendOpen.taskId === clientTaskId ? inviteRead.view : null
+        }
+        onClose={() => setSendOpen(null)}
+        onSent={v => {
+          if (sendOpen?.taskId === clientTaskId) {
+            if (v) inviteRead.put(v);
+            else inviteRead.reload();
+          }
+          setLifeVersion(x => x + 1);
+        }}
+      />
       <DoorSheet
         door={door}
         client={auth.client}
         doors={doors ?? NO_DOORS}
+        more={more}
+        io={fio}
+        live={liveList}
+        onSendForm={
+          door && more?.invites
+            ? () => {
+                const d = door;
+                setDoor(null);
+                setSendOpen({
+                  taskId: d.taskId,
+                  name: d.name,
+                  preset: { formKey: "exit_survey", origin: "churn" },
+                });
+              }
+            : undefined
+        }
         asCeo={auth.isCeo}
         onClose={() => setDoor(null)}
         onTicket={type =>
@@ -3236,6 +3384,28 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
           onChanged={() => setLifeVersion(v => v + 1)}
         />
       )}
+
+      {/* Client forms out and the client's voice on Today (WAVE34-CONTRACT.md 5.3). */}
+      {section === "today" && (more?.invites || more?.voice) ? (
+        <FormBands
+          io={more?.invites ? fio : null}
+          bands={formBands}
+          ticketTypes={ticketTypes}
+          onSend={(taskId, name, preset) =>
+            setSendOpen({ taskId, name, preset })
+          }
+          onOpenClient={taskId =>
+            navigate(
+              `/clients/${encodeURIComponent(taskId)}?tab=overview#forms-out`,
+            )
+          }
+          onTicket={setTicketOpen}
+          onChanged={() => setLifeVersion(v => v + 1)}
+        />
+      ) : null}
+      {section === "today" && more && !more.invites ? (
+        <p className="text-xs text-muted-foreground">Client forms: {NOT_YET}</p>
+      ) : null}
 
       {/* Your tasks (PLAN.md D19): your own open ClickUp tasks, five at
           most, each opening in place. The Client Success board below stays
@@ -3729,7 +3899,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
             it gets added.
           </p>
           <div className="grid gap-4 lg:grid-cols-2 lg:gap-6">
-            {LINK_GROUPS.map(g => (
+            {linkGroupsFor(liveList).map(g => (
               <SectionCard key={g.title} title={g.title} sub={g.blurb} flush>
                 {g.rows.map(r => (
                   <div
@@ -3745,6 +3915,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                           {r.note}
                         </div>
                       )}
+                      <OldForm url={oldFormOf(r, liveList)} />
                     </div>
                     <Button
                       size="sm"
@@ -4695,8 +4866,20 @@ function TodaysCalls({
 /** The plain line in place of a door or band whose migration is not live yet. */
 export const NOT_YET = "Opens after the next cockpit update.";
 
-/** cockpit_form_doors, read once per page load for the signed-in client. */
-let doorsRead: { client: SupabaseClient; read: Promise<Doors> } | null = null;
+/**
+ * cockpit_form_doors, read once per page load for the signed-in client: W12's
+ * seven doors and waves 3-4's four (invites, lifecycle, voice, editor).
+ */
+let doorsRead: {
+  client: SupabaseClient;
+  read: Promise<{ doors: Doors; more: MoreDoors }>;
+} | null = null;
+
+function readDoorsOnce(client: SupabaseClient) {
+  if (!doorsRead || doorsRead.client !== client)
+    doorsRead = { client, read: readAllDoors(client) };
+  return doorsRead.read;
+}
 
 export function useDoors(client: SupabaseClient | null): Doors | null {
   const [doors, setDoors] = useState<Doors | null>(null);
@@ -4705,17 +4888,59 @@ export function useDoors(client: SupabaseClient | null): Doors | null {
       setDoors({ ...NO_DOORS });
       return;
     }
-    if (!doorsRead || doorsRead.client !== client)
-      doorsRead = { client, read: formDoors(client) };
     let live = true;
-    void doorsRead.read.then(d => {
-      if (live) setDoors(d);
+    void readDoorsOnce(client).then(d => {
+      if (live) setDoors(d.doors);
     });
     return () => {
       live = false;
     };
   }, [client]);
   return doors;
+}
+
+/** Waves 3-4's doors; null until read, every one closed without a client. */
+export function useMoreDoors(client: SupabaseClient | null): MoreDoors | null {
+  const [more, setMore] = useState<MoreDoors | null>(null);
+  useEffect(() => {
+    if (!client) {
+      setMore({
+        invites: false,
+        lifecycle: false,
+        voice: false,
+        editor: false,
+      });
+      return;
+    }
+    let live = true;
+    void readDoorsOnce(client).then(d => {
+      if (live) setMore(d.more);
+    });
+    return () => {
+      live = false;
+    };
+  }, [client]);
+  return more;
+}
+
+/** The client forms live today (4.11), read once per page load; null while unread or unreadable. */
+let liveRead: { io: FormsIO; read: Promise<string[] | null> } | null = null;
+
+export function useLiveForms(io: FormsIO | null, on: boolean): string[] | null {
+  const [live, setLive] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (!io || !on) return;
+    if (!liveRead || liveRead.io !== io)
+      liveRead = { io, read: io.live().catch(() => null) };
+    let still = true;
+    void liveRead.read.then(l => {
+      if (still) setLive(l);
+    });
+    return () => {
+      still = false;
+    };
+  }, [io, on]);
+  return live;
 }
 
 /** The request types this seat can open, so a ticket button shows only once its type exists (D-R1). */
@@ -4881,6 +5106,10 @@ export function DoorSheet({
   door,
   client,
   doors,
+  more = null,
+  io = null,
+  live = null,
+  onSendForm,
   asCeo,
   onClose,
   onTicket,
@@ -4889,12 +5118,21 @@ export function DoorSheet({
   door: DoorOpen | null;
   client: SupabaseClient | null;
   doors: Doors;
+  /** Waves 3-4's doors: the pause consent shows only with invites and lifecycle open. */
+  more?: MoreDoors | null;
+  io?: FormsIO | null;
+  /** The client forms live today; the consent row needs pause_consent in it. */
+  live?: string[] | null;
+  /** After Client is leaving: Send exit survey (5.11). */
+  onSendForm?: () => void;
   asCeo: boolean;
   onClose: () => void;
   onTicket: (type: string) => void;
   onSent: () => void;
 }) {
   const [read, setRead] = useState<PrefillRead | null>(null);
+  // A consent sent from the sheet reads the prefill again for its new state.
+  const [reread, setReread] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   // The CSM's word that a survey found only by the link's hidden id is this client's.
@@ -4927,7 +5165,7 @@ export function DoorSheet({
     return () => {
       live = false;
     };
-  }, [client, form, taskId, doors.prefill]);
+  }, [client, form, taskId, doors.prefill, reread]);
 
   const today = kuwaitToday();
   // The survey this confirm would attach: the notice's, else the card's latest.
@@ -4990,21 +5228,34 @@ export function DoorSheet({
   }, [read, form, door?.noticeOn, useSurvey, today]);
 
   const liveUntil = read?.grant?.until ?? door?.liveUntil ?? null;
+  // The pause consent (WAVE34-CONTRACT.md 4.3.6): once the form is live, a
+  // client request is confirmed on the client's signed consent, not two ticks.
+  const consentMode =
+    form === "pause" &&
+    Boolean(more?.invites && more?.lifecycle) &&
+    Boolean(live?.includes("pause_consent"));
+  const consent = read?.consent ?? null;
   const def = useMemo(
     () =>
       form === "extension"
         ? extensionDef(liveUntil)
-        : form
-          ? FORM_DEFS[form]
-          : null,
-    [form, liveUntil],
+        : form === "pause" && consentMode
+          ? pauseConsentDef(consent)
+          : form
+            ? FORM_DEFS[form]
+            : null,
+    [form, liveUntil, consentMode, consent],
   );
   if (!door || !def || !client) return null;
+  const signed = consentMode && consent?.state === "signed";
   const options: SendOptions = {
     source: asCeo ? "ceo" : "csm",
     replacesGrantId: read?.grant?.grantId ?? null,
     surveyResponseId: useSurvey ? surveyId : null,
     ...(useSurvey && surveyUnverified ? { surveyConfirmed: true } : {}),
+    ...(signed && consent?.responseId
+      ? { consentResponseId: consent.responseId }
+      : {}),
   };
   const surveyCheck =
     surveyId && surveyUnverified ? (
@@ -5050,6 +5301,39 @@ export function DoorSheet({
       }
       trail={ref => formTrail(client, ref)}
       aside={surveyCheck}
+      after={
+        consentMode
+          ? a =>
+              a.pauseKind === "client_request" ? (
+                <PauseConsentRow
+                  io={io}
+                  taskId={door.taskId}
+                  consent={consent}
+                  answers={a}
+                  today={today}
+                  onSent={() => setReread(n => n + 1)}
+                />
+              ) : null
+          : undefined
+      }
+      blocked={
+        consentMode
+          ? a =>
+              a.pauseKind === "client_request" && !signed ? CONSENT_WAIT : null
+          : undefined
+      }
+      afterSent={
+        door.form === "churn_confirm" && onSendForm ? (
+          <button
+            type="button"
+            className="fs-btn fs-btn-quiet"
+            data-send-exit-survey
+            onClick={onSendForm}
+          >
+            Send exit survey
+          </button>
+        ) : undefined
+      }
       onTicket={onTicket}
       onSent={message => {
         sent.current = { done: def.doneLabel, message };
@@ -5188,6 +5472,19 @@ export function ClientDoors({
         </span>
       ) : null}
     </>
+  );
+}
+
+/** The Typeform a row still points to until its client form goes live (4.11). */
+function OldForm({ url }: { url: string | null }) {
+  if (!url) return null;
+  return (
+    <div className="basis-full text-xs text-muted-foreground">
+      {OLD_FORM}{" "}
+      <ExtLink href={url} className="text-xs">
+        Typeform
+      </ExtLink>
+    </div>
   );
 }
 
@@ -5438,6 +5735,9 @@ export function TodayBands({
   );
   const terminations = notices.filter(n => n.kind === "termination");
   const pauses = notices.filter(n => n.kind === "pause_request");
+  const consents = notices.filter(
+    n => n.kind === "pause_consent" && n.matched && n.taskId,
+  );
   const ladder = (bands.ladder.rows ?? []).filter(
     r => !hidden.has(`${r.taskId}:${r.step}`),
   );
@@ -5519,6 +5819,12 @@ export function TodayBands({
                   </span>
                 ) : null}
                 <bdi>{n.clientName}</bdi> sent the termination survey on
+                {n.ratings?.length ? (
+                  // A native exit survey's ratings, in Geist Mono (5.11).
+                  <span className="mt-1 block font-mono text-xs text-muted-foreground">
+                    {n.ratings.map(r => `${r.title} ${r.value}/10`).join(" · ")}
+                  </span>
+                ) : null}
               </BandRow>
             ) : (
               <BandRow
@@ -5606,6 +5912,46 @@ export function TodayBands({
               </BandRow>
             ),
           )}
+        </SectionCard>
+      ) : null}
+
+      {consents.length ? (
+        // The client's pause consent (WAVE34-CONTRACT.md 5.3): signed, or the dates said wrong.
+        <SectionCard title="Pause consent in" count={consents.length} flush>
+          {consents.map(n => {
+            const c = n.consent ?? null;
+            const wrong = c?.state === "dates_wrong";
+            return (
+              <BandRow
+                key={n.responseId}
+                fact={dayWords(c?.signedAt ?? n.submittedAt) || undefined}
+                actions={
+                  doors.pause ? (
+                    <Button
+                      size="sm"
+                      variant={wrong ? "outline" : "default"}
+                      onClick={() =>
+                        onDoor("pause", String(n.taskId), n.clientName)
+                      }
+                    >
+                      {wrong ? "Open the pause" : "Confirm pause"}
+                    </Button>
+                  ) : null
+                }
+              >
+                {wrong ? (
+                  <>
+                    Pause dates wrong: <bdi>{n.clientName}</bdi>
+                  </>
+                ) : (
+                  <>
+                    Pause consent signed: <bdi>{n.clientName}</bdi> (
+                    {signerWords(c?.via ?? null, c?.signer ?? null)})
+                  </>
+                )}
+              </BandRow>
+            );
+          })}
         </SectionCard>
       ) : null}
 
