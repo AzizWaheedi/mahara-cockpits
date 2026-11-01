@@ -304,6 +304,8 @@ describe("O1b: outside links", () => {
     expect(html).toContain('rel="noreferrer"');
   });
 
+  // It reads every .tsx under src. Cold, in a fresh release checkout on
+  // Windows, that took 8.8 s, past bun's 5 s default.
   test("a caller's text-primary-ink replaces LINK_INK, so no caller passes it", () => {
     // Why the scan below exists: cn() keeps the last text colour.
     const html = renderToStaticMarkup(
@@ -329,7 +331,7 @@ describe("O1b: outside links", () => {
     // Nothing else may join it.
     const later = ["src/forms/FormPanel.tsx"];
     expect(found.filter(f => !later.includes(f))).toEqual([]);
-  });
+  }, 30_000);
 });
 
 describe("O1c: reduced motion", () => {
