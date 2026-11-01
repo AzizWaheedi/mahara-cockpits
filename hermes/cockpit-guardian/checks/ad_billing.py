@@ -11,6 +11,11 @@ NO_META_ACCESS = {'86ex4j8f3'}  # Brillant Touch Company
 # two scans read the same 14:40 result (one after it finished, one before the next run replaced it).
 STALE_READ_MIN = 20
 
+# The worker's own refusal for a client whose ClickUp Client Status is not Active (core.ts validateBinding). Such a
+# client is paused, not unread: the worker reads it again on the first run after the status returns to Active, so its
+# binding stays enabled and nobody has to switch it back on. On 1 Nov 2026 four paused clients paged every scan.
+NOT_ACTIVE = 'Client is not currently Active'
+
 
 def _replaced(ctx, problems):
     """Failed notifications that never went out and that a newer status for the same client has replaced.
@@ -57,8 +62,10 @@ def run(ctx):
     bindings = ctx.rows('cockpit_ad_billing_bindings',
                         'client_task_id,client_name,enabled,manual_cutover_verified,error,last_good_at')
     enabled = [b for b in bindings if b.get('enabled')]
+    paused = sorted(b.get('client_name') or b.get('client_task_id') or '?' for b in enabled
+                    if (b.get('error') or '').strip() == NOT_ACTIVE)
     # A crashed run reads no client at all, so it shows here too once it has lasted 20 minutes.
-    stale = [b for b in enabled if _stale(b, ctx.now)]
+    stale = [b for b in enabled if _stale(b, ctx.now) and (b.get('error') or '').strip() != NOT_ACTIVE]
     if stale:
         names = ', '.join(sorted(b.get('client_name') or b.get('client_task_id') or '?' for b in stale))
         return fail(f'Ad billing has not read {len(stale)} client(s) for over {STALE_READ_MIN} minutes: {names}.',
@@ -77,7 +84,9 @@ def run(ctx):
     missing = len([r for r in roster if r.get('client_task_id') not in covered | NO_META_ACCESS])
     if missing:
         return warn('Some active clients lack verified ad billing coverage.', evidence={'missing_clients': missing})
-    return ok('Ad billing checks are current and no delivery is awaiting review.')
+    note = f' Paused (not Active in ClickUp): {", ".join(paused)}.' if paused else ''
+    return ok('Ad billing checks are current and no delivery is awaiting review.' + note,
+              evidence={'paused_clients': len(paused)} if paused else {})
 
 
 CHECKS = (Check('ad-billing-watch', 'workers', 'Ad billing alerts',
