@@ -1,10 +1,13 @@
 // Billing edits from the cockpits, written to the client's card on Clients - Mahara.
 //
 // cockpit_billing_write (and since waves 1-2 the churn confirm, the money acts
-// and the cockpit's own daily step) saves an edit as a cockpit_billing_events
-// row and, in the same transaction, queues one 'billing' item carrying every
-// field the edit changes and the comment it posts (migrations
-// 20261009j_billing_clickup_writeback.sql and 20261101m_billing_rails.sql).
+// and the cockpit's own daily step; since waves 3-4 the exit survey's comment
+// and NPS Survey Sent) saves an edit as a cockpit_billing_events row and, in
+// the same transaction, queues one 'billing' item carrying every field the
+// edit changes and the comment it posts (migrations
+// 20261009j_billing_clickup_writeback.sql, 20261101m_billing_rails.sql and
+// 20261102b_client_lifecycle.sql: kind survey writes no field, only its
+// comment; kind nps_sent writes npsSent, the day the NPS invite went out).
 // This file turns that item into ClickUp writes, in the order the item lists
 // them and in these formats:
 //   dropdown  POST {value: <option id>}, the option looked up by name on the list
@@ -52,6 +55,8 @@ export const BILLING_FIELDS: Record<string, { id: string; name: string; format: 
   churnType: { id: "a121f39a-f8a4-41f5-905e-a735ee729071", name: "Churn Type", format: "dropdown" },
   mrr: { id: "48eb6023-8944-4404-9e30-b01fc8a38256", name: "MRR", format: "number" },
   ltv: { id: "11d70e58-20e7-4ff0-85c6-51de42f044d2", name: "LTV", format: "number" },
+  // Waves 3-4 (contract 3.8, 11.2-f): written by billing kind nps_sent once CLICKUP_WRITEBACK_BILLING_KINDS lists it.
+  npsSent: { id: "34b2d7c0-6a95-4382-8c5b-5dcb83a9ac53", name: "NPS Survey Sent", format: "date" },
   willNotContinue: { id: "9cfdb353", name: "Will not continue if billed on schedule", format: "checkbox", byPrefix: true },
 };
 

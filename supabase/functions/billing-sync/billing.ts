@@ -254,6 +254,7 @@ const HUMAN = new Set(["ceo", "csm", "maher"]);
  * reads the events with these lists (waves 1-2 4.1 step 5: churn, mrr and the system's extension clear).
  */
 export const EDIT_EVENT_SOURCES = ["ceo", "csm", "maher", "system"] as const;
+// survey and nps_sent (waves 3-4) are left out on purpose: they change no mirror column.
 export const EDIT_EVENT_KINDS = ["method", "plan", "amount", "date", "extension", "pause", "resume", "payment", "churn", "mrr"] as const;
 
 /**
@@ -288,6 +289,11 @@ export function columnsOf(e: Any): Column[] {
       return d.clear_paused === true ? ["client_status", "churn_date", "paused_on"] : ["client_status", "churn_date"];
     case "mrr":
       return ["mrr_usd"];
+    // Waves 3-4 (20261102b, contract 3.8): the exit survey's card comment and NPS Survey Sent have no mirror
+    // column, so neither holds anything here, whoever wrote it.
+    case "survey":
+    case "nps_sent":
+      return [];
     default:
       return [];
   }

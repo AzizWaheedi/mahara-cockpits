@@ -260,6 +260,22 @@ test("waves 1-2 events: a churn holds status and churn date, an MRR edit its MRR
   for (const kind of ["churn", "mrr", "extension", "pause", "resume"]) assert.ok((EDIT_EVENT_KINDS as readonly string[]).includes(kind));
 });
 
+test("waves 3-4 events: the exit survey's comment and NPS Survey Sent hold no mirror column (contract 3.8)", () => {
+  const e = (kind: string, over: Any = {}) => ({ kind, ...over });
+  // As 20261102b writes them (system), and even if a person's row ever carried the kind.
+  for (const source of ["system", "csm", "ceo", "maher"]) {
+    assert.deepEqual(columnsOf(e("nps_sent", { source, detail: { invite_id: "i1", on: "2026-11-03", round: 1 } })), []);
+    assert.deepEqual(columnsOf(e("survey", { source, detail: { form_key: "exit_survey", response_id: "r1", recommend: 5 } })), []);
+  }
+  // index.ts never reads them as edits, so a waiting survey or NPS item never holds a column on the mirror.
+  for (const kind of ["survey", "nps_sent"]) assert.equal((EDIT_EVENT_KINDS as readonly string[]).includes(kind), false);
+  const edits = humanEdits([
+    { kind: "nps_sent", source: "system", clickup_task_id: "t1", at: "2026-11-03T07:00:00Z", detail: { on: "2026-11-03" } },
+    { kind: "survey", source: "system", clickup_task_id: "t1", at: "2026-11-03T07:00:00Z", detail: {} },
+  ], new Set(["1", "2"]));
+  assert.equal(edits.size, 0);
+});
+
 test("a held cockpit clear keeps the mirror's weeks and names the row's source as the sync, never 'system'", () => {
   // The card still shows 2 weeks; the cockpit cleared the grant and its write waits in the queue.
   const clear = { id: 9, clickup_task_id: "t1", kind: "extension", source: "system", at: "2026-10-09T07:00:00Z", detail: { weeks: 0, reason: "grant ended", grant_id: 3 } };
