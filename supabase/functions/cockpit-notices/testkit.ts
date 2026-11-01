@@ -13,6 +13,8 @@ export const BOT_USER = "U0C0MJZNS2Y";
 export const BOT_ID = "B0FAKEBOT01";
 export const CSM_GENERAL = "C09RZ0GS0V9";
 export const MEDIA_GENERAL = "C0AE8G5MT7Y";
+/** #csm-announcements (S0, waves 1-2): the four staff notices post there once the CEO invites the bot (Q4). */
+export const CSM_ANNOUNCE = "C09SNG5BP53";
 export const SCOPES = "chat:write,groups:history,groups:read,users:read,users:read.email,im:history";
 export const NOW = new Date("2026-10-25T11:30:00Z"); // 14:30 in Kuwait, a Sunday
 export const minutesAgo = (n: number, from = NOW) => new Date(from.getTime() - n * 60_000).toISOString();
@@ -285,4 +287,25 @@ export function deps(opts: { slack?: FakeSlack; clickup?: FakeClickUp; rpc?: Ret
     secrets: () => ({ SLACK_BOT_TOKEN: (opts.token ?? "x") !== "", CLICKUP_API_TOKEN: true, NOTICES_CRON_SECRET: true }),
   };
   return { deps: d, slack, clickup, rpc, receipts, net };
+}
+
+/** A claimed client lifecycle notice (waves 1-2, 3.4): its facts as the cockpit queues them, its live rule true. */
+export function lifecycleRow(kind: string, over: Partial<ClaimedRow> & { id?: string } = {}): Record<string, unknown> {
+  const facts: Record<string, Record<string, unknown>> = {
+    "termination.notice": { responseId: ID(50), submittedAt: minutesAgo(3), noticeOn: "2026-10-25", matched: true, client: "Acme Interiors" },
+    "termination.submitted": { responseId: ID(50), submittedAt: minutesAgo(3), client: "Acme Interiors" },
+    "churn.confirmed": { departureId: 17, reason: "Cancelled", client: "Acme Interiors" },
+    "extension.granted": { eventId: 901, weeks: 2, until: "2026-11-08", client: "Acme Interiors" },
+    "pause.agreed": { eventId: 902, on: "2026-10-25", restart: "2026-11-04", client: "Acme Interiors" },
+    "client.resumed": { eventId: 903, on: "2026-10-25", client: "Acme Interiors" },
+  };
+  return claimed({
+    kind: kind as ClaimedRow["kind"],
+    clientName: "Acme Interiors",
+    target: kind === "termination.notice" ? CSM_GENERAL : CSM_ANNOUNCE,
+    facts: facts[kind] ?? {},
+    live: { stillTrue: true, why: null },
+    mentions: { main: kind === "termination.notice" ? [CSM] : [] },
+    ...over,
+  });
 }

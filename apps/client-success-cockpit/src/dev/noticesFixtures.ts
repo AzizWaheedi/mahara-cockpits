@@ -19,6 +19,9 @@ export const MEDIA_GENERAL = { id: "C0AE8G5MT7Y", name: "media-general" };
 /** Invented: a private channel for the Call grade, and a public one it may not use (STAGE2B 5.4). */
 export const CALL_GRADES = { id: "C0EXAMPLE02", name: "call-grades" };
 export const TEAM_WINS = { id: "C0EXAMPLE03", name: "team-wins" };
+/** S0 (waves 1-2): the channel the four staff notices post in, checking until the CEO invites the bot (Q4). */
+export const CSM_ANNOUNCE = { id: "C09SNG5BP53", name: "csm-announcements" };
+export const NPS_FEEDBACK = { id: "C09TTGBRQ0G", name: "nps-survey-feedback" };
 
 let n = 0;
 export function noticeFixture(
@@ -124,11 +127,25 @@ export function noticeRead(
 const ago = (now: string, hours: number) =>
   new Date(Date.parse(now) - hours * 3_600_000).toISOString();
 
-/** The Notices and routing read, as an editor (or a viewer) would get it. */
+/**
+ * The Notices and routing read, as an editor (or a viewer) would get it.
+ * `lifecycle` adds waves 1-2's six rows and the two S0 channels, as
+ * 20261101l seeds them; the layout harness turns it on with `&lifecycle=1`
+ * in its address (the default read stays the ten rows the card's tests pin).
+ */
 export function settingsReadFixture(
-  opts: { edit?: boolean; editors?: boolean; now?: string } = {},
+  opts: {
+    edit?: boolean;
+    editors?: boolean;
+    now?: string;
+    lifecycle?: boolean;
+  } = {},
 ): SettingsRead {
   const now = opts.now ?? NOTICE_NOW;
+  const lifecycle =
+    opts.lifecycle ??
+    (typeof location !== "undefined" &&
+      new URLSearchParams(location.search).get("lifecycle") === "1");
   const edit = opts.edit ?? true;
   const editors = opts.editors ?? edit;
   const migration = { updatedBy: "the migration", updatedAt: ago(now, 72) };
@@ -295,6 +312,54 @@ export function settingsReadFixture(
         ...migration,
         last: null,
       },
+      // The client lifecycle's six, as 20261101l seeds them (WAVE12 3.4).
+      ...(lifecycle
+        ? [
+            {
+              kind: "termination.notice",
+              shape: "post" as const,
+              on: true,
+              fixedOn: false,
+              channel: CSM_GENERAL,
+              mentionRule: ["seat:csm"],
+              mentionPeople: [],
+              tags: [seat("seat:csm")],
+              ...migration,
+              last: null,
+            },
+            ...(
+              [
+                ["termination.submitted", false],
+                ["churn.confirmed", true],
+                ["extension.granted", true],
+                ["pause.agreed", true],
+                ["client.resumed", true],
+              ] as const
+            ).map(([kind, on]) => ({
+              kind,
+              shape: "post" as const,
+              on,
+              fixedOn: false,
+              channel: CSM_ANNOUNCE,
+              mentionRule: [],
+              mentionPeople: [],
+              tags: [],
+              ...migration,
+              last:
+                kind === "churn.confirmed"
+                  ? noticeFixture({
+                      kind,
+                      state: "failed",
+                      permalink: null,
+                      channel: CSM_ANNOUNCE,
+                      at: ago(now, 3),
+                      reason:
+                        "The channel for this notice is not ready (C09SNG5BP53). Choose one in Settings, Notices and routing.",
+                    })
+                  : null,
+            })),
+          ]
+        : []),
     ],
     channels: [
       {
@@ -338,6 +403,26 @@ export function settingsReadFixture(
         checkedAt: ago(now, 24),
         inUse: false,
       },
+      ...(lifecycle
+        ? [
+            {
+              ...CSM_ANNOUNCE,
+              private: false,
+              state: "checking" as const,
+              note: "The CEO invites the bot (Q4); until then notices here read Not posted.",
+              checkedAt: null,
+              inUse: true,
+            },
+            {
+              ...NPS_FEEDBACK,
+              private: false,
+              state: "checking" as const,
+              note: "The CEO invites the bot (Q4); until then notices here read Not posted.",
+              checkedAt: null,
+              inUse: false,
+            },
+          ]
+        : []),
     ],
     people: edit
       ? [
@@ -428,6 +513,11 @@ export function fakeNoticesIO(
         );
       const row = mem.notices.find(x => x.kind === kind);
       if (!row) return refuse(`There is no notice called ${kind}.`);
+      // Termination survey sent stays off while Make's post runs (WAVE12 W4), as settings_set refuses it.
+      if (kind === "termination.submitted" && patch.on === true && !row.on)
+        refuse(
+          "Termination survey sent stays off while the old Make post still runs in #csm-announcements. It turns on when that post is switched off.",
+        );
       if (patch.on !== undefined) {
         if (row.fixedOn)
           refuse(

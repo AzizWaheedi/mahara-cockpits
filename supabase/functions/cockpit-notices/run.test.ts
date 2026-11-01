@@ -4,7 +4,8 @@ import { CLAIM_LIMIT, JobError, OUT_OF_TIME, runDryRun, runNotices, runRehearse 
 import { BAD_TOKEN, NO_GRADE, NO_SLACK_ID, NO_TOKEN, REPLY_RECHECK_SEC, UNKNOWN, WAITING, WAITING_CARD, WAITING_REPLY, wantedMentions, WRONG_BOT } from "./send";
 import { CRITERIA } from "./text";
 import {
-  BOT_USER, claimed, CREATIVE, CSM, CSM_GENERAL, deps, FakeClickUp, FakeSlack, fakeRpc, ID, MEDIA_GENERAL, mention, minutesAgo, NOW, receiptsRecorder, ref, SYSTEMS,
+  BOT_USER, claimed, CREATIVE, CSM, CSM_ANNOUNCE, CSM_GENERAL, deps, FakeClickUp, FakeSlack, fakeRpc, ID, lifecycleRow, MEDIA_GENERAL, mention, minutesAgo, NOW,
+  receiptsRecorder, ref, SYSTEMS,
 } from "./testkit";
 
 // A fake Slack, ClickUp and database stand in for the real ones; the real door code, sender, text and
@@ -852,5 +853,128 @@ describe("the 1-1 notes notices (docs/forms/STAGE2B-CONTRACT.md 4.2)", () => {
     expect(out).toMatchObject({ ok: true, kind: "checkin.recap_late", variant: "late", target: CSM_GENERAL, commentCheck: null });
     expect(out.text).toBe("Recap not sent: Acme Interiors, call Sat 24 Oct. Open in the cockpit. Ref CN-dryrun00");
     expect(kit.slack.posts()).toHaveLength(0);
+  });
+});
+
+describe("the client lifecycle notices (docs/forms/WAVE12-CONTRACT.md 3.4)", () => {
+  const withAnnounce = () => {
+    const slack = new FakeSlack();
+    slack.channels.set(CSM_ANNOUNCE, { name: "csm-announcements", is_private: false, is_member: true });
+    return slack;
+  };
+
+  test("Termination notice in, matched: posts once in #csm-general, tags the CSM, links the client page, reads no card", async () => {
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(lifecycleRow("termination.notice")) }) });
+    const result = await runNotices(kit.deps);
+    expect(result).toMatchObject({ ok: true, claimed: 1, posted: 1, failed: 0 });
+    const [post] = kit.slack.posts();
+    expect(post.body).toMatchObject({
+      channel: CSM_GENERAL,
+      text: `Acme Interiors sent the termination survey. Confirm churn or answer the notice in the cockpit. Ref ${ref(ID(1))}`,
+    });
+    const blocks = JSON.stringify(post.body?.blocks);
+    expect(blocks).toContain("<@U0C5JHUCTPG>");
+    expect(blocks).toContain("https://cockpit.maharamedia.com/client-success/clients/task0001|Open the client");
+    expect(kit.net.calls.some(c => c.url.host === "api.clickup.com")).toBe(false);
+    expect(detailOf(lastResult(kit)).variant).toBe("matched");
+  });
+
+  test("Termination notice in, unmatched: no card, the form's own name, the churn tracker, every CSM tagged", async () => {
+    const row = lifecycleRow("termination.notice", {
+      taskId: null,
+      clientName: null,
+      facts: { responseId: ID(51), submittedAt: minutesAgo(3), noticeOn: "2026-10-25", matched: false, formClientName: "Gamma Homes" },
+      mentions: { main: [CSM, mention("seat:csm", "the CSM", "U0C5JHUCTP2", { personId: 14 })] },
+    });
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(row) }) });
+    await runNotices(kit.deps);
+    const [post] = kit.slack.posts();
+    expect(String(post.body?.text)).toBe(
+      `Gamma Homes sent the termination survey. It is not matched to a card yet: pick the card in the cockpit. Ref ${ref(ID(1))}`,
+    );
+    const blocks = JSON.stringify(post.body?.blocks);
+    expect(blocks).toContain("money?tab=churn|Open the churn tracker");
+    expect(blocks).toContain("<@U0C5JHUCTPG> <@U0C5JHUCTP2>");
+    expect(detailOf(lastResult(kit)).variant).toBe("unmatched");
+  });
+
+  test("a notice whose news stopped being true is not posted, and says why", async () => {
+    const row = lifecycleRow("termination.notice", {
+      live: { stillTrue: false, why: "The notice was answered in the cockpit before it went out.", matched: true },
+    });
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(row) }) });
+    await runNotices(kit.deps);
+    expect(kit.slack.posts()).toHaveLength(0);
+    expect(lastResult(kit)).toMatchObject({
+      p_outcome: "failed",
+      p_error: "Not posted: the notice was answered in the cockpit before it went out.",
+    });
+  });
+
+  test("the four staff notices post their one line in #csm-announcements and tag nobody", async () => {
+    const rows = ["churn.confirmed", "extension.granted", "pause.agreed", "client.resumed"].map((k, i) => lifecycleRow(k, { id: ID(60 + i) }));
+    const kit = deps({ slack: withAnnounce(), rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(...rows) }) });
+    const result = await runNotices(kit.deps);
+    expect(result).toMatchObject({ claimed: 4, posted: 4 });
+    expect(kit.slack.posts().map(p => [p.body?.channel, String(p.body?.text).replace(/ Ref CN-\w+$/, "")])).toEqual([
+      [CSM_ANNOUNCE, "Acme Interiors has left: Cancelled."],
+      [CSM_ANNOUNCE, "Acme Interiors: 2-week extension to Sun 8 Nov."],
+      [CSM_ANNOUNCE, "Acme Interiors: paused from Sun 25 Oct, restarts Wed 4 Nov."],
+      [CSM_ANNOUNCE, "Acme Interiors: resumed Sun 25 Oct."],
+    ]);
+    for (const p of kit.slack.posts()) expect(JSON.stringify(p.body?.blocks)).not.toContain("<@");
+    expect(kit.rpc.results().map(r => detailOf(r).variant)).toEqual(["post", "post", "post", "post"]);
+  });
+
+  test("a test of a lifecycle kind goes to a person and names who it would tag", async () => {
+    const row = claimed({
+      kind: "rehearsal", taskId: null, clientName: null, target: "U0TESTER001",
+      facts: { of: "termination.notice", variant: null, sample: true, requestedBy: "cron" },
+      live: {}, mentions: { main: [] }, rehearsal: { of: "termination.notice", lookupEmail: null },
+    });
+    const settings = { cockpit_slack_notice_doctor_inputs: () => ({ channels: [], settings: [{ kind: "termination.notice", enabled: true, channel: CSM_GENERAL, mentions: [CSM] }] }) };
+    const kit = deps({ rpc: fakeRpc({ ...settings, cockpit_slack_notice_claim: claimOnce(row) }) });
+    await runNotices(kit.deps);
+    expect(lastResult(kit)).toMatchObject({ p_outcome: "posted", p_channel: "D0TESTDM001" });
+    const d = detailOf(lastResult(kit));
+    expect(String(d.text)).toStartWith("[Rehearsal] Sample client sent the termination survey.");
+    expect(blocksText(d)).toContain("This would tag the CSM.");
+    expect(blocksText(d)).not.toContain("https://");
+  });
+
+  test("the doctor lists every kind and names the notices waiting on #csm-announcements", async () => {
+    const slack = new FakeSlack();
+    slack.channels.set(CSM_ANNOUNCE, { name: "csm-announcements", is_private: false, is_member: false });
+    slack.scopes = `${slack.scopes},channels:history`;
+    const settings = [
+      { kind: "kickoff", enabled: true, channel: CSM_GENERAL, mentions: [CREATIVE] },
+      { kind: "termination.notice", enabled: true, channel: CSM_GENERAL, mentions: [CSM] },
+      { kind: "termination.submitted", enabled: false, channel: CSM_ANNOUNCE, mentions: [] },
+      { kind: "churn.confirmed", enabled: true, channel: CSM_ANNOUNCE, mentions: [] },
+      { kind: "extension.granted", enabled: true, channel: CSM_ANNOUNCE, mentions: [] },
+      { kind: "pause.agreed", enabled: true, channel: CSM_ANNOUNCE, mentions: [] },
+      { kind: "client.resumed", enabled: true, channel: CSM_ANNOUNCE, mentions: [] },
+    ];
+    const kit = deps({
+      slack,
+      rpc: fakeRpc({
+        cockpit_slack_notice_doctor_inputs: () => ({
+          channels: [
+            { id: CSM_GENERAL, name: "csm-general", private: true, state: "ok" },
+            { id: CSM_ANNOUNCE, name: "csm-announcements", private: false, state: "checking" },
+          ],
+          settings,
+        }),
+      }),
+    });
+    const d = await runDoctor(kit.deps);
+    expect(d.ok).toBe(false);
+    expect(d.kinds.map(k => k.kind)).toEqual(settings.map(s => s.kind));
+    expect(d.kinds.find(k => k.kind === "churn.confirmed")).toEqual({ kind: "churn.confirmed", enabled: true, channel: CSM_ANNOUNCE, ready: false });
+    expect(d.kinds.find(k => k.kind === "termination.notice")?.ready).toBe(true);
+    expect(d.note).toContain("Not posted until the bot is in #csm-announcements: churn.confirmed, extension.granted, pause.agreed, client.resumed.");
+    expect(d.note).not.toContain("termination.submitted");
+    // The verdict is recorded, so the channel turns refused until the CEO invites the bot.
+    expect(kit.rpc.calls.find(c => c.name === "cockpit_slack_channel_checked" && c.args.p_id === CSM_ANNOUNCE)?.args.p_ok).toBe(false);
   });
 });
