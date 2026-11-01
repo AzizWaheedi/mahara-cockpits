@@ -4,7 +4,7 @@ import { CLAIM_LIMIT, JobError, OUT_OF_TIME, runDryRun, runNotices, runRehearse 
 import { BAD_TOKEN, NO_GRADE, NO_SLACK_ID, NO_TOKEN, REPLY_RECHECK_SEC, UNKNOWN, WAITING, WAITING_CARD, WAITING_REPLY, wantedMentions, WRONG_BOT } from "./send";
 import { CRITERIA } from "./text";
 import {
-  BOT_USER, claimed, CREATIVE, CSM, CSM_ANNOUNCE, CSM_GENERAL, deps, FakeClickUp, FakeSlack, fakeRpc, ID, lifecycleRow, MEDIA_GENERAL, mention, minutesAgo, NOW,
+  BOT_USER, claimed, clientFormRow, CREATIVE, CSM, CSM_ANNOUNCE, CSM_GENERAL, deps, FakeClickUp, FakeSlack, fakeRpc, ID, lifecycleRow, MEDIA_GENERAL, NPS_FEEDBACK, mention, minutesAgo, NOW,
   receiptsRecorder, ref, SYSTEMS,
 } from "./testkit";
 
@@ -976,5 +976,79 @@ describe("the client lifecycle notices (docs/forms/WAVE12-CONTRACT.md 3.4)", () 
     expect(d.note).not.toContain("termination.submitted");
     // The verdict is recorded, so the channel turns refused until the CEO invites the bot.
     expect(kit.rpc.calls.find(c => c.name === "cockpit_slack_channel_checked" && c.args.p_id === CSM_ANNOUNCE)?.args.p_ok).toBe(false);
+  });
+});
+
+describe("the client's voice and forms (docs/forms/WAVE34-CONTRACT.md 3.4)", () => {
+  const withNps = () => {
+    const slack = new FakeSlack();
+    slack.channels.set(NPS_FEEDBACK, { name: "nps-survey-feedback", is_private: false, is_member: true });
+    return slack;
+  };
+
+  test("each kind posts its one line where it is routed, tags the CSM only where 3.4 says, and reads no card", async () => {
+    const kinds = ["pause.consent", "nps.received", "csat.received", "voice.low", "feedback.received", "legacy.received"];
+    const rows = kinds.map((k, i) => clientFormRow(k, { id: ID(80 + i) }));
+    const kit = deps({ slack: withNps(), rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(...rows) }) });
+    const result = await runNotices(kit.deps);
+    expect(result).toMatchObject({ claimed: 6, posted: 6, failed: 0 });
+    expect(kit.slack.posts().map(p => [p.body?.channel, String(p.body?.text).replace(/ Ref CN-\w+$/, "")])).toEqual([
+      [CSM_GENERAL, "Acme Interiors signed the pause consent. Confirm the pause in the cockpit."],
+      [NPS_FEEDBACK, "Acme Interiors: 9/10 would recommend, 8/10 on results so far."],
+      [NPS_FEEDBACK, "Acme Interiors: 7/10 for getting started."],
+      [CSM_GENERAL, "Acme Interiors gave 5/10 on the NPS survey. Call them today."],
+      [CSM_GENERAL, "Acme Interiors shared a new idea in the portal about the portal."],
+      [CSM_GENERAL, "The NPS survey came in through the old link for a client not matched to a card. Open it in the cockpit."],
+    ]);
+    const tagged = kit.slack.posts().map(p => JSON.stringify(p.body?.blocks).includes("<@U0C5JHUCTPG>"));
+    expect(tagged).toEqual([true, false, false, true, true, false]);
+    expect(kit.rpc.results().map(r => detailOf(r).variant)).toEqual(["signed", "post", "post", "post", "post", "post"]);
+    expect(kit.net.calls.some(c => c.url.host === "api.clickup.com")).toBe(false);
+  });
+
+  test("dates said wrong post the dates_wrong line", async () => {
+    const row = clientFormRow("pause.consent", { facts: { responseId: ID(70), submittedAt: minutesAgo(2), client: "Acme Interiors", datesWrong: true } });
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(row) }) });
+    await runNotices(kit.deps);
+    expect(String(kit.slack.posts()[0].body?.text)).toStartWith("Acme Interiors says the pause dates are wrong. Open the pause in the cockpit.");
+    expect(detailOf(lastResult(kit)).variant).toBe("dates_wrong");
+  });
+
+  test("a low score whose ticket opened first is not posted, and says why", async () => {
+    const row = clientFormRow("voice.low", { live: { stillTrue: false, why: "A low-score ticket was opened before the notice went out." } });
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(row) }) });
+    await runNotices(kit.deps);
+    expect(kit.slack.posts()).toHaveLength(0);
+    expect(lastResult(kit)).toMatchObject({ p_outcome: "failed", p_error: "Not posted: a low-score ticket was opened before the notice went out." });
+  });
+
+  test("the doctor names the answers waiting on #nps-survey-feedback, and a family seeded in part", async () => {
+    const slack = new FakeSlack();
+    slack.channels.set(NPS_FEEDBACK, { name: "nps-survey-feedback", is_private: false, is_member: false });
+    slack.scopes = `${slack.scopes},channels:history`;
+    const settings = [
+      { kind: "kickoff", enabled: true, channel: CSM_GENERAL, mentions: [CREATIVE] },
+      { kind: "pause.consent", enabled: true, channel: CSM_GENERAL, mentions: [CSM] },
+      { kind: "nps.received", enabled: true, channel: NPS_FEEDBACK, mentions: [] },
+      { kind: "csat.received", enabled: true, channel: NPS_FEEDBACK, mentions: [] },
+    ];
+    const kit = deps({
+      slack,
+      rpc: fakeRpc({
+        cockpit_slack_notice_doctor_inputs: () => ({
+          channels: [
+            { id: CSM_GENERAL, name: "csm-general", private: true, state: "ok" },
+            { id: NPS_FEEDBACK, name: "nps-survey-feedback", private: false, state: "refused" },
+          ],
+          settings,
+        }),
+      }),
+    });
+    const d = await runDoctor(kit.deps);
+    expect(d.ok).toBe(false);
+    expect(d.note).toContain("Not posted until the bot is in #nps-survey-feedback: nps.received, csat.received.");
+    expect(d.note).toContain("No settings row for voice.low, feedback.received, legacy.received: check 20261102a applied in full.");
+    expect(d.unseeded).toContain("voice.low");
+    expect(d.unseeded).toContain("termination.notice");
   });
 });

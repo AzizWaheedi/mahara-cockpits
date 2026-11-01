@@ -31,7 +31,7 @@ place. A switch written on two lines is not read at all: the run stops with
 sending off and the health row says `CLIENT_MESSAGES_APPLY is written more
 than once in switches.env, so nothing is sent.`, until one line is left. The
 same stop, off, comes from anything else the worker cannot read for certain:
-a kind other than `recap_checkin`, a card list holding anything but card ids
+a kind other than `recap_checkin` and `form_invite`, a card list holding anything but card ids
 (an inline `# comment`, a `;` between ids, a stray quote, a quoted space), or any line that is not one of the
 three switches (a misspelt `CLIENT_MESSAGES_ONLY_CARD=86x`). That last one
 reads `Line 2 of switches.env is not one of the three switches, so nothing is
@@ -167,6 +167,51 @@ run's `run_key`. G5's row carries the same count in its detail. The guardian's c
 row (it prints `The run could not reach the database` to `cron.log`); the
 guardian reads `client-messages` as stale after 10 minutes, so run the doctor.
 
+## Form links (`form_invite`, waves 3-4)
+
+A client form link goes to the client's group as a WhatsApp message
+(`docs/forms/WAVE34-CONTRACT.md` 3.9, 4.1.6). The CSM sends a form from the
+client page (Send a form), picks WhatsApp link, and approves the text there
+(`invite.approve`); the schedule's NPS and onboarding survey links wait as
+drafts for the same approval. The approved text keeps `{form_link}` exactly
+once: the link does not exist yet.
+
+Turning it on is a line in `switches.env`, after the canary:
+
+```
+CLIENT_MESSAGES_KINDS=recap_checkin,form_invite
+CLIENT_MESSAGES_ONLY_CARDS=86eywg1cq
+```
+
+then the card list emptied once the canary's link was read back. With no
+`CLIENT_MESSAGES_KINDS` line the worker sends recaps only.
+
+At send, right after the database's last check (the intent), the worker asks
+`cockpit_client_message_invite_link` for this message's link. The database
+makes it once per message, keeps only its hash, and hands back
+`https://portal.maharamedia.com/f#<token>`. The worker puts it where
+`{form_link}` is and posts that text. The stored text stays the template, so
+the fingerprint check is unchanged, and every group search (read-back, the
+unknown reconcile) turns a form link back into `{form_link}` before it
+compares. The link is in no report, health row, receipt or log line.
+
+What the run says, and what to do:
+
+- `The link for this message was already made, so it may already be in the group. Look in the group; the tech lead settles it.`
+  The row is `unknown`. Read it as any unknown (below): never mint or send a
+  second link for the same message.
+- `The form was answered, withdrawn or ran out before its link was made, so nothing was sent.`
+  The row is `failed` and nothing reached the group. Nothing to do: the form
+  is closed. Skip it on the Messages card.
+- `The form link could not be made, so nothing was sent. Reopen the message in the cockpit to try again.`
+  The row is `failed`; reopen it, approve it again.
+
+A client says the link does not work: it ends at 14 days, at the first answer
+(from the portal or any link), on withdraw, and when the form is switched off.
+Send the form again from the client page (Send again withdraws the old one).
+Never read a token from anywhere: the database cannot give one back, and none
+is stored.
+
 ## Reading an unknown
 
 An `unknown` recap may be in the group. The cockpit never sends it twice; the
@@ -254,6 +299,11 @@ proven`, which counts as failed. It writes `client-messages-g5`, ok only for
 `same number`.
 
 ## Tests
+
+The form link tests are in `worker.test.ts` (`form links`) and `core.test.ts`
+(`maskInviteLink`); the database side is
+`apps/media-buyer-cockpit/scripts/forms-invites-supabase.test.ts`.
+
 
 ```
 bun test hermes/client-messages

@@ -183,6 +183,17 @@ describe("the door: 2b ops", () => {
     expect(svc.status).toBe(403);
   });
 
+  test("invite.approve is a seat op beside recap.approve: the seat first, never the service key", async () => {
+    const f = fakeDeps({ rpc: { cockpit_forms_actor: csmActor } });
+    const res = await makeDoor(f.deps)(post({ op: "invite.approve", messageId: "not-a-uuid", body: "x" }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Open the form link from the client page." });
+    expect(f.service.named("cockpit_forms_actor")).toHaveLength(1);
+    const svc = await makeDoor(fakeDeps().deps)(post({ op: "invite.approve" }, `Bearer ${SERVICE_KEY}`));
+    expect(svc.status).toBe(403);
+    expect(await svc.json()).toEqual({ error: "The service key runs the doctor only." });
+  });
+
   test("the service key runs the doctor and it names NOTICES_CRON_SECRET as a boolean", async () => {
     const f = fakeDeps({ env: { NOTICES_CRON_SECRET: "invented-secret-abc" }, rpc: doctorRpc });
     const res = await makeDoor(f.deps)(post({ op: "doctor" }, `Bearer ${SERVICE_KEY}`));

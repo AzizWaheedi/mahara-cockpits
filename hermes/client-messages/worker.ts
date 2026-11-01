@@ -15,6 +15,16 @@
  * An `unknown` is never sent again: a later run looks for it in the group by
  * its fingerprint, and a person settles what is not found.
  *
+ * A form link (kind form_invite, docs/forms/WAVE34-CONTRACT.md 3.9, 4.1.6) is
+ * approved with {form_link} in its text. Right after the intent answers ok the
+ * worker asks cockpit_client_message_invite_link for the link (minted once per
+ * message), puts it where the placeholder is and sends that text. The stored
+ * text stays the template, so its fingerprint check is unchanged, and every
+ * group search masks a form link back to {form_link} before it compares. The
+ * link never goes into a report, a health row or a log line. A link already
+ * made for the message is never sent again: the row turns unknown and a person
+ * looks in the group.
+ *
  * Two switches must both be on to send: the checkin registry's recap owner
  * (the database refuses every approval and claim while Make owns it) and
  * CLIENT_MESSAGES_APPLY=true in ~/.client-messages/switches.env, read only
@@ -56,6 +66,7 @@ import {
   groupOf,
   jitterMs,
   last4,
+  maskInviteLink,
   normalise,
   sha256,
   sheetShape,
@@ -83,7 +94,10 @@ export const SWITCH_KEYS = [
   "CLIENT_MESSAGES_ONLY_CARDS",
 ] as const;
 /** The one kind 2b sends. */
-export const KINDS_2B = ["recap_checkin"];
+/** The kinds this worker may send (CLIENT_MESSAGES_KINDS lists the ones on). */
+export const KINDS = ["recap_checkin", "form_invite"];
+/** With no CLIENT_MESSAGES_KINDS line, recaps only: form links wait for D-WA. */
+export const DEFAULT_KINDS = ["recap_checkin"];
 
 export const RUN_SECONDS = 300;
 /** A run claims only while at least 200 of its 300 seconds remain. */
@@ -131,6 +145,19 @@ export const CARD_NO_GROUP_FIELD = (taskId: string) =>
   `ClickUp's card ${taskId} has no readable WhatsApp group field, so nothing was sent unchecked. Fix that field on the card, then try again.`;
 /** The doctor's word for a 200 from ClickUp that does not list the card's fields. */
 export const CARD_NO_FIELDS = "ClickUp answered without the card's fields.";
+/** A form link already minted for this message may be in the group: never sent twice. */
+export const LINK_ALREADY_MADE =
+  "The link for this message was already made, so it may already be in the group. Look in the group; the tech lead settles it.";
+export const LINK_NOT_MADE =
+  "The form link could not be made, so nothing was sent. Reopen the message in the cockpit to try again.";
+export const LINK_FORM_CLOSED =
+  "The form was answered, withdrawn or ran out before its link was made, so nothing was sent.";
+/** The one shape a minted link has (3.6). */
+export const INVITE_URL = /^https:\/\/portal\.maharamedia\.com\/f#f1[A-Za-z0-9_-]{43}$/;
+/** The approved text with its one placeholder replaced by the minted link. */
+export function withLink(body: string, url: string): string {
+  return body.replace("{form_link}", url);
+}
 export const SWITCHED_OFF =
   "The switches changed during the wait and no longer allow this recap, so nothing was sent. It stays approved.";
 export const TOO_LATE =
@@ -259,7 +286,7 @@ export function readSwitches(path: string): Switches {
   } catch {
     return {
       apply: false,
-      kinds: [...KINDS_2B],
+      kinds: [...DEFAULT_KINDS],
       onlyCards: [],
       from: null,
       error: null,
@@ -269,9 +296,9 @@ export function readSwitches(path: string): Switches {
   const twice = SWITCH_KEYS.filter(k => (lines[k]?.length ?? 0) > 1);
   const kinds =
     value("CLIENT_MESSAGES_KINDS") === undefined
-      ? [...KINDS_2B]
+      ? [...DEFAULT_KINDS]
       : list(value("CLIENT_MESSAGES_KINDS"));
-  const bad = kinds.filter(k => !KINDS_2B.includes(k));
+  const bad = kinds.filter(k => !KINDS.includes(k));
   const rawCards = value("CLIENT_MESSAGES_ONLY_CARDS") ?? "";
   const cards = list(rawCards);
   const error = twice.length
@@ -279,7 +306,7 @@ export function readSwitches(path: string): Switches {
     : unknown.length
       ? SWITCH_UNKNOWN(unknown)
       : bad.length || !kinds.length
-        ? `CLIENT_MESSAGES_KINDS names ${bad.length ? `a kind 2b does not send (${bad.join(", ").slice(0, 60)})` : "no kind"}. Set it to recap_checkin.`
+        ? `CLIENT_MESSAGES_KINDS names ${bad.length ? `a kind this worker does not send (${bad.join(", ").slice(0, 60)})` : "no kind"}. Set it to recap_checkin, or recap_checkin,form_invite.`
         : cards.some(c => !CARD_ID.test(c)) ||
             (rawCards !== "" && cards.length === 0)
           ? NOT_A_CARD
@@ -428,8 +455,9 @@ const say = (e: unknown, fallback: string) => {
     .slice(0, 200);
   return /[.!?]$/.test(m) ? m : `${m}.`;
 };
+/** A group message against an approved text, a form link masked back to its placeholder first. */
 const same = (a: string, b: string) =>
-  sha256(normalise(a)) === sha256(normalise(b));
+  sha256(normalise(maskInviteLink(a))) === sha256(normalise(b));
 
 /** The note of a run that threw part way. Its health row is still written; the sweep settles what it held. */
 export const STOPPED = (reason: string) =>
@@ -775,8 +803,43 @@ async function steps(
     );
   }
 
+  // 11b. A form link: minted now for this message, once, and put where the
+  // placeholder is. The stored text keeps the placeholder; the link is in
+  // nothing this run writes but the one POST.
+  let text = row.body;
+  if (row.kind === "form_invite") {
+    let made: { ok?: boolean; url?: string; reason?: string } | null;
+    try {
+      made = await db.rpc("cockpit_client_message_invite_link", {
+        p_id: row.id,
+        p_claim: row.claimToken,
+      });
+    } catch (e) {
+      await result("failed", { p_reason: LINK_NOT_MADE });
+      report.detail.failed += 1;
+      return finish(false, `${LINK_NOT_MADE} ${say(e, "no answer")}`);
+    }
+    report.steps.push("link");
+    if (made?.reason === "already_made") {
+      await result("unknown", { p_reason: LINK_ALREADY_MADE });
+      report.detail.unknown += 1;
+      return finish(false, LINK_ALREADY_MADE);
+    }
+    if (made?.reason === "closed") {
+      await result("failed", { p_reason: LINK_FORM_CLOSED });
+      report.detail.failed += 1;
+      return finish(true, LINK_FORM_CLOSED);
+    }
+    if (!made?.ok || typeof made.url !== "string" || !INVITE_URL.test(made.url)) {
+      await result("failed", { p_reason: LINK_NOT_MADE });
+      report.detail.failed += 1;
+      return finish(false, LINK_NOT_MADE);
+    }
+    text = withLink(row.body, made.url);
+  }
+
   // 12. The one POST.
-  const out = await provider.sendText(g.group, row.body);
+  const out = await provider.sendText(g.group, text);
   report.steps.push(`send ${out.state}`);
 
   // 13. What WhatsApp answered.
@@ -808,7 +871,7 @@ async function steps(
   }
   return finish(
     true,
-    `Sent one recap to the client's group (WhatsApp group ending ${last4(g.group) ?? "unknown"}).`,
+    `Sent one ${row.kind === "form_invite" ? "form link" : "recap"} to the client's group (WhatsApp group ending ${last4(g.group) ?? "unknown"}).`,
   );
 }
 

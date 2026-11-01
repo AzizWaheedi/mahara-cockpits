@@ -1,0 +1,775 @@
+{
+  "about": "Client form schema v1 answer checks (docs/forms/WAVE34-CONTRACT.md 3.1). The SQL checker cockpit_form_answers_check and the portal's client-form-schema.ts validateAnswers must give exactly these ok and errors for every row. Written by invites-core; portal-forms copies this file byte for byte into tests/fixtures/client-form-answers.json (D0 compares them with cmp). Codes: required, range, option, length, unknown, hidden. A wrong JSON type answers range for a scale, option for a choice, multi or tick, and required for a text. A question is shown when its showIf holds on the checked earlier answer; an unanswered tick reads false. A context that carries signer (the link page's typed name) is checked under the key signer when the schema's signer is typed.",
+  "version": 1,
+  "schemas": {
+    "nps": {
+      "v": 1,
+      "key": "nps",
+      "title": { "en": "How are we doing?", "ar": "شلون شغلنا معاكم؟" },
+      "intro": {
+        "en": "One minute. Your account manager reads every answer.",
+        "ar": "دقيقة وحدة بس. مدير حسابك يقرا كل رد."
+      },
+      "minutes": 1,
+      "audience": "any",
+      "signer": "none",
+      "context": [],
+      "fields": [
+        {
+          "key": "recommend",
+          "type": "scale",
+          "required": true,
+          "min": 0,
+          "max": 10,
+          "label": {
+            "en": "How likely are you to recommend Mahara to a friend or another business owner?",
+            "ar": "شكثر ممكن تنصح فينا ربعك أو صاحب شركة ثاني؟"
+          },
+          "lowLabel": { "en": "Not at all likely", "ar": "أبد" },
+          "highLabel": { "en": "Extremely likely", "ar": "أكيد" }
+        },
+        {
+          "key": "results",
+          "type": "scale",
+          "required": false,
+          "min": 0,
+          "max": 10,
+          "label": {
+            "en": "How happy are you with the results so far?",
+            "ar": "شكثر راضي عن النتائج لين الحين؟"
+          },
+          "lowLabel": { "en": "Not happy", "ar": "مو راضي" },
+          "highLabel": { "en": "Very happy", "ar": "راضي وايد" }
+        },
+        {
+          "key": "communication",
+          "type": "scale",
+          "required": false,
+          "min": 1,
+          "max": 10,
+          "label": {
+            "en": "How is communication with your Mahara team?",
+            "ar": "شلون التواصل مع فريق مهارة؟"
+          },
+          "lowLabel": { "en": "Poor", "ar": "ضعيف" },
+          "highLabel": { "en": "Excellent", "ar": "ممتاز" }
+        },
+        {
+          "key": "startStop",
+          "type": "longtext",
+          "required": false,
+          "maxLength": 2000,
+          "label": {
+            "en": "What should we start or stop doing?",
+            "ar": "شنو تبينا نبدي فيه أو نوقفه؟"
+          }
+        }
+      ],
+      "reads": {
+        "low_score": ["recommend"],
+        "nps_notice": ["recommend", "results"]
+      },
+      "submit": { "en": "Send", "ar": "أرسل" },
+      "done": {
+        "en": "Thanks. Your account manager reads every answer.",
+        "ar": "مشكور. مدير حسابك يقرا كل رد."
+      },
+      "invite": {
+        "whatsapp": {
+          "en": "Hi {client} team, a quick question from Mahara: how likely are you to recommend us? It takes a minute: {form_link}",
+          "ar": "هلا فريق {client}، عندنا سؤال سريع من مهارة: شكثر ممكن تنصحون فينا؟ ما ياخذ إلا دقيقة: {form_link}"
+        },
+        "push": {
+          "en": "A one-minute question from your Mahara team. Tap to answer.",
+          "ar": "سؤال من فريق مهارة ياخذ دقيقة. اضغط وجاوب."
+        }
+      }
+    },
+    "csat": {
+      "v": 1,
+      "key": "csat",
+      "title": {
+        "en": "How was getting started?",
+        "ar": "شلون كانت البداية معانا؟"
+      },
+      "intro": {
+        "en": "Your campaign is live. Tell us how the first steps felt.",
+        "ar": "حملتك اشتغلت. قول لنا شلون كانت أول الخطوات."
+      },
+      "minutes": 1,
+      "audience": "any",
+      "signer": "none",
+      "context": [],
+      "fields": [
+        {
+          "key": "onboarding",
+          "type": "scale",
+          "required": true,
+          "min": 1,
+          "max": 10,
+          "label": {
+            "en": "How would you rate getting started with Mahara?",
+            "ar": "من ١ لين ١٠، شكثر تعطي البداية معانا؟"
+          },
+          "lowLabel": { "en": "Poor", "ar": "ضعيف" },
+          "highLabel": { "en": "Excellent", "ar": "ممتاز" }
+        },
+        {
+          "key": "liked",
+          "type": "longtext",
+          "required": false,
+          "maxLength": 2000,
+          "label": { "en": "What did you like?", "ar": "شنو عجبك؟" }
+        },
+        {
+          "key": "disliked",
+          "type": "longtext",
+          "required": false,
+          "maxLength": 2000,
+          "label": {
+            "en": "What could we have done better?",
+            "ar": "شنو كان ممكن نسويه أحسن؟"
+          }
+        }
+      ],
+      "reads": { "low_score": ["onboarding"], "csat_notice": ["onboarding"] },
+      "submit": { "en": "Send", "ar": "أرسل" },
+      "done": {
+        "en": "Thank you. This helps the next client too.",
+        "ar": "مشكور. هذا يساعدنا مع العميل الياي بعد."
+      },
+      "invite": {
+        "whatsapp": {
+          "en": "Hi {client} team, now that your campaign is live, how was getting started with us? Tell us in a minute: {form_link}",
+          "ar": "هلا فريق {client}، الحين حملتكم اشتغلت. شلون كانت البداية معانا؟ قولوا لنا بدقيقة: {form_link}"
+        },
+        "push": {
+          "en": "How was getting started? Tell your Mahara team in a minute.",
+          "ar": "شلون كانت البداية؟ قول لفريق مهارة بدقيقة."
+        }
+      }
+    },
+    "pause_consent": {
+      "v": 1,
+      "key": "pause_consent",
+      "title": { "en": "Confirm your pause", "ar": "أكّد الإيقاف المؤقت" },
+      "intro": {
+        "en": "Your account manager set up this pause after your call. Check the dates, then confirm.",
+        "ar": "مدير حسابك جهّز هالإيقاف بعد المكالمة. شيّك على التواريخ وبعدها أكّد."
+      },
+      "minutes": 2,
+      "audience": "admin",
+      "signer": "typed",
+      "context": [
+        {
+          "key": "start",
+          "type": "date",
+          "label": { "en": "Pause starts", "ar": "يبدأ الإيقاف" }
+        },
+        {
+          "key": "restart",
+          "type": "date",
+          "label": { "en": "Campaign restarts", "ar": "ترجع الحملة" }
+        }
+      ],
+      "fields": [
+        {
+          "key": "datesWrong",
+          "type": "tick",
+          "required": false,
+          "label": { "en": "These dates are wrong", "ar": "التواريخ هذي غلط" }
+        },
+        {
+          "key": "datesNote",
+          "type": "longtext",
+          "required": true,
+          "maxLength": 2000,
+          "showIf": { "key": "datesWrong", "equals": true },
+          "label": { "en": "What should they be?", "ar": "شنو التواريخ الصح؟" }
+        },
+        {
+          "key": "reason",
+          "type": "choice",
+          "required": true,
+          "label": {
+            "en": "Why are you pausing?",
+            "ar": "ليش تبي توقف الحملة؟"
+          },
+          "options": [
+            { "value": "travel", "label": { "en": "Travel", "ar": "سفر" } },
+            {
+              "value": "closure",
+              "label": { "en": "Temporary closure", "ar": "سكّرنا مؤقتاً" }
+            },
+            {
+              "value": "capacity",
+              "label": {
+                "en": "We are at capacity",
+                "ar": "عندنا شغل فوق طاقتنا"
+              }
+            },
+            {
+              "value": "season",
+              "label": { "en": "Ramadan or a season", "ar": "رمضان أو موسم" }
+            },
+            {
+              "value": "other",
+              "label": { "en": "Something else", "ar": "شي ثاني" }
+            }
+          ]
+        },
+        {
+          "key": "details",
+          "type": "longtext",
+          "required": true,
+          "maxLength": 2000,
+          "label": { "en": "Tell us a little more", "ar": "قول لنا أكثر شوي" }
+        },
+        {
+          "key": "consentTerm",
+          "type": "tick",
+          "required": true,
+          "showIf": { "key": "datesWrong", "equals": false },
+          "label": {
+            "en": "I understand the 90-day term keeps running during the pause.",
+            "ar": "أدري إن مدة العقد ٩٠ يوم تظل تمشي خلال الإيقاف."
+          }
+        },
+        {
+          "key": "consentOver14",
+          "type": "tick",
+          "required": true,
+          "showIf": { "key": "datesWrong", "equals": false },
+          "boldIf": { "context": "over14", "equals": true },
+          "label": {
+            "en": "I understand that a pause longer than 14 days ends our agreement.",
+            "ar": "أدري إن الإيقاف إذا زاد عن ١٤ يوم ينتهي فيه الاتفاق بيننا."
+          }
+        },
+        {
+          "key": "anythingElse",
+          "type": "longtext",
+          "required": false,
+          "maxLength": 2000,
+          "label": {
+            "en": "Anything else for your Mahara team?",
+            "ar": "تبي تقول شي ثاني لفريق مهارة؟"
+          }
+        }
+      ],
+      "reads": {
+        "consent_gate": ["datesWrong", "consentTerm", "consentOver14"]
+      },
+      "submit": { "en": "Confirm the pause", "ar": "أكّد الإيقاف" },
+      "done": {
+        "en": "Confirmed. Your account manager takes it from here.",
+        "ar": "تم التأكيد. مدير حسابك بيكمل الباقي."
+      },
+      "doneIf": [
+        {
+          "key": "datesWrong",
+          "equals": true,
+          "text": {
+            "en": "Sent. Your account manager will fix the dates and send it again.",
+            "ar": "وصل. مدير حسابك بيعدّل التواريخ ويرسله لك مرة ثانية."
+          }
+        }
+      ],
+      "invite": {
+        "whatsapp": {
+          "en": "Hi {client} team, here is the pause we agreed on the call. Check the dates and confirm here: {form_link}",
+          "ar": "هلا فريق {client}، هذا الإيقاف المؤقت اللي اتفقنا عليه بالمكالمة. شيّكوا على التواريخ وأكّدوا من هني: {form_link}"
+        },
+        "push": {
+          "en": "Your account manager sent the pause to confirm. Tap to open it.",
+          "ar": "مدير حسابك أرسل لك الإيقاف عشان تأكده. اضغط وافتحه."
+        }
+      }
+    },
+    "kitchen": {
+      "v": 1,
+      "key": "kitchen",
+      "title": { "en": "Every question type", "ar": "كل أنواع الأسئلة" },
+      "intro": null,
+      "minutes": 3,
+      "audience": "any",
+      "signer": "none",
+      "context": [],
+      "fields": [
+        {
+          "key": "pick",
+          "type": "choice",
+          "required": true,
+          "label": { "en": "Pick one", "ar": "اختار وحدة" },
+          "options": [
+            { "value": "one", "label": { "en": "One", "ar": "وحدة" } },
+            { "value": "two", "label": { "en": "Two", "ar": "ثنتين" } }
+          ]
+        },
+        {
+          "key": "many",
+          "type": "multi",
+          "required": true,
+          "label": { "en": "Pick any", "ar": "اختار اللي تبي" },
+          "options": [
+            { "value": "red", "label": { "en": "Red", "ar": "أحمر" } },
+            { "value": "blue", "label": { "en": "Blue", "ar": "أزرق" } },
+            { "value": "green", "label": { "en": "Green", "ar": "أخضر" } }
+          ]
+        },
+        {
+          "key": "short",
+          "type": "text",
+          "required": false,
+          "maxLength": 10,
+          "label": { "en": "A short line", "ar": "سطر قصير" }
+        },
+        {
+          "key": "name",
+          "type": "text",
+          "required": true,
+          "label": { "en": "Your shop's name", "ar": "اسم محلك" }
+        },
+        {
+          "key": "more",
+          "type": "longtext",
+          "required": false,
+          "showIf": { "key": "pick", "equals": "two" },
+          "label": { "en": "Why two?", "ar": "ليش ثنتين؟" }
+        },
+        {
+          "key": "agree",
+          "type": "tick",
+          "required": false,
+          "label": { "en": "I agree", "ar": "موافق" }
+        }
+      ],
+      "submit": { "en": "Send", "ar": "أرسل" },
+      "done": { "en": "Thank you.", "ar": "مشكور." }
+    }
+  },
+  "rows": [
+    {
+      "name": "nps: the promoter",
+      "schema": "nps",
+      "answers": { "recommend": 9 },
+      "context": {},
+      "ok": true,
+      "errors": {}
+    },
+    {
+      "name": "nps: every question, texts collapsed",
+      "schema": "nps",
+      "answers": {
+        "recommend": 10,
+        "results": 0,
+        "communication": 1,
+        "startStop": "  Keep   the weekly call  "
+      },
+      "context": {},
+      "ok": true,
+      "errors": {},
+      "stored": {
+        "recommend": 10,
+        "results": 0,
+        "communication": 1,
+        "startStop": "Keep the weekly call"
+      }
+    },
+    {
+      "name": "nps: nothing answered",
+      "schema": "nps",
+      "answers": {},
+      "context": {},
+      "ok": false,
+      "errors": { "recommend": "required" }
+    },
+    {
+      "name": "nps: a null is no answer",
+      "schema": "nps",
+      "answers": { "recommend": null },
+      "context": {},
+      "ok": false,
+      "errors": { "recommend": "required" }
+    },
+    {
+      "name": "nps: over the top",
+      "schema": "nps",
+      "answers": { "recommend": 11 },
+      "context": {},
+      "ok": false,
+      "errors": { "recommend": "range" }
+    },
+    {
+      "name": "nps: below zero",
+      "schema": "nps",
+      "answers": { "recommend": -1 },
+      "context": {},
+      "ok": false,
+      "errors": { "recommend": "range" }
+    },
+    {
+      "name": "nps: not a whole number",
+      "schema": "nps",
+      "answers": { "recommend": 7.5 },
+      "context": {},
+      "ok": false,
+      "errors": { "recommend": "range" }
+    },
+    {
+      "name": "nps: a number as text",
+      "schema": "nps",
+      "answers": { "recommend": "7" },
+      "context": {},
+      "ok": false,
+      "errors": { "recommend": "range" }
+    },
+    {
+      "name": "nps: communication starts at 1",
+      "schema": "nps",
+      "answers": { "recommend": 0, "communication": 0 },
+      "context": {},
+      "ok": false,
+      "errors": { "communication": "range" }
+    },
+    {
+      "name": "nps: a blank optional text is no answer",
+      "schema": "nps",
+      "answers": { "recommend": 5, "startStop": "   " },
+      "context": {},
+      "ok": true,
+      "errors": {},
+      "stored": { "recommend": 5 }
+    },
+    {
+      "name": "nps: an unknown answer",
+      "schema": "nps",
+      "answers": { "recommend": 8, "leadsThisMonth": 4 },
+      "context": {},
+      "ok": false,
+      "errors": { "leadsThisMonth": "unknown" }
+    },
+    {
+      "name": "csat: the lowest score",
+      "schema": "csat",
+      "answers": { "onboarding": 1, "disliked": "Slow start" },
+      "context": {},
+      "ok": true,
+      "errors": {}
+    },
+    {
+      "name": "csat: zero is under the scale",
+      "schema": "csat",
+      "answers": { "onboarding": 0 },
+      "context": {},
+      "ok": false,
+      "errors": { "onboarding": "range" }
+    },
+    {
+      "name": "pause: signed",
+      "schema": "pause_consent",
+      "answers": {
+        "reason": "travel",
+        "details": "Family trip in December",
+        "consentTerm": true,
+        "consentOver14": true
+      },
+      "context": {
+        "start": "2026-11-05",
+        "restart": "2026-11-15",
+        "over14": false
+      },
+      "ok": true,
+      "errors": {}
+    },
+    {
+      "name": "pause: the consents are required while the dates stand",
+      "schema": "pause_consent",
+      "answers": { "reason": "travel", "details": "Trip" },
+      "context": {},
+      "ok": false,
+      "errors": { "consentTerm": "required", "consentOver14": "required" }
+    },
+    {
+      "name": "pause: an unticked consent is no consent",
+      "schema": "pause_consent",
+      "answers": {
+        "reason": "season",
+        "details": "Ramadan",
+        "consentTerm": false,
+        "consentOver14": true
+      },
+      "context": {},
+      "ok": false,
+      "errors": { "consentTerm": "required" }
+    },
+    {
+      "name": "pause: dates wrong asks what they should be",
+      "schema": "pause_consent",
+      "answers": {
+        "datesWrong": true,
+        "datesNote": "Start on the 10th",
+        "reason": "travel",
+        "details": "Trip"
+      },
+      "context": {},
+      "ok": true,
+      "errors": {}
+    },
+    {
+      "name": "pause: dates wrong without a note",
+      "schema": "pause_consent",
+      "answers": { "datesWrong": true, "reason": "travel", "details": "Trip" },
+      "context": {},
+      "ok": false,
+      "errors": { "datesNote": "required" }
+    },
+    {
+      "name": "pause: consents are hidden once the dates are wrong",
+      "schema": "pause_consent",
+      "answers": {
+        "datesWrong": true,
+        "datesNote": "Later",
+        "reason": "other",
+        "details": "x",
+        "consentTerm": true,
+        "consentOver14": true
+      },
+      "context": {},
+      "ok": false,
+      "errors": { "consentTerm": "hidden", "consentOver14": "hidden" }
+    },
+    {
+      "name": "pause: a note while the dates stand is hidden",
+      "schema": "pause_consent",
+      "answers": {
+        "datesWrong": false,
+        "datesNote": "Fine",
+        "reason": "travel",
+        "details": "Trip",
+        "consentTerm": true,
+        "consentOver14": true
+      },
+      "context": {},
+      "ok": false,
+      "errors": { "datesNote": "hidden" }
+    },
+    {
+      "name": "pause: a tick must be true or false",
+      "schema": "pause_consent",
+      "answers": {
+        "datesWrong": "yes",
+        "reason": "travel",
+        "details": "Trip",
+        "consentTerm": true,
+        "consentOver14": true
+      },
+      "context": {},
+      "ok": false,
+      "errors": { "datesWrong": "option" }
+    },
+    {
+      "name": "pause: a choice not on the list",
+      "schema": "pause_consent",
+      "answers": {
+        "reason": "money",
+        "details": "Trip",
+        "consentTerm": true,
+        "consentOver14": true
+      },
+      "context": {},
+      "ok": false,
+      "errors": { "reason": "option" }
+    },
+    {
+      "name": "pause by link: the typed name is required",
+      "schema": "pause_consent",
+      "answers": {
+        "reason": "travel",
+        "details": "Trip",
+        "consentTerm": true,
+        "consentOver14": true
+      },
+      "context": { "signer": "  " },
+      "ok": false,
+      "errors": { "signer": "required" }
+    },
+    {
+      "name": "pause by link: a one-letter name is too short",
+      "schema": "pause_consent",
+      "answers": {
+        "reason": "travel",
+        "details": "Trip",
+        "consentTerm": true,
+        "consentOver14": true
+      },
+      "context": { "signer": "A" },
+      "ok": false,
+      "errors": { "signer": "length" }
+    },
+    {
+      "name": "pause by link: a full name",
+      "schema": "pause_consent",
+      "answers": {
+        "reason": "travel",
+        "details": "Trip",
+        "consentTerm": true,
+        "consentOver14": true
+      },
+      "context": { "signer": "Noura Test" },
+      "ok": true,
+      "errors": {}
+    },
+    {
+      "name": "nps by link: no name is asked",
+      "schema": "nps",
+      "answers": { "recommend": 6 },
+      "context": { "signer": "" },
+      "ok": true,
+      "errors": {}
+    },
+    {
+      "name": "kitchen: every type answered",
+      "schema": "kitchen",
+      "answers": {
+        "pick": "two",
+        "many": ["red", "green"],
+        "short": "ok",
+        "name": "Acme",
+        "more": "Because",
+        "agree": true
+      },
+      "context": {},
+      "ok": true,
+      "errors": {}
+    },
+    {
+      "name": "kitchen: a choice not on the list",
+      "schema": "kitchen",
+      "answers": { "pick": "three", "many": ["red"], "name": "Acme" },
+      "context": {},
+      "ok": false,
+      "errors": { "pick": "option" }
+    },
+    {
+      "name": "kitchen: a choice as a number",
+      "schema": "kitchen",
+      "answers": { "pick": 1, "many": ["red"], "name": "Acme" },
+      "context": {},
+      "ok": false,
+      "errors": { "pick": "option" }
+    },
+    {
+      "name": "kitchen: a repeated pick",
+      "schema": "kitchen",
+      "answers": { "pick": "one", "many": ["red", "red"], "name": "Acme" },
+      "context": {},
+      "ok": false,
+      "errors": { "many": "option" }
+    },
+    {
+      "name": "kitchen: an empty pick list is no answer",
+      "schema": "kitchen",
+      "answers": { "pick": "one", "many": [], "name": "Acme" },
+      "context": {},
+      "ok": false,
+      "errors": { "many": "required" }
+    },
+    {
+      "name": "kitchen: a pick list as text",
+      "schema": "kitchen",
+      "answers": { "pick": "one", "many": "red", "name": "Acme" },
+      "context": {},
+      "ok": false,
+      "errors": { "many": "option" }
+    },
+    {
+      "name": "kitchen: over the length",
+      "schema": "kitchen",
+      "answers": {
+        "pick": "one",
+        "many": ["blue"],
+        "short": "eleven chars",
+        "name": "Acme"
+      },
+      "context": {},
+      "ok": false,
+      "errors": { "short": "length" }
+    },
+    {
+      "name": "kitchen: the length counts after collapsing",
+      "schema": "kitchen",
+      "answers": {
+        "pick": "one",
+        "many": ["blue"],
+        "short": "  ten   char  ",
+        "name": "Acme"
+      },
+      "context": {},
+      "ok": true,
+      "errors": {}
+    },
+    {
+      "name": "kitchen: a text as a number",
+      "schema": "kitchen",
+      "answers": { "pick": "one", "many": ["blue"], "name": 42 },
+      "context": {},
+      "ok": false,
+      "errors": { "name": "required" }
+    },
+    {
+      "name": "kitchen: a blank required text",
+      "schema": "kitchen",
+      "answers": { "pick": "one", "many": ["blue"], "name": " \n " },
+      "context": {},
+      "ok": false,
+      "errors": { "name": "required" }
+    },
+    {
+      "name": "kitchen: shown only after two",
+      "schema": "kitchen",
+      "answers": {
+        "pick": "one",
+        "many": ["blue"],
+        "name": "Acme",
+        "more": "Why not"
+      },
+      "context": {},
+      "ok": false,
+      "errors": { "more": "hidden" }
+    },
+    {
+      "name": "kitchen: an optional tick left false",
+      "schema": "kitchen",
+      "answers": {
+        "pick": "one",
+        "many": ["blue"],
+        "name": "Acme",
+        "agree": false
+      },
+      "context": {},
+      "ok": true,
+      "errors": {}
+    },
+    {
+      "name": "kitchen: several mistakes at once",
+      "schema": "kitchen",
+      "answers": {
+        "pick": "two",
+        "many": ["pink"],
+        "short": "far too long for it",
+        "agree": "y",
+        "extra": 1
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "many": "option",
+        "short": "length",
+        "name": "required",
+        "agree": "option",
+        "extra": "unknown"
+      }
+    }
+  ]
+}
