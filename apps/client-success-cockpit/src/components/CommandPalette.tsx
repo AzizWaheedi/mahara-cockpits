@@ -10,7 +10,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { LINK_GROUPS } from "@/lib/csmLinks";
+import { linkGroupsFor, OLD_FORM } from "@/lib/csmLinks";
 import { TEMPLATE_TITLES } from "@/lib/csmTemplates";
 import { displayLabel } from "@/lib/format";
 import { useCheckinEntry } from "@/lib/formsRegistry";
@@ -207,16 +207,34 @@ const CLIENT_TABS: { tab: string; label: string; keywords: string }[] = [
   },
 ];
 
-const LINKS: Hit[] = LINK_GROUPS.flatMap(g =>
-  g.rows.map(r => ({
-    value: `link:${r.url}|${r.label}`,
-    label: r.label,
-    sub: r.note ?? g.title,
-    kind: "Link" as const,
-    href: r.url,
-    external: true,
-    keywords: [r.label, r.note ?? "", g.title],
-  })),
+// The palette does not read which client forms are live, so a form moving
+// into the cockpit is found both ways until its old Typeform is retired
+// (WAVE34-CONTRACT.md 4.11): the cockpit row, and the old form, still live.
+const LINKS: Hit[] = linkGroupsFor(null).flatMap(g =>
+  g.rows.flatMap(r => [
+    {
+      value: `link:${r.url}|${r.label}`,
+      label: r.label,
+      sub: r.note ?? g.title,
+      kind: "Link" as const,
+      href: r.url,
+      external: true,
+      keywords: [r.label, r.note ?? "", g.title],
+    },
+    ...(r.form
+      ? [
+          {
+            value: `link:${r.form.oldUrl}|${r.label}:old`,
+            label: `${r.label.replace(/ \(in the cockpit\)$/, "")}: ${OLD_FORM.replace(/:$/, "").toLowerCase()}`,
+            sub: "Until the portal forms switch on",
+            kind: "Link" as const,
+            href: r.form.oldUrl,
+            external: true,
+            keywords: [r.label, "typeform", g.title],
+          },
+        ]
+      : []),
+  ]),
 );
 
 function readRecent(actor: string): string[] {

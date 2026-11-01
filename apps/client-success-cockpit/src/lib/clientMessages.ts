@@ -328,6 +328,14 @@ export function notSentLine(
     : `${stop(reason)} ${TRIES_USED_UP}`;
 }
 
+/**
+ * A recap, not a form link: `form_invite` messages (waves 3-4) are approved
+ * from Send a form and Forms out through invite.approve, and recap.approve
+ * refuses them, so the recap card and its Today rows leave them out.
+ */
+export const isRecap = (m: Pick<MessageView, "kind">) =>
+  m.kind !== "form_invite";
+
 /** A message that waits on a person (Today's rows, the reminder). */
 export const WAITING_STATES: ReadonlySet<MessageState> = new Set([
   "draft",

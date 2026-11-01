@@ -120,7 +120,52 @@ export type BriefInput = {
     stale?: boolean;
     threads: WaThread[];
   } | null;
+  /**
+   * The client's own NPS and onboarding scores (cockpit_client_voice_read,
+   * WAVE34-CONTRACT.md 5.4). The client page may also hand them in on the
+   * row as `voice`; either way only an answer under 30 days old is said.
+   */
+  voice?: VoiceBrief[] | null;
 };
+
+/** One score the brief may say: the survey, the score, its time and the low-score line. */
+export type VoiceBrief = {
+  formKey: "nps" | "csat";
+  score: number;
+  at: string;
+  /** At or under this is a low score (voice.low_score.max). */
+  max: number;
+};
+
+/**
+ * The brief's line about the client's own score (5.4): the newest NPS or
+ * onboarding answer under 30 days old, "Said 9/10 on the NPS survey on 3
+ * Nov.", with "Low score: call them." when it is at or under the line.
+ */
+export function voiceBriefLine(
+  voice: VoiceBrief[] | null | undefined,
+  now: number,
+): BriefLine | null {
+  const fresh = (voice ?? [])
+    .filter(v => Number.isFinite(v.score) && Number.isFinite(Date.parse(v.at)))
+    .filter(
+      v =>
+        now - Date.parse(v.at) < 30 * 86_400_000 &&
+        Date.parse(v.at) <= now + 60_000,
+    )
+    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  const v = fresh[0];
+  if (!v) return null;
+  const survey = v.formKey === "csat" ? "onboarding survey" : "NPS survey";
+  const day = kuwaitDay(v.at);
+  const low = v.score <= v.max;
+  return {
+    text: `Said ${v.score}/10 on the ${survey} on ${day}.${low ? " Low score: call them." : ""}`,
+    source: "The client's answer",
+    day,
+    risk: low || undefined,
+  };
+}
 
 export type WaThread = {
   name: string;
@@ -3585,6 +3630,13 @@ export function buildBrief(input: BriefInput): Brief {
         text: `Their mood was last recorded on ${brief.defcon.day} (${brief.defcon.value}). Ask, and update the 1-1 form.`,
         source: "1-1 form",
       });
+    // The client's own score (5.4): a low one near the top, a good one after the work.
+    const voiceLine = voiceBriefLine(
+      input.voice ??
+        (Array.isArray(c.voice) ? (c.voice as VoiceBrief[]) : null),
+      now,
+    );
+    if (voiceLine) add(voiceLine.risk ? 1.1 : 9, voiceLine);
     // Ranked, said once, at most six; only the first says "before anything else".
     const kept: Cand[] = [];
     for (const l of raise.sort((a, b) => a.rank - b.rank)) {
