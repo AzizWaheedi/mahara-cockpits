@@ -51,6 +51,8 @@ export type Departure = {
   createdAt: string;
   updatedBy: string | null;
   updatedAt: string;
+  /** The confirm's columns; absent on a read from before 20261101o. */
+  confirm?: DepartureConfirm;
 };
 
 export type CountsAs = "churn" | "completed" | "unknown";
@@ -290,4 +292,230 @@ export function departureProblem(d: {
   )
     return "MRR lost is a dollar amount, 0 or more.";
   return null;
+}
+
+// --- The confirm (docs/forms/WAVE12-CONTRACT.md 4.5, 5.5) ------------------------------------
+
+/** The card's Churn Type, as the confirm records it. */
+export type ChurnType = "mid_programme" | "completed";
+export type SurveyState = "not_sent" | "sent" | "filled" | "declined";
+
+/** What a register row knows about its confirm (20261101o). Null: nobody holds it. */
+export type DepartureConfirm = {
+  noticeOn: string | null;
+  surveyState: SurveyState | null;
+  surveyResponseId: string | null;
+  whyDetail: string | null;
+  howToStop: string | null;
+  churnType: ChurnType | null;
+  /** The confirm's time; null while the row is logged, not confirmed. */
+  confirmedAt: string | null;
+  /** "the CSM", "the CEO": never an address. */
+  confirmedRole: string | null;
+  /** The card write's queue state: held, queued, sending, retry, delivered, skipped, failed, unknown, none. */
+  cardState: string | null;
+  cardError: string | null;
+  /** The day-90 rule's answer for this row (cockpit_churn_type_default). */
+  typeDefault: ChurnType | null;
+};
+
+export const CHURN_TYPE_WORDS: Record<ChurnType, string> = {
+  mid_programme: "Counts as churn",
+  completed: "Finished the term",
+};
+
+/** The Kuwait day (YYYY-MM-DD) of a timestamp; Kuwait has no daylight saving. */
+export function kuwaitIsoDay(at: string | null | undefined): string | null {
+  if (!at) return null;
+  const t = Date.parse(at);
+  if (Number.isNaN(t))
+    return /^\d{4}-\d{2}-\d{2}/.test(at) ? at.slice(0, 10) : null;
+  return new Date(t + 3 * 3_600_000).toISOString().slice(0, 10);
+}
+
+/**
+ * The register's status line (5.5): "Confirmed {day} · {role}" with a teal
+ * ring, or "Logged, not confirmed" in amber. `day` is "1 Nov" style.
+ */
+export function confirmLine(
+  c: Pick<DepartureConfirm, "confirmedAt" | "confirmedRole">,
+  dayWords: (iso: string) => string,
+): { confirmed: boolean; line: string } {
+  const day = kuwaitIsoDay(c.confirmedAt);
+  if (!day) return { confirmed: false, line: "Logged, not confirmed" };
+  return {
+    confirmed: true,
+    line: `Confirmed ${dayWords(day)}${c.confirmedRole ? ` · ${c.confirmedRole}` : ""}`,
+  };
+}
+
+export type CardTone = "good" | "warn" | "bad" | "neutral";
+
+/**
+ * Where the confirm stands on the ClickUp card, in the FormSheet trail's
+ * words (5.1): `line` is the full sentence, `short` fits a register row.
+ */
+export function cardLine(
+  state: string | null | undefined,
+  error?: string | null,
+): { tone: CardTone; line: string; short: string } | null {
+  const say = (tone: CardTone, line: string, short = line) => ({
+    tone,
+    line,
+    short,
+  });
+  switch (state) {
+    case null:
+    case undefined:
+    case "":
+      return null;
+    case "none":
+      return say("neutral", "Nothing to write on the card");
+    case "held":
+    case "dry_run":
+      return say(
+        "warn",
+        "Held: card writes for churn are off. When the CEO turns them on, this edit is reviewed and sent or closed.",
+        "Held: card writes for churn are off",
+      );
+    case "queued":
+      return say("warn", "Queued for the ClickUp card");
+    case "sending":
+    case "retry":
+    case "unknown":
+      return say("warn", "Waiting for ClickUp to confirm");
+    case "delivered":
+      return say("good", "Card shows it");
+    case "skipped":
+      return /voided|closed/i.test(error ?? "")
+        ? say("neutral", `Closed: ${error}`, "Closed in the cockpit")
+        : say(
+            "neutral",
+            "ClickUp already showed this, so nothing was written.",
+            "Card already showed it",
+          );
+    case "failed":
+      return say(
+        "bad",
+        `ClickUp refused it${error ? `: ${error}` : ""}. It stays in the cockpit; tell the systems manager.`,
+        "ClickUp refused it",
+      );
+    default:
+      return say("neutral", `Card: ${state}`);
+  }
+}
+
+/**
+ * The tracker counts by the day-90 rule (it feeds pay); a confirmed type that
+ * reads otherwise is said beside the row, never silently counted.
+ */
+export function typeNote(d: {
+  leftOn: string;
+  launchedOn: string | null;
+  churnType: ChurnType | null;
+}): string | null {
+  if (!d.churnType) return null;
+  const rule = countsAs(d);
+  if (rule === "unknown") return null;
+  if (rule === "churn" && d.churnType === "completed")
+    return "Confirmed as a finished term; the day-90 rule still counts it as churn here.";
+  if (rule === "completed" && d.churnType === "mid_programme")
+    return "Confirmed as churn on the card; the day-90 rule counts it as a finished term here, and pay reads that.";
+  return null;
+}
+
+/** The "Not leaving" note, checked as cockpit_form_notice_answer checks it. */
+export function answerProblem(note: string): string | null {
+  return note.trim().replace(/\s+/g, " ").length < 4
+    ? "Say what the client said, so the answer reads back."
+    : null;
+}
+
+/** The exit survey's state, in words. */
+export const SURVEY_WORDS: Record<SurveyState, string> = {
+  not_sent: "Exit survey not sent",
+  sent: "Exit survey sent",
+  filled: "Exit survey filled",
+  declined: "Exit survey declined",
+};
+
+/** One prefilled answer and where it came from, shown as "{value} · from {source}" (FormSheet). */
+export type PrefillLine = { key: string; value: unknown; source: string };
+
+/**
+ * The confirm's answers the tracker already holds, for FormSheet: the
+ * register row, the termination survey or the card. The server's prefill
+ * (cockpit_form_prefill) wins key by key when it is open; this fills the
+ * rest, and leaves out what nobody holds rather than guessing it.
+ */
+export function confirmPrefill(x: {
+  leftOn?: string | null;
+  leftOnFrom?: "register" | "card";
+  reason?: string | null;
+  mrrLostUsd?: number | null;
+  mrrFrom?: "register" | "card";
+  churnType?: ChurnType | null;
+  typeDefault?: ChurnType | null;
+  survey?: { noticeOn: string | null; dayWords: string } | null;
+}): PrefillLine[] {
+  const out: PrefillLine[] = [];
+  const from = (f?: "register" | "card") =>
+    f === "card" ? "the ClickUp card" : "the churn register";
+  if (x.leftOn)
+    out.push({ key: "leftOn", value: x.leftOn, source: from(x.leftOnFrom) });
+  if (x.survey?.noticeOn)
+    out.push({
+      key: "noticeOn",
+      value: x.survey.noticeOn,
+      source: `the termination survey, ${x.survey.dayWords}`,
+    });
+  if (x.survey)
+    out.push({
+      key: "surveyState",
+      value: "filled",
+      source: `the termination survey, ${x.survey.dayWords}`,
+    });
+  if (x.reason && (REASONS as readonly string[]).includes(x.reason))
+    out.push({ key: "reason", value: x.reason, source: "the churn register" });
+  if (x.churnType)
+    out.push({
+      key: "churnType",
+      value: x.churnType,
+      source: "the churn register",
+    });
+  else if (x.typeDefault)
+    out.push({
+      key: "churnType",
+      value: x.typeDefault,
+      source: "the day-90 rule",
+    });
+  if (
+    x.mrrLostUsd !== null &&
+    x.mrrLostUsd !== undefined &&
+    Number.isFinite(x.mrrLostUsd)
+  )
+    out.push({
+      key: "mrrLostUsd",
+      value: x.mrrLostUsd,
+      source: from(x.mrrFrom),
+    });
+  return out;
+}
+
+/** Server rows first, then the tracker's own for the keys the server left out. */
+export function mergePrefill(
+  server: PrefillLine[],
+  local: PrefillLine[],
+): PrefillLine[] {
+  const have = new Set(
+    server
+      .filter(p => p.value !== null && p.value !== undefined)
+      .map(p => p.key),
+  );
+  return [
+    ...server.filter(
+      p => !(p.value === null && local.some(l => l.key === p.key)),
+    ),
+    ...local.filter(l => !have.has(l.key)),
+  ];
 }
