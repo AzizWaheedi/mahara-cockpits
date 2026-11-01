@@ -58,14 +58,9 @@ import {
   tabWindow,
 } from "@/components/ceo/tabWindow";
 import { useTimeframe } from "@/components/ceo/timeframe";
-import { Button } from "@/components/ui/button";
-import { api, useAction } from "@/lib/cockpitApi";
 import { CPL_GATE } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
-import type {
-  ApplyResult,
-  ExtensionsWithLastMonth,
-} from "@/types/ceo/extensions";
+import type { ExtensionsWithLastMonth } from "@/types/ceo/extensions";
 import type {
   ChurnClient,
   ClientRow,
@@ -298,7 +293,7 @@ const NOTE_ROUTES: readonly (readonly [RegExp, CardKey[]])[] = [
   [/churn and renewals/i, ["terms"]],
   [/risk points/i, ["risk"]],
   [
-    /extension form|current extension|first launch|average retainer|billing fields/i,
+    /extension form|extension grant|extensions are|current extension|first launch|average retainer|billing fields/i,
     ["extensions"],
   ],
   [/portal/i, ["portal", "roster"]],
@@ -526,7 +521,7 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
         <SectionCard
           kicker={w ? w.label : "Month to date"}
           title="Extensions and launches"
-          description="From the Client Extension Form and the card's dates, first launch only"
+          description="Extensions from the billing sheet and the client page, launches from the card's dates, first launch only"
           section={clients}
           notes={cardNotes(routed, "extensions")}
           order={5}
@@ -864,13 +859,12 @@ const EXT_LIST_START = 8;
 const LAUNCH_LIST_MAX = 10;
 
 /**
- * Weeks of extension granted on the Client Extension Form, who is covered
- * today, time from the card's creation to its Launch Date, and the average
- * retainer, with the one write this tab makes: the current extension onto
- * the ClickUp card. The hourly job (mahara-ceo-extensions-auto, :47) keeps
- * the field current from the extension form when CEO_EXTENSIONS_APPLY is on
- * (A120/A136); the button writes it now. The line beside the button is the
- * worker's own sentence about that job, so it says when writes are off.
+ * Weeks of extension granted, who is covered today, time from the card's
+ * creation to its Launch Date, and the average retainer. A grant is "Give
+ * more time" on the client page or Extend on the billing sheet, read from
+ * cockpit_extensions_v (WAVE12-CONTRACT 4.11.3). This tab writes nothing: the
+ * billing queue is the one writer of the card's extension field, so the old
+ * "Write current extensions to ClickUp" button is gone.
  */
 function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
   const ext = payload.extensions ?? null;
@@ -903,21 +897,19 @@ function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
           variant="plain"
           label="Weeks granted"
           value={isNum(inWin.totalWeeks) ? count(inWin.totalWeeks) : null}
-          naHint={
-            inWin.why ?? "The Client Extension Form was not read this run"
-          }
+          naHint={inWin.why ?? "The extension grants were not read this run"}
           sub={
             isNum(inWin.grants)
               ? `${plural(inWin.grants, "grant")}, ${windowWords}${lastMonth && win?.w?.range === "mtd" ? ` · last month ${plural(lastMonth.totalWeeks, "week")}` : ""}`
               : windowWords
           }
-          hint="Weeks of billing extension granted on the Client Extension Form in the timeframe above, dated by the day the form was submitted."
+          hint="Weeks of billing extension given with Give more time or the billing sheet's Extend in the timeframe above, dated by the day each was given."
         />
         <StatTile
           variant="plain"
           label="Clients with a live extension"
           value={ext ? count(live.length) : null}
-          naHint="The Client Extension Form was not read this run"
+          naHint="The extension grants were not read this run"
           sub={
             ext
               ? nextToEnd
@@ -925,7 +917,7 @@ function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
                 : "No cover running today"
               : undefined
           }
-          hint="Clients whose latest extension ends today or later. The clock starts at submission."
+          hint="Clients whose latest extension ends today or later. The clock starts the day it was given."
         />
         <StatTile
           variant="plain"
@@ -971,7 +963,7 @@ function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
           sub={
             ext
               ? `${win?.w ? win.w.label : `${date(ext.from)} to ${date(ext.to)}`}, plus any cover still running`
-              : "The form was not read this run"
+              : "The grants were not read this run"
           }
         >
           {!ext ? (
@@ -1024,7 +1016,11 @@ function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
         </ListBlock>
       </div>
 
-      {ext ? <WriteExtensions field={ext.clickupField} /> : null}
+      {ext ? (
+        <p className="mt-6 border-t border-[color:var(--ceo-grid)] pt-4 text-xs leading-relaxed text-muted-foreground">
+          The billing sheet writes the extension to the card.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -1036,7 +1032,7 @@ function ExtensionList({ rows }: { rows: Extensions["perClient"] }) {
       <EmptyState
         icon={CalendarSync}
         title="No extension in these days and none running"
-        text="Nothing was granted on the Client Extension Form in the timeframe."
+        text="Nothing was given in these days. Give more time on the client page records the next one."
         compact
       />
     );
@@ -1056,7 +1052,7 @@ function ExtensionList({ rows }: { rows: Extensions["perClient"] }) {
               />
               {!c.clickupTaskId ? (
                 <p className="truncate text-xs text-muted-foreground">
-                  As typed on the form, no card matched
+                  No card on the roster holds this grant
                 </p>
               ) : null}
             </div>
@@ -1090,60 +1086,6 @@ function ExtensionList({ rows }: { rows: Extensions["perClient"] }) {
         />
       ) : null}
     </>
-  );
-}
-
-/** One sentence from the write's result: what landed, what did not, and why. */
-function applySentence(r: ApplyResult): string {
-  const parts: string[] = [];
-  if (r.written) parts.push(`${plural(r.written, "card")} set`);
-  if (r.cleared) parts.push(`${plural(r.cleared, "card")} cleared to 0`);
-  if (r.skipped) parts.push(`${plural(r.skipped, "gone card")} left alone`);
-  if (r.errors.length)
-    parts.push(
-      `${plural(r.errors.length, "write")} failed: ${r.errors.slice(0, 3).join("; ")}`,
-    );
-  return `${parts.length ? `${parts.join(", ")}. ` : ""}${r.note}`;
-}
-
-/** The one write on this tab: the current extension onto the ClickUp cards, on request. */
-function WriteExtensions({ field }: { field: Extensions["clickupField"] }) {
-  const apply = useAction(api.ceo.extensions.applyToClickUp);
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
-  const run = async () => {
-    setBusy(true);
-    try {
-      const r: ApplyResult = await apply({});
-      setResult(applySentence(r));
-    } catch (e) {
-      setResult(
-        `Nothing was written: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`,
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <div className="mt-6 flex flex-wrap items-start gap-3 border-t border-[color:var(--ceo-grid)] pt-4">
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        onClick={() => void run()}
-        disabled={busy}
-        aria-busy={busy}
-      >
-        <CalendarSync aria-hidden />
-        {busy ? "Writing..." : "Write current extensions to ClickUp"}
-      </Button>
-      <p
-        role="status"
-        className="min-w-0 flex-1 basis-60 text-xs leading-relaxed text-muted-foreground"
-      >
-        {result ?? field.note}
-      </p>
-    </div>
   );
 }
 

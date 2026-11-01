@@ -60,7 +60,9 @@ import {
   approvePayload,
   baseNote,
   basisWords,
+  CASH_NOT_CHECKED,
   CONDITIONS_SENTENCE,
+  cashCheckSentence,
   confirmFor,
   dayText,
   driftNote,
@@ -69,6 +71,7 @@ import {
   isCashPart,
   isTypedPart,
   lineWorking,
+  manualLoggedOfFacts,
   monthChips,
   monthHeadline,
   monthName,
@@ -81,6 +84,7 @@ import {
   planSourceWords,
   statusChip,
   thisMonth,
+  uncheckedCash,
   valueText,
   whyNotApproved,
 } from "./payCopy";
@@ -443,7 +447,7 @@ export function PayMonthCard({
               month={shown}
               people={ready}
               leftOut={shown.people.flatMap(p => {
-                const why = whyNotApproved(p);
+                const why = whyNotApproved(p, shown.facts);
                 return why ? [{ name: p.name, why }] : [];
               })}
               onClose={() => setApproving(false)}
@@ -903,6 +907,8 @@ function CommissionLineRow({
   const ym = a.month.month.slice(0, 7);
   const working = lineWorking(line);
   const waiting = arr(line.waiting).map(obj);
+  // Hand-logged cash not checked against the bank: the line waits, and the person is left out of Approve.
+  const unchecked = approved ? null : uncheckedCash(line, a.month.facts);
   const value =
     line.state === "not_here" ? (
       <span className="text-xs font-normal text-muted-foreground">
@@ -921,9 +927,18 @@ function CommissionLineRow({
           {line.state === "waiting" ? (
             <StatusChip tone="warning" label="Waiting for you" />
           ) : null}
+          {unchecked ? (
+            <StatusChip tone="warning" label={CASH_NOT_CHECKED} />
+          ) : null}
         </span>
       }
-      note={[working, line.note].filter(Boolean).join(" · ")}
+      note={[
+        working,
+        line.note,
+        unchecked ? cashCheckSentence(unchecked) : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")}
       value={
         line.state === "waiting" && line.amountUsd !== null ? (
           <span>
@@ -1511,6 +1526,7 @@ function WhereFrom({ month }: { month: PayMonth }) {
   const calls = obj(facts.calls);
   const clients = obj(facts.clients);
   const sales = obj(facts.sales);
+  const logged = manualLoggedOfFacts(month.facts);
   const nothing =
     !arr(ads.clients).length &&
     !arr(calls.agents).length &&
@@ -1538,6 +1554,12 @@ function WhereFrom({ month }: { month: PayMonth }) {
         {nothing ? (
           <p className="text-xs text-muted-foreground">
             {`Nothing was read for ${monthName(month.month)}: no ads, calls, client or deal figures.`}
+          </p>
+        ) : null}
+        {logged?.count ? (
+          <p className="flex flex-wrap items-baseline gap-2 text-xs text-muted-foreground">
+            <StatusChip tone="warning" label={CASH_NOT_CHECKED} />
+            <span>{`${plural(logged.count, "hand-logged payment")}, ${payUsd(logged.usd)}, not checked against the bank yet. Commission on that cash waits until finance or the CEO checks it on the Money tab.`}</span>
           </p>
         ) : null}
         {arr(ads.clients).length || notesOf(ads.note).length ? (

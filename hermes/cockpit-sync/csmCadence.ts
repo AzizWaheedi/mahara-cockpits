@@ -79,25 +79,33 @@ export type CallNote = {
   defcon?: string;
   priority?: string;
 };
-const EXT_FORM = "gqBcyK6g";
-const EXT_CLIENT_REF = "5145ff0c-009b-4f51-b3a9-4651efc908be";
-const EXT_DURATION_REF = "278c2f80-88bd-428e-b330-8c6b3175d63f";
+/**
+ * One card's billing facts (docs/forms/WAVE12-CONTRACT.md 4.11.1), by card id, never by typed name: the end of
+ * its live extension grant (cockpit_extensions_v) and its overdue step (cockpit_client_lifecycle_v), with the
+ * ladder's days from cockpit_settings billing.ladder. `until` is null when no grant runs.
+ */
+export type LadderStep = "pause_review" | "cancel_review" | "pause_day14";
+export type Extension = {
+  taskId: string;
+  until: string | null;
+  ladderStep?: LadderStep;
+  daysLate?: number | null;
+  pauseReviewDay?: number;
+  cancelReviewDay?: number;
+};
+/** The approved ladder (plan section 7): a pause review on day 4 late, a cancel review on day 15. */
+export const DEFAULT_LADDER = { pauseReviewDay: 4, cancelReviewDay: 15 } as const;
 
-export type Extension = { client: string; until: string };
+function factFor(taskId: string, exts: Extension[]): Extension | undefined {
+  return exts.find(e => e.taskId === taskId);
+}
 function liveExtension(
-  name: string,
+  taskId: string,
   exts: Extension[],
   today: string,
 ): string | undefined {
-  const key = name.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
-  let best: string | undefined;
-  for (const e of exts) {
-    const other = e.client.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
-    if (other.length < 4) continue;
-    if (!(other.includes(key) || key.includes(other))) continue;
-    if (e.until >= today && (!best || e.until > best)) best = e.until;
-  }
-  return best;
+  const until = factFor(taskId, exts)?.until;
+  return until && until >= today ? until : undefined;
 }
 
 function kuwaitToday(): string {
@@ -156,12 +164,23 @@ export function instruct(c: {
   launchDate?: string;
   paymentDue?: number;
   extendedUntil?: string;
+  /** The card's overdue step and days late from the cockpit's lifecycle view, with the ladder's days. */
+  ladder?: Pick<Extension, "ladderStep" | "daysLate" | "pauseReviewDay" | "cancelReviewDay">;
   /** Meta spend in the last 7 days while the card is still pre-launch. */
   liveSpend7d?: number;
   today: string;
 }): { todo: string; level: "red" | "amber" | "blue" | "green"; rank: number } {
   // Paused, stopped and cancelled clients carry no cadence at all. Reactivation is a
   // sales motion, not a CSM chore, and they used to flood the list with "call today".
+  // A paused card on pause day 14 or more is the ladder's one step for a paused client: restart or confirm churn.
+  // A review, never a change: the CSM decides on the client page (WAVE12-CONTRACT 4.8.2).
+  if (c.stage === "Paused" && c.ladder?.ladderStep === "pause_day14") {
+    return {
+      todo: `Paused ${c.ladder.daysLate ?? 14}+ days, restart them or confirm the churn`,
+      level: "amber",
+      rank: 41,
+    };
+  }
   if (DEAD.has(c.stage)) {
     return {
       todo: `${c.stage}, no cadence. Reactivation sits with sales.`,
@@ -182,9 +201,23 @@ export function instruct(c: {
   }
   if (c.paymentDue !== undefined) {
     const d = c.paymentDue;
-    if (d >= 3)
+    // The overdue steps come from the ladder (billing.ladder, editable on the CEO Billing tab), not a fixed "3+".
+    // The lifecycle view's step wins; a card the view does not hold falls back to the same days on its own date.
+    const pauseDay = c.ladder?.pauseReviewDay ?? DEFAULT_LADDER.pauseReviewDay;
+    const cancelDay = c.ladder?.cancelReviewDay ?? DEFAULT_LADDER.cancelReviewDay;
+    const late = c.ladder?.daysLate ?? d;
+    const step =
+      c.ladder?.ladderStep ??
+      (d >= cancelDay ? "cancel_review" : d >= pauseDay ? "pause_review" : undefined);
+    if (step === "cancel_review")
       return {
-        todo: "PAUSE REQUIRED, 3+ days past due with no logged extension",
+        todo: `${late} days past due, cancel review (day ${cancelDay} of the overdue steps)`,
+        level: "red",
+        rank: 0,
+      };
+    if (step === "pause_review")
+      return {
+        todo: `${late} days past due, pause review (day ${pauseDay} of the overdue steps)`,
         level: "red",
         rank: 0,
       };
@@ -340,11 +373,13 @@ export function buildSnapshot(input: {today:string;now:number;exts:Extension[];n
           ? dayNumber(today) - dayNumber(paymentDate)
           : undefined;
 
-      const extendedUntil = liveExtension(t.name, exts, today);
+      const extendedUntil = liveExtension(t.id, exts, today);
+      const fact = factFor(t.id, exts);
       const { todo, level, rank } = instruct({
         stage: stageName,
         liveSpend7d: liveSpendFor(t.name),
         extendedUntil,
+        ladder: fact?.ladderStep ? fact : undefined,
         silentDays,
         callDays,
         nextPoc,
@@ -502,7 +537,10 @@ export function buildSnapshot(input: {today:string;now:number;exts:Extension[];n
               (stageName === "GHOSTED" && !launchDate)
             ? "onboarding"
             : "management",
-        pauseRequired: (paymentDue ?? -99) >= 3 && !extendedUntil,
+        // The pause review of the overdue ladder: the lifecycle view's step, else the ladder's day on the card's date.
+        pauseRequired: fact?.ladderStep
+          ? fact.ladderStep === "pause_review" || fact.ladderStep === "cancel_review"
+          : (paymentDue ?? -99) >= DEFAULT_LADDER.pauseReviewDay && !extendedUntil,
         newSignup: stageName === "Needs Contacting",
         onboarding: PIPELINE.has(stageName),
         syncedAt: now,
