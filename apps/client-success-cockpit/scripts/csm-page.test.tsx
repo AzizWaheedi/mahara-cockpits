@@ -2032,10 +2032,14 @@ test("the Ads tab shows the ads read only, and Results links to it", async () =>
     // Lost reasons show once (2026-10-13): the dialer's under Calls, right
     // after Numbers, read for the profile's card and the period's dates;
     // the GoHighLevel list (its cleaned notes checked above) stays on Ads.
+    // Last month on Kuwait's calendar, as the page reads it (it was pinned to
+    // September and broke when November began).
+    const { periodOf } = await import("../src/lib/reportPeriod");
+    const lastMonth = periodOf("lastMonth");
     expect(callReads.at(-1)).toEqual({
       p_key: withLost.taskId,
-      p_from: "2026-09-01",
-      p_to: "2026-09-30",
+      p_from: lastMonth.from,
+      p_to: lastMonth.to,
     });
     expect(results).toContain("On track");
     expect(results).toContain("Why leads were lost");
