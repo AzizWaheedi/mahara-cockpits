@@ -319,6 +319,59 @@ for app in "$CS" "$MB" "$CD" "$ED" "$SA"; do
   [ -f "$app/src/lib/taskSeat.ts" ] || { echo "MISSING  $app/src/lib/taskSeat.ts"; fails=$((fails + 1)); }
 done
 
+# The staff forms' sheet (docs/forms/WAVE12-CONTRACT.md 4.12): FormSheet,
+# its rules and words, the five forms and every browser call of their doors,
+# in the client success and CEO cockpits, byte for byte, imports included.
+# The client success copy is the master. The core imports nothing; the rest
+# import only what 4.12 names, so the two copies build the same.
+FORM_SET="src/forms/staff/FormSheet.tsx src/forms/staff/formSheet.css
+src/forms/staff/formSheetCore.ts src/forms/staff/formDefs.ts
+src/forms/staff/lifecycleClient.ts"
+for f in $FORM_SET; do
+  if [ ! -f "$CS/$f" ] || [ ! -f "$MB/$f" ]; then
+    echo "MISSING  $f: $CS/$f or $MB/$f does not exist"; fails=$((fails + 1)); continue
+  fi
+  if ! cmp -s "$CS/$f" "$MB/$f"; then
+    echo "DRIFTED  $f: copy $CS/$f to $MB/"; fails=$((fails + 1))
+  fi
+done
+form_imports() {
+  local f="$1" allowed="$2"
+  [ -f "$CS/$f" ] || return 0
+  if grep -oE "(from|import) +[\"'][^\"']+[\"']" "$CS/$f" \
+    | grep -vE "[\"']($allowed)[\"']$" >/dev/null; then
+    echo "IMPORTS  $CS/$f may import only: $allowed"; fails=$((fails + 1))
+  fi
+}
+if [ -f "$CS/src/forms/staff/formSheetCore.ts" ] \
+  && grep -qE '^(import |export .* from )' "$CS/src/forms/staff/formSheetCore.ts"; then
+  echo "IMPORTS  $CS/src/forms/staff/formSheetCore.ts must stay import-free"; fails=$((fails + 1))
+fi
+form_imports src/forms/staff/FormSheet.tsx 'react|lucide-react|@/components/ui/sheet|\./formSheetCore|\./formSheet\.css'
+form_imports src/forms/staff/formDefs.ts '\./formSheetCore'
+form_imports src/forms/staff/lifecycleClient.ts '@supabase/supabase-js|\./formSheetCore'
+if [ -f "$CS/src/forms/staff/lifecycleClient.ts" ] \
+  && grep -E "[\"']@supabase/supabase-js[\"']" "$CS/src/forms/staff/lifecycleClient.ts" \
+  | grep -vqE "^import type \{ SupabaseClient \} from [\"']@supabase/supabase-js[\"'];$"; then
+  echo "IMPORTS  $CS/src/forms/staff/lifecycleClient.ts may take only the SupabaseClient type"
+  fails=$((fails + 1))
+fi
+if [ -f "$CS/src/forms/staff/formSheet.css" ]; then
+  if grep -q '@import' "$CS/src/forms/staff/formSheet.css"; then
+    echo "IMPORTS  $CS/src/forms/staff/formSheet.css must not @import anything"; fails=$((fails + 1))
+  fi
+  if grep -nE '#[0-9a-fA-F]{3,8}\b|\b(rgba?|hsla?|oklch)\(' "$CS/src/forms/staff/formSheet.css" >/dev/null; then
+    echo "COLOUR   $CS/src/forms/staff/formSheet.css may use only the apps' colour tokens"; fails=$((fails + 1))
+  fi
+fi
+
+# Checks waiting (checked money, WAVE12-CONTRACT.md 4.2.5): the list and its
+# calls are the same in both cockpits. Compared once either copy exists; a
+# copy in one app only is a miss.
+for f in src/components/billing/ChecksWaiting.tsx src/lib/paymentChecks.ts; do
+  if [ -f "$CS/$f" ] || [ -f "$MB/$f" ]; then same "$f" "$MB/$f" "$CS/$f"; fi
+done
+
 if [ "$fails" -ne 0 ]; then
   echo
   echo "$fails shared file(s) have drifted. Copy the good one over the others:"
