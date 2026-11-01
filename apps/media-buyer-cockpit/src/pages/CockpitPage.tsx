@@ -1563,6 +1563,52 @@ function Cockpit({ view }: { view: View }) {
     return m;
   }, [snap]);
 
+  /**
+   * One row per client for the Today header: its 7-day spend, leads and cost
+   * per lead, so its page is one step away. A client whose campaigns report
+   * no leads reads "leads n/a", never 0.
+   */
+  const clientPicks = useMemo(() => {
+    const byClient = new Map<
+      string,
+      { name: string; spend: number | null; leads: number | null }
+    >();
+    for (const c of (snap?.campaigns ?? []) as Campaign[]) {
+      if (c.internal) continue;
+      const name = clientOf(c);
+      const row = byClient.get(name) ?? { name, spend: null, leads: null };
+      const spend = Number(c.spend7d);
+      const leads = Number(c.leads7d);
+      if (Number.isFinite(spend)) row.spend = (row.spend ?? 0) + spend;
+      if (Number.isFinite(leads)) row.leads = (row.leads ?? 0) + leads;
+      byClient.set(name, row);
+    }
+    return [...byClient.values()]
+      .map(r => {
+        const cpl =
+          r.leads !== null && r.leads > 0 && r.spend !== null
+            ? `${moneyOr(r.spend / r.leads)}/lead`
+            : r.leads === null
+              ? null
+              : "no leads yet";
+        const label = [
+          r.name,
+          moneyOr(r.spend),
+          r.leads === null ? "leads n/a" : `${r.leads} leads`,
+          cpl,
+        ]
+          .filter(part => part !== null)
+          .join(" · ");
+        return { name: r.name, spend: r.spend, label };
+      })
+      .sort(
+        (a, b) =>
+          (b.spend ?? Number.NEGATIVE_INFINITY) -
+            (a.spend ?? Number.NEGATIVE_INFINITY) ||
+          a.name.localeCompare(b.name),
+      );
+  }, [snap?.campaigns]);
+
   if (sb.error) {
     return (
       <p role="alert" className="p-6 text-sm">
@@ -4120,12 +4166,36 @@ function Cockpit({ view }: { view: View }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {view === "sod" ? (
-            <Button size="sm" variant="outline" asChild>
-              <Link to="/eod">
-                <MoonStar aria-hidden />
-                End of day
-              </Link>
-            </Button>
+            <>
+              {/* One step to a client's page with its 7-day numbers in view (Muhammed, 1 November 2026). */}
+              <select
+                aria-label="Open a client"
+                defaultValue=""
+                disabled={clientPicks.length === 0}
+                className="h-8 max-w-[22rem] rounded-md border bg-background px-2 text-sm"
+                onChange={e => {
+                  const v = e.target.value;
+                  if (v) navigate(`/ads?account=${encodeURIComponent(v)}`);
+                }}
+              >
+                <option value="">
+                  {clientPicks.length === 0
+                    ? "No clients yet"
+                    : "Open a client…"}
+                </option>
+                {clientPicks.map(p => (
+                  <option key={p.name} value={p.name}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+              <Button size="sm" variant="outline" asChild>
+                <Link to="/eod">
+                  <MoonStar aria-hidden />
+                  End of day
+                </Link>
+              </Button>
+            </>
           ) : null}
           {view === "ads" ? <VerdictPlaybook /> : null}
           {reportProblem}
