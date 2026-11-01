@@ -1,18 +1,20 @@
-// The cron door for the CEO automatic extension pass (Convex ceoExtensions.applyAuto).
+// The cron door for the CEO automatic extension pass, retired in waves 1 and 2
+// (docs/forms/WAVE12-CONTRACT.md 4.11.3).
 //
-// cockpit-ceo-api stays behind the Supabase gateway (verify_jwt=true), and
-// pg_cron sends x-cron-secret, not a user token. So the scheduled pass has
-// its own function, deployed with --no-verify-jwt like the other cron
-// targets, that runs only extensionsAuto from cockpit-ceo-api/endpoints.ts.
-// The pass is a dry run unless CEO_EXTENSIONS_APPLY is 'true', and its last
-// run lands in cockpit_sync_state under 'ceo-extensions-auto'.
+// The ClickUp field 'Current extension (weeks)' has one writer now: the
+// billing queue (clickup-writeback, kind `billing`), which writes it with the
+// grant from "Give more time" or the billing sheet's Extend and clears it the
+// day after the grant ends. So this function writes nothing. It stays deployed
+// until pg_cron mahara-ceo-extensions-auto is unscheduled in the C1 window
+// (section 9, D-C1.5); until then each call answers the retired sentence and
+// marks cockpit_sync_state 'ceo-extensions-auto' with it, so the run state says
+// why nothing moved instead of going stale. No ClickUp or Typeform call.
 
-import {extensionsAuto} from '../cockpit-ceo-api/endpoints.ts';
+import {RETIRED} from '../cockpit-ceo-api/extensions.ts';
 
 type Env = (name: string) => string | undefined;
 // deno-lint-ignore no-explicit-any
 export type Admin = any;
-type Run = typeof extensionsAuto;
 
 function timingSafeEqual(a: string, b: string): boolean {
   const x = new TextEncoder().encode(a), y = new TextEncoder().encode(b);
@@ -23,9 +25,9 @@ function timingSafeEqual(a: string, b: string): boolean {
 
 const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), {status, headers: {'Content-Type': 'application/json'}});
 
-const KEYS = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'CLICKUP_API_TOKEN', 'TYPEFORM_TOKEN'];
+const KEYS = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'];
 
-export async function handle(req: Request, env: Env, connect: (url: string, key: string) => Admin, run: Run = extensionsAuto): Promise<Response> {
+export async function handle(req: Request, env: Env, connect: (url: string, key: string) => Admin, now: () => Date = () => new Date()): Promise<Response> {
   if (req.method !== 'POST') return reply({ok: false, note: 'Send a POST.'}, 405);
   const expected = (env('CRON_SECRET') ?? '').trim();
   if (!expected) return reply({ok: false, note: 'CRON_SECRET is not set on this Edge Function. Add it under Edge Functions, Secrets.'}, 503);
@@ -42,21 +44,25 @@ export async function handle(req: Request, env: Env, connect: (url: string, key:
   if (body.doctor === true)
     return reply({
       ok: KEYS.every(n => (env(n) ?? '').trim() !== ''),
-      apply: env('CEO_EXTENSIONS_APPLY') === 'true',
+      retired: true,
+      note: RETIRED,
       keys: Object.fromEntries(KEYS.map(n => [n, (env(n) ?? '').trim() ? 'set' : 'missing'])),
     });
   if (body.operation !== undefined && body.operation !== 'ceo.extensions.applyAuto')
     return reply({ok: false, note: 'This function runs only ceo.extensions.applyAuto.'}, 403);
+  const result = {ok: true, retired: true, note: RETIRED, written: 0, cleared: 0, skipped: 0, errors: [] as string[]};
   const url = (env('SUPABASE_URL') ?? '').trim(), key = (env('SUPABASE_SERVICE_ROLE_KEY') ?? '').trim();
-  if (!url || !key) return reply({ok: false, note: 'SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set on this Edge Function.'}, 503);
-  const admin = connect(url, key);
-  const health = async (row: Record<string, unknown>) => {
-    const {error} = await admin.from('cockpit_ceo_provider_health').insert(row);
-    if (error) throw Error('CEO provider health receipt could not be saved.');
-  };
+  // Without the service door the answer is still the retired sentence; only the run state is not marked.
+  if (!url || !key) return reply({...result, note: `${RETIRED} The run state was not marked: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set.`});
+  const at = now().toISOString();
   try {
-    return reply(await run(admin, env, health));
+    const {error} = await connect(url, key).from('cockpit_sync_state').upsert(
+      {key: 'ceo-extensions-auto', last_run_at: at, last_ok_at: at, ok: true, note: RETIRED, rows_seen: 0, updated_at: at},
+      {onConflict: 'key'},
+    );
+    if (error) throw Error('the run state was not saved');
   } catch (e) {
-    return reply({ok: false, note: e instanceof Error ? e.message : String(e)}, 500);
+    return reply({...result, ok: false, note: `${RETIRED} The run state was not marked (${e instanceof Error ? e.message : String(e)}).`}, 500);
   }
+  return reply(result);
 }

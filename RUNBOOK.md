@@ -2145,6 +2145,43 @@ Going live (the lead session; contract `MONEY-ATTRIBUTION.md` section 4):
    `docs/preserve/supabase-manifest.json` and run
    `scripts/verify-preserved.py --via composio --problems`.
 
+## Forms and billing rails (waves 1 and 2)
+
+The CSM's money acts and the churn confirm (`docs/forms/WAVE12-CONTRACT.md`):
+"Give more time", Pause and Resume, "Client is leaving", Set MRR, the billing
+sheet's Extend, and the checked-money rule for hand-logged payments. Each act
+is one gated SQL function that saves the record, inserts a billing event and
+queues a notice; the event's trigger queues a ClickUp card write (kind
+`billing`). Card writes for money open kind by kind behind
+`CLICKUP_WRITEBACK_APPLY_BILLING`, `CLICKUP_WRITEBACK_BILLING_KINDS` and
+`CLICKUP_WRITEBACK_BILLING_ONLY_CARDS` (Edge Function secrets of
+`clickup-writeback`); the general `CLICKUP_WRITEBACK_APPLY` never opens them.
+A billing item written while its kind is closed lands `dry_run`, and
+`dry_run` is final for the claim: opening a kind sends nothing already held,
+so every opening runs the held-edit review below. The guardian's
+`forms_billing` checks (billing-writeback, billing-doctor, billing-daily,
+forms-door-exit, notice-unmatched, register-vs-card, extension-vs-card,
+mrr-differs, checks-waiting) report; nothing here is fixed by them.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| Turn a billing kind on | 1. Add the kind to `CLICKUP_WRITEBACK_BILLING_KINDS` with `CLICKUP_WRITEBACK_BILLING_ONLY_CARDS=86eywg1cq` (the test card) and `CLICKUP_WRITEBACK_APPLY_BILLING=true`. 2. `select public.cockpit_billing_canary('<kind>', '{...}')` through Composio; the item reads `delivered` and the card reads every field back; read the card again 10 minutes later (a ClickUp automation can overwrite a date after the read-back). 3. The held-edit review: list the kind's held items (`select id, source_id, task_id, created_at, payload->>'kind' from public.cockpit_clickup_writeback_queue where kind = 'billing' and state = 'dry_run' and payload->>'kind' = '<kind>'`), read each card, then for each item `select public.cockpit_billing_held_release(<event id>, '<how>', '<reason>', '<actor>')` with `replan` when the card is unchanged since the event, `fresh` when it changed since (a new event dated now, so the stale check does not skip it), `close` when the edit no longer applies but stays a record (an extension that already ended), or `void` when it should never have been made. 4. Clear `CLICKUP_WRITEBACK_BILLING_ONLY_CARDS`. `clickup-writeback:billing` then reads the kind open and `heldOpenKind` 0. | Systems manager, on the CEO's go |
+| billing-writeback: "N held edits of an open kind wait for the review" | Run step 3 of the row above for each item it names. Never re-send blindly: read the card first. | Systems manager |
+| A billing write failed (billing-writeback fails: an item retrying, unknown or failed for over 30 minutes) | Read the queue row's `error` and the card on ClickUp. Re-queue only after reading back what the card shows now: a field that already reads the new value needs nothing; a field ClickUp refused (a missing option, a renamed field) is fixed on Clients - Mahara first, then `billing_doctor` is run once and the item re-planned. | Systems manager |
+| billing-doctor names a gap ("The will-not-continue checkbox (9cfdb353) is not on Clients - Mahara", a Churn Reason option missing) | Add or fix the field or option on Clients - Mahara, then post `{"job":"billing_doctor"}` to `clickup-writeback` once. A missing Churn Reason option skips only that step; the rest of the churn write still runs. | Systems manager |
+| Undo a churn confirm | The CEO removes the departure on the churn tracker (Remove, with a reason; the row is kept as removed). If the client is staying, a CSM presses Resume on the client page: the card returns to Active and the pause dates clear. The card's Churn Date, Churn Reason and Churn Type stay as history; the next confirm writes over them. | CEO, then the CSM |
+| Void a held billing edit | `cockpit_billing_event_void(<event id>, '<reason>')` (the CEO or finance; from the cockpit or Composio). It closes the event's unsent item (`skipped`, "Voided in the cockpit: ...") and leaves the event out of `cockpit_extensions_v`. A delivered item cannot be voided: "The card already shows this change; make a new edit instead." | CEO, finance |
+| Check a hand-logged payment | Money tab, Checks waiting (or the billing page): Check opens the bank reference or the statement line; Reject asks for the reason. A logged payment is not in cash collected, LTV, the deal ledger or pay until checked; the CEO's own add with a bank reference lands checked. checks-waiting warns after 7 days. The client-income statement for the month is uploaded by the 3rd so transfers can be checked against a line. | Finance, CEO |
+| Pay shows "Cash not checked yet" on a commission line | A hand-logged payment behind that line's deal is still `logged`. Check it on the Money tab; after the next money refresh the line counts and the person can be approved. | CEO, finance |
+| The exit-survey and pause-request webhooks (forms-door-exit) | On the VPS: `python3 scripts/dev/forms_key.py status`; `probe-typeform exit_survey` (or `pause_request`) answers 401 unsigned, then 200 signed; `unregister-typeform <form>` removes only the cockpit's webhook and reads every other webhook before and after. A quiet form for 21 days is normal (the warning says so); a failed last delivery is not. | Systems manager |
+| notice-unmatched: "A termination survey from ... is not matched to a card" | The survey had no card id in its hidden field. A CSM opens the churn tracker, Termination surveys not matched to a card, and presses Pick the card (a CSM can pick only their own clients). Never guess a client by name. | CSM |
+| register-vs-card or extension-vs-card warns | Read the card. If a ClickUp automation moved Client Status or the Churn Date after the read-back, the person who owns ClickUp automations turns that automation off; the cockpit never edits automations. For an extension, read the grant's billing queue item first: a held item (`dry_run`) explains a card that never got the weeks. | Systems manager |
+| Change the overdue steps | CEO Billing tab, Overdue steps: the pause review day and the cancel review day (1 to 60, pause before cancel), Save → Saved. The cadence ("{n} days past due, pause review"), Reviews due on Today and the billing agent read the same setting (`cockpit_settings` `billing.ladder`). No step ever changes a card or opens a ticket by itself: each review row has its own ticket button. | CEO |
+| Turn the daily billing step off | `update public.cockpit_settings set value = jsonb_set(value, '{on}', 'false') where key = 'billing.daily'` through Composio (the change is audited). The cron `mahara-billing-daily` keeps running and writes `billing-daily` "off"; ended extensions stay on the card until it is on again. | Systems manager |
+| Roll back a migration with screens on it (`20261101n`, `o` or `p`) | In one step: restore the saved function bodies (`notes/forms-w12/deploy/before-<name>.sql`), flip that migration's marker in `cockpit_settings` `forms.doors` to false (`checks`, `churn` or `money`; a restored old function still exists, so the marker is what hides the door), and `vercel rollback` both apps (client-success and media-buyer) to the deployment recorded before D-S1. Read back `cockpit_form_doors()`: the rolled-back door reads false and its place says "Opens after the next cockpit update." Columns and rows stay; nothing is deleted. | Systems manager |
+| Roll back `20261101q` (the readers) | Restore `cockpit_ceo_goal_sheet_context` from its saved body; the goal sheet and lock-in then read as before (no lifecycle lines, no "Logged, not checked"). The November `actual_source` values may stay (a typed target ignores them) or be set back to NULL in a dated corrective migration. Release the previous cockpit-sync, ceo-refresh and csm-calls if they were released with it; csm-calls must not run on a database without the widened `cockpit_csm_call_forms` CHECKs. | Systems manager |
+| The CEO's Client success card reads "The billing sheet writes the extension to the card." where the button was | Expected since waves 1 and 2: the billing queue is the one writer of the card's Current extension (weeks). `ceo-extensions-sync` answers "Retired: the billing sheet writes the extension field." until `mahara-ceo-extensions-auto` is unscheduled in the C1 window. | Nobody |
+
 ## Hubstaff watch
 
 CEO cockpit, Management tab: the "Hubstaff watch" card. Every 5 minutes the

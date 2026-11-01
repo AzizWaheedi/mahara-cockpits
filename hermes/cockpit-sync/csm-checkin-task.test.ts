@@ -1,8 +1,13 @@
 import { describe, expect, it } from "bun:test";
 import {
+  CADENCE_SQL,
+  CHURN_SQL,
   NOTE_REF,
   STORE_SQL,
   cadenceInputs,
+  churnGrid,
+  churnValues,
+  ladderDaysOf,
   checkinTaskId,
   commitmentsOf,
   noteOf,
@@ -14,6 +19,7 @@ import {
   type StoredNote,
   type TypeformNote,
 } from "./csmProviders";
+import { buildSnapshot, CF, type Extension } from "./csmCadence";
 import { withNativeContext, type Reads, type Row } from "./runtime";
 
 const TYPED = "c484f390-9695-4ffa-9693-9cc219592713";
@@ -108,8 +114,11 @@ type Fixture = {
   stored?: Row[];
   marks?: Row[];
   checkins?: Row[];
-  extensions?: Row[];
-  fail?: "registry" | "newest" | "marks" | "typeform";
+  /** cockpit_extensions_v live rows, cockpit_client_lifecycle_v ladder rows and the billing.ladder setting. */
+  grants?: Row[];
+  ladder?: Row[];
+  ladderDays?: Row[];
+  fail?: "registry" | "newest" | "marks" | "typeform" | "grants" | "ladder";
 };
 
 function reads(f: Fixture) {
@@ -132,6 +141,15 @@ function reads(f: Fixture) {
           if (f.fail === "marks") throw new Error("SQL source missing or reached its coverage limit");
           return { result: JSON.stringify(f.marks ?? []) };
         }
+        if (query === CADENCE_SQL.extensions) {
+          if (f.fail === "grants") throw new Error("SQL source missing or reached its coverage limit");
+          return { result: JSON.stringify(f.grants ?? []) };
+        }
+        if (query === CADENCE_SQL.ladder) {
+          if (f.fail === "ladder") throw new Error("SQL source missing or reached its coverage limit");
+          return { result: JSON.stringify(f.ladder ?? []) };
+        }
+        if (query === CADENCE_SQL.ladderDays) return { result: JSON.stringify(f.ladderDays ?? [{ value: { pauseReviewDay: 4, cancelReviewDay: 15 } }]) };
         throw new Error(`Unexpected SQL ${query}`);
       }
       if (name === "pd_typeform_proxy_get") {
@@ -141,7 +159,6 @@ function reads(f: Fixture) {
           if (f.fail === "typeform") throw new Error("Typeform read failed");
           return { items: f.checkins ?? [], total_items: (f.checkins ?? []).length };
         }
-        if (id === "gqBcyK6g") return { items: f.extensions ?? [], total_items: (f.extensions ?? []).length };
       }
       throw new Error(`Unexpected tool ${name}`);
     },
@@ -176,7 +193,7 @@ describe("release N4: the 1-1 notes come from the store", () => {
 
   it("every query starts select and carries no limit, so the transport's coverage cap never trims a client", async () => {
     const { sql } = await run({});
-    expect(sql.sort()).toEqual(Object.values(STORE_SQL).sort());
+    expect(sql.sort()).toEqual([...Object.values(STORE_SQL), ...Object.values(CADENCE_SQL)].sort());
     for (const q of sql) {
       expect(q).toMatch(/^select\b/);
       expect(q).not.toMatch(/\blimit\s+\d+/i);
@@ -184,7 +201,7 @@ describe("release N4: the 1-1 notes come from the store", () => {
   });
 
   it("a failing store select throws, so the cycle publishes nothing rather than notes from nowhere", async () => {
-    for (const fail of ["registry", "newest", "marks", "typeform"] as const)
+    for (const fail of ["registry", "newest", "marks", "typeform", "grants", "ladder"] as const)
       await expect(run({ fail })).rejects.toThrow();
     await expect(run({ provider: "" })).rejects.toThrow(/registry row/);
     await expect(run({ stored: [{ task_id: A, token: "x", form_id: "fRokTITH", submitted_at: "not a time", answers: [] }] })).rejects.toThrow(
@@ -192,23 +209,46 @@ describe("release N4: the 1-1 notes come from the store", () => {
     );
   });
 
-  it("the extensions still come from gqBcyK6g, as before", async () => {
-    const ext = {
-      token: "e1",
-      submitted_at: "2026-10-20T09:00:00Z",
-      answers: [
-        { type: "text", text: "City Wood", field: { ref: "5145ff0c-009b-4f51-b3a9-4651efc908be" } },
-        { type: "choice", choice: { label: "2 Weeks" }, field: { ref: "278c2f80-88bd-428e-b330-8c6b3175d63f" } },
+  it("extensions are the live grants of cockpit_extensions_v, by card id, and no Typeform gqBcyK6g call remains", async () => {
+    const { exts, forms } = await run({
+      grants: [
+        { clickup_task_id: "86ewvnqj5", until: "2026-11-16" },
+        { clickup_task_id: "86eyurepc", until: "2026-12-11" },
       ],
-    };
-    const { exts } = await run({ extensions: [ext] });
-    expect(exts).toEqual([{ client: "City Wood", until: "2026-11-03" }]);
+    });
+    expect(exts).toEqual([
+      { taskId: "86ewvnqj5", until: "2026-11-16" },
+      { taskId: "86eyurepc", until: "2026-12-11" },
+    ]);
+    expect(forms).not.toContain("gqBcyK6g");
+  });
+
+  it("the ladder's step and days late join the card's fact, with the ladder's days from the setting", async () => {
+    const { exts } = await run({
+      grants: [{ clickup_task_id: "86ewvnqj5", until: "2026-11-16" }],
+      ladder: [
+        { clickup_task_id: "86ex4m5ux", ladder_step: "cancel_review", days_late: 26 },
+        { clickup_task_id: "86ewvnqgz", ladder_step: "pause_review", days_late: 5 },
+      ],
+      ladderDays: [{ value: { pauseReviewDay: 5, cancelReviewDay: 20 } }],
+    });
+    expect(exts).toEqual([
+      { taskId: "86ewvnqj5", until: "2026-11-16" },
+      { taskId: "86ex4m5ux", until: null, ladderStep: "cancel_review", daysLate: 26, pauseReviewDay: 5, cancelReviewDay: 20 },
+      { taskId: "86ewvnqgz", until: null, ladderStep: "pause_review", daysLate: 5, pauseReviewDay: 5, cancelReviewDay: 20 },
+    ]);
+  });
+
+  it("a grant with no card or end day, or an unknown step, throws rather than reading as no extension", async () => {
+    await expect(run({ grants: [{ clickup_task_id: "", until: "2026-11-16" }] })).rejects.toThrow(/live extension grant/);
+    await expect(run({ grants: [{ clickup_task_id: "86ewvnqj5", until: null }] })).rejects.toThrow(/live extension grant/);
+    await expect(run({ ladder: [{ clickup_task_id: "86ewvnqj5", ladder_step: "pause_now", days_late: 4 }] })).rejects.toThrow(/unknown step/);
   });
 
   it("when the registry says native, fRokTITH is not read and every reading is off", async () => {
     const native = nativeRow("cockpit-1", A, "2026-10-29 14:00:00+03", "Mahara: Book the shoot - Friday");
     const { forms, parity, notes } = await run({ provider: "native", stored: [native], checkins: [typeformItem("t", A, EARLIER)] });
-    expect(forms).toEqual(["gqBcyK6g"]);
+    expect(forms).toEqual([]);
     expect(parity).toEqual({ native: true, byTask: {} });
     expect(notes[0].notes).toEqual(["Book the shoot - Friday"]);
   });
@@ -360,5 +400,132 @@ describe("store against Typeform, per card", () => {
     const item = { ...typeformItem("tok-s", B, EARLIER), hidden: { task_id: "xxxxx" } };
     const { parity } = await run({ checkins: [item] }, new Set([B]));
     expect(Object.keys(parity.byTask)).toEqual([B]);
+  });
+});
+
+describe("the overdue ladder's days", () => {
+  it("reads billing.ladder, falls back to the approved 4 and 15 when the row is absent, and refuses days it cannot use", () => {
+    expect(ladderDaysOf([{ value: { pauseReviewDay: 6, cancelReviewDay: 21 } }])).toEqual({ pauseReviewDay: 6, cancelReviewDay: 21 });
+    expect(ladderDaysOf([])).toEqual({ pauseReviewDay: 4, cancelReviewDay: 15 });
+    for (const value of [{ pauseReviewDay: 15, cancelReviewDay: 4 }, { pauseReviewDay: 0, cancelReviewDay: 4 }, { pauseReviewDay: 4, cancelReviewDay: 61 }, {}])
+      expect(() => ladderDaysOf([{ value }])).toThrow(/ladder/);
+    expect(() => ladderDaysOf([{ value: {} }, { value: {} }])).toThrow(/ambiguous/);
+  });
+});
+
+describe("churnValues reads the churn register in tab 01's shape", () => {
+  const register = [
+    { month: "2026-01", active_at_start: 15, lost_before_register: 3, departed: 0 },
+    { month: "2026-08", active_at_start: null, lost_before_register: 2, departed: 0 },
+    { month: "2026-10", active_at_start: 21, lost_before_register: null, departed: 6 },
+    { month: "2026-11", active_at_start: 18, lost_before_register: null, departed: 0 },
+  ];
+
+  it("a header, then one row per month: name, clients at start, clients lost, blank, churn %", () => {
+    expect(churnGrid(register)).toEqual([
+      ["Month", "Clients at start", "Clients lost", "", "Churn"],
+      ["January", "15", "3", "", "20.00%"],
+      ["August", "", "2", "", ""],
+      ["October", "21", "6", "", "28.57%"],
+      ["November", "18", "0", "", "0.00%"],
+    ]);
+  });
+
+  it("only the newest twelve months, so a month name never repeats", () => {
+    const rows = Array.from({ length: 14 }, (_, i) => {
+      const d = new Date(Date.UTC(2025, 9 + i, 1));
+      return { month: d.toISOString().slice(0, 7), active_at_start: 10, lost_before_register: null, departed: 1 };
+    });
+    const grid = churnGrid(rows);
+    expect(grid).toHaveLength(13);
+    expect(new Set(grid.slice(1).map(r => r[0])).size).toBe(12);
+    expect(grid[1][0]).toBe("December");
+  });
+
+  it("parseKpi reads it unchanged: October's row gives the rate, a month without a start count is not published", async () => {
+    const { parseKpi } = await import("./csmProducer");
+    const oct = parseKpi(churnGrid(register), "2026-10-20", 1);
+    expect(oct.find(r => r.key === "churn")).toMatchObject({ value: "28.57%", numeric: 28.57 });
+    expect(oct.find(r => r.key === "clients_lost")).toMatchObject({ value: "6" });
+    const aug = parseKpi(churnGrid(register), "2026-08-20", 1);
+    expect(aug.find(r => r.key === "churn")).toBeUndefined();
+    expect(aug.find(r => r.key === "churn_missing")).toBeTruthy();
+  });
+
+  it("one select, no limit word, and a register row with no month throws", async () => {
+    const sql: string[] = [];
+    const r: Reads = {
+      tool: async (name, args) => {
+        if (name !== "mcp_supabase_execute_sql") throw new Error(`Unexpected tool ${name}`);
+        sql.push(String(args.query));
+        return { result: JSON.stringify(register) };
+      },
+      graph: async () => ({ data: [] }),
+      fetch: async () => new Response("{}"),
+      log: () => {},
+    };
+    const grid = await withNativeContext(r, { receipts: [] }, () => churnValues());
+    expect(grid[0][0]).toBe("Month");
+    expect(sql).toEqual([CHURN_SQL]);
+    expect(CHURN_SQL).toMatch(/^select\b/);
+    expect(CHURN_SQL).not.toMatch(/\blimit\s+\d+/i);
+    expect(() => churnGrid([{ month: "", departed: 0 }])).toThrow(/month/);
+  });
+});
+
+describe("the cadence reads the card's billing facts by card id", () => {
+  const task = (id: string, name: string, stage: string, nextPayment?: string) => ({
+    id,
+    name,
+    url: `https://app.clickup.com/t/${id}`,
+    custom_fields: [
+      { id: CF.status, value: "s", type_config: { options: [{ id: "s", name: stage }] } },
+      ...(nextPayment ? [{ id: CF.nextPayment, value: String(Date.parse(`${nextPayment}T00:00:00+03:00`)) }] : []),
+    ],
+  });
+  const snap = (clientTasks: Row[], exts: Extension[], today = "2026-11-10") =>
+    buildSnapshot({ today, now: 1, exts, notes: [], clientTasks, csTasks: [], liveWatch: [], campaigns: [], changeLog: [] }).clients;
+
+  it("a live grant is found by the card id, not by a name that merely looks alike", () => {
+    const [liwan, other] = snap(
+      [task("86ewvnqj5", "Liwan Limited", "Active", "2026-11-08"), task("86exxxxx1", "Liwan Limited Construction", "Active", "2026-11-08")],
+      [{ taskId: "86ewvnqj5", until: "2026-11-16" }],
+    ).sort((a, b) => a.taskId.localeCompare(b.taskId));
+    expect(liwan.extendedUntil).toBe("2026-11-16");
+    expect(liwan.todo).toBe("Invoice late but an extension is logged to 2026-11-16, no chase needed");
+    expect(other.extendedUntil).toBeUndefined();
+    expect(other.todo).toBe("Invoice 2d late, chase or log an extension");
+  });
+
+  it("the lifecycle view's step names the days late and the ladder's day, never '3+'", () => {
+    const [c] = snap([task("86ewvnqgz", "Safad", "Active", "2026-11-04")], [
+      { taskId: "86ewvnqgz", until: null, ladderStep: "pause_review", daysLate: 6, pauseReviewDay: 4, cancelReviewDay: 15 },
+    ]);
+    expect(c.todo).toBe("6 days past due, pause review (day 4 of the overdue steps)");
+    expect(c.todo).not.toContain("3+");
+    expect(c.pauseRequired).toBe(true);
+    expect(c.level).toBe("red");
+    const [k] = snap([task("86ex4m5ux", "Nohod", "Active", "2026-10-07")], [
+      { taskId: "86ex4m5ux", until: null, ladderStep: "cancel_review", daysLate: 34, pauseReviewDay: 4, cancelReviewDay: 15 },
+    ]);
+    expect(k.todo).toBe("34 days past due, cancel review (day 15 of the overdue steps)");
+  });
+
+  it("a card the view does not hold falls back to the ladder's default days on its own date", () => {
+    const [three] = snap([task("86eaaaaa1", "Three late", "Active", "2026-11-07")], []);
+    expect(three.todo).toBe("Invoice 3d late, chase or log an extension");
+    expect(three.pauseRequired).toBe(false);
+    const [four] = snap([task("86eaaaaa2", "Four late", "Active", "2026-11-06")], []);
+    expect(four.todo).toBe("4 days past due, pause review (day 4 of the overdue steps)");
+    expect(four.pauseRequired).toBe(true);
+  });
+
+  it("a paused card on pause day 14 is told to restart or confirm the churn; other paused cards carry no cadence", () => {
+    const [p14] = snap([task("86eypmbp3", "Alkhalil", "Paused")], [
+      { taskId: "86eypmbp3", until: null, ladderStep: "pause_day14", daysLate: 15, pauseReviewDay: 4, cancelReviewDay: 15 },
+    ]);
+    expect(p14.todo).toBe("Paused 15+ days, restart them or confirm the churn");
+    const [paused] = snap([task("86eypmbp4", "Paused only", "Paused")], []);
+    expect(paused.todo).toBe("Paused, no cadence. Reactivation sits with sales.");
   });
 });
