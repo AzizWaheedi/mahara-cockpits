@@ -90,18 +90,18 @@ export function MobileTabBar() {
             active: path === "/dashboard" || path === "/eod",
           },
           {
-            key: "launch",
-            label: "Clients",
-            icon: Users,
-            to: "/clients",
-            active: path === "/clients" || path === "/launch",
-          },
-          {
             key: "ads",
             label: "Ads",
             icon: Megaphone,
             to: "/ads",
             active: path === "/ads",
+          },
+          {
+            key: "launch",
+            label: "Clients",
+            icon: Users,
+            to: "/clients",
+            active: path === "/clients" || path === "/launch",
           },
           {
             key: "library",
@@ -160,7 +160,7 @@ export function MobileTabBar() {
           },
           {
             key: "performance",
-            label: "Clients",
+            label: "Performance",
             icon: COCKPIT_ICON.performance,
             to: "/performance",
             active: path === "/performance",

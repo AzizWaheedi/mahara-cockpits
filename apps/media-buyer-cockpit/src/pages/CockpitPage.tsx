@@ -2317,7 +2317,9 @@ function Cockpit({ view }: { view: View }) {
     .slice(0, 3);
   const accounts = (
     <section className={CARD}>
-      <h2 className="text-[15px] font-semibold">Then, the accounts</h2>
+      <h2 className="text-[15px] font-semibold">
+        Accounts to work, in this order
+      </h2>
       <p className="mt-1 text-sm text-muted-foreground">
         Inbox clear? The rest is account work: one block, one client at a time.
         Start with these.
@@ -2354,9 +2356,6 @@ function Cockpit({ view }: { view: View }) {
           ))}
         </ol>
       )}
-      <Button asChild size="sm" className="mt-4">
-        <Link to="/ads">Open Ads management</Link>
-      </Button>
     </section>
   );
 
@@ -4159,15 +4158,6 @@ function Cockpit({ view }: { view: View }) {
           </div>
           {tiles}
           <PortfolioTrends />
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed px-4 py-4 sm:px-6">
-            <p className="text-sm text-muted-foreground">
-              Before you log off, file your end of day. The numbers and the
-              change log are already in it.
-            </p>
-            <Button size="sm" asChild>
-              <Link to="/eod">File my end of day</Link>
-            </Button>
-          </div>
         </>
       )}
 
