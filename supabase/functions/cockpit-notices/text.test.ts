@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { SERVICE_LABEL as BRIEF_SERVICE_LABEL } from "../../../apps/client-success-cockpit/src/present/blueprintBrief";
 import { CRITERIA as GRADE_CRITERIA } from "../cockpit-forms-api/prompts/grade.ts";
 import {
-  CHURN_REASONS, CRITERIA, cleanStatus, cutAtWord, escapeSlack, kuwaitClock, kuwaitDay, kuwaitWhen, LIFECYCLE_KINDS, NOTICE_KINDS, type NoticeFacts, type NoticeKind, noticeLinks, noticeText, sampleFacts,
+  CHURN_REASONS, CLIENT_FORM_KINDS, CRITERIA, cleanStatus, FEEDBACK_KIND_WORDS, FEEDBACK_TOPIC_WORDS, cutAtWord, escapeSlack, kuwaitClock, kuwaitDay, kuwaitWhen, LIFECYCLE_KINDS, NOTICE_KINDS, type NoticeFacts, type NoticeKind, noticeLinks, noticeText, sampleFacts,
   SECTION_MAX, SERVICE_LABEL, type SlackBlock, type TextMention, VARIANTS, type Variant,
 } from "./text";
 
@@ -374,7 +374,8 @@ describe("the 1-1 notes notices (docs/forms/STAGE2B-CONTRACT.md 4.2)", () => {
     expect(VARIANTS["checkin.grade"]).toEqual(["grade"]);
     expect(VARIANTS["checkin.recap_late"]).toEqual(["late"]);
     expect(() => noticeText("checkin.grade", "late", gradeFacts)).toThrow("There is no late wording for checkin.grade.");
-    expect(NOTICE_KINDS).toHaveLength(14);
+    // Stage 1's six, the 1-1 notes' two, waves 1-2's lifecycle six and waves 3-4's client forms six.
+    expect(NOTICE_KINDS).toHaveLength(20);
   });
 });
 
@@ -385,7 +386,7 @@ describe("the client lifecycle notices (docs/forms/WAVE12-CONTRACT.md 3.4)", () 
     expect([...LIFECYCLE_KINDS]).toEqual([
       "termination.notice", "termination.submitted", "churn.confirmed", "extension.granted", "pause.agreed", "client.resumed",
     ]);
-    expect(NOTICE_KINDS.slice(-6)).toEqual([...LIFECYCLE_KINDS]);
+    expect(NOTICE_KINDS.slice(8, 14)).toEqual([...LIFECYCLE_KINDS]);
     expect(VARIANTS["termination.notice"]).toEqual(["matched", "unmatched"]);
     for (const k of LIFECYCLE_KINDS.slice(1)) expect(VARIANTS[k]).toEqual(["post"]);
     expect(CHURN_REASONS).toHaveLength(8);
@@ -440,5 +441,92 @@ describe("the client lifecycle notices (docs/forms/WAVE12-CONTRACT.md 3.4)", () 
         const out = JSON.stringify(noticeText(kind, variant, leaky));
         for (const bad of ["4242", "client.secret", "+96599990001"]) expect(out).not.toContain(bad);
       }
+  });
+});
+
+describe("the client's voice and forms (docs/forms/WAVE34-CONTRACT.md 3.4)", () => {
+  const f = (extra: Record<string, unknown> = {}) => base({ mentions: [], ...extra });
+
+  test("the six kinds close the list, with their variants", () => {
+    expect([...CLIENT_FORM_KINDS]).toEqual(["pause.consent", "nps.received", "csat.received", "voice.low", "feedback.received", "legacy.received"]);
+    expect(NOTICE_KINDS.slice(-6)).toEqual([...CLIENT_FORM_KINDS]);
+    expect(VARIANTS["pause.consent"]).toEqual(["signed", "dates_wrong"]);
+    for (const k of CLIENT_FORM_KINDS.slice(1)) expect(VARIANTS[k]).toEqual(["post"]);
+    expect(Object.keys(FEEDBACK_KIND_WORDS)).toEqual(["idea", "improvement", "problem", "appreciation"]);
+    expect(Object.keys(FEEDBACK_TOPIC_WORDS)).toEqual(["service", "portal", "communication", "results", "onboarding", "other"]);
+  });
+
+  test("Pause consent signed and dates wrong: 3.4's sentences, the CSM tagged, the client opened", () => {
+    const signed = noticeText("pause.consent", "signed", f({ mentions: [CSM] }));
+    expect(signed.text).toBe(`Acme Interiors signed the pause consent. Confirm the pause in the cockpit. Ref ${REF}`);
+    expect(lines(signed.blocks)).toEqual([
+      "*Pause consent signed: Acme Interiors*",
+      "Acme Interiors signed the pause consent. Confirm the pause in the cockpit. <@U0C5JHUCTPG>",
+    ]);
+    expect(contexts(signed.blocks)).toEqual([`<${L.client}|Open the client>`, `Client success · Ref ${REF}`]);
+    const wrong = noticeText("pause.consent", "dates_wrong", f());
+    expect(wrong.text).toBe(`Acme Interiors says the pause dates are wrong. Open the pause in the cockpit. Ref ${REF}`);
+    expect(lines(wrong.blocks)[0]).toBe("*Pause dates wrong: Acme Interiors*");
+  });
+
+  test("NPS and onboarding answers: scores only, no link, the results line only when answered", () => {
+    expect(noticeText("nps.received", "post", f({ score: 9, results: 7 })).text).toBe(`Acme Interiors: 9/10 would recommend, 7/10 on results so far. Ref ${REF}`);
+    expect(noticeText("nps.received", "post", f({ score: 0 })).text).toBe(`Acme Interiors: 0/10 would recommend. Ref ${REF}`);
+    expect(noticeText("nps.received", "post", f({ score: 14, results: "lots" })).text).toBe(`Acme Interiors: a score not recorded would recommend. Ref ${REF}`);
+    const csat = noticeText("csat.received", "post", f({ score: 8 }));
+    expect(csat.text).toBe(`Acme Interiors: 8/10 for getting started. Ref ${REF}`);
+    expect(contexts(csat.blocks)).toEqual([`Client success · Ref ${REF}`]);
+    expect(contexts(noticeText("nps.received", "post", f({ score: 9 })).blocks)).toEqual([`Client success · Ref ${REF}`]);
+  });
+
+  test("A low score names the survey and asks for a call today", () => {
+    const nps = noticeText("voice.low", "post", f({ score: 4, form: "nps", mentions: [CSM] }));
+    expect(nps.text).toBe(`Acme Interiors gave 4/10 on the NPS survey. Call them today. Ref ${REF}`);
+    expect(lines(nps.blocks)[1]).toBe("Acme Interiors gave 4/10 on the NPS survey. Call them today. <@U0C5JHUCTPG>");
+    const csat = noticeText("voice.low", "post", f({ score: 3, form: "csat" }));
+    expect(csat.text).toBe(`Acme Interiors gave 3/10 on the onboarding survey. Call them today. Ref ${REF}`);
+    expect(contexts(csat.blocks)[0]).toBe(`<${L.client}|Open the client>`);
+  });
+
+  test("Portal feedback says its kind and topic from the lists, never its words", () => {
+    expect(noticeText("feedback.received", "post", f({ feedbackKind: "problem", topic: "results", message: "Our leads dropped" })).text).toBe(
+      `Acme Interiors shared a problem in the portal about results. Ref ${REF}`,
+    );
+    expect(noticeText("feedback.received", "post", f({ feedbackKind: "<script>", topic: "x" })).text).toBe(
+      `Acme Interiors shared feedback in the portal about something else. Ref ${REF}`,
+    );
+  });
+
+  test("An old form link: matched to a card or not, with the right place to open it", () => {
+    const matched = noticeText("legacy.received", "post", f({ form: "nps" }));
+    expect(matched.text).toBe(`The NPS survey came in through the old link for Acme Interiors. Open it in the cockpit. Ref ${REF}`);
+    expect(contexts(matched.blocks)[0]).toBe(`<${L.client}|Open the client>`);
+    const loose = noticeText("legacy.received", "post", { ref: REF, taskId: "", client: "", form: "exit_survey" });
+    expect(loose.text).toBe(`The exit survey came in through the old link for a client not matched to a card. Open it in the cockpit. Ref ${REF}`);
+    expect(contexts(loose.blocks)[0]).toBe("<https://cockpit.maharamedia.com/client-success/money?tab=churn|Open the churn tracker>");
+    expect(noticeText("legacy.received", "post", { ref: REF, taskId: "", client: "", form: "csat" }).blocks.length).toBe(2);
+  });
+
+  test("no answer text, email, phone, token or amount ever reaches these notices", () => {
+    const leaky = f({
+      score: 9, results: 8, form: "nps", feedbackKind: "idea", topic: "portal",
+      message: "secret words from the client", startStop: "secret words from the client", email: "client.secret@example.test",
+      phone: "+96599990001", token: "f1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abcd", amountUsd: 4242,
+      url: "https://portal.maharamedia.com/f#f1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abcd",
+    });
+    for (const kind of CLIENT_FORM_KINDS)
+      for (const variant of VARIANTS[kind]) {
+        const out = JSON.stringify(noticeText(kind, variant, leaky));
+        for (const bad of ["secret words", "client.secret", "+96599990001", "f1AbCd", "4242", "portal.maharamedia.com/f"]) expect([kind, out.includes(bad)]).toEqual([kind, false]);
+      }
+  });
+
+  test("a test post of each kind uses the sample's words", () => {
+    for (const kind of CLIENT_FORM_KINDS) {
+      const variant = VARIANTS[kind][0];
+      const out = noticeText(kind, variant, { ...sampleFacts(kind), rehearsal: true });
+      expect(out.text).toStartWith("[Rehearsal] ");
+      expect(out.text).toContain("Sample client");
+    }
   });
 });

@@ -17,6 +17,7 @@ import {
   ALL_NOTICE_KINDS,
   addSlackChannel,
   atNoticeWhen,
+  CLIENT_FORM_KINDS,
   LIFECYCLE_KINDS,
   type NoticeSetting,
   noAccess,
@@ -72,6 +73,21 @@ import { cn } from "@/lib/utils";
  * reads as working when it cannot post. Termination survey sent keeps its
  * switch; the server refuses it while Make's post still runs, and that
  * refusal shows under the switch like any other.
+ *
+ * Waves 3-4 (docs/forms/WAVE34-CONTRACT.md 3.4, 5.12), the same card again,
+ * no new pattern and no new token. Design plan (Hallmark, component scope:
+ * a list group inside an existing card). Subject: the client's own voice
+ * reaching the team (a signed pause consent, a survey score, a low score, the
+ * portal's Share feedback, an answer through a retired Typeform). Audience: the
+ * CEO and the editors they add, at a desk. Job: see where each of these posts
+ * and switch it. Tokens are the cockpit's: Geist, --mahara-teal for the
+ * switch, the warning tone only for a channel the bot is not in. Layout: a
+ * third list under its own mono Kicker, "Client forms", after "Client
+ * lifecycle", with one plain line. Signature: unchanged, the one-sentence
+ * row; NPS and onboarding answers say "Posts in #nps-survey-feedback once the
+ * bot is in." until the CEO invites it. States: every row is NoticeRow, which
+ * already draws default, hover, focus, active, disabled (read only), saving,
+ * refused and saved.
  */
 
 export type NoticesIO = {
@@ -156,12 +172,41 @@ export const NOTICE_ROWS: Record<
     label: "Client resumed",
     hint: "Posts in #csm-announcements once the bot is in.",
   },
+  // The client's voice and forms (docs/forms/WAVE34-CONTRACT.md 3.4, 5.12).
+  "pause.consent": {
+    label: "Pause consent signed",
+    hint: "The client signed (or said the dates are wrong); the CSM confirms the pause.",
+  },
+  "nps.received": {
+    label: "NPS answer in",
+    hint: "Posts in #nps-survey-feedback once the bot is in.",
+  },
+  "csat.received": {
+    label: "Onboarding survey answer in",
+    hint: "Posts in #nps-survey-feedback once the bot is in.",
+  },
+  "voice.low": {
+    label: "Low score",
+    hint: "A score of 6 or less; the CSM calls the client that day.",
+  },
+  "feedback.received": {
+    label: "Portal feedback in",
+    hint: "The client used Share feedback in their portal.",
+  },
+  "legacy.received": {
+    label: "Old form link used",
+    hint: "An answer came through a retired Typeform; open it in the cockpit.",
+  },
 };
 
 /** The lifecycle list's heading and its one line (5.9). */
 export const LIFECYCLE_TITLE = "Client lifecycle";
 export const LIFECYCLE_SUB =
   "Posts when a client leaves, gets more time, pauses or resumes. Names and dates only.";
+/** The client forms list's heading and its one line (5.12). */
+export const CLIENT_FORMS_TITLE = "Client forms";
+export const CLIENT_FORMS_SUB =
+  "Posts when a client answers a form or shares feedback. Names, dates and scores only, never their words.";
 
 /**
  * A post whose channel is not ready, in the words the sender's trail uses
@@ -429,8 +474,11 @@ function Body({
   const all = ALL_NOTICE_KINDS.map(k =>
     read.notices.find(n => n.kind === k),
   ).filter((n): n is NoticeSetting => Boolean(n));
-  const rows = all.filter(n => !LIFECYCLE_KINDS.has(n.kind));
+  const rows = all.filter(
+    n => !LIFECYCLE_KINDS.has(n.kind) && !CLIENT_FORM_KINDS.has(n.kind),
+  );
   const lifecycle = all.filter(n => LIFECYCLE_KINDS.has(n.kind));
+  const clientForms = all.filter(n => CLIENT_FORM_KINDS.has(n.kind));
   const edit = read.can.edit;
   const list = (items: NoticeSetting[]) => (
     <ul className="divide-y rounded-xl bg-muted/30">
@@ -463,6 +511,22 @@ function Body({
                 </p>
               </div>
               {list(lifecycle)}
+            </section>
+          ) : null}
+          {clientForms.length ? (
+            <section
+              aria-labelledby="notices-client-forms"
+              className="space-y-2"
+            >
+              <div>
+                <Kicker as="h3">
+                  <span id="notices-client-forms">{CLIENT_FORMS_TITLE}</span>
+                </Kicker>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {CLIENT_FORMS_SUB}
+                </p>
+              </div>
+              {list(clientForms)}
             </section>
           ) : null}
         </>

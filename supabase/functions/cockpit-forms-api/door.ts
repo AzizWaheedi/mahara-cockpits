@@ -9,8 +9,9 @@
  * time; no new secret, Z11); a wrong one is 401. Every op
  * gates itself again in the database: checkin.calls and checkin.typeformSent
  * through the client gate, the draft and transcript ops through the response's
- * own gate (read with the seat's token), recap.approve through the message's
- * gate and again in its service RPC, keys.save and the doctor for the CEO.
+ * own gate (read with the seat's token), recap.approve and invite.approve (a
+ * form link, docs/forms/WAVE34-CONTRACT.md 4.1.5) through the message's gate
+ * and again in its service RPC, keys.save and the doctor for the CEO.
  * An error answers {"error": "<one sentence>"} with 400, 403 or 404: never a
  * stack, a key or a provider's body.
  */
@@ -20,7 +21,7 @@ import { runDoctor } from "./doctor.ts";
 import { checkinDrafts, type Kind } from "./drafts.ts";
 import { sweepEffects } from "./effects.ts";
 import { transcriptOp } from "./fathom.ts";
-import { approveRecap } from "./messages.ts";
+import { approveInvite, approveRecap } from "./messages.ts";
 import { saveKey } from "./keys.ts";
 import { typeformSent } from "./typeform.ts";
 
@@ -157,6 +158,8 @@ export function makeDoor(deps: Deps): (req: Request) => Promise<Response> {
           return json(await typeformSent(ctx, body));
         case "recap.approve":
           return json(await approveRecap(ctx, body));
+        case "invite.approve":
+          return json(await approveInvite(ctx, body));
         case "keys.save":
           if (!actor.ceo) return json({ error: "Only the CEO can change the 1-1 notes connections." }, 403);
           return json(await saveKey(ctx, body));

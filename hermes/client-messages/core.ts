@@ -128,6 +128,20 @@ export function normalise(text: string): string {
     .trim();
 }
 
+/** A form link the worker put into a sent message (docs/forms/WAVE34-CONTRACT.md 3.6, 3.9). */
+export const INVITE_LINK = /https:\/\/portal\.maharamedia\.com\/f#f1[A-Za-z0-9_-]{43}/g;
+/** The placeholder the approved text keeps where the link goes at send. */
+export const FORM_LINK = "{form_link}";
+
+/**
+ * A group message with any form link masked back to {form_link}, so a sent
+ * form link matches its approved text by fingerprint (read-back and the
+ * unknown reconcile) and no search ever needs the token (4.1.6).
+ */
+export function maskInviteLink(text: string): string {
+  return String(text ?? "").replace(INVITE_LINK, FORM_LINK);
+}
+
 /** sha256 of the exact UTF-8 bytes, hex. */
 export function sha256(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");

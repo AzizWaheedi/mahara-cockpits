@@ -23,6 +23,13 @@
  * termination survey that came with no card id is "unmatched": it names the
  * client as the form gave it and points at the churn tracker, where a CSM
  * picks the card.
+ *
+ * The client's voice and forms (docs/forms/WAVE34-CONTRACT.md 3.4): a pause
+ * consent signed (or its dates said wrong), an NPS or onboarding survey score,
+ * a low score, the portal's Share feedback and an answer through a retired
+ * Typeform link. Names, dates and scores only: never an answer's words, an
+ * email, a phone, a token or an amount, and only the kind and topic words of
+ * a feedback, from their fixed lists.
  */
 
 export type NoticeKind =
@@ -39,10 +46,16 @@ export type NoticeKind =
   | "churn.confirmed"
   | "extension.granted"
   | "pause.agreed"
-  | "client.resumed";
+  | "client.resumed"
+  | "pause.consent"
+  | "nps.received"
+  | "csat.received"
+  | "voice.low"
+  | "feedback.received"
+  | "legacy.received";
 export type Variant =
   | "complete" | "late" | "done" | "reconcile" | "typeform" | "new" | "live" | "thread" | "top" | "grade"
-  | "matched" | "unmatched" | "post";
+  | "matched" | "unmatched" | "post" | "signed" | "dates_wrong";
 export type TextMention = { label: string; slackId: string | null };
 export type NoticeFacts = Record<string, unknown> & {
   ref: string;
@@ -68,6 +81,12 @@ export const NOTICE_KINDS: readonly NoticeKind[] = [
   "extension.granted",
   "pause.agreed",
   "client.resumed",
+  "pause.consent",
+  "nps.received",
+  "csat.received",
+  "voice.low",
+  "feedback.received",
+  "legacy.received",
 ];
 
 /** The client lifecycle kinds (waves 1-2, 3.4), in the settings' order. */
@@ -78,6 +97,16 @@ export const LIFECYCLE_KINDS: readonly NoticeKind[] = [
   "extension.granted",
   "pause.agreed",
   "client.resumed",
+];
+
+/** The client's voice and forms (waves 3-4, 3.4), in the settings' order. */
+export const CLIENT_FORM_KINDS: readonly NoticeKind[] = [
+  "pause.consent",
+  "nps.received",
+  "csat.received",
+  "voice.low",
+  "feedback.received",
+  "legacy.received",
 ];
 
 /** The variants each kind has wording for. */
@@ -96,6 +125,36 @@ export const VARIANTS: Record<NoticeKind, readonly Variant[]> = {
   "extension.granted": ["post"],
   "pause.agreed": ["post"],
   "client.resumed": ["post"],
+  "pause.consent": ["signed", "dates_wrong"],
+  "nps.received": ["post"],
+  "csat.received": ["post"],
+  "voice.low": ["post"],
+  "feedback.received": ["post"],
+  "legacy.received": ["post"],
+};
+
+/** The portal's Share feedback kinds and topics (mahara-feedback-policy.ts), as a notice says them. */
+export const FEEDBACK_KIND_WORDS: Record<string, string> = {
+  idea: "a new idea",
+  improvement: "a suggestion",
+  problem: "a problem",
+  appreciation: "praise",
+};
+export const FEEDBACK_TOPIC_WORDS: Record<string, string> = {
+  service: "Mahara's service",
+  portal: "the portal",
+  communication: "communication",
+  results: "results",
+  onboarding: "getting started",
+  other: "something else",
+};
+/** The client forms a notice may name. */
+export const FORM_WORDS: Record<string, string> = {
+  nps: "The NPS survey",
+  csat: "The onboarding survey",
+  exit_survey: "The exit survey",
+  pause_request: "The pause request",
+  pause_consent: "The pause consent",
 };
 
 /** The churn register's eight reasons (20261001a): the only reason words a notice ever shows. */
@@ -467,6 +526,54 @@ function lifecycle(kind: NoticeKind, variant: Variant, f: NoticeFacts): Built {
   return post(`Client resumed: ${client}`, `${client}: resumed ${dayWords(f.on)}.`);
 }
 
+/** A score from 0 to 10 as the facts carry it, or null when it is anything else. */
+function score(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" && /^\d{1,2}$/.test(v) ? Number(v) : Number.NaN;
+  return Number.isInteger(n) && n >= 0 && n <= 10 ? n : null;
+}
+
+// The client's voice and forms (waves 3-4, 3.4). Names, dates and scores only.
+function clientForm(kind: NoticeKind, variant: Variant, f: NoticeFacts): Built {
+  const client = escapeSlack(f.client);
+  const open = [{ url: noticeLinks(f.taskId).client, words: "Open the client" }];
+  const post = (header: string, sentence: string, links: Link[] = open): Built => ({
+    text: sentence,
+    lines: [`*${header}*`, sentence],
+    links,
+    inline: false,
+    footer: "Client success",
+    placed: false,
+  });
+  const s = score(f.score);
+  const scoreWords = s === null ? "a score not recorded" : `${s}/10`;
+  if (kind === "pause.consent") {
+    if (variant === "dates_wrong")
+      return post(`Pause dates wrong: ${client}`, `${client} says the pause dates are wrong. Open the pause in the cockpit.`);
+    return post(`Pause consent signed: ${client}`, `${client} signed the pause consent. Confirm the pause in the cockpit.`);
+  }
+  if (kind === "nps.received") {
+    const r = score(f.results);
+    const results = r === null ? "" : `, ${r}/10 on results so far`;
+    return post(`NPS answer in: ${client}`, `${client}: ${scoreWords} would recommend${results}.`, []);
+  }
+  if (kind === "csat.received") return post(`Onboarding survey answer in: ${client}`, `${client}: ${scoreWords} for getting started.`, []);
+  if (kind === "voice.low") {
+    const survey = f.form === "csat" ? "onboarding survey" : "NPS survey";
+    return post(`Low score: ${client}`, `${client} gave ${scoreWords} on the ${survey}. Call them today.`);
+  }
+  if (kind === "feedback.received") {
+    const what = FEEDBACK_KIND_WORDS[str(f.feedbackKind)] ?? "feedback";
+    const about = FEEDBACK_TOPIC_WORDS[str(f.topic)] ?? "something else";
+    return post(`Portal feedback in: ${client}`, `${client} shared ${what} in the portal about ${about}.`);
+  }
+  // legacy.received: an answer through a retired Typeform link, matched to a card or not.
+  const form = FORM_WORDS[str(f.form)] ?? "A client form";
+  const matched = TASK_ID.test(str(f.taskId)) && f.matched !== false;
+  const who = matched ? client : "a client not matched to a card";
+  const links = matched ? open : str(f.form) === "exit_survey" ? [{ url: noticeLinks("").churn, words: "Open the churn tracker" }] : [];
+  return post(`Old form link used: ${matched ? client : "not matched"}`, `${form} came in through the old link for ${who}. Open it in the cockpit.`, links);
+}
+
 const context = (text: string): SlackBlock => ({ type: "context", elements: [{ type: "mrkdwn", text }] });
 
 /** The twelve criteria of the call grade, in its order (cockpit-forms-api/prompts/grade.ts CRITERIA; a test pins them equal). */
@@ -565,6 +672,7 @@ export function noticeText(kind: NoticeKind, variant: Variant, facts: NoticeFact
     : kind === "blueprint.updated" ? updated(variant, f)
     : kind === "checkin.recap_late" ? recapLate(f)
     : (LIFECYCLE_KINDS as readonly string[]).includes(kind) ? lifecycle(kind, variant, f)
+    : (CLIENT_FORM_KINDS as readonly string[]).includes(kind) ? clientForm(kind, variant, f)
     : offer(variant, f);
   const lines = [...built.lines];
   if (!built.placed && who.mentions.length) lines[lines.length - 1] = tail(lines[lines.length - 1], who);
@@ -632,5 +740,12 @@ export function sampleFacts(kind: NoticeKind, now: Date = new Date()): NoticeFac
     until: at(14 * 24 * 60).slice(0, 10),
     on: at(0).slice(0, 10),
     restart: at(10 * 24 * 60).slice(0, 10),
+    // The client's voice and forms: an invented answer of each kind (scores, words from the lists).
+    score: 9,
+    results: 8,
+    form: "nps",
+    feedbackKind: "idea",
+    topic: "portal",
+    datesWrong: false,
   };
 }

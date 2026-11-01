@@ -132,6 +132,8 @@ const ago = (now: string, hours: number) =>
  * `lifecycle` adds waves 1-2's six rows and the two S0 channels, as
  * 20261101l seeds them; the layout harness turns it on with `&lifecycle=1`
  * in its address (the default read stays the ten rows the card's tests pin).
+ * `forms` adds waves 3-4's six client form rows as 20261102a seeds them
+ * (`&forms=1`), with #nps-survey-feedback still waiting for the bot (Q4).
  */
 export function settingsReadFixture(
   opts: {
@@ -139,6 +141,7 @@ export function settingsReadFixture(
     editors?: boolean;
     now?: string;
     lifecycle?: boolean;
+    forms?: boolean;
   } = {},
 ): SettingsRead {
   const now = opts.now ?? NOTICE_NOW;
@@ -146,6 +149,10 @@ export function settingsReadFixture(
     opts.lifecycle ??
     (typeof location !== "undefined" &&
       new URLSearchParams(location.search).get("lifecycle") === "1");
+  const forms =
+    opts.forms ??
+    (typeof location !== "undefined" &&
+      new URLSearchParams(location.search).get("forms") === "1");
   const edit = opts.edit ?? true;
   const editors = opts.editors ?? edit;
   const migration = { updatedBy: "the migration", updatedAt: ago(now, 72) };
@@ -360,6 +367,39 @@ export function settingsReadFixture(
             })),
           ]
         : []),
+      // The client's voice and forms, as 20261102a seeds them (WAVE34 3.4).
+      ...(forms
+        ? (
+            [
+              ["pause.consent", CSM_GENERAL, ["seat:csm"]],
+              ["nps.received", NPS_FEEDBACK, []],
+              ["csat.received", NPS_FEEDBACK, []],
+              ["voice.low", CSM_GENERAL, ["seat:csm"]],
+              ["feedback.received", CSM_GENERAL, ["seat:csm"]],
+              ["legacy.received", CSM_GENERAL, []],
+            ] as const
+          ).map(([kind, channel, rule]) => ({
+            kind,
+            shape: "post" as const,
+            on: true,
+            fixedOn: false,
+            channel,
+            mentionRule: [...rule],
+            mentionPeople: [],
+            tags: rule.map(r => seat(r)),
+            ...migration,
+            last:
+              kind === "pause.consent"
+                ? noticeFixture({
+                    kind,
+                    state: "posted",
+                    channel: CSM_GENERAL,
+                    at: ago(now, 2),
+                    reason: null,
+                  })
+                : null,
+          }))
+        : []),
     ],
     channels: [
       {
@@ -403,7 +443,7 @@ export function settingsReadFixture(
         checkedAt: ago(now, 24),
         inUse: false,
       },
-      ...(lifecycle
+      ...(lifecycle || forms
         ? [
             {
               ...CSM_ANNOUNCE,
