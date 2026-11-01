@@ -1,8 +1,16 @@
 # forms-door
 
-Typeform's push of each kickoff response (form `tG7dnxBn`) into the forms
-tables (`docs/forms/STAGE2B-CONTRACT.md` 4.8, build 8). It runs beside the
-csm-calls worker's 15-minute read (`csm-forms-record`, which records every
+Typeform's push of each response of three forms into the forms tables:
+kickoff (`tG7dnxBn`, `docs/forms/STAGE2B-CONTRACT.md` 4.8, build 8), and since
+waves 1-2 (`docs/forms/WAVE12-CONTRACT.md` 4.4) the termination survey
+(`knIe4eF3`, form key `exit_survey`) and the client's pause request
+(`CTUjv6l3`, form key `pause_request`). Each form has its own signing key, its
+own registry row and its own health row; the sections below describe kickoff
+first, then what differs for the two client forms.
+
+## Kickoff
+
+The kickoff door runs beside the csm-calls worker's 15-minute read (`csm-forms-record`, which records every
 stored kickoff through `cockpit_form_record_sweep`) and writes through the
 same store, so whichever comes first the response is recorded once. Until the
 webhook is registered (B3, below), the 15-minute read is the only source and
@@ -23,7 +31,7 @@ signing key from the vault (`cockpit_forms_key_get('typeform_kickoff')`).
 | --- | --- | --- |
 | 1 | Any path but `/forms-door/typeform/{form}` | 404 `{"ok":false}` |
 | 1 | Anything but POST | 405 `{"ok":false}` |
-| 1 | `{form}` other than `kickoff`: the checkin row also has a `typeform_id` and provider `typeform`, so in 2b only kickoff has a cockpit webhook (Z58) | 404 `{"ok":false}` |
+| 1 | `{form}` not one of `FORM_KEYS` (`kickoff`, `exit_survey`, `pause_request`): the checkin row also has a `typeform_id` and provider `typeform`, so the door names its forms itself (Z58) | 404 `{"ok":false}` |
 | 2 | The body is read once; over 1,500,000 bytes | 413 `{"ok":false}` |
 | 3 | The registry row (`cockpit_forms`, kept 5 minutes per isolate) no longer has a `typeform_id`, or its provider is not `typeform` | 404 `{"ok":false}` |
 | 4 | The signing key from the vault, kept 5 minutes per isolate. None saved: recorded `failed`, `No signing key saved` (at most once in 30 seconds per isolate), and the key read again at most once in 30 seconds per isolate, so a flood before registration costs one read and one write | 503 `{"ok":false}`; Typeform retries |
@@ -66,6 +74,39 @@ turns the row red: visible, and safe.
 Nothing is logged but one line per delivery, `forms-door kickoff {outcome}`:
 never a body, an answer, a hidden value, a header value, a token or a key.
 
+## The termination survey and the pause request (waves 1-2)
+
+Both are client forms that stay live in Typeform until wave 3. The door takes
+the same steps 1 to 7 as kickoff, each form with its own key
+(`cockpit_forms_key_get('typeform_exit_survey')`,
+`cockpit_forms_key_get('typeform_pause_request')`), registry row, limiters and
+health row (`forms-door:exit_survey`, `forms-door:pause_request`). Step 8
+differs: `cockpit_form_record_legacy(p)` with
+`p = {formKey, externalId (the token), submittedAt, answers: {fields: [{ref,
+title, type, value}]}, hidden, taskId, clientName, backfill: false}`
+(`legacyInput` in `handler.ts`).
+
+- **What is stored:** the answers with the worker's own mapping, less every
+  answer whose type is `email`, `phone_number` or `contact_info` (both forms
+  ask for contact details the card already holds, inventory 3.3 and 3.4), and
+  only the two hidden fields the forms set, `client_name` and
+  `onboarding_client_id`. A legacy response (`state 'legacy'`), never a card
+  change (D11).
+- **The card:** the form's own hidden `onboarding_client_id`, written by the
+  card's Termination Form Link (`24a77b61`) or Pause Form Link (`3a04c8a1`)
+  field, inventory 3.3 and 3.4. The database keeps it only when that card is
+  on the billing sheet. No card id, no match: the client name is kept as the
+  form gave it and never matched (W12); a CSM picks the card in the cockpit
+  (`cockpit_form_legacy_match`).
+- **What it queues:** a new termination survey queues one "Termination notice
+  in" (`termination.notice`, #csm-general, tags the CSM) in the database; a
+  pause request queues nothing, because its row on Today is the signal (W18).
+  A backfilled row queues nothing at all.
+
+The old answers come in once with
+`scripts/dev/forms_legacy_backfill.py {exit_survey|pause_request}` (`--dry`
+first): the same `legacyInput` rules, `backfill: true`, counts only.
+
 ## Register, probe, unregister (B3, deploy step D17)
 
 From the Mac, through the read-only ssh pattern of 2a 4.5 (keys by name, values
@@ -76,6 +117,18 @@ python3 scripts/dev/forms_key.py typeform-secret kickoff     # 32 random bytes, 
 python3 scripts/dev/forms_key.py register-typeform kickoff   # PUT /forms/tG7dnxBn/webhooks/cockpit, read back, marked connected
 python3 scripts/dev/forms_key.py probe-typeform kickoff      # unsigned POST must get 401, a signed probe 200
 python3 scripts/dev/forms_key.py status                      # typeform_kickoff connected, last 4 only
+```
+
+The two client forms register the same way with their own form key, at their
+own deploy steps: `exit_survey` at D-F4, `pause_request` at D-C2 (before Make
+9805613 goes off, W18):
+
+```sh
+python3 scripts/dev/forms_key.py typeform-secret exit_survey
+python3 scripts/dev/forms_key.py register-typeform exit_survey    # PUT /forms/knIe4eF3/webhooks/cockpit
+python3 scripts/dev/forms_key.py probe-typeform exit_survey       # 401, then 200
+python3 scripts/dev/forms_legacy_backfill.py exit_survey --dry    # counts only, nothing written
+python3 scripts/dev/forms_legacy_backfill.py exit_survey          # the old answers, no notice
 ```
 
 Read back: `GET /forms/tG7dnxBn/webhooks` lists `cockpit` enabled beside the
@@ -103,4 +156,5 @@ RPCs): before that a signed delivery would answer 500 and Typeform would retry.
 
 `bun test supabase/functions/forms-door`: every route and refusal, a rotated
 key accepted at once, the answer mapping of a signed body, the record call's keys, each recorded outcome, and no
-body, answer or hidden value in any log line.
+body, answer or hidden value in any log line; for the two client forms, their own keys, the legacy record's
+input with no email or phone, an unmatched survey, and a pause request on the same path.

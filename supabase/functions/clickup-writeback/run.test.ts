@@ -7,6 +7,7 @@ import {
   CALLS_MAX,
   CALLS_MIN,
   cardList,
+  billingGate,
   type Deps,
   FORMS_BUSY_HELD,
   FORMS_CALLS_PER_MINUTE,
@@ -21,6 +22,7 @@ import {
   openRunMinutes,
   pacer,
   REQUESTS_RUN_BUDGET_MS,
+  runBillingDoctor,
   runDoctor,
   runDosDonts,
   runForms,
@@ -120,6 +122,104 @@ describe("the write gate", () => {
   it("the client success ticket switch opens only on exactly 'true' and does not open the rest", () => {
     for (const v of [undefined, "", "TRUE", "1"]) expect(gate(k => (k === "CLICKUP_WRITEBACK_APPLY_CSM_TICKETS" ? v : undefined)).csmTickets).toBe(false);
     expect(gate(k => (k === "CLICKUP_WRITEBACK_APPLY_CSM_TICKETS" ? "true" : undefined))).toMatchObject({ csmTickets: true, apply: false, mode: "dry_run" });
+  });
+});
+
+describe("the billing switch (waves 1-2 1.4, W2)", () => {
+  const env = (e: Record<string, string | undefined>) => (k: string) => e[k];
+  const churn = { payload: { kind: "churn", taskId: "86card0001" } };
+  const ext = { payload: { kind: "extension", taskId: "86card0001" } };
+  it("opens only on CLICKUP_WRITEBACK_APPLY_BILLING exactly 'true' with the kind listed, never on the general switch", () => {
+    for (const v of [undefined, "", "TRUE", "True", " true", "true ", "1", "yes"]) {
+      const g = billingGate(env({ CLICKUP_WRITEBACK_APPLY_BILLING: v, CLICKUP_WRITEBACK_BILLING_KINDS: "churn", CLICKUP_WRITEBACK_APPLY: "true" }));
+      expect([g.apply, g.mode, g.open, g.live(churn)]).toEqual([false, "dry_run", [], false]);
+    }
+    // On with no kind listed is still a dry run: empty means none.
+    expect(billingGate(env({ CLICKUP_WRITEBACK_APPLY_BILLING: "true" }))).toMatchObject({ apply: true, mode: "dry_run", open: [] });
+    const open = billingGate(env({ CLICKUP_WRITEBACK_APPLY_BILLING: "true", CLICKUP_WRITEBACK_BILLING_KINDS: " resume, churn ,," }));
+    expect([open.mode, open.open, open.live(churn), open.live(ext), open.words]).toEqual(["apply", ["churn", "resume"], true, false, "billing: apply (churn, resume)"]);
+  });
+  it("BILLING_ONLY_CARDS narrows it to the canary card", () => {
+    const canary = billingGate(env({ CLICKUP_WRITEBACK_APPLY_BILLING: "true", CLICKUP_WRITEBACK_BILLING_KINDS: "churn", CLICKUP_WRITEBACK_BILLING_ONLY_CARDS: "86eywg1cq" }));
+    expect([canary.mode, canary.live(churn), canary.live({ payload: { kind: "churn", taskId: "86eywg1cq" } })]).toEqual(["apply_limited", false, true]);
+    expect(canary.words).toBe("billing: apply_limited (churn) on 86eywg1cq");
+  });
+  it("opens nothing else: the log, the KPI columns and requests stay dry runs", () => {
+    const e = env({ CLICKUP_WRITEBACK_APPLY_BILLING: "true", CLICKUP_WRITEBACK_BILLING_KINDS: "churn" });
+    expect(gate(e)).toMatchObject({ apply: false, mode: "dry_run", csmTickets: false });
+    expect(kpiGate(e)).toMatchObject({ apply: false, mode: "dry_run" });
+  });
+  it("the doctor names the billing mode and kinds", async () => {
+    const off = await runDoctor(harness({ CLICKUP_API_TOKEN: "x", CRON_SECRET: "s" }).deps);
+    expect(off).toMatchObject({ billingMode: "dry_run", billingKinds: [], billingOnlyCards: [] });
+    expect(off.note).toContain("Billing edits: dry run (written only when CLICKUP_WRITEBACK_APPLY_BILLING is true and the kind is in CLICKUP_WRITEBACK_BILLING_KINDS).");
+    const on = await runDoctor(harness({ CLICKUP_API_TOKEN: "x", CRON_SECRET: "s", CLICKUP_WRITEBACK_APPLY_BILLING: "true", CLICKUP_WRITEBACK_BILLING_KINDS: "churn" }).deps);
+    expect(on).toMatchObject({ billingMode: "apply", billingKinds: ["churn"] });
+    expect(on.note).toContain("Billing edits: apply (churn).");
+  });
+});
+
+describe("the billing doctor job (waves 1-2 4.1 step 2)", () => {
+  const CHURN_REASON = "796f25e7-7e63-4d08-9ec4-41c58a5b57ca";
+  const fieldsRead = (over: (f: any) => any = f => f) =>
+    [
+      { id: "9368ca9e-3549-4320-84ff-9abd0a2901cb", name: "Client Status", type: "drop_down", type_config: { options: ["Active", "Paused", "Stopped"].map((name, i) => ({ id: `s${i}`, name, orderindex: i })) } },
+      { id: "665e5754-b9c6-4776-9386-111ad221dead", name: "Payment Method", type: "drop_down" },
+      { id: "17d17129-43c4-441b-a55c-6eca83b9f776", name: "Payment Plan", type: "drop_down" },
+      { id: "f071ee8f-b7ce-49e8-899b-6bef649d86ba", name: "Next Payment Amount", type: "number" },
+      { id: "669ae046-bf82-4b59-80d5-bf25d6b57ef3", name: "Next Payment Date", type: "date" },
+      { id: "930c49eb-9374-410c-801f-9aa81fff4944", name: "Paused On", type: "date" },
+      { id: "8cb9d308-5df5-4ea1-b83d-32b5b7eea778", name: "Current extension (weeks)", type: "number" },
+      { id: "d3c46259-3017-4429-a52a-c609a40f348b", name: "Resume On", type: "date" },
+      { id: "42429a6e-5cba-4a3b-964d-2b493315421b", name: "Churn Date", type: "date" },
+      { id: CHURN_REASON, name: "❌ Churn Reason", type: "drop_down", type_config: { options: ["Cancelled", "Refund", "Chargeback", "Non-payment 14+ days", "Paused past 14 days", "Ghosted", "Completed term, did not renew"].map((name, i) => ({ id: `r${i}`, name, orderindex: i })) } },
+      { id: "a121f39a-f8a4-41f5-905e-a735ee729071", name: "Churn Type", type: "drop_down", type_config: { options: ["Mid-programme loss (counts as churn)", "Completed term (does NOT count as churn)"].map((name, i) => ({ id: `t${i}`, name, orderindex: i })) } },
+      { id: "48eb6023-8944-4404-9e30-b01fc8a38256", name: "MRR", type: "currency" },
+      { id: "11d70e58-20e7-4ff0-85c6-51de42f044d2", name: "LTV", type: "currency" },
+      { id: "9cfdb353-0000-4000-8000-000000000001", name: "Will not continue", type: "checkbox" },
+    ].map(over);
+  function doctorHarness(env: Record<string, string>, fields: any) {
+    const h = harness(env, { route: c => (c.method === "GET" && c.path === `list/${CLIENTS_LIST}/field` ? (fields instanceof Error ? fields : { fields }) : undefined) });
+    const states: { key: string; row: any }[] = [];
+    h.deps.syncState = async (key, row) => { states.push({ key, row: structuredClone(row) }); };
+    const orig = h.deps.rpc;
+    h.deps.rpc = async (name, params) => (name === "cockpit_clickup_fields_put" ? (h.rpcs.push({ name, params }), params!.p_fields.length) : orig(name, params));
+    return { ...h, state: () => states.find(s => s.key === "clickup-writeback:billing-doctor")?.row };
+  }
+
+  it("reads the list once through the ledger, stores the map, and says Ready with the reason options", async () => {
+    const h = doctorHarness({ CLICKUP_API_TOKEN: "x" }, fieldsRead());
+    const out = await runBillingDoctor(h.deps);
+    expect(out).toMatchObject({ ok: true, job: "billing_doctor", mode: "dry_run", gaps: [] });
+    expect(h.calls.map(c => [c.method, c.path, c.actionId])).toEqual([["GET", `list/${CLIENTS_LIST}/field`, "11111111-2222-3333-4444-555555555555"]]);
+    expect(h.writes()).toEqual([]);
+    expect(h.rpcs.find(r => r.name === "cockpit_clickup_fields_put")?.params).toMatchObject({ p_list: CLIENTS_LIST });
+    expect(out.note).toContain("Ready. 14 fields stored.");
+    expect(out.note).toContain("Churn Reason options: Cancelled, Refund, Chargeback, Non-payment 14+ days, Paused past 14 days, Ghosted, Completed term, did not renew.");
+    expect(h.state()).toMatchObject({ ok: true, detail: { gaps: [], stored: 14, reasonMap: { "Completed term, did not renew": "Completed term, did not renew" }, willNotContinue: "9cfdb353-0000-4000-8000-000000000001" } });
+  });
+
+  it("lists every gap in a sentence and stays ok: a gap is never a stop", async () => {
+    const h = doctorHarness({ CLICKUP_API_TOKEN: "x" }, fieldsRead(f => (f.id === CHURN_REASON ? { ...f, type_config: { options: [{ id: "r0", name: "Cancelled" }] } } : f)).filter(f => !f.id.startsWith("9cfdb353")));
+    const out = await runBillingDoctor(h.deps);
+    expect(out.ok).toBe(true);
+    expect(out.gaps).toHaveLength(2);
+    expect(out.note).toMatch(/^2 gaps on Clients - Mahara\. Churn Reason has no option for "Refund"/);
+    expect(out.note).toContain("The will-not-continue checkbox (9cfdb353) is not on Clients - Mahara, so it was not written.");
+    expect(h.state()?.detail.gaps).toEqual(out.gaps);
+  });
+
+  it("fails on no token or a failed read, keeps the stored map, and says so", async () => {
+    const none = doctorHarness({}, fieldsRead());
+    expect(await runBillingDoctor(none.deps)).toMatchObject({ ok: false });
+    expect(none.calls).toEqual([]);
+    const broken = doctorHarness({ CLICKUP_API_TOKEN: "x" }, new Error("clickup rejected the request (401): Token invalid"));
+    const out = await runBillingDoctor(broken.deps);
+    expect(out.ok).toBe(false);
+    expect(out.note).toContain("Could not read the Clients - Mahara fields: clickup rejected the request (401)");
+    expect(broken.rpcs.some(r => r.name === "cockpit_clickup_fields_put")).toBe(false);
+    expect(broken.state()).toMatchObject({ ok: false });
+    expect(broken.state()).not.toHaveProperty("last_ok_at");
   });
 });
 
@@ -382,7 +482,13 @@ describe("log job", () => {
     const h = harness({ CLICKUP_API_TOKEN: "x" });
     const out = await runLog(h.deps);
     expect(out).toMatchObject({ ok: true, note: "The ClickUp log queue is empty." });
-    expect(h.rpcs.map(r => r.name)).toEqual(["cockpit_clickup_writeback_sweep", "cockpit_clickup_writeback_claim", "cockpit_clickup_writeback_idle"]);
+    // The billing switch is reported on every run, so the held count is read first (waves 1-2 4.1 step 7).
+    expect(h.rpcs.map(r => r.name)).toEqual([
+      "cockpit_clickup_writeback_sweep",
+      "cockpit_clickup_writeback_claim",
+      "cockpit_billing_writeback_held",
+      "cockpit_clickup_writeback_idle",
+    ]);
   });
 
   const csmTicket = (over: any = {}) =>
@@ -726,9 +832,9 @@ describe("the requests switch beside the other jobs (contract 4.1)", () => {
     expect(k.writes()).toEqual([]);
   });
 
-  it("the unknown-job sentence names all eight jobs", () => {
-    expect(unknownJobNote("checkins")).toBe('Unknown job "checkins". Use kpi, log, dosdonts, doctor, requests, requests_doctor, forms or forms_doctor.');
-    expect(noJobNote).toBe("Send a JSON body with a job: kpi, log, dosdonts, doctor, requests, requests_doctor, forms or forms_doctor.");
+  it("the unknown-job sentence names all nine jobs", () => {
+    expect(unknownJobNote("checkins")).toBe('Unknown job "checkins". Use kpi, log, dosdonts, doctor, requests, requests_doctor, forms, forms_doctor or billing_doctor.');
+    expect(noJobNote).toBe("Send a JSON body with a job: kpi, log, dosdonts, doctor, requests, requests_doctor, forms, forms_doctor or billing_doctor.");
   });
 
   it("the doctor names the requests mode and the canary cards", async () => {
@@ -836,8 +942,8 @@ describe("the forms job beside the others", () => {
   }
   const LIVE = { CLICKUP_API_TOKEN: "x", CLICKUP_WRITEBACK_APPLY_FORMS: "true" };
 
-  it("JOBS adds forms and forms_doctor", () => {
-    expect(JOBS).toEqual(["kpi", "log", "dosdonts", "doctor", "requests", "requests_doctor", "forms", "forms_doctor"]);
+  it("JOBS adds forms and forms_doctor (and billing_doctor after them, waves 1-2)", () => {
+    expect(JOBS).toEqual(["kpi", "log", "dosdonts", "doctor", "requests", "requests_doctor", "forms", "forms_doctor", "billing_doctor"]);
   });
 
   it("a dry run claims nothing and reports dry_run: Nothing to write.", async () => {

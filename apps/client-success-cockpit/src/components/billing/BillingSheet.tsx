@@ -18,15 +18,40 @@ import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { FormBody } from "@/forms/staff/FormSheet";
+import { extensionDef, FORM_DEFS } from "@/forms/staff/formDefs";
+import type {
+  Answers,
+  FormTrailRow,
+  SubmitRef,
+} from "@/forms/staff/formSheetCore";
+import type {
+  Doors,
+  PrefillRead,
+  SendOptions,
+  SendResult,
+} from "@/forms/staff/lifecycleClient";
 import type {
   Account,
   Edit,
   EventRow,
   Ladder,
+  LadderSteps,
+  MrrRow,
+  MrrView,
   Sheet,
   SheetRow,
 } from "@/lib/billingCore";
-import { ladderOf, METHODS, PLANS } from "@/lib/billingCore";
+import {
+  DEFAULT_STEPS,
+  ladderOf,
+  ladderSentence,
+  METHODS,
+  mrrChip,
+  mrrDiffers,
+  mrrViewFrom,
+  PLANS,
+} from "@/lib/billingCore";
 import {
   type LogPaymentHandoff,
   type PendingApi,
@@ -94,6 +119,29 @@ export type PaymentInput = {
   allowRepeat?: boolean;
 };
 
+/**
+ * The staff forms the sheet opens in place (20261101p, contract 4.7 to 4.9):
+ * Give more time, Pause and Resume, Set MRR. Each cockpit wires them to
+ * forms/staff/lifecycleClient.ts with its own seat (the CEO cockpit writes
+ * as the CEO). A cockpit that passes nothing shows each tab's door closed.
+ */
+export type StaffFormKey = "extension" | "pause" | "resume" | "mrr";
+export type StaffFormsApi = {
+  /** Which doors may show (cockpit_form_doors), read once per page load. */
+  doors: () => Promise<Doors>;
+  prefill: (key: StaffFormKey, taskId: string) => Promise<PrefillRead>;
+  send: (
+    key: StaffFormKey,
+    taskId: string,
+    a: Answers,
+    requestId: string,
+    o: SendOptions,
+  ) => Promise<SendResult>;
+  trail: (ref: SubmitRef) => Promise<FormTrailRow>;
+  /** cockpit_mrr_read, as it comes. */
+  mrr: () => Promise<unknown>;
+};
+
 export type BillingApi = {
   sheet: (a: { fresh?: boolean }) => Promise<BillingPayload>;
   edit: (a: { taskId: string; edit: Edit }) => Promise<Account>;
@@ -114,6 +162,8 @@ export type BillingApi = {
    * paying. A cockpit that passes nothing shows no such section.
    */
   pending?: PendingApi;
+  /** The staff forms behind Give more time, Pause, Resume and Set MRR. */
+  forms?: StaffFormsApi;
 };
 
 // --- look ------------------------------------------------------------------
@@ -333,11 +383,20 @@ const NOW_RUNGS = new Set([
   "day14",
   "day7",
 ]);
-type Filter = "now" | "all" | "late" | "paused" | "extended" | "nomethod";
+type Filter =
+  | "now"
+  | "all"
+  | "late"
+  | "paused"
+  | "extended"
+  | "nomethod"
+  | "mrr";
+/** What a filter may need beyond the row: the MRR check's cards that differ. */
+type FilterContext = { mrrDiffer: Set<string> };
 const FILTERS: {
   key: Filter;
   label: string;
-  test: (r: SheetRow) => boolean;
+  test: (r: SheetRow, c: FilterContext) => boolean;
 }[] = [
   {
     key: "now",
@@ -365,11 +424,99 @@ const FILTERS: {
     label: "No payment method",
     test: r => r.group === "active" && !r.method,
   },
+  {
+    key: "mrr",
+    label: "MRR differs",
+    test: (r, c) => c.mrrDiffer.has(r.taskId),
+  },
 ];
 
 // --- one client, opened ----------------------------------------------------
 
-type Tab = "pay" | "date" | "extend" | "pause" | "method" | "note";
+type Tab = "pay" | "date" | "extend" | "pause" | "mrr" | "method" | "note";
+
+/** A door whose migration is not live yet (contract 5.2). */
+function DoorClosed() {
+  return (
+    <p className="text-sm text-muted-foreground">
+      Opens after the next cockpit update.
+    </p>
+  );
+}
+
+/**
+ * One staff form in place: the prefill read once per opening, then FormBody,
+ * whose after-send trail shows the decision reaching the card. The sheet
+ * reads itself again after a send, behind the trail.
+ */
+function StaffForm({
+  formKey,
+  row,
+  forms,
+  onSaved,
+}: {
+  formKey: StaffFormKey;
+  row: SheetRow;
+  forms: StaffFormsApi;
+  onSaved: () => void;
+}) {
+  const [read, setRead] = useState<PrefillRead | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [reads, setReads] = useState(0);
+  useEffect(() => {
+    let live = true;
+    forms.prefill(formKey, row.taskId).then(
+      r => {
+        if (live) {
+          setRead(r);
+          setFailed(null);
+        }
+      },
+      e => {
+        if (live) setFailed(errorText(e));
+      },
+    );
+    return () => {
+      live = false;
+    };
+    // `reads` reads the prefill again after a send (a grant is now live).
+  }, [forms, formKey, row.taskId, reads]);
+  const grant = formKey === "extension" ? (read?.grant ?? null) : null;
+  const def =
+    formKey === "extension" ? extensionDef(grant?.until) : FORM_DEFS[formKey];
+  const status = `${row.status ?? "No status"} · ${
+    row.group === "paused"
+      ? row.pausedOn
+        ? `paused ${shortDay(row.pausedOn)}`
+        : "paused, no pause date"
+      : row.nextDate
+        ? `due ${shortDay(row.nextDate)}`
+        : "no payment date"
+  }`;
+  return (
+    <FormBody
+      key={formKey}
+      def={def}
+      client={{ taskId: row.taskId, name: row.name }}
+      prefill={read?.prefill ?? []}
+      calls={read?.calls ?? []}
+      hints={read?.hints ?? []}
+      status={status}
+      loading={!read && !failed}
+      prefillError={failed}
+      submit={(a, requestId) =>
+        forms.send(formKey, row.taskId, a, requestId, {
+          replacesGrantId: grant?.grantId ?? null,
+        })
+      }
+      trail={forms.trail}
+      onSent={() => {
+        setReads(n => n + 1);
+        onSaved();
+      }}
+    />
+  );
+}
 
 function Panel({
   row,
@@ -381,6 +528,10 @@ function Panel({
   notice,
   start,
   onDone,
+  doors,
+  steps,
+  mrr,
+  onSaved,
 }: {
   row: SheetRow;
   api: BillingApi;
@@ -392,6 +543,13 @@ function Panel({
   /** Opened from Pending payments' "Log it as a payment": the payment form, filled in. */
   start?: { amount: string; currency: "USD" | "KWD"; note: string } | null;
   onDone: (message: string, updated?: Account) => void;
+  /** Which staff-form doors may show; null while unread. */
+  doors: Doors | null;
+  steps: LadderSteps;
+  /** This card's row of the MRR check, when it has one. */
+  mrr?: MrrRow;
+  /** A staff form saved: read the sheet again, quietly (the form shows its own trail). */
+  onSaved: () => void;
 }) {
   const paused = row.group === "paused";
   const [tab, setTab] = useState<Tab>(start || !paused ? "pay" : "pause");
@@ -423,12 +581,9 @@ function Panel({
   const [rollTo, setRollTo] = useState(
     row.nextDate && recurring && forThisDate ? addMonth(row.nextDate) : "",
   );
-  // The date, an extension, a pause
+  // The date
   const [date, setDate] = useState(row.nextDate ?? today);
   const [why, setWhy] = useState("");
-  const [weeks, setWeeks] = useState(2);
-  const [ours, setOurs] = useState(false);
-  const [moveDate, setMoveDate] = useState(true);
   // How they pay
   const [method, setMethod] = useState(row.method ?? "");
   const [plan, setPlan] = useState(row.plan ?? "");
@@ -474,18 +629,28 @@ function Panel({
       }),
     }));
 
-  const extendedTo = addDays(
-    row.nextDate && row.nextDate > today ? row.nextDate : today,
-    weeks * 7,
-  );
   const mine = events.filter(e => e.clickup_task_id === row.taskId).slice(0, 8);
-  const first = row.name.split(/\s+/)[0];
+  const forms = api.forms;
+  // A door opens only when its migration is live (cockpit_form_doors);
+  // while the doors are read, it says so rather than "closed".
+  const form = (key: StaffFormKey, open: boolean | undefined) =>
+    forms && doors === null ? (
+      <p className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="size-4 animate-spin" aria-hidden />
+        Opening the form
+      </p>
+    ) : forms && open ? (
+      <StaffForm formKey={key} row={row} forms={forms} onSaved={onSaved} />
+    ) : (
+      <DoorClosed />
+    );
 
   const TABS: { key: Tab; label: string; show: boolean }[] = [
     { key: "pay", label: "Log a payment", show: true },
     { key: "date", label: "Move the date", show: !paused },
-    { key: "extend", label: "Extend", show: !paused },
+    { key: "extend", label: "Give more time", show: !paused },
     { key: "pause", label: paused ? "Resume" : "Pause", show: true },
+    { key: "mrr", label: "Set MRR", show: true },
     { key: "method", label: "How they pay", show: true },
     { key: "note", label: "Note", show: true },
   ];
@@ -603,6 +768,10 @@ function Panel({
                       onChange={e => setReference(e.target.value)}
                       placeholder="Invoice or transfer number"
                     />
+                    <span className="text-xs text-muted-foreground">
+                      The CEO's entry with the bank's reference counts as
+                      checked at once; any other waits for the bank check.
+                    </span>
                   </>
                 )}
               </Field>
@@ -717,146 +886,41 @@ function Panel({
         ) : null}
 
         {tab === "extend" ? (
-          <div className="grid gap-3 sm:max-w-lg">
-            <div className="flex gap-1" role="radiogroup" aria-label="How long">
-              {[1, 2, 4].map(w => (
-                <button
-                  key={w}
-                  type="button"
-                  role="radio"
-                  aria-checked={weeks === w}
-                  onClick={() => setWeeks(w)}
-                  className={chip(weeks === w)}
-                >
-                  {plural(w, "week")}
-                </button>
-              ))}
-            </div>
-            <Field label="Why">
-              {id => (
-                <>
-                  <Input
-                    id={id}
-                    value={why}
-                    onChange={e => setWhy(e.target.value)}
-                    placeholder="Their launch slipped; they asked on the call"
-                  />
-                </>
-              )}
-            </Field>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="size-4 accent-[var(--primary)]"
-                checked={ours}
-                onChange={e => setOurs(e.target.checked)}
-              />
-              It was ours to control
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="size-4 accent-[var(--primary)]"
-                checked={moveDate}
-                onChange={e => setMoveDate(e.target.checked)}
-              />
-              Move their payment to {shortDay(extendedTo)}
-            </label>
-            <div>
-              <Button
-                size="sm"
-                disabled={busy || why.trim().length < 4}
-                onClick={() =>
-                  edit(
-                    { kind: "extension", weeks, reason: why, ours, moveDate },
-                    `Extended ${row.name} by ${plural(weeks, "week")}${moveDate ? `; they pay on ${shortDay(extendedTo)}` : ""}.`,
-                  )
-                }
-              >
-                {busy ? <Loader2 className="animate-spin" aria-hidden /> : null}
-                Extend by {plural(weeks, "week")}
-              </Button>
-            </div>
+          <div className="grid gap-3 sm:max-w-xl">
+            {form("extension", doors?.extension)}
           </div>
         ) : null}
 
         {tab === "pause" ? (
-          paused ? (
-            <div className="grid gap-3 sm:max-w-md">
+          <div className="grid gap-3 sm:max-w-xl">
+            {paused ? (
               <p className="text-sm text-muted-foreground">
                 {row.pausedOn
                   ? `Paused since ${shortDay(row.pausedOn)}.`
                   : "Paused, with no pause date on the card."}{" "}
-                Resuming sets them Active and clears the pause date, so a later
-                pause is counted from its own day.
+                Resuming sets them Active and clears Paused On and Resume On, so
+                a later pause is counted from its own day.
               </p>
-              <Field label="Their next payment">
-                {id => (
-                  <>
-                    <DateInput
-                      id={id}
-                      value={date}
-                      onChange={e => setDate(e.target.value)}
-                    />
-                  </>
-                )}
-              </Field>
-              <div>
-                <Button
-                  size="sm"
-                  disabled={busy}
-                  onClick={() =>
-                    edit(
-                      { kind: "resume", nextDate: date || undefined },
-                      `Resumed ${row.name}${date ? `; they pay on ${shortDay(date)}` : ""}.`,
-                    )
-                  }
-                >
-                  {busy ? (
-                    <Loader2 className="animate-spin" aria-hidden />
-                  ) : null}
-                  Resume {first}
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="grid gap-3 sm:max-w-md">
+            ) : (
               <p className="text-sm text-muted-foreground">
-                The SOP pauses on the third day late, and only after a call. A
-                pause that runs past 14 days is churn.
+                {ladderSentence(steps)}
               </p>
-              <Field label="Why">
-                {id => (
-                  <>
-                    <Input
-                      id={id}
-                      value={why}
-                      onChange={e => setWhy(e.target.value)}
-                      placeholder="Three days late; called twice, no answer"
-                    />
-                  </>
-                )}
-              </Field>
-              <div>
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  disabled={busy || why.trim().length < 4}
-                  onClick={() =>
-                    edit(
-                      { kind: "pause", reason: why },
-                      `Paused ${row.name} from today.`,
-                    )
-                  }
-                >
-                  {busy ? (
-                    <Loader2 className="animate-spin" aria-hidden />
-                  ) : null}
-                  Pause {first}
-                </Button>
-              </div>
-            </div>
-          )
+            )}
+            {form(paused ? "resume" : "pause", doors?.pause)}
+          </div>
+        ) : null}
+
+        {tab === "mrr" ? (
+          <div className="grid gap-3 sm:max-w-xl">
+            {mrr ? (
+              <p className="text-sm text-muted-foreground">
+                {mrrChip(mrr) ??
+                  "The card's MRR matches its suggestion and the money in."}
+                {mrr.suggestionWhy ? ` ${mrr.suggestionWhy}` : ""}
+              </p>
+            ) : null}
+            {form("mrr", doors?.mrr)}
+          </div>
         ) : null}
 
         {tab === "method" ? (
@@ -1019,6 +1083,25 @@ function Panel({
           <div className="min-w-0">
             <dt className={label}>MRR on the card</dt>
             <dd className="tabular-nums">{usd(row.mrrUsd)}</dd>
+            {mrr &&
+            (mrr.suggestedUsd !== null || mrr.railMonthlyUsd !== null) ? (
+              <dd className="text-xs text-muted-foreground">
+                {[
+                  mrr.suggestedUsd !== null
+                    ? `suggested ${usd(mrr.suggestedUsd)}`
+                    : null,
+                  mrr.railMonthlyUsd !== null
+                    ? `money in ${usd(mrr.railMonthlyUsd)} a month`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(", ")}
+              </dd>
+            ) : mrr?.flag === "not_recurring" ? (
+              <dd className="text-xs text-muted-foreground">
+                Not a monthly plan
+              </dd>
+            ) : null}
           </div>
           <div className="min-w-0">
             <dt className={label}>LTV</dt>
@@ -1121,9 +1204,31 @@ function partOf(d: Record<string, unknown>): string {
   }
 }
 
+// The seat as cockpit_billing_detail stores it (a code) said as a role.
+const SEAT_WORDS: Record<string, string> = {
+  csm: "The CSM",
+  ceo: "The CEO",
+  finance: "Finance",
+  system: "The cockpit",
+};
+
+export function seatWords(role: string): string {
+  return SEAT_WORDS[role] ?? role.charAt(0).toUpperCase() + role.slice(1);
+}
+
 function sentenceOf(e: EventRow): string {
-  const who = e.source === "maher" ? "Maher" : String(e.by_whom).split("@")[0];
   const d = (e.detail ?? {}) as Record<string, unknown>;
+  // The staff forms and the daily step carry the seat as words ("the CSM",
+  // 20261101p); the churn confirm and the canary as a code ("csm").
+  const role = typeof d.seat_role === "string" ? d.seat_role : null;
+  const who =
+    e.source === "system"
+      ? "The cockpit"
+      : role
+        ? seatWords(role)
+        : e.source === "maher"
+          ? "Maher"
+          : String(e.by_whom).split("@")[0];
   // A payment row with no amount on record says so in words, never "$NaN".
   const amount =
     d.amount === null || d.amount === undefined || d.amount === ""
@@ -1138,7 +1243,15 @@ function sentenceOf(e: EventRow): string {
     case "payment":
       return `${who} logged ${paid}${d.rail ? ` by ${RAIL[String(d.rail)] ?? d.rail}` : ""}${e.to_value && e.to_value !== e.from_value ? `; next due ${shortDay(e.to_value)}` : ""}.`;
     case "extension":
-      return `${who} extended by ${plural(Number(d.weeks), "week")}${e.reason ? `: ${e.reason}` : "."}`;
+      if (e.source === "system" || Number(d.weeks) === 0)
+        return `${who} cleared the extension on the card: the grant ended.`;
+      return `${who} gave ${plural(Number(d.weeks), "week")}${d.new_date ? ` to ${shortDay(String(d.new_date))}` : ""}${e.reason ? `: ${e.reason}` : "."}`;
+    case "mrr":
+      return `${who} set MRR to ${usd(Number(e.to_value))}${e.from_value ? ` (was ${usd(Number(e.from_value))})` : ""}${e.reason ? `: ${e.reason}` : "."}`;
+    case "late":
+      return `${who}: ${e.reason ?? "a late payment"}.`;
+    case "churn":
+      return `${who} confirmed the client has left${e.reason ? `: ${e.reason}` : "."}`;
     case "pause":
       return `${who} paused the account${e.reason ? `: ${e.reason}` : "."}`;
     case "resume":
@@ -1176,6 +1289,69 @@ function sentenceOf(e: EventRow): string {
     default:
       return `${who}: ${e.kind}${e.reason ? `, ${e.reason}` : ""}.`;
   }
+}
+
+// --- the MRR check (Set MRR, 20261101p) ------------------------------------
+
+/**
+ * Three quiet figures under the book's own: MRR as the cards hold it (active
+ * monthly cards, as the CEO's projected MRR counts), the suggestion beside
+ * it, and the cards whose MRR differs from the suggestion or from the money
+ * coming in. The last one filters the list.
+ */
+function MrrBand({
+  view,
+  active,
+  onShowDiffer,
+}: {
+  view: MrrView;
+  active: boolean;
+  onShowDiffer: () => void;
+}) {
+  const t = view.totals;
+  return (
+    <div className="mt-5 grid grid-cols-2 gap-x-6 gap-y-5 border-t pt-4 lg:grid-cols-4">
+      <Figure
+        title="MRR on the books"
+        value={usd(t.onBooks)}
+        sub={`${plural(t.onBooksCards, "monthly card")}${t.missing ? `; ${t.missing} with no MRR` : ""}`}
+        tone={t.missing ? "warning" : undefined}
+      />
+      <Figure
+        title="Suggested"
+        value={usd(t.suggested)}
+        sub={
+          t.noSuggestion
+            ? `${plural(t.noSuggestion, "card")} with no suggestion`
+            : "every card has one"
+        }
+      />
+      <button
+        type="button"
+        aria-pressed={active}
+        disabled={!t.differ && !active}
+        onClick={onShowDiffer}
+        className="-m-2 rounded-lg p-2 text-left transition-colors enabled:hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default"
+      >
+        <Figure
+          title="Cards that differ"
+          value={String(t.differ)}
+          sub={
+            active
+              ? "Showing them below; press again for all"
+              : t.differ
+                ? "Show them below"
+                : `all within ${view.tolerancePct}%`
+          }
+          tone={t.differ ? "warning" : undefined}
+        />
+      </button>
+      <p className="col-span-2 self-end text-xs leading-relaxed text-muted-foreground lg:col-span-1">
+        {view.railNote ??
+          `Money in is checked rail cash over the last two full months, from the money refresh${view.asOf ? ` of ${shortDay(view.asOf.slice(0, 10))}` : ""}.`}
+      </p>
+    </div>
+  );
 }
 
 // --- the sheet -------------------------------------------------------------
@@ -1225,6 +1401,52 @@ export function BillingSheet({ api }: { api: BillingApi }) {
     void load();
   }, [load]);
 
+  // The staff forms' doors, once per page load; any error reads as all closed.
+  const [doors, setDoors] = useState<Doors | null>(null);
+  useEffect(() => {
+    if (!api.forms) return;
+    let live = true;
+    api.forms.doors().then(
+      d => {
+        if (live) setDoors(d);
+      },
+      () => {
+        if (live) setDoors(null);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [api.forms]);
+
+  // The MRR check (cockpit_mrr_read): the band above the list, the row chips.
+  const [mrr, setMrr] = useState<MrrView | null>(null);
+  const [mrrError, setMrrError] = useState<string | null>(null);
+  const loadMrr = useCallback(async () => {
+    if (!api.forms || !doors?.mrr) return;
+    try {
+      setMrr(mrrViewFrom(await api.forms.mrr()));
+      setMrrError(null);
+    } catch (e) {
+      setMrrError(errorText(e));
+    }
+  }, [api.forms, doors?.mrr]);
+  useEffect(() => {
+    void loadMrr();
+  }, [loadMrr]);
+  const mrrBy = useMemo(
+    () => new Map((mrr?.rows ?? []).map(r => [r.taskId, r] as const)),
+    [mrr],
+  );
+  const context = useMemo<FilterContext>(
+    () => ({
+      mrrDiffer: new Set(
+        (mrr?.rows ?? []).filter(mrrDiffers).map(r => r.taskId),
+      ),
+    }),
+    [mrr],
+  );
+
   // Bring the row Pending payments opened into view once it has rendered.
   useEffect(() => {
     if (!start) return;
@@ -1264,7 +1486,7 @@ export function BillingSheet({ api }: { api: BillingApi }) {
             ...d,
             rows: d.rows.map(r =>
               r.taskId === fresh.taskId
-                ? { ...fresh, ladder: ladderOf(fresh, d.today) }
+                ? { ...fresh, ladder: ladderOf(fresh, d.today, d.steps) }
                 : r,
             ),
           }
@@ -1356,13 +1578,20 @@ export function BillingSheet({ api }: { api: BillingApi }) {
               ...d,
               rows: d.rows.map(r =>
                 r.taskId === updated.taskId
-                  ? { ...updated, ladder: ladderOf(updated, d.today) }
+                  ? { ...updated, ladder: ladderOf(updated, d.today, d.steps) }
                   : r,
               ),
             }
           : d,
       );
     void load();
+  };
+
+  /** A staff form saved: read the sheet and the MRR check again, quietly. */
+  const refresh = () => {
+    setPendingReads(n => n + 1);
+    void load();
+    void loadMrr();
   };
 
   const rows = useMemo(() => {
@@ -1372,17 +1601,17 @@ export function BillingSheet({ api }: { api: BillingApi }) {
     return data.rows.filter(
       r =>
         // The open row stays, so a decision never makes it vanish mid-read.
-        (r.taskId === open || f.test(r)) &&
+        (r.taskId === open || f.test(r, context)) &&
         (!q || r.name.toLowerCase().includes(q)),
     );
-  }, [data, filter, query, open]);
+  }, [data, filter, query, open, context]);
 
   const counts = useMemo(() => {
     const out = {} as Record<Filter, number>;
     for (const f of FILTERS)
-      out[f.key] = data ? data.rows.filter(f.test).length : 0;
+      out[f.key] = data ? data.rows.filter(r => f.test(r, context)).length : 0;
     return out;
-  }, [data]);
+  }, [data, context]);
 
   if (!data)
     return (
@@ -1478,6 +1707,21 @@ export function BillingSheet({ api }: { api: BillingApi }) {
             </span>
           </Button>
         </div>
+
+        {mrr ? (
+          <MrrBand
+            view={mrr}
+            active={filter === "mrr"}
+            onShowDiffer={() => {
+              setQuery("");
+              setFilter(filter === "mrr" ? "now" : "mrr");
+            }}
+          />
+        ) : mrrError ? (
+          <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">
+            The MRR check did not load: {mrrError} The sheet below is unchanged.
+          </p>
+        ) : null}
 
         {banner ? (
           <p className="mt-3 text-sm" role="status">
@@ -1590,6 +1834,20 @@ export function BillingSheet({ api }: { api: BillingApi }) {
                             ? `, extended ${plural(r.extensionWeeks, "week")}`
                             : ""}
                         </span>
+                        {(() => {
+                          const m = mrrBy.get(r.taskId);
+                          // Only what asks for a look; "not a monthly plan" waits in the panel.
+                          const words =
+                            m && m.flag !== "not_recurring" ? mrrChip(m) : null;
+                          return words ? (
+                            <span className="mt-1 inline-flex max-w-full items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] leading-4 text-muted-foreground">
+                              <Dot tone="warning" />
+                              <span className="truncate tabular-nums">
+                                {words}
+                              </span>
+                            </span>
+                          ) : null;
+                        })()}
                       </span>
                       <span className="shrink-0 text-sm font-medium tabular-nums md:hidden">
                         {isPaused ? "" : usd(r.nextUsd)}
@@ -1670,6 +1928,10 @@ export function BillingSheet({ api }: { api: BillingApi }) {
                       onDone={(text, updated) =>
                         settle(r.taskId, text, updated)
                       }
+                      doors={doors}
+                      steps={data.steps ?? DEFAULT_STEPS}
+                      mrr={mrrBy.get(r.taskId)}
+                      onSaved={refresh}
                     />
                   ) : null}
                 </li>

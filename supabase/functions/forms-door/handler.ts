@@ -1,15 +1,28 @@
-// forms-door's one route (docs/forms/STAGE2B-CONTRACT.md 4.8, build 8; README.md
-// here). Typeform posts each kickoff response (form tG7dnxBn) signed with the
-// secret saved at registration (scripts/dev/forms_key.py register-typeform),
-// which the vault keeps (cockpit_forms_key_get('typeform_kickoff')). The door
-// stores it through cockpit_form_record_typeform: the raw answers once, in
-// cockpit_csm_call_forms, as the csm-calls worker would write them, and a
-// pointer response in the forms tables. It never delivers anything: kickoff's
-// Stage 1 path keeps its notices (Y49, Z21). Everything that touches the
-// network or the clock comes in through Deps, so `bun test` runs it offline.
+// forms-door's one route (docs/forms/STAGE2B-CONTRACT.md 4.8, build 8;
+// docs/forms/WAVE12-CONTRACT.md 4.4; README.md here). Typeform posts each
+// response of three forms, each signed with its own secret saved at
+// registration (scripts/dev/forms_key.py register-typeform {form}), which the
+// vault keeps (cockpit_forms_key_get('typeform_{form}')):
+//
+// - kickoff (tG7dnxBn): stored through cockpit_form_record_typeform, the raw
+//   answers once in cockpit_csm_call_forms as the csm-calls worker would
+//   write them, and a pointer response in the forms tables. Kickoff's Stage 1
+//   path keeps its notices (Y49, Z21).
+// - exit_survey (the termination survey, knIe4eF3) and pause_request (the
+//   client's pause request, CTUjv6l3), waves 1-2 (C4a-2, W18): stored through
+//   cockpit_form_record_legacy as a legacy response, matched to a card only by
+//   the form's own hidden onboarding_client_id (never by a name, W12). The
+//   signature proves Typeform sent it, not which card it is for: the hidden id
+//   sits in a public link, so the database keeps the match as
+//   hidden_id_unverified and never attaches the survey to a departure (a
+//   person does). It queues the "Termination notice in" for the CSM; a pause
+//   request is a row on Today. No card field changes (D11).
+//
+// It never delivers anything itself. Everything that touches the network or
+// the clock comes in through Deps, so `bun test` runs it offline.
 //
 // One delivery, in order: the path (404) and the method (405); the form key,
-// kickoff only (404); the body, read once, 1,500,000 bytes at most (413); the
+// one of FORM_KEYS (404); the body, read once, 1,500,000 bytes at most (413); the
 // registry row, still a Typeform form (404); the secret (503 while none is
 // saved); the signature, before anything of the body is parsed (401, but only
 // after one fresh read of the key when the cached one is 30 seconds old or
@@ -18,11 +31,14 @@
 // inserted true or false; a refusal 500, which Typeform retries).
 //
 // Nothing of a body is logged or kept here: one line per delivery,
-// `forms-door kickoff {outcome}`, never a body, an answer, a hidden value, a
+// `forms-door {form} {outcome}`, never a body, an answer, a hidden value, a
 // header value or a secret. The client's email and phone ride in kickoff's
 // hidden fields (apps/client-success-cockpit/src/forms/prefill.ts), so the
 // response row holds a pointer only (3.9); the record RPC keeps the content in
-// cockpit_csm_call_forms alone.
+// cockpit_csm_call_forms alone. The two client forms ask for contact details
+// the card already holds (inventory 3.3, 3.4): their email and phone answers
+// are dropped here, before anything is stored, and only the forms' two hidden
+// fields (client_name, onboarding_client_id) are kept.
 
 import {
   fieldTitles,
@@ -41,8 +57,22 @@ export type Deps = {
   log: (line: string) => void;
 };
 
-/** In 2b only the kickoff form has a cockpit webhook (Z58): the checkin row also has a typeform_id and provider typeform. */
-export const FORM_KEYS = ["kickoff"] as const;
+/**
+ * The forms with a cockpit webhook: kickoff since 2b (Z58), the termination survey and the pause request since waves
+ * 1-2 (4.4). The checkin row also has a typeform_id and provider typeform, so the door names its forms itself.
+ */
+export const FORM_KEYS = ["kickoff", "exit_survey", "pause_request"] as const;
+export type FormKey = (typeof FORM_KEYS)[number];
+/** The two forms stored as legacy responses (cockpit_form_record_legacy), not through kickoff's store. */
+export const LEGACY_FORMS: ReadonlySet<string> = new Set([
+  "exit_survey",
+  "pause_request",
+]);
+/** Answer and field types that carry a person's email or phone: never stored from the two client forms. */
+const CONTACT_TYPES = new Set(["email", "phone_number", "contact_info"]);
+/** The only hidden fields the two client forms set (inventory 3.3, 3.4). */
+const LEGACY_HIDDEN = ["client_name", "onboarding_client_id"] as const;
+const CARD_ID = /^[A-Za-z0-9_-]{1,40}$/;
 /** A delivery larger than this is refused before it is checked (a kickoff response is a few kilobytes). */
 export const MAX_BODY_BYTES = 1_500_000;
 /** The signing key and the registry row are read at most once in this long, per isolate. */
@@ -54,8 +84,8 @@ export const SECRET_TTL_MS = 5 * 60_000;
  */
 export const MISSING_SECRET_TTL_MS = 30_000;
 /**
- * An unsigned request, or one while no key is saved, is recorded in forms-door:kickoff at most once in this long per
- * isolate, so a flood of them costs one write.
+ * An unsigned request, or one while no key is saved, is recorded in forms-door:{form} at most once in this long per
+ * isolate and form, so a flood of them costs one write.
  */
 export const UNSIGNED_SEEN_TTL_MS = 30_000;
 /** Each database call gives up after this long; Typeform retries a delivery that was not answered. */
@@ -175,13 +205,66 @@ export function recordInput(formKey: string, response: Row): Row {
   };
 }
 
+/**
+ * cockpit_form_record_legacy's input for a termination survey or a pause request (waves 1-2, 3.1): the answers as
+ * {fields: [{ref, title, type, value}]} with the worker's own mapping, less every email and phone answer; the two
+ * hidden fields only; the card from the form's hidden onboarding_client_id when it looks like a card id (the database
+ * keeps it only when the card is on the billing sheet). Never the raw body or anything else of the delivery.
+ */
+export function legacyInput(
+  formKey: string,
+  response: Row,
+  backfill = false,
+): Row {
+  const raw: Row[] = Array.isArray(response.answers) ? response.answers : [];
+  const kept = raw.filter(
+    a =>
+      a &&
+      typeof a === "object" &&
+      !CONTACT_TYPES.has(String(a.type ?? "")) &&
+      !CONTACT_TYPES.has(String(a.field?.type ?? "")),
+  );
+  const fields = formAnswers(
+    { ...response, answers: kept },
+    fieldTitles(response.definition ?? {}),
+  );
+  const given =
+    response.hidden &&
+    typeof response.hidden === "object" &&
+    !Array.isArray(response.hidden)
+      ? response.hidden
+      : {};
+  const hidden: Row = {};
+  for (const k of LEGACY_HIDDEN) {
+    const v = typeof given[k] === "string" ? given[k].trim() : "";
+    if (v) hidden[k] = v;
+  }
+  const card =
+    typeof hidden.onboarding_client_id === "string" &&
+    CARD_ID.test(hidden.onboarding_client_id)
+      ? hidden.onboarding_client_id
+      : null;
+  return {
+    formKey,
+    externalId: String(response.token ?? ""),
+    submittedAt: String(response.submitted_at ?? ""),
+    answers: { fields },
+    hidden,
+    taskId: card,
+    clientName:
+      typeof hidden.client_name === "string" ? hidden.client_name : null,
+    backfill,
+  };
+}
+
 export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
   const env = (n: string) => (deps.env(n) ?? "").trim();
   let door: Rpc | null = null;
-  let secretCache: { secret: string | null; at: number } | null = null;
-  /** When a failed signature last read the key again, kept apart so a read that throws still waits its 30 seconds. */
-  let rereadAt = Number.NEGATIVE_INFINITY;
-  let registryCache: { row: Row | null; at: number } | null = null;
+  // Each form has its own key, registry row and limiters, so one form's flood or rotation never touches another's.
+  const secretCache = new Map<string, { secret: string | null; at: number }>();
+  /** When a failed signature last read a form's key again, kept apart so a read that throws still waits its 30 seconds. */
+  const rereadAt = new Map<string, number>();
+  const registryCache = new Map<string, { row: Row | null; at: number }>();
   const seenAt = new Map<string, number>();
 
   const timed = ((input: RequestInfo | URL, init?: RequestInit) =>
@@ -202,8 +285,8 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
   /** The registry row of the form (cockpit_forms: provider, typeform_id), read with the service key, kept 5 minutes. */
   async function registryOf(formKey: string): Promise<Row | null> {
     const now = deps.now();
-    if (registryCache && now - registryCache.at < SECRET_TTL_MS)
-      return registryCache.row;
+    const cached = registryCache.get(formKey);
+    if (cached && now - cached.at < SECRET_TTL_MS) return cached.row;
     const res = await timed(
       `${base()}/rest/v1/cockpit_forms?select=provider,typeform_id&key=eq.${encodeURIComponent(formKey)}`,
       {
@@ -220,7 +303,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       Array.isArray(rows) && rows[0] && typeof rows[0] === "object"
         ? (rows[0] as Row)
         : null;
-    registryCache = { row, at: now };
+    registryCache.set(formKey, { row, at: now });
     return row;
   }
 
@@ -228,21 +311,25 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
    * The signing key, from the vault through the service RPC; a found one is kept 5 minutes, a missing one 30 seconds.
    * `fresh` reads it whatever the cache holds (a signature that failed against an older key).
    */
-  async function secretOf(db: Rpc, fresh = false): Promise<string | null> {
+  async function secretOf(
+    db: Rpc,
+    formKey: string,
+    fresh = false,
+  ): Promise<string | null> {
     const now = deps.now();
+    const cached = secretCache.get(formKey);
     if (
       !fresh &&
-      secretCache &&
-      now - secretCache.at <
-        (secretCache.secret ? SECRET_TTL_MS : MISSING_SECRET_TTL_MS)
+      cached &&
+      now - cached.at < (cached.secret ? SECRET_TTL_MS : MISSING_SECRET_TTL_MS)
     )
-      return secretCache.secret;
+      return cached.secret;
     const key = (await db("cockpit_forms_key_get", {
-      p_provider: "typeform_kickoff",
+      p_provider: `typeform_${formKey}`,
     })) as Row | null;
     const secret =
       typeof key?.secret === "string" && key.secret ? key.secret : null;
-    secretCache = { secret, at: now };
+    secretCache.set(formKey, { secret, at: now });
     return secret;
   }
 
@@ -269,7 +356,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
 
     const db = rpc();
     if (!db) return answer("no_database", 503, { ok: false });
-    // The last delivery and its outcome in cockpit_sync_state forms-door:kickoff, best effort: a failed write never
+    // The last delivery and its outcome in cockpit_sync_state forms-door:{form}, best effort: a failed write never
     // changes the answer Typeform gets.
     const seen = (outcome: Seen, reason: string | null) =>
       db("cockpit_forms_door_seen", {
@@ -280,9 +367,10 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     // The two outcomes anyone can cause without the key are written at most once in 30 seconds.
     const seenAtMost = async (outcome: Seen, reason: string) => {
       const now = deps.now();
-      const last = seenAt.get(reason);
+      const at = `${formKey}:${reason}`;
+      const last = seenAt.get(at);
       if (last !== undefined && now - last < UNSIGNED_SEEN_TTL_MS) return;
-      seenAt.set(reason, now);
+      seenAt.set(at, now);
       await seen(outcome, reason);
     };
 
@@ -301,7 +389,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     // Nothing of the body is read before the signature holds: no key, or a key that cannot be read, is a 503.
     let secret: string | null;
     try {
-      secret = await secretOf(db);
+      secret = await secretOf(db, formKey);
     } catch {
       return answer("no_database", 503, { ok: false });
     }
@@ -316,15 +404,17 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     // signature that fails against a key read 30 seconds ago or more reads the key once more and checks again. At most
     // once in 30 seconds per isolate, so anyone without the key still costs one read in 30 seconds.
     const t = deps.now();
+    const read = secretCache.get(formKey);
     if (
       !signed &&
-      secretCache &&
-      t - secretCache.at >= MISSING_SECRET_TTL_MS &&
-      t - rereadAt >= MISSING_SECRET_TTL_MS
+      read &&
+      t - read.at >= MISSING_SECRET_TTL_MS &&
+      t - (rereadAt.get(formKey) ?? Number.NEGATIVE_INFINITY) >=
+        MISSING_SECRET_TTL_MS
     ) {
-      rereadAt = t;
+      rereadAt.set(formKey, t);
       try {
-        secret = await secretOf(db, true);
+        secret = await secretOf(db, formKey, true);
       } catch {
         return answer("no_database", 503, { ok: false });
       }
@@ -348,13 +438,19 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       return answer("ignored", 202, { ignored: true });
     }
     try {
-      const out = (await db("cockpit_form_record_typeform", {
-        p: recordInput(formKey, response),
-      })) as Row | null;
+      // Kickoff keeps its 2b store; the two client forms are legacy records (3.1).
+      const legacy = LEGACY_FORMS.has(formKey);
+      const out = (
+        legacy
+          ? await db("cockpit_form_record_legacy", {
+              p: legacyInput(formKey, response),
+            })
+          : await db("cockpit_form_record_typeform", {
+              p: recordInput(formKey, response),
+            })
+      ) as Row | null;
       if (typeof out?.inserted !== "boolean")
-        throw new Error(
-          "cockpit_form_record_typeform answered without inserted",
-        );
+        throw new Error("The record RPC answered without inserted");
       await seen(out.inserted ? "recorded" : "repeat", null);
       return answer(out.inserted ? "recorded" : "repeat", 200, {
         ok: true,

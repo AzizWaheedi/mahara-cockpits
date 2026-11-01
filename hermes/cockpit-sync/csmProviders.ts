@@ -1,6 +1,6 @@
 import {type Row, callTool, providerFetch, unwrap, supabaseQuery} from './runtime';
 import {appointmentRows,summarise,staleRows,byAd,toDate,MONTHS,parseAdded,parseAppt,daysBetween,type Day,type Call,type GhlAccount} from './csmProfileCalculations';
-import type {Extension,CallNote} from './csmCadence';
+import {DEFAULT_LADDER,type Extension,type CallNote,type LadderStep} from './csmCadence';
 
 // The 1-1 form's client: the card id the client page's link carries (hidden task_id), else the typed Client ID.
 // Given the client cards, the same order as the csm-calls worker's checkinClient: a hidden id that is not a
@@ -146,26 +146,58 @@ export function notesParity(store:StoredNote[],typeform:TypeformNote[],marks:Not
 // Any failed authoritative read aborts the plan, rather than substituting zero.
 // Release N4 (docs/forms/STAGE2B-CONTRACT.md 4.4): the 1-1 notes come from the store; while the registry says
 // Typeform still fills them, fRokTITH is read beside them as a comparator, and a failed read still aborts the plan.
+// Waves 1-2 (docs/forms/WAVE12-CONTRACT.md 4.11): extensions are the cockpit's own grants (cockpit_extensions_v,
+// billing events only), keyed by card id, and the overdue ladder is cockpit_client_lifecycle_v's step with the
+// days from cockpit_settings billing.ladder. The Client Extension Form (Typeform gqBcyK6g) is no longer read.
+export const CADENCE_SQL={
+ extensions:"select e.clickup_task_id, e.until::text as until from public.cockpit_extensions_v e where e.state = 'live'",
+ ladder:"select l.clickup_task_id, l.ladder_step, l.days_late from public.cockpit_client_lifecycle_v l where l.ladder_step is distinct from 'none'",
+ ladderDays:"select s.value from public.cockpit_settings s where s.key = 'billing.ladder'",
+} as const;
+const LADDER_STEPS=new Set<LadderStep>(['pause_review','cancel_review','pause_day14']);
+const ISO_DAY=/^\d{4}-\d{2}-\d{2}$/;
+
+/** The days of the overdue steps from billing.ladder; the approved default (4 and 15) when the row is not there. */
+export function ladderDaysOf(rows:Row[]):{pauseReviewDay:number;cancelReviewDay:number}{
+ if(rows.length>1)throw new Error('cockpit_settings billing.ladder is ambiguous');
+ const v=rows[0]?.value,pause=Number(v?.pauseReviewDay),cancel=Number(v?.cancelReviewDay);
+ if(!rows.length)return {...DEFAULT_LADDER};
+ if(!Number.isInteger(pause)||!Number.isInteger(cancel)||pause<1||pause>=cancel||cancel>60)throw new Error('cockpit_settings billing.ladder holds days the ladder cannot use');
+ return {pauseReviewDay:pause,cancelReviewDay:cancel};
+}
+
+/** One billing fact per card: its live grant's end and its overdue step, both by card id. */
+export async function billingFacts():Promise<Extension[]>{
+ const [grants,steps,days]=await Promise.all([supabaseQuery(CADENCE_SQL.extensions),supabaseQuery(CADENCE_SQL.ladder),supabaseQuery(CADENCE_SQL.ladderDays)]);
+ const ladder=ladderDaysOf(days),out=new Map<string,Extension>();
+ const fact=(taskId:string)=>{let f=out.get(taskId);if(!f){f={taskId,until:null};out.set(taskId,f);}return f;};
+ for(const r of grants){
+  const taskId=String(r?.clickup_task_id??'').trim(),until=String(r?.until??'').slice(0,10);
+  if(!taskId||!ISO_DAY.test(until))throw new Error('A live extension grant lacks its card or its end day');
+  const f=fact(taskId);
+  // One open grant per card (W23); a second live row would be a replacement still settling, so the later end wins.
+  if(!f.until||until>f.until)f.until=until;
+ }
+ for(const r of steps){
+  const taskId=String(r?.clickup_task_id??'').trim(),step=String(r?.ladder_step??'') as LadderStep;
+  if(!taskId||!LADDER_STEPS.has(step))throw new Error('A ladder row lacks its card or names an unknown step');
+  const late=r?.days_late==null?null:Number(r.days_late);
+  Object.assign(fact(taskId),{ladderStep:step,daysLate:Number.isFinite(late)?late:null,...ladder});
+ }
+ return [...out.values()];
+}
+
 export async function cadenceInputs(cards?:ReadonlySet<string>,now=Date.now()):Promise<{notes:CallNote[];exts:Extension[];parity:NotesParity}>{
- const exts:Extension[]=[],typeform:TypeformNote[]=[];
- const store=await storeNotes(),native=store.provider==='native';
- const weeksByLabel:Record<string,number>={'1 WEEK':1,'2 WEEKS':2,'4 WEEKS':4};
- for(const form of native?['gqBcyK6g']:['fRokTITH','gqBcyK6g']){
-  const response=unwrap(await callTool('pd_typeform_proxy_get',{url:`https://api.typeform.com/forms/${form}/responses?page_size=200`}));
+ const typeform:TypeformNote[]=[];
+ const [store,exts]=await Promise.all([storeNotes(),billingFacts()]);
+ const native=store.provider==='native';
+ if(!native){
+  const response=unwrap(await callTool('pd_typeform_proxy_get',{url:'https://api.typeform.com/forms/fRokTITH/responses?page_size=200'}));
   if(!Array.isArray(response.items))throw new Error('Typeform collection missing');
   for(const item of response.items){
-   const answers:Row[]=item.answers??[];
-   const find=(ref:string)=>answers.find(a=>a.field?.ref===ref);
    const granted=Date.parse(item.submitted_at);if(!Number.isFinite(granted))throw new Error('Typeform submission date missing');
-   if(form==='gqBcyK6g'){
-    const client=String(find('5145ff0c-009b-4f51-b3a9-4651efc908be')?.text??'').trim();
-    const duration=find('278c2f80-88bd-428e-b330-8c6b3175d63f');
-    const weeks=weeksByLabel[String(duration?.choice?.label??duration?.text??'').trim().toUpperCase()];
-    if(client&&weeks)exts.push({client,until:new Date(granted+weeks*7*86400000+10800000).toISOString().slice(0,10)});
-   }else{
-    const taskId=checkinTaskId(item,cards);if(!taskId)continue;
-    typeform.push({...noteOf(taskId,granted,typeformAnswers(item)),token:String(item.token??''),submittedAt:granted});
-   }
+   const taskId=checkinTaskId(item,cards);if(!taskId)continue;
+   typeform.push({...noteOf(taskId,granted,typeformAnswers(item)),token:String(item.token??''),submittedAt:granted});
   }
  }
  const notes:CallNote[]=store.newest.map(({taskId,submitted,notes,defcon,priority})=>({taskId,submitted,notes,defcon,priority}));
@@ -280,17 +312,40 @@ export async function fathomCalls(sinceArg?: string): Promise<Call[]> {
   throw new Error('Fathom pagination incomplete');
 }
 
-/** Verified legacy bridge contract: discover tab 01; never guess a Summary tab. */
+// The churn register in the old sheet's tab 01 shape (docs/forms/WAVE12-CONTRACT.md 4.11.2): the churn KPIs now
+// read cockpit_churn_months and cockpit_churn_departures instead of the Churn Tracker sheet. One select, no limit.
+export const CHURN_SQL=`select m.month, m.active_at_start, m.lost_before_register,
+ (select count(*) from public.cockpit_churn_departures d where d.removed_at is null and to_char(d.left_on, 'YYYY-MM') = m.month
+   and coalesce(to_jsonb(d)->>'churn_type', case when d.reason = 'Completed term, did not renew' then 'completed' end)
+       is distinct from 'completed') as departed
+ from public.cockpit_churn_months m order by m.month`;
+const MONTH_NAMES=['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+/**
+ * The register as tab 01 read: a header, then one row per month, newest twelve months only (the sheet keyed rows by
+ * month name), [month name, clients at start, clients lost, (blank), churn %]. Lost is the register's departures in
+ * the month, a completed term left out (the confirm's churn type decides; with no type, a finished-term reason;
+ * the same rule as the goal sheet and ceo-refresh), plus the count kept
+ * from before the register. A month with no start count gives no rate, never 0%: parseKpi then says it is not
+ * published. Pure, for the tests.
+ */
+export function churnGrid(rows:Row[]):string[][]{
+ const out:string[][]=[['Month','Clients at start','Clients lost','','Churn']];
+ const months=rows.map(r=>({month:String(r?.month??''),start:r?.active_at_start==null?null:Number(r.active_at_start),before:r?.lost_before_register==null?null:Number(r.lost_before_register),departed:Number(r?.departed??0)}));
+ for(const m of months)if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(m.month)||!Number.isFinite(m.departed))throw new Error('A churn register month lacks its month or its departures');
+ const newest=months.sort((a,b)=>a.month.localeCompare(b.month)).slice(-12);
+ for(const m of newest){
+  const lost=m.departed+(Number.isFinite(m.before)?Number(m.before):0);
+  const start=m.start!==null&&Number.isFinite(m.start)?m.start:null;
+  const rate=start&&start>0?`${(lost/start*100).toFixed(2)}%`:'';
+  out.push([MONTH_NAMES[Number(m.month.slice(5,7))-1],start===null?'':String(start),String(lost),'',rate]);
+ }
+ return out;
+}
+
+/** The churn register in tab 01's shape, so parseKpi and everything after it read it unchanged. */
 export async function churnValues():Promise<string[][]>{
- const sheet='1p8CAd5pL9zKjc1mZ73Gc_hoj4NSWHfFPs4FoC_WuBUU';
- const metadata=unwrap(await callTool('pd_google_sheets_proxy_get',{url:`https://sheets.googleapis.com/v4/spreadsheets/${sheet}?fields=sheets(properties(title,sheetId))`}));
- if(!Array.isArray(metadata.sheets))throw new Error('Churn tracker metadata missing');
- const matching=metadata.sheets.filter((s:Row)=>String(s.properties?.title??'').startsWith('01'));
- if(matching.length!==1)throw new Error('Churn tracker tab 01 is missing or ambiguous');
- const range=`'${String(matching[0].properties.title).replace(/'/g,"''")}'!A1:K20`;
- const grid=unwrap(await callTool('pd_google_sheets_proxy_get',{url:`https://sheets.googleapis.com/v4/spreadsheets/${sheet}/values/${encodeURIComponent(range)}`}));
- if(!Array.isArray(grid.values))throw new Error('Churn tracker range missing');
- return grid.values;
+ return churnGrid(await supabaseQuery(CHURN_SQL));
 }
 
 /** Client-call calendars, ported from ghlCalendar.ts and the finite CSM bridge. */

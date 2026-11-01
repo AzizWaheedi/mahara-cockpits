@@ -1,5 +1,18 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { BillingPayload } from "@/components/billing/BillingSheet";
+import type {
+  BillingPayload,
+  StaffFormsApi,
+} from "@/components/billing/BillingSheet";
+import {
+  formDoors,
+  formPrefill,
+  formTrail,
+  giveMoreTime,
+  mrrRead,
+  pauseClient,
+  resumeClient,
+  setMrr,
+} from "@/forms/staff/lifecycleClient";
 import {
   type BalancesRead,
   buildPending,
@@ -11,6 +24,7 @@ import {
   accountFrom,
   buildSheet,
   type Edit,
+  stepsFrom,
 } from "./billingCore";
 
 // biome-ignore lint/suspicious/noExplicitAny: generic billing payload
@@ -24,6 +38,7 @@ export async function fetchBillingSheet(
     { data: accountsData, error: aErr },
     { data: eventsData, error: eErr },
     { data: inboxData, error: iErr },
+    ladder,
   ] = await Promise.all([
     client.from("cockpit_billing_accounts").select("*"),
     client
@@ -37,6 +52,12 @@ export async function fetchBillingSheet(
       .eq("status", "pending")
       .order("logged_at", { ascending: false })
       .limit(50),
+    // The overdue steps (20261101p). Before that migration, or on any
+    // error, the rows read with the defaults: day 4 and day 15.
+    Promise.resolve(client.rpc("cockpit_billing_ladder_read")).then(
+      r => (r.error ? null : r.data),
+      () => null,
+    ),
   ]);
 
   if (aErr) throw aErr;
@@ -47,7 +68,7 @@ export async function fetchBillingSheet(
   const events = eventsData ?? [];
   const inbox = inboxData ?? [];
 
-  const s = buildSheet(accounts, events, inbox);
+  const s = buildSheet(accounts, events, inbox, undefined, stepsFrom(ladder));
 
   if (!allowedClients || allowedClients.length === 0) {
     return s;
@@ -431,4 +452,29 @@ export async function unexcludePayment(
     source,
   });
   return String(out.sentence ?? "Counted as program money again.");
+}
+
+/**
+ * The billing sheet's staff forms (20261101p): Give more time, Pause,
+ * Resume and Set MRR, through forms/staff/lifecycleClient.ts with this
+ * cockpit's seat. The server gates each send and words each refusal.
+ */
+export function staffForms(
+  client: SupabaseClient,
+  source: "ceo" | "csm",
+): StaffFormsApi {
+  const sends = {
+    extension: giveMoreTime,
+    pause: pauseClient,
+    resume: resumeClient,
+    mrr: setMrr,
+  } as const;
+  return {
+    doors: () => formDoors(client),
+    prefill: (key, taskId) => formPrefill(client, key, taskId),
+    send: (key, taskId, a, requestId, o) =>
+      sends[key](client, taskId, a, requestId, { ...o, source }),
+    trail: ref => formTrail(client, ref),
+    mrr: () => mrrRead(client),
+  };
 }

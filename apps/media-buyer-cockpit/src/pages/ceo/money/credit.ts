@@ -476,6 +476,8 @@ export function byCloserFromLines(
   const by = new Map<string, { name: string; usd: number; payments: number }>();
   for (const t of lines) {
     if (t.direction !== "in" || t.side !== "front_end") continue;
+    // Hand-logged money not checked against the bank yet is in no total (20261101n).
+    if (t.checked === false) continue;
     if (t.day < from || t.day > to) continue;
     const name = t.person ?? "Closer not on the form";
     const k = name.toLowerCase();
@@ -600,7 +602,10 @@ export type MoneyTotals = Required<AttributionTotals> & {
  */
 export function moneyTotals(rows: MoneyLine[]): MoneyTotals {
   const r2 = (x: number) => Math.round(x * 100) / 100;
-  const ins = rows.filter(t => t.direction === "in" && !isStatementLine(t));
+  // Money in counts once checked (20261101n): a hand-logged row not checked yet is said apart.
+  const ins = rows.filter(
+    t => t.direction === "in" && !isStatementLine(t) && t.checked !== false,
+  );
   const sum = (f: (t: MoneyLine) => boolean) =>
     r2(ins.filter(f).reduce((n, t) => n + t.usd, 0));
   const outs = rows.filter(t => t.direction === "out");

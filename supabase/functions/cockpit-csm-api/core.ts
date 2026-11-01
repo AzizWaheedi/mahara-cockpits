@@ -23,6 +23,10 @@ const nextDay=(d:string)=>new Date(Date.parse(d+'T12:00:00Z')+86400000).toISOStr
 const id=(x:unknown)=>{const v=String(x??'');if(!/^[A-Za-z0-9_-]+$/.test(v))throw Error('Invalid task or field identity');return v;};
 function option(field:Row,label:string){const opt=(field?.type_config?.options??[]).find((o:Row)=>o.name===label||o.label===label);if(!opt)throw Error(`ClickUp does not offer the value "${label}"`);return opt.id;}
 type Update={field:string;value:unknown;day?:string};
+// Last report sent is a field added by hand, so its full id is not in the repo: it is found by its id's
+// prefix, exactly one date field (docs/forms/WAVE12-CONTRACT.md 4.6, W7), never by a name someone can retype.
+export const REPORT_FIELD_PREFIX='a7f4ecf5';
+export function reportField(defs:Row):Row{const hits=(defs?.fields??[]).filter((f:Row)=>String(f?.id??'').startsWith(REPORT_FIELD_PREFIX));if(hits.length!==1||hits[0].type!=='date')throw Error(`The Last report sent field (${REPORT_FIELD_PREFIX}) is missing from Clients - Mahara.`);id(hits[0].id);return hits[0];}
 export async function prepareCsm(operation:string,args:Row,context:Row,provider:Provider){
  const patch:Row={},updates:Update[]=[];let ticket:Row|null=null;
  if(operation==='plan')return {operation,context,args,patch,updates,ticket,tasks:args.items.map((it:Row)=>({name:it.text,description:[it.clientName?'Client: '+it.clientName:'',it.reason??'Planned by Client Success.'].filter(Boolean).join('\n'),due_date:day(it.dueDate||nextDay(context.day))}))};
@@ -34,7 +38,7 @@ export async function prepareCsm(operation:string,args:Row,context:Row,provider:
  }else if(args.kind==='booked'){updates.push({field:FIELDS.nextPoc,value:fieldDay(args.value),day:args.value});Object.assign(patch,{nextPoc:args.value,todo:'Booked '+args.value,level:'blue',rank:40});
  }else if(['stage','service','happiness','report'].includes(args.kind)){
   const defs=await provider.call('GET','list/901816559981/field');let field:Row|undefined;
-  if(args.kind==='report'){field=(defs.fields??[]).find((f:Row)=>String(f.name).trim().toLowerCase()==='last report sent');if(!field)throw Error('The Last report sent field is missing from ClickUp');updates.push({field:id(field.id),value:fieldDay(context.day),day:context.day});Object.assign(patch,{lastReport:context.day,reportDays:0,reportTracked:true,reportDue:false});}
+  if(args.kind==='report'){field=reportField(defs);updates.push({field:id(field.id),value:fieldDay(context.day),day:context.day});Object.assign(patch,{lastReport:context.day,reportDays:0,reportTracked:true,reportDue:false});}
   else{const fid=args.kind==='stage'?FIELDS.status:args.kind==='service'?FIELDS.service:FIELDS.happiness;field=(defs.fields??[]).find((f:Row)=>f.id===fid);updates.push({field:fid,value:option(field??{},args.value)});patch[args.kind==='stage'?'stage':args.kind]=args.value;if(args.kind==='service')patch.dwy=/dwy/i.test(args.value);}
  }else if(args.kind==='left'){Object.assign(patch,{level:'blue',rank:45,todo:'Left: '+(args.reason??args.note??'reason logged')});}
  if(args.department||args.kind==='ticket'){

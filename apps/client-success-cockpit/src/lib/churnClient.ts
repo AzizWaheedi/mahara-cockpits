@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   addMonths,
+  type ChurnType,
   type Departure,
   type MonthInput,
   type MonthRow,
@@ -13,6 +14,8 @@ import {
   churnSourceSchema,
   type DepartureSource,
   type MonthSource,
+  type NoticeSource,
+  type StoppedSource,
 } from "./churnSchema";
 import { addDays } from "./projectionsCore";
 
@@ -39,10 +42,36 @@ export type PickClient = {
   mrrUsd: number | null;
 };
 
+/** A termination survey on the tracker: matched to a card, or waiting for one (W12, W22). */
+export type NoticeRow = {
+  responseId: string;
+  taskId: string | null;
+  /** The card's name when matched; the form's own hidden name when not. */
+  clientName: string;
+  noticeOn: string | null;
+  submittedAt: string | null;
+  departureId: number | null;
+  /** The survey's ratings, numbers only. */
+  ratings: { title: string; value: number }[];
+  typeDefault: ChurnType | null;
+};
+
+/** A card that reads Stopped with no departure logged: confirm each, or leave it (Q5). */
+export type StoppedRow = {
+  taskId: string;
+  clientName: string;
+  churnDate: string | null;
+  /** The first snapshot day of the Stopped run; null when it has read Stopped since the snapshots began. */
+  stoppedSince: string | null;
+  mrrUsd: number | null;
+  csm: string | null;
+  typeDefault: ChurnType | null;
+};
+
 export type ChurnPage = {
   today: string;
   month: string;
-  me: { email: string; canRemove: boolean };
+  me: { email: string; canRemove: boolean; isCeo: boolean };
   reasons: readonly string[];
   departures: Departure[];
   /** Newest first, months with something in them, the current one always. */
@@ -54,7 +83,42 @@ export type ChurnPage = {
   /** Cards that launched in each month, to fill new clients with. */
   launches: { month: string; names: string[] }[];
   log: { at: string; by: string; what: string }[];
+  /** Termination surveys matched to a card, not answered and not confirmed. */
+  notices: NoticeRow[];
+  /** Termination surveys no card id came with: every CSM and the CEO see them. */
+  unmatched: NoticeRow[];
+  /** Stopped cards with no departure, less those already waiting above. */
+  stopped: StoppedRow[];
 };
+
+const day = (v: string | null | undefined) =>
+  v ? String(v).slice(0, 10) : null;
+const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+
+function noticeOf(n: NoticeSource): NoticeRow {
+  return {
+    responseId: String(n.responseId),
+    taskId: n.taskId ?? null,
+    clientName: (n.clientName ?? "").trim() || "A client the form did not name",
+    noticeOn: day(n.noticeOn),
+    submittedAt: n.submittedAt ?? null,
+    departureId: num(n.departureId),
+    ratings: (n.ratings ?? []).slice(0, 4),
+    typeDefault: n.typeDefault ?? null,
+  };
+}
+
+function stoppedOf(s: StoppedSource): StoppedRow {
+  return {
+    taskId: String(s.taskId),
+    clientName: String(s.clientName),
+    churnDate: day(s.churnDate),
+    stoppedSince: day(s.stoppedSince),
+    mrrUsd: num(s.mrrUsd),
+    csm: s.csm ?? null,
+    typeDefault: s.typeDefault ?? null,
+  };
+}
 
 function departureOf(r: DepartureSource): Departure {
   return {
@@ -77,6 +141,19 @@ function departureOf(r: DepartureSource): Departure {
     createdAt: String(r.created_at),
     updatedBy: r.updated_by ?? null,
     updatedAt: String(r.updated_at),
+    confirm: {
+      noticeOn: day(r.notice_on),
+      surveyState: r.survey_state ?? null,
+      surveyResponseId: r.survey_response_id ?? null,
+      whyDetail: r.why_detail ?? null,
+      howToStop: r.how_to_stop ?? null,
+      churnType: r.churn_type ?? null,
+      confirmedAt: r.confirmed_at ?? null,
+      confirmedRole: r.confirmed_role ?? null,
+      cardState: r.card_state ?? null,
+      cardError: r.card_error ?? null,
+      typeDefault: r.churn_type_default ?? null,
+    },
   };
 }
 
@@ -102,6 +179,9 @@ export function buildChurnPage(input: unknown): ChurnPage {
     log,
     roster: r,
     me: seatRow,
+    notices = [],
+    unmatched = [],
+    stoppedNotInRegister = [],
   }: ChurnSource = churnSourceSchema.parse(input);
   const departures = deps.map(departureOf);
   const billing = new Map(cards.map(c => [String(c.clickup_task_id), c]));
@@ -219,12 +299,14 @@ export function buildChurnPage(input: unknown): ChurnPage {
         c.name,
       ]);
 
+  const waitingKeys = new Set(waiting.keys());
   return {
     today,
     month,
     me: {
       email: seatRow.email,
       canRemove: seatRow.isCeo || seatRow.isAdmin,
+      isCeo: seatRow.isCeo,
     },
     reasons: REASONS,
     departures,
@@ -243,6 +325,12 @@ export function buildChurnPage(input: unknown): ChurnPage {
       by: String(l.by_whom),
       what: String(l.what),
     })),
+    notices: notices.map(noticeOf),
+    unmatched: unmatched.map(noticeOf),
+    // A Stopped card already offered under "Not in the register yet" is listed once.
+    stopped: stoppedNotInRegister
+      .map(stoppedOf)
+      .filter(s => !waitingKeys.has(s.taskId)),
   };
 }
 export async function readChurnPage(

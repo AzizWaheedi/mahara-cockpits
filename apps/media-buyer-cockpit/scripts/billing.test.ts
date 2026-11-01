@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { type Account, amountProblem, ladderOf } from "../convex/billingCore";
 import { bankCanBe } from "../convex/ceo/manualMatch";
+import * as sheet from "../src/lib/billingCore";
 
 // The rules both cockpits and Maher bill by (convex/billingCore.ts).
 
@@ -109,5 +110,208 @@ describe("a hand-logged payment and the bank line that is the same money", () =>
     expect(bankCanBe("cheque", "2026-09-23", "2026-10-08")).toBe(false);
     // Never a deposit from long before the cheque was received.
     expect(bankCanBe("cheque", "2026-09-23", "2026-09-19")).toBe(false);
+  });
+});
+
+// The sheet's own rules (src/lib/billingCore.ts, the same in both cockpits):
+// the one ladder of 20261101p, editable, and the MRR check's words.
+describe("the overdue steps: a pause review on day 4, a cancel review on day 15", () => {
+  const today = "2026-11-01";
+  const at = (nextDate: string, steps?: sheet.LadderSteps) =>
+    sheet.ladderOf({ ...card({ nextDate }) } as sheet.Account, today, steps);
+
+  test("the defaults are the CEO's 09-19 rule", () => {
+    expect(sheet.DEFAULT_STEPS).toEqual({
+      pauseReviewDay: 4,
+      cancelReviewDay: 15,
+    });
+    expect(at("2026-10-31").rung).toBe("day1");
+    expect(at("2026-10-29").rung).toBe("call"); // 3 late: still a call
+    expect(at("2026-10-28").rung).toBe("pause"); // day 4
+    expect(at("2026-10-28").label).toBe(
+      "Pause review, call first",
+    );
+    expect(at("2026-10-18").rung).toBe("pause"); // day 14
+    expect(at("2026-10-17").rung).toBe("churn"); // day 15
+    expect(at("2026-10-17").label).toBe(
+      "Cancel review, call first",
+    );
+  });
+
+  test("the CEO's own days move every row", () => {
+    const steps = { pauseReviewDay: 3, cancelReviewDay: 10 };
+    expect(at("2026-10-29", steps).rung).toBe("pause");
+    expect(at("2026-10-22", steps).rung).toBe("churn");
+    expect(sheet.ladderSentence(steps)).toBe(
+      "The ladder: a pause review on day 3 and a cancel review on day 10. Neither changes the card by itself.",
+    );
+  });
+
+  test("paused fourteen days is the restart-or-churn review, counted from Paused On", () => {
+    const paused = (pausedOn: string) =>
+      sheet.ladderOf(
+        card({
+          status: "Paused",
+          group: "paused",
+          pausedOn,
+          nextDate: "2026-09-01",
+        }) as sheet.Account,
+        today,
+      );
+    expect(paused("2026-10-19").rung).toBe("day14"); // 13 days
+    expect(paused("2026-10-18").rung).toBe("churn"); // 14 days
+    expect(paused("2026-10-18").label).toBe(
+      "Paused 14 days: restart or confirm churn",
+    );
+    expect(paused("2026-10-21").rung).toBe("day14"); // 11 days
+  });
+
+  test("what the server sends is trusted only when it is a real ladder", () => {
+    expect(sheet.stepsFrom({ pauseReviewDay: 5, cancelReviewDay: 20 })).toEqual(
+      { pauseReviewDay: 5, cancelReviewDay: 20 },
+    );
+    expect(sheet.stepsFrom(null)).toEqual(sheet.DEFAULT_STEPS);
+    expect(
+      sheet.stepsFrom({ pauseReviewDay: 10, cancelReviewDay: 10 }),
+    ).toEqual(sheet.DEFAULT_STEPS);
+    expect(
+      sheet.stepsFrom({ pauseReviewDay: "4", cancelReviewDay: 99 }),
+    ).toEqual(sheet.DEFAULT_STEPS);
+  });
+
+  test("buildSheet reads every row with the steps it is given and keeps them", () => {
+    const s = sheet.buildSheet(
+      [
+        card({
+          taskId: "a",
+          name: "A",
+          nextDate: "2026-10-29",
+        }) as sheet.Account,
+      ],
+      [],
+      [],
+      today,
+      { pauseReviewDay: 3, cancelReviewDay: 10 },
+    );
+    expect(s.steps).toEqual({ pauseReviewDay: 3, cancelReviewDay: 10 });
+    expect(s.rows[0].ladder.rung).toBe("pause");
+  });
+});
+
+describe("the MRR check's words (cockpit_mrr_read)", () => {
+  const raw = {
+    asOf: "2026-11-01T05:00:00Z",
+    tolerancePct: 10,
+    railNote: null,
+    rows: [
+      {
+        taskId: "a",
+        clientName: "Ardon",
+        plan: "Monthly",
+        mrrUsd: 2000,
+        suggestedUsd: 2000,
+        suggestionWhy: "x",
+        railMonthlyUsd: 1500,
+        railNote: "Whop",
+        flag: "differs_rail",
+      },
+      {
+        taskId: "b",
+        clientName: "Beta",
+        plan: "Monthly",
+        mrrUsd: null,
+        suggestedUsd: 1300,
+        suggestionWhy: "x",
+        railMonthlyUsd: null,
+        railNote: null,
+        flag: "missing",
+      },
+      {
+        taskId: "c",
+        clientName: "Cedar",
+        plan: "Paid in full (90 days)",
+        mrrUsd: 2000,
+        suggestedUsd: null,
+        suggestionWhy: "x",
+        railMonthlyUsd: null,
+        railNote: null,
+        flag: "not_recurring",
+      },
+      {
+        taskId: "d",
+        clientName: "Dune",
+        plan: "Monthly",
+        mrrUsd: 1333,
+        suggestedUsd: 1000,
+        suggestionWhy: "x",
+        railMonthlyUsd: null,
+        railNote: null,
+        flag: "differs_suggestion",
+      },
+      {
+        taskId: "e",
+        clientName: "Elm",
+        plan: "Monthly",
+        mrrUsd: 700,
+        suggestedUsd: 700,
+        suggestionWhy: "x",
+        railMonthlyUsd: null,
+        railNote: null,
+        flag: "ok",
+      },
+    ],
+    totals: {
+      onBooks: 4033,
+      onBooksCards: 3,
+      suggested: 5000,
+      noSuggestion: 1,
+      missing: 1,
+      differ: 2,
+    },
+    downgrades: [
+      {
+        taskId: "d",
+        clientName: "Dune",
+        fromUsd: 1800,
+        toUsd: 1333,
+        effective: "2026-11-01",
+        reason: "One campaign",
+        seatRole: "the CSM",
+      },
+    ],
+  };
+
+  test("each flag reads as 5.3 words it; a true MRR carries no chip", () => {
+    const v = sheet.mrrViewFrom(raw);
+    if (!v) throw new Error("expected a view");
+    const chip = (id: string) =>
+      sheet.mrrChip(v.rows.find(r => r.taskId === id));
+    expect(chip("a")).toBe("Card $2,000, money in $1,500");
+    expect(chip("b")).toBe("MRR missing");
+    expect(chip("c")).toBe("Not a monthly plan");
+    expect(chip("d")).toBe("Card $1,333, suggested $1,000");
+    expect(chip("e")).toBeNull();
+    expect(v.rows.filter(sheet.mrrDiffers).map(r => r.taskId)).toEqual([
+      "a",
+      "d",
+    ]);
+    expect(v.downgrades[0]).toMatchObject({
+      clientName: "Dune",
+      fromUsd: 1800,
+      toUsd: 1333,
+      seatRole: "the CSM",
+    });
+  });
+
+  test("missing is never zero", () => {
+    const v = sheet.mrrViewFrom({
+      rows: [{ taskId: "x", flag: "missing", mrrUsd: null }],
+      totals: {},
+    });
+    expect(v?.totals.onBooks).toBeNull();
+    expect(v?.totals.suggested).toBeNull();
+    expect(v?.rows[0].mrrUsd).toBeNull();
+    expect(sheet.mrrViewFrom(null)).toBeNull();
+    expect(sheet.mrrViewFrom("nope")).toBeNull();
   });
 });

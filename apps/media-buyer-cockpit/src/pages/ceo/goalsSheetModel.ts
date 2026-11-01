@@ -1,3 +1,4 @@
+import { money } from "@/components/ceo/format";
 import { CPB_GATE, CPL_GATE } from "@/lib/kpi";
 import type { Unit } from "@/types/ceo/scoreboard";
 import type { DriverKey, Drivers, Projection } from "./goalsModel";
@@ -475,7 +476,7 @@ export const SHEET_COLUMNS: SheetColumn[] = [
     "count",
     "down",
     sum("extensionsGiven"),
-    "Typed. The Extension form has no real response, so the billing sheet and his word are the record.",
+    "From the billing sheet and the client page; typed days add to it.",
   ),
   col(
     "upsells",
@@ -913,12 +914,25 @@ function profitOf(total: (part: string) => number | null): number | null {
   return ads === null ? null : cash - ads - labour - software;
 }
 
-/** A cell typed over what was measured wins for that day. */
+/**
+ * Parts where a typed day adds to what was measured instead of replacing it:
+ * an extension given in the cockpit is measured, and one agreed but entered
+ * nowhere is typed beside it (WAVE12-CONTRACT 4.11.5).
+ */
+export const ADDITIVE_PARTS: ReadonlySet<string> = new Set(["extensionsGiven"]);
+
+/** A cell typed over what was measured wins for that day, except an additive part, which adds. */
 export function dayRow(
   measured: DayParts | undefined,
   typed: Record<string, number> | undefined,
 ): DayParts {
-  return withComputed({ ...(measured ?? {}), ...(typed ?? {}) });
+  const out: DayParts = { ...(measured ?? {}), ...(typed ?? {}) };
+  for (const part of ADDITIVE_PARTS) {
+    const m = measured?.[part];
+    const t = typed?.[part];
+    if (typeof m === "number" && typeof t === "number") out[part] = m + t;
+  }
+  return withComputed(out);
 }
 
 /** Whether a metric only means something whole: a rate, a cost, a per-day figure. */
@@ -1131,4 +1145,223 @@ export function planRowsFor(
     });
   }
   return rows;
+}
+
+// ---- The month's lifecycle (WAVE12-CONTRACT 2.8, 4.11.5) -------------------------------------------
+// cockpit_ceo_goal_sheet_context returns `lifecycle` {extensions, latePayments, departures, missing} and
+// `manualLogged` since 20261101q. Each list is null with a sentence in `missing` while its record is not
+// live, never an empty list that reads as none.
+
+export type LifecycleExtension = {
+  grantId: number;
+  taskId: string;
+  client: string;
+  grantedOn: string;
+  weeks: number;
+  from: string | null;
+  until: string;
+  state: "live" | "ended" | "replaced";
+  reason: string | null;
+  source: string;
+};
+export type LifecycleLate = {
+  taskId: string;
+  client: string;
+  dueOn: string;
+  amountUsd: number | null;
+  endedOn: string | null;
+  closedHow: string;
+  paidOn: string | null;
+  daysLate: number | null;
+  source: string;
+};
+export type LifecycleDeparture = {
+  departureId: number;
+  taskId: string | null;
+  client: string;
+  leftOn: string;
+  reason: string;
+  churnType: "mid_programme" | "completed" | null;
+  whyDetail: string | null;
+  howToStop: string | null;
+  surveyState: string | null;
+  confirmed: boolean;
+  confirmedOn: string | null;
+  source: string;
+};
+export type GoalLifecycle = {
+  extensions: LifecycleExtension[] | null;
+  latePayments: LifecycleLate[] | null;
+  departures: LifecycleDeparture[] | null;
+  missing: string[];
+};
+export type ManualLogged = {
+  count: number;
+  usd: number;
+  oldestDay: string | null;
+};
+
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === "object" && !Array.isArray(v);
+const listOf = <T>(v: unknown): T[] | null =>
+  Array.isArray(v) ? (v.filter(isObj) as T[]) : null;
+
+/** The sheet context's lifecycle, or null when the server is older than 20261101q. */
+export function lifecycleOf(ctx: object): GoalLifecycle | null {
+  const raw = (ctx as { lifecycle?: unknown }).lifecycle;
+  if (!isObj(raw)) return null;
+  return {
+    extensions: listOf<LifecycleExtension>(raw.extensions),
+    latePayments: listOf<LifecycleLate>(raw.latePayments),
+    departures: listOf<LifecycleDeparture>(raw.departures),
+    missing: Array.isArray(raw.missing)
+      ? raw.missing.filter((m): m is string => typeof m === "string")
+      : [],
+  };
+}
+
+/** Hand-logged money waiting on its bank check, or null when the money refresh has not written it. */
+export function manualLoggedOf(ctx: object): ManualLogged | null {
+  const raw = (ctx as { manualLogged?: unknown }).manualLogged;
+  if (!isObj(raw)) return null;
+  const count = Number(raw.count);
+  const usd = Number(raw.usd);
+  if (!Number.isFinite(count) || !Number.isFinite(usd)) return null;
+  return {
+    count,
+    usd,
+    oldestDay: typeof raw.oldestDay === "string" ? raw.oldestDay : null,
+  };
+}
+
+/**
+ * The measured parts the lifecycle gives each day: extensions given, by the day they were given. The
+ * goal sheet's measured map takes these beside the growth and cash days.
+ */
+export function lifecycleDayParts(
+  life: GoalLifecycle | null,
+): Record<string, DayParts> {
+  const out: Record<string, DayParts> = {};
+  for (const e of life?.extensions ?? []) {
+    const day = out[e.grantedOn] ?? {};
+    day.extensionsGiven = (Number(day.extensionsGiven) || 0) + 1;
+    out[e.grantedOn] = day;
+  }
+  return out;
+}
+
+/** One measured lock-in line: what the cockpit holds for a client in a section, with where it came from. */
+export type MeasuredLine = {
+  taskId: string | null;
+  client: string;
+  value: string;
+  source: string;
+  /** Answers the cockpit already holds, by the lock-in's answer key ("why", "prevent", "form", ...). */
+  answers: Record<string, string>;
+};
+
+const DAY_NAMES = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+const shortDay = (day: string | null) =>
+  day && /^\d{4}-\d{2}-\d{2}$/.test(day)
+    ? `${Number(day.slice(8, 10))} ${DAY_NAMES[Number(day.slice(5, 7)) - 1]}`
+    : "a day not known";
+const usdOrMissing = (n: number | null) =>
+  n === null || !Number.isFinite(n) ? "amount missing" : money(n);
+const SURVEY_WORDS: Record<string, string> = {
+  not_sent: "Not sent yet.",
+  sent: "Sent, not answered yet.",
+  filled: "Filled in.",
+  declined: "The client declined it.",
+};
+const CLOSED_WORDS: Record<string, string> = {
+  open: "still late",
+  extended: "an extension was given",
+  stopped: "the client stopped",
+  date_moved: "the date moved on the card",
+};
+
+/**
+ * The cockpit's measured lines for one lock-in section (churned, extensions, late_payments). Null when
+ * the section's record is not live yet; [] when it is live and holds nothing for the month.
+ */
+export function measuredLines(
+  section: string,
+  life: GoalLifecycle | null,
+): MeasuredLine[] | null {
+  if (!life) return null;
+  if (section === "extensions") {
+    if (!life.extensions) return null;
+    return life.extensions.map(
+      (e): MeasuredLine => ({
+        taskId: e.taskId,
+        client: e.client,
+        value: `${e.weeks} ${e.weeks === 1 ? "week" : "weeks"}, ${shortDay(e.from ?? e.grantedOn)} to ${shortDay(e.until)}`,
+        source: e.source,
+        answers: e.reason ? { why: e.reason } : ({} as Record<string, string>),
+      }),
+    );
+  }
+  if (section === "late_payments") {
+    if (!life.latePayments) return null;
+    return life.latePayments.map(l => ({
+      taskId: l.taskId,
+      client: l.client,
+      value: `${usdOrMissing(l.amountUsd)} due ${shortDay(l.dueOn)}, ${l.daysLate === null ? "days late not known" : `${l.daysLate} ${l.daysLate === 1 ? "day" : "days"} late`}${l.closedHow && l.closedHow !== "open" ? ` (${CLOSED_WORDS[l.closedHow] ?? l.closedHow})` : ""}`,
+      source: l.source,
+      answers: {},
+    }));
+  }
+  if (section === "churned") {
+    if (!life.departures) return null;
+    return life.departures.map(d => {
+      const answers: Record<string, string> = {};
+      if (d.whyDetail) answers.why = d.whyDetail;
+      if (d.howToStop) answers.prevent = d.howToStop;
+      if (d.surveyState && SURVEY_WORDS[d.surveyState])
+        answers.form = SURVEY_WORDS[d.surveyState];
+      return {
+        taskId: d.taskId,
+        client: d.client,
+        value: `Left ${shortDay(d.leftOn)}, ${d.reason}${d.churnType === "completed" ? ", a finished term" : ""}${d.confirmed ? "" : ", not confirmed"}`,
+        source: d.source,
+        answers,
+      };
+    });
+  }
+  return null;
+}
+
+/**
+ * Measured lines matched to the section's lock-in rows by card: `byRow` keys a row id to its line, and
+ * `extra` holds the lines no row names (a client the lock-in was written without).
+ */
+export function matchMeasured<
+  R extends { id: number; client_task_id: string | null },
+>(
+  rows: R[],
+  lines: MeasuredLine[] | null,
+): { byRow: Map<number, MeasuredLine>; extra: MeasuredLine[] } {
+  const byRow = new Map<number, MeasuredLine>();
+  const extra: MeasuredLine[] = [];
+  for (const line of lines ?? []) {
+    const row = line.taskId
+      ? rows.find(r => r.client_task_id === line.taskId && !byRow.has(r.id))
+      : undefined;
+    if (row) byRow.set(row.id, line);
+    else extra.push(line);
+  }
+  return { byRow, extra };
 }

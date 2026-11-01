@@ -1,7 +1,9 @@
-// forms-door (docs/forms/STAGE2B-CONTRACT.md 4.8): every route and refusal, the
-// worker's own answer mapping of a signed Typeform body, the record call's
-// shape, each outcome forms-door:kickoff records (3.9), and no body, answer or
-// hidden value in any log line. A fake database and a signer written with
+// forms-door (docs/forms/STAGE2B-CONTRACT.md 4.8; docs/forms/WAVE12-CONTRACT.md
+// 4.4): every route and refusal, the worker's own answer mapping of a signed
+// Typeform body, the record call's shape, each outcome forms-door:{form}
+// records (3.9), the termination survey and the pause request stored as legacy
+// records with their own keys, and no body, answer or hidden value in any log
+// line. A fake database and a signer written with
 // node:crypto, so the door's check (team-onboarding-intake/signature.ts) is held
 // against a second implementation. People, clients, links and values are invented.
 import { describe, expect, test } from "bun:test";
@@ -9,6 +11,7 @@ import { createHmac } from "node:crypto";
 import {
   FORM_KEYS,
   formKeyOf,
+  legacyInput,
   MAX_BODY_BYTES,
   MISSING_SECRET_TTL_MS,
   makeHandler,
@@ -111,6 +114,10 @@ type Fake = {
   secret: string | null | "throw";
   record: Row | { status: number; code: string; message: string };
   seenFails?: boolean;
+  /** The two client forms (waves 1-2): their registry rows, signing keys and the legacy record's answer. */
+  registries?: Record<string, Row[]>;
+  secrets?: Record<string, string>;
+  legacy?: Row | { status: number; code: string; message: string };
 };
 
 function harness(over: Partial<Fake> = {}) {
@@ -144,6 +151,12 @@ function harness(over: Partial<Fake> = {}) {
       body: init.body ? JSON.parse(String(init.body)) : null,
       auth: new Headers(init.headers).get("Authorization"),
     });
+    const other =
+      /^\/rest\/v1\/cockpit_forms\?select=provider,typeform_id&key=eq\.(exit_survey|pause_request)$/.exec(
+        path,
+      );
+    if (method === "GET" && other)
+      return Response.json(fake.registries?.[other[1]] ?? []);
     if (
       method === "GET" &&
       path ===
@@ -152,6 +165,33 @@ function harness(over: Partial<Fake> = {}) {
       if (typeof fake.registry === "number")
         return new Response("{}", { status: fake.registry });
       return Response.json(fake.registry);
+    }
+    const provider = init.body
+      ? JSON.parse(String(init.body)).p_provider
+      : null;
+    if (
+      path === "/rest/v1/rpc/cockpit_forms_key_get" &&
+      provider !== "typeform_kickoff"
+    )
+      return Response.json(
+        fake.secrets?.[provider]
+          ? { provider, secret: fake.secrets[provider], last4: "0000" }
+          : null,
+      );
+    if (path === "/rest/v1/rpc/cockpit_form_record_legacy") {
+      const r = (fake.legacy ?? {
+        inserted: true,
+        responseId: "22222222-2222-4222-8222-222222222222",
+        matched: false,
+        noticeQueued: true,
+        taskId: "86eyjkdc8",
+      }) as Row;
+      if (typeof r.status === "number")
+        return new Response(
+          JSON.stringify({ message: r.message, code: r.code }),
+          { status: r.status },
+        );
+      return Response.json(r);
     }
     if (path === "/rest/v1/rpc/cockpit_forms_key_get") {
       if (fake.secret === "throw")
@@ -265,7 +305,7 @@ describe("the route", () => {
       expect(
         (await h.post("{}", {}, `/forms-door/typeform/${form}`)).status,
       ).toBe(404);
-    expect(FORM_KEYS).toEqual(["kickoff"]);
+    expect(FORM_KEYS).toEqual(["kickoff", "exit_survey", "pause_request"]);
     expect(h.calls).toEqual([]);
   });
 
@@ -720,5 +760,419 @@ describe("the log", () => {
         "$1,000",
       ])
         expect(line).not.toContain(secretish);
+  });
+});
+
+// ----------------------------------------------------------------- waves 1-2: the two client forms (4.4)
+
+const EXIT_ID = "knIe4eF3";
+const PAUSE_ID = "CTUjv6l3";
+/** Each form's own invented key, never kickoff's. */
+const EXIT_SECRET = ["invented", "termination", "signing", "key"].join("-");
+const PAUSE_SECRET = ["invented", "pause", "signing", "key"].join("-");
+const CLIENT_EMAIL = "manager@atlantis.example";
+const CLIENT_PHONE = "+965 1111 2222";
+const COMMENT = "The leads were not the quality we hoped for";
+
+/** A termination survey as Typeform sends it: the contact group's answers, the ratings, the hidden card id. */
+function exitDelivery(over: Row = {}): Row {
+  return {
+    event_id: "01JTESTEXIT",
+    event_type: "form_response",
+    form_response: {
+      form_id: EXIT_ID,
+      token: "exit0000token001",
+      submitted_at: "2026-10-31T22:30:00Z",
+      hidden: {
+        client_name: "Atlantis Interiors",
+        onboarding_client_id: "86eyjkdc8",
+        utm: "x",
+      },
+      definition: {
+        id: EXIT_ID,
+        title: "Contract Termination Survey",
+        fields: [
+          {
+            id: "c1",
+            ref: "first-ref",
+            type: "short_text",
+            title: "First name",
+          },
+          { id: "c2", ref: "email-ref", type: "email", title: "Email" },
+          { id: "c3", ref: "phone-ref", type: "phone_number", title: "Phone" },
+          {
+            id: "r1",
+            ref: "eafeb9cf-70b5-46c0-9432-4db2998d5bf1",
+            type: "multiple_choice",
+            title: "Reason",
+          },
+          {
+            id: "r2",
+            ref: "62edbc75-ca88-4f1f-875d-5e79939a7edf",
+            type: "opinion_scale",
+            title: "Ad performance",
+          },
+          {
+            id: "r3",
+            ref: "9209b2ae-6214-4ffd-b41f-74facda83726",
+            type: "yes_no",
+            title: "Would you recommend us?",
+          },
+          {
+            id: "r4",
+            ref: "b2d88140-720d-4dfa-bcaf-a953d6b28b5e",
+            type: "long_text",
+            title: "Final comments",
+          },
+        ],
+      },
+      answers: [
+        {
+          type: "text",
+          text: "Dana",
+          field: { id: "c1", ref: "first-ref", type: "short_text" },
+        },
+        {
+          type: "email",
+          email: CLIENT_EMAIL,
+          field: { id: "c2", ref: "email-ref", type: "email" },
+        },
+        {
+          type: "phone_number",
+          phone_number: CLIENT_PHONE,
+          field: { id: "c3", ref: "phone-ref", type: "phone_number" },
+        },
+        {
+          type: "choices",
+          choices: { labels: ["Results"] },
+          field: {
+            id: "r1",
+            ref: "eafeb9cf-70b5-46c0-9432-4db2998d5bf1",
+            type: "multiple_choice",
+          },
+        },
+        {
+          type: "number",
+          number: 4,
+          field: {
+            id: "r2",
+            ref: "62edbc75-ca88-4f1f-875d-5e79939a7edf",
+            type: "opinion_scale",
+          },
+        },
+        {
+          type: "boolean",
+          boolean: false,
+          field: {
+            id: "r3",
+            ref: "9209b2ae-6214-4ffd-b41f-74facda83726",
+            type: "yes_no",
+          },
+        },
+        {
+          type: "text",
+          text: COMMENT,
+          field: {
+            id: "r4",
+            ref: "b2d88140-720d-4dfa-bcaf-a953d6b28b5e",
+            type: "long_text",
+          },
+        },
+      ],
+      ...over,
+    },
+  };
+}
+
+function clientHarness(over: Partial<Fake> = {}) {
+  return harness({
+    registries: {
+      exit_survey: [{ provider: "typeform", typeform_id: EXIT_ID }],
+      pause_request: [{ provider: "typeform", typeform_id: PAUSE_ID }],
+    },
+    secrets: {
+      typeform_exit_survey: EXIT_SECRET,
+      typeform_pause_request: PAUSE_SECRET,
+    },
+    ...over,
+  });
+}
+const EXIT_ROUTE = "/forms-door/typeform/exit_survey";
+const PAUSE_ROUTE = "/forms-door/typeform/pause_request";
+
+describe("the termination survey and the pause request (waves 1-2, 4.4)", () => {
+  test("a bad signature is 401 before any parse, with the form's own key; kickoff's key does not open it", async () => {
+    const h = clientHarness();
+    const raw = JSON.stringify(exitDelivery());
+    expect((await h.post(raw, {}, EXIT_ROUTE)).status).toBe(401);
+    expect(
+      (
+        await h.post(
+          raw,
+          { "Typeform-Signature": sign(SECRET, raw) },
+          EXIT_ROUTE,
+        )
+      ).status,
+    ).toBe(401);
+    expect(h.rpcs("cockpit_form_record_legacy")).toEqual([]);
+    expect(h.rpcs("cockpit_forms_key_get")).toEqual([
+      { p_provider: "typeform_exit_survey" },
+    ]);
+    expect(h.rpcs("cockpit_forms_door_seen")).toEqual([
+      {
+        p_form_key: "exit_survey",
+        p_outcome: "unsigned",
+        p_reason: "The signature was missing or did not match.",
+      },
+    ]);
+  });
+
+  test("a signed survey is stored as a legacy record: no email or phone, the two hidden fields, the card from the hidden id", async () => {
+    const h = clientHarness();
+    const raw = JSON.stringify(exitDelivery());
+    expect(
+      await read(
+        await h.post(
+          raw,
+          { "Typeform-Signature": sign(EXIT_SECRET, raw) },
+          EXIT_ROUTE,
+        ),
+      ),
+    ).toEqual({
+      status: 200,
+      body: { ok: true, inserted: true },
+    });
+    const [call] = h.rpcs("cockpit_form_record_legacy");
+    expect(call).toEqual({
+      p: {
+        formKey: "exit_survey",
+        externalId: "exit0000token001",
+        submittedAt: "2026-10-31T22:30:00Z",
+        answers: {
+          fields: [
+            {
+              ref: "first-ref",
+              type: "short_text",
+              title: "First name",
+              value: "Dana",
+            },
+            {
+              ref: "eafeb9cf-70b5-46c0-9432-4db2998d5bf1",
+              type: "multiple_choice",
+              title: "Reason",
+              value: ["Results"],
+            },
+            {
+              ref: "62edbc75-ca88-4f1f-875d-5e79939a7edf",
+              type: "opinion_scale",
+              title: "Ad performance",
+              value: 4,
+            },
+            {
+              ref: "9209b2ae-6214-4ffd-b41f-74facda83726",
+              type: "yes_no",
+              title: "Would you recommend us?",
+              value: false,
+            },
+            {
+              ref: "b2d88140-720d-4dfa-bcaf-a953d6b28b5e",
+              type: "long_text",
+              title: "Final comments",
+              value: COMMENT,
+            },
+          ],
+        },
+        hidden: {
+          client_name: "Atlantis Interiors",
+          onboarding_client_id: "86eyjkdc8",
+        },
+        taskId: "86eyjkdc8",
+        clientName: "Atlantis Interiors",
+        backfill: false,
+      },
+    });
+    expect(JSON.stringify(call)).not.toContain(CLIENT_EMAIL);
+    expect(JSON.stringify(call)).not.toContain(CLIENT_PHONE);
+    expect(h.rpcs("cockpit_form_record_typeform")).toEqual([]);
+    expect(h.rpcs("cockpit_forms_door_seen").at(-1)).toEqual({
+      p_form_key: "exit_survey",
+      p_outcome: "recorded",
+      p_reason: null,
+    });
+    expect(h.logs).toEqual(["forms-door exit_survey recorded"]);
+  });
+
+  test("a survey with no card id is stored unmatched; a pause request takes the same path; a repeat is a repeat", async () => {
+    const h = clientHarness({
+      legacy: {
+        inserted: false,
+        responseId: "x",
+        matched: false,
+        noticeQueued: false,
+        taskId: null,
+      },
+    });
+    const bare = exitDelivery({ hidden: { client_name: "Atlantis" } });
+    const raw = JSON.stringify(bare);
+    expect(
+      (
+        await read(
+          await h.post(
+            raw,
+            { "Typeform-Signature": sign(EXIT_SECRET, raw) },
+            EXIT_ROUTE,
+          ),
+        )
+      ).body,
+    ).toEqual({
+      ok: true,
+      inserted: false,
+    });
+    expect(h.rpcs("cockpit_form_record_legacy")[0].p).toMatchObject({
+      taskId: null,
+      clientName: "Atlantis",
+      hidden: { client_name: "Atlantis" },
+    });
+    const pause = exitDelivery({
+      form_id: PAUSE_ID,
+      token: "pause000token001",
+    });
+    const praw = JSON.stringify(pause);
+    expect(
+      (
+        await h.post(
+          praw,
+          { "Typeform-Signature": sign(PAUSE_SECRET, praw) },
+          PAUSE_ROUTE,
+        )
+      ).status,
+    ).toBe(200);
+    expect(h.rpcs("cockpit_form_record_legacy")[1].p).toMatchObject({
+      formKey: "pause_request",
+      externalId: "pause000token001",
+    });
+    expect(h.logs).toEqual([
+      "forms-door exit_survey repeat",
+      "forms-door pause_request repeat",
+    ]);
+  });
+
+  test("each form reads its own registry row and key, once in five minutes; another form's response is ignored", async () => {
+    const h = clientHarness();
+    const raw = JSON.stringify(exitDelivery());
+    const headers = { "Typeform-Signature": sign(EXIT_SECRET, raw) };
+    await h.post(raw, headers, EXIT_ROUTE);
+    await h.post(raw, headers, EXIT_ROUTE);
+    const praw = JSON.stringify(exitDelivery());
+    // A termination response sent to the pause door, signed with the pause key: not that form's response.
+    expect(
+      (
+        await h.post(
+          praw,
+          { "Typeform-Signature": sign(PAUSE_SECRET, praw) },
+          PAUSE_ROUTE,
+        )
+      ).status,
+    ).toBe(202);
+    expect(
+      h.calls
+        .filter(c => c.path.startsWith("/rest/v1/cockpit_forms?"))
+        .map(c => c.path.split("key=eq.")[1]),
+    ).toEqual(["exit_survey", "pause_request"]);
+    expect(h.rpcs("cockpit_forms_key_get")).toEqual([
+      { p_provider: "typeform_exit_survey" },
+      { p_provider: "typeform_pause_request" },
+    ]);
+  });
+
+  test("a form no longer filled in Typeform is 404; no key saved is 503 with its sentence; a store refusal is 500 with the code only", async () => {
+    const moved = clientHarness({
+      registries: {
+        exit_survey: [{ provider: "native", typeform_id: EXIT_ID }],
+      },
+    });
+    expect((await moved.post("{}", {}, EXIT_ROUTE)).status).toBe(404);
+    const nokey = clientHarness({ secrets: {} });
+    expect((await nokey.post("{}", {}, PAUSE_ROUTE)).status).toBe(503);
+    expect(nokey.rpcs("cockpit_forms_door_seen")).toEqual([
+      {
+        p_form_key: "pause_request",
+        p_outcome: "failed",
+        p_reason: "No signing key saved",
+      },
+    ]);
+    const refused = clientHarness({
+      legacy: { status: 400, code: "22023", message: CLIENT_EMAIL },
+    });
+    const raw = JSON.stringify(exitDelivery());
+    expect(
+      (
+        await refused.post(
+          raw,
+          { "Typeform-Signature": sign(EXIT_SECRET, raw) },
+          EXIT_ROUTE,
+        )
+      ).status,
+    ).toBe(500);
+    expect(refused.rpcs("cockpit_forms_door_seen").at(-1)).toEqual({
+      p_form_key: "exit_survey",
+      p_outcome: "failed",
+      p_reason: "The store refused the response (22023).",
+    });
+  });
+
+  test("the log holds no body, answer, hidden value or key of either form", async () => {
+    const h = clientHarness();
+    const raw = JSON.stringify(exitDelivery());
+    await h.post(
+      raw,
+      { "Typeform-Signature": sign(EXIT_SECRET, raw) },
+      EXIT_ROUTE,
+    );
+    await h.post(raw, {}, EXIT_ROUTE);
+    for (const line of h.logs)
+      for (const secretish of [
+        CLIENT_EMAIL,
+        CLIENT_PHONE,
+        COMMENT,
+        "Atlantis",
+        "86eyjkdc8",
+        "exit0000token001",
+        EXIT_SECRET,
+        SERVICE_KEY,
+        "Dana",
+      ])
+        expect(line).not.toContain(secretish);
+    expect(h.logs).toEqual([
+      "forms-door exit_survey recorded",
+      "forms-door exit_survey unsigned",
+    ]);
+  });
+
+  test("legacyInput keeps only short trimmed hidden strings and refuses a card id that is not shaped like one", () => {
+    const p = legacyInput(
+      "pause_request",
+      {
+        token: "t",
+        submitted_at: "s",
+        hidden: {
+          onboarding_client_id: " bad id! ",
+          client_name: "  ",
+          email: CLIENT_EMAIL,
+        },
+        answers: [],
+      },
+      true,
+    );
+    expect(p).toEqual({
+      formKey: "pause_request",
+      externalId: "t",
+      submittedAt: "s",
+      answers: { fields: [] },
+      hidden: { onboarding_client_id: "bad id!" },
+      taskId: null,
+      clientName: null,
+      backfill: true,
+    });
   });
 });

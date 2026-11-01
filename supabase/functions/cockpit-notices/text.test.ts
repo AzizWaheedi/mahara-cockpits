@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { SERVICE_LABEL as BRIEF_SERVICE_LABEL } from "../../../apps/client-success-cockpit/src/present/blueprintBrief";
 import { CRITERIA as GRADE_CRITERIA } from "../cockpit-forms-api/prompts/grade.ts";
 import {
-  CRITERIA, cleanStatus, cutAtWord, escapeSlack, kuwaitClock, kuwaitDay, kuwaitWhen, NOTICE_KINDS, type NoticeFacts, type NoticeKind, noticeLinks, noticeText, sampleFacts,
+  CHURN_REASONS, CRITERIA, cleanStatus, cutAtWord, escapeSlack, kuwaitClock, kuwaitDay, kuwaitWhen, LIFECYCLE_KINDS, NOTICE_KINDS, type NoticeFacts, type NoticeKind, noticeLinks, noticeText, sampleFacts,
   SECTION_MAX, SERVICE_LABEL, type SlackBlock, type TextMention, VARIANTS, type Variant,
 } from "./text";
 
@@ -44,6 +44,8 @@ describe("Kuwait time and the small helpers", () => {
       card: "https://app.clickup.com/t/task0001",
       blueprint: "https://cockpit.maharamedia.com/client-success/clients/task0001/present/blueprint?view=prep",
       messages: "https://cockpit.maharamedia.com/client-success/clients/task0001?tab=overview#messages",
+      client: "https://cockpit.maharamedia.com/client-success/clients/task0001",
+      churn: "https://cockpit.maharamedia.com/client-success/money?tab=churn",
     });
   });
   test("SERVICE_LABEL is blueprintBrief.ts's, key for key", () => {
@@ -372,6 +374,71 @@ describe("the 1-1 notes notices (docs/forms/STAGE2B-CONTRACT.md 4.2)", () => {
     expect(VARIANTS["checkin.grade"]).toEqual(["grade"]);
     expect(VARIANTS["checkin.recap_late"]).toEqual(["late"]);
     expect(() => noticeText("checkin.grade", "late", gradeFacts)).toThrow("There is no late wording for checkin.grade.");
-    expect(NOTICE_KINDS).toHaveLength(8);
+    expect(NOTICE_KINDS).toHaveLength(14);
+  });
+});
+
+describe("the client lifecycle notices (docs/forms/WAVE12-CONTRACT.md 3.4)", () => {
+  const f = (extra: Record<string, unknown> = {}) => base({ mentions: [], ...extra });
+
+  test("the six kinds, their variants, and the register's reasons", () => {
+    expect([...LIFECYCLE_KINDS]).toEqual([
+      "termination.notice", "termination.submitted", "churn.confirmed", "extension.granted", "pause.agreed", "client.resumed",
+    ]);
+    expect(NOTICE_KINDS.slice(-6)).toEqual([...LIFECYCLE_KINDS]);
+    expect(VARIANTS["termination.notice"]).toEqual(["matched", "unmatched"]);
+    for (const k of LIFECYCLE_KINDS.slice(1)) expect(VARIANTS[k]).toEqual(["post"]);
+    expect(CHURN_REASONS).toHaveLength(8);
+  });
+
+  test("Termination notice in, matched: 3.4's sentence, tags the CSM, opens the client", () => {
+    const { text, blocks } = noticeText("termination.notice", "matched", f({ matched: true, mentions: [CSM] }));
+    expect(text).toBe(`Acme Interiors sent the termination survey. Confirm churn or answer the notice in the cockpit. Ref ${REF}`);
+    expect(lines(blocks)).toEqual([
+      "*Termination notice in: Acme Interiors*",
+      "Acme Interiors sent the termination survey. Confirm churn or answer the notice in the cockpit. <@U0C5JHUCTPG>",
+    ]);
+    expect(contexts(blocks)).toEqual([`<${L.client}|Open the client>`, `Client success · Ref ${REF}`]);
+  });
+
+  test("Termination notice in, unmatched: the form's own name, and the churn tracker to pick the card", () => {
+    const { text, blocks } = noticeText("termination.notice", "unmatched", { ref: REF, taskId: "", client: "", formClientName: "Gamma & Co" });
+    expect(text).toBe(`Gamma &amp; Co sent the termination survey. It is not matched to a card yet: pick the card in the cockpit. Ref ${REF}`);
+    expect(lines(blocks)[0]).toBe("*Termination notice in, not matched to a card*");
+    expect(contexts(blocks)[0]).toBe("<https://cockpit.maharamedia.com/client-success/money?tab=churn|Open the churn tracker>");
+    expect(noticeText("termination.notice", "unmatched", { ref: REF, taskId: "", client: "" }).text).toStartWith("A client sent the termination survey.");
+  });
+
+  test("the four staff notices and the survey sent: names and dates only", () => {
+    expect(noticeText("termination.submitted", "post", f()).text).toBe(`Acme Interiors sent the termination survey. Ref ${REF}`);
+    expect(noticeText("churn.confirmed", "post", f({ reason: "Non-payment 14+ days" })).text).toBe(`Acme Interiors has left: Non-payment 14+ days. Ref ${REF}`);
+    // A reason off the register's list is never shown as typed.
+    expect(noticeText("churn.confirmed", "post", f({ reason: "they owe us $4,000" })).text).toBe(
+      `Acme Interiors has left: no reason on the register's list. Ref ${REF}`,
+    );
+    expect(noticeText("extension.granted", "post", f({ weeks: 2, until: "2026-11-16" })).text).toBe(
+      `Acme Interiors: 2-week extension to Mon 16 Nov. Ref ${REF}`,
+    );
+    expect(noticeText("extension.granted", "post", f({ weeks: "lots", until: null })).text).toBe(
+      `Acme Interiors: an extension to a day not recorded. Ref ${REF}`,
+    );
+    expect(noticeText("pause.agreed", "post", f({ on: "2026-11-01", restart: "2026-11-10" })).text).toBe(
+      `Acme Interiors: paused from Sun 1 Nov, restarts Tue 10 Nov. Ref ${REF}`,
+    );
+    expect(noticeText("pause.agreed", "post", f({ on: "2026-11-01" })).text).toBe(`Acme Interiors: paused from Sun 1 Nov. Ref ${REF}`);
+    expect(noticeText("client.resumed", "post", f({ on: "2026-11-20" })).text).toBe(`Acme Interiors: resumed Fri 20 Nov. Ref ${REF}`);
+    for (const kind of LIFECYCLE_KINDS.slice(2)) {
+      const { blocks } = noticeText(kind, "post", f({ weeks: 2, until: "2026-11-16", on: "2026-11-01", reason: "Ghosted" }));
+      expect(contexts(blocks)).toEqual([`<${L.client}|Open the client>`, `Client success · Ref ${REF}`]);
+    }
+  });
+
+  test("no amount, address or phone ever reaches a lifecycle notice", () => {
+    const leaky = f({ amountUsd: 4242, mrrLostUsd: 4242, email: "client.secret@example.test", phone: "+96599990001", reason: "Refund" });
+    for (const kind of LIFECYCLE_KINDS)
+      for (const variant of VARIANTS[kind]) {
+        const out = JSON.stringify(noticeText(kind, variant, leaky));
+        for (const bad of ["4242", "client.secret", "+96599990001"]) expect(out).not.toContain(bad);
+      }
   });
 });

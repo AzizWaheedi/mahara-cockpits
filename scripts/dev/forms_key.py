@@ -11,8 +11,9 @@ where the keys live:
   probe-webhook       send fathom-webhook one wrongly signed and one signed test delivery
   unregister-webhook  delete the webhook in Fathom and mark the registration off
 
-  Since Stage 2b (docs/forms/STAGE2B-CONTRACT.md 4.8), the kickoff form's signed Typeform webhook to forms-door.
-  <form> is kickoff, the only form with a cockpit webhook in 2b (Z58); any other exits 2:
+  Since Stage 2b (docs/forms/STAGE2B-CONTRACT.md 4.8), each form's signed Typeform webhook to forms-door.
+  <form> is kickoff (tG7dnxBn), exit_survey (the termination survey, knIe4eF3) or pause_request (the client's
+  pause request, CTUjv6l3; docs/forms/WAVE12-CONTRACT.md 4.4); any other exits 2:
   typeform-secret <form>      make a signing key (32 random bytes, base64url) and save it; never printed
   register-typeform <form>    read the form's webhooks, put the cockpit one, read it back, mark the key connected
   probe-typeform <form>       send forms-door one unsigned and one signed probe (401, then 200)
@@ -20,9 +21,9 @@ where the keys live:
 
 fathom, deepseek, register-webhook and unregister-webhook change the CEO's keys or his Fathom account, so
 the CEO runs them, or someone with his permission (contract A3). status, doctor and probe-webhook change
-nothing in Fathom. register-typeform and unregister-typeform change only the cockpit webhook of the kickoff
-form (B3, which the 2b contract gives the session at deploy step D17, Z22); every other webhook of the form is
-read before and after and never touched.
+nothing in Fathom. register-typeform and unregister-typeform change only the cockpit webhook of the named
+form (B3 for kickoff at deploy step D17, Z22; D-F4 for exit_survey and D-C2 for pause_request in the waves 1-2
+contract); every other webhook of the form is read before and after and never touched.
 
 The Fathom key is the api-keys.env copy, not the one in the native runtime file that hermes/csm-calls
 reads (the two values differ, and heavy reads are 10 a minute per key); the webhook is registered and
@@ -58,9 +59,11 @@ NATIVE_STATE = "/home/hermes/.cockpit-native-state"
 SUPABASE = "https://bldgtotkfmhoxmlzowdx.supabase.co"
 FATHOM = "https://api.fathom.ai/external/v1"
 TYPEFORM = "https://api.typeform.com"
-# The one form with a cockpit Typeform webhook in 2b (Z58), its signing key's provider, and the webhook's tag.
-TYPEFORM_FORMS = {"kickoff": "typeform_kickoff"}
-ONLY_KICKOFF = "Only the kickoff form has a cockpit webhook in 2b."
+# The forms with a cockpit Typeform webhook, each with its own signing key's provider: kickoff since 2b (Z58), the
+# termination survey and the pause request since waves 1-2 (4.4). The webhook's tag is the same on each form.
+TYPEFORM_FORMS = {"kickoff": "typeform_kickoff", "exit_survey": "typeform_exit_survey",
+                  "pause_request": "typeform_pause_request"}
+ONLY_KICKOFF = "Name kickoff, exit_survey or pause_request: only these forms have a cockpit webhook."
 TYPEFORM_ID = re.compile(r"^[A-Za-z0-9]{4,32}$")
 WEBHOOK_TAG = "cockpit"
 DEEPSEEK_MODELS = "https://api.deepseek.com/models"
@@ -316,7 +319,7 @@ def save(run: Run, p: dict) -> tuple[int, Any]:
     return run.rpc("cockpit_forms_key_put", {"p": p})
 
 
-# ---------------------------------------------------------------- the kickoff form's Typeform webhook (2b, 4.8)
+# ---------------------------------------------------------------- each form's Typeform webhook (2b 4.8, waves 1-2 4.4)
 
 def typeform_token(run: Run) -> str:
     """TYPEFORM_TOKEN from the native runtime file, as hermes/csm-calls reads it; never printed."""
@@ -777,7 +780,7 @@ def cmd_unregister_typeform(run: Run, form: str) -> int:
     if current is None:
         run.say("No signing key is saved, so there is no registration to mark off.")
         return 0
-    # Marking it refused with unregisteredAt turns forms-door:kickoff detail.registered false, so the guardian stops
+    # Marking it refused with unregisteredAt turns forms-door:{form} detail.registered false, so the guardian stops
     # expecting deliveries.
     status, out = run.rpc("cockpit_forms_key_mark", {"p": {
         "provider": TYPEFORM_FORMS[form], "state": "refused", "note": "Unregistered from the server.",
@@ -791,7 +794,7 @@ def cmd_unregister_typeform(run: Run, form: str) -> int:
 
 COMMANDS = {"status": cmd_status, "doctor": cmd_doctor, "fathom": cmd_fathom, "deepseek": cmd_deepseek,
             "register-webhook": cmd_register, "probe-webhook": cmd_probe, "unregister-webhook": cmd_unregister}
-# The commands that take a form; only kickoff has a cockpit webhook in 2b (Z58).
+# The commands that take a form: one of TYPEFORM_FORMS.
 FORM_COMMANDS = {"typeform-secret": cmd_typeform_secret, "register-typeform": cmd_register_typeform,
                  "probe-typeform": cmd_probe_typeform, "unregister-typeform": cmd_unregister_typeform}
 

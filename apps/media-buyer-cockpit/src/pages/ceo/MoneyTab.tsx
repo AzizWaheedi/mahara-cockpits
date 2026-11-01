@@ -22,6 +22,7 @@ import {
   plural,
   relative,
   shiftMonth,
+  shortDate,
 } from "@/components/ceo/format";
 import { HeroFigure } from "@/components/ceo/HeroFigure";
 import { Kicker } from "@/components/ceo/Kicker";
@@ -39,6 +40,7 @@ import { TabLink } from "@/components/ceo/TabLink";
 import { TargetMeter } from "@/components/ceo/TargetMeter";
 import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
 import type { CeoSection } from "@/components/ceo/useCeo";
+import { manualLoggedOf } from "@/lib/paymentChecks";
 import type {
   CashRail,
   ExpenseGroup,
@@ -50,6 +52,7 @@ import type {
 import { BankExpensesBody, BankStatementsCard } from "./moneyBank";
 import { ImportPaymentsCard, LtvWriteCard } from "./moneyImport";
 import {
+  ChecksWaitingCard,
   DuplicatesCard,
   LogPaymentCard,
   ManualEntriesCard,
@@ -283,6 +286,7 @@ export function MoneyTab({ sections, now, day, goTab }: CeoTabProps) {
       />
       <BankStatementsCard section={section} payload={payload} order={3} />
       <ImportPaymentsCard order={3} />
+      <ChecksWaitingCard order={4} />
       <ManualEntriesCard
         section={section}
         payload={payload}
@@ -477,6 +481,31 @@ function AttributionBody({ p }: { p: MoneyPayload }) {
 
 // --- Cash: the hero, pace facts and cash per day ---
 
+/**
+ * The day bank transfers stop being checked against a statement: the newest
+ * client-income statement's last day (Q12, the account statement uploaded
+ * each month by the 3rd), or the newest statement of any kind when none has
+ * been uploaded. Null once a client-income statement reaches the end of last
+ * month, when the line has nothing to say.
+ */
+export function uncheckedSince(p: MoneyPayload, today: string): string | null {
+  const statements = p.bank?.statements ?? [];
+  const newest = (list: typeof statements) =>
+    list
+      .map(s => s.toDay)
+      .filter((d): d is string => Boolean(d))
+      .sort()
+      .at(-1) ?? null;
+  const income = newest(statements.filter(s => s.accountKind !== "card"));
+  const lastMonthEnd = new Date(
+    Date.parse(`${today.slice(0, 7)}-01T00:00:00Z`) - 86_400_000,
+  )
+    .toISOString()
+    .slice(0, 10);
+  if (income && income >= lastMonthEnd) return null;
+  return income ?? newest(statements);
+}
+
 function CashBody({ p, today }: { p: MoneyPayload; today: string }) {
   // The same rule the Today and Frontend tabs use, so the three headline cash
   // figures are one number under one name. The rail split is the card below.
@@ -490,6 +519,11 @@ function CashBody({ p, today }: { p: MoneyPayload; today: string }) {
     (top, d) => (top === null || d.value > top.value ? d : top),
     null,
   );
+  // Checked money (20261101n): hand-logged money nobody has checked is beside
+  // the total, never in it; and until a client-income statement is uploaded,
+  // a bank transfer has no statement line to be checked against.
+  const logged = manualLoggedOf(p);
+  const since = uncheckedSince(p, today);
 
   return (
     <div className="grid gap-8 @3xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] @3xl:gap-10">
@@ -510,6 +544,32 @@ function CashBody({ p, today }: { p: MoneyPayload; today: string }) {
           sub={`Projected ${money(cash.projectedMonth)} for ${thisMonthName}, day ${p.dayOfMonth} of ${p.daysInMonth}`}
           naHint="No connected cash rail gives a figure for this month."
         />
+        {(logged && logged.count > 0) || since ? (
+          <div className="mt-3 grid gap-1 text-xs leading-5 text-muted-foreground">
+            {logged && logged.count > 0 ? (
+              <p className="flex items-baseline gap-2" data-logged-line>
+                <span
+                  className="relative top-px inline-block size-2 shrink-0 rounded-full border-2"
+                  style={{ borderColor: STATUS_COLOR.warning }}
+                  aria-hidden
+                />
+                <span className="min-w-0">
+                  Logged, not checked:{" "}
+                  <span className="font-mono tabular-nums text-foreground">
+                    {money(logged.usd)}
+                  </span>{" "}
+                  ({count(logged.count)})
+                </span>
+              </p>
+            ) : null}
+            {since ? (
+              <p data-unchecked-since>
+                Bank transfers since {shortDate(since)} are not checked against
+                a statement
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         <dl className="mt-6 grid grid-cols-3 gap-4 border-t pt-4 @3xl:mt-auto">
           <Fact label="Today so far" value={money(cash.today)} />
           <Fact label="Yesterday" value={money(cash.yesterday)} />

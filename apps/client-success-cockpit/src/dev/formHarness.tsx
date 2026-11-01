@@ -16,14 +16,39 @@
  * state=notices draws Settings' Notices and routing card (as=viewer: read
  * only; read=failed: the failed read).
  *
+ * The waves 1-2 staff forms (docs/forms/WAVE12-CONTRACT.md section 5, for the
+ * 375 and 1280 px, light and dark checks): state=staff&form=extension |
+ * pause | resume | churn_confirm | mrr draws FormSheet over formSheetFixtures
+ * (prefill=loading | failed; trail= a TRAIL_ROWS key for what the trail reads
+ * after Save: held, the default, queued, delivered, failed, skipped, voided);
+ * inline=1 draws it as the billing sheet's inline FormBody (no ticket handler).
+ * state=bands draws the client page's three doors and Today's four bands, and
+ * state=checks the shared Checks waiting (as=viewer: a success manager's read),
+ * both over a stand-in client answering from BAND_RPCS. The client page makes
+ * its Supabase client when it loads, so state=bands needs the project's public
+ * address and any anon text (nothing is called; the bands read the stand-in):
+ * `VITE_SUPABASE_URL=https://bldgtotkfmhoxmlzowdx.supabase.co
+ * VITE_SUPABASE_ANON_KEY=harness bunx vite`.
+ *
  * Typeform is a stand-in drawn here: no Typeform page loads and nothing is
  * submitted anywhere. Its "submit" only calls the panel's own handler, and
  * the harness's record and checks stay in memory.
  */
 
-import { StrictMode, useEffect, useMemo, useState } from "react";
+import {
+  lazy,
+  StrictMode,
+  Suspense,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { createRoot } from "react-dom/client";
 import { Toaster } from "sonner";
+import {
+  type ChecksApi,
+  ChecksWaitingView,
+} from "@/components/billing/ChecksWaiting";
 import { NoticesRouting } from "@/components/NoticesRouting";
 import { OnboardingKit } from "@/components/OnboardingKit";
 import { Button } from "@/components/ui/button";
@@ -35,6 +60,10 @@ import {
 } from "@/forms/FormWindow";
 import type { FormContext } from "@/forms/formConfig";
 import { KICKOFF } from "@/forms/kickoff";
+import { FormBody, FormSheet } from "@/forms/staff/FormSheet";
+import { FORM_DEFS } from "@/forms/staff/formDefs";
+import type { FormKey } from "@/forms/staff/formSheetCore";
+import { checkManualPayment, manualPaymentsToCheck } from "@/lib/paymentChecks";
 import { standIn } from "@/practice/fixtures/typeformStandIn";
 import {
   FULL_ANSWERS,
@@ -49,6 +78,16 @@ import {
   onboardingEntry,
   TASK,
 } from "./formFixtures";
+import {
+  BAND_RPCS,
+  CALLS,
+  CHURN_PREFILL,
+  CLIENT,
+  CLIENT_ARABIC,
+  EXTENSION_READ,
+  MRR_PREFILL,
+  TRAIL_ROWS,
+} from "./formSheetFixtures";
 import {
   fakeNoticesIO,
   kickoffNotice,
@@ -459,9 +498,169 @@ function NoticesHarness() {
   );
 }
 
+/** A Supabase stand-in for the bands and Checks waiting: answers from BAND_RPCS, a little late. */
+const standInClient: any = {
+  rpc: async (name: string) => {
+    await new Promise(r => setTimeout(r, 250));
+    return name in BAND_RPCS
+      ? { data: BAND_RPCS[name], error: null }
+      : { data: null, error: { message: `Not in the harness: ${name}` } };
+  },
+};
+
+const STAFF_PREFILL: Record<FormKey, typeof EXTENSION_READ.prefill> = {
+  extension: EXTENSION_READ.prefill,
+  pause: [
+    { key: "pauseKind", value: "client_request", source: "the pause request" },
+  ],
+  resume: [
+    {
+      key: "nextDate",
+      value: "2026-11-20",
+      source: "the old date moved by the pause's length",
+    },
+  ],
+  churn_confirm: CHURN_PREFILL,
+  mrr: MRR_PREFILL,
+};
+
+/** One staff form, in the sheet or inline, before and after Save. */
+function StaffHarness() {
+  const form = (params.get("form") ?? "extension") as FormKey;
+  const def = FORM_DEFS[form] ?? FORM_DEFS.extension;
+  const trail = TRAIL_ROWS[params.get("trail") ?? "held"] ?? TRAIL_ROWS.held;
+  const read = params.get("prefill");
+  const [open, setOpen] = useState(true);
+  const props = {
+    def,
+    client: params.get("arabic") === "1" ? CLIENT_ARABIC : CLIENT,
+    prefill: read ? [] : STAFF_PREFILL[form],
+    calls: CALLS,
+    hints: form === "extension" ? EXTENSION_READ.hints : [],
+    status: "Active · due 2 Nov",
+    loading: read === "loading",
+    prefillError:
+      read === "failed"
+        ? "The card could not be read (Failed to fetch)."
+        : null,
+    submit: async () => {
+      await new Promise(r => setTimeout(r, 600));
+      return { message: "Saved in the harness", ref: { eventId: 1 } };
+    },
+    trail: async () => trail,
+  };
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <div className="mx-auto w-full max-w-2xl space-y-4">
+        {params.get("inline") === "1" ? (
+          <div className="rounded-xl border bg-card p-4">
+            <FormBody {...props} />
+          </div>
+        ) : (
+          <>
+            <Button variant="outline" onClick={() => setOpen(true)}>
+              Open {def.title}
+            </Button>
+            <FormSheet
+              {...props}
+              open={open}
+              onOpenChange={setOpen}
+              onTicket={() => {}}
+            />
+          </>
+        )}
+      </div>
+      <Toaster />
+    </div>
+  );
+}
+
+/** The client page's doors and Today's bands, as a finance or CEO seat sees them (loaded only here). */
+const BandsHarness = lazy(async () => {
+  const { ClientDoors, TodayBands, useDoors, useTodayBands } = await import(
+    "@/pages/CsmPage"
+  );
+  return {
+    default: () => (
+      <Bands {...{ ClientDoors, TodayBands, useDoors, useTodayBands }} />
+    ),
+  };
+});
+
+function Bands({
+  ClientDoors,
+  TodayBands,
+  useDoors,
+  useTodayBands,
+}: Pick<
+  typeof import("@/pages/CsmPage"),
+  "ClientDoors" | "TodayBands" | "useDoors" | "useTodayBands"
+>) {
+  const doors = useDoors(standInClient);
+  const bands = useTodayBands(standInClient, doors, true, true, 0);
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <div className="mx-auto w-full max-w-6xl space-y-6">
+        <ClientDoors
+          c={{
+            taskId: CLIENT.taskId,
+            name: CLIENT.name,
+            stage: "Active",
+            paymentDate: "2026-11-04",
+          }}
+          doors={doors}
+          life={null}
+          onOpen={() => {}}
+        />
+        <TodayBands
+          client={standInClient}
+          doors={doors}
+          bands={bands}
+          types={new Set(["client_pause", "client_offboarding"])}
+          clients={[{ taskId: CLIENT.taskId, name: CLIENT.name }]}
+          checker
+          onDoor={() => {}}
+          onTicket={() => {}}
+          onChanged={() => {}}
+        />
+      </div>
+      <Toaster />
+    </div>
+  );
+}
+
+/** The shared Checks waiting on its own, framed as on the billing page. */
+function ChecksHarness() {
+  const api = useMemo<ChecksApi>(
+    () => ({
+      door: async () => true,
+      list: () => manualPaymentsToCheck(standInClient),
+      check: p => checkManualPayment(standInClient, p),
+      ticketType: async () => false,
+    }),
+    [],
+  );
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <div className="mx-auto w-full max-w-3xl">
+        <ChecksWaitingView api={api} canCheck={params.get("as") !== "viewer"} />
+      </div>
+      <Toaster />
+    </div>
+  );
+}
+
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
-    {scenario === "notices" ? (
+    {scenario === "staff" ? (
+      <StaffHarness />
+    ) : scenario === "bands" ? (
+      <Suspense fallback={null}>
+        <BandsHarness />
+      </Suspense>
+    ) : scenario === "checks" ? (
+      <ChecksHarness />
+    ) : scenario === "notices" ? (
       <NoticesHarness />
     ) : scenario.startsWith("panel") ? (
       <PanelHarness />

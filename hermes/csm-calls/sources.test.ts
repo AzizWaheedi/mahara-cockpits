@@ -7,6 +7,7 @@ import type { Client, Row } from "./match";
 import {
   type Ctx,
   checkinCutover,
+  FORMS,
   fathomActionsBackfill,
   fathomSource,
   formsRecord,
@@ -1191,6 +1192,39 @@ describe("ghlSource", () => {
     expect(rooms.ev1).toEqual(["https://us06web.zoom.us/j/12345678901?pwd=TEST", ZOOM_ROOM]);
     expect(rooms.ev2).toEqual(["https://meet.google.com/abc-defg-hij?authuser=0", MEET_ROOM]);
     expect(rooms.ev3).toEqual([null, null]);
+  });
+});
+
+describe("readTypeforms: the termination survey joins the client's timeline (waves 1-2, 4.11.6)", () => {
+  test("knIe4eF3 is read as kind exit_survey, matched by its own hidden onboarding_client_id, and never as a 1-1 note", async () => {
+    expect(FORMS.knIe4eF3).toBe("exit_survey");
+    const reads: string[] = [];
+    const t = {
+      receipts: [],
+      typeform: async (path: string) => {
+        reads.push(path);
+        if (path === "forms/knIe4eF3/responses")
+          return {
+            items: [
+              { token: "exit-1", submitted_at: iso(NOW - 2 * HOUR), hidden: { onboarding_client_id: CITY.taskId, client_name: "City" }, answers: [{ field: { ref: "why-ref", type: "long_text" }, type: "text", text: "Invented reason." }] },
+              { token: "exit-2", submitted_at: iso(NOW - HOUR), hidden: { client_name: "Not a card" }, answers: [] },
+            ],
+            total_items: 2,
+          };
+        if (path.endsWith("/responses")) return { items: [], total_items: 0 };
+        return { fields: [{ ref: "why-ref", title: "Why are you leaving?" }] };
+      },
+    } as unknown as Transport;
+    const ctx = ctxOf(store(seedOf({})), t);
+    const read = await readTypeforms(ctx);
+    expect(reads).toContain("forms/knIe4eF3");
+    const rows = read.formRows.filter(r => r.form_id === "knIe4eF3");
+    expect(rows.map(r => [r.token, r.form_kind, r.task_id, r.matched_by])).toEqual([
+      ["exit-1", "exit_survey", CITY.taskId, "hidden_field"],
+      ["exit-2", "exit_survey", null, null],
+    ]);
+    expect(read.checkins.some(c => c.row.form_id === "knIe4eF3")).toBe(false);
+    expect(read.counts.knIe4eF3).toMatchObject({ total: 2, stored: 2, matched: 1, unmatched: 1 });
   });
 });
 

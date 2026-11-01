@@ -114,6 +114,23 @@ export const projectionSourceSchema = z.object({
         kind: text,
       }),
     ),
+    // Hand-logged receipts finance has not checked yet (checked money, 20261101n): shown apart beside what was
+    // collected, never summed into it. Optional, so a read from before that migration still parses.
+    logged: z
+      .array(
+        z.object({
+          id: z.string(),
+          taskId: text,
+          clientName: z.string(),
+          day: z.string(),
+          usd: z.number().finite(),
+          side: text,
+          kind: text,
+          note: z.string().optional(),
+        }),
+      )
+      .optional()
+      .default([]),
     accounts: z.array(
       z.object({ taskId: z.string(), clientName: z.string(), ltvUsd: number }),
     ),

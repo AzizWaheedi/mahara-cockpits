@@ -8,7 +8,7 @@ import type {Row} from '../hermes/cockpit-sync/runtime';
 import {calculate,bookingsInWindow} from '../hermes/cockpit-sync/worker';
 import {prepareTables} from '../hermes/cockpit-sync/capture';
 import {collectCsm} from '../hermes/cockpit-sync/csmProducer';
-import {STORE_SQL} from '../hermes/cockpit-sync/csmProviders';
+import {CADENCE_SQL,CHURN_SQL,STORE_SQL} from '../hermes/cockpit-sync/csmProviders';
 import {collectCreative,gatherFunnels} from '../hermes/cockpit-sync/creativeProducer';
 import {CF} from '../hermes/cockpit-sync/csmCadence';
 import {storeStills} from '../hermes/cockpit-sync/stills';
@@ -472,6 +472,9 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
      if(args.query===STORE_SQL.newest)return {result:JSON.stringify([storedNote])};
      if(args.query===STORE_SQL.marks)return {result:'[]'};
      if(args.query===STORE_SQL.registry)return {result:JSON.stringify([{provider:'typeform'}])};
+     // Waves 1-2 (docs/forms/WAVE12-CONTRACT.md 4.11): no live grant, no ladder step, the default ladder, and the churn register.
+     if(args.query===CADENCE_SQL.extensions||args.query===CADENCE_SQL.ladder||args.query===CADENCE_SQL.ladderDays)return {result:'[]'};
+     if(args.query===CHURN_SQL)return {result:JSON.stringify([{month:new Date(Date.now()+3*3600000).toISOString().slice(0,7),active_at_start:10,lost_before_register:null,departed:2}])};
      throw new Error('Unexpected fixture SQL source');
     }
     const url=new URL(args.url);
@@ -706,7 +709,7 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
   const churnState=structuredClone(s);
   churnState.csm.kpi=[{_id:'original-churn',key:'churn',numeric:25,month:'2026-09',at:originalCheck,note:'Preserve original human context'}];
   const churnDenied:Reads={...reads,async tool(name,args){
-    if(name==='pd_google_sheets_proxy_get'&&String(args.url).includes('1p8CAd5pL9zKjc1mZ73Gc_hoj4NSWHfFPs4FoC_WuBUU'))throw Object.assign(new Error('Read rejected (403) at sheets.googleapis.com'),{status:403,resource:'sheets.googleapis.com'+new URL(args.url).pathname});
+    if(name==='mcp_supabase_execute_sql'&&args.query===CHURN_SQL)throw Object.assign(new Error('Read rejected (403) at the churn register'),{status:403,resource:'cockpit_churn_months'});
     return reads.tool(name,args);
   }};
   const churnRetained=await calculate(churnState,churnDenied,{receipts:[]},fixtureEnv);

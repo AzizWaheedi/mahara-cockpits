@@ -57,6 +57,11 @@ export const FORMS: Record<string, string> = {
   tG7dnxBn: "kickoff",
   BbJy6xg4: "kickoff_old",
   oYZKtogO: "blueprint",
+  // The termination survey (waves 1-2, docs/forms/WAVE12-CONTRACT.md 4.11.6): on the client's timeline beside the
+  // other forms, matched by its own hidden onboarding_client_id like them. forms-door stores the same answers as
+  // the cockpit's record (cockpit_form_responses exit_survey); this copy is the timeline's, never a churn signal.
+  // Needs 20261101q_readers.sql live (the form_id and form_kind CHECKs) before this worker is released.
+  knIe4eF3: "exit_survey",
 };
 const TRANSCRIPT_REF = "0773087f-beda-4e2c-bf50-acdac0dcbe05";
 /** A Fathom share link as the 1-1 form carries it. */

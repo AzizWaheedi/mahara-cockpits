@@ -17,12 +17,18 @@
  * The 1-1 notes notices (docs/forms/STAGE2B-CONTRACT.md 4.2): the call grade
  * reads its words from the claim's live read of the stored grade and tags
  * nobody, a test of it included; the recap reminder is a plain post.
+ *
+ * The client lifecycle notices (docs/forms/WAVE12-CONTRACT.md 3.4) are plain
+ * posts. Their live rule (cockpit_slack_notice_live) says whether the news is
+ * still true when the claim hands the row over: a survey answered, a churn
+ * confirmed, a departure removed or a billing change voided in between is
+ * settled as not posted with that sentence, never posted.
  */
 import { providerTools, slackTools, type SlackHealthRow, type SlackTools } from "../cockpit-csm-api/tools.ts";
 import type { Rpc } from "../cockpit-hours-sync/db.ts";
 import { slackReceiptConfirmed } from "../_shared/slackReceipt.ts";
 import { cachedLookup, type ClaimMentions, type Mention, mentionsFor, type PersonLooked, personNote, plainLabels, readMention, resolveMentions } from "./mentions.ts";
-import { isNoticeKind, isVariantOf, type NoticeFacts, type NoticeKind, noticeText, sampleFacts, type SlackBlock, type TextMention, type Variant } from "./text.ts";
+import { isNoticeKind, isVariantOf, LIFECYCLE_KINDS, type NoticeFacts, type NoticeKind, noticeText, sampleFacts, type SlackBlock, type TextMention, type Variant } from "./text.ts";
 
 // ------------------------------------------------------------------ deps and the ledger
 
@@ -180,6 +186,9 @@ const ACTIVE = /^\s*active\s*$/i;
 export function pickVariant(kind: NoticeKind, facts: Record<string, unknown>, live: Record<string, unknown>, threadTs: string | null): Variant {
   if (kind === "checkin.grade") return "grade";
   if (kind === "checkin.recap_late") return "late";
+  // A termination survey that came with no card says so in its facts (cockpit_form_record_legacy).
+  if (kind === "termination.notice") return facts.matched === false ? "unmatched" : "matched";
+  if (isLifecycle(kind)) return "post";
   if (kind === "blueprint.close") return facts.source === "typeform" ? "typeform" : facts.settled === "reconcile" ? "reconcile" : "done";
   if (kind === "blueprint.media") {
     const phase = Number(facts.mapPhase);
@@ -200,11 +209,15 @@ export function wantedMentions(kind: NoticeKind, variant: Variant, mentions: Cla
   return mentionsFor(kind === "checkin.recap_late" ? null : variant, mentions, second);
 }
 
+export const isLifecycle = (kind: NoticeKind): boolean => (LIFECYCLE_KINDS as readonly string[]).includes(kind);
+
 /** A test's variant: its facts' variant when it is one the kind has, else the plain one. */
 export function rehearsalVariant(kind: NoticeKind, facts: Record<string, unknown>): Variant {
   if (isVariantOf(kind, facts.variant)) return facts.variant;
   if (kind === "checkin.grade") return "grade";
   if (kind === "checkin.recap_late") return "late";
+  if (kind === "termination.notice") return "matched";
+  if (isLifecycle(kind)) return "post";
   return kind === "kickoff" ? "complete" : kind === "blueprint.close" ? "done" : kind === "blueprint.media" ? "new" : "top";
 }
 
@@ -427,6 +440,13 @@ export async function sendClaimed(ctx: SendContext, row: ClaimedRow): Promise<Se
     sendFacts = { commentCheck: check.state, handoffAt: check.at };
   } else {
     variant = pickVariant(kind, row.facts, row.live, row.threadTs);
+  }
+
+  // A lifecycle notice whose news stopped being true after it was queued (its
+  // live rule, read by the claim just now) is not posted, and says why.
+  if (!rehearsal && isLifecycle(kind) && row.live.stillTrue === false) {
+    const why = typeof row.live.why === "string" && row.live.why ? row.live.why : "What it would say is no longer true.";
+    return record(deps, row.id, "failed", { error: `Not posted: ${why.charAt(0).toLowerCase()}${why.slice(1)}`.slice(0, 240) });
   }
 
   // The tags. A test names who it would tag and tags nobody. The call grade

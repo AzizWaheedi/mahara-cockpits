@@ -611,6 +611,16 @@ mock.module("@/lib/useCsmSnapshot", () => ({
   }),
   kuwaitToday: () => "2026-10-06",
   CLICKUP_ACT_KINDS: new Set(["stage", "happiness"]),
+  ACT_SAVED: {
+    stage: "Saved, ClickUp updated",
+    happiness: "Saved, ClickUp updated",
+    booked: "Booking saved to the card",
+    touchpoint: "Touchpoint saved to the card",
+    report: "Report date saved to the card",
+    service: "Service saved to the card",
+  },
+  actFailed: (e: unknown) =>
+    `${String((e as Error)?.message ?? e ?? "").trim() || "ClickUp did not confirm this."} Nothing changed on the card.`,
   fetchDailyChecksRpc: async () => [],
   executeToggleCheck: async () => {},
   executeSubmitEod: async () => {},
@@ -2738,11 +2748,7 @@ test("dark until native: no Messages card or Client recaps at provider typeform;
     forgetFormsRegistry();
     await reactAct(async () => {
       root.render(
-        createElement(
-          MemoryRouter,
-          at ? { initialEntries: [at] } : null,
-          el,
-        ),
+        createElement(MemoryRouter, at ? { initialEntries: [at] } : null, el),
       );
     });
     await wait2b(10);
@@ -2761,9 +2767,9 @@ test("dark until native: no Messages card or Client recaps at provider typeform;
       `/clients/${GREYSTONE}`,
     );
     try {
-      expect(
-        watched.some(w => w.name === "cockpit_client_messages_read"),
-      ).toBe(true);
+      expect(watched.some(w => w.name === "cockpit_client_messages_read")).toBe(
+        true,
+      );
       expect(dark.host.querySelector("#messages")).toBeNull();
       expect(dark.host.textContent ?? "").not.toContain(MESSAGES_EMPTY);
     } finally {

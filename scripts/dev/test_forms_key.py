@@ -30,7 +30,10 @@ WEBHOOK_SECRET = "whsec_" + base64.b64encode(b"an invented webhook key, 32 byte"
 OLD_SECRET = "whsec_" + base64.b64encode(b"an older invented webhook key...").decode()
 TYPEFORM_TOKEN = "tfp_" + "InventedTypeformToken" + "0123456789abcdef"
 KICKOFF_SECRET = "Invented" + "KickoffSigningKey" + "0123456789abcdefgh"
-SECRETS = (FATHOM_KEY, DEEPSEEK_KEY, SERVICE_KEY, WEBHOOK_SECRET, OLD_SECRET, TYPEFORM_TOKEN, KICKOFF_SECRET)
+EXIT_SECRET = "Invented" + "ExitSurveySigningKey" + "0123456789abcdef"
+PAUSE_SECRET = "Invented" + "PauseRequestSigningKey" + "0123456789abcd"
+SECRETS = (FATHOM_KEY, DEEPSEEK_KEY, SERVICE_KEY, WEBHOOK_SECRET, OLD_SECRET, TYPEFORM_TOKEN, KICKOFF_SECRET, EXIT_SECRET,
+           PAUSE_SECRET)
 DB = "https://db.test"
 WEBHOOK_ID = "wh_invented_9876"
 SAVED_AT = "2026-10-27T09:00:00.12345+00:00"
@@ -133,8 +136,8 @@ class Net:
             return 200, [{"detail": self.door_status}] if self.door_status else []
         if url.startswith("https://api.typeform.com/"):
             return self.typeform(method, url, headers, body)
-        if url == f"{DB}/functions/v1/forms-door/typeform/kickoff":
-            return self.door(headers, data)
+        if url.startswith(f"{DB}/functions/v1/forms-door/typeform/"):
+            return self.door(url.rsplit("/", 1)[1], headers, data)
         if url.startswith(f"{DB}/rest/v1/cockpit_fathom_webhook_deliveries?"):
             wid = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["webhook_id"][0][3:]
             return 200, [{"outcome": self.deliveries[wid], "reason": "Not a Customer Success recording."}] if wid in self.deliveries else []
@@ -158,30 +161,32 @@ class Net:
         raise AssertionError(f"no fake for {method} {url}")
 
     def typeform(self, method, url, headers, body):
-        """Typeform's webhooks API for one form, from invented state."""
+        """Typeform's webhooks API for one form (the registry's), from invented state."""
         assert headers["authorization"] == "Bearer " + TYPEFORM_TOKEN
         path = urllib.parse.urlsplit(url).path
-        if method == "GET" and path == "/forms/tG7dnxBn/webhooks":
+        # The form the request names (register-typeform reads the registry, unregister-typeform the key's meta).
+        fid = path.split("/")[2] if path.startswith("/forms/") else ""
+        if method == "GET" and path == f"/forms/{fid}/webhooks":
             if self.wrote and self.read_back is not None:
                 return self.read_back
             return 200, {"items": self.hooks}
-        if path == "/forms/tG7dnxBn/webhooks/cockpit" and method in ("PUT", "DELETE"):
+        if path == f"/forms/{fid}/webhooks/cockpit" and method in ("PUT", "DELETE"):
             self.wrote = True
-        if path == "/forms/tG7dnxBn/webhooks/cockpit" and method == "PUT":
-            hook = {"id": "01HCOCKPITHOOK", "form_id": "tG7dnxBn", "tag": "cockpit", "url": body["url"], "enabled": body["enabled"],
+        if path == f"/forms/{fid}/webhooks/cockpit" and method == "PUT":
+            hook = {"id": "01HCOCKPITHOOK", "form_id": fid, "tag": "cockpit", "url": body["url"], "enabled": body["enabled"],
                     "verify_ssl": body["verify_ssl"], "event_types": body["event_types"]}
             self.hooks = [h for h in self.hooks if h["tag"] != "cockpit"] + [hook]
             self.secret_sent = body["secret"]
             return 200, hook
-        if path == "/forms/tG7dnxBn/webhooks/cockpit" and method == "DELETE":
+        if path == f"/forms/{fid}/webhooks/cockpit" and method == "DELETE":
             had = any(h["tag"] == "cockpit" for h in self.hooks)
             self.hooks = [h for h in self.hooks if h["tag"] != "cockpit"]
             return (204, "") if had else (404, {"code": "NOT_FOUND"})
         raise AssertionError(f"no Typeform fake for {method} {url}")
 
-    def door(self, headers, data):
-        """forms-door's signature check, with this file's own signer."""
-        secret = (self.keys.get("typeform_kickoff") or {}).get("secret") or ""
+    def door(self, form, headers, data):
+        """forms-door's signature check for one form, with that form's own key and this file's own signer."""
+        secret = (self.keys.get(f"typeform_{form}") or {}).get("secret") or ""
         good = "sha256=" + base64.b64encode(hmac.new(secret.encode(), data, hashlib.sha256).digest()).decode()
         if headers.get("typeform-signature") != good:
             return 401, {"ok": False}
@@ -197,6 +202,11 @@ class Net:
             return 401, {"ok": False}
         self.deliveries[headers["webhook-id"]] = "ignored"
         return 200, {"ok": True}
+
+
+def kickoff_line(out: str) -> str:
+    """status's kickoff line (the two client forms' lines follow it)."""
+    return next(line for line in out.splitlines() if line.startswith("typeform kickoff:"))
 
 
 def webhook_row(**meta):
@@ -266,8 +276,11 @@ class FormsKey(unittest.TestCase):
             "deepseek: not saved",
             "anthropic: not saved",
             "typeform kickoff: not saved",
+            "typeform exit_survey: not saved",
+            "typeform pause_request: not saved",
         ])
-        self.assertEqual([r["p_provider"] for r in self.net.rpcs("cockpit_forms_key_get")], [*fk.PROVIDERS, "typeform_kickoff"])
+        self.assertEqual([r["p_provider"] for r in self.net.rpcs("cockpit_forms_key_get")],
+                         [*fk.PROVIDERS, "typeform_kickoff", "typeform_exit_survey", "typeform_pause_request"])
         self.assertEqual(self.net.provider_calls(), [])
         self.assertEqual(self.net.receipts(), [])
 
@@ -632,7 +645,7 @@ class FormsKey(unittest.TestCase):
                      ("unregister-typeform", "onboarding"), ("register-typeform",)):
             code, out = self.run_cmd(*args)
             self.assertEqual(code, 2)
-            self.assertEqual(out.strip(), "Only the kickoff form has a cockpit webhook in 2b.")
+            self.assertEqual(out.strip(), "Name kickoff, exit_survey or pause_request: only these forms have a cockpit webhook.")
         self.assertEqual(self.net.requests, [])
 
     def test_typeform_secret_saves_32_random_bytes_and_never_prints_them(self):
@@ -870,7 +883,7 @@ class FormsKey(unittest.TestCase):
         self.net.door_status = {"registered": True, "lastDelivery": "2026-10-29T06:00:00Z", "outcome": "recorded"}
         code, out = self.run_cmd("status")
         self.assertEqual(code, 0)
-        self.assertEqual(out.splitlines()[-1], f"typeform kickoff: connected, key ending ····{KICKOFF_SECRET[-4:]}, saved "
+        self.assertEqual(kickoff_line(out), f"typeform kickoff: connected, key ending ····{KICKOFF_SECRET[-4:]}, saved "
                                                "2026-10-27 12:00 Kuwait time, registered, last delivery 2026-10-29 09:00 "
                                                "Kuwait time (recorded)")
 
@@ -883,7 +896,7 @@ class FormsKey(unittest.TestCase):
                 self.net.answers = {("GET", f"{DB}/rest/v1/cockpit_sync_state?"): answer}
                 code, out = self.run_cmd("status")
                 self.assertEqual(code, 1)
-                last = out.splitlines()[-1]
+                last = kickoff_line(out)
                 self.assertTrue(last.endswith(f", registered, its last delivery could not be read ({why})"), last)
                 self.assertNotIn("no delivery yet", out)
                 self.assertNotIn(KICKOFF_SECRET, out)
@@ -892,7 +905,7 @@ class FormsKey(unittest.TestCase):
         self.net.keys["typeform_kickoff"] = {**self.kickoff_row(), "state": "unchecked"}
         code, out = self.run_cmd("status")
         self.assertEqual(code, 0)
-        self.assertTrue(out.splitlines()[-1].endswith(", not registered, no delivery yet"), out)
+        self.assertTrue(kickoff_line(out).endswith(", not registered, no delivery yet"), out)
 
     def test_kuwait_time_reads_the_database_forms(self):
         for value, want in (("2026-10-27T21:30:00Z", "2026-10-28 00:30 Kuwait time"),
@@ -900,6 +913,52 @@ class FormsKey(unittest.TestCase):
                             ("2026-10-28T00:30:00+03:00", "2026-10-28 00:30 Kuwait time"),
                             (None, "an unknown time"), ("yesterday", "an unknown time")):
             self.assertEqual(fk.kuwait(value), want)
+
+
+    # ------------------------------------------------------------- the two client forms (waves 1-2, 4.4)
+
+    def exit_row(self, **meta):
+        return {"provider": "typeform_exit_survey", "secret": EXIT_SECRET, "last4": EXIT_SECRET[-4:], "state": "unchecked",
+                "savedAt": SAVED_AT, "meta": {"form": "exit_survey", "tag": "cockpit", **meta}}
+
+    def test_typeform_secret_saves_each_client_form_under_its_own_provider(self):
+        for form in ("exit_survey", "pause_request"):
+            code, out = self.run_cmd("typeform-secret", form)
+            self.assertEqual(code, 0, out)
+            self.assertIn(f"Next: register-typeform {form}.", out)
+        puts = [r["p"] for r in self.net.rpcs("cockpit_forms_key_put")]
+        self.assertEqual([(p["provider"], p["meta"]) for p in puts], [
+            ("typeform_exit_survey", {"form": "exit_survey", "tag": "cockpit"}),
+            ("typeform_pause_request", {"form": "pause_request", "tag": "cockpit"}),
+        ])
+        self.assertNotEqual(puts[0]["secret"], puts[1]["secret"])
+        self.assertEqual(self.net.provider_calls(), [])
+
+    def test_register_typeform_puts_only_the_termination_survey_cockpit_webhook_and_marks_its_own_key(self):
+        self.net.registry = [{"provider": "typeform", "typeform_id": "knIe4eF3"}]
+        self.net.hooks = [{"id": "01HMAKE", "form_id": "knIe4eF3", "tag": "WHTP4371873", "url": "https://hook.eu1.make.com/invented",
+                           "enabled": True, "verify_ssl": True}]
+        self.net.keys["typeform_exit_survey"] = self.exit_row()
+        code, out = self.run_cmd("register-typeform", "exit_survey")
+        self.assertEqual(code, 0, out)
+        [put] = self.net.made("https://api.typeform.com/forms/knIe4eF3/webhooks/cockpit", "PUT")
+        self.assertEqual(put["json"]["url"], f"{DB}/functions/v1/forms-door/typeform/exit_survey")
+        self.assertEqual(self.net.secret_sent, EXIT_SECRET)
+        [mark] = self.net.rpcs("cockpit_forms_key_mark")
+        self.assertEqual((mark["p"]["provider"], mark["p"]["state"], mark["p"]["meta"]["formId"]),
+                         ("typeform_exit_survey", "connected", "knIe4eF3"))
+        self.assertIn("1 other webhook of the form unchanged. Next: probe-typeform exit_survey.", out)
+        self.assertEqual([h["tag"] for h in self.net.hooks], ["WHTP4371873", "cockpit"])
+
+    def test_probe_typeform_checks_the_pause_request_door_with_its_own_key(self):
+        self.net.keys["typeform_pause_request"] = {**self.exit_row(), "provider": "typeform_pause_request",
+                                                   "secret": PAUSE_SECRET, "last4": PAUSE_SECRET[-4:]}
+        code, out = self.run_cmd("probe-typeform", "pause_request")
+        self.assertEqual(code, 0, out)
+        self.assertIn("forms-door checks the pause_request form's signature.", out)
+        posts = self.net.made(f"{DB}/functions/v1/forms-door/typeform/pause_request", "POST")
+        self.assertEqual(len(posts), 2)
+        self.assertEqual([r["p_provider"] for r in self.net.rpcs("cockpit_forms_key_get")], ["typeform_pause_request"])
 
 
 if __name__ == "__main__":

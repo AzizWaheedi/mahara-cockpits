@@ -8,6 +8,8 @@ import {
   dayRow,
   daysOfMonth,
   isWorkingDay,
+  lifecycleDayParts,
+  lifecycleOf,
   type PlanInputs,
   planNumbers,
   type SectionKey,
@@ -133,6 +135,9 @@ export function buildSheet(ctx: SheetContext): SheetData {
     const p = at(String(d.leftOn));
     p.clientsChurned = (p.clientsChurned ?? 0) + 1;
   }
+  // The month's grants from the cockpit's own billing log (20261101q), by the day given.
+  for (const [d, parts] of Object.entries(lifecycleDayParts(lifecycleOf(ctx))))
+    Object.assign(at(d), parts);
 
   const typed: Record<string, Record<string, number>> = {};
   const plan: Record<string, Record<string, number>> = {};

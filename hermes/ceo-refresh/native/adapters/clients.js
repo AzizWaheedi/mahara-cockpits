@@ -1,7 +1,7 @@
 import { CPB_GATE, CPL_GATE, NO_LEAD_MULTIPLE } from "../constants.js";
 import { BUCKET_CHURNED, BUCKET_METRIC, LAUNCH_METRIC } from "../data/clients.js";
 import { tapKeyState } from "../data/tap.js";
-import { averageRetainer, createdDayOf, daysToLaunchOf, EXT_PAGE, EXTENSION_FIELD_NAME, FIELD_ASK, findExtensionField, isInternalText, matchCard, readExtensionForm, summariseExtensions, summariseLaunch, } from "../extensions.js";
+import { averageRetainer, createdDayOf, daysToLaunchOf, EXT_PAGE, EXTENSION_FIELD_NAME, FIELD_ASK, findExtensionField, isInternalText, matchCard, readExtensionForm, readLifecycle, summariseExtensions, summariseLaunch, } from "../extensions.js";
 import { CPL_TARGETS_SQL, cplTargetsOf, frozenFillByCardSql, mediaClientDaysSql } from "../data/triage.js";
 import { isDoneWithYou } from "../data/deliveryClients.js";
 import { rollUp } from "../../../../apps/client-success-cockpit/src/lib/churnCore.ts";
@@ -854,18 +854,18 @@ export function churnRegisterOf(monthRows, departureRows, today) {
     const through = today.slice(0, 7);
     return { through, months: rollUp(inputs, departures, through), departures: departures.length };
 }
-/** The hourly job that writes the current extension to the ClickUp field (A120/A136), as the Client success card says it. */
+/**
+ * Who keeps the card's extension field current, as the Client success card
+ * says it. Since waves 1 and 2 (WAVE12-CONTRACT.md 4.11.3) the billing queue
+ * writes a grant's weeks when it is given and the daily step clears the field
+ * once the grant ends; the hourly job and the button no longer write it. `job`
+ * is kept for the callers' shape.
+ */
 export function extensionJobNote(job, fieldFound) {
+    void job;
     if (!fieldFound)
         return FIELD_ASK;
-    if (!job)
-        return `The '${EXTENSION_FIELD_NAME}' field is written from the button on this card. The hourly job at :47 has not reported a run yet, so automatic writes are not confirmed.`;
-    const note = String(job.error ?? "").trim();
-    const at = num(job.at);
-    const when = at > 0 ? `${kuwaitDay(at)} ${new Date(at + KUWAIT_OFFSET_MS).toISOString().slice(11, 16)} Kuwait` : "an unknown time";
-    if (/^dry run/i.test(note))
-        return `Automatic writes are off (dry run): the hourly job at :47 checks the '${EXTENSION_FIELD_NAME}' field against the extension form but writes nothing (last run ${when}: ${note}). The button writes it now.`;
-    return `Kept current every hour at :47 from the extension form (last run ${when}${note ? `: ${note}` : ""}). The button writes it now.`;
+    return `The billing sheet writes each grant's weeks to the '${EXTENSION_FIELD_NAME}' field through the ClickUp billing queue when the grant is given, and the cockpit's daily step sets it to 0 once the grant ends.`;
 }
 /**
  * Each client's spend, leads and due bookings per day (A127: the Client
@@ -967,9 +967,12 @@ export const clients = {
         // Whop renewal evidence runs beside the Pulse and portal reads, so the
         // three outside reads share the section budget instead of queueing.
         const whopRead = readWhopTies().then(ties => ({ ok: true, ties }), e => ({ ok: false, error: errText(e) }));
-        // The Client Extension Form and the cards' billing fields run beside it,
-        // for the same reason (Aziz's spec of 2026-09-21, points 12 to 15).
+        // The extension grants (cockpit_extensions_v) and the cards' billing fields
+        // run beside it, for the same reason (Aziz's spec of 2026-09-21, points 12 to 15).
         const extRead = readExtensionForm(ctx);
+        // The departures with their confirm and the late spells (waves 1-2 4.11.4),
+        // which metrics.ts reads from the payload's `lifecycle`.
+        const lifecycleRead = readLifecycle();
         const billingRead = ctx.repository.billing().then((rows) => ({ ok: true, rows }), (e) => ({ ok: false, error: errText(e) }));
         // The clients' cost per lead lines, for the no-lead risk point
         // (decision 4): the same read and fallback as Delivery's rows.
@@ -1292,7 +1295,11 @@ export const clients = {
             for (const k of [l.name, ...(l.aliases ?? [])])
                 addName(k, l.taskId);
         }
-        const manual = data.manualPayments ?? [];
+        // Checked money (20261101n): a hand-logged payment is paid money once finance or the CEO
+        // checked it against the bank; a logged one, or one with no state, waits and is counted apart.
+        const manualAll = data.manualPayments ?? [];
+        const manual = manualAll.filter((m) => m.checkState === "checked" || m.check_state === "checked");
+        const manualWaiting = manualAll.filter((m) => (m.checkState ?? m.check_state ?? "logged") === "logged").length;
         let manualTied = 0;
         for (const m of manual) {
             const usd = num(m.amountUsd);
@@ -1403,8 +1410,8 @@ export const clients = {
                     },
                     {
                         level: "info",
-                        text: manual.length
-                            ? `A hand-logged payment counts when a ClickUp client was picked on the entry, or when the typed name matches exactly one card: ${manualTied} of ${plural(manual.length, "live entry", "live entries")} ${manualTied === 1 ? "is" : "are"} tied to a client${manualTied < manual.length ? ", the rest do not count" : ""}.${data.manualCapped ? " Only the first 5,000 entries were read." : ""}`
+                        text: manual.length || manualWaiting
+                            ? `A hand-logged payment counts once it is checked against the bank, when a ClickUp client was picked on the entry or the typed name matches exactly one card: ${manualTied} of ${plural(manual.length, "checked entry", "checked entries")} ${manualTied === 1 ? "is" : "are"} tied to a client${manualTied < manual.length ? ", the rest do not count" : ""}.${manualWaiting ? ` ${plural(manualWaiting, "logged payment")} ${manualWaiting === 1 ? "waits" : "wait"} on a check and ${manualWaiting === 1 ? "is" : "are"} not counted yet.` : ""}${data.manualCapped ? " Only the first 5,000 entries were read." : ""}`
                             : "No payment has been logged by hand yet, so a bank transfer, cheque, cash or Tap payment is not renewal evidence until it is logged on the Money tab.",
                     },
                     {
@@ -1434,16 +1441,11 @@ export const clients = {
                 grants: s.grants,
                 perClient: s.perClient,
                 read: true,
-                // The hourly job (mahara-ceo-extensions-auto, :47) writes the field
-                // when CEO_EXTENSIONS_APPLY is on; the button writes it now. The
-                // count is the field writes logged in the last 30 days.
+                // The billing queue writes the field (waves 1-2); the count is the
+                // older field writes logged in the last 30 days, kept for the card.
                 clickupField: {
                     written: extJob.ok && extJob.writes ? num(extJob.writes.written30) : 0,
-                    note: extJob.ok
-                        ? extensionJobNote(extJob.job, Boolean(fieldId))
-                        : fieldId
-                            ? `The '${EXTENSION_FIELD_NAME}' field is written from the button on this card; the hourly job's state could not be read this run (${extJob.error}).`
-                            : FIELD_ASK,
+                    note: extensionJobNote(extJob.ok ? extJob.job : null, Boolean(fieldId)),
                 },
                 // Grants by day for the last twelve months, so the tab can count
                 // weeks granted for any window (A127).
@@ -1460,38 +1462,35 @@ export const clients = {
                 r.extendedUntil = p?.live ? p.until : null;
             }
             sources.push({
-                name: "Client Extension Form (Typeform)",
+                name: "Extension grants (cockpit billing log)",
                 freshestAt: s.newestAt ?? undefined,
                 ok: true,
             });
             const liveCount = s.perClient.filter(p => p.live).length;
             notes.push({
                 level: "info",
-                text: `Extensions are the Client Extension Form's responses, read from Typeform (${plural(ext.responses, "response")} on the form, the newest ${EXT_PAGE} at most): 1, 2 or 4 weeks each, dated by the day the form was submitted, so the clock starts at submission and a late form cannot backdate cover. Month to date (${shortDay(s.from)} to ${shortDay(s.to)}): ${plural(s.totalWeeks, "week")} over ${plural(s.grants, "grant")}, ${plural(liveCount, "client")} covered today; last month ${plural(s.lastMonth.totalWeeks, "week")} over ${plural(s.lastMonth.grants, "grant")}. The typed client is matched to a card by name${s.unmatched
-                    ? `: ${plural(s.unmatched, "response")} of ${ext.responses} matched no card and ${s.unmatched === 1 ? "is" : "are"} listed under the typed name`
+                text: `Extensions are the grants in the cockpit's billing log (cockpit_extensions_v: Give more time on the client page and Extend on the billing sheet, voided grants left out; ${plural(ext.responses, "grant")} read, the newest ${EXT_PAGE} at most): 1, 2 or 4 weeks each, dated by the day the grant was given, so cover cannot be backdated. Month to date (${shortDay(s.from)} to ${shortDay(s.to)}): ${plural(s.totalWeeks, "week")} over ${plural(s.grants, "grant")}, ${plural(liveCount, "client")} covered today; last month ${plural(s.lastMonth.totalWeeks, "week")} over ${plural(s.lastMonth.grants, "grant")}. Each grant carries its card; a card the roster does not hold is matched by name${s.unmatched
+                    ? `: ${plural(s.unmatched, "grant")} of ${ext.responses} matched no card and ${s.unmatched === 1 ? "is" : "are"} listed under the client's name`
                     : ""}.${s.internalTest
                     ? ` ${plural(s.internalTest, "test submission")} (an internal test card) ${s.internalTest === 1 ? "is" : "are"} left out.`
                     : ""}`,
             });
-            const autoOn = extJob.ok && extJob.job && !/^dry run/i.test(String(extJob.job.error ?? ""));
             notes.push({
                 level: fieldId ? "info" : "warn",
                 text: fieldId
-                    ? `The current extension (the live extension's weeks, or 0 once it has ended) is written to the '${EXTENSION_FIELD_NAME}' field on every card the extension form has named, the same form the extension Make scenario fires on. ${autoOn
-                        ? "The hourly job at :47 keeps it current and writes only the cards that changed; the button on this card writes it now."
-                        : "The hourly job at :47 is a dry run, so only the button on this card writes it."}${extJob.ok && extJob.writes && num(extJob.writes.written_all) > 0 ? ` ${plural(num(extJob.writes.written30), "field write")} in the last 30 days.` : ""}`
-                    : `The current extension is not on the ClickUp cards yet. ClickUp's API cannot create a field, so: ${FIELD_ASK}. The hourly job and the button then write the live extension's weeks, or 0 once it has ended.`,
+                    ? `The current extension (the live grant's weeks, or 0 once it has ended) is on the '${EXTENSION_FIELD_NAME}' field of each granted card: ${extensionJobNote(null, true)}`
+                    : `The current extension is not on the ClickUp cards yet. ClickUp's API cannot create a field, so: ${FIELD_ASK}. The billing queue then writes the live grant's weeks, or 0 once it has ended.`,
             });
         }
         else {
             sources.push({
-                name: "Client Extension Form (Typeform)",
+                name: "Extension grants (cockpit billing log)",
                 ok: false,
                 note: ext.error,
             });
             notes.push({
                 level: "warn",
-                text: `The Client Extension Form could not be read this run (${ext.error}), so extension weeks are missing, not zero, and a live extension is known only from the last CSM sync.`,
+                text: `The cockpit's extension grants (cockpit_extensions_v) could not be read this run (${ext.error}), so extension weeks are missing, not zero, and a live extension is known only from the last CSM sync.`,
             });
         }
         const launchSummary = summariseLaunch(rows.map(r => ({
@@ -1567,6 +1566,24 @@ export const clients = {
                 level: "warn",
                 text: `The churn register could not be read this run (${churnReg.error}), so churn on Backend is missing, not zero.`,
             });
+        // --- The lifecycle: confirmed departures and late spells (20261101o, p).
+        const life = await lifecycleRead;
+        let lifecycle;
+        if (life.ok) {
+            lifecycle = { read: true, departures: life.departures, latePayments: life.latePayments };
+            sources.push({ name: "Departures and late payments (cockpit_churn_departures, cockpit_late_payments_v)", ok: true, note: `${plural(life.departures.length, "departure")}, ${plural(life.latePayments.length, "late spell")}` });
+            // Each register row's confirm, for the Backend tab's "n of m confirmed" line: the role is not read, never an address.
+            if (churnRegister)
+                churnRegister = { ...churnRegister, departureRows: life.departures.map(d => ({ client: d.client, leftOn: d.leftOn, confirmedAt: d.confirmed ? d.confirmedOn : null, confirmedRole: null })) };
+        }
+        else {
+            lifecycle = { read: false, error: life.error, departures: [], latePayments: [] };
+            sources.push({ name: "Departures and late payments (cockpit_churn_departures, cockpit_late_payments_v)", ok: false, note: life.error });
+            notes.push({
+                level: "warn",
+                text: `The confirmed departures and late payments could not be read this run (${life.error}), so confirmed churn, the churn rate and late payments are missing, not zero.`,
+            });
+        }
         // --- Spend, leads and bookings per client per day (A127).
         const media = await dailyRead;
         let dailyFrom = null;
@@ -1612,6 +1629,7 @@ export const clients = {
             rows,
             churn,
             churnRegister,
+            lifecycle,
             dailyFrom,
             dailyTo,
             extensions,

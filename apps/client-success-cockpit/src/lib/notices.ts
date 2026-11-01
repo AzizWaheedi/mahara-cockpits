@@ -112,8 +112,9 @@ const noticeRead: z.ZodType<NoticeRead> = z.object({
 });
 
 /**
- * The ten notice kinds, in the settings' order: Stage 1's eight (contract
- * 2.1), then the 1-1 notes' two (docs/forms/STAGE2B-CONTRACT.md 4.2, 5.4).
+ * The ten notice kinds of Stage 1 and 2b, in the settings' order: Stage 1's
+ * eight (contract 2.1), then the 1-1 notes' two (docs/forms/STAGE2B-CONTRACT.md
+ * 4.2, 5.4). The client lifecycle's six follow them (LIFECYCLE_NOTICE_KINDS).
  */
 export const NOTICE_KINDS = [
   "kickoff",
@@ -129,6 +130,29 @@ export const NOTICE_KINDS = [
 ] as const;
 
 /**
+ * The client lifecycle's six (docs/forms/WAVE12-CONTRACT.md 3.4, 5.9), in the
+ * settings' order, seeded by 20261101l. Kept apart from NOTICE_KINDS so a
+ * database before that file reads exactly the ten, and the card shows them as
+ * their own list.
+ */
+export const LIFECYCLE_NOTICE_KINDS = [
+  "termination.notice",
+  "termination.submitted",
+  "churn.confirmed",
+  "extension.granted",
+  "pause.agreed",
+  "client.resumed",
+] as const;
+export const LIFECYCLE_KINDS: ReadonlySet<string> = new Set(
+  LIFECYCLE_NOTICE_KINDS,
+);
+/** Every kind the card shows, in its order. */
+export const ALL_NOTICE_KINDS = [
+  ...NOTICE_KINDS,
+  ...LIFECYCLE_NOTICE_KINDS,
+] as const;
+
+/**
  * The Call grade posts only in a private channel and tags nobody: the
  * server refuses anything else (STAGE2B-CONTRACT.md 4.2, settings_set), and
  * the card offers nothing else.
@@ -136,7 +160,7 @@ export const NOTICE_KINDS = [
 export const PRIVATE_ONLY_KINDS: ReadonlySet<string> = new Set([
   "checkin.grade",
 ]);
-export type NoticeKind = (typeof NOTICE_KINDS)[number];
+export type NoticeKind = (typeof ALL_NOTICE_KINDS)[number];
 
 /** The three seats a notice may tag. */
 export const SEAT_RULES = [

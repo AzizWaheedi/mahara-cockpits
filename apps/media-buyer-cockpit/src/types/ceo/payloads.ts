@@ -221,6 +221,37 @@ export type MoneyPayload = {
      * transfer a statement line covers, count once, on the bank rail.
      */
     total: CashRail;
+    /**
+     * Hand-logged payments not yet checked against the bank (20261101n):
+     * beside the rails, never in `total`, cash, pay or LTV. Absent on a
+     * payload stored before the checked-money refresh.
+     */
+    manualLogged?: { count: number; usd: number; oldestDay: string | null };
+  };
+  /**
+   * Each hand-logged row's check state over twelve months, for the manual
+   * list's chips (20261101n). Absent on older payloads.
+   */
+  manualChecks?: {
+    id: string;
+    state: "logged" | "checked" | "rejected";
+    at: string | null;
+    ref: string | null;
+  }[];
+  /**
+   * Rail cash per client card over the last two full months (20261101n),
+   * which cockpit_mrr_read compares with the card's MRR. A card with no tied
+   * money is left out, never 0. Absent on older payloads.
+   */
+  mrrCheck?: {
+    asOf: string;
+    rows: {
+      taskId: string;
+      railMonthlyUsd: number;
+      months: number;
+      rails: string[];
+      note: string;
+    }[];
   };
   /**
    * This month's hand-logged payments for the Money tab, newest `day` first,
@@ -606,6 +637,11 @@ export type Transaction = {
   bankKind?: string;
   /** The statement line's own id, so it can be reclassified from the Transactions tab. */
   bankLineId?: number;
+  /**
+   * False for a hand-logged row not checked against the bank yet (20261101n):
+   * shown, never in a total. Absent (or true) for every other row.
+   */
+  checked?: boolean;
 };
 
 export type AttributionTotals = {
@@ -1692,6 +1728,37 @@ export type ClientsPayload = {
    * number to manage against. Absent on payloads stored before 2026-10-11.
    */
   churnRegister?: ChurnRegister | ChurnRegisterMonth[] | null;
+  /**
+   * Waves 1-2 (20261101o, p): every departure with its confirm and every late
+   * spell, read by metrics.ts (lifecycleValues). `read: false` with the error
+   * when the read failed: the lists are then missing, never "none". Absent on
+   * payloads stored before.
+   */
+  lifecycle?: {
+    read: boolean;
+    error?: string;
+    departures: {
+      id: number;
+      taskId: string | null;
+      client: string;
+      leftOn: string;
+      reason: string;
+      churnType: "mid_programme" | "completed" | null;
+      counts: boolean;
+      confirmed: boolean;
+      confirmedOn: string | null;
+    }[];
+    latePayments: {
+      taskId: string;
+      client: string;
+      dueOn: string;
+      endedOn: string | null;
+      closedHow: string;
+      paidOn: string | null;
+      daysLate: number | null;
+      amountUsd: number | null;
+    }[];
+  };
   /** The days `rows[].daily` covers; null when the media history was not read. Absent on older payloads. */
   dailyFrom?: string | null;
   dailyTo?: string | null;
@@ -1730,6 +1797,16 @@ export type ChurnRegister = {
   months: ChurnRegisterMonth[];
   /** Departures logged on the Churn page (not removed). */
   departures?: number;
+  /**
+   * Each departure's confirm (20261101o), for "n of m confirmed": the day
+   * confirmed, never an address. Absent before the lifecycle read.
+   */
+  departureRows?: {
+    client: string;
+    leftOn: string;
+    confirmedAt: string | null;
+    confirmedRole: string | null;
+  }[];
 };
 
 // --- Team: EODs, activity and a live feed ---

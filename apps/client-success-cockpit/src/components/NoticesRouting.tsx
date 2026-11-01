@@ -14,9 +14,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
+  ALL_NOTICE_KINDS,
   addSlackChannel,
   atNoticeWhen,
-  NOTICE_KINDS,
+  LIFECYCLE_KINDS,
   type NoticeSetting,
   noAccess,
   noticeStop,
@@ -60,6 +61,17 @@ import { cn } from "@/lib/utils";
  * - Copy: plain and active; a refusal is the server's own sentence, under
  *   the control that caused it. Nothing here posts to Slack: a test and a
  *   new channel are rows the sender picks up within a minute.
+ *
+ * Waves 1-2 (docs/forms/WAVE12-CONTRACT.md 3.4, 5.9), the same card extended,
+ * no new pattern: the six client lifecycle notices are their own list under
+ * a mono Kicker, "Client lifecycle", because they are about a client's plan,
+ * not onboarding or a call, and post in a different channel. Each row keeps
+ * the one-sentence signature. A post whose channel the bot is not in yet
+ * (#csm-announcements until the CEO invites it, Q4) says so in the warning
+ * tone under its sentence, with the Dot the stop line uses, so the row never
+ * reads as working when it cannot post. Termination survey sent keeps its
+ * switch; the server refuses it while Make's post still runs, and that
+ * refusal shows under the switch like any other.
  */
 
 export type NoticesIO = {
@@ -75,7 +87,7 @@ export type NoticesIO = {
 
 /** Each kind's label and one-line hint (contract 6.3), in the card's order. */
 export const NOTICE_ROWS: Record<
-  (typeof NOTICE_KINDS)[number],
+  (typeof ALL_NOTICE_KINDS)[number],
   { label: string; hint: string }
 > = {
   kickoff: {
@@ -119,7 +131,52 @@ export const NOTICE_ROWS: Record<
     label: "Recap not sent",
     hint: "A client recap still not sent 24 hours after the call.",
   },
+  // The client lifecycle's six (docs/forms/WAVE12-CONTRACT.md 3.4, 5.9).
+  "termination.notice": {
+    label: "Termination notice in",
+    hint: "A client sent the termination survey; the CSM confirms churn or answers the notice in the cockpit.",
+  },
+  "termination.submitted": {
+    label: "Termination survey sent",
+    hint: "Off while the old Make post runs (wave 3 turns it on).",
+  },
+  "churn.confirmed": {
+    label: "Client has left",
+    hint: "Posts in #csm-announcements once the bot is in.",
+  },
+  "extension.granted": {
+    label: "Extension given",
+    hint: "Posts in #csm-announcements once the bot is in.",
+  },
+  "pause.agreed": {
+    label: "Pause agreed",
+    hint: "Posts in #csm-announcements once the bot is in.",
+  },
+  "client.resumed": {
+    label: "Client resumed",
+    hint: "Posts in #csm-announcements once the bot is in.",
+  },
 };
+
+/** The lifecycle list's heading and its one line (5.9). */
+export const LIFECYCLE_TITLE = "Client lifecycle";
+export const LIFECYCLE_SUB =
+  "Posts when a client leaves, gets more time, pauses or resumes. Names and dates only.";
+
+/**
+ * A post whose channel is not ready, in the words the sender's trail uses
+ * (contract 3.4): null while the channel is ready, the row is off or it
+ * posts nowhere of its own.
+ */
+export function channelWait(
+  n: NoticeSetting,
+  channels: SlackChannel[],
+): string | null {
+  if (n.shape !== "post" || !n.channel || (!n.on && !n.fixedOn)) return null;
+  const c = channels.find(x => x.id === n.channel?.id);
+  if (c?.state === "ok") return null;
+  return `Not posted until the bot is in ${channelName(n.channel)}. Ask the CEO to invite it.`;
+}
 
 /** The Call grade row's line where the tag editor would be (5.4). */
 export const GRADE_TAGS_NOBODY =
@@ -369,26 +426,46 @@ function Body({
   added: string | null;
   onAdded: (id: string) => void;
 }) {
-  const rows = NOTICE_KINDS.map(k =>
+  const all = ALL_NOTICE_KINDS.map(k =>
     read.notices.find(n => n.kind === k),
   ).filter((n): n is NoticeSetting => Boolean(n));
+  const rows = all.filter(n => !LIFECYCLE_KINDS.has(n.kind));
+  const lifecycle = all.filter(n => LIFECYCLE_KINDS.has(n.kind));
   const edit = read.can.edit;
+  const list = (items: NoticeSetting[]) => (
+    <ul className="divide-y rounded-xl bg-muted/30">
+      {items.map(n => (
+        <NoticeRow
+          key={n.kind}
+          n={n}
+          read={read}
+          io={io}
+          onRead={onRead}
+          testFor={testFor}
+          onTest={onTest}
+        />
+      ))}
+    </ul>
+  );
   return (
     <div className="mt-4 space-y-6">
-      {rows.length ? (
-        <ul className="divide-y rounded-xl bg-muted/30">
-          {rows.map(n => (
-            <NoticeRow
-              key={n.kind}
-              n={n}
-              read={read}
-              io={io}
-              onRead={onRead}
-              testFor={testFor}
-              onTest={onTest}
-            />
-          ))}
-        </ul>
+      {all.length ? (
+        <>
+          {rows.length ? list(rows) : null}
+          {lifecycle.length ? (
+            <section aria-labelledby="notices-lifecycle" className="space-y-2">
+              <div>
+                <Kicker as="h3">
+                  <span id="notices-lifecycle">{LIFECYCLE_TITLE}</span>
+                </Kicker>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {LIFECYCLE_SUB}
+                </p>
+              </div>
+              {list(lifecycle)}
+            </section>
+          ) : null}
+        </>
       ) : (
         <p className="text-sm text-muted-foreground">
           No notice settings came back. Refresh the page; if it stays, tell the
@@ -451,6 +528,7 @@ function NoticeRow({
     hint: "",
   };
   const edit = read.can.edit;
+  const wait = channelWait(n, read.channels);
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
   const changed = n.updatedAt
@@ -515,6 +593,14 @@ function NoticeRow({
       {switchError ? (
         <p role="alert" className="txt-bad text-xs">
           {switchError}
+        </p>
+      ) : null}
+      {wait ? (
+        <p className="flex gap-1.5 text-xs">
+          <span className="mt-[5px] flex self-start">
+            <Dot tone="warn" />
+          </span>
+          <span className="txt-warn min-w-0">{wait}</span>
         </p>
       ) : null}
       <LastStop n={n} now={read.now} />

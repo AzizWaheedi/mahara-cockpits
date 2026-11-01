@@ -732,6 +732,15 @@ export const DEFINITIONS: MetricDefinition[] = [
     "usd",
   ),
   d(
+    "money.logged_unchecked",
+    "money",
+    "Logged, not checked",
+    "Hand-logged payments (bank transfers, cheques) still waiting for finance or the CEO to check them against the bank. Not in cash collected, LTV or pay until checked.",
+    `${TRIAGE} cockpit_manual_payments (check_state logged), through the money refresh's rails.manualLogged`,
+    "usd",
+    "Rejected rows. Rails money (Whop, Tap, Ecom) needs no check.",
+  ),
+  d(
     "money.bank_statement_age_days",
     "money",
     "Days since the last statement",
@@ -929,9 +938,46 @@ export const DEFINITIONS: MetricDefinition[] = [
     "clients.extension_weeks",
     "clients",
     "Extension weeks granted",
-    "Weeks granted through the Client Extension Form in the window.",
-    "Typeform gqBcyK6g",
+    "Weeks granted in the window: each extension given with Give more time on the client page or Extend on the billing sheet, dated by the day it was given.",
+    `${TRIAGE} cockpit_extensions_v (billing events only)`,
     "count",
+    "Voided grants. The Client Extension Form's two answers of 14 Sep were tests, never grants.",
+  ),
+  d(
+    "clients.extensions.granted",
+    "clients",
+    "Extensions given",
+    "Extension grants given in the window, one per Give more time or billing sheet Extend, by the Kuwait day it was given. A grant that replaced a running one counts as a grant of its own.",
+    `${TRIAGE} cockpit_extensions_v (billing events only)`,
+    "count",
+    "Voided grants and anything agreed but never entered in the cockpit. Typed days on the goal sheet add to it there.",
+  ),
+  d(
+    "clients.churn.confirmed",
+    "clients",
+    "Churn confirmed",
+    "Departures on the churn register that a CSM or the CEO confirmed (Client is leaving, or Confirm churn on the tracker) and that count as churn, by the day the client left. A finished term is not churn.",
+    `${TRIAGE} cockpit_churn_departures (confirmed_at set, not removed)`,
+    "count",
+    "A departure logged but not confirmed: it counts in the goal sheet's churned clients and shows there as not confirmed.",
+  ),
+  d(
+    "clients.churn.rate",
+    "clients",
+    "Churn rate (register)",
+    "Departures that count as churn in the month, confirmed or not, over the clients active at the start of the month on the churn register.",
+    `${TRIAGE} cockpit_churn_departures and cockpit_churn_months`,
+    "share",
+    "Withheld when the month has no start count. A finished term is left out of the departures.",
+  ),
+  d(
+    "clients.late_payments",
+    "clients",
+    "Late payments",
+    "Late spells that began in the window: a card stayed Active past its Next Payment Date. Per client, the value is the days late, added up when a client was late twice.",
+    `${TRIAGE} cockpit_late_payments_v (the daily card snapshots)`,
+    "count",
+    "A spell that started before 2026-10-07 has no earlier snapshot, so its first days are not seen. A payment off the rails reads as the date moving.",
   ),
   d(
     "clients.average_retainer",
@@ -1186,6 +1232,9 @@ export function extractMoney(p: MoneyPayload): MetricValue[] {
     v("money.average_retainer", "snapshot", p.book.averageRetainer);
   }
   if (p.bank) v("money.bank_statement_age_days", "snapshot", p.bank.daysSince);
+  // checked-money's rails.manualLogged ({count, usd, oldestDay}); a payload from before it has none, so nothing is written.
+  const logged = (p.rails as { manualLogged?: { usd?: unknown } } | undefined)?.manualLogged;
+  if (logged) v("money.logged_unchecked", "snapshot", logged.usd);
   return out;
 }
 
@@ -1279,6 +1328,65 @@ export function extractCalls(p: CallsPayload): MetricValue[] {
   return out;
 }
 
+/** The month a Kuwait day falls in and the month before, as [from, to] day pairs. */
+function monthWindows(today: string): Record<"mtd" | "lastMonth", [string, string]> {
+  const start = `${today.slice(0, 7)}-01`;
+  const last = new Date(Date.parse(`${start}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+  return { mtd: [start, today], lastMonth: [`${last.slice(0, 7)}-01`, last] };
+}
+
+type LifecycleDeparture = { taskId: string | null; leftOn: string; counts: boolean; confirmed: boolean };
+type LifecycleLate = { taskId: string; dueOn: string; daysLate: number | null };
+
+/**
+ * The waves 1-2 client metrics (WAVE12-CONTRACT 4.11.4): extensions given from
+ * the grant rows (cockpit_extensions_v), churn confirmed and the register's
+ * churn rate from the departures, late payments from the late spells. A list
+ * the payload does not carry (an older payload, or a read that failed) writes
+ * nothing: missing is never zero.
+ */
+export function lifecycleValues(p: ClientsPayload): MetricValue[] {
+  // biome-ignore lint/suspicious/noExplicitAny: `lifecycle` is the Client success adapter's waves 1-2 key
+  const any = p as any;
+  const out: MetricValue[] = [];
+  const today: string | undefined = p.extensions?.to ?? any?.lifecycle?.today;
+  if (!today || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return out;
+  const windows = monthWindows(today);
+  const inWin = (day: string, [from, to]: [string, string]) => day >= from && day <= to;
+  const push = (metric: string, window: string, value: number | null, scope = "company", range?: [string, string]) =>
+    out.push({ metric, scope, window, value, ...(range ? { windowFrom: range[0], windowTo: range[1] } : {}) });
+
+  const grants = p.extensions?.grantRows;
+  if (Array.isArray(grants))
+    for (const [w, range] of Object.entries(windows))
+      push("clients.extensions.granted", w, grants.filter(g => inWin(g.day, range)).length, "company", range);
+
+  const life = any?.lifecycle;
+  const departures: LifecycleDeparture[] | null = life?.read !== false && Array.isArray(life?.departures) ? life.departures : null;
+  if (departures) {
+    for (const [w, range] of Object.entries(windows)) {
+      const left = departures.filter(d => d.counts && inWin(d.leftOn, range));
+      push("clients.churn.confirmed", w, left.filter(d => d.confirmed).length, "company", range);
+      const month = range[0].slice(0, 7);
+      const reg = p.churnRegister;
+      const months = Array.isArray(reg) ? reg : reg?.months;
+      const start = months?.find(m => m.month === month)?.activeAtStart;
+      push("clients.churn.rate", w, typeof start === "number" && start > 0 ? r(left.length / start) : null, "company", range);
+    }
+  }
+  const late: LifecycleLate[] | null = life?.read !== false && Array.isArray(life?.latePayments) ? life.latePayments : null;
+  if (late)
+    for (const [w, range] of Object.entries(windows)) {
+      const opened = late.filter(l => inWin(l.dueOn, range));
+      push("clients.late_payments", w, opened.length, "company", range);
+      // One value per client and window: a client late twice in a month reads its days added up.
+      const days = new Map<string, number>();
+      for (const l of opened) if (typeof l.daysLate === "number") days.set(l.taskId, (days.get(l.taskId) ?? 0) + l.daysLate);
+      for (const [taskId, n] of days) push("clients.late_payments", w, n, `client:${taskId}`, range);
+    }
+  return out;
+}
+
 export function extractClients(p: ClientsPayload): MetricValue[] {
   const out: MetricValue[] = [];
   const v = (
@@ -1305,6 +1413,7 @@ export function extractClients(p: ClientsPayload): MetricValue[] {
   v("clients.churn_rate", "mtd", p.churn?.rate);
   v("clients.average_days_to_launch", "all", p.launch?.averageDays);
   v("clients.extension_weeks", "mtd", p.extensions?.totalWeeks);
+  out.push(...lifecycleValues(p));
   v("clients.average_retainer", "snapshot", p.retainer?.averageUsd);
   for (const row of p.rows ?? []) {
     const scope = `client:${row.clickupTaskId}`;
