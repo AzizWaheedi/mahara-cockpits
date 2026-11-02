@@ -23,7 +23,35 @@ test("the guide group lists the demo, both SOPs and the how-to videos", () => {
     "Launch call: run the launch deck (video)",
     "Offers: pitch an offer and send a proposal (video)",
     "Client success cockpit, how to use it",
+    "Raise a ticket (the SOP for every team)",
+    "Raise a ticket and work one (video)",
   ]);
+});
+
+test("the logging SOP and its four videos have their own group", () => {
+  const logging = LINK_GROUPS.find(
+    g => g.title === "Log money and client changes",
+  );
+  expect(LINK_GROUPS.indexOf(logging as never)).toBe(1);
+  expect(logging?.rows.map(r => r.url)).toEqual([
+    "https://docs.google.com/document/d/1MvTFAMcZs_v7ZnGmwbU1lRSwkVk2oTYB1lIJc_3mPO4/edit",
+    drive("1sHrEtNJt2IODfNEaQrvw_iU_JXfpay0P"),
+    drive("1C3fC2NZVEpkSQrrI3dAFlJC1FpR803Sp"),
+    drive("11W5a_cezr5tXb5GWQ5klazXRusCEVzbY"),
+    drive("1eeSzAnU96tHJ5M4LW8FJSuXJVwwFxO8-"),
+  ]);
+  expect(logging?.rows[0].url).toBe(COCKPIT_GUIDES.csm.sops.logging);
+});
+
+test("the ticket rows open the team's SOP and video", () => {
+  const url = (start: string) =>
+    guide?.rows.find(r => r.label.startsWith(start))?.url;
+  expect(url("Raise a ticket (the SOP")).toBe(
+    "https://docs.google.com/document/d/15QeUvilPP-3d6wEfJIwj3YJaxeAYIgtVHpMchPoMZ-c/edit",
+  );
+  expect(url("Raise a ticket and work one")).toBe(
+    drive("1Ht7-NW7Eej8UwLNLqGFAZgs7Xny8JOzP"),
+  );
 });
 
 test("each how-to row opens its Drive video", () => {

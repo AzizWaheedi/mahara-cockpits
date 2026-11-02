@@ -61,6 +61,11 @@ export const COCKPIT_SOP: Record<string, string> = {
  * "Cockpit SOPs / Team how-to videos (October 2026)": client success has the
  * onboarding call, the launch call (2026-10-24) and Money → Offers
  * (2026-11-01); the creative director has the Brand Blueprint call.
+ * Client success also has four on logging (2026-11-02): money in, client
+ * changes, wins, and what to log after a call.
+ *
+ * `sops` holds a cockpit's SOPs for one job rather than the whole day:
+ * client success has "Logging money and client changes" (2026-11-02).
  */
 const DRIVE_FILE = "https://drive.google.com/file/d";
 const GOOGLE_DOC = "https://docs.google.com/document/d";
@@ -73,6 +78,13 @@ export const COCKPIT_GUIDES = {
       onboarding: `${DRIVE_FILE}/1AuD8qBlwRJHdUHF_teerPlLJI856WgTG/view`,
       launch: `${DRIVE_FILE}/1A-4eHbzNXXA2DiH5bZJzfn19LlgGKYdJ/view`,
       offers: `${DRIVE_FILE}/1fJ2aj62n1uCkxj5HO17Uxd9nqw97xuC2/view`,
+      money: `${DRIVE_FILE}/1sHrEtNJt2IODfNEaQrvw_iU_JXfpay0P/view`,
+      changes: `${DRIVE_FILE}/1C3fC2NZVEpkSQrrI3dAFlJC1FpR803Sp/view`,
+      wins: `${DRIVE_FILE}/11W5a_cezr5tXb5GWQ5klazXRusCEVzbY/view`,
+      afterCall: `${DRIVE_FILE}/1eeSzAnU96tHJ5M4LW8FJSuXJVwwFxO8-/view`,
+    },
+    sops: {
+      logging: `${GOOGLE_DOC}/1MvTFAMcZs_v7ZnGmwbU1lRSwkVk2oTYB1lIJc_3mPO4/edit`,
     },
   },
   media_buyer: {
@@ -105,8 +117,22 @@ export const COCKPIT_GUIDES = {
     simple: string;
     deep: string;
     howTo?: Record<string, string>;
+    sops?: Record<string, string>;
   }
 >;
+
+/**
+ * SOPs for every seat, not one cockpit. Raising a ticket is the same from
+ * every cockpit (Ask a team), so it is one SOP and one video for the whole
+ * team (Aziz, 2026-11-02), listed on every cockpit's links or guide page and
+ * on Requests itself. Same Drive folders as COCKPIT_GUIDES.
+ */
+export const TEAM_GUIDES = {
+  ticket: {
+    doc: `${GOOGLE_DOC}/15QeUvilPP-3d6wEfJIwj3YJaxeAYIgtVHpMchPoMZ-c/edit`,
+    video: `${DRIVE_FILE}/1Ht7-NW7Eej8UwLNLqGFAZgs7Xny8JOzP/view`,
+  },
+} as const;
 
 /**
  * The same videos, played inside the cockpit rather than from ClickUp or a
@@ -165,6 +191,38 @@ export const SOP_VIDEOS = {
       length: "2:46",
       note: "Silent: Money → Offers, step by step. Watch it before your first pitch",
     },
+    money: {
+      key: "csm-money",
+      wistia: "uiuydjyh91",
+      title: "Money in: log a payment and send an invoice",
+      url: COCKPIT_GUIDES.csm.howTo.money,
+      length: "2:58",
+      note: "Silent: a bank transfer and its receipt, Confirm paid, the date, MRR and invoices",
+    },
+    changes: {
+      key: "csm-changes",
+      wistia: "88p7n526vu",
+      title: "Give more time, pause, stop or bring back a client",
+      url: COCKPIT_GUIDES.csm.howTo.changes,
+      length: "2:57",
+      note: "Silent: the buttons on the client's page. Stopping is one process, whatever they call it",
+    },
+    wins: {
+      key: "csm-wins",
+      wistia: "0hlqabl6im",
+      title: "Log a review, referral, upsell or back-end programme",
+      url: COCKPIT_GUIDES.csm.howTo.wins,
+      length: "2:32",
+      note: "Silent: Log a win with its proof, an upsell from offered to paid, and asking for a review",
+    },
+    afterCall: {
+      key: "csm-after-call",
+      wistia: "t9wgctlgm9",
+      title: "What to log after a check-in call",
+      url: COCKPIT_GUIDES.csm.howTo.afterCall,
+      length: "2:45",
+      note: "Silent: Write 1-1 notes, send the recap, and turn what you promised into tasks",
+    },
   },
   media_buyer: {
     demo: {
@@ -212,6 +270,16 @@ export const SOP_VIDEOS = {
       url: COCKPIT_GUIDES.sales.video,
       length: "2:09",
       note: "The setter's and the closer's day, step by step",
+    },
+  },
+  team: {
+    ticket: {
+      key: "team-ticket",
+      wistia: "bw188pk09a",
+      title: "Raise a ticket and work one",
+      url: TEAM_GUIDES.ticket.video,
+      length: "2:54",
+      note: "Silent, for every seat: Ask a team, follow it, and work the tickets assigned to you",
     },
   },
 } satisfies Record<string, Record<string, SopVideoInfo>>;

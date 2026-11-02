@@ -8,12 +8,14 @@ import {
   winsApi,
 } from "@/components/ClientWins";
 import { PageHeader, Pill, PillRow } from "@/components/kit";
+import { SopVideo } from "@/components/SopVideo";
 import { useCsmSnapshot } from "@/lib/useCsmSnapshot";
 import type { WinsRead } from "@/lib/wins";
 import { BillingPage } from "./BillingPage";
 import { ChurnPage } from "./ChurnPage";
 import { HotListPage, MyMoneyPage, useW56Doors } from "./CsmPage";
 import { InvoicesPage } from "./InvoicesPage";
+import { TAB_VIDEO } from "./money/tabVideos";
 import { ProjectionsPage } from "./ProjectionsPage";
 
 const OffersTab = lazy(() =>
@@ -43,6 +45,7 @@ export function MoneyPage() {
   const [params, setParams] = useSearchParams();
   const asked = params.get("tab");
   const tab: Tab = TABS.some(t => t.key === asked) ? (asked as Tab) : "billing";
+  const video = TAB_VIDEO[tab];
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6">
       <PageHeader
@@ -63,6 +66,7 @@ export function MoneyPage() {
           </PillRow>
         </div>
       </PageHeader>
+      {video ? <SopVideo video={video} /> : null}
       {tab === "billing" ? <BillingPage embedded /> : null}
       {tab === "hot" ? <HotListPage embedded /> : null}
       {tab === "projections" ? <ProjectionsPage embedded /> : null}

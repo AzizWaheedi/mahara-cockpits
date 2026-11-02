@@ -18,6 +18,7 @@ import {
   COCKPIT_SOP,
   SOP_VIDEOS,
   type SopVideoInfo,
+  TEAM_GUIDES,
 } from "./cockpits";
 import { portalUrl } from "./portal";
 
@@ -63,6 +64,16 @@ export const LINK_GROUPS: LinkGroup[] = [
         label: "Creative director cockpit, how to use it",
         url: COCKPIT_SOP.creative,
         note: "The SOP for this cockpit, in ClickUp",
+      },
+      {
+        label: "Raise a ticket (the SOP for every team)",
+        url: TEAM_GUIDES.ticket.doc,
+        note: "Ask another team with Ask a team, follow it, and work the tickets assigned to you",
+      },
+      {
+        label: "Raise a ticket and work one (video)",
+        url: TEAM_GUIDES.ticket.video,
+        video: SOP_VIDEOS.team.ticket,
       },
     ],
   },
