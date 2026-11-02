@@ -31,6 +31,14 @@
 //   New Client Form keeps the legacy forms' mapping, less every email and
 //   phone, and its three hidden ids (contact_id, closer, setter). Nothing here
 //   ever submits a form.
+// - Stage 4 (docs/forms/WAVE56-CONTRACT.md 4.14.2, 4.15.3, X26): once
+//   cockpit_form_stage4_go_live turns kickoff or onboarding native, its registry
+//   row keeps its Typeform id, so the old link still reaches this door. A kickoff
+//   through it is kept as a legacy record (cockpit_form_record_legacy, the legacy
+//   mapping: no email or phone, the two hidden fields) with "Old form link used";
+//   an onboarding answer goes to cockpit_form_onboarding_typeform with
+//   onboardingAnswers' entry, so it runs the same native planner as a portal
+//   answer, once per card (a card already answered stores it legacy).
 //
 // It never delivers anything itself. Everything that touches the network or
 // the clock comes in through Deps, so `bun test` runs it offline.
@@ -99,6 +107,11 @@ export const LEGACY_FORMS: ReadonlySet<string> = new Set([
 export const MAKE_FORMS: ReadonlySet<string> = new Set([
   "onboarding",
   "new_client",
+]);
+/** The two Stage 4 forms: still taken through their old Typeform link once native (4.15.3, X26). */
+export const STAGE4_FORMS: ReadonlySet<string> = new Set([
+  "kickoff",
+  "onboarding",
 ]);
 /** The New Client Form's hidden fields (cockpit_sales_client_forms.hidden): the lead and who sent it. */
 const NEW_CLIENT_HIDDEN = ["contact_id", "closer", "setter"] as const;
@@ -508,9 +521,10 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     }
     const formId =
       typeof registry?.typeform_id === "string" ? registry.typeform_id : "";
+    const native = registry?.provider === "native";
     const filledInTypeform =
       registry?.provider === "typeform" ||
-      (registry?.provider === "native" && LEGACY_FORMS.has(formKey));
+      (native && (LEGACY_FORMS.has(formKey) || STAGE4_FORMS.has(formKey)));
     if (!formId || !filledInTypeform)
       return answer("not_typeform", 404, { ok: false });
 
@@ -567,18 +581,28 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     }
     try {
       // Kickoff keeps its 2b store; the two client forms are legacy records (3.1); the two Make forms are records only.
+      // Once native (Stage 4): an old kickoff link's answer is a legacy record, an onboarding answer runs the native
+      // planner through cockpit_form_onboarding_typeform.
       const out = (
-        LEGACY_FORMS.has(formKey)
+        native && formKey === "kickoff"
           ? await db("cockpit_form_record_legacy", {
               p: legacyInput(formKey, response),
             })
-          : MAKE_FORMS.has(formKey)
-            ? await db("cockpit_form_record_make", {
-                p: makeInput(formKey, response),
+          : native && formKey === "onboarding"
+            ? await db("cockpit_form_onboarding_typeform", {
+                p_payload: makeInput(formKey, response),
               })
-            : await db("cockpit_form_record_typeform", {
-                p: recordInput(formKey, response),
-              })
+            : LEGACY_FORMS.has(formKey)
+              ? await db("cockpit_form_record_legacy", {
+                  p: legacyInput(formKey, response),
+                })
+              : MAKE_FORMS.has(formKey)
+                ? await db("cockpit_form_record_make", {
+                    p: makeInput(formKey, response),
+                  })
+                : await db("cockpit_form_record_typeform", {
+                    p: recordInput(formKey, response),
+                  })
       ) as Row | null;
       if (typeof out?.inserted !== "boolean")
         throw new Error("The record RPC answered without inserted");

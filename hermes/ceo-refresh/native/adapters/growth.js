@@ -829,7 +829,7 @@ export function voidedNote(days, windows) {
  * 6) the typed amount is shown beside front-end cash as typed, not money, and
  * never added: front-end cash is the money itself (withPaid).
  *
- * The amount is the kickoff Typeform's (tG7dnxBn) "Payment Amount" field
+ * The amount is the kickoff's "Payment Amount" field, from the Typeform (tG7dnxBn) or the cockpit's native kickoff
  * (ref 75e97e7d-4c19-437a-b4b8-67570c29344f), which the onboarding sync
  * copies to cockpit_client_onboarding.forms.kickoff.payment. It is dated by
  * the day the form was submitted (Kuwait) and read as USD: the field carries
@@ -846,6 +846,11 @@ export function voidedNote(days, windows) {
  * listed under typedNotSeen.
  */
 export const KICKOFF_FORM = "tG7dnxBn";
+/**
+ * The kickoff's read-model form ids: the Typeform's, and "native" for a kickoff sent from the cockpit's sheet
+ * since Stage 4 (docs/forms/WAVE56-CONTRACT.md 4.13.2: the same Typeform-shaped entry, payment included).
+ */
+export const KICKOFF_FORMS = [KICKOFF_FORM, "native"];
 export const KICKOFF_READ_FROM = "2026-10-04";
 const KICKOFF_RAILS = new Set(["whop", "tap", "ecom", "transfer"]);
 export const KICKOFF_SQL = `select clickup_task_id, client_name,
@@ -853,7 +858,7 @@ export const KICKOFF_SQL = `select clickup_task_id, client_name,
     forms->'kickoff'->>'payment' as payment,
     floor(extract(epoch from synced_at) * 1000)::bigint as synced_ms
   from public.cockpit_client_onboarding
-  where forms->'kickoff'->>'form_id' = '${KICKOFF_FORM}' and forms->'kickoff'->>'submitted_at' is not null`;
+  where forms->'kickoff'->>'form_id' in (${KICKOFF_FORMS.map(f => `'${f}'`).join(", ")}) and forms->'kickoff'->>'submitted_at' is not null`;
 /** A typed amount as a number: "1500", "1,500", "$1500.50". Null when blank or not a number. */
 export function kickoffAmount(raw) {
     if (raw === null || raw === undefined)

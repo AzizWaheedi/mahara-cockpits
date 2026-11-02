@@ -943,6 +943,30 @@ describe("the forms job beside the others", () => {
   }
   const LIVE = { CLICKUP_API_TOKEN: "x", CLICKUP_WRITEBACK_APPLY_FORMS: "true" };
 
+  it("Stage 4: a kickoff row is held until CLICKUP_WRITEBACK_FORMS_KEYS lists kickoff; check-in rows go as before", async () => {
+    const map = {
+      ...row("happiness"),
+      id: "q-map",
+      payload: { formKey: "kickoff", responseId: RESPONSE, effectId: "e-map", effectKey: "map_phase4", taskId: CARD, fieldId: "51f49cb1-9f76-48be-b639-c42ca552d20a", phase: 4,
+                 value: `https://mahara-onboarding-map.vercel.app/?phase=4&cid=${CARD}` },
+      effect: { id: "e-map", state: "queued", plan: { taskId: CARD, fieldId: "51f49cb1-9f76-48be-b639-c42ca552d20a", phase: 4,
+                 value: `https://mahara-onboarding-map.vercel.app/?phase=4&cid=${CARD}` } },
+    };
+    const off = formsHarness(LIVE, [row("happiness"), map]);
+    const out = await runForms(off.deps);
+    expect(out.counts).toMatchObject({ claimed: 2, delivered: 1, held: 1, heldOff: 1 });
+    expect(off.releases().map(r => [r.p_id, r.p_note])).toEqual([["q-map", "Held: kickoff card writes are not switched on."]]);
+    expect(off.writes().every(c => c.path.includes("4e3924e3"))).toBe(true);
+    const on = formsHarness({ ...LIVE, CLICKUP_WRITEBACK_FORMS_KEYS: "checkin,kickoff" }, [map]);
+    await runForms(on.deps);
+    expect(on.releases()).toEqual([]);
+    expect(on.calls.some(c => c.method === "GET" && c.path === `task/${CARD}`)).toBe(true);
+    const bad = formsHarness({ ...LIVE, CLICKUP_WRITEBACK_FORMS_KEYS: "kickoff,pools" }, [map]);
+    const badOut = await runForms(bad.deps);
+    expect(bad.releases().map(r => r.p_note)).toEqual(["Held: kickoff card writes are not switched on."]);
+    expect(badOut.note).toContain("CLICKUP_WRITEBACK_FORMS_KEYS names something that is not checkin, kickoff or onboarding");
+  });
+
   it("JOBS adds forms and forms_doctor (and billing_doctor after them, waves 1-2)", () => {
     expect(JOBS).toEqual(["kpi", "log", "dosdonts", "doctor", "requests", "requests_doctor", "forms", "forms_doctor", "billing_doctor"]);
   });
@@ -1530,7 +1554,7 @@ describe("the forms job beside the others", () => {
     expect(out.note).toBe(
       "Ready. 1-1 notes writes: dry run (they are written only when CLICKUP_WRITEBACK_APPLY_FORMS is true). Client Happiness has its six options and Last POC and Last Check-in Call are date fields on Clients - Mahara. The test card 86eywg1cq is on Clients - Mahara.",
     );
-    expect(out.secrets).toEqual({ CLICKUP_API_TOKEN: true, CRON_SECRET: true, CLICKUP_WRITEBACK_APPLY_FORMS: false, CLICKUP_WRITEBACK_FORMS_ONLY_CARDS: false });
+    expect(out.secrets).toEqual({ CLICKUP_API_TOKEN: true, CRON_SECRET: true, CLICKUP_WRITEBACK_APPLY_FORMS: false, CLICKUP_WRITEBACK_FORMS_ONLY_CARDS: false, CLICKUP_WRITEBACK_FORMS_KEYS: false });
     expect(h.writes()).toEqual([]);
     const saved = h.rpcs.find(r => r.name === "syncState:clickup-writeback:forms-doctor")?.params;
     expect(saved).toMatchObject({ ok: true, detail: { mode: "dry_run", onlyCards: [], owners: { happiness: "shadow" } } });

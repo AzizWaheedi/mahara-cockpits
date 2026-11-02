@@ -22,6 +22,12 @@
 // each step's state and ids only, because the queue's audit trigger copies
 // progress whole into cockpit_audit_log.
 //
+// Stage 4 (docs/forms/WAVE56-CONTRACT.md 4.13.4, 4.14): the native kickoff and onboarding add seven effect
+// keys on the same rails: the handoff and raw answers comments (found again by their marker like the to-do
+// comment), the task status IN PROGRESS, two sets of card fields (each field read back), and the Onboarding
+// Map at phase 3 or 4, which never moves back: a card already at that phase or later is kept. A row of a form
+// not listed in CLICKUP_WRITEBACK_FORMS_KEYS (default checkin) is held by run.ts and never written here.
+//
 // Retry safety: every write records "started" before the call and "done"
 // after its read-back. A comment is found by its marker (Cockpit ref F- and
 // the first 10 hex of the response id) before anything is posted again, and
@@ -68,6 +74,59 @@ export const FORM_KEYS = [
   "last_checkin_call",
 ] as const;
 export type FormKey = (typeof FORM_KEYS)[number];
+/** Stage 4's effect keys (4.13.4): the kickoff's four, the onboarding's three. */
+export const STAGE4_KEYS = [
+  "handoff_comment",
+  "native_status",
+  "card_fields",
+  "map_phase4",
+  "profile_fields",
+  "raw_answers_comment",
+  "map_phase3",
+] as const;
+export type Stage4Key = (typeof STAGE4_KEYS)[number];
+/** Which form each Stage 4 key belongs to. */
+export const STAGE4_FORM: Record<Stage4Key, "kickoff" | "onboarding"> = {
+  handoff_comment: "kickoff",
+  native_status: "kickoff",
+  card_fields: "kickoff",
+  map_phase4: "kickoff",
+  profile_fields: "onboarding",
+  raw_answers_comment: "onboarding",
+  map_phase3: "onboarding",
+};
+/** The form keys CLICKUP_WRITEBACK_FORMS_KEYS may list. */
+export const FORMS_FORM_KEYS = ["checkin", "kickoff", "onboarding"] as const;
+/** The Onboarding Map field (a link with ?phase=N). */
+export const MAP_FIELD = "51f49cb1-9f76-48be-b639-c42ca552d20a";
+/** The only card fields each Stage 4 key may write, with their kinds (20261102j_stage4_native.sql). */
+export const STAGE4_FIELDS: Record<
+  "card_fields" | "profile_fields",
+  Record<string, "drop_down" | "url" | "text">
+> = {
+  card_fields: {
+    "9368ca9e-3549-4320-84ff-9abd0a2901cb": "drop_down",
+    "924bba47-32d4-4557-94d4-f475cd548dd2": "drop_down",
+    "a1520ef3-ec23-47a4-9584-e24257486a3e": "drop_down",
+    "ac976d4a-409b-441c-8c13-4b0e73a0c12f": "drop_down",
+    "bab9a58b-15af-4b0d-8e20-b8e5a4bee2cc": "drop_down",
+    "bc7e70a2-1623-426f-8ed7-fac8fed9b160": "drop_down",
+    "cc14ad2d-28ca-4eac-bbef-89b4f299ef8f": "drop_down",
+    "d113cd99-9d35-4b12-a8fa-0cd0c19ec777": "drop_down",
+    "e7d158a8-e303-4df8-a78a-61a0eb3843eb": "drop_down",
+    "f0a20cef-e902-4200-8f55-43431b2574c6": "drop_down",
+    "1b7a4a74-d0e7-4a7f-9218-59c80a738186": "url",
+  },
+  profile_fields: {
+    "7755485f-74a8-496c-85d8-562588e77944": "text",
+    "87d7d889-afea-42f8-9485-6f3ead5b857f": "url",
+  },
+};
+/** The phase an Onboarding Map link points at, or null. */
+export function mapPhaseOf(value: unknown): number | null {
+  const m = /[?&]phase=(\d+)/.exec(String(value ?? ""));
+  return m ? Number(m[1]) : null;
+}
 /** The Clients - Mahara list: the only list a 1-1 notes write may touch. */
 export const FORMS_LIST = CLIENTS_LIST;
 /** The internal test card the canary runs on (CLICKUP_WRITEBACK_FORMS_ONLY_CARDS at cut-over step 6). */
@@ -123,6 +182,14 @@ export const SAY_FORMS = {
   commentLost:
     "ClickUp answered the 1-1 notes comment with its id, but the comment is not on the card now. It is not posted again: check the card in ClickUp.",
   heldOff: "Held: the 1-1 notes writer is off until the switch-over.",
+  /** A row of a form CLICKUP_WRITEBACK_FORMS_KEYS does not list (4.13.4). */
+  heldForm: (form: string) => `Held: ${form} card writes are not switched on.`,
+  /** The Onboarding Map never moves back (4.13.4). */
+  mapKept: (phase: number) => `kept: the map is already at phase ${phase}`,
+  noFieldOption: (label: string, name: string) =>
+    `ClickUp's ${label} has no "${name}" option, so nothing was written. The tech lead runs the forms doctor.`,
+  statusNotBack:
+    "The task status did not read back as IN PROGRESS. The next run reads it again.",
   heldLimited: "Held: the 1-1 notes writer is open only for the test card.",
   noField: (label: string) =>
     `${label} is not on this card in ClickUp, so nothing was written.`,
@@ -218,6 +285,33 @@ export function formsWords(env: (name: string) => string | undefined) {
   };
 }
 
+/** Never names what the secret holds. */
+export const FORMS_KEYS_BAD =
+  "CLICKUP_WRITEBACK_FORMS_KEYS names something that is not checkin, kickoff or onboarding, so only checkin is written.";
+
+/**
+ * Which forms' card writes are on: CLICKUP_WRITEBACK_FORMS_KEYS, a comma list of checkin, kickoff and onboarding,
+ * checkin when unset (4.13.4). A list with anything else keeps checkin alone and says so: it never widens.
+ */
+export function formsKeysGate(env: (name: string) => string | undefined) {
+  const raw = env("CLICKUP_WRITEBACK_FORMS_KEYS");
+  const blank = raw === undefined || raw.trim() === "";
+  const listed = String(raw ?? "")
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean);
+  const bad =
+    !blank &&
+    (!listed.length ||
+      listed.some(k => !(FORMS_FORM_KEYS as readonly string[]).includes(k)));
+  const keys = new Set<string>(blank || bad ? ["checkin"] : listed);
+  return {
+    keys,
+    error: bad ? FORMS_KEYS_BAD : null,
+    has: (form: unknown) => keys.has(String(form ?? "checkin")),
+  };
+}
+
 // --- The database calls (migration 20261029t, service role only) --------------------------------
 
 export function formsDb(rpc: (name: string, params?: Row) => Promise<any>) {
@@ -278,7 +372,7 @@ export type FormItem = {
 
 export type FormStep =
   | {
-      key: "todo_comment";
+      key: "todo_comment" | "handoff_comment" | "raw_answers_comment";
       type: "comment";
       taskId: string;
       text: string;
@@ -299,7 +393,32 @@ export type FormStep =
       fieldId: string;
       day: string;
       value: number;
+    }
+  | { key: "native_status"; type: "status"; taskId: string; status: string }
+  | {
+      key: "card_fields" | "profile_fields";
+      type: "fields";
+      taskId: string;
+      fields: CardField[];
+    }
+  | {
+      key: "map_phase3" | "map_phase4";
+      type: "map";
+      taskId: string;
+      fieldId: string;
+      value: string;
+      phase: number;
     };
+
+/** One card field a Stage 4 key writes: a dropdown by option id or name, a link or a text. */
+export type CardField = {
+  fieldId: string;
+  kind: "drop_down" | "url" | "text";
+  label: string;
+  optionId?: string;
+  optionName?: string;
+  value?: string;
+};
 
 /** The marker that finds a 1-1 notes comment again: Cockpit ref F- and the first 10 hex of the response id. */
 export const formMarker = (responseId: string) =>
@@ -321,6 +440,103 @@ export async function sha256(s: string): Promise<string> {
 
 const isKey = (k: unknown): k is FormKey =>
   typeof k === "string" && (FORM_KEYS as readonly string[]).includes(k);
+const isStage4 = (k: unknown): k is Stage4Key =>
+  typeof k === "string" && (STAGE4_KEYS as readonly string[]).includes(k);
+const HTTPS = /^https:\/\/\S+$/;
+
+/** Stage 4's check of one row (4.13.4): its form, its card, its comment's sha256, and only its own fields. */
+async function stage4Step(
+  item: FormItem,
+  key: Stage4Key,
+): Promise<{ step: FormStep } | { fail: string }> {
+  const p = item.payload ?? {};
+  const plan = item.effect?.plan ?? {};
+  const card = item.task_id as string;
+  if (p.formKey !== STAGE4_FORM[key]) return { fail: SAY_FORMS.mismatch };
+  if (key === "handoff_comment" || key === "raw_answers_comment") {
+    const text = plan.comment_text;
+    if (
+      typeof text !== "string" ||
+      !text.trim() ||
+      typeof p.commentSha256 !== "string"
+    )
+      return { fail: SAY_FORMS.mismatch };
+    if ((await sha256(text)) !== p.commentSha256)
+      return { fail: SAY_FORMS.mismatch };
+    if (
+      typeof p.responseId !== "string" ||
+      !/[0-9a-f]{10}/i.test(p.responseId.replace(/-/g, ""))
+    )
+      return { fail: SAY_FORMS.mismatch };
+    const marker = formMarker(p.responseId);
+    return {
+      step: {
+        key,
+        type: "comment",
+        taskId: card,
+        text: `${text}\n\n${marker}`,
+        marker,
+      },
+    };
+  }
+  if (key === "native_status") {
+    if (plan.status !== "IN PROGRESS") return { fail: SAY_FORMS.mismatch };
+    return {
+      step: { key, type: "status", taskId: card, status: "IN PROGRESS" },
+    };
+  }
+  if (key === "map_phase3" || key === "map_phase4") {
+    const phase = key === "map_phase3" ? 3 : 4;
+    const value = plan.value;
+    if (
+      plan.fieldId !== MAP_FIELD ||
+      Number(plan.phase) !== phase ||
+      typeof value !== "string" ||
+      !HTTPS.test(value) ||
+      mapPhaseOf(value) !== phase
+    )
+      return { fail: SAY_FORMS.mismatch };
+    return {
+      step: {
+        key,
+        type: "map",
+        taskId: card,
+        fieldId: MAP_FIELD,
+        value,
+        phase,
+      },
+    };
+  }
+  const allowed = STAGE4_FIELDS[key];
+  const raw: Row[] = Array.isArray(plan.fields) ? plan.fields : [];
+  if (!raw.length) return { fail: SAY_FORMS.mismatch };
+  const fields: CardField[] = [];
+  for (const f of raw) {
+    const kind = allowed[String(f?.fieldId)];
+    if (!kind || f.kind !== kind || typeof f.label !== "string")
+      return { fail: SAY_FORMS.mismatch };
+    if (kind === "drop_down") {
+      if (typeof f.optionId !== "string" && typeof f.optionName !== "string")
+        return { fail: SAY_FORMS.mismatch };
+      fields.push({
+        fieldId: f.fieldId,
+        kind,
+        label: f.label,
+        optionId: f.optionId,
+        optionName: f.optionName,
+      });
+    } else {
+      if (
+        typeof f.value !== "string" ||
+        f.value.length > 5000 ||
+        (kind === "url" && !HTTPS.test(f.value))
+      )
+        return { fail: SAY_FORMS.mismatch };
+      fields.push({ fieldId: f.fieldId, kind, label: f.label, value: f.value });
+    }
+  }
+  return { step: { key, type: "fields", taskId: card, fields } };
+}
 
 /**
  * The one write a row makes, checked before any call (4.1): for every effect the payload's card, the row's card
@@ -336,7 +552,7 @@ export async function formStep(
   if (!item.effect || !plan || typeof plan !== "object")
     return { fail: SAY_FORMS.noPlan };
   const key = p.effectKey;
-  if (!isKey(key)) return { fail: SAY_FORMS.mismatch };
+  if (!isKey(key) && !isStage4(key)) return { fail: SAY_FORMS.mismatch };
   const card = item.task_id;
   if (
     typeof card !== "string" ||
@@ -347,6 +563,7 @@ export async function formStep(
     return { fail: SAY_FORMS.mismatch };
   if (p.effectId !== undefined && String(p.effectId) !== String(item.effect.id))
     return { fail: SAY_FORMS.mismatch };
+  if (isStage4(key)) return stage4Step(item, key);
   if (key === "todo_comment") {
     const text = plan.comment_text;
     if (
@@ -603,6 +820,159 @@ async function writeDate(
   throw halt("unknown", SAY_FORMS.notBack(label, shortDay(step.day)));
 }
 
+async function writeStatus(
+  x: Ctx & { step: Extract<FormStep, { type: "status" }> },
+): Promise<RequestOutcome> {
+  const { provider, book, step } = x;
+  const resumed = book.get(step.key)?.state === "started";
+  const shows = (card: Row) =>
+    String(card?.status?.status ?? "").toLowerCase() ===
+    step.status.toLowerCase();
+  if (shows(await readCard(x))) {
+    await book.set(step.key, resumed ? "done" : "unchanged");
+    return { state: "delivered", progress: book.progress };
+  }
+  await book.start(step.key);
+  await book.write(() =>
+    provider.call("clickup", "PUT", `task/${step.taskId}`, {
+      status: step.status,
+    }),
+  );
+  if (!shows(await readCard(x))) throw halt("unknown", SAY_FORMS.statusNotBack);
+  await book.set(step.key, "done");
+  return { state: "delivered", progress: book.progress };
+}
+
+/** A dropdown's option id on this card's field, by id or by name; null when ClickUp has no such option. */
+function optionOf(field: Row, f: CardField): string | null {
+  const options: Row[] = Array.isArray(field.type_config?.options)
+    ? field.type_config.options
+    : [];
+  const hit = f.optionId
+    ? options.find(o => String(o.id) === f.optionId)
+    : options.find(o => String(o.name) === f.optionName);
+  return hit ? String(hit.id) : null;
+}
+
+/** Card fields (4.13.3 card_fields, 4.14.3 profile_fields): each field read first, written when it differs, all read back. */
+async function writeFields(
+  x: Ctx & { step: Extract<FormStep, { type: "fields" }> },
+): Promise<RequestOutcome> {
+  const { provider, book, step } = x;
+  const resumed = book.get(step.key)?.state === "started";
+  const card = await readCard(x);
+  const plan: {
+    fieldId: string;
+    kind: string;
+    value: string;
+    label: string;
+  }[] = [];
+  for (const f of step.fields) {
+    const field = fieldOf(card, f.fieldId);
+    if (!field)
+      throw halt(
+        "failed",
+        resumed
+          ? SAY_FORMS.noFieldStarted(f.label)
+          : SAY_FORMS.noField(f.label),
+      );
+    if (f.kind === "drop_down") {
+      const id = optionOf(field, f);
+      if (!id)
+        throw halt(
+          "failed",
+          SAY_FORMS.noFieldOption(f.label, f.optionName ?? f.optionId ?? ""),
+        );
+      plan.push({
+        fieldId: f.fieldId,
+        kind: "select",
+        value: id,
+        label: f.label,
+      });
+    } else
+      plan.push({
+        fieldId: f.fieldId,
+        kind: "text",
+        value: f.value ?? "",
+        label: f.label,
+      });
+  }
+  const due = plan.filter(w => !fieldMatches(card, w.fieldId, w.kind, w.value));
+  if (!due.length) {
+    await book.set(step.key, resumed ? "done" : "unchanged");
+    return { state: "delivered", progress: book.progress };
+  }
+  await book.start(step.key);
+  for (const w of due)
+    await book.write(() =>
+      provider.call(
+        "clickup",
+        "POST",
+        `task/${step.taskId}/field/${w.fieldId}`,
+        {
+          value: w.value,
+        },
+      ),
+    );
+  const back = await readCard(x);
+  const missing = plan.find(
+    w => !fieldMatches(back, w.fieldId, w.kind, w.value),
+  );
+  if (missing)
+    throw halt("unknown", SAY_FORMS.notBack(missing.label, "written"));
+  await book.set(step.key, "done");
+  return { state: "delivered", progress: book.progress };
+}
+
+/** The Onboarding Map at phase 3 or 4, never moved back: a card at that phase or later is kept (4.13.4). */
+async function writeMap(
+  x: Ctx & { step: Extract<FormStep, { type: "map" }> },
+): Promise<RequestOutcome> {
+  const { provider, book, step } = x;
+  const resumed = book.get(step.key)?.state === "started";
+  const label = "Onboarding Map";
+  const field = fieldOf(await readCard(x), step.fieldId);
+  if (!field)
+    throw halt(
+      "failed",
+      resumed ? SAY_FORMS.noFieldStarted(label) : SAY_FORMS.noField(label),
+    );
+  const kept = async (cardPhase: number): Promise<RequestOutcome> => {
+    await book.set(step.key, "skipped", { cardPhase });
+    return {
+      state: "skipped",
+      progress: book.progress,
+      error: SAY_FORMS.mapKept(cardPhase),
+    };
+  };
+  if (String(field.value ?? "").trim() === step.value) {
+    await book.set(step.key, resumed ? "done" : "unchanged");
+    return { state: "delivered", progress: book.progress };
+  }
+  const phase = mapPhaseOf(field.value);
+  if (phase !== null && phase >= step.phase) return kept(phase);
+  await book.start(step.key);
+  await book.write(() =>
+    provider.call(
+      "clickup",
+      "POST",
+      `task/${step.taskId}/field/${step.fieldId}`,
+      {
+        value: step.value,
+      },
+    ),
+  );
+  const backField = fieldOf(await readCard(x), step.fieldId);
+  if (String(backField?.value ?? "").trim() === step.value) {
+    await book.set(step.key, "done");
+    return { state: "delivered", progress: book.progress };
+  }
+  // Another writer moved the map further between the read and the write: it stays.
+  const backPhase = mapPhaseOf(backField?.value);
+  if (backPhase !== null && backPhase > step.phase) return kept(backPhase);
+  throw halt("unknown", SAY_FORMS.notBack(label, `phase ${step.phase}`));
+}
+
 /**
  * executeForm's answer. `error` stays what ClickUp or the step said; `plain` is the sentence the queue row and its
  * effect carry when `error` is ClickUp's own wording, because 3.6 copies the row's error to the effect and the CSM's
@@ -707,11 +1077,24 @@ export async function executeForm(
         progress: book.progress,
         error: SAY_FORMS.stays(step.key, done.cardDay),
       };
+    if (
+      done.state === "skipped" &&
+      typeof done.cardPhase === "number" &&
+      step.type === "map"
+    )
+      return {
+        state: "skipped",
+        progress: book.progress,
+        error: SAY_FORMS.mapKept(done.cardPhase),
+      };
     return { state: "delivered", progress: book.progress };
   }
   try {
     if (step.type === "comment") return await writeComment({ ...x, step });
     if (step.type === "select") return await writeHappiness({ ...x, step });
+    if (step.type === "status") return await writeStatus({ ...x, step });
+    if (step.type === "fields") return await writeFields({ ...x, step });
+    if (step.type === "map") return await writeMap({ ...x, step });
     return await writeDate({ ...x, step });
   } catch (e) {
     if (
@@ -766,9 +1149,38 @@ export async function executeForm(
 }
 
 /** What a held row would write, for the run's planned list: never the comment text. */
+/** The words a held Stage 4 row shows: never a comment's text or a field's value. */
+const STAGE4_WORDS: Record<Stage4Key, string> = {
+  handoff_comment: "Kickoff handoff comment",
+  native_status: "Task status",
+  card_fields: "Card fields",
+  map_phase4: "Onboarding Map",
+  profile_fields: "Client Profile and kickoff link",
+  raw_answers_comment: "Raw onboarding answers comment",
+  map_phase3: "Onboarding Map",
+};
+
 export function planForm(item: FormItem): Row[] {
   const p = item.payload ?? {};
   const key = String(p.effectKey ?? "");
+  if (isStage4(key))
+    return [
+      {
+        queueId: item.id,
+        kind: "form",
+        taskId: item.task_id ?? null,
+        field: STAGE4_WORDS[key],
+        old: null,
+        new:
+          key === "handoff_comment" || key === "raw_answers_comment"
+            ? `${Number(p.commentChars) || 0} characters`
+            : key === "native_status"
+              ? "IN PROGRESS"
+              : key === "map_phase3" || key === "map_phase4"
+                ? `phase ${key === "map_phase3" ? 3 : 4}`
+                : `${Array.isArray(p.fields) ? p.fields.length : 0} fields`,
+      },
+    ];
   return [
     {
       queueId: item.id,
@@ -800,6 +1212,7 @@ export async function formsDoctorChecks(
   inputs: Row,
   provider: Provider,
   onlyCards: string[],
+  forms: readonly string[] = ["checkin"],
 ): Promise<{ problems: string[]; counts: Row }> {
   const problems: string[] = [];
   const dbOptions: Row[] = Array.isArray(inputs?.happinessOptions)
@@ -857,6 +1270,27 @@ export async function formsDoctorChecks(
           );
       }
     }
+    // Stage 4's fields, only while their form is switched on (CLICKUP_WRITEBACK_FORMS_KEYS).
+    const wanted4: [string, string][] = [];
+    if (forms.includes("kickoff"))
+      wanted4.push(
+        ...Object.keys(STAGE4_FIELDS.card_fields).map(
+          id => [id, "kickoff"] as [string, string],
+        ),
+        [MAP_FIELD, "kickoff"],
+      );
+    if (forms.includes("onboarding"))
+      wanted4.push(
+        ...Object.keys(STAGE4_FIELDS.profile_fields).map(
+          id => [id, "onboarding"] as [string, string],
+        ),
+        [MAP_FIELD, "onboarding"],
+      );
+    for (const [id, form] of wanted4)
+      if (!fields.some(x => x.id === id))
+        problems.push(
+          `The ${form} writes a field (${id.slice(0, 8)}) that is not on the Clients - Mahara list.`,
+        );
     for (const key of ["last_poc", "last_checkin_call"] as const) {
       const f = fields.find(x => x.id === FORM_FIELDS[key]);
       if (!f)

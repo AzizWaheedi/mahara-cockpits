@@ -1227,7 +1227,7 @@ describe("dry mode, the keys and the switches", () => {
     );
     const s = readSwitches(path);
     expect(s.error).toBe(
-      "CLIENT_MESSAGES_KINDS names a kind this worker does not send (phase5). Set it to recap_checkin, or recap_checkin,form_invite.",
+      "CLIENT_MESSAGES_KINDS names a kind this worker does not send (phase5). Set it to recap_checkin, or recap_checkin with any of form_invite, phase3 and phase4.",
     );
     expect(s.apply).toBe(false);
     const w = world({ switches: s });
@@ -1798,7 +1798,7 @@ describe("form links (docs/forms/WAVE34-CONTRACT.md 3.9, 4.1.6)", () => {
   });
 
   test("the switches: form links only when CLIENT_MESSAGES_KINDS lists them; a missing line is recaps only", () => {
-    expect(KINDS).toEqual(["recap_checkin", "form_invite"]);
+    expect(KINDS).toEqual(["recap_checkin", "form_invite", "phase3", "phase4"]);
     expect(DEFAULT_KINDS).toEqual(["recap_checkin"]);
     const dir = mkdtempSync(join(tmpdir(), "cm-forms-"));
     const path = join(dir, "switches.env");
@@ -1814,5 +1814,38 @@ describe("form links (docs/forms/WAVE34-CONTRACT.md 3.9, 4.1.6)", () => {
     const r = await runOnce(w.deps);
     expect(r.detail.approved).toBe(0);
     expect(w.names()).not.toContain("claim");
+  });
+});
+
+describe("phase 3 and phase 4 messages (docs/forms/WAVE56-CONTRACT.md 4.13.3, 4.14.3)", () => {
+  const PHASE = "هلا فريق Acme، خلصنا مكالمة الانطلاق. المرحلة الرابعة هني: https://mahara-onboarding-map.vercel.app/?phase=4&cid=86exxxx01";
+  const phaseClaim = { ...claimRow, kind: "phase4", body: PHASE, bodySha256: sha256(PHASE) };
+  const phaseWork = { unknowns: [], unread: [], approved: [{ ...approvedRow, kind: "phase4" }] };
+
+  test("sent like a recap once CLIENT_MESSAGES_KINDS lists the kind, the text as approved, no link minted", async () => {
+    const w = world({
+      switches: { ...APPLY, kinds: ["recap_checkin", "phase3", "phase4"] },
+      work: phaseWork,
+      claim: { busy: false, rows: [phaseClaim] },
+      messages: [{ id: "wamid-test-1", fromMe: true, from: null, body: PHASE, at: null }],
+    });
+    const r = await runOnce(w.deps);
+    expect(w.names()).toEqual(["sweep", "work", "claim", "intent", "result", "result"]);
+    expect(w.sends).toEqual([{ group: G1, body: PHASE }]);
+    expect(r.ok).toBe(true);
+    expect(w.healths[0].note).toBe("Sent one phase 4 message to the client's group (WhatsApp group ending 0001).");
+    const claimed = w.rpcs.find(c => c.name.endsWith("_claim"));
+    expect(claimed?.args.p_kinds).toEqual(["recap_checkin", "phase3", "phase4"]);
+  });
+
+  test("never claimed while the switches do not list it; the switches file takes the phase kinds", async () => {
+    const w = world({ work: phaseWork, claim: { busy: false, rows: [] } });
+    expect((await runOnce(w.deps)).detail.approved).toBe(0);
+    expect(w.names()).not.toContain("claim");
+    const dir = mkdtempSync(join(tmpdir(), "cm-phase-"));
+    const path = join(dir, "switches.env");
+    writeFileSync(path, "CLIENT_MESSAGES_APPLY=true\nCLIENT_MESSAGES_KINDS=recap_checkin,phase4\nCLIENT_MESSAGES_ONLY_CARDS=86eywg1cq\n");
+    expect(readSwitches(path)).toMatchObject({ apply: true, kinds: ["recap_checkin", "phase4"], onlyCards: ["86eywg1cq"], error: null });
+    rmSync(dir, { recursive: true, force: true });
   });
 });
