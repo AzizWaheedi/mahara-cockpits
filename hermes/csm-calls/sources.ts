@@ -384,7 +384,8 @@ export async function checkinCutover(db: Db): Promise<number | null> {
   return at;
 }
 /** Every Typeform response read and matched to a client, before the 1-1 forms are linked to their calls. */
-export type FormsRead = { formRows: Row[]; checkins: Checkin[]; counts: Record<string, Row> };
+/** counts is the Typeform per-form map (FORMS keys only); native is the cockpit's own answers, kept apart (review W34). */
+export type FormsRead = { formRows: Row[]; checkins: Checkin[]; counts: Record<string, Row>; native: Row };
 
 /**
  * Reads every response of every form and matches it to a client. The 1-1 forms' Fathom links go into
@@ -485,9 +486,9 @@ export async function readTypeforms(ctx: Ctx): Promise<FormsRead> {
   // The client's own answers in the cockpit join the same timeline (4.6.5).
   const native = await readNativeForms(ctx);
   formRows.push(...native.rows);
-  counts.native = native.count;
   ctx.plan.typeform = counts;
-  return { formRows, checkins, counts };
+  ctx.plan.native = native.count;
+  return { formRows, checkins, counts, native: native.count };
 }
 
 /**
@@ -497,7 +498,7 @@ export async function readTypeforms(ctx: Ctx): Promise<FormsRead> {
  */
 export async function linkTypeforms(ctx: Ctx, read: FormsRead): Promise<Health[]> {
   const { db } = ctx;
-  const { formRows, checkins, counts } = read;
+  const { formRows, checkins, counts, native } = read;
   const out: Health[] = [];
   // Link each 1-1 form to its call. A form whose Fathom link is a stored recording of the same client
   // belongs under that recording: its booking when the booking is on the card and not gone, else the
@@ -584,15 +585,26 @@ export async function linkTypeforms(ctx: Ctx, read: FormsRead): Promise<Health[]
     note: `${ck.stored} of ${ck.total} 1-1 forms stored, ${ck.matched} matched to a client (${ck.byMethod.hidden_field ?? 0} by the client page's link, ${ck.byMethod.typed_task_id ?? 0} by the typed ID${ck.byMethod.manual ? `, ${ck.byMethod.manual} by hand` : ""}; ${toRecording} linked to their recording, ${linked} to a booked check-in, ${own.length} on their own), ${ck.unmatched} with no client link and no typed ID on the board${ck.disagree ? `, ${ck.disagree} where the link and the typed ID differ` : ""}. Newest ${String(ck.newest).slice(0, 10)}.${lateNote}`,
     detail: { ...ck, linked, toRecording, ownCalls: own.length },
   });
-  const others = Object.entries(counts).filter(([f]) => f !== "fRokTITH");
+  // Typeform forms only: an entry with no FORMS label (such as a native count) would make rows NaN.
+  const others = Object.entries(counts).filter(([f]) => f !== "fRokTITH" && f in FORMS);
   out.push({
     key: "csm-forms-history",
     ok: true,
-    rows: others.reduce((n, [, c]) => n + c.stored, 0),
-    note: others.map(([f, c]) => `${FORMS[f]} ${c.stored}/${c.total} (${c.matched} matched)`).join(", ") + ".",
-    detail: Object.fromEntries(others),
+    rows: others.reduce((n, [, c]) => n + (Number(c.stored) || 0), 0) + (Number(native?.total) || 0),
+    note: `${others.map(([f, c]) => `${FORMS[f]} ${c.stored}/${c.total} (${c.matched} matched)`).join(", ")}.${nativeNote(native)}`,
+    detail: { ...Object.fromEntries(others), native },
   });
   return out;
+}
+
+const NATIVE_NAMES: Record<string, string> = { nps: "NPS", csat: "onboarding survey", portal_feedback: "portal feedback" };
+
+/** The cockpit's own answers in one plain sentence for the csm-forms-history note. */
+function nativeNote(native: Row | undefined): string {
+  if (!native) return "";
+  if (native.skipped) return ` The client's own forms in the cockpit are not read yet: ${native.skipped}`;
+  const parts = Object.entries((native.byForm ?? {}) as Record<string, number>).map(([k, n]) => `${n} ${NATIVE_NAMES[k] ?? k}`);
+  return ` The client's own forms in the cockpit: ${native.total} ${native.total === 1 ? "answer" : "answers"} stored, ${native.onBoard} on a client card${parts.length ? ` (${parts.join(", ")})` : ""}.`;
 }
 
 /** Read and link in one go, for a run of the Typeform source alone (worker.ts runs the Fathom source in between). */

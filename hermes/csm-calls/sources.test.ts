@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { meetingRow } from "./fathomRules.ts";
-import { type Db, ProviderError, type Transport } from "./lib";
+import { type Db, type Health, ProviderError, type Transport } from "./lib";
 import type { Client, Row } from "./match";
 import {
   type Ctx,
@@ -1262,8 +1262,33 @@ describe("readTypeforms: the client's own NPS, onboarding survey and portal feed
     ]);
     expect(native[1].answers).toEqual([{ ref: "onboarding", type: "opinion_scale", title: "How would you rate getting started with Mahara?", value: 6 }]);
     expect(native.every(r => r.recording_url === null && JSON.stringify(r.hidden) === "{}")).toBe(true);
-    expect(read.counts.native).toEqual({ total: 3, onBoard: 3, byForm: { nps: 1, csat: 1, portal_feedback: 1 } });
+    expect(read.native).toEqual({ total: 3, onBoard: 3, byForm: { nps: 1, csat: 1, portal_feedback: 1 } });
+    // The Typeform per-form map holds Typeform forms only (review W34: counts.native broke csm-forms-history).
+    expect(Object.keys(read.counts).every(f => f in FORMS)).toBe(true);
     expect(read.checkins.some(c => String(c.row.token).startsWith("cockpit:"))).toBe(false);
+  });
+
+  test("csm-forms-history counts the Typeform forms and says the cockpit's own answers in a sentence of their own", async () => {
+    const fake = store(seedOf({ cockpit_settings: [{ key: "forms.doors", value: { voice: true } }], cockpit_form_responses: answers }));
+    const healths = await typeformSource(ctxOf(fake, emptyTypeform));
+    const history = healths.find(h => h.key === "csm-forms-history") as Health;
+    expect(history.rows).toBe(3);
+    expect(Number.isInteger(history.rows)).toBe(true);
+    expect(history.note).not.toContain("undefined");
+    expect(history.note).toBe(
+      "onboarding 0/0 (0 matched), kickoff 0/0 (0 matched), kickoff_old 0/0 (0 matched), blueprint 0/0 (0 matched), exit_survey 0/0 (0 matched)." +
+        " The client's own forms in the cockpit: 3 answers stored, 3 on a client card (1 NPS, 1 onboarding survey, 1 portal feedback).",
+    );
+    expect(history.detail.native).toEqual({ total: 3, onBoard: 3, byForm: { nps: 1, csat: 1, portal_feedback: 1 } });
+  });
+
+  test("before 20261102c is live csm-forms-history still counts a number and says why the cockpit's answers are not read", async () => {
+    const fake = store(seedOf({ cockpit_settings: [{ key: "forms.doors", value: { money: true } }], cockpit_form_responses: answers }));
+    const healths = await typeformSource(ctxOf(fake, emptyTypeform));
+    const history = healths.find(h => h.key === "csm-forms-history") as Health;
+    expect(history.rows).toBe(0);
+    expect(history.note).not.toContain("undefined");
+    expect(history.note).toContain(" The client's own forms in the cockpit are not read yet: Client voice is not live yet (20261102c).");
   });
 
   test("before 20261102c is live nothing native is read or written, and the count says why", async () => {

@@ -366,9 +366,13 @@ COMMENT ON FUNCTION public.cockpit_exit_survey_native_ratings(jsonb) IS
 -- The card's latest pause consent and what it allows (contract 4.3.4).
 --   state none         no consent sent, the latest was withdrawn, or a pause has used it
 --         sent         out to the client, not answered yet
---         signed       answered in the last 14 days, dates not marked wrong, no pause after it
---         dates_wrong  the client says the dates are wrong (in the last 14 days)
---         expired      the invite ended unanswered, or it was signed over 14 days ago
+--         signed       answered within its 14 days, dates not marked wrong, no pause after it
+--         dates_wrong  the client says the dates are wrong (within its 14 days)
+--         expired      the invite ended unanswered, or its 14 days are over
+-- A signed consent's 14 days run from the later of the signing time and the
+-- start the client signed (Kuwait midnight of that day): a start up to 14 days
+-- out (the issue rule) waits for its day, and the CSM still has 14 days from
+-- it to confirm.
 -- via is portal or link; signer is "the client admin" in the portal, the typed
 -- name on the link (the screens show it so the CSM can check it). Canary
 -- invites and their shadow answers count only for the test card 86eywg1cq,
@@ -381,6 +385,7 @@ DECLARE
   r public.cockpit_form_responses;
   v_state text;
   v_used boolean;
+  v_from timestamptz;
 BEGIN
   IF p_task_id IS NULL OR p_task_id !~ '^[A-Za-z0-9_-]{1,40}$' THEN
     RAISE EXCEPTION 'That is not a ClickUp card id.' USING ERRCODE = '22023';
@@ -403,8 +408,10 @@ BEGIN
     v_used := EXISTS (SELECT 1 FROM public.cockpit_billing_events e
                        WHERE e.clickup_task_id = p_task_id AND e.kind = 'pause' AND e.at > r.submitted_at
                          AND NOT EXISTS (SELECT 1 FROM public.cockpit_billing_event_voids v WHERE v.event_id = e.id));
+    v_from := greatest(r.submitted_at,
+                       (public.cockpit_billing_day(i.context->>'start')::timestamp AT TIME ZONE 'Asia/Kuwait'));
     v_state := CASE WHEN v_used THEN 'none'
-                    WHEN r.submitted_at <= now() - interval '14 days' THEN 'expired'
+                    WHEN v_from <= now() - interval '14 days' THEN 'expired'
                     WHEN r.answers->'datesWrong' = 'true'::jsonb THEN 'dates_wrong'
                     ELSE 'signed' END;
   ELSE
@@ -428,7 +435,7 @@ BEGIN
     'datesNote', CASE WHEN r.answers->'datesWrong' = 'true'::jsonb THEN left(r.answers->>'datesNote', 2000) END);
 END $$;
 COMMENT ON FUNCTION public.cockpit_pause_consent_for(text) IS
-  'The card''s latest pause consent (contract 4.3.4): {state none|sent|signed|dates_wrong|expired, inviteId, sentAt, expiresAt, responseId, signedAt (Kuwait, +03:00), via portal|link, signer (the client admin, or the typed name), start, restart, over14, datesNote}. signed: answered within 14 days, dates not marked wrong, no unvoided pause after it. Canary consents count only for the test card. Read by cockpit_billing_write and cockpit_form_prefill (20261102b).';
+  'The card''s latest pause consent (contract 4.3.4): {state none|sent|signed|dates_wrong|expired, inviteId, sentAt, expiresAt, responseId, signedAt (Kuwait, +03:00), via portal|link, signer (the client admin, or the typed name), start, restart, over14, datesNote}. signed: within 14 days of the later of the signing and the signed start, dates not marked wrong, no unvoided pause after it. Canary consents count only for the test card. Read by cockpit_billing_write and cockpit_form_prefill (20261102b).';
 
 -- A hook's notice (contract 3.4, 3.10): queued as every notice is; a
 -- canary's goes straight on to muted with its reason (a notice is always

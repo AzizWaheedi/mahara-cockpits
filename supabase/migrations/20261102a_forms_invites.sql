@@ -50,7 +50,7 @@ BEGIN
       ('public.cockpit_slack_notice_rehearse(text)', '20cab5786b0a54be30f88fcaa5f1931f', '2ea83a6770947fce31d587f214d16817'),
       ('public.cockpit_slack_notice_rehearse_service(text,text)', '4cfbc884fe8c2c6946f09d818fa7be17', '044ba3be2c44da6d6ebe8fa73f20d5d8'),
       ('public.cockpit_slack_notice_read(text)', 'cfdcb4241f40a4452d50219f3ba11291', '56e3035431a069a6f4d2f74b3425a267'),
-      ('public.cockpit_client_message_approve(uuid,text,text,uuid,text[])', '528d7d0f273333ed734480ed947211c2', 'fb2f912ad15d3f6e0c0baa355a1e0da5'),
+      ('public.cockpit_client_message_approve(uuid,text,text,uuid,text[])', '528d7d0f273333ed734480ed947211c2', '2de20d1e0f44a1e379e5b57848d6a8e0'),
       ('public.cockpit_client_message_claim(text[],text[],integer)', '66c32c23fa588801b2cccbd3ec6e5f40', '937293e8d0421580fc47f8341ff9cae2'),
       ('public.cockpit_client_message_view(public.cockpit_client_messages)', '3f04490fe00e1d627896c21a4530e1f2', '5145dbe3460c3947c82c8420871581ef'),
       ('public.cockpit_form_effect_gate(text,text)', 'e498f48795c2644fb037df056828c736', 'c679cd114e6aa8d5e2dccbfb4207d1c8'),
@@ -1536,8 +1536,13 @@ BEGIN
         WHEN 'sent' THEN 'This ' || v_word || ' was already sent.'
         WHEN 'skipped' THEN 'This ' || v_word || ' was skipped. Nothing was sent.'
         WHEN 'unknown' THEN 'This ' || v_word || ' may already be in the group. Look in the group; the tech lead settles it.'
-        WHEN 'refused' THEN 'Reopen this ' || v_word || ' first, then approve it.'
-        WHEN 'failed' THEN 'Reopen this ' || v_word || ' first, then approve it.'
+        -- A form link has no reopen (the Messages card hides it, and a reopened row meets its first link).
+        WHEN 'refused' THEN CASE WHEN m.kind = 'form_invite'
+                                 THEN 'This message was not sent. Withdraw the form and send it again from Send a form.'
+                                 ELSE 'Reopen this ' || v_word || ' first, then approve it.' END
+        WHEN 'failed' THEN CASE WHEN m.kind = 'form_invite'
+                                THEN 'This message was not sent. Withdraw the form and send it again from Send a form.'
+                                ELSE 'Reopen this ' || v_word || ' first, then approve it.' END
         ELSE 'This ' || v_word || ' is being sent now.' END
       USING ERRCODE = '22023';
   END IF;
@@ -2019,9 +2024,11 @@ BEGIN
   RETURN jsonb_build_object('hook', v_hook);
 END $$;
 
--- A link has left the cockpit (the WhatsApp worker minted it for the send,
--- or a seat copied it): the form's link hook, when 20261102c makes one
--- (NPS Survey Sent for an invite with no portal channel waits for this).
+-- A link has left the cockpit (a seat copied it, or the invite's WhatsApp
+-- message was sent: cockpit_form_invite_message_sent, never the worker's
+-- mint, since a send can still fail after it): the form's link hook, when
+-- 20261102c makes one (NPS Survey Sent for an invite with no portal channel
+-- waits for this).
 -- Caught like an answer hook: a raise writes hook_failed and the link still
 -- goes, since the send must not depend on a card field.
 CREATE OR REPLACE FUNCTION public.cockpit_form_client_link_out(p_invite_id uuid)
@@ -2123,8 +2130,11 @@ BEGIN
      AND public.cockpit_form_card_allows(p_invite.task_id, p_invite.form_key) IS NULL;
 END $$;
 
--- The portal's workspace check (3.3): ids well formed and one open
--- workspace with both, else form_invite_not_in_workspace (the portal's 403).
+-- The portal's workspace check (3.3): ids well formed, one open workspace
+-- with both, and no other open workspace carrying the card (the issue path
+-- refuses the portal then too), else form_invite_not_in_workspace (the
+-- portal's 403). Each portal read and answer also requires the invite's own
+-- location_id, so a second workspace on the card never sees another's.
 CREATE OR REPLACE FUNCTION public.cockpit_form_portal_workspace(p_location_id text, p_clickup_id text)
 RETURNS void LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
@@ -2134,9 +2144,34 @@ BEGIN
   END IF;
   IF (SELECT count(*) FROM portal_data.workspaces w
        WHERE w.location_id = p_location_id AND w.clickup_id = p_clickup_id
-         AND w.status NOT IN ('Cancelled','Removed from sheet')) <> 1 THEN
+         AND w.status NOT IN ('Cancelled','Removed from sheet')) <> 1
+     OR (SELECT count(*) FROM portal_data.workspaces w
+          WHERE w.clickup_id = p_clickup_id AND w.status NOT IN ('Cancelled','Removed from sheet')) <> 1 THEN
     RAISE EXCEPTION 'form_invite_not_in_workspace' USING ERRCODE = '42501';
   END IF;
+END $$;
+
+-- The invite's context as a client may see it (3.3): only the facts the
+-- schema declares, the keys its boldIf lines read, and over14. Anything
+-- else the cockpit keeps on the invite (the call id, the reason category)
+-- stays in the cockpit.
+CREATE OR REPLACE FUNCTION public.cockpit_form_client_context(p_invite public.cockpit_form_invites)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE s jsonb := public.cockpit_form_invite_schema(p_invite); v_keys text[];
+BEGIN
+  SELECT coalesce(array_agg(k), '{}') INTO v_keys FROM (
+    SELECT c->>'key' AS k
+      FROM jsonb_array_elements(CASE WHEN jsonb_typeof(s->'context') = 'array' THEN s->'context' ELSE '[]'::jsonb END) c
+     WHERE jsonb_typeof(c) = 'object'
+    UNION
+    SELECT f->'boldIf'->>'context'
+      FROM jsonb_array_elements(CASE WHEN jsonb_typeof(s->'fields') = 'array' THEN s->'fields' ELSE '[]'::jsonb END) f
+     WHERE jsonb_typeof(f) = 'object' AND jsonb_typeof(f->'boldIf') = 'object'
+    UNION
+    SELECT 'over14') u WHERE k IS NOT NULL;
+  RETURN coalesce((SELECT jsonb_object_agg(e.key, e.value)
+                     FROM jsonb_each(CASE WHEN jsonb_typeof(p_invite.context) = 'object' THEN p_invite.context ELSE '{}'::jsonb END) e
+                    WHERE e.key = ANY(v_keys)), '{}'::jsonb);
 END $$;
 
 -- One invite as the cockpit shows it (InviteRow, 3.3). Roles, never addresses.
@@ -2789,7 +2824,8 @@ BEGIN
     RETURN jsonb_build_object('invite', NULL, 'reason', 'shown_today');
   END IF;
   FOR i IN SELECT * FROM public.cockpit_form_invites x
-            WHERE x.task_id = p_clickup_id AND (p_invite_id IS NULL OR x.id = p_invite_id)
+            WHERE x.task_id = p_clickup_id AND x.location_id IS NOT DISTINCT FROM p_location_id
+              AND (p_invite_id IS NULL OR x.id = p_invite_id)
             ORDER BY x.issued_at, x.id LOOP
     CONTINUE WHEN NOT public.cockpit_form_portal_visible(i, p_access_role);
     v_any := true;
@@ -2814,7 +2850,7 @@ BEGIN
                                            'answeredAt', x.answered_at)
                      ORDER BY x.issued_at, x.id)
       FROM public.cockpit_form_invites x
-     WHERE x.task_id = p_clickup_id AND x.origin <> 'canary'
+     WHERE x.task_id = p_clickup_id AND x.location_id IS NOT DISTINCT FROM p_location_id AND x.origin <> 'canary'
        AND (public.cockpit_form_portal_visible(x, p_access_role)
             OR (x.state = 'answered' AND x.answered_at > now() - interval '7 days' AND 'portal' = ANY(x.channels)
                 AND (x.audience = 'any' OR p_access_role = 'admin')))), '[]'::jsonb));
@@ -2832,7 +2868,7 @@ BEGIN
   IF i.id IS NULL OR i.origin = 'canary' THEN
     RETURN jsonb_build_object('reason', 'not_found');
   END IF;
-  IF i.task_id <> p_clickup_id THEN
+  IF i.task_id <> p_clickup_id OR i.location_id IS DISTINCT FROM p_location_id THEN
     RAISE EXCEPTION 'form_invite_not_in_workspace' USING ERRCODE = '42501';
   END IF;
   v_state := public.cockpit_form_invite_state(i);
@@ -2847,7 +2883,8 @@ BEGIN
     PERFORM public.cockpit_form_invite_event(i.id, 'portal', 'opened', v_person, '{}'::jsonb);
   END IF;
   RETURN jsonb_build_object('invite', public.cockpit_form_portal_invite(i)
-    || jsonb_build_object('schema', public.cockpit_form_invite_schema(i), 'context', i.context, 'state', 'open'));
+    || jsonb_build_object('schema', public.cockpit_form_invite_schema(i), 'context', public.cockpit_form_client_context(i),
+                          'state', 'open'));
 END $$;
 
 -- What a person did with the pop-up: shown, opened, later.
@@ -2862,7 +2899,7 @@ BEGIN
   PERFORM public.cockpit_form_portal_workspace(p_location_id, p_clickup_id);
   IF jsonb_typeof(p_detail->'via') = 'string' AND p_detail->>'via' = 'push' THEN v_detail := '{"via":"push"}'::jsonb; END IF;
   SELECT * INTO i FROM public.cockpit_form_invites x WHERE x.id = p_invite_id;
-  IF i.id IS NULL OR i.task_id <> p_clickup_id THEN
+  IF i.id IS NULL OR i.task_id <> p_clickup_id OR i.location_id IS DISTINCT FROM p_location_id THEN
     RAISE EXCEPTION 'form_invite_not_in_workspace' USING ERRCODE = '42501';
   END IF;
   IF public.cockpit_form_invite_state(i) <> 'open' THEN
@@ -2952,7 +2989,7 @@ BEGIN
   END IF;
   PERFORM public.cockpit_form_invites_expire();
   SELECT * INTO i FROM public.cockpit_form_invites x WHERE x.id = p_invite_id FOR UPDATE;
-  IF i.id IS NULL OR i.task_id <> p_clickup_id OR i.origin = 'canary' THEN
+  IF i.id IS NULL OR i.task_id <> p_clickup_id OR i.location_id IS DISTINCT FROM p_location_id OR i.origin = 'canary' THEN
     RAISE EXCEPTION 'form_invite_not_in_workspace' USING ERRCODE = '42501';
   END IF;
   -- A retry of the same request returns the first answer.
@@ -3058,7 +3095,8 @@ BEGIN
     PERFORM public.cockpit_form_invite_event(i.id, 'token', 'opened', NULL, jsonb_build_object('channel', v->>'channel'));
   END IF;
   RETURN jsonb_build_object('ok', true, 'invite', public.cockpit_form_portal_invite(i)
-    || jsonb_build_object('schema', public.cockpit_form_invite_schema(i), 'context', i.context, 'clientName', i.client_name,
+    || jsonb_build_object('schema', public.cockpit_form_invite_schema(i), 'context', public.cockpit_form_client_context(i),
+                          'clientName', i.client_name,
                           'signer', public.cockpit_form_invite_schema(i)->>'signer'));
 END $$;
 
@@ -3282,10 +3320,27 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'reason', 'already_made');
   END;
   PERFORM public.cockpit_form_invite_event(i.id, 'worker', 'link_sent', NULL, jsonb_build_object('messageId', m.id));
-  PERFORM public.cockpit_form_client_link_out(i.id);
   PERFORM set_config('cockpit.forms_action', '', true);
   RETURN jsonb_build_object('ok', true, 'url', 'https://portal.maharamedia.com/f#' || v_token);
 END $$;
+
+-- A form_invite message moved to sent (the worker's sent, a reconcile or
+-- read-back, or a person's fix of an unknown send): the link has left, so
+-- the form's link hook runs (NPS Survey Sent). A failed, refused or skipped
+-- message never gets here. link_out catches a hook's raise, so the send's
+-- own write never depends on a card field.
+CREATE OR REPLACE FUNCTION public.cockpit_form_invite_message_sent()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  IF NEW.kind = 'form_invite' AND NEW.invite_id IS NOT NULL AND NEW.state = 'sent'
+     AND OLD.state IS DISTINCT FROM 'sent' THEN
+    PERFORM public.cockpit_form_client_link_out(NEW.invite_id);
+  END IF;
+  RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS cockpit_form_invite_message_sent ON public.cockpit_client_messages;
+CREATE TRIGGER cockpit_form_invite_message_sent AFTER UPDATE OF state ON public.cockpit_client_messages
+  FOR EACH ROW EXECUTE FUNCTION public.cockpit_form_invite_message_sent();
 
 -- The only switch for clients to see a form (1.4, V5), owner only (deploy).
 -- On: the newest v1 version must pass the schema check and the text rule;
@@ -3604,6 +3659,7 @@ REVOKE ALL ON FUNCTION
   public.cockpit_form_client_link_out(uuid),
   public.cockpit_form_portal_invite(public.cockpit_form_invites),
   public.cockpit_form_portal_visible(public.cockpit_form_invites,text), public.cockpit_form_portal_workspace(text,text),
+  public.cockpit_form_client_context(public.cockpit_form_invites),
   public.cockpit_form_invite_row(public.cockpit_form_invites), public.cockpit_form_invite_build_view(text,text),
   public.cockpit_form_invite_issue_core(text,text,text[],text,text,boolean,jsonb,uuid,text,jsonb),
   public.cockpit_form_invite_seat(text),
@@ -3621,7 +3677,8 @@ REVOKE ALL ON FUNCTION
   public.portal_form_preview(text,boolean), public.portal_form_invites_push_claim(integer),
   public.portal_form_invite_push_done(uuid,text,text,jsonb), public.portal_form_invite_display(text,text,uuid,text,text),
   public.portal_form_presence_put(jsonb),
-  public.cockpit_client_message_invite_link(uuid,uuid), public.cockpit_form_client_go_live(text,boolean,text),
+  public.cockpit_client_message_invite_link(uuid,uuid), public.cockpit_form_invite_message_sent(),
+  public.cockpit_form_client_go_live(text,boolean,text),
   public.cockpit_form_invite_issue_system(text,text,text[],jsonb,text), public.cockpit_form_invite_canary(text,jsonb,text[])
   FROM PUBLIC, anon, authenticated, service_role;
 

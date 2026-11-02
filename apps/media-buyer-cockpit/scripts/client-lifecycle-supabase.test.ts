@@ -1831,7 +1831,11 @@ describe("pause consent and Confirm pause (contract 4.3)", () => {
       expect((await refusal(() => send())).message).toBe(
         "Send the pause consent from this sheet, then confirm once the client signs.",
       );
-      // Signed 15 days ago: too old.
+      // Sent and signed 15 days ago, for a start that day: too old.
+      await q(
+        "UPDATE cockpit_form_invites SET issued_at = now() - interval '15 days', context = context || jsonb_build_object('start', $2::text) WHERE id = $1::uuid",
+        [i1, dayFrom(today, -15)],
+      );
       const old = await answer(i1, SIGNED, {
         at: new Date(Date.now() - 15 * 86_400_000).toISOString(),
       });
@@ -2380,6 +2384,63 @@ describe("pause consent and Confirm pause (contract 4.3)", () => {
           ])
         ).state,
       ).toBe("none");
+    });
+  });
+
+  test("a start 14 days out signed on the issue day: the consent confirms on the start day after the signing hour, and runs out 14 days after the start", async () => {
+    await rolledBack(async () => {
+      await goLive(["pause_consent"]);
+      const today = await kuwaitToday();
+      const restart = dayFrom(today, 30);
+      const call = await callOn(A);
+      const consent = () =>
+        one<Row>("SELECT public.cockpit_pause_consent_for($1) AS r", [A]);
+      // Issued and signed 14 days ago (an hour past today's clock) for a start of that day + 14, which is today.
+      const i = await issue(A, "pause_consent", {
+        start: today,
+        restart,
+        over14: true,
+        reasonCat: "client_asked",
+        callId: call,
+      });
+      await q(
+        "UPDATE cockpit_form_invites SET issued_at = now() - interval '14 days 2 hours', expires_at = now() - interval '2 hours' WHERE id = $1::uuid",
+        [i],
+      );
+      const signed = await answer(i, SIGNED, {
+        at: new Date(Date.now() - (14 * 24 + 1) * 3_600_000).toISOString(),
+      });
+      expect(await consent()).toMatchObject({
+        state: "signed",
+        responseId: signed,
+        start: today,
+        restart,
+      });
+      // The same consent seen 14 days later (its start 14 days ago, signed 28 days ago): run out.
+      await q(
+        "UPDATE cockpit_form_invites SET context = context || jsonb_build_object('start', $2::text) WHERE id = $1::uuid",
+        [i, dayFrom(today, -14)],
+      );
+      await q(
+        "UPDATE cockpit_form_responses SET submitted_at = submitted_at - interval '14 days' WHERE id = $1::uuid",
+        [signed],
+      );
+      expect((await consent()).state).toBe("expired");
+      // Back on the start day: Confirm pause takes it.
+      await q(
+        "UPDATE cockpit_form_invites SET context = context || jsonb_build_object('start', $2::text) WHERE id = $1::uuid",
+        [i, today],
+      );
+      await q(
+        "UPDATE cockpit_form_responses SET submitted_at = submitted_at + interval '14 days' WHERE id = $1::uuid",
+        [signed],
+      );
+      const out = await pause(
+        CSM_A,
+        pauseEdit(A, restart, call, { consentResponseId: signed }),
+      );
+      expect(out.client_status).toBe("Paused");
+      expect((await consent()).state).toBe("none");
     });
   });
 

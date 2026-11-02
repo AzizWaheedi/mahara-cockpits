@@ -148,8 +148,9 @@ export const CARD_NO_FIELDS = "ClickUp answered without the card's fields.";
 /** A form link already minted for this message may be in the group: never sent twice. */
 export const LINK_ALREADY_MADE =
   "The link for this message was already made, so it may already be in the group. Look in the group; the tech lead settles it.";
+/** No reopen: the Messages card hides form_invite rows, and a reopened row meets already_made (review W34). */
 export const LINK_NOT_MADE =
-  "The form link could not be made, so nothing was sent. Reopen the message in the cockpit to try again.";
+  "The form link could not be made, so nothing was sent. Withdraw the form and send it again from Send a form.";
 export const LINK_FORM_CLOSED =
   "The form was answered, withdrawn or ran out before its link was made, so nothing was sent.";
 /** The one shape a minted link has (3.6). */

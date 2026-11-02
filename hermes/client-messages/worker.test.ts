@@ -1761,6 +1761,10 @@ describe("form links (docs/forms/WAVE34-CONTRACT.md 3.9, 4.1.6)", () => {
     expect(crash.sends).toEqual([]);
     expect(crash.rpcs.at(-1)?.args).toMatchObject({ p_outcome: "failed", p_reason: LINK_NOT_MADE });
     expect(r.ok).toBe(false);
+    // The cockpit hides form_invite rows from the Messages card, so the failed text points at the path a CSM has
+    // (review W34): withdraw, then Send a form. A reopened row would only meet already_made and turn unknown.
+    expect(LINK_NOT_MADE).toBe("The form link could not be made, so nothing was sent. Withdraw the form and send it again from Send a form.");
+    expect(LINK_NOT_MADE).not.toContain("Reopen");
     const odd = world({ switches: BOTH, work: inviteWork, claim: { busy: false, rows: [inviteClaim] }, inviteLink: { ok: true, url: "https://evil.example/f#x" } });
     await runOnce(odd.deps);
     expect(odd.sends).toEqual([]);

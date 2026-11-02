@@ -203,8 +203,12 @@ What the run says, and what to do:
 - `The form was answered, withdrawn or ran out before its link was made, so nothing was sent.`
   The row is `failed` and nothing reached the group. Nothing to do: the form
   is closed. Skip it on the Messages card.
-- `The form link could not be made, so nothing was sent. Reopen the message in the cockpit to try again.`
-  The row is `failed`; reopen it, approve it again.
+- `The form link could not be made, so nothing was sent. Withdraw the form and send it again from Send a form.`
+  The row is `failed` and nothing reached the group. On the client page,
+  withdraw the form (or press Send again, which withdraws the old one), then
+  send it from Send a form. Never reopen a `form_invite` row: the Messages card
+  does not show it, and a reopened row finds its link already made and turns
+  `unknown`.
 
 A client says the link does not work: it ends at 14 days, at the first answer
 (from the portal or any link), on withdraw, and when the form is switched off.

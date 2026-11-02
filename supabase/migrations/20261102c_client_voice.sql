@@ -293,8 +293,9 @@ $$;
 -- 6. The hooks (V19), called by 20261102a's dispatchers when they exist
 
 -- NPS Survey Sent through the billing rails (kind nps_sent, 20261102b), once per invite, on the day the survey
--- reached the client: the issue day for an invite with a portal channel, the day its link left the cockpit for an
--- invite without one (a WhatsApp draft never approved, refused or failed sends nothing, so it writes nothing).
+-- reached the client: the issue day for an invite with a portal channel; for an invite without one, the day a seat
+-- copied its link or the day its WhatsApp message was sent (the message moving to sent, 20261102a's trigger), never
+-- the worker's link mint. A WhatsApp draft never approved, refused, or failed at the provider writes nothing.
 -- A canary invite's event is by_whom 'canary', so the deploy voids it by record after the read-back (3.10).
 CREATE OR REPLACE FUNCTION public.cockpit_form_nps_sent_write(p_invite_id uuid, p_on date)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
@@ -339,12 +340,16 @@ BEGIN
   END IF;
 END $$;
 
--- NPS link out (20261102a's cockpit_form_client_link_out): the WhatsApp worker minted the link for the send, or a
--- seat copied it. Writes NPS Survey Sent for an invite that has none yet (once per invite).
+-- NPS link out (20261102a's cockpit_form_client_link_out): a seat copied the link, or the invite's WhatsApp message
+-- was sent. Writes NPS Survey Sent for an invite that has none yet (once per invite), on the message's sent day when
+-- there is one (a person's fix of an unknown send keeps the attempt's time), else today.
 CREATE OR REPLACE FUNCTION public.cockpit_form_link_hook_nps(p_invite_id uuid)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE v_at timestamptz;
 BEGIN
-  PERFORM public.cockpit_form_nps_sent_write(p_invite_id, public.cockpit_form_kuwait_day(now()));
+  SELECT max(m.sent_at) INTO v_at FROM public.cockpit_client_messages m
+   WHERE m.invite_id = p_invite_id AND m.kind = 'form_invite' AND m.state = 'sent';
+  PERFORM public.cockpit_form_nps_sent_write(p_invite_id, public.cockpit_form_kuwait_day(coalesce(v_at, now())));
 END $$;
 
 -- CSAT issued: the try (earlier CSAT invites of the card + 1).
@@ -673,13 +678,20 @@ BEGIN
                          AND i.state = 'open' AND i.expires_at > v_now) THEN
           v_skip := public.cockpit_form_schedule_bump(v_skip, 'open');
         ELSE
-          -- Only an invite that reached the client counts: a portal channel, an answer, or a link that left the
-          -- cockpit. A WhatsApp-only invite closed with its draft never sent does not restart the clock.
+          -- An invite counts when it reached the client (a portal channel, an answer, a copied link, or a WhatsApp
+          -- message that sent or may have sent) or when a seat withdrew it (V26: the person's decision holds the
+          -- clock; 'Sent again' does not, its new invite counts on its own). A WhatsApp-only invite whose draft was
+          -- never sent, refused or failed and then ran out does not restart the clock.
           SELECT max(i.issued_at) INTO v_newest FROM public.cockpit_form_invites i
            WHERE i.task_id = c.task AND i.form_key = 'nps' AND i.origin <> 'canary'
              AND ('portal' = ANY(i.channels) OR i.state = 'answered'
                   OR EXISTS (SELECT 1 FROM public.cockpit_form_invite_events e
-                              WHERE e.invite_id = i.id AND e.event IN ('link_sent','link_made') AND e.source <> 'push'));
+                              WHERE e.invite_id = i.id AND e.event = 'link_made' AND e.source <> 'push')
+                  OR EXISTS (SELECT 1 FROM public.cockpit_client_messages m
+                              WHERE m.invite_id = i.id AND m.kind = 'form_invite' AND m.state IN ('sent','unknown'))
+                  OR EXISTS (SELECT 1 FROM public.cockpit_form_invite_events e
+                              WHERE e.invite_id = i.id AND e.event = 'withdrawn' AND coalesce(e.detail->>'by', '') = 'seat'
+                                AND coalesce(nullif(e.detail->>'reason', ''), i.closed_reason, '') !~* '(^|:\s*)sent again\.?\s*$'));
           IF v_newest IS NOT NULL AND v_today - public.cockpit_form_kuwait_day(v_newest) < n_every THEN
             v_skip := public.cockpit_form_schedule_bump(v_skip, 'tooSoon');
           ELSE

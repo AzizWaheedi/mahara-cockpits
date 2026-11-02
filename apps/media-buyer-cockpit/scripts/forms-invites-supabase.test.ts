@@ -3316,3 +3316,181 @@ describe("the six notice kinds", () => {
     });
   });
 });
+
+describe("pre-deploy review fixes (W34)", () => {
+  const list = (loc: string, task = A, person = ADMIN_P, role = "admin") =>
+    as<Row>("service", "SELECT public.portal_form_list($1,$2,$3,$4) AS r", [
+      loc,
+      task,
+      person,
+      role,
+    ]);
+  const get = (loc: string, invite: string, task = A, role = "admin") =>
+    as<Row>(
+      "service",
+      "SELECT public.portal_form_get($1,$2,$3,$4,$5::uuid) AS r",
+      [loc, task, ADMIN_P, role, invite],
+    );
+
+  test("a second open workspace on the card stops every portal read; a workspace that is not the invite's never sees or answers it", async () => {
+    await rolledBack(async () => {
+      await golive("nps");
+      const v = await issue(CSM_A, A, "nps", ["portal"]);
+      expect(
+        (await list("locA")).forms.map((f: Row) => f.id),
+      ).toEqual([v.inviteId]);
+      // A sheet mistake points a second open workspace at the same card: the card is no longer one workspace's.
+      await q(
+        "INSERT INTO portal_data.workspaces VALUES ('locA2', $1, 'Another client', 'Active', NULL)",
+        [A],
+      );
+      for (const loc of ["locA", "locA2"]) {
+        expect((await refusal(() => list(loc))).message).toBe(
+          "form_invite_not_in_workspace",
+        );
+        expect((await refusal(() => get(loc, v.inviteId))).message).toBe(
+          "form_invite_not_in_workspace",
+        );
+        expect(
+          (await refusal(() => forPerson(ADMIN_P, null, "admin", loc))).message,
+        ).toBe("form_invite_not_in_workspace");
+      }
+      // The first workspace closes: the second is now the card's only one, but the invite is still the first's.
+      await q(
+        "UPDATE portal_data.workspaces SET status = 'Cancelled' WHERE location_id = 'locA'",
+      );
+      expect((await list("locA2")).forms).toEqual([]);
+      expect(await forPerson(ADMIN_P, null, "admin", "locA2")).toEqual({
+        invite: null,
+        reason: "nothing_waiting",
+      });
+      expect(
+        await forPerson(ADMIN_P, v.inviteId, "admin", "locA2"),
+      ).toEqual({ invite: null, reason: "nothing_waiting" });
+      expect((await refusal(() => get("locA2", v.inviteId))).message).toBe(
+        "form_invite_not_in_workspace",
+      );
+      expect(
+        (await refusal(() => record(v.inviteId, ADMIN_P, "shown", "locA2")))
+          .message,
+      ).toBe("form_invite_not_in_workspace");
+      expect(
+        (
+          await refusal(() =>
+            portalSubmit(v.inviteId, { recommend: 9 }, { loc: "locA2" }),
+          )
+        ).message,
+      ).toBe("form_invite_not_in_workspace");
+      expect(
+        await q(
+          "SELECT id FROM cockpit_form_responses WHERE invite_id = $1::uuid",
+          [v.inviteId],
+        ),
+      ).toEqual([]);
+      expect(
+        await q(
+          "SELECT event FROM cockpit_form_invite_events WHERE invite_id = $1::uuid AND source = 'portal'",
+          [v.inviteId],
+        ),
+      ).toEqual([]);
+    });
+  });
+
+  test("a pause consent's context reaches the client as start, restart and over14 only: never the call id or the reason", async () => {
+    await rolledBack(async () => {
+      await golive("pause_consent");
+      await presence("locA", 1, 1);
+      const today = await kuwaitToday();
+      const v = await issue(CSM_A, A, "pause_consent", ["portal", "whatsapp"], {
+        origin: "pause",
+        context: {
+          start: today,
+          restart: "2026-12-31",
+          reasonCat: "client_asked",
+          callId: "call-internal-123",
+        },
+      });
+      // The cockpit keeps them on the invite.
+      expect(
+        await one<Row>(
+          "SELECT context AS r FROM cockpit_form_invites WHERE id = $1::uuid",
+          [v.inviteId],
+        ),
+      ).toMatchObject({ reasonCat: "client_asked", callId: "call-internal-123" });
+      const portal = await get("locA", v.inviteId);
+      expect(portal.invite.context).toEqual({
+        start: today,
+        restart: "2026-12-31",
+        over14: true,
+      });
+      // The WhatsApp link, as the worker makes it.
+      const body = await one<string>(
+        "SELECT body AS r FROM cockpit_client_messages WHERE id = $1::uuid",
+        [v.messageId],
+      );
+      await as(
+        "service",
+        "SELECT public.cockpit_client_message_approve($1::uuid,$2,$3,$4::uuid,'{}'::text[]) AS r",
+        [v.messageId, body, sha(body), CSM_A],
+      );
+      const c = (
+        await as<Row>(
+          "service",
+          "SELECT public.cockpit_client_message_claim(ARRAY['form_invite'], NULL, 1) AS r",
+        )
+      ).rows[0];
+      await as(
+        "service",
+        "SELECT public.cockpit_client_message_intent($1::uuid,$2::uuid) AS r",
+        [c.id, c.claimToken],
+      );
+      const made = await as<Row>(
+        "service",
+        "SELECT public.cockpit_client_message_invite_link($1::uuid,$2::uuid) AS r",
+        [c.id, c.claimToken],
+      );
+      const open = await tokenOpen(tokenOf(made.url));
+      expect(open.ok).toBe(true);
+      expect(open.invite.context).toEqual({
+        start: today,
+        restart: "2026-12-31",
+        over14: true,
+      });
+      expect(JSON.stringify(open)).not.toContain("call-internal-123");
+      expect(JSON.stringify(portal)).not.toContain("client_asked");
+    });
+  });
+
+  test("a failed or refused form link is not reopened: the refusal says to withdraw and send again", async () => {
+    await rolledBack(async () => {
+      await golive("nps");
+      const v = await issue(CSM_A, A, "nps", ["whatsapp"], { lang: "en" });
+      const body = await one<string>(
+        "SELECT body AS r FROM cockpit_client_messages WHERE id = $1::uuid",
+        [v.messageId],
+      );
+      for (const state of ["failed", "refused"]) {
+        // Where the sender leaves it (its guard is not under test here).
+        await q("SET session_replication_role = replica");
+        await q(
+          "UPDATE cockpit_client_messages SET state = $2 WHERE id = $1::uuid",
+          [v.messageId, state],
+        );
+        await q("SET session_replication_role = origin");
+        expect(
+          (
+            await refusal(() =>
+              as<Row>(
+                "service",
+                "SELECT public.cockpit_client_message_approve($1::uuid,$2,$3,$4::uuid,'{}'::text[]) AS r",
+                [v.messageId, body, sha(body), CSM_A],
+              ),
+            )
+          ).message,
+        ).toBe(
+          "This message was not sent. Withdraw the form and send it again from Send a form.",
+        );
+      }
+    });
+  });
+});

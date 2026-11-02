@@ -2209,6 +2209,135 @@ describe("the NPS and CSAT hooks", () => {
     });
   });
 
+  test("a WhatsApp-only NPS: NPS Survey Sent waits for the message to send (not the link mint); a failed send writes nothing and does not hold the 90 days, a sent one does", async () => {
+    await rolledBack(async () => {
+      await live("nps");
+      await scheduleOn();
+      await card("wa1", "WhatsApp Only", {
+        launchedDaysAgo: 200,
+        workspace: null,
+      });
+      const sent = () =>
+        q<any>(
+          "SELECT to_value, detail->>'invite_id' AS invite FROM cockpit_billing_events WHERE clickup_task_id = 'wa1' AND kind = 'nps_sent'",
+        );
+      /** The worker's steps up to the link: approve, claim, intent, mint. */
+      const toMint = async (inviteId: string) => {
+        const msg = await one<string>(
+          "SELECT message_id::text AS r FROM cockpit_form_invites WHERE id = $1::uuid",
+          [inviteId],
+        );
+        const body = await one<string>(
+          "SELECT body AS r FROM cockpit_client_messages WHERE id = $1::uuid",
+          [msg],
+        );
+        await as(
+          "service",
+          "SELECT public.cockpit_client_message_approve($1::uuid,$2,$3,$4::uuid,'{}'::text[]) AS r",
+          [msg, body, await sha(body), CEO],
+        );
+        const c = (
+          await as<any>(
+            "service",
+            "SELECT public.cockpit_client_message_claim(ARRAY['form_invite'], NULL, 1) AS r",
+          )
+        ).rows[0];
+        expect(c.id).toBe(msg);
+        await as(
+          "service",
+          "SELECT public.cockpit_client_message_intent($1::uuid,$2::uuid) AS r",
+          [c.id, c.claimToken],
+        );
+        const made = await as<any>(
+          "service",
+          "SELECT public.cockpit_client_message_invite_link($1::uuid,$2::uuid) AS r",
+          [c.id, c.claimToken],
+        );
+        expect(made.ok).toBe(true);
+        return c;
+      };
+      const result = (c: any, outcome: string, pid: string | null, why: string | null) =>
+        as(
+          "service",
+          "SELECT public.cockpit_client_message_result($1::uuid,$2::uuid,$3,$4,$5,NULL) AS r",
+          [c.id, c.claimToken, outcome, pid, why],
+        );
+      const first = await one<string>(
+        "SELECT public.cockpit_form_invite_issue_system('wa1', 'nps', ARRAY['whatsapp'], '{}', 'schedule')::text AS r",
+      );
+      const c1 = await toMint(first);
+      // The link is made, nothing has gone yet.
+      expect(await sent()).toEqual([]);
+      await result(c1, "failed", null, "WhatsApp refused the send.");
+      expect(await sent()).toEqual([]);
+      // The failed invite runs out: it does not hold the clock, so the next run sends again.
+      await age(first, 1);
+      await q(
+        "UPDATE cockpit_form_invites SET issued_at = now() - interval '20 days' WHERE id = $1::uuid",
+        [first],
+      );
+      expect((await run()).issued.nps).toBe(1);
+      const next = (await invitesOf("wa1", "nps")).find(
+        (i: any) => i.state === "open",
+      );
+      const c2 = await toMint(next.id);
+      expect(await sent()).toEqual([]);
+      await result(c2, "sent", "wamid.test-1", null);
+      expect(await sent()).toEqual([
+        { to_value: await today(), invite: next.id },
+      ]);
+      // A read-back later writes nothing more.
+      await as(
+        "service",
+        "SELECT public.cockpit_client_message_result($1::uuid,$2::uuid,'read_back',NULL,NULL,'{\"by\":\"message_id\",\"providerId\":\"wamid.test-1\"}'::jsonb) AS r",
+        [c2.id, c2.claimToken],
+      );
+      expect(await sent()).toHaveLength(1);
+      // The sent one holds the 90 days.
+      await age(next.id, 1);
+      await q(
+        "UPDATE cockpit_form_invites SET issued_at = now() - interval '20 days' WHERE id = $1::uuid",
+        [next.id],
+      );
+      const out = await run();
+      expect(out.issued.nps).toBe(0);
+      expect(out.skipped.tooSoon).toBe(1);
+    });
+  });
+
+  test("a CSM's withdraw of a WhatsApp-only NPS holds the 90 days (V26's reasoning); Sent again does not", async () => {
+    await rolledBack(async () => {
+      await live("nps");
+      await scheduleOn();
+      await card("wa2", "Dispute Client", { launchedDaysAgo: 200, workspace: null });
+      await card("wa3", "Resent Client", { launchedDaysAgo: 199, workspace: null });
+      expect((await run()).issued.nps).toBe(2);
+      const [w2] = await invitesOf("wa2", "nps");
+      const [w3] = await invitesOf("wa3", "nps");
+      expect(w2.channels).toEqual(["whatsapp"]);
+      await as(
+        CEO,
+        "SELECT public.cockpit_form_invite_withdraw($1, $2::uuid, 'Client in a dispute, do not send') AS r",
+        ["wa2", w2.id],
+      );
+      await as(
+        CEO,
+        "SELECT public.cockpit_form_invite_withdraw($1, $2::uuid, 'Sent again') AS r",
+        ["wa3", w3.id],
+      );
+      for (const id of [w2.id, w3.id])
+        await q(
+          "UPDATE cockpit_form_invites SET issued_at = issued_at - interval '1 day', closed_at = closed_at - interval '1 day' WHERE id = $1::uuid",
+          [id],
+        );
+      const out = await run();
+      expect(out.issued.nps).toBe(1);
+      expect(out.skipped.tooSoon).toBe(1);
+      expect(await invitesOf("wa2", "nps")).toHaveLength(1);
+      expect(await invitesOf("wa3", "nps")).toHaveLength(2);
+    });
+  });
+
   test("the most re-tries the editor allows (3) still issues: the fourth try goes out as try 4", async () => {
     await rolledBack(async () => {
       await live("csat");
