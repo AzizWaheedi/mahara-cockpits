@@ -11,7 +11,9 @@
  * through the client gate, the draft and transcript ops through the response's
  * own gate (read with the seat's token), recap.approve and invite.approve (a
  * form link, docs/forms/WAVE34-CONTRACT.md 4.1.5) through the message's gate
- * and again in its service RPC, keys.save and the doctor for the CEO.
+ * and again in its service RPC, keys.save and the doctor for the CEO, and file.url (a client's form
+ * file, docs/forms/WAVE56-CONTRACT.md 4.10.4) through cockpit_form_file_read with the seat's token; its
+ * 5-minute link is answered once with Cache-Control no-store and never logged.
  * An error answers {"error": "<one sentence>"} with 400, 403 or 404: never a
  * stack, a key or a provider's body.
  */
@@ -21,6 +23,7 @@ import { runDoctor } from "./doctor.ts";
 import { checkinDrafts, type Kind } from "./drafts.ts";
 import { sweepEffects } from "./effects.ts";
 import { transcriptOp } from "./fathom.ts";
+import { fileUrl } from "./files.ts";
 import { approveInvite, approveRecap } from "./messages.ts";
 import { saveKey } from "./keys.ts";
 import { typeformSent } from "./typeform.ts";
@@ -65,7 +68,8 @@ const CORS = {
   "Access-Control-Allow-Headers": "authorization,apikey,content-type,x-client-info",
   "Access-Control-Allow-Methods": "POST,OPTIONS",
 };
-const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
+const json = (body: unknown, status = 200, extra: Record<string, string> = {}) =>
+  new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json", ...extra } });
 const DRAFT_AGAIN = new Set<Kind>(["todos", "client_notes", "defcon_priority", "recap"]);
 /**
  * The database's sentences: a refusal (22023, 40001, P0001 with no code of its own) or a gate (42501).
@@ -160,6 +164,9 @@ export function makeDoor(deps: Deps): (req: Request) => Promise<Response> {
           return json(await approveRecap(ctx, body));
         case "invite.approve":
           return json(await approveInvite(ctx, body));
+        case "file.url":
+          // A signed link: never cached by the browser or a proxy (WAVE56 4.10.4).
+          return json(await fileUrl(ctx, body), 200, { "Cache-Control": "no-store" });
         case "keys.save":
           if (!actor.ceo) return json({ error: "Only the CEO can change the 1-1 notes connections." }, 403);
           return json(await saveKey(ctx, body));
