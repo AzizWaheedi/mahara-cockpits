@@ -62,6 +62,29 @@ made-up people, clients and payment ids only.
    attributed; over 2 hours old it says the figure may be behind. Missing is
    never zero.
 
+7. **A payment tied to an upsell win is the card CSM's back-end money**
+   (waves 5-6, Q23; `docs/forms/WAVE56-CONTRACT.md` 4.3.5). A live tie
+   whose `win_id` is set (`cockpit_payment_ties.win_id`, migration
+   `20261102h_wins_pay.sql`) makes the payment `side='back_end'`,
+   `kind='client'`, credited to the card's CSM (`personRole='csm'`), with
+   `matchedBy='ceo'` and the tie reference carrying `winId`. It is read
+   before rules 1 and 2, so it is never written to `cockpit_deal_payments`,
+   never added to a deal's running contract total and never counts toward its
+   120-day cap, even inside the deal's term (an upsell paid on day 30 of a
+   deal's term is the CSM's). A win tie is always a payment tie to the win's
+   card, and one payment ties to one win at most (unique index
+   `cockpit_payment_ties_one_win_per_payment`), so upsell cash is attributed
+   once. The CSM proposes it (`cockpit_csm_win_tie_propose`) and the CEO
+   confirms it (`cockpit_ceo_win_tie_decide`): only a checked payment, never
+   a deal's own contract money (a deposit row, Whop's own deal link, the
+   deal's email or name, a payer tie); a rule-2 card-match remainder can be
+   tied with the CEO's reason; cash already paid to the closer in an approved
+   month is refused. Only `cockpit_ceo_win_tie_clear` clears a win tie (the
+   ordinary tie and untie refuse it), and not once the CSM was paid for the
+   win in an approved month; a cleared win tie leaves the snapshot, so the
+   payment falls back to the automatic rules on the next refresh. The rule
+   text beside the figures says it in both copies.
+
 Effects on recorded rows (all re-credited on the next refresh, because the
 ledger is rewritten every run): Makers' $5,500 (Whop `pay_soEOcvcTa3GRWD`, 17
 Oct, payer "Abdulrahman Alansary") moves from the CSM to the closer and
@@ -70,6 +93,15 @@ August's and July's "kickoff" rows move to their deals' closers; ocean home's
 Tap $5,528.96 and mergestudio's Tap $5,496.36 become front end (rule 2).
 
 ## 2. Code (both copies change together, with a parity test)
+
+Waves 5-6 (rule 7): `normalizeTies` carries `winId` (a payment tie to a card
+only) and `attributePayments` / `attribute` push a win-tied payment as back
+end before any deal or card match, in both copies; the parity test
+(`apps/media-buyer-cockpit/scripts/money-attribution-parity.test.ts`, "rule
+7") runs a day-30 upsell with and without the win and with a cleared win tie,
+and `scripts/wins-pay-supabase.test.ts` runs both copies on ties read from the
+database. `finance/adapters/money.ts` is unchanged: the Edge copy reads the
+ties from the same snapshot (`to_jsonb(t)`), so `win_id` arrives with them.
 
 - **Native** (writer of the published money and growth sections):
   `hermes/ceo-refresh/native/adapters/money.js` — `attributePayments` gets
