@@ -334,3 +334,22 @@ export function clientFormRow(kind: string, over: Partial<ClaimedRow> & { id?: s
     ...over,
   });
 }
+
+/** A claimed money notice (waves 5-6, 3.9): its facts as wins-pay and client-tail queue them, its live rule true. */
+export function moneyRow(kind: string, over: Partial<ClaimedRow> & { id?: string } = {}): Record<string, unknown> {
+  const facts: Record<string, Record<string, unknown>> = {
+    "win.logged": { winId: ID(80), winKind: "review", stage: "logged", byRole: "the CSM", client: "Acme Interiors" },
+    "receipt.in": { responseId: ID(81), amount: 650, currency: "KWD", paidOn: "2026-11-01", client: "Acme Interiors" },
+    "client.reactivated": { eventId: 905, status: "Active", leftOn: "2026-10-12", client: "Acme Interiors" },
+  };
+  return claimed({
+    kind: kind as ClaimedRow["kind"],
+    clientName: "Acme Interiors",
+    taskId: "task0001",
+    target: kind === "receipt.in" ? CSM_GENERAL : CSM_ANNOUNCE,
+    facts: facts[kind] ?? {},
+    live: { stillTrue: true },
+    mentions: { main: [] },
+    ...over,
+  });
+}

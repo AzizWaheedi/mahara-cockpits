@@ -123,6 +123,8 @@ type Fake = {
   legacy?: Row | { status: number; code: string; message: string };
   /** The two Make forms (waves 3-4): the record_make answer. */
   make?: Row | { status: number; code: string; message: string };
+  /** Stage 4: cockpit_form_onboarding_typeform's answer once onboarding is native. */
+  door?: Row;
 };
 
 function harness(over: Partial<Fake> = {}) {
@@ -198,6 +200,16 @@ function harness(over: Partial<Fake> = {}) {
         );
       return Response.json(r);
     }
+    if (path === "/rest/v1/rpc/cockpit_form_onboarding_typeform")
+      return Response.json(
+        fake.door ?? {
+          inserted: true,
+          responseId: "44444444-4444-4444-8444-444444444444",
+          taskId: "86exc1tyw",
+          stored: "native",
+          effects: 8,
+        },
+      );
     if (path === "/rest/v1/rpc/cockpit_form_record_make") {
       const r = (fake.make ?? {
         inserted: true,
@@ -368,9 +380,9 @@ describe("the route", () => {
     expect(h.calls).toEqual([]);
   });
 
-  test("the registry row must still be a Typeform form with its id, else 404; an unreadable registry is a 503", async () => {
+  test("the registry row must still carry its Typeform id (a native kickoff keeps it after Stage 4), else 404; an unreadable registry is a 503", async () => {
     for (const registry of [
-      [{ provider: "native", typeform_id: FORM_ID }],
+      [{ provider: "clickup", typeform_id: FORM_ID }],
       [{ provider: "typeform", typeform_id: null }],
       [],
     ]) {
@@ -1404,9 +1416,52 @@ describe("client onboarding and the New Client Form (waves 3-4, 4.7 and 4.8)", (
     expect(h.rpcs("cockpit_form_record_make")).toEqual([]);
   });
 
-  test("kickoff still needs its Typeform row: a native kickoff row is 404", async () => {
-    const h = harness({ registry: [{ provider: "native", typeform_id: FORM_ID }] });
+  test("a native kickoff row with no Typeform id is 404", async () => {
+    const h = harness({ registry: [{ provider: "native", typeform_id: null }] });
     expect((await h.post("{}")).status).toBe(404);
+  });
+});
+
+describe("Stage 4: the old links once kickoff and onboarding are native (4.15.3, X26)", () => {
+  test("a kickoff through the old link is kept as a legacy record: no email or phone, the two hidden fields only", async () => {
+    const h = harness({ registry: [{ provider: "native", typeform_id: FORM_ID }] });
+    const res = await read(await h.signed(delivery()));
+    expect(res).toEqual({ status: 200, body: { ok: true, inserted: true } });
+    expect(h.rpcs("cockpit_form_record_typeform")).toEqual([]);
+    const p = h.rpcs("cockpit_form_record_legacy")[0].p;
+    expect(p.formKey).toBe("kickoff");
+    expect(p.hidden).toEqual({ onboarding_client_id: "86exc1tyw" });
+    expect(p.taskId).toBe("86exc1tyw");
+    expect(JSON.stringify(p)).not.toContain(EMAIL);
+    expect(JSON.stringify(p)).not.toContain(PHONE);
+    for (const line of h.logs) expect(line).toBe("forms-door kickoff recorded");
+  });
+
+  test("an onboarding answer goes to the native planner with onboardingAnswers' entry; a repeat is a repeat", async () => {
+    const native = { onboarding: [{ provider: "native", typeform_id: ONBOARDING_ID }] };
+    const h = makeHarness({ registries: { ...native, new_client: [{ provider: "typeform", typeform_id: NEW_CLIENT_ID }] } });
+    const raw = JSON.stringify(fixture("onboarding-response.json"));
+    const res = await read(await h.post(raw, { "Typeform-Signature": sign(ONB_SECRET, raw) }, ONB_ROUTE));
+    expect(res).toEqual({ status: 200, body: { ok: true, inserted: true } });
+    expect(h.rpcs("cockpit_form_record_make")).toEqual([]);
+    const sent = h.rpcs("cockpit_form_onboarding_typeform")[0].p_payload;
+    expect(sent).toEqual(makeInput("onboarding", fixture("onboarding-response.json").form_response));
+    const again = makeHarness({ registries: { ...native }, door: { inserted: false, responseId: "x", stored: "native" } });
+    const r2 = await read(await again.post(raw, { "Typeform-Signature": sign(ONB_SECRET, raw) }, ONB_ROUTE));
+    expect(r2).toEqual({ status: 200, body: { ok: true, inserted: false } });
+    expect(again.logs).toEqual(["forms-door onboarding repeat"]);
+  });
+
+  test("before the go-live both keep their Typeform stores", async () => {
+    const k = harness();
+    await k.signed(delivery());
+    expect(k.rpcs("cockpit_form_record_typeform")).toHaveLength(1);
+    expect(k.rpcs("cockpit_form_record_legacy")).toEqual([]);
+    const o = makeHarness();
+    const raw = JSON.stringify(fixture("onboarding-response.json"));
+    await o.post(raw, { "Typeform-Signature": sign(ONB_SECRET, raw) }, ONB_ROUTE);
+    expect(o.rpcs("cockpit_form_record_make")).toHaveLength(1);
+    expect(o.rpcs("cockpit_form_onboarding_typeform")).toEqual([]);
   });
 });
 

@@ -4,7 +4,7 @@ import { CLAIM_LIMIT, JobError, OUT_OF_TIME, runDryRun, runNotices, runRehearse 
 import { BAD_TOKEN, NO_GRADE, NO_SLACK_ID, NO_TOKEN, REPLY_RECHECK_SEC, UNKNOWN, WAITING, WAITING_CARD, WAITING_REPLY, wantedMentions, WRONG_BOT } from "./send";
 import { CRITERIA } from "./text";
 import {
-  BOT_USER, claimed, clientFormRow, CREATIVE, CSM, CSM_ANNOUNCE, CSM_GENERAL, deps, FakeClickUp, FakeSlack, fakeRpc, ID, lifecycleRow, MEDIA_GENERAL, NPS_FEEDBACK, mention, minutesAgo, NOW,
+  BOT_USER, claimed, clientFormRow, CREATIVE, moneyRow, CSM, CSM_ANNOUNCE, CSM_GENERAL, deps, FakeClickUp, FakeSlack, fakeRpc, ID, lifecycleRow, MEDIA_GENERAL, NPS_FEEDBACK, mention, minutesAgo, NOW,
   receiptsRecorder, ref, SYSTEMS,
 } from "./testkit";
 
@@ -1050,5 +1050,49 @@ describe("the client's voice and forms (docs/forms/WAVE34-CONTRACT.md 3.4)", () 
     expect(d.note).toContain("No settings row for voice.low, feedback.received, legacy.received: check 20261102a applied in full.");
     expect(d.unseeded).toContain("voice.low");
     expect(d.unseeded).toContain("termination.notice");
+  });
+});
+
+describe("wins and money (docs/forms/WAVE56-CONTRACT.md 3.9)", () => {
+  test("each kind posts its one line where it is routed, tags nobody and reads no card", async () => {
+    const offered = moneyRow("win.logged", { id: ID(93), facts: { winId: ID(82), winKind: "upsell_website", stage: "quote_given", usd: 1500, client: "Acme Interiors" } });
+    const accepted = moneyRow("win.logged", { id: ID(94), facts: { winId: ID(83), winKind: "upsell_smm", stage: "signed", client: "Acme Interiors" } });
+    const rows = [moneyRow("win.logged", { id: ID(90) }), moneyRow("receipt.in", { id: ID(91) }), moneyRow("client.reactivated", { id: ID(92) }), offered, accepted];
+    const slack = new FakeSlack();
+    slack.channels.set(CSM_ANNOUNCE, { name: "csm-announcements", is_private: false, is_member: true });
+    const kit = deps({ slack, rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(...rows) }) });
+    const result = await runNotices(kit.deps);
+    expect(result).toMatchObject({ claimed: 5, posted: 5, failed: 0 });
+    expect(kit.slack.posts().map(p => [p.body?.channel, String(p.body?.text).replace(/ Ref CN-\w+$/, "")])).toEqual([
+      [CSM_ANNOUNCE, "Acme Interiors: Google review logged by the CSM."],
+      [CSM_GENERAL, "Acme Interiors sent a transfer receipt (650 KWD, paid Sun 1 Nov). Check it in the cockpit."],
+      [CSM_ANNOUNCE, "Acme Interiors is back: Active. They left on Mon 12 Oct."],
+      [CSM_ANNOUNCE, "Acme Interiors: website offered at $1,500."],
+      [CSM_ANNOUNCE, "Acme Interiors accepted the social media management."],
+    ]);
+    expect(kit.rpc.results().map(r => detailOf(r).variant)).toEqual(["post", "post", "post", "offered", "accepted"]);
+    expect(kit.slack.posts().some(p => JSON.stringify(p.body?.blocks).includes("<@"))).toBe(false);
+    expect(kit.net.calls.some(c => c.url.host === "api.clickup.com")).toBe(false);
+  });
+
+  test("a win voided before it went out is not posted, and says why", async () => {
+    const row = moneyRow("win.logged", { live: { stillTrue: false, why: "The win was voided before the notice went out." } });
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(row) }) });
+    await runNotices(kit.deps);
+    expect(kit.slack.posts()).toHaveLength(0);
+    expect(lastResult(kit)).toMatchObject({ p_outcome: "failed", p_error: "Not posted: the win was voided before the notice went out." });
+  });
+
+  test("the doctor names the money family when it is seeded in part", async () => {
+    const kit = deps({
+      rpc: fakeRpc({
+        cockpit_slack_notice_doctor_inputs: () => ({
+          channels: [{ id: CSM_GENERAL, name: "csm-general", private: true, state: "ok" }],
+          settings: [{ kind: "receipt.in", enabled: false, channel: CSM_GENERAL, mentions: [] }],
+        }),
+      }),
+    });
+    const d = await runDoctor(kit.deps);
+    expect(d.note).toContain("No settings row for win.logged, client.reactivated: check 20261102g applied in full.");
   });
 });

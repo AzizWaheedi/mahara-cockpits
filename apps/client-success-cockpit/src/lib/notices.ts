@@ -162,11 +162,23 @@ export const CLIENT_FORM_NOTICE_KINDS = [
 export const CLIENT_FORM_KINDS: ReadonlySet<string> = new Set(
   CLIENT_FORM_NOTICE_KINDS,
 );
+/**
+ * Wins and money (docs/forms/WAVE56-CONTRACT.md 3.9, 5.12), in the settings'
+ * order, seeded off by 20261102g. Their own list on the card, so a database
+ * before that file shows the card exactly as before.
+ */
+export const MONEY_NOTICE_KINDS = [
+  "win.logged",
+  "receipt.in",
+  "client.reactivated",
+] as const;
+export const MONEY_KINDS: ReadonlySet<string> = new Set(MONEY_NOTICE_KINDS);
 /** Every kind the card shows, in its order. */
 export const ALL_NOTICE_KINDS = [
   ...NOTICE_KINDS,
   ...LIFECYCLE_NOTICE_KINDS,
   ...CLIENT_FORM_NOTICE_KINDS,
+  ...MONEY_NOTICE_KINDS,
 ] as const;
 
 /**

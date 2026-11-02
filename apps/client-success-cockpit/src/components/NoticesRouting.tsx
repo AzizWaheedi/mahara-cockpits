@@ -19,6 +19,7 @@ import {
   atNoticeWhen,
   CLIENT_FORM_KINDS,
   LIFECYCLE_KINDS,
+  MONEY_KINDS,
   type NoticeSetting,
   noAccess,
   noticeStop,
@@ -88,6 +89,21 @@ import { cn } from "@/lib/utils";
  * bot is in." until the CEO invites it. States: every row is NoticeRow, which
  * already draws default, hover, focus, active, disabled (read only), saving,
  * refused and saved.
+ *
+ * Waves 5-6 (docs/forms/WAVE56-CONTRACT.md 3.9, 5.12), the same card a fourth
+ * time, no new pattern and no new token. Design plan (Hallmark, component
+ * scope: a list group inside an existing card). Subject: the money a client
+ * success manager earns after the sale reaching the team (a win or an upsell
+ * moving, a client's transfer receipt to check, a churned client coming back).
+ * Audience: the CEO and the editors they add, at a desk or on the phone app.
+ * Job: see where each posts and switch it on at its go-live. Tokens are the
+ * cockpit's: Geist, --mahara-teal for the switch, muted for off; the three rows
+ * arrive off, so each reads its plain off sentence until its day. Layout: a
+ * fourth list under its own mono Kicker, "Wins and money", after "Client
+ * forms", with one plain line. Signature: unchanged, the one-sentence row.
+ * Win logged keeps its switch; the server refuses it until Log a win is on
+ * (the old Four Rs posts run in #csm-announcements until then), and that
+ * refusal shows under the switch like any other. States: NoticeRow's, as above.
  */
 
 export type NoticesIO = {
@@ -197,6 +213,19 @@ export const NOTICE_ROWS: Record<
     label: "Old form link used",
     hint: "An answer came through a retired Typeform; open it in the cockpit.",
   },
+  // Wins and money (docs/forms/WAVE56-CONTRACT.md 3.9, 5.12).
+  "win.logged": {
+    label: "Win logged",
+    hint: "A CSM logged a win or an upsell moved.",
+  },
+  "receipt.in": {
+    label: "Receipt in",
+    hint: "A client sent a transfer receipt to check.",
+  },
+  "client.reactivated": {
+    label: "Client is back",
+    hint: "A churned client was reopened.",
+  },
 };
 
 /** The lifecycle list's heading and its one line (5.9). */
@@ -207,6 +236,10 @@ export const LIFECYCLE_SUB =
 export const CLIENT_FORMS_TITLE = "Client forms";
 export const CLIENT_FORMS_SUB =
   "Posts when a client answers a form or shares feedback. Names, dates and scores only, never their words.";
+/** The wins and money list's heading and its one line (WAVE56 5.12). */
+export const MONEY_TITLE = "Wins and money";
+export const MONEY_SUB =
+  "Posts when a CSM logs a win, a client sends a transfer receipt or a churned client comes back. Names, dates and amounts only.";
 
 /**
  * A post whose channel is not ready, in the words the sender's trail uses
@@ -475,10 +508,14 @@ function Body({
     read.notices.find(n => n.kind === k),
   ).filter((n): n is NoticeSetting => Boolean(n));
   const rows = all.filter(
-    n => !LIFECYCLE_KINDS.has(n.kind) && !CLIENT_FORM_KINDS.has(n.kind),
+    n =>
+      !LIFECYCLE_KINDS.has(n.kind) &&
+      !CLIENT_FORM_KINDS.has(n.kind) &&
+      !MONEY_KINDS.has(n.kind),
   );
   const lifecycle = all.filter(n => LIFECYCLE_KINDS.has(n.kind));
   const clientForms = all.filter(n => CLIENT_FORM_KINDS.has(n.kind));
+  const money = all.filter(n => MONEY_KINDS.has(n.kind));
   const edit = read.can.edit;
   const list = (items: NoticeSetting[]) => (
     <ul className="divide-y rounded-xl bg-muted/30">
@@ -527,6 +564,19 @@ function Body({
                 </p>
               </div>
               {list(clientForms)}
+            </section>
+          ) : null}
+          {money.length ? (
+            <section aria-labelledby="notices-money" className="space-y-2">
+              <div>
+                <Kicker as="h3">
+                  <span id="notices-money">{MONEY_TITLE}</span>
+                </Kicker>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {MONEY_SUB}
+                </p>
+              </div>
+              {list(money)}
             </section>
           ) : null}
         </>

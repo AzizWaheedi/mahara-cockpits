@@ -1074,3 +1074,113 @@ describe("the pause consent in the sheet (waves 3-4)", () => {
     await act(async () => root.unmount());
   });
 });
+
+// Waves 5-6 (docs/forms/WAVE56-CONTRACT.md 3.10, 5.1, 5.11, 5.13): the shared
+// sheet learns headings, grouped choices, a warning before a store, its own
+// trail words and the six new doors; the five registry forms read as before.
+describe("waves 5-6 in the shared sheet", () => {
+  test("the five registry forms keep their trail and their ticket step", () => {
+    for (const d of Object.values(defs.FORM_DEFS)) {
+      expect(d.words).toBeUndefined();
+      expect(core.trailFrom({}, d).map(s => s.key)).toEqual([
+        "stored",
+        "card",
+        "notice",
+        "ticket",
+      ]);
+    }
+  });
+  test("a sheet with its own words ends at the notice and says held its way", () => {
+    const d = defs.winDef({ client: "A", proposals: [], deals: [] });
+    const t = core.trailFrom(
+      { stored: { state: "done" }, card: { state: "held" } },
+      d,
+    );
+    expect(t.map(s => s.label)).toEqual([
+      "Win stored",
+      "Waits for the switch-on",
+      "No notice queued yet",
+    ]);
+  });
+  test("a heading is never checked or sent; grouped choices draw each group's label", async () => {
+    const def = {
+      ...defs.FORM_DEFS.mrr,
+      fields: [
+        { key: "h", label: "A group", type: "heading" as const },
+        ...defs
+          .winDef({ client: "A", proposals: [], deals: [] })
+          .fields.slice(0, 1),
+      ],
+    };
+    expect(core.validate(def, { kind: "review" })).toEqual({});
+    const { root } = await draw(
+      createElement(FormBody, {
+        def,
+        client: fx.CLIENT,
+        prefill: [],
+        submit: async () => ({ message: "", ref: {} }),
+        trail: async () => ({}),
+      }),
+    );
+    expect(text(body().querySelector(".fs-heading"))).toBe("A group");
+    expect([...body().querySelectorAll(".fs-group-label")].map(text)).toEqual([
+      "Upsells",
+    ]);
+    await act(async () => root.unmount());
+  });
+  test("the six doors, read from either shape of why", () => {
+    expect(core.W56_KEYS).toEqual([
+      "wins",
+      "receipts",
+      "reactivate",
+      "kickoff",
+      "agent",
+      "ltv",
+    ]);
+    expect(
+      core.doorLine(
+        core.readDoorsW56({ receipts: false, why: { receipts: "off" } })
+          .receipts,
+      ),
+    ).toBe("Not switched on yet.");
+    expect(core.doorLine(core.readDoorsW56({}).agent)).toBe(
+      "Opens after the next cockpit update.",
+    );
+  });
+  test("a win's MRR edit carries its win id; Client is back sends the departure", async () => {
+    const lc = await import("../src/forms/staff/lifecycleClient");
+    expect(
+      lc.mrrEdit({ mrrUsd: "2100", reasonCat: "upsell", winId: "w-1" }, "r"),
+    ).toMatchObject({
+      kind: "mrr",
+      value: 2100,
+      reasonCat: "upsell",
+      winId: "w-1",
+    });
+    expect(lc.mrrEdit({ mrrUsd: "2100" }, "r")).not.toHaveProperty("winId");
+    expect(
+      lc.reactivateArgs(
+        "t1",
+        6,
+        {
+          returnOn: "2026-11-02",
+          status: "Onboarding Booked",
+          why: "They want the leads back.",
+          mrrUsd: "900",
+        },
+        "r1",
+      ),
+    ).toEqual({
+      requestId: "r1",
+      taskId: "t1",
+      departureId: 6,
+      returnOn: "2026-11-02",
+      status: "Onboarding Booked",
+      nextPaymentDate: null,
+      mrrUsd: 900,
+      agreementUrl: null,
+      why: "They want the leads back.",
+      callId: null,
+    });
+  });
+});

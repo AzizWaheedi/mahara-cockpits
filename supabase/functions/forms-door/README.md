@@ -139,6 +139,26 @@ are the golden inputs: the handler test holds `makeInput` to them, and
 `scripts/dev/test_forms_legacy_backfill.py` holds the backfill's Python port
 to the same files.
 
+## Stage 4: the old links once kickoff and onboarding are native (waves 5-6)
+
+`cockpit_form_stage4_go_live` (`20261102j_stage4_native.sql`) turns the kickoff
+or the onboarding native and keeps the registry row's Typeform id, so the old
+link still reaches this door (`docs/forms/WAVE56-CONTRACT.md` 4.14.2, 4.15.3, X26):
+
+- **kickoff, native:** stored through `cockpit_form_record_legacy` with the
+  legacy mapping (no email or phone answer, only `client_name` and
+  `onboarding_client_id`), state `legacy`, and "Old form link used"
+  (`legacy.received`). Nothing runs: the native kickoff is the cockpit's sheet.
+- **onboarding, native:** sent to `cockpit_form_onboarding_typeform` as
+  `{p_payload: makeInput('onboarding', response)}`; the database maps it by
+  Typeform ref into version-2 answers and runs the same planner as a portal
+  answer, once per card. A card that already holds an onboarding answer or a
+  kickoff, or no card, is stored `legacy` with the notice and runs nothing.
+  `KFRCXPFx` stays open and Make `8979157` [40] keeps sending its link.
+
+Before the go-live both keep their stores above. A registry row with no
+Typeform id is still a 404.
+
 ## Register, probe, unregister (B3, deploy step D17)
 
 From the Mac, through the read-only ssh pattern of 2a 4.5 (keys by name, values

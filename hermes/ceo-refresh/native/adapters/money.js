@@ -4,6 +4,7 @@ import { bankCanBe, amountGap, coverWithTap, cashDuplicates, dealDuplicates, MAT
 import { groupOf, isOneOffPlan, summariseBilling } from "../billing.js";
 import { linkCtrTargetNote, targetItems } from "../../../../supabase/functions/cockpit-ceo-api/finance/targets.ts";
 import { MEDIA_FEED_SQL, MEDIA_STALE_MS, mediaClientDaysSql, mediaFeedFresh } from "../data/triage.js";
+import { withOptionalReads } from "../tools.js";
 
 const STALE_MS = 60 * 60_000;
 const TAP_STALE_MS = 3 * 60 * 60_000;
@@ -247,6 +248,11 @@ function nameKey(value) {
  * 3. The CEO's tie is read first: a payment tie, then a payer tie, then
  *    Whop's own deal link, the email, the name, the card.
  * 4. A payer tie keys on the email or the exact payer key, never a short name.
+ * 7. A payment whose tie names a win (cockpit_payment_ties.win_id, Q23) is
+ *    back end, the card's CSM's: never the closer's, never in the deal ledger,
+ *    never added to a deal's running contract total or its 120-day cap, even
+ *    inside the deal's term. It is read before rules 1 and 2. A cleared win
+ *    tie is not in the snapshot, so the payment falls back to the rules.
  */
 /** A payment this many days before the form can still be that deal's (the form is filled after the call). */
 export const BEFORE_FORM_DAYS = 7;
@@ -286,6 +292,7 @@ export function normalizeTies(rows) {
     const dealResponseId = text(field(row, "deal_response_id", "dealResponseId"));
     const clickupTaskId = text(field(row, "clickup_task_id", "clickupTaskId"));
     const notClient = field(row, "not_client", "notClient") === true;
+    const winId = text(field(row, "win_id", "winId"));
     const scope = paymentId ? "payment" : payerEmail || payerKey ? "payer" : null;
     if (!scope || !(dealResponseId || clickupTaskId || notClient)) continue;
     const setAt = field(row, "set_at", "setAt");
@@ -293,6 +300,8 @@ export function normalizeTies(rows) {
       id: num(field(row, "id")), scope, paymentId, payerEmail: paymentId ? null : payerEmail, payerKey: paymentId || payerEmail ? null : payerKey,
       dealResponseId, clickupTaskId: dealResponseId ? null : clickupTaskId, notClient: !dealResponseId && !clickupTaskId && notClient,
       note: oneLine(field(row, "note"), 500), setBy: oneLine(field(row, "set_by", "setBy"), 120) || null, setAt: setAt === null || setAt === undefined ? null : String(setAt),
+      // A win tie is a payment tie to the win's card (20261102h); anything else carries no win.
+      winId: paymentId && clickupTaskId && !dealResponseId ? winId : null,
     });
   }
   return ties.sort((a, b) => a.id - b.id);
@@ -417,7 +426,13 @@ export function attributePayments(payments, deals, cards, tieRows = []) {
     const payer = nameKey(payment.payerName);
     const tie = tieOf(payment);
     if (tie) {
-      const ref = { id: tie.id, scope: tie.scope, note: tie.note, setBy: tie.setBy, setAt: tie.setAt };
+      const ref = { id: tie.id, scope: tie.scope, note: tie.note, setBy: tie.setBy, setAt: tie.setAt, ...(tie.winId ? { winId: tie.winId } : {}) };
+      // Rule 7: an upsell payment tied to a win is the card CSM's back-end money, before rules 1 and 2.
+      if (tie.winId) {
+        const card = cardById.get(tie.clickupTaskId);
+        output.push({ ...payment, side: "back_end", kind: "client", depositUsd: 0, person: card?.csm ?? null, personRole: "csm", dealResponseId: null, dealBusiness: null, clientTaskId: tie.clickupTaskId, clientName: card?.names[0] ?? null, matchedBy: "ceo", tie: ref });
+        continue;
+      }
       const tiedDeal = tie.dealResponseId ? dealById.get(tie.dealResponseId) : undefined;
       if (tiedDeal && tieReaches(tie, tiedDeal, payment)) { output.push(dealRow(payment, tiedDeal, "ceo", ref)); continue; }
       if (tie.clickupTaskId && cardById.has(tie.clickupTaskId)) { output.push(cardRow(payment, cardById.get(tie.clickupTaskId), "ceo", ref)); continue; }
@@ -509,7 +524,7 @@ export function dealLedgerRows(rows) {
 
 /** The attribution rule in words, said beside the figures (the Edge copy says the same). */
 export function attributionRuleText(unattributedCount, unattributedUsd) {
-  return `Every payment in over the last 12 months is given a side. A payment tied to a signed deal (by your tie, Whop's own link, the payer's email, the business name, or a client card whose deal is still in its term) is front end and the closer's, from ${BEFORE_FORM_DAYS} days before the form until the deal's tied cash reaches its contract, at most ${DEAL_TERM_DAYS} days after signing: the deposit up to what the closer typed, then the remainder. Beyond the contract or the ${DEAL_TERM_DAYS} days it is back end, the card's CSM's, and so is a payment matched only to a client (by a portal login, the hand-kept payer mapping, the card's names or the card typed on a hand-logged entry). Your ties are read before any automatic match. ${unattributedCount === 1 ? "1 payment" : `${unattributedCount} payments`} (${usdWords(unattributedUsd)}) match no deal and no client; the Transactions tab lists every payment in and out.`;
+  return `Every payment in over the last 12 months is given a side. A payment tied to a signed deal (by your tie, Whop's own link, the payer's email, the business name, or a client card whose deal is still in its term) is front end and the closer's, from ${BEFORE_FORM_DAYS} days before the form until the deal's tied cash reaches its contract, at most ${DEAL_TERM_DAYS} days after signing: the deposit up to what the closer typed, then the remainder. Beyond the contract or the ${DEAL_TERM_DAYS} days it is back end, the card's CSM's, and so is a payment matched only to a client (by a portal login, the hand-kept payer mapping, the card's names or the card typed on a hand-logged entry). Your ties are read before any automatic match, and a payment you tied to an upsell win is back end, the card's CSM's, even inside a deal's term: it never counts toward the deal's contract or the closer. ${unattributedCount === 1 ? "1 payment" : `${unattributedCount} payments`} (${usdWords(unattributedUsd)}) match no deal and no client; the Transactions tab lists every payment in and out.`;
 }
 
 const TIE_WHY = {
@@ -586,6 +601,44 @@ function matchRuns(lines, payments, lookback, tolerance) {
     result.set(String(line.id), { from: match[0].day, to: match.at(-1).day, count: match.length });
   }
   return result;
+}
+
+/** The wins ledger reads (20261102h): the view of non-void wins, and the upsells that ended unwon (voided or not now). */
+export const WINS_SQL = {
+  wins: `/* ceo-refresh:money.wins */ SELECT id::text AS id, task_id, client_name, kind, stage, to_char(won_on,'YYYY-MM-DD') AS won_on,
+    to_char(offered_on,'YYYY-MM-DD') AS offered_on, to_char(accepted_on,'YYYY-MM-DD') AS accepted_on, quoted_usd, recurring, monthly_usd, ties
+    FROM public.cockpit_wins_v WHERE source <> 'canary' AND task_id <> '86eywg1cq' ORDER BY won_on, id`,
+  missed: `/* ceo-refresh:money.wins_missed */ SELECT 'voided' AS why_kind, client_name, kind AS what, left(void_reason, 300) AS why,
+    to_char((voided_at AT TIME ZONE 'Asia/Kuwait')::date,'YYYY-MM-DD') AS day
+    FROM public.cockpit_csm_wins WHERE stage = 'void' AND source = 'cockpit' AND kind LIKE 'upsell\\_%' AND voided_at >= now() - interval '120 days'
+    UNION ALL
+    SELECT 'not_now', client_name, offer_key, left(objection, 300), to_char((updated_at AT TIME ZONE 'Asia/Kuwait')::date,'YYYY-MM-DD')
+    FROM public.cockpit_upsell_proposals WHERE status = 'not_now' AND updated_at >= now() - interval '120 days'
+    ORDER BY 5 DESC LIMIT 200`,
+};
+
+/**
+ * The wins block of the money payload (WAVE56-CONTRACT 4.8): every non-void
+ * win with its event days and tied payments, and the upsells that ended unwon
+ * for the lock-in's "why we missed them". A failed read is said, never zero.
+ */
+export async function readWins(read, today) {
+  try {
+    const [rows, missed] = await Promise.all([read(TRIAGE, WINS_SQL.wins), read(TRIAGE, WINS_SQL.missed)]);
+    return {
+      read: true, today,
+      rows: rows.map(row => ({
+        id: String(row.id), taskId: String(row.task_id ?? ""), client: cleanText(row.client_name, 120), kind: String(row.kind), stage: String(row.stage),
+        wonOn: dateText(row.won_on), offeredOn: row.offered_on ? dateText(row.offered_on) : null, acceptedOn: row.accepted_on ? dateText(row.accepted_on) : null,
+        quotedUsd: row.quoted_usd == null ? null : ROUND2(num(row.quoted_usd)), recurring: row.recurring === true,
+        monthlyUsd: row.monthly_usd == null ? null : ROUND2(num(row.monthly_usd)),
+        ties: (Array.isArray(row.ties) ? row.ties : []).map(tie => ({ paidOn: dateText(tie.paidOn), usd: ROUND2(num(tie.usd)), checked: tie.checked === true })),
+      })),
+      missed: missed.map(row => ({ kind: String(row.why_kind), client: cleanText(row.client_name, 120), what: String(row.what ?? ""), why: row.why ? cleanText(row.why, 300) : null, day: dateText(row.day) })),
+    };
+  } catch (error) {
+    return { read: false, error: cleanText(error instanceof Error ? error.message : String(error), 200) };
+  }
 }
 
 function normalizeDeal(row) {
@@ -1187,6 +1240,9 @@ export function createMoneyAdapter(snapshot) {
       // Each hand-logged row's check state over the twelve months, for the manual list's chips.
       const manualChecks = manual.filter(row => row.day >= dates.from12)
         .map(row => ({ id: row.id, state: row.checkState, at: row.checkedAt === null ? null : new Date(row.checkedAt).toISOString(), ref: row.checkedRef }));
+      // The wins ledger (20261102h): the wins metrics, the goal actuals and the lock-in read it from here.
+      // An optional read: before the migration (or on any failure) Money still publishes and says wins are missing.
+      const wins = await withOptionalReads(() => readWins(sql, today));
       const payload = {
         month: dates.month, dayOfMonth: dates.dayOfMonth, daysInMonth: dates.dim, cash: whopCash,
         // manualLogged sits beside the rails, never in the total (contract 3.6).
@@ -1198,7 +1254,7 @@ export function createMoneyAdapter(snapshot) {
         deals: dealsPayload,
         failedCharges: { count30d: num(summary.failed_count_30), amount30d: ROUND2(num(summary.failed_amount_30)) },
         expenses: { month: bankLatestMonth, total: ROUND2(bankMonthLines.reduce((sum, line) => sum + Math.abs(line.usd), 0)), byCategory: [...new Set(bankMonthLines.map(line => line.category ?? "uncategorised"))].map(category => ({ category, amount: ROUND2(bankMonthLines.filter(line => (line.category ?? "uncategorised") === category).reduce((sum, line) => sum + Math.abs(line.usd), 0)) })) },
-        targets, mrr, attribution, bank: bankBlock, book: bookPayload,
+        targets, mrr, attribution, bank: bankBlock, book: bookPayload, wins,
         collection: { deals: deals.length, contracted: ROUND2(deals.reduce((sum, row) => sum + num(row.contracted), 0)), linkedCash: ROUND2(attributed.filter(row => row.dealResponseId).reduce((sum, row) => sum + row.usd, 0)), dealsWithCash: new Set(attributed.filter(row => row.dealResponseId).map(row => row.dealResponseId)).size, unlinkedCash: ROUND2(attributed.filter(row => !row.dealResponseId).reduce((sum, row) => sum + row.usd, 0)), unlinkedRows: attributed.filter(row => !row.dealResponseId).length, beforeFormCash: 0, formStarted: summary.first_deal_day ? String(summary.first_deal_day).slice(0, 7) : null, byMonth: monthly.map(row => ({ month: row.month, deals: row.deals, contracted: row.contracted, linked: ROUND2(attributed.filter(item => item.dealResponseId && item.day.slice(0, 7) === row.month).reduce((sum, item) => sum + item.usd, 0)) })), unmatched: [] },
         notes: [
           { level: "info", text: "Cash totals use source-confirmed Whop, Tap, Ecom and uploaded bank statement rows, and payments logged by hand once finance or the CEO checks them against the bank. Bank payout and settlement lines are not counted as client cash." },
@@ -1213,6 +1269,7 @@ export function createMoneyAdapter(snapshot) {
           ...(tapCovered.size ? [{ level: "info", text: `${tapCovered.size} Tap charges are covered by bank settlement lines and were counted once.` }] : []),
           ...(manualCoveredByBank ? [{ level: "info", text: `${manualCoveredByBank} manual payments match bank client-payment lines and were counted once.` }] : []),
           ...(ctrTargetNote ? [ctrTargetNote] : []),
+          ...(wins.read ? [] : [{ level: "warn", text: `The wins ledger could not be read this run (${wins.error}), so wins, upsells and upsell cash are missing, not zero.` }]),
         ],
       };
       const liveManualStamp = epoch(field(snapshot, "newestManualChange", "newest_manual_change"));

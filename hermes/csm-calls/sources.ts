@@ -135,6 +135,81 @@ export async function readNativeForms(ctx: Ctx): Promise<{ rows: Row[]; count: R
   return { rows, count: { total: rows.length, onBoard: rows.filter(x => valid.has(String(x.task_id))).length, byForm } };
 }
 
+/**
+ * Stage 4 (docs/forms/WAVE56-CONTRACT.md 4.13, 4.14): the native kickoff the CSM sends from the cockpit and the
+ * native onboarding the client answers in the portal or by link join the timeline under their own form ids. The
+ * Typeform door's onboarding answers after the go-live are not read here: this worker's Typeform read already
+ * stores them under KFRCXPFx. The questions' words come from each form's version-2 schema in the cockpit. Needs
+ * 20261102j live (the widened form_id CHECK): until forms.stage4 has a form on, nothing is read or written.
+ */
+export const STAGE4_FORMS: Record<string, string> = { kickoff: "cockpit-kickoff", onboarding: "cockpit-onboarding" };
+const STAGE4_TYPES: Record<string, string> = {
+  choice: "multiple_choice",
+  multi: "multiple_choice",
+  text: "short_text",
+  longtext: "long_text",
+  number: "number",
+  url: "website",
+};
+
+/** One answer as the timeline shows it: a choice by its English words, a list joined with ", ". */
+function stage4Value(field: Row, value: unknown): unknown {
+  const options: Row[] = Array.isArray(field.options) ? field.options : [];
+  const words = (v: unknown) => {
+    const hit = options.find(o => (typeof o === "string" ? o === v : o?.value === v));
+    if (!hit) return v;
+    return typeof hit === "string" ? hit : (hit.label?.en ?? hit.value);
+  };
+  if (Array.isArray(value)) return value.map(words).join(", ");
+  return words(value);
+}
+
+/** The native kickoff and onboarding answers as call-store rows, or none (with the reason in the count) before the go-live. */
+export async function readStage4Forms(ctx: Ctx): Promise<{ rows: Row[]; count: Row }> {
+  const stage = await ctx.db.all("cockpit_settings", "select=value&key=eq.forms.stage4");
+  const on = Object.keys(STAGE4_FORMS).filter(f => stage[0]?.value?.[f] === true);
+  if (!on.length) return { rows: [], count: { total: 0, skipped: "Stage 4 is not live yet (20261102j)." } };
+  const versions = await ctx.db.all("cockpit_form_versions", `select=form_key,version,schema&form_key=in.(${on.join(",")})&version=gte.2&order=version.desc`);
+  const fields: Record<string, Row[]> = {};
+  for (const v of versions)
+    if (!fields[String(v.form_key)])
+      fields[String(v.form_key)] = (Array.isArray(v.schema?.fields) ? v.schema.fields : []).filter((f: Row) => f?.type !== "heading");
+  const found = await ctx.db.all(
+    "cockpit_form_responses",
+    `select=id,form_key,task_id,submitted_at,answers,answer_meta&form_key=in.(${on.join(",")})&form_version=gte.2&source=in.(cockpit,portal,public)&mode=eq.live&state=in.(submitted,confirmed)&task_id=not.is.null&order=submitted_at.asc`,
+  );
+  const valid = new Set(ctx.clients.map(c => c.taskId));
+  const rows: Row[] = [];
+  const byForm: Record<string, number> = {};
+  for (const r of found) {
+    const form = String(r.form_key);
+    if (!STAGE4_FORMS[form] || r.answer_meta?.canary === true || !r.task_id || !Number.isFinite(Date.parse(r.submitted_at))) continue;
+    const answers = (fields[form] ?? [])
+      .filter(f => r.answers?.[f.key] !== undefined && r.answers?.[f.key] !== null && r.answers?.[f.key] !== "")
+      .map(f => ({
+        ref: String(f.key),
+        type: STAGE4_TYPES[String(f.type)] ?? "short_text",
+        title: String(typeof f.label === "object" ? (f.label?.en ?? f.key) : (f.title ?? f.key)),
+        value: stage4Value(f, r.answers[f.key]),
+      }));
+    rows.push({
+      token: `cockpit:${r.id}`,
+      form_id: STAGE4_FORMS[form],
+      form_kind: form,
+      task_id: String(r.task_id),
+      typed_client: null,
+      matched_by: "cockpit_form",
+      submitted_at: r.submitted_at,
+      answers,
+      hidden: {},
+      recording_url: null,
+      updated_at: iso(ctx.now),
+    });
+    byForm[form] = (byForm[form] ?? 0) + 1;
+  }
+  return { rows, count: { total: rows.length, onBoard: rows.filter(x => valid.has(String(x.task_id))).length, byForm } };
+}
+
 const TRANSCRIPT_REF = "0773087f-beda-4e2c-bf50-acdac0dcbe05";
 /** A Fathom share link as the 1-1 form carries it. */
 const SHARE = /https:\/\/fathom\.video\/share\/[A-Za-z0-9_-]+/;
@@ -385,7 +460,7 @@ export async function checkinCutover(db: Db): Promise<number | null> {
 }
 /** Every Typeform response read and matched to a client, before the 1-1 forms are linked to their calls. */
 /** counts is the Typeform per-form map (FORMS keys only); native is the cockpit's own answers, kept apart (review W34). */
-export type FormsRead = { formRows: Row[]; checkins: Checkin[]; counts: Record<string, Row>; native: Row };
+export type FormsRead = { formRows: Row[]; checkins: Checkin[]; counts: Record<string, Row>; native: Row; stage4?: Row };
 
 /**
  * Reads every response of every form and matches it to a client. The 1-1 forms' Fathom links go into
@@ -486,9 +561,13 @@ export async function readTypeforms(ctx: Ctx): Promise<FormsRead> {
   // The client's own answers in the cockpit join the same timeline (4.6.5).
   const native = await readNativeForms(ctx);
   formRows.push(...native.rows);
+  // Stage 4: the native kickoff and onboarding answers, once their go-live has happened.
+  const stage4 = await readStage4Forms(ctx);
+  formRows.push(...stage4.rows);
   ctx.plan.typeform = counts;
   ctx.plan.native = native.count;
-  return { formRows, checkins, counts, native: native.count };
+  ctx.plan.stage4 = stage4.count;
+  return { formRows, checkins, counts, native: native.count, stage4: stage4.count };
 }
 
 /**
@@ -498,7 +577,7 @@ export async function readTypeforms(ctx: Ctx): Promise<FormsRead> {
  */
 export async function linkTypeforms(ctx: Ctx, read: FormsRead): Promise<Health[]> {
   const { db } = ctx;
-  const { formRows, checkins, counts, native } = read;
+  const { formRows, checkins, counts, native, stage4 } = read;
   const out: Health[] = [];
   // Link each 1-1 form to its call. A form whose Fathom link is a stored recording of the same client
   // belongs under that recording: its booking when the booking is on the card and not gone, else the
@@ -590,9 +669,9 @@ export async function linkTypeforms(ctx: Ctx, read: FormsRead): Promise<Health[]
   out.push({
     key: "csm-forms-history",
     ok: true,
-    rows: others.reduce((n, [, c]) => n + (Number(c.stored) || 0), 0) + (Number(native?.total) || 0),
-    note: `${others.map(([f, c]) => `${FORMS[f]} ${c.stored}/${c.total} (${c.matched} matched)`).join(", ")}.${nativeNote(native)}`,
-    detail: { ...Object.fromEntries(others), native },
+    rows: others.reduce((n, [, c]) => n + (Number(c.stored) || 0), 0) + (Number(native?.total) || 0) + (Number(stage4?.total) || 0),
+    note: `${others.map(([f, c]) => `${FORMS[f]} ${c.stored}/${c.total} (${c.matched} matched)`).join(", ")}.${nativeNote(native)}${stage4Note(stage4)}`,
+    detail: { ...Object.fromEntries(others), native, ...(stage4 ? { stage4 } : {}) },
   });
   return out;
 }
@@ -605,6 +684,14 @@ function nativeNote(native: Row | undefined): string {
   if (native.skipped) return ` The client's own forms in the cockpit are not read yet: ${native.skipped}`;
   const parts = Object.entries((native.byForm ?? {}) as Record<string, number>).map(([k, n]) => `${n} ${NATIVE_NAMES[k] ?? k}`);
   return ` The client's own forms in the cockpit: ${native.total} ${native.total === 1 ? "answer" : "answers"} stored, ${native.onBoard} on a client card${parts.length ? ` (${parts.join(", ")})` : ""}.`;
+}
+
+/** Stage 4's own answers in a sentence, only once read (before the go-live the note is unchanged). */
+function stage4Note(stage4: Row | undefined): string {
+  if (!stage4 || stage4.skipped) return "";
+  const k = Number(stage4.byForm?.kickoff) || 0;
+  const o = Number(stage4.byForm?.onboarding) || 0;
+  return ` Sent in the cockpit since Stage 4: ${k} ${k === 1 ? "kickoff" : "kickoffs"} and ${o} onboarding ${o === 1 ? "form" : "forms"}, ${stage4.onBoard} on a client card.`;
 }
 
 /** Read and link in one go, for a run of the Typeform source alone (worker.ts runs the Fathom source in between). */

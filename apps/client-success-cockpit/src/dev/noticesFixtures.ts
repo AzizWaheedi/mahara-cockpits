@@ -134,6 +134,8 @@ const ago = (now: string, hours: number) =>
  * in its address (the default read stays the ten rows the card's tests pin).
  * `forms` adds waves 3-4's six client form rows as 20261102a seeds them
  * (`&forms=1`), with #nps-survey-feedback still waiting for the bot (Q4).
+ * `money` adds waves 5-6's three rows as 20261102g seeds them, all off
+ * (`&money=1`; WAVE56 3.9).
  */
 export function settingsReadFixture(
   opts: {
@@ -142,6 +144,7 @@ export function settingsReadFixture(
     now?: string;
     lifecycle?: boolean;
     forms?: boolean;
+    money?: boolean;
   } = {},
 ): SettingsRead {
   const now = opts.now ?? NOTICE_NOW;
@@ -153,6 +156,10 @@ export function settingsReadFixture(
     opts.forms ??
     (typeof location !== "undefined" &&
       new URLSearchParams(location.search).get("forms") === "1");
+  const money =
+    opts.money ??
+    (typeof location !== "undefined" &&
+      new URLSearchParams(location.search).get("money") === "1");
   const edit = opts.edit ?? true;
   const editors = opts.editors ?? edit;
   const migration = { updatedBy: "the migration", updatedAt: ago(now, 72) };
@@ -400,6 +407,27 @@ export function settingsReadFixture(
                 : null,
           }))
         : []),
+      // Wins and money, as 20261102g seeds them: off until each go-live (WAVE56 1.4).
+      ...(money
+        ? (
+            [
+              ["win.logged", CSM_ANNOUNCE],
+              ["receipt.in", CSM_GENERAL],
+              ["client.reactivated", CSM_ANNOUNCE],
+            ] as const
+          ).map(([kind, channel]) => ({
+            kind,
+            shape: "post" as const,
+            on: false,
+            fixedOn: false,
+            channel,
+            mentionRule: [],
+            mentionPeople: [],
+            tags: [],
+            ...migration,
+            last: null,
+          }))
+        : []),
     ],
     channels: [
       {
@@ -443,7 +471,7 @@ export function settingsReadFixture(
         checkedAt: ago(now, 24),
         inUse: false,
       },
-      ...(lifecycle || forms
+      ...(lifecycle || forms || money
         ? [
             {
               ...CSM_ANNOUNCE,

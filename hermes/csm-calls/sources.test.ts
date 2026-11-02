@@ -18,7 +18,9 @@ import {
   metaAccounts,
   NATIVE_FORMS,
   readNativeForms,
+  readStage4Forms,
   readTypeforms,
+  STAGE4_FORMS,
   reconcile,
   recordingOf,
   storePass,
@@ -1297,6 +1299,64 @@ describe("readTypeforms: the client's own NPS, onboarding survey and portal feed
     expect(out).toEqual({ rows: [], count: { total: 0, skipped: "Client voice is not live yet (20261102c)." } });
     const none = await readNativeForms(ctxOf(store(seedOf({})), emptyTypeform));
     expect(none.rows).toEqual([]);
+  });
+});
+
+describe("readStage4Forms: the native kickoff and onboarding join the timeline (waves 5-6, Stage 4)", () => {
+  const emptyTypeform = { receipts: [], typeform: async (path: string) => (path.endsWith("/responses") ? { items: [], total_items: 0 } : { fields: [] }) } as unknown as Transport;
+  const versions = [
+    { form_key: "kickoff", version: 2, schema: { lives: "cockpit", fields: [
+      { key: "contractStatus", typeformRef: "c0000001-0000-4000-8000-00000000000a", title: "Contract status", type: "choice", options: ["Signed", "Not sent yet"] },
+      { key: "serviceAdvertised", typeformRef: "c0000001-0000-4000-8000-000000000007", title: "Which service are we advertising?", type: "multi", options: ["Design and build", "Interior design"] },
+      { key: "newMrrUsd", typeformRef: null, title: "New MRR (USD a month)", type: "number" }] } },
+    { form_key: "onboarding", version: 2, schema: { v: 1, fields: [
+      { key: "aboutYou", type: "heading", label: { en: "About you", ar: "عنك" } },
+      { key: "freeConsults", type: "choice", label: { en: "Do you offer free consultations?", ar: "تقدمون استشارات مجانية؟" },
+        options: [{ value: "yes", label: { en: "Yes, we offer free consultations", ar: "إي" } }, { value: "no", label: { en: "No, we do not offer them", ar: "لا" } }] },
+      { key: "appointmentTypes", type: "multi", label: { en: "What types of appointments do you offer?", ar: "شنو أنواع المواعيد؟" },
+        options: [{ value: "online", label: { en: "Online", ar: "أونلاين" } }, { value: "office", label: { en: "In your office", ar: "في مكتبكم" } }] },
+      { key: "businessName", type: "text", label: { en: "Business Name", ar: "اسم الشركة" } }] } },
+  ];
+  const answers = [
+    { id: "k-1", form_key: "kickoff", form_version: 2, source: "cockpit", task_id: CITY.taskId, mode: "live", state: "submitted", submitted_at: iso(NOW - HOUR),
+      answers: { contractStatus: "Signed", serviceAdvertised: ["Design and build", "Interior design"], newMrrUsd: 2500 }, answer_meta: {} },
+    { id: "o-1", form_key: "onboarding", form_version: 2, source: "portal", task_id: MAKERS.taskId, mode: "live", state: "submitted", submitted_at: iso(NOW - HOUR),
+      answers: { freeConsults: "yes", appointmentTypes: ["online", "office"], businessName: "Invented Co" }, answer_meta: {} },
+    // Never here: a Typeform door answer (the Typeform read stores it), a canary, an old Typeform kickoff pointer.
+    { id: "o-door", form_key: "onboarding", form_version: 2, source: "typeform_webhook", task_id: SMMIM.taskId, mode: "live", state: "submitted", submitted_at: iso(NOW), answers: { businessName: "X" }, answer_meta: {} },
+    { id: "k-canary", form_key: "kickoff", form_version: 2, source: "cockpit", task_id: "86eywg1cq", mode: "live", state: "submitted", submitted_at: iso(NOW), answers: {}, answer_meta: { canary: true } },
+    { id: "k-old", form_key: "kickoff", form_version: 1, source: "typeform_webhook", task_id: CITY.taskId, mode: "live", state: "submitted", submitted_at: iso(NOW), answers: {}, answer_meta: {} },
+  ];
+  const seed = (stage: Row) => store(seedOf({ cockpit_settings: [{ key: "forms.doors", value: { voice: true } }, { key: "forms.stage4", value: stage }],
+    cockpit_form_versions: versions, cockpit_form_responses: answers }));
+
+  test("before the go-live nothing is read and the history note is unchanged", async () => {
+    const out = await readStage4Forms(ctxOf(seed({ kickoff: false, onboarding: false }), emptyTypeform));
+    expect(out).toEqual({ rows: [], count: { total: 0, skipped: "Stage 4 is not live yet (20261102j)." } });
+    const healths = await typeformSource(ctxOf(seed({ kickoff: false, onboarding: false }), emptyTypeform));
+    expect((healths.find(h => h.key === "csm-forms-history") as Health).note).not.toContain("Stage 4");
+  });
+
+  test("after the go-live each native answer is a call-store row under its own form id, with the questions' English words", async () => {
+    const out = await readStage4Forms(ctxOf(seed({ kickoff: true, onboarding: true }), emptyTypeform));
+    expect(out.rows.map(r => [r.token, r.form_id, r.form_kind, r.task_id, r.matched_by])).toEqual([
+      ["cockpit:k-1", STAGE4_FORMS.kickoff, "kickoff", CITY.taskId, "cockpit_form"],
+      ["cockpit:o-1", STAGE4_FORMS.onboarding, "onboarding", MAKERS.taskId, "cockpit_form"],
+    ]);
+    expect(out.rows[0].answers).toEqual([
+      { ref: "contractStatus", type: "multiple_choice", title: "Contract status", value: "Signed" },
+      { ref: "serviceAdvertised", type: "multiple_choice", title: "Which service are we advertising?", value: "Design and build, Interior design" },
+      { ref: "newMrrUsd", type: "number", title: "New MRR (USD a month)", value: 2500 },
+    ]);
+    expect(out.rows[1].answers).toEqual([
+      { ref: "freeConsults", type: "multiple_choice", title: "Do you offer free consultations?", value: "Yes, we offer free consultations" },
+      { ref: "appointmentTypes", type: "multiple_choice", title: "What types of appointments do you offer?", value: "Online, In your office" },
+      { ref: "businessName", type: "short_text", title: "Business Name", value: "Invented Co" },
+    ]);
+    expect(out.count).toEqual({ total: 2, onBoard: 2, byForm: { kickoff: 1, onboarding: 1 } });
+    const healths = await typeformSource(ctxOf(seed({ kickoff: true, onboarding: false }), emptyTypeform));
+    expect((healths.find(h => h.key === "csm-forms-history") as Health).note)
+      .toContain(" Sent in the cockpit since Stage 4: 1 kickoff and 0 onboarding forms, 1 on a client card.");
   });
 });
 

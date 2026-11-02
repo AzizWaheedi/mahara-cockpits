@@ -134,20 +134,22 @@ export const LINK_GROUPS: LinkGroup[] = [
   {
     title: "Money, the four Rs",
     blurb:
-      "Refer, resell, renew, review. Fill the form the same day it happens, no form, no commission.",
+      "Refer, resell, renew, review. Log it with Log a win the same day it happens, with its proof: no proof, no commission.",
     rows: [
       {
         label: "Google review link (the same ask for every client)",
         url: "https://g.page/r/CeRMcUwFPpe7EAI/review",
-        note: "Then log it in the client review form",
+        note: "Then log it with Log a win on the client's page",
       },
       {
-        label: "Client review form (review or video testimonial)",
-        url: "https://maharamedia.typeform.com/to/ETEynRgb",
+        label: "Log a win: a Google review or a video testimonial",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Log a win. Add the review, screenshot or video link. Until Log a win switches on, the old form stays live: https://maharamedia.typeform.com/to/ETEynRgb",
       },
       {
-        label: "Referral form",
-        url: "https://maharamedia.typeform.com/to/bAmbMKM2",
+        label: "Log a win: a referral",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Log a win, and pick the referred client's signed deal. Until Log a win switches on, the old form stays live: https://maharamedia.typeform.com/to/bAmbMKM2",
       },
       {
         label: "Referral programme, how it works",
@@ -155,16 +157,19 @@ export const LINK_GROUPS: LinkGroup[] = [
         note: "Send or explain this before asking for the referral",
       },
       {
-        label: "Website upsell form",
-        url: "https://maharamedia.typeform.com/to/VP3zmaj2",
+        label: "Log a win: a website upsell",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Log a win, or Mark as offered on the sent proposal. Until Log a win switches on, the old form stays live: https://maharamedia.typeform.com/to/VP3zmaj2",
       },
       {
-        label: "Social media management upsell form",
-        url: "https://maharamedia.typeform.com/to/IVHO9BMC",
+        label: "Log a win: a social media management upsell",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Log a win, or Mark as offered on the sent proposal. Until Log a win switches on, the old form stays live: https://maharamedia.typeform.com/to/IVHO9BMC",
       },
       {
-        label: "Backend program upsell form",
-        url: "https://maharamedia.typeform.com/to/cKItPZVI",
+        label: "Log a win: a back-end programme upsell",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Log a win, or Mark as offered on the sent proposal. Until Log a win switches on, the old form stays live: https://maharamedia.typeform.com/to/cKItPZVI",
       },
     ],
   },

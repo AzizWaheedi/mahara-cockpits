@@ -1006,6 +1006,63 @@ export const DEFINITIONS: MetricDefinition[] = [
     "ratio",
     "Clients launched more than 60 days ago are not asked. Old Typeform answers with no client; canary answers.",
   ),
+  // The wins ledger (WAVE56-CONTRACT 4.8, 6.4): counted from cockpit_wins_v by the money refresh.
+  ...(
+    [
+      ["clients.wins.reviews", "Google reviews", "review"],
+      ["clients.wins.testimonials", "Video testimonials", "video_testimonial"],
+      ["clients.wins.podcasts", "Podcast case studies", "podcast"],
+      ["clients.wins.referrals", "Referrals", "referral"],
+      ["clients.wins.renewals", "Renewals", "renewal"],
+      ["clients.wins.reactivations", "Reactivations", "reactivation"],
+    ] as const
+  ).map(([metric, label, kind]) =>
+    d(
+      metric,
+      "clients",
+      label,
+      `Wins of kind ${kind} the CSM or the CEO logged in the cockpit with their proof, by win date in the window; a voided win does not count.`,
+      `${TRIAGE} cockpit_wins_v (the wins ledger, cockpit_csm_wins)`,
+      "count",
+      "Imported Typeform wins (voided history, before the cockpit), voided wins and canary wins on the test card. A win nobody logged is not counted.",
+    ),
+  ),
+  d(
+    "money.upsells.offered",
+    "money",
+    "Upsells offered",
+    "Upsells offered in the window: a sent proposal or a proof link with a price, counted by the day of its offered event, so an upsell that went on to be accepted or paid still counts.",
+    `${TRIAGE} cockpit_wins_v offered_on (the wins ledger's offered event)`,
+    "count",
+    "Drafts never count. Voided upsells and canary wins on the test card.",
+  ),
+  d(
+    "money.upsells.accepted",
+    "money",
+    "Upsells accepted",
+    "Upsells accepted in the window: an agreement linked, counted by the day of its accepted event, so a paid upsell still counts.",
+    `${TRIAGE} cockpit_wins_v accepted_on (the wins ledger's accepted event)`,
+    "count",
+    "A proposal marked accepted with no signed agreement; voided upsells; canary wins.",
+  ),
+  d(
+    "money.upsells.cash",
+    "money",
+    "Upsell cash",
+    "Checked payments the CEO tied to an upsell win, by payment day in the window. Always back end, the card's CSM's, never in front-end cash.",
+    `${TRIAGE} cockpit_wins_v ties (confirmed win ties of cockpit_payment_ties.win_id, checked by cockpit_payment_checked)`,
+    "usd",
+    "A payment proposed but not confirmed by the CEO, a hand-logged transfer not checked yet, a cleared win tie.",
+  ),
+  d(
+    "money.upsells.rate",
+    "money",
+    "Upsell rate",
+    "Upsells accepted over upsells offered, both by event day in the window. Not known when nothing was offered.",
+    `${TRIAGE} cockpit_wins_v offered_on and accepted_on`,
+    "share",
+    "Withheld when no upsell was offered in the window (never 0). Drafts, voided upsells and canary wins.",
+  ),
   d(
     "clients.average_retainer",
     "clients",
@@ -1262,6 +1319,83 @@ export function extractMoney(p: MoneyPayload): MetricValue[] {
   // checked-money's rails.manualLogged ({count, usd, oldestDay}); a payload from before it has none, so nothing is written.
   const logged = (p.rails as { manualLogged?: { usd?: unknown } } | undefined)?.manualLogged;
   if (logged) v("money.logged_unchecked", "snapshot", logged.usd);
+  out.push(...winsValues(p));
+  return out;
+}
+
+/** One row of cockpit_wins_v as the money refresh carries it (payload.wins.rows). */
+export type WinRow = {
+  id: string;
+  kind: string;
+  stage: string;
+  wonOn: string;
+  offeredOn: string | null;
+  acceptedOn: string | null;
+  ties: { paidOn: string; usd: number; checked: boolean }[];
+};
+
+/** The wins block of the money payload: read, or why it was not. */
+export type WinsBlock = { read: true; today: string; rows: WinRow[] } | { read: false; error: string };
+
+const WIN_COUNTS: [string, string][] = [
+  ["clients.wins.reviews", "review"],
+  ["clients.wins.testimonials", "video_testimonial"],
+  ["clients.wins.podcasts", "podcast"],
+  ["clients.wins.referrals", "referral"],
+  ["clients.wins.renewals", "renewal"],
+  ["clients.wins.reactivations", "reactivation"],
+];
+
+/**
+ * The goal actuals and the lock-in's upsell lines over one window (4.8):
+ * googleReviews, referrals, testimonials, upsells (offered + accepted, by
+ * event day), upsellCash (checked tied cash by payment day) and upsellRate
+ * (accepted / offered; null, not known, when nothing was offered). Void and
+ * imported wins are not in the view, so they never count.
+ */
+export function winGoalActuals(rows: WinRow[], from: string, to: string) {
+  const inWin = (day: string | null) => !!day && day >= from && day <= to;
+  const live = rows.filter(w => w.stage !== "void");
+  const count = (kind: string) => live.filter(w => w.kind === kind && inWin(w.wonOn)).length;
+  const upsells = live.filter(w => w.kind.startsWith("upsell_"));
+  const offered = upsells.filter(w => inWin(w.offeredOn)).length;
+  const accepted = upsells.filter(w => inWin(w.acceptedOn)).length;
+  const cash = upsells.reduce((sum, w) => sum + (w.ties ?? []).filter(t => t.checked && inWin(t.paidOn)).reduce((s, t) => s + t.usd, 0), 0);
+  return {
+    googleReviews: count("review"),
+    referrals: count("referral"),
+    testimonials: count("video_testimonial"),
+    upsellsOffered: offered,
+    upsellsAccepted: accepted,
+    upsells: offered + accepted,
+    upsellCash: Math.round(cash * 100) / 100,
+    upsellRate: offered > 0 ? Math.round((accepted / offered) * 1000) / 1000 : null,
+  };
+}
+
+/**
+ * The wins metrics (WAVE56-CONTRACT 4.8) for this month and last month, from
+ * the money payload's wins block. A block that was not read writes nothing:
+ * missing is never zero. upsellRate is null when nothing was offered.
+ */
+export function winsValues(p: MoneyPayload): MetricValue[] {
+  const wins = (p as { wins?: WinsBlock } | undefined)?.wins;
+  const out: MetricValue[] = [];
+  if (wins?.read !== true || !Array.isArray(wins.rows) || !/^\d{4}-\d{2}-\d{2}$/.test(wins.today ?? "")) return out;
+  const start = `${wins.today.slice(0, 7)}-01`;
+  const last = new Date(Date.parse(`${start}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+  const windows: Record<string, [string, string]> = { mtd: [start, wins.today], lastMonth: [`${last.slice(0, 7)}-01`, last] };
+  for (const [w, [from, to]] of Object.entries(windows)) {
+    const at = { scope: "company", window: w, windowFrom: from, windowTo: to };
+    const inWin = (day: string | null) => !!day && day >= from && day <= to;
+    for (const [metric, kind] of WIN_COUNTS)
+      out.push({ metric, ...at, value: wins.rows.filter(x => x.stage !== "void" && x.kind === kind && inWin(x.wonOn)).length });
+    const a = winGoalActuals(wins.rows, from, to);
+    out.push({ metric: "money.upsells.offered", ...at, value: a.upsellsOffered });
+    out.push({ metric: "money.upsells.accepted", ...at, value: a.upsellsAccepted });
+    out.push({ metric: "money.upsells.cash", ...at, value: a.upsellCash });
+    out.push({ metric: "money.upsells.rate", ...at, value: a.upsellRate });
+  }
   return out;
 }
 

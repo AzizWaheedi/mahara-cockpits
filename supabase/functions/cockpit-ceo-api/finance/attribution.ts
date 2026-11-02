@@ -17,6 +17,10 @@ import { nameKey, usdWords } from "./manualMatch.ts";
  *    Whop's own deal link, the payer's email, the name, the card.
  * 4. A payer tie keys on the email or the exact payer key, never a short
  *    name. Anything else is not attributed, and the Transactions tab lists it.
+ * 7. A payment whose tie names a win (cockpit_payment_ties.win_id, Q23) is
+ *    back end, the card's CSM's: never the closer's, never in the deal
+ *    ledger, never added to a deal's running contract total or its 120-day
+ *    cap, even inside the deal's term. It is read before rules 1 and 2.
  *
  * The native copy is hermes/ceo-refresh/native/adapters/money.js; both change
  * together, and scripts/money-attribution-parity.test.ts runs them on the same
@@ -150,10 +154,14 @@ export type Tie = {
   note: string;
   setBy: string | null;
   setAt: string | null;
+  /** The upsell win a payment tie names (cockpit_payment_ties.win_id, 20261102h): rule 7. */
+  winId: string | null;
 };
 
-/** What a tied row carries: which tie, and the CEO's words. */
-export type TieRef = Pick<Tie, "id" | "scope" | "note" | "setBy" | "setAt">;
+/** What a tied row carries: which tie, the CEO's words, and the win of an upsell tie. */
+export type TieRef = Pick<Tie, "id" | "scope" | "note" | "setBy" | "setAt"> & {
+  winId?: string;
+};
 
 export type Side = "front_end" | "back_end" | "unattributed" | "not_client";
 export type Kind = "deposit" | "remainder" | "client" | "none";
@@ -293,6 +301,7 @@ export function normalizeTies(rows: TieRow[] | null | undefined): Tie[] {
     );
     const clickupTaskId = text(pick(row, "clickup_task_id", "clickupTaskId"));
     const notClient = pick(row, "not_client", "notClient") === true;
+    const winId = text(pick(row, "win_id", "winId"));
     const scope = paymentId
       ? "payment"
       : payerEmail || payerKey
@@ -313,6 +322,8 @@ export function normalizeTies(rows: TieRow[] | null | undefined): Tie[] {
       note: oneLine(pick(row, "note"), 500),
       setBy: oneLine(pick(row, "set_by", "setBy"), 120) || null,
       setAt: setAt === null || setAt === undefined ? null : String(setAt),
+      // A win tie is a payment tie to the win's card (20261102h); anything else carries no win.
+      winId: paymentId && clickupTaskId && !dealResponseId ? winId : null,
     });
   }
   return ties.sort((a, b) => a.id - b.id);
@@ -505,7 +516,27 @@ export function attribute(
         note: tie.note,
         setBy: tie.setBy,
         setAt: tie.setAt,
+        ...(tie.winId ? { winId: tie.winId } : {}),
       };
+      // 7. An upsell payment tied to a win is the card CSM's back-end money, before rules 1 and 2.
+      if (tie.winId && tie.clickupTaskId) {
+        const card = cardById.get(tie.clickupTaskId);
+        out.push({
+          ...p,
+          side: "back_end",
+          kind: "client",
+          depositUsd: 0,
+          person: card?.csm ?? null,
+          personRole: "csm",
+          dealResponseId: null,
+          dealBusiness: null,
+          clientTaskId: tie.clickupTaskId,
+          clientName: card?.names[0] ?? null,
+          matchedBy: "ceo",
+          tie: ref,
+        });
+        continue;
+      }
       const tiedDeal = tie.dealResponseId
         ? dealById.get(tie.dealResponseId)
         : undefined;
@@ -708,7 +739,7 @@ export function attributionRuleText(
   unattributedCount: number,
   unattributedUsd: number,
 ): string {
-  return `Every payment in over the last 12 months is given a side. A payment tied to a signed deal (by your tie, Whop's own link, the payer's email, the business name, or a client card whose deal is still in its term) is front end and the closer's, from ${BEFORE_FORM_DAYS} days before the form until the deal's tied cash reaches its contract, at most ${DEAL_TERM_DAYS} days after signing: the deposit up to what the closer typed, then the remainder. Beyond the contract or the ${DEAL_TERM_DAYS} days it is back end, the card's CSM's, and so is a payment matched only to a client (by a portal login, the hand-kept payer mapping, the card's names or the card typed on a hand-logged entry). Your ties are read before any automatic match. ${unattributedCount === 1 ? "1 payment" : `${unattributedCount} payments`} (${usdWords(unattributedUsd)}) match no deal and no client; the Transactions tab lists every payment in and out.`;
+  return `Every payment in over the last 12 months is given a side. A payment tied to a signed deal (by your tie, Whop's own link, the payer's email, the business name, or a client card whose deal is still in its term) is front end and the closer's, from ${BEFORE_FORM_DAYS} days before the form until the deal's tied cash reaches its contract, at most ${DEAL_TERM_DAYS} days after signing: the deposit up to what the closer typed, then the remainder. Beyond the contract or the ${DEAL_TERM_DAYS} days it is back end, the card's CSM's, and so is a payment matched only to a client (by a portal login, the hand-kept payer mapping, the card's names or the card typed on a hand-logged entry). Your ties are read before any automatic match, and a payment you tied to an upsell win is back end, the card's CSM's, even inside a deal's term: it never counts toward the deal's contract or the closer. ${unattributedCount === 1 ? "1 payment" : `${unattributedCount} payments`} (${usdWords(unattributedUsd)}) match no deal and no client; the Transactions tab lists every payment in and out.`;
 }
 
 const TIE_WHY: Record<TieSummary["notApplied"][number]["why"], string> = {

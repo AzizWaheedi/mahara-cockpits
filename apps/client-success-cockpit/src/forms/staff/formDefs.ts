@@ -527,3 +527,362 @@ export function suggestedNextDate(
   const length = daysBetween(pausedOn, today);
   return length >= 0 ? addDays(oldNextDate, length) : null;
 }
+
+// --- Waves 5 and 6: Log a win and Client is back (WAVE56-CONTRACT.md 5.1, 5.11) ----
+
+/** The win kinds in Log a win's order (3.1), the four Rs first, then the upsells. */
+export const WIN_KIND_OPTIONS = [
+  { value: "review", label: "Google review" },
+  { value: "video_testimonial", label: "Video testimonial" },
+  { value: "podcast", label: "Podcast case study" },
+  { value: "referral", label: "Referral" },
+  { value: "renewal", label: "Renewal" },
+  { value: "reactivation", label: "Reactivation" },
+  { value: "upsell_website", label: "Website" },
+  { value: "upsell_smm", label: "Social media management" },
+  { value: "upsell_backend", label: "Back-end programme" },
+  { value: "upsell_seo_geo", label: "SEO and AI search" },
+  { value: "upsell_second_campaign", label: "Second campaign" },
+];
+
+/** The wins ledger's refusals Log a win checks before a send (4.2), word for word. */
+export const WIN_SAY = {
+  kind: "Pick what you won.",
+  review: "Add the review link or a screenshot link.",
+  video: "Add the video link.",
+  podcast: "Add the episode link.",
+  referral: "Pick the referred client's signed deal.",
+  agreement: "Add the agreement link to clear it for pay.",
+  quoted: "Add the quoted price.",
+  belowList: "Say why the price is below the list price.",
+  date: "The win date is today or within the last 30 days.",
+  upsellProof: "Pick the sent proposal or add a proof link.",
+  monthly: "Add the monthly amount.",
+  link: "A link starts with https://.",
+} as const;
+
+export type WinProposal = {
+  id: string;
+  offerName: string;
+  status: string;
+  totalUsd: number | null;
+  listUsd: number | null;
+};
+export type WinDeal = {
+  responseId: string;
+  business: string;
+  signedOn: string;
+};
+
+export type WinContext = {
+  client: string;
+  /** Offer Studio proposals that are sent, link copied or accepted (never a draft). */
+  proposals: WinProposal[];
+  /** Signed deals of the last 120 days, for a referral. */
+  deals: WinDeal[];
+};
+
+const upsell = (a: Answers) => /^upsell_/.test(String(a.kind ?? ""));
+const isKind = (k: string) => (a: Answers) => a.kind === k;
+const https = (v: unknown) =>
+  /^https:\/\/\S+$/i.test(String(v ?? "").trim()) ? null : WIN_SAY.link;
+
+function proofField(
+  key: string,
+  label: string,
+  kinds: string[],
+  message: string,
+  required: boolean,
+): FieldDef {
+  return {
+    key,
+    label,
+    type: "text",
+    required,
+    showIf: a => kinds.includes(String(a.kind ?? "")),
+    message,
+    placeholder: "https://",
+    check: https,
+  };
+}
+
+/**
+ * Log a win (5.1): what was won, when, its proof per kind, the referred
+ * client's deal, an upsell's price, and a note. A proposal picked makes it
+ * "Mark as offered"; the database refuses a draft in its own words.
+ */
+export function winDef(ctx: WinContext): FormDef {
+  const listOf = (a: Answers) => {
+    const p = ctx.proposals.find(x => x.id === a.proposalId);
+    return p?.listUsd ?? null;
+  };
+  const below = (a: Answers) => {
+    const list = listOf(a);
+    const q = num(a.quotedUsd);
+    return upsell(a) && list !== null && Number.isFinite(q) && q < list;
+  };
+  return {
+    key: "win",
+    version: 1,
+    title: "Log a win",
+    lede: "Log it the day it happens, with its proof.",
+    cardWords: "wins",
+    ticket: null,
+    ticketNone: "No ticket for a win",
+    notice: true,
+    doneLabel: "Logged",
+    submitLabel: a => (a.proposalId ? "Mark as offered" : "Log the win"),
+    words: {
+      stored: "Win stored",
+      storing: "Storing the win",
+      cardQueued: "Card comment queued",
+      cardDone: "Card comment confirmed",
+      held: "Waits for the switch-on",
+    },
+    fields: [
+      {
+        key: "kind",
+        label: "What did you win?",
+        type: "choice",
+        required: true,
+        message: WIN_SAY.kind,
+        options: WIN_KIND_OPTIONS,
+        optionGroups: [
+          {
+            label: null,
+            values: WIN_KIND_OPTIONS.slice(0, 6).map(o => o.value),
+          },
+          {
+            label: "Upsells",
+            values: WIN_KIND_OPTIONS.slice(6).map(o => o.value),
+          },
+        ],
+      },
+      {
+        key: "wonOn",
+        label: "When",
+        type: "date",
+        required: true,
+        hint: "Today or within the last 30 days.",
+        message: WIN_SAY.date,
+        initial: today => today,
+        check: (v, _a, today) => {
+          const d = String(v);
+          return d > today || daysBetween(d, today) > 30 ? WIN_SAY.date : null;
+        },
+      },
+      proofField(
+        "proofReview",
+        "Review link or screenshot link",
+        ["review"],
+        WIN_SAY.review,
+        true,
+      ),
+      proofField(
+        "proofVideo",
+        "Video link",
+        ["video_testimonial"],
+        WIN_SAY.video,
+        true,
+      ),
+      proofField(
+        "proofPodcast",
+        "Episode link",
+        ["podcast"],
+        WIN_SAY.podcast,
+        true,
+      ),
+      {
+        key: "referralDealResponseId",
+        label: "Referred client",
+        type: "choice",
+        required: isKind("referral"),
+        showIf: isKind("referral"),
+        message: WIN_SAY.referral,
+        hint: ctx.deals.length
+          ? "Signed deals of the last 120 days that came by referral or are your clients. Not listed? The CEO can log it."
+          : "No signed deal to pick yet. The CEO can log a referral for any signed deal.",
+        options: ctx.deals.map(d => ({
+          value: d.responseId,
+          label: `${d.business} · signed ${kuwaitDay(d.signedOn) || "on a day not recorded"}`,
+        })),
+      },
+      {
+        key: "proposalId",
+        label: "Proposal",
+        type: "choice",
+        showIf: a => upsell(a) && ctx.proposals.length > 0,
+        hint: "A sent proposal. A draft is not a win.",
+        options: ctx.proposals.map(p => ({
+          value: p.id,
+          label: `${p.offerName}${p.totalUsd !== null ? ` · ${usd(p.totalUsd)}` : ""}`,
+        })),
+      },
+      {
+        ...proofField(
+          "proofUpsell",
+          "Proof link",
+          WIN_KIND_OPTIONS.slice(6).map(o => o.value),
+          WIN_SAY.upsellProof,
+          false,
+        ),
+        required: a => upsell(a) && !a.proposalId,
+      },
+      {
+        key: "agreementUrl",
+        label: "Agreement link",
+        type: "text",
+        hint: "Needed before this win can be paid.",
+        showIf: a => a.kind === "renewal" || a.kind === "reactivation",
+        placeholder: "https://",
+        check: https,
+      },
+      {
+        key: "quotedUsd",
+        label: "Quoted price (USD)",
+        type: "number",
+        required: upsell,
+        showIf: upsell,
+        message: WIN_SAY.quoted,
+        check: v => (num(v) > 0 && num(v) <= 1_000_000 ? null : WIN_SAY.quoted),
+      },
+      {
+        key: "recurring",
+        label: "Monthly",
+        type: "tick",
+        showIf: upsell,
+      },
+      {
+        key: "monthlyUsd",
+        label: "Monthly amount (USD)",
+        type: "number",
+        required: a => upsell(a) && a.recurring === true,
+        showIf: a => upsell(a) && a.recurring === true,
+        message: WIN_SAY.monthly,
+        check: v => (num(v) > 0 ? null : WIN_SAY.monthly),
+      },
+      {
+        key: "belowListReason",
+        label: "Why below the list price?",
+        type: "text",
+        required: below,
+        showIf: below,
+        min: 3,
+        message: WIN_SAY.belowList,
+        hint: "The proposal's list price is higher than the quoted price.",
+      },
+      { key: "note", label: "Note", type: "longtext" },
+    ],
+  };
+}
+
+/** An upsell needs a sent proposal or a proof link (3.2); said before the send. */
+export function winProblem(a: Answers): string | null {
+  if (!upsell(a)) return null;
+  const proof = String(a.proofUpsell ?? "").trim();
+  return a.proposalId || proof ? null : WIN_SAY.upsellProof;
+}
+
+/** The departure Client is back reopens, as the sheet's read-only facts say it. */
+export type Departure = {
+  id: number;
+  leftOn: string | null;
+  reason: string | null;
+  churnType: string | null;
+};
+
+export const REACTIVATE_SAY = {
+  why: "Say why they came back in 10 to 500 characters.",
+  date: "The return date is on or after the day they left, and within 14 days from now.",
+} as const;
+
+/**
+ * Client is back (5.11): a churned client returning. One act reopens the
+ * card through the rails; the month they left keeps its churn.
+ */
+export function reactivateDef(_client: string, d: Departure): FormDef {
+  const type =
+    CHURN_TYPES.find(t => t.value === d.churnType)?.label.replace(
+      / \(.*\)$/,
+      "",
+    ) ?? "churn type not recorded";
+  return {
+    key: "reactivate",
+    version: 1,
+    title: "Client is back",
+    lede: `Left on ${kuwaitDay(d.leftOn) || "a day not recorded"} · ${d.reason ?? "no reason recorded"} · ${type}`,
+    cardWords: "reactivations",
+    ticket: null,
+    ticketNone: "No ticket: open the relaunch ticket from Today",
+    notice: true,
+    doneLabel: "Reopened",
+    submitLabel: () => "Reopen the client",
+    words: {
+      stored: "Stored",
+      storing: "Storing",
+      cardQueued: "Card queued",
+      cardDone: "Card confirmed",
+      held: "Waits for the switch-on",
+    },
+    fields: [
+      {
+        key: "returnOn",
+        label: "Back from",
+        type: "date",
+        required: true,
+        initial: today => today,
+        message: REACTIVATE_SAY.date,
+        check: (v, _a, today) => {
+          const day = String(v);
+          if (d.leftOn && day < d.leftOn) return REACTIVATE_SAY.date;
+          return daysBetween(today, day) > 14 ? REACTIVATE_SAY.date : null;
+        },
+      },
+      {
+        key: "status",
+        label: "Back as",
+        type: "choice",
+        required: true,
+        initial: () => "Active",
+        options: [
+          { value: "Active", label: "Active" },
+          { value: "Onboarding Booked", label: "Onboarding again" },
+        ],
+      },
+      {
+        key: "nextPaymentDate",
+        label: "Next payment date",
+        type: "date",
+      },
+      {
+        key: "mrrUsd",
+        label: "MRR (USD)",
+        type: "number",
+        check: v => (num(v) >= 0 ? null : "Use a number of 0 or more."),
+      },
+      {
+        key: "agreementUrl",
+        label: "Agreement link",
+        type: "text",
+        hint: "Needed before this win can be paid.",
+        placeholder: "https://",
+        check: https,
+      },
+      {
+        key: "why",
+        label: "Why did they come back?",
+        type: "longtext",
+        required: true,
+        min: 10,
+        message: REACTIVATE_SAY.why,
+        check: v => (String(v).trim().length > 500 ? REACTIVATE_SAY.why : null),
+      },
+      {
+        key: "callId",
+        label: "Call",
+        type: "call",
+        noneLabel: "No call",
+      },
+    ],
+  };
+}

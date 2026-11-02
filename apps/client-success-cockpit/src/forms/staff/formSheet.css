@@ -714,3 +714,203 @@
 .fs-consent-row .fs-btn {
   min-height: 36px;
 }
+
+/* --- Waves 5-6 (docs/forms/WAVE56-CONTRACT.md 5.0, 5.1, 5.13) ------------- */
+
+/* A choice drawn in groups ("Upsells" under the four Rs). */
+.fs-group {
+  display: grid;
+  gap: 4px;
+}
+.fs-group + .fs-group {
+  margin-top: 8px;
+}
+.fs-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+/* A group's title between fields (the kickoff's three groups). */
+.fs-heading {
+  margin: 8px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  font-style: normal;
+}
+/* The database asked first: the warning and its two answers. */
+.fs-warn {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid color-mix(in oklab, var(--warning) 50%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--warning) 8%, var(--card));
+}
+.fs-warn-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+.fs-warn-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* --- The win ribbon (5.0's signature element) -------------------------------
+ * One row per win: a thin Geist Mono track, Offered → Accepted → Paid → Pay
+ * for an upsell, Logged → Pay for the rest. A stop is teal with its date when
+ * done, amber with its waiting sentence when waiting, a hollow ring when not
+ * yet. Voided rows cut the track with a short muted dash and the reason. The
+ * only motion is a stop filling (150 ms, none under reduced motion).
+ * states: done · waiting · todo · declined · voided · focus (row links) */
+.wr-root {
+  --wr-done: var(--mahara-teal);
+  --wr-wait: color-mix(in oklab, var(--warning) 75%, var(--foreground));
+  --wr-edge: color-mix(in oklab, var(--foreground) 30%, var(--card));
+  --wr-ink: var(
+    --primary-ink,
+    color-mix(in oklab, var(--mahara-teal) 55%, var(--foreground))
+  );
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  min-width: 0;
+}
+.dark .wr-root {
+  --wr-wait: var(--warning);
+  --wr-ink: var(--mahara-teal);
+}
+.wr-track {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 0;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
+}
+.wr-stop {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted-foreground);
+}
+.wr-stop + .wr-stop::before {
+  content: "";
+  display: inline-block;
+  width: 20px;
+  height: 1px;
+  margin: 0 6px;
+  background: var(--wr-edge);
+}
+.wr-stop[data-state="done"] + .wr-stop::before {
+  background: var(--wr-done);
+}
+.wr-dot {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border: 1.5px solid var(--wr-edge);
+  border-radius: 999px;
+  background: transparent;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+.wr-stop[data-state="done"] {
+  color: var(--foreground);
+}
+.wr-stop[data-state="done"] .wr-dot {
+  border-color: var(--wr-done);
+  background: var(--wr-done);
+}
+.wr-stop[data-state="waiting"] {
+  color: var(--wr-wait);
+}
+.wr-stop[data-state="waiting"] .wr-dot {
+  border-color: var(--wr-wait);
+  background: color-mix(in oklab, var(--warning) 20%, transparent);
+}
+.wr-stop[data-state="declined"] .wr-dot {
+  border-style: dashed;
+}
+.wr-date {
+  color: var(--muted-foreground);
+}
+.wr-said {
+  font-family: var(--font-sans);
+}
+.wr-cut {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted-foreground);
+  font-family: var(--font-sans);
+}
+.wr-cut::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 2px;
+  margin-left: 6px;
+  background: var(--wr-edge);
+}
+.wr-money {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground);
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wr-dot {
+    transition: none;
+  }
+}
+/* At phone width the track reads as a list down a rule, never a line that wraps
+   mid-connector: each stop on its own line, the dot sitting on the rule. */
+.wr-root {
+  container-type: inline-size;
+}
+@container (max-width: 30rem) {
+  .wr-track {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    margin-inline-start: 5px;
+    padding-inline-start: 14px;
+    border-inline-start: 1px solid var(--wr-edge);
+  }
+  .wr-stop {
+    flex-wrap: wrap;
+  }
+  .wr-stop .wr-dot {
+    margin-inline-start: -19px;
+    background: var(--card);
+  }
+  .wr-stop[data-state="done"] .wr-dot {
+    background: var(--wr-done);
+  }
+  .wr-stop + .wr-stop::before,
+  .wr-cut::before {
+    display: none;
+  }
+}
+/* A voided win's money is not money any more: muted and struck. */
+.wr-root[data-voided] .wr-money {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+}
+

@@ -88,6 +88,7 @@ class Net:
         self.refuse = None  # (status, body) the record RPC answers when set
         self.forms = {}  # other Typeform forms: form id -> (definition, items)
         self.onboarding_rows = []  # cockpit_client_onboarding cards
+        self.responses = []  # cockpit_form_responses rows (kickoff --count)
 
     def made(self, prefix, method=None):
         return [r for r in self.requests if r["url"].startswith(prefix) and (method is None or r["method"] == method)]
@@ -115,6 +116,8 @@ class Net:
             return 200, self.cards
         if url.startswith(f"{DB}/rest/v1/cockpit_client_onboarding?"):
             return 200, self.onboarding_rows
+        if url.startswith(f"{DB}/rest/v1/cockpit_form_responses?"):
+            return 200, self.responses
         if url == f"{DB}/rest/v1/rpc/cockpit_form_record_make":
             p = body["p"]
             inserted = p["externalId"] not in self.stored
@@ -356,3 +359,37 @@ class Backfill(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KickoffCount(unittest.TestCase):
+    """kickoff --count (docs/forms/WAVE56-CONTRACT.md 4.15.4): Stage 4's recorded inputs, counts only."""
+
+    setUp = Backfill.setUp
+    run_cmd = Backfill.run_cmd
+
+    def test_counts_both_sources_with_no_typeform_call_and_no_write(self):
+        self.net.onboarding_rows = ([{"kickoff": "BbJy6xg4", "onboarding": "KFRCXPFx"}] * 3
+                                    + [{"kickoff": "tG7dnxBn", "onboarding": None}] * 2 + [{"kickoff": None, "onboarding": None}])
+        self.net.responses = ([{"form_key": "kickoff", "form_version": 1, "state": "submitted"}] * 2
+                              + [{"form_key": "kickoff", "form_version": 2, "state": "submitted"}]
+                              + [{"form_key": "onboarding", "form_version": 1, "state": "submitted"}] * 4
+                              + [{"form_key": "onboarding", "form_version": 1, "state": "legacy"}])
+        code, out = self.run_cmd("kickoff", "--count")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out.strip(), "kickoff read model 5 (BbJy6xg4 3, tG7dnxBn 2), kickoff responses 3 (pointer 2, native 1), "
+                                      "onboarding answers 5 (legacy 1), onboarding read model 3 (counts only: nothing written)")
+        self.assertEqual(self.net.made("https://api.typeform.com/"), [])
+        self.assertEqual([r["method"] for r in self.net.requests], ["GET", "GET"])
+
+    def test_no_typeform_token_is_needed_and_an_unreadable_source_is_said_not_zero(self):
+        (self.state / "runtime-86eebpf1.json").write_text(json.dumps({"SUPABASE_URL": DB, "SUPABASE_SERVICE_ROLE_KEY": SERVICE_KEY}))
+        self.net.responses = "not a list"
+        code, out = self.run_cmd("kickoff", "--count")
+        self.assertEqual(code, 1)
+        self.assertEqual(out.strip(), "The stored answers could not be read, so it is not counted. Nothing was written.")
+
+    def test_kickoff_takes_only_count(self):
+        for args in (("kickoff", "--dry"), ("kickoff", "--count", "--dry")):
+            code, out = self.run_cmd(*args)
+            self.assertEqual(code, 2)
+        self.assertEqual(self.net.requests, [])

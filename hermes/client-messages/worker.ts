@@ -15,6 +15,13 @@
  * An `unknown` is never sent again: a later run looks for it in the group by
  * its fingerprint, and a person settles what is not found.
  *
+ * The phase 3 and phase 4 messages (kinds phase3, phase4, docs/forms/WAVE56-CONTRACT.md
+ * 4.13.3, 4.14.3; Stage 4) are client texts the CSM approves in the cockpit, sent on
+ * the same path as a recap once CLIENT_MESSAGES_KINDS lists them; the database's owner
+ * gate passes them only once the kickoff or onboarding is native (or for the test card's
+ * canary). A card with no group on Client Data is refused with the same sentence as a
+ * recap, so a person skips it (Make's filter skipped it silently).
+ *
  * A form link (kind form_invite, docs/forms/WAVE34-CONTRACT.md 3.9, 4.1.6) is
  * approved with {form_link} in its text. Right after the intent answers ok the
  * worker asks cockpit_client_message_invite_link for the link (minted once per
@@ -95,7 +102,14 @@ export const SWITCH_KEYS = [
 ] as const;
 /** The one kind 2b sends. */
 /** The kinds this worker may send (CLIENT_MESSAGES_KINDS lists the ones on). */
-export const KINDS = ["recap_checkin", "form_invite"];
+export const KINDS = ["recap_checkin", "form_invite", "phase3", "phase4"];
+/** How a run's note names one message of each kind. */
+export const KIND_WORDS: Record<string, string> = {
+  recap_checkin: "recap",
+  form_invite: "form link",
+  phase3: "phase 3 message",
+  phase4: "phase 4 message",
+};
 /** With no CLIENT_MESSAGES_KINDS line, recaps only: form links wait for D-WA. */
 export const DEFAULT_KINDS = ["recap_checkin"];
 
@@ -307,7 +321,7 @@ export function readSwitches(path: string): Switches {
     : unknown.length
       ? SWITCH_UNKNOWN(unknown)
       : bad.length || !kinds.length
-        ? `CLIENT_MESSAGES_KINDS names ${bad.length ? `a kind this worker does not send (${bad.join(", ").slice(0, 60)})` : "no kind"}. Set it to recap_checkin, or recap_checkin,form_invite.`
+        ? `CLIENT_MESSAGES_KINDS names ${bad.length ? `a kind this worker does not send (${bad.join(", ").slice(0, 60)})` : "no kind"}. Set it to recap_checkin, or recap_checkin with any of form_invite, phase3 and phase4.`
         : cards.some(c => !CARD_ID.test(c)) ||
             (rawCards !== "" && cards.length === 0)
           ? NOT_A_CARD
@@ -872,7 +886,7 @@ async function steps(
   }
   return finish(
     true,
-    `Sent one ${row.kind === "form_invite" ? "form link" : "recap"} to the client's group (WhatsApp group ending ${last4(g.group) ?? "unknown"}).`,
+    `Sent one ${KIND_WORDS[row.kind] ?? "recap"} to the client's group (WhatsApp group ending ${last4(g.group) ?? "unknown"}).`,
   );
 }
 

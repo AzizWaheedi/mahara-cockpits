@@ -30,6 +30,13 @@
  * Typeform link. Names, dates and scores only: never an answer's words, an
  * email, a phone, a token or an amount, and only the kind and topic words of
  * a feedback, from their fixed lists.
+ *
+ * Wins and money (docs/forms/WAVE56-CONTRACT.md 3.9): a win logged or an
+ * upsell moved (its kind words and, for an upsell, the quoted dollars), a
+ * transfer receipt sent by a client (the amount, currency and day it says,
+ * never the file or the reference) and a churned client coming back (the
+ * status and the day they left). Never an email, a name of a person, a link
+ * token or an answer's words.
  */
 
 export type NoticeKind =
@@ -52,10 +59,13 @@ export type NoticeKind =
   | "csat.received"
   | "voice.low"
   | "feedback.received"
-  | "legacy.received";
+  | "legacy.received"
+  | "win.logged"
+  | "receipt.in"
+  | "client.reactivated";
 export type Variant =
   | "complete" | "late" | "done" | "reconcile" | "typeform" | "new" | "live" | "thread" | "top" | "grade"
-  | "matched" | "unmatched" | "post" | "signed" | "dates_wrong";
+  | "matched" | "unmatched" | "post" | "signed" | "dates_wrong" | "offered" | "accepted";
 export type TextMention = { label: string; slackId: string | null };
 export type NoticeFacts = Record<string, unknown> & {
   ref: string;
@@ -87,6 +97,9 @@ export const NOTICE_KINDS: readonly NoticeKind[] = [
   "voice.low",
   "feedback.received",
   "legacy.received",
+  "win.logged",
+  "receipt.in",
+  "client.reactivated",
 ];
 
 /** The client lifecycle kinds (waves 1-2, 3.4), in the settings' order. */
@@ -107,6 +120,13 @@ export const CLIENT_FORM_KINDS: readonly NoticeKind[] = [
   "voice.low",
   "feedback.received",
   "legacy.received",
+];
+
+/** Wins and money (waves 5-6, 3.9), in the settings' order. */
+export const MONEY_KINDS: readonly NoticeKind[] = [
+  "win.logged",
+  "receipt.in",
+  "client.reactivated",
 ];
 
 /** The variants each kind has wording for. */
@@ -131,7 +151,36 @@ export const VARIANTS: Record<NoticeKind, readonly Variant[]> = {
   "voice.low": ["post"],
   "feedback.received": ["post"],
   "legacy.received": ["post"],
+  // A win logged; an upsell offered at its quoted price; an upsell accepted.
+  "win.logged": ["post", "offered", "accepted"],
+  "receipt.in": ["post"],
+  "client.reactivated": ["post"],
 };
+
+/** The wins ledger's kinds as a notice says them (contract 3.1's screen words). */
+export const WIN_KIND_WORDS: Record<string, string> = {
+  review: "Google review",
+  video_testimonial: "Video testimonial",
+  podcast: "Podcast case study",
+  referral: "Referral",
+  renewal: "Renewal",
+  reactivation: "Reactivation",
+  upsell_website: "Website",
+  upsell_smm: "Social media management",
+  upsell_backend: "Back-end programme",
+  upsell_seo_geo: "SEO and AI search",
+  upsell_second_campaign: "Second campaign",
+};
+/** An upsell as the middle of a sentence says it ("Acme accepted the website."). */
+export const OFFER_WORDS: Record<string, string> = {
+  upsell_website: "website",
+  upsell_smm: "social media management",
+  upsell_backend: "back-end programme",
+  upsell_seo_geo: "SEO and AI search",
+  upsell_second_campaign: "second campaign",
+};
+/** The two statuses a returning client comes back as (contract 3.5). */
+export const RETURN_STATUSES: readonly string[] = ["Active", "Onboarding Booked"];
 
 /** The portal's Share feedback kinds and topics (mahara-feedback-policy.ts), as a notice says them. */
 export const FEEDBACK_KIND_WORDS: Record<string, string> = {
@@ -155,6 +204,8 @@ export const FORM_WORDS: Record<string, string> = {
   exit_survey: "The exit survey",
   pause_request: "The pause request",
   pause_consent: "The pause consent",
+  kickoff: "The kickoff form",
+  onboarding: "The client onboarding form",
 };
 
 /** The churn register's eight reasons (20261001a): the only reason words a notice ever shows. */
@@ -227,7 +278,7 @@ export function cleanStatus(s: string): string {
 }
 
 export function noticeLinks(taskId: string): {
-  cockpit: string; card: string; blueprint: string; messages: string; client: string; churn: string;
+  cockpit: string; card: string; blueprint: string; messages: string; client: string; churn: string; billing: string;
 } {
   const id = encodeURIComponent(taskId);
   return {
@@ -235,6 +286,8 @@ export function noticeLinks(taskId: string): {
     client: `https://cockpit.maharamedia.com/client-success/clients/${id}`,
     /** The churn tracker (Money, Churn), where an unmatched survey gets its card. */
     churn: "https://cockpit.maharamedia.com/client-success/money?tab=churn",
+    /** Billing (Money), where Checks waiting lists a receipt to check. */
+    billing: "https://cockpit.maharamedia.com/client-success/money?tab=billing",
     cockpit: `https://cockpit.maharamedia.com/client-success/clients/${id}?tab=onboarding`,
     card: `https://app.clickup.com/t/${id}`,
     blueprint: `https://cockpit.maharamedia.com/client-success/clients/${id}/present/blueprint?view=prep`,
@@ -574,6 +627,52 @@ function clientForm(kind: NoticeKind, variant: Variant, f: NoticeFacts): Built {
   return post(`Old form link used: ${matched ? client : "not matched"}`, `${form} came in through the old link for ${who}. Open it in the cockpit.`, links);
 }
 
+/** Dollars as "$1,500"; null when the facts carry no positive number. */
+function usdWords(v: unknown): string | null {
+  const n = typeof v === "number" ? v : typeof v === "string" && /^\d+(\.\d+)?$/.test(v) ? Number(v) : Number.NaN;
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return `$${n.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+}
+/** An amount in its own currency as "650.5 KWD"; null unless a positive number in USD or KWD. */
+function amountWords(v: unknown, currency: unknown): string | null {
+  const n = typeof v === "number" ? v : typeof v === "string" && /^\d+(\.\d+)?$/.test(v) ? Number(v) : Number.NaN;
+  const c = str(currency);
+  if (!Number.isFinite(n) || n <= 0 || (c !== "USD" && c !== "KWD")) return null;
+  return `${n.toLocaleString("en-US", { maximumFractionDigits: c === "KWD" ? 3 : 2 })} ${c}`;
+}
+
+// Wins and money (waves 5-6, 3.9). Kind words, amounts and days only.
+function money(kind: NoticeKind, variant: Variant, f: NoticeFacts): Built {
+  const client = escapeSlack(f.client);
+  const open = [{ url: noticeLinks(f.taskId).client, words: "Open the client" }];
+  const post = (header: string, sentence: string, links: Link[] = open): Built => ({
+    text: sentence,
+    lines: [`*${header}*`, sentence],
+    links,
+    inline: false,
+    footer: "Client success",
+    placed: false,
+  });
+  if (kind === "win.logged") {
+    // 20261102h sends kind and seatRole; winKind and byRole are this file's first names for them.
+    const winKind = str(f.winKind) || str(f.kind);
+    const words = WIN_KIND_WORDS[winKind] ?? "A win";
+    const offer = OFFER_WORDS[winKind] ?? "upsell";
+    if (variant === "offered")
+      return post(`Upsell offered: ${client}`, `${client}: ${escapeSlack(offer)} offered at ${usdWords(f.usd) ?? "a price not recorded"}.`);
+    if (variant === "accepted") return post(`Upsell accepted: ${client}`, `${client} accepted the ${escapeSlack(offer)}.`);
+    return post(`Win logged: ${client}`, `${client}: ${escapeSlack(words)} logged by ${role(f.byRole ?? f.seatRole, "a team member")}.`);
+  }
+  if (kind === "receipt.in")
+    return post(
+      `Receipt in: ${client}`,
+      `${client} sent a transfer receipt (${amountWords(f.amount, f.currency) ?? "an amount not recorded"}, paid ${dayWords(f.paidOn ?? f.day)}). Check it in the cockpit.`,
+      [{ url: noticeLinks(f.taskId).billing, words: "Open Checks waiting" }],
+    );
+  const status = RETURN_STATUSES.includes(str(f.status)) ? str(f.status) : "back on the books";
+  return post(`Client is back: ${client}`, `${client} is back: ${status}. They left on ${dayWords(f.leftOn)}.`);
+}
+
 const context = (text: string): SlackBlock => ({ type: "context", elements: [{ type: "mrkdwn", text }] });
 
 /** The twelve criteria of the call grade, in its order (cockpit-forms-api/prompts/grade.ts CRITERIA; a test pins them equal). */
@@ -673,6 +772,7 @@ export function noticeText(kind: NoticeKind, variant: Variant, facts: NoticeFact
     : kind === "checkin.recap_late" ? recapLate(f)
     : (LIFECYCLE_KINDS as readonly string[]).includes(kind) ? lifecycle(kind, variant, f)
     : (CLIENT_FORM_KINDS as readonly string[]).includes(kind) ? clientForm(kind, variant, f)
+    : (MONEY_KINDS as readonly string[]).includes(kind) ? money(kind, variant, f)
     : offer(variant, f);
   const lines = [...built.lines];
   if (!built.placed && who.mentions.length) lines[lines.length - 1] = tail(lines[lines.length - 1], who);
@@ -747,5 +847,15 @@ export function sampleFacts(kind: NoticeKind, now: Date = new Date()): NoticeFac
     feedbackKind: "idea",
     topic: "portal",
     datesWrong: false,
+    // Wins and money: an invented win, receipt and return.
+    winKind: "review",
+    stage: "logged",
+    byRole: "the CSM",
+    usd: 1500,
+    amount: 650,
+    currency: "KWD",
+    paidOn: at(-24 * 60).slice(0, 10),
+    status: "Active",
+    leftOn: at(-30 * 24 * 60).slice(0, 10),
   };
 }

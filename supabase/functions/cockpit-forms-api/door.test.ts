@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { RpcError } from "../cockpit-hours-sync/db.ts";
 import { answerFor, DoorError, makeDoor, sameSecret, tokenRole } from "./door.ts";
-import { ceoActor, csmActor, fakeDeps, jwt, SEAT_TOKEN, SERVICE_KEY } from "./testkit.ts";
+import { answer, ceoActor, csmActor, fakeDeps, jwt, SEAT_TOKEN, SERVICE_KEY } from "./testkit.ts";
 
 const post = (body: unknown, auth: string | null = SEAT_TOKEN, method = "POST") =>
   new Request("https://example.test/functions/v1/cockpit-forms-api", {
@@ -201,5 +201,62 @@ describe("the door: 2b ops", () => {
     const d = await res.json();
     expect(d.secrets).toEqual({ NOTICES_CRON_SECRET: true });
     expect(JSON.stringify(d)).not.toContain("invented-secret-abc");
+  });
+});
+
+describe("file.url (WAVE56 4.10.4)", () => {
+  const RESPONSE = "0f0e0d0c-0b0a-4908-8706-050403020100";
+  const PATH = `forms/00000000-0000-4000-8000-00000000f001/receipt/${"a".repeat(64)}.pdf`;
+  const signed = (url: URL) =>
+    url.pathname.startsWith("/storage/v1/object/sign/") ? answer({ signedURL: "/object/sign/cockpit-form-files/x.pdf?token=tok-123" }) : null;
+
+  test("a seat gets the link once, never cached, and nothing is logged", async () => {
+    const f = fakeDeps({
+      rpc: { cockpit_forms_actor: csmActor },
+      seat: { cockpit_form_file_read: { path: PATH, mime: "application/pdf", bytes: 900, name: null } },
+      routes: [signed],
+      env: { SUPABASE_URL: "https://proj.supabase.test" },
+    });
+    const logs: unknown[] = [];
+    const saved = { log: console.log, info: console.info, warn: console.warn, error: console.error };
+    for (const k of ["log", "info", "warn", "error"] as const) console[k] = (...a: unknown[]) => void logs.push(a);
+    let res: Response;
+    try {
+      res = await makeDoor(f.deps)(post({ op: "file.url", responseId: RESPONSE, field: "receipt" }));
+    } finally {
+      Object.assign(console, saved);
+    }
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    const body = await res.json();
+    expect(body).toMatchObject({ mime: "application/pdf", bytes: 900, expiresIn: 300, viewable: true, name: null });
+    expect(body.url).toBe("https://proj.supabase.test/storage/v1/object/sign/cockpit-form-files/x.pdf?token=tok-123");
+    expect(logs).toHaveLength(0);
+    expect(f.health).toHaveLength(0);
+  });
+
+  test("the database's gate answers 403 with its sentence; the service key never opens a file", async () => {
+    const f = fakeDeps({
+      rpc: { cockpit_forms_actor: csmActor },
+      seat: {
+        cockpit_form_file_read: () => {
+          throw new RpcError("Acme Interiors is not one of your clients.", "42501");
+        },
+      },
+    });
+    const res = await makeDoor(f.deps)(post({ op: "file.url", responseId: RESPONSE, field: "receipt" }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "Acme Interiors is not one of your clients." });
+    expect(f.sent).toHaveLength(0);
+    const svc = await makeDoor(fakeDeps().deps)(post({ op: "file.url", responseId: RESPONSE, field: "receipt" }, `Bearer ${SERVICE_KEY}`));
+    expect(svc.status).toBe(403);
+    expect(await svc.json()).toEqual({ error: "The service key runs the doctor only." });
+  });
+
+  test("a bad request is 400 with the door's sentence", async () => {
+    const f = fakeDeps({ rpc: { cockpit_forms_actor: csmActor } });
+    const res = await makeDoor(f.deps)(post({ op: "file.url", responseId: "x" }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Pick the answer and its file." });
   });
 });

@@ -357,7 +357,27 @@ export type ConfirmPaidInput = {
   paidOn: string;
   evidenceUrl?: string | null;
   note?: string | null;
+  /** Waves 5-6 (4.6.5): the part's due day as the list shows it; without it the date never moves. */
+  dueOn?: string | null;
+  /** The next later part of the same deal still to be paid (a split), checked on the server. */
+  nextPartNo?: number | null;
+  nextDueOn?: string | null;
 };
+
+/** The date line a confirm or withdraw carries (20261102g): the server's own sentence, else its reason. */
+function dateLine(out: Any): string | null {
+  const d = out?.date;
+  if (!d || typeof d !== "object") return null;
+  const line =
+    typeof d.sentence === "string" && d.sentence
+      ? d.sentence
+      : typeof d.why === "string"
+        ? d.why
+        : null;
+  // "Confirmed. Next payment Tue 2 Dec." follows the confirm's own sentence: the first word once.
+  const text = line?.replace(/^(Confirmed|Withdrawn)\.\s*/, "").trim();
+  return text ? text : null;
+}
 
 /**
  * Confirm paid: a person's word that a part was paid on Whop, Tap or an Ecom
@@ -380,10 +400,17 @@ export async function confirmPaid(
     paidOn: p.paidOn,
     evidenceUrl: p.evidenceUrl || null,
     note: p.note || null,
+    ...(p.dueOn ? { dueOn: p.dueOn } : {}),
+    ...(p.dueOn && p.nextDueOn && p.nextPartNo
+      ? { nextPartNo: p.nextPartNo, nextDueOn: p.nextDueOn }
+      : {}),
     source,
   });
+  const date = dateLine(out);
   return {
-    sentence: String(out.sentence ?? "Confirmed."),
+    sentence: [String(out.sentence ?? "Confirmed."), date]
+      .filter(Boolean)
+      .join(" · "),
     confirmationId: Number(out.confirmation?.id),
     repeated: out.repeated === true,
   };
@@ -401,7 +428,9 @@ export async function withdrawConfirmation(
     reason: p.reason,
     source,
   });
-  return String(out.sentence ?? "Withdrawn.");
+  return [String(out.sentence ?? "Withdrawn."), dateLine(out)]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 /**

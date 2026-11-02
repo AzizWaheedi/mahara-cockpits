@@ -771,5 +771,925 @@
         "extra": "unknown"
       }
     }
+  ],
+  "wave5About": "Waves 5-6 additions (docs/forms/WAVE56-CONTRACT.md 3.6), kept apart so the waves 3-4 checker's test reads only schemas and rows. Written by client-tail; portal-56 copies this file byte for byte. New types: file, date, number, heading; text format plain, url, email, phone. New codes: file_missing (a required file absent, an answer that is not a file object, or no slot of this invite and field, or no object in the bucket cockpit-form-files at that path), file_type (a type the question does not take, or Storage's mimetype differs), file_size (over maxBytes, or Storage's size differs), format, and range for a date outside its window or a number outside min, max or decimals. A heading is never answered (unknown if sent). Dates written {today}, {today-N} or {today+N} are Kuwait's date when the test runs. A row with files seeds invite 00000000-0000-4000-8000-00000000f001 (form bank_receipt, the row's context without signer), a slot for each file whose slot is true and a storage object for each object that is not null. sqlOnly rows depend on what Storage and the slots hold: the portal's mirror checks the shape and skips their expected codes.",
+  "wave5Schemas": {
+    "bank_receipt": {
+      "v": 1,
+      "key": "bank_receipt",
+      "title": {
+        "en": "Send your transfer receipt",
+        "ar": "أرسل لنا إيصال التحويل"
+      },
+      "intro": {
+        "en": "Your account manager asked for the receipt of your bank transfer. We check it against our bank and confirm.",
+        "ar": "مدير حسابك طلب إيصال التحويل البنكي. بنشيّك عليه مع البنك وبنأكد لك."
+      },
+      "minutes": 2,
+      "audience": "admin",
+      "signer": "typed",
+      "context": [
+        {
+          "key": "expectedAmount",
+          "type": "number",
+          "label": {
+            "en": "Amount due",
+            "ar": "المبلغ المطلوب"
+          }
+        },
+        {
+          "key": "currency",
+          "type": "text",
+          "label": {
+            "en": "Currency",
+            "ar": "العملة"
+          }
+        },
+        {
+          "key": "dueOn",
+          "type": "date",
+          "label": {
+            "en": "Due on",
+            "ar": "تاريخ الاستحقاق"
+          }
+        }
+      ],
+      "fields": [
+        {
+          "key": "amount",
+          "type": "number",
+          "required": true,
+          "min": 0.001,
+          "max": 1000000,
+          "decimals": 3,
+          "label": {
+            "en": "Amount you transferred",
+            "ar": "المبلغ اللي حولته"
+          }
+        },
+        {
+          "key": "currency",
+          "type": "choice",
+          "required": true,
+          "label": {
+            "en": "Currency",
+            "ar": "العملة"
+          },
+          "options": [
+            {
+              "value": "kwd",
+              "label": {
+                "en": "Kuwaiti dinar (KWD)",
+                "ar": "دينار كويتي (KWD)"
+              }
+            },
+            {
+              "value": "usd",
+              "label": {
+                "en": "US dollar (USD)",
+                "ar": "دولار أمريكي (USD)"
+              }
+            }
+          ]
+        },
+        {
+          "key": "paidOn",
+          "type": "date",
+          "required": true,
+          "notAfter": "today",
+          "notBeforeDays": 120,
+          "label": {
+            "en": "Day you made the transfer",
+            "ar": "يوم التحويل"
+          }
+        },
+        {
+          "key": "reference",
+          "type": "text",
+          "required": false,
+          "maxLength": 60,
+          "format": "plain",
+          "label": {
+            "en": "Bank reference (if you have it)",
+            "ar": "رقم المرجع من البنك (إذا عندك)"
+          }
+        },
+        {
+          "key": "receipt",
+          "type": "file",
+          "required": true,
+          "accept": [
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image/heic",
+            "application/pdf"
+          ],
+          "maxBytes": 10485760,
+          "label": {
+            "en": "The receipt",
+            "ar": "الإيصال"
+          },
+          "hint": {
+            "en": "A photo or a PDF, up to 10 MB.",
+            "ar": "صورة أو PDF، لين ١٠ ميغا."
+          }
+        }
+      ],
+      "reads": {
+        "receipt_hook": ["amount", "currency", "paidOn", "reference", "receipt"]
+      },
+      "submit": {
+        "en": "Send the receipt",
+        "ar": "أرسل الإيصال"
+      },
+      "done": {
+        "en": "Thanks. We'll check it against our bank and confirm.",
+        "ar": "مشكور. بنشيّك عليه مع البنك ونأكد لك."
+      },
+      "invite": {
+        "whatsapp": {
+          "en": "Hi {client} team, could you send us the receipt of your bank transfer here: {form_link}",
+          "ar": "هلا فريق {client}، ممكن ترسلون لنا إيصال التحويل البنكي من هني: {form_link}"
+        },
+        "push": {
+          "en": "Your account manager asked for your transfer receipt. Tap to send it.",
+          "ar": "مدير حسابك يبي إيصال التحويل. اضغط وأرسله."
+        }
+      }
+    },
+    "kitchen5": {
+      "v": 1,
+      "key": "kitchen5",
+      "title": {
+        "en": "Every wave 5 question",
+        "ar": "كل أسئلة الموجة الخامسة"
+      },
+      "minutes": 2,
+      "audience": "any",
+      "signer": "none",
+      "context": [],
+      "fields": [
+        {
+          "key": "aboutYou",
+          "type": "heading",
+          "label": {
+            "en": "About you",
+            "ar": "عنك"
+          },
+          "hint": {
+            "en": "A few facts about your business.",
+            "ar": "كم معلومة عن شغلك."
+          }
+        },
+        {
+          "key": "count",
+          "type": "number",
+          "required": true,
+          "min": 0,
+          "max": 100,
+          "decimals": 0,
+          "label": {
+            "en": "How many branches?",
+            "ar": "كم فرع عندك؟"
+          }
+        },
+        {
+          "key": "price",
+          "type": "number",
+          "required": false,
+          "min": 0.001,
+          "max": 1000000,
+          "decimals": 3,
+          "label": {
+            "en": "Average job size",
+            "ar": "متوسط قيمة المشروع"
+          }
+        },
+        {
+          "key": "day",
+          "type": "date",
+          "required": false,
+          "notAfter": "today",
+          "notBeforeDays": 120,
+          "label": {
+            "en": "Day you opened",
+            "ar": "يوم الافتتاح"
+          }
+        },
+        {
+          "key": "anyDay",
+          "type": "date",
+          "required": false,
+          "label": {
+            "en": "Any day",
+            "ar": "أي يوم"
+          }
+        },
+        {
+          "key": "site",
+          "type": "text",
+          "required": false,
+          "format": "url",
+          "label": {
+            "en": "Website",
+            "ar": "الموقع"
+          }
+        },
+        {
+          "key": "mail",
+          "type": "text",
+          "required": false,
+          "format": "email",
+          "label": {
+            "en": "Email",
+            "ar": "الإيميل"
+          }
+        },
+        {
+          "key": "phone",
+          "type": "text",
+          "required": false,
+          "format": "phone",
+          "label": {
+            "en": "Phone",
+            "ar": "التلفون"
+          }
+        },
+        {
+          "key": "note",
+          "type": "text",
+          "required": false,
+          "format": "plain",
+          "maxLength": 20,
+          "label": {
+            "en": "A short note",
+            "ar": "ملاحظة قصيرة"
+          }
+        }
+      ],
+      "submit": {
+        "en": "Send",
+        "ar": "أرسل"
+      },
+      "done": {
+        "en": "Thanks.",
+        "ar": "مشكور."
+      }
+    }
+  },
+  "wave5Rows": [
+    {
+      "name": "kitchen5: every new type answered, texts collapsed",
+      "schema": "kitchen5",
+      "answers": {
+        "count": 3,
+        "price": 12.5,
+        "day": "{today}",
+        "anyDay": "2020-02-29",
+        "site": "https://acme.example/menu",
+        "mail": " owner@acme.example ",
+        "phone": "+965 2222 3333",
+        "note": "  open  late "
+      },
+      "context": {},
+      "ok": true,
+      "errors": {},
+      "stored": {
+        "count": 3,
+        "price": 12.5,
+        "day": "{today}",
+        "anyDay": "2020-02-29",
+        "site": "https://acme.example/menu",
+        "mail": "owner@acme.example",
+        "phone": "+965 2222 3333",
+        "note": "open late"
+      }
+    },
+    {
+      "name": "kitchen5: a required number left out",
+      "schema": "kitchen5",
+      "answers": {},
+      "context": {},
+      "ok": false,
+      "errors": {
+        "count": "required"
+      }
+    },
+    {
+      "name": "kitchen5: a heading is never answered",
+      "schema": "kitchen5",
+      "answers": {
+        "count": 1,
+        "aboutYou": "hi"
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "aboutYou": "unknown"
+      }
+    },
+    {
+      "name": "kitchen5: a number with decimals where none are allowed",
+      "schema": "kitchen5",
+      "answers": {
+        "count": 4.5
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "count": "range"
+      }
+    },
+    {
+      "name": "kitchen5: a number above its highest",
+      "schema": "kitchen5",
+      "answers": {
+        "count": 101
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "count": "range"
+      }
+    },
+    {
+      "name": "kitchen5: a number as text",
+      "schema": "kitchen5",
+      "answers": {
+        "count": "3"
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "count": "range"
+      }
+    },
+    {
+      "name": "kitchen5: four decimals where three are allowed",
+      "schema": "kitchen5",
+      "answers": {
+        "count": 1,
+        "price": 1.2345
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "price": "range"
+      }
+    },
+    {
+      "name": "kitchen5: zero under a lowest of 0.001",
+      "schema": "kitchen5",
+      "answers": {
+        "count": 1,
+        "price": 0
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "price": "range"
+      }
+    },
+    {
+      "name": "kitchen5: a day after today",
+      "schema": "kitchen5",
+      "answers": {
+        "count": 1,
+        "day": "{today+1}"
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "day": "range"
+      }
+    },
+    {
+      "name": "kitchen5: a day older than 120 days",
+      "schema": "kitchen5",
+      "answers": {
+        "count": 1,
+        "day": "{today-121}"
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "day": "range"
+      }
+    },
+    {
+      "name": "kitchen5: the oldest day allowed",
+      "schema": "kitchen5",
+      "answers": {
+        "count": 1,
+        "day": "{today-120}"
+      },
+      "context": {},
+      "ok": true,
+      "errors": {},
+      "stored": {
+        "count": 1,
+        "day": "{today-120}"
+      }
+    },
+    {
+      "name": "kitchen5: a day that is not on the calendar",
+      "schema": "kitchen5",
+      "answers": {
+        "count": 1,
+        "anyDay": "2026-02-30"
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "anyDay": "range"
+      }
+    },
+    {
+      "name": "kitchen5: a day as a number",
+      "schema": "kitchen5",
+      "answers": {
+        "count": 1,
+        "anyDay": 20261101
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "anyDay": "range"
+      }
+    },
+    {
+      "name": "kitchen5: formats that do not hold",
+      "schema": "kitchen5",
+      "answers": {
+        "count": 1,
+        "site": "acme.example",
+        "mail": "owner@acme",
+        "phone": "12"
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "site": "format",
+        "mail": "format",
+        "phone": "format"
+      }
+    },
+    {
+      "name": "kitchen5: a plain text over its limit",
+      "schema": "kitchen5",
+      "answers": {
+        "count": 1,
+        "note": "xxxxxxxxxxxxxxxxxxxxx"
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "note": "length"
+      }
+    },
+    {
+      "name": "bank_receipt: the receipt, every answer",
+      "schema": "bank_receipt",
+      "answers": {
+        "amount": 250,
+        "currency": "kwd",
+        "paidOn": "{today-2}",
+        "reference": "FT2611020001",
+        "receipt": {
+          "path": "forms/00000000-0000-4000-8000-00000000f001/receipt/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg",
+          "mime": "image/jpeg",
+          "bytes": 182340,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "receipt.jpg"
+        }
+      },
+      "context": {
+        "part": "payment",
+        "partNo": 1,
+        "expectedAmount": 250,
+        "currency": "KWD"
+      },
+      "ok": true,
+      "errors": {},
+      "stored": {
+        "amount": 250,
+        "currency": "kwd",
+        "paidOn": "{today-2}",
+        "reference": "FT2611020001",
+        "receipt": {
+          "path": "forms/00000000-0000-4000-8000-00000000f001/receipt/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg",
+          "mime": "image/jpeg",
+          "bytes": 182340,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "receipt.jpg"
+        }
+      },
+      "files": [
+        {
+          "path": "forms/00000000-0000-4000-8000-00000000f001/receipt/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg",
+          "mime": "image/jpeg",
+          "bytes": 182340,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "slot": true,
+          "object": {
+            "mimetype": "image/jpeg",
+            "size": 182340
+          }
+        }
+      ],
+      "sqlOnly": true
+    },
+    {
+      "name": "bank_receipt: the link page's typed name is checked as signer",
+      "schema": "bank_receipt",
+      "answers": {
+        "amount": 250,
+        "currency": "kwd",
+        "paidOn": "{today-2}",
+        "reference": "FT2611020001",
+        "receipt": {
+          "path": "forms/00000000-0000-4000-8000-00000000f001/receipt/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg",
+          "mime": "image/jpeg",
+          "bytes": 182340,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "receipt.jpg"
+        }
+      },
+      "context": {
+        "part": "payment",
+        "partNo": 1,
+        "expectedAmount": 250,
+        "currency": "KWD",
+        "signer": "  "
+      },
+      "ok": false,
+      "errors": {
+        "signer": "required"
+      },
+      "files": [
+        {
+          "path": "forms/00000000-0000-4000-8000-00000000f001/receipt/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg",
+          "mime": "image/jpeg",
+          "bytes": 182340,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "slot": true,
+          "object": {
+            "mimetype": "image/jpeg",
+            "size": 182340
+          }
+        }
+      ],
+      "sqlOnly": true
+    },
+    {
+      "name": "bank_receipt: no receipt added",
+      "schema": "bank_receipt",
+      "answers": {
+        "amount": 250,
+        "currency": "kwd",
+        "paidOn": "{today-2}",
+        "reference": "FT2611020001",
+        "receipt": null
+      },
+      "context": {
+        "part": "payment",
+        "partNo": 1,
+        "expectedAmount": 250,
+        "currency": "KWD"
+      },
+      "ok": false,
+      "errors": {
+        "receipt": "file_missing"
+      }
+    },
+    {
+      "name": "bank_receipt: a receipt that is not a file",
+      "schema": "bank_receipt",
+      "answers": {
+        "amount": 250,
+        "currency": "kwd",
+        "paidOn": "{today-2}",
+        "reference": "FT2611020001",
+        "receipt": "receipt.jpg"
+      },
+      "context": {
+        "part": "payment",
+        "partNo": 1,
+        "expectedAmount": 250,
+        "currency": "KWD"
+      },
+      "ok": false,
+      "errors": {
+        "receipt": "file_missing"
+      }
+    },
+    {
+      "name": "bank_receipt: the upload never reached Storage",
+      "schema": "bank_receipt",
+      "answers": {
+        "amount": 250,
+        "currency": "kwd",
+        "paidOn": "{today-2}",
+        "reference": "FT2611020001",
+        "receipt": {
+          "path": "forms/00000000-0000-4000-8000-00000000f001/receipt/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg",
+          "mime": "image/jpeg",
+          "bytes": 182340,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "receipt.jpg"
+        }
+      },
+      "context": {
+        "part": "payment",
+        "partNo": 1,
+        "expectedAmount": 250,
+        "currency": "KWD"
+      },
+      "ok": false,
+      "errors": {
+        "receipt": "file_missing"
+      },
+      "files": [
+        {
+          "path": "forms/00000000-0000-4000-8000-00000000f001/receipt/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg",
+          "mime": "image/jpeg",
+          "bytes": 182340,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "slot": true,
+          "object": null
+        }
+      ],
+      "sqlOnly": true
+    },
+    {
+      "name": "bank_receipt: a path that is not a slot of this invite",
+      "schema": "bank_receipt",
+      "answers": {
+        "amount": 250,
+        "currency": "kwd",
+        "paidOn": "{today-2}",
+        "reference": "FT2611020001",
+        "receipt": {
+          "path": "forms/00000000-0000-4000-8000-00000000f001/receipt/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg",
+          "mime": "image/jpeg",
+          "bytes": 182340,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "receipt.jpg"
+        }
+      },
+      "context": {
+        "part": "payment",
+        "partNo": 1,
+        "expectedAmount": 250,
+        "currency": "KWD"
+      },
+      "ok": false,
+      "errors": {
+        "receipt": "file_missing"
+      },
+      "files": [
+        {
+          "path": "forms/00000000-0000-4000-8000-00000000f001/receipt/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg",
+          "mime": "image/jpeg",
+          "bytes": 182340,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "slot": false,
+          "object": {
+            "mimetype": "image/jpeg",
+            "size": 182340
+          }
+        }
+      ],
+      "sqlOnly": true
+    },
+    {
+      "name": "bank_receipt: Storage holds another type than the answer says",
+      "schema": "bank_receipt",
+      "answers": {
+        "amount": 250,
+        "currency": "kwd",
+        "paidOn": "{today-2}",
+        "reference": "FT2611020001",
+        "receipt": {
+          "path": "forms/00000000-0000-4000-8000-00000000f001/receipt/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png",
+          "mime": "image/png",
+          "bytes": 5000,
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "name": "r.png"
+        }
+      },
+      "context": {
+        "part": "payment",
+        "partNo": 1,
+        "expectedAmount": 250,
+        "currency": "KWD"
+      },
+      "ok": false,
+      "errors": {
+        "receipt": "file_type"
+      },
+      "files": [
+        {
+          "path": "forms/00000000-0000-4000-8000-00000000f001/receipt/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png",
+          "mime": "image/png",
+          "bytes": 5000,
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "slot": true,
+          "object": {
+            "mimetype": "image/jpeg",
+            "size": 5000
+          }
+        }
+      ],
+      "sqlOnly": true
+    },
+    {
+      "name": "bank_receipt: a type the question does not take",
+      "schema": "bank_receipt",
+      "answers": {
+        "amount": 250,
+        "currency": "kwd",
+        "paidOn": "{today-2}",
+        "reference": "FT2611020001",
+        "receipt": {
+          "path": "forms/00000000-0000-4000-8000-00000000f001/receipt/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png",
+          "mime": "image/gif",
+          "bytes": 5000,
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "context": {
+        "part": "payment",
+        "partNo": 1,
+        "expectedAmount": 250,
+        "currency": "KWD"
+      },
+      "ok": false,
+      "errors": {
+        "receipt": "file_type"
+      },
+      "files": [
+        {
+          "path": "forms/00000000-0000-4000-8000-00000000f001/receipt/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png",
+          "mime": "image/png",
+          "bytes": 5000,
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "slot": true,
+          "object": {
+            "mimetype": "image/gif",
+            "size": 5000
+          }
+        }
+      ]
+    },
+    {
+      "name": "bank_receipt: Storage holds another size than the answer says",
+      "schema": "bank_receipt",
+      "answers": {
+        "amount": 250,
+        "currency": "kwd",
+        "paidOn": "{today-2}",
+        "reference": "FT2611020001",
+        "receipt": {
+          "path": "forms/00000000-0000-4000-8000-00000000f001/receipt/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg",
+          "mime": "image/jpeg",
+          "bytes": 182340,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "receipt.jpg"
+        }
+      },
+      "context": {
+        "part": "payment",
+        "partNo": 1,
+        "expectedAmount": 250,
+        "currency": "KWD"
+      },
+      "ok": false,
+      "errors": {
+        "receipt": "file_size"
+      },
+      "files": [
+        {
+          "path": "forms/00000000-0000-4000-8000-00000000f001/receipt/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg",
+          "mime": "image/jpeg",
+          "bytes": 182340,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "slot": true,
+          "object": {
+            "mimetype": "image/jpeg",
+            "size": 182000
+          }
+        }
+      ],
+      "sqlOnly": true
+    },
+    {
+      "name": "bank_receipt: a file over 10 MB",
+      "schema": "bank_receipt",
+      "answers": {
+        "amount": 250,
+        "currency": "kwd",
+        "paidOn": "{today-2}",
+        "reference": "FT2611020001",
+        "receipt": {
+          "path": "forms/00000000-0000-4000-8000-00000000f001/receipt/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.pdf",
+          "mime": "application/pdf",
+          "bytes": 10485761,
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      },
+      "context": {
+        "part": "payment",
+        "partNo": 1,
+        "expectedAmount": 250,
+        "currency": "KWD"
+      },
+      "ok": false,
+      "errors": {
+        "receipt": "file_size"
+      },
+      "files": [
+        {
+          "path": "forms/00000000-0000-4000-8000-00000000f001/receipt/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.pdf",
+          "mime": "application/pdf",
+          "bytes": 10485760,
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "slot": true,
+          "object": {
+            "mimetype": "application/pdf",
+            "size": 10485761
+          }
+        }
+      ]
+    },
+    {
+      "name": "bank_receipt: an amount with four decimals and a currency it does not take",
+      "schema": "bank_receipt",
+      "answers": {
+        "amount": 12.3456,
+        "currency": "eur",
+        "paidOn": "{today-2}",
+        "reference": "FT2611020001",
+        "receipt": null
+      },
+      "context": {
+        "part": "payment",
+        "partNo": 1,
+        "expectedAmount": 250,
+        "currency": "KWD"
+      },
+      "ok": false,
+      "errors": {
+        "amount": "range",
+        "currency": "option",
+        "receipt": "file_missing"
+      }
+    },
+    {
+      "name": "bank_receipt: a transfer day after today, a reference over 60",
+      "schema": "bank_receipt",
+      "answers": {
+        "amount": 250,
+        "currency": "kwd",
+        "paidOn": "{today+1}",
+        "reference": "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR",
+        "receipt": null
+      },
+      "context": {
+        "part": "payment",
+        "partNo": 1,
+        "expectedAmount": 250,
+        "currency": "KWD"
+      },
+      "ok": false,
+      "errors": {
+        "paidOn": "range",
+        "reference": "length",
+        "receipt": "file_missing"
+      }
+    },
+    {
+      "name": "bank_receipt: a transfer day older than 120 days",
+      "schema": "bank_receipt",
+      "answers": {
+        "amount": 250,
+        "currency": "kwd",
+        "paidOn": "{today-121}",
+        "reference": "FT2611020001",
+        "receipt": null
+      },
+      "context": {
+        "part": "payment",
+        "partNo": 1,
+        "expectedAmount": 250,
+        "currency": "KWD"
+      },
+      "ok": false,
+      "errors": {
+        "paidOn": "range",
+        "receipt": "file_missing"
+      }
+    }
   ]
 }

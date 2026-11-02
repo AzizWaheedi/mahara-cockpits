@@ -25,8 +25,12 @@ import {
   formsGate,
   formsWords,
   frozenStep,
+  formsKeysGate,
   HAPPINESS_OPTIONS,
+  MAP_FIELD,
+  mapPhaseOf,
   planForm,
+  STAGE4_FIELDS,
   SAY_FORMS,
   sha256,
   shortDay,
@@ -1477,5 +1481,496 @@ describe("the database calls", () => {
       "'Make owns this again. An earlier try may have reached the card, so check it in ClickUp.'",
     );
     expect(sql).toContain("'Make owns this again.'");
+  });
+});
+
+// --- Stage 4: the native kickoff and onboarding keys (docs/forms/WAVE56-CONTRACT.md 4.13.4) -----------------
+
+const STATUS = "9368ca9e-3549-4320-84ff-9abd0a2901cb";
+const CONTRACT = "ac976d4a-409b-441c-8c13-4b0e73a0c12f";
+const BLUEPRINT = "1b7a4a74-d0e7-4a7f-9218-59c80a738186";
+const PROFILE = "7755485f-74a8-496c-85d8-562588e77944";
+const KICKOFF_LINK = "87d7d889-afea-42f8-9485-6f3ead5b857f";
+const mapUrl = (phase: number) =>
+  `https://mahara-onboarding-map.vercel.app/?phase=${phase}&cid=${CARD}`;
+
+/** One client card with the Stage 4 fields, a status and comments; it keeps what it is sent. */
+class Stage4Card {
+  calls: Call[] = [];
+  status = "to do";
+  comments: Row[] = [];
+  /** A write ClickUp answers and never keeps. */
+  drop = false;
+  values = new Map<string, unknown>([[MAP_FIELD, mapUrl(2)]]);
+  fields: Row[] = [
+    {
+      id: STATUS,
+      name: "Client Status",
+      type: "drop_down",
+      type_config: {
+        options: [
+          {
+            id: "61635c5b-d38e-4b92-ac9f-7233290c1d04",
+            name: "Active",
+            orderindex: 0,
+          },
+          {
+            id: "dbd21650-59ce-429c-882d-5afd7d8aaa8a",
+            name: "Brand Blueprint Booked♠️",
+            orderindex: 4,
+          },
+        ],
+      },
+    },
+    {
+      id: CONTRACT,
+      name: "Contract Status",
+      type: "drop_down",
+      type_config: {
+        options: [
+          {
+            id: "ac8a68fa-ba2e-41da-9fcc-2e9b7d03d2e2",
+            name: "Signed",
+            orderindex: 0,
+          },
+          {
+            id: "0667c501-3955-4443-829a-a4eb9a1d7176",
+            name: "Not sent yet",
+            orderindex: 3,
+          },
+        ],
+      },
+    },
+    {
+      id: BLUEPRINT,
+      name: "🧬 Brand Blueprint Form Link",
+      type: "url",
+      type_config: {},
+    },
+    { id: PROFILE, name: "Client Profile", type: "text", type_config: {} },
+    {
+      id: KICKOFF_LINK,
+      name: "Kickoff Form Link",
+      type: "url",
+      type_config: {},
+    },
+    { id: MAP_FIELD, name: "Onboarding Map", type: "url", type_config: {} },
+  ];
+  provider(): Provider {
+    return {
+      call: async (_p, method, path, body) =>
+        this.handle({ method, path, body }),
+    };
+  }
+  writes() {
+    return this.calls.filter(c => c.method !== "GET");
+  }
+  private handle(c: Call): Row {
+    this.calls.push(c);
+    const m =
+      /^task\/([^/]+)(?:\/(field|comment)(?:\/([^/?]+))?)?(\?.*)?$/.exec(
+        c.path,
+      );
+    if (!m || m[1] !== CARD) throw rejected(404);
+    if (c.method === "GET" && !m[2])
+      return {
+        id: CARD,
+        list: { id: CARDS_LIST },
+        status: { status: this.status },
+        custom_fields: this.fields.map(f => ({
+          ...f,
+          value: this.values.get(f.id),
+        })),
+      };
+    if (c.method === "PUT" && !m[2]) {
+      if (!this.drop) this.status = String(c.body?.status ?? "").toLowerCase();
+      return {};
+    }
+    if (c.method === "POST" && m[2] === "field") {
+      if (!this.drop) {
+        const f = this.fields.find(x => x.id === m[3]);
+        // A dropdown reads back as its orderindex, as ClickUp answers it.
+        const opt = f?.type_config?.options?.find(
+          (o: Row) => o.id === c.body?.value,
+        );
+        this.values.set(String(m[3]), opt ? opt.orderindex : c.body?.value);
+      }
+      return {};
+    }
+    if (c.method === "POST" && m[2] === "comment") {
+      const id = `c${this.comments.length + 1}`;
+      this.comments.unshift({
+        id,
+        comment_text: c.body?.comment_text,
+        date: String(NOW),
+      });
+      return { id };
+    }
+    if (c.method === "GET" && m[2] === "comment")
+      return { comments: structuredClone(this.comments) };
+    throw rejected(404);
+  }
+}
+
+async function stage4Item(
+  key: string,
+  plan: Row,
+  over: { payload?: Row; progress?: Row } = {},
+): Promise<FormItem> {
+  const formKey = [
+    "profile_fields",
+    "raw_answers_comment",
+    "map_phase3",
+  ].includes(key)
+    ? "onboarding"
+    : "kickoff";
+  const full = { taskId: CARD, ...plan };
+  const { comment_text, lines: _lines, ...rest } = full;
+  return {
+    id: `q-${key}`,
+    kind: "form",
+    attempts: 1,
+    created_at: new Date(NOW - 60_000).toISOString(),
+    task_id: CARD,
+    steps: null,
+    progress: over.progress ?? {},
+    payload: {
+      formKey,
+      responseId: RESPONSE,
+      effectId: `e-${key}`,
+      effectKey: key,
+      taskId: CARD,
+      clientName: "Acme Interiors",
+      ...rest,
+      ...(typeof comment_text === "string"
+        ? {
+            commentChars: comment_text.length,
+            commentSha256: await sha256(comment_text),
+          }
+        : {}),
+      ...(over.payload ?? {}),
+    },
+    effect: { id: `e-${key}`, state: "queued", plan: full },
+  };
+}
+
+async function run4(card: Stage4Card, it: FormItem) {
+  const checked = await formStep(it);
+  if ("fail" in checked) throw new Error(checked.fail);
+  const step = frozenStep(it, checked.step);
+  if (!step) throw new Error("frozen step mismatch");
+  const saves: Row[] = [];
+  const out = await executeForm(
+    it,
+    step,
+    card.provider(),
+    async patch => {
+      saves.push(structuredClone(patch));
+    },
+    () => NOW,
+  );
+  return { out, saves, step };
+}
+
+describe("Stage 4 keys (4.13.4)", () => {
+  it("CLICKUP_WRITEBACK_FORMS_KEYS: checkin when unset; a bad list keeps checkin alone and says so", () => {
+    expect([...formsKeysGate(() => undefined).keys]).toEqual(["checkin"]);
+    expect([...formsKeysGate(() => "").keys]).toEqual(["checkin"]);
+    const both = formsKeysGate(n =>
+      n === "CLICKUP_WRITEBACK_FORMS_KEYS" ? "checkin, kickoff" : undefined,
+    );
+    expect(both.has("kickoff")).toBe(true);
+    expect(both.has("onboarding")).toBe(false);
+    expect(both.error).toBeNull();
+    const bad = formsKeysGate(n =>
+      n === "CLICKUP_WRITEBACK_FORMS_KEYS" ? "checkin,pools" : undefined,
+    );
+    expect([...bad.keys]).toEqual(["checkin"]);
+    expect(bad.error).toBe(
+      "CLICKUP_WRITEBACK_FORMS_KEYS names something that is not checkin, kickoff or onboarding, so only checkin is written.",
+    );
+    expect(SAY_FORMS.heldForm("kickoff")).toBe(
+      "Held: kickoff card writes are not switched on.",
+    );
+  });
+
+  it("formStep: the form, the card, the comment's sha256 and only the key's own fields", async () => {
+    const ok = await stage4Item("native_status", { status: "IN PROGRESS" });
+    expect(await formStep(ok)).toEqual({
+      step: {
+        key: "native_status",
+        type: "status",
+        taskId: CARD,
+        status: "IN PROGRESS",
+      },
+    });
+    expect(
+      await formStep(
+        await stage4Item(
+          "native_status",
+          { status: "IN PROGRESS" },
+          { payload: { formKey: "onboarding" } },
+        ),
+      ),
+    ).toEqual({ fail: SAY_FORMS.mismatch });
+    expect(
+      await formStep(await stage4Item("native_status", { status: "CLOSED" })),
+    ).toEqual({ fail: SAY_FORMS.mismatch });
+    // A field the key does not own (Client Happiness on card_fields) never passes.
+    expect(
+      await formStep(
+        await stage4Item("card_fields", {
+          fields: [
+            {
+              fieldId: FORM_FIELDS.happiness,
+              kind: "drop_down",
+              optionName: "Happy",
+              label: "Client Happiness",
+            },
+          ],
+        }),
+      ),
+    ).toEqual({ fail: SAY_FORMS.mismatch });
+    expect(
+      await formStep(
+        await stage4Item("profile_fields", {
+          fields: [
+            {
+              fieldId: KICKOFF_LINK,
+              kind: "url",
+              value: "javascript:alert(1)",
+              label: "Kickoff Form Link",
+            },
+          ],
+        }),
+      ),
+    ).toEqual({ fail: SAY_FORMS.mismatch });
+    const tampered = await stage4Item("handoff_comment", {
+      comment_text: "KICKOFF HANDOFF for Acme",
+    });
+    tampered.effect = {
+      ...tampered.effect!,
+      plan: {
+        ...tampered.effect!.plan,
+        comment_text: "KICKOFF HANDOFF for someone else",
+      },
+    };
+    expect(await formStep(tampered)).toEqual({ fail: SAY_FORMS.mismatch });
+    expect(
+      await formStep(
+        await stage4Item("map_phase4", {
+          fieldId: MAP_FIELD,
+          phase: 4,
+          value: mapUrl(3),
+        }),
+      ),
+    ).toEqual({ fail: SAY_FORMS.mismatch });
+    expect(Object.keys(STAGE4_FIELDS.card_fields)).toHaveLength(11);
+    expect(mapPhaseOf(mapUrl(5))).toBe(5);
+    expect(mapPhaseOf("https://example.invalid/")).toBeNull();
+  });
+
+  it("the task status: written once, read back; already IN PROGRESS writes nothing", async () => {
+    const card = new Stage4Card();
+    const { out, saves } = await run4(
+      card,
+      await stage4Item("native_status", { status: "IN PROGRESS" }),
+    );
+    expect(out.state).toBe("delivered");
+    expect(card.writes()).toEqual([
+      { method: "PUT", path: `task/${CARD}`, body: { status: "IN PROGRESS" } },
+    ]);
+    expect(saves.at(-1)?.progress.steps.native_status.state).toBe("done");
+    const again = await run4(
+      card,
+      await stage4Item("native_status", { status: "IN PROGRESS" }),
+    );
+    expect(again.out.state).toBe("delivered");
+    expect(card.writes()).toHaveLength(1);
+    const lost = new Stage4Card();
+    lost.drop = true;
+    const r = await run4(
+      lost,
+      await stage4Item("native_status", { status: "IN PROGRESS" }),
+    );
+    expect(r.out).toMatchObject({
+      state: "unknown",
+      error: SAY_FORMS.statusNotBack,
+    });
+  });
+
+  it("card fields: options by name or id, only what differs is written, all read back", async () => {
+    const card = new Stage4Card();
+    card.values.set(CONTRACT, 0); // already Signed (orderindex 0)
+    const fields = [
+      {
+        fieldId: STATUS,
+        kind: "drop_down",
+        optionId: "dbd21650-59ce-429c-882d-5afd7d8aaa8a",
+        optionName: "Brand Blueprint Booked♠️",
+        label: "Client Status",
+      },
+      {
+        fieldId: CONTRACT,
+        kind: "drop_down",
+        optionName: "Signed",
+        label: "Contract Status",
+      },
+      {
+        fieldId: BLUEPRINT,
+        kind: "url",
+        value: `https://cockpit.maharamedia.com/client-success/clients/${CARD}/present/blueprint?view=prep`,
+        label: "🧬 Brand Blueprint Form Link",
+      },
+    ];
+    const { out } = await run4(
+      card,
+      await stage4Item("card_fields", { fields }),
+    );
+    expect(out.state).toBe("delivered");
+    expect(card.writes().map(c => c.path)).toEqual([
+      `task/${CARD}/field/${STATUS}`,
+      `task/${CARD}/field/${BLUEPRINT}`,
+    ]);
+    expect(card.writes()[0].body).toEqual({
+      value: "dbd21650-59ce-429c-882d-5afd7d8aaa8a",
+    });
+    const missing = await run4(
+      new Stage4Card(),
+      await stage4Item("card_fields", {
+        fields: [
+          {
+            fieldId: CONTRACT,
+            kind: "drop_down",
+            optionName: "Maybe",
+            label: "Contract Status",
+          },
+        ],
+      }),
+    );
+    expect(missing.out).toMatchObject({
+      state: "failed",
+      error: SAY_FORMS.noFieldOption("Contract Status", "Maybe"),
+    });
+    const lost = new Stage4Card();
+    lost.drop = true;
+    const r = await run4(
+      lost,
+      await stage4Item("profile_fields", {
+        fields: [
+          {
+            fieldId: PROFILE,
+            kind: "text",
+            value: "Revenue last year: 120000",
+            label: "Client Profile",
+          },
+        ],
+      }),
+    );
+    expect(r.out).toMatchObject({
+      state: "unknown",
+      error: SAY_FORMS.notBack("Client Profile", "written"),
+    });
+  });
+
+  it("the map never moves back: a card at phase 5 is kept, one at phase 2 moves to 3", async () => {
+    const far = new Stage4Card();
+    far.values.set(MAP_FIELD, mapUrl(5));
+    const kept = await run4(
+      far,
+      await stage4Item("map_phase3", {
+        fieldId: MAP_FIELD,
+        phase: 3,
+        value: mapUrl(3),
+      }),
+    );
+    expect(kept.out).toMatchObject({
+      state: "skipped",
+      error: "kept: the map is already at phase 5",
+    });
+    expect(far.writes()).toEqual([]);
+    // A retry of the kept row reads as kept again, with no call.
+    const again = await run4(
+      far,
+      await stage4Item(
+        "map_phase3",
+        { fieldId: MAP_FIELD, phase: 3, value: mapUrl(3) },
+        { progress: kept.out.progress as Row },
+      ),
+    );
+    expect(again.out).toMatchObject({
+      state: "skipped",
+      error: "kept: the map is already at phase 5",
+    });
+    const at4 = new Stage4Card();
+    at4.values.set(MAP_FIELD, mapUrl(4));
+    expect(
+      (
+        await run4(
+          at4,
+          await stage4Item("map_phase4", {
+            fieldId: MAP_FIELD,
+            phase: 4,
+            value: mapUrl(4),
+          }),
+        )
+      ).out.state,
+    ).toBe("delivered");
+    expect(at4.writes()).toEqual([]);
+    const near = new Stage4Card();
+    const moved = await run4(
+      near,
+      await stage4Item("map_phase3", {
+        fieldId: MAP_FIELD,
+        phase: 3,
+        value: mapUrl(3),
+      }),
+    );
+    expect(moved.out.state).toBe("delivered");
+    expect(near.writes()).toEqual([
+      {
+        method: "POST",
+        path: `task/${CARD}/field/${MAP_FIELD}`,
+        body: { value: mapUrl(3) },
+      },
+    ]);
+  });
+
+  it("the handoff comment is posted once with its marker and read back", async () => {
+    const card = new Stage4Card();
+    const text =
+      "KICKOFF HANDOFF for Acme Interiors\n\nCLIENT DETAILS\nClient ID: 86card0001";
+    const { out } = await run4(
+      card,
+      await stage4Item("handoff_comment", { comment_text: text }),
+    );
+    expect(out.state).toBe("delivered");
+    expect(card.comments).toHaveLength(1);
+    expect(card.comments[0].comment_text).toBe(`${text}\n\n${MARKER}`);
+  });
+
+  it("a held row shows words, never the text or a value", async () => {
+    const it4 = await stage4Item("handoff_comment", {
+      comment_text: "secret words",
+    });
+    expect(planForm(it4)).toEqual([
+      {
+        queueId: "q-handoff_comment",
+        kind: "form",
+        taskId: CARD,
+        field: "Kickoff handoff comment",
+        old: null,
+        new: "12 characters",
+      },
+    ]);
+    const map = await stage4Item("map_phase4", {
+      fieldId: MAP_FIELD,
+      phase: 4,
+      value: mapUrl(4),
+    });
+    expect(planForm(map)[0]).toMatchObject({
+      field: "Onboarding Map",
+      new: "phase 4",
+    });
   });
 });
