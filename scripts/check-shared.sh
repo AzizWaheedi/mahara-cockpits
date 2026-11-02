@@ -21,6 +21,15 @@ SA=apps/sales-cockpit
 
 fails=0
 
+# The proposal preview must match the public page byte for byte. The cockpit
+# deploys on its own, so it carries these generated, checked source copies.
+for f in core.js offer.css strings.js offer.js; do
+  if ! cmp -s "sites/offer/$f" "apps/client-success-cockpit/src/pages/money/offers/proposal/page/$f"; then
+    echo "DRIFTED  offer page: $f (run apps/client-success-cockpit/scripts/offer-page-sync.mjs)"
+    fails=$((fails + 1))
+  fi
+done
+
 # Everything below the import block, which is the part that must match.
 body() {
   awk '
@@ -60,6 +69,12 @@ same adAsIdea "$CD/convex/adAsIdea.ts" "$ED/src/lib/adAsIdea.ts"
 # What a client is told about their ads (no leads, no cost per lead, what we
 # did in their words) reads the same from the media buyer and from the CSM.
 same clientUpdate "$MB/src/lib/clientUpdate.ts" "apps/client-success-cockpit/src/lib/clientUpdate.ts"
+
+# The invoice a client gets looks the same whether the CSM or a closer made
+# it: the template, its filling and the preview are copied into sales.
+same invoiceTemplate "apps/client-success-cockpit/src/lib/invoiceTemplate.ts" "$SA/src/lib/invoiceTemplate.ts"
+same invoiceTemplateHtml "apps/client-success-cockpit/src/lib/invoice-template.html" "$SA/src/lib/invoice-template.html"
+same invoicePaper "apps/client-success-cockpit/src/components/invoices/InvoicePaper.tsx" "$SA/src/components/invoices/InvoicePaper.tsx"
 
 # A lost lead's note shows what the agent typed, never the power dialer's
 # system lines, the same way for the media buyer and for the CSM.
@@ -248,6 +263,111 @@ done
 # the read into parts and figures, and the sheet's own rule it leans on are
 # the same in the CEO cockpit and the client success cockpit.
 for f in src/components/billing/PendingPayments.tsx src/lib/billingBalances.ts src/lib/billingCore.ts; do
+  same "$f" "$MB/$f" "$CS/$f"
+done
+
+# Your tasks, the alerts bell, the focus view and the request form
+# (PLAN.md D18, D19; docs/requests/CONTRACT.md 6.2): one set of eleven files
+# in all five apps, byte for byte, imports included. The client success copy
+# is the master. Each app's own adapter is src/lib/taskSeat.ts; nothing else
+# in the set differs.
+TASK_SET="src/lib/tasksCore.ts src/lib/tasksClient.ts
+src/components/tasks/TaskPanel.tsx src/components/tasks/YourTasks.tsx
+src/components/tasks/AlertsBell.tsx src/components/tasks/TaskFocus.tsx
+src/components/tasks/tasks.css src/lib/requestsCore.ts
+src/lib/requestsClient.ts src/components/tasks/RequestForm.tsx
+src/components/tasks/requests.css"
+for f in $TASK_SET; do
+  if [ ! -f "$CS/$f" ]; then
+    echo "MISSING  $f: $CS/$f does not exist"; fails=$((fails + 1)); continue
+  fi
+  for app in "$MB" "$CD" "$ED" "$SA"; do
+    if ! cmp -s "$CS/$f" "$app/$f"; then
+      echo "DRIFTED  $f: copy $CS/$f to $app/"; fails=$((fails + 1))
+    fi
+  done
+done
+# The two cores carry the rules and the words; they import nothing.
+for f in src/lib/tasksCore.ts src/lib/requestsCore.ts; do
+  if [ -f "$CS/$f" ] && grep -qE '^(import |export .* from )' "$CS/$f"; then
+    echo "IMPORTS  $CS/$f must stay import-free"; fails=$((fails + 1))
+  fi
+done
+# The rest may import only React, the router, lucide icons, the Supabase
+# client's type, the seat adapter, each other and their own CSS, so the set
+# builds the same in the two apps without Radix, sonner or zod.
+for f in $TASK_SET; do
+  case "$f" in *Core.ts|*.css) continue ;; esac
+  [ -f "$CS/$f" ] || continue
+  if grep -oE "(from|import) +[\"'][^\"']+[\"']" "$CS/$f" \
+    | grep -vE "[\"'](react|react-dom|react-router|lucide-react|@supabase/supabase-js|@/lib/(taskSeat|tasksClient|tasksCore|requestsClient|requestsCore)|\./(TaskPanel|YourTasks|AlertsBell|TaskFocus|RequestForm|tasks\.css|requests\.css))[\"']$" >/dev/null; then
+    echo "IMPORTS  $CS/$f may import only react, react-dom, react-router, lucide-react, the Supabase client type, @/lib/taskSeat and the set itself"
+    fails=$((fails + 1))
+  fi
+  if grep -E "[\"']@supabase/supabase-js[\"']" "$CS/$f" \
+    | grep -vqE "^import type \{ SupabaseClient \} from [\"']@supabase/supabase-js[\"'];$"; then
+    echo "IMPORTS  $CS/$f may take only the SupabaseClient type from @supabase/supabase-js"
+    fails=$((fails + 1))
+  fi
+done
+for f in src/components/tasks/tasks.css src/components/tasks/requests.css; do
+  if [ -f "$CS/$f" ] && grep -q '@import' "$CS/$f"; then
+    echo "IMPORTS  $CS/$f must not @import anything"; fails=$((fails + 1))
+  fi
+done
+for app in "$CS" "$MB" "$CD" "$ED" "$SA"; do
+  [ -f "$app/src/lib/taskSeat.ts" ] || { echo "MISSING  $app/src/lib/taskSeat.ts"; fails=$((fails + 1)); }
+done
+
+# The staff forms' sheet (docs/forms/WAVE12-CONTRACT.md 4.12): FormSheet,
+# its rules and words, the five forms and every browser call of their doors,
+# in the client success and CEO cockpits, byte for byte, imports included.
+# The client success copy is the master. The core imports nothing; the rest
+# import only what 4.12 names, so the two copies build the same.
+FORM_SET="src/forms/staff/FormSheet.tsx src/forms/staff/formSheet.css
+src/forms/staff/formSheetCore.ts src/forms/staff/formDefs.ts
+src/forms/staff/lifecycleClient.ts"
+for f in $FORM_SET; do
+  if [ ! -f "$CS/$f" ] || [ ! -f "$MB/$f" ]; then
+    echo "MISSING  $f: $CS/$f or $MB/$f does not exist"; fails=$((fails + 1)); continue
+  fi
+  if ! cmp -s "$CS/$f" "$MB/$f"; then
+    echo "DRIFTED  $f: copy $CS/$f to $MB/"; fails=$((fails + 1))
+  fi
+done
+form_imports() {
+  local f="$1" allowed="$2"
+  [ -f "$CS/$f" ] || return 0
+  if grep -oE "(from|import) +[\"'][^\"']+[\"']" "$CS/$f" \
+    | grep -vE "[\"']($allowed)[\"']$" >/dev/null; then
+    echo "IMPORTS  $CS/$f may import only: $allowed"; fails=$((fails + 1))
+  fi
+}
+if [ -f "$CS/src/forms/staff/formSheetCore.ts" ] \
+  && grep -qE '^(import |export .* from )' "$CS/src/forms/staff/formSheetCore.ts"; then
+  echo "IMPORTS  $CS/src/forms/staff/formSheetCore.ts must stay import-free"; fails=$((fails + 1))
+fi
+form_imports src/forms/staff/FormSheet.tsx 'react|lucide-react|@/components/ui/sheet|\./formSheetCore|\./formSheet\.css'
+form_imports src/forms/staff/formDefs.ts '\./formSheetCore'
+form_imports src/forms/staff/lifecycleClient.ts '@supabase/supabase-js|\./formSheetCore'
+if [ -f "$CS/src/forms/staff/lifecycleClient.ts" ] \
+  && grep -E "[\"']@supabase/supabase-js[\"']" "$CS/src/forms/staff/lifecycleClient.ts" \
+  | grep -vqE "^import type \{ SupabaseClient \} from [\"']@supabase/supabase-js[\"'];$"; then
+  echo "IMPORTS  $CS/src/forms/staff/lifecycleClient.ts may take only the SupabaseClient type"
+  fails=$((fails + 1))
+fi
+if [ -f "$CS/src/forms/staff/formSheet.css" ]; then
+  if grep -q '@import' "$CS/src/forms/staff/formSheet.css"; then
+    echo "IMPORTS  $CS/src/forms/staff/formSheet.css must not @import anything"; fails=$((fails + 1))
+  fi
+  if grep -nE '#[0-9a-fA-F]{3,8}\b|\b(rgba?|hsla?|oklch)\(' "$CS/src/forms/staff/formSheet.css" >/dev/null; then
+    echo "COLOUR   $CS/src/forms/staff/formSheet.css may use only the apps' colour tokens"; fails=$((fails + 1))
+  fi
+fi
+
+# Checks waiting (checked money, WAVE12-CONTRACT.md 4.2.5): the list and its
+# calls are the same in both cockpits; both copies must exist.
+for f in src/components/billing/ChecksWaiting.tsx src/lib/paymentChecks.ts; do
   same "$f" "$MB/$f" "$CS/$f"
 done
 

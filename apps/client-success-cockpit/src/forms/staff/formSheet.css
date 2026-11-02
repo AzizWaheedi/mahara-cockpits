@@ -1,0 +1,916 @@
+/* Hallmark · component: sheet form + after-send trail · genre: modern-minimal · theme: the cockpit's own (Geist, --mahara-teal)
+ * states: default · hover · focus · active · disabled · loading · error · success
+ * contrast: pass (40–41): teal and orange words use the ink mixes below; edges 3:1 on the card
+ *
+ * FormSheet (docs/forms/WAVE12-CONTRACT.md 4.12, 5.1), byte-identical in the
+ * client success and CEO cockpits. Only tokens both apps define: --mahara-teal,
+ * --deep-space, --background, --foreground, --card, --muted,
+ * --muted-foreground, --border, --warning, --destructive,
+ * --destructive-foreground, --font-sans, --font-mono, plus this file's own
+ * --fs-* mixes of them. No literal colour (the form-sheet test greps for one).
+ * The trail's rings take the StatusChip tone names (good, warning, critical,
+ * neutral), so a step and a chip read alike. Text at 11, 12, 13, 14, 15 or
+ * 18px; gaps and paddings on 4px steps.
+ */
+
+:root {
+  /* Teal as words: the client success cockpit's ink teal, else the teal
+     mixed with the ink (about 5.4:1 on white), as requests.css draws it. */
+  --fs-ink: var(
+    --primary-ink,
+    color-mix(in oklab, var(--mahara-teal) 55%, var(--foreground))
+  );
+  /* Orange words and marks on white: orange-500 alone is 2.9:1, this 4.7:1. */
+  --fs-warn: color-mix(in oklab, var(--warning) 75%, var(--foreground));
+}
+:root.dark,
+.dark {
+  --fs-ink: var(--mahara-teal);
+  --fs-warn: var(--warning);
+}
+
+/* --- The sheet ------------------------------------------------------------ */
+
+.fs-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  background: var(--card);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+.fs-sheet[data-side="right"] {
+  width: min(560px, 100vw);
+  max-width: none;
+  height: 100%;
+}
+.fs-sheet[data-side="bottom"] {
+  max-height: 92dvh;
+  border-radius: 16px 16px 0 0;
+}
+
+/* --- The form ------------------------------------------------------------- */
+
+.fs-root {
+  --fs-edge: color-mix(in oklab, var(--foreground) 38%, var(--card));
+  --fs-quiet: color-mix(in oklab, var(--muted) 80%, transparent);
+  --fs-on: color-mix(in oklab, var(--mahara-teal) 16%, var(--card));
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--foreground);
+}
+.fs-root[data-in-sheet] {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.fs-root *,
+.fs-root *::before,
+.fs-root *::after {
+  box-sizing: border-box;
+}
+:where(.fs-root) :where(h2, p, ol, ul, fieldset, legend) {
+  margin: 0;
+  padding: 0;
+}
+:where(.fs-root) :where(ol, ul) {
+  list-style: none;
+}
+
+.fs-head {
+  display: grid;
+  gap: 4px;
+  padding: 20px 56px 16px 24px;
+  border-bottom: 1px solid var(--border);
+}
+.fs-root:not([data-in-sheet]) .fs-head {
+  padding: 0 0 16px;
+}
+.fs-title {
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 600;
+  font-style: normal;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.fs-client {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  min-width: 0;
+}
+.fs-client-name {
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.fs-status {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.fs-lede {
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--muted-foreground);
+  max-width: 64ch;
+}
+
+.fs-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px 24px 24px;
+}
+.fs-root:not([data-in-sheet]) .fs-scroll {
+  overflow: visible;
+  padding: 16px 0;
+}
+.fs-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+}
+
+.fs-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.fs-fact {
+  max-width: 100%;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--fs-quiet);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+
+.fs-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 0;
+}
+.fs-label {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+.fs-optional {
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+.fs-from,
+.fs-hint {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+}
+.fs-from {
+  font-family: var(--font-mono);
+}
+.fs-error {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--destructive);
+}
+.fs-error-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+}
+
+/* Inputs: an edge of 3:1 on the card, the ink-teal ring on focus. */
+.fs-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--fs-edge);
+  border-radius: 12px;
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 14px;
+  line-height: 20px;
+  transition: border-color 120ms ease;
+}
+.fs-input[type="date"] {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.fs-input::placeholder {
+  color: var(--muted-foreground);
+}
+.fs-input:hover {
+  border-color: var(--foreground);
+}
+.fs-input:focus-visible {
+  outline: 2px solid var(--fs-ink);
+  outline-offset: 1px;
+  border-color: var(--fs-ink);
+}
+.fs-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.fs-input[aria-invalid="true"] {
+  border-color: var(--destructive);
+}
+.fs-textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+/* Pills: a real radio or checkbox, kept in the flow at zero size, and the
+   span beside it drawn as the pill (no :has(), no jump on a click). */
+.fs-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.fs-pill {
+  position: relative;
+  display: inline-flex;
+  cursor: pointer;
+}
+.fs-pill input,
+.fs-call input {
+  width: 0;
+  height: 0;
+  margin: 0;
+  opacity: 0;
+  appearance: none;
+}
+.fs-pill span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid var(--fs-edge);
+  border-radius: 999px;
+  background: var(--card);
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+.fs-pill:hover span {
+  background: var(--fs-quiet);
+}
+.fs-pill input:checked + span {
+  border-color: var(--fs-ink);
+  background: var(--fs-on);
+  font-weight: 500;
+}
+.fs-pill input:focus-visible + span {
+  outline: 2px solid var(--fs-ink);
+  outline-offset: 2px;
+}
+.fs-pill input:active + span {
+  background: var(--muted);
+}
+.fs-pill input:disabled + span {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.fs-pill input[aria-invalid="true"] + span {
+  border-color: var(--destructive);
+}
+
+.fs-tick-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  font-size: 14px;
+  line-height: 20px;
+  cursor: pointer;
+}
+.fs-tick-row input {
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  accent-color: var(--fs-ink);
+}
+.fs-tick-row input:focus-visible {
+  outline: 2px solid var(--fs-ink);
+  outline-offset: 2px;
+}
+.fs-tick-row[data-strong] span {
+  font-weight: 600;
+}
+
+.fs-calls {
+  display: grid;
+  gap: 8px;
+}
+.fs-call {
+  /* Grid, not block: a block would give the zero-size radio its own line box
+     (20px of empty line above every card); .fs-pill avoids it the same way. */
+  display: grid;
+  cursor: pointer;
+}
+.fs-call-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--fs-edge);
+  border-radius: 12px;
+  background: var(--card);
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+.fs-call:hover .fs-call-body {
+  background: var(--fs-quiet);
+}
+.fs-call input:checked + .fs-call-body {
+  border-color: var(--fs-ink);
+  background: var(--fs-on);
+}
+.fs-call input:focus-visible + .fs-call-body {
+  outline: 2px solid var(--fs-ink);
+  outline-offset: 2px;
+}
+.fs-call input:active + .fs-call-body {
+  background: var(--muted);
+}
+.fs-call input[aria-invalid="true"] + .fs-call-body {
+  border-color: var(--destructive);
+}
+.fs-call-day {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 16px;
+}
+.fs-call-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--muted-foreground);
+}
+.fs-call-kind {
+  font-size: 13px;
+  line-height: 16px;
+}
+.fs-call-from {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+}
+
+.fs-readonly {
+  font-size: 14px;
+  line-height: 20px;
+}
+.fs-note {
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--muted-foreground);
+  max-width: 64ch;
+}
+.fs-note-warn {
+  color: var(--fs-warn);
+}
+
+/* --- The footer and its one action ---------------------------------------- */
+
+.fs-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 16px 24px max(16px, env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--border);
+  background: var(--card);
+}
+.fs-root:not([data-in-sheet]) .fs-foot {
+  padding: 16px 0 0;
+  background: transparent;
+}
+.fs-foot-note {
+  flex: 1 1 200px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+}
+.fs-fail {
+  font-weight: 500;
+  color: var(--destructive);
+}
+
+.fs-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 16px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--mahara-teal);
+  color: var(--deep-space);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    transform 80ms ease;
+}
+.fs-btn:hover {
+  background: color-mix(in oklab, var(--mahara-teal) 86%, var(--deep-space));
+}
+.fs-btn:focus-visible {
+  outline: 2px solid var(--fs-ink);
+  outline-offset: 2px;
+}
+.fs-btn:active {
+  transform: translateY(1px);
+}
+.fs-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+.fs-btn[data-busy] {
+  cursor: progress;
+}
+.fs-btn[data-tone="destructive"] {
+  background: var(--destructive);
+  color: var(--destructive-foreground);
+}
+.fs-btn[data-tone="destructive"]:hover {
+  background: color-mix(in oklab, var(--destructive) 86%, var(--foreground));
+}
+.fs-btn-quiet {
+  border-color: var(--fs-edge);
+  background: var(--card);
+  color: var(--foreground);
+  font-weight: 500;
+}
+.fs-btn-quiet:hover {
+  background: var(--fs-quiet);
+}
+.fs-spin {
+  width: 16px;
+  height: 16px;
+  animation: fs-spin 900ms linear infinite;
+}
+@keyframes fs-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* --- The after-send trail (the signature) ---------------------------------- */
+
+.fs-after {
+  display: grid;
+  gap: 20px;
+}
+.fs-done {
+  font-size: 15px;
+  line-height: 24px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.fs-done-word {
+  color: var(--fs-ink);
+  font-weight: 600;
+}
+.fs-trail {
+  display: grid;
+  gap: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 20px;
+}
+.fs-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  padding-bottom: 16px;
+  animation: fs-step-in 150ms ease-out both;
+  animation-delay: calc(var(--i, 0) * 150ms);
+}
+.fs-step:last-child {
+  padding-bottom: 0;
+}
+/* The rail between two rings. */
+.fs-step:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  top: 22px;
+  bottom: 2px;
+  left: 9px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--border);
+}
+.fs-ring {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--fs-edge);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted-foreground);
+}
+.fs-ring[data-tone="good"] {
+  border-color: var(--mahara-teal);
+  background: var(--mahara-teal);
+  color: var(--deep-space);
+}
+.fs-ring[data-tone="warning"] {
+  border-color: var(--fs-warn);
+  background: color-mix(in oklab, var(--warning) 16%, var(--card));
+  color: var(--fs-warn);
+}
+.fs-ring[data-tone="critical"] {
+  border-color: var(--destructive);
+  background: color-mix(in oklab, var(--destructive) 14%, var(--card));
+  color: var(--destructive);
+}
+.fs-ring-icon {
+  width: 12px;
+  height: 12px;
+  stroke-width: 3;
+}
+.fs-step-text {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.fs-step[data-state="none"] .fs-step-label,
+.fs-step[data-state="skipped"] .fs-step-label {
+  color: var(--muted-foreground);
+}
+.fs-step[data-state="failed"] .fs-step-label {
+  color: var(--destructive);
+}
+.fs-step-time {
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.fs-link {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fs-ink);
+  font: inherit;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.fs-link:hover {
+  text-decoration-thickness: 2px;
+}
+.fs-link:focus-visible {
+  outline: 2px solid var(--fs-ink);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.fs-link:active {
+  opacity: 0.8;
+}
+.fs-link:disabled {
+  color: var(--muted-foreground);
+  cursor: not-allowed;
+}
+
+@keyframes fs-step-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+}
+
+@media (max-width: 767px) {
+  .fs-head {
+    padding: 16px 48px 12px 16px;
+  }
+  .fs-scroll {
+    padding: 16px;
+  }
+  .fs-foot {
+    padding: 12px 16px max(12px, env(safe-area-inset-bottom, 0px));
+  }
+  .fs-foot .fs-btn {
+    flex: 1 1 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fs-step,
+  .fs-spin {
+    animation: none;
+  }
+  .fs-input,
+  .fs-pill span,
+  .fs-call-body,
+  .fs-btn {
+    transition: none;
+  }
+  .fs-btn:active {
+    transform: none;
+  }
+}
+
+/* --- The pause's client consent row (waves 3-4, WAVE34-CONTRACT.md 5.2) ---- */
+
+.fs-consent {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--fs-quiet);
+}
+.fs-consent[data-state="signed"] {
+  border-color: var(--mahara-teal);
+  background: color-mix(in oklab, var(--mahara-teal) 8%, var(--card));
+}
+.fs-consent[data-state="sent"] {
+  border-color: color-mix(in oklab, var(--warning) 50%, var(--border));
+}
+.fs-consent[data-state="dates_wrong"],
+.fs-consent[data-state="expired"] {
+  border-color: color-mix(in oklab, var(--destructive) 50%, var(--border));
+}
+.fs-consent-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.fs-consent-line {
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.fs-consent[data-state="signed"] .fs-consent-line {
+  color: var(--fs-ink);
+}
+.fs-consent[data-state="sent"] .fs-consent-line {
+  color: var(--fs-warn);
+}
+.fs-consent-dates {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.fs-consent-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+}
+.fs-consent-row .fs-btn {
+  min-height: 36px;
+}
+
+/* --- Waves 5-6 (docs/forms/WAVE56-CONTRACT.md 5.0, 5.1, 5.13) ------------- */
+
+/* A choice drawn in groups ("Upsells" under the four Rs). */
+.fs-group {
+  display: grid;
+  gap: 4px;
+}
+.fs-group + .fs-group {
+  margin-top: 8px;
+}
+.fs-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+/* A group's title between fields (the kickoff's three groups). */
+.fs-heading {
+  margin: 8px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  font-style: normal;
+}
+/* The database asked first: the warning and its two answers. */
+.fs-warn {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid color-mix(in oklab, var(--warning) 50%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--warning) 8%, var(--card));
+}
+.fs-warn-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+.fs-warn-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* --- The win ribbon (5.0's signature element) -------------------------------
+ * One row per win: a thin Geist Mono track, Offered → Accepted → Paid → Pay
+ * for an upsell, Logged → Pay for the rest. A stop is teal with its date when
+ * done, amber with its waiting sentence when waiting, a hollow ring when not
+ * yet. Voided rows cut the track with a short muted dash and the reason. The
+ * only motion is a stop filling (150 ms, none under reduced motion).
+ * states: done · waiting · todo · declined · voided · focus (row links) */
+.wr-root {
+  --wr-done: var(--mahara-teal);
+  --wr-wait: color-mix(in oklab, var(--warning) 75%, var(--foreground));
+  --wr-edge: color-mix(in oklab, var(--foreground) 30%, var(--card));
+  --wr-ink: var(
+    --primary-ink,
+    color-mix(in oklab, var(--mahara-teal) 55%, var(--foreground))
+  );
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  min-width: 0;
+}
+.dark .wr-root {
+  --wr-wait: var(--warning);
+  --wr-ink: var(--mahara-teal);
+}
+.wr-track {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 0;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
+}
+.wr-stop {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted-foreground);
+}
+.wr-stop + .wr-stop::before {
+  content: "";
+  display: inline-block;
+  width: 20px;
+  height: 1px;
+  margin: 0 6px;
+  background: var(--wr-edge);
+}
+.wr-stop[data-state="done"] + .wr-stop::before {
+  background: var(--wr-done);
+}
+.wr-dot {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border: 1.5px solid var(--wr-edge);
+  border-radius: 999px;
+  background: transparent;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+.wr-stop[data-state="done"] {
+  color: var(--foreground);
+}
+.wr-stop[data-state="done"] .wr-dot {
+  border-color: var(--wr-done);
+  background: var(--wr-done);
+}
+.wr-stop[data-state="waiting"] {
+  color: var(--wr-wait);
+}
+.wr-stop[data-state="waiting"] .wr-dot {
+  border-color: var(--wr-wait);
+  background: color-mix(in oklab, var(--warning) 20%, transparent);
+}
+.wr-stop[data-state="declined"] .wr-dot {
+  border-style: dashed;
+}
+.wr-date {
+  color: var(--muted-foreground);
+}
+.wr-said {
+  font-family: var(--font-sans);
+}
+.wr-cut {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted-foreground);
+  font-family: var(--font-sans);
+}
+.wr-cut::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 2px;
+  margin-left: 6px;
+  background: var(--wr-edge);
+}
+.wr-money {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground);
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wr-dot {
+    transition: none;
+  }
+}
+/* At phone width the track reads as a list down a rule, never a line that wraps
+   mid-connector: each stop on its own line, the dot sitting on the rule. */
+.wr-root {
+  container-type: inline-size;
+}
+@container (max-width: 30rem) {
+  .wr-track {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    margin-inline-start: 5px;
+    padding-inline-start: 14px;
+    border-inline-start: 1px solid var(--wr-edge);
+  }
+  .wr-stop {
+    flex-wrap: wrap;
+  }
+  .wr-stop .wr-dot {
+    margin-inline-start: -19px;
+    background: var(--card);
+  }
+  .wr-stop[data-state="done"] .wr-dot {
+    background: var(--wr-done);
+  }
+  .wr-stop + .wr-stop::before,
+  .wr-cut::before {
+    display: none;
+  }
+}
+/* A voided win's money is not money any more: muted and struck. */
+.wr-root[data-voided] .wr-money {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+}
+

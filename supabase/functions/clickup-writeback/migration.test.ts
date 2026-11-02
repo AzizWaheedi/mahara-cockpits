@@ -3,7 +3,8 @@ import { existsSync, readFileSync } from "node:fs";
 
 // Static checks on 20261009f_clickup_writeback_native.sql: the contract between
 // the Edge Functions and the database, and the tables it must not write.
-const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), "utf8");
+// Windows checkouts are CRLF; the patterns below match on "\n".
+const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const SQL = read("../../migrations/20261009f_clickup_writeback_native.sql");
 const ORIGINAL_SOURCE = read("../../migrations/20261004d_media_native_surface.sql");
 const CALLERS = ["./run.ts", "./index.ts", "../tracking-audit/audit.ts", "../tracking-audit/index.ts"].map(read).join("\n");

@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import pathlib
 import tempfile
@@ -131,6 +132,18 @@ class AuthConfigurationTests(unittest.TestCase):
             read = MODULE.Reader(None, fallback=lambda path, payload=None: self.fail("fallback used"))
             with self.assertRaises(urllib.error.HTTPError):
                 read("config/auth")
+
+    def test_a_large_composio_answer_is_read_from_its_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            stored = pathlib.Path(folder) / "out.json"
+            stored.write_text('{"successful": true, "data": {"result": [{"functions": ["cockpit_a", "cockpit_b"]}]}}')
+            # json.dumps, not "%s": a Windows path's backslashes are not valid JSON as plain text.
+            printed = json.dumps({"successful": True, "storedInFile": True, "outputFilePath": str(stored)})
+            done = mock.Mock(returncode=0, stdout=printed)
+            with mock.patch.object(MODULE.subprocess, "run", return_value=done):
+                rows = MODULE.composio_request("database/query", {"query": "select 1"})
+        self.assertEqual(rows, [{"functions": ["cockpit_a", "cockpit_b"]}])
+        self.assertEqual(MODULE.stored_answer({"successful": True, "data": {"result": []}}), {"successful": True, "data": {"result": []}})
 
     def test_no_token_and_no_composio_still_fails(self):
         with mock.patch.dict(os.environ, {}, clear=True), \

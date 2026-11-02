@@ -4,7 +4,7 @@ from __future__ import annotations
 from guard import fixes
 from guard.context import Context, SourceError
 from guard.jobs import HERMES_LOGS
-from guard.model import Check, Result, fail, kuwait, ok, parse_time, warn
+from guard.model import UNKNOWN, Check, Result, fail, kuwait, ok, parse_time, warn
 
 MEM_FAIL_MB = 700
 MEM_WARN_MB = 1024
@@ -83,6 +83,21 @@ def run_tunnels(ctx: Context) -> Result:
     return ok(f"{n} cloudflared process(es) run on the VPS.", evidence=ev)
 
 
+def run_gateway_dup(ctx: Context) -> Result:
+    procs = ctx.snap_part("procs")
+    gateways = procs.get("gateways") if isinstance(procs, dict) else None
+    if gateways is None:
+        return Result(UNKNOWN, "The gateway list was not read (older snapshot).")
+    dups = [g for g in gateways
+            if "/opt/hermes-host/" in str(g.get("args") or "") or g.get("user") == "root"]
+    if dups:
+        names = ", ".join(f"{g.get('user')} {g.get('pid')}" for g in dups)
+        return fail(f"A second Hermes gateway is running ({names}): it runs every cron job twice and fights the "
+                    f"Telegram bot.", evidence={"duplicates": [[g.get("pid"), g.get("user")] for g in dups],
+                                               "gateways": len(gateways)}, urgent=True)
+    return ok(f"{len(gateways)} Hermes gateway(s) running, none duplicated.", evidence={"gateways": len(gateways)})
+
+
 def run_disk(ctx: Context) -> Result:
     d = ctx.snap_part("disk")
     pct = float(d.get("pct") or 0)
@@ -142,5 +157,13 @@ CHECKS = [
         severity="low", reads="git log -1 and git status --porcelain in ~/mahara-cockpits",
         threshold="Older than 7 days or any local change: warn (daily summary only).", run=run_code_copy,
         alert=False, action="Copy the worker changes into git from the VPS, then bring the copy up to date by hand. Never reset it.",
+    ),
+    Check(
+        id="hermes-gateway-dup", area="vps", name="Second Hermes gateway",
+        means="Only the container runs the Hermes gateway on its data folder.",
+        severity="high", reads="Processes whose command line has gateway run, with their user",
+        threshold="A gateway run by root or from /opt/hermes-host: fail (urgent).", run=run_gateway_dup, confirm=2,
+        owner="Hermes",
+        action="Stop the extra gateway and disable its unit (31 Oct 2026: root systemd --user hermes-gateway.service). Never stop the container gateway.",
     ),
 ]

@@ -4,9 +4,13 @@ import type {BillingRow} from './billing.ts';
 import {cleanText} from './attribution.ts';
 type Row=Record<string,any>;
 const stamp=(x:unknown)=>x?Date.parse(String(x)):null;
+const CHECK_STATES=new Set(['logged','checked','rejected']);
 const number=(x:unknown)=>{const n=Number(x);if(x===null||x===undefined||!Number.isFinite(n))throw Error('Finance source contains an invalid number');return n;};
 // A hand-logged entry, its client and note cleaned as native normalizeManual cleans them (money.js cleanText).
-function manual(r:Row):ManualRow{return {id:r.id,day:r.day,amount:number(r.amount),currency:r.currency,amountUsd:number(r.amount_usd),usdPerUnit:number(r.usd_per_unit),client:cleanText(r.client_name,120),clickupTaskId:r.clickup_task_id??null,rail:r.rail,kind:r.kind,dealContracted:r.deal_contracted===null?null:number(r.deal_contracted),dealContractedUsd:r.deal_contracted_usd===null?null:number(r.deal_contracted_usd),note:r.note?cleanText(r.note,300):null,addedBy:'Aziz',addedAt:stamp(r.added_at)!,deletedAt:stamp(r.deleted_at),deletedBy:r.deleted_at?'Aziz':null};}
+function manual(r:Row):ManualRow{return {id:r.id,day:r.day,amount:number(r.amount),currency:r.currency,amountUsd:number(r.amount_usd),usdPerUnit:number(r.usd_per_unit),client:cleanText(r.client_name,120),clickupTaskId:r.clickup_task_id??null,rail:r.rail,kind:r.kind,dealContracted:r.deal_contracted===null?null:number(r.deal_contracted),dealContractedUsd:r.deal_contracted_usd===null?null:number(r.deal_contracted_usd),note:r.note?cleanText(r.note,300):null,addedBy:'Aziz',addedAt:stamp(r.added_at)!,deletedAt:stamp(r.deleted_at),deletedBy:r.deleted_at?'Aziz':null,
+ // Checked money (20261101n), as native normalizeManual reads it: a row with no state waits as logged.
+ checkState:CHECK_STATES.has(r.check_state)?r.check_state:'logged',stateMissing:!CHECK_STATES.has(r.check_state),
+ checkedAt:stamp(r.checked_at),checkedRef:r.checked_ref==null?null:cleanText(r.checked_ref,120)};}
 export function financeContext(source:Row):FinanceContext{
  const billing:BillingRow[]=source.billing.map((r:Row)=>{
   const out:any={taskId:r.clickup_task_id,name:r.client_name,syncedAt:stamp(r.captured_at)};

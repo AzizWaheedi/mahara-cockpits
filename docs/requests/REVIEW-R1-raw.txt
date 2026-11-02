@@ -1,0 +1,209 @@
+verify:rt-3:2 | real: False
+verify:rt-2:2 | real: True
+verify:rt-3:1 | real: False
+verify:rt-2:1 | real: True
+verify:rt-1:2 | real: True
+verify:rt-1:1 | real: True
+verify:rt-4:1 | real: True
+verify:rt-4:2 | real: True
+verify:rt-6:1 | real: True
+verify:rt-6:2 | real: True
+verify:SEC-1:1 | real: True
+verify:SEC-1:2 | real: True
+verify:rt-5:2 | real: False
+verify:rt-5:1 | real: False
+verify:SEC-2:1 | real: True
+verify:SEC-2:2 | real: True
+verify:F1:1 | real: True
+verify:SEC-3:2 | real: True
+verify:F1:2 | real: True
+verify:SEC-3:1 | real: False
+verify:F3:1 | real: True
+verify:F4:1 | real: True
+verify:F4:2 | real: True
+verify:F2:2 | real: False
+verify:F5:1 | real: True
+verify:F3:2 | real: True
+verify:F2:1 | real: False
+verify:F5:2 | real: True
+verify:F7:2 | real: True
+verify:F12:2 | real: True
+verify:D2:2 | real: True
+verify:D2:1 | real: True
+verify:F12:1 | real: False
+verify:D1:2 | real: True
+verify:D1:1 | real: True
+build2:writer | files: 10 | tests: cd /Users/abdulazizwaheedi/mahara-cockpits/.claude/worktrees => 234 pass, 0 fail, 1313 expect() calls across 9 files. That is the exis; apps/media-buyer-cockpit/node_modules/.bin/tsc -p <scratch t => No errors. The scratch tsconfig was deleted afterwards.; same tsc with a Deno stub over index.ts (non-strict) => No errors in index.ts. The only errors were in cockpit-media-api/creat | deviations: 11
+   deploy: Order: migrations 20261026r and 20261026s first. Before r, begin and idle refuse the job 'requests' and the claim_requests RPC does not exist. Then deploy clickup-writeback from committed code, keepin || Secrets read by name: CLICKUP_API_TOKEN, CRON_SECRET, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY. Leave CLICKUP_WRITEBACK_APPLY_REQUESTS unset (dry run) until the rehearsal. For the rehearsal set it to e || After deploy, POST {"job":"doctor"}: its note now ends "Requests and task changes: <mode>." Then POST {"job":"requests_doctor"}, which reads only and writes cockpit_sync_state key clickup-writeback:re || The every-minute cron mahara-clickup-writeback-requests (migration r) posts {"job":"requests"}. Each run reports on clickup-writeback:requests through cockpit_clickup_requests_state, and cockpit_click || The unknown-job sentence is now "Use kpi, log, dosdonts, doctor, requests or requests_doctor." rules.ts now sends the right Request Type options for the qualification and landing-page wordings of the 
+build2:db | files: 5 | tests: cd apps/media-buyer-cockpit && bun test scripts/requests-sup => 65 pass, 0 fail, 2357 expect() calls (58 PGlite tests with r and s app; bun scripts/gen-request-types-seed.ts | cmp - supabase/migra => identical. The seed test also regenerates the file and compares it byt; cd apps/media-buyer-cockpit && bunx biome check --line-endin => clean (formatted with --write; one noAssignInExpressions fixed); sq.py SELECT pg_get_functiondef for cockpit_clickup_writebac => Only the intended lines differ: 'requests' added to the begin and idle | deviations: 12
+   deploy: Apply order: 20261026r_requests.sql, then 20261026s_request_types_seed.sql, then 20261026t_task_alerts.sql. Dry run each through Composio as BEGIN; ... ROLLBACK; first. Each file has its own BEGIN/COM || r replaces three live functions. cockpit_clickup_writeback_begin and _idle gain 'requests' in their job lists. cockpit_clickup_writeback_claim gains AND q.kind NOT IN ('request','task_action'). Their  || r schedules pg_cron job mahara-clickup-writeback-requests every minute. By contract it always posts {"job":"requests"} to clickup-writeback with vault cockpit_sync_secret, which already exists live, s || The writer's state row is cockpit_sync_state key clickup-writeback:requests (detail = {mode, onlyCards, counts, at}). Until it reports, cockpit_clickup_requests_mode() is 'unknown'. Nobody can send th || The seed sets set_request_type on for the 11 types with no folder rule and off for the other 20. Every type is enabled. The 8 media buyer of record parts have no named owner and fall back to the syste || Nothing was deployed, applied, committed or written anywhere. All live reads were SELECT only through sq.py.
+build2:portal-screens | files: 35 | tests: cd apps/media-buyer-cockpit && bun test scripts/requests-cor => 50 pass, 0 fail across 4 files (12.4 s). requests-core 17: the form's ; cd apps/media-buyer-cockpit && bunx biome check --line-endin => exit 0 (63 warnings and 8 infos, all in files other builders own or th; cd apps/media-buyer-cockpit && bun run tsc --project tsconfi => both exit 0; for each of client-success, creative-director, video-editor, => tsc exit 0 and biome exit 0 in all four apps; no drift | deviations: 9
+   deploy: Nothing was deployed, committed or written outside the worktree. No writes to production, ClickUp or Slack. || Portal routes /requests and /requests/settings sit inside the layout and outside every RoleRoute (the database gates). The catch-all rewrite in vercel.json already serves these deep links, and the PWA || Until the writer reports apply (CLICKUP_WRITEBACK_APPLY_REQUESTS), the form shows the database's writer note in place of Send and links the ClickUp form (2kzmr1ky-1178), so the team is never left with || Ship check: cd apps/media-buyer-cockpit && bun test scripts/requests-core.test.ts scripts/request-form.test.tsx scripts/requests-page.test.tsx scripts/requests-settings.test.tsx. requests-core reads s || To look at the screens: bun run harness in apps/media-buyer-cockpit (port 5179; that port was held by an ssh tunnel today, so I used --port 5189), then open /harness.html?path=%2Frequests, ?path=%2Fre || Disk: 2.2 GB free at the end (other builders were writing too). The vite cache I created and all scratch files are deleted.
+build2:cockpit-screens | files: 40 | tests: bash scripts/check-shared.sh => pass: 'shared files are in step.' All 11 files are byte-identical in a; cd apps/media-buyer-cockpit && bun test scripts/tasks-core.t => pass: 23 tests, 0 failures, 181 expect() calls, no act() warnings. tas; cd apps/media-buyer-cockpit && bunx biome check --line-endin => pass (exit 0 for all three). Biome still shows warnings, but every fil; cd apps/client-success-cockpit && bun test scripts/csm-page. => pass: 23 tests (21 existing plus 2 new: 'Requests you raised today' wi | deviations: 12
+   deploy: Nothing was deployed, committed, pushed or written anywhere. All Supabase and ClickUp traffic in tests and harnesses was faked. The sales harness was started once with the real project address and a p || Ship order per CONTRACT section 12: migrations r, s, t, then clickup-writeback and cockpit-tasks, then the five apps. Until migration t and cockpit-tasks are live, Your tasks says 'Your tasks could no || Important for the CSM: the client page's old 'Ask a team' select (the live decision-log path, 7 delivered) is replaced by RequestForm. Until CLICKUP_WRITEBACK_APPLY_REQUESTS is on (R6), a non-editor C || Portal: the bell (with the launch notices as 'Client alerts' for media buyer, admin and CEO seats) now sits on every page in the layout and for every seat, including /ceo, /team, /admin and /performan || scripts/check-shared.sh now pins all 11 shared files byte for byte in the five apps, plus the import allow-list. ship.sh runs it before any build, so a change to one copy must be copied to all five, c || After ship, check each live bundle for 'Your tasks' and 'Ask a team'. Seats unmatched by email (CONTRACT: the 2 call centre seats and the sales seat) will see the not-linked sentence until linked in R
+build2:mirror-alerts | files: 24 | tests: cd apps/media-buyer-cockpit && bun test scripts/task-alerts- => 37 pass, 0 fail (500 expects). Migrations r, s (present since 16:15) a; bun test supabase/functions/cockpit-tasks => 35 pass, 0 fail across door, delta, seats and detail tests, against a ; cd hermes/cockpit-guardian && ~/.cache/mahara-ship/pybin/pyt => Ran 411 tests, OK (Python 3.11). With the Mac's python3 (3.9.6) the sa; bash -n scripts/ship.sh => ok | deviations: 14
+   deploy: Order: apply 20261026r, then s, then t, each with a dry run first. t needs r's `cockpit_request_seat`, `cockpit_clickup_requests_mode`, `cockpit_request_owner_label`, `cockpit_request_lists`, `cockpit || Secrets: new function secret `TASKS_CRON_SECRET` on cockpit-tasks, with the same value in the vault as `cockpit_tasks_cron_secret`. The function also needs `CLICKUP_API_TOKEN`, `SUPABASE_URL`, `SUPABA || Deploy cockpit-tasks with verify_jwt OFF. The bundle must include ../cockpit-media-api/tools.ts (a type-only import of core.ts). || After deploy: run `{"job":"doctor"}`, then one `{"job":"seats"}` run. The first seats run that reads every linked seat in full sets baselinedAt, and no alert is made before it. Then link unmatched sea || Guardian: ship the new rows (queue-clickup-requests, the three run_jobs keys, the three EXPECTED_JOBS crons, cockpit-tasks verify_jwt false) only after the migrations and function are live. Before tha || ship.sh: the new block runs once apps/media-buyer-cockpit/scripts/requests-supabase.test.ts exists, which the db builder has already created. It then runs all nine app test files and both function sui
+integrate2 | green: True
+   cmd: integration edits (worktree /Users/abdulazizwaheedi/mahara-cockpits/.claude/worktrees/forms-1025) => 1) supabase/migrations/20261026r_requests.sql: (a) the per-task lane rule in cockpit_clickup_writeback_claim_r
+   cmd: cd apps/media-buyer-cockpit && bun test scripts/requests-supabase.test.ts scripts/request-types-seed.test.ts s => 189 pass, 0 fail across 10 files. Before the your-tasks fix, the original 9-file line was 142 pass and 33 fail
+   cmd: bun test supabase/functions/clickup-writeback supabase/functions/cockpit-tasks  (the ship.sh line) => 269 pass, 0 fail across 13 files
+   cmd: cd apps/media-buyer-cockpit && bun test scripts/requests-fit-supabase.test.ts scripts/requests-ownership.test. => 13 + 3 pass, 0 fail. Every changed file (160, from git diff 86ee4e84 plus untracked) has exactly one owner.
+   cmd: bun scripts/gen-request-types-seed.ts | cmp - supabase/migrations/20261026s_request_types_seed.sql => identical
+   cmd: bash scripts/check-shared.sh => shared files are in step (11 files byte-identical in 5 apps, cores import-free)
+   cmd: node_modules/.bin/tsc -b in each of media-buyer, client-success, creative-director, video-editor, sales => exit 0 in all five. Also bun run tsc -p tsconfig.app.json and tsconfig.node.json --noEmit pass in all five. A 
+   cmd: bunx biome check --line-ending=auto src in all five apps; biome on the four test files I wrote or edited => exit 0 everywhere (the new test files were formatted with --write)
+   cmd: bun build supabase/functions/{clickup-writeback,cockpit-tasks}/index.ts --target=browser --format=esm --extern => clickup-writeback 129.15 KB and cockpit-tasks 34.26 KB, one Deno.serve each, no testkit or bun:test inside. Bu
+   cmd: python scripts/dev/fn_extras.py . clickup-writeback / . cockpit-tasks => clickup-writeback: apps/media-buyer-cockpit/src/lib/{kpi,leadForm,pageForm}.ts and supabase/functions/cockpit-
+   cmd: cd hermes/cockpit-guardian && ~/.cache/mahara-ship/pybin/python -m unittest => Ran 411 tests, OK
+   cmd: every other local ship.sh test line (auth unittests, auth flow/sql/sdk, rpc restore, cs password ui, convex-re => 33 of 33 PASS
+   cmd: PATH=~/.cache/mahara-ship/pybin:$PATH VITE_SUPABASE_URL=https://bldgtotkfmhoxmlzowdx.supabase.co VITE_SUPABASE => PASS: structure, no Convex imports, shared files and Biome pins, typechecks (5 apps, app + node), fresh Vite b
+   cmd: sq.py SELECTs (read only) => No cockpit_request*, cockpit_task_* objects or functions exist live. Vault has cockpit_sync_secret but no cock
+   STEP: 0. Commit and push. Commit the 160 files from the worktree (branch tickets-1026; run `cd apps/media-buyer-cockpit && bun test scripts/requests-ownership.test.ts` first: it must be 3 pass). Rebase onto origin/main b6dd57c1 (no overlap) and push from a throwaway worktree, never resetting the shared checkout. Read-back: `git ls-remote origin main` shows the commit. Every later step deploys from that commit (ship.sh refuses source that is not on GitHub main).
+   STEP: 1. Deploy clickup-writeback first. It is backward compatible: kpi, log and dosdonts are unchanged except rules.ts, which corrects the Request Type ids for the qualification-questions and landing-page wordings on the live log job. Run `~/.cache/mahara-ship/pybin/python scripts/dev/deploy_composio.py clickup-writeback --rev <commit> $(for f in $(python3 scripts/dev/fn_extras.py . clickup-writeback); do printf -- '--extra %s ' $f; done) --verify-jwt off --dry`, then the same command without --dry. Leave CLICKUP_WRITEBACK_APPLY_REQUESTS and CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS unset. Read-back: t
+   STEP: 2. Migration 20261026r_requests.sql. Dry run its body (the file's own BEGIN and COMMIT stripped) inside BEGIN; ...; ROLLBACK; through the Composio Supabase connection, then apply it with its migration name. Read-back: to_regclass is not null for cockpit_request_field_catalog, _templates, _types, _type_versions, cockpit_clickup_members, cockpit_member_clickup, cockpit_requests, cockpit_request_parts. pg_get_functiondef of cockpit_clickup_writeback_claim(uuid,integer) contains `q.kind NOT IN ('request','task_action')`. claim_requests contains `o.payload->>'op' = 'verify'`. The kick contains `tim
+   STEP: 3. Migration 20261026s_request_types_seed.sql: dry run, then apply. Read-back: count(*) is 31 for cockpit_request_types, 31 for cockpit_request_type_versions, 24 for cockpit_request_field_catalog and 34 for cockpit_request_templates. set_request_type is true for exactly 11 keys (employee_offboarding, privacy_policy, client_offboarding, dfy_to_dwy, dwy_to_dfy, company_name, company_address, csm_request, business_licence, ads_request, edit_campaign).
+   STEP: 4. Migration 20261026t_task_alerts.sql: dry run, then apply. Read-back: cockpit_task_mirror, cockpit_task_alerts and cockpit_task_alert_rules exist with relrowsecurity on. cron.job has mahara-task-mirror '*/2 * * * *' and mahara-task-mirror-seats '11 * * * *'. pg_get_functiondef('public.cockpit_clickup_writeback_audit()') contains 'left out of the audit', and its proacl is unchanged. 'task-mirror:kick' reads ok=false 'The vault has no cockpit_tasks_cron_secret...', which is expected until step 6.
+   STEP: 5. Deploy cockpit-tasks (new): `deploy_composio.py cockpit-tasks --rev <commit> $(fn_extras cockpit-tasks as --extra list) --verify-jwt off --dry`, then without --dry. Generate one new value (for example `openssl rand -hex 32` into a shell variable, never printed) and set it as the project function secret TASKS_CRON_SECRET through Composio. CLICKUP_API_TOKEN is already a project secret; confirm it by name. SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are injected. CLICKUP_TASKS_CALLS_PER_MINUTE is optional (120). Read-back: the functions list shows cockpit-tasks ACTIVE with ve
+   STEP: 6. Vault: `select vault.create_secret('<the same value>', 'cockpit_tasks_cron_secret', 'cockpit-tasks cron, equals TASKS_CRON_SECRET')`. Read-back: `select count(*) from vault.decrypted_secrets where name='cockpit_tasks_cron_secret'` = 1 (name only). Within 2 minutes: 'task-mirror:kick' ok=true, and 'task-mirror:delta' ok with the note 'Read N changed tasks and M comment threads; K alerts.'. Doctor: net.http_post to .../functions/v1/cockpit-tasks with x-cron-secret from the vault and body {"job":"doctor"}. It should answer 200 ok with the secrets by name and rateLimit 1000.
+   STEP: 7. First seats run: `select public.cockpit_task_mirror_kick('seats');`, or wait for :11. Read-back: 'task-mirror:seats' ok, with detail->>'baselinedAt' set, members about equal to the workspace, fields 24 and templates 34 (`select state, count(*) from cockpit_request_field_catalog group by 1` gives 24 ok; the same for cockpit_request_templates gives 34 ok). `select state, count(*) from cockpit_member_clickup group by 1`: about 10 ok, plus not_found for the 2 call centre seats and the sales seat. `select count(*) from cockpit_requests where source='import'` = the open 'Form Submission' tickets 
+   STEP: 8. Requests doctor: net.http_post to clickup-writeback with body {"job":"requests_doctor"}. Read-back: cockpit_sync_state 'clickup-writeback:requests-doctor' ok=true with detail.problems = []. If not, the note names each template, option, field, owner or done status to fix. It reports secrets by name only.
+   STEP: 9. Ship four apps from the pushed commit, with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in the env: `scripts/ship.sh media-buyer`, then `creative`, `video-editor` and `sales`. ship.sh now runs the requests block including requests-fit-supabase.test.ts. Read-back: each live index-*.js contains 'Your tasks' and 'Ask a team'. cockpit.maharamedia.com/requests renders. For a linked seat the bell and Your tasks show tasks, never zero. An unlinked seat sees the not-linked sentence.
+   STEP: 10. Link the unmatched seats (the 2 call centre seats and the sales seat) in portal Requests settings, People in ClickUp, as the systems manager or CEO. Read-back: cockpit_member_clickup state = 'manual' for those seats, and their Your tasks list fills within 2 minutes.
+   STEP: 11. Guardian on the VPS: release hermes/cockpit-guardian (checks queues.py, sections.py, pg_cron.py, edge_functions.py) the way it is normally released, and only after steps 2 to 8 have reported. Then run one report-only scan. Read-back: these are green: queue-clickup-requests, the run_jobs keys clickup-writeback:requests (10 min), task-mirror:delta (10) and task-mirror:seats (90), EXPECTED_JOBS mahara-clickup-writeback-requests, mahara-task-mirror and mahara-task-mirror-seats, and edge function cockpit-tasks with verify_jwt false.
+   STEP: 12. CEO C3 batch (on his yes, D16). Set CLICKUP_WRITEBACK_APPLY_REQUESTS=true and CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS=86eywg1cq. Within 1 minute the requests state mode is 'apply_limited'. Turn Set Request Type on for general_tech, general_marketing, general_csm, low_show_rate and new_script in Requests settings. File five [TEST] requests on the test card from /requests. Read back each part at 2 minutes (verifyState kept or restored). Confirm the three ClickUp behaviours nobody has seen yet: where the task id sits in the POST list/{id}/taskTemplate answer, whether template checklists are the
+   STEP: 13. Ship client success only now: `scripts/ship.sh client-success` (CONTRACT I8). Its client page's old 'Ask a team' (the live decision-log path) is replaced by RequestForm, which shows the writer note instead of Send until requests are open. Shipping earlier means CSMs use the ClickUp form for that window. Read-back: the live bundle has 'Requests you raised today'. The CSM client page shows the request form with Send.
+   STEP: 14. Record the session in mahara-context shared/sessions/ and update memory. Note: the CEO's ClickUp user 284616470 is also the API user, so his own handwritten ClickUp comments make no comment alerts; mentions still alert. The EOD 'Tickets raised' count now adds the seat's requests that reached ClickUp (cockpit-screens deviation).
+review2:security:r1 | SEC-1 major supabase/migrations/20261026r_requests.sql | The team queue and the request panel ignore the team-only client limit. The 'team' branch of cockpit_request_in_view (1134-1138) and the team branch of cockpit_request_get (1722-1724) only check that the type's or a part
+review2:security:r1 | SEC-2 major supabase/migrations/20261026r_requests.sql | cockpit_request_submit accepts any p_replaces_task_id that names an import still 'imported'. It does not check that the seat may route it. The canRoute rule in cockpit_request_row (editor, admin, CEO, or the import type'
+review2:security:r1 | SEC-3 minor supabase/migrations/20261026r_requests.sql | cockpit_member_clickup_set lets any forms editor link any seat, their own included, to any active ClickUp user. That includes a user already linked to another seat and the CEO/API user 284616470. No unique rule exists on
+review2:security:r1 | SEC-4 minor supabase/migrations/20261026r_requests.sql | The cancel gate only refuses parts in sending, delivered or unknown. A part can be in 'retry' with its ClickUp task already made. The writer saves task_id as soon as create succeeds, and a 429 on any later step settles t
+review2:security:r1 | SEC-5 minor supabase/migrations/20261026t_task_alerts.sql | A focus-view comment's 'Cockpit ref T-xxxxxxxxxx' is the first 10 hex characters of the action id the browser chooses. cockpit_task_detail returns the action ids (queue ids) of every seat's presses on the task (lines 732
+review2:ask:r1 | F1 major /Users/abdulazizwaheedi/mahara-cockpits/.claude/worktrees/forms-1025/supabase/migrations/20261026t_task_alerts.sql | cockpit_task_hidden('editor', '901816720767', any kind) returns true, and cockpit_task_alerts (lines 636 and 640) applies it to the bell list and the unread count. So the editor cockpit's bell drops every Video Pipeline 
+review2:ask:r1 | F2 major /Users/abdulazizwaheedi/mahara-cockpits/supabase/migrations/20261026t_task_alerts.sql | The client-card exclusion is by list id (901816559981), not by 'the card itself'. Subtasks of client cards are real action items assigned to staff. They are left out of Your tasks (cockpit_my_tasks line 597), out of assi
+review2:ask:r1 | F3 major /Users/abdulazizwaheedi/mahara-cockpits/.claude/worktrees/forms-1025/supabase/migrations/20261026r_requests.sql | During the dry run that follows deploy (CLICKUP_WRITEBACK_APPLY_REQUESTS unset), canRoute (lines 1117-1119) is true for editors, because cockpit_request_can_send returns NULL for editors in dry_run (line 1023). 'Make it 
+review2:ask:r1 | F4 major /Users/abdulazizwaheedi/mahara-cockpits/.claude/worktrees/forms-1025/apps/client-success-cockpit/src/lib/requestsCore.ts | In dry_run the CEO, admins and editors may send (r:1022-1024), and writer.note is null for them, so the form shows no warning. After a send, the panel always says 'Sent to {list}. Owner: {owner}.' (sentLines; RequestForm
+review2:ask:r1 | F5 major /Users/abdulazizwaheedi/mahara-cockpits/.claude/worktrees/forms-1025/supabase/migrations/20261026r_requests.sql | After deploy, the cockpit form refuses every non-editor seat with 'Use the ClickUp request form until then' (line 1024), so the team keeps using the old form. For the 11 types with no folder rule, that form still leaves 
+review2:ask:r1 | F6 major /Users/abdulazizwaheedi/mahara-cockpits/.claude/worktrees/forms-1025/apps/client-success-cockpit/src/pages/CsmPage.tsx | The CSM client page's live 'Ask a team' (the decision-log ticket path, live since 2026-10-12, 7 delivered) is replaced by RequestForm, and AddTask lost its team choices (ClientPerformancePage.tsx:777-844). While the writ
+review2:ask:r1 | F7 major /Users/abdulazizwaheedi/mahara-cockpits/.claude/worktrees/forms-1025/supabase/functions/cockpit-tasks/delta.ts | Any failed comment read counts as a problem, so the delta reports ok=false (line 38) and last_ok_at stops moving. The failed task never gets comments_read_at, so cockpit_task_mirror_comment_due (t:1112-1132) keeps return
+review2:ask:r1 | F8 minor /Users/abdulazizwaheedi/mahara-cockpits/.claude/worktrees/forms-1025/supabase/migrations/20261026t_task_alerts.sql | API_USER 284616470 is the CEO's own ClickUp account (workspace members read 2026-10-26: aziz@maharamedia.com). cockpit_task_comment_author labels every comment from it without a T- ref as 'the cockpit', and cockpit_task_
+review2:ask:r1 | F9 minor /Users/abdulazizwaheedi/mahara-cockpits/.claude/worktrees/forms-1025/supabase/migrations/20261026t_task_alerts.sql | Status alerts go to every linked assignee whenever the status changes. The only exception is a cockpit task_action from the same seat. The team endpoint has no actor, so a seat is alerted about its own moves in ClickUp, 
+review2:ask:r1 | F10 minor /Users/abdulazizwaheedi/mahara-cockpits/.claude/worktrees/forms-1025/supabase/migrations/20261026r_requests.sql | The media buyer of record rule reads only a single global cockpit_blueprint_settings.launch_assignee (unset today) or a named person per type. There are two media buyers and no per-client media buyer anywhere (cockpit_cl
+review2:ask:r1 | F11 minor /Users/abdulazizwaheedi/mahara-cockpits/.claude/worktrees/forms-1025/supabase/migrations/20261026r_requests.sql | Two edits still need code. cockpit_request_field_catalog_sync 'adds no new row', so a ClickUp field the systems manager adds to the folder can never be mapped in the type editor. Request types are inserted only by the se
+review2:ask:r1 | F12 minor /Users/abdulazizwaheedi/mahara-cockpits/.claude/worktrees/forms-1025/supabase/migrations/20261026t_task_alerts.sql | cockpit_task_can allows tick and Mark done only on the five department lists and All Tasks. Every other list gets 'Open this one in ClickUp', even though the writer already reads each list's done-type status.
+review2:ask:r1 | F13 minor /Users/abdulazizwaheedi/mahara-cockpits/.claude/worktrees/forms-1025/apps/media-buyer-cockpit/src/pages/CeoPage.tsx | The CEO lands on /ceo (PortalHome sends isCeo there), and /ceo has no Your tasks card; only /admin, /dashboard and /team do (for /team, only seats with no cockpit). The ask was 'an easy tasks section in the Today for eve
+review2:ask:r1 | F14 minor /Users/abdulazizwaheedi/mahara-cockpits/.claude/worktrees/forms-1025/supabase/functions/clickup-writeback/requests.ts | Only whatsapp_connection gets SOP steps 'if the template is empty'. For every other template part the writer marks the task delivered without checking that the template brought a checklist. CT F1.5 shows a template objec
+review2:routing:r1 | RT-1 major supabase/functions/clickup-writeback/run.ts | When the switch is off (or narrowed back to the canary), every claimed `request` or `task_action` row is saved as `dry_run`. Nothing checks whether that row has already written to ClickUp: `task_id`, `progress.task`, or 
+review2:routing:r1 | RT-2 major supabase/functions/clickup-writeback/requests.ts | If any step fails after the task already exists in ClickUp, the whole part settles `failed`. Examples: a refused checklist or checklist-item POST, a refused link comment on the client card (404 or 403), a refused comment
+review2:routing:r1 | RT-3 minor supabase/functions/clickup-writeback/requests.ts | On resume, a template create looks for its task by exact name only (`String(t.name) === String(p.taskName)`) within startedAt minus 60 s. Nothing excludes a task that another request's part already owns. Adopting that ta
+review2:routing:r1 | RT-4 minor supabase/migrations/20261026r_requests.sql | Routing an old-form ticket (`p_replaces_task_id`) is gated only by the new request's own client card. Submit never checks that `p_client_task_id` matches the import's `client_task_id`, and the canary (`can_send` and `req
+review2:routing:r1 | RT-5 minor supabase/functions/clickup-writeback/taskActions.ts | When the 2-minute check finds a task moved or renamed after Request Type was set, `cockpit_request_type_rt_off` turns Request Type off on the type row only. Parts already queued, in retry, or delivered inside those 2 min
+review2:contract:r1 | F1 major supabase/migrations/20261026t_task_alerts.sql | Alerts for assigned and status changes are made only when the 2-minute delta sees a change, but the hourly seats read and the focus view's detail read write the same assignee_ids and status into the mirror first, with no
+review2:contract:r1 | F2 major supabase/migrations/20261026t_task_alerts.sql | The daily 'due_today' alert counts every open task the seat has due today on any list except the client cards, Video Pipeline included. The alert row has list_id NULL, so cockpit_task_hidden lets it into the editor cockp
+review2:contract:r1 | F3 minor apps/client-success-cockpit/src/pages/CsmPage.tsx | 'Requests you raised today' and the end-of-day ticket count are built from readRequests(client, 'mine', 50), then filtered on the client to requests created today. cockpit_requests_read sorts open requests first, then by
+review2:contract:r1 | F4 minor supabase/functions/cockpit-tasks/delta.ts | Each run reads from cursorMs - 10 minutes and at most 10 pages, oldest change first. After a truncated run the cursor is the newest date_updated among the 1,000 tasks read. If more than 1,000 tasks were updated inside an
+review2:contract:r1 | F5 minor supabase/functions/cockpit-tasks/delta.ts | Any comment thread that cannot be read adds a problem, and then result.ok is false for the whole run. comments_read_at only advances when cockpit_task_mirror_comments is called, so a task whose comments keep failing stay
+review2:contract:r1 | F6 minor supabase/migrations/20261026t_task_alerts.sql | cockpit_task_mirror_comments sets comments_read_at = now() at RPC time, but the comments were read from ClickUp earlier. delta.ts paces each GET at about 0.5 s and may read up to 10 reply threads first. A comment posted 
+review2:design:r1 | D1 major apps/media-buyer-cockpit/src/pages/requests/RequestsPage.tsx | Status chips and dots on /requests and /requests/settings have no colour. StatusChip and StatusDot read --ceo-good, --ceo-warning, --ceo-critical and --ceo-deemphasis, and ceo.css only defines those under .ceo-root. Neit
+review2:design:r1 | D2 major apps/media-buyer-cockpit/src/pages/requests/RequestPanel.tsx | A failed or partial request is a dead end. The panel shows 'Not in ClickUp: ClickUp refused the task: the list is full' twice (the state line and again inside the part box) and the 'Not sent' chip twice. The only control
+review2:design:r1 | D3 major apps/client-success-cockpit/src/lib/tasksCore.ts | The 'Your tasks' empty sentence 'Nothing is assigned to you in ClickUp. New tasks show here within two minutes.' is false in cockpits where the server hides lists. cockpit_task_hidden (migration t, line 156) drops Video 
+review2:design:r1 | D4 minor apps/media-buyer-cockpit/src/pages/requests/RequestsPage.tsx | The 32px pill row overlaps the card under it by 4px. FilterChips carries `-my-1`, and in Tailwind v4 `space-y-6` is applied through `:where()` (zero specificity), so the chips' -4px bottom margin beats the 24px gap. Meas
+review2:design:r1 | D5 minor apps/client-success-cockpit/src/lib/requestsClient.ts | callRequests and errorWords show any database or network error verbatim. Only PGRST202 and 42883 are translated. In the harness's requests=error state, the form card shows 'canceling statement due to statement timeout' (
+review2:design:r1 | D6 minor apps/client-success-cockpit/src/components/tasks/tasks.css | In light mode, the teal text in the shared tk-/rq- set renders #00cfc8 on white at about 1.95:1 in the portal, editor and sales cockpits. That covers 'See all {n}', 'Try again', 'Alert settings', 'Link it in Requests set
+review2:design:r1 | D7 minor apps/client-success-cockpit/src/components/tasks/tasks.css | In the sales cockpit, the focus view's 'Details' disclosure has no chevron. `.tk-details > summary { display: flex }` removes the native marker. The other four apps draw one through their index.css Disclosures block, but
+review2:design:r1 | D8 minor apps/client-success-cockpit/src/components/tasks/tasks.css | The client column on Your tasks shows or hides by viewport width (`@media (min-width: 640px)`), not by the card's width. DESIGN.md says inside-card layout widens by the card's width (@container). In narrow placements the
+review2:design:r1 | D9 minor apps/client-success-cockpit/src/components/tasks/AlertsBell.tsx | The bell lists up to 14 days of alerts newest first with no time on any row, although AlertRow carries `at`. The only cue is the unread dot.
+review2:design:r1 | D10 minor apps/media-buyer-cockpit/src/pages/requests/SeatLinks.tsx | Each People in ClickUp row says the same fact twice: 'Not linked. No match by email.' and then 'No ClickUp member has this seat's email.', or 'Yousef, set by hand' and then 'Set by an editor.'. 'Clear' also shows on rows
+review2:design:r1 | D11 minor apps/media-buyer-cockpit/src/pages/requests/TypeEditor.tsx | Type rows print '{list}, {owner}' plus a generic 'Template' chip for each part. Parts that differ only by template or by their 'runs when' choice render as identical lines.
+review2:design:r1 | D12 minor supabase/migrations/20261026r_requests.sql | The owner fallback note 'No media buyer of record is set, so the systems manager gets it. Set one in Requests settings.' appears in the route line for every requester. Only editors can open Request types; non-editors see
+review2:design:r1 | D13 minor apps/client-success-cockpit/src/components/tasks/RequestForm.tsx | Right after Send, the sent panel says 'Sent to Operations / Tech. Owner: the systems manager.' and then 'Sending to ClickUp.' directly underneath. The first line claims the task reached the team's board while the second 
+review2:design:r1 | D14 minor apps/media-buyer-cockpit/src/pages/requests/TypeEditor.tsx | For a type whose steps came from the template's source task, the SOP part shows two explanation lines that say nearly the same thing: 'From the template's source task. Added only when the template brings no checklist.' a
+review2:design:r1 | D15 minor apps/media-buyer-cockpit/src/pages/requests/RequestPanel.tsx | Pressing 'Cancel request' unmounts the footer button and shows the reason box in the scrolling body, but focus is not moved there. document.activeElement becomes BODY, outside the modal dialog.
+review2:design:r1 | D16 minor apps/client-success-cockpit/src/pages/ClientPerformancePage.tsx | The AddTask toggle button now reads 'A reminder for you'. That is a noun phrase taken from the new heading, not an action.
+review2:design:r1 | D0 minor docs/requests/CONTRACT.md | Not a defect: the screen scores this round asked for (1 to 5, dark and light, 390/820/1440, rendered from the media buyer harness, the sales harness and scratch mounts of the shared set in client success, creative and ed
+verify:RT-1:2 | real: True
+verify:RT-1:1 | real: True
+verify:RT-3:2 | real: True
+verify:RT-2:1 | real: True
+verify:RT-3:1 | real: True
+verify:RT-2:2 | real: True
+verify:RT-4:1 | real: True
+verify:RT-4:2 | real: True
+verify:SEC-1:2 | real: True
+verify:SEC-1:1 | real: True
+verify:RT-5:2 | real: True
+verify:RT-5:1 | real: True
+verify:SEC-2:1 | real: True
+verify:SEC-2:2 | real: True
+verify:SEC-3:1 | real: True
+verify:SEC-3:2 | real: True
+verify:SEC-4:1 | real: True
+verify:SEC-4:2 | real: True
+verify:SEC-5:1 | real: True
+verify:SEC-5:2 | real: True
+verify:F1:2 | real: True
+verify:F2:1 | real: True
+verify:F1:1 | real: True
+verify:F4:1 | real: True
+verify:F2:2 | real: True
+verify:F3:2 | real: True
+verify:F4:2 | real: True
+verify:F6:2 | real: True
+verify:F3:1 | real: True
+verify:F5:1 | real: True
+verify:F6:1 | real: True
+verify:D1:1 | real: True
+verify:D1:2 | real: True
+verify:D2:2 | real: True
+verify:D2:1 | real: True
+verify:D3:2 | real: True
+verify:D3:1 | real: True
+verify:F5:2 | real: True
+verify:D5:2 | real: True
+verify:D4:2 | real: True
+verify:D5:1 | real: True
+verify:D6:1 | real: True
+verify:D4:1 | real: True
+verify:D6:2 | real: True
+verify:D9:2 | real: True
+verify:D9:1 | real: True
+verify:D7:2 | real: True
+verify:D10:1 | real: True
+verify:D8:2 | real: True
+verify:D7:1 | real: True
+verify:D10:2 | real: True
+verify:D8:1 | real: True
+verify:D11:1 | real: True
+verify:D14:1 | real: True
+verify:D11:2 | real: True
+verify:D13:1 | real: True
+verify:D14:2 | real: True
+verify:D13:2 | real: True
+verify:D15:1 | real: True
+verify:D0:1 | real: False
+verify:D12:2 | real: True
+verify:D0:2 | real: False
+verify:D12:1 | real: True
+verify:D15:2 | real: True
+verify:D16:1 | real: False
+verify:D16:2 | real: False
+verify:F2:2 | real: True
+verify:F2:1 | real: True
+verify:F1:2 | real: True
+verify:F1:1 | real: True
+verify:F3:2 | real: True
+verify:F3:1 | real: True
+verify:F4:2 | real: True
+verify:F4:1 | real: True
+verify:F5:1 | real: True
+verify:F5:2 | real: True
+verify:F6:1 | real: True
+verify:F6:2 | real: True
+verify:F8:1 | real: True
+verify:F9:1 | real: True
+verify:F7:1 | real: True
+verify:F9:2 | real: True
+verify:F8:2 | real: True
+verify:F7:2 | real: True
+verify:F11:1 | real: True
+verify:F10:1 | real: True
+verify:F12:1 | real: False

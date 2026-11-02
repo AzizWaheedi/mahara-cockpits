@@ -8,26 +8,78 @@ import {
   useRef,
   useState,
 } from "react";
+import { Link } from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-import { Chip, Kicker, PageHeader, StatTile } from "@/components/kit";
+import { AnswerSheet, SendFormSheet } from "@/components/ClientForms";
+import {
+  Chip,
+  Kicker,
+  PageHeader,
+  SectionCard,
+  StatTile,
+} from "@/components/kit";
+import { RequestForm } from "@/components/tasks/RequestForm";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import type { ChurnPage as Page, PickClient, Waiting } from "@/lib/churnClient";
+import { FormSheet } from "@/forms/staff/FormSheet";
+import { FORM_DEFS } from "@/forms/staff/formDefs";
+import {
+  answerNotice,
+  confirmChurn,
+  type Doors,
+  formPrefill,
+  formTrail,
+  matchLegacy,
+  NO_DOORS,
+} from "@/forms/staff/lifecycleClient";
+import type {
+  NoticeRow,
+  ChurnPage as Page,
+  PickClient,
+  StoppedRow,
+  Waiting,
+} from "@/lib/churnClient";
 import { changeChurn, readChurnPage } from "@/lib/churnClient";
 import {
+  answerProblem,
+  backLine,
+  CHURN_TYPE_WORDS,
+  canComeBack,
+  cardLine,
+  confirmLine,
+  confirmPrefill,
   countsAs,
   type Departure,
   daysIn,
   type MonthRow,
+  mergePrefill,
   monthName,
   PROGRAMME_DAYS,
+  type PrefillLine,
+  SURVEY_WORDS,
+  surveyInviteLine,
   TARGET_PCT,
+  typeNote,
   verdictLine,
 } from "@/lib/churnCore";
+import {
+  formsIO,
+  type MoreDoors,
+  NO_MORE_DOORS,
+  readAllDoors,
+} from "@/lib/clientForms";
 import { plural, shortDay } from "@/lib/format";
+import { readRequestTypes } from "@/lib/requestsClient";
 import { cn } from "@/lib/utils";
 
 /**
@@ -35,7 +87,37 @@ import { cn } from "@/lib/utils";
  * inside the cockpit. One row per client who left, logged the day it
  * happens; two numbers typed a month; the rest worked out (lib/churnCore).
  * It replaces the Churn Tracker 2026 sheet, whose months are brought in.
+ *
+ * The confirm (docs/forms/WAVE12-CONTRACT.md 4.5, 5.5): every logged row,
+ * every termination survey and every card that reads Stopped without a
+ * departure gets "Confirm churn", which opens the shared FormSheet and
+ * writes the card through one audited function. Each row then says where
+ * it stands: confirmed (teal ring) or logged (amber), and the card's state.
+ * The doors show only once cockpit_form_doors says their functions exist.
  */
+
+/** Who the confirm sheet is open for, and what the tracker already knows. */
+type ConfirmTarget = {
+  taskId: string;
+  name: string;
+  /** "Stopped · left 18 Oct", beside the client's name in the sheet. */
+  status: string;
+  local: PrefillLine[];
+  surveyResponseId: string | null;
+};
+type PrefillState = {
+  loading: boolean;
+  prefill: PrefillLine[];
+  calls: { id: string; at: string; kind: string; source: string }[];
+  hints: PrefillLine[];
+  error: string | null;
+};
+type TicketTarget = {
+  type: string;
+  label: string;
+  client: { taskId: string; name: string };
+  details: string;
+};
 
 const field =
   "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:text-sm";
@@ -105,6 +187,100 @@ export function ChurnPage({ embedded = false }: { embedded?: boolean }) {
   );
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
+  // The doors of 20261101o: closed until cockpit_form_doors says they exist.
+  const [doors, setDoors] = useState<Doors>(NO_DOORS);
+  // The request types this seat may raise, so a ticket button shows only once its type exists (D-R1).
+  const [ticketTypes, setTicketTypes] = useState<Map<string, string>>(
+    () => new Map(),
+  );
+  const [confirming, setConfirming] = useState<ConfirmTarget | null>(null);
+  const [opened, setOpened] = useState(0);
+  const [prefill, setPrefill] = useState<PrefillState | null>(null);
+  const [ticket, setTicket] = useState<TicketTarget | null>(null);
+  // Waves 3-4 (WAVE34-CONTRACT.md 5.11): Send exit survey, once invites are live.
+  const [more, setMore] = useState<MoreDoors>(NO_MORE_DOORS);
+  const fio = useMemo(() => (client ? formsIO(client) : null), [client]);
+  const [surveyFor, setSurveyFor] = useState<{
+    taskId: string;
+    name: string;
+  } | null>(null);
+  const [answerFor, setAnswerFor] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!client) return;
+    let live = true;
+    void readAllDoors(client).then(d => {
+      if (!live) return;
+      setDoors(d.doors);
+      setMore(d.more);
+    });
+    return () => {
+      live = false;
+    };
+  }, [client, session?.user.id]);
+
+  useEffect(() => {
+    if (!client || !doors.churnConfirm) return;
+    let live = true;
+    readRequestTypes(client)
+      .then(t => {
+        if (live)
+          setTicketTypes(
+            new Map(t.types.filter(x => x.enabled).map(x => [x.key, x.label])),
+          );
+      })
+      .catch(() => {
+        // No catalogue, no ticket buttons: the rest of the tracker works.
+      });
+    return () => {
+      live = false;
+    };
+  }, [client, doors.churnConfirm]);
+
+  /** Opens the confirm sheet; the server's prefill is read once per open. */
+  const openConfirm = useCallback(
+    (t: ConfirmTarget) => {
+      setConfirming(t);
+      setOpened(n => n + 1);
+      if (!client || !doors.prefill) {
+        setPrefill({
+          loading: false,
+          prefill: [],
+          calls: [],
+          hints: [],
+          error: null,
+        });
+        return;
+      }
+      setPrefill({
+        loading: true,
+        prefill: [],
+        calls: [],
+        hints: [],
+        error: null,
+      });
+      formPrefill(client, "churn_confirm", t.taskId)
+        .then(r =>
+          setPrefill({
+            loading: false,
+            prefill: r.prefill,
+            calls: r.calls,
+            hints: r.hints,
+            error: null,
+          }),
+        )
+        .catch(e =>
+          setPrefill({
+            loading: false,
+            prefill: [],
+            calls: [],
+            hints: [],
+            error: `${errorText(e)} The form still works: fill it by hand.`,
+          }),
+        );
+    },
+    [client, doors.prefill],
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -196,7 +372,13 @@ export function ChurnPage({ embedded = false }: { embedded?: boolean }) {
             <Plus aria-hidden /> Log a departure
           </Button>
         }
-      />
+      >
+        {doors.churnConfirm ? null : (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Confirm churn opens after the next cockpit update.
+          </p>
+        )}
+      </PageHeader>
 
       {draft ? (
         <DepartureForm
@@ -235,6 +417,49 @@ export function ChurnPage({ embedded = false }: { embedded?: boolean }) {
         />
       ) : null}
 
+      {doors.churnConfirm && page.notices.length ? (
+        <NoticeBand
+          notices={page.notices}
+          ticketLabel={ticketTypes.get("client_notice") ?? null}
+          onConfirm={n =>
+            openConfirm({
+              taskId: n.taskId as string,
+              name: n.clientName,
+              status: `Termination survey ${shortDay(n.noticeOn ?? n.submittedAt)}`,
+              local: noticePrefill(n, page),
+              surveyResponseId: n.responseId,
+            })
+          }
+          onAnswer={async (n, note) => {
+            if (!client) throw new Error("Client-success sign-in is required");
+            await answerNotice(client, n.responseId, "staying", note);
+            toast.success("Saved");
+            await refresh();
+          }}
+          onTicket={(n, label) =>
+            setTicket({
+              type: "client_notice",
+              label,
+              client: { taskId: n.taskId as string, name: n.clientName },
+              details: `${n.clientName} sent the termination survey on ${shortDay(n.noticeOn ?? n.submittedAt)}.`,
+            })
+          }
+        />
+      ) : null}
+
+      {doors.churnConfirm && page.unmatched.length ? (
+        <UnmatchedBand
+          rows={page.unmatched}
+          clients={page.clients}
+          onPick={async (n, c) => {
+            if (!client) throw new Error("Client-success sign-in is required");
+            await matchLegacy(client, n.responseId, c.key);
+            toast.success(`Matched to ${c.name}`);
+            await refresh();
+          }}
+        />
+      ) : null}
+
       {current ? (
         <ThisMonth
           row={current}
@@ -268,21 +493,63 @@ export function ChurnPage({ embedded = false }: { embedded?: boolean }) {
 
       <Register
         departures={page.departures}
-        onEdit={d =>
-          openDraft({
-            id: d.id,
-            client: d.client,
-            clickupTaskId: d.clickupTaskId,
-            leftOn: d.leftOn,
-            launchedOn: d.launchedOn ?? "",
-            reason: d.reason,
-            mrrLostUsd: d.mrrLostUsd === null ? "" : String(d.mrrLostUsd),
-            csm: d.csm ?? "",
-            note: d.note ?? "",
-          })
+        canConfirm={doors.churnConfirm}
+        surveyDoor={more.invites}
+        onSendSurvey={d =>
+          d.clickupTaskId
+            ? setSurveyFor({ taskId: d.clickupTaskId, name: d.client })
+            : undefined
         }
+        onReadSurvey={setAnswerFor}
+        onConfirm={d =>
+          d.clickupTaskId
+            ? openConfirm({
+                taskId: d.clickupTaskId,
+                name: d.client,
+                status: `Logged · left ${shortDay(d.leftOn)}`,
+                local: confirmPrefill({
+                  leftOn: d.leftOn,
+                  reason: d.reason,
+                  mrrLostUsd: d.mrrLostUsd,
+                  churnType: d.confirm?.churnType ?? null,
+                  typeDefault: d.confirm?.typeDefault ?? null,
+                  survey: d.confirm?.surveyResponseId
+                    ? {
+                        noticeOn: d.confirm.noticeOn,
+                        dayWords: shortDay(d.confirm.noticeOn) || "on file",
+                      }
+                    : null,
+                }),
+                surveyResponseId: d.confirm?.surveyResponseId ?? null,
+              })
+            : openDraft(draftOf(d))
+        }
+        onEdit={d => openDraft(draftOf(d))}
         onAdd={() => openDraft(blank())}
       />
+
+      {doors.churnConfirm && page.stopped.length ? (
+        <StoppedBand
+          rows={page.stopped}
+          onConfirm={r =>
+            openConfirm({
+              taskId: r.taskId,
+              name: r.clientName,
+              status: r.churnDate
+                ? `Stopped · churn date ${shortDay(r.churnDate)}`
+                : "Stopped · no churn date on the card",
+              local: confirmPrefill({
+                leftOn: r.churnDate,
+                leftOnFrom: "card",
+                mrrLostUsd: r.mrrUsd,
+                mrrFrom: "card",
+                typeDefault: r.typeDefault,
+              }),
+              surveyResponseId: null,
+            })
+          }
+        />
+      ) : null}
 
       <Months
         rows={page.months}
@@ -292,6 +559,120 @@ export function ChurnPage({ embedded = false }: { embedded?: boolean }) {
       <Rules />
       <Changes log={page.log} />
 
+      {confirming && client ? (
+        <FormSheet
+          key={`${confirming.taskId}:${opened}`}
+          open
+          onOpenChange={o => {
+            if (!o) setConfirming(null);
+          }}
+          def={FORM_DEFS.churn_confirm}
+          client={{ taskId: confirming.taskId, name: confirming.name }}
+          status={confirming.status}
+          prefill={mergePrefill(prefill?.prefill ?? [], confirming.local)}
+          calls={prefill?.calls ?? []}
+          hints={prefill?.hints ?? []}
+          loading={prefill?.loading ?? false}
+          prefillError={prefill?.error ?? null}
+          submit={async (a, requestId) => {
+            const r = await confirmChurn(
+              client,
+              confirming.taskId,
+              a,
+              requestId,
+              {
+                source: page.me.isCeo ? "ceo" : "csm",
+                surveyResponseId: confirming.surveyResponseId,
+              },
+            );
+            return { message: r.message, ref: r.ref };
+          }}
+          trail={ref => formTrail(client, ref)}
+          afterSent={
+            more.invites ? (
+              <button
+                type="button"
+                className="fs-btn fs-btn-quiet"
+                data-send-exit-survey
+                onClick={() => {
+                  const c = confirming;
+                  setConfirming(null);
+                  setSurveyFor({ taskId: c.taskId, name: c.name });
+                }}
+              >
+                Send exit survey
+              </button>
+            ) : undefined
+          }
+          onTicket={
+            ticketTypes.has("client_offboarding")
+              ? type =>
+                  setTicket({
+                    type,
+                    label: ticketTypes.get(type) ?? "Offboarding",
+                    client: {
+                      taskId: confirming.taskId,
+                      name: confirming.name,
+                    },
+                    details: `${confirming.name} is leaving: churn confirmed in the cockpit.`,
+                  })
+              : undefined
+          }
+          onSent={() => void refresh()}
+        />
+      ) : null}
+
+      <SendFormSheet
+        io={fio}
+        open={surveyFor !== null}
+        taskId={surveyFor?.taskId ?? ""}
+        clientName={surveyFor?.name ?? ""}
+        preset={{ formKey: "exit_survey", origin: "churn" }}
+        onClose={() => setSurveyFor(null)}
+        onSent={() => void refresh()}
+      />
+      <AnswerSheet
+        io={fio}
+        responseId={answerFor}
+        onClose={() => setAnswerFor(null)}
+      />
+
+      <Sheet
+        open={ticket !== null}
+        onOpenChange={o => {
+          if (!o) setTicket(null);
+        }}
+      >
+        <SheetContent
+          side="right"
+          className="w-full overflow-y-auto sm:max-w-xl"
+        >
+          <SheetHeader>
+            <SheetTitle>
+              {ticket ? (
+                <>
+                  {ticket.label}: <bdi>{ticket.client.name}</bdi>
+                </>
+              ) : null}
+            </SheetTitle>
+            <SheetDescription>
+              The ticket reaches task alerts and Your tasks like any other.
+            </SheetDescription>
+          </SheetHeader>
+          {ticket ? (
+            <div className="mt-4">
+              <RequestForm
+                source="client_page"
+                presetClient={ticket.client}
+                presetType={ticket.type}
+                presetDetails={ticket.details}
+                compact
+              />
+            </div>
+          ) : null}
+        </SheetContent>
+      </Sheet>
+
       {error ? (
         <p className="text-sm text-destructive" role="alert">
           {error}
@@ -299,6 +680,49 @@ export function ChurnPage({ embedded = false }: { embedded?: boolean }) {
       ) : null}
     </div>
   );
+}
+
+/** A register row as the correction form takes it. */
+function draftOf(d: Departure): Draft {
+  return {
+    id: d.id,
+    client: d.client,
+    clickupTaskId: d.clickupTaskId,
+    leftOn: d.leftOn,
+    launchedOn: d.launchedOn ?? "",
+    reason: d.reason,
+    mrrLostUsd: d.mrrLostUsd === null ? "" : String(d.mrrLostUsd),
+    csm: d.csm ?? "",
+    note: d.note ?? "",
+  };
+}
+
+/** A survey's answers for the confirm: its logged departure when there is one, else the card. */
+function noticePrefill(n: NoticeRow, page: Page): PrefillLine[] {
+  const dep = page.departures.find(
+    d =>
+      d.id === n.departureId ||
+      (d.clickupTaskId === n.taskId && !d.confirm?.confirmedAt),
+  );
+  const card = page.clients.find(c => c.key === n.taskId);
+  const survey = {
+    noticeOn: n.noticeOn,
+    dayWords: shortDay(n.noticeOn ?? n.submittedAt) || "on file",
+  };
+  return dep
+    ? confirmPrefill({
+        leftOn: dep.leftOn,
+        reason: dep.reason,
+        mrrLostUsd: dep.mrrLostUsd,
+        typeDefault: dep.confirm?.typeDefault ?? n.typeDefault,
+        survey,
+      })
+    : confirmPrefill({
+        mrrLostUsd: card?.mrrUsd ?? null,
+        mrrFrom: "card",
+        typeDefault: n.typeDefault,
+        survey,
+      });
 }
 
 // --- this month ----------------------------------------------------------------------
@@ -974,79 +1398,273 @@ function TermBar({ days }: { days: number | null }) {
   );
 }
 
+/** Confirmed: a filled teal ring. Logged, not confirmed: a hollow amber one (5.5). */
+function ConfirmRing({ confirmed }: { confirmed: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "inline-block size-2.5 shrink-0 rounded-full border-2",
+        confirmed
+          ? "border-primary bg-primary"
+          : "border-warning bg-transparent",
+      )}
+    />
+  );
+}
+
+const CARD_INK = {
+  good: "text-foreground",
+  warn: "txt-warn",
+  bad: "text-destructive",
+  neutral: "text-muted-foreground",
+} as const;
+
+/** "Confirm churn": the destructive act, quiet until pressed. */
+function ConfirmButton({
+  onClick,
+  label = "Confirm churn",
+}: {
+  onClick: () => void;
+  label?: string;
+}) {
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="outline"
+      onClick={onClick}
+      className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+    >
+      {label}
+    </Button>
+  );
+}
+
+/** The native exit survey on a departure (5.11): where it stands, then Send or Read. */
+function SurveyCell({
+  d,
+  onSend,
+  onRead,
+}: {
+  d: Departure;
+  onSend: () => void;
+  onRead?: (responseId: string) => void;
+}) {
+  const si = d.surveyInvite ?? null;
+  const answered = si?.state === "answered" || Boolean(si?.answeredAt);
+  const responseId = d.confirm?.surveyResponseId ?? null;
+  const canSend = !si || si.state === "withdrawn" || si.state === "expired";
+  return (
+    <span
+      className="flex min-w-0 flex-col items-start gap-1 sm:items-end"
+      data-survey-cell
+    >
+      <span className="font-mono text-[11px] text-muted-foreground">
+        {surveyInviteLine(si, x => shortDay(x))}
+      </span>
+      <span className="flex flex-wrap gap-2">
+        {canSend ? (
+          <Button type="button" size="sm" variant="outline" onClick={onSend}>
+            Send exit survey
+          </Button>
+        ) : null}
+        {answered && responseId && onRead ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => onRead(responseId)}
+          >
+            Read the answer
+          </Button>
+        ) : null}
+      </span>
+    </span>
+  );
+}
+
 function Register({
   departures,
+  canConfirm,
+  surveyDoor = false,
+  onSendSurvey,
+  onReadSurvey,
+  onConfirm,
   onEdit,
   onAdd,
 }: {
   departures: Departure[];
+  canConfirm: boolean;
+  /** The native exit survey is open to send (doors.invites, 5.11). */
+  surveyDoor?: boolean;
+  onSendSurvey?: (d: Departure) => void;
+  onReadSurvey?: (responseId: string) => void;
+  onConfirm: (d: Departure) => void;
   onEdit: (d: Departure) => void;
   onAdd: () => void;
 }) {
   const [all, setAll] = useState(false);
   const shown = all ? departures : departures.slice(0, 50);
+  const waiting = departures.filter(
+    d => d.confirm && !d.confirm.confirmedAt,
+  ).length;
   return (
     <section className="rounded-2xl border bg-card" aria-labelledby="register">
-      <div className="flex flex-wrap items-baseline justify-between gap-2 px-4 pt-4 sm:px-6 sm:pt-5">
-        <h2 id="register" className="text-[15px] font-semibold">
-          Departures
-        </h2>
-        <span className="text-xs text-muted-foreground">
-          {departures.length
-            ? `${plural(departures.length, "client")} logged · click a row to correct it`
-            : ""}
-        </span>
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 px-4 pt-4 sm:px-6 sm:pt-5">
+        <div className="min-w-0">
+          <h2 id="register" className="text-[15px] font-semibold">
+            Departures
+          </h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {departures.length
+              ? `${plural(departures.length, "client")} logged${canConfirm && waiting ? ` · ${waiting} not confirmed` : ""} · click a client to correct the row`
+              : ""}
+          </p>
+        </div>
+        {canConfirm && !surveyDoor ? (
+          <span className="text-xs text-muted-foreground">
+            Send exit survey: Opens after the next cockpit update.
+          </span>
+        ) : null}
       </div>
       {departures.length ? (
         <ul className="mt-3 divide-y border-t">
           {shown.map(d => {
             const n = daysIn(d);
             const kind = countsAs(d);
+            const c = d.confirm;
+            const status = c
+              ? confirmLine(c, shortDay)
+              : { confirmed: false, line: "" };
+            const card = c ? cardLine(c.cardState, c.cardError) : null;
+            const note = c
+              ? typeNote({
+                  leftOn: d.leftOn,
+                  launchedOn: d.launchedOn,
+                  churnType: c.churnType,
+                })
+              : null;
             return (
-              <li key={d.id}>
+              <li
+                key={d.id}
+                className="grid gap-x-6 gap-y-2 px-4 py-3 transition-colors hover:bg-muted/30 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:px-6"
+              >
                 <button
                   type="button"
                   onClick={() => onEdit(d)}
-                  className="grid w-full gap-1 px-4 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-6 sm:px-6"
+                  className="min-w-0 rounded-md text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 >
-                  <span className="min-w-0">
-                    <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span className="font-medium">
-                        <bdi>{d.client}</bdi>
-                      </span>
-                      <Chip
-                        tone={
-                          kind === "churn"
-                            ? "bad"
-                            : kind === "completed"
-                              ? "neutral"
-                              : "warn"
-                        }
-                      >
-                        {kind === "churn"
-                          ? `Churn · day ${n}`
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="font-medium">
+                      <bdi>{d.client}</bdi>
+                    </span>
+                    <Chip
+                      tone={
+                        kind === "churn"
+                          ? "bad"
                           : kind === "completed"
-                            ? `Finished the term · day ${n}`
-                            : "Needs a launch date"}
-                      </Chip>
-                    </span>
-                    <span className="mt-1 block text-xs text-muted-foreground">
-                      Left {shortDay(d.leftOn)}
-                      {d.launchedOn
-                        ? ` · launched ${shortDay(d.launchedOn)}`
-                        : ""}
-                      {` · ${d.reason}`}
-                      {d.csm ? ` · ${d.csm}` : ""}
-                      {d.note ? ` · ${d.note}` : ""}
-                    </span>
+                            ? "neutral"
+                            : "warn"
+                      }
+                    >
+                      {kind === "churn"
+                        ? `Churn · day ${n}`
+                        : kind === "completed"
+                          ? `Finished the term · day ${n}`
+                          : "Needs a launch date"}
+                    </Chip>
                   </span>
-                  <span className="flex items-center gap-4 sm:justify-end">
-                    <TermBar days={n} />
-                    <span className="w-20 text-right text-sm tabular-nums">
-                      {usd(d.mrrLostUsd)}
-                    </span>
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    Left {shortDay(d.leftOn)}
+                    {d.launchedOn
+                      ? ` · launched ${shortDay(d.launchedOn)}`
+                      : ""}
+                    {` · ${d.reason}`}
+                    {d.csm ? ` · ${d.csm}` : ""}
+                    {d.note ? ` · ${d.note}` : ""}
                   </span>
+                  {c?.confirmedAt && c.whyDetail ? (
+                    <span
+                      className="mt-0.5 line-clamp-1 block text-xs text-muted-foreground"
+                      dir="auto"
+                    >
+                      Why: {c.whyDetail}
+                    </span>
+                  ) : null}
+                  {note ? (
+                    <span className="mt-0.5 block text-xs txt-warn">
+                      {note}
+                    </span>
+                  ) : null}
+                  {backLine(d, shortDay) ? (
+                    <span
+                      className="mt-0.5 block text-xs font-medium"
+                      data-back-since
+                    >
+                      {backLine(d, shortDay)}
+                    </span>
+                  ) : null}
                 </button>
+                <span className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:justify-end">
+                  {c && canConfirm ? (
+                    <span className="flex min-w-0 max-w-[22rem] flex-col gap-0.5 sm:items-end sm:text-right">
+                      <span className="flex items-center gap-1.5 text-xs font-medium">
+                        <ConfirmRing confirmed={status.confirmed} />
+                        <span className={status.confirmed ? "" : "txt-warn"}>
+                          {status.line}
+                        </span>
+                      </span>
+                      {status.confirmed && c.churnType ? (
+                        <span className="font-mono text-[11px] text-muted-foreground">
+                          {CHURN_TYPE_WORDS[c.churnType]}
+                          {c.surveyState
+                            ? ` · ${SURVEY_WORDS[c.surveyState]}`
+                            : ""}
+                        </span>
+                      ) : null}
+                      {card ? (
+                        <span
+                          title={
+                            card.line === card.short ? undefined : card.line
+                          }
+                          className={cn(
+                            "font-mono text-[11px] leading-snug",
+                            CARD_INK[card.tone],
+                          )}
+                        >
+                          {card.short}
+                          {card.line === card.short ? null : (
+                            <span className="sr-only">. {card.line}</span>
+                          )}
+                        </span>
+                      ) : null}
+                    </span>
+                  ) : null}
+                  {canComeBack(d) && canConfirm ? (
+                    <Link
+                      to={`/clients/${encodeURIComponent(String(d.clickupTaskId))}?tab=money&back=1`}
+                      className="inline-flex h-8 items-center rounded-lg border px-3 text-xs font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      data-back
+                    >
+                      Back
+                    </Link>
+                  ) : null}
+                  {surveyDoor && canConfirm && d.clickupTaskId ? (
+                    <SurveyCell
+                      d={d}
+                      onSend={() => onSendSurvey?.(d)}
+                      onRead={onReadSurvey}
+                    />
+                  ) : null}
+                  {c && canConfirm && !c.confirmedAt ? (
+                    <ConfirmButton onClick={() => onConfirm(d)} />
+                  ) : null}
+                  <TermBar days={n} />
+                  <span className="w-16 text-right text-sm tabular-nums">
+                    {usd(d.mrrLostUsd)}
+                  </span>
+                </span>
               </li>
             );
           })}
@@ -1072,6 +1690,380 @@ function Register({
         </button>
       ) : null}
     </section>
+  );
+}
+
+// --- notices, unmatched surveys and Stopped cards -------------------------------------------
+
+/** The survey's ratings, numbers in Geist Mono with their question beside them. */
+function Ratings({ ratings }: { ratings: NoticeRow["ratings"] }) {
+  if (!ratings.length) return null;
+  return (
+    <span className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+      {ratings.map(r => (
+        <span key={r.title} className="flex min-w-0 items-baseline gap-1.5">
+          <span className="font-mono font-medium tabular-nums">{r.value}</span>
+          <span
+            className="max-w-[16rem] truncate text-muted-foreground"
+            title={r.title}
+          >
+            {r.title}
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function NoticeBand({
+  notices,
+  ticketLabel,
+  onConfirm,
+  onAnswer,
+  onTicket,
+}: {
+  notices: NoticeRow[];
+  /** The client_notice type's label, or null while the type is not in the catalogue. */
+  ticketLabel: string | null;
+  onConfirm: (n: NoticeRow) => void;
+  onAnswer: (n: NoticeRow, note: string) => Promise<void>;
+  onTicket: (n: NoticeRow, label: string) => void;
+}) {
+  return (
+    <SectionCard
+      title="Notice in"
+      count={notices.length}
+      sub="These clients sent the termination survey. Confirm the churn, or say they are staying."
+      flush
+    >
+      {notices.map(n => (
+        <NoticeRowView
+          key={n.responseId}
+          n={n}
+          ticketLabel={ticketLabel}
+          onConfirm={onConfirm}
+          onAnswer={onAnswer}
+          onTicket={onTicket}
+        />
+      ))}
+    </SectionCard>
+  );
+}
+
+function NoticeRowView({
+  n,
+  ticketLabel,
+  onConfirm,
+  onAnswer,
+  onTicket,
+}: {
+  n: NoticeRow;
+  ticketLabel: string | null;
+  onConfirm: (n: NoticeRow) => void;
+  onAnswer: (n: NoticeRow, note: string) => Promise<void>;
+  onTicket: (n: NoticeRow, label: string) => void;
+}) {
+  const [answering, setAnswering] = useState(false);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const ids = useId();
+  const save = async () => {
+    const p = answerProblem(note);
+    setProblem(p);
+    if (p) return;
+    setBusy(true);
+    try {
+      await onAnswer(n, note.trim());
+      setAnswering(false);
+      setNote("");
+    } catch (e) {
+      setProblem(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="px-4 py-3 sm:px-6">
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0">
+          <div className="font-medium">
+            <bdi>{n.clientName}</bdi>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Sent the termination survey on{" "}
+            <span className="font-mono">
+              {shortDay(n.noticeOn ?? n.submittedAt) || "a day not recorded"}
+            </span>
+          </div>
+          <Ratings ratings={n.ratings} />
+        </div>
+        {answering ? null : (
+          <span className="flex flex-wrap items-center gap-1">
+            <ConfirmButton onClick={() => onConfirm(n)} />
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setAnswering(true)}
+            >
+              Not leaving
+            </Button>
+            {ticketLabel ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-muted-foreground"
+                onClick={() => onTicket(n, ticketLabel)}
+              >
+                Open the notice ticket
+              </Button>
+            ) : null}
+          </span>
+        )}
+      </div>
+      {answering ? (
+        <form
+          className="mt-2 flex flex-wrap items-end gap-2"
+          onSubmit={e => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <div className="grid min-w-0 flex-1 gap-1">
+            <label
+              htmlFor={`${ids}-note`}
+              className="text-xs font-medium text-muted-foreground"
+            >
+              What did the client say?
+            </label>
+            <Input
+              id={`${ids}-note`}
+              autoFocus
+              value={note}
+              dir="auto"
+              disabled={busy}
+              aria-invalid={problem ? true : undefined}
+              aria-describedby={problem ? `${ids}-problem` : undefined}
+              onChange={e => setNote(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Escape") setAnswering(false);
+              }}
+              placeholder="They signed for the next campaign on the call"
+            />
+          </div>
+          <Button type="submit" size="sm" disabled={busy}>
+            {busy ? <Loader2 className="animate-spin" aria-hidden /> : null}
+            Save
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => setAnswering(false)}
+          >
+            Cancel
+          </Button>
+          {problem ? (
+            <p
+              id={`${ids}-problem`}
+              className="w-full text-xs text-destructive"
+              role="alert"
+            >
+              {problem}
+            </p>
+          ) : (
+            <p className="w-full text-xs text-muted-foreground">
+              Nothing changes on the card. The notice leaves this list.
+            </p>
+          )}
+        </form>
+      ) : null}
+    </div>
+  );
+}
+
+function UnmatchedBand({
+  rows,
+  clients,
+  onPick,
+}: {
+  rows: NoticeRow[];
+  clients: PickClient[];
+  onPick: (n: NoticeRow, c: PickClient) => Promise<void>;
+}) {
+  return (
+    <SectionCard
+      title="Termination surveys not matched to a card"
+      count={rows.length}
+      sub="These came without a card id, so the cockpit never guesses whose they are. Pick the card; you can pick only your own clients."
+      flush
+    >
+      {rows.map(n => (
+        <UnmatchedRow
+          key={n.responseId}
+          n={n}
+          clients={clients}
+          onPick={onPick}
+        />
+      ))}
+    </SectionCard>
+  );
+}
+
+function UnmatchedRow({
+  n,
+  clients,
+  onPick,
+}: {
+  n: NoticeRow;
+  clients: PickClient[];
+  onPick: (n: NoticeRow, c: PickClient) => Promise<void>;
+}) {
+  const [picking, setPicking] = useState(false);
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const ids = useId();
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 sm:px-6">
+      <div className="min-w-0">
+        <div className="font-medium">
+          <bdi>{n.clientName}</bdi>
+          <span className="ml-2 text-xs font-normal text-muted-foreground">
+            name from the form
+          </span>
+        </div>
+        <div className="text-xs text-muted-foreground">
+          Sent the termination survey on{" "}
+          <span className="font-mono">
+            {shortDay(n.noticeOn ?? n.submittedAt) || "a day not recorded"}
+          </span>
+        </div>
+      </div>
+      {picking ? (
+        <form
+          className="flex flex-wrap items-center gap-2"
+          onSubmit={async e => {
+            e.preventDefault();
+            const c = clients.find(x => x.key === key);
+            if (!c) {
+              setProblem("Pick the client's card first.");
+              return;
+            }
+            setBusy(true);
+            try {
+              await onPick(n, c);
+              setPicking(false);
+            } catch (err) {
+              setProblem(errorText(err));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <label htmlFor={`${ids}-card`} className="sr-only">
+            The client's card
+          </label>
+          <select
+            id={`${ids}-card`}
+            value={key}
+            onChange={e => setKey(e.target.value)}
+            className={cn(field, "w-56")}
+            disabled={busy}
+          >
+            <option value="" disabled>
+              Pick the card
+            </option>
+            {clients.map(c => (
+              <option key={c.key} value={c.key}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          <Button type="submit" size="sm" disabled={busy || !key}>
+            {busy ? <Loader2 className="animate-spin" aria-hidden /> : null}
+            Match it
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => setPicking(false)}
+          >
+            Cancel
+          </Button>
+          {problem ? (
+            <p className="w-full text-xs text-destructive" role="alert">
+              {problem}
+            </p>
+          ) : null}
+        </form>
+      ) : (
+        <Button size="sm" variant="outline" onClick={() => setPicking(true)}>
+          Pick the card
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function StoppedBand({
+  rows,
+  onConfirm,
+}: {
+  rows: StoppedRow[];
+  onConfirm: (r: StoppedRow) => void;
+}) {
+  return (
+    <details className="group rounded-2xl border bg-card">
+      <summary className="no-marker flex cursor-pointer flex-wrap items-baseline gap-x-2 gap-y-1 px-4 py-4 sm:px-6">
+        <span className="text-[15px] font-semibold">
+          Stopped on the card, not in the register ({rows.length})
+        </span>
+        <span className="text-xs text-muted-foreground">
+          Confirm each one, or leave it if it was stopped by mistake.
+        </span>
+      </summary>
+      <ul className="divide-y border-t">
+        {rows.map(r => (
+          <li
+            key={r.taskId}
+            className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 sm:px-6"
+          >
+            <div className="min-w-0">
+              <div className="font-medium">
+                <bdi>{r.clientName}</bdi>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {r.churnDate ? (
+                  <>
+                    Churn date on the card{" "}
+                    <span className="font-mono">{shortDay(r.churnDate)}</span>
+                  </>
+                ) : (
+                  "No churn date on the card"
+                )}
+                {r.stoppedSince ? (
+                  <>
+                    {" "}
+                    · Stopped since{" "}
+                    <span className="font-mono">
+                      {shortDay(r.stoppedSince)}
+                    </span>
+                  </>
+                ) : (
+                  " · Stopped in every daily snapshot so far"
+                )}
+                {r.mrrUsd !== null
+                  ? ` · ${usd(r.mrrUsd)} a month on the card`
+                  : ""}
+              </div>
+            </div>
+            <ConfirmButton onClick={() => onConfirm(r)} />
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 

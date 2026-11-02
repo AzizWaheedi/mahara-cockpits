@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { type Account, amountProblem, ladderOf } from "../convex/billingCore";
 import { bankCanBe } from "../convex/ceo/manualMatch";
+import * as sheet from "../src/lib/billingCore";
 
 // The rules both cockpits and Maher bill by (convex/billingCore.ts).
 
@@ -109,5 +110,295 @@ describe("a hand-logged payment and the bank line that is the same money", () =>
     expect(bankCanBe("cheque", "2026-09-23", "2026-10-08")).toBe(false);
     // Never a deposit from long before the cheque was received.
     expect(bankCanBe("cheque", "2026-09-23", "2026-09-19")).toBe(false);
+  });
+});
+
+// The sheet's own rules (src/lib/billingCore.ts, the same in both cockpits):
+// the one ladder of 20261101p, editable, and the MRR check's words.
+describe("the overdue steps: a pause review on day 4, a cancel review on day 15", () => {
+  const today = "2026-11-01";
+  const at = (nextDate: string, steps?: sheet.LadderSteps) =>
+    sheet.ladderOf({ ...card({ nextDate }) } as sheet.Account, today, steps);
+
+  test("the defaults are the CEO's 09-19 rule", () => {
+    expect(sheet.DEFAULT_STEPS).toEqual({
+      pauseReviewDay: 4,
+      cancelReviewDay: 15,
+    });
+    expect(at("2026-10-31").rung).toBe("day1");
+    expect(at("2026-10-29").rung).toBe("call"); // 3 late: still a call
+    expect(at("2026-10-28").rung).toBe("pause"); // day 4
+    expect(at("2026-10-28").label).toBe("Pause review, call first");
+    expect(at("2026-10-18").rung).toBe("pause"); // day 14
+    expect(at("2026-10-17").rung).toBe("churn"); // day 15
+    expect(at("2026-10-17").label).toBe("Cancel review, call first");
+  });
+
+  test("the CEO's own days move every row", () => {
+    const steps = { pauseReviewDay: 3, cancelReviewDay: 10 };
+    expect(at("2026-10-29", steps).rung).toBe("pause");
+    expect(at("2026-10-22", steps).rung).toBe("churn");
+    expect(sheet.ladderSentence(steps)).toBe(
+      "The ladder: a pause review on day 3 and a cancel review on day 10. Neither changes the card by itself.",
+    );
+  });
+
+  test("paused fourteen days is the restart-or-churn review, counted from Paused On", () => {
+    const paused = (pausedOn: string) =>
+      sheet.ladderOf(
+        card({
+          status: "Paused",
+          group: "paused",
+          pausedOn,
+          nextDate: "2026-09-01",
+        }) as sheet.Account,
+        today,
+      );
+    expect(paused("2026-10-19").rung).toBe("day14"); // 13 days
+    expect(paused("2026-10-18").rung).toBe("churn"); // 14 days
+    expect(paused("2026-10-18").label).toBe(
+      "Paused 14 days: restart or confirm churn",
+    );
+    expect(paused("2026-10-21").rung).toBe("day14"); // 11 days
+  });
+
+  test("what the server sends is trusted only when it is a real ladder", () => {
+    expect(sheet.stepsFrom({ pauseReviewDay: 5, cancelReviewDay: 20 })).toEqual(
+      { pauseReviewDay: 5, cancelReviewDay: 20 },
+    );
+    expect(sheet.stepsFrom(null)).toEqual(sheet.DEFAULT_STEPS);
+    expect(
+      sheet.stepsFrom({ pauseReviewDay: 10, cancelReviewDay: 10 }),
+    ).toEqual(sheet.DEFAULT_STEPS);
+    expect(
+      sheet.stepsFrom({ pauseReviewDay: "4", cancelReviewDay: 99 }),
+    ).toEqual(sheet.DEFAULT_STEPS);
+  });
+
+  test("buildSheet reads every row with the steps it is given and keeps them", () => {
+    const s = sheet.buildSheet(
+      [
+        card({
+          taskId: "a",
+          name: "A",
+          nextDate: "2026-10-29",
+        }) as sheet.Account,
+      ],
+      [],
+      [],
+      today,
+      { pauseReviewDay: 3, cancelReviewDay: 10 },
+    );
+    expect(s.steps).toEqual({ pauseReviewDay: 3, cancelReviewDay: 10 });
+    expect(s.rows[0].ladder.rung).toBe("pause");
+  });
+});
+
+describe("the MRR check's words (cockpit_mrr_read)", () => {
+  const raw = {
+    asOf: "2026-11-01T05:00:00Z",
+    tolerancePct: 10,
+    railNote: null,
+    rows: [
+      {
+        taskId: "a",
+        clientName: "Ardon",
+        plan: "Monthly",
+        mrrUsd: 2000,
+        suggestedUsd: 2000,
+        suggestionWhy: "x",
+        railMonthlyUsd: 1500,
+        railNote: "Whop",
+        flag: "differs_rail",
+      },
+      {
+        taskId: "b",
+        clientName: "Beta",
+        plan: "Monthly",
+        mrrUsd: null,
+        suggestedUsd: 1300,
+        suggestionWhy: "x",
+        railMonthlyUsd: null,
+        railNote: null,
+        flag: "missing",
+      },
+      {
+        taskId: "c",
+        clientName: "Cedar",
+        plan: "Paid in full (90 days)",
+        mrrUsd: 2000,
+        suggestedUsd: null,
+        suggestionWhy: "x",
+        railMonthlyUsd: null,
+        railNote: null,
+        flag: "not_recurring",
+      },
+      {
+        taskId: "d",
+        clientName: "Dune",
+        plan: "Monthly",
+        mrrUsd: 1333,
+        suggestedUsd: 1000,
+        suggestionWhy: "x",
+        railMonthlyUsd: null,
+        railNote: null,
+        flag: "differs_suggestion",
+      },
+      {
+        taskId: "e",
+        clientName: "Elm",
+        plan: "Monthly",
+        mrrUsd: 700,
+        suggestedUsd: 700,
+        suggestionWhy: "x",
+        railMonthlyUsd: null,
+        railNote: null,
+        flag: "ok",
+      },
+    ],
+    totals: {
+      onBooks: 4033,
+      onBooksCards: 3,
+      suggested: 5000,
+      noSuggestion: 1,
+      missing: 1,
+      differ: 2,
+    },
+    downgrades: [
+      {
+        taskId: "d",
+        clientName: "Dune",
+        fromUsd: 1800,
+        toUsd: 1333,
+        effective: "2026-11-01",
+        reason: "One campaign",
+        seatRole: "the CSM",
+      },
+    ],
+  };
+
+  test("each flag reads as 5.3 words it; a true MRR carries no chip", () => {
+    const v = sheet.mrrViewFrom(raw);
+    if (!v) throw new Error("expected a view");
+    const chip = (id: string) =>
+      sheet.mrrChip(v.rows.find(r => r.taskId === id));
+    expect(chip("a")).toBe("Card $2,000, money in $1,500");
+    expect(chip("b")).toBe("MRR missing");
+    expect(chip("c")).toBe("Not a monthly plan");
+    expect(chip("d")).toBe("Card $1,333, suggested $1,000");
+    expect(chip("e")).toBeNull();
+    expect(v.rows.filter(sheet.mrrDiffers).map(r => r.taskId)).toEqual([
+      "a",
+      "d",
+    ]);
+    expect(v.downgrades[0]).toMatchObject({
+      clientName: "Dune",
+      fromUsd: 1800,
+      toUsd: 1333,
+      seatRole: "the CSM",
+    });
+  });
+
+  test("missing is never zero", () => {
+    const v = sheet.mrrViewFrom({
+      rows: [{ taskId: "x", flag: "missing", mrrUsd: null }],
+      totals: {},
+    });
+    expect(v?.totals.onBooks).toBeNull();
+    expect(v?.totals.suggested).toBeNull();
+    expect(v?.rows[0].mrrUsd).toBeNull();
+    expect(sheet.mrrViewFrom(null)).toBeNull();
+    expect(sheet.mrrViewFrom("nope")).toBeNull();
+  });
+});
+
+describe("the billing log's read (review W34: survey and nps_sent never crowd out money acts)", () => {
+  // A fake client: each from() records its filters and answers from the rows given.
+  function fakeClient(events: { id: number; kind: string; at: string }[]) {
+    const reads: {
+      table: string;
+      not?: string;
+      in?: string[];
+      limit?: number;
+    }[] = [];
+    const client = {
+      from(table: string) {
+        const q: {
+          table: string;
+          not?: string;
+          in?: string[];
+          limit?: number;
+        } = { table };
+        reads.push(q);
+        const b = {
+          select: () => b,
+          eq: () => b,
+          order: () => b,
+          not: (_c: string, _op: string, v: string) => {
+            q.not = v;
+            return b;
+          },
+          in: (_c: string, v: string[]) => {
+            q.in = v;
+            return b;
+          },
+          limit: (n: number) => {
+            q.limit = n;
+            return b;
+          },
+          // biome-ignore lint/suspicious/noThenProperty: a thenable like supabase-js's builder
+          then(ok: (r: { data: unknown[]; error: null }) => unknown) {
+            let rows: unknown[] = [];
+            if (table === "cockpit_billing_events") {
+              const voice = ["survey", "nps_sent"];
+              rows = events
+                .filter(e =>
+                  q.in
+                    ? q.in.includes(e.kind)
+                    : q.not
+                      ? !voice.includes(e.kind)
+                      : true,
+                )
+                .sort((a, b2) => b2.at.localeCompare(a.at))
+                .slice(0, q.limit ?? 1000);
+            }
+            return Promise.resolve({ data: rows, error: null }).then(ok);
+          },
+        };
+        return b;
+      },
+      rpc: () => Promise.resolve({ data: null, error: null }),
+    };
+    return { client, reads };
+  }
+
+  test("60 money acts still reach the log on a day of 40 NPS sends, and the NPS rows come too", async () => {
+    const { fetchBillingSheet } = await import("../src/lib/billing");
+    const events: { id: number; kind: string; at: string }[] = [];
+    for (let i = 0; i < 60; i++)
+      events.push({
+        id: i + 1,
+        kind: "payment",
+        at: `2026-10-${String(1 + (i % 28)).padStart(2, "0")}T0${i % 10}:00:00+00:00`,
+      });
+    for (let i = 0; i < 40; i++)
+      events.push({
+        id: 100 + i,
+        kind: i % 2 ? "nps_sent" : "survey",
+        at: `2026-11-02T0${i % 10}:${String(i).padStart(2, "0")}:00+00:00`,
+      });
+    const { client, reads } = fakeClient(events);
+    const s = await fetchBillingSheet(
+      client as unknown as Parameters<typeof fetchBillingSheet>[0],
+    );
+    expect(s.events.filter(e => e.kind === "payment")).toHaveLength(60);
+    expect(s.events.filter(e => e.kind !== "payment").length).toBe(20);
+    // Newest first across both reads.
+    const ats = s.events.map(e => String(e.at));
+    expect([...ats].sort().reverse()).toEqual(ats);
+    const ev = reads.filter(r => r.table === "cockpit_billing_events");
+    expect(ev).toHaveLength(2);
+    expect(ev[0]).toMatchObject({ not: "(survey,nps_sent)", limit: 60 });
+    expect(ev[1]).toMatchObject({ in: ["survey", "nps_sent"], limit: 20 });
   });
 });

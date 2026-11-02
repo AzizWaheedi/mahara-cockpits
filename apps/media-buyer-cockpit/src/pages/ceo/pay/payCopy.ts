@@ -251,9 +251,12 @@ export function statusChip(
  * Why a person is not in "Approve [month]": waiting for the CEO, still
  * open, or nothing worked out here. Null for the ready and the approved.
  */
-export function whyNotApproved(p: PayPerson): string | null {
+export function whyNotApproved(p: PayPerson, facts?: unknown): string | null {
   if (p.status === "approved" || p.approval !== null) return null;
-  if (p.status === "ready" && p.totalUsd !== null) return null;
+  if (p.status === "ready" && p.totalUsd !== null)
+    return personCashWaits(p, facts)
+      ? "cash not checked yet: a payment behind their commission waits on its bank check"
+      : null;
   if (notWorkedOutHere(p))
     return `${p.plan.source === "none" ? "their commission lines are" : "nothing on their pay plan is"} not worked out here; their base is paid through Hours and pay`;
   const first = p.missing[0];
@@ -474,8 +477,110 @@ export function confirmFor(
 export function approvable(m: PayMonth | null): PayPerson[] {
   if (!m) return [];
   return m.people.filter(
-    p => p.status === "ready" && p.totalUsd !== null && p.approval === null,
+    p =>
+      p.status === "ready" &&
+      p.totalUsd !== null &&
+      p.approval === null &&
+      !personCashWaits(p, m.facts),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Checked money (plan 5.3, WAVE12-CONTRACT 4.11.5a)
+
+/** The chip on a commission line whose deal cash includes a hand-logged payment not checked yet. */
+export const CASH_NOT_CHECKED = "Cash not checked yet";
+
+type Obj = Record<string, unknown>;
+const isObj = (v: unknown): v is Obj =>
+  v !== null && typeof v === "object" && !Array.isArray(v);
+
+/**
+ * The logged payments behind one commission line: hand-logged money that
+ * finance or the CEO has not checked against the bank. Read from the deal
+ * ledger's `checked` flag, on the line's own payments and on the payments of
+ * the deals the line names (`facts.sales.deals`, by responseId). A payment is
+ * counted once. Null when none waits, or when the server sends no flag at
+ * all (a ledger from before the check reads as checked, as the money refresh
+ * reads it).
+ */
+export function uncheckedCash(
+  line: { evidence?: unknown[]; payments?: unknown[] },
+  facts: unknown,
+): { count: number; usd: number | null } | null {
+  const seen = new Set<string>();
+  let count = 0;
+  let usd: number | null = 0;
+  const take = (x: unknown, i: string) => {
+    if (!isObj(x) || x.checked !== false) return;
+    const id =
+      typeof x.id === "string" || typeof x.id === "number" ? String(x.id) : i;
+    if (seen.has(id)) return;
+    seen.add(id);
+    count += 1;
+    const n =
+      typeof x.usd === "number" && Number.isFinite(x.usd) ? x.usd : null;
+    usd = usd === null || n === null ? null : usd + n;
+  };
+  (line.payments ?? []).forEach((x, i) => {
+    take(x, `line:${i}`);
+  });
+  const ids = new Set(
+    (line.evidence ?? []).map(e =>
+      isObj(e) ? String(e.responseId ?? e.id ?? "") : String(e),
+    ),
+  );
+  const sales = isObj(facts) && isObj(facts.sales) ? facts.sales : null;
+  const deals = Array.isArray(sales?.deals) ? sales.deals : [];
+  for (const d of deals) {
+    if (!isObj(d) || !ids.has(String(d.responseId ?? ""))) continue;
+    const pays = Array.isArray(d.payments) ? d.payments : [];
+    pays.forEach((x, i) => {
+      take(x, `${String(d.responseId)}:${i}`);
+    });
+  }
+  return count ? { count, usd } : null;
+}
+
+/** True when any of the person's commission lines waits on a cash check: the person is not approvable. */
+export function personCashWaits(
+  p: Pick<PayPerson, "commission">,
+  facts: unknown,
+): boolean {
+  return p.commission.some(line => uncheckedCash(line, facts) !== null);
+}
+
+/** The sentence beside the chip: what waits and who clears it. */
+export function cashCheckSentence(w: {
+  count: number;
+  usd: number | null;
+}): string {
+  const what = `${plural(w.count, "hand-logged payment")}${w.usd === null ? "" : ` (${payUsd(w.usd)})`}`;
+  return `${what} behind this line ${w.count === 1 ? "is" : "are"} not checked against the bank yet. Finance or the CEO checks ${w.count === 1 ? "it" : "them"} on the Money tab; the line counts once checked.`;
+}
+
+/**
+ * The month's hand-logged money not checked yet (rails.manualLogged), when
+ * the server passes it on the pay facts, or null when it does not.
+ */
+export function manualLoggedOfFacts(
+  facts: unknown,
+): { count: number; usd: number; oldestDay: string | null } | null {
+  if (!isObj(facts)) return null;
+  const raw = [
+    facts.manualLogged,
+    isObj(facts.money) ? facts.money.manualLogged : null,
+    isObj(facts.sales) ? facts.sales.manualLogged : null,
+  ].find(isObj);
+  if (!raw) return null;
+  const count = Number(raw.count);
+  const usd = Number(raw.usd);
+  if (!Number.isFinite(count) || !Number.isFinite(usd)) return null;
+  return {
+    count,
+    usd,
+    oldestDay: typeof raw.oldestDay === "string" ? raw.oldestDay : null,
+  };
 }
 
 /** The approve payload: totals and hashes exactly as shown. */
@@ -1022,3 +1127,113 @@ export function baseNote(base: PayPerson["base"]): string {
 /** A day, as the receipts print it: "7 Oct". */
 export const dayText = (d: string | null | undefined) =>
   d ? shortDate(d.slice(0, 10)) : "n/a";
+
+// --- Pay proposals from the wins ledger (docs/forms/WAVE56-CONTRACT.md 4.9, 5.4) ---
+
+/** The CSM plan parts the wins ledger backs: a typed entry for one needs a win or a reason (C7). */
+export const WIN_PARTS = [
+  "google_reviews",
+  "video_testimonials",
+  "podcasts",
+  "referrals",
+  "renewals",
+  "reactivations",
+  "upsells",
+  "recurring",
+] as const;
+
+export const isWinPart = (key: string) =>
+  (WIN_PARTS as readonly string[]).includes(key);
+
+/** A win evidence reference: "win:<uuid>". */
+export const isWinRef = (ref: string) =>
+  /^win:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    ref.trim(),
+  );
+
+export const PROPOSALS_OFF = "Pay proposals open after their switch-on.";
+export const OUTSIDE_LEDGER_LABEL = "Not in the wins ledger? Say why";
+export const OUTSIDE_LEDGER_SAY =
+  "This part comes from the wins ledger. Confirm its proposal, or say why it is not in the ledger.";
+export const noWinsFor = (ym: string) => `No wins to pay for ${monthName(ym)}.`;
+export const alreadyPaid = (ym: string) =>
+  `This win is already paid for ${monthName(ym)}.`;
+
+export type PayProposal = {
+  key: string;
+  personId: number | null;
+  person: string | null;
+  partKey: string;
+  partLabel: string;
+  client: string | null;
+  amountUsd: number | null;
+  state: "proposed" | "waiting" | "confirmed" | "declined";
+  why: string | null;
+  proofUrl: string | null;
+  entryId: number | null;
+};
+
+export type PayProposals = {
+  month: string;
+  on: boolean;
+  approved: boolean;
+  rows: PayProposal[];
+};
+
+const pt = (v: unknown): string | null =>
+  typeof v === "string" && v.trim() ? v.trim() : null;
+const pn = (v: unknown): number | null =>
+  v === null || v === undefined || v === "" || !Number.isFinite(Number(v))
+    ? null
+    : Number(v);
+const STATES = ["proposed", "waiting", "confirmed", "declined"];
+
+/** cockpit_ceo_pay_proposals' answer, read defensively. */
+export function toProposals(d: any, ym: string): PayProposals {
+  return {
+    month: pt(d?.month)?.slice(0, 7) ?? ym,
+    on: d?.on === true,
+    approved: d?.approved === true,
+    rows: (Array.isArray(d?.rows) ? d.rows : [])
+      .filter((r: any) => pt(r?.key) && STATES.includes(r?.state))
+      .map((r: any) => ({
+        key: String(r.key),
+        personId: pn(r.personId),
+        person: pt(r.person),
+        partKey: pt(r.partKey) ?? "",
+        partLabel: pt(r.partLabel) ?? pt(r.partKey) ?? "Part",
+        client: pt(r.client),
+        amountUsd: pn(r.amountUsd),
+        state: r.state,
+        why: pt(r.why),
+        proofUrl: pt(r.proofUrl),
+        entryId: pn(r.entryId),
+      })),
+  };
+}
+
+/** "{person} · {part label} · {client} · {amount}" (5.4). */
+export function proposalLine(r: PayProposal): string {
+  return [
+    r.person ?? "Pick the person",
+    r.partLabel,
+    r.client ?? "a client",
+    r.amountUsd === null ? "amount not known" : payUsd(r.amountUsd),
+  ].join(" · ");
+}
+
+/**
+ * What a confirm says (4.9.2): "Added to November." into its own month, or,
+ * when that month is approved, "Added to December: November is approved."
+ */
+export function confirmedLine(
+  proposalMonth: string,
+  entryMonth: string | null,
+  approved: boolean,
+): string {
+  const into =
+    entryMonth ?? (approved ? nextMonth(proposalMonth) : proposalMonth);
+  return into.slice(0, 7) !== proposalMonth.slice(0, 7)
+    ? `Added to ${monthName(into)}: ${monthName(proposalMonth)} is approved.`
+    : `Added to ${monthName(proposalMonth)}.`;
+}

@@ -1,5 +1,7 @@
 # Forms in the cockpit: the build plan
 
+> **2026-11-01:** the CSM, money and client-facing forms are planned in full in [CSM-CLIENT-FORMS-PLAN.md](CSM-CLIENT-FORMS-PLAN.md), which carries this plan forward and lists where it departs (its section 9).
+
 Plan, 2026-10-25, worktree `forms-1025` (origin/main `d2c9817c`). It is built
 from the eight read-only maps in `docs/forms/maps/`, their follow-ups
 included, and revised once after review (section 7). The build sessions

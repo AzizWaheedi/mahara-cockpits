@@ -66,7 +66,7 @@ export async function runCheckIn(client:RpcClient,admin:Admin,raw:unknown,env:(n
   const receipt=await createCheckIn(provider,selection,scope.clientName);
   const stored=await admin.rpc('cockpit_csm_check_in_capture',{p_id:actionId,p_result:{...receipt,kind:call.kind,contactId:selection.contact.id,calendarId:selection.calendar.id,locationId:CLIENT_ACCOUNT,calendarName:selection.calendar.name}});if(stored.error)throw Error(stored.error.message);captured=true;
   const day=new Date(Date.parse(receipt.startTime)+10800000).toISOString().slice(0,10);
-  const clickupBase=providerTools(env('CLICKUP_API_TOKEN')??'',row=>health({...row,provider:'clickup'}),request);
+  const clickupBase=providerTools(env('CLICKUP_API_TOKEN')??'',row=>health({...row,provider:'clickup'}),request,{retry429:true});
   const clickup={call:async(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>{await guard();return clickupBase.call(method,path,body);}};
   const actionContext={...scope,day,evidence:'GoHighLevel appointment '+receipt.appointmentId};
   const patch:Record<string,unknown>={};

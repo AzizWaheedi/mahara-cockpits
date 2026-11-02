@@ -5,6 +5,7 @@ import type { PresentUrls } from "@/present/PresentApp";
 import { applyPatch } from "@/present/prep";
 import type { DeckKind, LaunchAd } from "@/present/sources";
 import type { DeckIO, Loaded } from "@/present/useDeckModel";
+import { BUILT_OFFER_DECKS, type OfferDeckKind } from "../present/offer/kinds";
 import {
   BP_NOW,
   blueprintLoaded,
@@ -140,6 +141,10 @@ export function practiceIO(deck: DeckKind, presenter: string | null): DeckIO {
     onboarding: kept.onboarding ?? loaded.prep.onboarding,
     launch: kept.launch ?? loaded.prep.launch,
     blueprint: {},
+    ...(Object.fromEntries(BUILT_OFFER_DECKS.map(k => [k, {}])) as Record<
+      OfferDeckKind,
+      Overrides
+    >),
   };
   let ads: LaunchAd[] = [...loaded.ads];
   let revision = 1;

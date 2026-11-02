@@ -37,6 +37,7 @@ import {
   PROBLEMS,
   PROGRAM,
   type ProblemKey,
+  pillarLabel,
   STORIES,
   type Story,
   TIMELINE,
@@ -70,6 +71,7 @@ import {
   REVIEW_PAGES,
   STORY_PROOF,
 } from "./proof";
+import { SYSTEM_PHOTOS, systemSlide } from "./system";
 import { PORTAL_TOUR } from "./tour";
 
 /** Every partner's story: the eight Wistia masters and the proof page's two more. */
@@ -89,6 +91,7 @@ export const DECK_PHOTOS = [
   interiorMajlis,
   salesDesk,
   skylineNight,
+  ...SYSTEM_PHOTOS,
 ];
 
 export interface NumbersState {
@@ -221,11 +224,6 @@ function Bridge({ ctx, pillar }: { ctx: DeckCtx; pillar: PillarKey }) {
       </div>
     </Rv>
   );
-}
-
-function pillarLabel(key: PillarKey, lang: Lang) {
-  const n = PILLARS.findIndex(p => p.key === key) + 1;
-  return ar(lang) ? `الخطوة ${"١٢٣٤٥"[n - 1]} من ٥` : `Step ${n} of 5`;
 }
 
 function Check() {
@@ -1037,78 +1035,6 @@ function whoSlide(ctx: DeckCtx) {
         ))}
       </Rv>
     </div>
-  );
-}
-
-function systemSlide(ctx: DeckCtx) {
-  const { lang, match } = ctx;
-  return (
-    <>
-      <Header
-        label="Project to Profit"
-        title={
-          ar(lang)
-            ? "خمس خطوات.. وفريق واحد يشغلها."
-            : "Five steps, and one team running them."
-        }
-      />
-      <div style={{ flex: 1 }} />
-      <Rv i={2}>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(5, 1fr)",
-            gap: 28,
-          }}
-        >
-          {PILLARS.map((p, i) => {
-            const hit = match.includes(p.key);
-            return (
-              <div
-                key={p.key}
-                className={hit ? "dk-card dk-glow" : "dk-card"}
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 16,
-                  padding: "34px 32px",
-                }}
-              >
-                <span
-                  className="dk-num dk-teal"
-                  style={{ fontSize: ar(lang) ? 30 : 26 }}
-                >
-                  {ar(lang) ? "١٢٣٤٥"[i] : `0${i + 1}`}
-                </span>
-                <span
-                  style={{
-                    fontSize: ar(lang) ? 34 : 32,
-                    fontWeight: 600,
-                    lineHeight: 1.25,
-                  }}
-                >
-                  {t(p.name, lang)}
-                </span>
-                <span
-                  className="dk-body"
-                  style={{ fontSize: ar(lang) ? 27 : 25 }}
-                >
-                  {t(p.line, lang)}
-                </span>
-                {hit ? (
-                  <span
-                    className="dk-label"
-                    style={{ fontSize: 21, marginTop: "auto" }}
-                  >
-                    {ar(lang) ? "يحل مشكلتك" : "Answers your challenge"}
-                  </span>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      </Rv>
-    </>
   );
 }
 
@@ -2100,10 +2026,13 @@ export function deckSlides(): SlideDef[] {
       render: c => whoSlide(c),
     },
     {
+      // The funnel drawn large is the rail, so it takes the rail's room. Its
+      // stops: the overview, then each step opened on the same drawing.
       id: "system",
       section: S.system,
       title: { en: "Project to Profit", ar: "Project to Profit" },
-      railAll: true,
+      noRail: true,
+      stops: PILLARS.length + 1,
       render: c => systemSlide(c),
     },
     {

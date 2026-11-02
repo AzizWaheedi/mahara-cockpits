@@ -13,6 +13,7 @@ import {
   ClientsPage,
   EndOfDayPage,
   FirstSignInPage,
+  FormsEditorPage,
   InboxPage,
   KeyLinksPage,
   LandingPage,
@@ -28,6 +29,8 @@ import { DeckRouteBoundary } from "@/present/DeckBoundary";
 
 /** The client decks, loaded only when a deck window opens. */
 const PresentPage = lazy(() => import("@/present/PresentPage"));
+const OfferPresentPage = lazy(() => import("@/present/offer/OfferPresentPage"));
+const ProposalPage = lazy(() => import("@/pages/money/offers/ProposalPage"));
 /** A client's forms (the kickoff first), loaded only when a form window opens. */
 const FormWindow = lazy(() => import("@/forms/FormWindow"));
 /** The practice client (docs/call-guide/DESIGN.md): its page and its decks. */
@@ -78,6 +81,14 @@ export function AuthenticatedRoutes() {
             sidebar or data provider is mounted for another seat. */}
         <Route element={<BillingReviewLayout />}>
           <Route path="/notices" element={<NoticesPage />} />
+        </Route>
+        {/* The forms editor (docs/forms/WAVE34-CONTRACT.md 4.9, 5.13): admins
+            and the CEO, whatever their other roles, so any signed-in seat
+            opens it and cockpit_form_editor_seat decides; anyone else reads
+            "Only an admin or the CEO edits forms." No CSM sidebar is mounted. */}
+        <Route element={<BillingReviewLayout wide />}>
+          <Route path="/forms-editor" element={<FormsEditorPage />} />
+          <Route path="/forms-editor/:key" element={<FormsEditorPage />} />
         </Route>
         {/* The Brand Blueprint call (docs/brand-blueprint/SPEC.md 4.7): the
             creative director presents it, the CSM reads it. Its static
@@ -133,6 +144,26 @@ export function AuthenticatedRoutes() {
             focus while the deck is shared on a call. */}
         {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
         <Route element={<RoleRoute role="csm" />}>
+          <Route
+            path="/clients/:key/present/offer/:offer"
+            element={
+              <DeckRouteBoundary>
+                <Suspense fallback={null}>
+                  <OfferPresentPage />
+                </Suspense>
+              </DeckRouteBoundary>
+            }
+          />
+          <Route
+            path="/clients/:key/present/offer/:offer/notes"
+            element={
+              <DeckRouteBoundary>
+                <Suspense fallback={null}>
+                  <OfferPresentPage notes />
+                </Suspense>
+              </DeckRouteBoundary>
+            }
+          />
           <Route
             path="/clients/:key/present/:deck"
             element={
@@ -196,6 +227,16 @@ export function AuthenticatedRoutes() {
             <Route path="/inbox" element={<InboxPage />} />
             <Route path="/clients" element={<ClientsPage />} />
             <Route path="/clients/:key" element={<ClientPage />} />
+            <Route
+              path="/clients/:key/proposals/:id"
+              element={
+                <DeckRouteBoundary>
+                  <Suspense fallback={null}>
+                    <ProposalPage />
+                  </Suspense>
+                </DeckRouteBoundary>
+              }
+            />
             <Route path="/money" element={<MoneyPage />} />
             <Route path="/links" element={<KeyLinksPage />} />
             {/* Today's own pages. */}

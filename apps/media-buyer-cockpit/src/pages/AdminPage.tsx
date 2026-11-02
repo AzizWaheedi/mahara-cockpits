@@ -14,6 +14,7 @@ import {
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { YourTasks } from "@/components/tasks/YourTasks";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -310,6 +311,10 @@ export function AdminPage() {
           </Button>
         </div>
       </header>
+
+      {/* Admin seats land here, not on a Today; the systems manager owns
+          most request types, so their ClickUp tasks sit at the top. */}
+      <YourTasks />
 
       {/* Cockpits: switch, and see at a glance that each one is alive. */}
       <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">

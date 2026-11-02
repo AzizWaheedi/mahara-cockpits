@@ -1,5 +1,13 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { Receipt, Target, TriangleAlert, Wallet } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { BarList, type BarListItem } from "@/components/ceo/BarList";
 import { ColumnChart } from "@/components/ceo/ColumnChart";
 import type { ChartSeries } from "@/components/ceo/chartKit";
@@ -22,6 +30,7 @@ import {
   plural,
   relative,
   shiftMonth,
+  shortDate,
 } from "@/components/ceo/format";
 import { HeroFigure } from "@/components/ceo/HeroFigure";
 import { Kicker } from "@/components/ceo/Kicker";
@@ -39,6 +48,10 @@ import { TabLink } from "@/components/ceo/TabLink";
 import { TargetMeter } from "@/components/ceo/TargetMeter";
 import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
 import type { CeoSection } from "@/components/ceo/useCeo";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { type Door, doorLine } from "@/forms/staff/formSheetCore";
+import { manualLoggedOf } from "@/lib/paymentChecks";
 import type {
   CashRail,
   ExpenseGroup,
@@ -48,8 +61,9 @@ import type {
   Note,
 } from "@/types/ceo/payloads";
 import { BankExpensesBody, BankStatementsCard } from "./moneyBank";
-import { ImportPaymentsCard, LtvWriteCard } from "./moneyImport";
+import { ImportPaymentsCard, LtvApplyDoor, useW56Doors } from "./moneyImport";
 import {
+  ChecksWaitingCard,
   DuplicatesCard,
   LogPaymentCard,
   ManualEntriesCard,
@@ -283,6 +297,8 @@ export function MoneyTab({ sections, now, day, goTab }: CeoTabProps) {
       />
       <BankStatementsCard section={section} payload={payload} order={3} />
       <ImportPaymentsCard order={3} />
+      <ChecksWaitingCard order={4} />
+      <UpsellTiesCard order={4} />
       <ManualEntriesCard
         section={section}
         payload={payload}
@@ -341,7 +357,7 @@ export function MoneyTab({ sections, now, day, goTab }: CeoTabProps) {
             lines={payload.attribution?.transactions ?? []}
             lastRefreshAt={section?.lastOkAt ?? null}
           />
-          <LtvWriteCard order={11} />
+          <LtvApplyDoor order={11} />
 
           <div className="grid gap-4 lg:gap-6 xl:grid-cols-12">
             <SectionCard
@@ -477,6 +493,31 @@ function AttributionBody({ p }: { p: MoneyPayload }) {
 
 // --- Cash: the hero, pace facts and cash per day ---
 
+/**
+ * The day bank transfers stop being checked against a statement: the newest
+ * client-income statement's last day (Q12, the account statement uploaded
+ * each month by the 3rd), or the newest statement of any kind when none has
+ * been uploaded. Null once a client-income statement reaches the end of last
+ * month, when the line has nothing to say.
+ */
+export function uncheckedSince(p: MoneyPayload, today: string): string | null {
+  const statements = p.bank?.statements ?? [];
+  const newest = (list: typeof statements) =>
+    list
+      .map(s => s.toDay)
+      .filter((d): d is string => Boolean(d))
+      .sort()
+      .at(-1) ?? null;
+  const income = newest(statements.filter(s => s.accountKind !== "card"));
+  const lastMonthEnd = new Date(
+    Date.parse(`${today.slice(0, 7)}-01T00:00:00Z`) - 86_400_000,
+  )
+    .toISOString()
+    .slice(0, 10);
+  if (income && income >= lastMonthEnd) return null;
+  return income ?? newest(statements);
+}
+
 function CashBody({ p, today }: { p: MoneyPayload; today: string }) {
   // The same rule the Today and Frontend tabs use, so the three headline cash
   // figures are one number under one name. The rail split is the card below.
@@ -490,6 +531,11 @@ function CashBody({ p, today }: { p: MoneyPayload; today: string }) {
     (top, d) => (top === null || d.value > top.value ? d : top),
     null,
   );
+  // Checked money (20261101n): hand-logged money nobody has checked is beside
+  // the total, never in it; and until a client-income statement is uploaded,
+  // a bank transfer has no statement line to be checked against.
+  const logged = manualLoggedOf(p);
+  const since = uncheckedSince(p, today);
 
   return (
     <div className="grid gap-8 @3xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] @3xl:gap-10">
@@ -510,6 +556,32 @@ function CashBody({ p, today }: { p: MoneyPayload; today: string }) {
           sub={`Projected ${money(cash.projectedMonth)} for ${thisMonthName}, day ${p.dayOfMonth} of ${p.daysInMonth}`}
           naHint="No connected cash rail gives a figure for this month."
         />
+        {(logged && logged.count > 0) || since ? (
+          <div className="mt-3 grid gap-1 text-xs leading-5 text-muted-foreground">
+            {logged && logged.count > 0 ? (
+              <p className="flex items-baseline gap-2" data-logged-line>
+                <span
+                  className="relative top-px inline-block size-2 shrink-0 rounded-full border-2"
+                  style={{ borderColor: STATUS_COLOR.warning }}
+                  aria-hidden
+                />
+                <span className="min-w-0">
+                  Logged, not checked:{" "}
+                  <span className="font-mono tabular-nums text-foreground">
+                    {money(logged.usd)}
+                  </span>{" "}
+                  ({count(logged.count)})
+                </span>
+              </p>
+            ) : null}
+            {since ? (
+              <p data-unchecked-since>
+                Bank transfers since {shortDate(since)} are not checked against
+                a statement
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         <dl className="mt-6 grid grid-cols-3 gap-4 border-t pt-4 @3xl:mt-auto">
           <Fact label="Today so far" value={money(cash.today)} />
           <Fact label="Yesterday" value={money(cash.yesterday)} />
@@ -1964,5 +2036,412 @@ function TotalsBody({ e }: { e: ExpensesPayload }) {
         </p>
       </div>
     </div>
+  );
+}
+
+// --- Upsell payments to confirm (WAVE56-CONTRACT.md 4.3, 5.4) ---------------------
+
+export type TieWaiting = {
+  proposalId: number;
+  client: string;
+  offer: string;
+  rail: string;
+  usd: number | null;
+  paidOn: string | null;
+  checked: boolean;
+  /** The payment counts for the closer now (a rule-2 card match in the deal ledger). */
+  inDealLedger: boolean;
+};
+
+export type PaidWin = {
+  winId: string;
+  client: string;
+  offer: string;
+  tiedUsd: number | null;
+  paidOn: string | null;
+};
+
+export type ClearedEntry = {
+  entryId: number | null;
+  month: string | null;
+  person: string | null;
+  part: string | null;
+  amountUsd: number | null;
+};
+
+export type TieApi = {
+  waiting: () => Promise<TieWaiting[]>;
+  paid: (from: string, to: string) => Promise<PaidWin[]>;
+  decide: (p: {
+    proposalId: number;
+    decision: "confirm" | "decline";
+    reason?: string;
+  }) => Promise<string>;
+  clear: (p: {
+    winId: string;
+    reason: string;
+  }) => Promise<{ sentence: string; entries: ClearedEntry[] }>;
+};
+
+const txt = (v: unknown): string | null =>
+  typeof v === "string" && v.trim() ? v.trim() : null;
+const nm = (v: unknown): number | null =>
+  v === null || v === undefined || v === "" || !Number.isFinite(Number(v))
+    ? null
+    : Number(v);
+
+async function ceoRpc(
+  c: SupabaseClient,
+  name: string,
+  args?: Record<string, unknown>,
+): Promise<any> {
+  const { data, error } = await (args === undefined
+    ? c.rpc(name)
+    : c.rpc(name, args));
+  if (error)
+    throw new Error(
+      String(error.message ?? "").trim() ||
+        "The server refused this with no reason. Try again in a minute.",
+    );
+  return data;
+}
+
+export function tieApi(c: SupabaseClient): TieApi {
+  return {
+    waiting: async () => {
+      const d = await ceoRpc(c, "cockpit_csm_wins_today");
+      return (Array.isArray(d) ? d : (d?.rows ?? []))
+        .filter(
+          (r: any) => r?.kind === "tie_waiting" && nm(r.proposalId) !== null,
+        )
+        .map((r: any) => ({
+          proposalId: Number(r.proposalId),
+          client: txt(r.client ?? r.clientName) ?? "A client",
+          offer: txt(r.offer ?? r.offerName ?? r.kindLabel) ?? "upsell",
+          rail: txt(r.rail) ?? "payment",
+          usd: nm(r.usd),
+          paidOn: txt(r.paidOn),
+          checked: r.checked === true,
+          inDealLedger: Boolean(r.inDealLedger),
+        }));
+    },
+    paid: async (from, to) => {
+      const d = await ceoRpc(c, "cockpit_csm_wins_list", {
+        p_from: from,
+        p_to: to,
+      });
+      return (Array.isArray(d?.wins) ? d.wins : [])
+        .filter((w: any) => w?.stage === "paid" && txt(w.id))
+        .map((w: any) => ({
+          winId: String(w.id),
+          client: txt(w.client ?? w.clientName) ?? "A client",
+          offer: txt(w.offerName ?? w.kindLabel) ?? "upsell",
+          tiedUsd: nm(w.tiedUsd),
+          paidOn: txt(w.paidOn ?? w.tiePending?.paidOn),
+        }));
+    },
+    decide: async p => {
+      const d = await ceoRpc(c, "cockpit_ceo_win_tie_decide", { p });
+      return (
+        txt(d?.sentence) ??
+        (p.decision === "confirm" ? "Tied. The win is paid." : "Declined.")
+      );
+    },
+    clear: async p => {
+      const d = await ceoRpc(c, "cockpit_ceo_win_tie_clear", { p });
+      const entries: ClearedEntry[] = (
+        Array.isArray(d?.entries) ? d.entries : []
+      ).map((e: any) => ({
+        entryId: nm(e.entryId),
+        month: txt(e.month),
+        person: txt(e.person),
+        part: txt(e.part),
+        amountUsd: nm(e.amountUsd),
+      }));
+      return {
+        sentence:
+          txt(d?.sentence) ??
+          `Tie cleared. ${plural(entries.length, "pay entry", "pay entries")} came from this win; check ${entries.length === 1 ? "it" : "them"} on Team & payroll.`,
+        entries,
+      };
+    },
+  };
+}
+
+const usdWords = (n: number | null) =>
+  n === null ? "an amount not known" : money(n);
+const dayWords = (d: string | null) =>
+  d ? shortDate(d) : "a day not recorded";
+
+/** The tie decision band (5.4): one row per open proposal, then the paid upsells the CEO may clear. */
+export function UpsellTies({
+  api,
+  door,
+  today,
+}: {
+  api: TieApi;
+  door: Door | null;
+  today: string;
+}) {
+  const [rows, setRows] = useState<TieWaiting[] | null>(null);
+  const [paid, setPaid] = useState<PaidWin[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [asking, setAsking] = useState<
+    | { kind: "confirm" | "decline"; row: TieWaiting }
+    | { kind: "clear"; win: PaidWin }
+    | null
+  >(null);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState<string | null>(null);
+  const [entries, setEntries] = useState<ClearedEntry[]>([]);
+  const open = door?.open === true;
+  const load = useCallback(async () => {
+    if (!open) return;
+    setError(null);
+    try {
+      const from = `${today.slice(0, 7)}-01`;
+      const [w, p] = await Promise.all([api.waiting(), api.paid(from, today)]);
+      setRows(w);
+      setPaid(p);
+    } catch (e) {
+      setError(String((e as Error)?.message ?? e));
+    }
+  }, [api, open, today]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  if (!open)
+    return (
+      <p className="text-sm text-muted-foreground" data-door-closed>
+        {doorLine(door)}
+      </p>
+    );
+  const needsReason =
+    asking?.kind === "decline" ||
+    asking?.kind === "clear" ||
+    (asking?.kind === "confirm" && asking.row.inDealLedger);
+  const go = async () => {
+    if (!asking) return;
+    const r = reason.trim();
+    if (needsReason && (r.length < 3 || r.length > 300)) {
+      setSaid(
+        asking.kind === "confirm"
+          ? "This payment counts for the closer now. Say why it is the upsell's."
+          : "Say why in 3 to 300 characters.",
+      );
+      return;
+    }
+    setBusy(true);
+    setSaid(null);
+    try {
+      if (asking.kind === "clear") {
+        const out = await api.clear({ winId: asking.win.winId, reason: r });
+        setSaid(out.sentence);
+        setEntries(out.entries);
+      } else {
+        setSaid(
+          await api.decide({
+            proposalId: asking.row.proposalId,
+            decision: asking.kind,
+            ...(r ? { reason: r } : {}),
+          }),
+        );
+        setEntries([]);
+      }
+      setAsking(null);
+      setReason("");
+      void load();
+    } catch (e) {
+      setSaid(String((e as Error)?.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="grid gap-4" data-upsell-ties>
+      {error ? (
+        <p className="text-sm text-destructive" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {rows === null && !error ? (
+        <p className="text-sm text-muted-foreground" role="status">
+          Reading the tie proposals
+        </p>
+      ) : rows && !rows.length ? (
+        <p className="text-sm text-muted-foreground">
+          No upsell payment waits for you.
+        </p>
+      ) : rows ? (
+        <ul className="grid divide-y">
+          {rows.map(r => (
+            <li
+              key={r.proposalId}
+              className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm"
+              data-tie-row={r.proposalId}
+            >
+              <span className="min-w-0">
+                <bdi>{r.client}</bdi> · {r.offer} ·{" "}
+                <span className="font-mono tabular-nums">
+                  {r.rail} {usdWords(r.usd)} paid {dayWords(r.paidOn)}
+                </span>
+                {r.inDealLedger ? (
+                  <StatusChip
+                    tone="warning"
+                    label="Counts for the closer now"
+                    className="ml-2"
+                  />
+                ) : null}
+                {!r.checked ? (
+                  <StatusChip
+                    tone="warning"
+                    label="Not checked yet"
+                    className="ml-2"
+                  />
+                ) : null}
+              </span>
+              <span className="flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => setAsking({ kind: "confirm", row: r })}
+                >
+                  Confirm the tie
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setAsking({ kind: "decline", row: r })}
+                >
+                  Decline
+                </Button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {paid?.length ? (
+        <div className="grid gap-1">
+          <p className="text-xs font-medium text-muted-foreground">
+            Tied this month
+          </p>
+          <ul className="grid divide-y">
+            {paid.map(w => (
+              <li
+                key={w.winId}
+                className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
+                data-paid-win={w.winId}
+              >
+                <span>
+                  <bdi>{w.client}</bdi> · {w.offer} ·{" "}
+                  <span className="font-mono tabular-nums">
+                    {usdWords(w.tiedUsd)} tied
+                  </span>
+                </span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setAsking({ kind: "clear", win: w })}
+                >
+                  Clear the tie
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {asking ? (
+        <form
+          className="grid gap-2 rounded-lg border bg-muted/30 p-3"
+          onSubmit={e => {
+            e.preventDefault();
+            void go();
+          }}
+          aria-label="Your decision"
+        >
+          {needsReason ? (
+            <>
+              <label
+                className="text-xs font-medium text-muted-foreground"
+                htmlFor="tie-reason"
+              >
+                {asking.kind === "confirm"
+                  ? "This payment counts for the closer now. Say why it is the upsell's."
+                  : asking.kind === "clear"
+                    ? "Why are you clearing the tie?"
+                    : "Why are you declining it?"}
+              </label>
+              <Input
+                id="tie-reason"
+                value={reason}
+                onChange={e => setReason(e.target.value)}
+                maxLength={300}
+                autoFocus
+              />
+            </>
+          ) : (
+            <p className="text-sm">
+              Tie this payment to the upsell? Only a checked payment can be
+              tied.
+            </p>
+          )}
+          <div className="flex gap-2">
+            <Button type="submit" size="sm" disabled={busy}>
+              {asking.kind === "confirm"
+                ? "Confirm the tie"
+                : asking.kind === "clear"
+                  ? "Clear the tie"
+                  : "Decline"}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => setAsking(null)}
+            >
+              Cancel
+            </Button>
+          </div>
+        </form>
+      ) : null}
+      {said ? (
+        <p className="text-sm" role="status">
+          {said}
+        </p>
+      ) : null}
+      {entries.length ? (
+        <ul className="grid gap-1 text-xs" data-cleared-entries>
+          {entries.map((e, i) => (
+            <li key={e.entryId ?? i} className="font-mono tabular-nums">
+              {e.month ?? "a month"} · {e.person ?? "a person"} ·{" "}
+              {e.part ?? "a part"} · {usdWords(e.amountUsd)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+function UpsellTiesCard({ order }: { order?: number }) {
+  const auth = useCockpitAuth();
+  const doors = useW56Doors(auth.client);
+  const api = useMemo(
+    () => (auth.client ? tieApi(auth.client) : null),
+    [auth.client],
+  );
+  if (!api || !doors) return null;
+  return (
+    <SectionCard
+      id="money-upsell-ties"
+      kicker="Wins"
+      title="Upsell payments to confirm"
+      description="A client success manager says each of these payments is for an upsell. Once you confirm, it counts as that manager's upsell cash, not the closer's."
+      order={order}
+    >
+      {() => (
+        <UpsellTies api={api} door={doors.wins} today={kuwaitDay(Date.now())} />
+      )}
+    </SectionCard>
   );
 }

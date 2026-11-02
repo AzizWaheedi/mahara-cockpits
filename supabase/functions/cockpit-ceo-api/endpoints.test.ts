@@ -86,31 +86,27 @@ const formFetch = (paths: string[]) => async (input: RequestInfo | URL, init?: R
   return new Response('{}', { status: 200 });
 };
 
-test('the button path finds the field by name, writes the card and records the founder write', async () => {
+test('the button path is retired: no ClickUp or Typeform call, no audit row, the retired sentence (4.11.3)', async () => {
   const { admin, calls } = fakeAdmin();
   const paths: string[] = [];
   const out = await ceoEndpoint('ceo.extensions.applyToClickUp', {}, {
     admin, env: env({ CLICKUP_API_TOKEN: 'pk', TYPEFORM_TOKEN: 'tf' }), health: async () => {}, actorId: 'founder-id', apply: true, request: formFetch(paths),
   }) as Row;
-  expect(paths).toEqual(['GET api/v2/list/901816559981/field', 'GET forms/gqBcyK6g/responses?page_size=200', 'POST api/v2/task/n1/field/fld-9']);
-  expect(out).toMatchObject({ written: 1, ok: true });
-  const record = calls.find(c => c.name === 'cockpit_ceo_extension_write_record');
-  expect(record?.args).toMatchObject({ p_actor_id: 'founder-id', p_write: { taskId: 'n1', weeks: 2, fieldId: 'fld-9' } });
+  expect(paths).toEqual([]);
+  expect(out).toMatchObject({ written: 0, cleared: 0, ok: true, retired: true, note: 'Retired: the billing sheet writes the extension field.' });
+  expect(calls.find(c => c.name === 'cockpit_ceo_extension_write_record')).toBeUndefined();
 });
 
-test('the cron pass is a dry run without CEO_EXTENSIONS_APPLY and records its run state', async () => {
-  const { admin, calls } = fakeAdmin();
-  const paths: string[] = [];
-  const out = await extensionsAuto(admin, env({ CLICKUP_API_TOKEN: 'pk', TYPEFORM_TOKEN: 'tf', CLICKUP_EXTENSION_FIELD: 'fld-9' }), async () => {}, formFetch(paths));
-  expect(out).toMatchObject({ dryRun: true, planned: 1, written: 0 });
-  expect(paths.some(p => p.startsWith('POST'))).toBe(false);
-  expect(calls.find(c => c.kind === 'upsert')?.args).toMatchObject({ key: 'ceo-extensions-auto', ok: true });
-
-  const live = fakeAdmin();
-  const livePaths: string[] = [];
-  const applied = await extensionsAuto(live.admin, env({ CLICKUP_API_TOKEN: 'pk', TYPEFORM_TOKEN: 'tf', CLICKUP_EXTENSION_FIELD: 'fld-9', CEO_EXTENSIONS_APPLY: 'true' }), async () => {}, formFetch(livePaths));
-  expect(applied.written).toBe(1);
-  expect(live.calls.find(c => c.name === 'cockpit_ceo_extension_write_record')?.args).toMatchObject({ p_actor_id: null });
+test('the cron pass is retired too: nothing written even with CEO_EXTENSIONS_APPLY, and its run state says retired', async () => {
+  for (const apply of ['false', 'true']) {
+    const { admin, calls } = fakeAdmin();
+    const paths: string[] = [];
+    const out = await extensionsAuto(admin, env({ CLICKUP_API_TOKEN: 'pk', TYPEFORM_TOKEN: 'tf', CLICKUP_EXTENSION_FIELD: 'fld-9', CEO_EXTENSIONS_APPLY: apply }), async () => {}, formFetch(paths));
+    expect(out).toMatchObject({ written: 0, retired: true, ok: true });
+    expect(paths).toEqual([]);
+    expect(calls.find(c => c.name === 'cockpit_ceo_extension_write_record')).toBeUndefined();
+    expect(calls.find(c => c.kind === 'upsert')?.args).toMatchObject({ key: 'ceo-extensions-auto', ok: true, rows_seen: 0, note: 'Retired: the billing sheet writes the extension field.' });
+  }
 });
 
 test('task and field IDs are checked before a ClickUp path is built', async () => {

@@ -77,6 +77,8 @@ export const USD_PER: Record<string, number> = {
 
 export type Group = "active" | "paused" | "pipeline" | "sales" | "gone";
 type Source = "sync" | "ceo" | "csm" | "maher";
+/** Who made a cockpit edit: a person's cockpit, or the cockpit itself (an extension cleared on end, 20261101m). */
+type EditSource = Exclude<Source, "sync"> | "system";
 
 const GONE = new Set(["Stopped", "CANCELLED ONBOARDING"]);
 const SALES = "SALES TEAM TO CONTACT";
@@ -247,11 +249,23 @@ type Column = (typeof PLAIN)[number] | "client_status";
 
 const HUMAN = new Set(["ceo", "csm", "maher"]);
 
-/** Which mirror columns one cockpit_billing_events row changed. */
+/**
+ * The cockpit_billing_events sources and kinds whose edits the mirror holds until ClickUp shows them. index.ts
+ * reads the events with these lists (waves 1-2 4.1 step 5: churn, mrr and the system's extension clear).
+ */
+export const EDIT_EVENT_SOURCES = ["ceo", "csm", "maher", "system"] as const;
+// survey and nps_sent (waves 3-4) are left out on purpose: they change no mirror column.
+export const EDIT_EVENT_KINDS = ["method", "plan", "amount", "date", "extension", "pause", "resume", "payment", "churn", "mrr"] as const;
+
+/**
+ * Which mirror columns one cockpit_billing_events row changed. A person's edit (ceo, csm, maher) and, for an
+ * extension only, the cockpit's own clear (system), so a clear is held on the mirror until it is delivered.
+ */
 export function columnsOf(e: Any): Column[] {
-  if (!HUMAN.has(String(e?.source))) return [];
+  const kind = String(e?.kind);
+  if (!HUMAN.has(String(e?.source)) && !(e?.source === "system" && kind === "extension")) return [];
   const d = (e?.detail ?? {}) as Any;
-  switch (String(e?.kind)) {
+  switch (kind) {
     case "method":
       return ["payment_method"];
     case "plan":
@@ -270,13 +284,23 @@ export function columnsOf(e: Any): Column[] {
       return d.nextDate ? ["client_status", "paused_on", "next_payment_date"] : ["client_status", "paused_on"];
     case "payment":
       return e?.to_value && e.to_value !== e.from_value ? ["next_payment_date"] : [];
+    // A churn writes Churn Date and Client Status on the card (and clears Paused On when it asks to).
+    case "churn":
+      return d.clear_paused === true ? ["client_status", "churn_date", "paused_on"] : ["client_status", "churn_date"];
+    case "mrr":
+      return ["mrr_usd"];
+    // Waves 3-4 (20261102b, contract 3.8): the exit survey's card comment and NPS Survey Sent have no mirror
+    // column, so neither holds anything here, whoever wrote it.
+    case "survey":
+    case "nps_sent":
+      return [];
     default:
       return [];
   }
 }
 
 /** waiting: an edit to this column still has its ClickUp write-back pending or held as a dry run. */
-export type Edits = Map<Column, { at: number; source: Source; waiting?: true }>;
+export type Edits = Map<Column, { at: number; source: EditSource; waiting?: true }>;
 
 /**
  * The newest cockpit edit per card and column: when (epoch ms) and from which
@@ -293,7 +317,7 @@ export function humanEdits(events: Any[], waiting?: Set<string>): Map<string, Ed
     for (const c of columnsOf(e)) {
       const m: Edits = out.get(task) ?? new Map();
       const prev = m.get(c);
-      const next = !prev || at > prev.at ? { at, source: e.source as Source } : { at: prev.at, source: prev.source };
+      const next = !prev || at > prev.at ? { at, source: e.source as EditSource } : { at: prev.at, source: prev.source };
       m.set(c, pending || prev?.waiting ? { ...next, waiting: true } : next);
       out.set(task, m);
     }
@@ -382,9 +406,10 @@ export function mergeAccount(
   if (held.length) {
     const newest = held
       .map(h => edits?.get(h.column as Column))
-      .filter((e): e is { at: number; source: Source } => Boolean(e))
+      .filter((e): e is { at: number; source: EditSource } => Boolean(e))
       .sort((a, b) => b.at - a.at)[0];
-    row.source = newest?.source ?? "csm";
+    // The mirror's source column names a cockpit (its CHECK has no "system"): the cockpit's own clear is "sync".
+    row.source = newest?.source === "system" ? "sync" : (newest?.source ?? "csm");
   }
   return { row, isNew: false, changes, kept, held };
 }

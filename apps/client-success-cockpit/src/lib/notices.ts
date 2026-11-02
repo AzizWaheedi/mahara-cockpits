@@ -111,7 +111,11 @@ const noticeRead: z.ZodType<NoticeRead> = z.object({
   notices: z.array(noticeView),
 });
 
-/** The eight notice kinds, in the settings' order (contract 2.1). */
+/**
+ * The ten notice kinds of Stage 1 and 2b, in the settings' order: Stage 1's
+ * eight (contract 2.1), then the 1-1 notes' two (docs/forms/STAGE2B-CONTRACT.md
+ * 4.2, 5.4). The client lifecycle's six follow them (LIFECYCLE_NOTICE_KINDS).
+ */
 export const NOTICE_KINDS = [
   "kickoff",
   "kickoff.late",
@@ -121,8 +125,71 @@ export const NOTICE_KINDS = [
   "blueprint.media",
   "blueprint.updated",
   "blueprint.offer",
+  "checkin.grade",
+  "checkin.recap_late",
 ] as const;
-export type NoticeKind = (typeof NOTICE_KINDS)[number];
+
+/**
+ * The client lifecycle's six (docs/forms/WAVE12-CONTRACT.md 3.4, 5.9), in the
+ * settings' order, seeded by 20261101l. Kept apart from NOTICE_KINDS so a
+ * database before that file reads exactly the ten, and the card shows them as
+ * their own list.
+ */
+export const LIFECYCLE_NOTICE_KINDS = [
+  "termination.notice",
+  "termination.submitted",
+  "churn.confirmed",
+  "extension.granted",
+  "pause.agreed",
+  "client.resumed",
+] as const;
+export const LIFECYCLE_KINDS: ReadonlySet<string> = new Set(
+  LIFECYCLE_NOTICE_KINDS,
+);
+/**
+ * The client's voice and forms (docs/forms/WAVE34-CONTRACT.md 3.4, 5.12), in
+ * the settings' order, seeded by 20261102a. Their own list on the card, so a
+ * database before that file shows the card exactly as before.
+ */
+export const CLIENT_FORM_NOTICE_KINDS = [
+  "pause.consent",
+  "nps.received",
+  "csat.received",
+  "voice.low",
+  "feedback.received",
+  "legacy.received",
+] as const;
+export const CLIENT_FORM_KINDS: ReadonlySet<string> = new Set(
+  CLIENT_FORM_NOTICE_KINDS,
+);
+/**
+ * Wins and money (docs/forms/WAVE56-CONTRACT.md 3.9, 5.12), in the settings'
+ * order, seeded off by 20261102g. Their own list on the card, so a database
+ * before that file shows the card exactly as before.
+ */
+export const MONEY_NOTICE_KINDS = [
+  "win.logged",
+  "receipt.in",
+  "client.reactivated",
+] as const;
+export const MONEY_KINDS: ReadonlySet<string> = new Set(MONEY_NOTICE_KINDS);
+/** Every kind the card shows, in its order. */
+export const ALL_NOTICE_KINDS = [
+  ...NOTICE_KINDS,
+  ...LIFECYCLE_NOTICE_KINDS,
+  ...CLIENT_FORM_NOTICE_KINDS,
+  ...MONEY_NOTICE_KINDS,
+] as const;
+
+/**
+ * The Call grade posts only in a private channel and tags nobody: the
+ * server refuses anything else (STAGE2B-CONTRACT.md 4.2, settings_set), and
+ * the card offers nothing else.
+ */
+export const PRIVATE_ONLY_KINDS: ReadonlySet<string> = new Set([
+  "checkin.grade",
+]);
+export type NoticeKind = (typeof ALL_NOTICE_KINDS)[number];
 
 /** The three seats a notice may tag. */
 export const SEAT_RULES = [

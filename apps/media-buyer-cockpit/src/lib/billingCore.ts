@@ -160,14 +160,50 @@ export type Ladder = {
 };
 
 /**
+ * The overdue steps, one set for the whole cockpit (20261101p, the plan's
+ * E7): a pause review on day 4 late and a cancel review on day 15, both
+ * editable by the CEO (cockpit_settings billing.ladder). Each is a review a
+ * person makes on a call; neither changes the card by itself.
+ */
+export type LadderSteps = { pauseReviewDay: number; cancelReviewDay: number };
+export const DEFAULT_STEPS: LadderSteps = {
+  pauseReviewDay: 4,
+  cancelReviewDay: 15,
+};
+
+/** The steps as the server sent them, or the defaults when it sent none. */
+export function stepsFrom(raw: unknown): LadderSteps {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const p = Number(r.pauseReviewDay);
+  const c = Number(r.cancelReviewDay);
+  return Number.isInteger(p) &&
+    Number.isInteger(c) &&
+    p >= 1 &&
+    p < c &&
+    c <= 60
+    ? { pauseReviewDay: p, cancelReviewDay: c }
+    : DEFAULT_STEPS;
+}
+
+/** The sentence the Pause tab shows (contract 5.3). */
+export function ladderSentence(s: LadderSteps): string {
+  return `The ladder: a pause review on day ${s.pauseReviewDay} and a cancel review on day ${s.cancelReviewDay}. Neither changes the card by itself.`;
+}
+
+/**
  * Where a client stands on the chasing ladder today.
  *
  * A paused client is measured from Paused On, not from the payment date,
- * because the fifteen-day rule is fifteen days in this pause (Maher's
- * pitfall: a client paused, resumed and paused again was once churned on day
- * one of the second pause, measured from the first).
+ * because the pause rule counts days in this pause (Maher's pitfall: a
+ * client paused, resumed and paused again was once churned on day one of the
+ * second pause, measured from the first). Fourteen days paused is the
+ * "restart or confirm churn" review.
  */
-export function ladderOf(a: Account, today = kuwaitToday()): Ladder {
+export function ladderOf(
+  a: Account,
+  today = kuwaitToday(),
+  steps: LadderSteps = DEFAULT_STEPS,
+): Ladder {
   if (a.group === "gone" || a.group === "sales")
     return {
       rung: "none",
@@ -187,10 +223,10 @@ export function ladderOf(a: Account, today = kuwaitToday()): Ladder {
     };
   if (a.group === "paused" && a.pausedOn) {
     const inPause = daysBetween(a.pausedOn, today);
-    if (inPause >= 15)
+    if (inPause >= 14)
       return {
         rung: "churn",
-        label: "Fifteen days paused: churn",
+        label: `Paused ${inPause} days: restart or confirm churn`,
         days: -inPause,
         tone: "critical",
       };
@@ -250,23 +286,23 @@ export function ladderOf(a: Account, today = kuwaitToday()): Ladder {
       days: d,
       tone: "serious",
     };
-  if (d === -2)
+  if (-d < steps.pauseReviewDay)
     return {
       rung: "call",
       label: "Call, do not write",
       days: d,
       tone: "serious",
     };
-  if (d <= -15)
+  if (-d >= steps.cancelReviewDay)
     return {
       rung: "churn",
-      label: "Fifteen days late: churn",
+      label: "Cancel review, call first",
       days: d,
       tone: "critical",
     };
   return {
     rung: "pause",
-    label: "Pause the account, call first",
+    label: "Pause review, call first",
     days: d,
     tone: "critical",
   };
@@ -533,7 +569,8 @@ export type EventRow = {
   to_value: string | null;
   reason: string | null;
   detail: Any | null;
-  source: "ceo" | "csm" | "maher" | "clickup";
+  // system: the cockpit's own daily step (20261101m and p).
+  source: "ceo" | "csm" | "maher" | "clickup" | "system";
   by_whom: string;
 };
 
@@ -850,6 +887,8 @@ export type SheetRow = Account & { ladder: Ladder };
 
 export type Sheet = {
   today: string;
+  /** The overdue steps the rows were read with (billing.ladder). */
+  steps?: LadderSteps;
   rows: SheetRow[];
   /** How the book stands, in the numbers the header shows. */
   totals: {
@@ -879,10 +918,11 @@ export function buildSheet(
   events: Any[],
   inbox: Any[],
   today = kuwaitToday(),
+  steps: LadderSteps = DEFAULT_STEPS,
 ): Sheet {
   const rows = accounts
     .filter(onTheBooks)
-    .map(a => ({ ...a, ladder: ladderOf(a, today) }))
+    .map(a => ({ ...a, ladder: ladderOf(a, today, steps) }))
     .sort((x, y) => {
       // The ones that need somebody today first, then by date.
       const rank = (r: SheetRow) =>
@@ -922,6 +962,7 @@ export function buildSheet(
     Math.round(list.reduce((t, r) => t + (r.nextUsd ?? 0), 0) * 100) / 100;
   return {
     today,
+    steps,
     rows,
     totals: {
       dueThisWeek: { count: week.length, usd: sum(week) },
@@ -964,3 +1005,137 @@ export async function readSheet(url: string, key: string): Promise<Sheet> {
   ]);
   return buildSheet(accounts.map(accountFrom), events, inbox);
 }
+
+// --- MRR (Set MRR, 20261101p) -----------------------------------------------
+
+export type MrrFlag =
+  | "missing"
+  | "differs_suggestion"
+  | "differs_rail"
+  | "ok"
+  | "not_recurring";
+
+export type MrrRow = {
+  taskId: string;
+  clientName: string;
+  plan: string | null;
+  mrrUsd: number | null;
+  suggestedUsd: number | null;
+  suggestionWhy: string;
+  railMonthlyUsd: number | null;
+  railNote: string | null;
+  flag: MrrFlag;
+};
+
+export type MrrDowngrade = {
+  taskId: string;
+  clientName: string;
+  fromUsd: number | null;
+  toUsd: number | null;
+  effective: string | null;
+  reason: string | null;
+  seatRole: string;
+};
+
+/** cockpit_mrr_read, typed. Missing stays null: never a made-up 0. */
+export type MrrView = {
+  asOf: string | null;
+  tolerancePct: number;
+  railNote: string | null;
+  rows: MrrRow[];
+  totals: {
+    onBooks: number | null;
+    onBooksCards: number;
+    suggested: number | null;
+    noSuggestion: number;
+    missing: number;
+    differ: number;
+  };
+  downgrades: MrrDowngrade[];
+};
+
+const numOrNull = (v: unknown): number | null => {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+const textOrNull = (v: unknown): string | null =>
+  typeof v === "string" && v.trim() ? v : null;
+const FLAGS: MrrFlag[] = [
+  "missing",
+  "differs_suggestion",
+  "differs_rail",
+  "ok",
+  "not_recurring",
+];
+
+export function mrrViewFrom(raw: unknown): MrrView | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Any;
+  const t = (r.totals ?? {}) as Any;
+  return {
+    asOf: textOrNull(r.asOf),
+    tolerancePct: numOrNull(r.tolerancePct) ?? 10,
+    railNote: textOrNull(r.railNote),
+    rows: (Array.isArray(r.rows) ? r.rows : [])
+      .filter((x: Any) => x && textOrNull(x.taskId))
+      .map((x: Any) => ({
+        taskId: String(x.taskId),
+        clientName: textOrNull(x.clientName) ?? "A client",
+        plan: textOrNull(x.plan),
+        mrrUsd: numOrNull(x.mrrUsd),
+        suggestedUsd: numOrNull(x.suggestedUsd),
+        suggestionWhy: textOrNull(x.suggestionWhy) ?? "",
+        railMonthlyUsd: numOrNull(x.railMonthlyUsd),
+        railNote: textOrNull(x.railNote),
+        flag: FLAGS.includes(x.flag) ? x.flag : "ok",
+      })),
+    totals: {
+      onBooks: numOrNull(t.onBooks),
+      onBooksCards: numOrNull(t.onBooksCards) ?? 0,
+      suggested: numOrNull(t.suggested),
+      noSuggestion: numOrNull(t.noSuggestion) ?? 0,
+      missing: numOrNull(t.missing) ?? 0,
+      differ: numOrNull(t.differ) ?? 0,
+    },
+    downgrades: (Array.isArray(r.downgrades) ? r.downgrades : [])
+      .filter((x: Any) => x && textOrNull(x.taskId))
+      .map((x: Any) => ({
+        taskId: String(x.taskId),
+        clientName: textOrNull(x.clientName) ?? "A client",
+        fromUsd: numOrNull(x.fromUsd),
+        toUsd: numOrNull(x.toUsd),
+        effective: textOrNull(x.effective),
+        reason: textOrNull(x.reason),
+        seatRole: textOrNull(x.seatRole) ?? "the CSM",
+      })),
+  };
+}
+
+const dollars = (v: number) =>
+  `$${v.toLocaleString("en-US", { maximumFractionDigits: v % 1 ? 2 : 0 })}`;
+
+/** The chip a card's row carries (contract 5.3), or null when the MRR reads true. */
+export function mrrChip(row: MrrRow | undefined): string | null {
+  if (!row) return null;
+  switch (row.flag) {
+    case "missing":
+      return "MRR missing";
+    case "differs_suggestion":
+      return row.mrrUsd !== null && row.suggestedUsd !== null
+        ? `Card ${dollars(row.mrrUsd)}, suggested ${dollars(row.suggestedUsd)}`
+        : null;
+    case "differs_rail":
+      return row.mrrUsd !== null && row.railMonthlyUsd !== null
+        ? `Card ${dollars(row.mrrUsd)}, money in ${dollars(row.railMonthlyUsd)}`
+        : null;
+    case "not_recurring":
+      return "Not a monthly plan";
+    default:
+      return null;
+  }
+}
+
+/** A card the MRR check asks somebody to look at (the "Cards that differ" tile). */
+export const mrrDiffers = (row: MrrRow | undefined): boolean =>
+  row?.flag === "differs_suggestion" || row?.flag === "differs_rail";

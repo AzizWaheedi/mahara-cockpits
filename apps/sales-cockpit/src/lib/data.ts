@@ -1,8 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ThreadMessage } from "../components/Conversation";
 import type { Asset } from "./assets";
 import type { CallRow, LeadRow } from "./calls";
 import type { ClientFormSent } from "./clientForm";
 import type { GoalRow } from "./goals";
+import {
+  type InboxChannel,
+  type InboxCounts,
+  type InboxPage,
+  type InboxPerson,
+  type InboxState,
+  personParam,
+  readInboxCounts,
+  readInboxPage,
+} from "./messages";
 import { requestRead } from "./proposals";
 import { supabase } from "./supabase";
 import type {
@@ -11,7 +22,7 @@ import type {
   CoachReview,
   Deal,
   Dial,
-  InboxRow,
+  Funnel,
   Lead,
   Me,
   MirrorRun,
@@ -282,6 +293,37 @@ export function useOwed(
         .gte("start_at", new Date(Date.now() - days * 86_400_000).toISOString())
         .order("start_at", { ascending: false })
         .limit(300);
+      if (ghlUserId) q = q.eq("assigned_user_id", ghlUserId);
+      return q;
+    },
+    [ghlUserId, days],
+    everyMs,
+  );
+}
+
+/**
+ * Intros and demos held in the last `days` that may still need the lead
+ * rated or a reason (lib/afterCall outcomeMissing decides), newest first.
+ */
+export function useAfterCall(
+  ghlUserId: string | null,
+  days = 7,
+  everyMs = 60_000,
+): Loaded<CalendarRow[]> {
+  return useQuery<CalendarRow[]>(
+    () => {
+      let q = supabase
+        .from("cockpit_sales_calendar")
+        .select("*")
+        .in("call_type", ["intro", "demo"])
+        .in("status", ["showed", "completed", "invalid"])
+        .or(
+          "lead_quality.is.null,and(call_type.eq.intro,no_demo_reason.is.null)",
+        )
+        .gte("start_at", new Date(Date.now() - days * 86_400_000).toISOString())
+        .lte("start_at", new Date().toISOString())
+        .order("start_at", { ascending: false })
+        .limit(200);
       if (ghlUserId) q = q.eq("assigned_user_id", ghlUserId);
       return q;
     },
@@ -881,6 +923,27 @@ export function useFollowupsWaiting(
   );
 }
 
+/**
+ * Intros to demos for Kuwait days `from`..`to`: the team's, or one host's by
+ * their HighLevel user (a rep may read only their own; the function says so).
+ */
+export function useFunnel(
+  from: string,
+  to: string,
+  host: string | null,
+): Loaded<Funnel> {
+  return useQuery<Funnel>(
+    () =>
+      supabase.rpc("cockpit_sales_funnel", {
+        p_from: from,
+        p_to: to,
+        p_host: host,
+      }),
+    [from, to, host],
+    120_000,
+  );
+}
+
 /** Rates only, everyone with a seat. */
 export function useBoard(windowKey: WindowKey): Loaded<BoardRow[]> {
   return useQuery<BoardRow[]>(
@@ -1074,23 +1137,6 @@ export function useLatest<T>(value: T) {
 }
 
 /** Leads whose last message was theirs, in the last `hours`, newest first. */
-export function useReplies(hours = 48, everyMs = 60_000): Loaded<InboxRow[]> {
-  return useQuery<InboxRow[]>(
-    () =>
-      supabase
-        .from("cockpit_sales_inbox")
-        .select("*")
-        .eq("last_direction", "inbound")
-        .gte(
-          "last_message_at",
-          new Date(Date.now() - hours * 3_600_000).toISOString(),
-        )
-        .order("last_message_at", { ascending: false })
-        .limit(50),
-    [hours],
-    everyMs,
-  );
-}
 
 // ---------------------------------------------------------------------------
 // WhatsApp: the ready-made messages and the template routes (lib/whatsapp.ts)
@@ -1166,4 +1212,149 @@ export function useAssetSends(contactId: string) {
         .limit(50),
     [contactId],
   );
+}
+
+// ---------------------------------------------------------------------------
+// Messages: the cockpit's copy of every HighLevel conversation (20261029d)
+// ---------------------------------------------------------------------------
+
+export interface InboxFilter {
+  person: InboxPerson;
+  state: InboxState;
+  channel: InboxChannel | null;
+  account: string | null;
+  q: string;
+}
+
+function inboxArgs(f: InboxFilter) {
+  return {
+    p_person: personParam(f.person),
+    p_state: f.state,
+    p_channel: f.channel,
+    p_account: f.account,
+    p_q: f.q.trim() || null,
+  };
+}
+
+/** The first page of the list, read again every 20 seconds while it shows. */
+/** limit: how many rows the first read holds (40, up to 100 after Show more). */
+export function useInbox(f: InboxFilter, limit = 40): Loaded<InboxPage> {
+  const args = inboxArgs(f);
+  const key = JSON.stringify([args, limit]);
+  return useQuery<InboxPage>(
+    async () => {
+      const { data, error } = await supabase.rpc(
+        "cockpit_sales_conversations_list",
+        { ...args, p_limit: Math.min(100, Math.max(1, limit)) },
+      );
+      if (error) return { data: null, error };
+      try {
+        return { data: readInboxPage(data), error: null };
+      } catch (e) {
+        return { data: null, error: { message: String((e as Error).message) } };
+      }
+    },
+    [key],
+    20_000,
+    { timeoutMs: 20_000 },
+  );
+}
+
+/** The page after the given row, for "Show more". */
+export async function readInboxAfter(
+  f: InboxFilter,
+  last: { sort_at: string; conversation_id: string },
+): Promise<InboxPage> {
+  const { data, error } = await supabase.rpc(
+    "cockpit_sales_conversations_list",
+    {
+      ...inboxArgs(f),
+      p_before_at: last.sort_at,
+      p_before_id: last.conversation_id,
+      p_limit: 40,
+    },
+  );
+  if (error) throw new Error(error.message);
+  return readInboxPage(data);
+}
+
+/** The numbers beside each filter, the people and inboxes, and how fresh the copy is. */
+export function useInboxCounts(
+  person: InboxPerson,
+  channel: InboxChannel | null,
+  account: string | null,
+  everyMs = 20_000,
+): Loaded<InboxCounts> {
+  return useQuery<InboxCounts>(
+    async () => {
+      const { data, error } = await supabase.rpc(
+        "cockpit_sales_conversations_counts",
+        {
+          p_person: personParam(person),
+          p_channel: channel,
+          p_account: account,
+        },
+      );
+      if (error) return { data: null, error };
+      try {
+        return { data: readInboxCounts(data), error: null };
+      } catch (e) {
+        return { data: null, error: { message: String((e as Error).message) } };
+      }
+    },
+    [person, channel, account],
+    everyMs,
+    { timeoutMs: 20_000 },
+  );
+}
+
+/**
+ * A lead's messages as the cockpit's copy holds them, newest 80, in the
+ * conversation view's shape: drawn at once while HighLevel is read live.
+ */
+export function useCopiedThread(
+  contactId: string | null,
+): Loaded<ThreadMessage[]> {
+  return useQuery<ThreadMessage[]>(async () => {
+    if (!contactId) return { data: [], error: null };
+    const { data, error } = await supabase
+      .from("cockpit_sales_conversation_messages")
+      .select(
+        "id,conversation_id,direction,channel,type,status,at,body,subject,attachments,error,source,copy",
+      )
+      .eq("contact_id", contactId)
+      .order("at", { ascending: false })
+      .limit(80);
+    if (error) return { data: null, error };
+    return {
+      data: (data ?? []).map(m => ({
+        id: String(m.id),
+        conversation_id: String(m.conversation_id),
+        direction:
+          m.direction === "inbound" || m.direction === "outbound"
+            ? m.direction
+            : null,
+        channel: ([
+          "whatsapp",
+          "email",
+          "sms",
+          "instagram",
+          "facebook",
+          "call",
+        ].includes(String(m.channel))
+          ? m.channel
+          : "other") as ThreadMessage["channel"],
+        type: m.type ?? null,
+        status: m.status ?? null,
+        at: m.at ?? null,
+        body: m.body ?? null,
+        subject: m.subject ?? null,
+        attachments: Array.isArray(m.attachments) ? m.attachments : [],
+        error: m.error ?? null,
+        source: m.source ?? null,
+        copy: m.copy === true,
+      })),
+      error: null,
+    };
+  }, [contactId]);
 }

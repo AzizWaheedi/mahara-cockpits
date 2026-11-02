@@ -1,5 +1,6 @@
 import { ClipboardList } from "lucide-react";
 import { type ReactNode, useEffect, useRef } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { openNamed } from "@/present/PresentButton";
 import type { FormKey, FormNews } from "./formConfig";
@@ -38,12 +39,41 @@ export function formWindowFeatures(
   return `popup,width=${w},height=${h},left=0,top=0`;
 }
 
+const OPENED_HERE = "mahara-form-opened-here";
+
+/**
+ * The form's own window; when the browser blocks it, the form opens in this
+ * tab instead (the record never waits on a popup setting), and says so
+ * there once it has loaded.
+ */
 export function openForm(taskId: string, form: FormKey) {
-  return openNamed(
-    formUrl(taskId, form),
+  const url = formUrl(taskId, form);
+  const opened = openNamed(
+    url,
     formWindowName(taskId, form),
     formWindowFeatures(),
   );
+  if (opened) return opened;
+  try {
+    sessionStorage.setItem(OPENED_HERE, "1");
+  } catch {
+    // It still opens here; only the line saying why is lost.
+  }
+  window.location.assign(url);
+  return null;
+}
+
+/** On a form window that opened in the cockpit's tab: say why, once. */
+export function useOpenedHere() {
+  useEffect(() => {
+    try {
+      if (!sessionStorage.getItem(OPENED_HERE)) return;
+      sessionStorage.removeItem(OPENED_HERE);
+    } catch {
+      return;
+    }
+    toast("Your browser blocked the window, so it opened here.");
+  }, []);
 }
 
 /** "Fill the kickoff": the step's one teal button, or a quiet one. */

@@ -3,43 +3,99 @@
 //
 // Jobs (POST body {"job": ...}), each started by pg_cron with the shared
 // secret from the vault (migration 20261009f_clickup_writeback_native.sql):
-//   kpi       hourly at :05, 03-18 UTC  board KPI columns (convex writeback.pushMetrics)
+//   kpi       hourly at :23, 03-18 UTC  board KPI columns (convex writeback.pushMetrics);
+//                                       moved from :05 off the native cycle's minute (20261029q)
 //   log       every 2 minutes           decision / change comments, Ad Status moves and
 //                                       cockpit billing edits on Clients - Mahara cards (billing.ts, 20261009j)
 //   dosdonts  hourly at :35, 03-18 UTC  Do's & Don'ts clean format (convex dosDonts.tidyClient)
 //   doctor    on demand                 secrets present (names only) and queue health
+//   requests  every minute (20261026r)  tickets from /requests (kind 'request') and focus-view
+//                                       presses (kind 'task_action'), requests.ts and taskActions.ts
+//   requests_doctor  on demand          reads only: templates, Request Type options, fields,
+//                                       named owners and done statuses the request types rely on
+//   forms     every minute while work   the 1-1 notes writes (kind 'form', 20261029t): the to-do
+//             waits (20261029t)         comment, Client Happiness, Last POC and Last Check-in Call
+//                                       on a client card, forms.ts
+//   forms_doctor  on demand             reads only: the six Client Happiness options, the two
+//                                       date fields and the test card on Clients - Mahara
+//   billing_doctor  daily at 03:41 UTC  reads only: the Clients - Mahara fields, stored as the field
+//                   (20261101m)         map (cockpit_clickup_fields), checked against what the
+//                                       billing writes need (Client Status, Churn Type and Reason
+//                                       options, the dates, MRR, LTV, the 9cfdb353 checkbox)
 //
-// Dry run by default. Three secrets open writes to ClickUp, each only when it
+// Dry run by default. Six secrets open writes to ClickUp, each only when it
 // is exactly "true" (run.ts OUTWARD SAFETY):
-//   CLICKUP_WRITEBACK_APPLY              the log and Do's & Don'ts
+//   CLICKUP_WRITEBACK_APPLY              the log and Do's & Don'ts, never a billing
+//                                        edit (waves 1-2 W2)
 //   CLICKUP_WRITEBACK_APPLY_CSM_TICKETS  client success tickets in the log, on
 //                                        their own (live since 2026-10-12)
 //   CLICKUP_WRITEBACK_APPLY_KPI          the board KPI columns; the general
 //                                        switch does not write them
+//   CLICKUP_WRITEBACK_APPLY_REQUESTS     requests and task changes only; no other switch
+//                                        opens them and this one opens nothing else.
+//                                        CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS (client card
+//                                        ids) narrows it to a canary card.
+//   CLICKUP_WRITEBACK_APPLY_FORMS        the 1-1 notes writes only; no other switch opens
+//                                        them and this one opens nothing else.
+//                                        CLICKUP_WRITEBACK_FORMS_ONLY_CARDS (client card
+//                                        ids) narrows it to a canary card (86eywg1cq).
+//   CLICKUP_WRITEBACK_APPLY_BILLING      billing edits in the log only, and only of the event
+//                                        kinds in CLICKUP_WRITEBACK_BILLING_KINDS (comma list,
+//                                        empty means none); CLICKUP_WRITEBACK_BILLING_ONLY_CARDS
+//                                        (client card ids) narrows it to a canary card
+//                                        (86eywg1cq). Every log run reports the switch in
+//                                        cockpit_sync_state clickup-writeback:billing.
 // The kpi job reports ok=false while it is a dry run, on a run limited to
 // CLICKUP_WRITEBACK_ONLY_TASKS, when no card had Last Updated written and when
 // a write failed, so the health line never says ok over frozen numbers.
 // Secrets read by name: CLICKUP_API_TOKEN, META_SYSTEM_TOKEN (Ad Status
 // read-back), CRON_SECRET, optional META_GRAPH_VERSION,
 // CLICKUP_WRITEBACK_ONLY_TASKS (comma-separated task ids for a one-card live
-// check; it narrows APPLY and APPLY_KPI, not client success tickets) and
-// CLICKUP_CALLS_PER_MINUTE. Every provider
-// call goes through cockpit-media-api/tools.ts and lands in
-// cockpit_media_provider_health. Nothing here logs a key.
+// check; it narrows APPLY and APPLY_KPI, not client success tickets) and the
+// pace: CLICKUP_REQUESTS_CALLS_PER_MINUTE for the two requests jobs (default
+// 25), CLICKUP_FORMS_CALLS_PER_MINUTE for the two forms jobs (default 10) and
+// CLICKUP_CALLS_PER_MINUTE for the others (default 30), never above 60
+// (run.ts writebackPerMinute, formsPerMinute). Each pace is one Edge Function
+// call's; the requests and forms jobs each open one run at a time (an
+// exclusive begin, run.ts BUSY_HELD; the forms kick posts none while one is
+// open), so their pace is also the whole job's, however many runs start in
+// the same minute. ClickUp Business allows 100 calls a minute for the one
+// token the Supabase functions and the VPS workers share
+// (docs/requests/CLICKUP-DOWNGRADE.md). Every provider call goes through
+// cockpit-media-api/tools.ts and lands in cockpit_media_provider_health. These
+// jobs keep their own retries (queue.ts), so they do not take the helper's 429
+// retry. Nothing here logs a key.
 
 import { providerTools } from "../cockpit-media-api/tools.ts";
-import { type Deps, redact, runDoctor, runDosDonts, runKpi, runLog, pacer } from "./run.ts";
+import {
+  type Deps,
+  formsPerMinute,
+  noJobNote,
+  pacer,
+  redact,
+  runDoctor,
+  runDosDonts,
+  runForms,
+  runBillingDoctor,
+  runFormsDoctor,
+  runKpi,
+  runLog,
+  runRequests,
+  runRequestsDoctor,
+  unknownJobNote,
+  writebackPerMinute,
+} from "./run.ts";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
-async function rest(base: string, key: string, path: string, body: unknown): Promise<any> {
+async function rest(base: string, key: string, path: string, body: unknown, prefer = "return=minimal"): Promise<any> {
   const res = await fetch(`${base}/rest/v1/${path}`, {
     method: "POST",
     headers: {
       apikey: key,
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
-      ...(path.startsWith("rpc/") ? {} : { Prefer: "return=minimal" }),
+      ...(path.startsWith("rpc/") ? {} : { Prefer: prefer }),
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(30_000),
@@ -63,8 +119,9 @@ Deno.serve(async (req: Request) => {
   try {
     job = String((await req.json())?.job ?? "");
   } catch {
-    return json({ ok: false, note: "Send a JSON body with a job: kpi, log, dosdonts or doctor." }, 400);
+    return json({ ok: false, note: noJobNote }, 400);
   }
+  const formsJob = job === "forms" || job === "forms_doctor";
   const deps: Deps = {
     env,
     rpc: (name, params = {}) => rest(url, service, `rpc/${name}`, params),
@@ -75,8 +132,12 @@ Deno.serve(async (req: Request) => {
       }),
     now: () => Date.now(),
     uuid: () => crypto.randomUUID(),
-    // ClickUp allows 100 calls a minute per token on Business plans; stay under it unless told otherwise.
-    pace: pacer(Math.min(1000, Math.max(10, Number(env("CLICKUP_CALLS_PER_MINUTE")) || 90))),
+    // ClickUp Business allows 100 calls a minute for the shared token; each job keeps to its own pace, 60 at most.
+    // This pacer is this call's; one requests run and one forms run send at a time (the forms kick posts none while
+    // one is open), so for those two it is the job's too. The forms jobs keep a low pace of their own (formsPerMinute).
+    pace: pacer(formsJob ? formsPerMinute(env) : writebackPerMinute(job, env)),
+    // One health row by key, merged on conflict (the tap-charges-sync pattern).
+    syncState: (key, row) => rest(url, service, "cockpit_sync_state?on_conflict=key", [{ key, ...row }], "resolution=merge-duplicates,return=minimal"),
   };
   try {
     const result =
@@ -84,8 +145,13 @@ Deno.serve(async (req: Request) => {
       : job === "log" ? await runLog(deps)
       : job === "dosdonts" ? await runDosDonts(deps)
       : job === "doctor" ? await runDoctor(deps)
+      : job === "requests" ? await runRequests(deps)
+      : job === "requests_doctor" ? await runRequestsDoctor(deps)
+      : job === "forms" ? await runForms(deps)
+      : job === "forms_doctor" ? await runFormsDoctor(deps)
+      : job === "billing_doctor" ? await runBillingDoctor(deps)
       : null;
-    if (!result) return json({ ok: false, note: `Unknown job "${job.slice(0, 40)}". Use kpi, log, dosdonts or doctor.` }, 400);
+    if (!result) return json({ ok: false, note: unknownJobNote(job) }, 400);
     console.log(`clickup-writeback ${job} ${result.ok ? "ok" : "FAILED"}: ${result.note}`);
     return json(result);
   } catch (e) {

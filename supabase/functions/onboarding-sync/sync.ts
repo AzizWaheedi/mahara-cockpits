@@ -18,10 +18,13 @@
 //    freshness in cockpit_sync_state under key 'onboarding-sync'.
 //
 // Every ClickUp and Typeform call goes through cockpit-csm-api/tools.ts, so it
-// lands in cockpit_csm_provider_health. Calls are spaced (ClickUp allows 100
-// a minute per token, Typeform 2 a second) and retried on 429 or 5xx while
-// time allows. A run starts no new card page after BUDGET_MS; the next run
-// continues from that page. This function reads providers and writes only the
+// lands in cockpit_csm_provider_health. Calls are spaced (ClickUp 2 s apart, 30
+// a minute: ClickUp Business allows 100 a minute for the one token the Supabase
+// functions and the VPS workers share, docs/requests/CLICKUP-DOWNGRADE.md;
+// Typeform under 2 a second) and retried on 429 or 5xx while time allows, so
+// the helper's own 429 retry is not taken. A run starts no new card page after
+// BUDGET_MS; the next run continues from that page. This function reads
+// providers and writes only the
 // cockpit database: it makes no provider writes.
 
 import {cardRow, formsFor, LIST_ID, newestByCard, optionsOf, type FormData, type OnboardingRow} from '../../../apps/client-success-cockpit/src/lib/onboardingCore.ts';
@@ -34,8 +37,8 @@ export const BUDGET_MS = 100_000;
 export const TYPEFORM_BUDGET_MS = 50_000;
 /** No call or retry starts after this (the Edge Function stops at 150 s). */
 export const HARD_MS = 115_000;
-/** At most about 86 ClickUp calls a minute from this run; ClickUp allows 100 per token. */
-export const CLICKUP_GAP_MS = 700;
+/** 30 ClickUp calls a minute from this run; ClickUp Business allows 100 for the token the VPS shares. */
+export const CLICKUP_GAP_MS = 2_000;
 /** Under Typeform's 2 calls a second. */
 export const TYPEFORM_GAP_MS = 600;
 /** 2,000 cards, as the Convex sync read. */

@@ -3,6 +3,7 @@ import type { LiveState } from "./channel";
 import { type L, type Lang, type SlideNotes, tf } from "./content";
 import type { DeckData, Overrides } from "./deckData";
 import type { KickoffShown } from "./kickoffStop";
+import type { OfferModel } from "./offer/useOffer";
 import type { DeckKind } from "./sources";
 import type { BpModel } from "./useBlueprint";
 import type { ControlItem } from "./VideoPlayer";
@@ -13,6 +14,7 @@ import type { ControlItem } from "./VideoPlayer";
  * lives here, at shell level, and survives a slide change or an L.
  */
 export interface SlideCtx {
+  offer?: OfferModel | null;
   d: DeckData;
   lang: Lang;
   deck: DeckKind;

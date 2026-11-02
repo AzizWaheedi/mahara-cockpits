@@ -16,6 +16,12 @@ import {
 export const NOTICE_NOW = "2026-10-22T10:30:00.000Z"; // 13:30 in Kuwait
 export const CSM_GENERAL = { id: "C09RZ0GS0V9", name: "csm-general" };
 export const MEDIA_GENERAL = { id: "C0AE8G5MT7Y", name: "media-general" };
+/** Invented: a private channel for the Call grade, and a public one it may not use (STAGE2B 5.4). */
+export const CALL_GRADES = { id: "C0EXAMPLE02", name: "call-grades" };
+export const TEAM_WINS = { id: "C0EXAMPLE03", name: "team-wins" };
+/** S0 (waves 1-2): the channel the four staff notices post in, checking until the CEO invites the bot (Q4). */
+export const CSM_ANNOUNCE = { id: "C09SNG5BP53", name: "csm-announcements" };
+export const NPS_FEEDBACK = { id: "C09TTGBRQ0G", name: "nps-survey-feedback" };
 
 let n = 0;
 export function noticeFixture(
@@ -121,11 +127,39 @@ export function noticeRead(
 const ago = (now: string, hours: number) =>
   new Date(Date.parse(now) - hours * 3_600_000).toISOString();
 
-/** The Notices and routing read, as an editor (or a viewer) would get it. */
+/**
+ * The Notices and routing read, as an editor (or a viewer) would get it.
+ * `lifecycle` adds waves 1-2's six rows and the two S0 channels, as
+ * 20261101l seeds them; the layout harness turns it on with `&lifecycle=1`
+ * in its address (the default read stays the ten rows the card's tests pin).
+ * `forms` adds waves 3-4's six client form rows as 20261102a seeds them
+ * (`&forms=1`), with #nps-survey-feedback still waiting for the bot (Q4).
+ * `money` adds waves 5-6's three rows as 20261102g seeds them, all off
+ * (`&money=1`; WAVE56 3.9).
+ */
 export function settingsReadFixture(
-  opts: { edit?: boolean; editors?: boolean; now?: string } = {},
+  opts: {
+    edit?: boolean;
+    editors?: boolean;
+    now?: string;
+    lifecycle?: boolean;
+    forms?: boolean;
+    money?: boolean;
+  } = {},
 ): SettingsRead {
   const now = opts.now ?? NOTICE_NOW;
+  const lifecycle =
+    opts.lifecycle ??
+    (typeof location !== "undefined" &&
+      new URLSearchParams(location.search).get("lifecycle") === "1");
+  const forms =
+    opts.forms ??
+    (typeof location !== "undefined" &&
+      new URLSearchParams(location.search).get("forms") === "1");
+  const money =
+    opts.money ??
+    (typeof location !== "undefined" &&
+      new URLSearchParams(location.search).get("money") === "1");
   const edit = opts.edit ?? true;
   const editors = opts.editors ?? edit;
   const migration = { updatedBy: "the migration", updatedAt: ago(now, 72) };
@@ -267,6 +301,133 @@ export function settingsReadFixture(
         ...migration,
         last: null,
       },
+      // The 1-1 notes' two rows, seeded on by the migration (STAGE2B 2.5, 5.4).
+      {
+        kind: "checkin.grade",
+        shape: "post",
+        on: true,
+        fixedOn: false,
+        channel: CALL_GRADES,
+        mentionRule: [],
+        mentionPeople: [],
+        tags: [],
+        ...migration,
+        last: null,
+      },
+      {
+        kind: "checkin.recap_late",
+        shape: "post",
+        on: true,
+        fixedOn: false,
+        channel: CSM_GENERAL,
+        mentionRule: [],
+        mentionPeople: [],
+        tags: [],
+        ...migration,
+        last: null,
+      },
+      // The client lifecycle's six, as 20261101l seeds them (WAVE12 3.4).
+      ...(lifecycle
+        ? [
+            {
+              kind: "termination.notice",
+              shape: "post" as const,
+              on: true,
+              fixedOn: false,
+              channel: CSM_GENERAL,
+              mentionRule: ["seat:csm"],
+              mentionPeople: [],
+              tags: [seat("seat:csm")],
+              ...migration,
+              last: null,
+            },
+            ...(
+              [
+                ["termination.submitted", false],
+                ["churn.confirmed", true],
+                ["extension.granted", true],
+                ["pause.agreed", true],
+                ["client.resumed", true],
+              ] as const
+            ).map(([kind, on]) => ({
+              kind,
+              shape: "post" as const,
+              on,
+              fixedOn: false,
+              channel: CSM_ANNOUNCE,
+              mentionRule: [],
+              mentionPeople: [],
+              tags: [],
+              ...migration,
+              last:
+                kind === "churn.confirmed"
+                  ? noticeFixture({
+                      kind,
+                      state: "failed",
+                      permalink: null,
+                      channel: CSM_ANNOUNCE,
+                      at: ago(now, 3),
+                      reason:
+                        "The channel for this notice is not ready (C09SNG5BP53). Choose one in Settings, Notices and routing.",
+                    })
+                  : null,
+            })),
+          ]
+        : []),
+      // The client's voice and forms, as 20261102a seeds them (WAVE34 3.4).
+      ...(forms
+        ? (
+            [
+              ["pause.consent", CSM_GENERAL, ["seat:csm"]],
+              ["nps.received", NPS_FEEDBACK, []],
+              ["csat.received", NPS_FEEDBACK, []],
+              ["voice.low", CSM_GENERAL, ["seat:csm"]],
+              ["feedback.received", CSM_GENERAL, ["seat:csm"]],
+              ["legacy.received", CSM_GENERAL, []],
+            ] as const
+          ).map(([kind, channel, rule]) => ({
+            kind,
+            shape: "post" as const,
+            on: true,
+            fixedOn: false,
+            channel,
+            mentionRule: [...rule],
+            mentionPeople: [],
+            tags: rule.map(r => seat(r)),
+            ...migration,
+            last:
+              kind === "pause.consent"
+                ? noticeFixture({
+                    kind,
+                    state: "posted",
+                    channel: CSM_GENERAL,
+                    at: ago(now, 2),
+                    reason: null,
+                  })
+                : null,
+          }))
+        : []),
+      // Wins and money, as 20261102g seeds them: off until each go-live (WAVE56 1.4).
+      ...(money
+        ? (
+            [
+              ["win.logged", CSM_ANNOUNCE],
+              ["receipt.in", CSM_GENERAL],
+              ["client.reactivated", CSM_ANNOUNCE],
+            ] as const
+          ).map(([kind, channel]) => ({
+            kind,
+            shape: "post" as const,
+            on: false,
+            fixedOn: false,
+            channel,
+            mentionRule: [],
+            mentionPeople: [],
+            tags: [],
+            ...migration,
+            last: null,
+          }))
+        : []),
     ],
     channels: [
       {
@@ -294,6 +455,42 @@ export function settingsReadFixture(
         checkedAt: ago(now, 1),
         inUse: false,
       },
+      {
+        ...CALL_GRADES,
+        private: true,
+        state: "ok",
+        note: "mahara-club-bot is in it.",
+        checkedAt: ago(now, 24),
+        inUse: true,
+      },
+      {
+        ...TEAM_WINS,
+        private: false,
+        state: "ok",
+        note: "mahara-club-bot is in it.",
+        checkedAt: ago(now, 24),
+        inUse: false,
+      },
+      ...(lifecycle || forms || money
+        ? [
+            {
+              ...CSM_ANNOUNCE,
+              private: false,
+              state: "checking" as const,
+              note: "The CEO invites the bot (Q4); until then notices here read Not posted.",
+              checkedAt: null,
+              inUse: true,
+            },
+            {
+              ...NPS_FEEDBACK,
+              private: false,
+              state: "checking" as const,
+              note: "The CEO invites the bot (Q4); until then notices here read Not posted.",
+              checkedAt: null,
+              inUse: false,
+            },
+          ]
+        : []),
     ],
     people: edit
       ? [
@@ -384,6 +581,11 @@ export function fakeNoticesIO(
         );
       const row = mem.notices.find(x => x.kind === kind);
       if (!row) return refuse(`There is no notice called ${kind}.`);
+      // Termination survey sent stays off while Make's post runs (WAVE12 W4), as settings_set refuses it.
+      if (kind === "termination.submitted" && patch.on === true && !row.on)
+        refuse(
+          "Termination survey sent stays off while the old Make post still runs in #csm-announcements. It turns on when that post is switched off.",
+        );
       if (patch.on !== undefined) {
         if (row.fixedOn)
           refuse(
@@ -391,6 +593,21 @@ export function fakeNoticesIO(
           );
         row.on = patch.on;
       }
+      // The Call grade's rules, as settings_set refuses them (STAGE2B 4.2).
+      if (
+        kind === "checkin.grade" &&
+        ((patch.mentionRule?.length ?? 0) > 0 ||
+          (patch.mentionPeople?.length ?? 0) > 0)
+      )
+        refuse("The call grade tags nobody.");
+      if (
+        kind === "checkin.grade" &&
+        patch.channel !== undefined &&
+        mem.channels.find(x => x.id === patch.channel)?.private !== true
+      )
+        refuse(
+          "The call grade posts only in a private channel. Choose one the cockpit has checked as private.",
+        );
       if (patch.channel !== undefined) {
         if (row.shape !== "post")
           refuse("Replies post in their first notice's thread.");
@@ -457,6 +674,10 @@ export function fakeNoticesIO(
       calls.push({ fn: "removeChannel", args: [id] });
       await pause();
       const user = mem.notices.find(x => x.channel?.id === id);
+      if (user?.kind === "checkin.grade")
+        refuse(
+          "The Call grade notice posts there. Choose another channel for it first.",
+        );
       if (user)
         refuse(
           `The ${user.kind} notice posts there. Choose another channel for it first.`,

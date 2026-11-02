@@ -15,7 +15,7 @@ import os
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from unittest.mock import MagicMock, patch
 
 import askai
@@ -23,11 +23,20 @@ import askai
 
 class TestAskAiWorker(unittest.TestCase):
     def setUp(self):
-        self.orig_env = dict(os.environ)
-
-    def tearDown(self):
-        os.environ.clear()
-        os.environ.update(self.orig_env)
+        # The real worker also reads the VPS key file. Keep both credential
+        # sources isolated so missing-config tests stay offline on that host.
+        fixtures = ExitStack()
+        self.addCleanup(fixtures.close)
+        fixtures.enter_context(patch.dict(os.environ, {}, clear=True))
+        keys_dir = fixtures.enter_context(tempfile.TemporaryDirectory())
+        fixtures.enter_context(patch.object(askai, "KEYS", os.path.join(keys_dir, "missing.env")))
+        outbound = fixtures.enter_context(patch(
+            "askai.urllib.request.urlopen",
+            side_effect=AssertionError("Offline Ask AI tests cannot make HTTP requests"),
+        ))
+        # call() catches transport exceptions, so also fail if it swallowed the
+        # guard. unittest still closes fixtures if this or the test body fails.
+        self.addCleanup(outbound.assert_not_called)
 
     def test_doctor_checks_config_without_exposing_secrets(self):
         secret_key = "super-secret-service-role-key-998877"

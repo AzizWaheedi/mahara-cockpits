@@ -523,6 +523,24 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
   switch (b.action) {
     case "script.save":
       return await scriptSave(b, now, signal);
+    case "call.outcome": {
+      // After the call: the answers land on the row every list reads.
+      const row = F.APPOINTMENTS.find(
+        a => a.appointment_id === String(b.appointment_id ?? ""),
+      );
+      if (!row) throw new Refusal("That call is not in the cockpit.", 404);
+      if (b.lead_quality !== undefined) {
+        row.lead_quality = Number(b.lead_quality);
+        row.quality_by = F.ME.email;
+        row.quality_role = F.ME.role;
+      }
+      if (b.no_demo_reason !== undefined) {
+        row.no_demo_reason = b.no_demo_reason;
+        row.no_demo_note =
+          b.no_demo_reason === "other" ? (b.no_demo_note ?? null) : null;
+      }
+      return { outcome: { ...row } };
+    }
     case "mark": {
       // The mark lands on the calendar row the lead page reads.
       const row = F.APPOINTMENTS.find(
@@ -783,8 +801,46 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
       return (await import("./pipelineFake")).pipelineBoardFake(b);
     case "pipeline.move":
       return (await import("./pipelineFake")).pipelineMoveFake(b);
-    case "convo.read":
-      return F.conversation(String(b.contact_id), now);
+    case "convo.read": {
+      const base = F.conversation(String(b.contact_id), now);
+      const { dmConversation, copiedMessages } = await import("./inboxFake");
+      const copies = copiedMessages(now).filter(
+        m => m.contact_id === b.contact_id,
+      );
+      return dmConversation(
+        String(b.contact_id),
+        {
+          ...base,
+          thread: [...(base.thread as Row[]), ...copies],
+        },
+        now,
+      );
+    }
+    case "inbox.seen":
+      return { conversation_id: b.conversation_id, unread: 0 };
+    case "invoice.request":
+      return {
+        invoice: {
+          id: crypto.randomUUID(),
+          status: "queued",
+          ...(b.args as Row),
+        },
+      };
+    case "invoice.change":
+      return {
+        invoice: {
+          id: b.id,
+          status: b.change === "cancel" ? "cancelled" : "queued",
+        },
+      };
+    case "inbox.done":
+      return {
+        conversation_id: b.conversation_id,
+        cleared: b.undo !== true,
+        needs_reply: b.undo === true,
+      };
+    case "inbox.assign":
+      return { contact_id: b.contact_id, assigned_to: b.user_id ?? null };
     case "convo.send":
       return {
         message: {
@@ -1108,6 +1164,12 @@ async function main() {
 
   const tables: Record<string, Row[]> = {
     cockpit_sales_leads: F.LEADS,
+    cockpit_invoices: (await import("./invoiceFake")).INVOICES,
+    cockpit_billing_accounts: (await import("./invoiceFake")).BILLING,
+    cockpit_invoice_desk_status: (await import("./invoiceFake")).DESK,
+    cockpit_sales_conversation_messages: (
+      await import("./inboxFake")
+    ).copiedMessages(Date.now()),
     cockpit_sales_calendar: F.APPOINTMENTS,
     cockpit_sales_dials: [...F.DIALS, ...F.HOT_DIALS],
     cockpit_sales_deals: F.DEALS,
@@ -1209,6 +1271,27 @@ async function main() {
       });
     const path = url.pathname;
     if (path.endsWith("/rpc/cockpit_sales_whoami")) return json(F.ME);
+    if (path.endsWith("/rpc/cockpit_sales_funnel")) return json(F.FUNNEL);
+    if (path.endsWith("/rpc/cockpit_invoice_payments"))
+      return json(
+        (await import("./invoiceFake")).payments(
+          (JSON.parse(String(init?.body ?? "{}")).p_ids ?? []) as string[],
+        ),
+      );
+    if (path.endsWith("/rpc/cockpit_sales_conversations_list"))
+      return json(
+        (await import("./inboxFake")).inboxList(
+          JSON.parse(String(init?.body ?? "{}")),
+          Date.now(),
+        ),
+      );
+    if (path.endsWith("/rpc/cockpit_sales_conversations_counts"))
+      return json(
+        (await import("./inboxFake")).inboxCounts(
+          JSON.parse(String(init?.body ?? "{}")),
+          Date.now(),
+        ),
+      );
     if (path.startsWith("/functions/v1/sales-api")) {
       // The failure knobs: the server gone, a garbled yes, a lapsed sign-in.
       if (

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { buildSteps, classify, executeItem, planItem, type Provider, type QueueItem, type Step } from "./queue";
-import { DEPARTMENT_LIST, FIELD, refLine, TECH_FIELD } from "./rules";
+import { billingAllStale, buildSteps, classify, executeItem, planItem, type Provider, type QueueItem, type Step } from "./queue";
+import { CLIENTS_LIST, DEPARTMENT_LIST, FIELD, refLine, TECH_FIELD } from "./rules";
 
 type Call = { provider: string; method: string; path: string; body?: any };
 /** A provider that answers by route and records every call. A throw stands for a provider failure. */
@@ -186,5 +186,65 @@ describe("delivery without duplicate comments", () => {
       { queueId: item({}).id, kind: "manual_change", taskId: "t1", field: "comment", old: null, new: "🎯 Cockpit · CHANGE MADE — x\n\nCockpit ref abc" },
       { queueId: item({}).id, kind: "manual_change", taskId: "t1", field: "Ad Status", fieldId: FIELD.adStatus, old: "Paused", new: "Live", note: "Meta says ACTIVE." },
     ]);
+  });
+});
+
+// --- billing items of waves 1-2 (20261101m; contract 4.1 step 4) ------------------------------------------
+
+describe("billing items: the checkbox format, a resumed step read back, the item's own comment", () => {
+  const CHECKBOX = "9cfdb353-aaaa-4bbb-8ccc-dddddddddddd";
+  const RESUME_ON = "d3c46259-3017-4429-a52a-c609a40f348b";
+  const fields = async () => [{ id: CHECKBOX, type: "checkbox" }, { id: RESUME_ON, type: "date" }];
+  const billing = (payload: Record<string, unknown>, over: Partial<QueueItem> = {}) =>
+    item({ kind: "billing", payload: { taskId: "task_a", by: "sara@tests.invalid", at: NOW - 60_000, ...payload }, ...over });
+  const cardWith = (values: Record<string, unknown>, updated = NOW - 86_400_000) => ({
+    id: "task_a",
+    list: { id: CLIENTS_LIST },
+    date_updated: String(updated),
+    custom_fields: Object.entries(values).map(([id, value]) => ({ id, value })),
+  });
+  const built = (i: QueueItem) => {
+    const b = buildSteps(i, [], NOW);
+    if (!("steps" in b)) throw new Error(b.skip);
+    return b.steps;
+  };
+
+  it("a checkbox step carries true or false as text and resolves its field on the run", async () => {
+    const one = billing({ writes: [{ field: "willNotContinue", value: false }] });
+    expect(built(one)).toEqual([
+      { key: "willNotContinue", type: "billing_field", taskId: "task_a", fieldId: "9cfdb353", field: "Will not continue if billed on schedule", format: "checkbox", value: "false", byPrefix: true, at: NOW - 60_000 },
+    ]);
+    const p = fakeProvider(c => (c.method === "GET" ? cardWith({ [CHECKBOX]: "true" }) : {}));
+    expect((await executeItem(one, built(one), p, async () => {}, boardFields, fields)).progress.willNotContinue).toEqual({ done: true, written: true, from: "true", to: "false" });
+    expect(writes(p.calls)).toEqual([{ provider: "clickup", method: "POST", path: `task/task_a/field/${CHECKBOX}`, body: { value: false } }]);
+    // The dry-run plan names the field it resolved.
+    const plan = await planItem(one, built(one), fakeProvider(() => cardWith({ [CHECKBOX]: "true" })), boardFields, fields);
+    expect(plan).toEqual([{ queueId: one.id, kind: "billing", taskId: "task_a", field: "Will not continue if billed on schedule", fieldId: CHECKBOX, old: "true", new: "false" }]);
+  });
+
+  it("a step that started and never finished is read back: the card already shows it, so it is not written twice", async () => {
+    const one = billing({ writes: [{ field: "resumeOn", value: "2026-11-10" }] });
+    const p = fakeProvider(() => cardWith({ [RESUME_ON]: String(Date.parse("2026-11-10T09:00:00Z")) }, NOW - 1000));
+    const out = await executeItem({ ...one, attempts: 2, progress: { resumeOn: { started: true } } }, built(one), p, async () => {}, boardFields, fields);
+    expect(out.state).toBe("delivered");
+    expect(writes(p.calls)).toEqual([]);
+    expect(out.progress.resumeOn).toMatchObject({ unchanged: true, current: "2026-11-10" });
+  });
+
+  it("a note and an event comment on one item carry different reference lines, so a retry finds each", () => {
+    const both = built(billing({ writes: [], note: "Called", comment: "RESUMED 2026-11-10" }));
+    expect(both.map(s => [s.key, (s as any).text.split("\n").pop()])).toEqual([
+      ["comment", refLine(item({}).id)],
+      ["billing_comment", refLine(item({}).id, "c")],
+    ]);
+  });
+
+  it("all stale means every field kept by ClickUp or missing, at least one kept; a note-only item never is", () => {
+    const s = (key: string): Step => ({ key, type: "billing_field", taskId: "t", fieldId: "f", field: "F", format: "date", value: "2026-11-01", at: 0 });
+    const c: Step = { key: "billing_comment", type: "comment", taskId: "t", text: "x" };
+    expect(billingAllStale([s("a"), s("b"), c], { a: { stale: true }, b: { missing: true } })).toBe(true);
+    expect(billingAllStale([s("a"), s("b")], { a: { stale: true }, b: { written: true } })).toBe(false);
+    expect(billingAllStale([s("a")], { a: { missing: true } })).toBe(false);
+    expect(billingAllStale([c], {})).toBe(false);
   });
 });

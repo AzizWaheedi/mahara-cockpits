@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { BookCallButton, MainContact } from "@/components/ClientCheckIn";
 import { Chip, Dot, ExtLink, Kicker, type Tone } from "@/components/kit";
+import { OnboardingGuides } from "@/components/OnboardingGuides";
 import { PortalTasksButton } from "@/components/PortalTasks";
 import { Button } from "@/components/ui/button";
 import {
@@ -297,9 +298,7 @@ function NoticeLine({
         {stop.href ? (
           <>
             {" "}
-            <ExtLink href={stop.href} className="text-primary-ink">
-              Open in Slack
-            </ExtLink>
+            <ExtLink href={stop.href}>Open in Slack</ExtLink>
           </>
         ) : null}
       </span>
@@ -600,6 +599,7 @@ export function OnboardingKit({
         </div>
       ) : null}
 
+      <OnboardingGuides />
       <div className="@container">
         <div className="grid gap-3 @3xl:grid-cols-3">
           <StepPanel title="Before the call" state={stateOf("before")}>

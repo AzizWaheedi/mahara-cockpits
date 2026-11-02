@@ -143,6 +143,8 @@ export async function runLever(
       if (error) throw Error("Could not save the ClickUp receipt; nothing more was sent.");
     },
     request,
+    // A person is waiting: one more try after ClickUp's 429 (_shared/clickupRetry.ts).
+    { retry429: true },
   );
   const args = {
     kind: "ticket",

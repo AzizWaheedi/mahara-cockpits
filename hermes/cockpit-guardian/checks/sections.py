@@ -20,7 +20,7 @@ from .claude_proxy import signed_out_text
 
 SECTION_LIMIT_MIN = 45
 EXPECTED_SECTIONS = 14
-# Jobs that run only in set UTC hours (pg_cron '5 3-18 * * *' and '35 3-18 * * *'): their lateness counts the
+# Jobs that run only in set UTC hours (pg_cron '23 3-18 * * *' (20261029q) and '35 3-18 * * *'): their lateness counts the
 # minutes inside those hours, so the night with no run is not "late" (19, 20 and 21 Oct 2026, 22:25-07:35 Kuwait).
 SCHEDULED_HOURS_UTC = {"clickup-writeback:kpi": (3, 19), "clickup-writeback:dosdonts": (3, 19)}
 
@@ -117,6 +117,14 @@ def run_jobs(ctx: Context) -> Result:
         "csm-reconcile": 26 * 60,
         # Facebook leads vs CRM, every 15 min (hermes/lead-sync-watch).
         "lead-sync-watch": 45,
+        # The requests writer reports every minute; the task mirror every 2 minutes and its seats read hourly
+        # (20261026r, 20261026t, docs/requests/CONTRACT.md section 7).
+        "clickup-writeback:requests": 10, "task-mirror:delta": 10, "task-mirror:seats": 90,
+        # The 1-1 notes machinery, dark until the cut-over and still reporting (docs/forms/STAGE2B-CONTRACT.md 3.11). An
+        # idle forms writer reports every ten minutes, so 10 would read a healthy one as late: 15, where its own mode
+        # function reads unknown (20261029t). The dispatch kick rides the notices kick, every minute. This copy lands at
+        # deploy D15, after D5, D8 and D13 write these rows.
+        "clickup-writeback:forms": 15, "forms-effects-kick": 10, "csm-forms-record": 45,
     }
     rows = {r.get("key"): r for r in ctx.rows("cockpit_sync_state", "key,ok,note,last_ok_at", where=[("key", "in", list(keys))])}
     bad = []

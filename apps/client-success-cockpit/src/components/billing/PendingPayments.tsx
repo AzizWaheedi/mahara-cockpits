@@ -20,6 +20,7 @@ import {
   dayText,
   type Figure,
   type Hint,
+  nextDateLine,
   type Part,
   type PendingRow,
   type PendingView,
@@ -64,9 +65,11 @@ import {
  *   lines: name and amount; part and due; the full-width ribbon.
  * - Signature: the contract ribbon. One 6px bar per client cut at the
  *   plan's real parts in proportion to their dollars, 2px gaps between
- *   parts, a 1px tick before the part due next. Teal for rail money, teal
- *   hatch for a confirmation, red for due and not seen, orange hatch for
- *   another source, a quiet track for not due.
+ *   parts, a 1px tick before the part due next. Teal for rail money, amber
+ *   with fine upright ticks for a receipt logged by hand that nobody has
+ *   checked against the bank (20261101n: "Receipt in, not checked", never
+ *   "Paid"), teal hatch for a confirmation, red for due and not seen,
+ *   orange hatch for another source, a quiet track for not due.
  * - Against the template. Not one percentage bar, not a red "Overdue" pill,
  *   not "Mark as paid": the bar is cut at the plan's parts, a person's word
  *   and another source each get a hatch, and the button is Confirm paid,
@@ -91,6 +94,10 @@ export type ConfirmInput = {
   paidOn: string;
   evidenceUrl: string | null;
   note: string | null;
+  /** Waves 5-6 (4.6.5): the part's due day and the next later part, for the next-date rule. */
+  dueOn?: string | null;
+  nextPartNo?: number | null;
+  nextDueOn?: string | null;
 };
 
 export type PendingApi = {
@@ -123,6 +130,33 @@ export type PendingApi = {
   }) => Promise<string>;
   /** CEO cockpit only: count a payment left out of program money again. */
   unexclude?: (p: { paymentId: string; reason: string }) => Promise<string>;
+  /**
+   * Waves 5-6 (WAVE56-CONTRACT.md 4.10.5, 5.6): ask the client for a part's
+   * bank transfer receipt (the Send panel on the bank receipt, origin
+   * billing). `outSince` names the day an open request went out, so the
+   * button waits. Absent where the receipt form is not live.
+   */
+  receipts?: {
+    ask: (p: ReceiptAsk) => void;
+    outSince: (taskId: string) => string | null;
+  };
+};
+
+/** One part's receipt request: its invite context (3.6). */
+export type ReceiptAsk = {
+  taskId: string;
+  name: string;
+  part: "deposit" | "onboarding" | "later" | "all";
+  partNo: number;
+  /**
+   * The amount due in the client's own currency, or null with no currency
+   * when that is not known: a plan's parts are in dollars, and a client who
+   * pays by transfer in dinars must never be shown a dollar figure (5.6).
+   */
+  expectedAmount: number | null;
+  currency: "USD" | "KWD" | null;
+  dueOn: string | null;
+  dealResponseId: string | null;
 };
 
 /**
@@ -162,10 +196,14 @@ const TONE: Record<Tone, string> = {
 
 const hatch = (token: string) =>
   `repeating-linear-gradient(135deg, ${token} 0 1.5px, transparent 1.5px 4px), color-mix(in srgb, ${token} 22%, transparent)`;
+/** Near solid, cut by fine upright ticks: money that arrived on paper, not yet on the bank. Reads apart from the hatches in grey too. */
+const ticks = (token: string) =>
+  `repeating-linear-gradient(90deg, ${token} 0 3px, color-mix(in srgb, ${token} 45%, transparent) 3px 4px)`;
 
 /** The ribbon's fills, by name only: the roles live in the sheet's STYLE block. */
 const FILL: Record<RibbonState, string> = {
   rails: "var(--b-rail, var(--primary))",
+  logged: ticks("var(--b-logged, var(--b-warning, var(--warning)))"),
   person: hatch("var(--b-person, var(--primary))"),
   notSeen: "var(--b-due, var(--destructive))",
   another: hatch("var(--b-another, var(--warning))"),
@@ -273,10 +311,19 @@ function Field({
 function ribbonLabel(r: PendingRow, today: string): string {
   const head = `On a rail ${usdText(r.railsUsd)} of ${usdText(r.contractUsd)}.`;
   const parts = r.parts
-    .filter(p => p.notSeen > 0 || p.another > 0 || p.person > 0 || p.next)
+    .filter(
+      p =>
+        p.notSeen > 0 ||
+        p.another > 0 ||
+        p.logged > 0 ||
+        p.person > 0 ||
+        p.next,
+    )
     .map(p => {
       const bits: string[] = [];
       if (p.notSeen > 0) bits.push(`${usdText(p.notSeen)} not seen`);
+      if (p.logged > 0)
+        bits.push(`${usdText(p.logged)} receipt in, not checked`);
       if (p.another > 0)
         bits.push(`${usdText(p.another)} another source says paid`);
       if (p.person > 0) bits.push(`${usdText(p.person)} confirmed by a person`);
@@ -483,6 +530,13 @@ function Figures({ view }: { view: PendingView }) {
           title="Another source says paid"
           figure={f.another}
         />
+        {f.logged.count > 0 ? (
+          <FigureItem
+            state="logged"
+            title="Receipt in, not checked"
+            figure={f.logged}
+          />
+        ) : null}
         <FigureItem
           state="person"
           title="Confirmed by a person"
@@ -618,6 +672,9 @@ function ConfirmForm({
         paidOn: day,
         evidenceUrl: link || null,
         note: note.trim() || null,
+        dueOn: part.dueOn ?? null,
+        nextPartNo: part.nextPartNo ?? null,
+        nextDueOn: part.nextDueOn ?? null,
       });
       onDone(sentence);
     } catch (e) {
@@ -829,6 +886,11 @@ function ConfirmForm({
             Your word, not money: it holds the part until {railWord(rail)} shows
             the payment, and never counts toward cash, LTV or pay.
           </p>
+          {nextDateLine(part, today) ? (
+            <p className="text-xs" data-next-date>
+              {nextDateLine(part, today)}
+            </p>
+          ) : null}
           <div>
             <Button size="sm" disabled={busy || !ready} onClick={confirm}>
               {busy ? <Loader2 className={spin} aria-hidden /> : null}
@@ -1082,6 +1144,12 @@ function partWords(p: Part): string {
   const bits: string[] = [];
   if (p.rails > 0)
     bits.push(p.rails >= p.usd ? "on a rail" : `${usdText(p.rails)} on a rail`);
+  if (p.logged > 0)
+    bits.push(
+      p.logged >= p.usd
+        ? "receipt in, not checked"
+        : `${usdText(p.logged)} receipt in, not checked`,
+    );
   if (p.person > 0) bits.push(`${usdText(p.person)} confirmed by a person`);
   if (p.notSeen > 0)
     bits.push(
@@ -1099,6 +1167,7 @@ function partWords(p: Part): string {
 function partState(p: Part): RibbonState {
   if (p.notSeen > 0) return "notSeen";
   if (p.another > 0) return "another";
+  if (p.logged > 0) return "logged";
   if (p.person > 0) return "person";
   if (p.rails > 0 && p.notDue === 0) return "rails";
   return p.rails > 0 ? "rails" : "notDue";
@@ -1111,7 +1180,16 @@ function lateWords(p: Part): string {
   return ` · in ${plural(-p.daysLate, "day")}`;
 }
 
-function Parts({ row, today }: { row: PendingRow; today: string }) {
+function Parts({
+  row,
+  today,
+  receipts,
+}: {
+  row: PendingRow;
+  today: string;
+  receipts?: PendingApi["receipts"];
+}) {
+  const out = receipts ? receipts.outSince(row.taskId) : null;
   // Amounts nobody can work out are never drawn as parts (missing is never zero).
   if (!row.parts.length || !row.amountsKnown) return null;
   return (
@@ -1145,6 +1223,39 @@ function Parts({ row, today }: { row: PendingRow; today: string }) {
                   {s}
                 </span>
               ))}
+              {receipts && p.notSeen + p.notDue + p.another > 0 ? (
+                out ? (
+                  <span
+                    className="block pt-1 text-xs text-muted-foreground"
+                    data-receipt-out
+                  >
+                    A receipt request is already out, sent{" "}
+                    {dayText(out.slice(0, 10), today)}.
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    data-ask-receipt={p.key}
+                    className="mt-1 inline-flex rounded-sm text-xs font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    onClick={() =>
+                      receipts.ask({
+                        taskId: row.taskId,
+                        name: row.name,
+                        part: p.kind,
+                        partNo: p.kind === "later" ? p.no : 0,
+                        // A plan's parts are in dollars; the client's billing currency is not
+                        // on record, so the form asks for the amount and currency itself.
+                        expectedAmount: null,
+                        currency: null,
+                        dueOn: p.due,
+                        dealResponseId: row.deal?.responseId ?? null,
+                      })
+                    }
+                  >
+                    Ask for the receipt
+                  </button>
+                )
+              ) : null}
             </span>
             <span className="tabular-nums">{usdText(p.usd)}</span>
           </li>
@@ -1638,7 +1749,7 @@ function RowPanel({
       className="grid gap-5 border-t bg-muted/30 px-4 py-4 @2xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] @2xl:gap-8 @3xl:px-6"
     >
       <div className="grid min-w-0 content-start gap-5">
-        <Parts row={row} today={view.today} />
+        <Parts row={row} today={view.today} receipts={api.receipts} />
         {row.cardOnly ? (
           <CardOnlyPay
             row={row}

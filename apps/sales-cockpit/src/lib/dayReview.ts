@@ -1,3 +1,4 @@
+import { outcomeMissing } from "./afterCall";
 import type { CalendarRow } from "./types";
 export interface DayReview {
   calls: CalendarRow[];
@@ -5,9 +6,12 @@ export interface DayReview {
   version: string;
   linked: boolean;
 }
+/** An outcome, and for a held intro or demo the after-call answers (sales-api dayReview.ts). */
 export function reviewed(row: CalendarRow): boolean {
-  return ["showed", "completed", "noshow", "cancelled", "invalid"].includes(
-    String(row.marked_status ?? row.status),
+  return (
+    ["showed", "completed", "noshow", "cancelled", "invalid"].includes(
+      String(row.marked_status ?? row.status),
+    ) && !outcomeMissing(row)
   );
 }
 export interface EodDraft {

@@ -78,6 +78,9 @@ The brand itself is Mahara Media Brand Guidelines v1.0.
 - Filters, tabs and segmented controls: 32px pills; the active one is teal
   (`bg-primary/15 ring-1 ring-inset ring-primary/40`), never a white fill.
   A row that can overflow scrolls sideways on a phone; zero-count chips hide.
+- Required radio pills in a form (the 1-1 notes window's DEFCON and Priority) depart from the filter pill on purpose: the chosen pill carries a Check icon, semibold text and a 2px inset --primary-ink ring on bg-primary/15 (4.6:1 on the light page); an unchosen one a 1px inset --border ring; focus is a separate 2px ring set 2px outside the pill, so a focused pill never reads as chosen. Filters and tabs keep the rule above.
+- Focus: every control shows a 2px --ring ring set 2px off it on the page colour. --ring is the ink teal #00807B on the light page and Mahara Teal on dark, 3:1 or more on every surface; never a 1px teal ring. Client success follows this now; the other cockpits move to it on their next pass.
+- External links (ExtLink) are the ink teal mixed 90% with the text colour, 4.5:1 or more on cards, panels and hover in both themes. Overlays (popover, sheet, menus, tooltips) do not animate under reduced motion.
 - Buttons: ui/button (teal default, outline, ghost, white, teal outline); one
   teal primary per view.
 - Touch: 40px targets inside `<main>` come from the coarse-pointer rule in

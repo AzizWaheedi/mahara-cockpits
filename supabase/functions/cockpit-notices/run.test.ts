@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { DOCTOR_NO_TOKEN, runDoctor } from "./doctor";
 import { CLAIM_LIMIT, JobError, OUT_OF_TIME, runDryRun, runNotices, runRehearse } from "./run";
-import { BAD_TOKEN, NO_SLACK_ID, NO_TOKEN, REPLY_RECHECK_SEC, UNKNOWN, WAITING, WAITING_CARD, WAITING_REPLY, WRONG_BOT } from "./send";
+import { BAD_TOKEN, NO_GRADE, NO_SLACK_ID, NO_TOKEN, REPLY_RECHECK_SEC, UNKNOWN, WAITING, WAITING_CARD, WAITING_REPLY, wantedMentions, WRONG_BOT } from "./send";
+import { CRITERIA } from "./text";
 import {
-  BOT_USER, claimed, CREATIVE, CSM, CSM_GENERAL, deps, FakeClickUp, FakeSlack, fakeRpc, ID, MEDIA_GENERAL, mention, minutesAgo, NOW, receiptsRecorder, ref, SYSTEMS,
+  BOT_USER, claimed, clientFormRow, CREATIVE, moneyRow, CSM, CSM_ANNOUNCE, CSM_GENERAL, deps, FakeClickUp, FakeSlack, fakeRpc, ID, lifecycleRow, MEDIA_GENERAL, NPS_FEEDBACK, mention, minutesAgo, NOW,
+  receiptsRecorder, ref, SYSTEMS,
 } from "./testkit";
 
 // A fake Slack, ClickUp and database stand in for the real ones; the real door code, sender, text and
@@ -694,4 +696,403 @@ test("the clock the tests use is a Sunday afternoon in Kuwait", () => {
   expect(NOW.toISOString()).toBe("2026-10-25T11:30:00.000Z");
   expect(new FakeClickUp().comments.size).toBe(0);
   expect(receiptsRecorder().rows).toEqual([]);
+});
+
+describe("the 1-1 notes notices (docs/forms/STAGE2B-CONTRACT.md 4.2)", () => {
+  const FEEDBACK = "C09SVG6FHGU";
+  const grade = {
+    criteria: CRITERIA.map((name, i) => ({ name, score: 5 + (i % 5), note: `Invented note on ${name}.` })),
+    overall: "INVENTED-OVERALL: a calm call with one clear next step.",
+    color: "Orange",
+    score: 6.8,
+    draftId: "00000000-0000-4000-8000-0000000000d7",
+  };
+  const gradeRow = (over: Record<string, unknown> = {}) =>
+    claimed({
+      kind: "checkin.grade",
+      target: FEEDBACK,
+      facts: { responseId: ID(30), recordingId: "900000777", draftId: grade.draftId, taskId: "task0001", effectId: ID(31), client: "Acme Interiors", submittedAt: minutesAgo(10) },
+      live: { grade, takenByRole: "the CSM", callAt: minutesAgo(70), shareUrl: "https://fathom.video/share/invented-call", recordingShown: true },
+      // Whatever the settings row says, the grade tags nobody.
+      mentions: { main: [CSM, SYSTEMS] },
+      ...over,
+    });
+
+  test("the call grade posts once to its private channel with the stored grade, tags nobody, and keeps no grade words in the outbox", async () => {
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(gradeRow()) }) });
+    kit.slack.channels.set(FEEDBACK, { name: "client-call-feedback", is_private: true, is_member: true });
+    const result = await runNotices(kit.deps);
+    expect(result).toMatchObject({ ok: true, claimed: 1, posted: 1, failed: 0 });
+    const posts = kit.slack.posts();
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body).toMatchObject({ channel: FEEDBACK, text: `Call grade: Acme Interiors, 6.8/10, Orange. Ref ${ref(ID(1))}` });
+    const blocks = JSON.stringify(posts[0].body?.blocks);
+    expect(blocks).toContain("*Call grade: Acme Interiors*");
+    expect(blocks).toContain("INVENTED-OVERALL");
+    expect(blocks).toContain("*Creating Urgency* 6/10. Invented note on Creating Urgency.");
+    expect(blocks).toContain("<https://fathom.video/share/invented-call|Watch the recording>");
+    expect(`${posts[0].body?.text}${blocks}`).not.toContain("<@");
+    // No ClickUp read, and no tag warning row: nobody was wanted.
+    expect(kit.net.calls.some(c => c.url.host === "api.clickup.com")).toBe(false);
+    expect(kit.receipts.rows.filter(r => r.resource === "notices/mentions")).toEqual([]);
+    const r = lastResult(kit);
+    expect(r).toMatchObject({ p_outcome: "posted", p_channel: FEEDBACK });
+    const d = detailOf(r);
+    expect(d.variant).toBe("grade");
+    expect(d.text).toBe(posts[0].body?.text);
+    expect(d.blocks).toBeUndefined();
+    expect(JSON.stringify(r)).not.toContain("INVENTED-OVERALL");
+  });
+
+  test("a grade row with no stored grade fails with the sentence and calls no Slack post", async () => {
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(gradeRow({ live: { takenByRole: "the CSM", recordingShown: true } })) }) });
+    await runNotices(kit.deps);
+    expect(lastResult(kit)).toMatchObject({ p_outcome: "failed", p_error: NO_GRADE });
+    expect(kit.slack.posts()).toHaveLength(0);
+  });
+
+  test("the recap reminder posts its late wording with the Messages link and the row's tags", async () => {
+    const row = claimed({
+      kind: "checkin.recap_late",
+      facts: { taskId: "task0001", client: "Acme Interiors", responseId: ID(40), callAt: "2026-10-24T09:00:00Z", dueAt: minutesAgo(5) },
+      live: { recap: { effectState: "queued", messageState: "draft" } },
+      mentions: { main: [CSM] },
+    });
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(row) }) });
+    await runNotices(kit.deps);
+    const posts = kit.slack.posts();
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body).toMatchObject({ channel: CSM_GENERAL, text: `Recap not sent: Acme Interiors, call Sat 24 Oct. Open in the cockpit. Ref ${ref(ID(1))}` });
+    const blocks = JSON.stringify(posts[0].body?.blocks);
+    expect(blocks).toContain("The recap for the call on Sat 24 Oct is still waiting in the cockpit. <@U0C5JHUCTPG>");
+    expect(blocks).toContain("https://cockpit.maharamedia.com/client-success/clients/task0001?tab=overview#messages|Open in the cockpit");
+    const d = detailOf(lastResult(kit));
+    expect(d.variant).toBe("late");
+    expect(blocksText(d)).toContain("Recap not sent");
+  });
+
+  test("one tag choice for the post and its dry run: the grade tags nobody, the reminder its row's main list, a late kickoff its late list", () => {
+    const m = { main: [CSM], late: [SYSTEMS], second: [CREATIVE] };
+    expect(wantedMentions("checkin.grade", "grade", m, true)).toEqual([]);
+    expect(wantedMentions("checkin.grade", "grade", [CSM, SYSTEMS], false)).toEqual([]);
+    // The reminder's only variant is "late", but its tags are never the late kickoff's list.
+    expect(wantedMentions("checkin.recap_late", "late", m, false)).toEqual([CSM]);
+    expect(wantedMentions("checkin.recap_late", "late", { main: [CSM], late: [] }, false)).toEqual([CSM]);
+    expect(wantedMentions("kickoff", "late", m, false)).toEqual([SYSTEMS]);
+    expect(wantedMentions("kickoff", "late", m, true)).toEqual([SYSTEMS, CREATIVE]);
+    expect(wantedMentions("kickoff", "complete", m, false)).toEqual([CSM]);
+    expect(wantedMentions("blueprint.close", "done", m, true)).toEqual([CSM]);
+  });
+
+  test("a test of the call grade goes to a person, tags nobody, names nobody, and leaves the recording link out", async () => {
+    const row = claimed({
+      kind: "rehearsal", taskId: null, clientName: null, target: "U0TESTER001",
+      facts: { of: "checkin.grade", variant: null, sample: true, requestedBy: "cron" },
+      live: {}, mentions: { main: [] }, rehearsal: { of: "checkin.grade", lookupEmail: null },
+    });
+    const settings = { cockpit_slack_notice_doctor_inputs: () => ({ channels: [], settings: [{ kind: "checkin.grade", enabled: true, channel: FEEDBACK, mentions: [CSM] }] }) };
+    const kit = deps({ rpc: fakeRpc({ ...settings, cockpit_slack_notice_claim: claimOnce(row) }) });
+    await runNotices(kit.deps);
+    const d = detailOf(lastResult(kit));
+    expect(lastResult(kit)).toMatchObject({ p_outcome: "posted", p_channel: "D0TESTDM001" });
+    expect(String(d.text)).toStartWith("[Rehearsal] Call grade: Sample client, 7.5/10, Green.");
+    const posted = JSON.stringify(kit.slack.posts()[0].body?.blocks);
+    expect(posted).toContain("Links are left out of a test.");
+    expect(posted).not.toContain("https://");
+    expect(posted).not.toContain("would tag");
+    expect(posted).not.toContain("<@");
+  });
+
+  test("a dry run of the recap reminder tags the people the real post tags (a preview is the post)", async () => {
+    const mentions = { main: [CSM], late: [SYSTEMS], second: [CREATIVE] };
+    const facts = { client: "Acme Interiors", callAt: "2026-10-24T09:00:00Z", dueAt: minutesAgo(60), taskId: "task0001", responseId: ID(30) };
+    const live = { recap: { effectState: "queued", messageState: "draft" } };
+    const rpc = fakeRpc({
+      cockpit_slack_notice_inputs: () => ({
+        kind: "checkin.recap_late", taskId: "task0001", clientName: "Acme Interiors", ref: "CN-dryrun00",
+        facts, live, target: CSM_GENERAL, threadTs: null, mentions,
+      }),
+    });
+    const dry = await runDryRun(deps({ rpc }).deps, { kind: "checkin.recap_late", taskId: "task0001", facts: { client: "Acme Interiors" } });
+    expect(dry.tags).toEqual([{ label: "the CSM", tagged: true }]);
+    expect(JSON.stringify(dry.blocks)).toContain("<@U0C5JHUCTPG>");
+    expect(JSON.stringify(dry.blocks)).not.toContain("<@U0AS90SHMH8>");
+
+    // The real post of the same row tags the same person.
+    const real = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(claimed({ kind: "checkin.recap_late", target: CSM_GENERAL, clientName: "Acme Interiors", facts, live, mentions })) }) });
+    await runNotices(real.deps);
+    const posted = blocksText(detailOf(lastResult(real)));
+    expect(posted).toContain("<@U0C5JHUCTPG>");
+    expect(posted).not.toContain("<@U0AS90SHMH8>");
+  });
+
+  test("a dry run of the call grade reports nobody tagged, whatever the settings row names", async () => {
+    const rpc = fakeRpc({
+      cockpit_slack_notice_inputs: () => ({
+        kind: "checkin.grade", taskId: "task0001", clientName: "Acme Interiors", ref: "CN-dryrun00",
+        facts: { client: "Acme Interiors", draftId: ID(32) },
+        live: { grade: { criteria: [], overall: "Invented overall feedback.", color: "Orange", score: 6.8, draftId: ID(32) }, takenByRole: "the CSM", callAt: minutesAgo(70), shareUrl: null, recordingShown: true },
+        target: "C0FEEDBACK1", threadTs: null, mentions: { main: [CSM, SYSTEMS] },
+      }),
+    });
+    const dry = await runDryRun(deps({ rpc }).deps, { kind: "checkin.grade", taskId: "task0001", facts: { client: "Acme Interiors" } });
+    expect(dry).toMatchObject({ ok: true, kind: "checkin.grade", variant: "grade", tags: [] });
+    expect(JSON.stringify(dry.blocks)).not.toContain("<@");
+  });
+
+  test("a dry run builds the recap reminder from given facts and posts nothing", async () => {
+    const rpc = fakeRpc({
+      cockpit_slack_notice_inputs: () => ({
+        kind: "checkin.recap_late", taskId: "task0001", clientName: "Acme Interiors", ref: "CN-dryrun00",
+        facts: { client: "Acme Interiors", callAt: "2026-10-24T09:00:00Z" }, live: { recap: { effectState: "queued", messageState: "draft" } },
+        target: CSM_GENERAL, threadTs: null, mentions: { main: [] },
+      }),
+    });
+    const kit = deps({ rpc });
+    const out = await runDryRun(kit.deps, { kind: "checkin.recap_late", taskId: "task0001", facts: { client: "Acme Interiors" } });
+    expect(out).toMatchObject({ ok: true, kind: "checkin.recap_late", variant: "late", target: CSM_GENERAL, commentCheck: null });
+    expect(out.text).toBe("Recap not sent: Acme Interiors, call Sat 24 Oct. Open in the cockpit. Ref CN-dryrun00");
+    expect(kit.slack.posts()).toHaveLength(0);
+  });
+});
+
+describe("the client lifecycle notices (docs/forms/WAVE12-CONTRACT.md 3.4)", () => {
+  const withAnnounce = () => {
+    const slack = new FakeSlack();
+    slack.channels.set(CSM_ANNOUNCE, { name: "csm-announcements", is_private: false, is_member: true });
+    return slack;
+  };
+
+  test("Termination notice in, matched: posts once in #csm-general, tags the CSM, links the client page, reads no card", async () => {
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(lifecycleRow("termination.notice")) }) });
+    const result = await runNotices(kit.deps);
+    expect(result).toMatchObject({ ok: true, claimed: 1, posted: 1, failed: 0 });
+    const [post] = kit.slack.posts();
+    expect(post.body).toMatchObject({
+      channel: CSM_GENERAL,
+      text: `Acme Interiors sent the termination survey. Confirm churn or answer the notice in the cockpit. Ref ${ref(ID(1))}`,
+    });
+    const blocks = JSON.stringify(post.body?.blocks);
+    expect(blocks).toContain("<@U0C5JHUCTPG>");
+    expect(blocks).toContain("https://cockpit.maharamedia.com/client-success/clients/task0001|Open the client");
+    expect(kit.net.calls.some(c => c.url.host === "api.clickup.com")).toBe(false);
+    expect(detailOf(lastResult(kit)).variant).toBe("matched");
+  });
+
+  test("Termination notice in, unmatched: no card, the form's own name, the churn tracker, every CSM tagged", async () => {
+    const row = lifecycleRow("termination.notice", {
+      taskId: null,
+      clientName: null,
+      facts: { responseId: ID(51), submittedAt: minutesAgo(3), noticeOn: "2026-10-25", matched: false, formClientName: "Gamma Homes" },
+      mentions: { main: [CSM, mention("seat:csm", "the CSM", "U0C5JHUCTP2", { personId: 14 })] },
+    });
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(row) }) });
+    await runNotices(kit.deps);
+    const [post] = kit.slack.posts();
+    expect(String(post.body?.text)).toBe(
+      `Gamma Homes sent the termination survey. It is not matched to a card yet: pick the card in the cockpit. Ref ${ref(ID(1))}`,
+    );
+    const blocks = JSON.stringify(post.body?.blocks);
+    expect(blocks).toContain("money?tab=churn|Open the churn tracker");
+    expect(blocks).toContain("<@U0C5JHUCTPG> <@U0C5JHUCTP2>");
+    expect(detailOf(lastResult(kit)).variant).toBe("unmatched");
+  });
+
+  test("a notice whose news stopped being true is not posted, and says why", async () => {
+    const row = lifecycleRow("termination.notice", {
+      live: { stillTrue: false, why: "The notice was answered in the cockpit before it went out.", matched: true },
+    });
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(row) }) });
+    await runNotices(kit.deps);
+    expect(kit.slack.posts()).toHaveLength(0);
+    expect(lastResult(kit)).toMatchObject({
+      p_outcome: "failed",
+      p_error: "Not posted: the notice was answered in the cockpit before it went out.",
+    });
+  });
+
+  test("the four staff notices post their one line in #csm-announcements and tag nobody", async () => {
+    const rows = ["churn.confirmed", "extension.granted", "pause.agreed", "client.resumed"].map((k, i) => lifecycleRow(k, { id: ID(60 + i) }));
+    const kit = deps({ slack: withAnnounce(), rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(...rows) }) });
+    const result = await runNotices(kit.deps);
+    expect(result).toMatchObject({ claimed: 4, posted: 4 });
+    expect(kit.slack.posts().map(p => [p.body?.channel, String(p.body?.text).replace(/ Ref CN-\w+$/, "")])).toEqual([
+      [CSM_ANNOUNCE, "Acme Interiors has left: Cancelled."],
+      [CSM_ANNOUNCE, "Acme Interiors: 2-week extension to Sun 8 Nov."],
+      [CSM_ANNOUNCE, "Acme Interiors: paused from Sun 25 Oct, restarts Wed 4 Nov."],
+      [CSM_ANNOUNCE, "Acme Interiors: resumed Sun 25 Oct."],
+    ]);
+    for (const p of kit.slack.posts()) expect(JSON.stringify(p.body?.blocks)).not.toContain("<@");
+    expect(kit.rpc.results().map(r => detailOf(r).variant)).toEqual(["post", "post", "post", "post"]);
+  });
+
+  test("a test of a lifecycle kind goes to a person and names who it would tag", async () => {
+    const row = claimed({
+      kind: "rehearsal", taskId: null, clientName: null, target: "U0TESTER001",
+      facts: { of: "termination.notice", variant: null, sample: true, requestedBy: "cron" },
+      live: {}, mentions: { main: [] }, rehearsal: { of: "termination.notice", lookupEmail: null },
+    });
+    const settings = { cockpit_slack_notice_doctor_inputs: () => ({ channels: [], settings: [{ kind: "termination.notice", enabled: true, channel: CSM_GENERAL, mentions: [CSM] }] }) };
+    const kit = deps({ rpc: fakeRpc({ ...settings, cockpit_slack_notice_claim: claimOnce(row) }) });
+    await runNotices(kit.deps);
+    expect(lastResult(kit)).toMatchObject({ p_outcome: "posted", p_channel: "D0TESTDM001" });
+    const d = detailOf(lastResult(kit));
+    expect(String(d.text)).toStartWith("[Rehearsal] Sample client sent the termination survey.");
+    expect(blocksText(d)).toContain("This would tag the CSM.");
+    expect(blocksText(d)).not.toContain("https://");
+  });
+
+  test("the doctor lists every kind and names the notices waiting on #csm-announcements", async () => {
+    const slack = new FakeSlack();
+    slack.channels.set(CSM_ANNOUNCE, { name: "csm-announcements", is_private: false, is_member: false });
+    slack.scopes = `${slack.scopes},channels:history`;
+    const settings = [
+      { kind: "kickoff", enabled: true, channel: CSM_GENERAL, mentions: [CREATIVE] },
+      { kind: "termination.notice", enabled: true, channel: CSM_GENERAL, mentions: [CSM] },
+      { kind: "termination.submitted", enabled: false, channel: CSM_ANNOUNCE, mentions: [] },
+      { kind: "churn.confirmed", enabled: true, channel: CSM_ANNOUNCE, mentions: [] },
+      { kind: "extension.granted", enabled: true, channel: CSM_ANNOUNCE, mentions: [] },
+      { kind: "pause.agreed", enabled: true, channel: CSM_ANNOUNCE, mentions: [] },
+      { kind: "client.resumed", enabled: true, channel: CSM_ANNOUNCE, mentions: [] },
+    ];
+    const kit = deps({
+      slack,
+      rpc: fakeRpc({
+        cockpit_slack_notice_doctor_inputs: () => ({
+          channels: [
+            { id: CSM_GENERAL, name: "csm-general", private: true, state: "ok" },
+            { id: CSM_ANNOUNCE, name: "csm-announcements", private: false, state: "checking" },
+          ],
+          settings,
+        }),
+      }),
+    });
+    const d = await runDoctor(kit.deps);
+    expect(d.ok).toBe(false);
+    expect(d.kinds.map(k => k.kind)).toEqual(settings.map(s => s.kind));
+    expect(d.kinds.find(k => k.kind === "churn.confirmed")).toEqual({ kind: "churn.confirmed", enabled: true, channel: CSM_ANNOUNCE, ready: false });
+    expect(d.kinds.find(k => k.kind === "termination.notice")?.ready).toBe(true);
+    expect(d.note).toContain("Not posted until the bot is in #csm-announcements: churn.confirmed, extension.granted, pause.agreed, client.resumed.");
+    expect(d.note).not.toContain("termination.submitted");
+    // The verdict is recorded, so the channel turns refused until the CEO invites the bot.
+    expect(kit.rpc.calls.find(c => c.name === "cockpit_slack_channel_checked" && c.args.p_id === CSM_ANNOUNCE)?.args.p_ok).toBe(false);
+  });
+});
+
+describe("the client's voice and forms (docs/forms/WAVE34-CONTRACT.md 3.4)", () => {
+  const withNps = () => {
+    const slack = new FakeSlack();
+    slack.channels.set(NPS_FEEDBACK, { name: "nps-survey-feedback", is_private: false, is_member: true });
+    return slack;
+  };
+
+  test("each kind posts its one line where it is routed, tags the CSM only where 3.4 says, and reads no card", async () => {
+    const kinds = ["pause.consent", "nps.received", "csat.received", "voice.low", "feedback.received", "legacy.received"];
+    const rows = kinds.map((k, i) => clientFormRow(k, { id: ID(80 + i) }));
+    const kit = deps({ slack: withNps(), rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(...rows) }) });
+    const result = await runNotices(kit.deps);
+    expect(result).toMatchObject({ claimed: 6, posted: 6, failed: 0 });
+    expect(kit.slack.posts().map(p => [p.body?.channel, String(p.body?.text).replace(/ Ref CN-\w+$/, "")])).toEqual([
+      [CSM_GENERAL, "Acme Interiors signed the pause consent. Confirm the pause in the cockpit."],
+      [NPS_FEEDBACK, "Acme Interiors: 9/10 would recommend, 8/10 on results so far."],
+      [NPS_FEEDBACK, "Acme Interiors: 7/10 for getting started."],
+      [CSM_GENERAL, "Acme Interiors gave 5/10 on the NPS survey. Call them today."],
+      [CSM_GENERAL, "Acme Interiors shared a new idea in the portal about the portal."],
+      [CSM_GENERAL, "The NPS survey came in through the old link for a client not matched to a card. Open it in the cockpit."],
+    ]);
+    const tagged = kit.slack.posts().map(p => JSON.stringify(p.body?.blocks).includes("<@U0C5JHUCTPG>"));
+    expect(tagged).toEqual([true, false, false, true, true, false]);
+    expect(kit.rpc.results().map(r => detailOf(r).variant)).toEqual(["signed", "post", "post", "post", "post", "post"]);
+    expect(kit.net.calls.some(c => c.url.host === "api.clickup.com")).toBe(false);
+  });
+
+  test("dates said wrong post the dates_wrong line", async () => {
+    const row = clientFormRow("pause.consent", { facts: { responseId: ID(70), submittedAt: minutesAgo(2), client: "Acme Interiors", datesWrong: true } });
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(row) }) });
+    await runNotices(kit.deps);
+    expect(String(kit.slack.posts()[0].body?.text)).toStartWith("Acme Interiors says the pause dates are wrong. Open the pause in the cockpit.");
+    expect(detailOf(lastResult(kit)).variant).toBe("dates_wrong");
+  });
+
+  test("a low score whose ticket opened first is not posted, and says why", async () => {
+    const row = clientFormRow("voice.low", { live: { stillTrue: false, why: "A low-score ticket was opened before the notice went out." } });
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(row) }) });
+    await runNotices(kit.deps);
+    expect(kit.slack.posts()).toHaveLength(0);
+    expect(lastResult(kit)).toMatchObject({ p_outcome: "failed", p_error: "Not posted: a low-score ticket was opened before the notice went out." });
+  });
+
+  test("the doctor names the answers waiting on #nps-survey-feedback, and a family seeded in part", async () => {
+    const slack = new FakeSlack();
+    slack.channels.set(NPS_FEEDBACK, { name: "nps-survey-feedback", is_private: false, is_member: false });
+    slack.scopes = `${slack.scopes},channels:history`;
+    const settings = [
+      { kind: "kickoff", enabled: true, channel: CSM_GENERAL, mentions: [CREATIVE] },
+      { kind: "pause.consent", enabled: true, channel: CSM_GENERAL, mentions: [CSM] },
+      { kind: "nps.received", enabled: true, channel: NPS_FEEDBACK, mentions: [] },
+      { kind: "csat.received", enabled: true, channel: NPS_FEEDBACK, mentions: [] },
+    ];
+    const kit = deps({
+      slack,
+      rpc: fakeRpc({
+        cockpit_slack_notice_doctor_inputs: () => ({
+          channels: [
+            { id: CSM_GENERAL, name: "csm-general", private: true, state: "ok" },
+            { id: NPS_FEEDBACK, name: "nps-survey-feedback", private: false, state: "refused" },
+          ],
+          settings,
+        }),
+      }),
+    });
+    const d = await runDoctor(kit.deps);
+    expect(d.ok).toBe(false);
+    expect(d.note).toContain("Not posted until the bot is in #nps-survey-feedback: nps.received, csat.received.");
+    expect(d.note).toContain("No settings row for voice.low, feedback.received, legacy.received: check 20261102a applied in full.");
+    expect(d.unseeded).toContain("voice.low");
+    expect(d.unseeded).toContain("termination.notice");
+  });
+});
+
+describe("wins and money (docs/forms/WAVE56-CONTRACT.md 3.9)", () => {
+  test("each kind posts its one line where it is routed, tags nobody and reads no card", async () => {
+    const offered = moneyRow("win.logged", { id: ID(93), facts: { winId: ID(82), winKind: "upsell_website", stage: "quote_given", usd: 1500, client: "Acme Interiors" } });
+    const accepted = moneyRow("win.logged", { id: ID(94), facts: { winId: ID(83), winKind: "upsell_smm", stage: "signed", client: "Acme Interiors" } });
+    const rows = [moneyRow("win.logged", { id: ID(90) }), moneyRow("receipt.in", { id: ID(91) }), moneyRow("client.reactivated", { id: ID(92) }), offered, accepted];
+    const slack = new FakeSlack();
+    slack.channels.set(CSM_ANNOUNCE, { name: "csm-announcements", is_private: false, is_member: true });
+    const kit = deps({ slack, rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(...rows) }) });
+    const result = await runNotices(kit.deps);
+    expect(result).toMatchObject({ claimed: 5, posted: 5, failed: 0 });
+    expect(kit.slack.posts().map(p => [p.body?.channel, String(p.body?.text).replace(/ Ref CN-\w+$/, "")])).toEqual([
+      [CSM_ANNOUNCE, "Acme Interiors: Google review logged by the CSM."],
+      [CSM_GENERAL, "Acme Interiors sent a transfer receipt (650 KWD, paid Sun 1 Nov). Check it in the cockpit."],
+      [CSM_ANNOUNCE, "Acme Interiors is back: Active. They left on Mon 12 Oct."],
+      [CSM_ANNOUNCE, "Acme Interiors: website offered at $1,500."],
+      [CSM_ANNOUNCE, "Acme Interiors accepted the social media management."],
+    ]);
+    expect(kit.rpc.results().map(r => detailOf(r).variant)).toEqual(["post", "post", "post", "offered", "accepted"]);
+    expect(kit.slack.posts().some(p => JSON.stringify(p.body?.blocks).includes("<@"))).toBe(false);
+    expect(kit.net.calls.some(c => c.url.host === "api.clickup.com")).toBe(false);
+  });
+
+  test("a win voided before it went out is not posted, and says why", async () => {
+    const row = moneyRow("win.logged", { live: { stillTrue: false, why: "The win was voided before the notice went out." } });
+    const kit = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(row) }) });
+    await runNotices(kit.deps);
+    expect(kit.slack.posts()).toHaveLength(0);
+    expect(lastResult(kit)).toMatchObject({ p_outcome: "failed", p_error: "Not posted: the win was voided before the notice went out." });
+  });
+
+  test("the doctor names the money family when it is seeded in part", async () => {
+    const kit = deps({
+      rpc: fakeRpc({
+        cockpit_slack_notice_doctor_inputs: () => ({
+          channels: [{ id: CSM_GENERAL, name: "csm-general", private: true, state: "ok" }],
+          settings: [{ kind: "receipt.in", enabled: false, channel: CSM_GENERAL, mentions: [] }],
+        }),
+      }),
+    });
+    const d = await runDoctor(kit.deps);
+    expect(d.note).toContain("No settings row for win.logged, client.reactivated: check 20261102g applied in full.");
+  });
 });

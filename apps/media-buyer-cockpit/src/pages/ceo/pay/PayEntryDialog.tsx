@@ -15,7 +15,14 @@ import { api, useAction } from "@/lib/cockpitApi";
 import { cn } from "@/lib/utils";
 import { lowerFirst, type Part, type PayEntry } from "@/types/ceo/payPlan";
 import { errorText, FIELD, LABEL, NumberBox } from "./fields";
-import { entryShape, monthName } from "./payCopy";
+import {
+  entryShape,
+  isWinPart,
+  isWinRef,
+  monthName,
+  OUTSIDE_LEDGER_LABEL,
+  OUTSIDE_LEDGER_SAY,
+} from "./payCopy";
 
 /**
  * "Add a count" (PAY-PLANS.md 8.5): one audited entry for what the data
@@ -36,6 +43,11 @@ export type EntryTarget = {
   part: Part | "adjustment";
   /** Pre-filled values: a clawback's −1, drift's amount and note. */
   preset?: Partial<EntryDraft>;
+  /**
+   * Pay proposals are on (pay.proposals, WAVE56-CONTRACT.md 4.9.3): a typed
+   * entry for a win-backed part needs a win reference or its reason.
+   */
+  winsLedger?: boolean;
 };
 
 type EntryDraft = {
@@ -53,6 +65,8 @@ type EntryDraft = {
   note: string;
   /** The approved month an adjustment corrects, "YYYY-MM". */
   fromMonth: string;
+  /** Why a win-backed part is typed outside the wins ledger (C7). */
+  outsideLedger: string;
 };
 
 const blank: EntryDraft = {
@@ -69,6 +83,7 @@ const blank: EntryDraft = {
   evidence: "",
   note: "",
   fromMonth: "",
+  outsideLedger: "",
 };
 
 /** What the dialog would send, or the first thing missing as a sentence. */
@@ -135,6 +150,18 @@ export function entryPayload(
   if (shape.review && d.quantity > 0) {
     if (!text("evidence")) return { problem: "Paste the link to the review." };
     if (!text("postedOn")) return { problem: "Pick the day it was posted." };
+  }
+  // The C7 rule (4.9.3): a win-backed part typed by hand rests on a win, or says why not.
+  const partKey = target.part === "adjustment" ? "" : target.part.key;
+  if (
+    target.winsLedger &&
+    isWinPart(partKey) &&
+    !isWinRef(text("evidenceRef"))
+  ) {
+    const why = text("outsideLedger");
+    if (why.length < 10 || why.length > 300)
+      return { problem: OUTSIDE_LEDGER_SAY };
+    out.outsideLedger = why;
   }
   for (const k of [
     "client",
@@ -336,6 +363,19 @@ function EntryForm({
             placeholder="whop:pay_… or the contract id"
           />
         </div>
+      ) : null}
+
+      {target.winsLedger &&
+      target.part !== "adjustment" &&
+      isWinPart(target.part.key) &&
+      !isWinRef(d.evidenceRef) ? (
+        <TextField
+          id={`${id}-outside`}
+          label={OUTSIDE_LEDGER_LABEL}
+          value={d.outsideLedger}
+          onChange={outsideLedger => set({ outsideLedger })}
+          placeholder="Logged before the wins ledger, or a win it missed"
+        />
       ) : null}
 
       {shape.review ? (

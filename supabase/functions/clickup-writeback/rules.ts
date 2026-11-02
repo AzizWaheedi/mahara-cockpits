@@ -56,13 +56,24 @@ export const TECH_FIELD = {
   additionalNotes: "6742edfb-9b6f-4615-933d-7ebd74f9542b",
   qualificationQuestions: "35f4bf1a-7df5-4cc0-919c-2669aea0bc27",
 } as const;
+/**
+ * Request Type options on the folder field e9fd8024 (read 2026-10-26, CT section 7,
+ * writers map 3.5). Until then the first two wordings wrote 37d99ca0, which ClickUp
+ * names "Connect a New Lead Form 🆕"; none of those writes ever reached ClickUp.
+ * The paused Convex copy (convex/writeback.ts) keeps the old ids and is not used.
+ */
+export const REQUEST_TYPE_OPTION = {
+  qualificationQuestions: "7fc82c41-7bcd-47f7-bae0-868d4954495b", // Add Custom Qualification Questions🙋
+  landingPage: "a2d9483c-2dde-486d-969e-78679e5d27a6", // Create Landing Page📊
+  missingLeads: "9fd304bb-7078-4485-9b9f-aa19ad47ed98", // Missing Leads ❌
+} as const;
 export const TECH_REQUEST_TYPE: Record<string, string> = {
-  "Add qualification questions to the lead form": "37d99ca0-e53f-4499-90e8-f1be8a21b207",
-  "Switch to a landing page": "37d99ca0-e53f-4499-90e8-f1be8a21b207",
-  "Landing page or tracking is broken": "9fd304bb-7078-4485-9b9f-aa19ad47ed98",
+  "Add qualification questions to the lead form": REQUEST_TYPE_OPTION.qualificationQuestions,
+  "Switch to a landing page": REQUEST_TYPE_OPTION.landingPage,
+  "Landing page or tracking is broken": REQUEST_TYPE_OPTION.missingLeads,
   // The same requests as the client success page words them.
-  "Switch this campaign to a landing page": "37d99ca0-e53f-4499-90e8-f1be8a21b207",
-  "Tracking / page is broken": "9fd304bb-7078-4485-9b9f-aa19ad47ed98",
+  "Switch this campaign to a landing page": REQUEST_TYPE_OPTION.landingPage,
+  "Tracking / page is broken": REQUEST_TYPE_OPTION.missingLeads,
 };
 /** Where a rerouted request lands (convex/writeback.ts DEPARTMENT_LIST). */
 export const DEPARTMENT_LIST: Record<string, { id: string; label: string }> = {

@@ -96,6 +96,41 @@ class Resources(unittest.TestCase):
         self.assertFalse(next(c for c in vps_resources.CHECKS if c.id == "vps-code-copy").alert)
 
 
+class GatewayDup(unittest.TestCase):
+    EXPECTED = [
+        {"pid": 10, "user": "hermes",
+         "args": "/opt/hermes/.venv/bin/python3 /opt/hermes/.venv/bin/hermes gateway run --replace"},
+        {"pid": 11, "user": "carax",
+         "args": "/opt/hermes/.venv/bin/python3 /opt/hermes/.venv/bin/hermes gateway run --replace"},
+        {"pid": 12, "user": "muhammed",
+         "args": "/opt/hermes/.venv/bin/python3 /opt/hermes/.venv/bin/hermes --profile scout gateway run"},
+    ]
+
+    def snap(self, gateways):
+        return fakes.snapshot(procs={"jobs": [], "top": [], "cloudflared": {"n": 1}, "gateways": gateways})
+
+    def test_the_three_expected_gateways_are_ok(self):
+        r = vps_resources.run_gateway_dup(make(self.snap(self.EXPECTED)))
+        self.assertEqual(r.status, OK)
+        self.assertEqual(r.evidence["gateways"], 3)
+
+    def test_a_root_gateway_from_opt_hermes_host_fails_urgent(self):
+        extra = {"pid": 99, "user": "root", "args": "/opt/hermes-host/venv/bin/python -m hermes_cli.main gateway run"}
+        r = vps_resources.run_gateway_dup(make(self.snap(self.EXPECTED + [extra])))
+        self.assertEqual(r.status, FAIL)
+        self.assertTrue(r.urgent)
+        self.assertIn("99", r.summary)
+
+    def test_a_hermes_gateway_from_opt_hermes_host_fails(self):
+        extra = {"pid": 98, "user": "hermes", "args": "/opt/hermes-host/venv/bin/python -m hermes_cli.main gateway run"}
+        r = vps_resources.run_gateway_dup(make(self.snap(self.EXPECTED + [extra])))
+        self.assertEqual(r.status, FAIL)
+
+    def test_an_older_snapshot_without_the_gateway_list_is_unknown(self):
+        old = fakes.snapshot(procs={"jobs": [], "top": [], "cloudflared": {"n": 1}})
+        self.assertEqual(vps_resources.run_gateway_dup(make(old)).status, UNKNOWN)
+
+
 class Crontab(unittest.TestCase):
     def test_all_present(self):
         self.assertEqual(vps_cron.run_crontab(make()).status, OK)

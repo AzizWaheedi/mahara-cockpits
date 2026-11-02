@@ -570,22 +570,55 @@ export function Seal({
   taskId,
   glow,
   rehearse,
+  kicker,
+  why: said,
+  whyLabel = "Why this form goes to this card",
+  wrapName = false,
 }: {
   clientName: string;
   taskId: string;
   glow: boolean;
+  /** The orange ring: nothing reaches the card from this window. */
   rehearse: boolean;
+  /** The mono words before the name ("Notes for"); the kickoff's by default. */
+  kicker?: string;
+  /** What the popover says; the kickoff's by default. */
+  why?: string;
+  /**
+   * The popover's name: it opens as a dialog and takes focus, so a screen
+   * reader says what it is before the sentence.
+   */
+  whyLabel?: string;
+  /**
+   * Below sm the seal wraps instead of cutting the name: the kicker on the
+   * first line, then the whole name with the card ID after it. Off by
+   * default, so the kickoff's one-line pill is unchanged.
+   */
+  wrapName?: boolean;
 }) {
-  const why = rehearse
-    ? "A rehearsal in Typeform's sandbox: nothing is saved, nothing reaches this card, and Make does not run."
-    : "From the client record. Make writes everything from this form to this card.";
+  const why =
+    said ??
+    (rehearse
+      ? "A rehearsal in Typeform's sandbox: nothing is saved, nothing reaches this card, and Make does not run."
+      : "From the client record. Make writes everything from this form to this card.");
+  const kickerText = kicker ?? (rehearse ? "Rehearsal ·" : "Sends to");
+  const kickerClass =
+    "shrink-0 font-mono text-[11px] uppercase tracking-[0.06em] text-muted-foreground";
+  const idClass = "shrink-0 font-mono text-[13px] text-foreground/80";
   return (
     <Popover>
       <PopoverTrigger asChild>
         <button
           type="button"
           className={cn(
-            "inline-flex min-w-0 max-w-full items-center gap-2 rounded-full px-3 py-1 text-sm ring-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            // The 1-1 window's focus (CheckinFields.tsx FOCUS): 2px of the
+            // ink teal set 2px off the pill, 3:1 on both pages, so it never
+            // reads as the pill's own ring (ring-ring is Mahara Teal, about
+            // 1.8:1 on the light page). Written out here: FormPanel is shared
+            // with the kickoff and does not import the window's files.
+            "inline-flex min-w-0 max-w-full items-center gap-2 rounded-full px-3 py-1 text-sm ring-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ink focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+            wrapName &&
+              "max-sm:items-start max-sm:rounded-2xl max-sm:py-1.5 max-sm:text-left",
             rehearse
               ? "bg-warning/10 ring-warning/60"
               : "bg-primary/10 ring-primary/40",
@@ -596,19 +629,32 @@ export function Seal({
             aria-hidden
             className={cn(
               "size-2 shrink-0 rounded-full",
+              wrapName && "max-sm:mt-1.5",
               rehearse ? "bg-warning" : "bg-primary",
             )}
           />
-          <span className="shrink-0 font-mono text-[11px] uppercase tracking-[0.06em] text-muted-foreground">
-            {rehearse ? "Rehearsal ·" : "Sends to"}
-          </span>
-          <bdi className="min-w-0 truncate font-medium">{clientName}</bdi>
-          <span className="shrink-0 font-mono text-[13px] text-foreground/80">
-            {taskId}
-          </span>
+          {wrapName ? (
+            <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 max-sm:flex-1 sm:flex-nowrap sm:items-center">
+              <span className={cn(kickerClass, "max-sm:basis-full")}>
+                {kickerText}
+              </span>
+              <bdi className="min-w-0 font-medium max-sm:break-words sm:truncate">
+                {clientName}
+              </bdi>
+              <span className={idClass}>{taskId}</span>
+            </span>
+          ) : (
+            <>
+              <span className={kickerClass}>{kickerText}</span>
+              <bdi className="min-w-0 truncate font-medium">{clientName}</bdi>
+              <span className={idClass}>{taskId}</span>
+            </>
+          )}
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-72 text-sm">{why}</PopoverContent>
+      <PopoverContent aria-label={whyLabel} className="w-72 text-sm">
+        {why}
+      </PopoverContent>
     </Popover>
   );
 }

@@ -3,6 +3,7 @@ import { count, dateTime, pct, shortDate } from "@/components/ceo/format";
 import { STATUS_COLOR, StatusChip } from "@/components/ceo/StatusChip";
 import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { notCountedYet } from "@/lib/funnelSplit";
 import { useCampaignFunnels } from "@/lib/funnelSplitClient";
 import {
   type FunnelSource,
@@ -25,6 +26,9 @@ const SOURCES: { value: FunnelSource; label: string }[] = [
 const AD_PARAM =
   "utm_medium=paid with the campaign or ad id, or ad_id={{ad.id}}";
 
+const NO_WEBSITE =
+  "No website campaign of this client is on the ads board, so Meta's clicks are not shown beside these visits.";
+
 /** Visits lost at a step: the step before it, minus this one. */
 const lost = (steps: FunnelStep[], i: number) =>
   i === 0 ? 0 : Math.max(0, steps[i - 1].visits - steps[i].visits);
@@ -41,6 +45,7 @@ export function PageFormFunnel({
   liveLabel,
   tick,
   metaCampaigns = [],
+  waitingCampaigns = [],
 }: {
   slug: string;
   liveLabel: string;
@@ -48,14 +53,30 @@ export function PageFormFunnel({
   tick: number;
   /** The client's website campaigns on the ads board, for Meta's clicks. */
   metaCampaigns?: string[];
+  /** Website campaigns on the ads board with no full day in the client's numbers yet. */
+  waitingCampaigns?: string[];
 }) {
   const [days, setDays] = useState<number>(30);
   const [version, setVersion] = useState<string | undefined>(undefined);
   const [source, setSource] = useState<FunnelSource>("ads");
   const funnel = usePageFormFunnel(slug, version, days, source, tick);
-  // Meta's side of the same days: link clicks and landing page views on the
-  // website campaigns, beside the visits the page itself recorded.
-  const meta = useCampaignFunnels(metaCampaigns, kuwaitDay(days), kuwaitDay(0));
+  // Meta's side of the same days, today included: link clicks and landing
+  // page views on the website campaigns, beside the visits the page itself
+  // recorded. A campaign not in the client's numbers yet counts here once
+  // Meta has a day of it in these days, and is named (Muhammed, 2026-10-26).
+  const meta = useCampaignFunnels(
+    [...metaCampaigns, ...waitingCampaigns],
+    kuwaitDay(days),
+    kuwaitDay(0),
+  );
+  const joining = waitingCampaigns.filter(name =>
+    meta.data?.some(
+      r =>
+        r.campaign === name &&
+        (r.linkClicks !== null || r.landingPageViews !== null),
+    ),
+  );
+  const onMeta = metaCampaigns.length + joining.length;
   const sumOf = (k: "linkClicks" | "landingPageViews") => {
     const rows = meta.data ?? [];
     return rows.some(r => r[k] !== null)
@@ -136,13 +157,15 @@ export function PageFormFunnel({
       </div>
 
       <p className="mt-2 text-xs text-muted-foreground">
-        {metaCampaigns.length === 0
-          ? "No website campaign of this client is on the ads board, so Meta's clicks are not shown beside these visits."
+        {metaCampaigns.length + waitingCampaigns.length === 0
+          ? NO_WEBSITE
           : meta.error
             ? `Meta's clicks could not be read: ${meta.error}`
             : !meta.data
               ? "Reading Meta's clicks…"
-              : `Meta, same ${days} days: ${clicks === null ? "n/a" : count(clicks)} link clicks and ${views === null ? "n/a" : count(views)} landing page views on ${metaCampaigns.length === 1 ? "the website campaign" : `${metaCampaigns.length} website campaigns`}${f?.counts ? `; the page recorded ${count(f.counts.ads)} ${f.counts.ads === 1 ? "visit" : "visits"} from ads` : ""}.`}
+              : onMeta === 0
+                ? NO_WEBSITE
+                : `Meta, same ${days} days: ${clicks === null ? "n/a" : count(clicks)} link clicks and ${views === null ? "n/a" : count(views)} landing page views on ${onMeta === 1 ? "the website campaign" : `${onMeta} website campaigns`}${f?.counts ? `; the page recorded ${count(f.counts.ads)} ${f.counts.ads === 1 ? "visit" : "visits"} from ads` : ""}.${joining.length ? ` ${notCountedYet(joining)}` : ""}`}
       </p>
 
       {funnel.error ? (

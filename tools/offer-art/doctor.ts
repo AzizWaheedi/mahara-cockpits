@@ -1,0 +1,14 @@
+import { access, statfs } from "node:fs/promises";
+import { homedir, platform } from "node:os";
+import { join } from "node:path";
+import selection from "./selection.website.json";
+import { checkSelection } from "./export";
+import { run } from "./run";
+if (platform() === "darwin") throw new Error("Use the VPS. No Mac build/render fallback is allowed.");
+checkSelection();
+for (const command of ["ffmpeg", "ffprobe"]) await run([command, "-version"], command);
+const dir = process.env.OFFER_ART_SOURCE || join(homedir(), selection.sourceDirectory);
+for (const item of selection.images) await access(join(dir,item.source));
+const fs = await statfs(dir);
+if (fs.bavail * fs.bsize < 250_000_000) throw new Error("Less than 250 MB available for export staging");
+console.log("Ready: existing masters, ffmpeg, ffprobe, storage. No provider keys or paid calls needed.");

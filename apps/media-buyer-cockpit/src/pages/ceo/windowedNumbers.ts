@@ -118,7 +118,7 @@ export function extensionsIn(
       totalWeeks: null,
       grants: null,
       perClient: [],
-      why: "The Client Extension Form was not read this run.",
+      why: "The extension grants were not read this run.",
     };
   if (!w || (w.from === ext.from && w.to === ext.to))
     return {

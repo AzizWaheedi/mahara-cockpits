@@ -51,6 +51,7 @@ import {
 import { type Timeframe, useTimeframe } from "@/components/ceo/timeframe";
 import type { CeoSections } from "@/components/ceo/useCeo";
 import { range as rangeText } from "@/components/ceo/windows";
+import { YourTasks } from "@/components/tasks/YourTasks";
 import { cn } from "@/lib/utils";
 import type {
   ClientRow,
@@ -180,6 +181,12 @@ export function TodayTab({ sections, now, day, goTab }: CeoTabProps) {
           day={day}
           goTab={goTab}
         />
+
+        {/* Your own ClickUp tasks (PLAN.md D19): /ceo is where the CEO
+            lands, so the card every Today carries sits high, under the
+            company's numbers and before the funnels, not three screens
+            down on a phone. Five rows at most, so it stays quiet. */}
+        <YourTasks />
 
         <div className="grid items-start gap-4 lg:gap-6 @4xl:grid-cols-2">
           <DeliveryFunnelCard

@@ -23,6 +23,12 @@
  * The Ads page (?path=/ads?range=30d) reads adsPageHarness.ts.
  * Billing (?tab=billing) reads billingFixture.ts: the sheet and Pending
  * payments from the 23 Oct read (`&pending=` picks the scenario).
+ * Requests (?path=/requests, /requests?view=mine, /requests/settings) read
+ * requestsHarness.ts (`&requests=`, `&seat=`, `&writer=` pick the answer);
+ * the task card, the bell and the focus view read tasksHarness.ts.
+ * Waves 5-6 (`&w56=on|off|empty|held|revoked|split`) read w56Harness.ts: the
+ * Lifetime value and Billing agent login cards (?tab=billing), Upsell payments
+ * to confirm (?tab=money) and Proposed from wins (?path=/team#team/pay).
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -41,6 +47,8 @@ import { LaunchPage } from "@/pages/LaunchPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { PlaybookPage } from "@/pages/PlaybookPage";
 import { PerformancePage } from "@/pages/performance/PerformancePage";
+import { RequestsPage } from "@/pages/requests/RequestsPage";
+import { RequestsSettings } from "@/pages/requests/RequestsSettings";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { MeetingPage } from "@/pages/team/MeetingPage";
 import { TeamPage } from "@/pages/team/TeamPage";
@@ -57,8 +65,21 @@ import { setFixtures } from "./convexStub";
 import { installDataViewHarness } from "./dataViewHarness";
 import { installHoursHarness } from "./hoursHarness";
 import { portalFixtures } from "./portalFixtures";
+import { installRequestsHarness } from "./requestsHarness";
 import { installResultsHarness } from "./resultsHarness";
+import { installW56Harness } from "./w56Harness";
 import { webinarTargetsFixtures } from "./webinarTargetsFixture";
+
+/**
+ * The task card, the bell and the focus view's fixtures (tasksHarness.ts,
+ * the cockpit-screens build). Read through a glob so this harness still
+ * starts while that file is being written.
+ */
+const tasksHarness = import.meta.glob<{
+  installTasksHarness?: (
+    client: ReturnType<typeof getCockpitSupabaseClient>,
+  ) => void;
+}>("./tasksHarness.ts", { eager: true });
 
 async function load(path: string): Promise<unknown> {
   const res = await fetch(path);
@@ -86,7 +107,15 @@ async function main() {
   // Billing (?tab=billing&pending=...): the sheet and Pending payments from
   // the 23 Oct read, writes kept in memory (billingFixture.ts).
   installBillingHarness(getCockpitSupabaseClient());
+  // Waves 5-6 (&w56=on|off|empty|held|revoked|split): the Lifetime value and
+  // agent login cards, the upsell ties band and the pay proposals (w56Harness.ts).
+  installW56Harness(getCockpitSupabaseClient());
   installLaunchHarness(getCockpitSupabaseClient());
+  // Requests (?path=/requests&requests=...&seat=...&writer=...): every
+  // function of the requests contract, answered from a made-up store.
+  installRequestsHarness(getCockpitSupabaseClient());
+  for (const mod of Object.values(tasksHarness))
+    mod.installTasksHarness?.(getCockpitSupabaseClient());
   const [today, people, more] = await Promise.all([
     // Optional since the cutover: the CEO tabs that still read them show
     // their empty states without.
@@ -131,6 +160,11 @@ async function main() {
               <Route element={<AppLayout />}>
                 <Route path="/ceo" element={<CeoPage />} />
                 <Route path="/team" element={<TeamPage />} />
+                <Route path="/requests" element={<RequestsPage />} />
+                <Route
+                  path="/requests/settings"
+                  element={<RequestsSettings />}
+                />
                 <Route path="/performance" element={<PerformancePage />} />
                 <Route path="/team/:id" element={<MeetingPage />} />
                 <Route path="/dashboard" element={<TodayPage />} />

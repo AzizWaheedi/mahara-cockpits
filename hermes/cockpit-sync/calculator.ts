@@ -173,6 +173,26 @@ export function normalize(s: string): string {
 }
 
 /**
+ * The client whose Client Data "Ad Account - Meta" cell names this account.
+ * The cell may hold the bare Meta id ("1988430024784828") while the tracker
+ * and the Meta fallback name the account "<id>, <currency>"
+ * ("1988430024784828, SAR"), so the account is tried without that suffix
+ * too. An exact match always wins. Smmim studio had no client tag until
+ * this. [2026-10-28]
+ */
+export function clientForAccount(
+  clientByAccount: Map<string, string>,
+  account: string,
+): string | undefined {
+  const exact = clientByAccount.get(normalize(account));
+  if (exact !== undefined) return exact;
+  const currency = /\s*,\s*[a-z]{3}\s*$/i;
+  const name = String(account);
+  if (!currency.test(name)) return undefined;
+  return clientByAccount.get(normalize(name.replace(currency, "")));
+}
+
+/**
  * Ad-level daily rows, straight from Meta, for every visible account with
  * spend in the last 30 days that the tracker sheet does not keep up to date:
  * accounts with no row at all, and accounts whose rows stop more than a day
@@ -2589,7 +2609,7 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
   for (const [, a] of byCampaign) {
     if (a.spend30 < 0.5) continue;
     if (INTERNAL_ACCOUNTS.includes(normalize(a.account))) continue;
-    const client = clientByAccount.get(normalize(a.account));
+    const client = clientForAccount(clientByAccount, a.account);
     if (!client) continue;
     const key = normalize(client);
     if (modeByClient.get(key) === "DWY") continue;
@@ -2614,7 +2634,7 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
     if (a.spend < 0.5) continue;
     // Mahara's own lead-gen account is Aziz's, not a client — never show it here.
     if (INTERNAL_ACCOUNTS.includes(normalize(a.account))) continue;
-    const client = clientByAccount.get(normalize(a.account));
+    const client = clientForAccount(clientByAccount, a.account);
     const byName = taskByName.get(normalize(name));
     const byTag = client ? taskByTag.get(normalize(client)) : undefined;
     // Last resort: the campaign name's first word against the client tags
@@ -2915,7 +2935,7 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
     let current: string | undefined;
     let best: [number, number, number] = [-1, -1, -1];
     for (const [name, a] of byCampaign) {
-      const owner = clientByAccount.get(normalize(a.account));
+      const owner = clientForAccount(clientByAccount, a.account);
       if (!owner || normalize(owner) !== key) continue;
       const score: [number, number, number] = [
         onBoardNow.has(name) ? 1 : 0,
@@ -3698,7 +3718,7 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
         if (INTERNAL_ACCOUNTS.includes(normalize(d.accountName))) continue;
         const accountId = accountIdOf(d.accountName, name);
         const client =
-          clientByAccount.get(normalize(d.accountName)) ??
+          clientForAccount(clientByAccount, d.accountName) ??
           (accountId ? accountClient.get(accountId) : undefined);
         if (accountId && client && !accountClient.has(accountId))
           accountClient.set(accountId, client);

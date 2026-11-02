@@ -1,0 +1,29 @@
+{
+  "_note": "A New Client Form (BTzMwXiw) webhook delivery in Typeform's shape, every value invented. Recorded payloads only: no test, canary or deploy step ever submits this form.",
+  "event_id": "01JTESTNEWCLIENT",
+  "event_type": "form_response",
+  "form_response": {
+    "form_id": "BTzMwXiw",
+    "token": "ncf0000token0001",
+    "submitted_at": "2026-10-30T11:00:00Z",
+    "hidden": { "contact_id": "ghlContact0001", "closer": "Closer Test", "setter": "Setter Test", "utm_campaign": "kept-out" },
+    "definition": {
+      "id": "BTzMwXiw",
+      "title": "New Client Form",
+      "fields": [
+        { "id": "n1", "ref": "business-ref", "type": "short_text", "title": "Business name" },
+        { "id": "n2", "ref": "email-ref", "type": "email", "title": "Client email" },
+        { "id": "n3", "ref": "phone-ref", "type": "phone_number", "title": "Client phone" },
+        { "id": "n4", "ref": "plan-ref", "type": "multiple_choice", "title": "Payment plan" },
+        { "id": "n5", "ref": "amount-ref", "type": "number", "title": "Amount paid" }
+      ]
+    },
+    "answers": [
+      { "type": "text", "text": "Harbour Homes", "field": { "id": "n1", "ref": "business-ref", "type": "short_text" } },
+      { "type": "email", "email": "owner@harbour.example", "field": { "id": "n2", "ref": "email-ref", "type": "email" } },
+      { "type": "phone_number", "phone_number": "+965 0000 0002", "field": { "id": "n3", "ref": "phone-ref", "type": "phone_number" } },
+      { "type": "choice", "choice": { "label": "Monthly" }, "field": { "id": "n4", "ref": "plan-ref", "type": "multiple_choice" } },
+      { "type": "number", "number": 2000, "field": { "id": "n5", "ref": "amount-ref", "type": "number" } }
+    ]
+  }
+}

@@ -67,7 +67,6 @@ import {
   fetchTasksAdded,
   requestReportDoc,
 } from "@/lib/performance";
-
 import {
   AD_TABLE_LIMIT,
   byAdIn,
@@ -82,6 +81,7 @@ import {
   shiftDay,
   withSheetMonth,
 } from "@/lib/reportPeriod";
+import { useRequestsOpen } from "@/lib/requestsOpen";
 import { cn } from "@/lib/utils";
 
 /**
@@ -774,6 +774,13 @@ function Provisional({ pv }: { pv: Any }) {
   );
 }
 
+/**
+ * The teams a task added here can go to while requests are not open (as on
+ * main before 2026-10-26), and the names of the teams past tasks went to.
+ * Once requests are open for the client, asking another team is the
+ * request form's job (Ask a team), which picks the board, the template and
+ * the owner, and this form is a reminder for me only.
+ */
 const TEAMS: [string, string][] = [
   ["", "Me (Client Success list)"],
   ["creative", "Media / Creative"],
@@ -781,10 +788,15 @@ const TEAMS: [string, string][] = [
   ["call_center", "Call centre"],
   ["media_buyer", "Media buyer (Marketing / ADs)"],
 ];
+const PAST_TEAMS: Record<string, string> = Object.fromEntries(
+  TEAMS.filter(([k]) => k),
+);
 
 /**
- * Add a task for this client: a reminder for me, or a request to another
- * team. It reaches ClickUp within five minutes with the client's tag on it.
+ * Add a task for this client, with the client's tag on it. Until requests
+ * are open for the client (review F6) it is a reminder for me or a request
+ * to another team, exactly as before; once they are open it is a reminder
+ * for me only.
  */
 export function AddTask({
   taskId,
@@ -797,12 +809,15 @@ export function AddTask({
   inline?: boolean;
 }) {
   const auth = useCockpitAuth();
+  const requests = useRequestsOpen(taskId);
   const [added, setAdded] = useState<Any[] | undefined>(undefined);
   const [open, setOpen] = useState(inline);
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
   const [team, setTeam] = useState("");
   const [due, setDue] = useState("");
+  // A team picked before requests opened is not sent once they are.
+  const department = requests ? "" : team;
 
   const reloadTasks = useCallback(() => {
     if (!auth.client) return;
@@ -820,13 +835,15 @@ export function AddTask({
       clientName,
       title: title.trim(),
       note: note.trim() || undefined,
-      department: team || undefined,
+      department: department || undefined,
       due: due ? Date.parse(`${due}T12:00:00+03:00`) : undefined,
     });
     toast.success(
-      team
-        ? `Sent to ${TEAMS.find(t => t[0] === team)?.[1] ?? team}, in ClickUp within 5 minutes`
-        : "Added to your Client Success list, in ClickUp within 5 minutes",
+      requests
+        ? "Added to your Client Success list."
+        : department
+          ? `Sent to ${TEAMS.find(t => t[0] === department)?.[1] ?? department}, in ClickUp within 5 minutes`
+          : "Added to your Client Success list, in ClickUp within 5 minutes",
     );
     setTitle("");
     setNote("");
@@ -843,7 +860,11 @@ export function AddTask({
           aria-expanded={open}
           onClick={() => setOpen(v => !v)}
         >
-          {open ? "Close" : "Add a task for this client"}
+          {open
+            ? "Close"
+            : requests
+              ? "A reminder for you"
+              : "Add a task for this client"}
         </Button>
       )}
       {open ? (
@@ -857,6 +878,7 @@ export function AddTask({
           <input
             className="h-9 w-full rounded-lg border bg-background px-3"
             placeholder="What needs doing"
+            aria-label="What needs doing"
             value={title}
             onChange={e => setTitle(e.target.value)}
           />
@@ -868,16 +890,19 @@ export function AddTask({
             onChange={e => setNote(e.target.value)}
           />
           <div className="flex flex-wrap items-center gap-2">
-            <AnimatedSelect
-              value={team}
-              onChange={e => setTeam(e.target.value)}
-            >
-              {TEAMS.map(([k, label]) => (
-                <option key={k} value={k}>
-                  {label}
-                </option>
-              ))}
-            </AnimatedSelect>
+            {requests ? null : (
+              <AnimatedSelect
+                aria-label="Who it is for"
+                value={team}
+                onChange={e => setTeam(e.target.value)}
+              >
+                {TEAMS.map(([k, label]) => (
+                  <option key={k} value={k}>
+                    {label}
+                  </option>
+                ))}
+              </AnimatedSelect>
+            )}
             <DateInput
               className="rounded-lg border bg-background px-3 py-1.5"
               value={due}
@@ -890,13 +915,21 @@ export function AddTask({
               disabled={!title.trim()}
               className="ml-auto"
             >
-              Add task
+              {requests ? "Add to my list" : "Add task"}
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground">
-            Tagged "{clientName.toLowerCase()}" in ClickUp, so the board
-            attributes it to this client.
-          </p>
+          {requests ? (
+            <p className="text-xs text-muted-foreground">
+              It goes on your Client Success list, tagged "
+              {clientName.toLowerCase()}" in ClickUp, so the board attributes it
+              to this client. To ask another team, use Ask a team.
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Tagged "{clientName.toLowerCase()}" in ClickUp, so the board
+              attributes it to this client.
+            </p>
+          )}
         </form>
       ) : null}
       {added?.length ? (
@@ -909,8 +942,7 @@ export function AddTask({
               <span className="font-medium">{t.title}</span>
               <span className="text-xs text-muted-foreground">
                 {t.department
-                  ? (TEAMS.find(x => x[0] === t.department)?.[1] ??
-                    t.department)
+                  ? (PAST_TEAMS[t.department] ?? t.department)
                   : "My list"}
               </span>
               <span className="ml-auto text-xs">

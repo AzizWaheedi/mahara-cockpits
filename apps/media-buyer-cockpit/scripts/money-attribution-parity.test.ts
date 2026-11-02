@@ -9,6 +9,8 @@
  */
 import { describe, expect, test } from "bun:test";
 import * as native from "../../../hermes/ceo-refresh/native/adapters/money.js";
+import { withRuntime } from "../../../hermes/ceo-refresh/runtime";
+import { money as edgeMoney } from "../../../supabase/functions/cockpit-ceo-api/finance/adapters/money";
 import type {
   Attributed,
   CardRef,
@@ -17,10 +19,8 @@ import type {
   TieRow,
 } from "../../../supabase/functions/cockpit-ceo-api/finance/attribution";
 import * as edge from "../../../supabase/functions/cockpit-ceo-api/finance/attribution";
-import { money as edgeMoney } from "../../../supabase/functions/cockpit-ceo-api/finance/adapters/money";
 import { financeContext } from "../../../supabase/functions/cockpit-ceo-api/finance/context";
 import { withFinanceRuntime } from "../../../supabase/functions/cockpit-ceo-api/finance/runtime";
-import { withRuntime } from "../../../hermes/ceo-refresh/runtime";
 
 const pay = (
   p: Partial<PaymentIn> & { id: string; day: string; usd: number },
@@ -536,20 +536,161 @@ describe("both copies decide every payment the same", () => {
   });
 });
 
+describe("rule 7: a payment tied to an upsell win is back end, the card CSM's (Q23)", () => {
+  // Deal "deal-card" was signed 2026-09-12 on card "card-card"; day 30 of its term is 2026-10-12.
+  const upsell = pay({
+    id: "tap:chg_upsell30",
+    day: "2026-10-12",
+    usd: 2000,
+    rail: "tap",
+    payerName: "Card Payer Example",
+  });
+  const winTie = tie({
+    id: 70,
+    payment_id: "tap:chg_upsell30",
+    clickup_task_id: "card-card",
+    note: "Upsell payment for Website",
+    win_id: "00000000-0000-4000-8000-00000000e170",
+  });
+  const run = (ties: TieRow[], payments: PaymentIn[] = [upsell]) => {
+    const n = runNative(payments, DEALS, CARDS, ties);
+    const e = runEdge(payments, DEALS, CARDS, ties);
+    expect(n).toEqual(e);
+    return n;
+  };
+
+  test("on day 30 of the deal's term it is back end: not the closer's, not in the deal ledger, not in the contract total", () => {
+    const rows = run([winTie]);
+    const r = rows.find(x => x.id === upsell.id);
+    expect([
+      r?.side,
+      r?.kind,
+      r?.person,
+      r?.personRole,
+      r?.dealResponseId,
+      r?.clientTaskId,
+      r?.matchedBy,
+      r?.depositUsd,
+    ]).toEqual([
+      "back_end",
+      "client",
+      "Csmtwo",
+      "csm",
+      null,
+      "card-card",
+      "ceo",
+      0,
+    ]);
+    expect(r?.tie).toEqual({
+      id: 70,
+      scope: "payment",
+      note: "Upsell payment for Website",
+      setBy: "ceo@example.test",
+      setAt: "2026-10-18T09:00:00+00:00",
+      winId: "00000000-0000-4000-8000-00000000e170",
+    });
+    expect(native.dealLedgerRows(rows)).toEqual([]);
+    expect(edge.dealLedgerRows(rows as Attributed[])).toEqual([]);
+    expect(native.attributionTotals(rows)).toEqual(
+      edge.totals(rows as Attributed[]),
+    );
+    // The deal's contract is untouched: a later card payment inside the term is still the closer's.
+    const later = pay({
+      id: "tap:chg_after",
+      day: "2026-10-20",
+      usd: 500,
+      rail: "tap",
+      payerName: "Card Payer Example",
+    });
+    const both = run([winTie], [upsell, later]);
+    expect(both.find(x => x.id === later.id)?.side).toBe("front_end");
+    expect(native.normalizeTies([winTie])).toEqual(
+      edge.normalizeTies([winTie]),
+    );
+    expect(native.normalizeTies([winTie])[0].winId).toBe(
+      "00000000-0000-4000-8000-00000000e170",
+    );
+  });
+
+  test("the same payment without the win stays front end (rule 2), and a cleared win tie falls back", () => {
+    const r = run([]).find(x => x.id === upsell.id);
+    expect([r?.side, r?.personRole, r?.dealResponseId, r?.matchedBy]).toEqual([
+      "front_end",
+      "closer",
+      "deal-card",
+      "card_payer",
+    ]);
+    const cleared = run([
+      {
+        ...winTie,
+        cleared_at: "2026-10-30T10:00:00+00:00",
+        cleared_by: "ceo@example.test",
+      },
+    ]).find(x => x.id === upsell.id);
+    expect([cleared?.side, cleared?.dealResponseId, cleared?.tie]).toEqual([
+      "front_end",
+      "deal-card",
+      null,
+    ]);
+    // An ordinary card tie on the same payment still binds to the deal in its term (rule 2 under the CEO's tie).
+    const plain = run([{ ...winTie, win_id: null }]).find(
+      x => x.id === upsell.id,
+    );
+    expect([plain?.side, plain?.dealResponseId, plain?.matchedBy]).toEqual([
+      "front_end",
+      "deal-card",
+      "ceo",
+    ]);
+  });
+
+  test("the rule says it in words, the same in both copies", () => {
+    expect(native.attributionRuleText(0, 0)).toBe(
+      edge.attributionRuleText(0, 0),
+    );
+    expect(native.attributionRuleText(0, 0)).toContain(
+      "a payment you tied to an upsell win is back end, the card's CSM's, even inside a deal's term",
+    );
+  });
+});
+
 describe("both copies build the same client cards (contract section 2)", () => {
   // Made-up snapshot rows: a card on billing only (a new client, no alias row
   // yet), a card with aliases and a CSM, logins and a hand-kept payer.
   const snapshot = {
     billing: [
-      { clickup_task_id: "card-new", client_name: "Client New Example", captured_at: "2026-10-17T00:00:00Z" },
-      { clickup_task_id: "card-old", client_name: "Client Old Example", captured_at: "2026-10-17T00:00:00Z" },
+      {
+        clickup_task_id: "card-new",
+        client_name: "Client New Example",
+        captured_at: "2026-10-17T00:00:00Z",
+      },
+      {
+        clickup_task_id: "card-old",
+        client_name: "Client Old Example",
+        captured_at: "2026-10-17T00:00:00Z",
+      },
     ],
     aliases: [
-      { task_id: "card-old", name: "Client Old Example", aliases: ["Old Example Co —  Branch"], csm: "Csmold Person" },
-      { task_id: "card-old", name: "Client Old Example", aliases: [], csm: "Csmother Person" },
+      {
+        task_id: "card-old",
+        name: "Client Old Example",
+        aliases: ["Old Example Co —  Branch"],
+        csm: "Csmold Person",
+      },
+      {
+        task_id: "card-old",
+        name: "Client Old Example",
+        aliases: [],
+        csm: "Csmother Person",
+      },
       { task_id: null, name: "Unmapped", aliases: [] },
     ],
-    payers: [{ payer_key: "newpayerfamily", payer: "New Payer Family", clickup_task_id: "card-new" }],
+    payers: [
+      {
+        payer_key: "newpayerfamily",
+        payer: "New Payer Family",
+        clickup_task_id: "card-new",
+      },
+    ],
     manual: [],
     series: [],
     newestManualChange: null,
@@ -601,14 +742,46 @@ describe("both copies build the same client cards (contract section 2)", () => {
     ];
     const payments = [
       // A hand-logged entry with the card typed, and a payer mapped by hand.
-      pay({ id: "manual:m-new", rail: "manual", day: "2026-10-17", usd: 5500, payerName: "Someone Else", clickupTaskId: "card-new" }),
-      pay({ id: "tap:chg_new", rail: "tap", day: "2026-10-12", usd: 500, payerName: "New Payer Family" }),
+      pay({
+        id: "manual:m-new",
+        rail: "manual",
+        day: "2026-10-17",
+        usd: 5500,
+        payerName: "Someone Else",
+        clickupTaskId: "card-new",
+      }),
+      pay({
+        id: "tap:chg_new",
+        rail: "tap",
+        day: "2026-10-12",
+        usd: 500,
+        payerName: "New Payer Family",
+      }),
     ];
-    const n = runNative(payments, deals, native.cardReferences(snapshot, logins), []);
+    const n = runNative(
+      payments,
+      deals,
+      native.cardReferences(snapshot, logins),
+      [],
+    );
     expect(runEdge(payments, deals, cards, [])).toEqual(n);
-    expect(n.map(r => [r.id, r.side, r.person, r.clientTaskId, r.matchedBy])).toEqual([
-      ["tap:chg_new", "front_end", "Closer New Example", "card-new", "card_payer"],
-      ["manual:m-new", "front_end", "Closer New Example", "card-new", "card_typed"],
+    expect(
+      n.map(r => [r.id, r.side, r.person, r.clientTaskId, r.matchedBy]),
+    ).toEqual([
+      [
+        "tap:chg_new",
+        "front_end",
+        "Closer New Example",
+        "card-new",
+        "card_payer",
+      ],
+      [
+        "manual:m-new",
+        "front_end",
+        "Closer New Example",
+        "card-new",
+        "card_typed",
+      ],
     ]);
   });
 });
@@ -637,104 +810,408 @@ describe("both money adapters read the same inputs the same way (contract sectio
     newestManualChange: stamp,
     billing: [
       // A new client on billing only: no alias row yet.
-      { clickup_task_id: "card-new", client_name: "Client New Example", csm: "Csmnew Person", stage: "Active", mrr_usd: 1000, ltv_usd: 5500, payment_plan: "Paid In Full", captured_at: stamp },
-      { clickup_task_id: "card-old", client_name: "Client Old Example", stage: "Active", mrr_usd: 750, ltv_usd: 9000, payment_plan: "Monthly", captured_at: stamp },
+      {
+        clickup_task_id: "card-new",
+        client_name: "Client New Example",
+        csm: "Csmnew Person",
+        stage: "Active",
+        mrr_usd: 1000,
+        ltv_usd: 5500,
+        payment_plan: "Paid In Full",
+        captured_at: stamp,
+      },
+      {
+        clickup_task_id: "card-old",
+        client_name: "Client Old Example",
+        stage: "Active",
+        mrr_usd: 750,
+        ltv_usd: 9000,
+        payment_plan: "Monthly",
+        captured_at: stamp,
+      },
     ],
-    aliases: [{ task_id: "card-old", name: "Client Old Example", aliases: ["Old Example Co"], csm: "Csmold Person" }],
-    payers: [{ payer_key: "oldpayerfamily", payer: "Old Payer Family", clickup_task_id: "card-old" }],
+    aliases: [
+      {
+        task_id: "card-old",
+        name: "Client Old Example",
+        aliases: ["Old Example Co"],
+        csm: "Csmold Person",
+      },
+    ],
+    payers: [
+      {
+        payer_key: "oldpayerfamily",
+        payer: "Old Payer Family",
+        clickup_task_id: "card-old",
+      },
+    ],
     ties: [
-      tie({ id: 21, payment_id: "whop:pay_tied", deal_response_id: "deal-same-b" }),
+      tie({
+        id: 21,
+        payment_id: "whop:pay_tied",
+        deal_response_id: "deal-same-b",
+      }),
     ],
     manual: [
       // Spaces and a dash in the client typed by hand.
-      { id: "m-old", day: ago(3), amount: 1000, currency: "USD", amount_usd: 1000, usd_per_unit: 1, client_name: "Client  Old — Example", clickup_task_id: null, rail: "cash", kind: "payment", deal_contracted: null, deal_contracted_usd: null, note: null, added_at: stamp, deleted_at: null },
+      {
+        id: "m-old",
+        day: ago(3),
+        amount: 1000,
+        currency: "USD",
+        amount_usd: 1000,
+        usd_per_unit: 1,
+        client_name: "Client  Old — Example",
+        clickup_task_id: null,
+        rail: "cash",
+        kind: "payment",
+        deal_contracted: null,
+        deal_contracted_usd: null,
+        note: null,
+        added_at: stamp,
+        deleted_at: null,
+      },
       // Dated after today: not money in yet.
-      { id: "m-future", day: ago(-3), amount: 100, currency: "USD", amount_usd: 100, usd_per_unit: 1, client_name: "Client Old Example", clickup_task_id: "card-old", rail: "cash", kind: "payment", deal_contracted: null, deal_contracted_usd: null, note: null, added_at: stamp, deleted_at: null },
+      {
+        id: "m-future",
+        day: ago(-3),
+        amount: 100,
+        currency: "USD",
+        amount_usd: 100,
+        usd_per_unit: 1,
+        client_name: "Client Old Example",
+        clickup_task_id: "card-old",
+        rail: "cash",
+        kind: "payment",
+        deal_contracted: null,
+        deal_contracted_usd: null,
+        note: null,
+        added_at: stamp,
+        deleted_at: null,
+      },
     ],
     series: [],
     exclusions: [],
     statements: [
-      { id: "st-1", account: "XXXX0001", account_kind: "account", from_day: ago(40), to_day: ago(2), lines: 4, imported_at: stamp },
+      {
+        id: "st-1",
+        account: "XXXX0001",
+        account_kind: "account",
+        from_day: ago(40),
+        to_day: ago(2),
+        lines: 4,
+        imported_at: stamp,
+      },
     ],
     bank_lines: [
-      { id: 1, statement_id: "st-1", day: ago(8), usd: 326, amount: 100, currency: "KWD", reference: "Transfer  from   Client Old Example", account: "XXXX0001", kind: "client_payment" },
-      { id: 2, statement_id: "st-1", day: ago(8), usd: -32.6, amount: -10, currency: "KWD", reference: "Software vendor", account: "XXXX0001", kind: "expense", category: "software" },
+      {
+        id: 1,
+        statement_id: "st-1",
+        day: ago(8),
+        usd: 326,
+        amount: 100,
+        currency: "KWD",
+        reference: "Transfer  from   Client Old Example",
+        account: "XXXX0001",
+        kind: "client_payment",
+      },
+      {
+        id: 2,
+        statement_id: "st-1",
+        day: ago(8),
+        usd: -32.6,
+        amount: -10,
+        currency: "KWD",
+        reference: "Software vendor",
+        account: "XXXX0001",
+        kind: "expense",
+        category: "software",
+      },
       // A Tap settlement: it credits nobody, the charge it covers does.
-      { id: 3, statement_id: "st-1", day: ago(28), usd: 400, amount: 122.7, currency: "KWD", reference: "Tap settlement", account: "XXXX0001", kind: "tap_settlement" },
-      { id: 5, statement_id: "st-1", day: ago(3), usd: 300, amount: 92, currency: "KWD", reference: "ECOM settlement", account: "XXXX0001", kind: "ecom_settlement" },
+      {
+        id: 3,
+        statement_id: "st-1",
+        day: ago(28),
+        usd: 400,
+        amount: 122.7,
+        currency: "KWD",
+        reference: "Tap settlement",
+        account: "XXXX0001",
+        kind: "tap_settlement",
+      },
+      {
+        id: 5,
+        statement_id: "st-1",
+        day: ago(3),
+        usd: 300,
+        amount: 92,
+        currency: "KWD",
+        reference: "ECOM settlement",
+        account: "XXXX0001",
+        kind: "ecom_settlement",
+      },
       // A debit classed as a client payment is no payment in.
-      { id: 4, statement_id: "st-1", day: ago(7), usd: -50, amount: -15.34, currency: "KWD", reference: "Reversal Client Old Example", account: "XXXX0001", kind: "client_payment" },
+      {
+        id: 4,
+        statement_id: "st-1",
+        day: ago(7),
+        usd: -50,
+        amount: -15.34,
+        currency: "KWD",
+        reference: "Reversal Client Old Example",
+        account: "XXXX0001",
+        kind: "client_payment",
+      },
     ],
   };
 
   // Two forms for one email on one day, stored newest first: the copies must
   // read them in form order to pick the same one.
   const dealRows: Row[] = [
-    { response_id: "deal-new", submitted_at: `${ago(6)}T15:00:00Z`, day: ago(6), email: "form@new.example.test", business: "Client New Example", contact: "Payer  Newfamily", closer: "Closer  New   Example", csm: "Csm  Deal Example", cash_collected: 500, payment_structure: "Paid in full ($5,500)", contracted: 5500 },
-    { response_id: "deal-same-b", submitted_at: `${ago(10)}T15:00:00Z`, day: ago(10), email: "same@same.example.test", business: "Client Same Late Example", contact: null, closer: "Closer Two Example", csm: null, cash_collected: 500, payment_structure: "Monthly", contracted: 3000 },
-    { response_id: "deal-same-a", submitted_at: `${ago(10)}T09:00:00Z`, day: ago(10), email: "same@same.example.test", business: "Client Same Early Example", contact: null, closer: "Closer One Example", csm: null, cash_collected: 500, payment_structure: "Monthly", contracted: 3000 },
+    {
+      response_id: "deal-new",
+      submitted_at: `${ago(6)}T15:00:00Z`,
+      day: ago(6),
+      email: "form@new.example.test",
+      business: "Client New Example",
+      contact: "Payer  Newfamily",
+      closer: "Closer  New   Example",
+      csm: "Csm  Deal Example",
+      cash_collected: 500,
+      payment_structure: "Paid in full ($5,500)",
+      contracted: 5500,
+    },
+    {
+      response_id: "deal-same-b",
+      submitted_at: `${ago(10)}T15:00:00Z`,
+      day: ago(10),
+      email: "same@same.example.test",
+      business: "Client Same Late Example",
+      contact: null,
+      closer: "Closer Two Example",
+      csm: null,
+      cash_collected: 500,
+      payment_structure: "Monthly",
+      contracted: 3000,
+    },
+    {
+      response_id: "deal-same-a",
+      submitted_at: `${ago(10)}T09:00:00Z`,
+      day: ago(10),
+      email: "same@same.example.test",
+      business: "Client Same Early Example",
+      contact: null,
+      closer: "Closer One Example",
+      csm: null,
+      cash_collected: 500,
+      payment_structure: "Monthly",
+      contracted: 3000,
+    },
   ];
-  const whop = (r: Row): Row => ({ final_amount: r.net_amount, refunded_amount: 0, refund_day: null, email: null, billing: null, username: null, deal_response_id: null, billing_reason: "one_time", ...r });
+  const whop = (r: Row): Row => ({
+    final_amount: r.net_amount,
+    refunded_amount: 0,
+    refund_day: null,
+    email: null,
+    billing: null,
+    username: null,
+    deal_response_id: null,
+    billing_reason: "one_time",
+    ...r,
+  });
   const whopRows: Row[] = [
-    whop({ payment_id: "pay_old_client", day: ago(20), net_amount: 750, billing: "Client Old  Example" }),
-    whop({ payment_id: "pay_tied", day: ago(15), net_amount: 200, final_amount: 300, refunded_amount: 100, refund_day: ago(14), billing: "Refund  Payer" }),
-    whop({ payment_id: "pay_same", day: ago(9), net_amount: 1000, email: "same@same.example.test", billing: "Same  Payer" }),
-    whop({ payment_id: "pay_new_dep", day: ago(6), net_amount: 500, email: "form@new.example.test", billing: "Payer  Newfamily", deal_response_id: "deal-new" }),
-    whop({ payment_id: "pay_new_rest", day: ago(2), net_amount: 5000, email: "owner@new.example.test", username: "owner  new" }),
+    whop({
+      payment_id: "pay_old_client",
+      day: ago(20),
+      net_amount: 750,
+      billing: "Client Old  Example",
+    }),
+    whop({
+      payment_id: "pay_tied",
+      day: ago(15),
+      net_amount: 200,
+      final_amount: 300,
+      refunded_amount: 100,
+      refund_day: ago(14),
+      billing: "Refund  Payer",
+    }),
+    whop({
+      payment_id: "pay_same",
+      day: ago(9),
+      net_amount: 1000,
+      email: "same@same.example.test",
+      billing: "Same  Payer",
+    }),
+    whop({
+      payment_id: "pay_new_dep",
+      day: ago(6),
+      net_amount: 500,
+      email: "form@new.example.test",
+      billing: "Payer  Newfamily",
+      deal_response_id: "deal-new",
+    }),
+    whop({
+      payment_id: "pay_new_rest",
+      day: ago(2),
+      net_amount: 5000,
+      email: "owner@new.example.test",
+      username: "owner  new",
+    }),
   ];
   const tapRows: Row[] = [
-    { id: "chg_settled", day: ago(30), at_ms: now - 30 * 86_400_000, currency: "USD", amount: 400, usd: 400, email: null, name: "Old  Payer Family" },
-    { id: "chg_new", day: ago(5), at_ms: now - 5 * 86_400_000, currency: "USD", amount: 250, usd: 250, email: "OWNER@New.example.test", name: "Payer   Newfamily" },
+    {
+      id: "chg_settled",
+      day: ago(30),
+      at_ms: now - 30 * 86_400_000,
+      currency: "USD",
+      amount: 400,
+      usd: 400,
+      email: null,
+      name: "Old  Payer Family",
+    },
+    {
+      id: "chg_new",
+      day: ago(5),
+      at_ms: now - 5 * 86_400_000,
+      currency: "USD",
+      amount: 250,
+      usd: 250,
+      email: "OWNER@New.example.test",
+      name: "Payer   Newfamily",
+    },
   ];
-  const ecomRows: Row[] = [{ id: "INV_test1", day: ago(5), at_ms: now - 5 * 86_400_000, amount_kwd: 92, usd: 300, customer_email: "FORM@NEW.EXAMPLE.TEST", customer_name: "Payer Newfamily" }];
+  const ecomRows: Row[] = [
+    {
+      id: "INV_test1",
+      day: ago(5),
+      at_ms: now - 5 * 86_400_000,
+      amount_kwd: 92,
+      usd: 300,
+      customer_email: "FORM@NEW.EXAMPLE.TEST",
+      customer_name: "Payer Newfamily",
+    },
+  ];
   const transferRows: Row[] = [
-    { id: 9, day: ago(12), amount_usd: 600, method: "wire", client: "Client  Old  Example", reference: "INV-1", deal_response_id: null },
+    {
+      id: 9,
+      day: ago(12),
+      amount_usd: 600,
+      method: "wire",
+      client: "Client  Old  Example",
+      reference: "INV-1",
+      deal_response_id: null,
+    },
   ];
-  const loginRows: Row[] = [{ email: "owner@new.example.test", clickup_id: "card-new" }];
+  const loginRows: Row[] = [
+    { email: "owner@new.example.test", clickup_id: "card-new" },
+  ];
   const inOrder = (query: string, rows: Row[]) =>
     /order by submitted_at\s*$/i.test(query.trim())
-      ? [...rows].sort((a, b) => String(a.submitted_at).localeCompare(String(b.submitted_at)))
+      ? [...rows].sort((a, b) =>
+          String(a.submitted_at).localeCompare(String(b.submitted_at)),
+        )
       : rows;
 
-  const nativeReader = async (_project: string, query: string): Promise<Row[]> => {
+  const nativeReader = async (
+    _project: string,
+    query: string,
+  ): Promise<Row[]> => {
     const marker = /\/\*\s*ceo-refresh:([a-z0-9._-]+)\s*\*\//i.exec(query)?.[1];
     const fixtures: Record<string, Row[]> = {
-      "money.summary": [{ whop_synced_ms: now, whop_last_paid_ms: now, deals_synced_ms: now, failed_count_30: 0, failed_amount_30: 0, refunds_mtd: 0, refunds_90: 0, avg_contract_90: 3833.33, first_deal_day: ago(10) }],
+      "money.summary": [
+        {
+          whop_synced_ms: now,
+          whop_last_paid_ms: now,
+          deals_synced_ms: now,
+          failed_count_30: 0,
+          failed_amount_30: 0,
+          refunds_mtd: 0,
+          refunds_90: 0,
+          avg_contract_90: 3833.33,
+          first_deal_day: ago(10),
+        },
+      ],
       "money.attribution.whop": whopRows,
       "money.attribution.transfers": transferRows,
       "money.attribution.deals": inOrder(query, dealRows),
       "money.attribution.logins": loginRows,
-      "money.tap_state": [{ ok: true, note: null, rows_seen: 2, run_ms: now, ok_ms: now }],
+      "money.tap_state": [
+        { ok: true, note: null, rows_seen: 2, run_ms: now, ok_ms: now },
+      ],
       "money.tap_charges": tapRows,
       "money.ecom_state": [{ ok: true, note: null, ok_ms: now }],
       "money.ecom_invoices": ecomRows,
-      "money.media_feed": [{ ready: true, source_rows: 2, actual_rows: 2, snapshot_ms: now - 600_000, first_day: ago(60), last_day: today }],
+      "money.media_feed": [
+        {
+          ready: true,
+          source_rows: 2,
+          actual_rows: 2,
+          snapshot_ms: now - 600_000,
+          first_day: ago(60),
+          last_day: today,
+        },
+      ],
     };
     if (!marker) throw new Error(`Unmarked query ${query.slice(0, 80)}`);
     return fixtures[marker] ?? [];
   };
-  const edgeReader = async (_project: string, query: string): Promise<Row[]> => {
+  const edgeReader = async (
+    _project: string,
+    query: string,
+  ): Promise<Row[]> => {
     if (/failed_count_30/.test(query))
-      return [{ refunds_mtd: 0, refunds_90: 0, failed_count_30: 0, failed_amount_30: 0, whop_synced_ms: now, whop_last_paid_ms: now, avg_contract_90: 3833.33, deals_synced_ms: now, first_deal_day: ago(10), expense_months: null, transfer_months: null }];
-    if (/cockpit_sync_state/.test(query)) return [{ ok: true, note: null, rows_seen: 2, run_ms: now, ok_ms: now }];
+      return [
+        {
+          refunds_mtd: 0,
+          refunds_90: 0,
+          failed_count_30: 0,
+          failed_amount_30: 0,
+          whop_synced_ms: now,
+          whop_last_paid_ms: now,
+          avg_contract_90: 3833.33,
+          deals_synced_ms: now,
+          first_deal_day: ago(10),
+          expense_months: null,
+          transfer_months: null,
+        },
+      ];
+    if (/cockpit_sync_state/.test(query))
+      return [{ ok: true, note: null, rows_seen: 2, run_ms: now, ok_ms: now }];
     if (/from public\.cockpit_tap_charges/.test(query)) return tapRows;
     if (/from public\.cockpit_ecom_invoices/.test(query)) return ecomRows;
-    if (/from public\.cockpit_bank_lines/.test(query)) return snapshot.bank_lines;
+    if (/from public\.cockpit_bank_lines/.test(query))
+      return snapshot.bank_lines;
     if (/from public\.cockpit_statements/.test(query))
       return snapshot.statements.map(st => ({ ...st, imported_ms: now }));
     if (/mahara_portal_documents/.test(query)) return loginRows;
     if (/client_first_name/.test(query)) return inOrder(query, dealRows);
-    if (/billing_reason\s+from public\.whop_payments/.test(query)) return whopRows;
-    if (/deal_response_id\s+from public\.transfers/.test(query)) return transferRows;
+    if (/billing_reason\s+from public\.whop_payments/.test(query))
+      return whopRows;
+    if (/deal_response_id\s+from public\.transfers/.test(query))
+      return transferRows;
     return [];
   };
 
   const runBoth = async () => {
     const nativeOut = (await withRuntime(
-      { env: () => undefined, read: nativeReader as never, repository: {} as never, tools: {} as never },
-      () => native.createMoneyAdapter(snapshot).compute({ repository: {} as never }),
+      {
+        env: () => undefined,
+        read: nativeReader as never,
+        repository: {} as never,
+        tools: {} as never,
+      },
+      () =>
+        native
+          .createMoneyAdapter(snapshot)
+          .compute({ repository: {} as never }),
     )) as Row & { payload: Row; clientPayments: Row[]; dealPayments: Row[] };
-    const edgeRuntime = { read: edgeReader, context: financeContext(snapshot), payments: [] as Row[], dealPayments: undefined as Row[] | undefined, failures: [] as string[] };
+    const edgeRuntime = {
+      read: edgeReader,
+      context: financeContext(snapshot),
+      payments: [] as Row[],
+      dealPayments: undefined as Row[] | undefined,
+      failures: [] as string[],
+    };
     const edgeOut = (await withFinanceRuntime(edgeRuntime as never, () =>
       edgeMoney.compute(edgeRuntime.context),
     )) as unknown as { payload: Row };
@@ -749,19 +1226,32 @@ describe("both money adapters read the same inputs the same way (contract sectio
   const section = (payload: Row) => {
     const a = payload.attribution as Row & { totals: Row };
     const { out: _out, outCount: _outCount, ...totals } = a.totals;
-    return { totals, mtd: a.mtd, lastMonth: a.lastMonth, byPerson: a.byPerson, ties: a.ties, dealLedger: a.dealLedger };
+    return {
+      totals,
+      mtd: a.mtd,
+      lastMonth: a.lastMonth,
+      byPerson: a.byPerson,
+      ties: a.ties,
+      dealLedger: a.dealLedger,
+    };
   };
 
   test("every payment in, the client payments and the deal ledger are the same rows", async () => {
     const { nativeOut, edgeOut, edgeRuntime } = await runBoth();
-    for (const s of nativeOut.sources as { ok: boolean }[]) expect(s.ok).toBe(true);
+    for (const s of nativeOut.sources as { ok: boolean }[])
+      expect(s.ok).toBe(true);
     expect(edgeRuntime.failures).toEqual([]);
     expect(moneyIn(edgeOut.payload)).toEqual(moneyIn(nativeOut.payload));
     expect(section(edgeOut.payload)).toEqual(section(nativeOut.payload));
     const written = edgeRuntime.payments.map(({ recorded_at: _at, ...r }) => r);
-    const byPayment = (rows: Row[]) => [...rows].sort((a, b) => String(a.payment_id).localeCompare(String(b.payment_id)));
+    const byPayment = (rows: Row[]) =>
+      [...rows].sort((a, b) =>
+        String(a.payment_id).localeCompare(String(b.payment_id)),
+      );
     expect(byPayment(written)).toEqual(byPayment(nativeOut.clientPayments));
-    expect(byPayment(edgeRuntime.dealPayments ?? [])).toEqual(byPayment(nativeOut.dealPayments));
+    expect(byPayment(edgeRuntime.dealPayments ?? [])).toEqual(
+      byPayment(nativeOut.dealPayments),
+    );
   });
 
   test("and what they read is the contract", async () => {
@@ -769,23 +1259,77 @@ describe("both money adapters read the same inputs the same way (contract sectio
     const rows = new Map(moneyIn(nativeOut.payload).map(t => [t.id, t]));
     const look = (id: string) => {
       const r = rows.get(id);
-      return r ? [r.side, r.person, r.dealResponseId ?? null, r.clientTaskId, r.matchedBy, r.payerName] : null;
+      return r
+        ? [
+            r.side,
+            r.person,
+            r.dealResponseId ?? null,
+            r.clientTaskId,
+            r.matchedBy,
+            r.payerName,
+          ]
+        : null;
     };
     // The new client's money is the closer's, on the billing-only card; names cleaned in both copies.
-    expect(look("whop:pay_new_dep")).toEqual(["front_end", "Closer New Example", "deal-new", "card-new", "deal_id", "Payer Newfamily"]);
-    expect(look("whop:pay_new_rest")).toEqual(["front_end", "Closer New Example", "deal-new", "card-new", "card_email", "owner new"]);
+    expect(look("whop:pay_new_dep")).toEqual([
+      "front_end",
+      "Closer New Example",
+      "deal-new",
+      "card-new",
+      "deal_id",
+      "Payer Newfamily",
+    ]);
+    expect(look("whop:pay_new_rest")).toEqual([
+      "front_end",
+      "Closer New Example",
+      "deal-new",
+      "card-new",
+      "card_email",
+      "owner new",
+    ]);
     // The payer pays under the contact's own name on the form: that deal, in its term.
-    expect(look("tap:chg_new")?.slice(0, 5)).toEqual(["front_end", "Closer New Example", "deal-new", "card-new", "deal_name"]);
+    expect(look("tap:chg_new")?.slice(0, 5)).toEqual([
+      "front_end",
+      "Closer New Example",
+      "deal-new",
+      "card-new",
+      "deal_name",
+    ]);
     expect(rows.get("tap:chg_new")?.payerEmail).toBe("owner@new.example.test");
-    expect(rows.get("ecom:INV_test1")?.payerEmail).toBe("form@new.example.test");
-    expect((nativeOut.payload.rails as Row).ecom).toMatchObject({ label: "Ecom", connected: true });
+    expect(rows.get("ecom:INV_test1")?.payerEmail).toBe(
+      "form@new.example.test",
+    );
+    expect((nativeOut.payload.rails as Row).ecom).toMatchObject({
+      label: "Ecom",
+      connected: true,
+    });
     // Two forms on one day: the earlier form, in both copies.
-    expect(look("whop:pay_same")?.slice(0, 3)).toEqual(["front_end", "Closer One Example", "deal-same-a"]);
-    expect(look("whop:pay_tied")?.slice(0, 3)).toEqual(["front_end", "Closer Two Example", "deal-same-b"]);
+    expect(look("whop:pay_same")?.slice(0, 3)).toEqual([
+      "front_end",
+      "Closer One Example",
+      "deal-same-a",
+    ]);
+    expect(look("whop:pay_tied")?.slice(0, 3)).toEqual([
+      "front_end",
+      "Closer Two Example",
+      "deal-same-b",
+    ]);
     // A Tap charge a settlement line covers is still the payer's money.
-    expect(look("tap:chg_settled")?.slice(0, 5)).toEqual(["back_end", "Csmold", null, "card-old", "card_payer"]);
+    expect(look("tap:chg_settled")?.slice(0, 5)).toEqual([
+      "back_end",
+      "Csmold",
+      null,
+      "card-old",
+      "card_payer",
+    ]);
     expect(look("transfer:9")?.[5]).toBe("Client Old Example");
-    expect(look("bank:1")?.slice(0, 5)).toEqual(["back_end", "Csmold", null, "card-old", "card_name"]);
+    expect(look("bank:1")?.slice(0, 5)).toEqual([
+      "back_end",
+      "Csmold",
+      null,
+      "card-old",
+      "card_name",
+    ]);
     expect(look("bank:1")?.[5]).toBe("Transfer from Client Old Example");
     expect(look("manual:m-old")?.[5]).toBe("Client Old , Example");
     expect(rows.has("bank:4")).toBe(false);
@@ -793,7 +1337,15 @@ describe("both money adapters read the same inputs the same way (contract sectio
   });
 
   test("the cleaner is one rule in both copies", () => {
-    for (const text of ["  Mohammed  Algodaihi ", "وليد  سندي", "Client — Example – Co", "pay me@example.test now", "Call +965 5555 1234 today", "2026-10-18 note", "x".repeat(300)])
+    for (const text of [
+      "  Mohammed  Algodaihi ",
+      "وليد  سندي",
+      "Client — Example – Co",
+      "pay me@example.test now",
+      "Call +965 5555 1234 today",
+      "2026-10-18 note",
+      "x".repeat(300),
+    ])
       for (const max of [60, 80, 120, 240])
         expect(edge.cleanText(text, max)).toBe(native.cleanText(text, max));
   });

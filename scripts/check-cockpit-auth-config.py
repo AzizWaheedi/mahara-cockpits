@@ -122,6 +122,16 @@ def request(token, path, payload=None):
         return json.load(response)
 
 
+def stored_answer(answer):
+    """The Composio CLI writes a large answer to a file and prints only its
+    path (storedInFile, outputFilePath). The function catalog passed that size
+    on 2026-10-27 (1,194 cockpit_* names), and the preflight then failed every
+    ship with "Composio query failed". Read the file when there is one."""
+    if isinstance(answer, dict) and answer.get("storedInFile") and answer.get("outputFilePath"):
+        return json.loads(pathlib.Path(answer["outputFilePath"]).read_text(encoding="utf-8"))
+    return answer
+
+
 def composio_request(path, payload=None):
     """The same read through Aziz's Composio Supabase connection. Queries run
     read-only; the answers stay in memory and are never printed."""
@@ -133,7 +143,7 @@ def composio_request(path, payload=None):
     done = subprocess.run(argv, capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
     if done.returncode != 0:
         raise ValueError("Composio could not read the project")
-    answer = json.loads(done.stdout)
+    answer = stored_answer(json.loads(done.stdout))
     if path != "database/query":
         return answer
     if not answer.get("successful") or not isinstance((answer.get("data") or {}).get("result"), list):

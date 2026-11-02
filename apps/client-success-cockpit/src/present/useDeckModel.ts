@@ -26,6 +26,9 @@ import {
 } from "./deckData";
 import { langParam } from "./engine";
 import type { LaunchBlueprint } from "./launchData";
+import { BUILT_OFFER_DECKS, type OfferDeckKind } from "./offer/kinds";
+import type { OfferSources } from "./offer/sources";
+import type { OfferIO } from "./offer/useOffer";
 import { applyPatch, PrepSaver, prepAfterLoad } from "./prep";
 import {
   type clearDeckVideo,
@@ -53,10 +56,15 @@ import { localAds } from "./uploads";
  */
 
 export interface Loaded {
+  offer?: OfferSources;
   sources: DeckSources | null;
   kit: OnboardingRow | null;
   ads: LaunchAd[];
-  prep: { onboarding: Overrides; launch: Overrides; blueprint?: Overrides };
+  prep: {
+    onboarding: Overrides;
+    launch: Overrides;
+    blueprint?: Overrides;
+  } & Partial<Record<OfferDeckKind, Overrides>>;
   /**
    * The Brand Blueprint beside the deck's read (cockpit_blueprint_sources):
    * the seat's rights, the card, the settings and the record.
@@ -77,6 +85,7 @@ export interface Loaded {
 }
 
 export interface DeckIO {
+  offer?: OfferIO;
   load: () => Promise<Loaded>;
   savePrep: (deck: DeckKind, patch: Overrides) => Promise<SavedPrep>;
   presenterName?: string | null;
@@ -175,6 +184,7 @@ export function useDeckModel({
     onboarding: {},
     launch: {},
     blueprint: {},
+    ...emptyOfferPrep(),
   });
   const prepRef = useRef(prep);
   prepRef.current = prep;
@@ -240,7 +250,7 @@ export function useDeckModel({
         // Prep comes from the server on the first read only (prepAfterLoad).
         const nextPrep = prepAfterLoad(
           prepRef.current,
-          { blueprint: {}, ...out.prep },
+          { blueprint: {}, ...emptyOfferPrep(), ...out.prep },
           firstLoad.current,
         );
         firstLoad.current = false;
@@ -291,6 +301,7 @@ export function useDeckModel({
   const savers = useMemo(() => {
     const make = (k: DeckKind) =>
       new PrepSaver({
+        deck: k,
         save: patch => {
           setSave({ kind: "saving" });
           return ioRef.current.savePrep(k, patch);
@@ -303,12 +314,19 @@ export function useDeckModel({
           }),
         onError: message => setSave({ kind: "error", message }),
       });
-    return { onboarding: make("onboarding"), launch: make("launch") };
+    return {
+      onboarding: make("onboarding"),
+      launch: make("launch"),
+      ...(Object.fromEntries(
+        BUILT_OFFER_DECKS.map(k => [k, make(k)]),
+      ) as Record<OfferDeckKind, PrepSaver>),
+    };
   }, []);
   useEffect(
     () => () => {
       void savers.onboarding.flush();
       void savers.launch.flush();
+      for (const k of BUILT_OFFER_DECKS) void savers[k].flush();
     },
     [savers],
   );
@@ -317,6 +335,7 @@ export function useDeckModel({
     const again = () => {
       void savers.onboarding.flush();
       void savers.launch.flush();
+      for (const k of BUILT_OFFER_DECKS) void savers[k].flush();
     };
     window.addEventListener("online", again);
     return () => window.removeEventListener("online", again);
@@ -474,8 +493,19 @@ export function useDeckModel({
     save,
     reload,
     flush: () =>
-      Promise.all([savers.onboarding.flush(), savers.launch.flush()]),
+      Promise.all([
+        savers.onboarding.flush(),
+        savers.launch.flush(),
+        ...BUILT_OFFER_DECKS.map(k => savers[k].flush()),
+      ]),
   };
 }
 
 export type DeckModel = ReturnType<typeof useDeckModel>;
+
+function emptyOfferPrep(): Record<OfferDeckKind, Overrides> {
+  return Object.fromEntries(BUILT_OFFER_DECKS.map(k => [k, {}])) as Record<
+    OfferDeckKind,
+    Overrides
+  >;
+}

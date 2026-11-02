@@ -13,7 +13,7 @@ export const STATUS_FIELD = '7f118f61-34b6-483a-b749-ff9fc31fd423';
 export const CITIES_FIELD = 'b98aa20e-c2d1-4785-baae-67e67506023d';
 export const OPERATIONS = new Set(['client.stopReview','client.pause','client.offboard','control.setStatus','ceo.b2bControl.setStatus','edit.setAdSetBudget',
  'edit.duplicateAdSet','board.adStatusOptions','board.advertisingCityOptions','board.setAdStatus',
- 'board.setAdvertisingCities','board.renameCard','board.addToBoard','board.dismissOffBoard','ceo.ltv.apply','edit.askViktorFor','cockpit.askForDetail','execute.runAction','previews.fresh','comms.sendReply','launch.readiness','launch.importCreatives','launch.copyIdeas','launch.switchOn','launch.copy','launch.rebuild','launch.new','launch.attachAccount',...B2B_OPERATIONS,...CREATIVE_OPERATIONS,...LAUNCH_OPERATIONS,...FUNNEL_OPERATIONS,...PAGE_FORM_OPERATIONS]);
+ 'board.setAdvertisingCities','board.renameCard','board.addToBoard','board.dismissOffBoard','ceo.ltv.apply','edit.askViktorFor','cockpit.askForDetail','execute.runAction','previews.fresh','comms.sendReply','launch.readiness','launch.importCreatives','launch.copyIdeas','launch.switchOn','launch.copy','launch.rebuild','launch.new','launch.attachAccount','launch.logCampaign',...B2B_OPERATIONS,...CREATIVE_OPERATIONS,...LAUNCH_OPERATIONS,...FUNNEL_OPERATIONS,...PAGE_FORM_OPERATIONS]);
 export interface Provider { call(provider:'meta'|'clickup'|'slack'|'ghl'|'make', method:string,path:string,body?:Row,as?:{token:string}):Promise<Row> }
 // has: a tag or an assignee the read-back must show (the rest of the list is the provider's).
 // idFrom: where a create's id sits when the response does not carry it at the top (a ClickUp template task).
@@ -112,12 +112,14 @@ async function checkedTask(s:Row,p:Provider) {
 }
 export function confirmed(actual:Row,expected:Row):boolean {
  if(Array.isArray(expected))return Array.isArray(actual)&&actual.length===expected.length&&expected.every((value,i)=>value&&typeof value==='object'?confirmed(actual[i],value):String(actual[i])===String(value));
+ // fields: several custom fields on one read-back, each checked as a single `field` is.
+ if(Array.isArray(expected.fields)){const {fields,...rest}=expected;return fields.every((f:Row)=>confirmed(actual,f))&&confirmed(actual,rest);}
  if(expected.field) {
   const rawValue=actual.custom_fields?.find((f:Row)=>f.id===expected.field)?.value;
   if(expected.numeric&&(rawValue===undefined||rawValue===null||rawValue===''))return false;
   const got=rawValue??[];
-  if(expected.numeric? !Number.isFinite(Number(got))||Math.abs(Number(got)-Number(expected.value))>=0.005:expected.aliases? !expected.aliases.some((v:unknown)=>String(v)===String(got)):JSON.stringify(Array.isArray(got)?[...got].sort():String(got))!==JSON.stringify(Array.isArray(expected.value)?[...expected.value].sort():String(expected.value)))return false;
-  const {field:_field,value:_value,aliases:_aliases,numeric:_numeric,...rest}=expected;return confirmed(actual,rest);
+  if(expected.numeric? !Number.isFinite(Number(got))||Math.abs(Number(got)-Number(expected.value))>=(expected.tolerance??0.005):expected.aliases? !expected.aliases.some((v:unknown)=>String(v)===String(got)):JSON.stringify(Array.isArray(got)?[...got].sort():String(got))!==JSON.stringify(Array.isArray(expected.value)?[...expected.value].sort():String(expected.value)))return false;
+  const {field:_field,value:_value,aliases:_aliases,numeric:_numeric,tolerance:_tolerance,...rest}=expected;return confirmed(actual,rest);
  }
  return Object.entries(expected).every(([key,value])=>{
   if(key==='end_time')return value?Date.parse(actual[key])===Date.parse(String(value)):!actual[key];

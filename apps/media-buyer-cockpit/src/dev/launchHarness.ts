@@ -241,11 +241,91 @@ export function installLaunchHarness(client: SupabaseClient) {
                 },
           error: null,
         });
-      if (operation === "launch.readiness")
+      if (operation === "launch.readiness" && args.cardDetails)
         return Promise.resolve({
           data: {
-            ...fixtureReadiness(c, args.accountId, state),
+            ok: true,
+            options: {
+              serviceType: [
+                "Construction",
+                "Architectural Design",
+                "Design & Build",
+                "Renovation/Fit Out",
+                "Interior Design",
+              ],
+              priority: ["High", "Medium", "Low"],
+              funnelType: ["Landing Page", "Lead Form"],
+            },
+            defaults: {
+              serviceType: "Renovation/Fit Out",
+              priority: "Medium",
+              funnelType: "Lead Form",
+              landingUrl: null,
+              dailyAdSpendUsd: 30,
+              launchDay: new Intl.DateTimeFormat("en-CA", {
+                timeZone: "Asia/Kuwait",
+              }).format(new Date()),
+              dos: "",
+            },
+            sources: {
+              serviceType: "Last ads card",
+              priority: "Last ads card",
+              funnelType: "Campaign",
+              dailyAdSpendUsd: "Campaign budget",
+            },
+            fixed: {
+              tag: c.name.toLowerCase(),
+              platform: "Meta",
+              metaAccountUrl: `https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${args.accountId}&business_id=767701513092162`,
+              crmUrl: `https://app.maharamedia.com/v2/location/${c.locationId}/dashboard`,
+              cities: ["AE - Dubai"],
+            },
+            campaign: null,
+          },
+          error: null,
+        });
+      if (operation === "launch.readiness") {
+        const ready = fixtureReadiness(c, args.accountId, state);
+        // A campaign switched on in Ads Manager with no card, for Log a launch.
+        const logged =
+          state === "log-launch" || state === "interactive"
+            ? [
+                {
+                  id: "919191",
+                  name: `${c.name} |MAHARA| 26\\10`,
+                  status: "ACTIVE",
+                  owner: { kind: "mahara", name: "Mahara buyer" },
+                },
+              ]
+            : [];
+        return Promise.resolve({
+          data: {
+            ...ready,
+            candidates: [...ready.candidates, ...logged],
             applyEnabled: state === "interactive",
+          },
+          error: null,
+        });
+      }
+      if (operation === "launch.logCampaign")
+        return Promise.resolve({
+          data: {
+            ok: false,
+            dryRun: true,
+            plan: {
+              steps: [
+                {
+                  provider: "clickup",
+                  path: "list/fixture/task",
+                  body: {
+                    name: `${c.name} |MAHARA| 26\\10`,
+                    tags: [c.name.toLowerCase()],
+                  },
+                },
+              ],
+              result: { campaignName: `${c.name} |MAHARA| 26\\10` },
+            },
+            message: "Rehearsal. No changes will be made to Meta or ClickUp.",
           },
           error: null,
         });
@@ -289,11 +369,16 @@ export function installLaunchHarness(client: SupabaseClient) {
                       status: "PAUSED",
                     },
                   },
-                  {
-                    provider: "clickup",
-                    path: "list/fixture/task",
-                    body: { name },
-                  },
+                  // A build makes no card; Switch on makes it.
+                  ...(operation === "launch.switchOn"
+                    ? [
+                        {
+                          provider: "clickup",
+                          path: "list/fixture/task",
+                          body: { name },
+                        },
+                      ]
+                    : []),
                 ],
           result: {
             campaignName: name,

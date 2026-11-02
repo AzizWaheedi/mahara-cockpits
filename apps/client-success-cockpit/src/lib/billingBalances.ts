@@ -19,10 +19,12 @@
  *   1. On the list: every signed client whose card is on the books (Active
  *      or in onboarding) and whose rails show less than 99% of the contract.
  *   2. Paid means a rail shows the money: Whop, Tap, Ecom, or a transfer,
- *      cheque or cash logged by hand that reached the ledger. A person's
- *      word, the closer's typed amount, the card's LTV and Maher's logs are
- *      never money, and nor is a payment the CEO left out of program money
- *      (the website, 20261024p): it is listed as a source, never in a part.
+ *      cheque or cash logged by hand that finance or the CEO checked against
+ *      the bank (20261101n). A logged payment nobody has checked fills its
+ *      part as "Receipt in, not checked", never as paid. A person's word,
+ *      the closer's typed amount, the card's LTV and Maher's logs are never
+ *      money, and nor is a payment the CEO left out of program money (the
+ *      website, 20261024p): it is listed as a source, never in a part.
  *   3. The amount is worked out per part of the plan (deposit, onboarding
  *      payment, second half, month 2 of 3 ...). Rail money fills the parts
  *      in order; Not seen is what is due and still empty.
@@ -49,7 +51,23 @@ import {
 
 // --- the read (cockpit_billing_balances_read) -------------------------------
 
+/**
+ * What the next-date rule of Confirm paid knows of a card (20261102g
+ * cockpit_billing_confirm_date_card): the switch, the window, the card's
+ * date, and a month on for a monthly plan.
+ */
+export type ReadConfirmDateCard = {
+  on?: boolean;
+  windowDays?: number | null;
+  cardDate?: string | null;
+  monthlyPlan?: boolean;
+  plusMonth?: string | null;
+  why?: string | null;
+};
+
 export type ReadCard = {
+  /** Waves 5-6 (4.6.5): the rule's inputs for this card; absent from an older read. */
+  dateIfConfirmed?: ReadConfirmDateCard | null;
   taskId: string;
   name: string;
   url: string | null;
@@ -107,6 +125,12 @@ export type ReadRail = {
   /** True for the deal ledger; false for the card's own payment since signing. */
   fromLedger: boolean;
   byHand: boolean;
+  /**
+   * False for a payment logged by hand that finance or the CEO has not
+   * checked against the bank (20261101n); absent on a read from before the
+   * check rule, which counted every payment it sent.
+   */
+  checked?: boolean;
 };
 
 export type ReadCall = {
@@ -263,7 +287,22 @@ export type ReadSalesCard = {
 };
 
 /** What cockpit_billing_balances_read() returns (PLAN 3.1, as built in 20261023x). */
+/**
+ * What Confirm paid would write as the card's next payment date
+ * (WAVE56-CONTRACT.md 4.6.5, 20261102g): per part, the date the rule would
+ * write, or none with the sentence that says why.
+ */
+export type ReadDateIfConfirmed = {
+  taskId: string;
+  part: string;
+  partNo?: number | null;
+  date?: string | null;
+  why?: string | null;
+};
+
 export type BalancesRead = {
+  /** Waves 5-6: Confirm paid's next-date rule, per part; absent from an older read. */
+  datesIfConfirmed?: ReadDateIfConfirmed[];
   today: string;
   ceo: boolean;
   moneyAsOf: string | null;
@@ -284,6 +323,12 @@ export type BalancesRead = {
   confirmations: ReadConfirmation[];
   /** Payments left out of program money (20261024p); absent from an older read. */
   exclusions?: ReadExclusion[];
+  /**
+   * Never sent by the server: buildPending moves every rail payment not
+   * checked (20261101n) here, off the rails, so it fills a part as a receipt
+   * and no figure counts it as money.
+   */
+  logged?: ReadRail[];
   untied: ReadUntied[];
   unlinked: ReadUnlinked[];
   backWithSales: ReadSalesCard[];
@@ -296,7 +341,7 @@ export type PartKind = "deposit" | "onboarding" | "later";
 export type PlanKind = "pif" | "split" | "monthly" | "m2m" | "unreadable";
 export type ChipKey = "notSeen" | "onboarding" | "later" | "another" | "toCome";
 
-/** One part of a client's plan, in dollars. rails + person + notSeen + another + notDue = usd. */
+/** One part of a client's plan, in dollars. rails + logged + person + notSeen + another + notDue = usd. */
 export type Part = {
   /** "deposit", "onboarding" or "later-<k>". */
   key: string;
@@ -307,6 +352,8 @@ export type Part = {
   usd: number;
   /** Filled by rail money. */
   rails: number;
+  /** Filled by a payment logged by hand that nobody has checked yet: "Receipt in, not checked". Never money. */
+  logged: number;
   /** Held by a person's confirmation no rail payment has proven yet. */
   person: number;
   /** Due, empty, and no other source says it was paid. */
@@ -331,7 +378,13 @@ export type Part = {
   signals: string[];
 };
 
-export type RibbonState = "rails" | "person" | "notSeen" | "another" | "notDue";
+export type RibbonState =
+  | "rails"
+  | "logged"
+  | "person"
+  | "notSeen"
+  | "another"
+  | "notDue";
 
 /** One segment of the contract ribbon; share is of the contract. */
 export type RibbonSegment = {
@@ -408,7 +461,115 @@ export type Confirmable = {
    * record): the form starts empty, never at $0.
    */
   emptyUsd: number | null;
+  /** Waves 5-6 (4.6.5): the next payment date a confirm of this part would write. */
+  dateIfConfirmed?: string | null;
+  /** Why it would write none ("Next payment date stays 2 Dec: …"). */
+  dateWhy?: string | null;
+  /** The part's due day as this list shows it; Confirm paid sends it as dueOn (4.6.5). */
+  dueOn?: string | null;
+  /** The next later part of the same deal still to be paid, sent as nextPartNo and nextDueOn. */
+  nextPartNo?: number | null;
+  nextDueOn?: string | null;
 };
+
+/**
+ * The line Confirm paid shows before the press (5.6): "Next payment moves
+ * to 2 Dec", or the rule's own sentence when it moves nothing; null when the
+ * read says nothing (an older read, or the rule switched off).
+ */
+export function nextDateLine(
+  c: Pick<Confirmable, "dateIfConfirmed" | "dateWhy">,
+  today?: string,
+): string | null {
+  if (c.dateIfConfirmed)
+    return `Next payment moves to ${dayText(c.dateIfConfirmed, today)}`;
+  return c.dateWhy ? c.dateWhy : null;
+}
+
+/**
+ * The rule of 20261102g cockpit_billing_confirm_date_rule, read on the
+ * screen from the card's inputs so the line before the press says what the
+ * confirm will write. The server runs the same rule again on the press.
+ */
+export function confirmDateOf(
+  c: Pick<
+    Confirmable,
+    "part" | "partNo" | "dueOn" | "nextPartNo" | "nextDueOn"
+  >,
+  card: ReadConfirmDateCard | null | undefined,
+  hasDeal: boolean,
+): { date: string | null; why: string | null } | null {
+  if (card?.on !== true) return null;
+  const from =
+    card.cardDate && DAY_RE.test(card.cardDate) ? card.cardDate : null;
+  if (c.part !== "later") return null;
+  if (!from) return { date: null, why: card.why ?? null };
+  const window = Number(card.windowDays ?? 7);
+  const words = dayText(from);
+  if (
+    !c.dueOn ||
+    !DAY_RE.test(c.dueOn) ||
+    Math.abs(daysBetween(from, c.dueOn)) > window
+  )
+    return {
+      date: null,
+      why: `Next payment date stays ${words}: this payment was not the one due on it.`,
+    };
+  if (c.nextDueOn && DAY_RE.test(c.nextDueOn)) {
+    const no = c.nextPartNo ?? null;
+    const gap = daysBetween(from, c.nextDueOn);
+    if (
+      !hasDeal ||
+      no === null ||
+      no <= (c.partNo ?? 0) ||
+      no > 36 ||
+      gap <= 0 ||
+      gap > 70
+    )
+      return {
+        date: null,
+        why: `Next payment date stays ${words}: the next part could not be read. Reload the page and confirm again.`,
+      };
+    return { date: c.nextDueOn, why: null };
+  }
+  if (
+    card.monthlyPlan === true &&
+    card.plusMonth &&
+    DAY_RE.test(card.plusMonth)
+  )
+    return { date: card.plusMonth, why: null };
+  return {
+    date: null,
+    why: `Next payment date stays ${words}: there is no later payment on this plan. Set it by hand if they continue.`,
+  };
+}
+
+/** Each confirmable part with the date its confirm would write (4.6.5). */
+function withDates(
+  list: Confirmable[],
+  taskId: string,
+  read: BalancesRead,
+  hasDeal: boolean,
+): Confirmable[] {
+  const dates = read.datesIfConfirmed ?? [];
+  const card = read.cards.find(x => x.taskId === taskId)?.dateIfConfirmed;
+  return list.map(c => {
+    const hit = dates.find(
+      d =>
+        d.taskId === taskId &&
+        d.part === c.part &&
+        Number(d.partNo ?? 0) === Number(c.partNo ?? 0),
+    );
+    if (hit)
+      return {
+        ...c,
+        dateIfConfirmed: hit.date ?? null,
+        dateWhy: hit.why ?? null,
+      };
+    const rule = confirmDateOf(c, card, hasDeal);
+    return rule ? { ...c, dateIfConfirmed: rule.date, dateWhy: rule.why } : c;
+  });
+}
 
 export type PendingRow = {
   taskId: string;
@@ -435,6 +596,8 @@ export type PendingRow = {
   contractUsd: number | null;
   /** Rail money on the deal; null while the money ledger has never run. */
   railsUsd: number | null;
+  /** Payments logged by hand on the deal that nobody has checked yet; null with no deal or while the money ledger has never run. Never in railsUsd. */
+  loggedUsd: number | null;
   /** Contract minus rails; null with no contract, on month to month, or while the money ledger has never run. */
   leftUsd: number | null;
   finished: boolean;
@@ -476,8 +639,10 @@ export type PendingRow = {
   confirmable: Confirmable[];
   /** CEO only: untied payments that fit a part. */
   hints: Hint[];
-  /** Program money only: a payment left out of program money is never here. */
+  /** Program money only: a payment left out of program money is never here, nor one not checked. */
   rails: ReadRail[];
+  /** The deal's payments logged by hand that wait on a check (each a source line too). */
+  logged: ReadRail[];
   /** The payments on this row's deal the CEO left out of program money (each a source line too). */
   excluded: ReadExclusion[];
   /** Pending and refused billing-inbox logs for the card. */
@@ -579,6 +744,8 @@ export type PendingView = {
     another: Figure;
     person: Figure;
     typed: Figure;
+    /** Receipts logged by hand on listed rows that nobody has checked yet ("Receipt in, not checked"). Never money. */
+    logged: Figure;
   };
   chips: { key: ChipKey; label: string; count: number }[];
   rows: PendingRow[];
@@ -1013,6 +1180,8 @@ type Work = {
   spec: PartSpec;
   key: string;
   railsC: number;
+  /** A receipt logged by hand nobody has checked (20261101n), in what the rails left. */
+  loggedC: number;
   personC: number;
   emptyC: number;
   due: string | null;
@@ -1229,6 +1398,15 @@ function rowFor(
         .sort((a, b) => a.day.localeCompare(b.day))
     : [];
   const R = rails.reduce((t, r) => t + cents(r.usd), 0);
+  // Receipts logged by hand that nobody has checked (checkedMoneyOnly took them
+  // off the rails): they fill a part as "Receipt in, not checked", never as paid.
+  const logged = deal
+    ? (ctx.read.logged ?? [])
+        .filter(r => r.dealResponseId === deal.responseId)
+        .slice()
+        .sort((a, b) => a.day.localeCompare(b.day))
+    : [];
+  const L = logged.reduce((t, r) => t + cents(r.usd), 0);
   // Never in the rails (programMoneyOnly took them out); said in words instead.
   const excluded = deal
     ? (ctx.read.exclusions ?? [])
@@ -1272,6 +1450,7 @@ function rowFor(
     contractUsd: deal ? numOrNull(deal.contractUsd) : null,
     // With no deal the read carries no rails for the card: unknown, never $0.
     railsUsd: deal ? dollars(R) : null,
+    loggedUsd: deal ? dollars(L) : null,
     leftUsd: null,
     finished: false,
     // Known only once the plan's parts are worked out (the main path below).
@@ -1297,6 +1476,7 @@ function rowFor(
     confirmable: [],
     hints: [],
     rails,
+    logged,
     excluded,
     inbox,
     nextPart: null,
@@ -1480,6 +1660,17 @@ function rowFor(
             .join(", ")
     }`,
   );
+  if (logged.length)
+    sources.splice(
+      1,
+      0,
+      `Receipts in, not checked: ${logged
+        .map(
+          r =>
+            `${railName(r.rail)} ${usdText(Number(r.usd))} (${dayText(r.day, today)}, logged by hand)`,
+        )
+        .join(", ")}`,
+    );
   sources.unshift(
     `Closer form, ${dayText(signedOn, today)}: ${form.join("; ")}`,
   );
@@ -1507,7 +1698,11 @@ function rowFor(
         ? `This closer form's name also matches ${deal.conflictWith.map(x => x.name).join(", ")}. Check it is this client's.`
         : "This closer form's name also matches another client card. Check it is this client's.",
     );
-  if (rails.length === 0)
+  if (L > 0)
+    notes.push(
+      `${usdText(dollars(L))} logged by hand waits on a check against the bank, so it is not counted as paid yet.`,
+    );
+  if (rails.length === 0 && logged.length === 0)
     notes.push(
       excluded.length
         ? "No rail shows program money from this client: every payment on record was left out of it."
@@ -1584,6 +1779,7 @@ function rowFor(
       spec,
       key: keyOf(spec.kind, spec.no),
       railsC: 0,
+      loggedC: 0,
       personC: 0,
       emptyC: 0,
       due,
@@ -1621,6 +1817,17 @@ function rowFor(
   });
   if (plan === "m2m")
     base.finished = works.every(w => w.emptyC <= 0 && w.personC <= 0);
+  // 2b. A receipt logged by hand that nobody has checked fills what the rails
+  // left, in part order: "Receipt in, not checked", never paid and never Not
+  // seen. Checked after Finished, which only rail money decides.
+  let l = L;
+  for (const w of works) {
+    const take = Math.min(l, w.emptyC);
+    if (take <= 0) continue;
+    w.loggedC = take;
+    w.emptyC -= take;
+    l -= take;
+  }
 
   // 3. Moves: an audited extension or date event moves the part due within
   // 7 days of the day it moved from, at any gap, unless the card's LTV rose
@@ -1809,7 +2016,7 @@ function rowFor(
   const s12 = works.reduce((t, w) => t + w.anotherC, 0);
   const ltv = numOrNull(card.ltvFieldUsd);
   if (ltv !== null && remaining > 0) {
-    const room = cents(ltv) - R - s12;
+    const room = cents(ltv) - R - L - s12;
     if (room >= remaining - remaining / 100) {
       for (const w of works) {
         if (w.notSeenC <= 0) continue;
@@ -1850,7 +2057,7 @@ function rowFor(
                 ? "serious"
                 : "warning";
       if (w.ask && today <= w.ask.holdUntil) tone = "warning";
-    } else if (w.anotherC > 0) tone = "warning";
+    } else if (w.anotherC > 0 || w.loggedC > 0) tone = "warning";
     const typed =
       w.spec.kind === "deposit"
         ? Math.min(cents(deal.depositUsd), w.notSeenC)
@@ -1862,6 +2069,7 @@ function rowFor(
       label: w.spec.label,
       usd: dollars(w.spec.c),
       rails: dollars(w.railsC),
+      logged: dollars(w.loggedC),
       person: dollars(w.personC),
       notSeen: dollars(w.notSeenC),
       another: dollars(w.anotherC),
@@ -1925,6 +2133,7 @@ function rowFor(
         });
     };
     add("rails", p.rails);
+    add("logged", p.logged);
     add("person", p.person);
     add("notSeen", p.typed, true);
     add("notSeen", dollars(cents(p.notSeen) - cents(p.typed)));
@@ -1958,6 +2167,8 @@ function rowFor(
   base.tone = parts.reduce<Tone>((t, p) => worse(t, p.tone), "neutral");
   const unseen = parts.filter(p => p.notSeen > 0);
   const seenBy = parts.filter(p => p.another > 0);
+  // Parts a receipt logged by hand fills that nobody has checked yet.
+  const receipted = parts.filter(p => p.logged > 0);
   // Parts a person confirmed that no rail has shown yet.
   const held = parts.filter(p => p.person > 0);
   // The part the row leads with: the first one not seen, except that a
@@ -1970,7 +2181,12 @@ function rowFor(
       ? list[1]
       : list[0];
   const lead =
-    pick(unseen) ?? pick(seenBy) ?? held[0] ?? parts.find(p => p.next) ?? null;
+    pick(unseen) ??
+    pick(seenBy) ??
+    receipted[0] ??
+    held[0] ??
+    parts.find(p => p.next) ??
+    null;
   base.daysLate =
     (unseen.length || seenBy.length) && lead ? lead.daysLate : null;
   const heldLine =
@@ -1980,9 +2196,16 @@ function rowFor(
           views.find(v => holding(v) && v.partKey === null)
         )?.line
       : undefined;
-  base.dueLine = heldLine ?? (lead ? lead.dueLine : "");
+  const receiptLine =
+    !unseen.length && !seenBy.length && lead && receipted.includes(lead)
+      ? `Receipt in, not checked: ${usdText(dollars(L))} logged by hand${logged.length === 1 ? ` (${railName(logged[0].rail)}, ${dayText(logged[0].day, today)})` : ""}`
+      : undefined;
+  base.dueLine = receiptLine ?? heldLine ?? (lead ? lead.dueLine : "");
   base.when =
-    heldLine === undefined && lead && lead.daysLate !== null
+    heldLine === undefined &&
+    receiptLine === undefined &&
+    lead &&
+    lead.daysLate !== null
       ? whenWords(lead.daysLate)
       : null;
   const labels = (list: Part[]) => {
@@ -1999,9 +2222,11 @@ function rowFor(
     ? labels(unseen)
     : seenBy.length
       ? labels(seenBy)
-      : held.length
-        ? labels(held)
-        : (lead?.label ?? "");
+      : receipted.length
+        ? labels(receipted)
+        : held.length
+          ? labels(held)
+          : (lead?.label ?? "");
   base.headline = what ? `${base.planLabel} · ${what}` : base.planLabel;
   // Onboarding: a deposit or onboarding payment not on a rail, due or still
   // to come on the call, so a success manager sees it before the call.
@@ -2016,12 +2241,28 @@ function rowFor(
   base.chips = chips;
   base.confirmable = works
     .filter(w => w.emptyC > 0)
-    .map(w => ({
-      part: w.spec.kind as ConfirmPart,
-      partNo: w.spec.kind === "later" ? w.spec.no : 0,
-      label: w.spec.label,
-      emptyUsd: dollars(w.emptyC),
-    }));
+    .map(w => {
+      // The next later part still to be paid (its room not taken by rails or a confirmation).
+      const next =
+        w.spec.kind === "later"
+          ? works.find(
+              x =>
+                x.spec.kind === "later" &&
+                x.spec.no > w.spec.no &&
+                x.emptyC > 0 &&
+                x.personC <= 0,
+            )
+          : undefined;
+      return {
+        part: w.spec.kind as ConfirmPart,
+        partNo: w.spec.kind === "later" ? w.spec.no : 0,
+        label: w.spec.label,
+        emptyUsd: dollars(w.emptyC),
+        dueOn: w.due,
+        nextPartNo: next ? next.spec.no : null,
+        nextDueOn: next?.due ?? null,
+      };
+    });
 
   // CEO only: untied payments that fit a part.
   if (ceo)
@@ -2065,6 +2306,43 @@ function programMoneyOnly(read: BalancesRead): BalancesRead {
   return {
     ...read,
     exclusions,
+    rails: keep(read.rails),
+    unlinked: (read.unlinked ?? []).map(u => ({ ...u, rails: keep(u.rails) })),
+    backWithSales: (read.backWithSales ?? []).map(s => ({
+      ...s,
+      rails: keep(s.rails),
+    })),
+  };
+}
+
+/**
+ * The read with every rail payment not checked (20261101n: logged by hand,
+ * waiting on finance's check) moved off the rails of the cards', the deals
+ * with no card and Back with sales into read.logged, kept once per deal and
+ * payment. So no figure, no Finished and no proof of a confirmation ever
+ * counts it, and its row says "Receipt in, not checked" instead. A read from
+ * before the check rule carries no checked flag and is left as it is.
+ */
+function checkedMoneyOnly(read: BalancesRead): BalancesRead {
+  const notChecked = (r: ReadRail) => r.checked === false;
+  const seen = new Set<string>();
+  const logged: ReadRail[] = [];
+  for (const r of [
+    ...(read.rails ?? []),
+    ...(read.unlinked ?? []).flatMap(u => u.rails ?? []),
+    ...(read.backWithSales ?? []).flatMap(s => s.rails ?? []),
+  ]) {
+    const k = `${r.dealResponseId}|${r.paymentId}`;
+    if (!notChecked(r) || seen.has(k)) continue;
+    seen.add(k);
+    logged.push(r);
+  }
+  if (logged.length === 0) return read;
+  const keep = (list: ReadRail[] | undefined) =>
+    (list ?? []).filter(r => !notChecked(r));
+  return {
+    ...read,
+    logged,
     rails: keep(read.rails),
     unlinked: (read.unlinked ?? []).map(u => ({ ...u, rails: keep(u.rails) })),
     backWithSales: (read.backWithSales ?? []).map(s => ({
@@ -2221,6 +2499,7 @@ export function lastCardsRun(at: number): number {
 function unknownAmounts(r: PendingRow): void {
   r.amountsKnown = false;
   r.railsUsd = null;
+  r.loggedUsd = null;
   r.leftUsd = null;
   r.notSeenUsd = null;
   r.onboardingNotSeenUsd = null;
@@ -2325,7 +2604,7 @@ export function buildPending(
   sent: BalancesRead,
   now: number = Date.now(),
 ): PendingView {
-  const read = programMoneyOnly(sent);
+  const read = checkedMoneyOnly(programMoneyOnly(sent));
   const today = read.today;
   const lists = new WeakMap<object, Map<string, unknown[]>>();
   const byTask = <T extends { taskId: string }>(
@@ -2508,6 +2787,8 @@ export function buildPending(
     if (asks) rows.push(rowFor(c, null, read.rails, ctx));
   }
   rows.sort(rowOrder);
+  for (const r of [...rows, ...quietRows])
+    r.confirmable = withDates(r.confirmable, r.taskId, read, Boolean(r.deal));
   const asked = (c: ReadCard) => {
     const usd = numOrNull(c.nextUsd);
     const day = c.nextDate && DAY_RE.test(c.nextDate) ? c.nextDate : null;
@@ -2701,6 +2982,7 @@ export function buildPending(
       another: fig(r => r.anotherUsd),
       person: fig(r => r.personUsd),
       typed: fig(r => r.typedUsd),
+      logged: fig(r => r.loggedUsd),
     },
     chips: (
       ["notSeen", "onboarding", "later", "another", "toCome"] as ChipKey[]

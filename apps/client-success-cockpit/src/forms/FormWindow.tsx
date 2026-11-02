@@ -1,5 +1,13 @@
 import { ArrowUpRight, RefreshCw, X } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  type ReactNode,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Navigate, useLocation, useParams } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { BookCallButton } from "@/components/ClientCheckIn";
@@ -15,11 +23,14 @@ import {
 } from "./FormPanel";
 import type { FormConfig, FormContext } from "./formConfig";
 import { formConfig } from "./kickoff";
-import { formUrl } from "./OpenFormButton";
+import { formUrl, useOpenedHere } from "./OpenFormButton";
 import { formLink } from "./prefill";
 import { formReads, useLiveForm, type WindowState } from "./useLiveForm";
 
 export { blockedFor, type WindowState } from "./useLiveForm";
+
+/** The 1-1 notes are native, not a Typeform config (STAGE2-CONTRACT.md 8.3). */
+const CheckinWindow = lazy(() => import("./CheckinWindow"));
 
 /**
  * /clients/:key/forms/:form, in a window of its own (KICKOFF.md 1 and 6):
@@ -55,11 +66,23 @@ export default function FormWindow() {
   const { key = "", form = "" } = useParams();
   const { search } = useLocation();
   const auth = useCockpitAuth();
-  const cfg = formConfig(form);
-  // Rehearsal is Typeform's sandbox, for admins and the CEO only.
+  useOpenedHere();
+  // Rehearsal (Typeform's sandbox for the kickoff, nothing saved for the
+  // 1-1 notes) is for admins and the CEO only.
   const rehearse =
     new URLSearchParams(search).get("rehearse") === "1" &&
     (auth.isAdmin || auth.isCeo);
+  if (form === "checkin")
+    return (
+      <Suspense fallback={null}>
+        <CheckinWindow
+          key={`${key}:${rehearse}`}
+          taskId={key}
+          rehearse={rehearse}
+        />
+      </Suspense>
+    );
+  const cfg = formConfig(form);
   if (!cfg)
     return <Navigate to={`/clients/${encodeURIComponent(key)}`} replace />;
   return (

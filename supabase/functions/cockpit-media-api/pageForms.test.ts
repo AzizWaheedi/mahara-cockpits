@@ -156,11 +156,28 @@ test('switch puts an earlier version back live without making a new one', async 
  expect(already.error).toBe('v1 is already live.');
 });
 
-test('a removed key cannot come back as a new question', async () => {
+test('a removed key without its own CRM field cannot come back as a new question', async () => {
+ const w=world();
+ const extra={key:'q_budget',name:'الميزانية',label:'كم الميزانية؟',style:'list',options:[{value:'أقل'},{value:'أكثر'}]};
+ await pageFormOperation('pageForms.publish',{slug:'mergestudio',base:0,spec:draft(q=>q.push(extra))},true,REQ,w.d);
+ await pageFormOperation('pageForms.publish',{slug:'mergestudio',base:2,spec:draft()},true,'41111111-2222-4333-8444-555555555555',w.d);
+ const out=await pageFormOperation('pageForms.publish',{slug:'mergestudio',base:3,spec:draft(q=>q.push(extra))},false,undefined,w.d) as Row;
+ expect(out.error).toBe('Question 3 reuses the key of a removed question.');
+});
+test('a question with its own CRM field is saved, not retired, and can be added back', async () => {
  const w=world();
  await pageFormOperation('pageForms.publish',{slug:'mergestudio',base:0,spec:draft(q=>q.pop())},true,REQ,w.d);
+ const read=await pageFormOperation('pageForms.read',{client:'mergestudio.kw'},false,undefined,w.d) as Row;
+ const page=read.pages[0];
+ expect(page.retired).toEqual([]);
+ expect(page.saved.map((q:Row)=>q.key)).toEqual(['timing']);
+ expect(page.saved[0].param).toBe('ms_timing');
+ expect(page.saved[0].label).toBe('متى حاب تبدأ؟');
  const out=await pageFormOperation('pageForms.publish',{slug:'mergestudio',base:2,spec:draft()},false,undefined,w.d) as Row;
- expect(out.error).toBe('Question 2 reuses the key of a removed question.');
+ expect(out).toMatchObject({ok:false,dryRun:true,summary:'Added "موعد البداية"'});
+ const applied=await pageFormOperation('pageForms.publish',{slug:'mergestudio',base:2,spec:draft()},true,'51111111-2222-4333-8444-555555555555',w.d) as Row;
+ expect(applied).toMatchObject({ok:true,version:3});
+ expect(JSON.parse(w.files['mergestudio/live.json']).questions[1]).toMatchObject({key:'timing',param:'ms_timing'});
 });
 
 test('apply needs a request id', async () => {

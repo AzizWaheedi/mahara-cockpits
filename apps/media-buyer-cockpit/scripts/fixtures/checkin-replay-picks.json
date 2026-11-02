@@ -1,0 +1,56 @@
+{
+  "contract": "docs/forms/STAGE2-CONTRACT.md 7.4",
+  "note": "The shadow replay's pinned picks (matching-evidence section 5: the client's match, else the newest unlinked call). Ids only: the response is the fixture id's first 10 characters, the card its ClickUp card, the recording its Fathom recording. Everything else is read at run time.",
+  "picks": [
+    {
+      "response": "2fk27ot4kn",
+      "card": "86eyry0na",
+      "recording": "194756343"
+    },
+    {
+      "response": "1yagb1b185",
+      "card": "86ex4m5ux",
+      "recording": "193701396"
+    },
+    {
+      "response": "arge0zki25",
+      "card": "86eypmbp3",
+      "recording": "192502786"
+    },
+    {
+      "response": "4qxruuujgf",
+      "card": "86eyjkdc8",
+      "recording": "192140228"
+    },
+    {
+      "response": "p1od1iz905",
+      "card": "86eywazcu",
+      "recording": "192084146"
+    },
+    {
+      "response": "nbynd1geg3",
+      "card": "86eymcqdq",
+      "recording": "191799288"
+    },
+    {
+      "response": "wzpwmf0a2d",
+      "card": "86eyt1d33",
+      "recording": "191603145"
+    },
+    {
+      "response": "ys8vnak1is",
+      "card": "86ey2em6q",
+      "recording": "190894076"
+    },
+    {
+      "response": "cmh0gz1xfo",
+      "card": "z8xmdvffcd",
+      "recording": "189344849"
+    },
+    {
+      "response": "eixwdjzeql",
+      "card": "86eymcqdq",
+      "recording": "188142043"
+    }
+  ]
+}

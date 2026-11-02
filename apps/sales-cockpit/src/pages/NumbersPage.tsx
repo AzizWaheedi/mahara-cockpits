@@ -14,12 +14,14 @@ import {
 import { NumbersBoard } from "../components/NumbersBoard";
 import { DIALS_CAP, NumbersDials } from "../components/NumbersDials";
 import { NumbersGoals } from "../components/NumbersGoals";
+import { NumbersIntros } from "../components/NumbersIntros";
 import { NumbersPay } from "../components/NumbersPay";
 import { NumbersCalls, NumbersClosing } from "../components/NumbersTiles";
 import { type CallRow, callGaps, speedToLead } from "../lib/calls";
 import {
   useBoard,
   useDials,
+  useFunnel,
   useNow,
   usePeople,
   useReps,
@@ -207,6 +209,16 @@ export default function NumbersPage({ me }: { me: Me }) {
       Number(odd(a.key)) - Number(odd(b.key)) || a.name.localeCompare(b.name),
   );
 
+  // Intros and demos (2026-10-29): the team's, or one host's calls by their
+  // HighLevel user. A person with no HighLevel link has no calls to show.
+  const host = team
+    ? null
+    : manager
+      ? (seat?.ghl_user_id ?? null)
+      : (me.ghl_user_id ?? null);
+  const funnel = useFunnel(days.from, days.to, host);
+  const funnelShown = team || host !== null;
+
   const unlinked = !manager && !me.b2b_rep_id;
   const firstLoad =
     (rows.loading && !rows.data) || (board.loading && !board.data);
@@ -266,6 +278,16 @@ export default function NumbersPage({ me }: { me: Me }) {
           {name} has no seat in the sales cockpit, so there are no goals, pay
           rule or Maqsam email to show. Their calls and closes come from B2B.
         </div>
+      ) : null}
+
+      {funnelShown ? (
+        <NumbersIntros
+          funnel={funnel.data}
+          error={funnel.error}
+          reload={funnel.reload}
+          loading={funnel.loading}
+          team={team}
+        />
       ) : null}
 
       {unlinked ? (

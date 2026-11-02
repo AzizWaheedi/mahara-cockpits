@@ -1,3 +1,5 @@
+import { WEBSITE_DECK } from "./offer/content/website";
+import type { OfferDeckKind } from "./offer/kinds";
 /**
  * Everything the two client decks say, in English and in the client-facing
  * Gulf Arabic, in one place (docs/csm-decks/CONTENT.md and CONTENT-AR.md are
@@ -1252,6 +1254,9 @@ export const VIDEO = {
     en: "The video didn't load. We'll send you the link in the group.",
     ar: "ما اشتغل الفيديو. بنرسل لكم الرابط بالقروب.",
   },
+  /** Under "didn't load": a fresh frame, then the link people open. */
+  retry: { en: "Try again", ar: "نحاول مرة ثانية" },
+  open: { en: "Open the video", ar: "فتح الفيديو" },
   blocked: {
     en: "This video can't play here. We'll send you the link in the group.",
     ar: "هالفيديو ما يشتغل هنا. بنرسل لكم الرابط بالقروب.",
@@ -1321,10 +1326,23 @@ export const journeyName = (i: number, dwy: boolean): L => {
 };
 
 /** The decks' names, for the chrome and the presenter's windows. */
-export const DECK_NAME: Record<"onboarding" | "launch" | "blueprint", L> = {
+export const DECK_NAME: Record<
+  "onboarding" | "launch" | "blueprint" | OfferDeckKind,
+  L
+> = {
   onboarding: { en: "Onboarding", ar: "التعريف" },
   launch: { en: "Launch", ar: "الإطلاق" },
   blueprint: { en: "Brand Blueprint", ar: "بناء الهوية والعرض" },
+  offer_second_campaign: { en: "Second campaign", ar: "حملة ثانية" },
+  offer_seo_geo: {
+    en: "Google and AI search",
+    ar: "قوقل والبحث بالذكاء الاصطناعي",
+  },
+  offer_smm: { en: "Social media", ar: "السوشال ميديا" },
+  offer_cameraman: { en: "Cameraman day", ar: "يوم تصوير" },
+  offer_ugc: { en: "Presenter videos", ar: "فيديوهات بمقدّم" },
+  offer_closer: { en: "Closer placement", ar: "توظيف مندوب مبيعات" },
+  offer_website: WEBSITE_DECK.name,
 };
 
 export const CLOSED = { en: "Deck closed", ar: "انتهى العرض" } as const;

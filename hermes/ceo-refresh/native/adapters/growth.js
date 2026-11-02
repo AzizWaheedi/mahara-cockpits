@@ -829,7 +829,7 @@ export function voidedNote(days, windows) {
  * 6) the typed amount is shown beside front-end cash as typed, not money, and
  * never added: front-end cash is the money itself (withPaid).
  *
- * The amount is the kickoff Typeform's (tG7dnxBn) "Payment Amount" field
+ * The amount is the kickoff's "Payment Amount" field, from the Typeform (tG7dnxBn) or the cockpit's native kickoff
  * (ref 75e97e7d-4c19-437a-b4b8-67570c29344f), which the onboarding sync
  * copies to cockpit_client_onboarding.forms.kickoff.payment. It is dated by
  * the day the form was submitted (Kuwait) and read as USD: the field carries
@@ -840,10 +840,17 @@ export function voidedNote(days, windows) {
  * Confirmed: a payment the Money section attributed to the same client card
  * on Whop, Tap or a bank transfer (a transfer row or a bank statement line),
  * within MATCH_DAYS days and MATCH_GAP of the amount (./manualMatch.js), one
- * payment per kickoff. A payment only logged by hand is not a rail. An
- * unconfirmed kickoff is listed under typedNotSeen.
+ * payment per kickoff. A payment only logged by hand is not a rail, and a
+ * payment the client payment store marks not checked (20261101n: hand-logged,
+ * waiting on finance's check) confirms nothing. An unconfirmed kickoff is
+ * listed under typedNotSeen.
  */
 export const KICKOFF_FORM = "tG7dnxBn";
+/**
+ * The kickoff's read-model form ids: the Typeform's, and "native" for a kickoff sent from the cockpit's sheet
+ * since Stage 4 (docs/forms/WAVE56-CONTRACT.md 4.13.2: the same Typeform-shaped entry, payment included).
+ */
+export const KICKOFF_FORMS = [KICKOFF_FORM, "native"];
 export const KICKOFF_READ_FROM = "2026-10-04";
 const KICKOFF_RAILS = new Set(["whop", "tap", "ecom", "transfer"]);
 export const KICKOFF_SQL = `select clickup_task_id, client_name,
@@ -851,7 +858,7 @@ export const KICKOFF_SQL = `select clickup_task_id, client_name,
     forms->'kickoff'->>'payment' as payment,
     floor(extract(epoch from synced_at) * 1000)::bigint as synced_ms
   from public.cockpit_client_onboarding
-  where forms->'kickoff'->>'form_id' = '${KICKOFF_FORM}' and forms->'kickoff'->>'submitted_at' is not null`;
+  where forms->'kickoff'->>'form_id' in (${KICKOFF_FORMS.map(f => `'${f}'`).join(", ")}) and forms->'kickoff'->>'submitted_at' is not null`;
 /** A typed amount as a number: "1500", "1,500", "$1500.50". Null when blank or not a number. */
 export function kickoffAmount(raw) {
     if (raw === null || raw === undefined)
@@ -872,7 +879,7 @@ export function readKickoffs(formRows, paymentRows) {
     const blank = [];
     const used = new Set();
     const rails = paymentRows
-        .filter(p => KICKOFF_RAILS.has(String(p.rail)) && num(p.usd) > 0 && /^\d{4}-\d{2}-\d{2}$/.test(String(p.day)))
+        .filter(p => KICKOFF_RAILS.has(String(p.rail)) && p.checked !== false && num(p.usd) > 0 && /^\d{4}-\d{2}-\d{2}$/.test(String(p.day)))
         .map(p => ({ id: String(p.payment_id), taskId: String(p.clickup_task_id), day: String(p.day), usd: num(p.usd), rail: String(p.rail) }));
     const forms = formRows
         .filter(r => /^\d{4}-\d{2}-\d{2}$/.test(String(r.day)) && String(r.day) >= KICKOFF_READ_FROM)
@@ -940,7 +947,9 @@ export function withKickoff(window, kickoffs) {
  * exclusion. Either way growth runs beside money, not after it, so the figure
  * is the last published attribution: `attributedAt` says when, and a note says
  * when that is over 2 hours old. A ledger not yet written is not read, never
- * zero.
+ * zero. The refresh writes checked money only (20261101n): a payment logged by
+ * hand reaches the ledger once finance or the CEO has checked it, so it is
+ * never front-end cash while it waits.
  */
 export const LEDGER_STALE_MS = 2 * 60 * 60_000;
 /** A deal's money is the closer's this many days after signing (money.js DEAL_TERM_DAYS), so the ledger points at deals this far back. */
@@ -1139,7 +1148,7 @@ export const growth = {
         const kickoffRead = await attempt("The kickoff form's cash", notes, null, async () => {
             const [formRows, paymentRows] = await Promise.all([
                 sql(TRIAGE, KICKOFF_SQL),
-                sql(TRIAGE, `select payment_id, clickup_task_id, to_char(day, 'YYYY-MM-DD') as day, usd::float8 as usd, rail
+                sql(TRIAGE, `select payment_id, clickup_task_id, to_char(day, 'YYYY-MM-DD') as day, usd::float8 as usd, rail, checked
            from public.cockpit_client_payments
            where active and day >= ${day(addDays(KICKOFF_READ_FROM, -MATCH_DAYS))}`),
             ]);

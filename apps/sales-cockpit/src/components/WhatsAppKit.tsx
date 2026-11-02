@@ -11,8 +11,9 @@ import {
   type SnippetValues,
   snippetLine,
   type TemplateRoute,
+  templateLive,
 } from "../lib/whatsapp";
-import { button, buttonPrimary, FilterChip, field, Segmented } from "./kit";
+import { button, buttonPrimary, field, Segmented } from "./kit";
 
 /**
  * The team's ready-made WhatsApp messages, filled in for this lead, one click
@@ -127,7 +128,8 @@ export function SnippetPicker({
 
 /**
  * WhatsApp to a lead whose 24-hour window is closed: an approved template
- * with one line written for them, sent through its HighLevel workflow.
+ * with one line written for them, sent straight through HighLevel or through
+ * its workflow.
  */
 export function TemplateComposer({
   contactId,
@@ -151,10 +153,7 @@ export function TemplateComposer({
   } | null;
   onSent: () => void;
 }) {
-  const live = useMemo(
-    () => templates.filter(t => t.active && t.workflow_id),
-    [templates],
-  );
+  const live = useMemo(() => templates.filter(templateLive), [templates]);
   const [key, setKey] = useState<string>("");
   useEffect(() => {
     if (!live.some(t => t.key === key))
@@ -263,17 +262,18 @@ export function TemplateComposer({
   return (
     <div className="space-y-2">
       {live.length > 1 ? (
-        <div className="flex flex-wrap items-center gap-1.5">
+        <select
+          value={key}
+          onChange={e => setKey(e.target.value)}
+          className={field}
+          aria-label="Template"
+        >
           {live.map(x => (
-            <FilterChip
-              key={x.key}
-              on={x.key === key}
-              onClick={() => setKey(x.key)}
-            >
-              {x.language === "ar" ? "عربي" : "English"} · {x.name}
-            </FilterChip>
+            <option key={x.key} value={x.key}>
+              {`${x.language === "ar" ? "عربي" : "English"} · ${x.purpose || x.name}`}
+            </option>
           ))}
-        </div>
+        </select>
       ) : null}
       {takesLine ? (
         <textarea
@@ -301,11 +301,15 @@ export function TemplateComposer({
       >
         {preview}
       </p>
-      <p className="muted text-[11px]">
-        {"{{2}}"} is signed with the lead's rep (their Arabic name in an Arabic
-        template, when set on their seat), else the sales team. One line: line
-        breaks are taken out.
-      </p>
+      {t?.variables.includes("rep_name") || takesLine ? (
+        <p className="muted text-[11px]">
+          {t?.variables.includes("rep_name")
+            ? "{{2}} is signed with the lead's rep (their Arabic name in an Arabic template, when set on their seat), else the sales team."
+            : null}
+          {t?.variables.includes("rep_name") && takesLine ? " " : null}
+          {takesLine ? "One line: line breaks are taken out." : null}
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2">
         {takesLine ? (
           <SnippetPicker

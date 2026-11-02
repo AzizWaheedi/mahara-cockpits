@@ -149,7 +149,7 @@ export function Rail({
   lang: Lang;
   /** The pillar this slide is about. */
   now: PillarKey | null;
-  /** Every step lit (the system slide, the program). */
+  /** Every step lit (the program slides). */
   all?: boolean;
   match: PillarKey[];
 }) {

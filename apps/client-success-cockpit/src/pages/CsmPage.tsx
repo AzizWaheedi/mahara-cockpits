@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -20,11 +21,19 @@ import {
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AdBillingDailyTask } from "@/components/AdBillingReview";
+import { AfterCalls, NotesNudge, TypeformMark } from "@/components/AfterCalls";
+import {
+  type CheckRow,
+  type ChecksApi,
+  ChecksWaitingView,
+  toCheckRow,
+} from "@/components/billing/ChecksWaiting";
 import {
   ClientCallerChip,
   ClientCallerLine,
 } from "@/components/CallCentreSection";
 import { ClientAdsTab } from "@/components/ClientAds";
+import { ClientAsks } from "@/components/ClientAsks";
 import { ClientBrief, useCardNotes } from "@/components/ClientBrief";
 import {
   CallsTimeline,
@@ -35,16 +44,41 @@ import {
   useClientTimeline,
 } from "@/components/ClientCalls";
 import { ClientCheckIn } from "@/components/ClientCheckIn";
+import {
+  FormBands,
+  FormsOut,
+  type KickoffApi,
+  KickoffDoor,
+  PauseConsentRow,
+  SendFormSheet,
+  type SendPreset,
+  useFormBands,
+  useInviteView,
+} from "@/components/ClientForms";
+import { ClientMessages, RecapsWaiting } from "@/components/ClientMessages";
+import { ClientVoiceCard, useClientVoice } from "@/components/ClientVoice";
 import { ClientWhatsApp } from "@/components/ClientWhatsApp";
+import {
+  ClientWins,
+  LogWinButton,
+  LogWinSheet,
+  ReactivateAction,
+  ReactivateSheet,
+  WinBands,
+  winsApi,
+} from "@/components/ClientWins";
+import { FormsButton } from "@/components/FormsButton";
 import {
   Chip,
   Dot,
   ExtLink,
   Fold,
   Kicker,
+  LINK_INK,
   PageHeader,
   Pill,
   PillRow,
+  SectionCard,
   StatTile,
   type Tone,
 } from "@/components/kit";
@@ -53,19 +87,83 @@ import { PortalTasksButton } from "@/components/PortalTasks";
 import { ReportIssue } from "@/components/ReportIssue";
 import { CallList } from "@/components/results/CallList";
 import { SyncStrip } from "@/components/SyncStrip";
+import { RequestForm } from "@/components/tasks/RequestForm";
+import { YourTasks } from "@/components/tasks/YourTasks";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
+import { Input } from "@/components/ui/input";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import { FillFormButton, useFormNews } from "@/forms/OpenFormButton";
+import { useFormNews } from "@/forms/OpenFormButton";
+import { FormSheet } from "@/forms/staff/FormSheet";
+import {
+  extensionDef,
+  FORM_DEFS,
+  pauseConsentDef,
+  suggestedNextDate,
+} from "@/forms/staff/formDefs";
+import type { W56Doors } from "@/forms/staff/formSheetCore";
+import {
+  type Answers,
+  CONSENT_WAIT,
+  kuwaitDay as dayWords,
+  dueHint,
+  type FormKey,
+  type Prefill,
+} from "@/forms/staff/formSheetCore";
+import {
+  answerNotice,
+  confirmChurn,
+  type Doors,
+  formDoorsW56,
+  formPrefill,
+  formTrail,
+  giveMoreTime,
+  type LadderRow,
+  type Lifecycle,
+  ladderDue,
+  lifecycleRead,
+  matchLegacy,
+  NO_DOORS,
+  type NoticeIn,
+  noticesIn,
+  type PaymentToCheck,
+  type PrefillRead,
+  pauseClient,
+  paymentsToCheck,
+  reactivateClient,
+  resumeClient,
+  type SendOptions,
+  type SendResult,
+  setMrr,
+} from "@/forms/staff/lifecycleClient";
 import { useFormSend } from "@/forms/useFormSend";
 import { type Caller, useClientCallers } from "@/lib/callCentreClient";
 import { readChurnPage } from "@/lib/churnClient";
 import type { MonthRow } from "@/lib/churnCore";
+import {
+  type FormsIO,
+  formsIO,
+  type MoreDoors,
+  readAllDoors,
+} from "@/lib/clientForms";
+import { signerWords } from "@/lib/clientFormsCore";
+import { readLowScores, readVoice, voiceForBrief } from "@/lib/clientVoice";
 import { useClientWhatsApp } from "@/lib/clientWhatsApp";
-import { kuwaitDayOf, logCall, staleSentence } from "@/lib/csmCalls";
+import { joinLink, kuwaitDayOf, logCall, staleSentence } from "@/lib/csmCalls";
 import { opportunitiesFor, rankOpportunities } from "@/lib/csmHotList";
-import { LINK_GROUPS } from "@/lib/csmLinks";
+import {
+  linkGroupsFor,
+  liveWithWins,
+  OLD_FORM,
+  oldFormOf,
+} from "@/lib/csmLinks";
 import {
   BASE_USD,
   CHURN_TARGET,
@@ -73,6 +171,7 @@ import {
   type Counts,
   closeTheGap,
   computePay,
+  countsFromWins,
   EARNERS,
   earned,
   FOUR_RS,
@@ -100,7 +199,9 @@ import {
   buildCallDraft,
   countDecisions,
   eodDayLabel,
+  eodWorkingDay,
   markEodOpened,
+  onEodDay,
   readEodCalls,
 } from "@/lib/eodDraft";
 import {
@@ -110,28 +211,55 @@ import {
   sentence,
   shortDay,
 } from "@/lib/format";
+import { notesNative, useCheckinEntry } from "@/lib/formsRegistry";
+import { rememberWinInvoice } from "@/lib/invoices";
 import { useNotCalled } from "@/lib/notCalled";
 import {
   readOnboardingKits,
   refreshOnboardingKits,
 } from "@/lib/onboardingClient";
-import {
-  checkinFormLink,
-  type KitsPage,
-  type OnboardingRow,
-} from "@/lib/onboardingCore";
+import type { KitsPage, OnboardingRow } from "@/lib/onboardingCore";
 import { publishOpenClient } from "@/lib/openClient";
+import { checkManualPayment, manualPaymentsToCheck } from "@/lib/paymentChecks";
 import { fetchClientProfile } from "@/lib/performance";
 import { eodDeliveryNote } from "@/lib/personalEod";
 import { portalUrl } from "@/lib/portal";
 import { kuwaitDay, periodOf } from "@/lib/reportPeriod";
-import { fold, matchScore } from "@/lib/search";
+import { readRequests, readRequestTypes } from "@/lib/requestsClient";
 import {
+  type RequestRow,
+  requestHeld,
+  stateChip,
+  stateHint,
+  unfinishedNote,
+} from "@/lib/requestsCore";
+import { useRequestsOpen, useWriterMode } from "@/lib/requestsOpen";
+import { fold, matchScore } from "@/lib/search";
+import { actOnTask } from "@/lib/tasksClient";
+import {
+  ACT_SAVED,
+  actFailed,
   CLICKUP_ACT_KINDS,
   kuwaitToday,
   useCsmSnapshot,
 } from "@/lib/useCsmSnapshot";
 import { cn } from "@/lib/utils";
+import {
+  kickoffPrefill,
+  kickoffSubmit,
+  receiptUrl,
+  trailOf,
+  type WinsRead,
+  winsList as winsListRead,
+  winsToday,
+} from "@/lib/wins";
+import {
+  type Band,
+  type BandInput,
+  reactivateState,
+  ALL_CLOSED as W56_CLOSED,
+  todayBands as winTodayBands,
+} from "@/lib/winsCore";
 import { PresentButton } from "@/present/PresentButton";
 import { BacklogPage } from "./BacklogPage";
 import {
@@ -148,7 +276,14 @@ import {
   PeriodBar,
 } from "./ClientPerformancePage";
 import { MeetingsPage } from "./MeetingsPage";
+import { OfferHotRow } from "./money/offers/OfferHotRow";
+import { MakeProposalButton } from "./money/offers/proposal/MakeProposalButton";
+import { ProposalsCard } from "./money/offers/proposal/ProposalsCard";
 
+/*
+ * The old "Ask a team" (a decision-log ticket, live since 2026-10-12), kept
+ * until requests are open for the client (review F6, useRequestsOpen).
+ */
 /** Tickets the CSM raises. Picking the request picks the board — she never picks a team. */
 /** A ticket's team as people say it: "Media buyer", not media_buyer. */
 const teamName = (dept?: string) =>
@@ -200,6 +335,197 @@ const TICKETS: { label: string; dept: string; deptLabel: string }[] = [
     deptLabel: "Call centre",
   },
 ];
+
+/**
+ * The requests this seat raised (cockpit_requests_read, view "mine"), read
+ * when Today or the end of day opens and again on Try again. "Requests you
+ * raised today" and the end of day's ticket count read the same rows, so a
+ * request counts once, and a failed read says so instead of showing zero.
+ */
+type MyRequests = {
+  rows: RequestRow[] | null;
+  error: string | null;
+  reading: boolean;
+  reload: () => void;
+};
+
+function useMyRequests(
+  client: ReturnType<typeof useCockpitAuth>["client"],
+  on: boolean,
+  since: string,
+): MyRequests {
+  const [rows, setRows] = useState<RequestRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [reading, setReading] = useState(false);
+  const [asked, setAsked] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: asked is the Try again trigger
+  useEffect(() => {
+    if (!client || !on) return;
+    let live = true;
+    setReading(true);
+    // Only the rows from `since` on (the server filters, contract F3); the
+    // two cards then keep their own day (raisedToday, onEodDay).
+    readRequests(client, "mine", MY_REQUESTS_LIMIT, since)
+      .then(read => {
+        if (!live) return;
+        setRows(Array.isArray(read?.rows) ? read.rows : []);
+        setError(null);
+      })
+      .catch(e => {
+        if (live)
+          setError(
+            (e as Error)?.message?.trim() ||
+              "Your requests could not be read just now.",
+          );
+      })
+      .finally(() => {
+        if (live) setReading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [client, on, since, asked]);
+  return {
+    rows,
+    error,
+    reading,
+    reload: () => setAsked(n => n + 1),
+  };
+}
+
+/** cockpit_requests_read's own ceiling (p_limit is capped at 200). */
+export const MY_REQUESTS_LIMIT = 200;
+
+/**
+ * The first moment the two cards read from: the start of today in Kuwait, or
+ * 04:00 Kuwait of the end of day's own day when that is earlier (before 04:00
+ * the end of day still files yesterday). The server's EOD day wins over the
+ * clock's guess.
+ */
+export function requestsSince(
+  eodDay: string | null | undefined,
+  now: number = Date.now(),
+): string {
+  const day =
+    typeof eodDay === "string" && /^\d{4}-\d{2}-\d{2}$/.test(eodDay)
+      ? eodDay
+      : eodWorkingDay(now);
+  const calendar = Date.parse(`${kuwaitDay(now)}T00:00:00+03:00`);
+  const eod = Date.parse(`${day}T04:00:00+03:00`);
+  return new Date(Math.min(calendar, eod)).toISOString();
+}
+
+/** The requests created today in Kuwait, in the read's order. */
+export function raisedToday(
+  rows: RequestRow[] | null,
+  today: string = kuwaitDay(),
+): RequestRow[] {
+  return (rows ?? []).filter(r => kuwaitDay(Date.parse(r.createdAt)) === today);
+}
+
+/** A request counts as raised once part of it is in ClickUp (the ticket rule). */
+const requestLanded = (r: RequestRow) =>
+  r.done || r.parts.some(part => part.state === "delivered");
+
+/** The request chip's tone on the kit's chip. */
+const REQUEST_TONE = {
+  good: "good",
+  warning: "warn",
+  serious: "bad",
+  critical: "bad",
+  neutral: "neutral",
+} as const;
+
+/**
+ * "Requests you raised today": the requests this seat sent today in Kuwait,
+ * one line each, its state as a chip and the ClickUp task behind it.
+ */
+function RequestsRaisedToday({ mine }: { mine: MyRequests }) {
+  const rows = raisedToday(mine.rows);
+  return (
+    <SectionCard
+      title="Requests you raised today"
+      count={mine.rows && !mine.error ? rows.length : undefined}
+      sub="Each one becomes a ClickUp task on the other team's board, with its SOP steps and an owner."
+      action={
+        <a
+          href={`${portalUrl()}/requests?view=mine`}
+          className="inline-flex items-center gap-1 text-xs font-medium text-[color:var(--primary-ink,var(--primary))] underline-offset-4 hover:underline"
+        >
+          My requests
+          <ChevronRight aria-hidden className="size-3.5" />
+        </a>
+      }
+      flush
+    >
+      {mine.error ? (
+        <div className="px-4 py-4 text-sm sm:px-6" role="alert">
+          {mine.error}{" "}
+          <button
+            type="button"
+            className="font-medium text-[color:var(--primary-ink,var(--primary))] underline-offset-4 hover:underline disabled:text-muted-foreground"
+            disabled={mine.reading}
+            onClick={mine.reload}
+          >
+            {mine.reading ? "Trying…" : "Try again"}
+          </button>
+        </div>
+      ) : !mine.rows ? (
+        <p
+          className="px-4 py-4 text-sm text-muted-foreground sm:px-6"
+          aria-busy="true"
+        >
+          Reading your requests…
+        </p>
+      ) : rows.length === 0 ? (
+        <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
+          No requests raised today. Open a client and press Ask a team.
+        </p>
+      ) : (
+        rows.map(r => {
+          const chip = stateChip(r);
+          // Not (all) in ClickUp, or in ClickUp with a step the cockpit
+          // could not finish: say where it is and what to check, in one line.
+          const trouble =
+            !r.done &&
+            (r.state === "failed" ||
+              r.state === "partial" ||
+              r.state === "dry_run" ||
+              requestHeld(r) ||
+              unfinishedNote(r) !== null);
+          const links = r.parts.filter(part => part.url);
+          return (
+            <div
+              key={r.id}
+              className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-sm sm:px-6"
+            >
+              <Chip tone={REQUEST_TONE[chip.tone]}>{chip.label}</Chip>
+              <span className="min-w-0 flex-1">
+                <span className="font-medium">{r.typeLabel}</span>
+                {r.clientName ? (
+                  <span className="text-muted-foreground">
+                    {" · "}
+                    <bdi dir="auto">{r.clientName}</bdi>
+                  </span>
+                ) : null}
+              </span>
+              {links.map(part => (
+                <ExtLink key={part.part} href={String(part.url)}>
+                  {links.length > 1 ? part.teamLabel : "Open in ClickUp"}
+                </ExtLink>
+              ))}
+              {trouble ? (
+                <p className="basis-full text-xs text-muted-foreground">
+                  {stateHint(r)}
+                </p>
+              ) : null}
+            </div>
+          );
+        })
+      )}
+    </SectionCard>
+  );
+}
 
 /**
  * The ClickUp board's Client Status options, spelled exactly as ClickUp has
@@ -264,55 +590,18 @@ function LevelDot({ level }: { level?: string }) {
   );
 }
 
-/** A card with a title row, for the list screens. */
-function SectionCard({
-  title,
-  count,
-  sub,
-  action,
-  children,
-  flush,
-}: {
-  title: ReactNode;
-  count?: number;
-  sub?: ReactNode;
-  action?: ReactNode;
-  children: ReactNode;
-  /** The body is a divided list that runs edge to edge under a divider. */
-  flush?: boolean;
-}) {
-  return (
-    <section className="rounded-2xl border bg-card">
-      <div
-        className={cn(
-          "flex flex-wrap items-start justify-between gap-x-3 gap-y-2 px-4 pt-4 sm:px-6 sm:pt-6",
-          flush ? "border-b pb-4" : "",
-        )}
-      >
-        <div className="min-w-0">
-          <h2 className="text-[15px] font-semibold">
-            {title}
-            {count !== undefined ? (
-              <span className="ml-1.5 font-normal text-muted-foreground tabular-nums">
-                {count}
-              </span>
-            ) : null}
-          </h2>
-          {sub ? (
-            <p className="mt-1 text-xs text-muted-foreground">{sub}</p>
-          ) : null}
-        </div>
-        {action}
-      </div>
-      <div className={flush ? "divide-y" : "px-4 pt-4 pb-4 sm:px-6 sm:pb-6"}>
-        {children}
-      </div>
-    </section>
-  );
-}
-
 // biome-ignore lint/suspicious/noExplicitAny: snapshot payload is untyped by design
 type Client = any;
+
+/** One thing said on a call (csmCadence.ts commitments); the ids ride along when the read has them. */
+type Commitment = {
+  text: string;
+  source: string;
+  index?: number;
+  responseId?: string;
+  taskId?: string;
+  taskStatus?: string;
+};
 
 function ShortList({
   title,
@@ -448,7 +737,7 @@ function NextPocControl({
             })
           }
         >
-          They booked, save it to ClickUp
+          Save the booking
         </Button>
       </div>
     </div>
@@ -638,15 +927,13 @@ function TemplatePicker({
           </span>
         )}
         {c.noteMissing && (
-          <a
+          <NotesNudge
+            taskId={String(c.taskId)}
+            lastCall={c.lastCallAt ?? c.lastCall ?? null}
             className="inline-flex items-center gap-1.5 font-medium txt-bad underline-offset-4 hover:underline"
-            href={checkinFormLink(c.taskId)}
-            target="_blank"
-            rel="noreferrer"
           >
             1-1 notes missing for the last call
-            <ArrowUpRight aria-hidden className="size-3.5" />
-          </a>
+          </NotesNudge>
         )}
       </div>
       {justSent && (
@@ -1109,6 +1396,7 @@ const ACTIONS = [
   { key: "log", label: "Log a call" },
   { key: "update", label: "Update the board" },
   { key: "task", label: "Add a task" },
+  { key: "ask", label: "Ask for a review or referral" },
   { key: "leave", label: "Leave it" },
 ] as const;
 type Panel = (typeof ACTIONS)[number]["key"] | "link";
@@ -1231,6 +1519,8 @@ function kitErrorText(error: unknown): string {
 function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
   const auth = useCockpitAuth();
   const sb = useCsmSnapshot(auth.client, auth.clients);
+  /** Where 1-1 notes go: the Typeform until the cut-over, then the cockpit. */
+  const entry = useCheckinEntry();
   const {
     snap,
     toggleCheck,
@@ -1475,6 +1765,11 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
   useFormNews(news => {
     if (news.type === "sent") toast.success(news.say);
     setKitNews(n => n + 1);
+    // 1-1 notes: the client's calls and Today's flags read again.
+    if (news.form === "checkin") {
+      calls.reload();
+      void sb.refetch();
+    }
   });
   // biome-ignore lint/correctness/useExhaustiveDependencies: kitNews only asks for a fresh read
   useEffect(() => {
@@ -1534,6 +1829,149 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
       setKitRefreshing(null);
     }
   };
+  const myRequests = useMyRequests(
+    auth.client,
+    section === "today" || section === "eod",
+    requestsSince(snap?.eodDay),
+  );
+  // The request form replaces the old Ask a team only once requests are
+  // open for this client; until then the CSM keeps the path that works.
+  const requestsLive = useRequestsOpen(
+    clientRow ? String(clientRow.taskId) : null,
+  );
+  // Open for everyone: the request form is the way to ask on every client.
+  const requestsAnywhere = useWriterMode() === "apply";
+  // The staff forms' doors and Today's bands (WAVE12-CONTRACT.md 4.6): which
+  // may show is read once per page load; each read waits on its flag.
+  const doors = useDoors(auth.client);
+  const [lifeVersion, setLifeVersion] = useState(0);
+  const [door, setDoor] = useState<DoorOpen | null>(null);
+  const [ticketOpen, setTicketOpen] = useState<TicketOpen | null>(null);
+  const checker = auth.isCeo || auth.roles.includes("finance");
+  const life = useLifecycle(
+    auth.client,
+    clientRow ? String(clientRow.taskId) : null,
+    section === "client" && Boolean(doors?.churnConfirm),
+    lifeVersion,
+  );
+  const bands = useTodayBands(
+    auth.client,
+    doors,
+    section === "today",
+    checker,
+    lifeVersion,
+  );
+  // Waves 3-4 (WAVE34-CONTRACT.md 4.10): client forms, the client's voice and
+  // the pause consent, each read only once its door is open.
+  const more = useMoreDoors(auth.client);
+  // Waves 5-6 (WAVE56-CONTRACT.md 3.10): Log a win, Client is back, the
+  // kickoff and the receipt asks, each behind its own door.
+  const w56 = useW56Doors(auth.client);
+  const wapi = useMemo(
+    () => (auth.client ? winsApi(auth.client) : null),
+    [auth.client],
+  );
+  const kickApi = useMemo<KickoffApi | null>(
+    () =>
+      auth.client
+        ? {
+            prefill: t => kickoffPrefill(auth.client, t),
+            submit: (t, a, r) => kickoffSubmit(auth.client, t, a, r),
+            trail: ref => trailOf(auth.client, ref),
+          }
+        : null,
+    [auth.client],
+  );
+  const [winOpen, setWinOpen] = useState<{
+    taskId: string;
+    name: string;
+    preset?: Prefill[];
+  } | null>(null);
+  const [winRead, setWinRead] = useState<WinsRead | null>(null);
+  const [winsVersion, setWinsVersion] = useState(0);
+  const [backOpen, setBackOpen] = useState(false);
+  // The churn tracker's "Back" lands here with back=1: open Client is back once.
+  const backAsked = useRef(false);
+  useEffect(() => {
+    if (
+      !backAsked.current &&
+      params.get("back") === "1" &&
+      w56?.reactivate.open &&
+      life?.departureId &&
+      !life.returnedOn
+    ) {
+      backAsked.current = true;
+      setBackOpen(true);
+    }
+  }, [params, w56?.reactivate.open, life?.departureId, life?.returnedOn]);
+  const winBands = useWinBands(
+    auth.client,
+    w56,
+    section === "today",
+    auth.isCeo,
+    lifeVersion + winsVersion,
+  );
+  // The request types, read only once a door that offers a ticket is open.
+  const ticketTypes = useTicketTypes(
+    auth.client,
+    (Boolean(
+      doors &&
+        (doors.churnConfirm || doors.pause || doors.reviews || doors.checks),
+    ) ||
+      Boolean(more?.voice)) &&
+      (section === "today" || section === "client"),
+  );
+  const fio = useMemo(
+    () => (auth.client ? formsIO(auth.client) : null),
+    [auth.client],
+  );
+  const [sendOpen, setSendOpen] = useState<{
+    taskId: string;
+    name: string;
+    preset?: SendPreset;
+  } | null>(null);
+  const clientTaskId = clientRow ? String(clientRow.taskId) : null;
+  const inviteRead = useInviteView(
+    fio,
+    clientTaskId,
+    section === "client" && Boolean(more?.invites),
+  );
+  const liveList = useLiveForms(
+    fio,
+    Boolean(more?.invites) &&
+      (section === "client" || section === "links" || Boolean(door)),
+  );
+  const voiceReader = useMemo(
+    () =>
+      auth.client
+        ? (t: string) => readVoice(auth.client as SupabaseClient, t)
+        : null,
+    [auth.client],
+  );
+  const voice = useClientVoice(
+    voiceReader,
+    clientTaskId,
+    section === "client" && Boolean(more?.voice),
+    lifeVersion,
+  );
+  const lowReader = useMemo(
+    () =>
+      auth.client && more?.voice
+        ? () => readLowScores(auth.client as SupabaseClient)
+        : null,
+    [auth.client, more?.voice],
+  );
+  const formBands = useFormBands(
+    more?.invites ? fio : null,
+    lowReader,
+    section === "today" && Boolean(more?.invites || more?.voice),
+    lifeVersion,
+  );
+  // The brief says the client's own newest score (5.4); the row carries it.
+  const briefRow = useMemo(() => {
+    const v = voice?.status === "ready" ? voiceForBrief(voice.voice) : null;
+    return clientRow && v?.length ? { ...clientRow, voice: v } : clientRow;
+  }, [clientRow, voice]);
   if (sb.error) {
     return (
       <div className="p-10 text-sm text-muted-foreground" role="alert">
@@ -1573,7 +2011,21 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
   const clientsHandled = eodC.handled;
   const signupsToday = eodC.signups;
   const hotToday = eodC.hot;
-  const ticketsToday = eodC.tickets;
+  // Tickets raised = the old decision tickets plus the requests sent on this
+  // EOD day that reached ClickUp (the request form replaced the ticket
+  // select on 2026-10-26). A failed read of the requests adds nothing; the
+  // card on Today says the read failed.
+  const eodDay = typeof snap.eodDay === "string" ? snap.eodDay : "";
+  const requestsLanded =
+    /^\d{4}-\d{2}-\d{2}$/.test(eodDay) && myRequests.rows
+      ? onEodDay(
+          eodDay,
+          myRequests.rows
+            .filter(requestLanded)
+            .map(r => ({ loggedAt: r.createdAt })),
+        ).length
+      : 0;
+  const ticketsToday = eodC.tickets + requestsLanded;
   // Pre-set from the day's activity until the CSM picks an answer.
   const signupsAnswer = newSignups ?? (eodC.signups > 0 ? "Y" : "N");
   const upsellsAnswer = upsells ?? (eodC.upsells > 0 ? "Y" : "N");
@@ -1661,13 +2113,19 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
   );
   // A commitment counts as outstanding until the CSM turns it into a task or says done.
   const handledText = new Set(ds.map(d => d.action));
+  // Each commitment keeps its place in the call's list (and the stored
+  // check-in's id when the read carries one), so "handled" names which one
+  // (WAVE12-CONTRACT.md 4.6.3).
   const commitmentRows = clients.flatMap((c: Client) =>
     (c.commitments ?? [])
+      .map((item: Commitment, index: number) => ({
+        client: c,
+        item: { ...item, index },
+      }))
       .filter(
-        (item: { text: string }) =>
-          !handledText.has(`Commitment handled: ${item.text}`),
-      )
-      .map((item: { text: string; source: string }) => ({ client: c, item })),
+        (r: { item: Commitment }) =>
+          !handledText.has(`Commitment handled: ${r.item.text}`),
+      ),
   );
   /**
    * The day's numbers, counted from the list on the page: the board-wide
@@ -1683,6 +2141,25 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
     hot: hotRows.length,
     loose: looseList.reduce((n, c) => n + c.loose.length, 0),
   };
+
+  /** "Active · due 2 Nov": the card's state for a form's header. */
+  const statusWords = (c: Client | undefined): string | undefined =>
+    c
+      ? `${displayLabel(c.stage)}${c.paymentDate ? ` · due ${shortDay(c.paymentDate)}` : ""}`
+      : undefined;
+  const openDoor = (
+    form: FormKey,
+    taskId: string,
+    name: string,
+    extra: Partial<DoorOpen> = {},
+  ) =>
+    setDoor({
+      form,
+      taskId,
+      name,
+      status: statusWords(clients.find(x => String(x.taskId) === taskId)),
+      ...extra,
+    });
 
   const run = async (
     c: Client,
@@ -1701,25 +2178,32 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
         ...extra,
       });
     } catch (e) {
-      toast.error(String((e as Error).message ?? e));
-      return;
+      // A card act that fails leaves the card as it was, and says so (4.6.1).
+      toast.error(
+        CLICKUP_ACT_KINDS.has(kind)
+          ? actFailed(e)
+          : String((e as Error).message ?? e),
+      );
+      return false;
     }
     setNote("");
     setTicketNote("");
     // The message panel stays open: it asks for the next call once logged.
     if (panel !== "message" && panel !== "update") setPanel(null);
     // Stage and happiness are on the client's ClickUp card once act returns.
-    // A ticket reaches its team through the ClickUp log: the ticket list shows
-    // when it lands. Everything else stays in the cockpit.
+    // A ticket (the old Ask a team, until requests open) reaches its team
+    // through the ClickUp log: the ticket list shows when it lands.
+    // Everything else stays in the cockpit.
     toast.success(
       CLICKUP_ACT_KINDS.has(kind)
-        ? "Saved, ClickUp updated"
+        ? (ACT_SAVED[kind] ?? "Saved, ClickUp updated")
         : kind === "ticket"
           ? "Request saved. It shows as landed once it is on the team's board."
           : kind === "left"
             ? "Left, with a reason logged"
             : "Saved in the cockpit",
     );
+    return true;
   };
 
   const submitPlan = async () => {
@@ -1810,13 +2294,42 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                     // "commitment" leaves Last POC and the silence clock alone
                     // (it used to log a touchpoint; the simplification audit,
                     // 2026-10-06). The ClickUp card still gets the note.
-                    for (const i of items)
-                      await run(
+                    for (const i of items) {
+                      const ok = await run(
                         client,
                         `Commitment handled: ${i.text}`,
                         "commitment",
-                        { note: i.source },
+                        {
+                          note: i.source,
+                          commitmentIndex: i.index,
+                          ...(i.responseId ? { responseId: i.responseId } : {}),
+                        },
                       );
+                      // A commitment made a task earlier: offer to close it
+                      // too, through the same writer as Your tasks.
+                      if (ok && i.taskId && auth.client) {
+                        const taskId = i.taskId;
+                        const client2 = auth.client;
+                        toast.success("Commitment handled", {
+                          action: {
+                            label: "Close the task",
+                            onClick: () => {
+                              void actOnTask(client2, {
+                                taskId,
+                                op: "done",
+                                payload: { statusSeen: i.taskStatus ?? null },
+                              })
+                                .then(() => toast.success("Task closed"))
+                                .catch(e =>
+                                  toast.error(
+                                    String((e as Error).message ?? e),
+                                  ),
+                                );
+                            },
+                          },
+                        });
+                      }
+                    }
                   }}
                 >
                   All done already
@@ -1923,29 +2436,34 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                   See this client's data
                 </a>
               ) : null}
-              {/* The kickoff, a click away while it is still to fill
-                  (docs/csm-forms/KICKOFF.md 1): not once it is on record
-                  or sent from the cockpit. */}
+              {/* The client's forms in one control (docs/forms/STAGE2-
+                  CONTRACT.md 8.6): "Write 1-1 notes", and in its menu the
+                  kickoff while it is still to fill (docs/csm-forms/
+                  KICKOFF.md 1): not once it is on record or sent from the
+                  cockpit. */}
               {(() => {
                 const kit = kitOf(c);
-                return kit !== undefined &&
-                  !kit?.forms?.kickoff &&
-                  !kickSend &&
-                  (kit ? kit.in_onboarding : c.bucket === "onboarding") ? (
-                  <FillFormButton
+                return (
+                  <FormsButton
                     taskId={String(c.taskId)}
-                    form="kickoff"
-                    variant="outline"
-                  >
-                    Fill the kickoff
-                  </FillFormButton>
-                ) : null;
+                    noteMissing={Boolean(c.noteMissing)}
+                    lastCall={c.lastCall ?? null}
+                    lastCallAt={c.lastCallAt ?? null}
+                    kickoff={
+                      kit !== undefined &&
+                      !kit?.forms?.kickoff &&
+                      !kickSend &&
+                      (kit ? kit.in_onboarding : c.bucket === "onboarding")
+                    }
+                  />
+                );
               })()}
               <PresentButton
                 taskId={String(c.taskId)}
                 stage={c.stage}
                 nextCallKind={c.nextCallKind}
               />
+              <MakeProposalButton taskId={String(c.taskId)} />
               <ReportIssue page={`client: ${c.name}`} />
             </div>
           </div>
@@ -1981,10 +2499,17 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               <>
                 {" · "}
                 <NextCallLine at={c.nextCallAt} kind={c.nextCallKind} />
+                {/* Undefined from an older summary: unknown, not "no link". */}
+                {c.nextCallJoinUrl !== undefined && !c.nextCallJoinUrl
+                  ? " · No meeting link yet. Confirm the booking in GoHighLevel."
+                  : null}
               </>
             ) : (
               " · no call booked"
             )}
+            {/* Outside the next call: a call in progress has left nextCallAt
+                but keeps its Join until it ends. */}
+            <JoinLine c={c} />
             {" · 1-1 notes "}
             {c.lastNoteOn ? shortDay(c.lastNoteOn) : "none"}
             {sm.dwy ? "" : " · report "}
@@ -2047,6 +2572,62 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                 {a.label}
               </Button>
             ))}
+            {more?.invites ? (
+              <Button
+                size="sm"
+                variant="outline"
+                data-send-form-door
+                onClick={() =>
+                  setSendOpen({
+                    taskId: String(c.taskId),
+                    name: String(c.name),
+                  })
+                }
+              >
+                Send a form
+              </Button>
+            ) : null}
+            <ClientDoors
+              c={c}
+              doors={doors}
+              life={life}
+              onOpen={(form, extra) =>
+                openDoor(form, String(c.taskId), String(c.name), extra)
+              }
+            />
+            {/* Waves 5-6 (WAVE56-CONTRACT.md 5.1, 5.11, 5.13). */}
+            <LogWinButton
+              door={w56?.wins ?? null}
+              onClick={() =>
+                setWinOpen({ taskId: String(c.taskId), name: String(c.name) })
+              }
+            />
+            <ReactivateAction
+              state={reactivateState({
+                status: life?.clientStatus ?? c.stage,
+                departureId: life?.departureId ?? null,
+                churnConfirmedAt: life ? life.churnConfirmedAt : undefined,
+                returnedOn: life?.returnedOn ?? null,
+              })}
+              door={w56?.reactivate ?? null}
+              onOpen={() => setBackOpen(true)}
+            />
+            {params.get("form") === "kickoff" ||
+            (kitOf(c) ? kitOf(c)?.in_onboarding : c.bucket === "onboarding") ? (
+              <KickoffDoor
+                door={w56?.kickoff ?? null}
+                api={kickApi}
+                taskId={String(c.taskId)}
+                clientName={String(c.name)}
+                autoOpen={params.get("form") === "kickoff"}
+                onSent={() => setLifeVersion(v => v + 1)}
+              />
+            ) : null}
+            {more && !more.invites ? (
+              <span className="basis-full text-xs text-muted-foreground">
+                Send a form: {NOT_YET}
+              </span>
+            ) : null}
           </div>
 
           {panel === "message" && (
@@ -2068,15 +2649,31 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
           {panel === "log" && (
             <div className="space-y-3 rounded-2xl border bg-card p-4 sm:p-6">
               <Textarea
-                placeholder="Call summary or what you said to them (optional, goes on the ClickUp card)"
+                placeholder="Call summary or what you said to them (optional, saved with the call on this page)"
                 value={note}
                 onChange={e => setNote(e.target.value)}
                 rows={3}
                 dir="auto"
               />
               <div className="flex flex-wrap gap-2">
+                {/* The record of the call, and the one writer of Last POC
+                    and Last Check-in Call (docs/forms/STAGE2-CONTRACT.md
+                    8.6, Y28). */}
                 <Button
                   size="sm"
+                  onClick={() =>
+                    entry.open(
+                      String(c.taskId),
+                      c.lastCallAt ?? c.lastCall ?? null,
+                    )
+                  }
+                >
+                  Write 1-1 notes
+                  <TypeformMark entry={entry} />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
                   onClick={async () => {
                     if (!auth.client) return;
                     try {
@@ -2102,7 +2699,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                     }
                   }}
                 >
-                  Log the call and summary
+                  Log the call without notes
                 </Button>
                 <Button
                   size="sm"
@@ -2125,11 +2722,9 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                 />
               </div>
               <p className="text-xs text-muted-foreground">
-                The call summary form is still the record of the call:{" "}
-                <ExtLink href={checkinFormLink(c.taskId)}>
-                  1-1 call summary form
-                </ExtLink>
-                .
+                {entry.provider === "typeform"
+                  ? "1-1 notes are the record of the call. For now they go through the Typeform."
+                  : "1-1 notes are the record of the call: they update the card, post the grade and draft the client's recap."}
               </p>
             </div>
           )}
@@ -2304,42 +2899,59 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
             <div className="space-y-6 rounded-2xl border bg-card p-4 text-sm sm:p-6">
               <div className="space-y-3">
                 <h2 className="text-[15px] font-semibold">Ask a team</h2>
-                <AnimatedSelect
-                  className="w-full"
-                  value={ticket}
-                  onChange={e => setTicket(e.target.value)}
-                >
-                  {TICKETS.map(r => (
-                    <option key={r.label} value={r.label}>
-                      {r.label} ({r.deptLabel})
-                    </option>
-                  ))}
-                </AnimatedSelect>
-                <Textarea
-                  placeholder="What exactly is needed?"
-                  value={ticketNote}
-                  onChange={e => setTicketNote(e.target.value)}
-                  rows={2}
-                  dir="auto"
-                />
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    const hit = TICKETS.find(r => r.label === ticket);
-                    if (!hit) return;
-                    run(c, hit.label, "ticket", {
-                      department: hit.dept,
-                      note: ticketNote,
-                    });
-                  }}
-                >
-                  Create the ticket for{" "}
-                  {TICKETS.find(r => r.label === ticket)?.deptLabel}
-                </Button>
+                {requestsLive ? (
+                  // One request form for every cockpit: the type picks the
+                  // board, the SOP template and the owner (CONTRACT.md 6.3).
+                  <RequestForm
+                    source="client_page"
+                    presetClient={{
+                      taskId: String(c.taskId),
+                      name: String(c.name),
+                    }}
+                    compact
+                  />
+                ) : (
+                  <>
+                    <AnimatedSelect
+                      className="w-full"
+                      value={ticket}
+                      onChange={e => setTicket(e.target.value)}
+                    >
+                      {TICKETS.map(r => (
+                        <option key={r.label} value={r.label}>
+                          {r.label} ({r.deptLabel})
+                        </option>
+                      ))}
+                    </AnimatedSelect>
+                    <Textarea
+                      placeholder="What exactly is needed?"
+                      value={ticketNote}
+                      onChange={e => setTicketNote(e.target.value)}
+                      rows={2}
+                      dir="auto"
+                    />
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        const hit = TICKETS.find(r => r.label === ticket);
+                        if (!hit) return;
+                        run(c, hit.label, "ticket", {
+                          department: hit.dept,
+                          note: ticketNote,
+                        });
+                      }}
+                    >
+                      Create the ticket for{" "}
+                      {TICKETS.find(r => r.label === ticket)?.deptLabel}
+                    </Button>
+                  </>
+                )}
               </div>
               <div className="space-y-3 border-t pt-5">
                 <h2 className="text-[15px] font-semibold">
-                  Anything else, for you or a team
+                  {requestsLive
+                    ? "A reminder for you"
+                    : "Anything else, for you or a team"}
                 </h2>
                 <AddTask
                   taskId={String(c.taskId)}
@@ -2360,6 +2972,28 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                 />
               </div>
             </div>
+          )}
+
+          {panel === "ask" && (
+            <ClientAsks
+              taskId={String(c.taskId)}
+              onLogWin={
+                w56?.wins.open
+                  ? () =>
+                      setWinOpen({
+                        taskId: String(c.taskId),
+                        name: String(c.name),
+                        preset: [
+                          {
+                            key: "kind",
+                            value: "review",
+                            source: "the review ask",
+                          },
+                        ],
+                      })
+                  : undefined
+              }
+            />
           )}
 
           {panel === "leave" && (
@@ -2423,7 +3057,11 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
           <>
             <ClientBrief
               client={auth.client}
-              row={c}
+              row={
+                briefRow && String(briefRow.taskId) === String(c.taskId)
+                  ? briefRow
+                  : c
+              }
               timeline={calls.timeline}
               profile={profile ?? null}
               error={calls.error}
@@ -2437,6 +3075,26 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                   ?.scrollIntoView({ behavior: "smooth", block: "start" })
               }
             />
+            {/* The one message the client's group reads after a 1-1, said
+                yes to or skipped here (STAGE2B-CONTRACT.md 5.1, Z45). */}
+            <ClientMessages
+              taskId={String(c.taskId)}
+              native={notesNative(entry)}
+            />
+            {/* Client forms and the client's voice (WAVE34-CONTRACT.md 5.2, 5.4). */}
+            {more?.invites ? (
+              <FormsOut
+                io={fio}
+                read={inviteRead}
+                onSend={() =>
+                  setSendOpen({
+                    taskId: String(c.taskId),
+                    name: String(c.name),
+                  })
+                }
+              />
+            ) : null}
+            {more?.voice ? <ClientVoiceCard state={voice} /> : null}
             <ClientWhatsApp
               team={cardNotes?.teamActors ?? []}
               client={auth.client}
@@ -2575,10 +3233,41 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               </div>
             </SectionCard>
 
+            <ClientWins
+              api={wapi}
+              door={w56?.wins ?? null}
+              taskId={String(c.taskId)}
+              client={String(c.name)}
+              ceo={auth.isCeo}
+              reloadKey={winsVersion}
+              onRead={setWinRead}
+              onInvoice={async w => {
+                rememberWinInvoice(w.id, String(c.taskId));
+                navigate(
+                  `/money?${new URLSearchParams({
+                    tab: "invoices",
+                    client: String(c.taskId),
+                    win: w.id,
+                    amount: w.quotedUsd !== null ? String(w.quotedUsd) : "",
+                    description: w.offerName ?? w.kindLabel,
+                  })}`,
+                );
+                // The invoice desk links it once the invoice is requested.
+                return null;
+              }}
+              onSetMrr={({ monthlyUsd, winId }) =>
+                openDoor("mrr", String(c.taskId), String(c.name), {
+                  addMrrUsd: monthlyUsd,
+                  winId,
+                })
+              }
+            />
+
             <SectionCard
               title="Hot list"
               sub="One upsell, referral or review conversation per client a month."
             >
+              <OfferHotRow c={c} />
               {isChurned(c) ? (
                 <p className="text-sm text-muted-foreground">
                   A client who has left is never an upsell, a review or a
@@ -2626,14 +3315,17 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               </Link>
             </SectionCard>
 
+            <ProposalsCard taskId={String(c.taskId)} />
+
             <SectionCard
               title="Changing their plan"
-              sub="Pause, extend, reactivate or end. One form per change, after a call."
+              sub="Pause, extend or end. One change at a time, after a call."
               flush
             >
               {(
-                LINK_GROUPS.find(g => /changing a client/i.test(g.title))
-                  ?.rows ?? []
+                linkGroupsFor(
+                  liveWithWins(liveList, Boolean(w56?.wins.open)),
+                ).find(g => /changing a client/i.test(g.title))?.rows ?? []
               ).map(r => (
                 <div
                   key={r.url + r.label}
@@ -2647,6 +3339,12 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                       {r.note}
                     </span>
                   ) : null}
+                  <OldForm
+                    url={oldFormOf(
+                      r,
+                      liveWithWins(liveList, Boolean(w56?.wins.open)),
+                    )}
+                  />
                 </div>
               ))}
               <div className="px-4 py-3 sm:px-6">
@@ -2703,6 +3401,105 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
 
   return (
     <div className={wrap}>
+      <SendFormSheet
+        io={fio}
+        open={sendOpen !== null}
+        taskId={sendOpen?.taskId ?? ""}
+        clientName={sendOpen?.name ?? ""}
+        preset={sendOpen?.preset}
+        view={
+          sendOpen && sendOpen.taskId === clientTaskId ? inviteRead.view : null
+        }
+        onClose={() => setSendOpen(null)}
+        onSent={v => {
+          if (sendOpen?.taskId === clientTaskId) {
+            if (v) inviteRead.put(v);
+            else inviteRead.reload();
+          }
+          setLifeVersion(x => x + 1);
+        }}
+      />
+      <DoorSheet
+        door={door}
+        client={auth.client}
+        doors={doors ?? NO_DOORS}
+        more={more}
+        io={fio}
+        live={liveList}
+        onSendForm={
+          door && more?.invites
+            ? () => {
+                const d = door;
+                setDoor(null);
+                setSendOpen({
+                  taskId: d.taskId,
+                  name: d.name,
+                  preset: { formKey: "exit_survey", origin: "churn" },
+                });
+              }
+            : undefined
+        }
+        asCeo={auth.isCeo}
+        onClose={() => setDoor(null)}
+        onTicket={type =>
+          door &&
+          setTicketOpen({
+            type,
+            taskId: door.taskId,
+            name: door.name,
+            details: `${door.name}: ${FORM_DEFS[door.form].doneLabel.toLowerCase()} in the cockpit on ${dayWords(kuwaitToday())}.`,
+          })
+        }
+        onSent={() => {
+          setLifeVersion(v => v + 1);
+          void sb.refetch();
+        }}
+      />
+      <TicketSheet ticket={ticketOpen} onClose={() => setTicketOpen(null)} />
+      {wapi && winOpen ? (
+        <LogWinSheet
+          open
+          onOpenChange={o => (o ? null : setWinOpen(null))}
+          api={wapi}
+          taskId={winOpen.taskId}
+          client={winOpen.name}
+          preset={winOpen.preset}
+          context={
+            winRead && String(clientRow?.taskId ?? "") === winOpen.taskId
+              ? winRead.context
+              : { proposals: [], deals: [] }
+          }
+          onSent={() => setWinsVersion(v => v + 1)}
+        />
+      ) : null}
+      {auth.client && clientRow && backOpen && life?.departureId ? (
+        <ReactivateSheet
+          open
+          onOpenChange={setBackOpen}
+          taskId={String(clientRow.taskId)}
+          client={String(clientRow.name)}
+          departure={{
+            id: life.departureId,
+            leftOn: life.leftOn,
+            reason: life.reason ?? null,
+            churnType: life.churnType ?? null,
+          }}
+          submit={(a, requestId) =>
+            reactivateClient(
+              auth.client as SupabaseClient,
+              String(clientRow.taskId),
+              life.departureId as number,
+              a,
+              requestId,
+            )
+          }
+          trail={ref => formTrail(auth.client as SupabaseClient, ref)}
+          onSent={() => {
+            setLifeVersion(v => v + 1);
+            setWinsVersion(v => v + 1);
+          }}
+        />
+      ) : null}
       {section === "client" ? null : (
         <PageHeader
           as={embedded ? "h2" : "h1"}
@@ -2787,9 +3584,125 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
         </div>
       )}
 
+      {section === "today" && (
+        <TodayBands
+          client={auth.client}
+          doors={doors}
+          bands={bands}
+          types={ticketTypes}
+          clients={clients}
+          checker={checker}
+          onDoor={openDoor}
+          onTicket={setTicketOpen}
+          onChanged={() => setLifeVersion(v => v + 1)}
+          onAskReceipt={
+            w56?.receipts.open
+              ? row =>
+                  row.taskId &&
+                  setSendOpen({
+                    taskId: String(row.taskId),
+                    name: row.clientName,
+                    preset: {
+                      formKey: "bank_receipt",
+                      origin: "billing",
+                      context: {
+                        part: "payment",
+                        partNo: 0,
+                        expectedAmount: row.amount,
+                        currency: row.currency,
+                        dueOn: null,
+                        manualPaymentId: row.id,
+                        dealResponseId: null,
+                      },
+                    },
+                  })
+              : undefined
+          }
+        />
+      )}
+
+      {/* Wins, receipts and returns on Today (WAVE56-CONTRACT.md 5.12). */}
+      {section === "today" ? (
+        <WinBands
+          bands={winBands}
+          onAction={b => {
+            const name =
+              clients.find(x => String(x.taskId) === b.taskId)?.name ??
+              b.text.replace(/^.*\((.*)\)$/, "$1");
+            if (
+              b.kind === "accepted_no_agreement" &&
+              b.taskId &&
+              b.ref.proposalId
+            )
+              navigate(
+                `/clients/${encodeURIComponent(b.taskId)}/proposals/${String(b.ref.proposalId)}`,
+              );
+            else if (b.kind === "invoice_paid_untied" && b.taskId)
+              navigate(`/clients/${encodeURIComponent(b.taskId)}?tab=money`);
+            else if (b.kind === "tie_waiting") navigate("/money?tab=wins");
+            else if (b.kind === "receipt_in" || b.kind === "receipt_checked")
+              navigate("/money?tab=billing");
+            else if (b.kind === "back" && b.taskId)
+              setTicketOpen({
+                type: "client_relaunch",
+                taskId: b.taskId,
+                name: String(name),
+                details: `${String(name)} is back in the cockpit: relaunch their ads.`,
+              });
+            else if (b.kind === "due_no_money" && b.taskId)
+              setSendOpen({
+                taskId: b.taskId,
+                name: String(name),
+                preset: {
+                  formKey: "bank_receipt",
+                  origin: "billing",
+                  context: b.ref,
+                },
+              });
+          }}
+        />
+      ) : null}
+
+      {/* Client forms out and the client's voice on Today (WAVE34-CONTRACT.md 5.3). */}
+      {section === "today" && (more?.invites || more?.voice) ? (
+        <FormBands
+          io={more?.invites ? fio : null}
+          bands={formBands}
+          ticketTypes={ticketTypes}
+          onSend={(taskId, name, preset) =>
+            setSendOpen({ taskId, name, preset })
+          }
+          onOpenClient={taskId =>
+            navigate(
+              `/clients/${encodeURIComponent(taskId)}?tab=overview#forms-out`,
+            )
+          }
+          onTicket={setTicketOpen}
+          onChanged={() => setLifeVersion(v => v + 1)}
+        />
+      ) : null}
+      {section === "today" && more && !more.invites ? (
+        <p className="text-xs text-muted-foreground">Client forms: {NOT_YET}</p>
+      ) : null}
+
+      {/* Your tasks (PLAN.md D19): your own open ClickUp tasks, five at
+          most, each opening in place. The Client Success board below stays
+          until the per-seat read is shown to hold the same tasks (TD 11.3). */}
+      {section === "today" && <YourTasks />}
+
       {section === "today" && <AdBillingDailyTask />}
 
       {section === "today" && <TodaysCalls snap={snap} />}
+
+      {section === "today" && (
+        <AfterCalls snap={snap} onPlaced={() => void sb.refetch()} />
+      )}
+
+      {/* Client recaps waiting on a person (docs/forms/STAGE2B-CONTRACT.md
+          5.1): each opens the client's Messages card. */}
+      {section === "today" && (
+        <RecapsWaiting readKey={snap} native={notesNative(entry)} />
+      )}
 
       {section === "today" && <CallList />}
 
@@ -2829,70 +3742,77 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
             )}
           </SectionCard>
 
-          <SectionCard
-            title="Tickets raised today"
-            count={ticketRows.length}
-            sub="Verified against ClickUp: a ticket counts as landed once it exists on the other team's board."
-            flush
-          >
-            {ticketRows.length === 0 ? (
-              <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
-                No tickets raised today.
-              </p>
-            ) : (
-              ticketRows.map(
-                (d: {
-                  _id: string;
-                  subject: string;
-                  action: string;
-                  reroutedTo?: string;
-                  clickupTaskUrl?: string;
-                  logError?: string;
-                }) => (
-                  <ChecklistItem
-                    key={d._id}
-                    title={`${d.subject}, ${d.action}`}
-                    meta={
-                      <>
-                        <span className="text-xs text-muted-foreground">
-                          to {teamName(d.reroutedTo)}
-                        </span>
-                        <Chip
-                          tone={
-                            d.clickupTaskUrl
-                              ? "good"
+          {/* The old tickets while they are the way to ask (or any were
+              raised today); the request form's requests once it is. */}
+          {ticketRows.length > 0 || !requestsAnywhere ? (
+            <SectionCard
+              title="Tickets raised today"
+              count={ticketRows.length}
+              sub="Verified against ClickUp: a ticket counts as landed once it exists on the other team's board."
+              flush
+            >
+              {ticketRows.length === 0 ? (
+                <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
+                  No tickets raised today.
+                </p>
+              ) : (
+                ticketRows.map(
+                  (d: {
+                    _id: string;
+                    subject: string;
+                    action: string;
+                    reroutedTo?: string;
+                    clickupTaskUrl?: string;
+                    logError?: string;
+                  }) => (
+                    <ChecklistItem
+                      key={d._id}
+                      title={`${d.subject}, ${d.action}`}
+                      meta={
+                        <>
+                          <span className="text-xs text-muted-foreground">
+                            to {teamName(d.reroutedTo)}
+                          </span>
+                          <Chip
+                            tone={
+                              d.clickupTaskUrl
+                                ? "good"
+                                : d.logError
+                                  ? "bad"
+                                  : "neutral"
+                            }
+                          >
+                            {d.clickupTaskUrl
+                              ? "Landed"
                               : d.logError
-                                ? "bad"
-                                : "neutral"
-                          }
-                        >
-                          {d.clickupTaskUrl
-                            ? "Landed"
-                            : d.logError
-                              ? "Failed"
-                              : "Waiting"}
-                        </Chip>
-                      </>
-                    }
-                    why={
-                      d.clickupTaskUrl
-                        ? `Created on the ${teamName(d.reroutedTo)} board.`
-                        : d.logError
-                          ? `ClickUp rejected it: ${d.logError}. Raise it again.`
-                          : `Not on the ${teamName(d.reroutedTo)} board yet. If it is urgent, tell the team directly.`
-                    }
-                    action={
-                      d.clickupTaskUrl ? (
-                        <ExtLink href={d.clickupTaskUrl}>
-                          Open it in ClickUp
-                        </ExtLink>
-                      ) : undefined
-                    }
-                  />
-                ),
-              )
-            )}
-          </SectionCard>
+                                ? "Failed"
+                                : "Waiting"}
+                          </Chip>
+                        </>
+                      }
+                      why={
+                        d.clickupTaskUrl
+                          ? `Created on the ${teamName(d.reroutedTo)} board.`
+                          : d.logError
+                            ? `ClickUp rejected it: ${d.logError}. Raise it again.`
+                            : `Not on the ${teamName(d.reroutedTo)} board yet. If it is urgent, tell the team directly.`
+                      }
+                      action={
+                        d.clickupTaskUrl ? (
+                          <ExtLink href={d.clickupTaskUrl}>
+                            Open it in ClickUp
+                          </ExtLink>
+                        ) : undefined
+                      }
+                    />
+                  ),
+                )
+              )}
+            </SectionCard>
+          ) : null}
+          {requestsAnywhere || raisedToday(myRequests.rows).length > 0 ? (
+            <RequestsRaisedToday mine={myRequests} />
+          ) : null}
 
           <SectionCard
             title="Loose ends"
@@ -2937,6 +3857,15 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                           >
                             Open the client
                           </Link>
+                          {/1-1 call notes form not submitted/i.test(l) ? (
+                            <NotesNudge
+                              taskId={String(c.taskId)}
+                              lastCall={c.lastCallAt ?? c.lastCall ?? null}
+                              className="text-primary underline-offset-4 hover:underline"
+                            >
+                              Write 1-1 notes
+                            </NotesNudge>
+                          ) : null}
                           {c.taskUrl ? (
                             <ExtLink href={c.taskUrl}>ClickUp card</ExtLink>
                           ) : null}
@@ -3248,37 +4177,45 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
             it gets added.
           </p>
           <div className="grid gap-4 lg:grid-cols-2 lg:gap-6">
-            {LINK_GROUPS.map(g => (
-              <SectionCard key={g.title} title={g.title} sub={g.blurb} flush>
-                {g.rows.map(r => (
-                  <div
-                    key={r.url + r.label}
-                    className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 sm:px-6"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <ExtLink href={r.url} className="text-sm font-medium">
-                        {r.label}
-                      </ExtLink>
-                      {r.note && (
-                        <div className="text-xs text-muted-foreground">
-                          {r.note}
-                        </div>
-                      )}
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        void navigator.clipboard.writeText(r.url);
-                        toast.success("Link copied");
-                      }}
+            {linkGroupsFor(liveWithWins(liveList, Boolean(w56?.wins.open))).map(
+              g => (
+                <SectionCard key={g.title} title={g.title} sub={g.blurb} flush>
+                  {g.rows.map(r => (
+                    <div
+                      key={r.url + r.label}
+                      className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 sm:px-6"
                     >
-                      Copy
-                    </Button>
-                  </div>
-                ))}
-              </SectionCard>
-            ))}
+                      <div className="min-w-0 flex-1">
+                        <ExtLink href={r.url} className="text-sm font-medium">
+                          {r.label}
+                        </ExtLink>
+                        {r.note && (
+                          <div className="text-xs text-muted-foreground">
+                            {r.note}
+                          </div>
+                        )}
+                        <OldForm
+                          url={oldFormOf(
+                            r,
+                            liveWithWins(liveList, Boolean(w56?.wins.open)),
+                          )}
+                        />
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          void navigator.clipboard.writeText(r.url);
+                          toast.success("Link copied");
+                        }}
+                      >
+                        Copy
+                      </Button>
+                    </div>
+                  ))}
+                </SectionCard>
+              ),
+            )}
           </div>
         </div>
       )}
@@ -3683,7 +4620,11 @@ function MoneySection({
   const clients = Number(
     clientsEdit ?? saved?.clients ?? qualifyingFrom(snap.clients ?? []),
   );
-  const counts: Counts = { ...(saved?.counts ?? {}), ...countEdits };
+  // Waves 5-6 (4.8): with Log a win open, the four Rs read the wins ledger.
+  const fromWins = useWinCounts(client);
+  const counts: Counts = fromWins
+    ? fromWins
+    : { ...(saved?.counts ?? {}), ...countEdits };
   const pay = computePay(clients, churn, counts);
   const gap = target - pay.total;
   const closes = closeTheGap(gap);
@@ -3876,7 +4817,11 @@ function MoneySection({
 
       <SectionCard
         title="The four Rs, where the rest of the money is"
-        sub={FOUR_RS.map(x => `${x.r}: ${x.meaning}`).join(" · ")}
+        sub={
+          fromWins
+            ? `From your wins this month. ${FOUR_RS.map(x => `${x.r}: ${x.meaning}`).join(" · ")}`
+            : FOUR_RS.map(x => `${x.r}: ${x.meaning}`).join(" · ")
+        }
         flush
       >
         {EARNERS.map(e => {
@@ -3898,8 +4843,8 @@ function MoneySection({
                     {e.note}
                   </div>
                 )}
-                {e.form && (
-                  <ExtLink href={e.form} className="mt-0.5 text-xs">
+                {e.oldForm && !fromWins && (
+                  <ExtLink href={e.oldForm} className="mt-0.5 text-xs">
                     Log it in the form
                   </ExtLink>
                 )}
@@ -3908,22 +4853,32 @@ function MoneySection({
                 <span className="text-xs text-muted-foreground">
                   {rateLabel(e)}
                 </span>
-                <input
-                  className={field}
-                  value={String(n)}
-                  inputMode={e.kind === "share" ? "decimal" : "numeric"}
-                  aria-label={
-                    e.kind === "share"
-                      ? `${e.label}, how much`
-                      : `${e.label}, how many`
-                  }
-                  onChange={ev =>
-                    setCountEdits({
-                      ...countEdits,
-                      [e.id]: Number(ev.target.value) || 0,
-                    })
-                  }
-                />
+                {fromWins ? (
+                  <span
+                    className="w-24 text-right text-sm tabular-nums"
+                    data-from-wins={e.id}
+                    title="From your wins this month"
+                  >
+                    {e.kind === "share" ? usd(n) : n}
+                  </span>
+                ) : (
+                  <input
+                    className={field}
+                    value={String(n)}
+                    inputMode={e.kind === "share" ? "decimal" : "numeric"}
+                    aria-label={
+                      e.kind === "share"
+                        ? `${e.label}, how much`
+                        : `${e.label}, how many`
+                    }
+                    onChange={ev =>
+                      setCountEdits({
+                        ...countEdits,
+                        [e.id]: Number(ev.target.value) || 0,
+                      })
+                    }
+                  />
+                )}
                 <span className="w-20 text-right font-semibold tabular-nums">
                   {usd(earned(e, n))}
                 </span>
@@ -4103,6 +5058,28 @@ function apptTime(iso: string): string {
 }
 
 /**
+ * The meeting link in the header line (docs/forms/STAGE2-CONTRACT.md 8.3,
+ * Y24): `joinLink` on the summary's booking to join, checked again every 30
+ * seconds, so it shows 15 minutes before the call and goes when it ends. A
+ * booked call with no link says so beside the next call, not here.
+ */
+function JoinLine({ c }: { c: Parameters<typeof joinLink>[0] }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
+  const link = joinLink(c, now);
+  if (!link) return null;
+  return (
+    <>
+      {" · "}
+      <ExtLink href={link.href}>{link.label}</ExtLink>
+    </>
+  );
+}
+
+/**
  * What the CSM actually has booked today, read from the client GHL account. Nobody has to
  * type their own schedule into a form, and a call that exists here is proof of a booked
  * touchpoint.
@@ -4174,5 +5151,1443 @@ function TodaysCalls({
         </p>
       ) : null}
     </section>
+  );
+}
+
+// --- The staff forms' doors and Today's bands --------------------------------
+//
+// docs/forms/WAVE12-CONTRACT.md 4.6, 5.2 and 5.4. Give more time, Pause or
+// Resume this client and Client is leaving open FormSheet with the card's
+// prefill; Today shows the rows a person acts on (a notice in, a pause
+// request, a review the overdue ladder raised, a receipt to check), each with
+// the button that opens the prefilled request form for its ticket (W5: the
+// system never opens a ticket itself). Every door and band reads
+// cockpit_form_doors() once per page load and stays hidden, with "Opens after
+// the next cockpit update.", while its migration is not live; nothing calls an
+// RPC the flag says is missing.
+
+/** The plain line in place of a door or band whose migration is not live yet. */
+export const NOT_YET = "Opens after the next cockpit update.";
+
+/**
+ * cockpit_form_doors, read once per page load for the signed-in client: W12's
+ * seven doors and waves 3-4's four (invites, lifecycle, voice, editor).
+ */
+let doorsRead: {
+  client: SupabaseClient;
+  read: Promise<{ doors: Doors; more: MoreDoors }>;
+} | null = null;
+
+function readDoorsOnce(client: SupabaseClient) {
+  if (!doorsRead || doorsRead.client !== client)
+    doorsRead = { client, read: readAllDoors(client) };
+  return doorsRead.read;
+}
+
+export function useDoors(client: SupabaseClient | null): Doors | null {
+  const [doors, setDoors] = useState<Doors | null>(null);
+  useEffect(() => {
+    if (!client) {
+      setDoors({ ...NO_DOORS });
+      return;
+    }
+    let live = true;
+    void readDoorsOnce(client).then(d => {
+      if (live) setDoors(d.doors);
+    });
+    return () => {
+      live = false;
+    };
+  }, [client]);
+  return doors;
+}
+
+/**
+ * "From your wins" (WAVE56-CONTRACT.md 4.8): this month's wins counted for
+ * the four Rs; null while Log a win is not open or the read fails, so the
+ * typed numbers stay.
+ */
+function useWinCounts(client: SupabaseClient | null): Counts | null {
+  const doors = useW56Doors(client);
+  const [counts, setCounts] = useState<Counts | null>(null);
+  const open = Boolean(doors?.wins.open);
+  useEffect(() => {
+    if (!client || !open) return;
+    let live = true;
+    const today = kuwaitToday();
+    void winsListRead(client, `${today.slice(0, 8)}01`, today)
+      .then(
+        r =>
+          live &&
+          setCounts(
+            countsFromWins(r.wins.map(w => ({ ...w, kind: String(w.kind) }))),
+          ),
+      )
+      .catch(() => live && setCounts(null));
+    return () => {
+      live = false;
+    };
+  }, [client, open]);
+  return open ? counts : null;
+}
+
+/** Waves 5-6's doors with why each is closed, read once per page load. */
+let w56Read: { client: SupabaseClient; read: Promise<W56Doors> } | null = null;
+
+export function useW56Doors(client: SupabaseClient | null): W56Doors | null {
+  const [doors, setDoors] = useState<W56Doors | null>(null);
+  useEffect(() => {
+    if (!client) {
+      setDoors({ ...W56_CLOSED });
+      return;
+    }
+    if (!w56Read || w56Read.client !== client)
+      w56Read = { client, read: formDoorsW56(client) };
+    let live = true;
+    void w56Read.read.then(d => {
+      if (live) setDoors(d);
+    });
+    return () => {
+      live = false;
+    };
+  }, [client]);
+  return doors;
+}
+
+/**
+ * Today's wins and receipts bands (5.12): read only while the wins door is
+ * open, every 5 minutes on Today; a failed read shows no band, never a guess.
+ */
+function useWinBands(
+  client: SupabaseClient | null,
+  w56: W56Doors | null,
+  on: boolean,
+  ceo: boolean,
+  version: number,
+): Band[] {
+  const [rows, setRows] = useState<BandInput[]>([]);
+  const open = Boolean(w56?.wins.open);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: version reads again
+  useEffect(() => {
+    if (!client || !open || !on) return;
+    let live = true;
+    const read = () =>
+      winsToday(client)
+        .then(r => live && setRows(r))
+        .catch(() => live && setRows([]));
+    void read();
+    const t = setInterval(read, 5 * 60_000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [client, open, on, version]);
+  return useMemo(
+    () =>
+      open && on ? winTodayBands(rows, { ceo, today: kuwaitToday() }) : [],
+    [rows, open, on, ceo],
+  );
+}
+
+/** Waves 3-4's doors; null until read, every one closed without a client. */
+export function useMoreDoors(client: SupabaseClient | null): MoreDoors | null {
+  const [more, setMore] = useState<MoreDoors | null>(null);
+  useEffect(() => {
+    if (!client) {
+      setMore({
+        invites: false,
+        lifecycle: false,
+        voice: false,
+        editor: false,
+      });
+      return;
+    }
+    let live = true;
+    void readDoorsOnce(client).then(d => {
+      if (live) setMore(d.more);
+    });
+    return () => {
+      live = false;
+    };
+  }, [client]);
+  return more;
+}
+
+/** The client forms live today (4.11), read once per page load; null while unread or unreadable. */
+let liveRead: { io: FormsIO; read: Promise<string[] | null> } | null = null;
+
+export function useLiveForms(io: FormsIO | null, on: boolean): string[] | null {
+  const [live, setLive] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (!io || !on) return;
+    if (!liveRead || liveRead.io !== io)
+      liveRead = { io, read: io.live().catch(() => null) };
+    let still = true;
+    void liveRead.read.then(l => {
+      if (still) setLive(l);
+    });
+    return () => {
+      still = false;
+    };
+  }, [io, on]);
+  return live;
+}
+
+/** The request types this seat can open, so a ticket button shows only once its type exists (D-R1). */
+let typesRead: { client: SupabaseClient; read: Promise<Set<string>> } | null =
+  null;
+
+function useTicketTypes(
+  client: SupabaseClient | null,
+  wanted: boolean,
+): Set<string> | null {
+  const [types, setTypes] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    if (!client || !wanted) return;
+    if (!typesRead || typesRead.client !== client)
+      typesRead = {
+        client,
+        read: readRequestTypes(client)
+          .then(
+            r =>
+              new Set(
+                (r.types ?? []).filter(t => t.enabled).map(t => String(t.key)),
+              ),
+          )
+          .catch(() => new Set<string>()),
+      };
+    let live = true;
+    void typesRead.read.then(t => {
+      if (live) setTypes(t);
+    });
+    return () => {
+      live = false;
+    };
+  }, [client, wanted]);
+  return types;
+}
+
+/** One card's lifecycle row (paused, a live grant, a confirmed churn), once its migration is live. */
+function useLifecycle(
+  client: SupabaseClient | null,
+  taskId: string | null,
+  on: boolean,
+  version: number,
+): Lifecycle | null {
+  const [row, setRow] = useState<Lifecycle | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: version re-reads after a send
+  useEffect(() => {
+    setRow(null);
+    if (!client || !taskId || !on) return;
+    let live = true;
+    lifecycleRead(client, taskId)
+      .then(r => {
+        if (live) setRow(r);
+      })
+      .catch(() => {
+        if (live) setRow(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [client, taskId, on, version]);
+  return row;
+}
+
+type Read<T> = { rows: T[] | null; error: string | null };
+const EMPTY_READ = { rows: null, error: null };
+
+/** Today's three reads, each only when its door is open and the seat may see it. */
+export function useTodayBands(
+  client: SupabaseClient | null,
+  doors: Doors | null,
+  on: boolean,
+  checker: boolean,
+  version: number,
+) {
+  const [notices, setNotices] = useState<Read<NoticeIn>>(EMPTY_READ);
+  const [ladder, setLadder] = useState<Read<LadderRow>>(EMPTY_READ);
+  const [checks, setChecks] = useState<Read<PaymentToCheck>>(EMPTY_READ);
+  const wantNotices = Boolean(doors && (doors.churnConfirm || doors.pause));
+  const wantLadder = Boolean(doors?.reviews);
+  const wantChecks = Boolean(doors?.checks && checker);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: version re-reads after an answer
+  useEffect(() => {
+    if (!client || !on) return;
+    let live = true;
+    const words = (e: unknown) => String((e as Error)?.message ?? e);
+    if (wantNotices)
+      noticesIn(client)
+        .then(rows => live && setNotices({ rows, error: null }))
+        .catch(e => live && setNotices({ rows: null, error: words(e) }));
+    if (wantLadder)
+      ladderDue(client)
+        .then(rows => live && setLadder({ rows, error: null }))
+        .catch(e => live && setLadder({ rows: null, error: words(e) }));
+    if (wantChecks)
+      paymentsToCheck(client)
+        .then(rows => live && setChecks({ rows, error: null }))
+        .catch(e => live && setChecks({ rows: null, error: words(e) }));
+    return () => {
+      live = false;
+    };
+  }, [client, on, wantNotices, wantLadder, wantChecks, version]);
+  return { notices, ladder, checks, wantNotices, wantLadder, wantChecks };
+}
+
+/** What opens a staff form: the form, the client, and what the row already knows. */
+type DoorOpen = {
+  form: FormKey;
+  taskId: string;
+  name: string;
+  status?: string;
+  /** A live extension's end, known before the prefill read. */
+  liveUntil?: string | null;
+  /** Client is leaving from a termination notice: the survey it answers. */
+  surveyResponseId?: string | null;
+  /** That survey is on the card only by the link's hidden id (nobody has checked it). */
+  surveyUnverified?: boolean;
+  noticeOn?: string | null;
+  /** Set MRR from a paid recurring win (WAVE56-CONTRACT.md 4.3.7): the monthly amount to add. */
+  addMrrUsd?: number | null;
+  /** That win, sent with the MRR edit as its win_id. */
+  winId?: string | null;
+};
+
+/** What opens the request form: the ticket type, the client and its details line. */
+type TicketOpen = {
+  type: string;
+  taskId: string;
+  name: string;
+  details: string;
+};
+
+const SENDERS: Record<
+  FormKey,
+  (
+    c: SupabaseClient,
+    taskId: string,
+    a: Answers,
+    requestId: string,
+    o?: SendOptions,
+  ) => Promise<SendResult>
+> = {
+  extension: giveMoreTime,
+  pause: pauseClient,
+  resume: resumeClient,
+  churn_confirm: confirmChurn,
+  mrr: setMrr,
+};
+
+/** FormSheet for one door: reads the prefill once per open, sends through lifecycleClient. */
+/** The prefill read's card in a few words: "Active · due 2 Nov", or null when it says nothing. */
+function cardStatus(
+  card: Record<string, unknown> | null | undefined,
+): string | null {
+  const val = (k: string) => {
+    const v = (card?.[k] as { value?: unknown } | undefined)?.value;
+    return typeof v === "string" && v ? v : null;
+  };
+  const status = val("status");
+  const next = val("nextDate");
+  if (!status && !next) return null;
+  return [status, next ? `due ${dayWords(next)}` : null]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+export function DoorSheet({
+  door,
+  client,
+  doors,
+  more = null,
+  io = null,
+  live = null,
+  onSendForm,
+  asCeo,
+  onClose,
+  onTicket,
+  onSent,
+}: {
+  door: DoorOpen | null;
+  client: SupabaseClient | null;
+  doors: Doors;
+  /** Waves 3-4's doors: the pause consent shows only with invites and lifecycle open. */
+  more?: MoreDoors | null;
+  io?: FormsIO | null;
+  /** The client forms live today; the consent row needs pause_consent in it. */
+  live?: string[] | null;
+  /** After Client is leaving: Send exit survey (5.11). */
+  onSendForm?: () => void;
+  asCeo: boolean;
+  onClose: () => void;
+  onTicket: (type: string) => void;
+  onSent: () => void;
+}) {
+  const [read, setRead] = useState<PrefillRead | null>(null);
+  // A consent sent from the sheet reads the prefill again for its new state.
+  const [reread, setReread] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  // The CSM's word that a survey found only by the link's hidden id is this client's.
+  const [surveyTicked, setSurveyTicked] = useState(false);
+  const sent = useRef<{ done: string; message: string } | null>(null);
+  const form = door?.form ?? null;
+  const taskId = door?.taskId ?? null;
+  useEffect(() => {
+    setRead(null);
+    setError(null);
+    setSurveyTicked(false);
+    sent.current = null;
+    if (!client || !form || !taskId) return;
+    if (!doors.prefill) {
+      setError("The card's values open after the next cockpit update.");
+      return;
+    }
+    let live = true;
+    setLoading(true);
+    formPrefill(client, form, taskId)
+      .then(r => live && setRead(r))
+      .catch(
+        e =>
+          live &&
+          setError(
+            `The card could not be read (${String((e as Error)?.message ?? e)}).`,
+          ),
+      )
+      .finally(() => live && setLoading(false));
+    return () => {
+      live = false;
+    };
+  }, [client, form, taskId, doors.prefill, reread]);
+
+  const today = kuwaitToday();
+  // The survey this confirm would attach: the notice's, else the card's latest.
+  // One on the card only by the link's hidden id goes (and fills the form) only
+  // after the CSM ticks that it is this client's; a checked one as before.
+  const surveyId =
+    form === "churn_confirm"
+      ? (door?.surveyResponseId ?? read?.survey?.responseId ?? null)
+      : null;
+  const surveyUnverified = Boolean(
+    surveyId &&
+      (door?.surveyResponseId
+        ? door.surveyUnverified === true ||
+          (read?.survey?.responseId === door.surveyResponseId &&
+            read.survey.unverified)
+        : read?.survey?.unverified),
+  );
+  const useSurvey = Boolean(surveyId) && (!surveyUnverified || surveyTicked);
+  const prefill = useMemo((): Prefill[] => {
+    const rows = [...(read?.prefill ?? [])];
+    const has = (k: string) => rows.some(r => r.key === k);
+    if (form === "churn_confirm" && useSurvey) {
+      // After the tick, the server's empty rows for an unchecked survey give way.
+      const held = (k: string) =>
+        rows.some(r => r.key === k && r.value !== null);
+      const put = (row: Prefill) => {
+        const i = rows.findIndex(r => r.key === row.key);
+        if (i >= 0) rows[i] = row;
+        else rows.push(row);
+      };
+      const on = door?.noticeOn ?? read?.survey?.submittedAt?.slice(0, 10);
+      if (on && !held("noticeOn"))
+        put({
+          key: "noticeOn",
+          value: on.slice(0, 10),
+          source: `the termination survey, ${dayWords(on)}`,
+        });
+      if (!held("surveyState"))
+        put({
+          key: "surveyState",
+          value: "filled",
+          source: "the termination survey",
+        });
+    }
+    // Add a paid recurring win's monthly amount to the card's MRR, reason Upsell (4.3.7).
+    if (form === "mrr" && typeof door?.addMrrUsd === "number") {
+      const i = rows.findIndex(r => r.key === "mrrUsd");
+      const card =
+        i >= 0 && typeof rows[i].value === "number"
+          ? (rows[i].value as number)
+          : 0;
+      const next = {
+        key: "mrrUsd",
+        value: Math.round((card + door.addMrrUsd) * 100) / 100,
+        source: "the card plus the upsell's monthly amount",
+      };
+      if (i >= 0) rows[i] = next;
+      else rows.push(next);
+      rows.push({
+        key: "reasonCat",
+        value: "upsell",
+        source: "the upsell win",
+      });
+    }
+    if (form === "resume" && !has("nextDate")) {
+      const card = read?.card ?? {};
+      const next = suggestedNextDate(
+        typeof card.nextDate === "string" ? card.nextDate : null,
+        typeof card.pausedOn === "string" ? card.pausedOn : null,
+        today,
+      );
+      if (next)
+        rows.push({
+          key: "nextDate",
+          value: next,
+          source: "the old date moved by the pause's length",
+        });
+    }
+    return rows;
+  }, [read, form, door?.noticeOn, door?.addMrrUsd, useSurvey, today]);
+
+  const liveUntil = read?.grant?.until ?? door?.liveUntil ?? null;
+  // The pause consent (WAVE34-CONTRACT.md 4.3.6): once the form is live, a
+  // client request is confirmed on the client's signed consent, not two ticks.
+  const consentMode =
+    form === "pause" &&
+    Boolean(more?.invites && more?.lifecycle) &&
+    Boolean(live?.includes("pause_consent"));
+  const consent = read?.consent ?? null;
+  const def = useMemo(
+    () =>
+      form === "extension"
+        ? extensionDef(liveUntil)
+        : form === "pause" && consentMode
+          ? pauseConsentDef(consent)
+          : form
+            ? FORM_DEFS[form]
+            : null,
+    [form, liveUntil, consentMode, consent],
+  );
+  if (!door || !def || !client) return null;
+  const signed = consentMode && consent?.state === "signed";
+  const options: SendOptions = {
+    source: asCeo ? "ceo" : "csm",
+    replacesGrantId: read?.grant?.grantId ?? null,
+    surveyResponseId: useSurvey ? surveyId : null,
+    ...(useSurvey && surveyUnverified ? { surveyConfirmed: true } : {}),
+    ...(signed && consent?.responseId
+      ? { consentResponseId: consent.responseId }
+      : {}),
+  };
+  const surveyCheck =
+    surveyId && surveyUnverified ? (
+      <div className="fs-field fs-tick">
+        <p className="fs-note fs-note-warn">
+          A termination survey came in with this client's link, but nobody has
+          checked it is theirs. It stays out of this form until you tick the
+          box.
+        </p>
+        <label className="fs-tick-row">
+          <input
+            type="checkbox"
+            data-survey-tick
+            checked={surveyTicked}
+            onChange={e => setSurveyTicked(e.target.checked)}
+          />
+          <span>This survey is from this client</span>
+        </label>
+      </div>
+    ) : null;
+  return (
+    <FormSheet
+      key={`${door.form}:${door.taskId}`}
+      open
+      onOpenChange={o => {
+        if (o) return;
+        // The toast mirrors the done label once the sheet is gone (5.2).
+        if (sent.current)
+          toast.success(`${sent.current.done}: ${sent.current.message}`);
+        onClose();
+      }}
+      def={def}
+      client={{ taskId: door.taskId, name: door.name }}
+      prefill={prefill}
+      calls={read?.calls ?? []}
+      hints={read?.hints ?? []}
+      // The card read's own state once it lands ("Active · due 2 Nov"); until then the list's.
+      status={cardStatus(read?.card) ?? door.status}
+      loading={loading}
+      prefillError={error}
+      submit={(a, requestId) =>
+        SENDERS[door.form](
+          client,
+          door.taskId,
+          door.winId ? { ...a, winId: door.winId } : a,
+          requestId,
+          options,
+        )
+      }
+      trail={ref => formTrail(client, ref)}
+      aside={surveyCheck}
+      after={
+        consentMode
+          ? a =>
+              a.pauseKind === "client_request" ? (
+                <PauseConsentRow
+                  io={io}
+                  taskId={door.taskId}
+                  consent={consent}
+                  answers={a}
+                  today={today}
+                  onSent={() => setReread(n => n + 1)}
+                />
+              ) : null
+          : undefined
+      }
+      blocked={
+        consentMode
+          ? a =>
+              a.pauseKind === "client_request" && !signed ? CONSENT_WAIT : null
+          : undefined
+      }
+      afterSent={
+        door.form === "churn_confirm" && onSendForm ? (
+          <button
+            type="button"
+            className="fs-btn fs-btn-quiet"
+            data-send-exit-survey
+            onClick={onSendForm}
+          >
+            Send exit survey
+          </button>
+        ) : undefined
+      }
+      onTicket={onTicket}
+      onSent={message => {
+        sent.current = { done: def.doneLabel, message };
+        onSent();
+      }}
+    />
+  );
+}
+
+/** The prefilled request form in a sheet (W5): the ticket reaches task alerts and Your tasks. */
+export function TicketSheet({
+  ticket,
+  onClose,
+}: {
+  ticket: TicketOpen | null;
+  onClose: () => void;
+}) {
+  return (
+    <Sheet open={ticket !== null} onOpenChange={o => (o ? null : onClose())}>
+      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
+        {ticket ? (
+          <div className="space-y-4">
+            <div className="space-y-1 pr-8">
+              <SheetTitle className="text-[15px]">Open the ticket</SheetTitle>
+              <SheetDescription className="text-xs">
+                For <bdi>{ticket.name}</bdi>. Check the details, then send.
+              </SheetDescription>
+            </div>
+            <RequestForm
+              key={`${ticket.type}:${ticket.taskId}`}
+              source="client_page"
+              presetClient={{ taskId: ticket.taskId, name: ticket.name }}
+              presetType={ticket.type}
+              presetDetails={ticket.details}
+              compact
+            />
+          </div>
+        ) : null}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+/** The client page's three doors, in the action row (5.2). */
+export function ClientDoors({
+  c,
+  doors,
+  life,
+  onOpen,
+}: {
+  c: Client;
+  doors: Doors | null;
+  life: Lifecycle | null;
+  onOpen: (form: FormKey, extra?: Partial<DoorOpen>) => void;
+}) {
+  if (!doors) return null;
+  const showExtension = doors.extension;
+  const showPause = doors.pause;
+  const showChurn = doors.churnConfirm;
+  const paused =
+    Boolean(life?.pausedOn) ||
+    displayLabel(life?.clientStatus ?? c.stage) === "Paused";
+  const liveUntil =
+    life?.extensionUntil ??
+    (typeof c.extendedUntil === "string" ? c.extendedUntil : null);
+  const hint = dueHint(typeof c.paymentDue === "number" ? c.paymentDue : null);
+  const confirmed = life?.churnConfirmedAt ?? null;
+  const any = showExtension || showPause || showChurn;
+  return (
+    <>
+      {showExtension ? (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => onOpen("extension", { liveUntil })}
+        >
+          {liveUntil ? (
+            `Extension to ${dayWords(liveUntil)} running · Add weeks`
+          ) : (
+            <>
+              Give more time
+              {hint ? (
+                <span
+                  className={cn(
+                    "font-mono text-[11px] font-normal",
+                    hint.endsWith("late") ? "txt-bad" : "text-muted-foreground",
+                  )}
+                >
+                  {hint}
+                </span>
+              ) : null}
+            </>
+          )}
+        </Button>
+      ) : null}
+      {showPause ? (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => onOpen(paused ? "resume" : "pause")}
+        >
+          {paused ? "Resume this client" : "Pause this client"}
+        </Button>
+      ) : null}
+      {showChurn ? (
+        // The hairline and the door wrap together, never one without the other.
+        <span className="inline-flex items-center gap-2">
+          <span aria-hidden className="mx-1 h-6 w-px bg-border" />
+          {confirmed ? (
+            <span className="text-xs text-muted-foreground">
+              Churn confirmed {dayWords(confirmed)}
+            </span>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-destructive/40 text-destructive hover:bg-destructive/5 hover:text-destructive"
+              onClick={() => onOpen("churn_confirm")}
+            >
+              Client is leaving
+            </Button>
+          )}
+        </span>
+      ) : null}
+      {!any || !showExtension || !showPause || !showChurn ? (
+        <span className="basis-full text-xs text-muted-foreground">
+          {[
+            showExtension ? "" : "Give more time",
+            showPause ? "" : "Pause this client",
+            showChurn ? "" : "Client is leaving",
+          ]
+            .filter(Boolean)
+            .join(", ")}
+          {": "}
+          {NOT_YET}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+/** The Typeform a row still points to until its client form goes live (4.11). */
+function OldForm({ url }: { url: string | null }) {
+  if (!url) return null;
+  return (
+    <div className="basis-full text-xs text-muted-foreground">
+      {OLD_FORM}{" "}
+      <ExtLink href={url} className="text-xs">
+        Typeform
+      </ExtLink>
+    </div>
+  );
+}
+
+/** A ticket button, shown once its request type exists for the seat. */
+function TicketButton({
+  type,
+  types,
+  label,
+  onOpen,
+}: {
+  type: string;
+  types: Set<string> | null;
+  label: string;
+  onOpen: () => void;
+}) {
+  if (!types?.has(type)) return null;
+  return (
+    <Button size="sm" variant="ghost" className={LINK_INK} onClick={onOpen}>
+      {label}
+    </Button>
+  );
+}
+
+/** One band row: the sentence, one fact in Geist Mono, then its buttons. */
+function BandRow({
+  children,
+  fact,
+  actions,
+}: {
+  children: ReactNode;
+  fact?: ReactNode;
+  actions: ReactNode;
+}) {
+  return (
+    <div className="space-y-2 px-4 py-3 sm:px-6">
+      <p className="text-sm" dir="auto">
+        {children}
+        {fact ? (
+          <>
+            {" "}
+            {/* The row's key fact (the day, the amount) reads at the sentence's own size. */}
+            <span className="font-mono text-sm text-foreground">{fact}</span>
+          </>
+        ) : null}
+      </p>
+      <div className="flex flex-wrap items-center gap-2">{actions}</div>
+    </div>
+  );
+}
+
+/** "Not leaving" or "Handled": a one-line note of what the client said, then Save. */
+function NoticeAnswer({
+  client,
+  responseId,
+  answer,
+  label,
+  onDone,
+}: {
+  client: SupabaseClient | null;
+  responseId: string;
+  answer: "staying" | "handled";
+  label: string;
+  onDone: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const id = `note-${responseId}`;
+  if (!open)
+    return (
+      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+        {label}
+      </Button>
+    );
+  return (
+    <form
+      className="flex w-full flex-wrap items-center gap-2"
+      onSubmit={async e => {
+        e.preventDefault();
+        if (!client) return;
+        if (note.trim().length < 4) {
+          setError("Say what the client said, so the answer reads back.");
+          return;
+        }
+        setBusy(true);
+        setError(null);
+        try {
+          await answerNotice(client, responseId, answer, note);
+          toast.success("Saved");
+          onDone();
+        } catch (err) {
+          setError(String((err as Error)?.message ?? err));
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <label htmlFor={id} className="sr-only">
+        What did the client say?
+      </label>
+      <Input
+        id={id}
+        value={note}
+        onChange={e => setNote(e.target.value)}
+        placeholder="What did the client say?"
+        className="h-8 min-w-0 flex-1 text-sm"
+        dir="auto"
+        aria-invalid={error ? true : undefined}
+        autoFocus
+      />
+      <Button size="sm" type="submit" disabled={busy}>
+        {busy ? "Saving…" : "Save"}
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        type="button"
+        onClick={() => setOpen(false)}
+      >
+        Cancel
+      </Button>
+      {error ? (
+        <p className="basis-full text-xs txt-bad" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </form>
+  );
+}
+
+/** Pick the card for a form answer that names no card (W12): never a guess by name. */
+function PickCard({
+  client,
+  responseId,
+  clients,
+  onDone,
+}: {
+  client: SupabaseClient | null;
+  responseId: string;
+  clients: Client[];
+  onDone: () => void;
+}) {
+  const [taskId, setTaskId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const id = `pick-${responseId}`;
+  return (
+    <div className="flex w-full flex-wrap items-center gap-2">
+      <label htmlFor={id} className="sr-only">
+        The client's card
+      </label>
+      {/* The select at the small buttons' size: 14px words, 32px tall. */}
+      <div className="w-full min-w-0 max-w-xs text-sm [&_[data-cockpit-select]]:min-h-8! [&_[data-cockpit-select]]:py-1!">
+        <AnimatedSelect
+          id={id}
+          className="w-full"
+          value={taskId}
+          onChange={e => setTaskId(e.target.value)}
+        >
+          <option value="">Pick the client…</option>
+          {clients.map(x => (
+            <option key={String(x.taskId)} value={String(x.taskId)}>
+              {String(x.name)}
+            </option>
+          ))}
+        </AnimatedSelect>
+      </div>
+      <Button
+        size="sm"
+        disabled={!taskId || busy}
+        onClick={async () => {
+          if (!client || !taskId) return;
+          setBusy(true);
+          setError(null);
+          try {
+            await matchLegacy(client, responseId, taskId);
+            toast.success("Matched to the card");
+            onDone();
+          } catch (err) {
+            setError(String((err as Error)?.message ?? err));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? "Saving…" : "Pick the card"}
+      </Button>
+      {error ? (
+        <p className="basis-full text-xs txt-bad" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** Today's bands (5.4): rows a person acts on, each with its ticket button. */
+export function TodayBands({
+  client,
+  doors,
+  bands,
+  types,
+  clients,
+  checker,
+  onDoor,
+  onTicket,
+  onChanged,
+  onAskReceipt,
+}: {
+  client: SupabaseClient | null;
+  doors: Doors | null;
+  bands: ReturnType<typeof useTodayBands>;
+  /** Waves 5-6: ask the client for a logged transfer's receipt (the receipts door open). */
+  onAskReceipt?: (row: CheckRow) => void;
+  types: Set<string> | null;
+  clients: Client[];
+  checker: boolean;
+  onDoor: (
+    form: FormKey,
+    taskId: string,
+    name: string,
+    extra?: Partial<DoorOpen>,
+  ) => void;
+  onTicket: (t: TicketOpen) => void;
+  onChanged: () => void;
+}) {
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  // Checks waiting reads through this page's own client; its ticket opens this page's request sheet.
+  const checksApi = useMemo<ChecksApi | null>(
+    () =>
+      client
+        ? {
+            // The band shows only with the door open (useTodayBands), so it is not read again.
+            door: async () => Boolean(doors?.checks),
+            list: async () => {
+              const { data, error } = await client.rpc(
+                "cockpit_manual_payments_to_check",
+              );
+              if (error) return manualPaymentsToCheck(client);
+              return (Array.isArray(data) ? data : []).map(toCheckRow);
+            },
+            receiptUrl: (responseId, field) =>
+              receiptUrl(client, responseId, field),
+            check: p => checkManualPayment(client, p),
+            ticketType: async () =>
+              Boolean(types?.has("payment_receipt_check")),
+          }
+        : null,
+    [client, types, doors?.checks],
+  );
+  if (!doors) return null;
+  const hide = (key: string) => {
+    setHidden(h => new Set(h).add(key));
+    onChanged();
+  };
+  const notices = (bands.notices.rows ?? []).filter(
+    n => !hidden.has(n.responseId),
+  );
+  const terminations = notices.filter(n => n.kind === "termination");
+  const pauses = notices.filter(n => n.kind === "pause_request");
+  const consents = notices.filter(
+    n => n.kind === "pause_consent" && n.matched && n.taskId,
+  );
+  const ladder = (bands.ladder.rows ?? []).filter(
+    r => !hidden.has(`${r.taskId}:${r.step}`),
+  );
+  const checks = (bands.checks.rows ?? []).filter(r => !hidden.has(r.id));
+  const day = (n: NoticeIn) =>
+    dayWords(n.noticeOn ?? n.submittedAt) || "a day not recorded";
+  const off = [
+    !bands.wantNotices ? "Notices in" : "",
+    !doors.reviews ? "Reviews due" : "",
+    checker && !doors.checks ? "Checks waiting" : "",
+  ].filter(Boolean);
+
+  return (
+    <div className="space-y-4">
+      {bands.notices.error ? (
+        <p className="text-xs txt-bad" role="alert">
+          Notices could not be read: {bands.notices.error}
+        </p>
+      ) : null}
+
+      {terminations.length ? (
+        <SectionCard title="Notice in" count={terminations.length} flush>
+          {terminations.map(n =>
+            n.matched && n.taskId ? (
+              <BandRow
+                key={n.responseId}
+                fact={day(n)}
+                actions={
+                  <>
+                    {doors.churnConfirm ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="border-destructive/40 text-destructive hover:bg-destructive/5 hover:text-destructive"
+                        onClick={() =>
+                          onDoor(
+                            "churn_confirm",
+                            String(n.taskId),
+                            n.clientName,
+                            {
+                              surveyResponseId: n.responseId,
+                              surveyUnverified: n.unverified,
+                              noticeOn: n.noticeOn ?? n.submittedAt,
+                            },
+                          )
+                        }
+                      >
+                        Confirm churn
+                      </Button>
+                    ) : null}
+                    {doors.churnConfirm ? (
+                      <NoticeAnswer
+                        client={client}
+                        responseId={n.responseId}
+                        answer="staying"
+                        label="Not leaving"
+                        onDone={() => hide(n.responseId)}
+                      />
+                    ) : null}
+                    <TicketButton
+                      type="client_notice"
+                      types={types}
+                      label="Open the notice ticket"
+                      onOpen={() =>
+                        onTicket({
+                          type: "client_notice",
+                          taskId: String(n.taskId),
+                          name: n.clientName,
+                          details: `${n.clientName} sent the termination survey on ${day(n)}. Confirm churn or answer the notice in the cockpit.`,
+                        })
+                      }
+                    />
+                  </>
+                }
+              >
+                {n.unverified ? (
+                  <span className="text-muted-foreground">
+                    Card from the link, not checked:{" "}
+                  </span>
+                ) : null}
+                <bdi>{n.clientName}</bdi> sent the termination survey on
+                {n.ratings?.length ? (
+                  // A native exit survey's ratings, in Geist Mono (5.11).
+                  <span className="mt-1 block font-mono text-xs text-muted-foreground">
+                    {n.ratings.map(r => `${r.title} ${r.value}/10`).join(" · ")}
+                  </span>
+                ) : null}
+              </BandRow>
+            ) : (
+              <BandRow
+                key={n.responseId}
+                fact={day(n)}
+                actions={
+                  <PickCard
+                    client={client}
+                    responseId={n.responseId}
+                    clients={clients}
+                    onDone={onChanged}
+                  />
+                }
+              >
+                Not matched to a card: <bdi>{n.clientName}</bdi> sent the
+                termination survey on
+              </BandRow>
+            ),
+          )}
+        </SectionCard>
+      ) : null}
+
+      {pauses.length ? (
+        <SectionCard title="Pause request in" count={pauses.length} flush>
+          {pauses.map(n =>
+            n.matched && n.taskId ? (
+              <BandRow
+                key={n.responseId}
+                fact={day(n)}
+                actions={
+                  <>
+                    {doors.pause ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          onDoor("pause", String(n.taskId), n.clientName)
+                        }
+                      >
+                        Pause this client
+                      </Button>
+                    ) : null}
+                    {doors.churnConfirm ? (
+                      <NoticeAnswer
+                        client={client}
+                        responseId={n.responseId}
+                        answer="handled"
+                        label="Handled"
+                        onDone={() => hide(n.responseId)}
+                      />
+                    ) : null}
+                    <TicketButton
+                      type="client_pause"
+                      types={types}
+                      label="Open the pause tickets"
+                      onOpen={() =>
+                        onTicket({
+                          type: "client_pause",
+                          taskId: String(n.taskId),
+                          name: n.clientName,
+                          details: `${n.clientName} asked to pause on ${day(n)} (the client pause form).`,
+                        })
+                      }
+                    />
+                  </>
+                }
+              >
+                <bdi>{n.clientName}</bdi> asked to pause on
+              </BandRow>
+            ) : (
+              <BandRow
+                key={n.responseId}
+                fact={day(n)}
+                actions={
+                  <PickCard
+                    client={client}
+                    responseId={n.responseId}
+                    clients={clients}
+                    onDone={onChanged}
+                  />
+                }
+              >
+                Not matched to a card: <bdi>{n.clientName}</bdi> asked to pause
+                on
+              </BandRow>
+            ),
+          )}
+        </SectionCard>
+      ) : null}
+
+      {consents.length ? (
+        // The client's pause consent (WAVE34-CONTRACT.md 5.3): signed, or the dates said wrong.
+        <SectionCard title="Pause consent in" count={consents.length} flush>
+          {consents.map(n => {
+            const c = n.consent ?? null;
+            const wrong = c?.state === "dates_wrong";
+            return (
+              <BandRow
+                key={n.responseId}
+                fact={dayWords(c?.signedAt ?? n.submittedAt) || undefined}
+                actions={
+                  doors.pause ? (
+                    <Button
+                      size="sm"
+                      variant={wrong ? "outline" : "default"}
+                      onClick={() =>
+                        onDoor("pause", String(n.taskId), n.clientName)
+                      }
+                    >
+                      {wrong ? "Open the pause" : "Confirm pause"}
+                    </Button>
+                  ) : null
+                }
+              >
+                {wrong ? (
+                  <>
+                    Pause dates wrong: <bdi>{n.clientName}</bdi>
+                  </>
+                ) : (
+                  <>
+                    Pause consent signed: <bdi>{n.clientName}</bdi> (
+                    {signerWords(c?.via ?? null, c?.signer ?? null)})
+                  </>
+                )}
+              </BandRow>
+            );
+          })}
+        </SectionCard>
+      ) : null}
+
+      {bands.ladder.error ? (
+        <p className="text-xs txt-bad" role="alert">
+          Reviews could not be read: {bands.ladder.error}
+        </p>
+      ) : null}
+      {ladder.length ? (
+        <SectionCard
+          title="Reviews due"
+          count={ladder.length}
+          sub="From the overdue steps. Neither review changes the card by itself."
+          flush
+        >
+          {ladder.map(r => {
+            const late =
+              r.daysLate === null
+                ? "late, days not recorded"
+                : `${r.daysLate} ${r.daysLate === 1 ? "day" : "days"} late`;
+            const pausedDays = r.pausedOn
+              ? Math.max(0, daysSince(r.pausedOn))
+              : null;
+            const ticket = (type: string, details: string) => (
+              <TicketButton
+                type={type}
+                types={types}
+                label="Open the review ticket"
+                onOpen={() =>
+                  onTicket({
+                    type,
+                    taskId: r.taskId,
+                    name: r.clientName,
+                    details,
+                  })
+                }
+              />
+            );
+            if (r.step === "pause_review")
+              return (
+                <BandRow
+                  key={`${r.taskId}:${r.step}`}
+                  fact={r.dueOn ? `· due ${dayWords(r.dueOn)}` : undefined}
+                  actions={
+                    <>
+                      {doors.pause ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            onDoor("pause", r.taskId, r.clientName)
+                          }
+                        >
+                          Pause this client
+                        </Button>
+                      ) : null}
+                      {doors.extension ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            onDoor("extension", r.taskId, r.clientName, {
+                              liveUntil: r.extendedUntil,
+                            })
+                          }
+                        >
+                          Give more time
+                        </Button>
+                      ) : null}
+                      {ticket(
+                        "client_pause",
+                        `Pause review: ${r.clientName} is ${late} on the payment due ${dayWords(r.dueOn) || "on the card"}.`,
+                      )}
+                    </>
+                  }
+                >
+                  Pause review: <bdi>{r.clientName}</bdi> is {late}
+                </BandRow>
+              );
+            if (r.step === "cancel_review")
+              return (
+                <BandRow
+                  key={`${r.taskId}:${r.step}`}
+                  fact={r.dueOn ? `· due ${dayWords(r.dueOn)}` : undefined}
+                  actions={
+                    <>
+                      {doors.churnConfirm ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="border-destructive/40 text-destructive hover:bg-destructive/5 hover:text-destructive"
+                          onClick={() =>
+                            onDoor("churn_confirm", r.taskId, r.clientName)
+                          }
+                        >
+                          Client is leaving
+                        </Button>
+                      ) : null}
+                      {ticket(
+                        "client_offboarding",
+                        `Cancel review: ${r.clientName} is ${late} on the payment due ${dayWords(r.dueOn) || "on the card"}.`,
+                      )}
+                    </>
+                  }
+                >
+                  Cancel review: <bdi>{r.clientName}</bdi> is {late}
+                </BandRow>
+              );
+            return (
+              <BandRow
+                key={`${r.taskId}:${r.step}`}
+                fact={
+                  r.pausedOn ? `· paused ${dayWords(r.pausedOn)}` : undefined
+                }
+                actions={
+                  <>
+                    {doors.pause ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => onDoor("resume", r.taskId, r.clientName)}
+                      >
+                        Resume this client
+                      </Button>
+                    ) : null}
+                    {doors.churnConfirm ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="border-destructive/40 text-destructive hover:bg-destructive/5 hover:text-destructive"
+                        onClick={() =>
+                          onDoor("churn_confirm", r.taskId, r.clientName)
+                        }
+                      >
+                        Client is leaving
+                      </Button>
+                    ) : null}
+                    {ticket(
+                      "client_offboarding",
+                      `${r.clientName} has been paused ${pausedDays ?? "14 or more"} days. Restart or confirm churn.`,
+                    )}
+                  </>
+                }
+              >
+                Paused {pausedDays ?? "14+"} days: restart or confirm churn for{" "}
+                <bdi>{r.clientName}</bdi>
+              </BandRow>
+            );
+          })}
+        </SectionCard>
+      ) : null}
+
+      {bands.wantChecks ? (
+        // One Checks waiting everywhere (5.7): the billing page's own list, so finance and the CEO get the
+        // same two-field check (bank reference or statement line), amounts and sentence on Today.
+        <SectionCard
+          title="Checks waiting"
+          count={bands.checks.rows ? checks.length : undefined}
+          flush
+        >
+          <div className="px-4 py-3 sm:px-6">
+            {checksApi ? (
+              <ChecksWaitingView
+                api={checksApi}
+                canCheck={checker}
+                framed={false}
+                onChecked={onChanged}
+                onAskReceipt={onAskReceipt}
+                renderTicket={row =>
+                  row.taskId ? (
+                    <TicketButton
+                      type="payment_receipt_check"
+                      types={types}
+                      label="Open the receipt check"
+                      onOpen={() =>
+                        onTicket({
+                          type: "payment_receipt_check",
+                          taskId: String(row.taskId),
+                          name: row.clientName,
+                          details: `${row.clientName}: ${row.amount.toLocaleString("en-US")} ${row.currency} on ${dayWords(row.day) || "a day not recorded"}${row.reference ? `, reference ${row.reference}` : ""}. Check it against the bank statement.`,
+                        })
+                      }
+                    />
+                  ) : null
+                }
+              />
+            ) : null}
+          </div>
+        </SectionCard>
+      ) : null}
+
+      {off.length ? (
+        <p className="text-xs text-muted-foreground">
+          {off.join(", ")}: {NOT_YET}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** Whole days since a "YYYY-MM-DD" day, in Kuwait. */
+function daysSince(day: string): number {
+  return Math.round(
+    (Date.parse(`${kuwaitToday()}T00:00:00Z`) -
+      Date.parse(`${day.slice(0, 10)}T00:00:00Z`)) /
+      86_400_000,
   );
 }

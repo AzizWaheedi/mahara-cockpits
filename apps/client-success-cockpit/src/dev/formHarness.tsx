@@ -16,17 +16,92 @@
  * state=notices draws Settings' Notices and routing card (as=viewer: read
  * only; read=failed: the failed read).
  *
+ * The waves 1-2 staff forms (docs/forms/WAVE12-CONTRACT.md section 5, for the
+ * 375 and 1280 px, light and dark checks): state=staff&form=extension |
+ * pause | resume | churn_confirm | mrr draws FormSheet over formSheetFixtures
+ * (prefill=loading | failed; trail= a TRAIL_ROWS key for what the trail reads
+ * after Save: held, the default, queued, delivered, failed, skipped, voided);
+ * inline=1 draws it as the billing sheet's inline FormBody (no ticket handler).
+ * state=bands draws the client page's three doors and Today's four bands, and
+ * state=checks the shared Checks waiting (as=viewer: a success manager's read),
+ * both over a stand-in client answering from BAND_RPCS. The client page makes
+ * its Supabase client when it loads, so state=bands needs the project's public
+ * address and any anon text (nothing is called; the bands read the stand-in):
+ * `VITE_SUPABASE_URL=https://bldgtotkfmhoxmlzowdx.supabase.co
+ * VITE_SUPABASE_ANON_KEY=harness bunx vite`.
+ *
+ * Waves 3-4 (docs/forms/WAVE34-CONTRACT.md 5.0 to 5.4, the 375 and 1280 px,
+ * light and dark checks), over clientFormsFixtures and a stand-in FormsIO:
+ * state=forms draws Send a form (send=0 to close it; view= recent | none |
+ * closed | notReported | quiet | membersOnly | leaving | empty; preset=
+ * exit_survey) beside Forms out and Today's form bands; state=voice draws the
+ * Client voice card (empty=1 | failed=1 | low=1); state=consent draws Pause
+ * this client with the consent live (consent= none | sent | signed |
+ * dates_wrong | expired; live=0 draws the old two ticks).
+ *
+ * Waves 5-6 (docs/forms/WAVE56-CONTRACT.md 5.0, section 8: the 375 and 1280
+ * px, light and dark checks), over winsFixtures: state=wins draws Today's
+ * bands, the client page's Wins with every ribbon, the Money tab's wins and
+ * Offer Studio's stage strip (sheet=log | tie opens Log a win or the tie
+ * dialog; proposal=sent | accepted; door=off | missing shows a closed door);
+ * state=reactivate draws Client is back in both states and its sheet
+ * (sheet=0 to close it); state=kickoff draws the kickoff sheet (again=1 asks
+ * why it is sent again; door=off keeps today's Typeform line).
+ * state=editor draws the forms editor (5.13) over formsEditorFixtures and its
+ * in-memory stand-in: the list, or form=<key> for one form (nps and csat have
+ * a history; kickoff and extension are the read-only rows); draft=1 seeds a
+ * draft the server refused (its sentence and where), refuse=1 makes the next
+ * Publish refused in the database's words, door=0 the editor not open yet.
+ *
  * Typeform is a stand-in drawn here: no Typeform page loads and nothing is
  * submitted anywhere. Its "submit" only calls the panel's own handler, and
  * the harness's record and checks stay in memory.
  */
 
-import { StrictMode, useEffect, useMemo, useState } from "react";
+import {
+  lazy,
+  StrictMode,
+  Suspense,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { createRoot } from "react-dom/client";
 import { Toaster } from "sonner";
+import {
+  type ChecksApi,
+  ChecksWaitingView,
+} from "@/components/billing/ChecksWaiting";
+import {
+  FormBands,
+  FormsOut,
+  KickoffDoor,
+  PauseConsentRow,
+  SendFormSheet,
+  useInviteView,
+} from "@/components/ClientForms";
+import { ClientVoiceCard } from "@/components/ClientVoice";
+import {
+  ClientWins,
+  LogWinButton,
+  LogWinSheet,
+  MarkOffered,
+  MoneyWins,
+  ReactivateAction,
+  ReactivateSheet,
+  TieDialog,
+  WinBands,
+  type WinsApi,
+} from "@/components/ClientWins";
 import { NoticesRouting } from "@/components/NoticesRouting";
 import { OnboardingKit } from "@/components/OnboardingKit";
 import { Button } from "@/components/ui/button";
+import {
+  copy as copyEditor,
+  editorOneFixture,
+  fakeFormsEditorIO,
+} from "@/dev/formsEditorFixtures";
+import * as WINS_FX from "@/dev/winsFixtures";
 import type { BookProps, FormIO } from "@/forms/FormPanel";
 import {
   blockedFor,
@@ -35,7 +110,32 @@ import {
 } from "@/forms/FormWindow";
 import type { FormContext } from "@/forms/formConfig";
 import { KICKOFF } from "@/forms/kickoff";
+import { FormBody, FormSheet } from "@/forms/staff/FormSheet";
+import { FORM_DEFS, pauseConsentDef } from "@/forms/staff/formDefs";
+import {
+  CONSENT_WAIT,
+  type FormKey,
+  kuwaitIso,
+} from "@/forms/staff/formSheetCore";
+import { checkManualPayment, manualPaymentsToCheck } from "@/lib/paymentChecks";
+import {
+  reactivateState as reactivateStateOf,
+  todayBands as winTodayBands,
+} from "@/lib/winsCore";
+import { FormsEditorView } from "@/pages/FormsEditorPage";
 import { standIn } from "@/practice/fixtures/typeformStandIn";
+import {
+  CONSENTS,
+  NAME as FORMS_NAME,
+  NOW as FORMS_NOW,
+  TASK as FORMS_TASK,
+  fakeFormsIO,
+  LOW_SCORES,
+  TODAY_ROWS,
+  VIEWS,
+  VOICE_FULL,
+  VOICE_NONE,
+} from "./clientFormsFixtures";
 import {
   FULL_ANSWERS,
   fixtureCall,
@@ -49,6 +149,16 @@ import {
   onboardingEntry,
   TASK,
 } from "./formFixtures";
+import {
+  BAND_RPCS,
+  CALLS,
+  CHURN_PREFILL,
+  CLIENT,
+  CLIENT_ARABIC,
+  EXTENSION_READ,
+  MRR_PREFILL,
+  TRAIL_ROWS,
+} from "./formSheetFixtures";
 import {
   fakeNoticesIO,
   kickoffNotice,
@@ -459,9 +569,613 @@ function NoticesHarness() {
   );
 }
 
+/** A Supabase stand-in for the bands and Checks waiting: answers from BAND_RPCS, a little late. */
+const standInClient: any = {
+  rpc: async (name: string) => {
+    await new Promise(r => setTimeout(r, 250));
+    return name in BAND_RPCS
+      ? { data: BAND_RPCS[name], error: null }
+      : { data: null, error: { message: `Not in the harness: ${name}` } };
+  },
+};
+
+const STAFF_PREFILL: Record<FormKey, typeof EXTENSION_READ.prefill> = {
+  extension: EXTENSION_READ.prefill,
+  pause: [
+    { key: "pauseKind", value: "client_request", source: "the pause request" },
+  ],
+  resume: [
+    {
+      key: "nextDate",
+      value: "2026-11-20",
+      source: "the old date moved by the pause's length",
+    },
+  ],
+  churn_confirm: CHURN_PREFILL,
+  mrr: MRR_PREFILL,
+};
+
+/** One staff form, in the sheet or inline, before and after Save. */
+function StaffHarness() {
+  const form = (params.get("form") ?? "extension") as FormKey;
+  const def = FORM_DEFS[form] ?? FORM_DEFS.extension;
+  const trail = TRAIL_ROWS[params.get("trail") ?? "held"] ?? TRAIL_ROWS.held;
+  const read = params.get("prefill");
+  const [open, setOpen] = useState(true);
+  const props = {
+    def,
+    client: params.get("arabic") === "1" ? CLIENT_ARABIC : CLIENT,
+    prefill: read ? [] : STAFF_PREFILL[form],
+    calls: CALLS,
+    hints: form === "extension" ? EXTENSION_READ.hints : [],
+    status: "Active · due 2 Nov",
+    loading: read === "loading",
+    prefillError:
+      read === "failed"
+        ? "The card could not be read (Failed to fetch)."
+        : null,
+    submit: async () => {
+      await new Promise(r => setTimeout(r, 600));
+      return { message: "Saved in the harness", ref: { eventId: 1 } };
+    },
+    trail: async () => trail,
+  };
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <div className="mx-auto w-full max-w-2xl space-y-4">
+        {params.get("inline") === "1" ? (
+          <div className="rounded-xl border bg-card p-4">
+            <FormBody {...props} />
+          </div>
+        ) : (
+          <>
+            <Button variant="outline" onClick={() => setOpen(true)}>
+              Open {def.title}
+            </Button>
+            <FormSheet
+              {...props}
+              open={open}
+              onOpenChange={setOpen}
+              onTicket={() => {}}
+            />
+          </>
+        )}
+      </div>
+      <Toaster />
+    </div>
+  );
+}
+
+/** The client page's doors and Today's bands, as a finance or CEO seat sees them (loaded only here). */
+const BandsHarness = lazy(async () => {
+  const { ClientDoors, TodayBands, useDoors, useTodayBands } = await import(
+    "@/pages/CsmPage"
+  );
+  return {
+    default: () => (
+      <Bands {...{ ClientDoors, TodayBands, useDoors, useTodayBands }} />
+    ),
+  };
+});
+
+function Bands({
+  ClientDoors,
+  TodayBands,
+  useDoors,
+  useTodayBands,
+}: Pick<
+  typeof import("@/pages/CsmPage"),
+  "ClientDoors" | "TodayBands" | "useDoors" | "useTodayBands"
+>) {
+  const doors = useDoors(standInClient);
+  const bands = useTodayBands(standInClient, doors, true, true, 0);
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <div className="mx-auto w-full max-w-6xl space-y-6">
+        <ClientDoors
+          c={{
+            taskId: CLIENT.taskId,
+            name: CLIENT.name,
+            stage: "Active",
+            paymentDate: "2026-11-04",
+          }}
+          doors={doors}
+          life={null}
+          onOpen={() => {}}
+        />
+        <TodayBands
+          client={standInClient}
+          doors={doors}
+          bands={bands}
+          types={new Set(["client_pause", "client_offboarding"])}
+          clients={[{ taskId: CLIENT.taskId, name: CLIENT.name }]}
+          checker
+          onDoor={() => {}}
+          onTicket={() => {}}
+          onChanged={() => {}}
+        />
+      </div>
+      <Toaster />
+    </div>
+  );
+}
+
+/** The shared Checks waiting on its own, framed as on the billing page. */
+function ChecksHarness() {
+  const api = useMemo<ChecksApi>(
+    () => ({
+      door: async () => true,
+      list: () => manualPaymentsToCheck(standInClient),
+      check: p => checkManualPayment(standInClient, p),
+      ticketType: async () => false,
+    }),
+    [],
+  );
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <div className="mx-auto w-full max-w-3xl">
+        <ChecksWaitingView api={api} canCheck={params.get("as") !== "viewer"} />
+      </div>
+      <Toaster />
+    </div>
+  );
+}
+
+/** Send a form, Forms out and Today's form bands over a stand-in FormsIO (5.1 to 5.3). */
+function FormsHarness() {
+  const view = VIEWS[params.get("view") ?? "recent"] ?? VIEWS.recent;
+  const io = useMemo(() => fakeFormsIO({ view, delay: 250 }), [view]);
+  const read = useInviteView(io, FORMS_TASK, true);
+  const [open, setOpen] = useState(params.get("send") !== "0");
+  const preset = params.get("preset");
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <div className="mx-auto w-full max-w-3xl space-y-6">
+        <Button variant="outline" onClick={() => setOpen(true)}>
+          Send a form
+        </Button>
+        <FormsOut io={io} read={read} onSend={() => setOpen(true)} />
+        <FormBands
+          io={io}
+          bands={{
+            invites: { rows: TODAY_ROWS, error: null },
+            low: { rows: LOW_SCORES, error: null },
+            reload: () => {},
+          }}
+          ticketTypes={new Set(["client_low_score"])}
+          onSend={() => setOpen(true)}
+          onOpenClient={() => {}}
+          onTicket={() => {}}
+          onChanged={() => {}}
+        />
+        <SendFormSheet
+          io={io}
+          open={open}
+          taskId={FORMS_TASK}
+          clientName={FORMS_NAME}
+          now={FORMS_NOW}
+          preset={preset ? { formKey: preset, origin: "churn" } : undefined}
+          onClose={() => setOpen(false)}
+        />
+      </div>
+      <Toaster />
+    </div>
+  );
+}
+
+/** The Client voice card (5.4). */
+function VoiceHarness() {
+  const low = params.get("low") === "1";
+  const voice =
+    params.get("empty") === "1"
+      ? VOICE_NONE
+      : low
+        ? {
+            ...VOICE_FULL,
+            nps: {
+              ...VOICE_FULL.nps,
+              latest: VOICE_FULL.nps.latest
+                ? { ...VOICE_FULL.nps.latest, score: 4 }
+                : null,
+            },
+          }
+        : VOICE_FULL;
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <div className="mx-auto w-full max-w-2xl">
+        <ClientVoiceCard
+          state={
+            params.get("failed") === "1"
+              ? { status: "failed", error: "Failed to fetch" }
+              : { status: "ready", voice }
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Pause this client with the pause consent live (4.3.6, 5.2). */
+function ConsentHarness() {
+  const key = (params.get("consent") ?? "sent") as keyof typeof CONSENTS;
+  const consent = CONSENTS[key] ?? CONSENTS.sent;
+  const live = params.get("live") !== "0";
+  const io = useMemo(() => fakeFormsIO({ delay: 300 }), []);
+  const [open, setOpen] = useState(true);
+  const today = kuwaitIso();
+  const def = live ? pauseConsentDef(consent) : FORM_DEFS.pause;
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <div className="mx-auto w-full max-w-2xl space-y-4">
+        <Button variant="outline" onClick={() => setOpen(true)}>
+          Open Pause this client
+        </Button>
+        <FormSheet
+          open={open}
+          onOpenChange={setOpen}
+          def={def}
+          client={CLIENT}
+          prefill={[
+            {
+              key: "pauseKind",
+              value: "client_request",
+              source: "the pause request",
+            },
+            {
+              key: "restart",
+              value: consent.restart ?? "2026-11-20",
+              source: "the consent",
+            },
+          ]}
+          calls={CALLS}
+          status="Active · due 2 Nov"
+          submit={async () => {
+            await new Promise(r => setTimeout(r, 600));
+            return {
+              message: "from today, restarts 20 Nov",
+              ref: { eventId: 1 },
+            };
+          }}
+          trail={async () => TRAIL_ROWS.held}
+          onTicket={() => {}}
+          after={
+            live
+              ? a =>
+                  a.pauseKind === "client_request" ? (
+                    <PauseConsentRow
+                      io={io}
+                      taskId={CLIENT.taskId}
+                      consent={consent}
+                      answers={a}
+                      today={today}
+                      onSent={() => {}}
+                    />
+                  ) : null
+              : undefined
+          }
+          blocked={
+            live
+              ? a =>
+                  a.pauseKind === "client_request" && consent.state !== "signed"
+                    ? CONSENT_WAIT
+                    : null
+              : undefined
+          }
+        />
+      </div>
+      <Toaster />
+    </div>
+  );
+}
+
+/** The forms editor (5.13) over its fixtures: nothing leaves the page. */
+function EditorHarness() {
+  const [formKey, setFormKey] = useState<string | null>(params.get("form"));
+  const io = useMemo(() => {
+    const fake = fakeFormsEditorIO();
+    const key = params.get("form");
+    if (key && params.get("draft") === "1") {
+      const one = editorOneFixture(key);
+      if (one.published) {
+        const schema = copyEditor(one.published.schema);
+        schema.intro = {
+          en: `${schema.intro?.en ?? ""} We read every answer the same day.`.trim(),
+          ar: `${schema.intro?.ar ?? ""} نقرا كل رد بنفس اليوم.`.trim(),
+        };
+        fake.state.ones.set(key, {
+          ...one,
+          draft: {
+            schema,
+            baseVersion: one.published.version,
+            savedAt: "2026-11-01T09:12:00Z",
+            savedBy: "an admin",
+            stale: false,
+            problem:
+              "Client messages never quote leads or cost per lead. Say how the campaign is doing, or count appointments for clients we book for.",
+            where: ".intro.en",
+          },
+        });
+      }
+    }
+    if (params.get("refuse") === "1")
+      fake.refuse(
+        "publish",
+        "How likely are you to recommend Mahara? is read by the low-score call on Today, so its type, range and choices stay as they are.",
+        ".fields.recommend",
+      );
+    return fake;
+  }, []);
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <FormsEditorView
+        io={io}
+        door={params.get("door") === "0" ? false : true}
+        formKey={formKey}
+        onOpen={setFormKey}
+        onBack={() => setFormKey(null)}
+      />
+      <Toaster />
+    </div>
+  );
+}
+
+// --- Waves 5-6 (docs/forms/WAVE56-CONTRACT.md 5.0, section 8): wins, reactivate, kickoff ---
+
+const W56_OPEN = { open: true, why: null } as const;
+/** ?door=off or ?door=missing shows a closed door's line instead. */
+const w56Door =
+  params.get("door") === "off"
+    ? ({ open: false, why: "off" } as const)
+    : params.get("door") === "missing"
+      ? ({ open: false, why: "missing" } as const)
+      : W56_OPEN;
+
+function winsStandIn(): WinsApi {
+  const later = <T,>(v: T): Promise<T> =>
+    new Promise(r => setTimeout(() => r(v), 250));
+  return {
+    read: async () =>
+      later({
+        wins: WINS_FX.WINS,
+        acceptedProposals: [],
+        doorOpen: true,
+        context: WINS_FX.CONTEXT,
+      }),
+    list: async () =>
+      later({
+        wins: WINS_FX.WINS.map((w, i) => ({
+          ...w,
+          client: i % 2 ? WINS_FX.CLIENT_AR : WINS_FX.CLIENT,
+        })),
+        totals: {
+          upsellsOffered: 3,
+          upsellsAccepted: 2,
+          upsellCashChecked: 1500,
+          reviewsAndTestimonials: null,
+        },
+      }),
+    log: async () =>
+      later({
+        ok: true,
+        winId: "w",
+        stage: "logged",
+        sentence: "Logged.",
+        ref: { winId: "w" },
+      }),
+    stage: async p =>
+      later(p.act === "void" ? "Voided." : "Marked as accepted."),
+    candidates: async () => later(WINS_FX.CANDIDATES),
+    propose: async () => later("Sent to the CEO to confirm."),
+    trail: async () => ({
+      stored: { state: "done" },
+      card: { state: "held" },
+      notice: { state: "queued" },
+    }),
+    offered: async () => ({
+      ok: true,
+      winId: "w",
+      stage: "quote_given",
+      sentence: "Marked as offered.",
+    }),
+    linkInvoice: async () => {},
+  };
+}
+
+/** Wins on the client page and the Money tab, the ribbon, Log a win, the tie dialog and Today's bands. */
+function WinsHarness() {
+  const api = useMemo(winsStandIn, []);
+  const [log, setLog] = useState(params.get("sheet") === "log");
+  const [tie, setTie] = useState(params.get("sheet") === "tie");
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <div className="mx-auto grid w-full max-w-3xl gap-6">
+        <WinBands
+          bands={winTodayBands(WINS_FX.BAND_ROWS, {
+            ceo: true,
+            today: "2026-11-02",
+          })}
+          onAction={() => {}}
+        />
+        <div className="flex gap-2">
+          <LogWinButton door={w56Door} onClick={() => setLog(true)} />
+          <Button size="sm" variant="outline" onClick={() => setTie(true)}>
+            Tie a payment
+          </Button>
+        </div>
+        <ClientWins
+          api={api}
+          door={w56Door}
+          taskId={WINS_FX.TASK}
+          client={WINS_FX.CLIENT}
+          onSetMrr={() => {}}
+        />
+        <MoneyWins api={api} door={w56Door} />
+        <MarkOffered
+          api={api}
+          door={w56Door}
+          proposal={{
+            id: "p1",
+            taskId: WINS_FX.TASK,
+            status: params.get("proposal") ?? "draft",
+            kind: "upsell_website",
+            totalUsd: 1500,
+            listUsd: 1800,
+          }}
+          win={null}
+        />
+      </div>
+      <LogWinSheet
+        open={log}
+        onOpenChange={setLog}
+        api={api}
+        taskId={WINS_FX.TASK}
+        client={WINS_FX.CLIENT_AR}
+        context={WINS_FX.CONTEXT}
+      />
+      {tie ? (
+        <TieDialog
+          api={api}
+          win={WINS_FX.WINS[2]}
+          onClose={() => setTie(false)}
+          onDone={() => setTie(false)}
+        />
+      ) : null}
+      <Toaster />
+    </div>
+  );
+}
+
+/** Client is back: the action in both states, then the sheet. */
+function ReactivateHarness() {
+  const [open, setOpen] = useState(params.get("sheet") !== "0");
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <div className="mx-auto flex w-full max-w-3xl flex-wrap gap-3">
+        <ReactivateAction
+          state={reactivateStateOf({
+            status: "Stopped",
+            departureId: 6,
+            churnConfirmedAt: "2026-10-31T10:00:00Z",
+          })}
+          door={w56Door}
+          onOpen={() => setOpen(true)}
+        />
+        <ReactivateAction
+          state={reactivateStateOf({ status: "Stopped", departureId: null })}
+          door={w56Door}
+          onOpen={() => {}}
+        />
+      </div>
+      <ReactivateSheet
+        open={open}
+        onOpenChange={setOpen}
+        taskId={WINS_FX.TASK}
+        client={WINS_FX.CLIENT_AR}
+        departure={{
+          id: 6,
+          leftOn: "2026-10-18",
+          reason: "Cancelled",
+          churnType: "mid_programme",
+        }}
+        calls={CALLS}
+        submit={async () => ({
+          message: "back from today as Active",
+          ref: { eventId: 1 },
+        })}
+        trail={async () => ({
+          stored: { state: "done" },
+          card: { state: "held" },
+          notice: { state: "queued" },
+        })}
+      />
+      <Toaster />
+    </div>
+  );
+}
+
+/** The kickoff sheet: live (?door=open, the default) or kept on the Typeform (?door=off). */
+function KickoffHarness() {
+  const api = useMemo(
+    () => ({
+      prefill: async () => ({
+        live: true,
+        why: null,
+        client: WINS_FX.CLIENT,
+        answered: params.get("again")
+          ? { at: "2026-10-28T10:00:00Z", byRole: "the CSM" }
+          : null,
+        prefill: [
+          {
+            key: "legal_name",
+            value: "Ardon Interiors WLL",
+            source: "the onboarding form",
+          },
+          {
+            key: "serviceAdvertised",
+            value: "Villa interiors",
+            source: "the onboarding form",
+          },
+          { key: "newMrrUsd", value: 1500, source: "the card" },
+        ],
+        onboardingAt: "2026-10-30T10:00:00Z",
+        card: { mrrUsd: 1500, status: "Onboarding Booked" },
+      }),
+      submit: async () => ({
+        responseId: "k1",
+        trail: [
+          { step: "tasks", state: "done" },
+          { step: "message", state: "waiting" },
+        ],
+      }),
+      trail: async () => ({
+        stored: { state: "done" },
+        card: { state: "held" },
+        notice: { state: "posted", channelName: "csm-general" },
+      }),
+    }),
+    [],
+  );
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <div className="mx-auto w-full max-w-3xl">
+        <KickoffDoor
+          door={w56Door}
+          api={api}
+          taskId={WINS_FX.TASK}
+          clientName={WINS_FX.CLIENT}
+          autoOpen
+        />
+      </div>
+      <Toaster />
+    </div>
+  );
+}
+
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
-    {scenario === "notices" ? (
+    {scenario === "wins" ? (
+      <WinsHarness />
+    ) : scenario === "reactivate" ? (
+      <ReactivateHarness />
+    ) : scenario === "kickoff" ? (
+      <KickoffHarness />
+    ) : scenario === "editor" ? (
+      <EditorHarness />
+    ) : scenario === "forms" ? (
+      <FormsHarness />
+    ) : scenario === "voice" ? (
+      <VoiceHarness />
+    ) : scenario === "consent" ? (
+      <ConsentHarness />
+    ) : scenario === "staff" ? (
+      <StaffHarness />
+    ) : scenario === "bands" ? (
+      <Suspense fallback={null}>
+        <BandsHarness />
+      </Suspense>
+    ) : scenario === "checks" ? (
+      <ChecksHarness />
+    ) : scenario === "notices" ? (
       <NoticesHarness />
     ) : scenario.startsWith("panel") ? (
       <PanelHarness />

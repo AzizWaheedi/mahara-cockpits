@@ -178,6 +178,12 @@ function CeoRail() {
       icon: COCKPIT_ICON.team,
     },
     {
+      key: "requests",
+      label: "Ask a team",
+      href: "/requests",
+      icon: COCKPIT_ICON.requests,
+    },
+    {
       key: "performance",
       label: "Client performance",
       href: "/performance",

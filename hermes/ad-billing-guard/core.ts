@@ -47,6 +47,9 @@ export function accountId(value: unknown): string | null {
 	if (typeof value !== "string") return null;
 	const raw = value.trim();
 	if (/^(?:act_)?\d{5,25}$/.test(raw)) return raw.replace(/^act_/, "");
+	// Client Data cell "1988430024784828, SAR": the number, then a three-letter currency (Smmim studio, 28 Oct 2026).
+	const withCurrency = raw.match(/^(?:act_)?(\d{5,25})\s*,\s*[A-Za-z]{3}$/);
+	if (withCurrency) return withCurrency[1];
 	try {
 		const u = new URL(raw);
 		if (

@@ -34,5 +34,7 @@ describe("build checks", () => {
     );
     expect(r.out.trim()).toBe("");
     expect(r.code).toBe(0);
-  }, 120_000);
+    // Shared build hosts can be CPU-bound. Keep the complete compiler check,
+    // with a finite ceiling, rather than killing a valid check after two minutes.
+  }, 600_000);
 });

@@ -7,18 +7,57 @@
  * So is the team's ClickUp ticketing form: a ticket goes from the client's page
  * ("Add a task", Ask a team), which files the same task with the client on it
  * (the simplification audit, approved 2026-10-06).
+ * And the 1-1 call summary form: since 2026-11-01 the 1-1 notes are written
+ * in the cockpit (Write 1-1 notes on the client's page), and the Typeform is closed.
  */
 
 import { COCKPIT_GUIDES, COCKPIT_SOP } from "./cockpits";
 
-export type LinkRow = { label: string; url: string; note?: string };
+export type LinkRow = {
+  label: string;
+  url: string;
+  note?: string;
+  /**
+   * A client form that moves into the cockpit (WAVE34-CONTRACT.md 4.11): its
+   * registry key, and the Typeform it replaces. Until the key is live the
+   * row says so and keeps the old link below it; once live, the old link
+   * goes.
+   */
+  form?: { key: string; oldUrl: string; waiting?: string };
+};
 export type LinkGroup = { title: string; blurb: string; rows: LinkRow[] };
+
+/** The client page, where Send a form and the staff doors live. */
+const CLIENT_PAGE = "https://cockpit.maharamedia.com/client-success/clients";
+/** Said on a form's row until its switch-on. */
+export const NOT_LIVE_YET =
+  "Opens with the portal forms (after the switch-on).";
+/** The words above the old link while the Typeform still runs. */
+export const OLD_FORM = "Old form, still live:";
+/**
+ * Log a win (WAVE56-CONTRACT.md 1.1, 5.1): its rows follow the wins door,
+ * passed in the live list as this key, and keep the Four Rs Typeform as the
+ * old form until it is open.
+ */
+export const WINS_DOOR = "door:wins";
+export const WINS_WAITING = "Log a win opens after its switch-on.";
+
+/** The live list with the wins door in it, when it is open. */
+export function liveWithWins(
+  live: readonly string[] | null,
+  winsOpen: boolean,
+): string[] | null {
+  return winsOpen ? [...(live ?? []), WINS_DOOR] : live ? [...live] : null;
+}
+
+const SEND_NOTE =
+  "Open the client, then Send a form. It goes to their portal, or by WhatsApp link.";
 
 export const LINK_GROUPS: LinkGroup[] = [
   {
     title: "How this cockpit works",
     blurb:
-      "Watch the demo once, then keep the simple SOP open beside you while you learn the day.",
+      "Watch the demo once, then keep the simple SOP open beside you while you learn the day. Before your first onboarding call, launch call or pitch, watch its short video.",
     rows: [
       {
         label: "Watch the demo",
@@ -34,6 +73,21 @@ export const LINK_GROUPS: LinkGroup[] = [
         label: "The in-depth SOP",
         url: COCKPIT_GUIDES.csm.deep,
         note: "Every screen, and how to use it",
+      },
+      {
+        label: "Onboarding call: run the deck and the kickoff form (video)",
+        url: COCKPIT_GUIDES.csm.howTo.onboarding,
+        note: "Three minutes, silent: prep, present with your notes, then submit the kickoff with the client so the Brand Blueprint is booked",
+      },
+      {
+        label: "Launch call: run the launch deck (video)",
+        url: COCKPIT_GUIDES.csm.howTo.launch,
+        note: "Three minutes, silent: from prep to the client's green light",
+      },
+      {
+        label: "Offers: pitch an offer and send a proposal (video)",
+        url: COCKPIT_GUIDES.csm.howTo.offers,
+        note: "Under three minutes, silent: Money → Offers, step by step. Watch it before your first pitch",
       },
       {
         label: "Client success cockpit, how to use it",
@@ -65,17 +119,6 @@ export const LINK_GROUPS: LinkGroup[] = [
         label: "Client check-in call",
         url: "https://api.leadconnectorhq.com/widget/booking/SHjlq0UjeR11maltYNyh",
         note: "The recurring one, weekly for their first month, then every 2 weeks",
-      },
-    ],
-  },
-  {
-    title: "Forms to fill in",
-    blurb: "If it is not in a form, it did not happen.",
-    rows: [
-      {
-        label: "1-1 call summary form",
-        url: "https://maharamedia.typeform.com/to/fRokTITH",
-        note: "After every client call, same day",
       },
     ],
   },
@@ -134,13 +177,22 @@ export const LINK_GROUPS: LinkGroup[] = [
     blurb: "The client fills these in, not you.",
     rows: [
       {
-        label: "Onboarding experience survey",
-        url: "https://maharamedia.typeform.com/to/KbcbPA73",
-        note: "Send once onboarding is done",
+        label: "Onboarding survey (in the cockpit)",
+        url: CLIENT_PAGE,
+        note: SEND_NOTE,
+        form: {
+          key: "csat",
+          oldUrl: "https://maharamedia.typeform.com/to/KbcbPA73",
+        },
       },
       {
-        label: "NPS survey",
-        url: "https://maharamedia.typeform.com/to/fuPgs85S",
+        label: "NPS survey (in the cockpit)",
+        url: CLIENT_PAGE,
+        note: SEND_NOTE,
+        form: {
+          key: "nps",
+          oldUrl: "https://maharamedia.typeform.com/to/fuPgs85S",
+        },
       },
     ],
   },
@@ -172,20 +224,32 @@ export const LINK_GROUPS: LinkGroup[] = [
   {
     title: "Money, the four Rs",
     blurb:
-      "Refer, resell, renew, review. Fill the form the same day it happens, no form, no commission.",
+      "Refer, resell, renew, review. Log it with Log a win the same day it happens, with its proof: no proof, no commission.",
     rows: [
       {
-        label: "Google review link (send to happy clients)",
+        label: "Google review link (the same ask for every client)",
         url: "https://g.page/r/CeRMcUwFPpe7EAI/review",
-        note: "Then log it in the client review form",
+        note: "Then log it with Log a win on the client's page",
       },
       {
-        label: "Client review form (review or video testimonial)",
-        url: "https://maharamedia.typeform.com/to/ETEynRgb",
+        label: "Log a win: a Google review or a video testimonial",
+        url: CLIENT_PAGE,
+        note: "Open the client, then Log a win. Add the review, screenshot or video link.",
+        form: {
+          key: WINS_DOOR,
+          oldUrl: "https://maharamedia.typeform.com/to/ETEynRgb",
+          waiting: WINS_WAITING,
+        },
       },
       {
-        label: "Referral form",
-        url: "https://maharamedia.typeform.com/to/bAmbMKM2",
+        label: "Log a win: a referral",
+        url: CLIENT_PAGE,
+        note: "Open the client, then Log a win, and pick the referred client's signed deal.",
+        form: {
+          key: WINS_DOOR,
+          oldUrl: "https://maharamedia.typeform.com/to/bAmbMKM2",
+          waiting: WINS_WAITING,
+        },
       },
       {
         label: "Referral programme, how it works",
@@ -193,43 +257,66 @@ export const LINK_GROUPS: LinkGroup[] = [
         note: "Send or explain this before asking for the referral",
       },
       {
-        label: "Website upsell form",
-        url: "https://maharamedia.typeform.com/to/VP3zmaj2",
+        label: "Log a win: a website upsell",
+        url: CLIENT_PAGE,
+        note: "Open the client, then Log a win, or Mark as offered on the sent proposal.",
+        form: {
+          key: WINS_DOOR,
+          oldUrl: "https://maharamedia.typeform.com/to/VP3zmaj2",
+          waiting: WINS_WAITING,
+        },
       },
       {
-        label: "Social media management upsell form",
-        url: "https://maharamedia.typeform.com/to/IVHO9BMC",
+        label: "Log a win: a social media management upsell",
+        url: CLIENT_PAGE,
+        note: "Open the client, then Log a win, or Mark as offered on the sent proposal.",
+        form: {
+          key: WINS_DOOR,
+          oldUrl: "https://maharamedia.typeform.com/to/IVHO9BMC",
+          waiting: WINS_WAITING,
+        },
       },
       {
-        label: "Backend program upsell form",
-        url: "https://maharamedia.typeform.com/to/cKItPZVI",
+        label: "Log a win: a back-end programme upsell",
+        url: CLIENT_PAGE,
+        note: "Open the client, then Log a win, or Mark as offered on the sent proposal.",
+        form: {
+          key: WINS_DOOR,
+          oldUrl: "https://maharamedia.typeform.com/to/cKItPZVI",
+          waiting: WINS_WAITING,
+        },
       },
     ],
   },
   {
-    title: "Changing a client's plan, pause, extend, reactivate, cancel",
+    title: "Changing a client's plan, pause, extend, cancel",
     blurb:
       "One form per change. Never agree to any of these over WhatsApp, get them on a call first.",
     rows: [
       {
-        label: "Pause request form",
-        url: "https://maharamedia.typeform.com/to/CTUjv6l3",
-        note: "Client wants to freeze. A freeze over 14 days counts as churn",
+        label: "Pause consent (in the cockpit)",
+        url: CLIENT_PAGE,
+        note: "Open the client, then Pause this client. The client signs the consent in their portal or by link.",
+        form: {
+          key: "pause_consent",
+          oldUrl: "https://maharamedia.typeform.com/to/CTUjv6l3",
+        },
       },
       {
-        label: "Client extension form",
-        url: "https://maharamedia.typeform.com/to/gqBcyK6g",
-        note: "Only with a real reason, each extension costs you $50",
+        // The extension Typeform closes at the C1 window: Give more time on the
+        // client's page writes the card itself (WAVE12-CONTRACT.md 4.7.4, Q7).
+        label: "Give more time (in the cockpit)",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Give more time. The ClickUp card updates itself.",
       },
       {
-        label: "Card declined, reactivate their ads",
-        url: "https://maharamedia.typeform.com/to/ecJQ5Z5C",
-        note: "Use when a client's card fails and the ads stop. Admin only, not an earner",
-      },
-      {
-        label: "Contract termination survey (cancellation form)",
-        url: "https://maharamedia.typeform.com/to/knIe4eF3",
-        note: "After the exit call only, never instead of it",
+        label: "Exit survey (in the cockpit)",
+        url: CLIENT_PAGE,
+        note: "Open the client, then Client is leaving or Send a form.",
+        form: {
+          key: "exit_survey",
+          oldUrl: "https://maharamedia.typeform.com/to/knIe4eF3",
+        },
       },
       {
         label: "Client exit process",
@@ -263,3 +350,30 @@ export const LINK_GROUPS: LinkGroup[] = [
     ],
   },
 ];
+
+/**
+ * The Links rows as they stand today (4.11): a client form's row reads its
+ * cockpit words once cockpit_form_client_live_list() lists it; until then
+ * (or while the list cannot be read, `live` null) the row says it opens
+ * with the portal forms and keeps the Typeform as the old form, still live.
+ */
+export function linkGroupsFor(
+  live: readonly string[] | null,
+  groups: LinkGroup[] = LINK_GROUPS,
+): LinkGroup[] {
+  return groups.map(g => ({
+    ...g,
+    rows: g.rows.map(r => {
+      if (!r.form || live?.includes(r.form.key)) return r;
+      return {
+        ...r,
+        note: `${r.note ?? ""} ${r.form.waiting ?? NOT_LIVE_YET}`.trim(),
+      };
+    }),
+  }));
+}
+
+/** The old Typeform still to show under a row, or null once its form is live. */
+export function oldFormOf(r: LinkRow, live: readonly string[] | null) {
+  return r.form && !live?.includes(r.form.key) ? r.form.oldUrl : null;
+}

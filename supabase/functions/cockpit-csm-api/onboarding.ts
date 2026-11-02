@@ -43,7 +43,7 @@ export async function refreshOnboarding(client:RpcClient,admin:Admin,raw:unknown
  const initial=await client.rpc('cockpit_csm_onboarding_read',{p_task_ids:input.args.taskIds});if(initial.error)throw Error(initial.error.message);
  if(input.apply!==true)return {dryRun:true,taskId:context.taskId};
  const health=async(row:Record<string,unknown>)=>{const {error}=await admin.from('cockpit_csm_provider_health').insert(row);if(error)throw Error('Provider health could not be saved. Stop the refresh.');};
- const clickup=providerTools(env('CLICKUP_API_TOKEN')??'',row=>health({...row,provider:'clickup'}),request);
+ const clickup=providerTools(env('CLICKUP_API_TOKEN')??'',row=>health({...row,provider:'clickup'}),request,{retry429:true});
  const begun=await admin.from('cockpit_client_onboarding_runs').insert({trigger:'one',actor_email:context.email}).select('id').single();
  if(begun.error||!begun.data||typeof begun.data.id!=='number')throw Error('The client refresh could not start.');
  const runId=begun.data.id;

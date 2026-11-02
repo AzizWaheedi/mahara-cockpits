@@ -10,9 +10,10 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { LINK_GROUPS } from "@/lib/csmLinks";
+import { linkGroupsFor, OLD_FORM } from "@/lib/csmLinks";
 import { TEMPLATE_TITLES } from "@/lib/csmTemplates";
 import { displayLabel } from "@/lib/format";
+import { useCheckinEntry } from "@/lib/formsRegistry";
 import { matchScore, onOpenSearch } from "@/lib/search";
 import { useCsmSnapshot } from "@/lib/useCsmSnapshot";
 
@@ -145,6 +146,15 @@ const ACTIONS: { act: string; label: string; ask: string; keywords: string }[] =
       keywords: `message template whatsapp sop draft ${TEMPLATE_TITLES.join(" ")}`,
     },
     {
+      // Opens the 1-1 notes in the same click (docs/forms/STAGE2-CONTRACT.md
+      // 8.6): the cockpit's window, or the Typeform only after a rollback to
+      // `typeform` (STAGE2B-CONTRACT.md 11.3).
+      act: "notes",
+      label: "Write 1-1 notes",
+      ask: "Write notes for which client?",
+      keywords: "1-1 notes call summary defcon fathom recap",
+    },
+    {
       act: "log",
       label: "Log a call or a message",
       ask: "Log it for which client?",
@@ -197,16 +207,34 @@ const CLIENT_TABS: { tab: string; label: string; keywords: string }[] = [
   },
 ];
 
-const LINKS: Hit[] = LINK_GROUPS.flatMap(g =>
-  g.rows.map(r => ({
-    value: `link:${r.url}|${r.label}`,
-    label: r.label,
-    sub: r.note ?? g.title,
-    kind: "Link" as const,
-    href: r.url,
-    external: true,
-    keywords: [r.label, r.note ?? "", g.title],
-  })),
+// The palette does not read which client forms are live, so a form moving
+// into the cockpit is found both ways until its old Typeform is retired
+// (WAVE34-CONTRACT.md 4.11): the cockpit row, and the old form, still live.
+const LINKS: Hit[] = linkGroupsFor(null).flatMap(g =>
+  g.rows.flatMap(r => [
+    {
+      value: `link:${r.url}|${r.label}`,
+      label: r.label,
+      sub: r.note ?? g.title,
+      kind: "Link" as const,
+      href: r.url,
+      external: true,
+      keywords: [r.label, r.note ?? "", g.title],
+    },
+    ...(r.form
+      ? [
+          {
+            value: `link:${r.form.oldUrl}|${r.label}:old`,
+            label: `${r.label.replace(/ \(in the cockpit\)$/, "")}: ${OLD_FORM.replace(/:$/, "").toLowerCase()}`,
+            sub: "Until the portal forms switch on",
+            kind: "Link" as const,
+            href: r.form.oldUrl,
+            external: true,
+            keywords: [r.label, "typeform", g.title],
+          },
+        ]
+      : []),
+  ]),
 );
 
 function readRecent(actor: string): string[] {
@@ -340,6 +368,7 @@ function CommandPaletteContent({ actor }: { actor: string }) {
   const [reading, setReading] = useState(false);
   const navigate = useNavigate();
   const auth = useCockpitAuth();
+  const entry = useCheckinEntry();
   const { snap, error, loading } = useCsmSnapshot(
     reading ? auth.client : null,
     auth.clients,
@@ -497,6 +526,37 @@ function CommandPaletteContent({ actor }: { actor: string }) {
             </CommandItem>
             {clients.map(c => {
               const hit = clientHit(c);
+              if (pickFor.act === "notes")
+                return (
+                  <CommandItem
+                    key={`notes:${c.taskId}`}
+                    value={`pick:${c.taskId}`}
+                    keywords={hit.keywords}
+                    onSelect={() => {
+                      show(false);
+                      entry.open(
+                        String(c.taskId),
+                        c.lastCallAt ?? c.lastCall ?? null,
+                      );
+                    }}
+                    className="items-start gap-3"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span
+                        className="block truncate text-left font-medium"
+                        dir="auto"
+                      >
+                        {hit.label}
+                      </span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {pickFor.label}
+                      </span>
+                    </span>
+                    <span className="mt-0.5 shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+                      {hit.kind}
+                    </span>
+                  </CommandItem>
+                );
               return row({
                 ...hit,
                 value: `pick:${c.taskId}`,

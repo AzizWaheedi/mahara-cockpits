@@ -58,14 +58,9 @@ import {
   tabWindow,
 } from "@/components/ceo/tabWindow";
 import { useTimeframe } from "@/components/ceo/timeframe";
-import { Button } from "@/components/ui/button";
-import { api, useAction } from "@/lib/cockpitApi";
 import { CPL_GATE } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
-import type {
-  ApplyResult,
-  ExtensionsWithLastMonth,
-} from "@/types/ceo/extensions";
+import type { ExtensionsWithLastMonth } from "@/types/ceo/extensions";
 import type {
   ChurnClient,
   ClientRow,
@@ -74,7 +69,10 @@ import type {
   PortalPayload,
   RenewalEvidence,
   TermClient,
+  VoiceAnswer,
+  VoicePayload,
 } from "@/types/ceo/payloads";
+import { FormsConnections } from "./FormsConnections";
 import type { CeoTabProps } from "./types";
 import {
   clientNumbers,
@@ -281,7 +279,8 @@ type CardKey =
   | "terms"
   | "churn"
   | "roster"
-  | "portal";
+  | "portal"
+  | "voice";
 
 /**
  * Where each note from the clients payload belongs. A note can qualify more
@@ -297,9 +296,11 @@ const NOTE_ROUTES: readonly (readonly [RegExp, CardKey[]])[] = [
   [/churn and renewals/i, ["terms"]],
   [/risk points/i, ["risk"]],
   [
-    /extension form|current extension|first launch|average retainer|billing fields/i,
+    /extension form|extension grant|extensions are|current extension|first launch|average retainer|billing fields/i,
     ["extensions"],
   ],
+  // Before the portal route: the voice notes name the portal as where clients answer.
+  [/client voice|\bNPS\b/i, ["voice"]],
   [/portal/i, ["portal", "roster"]],
 ];
 
@@ -366,6 +367,7 @@ const OWN_NOTES: Record<CardKey, Note[]> = {
     },
   ],
   roster: [],
+  voice: [],
   portal: [
     {
       level: "info",
@@ -441,6 +443,10 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
     </SectionCard>
   );
 
+  // The keys of the 1-1 notes (docs/forms/STAGE2-CONTRACT.md 8.7): its own
+  // reads, so it shows whether or not the roster has numbers yet.
+  const connections = <FormsConnections order={1} />;
+
   // One empty state for the whole roster, not six stacked ones.
   if (!payload)
     return (
@@ -448,6 +454,7 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
         <SectionCard title="Clients" section={clients}>
           {() => null}
         </SectionCard>
+        {connections}
         {portalCard}
         <NotMeasured order={8} />
       </div>
@@ -472,6 +479,8 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
         >
           {p => <Book payload={p} high={high} medium={medium} />}
         </SectionCard>
+
+        {connections}
 
         <SectionCard
           kicker="Right now"
@@ -518,12 +527,23 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
         <SectionCard
           kicker={w ? w.label : "Month to date"}
           title="Extensions and launches"
-          description="From the Client Extension Form and the card's dates, first launch only"
+          description="Extensions from the billing sheet and the client page, launches from the card's dates, first launch only"
           section={clients}
           notes={cardNotes(routed, "extensions")}
           order={5}
         >
           {p => <ExtensionsLaunches payload={p} />}
+        </SectionCard>
+
+        <SectionCard
+          kicker={w ? w.label : "Month to date"}
+          title="Client voice"
+          description="NPS and the onboarding survey, from the clients' own answers in their portal or by WhatsApp link"
+          section={clients}
+          notes={cardNotes(routed, "voice")}
+          order={5}
+        >
+          {p => <ClientVoice payload={p} />}
         </SectionCard>
 
         <SectionCard
@@ -856,13 +876,12 @@ const EXT_LIST_START = 8;
 const LAUNCH_LIST_MAX = 10;
 
 /**
- * Weeks of extension granted on the Client Extension Form, who is covered
- * today, time from the card's creation to its Launch Date, and the average
- * retainer, with the one write this tab makes: the current extension onto
- * the ClickUp card. The hourly job (mahara-ceo-extensions-auto, :47) keeps
- * the field current from the extension form when CEO_EXTENSIONS_APPLY is on
- * (A120/A136); the button writes it now. The line beside the button is the
- * worker's own sentence about that job, so it says when writes are off.
+ * Weeks of extension granted, who is covered today, time from the card's
+ * creation to its Launch Date, and the average retainer. A grant is "Give
+ * more time" on the client page or Extend on the billing sheet, read from
+ * cockpit_extensions_v (WAVE12-CONTRACT 4.11.3). This tab writes nothing: the
+ * billing queue is the one writer of the card's extension field, so the old
+ * "Write current extensions to ClickUp" button is gone.
  */
 function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
   const ext = payload.extensions ?? null;
@@ -895,21 +914,19 @@ function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
           variant="plain"
           label="Weeks granted"
           value={isNum(inWin.totalWeeks) ? count(inWin.totalWeeks) : null}
-          naHint={
-            inWin.why ?? "The Client Extension Form was not read this run"
-          }
+          naHint={inWin.why ?? "The extension grants were not read this run"}
           sub={
             isNum(inWin.grants)
               ? `${plural(inWin.grants, "grant")}, ${windowWords}${lastMonth && win?.w?.range === "mtd" ? ` · last month ${plural(lastMonth.totalWeeks, "week")}` : ""}`
               : windowWords
           }
-          hint="Weeks of billing extension granted on the Client Extension Form in the timeframe above, dated by the day the form was submitted."
+          hint="Weeks of billing extension given with Give more time or the billing sheet's Extend in the timeframe above, dated by the day each was given."
         />
         <StatTile
           variant="plain"
           label="Clients with a live extension"
           value={ext ? count(live.length) : null}
-          naHint="The Client Extension Form was not read this run"
+          naHint="The extension grants were not read this run"
           sub={
             ext
               ? nextToEnd
@@ -917,7 +934,7 @@ function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
                 : "No cover running today"
               : undefined
           }
-          hint="Clients whose latest extension ends today or later. The clock starts at submission."
+          hint="Clients whose latest extension ends today or later. The clock starts the day it was given."
         />
         <StatTile
           variant="plain"
@@ -963,7 +980,7 @@ function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
           sub={
             ext
               ? `${win?.w ? win.w.label : `${date(ext.from)} to ${date(ext.to)}`}, plus any cover still running`
-              : "The form was not read this run"
+              : "The grants were not read this run"
           }
         >
           {!ext ? (
@@ -1016,7 +1033,11 @@ function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
         </ListBlock>
       </div>
 
-      {ext ? <WriteExtensions field={ext.clickupField} /> : null}
+      {ext ? (
+        <p className="mt-6 border-t border-[color:var(--ceo-grid)] pt-4 text-xs leading-relaxed text-muted-foreground">
+          The billing sheet writes the extension to the card.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -1028,7 +1049,7 @@ function ExtensionList({ rows }: { rows: Extensions["perClient"] }) {
       <EmptyState
         icon={CalendarSync}
         title="No extension in these days and none running"
-        text="Nothing was granted on the Client Extension Form in the timeframe."
+        text="Nothing was given in these days. Give more time on the client page records the next one."
         compact
       />
     );
@@ -1048,7 +1069,7 @@ function ExtensionList({ rows }: { rows: Extensions["perClient"] }) {
               />
               {!c.clickupTaskId ? (
                 <p className="truncate text-xs text-muted-foreground">
-                  As typed on the form, no card matched
+                  No card on the roster holds this grant
                 </p>
               ) : null}
             </div>
@@ -1085,55 +1106,133 @@ function ExtensionList({ rows }: { rows: Extensions["perClient"] }) {
   );
 }
 
-/** One sentence from the write's result: what landed, what did not, and why. */
-function applySentence(r: ApplyResult): string {
-  const parts: string[] = [];
-  if (r.written) parts.push(`${plural(r.written, "card")} set`);
-  if (r.cleared) parts.push(`${plural(r.cleared, "card")} cleared to 0`);
-  if (r.skipped) parts.push(`${plural(r.skipped, "gone card")} left alone`);
-  if (r.errors.length)
-    parts.push(
-      `${plural(r.errors.length, "write")} failed: ${r.errors.slice(0, 3).join("; ")}`,
-    );
-  return `${parts.length ? `${parts.join(", ")}. ` : ""}${r.note}`;
+// --- Client voice (docs/forms/WAVE34-CONTRACT.md 4.6.4) ---
+
+/**
+ * NPS, its answers and the onboarding average over one window, the same rule as
+ * voice.js npsOf and SQL cockpit_client_voice_nps: each client once with the
+ * latest NPS answer, promoters (9-10) minus detractors (0-6) over n; checked
+ * against the clients with an answered invite. No answers is null, never 0.
+ */
+export function voiceIn(
+  voice: Extract<VoicePayload, { read: true }>,
+  from: string,
+  to: string,
+) {
+  const inWin = (day: string) => day >= from && day <= to;
+  const latest = new Map<string, VoiceAnswer>();
+  for (const a of voice.answers)
+    if (a.form === "nps" && a.band && a.score !== null && inWin(a.day)) {
+      const had = latest.get(a.taskId);
+      if (!had || a.at > had.at || (a.at === had.at && a.day >= had.day))
+        latest.set(a.taskId, a);
+    }
+  const bands = { promoter: 0, passive: 0, detractor: 0 };
+  for (const a of latest.values()) bands[a.band as keyof typeof bands] += 1;
+  const n = latest.size;
+  const cards = new Set(
+    voice.answered.filter(x => inWin(x.day)).map(x => x.taskId),
+  ).size;
+  const csat = voice.answers
+    .filter(a => a.form === "csat" && a.score !== null && inWin(a.day))
+    .map(a => a.score as number);
+  const sum = (form: string, key: "issued" | "answered") =>
+    voice.daily
+      .filter(d => d.form === form && inWin(d.day))
+      .reduce((t, d) => t + d[key], 0);
+  return {
+    nps:
+      n > 0 ? Math.round((100 * (bands.promoter - bands.detractor)) / n) : null,
+    n,
+    ...bands,
+    cardsAnswered: cards,
+    csatAverage: csat.length
+      ? Math.round((csat.reduce((t, x) => t + x, 0) / csat.length) * 10) / 10
+      : null,
+    csatN: csat.length,
+    npsSent: sum("nps", "issued"),
+    npsAnswered: sum("nps", "answered"),
+  };
 }
 
-/** The one write on this tab: the current extension onto the ClickUp cards, on request. */
-function WriteExtensions({ field }: { field: Extensions["clickupField"] }) {
-  const apply = useAction(api.ceo.extensions.applyToClickUp);
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
-  const run = async () => {
-    setBusy(true);
-    try {
-      const r: ApplyResult = await apply({});
-      setResult(applySentence(r));
-    } catch (e) {
-      setResult(
-        `Nothing was written: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`,
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
+const signed = (n: number) =>
+  n > 0 ? `+${n}` : n < 0 ? `\u2212${Math.abs(n)}` : "0";
+
+/**
+ * The client's own scores for the window the bar picked: NPS, how many clients
+ * answered it, and the onboarding survey's average, apart. A read that failed
+ * says so; a window nobody answered in says "No scores yet", never 0.
+ */
+function ClientVoice({ payload }: { payload: ClientsPayload }) {
+  const voice = payload.voice;
+  const win = useContext(ClientWindow);
+  if (!voice)
+    return (
+      <EmptyState
+        icon={MessageSquare}
+        title="Not computed yet"
+        text="Client voice fills in after the next refresh of the clients section."
+        compact
+      />
+    );
+  if (!voice.read)
+    return (
+      <EmptyState
+        icon={MessageSquare}
+        title="Client voice could not be read"
+        text="NPS and the onboarding survey are missing this run, not zero. The next refresh reads them again."
+        compact
+      />
+    );
+  const from = win?.w?.from ?? `${voice.today.slice(0, 7)}-01`;
+  const to = win?.w?.to ?? voice.today;
+  const v = voiceIn(voice, from, to);
+  const mismatch = v.n > 0 && v.cardsAnswered !== v.n;
   return (
-    <div className="mt-6 flex flex-wrap items-start gap-3 border-t border-[color:var(--ceo-grid)] pt-4">
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        onClick={() => void run()}
-        disabled={busy}
-        aria-busy={busy}
-      >
-        <CalendarSync aria-hidden />
-        {busy ? "Writing..." : "Write current extensions to ClickUp"}
-      </Button>
-      <p
-        role="status"
-        className="min-w-0 flex-1 basis-60 text-xs leading-relaxed text-muted-foreground"
-      >
-        {result ?? field.note}
+    <div className="@container">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3">
+        <StatTile
+          variant="plain"
+          label="NPS"
+          value={v.nps === null ? null : signed(v.nps)}
+          naHint="No scores yet: no client answered the NPS survey in this timeframe"
+          sub={
+            v.n > 0
+              ? `${plural(v.promoter, "promoter")} \u00b7 ${plural(v.passive, "passive")} \u00b7 ${plural(v.detractor, "detractor")}`
+              : "No scores yet"
+          }
+          status={
+            mismatch ? (
+              <StatusChip
+                tone="warning"
+                label="Counts differ"
+                hint={`Clients with an answered invite ${v.cardsAnswered}, clients with an answer ${v.n}.`}
+              />
+            ) : undefined
+          }
+          hint="Promoters (9 or 10) minus detractors (0 to 6), over the clients who answered, times 100. Each client counts once, with their latest answer in the timeframe."
+        />
+        <StatTile
+          variant="plain"
+          label="Clients who answered NPS"
+          value={count(v.n)}
+          sub={`${plural(v.npsSent, "survey")} sent \u00b7 ${count(v.npsAnswered)} answered`}
+          hint="Checked against the clients with an answered NPS invite in the same timeframe. Sent counts each invite, by the day it went out."
+        />
+        <StatTile
+          variant="plain"
+          label="Onboarding survey"
+          value={v.csatAverage === null ? null : `${decimal(v.csatAverage)}/10`}
+          naHint="No onboarding survey answers in this timeframe"
+          sub={v.csatN > 0 ? plural(v.csatN, "answer") : "No answers yet"}
+          hint="The average of how clients rated getting started, 1 to 10, kept apart from NPS. Clients launched more than 60 days ago are not asked."
+        />
+      </div>
+      <p className="mt-4 border-t border-[color:var(--ceo-grid)] pt-3 text-xs leading-relaxed text-muted-foreground">
+        From the clients' own answers
+        {voice.firstDay ? ` since ${date(voice.firstDay)}` : ""}. The 2 old
+        Typeform answers could not be matched to a client, so they are left out.
+        Portal feedback ratings never count here.
       </p>
     </div>
   );
@@ -3018,10 +3117,6 @@ const NOT_MEASURED: { label: string; why: string }[] = [
   {
     label: "Client requests and response time",
     why: "No ticket or request table exists in any source the cockpit reads.",
-  },
-  {
-    label: "A survey score from the client",
-    why: "Happiness and DEFCON are set by the team on the card and in the call notes, not answered by the client, so there is no NPS or CSAT.",
   },
 ];
 

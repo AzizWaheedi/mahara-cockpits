@@ -13,6 +13,11 @@ import type { Timeline, TimelineCall, TimelineEod } from "../src/lib/csmCalls";
 const NOW = Date.parse("2026-10-12T13:00:00Z");
 const DAY_MS = 86_400_000;
 const OK = new Date(NOW - 5 * 60_000).toISOString();
+// September's short name depends on the runtime's date data: "Sep" on some, "Sept" on newer ones.
+const SEP = new Date(Date.UTC(2026, 8, 15, 12)).toLocaleDateString("en-GB", {
+  timeZone: "Asia/Kuwait",
+  month: "short",
+});
 
 const FATHOM = [
   "## الغرض من الاجتماع",
@@ -159,7 +164,7 @@ describe("the brief for a live client", () => {
         ],
       }),
     });
-    expect(b.call.heading).toBe("Last call with notes, Mon 28 Sep");
+    expect(b.call.heading).toBe(`Last call with notes, Mon 28 ${SEP}`);
     expect(b.call.empty).toBe("The 11 Oct call has no recording or notes.");
     expect(b.call.lines.length).toBe(2);
   });
@@ -1027,7 +1032,7 @@ describe("EODs: only what names the client", () => {
       }),
     });
     expect(b.since.team.map(l => `${l.text} [${l.source}]`)).toEqual([
-      "Cost per booking: $249 (15 Sep) → $89 (7 Oct) [Media buyer cockpit (auto)]",
+      `Cost per booking: $249 (15 ${SEP}) → $89 (7 Oct) [Media buyer cockpit (auto)]`,
       "Created the reactivation campaign for City Wood's old leads. [Muhammed, systems manager]",
     ]);
   });
@@ -1140,7 +1145,7 @@ describe("stopped and paused: why, in their own sentence", () => {
       "Stopped. No stop reason is on record. Last on record: Requested a meeting about City Wood renewal and no response till now.",
     );
     expect(b.raise[1].text).toBe(
-      "Last activity on record, 23 Sep: Client updated: shared the week's result.",
+      `Last activity on record, 23 ${SEP}: Client updated: shared the week's result.`,
     );
     // A request with no reply is not a held meeting.
     expect(b.call.empty).toBe("No call with them is on record since 1 Jun.");
@@ -1254,7 +1259,7 @@ describe("last contact and calls", () => {
       }),
     });
     expect(b.raise.find(l => l.text.startsWith("Still onboarding"))?.text).toBe(
-      "Still onboarding. Last call on record 29 Jul; the systems manager's EOD records a meeting on 13 Sep. Nothing is booked: book their launch call.",
+      `Still onboarding. Last call on record 29 Jul; the systems manager's EOD records a meeting on 13 ${SEP}. Nothing is booked: book their launch call.`,
     );
   });
 
@@ -1434,9 +1439,9 @@ describe("the raise list", () => {
       }),
     });
     expect(
-      b.raise.find(l => l.text.startsWith("From the 15 Sep call"))?.text,
+      b.raise.find(l => l.text.startsWith(`From the 15 ${SEP} call`))?.text,
     ).toBe(
-      "From the 15 Sep call: Billing: a dispute over the invoice period. Since then: Corrected the City Wood invoice to $1,450 and prepared the payment link. (Muhammed, systems manager, 3 Oct) Check it was paid.",
+      `From the 15 ${SEP} call: Billing: a dispute over the invoice period. Since then: Corrected the City Wood invoice to $1,450 and prepared the payment link. (Muhammed, systems manager, 3 Oct) Check it was paid.`,
     );
   });
 
@@ -1880,6 +1885,568 @@ describe("who they are", () => {
       "Send them a QR code to scan.",
     ]);
   });
+
+  /** A brief from one Typeform 1-1 form on a held call, with these Client Notes and Additional Notes. */
+  const noted = (clientNotes: string | null, additionalNotes: string | null) =>
+    buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      timeline: timeline({
+        calls: [
+          call({
+            source: "checkin_form",
+            status: "held",
+            startsAt: "2026-10-05T10:00:00Z",
+            endsAt: "2026-10-05T10:00:00Z",
+          }),
+        ],
+        forms: [
+          {
+            token: "c1",
+            formId: "fRokTITH",
+            kind: "checkin",
+            submittedAt: "2026-10-05T10:00:00Z",
+            answers: [
+              ...(clientNotes === null
+                ? []
+                : [{ title: "Client Notes", value: clientNotes }]),
+              ...(additionalNotes === null
+                ? []
+                : [{ title: "Additional Notes", value: additionalNotes }]),
+            ],
+          },
+        ],
+      }),
+    });
+  const texts = (lines: { text: string }[]) => lines.map(l => l.text);
+
+  test("a Typeform to-do of one word stays whole on its side (Client: Pay is theirs)", () => {
+    const b = noted(
+      "We went through the April leads and the new offer.",
+      "Mahara: Send the April report by Thursday\nClient: Pay",
+    );
+    expect(texts(b.promises.ours)).toEqual([
+      "Send the April report by Thursday",
+    ]);
+    expect(texts(b.promises.theirs)).toEqual(["Pay"]);
+    expect(texts(b.call.lines)).toEqual([
+      "We went through the April leads and the new offer.",
+    ]);
+  });
+
+  test("a two-word unlabelled fragment before a labelled to-do joins the line before, never the to-do", () => {
+    const b = noted(
+      "We went through the April leads and the new offer\nAll good\nMahara: Send the invoice",
+      null,
+    );
+    expect(texts(b.call.lines)).toEqual([
+      "We went through the April leads and the new offer - All good",
+    ]);
+    expect(texts(b.promises.ours)).toEqual(["Send the invoice"]);
+    expect(texts(b.promises.theirs)).toEqual([]);
+  });
+
+  test("a short Client Notes line alone stays the recap; Additional Notes' first line stays a promise", () => {
+    const b = noted(
+      "Very happy.",
+      "Mahara: Send the invoice\nClient: Pay the deposit",
+    );
+    expect(texts(b.call.lines)).toEqual(["Very happy."]);
+    expect(texts(b.promises.ours)).toEqual(["Send the invoice"]);
+    expect(texts(b.promises.theirs)).toEqual(["Pay the deposit"]);
+  });
+
+  test("a labelled to-do keeps a short tail of its own line after an inline dash; a fragment on a later line does not join it", () => {
+    const b = noted(
+      "We went through the April leads and the new offer.",
+      "Client: Pay the deposit\nMahara: Send the April report - by Thursday",
+    );
+    expect(texts(b.promises.ours)).toEqual([
+      "Send the April report - by Thursday",
+    ]);
+    expect(texts(b.promises.theirs)).toEqual(["Pay the deposit"]);
+    expect(texts(b.call.lines)).toEqual([
+      "We went through the April leads and the new offer.",
+    ]);
+    // A tail of four words or more keeps the rule for unlabelled parts: its own
+    // line. A second label on the line starts a to-do of its own.
+    const two = noted(
+      null,
+      "Mahara: Send the April report - with the cost per lead for each campaign - Client: Pay the deposit",
+    );
+    expect(texts(two.promises.ours)).toEqual(["Send the April report"]);
+    expect(texts(two.promises.theirs)).toEqual(["Pay the deposit"]);
+    expect(texts(two.call.lines)).toEqual([
+      "with the cost per lead for each campaign",
+    ]);
+    // Build 12's rule is unchanged for a fragment on a later line: it never
+    // joins a labelled line, so it stays a line of its own.
+    const later = noted(
+      "We went through the April leads and the new offer.",
+      "Mahara: Send the April report\nby Thursday",
+    );
+    expect(texts(later.promises.ours)).toEqual(["Send the April report"]);
+    expect(texts(later.call.lines)).toEqual([
+      "We went through the April leads and the new offer.",
+      "by Thursday",
+    ]);
+  });
+});
+
+describe("a to-do listed after a labelled one on the same line", () => {
+  /** A brief from one Typeform 1-1 form on a held call, with these Additional Notes. */
+  const noted = (additionalNotes: string) =>
+    buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      timeline: timeline({
+        calls: [
+          call({
+            source: "checkin_form",
+            status: "held",
+            startsAt: "2026-10-05T10:00:00Z",
+            endsAt: "2026-10-05T10:00:00Z",
+          }),
+        ],
+        forms: [
+          {
+            token: "c1",
+            formId: "fRokTITH",
+            kind: "checkin",
+            submittedAt: "2026-10-05T10:00:00Z",
+            answers: [{ title: "Additional Notes", value: additionalNotes }],
+          },
+        ],
+      }),
+    });
+  const sides = (b: ReturnType<typeof noted>) => ({
+    ours: b.promises.ours.map(l => l.text),
+    theirs: b.promises.theirs.map(l => l.text),
+  });
+
+  test("a labelled to-do of one or two characters stays on its side (G11)", () => {
+    expect(sides(noted("Mahara: Send the report\nClient: QA"))).toEqual({
+      ours: ["Send the report"],
+      theirs: ["QA"],
+    });
+    expect(sides(noted("Mahara: QA\nClient: Pay the deposit"))).toEqual({
+      ours: ["QA"],
+      theirs: ["Pay the deposit"],
+    });
+    expect(sides(noted("Client: X"))).toEqual({ ours: [], theirs: ["X"] });
+    // A label with nothing after it is no to-do at all.
+    expect(sides(noted("Client -"))).toEqual({ ours: [], theirs: [] });
+    expect(sides(noted("Mahara:"))).toEqual({ ours: [], theirs: [] });
+  });
+
+  test("a labelled to-do that ends with a colon stays; a bare label or heading does not", () => {
+    expect(sides(noted("Client: Send these:"))).toEqual({
+      ours: [],
+      theirs: ["Send these:"],
+    });
+    expect(sides(noted("مهارة: إرسال الملفات："))).toEqual({
+      ours: ["إرسال الملفات："],
+      theirs: [],
+    });
+    const heading = noted("Next steps:\nClient:\nLong call about the leads");
+    expect(sides(heading)).toEqual({ ours: [], theirs: [] });
+    expect(JSON.stringify(heading)).not.toContain("Next steps:");
+  });
+
+  test("an inline number stays inside a labelled to-do, so its second half keeps the side", () => {
+    expect(
+      sides(noted("Client: Send the logo. 2. Book the shoot day")),
+    ).toEqual({ ours: [], theirs: ["Send the logo. 2. Book the shoot day"] });
+    expect(
+      sides(
+        noted("Mahara: Send the report. 2) Please share the photos. 3. QA"),
+      ),
+    ).toEqual({
+      ours: ["Send the report. 2) Please share the photos. 3. QA"],
+      theirs: [],
+    });
+    // A label written with a dash is a label too.
+    expect(
+      sides(noted("Client - Send the logo. 2. Book the shoot day")),
+    ).toEqual({ ours: [], theirs: ["Send the logo. 2. Book the shoot day"] });
+  });
+
+  test("the inline number still splits what is not one labelled to-do", () => {
+    // Its own label starts its own to-do.
+    expect(
+      sides(noted("Client: Send the logo. 2. Mahara: Book the shoot day")),
+    ).toEqual({ ours: ["Book the shoot day"], theirs: ["Send the logo."] });
+    // On the next line it is the next row, not this to-do.
+    expect(
+      sides(noted("Client: Send the logo.\n2. Book the shoot day")),
+    ).toEqual({ ours: ["Book the shoot day"], theirs: ["Send the logo."] });
+    // With no label on the row, the list splits as before.
+    expect(
+      sides(noted("We went through the April leads. 2. Book the shoot day")),
+    ).toEqual({ ours: ["Book the shoot day"], theirs: [] });
+    // A stray short part with no labelled to-do to hold it is dropped as before.
+    const stray = noted("We went through the April leads. 2. QA");
+    expect(sides(stray)).toEqual({ ours: [], theirs: [] });
+    expect(JSON.stringify(stray)).not.toContain('"QA"');
+  });
+
+  test("a client to-do after an inline dash stays on the client's side", () => {
+    expect(
+      sides(
+        noted(
+          "Mahara: Send the April report - you need to pay the deposit by Sunday",
+        ),
+      ),
+    ).toEqual({
+      ours: ["Send the April report"],
+      theirs: ["You need to pay the deposit by Sunday"],
+    });
+  });
+
+  test("a part after a bullet is its own line, never the labelled to-do's tail", () => {
+    expect(
+      sides(
+        noted(
+          "Mahara: Send the April report • Share your logo files with the team",
+        ),
+      ),
+    ).toEqual({
+      ours: ["Send the April report"],
+      theirs: ["Share your logo files with the team"],
+    });
+    // Short too: a bullet's part is never the tail, whatever its length.
+    const short = noted("Mahara: Send the April report • by Thursday");
+    expect(sides(short).ours).toEqual(["Send the April report"]);
+    expect(short.call.lines.map(l => l.text)).toEqual(["by Thursday"]);
+  });
+
+  test("a short part that opens a to-do is not a tail: it reaches its own side", () => {
+    expect(sides(noted("Mahara: Send the April report - please pay"))).toEqual({
+      ours: ["Send the April report"],
+      theirs: ["Please pay"],
+    });
+    expect(sides(noted("Client: Pay the deposit - book the shoot"))).toEqual({
+      ours: ["Book the shoot"],
+      theirs: ["Pay the deposit"],
+    });
+  });
+
+  test("three words or fewer after an inline dash is the same to-do; four is its own line", () => {
+    expect(sides(noted("Mahara: Send the report - in the morning"))).toEqual({
+      ours: ["Send the report - in the morning"],
+      theirs: [],
+    });
+    const four = noted("Mahara: Send the report - early in the morning");
+    expect(sides(four).ours).toEqual(["Send the report"]);
+    expect(four.call.lines.map(l => l.text)).toEqual(["early in the morning"]);
+  });
+});
+
+/** A brief from one Typeform 1-1 form on a held call, with these Additional Notes. */
+const fromNotes = (
+  additionalNotes: string,
+  digests: Parameters<typeof buildBrief>[0]["digests"] = [],
+) =>
+  buildBrief({
+    now: NOW,
+    client: live,
+    digests,
+    timeline: timeline({
+      calls: [
+        call({
+          source: "checkin_form",
+          status: "held",
+          startsAt: "2026-10-05T10:00:00Z",
+          endsAt: "2026-10-05T10:00:00Z",
+        }),
+      ],
+      forms: [
+        {
+          token: "c1",
+          formId: "fRokTITH",
+          kind: "checkin",
+          submittedAt: "2026-10-05T10:00:00Z",
+          answers: [{ title: "Additional Notes", value: additionalNotes }],
+        },
+      ],
+    }),
+  });
+const sidesOf = (additionalNotes: string) => {
+  const b = fromNotes(additionalNotes);
+  return {
+    ours: b.promises.ours.map(l => l.text),
+    theirs: b.promises.theirs.map(l => l.text),
+    recap: b.call.lines.map(l => l.text),
+  };
+};
+
+describe("a second owner written with a dash", () => {
+  test("a bare owner after a labelled to-do opens its own to-do, never a tail", () => {
+    expect(
+      sidesOf("Mahara: Send the invoice - Client - Pay the deposit by Sunday"),
+    ).toEqual({
+      ours: ["Send the invoice"],
+      theirs: ["Pay the deposit by Sunday"],
+      recap: [],
+    });
+    expect(
+      sidesOf(
+        "Client: Pay the deposit - Mahara - Send the signed contract today",
+      ),
+    ).toEqual({
+      ours: ["Send the signed contract today"],
+      theirs: ["Pay the deposit"],
+      recap: [],
+    });
+  });
+
+  test("a one-word dash-labelled to-do never folds in the next owner's line", () => {
+    expect(sidesOf("Client - Pay\nMahara - Send the invoice")).toEqual({
+      ours: ["Send the invoice"],
+      theirs: ["Pay"],
+      recap: [],
+    });
+    expect(sidesOf("Mahara - Send\nClient - Pay")).toEqual({
+      ours: ["Send"],
+      theirs: ["Pay"],
+      recap: [],
+    });
+    // Two owners, one word each, on one line.
+    expect(sidesOf("Client - Pay - Mahara - Send")).toEqual({
+      ours: ["Send"],
+      theirs: ["Pay"],
+      recap: [],
+    });
+  });
+
+  test("a dash-labelled to-do keeps its own short tail, and a later fragment does not join it", () => {
+    expect(sidesOf("Client - Pay the deposit - by Sunday")).toEqual({
+      ours: [],
+      theirs: ["Pay the deposit - by Sunday"],
+      recap: [],
+    });
+    const later = sidesOf(
+      "We went through the April leads.\nClient - Pay the deposit\nVery happy.",
+    );
+    expect(later.theirs).toEqual(["Pay the deposit"]);
+    expect(later.recap).toContain("Very happy.");
+  });
+
+  test("an owner alone on its line still reads the line after it, as it always did", () => {
+    expect(sidesOf("Client\nPay the deposit by Sunday")).toEqual({
+      ours: [],
+      theirs: ["Pay the deposit by Sunday"],
+      recap: [],
+    });
+    // The next line is another owner's: the first owner has no to-do to take.
+    expect(sidesOf("Client\nMahara - Send the invoice").ours).toEqual([
+      "Send the invoice",
+    ]);
+  });
+});
+
+describe("the CSM's own to-dos are never merged as near-duplicates", () => {
+  test("a They owe line sharing words with a We owe line stays on its side", () => {
+    const { ours, theirs } = sidesOf(
+      "Mahara: Send the April invoice\nClient: Pay the April invoice",
+    );
+    expect({ ours, theirs }).toEqual({
+      ours: ["Send the April invoice"],
+      theirs: ["Pay the April invoice"],
+    });
+  });
+
+  test("two lines on one side stay two unless they are the same words", () => {
+    expect(
+      sidesOf(
+        "Client: Pay the April invoice\nClient: Confirm the April invoice",
+      ).theirs,
+    ).toEqual(["Pay the April invoice", "Confirm the April invoice"]);
+    expect(
+      sidesOf("Mahara: Send the April invoice\nMahara: send the april invoice")
+        .ours,
+    ).toEqual(["Send the April invoice"]);
+  });
+
+  test("the same words on both sides are two to-dos", () => {
+    const { ours, theirs } = sidesOf(
+      "Mahara: Review the contract\nClient: Review the contract",
+    );
+    expect({ ours, theirs }).toEqual({
+      ours: ["Review the contract"],
+      theirs: ["Review the contract"],
+    });
+  });
+
+  test("a line that repeats a card digest's step still folds into it", () => {
+    const b = fromNotes("Mahara: Send the April invoice today", [
+      {
+        at: Date.parse("2026-10-05T12:00:00Z"),
+        kind: "call",
+        summary: "Monthly call",
+        nextSteps: ["Mahara: Send the April invoice"],
+      },
+    ]);
+    expect(b.promises.ours.map(l => [l.text, l.source])).toEqual([
+      ["Send the April invoice", "ClickUp card"],
+    ]);
+  });
+});
+
+describe("a to-do never folds into the other side, from any source", () => {
+  // The call's own day, so this digest carries the call's steps.
+  const sameDay = (...nextSteps: string[]) => [
+    {
+      at: Date.parse("2026-10-05T12:00:00Z"),
+      kind: "call",
+      summary: "Monthly call",
+      nextSteps,
+    },
+  ];
+  // The day before the call, so Fathom's steps stay in the brief beside it.
+  const dayBefore = (...nextSteps: string[]) => [
+    {
+      at: Date.parse("2026-10-04T12:00:00Z"),
+      kind: "update",
+      summary: "Card update",
+      nextSteps,
+    },
+  ];
+  const fathomAndNotes = (
+    steps: string[],
+    additionalNotes: string,
+    digests: Parameters<typeof buildBrief>[0]["digests"] = [],
+  ) =>
+    buildBrief({
+      now: NOW,
+      client: live,
+      digests,
+      timeline: timeline({
+        calls: [
+          call({
+            source: "fathom",
+            status: "held",
+            startsAt: "2026-10-05T10:00:00Z",
+            endsAt: "2026-10-05T10:30:00Z",
+            summary: ["## Next Steps", ...steps.map(l => `  - ${l}`)].join(
+              "\n",
+            ),
+            recordingUrl: "https://fathom.video/x",
+          }),
+        ],
+        forms: [
+          {
+            token: "c1",
+            formId: "fRokTITH",
+            kind: "checkin",
+            submittedAt: "2026-10-05T10:30:00Z",
+            answers: [{ title: "Additional Notes", value: additionalNotes }],
+          },
+        ],
+      }),
+    });
+  const lines = (l: { text: string; source?: string }[]) =>
+    l.map(x => [x.text, x.source]);
+
+  test("a same-day digest with both steps keeps both, and the notes fold into their own side", () => {
+    const b = fromNotes(
+      "Mahara: Send the April invoice\nClient: Pay the April invoice",
+      sameDay(
+        "Mahara: Send the April invoice",
+        "Client: Pay the April invoice",
+      ),
+    );
+    expect(lines(b.promises.ours)).toEqual([
+      ["Send the April invoice", "ClickUp card"],
+    ]);
+    expect(lines(b.promises.theirs)).toEqual([
+      ["Pay the April invoice", "ClickUp card"],
+    ]);
+  });
+
+  test("two sides of one digest stay two", () => {
+    const b = fromNotes(
+      "We went through the April leads.",
+      sameDay(
+        "Mahara: Send the April invoice",
+        "Client: Pay the April invoice",
+      ),
+    );
+    expect(b.promises.ours.map(l => l.text)).toEqual([
+      "Send the April invoice",
+    ]);
+    expect(b.promises.theirs.map(l => l.text)).toEqual([
+      "Pay the April invoice",
+    ]);
+  });
+
+  test("a They owe line in the notes survives a We owe digest line that shares its words", () => {
+    const b = fromNotes(
+      "Client: Approve the April budget",
+      sameDay("Mahara: Prepare the April budget"),
+    );
+    expect(lines(b.promises.ours)).toEqual([
+      ["Prepare the April budget", "ClickUp card"],
+    ]);
+    expect(b.promises.theirs.map(l => l.text)).toEqual([
+      "Approve the April budget",
+    ]);
+    expect(b.promises.theirs[0].source).not.toBe("ClickUp card");
+  });
+
+  test("a We owe line in the notes survives a Fathom step that gives the same words to the client", () => {
+    const b = fathomAndNotes(
+      ["Dana: Upload the showroom photos to Drive"],
+      "Mahara: Upload the showroom photos to Drive",
+    );
+    expect(b.promises.ours.map(l => l.text)).toEqual([
+      "Upload the showroom photos to Drive",
+    ]);
+    expect(lines(b.promises.theirs)).toEqual([
+      ["Upload the showroom photos to Drive", "Fathom"],
+    ]);
+  });
+
+  test("a They owe line in the notes survives a Fathom step with no owner", () => {
+    const b = fathomAndNotes(
+      ["Share the showroom photos with the team"],
+      "Client: Share the showroom photos",
+    );
+    expect(b.promises.theirs.map(l => l.text)).toEqual([
+      "Share the showroom photos",
+    ]);
+  });
+
+  test("the same side still folds across sources", () => {
+    const b = fromNotes(
+      "Client: Pay the April invoice today",
+      sameDay("Client: Pay the April invoice"),
+    );
+    expect(lines(b.promises.theirs)).toEqual([
+      ["Pay the April invoice", "ClickUp card"],
+    ]);
+    expect(b.promises.ours).toEqual([]);
+  });
+
+  test("a Fathom step with no owner still folds into the digest line that says it, on either side", () => {
+    const b = fathomAndNotes(
+      ["Send the new scripts", "Pay the April invoice"],
+      "",
+      dayBefore(
+        "Mahara: Send the new scripts",
+        "Client: Pay the April invoice",
+      ),
+    );
+    expect(lines(b.promises.ours)).toEqual([
+      ["Send the new scripts", "ClickUp card"],
+    ]);
+    expect(lines(b.promises.theirs)).toEqual([
+      ["Pay the April invoice", "ClickUp card"],
+    ]);
+    expect(b.promises.steps).toEqual([]);
+  });
 });
 
 describe("mood and billing carry-overs", () => {
@@ -1919,7 +2486,7 @@ describe("mood and billing carry-overs", () => {
     });
     const texts = b.raise.map(l => l.text);
     expect(texts).toContain(
-      "They were marked ready for a testimonial on 14 Sep. Ask for it.",
+      `They were marked ready for a testimonial on 14 ${SEP}. Ask for it.`,
     );
     expect(texts.some(t => t.startsWith("Their mood was last recorded"))).toBe(
       false,

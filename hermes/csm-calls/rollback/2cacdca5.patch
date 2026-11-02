@@ -1,0 +1,74 @@
+The csm-calls rollback release (docs/forms/STAGE2-CONTRACT.md 4.7).
+
+Release 2cacdca5 plus three guards, so a rollback leaves the rows Stage 2a writes as they are, but
+for the two losses the csm-calls RUNBOOK names (Release / rollback):
+  1. the re-match loop skips a stored row with no external invitee (a 2a candidate);
+     the release itself makes call rows for external meetings only;
+  2. the transcript loop reads each meeting's class with its raw before it takes its 8,
+     and fetches client and candidate meetings only, never a stripped sales or internal one;
+  3. a Fathom row placed by hand keeps the booking link, the kind and the client name the
+     2a manual match wrote: existing() reads them for Fathom rows, and keepManual keeps them
+     (the release read no link, so every rerun wrote linked_call_id null and the kind afresh).
+
+Stage it beside the new release <sha8> (hermes/csm-calls/RUNBOOK.md, Release / rollback):
+  R=/home/hermes/.csm-calls-releases-hermes
+  mkdir -p $R/rollback-<sha8> && tar -x -C $R/rollback-<sha8> -f <git archive 2cacdca5 hermes/csm-calls>
+  cd $R/rollback-<sha8> && patch -p1 < $R/<sha8>/hermes/csm-calls/rollback/2cacdca5.patch
+Tested by hermes/csm-calls/rollback.test.ts.
+
+--- a/hermes/csm-calls/sources.ts
++++ b/hermes/csm-calls/sources.ts
+@@ -85,7 +85,10 @@
+ 
+ /** Existing rows keyed by source_id so manual matches survive every rerun. */
+ async function existing(db: Db, source: string, extra = "") {
+-  const rows = await db.all("cockpit_csm_calls", `select=id,source_id,task_id,match_method,status,transcript_path&source=eq.${source}${extra}`);
++  // Rollback guard 3 (docs/forms/STAGE2-CONTRACT.md 4.7): a Fathom row also reads the booking link, the kind
++  // and the client name that a Stage 2a manual match wrote, so keepManual keeps them.
++  const more = source === "fathom" ? ",client_name,linked_call_id,kind" : "";
++  const rows = await db.all("cockpit_csm_calls", `select=id,source_id,task_id,match_method,status,transcript_path${more}&source=eq.${source}${extra}`);
+   return new Map(rows.map(r => [String(r.source_id), r]));
+ }
+ 
+@@ -97,6 +100,9 @@
+     // A manual assignment wins over the automatic appointment join too.
+     // Otherwise the recording could appear on another client's timeline.
+     row.linked_call_id = prior.linked_call_id ?? null;
++    // Rollback guard 3: the kind and the name stay as the person's match left them (read for Fathom rows only).
++    if (prior.kind) row.kind = prior.kind;
++    if (prior.client_name) row.client_name = prior.client_name;
+   }
+   return row;
+ }
+@@ -502,6 +508,10 @@
+   if (open.length) {
+     const stored = await db.all("cockpit_fathom_meetings", `select=recording_id,raw,share_url&recording_id=in.(${open.map(o => o.source_id).join(",")})`);
+     for (const s of stored) {
++      // Rollback guard 1 (docs/forms/STAGE2-CONTRACT.md 4.7): this release makes call rows for external
++      // meetings only, so a row without an external invitee is a 2a candidate. Leave it alone: a client
++      // named in its title would otherwise attach it (match.ts byNameIn).
++      if (!(s.raw?.calendar_invitees ?? []).some((i: Row) => i.is_external)) continue;
+       const m = { ...s.raw, share_url: s.share_url };
+       const mt = matchMeeting(m, appts, ctx.clients, contactsIndex, ctx.shareToTask);
+       const p = prior.get(String(s.recording_id))!;
+@@ -542,8 +552,18 @@
+         });
+     // Transcripts once per recording, for client calls only, bounded per run.
+     const missing = await db.all("cockpit_csm_calls", "select=id,source_id,starts_at&source=eq.fathom&transcript_path=is.null&status=neq.gone&order=starts_at.desc");
+-    for (const mrow of missing.slice(0, transcriptsPerRun)) {
+-      const stored = (await db.all("cockpit_fathom_meetings", `select=raw&recording_id=eq.${mrow.source_id}`))[0];
++    // Rollback guard 2 (docs/forms/STAGE2-CONTRACT.md 4.7): a call row carries no class, and 2a stripped
++    // the sales and internal rows. Read each meeting's class with its raw before taking the 8, and fetch
++    // client and candidate meetings only, so a stripped transcript is never downloaded again.
++    const meetingOf = new Map(
++      (missing.length
++        ? await db.all("cockpit_fathom_meetings", `select=recording_id,raw,class&recording_id=in.(${missing.map(r => r.source_id).join(",")})`)
++        : []
++      ).map(r => [String(r.recording_id), r]),
++    );
++    const wanted = missing.filter(r => ["client", "candidate"].includes(meetingOf.get(String(r.source_id))?.class));
++    for (const mrow of wanted.slice(0, transcriptsPerRun)) {
++      const stored = meetingOf.get(String(mrow.source_id));
+       const created = Date.parse(stored?.raw?.created_at ?? "");
+       if (!Number.isFinite(created)) continue;
+       const p = new URLSearchParams({ created_after: iso(created - 1000), created_before: iso(created + 1000), include_transcript: "true" });

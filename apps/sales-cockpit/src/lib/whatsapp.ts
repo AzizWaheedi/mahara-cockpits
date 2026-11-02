@@ -63,8 +63,17 @@ export interface TemplateRoute {
   active: boolean;
   segments: string[];
   sort: number;
+  /** Sent by name through HighLevel's conversations API, no workflow. */
+  direct?: boolean;
   updated_by: string;
   updated_at: string;
+}
+
+/** A template a rep can send: switched on, and either sent directly or tied to a workflow. */
+export function templateLive(
+  t: Pick<TemplateRoute, "active" | "workflow_id" | "direct">,
+): boolean {
+  return t.active && (t.direct === true || Boolean(t.workflow_id));
 }
 
 const AR_DIGITS = "٠١٢٣٤٥٦٧٨٩";

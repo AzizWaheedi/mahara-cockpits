@@ -25,3 +25,7 @@ export function ltvRefusal(error: Error): string {
       : "It will not clear by itself: queue it as a bug under Changes and bugs on the Machine tab.";
   return `${said || "The preview was refused"}. ${next}`;
 }
+
+/** The Money tab's line once the morning writer owns lifetime value (WAVE56-CONTRACT.md 5.5). */
+export const LTV_RETIRED =
+  "Lifetime value is written by the cockpit every morning now. See the Billing tab.";

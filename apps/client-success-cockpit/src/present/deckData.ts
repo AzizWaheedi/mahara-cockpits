@@ -28,6 +28,7 @@ import {
   type LaunchData,
   launchData,
 } from "./launchData";
+import type { OfferDeckKind } from "./offer/kinds";
 import {
   isMain,
   resolveService,
@@ -107,7 +108,11 @@ export interface DeckInput {
   /** The client's row from cockpit_csm_onboarding_read (forms, links, dates). */
   kit: OnboardingRow | null;
   /** This deck's prep overrides, and the other deck's (red lines carry over). */
-  prep: { onboarding: Overrides; launch: Overrides; blueprint?: Overrides };
+  prep: {
+    onboarding: Overrides;
+    launch: Overrides;
+    blueprint?: Overrides;
+  } & Partial<Record<OfferDeckKind, Overrides>>;
   /** This client's ready uploads, with signed links when they were signed. */
   ads: LaunchAd[];
   /** The signed-in seat's name, when the server has no first name for it. */

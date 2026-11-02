@@ -13,7 +13,8 @@ import { z } from "zod";
  * The client decks: the CSM's two, and the creative director's Brand
  * Blueprint call (docs/brand-blueprint/SPEC.md 5).
  */
-export type DeckKind = "onboarding" | "launch" | "blueprint";
+import type { OfferDeckKind } from "./offer/kinds";
+export type DeckKind = "onboarding" | "launch" | "blueprint" | OfferDeckKind;
 
 /** The few calls the decks make, so a harness or a test can stand in. */
 export type DeckClient = Pick<SupabaseClient, "rpc" | "functions" | "auth">;
@@ -76,7 +77,7 @@ export type LaunchAd = z.infer<typeof launchAdSchema>;
 
 const prepRow = z
   .object({
-    deck: z.enum(["onboarding", "launch"]),
+    deck: z.string(),
     overrides: z.record(z.string(), z.unknown()),
     revision: z.number(),
     updatedAt: opt,
@@ -696,7 +697,17 @@ const bare = (s: string) => {
 };
 
 const videoBase = z.object({
-  deck: z.enum(["onboarding", "launch"]),
+  deck: z.enum([
+    "onboarding",
+    "launch",
+    "offer_website",
+    "offer_second_campaign",
+    "offer_seo_geo",
+    "offer_smm",
+    "offer_cameraman",
+    "offer_ugc",
+    "offer_closer",
+  ]),
   slotKey: z.string(),
   lang: z.enum(["en", "ar", "any"]),
   provider: z.enum(["loom", "youtube", "wistia", "vimeo", "drive"]),

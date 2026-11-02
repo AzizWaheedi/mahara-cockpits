@@ -214,6 +214,14 @@ export const plan = internalQuery({
  * changing an existing baseline is a different and much riskier act, and it
  * belongs in the recompute above rather than here.
  */
+/**
+ * The cockpit writes lifetime value every morning from checked money (waves 5-6, C8). Both
+ * card writers here refuse first, so a Convex deploy can never become a second writer.
+ */
+export const LTV_WRITER_RETIRED = true;
+export const LTV_RETIRED_SENTENCE =
+  "Lifetime value is written by the cockpit every morning now. See the list on the Billing tab.";
+
 export const setStartingFigures = internalAction({
   args: {
     userId: v.id("users"),
@@ -227,6 +235,8 @@ export const setStartingFigures = internalAction({
     written: { client: string; value: number }[];
     errors: string[];
   }> => {
+    // C8 (WAVE56-CONTRACT 4.4.3): one LTV writer. A redeployed Convex never writes the card again.
+    if (LTV_WRITER_RETIRED) throw new Error(LTV_RETIRED_SENTENCE);
     const by: string = await ctx.runQuery(internal.ceo.ltv.whoami, { userId });
     const cards: { taskId: string; name: string; ltvUsd?: number }[] =
       await ctx.runQuery(internal.ceo.billing.allBilling, {});
@@ -343,6 +353,8 @@ export const apply = authenticatedAction({
     ctx,
     { taskIds },
   ): Promise<{ written: number; skipped: number; errors: string[] }> => {
+    // C8 (WAVE56-CONTRACT 4.4.3): one LTV writer. A redeployed Convex never writes the card again.
+    if (LTV_WRITER_RETIRED) throw new Error(LTV_RETIRED_SENTENCE);
     const { rows }: LtvPlan = await ctx.runQuery(internal.ceo.ltv.plan, {
       userId: ctx.userId,
     });

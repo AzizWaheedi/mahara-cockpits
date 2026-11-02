@@ -6,6 +6,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { OfferPickerItem } from "./offer/OfferPickerItem";
 
 /**
  * The ways into the client decks, for the client page header and the
@@ -123,6 +124,7 @@ export function PresentButton({
           <DropdownMenuItem onSelect={() => openDeck(taskId, other, true)}>
             Prepare the {NAMES[other]}
           </DropdownMenuItem>
+          <OfferPickerItem taskId={taskId} />
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
