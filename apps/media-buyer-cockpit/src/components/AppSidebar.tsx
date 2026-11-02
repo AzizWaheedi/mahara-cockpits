@@ -61,16 +61,16 @@ const navItems = [
     also: ["/eod"],
   },
   {
-    href: "/clients",
-    label: "Clients",
-    icon: Users,
+    href: "/ads",
+    label: "Ads",
+    icon: Megaphone,
     role: "media_buyer",
     also: [] as string[],
   },
   {
-    href: "/ads",
-    label: "Ads",
-    icon: Megaphone,
+    href: "/clients",
+    label: "Clients",
+    icon: Users,
     role: "media_buyer",
     also: [] as string[],
   },
@@ -320,69 +320,39 @@ function SidebarNav() {
 
   return (
     <SidebarContent>
-      <SidebarGroup>
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {auth.isCeo ? (
-              <NavLink
-                href="/ceo"
-                label="CEO"
-                icon={COCKPIT_ICON.ceo}
-                isActive={location.pathname.startsWith("/ceo")}
-              />
-            ) : null}
-            {auth.isAdmin ? (
-              <NavLink
-                href="/admin"
-                label="Admin"
-                icon={COCKPIT_ICON.admin}
-                isActive={location.pathname === "/admin"}
-              />
-            ) : null}
-            {/* Every lead and appointment, for checking the numbers. */}
-            {auth.isAdmin ? (
-              <NavLink
-                href="/data"
-                label="Data"
-                icon={Table2}
-                isActive={location.pathname === "/data"}
-              />
-            ) : null}
-            {/* Everybody's: the team's meetings and their agendas. */}
-            {auth.isAuthenticated ? (
-              <NavLink
-                href="/team"
-                label="Team meetings"
-                icon={COCKPIT_ICON.team}
-                isActive={location.pathname.startsWith("/team")}
-              />
-            ) : null}
-            {/* Everybody's: ask another team for something; it becomes a
-                ClickUp task with its SOP steps and an owner (2026-10-26). */}
-            {auth.isAuthenticated ? (
-              <NavLink
-                href="/requests"
-                label="Ask a team"
-                icon={COCKPIT_ICON.requests}
-                isActive={location.pathname.startsWith("/requests")}
-              />
-            ) : null}
-            {/* Everybody's: every client against its targets (2026-10-16). */}
-            {auth.isAuthenticated ? (
-              <NavLink
-                href="/performance"
-                label="Client performance"
-                icon={COCKPIT_ICON.performance}
-                isActive={location.pathname === "/performance"}
-              />
-            ) : null}
-            {/* The media buyer's SOP, in ClickUp, in a new tab. */}
-            {allowed.includes("media_buyer") ? (
-              <SopLink href={COCKPIT_SOP.media_buyer} />
-            ) : null}
-          </SidebarMenu>
-        </SidebarGroupContent>
-      </SidebarGroup>
+      {auth.isCeo || auth.isAdmin ? (
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {auth.isCeo ? (
+                <NavLink
+                  href="/ceo"
+                  label="CEO"
+                  icon={COCKPIT_ICON.ceo}
+                  isActive={location.pathname.startsWith("/ceo")}
+                />
+              ) : null}
+              {auth.isAdmin ? (
+                <NavLink
+                  href="/admin"
+                  label="Admin"
+                  icon={COCKPIT_ICON.admin}
+                  isActive={location.pathname === "/admin"}
+                />
+              ) : null}
+              {/* Every lead and appointment, for checking the numbers. */}
+              {auth.isAdmin ? (
+                <NavLink
+                  href="/data"
+                  label="Data"
+                  icon={Table2}
+                  isActive={location.pathname === "/data"}
+                />
+              ) : null}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      ) : null}
       {items.length ? (
         <SidebarGroup>
           <SidebarGroupLabel>Media buyer</SidebarGroupLabel>
@@ -400,6 +370,37 @@ function SidebarNav() {
                   }
                 />
               ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      ) : null}
+      {auth.isAuthenticated || allowed.includes("media_buyer") ? (
+        <SidebarGroup>
+          <SidebarGroupLabel>More</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {/* Everybody's: the team's meetings and their agendas. */}
+              {auth.isAuthenticated ? (
+                <NavLink
+                  href="/team"
+                  label="Team meetings"
+                  icon={COCKPIT_ICON.team}
+                  isActive={location.pathname.startsWith("/team")}
+                />
+              ) : null}
+              {/* Everybody's: every client against its targets (2026-10-16). */}
+              {auth.isAuthenticated ? (
+                <NavLink
+                  href="/performance"
+                  label="Client performance"
+                  icon={COCKPIT_ICON.performance}
+                  isActive={location.pathname === "/performance"}
+                />
+              ) : null}
+              {/* The media buyer's SOP, in ClickUp, in a new tab. */}
+              {allowed.includes("media_buyer") ? (
+                <SopLink href={COCKPIT_SOP.media_buyer} />
+              ) : null}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
