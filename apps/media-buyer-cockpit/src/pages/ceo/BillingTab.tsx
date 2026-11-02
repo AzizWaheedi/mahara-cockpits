@@ -17,7 +17,7 @@ import {
 import { ChecksWaiting } from "@/components/billing/ChecksWaiting";
 import type { PendingApi } from "@/components/billing/PendingPayments";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { money, shortDate } from "@/components/ceo/format";
+import { money, plural, shortDate } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
@@ -559,6 +559,13 @@ const signed = (n: number | null) =>
     : `${n > 0 ? "+" : n < 0 ? "−" : ""}${money(Math.abs(n))}`;
 const usdOr = (n: number | null) => (n === null ? "not known" : money(n));
 
+/** The second-source line of 5.5: what the figures were checked against, in plain words. */
+export function ltvSourceLine(differ: number | null): string {
+  if (differ === null) return "Not yet checked against a second source.";
+  if (differ === 0) return "Matches the payments tied to each card.";
+  return `${plural(differ, "card")} ${differ === 1 ? "differs" : "differ"} from the payments tied to ${differ === 1 ? "it" : "them"}.`;
+}
+
 /** The state words of 5.5. */
 export function ltvStateWords(
   r: Pick<LtvRow, "state">,
@@ -570,7 +577,9 @@ export function ltvStateWords(
     case "write":
       return "Writes tomorrow morning";
     case "held":
-      return `Held: over ${max === null ? "the" : money(max)} change`;
+      return max === null
+        ? "Held: a bigger change than the daily limit"
+        : `Held: over a ${money(max)} change`;
     case "missing":
       return "No starting value";
     default:
@@ -636,14 +645,8 @@ export function LtvCard({ api, door }: { api: LtvApi; door: Door | null }) {
           <Reading words="Reading lifetime value" />
         ) : (
           <div className="grid gap-4" data-ltv-card>
-            <p className="text-xs text-muted-foreground">
-              Checked against the payments tied straight to each card:{" "}
-              {read.secondSourceDiffer === null
-                ? "not checked yet"
-                : read.secondSourceDiffer === 0
-                  ? "ok"
-                  : `${read.secondSourceDiffer} cards differ`}
-              .
+            <p className="text-xs text-muted-foreground" data-ltv-source>
+              {ltvSourceLine(read.secondSourceDiffer)}
             </p>
             {!read.on ? (
               <p className="text-sm" data-ltv-off>
@@ -652,8 +655,9 @@ export function LtvCard({ api, door }: { api: LtvApi; door: Door | null }) {
             ) : null}
             {read.loggedWaiting > 0 ? (
               <p className="text-sm text-muted-foreground">
-                {read.loggedWaiting} logged payments wait on a check and are not
-                counted yet.
+                {plural(read.loggedWaiting, "logged payment")}{" "}
+                {read.loggedWaiting === 1 ? "waits" : "wait"} on a check and{" "}
+                {read.loggedWaiting === 1 ? "is" : "are"} not counted yet.
               </p>
             ) : null}
             <div className="grid grid-cols-2 gap-3 @2xl:grid-cols-4">
@@ -751,6 +755,7 @@ export type AgentKey = {
   note: string | null;
   addedAt: string | null;
   revokedAt: string | null;
+  revokedReason: string | null;
   lastCallAt: string | null;
   callsToday: number | null;
 };
@@ -773,6 +778,7 @@ export function agentApi(c: SupabaseClient): AgentApi {
             note: tx(k.note),
             addedAt: tx(k.addedAt),
             revokedAt: tx(k.revokedAt),
+            revokedReason: tx(k.revokedReason),
             lastCallAt: tx(k.lastCallAt),
             callsToday: nn(k.callsToday),
           })),
@@ -825,6 +831,8 @@ export function AgentCard({ api, door }: { api: AgentApi; door: Door | null }) {
     void load();
   }, [open]);
   const key = read?.keys.find(k => !k.revokedAt) ?? null;
+  // The newest revoked key, when no key is active: the card says so instead of "No key yet".
+  const revoked = key ? null : (read?.keys.find(k => k.revokedAt) ?? null);
   const revoke = async () => {
     if (!key) return;
     if (why.trim().length < 3) {
@@ -863,8 +871,17 @@ export function AgentCard({ api, door }: { api: AgentApi; door: Door | null }) {
                 {key.addedAt
                   ? shortDate(key.addedAt.slice(0, 10))
                   : "a day not recorded"}{" "}
-                · last call {timeOf(key.lastCallAt)} · {key.callsToday ?? 0}{" "}
-                calls today
+                · last call {timeOf(key.lastCallAt)} ·{" "}
+                {plural(key.callsToday ?? 0, "call")} today
+              </p>
+            ) : revoked ? (
+              <p data-agent-revoked>
+                Revoked on{" "}
+                {revoked.revokedAt
+                  ? shortDate(revoked.revokedAt.slice(0, 10))
+                  : "a day not recorded"}
+                {revoked.revokedReason ? `: ${revoked.revokedReason}` : ""}. The
+                agent cannot write until a new key is set on the server.
               </p>
             ) : (
               <p>

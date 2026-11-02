@@ -197,12 +197,8 @@ describe("Log a win's words (3.1, 4.2, 5.1)", () => {
     expect(shownFor("video_testimonial")).toContain("Video link");
     expect(shownFor("podcast")).toContain("Episode link");
     expect(shownFor("referral")).toContain("Referred client");
-    expect(shownFor("renewal")).toContain(
-      "Agreement link (optional now, needed for pay)",
-    );
-    expect(shownFor("reactivation")).toContain(
-      "Agreement link (optional now, needed for pay)",
-    );
+    expect(shownFor("renewal")).toContain("Agreement link");
+    expect(shownFor("reactivation")).toContain("Agreement link");
     for (const k of ["upsell_website", "upsell_smm"]) {
       expect(shownFor(k)).toEqual(
         expect.arrayContaining([
@@ -268,7 +264,7 @@ describe("Log a win's words (3.1, 4.2, 5.1)", () => {
 
   test("a sent proposal makes it Mark as offered; the args carry its price", () => {
     const def = defs.winDef({ client: fx.CLIENT, ...fx.CONTEXT });
-    expect(def.title).toBe("Log a win for Ardon Interiors");
+    expect(def.title).toBe("Log a win");
     expect(def.submitLabel({ kind: "review" })).toBe("Log the win");
     expect(def.submitLabel({ kind: "upsell_website", proposalId: "p" })).toBe(
       "Mark as offered",
@@ -432,8 +428,8 @@ describe("Today bands (5.12)", () => {
       ["Receipt in: شركة العلا للتصميم", "Open Checks waiting"],
       ["Back: Dusk Arch", "Open the relaunch ticket"],
       [
-        "Receipt checked: confirm the part paid (Ardon Interiors)",
-        "Open Pending payments",
+        "Receipt checked: set the next payment date to 5 Dec (Ardon Interiors)",
+        "Open the billing sheet",
       ],
       [
         "Payment due 30 Oct, no money in: ask for the receipt (Imperium Studio)",
@@ -489,6 +485,20 @@ describe("Today bands (5.12)", () => {
   });
 });
 
+describe("labels never say optional (FormSheet marks it)", () => {
+  test("no label of Log a win or Client is back matches optional", () => {
+    const win = defs.winDef({ client: fx.CLIENT, ...fx.CONTEXT });
+    const back = defs.reactivateDef(fx.CLIENT, {
+      id: 6,
+      leftOn: "2026-10-18",
+      reason: "Cancelled",
+      churnType: "mid_programme",
+    } as never);
+    const labels = [...win.fields, ...back.fields].map(f => f.label);
+    expect(labels.filter(l => /\boptional\b/i.test(l))).toEqual([]);
+  });
+});
+
 describe("Client is back (4.12, 5.11, X30)", () => {
   test("shown with a confirmed departure; disabled on a Stopped card without one; hidden otherwise", () => {
     expect(
@@ -527,18 +537,22 @@ describe("Client is back (4.12, 5.11, X30)", () => {
       reason: "Cancelled",
       churnType: "mid_programme",
     });
-    expect(def.title).toBe("Ardon Interiors is back");
+    expect(def.title).toBe("Client is back");
     expect(def.lede).toBe("Left on 18 Oct · Cancelled · Mid-programme loss");
     expect(def.submitLabel({})).toBe("Reopen the client");
     expect(def.fields.map(f => f.label)).toEqual([
       "Back from",
       "Back as",
-      "Next payment date (optional)",
-      "MRR (USD, optional)",
-      "Agreement link (optional, needed for pay)",
+      "Next payment date",
+      "MRR (USD)",
+      "Agreement link",
       "Why did they come back?",
-      "Call (optional)",
+      "Call",
     ]);
+    // FormSheet adds "(optional)" itself: no label carries the word (5.1, 5.11).
+    expect(def.fields.find(f => f.key === "agreementUrl")?.hint).toBe(
+      "Needed before this win can be paid.",
+    );
     const say = (a: Record<string, unknown>) =>
       Object.values(staff.validate(def, a, "2026-11-02"));
     expect(
@@ -678,8 +692,10 @@ describe("Log a win sheet (5.1)", () => {
         context: fx.CONTEXT,
       }),
     );
-    expect(text(body().querySelector(".fs-title"))).toBe(
-      "Log a win for Ardon Interiors",
+    expect(text(body().querySelector(".fs-title"))).toBe("Log a win");
+    // The client is named once, on the line under the title.
+    expect(text(body().querySelector(".fs-client-name"))).toBe(
+      "Ardon Interiors",
     );
     expect(text(body())).toContain("Upsells");
     await pick("Google review");

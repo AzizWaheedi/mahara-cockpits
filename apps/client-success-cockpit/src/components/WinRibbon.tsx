@@ -16,7 +16,9 @@
  *   drops under the track instead of squeezing it.
  * - Signature: the track itself. Offered → Accepted → Paid → Pay for an
  *   upsell, Logged → Pay for the rest; a voided win cuts the track with a short
- *   muted dash and its reason. The only motion is a stop filling (150 ms, none
+ *   muted dash and its reason, and its money is struck. Under 30rem the track
+ *   runs down a rule, one stop a line. Links are underlined at rest (no hover
+ *   on a phone). The only motion is a stop filling (150 ms, none
  *   under reduced motion).
  * - Against the template: no progress bar with a percentage, no badge soup;
  *   the stops are words with dates, and a missing amount reads "not known".
@@ -100,9 +102,9 @@ export function WinRibbon({
               href={win.proofUrl}
               target="_blank"
               rel="noreferrer noopener"
-              className="rounded-sm underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-sm text-foreground/80 underline decoration-1 underline-offset-4 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              Proof
+              Open the proof ↗
             </a>
           ) : null}
           {win.agreementUrl ? (
@@ -110,9 +112,9 @@ export function WinRibbon({
               href={win.agreementUrl}
               target="_blank"
               rel="noreferrer noopener"
-              className="rounded-sm underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-sm text-foreground/80 underline decoration-1 underline-offset-4 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              Agreement
+              Open the agreement ↗
             </a>
           ) : null}
         </p>

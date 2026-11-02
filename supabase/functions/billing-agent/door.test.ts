@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { type HealthRow, MAX_BODY, makeAgentDoor, readCall, SEND, sha256Hex } from "./door";
+import { type HealthRow, MAX_BODY, makeAgentDoor, readCall, SEND, sha256Hex, UNKNOWN_PER_MINUTE } from "./door";
 
 // The billing agent's door (docs/forms/WAVE56-CONTRACT.md 3.4). The database is a stand-in that
 // answers the way cockpit_billing_agent_write and _read do (money-rails-w5-supabase.test.ts proves
@@ -60,6 +60,69 @@ describe("the key", () => {
     const res = await k.door(post({ what: "ladder" }));
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ ok: false, outcome: "refused", error: "This key was revoked.", requestId: "00000000-0000-4000-8000-000000000001" });
+  });
+});
+
+describe("unknown keys cost little (the door is public)", () => {
+  const UNKNOWN = { ok: false, outcome: "refused", status: 401, error: "This key is not known." };
+  const keyN = (n: number) => `mak_${String(n).padStart(43, "k")}`;
+
+  test("an unknown key gets the database's sentence and writes no receipt; asked again within a minute, no database call", async () => {
+    const k = kit(() => UNKNOWN);
+    const res = await k.door(post({ what: "ladder" }));
+    expect(res.status).toBe(401);
+    expect((await res.json()).error).toBe("This key is not known.");
+    expect(k.calls).toHaveLength(1);
+    expect(k.health).toHaveLength(0);
+    const again = await k.door(post({ what: "ladder" }));
+    expect(again.status).toBe(401);
+    expect(k.calls).toHaveLength(1);
+    expect(k.health).toHaveLength(0);
+  });
+
+  test("a flood of new unknown keys is answered 429 before the database; a key seen working still gets in", async () => {
+    let t = 1_000_000;
+    const calls: string[] = [];
+    const health: HealthRow[] = [];
+    const good = `Bearer ${KEY}`;
+    const door = makeAgentDoor({
+      rpc: async (_name, args) => {
+        calls.push(String(args.p_key_sha256));
+        return args.p_key_sha256 === createHash("sha256").update(KEY).digest("hex")
+          ? { ok: true, outcome: "ok", status: 200, result: {} }
+          : UNKNOWN;
+      },
+      insertHealth: async row => {
+        health.push(row);
+      },
+      sha256Hex,
+      uuid: () => "00000000-0000-4000-8000-000000000001",
+      now: () => t,
+    });
+    expect((await door(post({ what: "ladder" }, good))).status).toBe(200);
+    for (let i = 0; i < UNKNOWN_PER_MINUTE; i++) expect((await door(post({ what: "ladder" }, `Bearer ${keyN(i)}`))).status).toBe(401);
+    const before = calls.length;
+    const flooded = await door(post({ what: "ladder" }, `Bearer ${keyN(999)}`));
+    expect(flooded.status).toBe(429);
+    expect(calls.length).toBe(before);
+    expect((await door(post({ what: "ladder" }, good))).status).toBe(200);
+    expect(health.map(h => h.http_status)).toEqual([200, 200]);
+    t += 61_000;
+    expect((await door(post({ what: "ladder" }, `Bearer ${keyN(999)}`))).status).toBe(401);
+  });
+
+  test("a body over 32 KB with no Content-Length is refused without reading it all", async () => {
+    const k = kit();
+    const big = new ReadableStream({
+      start(c) {
+        for (let i = 0; i < 40; i++) c.enqueue(new TextEncoder().encode("x".repeat(1024)));
+        c.close();
+      },
+    });
+    const req = new Request(URL, { method: "POST", headers: { Authorization: `Bearer ${KEY}` }, body: big, duplex: "half" } as RequestInit);
+    const res = await k.door(req);
+    expect(res.status).toBe(413);
+    expect(k.calls).toHaveLength(0);
   });
 });
 

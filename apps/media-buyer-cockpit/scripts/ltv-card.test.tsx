@@ -228,9 +228,7 @@ describe("Lifetime value (5.5)", () => {
     expect(t).toContain(
       "The card's starting value plus every checked payment tied to the client since. Written to ClickUp each morning.",
     );
-    expect(t).toContain(
-      "Checked against the payments tied straight to each card: ok.",
-    );
+    expect(t).toContain("Matches the payments tied to each card.");
     expect(t).toContain("Cards up to date1");
     expect(t).toContain("Written today2");
     expect(t).toContain("Waiting for you1");
@@ -253,7 +251,7 @@ describe("Lifetime value (5.5)", () => {
     expect(win.document.querySelector('[data-ltv-row="t4"]')).toBeNull();
     expect(
       String(win.document.querySelector('[data-ltv-held="t5"]')?.textContent),
-    ).toContain("Held: over $5,000 change");
+    ).toContain("Held: over a $5,000 change");
     await render(h("div"));
   });
 
@@ -283,9 +281,7 @@ describe("Lifetime value (5.5)", () => {
     expect(page()).toContain(
       "The morning writer is off. Nothing is written to the card.",
     );
-    expect(page()).toContain(
-      "Checked against the payments tied straight to each card: 3 cards differ.",
-    );
+    expect(page()).toContain("3 cards differ from the payments tied to them.");
     await render(h("div"));
     for (const [door, line] of [
       [MISSING, "Opens after the next cockpit update."],
@@ -349,6 +345,7 @@ describe("the billing agent's login (5.7)", () => {
     note: null,
     addedAt: "2026-11-05T09:00:00Z",
     revokedAt: null,
+    revokedReason: null,
     lastCallAt: "2026-11-06T07:42:00Z",
     callsToday: 12,
   };
@@ -404,6 +401,31 @@ describe("the billing agent's login (5.7)", () => {
     expect(page()).toContain(
       "No key yet. The agent still uses the old access until the next deploy step.",
     );
+    await render(h("div"));
+    // After Revoke: the card says so and why, never "No key yet".
+    const gone = agentOf(
+      [
+        {
+          ...key,
+          revokedAt: "2026-11-06T09:00:00Z",
+          revokedReason: "The key leaked in a log",
+          callsToday: 0,
+        },
+      ],
+      true,
+    );
+    await render(h(billing.AgentCard, { api: gone.api, door: OPEN }));
+    expect(
+      String(win.document.querySelector("[data-agent-revoked]")?.textContent),
+    ).toBe(
+      "Revoked on 6 Nov: The key leaked in a log. The agent cannot write until a new key is set on the server.",
+    );
+    expect(page()).not.toContain("No key yet");
+    await render(h("div"));
+    // One call today reads "1 call".
+    const one = agentOf([{ ...key, callsToday: 1 }], true);
+    await render(h(billing.AgentCard, { api: one.api, door: OPEN }));
+    expect(page()).toContain("· 1 call today");
     await render(h("div"));
     const shut = agentOf([key], false);
     await render(h(billing.AgentCard, { api: shut.api, door: MISSING }));

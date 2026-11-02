@@ -39,7 +39,7 @@ DO $$
 DECLARE r record; v text;
 BEGIN
   FOR r IN SELECT * FROM (VALUES
-      ('cockpit_ceo_pay_entry_save', 'p jsonb', '48ff70e02b66ffefc858342146b41998', 'ea917bb7adf730d787bf34beadc7aa30'),
+      ('cockpit_ceo_pay_entry_save', 'p jsonb', '48ff70e02b66ffefc858342146b41998', '8a6dddff39d81969176ac94c60d31df6'),
       ('cockpit_ceo_payment_tie', 'p jsonb', 'b46f90ce93bbf07f35614de78805534d', 'f0e9b33d147639c890966b9e83c2af48'),
       ('cockpit_ceo_payment_untie', 'p jsonb', 'e569f8c08d8260b4cdbc4a237c1c51c9', 'ee27b60cc0c347be5fee32d71fb8086e')
     ) AS x(fn, args, live, after)
@@ -366,9 +366,13 @@ ALTER TABLE public.cockpit_invoices ADD COLUMN IF NOT EXISTS win_id uuid REFEREN
 CREATE INDEX IF NOT EXISTS cockpit_invoices_win ON public.cockpit_invoices (win_id) WHERE win_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS public.cockpit_pay_proposal_decisions (
-  key text PRIMARY KEY CHECK (key ~ '^win:[0-9a-f-]{36}:[a-z][a-z0-9_]{0,39}:[0-9]{4}-[0-9]{2}$'),
+  -- win:{id}:{part}:{YYYY-MM}, and :{n} for a top-up (cash tied or checked after the first decision of the month).
+  key text PRIMARY KEY CHECK (key ~ '^win:[0-9a-f-]{36}:[a-z][a-z0-9_]{0,39}:[0-9]{4}-[0-9]{2}(:[0-9]{1,3})?$'),
   month date NOT NULL CHECK (extract(day FROM month) = 1),
   decision text NOT NULL CHECK (decision IN ('confirmed','declined')),
+  -- What the decision covered: the checked cash (a share part) or the count (a per-event part).
+  cash_usd numeric CHECK (cash_usd IS NULL OR cash_usd >= 0),
+  quantity numeric,
   entry_id bigint REFERENCES public.cockpit_pay_entries(id),
   reason text CHECK (reason IS NULL OR char_length(btrim(reason)) BETWEEN 3 AND 300),
   decided_by text NOT NULL,
@@ -458,7 +462,9 @@ BEGIN
      OR NEW.kind IS DISTINCT FROM OLD.kind OR NEW.source IS DISTINCT FROM OLD.source OR NEW.won_on IS DISTINCT FROM OLD.won_on
      OR NEW.imported_from IS DISTINCT FROM OLD.imported_from OR NEW.logged_at IS DISTINCT FROM OLD.logged_at
      OR NEW.logged_by IS DISTINCT FROM OLD.logged_by OR NEW.proposal_id IS DISTINCT FROM OLD.proposal_id
-     OR NEW.referral_deal_response_id IS DISTINCT FROM OLD.referral_deal_response_id OR NEW.departure_id IS DISTINCT FROM OLD.departure_id
+     OR NEW.referral_deal_response_id IS DISTINCT FROM OLD.referral_deal_response_id
+     OR (NEW.departure_id IS DISTINCT FROM OLD.departure_id
+         AND NOT (v_act = 'reactivate_attach' AND OLD.departure_id IS NULL AND NEW.departure_id IS NOT NULL AND OLD.kind = 'reactivation'))
      OR NEW.quoted_usd IS DISTINCT FROM OLD.quoted_usd OR NEW.recurring IS DISTINCT FROM OLD.recurring
      OR NEW.monthly_usd IS DISTINCT FROM OLD.monthly_usd THEN
     RAISE EXCEPTION 'A win keeps its card, kind, day and price. Void it and log it again.' USING ERRCODE = '55000';
@@ -611,13 +617,45 @@ BEGIN
   RETURN NULL;
 END $$;
 
+-- The signed deals Log a win's referral picker shows a seat (5.1): the last 120 days, not voided,
+-- not already a referral win. The CEO sees every one; a CSM sees those whose lead source says
+-- referral or whose card the CSM is allowed on, so a CSM never lists every new client's name.
+CREATE OR REPLACE FUNCTION public.cockpit_win_referral_deals(p_ceo boolean)
+RETURNS TABLE (response_id text, business text, signed_on date, submitted_at timestamptz)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  WITH allowed AS (
+    SELECT dc.deal_response_id FROM public.cockpit_billing_deal_cards() dc
+      JOIN public.cockpit_billing_accounts a ON a.clickup_task_id = dc.clickup_task_id
+     WHERE NOT p_ceo AND coalesce(public.cockpit_client_allowed(a.client_name), false))
+  SELECT d.response_id,
+         coalesce(nullif(btrim(d.business_name), ''), nullif(btrim(d.client_name), ''), 'A signed client'),
+         (d.submitted_at AT TIME ZONE 'Asia/Kuwait')::date, d.submitted_at
+    FROM public.cockpit_sales_deals d
+   WHERE d.submitted_at IS NOT NULL AND NOT d.voided AND d.submitted_at >= now() - interval '120 days'
+     AND NOT EXISTS (SELECT 1 FROM public.cockpit_csm_wins w WHERE w.referral_deal_response_id = d.response_id AND w.stage <> 'void')
+     AND (p_ceo OR coalesce(d.lead_source, '') ~* 'referr' OR d.response_id IN (SELECT a.deal_response_id FROM allowed a))
+$$;
+
+-- The first day a win can be paid in: the win day, or earlier money that clears it (the referred
+-- client's first deal payment, the first tied payment), so a payment before the win day is proposed
+-- in its own month (4.9).
+CREATE OR REPLACE FUNCTION public.cockpit_win_first_day(p_win_id uuid)
+RETURNS date LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT least(w.won_on,
+               (SELECT min(dp.day) FROM public.cockpit_deal_payments dp
+                 WHERE w.kind = 'referral' AND dp.deal_response_id = w.referral_deal_response_id AND dp.active),
+               (SELECT min(t.paid_on) FROM public.cockpit_win_ties(w.id) t))
+    FROM public.cockpit_csm_wins w WHERE w.id = p_win_id
+$$;
+
 -- One win as the screens read it (3.3 WinRow). Never a payer or an email.
 CREATE OR REPLACE FUNCTION public.cockpit_win_row(p_win_id uuid)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
-DECLARE w public.cockpit_csm_wins; f jsonb; v_pending jsonb; v_pay jsonb; v_invoice uuid; v_offer text;
+DECLARE w public.cockpit_csm_wins; f jsonb; v_pending jsonb; v_pay jsonb; v_invoice uuid; v_offer text; v_start date;
 BEGIN
   SELECT * INTO w FROM public.cockpit_csm_wins x WHERE x.id = p_win_id;
   IF NOT FOUND THEN RETURN NULL; END IF;
+  v_start := public.cockpit_win_first_day(w.id);
   f := public.cockpit_win_tie_facts(w.id);
   SELECT jsonb_build_object('id', tp.id, 'usd', tp.usd, 'paidOn', tp.paid_on) INTO v_pending
     FROM public.cockpit_win_tie_proposals tp WHERE tp.win_id = w.id AND tp.state = 'open' ORDER BY tp.id DESC LIMIT 1;
@@ -637,8 +675,8 @@ BEGIN
       WHEN count(*) FILTER (WHERE r.state = 'declined') > 0 THEN
         jsonb_build_object('state', 'declined', 'why', min(r.why) FILTER (WHERE r.state = 'declined'), 'amountUsd', NULL)
       END INTO v_pay
-      FROM generate_series(date_trunc('month', w.won_on)::date,
-                           greatest(date_trunc('month', w.won_on)::date, date_trunc('month', public.cockpit_billing_today())::date),
+      FROM generate_series(date_trunc('month', v_start)::date,
+                           greatest(date_trunc('month', v_start)::date, date_trunc('month', public.cockpit_billing_today())::date),
                            interval '1 month') AS m(month)
       CROSS JOIN LATERAL public.cockpit_win_pay_rows(m.month::date) r
      WHERE r.win_id = w.id;
@@ -770,6 +808,10 @@ BEGIN
          WHERE d.response_id = v_deal AND d.submitted_at IS NOT NULL AND NOT d.voided) THEN
       RAISE EXCEPTION 'Pick the referred client''s signed deal.' USING ERRCODE = '22023';
     END IF;
+    IF NOT (v_seat->>'ceo')::boolean AND NOT EXISTS (SELECT 1 FROM public.cockpit_win_referral_deals(false) x WHERE x.response_id = v_deal)
+       AND NOT EXISTS (SELECT 1 FROM public.cockpit_csm_wins w WHERE w.referral_deal_response_id = v_deal AND w.stage <> 'void') THEN
+      RAISE EXCEPTION 'That deal is not one you can pick. Ask the CEO to log this referral.' USING ERRCODE = '42501';
+    END IF;
     SELECT w.won_on INTO v_hit FROM public.cockpit_csm_wins w
      WHERE w.referral_deal_response_id = v_deal AND w.stage <> 'void' ORDER BY w.won_on LIMIT 1;
     IF FOUND THEN
@@ -777,7 +819,7 @@ BEGIN
     END IF;
   END IF;
   IF v_kind IN ('renewal', 'reactivation') AND v_agreement IS NULL THEN
-    v_next := 'Add the agreement link or tie a payment later.';
+    v_next := 'Add the agreement link to clear it for pay.';
   END IF;
   -- A hand-logged reactivation never doubles a Reactivate (4.3.6).
   IF v_kind = 'reactivation' THEN
@@ -788,6 +830,18 @@ BEGIN
     IF FOUND THEN
       RAISE EXCEPTION '% was reopened on % and that return already has its win.', v_client, public.cockpit_billing_day_words(v_hit.won_on)
         USING ERRCODE = '22023';
+    END IF;
+  END IF;
+  -- A link already paid for on a win voided since is never paid a second time.
+  IF v_proof IS NOT NULL THEN
+    SELECT w.won_on INTO v_hit FROM public.cockpit_csm_wins w
+     WHERE w.task_id = v_task AND w.stage = 'void' AND lower(w.proof_url) = lower(v_proof)
+       AND EXISTS (SELECT 1 FROM public.cockpit_pay_proposal_decisions d
+                    WHERE d.key LIKE 'win:' || w.id::text || ':%' AND d.decision = 'confirmed')
+     ORDER BY w.won_on DESC LIMIT 1;
+    IF FOUND THEN
+      RAISE EXCEPTION 'That link was paid for on a win of % that was voided since. Ask the CEO.',
+        public.cockpit_billing_day_words(v_hit.won_on) USING ERRCODE = '22023';
     END IF;
   END IF;
   -- A second review or renewal within 30 days asks first; nothing is stored.
@@ -890,7 +944,7 @@ CREATE OR REPLACE FUNCTION public.cockpit_csm_win_stage(p jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   v_req uuid; v_win uuid; w public.cockpit_csm_wins; v_seat jsonb; v_act text; v_role text; v_email text;
-  v_agreement text; v_proof text; v_reason text; v_ceo boolean; v_done record;
+  v_agreement text; v_proof text; v_reason text; v_ceo boolean; v_done record; v_entries jsonb;
 BEGIN
   PERFORM public.cockpit_win_only(p, ARRAY['requestId','winId','act','agreementUrl','reason','proofUrl']);
   v_req := public.cockpit_win_uuid(p, 'requestId');
@@ -930,6 +984,10 @@ BEGIN
     IF w.stage = 'paid' AND (NOT v_ceo OR EXISTS (SELECT 1 FROM public.cockpit_payment_ties t WHERE t.win_id = w.id AND t.cleared_at IS NULL)) THEN
       RAISE EXCEPTION 'Clear the payment tie first. Only the CEO voids a paid win.' USING ERRCODE = '22023';
     END IF;
+    IF NOT v_ceo AND EXISTS (SELECT 1 FROM public.cockpit_pay_proposal_decisions d
+                              WHERE d.key LIKE 'win:' || w.id::text || ':%' AND d.decision = 'confirmed') THEN
+      RAISE EXCEPTION 'This win was paid for. Ask the CEO to void it.' USING ERRCODE = '22023';
+    END IF;
     PERFORM set_config('cockpit.wins_action', 'wins.voided', true);
     UPDATE public.cockpit_csm_wins SET stage = 'void', voided_by = coalesce(v_email, v_role), voided_at = now(), void_reason = v_reason
      WHERE id = w.id;
@@ -937,7 +995,18 @@ BEGIN
            reason = 'The win was voided.'
      WHERE win_id = w.id AND state = 'open';
     PERFORM public.cockpit_win_event(w.id, 'voided', v_role, v_email, jsonb_build_object('request_id', v_req, 'reason', v_reason));
-    RETURN jsonb_build_object('ok', true, 'winId', w.id, 'stage', 'void', 'sentence', 'Voided.');
+    -- The pay entries this win made in months not yet approved: the CEO removes or adjusts them.
+    SELECT coalesce(jsonb_agg(jsonb_build_object('entryId', e.id, 'month', to_char(e.month, 'YYYY-MM'), 'person', p2.name,
+             'part', public.cockpit_win_part_label(e.part_key)) ORDER BY e.month, e.id), '[]'::jsonb)
+      INTO v_entries
+      FROM public.cockpit_pay_entries e JOIN public.cockpit_people p2 ON p2.id = e.person_id
+     WHERE e.evidence_ref = 'win:' || w.id::text AND e.voided_at IS NULL
+       AND NOT EXISTS (SELECT 1 FROM public.cockpit_pay_months pm WHERE pm.person_id = e.person_id AND pm.month = e.month AND pm.status = 'approved');
+    RETURN jsonb_build_object('ok', true, 'winId', w.id, 'stage', 'void', 'entries', v_entries,
+      'sentence', CASE WHEN jsonb_array_length(v_entries) = 0 THEN 'Voided.'
+                       ELSE format('Voided. %s pay %s came from this win; remove or adjust %s on Team & payroll.',
+                                   jsonb_array_length(v_entries), CASE WHEN jsonb_array_length(v_entries) = 1 THEN 'entry' ELSE 'entries' END,
+                                   CASE WHEN jsonb_array_length(v_entries) = 1 THEN 'it' ELSE 'them' END) END);
   ELSIF v_act = 'proof' THEN
     IF w.stage = 'void' THEN RAISE EXCEPTION 'That win was voided.' USING ERRCODE = '22023'; END IF;
     v_proof := public.cockpit_win_link(p, 'proofUrl');
@@ -978,15 +1047,9 @@ BEGIN
                              FROM public.cockpit_upsell_proposals u
                              CROSS JOIN LATERAL public.cockpit_win_proposal_prices(u.id) pr
                             WHERE u.task_id = p_task_id AND u.status IN ('sent', 'link_copied', 'accepted')), '[]'::jsonb),
-    'referralDeals', coalesce((SELECT jsonb_agg(jsonb_build_object('responseId', d.response_id,
-                                 'business', coalesce(nullif(btrim(d.business_name), ''), nullif(btrim(d.client_name), ''), 'A signed client'),
-                                 'signedOn', (d.submitted_at AT TIME ZONE 'Asia/Kuwait')::date)
-                                 ORDER BY d.submitted_at DESC)
-                                 FROM public.cockpit_sales_deals d
-                                WHERE d.submitted_at IS NOT NULL AND NOT d.voided
-                                  AND d.submitted_at >= now() - interval '120 days'
-                                  AND NOT EXISTS (SELECT 1 FROM public.cockpit_csm_wins w
-                                                   WHERE w.referral_deal_response_id = d.response_id AND w.stage <> 'void')), '[]'::jsonb),
+    'referralDeals', coalesce((SELECT jsonb_agg(jsonb_build_object('responseId', d.response_id, 'business', d.business,
+                                 'signedOn', d.signed_on) ORDER BY d.submitted_at DESC)
+                                 FROM public.cockpit_win_referral_deals(coalesce((v_seat->>'ceo')::boolean, false)) d), '[]'::jsonb),
     'doorOpen', public.cockpit_win_door_open(),
     'seatRole', v_seat->>'role');
 END $$;
@@ -1364,14 +1427,21 @@ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   m0 date := date_trunc('month', p_month)::date;
   w public.cockpit_csm_wins; v_part text; v_q numeric; v_cash numeric; v_em integer; v_cleared date; v_posted date;
-  v_state text; v_why text; v_first date; v_any boolean; v_plan jsonb; v_role text; d public.cockpit_pay_proposal_decisions;
+  v_state text; v_why text; v_first date; v_any boolean; v_unchecked boolean; v_plan jsonb; v_role text;
+  d public.cockpit_pay_proposal_decisions; v_base text; v_n integer; v_decided numeric; v_closer text; v_open boolean;
 BEGIN
+  -- A win is read in every month its money can fall in (4.9): reviews, testimonials, podcasts,
+  -- renewals and reactivations in the win's own month; a referral in the month the referred deal
+  -- first paid (which may be before the win day); an upsell in each month a tied payment fell in
+  -- (a tie may be up to 30 days before the win day).
   FOR w IN SELECT * FROM public.cockpit_csm_wins x
             WHERE x.stage <> 'void' AND x.source IN ('cockpit', 'reactivate') AND x.task_id <> public.cockpit_win_canary_card()
-              AND x.won_on < (m0 + interval '1 month')::date
+              AND (x.kind IN ('referral') OR public.cockpit_win_is_upsell(x.kind)
+                   OR (x.won_on >= m0 AND x.won_on < (m0 + interval '1 month')::date))
             ORDER BY x.won_on, x.logged_at LOOP
     v_part := public.cockpit_win_part(w.kind, w.recurring);
     v_q := NULL; v_cash := NULL; v_em := NULL; v_cleared := NULL; v_posted := NULL; v_state := 'proposed'; v_why := NULL;
+    v_unchecked := false; v_closer := NULL;
     IF w.kind IN ('review', 'video_testimonial', 'podcast') THEN
       CONTINUE WHEN date_trunc('month', w.won_on)::date <> m0;
       v_q := 1; v_cleared := w.won_on; v_posted := w.won_on;
@@ -1386,30 +1456,72 @@ BEGIN
         v_q := 1;
       END IF;
     ELSIF w.kind IN ('renewal', 'reactivation') THEN
-      v_cleared := CASE WHEN w.agreement_url IS NOT NULL THEN w.won_on END;
-      IF v_cleared IS NULL THEN SELECT min(t.paid_on) INTO v_cleared FROM public.cockpit_win_ties(w.id) t WHERE t.checked; END IF;
-      IF v_cleared IS NULL THEN
-        CONTINUE WHEN date_trunc('month', w.won_on)::date <> m0;
-        v_state := 'waiting'; v_why := 'No agreement link or tied payment yet.';
+      -- Cleared by the signed agreement (3.3): a renewal or reactivation never takes a payment tie.
+      CONTINUE WHEN date_trunc('month', w.won_on)::date <> m0;
+      IF w.agreement_url IS NULL THEN
+        v_state := 'waiting'; v_why := 'Add the agreement link to clear it for pay.';
       ELSE
-        CONTINUE WHEN date_trunc('month', v_cleared)::date <> m0;
-        v_q := 1;
+        v_cleared := w.won_on; v_q := 1;
       END IF;
     ELSE
       -- An upsell pays on the checked cash tied to it, month by month.
       SELECT min(t.paid_on) INTO v_first FROM public.cockpit_win_ties(w.id) t;
       CONTINUE WHEN v_first IS NULL;
-      SELECT round(sum(t.usd) FILTER (WHERE t.checked), 2), min(t.paid_on) FILTER (WHERE t.checked), count(*) > 0
-        INTO v_cash, v_cleared, v_any
+      SELECT round(sum(t.usd) FILTER (WHERE t.checked), 2), min(t.paid_on) FILTER (WHERE t.checked), count(*) > 0,
+             coalesce(bool_or(NOT coalesce(t.checked, false)), false)
+        INTO v_cash, v_cleared, v_any, v_unchecked
         FROM public.cockpit_win_ties(w.id) t WHERE date_trunc('month', t.paid_on)::date = m0;
       CONTINUE WHEN NOT coalesce(v_any, false);
-      IF v_cash IS NULL OR v_cash <= 0 THEN
-        v_state := 'waiting'; v_why := 'Cash not checked yet.'; v_cash := NULL;
-      END IF;
+      -- Never paid twice (X31): a tied payment the closer was already paid on in an approved month.
+      SELECT public.cockpit_win_closer_paid(t.payment_id)->>'month' INTO v_closer
+        FROM public.cockpit_win_ties(w.id) t
+       WHERE date_trunc('month', t.paid_on)::date = m0 AND public.cockpit_win_closer_paid(t.payment_id) IS NOT NULL
+       ORDER BY t.paid_on LIMIT 1;
       v_em := CASE WHEN w.recurring
                    THEN ((extract(year FROM m0) - extract(year FROM v_first)) * 12 + extract(month FROM m0) - extract(month FROM v_first))::integer + 1
                    ELSE 1 END;
     END IF;
+
+    v_base := format('win:%s:%s:%s', w.id, v_part, to_char(m0, 'YYYY-MM'));
+    win_id := w.id; task_id := w.task_id; client := w.client_name; person_id := w.csm_person_id; part_key := v_part;
+    engagement_month := v_em; posted_on := v_posted;
+    evidence_ref := 'win:' || w.id::text; proof_url := coalesce(w.proof_url, w.agreement_url);
+
+    -- The decided rows of the month, each with what it covered (a confirmed row shows what was paid).
+    v_n := 0; v_decided := 0;
+    FOR d IN SELECT * FROM public.cockpit_pay_proposal_decisions x
+              WHERE x.key = v_base OR x.key LIKE v_base || ':%' ORDER BY x.decided_at, x.key LOOP
+      v_n := v_n + 1;
+      v_decided := v_decided + coalesce(d.cash_usd, v_cash, 0);
+      key := d.key; quantity := coalesce(d.quantity, v_q); cash_usd := coalesce(d.cash_usd, v_cash);
+      cleared_on := v_cleared; entry_id := d.entry_id; state := d.decision;
+      why := CASE WHEN d.decision = 'declined' THEN d.reason END;
+      amount_usd := CASE WHEN d.decision = 'confirmed'
+                         THEN public.cockpit_win_price(w.csm_person_id, m0, v_part, coalesce(d.quantity, v_q), coalesce(d.cash_usd, v_cash), v_em) END;
+      RETURN NEXT;
+    END LOOP;
+
+    -- What is still open: the first proposal of the month, or (an upsell) the cash checked since.
+    IF public.cockpit_win_is_upsell(w.kind) THEN
+      IF v_n = 0 THEN
+        v_open := true;
+        IF v_cash IS NULL OR v_cash <= 0 THEN v_state := 'waiting'; v_why := 'Cash not checked yet.'; v_cash := NULL; END IF;
+      ELSIF coalesce(v_cash, 0) - v_decided > 0.005 THEN
+        v_open := true; v_cash := round(v_cash - v_decided, 2);
+      ELSIF v_unchecked THEN
+        v_open := true; v_state := 'waiting'; v_why := 'Cash not checked yet.'; v_cash := NULL;
+      ELSE
+        v_open := false;
+      END IF;
+      IF v_open AND v_state = 'proposed' AND v_closer IS NOT NULL THEN
+        v_state := 'waiting';
+        v_why := format('This payment was paid to the closer in %s.', public.cockpit_win_month_words(to_date(v_closer, 'YYYY-MM')));
+      END IF;
+    ELSE
+      v_open := v_n = 0;
+    END IF;
+    CONTINUE WHEN NOT v_open;
+
     -- The part must be in the person's plan for the month.
     IF v_state = 'proposed' AND w.csm_person_id IS NOT NULL THEN
       v_plan := public.cockpit_pay_plan_for(w.csm_person_id, m0);
@@ -1421,18 +1533,9 @@ BEGIN
     ELSIF v_state = 'proposed' THEN
       v_why := 'No CSM on the roster matches this card. Pick the person when you confirm.';
     END IF;
-    key := format('win:%s:%s:%s', w.id, v_part, to_char(m0, 'YYYY-MM'));
-    SELECT * INTO d FROM public.cockpit_pay_proposal_decisions x WHERE x.key = format('win:%s:%s:%s', w.id, v_part, to_char(m0, 'YYYY-MM'));
-    IF d.key IS NOT NULL THEN
-      v_state := d.decision; entry_id := d.entry_id;
-      IF d.decision = 'declined' THEN v_why := d.reason; END IF;
-    ELSE
-      entry_id := NULL;
-    END IF;
-    win_id := w.id; task_id := w.task_id; client := w.client_name; person_id := w.csm_person_id; part_key := v_part;
-    quantity := v_q; cash_usd := v_cash; engagement_month := v_em; cleared_on := v_cleared; posted_on := v_posted;
-    evidence_ref := 'win:' || w.id::text; proof_url := coalesce(w.proof_url, w.agreement_url);
-    amount_usd := CASE WHEN v_state IN ('proposed', 'confirmed') THEN public.cockpit_win_price(w.csm_person_id, m0, v_part, v_q, v_cash, v_em) END;
+    key := CASE WHEN v_n = 0 THEN v_base ELSE v_base || ':' || (v_n + 1)::text END;
+    quantity := v_q; cash_usd := v_cash; cleared_on := v_cleared; entry_id := NULL;
+    amount_usd := CASE WHEN v_state = 'proposed' THEN public.cockpit_win_price(w.csm_person_id, m0, v_part, v_q, v_cash, v_em) END;
     state := v_state; why := v_why;
     RETURN NEXT;
   END LOOP;
@@ -1488,7 +1591,7 @@ BEGIN
   IF v_existing.key IS NOT NULL THEN
     RAISE EXCEPTION 'That proposal was already %.', v_existing.decision USING ERRCODE = '22023';
   END IF;
-  SELECT * INTO r FROM public.cockpit_win_pay_rows(m0) x WHERE x.key = v_key;
+  SELECT * INTO r FROM public.cockpit_win_pay_rows(m0) x WHERE x.key = v_key AND x.state IN ('proposed', 'waiting');
   IF NOT FOUND THEN
     RAISE EXCEPTION 'That proposal is not in %. Reload the list.', public.cockpit_win_month_words(m0) USING ERRCODE = '22023';
   END IF;
@@ -1496,8 +1599,8 @@ BEGIN
   IF v_decision = 'decline' THEN
     IF v_reason IS NULL THEN RAISE EXCEPTION 'Say why in 3 to 300 characters.' USING ERRCODE = '22023'; END IF;
     PERFORM set_config('cockpit.wins_action', 'pay.proposal_declined', true);
-    INSERT INTO public.cockpit_pay_proposal_decisions(key, month, decision, entry_id, reason, decided_by)
-    VALUES (v_key, m0, 'declined', NULL, v_reason, v_actor);
+    INSERT INTO public.cockpit_pay_proposal_decisions(key, month, decision, entry_id, reason, decided_by, cash_usd, quantity)
+    VALUES (v_key, m0, 'declined', NULL, v_reason, v_actor, r.cash_usd, r.quantity);
     RETURN jsonb_build_object('ok', true, 'key', v_key, 'state', 'declined', 'sentence', 'Declined.');
   END IF;
   IF v_decision <> 'confirm' THEN RAISE EXCEPTION 'Choose confirm or decline.' USING ERRCODE = '22023'; END IF;
@@ -1515,6 +1618,11 @@ BEGIN
     v_carried := true;
   END IF;
   -- The entry save path, as the CEO: its gate, its rules (the C7 rule included) and its audit.
+  -- A top-up key (win:...:YYYY-MM:n) is a new decision for the same win, part and month: the entry
+  -- save's one-entry rule lets exactly this key through (transaction-local, never from a browser).
+  IF v_key ~ ':[0-9]{1,3}$' THEN
+    PERFORM set_config('cockpit.pay_topup', r.evidence_ref || '|' || r.part_key || '|' || to_char(m0, 'YYYY-MM'), true);
+  END IF;
   v_entry := public.cockpit_ceo_pay_entry_save(jsonb_strip_nulls(jsonb_build_object(
     'personId', v_person, 'month', to_char(v_target, 'YYYY-MM'), 'partKey', r.part_key,
     'quantity', r.quantity, 'cashUsd', r.cash_usd, 'engagementMonth', r.engagement_month,
@@ -1523,9 +1631,10 @@ BEGIN
     'note', public.cockpit_win_part_label(r.part_key),
     'forMonth', CASE WHEN v_carried THEN to_char(m0, 'YYYY-MM') END)));
   v_entry_id := (v_entry->>'id')::bigint;
+  PERFORM set_config('cockpit.pay_topup', '', true);
   PERFORM set_config('cockpit.wins_action', 'pay.proposal_confirmed', true);
-  INSERT INTO public.cockpit_pay_proposal_decisions(key, month, decision, entry_id, reason, decided_by)
-  VALUES (v_key, m0, 'confirmed', v_entry_id, v_reason, v_actor);
+  INSERT INTO public.cockpit_pay_proposal_decisions(key, month, decision, entry_id, reason, decided_by, cash_usd, quantity)
+  VALUES (v_key, m0, 'confirmed', v_entry_id, v_reason, v_actor, r.cash_usd, r.quantity);
   RETURN jsonb_build_object('ok', true, 'key', v_key, 'state', 'confirmed', 'entryId', v_entry_id, 'month', to_char(v_target, 'YYYY-MM'),
     'sentence', CASE WHEN v_carried
                      THEN format('Added to %s: %s is approved.', public.cockpit_win_month_words(v_target), public.cockpit_win_month_words(m0))
@@ -1811,7 +1920,8 @@ BEGIN
           WHERE pm.person_id=v_person.id AND pm.month=v_for AND pm.status='approved')) THEN
         RAISE EXCEPTION 'A carried entry names an approved month before the one it goes into.' USING ERRCODE='22023';
       END IF;
-      IF EXISTS (SELECT 1 FROM public.cockpit_pay_entries e WHERE e.evidence_ref=eref AND e.part_key=pk AND e.voided_at IS NULL
+      IF coalesce(current_setting('cockpit.pay_topup',true),'') IS DISTINCT FROM eref||'|'||pk||'|'||to_char(coalesce(v_for,m0),'YYYY-MM')
+        AND EXISTS (SELECT 1 FROM public.cockpit_pay_entries e WHERE e.evidence_ref=eref AND e.part_key=pk AND e.voided_at IS NULL
           AND CASE WHEN e.note ~ '^For [A-Z][a-z]+ [0-9]{4}: ' THEN to_date(substring(e.note FROM '^For ([A-Z][a-z]+ [0-9]{4}): '),'FMMonth YYYY')
                    ELSE e.month END=coalesce(v_for,m0)) THEN
         RAISE EXCEPTION 'This win is already paid for %.', to_char(coalesce(v_for,m0),'FMMonth YYYY') USING ERRCODE='22023';
@@ -1933,6 +2043,7 @@ BEGIN
     'public.cockpit_win_uuid(jsonb,text)', 'public.cockpit_win_only(jsonb,text[])', 'public.cockpit_win_canary_card()',
     'public.cockpit_win_door_open()', 'public.cockpit_win_proposals_on()', 'public.cockpit_win_seat(text)',
     'public.cockpit_win_csm_person(text)', 'public.cockpit_win_proposal_prices(uuid)', 'public.cockpit_wins_audit()',
+    'public.cockpit_win_referral_deals(boolean)', 'public.cockpit_win_first_day(uuid)',
     'public.cockpit_wins_append_only()', 'public.cockpit_win_tie_proposals_guard()', 'public.cockpit_csm_wins_guard()',
     'public.cockpit_win_ties(uuid)', 'public.cockpit_win_event_day(uuid,text)', 'public.cockpit_win_tie_facts(uuid)',
     'public.cockpit_win_deal_row(text)', 'public.cockpit_win_contract_money(text)', 'public.cockpit_win_closer_paid(text)',

@@ -1412,11 +1412,12 @@ const slot = (
   field = "receipt",
   loc = LOC_A,
   task = A,
+  role: "admin" | "member" = "admin",
 ) =>
   as<Row>(
     "service",
-    "SELECT public.portal_form_file_slot($1, $2, $3, $4::uuid, $5, $6, $7, $8) AS r",
-    [loc, task, PERSON, invite, field, mime, bytes, sha],
+    "SELECT public.portal_form_file_slot($1, $2, $3, $4, $5::uuid, $6, $7, $8, $9) AS r",
+    [loc, task, PERSON, role, invite, field, mime, bytes, sha],
   );
 const putObject = (path: string, mime: string, size: number) =>
   q(
@@ -1707,7 +1708,7 @@ describe("the file", () => {
       expect([fn, await acl(fn)]).toEqual([fn, ACL_AUTH]);
     for (const fn of [
       "public.portal_form_get(text,text,text,text,uuid)",
-      "public.portal_form_file_slot(text,text,text,uuid,text,text,bigint,text)",
+      "public.portal_form_file_slot(text,text,text,text,uuid,text,text,bigint,text)",
       "public.portal_form_token_file_slot(text,text,text,text,text,bigint,text)",
     ])
       expect([fn, await acl(fn)]).toEqual([fn, ACL_SERVICE]);
@@ -3235,5 +3236,182 @@ describe("the C9 retire registry (3.7, 11.3)", () => {
         )
       ).message,
     ).toBe("The old forms list is for the CEO and admins.");
+  });
+});
+
+// --- Waves 5-6 review fixes -----------------------------------------------------------------------
+
+describe("review fixes: receipts, slots, returns and the Today rows", () => {
+  test("an admin-only invite gives a member of the workspace no upload slot", async () => {
+    await rolledBack(async () => {
+      const sent = await issue(CSM_A, A, CTX);
+      expect(
+        await slot(
+          sent.inviteId,
+          SHA_A,
+          "image/jpeg",
+          182340,
+          "receipt",
+          LOC_A,
+          A,
+          "member",
+        ),
+      ).toEqual({
+        ok: false,
+        reason: "admin_only",
+      });
+      expect(
+        await one<number>(
+          "SELECT count(*)::int AS r FROM public.cockpit_form_file_slots WHERE invite_id = $1::uuid",
+          [sent.inviteId],
+        ),
+      ).toBe(0);
+      expect((await slot(sent.inviteId, SHA_A)).ok).toBe(true);
+    });
+  });
+
+  test("a named transfer deleted before the answer gets no receipt; the answer goes to the inbox", async () => {
+    await rolledBack(async () => {
+      const mp = await manualPayment();
+      const sent = await issue(CSM_A, A, { ...CTX, manualPaymentId: mp });
+      const s = await slot(sent.inviteId, SHA_A);
+      await putObject(s.path, "image/jpeg", 182340);
+      await q(
+        "UPDATE public.cockpit_manual_payments SET deleted_at = now(), deleted_by = 'test', delete_reason = 'Logged twice' WHERE id = $1",
+        [mp],
+      );
+      const got = await submit(sent.inviteId, {
+        amount: 250,
+        currency: "kwd",
+        paidOn: day(-1),
+        reference: "FT1102",
+        receipt: {
+          path: s.path,
+          mime: "image/jpeg",
+          bytes: 182340,
+          sha256: SHA_A,
+          name: "receipt.jpg",
+        },
+      });
+      expect(got.ok).toBe(true);
+      expect(
+        await one<number>(
+          "SELECT count(*)::int AS r FROM public.cockpit_payment_receipts WHERE manual_payment_id = $1",
+          [mp],
+        ),
+      ).toBe(0);
+      expect(
+        await one<number>(
+          "SELECT count(*)::int AS r FROM public.cockpit_billing_inbox WHERE response_id = $1::uuid",
+          [got.responseId],
+        ),
+      ).toBe(1);
+    });
+  });
+
+  test("a reactivation logged by hand becomes the return's win: one win, never two", async () => {
+    await rolledBack(async () => {
+      await setMarker(true);
+      const D = "taskD4";
+      await q(
+        "INSERT INTO public.cockpit_billing_accounts(clickup_task_id, client_name, stage, client_status, mrr_usd, csm) VALUES ($1, 'Dune Interiors', 'Active', 'Active', 900, 'Huda Test')",
+        [D],
+      );
+      const left = await as<Row>(
+        CEO,
+        "SELECT public.cockpit_client_lifecycle_confirm('churn', $1::jsonb) AS r",
+        [
+          json({
+            taskId: D,
+            requestId: rid(),
+            leftOn: day(-5),
+            reason: "Cancelled",
+            churnType: "mid_programme",
+            whyDetail: "The owner paused marketing for the season.",
+            howToStop: "Agree the next campaign earlier.",
+            mrrLostUsd: 900,
+            surveyState: "not_sent",
+          }),
+        ],
+      );
+      const hand = await one<string>(
+        `INSERT INTO public.cockpit_csm_wins(request_id, task_id, client_name, kind, stage, won_on, source, logged_by_role)
+         VALUES (gen_random_uuid(), $1, 'Dune Interiors', 'reactivation', 'logged', $2::date, 'cockpit', 'the CSM') RETURNING id::text AS r`,
+        [D, day(-1)],
+      );
+      const back = await reactivate(CEO, {
+        requestId: rid(),
+        taskId: D,
+        departureId: left.departureId,
+        returnOn: day(0),
+        status: "Active",
+        why: "They came back after the season with a new budget.",
+        agreementUrl: "https://drive.example/agreement-d",
+      });
+      expect(back.winId).toBe(hand);
+      expect(
+        await q(
+          "SELECT id::text, departure_id::bigint AS dep, agreement_url FROM public.cockpit_csm_wins WHERE task_id = $1 AND kind = 'reactivation' AND stage <> 'void'",
+          [D],
+        ),
+      ).toEqual([
+        {
+          id: hand,
+          dep: Number(left.departureId),
+          agreement_url: "https://drive.example/agreement-d",
+        },
+      ]);
+      const today = await as<Row>(
+        CEO,
+        "SELECT public.cockpit_csm_wins_today() AS r",
+      );
+      expect(
+        today.rows.some((r: Row) => r.kind === "back" && r.taskId === D),
+      ).toBe(true);
+    });
+  });
+
+  test("the Today rows: a receipt in, and a transfer client due with no money in (no amount in another currency)", async () => {
+    await rolledBack(async () => {
+      await receiptFlow(CTX);
+      const csm = await as<Row>(
+        CSM_A,
+        "SELECT public.cockpit_csm_wins_today() AS r",
+      );
+      expect(
+        csm.rows.some((r: Row) => r.kind === "receipt_in" && r.taskId === A),
+      ).toBe(true);
+      const E = "taskE7";
+      await q(
+        "INSERT INTO public.cockpit_billing_accounts(clickup_task_id, client_name, stage, client_status, next_payment_date, next_payment_usd) VALUES ($1, 'Elm Studio', 'Active', 'Active', $2::date, 1000)",
+        [E, day(-3)],
+      );
+      await manualPayment({ task: E, day: day(-40), check_state: "checked" });
+      const ceo = await as<Row>(
+        CEO,
+        "SELECT public.cockpit_csm_wins_today() AS r",
+      );
+      const due = ceo.rows.find(
+        (r: Row) => r.kind === "due_no_money" && r.taskId === E,
+      );
+      expect([due?.dueOn, due?.currency, due?.expectedAmount ?? null]).toEqual([
+        day(-3),
+        "KWD",
+        null,
+      ]);
+      // Asked already: an open receipt invite takes the row away.
+      await issue(CEO, E, { part: "later", dueOn: day(-3) }, "billing", rid(), [
+        "whatsapp",
+      ]);
+      const after = await as<Row>(
+        CEO,
+        "SELECT public.cockpit_csm_wins_today() AS r",
+      );
+      expect(
+        after.rows.some(
+          (r: Row) => r.kind === "due_no_money" && r.taskId === E,
+        ),
+      ).toBe(false);
+    });
   });
 });

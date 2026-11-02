@@ -207,6 +207,7 @@ export const BAND_ROWS: BandInput[] = [
     client: CLIENT,
     part: "later",
     partNo: 2,
+    dateIfConfirmed: "2026-12-05",
   },
   {
     kind: "due_no_money",

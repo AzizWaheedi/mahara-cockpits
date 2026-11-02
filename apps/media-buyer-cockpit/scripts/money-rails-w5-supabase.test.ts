@@ -1335,6 +1335,29 @@ describe("the LTV plan and the morning writer", () => {
     });
   });
 
+  test("an error in the LTV step is written down and never undoes the rest of the daily run", async () => {
+    await rolledBack(async () => {
+      await ltvFixture();
+      // A malformed money payload: a transaction day that is not a date.
+      await q(`UPDATE public.cockpit_sections SET payload = jsonb_set(payload, '{attribution,transactions}',
+                 (payload->'attribution'->'transactions') || '[{"direction":"in","clientTaskId":"ardon01","day":"not-a-day","usd":5,"checked":true}]'::jsonb)
+               WHERE key = 'money'`);
+      await merge("billing.ltv", { on: true });
+      await setting("billing.daily", { on: true });
+      const run = await one<Row>("SELECT public.cockpit_billing_daily_run(NULL) AS r");
+      expect(run.ran).toBe(true);
+      expect(run.ltv).toMatchObject({ ran: false, note: "LTV: not written (error)." });
+      expect(typeof run.ltv.error).toBe("string");
+      const daily = await one<Row>("SELECT to_jsonb(s.*) AS r FROM public.cockpit_sync_state s WHERE key = 'billing-daily'");
+      expect(daily.ok).toBe(true);
+      expect(daily.note).toContain("LTV: not written (error).");
+      const ltv = await one<Row>("SELECT to_jsonb(s.*) AS r FROM public.cockpit_sync_state s WHERE key = 'billing-ltv'");
+      expect(ltv.ok).toBe(false);
+      expect(ltv.note).toContain("LTV: not written (error).");
+      expect(await ltvEvents()).toHaveLength(0);
+    });
+  });
+
   test("the CEO releases a held jump at the amount he read; it can be held again later", async () => {
     await rolledBack(async () => {
       await ltvFixture();
@@ -1434,6 +1457,33 @@ describe("Confirm paid moves the next payment date", () => {
       expect((await preview(none)).dateWhy).toBe("Next payment date stays 5 Nov: there is no later payment on this plan. Set it by hand if they continue.");
       expect(await dateEvents()).toHaveLength(0);
       expect(await cardDate()).toBe("2026-11-05");
+    });
+  });
+
+  test("with a launch day on record the server works the dates out; a crafted next date is refused, never written", async () => {
+    await rolledBack(async () => {
+      await merge("billing.confirm_date", { on: true });
+      // Launched 5 Oct: part 1 is due 5 Nov (the card's date), part 2 on 5 Dec.
+      await q(`INSERT INTO public.cockpit_client_billing_days(day, clickup_task_id, client_name, stage, launch_date, captured_at)
+               VALUES ((now() AT TIME ZONE 'Asia/Kuwait')::date, $1, 'Acme Interiors', 'Active', '2026-10-05', now())
+               ON CONFLICT DO NOTHING`, [A]);
+      await q("UPDATE public.cockpit_client_billing_days SET launch_date = '2026-10-05' WHERE clickup_task_id = $1", [A]);
+      const crafted = { part: "later", partNo: 1, dealResponseId: "dealA", dueOn: "2026-11-05", nextPartNo: 2, nextDueOn: "2027-01-04" };
+      const p = await preview(crafted);
+      expect(p.dateIfConfirmed).toBeNull();
+      expect(p.dateWhy).toBe("Next payment date stays 5 Nov: the payment plan changed since this page loaded. Reload the page and confirm again.");
+      const conf0 = await confirmation();
+      expect((await refusal(() => apply(conf0, crafted))).message).toBe(
+        "The payment plan changed since this page loaded. Reload the page and confirm again.");
+      expect(await cardDate()).toBe("2026-11-05");
+      expect(await dateEvents()).toHaveLength(0);
+      // A part the card's date is not for (the browser says part 1 is due 20 Nov) is refused the same way.
+      expect((await preview({ part: "later", partNo: 1, dealResponseId: "dealA", dueOn: "2026-11-20" })).dateWhy).toContain("Reload the page");
+      // The real next part moves the date to the server's own day.
+      const real = { part: "later", partNo: 1, dealResponseId: "dealA", dueOn: "2026-11-05", nextPartNo: 2, nextDueOn: "2026-12-05" };
+      expect((await preview(real)).dateIfConfirmed).toBe("2026-12-05");
+      expect(await apply(await confirmation(), real)).toMatchObject({ moved: true, to: "2026-12-05", fromRule: "next_part" });
+      expect(await cardDate()).toBe("2026-12-05");
     });
   });
 

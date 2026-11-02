@@ -2224,16 +2224,15 @@ describe("waves 5-6: the next date and the receipt ask", () => {
     expect(asks.length).toBeGreaterThan(0);
     expect(String(asks[0].textContent)).toBe("Ask for the receipt");
     await click(asks[0]);
+    // No dollar figure goes to a client whose billing currency is not on record (5.6).
     expect(asked[0]).toMatchObject({
       taskId: metals.taskId,
-      currency: "USD",
+      expectedAmount: null,
+      currency: null,
       dealResponseId:
         LIVE_2026_10_23.deals.find(d => d.taskId === metals.taskId)
           ?.responseId ?? null,
     });
-    expect(
-      (asked[0] as { expectedAmount: number }).expectedAmount,
-    ).toBeGreaterThan(0);
     await render(h("div"));
     const out = apiOf(async () => view(), {
       receipts: { ask: () => {}, outSince: () => "2026-10-21T09:00:00Z" },

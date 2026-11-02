@@ -1467,7 +1467,7 @@ function FormTexts({
           id="forms-editor-minutes"
           type="number"
           min={1}
-          max={10}
+          max={60}
           step={1}
           value={draft.minutes}
           disabled={disabled}
@@ -1476,7 +1476,7 @@ function FormTexts({
             set({
               minutes: Math.max(
                 1,
-                Math.min(10, Math.round(Number(e.currentTarget.value) || 1)),
+                Math.min(60, Math.round(Number(e.currentTarget.value) || 1)),
               ),
             })
           }

@@ -16,7 +16,7 @@ import {
   completeCockpitPasswordReset,
   requestCockpitPasswordReset,
 } from "@/auth/supabaseAccess";
-import { PageHeader } from "@/components/kit";
+import { PageHeader, SectionCard } from "@/components/kit";
 import { NoticesRouting } from "@/components/NoticesRouting";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,7 @@ import {
   NOT_YET,
   type RetireItem,
   retireKind,
+  retireReplacementWords,
   retireState,
 } from "@/lib/winsCore";
 
@@ -440,55 +441,57 @@ export function RetiredForms({
   }, [read, auth.client]);
   const today = kuwaitToday(now);
   return (
-    <section
-      className="rounded-2xl border bg-card p-4 sm:p-6"
-      data-retired-forms
-    >
-      <h2 className="text-[15px] font-semibold">Old forms and scenarios</h2>
-      <p className="mt-1 text-xs text-muted-foreground">
-        What the cockpit replaced. An item is archived only after it has been
-        off and quiet for 14 days; nothing is deleted.
-      </p>
-      {error ? (
-        <p className="mt-3 text-sm text-muted-foreground">
-          {/does not exist|not found|404|schema cache/i.test(error)
-            ? NOT_YET
-            : error}
-        </p>
-      ) : !items ? (
-        <p className="mt-3 text-sm text-muted-foreground" role="status">
-          Reading the list
-        </p>
-      ) : (
-        <ul className="mt-3 grid divide-y">
-          {items.map(i => (
-            <li
-              key={i.id}
-              className="grid gap-0.5 py-2.5 text-sm"
-              data-retire={i.id}
-            >
-              <span className="flex flex-wrap items-baseline justify-between gap-x-3">
-                <span className="min-w-0 font-medium">
-                  {i.name}
-                  <span className="font-normal text-muted-foreground">
-                    {" · "}
-                    {retireKind(i.kind)}
+    <div data-retired-forms>
+      <SectionCard
+        title="Old forms and scenarios"
+        sub="What the cockpit replaced. An item is archived only after it has been off and quiet for 14 days; nothing is deleted."
+      >
+        {error ? (
+          <p className="text-sm text-muted-foreground">
+            {/does not exist|not found|404|schema cache/i.test(error)
+              ? NOT_YET
+              : error}
+          </p>
+        ) : !items ? (
+          <p className="text-sm text-muted-foreground" role="status">
+            Reading the list
+          </p>
+        ) : (
+          <ul className="grid divide-y">
+            {items.map(i => (
+              <li
+                key={i.id}
+                className="grid gap-0.5 py-2.5 text-sm"
+                data-retire={i.id}
+              >
+                <span className="flex flex-wrap items-baseline justify-between gap-x-3">
+                  <span className="min-w-0 font-medium">
+                    {i.name}
+                    <span className="font-normal text-muted-foreground">
+                      {" · "}
+                      {retireKind(i.kind)}
+                    </span>
+                  </span>
+                  <span className="font-mono text-xs">
+                    {retireState(i, today)}
                   </span>
                 </span>
-                <span className="font-mono text-xs">
-                  {retireState(i, today)}
+                <span className="text-xs text-muted-foreground">
+                  {i.replacement
+                    ? `Replaced by ${retireReplacementWords(i.replacement)}`
+                    : "No replacement"}
+                  {i.ownerRole ? ` · owner: ${i.ownerRole}` : ""}
                 </span>
-              </span>
-              <span className="text-xs text-muted-foreground">
-                {i.replacement
-                  ? `Replaced by ${i.replacement}`
-                  : "No replacement"}
-                {i.ownerRole ? ` · owner: ${i.ownerRole}` : ""}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+                {i.note ? (
+                  <span className="text-xs" data-retire-next>
+                    Next: {i.note}
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </SectionCard>
+    </div>
   );
 }

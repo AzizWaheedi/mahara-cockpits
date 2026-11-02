@@ -552,7 +552,7 @@ export const WIN_SAY = {
   video: "Add the video link.",
   podcast: "Add the episode link.",
   referral: "Pick the referred client's signed deal.",
-  agreement: "Add the agreement link or tie a payment later.",
+  agreement: "Add the agreement link to clear it for pay.",
   quoted: "Add the quoted price.",
   belowList: "Say why the price is below the list price.",
   date: "The win date is today or within the last 30 days.",
@@ -624,7 +624,7 @@ export function winDef(ctx: WinContext): FormDef {
   return {
     key: "win",
     version: 1,
-    title: `Log a win for ${ctx.client}`,
+    title: "Log a win",
     lede: "Log it the day it happens, with its proof.",
     cardWords: "wins",
     ticket: null,
@@ -700,8 +700,8 @@ export function winDef(ctx: WinContext): FormDef {
         showIf: isKind("referral"),
         message: WIN_SAY.referral,
         hint: ctx.deals.length
-          ? "Signed deals of the last 120 days, by business name."
-          : "No signed deal in the last 120 days to pick yet.",
+          ? "Signed deals of the last 120 days that came by referral or are your clients. Not listed? The CEO can log it."
+          : "No signed deal to pick yet. The CEO can log a referral for any signed deal.",
         options: ctx.deals.map(d => ({
           value: d.responseId,
           label: `${d.business} · signed ${kuwaitDay(d.signedOn) || "on a day not recorded"}`,
@@ -730,8 +730,9 @@ export function winDef(ctx: WinContext): FormDef {
       },
       {
         key: "agreementUrl",
-        label: "Agreement link (optional now, needed for pay)",
+        label: "Agreement link",
         type: "text",
+        hint: "Needed before this win can be paid.",
         showIf: a => a.kind === "renewal" || a.kind === "reactivation",
         placeholder: "https://",
         check: https,
@@ -770,7 +771,7 @@ export function winDef(ctx: WinContext): FormDef {
         message: WIN_SAY.belowList,
         hint: "The proposal's list price is higher than the quoted price.",
       },
-      { key: "note", label: "Note (optional)", type: "longtext" },
+      { key: "note", label: "Note", type: "longtext" },
     ],
   };
 }
@@ -799,7 +800,7 @@ export const REACTIVATE_SAY = {
  * Client is back (5.11): a churned client returning. One act reopens the
  * card through the rails; the month they left keeps its churn.
  */
-export function reactivateDef(client: string, d: Departure): FormDef {
+export function reactivateDef(_client: string, d: Departure): FormDef {
   const type =
     CHURN_TYPES.find(t => t.value === d.churnType)?.label.replace(
       / \(.*\)$/,
@@ -808,7 +809,7 @@ export function reactivateDef(client: string, d: Departure): FormDef {
   return {
     key: "reactivate",
     version: 1,
-    title: `${client} is back`,
+    title: "Client is back",
     lede: `Left on ${kuwaitDay(d.leftOn) || "a day not recorded"} · ${d.reason ?? "no reason recorded"} · ${type}`,
     cardWords: "reactivations",
     ticket: null,
@@ -850,19 +851,20 @@ export function reactivateDef(client: string, d: Departure): FormDef {
       },
       {
         key: "nextPaymentDate",
-        label: "Next payment date (optional)",
+        label: "Next payment date",
         type: "date",
       },
       {
         key: "mrrUsd",
-        label: "MRR (USD, optional)",
+        label: "MRR (USD)",
         type: "number",
         check: v => (num(v) >= 0 ? null : "Use a number of 0 or more."),
       },
       {
         key: "agreementUrl",
-        label: "Agreement link (optional, needed for pay)",
+        label: "Agreement link",
         type: "text",
+        hint: "Needed before this win can be paid.",
         placeholder: "https://",
         check: https,
       },
@@ -877,7 +879,7 @@ export function reactivateDef(client: string, d: Departure): FormDef {
       },
       {
         key: "callId",
-        label: "Call (optional)",
+        label: "Call",
         type: "call",
         noneLabel: "No call",
       },

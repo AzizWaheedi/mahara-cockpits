@@ -75,7 +75,7 @@ export const SAY = {
   videoProof: "Add the video link.",
   podcastProof: "Add the episode link.",
   referralDeal: "Pick the referred client's signed deal.",
-  agreementLater: "Add the agreement link or tie a payment later.",
+  agreementLater: "Add the agreement link to clear it for pay.",
   quoted: "Add the quoted price.",
   belowList: "Say why the price is below the list price.",
   winDate: "The win date is today or within the last 30 days.",
@@ -119,7 +119,7 @@ export const closerPaid = (month: string) =>
 export const clearRefused = (month: string, next: string) =>
   `The CSM was paid for this upsell in ${month}. It stays tied; add an adjustment in ${next} if it was wrong.`;
 export const clearDone = (n: number) =>
-  `Tie cleared. ${n} pay entries came from this win; check them on Team & payroll.`;
+  `Tie cleared. ${n} pay ${n === 1 ? "entry" : "entries"} came from this win; check ${n === 1 ? "it" : "them"} on Team & payroll.`;
 export const notLeft = (client: string) =>
   `${client} is not marked as left. Nothing to reactivate.`;
 export const noConfirmedChurn = (client: string) =>
@@ -155,7 +155,7 @@ export function proofOf(kind: string | null | undefined): {
     case "renewal":
     case "reactivation":
       return {
-        label: "Agreement link (optional now, needed for pay)",
+        label: "Agreement link",
         message: SAY.agreementLater,
         required: false,
       };
@@ -747,16 +747,28 @@ export function todayBands(
           });
         break;
       }
-      case "receipt_checked":
+      case "receipt_checked": {
+        // A transfer never passes Confirm paid: the checked receipt is the payment, so the CSM sets
+        // the card's next payment date (the date the rule of 4.6 gives, when it gives one).
+        const next =
+          typeof r.dateIfConfirmed === "string" ? day(r.dateIfConfirmed) : "";
         out.push({
           key,
           kind: r.kind,
-          text: `Receipt checked: confirm the part paid (${who(r)})`,
-          action: "Open Pending payments",
+          text: next
+            ? `Receipt checked: set the next payment date to ${next} (${who(r)})`
+            : `Receipt checked: set the next payment date (${who(r)})`,
+          action: "Open the billing sheet",
           taskId,
-          ref: { part: r.part ?? null, partNo: r.partNo ?? null },
+          ref: {
+            part: r.part ?? null,
+            partNo: r.partNo ?? null,
+            date:
+              typeof r.dateIfConfirmed === "string" ? r.dateIfConfirmed : null,
+          },
         });
         break;
+      }
       case "due_no_money":
         if (taskId && o.pausedOrStopped?.(taskId)) break;
         out.push({
@@ -768,8 +780,9 @@ export function todayBands(
           ref: {
             part: r.part ?? "later",
             partNo: r.partNo ?? 0,
-            expectedAmount: r.expectedAmount ?? null,
-            currency: r.currency ?? "USD",
+            // No currency is ever guessed: an unknown one sends none, and no amount.
+            expectedAmount: r.currency ? (r.expectedAmount ?? null) : null,
+            currency: r.currency ?? null,
             dueOn: r.dueOn ?? null,
             dealResponseId: r.dealResponseId ?? null,
           },
@@ -828,6 +841,32 @@ export type RetireItem = {
   archivedAt: string | null;
   note: string | null;
 };
+
+const REQUEST_TYPE_WORDS: Record<string, string> = {
+  whatsapp_reactivation: "the WhatsApp reactivation request",
+  landing_page: "the landing page request",
+  client_relaunch: "the relaunch request",
+};
+
+/**
+ * What replaced an old form, in plain words (5.14): never a build code such as
+ * "(W12 C1)", "(C7)" or "(Stage 4)", and a request type by its label.
+ */
+export function retireReplacementWords(replacement: string): string {
+  const typed = replacement.match(/^Request type ([a-z_]+)$/);
+  if (typed)
+    return (
+      REQUEST_TYPE_WORDS[typed[1]] ??
+      `the ${typed[1].replace(/_/g, " ")} request`
+    );
+  return replacement
+    .replace(
+      /\s*\((?:(?:W\d+|C\d+[a-z]?|Q\d+|X\d+|D\d+|A\d+|2b|Stage \d+)[ ,]*)+\)/g,
+      "",
+    )
+    .replace(/\s*\(\d+(?:\.\d+)+\)/g, "")
+    .trim();
+}
 
 export function toRetireItem(raw: unknown): RetireItem | null {
   const r =

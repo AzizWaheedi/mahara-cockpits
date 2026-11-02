@@ -78,6 +78,17 @@ def _door_url(environ: dict[str, str] | None = None) -> str:
 Opener = Callable[..., Any]
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow a redirect: urllib would re-send the POST as a GET to the Location host with the
+    Authorization header (the agent's key) copied over."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def _post(payload: dict[str, Any], environ: dict[str, str] | None = None, opener: Opener | None = None) -> dict[str, Any]:
     key = _key(environ)
     req = urllib.request.Request(
@@ -86,12 +97,14 @@ def _post(payload: dict[str, Any], environ: dict[str, str] | None = None, opener
         method="POST",
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "Accept": "application/json"},
     )
-    open_ = opener or urllib.request.urlopen
+    open_ = opener or _OPENER.open
     try:
         with open_(req, timeout=TIMEOUT_S) as res:
             body = res.read().decode("utf-8")
             status = getattr(res, "status", 200)
     except urllib.error.HTTPError as e:  # a refusal: the cockpit's sentence is in the body
+        if 300 <= e.code < 400:
+            raise Refused(f"The cockpit's door answered with a redirect; check {URL_NAME}.", status=e.code) from None
         status = e.code
         body = e.read().decode("utf-8", "replace") if e.fp else ""
     except (urllib.error.URLError, TimeoutError, OSError) as e:
@@ -102,6 +115,8 @@ def _post(payload: dict[str, Any], environ: dict[str, str] | None = None, opener
         data = {}
     if not isinstance(data, dict):
         data = {}
+    if 300 <= status < 400:
+        raise Refused(f"The cockpit's door answered with a redirect; check {URL_NAME}.", status=status)
     if status == 200 and data.get("ok") is True:
         return data
     sentence = data.get("error") if isinstance(data.get("error"), str) else None

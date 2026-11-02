@@ -51,6 +51,16 @@ class FakeDoor:
 
 
 class DoorTest(unittest.TestCase):
+    def test_a_redirect_is_refused_and_never_followed_with_the_key(self):
+        fake = FakeDoor((302, {"ok": False}))
+        with self.assertRaises(ca.Refused) as ctx:
+            ca.read("ladder", environ=ENV, opener=fake)
+        self.assertEqual(str(ctx.exception), "The cockpit's door answered with a redirect; check COCKPIT_URL.")
+        self.assertEqual(len(fake.requests), 1)
+        # The default opener follows no redirect at all.
+        handler = next(h for h in ca._OPENER.handlers if isinstance(h, ca.urllib.request.HTTPRedirectHandler))
+        self.assertIsNone(handler.redirect_request(None, None, 302, "Found", {}, "https://elsewhere.test/"))
+
     def test_a_write_posts_the_op_with_the_key_a_request_id_and_a_15_second_timeout(self):
         fake = FakeDoor((200, {"ok": True, "outcome": "ok", "result": {"eventId": 7}}))
         out = ca.door("chase", {"taskId": "86ab", "step": "D+3"}, environ=ENV, opener=fake)

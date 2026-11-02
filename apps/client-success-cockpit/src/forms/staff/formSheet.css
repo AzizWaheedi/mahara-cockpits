@@ -879,3 +879,38 @@
     transition: none;
   }
 }
+/* At phone width the track reads as a list down a rule, never a line that wraps
+   mid-connector: each stop on its own line, the dot sitting on the rule. */
+.wr-root {
+  container-type: inline-size;
+}
+@container (max-width: 30rem) {
+  .wr-track {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    margin-inline-start: 5px;
+    padding-inline-start: 14px;
+    border-inline-start: 1px solid var(--wr-edge);
+  }
+  .wr-stop {
+    flex-wrap: wrap;
+  }
+  .wr-stop .wr-dot {
+    margin-inline-start: -19px;
+    background: var(--card);
+  }
+  .wr-stop[data-state="done"] .wr-dot {
+    background: var(--wr-done);
+  }
+  .wr-stop + .wr-stop::before,
+  .wr-cut::before {
+    display: none;
+  }
+}
+/* A voided win's money is not money any more: muted and struck. */
+.wr-root[data-voided] .wr-money {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+}
+

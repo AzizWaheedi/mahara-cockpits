@@ -2161,7 +2161,7 @@ export function tieApi(c: SupabaseClient): TieApi {
       return {
         sentence:
           txt(d?.sentence) ??
-          `Tie cleared. ${entries.length} pay entries came from this win; check them on Team & payroll.`,
+          `Tie cleared. ${plural(entries.length, "pay entry", "pay entries")} came from this win; check ${entries.length === 1 ? "it" : "them"} on Team & payroll.`,
         entries,
       };
     },
@@ -2436,7 +2436,7 @@ function UpsellTiesCard({ order }: { order?: number }) {
       id="money-upsell-ties"
       kicker="Wins"
       title="Upsell payments to confirm"
-      description="A CSM proposed these payments as an upsell's. Confirmed, the cash is the card CSM's back-end money, never the closer's."
+      description="A client success manager says each of these payments is for an upsell. Once you confirm, it counts as that manager's upsell cash, not the closer's."
       order={order}
     >
       {() => (

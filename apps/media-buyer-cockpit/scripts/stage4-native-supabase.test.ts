@@ -2418,6 +2418,73 @@ describe("the onboarding (4.14, 3.3)", () => {
     });
   });
 
+  test("the version-2 schema holds the portal's parse contract: a context list, a required flag on every field, honest minutes", async () => {
+    const v2 = await one<any>(
+      "SELECT schema AS r FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2",
+    );
+    expect(Array.isArray(v2.context)).toBe(true);
+    expect(
+      v2.fields
+        .filter((f: any) => typeof f.required !== "boolean")
+        .map((f: any) => f.key),
+    ).toEqual([]);
+    expect(v2.fields.filter((f: any) => f.type !== "heading")).toHaveLength(36);
+    expect(v2.minutes).toBe(25);
+    expect(JSON.stringify(v2)).not.toMatch(
+      /check list below|القائمة تحت|\(optional\)|اختياري/,
+    );
+    expect(
+      await one(
+        "SELECT public.cockpit_form_schema_check(schema) AS r FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2",
+      ),
+    ).toBeNull();
+  });
+
+  test("a Typeform delivery naming a card that is not onboarding is kept as an old link's answer and changes nothing", async () => {
+    await rolledBack(async () => {
+      await goLive("onboarding", true);
+      const v2 = await one<any>(
+        "SELECT public.cockpit_form_stage4_typeform_answers('onboarding', $1::jsonb) AS r",
+        [json(ONB_ANSWERS)],
+      );
+      await ex(
+        `UPDATE public.cockpit_client_onboarding SET in_onboarding = false, signup_on = '2026-01-01' WHERE clickup_task_id = '${E}'`,
+      );
+      await ex(
+        `UPDATE public.cockpit_billing_accounts SET stage_group = 'active' WHERE clickup_task_id = '${E}'`,
+      );
+      await ex(`UPDATE public.cockpit_sales_deals SET submitted_at = '2026-01-01' WHERE response_id IN (
+                  SELECT dc.deal_response_id FROM public.cockpit_billing_deal_cards() dc WHERE dc.clickup_task_id = '${E}')`);
+      const viaDoor = await as<any>(
+        "service",
+        "SELECT public.cockpit_form_record_legacy($1::jsonb) AS r",
+        [
+          json({
+            formKey: "onboarding",
+            externalId: "tokElm00009",
+            submittedAt: "2026-11-02T09:00:00Z",
+            answers: { fields: v2 },
+            hidden: { onboarding_client_id: E, client_name: "Elm Works" },
+            taskId: E,
+            backfill: false,
+          }),
+        ],
+      );
+      expect(viaDoor).toMatchObject({
+        inserted: true,
+        stored: "legacy",
+        taskId: E,
+      });
+      expect(
+        await one(
+          "SELECT answer_meta->>'why' AS r FROM public.cockpit_form_responses WHERE id = $1::uuid",
+          [viaDoor.responseId],
+        ),
+      ).toBe("not_onboarding");
+      expect(await effects(viaDoor.responseId)).toHaveLength(0);
+    });
+  });
+
   test("an onboarding Typeform delivery after the go-live runs the native planner, equal to the portal answer's plan", async () => {
     await rolledBack(async () => {
       await goLive("onboarding", true);
@@ -2431,6 +2498,11 @@ describe("the onboarding (4.14, 3.3)", () => {
       await ex(`UPDATE public.cockpit_client_onboarding SET forms = jsonb_build_object('onboarding', jsonb_build_object(
         'form_id', 'KFRCXPFx', 'response_id', 'tokElm00001', 'submitted_at', '2026-11-02T09:00:00Z', 'answers', '[]'::jsonb))
         WHERE clickup_task_id = '${E}'`);
+      // The planner runs from the public Typeform door only for a card onboarding now (its hidden field
+      // is anyone's to set): Elm Works is in onboarding.
+      await ex(
+        `UPDATE public.cockpit_client_onboarding SET in_onboarding = true WHERE clickup_task_id = '${E}'`,
+      );
       const viaDoor = await as<any>(
         "service",
         "SELECT public.cockpit_form_record_legacy($1::jsonb) AS r",

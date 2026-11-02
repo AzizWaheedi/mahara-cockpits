@@ -148,8 +148,13 @@ export type ReceiptAsk = {
   name: string;
   part: "deposit" | "onboarding" | "later" | "all";
   partNo: number;
-  expectedAmount: number;
-  currency: "USD" | "KWD";
+  /**
+   * The amount due in the client's own currency, or null with no currency
+   * when that is not known: a plan's parts are in dollars, and a client who
+   * pays by transfer in dinars must never be shown a dollar figure (5.6).
+   */
+  expectedAmount: number | null;
+  currency: "USD" | "KWD" | null;
   dueOn: string | null;
   dealResponseId: string | null;
 };
@@ -1238,8 +1243,10 @@ function Parts({
                         name: row.name,
                         part: p.kind,
                         partNo: p.kind === "later" ? p.no : 0,
-                        expectedAmount: p.notSeen + p.notDue + p.another,
-                        currency: "USD",
+                        // A plan's parts are in dollars; the client's billing currency is not
+                        // on record, so the form asks for the amount and currency itself.
+                        expectedAmount: null,
+                        currency: null,
                         dueOn: p.due,
                         dealResponseId: row.deal?.responseId ?? null,
                       })

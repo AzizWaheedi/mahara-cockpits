@@ -26,6 +26,9 @@
  * Requests (?path=/requests, /requests?view=mine, /requests/settings) read
  * requestsHarness.ts (`&requests=`, `&seat=`, `&writer=` pick the answer);
  * the task card, the bell and the focus view read tasksHarness.ts.
+ * Waves 5-6 (`&w56=on|off|empty|held|revoked|split`) read w56Harness.ts: the
+ * Lifetime value and Billing agent login cards (?tab=billing), Upsell payments
+ * to confirm (?tab=money) and Proposed from wins (?path=/team#team/pay).
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -64,6 +67,7 @@ import { installHoursHarness } from "./hoursHarness";
 import { portalFixtures } from "./portalFixtures";
 import { installRequestsHarness } from "./requestsHarness";
 import { installResultsHarness } from "./resultsHarness";
+import { installW56Harness } from "./w56Harness";
 import { webinarTargetsFixtures } from "./webinarTargetsFixture";
 
 /**
@@ -103,6 +107,9 @@ async function main() {
   // Billing (?tab=billing&pending=...): the sheet and Pending payments from
   // the 23 Oct read, writes kept in memory (billingFixture.ts).
   installBillingHarness(getCockpitSupabaseClient());
+  // Waves 5-6 (&w56=on|off|empty|held|revoked|split): the Lifetime value and
+  // agent login cards, the upsell ties band and the pay proposals (w56Harness.ts).
+  installW56Harness(getCockpitSupabaseClient());
   installLaunchHarness(getCockpitSupabaseClient());
   // Requests (?path=/requests&requests=...&seat=...&writer=...): every
   // function of the requests contract, answered from a made-up store.

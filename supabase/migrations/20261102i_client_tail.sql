@@ -33,7 +33,7 @@ DECLARE g record; v_now text;
 BEGIN
   FOR g IN
     SELECT * FROM (VALUES
-      ('public.cockpit_form_schema_check(jsonb)', '30b96e79a5257d98cb0c22b5d00d7af9', '70ef04e055859707e5f42baddf48646c'),
+      ('public.cockpit_form_schema_check(jsonb)', '30b96e79a5257d98cb0c22b5d00d7af9', '1f5d9016571ed472b83dbffa17363095'),
       ('public.cockpit_form_answers_check(jsonb,jsonb,jsonb)', 'ae2318509ab88246c8b9deb15ef6c8b6', 'd1d8bb66ae056415f8a2a968627220df'),
       ('public.cockpit_form_card_allows(text,text)', 'd6f88a6602190b25c3e795124bd95335', '7f51b4364ee45a5dedebeab079aed4a3'),
       ('public.cockpit_form_invite_issue_core(text,text,text[],text,text,boolean,jsonb,uuid,text,jsonb)', 'd9fd866ad86caeaf87b4887684c1fe3e', '3177aa72c0933c62f54c961245e2c256'),
@@ -214,7 +214,8 @@ CREATE TABLE IF NOT EXISTS public.cockpit_payment_receipts (
   attached_by       text NOT NULL DEFAULT 'invite' CHECK (attached_by IN ('invite','near_match','twin')),
   added_at          timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS cockpit_payment_receipts_payment ON public.cockpit_payment_receipts (manual_payment_id);
+-- One receipt per logged payment: a second invite, a near match or a twin never stacks a second one.
+CREATE UNIQUE INDEX IF NOT EXISTS cockpit_payment_receipts_one_per_payment ON public.cockpit_payment_receipts (manual_payment_id);
 
 CREATE TABLE IF NOT EXISTS public.cockpit_retire_items (
   id              text PRIMARY KEY CHECK (id ~ '^(make|typeform|webhook):[A-Za-z0-9_.-]{1,60}$'),
@@ -460,8 +461,8 @@ BEGIN
 END $$;
 
 -- The portal's slot (service_role): the workspace checks of portal_form_get.
-CREATE OR REPLACE FUNCTION public.portal_form_file_slot(p_location_id text, p_clickup_id text, p_person text, p_invite_id uuid,
-  p_field text, p_mime text, p_bytes bigint, p_sha256 text)
+CREATE OR REPLACE FUNCTION public.portal_form_file_slot(p_location_id text, p_clickup_id text, p_person text, p_access_role text,
+  p_invite_id uuid, p_field text, p_mime text, p_bytes bigint, p_sha256 text)
 RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE v_person text := public.portal_client_ask_person(p_person); i public.cockpit_form_invites; v_state text;
 BEGIN
@@ -473,6 +474,10 @@ BEGIN
   END IF;
   IF i.task_id <> p_clickup_id OR i.location_id IS DISTINCT FROM p_location_id THEN
     RAISE EXCEPTION 'form_invite_not_in_workspace' USING ERRCODE = '42501';
+  END IF;
+  -- The audience of portal_form_get: an admin-only invite (the bank receipt) takes files from an admin only.
+  IF i.audience = 'admin' AND p_access_role IS DISTINCT FROM 'admin' THEN
+    RETURN jsonb_build_object('ok', false, 'reason', 'admin_only');
   END IF;
   v_state := public.cockpit_form_invite_state(i);
   IF v_state <> 'open' THEN RETURN jsonb_build_object('ok', false, 'reason', v_state); END IF;
@@ -571,6 +576,12 @@ BEGIN
                      WHERE x->>'key' = p_field AND x->>'type' = 'file') THEN
     RAISE EXCEPTION 'That answer has no file there.' USING ERRCODE = '22023';
   END IF;
+  -- The path must be a slot this response used, made for an invite of the same card: the read itself
+  -- guarantees a seat sees only its own client's files, whatever wrote the answer.
+  IF NOT EXISTS (SELECT 1 FROM public.cockpit_form_file_slots sl JOIN public.cockpit_form_invites iv ON iv.id = sl.invite_id
+                  WHERE sl.path = v->>'path' AND sl.used_by = r.id AND iv.task_id IS NOT DISTINCT FROM r.task_id) THEN
+    RAISE EXCEPTION 'That answer has no file there.' USING ERRCODE = '22023';
+  END IF;
   RETURN jsonb_build_object('path', v->>'path', 'mime', v->>'mime', 'bytes', (v->>'bytes')::bigint,
                             'name', v->>'name', 'bucket', 'cockpit-form-files');
 END $$;
@@ -596,12 +607,19 @@ BEGIN
      AND (jsonb_typeof(c->'partNo') <> 'number' OR (c->>'partNo') !~ '^[1-9][0-9]?$') THEN
     RAISE EXCEPTION 'The part number is a whole number from 1.' USING ERRCODE = '22023';
   END IF;
-  IF jsonb_typeof(c->'expectedAmount') IS DISTINCT FROM 'number' OR (c->>'expectedAmount')::numeric <= 0
-     OR (c->>'expectedAmount')::numeric > 1000000 THEN
+  -- The amount due and its currency are sent only when the card's billing currency is known (5.6):
+  -- never a figure converted to dollars for a client who pays in dinars.
+  IF c ? 'expectedAmount' AND c->'expectedAmount' <> 'null'::jsonb
+     AND (jsonb_typeof(c->'expectedAmount') <> 'number' OR (c->>'expectedAmount')::numeric <= 0
+          OR (c->>'expectedAmount')::numeric > 1000000) THEN
     RAISE EXCEPTION 'Send the amount due, above 0.' USING ERRCODE = '22023';
   END IF;
-  IF jsonb_typeof(c->'currency') IS DISTINCT FROM 'string' OR c->>'currency' NOT IN ('USD','KWD') THEN
+  IF c ? 'currency' AND c->'currency' <> 'null'::jsonb
+     AND (jsonb_typeof(c->'currency') <> 'string' OR c->>'currency' NOT IN ('USD','KWD')) THEN
     RAISE EXCEPTION 'The currency is USD or KWD.' USING ERRCODE = '22023';
+  END IF;
+  IF c ? 'expectedAmount' AND c->'expectedAmount' <> 'null'::jsonb AND NOT (c ? 'currency' AND c->'currency' <> 'null'::jsonb) THEN
+    RAISE EXCEPTION 'Send the currency with the amount due.' USING ERRCODE = '22023';
   END IF;
   IF c ? 'dueOn' AND c->'dueOn' <> 'null'::jsonb THEN
     BEGIN
@@ -665,11 +683,22 @@ BEGIN
   v_mp := nullif(i.context->>'manualPaymentId', '');
 
   PERFORM set_config('cockpit.forms_action', 'forms.receipt_in', true);
+  -- The transfer the invite named, checked again now: deleted, rejected or given a receipt since the
+  -- invite went out (a second invite, a near match, a twin) and it is not attached; the answer then
+  -- takes the near-match or inbox path below like any other.
+  IF v_mp IS NOT NULL AND NOT EXISTS (
+       SELECT 1 FROM public.cockpit_manual_payments p
+        WHERE p.id = v_mp AND p.clickup_task_id = i.task_id AND p.deleted_at IS NULL AND p.check_state IN ('logged','checked')
+          AND NOT EXISTS (SELECT 1 FROM public.cockpit_payment_receipts x WHERE x.manual_payment_id = p.id)
+          AND NOT EXISTS (SELECT 1 FROM public.cockpit_billing_inbox b
+                           WHERE p.source_deployment = 'billing-inbox' AND b.id::text = p.source_id AND b.response_id IS NOT NULL)) THEN
+    v_mp := NULL;
+  END IF;
   IF v_mp IS NOT NULL THEN
     -- The transfer the CSM named: the receipt sits beside it (X11), no inbox row.
     INSERT INTO public.cockpit_payment_receipts(manual_payment_id, response_id, path, amount, currency, paid_on, reference, attached_by)
     VALUES (v_mp, r.id, v_path, v_amount, v_currency, v_paid, v_ref, 'invite')
-    ON CONFLICT (response_id) DO NOTHING;
+    ON CONFLICT DO NOTHING;
     v_how := 'attached';
   ELSE
     -- The same transfer logged by the agent or a CSM: one logged transfer on the card, same currency,
@@ -685,7 +714,7 @@ BEGIN
     IF cardinality(v_hits) = 1 THEN
       INSERT INTO public.cockpit_payment_receipts(manual_payment_id, response_id, path, amount, currency, paid_on, reference, attached_by)
       VALUES (v_hits[1], r.id, v_path, v_amount, v_currency, v_paid, v_ref, 'near_match')
-      ON CONFLICT (response_id) DO NOTHING;
+      ON CONFLICT DO NOTHING;
       v_how := 'attached';
     ELSE
       -- A transfer nobody logged yet: one inbox row, which ingest takes in as logged (W12 CK). A canary
@@ -739,7 +768,7 @@ BEGIN
   INSERT INTO public.cockpit_payment_receipts(manual_payment_id, response_id, path, amount, currency, paid_on, reference, attached_by)
   VALUES (NEW.ledger_id, NEW.response_id, regexp_replace(coalesce(NEW.evidence_url, ''), '^storage://cockpit-form-files/', ''),
           NEW.amount, NEW.currency, NEW.paid_on, left(NEW.reference, 60), 'twin')
-  ON CONFLICT (response_id) DO NOTHING;
+  ON CONFLICT DO NOTHING;
   PERFORM set_config('cockpit.forms_action', coalesce(v_prev, ''), true);
   RETURN NULL;
 END $$;
@@ -963,17 +992,34 @@ BEGIN
    WHERE v_acc.csm IS NOT NULL
      AND lower(regexp_replace(btrim(p.name), '\s+', ' ', 'g')) = lower(regexp_replace(btrim(v_acc.csm), '\s+', ' ', 'g'))
    ORDER BY p.active DESC, p.id LIMIT 1;
-  BEGIN
-    INSERT INTO public.cockpit_csm_wins(request_id, task_id, client_name, kind, stage, won_on, agreement_url, departure_id,
-      csm_person_id, note, source, logged_by, logged_by_email, logged_by_role)
-    VALUES (md5('reactivate-win:' || v_req::text)::uuid, v_task, v_client, 'reactivation', 'logged', least(v_return, v_today),
-            v_agree, v_dep.id, v_person, 'Reopened with Client is back.', 'reactivate', v_uid, v_who, v_role)
-    RETURNING id INTO v_win;
-  EXCEPTION WHEN unique_violation THEN
-    RAISE EXCEPTION 'This return already has its reactivation win.' USING ERRCODE = '22023';
-  END;
-  INSERT INTO public.cockpit_csm_win_events(win_id, event, by_role, by_email, detail)
-  VALUES (v_win, 'logged', v_role, v_who, jsonb_build_object('source', 'reactivate', 'departure_id', v_dep.id));
+  -- A reactivation the CSM already logged by hand for this return (within 60 days) becomes this
+  -- return's win: it is attached to the departure, never doubled (4.3.6), so one return pays once.
+  SELECT w.id INTO v_win FROM public.cockpit_csm_wins w
+   WHERE w.task_id = v_task AND w.kind = 'reactivation' AND w.stage <> 'void' AND w.departure_id IS NULL
+     AND w.won_on >= v_return - 60
+   ORDER BY w.won_on DESC, w.logged_at DESC LIMIT 1;
+  IF v_win IS NOT NULL THEN
+    PERFORM set_config('cockpit.win_act', 'reactivate_attach', true);
+    PERFORM set_config('cockpit.wins_action', 'wins.reactivate_attached', true);
+    UPDATE public.cockpit_csm_wins SET departure_id = v_dep.id, agreement_url = coalesce(agreement_url, v_agree) WHERE id = v_win;
+    PERFORM set_config('cockpit.win_act', '', true);
+    PERFORM set_config('cockpit.wins_action', '', true);
+    INSERT INTO public.cockpit_csm_win_events(win_id, event, by_role, by_email, detail)
+    VALUES (v_win, 'proof_added', v_role, v_who,
+            jsonb_build_object('source', 'reactivate', 'departure_id', v_dep.id, 'attached', true, 'agreement', v_agree IS NOT NULL));
+  ELSE
+    BEGIN
+      INSERT INTO public.cockpit_csm_wins(request_id, task_id, client_name, kind, stage, won_on, agreement_url, departure_id,
+        csm_person_id, note, source, logged_by, logged_by_email, logged_by_role)
+      VALUES (md5('reactivate-win:' || v_req::text)::uuid, v_task, v_client, 'reactivation', 'logged', least(v_return, v_today),
+              v_agree, v_dep.id, v_person, 'Reopened with Client is back.', 'reactivate', v_uid, v_who, v_role)
+      RETURNING id INTO v_win;
+    EXCEPTION WHEN unique_violation THEN
+      RAISE EXCEPTION 'This return already has its reactivation win.' USING ERRCODE = '22023';
+    END;
+    INSERT INTO public.cockpit_csm_win_events(win_id, event, by_role, by_email, detail)
+    VALUES (v_win, 'logged', v_role, v_who, jsonb_build_object('source', 'reactivate', 'departure_id', v_dep.id));
+  END IF;
 
   -- The card write (3.5): status back, churn fields cleared, the old churn in the comment. Held until D-RA.
   v_detail := jsonb_strip_nulls(jsonb_build_object(
@@ -1037,6 +1083,128 @@ BEGIN
     'mrrEventId', v_mrr_event,
     'cardState', CASE WHEN v_card IS NULL THEN 'none' WHEN v_card = 'dry_run' THEN 'held' ELSE v_card END,
     'sentence', 'Reopened. The card updates within a few minutes.');
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- 6b. The Today rows (5.12), whole: 20261102h's three win rows, and the four this file's tables feed.
+--     Replaces h's body in the same deploy (h's version reads no receipt or return).
+--     receipt_in:      a client's bank receipt (14 days) whose payment nobody has checked yet;
+--     receipt_checked: a checked receipt for a later part (14 days) with no next payment date set since
+--                      the check: a transfer never passes Confirm paid, so the CSM sets the date (the
+--                      W12 date edit) and the row says the date the rule of 4.6 gives;
+--     back:            a return (Client is back) in the last 7 days;
+--     due_no_money:    a client who pays by bank transfer, whose next payment date passed in the last
+--                      30 days with no payment of any rail since a week before it, no open receipt
+--                      invite, not paused or stopped (4.10.6). The amount is sent only in dollars a
+--                      card states and only for a client whose last transfer was in dollars.
+CREATE OR REPLACE FUNCTION public.cockpit_csm_wins_today()
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE v_ceo boolean; v_today date := public.cockpit_billing_today();
+BEGIN
+  IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Sign in to work with wins.' USING ERRCODE = '42501'; END IF;
+  v_ceo := coalesce(public.cockpit_is_ceo(), false);
+  IF NOT v_ceo AND NOT coalesce(public.cockpit_has_role('csm'), false) THEN
+    RAISE EXCEPTION 'Wins need a client success or CEO seat. Ask an admin to add the role.' USING ERRCODE = '42501';
+  END IF;
+  RETURN jsonb_build_object('rows', coalesce((
+    SELECT jsonb_agg(r ORDER BY r->>'kind', r->>'client') FROM (
+      SELECT jsonb_build_object('kind', 'accepted_no_agreement', 'taskId', u.task_id, 'client', u.client_name, 'proposalId', u.id,
+               'winId', (SELECT w.id FROM public.cockpit_csm_wins w WHERE w.proposal_id = u.id AND w.stage = 'quote_given' LIMIT 1),
+               'sentence', 'Client accepted: send the agreement') AS r
+        FROM public.cockpit_upsell_proposals u
+       WHERE u.status = 'accepted'
+         AND NOT EXISTS (SELECT 1 FROM public.cockpit_csm_wins w WHERE w.proposal_id = u.id AND w.stage IN ('signed', 'paid'))
+         AND (v_ceo OR coalesce(public.cockpit_client_allowed(u.client_name), false))
+      UNION ALL
+      SELECT jsonb_build_object('kind', 'invoice_paid_untied', 'taskId', w.task_id, 'client', w.client_name, 'winId', w.id,
+               'invoiceId', i.id, 'paymentId', 'ecom:' || e.id,
+               'sentence', format('Invoice paid: tie it to the %s', coalesce(public.cockpit_win_proposal_prices(w.proposal_id)->>'offer',
+                                                                      public.cockpit_win_kind_label(w.kind))),
+               'action', 'Tie the payment')
+        FROM public.cockpit_invoices i
+        JOIN public.cockpit_csm_wins w ON w.id = i.win_id AND w.stage IN ('signed', 'paid')
+        JOIN public.cockpit_ecom_invoices e ON e.cockpit_invoice_id = i.id AND e.status = 'PAID'
+       WHERE NOT EXISTS (SELECT 1 FROM public.cockpit_win_tie_proposals tp
+                          WHERE tp.payment_id = 'ecom:' || e.id AND tp.state IN ('open', 'confirmed'))
+         AND NOT EXISTS (SELECT 1 FROM public.cockpit_payment_ties t WHERE t.payment_id = 'ecom:' || e.id AND t.cleared_at IS NULL)
+         AND (v_ceo OR coalesce(public.cockpit_client_allowed(w.client_name), false))
+      UNION ALL
+      SELECT jsonb_build_object('kind', 'tie_waiting', 'taskId', w.task_id, 'client', w.client_name, 'winId', w.id,
+               'proposalId', tp.id, 'usd', tp.usd, 'paidOn', tp.paid_on, 'proposedAt', tp.proposed_at, 'rail', tp.rail,
+               'offer', coalesce(public.cockpit_win_proposal_prices(w.proposal_id)->>'offer', public.cockpit_win_kind_label(w.kind)),
+               'checked', coalesce(public.cockpit_payment_checked(tp.payment_id, tp.rail), false),
+               'inDealLedger', EXISTS (SELECT 1 FROM public.cockpit_deal_payments dp WHERE dp.payment_id = tp.payment_id AND dp.active),
+               'sentence', format('Confirm the %s payment for the %s', public.cockpit_billing_usd_words(tp.usd),
+                                  public.cockpit_win_kind_label(w.kind)))
+        FROM public.cockpit_win_tie_proposals tp JOIN public.cockpit_csm_wins w ON w.id = tp.win_id
+       WHERE v_ceo AND tp.state = 'open'
+      UNION ALL
+      -- A receipt in, its payment not checked yet (one row per answer).
+      SELECT jsonb_build_object('kind', 'receipt_in', 'taskId', rs.task_id, 'client', rs.client_name, 'responseId', rs.id)
+        FROM public.cockpit_form_responses rs
+       WHERE rs.form_key = 'bank_receipt' AND rs.state IN ('submitted', 'confirmed') AND rs.mode = 'live'
+         AND rs.submitted_at >= now() - interval '14 days'
+         AND (EXISTS (SELECT 1 FROM public.cockpit_payment_receipts pr JOIN public.cockpit_manual_payments p ON p.id = pr.manual_payment_id
+                       WHERE pr.response_id = rs.id AND p.deleted_at IS NULL AND p.check_state = 'logged')
+              OR EXISTS (SELECT 1 FROM public.cockpit_billing_inbox b
+                          WHERE b.response_id = rs.id AND (b.status = 'pending'
+                            OR EXISTS (SELECT 1 FROM public.cockpit_manual_payments p
+                                        WHERE p.source_deployment = 'billing-inbox' AND p.source_id = b.id::text
+                                          AND p.deleted_at IS NULL AND p.check_state = 'logged'))))
+         AND (v_ceo OR coalesce(public.cockpit_client_allowed(rs.client_name), false))
+      UNION ALL
+      -- A checked receipt for a later part, no date set on the card since the check.
+      SELECT jsonb_build_object('kind', 'receipt_checked', 'taskId', x.task_id, 'client', x.client_name, 'responseId', x.response_id,
+               'part', 'later', 'partNo', x.part_no, 'checkedAt', x.checked_at,
+               'dateIfConfirmed', CASE WHEN (x.rule->>'move')::boolean THEN x.rule->'to' END, 'dateWhy', x.rule->'why')
+        FROM (
+          SELECT rs.id AS response_id, rs.task_id, rs.client_name, p.checked_at,
+                 CASE WHEN iv.context->>'partNo' ~ '^[1-9][0-9]?$' THEN (iv.context->>'partNo')::integer END AS part_no,
+                 public.cockpit_billing_confirm_date_rule(rs.task_id, nullif(iv.context->>'dealResponseId', ''), 'later',
+                   CASE WHEN iv.context->>'partNo' ~ '^[1-9][0-9]?$' THEN (iv.context->>'partNo')::integer END,
+                   jsonb_strip_nulls(jsonb_build_object('dueOn', iv.context->>'dueOn'))) AS rule
+            FROM public.cockpit_form_responses rs
+            JOIN public.cockpit_form_invites iv ON iv.id = rs.invite_id
+            JOIN public.cockpit_manual_payments p ON p.deleted_at IS NULL AND p.check_state = 'checked' AND (
+                   p.id IN (SELECT pr.manual_payment_id FROM public.cockpit_payment_receipts pr WHERE pr.response_id = rs.id)
+                   OR (p.source_deployment = 'billing-inbox'
+                       AND p.source_id IN (SELECT b.id::text FROM public.cockpit_billing_inbox b WHERE b.response_id = rs.id)))
+           WHERE rs.form_key = 'bank_receipt' AND rs.mode = 'live' AND iv.context->>'part' = 'later'
+             AND p.checked_at >= now() - interval '14 days'
+             AND NOT EXISTS (SELECT 1 FROM public.cockpit_billing_events e
+                              WHERE e.clickup_task_id = rs.task_id AND e.kind = 'date' AND e.at >= p.checked_at
+                                AND NOT EXISTS (SELECT 1 FROM public.cockpit_billing_event_voids v WHERE v.event_id = e.id))
+             AND (v_ceo OR coalesce(public.cockpit_client_allowed(rs.client_name), false))) x
+      UNION ALL
+      -- Back: a return in the last 7 days.
+      SELECT jsonb_build_object('kind', 'back', 'taskId', d.clickup_task_id, 'client', d.client, 'returnedOn', d.returned_on)
+        FROM public.cockpit_churn_departures d
+       WHERE d.removed_at IS NULL AND d.returned_on IS NOT NULL AND d.returned_on BETWEEN v_today - 6 AND v_today
+         AND (v_ceo OR coalesce(public.cockpit_client_allowed(d.client), false))
+      UNION ALL
+      -- Due, no money in, for a client who pays by bank transfer.
+      SELECT jsonb_build_object('kind', 'due_no_money', 'taskId', a.clickup_task_id, 'client', a.client_name, 'part', 'later',
+               'dueOn', a.next_payment_date, 'currency', t.currency,
+               'expectedAmount', CASE WHEN t.currency = 'USD' AND a.next_payment_usd > 0 THEN a.next_payment_usd END)
+        FROM public.cockpit_billing_accounts a
+        CROSS JOIN LATERAL (SELECT p.currency FROM public.cockpit_manual_payments p
+                             WHERE p.clickup_task_id = a.clickup_task_id AND p.rail = 'bank_transfer' AND p.deleted_at IS NULL
+                               AND p.check_state <> 'rejected' AND p.day >= v_today - 400
+                             ORDER BY p.day DESC, p.added_at DESC LIMIT 1) t
+       WHERE a.next_payment_date BETWEEN v_today - 30 AND v_today - 1
+         AND a.paused_on IS NULL AND coalesce(a.client_status, '') NOT IN ('Paused', 'Stopped', 'Churned')
+         AND NOT EXISTS (SELECT 1 FROM public.cockpit_manual_payments p
+                          WHERE p.clickup_task_id = a.clickup_task_id AND p.deleted_at IS NULL AND p.check_state <> 'rejected'
+                            AND p.day >= a.next_payment_date - 7)
+         AND NOT EXISTS (SELECT 1 FROM public.cockpit_client_payments cp
+                          WHERE cp.clickup_task_id = a.clickup_task_id AND cp.active AND cp.day >= a.next_payment_date - 7)
+         AND NOT EXISTS (SELECT 1 FROM public.cockpit_billing_inbox b
+                          WHERE b.clickup_task_id = a.clickup_task_id AND b.status = 'pending' AND b.paid_on >= a.next_payment_date - 7)
+         AND NOT EXISTS (SELECT 1 FROM public.cockpit_form_invites iv
+                          WHERE iv.task_id = a.clickup_task_id AND iv.form_key = 'bank_receipt'
+                            AND public.cockpit_form_invite_state(iv) = 'open')
+         AND (v_ceo OR coalesce(public.cockpit_client_allowed(a.client_name), false))
+    ) x), '[]'::jsonb));
 END $$;
 
 -- ---------------------------------------------------------------------------
@@ -1222,9 +1390,10 @@ BEGIN
   IF p_schema ? 'intro' AND p_schema->'intro' <> 'null'::jsonb AND NOT public.cockpit_form_schema_pair(p_schema->'intro', 600) THEN
     RETURN 'The introduction needs English and Arabic, each 600 characters at most.';
   END IF;
+  -- Up to an hour (waves 5-6): the native onboarding honestly takes about 25 minutes.
   IF jsonb_typeof(p_schema->'minutes') IS DISTINCT FROM 'number'
-     OR (p_schema->>'minutes')::numeric NOT IN (1,2,3,4,5,6,7,8,9,10) THEN
-    RETURN 'Minutes must be a whole number from 1 to 10.';
+     OR (p_schema->>'minutes') !~ '^[0-9]{1,2}$' OR (p_schema->>'minutes')::integer NOT BETWEEN 1 AND 60 THEN
+    RETURN 'Minutes must be a whole number from 1 to 60.';
   END IF;
   IF coalesce(p_schema->>'audience', '') NOT IN ('any','admin') OR jsonb_typeof(p_schema->'audience') <> 'string' THEN
     RETURN 'Who answers must be any or admin.';
@@ -2847,37 +3016,37 @@ INSERT INTO public.cockpit_retire_items (id, kind, external_id, name, used_for, 
 SELECT 'make:' || x.ext, 'make', x.ext, x.name, x.used_for, 'the systems manager', x.repl, x.wave, x.state, x.step,
        x.off_at::timestamptz, x.quiet::timestamptz, x.note, 'migration 20261102i'
   FROM (VALUES
-    ('9805665', 'Extension (Make)', 'extension, Confirm Charge', 'Billing sheet Extend and Confirm paid (W12 C1)', 'W12', 'off', 'W12 D-C1', '2026-11-01 00:00+03', '2026-11-01 00:00+03', NULL),
-    ('9000763', 'Confirm Charge (Make)', 'extension, Confirm Charge', 'Billing sheet Extend and Confirm paid (W12 C1)', 'W12', 'off', 'W12 D-C1', '2026-11-01 00:00+03', '2026-11-01 00:00+03', NULL),
-    ('8069181', 'Confirm Charge, old (Make)', 'extension, Confirm Charge', 'Billing sheet Extend and Confirm paid (W12 C1)', 'W12', 'off', 'W12 D-C1', '2026-11-01 00:00+03', '2026-11-01 00:00+03', NULL),
-    ('9585358', 'Extension sheet (Make)', 'extension, Confirm Charge', 'Billing sheet Extend and Confirm paid (W12 C1)', 'W12', 'off', 'W12 D-C1', '2026-11-01 00:00+03', '2026-11-01 00:00+03', NULL),
-    ('9805613', 'Pause on submit (Make)', 'pause on the client''s submit', 'Pause sheet and pause consent (W12 C2, W34)', 'W12', 'off', 'W12 D-C2', '2026-11-01 00:00+03', '2026-11-01 00:00+03', NULL),
-    ('9805538', 'Termination on submit (Make)', 'termination on submit', 'Exit survey and churn confirm (W34 C4b)', 'W34', 'off', 'W34 D-C4b', '2026-11-02 00:00+03', '2026-11-02 00:00+03', NULL),
-    ('9209179', '1-1 notes (Make)', '1-1 notes', 'The 2b cut-over (native 1-1 notes)', '2b', 'off', '2b cut-over', '2026-11-01 00:00+03', '2026-11-01 00:00+03', NULL),
-    ('9523861', 'Recap sender (Make)', 'recap sender', 'The 2b cut-over (client messages)', '2b', 'off', '2b cut-over', '2026-11-01 00:00+03', '2026-11-01 00:00+03', NULL),
+    ('9805665', 'Extension (Make)', 'extension, Confirm Charge', 'Extend and Confirm paid on the billing sheet', 'W12', 'off', 'W12 D-C1', '2026-11-01 00:00+03', '2026-11-01 00:00+03', NULL),
+    ('9000763', 'Confirm Charge (Make)', 'extension, Confirm Charge', 'Extend and Confirm paid on the billing sheet', 'W12', 'off', 'W12 D-C1', '2026-11-01 00:00+03', '2026-11-01 00:00+03', NULL),
+    ('8069181', 'Confirm Charge, old (Make)', 'extension, Confirm Charge', 'Extend and Confirm paid on the billing sheet', 'W12', 'off', 'W12 D-C1', '2026-11-01 00:00+03', '2026-11-01 00:00+03', NULL),
+    ('9585358', 'Extension sheet (Make)', 'extension, Confirm Charge', 'Extend and Confirm paid on the billing sheet', 'W12', 'off', 'W12 D-C1', '2026-11-01 00:00+03', '2026-11-01 00:00+03', NULL),
+    ('9805613', 'Pause on submit (Make)', 'pause on the client''s submit', 'The pause sheet and the client''s pause consent', 'W12', 'off', 'W12 D-C2', '2026-11-01 00:00+03', '2026-11-01 00:00+03', NULL),
+    ('9805538', 'Termination on submit (Make)', 'termination on submit', 'The exit survey and Client is leaving', 'W34', 'off', 'W34 D-C4b', '2026-11-02 00:00+03', '2026-11-02 00:00+03', NULL),
+    ('9209179', '1-1 notes (Make)', '1-1 notes', '1-1 notes in the cockpit', '2b', 'off', '2b cut-over', '2026-11-01 00:00+03', '2026-11-01 00:00+03', NULL),
+    ('9523861', 'Recap sender (Make)', 'recap sender', 'Client messages in the cockpit', '2b', 'off', '2b cut-over', '2026-11-01 00:00+03', '2026-11-01 00:00+03', NULL),
     ('8962418', 'Old cancellation to sheet (Make)', 'old cancellation to sheet (invalid)', 'Exit survey', 'C9', 'off', NULL, NULL, '2026-09-25 00:00+03', 'Off (invalid) before the 2026-10-25 inventory; no run in its 30 days.'),
     ('9169732', 'Closed to RAW LEADS (Make)', 'closed to RAW LEADS', 'None needed (webhook WHTP4096881 disabled 2026-11-02)', 'C9', 'off', NULL, '2026-11-02 00:00+03', '2026-11-02 00:00+03', NULL),
     ('9783436', 'Draft internal request (Make)', 'draft internal request', 'The /requests page', 'C9', 'off', NULL, NULL, '2026-09-25 00:00+03', 'Off before the 2026-10-25 inventory; no run in its 30 days.'),
     ('8063994', 'Monday-era ticketing (Make)', 'Monday-era ticketing, QA', 'The /requests page', 'C9', 'off', NULL, NULL, '2026-09-25 00:00+03', 'Off before the 2026-10-25 inventory; no run in its 30 days.'),
     ('8064859', 'Monday-era ticketing (Make)', 'Monday-era ticketing, QA', 'The /requests page', 'C9', 'off', NULL, NULL, '2026-09-25 00:00+03', 'Off before the 2026-10-25 inventory; no run in its 30 days.'),
     ('8065434', 'Monday-era QA (Make)', 'Monday-era ticketing, QA', 'The /requests page', 'C9', 'off', NULL, NULL, '2026-09-25 00:00+03', 'Off before the 2026-10-25 inventory; no run in its 30 days.'),
-    ('8962328', 'NPS to Slack (Make)', 'NPS to Slack', 'Native NPS (W34 C5)', 'W34', 'on', 'W34 D-C5', NULL, NULL, 'Waits on the bot invite to #nps-survey-feedback (Q4).'),
-    ('8962387', 'CSAT to Slack (Make)', 'CSAT to Slack', 'Native onboarding survey (W34 C5)', 'W34', 'on', 'W34 D-C5', NULL, NULL, 'Waits on the bot invite to #nps-survey-feedback (Q4).'),
+    ('8962328', 'NPS to Slack (Make)', 'NPS to Slack', 'Native NPS', 'W34', 'on', 'W34 D-C5', NULL, NULL, 'Waits for the cockpit bot to be invited to #nps-survey-feedback.'),
+    ('8962387', 'CSAT to Slack (Make)', 'CSAT to Slack', 'Native onboarding survey', 'W34', 'on', 'W34 D-C5', NULL, NULL, 'Waits for the cockpit bot to be invited to #nps-survey-feedback.'),
     ('8068892', 'Old NPS and CSAT to Slack and sheet (Make)', 'old NPS and CSAT to Slack and sheet (0 runs)', 'Native NPS and onboarding survey', 'C9', 'on', 'D-C9', NULL, NULL, NULL),
-    ('9169735', 'Four Rs: reviews (Make)', 'Four Rs to sheet, comment, Slack', 'Log a win (C7)', 'W5', 'on', 'D-W', NULL, NULL, NULL),
-    ('9188441', 'Four Rs: testimonials (Make)', 'Four Rs to sheet, comment, Slack', 'Log a win (C7)', 'W5', 'on', 'D-W', NULL, NULL, NULL),
-    ('9190294', 'Four Rs: referrals (Make)', 'Four Rs to sheet, comment, Slack', 'Log a win (C7)', 'W5', 'on', 'D-W', NULL, NULL, NULL),
-    ('9195843', 'Four Rs: upsells (Make)', 'Four Rs to sheet, comment, Slack', 'Log a win (C7)', 'W5', 'on', 'D-W', NULL, NULL, NULL),
-    ('9205789', 'Four Rs: podcasts (Make)', 'Four Rs to sheet, comment, Slack', 'Log a win (C7)', 'W5', 'on', 'D-W', NULL, NULL, NULL),
-    ('9122691', 'Lead list (Make)', 'lead list', 'Request type whatsapp_reactivation', 'C9', 'on', 'D-C9', NULL, NULL, NULL),
-    ('9282377', 'Website sell form (Make)', 'website sell form', 'Request type landing_page', 'C9', 'on', 'D-C9', NULL, NULL, NULL),
+    ('9169735', 'Four Rs: reviews (Make)', 'Four Rs to sheet, comment, Slack', 'Log a win', 'W5', 'on', 'D-W', NULL, NULL, NULL),
+    ('9188441', 'Four Rs: testimonials (Make)', 'Four Rs to sheet, comment, Slack', 'Log a win', 'W5', 'on', 'D-W', NULL, NULL, NULL),
+    ('9190294', 'Four Rs: referrals (Make)', 'Four Rs to sheet, comment, Slack', 'Log a win', 'W5', 'on', 'D-W', NULL, NULL, NULL),
+    ('9195843', 'Four Rs: upsells (Make)', 'Four Rs to sheet, comment, Slack', 'Log a win', 'W5', 'on', 'D-W', NULL, NULL, NULL),
+    ('9205789', 'Four Rs: podcasts (Make)', 'Four Rs to sheet, comment, Slack', 'Log a win', 'W5', 'on', 'D-W', NULL, NULL, NULL),
+    ('9122691', 'Lead list (Make)', 'lead list', 'The WhatsApp reactivation request', 'C9', 'on', 'D-C9', NULL, NULL, NULL),
+    ('9282377', 'Website sell form (Make)', 'website sell form', 'The landing page request', 'C9', 'on', 'D-C9', NULL, NULL, NULL),
     ('9018535', 'Client card info to sheet and DM (Make)', 'client card info to sheet and DM', 'None: card data is not collected (retired 2026-10-26)', 'C9', 'on', 'D-C9', NULL, NULL, NULL),
     ('7908153', 'Old Monday kickoff (Make)', 'old Monday kickoff and card info', 'None', 'C9', 'on', 'D-C9', NULL, NULL, '0 runs; first in the D-C9 window (it maps card number and CVV).'),
     ('8069605', 'Old Monday card info (Make)', 'old Monday kickoff and card info', 'None', 'C9', 'on', 'D-C9', NULL, NULL, '0 runs; first in the D-C9 window (it maps card number and CVV).'),
-    ('8925654', 'Kickoff effects (Make 12)', 'kickoff effects', 'Native kickoff (Stage 4)', 'W6', 'on', 'D-S4K', NULL, NULL, 'Off only after parity of every effect (4.15).'),
-    ('8922994', 'Onboarding effects (Make 13)', 'onboarding effects', 'Native onboarding (Stage 4)', 'W6', 'on', 'D-S4O', NULL, NULL, 'Off only after parity of every effect (4.15).'),
-    ('9748311', 'Blueprint (Make 14)', 'Blueprint', 'Cockpit Blueprint (A1)', 'A1', 'on', 'after first native Blueprint close', NULL, NULL, NULL),
-    ('8979157', 'New Client Form MAIN (Make)', 'New Client Form MAIN', 'Stays (D14); [45] Kickoff Form Link to the cockpit link at D-S4K; [40] keeps the KFRCXPFx link (X26)', 'kept', 'kept', NULL, NULL, NULL, 'Kept: the New Client Form feeds HighLevel, Cortana and the B2B.'),
+    ('8925654', 'Kickoff effects (Make 12)', 'kickoff effects', 'Native kickoff', 'W6', 'on', 'D-S4K', NULL, NULL, 'Switched off only once every effect it has is proven the same in the cockpit.'),
+    ('8922994', 'Onboarding effects (Make 13)', 'onboarding effects', 'Native client onboarding', 'W6', 'on', 'D-S4O', NULL, NULL, 'Switched off only once every effect it has is proven the same in the cockpit.'),
+    ('9748311', 'Blueprint (Make 14)', 'Blueprint', 'Blueprint in the cockpit', 'A1', 'on', 'after first native Blueprint close', NULL, NULL, NULL),
+    ('8979157', 'New Client Form MAIN (Make)', 'New Client Form MAIN', 'Stays. Its kickoff link points at the cockpit kickoff once the native kickoff is live.', 'kept', 'kept', NULL, NULL, NULL, 'Kept: the New Client Form feeds HighLevel, Cortana and the B2B.'),
     ('9686154', 'Resume reminder (Make)', 'resume reminder', 'Stays (not a form scenario)', 'kept', 'kept', NULL, NULL, NULL, 'Kept: not a form scenario, or still the writer of record.'),
     ('9356423', 'First launch date (Make)', 'first launch date', 'Stays (not a form scenario)', 'kept', 'kept', NULL, NULL, NULL, 'Kept: not a form scenario, or still the writer of record.'),
     ('9744107', 'Status forward (Make)', 'status forward', 'Stays (not a form scenario)', 'kept', 'kept', NULL, NULL, NULL, 'Kept: not a form scenario, or still the writer of record.'),
@@ -2894,28 +3063,28 @@ INSERT INTO public.cockpit_retire_items (id, kind, external_id, name, used_for, 
 SELECT 'typeform:' || x.ext, 'typeform', x.ext, x.name, x.used_for, 'the systems manager', x.repl, x.wave, x.state, x.step,
        x.off_at::timestamptz, x.quiet::timestamptz, x.note, 'migration 20261102i'
   FROM (VALUES
-    ('gqBcyK6g', 'Extension (Typeform)', 'extension', 'Native extension (W12)', 'W12', 'closed', 'W12 D-C1', '2026-11-01 00:00+03', '2026-11-01 00:00+03', 'Archive 14 days after close if no legacy answer.'),
-    ('CTUjv6l3', 'Pause request (Typeform)', 'pause', 'Native pause and pause consent (W12, W34)', 'W12', 'closed', 'W12 D-C2', '2026-11-01 00:00+03', '2026-11-01 00:00+03', 'Archive 14 days after close if no legacy answer.'),
-    ('knIe4eF3', 'Termination (Typeform)', 'termination', 'Native exit survey (W34)', 'W34', 'closed', 'W34 D-C4b', '2026-11-02 00:00+03', '2026-11-02 00:00+03', 'Archive 14 days after close if no legacy answer.'),
-    ('fRokTITH', '1-1 notes (Typeform)', '1-1 notes', 'Native 1-1 notes (2b)', '2b', 'closed', '2b cut-over', '2026-11-01 00:00+03', '2026-11-01 00:00+03', 'Archive 14 days after close if no legacy answer.'),
-    ('fuPgs85S', 'NPS (Typeform)', 'NPS', 'Native NPS (W34 C5)', 'W34', 'on', 'W34 D-C5', NULL, NULL, 'Waits on the bot invite to #nps-survey-feedback (Q4).'),
-    ('KbcbPA73', 'CSAT (Typeform)', 'CSAT', 'Native onboarding survey (W34 C5)', 'W34', 'on', 'W34 D-C5', NULL, NULL, 'Waits on the bot invite to #nps-survey-feedback (Q4).'),
-    ('ETEynRgb', 'Four Rs: reviews (Typeform)', 'Four Rs', 'Log a win (C7)', 'W5', 'on', 'D-W', NULL, NULL, NULL),
-    ('bAmbMKM2', 'Four Rs: testimonials (Typeform)', 'Four Rs', 'Log a win (C7)', 'W5', 'on', 'D-W', NULL, NULL, NULL),
-    ('cKItPZVI', 'Four Rs: referrals (Typeform)', 'Four Rs', 'Log a win (C7)', 'W5', 'on', 'D-W', NULL, NULL, NULL),
-    ('VP3zmaj2', 'Four Rs: upsells (Typeform)', 'Four Rs', 'Log a win (C7)', 'W5', 'on', 'D-W', NULL, NULL, NULL),
-    ('IVHO9BMC', 'Four Rs: podcasts (Typeform)', 'Four Rs', 'Log a win (C7)', 'W5', 'on', 'D-W', NULL, NULL, NULL),
-    ('uXtImBuZ', 'Lead list (Typeform)', 'lead list', 'Request type whatsapp_reactivation', 'C9', 'on', 'D-C9', NULL, NULL, NULL),
-    ('PjfTJypg', 'Site design (Typeform)', 'site design', 'Request type landing_page', 'C9', 'on', 'D-C9', NULL, NULL, NULL),
+    ('gqBcyK6g', 'Extension (Typeform)', 'extension', 'Native extension', 'W12', 'closed', 'W12 D-C1', '2026-11-01 00:00+03', '2026-11-01 00:00+03', 'Archive 14 days after close if no legacy answer.'),
+    ('CTUjv6l3', 'Pause request (Typeform)', 'pause', 'Native pause and the client''s pause consent', 'W12', 'closed', 'W12 D-C2', '2026-11-01 00:00+03', '2026-11-01 00:00+03', 'Archive 14 days after close if no legacy answer.'),
+    ('knIe4eF3', 'Termination (Typeform)', 'termination', 'Native exit survey', 'W34', 'closed', 'W34 D-C4b', '2026-11-02 00:00+03', '2026-11-02 00:00+03', 'Archive 14 days after close if no legacy answer.'),
+    ('fRokTITH', '1-1 notes (Typeform)', '1-1 notes', 'Native 1-1 notes', '2b', 'closed', '2b cut-over', '2026-11-01 00:00+03', '2026-11-01 00:00+03', 'Archive 14 days after close if no legacy answer.'),
+    ('fuPgs85S', 'NPS (Typeform)', 'NPS', 'Native NPS', 'W34', 'on', 'W34 D-C5', NULL, NULL, 'Waits for the cockpit bot to be invited to #nps-survey-feedback.'),
+    ('KbcbPA73', 'CSAT (Typeform)', 'CSAT', 'Native onboarding survey', 'W34', 'on', 'W34 D-C5', NULL, NULL, 'Waits for the cockpit bot to be invited to #nps-survey-feedback.'),
+    ('ETEynRgb', 'Four Rs: reviews (Typeform)', 'Four Rs', 'Log a win', 'W5', 'on', 'D-W', NULL, NULL, NULL),
+    ('bAmbMKM2', 'Four Rs: testimonials (Typeform)', 'Four Rs', 'Log a win', 'W5', 'on', 'D-W', NULL, NULL, NULL),
+    ('cKItPZVI', 'Four Rs: referrals (Typeform)', 'Four Rs', 'Log a win', 'W5', 'on', 'D-W', NULL, NULL, NULL),
+    ('VP3zmaj2', 'Four Rs: upsells (Typeform)', 'Four Rs', 'Log a win', 'W5', 'on', 'D-W', NULL, NULL, NULL),
+    ('IVHO9BMC', 'Four Rs: podcasts (Typeform)', 'Four Rs', 'Log a win', 'W5', 'on', 'D-W', NULL, NULL, NULL),
+    ('uXtImBuZ', 'Lead list (Typeform)', 'lead list', 'The WhatsApp reactivation request', 'C9', 'on', 'D-C9', NULL, NULL, NULL),
+    ('PjfTJypg', 'Site design (Typeform)', 'site design', 'The landing page request', 'C9', 'on', 'D-C9', NULL, NULL, NULL),
     ('Aa6nUPOs', 'Old onboarding (Typeform)', 'old onboarding', 'Native onboarding', 'C9', 'on', 'D-C9', NULL, NULL, NULL),
     ('uUEp9YwJ', 'Old onboarding, second (Typeform)', 'old onboarding', 'Native onboarding', 'C9', 'on', 'D-C9', NULL, NULL, NULL),
     ('BbJy6xg4', 'Old kickoff (Typeform)', 'old kickoff', 'Native kickoff', 'C9', 'on', 'D-C9', NULL, NULL, NULL),
-    ('Uju17Z13', 'Card info (Typeform)', 'card info', 'None: card data is not collected', 'C9', 'on', 'D-C9', NULL, NULL, 'The CEO clears the card data it collected (plan 5.20).'),
-    ('ecJQ5Z5C', 'Reactivate your ads (Typeform)', 'reactivate ads', 'None: the ad-billing guard decides (X13)', 'C9', 'on', 'D-C9', NULL, NULL, NULL),
-    ('oYZKtogO', 'Old Blueprint (Typeform)', 'old Blueprint', 'Cockpit Blueprint (A1)', 'A1', 'on', 'after first native Blueprint close', NULL, NULL, NULL),
-    ('tG7dnxBn', 'Kickoff (Typeform)', 'kickoff', 'Native kickoff (Stage 4)', 'W6', 'on', 'D-S4K', NULL, NULL, NULL),
-    ('KFRCXPFx', 'Client onboarding (Typeform)', 'onboarding', 'Native onboarding; after D-S4O its answers feed the native planner (X26)', 'W6', 'on', 'after [40] sends native invite', NULL, NULL, 'Stays open until Make 8979157 [40] carries a native invite.'),
-    ('BTzMwXiw', 'New Client Form (Typeform)', 'New Client Form', 'Stays (D14)', 'kept', 'kept', NULL, NULL, NULL, 'Kept: never imitate a submission (Make, HighLevel, Cortana and the B2B read it).')
+    ('Uju17Z13', 'Card info (Typeform)', 'card info', 'None: card data is not collected', 'C9', 'on', 'D-C9', NULL, NULL, 'The CEO clears the card data it collected.'),
+    ('ecJQ5Z5C', 'Reactivate your ads (Typeform)', 'reactivate ads', 'None: the ad-billing guard decides', 'C9', 'on', 'D-C9', NULL, NULL, NULL),
+    ('oYZKtogO', 'Old Blueprint (Typeform)', 'old Blueprint', 'Blueprint in the cockpit', 'A1', 'on', 'after first native Blueprint close', NULL, NULL, NULL),
+    ('tG7dnxBn', 'Kickoff (Typeform)', 'kickoff', 'Native kickoff', 'W6', 'on', 'D-S4K', NULL, NULL, NULL),
+    ('KFRCXPFx', 'Client onboarding (Typeform)', 'onboarding', 'Native client onboarding; once it is live, this form''s answers go through the same steps', 'W6', 'on', 'after [40] sends native invite', NULL, NULL, 'Stays open until the New Client Form scenario sends the native onboarding link.'),
+    ('BTzMwXiw', 'New Client Form (Typeform)', 'New Client Form', 'Stays', 'kept', 'kept', NULL, NULL, NULL, 'Kept: never imitate a submission (Make, HighLevel, Cortana and the B2B read it).')
   ) AS x(ext, name, used_for, repl, wave, state, step, off_at, quiet, note)
 ON CONFLICT (id) DO NOTHING;
 
@@ -2927,18 +3096,20 @@ SELECT 'webhook:' || x.ext, 'webhook', x.ext, x.name, x.used_for, 'the systems m
     ('WHTP4364124', 'Sandbox ticket form webhook (o0ULXQhD)', 'sandbox ticket form to the inactive 9783436', 'None', 'C9', 'D-C9', NULL),
     ('WHTP4007419', 'NPS webhook (fuPgs85S)', 'NPS', 'Native NPS', 'W34', 'W34 D-C5', NULL),
     ('WHTP4007430', 'CSAT webhook (KbcbPA73)', 'CSAT', 'Native onboarding survey', 'W34', 'W34 D-C5', NULL),
-    ('WHTP4149695', 'Site design webhook (PjfTJypg)', 'site design', 'Request type landing_page', 'C9', 'D-C9', NULL),
-    ('WHTP4077499', 'Lead list webhook (uXtImBuZ)', 'lead list', 'Request type whatsapp_reactivation', 'C9', 'D-C9', NULL),
+    ('WHTP4149695', 'Site design webhook (PjfTJypg)', 'site design', 'The landing page request', 'C9', 'D-C9', NULL),
+    ('WHTP4077499', 'Lead list webhook (uXtImBuZ)', 'lead list', 'The WhatsApp reactivation request', 'C9', 'D-C9', NULL),
     ('WHTP4030451', 'Card info webhook (Uju17Z13)', 'card info', 'None', 'C9', 'D-C9', NULL),
-    ('WHTP4096883', 'Four Rs: reviews webhook (ETEynRgb)', 'Four Rs', 'Log a win (C7)', 'W5', 'D-W', NULL),
-    ('WHTP4105426', 'Four Rs: testimonials webhook (bAmbMKM2)', 'Four Rs', 'Log a win (C7)', 'W5', 'D-W', NULL),
-    ('phoenix-bAmbMKM2', 'Phoenix webhook on testimonials (bAmbMKM2)', 'Four Rs', 'Log a win (C7)', 'W5', 'D-W', 'Already disabled in Typeform; D-W removes it.'),
-    ('WHTP4105956', 'Four Rs: referrals webhook (cKItPZVI)', 'Four Rs', 'Log a win (C7)', 'W5', 'D-W', NULL),
-    ('WHTP4108828', 'Four Rs: upsells webhook (VP3zmaj2)', 'Four Rs', 'Log a win (C7)', 'W5', 'D-W', NULL),
-    ('WHTP4112950', 'Four Rs: podcasts webhook (IVHO9BMC)', 'Four Rs', 'Log a win (C7)', 'W5', 'D-W', NULL),
+    ('WHTP4096883', 'Four Rs: reviews webhook (ETEynRgb)', 'Four Rs', 'Log a win', 'W5', 'D-W', NULL),
+    ('WHTP4105426', 'Four Rs: testimonials webhook (bAmbMKM2)', 'Four Rs', 'Log a win', 'W5', 'D-W', NULL),
+    ('phoenix-bAmbMKM2', 'Phoenix webhook on testimonials (bAmbMKM2)', 'Four Rs', 'Log a win', 'W5', 'D-W', 'Already disabled in Typeform; D-W removes it.'),
+    ('WHTP4105956', 'Four Rs: referrals webhook (cKItPZVI)', 'Four Rs', 'Log a win', 'W5', 'D-W', NULL),
+    ('WHTP4108828', 'Four Rs: upsells webhook (VP3zmaj2)', 'Four Rs', 'Log a win', 'W5', 'D-W', NULL),
+    ('WHTP4112950', 'Four Rs: podcasts webhook (IVHO9BMC)', 'Four Rs', 'Log a win', 'W5', 'D-W', NULL),
     ('WHTP3992232', 'Kickoff webhook (tG7dnxBn)', 'kickoff', 'Native kickoff', 'W6', 'D-S4K', NULL),
-    ('postcallsummary', 'Post-call summary webhook (tG7dnxBn)', 'kickoff', 'Native kickoff', 'W6', 'D-S4K', NULL),
-    ('WHTP3991048', 'Make''s onboarding webhook (KFRCXPFx)', 'onboarding', 'Native onboarding (the forms-door webhook on KFRCXPFx stays)', 'W6', 'D-S4O', NULL)
+    ('postcallsummary', 'Post-call summary webhook (tG7dnxBn)', 'kickoff recap drafts (Make hook 4114295, Make 06 9209179)',
+     'Nothing: client recaps are sent from the cockpit (client messages)', 'W6', 'D-S4K',
+     'Its only reader is Make 06 (9209179), the recap drafter; the CEO turned this webhook off on 2026-10-26 (A3) after 0 of 8 recaps ever reached a client. Removing it drops nothing.'),
+    ('WHTP3991048', 'Make''s onboarding webhook (KFRCXPFx)', 'onboarding', 'Native client onboarding (the cockpit''s own webhook on the form stays)', 'W6', 'D-S4O', NULL)
   ) AS x(ext, name, used_for, repl, wave, step, note)
 ON CONFLICT (id) DO NOTHING;
 SELECT set_config('cockpit.forms_action', '', true);
@@ -2954,7 +3125,7 @@ REVOKE ALL ON FUNCTION
   public.cockpit_form_invite_tail_forms(text,text), public.cockpit_form_invite_view_with_tail(text,text),
   public.cockpit_form_file_slots_state(public.cockpit_form_invites),
   public.cockpit_form_file_slot_make(public.cockpit_form_invites,text,text,bigint,text,text),
-  public.portal_form_file_slot(text,text,text,uuid,text,text,bigint,text),
+  public.portal_form_file_slot(text,text,text,text,uuid,text,text,bigint,text),
   public.portal_form_token_file_slot(text,text,text,text,text,bigint,text),
   public.cockpit_form_file_slots_claim(), public.cockpit_form_file_read(uuid,text),
   public.cockpit_form_issue_hook_bank_receipt(uuid), public.cockpit_form_hook_bank_receipt(uuid),
@@ -2980,14 +3151,14 @@ GRANT EXECUTE ON FUNCTION public.cockpit_form_invite_view(text),
 GRANT EXECUTE ON FUNCTION public.portal_form_get(text,text,text,text,uuid) TO service_role;
 
 -- New (3.3): the portal's two slots, the staff file read and the retire list.
-GRANT EXECUTE ON FUNCTION public.portal_form_file_slot(text,text,text,uuid,text,text,bigint,text),
+GRANT EXECUTE ON FUNCTION public.portal_form_file_slot(text,text,text,text,uuid,text,text,bigint,text),
   public.portal_form_token_file_slot(text,text,text,text,text,bigint,text)
   TO service_role;
 GRANT EXECUTE ON FUNCTION public.cockpit_form_file_read(uuid,text), public.cockpit_retire_items_read() TO authenticated;
 
 COMMENT ON FUNCTION public.cockpit_form_file_read(uuid, text) IS
   'One stored client file for a staff seat (W56 4.10.4): the gate of cockpit_form_answer_read (the CEO, an admin, finance, or a CSM allowed on the client), then {path, mime, bytes, name} for cockpit-forms-api file.url to sign for 5 minutes. Never a URL.';
-COMMENT ON FUNCTION public.portal_form_file_slot(text, text, text, uuid, text, text, bigint, text) IS
+COMMENT ON FUNCTION public.portal_form_file_slot(text, text, text, text, uuid, text, text, bigint, text) IS
   'The portal''s upload slot (W56 3.6): the workspace checks of portal_form_get, then forms/{invite}/{field}/{sha256}.{ext} for the portal server to sign an upload URL for (10 minutes). At most 5 slots per invite and field.';
 COMMENT ON FUNCTION public.portal_form_token_file_slot(text, text, text, text, text, bigint, text) IS
   'The link page''s upload slot (W56 3.6): the token checks and rate limits of portal_form_token_open, logged the same way.';

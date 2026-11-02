@@ -882,6 +882,12 @@ agent's user): zero files with a Supabase key name for "achieved", or the stated
    date.
 5. `cockpit_billing_balances_read` adds `dateIfConfirmed` per part (the date the rule would write, or
    NULL with `dateWhy`), so the screen can say it before the press (5.6).
+6. (Revision 2.) The server works the days out itself (`cockpit_billing_later_due`): with a launch day on
+   record a later part n is due launch + n months (the card's date when the card moved it 1 to 21 days
+   on); without one, the next part must sit 30 days a part after this one, less up to 21. The browser's
+   `dueOn`, `nextPartNo` and `nextDueOn` are only an optimistic check: a mismatch refuses the whole confirm
+   with `The payment plan changed since this page loaded. Reload the page and confirm again.` and writes
+   nothing.
 
 ### 4.7 C7 switch-offs (deploy D-W, with wins-pay's backfill)
 
@@ -974,9 +980,10 @@ Reviews" (protect the range; the CEO's sheet, read back); enable `win.logged`; r
    (`cockpit_manual_payments_to_check`, replaced) with `receipt` and a `View the receipt` link. The
    card is not changed (D11). It is not cash, LTV or pay until `cockpit_manual_payment_check` moves it
    to `checked` (unchanged W12 RPC). Once checked, a receipt whose invite context names a `later`
-   part puts `Receipt checked: confirm the part paid ({client})` on the CSM's Today, which opens that
-   part's Confirm paid; Confirm paid then moves the next payment date by 4.6 (one date write per save,
-   no new trigger; X29).
+   part puts `Receipt checked: set the next payment date to {date} ({client})` (or `... set the next
+   payment date ({client})` when 4.6's rule gives none) on the CSM's Today for 14 days, until a date event
+   lands on the card; it opens the billing sheet, where the W12 date edit writes the one date (revision 2:
+   Confirm paid refuses a transfer, so it cannot be the door; no new trigger; X29).
 4. Staff view: `cockpit-forms-api` op `file.url` `{responseId, field}` → `cockpit_form_file_read`
    with the seat's token, then a 5-minute signed download URL from Storage with the service key; the
    URL is returned once and never logged (`supabase/functions/cockpit-forms-api/{door.ts,files.ts}`).
@@ -1313,13 +1320,14 @@ The questions keep the Typeform's wording (4.14). New lines:
 
 | Key | EN | AR |
 |---|---|---|
-| title (if the Typeform's is missing) | Tell us about your business | عرّفنا على شغلك |
-| intro (n = 10) | Tell us about your business so your onboarding call starts in the right place. It takes about 10 minutes, and you can come back to it on this device. | عرّفنا على شغلك عشان مكالمة الانطلاق تبدي من المكان الصح. تاخذ تقريباً ١٠ دقايق، وتقدر ترجع تكملها بعدين من نفس الجهاز. |
+| title (if the Typeform's is missing) | Tell us about your business | عرّفونا على شغلكم |
+| intro (n = 25; revision 2: 36 questions, 11 long) | Tell us about your business so your onboarding call starts in the right place. It takes about 25 minutes. Your answers stay on this device, so you can finish it in more than one sitting. | عرّفونا على شغلكم عشان مكالمة الانطلاق تبدي من المكان الصح. تاخذ تقريباً ٢٥ دقيقة، وردودكم تنحفظ على هالجهاز، فتقدرون تكملونها على كم مرة. |
 | step count | {i} of {n} | {i} من {n} |
-| draft line | Your answers are saved on this device for 7 days. | ردودك محفوظة على هالجهاز لمدة ٧ أيام. |
+| draft line | Your answers are saved on this device for 7 days. | ردودكم محفوظة على هالجهاز لمدة ٧ أيام. |
 | submit | Send my answers | أرسل ردودي |
-| done | Got it. Your account manager will see your answers before your onboarding call. | وصلنا. مدير حسابك بيشوف ردودك قبل مكالمة الانطلاق. |
-| Getting started card | Your onboarding form · Fill it before your onboarding call. | فورم التعريف · عبّه قبل مكالمة الانطلاق. |
+| done | Got it. Your account manager will see your answers before your onboarding call. | وصلنا. مدير حسابكم بيشوف ردودكم قبل مكالمة الانطلاق. |
+| Getting started card | Your onboarding form · Fill it before your onboarding call. | فورم التعريف · عبّوه قبل مكالمة الانطلاق. |
+| Getting started card, sent | Your account manager has your answers. | مدير حسابكم وصلته ردودكم. |
 | card buttons | Start · Continue · Sent on {date} | ابدِ · كمّل · انرسل {date} |
 | WhatsApp (CSM send) | Hi {client} team, here is your onboarding form. Fill it before our onboarding call: {form_link} | هلا فريق {client}، هذا فورم التعريف. عبّوه قبل مكالمة الانطلاق: {form_link} |
 | push | Your onboarding form is ready. Tap to start. | فورم التعريف جاهز. اضغط وابدِ. |
@@ -1358,8 +1366,8 @@ client sent a transfer receipt to check.`), `Client is back` (`A churned client 
 Today bands (hidden when empty): `Client accepted: send the agreement for the {offer} ({client})` →
 `Open the proposal`; `Invoice paid: tie it to the {offer} ({client})` → `Tie the payment`; CEO only:
 `Upsell payments to confirm: {n}` → `Open Money`; `Receipt in: {client}` → `Open Checks waiting`;
-`Back: {client}` (7 days) → `Open the relaunch ticket`; `Receipt checked: confirm the part paid
-({client})` → `Open Pending payments`; `Payment due {date}, no money in: ask for the receipt
+`Back: {client}` (7 days) → `Open the relaunch ticket`; `Receipt checked: set the next payment date to
+{date} ({client})` → `Open the billing sheet`; `Payment due {date}, no money in: ask for the receipt
 ({client})` → `Ask for the receipt` (4.10.6).
 
 ### 5.13 The kickoff sheet (cockpit, `src/forms/kickoff.ts` + FormSheet def `kickoff`)
@@ -1529,7 +1537,7 @@ with W12's held-edit review over every open kind (W34 11.4).
 | D-J2 | Deploy `forms-door` (off) and `clickup-writeback` (off, `forms.ts`, `run.ts`); native releases `hermes/client-messages` (file-scoped) and `hermes/csm-calls` (`sources.ts`); `hermes/forms-relay` installed with `FORMS_RELAY_APPLY=false`, its cron under `flock`; `hermes/ceo-refresh` `growth.js` file-scoped | forms-door probes as before (kickoff unsigned 401, signed probe 200); `FORMS_KEYS` absent = `checkin` only, the 1-1 notes writes unchanged; relay doctor ok, runs print "Nothing to relay."; kickoff cash in the growth section unchanged | previous versions and links |
 | D-S1 | Ship client-success and media-buyer from the merged main, only after D-G1 to D-J2 | live bundle check; `to_regprocedure` non-NULL for every RPC the bundles name; every new door hidden (markers false); the Money tab Apply still present until D-LTV | `vercel rollback`; migrations stay |
 | D-P1 | Portal release (after D-I1): `npm test`, `tsc`, commit on origin/main, `git archive`, `vercel deploy --prod --skip-domain`, CI, note the live id, `vercel promote`, `check-login-origin.mjs` 17/17, receipt `docs/releases/2026-11-0x-forms-w56.json`, `docs/CURRENT-STATE.md`, `VERSION.json` | `/preview/client-form?form=bank_receipt` 404 in production; staff preview of `bank_receipt` renders the tile in both languages and records nothing; Getting started still shows the Typeform embed (onboarding not live); `POST /api/forms/file` 401 without a session | `vercel promote <previous id>` |
-| D-LTV | **LTV writer on:** pre-check: grep the saved blueprints of active Make scenarios **and the live billing-agent skill files** for `11d70e58` and an LTV field write (none expected in Make; the skill's `log_payment.py` write is the one known hit); back up the skill folder (`~/backups/billing-agent-<date>-ltv/`), delete only `log_payment.py`'s LTV write (file-scoped), read the change back (the grep now counts 0); `BILLING_ONLY_CARDS=86eywg1cq` + kind `ltv`, `cockpit_billing_canary('ltv', {to: <test value>})`, read back, void, restore the test card's value by a second canary; clear the card list and run the held-edit review; deploy `cockpit-media-api` with the refusal; `billing.ltv.on=true`, marker `ltv` true (the Money tab Apply turns into the retirement line in the same minute); the next morning's run | the skill grep 0 after the edit; the canary item `delivered`; `ceo.ltv.apply` answers the retirement sentence; the 05:10 UTC run writes 2 events (Ardon, شركة العلا) and holds none; both read back on the cards; `ltv-drift` and `ltv-second-source` ok 2 days later | `billing.ltv.on=false`, marker `ltv` false (the Apply returns); remove `ltv` from the kinds; redeploy the previous `cockpit-media-api`; restore `log_payment.py` from the backup only if the morning writer stays off |
+| D-LTV | **LTV writer on:** pre-check: grep the saved blueprints of active Make scenarios **and the live billing-agent skill files** for `11d70e58` and an LTV field write (none expected in Make; the skill's `log_payment.py` write is the one known hit); confirm `convex/ceo/ltv.ts` `apply` and `setStartingFigures` still refuse first (`LTV_WRITER_RETIRED`) and `portal_billing_ltv_prepare` answers `hold` (revision 2); back up the skill folder (`~/backups/billing-agent-<date>-ltv/`), delete only `log_payment.py`'s LTV write (file-scoped), read the change back (the grep now counts 0); `BILLING_ONLY_CARDS=86eywg1cq` + kind `ltv`, `cockpit_billing_canary('ltv', {to: <test value>})`, read back, void, restore the test card's value by a second canary; clear the card list and run the held-edit review; deploy `cockpit-media-api` with the refusal; `billing.ltv.on=true`, marker `ltv` true (the Money tab Apply turns into the retirement line in the same minute); the next morning's run | the skill grep 0 after the edit; the canary item `delivered`; `ceo.ltv.apply` answers the retirement sentence; the 05:10 UTC run writes 2 events (Ardon, شركة العلا) and holds none; both read back on the cards; `ltv-drift` and `ltv-second-source` ok 2 days later | `billing.ltv.on=false`, marker `ltv` false (the Apply returns); remove `ltv` from the kinds; redeploy the previous `cockpit-media-api`; restore `log_payment.py` from the backup only if the morning writer stays off |
 | D-CD | **Confirm paid moves the date:** a rolled-back DO block as the CEO that first inserts a fixture deal and a monthly `later` part for the test card `86eywg1cq` (and its mirrored Next Payment Date), confirms the part, reads the queued `date` item and RAISEs, so no row, queue item, notice or `pg_net` request survives (pg_net sends only after commit); the same cases are proven in PGlite (8); then `billing.confirm_date.on=true` | the rolled-back block shows one `date` item one month on, for the test card only; the first real confirm is watched and read back | `billing.confirm_date.on=false` |
 | D-AG0 | **The agent's reach (read only):** the inventory of 4.5.1: every file the agent's Unix user and runtime can read that holds a Supabase key name, and the Unix user of each worker that sources those files; paths and key names only, in the deploy log | the list, and the verdict: separation possible (the agent can be moved to its own user or runtime without breaking another worker) or not | none |
 | D-AG | **The agent's login:** read and save the live skill files (`~/backups/billing-agent-<date>/`); map every Supabase REST call to a 3.4 op or read and list every ClickUp call (stop if a write has no op); generate the key on the VPS (`openssl rand`, written into the agent's **own** env file, `chmod 600`, as `MAHARA_AGENT_KEY`, never printed), send only its sha256 to `cockpit_agent_key_put_owner('billing_agent', <sha>, 'D-AG', <who>)`; copy `cockpit_agent.py`, re-point the skill's writes, remove its ClickUp writes; `cockpit_agent.py doctor`; remove the Supabase key entries from the agent's own env and skill; when D-AG0 said separation is possible, move the agent to its own user or runtime and make every file holding a Supabase key unreadable to it (other workers' next runs read back), then `billing.agent.separated=true`; otherwise leave it false and write "AG is not achieved: the agent can still read the old key on the server" in the deploy log; freeze the Google Sheet "Payments" tab (protect the range; the CEO's sheet, read back; C8); marker `agent` true | doctor ok; the D-AG0 list run again as the agent's user shows zero files with a Supabase key name (achieved) or the stated "not achieved" line; zero ClickUp write calls in the skill; the agent's next scheduled run writes its `chase` events through the door (`cockpit_agent_calls` rows `ok`, events source `maher`); the Payments tab protected; the CEO card shows the key, last call and, if not separated, its warning | restore the saved skill folder and env from the backup; revoke the key; unprotect the Payments tab |
@@ -1697,3 +1705,31 @@ These were declined, or applied differently from the fix the review suggested:
 | A scheduled bank receipt trigger (E20) | Applied as a Today band (X28) | A scheduled request would reach card payers. |
 | Full bilingual question table for the native onboarding in 5.9 | Not written here; the go-live waits on the CEO's look at the drafts in the forms editor (1.3, D-S4O) | The 33 questions' wording comes from the stored Typeform titles at build time; writing the other language here without the definition would guess. |
 | AG: give the agent its own env file and move other workers away | Applied only where possible (4.5, D-AG0); otherwise "not achieved" is stated (X27) | A separate Unix user may not exist on the VPS; the contract cannot promise a separation it cannot verify from here. |
+
+
+### 11.6 Implementation review, revision 2 (2026-11-02): what changed
+
+Each finding of the post-integration review was checked against the code, the live database (SELECT only)
+and memory first. Applied (the migrations are not live, so g to j were edited in place; drift-guard
+"after" md5s were recomputed for the bodies that changed):
+
+| Area | Change |
+|---|---|
+| 4.9 pay proposals | A win is read in every month its money falls in: a referred deal's first payment or a tied upsell payment before the win day is proposed once, in its own month (`cockpit_win_first_day` starts the WinRow series there). Decisions store the `cash_usd`/`quantity` they covered; cash tied or checked after a decision is proposed as a top-up key `win:{id}:{part}:{YYYY-MM}:{n}` (the decide tells the entry save, transaction-local, that this key is a new decision; a typed third entry is still refused). A tied payment the closer was already paid on in an approved month reads `waiting`: `This payment was paid to the closer in {month}.` Renewals and reactivations clear on the agreement only (`Add the agreement link to clear it for pay.`), as 3.3 says. |
+| 3.2 void | A CSM cannot void a win with a confirmed pay decision (`This win was paid for. Ask the CEO to void it.`); the CEO's void lists the open-month entries it made. A proof link paid for on a voided win is refused at log. |
+| 4.3.6 / 4.12 | Reactivate attaches a reactivation the CSM logged by hand within 60 days (departure set through the act; the guard allows only that move) instead of logging a second win. |
+| 5.1 referral picker | The CEO sees every signed deal of 120 days; a CSM only deals whose lead source says referral or whose card the CSM is allowed on (`cockpit_win_referral_deals`), at read and at log. |
+| 4.6 | Server-side days (4.6.6). |
+| 4.4.2 | The LTV step runs inside its own exception block: an error writes `billing-ltv` ok=false and `LTV: not written (error).` and the run commits. |
+| 4.4.3 C8 | Convex `ceo.ltv.apply` and `setStartingFigures` refuse first; `portal_billing_ltv_prepare` now always answers `hold` and `_finish` refuses (live md5s guarded, ACL kept so an old portal build stops quietly). D-LTV's pre-check also greps `convex/ceo/ltv.ts` for `field/${CFB.ltv}` behind the refusal. |
+| 3.4 agent door | An unknown key writes no health receipt, is answered from memory for a minute, and above 20 unknown keys a minute per instance new keys get 429 before the database; the body is read with a hard 32 KB cap. The Python client refuses redirects (the key is never re-sent to a Location host). |
+| 4.10.3 / 4.10.6 / 4.12.5 | `cockpit_csm_wins_today` (replaced in `i`) adds `receipt_in`, `receipt_checked` (with the rule's date), `back` and `due_no_money` (a transfer payer whose card date passed in 30 days with no payment since a week before, no open receipt invite, not paused or stopped; currency from the last transfer, an amount only in dollars). The receipt hook re-reads a named transfer and attaches only to a live one without a receipt; one receipt per logged payment (unique index). The receipt context's amount and currency are optional; Pending payments sends neither (a plan's parts are dollars, the client's billing currency is not on record). |
+| 3.6 slots and files | `portal_form_file_slot` takes `p_access_role` and refuses `admin_only`; the portal route forwards it. The staff file read signs only a slot that very response used on its own card. |
+| 4.14 / X26 | The Typeform door runs the planner only for a card onboarding now (in onboarding, pipeline group, or signed up / signed a deal in 30 days); any other card's answer is stored legacy (`why 'not_onboarding'`). |
+| 4.14 / 5.9 onboarding v2 | The schema gained `context: []` and `required: false` on its three headings: without them the portal's parser refused the whole form (found by pointing the portal preview at the real schema, a JSON copy at `src/lib/forms/onboarding-v2.json` in the portal, checked equal by shape in both test suites). Minutes 25 (the minutes cap is 1 to 60 in the SQL check, the editor, the portal parser, the pop-up and the asks; Arabic 11+ reads `دقيقة`). Arabic in the plural throughout (`منو`), no `(optional)` in a label, the drive link's checklist became a hint. |
+| 11.3 C9 | The registry's replacement and note words carry no build codes; Settings renders the note as the next step in the kit's SectionCard. `postcallsummary`: its only reader is Make 06 (9209179); the CEO turned it off on 2026-10-26 (A3) after 0 of 8 recaps reached a client, so removing it at D-S4K drops nothing (recorded in the row's note). |
+| Screens | No label says "(optional)" (FormSheet adds it); sheet titles `Log a win` and `Client is back` with the client underneath; the ribbon runs down a rule under 30rem, links underlined at rest, voided money struck; LTV source line and plurals; the agent card says `Revoked on {date}: {reason}.`; Money tab band in plain words; the portal tile isolates a Latin file name in Arabic; `قاعد ينرفع…`; the Getting started card stops asking once sent and uses a plain file icon until then. A harness (`?w56=on|off|empty|held|revoked|split`, `src/dev/w56Harness.ts`) feeds the four CEO screens. |
+
+Not applied: none of the findings were rejected outright. Not done in this revision: the 375/1280
+light/dark screenshots and the Hallmark slop test of the CEO screens (the harness now makes them possible;
+they wait on a browser session), and the CEO's read of the Arabic drafts under aziz-kuwaiti-voice (1.3).
