@@ -7,14 +7,22 @@
 // edit changes and the comment it posts (migrations
 // 20261009j_billing_clickup_writeback.sql, 20261101m_billing_rails.sql and
 // 20261102b_client_lifecycle.sql: kind survey writes no field, only its
-// comment; kind nps_sent writes npsSent, the day the NPS invite went out).
+// comment; kind nps_sent writes npsSent, the day the NPS invite went out;
+// 20261102g_money_rails_w5.sql: kind win writes no field, only its comment;
+// kind reactivate writes Client Status back, clears Churn Date, Churn Reason,
+// Churn Type, Paused On and Resume On, then the next payment date; a date
+// that Confirm paid moved carries its own comment; kind ltv is the morning
+// writer's one LTV write).
 // This file turns that item into ClickUp writes, in the order the item lists
 // them and in these formats:
 //   dropdown  POST {value: <option id>}, the option looked up by name on the list
 //   date      POST {value: <ms of 09:00 UTC, noon Kuwait>, value_options: {time: false}}
 //   number    POST {value: <number>} (MRR and LTV are currency fields; they take a number)
 //   checkbox  POST {value: true|false}
-//   clear     DELETE on the field value (Paused On and Resume On on a resume)
+//   clear     DELETE on the field value, for any format (a write with value null):
+//             Paused On and Resume On on a resume, and on a reactivate the
+//             churn date and the two churn dropdowns as well; a field already
+//             empty reads back as unchanged and is not cleared again
 //   note      the comment "Billing note (<email>): <text>"
 //   comment   the event's own comment (payload.comment, 20261101m), posted as is
 //

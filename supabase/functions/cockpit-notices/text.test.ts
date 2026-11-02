@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { SERVICE_LABEL as BRIEF_SERVICE_LABEL } from "../../../apps/client-success-cockpit/src/present/blueprintBrief";
 import { CRITERIA as GRADE_CRITERIA } from "../cockpit-forms-api/prompts/grade.ts";
 import {
-  CHURN_REASONS, CLIENT_FORM_KINDS, CRITERIA, cleanStatus, FEEDBACK_KIND_WORDS, FEEDBACK_TOPIC_WORDS, cutAtWord, escapeSlack, kuwaitClock, kuwaitDay, kuwaitWhen, LIFECYCLE_KINDS, NOTICE_KINDS, type NoticeFacts, type NoticeKind, noticeLinks, noticeText, sampleFacts,
+  CHURN_REASONS, CLIENT_FORM_KINDS, CRITERIA, cleanStatus, MONEY_KINDS, OFFER_WORDS, WIN_KIND_WORDS, FEEDBACK_KIND_WORDS, FEEDBACK_TOPIC_WORDS, cutAtWord, escapeSlack, kuwaitClock, kuwaitDay, kuwaitWhen, LIFECYCLE_KINDS, NOTICE_KINDS, type NoticeFacts, type NoticeKind, noticeLinks, noticeText, sampleFacts,
   SECTION_MAX, SERVICE_LABEL, type SlackBlock, type TextMention, VARIANTS, type Variant,
 } from "./text";
 
@@ -46,6 +46,7 @@ describe("Kuwait time and the small helpers", () => {
       messages: "https://cockpit.maharamedia.com/client-success/clients/task0001?tab=overview#messages",
       client: "https://cockpit.maharamedia.com/client-success/clients/task0001",
       churn: "https://cockpit.maharamedia.com/client-success/money?tab=churn",
+      billing: "https://cockpit.maharamedia.com/client-success/money?tab=billing",
     });
   });
   test("SERVICE_LABEL is blueprintBrief.ts's, key for key", () => {
@@ -374,8 +375,8 @@ describe("the 1-1 notes notices (docs/forms/STAGE2B-CONTRACT.md 4.2)", () => {
     expect(VARIANTS["checkin.grade"]).toEqual(["grade"]);
     expect(VARIANTS["checkin.recap_late"]).toEqual(["late"]);
     expect(() => noticeText("checkin.grade", "late", gradeFacts)).toThrow("There is no late wording for checkin.grade.");
-    // Stage 1's six, the 1-1 notes' two, waves 1-2's lifecycle six and waves 3-4's client forms six.
-    expect(NOTICE_KINDS).toHaveLength(20);
+    // Stage 1's six, the 1-1 notes' two, waves 1-2's lifecycle six, waves 3-4's client forms six, waves 5-6's money three.
+    expect(NOTICE_KINDS).toHaveLength(23);
   });
 });
 
@@ -449,7 +450,7 @@ describe("the client's voice and forms (docs/forms/WAVE34-CONTRACT.md 3.4)", () 
 
   test("the six kinds close the list, with their variants", () => {
     expect([...CLIENT_FORM_KINDS]).toEqual(["pause.consent", "nps.received", "csat.received", "voice.low", "feedback.received", "legacy.received"]);
-    expect(NOTICE_KINDS.slice(-6)).toEqual([...CLIENT_FORM_KINDS]);
+    expect(NOTICE_KINDS.slice(14, 20)).toEqual([...CLIENT_FORM_KINDS]);
     expect(VARIANTS["pause.consent"]).toEqual(["signed", "dates_wrong"]);
     for (const k of CLIENT_FORM_KINDS.slice(1)) expect(VARIANTS[k]).toEqual(["post"]);
     expect(Object.keys(FEEDBACK_KIND_WORDS)).toEqual(["idea", "improvement", "problem", "appreciation"]);
@@ -525,6 +526,69 @@ describe("the client's voice and forms (docs/forms/WAVE34-CONTRACT.md 3.4)", () 
     for (const kind of CLIENT_FORM_KINDS) {
       const variant = VARIANTS[kind][0];
       const out = noticeText(kind, variant, { ...sampleFacts(kind), rehearsal: true });
+      expect(out.text).toStartWith("[Rehearsal] ");
+      expect(out.text).toContain("Sample client");
+    }
+  });
+});
+
+describe("wins and money (docs/forms/WAVE56-CONTRACT.md 3.9)", () => {
+  const f = (extra: Record<string, unknown> = {}) => base({ mentions: [], ...extra });
+
+  test("the three kinds close the list, with their variants and the ledger's words", () => {
+    expect([...MONEY_KINDS]).toEqual(["win.logged", "receipt.in", "client.reactivated"]);
+    expect(NOTICE_KINDS.slice(-3)).toEqual([...MONEY_KINDS]);
+    expect(VARIANTS["win.logged"]).toEqual(["post", "offered", "accepted"]);
+    expect(VARIANTS["receipt.in"]).toEqual(["post"]);
+    expect(VARIANTS["client.reactivated"]).toEqual(["post"]);
+    expect(Object.keys(WIN_KIND_WORDS)).toHaveLength(11);
+    expect(Object.keys(OFFER_WORDS).every(k => k.startsWith("upsell_"))).toBe(true);
+  });
+
+  test("Win logged: the kind and the seat role; an upsell offered at its price; accepted", () => {
+    const logged = noticeText("win.logged", "post", f({ winKind: "review", byRole: "the CSM" }));
+    expect(logged.text).toBe(`Acme Interiors: Google review logged by the CSM. Ref ${REF}`);
+    expect(lines(logged.blocks)).toEqual(["*Win logged: Acme Interiors*", "Acme Interiors: Google review logged by the CSM."]);
+    expect(contexts(logged.blocks)).toEqual([`<${L.client}|Open the client>`, `Client success · Ref ${REF}`]);
+    expect(noticeText("win.logged", "offered", f({ winKind: "upsell_website", usd: 1500 })).text).toBe(`Acme Interiors: website offered at $1,500. Ref ${REF}`);
+    expect(noticeText("win.logged", "offered", f({ winKind: "upsell_seo_geo", usd: "nothing" })).text).toBe(
+      `Acme Interiors: SEO and AI search offered at a price not recorded. Ref ${REF}`);
+    expect(noticeText("win.logged", "accepted", f({ winKind: "upsell_second_campaign" })).text).toBe(`Acme Interiors accepted the second campaign. Ref ${REF}`);
+    expect(noticeText("win.logged", "post", f({ winKind: "something else" })).text).toBe(`Acme Interiors: A win logged by a team member. Ref ${REF}`);
+  });
+
+  test("Receipt in: the amount, currency and day it says, and where to check it", () => {
+    const r = noticeText("receipt.in", "post", f({ amount: 650.5, currency: "KWD", paidOn: "2026-11-01" }));
+    expect(r.text).toBe(`Acme Interiors sent a transfer receipt (650.5 KWD, paid Sun 1 Nov). Check it in the cockpit. Ref ${REF}`);
+    expect(contexts(r.blocks)[0]).toBe("<https://cockpit.maharamedia.com/client-success/money?tab=billing|Open Checks waiting>");
+    expect(noticeText("receipt.in", "post", f({ amount: 1200, currency: "USD", paidOn: "2026-11-01" })).text).toContain("(1,200 USD, paid Sun 1 Nov)");
+    expect(noticeText("receipt.in", "post", f({ amount: 1200, currency: "EUR" })).text).toContain("(an amount not recorded, paid a day not recorded)");
+  });
+
+  test("Client is back: the status from the two, and the day they left", () => {
+    expect(noticeText("client.reactivated", "post", f({ status: "Onboarding Booked", leftOn: "2026-10-12" })).text).toBe(
+      `Acme Interiors is back: Onboarding Booked. They left on Mon 12 Oct. Ref ${REF}`);
+    expect(noticeText("client.reactivated", "post", f({ status: "<b>Paused</b>" })).text).toBe(
+      `Acme Interiors is back: back on the books. They left on a day not recorded. Ref ${REF}`);
+  });
+
+  test("no email, name of a person, link token, file or reference ever reaches these notices", () => {
+    const leaky = f({
+      winKind: "review", byRole: "the CSM", usd: 1500, amount: 650, currency: "KWD", paidOn: "2026-11-01", status: "Active",
+      email: "client.secret@example.test", loggedByEmail: "csm.secret@example.test", person: "Noura Secret",
+      reference: "FT-SECRET-99", path: "forms/abc/receipt/secret.pdf", proofUrl: "https://g.page/secret-proof",
+      token: "f1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abcd", phone: "+96599990001",
+    });
+    for (const kind of MONEY_KINDS)
+      for (const variant of VARIANTS[kind]) {
+        const out = JSON.stringify(noticeText(kind, variant, leaky));
+        for (const bad of ["secret", "Noura", "FT-SECRET", "f1AbCd", "+96599990001", "@example"]) expect([kind, variant, out.includes(bad)]).toEqual([kind, variant, false]);
+      }
+  });
+
+  test("a test post of each kind uses the sample's words", () => {
+    for (const kind of MONEY_KINDS) {
+      const out = noticeText(kind, VARIANTS[kind][0], { ...sampleFacts(kind), rehearsal: true });
       expect(out.text).toStartWith("[Rehearsal] ");
       expect(out.text).toContain("Sample client");
     }

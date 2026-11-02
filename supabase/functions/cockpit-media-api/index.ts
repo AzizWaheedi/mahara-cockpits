@@ -7,7 +7,7 @@ import {createClient} from 'npm:@supabase/supabase-js@2';
 import {confirmed,OPERATIONS,prepare,type Row} from './core.ts';
 import {providerTools} from './tools.ts';
 import {executePlan,prepareRecommendation} from './execute.ts';
-import {prepareLtv} from './ltv.ts';
+import {LTV_RETIRED,prepareLtv} from './ltv.ts';
 import {buildDraft,copyIdeas,prepareLaunch,toDraft,checkDraft} from './launch.ts';
 import {prepareSlack,prepareDetail} from './slack.ts';
 import {cachedPreview,readAdPreview} from './preview.ts';
@@ -35,6 +35,8 @@ Deno.serve(async(req:Request)=>{
   const deskApply=desk&&launchEnabled(env,args.rehearse);
   if(desk&&!deskApply){input.apply=false;args.check=false;}
   if(!OPERATIONS.has(operation)) return json({ok:false,error:`Unsupported provider operation: ${String(operation)}`},400);
+  // One LTV writer (WAVE56 4.4.3, C8): the old Apply is refused before any read or write; the morning run writes LTV.
+  if(operation==='ceo.ltv.apply') return json({ok:false,error:LTV_RETIRED},409);
   if(operation==='comms.sendReply'){
    admin=createClient(url,service,{auth:{persistSession:false}});
    return json(await executeWhatsappReply(userClient,admin,args,env));
@@ -63,16 +65,14 @@ Deno.serve(async(req:Request)=>{
   const scopeCall=()=>desk?userClient.rpc('cockpit_media_account_scope',{p_operation:operation==='launch.importCreatives'?'launch.new':operation,p_clickup_id:args.clickupId,p_account:args.accountId??null,p_launch:args.launchId??null}):operation==='previews.fresh'?userClient.rpc('cockpit_ad_preview_scope',{p_ad:args.adId}):operation==='cockpit.askForDetail'?userClient.rpc('cockpit_media_task_scope',{p_task:args.taskId}):operation==='edit.askViktorFor'?userClient.rpc('cockpit_media_request_scope',{p_campaign:args.campaignName??null,p_client:args.client??null}):userClient.rpc('cockpit_media_scope',{p_operation:operation,p_campaign:args.campaignName??(args.level==='campaign'?args.name:null)});
   const {data:scope,error:scopeError}=await scopeCall();
   if(scopeError) return json({ok:false,error:scopeError.message},403);
-  let serverPreview:Row|null=null;
-  const ltvPreview=async()=>{const {data,error}=await userClient.rpc('cockpit_ceo_action',{p_action:'ltv.preview',p_args:{}});if(error)throw new Error(error.message);return data as Row;};
-  if(operation==='ceo.ltv.apply')serverPreview=await ltvPreview();
+  // ceo.ltv.apply is refused above (WAVE56 4.4.3), so no LTV preview is read for an apply any more.
+  const serverPreview:Row|null=null;
   admin=createClient(url,service,{auth:{persistSession:false}});
   const health=async(row:Row)=>{
    if(row.phase==='intent'&&row.method!=='GET'){
     if(desk&&!deskApply&&row.provider!=='model')throw new Error(REHEARSAL);
     const {data:current,error:currentError}=await scopeCall();
     if(currentError||canonical(current)!==canonical(scope))throw new Error('Access or campaign mapping changed before the provider write. Reconcile this request.');
-    if(serverPreview&&canonical(await ltvPreview())!==canonical(serverPreview))throw new Error('The LTV source changed while applying. Refresh and reconcile this request.');
    }
    const {error}=await admin.from('cockpit_media_provider_health').insert({...row,action_id:actionId??null});
    if(error) throw new Error('Could not save provider health receipt');
