@@ -201,7 +201,7 @@ export const SOP_VIDEOS = {
     },
     changes: {
       key: "csm-changes",
-      wistia: "88p7n526vu",
+      wistia: "he7a2xwwc9",
       title: "Give more time, pause, stop or bring back a client",
       url: COCKPIT_GUIDES.csm.howTo.changes,
       length: "2:57",
@@ -217,7 +217,7 @@ export const SOP_VIDEOS = {
     },
     afterCall: {
       key: "csm-after-call",
-      wistia: "t9wgctlgm9",
+      wistia: "2dp8zflbpw",
       title: "What to log after a check-in call",
       url: COCKPIT_GUIDES.csm.howTo.afterCall,
       length: "2:45",

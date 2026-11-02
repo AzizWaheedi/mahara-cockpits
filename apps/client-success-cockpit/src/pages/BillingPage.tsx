@@ -165,7 +165,7 @@ export function BillingPage({ embedded = false }: { embedded?: boolean }) {
       <PageHeader
         as={embedded ? "h2" : "h1"}
         title="Billing"
-        sub="Who pays next, how they pay, and what the billing SOP says to do today. Every change is made on the ClickUp card."
+        sub="Who pays next, how they pay, and what the billing SOP says to do today. Log every change here; How they pay still needs the ClickUp card too."
       />
       {doors?.checks && auth.client ? (
         <ChecksWaiting
