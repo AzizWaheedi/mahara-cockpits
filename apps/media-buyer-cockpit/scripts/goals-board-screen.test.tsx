@@ -511,3 +511,35 @@ describe("the board reads the sheet", () => {
     expect(text()).not.toContain("The plan could not be read");
   });
 });
+
+describe("Edit this plan (2026-11-02)", () => {
+  test("the instalments owed on signed deals are changed on the sheet, not alone here", async () => {
+    moreTargets = [
+      {
+        ...target("onDealDue", "usd", 8000, 7),
+        group_key: "back_end",
+        label: "Instalments owed on signed deals",
+      },
+    ];
+    await show();
+    const edit = [...host.querySelectorAll("button")].find(
+      b => (b as any).textContent?.trim() === "Edit this plan",
+    );
+    await click(edit);
+    const box = (name: string) =>
+      host.querySelector(`input[aria-label="${name}"]`) as any;
+    const own = box("Instalments owed on signed deals target");
+    expect(own).toBeTruthy();
+    expect(own.disabled).toBe(true);
+    expect(box("Instalments owed on signed deals stretch").disabled).toBe(true);
+    const off = host.querySelector(
+      'button[aria-label="Take Instalments owed on signed deals off the plan"]',
+    ) as any;
+    expect(off.disabled).toBe(true);
+    expect(text()).toContain(
+      "Change it on the monthly sheet's instalments line, so Cash collected and the spend follow.",
+    );
+    // Any other row stays editable in place.
+    expect(box("leads target").disabled).toBe(false);
+  });
+});

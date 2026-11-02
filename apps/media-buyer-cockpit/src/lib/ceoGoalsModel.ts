@@ -446,6 +446,12 @@ export function buildGoalsBoard(
     const v = reads[of]?.value ?? null;
     if (v !== null) measured[alias] = v;
   }
+  // What the month's book says is still owed on signed deals (2026-11-02):
+  // no column of the sheet, so it is read from the sheet's month facts for
+  // Plan next month's box and the plan's own row of it.
+  const onDeal = sheet?.facts.onDealDue;
+  if (typeof onDeal === "number" && Number.isFinite(onDeal))
+    measured.onDealDue = onDeal;
   // The one number the goals tables can answer themselves: how many
   // one-to-ones were actually held and signed off in the period.
   if (plan.periodFrom.slice(0, 7) === plan.periodTo.slice(0, 7)) {
@@ -599,8 +605,10 @@ export function buildGoalsBoard(
       return (a < 0 ? 99 : a) - (b < 0 ? 99 : b);
     });
 
+  // The retired metrics stay off it, as they stay off the board's lists
+  // (2026-11-02): what clients still owe on signed deals is no performance.
   const behind = targets
-    .filter(t => t.onPace === false)
+    .filter(t => t.onPace === false && !RETIRED_SHEET_KEYS.has(t.metricKey))
     .map(t => ({
       label: t.label,
       actual: t.actual,

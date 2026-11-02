@@ -4,10 +4,12 @@ import { dailyHasStages, type Timeframe, windowFromDaily } from "./timeframe";
 
 /**
  * The growth window a tab shows for the chosen timeframe. A preset that
- * lines up with a server window uses it (it carries the exact median, the
- * confirmed share and intro to demo); any other run of days is rebuilt from
- * the daily series. The comparison window is the run of the same length
- * just before, or the server's pair for month to date and last 7 days.
+ * lines up with a server window uses it (it carries the exact median and the
+ * confirmed share); any other run of days is rebuilt from the daily series.
+ * Intro to demo reads on both: since release goal1102 (2026-11-02) the days
+ * carry introsAdvanced, so a rebuilt window divides its sums as B2B does. The
+ * comparison window is the run of the same length just before, or the
+ * server's pair for month to date and last 7 days.
  */
 export function useGrowthWindow(
   g: GrowthPayload | null,
@@ -121,4 +123,4 @@ export function useGrowthWindow(
 }
 
 export const DERIVED_NOTE =
-  "Rebuilt from the daily series for these days: every count is a sum of days and every rate a quotient of sums. Speed to lead is then the mean minutes over the leads called, and intro to demo is not available.";
+  "Rebuilt from the daily series for these days: every count is a sum of days and every rate a quotient of sums, intro to demo included. Speed to lead is then the mean minutes over the leads called.";

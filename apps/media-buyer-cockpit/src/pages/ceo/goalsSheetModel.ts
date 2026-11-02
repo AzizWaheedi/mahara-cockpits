@@ -227,11 +227,14 @@ function col(
  * Metrics the sheet no longer shows (2026-11-02): not on his sheet, and the
  * creative ones he cannot track. Their targets stay on the plan untouched, AOV
  * and direct demos still feed it as inputs, and their typed days are kept. The
- * Goals board hides them too.
+ * Goals board hides them too. The instalments owed on signed deals
+ * (`onDealDue`, 2026-11-02) are kept off the same way: an input of the plan
+ * that was never a column, set in Plan next month.
  */
 export const RETIRED_SHEET_KEYS: ReadonlySet<string> = new Set([
   "directDemos",
   "aov",
+  "onDealDue",
   "roasContracted",
   "clientsAtStart",
   "churnRate",
@@ -254,7 +257,7 @@ export const SHEET_COLUMNS: SheetColumn[] = [
     "usd",
     "up",
     sum("spendRetargeting"),
-    "Retargeting spend on Mahara's own account, by Meta day. Kept apart from lead gen.",
+    "Retargeting spend on Mahara's own account, by Meta's day: the ad account's own day, Los Angeles time (10 or 11 hours behind Kuwait, by the season), not Kuwait's. Kept apart from lead gen.",
     { driver: "spendRetargeting" },
   ),
   col(
@@ -264,7 +267,7 @@ export const SHEET_COLUMNS: SheetColumn[] = [
     "usd",
     "up",
     sum("spend"),
-    "Lead-gen spend on Mahara's own account, by Meta day. The webinar's campaigns and Hammer Them retargeting are not in it.",
+    "Lead-gen spend on Mahara's own account, by Meta's day: the ad account's own day, Los Angeles time (10 or 11 hours behind Kuwait, by the season), not Kuwait's, so a day's spend and that day's leads and calls (Kuwait days) are cut at different hours. The webinar's campaigns and Hammer Them retargeting are not in it.",
     { driver: "spend", boardLabel: "Lead gen ad spend" },
   ),
   col(
@@ -274,7 +277,7 @@ export const SHEET_COLUMNS: SheetColumn[] = [
     "count",
     "up",
     sum("uniqueLinkClicks"),
-    "Each ad's unique link clicks summed by Meta day, on the same lead-gen ads as Ad spend, the webinar's left out. A person who clicks two ads, or on two days, counts twice (Meta's own account-day sum for October is 2,383). A day Meta gave no unique count for is not known, so a run of days over it reads missing, never a smaller count. An ended month whose days do not carry it reads B2B's whole-month link clicks instead, which count every click and so read higher; the month in progress waits for its days.",
+    "Each ad's unique link clicks summed by Meta's day (the ad account's own Los Angeles day, as Ad spend), on the same lead-gen ads as Ad spend, the webinar's left out. A person who clicks two ads, or on two days, counts twice (Meta's own account-day sum for October is 2,383). A day Meta gave no unique count for is not known, so a run of days over it reads missing, never a smaller count. An ended month whose days do not carry it reads B2B's whole-month link clicks instead, which count every click and so read higher; the month in progress waits for its days.",
   ),
   col(
     "cpc",
@@ -495,7 +498,7 @@ export const SHEET_COLUMNS: SheetColumn[] = [
     "usd",
     "up",
     sum("newCash"),
-    "Money paid on a signed deal, on Whop, Tap, a logged transfer or by hand, on the day it arrived. Bank lines stop at the last uploaded statement.",
+    "Money paid on a signed deal, on Whop, Tap, a logged transfer or by hand, on the day it arrived. Bank lines stop at the last uploaded statement. Instalments on deals signed in an earlier month are in it, not in MRR collected. A plan counts them in its target on a line of their own, the instalments owed on signed deals, collected at its MRR collection rate.",
   ),
   col(
     "contracted",
@@ -660,7 +663,7 @@ export const SHEET_COLUMNS: SheetColumn[] = [
     "usd",
     "up",
     sum("newCash"),
-    "The same number as Cash collected under demo calls, as on his sheet: money paid on a signed deal, on the day it arrived. Its target is Cash collected's, and a day typed here is typed there.",
+    "The same number as Cash collected under demo calls, as on his sheet: money paid on a signed deal, on the day it arrived, instalments on earlier deals included. Its target is Cash collected's, and a day typed here is typed there.",
     { targetKey: "newCash" },
   ),
   col(
@@ -1279,12 +1282,20 @@ export type PlanInputs = Drivers & {
  * The goal is revenue by his sheet's rule, so the new cash it needs is the
  * goal less MRR collected and upsell cash (the plan's back-end cash), plus
  * the refunds it must cover (`refundAmount`, an empty box plans none).
+ *
+ * The instalments owed on signed deals (2026-11-02) are collected at the same
+ * rate and counted in Cash collected, but no ad bought them: they come off
+ * the goal with MRR collected, and the funnel is asked only for the new
+ * deals' cash. So the same cards read on the whole book, or split into the
+ * back end and the deals, ask for the same spend. An empty box is not
+ * planned and takes nothing off.
  */
 export function solveSpend(i: PlanInputs): number | null {
   const need =
     ok(i.goalCash) && ok(i.mrrDue) && ok(i.mrrCollectionRate)
       ? i.goalCash -
         i.mrrDue * i.mrrCollectionRate -
+        (ok(i.onDealDue) ? i.onDealDue * i.mrrCollectionRate : 0) -
         (i.upsellCash ?? 0) +
         (i.refundAmount ?? 0)
       : null;
@@ -1342,7 +1353,8 @@ export function planNumbers(i: PlanInputs): {
   // His sheet's revenue on the plan's own numbers (2026-11-02). Upsells and
   // refunds are lines that add up, so an empty one plans nothing; new cash and
   // MRR collected are the funnel and the book, and either missing leaves
-  // revenue missing, never smaller.
+  // revenue missing, never smaller. New cash is Cash collected: the month's
+  // deals' cash and the instalments owed on signed deals (project's newCash).
   const revenue =
     ok(p.newCash) && ok(p.backEndCash)
       ? p.newCash + (i.upsellCash ?? 0) + p.backEndCash - (i.refundAmount ?? 0)

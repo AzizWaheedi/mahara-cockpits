@@ -159,6 +159,13 @@ export function windowFromDaily(
   const introsDue = sum(d => d.introsDue);
   const demosDue = sum(d => d.demosDue);
   const introsShown = sum(d => d.introsShown);
+  // Intro to demo by day (2026-11-02, Goals sheet round 3): since release
+  // goal1102 every day carries introsAdvanced, b2b_window_metrics' own
+  // intro_handoff rule, so a run of days is sum(introsAdvanced) over
+  // sum(introsShown), as B2B and the Goals sheet work it out. It is read only
+  // when every day carries it: a payload stored before is missing, never 0.
+  const advRead = rows.length > 0 && rows.every(d => isNum(d.introsAdvanced));
+  const introsAdvanced = advRead ? sum(d => d.introsAdvanced ?? 0) : null;
   const demosShown = sum(d => d.demosShown);
   const demosQualified = sum(d => d.demosQualified);
   const introsScheduled = sum(d => d.introsScheduled);
@@ -196,6 +203,8 @@ export function windowFromDaily(
         ? null
         : share(kickoffConfirmed, kickoff),
     paid,
+    // A month measure (paid and signed inside the window), never kept per day.
+    paidOnWindowDeals: null,
     // The split by kind, by rail and by closer is not kept per day.
     paidDeposit: null,
     paidRemainder: null,
@@ -240,8 +249,10 @@ export function windowFromDaily(
     demosDue,
     demoShowRate: share(demosShown, demosDue),
     introShowRate: share(introsShown, introsDue),
-    // Intro to demo needs the contact join the server does; not derivable from days.
-    introToDemo: null,
+    // Three places, as the server's windows carry it (growth.js pct), so
+    // INTRO_TO_DEMO.format prints a range and a preset alike.
+    introToDemo:
+      introsAdvanced === null ? null : share(introsAdvanced, introsShown),
     demosStillConfirmed: 0,
     cancel: {
       intro: share(introsCancelled, introsScheduled),
@@ -277,6 +288,7 @@ export function windowFromDaily(
       spend,
       spend_retargeting: spendRt,
       intros_shown: introsShown,
+      intros_advanced: introsAdvanced,
       intros_due: introsDue,
       demos_due: demosDue,
       demos_shown: demosShown,

@@ -155,6 +155,8 @@ const targetSaves: any[][] = [];
 const failingMonths = new Set<string>();
 /** Lock-in lines the next context read carries (2026-11-02). */
 let lockinRows: Record<string, unknown>[] = [];
+/** The Money tab's book the next context read carries (round 3, 2026-11-02). */
+let bookNow: Record<string, unknown> | null = null;
 
 function context(month: string) {
   const day = (n: number) => `${month}-${String(n).padStart(2, "0")}`;
@@ -209,7 +211,7 @@ function context(month: string) {
     growthDaily: [measured(1, 5, 1000), measured(2, 6, 0), measured(3, 7, 500)],
     windows: [],
     cashDaily: [],
-    book: null,
+    book: bookNow && { ...bookNow, month },
     refundsMonthly: [],
     bankThrough: null,
     deliveryDaily: [],
@@ -408,6 +410,7 @@ afterEach(async () => {
   await flush(2);
   stored = [];
   storedTargets = [];
+  bookNow = null;
 });
 
 afterAll(async () => {
@@ -1043,5 +1046,409 @@ describe("Plan the next month", () => {
       .flat()
       .find(t => t.metricKey === "refundAmount");
     expect(refunds).toMatchObject({ target: 450, groupKey: "back_end" });
+  });
+});
+
+describe("the instalments owed on signed deals (round 3, 2026-11-02)", () => {
+  const setter = () =>
+    Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, "value")
+      ?.set;
+  const lineBox = () =>
+    host.querySelector('input[placeholder="Not planned"]') as any;
+  const button = (label: string) =>
+    Array.from(host.querySelectorAll("button") as ArrayLike<any>).find(
+      b => text(b) === label,
+    );
+  /** An invented funnel: $1,000 at $20 a lead makes 1.26 deals at $5,000, 60% collected. */
+  const FUNNEL = [
+    { metricKey: "spend", target: 1000 },
+    { metricKey: "cpl", target: 20 },
+    { metricKey: "leadToBooked", target: 0.5 },
+    { metricKey: "introShowRate", target: 0.6 },
+    { metricKey: "introToDemo", target: 0.6 },
+    { metricKey: "demoShowRate", target: 0.7 },
+    { metricKey: "closeRate", target: 0.2 },
+    { metricKey: "aov", target: 5000 },
+    { metricKey: "cashShare", target: 0.6 },
+    { metricKey: "mrrCollectionRate", target: 0.8 },
+  ];
+
+  test("a line over the sheet: typed, it saves the plan's row and Cash collected follows", async () => {
+    storedTargets = [...FUNNEL, { metricKey: "mrrProjected", target: 2000 }];
+    bookNow = {
+      projectedMrr: 7000,
+      collected: 0,
+      collectedBackEnd: 0,
+      projectedExisting: 2000,
+      projectedOnDeals: 5000,
+      history: [],
+    };
+    await show();
+    const box = lineBox();
+    expect(box).not.toBeNull();
+    expect(box.value).toBe("");
+    expect(text(host)).toContain(
+      "Not planned. Cards still on their closer-form deal",
+    );
+    expect(text(host)).toContain(
+      "The book holds $5,000 on signed deals this month.",
+    );
+    // Not inside the grid: the grid's keys never reach it.
+    expect(grid().contains(box)).toBe(false);
+    await act(async () => {
+      box.focus();
+      setter()?.call(box, "4500");
+      box.dispatchEvent(new win.Event("input", { bubbles: true }));
+    });
+    await press("Enter");
+    await flush();
+    const sent = targetSaves.flat();
+    expect(sent.find(t => t.metricKey === "onDealDue")).toMatchObject({
+      target: 4500,
+      groupKey: "back_end",
+      label: "Instalments owed on signed deals",
+    });
+    // Cash collected: 60% of $6,300 contracted, plus 80% of the $4,500.
+    expect(sent.find(t => t.metricKey === "newCash")?.target).toBe(7380);
+    // MRR collected stays the back end's 80% of 2,000, so it is not sent;
+    // the spend is typed, so the funnel is not either.
+    expect(sent.some(t => t.metricKey === "mrrCollected")).toBe(false);
+    expect(sent.some(t => t.metricKey === "spend")).toBe(false);
+    expect(sent.some(t => t.metricKey === "leads")).toBe(false);
+    expect(targetSaves.length).toBe(1);
+    expect(lineBox().value).toBe("4500");
+    expect(text(host)).toContain(
+      "of it, $3,600, is in Cash collected's target",
+    );
+  });
+
+  test("planned in both, it says they count twice and takes them out of Projected MRR in one tap", async () => {
+    storedTargets = [
+      { metricKey: "mrrProjected", target: 7000 },
+      { metricKey: "mrrCollectionRate", target: 0.8 },
+      { metricKey: "onDealDue", target: 5000 },
+    ];
+    bookNow = {
+      projectedMrr: 7000,
+      collected: 0,
+      collectedBackEnd: 0,
+      projectedExisting: 2000,
+      projectedOnDeals: 5000,
+      history: [],
+    };
+    await show();
+    expect(lineBox().value).toBe("5000");
+    expect(text(host)).toContain(
+      "Projected MRR's target, $7,000, holds them as well (the book's back end is $2,000), so they count twice.",
+    );
+    // The book's number is in the box, so no button offers it again.
+    expect(text(host)).not.toContain("Use the book's");
+    await click(button("Take them out of Projected MRR"));
+    await flush();
+    const sent = targetSaves.flat();
+    expect(sent.find(t => t.metricKey === "mrrProjected")?.target).toBe(2000);
+    expect(sent.find(t => t.metricKey === "onDealDue")?.target).toBe(5000);
+    expect(targetSaves.length).toBe(1);
+    expect(text(host)).not.toContain("count twice");
+  });
+
+  test("Projected MRR's target on the whole book: the book's number moves out of it and the spend stays", async () => {
+    // Plan 6's shape, invented: a goal, the funnel worked back from it, and
+    // Projected MRR set on the whole book (2,000 back end and 5,000 on deals).
+    storedTargets = [
+      ...FUNNEL,
+      { metricKey: "totalCash", target: 20000 },
+      { metricKey: "mrrProjected", target: 7000 },
+    ];
+    bookNow = {
+      projectedMrr: 7000,
+      collected: 0,
+      collectedBackEnd: 0,
+      projectedExisting: 2000,
+      projectedOnDeals: 5000,
+      history: [],
+    };
+    await show();
+    // Said before anything is saved.
+    expect(text(host)).toContain(
+      "Projected MRR's target, $7,000, holds them already (the book's back end is $2,000): saving the book's $5,000 here takes it out of that target, to $2,000, so they count once and the spend stays.",
+    );
+    await click(button("Use the book's $5,000"));
+    await flush();
+    expect(targetSaves.length).toBe(1);
+    const sent = targetSaves.flat();
+    const row = (k: string) => sent.find(t => t.metricKey === k);
+    expect(row("onDealDue")?.target).toBe(5000);
+    expect(String(row("onDealDue")?.note)).toContain("book: $5,000.");
+    expect(row("mrrProjected")?.target).toBe(2000);
+    expect(String(row("mrrProjected")?.note)).toContain(
+      "$5,000 of cards still on their closer-form deal moved out of this target",
+    );
+    expect(row("mrrCollected")?.target).toBe(1600);
+    // The funnel is asked for what it was asked for before: no row of it is sent.
+    for (const k of [
+      "spend",
+      "spendRetargeting",
+      "leads",
+      "introsBooked",
+      "closes",
+      "contracted",
+    ])
+      expect(row(k)).toBeUndefined();
+    // The goal stands.
+    expect(row("totalCash")?.target ?? 20000).toBe(20000);
+    expect(text(host)).not.toContain("holds them");
+  });
+
+  test("the book's number is one tap", async () => {
+    storedTargets = [{ metricKey: "mrrCollectionRate", target: 0.8 }];
+    bookNow = {
+      projectedMrr: 7000,
+      collected: 0,
+      collectedBackEnd: 0,
+      projectedExisting: 2000,
+      projectedOnDeals: 5000,
+      history: [],
+    };
+    await show();
+    await click(button("Use the book's $5,000"));
+    await flush();
+    expect(
+      targetSaves.flat().find(t => t.metricKey === "onDealDue")?.target,
+    ).toBe(5000);
+  });
+
+  test("Plan next month starts MRR due and the instalments from the book, and saves both", async () => {
+    const row = (id: number, key: string, label: string, target: number) => ({
+      id,
+      groupKey: "back_end",
+      metricKey: key,
+      label,
+      unit: "usd",
+      direction: "up",
+      target,
+      stretch: null,
+      baseline: null,
+      note: null,
+      sort: id,
+      source: "measured",
+      sourceText: "",
+      actual: null,
+      pacedTarget: null,
+      level: false,
+      onPace: null,
+      progress: null,
+    });
+    const board = {
+      plan: {
+        id: 7,
+        periodKind: "month",
+        periodFrom: "2026-11-01",
+        periodTo: "2026-11-30",
+        title: "November 2026 plan",
+        mission: null,
+        headline: null,
+        status: "live",
+        workingDays: 25,
+      },
+      plans: [],
+      pace: {
+        workingDays: 25,
+        workedSoFar: 1,
+        daysLeft: 24,
+        share: 0.04,
+        through: "2026-11-01",
+      },
+      groups: [
+        {
+          key: "back_end",
+          label: "Back end",
+          blurb: "",
+          // Set on the whole book before round 2.
+          targets: [
+            row(1, "mrrProjected", "Projected MRR to collect", 11000),
+            row(2, "mrrCollectionRate", "Collections %", 0.85),
+          ],
+        },
+      ],
+      behind: [],
+      catalogue: [
+        {
+          key: "mrrProjected",
+          label: "MRR due",
+          group: "back_end",
+          unit: "usd",
+          direction: "up",
+          source: "",
+        },
+      ],
+      measured: { mrrProjected: 3000, onDealDue: 8000 },
+      callClients: null,
+      costs: null,
+    };
+    mounts += 1;
+    await act(async () => {
+      root.render(
+        createElement(NextMonth, {
+          key: mounts,
+          board: board as never,
+          onClose: () => {},
+          onSaved: () => {},
+        }),
+      );
+    });
+    await flush();
+    const mrr = host.querySelector('input[aria-label^="MRR due for"]') as any;
+    const owed = host.querySelector(
+      'input[aria-label^="Instalments owed on signed deals for"]',
+    ) as any;
+    expect(mrr?.value).toBe("3000");
+    expect(owed?.value).toBe("8000");
+    // Last month's whole-book plan stays one tap away, named for what it is.
+    expect(text(host)).toContain("Nov plan $11,000 (whole book)");
+    expect(text(host)).not.toContain("count twice");
+    expect(text(host)).toContain(
+      "of $8,000, collected as Cash collected, not as MRR.",
+    );
+    expect(text(host)).toContain("Instalments collected$6,800");
+    const save = Array.from(
+      host.querySelectorAll("button") as ArrayLike<any>,
+    ).find(b => /^Save \d+ targets as a draft$/.test(text(b)));
+    await click(save);
+    await flush();
+    const sent = targetSaves.flat();
+    expect(sent.find(t => t.metricKey === "mrrProjected")?.target).toBe(3000);
+    const line = sent.find(t => t.metricKey === "onDealDue");
+    expect(line).toMatchObject({
+      target: 8000,
+      groupKey: "back_end",
+      label: "Instalments owed on signed deals",
+      unit: "usd",
+      baseline: 8000,
+    });
+    expect(String(line?.note)).toContain("From Nov's book: $8,000.");
+
+    // Tapped, the whole book in MRR due and the instalments beside it are
+    // the same cards twice: it says so.
+    const whole = Array.from(
+      host.querySelectorAll("button") as ArrayLike<any>,
+    ).find(b => text(b) === "Nov plan $11,000 (whole book)");
+    await click(whole);
+    expect(text(host)).toContain(
+      "MRR due, $11,000, looks set on the whole book (Nov's back end is $3,000), so these instalments would count twice: set MRR due to the back end.",
+    );
+  });
+
+  test("re-saving a draft with the boxes empty clears its instalments and refunds, never leaves the old numbers", async () => {
+    const board = {
+      plan: {
+        id: 7,
+        periodKind: "month",
+        periodFrom: "2026-11-01",
+        periodTo: "2026-11-30",
+        title: "November 2026 plan",
+        mission: null,
+        headline: null,
+        status: "live",
+        workingDays: 25,
+      },
+      // A draft already written for December.
+      plans: [
+        {
+          id: 9,
+          periodKind: "month",
+          periodFrom: "2026-12-01",
+          periodTo: "2026-12-31",
+          title: "December 2026 plan",
+          mission: null,
+          headline: null,
+          status: "draft",
+          workingDays: 26,
+        },
+      ],
+      pace: null,
+      groups: [],
+      behind: [],
+      catalogue: [],
+      measured: { mrrProjected: 3000, onDealDue: 8000 },
+      callClients: null,
+      costs: null,
+    };
+    mounts += 1;
+    await act(async () => {
+      root.render(
+        createElement(NextMonth, {
+          key: mounts,
+          board: board as never,
+          onClose: () => {},
+          onSaved: () => {},
+        }),
+      );
+    });
+    await flush();
+    const owed = host.querySelector(
+      'input[aria-label^="Instalments owed on signed deals for"]',
+    ) as any;
+    expect(owed?.value).toBe("8000");
+    await act(async () => {
+      setter()?.call(owed, "");
+      owed.dispatchEvent(new win.Event("input", { bubbles: true }));
+    });
+    const save = Array.from(
+      host.querySelectorAll("button") as ArrayLike<any>,
+    ).find(b => /^Update the .* draft \(\d+ targets\)$/.test(text(b)));
+    expect(save).toBeDefined();
+    await click(save);
+    await flush();
+    const sent = targetSaves.flat();
+    // Sent with no number, so the draft's own row is cleared: not planned.
+    const line = sent.find(t => t.metricKey === "onDealDue");
+    expect(line).toBeDefined();
+    expect(line.target).toBe(null);
+    expect("target" in line).toBe(true);
+    const refunds = sent.find(t => t.metricKey === "refundAmount");
+    expect(refunds?.target).toBe(null);
+  });
+
+  test("Plan next month with no book and no line: not planned, and no row is written", async () => {
+    const board = {
+      plan: {
+        id: 7,
+        periodKind: "month",
+        periodFrom: "2026-11-01",
+        periodTo: "2026-11-30",
+        title: "November 2026 plan",
+        mission: null,
+        headline: null,
+        status: "live",
+        workingDays: 25,
+      },
+      plans: [],
+      pace: null,
+      groups: [],
+      behind: [],
+      catalogue: [],
+      measured: {},
+      callClients: null,
+      costs: null,
+    };
+    mounts += 1;
+    await act(async () => {
+      root.render(
+        createElement(NextMonth, {
+          key: mounts,
+          board: board as never,
+          onClose: () => {},
+          onSaved: () => {},
+        }),
+      );
+    });
+    await flush();
+    const owed = host.querySelector(
+      'input[aria-label^="Instalments owed on signed deals for"]',
+    ) as any;
+    expect(owed?.value).toBe("");
+    expect(text(host)).toContain("Not planned");
+    expect(text(host)).toContain("Leave it empty and none are planned.");
   });
 });

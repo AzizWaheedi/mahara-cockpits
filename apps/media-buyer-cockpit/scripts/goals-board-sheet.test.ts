@@ -1044,3 +1044,47 @@ describe("readGoalsBoard reads the plan month's sheet", () => {
     expect(sent.callLeadToBooking).toBeCloseTo(7 / 30, 12);
   });
 });
+
+describe("the instalments owed on signed deals (2026-11-02, round 3)", () => {
+  test("the board reads the book's on-deal MRR for the plan's own line, and the MRR rows stay back end only", () => {
+    const sheet = buildSheet(november());
+    const rows = [
+      target("mrrProjected", 4000),
+      target("mrrCollected", 3600),
+      { ...target("onDealDue", 5000), group_key: "back_end" },
+    ];
+    const board = buildGoalsBoard({ ...goals(rows), sheet });
+    expect(board.measured.onDealDue).toBe(5000);
+    const line = rowOf(board, "onDealDue");
+    expect(line.actual).toBe(5000);
+    expect(line.source).toBe("measured");
+    expect(line.groupKey).toBe("back_end");
+    // The MRR rows are the sheet's back-end numbers, so target and actual mean one thing.
+    expect(rowOf(board, "mrrProjected").actual).toBe(4000);
+    expect(rowOf(board, "mrrCollected").actual).toBe(1500);
+  });
+
+  test("what clients owe is no performance: the line never joins the behind list", () => {
+    const sheet = buildSheet(november());
+    // Planned far above the book's 5,000, so its paced share is not met.
+    const rows = [
+      { ...target("onDealDue", 100000), group_key: "back_end" },
+      target("leads", 100000),
+    ];
+    const board = buildGoalsBoard({ ...goals(rows), sheet });
+    expect(rowOf(board, "onDealDue").onPace).toBe(false);
+    const labels = board.behind.map(b => b.label);
+    expect(labels).not.toContain("onDealDue");
+    // A real metric behind still is.
+    expect(rowOf(board, "leads").onPace).toBe(false);
+    expect(labels).toContain(rowOf(board, "leads").label);
+  });
+
+  test("with no sheet read, nothing is said to be owed: the line reads nothing, never 0", () => {
+    const board = buildGoalsBoard(
+      goals([{ ...target("onDealDue", 5000), group_key: "back_end" }]),
+    );
+    expect(board.measured.onDealDue).toBeUndefined();
+    expect(rowOf(board, "onDealDue").actual).toBeNull();
+  });
+});
