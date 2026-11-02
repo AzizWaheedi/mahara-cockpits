@@ -1898,11 +1898,15 @@ describe("publish (4.9.3, 4.9.4)", () => {
       expect(relabelled.version).toBe(p.version + 1);
       // A choice of a field nothing reads may go (stored answers keep their value).
       const pc = await published("pause_consent");
-      const dropReason = await edit("pause_consent", s => {
-        fieldOf(s, "reason").options = fieldOf(s, "reason").options.filter(
-          (o: any) => o.value !== "season",
-        );
-      });
+      const dropReason = await edit(
+        "pause_consent",
+        s => {
+          fieldOf(s, "reason").options = fieldOf(s, "reason").options.filter(
+            (o: any) => o.value !== "season",
+          );
+        },
+        CEO,
+      );
       expect(dropReason.version).toBe(pc.version + 1);
     });
   });
@@ -1968,10 +1972,62 @@ describe("publish (4.9.3, 4.9.4)", () => {
         "The facts shown from the invite are set in the cockpit's code. Change only their wording.",
       );
       // Their wording may change.
-      const ok = await edit("pause_consent", s => {
-        s.context[0].label = { en: "The pause starts", ar: "يبدأ الإيقاف من" };
-      });
+      const ok = await edit(
+        "pause_consent",
+        s => {
+          s.context[0].label = {
+            en: "The pause starts",
+            ar: "يبدأ الإيقاف من",
+          };
+        },
+        CEO,
+      );
       expect(ok.version).toBeGreaterThan(1);
+    });
+  });
+
+  test("the pause consent's words are the agreement: an admin drafts them, only the CEO publishes or restores", async () => {
+    await rolledBack(async () => {
+      const p = await published("pause_consent");
+      const next = copy(p.schema);
+      fieldOf(next, "consentOver14").label = {
+        ...fieldOf(next, "consentOver14").label,
+        en: `${fieldOf(next, "consentOver14").label.en} (changed)`,
+      };
+      expect(
+        (await save(ADMIN, "pause_consent", next, p.version)).draft,
+      ).toBeTruthy();
+      const r = await refusedWith(() =>
+        publish(ADMIN, "pause_consent", "Wording change", p.version),
+      );
+      expect(r.message).toBe(
+        "Only the CEO publishes the pause consent, since its words are the agreement the client signs. Save the draft and ask the CEO to publish it.",
+      );
+      expect(r.code).toBe("42501");
+      const out = await publish(
+        CEO,
+        "pause_consent",
+        "Wording change",
+        p.version,
+      );
+      expect(out.version).toBe(p.version + 1);
+      const audit = await one<any>(
+        "SELECT jsonb_build_object('before', before, 'after', after) AS r FROM public.cockpit_audit_log WHERE action = 'forms.editor_publish' AND entity_id = 'pause_consent' AND entity_type = 'cockpit_forms' AND metadata->>'op' = 'publish' ORDER BY id DESC LIMIT 1",
+      );
+      expect(audit.before.schema_md5).toMatch(/^[0-9a-f]{32}$/);
+      expect(audit.after.schema_md5).not.toBe(audit.before.schema_md5);
+      const back = await refusedWith(() =>
+        restore(ADMIN, "pause_consent", p.version, "Back to the old words"),
+      );
+      expect(back.message).toBe(r.message);
+      // Other forms stay with any admin.
+      expect(
+        (
+          await edit("nps", s => {
+            s.intro = { ...s.intro, en: `${s.intro.en} Thank you.` };
+          })
+        ).version,
+      ).toBeGreaterThan(1);
     });
   });
 
@@ -2308,6 +2364,18 @@ describe("read-only forms and the registry", () => {
       );
       const view = await apply("exit_survey", { owners });
       expect(view.key).toBe("exit_survey");
+      // A client form opens in the cockpit only through the go-live step, never by a provider patch.
+      for (const key of ["exit_survey", "pause_request"]) {
+        const flip = await refusal(() => apply(key, { provider: "native" }));
+        expect(flip.message).toBe(
+          "Switch client forms on with the go-live step.",
+        );
+      }
+      expect(
+        await one(
+          "SELECT provider AS r FROM public.cockpit_forms WHERE key = 'exit_survey'",
+        ),
+      ).toBe("typeform");
       const notCeo = await refusal(() =>
         apply("exit_survey", { owners }, { via: "cockpit", who: "csm" }),
       );
@@ -2369,8 +2437,8 @@ describe("routing (4.9.2)", () => {
           'The days "Not now" waits is a whole number from 1 to 14.',
         ],
         [
-          { csat: { rule: { reissues: 6 } } },
-          "The number of re-tries is a whole number from 0 to 5.",
+          { csat: { rule: { reissues: 4 } } },
+          "The number of re-tries is a whole number from 0 to 3.",
         ],
         [
           { csat: { rule: { retryAfterDays: 0 } } },

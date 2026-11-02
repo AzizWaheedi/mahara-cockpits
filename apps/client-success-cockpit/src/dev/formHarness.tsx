@@ -38,6 +38,11 @@
  * Client voice card (empty=1 | failed=1 | low=1); state=consent draws Pause
  * this client with the consent live (consent= none | sent | signed |
  * dates_wrong | expired; live=0 draws the old two ticks).
+ * state=editor draws the forms editor (5.13) over formsEditorFixtures and its
+ * in-memory stand-in: the list, or form=<key> for one form (nps and csat have
+ * a history; kickoff and extension are the read-only rows); draft=1 seeds a
+ * draft the server refused (its sentence and where), refuse=1 makes the next
+ * Publish refused in the database's words, door=0 the editor not open yet.
  *
  * Typeform is a stand-in drawn here: no Typeform page loads and nothing is
  * submitted anywhere. Its "submit" only calls the panel's own handler, and
@@ -69,6 +74,11 @@ import { ClientVoiceCard } from "@/components/ClientVoice";
 import { NoticesRouting } from "@/components/NoticesRouting";
 import { OnboardingKit } from "@/components/OnboardingKit";
 import { Button } from "@/components/ui/button";
+import {
+  copy as copyEditor,
+  editorOneFixture,
+  fakeFormsEditorIO,
+} from "@/dev/formsEditorFixtures";
 import type { BookProps, FormIO } from "@/forms/FormPanel";
 import {
   blockedFor,
@@ -85,6 +95,7 @@ import {
   kuwaitIso,
 } from "@/forms/staff/formSheetCore";
 import { checkManualPayment, manualPaymentsToCheck } from "@/lib/paymentChecks";
+import { FormsEditorView } from "@/pages/FormsEditorPage";
 import { standIn } from "@/practice/fixtures/typeformStandIn";
 import {
   CONSENTS,
@@ -830,9 +841,62 @@ function ConsentHarness() {
   );
 }
 
+/** The forms editor (5.13) over its fixtures: nothing leaves the page. */
+function EditorHarness() {
+  const [formKey, setFormKey] = useState<string | null>(params.get("form"));
+  const io = useMemo(() => {
+    const fake = fakeFormsEditorIO();
+    const key = params.get("form");
+    if (key && params.get("draft") === "1") {
+      const one = editorOneFixture(key);
+      if (one.published) {
+        const schema = copyEditor(one.published.schema);
+        schema.intro = {
+          en: `${schema.intro?.en ?? ""} We read every answer the same day.`.trim(),
+          ar: `${schema.intro?.ar ?? ""} نقرا كل رد بنفس اليوم.`.trim(),
+        };
+        fake.state.ones.set(key, {
+          ...one,
+          draft: {
+            schema,
+            baseVersion: one.published.version,
+            savedAt: "2026-11-01T09:12:00Z",
+            savedBy: "an admin",
+            stale: false,
+            problem:
+              "Client messages never quote leads or cost per lead. Say how the campaign is doing, or count appointments for clients we book for.",
+            where: ".intro.en",
+          },
+        });
+      }
+    }
+    if (params.get("refuse") === "1")
+      fake.refuse(
+        "publish",
+        "How likely are you to recommend Mahara? is read by the low-score call on Today, so its type, range and choices stay as they are.",
+        ".fields.recommend",
+      );
+    return fake;
+  }, []);
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <FormsEditorView
+        io={io}
+        door={params.get("door") === "0" ? false : true}
+        formKey={formKey}
+        onOpen={setFormKey}
+        onBack={() => setFormKey(null)}
+      />
+      <Toaster />
+    </div>
+  );
+}
+
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
-    {scenario === "forms" ? (
+    {scenario === "editor" ? (
+      <EditorHarness />
+    ) : scenario === "forms" ? (
       <FormsHarness />
     ) : scenario === "voice" ? (
       <VoiceHarness />

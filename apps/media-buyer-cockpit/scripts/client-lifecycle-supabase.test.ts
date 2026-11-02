@@ -1928,6 +1928,8 @@ describe("pause consent and Confirm pause (contract 4.3)", () => {
         signed_at: state.signedAt,
         via: "link",
         call_id: call,
+        signed_start: today,
+        over14: true,
       });
       const resp = await one<Row>(
         "SELECT answers AS r FROM cockpit_form_responses WHERE id = $1::uuid",
@@ -1953,6 +1955,92 @@ describe("pause consent and Confirm pause (contract 4.3)", () => {
           ])
         ).state,
       ).toBe("none");
+    });
+  });
+
+  test("a consent signed for a later start waits for that day: confirming early would pause longer than signed", async () => {
+    await rolledBack(async () => {
+      await goLive(["pause_consent"]);
+      const today = await kuwaitToday();
+      const start = dayFrom(today, 5);
+      const restart = dayFrom(today, 15);
+      const call = await callOn(A);
+      const i = await issue(A, "pause_consent", {
+        start,
+        restart,
+        reasonCat: "client_asked",
+        callId: call,
+      });
+      expect(
+        await one<Row>(
+          "SELECT context->'over14' AS r FROM cockpit_form_invites WHERE id = $1::uuid",
+          [i],
+        ),
+      ).toBe(false);
+      const signed = await answer(i, SIGNED);
+      const early = await refusal(() =>
+        pause(
+          CSM_A,
+          pauseEdit(A, restart, call, { consentResponseId: signed }),
+        ),
+      );
+      expect(early.message).toMatch(
+        /^The client signed a pause from .+\. Confirm it on that day or send a new consent\.$/,
+      );
+      expect(
+        await one(
+          "SELECT client_status AS r FROM cockpit_billing_accounts WHERE clickup_task_id = $1",
+          [A],
+        ),
+      ).not.toBe("Paused");
+      // Five days on (the invite's days moved back five, as the clock cannot be): it goes through, and the record
+      // keeps the signed start and the 14-day line worked out from the days the pause really runs (10).
+      const later = dayFrom(today, 10);
+      await q(
+        "UPDATE cockpit_form_invites SET context = context || jsonb_build_object('start', $2::text, 'restart', $3::text) WHERE id = $1::uuid",
+        [i, today, later],
+      );
+      const out = await pause(
+        CSM_A,
+        pauseEdit(A, later, call, { consentResponseId: signed }),
+      );
+      expect(out.client_status).toBe("Paused");
+      const ev = await q<{ detail: Row }>(
+        "SELECT detail FROM cockpit_billing_events WHERE id = $1",
+        [out.eventId],
+      );
+      expect(ev[0].detail.consent).toMatchObject({
+        signed_start: today,
+        over14: false,
+      });
+    });
+  });
+
+  test("with pause_consent live the older sheet's {kind:'pause', reason} is refused: no pause without the consent", async () => {
+    await rolledBack(async () => {
+      await goLive(["pause_consent"]);
+      const r = await refusal(() =>
+        as<Row>(
+          CSM_B,
+          "SELECT public.cockpit_billing_write('edit', $1::jsonb) AS r",
+          [
+            JSON.stringify({
+              taskId: B,
+              source: "csm",
+              edit: { kind: "pause", reason: "Client asked for a month off" },
+            }),
+          ],
+        ),
+      );
+      expect(r.message).toBe(
+        "That form is out of date. Reload the page and send it again.",
+      );
+      expect(
+        await one(
+          "SELECT client_status AS r FROM cockpit_billing_accounts WHERE clickup_task_id = $1",
+          [B],
+        ),
+      ).not.toBe("Paused");
     });
   });
 

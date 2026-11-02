@@ -165,6 +165,11 @@ export const lowScoreLine = (
 ) =>
   `Low score: ${r.clientName} gave ${r.score}/10 on the ${surveyWords(r.formKey)}`;
 
+/** The same row under the Low scores band, without the band's own words. */
+export const lowScoreRowText = (
+  r: Pick<LowScore, "clientName" | "score" | "formKey">,
+) => `${r.clientName} gave ${r.score}/10 on the ${surveyWords(r.formKey)}`;
+
 /** The low-score ticket's details line (the prefilled request form, type client_low_score). */
 export const lowScoreDetails = (
   r: Pick<LowScore, "clientName" | "score" | "formKey" | "at">,

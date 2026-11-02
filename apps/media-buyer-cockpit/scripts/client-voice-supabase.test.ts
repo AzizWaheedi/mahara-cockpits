@@ -2168,6 +2168,123 @@ describe("the NPS and CSAT hooks", () => {
     });
   });
 
+  test("a WhatsApp-only NPS writes NPS Survey Sent when its link leaves, not at issue, and once; one never sent does not restart the 90 days", async () => {
+    await rolledBack(async () => {
+      await live("nps");
+      await scheduleOn();
+      await card("wa1", "WhatsApp Only", {
+        launchedDaysAgo: 200,
+        workspace: null,
+      });
+      const id = await one<string>(
+        "SELECT public.cockpit_form_invite_issue_system('wa1', 'nps', ARRAY['whatsapp'], '{}', 'schedule')::text AS r",
+      );
+      const sent = () =>
+        q<any>(
+          "SELECT to_value, detail->>'invite_id' AS invite FROM cockpit_billing_events WHERE clickup_task_id = 'wa1' AND kind = 'nps_sent'",
+        );
+      expect(await sent()).toEqual([]);
+      // Its draft was never approved: the invite ends unsent, and the clock does not count it.
+      await age(id, 100);
+      await q(
+        "UPDATE cockpit_form_invites SET issued_at = now() - interval '20 days' WHERE id = $1::uuid",
+        [id],
+      );
+      const out = await run();
+      expect(out.issued.nps).toBe(1);
+      expect(await sent()).toEqual([]);
+      // The link leaves (the worker's mint calls the link hook): written once, on that day.
+      const next = (await invitesOf("wa1", "nps")).find(
+        (i: any) => i.state === "open",
+      );
+      await q("SELECT public.cockpit_form_client_link_out($1::uuid)", [
+        next.id,
+      ]);
+      await q("SELECT public.cockpit_form_client_link_out($1::uuid)", [
+        next.id,
+      ]);
+      expect(await sent()).toEqual([
+        { to_value: await today(), invite: next.id },
+      ]);
+    });
+  });
+
+  test("the most re-tries the editor allows (3) still issues: the fourth try goes out as try 4", async () => {
+    await rolledBack(async () => {
+      await live("csat");
+      await scheduleOn();
+      await card("rt", "Retry Max", { launchedDaysAgo: 40, sessionDaysAgo: 1 });
+      expect(
+        await one<number>(
+          "SELECT (rule->>'reissues')::int AS r FROM cockpit_form_schedules WHERE form_key = 'csat'",
+        ),
+      ).toBe(3);
+      for (let n = 0; n < 3; n++) {
+        const id = await one<string>(
+          "SELECT public.cockpit_form_invite_issue_system('rt', 'csat', ARRAY['portal'], '{}', 'schedule')::text AS r",
+        );
+        await age(id, 10);
+      }
+      // The last one closed more than retryAfterDays (7) ago.
+      await q(
+        "UPDATE cockpit_form_invites SET closed_at = closed_at - interval '8 days' WHERE task_id = 'rt'",
+      );
+      const out = await run();
+      expect(out.refused ?? []).toEqual([]);
+      expect(out.issued.csat).toBe(1);
+      const open = (await invitesOf("rt", "csat")).find(
+        (i: any) => i.state === "open",
+      );
+      expect(open.context.try).toBe(4);
+      // And no fifth: 1 + reissues tries in all.
+      await age(open.id, 10);
+      await q(
+        "UPDATE cockpit_form_invites SET closed_at = closed_at - interval '8 days' WHERE task_id = 'rt'",
+      );
+      const last = await run();
+      expect(last.issued.csat).toBe(0);
+      expect(last.skipped.triesUsed).toBe(1);
+    });
+  });
+
+  test("Not now waits the CSAT rule's snoozeDays (the editor's setting), other forms 3 days", async () => {
+    await rolledBack(async () => {
+      await live("csat");
+      await card("sz", "Snooze Days", {
+        launchedDaysAgo: 1,
+        sessionDaysAgo: 1,
+      });
+      const id = await one<string>(
+        "SELECT public.cockpit_form_invite_issue_system('sz', 'csat', ARRAY['portal'], '{}', 'schedule')::text AS r",
+      );
+      await q(
+        "UPDATE cockpit_form_schedules SET rule = jsonb_set(rule, '{snoozeDays}', '7') WHERE form_key = 'csat'",
+      );
+      const pick = () =>
+        as<any>(
+          "service",
+          "SELECT public.portal_form_for_person('loc-sz', 'sz', 'owner@client.invalid', 'admin', NULL) AS r",
+        );
+      expect((await pick()).invite.id).toBe(id);
+      await as(
+        "service",
+        "SELECT public.portal_form_invite_record('loc-sz', 'sz', $1::uuid, 'owner@client.invalid', 'later', '{}'::jsonb) AS r",
+        [id],
+      );
+      // Past the 20-hour cap and past 3 days, inside 7: still snoozed.
+      await q(
+        "UPDATE cockpit_form_invite_events SET at = at - interval '4 days' WHERE invite_id = $1::uuid",
+        [id],
+      );
+      expect((await pick()).reason).toBe("snoozed");
+      await q(
+        "UPDATE cockpit_form_invite_events SET at = at - interval '3 days 1 hour' WHERE invite_id = $1::uuid",
+        [id],
+      );
+      expect((await pick()).invite.id).toBe(id);
+    });
+  });
+
   test("an answer queues its 'answer in' notice and, at 6 and not at 7, the low-score call; the facts carry no free text", async () => {
     await rolledBack(async () => {
       await live("nps", "csat");

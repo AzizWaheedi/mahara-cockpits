@@ -117,7 +117,7 @@ export function DeliveryLine({
                 r.state === "todo"
                   ? "text-muted-foreground"
                   : "text-foreground",
-                r.state === "waiting" && "txt-warn",
+                r.state === "waiting" && "txt-wait",
               )}
             >
               {r.label}

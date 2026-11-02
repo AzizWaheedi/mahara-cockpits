@@ -40,7 +40,7 @@ DECLARE g record; v_now text;
 BEGIN
   FOR g IN
     SELECT * FROM (VALUES
-      ('public.cockpit_form_registry_apply(text,jsonb,jsonb)', '73a88dc6513b074e54d76ec4472d3539', '129226b2d25b878a91677012f32e9fa4')
+      ('public.cockpit_form_registry_apply(text,jsonb,jsonb)', '73a88dc6513b074e54d76ec4472d3539', '643b468d249050e964d2e21198f09729')
     ) AS x(fn, live_md5, after_md5)
   LOOP
     v_now := NULL;
@@ -642,6 +642,15 @@ BEGIN
   IF v_problem IS NOT NULL THEN
     RAISE EXCEPTION '%', v_problem->>'problem' USING ERRCODE = '22023', HINT = coalesce(v_problem->>'where', '');
   END IF;
+  -- A consent the client signs (the cockpit's consent gate reads it: the
+  -- pause consent) is the agreement's wording: an admin may draft it, only
+  -- the CEO publishes or restores it. The audit row below keeps the before
+  -- and after hashes.
+  IF coalesce(v_published.schema->'reads', '{}'::jsonb) ? 'consent_gate'
+     AND NOT coalesce((p_seat->>'ceo')::boolean, false) THEN
+    RAISE EXCEPTION 'Only the CEO publishes the pause consent, since its words are the agreement the client signs. Save the draft and ask the CEO to publish it.'
+      USING ERRCODE = '42501';
+  END IF;
   SELECT max(x.version) + 1 INTO v_next FROM public.cockpit_form_versions x WHERE x.form_key = p.key;
   -- The registry follows only a native client form; the exit survey on
   -- Typeform keeps its registry row until its go-live takes the newest v1
@@ -818,7 +827,7 @@ BEGIN
         ('csat', 'afterLaunchDays', 'The days after launch before the onboarding survey', 0, 30),
         ('csat', 'whatsappAfterDays', 'The day after launch the WhatsApp link goes', 0, 14),
         ('csat', 'snoozeDays', 'The days "Not now" waits', 1, 14),
-        ('csat', 'reissues', 'The number of re-tries', 0, 5),
+        ('csat', 'reissues', 'The number of re-tries', 0, 3),
         ('csat', 'retryAfterDays', 'The days between re-tries', 1, 30),
         ('csat', 'maxAgeDays', 'The last day after launch it can go', 14, 120)
       ) AS x(form, k, words, lo, hi) WHERE x.form = v_form
@@ -970,13 +979,16 @@ BEGIN
   -- CEO seat or the cut-over's rollback.
   v_provider := coalesce(p_patch->>'provider', f.provider);
   IF v_provider IS DISTINCT FROM f.provider AND f.key <> 'checkin' THEN
-    -- Only the termination survey and the pause request move, forward to
-    -- the cockpit, by the CEO (gated above); kickoff and the Blueprint keep
-    -- where they are filled.
-    IF NOT (f.key IN ('exit_survey','pause_request') AND f.provider = 'typeform' AND v_provider = 'native') THEN
-      RAISE EXCEPTION 'Only the termination survey and the pause request move here, from Typeform to the cockpit.'
-        USING ERRCODE = '22023';
+    -- Waves 3-4: a client form opens in the cockpit only through
+    -- cockpit_form_client_go_live (the deploy's go-live step), which checks
+    -- its schema, takes the newest version and lists it in forms.client.live
+    -- in one statement; the pause request is replaced by the pause consent
+    -- and retires on Typeform. Kickoff and the Brand Blueprint keep where
+    -- they are filled. Owner changes still go through below.
+    IF f.key IN ('exit_survey','pause_request') THEN
+      RAISE EXCEPTION 'Switch client forms on with the go-live step.' USING ERRCODE = '22023';
     END IF;
+    RAISE EXCEPTION 'Kickoff and the Brand Blueprint stay where they are filled.' USING ERRCODE = '22023';
   ELSIF v_provider IS DISTINCT FROM f.provider THEN
     IF v_provider = 'native' AND v_via IS DISTINCT FROM 'cutover' THEN
       RAISE EXCEPTION 'The 1-1 notes open in the cockpit only through the switch-over function at the cut-over hour.'

@@ -66,7 +66,7 @@ DECLARE
 BEGIN
   FOR r IN SELECT * FROM (VALUES
       ('cockpit_form_responses_guard()', '38fa9795b15dbc93494a691f88766b0f', 'd013e81456ebe7a8791270fe8858b972'),
-      ('cockpit_billing_write(text,jsonb)', '8bdd972146ee2dfc0a5e1c6c0c5c47e4', '08ebb9942032b1dcf52cec367bb30a4a'),
+      ('cockpit_billing_write(text,jsonb)', '8bdd972146ee2dfc0a5e1c6c0c5c47e4', 'bf105575a2d3a091b84ba1e3756c6520'),
       ('cockpit_billing_writeback_writes(text,text,text,jsonb)', 'dc073d43dfc0c8ae6c610f97d2c75eb6', '547e7750bfaf4473c50365bcbdcf8dac'),
       ('cockpit_billing_writeback_comment(text,text,text,jsonb,text)', '8d46fdc717d86d7e791a4d1c03ac9bdb', '850a7430b7b8cfc62a170ecccf127d63'),
       ('cockpit_billing_detail(text,jsonb)', '9b1a740c3d6002277cf6ae4130441939', '6b483cc5047953d545123e00cb87cb07'),
@@ -1185,6 +1185,12 @@ BEGIN
     v_role := public.cockpit_billing_seat_role(v_acc.client_name);
 
     IF v_legacy THEN
+      -- Once the pause consent is live, the only pause a client asked for is
+      -- the staff shape with the client's signed consent: the old sheet's
+      -- {kind:'pause', reason} would pause with no consent at all.
+      IF v_kind = 'pause' AND public.cockpit_form_client_live('pause_consent') THEN
+        RAISE EXCEPTION 'That form is out of date. Reload the page and send it again.' USING ERRCODE='22023';
+      END IF;
       -- The 20261009a branches, unchanged.
       CASE v_kind
       WHEN 'extension' THEN
@@ -1372,8 +1378,18 @@ BEGIN
               coalesce(public.cockpit_billing_day_words(public.cockpit_billing_day(v_signed->>'restart')), 'a day not recorded')
               USING ERRCODE='22023';
           END IF;
+          -- The pause runs from today (W11). A start the client signed for a
+          -- later day waits for that day: confirming early would pause for
+          -- longer than the client agreed, and the 14-day line they read was
+          -- worked out from their start. A start already past only shortens it.
+          IF public.cockpit_billing_day(v_signed->>'start') > v_today THEN
+            RAISE EXCEPTION 'The client signed a pause from %. Confirm it on that day or send a new consent.',
+              public.cockpit_billing_day_words(public.cockpit_billing_day(v_signed->>'start')) USING ERRCODE='22023';
+          END IF;
           v_consent := jsonb_build_object('kind', 'signed', 'response_id', v_signed->>'responseId',
-                                          'signed_at', v_signed->>'signedAt', 'via', v_signed->>'via', 'call_id', v_call);
+                                          'signed_at', v_signed->>'signedAt', 'via', v_signed->>'via', 'call_id', v_call,
+                                          'signed_start', public.cockpit_billing_day(v_signed->>'start'),
+                                          'over14', (v_restart - v_today) > 14);
         ELSE
           -- The call is the consent, with the CSM's two required ticks.
           v_term := coalesce((v_edit->'consent'->'term_runs') = 'true'::jsonb, (v_edit->'consent'->'termRuns') = 'true'::jsonb,

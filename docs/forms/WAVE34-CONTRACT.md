@@ -478,7 +478,9 @@ cockpit_form_invite_withdraw(p_task_id text, p_invite_id uuid, p_reason text) RE
   draft or approved (the skip rule above; 'Withdrawn in the cockpit: {reason}'), event 'withdrawn'
   with detail {by:'seat'} (the schedule reads it, 4.5.4). -> view.
 cockpit_form_invite_link(p_task_id text, p_invite_id uuid) RETURNS jsonb   -- authenticated
-  Only an open invite of a live form. Revokes the invite's unrevoked copy token, mints a new one
+  Only an open invite of a live form, never an admin-only or signed form (pause consent, exit
+  survey: review fix, they reach the client only in the portal or by the approved WhatsApp
+  message). Revokes the invite's unrevoked copy token, mints a new one
   (3.6), event 'link_made'. -> {url ('https://portal.maharamedia.com/f#'||token), expiresAt}.
   The only place a raw token leaves the database for a seat; shown once, never stored.
 cockpit_form_invites_today() RETURNS jsonb                                 -- authenticated, STABLE
@@ -500,8 +502,8 @@ portal_form_for_person(p_location_id text, p_clickup_id text, p_person text, p_a
   p_invite_id uuid DEFAULT NULL) RETURNS jsonb
   -> {invite: PortalInvite|null, reason: 'shown_today'|'nothing_waiting'|'snoozed'|null}
   The pop-up pick: open invites of live forms for this card, audience 'any' or (admin and
-  p_access_role='admin'), oldest first; skipped when this person 'later'd it within snoozeDays (csat 3,
-  others 3); none when this person saw any ask or invite pop-up for this workspace within 20 hours
+  p_access_role='admin'), oldest first; skipped when this person 'later'd it within snoozeDays (csat: the
+  CSAT rule's snoozeDays, 3 when unset; others 3); none when this person saw any ask or invite pop-up for this workspace within 20 hours
   (both event tables, V8), unless p_invite_id (the phone alert's deep link). The cap is checked
   first and returns reason 'shown_today' whenever any ask or invite pop-up was shown to this person
   in this workspace within 20 hours, **even when no invite is open**, so `/api/asks` stops there and
@@ -548,8 +550,10 @@ portal_form_preview(p_form_key text, p_draft boolean) RETURNS jsonb
   -> {schema (published, or the ED draft when p_draft), context: a fixed sample per purpose (3.7)}.
 portal_form_invites_push_claim(p_limit integer DEFAULT 20) / portal_form_invite_push_done(
   p_invite_id uuid, p_location_id text, p_state text, p_result jsonb) /
-  portal_form_invite_display(p_location_id, p_clickup_id, p_invite_id uuid, p_person text)
+  portal_form_invite_display(p_location_id, p_clickup_id, p_invite_id uuid, p_person text, p_access_role text)
   The asks' three push functions, same lease (5 minutes), same states, same day cut-off, for invites.
+  The claim carries audience; an admin-only invite's alert goes only to devices whose current grant
+  is admin, and the display check uses the device's own role (review fix).
 portal_form_presence_put(p_rows jsonb) RETURNS jsonb
   p_rows = [{locationId, lastSessionAt|null, admins, members}] (≤ 200 rows). Refused with
   {ok:false, reason:'off'} while forms.client.presence is false. Upserts; a workspace the
@@ -815,7 +819,7 @@ in the same step (V15), every other webhook read before and after.
 ### 4.9 The forms editor, ED (forms-editor)
 
 1. Who: an admin seat or the CEO (`cockpit_form_seat`). Everyone else gets `Only an admin or the CEO edits forms.`
-2. What can be edited: every client form (`audience='client'`, provider native or about to be: `exit_survey` v2 before C4b; while its provider is still `typeform`, publish adds a version row and leaves the registry `schema`/`version` alone, and go-live takes the newest `v:1` version): title, intro, minutes, each field's label, hint, required, options (add, relabel, remove; stored answers keep the value they were given), scale ends, show-if, order, new fields; `invite.whatsapp` and `invite.push` texts; and routing: the notice channel and mentions (the live notices editor, linked), the schedule rows (NPS first day 30..180, repeat 30..365; CSAT WhatsApp after 0..14 days, snooze 1..14, re-tries 0..5, retry after 1..30 days, max age 14..120; every key always present, so a save never leaves a rule key missing), `voice.low_score.max` (0..8). Keys of published fields never change.
+2. What can be edited: every client form (`audience='client'`, provider native or about to be: `exit_survey` v2 before C4b; while its provider is still `typeform`, publish adds a version row and leaves the registry `schema`/`version` alone, and go-live takes the newest `v:1` version): title, intro, minutes, each field's label, hint, required, options (add, relabel, remove; stored answers keep the value they were given), scale ends, show-if, order, new fields; `invite.whatsapp` and `invite.push` texts; and routing: the notice channel and mentions (the live notices editor, linked), the schedule rows (NPS first day 30..180, repeat 30..365; CSAT WhatsApp after 0..14 days, snooze 1..14, re-tries 0..3 (the issuer takes tries 1 to 4), retry after 1..30 days, max age 14..120; every key always present, so a save never leaves a rule key missing), `voice.low_score.max` (0..8). Keys of published fields never change.
 3. The field guard: `cockpit_form_publish` refuses removing (or hiding behind a new `showIf`) a field listed in `reads` for an effect: `{field label} is read by {effect label}. Remove that effect first.` For a field named in `reads` it also freezes `type`, `min`, `max`, `required` and the option **values** (labels stay editable): `{field label} is read by {effect label}, so its type, range and choices stay as they are.` The schema's `audience` and `signer` never change once published (`Who answers this form is set in the cockpit's code.`). The hooks read only the keys in `reads` (tests prove it).
 4. `cockpit_form_publish(key, note, base)`: draft → `cockpit_form_schema_check` → `cockpit_client_text_ok` on every text → new `cockpit_form_versions` row (`published_by` the seat's email, `note`) → registry `schema` and `version` → draft removed → audit. Open invites keep the version they were issued with (answers stay valid against it).
 5. `cockpit_form_restore(key, version, note)`: publishes that version's schema as a new version (`Restored version {n}`), same checks.
@@ -1007,7 +1011,7 @@ recommend score here is kept out of NPS (plan 5.8).
 
 | Key | Type | EN | AR |
 |---|---|---|---|
-| title | | How are we doing? | شلون شغلنا معاكم؟ |
+| title | | How are we doing? | شلون شغلنا معاك؟ |
 | intro | | One minute. Your account manager reads every answer. | دقيقة وحدة بس. مدير حسابك يقرا كل رد. |
 | `recommend` | scale 0–10, required | How likely are you to recommend Mahara to a friend or another business owner? | شكثر ممكن تنصح فينا ربعك أو صاحب شركة ثاني؟ |
 | ends | | 0 = Not at all likely · 10 = Extremely likely | ٠ = أبد · ١٠ = أكيد |
@@ -1178,8 +1182,8 @@ the owner; the dedupe keys stop doubles).
 
 NPS (`clients.nps`: "From the client's own answers in the portal or by WhatsApp link since {first
 day}; each client counts once per window with their latest answer; promoters 9–10 minus detractors
-0–6, over n answers; the 2 old Typeform answers could not be matched to a client and are left out;
-checked against the count of answered invites"); CSAT ("average of onboarding answers 1–10, shown
+0–6, over n answers; the {n} old Typeform answers could not be matched to a client and are left out
+(n counted live each run, the clause dropped at 0: review fix); checked against the count of answered invites"); CSAT ("average of onboarding answers 1–10, shown
 apart from NPS"); Portal feedback ("counted apart; its 1–5 rating never enters NPS").
 
 ---

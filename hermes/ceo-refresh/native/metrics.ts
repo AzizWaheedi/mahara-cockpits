@@ -986,7 +986,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "Net promoter score from the clients' own NPS answers (0 to 10, how likely they are to recommend Mahara) in the window: each client counts once with their latest answer; promoters (9 or 10) minus detractors (0 to 6), over the answers, times 100. No answers in the window is no score, never 0.",
     `${TRIAGE} cockpit_client_voice_v (answers in the portal or by WhatsApp link), checked against cockpit_form_invite_events (cards with an answered NPS invite)`,
     "ratio",
-    "The 2 old Typeform answers could not be matched to a client and are left out. Canary answers on the test card, the exit survey's recommend score and portal feedback ratings never count.",
+    "Old Typeform answers that could not be matched to a client (the note beside the number gives the count). Canary answers on the test card, the exit survey's recommend score and portal feedback ratings never count.",
   ),
   d(
     "clients.nps.responses",

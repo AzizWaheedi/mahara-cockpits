@@ -119,10 +119,15 @@
 
   /* Section-label teal that still passes contrast on white. */
   --color-teal-600: #0a9e98;
+  /* Amber text for a step that waits (the delivery line): mixed in oklab so
+     it keeps the amber hue (oklch toward the indigo ink lands on red), about
+     5:1 on white at 11px. */
+  --wait-ink: color-mix(in oklab, var(--warning) 75%, black);
   color-scheme: light;
 }
 
 .dark {
+  --wait-ink: var(--warning);
   --primary: var(--mahara-teal);
   --primary-foreground: var(--deep-space);
   --primary-ink: var(--mahara-teal);
@@ -264,6 +269,9 @@
   }
   .txt-warn {
     color: color-mix(in oklch, var(--warning) 85%, var(--foreground));
+  }
+  .txt-wait {
+    color: var(--wait-ink);
   }
   /* Signature elevation on dark surfaces (brand §4). Use sparingly. */
   .glow-teal {

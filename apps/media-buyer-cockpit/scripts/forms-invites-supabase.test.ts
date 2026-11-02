@@ -1308,7 +1308,7 @@ describe("the file", () => {
       "portal_form_preview(text,boolean)",
       "portal_form_invites_push_claim(integer)",
       "portal_form_invite_push_done(uuid,text,text,jsonb)",
-      "portal_form_invite_display(text,text,uuid,text)",
+      "portal_form_invite_display(text,text,uuid,text,text)",
       "portal_form_presence_put(jsonb)",
       "cockpit_client_message_invite_link(uuid,uuid)",
       "cockpit_client_message_approve(uuid,text,text,uuid,text[])",
@@ -1331,6 +1331,8 @@ describe("the file", () => {
       "cockpit_form_invite_canary(text,jsonb,text[])",
       "cockpit_form_client_submitted(uuid)",
       "cockpit_form_client_issued(uuid)",
+      "cockpit_form_client_link_out(uuid)",
+      "cockpit_form_token_limited_note(text,text)",
       "cockpit_form_effect_gate(text,text)",
       "cockpit_slack_notice_live(cockpit_slack_notices)",
       "cockpit_client_message_view(cockpit_client_messages)",
@@ -1602,7 +1604,7 @@ describe("issuing from a seat", () => {
         "SELECT public.portal_form_preview('nps', false) AS r",
         "SELECT public.portal_form_invites_push_claim(5) AS r",
         "SELECT public.portal_form_invite_push_done(gen_random_uuid(),'locA','sent','{}'::jsonb) AS r",
-        "SELECT public.portal_form_invite_display('locA','taskA1',gen_random_uuid(),'a@b.c') AS r",
+        "SELECT public.portal_form_invite_display('locA','taskA1',gen_random_uuid(),'a@b.c','admin') AS r",
         "SELECT public.cockpit_client_message_invite_link(gen_random_uuid(),gen_random_uuid()) AS r",
         "SELECT public.cockpit_form_client_go_live('nps', true, 'x') AS r",
         "SELECT public.cockpit_form_invite_canary('nps', '{}'::jsonb) AS r",
@@ -2015,6 +2017,28 @@ describe("tokens and the link page", () => {
       for (let i = 0; i < 10; i++)
         expect((await tokenOpen(unknown, NET2, null)).reason).toBe("unknown");
       expect((await tokenOpen(unknown, NET2, null)).reason).toBe("limited");
+      // Another browser behind the same address is not locked out by those ten.
+      expect((await tokenOpen(unknown, NET2, "e".repeat(64))).reason).toBe(
+        "unknown",
+      );
+      // A flood leaves one limited row a minute, not one a request.
+      for (let i = 0; i < 5; i++)
+        expect((await tokenOpen(unknown, NET2, null)).reason).toBe("limited");
+      expect(
+        await one(
+          "SELECT count(*)::int AS r FROM cockpit_form_token_opens WHERE outcome = 'limited' AND net_hash = $1",
+          [NET2],
+        ),
+      ).toBe(1);
+      // The whole network's ceiling: 50 unknown in 10 minutes from any browsers.
+      await q("DELETE FROM cockpit_form_token_opens");
+      await q(
+        `INSERT INTO cockpit_form_token_opens(net_hash, browser_hash, outcome) SELECT $1, md5(g::text) || md5(g::text), 'unknown' FROM generate_series(1, 50) g`,
+        [NET2],
+      );
+      expect((await tokenOpen(unknown, NET2, "f".repeat(64))).reason).toBe(
+        "limited",
+      );
       await q("DELETE FROM cockpit_form_token_opens");
       await q(
         `INSERT INTO cockpit_form_token_opens(net_hash, browser_hash, outcome) SELECT $1, $2, 'ok' FROM generate_series(1, 30)`,
@@ -2148,7 +2172,14 @@ describe("tokens and the link page", () => {
         reason: "invalid",
         errors: { consentTerm: "hidden" },
       });
-      const tp = tokenOf((await link(CSM_A, A, p.inviteId)).url);
+      // No copy link for a signed or admin-only form: the client gets it in the portal or by the approved message.
+      expect((await refusal(() => link(CSM_A, A, p.inviteId))).message).toBe(
+        "This form goes to the client only in the portal or by the approved WhatsApp message, so it has no link to copy.",
+      );
+      const tp = await one<string>(
+        "SELECT public.cockpit_form_token_mint($1::uuid,'whatsapp',gen_random_uuid(),'the cockpit') AS r",
+        [p.inviteId],
+      );
       expect((await tokenOpen(tp)).invite.signer).toBe("typed");
       expect(
         (
@@ -2505,18 +2536,58 @@ describe("the pop-up and the forms page", () => {
       expect(
         await as(
           "service",
-          "SELECT public.portal_form_invite_display('locA',$1,$2::uuid,$3) AS r",
+          "SELECT public.portal_form_invite_display('locA',$1,$2::uuid,$3,'admin') AS r",
           [A, v.inviteId, ADMIN_P],
         ),
       ).toBe(true);
+      // An NPS (audience any) shows to a member too; an unknown role shows nothing.
+      expect(
+        await as(
+          "service",
+          "SELECT public.portal_form_invite_display('locA',$1,$2::uuid,$3,'member') AS r",
+          [A, v.inviteId, MEMBER_P],
+        ),
+      ).toBe(true);
+      expect(
+        await as(
+          "service",
+          "SELECT public.portal_form_invite_display('locA',$1,$2::uuid,$3,NULL) AS r",
+          [A, v.inviteId, MEMBER_P],
+        ),
+      ).toBe(false);
       await withdraw(CSM_A, A, v.inviteId);
       expect(
         await as(
           "service",
-          "SELECT public.portal_form_invite_display('locA',$1,$2::uuid,$3) AS r",
+          "SELECT public.portal_form_invite_display('locA',$1,$2::uuid,$3,'admin') AS r",
           [A, v.inviteId, ADMIN_P],
         ),
       ).toBe(false);
+    });
+  });
+
+  test("an admin-only invite's alert: the claim says admin, and a member's device may not show it", async () => {
+    await rolledBack(async () => {
+      await golive("pause_consent");
+      await presence("locA", 1, 1);
+      const p = await issue(CSM_A, A, "pause_consent", ["portal"], {
+        origin: "pause",
+        push: true,
+        context: { start: await kuwaitToday(), restart: "2026-12-31" },
+      });
+      const claim = await as<Row[]>(
+        "service",
+        "SELECT public.portal_form_invites_push_claim(20) AS r",
+      );
+      expect(claim.find(c => c.id === p.inviteId)?.audience).toBe("admin");
+      const show = (role: string, person: string) =>
+        as(
+          "service",
+          "SELECT public.portal_form_invite_display('locA',$1,$2::uuid,$3,$4) AS r",
+          [A, p.inviteId, person, role],
+        );
+      expect(await show("admin", ADMIN_P)).toBe(true);
+      expect(await show("member", MEMBER_P)).toBe(false);
     });
   });
 });

@@ -501,6 +501,14 @@ export function pauseConsentDef(consent: PauseConsent | null): FormDef {
               String(v) !== consent.restart
             )
               return `The client signed a restart of ${kuwaitDay(consent.restart)}. Use that date or send a new consent.`;
+            // The pause runs from today; a later signed start waits for its day (the database refuses it too).
+            if (
+              isClientRequest(a) &&
+              consent?.state === "signed" &&
+              consent.start &&
+              consent.start > today
+            )
+              return `The client signed a pause from ${kuwaitDay(consent.start)}. Confirm it on that day or send a new consent.`;
             return null;
           },
         };

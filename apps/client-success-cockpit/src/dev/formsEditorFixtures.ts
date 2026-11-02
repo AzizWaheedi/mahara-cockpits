@@ -27,7 +27,7 @@ const SCALE_10_1 = {
 export const NPS_SCHEMA: ClientFormSchema = {
   v: 1,
   key: "nps",
-  title: t("How are we doing?", "شلون شغلنا معاكم؟"),
+  title: t("How are we doing?", "شلون شغلنا معاك؟"),
   intro: t(
     "One minute. Your account manager reads every answer.",
     "دقيقة وحدة بس. مدير حسابك يقرا كل رد.",

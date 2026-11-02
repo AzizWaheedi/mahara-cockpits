@@ -65,6 +65,7 @@ import {
   sentByWords,
   type TodayRow,
   todayLine,
+  todayRowText,
   WAITS_FOR_APPROVAL,
   WHATSAPP_HINT,
   WITHDRAW_PROMPT,
@@ -74,6 +75,7 @@ import {
   type LowScore,
   lowScoreDetails,
   lowScoreLine,
+  lowScoreRowText,
 } from "@/lib/clientVoice";
 import { cn } from "@/lib/utils";
 
@@ -958,6 +960,11 @@ function InviteLine({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const open = row.state === "open" && !isExpired(row, now);
+  // The pause consent and the exit survey reach the client only in the portal
+  // or by the approved WhatsApp message: no copied link (the database refuses one).
+  const copyable =
+    !COPYLESS.has(row.formKey) &&
+    view.forms.find(f => f.key === row.formKey)?.audience !== "admin";
   const act = async (key: string, run: () => Promise<void>) => {
     setBusy(key);
     setError(null);
@@ -1072,7 +1079,7 @@ function InviteLine({
               {busy === "again" ? "Sending…" : "Send again"}
             </Button>
           ) : null}
-          {open ? (
+          {open && copyable ? (
             <Button
               size="sm"
               variant="ghost"
@@ -1263,18 +1270,26 @@ function Band({
 
 function BandLine({
   line,
+  full,
   name,
   actions,
   fact,
 }: {
   line: string;
+  /** The whole sentence with the band's words, for a screen reader moving row by row. */
+  full: string;
   name: string;
   actions?: ReactNode;
   fact?: string;
 }) {
   const at = name ? line.indexOf(name) : -1;
   return (
-    <div className="space-y-2 px-4 py-3 sm:px-6" data-band-row>
+    <div
+      className="space-y-2 px-4 py-3 sm:px-6"
+      data-band-row
+      role="group"
+      aria-label={full}
+    >
       <p className="text-sm">
         {at < 0 ? (
           line
@@ -1363,14 +1378,20 @@ export function FormBands({
       ))}
       <Band title="Forms sent today" rows={of("sent_today").length}>
         {of("sent_today").map(r => (
-          <BandLine key={key(r)} line={todayLine(r)} name={r.clientName} />
+          <BandLine
+            key={key(r)}
+            line={todayRowText(r)}
+            full={todayLine(r)}
+            name={r.clientName}
+          />
         ))}
       </Band>
       <Band title="WhatsApp links to approve" rows={of("approve_link").length}>
         {of("approve_link").map(r => (
           <BandLine
             key={key(r)}
-            line={todayLine(r)}
+            line={todayRowText(r)}
+            full={todayLine(r)}
             name={r.clientName}
             actions={
               <>
@@ -1405,7 +1426,8 @@ export function FormBands({
         {of("not_answered").map(r => (
           <BandLine
             key={key(r)}
-            line={todayLine(r)}
+            line={todayRowText(r)}
+            full={todayLine(r)}
             name={r.clientName}
             actions={
               <>
@@ -1437,7 +1459,8 @@ export function FormBands({
         {of("answered").map(r => (
           <BandLine
             key={key(r)}
-            line={todayLine(r)}
+            line={todayRowText(r)}
+            full={todayLine(r)}
             name={r.clientName}
             actions={
               // The answer opens from the client's Forms out, beside its delivery line.
@@ -1456,7 +1479,8 @@ export function FormBands({
         {of("exit_survey_due").map(r => (
           <BandLine
             key={key(r)}
-            line={todayLine(r)}
+            line={todayRowText(r)}
+            full={todayLine(r)}
             name={r.clientName}
             actions={
               <Button
@@ -1479,7 +1503,8 @@ export function FormBands({
         {low.map(r => (
           <BandLine
             key={r.responseId}
-            line={lowScoreLine(r)}
+            line={lowScoreRowText(r)}
+            full={lowScoreLine(r)}
             name={r.clientName}
             actions={
               <>
@@ -1691,6 +1716,9 @@ export function PauseConsentRow({
     </div>
   );
 }
+
+/** Forms with no Copy a link: admin-only or signed (cockpit_form_invite_link refuses them). */
+const COPYLESS = new Set(["pause_consent", "exit_survey"]);
 
 function addDaysIso(day: string, n: number): string {
   return new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000)

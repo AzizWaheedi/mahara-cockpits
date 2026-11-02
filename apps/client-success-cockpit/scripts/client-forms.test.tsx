@@ -785,12 +785,25 @@ describe("Today's form bands (5.3)", () => {
       text(r),
     );
     expect(rows).toEqual([
-      "NPS sent: Castello Industries",
-      `WhatsApp link to approve: onboarding survey for ${fx.NAME_AR}Approve and send`,
-      "Not answered: NPS survey to Castello Industries, sent 8 days agoSend again",
-      "Answered: NPS survey from Castello IndustriesRead the answer",
+      "NPS survey to Castello Industries",
+      `Onboarding survey for ${fx.NAME_AR}Approve and send`,
+      "NPS survey to Castello Industries, sent 8 days agoSend again",
+      "NPS survey from Castello IndustriesRead the answer",
       "Send the exit survey to Shades StudioSend exit survey",
-      "Low score: Castello Industries gave 4/10 on the NPS surveyOpen the client",
+      "Castello Industries gave 4/10 on the NPS surveyOpen the client",
+    ]);
+    // Each row's accessible name keeps the band's words, for a screen reader moving row by row.
+    expect(
+      [...host.querySelectorAll("[data-band-row]")].map((r: any) =>
+        r.getAttribute("aria-label"),
+      ),
+    ).toEqual([
+      "NPS sent: Castello Industries",
+      `WhatsApp link to approve: onboarding survey for ${fx.NAME_AR}`,
+      "Not answered: NPS survey to Castello Industries, sent 8 days ago",
+      "Answered: NPS survey from Castello Industries",
+      "Send the exit survey to Shades Studio",
+      "Low score: Castello Industries gave 4/10 on the NPS survey",
     ]);
     // The client's name in a bdi: an Arabic name stays whole.
     expect(host.querySelector("bdi")).toBeTruthy();

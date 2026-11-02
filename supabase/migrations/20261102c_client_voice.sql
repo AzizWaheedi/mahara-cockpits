@@ -292,9 +292,28 @@ $$;
 -- ---------------------------------------------------------------------------
 -- 6. The hooks (V19), called by 20261102a's dispatchers when they exist
 
--- NPS issued: the round (the card's highest earlier round + 1) and NPS Survey Sent through the billing rails
--- (kind nps_sent, 20261102b), written once the kind is open. A canary invite's event is by_whom 'canary', so the
--- deploy voids it by record after the read-back (3.10).
+-- NPS Survey Sent through the billing rails (kind nps_sent, 20261102b), once per invite, on the day the survey
+-- reached the client: the issue day for an invite with a portal channel, the day its link left the cockpit for an
+-- invite without one (a WhatsApp draft never approved, refused or failed sends nothing, so it writes nothing).
+-- A canary invite's event is by_whom 'canary', so the deploy voids it by record after the read-back (3.10).
+CREATE OR REPLACE FUNCTION public.cockpit_form_nps_sent_write(p_invite_id uuid, p_on date)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE i public.cockpit_form_invites;
+BEGIN
+  SELECT * INTO i FROM public.cockpit_form_invites x WHERE x.id = p_invite_id;
+  IF i.id IS NULL OR i.form_key IS DISTINCT FROM 'nps' THEN RETURN; END IF;
+  IF EXISTS (SELECT 1 FROM public.cockpit_billing_events e
+              WHERE e.clickup_task_id = i.task_id AND e.kind = 'nps_sent' AND e.detail->>'invite_id' = i.id::text) THEN
+    RETURN;
+  END IF;
+  INSERT INTO public.cockpit_billing_events(clickup_task_id, client_name, kind, from_value, to_value, reason, detail, source, by_whom)
+  VALUES (i.task_id, i.client_name, 'nps_sent', NULL, p_on::text, 'NPS survey sent',
+          jsonb_build_object('invite_id', i.id, 'on', p_on, 'round', CASE WHEN (i.context->>'round') ~ '^[0-9]{1,4}$'
+                                                                          THEN (i.context->>'round')::integer END),
+          'system', CASE WHEN i.origin = 'canary' THEN 'canary' ELSE 'the cockpit' END);
+END $$;
+
+-- NPS issued: the round (the card's highest earlier round + 1), and NPS Survey Sent when a portal channel carries it.
 CREATE OR REPLACE FUNCTION public.cockpit_form_issue_hook_nps(p_invite_id uuid)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -314,11 +333,18 @@ BEGIN
   UPDATE public.cockpit_form_invites x
      SET context = x.context || jsonb_build_object('round', v_round), updated_at = now()
    WHERE x.id = i.id;
-  v_on := public.cockpit_form_kuwait_day(i.issued_at);
-  INSERT INTO public.cockpit_billing_events(clickup_task_id, client_name, kind, from_value, to_value, reason, detail, source, by_whom)
-  VALUES (i.task_id, i.client_name, 'nps_sent', NULL, v_on::text, 'NPS survey sent',
-          jsonb_build_object('invite_id', i.id, 'on', v_on, 'round', v_round),
-          'system', CASE WHEN i.origin = 'canary' THEN 'canary' ELSE 'the cockpit' END);
+  IF 'portal' = ANY(i.channels) THEN
+    v_on := public.cockpit_form_kuwait_day(i.issued_at);
+    PERFORM public.cockpit_form_nps_sent_write(i.id, v_on);
+  END IF;
+END $$;
+
+-- NPS link out (20261102a's cockpit_form_client_link_out): the WhatsApp worker minted the link for the send, or a
+-- seat copied it. Writes NPS Survey Sent for an invite that has none yet (once per invite).
+CREATE OR REPLACE FUNCTION public.cockpit_form_link_hook_nps(p_invite_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  PERFORM public.cockpit_form_nps_sent_write(p_invite_id, public.cockpit_form_kuwait_day(now()));
 END $$;
 
 -- CSAT issued: the try (earlier CSAT invites of the card + 1).
@@ -647,8 +673,13 @@ BEGIN
                          AND i.state = 'open' AND i.expires_at > v_now) THEN
           v_skip := public.cockpit_form_schedule_bump(v_skip, 'open');
         ELSE
+          -- Only an invite that reached the client counts: a portal channel, an answer, or a link that left the
+          -- cockpit. A WhatsApp-only invite closed with its draft never sent does not restart the clock.
           SELECT max(i.issued_at) INTO v_newest FROM public.cockpit_form_invites i
-           WHERE i.task_id = c.task AND i.form_key = 'nps' AND i.origin <> 'canary';
+           WHERE i.task_id = c.task AND i.form_key = 'nps' AND i.origin <> 'canary'
+             AND ('portal' = ANY(i.channels) OR i.state = 'answered'
+                  OR EXISTS (SELECT 1 FROM public.cockpit_form_invite_events e
+                              WHERE e.invite_id = i.id AND e.event IN ('link_sent','link_made') AND e.source <> 'push'));
           IF v_newest IS NOT NULL AND v_today - public.cockpit_form_kuwait_day(v_newest) < n_every THEN
             v_skip := public.cockpit_form_schedule_bump(v_skip, 'tooSoon');
           ELSE
@@ -1794,6 +1825,7 @@ BEGIN
     'cockpit_form_schedules_audit()', 'cockpit_form_rule_int(jsonb,text)', 'cockpit_form_answer_int(jsonb,text,integer,integer)',
     'cockpit_client_voice_low_max()', 'cockpit_form_schedule_bump(jsonb,text,integer)',
     'cockpit_form_issue_hook_nps(uuid)', 'cockpit_form_issue_hook_csat(uuid)',
+    'cockpit_form_nps_sent_write(uuid,date)', 'cockpit_form_link_hook_nps(uuid)',
     'cockpit_form_voice_queue(text,text,text,text,jsonb,boolean)',
     'cockpit_form_voice_notices(public.cockpit_form_responses,text,integer,integer,integer,text)',
     'cockpit_form_hook_nps(uuid)', 'cockpit_form_hook_csat(uuid)',

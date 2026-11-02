@@ -31,7 +31,7 @@ const T = (d: string) => `${d}T07:30:00Z`;
 const base: InviteRow = {
   id: "00000000-0000-4000-8000-000000000001",
   formKey: "nps",
-  title: { en: "How are we doing?", ar: "شلون شغلنا معاكم؟" },
+  title: { en: "How are we doing?", ar: "شلون شغلنا معاك؟" },
   state: "open",
   channels: ["portal"],
   origin: "csm",
@@ -113,7 +113,7 @@ export const INVITES: Record<string, InviteRow> = {
 const forms: InviteView["forms"] = [
   {
     key: "nps",
-    title: { en: "How are we doing?", ar: "شلون شغلنا معاكم؟" },
+    title: { en: "How are we doing?", ar: "شلون شغلنا معاك؟" },
     live: true,
     sendable: true,
     why: null,
@@ -378,7 +378,7 @@ export const VOICE_NONE: VoiceRead = {
 
 export const ANSWER: AnswerRead = {
   formKey: "nps",
-  title: { en: "How are we doing?", ar: "شلون شغلنا معاكم؟" },
+  title: { en: "How are we doing?", ar: "شلون شغلنا معاك؟" },
   submittedAt: T("2026-10-31"),
   source: "portal",
   signer: "the client admin",

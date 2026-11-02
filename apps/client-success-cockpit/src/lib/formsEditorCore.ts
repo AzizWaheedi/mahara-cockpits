@@ -551,7 +551,7 @@ export const CSAT_BOUNDS: readonly Bound[] = [
     hi: 14,
   },
   { key: "snoozeDays", words: 'The days "Not now" waits', lo: 1, hi: 14 },
-  { key: "reissues", words: "The number of re-tries", lo: 0, hi: 5 },
+  { key: "reissues", words: "The number of re-tries", lo: 0, hi: 3 },
   { key: "retryAfterDays", words: "The days between re-tries", lo: 1, hi: 30 },
   {
     key: "maxAgeDays",

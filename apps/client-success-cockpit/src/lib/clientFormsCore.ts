@@ -386,7 +386,9 @@ export const WITHDRAW_PROMPT = "Why are you withdrawing it?";
 export const SENT_AGAIN_REASON = "Sent again";
 export const NOTE_HINT =
   "Shown under the form's title. No numbers about leads or cost.";
-export const WHATSAPP_HINT = "The link is added when it sends.";
+/** Under the WhatsApp text: what {form_link} is and the one rule it keeps (the live check uses the same words in red). */
+export const WHATSAPP_HINT =
+  "Keep {form_link} in the text once; the link goes there when it sends.";
 export const PHONE_ALERT = "Phone alert to people who turned alerts on";
 export const PREVIEW_HINT = "Team preview: nothing is recorded.";
 
@@ -729,6 +731,32 @@ export function todayLine(r: TodayRow): string {
       return `WhatsApp link to approve: ${formInline(r.formKey, r.title)} for ${r.clientName}`;
     case "answered":
       return `Answered: ${formInline(r.formKey, r.title)} from ${r.clientName}`;
+    case "exit_survey_due":
+      return `Send the exit survey to ${r.clientName}`;
+  }
+}
+
+/**
+ * A row under its band's title (5.3): the band already says what the row is
+ * ("Not answered"), so the row drops that prefix and names the form as the
+ * Send a form chips do ("Onboarding survey"). todayLine stays the full
+ * sentence for the row's accessible name and wherever a row shows alone.
+ */
+export function todayRowText(r: TodayRow): string {
+  const form = formWords(r.formKey, r.title);
+  switch (r.kind) {
+    case "sent_today":
+      return `${form} to ${r.clientName}`;
+    case "not_answered": {
+      const n = r.days;
+      const ago =
+        n === null ? "some days ago" : n === 1 ? "1 day ago" : `${n} days ago`;
+      return `${form} to ${r.clientName}, sent ${ago}`;
+    }
+    case "approve_link":
+      return `${form} for ${r.clientName}`;
+    case "answered":
+      return `${form} from ${r.clientName}`;
     case "exit_survey_due":
       return `Send the exit survey to ${r.clientName}`;
   }

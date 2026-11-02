@@ -121,6 +121,9 @@ describe("the metrics and the source note", () => {
       "Client voice could not be read this run (permission denied for view cockpit_client_voice_v), so NPS and the onboarding survey are missing, not zero.",
     );
     expect(voiceSourceNote(voicePayload(fixture(), TODAY))).toContain("each client counts once per window with their latest answer");
+    // The old Typeform answers are counted live: none, no sentence; one, singular.
+    expect(voiceSourceNote(voicePayload({ ...fixture(), legacyUnmatched: 0 }, TODAY))).not.toContain("Typeform");
+    expect(voiceSourceNote(voicePayload({ ...fixture(), legacyUnmatched: 1 }, TODAY))).toContain("the 1 old Typeform answer could not be matched to a client and is left out");
   });
 
   test("both registries define the three metrics once, with a source and what each leaves out", async () => {
@@ -151,12 +154,16 @@ describe("readVoice", () => {
         return [{ response_id: "r1", clickup_task_id: "A", form_key: "nps", day: "2026-11-10", at_ms: 1, score: 9, band: "promoter", round: 1 }];
       if (query === VOICE_SQL.answered) return [{ task_id: "A", day: "2026-11-10" }];
       if (query === VOICE_SQL.daily) return [{ day: "2026-11-09", form_key: "nps", issued: 1, answered: 0 }];
+      if (query === VOICE_SQL.legacy) return [{ n: 2 }];
       throw new Error("unexpected query");
     };
     const out = await withRuntime(runtimeWith(read), () => readVoice(TODAY));
     expect(out.ok).toBe(true);
     expect(out.payload.windows.mtd.nps).toMatchObject({ score: 100, n: 1, cardsAnswered: 1, note: "" });
-    expect(seen).toHaveLength(3);
+    expect(out.payload.legacyUnmatched).toBe(2);
+    expect(voiceSourceNote(out.payload)).toContain("the 2 old Typeform answers could not be matched to a client and are left out");
+    expect(seen).toHaveLength(4);
+    expect(VOICE_SQL.legacy).toContain("state = 'legacy' and r.task_id is null");
     for (const q of seen) expect(q).not.toMatch(/\blimit\b/i);
     expect(VOICE_SQL.answered).toContain("i.origin <> 'canary'");
   });

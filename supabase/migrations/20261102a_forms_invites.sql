@@ -2019,6 +2019,27 @@ BEGIN
   RETURN jsonb_build_object('hook', v_hook);
 END $$;
 
+-- A link has left the cockpit (the WhatsApp worker minted it for the send,
+-- or a seat copied it): the form's link hook, when 20261102c makes one
+-- (NPS Survey Sent for an invite with no portal channel waits for this).
+-- Caught like an answer hook: a raise writes hook_failed and the link still
+-- goes, since the send must not depend on a card field.
+CREATE OR REPLACE FUNCTION public.cockpit_form_client_link_out(p_invite_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE i public.cockpit_form_invites; v_hook text;
+BEGIN
+  SELECT * INTO i FROM public.cockpit_form_invites x WHERE x.id = p_invite_id;
+  IF i.id IS NULL THEN RETURN; END IF;
+  v_hook := 'cockpit_form_link_hook_' || i.form_key;
+  IF to_regprocedure('public.' || v_hook || '(uuid)') IS NULL THEN RETURN; END IF;
+  BEGIN
+    EXECUTE format('SELECT public.%I($1)', v_hook) USING p_invite_id;
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM public.cockpit_form_invite_event(i.id, 'cockpit', 'hook_failed', NULL,
+      jsonb_build_object('hook', v_hook, 'sqlstate', SQLSTATE));
+  END;
+END $$;
+
 -- After an answer is stored (4.1.2): the invite to answered (its tokens
 -- revoked, its unsent message skipped, event answered), then the form's hook
 -- in a caught block: a raise rolls back the hook's own writes only, writes
@@ -2552,6 +2573,14 @@ BEGIN
   IF i.origin <> 'canary' AND NOT public.cockpit_form_client_live(i.form_key) THEN
     RAISE EXCEPTION 'This form opens to clients after its switch-on.' USING ERRCODE = '22023';
   END IF;
+  -- The pause consent and the exit survey reach the client only in the
+  -- portal (admins) or through the approved WhatsApp message: a link a seat
+  -- copies could be answered by anyone holding it, and a signed consent from
+  -- it would read the same as the client's own.
+  IF i.audience = 'admin' OR public.cockpit_form_invite_schema(i)->>'signer' = 'typed' THEN
+    RAISE EXCEPTION 'This form goes to the client only in the portal or by the approved WhatsApp message, so it has no link to copy.'
+      USING ERRCODE = '22023';
+  END IF;
   PERFORM set_config('cockpit.audit_source', 'cockpit', true);
   PERFORM set_config('cockpit.forms_action', 'forms.invite_link_replaced', true);
   UPDATE public.cockpit_form_invite_tokens t SET revoked_at = now(), revoked_reason = 'Replaced by a new link.'
@@ -2562,6 +2591,7 @@ BEGIN
     UPDATE public.cockpit_form_invites SET channels = channels || ARRAY['copy'], updated_at = now() WHERE id = i.id;
   END IF;
   PERFORM public.cockpit_form_invite_event(i.id, 'cockpit', 'link_made', NULL, jsonb_build_object('by', v_role));
+  PERFORM public.cockpit_form_client_link_out(i.id);
   PERFORM set_config('cockpit.forms_action', '', true);
   RETURN jsonb_build_object('url', 'https://portal.maharamedia.com/f#' || v_token, 'expiresAt', i.expires_at);
 END $$;
@@ -2738,8 +2768,17 @@ DECLARE
   v_person text := public.portal_client_ask_person(p_person);
   i public.cockpit_form_invites;
   v_any boolean := false;
+  v_snooze_csat integer;
 BEGIN
   PERFORM public.cockpit_form_portal_workspace(p_location_id, p_clickup_id);
+  -- "Not now" waits the CSAT rule's snoozeDays (the forms editor sets it,
+  -- 1 to 14) once 20261102c makes the schedules; 3 days for every other form.
+  IF to_regclass('public.cockpit_form_schedules') IS NOT NULL THEN
+    EXECUTE 'SELECT CASE WHEN (s.rule->>''snoozeDays'') ~ ''^[0-9]{1,2}$'' THEN (s.rule->>''snoozeDays'')::integer END'
+            ' FROM public.cockpit_form_schedules s WHERE s.form_key = ''csat'''
+      INTO v_snooze_csat;
+  END IF;
+  v_snooze_csat := least(greatest(coalesce(v_snooze_csat, 3), 1), 14);
   IF p_invite_id IS NULL AND (
        EXISTS (SELECT 1 FROM public.cockpit_client_ask_events e JOIN public.cockpit_client_asks x ON x.id = e.ask_id
                 WHERE e.source = 'portal' AND e.person = v_person AND e.event = 'shown'
@@ -2757,7 +2796,7 @@ BEGIN
     CONTINUE WHEN p_invite_id IS NULL AND EXISTS (
       SELECT 1 FROM public.cockpit_form_invite_events e
        WHERE e.invite_id = i.id AND e.source = 'portal' AND e.person = v_person AND e.event = 'later'
-         AND e.at > now() - interval '3 days');
+         AND e.at > now() - make_interval(days => CASE WHEN i.form_key = 'csat' THEN v_snooze_csat ELSE 3 END));
     RETURN jsonb_build_object('invite', public.cockpit_form_portal_invite(i), 'reason', NULL);
   END LOOP;
   RETURN jsonb_build_object('invite', NULL, 'reason', CASE WHEN v_any THEN 'snoozed' ELSE 'nothing_waiting' END);
@@ -2940,7 +2979,9 @@ BEGIN
 END $$;
 
 -- The link page's rate limits (3.6): per browser 30 tries a minute, per
--- network 120 a minute and 10 unknown tokens in 10 minutes. False when within.
+-- network 120 a minute, and 10 unknown tokens in 10 minutes per browser on a
+-- network (50 for the whole network, so one shared mobile address with a few
+-- stale links does not lock out every client behind it). False when within.
 CREATE OR REPLACE FUNCTION public.cockpit_form_token_limited(p_net text, p_browser text)
 RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
@@ -2949,7 +2990,21 @@ BEGIN
       OR (SELECT count(*) FROM public.cockpit_form_token_opens o
            WHERE o.net_hash = p_net AND o.at > now() - interval '1 minute') >= 120
       OR (SELECT count(*) FROM public.cockpit_form_token_opens o
-           WHERE o.net_hash = p_net AND o.outcome = 'unknown' AND o.at > now() - interval '10 minutes') >= 10;
+           WHERE o.net_hash = p_net AND o.browser_hash IS NOT DISTINCT FROM p_browser AND o.outcome = 'unknown'
+             AND o.at > now() - interval '10 minutes') >= 10
+      OR (SELECT count(*) FROM public.cockpit_form_token_opens o
+           WHERE o.net_hash = p_net AND o.outcome = 'unknown' AND o.at > now() - interval '10 minutes') >= 50;
+END $$;
+
+-- A limited caller leaves one row a minute per network, not one per request,
+-- so a flood cannot fill the table (the limits count the rows already there).
+CREATE OR REPLACE FUNCTION public.cockpit_form_token_limited_note(p_net text, p_browser text)
+RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.cockpit_form_token_opens o
+                  WHERE o.net_hash = p_net AND o.outcome = 'limited' AND o.at > now() - interval '1 minute') THEN
+    INSERT INTO public.cockpit_form_token_opens(net_hash, browser_hash, outcome) VALUES (p_net, p_browser, 'limited');
+  END IF;
 END $$;
 
 -- What a token opens now: the invite and the outcome code of 3.3.
@@ -2983,7 +3038,7 @@ BEGIN
     RAISE EXCEPTION 'form_token_invalid' USING ERRCODE = '22023';
   END IF;
   IF public.cockpit_form_token_limited(p_net, p_browser) THEN
-    INSERT INTO public.cockpit_form_token_opens(net_hash, browser_hash, outcome) VALUES (p_net, p_browser, 'limited');
+    PERFORM public.cockpit_form_token_limited_note(p_net, p_browser);
     RETURN jsonb_build_object('ok', false, 'reason', 'limited');
   END IF;
   PERFORM public.cockpit_form_invites_expire();
@@ -3017,7 +3072,7 @@ BEGIN
     RAISE EXCEPTION 'form_token_invalid' USING ERRCODE = '22023';
   END IF;
   IF public.cockpit_form_token_limited(p_net, p_browser) THEN
-    INSERT INTO public.cockpit_form_token_opens(net_hash, browser_hash, outcome) VALUES (p_net, p_browser, 'limited');
+    PERFORM public.cockpit_form_token_limited_note(p_net, p_browser);
     RETURN jsonb_build_object('ok', false, 'reason', 'limited');
   END IF;
   PERFORM public.cockpit_form_invites_expire();
@@ -3143,15 +3198,20 @@ BEGIN
 END $$;
 
 -- Whether a phone alert may still show its text: the invite is open in that
--- workspace, visible to the person's role and not answered.
-CREATE OR REPLACE FUNCTION public.portal_form_invite_display(p_location_id text, p_clickup_id text, p_invite_id uuid, p_person text)
+-- workspace, visible to the person's role (the portal passes the device's
+-- current grant: admin or member) and not answered.
+CREATE OR REPLACE FUNCTION public.portal_form_invite_display(p_location_id text, p_clickup_id text, p_invite_id uuid, p_person text,
+  p_access_role text)
 RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE i public.cockpit_form_invites;
 BEGIN
   PERFORM public.portal_client_ask_person(p_person);
+  IF p_access_role IS NULL OR p_access_role NOT IN ('admin','member') THEN
+    RETURN false;
+  END IF;
   SELECT * INTO i FROM public.cockpit_form_invites x
    WHERE x.id = p_invite_id AND x.location_id = p_location_id AND x.task_id = p_clickup_id;
-  RETURN i.id IS NOT NULL AND public.cockpit_form_portal_visible(i, 'admin');
+  RETURN i.id IS NOT NULL AND public.cockpit_form_portal_visible(i, p_access_role);
 END $$;
 
 -- The portal's sessions as counts per workspace (V12), refused while
@@ -3222,6 +3282,7 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'reason', 'already_made');
   END;
   PERFORM public.cockpit_form_invite_event(i.id, 'worker', 'link_sent', NULL, jsonb_build_object('messageId', m.id));
+  PERFORM public.cockpit_form_client_link_out(i.id);
   PERFORM set_config('cockpit.forms_action', '', true);
   RETURN jsonb_build_object('ok', true, 'url', 'https://portal.maharamedia.com/f#' || v_token);
 END $$;
@@ -3343,6 +3404,7 @@ BEGIN
   PERFORM set_config('cockpit.forms_action', 'forms.invite_link_made', true);
   v_token := public.cockpit_form_token_mint(v_id, 'copy', NULL, 'the tech lead');
   PERFORM public.cockpit_form_invite_event(v_id, 'cockpit', 'link_made', NULL, jsonb_build_object('by', 'canary'));
+  PERFORM public.cockpit_form_client_link_out(v_id);
   PERFORM set_config('cockpit.forms_action', '', true);
   RETURN jsonb_build_object('inviteId', v_id, 'url', 'https://portal.maharamedia.com/f#' || v_token, 'messageId', v->'messageId');
 END $$;
@@ -3390,7 +3452,7 @@ DO $$
 DECLARE
   v_nps jsonb := $json${
     "v": 1, "key": "nps",
-    "title": {"en": "How are we doing?", "ar": "شلون شغلنا معاكم؟"},
+    "title": {"en": "How are we doing?", "ar": "شلون شغلنا معاك؟"},
     "intro": {"en": "One minute. Your account manager reads every answer.", "ar": "دقيقة وحدة بس. مدير حسابك يقرا كل رد."},
     "minutes": 1, "audience": "any", "signer": "none", "context": [],
     "fields": [
@@ -3539,6 +3601,7 @@ REVOKE ALL ON FUNCTION
   public.cockpit_form_invites_expire(), public.cockpit_form_invites_withdraw_ineligible(),
   public.cockpit_form_token_mint(uuid,text,uuid,text), public.cockpit_form_invite_gate(uuid),
   public.cockpit_form_client_issued(uuid), public.cockpit_form_client_submitted(uuid),
+  public.cockpit_form_client_link_out(uuid),
   public.cockpit_form_portal_invite(public.cockpit_form_invites),
   public.cockpit_form_portal_visible(public.cockpit_form_invites,text), public.cockpit_form_portal_workspace(text,text),
   public.cockpit_form_invite_row(public.cockpit_form_invites), public.cockpit_form_invite_build_view(text,text),
@@ -3552,10 +3615,11 @@ REVOKE ALL ON FUNCTION
   public.cockpit_form_done_text(jsonb,jsonb),
   public.cockpit_form_store_answer(public.cockpit_form_invites,text,text,text,text,text,jsonb,text,text),
   public.portal_form_submit(text,text,text,text,uuid,jsonb,uuid,text),
-  public.cockpit_form_token_limited(text,text), public.cockpit_form_token_find(text),
+  public.cockpit_form_token_limited(text,text), public.cockpit_form_token_limited_note(text,text),
+  public.cockpit_form_token_find(text),
   public.portal_form_token_open(text,text,text), public.portal_form_token_submit(text,text,text,jsonb,text,uuid,text),
   public.portal_form_preview(text,boolean), public.portal_form_invites_push_claim(integer),
-  public.portal_form_invite_push_done(uuid,text,text,jsonb), public.portal_form_invite_display(text,text,uuid,text),
+  public.portal_form_invite_push_done(uuid,text,text,jsonb), public.portal_form_invite_display(text,text,uuid,text,text),
   public.portal_form_presence_put(jsonb),
   public.cockpit_client_message_invite_link(uuid,uuid), public.cockpit_form_client_go_live(text,boolean,text),
   public.cockpit_form_invite_issue_system(text,text,text[],jsonb,text), public.cockpit_form_invite_canary(text,jsonb,text[])
@@ -3583,7 +3647,7 @@ GRANT EXECUTE ON FUNCTION public.portal_form_for_person(text,text,text,text,uuid
   public.portal_form_submit(text,text,text,text,uuid,jsonb,uuid,text),
   public.portal_form_token_open(text,text,text), public.portal_form_token_submit(text,text,text,jsonb,text,uuid,text),
   public.portal_form_preview(text,boolean), public.portal_form_invites_push_claim(integer),
-  public.portal_form_invite_push_done(uuid,text,text,jsonb), public.portal_form_invite_display(text,text,uuid,text),
+  public.portal_form_invite_push_done(uuid,text,text,jsonb), public.portal_form_invite_display(text,text,uuid,text,text),
   public.portal_form_presence_put(jsonb), public.cockpit_client_message_invite_link(uuid,uuid)
   TO service_role;
 

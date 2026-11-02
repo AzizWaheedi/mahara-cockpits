@@ -38,6 +38,9 @@ export const VOICE_SQL = {
   from public.${VOICE_DAILY_VIEW} d
   where d.day >= ((now() at time zone 'UTC') + interval '3 hours')::date - ${HISTORY_DAYS}
   order by d.day, d.form_key`,
+  /** Old Typeform NPS and CSAT answers with no card: counted live for the note, never scored. */
+  legacy: `select count(*)::integer as n from public.cockpit_form_responses r
+  where r.form_key in ('nps', 'csat') and r.state = 'legacy' and r.task_id is null`,
 };
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 const FORMS = new Set(["nps", "csat", "portal_feedback"]);
@@ -158,6 +161,7 @@ export function voicePayload(input, today) {
     answers: input.answers.map(({ taskId, form, day, at, score, band }) => ({ taskId, form, day, at, score, band })),
     answered: input.answered,
     daily: input.daily,
+    legacyUnmatched: Number.isInteger(input.legacyUnmatched) ? input.legacyUnmatched : null,
     windows,
   };
 }
@@ -166,14 +170,22 @@ export function voicePayload(input, today) {
 export function voiceSourceNote(payload) {
   if (!payload?.read) return `Client voice could not be read this run (${payload?.error ?? "no answer"}), so NPS and the onboarding survey are missing, not zero.`;
   const since = payload.firstDay ? ` since ${payload.firstDay}` : "";
-  return `NPS is from the client's own answers in the portal or by WhatsApp link${since}; each client counts once per window with their latest answer; promoters 9-10 minus detractors 0-6, over n answers; the 2 old Typeform answers could not be matched to a client and are left out; checked against the count of answered invites. The onboarding survey (1 to 10) and portal feedback are counted apart.`;
+  const n = payload.legacyUnmatched;
+  const legacy = Number.isInteger(n) && n > 0
+    ? `; the ${n} old Typeform ${n === 1 ? "answer" : "answers"} could not be matched to a client and ${n === 1 ? "is" : "are"} left out`
+    : "";
+  return `NPS is from the client's own answers in the portal or by WhatsApp link${since}; each client counts once per window with their latest answer; promoters 9-10 minus detractors 0-6, over n answers${legacy}; checked against the count of answered invites. The onboarding survey (1 to 10) and portal feedback are counted apart.`;
 }
 
 /** Reads the three sources. Missing is never zero: a failed read says so and the payload carries no numbers. */
 export async function readVoice(today) {
   try {
-    const [a, e, d] = await Promise.all([sql(TRIAGE, VOICE_SQL.answers), sql(TRIAGE, VOICE_SQL.answered), sql(TRIAGE, VOICE_SQL.daily)]);
-    return { ok: true, payload: voicePayload({ answers: answersOf(a), answered: answeredOf(e), daily: dailyOf(d) }, today) };
+    const [a, e, d, l] = await Promise.all([
+      sql(TRIAGE, VOICE_SQL.answers), sql(TRIAGE, VOICE_SQL.answered), sql(TRIAGE, VOICE_SQL.daily), sql(TRIAGE, VOICE_SQL.legacy),
+    ]);
+    const legacy = intOrNull(l?.[0]?.n);
+    if (legacy === null) throw new Error("The old Typeform answer count came back empty");
+    return { ok: true, payload: voicePayload({ answers: answersOf(a), answered: answeredOf(e), daily: dailyOf(d), legacyUnmatched: legacy }, today) };
   } catch (err) {
     return { ok: false, error: (err instanceof Error ? err.message : String(err)).replace(/https?:\/\/\S+/g, "").trim().slice(0, 160) };
   }
