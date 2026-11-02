@@ -108,6 +108,7 @@ const {
   onItsWay,
   CONTENT_FOLDER,
   FOLDER_WORDS,
+  messageMax,
 } = await import("../src/forms/RecapApproval");
 const lib = await import("../src/lib/clientMessages");
 const { approveRecap } = await import("../src/forms/checkinClient");
@@ -1647,6 +1648,34 @@ describe("a phase message's content folder (docs/forms/WAVE56-CONTRACT.md D-S4.0
       text(surface.querySelector('[data-placeholder="content_folder"]')),
     ).toBe(FOLDER_WORDS.token);
     expect(host.querySelector("[data-folder-note]")).toBeNull();
+  });
+
+  test("the edit counter counts to 1,500 for a phase message, the database's limit, and turns red past it; a recap keeps 4,096", async () => {
+    expect(messageMax("phase3")).toBe(1500);
+    expect(messageMax("phase4")).toBe(1500);
+    expect(messageMax("recap_checkin")).toBe(4096);
+    expect(messageMax("phase5")).toBe(4096);
+    for (const kind of ["phase3", "phase4"]) {
+      const { node } = card([phase({ kind })]);
+      const host = await mount(node);
+      await click(named("Edit")[0]);
+      const counter = () =>
+        host.querySelector("[data-message] p span.font-mono");
+      expect(text(counter())).toBe(`${[...PHASE3].length} / 1,500`);
+      expect(page()).not.toContain("4,096");
+      expect(counter().getAttribute("data-over")).toBeNull();
+      const field = host.querySelector("[data-message] textarea");
+      const longest = `${PHASE3}${"ت".repeat(1500 - [...PHASE3].length)}`;
+      await typeInto(field, longest);
+      expect(text(counter())).toBe("1,500 / 1,500");
+      expect(counter().getAttribute("data-over")).toBeNull();
+      await typeInto(field, `${longest}ت`);
+      expect(text(counter())).toBe("1,501 / 1,500");
+      expect(counter().getAttribute("data-over")).toBe("true");
+      expect(String(counter().className)).toContain("text-destructive");
+      for (const r of roots.splice(0)) await act(async () => r.unmount());
+      win.document.body.innerHTML = "";
+    }
   });
 
   test("only phase 3 and phase 4: any other message shows its text as it is", async () => {

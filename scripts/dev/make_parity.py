@@ -27,14 +27,21 @@ ClickUp's markdown marks ignored. One line per effect:
   kickoff run 1: phase4_whatsapp setting missing
   kickoff run 1: fidelity equal
 
-plus one line for Make 12's [24] (or Make 13's [31]): "[24] search", or "[24] writes: {columns}", which stops
-Stage 4 until the write is its own effect. Pass = every effect equal or intended and the fidelity equal, on every
-run. A phase text compares as a template ({map_link}, {content_folder}); while stage4.messages has no text for it,
-it is "setting missing" and the run is not proven. It prints ids, field ids, effect keys, run numbers and verdicts
-only: never a name, an answer, a phone number, a token or a key. Every ClickUp read writes an intent receipt before
-it and a response receipt after it into cockpit_csm_provider_health (provider clickup, run_key make-parity:{uuid});
-a call whose intent receipt cannot be saved is not made. Self-contained on purpose: the VPS gets this one file on
-stdin.
+plus one line for Make 12's [24] (or Make 13's [31]): "[24] search", or "[24] writes: {columns}", which stops Stage
+4 until the write is its own effect. Pass = every effect equal or intended and the fidelity equal, on every run. A
+text Make writes (the handoff, also posted on each onboarding task by [18] and [23], the raw answers comment, the
+Client Profile, a phase text) is equal only byte for byte (the CEO's rule, 2026-11-02); "differs: text, whitespace
+only" names a difference of spaces or new lines alone. The handoff on the onboarding tasks is graded as delivered,
+not only planned: it differs while the request writer has no step that posts it (TASK_COMMENT_STEP). A task
+description the plan writes (details) differs too: Make 12 [17], [22] and Make 13 [46] write none. A phase text
+compares as a template ({map_link}, {content_folder}); while stage4.messages has no text for it, it is "setting
+missing" and the run is not proven. oracle() is one stored answer's two inputs with no network (what
+cockpit_form_parity_plan is sent, and Make's evaluated modules), so a branch's SQL can be planned and compared off
+the VPS; plan_lines() and summary() print such a run as this one does. It prints ids, field ids, effect keys, run
+numbers and verdicts only: never a name, an answer, a phone number, a token or a key. Every ClickUp read writes an
+intent receipt before it and a response receipt after it into cockpit_csm_provider_health (provider clickup, run_key
+make-parity:{uuid}); a call whose intent receipt cannot be saved is not made. Self-contained on purpose: the VPS
+gets this one file on stdin.
 """
 from __future__ import annotations
 
@@ -70,7 +77,6 @@ FIELD = {
 }
 INTENDED = {
     "blueprint": "the Blueprint link points at the cockpit Blueprint",
-    "service": "Make's switch() finds no option for the first listed service; the cockpit writes the first listed service it knows",
     "task_name": "the request names the task {client} - {type label}",
     "kickoff_link": "the kickoff link opens the cockpit sheet, not a prefilled Typeform",
     "approval": "waits for the CSM's approval (2b rule)",
@@ -81,6 +87,13 @@ INTENDED = {
     "read_model": "the cockpit's own record (Make writes none)",
     "dedupe": "one task each per card (Make doubles them on a second submit)",
 }
+# The request writer's step that posts a request's taskComment once on the task it made (REQUEST_STEPS in
+# supabase/functions/clickup-writeback/requests.ts): what carries the onboarding_tasks plan's comment_text to
+# ClickUp, as Make 12 [18] and [23] post the handoff. None while the writer has no such step: then nothing posts it,
+# whatever the plan says. test_make_parity.py fails while this and that file disagree.
+TASK_COMMENT_STEP: Optional[str] = None
+NO_TASK_COMMENT = "nothing posts comment_text on the two tasks"
+DESCRIPTION = "the cockpit writes a task description Make does not"
 # What the fidelity check reads: the module whose comment ClickUp holds, and how that comment starts.
 FIDELITY = {"kickoff": (11, "KICKOFF HANDOFF", "handoff"), "onboarding": (47, "Raw Onboarding Form Answers", "raw answers")}
 COMMENT_PAGES = 8
@@ -710,6 +723,79 @@ def native_input(rec: dict, client: Optional[str], hidden: dict) -> dict:
             "hidden": {k: v for k, v in hidden.items() if v}, "answers": rec["answers"], "cardOnSheet": True}
 
 
+# ---------------------------------------------------------------- pure: one stored answer, both sides' inputs
+
+# Where a kickoff's hidden values came from: Make 13 [29]'s Kickoff Form Link, or the cockpit's own kickoff link.
+SOURCES = {"make13": "", "cockpit": "the cockpit's kickoff link"}
+# The cockpit's own kickoff link went out from this day; without ClickUp's comments it is the one assumed after it.
+COCKPIT_LINK_SINCE = "2026-10-22T00:00:00+03:00"
+
+
+def saved_set(blueprint_dir: str, typeform_dir: str) -> dict:
+    """The two saved blueprints and the two saved Typeform definitions the evaluator reads."""
+    return {"make12": blueprint_of(saved_file(blueprint_dir, str(MAKE12))),
+            "make13": blueprint_of(saved_file(blueprint_dir, str(MAKE13))),
+            "kickoff": saved_file(typeform_dir, KICKOFF_FORM), "onboarding": saved_file(typeform_dir, ONBOARDING_FORM)}
+
+
+def client_of(rec: dict, names: dict) -> Optional[str]:
+    """The card's name as the cockpit plans it: the billing sheet's, else the stored answer's."""
+    return next((x for x in [names.get(rec["task"])] + rec["names"] if isinstance(x, str) and x.strip()), None)
+
+
+def kickoff_hidden_from(source: str, saved: dict, rec: dict, readmodel: list, responses: list) -> dict:
+    """A kickoff's hidden values from one source (SOURCES), on the card's onboarding answers as the cockpit holds them."""
+    onboarding = card_onboarding(rec["task"], readmodel, responses)
+    if source == "cockpit":
+        return cockpit_hidden(saved["make13"], rec["task"], onboarding, rec.get("cardName"))
+    return kickoff_hidden(saved["make13"], saved["onboarding"], rec["task"], onboarding)
+
+
+def make_side(form: str, saved: dict, rec: dict, hidden: dict) -> dict:
+    """Make's module inputs for one stored answer: Make 12 on a kickoff (with its hidden values), Make 13 on an
+    onboarding answer."""
+    if form == "kickoff":
+        return make_modules(saved["make12"], trigger_bundle(saved["kickoff"], rec["answers"], hidden))
+    return make_modules(saved["make13"], trigger_bundle(saved["onboarding"], rec["answers"], {"onboarding_client_id": rec["task"]}))
+
+
+def oracle(form: str, saved: dict, rec: dict, readmodel: list, responses: list, names: dict,
+           source: Optional[str] = None) -> dict:
+    """One stored answer with no network: {input, mods, source}. input is what parity() sends to
+    cockpit_form_parity_plan; mods is Make's evaluated modules. A kickoff's hidden values come from source (SOURCES);
+    when none is given, from the cockpit's link on or after COCKPIT_LINK_SINCE and Make 13 [29]'s link before it (on the
+    VPS the fidelity check decides instead)."""
+    hidden: dict = {}
+    if form == "kickoff":
+        if source is None:
+            source = "cockpit" if ms_of(rec["submittedAt"]) >= ms_of(COCKPIT_LINK_SINCE) else "make13"
+        if source not in SOURCES:
+            raise Unsupported(f"the hidden value source {source}")
+        hidden = kickoff_hidden_from(source, saved, rec, readmodel, responses)
+    else:
+        source = None
+    return {"input": native_input(rec, client_of(rec, names), hidden), "mods": make_side(form, saved, rec, hidden),
+            "source": source}
+
+
+def relay_of(m25: Optional[dict], task: str) -> dict:
+    """What ~/.forms-relay/config.env holds for the dispatch (D-S4F), read from one evaluated Make 13 [25] input:
+    the repository from its URL, the event and the two client_payload keys from its body (the id key is the one
+    holding the card id). Never its headers: the evaluator leaves them out."""
+    m = re.match(r"^https://api\.github\.com/repos/([^/]+)/([^/]+)/dispatches$", str((m25 or {}).get("url") or ""))
+    try:
+        body = json.loads(str((m25 or {}).get("jsonStringBodyContent") or "{}"))
+    except ValueError:
+        body = {}
+    sent = body.get("client_payload") if isinstance(body, dict) and isinstance(body.get("client_payload"), dict) else {}
+    ids = [k for k, v in sent.items() if str(v) == task]
+    names = [k for k in sent if k not in ids]
+    if not m or len(ids) != 1 or len(names) != 1:
+        return {}
+    return {"DISPATCH_OWNER": m.group(1), "DISPATCH_REPO": m.group(2), "DISPATCH_EVENT": str(body.get("event_type") or ""),
+            "DISPATCH_NAME_KEY": names[0], "DISPATCH_ID_KEY": ids[0]}
+
+
 # ---------------------------------------------------------------- pure: comparing
 
 def fold(text: Any) -> str:
@@ -725,6 +811,16 @@ def unmarked(text: Any) -> str:
 
 def same_text(a: Any, b: Any) -> bool:
     return fold(a) == fold(b) or unmarked(a) == unmarked(b)
+
+
+def text_verdict(made: Any, planned: Any, what: str = "text") -> str:
+    """A text Make writes against the cockpit's: equal only byte for byte (the CEO's rule, 2026-11-02); a difference
+    in spaces or new lines alone is named as that."""
+    if made is None or planned is None:
+        return "equal" if made is None and planned is None else f"differs: {what}"
+    if str(made) == str(planned):
+        return "equal"
+    return f"differs: {what}, whitespace only" if fold(made) == fold(planned) else f"differs: {what}"
 
 
 def custom_fields(bundle: dict) -> dict:
@@ -819,11 +915,33 @@ def phase_verdict(phase: str, made: Optional[dict], effect: Optional[dict], ctx:
         return "setting missing"
     if made is None:
         return f"intended: {INTENDED['no_group']}"
-    if fold(text) != fold(text_of(made, "body", "text", "message")):
-        return "differs: text"
+    same = text_verdict(text_of(made, "body", "text", "message"), text)
+    if same != "equal":
+        return same
     if not ((effect or {}).get("plan") or {}).get("body") or (effect or {}).get("missing"):
         return f"differs: the cockpit drafts no {phase.replace('phase', 'phase ')} message"
     return f"intended: {INTENDED['approval']}"
+
+
+def task_comment(m18: Optional[dict], m23: Optional[dict], planned: dict) -> Optional[str]:
+    """Make 12 [18] and [23] post the handoff as a comment on each onboarding task; the cockpit's onboarding_tasks plan
+    must carry the same text as comment_text, byte for byte, and the request writer must post it (TASK_COMMENT_STEP).
+    None when both hold. The request's details (the task description, 4,000 characters at most) is not a comment."""
+    texts = [text_of(m or {}, "comment_text") for m in (m18, m23)]
+    if "comment_text" not in planned:
+        cut = any(isinstance(t, str) and len(t) > 4000 for t in texts)
+        return ("Make posts the handoff on each task as a comment, the cockpit only in the task description"
+                + (" (4,000 characters at most, and Make's is longer)" if cut else ""))
+    verdicts = [text_verdict(t, planned.get("comment_text"), "the handoff on the tasks") for t in texts]
+    what = [x for x in [next((v[len("differs: "):] for v in verdicts if v != "equal"), None),
+                        NO_TASK_COMMENT if TASK_COMMENT_STEP is None else None] if x]
+    return "; ".join(what) or None
+
+
+def description(planned: dict) -> Optional[str]:
+    """Make 12 [17], [22] and Make 13 [46] make their tasks with no description; a plan's details is one. The
+    request marker and template text the writer puts there are a recorded cannot-match, not graded here."""
+    return DESCRIPTION if str(planned.get("details") or "").strip() else None
 
 
 def compare_kickoff(plan: list, mods: dict, ctx: dict) -> list:
@@ -838,8 +956,7 @@ def compare_kickoff(plan: list, mods: dict, ctx: dict) -> list:
 
     m11 = need(11)
     out.append(("handoff_comment", "differs: module [11] not in the run" if m11 is None
-                else "equal" if fold(text_of(m11, "comment_text", "commentText", "comment")) == fold(p("handoff_comment").get("comment_text"))
-                else "differs: text"))
+                else text_verdict(text_of(m11, "comment_text", "commentText", "comment"), p("handoff_comment").get("comment_text"))))
     m20 = need(20)
     status = text_of(m20 or {}, "status") or ""
     out.append(("native_status", "differs: module [20] not in the run" if m20 is None
@@ -850,16 +967,14 @@ def compare_kickoff(plan: list, mods: dict, ctx: dict) -> list:
     else:
         made = custom_fields(m21)
         fields = p("card_fields").get("fields") or []
-        diffs, service = [], False
+        diffs = []
         for f in fields:
             fid = f["fieldId"]
             if fid == FIELD["blueprint"]:
                 continue
             raw = made.get(fid)
-            # Intended only when Make's switch() wrote nothing; an option id the field map lacks still differs.
-            if fid == FIELD["service"] and raw in (None, ""):
-                service = True
-                continue
+            # Service Advertised too (X37): Make 12 [21] writes switch(first(list)), so a service the cockpit
+            # writes where Make writes none differs.
             got = option_name(ctx.get("options", {}), fid, raw) if raw not in (None, "") else None
             if got != f.get("optionName"):
                 diffs.append(fid[:8])
@@ -870,8 +985,6 @@ def compare_kickoff(plan: list, mods: dict, ctx: dict) -> list:
                 diffs.append(fid[:8])
         out.append(("card_fields", f"differs: {', '.join(sorted(set(diffs)))}" if diffs else "equal"))
         out.append(("card_fields", f"intended: {INTENDED['blueprint']}"))
-        if service:
-            out.append(("card_fields", f"intended: {INTENDED['service']}"))
     targets = ctx.get("targets", {}).get("client_onboarding") or []
     m17, m22 = need(17), need(22)
     if m17 is None or m22 is None:
@@ -881,7 +994,9 @@ def compare_kickoff(plan: list, mods: dict, ctx: dict) -> list:
     else:
         made = {(str(m.get("list_id") or ""), str(m.get("template_id") or "")) for m in (m17, m22)}
         want = {(str(t.get("list_id") or ""), str(t.get("template_id") or "")) for t in targets}
-        out.append(("onboarding_tasks", "equal" if made == want else "differs: lists or templates"))
+        what = [] if made == want else ["lists or templates"]
+        what += [x for x in [task_comment(need(18), need(23), p("onboarding_tasks")), description(p("onboarding_tasks"))] if x]
+        out.append(("onboarding_tasks", f"differs: {'; '.join(what)}" if what else "equal"))
         out.append(("onboarding_tasks", f"intended: {INTENDED['task_name']}; {INTENDED['dedupe']}"))
     m26 = need(26)
     want_map = p("map_phase4").get("value")
@@ -939,12 +1054,11 @@ def compare_onboarding(plan: list, mods: dict, ctx: dict) -> list:
     else:
         made = custom_fields(m29)
         profile = next((f.get("value") for f in p("profile_fields").get("fields") or [] if f["fieldId"] == FIELD["profile"]), None)
-        out.append(("profile_fields", "equal" if fold(made.get(FIELD["profile"])) == fold(profile) else "differs: 7755485f"))
+        out.append(("profile_fields", text_verdict(made.get(FIELD["profile"]), profile, FIELD["profile"][:8])))
         out.append(("profile_fields", f"intended: {INTENDED['kickoff_link']}"))
     m47 = need(47)
     out.append(("raw_answers_comment", "differs: module [47] not in the run" if m47 is None
-                else "equal" if fold(text_of(m47, "comment_text", "commentText", "comment")) == fold(p("raw_answers_comment").get("comment_text"))
-                else "differs: text"))
+                else text_verdict(text_of(m47, "comment_text", "commentText", "comment"), p("raw_answers_comment").get("comment_text"))))
     kind31 = str(mods.get(31, {}).get("module") or "")
     if "client_data_row" in fx:
         m31 = need(31)
@@ -984,10 +1098,31 @@ def compare_onboarding(plan: list, mods: dict, ctx: dict) -> list:
             ("template", m46.get("template_id"), t.get("template_id")),
             ("assignee", assignees[0] if assignees else None, t.get("owner_clickup_id")))
             if str(made or "") != str(want or "")]
+        what += [x for x in [description(p("brand_dna_task"))] if x]
         out.append(("brand_dna_task", f"differs: {', '.join(what)}" if what else "equal"))
         out.append(("brand_dna_task", f"intended: {INTENDED['task_name']}; {INTENDED['dedupe']}"))
     out.append(("read_model", f"intended: {INTENDED['read_model']}"))
     return out
+
+
+def plan_lines(form: str, out: dict, mods: dict, ctx: dict) -> list:
+    """Every (effect, verdict) of one run: the comparison of the cockpit's parity plan (out) with Make's modules, and
+    the answers the cockpit maps no option for. The fidelity line is the caller's."""
+    lines = compare_kickoff(out["effects"], mods, ctx) if form == "kickoff" else compare_onboarding(out["effects"], mods, ctx)
+    # Full refs: the kickoff's own questions all start c0000001, so a cut ref cannot say which map to fix.
+    unmapped = sorted({str(u) for u in out.get("unmapped") or []})
+    if unmapped:
+        lines.append(("answers", f"differs: the cockpit maps no option for {', '.join(unmapped)}"))
+    return lines
+
+
+def summary(form: str, runs: int, failures: int, missing: set) -> tuple:
+    """The last line and the exit code: PASS, FAIL or NOT PROVEN."""
+    plural = lambda k, word: f"{k} {word}{'' if k == 1 else 's'}"  # noqa: E731
+    gap = (f"; stage4.messages has no {' or '.join(p.replace('phase', 'phase ') for p in sorted(missing))} text, "
+           f"so it was not compared") if missing else ""
+    verdict = "PASS" if not failures and not missing else "FAIL" if failures else "NOT PROVEN"
+    return f"{verdict}: {plural(runs, 'run')} of {SCENARIOS[form][0]}, {plural(failures, 'difference')}{gap}.", 0 if verdict == "PASS" else 1
 
 
 def comment_labels(form: str, make12: dict, definition: dict) -> dict:
@@ -1153,12 +1288,8 @@ def context(run: Run) -> dict:
 
 
 def parity(run: Run, form: str, last: int, blueprint_dir: str, typeform_dir: str) -> int:
-    scenario, _, _ = SCENARIOS[form]
-    make12 = blueprint_of(saved_file(blueprint_dir, str(MAKE12)))
-    make13 = blueprint_of(saved_file(blueprint_dir, str(MAKE13)))
-    kick_def = saved_file(typeform_dir, KICKOFF_FORM)
-    onb_def = saved_file(typeform_dir, ONBOARDING_FORM)
-    print(f"kickoff {line_of(make12, 24)}" if form == "kickoff" else f"onboarding {line_of(make13, 31)}")
+    saved = saved_set(blueprint_dir, typeform_dir)
+    print(f"kickoff {line_of(saved['make12'], 24)}" if form == "kickoff" else f"onboarding {line_of(saved['make13'], 31)}")
     readmodel = run.rows("/rest/v1/cockpit_client_onboarding?select=clickup_task_id,client_name,"
                          "kickoff:forms->kickoff,onboarding:forms->onboarding", "The stored kickoff and onboarding answers")
     responses = run.rows("/rest/v1/cockpit_form_responses?select=id,form_key,task_id,client_name,external_id,submitted_at,"
@@ -1169,7 +1300,7 @@ def parity(run: Run, form: str, last: int, blueprint_dir: str, typeform_dir: str
         raise Stop(f"The cockpit holds no stored {form} answer to compare.")
     ctx = context(run)
     names = run.card_names([r["task"] for r in runs])
-    labels = comment_labels(form, make12, onb_def)
+    labels = comment_labels(form, saved["make12"], saved["onboarding"])
     failures, missing = 0, set()
     for n, rec in enumerate(runs, start=1):
         head = f"{form} run {n}:"
@@ -1178,46 +1309,30 @@ def parity(run: Run, form: str, last: int, blueprint_dir: str, typeform_dir: str
             print(f"{head} card differs: the stored answer names no readable card")
             failures += 1
             continue
-        client = next((x for x in [names.get(rec["task"])] + rec["names"] if isinstance(x, str) and x.strip()), None)
         since = ms_of(rec["submittedAt"])
         held = run.comments(rec["task"], since)
-        if form == "kickoff":
-            # The kickoff's hidden values came from Make 13 [29]'s link or, since 2026-10-22, the cockpit's own link:
-            # the one whose handoff ClickUp holds is the one the CSM opened; [29]'s when neither is.
-            onboarding = card_onboarding(rec["task"], readmodel, responses)
-            tries = []
-            for source, hidden in (("", kickoff_hidden(make13, onb_def, rec["task"], onboarding)),
-                                   ("the cockpit's kickoff link", cockpit_hidden(make13, rec["task"], onboarding, rec.get("cardName")))):
-                mods = make_modules(make12, trigger_bundle(kick_def, rec["answers"], hidden))
-                made = text_of(mods[FIDELITY[form][0]]["input"], "comment_text") if FIDELITY[form][0] in mods else None
-                tries.append((source, hidden, mods, fidelity(made, held, form, labels, since)))
-            source, hidden, mods, proof = next((t for t in tries if t[3] == "equal"), tries[0])
-            if source:
-                print(f"{head} hidden values from {source}, not Make 13 [29]'s")
-        else:
-            hidden = {}
-            mods = make_modules(make13, trigger_bundle(onb_def, rec["answers"], {"onboarding_client_id": rec["task"]}))
+        # The kickoff's hidden values came from Make 13 [29]'s link or, since 2026-10-22, the cockpit's own link: the
+        # one whose handoff ClickUp holds is the one the CSM opened; [29]'s when neither is.
+        tries = []
+        for source in (SOURCES if form == "kickoff" else (None,)):
+            side = oracle(form, saved, rec, readmodel, responses, names, source)
+            mods = side["mods"]
             made = text_of(mods[FIDELITY[form][0]]["input"], "comment_text") if FIDELITY[form][0] in mods else None
-            proof = fidelity(made, held, form, labels, since)
-        out = run.plan(form, native_input(rec, client, hidden))
-        lines = compare_kickoff(out["effects"], mods, ctx) if form == "kickoff" else compare_onboarding(out["effects"], mods, ctx)
-        # Full refs: the kickoff's own questions all start c0000001, so a cut ref cannot say which map to fix.
-        unmapped = sorted({str(u) for u in out.get("unmapped") or []})
-        if unmapped:
-            lines.append(("answers", f"differs: the cockpit maps no option for {', '.join(unmapped)}"))
-        lines.append(("fidelity", proof))
+            tries.append((side, fidelity(made, held, form, labels, since)))
+        side, proof = next((t for t in tries if t[1] == "equal"), tries[0])
+        if side["source"] and SOURCES[side["source"]]:
+            print(f"{head} hidden values from {SOURCES[side['source']]}, not Make 13 [29]'s")
+        out = run.plan(form, side["input"])
+        lines = plan_lines(form, out, side["mods"], ctx) + [("fidelity", proof)]
         for key, verdict in lines:
             print(f"{head} {key} {verdict}")
             if verdict.startswith("differs"):
                 failures += 1
             if verdict == "setting missing":
                 missing.add(key.split("_")[0])
-    plural = lambda k, word: f"{k} {word}{'' if k == 1 else 's'}"  # noqa: E731
-    gap = (f"; stage4.messages has no {' or '.join(p.replace('phase', 'phase ') for p in sorted(missing))} text, "
-           f"so it was not compared") if missing else ""
-    verdict = "PASS" if not failures and not missing else "FAIL" if failures else "NOT PROVEN"
-    print(f"{verdict}: {plural(len(runs), 'run')} of {scenario}, {plural(failures, 'difference')}{gap}.")
-    return 0 if verdict == "PASS" else 1
+    text, code = summary(form, len(runs), failures, missing)
+    print(text)
+    return code
 
 
 def main(argv: Optional[list] = None) -> int:

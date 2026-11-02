@@ -30,7 +30,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import { kickoffAnswers, kickoffDef } from "@/forms/kickoff";
+import { kickoffAnswers, kickoffDef, kickoffRefused } from "@/forms/kickoff";
 import { FormSheet } from "@/forms/staff/FormSheet";
 import {
   consentLine,
@@ -1755,13 +1755,15 @@ export type KickoffApi = {
   ) => Promise<{
     responseId: string | null;
     trail: { step: string; state: string }[];
+    /** The answers the database's check refused, by key: nothing was stored. */
+    refused?: Record<string, string>;
   }>;
   trail: (ref: SubmitRef) => Promise<FormTrailRow>;
 };
 
 /**
  * The kickoff in the cockpit once its switch is on: Send the kickoff opens
- * FormSheet with the 38 answers in their three groups, the prefill chips
+ * FormSheet with the 46 answers in their three groups, the prefill chips
  * (from the onboarding form, from the card) and New MRR at the end. While it
  * is off the page keeps today's embedded Typeform and says so; while its
  * functions are missing it says the next update opens it. Nothing is read
@@ -1836,6 +1838,8 @@ export function KickoffDoor({
           status={read?.card.status ?? undefined}
           submit={async (a, requestId) => {
             const out = await api.submit(taskId, kickoffAnswers(a), requestId);
+            // Nothing was stored: the sheet stays open with its answers and says what to check.
+            if (out.refused) throw new Error(kickoffRefused(out.refused));
             extras.current = Object.fromEntries(
               out.trail.map(t => [t.step, t.state]),
             );

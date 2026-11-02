@@ -281,6 +281,15 @@ export const FOLDER_WORDS = {
   hint: "Keep {content_folder} in the text: the client's Google Drive link from Client Data column H goes there when it sends.",
 } as const;
 
+/**
+ * The longest text a kind takes, in characters, as cockpit_client_message_approve
+ * holds it: a phase 3 or phase 4 message 1,500 (WAVE56-CONTRACT.md 11.8), a
+ * recap 4,096, one WhatsApp message.
+ */
+export function messageMax(kind: string): number {
+  return FOLDER_KINDS.has(kind) ? 1500 : 4096;
+}
+
 /** {content_folder} as a label chip, left to right inside the message: what goes there, never a link. */
 function FolderToken() {
   return (
@@ -539,6 +548,9 @@ export function RecapApproval({
   const shown = closing ? message.body : text;
   const folderNote =
     folder && draft && !closing && shown.includes(CONTENT_FOLDER);
+  // The edit counter counts to this kind's own limit, and turns red past it.
+  const max = messageMax(message.kind);
+  const over = [...text].length > max;
   const describedBy = [`${id}-status`, error ? `${id}-error` : null]
     .filter(Boolean)
     .join(" ");
@@ -725,8 +737,15 @@ export function RecapApproval({
                   "The saved text, unchanged."
                 )}
               </span>
-              <span className="font-mono text-[11px] tabular-nums">
-                {[...text].length.toLocaleString("en-US")} / 4,096
+              <span
+                className={cn(
+                  "font-mono text-[11px] tabular-nums",
+                  over && "text-destructive",
+                )}
+                data-over={over || undefined}
+              >
+                {[...text].length.toLocaleString("en-US")} /{" "}
+                {max.toLocaleString("en-US")}
               </span>
             </p>
             {folderNote ? (

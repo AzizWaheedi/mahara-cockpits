@@ -360,6 +360,153 @@ class Evaluator(unittest.TestCase):
         self.assertEqual(mp.ms_of("2026-10-18T19:11:56+00:00"), mp.ms_of("2026-10-18 22:11:56.5+03") - 500)
 
 
+class Oracle(unittest.TestCase):
+    """The pure path: one stored answer's two inputs with no network, and the verdicts as the VPS run prints them."""
+
+    def setUp(self):
+        self.saved = mp.saved_set(str(FIXTURES), str(FIXTURES))
+        self.readmodel = [{"clickup_task_id": CARD, "client_name": "Cedar Homes (old)",
+                           "kickoff": {"form_id": "tG7dnxBn", "response_id": "tokKick00001", "submitted_at": "2026-10-20T11:55:11Z", "answers": KICKOFF},
+                           "onboarding": {"form_id": "KFRCXPFx", "response_id": "tokOnb00001", "submitted_at": "2026-10-01T08:00:00Z", "answers": ONBOARDING}}]
+        self.responses = [{"id": RESPONSE, "form_key": "kickoff", "external_id": "tokKick00001", "client_name": "Cedar Homes"}]
+        self.kick = mp.kickoff_runs(self.readmodel, self.responses, 7)[0]
+        self.onb = mp.onboarding_runs(self.readmodel, self.responses, 5)[0]
+
+    def side(self, form, rec, names=None, source=None):
+        return mp.oracle(form, self.saved, rec, self.readmodel, self.responses, {CARD: "Cedar Homes"} if names is None else names, source)
+
+    def test_a_kickoff_gives_the_plan_input_and_make12_on_its_hidden_values(self):
+        side = self.side("kickoff", self.kick)
+        self.assertEqual(side["source"], "make13")  # before 2026-10-22: Make 13 [29]'s link
+        hidden = mp.kickoff_hidden(self.saved["make13"], self.saved["onboarding"], CARD, mp.clean(ONBOARDING))
+        self.assertEqual(side["input"], mp.native_input(self.kick, "Cedar Homes", hidden))
+        self.assertEqual(side["mods"][11]["input"]["comment_text"], make12_mods()[11]["input"]["comment_text"])
+        late = dict(self.kick, submittedAt="2026-10-22T09:00:00+03:00")
+        side = self.side("kickoff", late)
+        self.assertEqual(side["source"], "cockpit")
+        self.assertEqual(side["input"]["hidden"]["consultation_types"], "عن بُعد (أونلاين) | Online, في مقرّكم / مكتبكم | In your office")
+        self.assertEqual(self.side("kickoff", late, source="make13")["input"]["hidden"]["consultation_types"],
+                         "عن بُعد (أونلاين) | Online,في مقرّكم / مكتبكم | In your office")
+        with self.assertRaises(mp.Unsupported):
+            self.side("kickoff", self.kick, source="typeform")
+        # No billing name: the stored answer's names, in order.
+        self.assertEqual(self.side("kickoff", self.kick, names={})["input"]["client"], "Cedar Homes")
+        self.assertIsNone(mp.client_of({"task": CARD, "names": [None, "  "]}, {CARD: ""}))
+
+    def test_an_onboarding_answer_gives_the_plan_input_and_make13(self):
+        side = self.side("onboarding", self.onb)
+        self.assertIsNone(side["source"])
+        self.assertEqual(side["input"], mp.native_input(self.onb, "Cedar Homes", {}))
+        made = make13_mods()
+        for mid in (25, 29, 46, 47, 48):
+            self.assertEqual(side["mods"][mid]["input"], made[mid]["input"], mid)
+
+    def test_the_relay_config_is_read_from_make13_25_without_its_headers(self):
+        m25 = make13_mods()[25]["input"]
+        self.assertEqual(mp.relay_of(m25, CARD), RELAY)
+        self.assertEqual(mp.relay_of(dict(m25, headers=[{"name": "Authorization", "value": "Bearer invented"}]), CARD), RELAY)
+        self.assertEqual(mp.relay_of(None, CARD), {})
+        self.assertEqual(mp.relay_of(dict(m25, url="https://example.test/dispatches"), CARD), {})
+        self.assertEqual(mp.relay_of(m25, "86other01"), {})  # no payload value is the card
+
+    def test_a_text_make_writes_is_equal_only_byte_for_byte(self):
+        self.assertEqual(mp.text_verdict("a\n\nb", "a\n\nb"), "equal")
+        self.assertEqual(mp.text_verdict("a\n\nb", "a\nb"), "differs: text, whitespace only")
+        self.assertEqual(mp.text_verdict("a\n\nb", "a\n\nc", "7755485f"), "differs: 7755485f")
+        self.assertEqual(mp.text_verdict(None, None), "equal")
+        self.assertEqual(mp.text_verdict("", None), "differs: text")
+        k, o = make12_mods(), make13_mods()
+        handoff = k[11]["input"]["comment_text"]
+        plan = [{"key": "handoff_comment", "plan": {"comment_text": handoff + "\n"}}]
+        self.assertEqual(dict(mp.compare_kickoff(plan, k, {}))["handoff_comment"], "differs: text, whitespace only")
+        profile = o[29]["input"]["custom_fields"][mp.FIELD["profile"]]
+        plan = [{"key": "profile_fields", "plan": {"fields": [{"fieldId": mp.FIELD["profile"], "value": profile.replace("\n\n", "\n")}]}},
+                {"key": "raw_answers_comment", "plan": {"comment_text": o[47]["input"]["comment_text"]}}]
+        lines = mp.compare_onboarding(plan, o, {"relay": {}, "targets": {}})
+        self.assertIn(("profile_fields", "differs: 7755485f, whitespace only"), lines)
+        self.assertIn(("raw_answers_comment", "equal"), lines)
+        ctx = {"messages": {"phase4": PHASES["phase4"] + " "}}
+        self.assertEqual(mp.phase_verdict("phase4", k[25]["input"], {"plan": {"body": "x"}}, ctx), "differs: text, whitespace only")
+
+    def test_the_onboarding_tasks_carry_makes_handoff_comment_byte_for_byte(self):
+        k = make12_mods()
+        handoff = k[11]["input"]["comment_text"]
+        self.assertEqual((k[18]["input"]["comment_text"], k[23]["input"]["comment_text"]), (handoff, handoff))
+        targets = {"client_onboarding": [{"list_id": "901816723190", "template_id": "t-86ex8x9xw"},
+                                         {"list_id": "901818016338", "template_id": "t-86eyu1w3d"}]}
+
+        def tasks(plan, mods=k):
+            return [v for key, v in mp.compare_kickoff([{"key": "onboarding_tasks", "plan": plan}], mods, {"targets": targets})
+                    if key == "onboarding_tasks"][0]
+
+        # Planned is not delivered: while the request writer has no step that posts it, nothing reaches the tasks.
+        with mock.patch.object(mp, "TASK_COMMENT_STEP", None):
+            self.assertEqual(tasks({"comment_text": handoff}), "differs: nothing posts comment_text on the two tasks")
+            self.assertEqual(tasks({"comment_text": handoff + "\n"}),
+                             "differs: the handoff on the tasks, whitespace only; nothing posts comment_text on the two tasks")
+        with mock.patch.object(mp, "TASK_COMMENT_STEP", "task_comment"):
+            self.assertEqual(tasks({"comment_text": handoff}), "equal")
+            self.assertEqual(tasks({"comment_text": handoff + "\n"}), "differs: the handoff on the tasks, whitespace only")
+            self.assertEqual(tasks({"details": handoff}),
+                             "differs: Make posts the handoff on each task as a comment, the cockpit only in the task description; "
+                             "the cockpit writes a task description Make does not")
+            long = copy.deepcopy(k)
+            for mid in (18, 23):
+                long[mid]["input"]["comment_text"] = "x" * 4001
+            self.assertEqual(tasks({"details": "x" * 4000}, long),
+                             "differs: Make posts the handoff on each task as a comment, the cockpit only in the task description "
+                             "(4,000 characters at most, and Make's is longer); the cockpit writes a task description Make does not")
+            self.assertEqual(tasks({"comment_text": "x" * 4001}, long), "equal")
+            # A description beside Make's comment still differs: [17] and [22] make the tasks with none.
+            self.assertEqual(tasks({"comment_text": handoff, "details": handoff[:4000]}),
+                             "differs: the cockpit writes a task description Make does not")
+            self.assertEqual(tasks({"comment_text": handoff, "details": " \n"}), "equal")
+            targets["client_onboarding"][0]["template_id"] = "t-other0001"
+            self.assertEqual(tasks({"comment_text": handoff + "!"}), "differs: lists or templates; the handoff on the tasks")
+
+    def test_the_brand_dna_task_differs_when_the_cockpit_writes_a_description(self):
+        k, o = make12_mods(), make13_mods()
+        for mods, mid in ((k, 17), (k, 22), (o, 46)):  # Make makes each task with no description
+            self.assertFalse({"description", "content", "markdown_description", "markdown_content"} & set(mods[mid]["input"]), mid)
+        m46 = o[46]["input"]
+        targets = {"brand_dna": [{"list_id": m46["list_id"], "owner_clickup_id": m46["assignees"][0]}]}
+
+        def task(plan):
+            return [v for key, v in mp.compare_onboarding([{"key": "brand_dna_task", "plan": plan}], o, {"relay": {}, "targets": targets})
+                    if key == "brand_dna_task"][0]
+
+        self.assertEqual(task({"typeKey": "brand_dna"}), "equal")
+        self.assertEqual(task({"typeKey": "brand_dna", "details": None}), "equal")
+        self.assertEqual(task({"typeKey": "brand_dna", "details": "Raw Onboarding Form Answers\nBusiness Name: Cedar Homes"}),
+                         "differs: the cockpit writes a task description Make does not")
+        targets["brand_dna"][0]["list_id"] = "901800000000"
+        self.assertEqual(task({"typeKey": "brand_dna", "details": "x"}), "differs: list, the cockpit writes a task description Make does not")
+
+    def test_the_task_comment_step_is_the_one_the_request_writer_has(self):
+        # TASK_COMMENT_STEP says what the request writer posts; the writer's own step list is the truth. A step that
+        # posts a comment on the task the request made: any comment step but card_comment, which posts on the card,
+        # in a writer that reads taskComment.
+        writer = Path(__file__).resolve().parents[2] / "supabase" / "functions" / "clickup-writeback" / "requests.ts"
+        text = writer.read_text()
+        m = re.search(r"export const REQUEST_STEPS\s*=\s*\[([^\]]*)\]", text)
+        self.assertIsNotNone(m, "REQUEST_STEPS is not in requests.ts")
+        steps = re.findall(r'"([a-z_]+)"', m.group(1))
+        self.assertIn("card_comment", steps)
+        posts = [s for s in steps if "comment" in s and s != "card_comment"]
+        self.assertEqual(mp.TASK_COMMENT_STEP, posts[0] if posts and "taskComment" in text else None,
+                         "make_parity.TASK_COMMENT_STEP and clickup-writeback's REQUEST_STEPS disagree: set it to the step "
+                         "that posts taskComment on the task the request made, or None while there is none")
+
+    def test_plan_lines_and_the_summary_read_as_the_vps_run(self):
+        out = {"effects": [], "unmapped": ["c0000001-0000-4000-8000-00000000000a"]}
+        lines = mp.plan_lines("onboarding", out, {}, {"relay": {}, "targets": {}})
+        self.assertEqual(lines[-1], ("answers", "differs: the cockpit maps no option for c0000001-0000-4000-8000-00000000000a"))
+        self.assertEqual(mp.summary("kickoff", 7, 0, set()), ("PASS: 7 runs of 8925654, 0 differences.", 0))
+        self.assertEqual(mp.summary("onboarding", 1, 1, set()), ("FAIL: 1 run of 8922994, 1 difference.", 1))
+        self.assertEqual(mp.summary("kickoff", 2, 0, {"phase4"}),
+                         ("NOT PROVEN: 2 runs of 8925654, 0 differences; stage4.messages has no phase 4 text, so it was not compared.", 1))
+
+
 class Answer:
     def __init__(self, status: int, text: str):
         self.status = status
@@ -421,7 +568,7 @@ class Net:
                         {"fieldId": SERVICE, "kind": "drop_down", "optionName": "Interior design"},
                         {"fieldId": "924bba47-32d4-4557-94d4-f475cd548dd2", "kind": "drop_down", "optionName": "Logged In"},
                         {"fieldId": BLUEPRINT, "kind": "url", "value": "https://cockpit.maharamedia.com/x"}]}},
-                    {"key": "onboarding_tasks", "plan": {"typeKey": "client_onboarding"}},
+                    {"key": "onboarding_tasks", "plan": {"typeKey": "client_onboarding", "comment_text": self.handoff}},
                     {"key": "map_phase4", "plan": {"value": "https://mahara-onboarding-map.vercel.app/?phase=4&cid=" + CARD}},
                     {"key": "phase4_whatsapp", "plan": {"body": body or None}, "missing": None if body else "not set up"},
                     {"key": "kickoff_notice", "plan": {}}, {"key": "new_mrr", "plan": {}}, {"key": "recap", "plan": {}}]
@@ -488,7 +635,9 @@ class Parity(unittest.TestCase):
                                                                "CLICKUP_API_TOKEN": CLICKUP_KEY}))
         (self.tmp / "relay.env").write_text("".join(f"{k}={v}\n" for k, v in RELAY.items()))
         self.net = Net()
-        for patch in (mock.patch.object(mp, "NATIVE_CURRENT", str(self.tmp / "current")),
+        # The fake cockpit matches Make, so its request writer posts the tasks' comment; one test runs the writer as it is.
+        for patch in (mock.patch.object(mp, "TASK_COMMENT_STEP", "task_comment"),
+                      mock.patch.object(mp, "NATIVE_CURRENT", str(self.tmp / "current")),
                       mock.patch.object(mp, "NATIVE_STATE", str(state)),
                       mock.patch.object(mp, "RELAY_CONFIG", str(self.tmp / "relay.env")),
                       mock.patch.object(mp, "BLUEPRINT_DIR", str(FIXTURES)),
@@ -525,6 +674,13 @@ class Parity(unittest.TestCase):
             "kickoff run 1: recap intended: stays off (Q22)",
             "kickoff run 1: fidelity equal",
             "PASS: 1 run of 8925654, 0 differences."])
+
+    def test_a_planned_task_comment_nothing_posts_fails_the_vps_run(self):
+        with mock.patch.object(mp, "TASK_COMMENT_STEP", None):
+            code, out = self.run_cmd("kickoff", "--last", "1")
+        self.assertEqual(code, 1)
+        self.assertIn("kickoff run 1: onboarding_tasks differs: nothing posts comment_text on the two tasks\n", out)
+        self.assertEqual(out.strip().splitlines()[-1], "FAIL: 1 run of 8925654, 1 difference.")
 
     def test_a_kickoff_opened_from_the_cockpits_link_is_proven_with_its_values(self):
         hidden = mp.cockpit_hidden(mp.blueprint_of(fixture("8922994")), CARD, mp.clean(ONBOARDING), "Cedar Homes (card)")
@@ -665,8 +821,21 @@ class Parity(unittest.TestCase):
         self.assertEqual(out.splitlines()[0], "kickoff [24] writes: 2, 5")
         self.assertIn("make parity stopped: the evaluator does not know [24] google-sheets:updateRow", out)
 
-    def test_the_service_is_intended_only_when_make_writes_none(self):
+    def test_the_vps_run_sends_the_plan_exactly_the_input_the_oracle_gives(self):
+        get = lambda path: self.net.route("GET", DB + path, {"apikey": SERVICE_KEY}, None)[1]  # noqa: E731
+        readmodel, responses = get("/rest/v1/cockpit_client_onboarding?x"), get("/rest/v1/cockpit_form_responses?x")
+        saved = mp.saved_set(str(FIXTURES), str(FIXTURES))
+        for form in ("kickoff", "onboarding"):
+            self.net.requests = []
+            self.run_cmd(form, "--last", "1")
+            sent = [r["json"] for r in self.net.requests if r["url"].endswith("/rpc/cockpit_form_parity_plan")]
+            runs = mp.kickoff_runs(readmodel, responses, 1) if form == "kickoff" else mp.onboarding_runs(readmodel, responses, 1)
+            side = mp.oracle(form, saved, runs[0], readmodel, responses, {CARD: self.net.card_name})
+            self.assertEqual(sent, [{"p_form_key": form, "p_input": side["input"]}], form)
+
+    def test_the_service_differs_whenever_it_is_not_makes(self):
         # The test field map lists Interior design only, so Make's id for any other service must still differ.
+        # A service the cockpit writes where Make 12 [21]'s switch(first(list)) writes none differs too (X37).
         plan = self.net.plan("kickoff", {"taskId": CARD, "client": "Cedar Homes", "hidden": {"legal_name": "Cedar Homes"}})
         ctx = {"options": {o["field_id"]: o["options"] for o in OPTIONS}, "targets": {}, "messages": PHASES}
 
@@ -678,7 +847,8 @@ class Parity(unittest.TestCase):
         blueprint = f"intended: {mp.INTENDED['blueprint']}"
         self.assertEqual(card("Interior design, Other"), ("e9883783-96ef-49e9-83c3-efba1aebc738", ["equal", blueprint]))
         self.assertEqual(card("Fit out and renovation"), ("889744ae-e3c5-4dc0-bf29-7f6c183be11e", ["differs: bab9a58b", blueprint]))
-        self.assertEqual(card("Landscaping"), (None, ["equal", blueprint, f"intended: {mp.INTENDED['service']}"]))
+        self.assertEqual(card("Landscaping"), (None, ["differs: bab9a58b", blueprint]))
+        self.assertNotIn("service", mp.INTENDED)
 
 
 if __name__ == "__main__":

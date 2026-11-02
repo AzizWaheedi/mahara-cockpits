@@ -8,10 +8,14 @@ import { sha256 } from "./drafts.ts";
 import {
   approveInvite,
   approveRecap,
+  CONTENT_FOLDER,
   forReviewer,
   INVITE_MAX,
   inviteRefusal,
   MESSAGE_MAX,
+  PHASE_MAX,
+  phaseLeftOver,
+  phaseRefusal,
   SAY_MESSAGES,
 } from "./messages.ts";
 import { BOOKING_BLOCK } from "./recapRules.ts";
@@ -33,7 +37,7 @@ const STORED = {
   kind: "recap_checkin",
   state: "approved",
   taskId: "86exCITYW",
-  clientName: "City Wood",
+  clientName: "Olive Wood",
   approvedBy: "the CSM",
 };
 
@@ -47,7 +51,7 @@ function world(
         kind: "recap_checkin",
         state: o.state ?? "draft",
         taskId: "86exCITYW",
-        clientName: "City Wood",
+        clientName: "Olive Wood",
         body: full(CLEAN),
       },
     },
@@ -348,7 +352,7 @@ describe("the door routes recap.approve as a seat op", () => {
 });
 
 describe("invite.approve (docs/forms/WAVE34-CONTRACT.md 3.9, 4.1.5)", () => {
-  const LINK_BODY = "هلا فريق City Wood، عندنا سؤال سريع من مهارة: شكثر ممكن تنصحون فينا؟ ما ياخذ إلا دقيقة: {form_link}";
+  const LINK_BODY = "هلا فريق Olive Wood، عندنا سؤال سريع من مهارة: شكثر ممكن تنصحون فينا؟ ما ياخذ إلا دقيقة: {form_link}";
   const STORED_INVITE = { ...STORED, kind: "form_invite", formKey: "nps", owner: "cockpit" };
   function inviteWorld(o: { state?: string; kind?: string } = {}) {
     return fakeDeps({
@@ -358,7 +362,7 @@ describe("invite.approve (docs/forms/WAVE34-CONTRACT.md 3.9, 4.1.5)", () => {
           kind: o.kind ?? "form_invite",
           state: o.state ?? "draft",
           taskId: "86exCITYW",
-          clientName: "City Wood",
+          clientName: "Olive Wood",
           body: LINK_BODY,
         },
       },
@@ -407,5 +411,142 @@ describe("invite.approve (docs/forms/WAVE34-CONTRACT.md 3.9, 4.1.5)", () => {
     } catch (e) {
       expect((e as Error).message).toBe("Approve a form link from Send a form.");
     }
+  });
+});
+
+describe("recap.approve on a phase 3 or phase 4 message (docs/forms/WAVE56-CONTRACT.md 11.8)", () => {
+  // stage4.messages as X35 holds them (apps/media-buyer-cockpit/scripts/stage4-content-folder-supabase.test.ts),
+  // drafted: {map_link} filled by cockpit_form_stage4_message, {content_folder} kept for the sender.
+  const MAP = (n: 3 | 4) => `https://mahara-onboarding-map.vercel.app/?phase=${n}&cid=86exfix01`;
+  const PHASE = {
+    phase3: `أكملنا المرحلة الثانية: نموذج التعريف بالنشاط.\nالمرحلة التالية: مكالمة التعريف.\n\nاطّلع على المطلوب منك وما سنعمل عليه بعد ذلك:\n${MAP(3)}\n\n*إذا ما رفعتوا المحتوى للحين:*\nارفعوا كل الصور والفيديوهات في مجلد المحتوى الموحد عشان توصل مباشرة لفريق الإبداع والمونتاج:\n{content_folder}`,
+    phase4: `أكملنا المرحلة الثالثة: مكالمة التعريف.\nالمرحلة التالية: بناء الهوية والعرض.\n\nاطّلع على المطلوب منك وما سنعمل عليه بعد ذلك:\n${MAP(4)}\n\n*إذا ما رفعتوا المحتوى للحين:*\nارفعوا كل الصور والفيديوهات في مجلد المحتوى الموحد عشان توصل مباشرة لفريق الإبداع والمونتاج:\n{content_folder}`,
+  } as const;
+  const STORED_PHASE = { ...STORED, kind: "phase4", formKey: "kickoff", owner: "cockpit" };
+  function phaseWorld(o: { kind?: string; state?: string; approve?: unknown } = {}) {
+    const kind = o.kind ?? "phase4";
+    return fakeDeps({
+      seat: {
+        cockpit_client_message_read: {
+          id: MID,
+          kind,
+          state: o.state ?? "draft",
+          taskId: "86exCITYW",
+          clientName: "Olive Wood",
+          body: PHASE[kind as keyof typeof PHASE] ?? PHASE.phase4,
+        },
+      },
+      rpc: {
+        cockpit_forms_actor: csmActor,
+        cockpit_client_message_team_today: true,
+        cockpit_client_message_approve: o.approve ?? STORED_PHASE,
+      },
+    });
+  }
+  const phaseApprove = (f: ReturnType<typeof phaseWorld>, body: unknown) =>
+    approveRecap(opOf(f.deps), { messageId: MID, body });
+  const phaseRefused = async (f: ReturnType<typeof phaseWorld>, body: unknown) => {
+    try {
+      await phaseApprove(f, body);
+    } catch (e) {
+      return { message: (e as Error).message, status: (e as { status?: number }).status };
+    }
+    throw new Error("Expected a refusal");
+  };
+
+  test("Make's text with no booking block: the exact bytes, {content_folder} kept, its sha256, the verified seat, no warnings", async () => {
+    for (const kind of ["phase3", "phase4"] as const) {
+      const f = phaseWorld({ kind });
+      const text = PHASE[kind];
+      expect(text.endsWith(BOOKING_BLOCK)).toBe(false);
+      expect(await phaseApprove(f, text)).toEqual({ message: STORED_PHASE, warnings: [] });
+      expect(f.seat.named("cockpit_client_message_read").map(c => c.args)).toEqual([{ p_id: MID }]);
+      expect(f.service.named("cockpit_client_message_approve").map(c => c.args)).toEqual([
+        { p_id: MID, p_body: text, p_body_sha256: await sha256(text), p_actor: csmActor.actorId, p_warnings: [] },
+      ]);
+      // No recap checks and no team-message warning: Make sends the phase text whatever the group had today.
+      expect(f.service.named("cockpit_client_message_team_today")).toEqual([]);
+    }
+  });
+
+  test("an edited text, one without {content_folder} and one of exactly 1,500 characters are approved", async () => {
+    const edited = PHASE.phase4.replace("أكملنا", "خلصنا");
+    const without = PHASE.phase4.replace(`\n${CONTENT_FOLDER}`, "");
+    const longest = `${PHASE.phase4}\n${"ت".repeat(PHASE_MAX - [...PHASE.phase4].length - 1)}`;
+    expect([...longest].length).toBe(PHASE_MAX);
+    for (const text of [edited, without, longest]) {
+      expect(phaseRefusal(text)).toBeNull();
+      const f = phaseWorld();
+      await phaseApprove(f, text);
+      expect(f.service.named("cockpit_client_message_approve")[0].args.p_body).toBe(text);
+    }
+  });
+
+  test("empty, over 1,500 characters, a placeholder nothing fills, {content_folder} twice, leads and guarantee are refused; nothing is approved", async () => {
+    const cases: [string, string][] = [
+      ["  \n ", SAY_MESSAGES.inviteNoText],
+      [`${PHASE.phase4}\n${"ت".repeat(PHASE_MAX - [...PHASE.phase4].length)}`, SAY_MESSAGES.phaseTooLong],
+      [PHASE.phase4.replace(MAP(4), "{map_link}"), phaseLeftOver("{map_link}")],
+      [`هلا فريق {client}\n${PHASE.phase4}`, phaseLeftOver("{client}")],
+      [PHASE.phase4.replace(CONTENT_FOLDER, "{form_link}"), phaseLeftOver("{form_link}")],
+      [`${PHASE.phase4}\n${CONTENT_FOLDER}`, SAY_MESSAGES.phaseFolder],
+      [`${PHASE.phase4}\nجبنا لكم ليدز`, SAY_MESSAGES.inviteLeads],
+      [`${PHASE.phase4}\nنضمن لكم النتائج`, SAY_MESSAGES.inviteGuarantee],
+      [`${PHASE.phase4}\nالضمان سنة`, SAY_MESSAGES.inviteGuarantee],
+    ];
+    for (const [text, sentence] of cases) {
+      expect(phaseRefusal(text)).toBe(sentence);
+      const f = phaseWorld();
+      expect(await phaseRefused(f, text)).toEqual({ message: sentence, status: 400 });
+      expect(f.service.named("cockpit_client_message_approve")).toEqual([]);
+    }
+    expect(phaseLeftOver("{map_link}")).toBe(
+      "The message still holds {map_link}, which nothing fills when it sends. Write what goes there instead, then approve again.",
+    );
+    // No text at all is refused before the row is read, as for a recap.
+    const f = phaseWorld();
+    expect(await phaseRefused(f, 12)).toEqual({ message: SAY_MESSAGES.noText, status: 400 });
+    expect(f.seat.calls).toEqual([]);
+  });
+
+  test("only a draft is approved, in a message's words; a recap keeps its booking rule", async () => {
+    expect(await phaseRefused(phaseWorld({ state: "approved" }), PHASE.phase4)).toEqual({
+      message: SAY_MESSAGES.inviteNotDraft,
+      status: 400,
+    });
+    // The same phase text on a 1-1 recap row is still refused by the booking rule.
+    const recap = world();
+    expect(await refusal(recap, { body: PHASE.phase4 })).toEqual({
+      message: "The booking link must appear exactly once, at the end. Edit the text, then approve again.",
+      status: 400,
+    });
+    expect(recap.service.named("cockpit_client_message_approve")).toEqual([]);
+  });
+
+  test("through the door: approved with 200, and the approve RPC's own sentence reaches the browser word for word", async () => {
+    const post = (body: unknown) =>
+      new Request("https://example.test/functions/v1/cockpit-forms-api", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: SEAT_TOKEN },
+        body: JSON.stringify(body),
+      });
+    const f = phaseWorld({ kind: "phase3" });
+    const res = await makeDoor(f.deps)(post({ op: "recap.approve", messageId: MID, body: PHASE.phase3 }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ message: STORED_PHASE, warnings: [] });
+    const sentence = "The message is empty or over 1,500 characters. Edit the text, then approve again.";
+    const gated = phaseWorld({
+      approve: () => {
+        throw new RpcError(sentence, "22023");
+      },
+    });
+    const refused = await makeDoor(gated.deps)(post({ op: "recap.approve", messageId: MID, body: PHASE.phase4 }));
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toEqual({ error: sentence });
+    // invite.approve still refuses a phase message.
+    const other = phaseWorld();
+    const wrong = await makeDoor(other.deps)(post({ op: "invite.approve", messageId: MID, body: PHASE.phase4 }));
+    expect(wrong.status).toBe(400);
+    expect(await wrong.json()).toEqual({ error: SAY_MESSAGES.notInvite });
   });
 });

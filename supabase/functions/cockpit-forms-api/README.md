@@ -26,7 +26,7 @@ a key or a provider's body.
 | `checkin.drafts`, `checkin.draftAgain` | the response's own gate (`cockpit_form_responses_read` with the seat's token) | `{recordingId, drafts, started, now}` |
 | `checkin.transcript` | the same; the recording, the saved call included, passes the save's checks again and the tie rule below for the seat whose response saved it, and one that is not the saved call is a Customer Success recording | `{url}` (60 s, its own `fathom/{id}.txt` only) or `{text}`; 404 when there is none |
 | `checkin.typeformSent` | the client gate per item | `{items: [{taskId, sent, at}], now}` |
-| `recap.approve` (2b) | the message's gate (`cockpit_client_message_read` with the seat's token), then `cockpit_client_message_approve` (service only: the seat's client gate and the owner gate, 3.1) | `{message, warnings}` (the stored row's `MessageView`, 3.7) or `{needsConfirm: true, warnings}`; a refused text is 400 with the rule's sentence ending `Edit the text, then approve again.` |
+| `recap.approve` (2b) | the message's gate (`cockpit_client_message_read` with the seat's token), then `cockpit_client_message_approve` (service only: the seat's client gate and the owner gate, 3.1) | `{message, warnings}` (the stored row's `MessageView`, 3.7) or `{needsConfirm: true, warnings}`; a refused text is 400 with the rule's sentence ending `Edit the text, then approve again.` A `phase3` or `phase4` message (Stage 4, WAVE56 11.8) has no booking block: it is checked as the approve RPC checks it (not empty, 1,500 characters at most, the client text rule), no placeholder but `{content_folder}` (once at most; the sender fills it), never a warning |
 | `effects.sweep` (2b) | the cron secret only (`cockpit_form_effects_kick`, 20261029w) | `{ok, begun, skipped}` |
 | `keys.save` | the CEO | `{ok, state, text, last4}` |
 | `doctor` | the CEO or the service key | the Doctor (6.7) |
@@ -43,7 +43,7 @@ a key or a provider's body.
 | `todos.ts` | We owe / They owe from Fathom's action items (the one copy of the rule; the shadow replay imports it) |
 | `transcript.ts` | the numbered, role-labelled lines and the quote check |
 | `recapRules.ts` | the 14 recap checks, Make [23]'s booking block and `splitRecap` |
-| `messages.ts` | `recap.approve` (2b): the read through the seat's gate, the checks on the exact text, the sha256 of its bytes, the service approval as the verified seat |
+| `messages.ts` | `recap.approve` (2b, and the phase 3 and phase 4 messages): the read through the seat's gate, the checks on the exact text, the sha256 of its bytes, the service approval as the verified seat |
 | `effects.ts` | `effects.sweep` (2b): the waiting grade and recap effects' drafts, begun as the response's own seat with no seat token |
 | `prompts/*.ts` | the client notes (DeepSeek), DEFCON and priority, the grade and the recap (Anthropic), each with its `VERSION` |
 | `typeform.ts` | `checkin.typeformSent` |

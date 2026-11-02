@@ -1,0 +1,148 @@
+{
+  "fields": [
+    {
+      "ref": "533f14a0-712f-4de9-9ac7-67e1be6bc0c8",
+      "title": "Full Name | الاسم الكامل"
+    },
+    {
+      "ref": "64f2fb80-b074-4017-b8b7-b7d549947e52",
+      "title": "Phone | رقم التليفون"
+    },
+    {
+      "ref": "7994f0d2-baeb-451b-983a-816290873a68",
+      "title": "Email | الايميل"
+    },
+    {
+      "ref": "514bfd3f-4ca1-469e-b9e7-87656503f65c",
+      "title": "Business Name | اسم الشركه (بالانقليزي)"
+    },
+    {
+      "ref": "e5caee43-e9b5-427d-8583-6982c5dd9be8",
+      "title": "Please enter your business address. | الرجاء كتابة عنوان الشركة"
+    },
+    {
+      "ref": "f7f9f2eb-1761-4c28-83ed-a53621c2cf88",
+      "title": "Paste a Google Maps link to your location (optional). | ضع رابط موقعك على خرائط جوجل (اختياري)"
+    },
+    {
+      "ref": "454a425f-2ac6-4d94-92db-cec08618600e",
+      "title": "Website URL | رابط الموقع الالكتروني"
+    },
+    {
+      "ref": "adecfe45-5d55-4319-98ff-3761e04bfc9b",
+      "title": "Instagram URL | رابط حساب الانستقرام"
+    },
+    {
+      "ref": "575d17ed-e26d-4e55-87d3-7cb31cb71939",
+      "title": "Facebook Page URL | رابط حساب فيسبوك"
+    },
+    {
+      "ref": "ee25f923-d5e1-4d1a-a95f-cd9c17abbe83",
+      "title": "What payment options do you currently offer to your clients (e.g., full payment, installment plans, minimum down payment, in-house financing, third-party financing, etc.)? | ما هي خيارات الدفع التي تقدمها حالياً لعملائك (مثل: الدفع الكامل، خطط التقسيط، دفعة مقدمة، تمويل داخلي، تمويل من طرف ثالث،)؟"
+    },
+    {
+      "ref": "282dac48-5031-4acb-96b6-ea469e8a5a8b",
+      "title": "Front Desk Phone | رقم هاتف الشركه"
+    },
+    {
+      "ref": "09d2e62a-51d4-4665-a3a9-30f5279b71bc",
+      "title": "Personal Phone Number | الرقم الهاتف الشخصي"
+    },
+    {
+      "ref": "ed1ba2fe-2827-4eea-a678-62205f1ce9f5",
+      "title": "How long have you been in business? | منذ متى وأنتم في مجال العمل؟"
+    },
+    {
+      "ref": "0a6b5704-c46d-480c-a592-b59108683596",
+      "title": "How many projects has your company completed to date? | كم عدد المشاريع التي أنجزتها شركتكم حتى الآن؟"
+    },
+    {
+      "ref": "7a120dbb-0169-4bcc-9193-5c525a470d02",
+      "title": "Current booking software | برنامج الحجز الحالي"
+    },
+    {
+      "ref": "ddf2767d-5725-4df2-b200-f0aab77a2db5",
+      "title": "Do you have a facebook business manager or have you ever ran ads on meta (Facebook & Instagram) in the past? | هل عندك مدير أعمال في فيسبوك أو سبق واشتغلت إعلانات على ميتا (فيسبوك وإنستغرام) من قبل؟"
+    },
+    {
+      "ref": "b7873d40-d154-42ac-bf24-cb3b667e84cc",
+      "title": "Business hours - When are you open to schedule? | ساعات العمل — متى تكون متاحًا للحجز؟"
+    },
+    {
+      "ref": "d976036f-6c2e-4d5d-999a-64cf9bb2ef02",
+      "title": "1) What services do you offer list all of them? Also I want to know which ones have the HIGHEST price point and Highest Profit \n2) What is the PRICE of the services? | ما الخدمات التي تقدّمها لكتب جميعهم؟وكمان أريد معرفة: أيّها الأعلى سعراً والأعلى ربحية،ما أسعار هذه الخدمات؟"
+    },
+    {
+      "ref": "6271b610-6946-4056-bb08-d03ffc274141",
+      "title": "Out of those what is the #1 service/type of project you want to focus on scaling? | من بين كل ما سبق، ما هي الخدمة أو نوع المشروع رقم ١ الذي ترغب في التركيز على تطويره وتوسيعه؟"
+    },
+    {
+      "ref": "f2b7bc2b-2a79-4640-9e21-377e7aa39d45",
+      "title": "What are your top five most frequently asked questions and their answers? (Feel free to add more — the more detailed, the better.) | ما هي أكثر خمسة أسئلة شائعة للشركه مع إجاباتها؟ (لا تتردد بإضافة المزيد — كلما كانت التفاصيل أكثر كان أفضل.)"
+    },
+    {
+      "ref": "6c819933-3eb9-4db8-bd59-d39be11cb7f0",
+      "title": "Please describe your ideal project in detail. | يرجى وصف مشروعك المثالي بالتفصيل."
+    },
+    {
+      "ref": "fa017616-3fb5-4e64-9fbd-39cea6e26c47",
+      "title": "What service areas do you cover? Please list all cities and neighborhoods you serve so we can target your ads precisely. | ما المناطق التي تغطيها بالخدمة؟ يُرجى إدراج جميع المدن والأحياء التي تخدمها حتى نتمكن من استهداف إعلاناتك بدقة"
+    },
+    {
+      "ref": "b370341c-6ea3-43c9-bd8c-16e278a2d2d5",
+      "title": "ما أنواع المواعيد التي تقدمونها؟ (يمكن اختيار أكثر من خيار)\n| What types of appointments do you offer? (Select all that apply)"
+    },
+    {
+      "ref": "35ea63c3-090a-425d-b75c-e3d183d48cd1",
+      "title": "What's the maximum distance you would travel from your office to do an in-home consultation? | ما هي أقصى مسافة يمكنك قطعها من مكتبك لإجراء استشارة في منزل العميل؟"
+    },
+    {
+      "ref": "b7c403ea-8d66-4814-80cf-7e8d7fdb8d11",
+      "title": "Local Landmark Information (Please type this in the format shown) - Located next to the Burger King down King Saud street on the left hand side. | معلومات المعالم القريبة لمكتبكم (يُرجى الكتابة بالصيغة نفسها): يقع بجوار مطعم برغر كينغ في شارع الملك سعود على الجهة اليسرى."
+    },
+    {
+      "ref": "a20cfc1a-0228-413d-80ab-d97fc97574e0",
+      "title": "Appointment length + details + buffer | مدة الموعد + التفاصيل + الفاصل"
+    },
+    {
+      "ref": "0a80a0a8-3a09-4907-a1d1-6c57e57d4c47",
+      "title": "من هم المهندسين في شركتكم الذين سيعطون الاستشارات ضمن هالبرنامج؟ Who are the engineers in your business that will be giving these consultations?"
+    },
+    {
+      "ref": "7426c6c5-344f-44c9-9999-3b9daf3a06b8",
+      "title": "ما الذي حفّزك للانضمام إلى برنامجنا؟ ما السبب الذي جعلك تسجّل معنا؟ | What motivated you to join our program? What was the reason you signed up?"
+    },
+    {
+      "ref": "ec89854f-d006-402b-958a-91738e2b3e7a",
+      "title": "Do you offer free consultations? | هل تقدم استشارات مجانية؟"
+    },
+    {
+      "ref": "bf8c7c7b-fff9-463f-b30a-8d8ca8b622f6",
+      "title": "What is your marketing process? In other words... please explain EVERYTHING A-Z that you have in place or have tried to generate new projects | ما هي عمليتك التسويقية؟ بمعنى آخر... اشرح لنا بالتفصيل كل ما لديك أو جربته من الألف إلى الياء لجذب مشاريع جديدة"
+    },
+    {
+      "ref": "7ff5d37a-df7f-4002-8248-d0b4af6c28e8",
+      "title": "Last Calendar Year - How Much Total Revenue did you do? | في السنة التقويمية الماضية، كم كان إجمالي الإيرادات التي حققتها؟"
+    },
+    {
+      "ref": "fcf43e6a-cc84-4ae7-9cef-2336069d0280",
+      "title": "What are the TOP 3 challenges that - if we were able to help you with - would make you 100% satisfied with your investment? - Be specific, and note some down we can immediately help with | ما هي أهم ٣ تحديات — إذا تمكّنا من مساعدتك في حلّها — ستشعر أنك راضٍ تمامًا عن استثمارك معنا؟ كن محددًا، واذكر بعض الأمور التي يمكننا البدء بمساعدتك فيها فورًا"
+    },
+    {
+      "ref": "791b99b8-c7e9-40a4-96d6-868399e1ae97",
+      "title": "What is your realistic goal revenue in 90 Days?This question is required. | ما هو هدفك الواقعي من الإيرادات خلال ٩٠ يومًا؟ هذا السؤال إلزامي."
+    },
+    {
+      "ref": "f4b96a9b-bd7c-4398-98b4-6a28a7d3595a",
+      "title": "What is your ideal/stretch revenue goal within the next 12-24 months? | ما هو هدفك المثالي (أو الطموح) من الإيرادات خلال الـ ١٢ إلى ٢٤ شهرًا القادمة؟"
+    },
+    {
+      "ref": "64d23c81-1784-4f07-8356-107af764fc95",
+      "title": "Please attach a Google Drive link to all the content you have for your office (See check list below)"
+    },
+    {
+      "ref": "41d2d5bb-b023-4fa4-906c-72aeef7a5e46",
+      "title": "Any additional information we should know before starting? | هل هناك أي معلومات إضافية نحتاج إلى معرفتها قبل البدء؟"
+    }
+  ]
+}
