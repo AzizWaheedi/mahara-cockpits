@@ -204,6 +204,8 @@ export const FORM_WORDS: Record<string, string> = {
   exit_survey: "The exit survey",
   pause_request: "The pause request",
   pause_consent: "The pause consent",
+  kickoff: "The kickoff form",
+  onboarding: "The client onboarding form",
 };
 
 /** The churn register's eight reasons (20261001a): the only reason words a notice ever shows. */
@@ -652,17 +654,19 @@ function money(kind: NoticeKind, variant: Variant, f: NoticeFacts): Built {
     placed: false,
   });
   if (kind === "win.logged") {
-    const words = WIN_KIND_WORDS[str(f.winKind)] ?? "A win";
-    const offer = OFFER_WORDS[str(f.winKind)] ?? "upsell";
+    // 20261102h sends kind and seatRole; winKind and byRole are this file's first names for them.
+    const winKind = str(f.winKind) || str(f.kind);
+    const words = WIN_KIND_WORDS[winKind] ?? "A win";
+    const offer = OFFER_WORDS[winKind] ?? "upsell";
     if (variant === "offered")
       return post(`Upsell offered: ${client}`, `${client}: ${escapeSlack(offer)} offered at ${usdWords(f.usd) ?? "a price not recorded"}.`);
     if (variant === "accepted") return post(`Upsell accepted: ${client}`, `${client} accepted the ${escapeSlack(offer)}.`);
-    return post(`Win logged: ${client}`, `${client}: ${escapeSlack(words)} logged by ${role(f.byRole, "a team member")}.`);
+    return post(`Win logged: ${client}`, `${client}: ${escapeSlack(words)} logged by ${role(f.byRole ?? f.seatRole, "a team member")}.`);
   }
   if (kind === "receipt.in")
     return post(
       `Receipt in: ${client}`,
-      `${client} sent a transfer receipt (${amountWords(f.amount, f.currency) ?? "an amount not recorded"}, paid ${dayWords(f.paidOn)}). Check it in the cockpit.`,
+      `${client} sent a transfer receipt (${amountWords(f.amount, f.currency) ?? "an amount not recorded"}, paid ${dayWords(f.paidOn ?? f.day)}). Check it in the cockpit.`,
       [{ url: noticeLinks(f.taskId).billing, words: "Open Checks waiting" }],
     );
   const status = RETURN_STATUSES.includes(str(f.status)) ? str(f.status) : "back on the books";

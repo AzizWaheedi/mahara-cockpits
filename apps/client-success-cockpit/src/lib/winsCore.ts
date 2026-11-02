@@ -669,6 +669,13 @@ export function todayBands(
 ): Band[] {
   const out: Band[] = [];
   const who = (r: BandInput) => r.client ?? "a client";
+  // The read gives one tie_waiting row per open proposal (20261102h); a row may also carry its own count.
+  const ties = rows.filter(r => r.kind === "tie_waiting");
+  const tieCount = ties.reduce(
+    (n, r) => n + (num(r.count) ?? (r.proposalId ? 1 : 0)),
+    0,
+  );
+  let tieShown = false;
   for (const [i, r] of rows.entries()) {
     const taskId = r.taskId ?? null;
     const offer = r.offer ?? "upsell";
@@ -695,7 +702,9 @@ export function todayBands(
         });
         break;
       case "tie_waiting": {
-        const n = num(r.count) ?? 0;
+        const n = tieCount;
+        if (tieShown) break;
+        tieShown = true;
         if (o.ceo && n > 0)
           out.push({
             key: "tie_waiting",

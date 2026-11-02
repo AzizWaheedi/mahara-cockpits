@@ -565,6 +565,20 @@ describe("wins and money (docs/forms/WAVE56-CONTRACT.md 3.9)", () => {
     expect(noticeText("receipt.in", "post", f({ amount: 1200, currency: "EUR" })).text).toContain("(an amount not recorded, paid a day not recorded)");
   });
 
+  test("Old form link used: the kickoff and the onboarding say their names (Stage 4)", () => {
+    expect(noticeText("legacy.received", "post", f({ form: "kickoff", matched: true })).text).toContain("The kickoff form came in through the old link");
+    expect(noticeText("legacy.received", "post", f({ form: "onboarding", matched: true })).text).toContain(
+      "The client onboarding form came in through the old link");
+  });
+
+  test("the facts as 20261102h and 20261102i queue them (kind, seatRole, day) read the same", () => {
+    expect(noticeText("win.logged", "post", f({ kind: "review", kindLabel: "Google review", seatRole: "the CSM" })).text).toBe(
+      `Acme Interiors: Google review logged by the CSM. Ref ${REF}`);
+    expect(noticeText("win.logged", "offered", f({ kind: "upsell_website", usd: 1500, offer: "Website" })).text).toBe(
+      `Acme Interiors: website offered at $1,500. Ref ${REF}`);
+    expect(noticeText("receipt.in", "post", f({ amount: 650.5, currency: "KWD", day: "2026-11-01" })).text).toContain("(650.5 KWD, paid Sun 1 Nov)");
+  });
+
   test("Client is back: the status from the two, and the day they left", () => {
     expect(noticeText("client.reactivated", "post", f({ status: "Onboarding Booked", leftOn: "2026-10-12" })).text).toBe(
       `Acme Interiors is back: Onboarding Booked. They left on Mon 12 Oct. Ref ${REF}`);

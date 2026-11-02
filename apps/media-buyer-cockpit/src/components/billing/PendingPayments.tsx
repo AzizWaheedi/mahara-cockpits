@@ -94,6 +94,10 @@ export type ConfirmInput = {
   paidOn: string;
   evidenceUrl: string | null;
   note: string | null;
+  /** Waves 5-6 (4.6.5): the part's due day and the next later part, for the next-date rule. */
+  dueOn?: string | null;
+  nextPartNo?: number | null;
+  nextDueOn?: string | null;
 };
 
 export type PendingApi = {
@@ -663,6 +667,9 @@ function ConfirmForm({
         paidOn: day,
         evidenceUrl: link || null,
         note: note.trim() || null,
+        dueOn: part.dueOn ?? null,
+        nextPartNo: part.nextPartNo ?? null,
+        nextDueOn: part.nextDueOn ?? null,
       });
       onDone(sentence);
     } catch (e) {

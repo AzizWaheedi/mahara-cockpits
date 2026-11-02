@@ -1989,7 +1989,9 @@ export function payProposalsApi(c: SupabaseClient): ProposalsApi {
             ? d.sentence.trim()
             : null,
         entryMonth:
-          typeof d?.entryMonth === "string" ? d.entryMonth.slice(0, 7) : null,
+          typeof (d?.entryMonth ?? d?.month) === "string"
+            ? String(d.entryMonth ?? d.month).slice(0, 7)
+            : null,
       };
     },
   };

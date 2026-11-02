@@ -445,6 +445,18 @@ describe("Today bands (5.12)", () => {
       today: "2026-11-02",
     });
     expect(csm.some(b => b.kind === "tie_waiting")).toBe(false);
+    // 20261102h gives one row per open proposal: they count into one band.
+    const perProposal = core.todayBands(
+      [
+        { kind: "tie_waiting", proposalId: "11", client: "Acme" },
+        { kind: "tie_waiting", proposalId: "12", client: "Beta" },
+        { kind: "tie_waiting", proposalId: "13", client: "Gamma" },
+      ],
+      { ceo: true, today: "2026-11-02" },
+    );
+    expect(perProposal.map(b => b.text)).toEqual([
+      "Upsell payments to confirm: 3",
+    ]);
   });
   test("Back for 7 days only; due, no money skips Paused and Stopped cards; empty hides", () => {
     const later = core.todayBands(fx.BAND_ROWS, {

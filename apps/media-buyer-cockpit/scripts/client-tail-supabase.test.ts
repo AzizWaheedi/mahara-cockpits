@@ -44,6 +44,7 @@ import {
   EXIT_SURVEY_SCHEMA,
 } from "../../client-success-cockpit/src/dev/formsEditorFixtures";
 import { actor, cockpitTestDb, member, migration } from "./lib/cockpitTestDb";
+import { winsPayGround } from "./lib/w56Ground";
 
 // Keep direct, ship and readiness runs consistent on busy build hosts.
 setDefaultTimeout(180_000);
@@ -1205,6 +1206,8 @@ async function groundW56() {
     "ALTER TABLE storage.buckets ADD COLUMN IF NOT EXISTS allowed_mime_types text[]; ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS id uuid DEFAULT gen_random_uuid();",
   );
   for (const file of [E, F]) await db.exec(withoutCron(migration(file)));
+  // The real h stands on the pay plans and Offer Studio (wins-pay's ground).
+  if (HAS_H) await winsPayGround(db);
   if (HAS_G) await db.exec(withoutCron(migration(G)));
   else await db.exec(G_STUB);
   if (HAS_H) await db.exec(withoutCron(migration(H)));

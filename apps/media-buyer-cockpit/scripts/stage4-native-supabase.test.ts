@@ -41,6 +41,7 @@ import {
   EXIT_SURVEY_SCHEMA,
 } from "../../client-success-cockpit/src/dev/formsEditorFixtures";
 import { actor, cockpitTestDb, member, migration } from "./lib/cockpitTestDb";
+import { winsPayGround } from "./lib/w56Ground";
 
 // Keep direct, ship and readiness runs consistent on busy build hosts.
 setDefaultTimeout(180_000);
@@ -1306,9 +1307,11 @@ beforeAll(async () => {
   await standIns();
   await db.exec(withoutCron(migration(D)));
   for (const file of AFTER_W34) await db.exec(migration(file));
-  if (REAL_W56)
+  if (REAL_W56) {
+    // The real h stands on the pay plans and Offer Studio (wins-pay's ground).
+    await winsPayGround(db);
     for (const file of W56) await db.exec(withoutCron(migration(file)));
-  else await db.exec(CLIENT_TAIL_STANDIN);
+  } else await db.exec(CLIENT_TAIL_STANDIN);
   await db.exec(withoutCron(migration(J)));
   await seedStage4();
 }, 900_000);
@@ -1446,6 +1449,27 @@ async function addRequestTypes() {
 // --- The file --------------------------------------------------------------------------------
 
 describe("the file (2.1, 2.6)", () => {
+  // The merged chain: g, h, i and j applied once already; all four again, in order, change nothing.
+  test.if(REAL_W56)(
+    "the merged waves 5-6 chain (g, h, i, j) applies a second time in order",
+    async () => {
+      await rolledBack(async () => {
+        for (const file of [...W56, J])
+          try {
+            await ex(
+              withoutCron(migration(file))
+                .replace(/^BEGIN;/m, "")
+                .replace(/COMMIT;\s*$/m, ""),
+            );
+          } catch (e) {
+            throw new Error(
+              `${file} on the second pass: ${(e as Error).message}`,
+            );
+          }
+      });
+    },
+  );
+
   test("applies a second time and keeps a switched-on stage", async () => {
     await rolledBack(async () => {
       await ex(

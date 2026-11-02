@@ -51,7 +51,23 @@ import {
 
 // --- the read (cockpit_billing_balances_read) -------------------------------
 
+/**
+ * What the next-date rule of Confirm paid knows of a card (20261102g
+ * cockpit_billing_confirm_date_card): the switch, the window, the card's
+ * date, and a month on for a monthly plan.
+ */
+export type ReadConfirmDateCard = {
+  on?: boolean;
+  windowDays?: number | null;
+  cardDate?: string | null;
+  monthlyPlan?: boolean;
+  plusMonth?: string | null;
+  why?: string | null;
+};
+
 export type ReadCard = {
+  /** Waves 5-6 (4.6.5): the rule's inputs for this card; absent from an older read. */
+  dateIfConfirmed?: ReadConfirmDateCard | null;
   taskId: string;
   name: string;
   url: string | null;
@@ -449,6 +465,11 @@ export type Confirmable = {
   dateIfConfirmed?: string | null;
   /** Why it would write none ("Next payment date stays 2 Dec: …"). */
   dateWhy?: string | null;
+  /** The part's due day as this list shows it; Confirm paid sends it as dueOn (4.6.5). */
+  dueOn?: string | null;
+  /** The next later part of the same deal still to be paid, sent as nextPartNo and nextDueOn. */
+  nextPartNo?: number | null;
+  nextDueOn?: string | null;
 };
 
 /**
@@ -465,14 +486,73 @@ export function nextDateLine(
   return c.dateWhy ? c.dateWhy : null;
 }
 
+/**
+ * The rule of 20261102g cockpit_billing_confirm_date_rule, read on the
+ * screen from the card's inputs so the line before the press says what the
+ * confirm will write. The server runs the same rule again on the press.
+ */
+export function confirmDateOf(
+  c: Pick<
+    Confirmable,
+    "part" | "partNo" | "dueOn" | "nextPartNo" | "nextDueOn"
+  >,
+  card: ReadConfirmDateCard | null | undefined,
+  hasDeal: boolean,
+): { date: string | null; why: string | null } | null {
+  if (card?.on !== true) return null;
+  const from =
+    card.cardDate && DAY_RE.test(card.cardDate) ? card.cardDate : null;
+  if (c.part !== "later") return null;
+  if (!from) return { date: null, why: card.why ?? null };
+  const window = Number(card.windowDays ?? 7);
+  const words = dayText(from);
+  if (
+    !c.dueOn ||
+    !DAY_RE.test(c.dueOn) ||
+    Math.abs(daysBetween(from, c.dueOn)) > window
+  )
+    return {
+      date: null,
+      why: `Next payment date stays ${words}: this payment was not the one due on it.`,
+    };
+  if (c.nextDueOn && DAY_RE.test(c.nextDueOn)) {
+    const no = c.nextPartNo ?? null;
+    const gap = daysBetween(from, c.nextDueOn);
+    if (
+      !hasDeal ||
+      no === null ||
+      no <= (c.partNo ?? 0) ||
+      no > 36 ||
+      gap <= 0 ||
+      gap > 70
+    )
+      return {
+        date: null,
+        why: `Next payment date stays ${words}: the next part could not be read. Reload the page and confirm again.`,
+      };
+    return { date: c.nextDueOn, why: null };
+  }
+  if (
+    card.monthlyPlan === true &&
+    card.plusMonth &&
+    DAY_RE.test(card.plusMonth)
+  )
+    return { date: card.plusMonth, why: null };
+  return {
+    date: null,
+    why: `Next payment date stays ${words}: there is no later payment on this plan. Set it by hand if they continue.`,
+  };
+}
+
 /** Each confirmable part with the date its confirm would write (4.6.5). */
 function withDates(
   list: Confirmable[],
   taskId: string,
   read: BalancesRead,
+  hasDeal: boolean,
 ): Confirmable[] {
   const dates = read.datesIfConfirmed ?? [];
-  if (!dates.length) return list;
+  const card = read.cards.find(x => x.taskId === taskId)?.dateIfConfirmed;
   return list.map(c => {
     const hit = dates.find(
       d =>
@@ -480,9 +560,14 @@ function withDates(
         d.part === c.part &&
         Number(d.partNo ?? 0) === Number(c.partNo ?? 0),
     );
-    return hit
-      ? { ...c, dateIfConfirmed: hit.date ?? null, dateWhy: hit.why ?? null }
-      : c;
+    if (hit)
+      return {
+        ...c,
+        dateIfConfirmed: hit.date ?? null,
+        dateWhy: hit.why ?? null,
+      };
+    const rule = confirmDateOf(c, card, hasDeal);
+    return rule ? { ...c, dateIfConfirmed: rule.date, dateWhy: rule.why } : c;
   });
 }
 
@@ -2156,12 +2241,28 @@ function rowFor(
   base.chips = chips;
   base.confirmable = works
     .filter(w => w.emptyC > 0)
-    .map(w => ({
-      part: w.spec.kind as ConfirmPart,
-      partNo: w.spec.kind === "later" ? w.spec.no : 0,
-      label: w.spec.label,
-      emptyUsd: dollars(w.emptyC),
-    }));
+    .map(w => {
+      // The next later part still to be paid (its room not taken by rails or a confirmation).
+      const next =
+        w.spec.kind === "later"
+          ? works.find(
+              x =>
+                x.spec.kind === "later" &&
+                x.spec.no > w.spec.no &&
+                x.emptyC > 0 &&
+                x.personC <= 0,
+            )
+          : undefined;
+      return {
+        part: w.spec.kind as ConfirmPart,
+        partNo: w.spec.kind === "later" ? w.spec.no : 0,
+        label: w.spec.label,
+        emptyUsd: dollars(w.emptyC),
+        dueOn: w.due,
+        nextPartNo: next ? next.spec.no : null,
+        nextDueOn: next?.due ?? null,
+      };
+    });
 
   // CEO only: untied payments that fit a part.
   if (ceo)
@@ -2687,7 +2788,7 @@ export function buildPending(
   }
   rows.sort(rowOrder);
   for (const r of [...rows, ...quietRows])
-    r.confirmable = withDates(r.confirmable, r.taskId, read);
+    r.confirmable = withDates(r.confirmable, r.taskId, read, Boolean(r.deal));
   const asked = (c: ReadCard) => {
     const usd = numOrNull(c.nextUsd);
     const day = c.nextDate && DAY_RE.test(c.nextDate) ? c.nextDate : null;

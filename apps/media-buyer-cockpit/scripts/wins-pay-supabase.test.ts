@@ -1729,6 +1729,8 @@ describe("Log a win: proof per kind, the date, duplicates, one request", () => {
         ok: true,
         winId: first.winId,
         stage: "logged",
+        eventId: first.eventId,
+        responseId: first.responseId,
         sentence: "Logged.",
       });
       const again = await rpc(CSM_A, "cockpit_csm_win_log", p);
@@ -2782,7 +2784,7 @@ describe("the CEO confirms or declines a pay proposal", () => {
       });
       expect([ok.state, ok.sentence, ok.month]).toEqual([
         "confirmed",
-        "Confirmed.",
+        `Added to ${monthWords(M0)}.`,
         M0,
       ]);
       const e = (
@@ -3186,7 +3188,21 @@ describe("the import of the old Typeform wins", () => {
 describe("reads, Today bands, the invoice link and cockpit_wins_v", () => {
   test("wins_read and wins_list carry WinRow; list totals count upsells by event day", async () => {
     await rolledBack(async () => {
-      await log(CSM_A, { kind: "review", proofUrl: PROOF });
+      const logged = await log(CSM_A, { kind: "review", proofUrl: PROOF });
+      // The after-send trail follows the log's billing event and its form response.
+      expect(typeof logged.eventId).toBe("number");
+      expect(logged.responseId).toMatch(/^[0-9a-f-]{36}$/);
+      const trail = await as(
+        CSM_A,
+        "SELECT public.cockpit_form_trail($1::jsonb) AS r",
+        [
+          JSON.stringify({
+            eventId: logged.eventId,
+            responseId: logged.responseId,
+          }),
+        ],
+      );
+      expect(trail).toBeTruthy();
       const up = await acceptedUpsell("upsell_backend", { wonOn: day(-2) });
       const pr = await propose(CSM_A, up, "whop:pay_acme_free");
       await decide(pr.proposalId, "confirm");
@@ -3196,6 +3212,29 @@ describe("reads, Today bands, the invoice link and cockpit_wins_v", () => {
         [A],
       );
       expect(read.doorOpen).toBe(true);
+      // What Log a win picks from: the sent proposal at its sent prices, never the draft;
+      // the signed deals not yet a referral, never the voided one.
+      const sent = read.proposals.find(
+        (x: { id: string }) => x.id === SENT_PROPOSAL,
+      );
+      expect([sent?.status, sent?.totalUsd, sent?.listUsd]).toEqual([
+        "sent",
+        2200,
+        2500,
+      ]);
+      expect(
+        read.proposals.some((x: { id: string }) => x.id === DRAFT_PROPOSAL),
+      ).toBe(false);
+      const deals = read.referralDeals.map(
+        (d: { responseId: string }) => d.responseId,
+      );
+      expect(deals).toContain("resp_ref");
+      expect(deals).not.toContain("resp_void");
+      expect(
+        read.referralDeals.find(
+          (d: { responseId: string }) => d.responseId === "resp_ref",
+        ).business,
+      ).toBe("Referred Co");
       const w = read.wins.find((x: { id: string }) => x.id === up);
       expect([
         w.stageLabel,

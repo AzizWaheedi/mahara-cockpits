@@ -414,9 +414,8 @@ function SendFormBody({
         push: push && picked.includes("portal"),
         context: preset?.context ?? {},
         requestId: requestId.current,
-        // `billing` is the bank receipt's origin (20261102i); clientForms.ts
-        // passes it through unchanged.
-        origin: (preset?.origin ?? "csm") as "csm",
+        // `billing` is the bank receipt's origin (20261102i).
+        origin: preset?.origin ?? "csm",
       });
       toast.success(sendToast(out.delivered));
       setPhase({

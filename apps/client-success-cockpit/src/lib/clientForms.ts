@@ -82,8 +82,8 @@ export type IssueArgs = {
   push: boolean;
   context?: Record<string, unknown>;
   requestId: string;
-  /** Where it is sent from: the client page, the pause sheet, the churn tracker (3.3). */
-  origin: "csm" | "pause" | "churn";
+  /** Where it is sent from: the client page, the pause sheet, the churn tracker (3.3), Billing's receipt ask (waves 5-6). */
+  origin: "csm" | "pause" | "churn" | "billing";
 };
 
 export type ApproveResult =

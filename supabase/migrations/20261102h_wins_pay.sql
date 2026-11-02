@@ -709,7 +709,7 @@ DECLARE
   v_proof text; v_agreement text; v_proposal uuid; v_prices jsonb; v_quoted numeric; v_list numeric; v_below text;
   v_recurring boolean; v_monthly numeric; v_deal text; v_note text; v_confirm boolean; v_hit record;
   v_stage text; v_id uuid; v_role text; v_email text; v_source text; v_next text;
-  v_form public.cockpit_forms; v_answers jsonb;
+  v_form public.cockpit_forms; v_answers jsonb; v_event bigint; v_response uuid;
 BEGIN
   PERFORM public.cockpit_win_only(p, ARRAY['requestId','taskId','kind','wonOn','proofUrl','proposalId','quotedUsd','listUsd',
     'belowListReason','recurring','monthlyUsd','agreementUrl','referralDealResponseId','note','confirmDuplicate']);
@@ -864,7 +864,7 @@ BEGIN
     v_stage := 'signed';
   END IF;
 
-  PERFORM public.cockpit_win_billing_event(v_id, v_source, v_email, v_role);
+  v_event := public.cockpit_win_billing_event(v_id, v_source, v_email, v_role);
   PERFORM public.cockpit_win_notice(v_id, v_role);
   -- The history the forms pages read: one confirmed response per request.
   SELECT * INTO v_form FROM public.cockpit_forms f WHERE f.key = 'win';
@@ -874,9 +874,11 @@ BEGIN
     answers, created_by, created_by_id, submitted_by, submitted_at, confirmed_by, confirmed_at)
   VALUES ('win', v_form.version, 'cockpit', 'req:' || v_req::text, v_task, v_client, 'live', 'confirmed',
     v_answers, coalesce(v_email, 'cockpit'), (v_seat->>'uid')::uuid, coalesce(v_email, 'cockpit'), now(), coalesce(v_email, 'cockpit'), now())
-  ON CONFLICT (form_key, external_id) DO NOTHING;
+  ON CONFLICT (form_key, external_id) DO NOTHING
+  RETURNING id INTO v_response;
 
-  RETURN jsonb_strip_nulls(jsonb_build_object('ok', true, 'winId', v_id, 'stage', v_stage,
+  -- eventId and responseId are what the after-send trail follows (cockpit_form_trail).
+  RETURN jsonb_strip_nulls(jsonb_build_object('ok', true, 'winId', v_id, 'stage', v_stage, 'eventId', v_event, 'responseId', v_response,
     'sentence', CASE WHEN v_stage = 'signed' THEN 'Marked as accepted.' WHEN v_upsell THEN 'Marked as offered.' ELSE 'Logged.' END,
     'next', v_next));
 END $$;
@@ -968,6 +970,23 @@ BEGIN
                                     WHERE u.task_id = p_task_id AND u.status = 'accepted'
                                       AND NOT EXISTS (SELECT 1 FROM public.cockpit_csm_wins w
                                                        WHERE w.proposal_id = u.id AND w.stage IN ('signed', 'paid'))), '[]'::jsonb),
+    -- What Log a win picks from (5.2): this card's sent proposals at their sent prices, and the
+    -- signed deals of the last 120 days not yet logged as a referral (the referred client's deal).
+    'proposals', coalesce((SELECT jsonb_agg(jsonb_build_object('id', u.id, 'offerName', pr->>'offer', 'status', u.status,
+                             'totalUsd', (pr->>'quoted')::numeric, 'listUsd', (pr->>'list')::numeric, 'sentAt', u.sent_at)
+                             ORDER BY u.sent_at DESC NULLS LAST)
+                             FROM public.cockpit_upsell_proposals u
+                             CROSS JOIN LATERAL public.cockpit_win_proposal_prices(u.id) pr
+                            WHERE u.task_id = p_task_id AND u.status IN ('sent', 'link_copied', 'accepted')), '[]'::jsonb),
+    'referralDeals', coalesce((SELECT jsonb_agg(jsonb_build_object('responseId', d.response_id,
+                                 'business', coalesce(nullif(btrim(d.business_name), ''), nullif(btrim(d.client_name), ''), 'A signed client'),
+                                 'signedOn', (d.submitted_at AT TIME ZONE 'Asia/Kuwait')::date)
+                                 ORDER BY d.submitted_at DESC)
+                                 FROM public.cockpit_sales_deals d
+                                WHERE d.submitted_at IS NOT NULL AND NOT d.voided
+                                  AND d.submitted_at >= now() - interval '120 days'
+                                  AND NOT EXISTS (SELECT 1 FROM public.cockpit_csm_wins w
+                                                   WHERE w.referral_deal_response_id = d.response_id AND w.stage <> 'void')), '[]'::jsonb),
     'doorOpen', public.cockpit_win_door_open(),
     'seatRole', v_seat->>'role');
 END $$;
@@ -1044,7 +1063,10 @@ BEGIN
          AND (v_ceo OR coalesce(public.cockpit_client_allowed(w.client_name), false))
       UNION ALL
       SELECT jsonb_build_object('kind', 'tie_waiting', 'taskId', w.task_id, 'client', w.client_name, 'winId', w.id,
-               'proposalId', tp.id, 'usd', tp.usd, 'paidOn', tp.paid_on, 'proposedAt', tp.proposed_at,
+               'proposalId', tp.id, 'usd', tp.usd, 'paidOn', tp.paid_on, 'proposedAt', tp.proposed_at, 'rail', tp.rail,
+               'offer', coalesce(public.cockpit_win_proposal_prices(w.proposal_id)->>'offer', public.cockpit_win_kind_label(w.kind)),
+               'checked', coalesce(public.cockpit_payment_checked(tp.payment_id, tp.rail), false),
+               'inDealLedger', EXISTS (SELECT 1 FROM public.cockpit_deal_payments dp WHERE dp.payment_id = tp.payment_id AND dp.active),
                'sentence', format('Confirm the %s payment for the %s', public.cockpit_billing_usd_words(tp.usd),
                                   public.cockpit_win_kind_label(w.kind)))
         FROM public.cockpit_win_tie_proposals tp JOIN public.cockpit_csm_wins w ON w.id = tp.win_id
@@ -1507,7 +1529,7 @@ BEGIN
   RETURN jsonb_build_object('ok', true, 'key', v_key, 'state', 'confirmed', 'entryId', v_entry_id, 'month', to_char(v_target, 'YYYY-MM'),
     'sentence', CASE WHEN v_carried
                      THEN format('Added to %s: %s is approved.', public.cockpit_win_month_words(v_target), public.cockpit_win_month_words(m0))
-                     ELSE 'Confirmed.' END);
+                     ELSE format('Added to %s.', public.cockpit_win_month_words(v_target)) END);
 END $$;
 
 -- ---------------------------------------------------------------------------

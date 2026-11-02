@@ -913,6 +913,10 @@ describe("Confirm paid", () => {
       paidOn: "2026-10-23",
       evidenceUrl: null,
       note: null,
+      // Waves 5-6 (4.6.5): the part's due day as the list shows it, and no next later part.
+      dueOn: "2026-10-19",
+      nextPartNo: null,
+      nextDueOn: null,
     });
     await act(async () => release("Confirmed by you · waiting for Tap"));
     await flush();
@@ -2121,6 +2125,67 @@ describe("waves 5-6: the next date and the receipt ask", () => {
     expect(plain?.confirmable.every(c => c.dateIfConfirmed === undefined)).toBe(
       true,
     );
+  });
+
+  test("the card's rule inputs (20261102g) give the line as the server's rule would", () => {
+    const { confirmDateOf } =
+      require("../src/lib/billingBalances") as typeof import("../src/lib/billingBalances");
+    const card = {
+      on: true,
+      windowDays: 7,
+      cardDate: "2026-11-02",
+      monthlyPlan: false,
+      plusMonth: null,
+      why: null,
+    };
+    const later = {
+      part: "later" as const,
+      partNo: 1,
+      dueOn: "2026-11-04",
+      nextPartNo: 2,
+      nextDueOn: "2026-12-02",
+    };
+    expect(confirmDateOf(later, card, true)).toEqual({
+      date: "2026-12-02",
+      why: null,
+    });
+    // Off, or not a later part: nothing to say.
+    expect(confirmDateOf(later, { ...card, on: false }, true)).toBeNull();
+    expect(
+      confirmDateOf({ ...later, part: "onboarding", partNo: 0 }, card, true),
+    ).toBeNull();
+    // Due outside the window of the card's date: it stays.
+    expect(
+      confirmDateOf({ ...later, dueOn: "2026-11-20" }, card, true)?.why,
+    ).toMatch(
+      /^Next payment date stays .*: this payment was not the one due on it\.$/,
+    );
+    // No next part: a month on for a monthly plan, else it stays.
+    const last = { ...later, nextPartNo: null, nextDueOn: null };
+    expect(
+      confirmDateOf(
+        last,
+        { ...card, monthlyPlan: true, plusMonth: "2026-12-02" },
+        true,
+      ),
+    ).toEqual({
+      date: "2026-12-02",
+      why: null,
+    });
+    expect(confirmDateOf(last, card, true)?.why).toMatch(
+      /there is no later payment on this plan/,
+    );
+    // A card with no date says why.
+    expect(
+      confirmDateOf(
+        later,
+        { ...card, cardDate: null, why: "The card has no next payment date." },
+        true,
+      ),
+    ).toEqual({
+      date: null,
+      why: "The card has no next payment date.",
+    });
   });
 
   test("Confirm paid shows Next payment moves to {date} before the press", async () => {
