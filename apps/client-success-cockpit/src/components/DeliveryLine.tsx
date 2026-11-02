@@ -134,9 +134,7 @@ export function DeliveryLine({
         <li className="flex items-start" data-ring="cut" aria-hidden>
           <span className="mx-1 mt-[7px] h-px w-3 shrink-0 bg-muted-foreground/60" />
           <span className="flex flex-col items-start gap-1">
-            <span className="mt-px text-muted-foreground">
-              {line.cut.word}
-            </span>
+            <span className="mt-px text-muted-foreground">{line.cut.word}</span>
             {line.cut.at ? (
               <span className="hidden whitespace-nowrap text-[10px] text-muted-foreground sm:block">
                 {when(line.cut.at)}

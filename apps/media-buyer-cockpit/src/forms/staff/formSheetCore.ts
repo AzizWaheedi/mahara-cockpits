@@ -96,6 +96,8 @@ export type PauseConsent = {
   start: string | null;
   restart: string | null;
   datesNote: string | null;
+  /** Whether pause_consent is live (cockpit_form_prefill adds it); absent elsewhere. */
+  live?: boolean;
 };
 
 /** The consent row's state line (5.2), word for word. */

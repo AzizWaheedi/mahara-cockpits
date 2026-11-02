@@ -156,6 +156,9 @@ $schema${
   "reads": {"consent_gate": ["datesWrong", "consentTerm", "consentOver14"]},
   "submit": {"en": "Confirm the pause", "ar": "أكّد الإيقاف"},
   "done": {"en": "Confirmed. Your account manager takes it from here.", "ar": "تم التأكيد. مدير حسابك بيكمل الباقي."},
+  "doneIf": [{"key": "datesWrong", "equals": true,
+              "text": {"en": "Sent. Your account manager will fix the dates and send it again.",
+                       "ar": "وصل. مدير حسابك بيعدّل التواريخ ويرسله لك مرة ثانية."}}],
   "invite": {
     "whatsapp": {"en": "Hi {client} team, here is the pause we agreed on the call. Check the dates and confirm here: {form_link}",
                  "ar": "هلا فريق {client}، هذا الإيقاف المؤقت اللي اتفقنا عليه بالمكالمة. شيّكوا على التواريخ وأكّدوا من هني: {form_link}"},

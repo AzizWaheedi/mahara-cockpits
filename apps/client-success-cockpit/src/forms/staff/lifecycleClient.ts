@@ -371,6 +371,7 @@ export function pauseConsentOf(v: unknown): PauseConsent | null {
     start: text(o.start),
     restart: text(o.restart),
     datesNote: text(o.datesNote ?? o.dates_note),
+    ...(typeof o.live === "boolean" ? { live: o.live } : {}),
   };
 }
 

@@ -1107,6 +1107,35 @@ async function standIns() {
     );
 }
 
+/**
+ * What the real 20261102a stands on besides waves 1-2 (as forms-invites-supabase.test.ts and
+ * client-voice-supabase.test.ts ground it): the portal's workspaces, pgcrypto's gen_random_bytes in
+ * schema extensions (11.2-m), the CSM state audit, the client asks (20261029170000, live) and the
+ * read-only role the CEO refresh uses (20261102c grants its views to it).
+ */
+async function realAPrereqs(portal: string | null) {
+  await db.exec(`
+    DO $r$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_read_only_user') THEN
+        CREATE ROLE supabase_read_only_user BYPASSRLS;
+      END IF;
+    END $r$;
+    GRANT pg_read_all_data TO supabase_read_only_user;
+    CREATE SCHEMA IF NOT EXISTS extensions;
+    GRANT USAGE ON SCHEMA extensions TO service_role, authenticated;
+    CREATE OR REPLACE FUNCTION extensions.gen_random_bytes(n integer) RETURNS bytea LANGUAGE sql VOLATILE AS
+      $$ SELECT substring(decode(replace(gen_random_uuid()::text,'-','') || replace(gen_random_uuid()::text,'-',''), 'hex') FROM 1 FOR n) $$;`);
+  if (portal) await db.exec(portal);
+  await db.exec(
+    cut(
+      migration("20260926m_cockpit_csm_state.sql"),
+      /CREATE OR REPLACE FUNCTION public\.cockpit_audit_csm_state\(\)[\s\S]*?END \$\$;/,
+      "csm state audit",
+    ),
+  );
+  await db.exec(migration("20261029170000_client_asks.sql"));
+}
+
 beforeAll(async () => {
   db = await cockpitTestDb({ supabaseDefaultPrivileges: true });
   await db.exec(VAULT);
@@ -1125,7 +1154,8 @@ beforeAll(async () => {
       throw new Error(`${file}: ${(e as Error).message}`);
     }
   }
-  await db.exec(PORTAL);
+  if (REAL.length > 0) await realAPrereqs(PORTAL);
+  else await db.exec(PORTAL);
   for (const file of REAL) {
     try {
       await db.exec(withoutCron(migration(file)));
@@ -1226,6 +1256,25 @@ const ACL_AUTH = "{postgres=X/postgres,authenticated=X/postgres}";
 const ACL_OWNER = "{postgres=X/postgres}";
 
 describe("the file", () => {
+  test("waves 3-4 in order (a, b, c, d) apply a second time after 20261101l to r (integration)", async () => {
+    if (REAL.length < 3) return;
+    const before = await q(
+      "SELECT key, version, md5(schema::text) AS s FROM public.cockpit_forms ORDER BY key",
+    );
+    for (const file of [...REAL, D]) {
+      try {
+        await db.exec(withoutCron(migration(file)));
+      } catch (e) {
+        throw new Error(`${file} (second apply): ${(e as Error).message}`);
+      }
+    }
+    expect(
+      await q(
+        "SELECT key, version, md5(schema::text) AS s FROM public.cockpit_forms ORDER BY key",
+      ),
+    ).toEqual(before);
+  });
+
   test("applies a second time and changes nothing", async () => {
     const before = await q(
       "SELECT key, version, md5(schema::text) AS s FROM public.cockpit_forms ORDER BY key",

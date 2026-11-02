@@ -69,6 +69,8 @@ import type {
   PortalPayload,
   RenewalEvidence,
   TermClient,
+  VoiceAnswer,
+  VoicePayload,
 } from "@/types/ceo/payloads";
 import { FormsConnections } from "./FormsConnections";
 import type { CeoTabProps } from "./types";
@@ -1106,26 +1108,6 @@ function ExtensionList({ rows }: { rows: Extensions["perClient"] }) {
 
 // --- Client voice (docs/forms/WAVE34-CONTRACT.md 4.6.4) ---
 
-/** The clients section's `voice` (hermes/ceo-refresh/native/voice.js voicePayload). */
-type VoiceAnswer = {
-  taskId: string;
-  form: string;
-  day: string;
-  at: number;
-  score: number | null;
-  band: string | null;
-};
-type VoicePayload =
-  | {
-      read: true;
-      today: string;
-      firstDay: string | null;
-      answers: VoiceAnswer[];
-      answered: { taskId: string; day: string }[];
-      daily: { day: string; form: string; issued: number; answered: number }[];
-    }
-  | { read: false; error?: string };
-
 /**
  * NPS, its answers and the onboarding average over one window, the same rule as
  * voice.js npsOf and SQL cockpit_client_voice_nps: each client once with the
@@ -1182,7 +1164,7 @@ const signed = (n: number) =>
  * says so; a window nobody answered in says "No scores yet", never 0.
  */
 function ClientVoice({ payload }: { payload: ClientsPayload }) {
-  const voice = (payload as ClientsPayload & { voice?: VoicePayload }).voice;
+  const voice = payload.voice;
   const win = useContext(ClientWindow);
   if (!voice)
     return (

@@ -1015,6 +1015,35 @@ async function financeAndBalances() {
   await db.exec(migration("20261024p_billing_payment_exclusions.sql"));
 }
 
+/**
+ * What the real 20261102a stands on besides waves 1-2 (as forms-invites-supabase.test.ts and
+ * client-voice-supabase.test.ts ground it): the portal's workspaces, pgcrypto's gen_random_bytes in
+ * schema extensions (11.2-m), the CSM state audit, the client asks (20261029170000, live) and the
+ * read-only role the CEO refresh uses (20261102c grants its views to it).
+ */
+async function realAPrereqs(portal: string | null) {
+  await db.exec(`
+    DO $r$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_read_only_user') THEN
+        CREATE ROLE supabase_read_only_user BYPASSRLS;
+      END IF;
+    END $r$;
+    GRANT pg_read_all_data TO supabase_read_only_user;
+    CREATE SCHEMA IF NOT EXISTS extensions;
+    GRANT USAGE ON SCHEMA extensions TO service_role, authenticated;
+    CREATE OR REPLACE FUNCTION extensions.gen_random_bytes(n integer) RETURNS bytea LANGUAGE sql VOLATILE AS
+      $$ SELECT substring(decode(replace(gen_random_uuid()::text,'-','') || replace(gen_random_uuid()::text,'-',''), 'hex') FROM 1 FOR n) $$;`);
+  if (portal) await db.exec(portal);
+  await db.exec(
+    cut(
+      migration("20260926m_cockpit_csm_state.sql"),
+      /CREATE OR REPLACE FUNCTION public\.cockpit_audit_csm_state\(\)[\s\S]*?END \$\$;/,
+      "csm state audit",
+    ),
+  );
+  await db.exec(migration("20261029170000_client_asks.sql"));
+}
+
 beforeAll(async () => {
   db = await cockpitTestDb({ supabaseDefaultPrivileges: true });
   await db.exec(VAULT);
@@ -1055,6 +1084,14 @@ beforeAll(async () => {
       "\nGRANT EXECUTE ON FUNCTION public.cockpit_csm_actor(), public.cockpit_csm_scope_all(), public.cockpit_csm_source_read() TO authenticated;",
   );
   // 20261102a: the real file once it has landed, else the contract's objects of it.
+  if (HAS_A)
+    await realAPrereqs(`
+      CREATE SCHEMA IF NOT EXISTS portal_data;
+      CREATE TABLE IF NOT EXISTS portal_data.workspaces(location_id text PRIMARY KEY, clickup_id text, name text, status text, language text);
+      ALTER TABLE portal_data.workspaces ENABLE ROW LEVEL SECURITY;
+      REVOKE ALL ON portal_data.workspaces FROM PUBLIC, anon, authenticated;
+      INSERT INTO portal_data.workspaces VALUES ('locA', '${A}', 'Acme Interiors', 'Active', NULL), ('locB', '${B}', 'Beta Build', 'Active', NULL)
+      ON CONFLICT DO NOTHING;`);
   await db.exec(HAS_A ? withoutCron(migration(FILE_A)) : A_STUB);
   try {
     await db.exec(migration(FILE_B));
@@ -1994,7 +2031,7 @@ describe("pause consent and Confirm pause (contract 4.3)", () => {
         over14: true,
       });
       await ex(
-        `UPDATE cockpit_form_invites SET state = 'withdrawn' WHERE id = '${at14}'`,
+        `UPDATE cockpit_form_invites SET state = 'withdrawn', closed_at = now() WHERE id = '${at14}'`,
       );
       for (const [context, message] of [
         [
@@ -2032,7 +2069,7 @@ describe("pause consent and Confirm pause (contract 4.3)", () => {
         over14: false,
       });
       await ex(
-        `UPDATE cockpit_form_invites SET state = 'withdrawn' WHERE id = '${short}'`,
+        `UPDATE cockpit_form_invites SET state = 'withdrawn', closed_at = now() WHERE id = '${short}'`,
       );
       await ex(
         `UPDATE cockpit_billing_accounts SET client_status = 'Paused' WHERE clickup_task_id = '${A}'`,
@@ -2081,7 +2118,7 @@ describe("pause consent and Confirm pause (contract 4.3)", () => {
       for (const secret of ["Noor", "+965", "@", "three weeks"])
         expect(text).not.toContain(secret);
       await ex(
-        `UPDATE cockpit_form_invites SET state = 'withdrawn' WHERE task_id = '${A}' AND state = 'open'`,
+        `UPDATE cockpit_form_invites SET state = 'withdrawn', closed_at = now() WHERE task_id = '${A}' AND state = 'open'`,
       );
       const i2 = await issue(A, "pause_consent", {
         restart: dayFrom(today, 20),
@@ -2246,8 +2283,8 @@ describe("pause consent and Confirm pause (contract 4.3)", () => {
         { state: "muted", error: "Canary on the test card: not posted" },
       ]);
       // A canary invite on a real card (never made by the canary door) does not count for that card.
-      await ex(`INSERT INTO cockpit_form_invites(task_id, client_name, form_key, form_version, purpose, context, channels, audience, origin, issued_by_role)
-        VALUES ('${A}', 'Acme Interiors', 'pause_consent', 1, 'pause_consent', '{"restart":"${dayFrom(today, 7)}"}', '{copy}', 'admin', 'canary', 'the cockpit')`);
+      await ex(`INSERT INTO cockpit_form_invites(id, task_id, client_name, form_key, form_version, purpose, context, channels, audience, origin, issued_by_role, expires_at)
+        VALUES ('${rid()}', '${A}', 'Acme Interiors', 'pause_consent', 1, 'pause_consent', '{"restart":"${dayFrom(today, 7)}"}', '{copy}', 'admin', 'canary', 'the cockpit', now() + interval '14 days')`);
       expect(
         (
           await one<Row>("SELECT public.cockpit_pause_consent_for($1) AS r", [
@@ -2356,7 +2393,7 @@ describe("the exit survey and C4b (contract 4.4)", () => {
         ),
       ).toBe(2);
       // A departure after which the client resumed is not open: nothing changes on it.
-      await ex(`UPDATE cockpit_form_invites SET state = 'withdrawn' WHERE id = '${i}';
+      await ex(`UPDATE cockpit_form_invites SET state = 'withdrawn', closed_at = now() WHERE id = '${i}';
         UPDATE cockpit_churn_departures SET survey_state = 'not_sent' WHERE id = ${dep};
         INSERT INTO cockpit_billing_events(clickup_task_id, client_name, kind, source, by_whom, at)
         VALUES ('${B}', 'Beta Build', 'resume', 'csm', 'csm.b@tests.invalid', now());`);
@@ -2608,7 +2645,7 @@ describe("the exit survey and C4b (contract 4.4)", () => {
       ]);
       // An open invite past its end reads expired, without a write.
       await ex(
-        `UPDATE cockpit_form_invites SET state = 'open', expires_at = now() - interval '1 hour' WHERE id = '${i}'`,
+        `UPDATE cockpit_form_invites SET state = 'open', closed_at = NULL, issued_at = now() - interval '15 days', expires_at = now() - interval '1 hour' WHERE id = '${i}'`,
       );
       expect(
         (
@@ -2716,7 +2753,7 @@ describe("the exit survey and C4b (contract 4.4)", () => {
         await issue(A, "pause_consent", { restart: dayFrom(today, 9) }),
         SIGNED,
       );
-      await ex(`UPDATE public.cockpit_form_invites SET state = 'open', expires_at = now() - interval '1 hour'
+      await ex(`UPDATE public.cockpit_form_invites SET state = 'open', closed_at = NULL, issued_at = now() - interval '15 days', expires_at = now() - interval '1 hour'
                  WHERE form_key = 'exit_survey' AND task_id = '${B}'`);
       // At the top of the block, not inside a step's savepoint (a released savepoint puts read-write back).
       await asOwner();
@@ -2813,5 +2850,31 @@ describe("the exit survey and C4b (contract 4.4)", () => {
         ),
       ).toBe(0);
     });
+  });
+});
+
+describe("the pause consent's thank-you lines (contract 5.5, integration)", () => {
+  test("dates wrong reads the dates-wrong line; a signed consent reads done", async () => {
+    const done = (answers: Row) =>
+      one<Row>(
+        "SELECT public.cockpit_form_done_text((SELECT schema FROM public.cockpit_forms WHERE key = 'pause_consent'), $1::jsonb) AS r",
+        [JSON.stringify(answers)],
+      );
+    if (!HAS_A) return;
+    expect(
+      await done({ datesWrong: true, datesNote: "From the 10th" }),
+    ).toEqual({
+      en: "Sent. Your account manager will fix the dates and send it again.",
+      ar: "وصل. مدير حسابك بيعدّل التواريخ ويرسله لك مرة ثانية.",
+    });
+    expect(await done({ datesWrong: false })).toEqual({
+      en: "Confirmed. Your account manager takes it from here.",
+      ar: "تم التأكيد. مدير حسابك بيكمل الباقي.",
+    });
+    expect(
+      await one<string | null>(
+        "SELECT public.cockpit_form_schema_check((SELECT schema FROM public.cockpit_forms WHERE key = 'pause_consent')) AS r",
+      ),
+    ).toBeNull();
   });
 });

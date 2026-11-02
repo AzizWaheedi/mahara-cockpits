@@ -138,7 +138,12 @@ async function open() {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => root!.render(createElement(SettingsPage)));
+  // SettingsPage links to the forms editor (waves 3-4), so it renders inside a router.
+  await act(async () =>
+    root!.render(
+      createElement(MemoryRouter, null, createElement(SettingsPage)),
+    ),
+  );
   await click("Change password");
 }
 afterEach(async () => {

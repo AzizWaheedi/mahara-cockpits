@@ -1980,17 +1980,37 @@ describe("the schedule run", () => {
     await rolledBack(async () => {
       await live("csat");
       await scheduleOn();
-      for (const [task, name, loc] of [[A, "Acme Interiors", "locA"], [B, "Beta Build", "locB"]]) {
-        await q("INSERT INTO cockpit_client_billing_days(day, clickup_task_id, client_name, launch_date) VALUES ($1::date, $2, $3, $1::date)", [await daysAgo(10), task, name]);
-        await q("INSERT INTO cockpit_portal_presence(location_id, last_session_at, admins, members, pushed_at) VALUES ($1, now() - interval '1 day', 1, 1, now())", [loc]);
+      for (const [task, name, loc] of [
+        [A, "Acme Interiors", "locA"],
+        [B, "Beta Build", "locB"],
+      ]) {
+        await q(
+          "INSERT INTO cockpit_client_billing_days(day, clickup_task_id, client_name, launch_date) VALUES ($1::date, $2, $3, $1::date)",
+          [await daysAgo(10), task, name],
+        );
+        await q(
+          "INSERT INTO cockpit_portal_presence(location_id, last_session_at, admins, members, pushed_at) VALUES ($1, now() - interval '1 day', 1, 1, now())",
+          [loc],
+        );
       }
       expect((await run()).issued.csat).toBe(2);
       const [a1] = await invitesOf(A, "csat");
       const [b1] = await invitesOf(B, "csat");
-      await as(CSM_A, "SELECT public.cockpit_form_invite_withdraw($1, $2::uuid, 'The owner asked us not to send surveys') AS r", [A, a1.id]);
-      await as(CSM_B, "SELECT public.cockpit_form_invite_withdraw($1, $2::uuid, 'Sent again') AS r", [B, b1.id]);
+      await as(
+        CSM_A,
+        "SELECT public.cockpit_form_invite_withdraw($1, $2::uuid, 'The owner asked us not to send surveys') AS r",
+        [A, a1.id],
+      );
+      await as(
+        CSM_B,
+        "SELECT public.cockpit_form_invite_withdraw($1, $2::uuid, 'Sent again') AS r",
+        [B, b1.id],
+      );
       for (const id of [a1.id, b1.id])
-        await q("UPDATE cockpit_form_invites SET issued_at = issued_at - interval '21 days', closed_at = closed_at - interval '20 days' WHERE id = $1::uuid", [id]);
+        await q(
+          "UPDATE cockpit_form_invites SET issued_at = issued_at - interval '21 days', closed_at = closed_at - interval '20 days' WHERE id = $1::uuid",
+          [id],
+        );
       const out = await run();
       expect(out.skipped.withdrawnBySeat).toBe(1);
       // Beta's was withdrawn to send again: the schedule tries again after 7 days; Acme's never.
