@@ -466,6 +466,17 @@ function SidebarNav() {
                   isActive={location.pathname.startsWith("/team")}
                 />
               ) : null}
+              {/* Everybody's: ask another team for something; it becomes a
+                  ClickUp task with its SOP steps and an owner (2026-10-26).
+                  The Raise a ticket SOP and the phone bar's More point here. */}
+              {auth.isAuthenticated ? (
+                <NavLink
+                  href="/requests"
+                  label="Ask a team"
+                  icon={COCKPIT_ICON.requests}
+                  isActive={location.pathname.startsWith("/requests")}
+                />
+              ) : null}
               {/* Everybody's: every client against its targets (2026-10-16). */}
               {auth.isAuthenticated ? (
                 <NavLink
