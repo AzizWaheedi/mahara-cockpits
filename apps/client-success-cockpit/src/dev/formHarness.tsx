@@ -38,6 +38,15 @@
  * Client voice card (empty=1 | failed=1 | low=1); state=consent draws Pause
  * this client with the consent live (consent= none | sent | signed |
  * dates_wrong | expired; live=0 draws the old two ticks).
+ *
+ * Waves 5-6 (docs/forms/WAVE56-CONTRACT.md 5.0, section 8: the 375 and 1280
+ * px, light and dark checks), over winsFixtures: state=wins draws Today's
+ * bands, the client page's Wins with every ribbon, the Money tab's wins and
+ * Offer Studio's stage strip (sheet=log | tie opens Log a win or the tie
+ * dialog; proposal=sent | accepted; door=off | missing shows a closed door);
+ * state=reactivate draws Client is back in both states and its sheet
+ * (sheet=0 to close it); state=kickoff draws the kickoff sheet (again=1 asks
+ * why it is sent again; door=off keeps today's Typeform line).
  * state=editor draws the forms editor (5.13) over formsEditorFixtures and its
  * in-memory stand-in: the list, or form=<key> for one form (nps and csat have
  * a history; kickoff and extension are the read-only rows); draft=1 seeds a
@@ -66,11 +75,24 @@ import {
 import {
   FormBands,
   FormsOut,
+  KickoffDoor,
   PauseConsentRow,
   SendFormSheet,
   useInviteView,
 } from "@/components/ClientForms";
 import { ClientVoiceCard } from "@/components/ClientVoice";
+import {
+  ClientWins,
+  LogWinButton,
+  LogWinSheet,
+  MarkOffered,
+  MoneyWins,
+  ReactivateAction,
+  ReactivateSheet,
+  TieDialog,
+  WinBands,
+  type WinsApi,
+} from "@/components/ClientWins";
 import { NoticesRouting } from "@/components/NoticesRouting";
 import { OnboardingKit } from "@/components/OnboardingKit";
 import { Button } from "@/components/ui/button";
@@ -79,6 +101,7 @@ import {
   editorOneFixture,
   fakeFormsEditorIO,
 } from "@/dev/formsEditorFixtures";
+import * as WINS_FX from "@/dev/winsFixtures";
 import type { BookProps, FormIO } from "@/forms/FormPanel";
 import {
   blockedFor,
@@ -95,6 +118,10 @@ import {
   kuwaitIso,
 } from "@/forms/staff/formSheetCore";
 import { checkManualPayment, manualPaymentsToCheck } from "@/lib/paymentChecks";
+import {
+  reactivateState as reactivateStateOf,
+  todayBands as winTodayBands,
+} from "@/lib/winsCore";
 import { FormsEditorView } from "@/pages/FormsEditorPage";
 import { standIn } from "@/practice/fixtures/typeformStandIn";
 import {
@@ -892,9 +919,247 @@ function EditorHarness() {
   );
 }
 
+// --- Waves 5-6 (docs/forms/WAVE56-CONTRACT.md 5.0, section 8): wins, reactivate, kickoff ---
+
+const W56_OPEN = { open: true, why: null } as const;
+/** ?door=off or ?door=missing shows a closed door's line instead. */
+const w56Door =
+  params.get("door") === "off"
+    ? ({ open: false, why: "off" } as const)
+    : params.get("door") === "missing"
+      ? ({ open: false, why: "missing" } as const)
+      : W56_OPEN;
+
+function winsStandIn(): WinsApi {
+  const later = <T,>(v: T): Promise<T> =>
+    new Promise(r => setTimeout(() => r(v), 250));
+  return {
+    read: async () =>
+      later({
+        wins: WINS_FX.WINS,
+        acceptedProposals: [],
+        doorOpen: true,
+        context: WINS_FX.CONTEXT,
+      }),
+    list: async () =>
+      later({
+        wins: WINS_FX.WINS.map((w, i) => ({
+          ...w,
+          client: i % 2 ? WINS_FX.CLIENT_AR : WINS_FX.CLIENT,
+        })),
+        totals: {
+          upsellsOffered: 3,
+          upsellsAccepted: 2,
+          upsellCashChecked: 1500,
+          reviewsAndTestimonials: null,
+        },
+      }),
+    log: async () =>
+      later({
+        ok: true,
+        winId: "w",
+        stage: "logged",
+        sentence: "Logged.",
+        ref: { winId: "w" },
+      }),
+    stage: async p =>
+      later(p.act === "void" ? "Voided." : "Marked as accepted."),
+    candidates: async () => later(WINS_FX.CANDIDATES),
+    propose: async () => later("Sent to the CEO to confirm."),
+    trail: async () => ({
+      stored: { state: "done" },
+      card: { state: "held" },
+      notice: { state: "queued" },
+    }),
+    offered: async () => ({
+      ok: true,
+      winId: "w",
+      stage: "quote_given",
+      sentence: "Marked as offered.",
+    }),
+    linkInvoice: async () => {},
+  };
+}
+
+/** Wins on the client page and the Money tab, the ribbon, Log a win, the tie dialog and Today's bands. */
+function WinsHarness() {
+  const api = useMemo(winsStandIn, []);
+  const [log, setLog] = useState(params.get("sheet") === "log");
+  const [tie, setTie] = useState(params.get("sheet") === "tie");
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <div className="mx-auto grid w-full max-w-3xl gap-6">
+        <WinBands
+          bands={winTodayBands(WINS_FX.BAND_ROWS, {
+            ceo: true,
+            today: "2026-11-02",
+          })}
+          onAction={() => {}}
+        />
+        <div className="flex gap-2">
+          <LogWinButton door={w56Door} onClick={() => setLog(true)} />
+          <Button size="sm" variant="outline" onClick={() => setTie(true)}>
+            Tie a payment
+          </Button>
+        </div>
+        <ClientWins
+          api={api}
+          door={w56Door}
+          taskId={WINS_FX.TASK}
+          client={WINS_FX.CLIENT}
+          onSetMrr={() => {}}
+        />
+        <MoneyWins api={api} door={w56Door} />
+        <MarkOffered
+          api={api}
+          door={w56Door}
+          proposal={{
+            id: "p1",
+            taskId: WINS_FX.TASK,
+            status: params.get("proposal") ?? "draft",
+            kind: "upsell_website",
+            totalUsd: 1500,
+            listUsd: 1800,
+          }}
+          win={null}
+        />
+      </div>
+      <LogWinSheet
+        open={log}
+        onOpenChange={setLog}
+        api={api}
+        taskId={WINS_FX.TASK}
+        client={WINS_FX.CLIENT_AR}
+        context={WINS_FX.CONTEXT}
+      />
+      {tie ? (
+        <TieDialog
+          api={api}
+          win={WINS_FX.WINS[2]}
+          onClose={() => setTie(false)}
+          onDone={() => setTie(false)}
+        />
+      ) : null}
+      <Toaster />
+    </div>
+  );
+}
+
+/** Client is back: the action in both states, then the sheet. */
+function ReactivateHarness() {
+  const [open, setOpen] = useState(params.get("sheet") !== "0");
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <div className="mx-auto flex w-full max-w-3xl flex-wrap gap-3">
+        <ReactivateAction
+          state={reactivateStateOf({
+            status: "Stopped",
+            departureId: 6,
+            churnConfirmedAt: "2026-10-31T10:00:00Z",
+          })}
+          door={w56Door}
+          onOpen={() => setOpen(true)}
+        />
+        <ReactivateAction
+          state={reactivateStateOf({ status: "Stopped", departureId: null })}
+          door={w56Door}
+          onOpen={() => {}}
+        />
+      </div>
+      <ReactivateSheet
+        open={open}
+        onOpenChange={setOpen}
+        taskId={WINS_FX.TASK}
+        client={WINS_FX.CLIENT_AR}
+        departure={{
+          id: 6,
+          leftOn: "2026-10-18",
+          reason: "Cancelled",
+          churnType: "mid_programme",
+        }}
+        calls={CALLS}
+        submit={async () => ({
+          message: "back from today as Active",
+          ref: { eventId: 1 },
+        })}
+        trail={async () => ({
+          stored: { state: "done" },
+          card: { state: "held" },
+          notice: { state: "queued" },
+        })}
+      />
+      <Toaster />
+    </div>
+  );
+}
+
+/** The kickoff sheet: live (?door=open, the default) or kept on the Typeform (?door=off). */
+function KickoffHarness() {
+  const api = useMemo(
+    () => ({
+      prefill: async () => ({
+        live: true,
+        why: null,
+        client: WINS_FX.CLIENT,
+        answered: params.get("again")
+          ? { at: "2026-10-28T10:00:00Z", byRole: "the CSM" }
+          : null,
+        prefill: [
+          {
+            key: "legal_name",
+            value: "Ardon Interiors WLL",
+            source: "the onboarding form",
+          },
+          {
+            key: "serviceAdvertised",
+            value: "Villa interiors",
+            source: "the onboarding form",
+          },
+          { key: "newMrrUsd", value: 1500, source: "the card" },
+        ],
+        onboardingAt: "2026-10-30T10:00:00Z",
+        card: { mrrUsd: 1500, status: "Onboarding Booked" },
+      }),
+      submit: async () => ({
+        responseId: "k1",
+        trail: [
+          { step: "tasks", state: "done" },
+          { step: "message", state: "waiting" },
+        ],
+      }),
+      trail: async () => ({
+        stored: { state: "done" },
+        card: { state: "held" },
+        notice: { state: "posted", channelName: "csm-general" },
+      }),
+    }),
+    [],
+  );
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <div className="mx-auto w-full max-w-3xl">
+        <KickoffDoor
+          door={w56Door}
+          api={api}
+          taskId={WINS_FX.TASK}
+          clientName={WINS_FX.CLIENT}
+          autoOpen
+        />
+      </div>
+      <Toaster />
+    </div>
+  );
+}
+
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
-    {scenario === "editor" ? (
+    {scenario === "wins" ? (
+      <WinsHarness />
+    ) : scenario === "reactivate" ? (
+      <ReactivateHarness />
+    ) : scenario === "kickoff" ? (
+      <KickoffHarness />
+    ) : scenario === "editor" ? (
       <EditorHarness />
     ) : scenario === "forms" ? (
       <FormsHarness />

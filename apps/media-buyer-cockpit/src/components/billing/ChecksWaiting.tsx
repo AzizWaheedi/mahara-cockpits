@@ -19,8 +19,8 @@ import {
   checkManualPayment,
   checkProblem,
   checksDoorOpen,
-  manualPaymentsToCheck,
   railWords,
+  toCheckWaiting,
   waitingWords,
 } from "@/lib/paymentChecks";
 import { readRequestTypes } from "@/lib/requestsClient";
@@ -61,10 +61,82 @@ import { useTaskSeat } from "@/lib/taskSeat";
  *   the check needs, and the result reads "Checked", never "Approved".
  */
 
+/**
+ * Waves 5-6 (WAVE56-CONTRACT.md 4.10, 5.6): a row may carry the client's
+ * receipt (sent through the bank receipt form), whether the client can be
+ * asked for one, and a near match with another logged transfer.
+ */
+export type ClientReceipt = {
+  responseId: string;
+  field: string;
+  mime: string | null;
+  at: string | null;
+};
+export type CheckRow = CheckWaiting & {
+  receipt: ClientReceipt | null;
+  askable: boolean;
+  nearMatch: {
+    day: string | null;
+    amount: number | null;
+    currency: string | null;
+  } | null;
+};
+
+const str = (v: unknown): string | null =>
+  typeof v === "string" && v.trim() ? v.trim() : null;
+const numOr = (v: unknown): number | null =>
+  v === null || v === undefined || v === "" || !Number.isFinite(Number(v))
+    ? null
+    : Number(v);
+
+/** One row of cockpit_manual_payments_to_check with the waves 5-6 additions, read defensively. */
+export function toCheckRow(raw: unknown): CheckRow {
+  const base = toCheckWaiting(raw);
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const rec =
+    r.receipt && typeof r.receipt === "object"
+      ? (r.receipt as Record<string, unknown>)
+      : null;
+  const near =
+    r.nearMatch && typeof r.nearMatch === "object"
+      ? (r.nearMatch as Record<string, unknown>)
+      : null;
+  return {
+    ...base,
+    receipt:
+      rec && str(rec.responseId)
+        ? {
+            responseId: str(rec.responseId) as string,
+            field: str(rec.field) ?? "receipt",
+            mime: str(rec.mime),
+            at: str(rec.at ?? rec.addedAt),
+          }
+        : null,
+    askable: r.askable === true,
+    nearMatch: near
+      ? {
+          day: str(near.day ?? near.paidOn),
+          amount: numOr(near.amount),
+          currency: str(near.currency),
+        }
+      : null,
+  };
+}
+
+/** A HEIC photo: desktop browsers cannot show one, so it is downloaded to view (5.6). */
+export const isHeic = (mime: string | null | undefined) =>
+  /heic|heif/i.test(String(mime ?? ""));
+
 export type ChecksApi = {
   /** cockpit_form_doors().checks: false until 20261101n is live. */
   door: () => Promise<boolean>;
-  list: () => Promise<CheckWaiting[]>;
+  /** The rows; an older list without the waves 5-6 fields reads as no receipt, not askable. */
+  list: () => Promise<
+    (CheckWaiting &
+      Partial<Pick<CheckRow, "receipt" | "askable" | "nearMatch">>)[]
+  >;
+  /** cockpit-forms-api `file.url`: a 5-minute signed link to a client's receipt (waves 5-6). */
+  receiptUrl?: (responseId: string, field: string) => Promise<string>;
   check: (p: {
     id: string;
     verdict: CheckVerdict;
@@ -82,6 +154,12 @@ export type ChecksWaitingProps = {
   framed?: boolean;
   /** After a check or a rejection lands, so the screen around it can read again. */
   onChecked?: (r: CheckResult) => void;
+  /**
+   * Ask the client for the receipt (the Send panel on the bank receipt,
+   * origin billing, context manualPaymentId); absent while the receipt
+   * form is not live or the cockpit has no Send panel.
+   */
+  onAskReceipt?: (row: CheckRow) => void;
 };
 
 const TICKET_TYPE = "payment_receipt_check";
@@ -141,7 +219,33 @@ export function ChecksWaiting(props: ChecksWaitingProps) {
       client
         ? {
             door: () => checksDoorOpen(client),
-            list: () => manualPaymentsToCheck(client),
+            list: async () => {
+              const { data, error } = await client.rpc(
+                "cockpit_manual_payments_to_check",
+              );
+              if (error)
+                throw new Error(
+                  String(error.message ?? "").trim() ||
+                    "The list did not come back. Try again in a minute.",
+                );
+              return (Array.isArray(data) ? data : []).map(toCheckRow);
+            },
+            receiptUrl: async (responseId, field) => {
+              const { data, error } = await client.functions.invoke(
+                "cockpit-forms-api",
+                { body: { op: "file.url", responseId, field } },
+              );
+              const url =
+                data && typeof (data as { url?: unknown }).url === "string"
+                  ? (data as { url: string }).url
+                  : null;
+              if (error || !url)
+                throw new Error(
+                  (data as { error?: string } | null)?.error ??
+                    "The receipt link did not come back. Try again in a minute.",
+                );
+              return url;
+            },
             check: p => checkManualPayment(client, p),
             ticketType: async () => {
               try {
@@ -185,6 +289,7 @@ export function ChecksWaitingView({
   canCheck,
   framed = true,
   onChecked,
+  onAskReceipt,
   renderTicket,
 }: ChecksWaitingProps & {
   api: ChecksApi;
@@ -192,7 +297,7 @@ export function ChecksWaitingView({
 }) {
   const headingId = useId();
   const [door, setDoor] = useState<boolean | null>(null);
-  const [rows, setRows] = useState<CheckWaiting[] | null>(null);
+  const [rows, setRows] = useState<CheckRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [ticket, setTicket] = useState(false);
@@ -213,7 +318,14 @@ export function ChecksWaitingView({
         api.list(),
         wantsTicket ? api.ticketType() : Promise.resolve(false),
       ]);
-      setRows(list);
+      setRows(
+        list.map(r => ({
+          ...r,
+          receipt: r.receipt ?? null,
+          askable: r.askable === true,
+          nearMatch: r.nearMatch ?? null,
+        })),
+      );
       setTicket(hasTicket);
       setDone({});
     } catch (e) {
@@ -314,6 +426,8 @@ export function ChecksWaitingView({
               onChecked?.(result);
             }}
             check={api.check}
+            receiptUrl={api.receiptUrl}
+            onAskReceipt={onAskReceipt}
           />
         ))}
       </ol>
@@ -348,15 +462,41 @@ function CheckRow({
   ticket,
   onDone,
   check,
+  receiptUrl,
+  onAskReceipt,
 }: {
-  row: CheckWaiting;
+  row: CheckRow;
   today: string;
   canCheck: boolean;
   done: Done | null;
   ticket?: (row: CheckWaiting) => ReactNode;
   onDone: (mark: Done, result: CheckResult) => void;
   check: ChecksApi["check"];
+  receiptUrl?: ChecksApi["receiptUrl"];
+  onAskReceipt?: (row: CheckRow) => void;
 }) {
+  const [opening, setOpening] = useState(false);
+  const [linkProblem, setLinkProblem] = useState<string | null>(null);
+  const openReceipt = async () => {
+    if (!row.receipt || !receiptUrl) return;
+    setOpening(true);
+    setLinkProblem(null);
+    // The tab opens on the press (a pop-up blocker allows it), then takes the link.
+    const tab =
+      typeof window !== "undefined" ? window.open("", "_blank") : null;
+    try {
+      const url = await receiptUrl(row.receipt.responseId, row.receipt.field);
+      if (tab) {
+        tab.opener = null;
+        tab.location.href = url;
+      } else window.location.assign(url);
+    } catch (e) {
+      tab?.close();
+      setLinkProblem(errorText(e));
+    } finally {
+      setOpening(false);
+    }
+  };
   const [form, setForm] = useState<CheckVerdict | null>(null);
   const [ref, setRef] = useState("");
   const [line, setLine] = useState("");
@@ -443,6 +583,60 @@ function CheckRow({
             </a>
           ) : null}
         </p>
+        {row.receipt ? (
+          <p
+            className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 text-xs"
+            data-client-receipt
+          >
+            <span className="text-muted-foreground">
+              Receipt from the client ·{" "}
+              {dayText(row.receipt.at?.slice(0, 10) ?? null, today) ||
+                "day not recorded"}
+            </span>
+            {receiptUrl ? (
+              <button
+                type="button"
+                onClick={() => void openReceipt()}
+                disabled={opening}
+                className="inline-flex items-center gap-0.5 rounded-sm font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+              >
+                {opening ? (
+                  <Loader2 className={`size-3 ${spin}`} aria-hidden />
+                ) : null}
+                {isHeic(row.receipt.mime)
+                  ? "Download to view"
+                  : "View the receipt"}
+                <ArrowUpRight className="size-3" aria-hidden />
+              </button>
+            ) : null}
+          </p>
+        ) : null}
+        {row.nearMatch ? (
+          <p className="text-xs" data-near-match>
+            May be the same transfer as{" "}
+            {dayText(row.nearMatch.day, today) || "another day"}{" "}
+            {row.nearMatch.amount !== null && row.nearMatch.currency
+              ? typed(row.nearMatch.amount, row.nearMatch.currency)
+              : "an amount not recorded"}
+          </p>
+        ) : null}
+        {linkProblem ? (
+          <p className="text-xs text-destructive" role="alert">
+            {linkProblem}
+          </p>
+        ) : null}
+        {!row.receipt && row.askable && onAskReceipt && !done ? (
+          <div>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => onAskReceipt(row)}
+              data-ask-receipt
+            >
+              Ask the client for the receipt
+            </Button>
+          </div>
+        ) : null}
 
         {done ? (
           <p className="text-sm" role="status">

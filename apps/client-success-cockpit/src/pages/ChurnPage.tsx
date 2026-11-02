@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Link } from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AnswerSheet, SendFormSheet } from "@/components/ClientForms";
@@ -51,7 +52,9 @@ import type {
 import { changeChurn, readChurnPage } from "@/lib/churnClient";
 import {
   answerProblem,
+  backLine,
   CHURN_TYPE_WORDS,
+  canComeBack,
   cardLine,
   confirmLine,
   confirmPrefill,
@@ -1594,6 +1597,14 @@ function Register({
                       {note}
                     </span>
                   ) : null}
+                  {backLine(d, shortDay) ? (
+                    <span
+                      className="mt-0.5 block text-xs font-medium"
+                      data-back-since
+                    >
+                      {backLine(d, shortDay)}
+                    </span>
+                  ) : null}
                 </button>
                 <span className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:justify-end">
                   {c && canConfirm ? (
@@ -1629,6 +1640,15 @@ function Register({
                         </span>
                       ) : null}
                     </span>
+                  ) : null}
+                  {canComeBack(d) && canConfirm ? (
+                    <Link
+                      to={`/clients/${encodeURIComponent(String(d.clickupTaskId))}?tab=money&back=1`}
+                      className="inline-flex h-8 items-center rounded-lg border px-3 text-xs font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      data-back
+                    >
+                      Back
+                    </Link>
                   ) : null}
                   {surveyDoor && canConfirm && d.clickupTaskId ? (
                     <SurveyCell

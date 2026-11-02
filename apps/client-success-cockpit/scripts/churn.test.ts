@@ -661,3 +661,37 @@ describe("the exit survey on a departure (5.11)", () => {
     );
   });
 });
+
+// Waves 5-6 (docs/forms/WAVE56-CONTRACT.md 4.12, 5.11): a churned client who
+// comes back. The departure stays (the month they left keeps its churn); the
+// tracker says "Back since {date}" and offers Back only on a confirmed one.
+describe("Client is back on the tracker", () => {
+  test("a returned departure reads Back since its day and still counts", async () => {
+    const { backLine, canComeBack } = await import("../src/lib/churnCore");
+    const raw = read();
+    raw.deps = raw.deps.map(d =>
+      (d as { id: number }).id === 20 ? { ...d, returned_on: "2026-11-04" } : d,
+    );
+    const page = buildChurnPage(raw);
+    const back = page.departures.find(d => d.id === 20);
+    expect(back?.returnedOn).toBe("2026-11-04");
+    expect(backLine(back!, x => `day ${x}`)).toBe("Back since day 2026-11-04");
+    expect(canComeBack(back!)).toBe(false);
+    // Still on the register: the month it left is not uncounted.
+    expect(page.departures.some(d => d.id === 20)).toBe(true);
+    expect(countsAs(back!)).toBe(
+      countsAs(buildChurnPage(read()).departures.find(d => d.id === 20)!),
+    );
+  });
+
+  test("Back shows only on a confirmed departure on a card, not yet returned", async () => {
+    const { backLine, canComeBack } = await import("../src/lib/churnCore");
+    const page = buildChurnPage(read());
+    const confirmed = page.departures.find(d => d.id === 20)!;
+    const unconfirmed = page.departures.find(d => d.id === 21)!;
+    expect(canComeBack(confirmed)).toBe(Boolean(confirmed.clickupTaskId));
+    expect(canComeBack(unconfirmed)).toBe(false);
+    expect(backLine(confirmed, x => x)).toBeNull();
+    expect(canComeBack({ ...confirmed, clickupTaskId: null })).toBe(false);
+  });
+});

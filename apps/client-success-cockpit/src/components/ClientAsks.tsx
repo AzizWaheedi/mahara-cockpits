@@ -31,7 +31,11 @@ import {
  */
 
 const PORTAL = "https://portal.maharamedia.com";
-/** Where a seat logs a review for the four Rs (csmLinks, "Money, the four Rs"). */
+/**
+ * Where a seat logged a review before the wins ledger (csmLinks, "Money, the
+ * four Rs"): kept only until Log a win switches on (WAVE56-CONTRACT.md 1.1,
+ * C7), then "Log it" opens Log a win on this client.
+ */
 const REVIEW_FORM = "https://maharamedia.typeform.com/to/ETEynRgb";
 
 const KINDS: {
@@ -72,10 +76,13 @@ type Rpc = Pick<SupabaseClient, "rpc">;
 export function ClientAsks({
   taskId,
   rpc,
+  onLogWin,
 }: {
   taskId: string;
   /** A stand-in for the harness; the page uses the seat's own client. */
   rpc?: Rpc;
+  /** Log a win on this client, preset to a Google review; absent while its door is closed. */
+  onLogWin?: () => void;
 }) {
   const auth = useCockpitAuth();
   const client = rpc ?? auth.client;
@@ -134,6 +141,7 @@ export function ClientAsks({
                 }
                 onView={setView}
                 client={client}
+                onLogWin={onLogWin}
               />
             ))}
           </div>
@@ -155,6 +163,7 @@ function AskTile({
   previewHref,
   onView,
   client,
+  onLogWin,
 }: {
   spec: (typeof KINDS)[number];
   view: ClientAsksView;
@@ -162,6 +171,7 @@ function AskTile({
   previewHref: string | null;
   onView: (v: ClientAsksView) => void;
   client: Rpc | null;
+  onLogWin?: () => void;
 }) {
   const { ask, earlier } = latestAsk(view, spec.kind);
   const open = ask?.state === "open";
@@ -264,9 +274,20 @@ function AskTile({
             </ul>
           ) : null}
           {ask.state === "done" && spec.kind === "review" ? (
-            <ExtLink href={REVIEW_FORM} className="pt-1">
-              Log it in the client review form
-            </ExtLink>
+            onLogWin ? (
+              <button
+                type="button"
+                className="pt-1 font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={onLogWin}
+                data-log-it
+              >
+                Log it
+              </button>
+            ) : (
+              <ExtLink href={REVIEW_FORM} className="pt-1">
+                Log it in the client review form
+              </ExtLink>
+            )
           ) : null}
         </div>
       ) : null}

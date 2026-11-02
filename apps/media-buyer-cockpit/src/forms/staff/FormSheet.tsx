@@ -68,10 +68,15 @@ import {
 } from "./formSheetCore";
 import "./formSheet.css";
 
+/**
+ * A send. It may answer with a warning instead of storing anything (Log a
+ * win's "A Google review was logged for … Log this one too?"): the sheet
+ * then asks, and "Log it anyway" sends again with confirmDuplicate.
+ */
 export type FormSheetSubmit = (
   a: Answers,
   requestId: string,
-) => Promise<{ message: string; ref: SubmitRef }>;
+) => Promise<{ message: string; ref: SubmitRef; warning?: string | null }>;
 
 export type FormSheetProps = {
   open: boolean;
@@ -232,6 +237,7 @@ export function FormBody(p: BodyProps) {
   );
   const [steps, setSteps] = useState<TrailStep[]>([]);
   const [trailNote, setTrailNote] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
 
   // A prefill that lands after the sheet opened fills only what nobody typed.
   // Keyed by its content, so a caller passing a fresh [] each render is harmless.
@@ -272,7 +278,7 @@ export function FormBody(p: BodyProps) {
   const label = def.submitLabel(answers);
   const waitFor = p.blocked ? p.blocked(answers) : null;
 
-  const send = async () => {
+  const send = async (confirmDuplicate = false) => {
     if (phase === "sending" || waitFor) return;
     const found = validate(def, answers, today);
     setErrors(found);
@@ -282,9 +288,19 @@ export function FormBody(p: BodyProps) {
       return;
     }
     setFailure(null);
+    setWarning(null);
     setPhase("sending");
     try {
-      const out = await p.submit(answers, requestId.current);
+      const out = await p.submit(
+        confirmDuplicate ? { ...answers, confirmDuplicate: true } : answers,
+        requestId.current,
+      );
+      // Nothing was stored: the database asks first.
+      if (out.warning) {
+        setWarning(out.warning);
+        setPhase("editing");
+        return;
+      }
       dropDraft(key);
       setDone(out);
       setSteps(
@@ -450,6 +466,28 @@ export function FormBody(p: BodyProps) {
                 />
               ))}
             {p.after ? p.after(answers) : null}
+            {warning ? (
+              <div className="fs-warn" role="alert" data-warning>
+                <p className="fs-warn-text">{warning}</p>
+                <div className="fs-warn-acts">
+                  <button
+                    type="button"
+                    className="fs-btn"
+                    data-tone="primary"
+                    onClick={() => void send(true)}
+                  >
+                    Log it anyway
+                  </button>
+                  <button
+                    type="button"
+                    className="fs-btn fs-btn-quiet"
+                    onClick={() => setWarning(null)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : null}
             {/* Enter in a text box sends, like any form. */}
             <button type="submit" hidden tabIndex={-1} aria-hidden />
           </form>
@@ -709,25 +747,41 @@ function Field({
         from={from}
         group
       >
-        <div className="fs-pills">
-          {options.map((o, i) => (
-            <label key={o.value} className="fs-pill">
-              <input
-                type="radio"
-                name={id}
-                id={i === 0 ? id : undefined}
-                value={o.value}
-                checked={str === o.value}
-                onChange={() => onChange(o.value)}
-                {...aria}
-              />
-              <span>{o.label}</span>
-            </label>
-          ))}
-        </div>
+        {(
+          f.optionGroups ?? [{ label: null, values: options.map(o => o.value) }]
+        ).map((g, gi) => (
+          <div key={g.label ?? `g${gi}`} className="fs-group">
+            {g.label ? <span className="fs-group-label">{g.label}</span> : null}
+            <div className="fs-pills">
+              {options
+                .filter(o => g.values.includes(o.value))
+                .map(o => (
+                  <label key={o.value} className="fs-pill">
+                    <input
+                      type="radio"
+                      name={id}
+                      id={o.value === options[0]?.value ? id : undefined}
+                      value={o.value}
+                      checked={str === o.value}
+                      onChange={() => onChange(o.value)}
+                      {...aria}
+                    />
+                    <span>{o.label}</span>
+                  </label>
+                ))}
+            </div>
+          </div>
+        ))}
       </FieldShell>
     );
   }
+
+  if (f.type === "heading")
+    return (
+      <h3 className="fs-heading" id={id}>
+        {f.label}
+      </h3>
+    );
 
   if (f.type === "multi") {
     const picked = Array.isArray(value) ? (value as string[]) : [];

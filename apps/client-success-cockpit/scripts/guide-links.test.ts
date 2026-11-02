@@ -56,9 +56,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   linkGroupsFor,
+  liveWithWins,
   NOT_LIVE_YET,
   OLD_FORM,
   oldFormOf,
+  WINS_DOOR,
+  WINS_WAITING,
 } from "../src/lib/csmLinks";
 
 const ROWS: [string, string, string, string][] = [
@@ -124,12 +127,6 @@ test("until a form is live (or the list cannot be read) the row says so and keep
     "Opens with the portal forms (after the switch-on).",
   );
   expect(OLD_FORM).toBe("Old form, still live:");
-  // The rows that stay: the referral form is not retired.
-  expect(
-    LINK_GROUPS.flatMap(g => g.rows).some(
-      r => r.url === "https://maharamedia.typeform.com/to/bAmbMKM2",
-    ),
-  ).toBe(true);
 });
 
 test("no row links a retired Typeform as its main link, in either app", () => {
@@ -146,7 +143,7 @@ test("no row links a retired Typeform as its main link, in either app", () => {
   for (const [, label] of ROWS) expect(mb).toContain(`label: "${label}"`);
 });
 
-test("the CSM assistant changes lines 39 and 41 only; the referral form on 42 stays", () => {
+test("the CSM assistant changes lines 39 and 41; line 42 is Log a win (waves 5-6)", () => {
   const py = readFileSync(
     join(import.meta.dir, "../../../viktor-side-scripts/csm/csm_assistant.py"),
     "utf8",
@@ -158,7 +155,82 @@ test("the CSM assistant changes lines 39 and 41 only; the referral form on 42 st
   expect(py[40]).toContain(
     "Open the client, then Client is leaving or Send a form.",
   );
-  expect(py[41]).toBe(
-    '    "referral form": "https://maharamedia.typeform.com/to/bAmbMKM2",',
+  expect(py[41]).toContain("Open the client, then Log a win, with its proof.");
+  expect(py[41]).toContain(
+    '": "https://cockpit.maharamedia.com/client-success/clients",',
   );
+});
+
+// Waves 5-6 (docs/forms/WAVE56-CONTRACT.md 1.1, 4.7, C7): the Four Rs move to
+// Log a win. Each row follows the wins door: until it opens the row says so
+// and keeps its Typeform as the old form; the media buyer copy and the CSM
+// assistant carry the cockpit words with the old link in the line.
+const FOUR_RS = ["ETEynRgb", "bAmbMKM2", "VP3zmaj2", "IVHO9BMC", "cKItPZVI"];
+
+test("the Four Rs rows point at Log a win on the client page in both apps", () => {
+  const rows =
+    LINK_GROUPS.find(g => g.title === "Money, the four Rs")?.rows ?? [];
+  const wins = rows.filter(r => r.form?.key === WINS_DOOR);
+  expect(wins.map(r => r.form?.oldUrl.split("/").pop())).toEqual(FOUR_RS);
+  for (const r of wins) {
+    expect(r.url).toBe(
+      "https://cockpit.maharamedia.com/client-success/clients",
+    );
+    expect(r.label.startsWith("Log a win: ")).toBe(true);
+  }
+  // No row's main link is a Four Rs Typeform any more, in either app.
+  const tf = new RegExp(`typeform\\.com/to/(${FOUR_RS.join("|")})`);
+  for (const r of LINK_GROUPS.flatMap(g => g.rows))
+    expect(r.url).not.toMatch(tf);
+  const mb = readFileSync(
+    join(import.meta.dir, "../../media-buyer-cockpit/src/lib/csmLinks.ts"),
+    "utf8",
+  );
+  expect(mb).not.toMatch(
+    new RegExp(
+      `url: "https://maharamedia\\.typeform\\.com/to/(${FOUR_RS.join("|")})"`,
+    ),
+  );
+  expect((mb.match(/label: "Log a win: /g) ?? []).length).toBe(5);
+  for (const id of FOUR_RS)
+    expect(mb).toContain(
+      `Until Log a win switches on, the old form stays live: https://maharamedia.typeform.com/to/${id}`,
+    );
+  const py = readFileSync(
+    join(import.meta.dir, "../../../viktor-side-scripts/csm/csm_assistant.py"),
+    "utf8",
+  );
+  expect(py).not.toMatch(/"(referral form|client review form)":/);
+  expect(py).toContain("then Log a win");
+});
+
+test("until the wins door opens the row says so and keeps the old form; open, the old link goes", () => {
+  const row = (live: readonly string[] | null) =>
+    linkGroupsFor(live)
+      .flatMap(g => g.rows)
+      .find(r => r.form?.oldUrl.endsWith("bAmbMKM2"));
+  const closed = row(liveWithWins(["nps"], false));
+  expect(closed?.note).toBe(
+    `Open the client, then Log a win, and pick the referred client's signed deal. ${WINS_WAITING}`,
+  );
+  expect(oldFormOf(closed!, liveWithWins(["nps"], false))).toBe(
+    "https://maharamedia.typeform.com/to/bAmbMKM2",
+  );
+  const open = row(liveWithWins(null, true));
+  expect(open?.note).toBe(
+    "Open the client, then Log a win, and pick the referred client's signed deal.",
+  );
+  expect(oldFormOf(open!, liveWithWins(null, true))).toBeNull();
+  expect(WINS_WAITING).toBe("Log a win opens after its switch-on.");
+  // The wins door never opens a client form's row, nor the reverse.
+  expect(liveWithWins(null, false)).toBeNull();
+});
+
+test("the media buyer's old kickoff link (BbJy6xg4) is gone from its templates", () => {
+  const t = readFileSync(
+    join(import.meta.dir, "../../media-buyer-cockpit/src/lib/csmTemplates.ts"),
+    "utf8",
+  );
+  expect(t).not.toContain("BbJy6xg4");
+  expect(t).not.toContain("kickoffForm");
 });

@@ -31,7 +31,6 @@ export const LINKS = {
     "https://api.leadconnectorhq.com/widget/booking/z1Ne59rohCCj87KhcXoi",
   checkInCall:
     "https://api.leadconnectorhq.com/widget/booking/SHjlq0UjeR11maltYNyh",
-  kickoffForm: "https://maharamedia.typeform.com/to/BbJy6xg4",
   calculator: "http://calculator.maharamedia.com",
   review: "https://g.page/r/CeRMcUwFPpe7EAI/review",
   referralDoc:
@@ -163,11 +162,11 @@ const TEMPLATES: Template[] = [
     short: "chased the onboarding call booking",
     when: c => c.bucket === "onboarding" && !c.launchDate,
     why: c =>
-      `In onboarding (${c.stage}), message every working day until the call is booked and the kickoff form is in`,
+      `In onboarding (${c.stage}), message every working day until the call is booked; the kickoff is filled on that call`,
     en: c =>
-      `Hey ${first(c.name)}, following up so we can get you launched quickly. Two things left on our side:\n\n1. Your onboarding call in the calendar: ${LINKS.onboardingCall}\n2. The kickoff form filled in: ${LINKS.kickoffForm}\n\nWant me to walk you through either one right now?`,
+      `Hey ${first(c.name)}, following up so we can get you launched quickly. One thing left: your onboarding call in the calendar: ${LINKS.onboardingCall}\n\nWe fill in the kickoff together on that call. Want me to help you pick a time now?`,
     ar: c =>
-      `هلا ${first(c.name)}، متابعة بسيطة حتى نطلق حملتك بأسرع وقت. باقي علينا شيئين:\n\n١. موعد مكالمة الانضمام: ${LINKS.onboardingCall}\n٢. تعبئة نموذج البداية: ${LINKS.kickoffForm}\n\nتحب أساعدك بأي واحد منهم الآن؟`,
+      `هلا ${first(c.name)}، متابعة بسيطة عشان نطلق حملتك بأسرع وقت. باجي علينا شي واحد: موعد مكالمة الانطلاق بالكالندر: ${LINKS.onboardingCall}\n\nنعبّي نموذج البداية مع بعض بنفس المكالمة. تبيني أساعدك تختار وقت الحين؟`,
   },
   {
     id: "onboarding_access",

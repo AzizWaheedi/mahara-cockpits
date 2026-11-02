@@ -1,9 +1,18 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import {
+  LogWinButton,
+  LogWinSheet,
+  MoneyWins,
+  winsApi,
+} from "@/components/ClientWins";
 import { PageHeader, Pill, PillRow } from "@/components/kit";
+import { useCsmSnapshot } from "@/lib/useCsmSnapshot";
+import type { WinsRead } from "@/lib/wins";
 import { BillingPage } from "./BillingPage";
 import { ChurnPage } from "./ChurnPage";
-import { HotListPage, MyMoneyPage } from "./CsmPage";
+import { HotListPage, MyMoneyPage, useW56Doors } from "./CsmPage";
 import { InvoicesPage } from "./InvoicesPage";
 import { ProjectionsPage } from "./ProjectionsPage";
 
@@ -26,6 +35,7 @@ const TABS = [
   { key: "mine", label: "My money" },
   { key: "invoices", label: "Invoices" },
   { key: "offers", label: "Offers" },
+  { key: "wins", label: "Wins" },
 ] as const;
 type Tab = (typeof TABS)[number]["key"];
 
@@ -59,10 +69,89 @@ export function MoneyPage() {
       {tab === "churn" ? <ChurnPage embedded /> : null}
       {tab === "mine" ? <MyMoneyPage embedded /> : null}
       {tab === "invoices" ? <InvoicesPage embedded /> : null}
+      {tab === "wins" ? <WinsTab /> : null}
       {tab === "offers" ? (
         <Suspense fallback={<p>Loading offers</p>}>
           <OffersTab />
         </Suspense>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Wins across your clients (docs/forms/WAVE56-CONTRACT.md 5.2): the ribbons,
+ * the four tiles, and Log a win for a client picked here.
+ */
+function WinsTab() {
+  const auth = useCockpitAuth();
+  const doors = useW56Doors(auth.client);
+  const api = useMemo(
+    () => (auth.client ? winsApi(auth.client) : null),
+    [auth.client],
+  );
+  const { snap } = useCsmSnapshot(auth.client);
+  const clients: { taskId: string; name: string }[] = (snap?.clients ?? [])
+    .map((c: { taskId?: unknown; name?: unknown }) => ({
+      taskId: String(c.taskId ?? ""),
+      name: String(c.name ?? ""),
+    }))
+    .filter((c: { taskId: string }) => c.taskId);
+  const [pick, setPick] = useState("");
+  const [open, setOpen] = useState(false);
+  const [read, setRead] = useState<WinsRead | null>(null);
+  const [version, setVersion] = useState(0);
+  const chosen = clients.find(c => c.taskId === pick) ?? null;
+  return (
+    <div className="space-y-4">
+      {doors?.wins.open ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <label
+            className="text-xs text-muted-foreground"
+            htmlFor="wins-client"
+          >
+            Client
+          </label>
+          <select
+            id="wins-client"
+            className="h-9 rounded-lg border bg-background px-2 text-sm"
+            value={pick}
+            onChange={e => setPick(e.target.value)}
+          >
+            <option value="">Pick a client</option>
+            {clients.map(c => (
+              <option key={c.taskId} value={c.taskId}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          {chosen ? (
+            <LogWinButton
+              door={doors.wins}
+              onClick={() => {
+                setRead(null);
+                setOpen(true);
+                if (api)
+                  void api
+                    .read(chosen.taskId)
+                    .then(setRead)
+                    .catch(() => setRead(null));
+              }}
+            />
+          ) : null}
+        </div>
+      ) : null}
+      <MoneyWins key={version} api={api} door={doors?.wins ?? null} />
+      {api && chosen && open ? (
+        <LogWinSheet
+          open
+          onOpenChange={setOpen}
+          api={api}
+          taskId={chosen.taskId}
+          client={chosen.name}
+          context={read?.context ?? { proposals: [], deals: [] }}
+          onSent={() => setVersion(v => v + 1)}
+        />
       ) : null}
     </div>
   );

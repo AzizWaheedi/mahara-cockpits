@@ -1,12 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import {
+  MarkOffered,
+  type ProposalFacts,
+  upsellKindOf,
+  winsApi,
+} from "@/components/ClientWins";
 import { Button } from "@/components/ui/button";
+import type { Door } from "@/forms/staff/formSheetCore";
+import { formDoorsW56 } from "@/forms/staff/lifecycleClient";
+import type { WinRow } from "@/lib/winsCore";
 import { isOfferKey } from "@/present/offer/kinds";
 import { checkVideo } from "@/present/offer/sources";
 import { readFileFacts, uploadLaunchAd } from "@/present/sources";
 import { ProposalBuilder } from "./proposal/ProposalBuilder";
-import { createProposal, proposalIO } from "./proposal/proposalSources";
+import {
+  createProposal,
+  getProposal,
+  proposalIO,
+} from "./proposal/proposalSources";
 
 export default function ProposalPage() {
   const { key = "", id = "new" } = useParams();
@@ -91,35 +104,129 @@ export default function ProposalPage() {
       </p>
     );
   return (
-    <ProposalBuilder
-      key={id}
-      io={io}
-      onBack={() => navigate(`/clients/${encodeURIComponent(key)}?tab=money`)}
-      checkCustomVideo={url => checkVideo(client, url)}
-      addLogo={async file => {
-        if (
-          !["image/png", "image/jpeg", "image/webp"].includes(file.type) ||
-          file.size > 2 * 1024 * 1024
-        )
-          throw Error("Choose a PNG, JPEG or WebP logo under 2 MB.");
-        const facts = await readFileFacts(file);
-        if (
-          !facts.width ||
-          !facts.height ||
-          facts.width < 64 ||
-          facts.height < 64 ||
-          facts.width > 4000 ||
-          facts.height > 4000
-        )
-          throw Error("Choose a logo between 64 and 4000 pixels on each side.");
-        return uploadLaunchAd(client, {
-          taskId: key,
-          kind: "logo",
-          file,
-          facts,
-          requestId: crypto.randomUUID(),
+    <>
+      <OfferStage taskId={key} proposalId={id} />
+      <ProposalBuilder
+        key={id}
+        io={io}
+        onBack={() => navigate(`/clients/${encodeURIComponent(key)}?tab=money`)}
+        checkCustomVideo={url => checkVideo(client, url)}
+        addLogo={async file => {
+          if (
+            !["image/png", "image/jpeg", "image/webp"].includes(file.type) ||
+            file.size > 2 * 1024 * 1024
+          )
+            throw Error("Choose a PNG, JPEG or WebP logo under 2 MB.");
+          const facts = await readFileFacts(file);
+          if (
+            !facts.width ||
+            !facts.height ||
+            facts.width < 64 ||
+            facts.height < 64 ||
+            facts.width > 4000 ||
+            facts.height > 4000
+          )
+            throw Error(
+              "Choose a logo between 64 and 4000 pixels on each side.",
+            );
+          return uploadLaunchAd(client, {
+            taskId: key,
+            kind: "logo",
+            file,
+            facts,
+            requestId: crypto.randomUUID(),
+          });
+        }}
+      />
+    </>
+  );
+}
+
+const sum = (r: Record<string, number | null> | null | undefined) => {
+  const v = Object.values(r ?? {});
+  return v.length && v.every(x => typeof x === "number")
+    ? (v as number[]).reduce((t, x) => t + x, 0)
+    : null;
+};
+
+/**
+ * The proposal's place in the wins ledger (docs/forms/WAVE56-CONTRACT.md
+ * 4.3, 5.3): Mark as offered on a sent proposal (never a draft), the
+ * accepted banner, and the win ribbon once offered. Behind the wins door.
+ */
+function OfferStage({
+  taskId,
+  proposalId,
+}: {
+  taskId: string;
+  proposalId: string;
+}) {
+  const { client } = useCockpitAuth();
+  const [door, setDoor] = useState<Door | null>(null);
+  const [facts, setFacts] = useState<ProposalFacts | null>(null);
+  const [win, setWin] = useState<WinRow | null>(null);
+  const [version, setVersion] = useState(0);
+  const api = useMemo(() => (client ? winsApi(client) : null), [client]);
+  useEffect(() => {
+    if (!client) return;
+    let live = true;
+    void formDoorsW56(client).then(d => live && setDoor(d.wins));
+    return () => {
+      live = false;
+    };
+  }, [client]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: version reads again after a mark
+  useEffect(() => {
+    if (!client || !api || !door?.open || proposalId === "new") return;
+    let live = true;
+    void getProposal(client, proposalId)
+      .then(b => {
+        const p = (b as { proposal?: Record<string, any> }).proposal ?? b;
+        const kind = upsellKindOf(String(p.offerKey ?? ""));
+        if (!live || !kind) return;
+        setFacts({
+          id: proposalId,
+          taskId,
+          status: String(p.status ?? "draft"),
+          kind,
+          totalUsd: sum(p.price?.parts),
+          listUsd: sum(p.listPrice),
         });
-      }}
-    />
+      })
+      .catch(() => live && setFacts(null));
+    void api
+      .read(taskId)
+      .then(
+        r =>
+          live && setWin(r.wins.find(w => w.proposalId === proposalId) ?? null),
+      )
+      .catch(() => live && setWin(null));
+    return () => {
+      live = false;
+    };
+  }, [client, api, door?.open, proposalId, taskId, version]);
+  if (!door) return null;
+  if (door.open && !facts) return null;
+  return (
+    <div className="mb-4">
+      {facts || !door.open ? (
+        <MarkOffered
+          api={api}
+          door={door}
+          proposal={
+            facts ?? {
+              id: proposalId,
+              taskId,
+              status: "draft",
+              kind: "upsell_website",
+              totalUsd: null,
+              listUsd: null,
+            }
+          }
+          win={win}
+          onMarked={() => setVersion(v => v + 1)}
+        />
+      ) : null}
+    </div>
   );
 }

@@ -116,6 +116,27 @@ const fresh = (
   payments: [blankPayment(today)],
 });
 
+/**
+ * "Invoice this" on an accepted upsell (WAVE56-CONTRACT.md 4.3.3): the desk
+ * opens on the client, Pay online with an Ecom link (Whop stays the backup),
+ * the quoted amount and the offer's name. The invoice is linked to the win
+ * once it is requested (invoices.ts).
+ */
+function fromWin(s: State): State {
+  if (typeof window === "undefined") return s;
+  const q = new URLSearchParams(window.location.search);
+  if (!q.get("win") || !q.get("client")) return s;
+  const amount = Number(q.get("amount"));
+  return {
+    ...s,
+    taskId: String(q.get("client")),
+    kind: "checkout",
+    linkMode: "ecom",
+    amount: Number.isFinite(amount) && amount > 0 ? String(amount) : s.amount,
+    description: q.get("description") ?? s.description,
+  };
+}
+
 const field =
   "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:text-sm";
 
@@ -200,7 +221,7 @@ export function InvoiceForm({
   onIssue: (args: InvoiceRequest) => Promise<boolean>;
   onSetFolder: (taskId: string, link: string) => Promise<boolean>;
 }) {
-  const [s, setS] = useState<State>(() => fresh(today));
+  const [s, setS] = useState<State>(() => fromWin(fresh(today)));
   const [asking, setAsking] = useState(false);
   const [sending, setSending] = useState(false);
   const [folderLink, setFolderLink] = useState("");

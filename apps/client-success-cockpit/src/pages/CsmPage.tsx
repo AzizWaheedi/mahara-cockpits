@@ -23,8 +23,10 @@ import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AdBillingDailyTask } from "@/components/AdBillingReview";
 import { AfterCalls, NotesNudge, TypeformMark } from "@/components/AfterCalls";
 import {
+  type CheckRow,
   type ChecksApi,
   ChecksWaitingView,
+  toCheckRow,
 } from "@/components/billing/ChecksWaiting";
 import {
   ClientCallerChip,
@@ -45,6 +47,8 @@ import { ClientCheckIn } from "@/components/ClientCheckIn";
 import {
   FormBands,
   FormsOut,
+  type KickoffApi,
+  KickoffDoor,
   PauseConsentRow,
   SendFormSheet,
   type SendPreset,
@@ -54,6 +58,15 @@ import {
 import { ClientMessages, RecapsWaiting } from "@/components/ClientMessages";
 import { ClientVoiceCard, useClientVoice } from "@/components/ClientVoice";
 import { ClientWhatsApp } from "@/components/ClientWhatsApp";
+import {
+  ClientWins,
+  LogWinButton,
+  LogWinSheet,
+  ReactivateAction,
+  ReactivateSheet,
+  WinBands,
+  winsApi,
+} from "@/components/ClientWins";
 import { FormsButton } from "@/components/FormsButton";
 import {
   Chip,
@@ -95,6 +108,7 @@ import {
   pauseConsentDef,
   suggestedNextDate,
 } from "@/forms/staff/formDefs";
+import type { W56Doors } from "@/forms/staff/formSheetCore";
 import {
   type Answers,
   CONSENT_WAIT,
@@ -107,6 +121,7 @@ import {
   answerNotice,
   confirmChurn,
   type Doors,
+  formDoorsW56,
   formPrefill,
   formTrail,
   giveMoreTime,
@@ -122,6 +137,7 @@ import {
   type PrefillRead,
   pauseClient,
   paymentsToCheck,
+  reactivateClient,
   resumeClient,
   type SendOptions,
   type SendResult,
@@ -142,7 +158,12 @@ import { readLowScores, readVoice, voiceForBrief } from "@/lib/clientVoice";
 import { useClientWhatsApp } from "@/lib/clientWhatsApp";
 import { joinLink, kuwaitDayOf, logCall, staleSentence } from "@/lib/csmCalls";
 import { opportunitiesFor, rankOpportunities } from "@/lib/csmHotList";
-import { linkGroupsFor, OLD_FORM, oldFormOf } from "@/lib/csmLinks";
+import {
+  linkGroupsFor,
+  liveWithWins,
+  OLD_FORM,
+  oldFormOf,
+} from "@/lib/csmLinks";
 import {
   BASE_USD,
   CHURN_TARGET,
@@ -150,6 +171,7 @@ import {
   type Counts,
   closeTheGap,
   computePay,
+  countsFromWins,
   EARNERS,
   earned,
   FOUR_RS,
@@ -190,6 +212,7 @@ import {
   shortDay,
 } from "@/lib/format";
 import { notesNative, useCheckinEntry } from "@/lib/formsRegistry";
+import { rememberWinInvoice } from "@/lib/invoices";
 import { useNotCalled } from "@/lib/notCalled";
 import {
   readOnboardingKits,
@@ -221,6 +244,22 @@ import {
   useCsmSnapshot,
 } from "@/lib/useCsmSnapshot";
 import { cn } from "@/lib/utils";
+import {
+  kickoffPrefill,
+  kickoffSubmit,
+  receiptUrl,
+  trailOf,
+  type WinsRead,
+  winsList as winsListRead,
+  winsToday,
+} from "@/lib/wins";
+import {
+  type Band,
+  type BandInput,
+  reactivateState,
+  ALL_CLOSED as W56_CLOSED,
+  todayBands as winTodayBands,
+} from "@/lib/winsCore";
 import { PresentButton } from "@/present/PresentButton";
 import { BacklogPage } from "./BacklogPage";
 import {
@@ -1825,6 +1864,53 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
   // Waves 3-4 (WAVE34-CONTRACT.md 4.10): client forms, the client's voice and
   // the pause consent, each read only once its door is open.
   const more = useMoreDoors(auth.client);
+  // Waves 5-6 (WAVE56-CONTRACT.md 3.10): Log a win, Client is back, the
+  // kickoff and the receipt asks, each behind its own door.
+  const w56 = useW56Doors(auth.client);
+  const wapi = useMemo(
+    () => (auth.client ? winsApi(auth.client) : null),
+    [auth.client],
+  );
+  const kickApi = useMemo<KickoffApi | null>(
+    () =>
+      auth.client
+        ? {
+            prefill: t => kickoffPrefill(auth.client, t),
+            submit: (t, a, r) => kickoffSubmit(auth.client, t, a, r),
+            trail: ref => trailOf(auth.client, ref),
+          }
+        : null,
+    [auth.client],
+  );
+  const [winOpen, setWinOpen] = useState<{
+    taskId: string;
+    name: string;
+    preset?: Prefill[];
+  } | null>(null);
+  const [winRead, setWinRead] = useState<WinsRead | null>(null);
+  const [winsVersion, setWinsVersion] = useState(0);
+  const [backOpen, setBackOpen] = useState(false);
+  // The churn tracker's "Back" lands here with back=1: open Client is back once.
+  const backAsked = useRef(false);
+  useEffect(() => {
+    if (
+      !backAsked.current &&
+      params.get("back") === "1" &&
+      w56?.reactivate.open &&
+      life?.departureId &&
+      !life.returnedOn
+    ) {
+      backAsked.current = true;
+      setBackOpen(true);
+    }
+  }, [params, w56?.reactivate.open, life?.departureId, life?.returnedOn]);
+  const winBands = useWinBands(
+    auth.client,
+    w56,
+    section === "today",
+    auth.isCeo,
+    lifeVersion + winsVersion,
+  );
   // The request types, read only once a door that offers a ticket is open.
   const ticketTypes = useTicketTypes(
     auth.client,
@@ -2509,6 +2595,34 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                 openDoor(form, String(c.taskId), String(c.name), extra)
               }
             />
+            {/* Waves 5-6 (WAVE56-CONTRACT.md 5.1, 5.11, 5.13). */}
+            <LogWinButton
+              door={w56?.wins ?? null}
+              onClick={() =>
+                setWinOpen({ taskId: String(c.taskId), name: String(c.name) })
+              }
+            />
+            <ReactivateAction
+              state={reactivateState({
+                status: life?.clientStatus ?? c.stage,
+                departureId: life?.departureId ?? null,
+                churnConfirmedAt: life ? life.churnConfirmedAt : undefined,
+                returnedOn: life?.returnedOn ?? null,
+              })}
+              door={w56?.reactivate ?? null}
+              onOpen={() => setBackOpen(true)}
+            />
+            {params.get("form") === "kickoff" ||
+            (kitOf(c) ? kitOf(c)?.in_onboarding : c.bucket === "onboarding") ? (
+              <KickoffDoor
+                door={w56?.kickoff ?? null}
+                api={kickApi}
+                taskId={String(c.taskId)}
+                clientName={String(c.name)}
+                autoOpen={params.get("form") === "kickoff"}
+                onSent={() => setLifeVersion(v => v + 1)}
+              />
+            ) : null}
             {more && !more.invites ? (
               <span className="basis-full text-xs text-muted-foreground">
                 Send a form: {NOT_YET}
@@ -2860,7 +2974,27 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
             </div>
           )}
 
-          {panel === "ask" && <ClientAsks taskId={String(c.taskId)} />}
+          {panel === "ask" && (
+            <ClientAsks
+              taskId={String(c.taskId)}
+              onLogWin={
+                w56?.wins.open
+                  ? () =>
+                      setWinOpen({
+                        taskId: String(c.taskId),
+                        name: String(c.name),
+                        preset: [
+                          {
+                            key: "kind",
+                            value: "review",
+                            source: "the review ask",
+                          },
+                        ],
+                      })
+                  : undefined
+              }
+            />
+          )}
 
           {panel === "leave" && (
             <div className="space-y-3 rounded-2xl border bg-card p-4 text-sm sm:p-6">
@@ -3099,6 +3233,36 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               </div>
             </SectionCard>
 
+            <ClientWins
+              api={wapi}
+              door={w56?.wins ?? null}
+              taskId={String(c.taskId)}
+              client={String(c.name)}
+              ceo={auth.isCeo}
+              reloadKey={winsVersion}
+              onRead={setWinRead}
+              onInvoice={async w => {
+                rememberWinInvoice(w.id, String(c.taskId));
+                navigate(
+                  `/money?${new URLSearchParams({
+                    tab: "invoices",
+                    client: String(c.taskId),
+                    win: w.id,
+                    amount: w.quotedUsd !== null ? String(w.quotedUsd) : "",
+                    description: w.offerName ?? w.kindLabel,
+                  })}`,
+                );
+                // The invoice desk links it once the invoice is requested.
+                return null;
+              }}
+              onSetMrr={({ monthlyUsd, winId }) =>
+                openDoor("mrr", String(c.taskId), String(c.name), {
+                  addMrrUsd: monthlyUsd,
+                  winId,
+                })
+              }
+            />
+
             <SectionCard
               title="Hot list"
               sub="One upsell, referral or review conversation per client a month."
@@ -3159,9 +3323,9 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               flush
             >
               {(
-                linkGroupsFor(liveList).find(g =>
-                  /changing a client/i.test(g.title),
-                )?.rows ?? []
+                linkGroupsFor(
+                  liveWithWins(liveList, Boolean(w56?.wins.open)),
+                ).find(g => /changing a client/i.test(g.title))?.rows ?? []
               ).map(r => (
                 <div
                   key={r.url + r.label}
@@ -3175,7 +3339,12 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                       {r.note}
                     </span>
                   ) : null}
-                  <OldForm url={oldFormOf(r, liveList)} />
+                  <OldForm
+                    url={oldFormOf(
+                      r,
+                      liveWithWins(liveList, Boolean(w56?.wins.open)),
+                    )}
+                  />
                 </div>
               ))}
               <div className="px-4 py-3 sm:px-6">
@@ -3287,6 +3456,50 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
         }}
       />
       <TicketSheet ticket={ticketOpen} onClose={() => setTicketOpen(null)} />
+      {wapi && winOpen ? (
+        <LogWinSheet
+          open
+          onOpenChange={o => (o ? null : setWinOpen(null))}
+          api={wapi}
+          taskId={winOpen.taskId}
+          client={winOpen.name}
+          preset={winOpen.preset}
+          context={
+            winRead && String(clientRow?.taskId ?? "") === winOpen.taskId
+              ? winRead.context
+              : { proposals: [], deals: [] }
+          }
+          onSent={() => setWinsVersion(v => v + 1)}
+        />
+      ) : null}
+      {auth.client && clientRow && backOpen && life?.departureId ? (
+        <ReactivateSheet
+          open
+          onOpenChange={setBackOpen}
+          taskId={String(clientRow.taskId)}
+          client={String(clientRow.name)}
+          departure={{
+            id: life.departureId,
+            leftOn: life.leftOn,
+            reason: life.reason ?? null,
+            churnType: life.churnType ?? null,
+          }}
+          submit={(a, requestId) =>
+            reactivateClient(
+              auth.client as SupabaseClient,
+              String(clientRow.taskId),
+              life.departureId as number,
+              a,
+              requestId,
+            )
+          }
+          trail={ref => formTrail(auth.client as SupabaseClient, ref)}
+          onSent={() => {
+            setLifeVersion(v => v + 1);
+            setWinsVersion(v => v + 1);
+          }}
+        />
+      ) : null}
       {section === "client" ? null : (
         <PageHeader
           as={embedded ? "h2" : "h1"}
@@ -3382,8 +3595,73 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
           onDoor={openDoor}
           onTicket={setTicketOpen}
           onChanged={() => setLifeVersion(v => v + 1)}
+          onAskReceipt={
+            w56?.receipts.open
+              ? row =>
+                  row.taskId &&
+                  setSendOpen({
+                    taskId: String(row.taskId),
+                    name: row.clientName,
+                    preset: {
+                      formKey: "bank_receipt",
+                      origin: "billing",
+                      context: {
+                        part: "payment",
+                        partNo: 0,
+                        expectedAmount: row.amount,
+                        currency: row.currency,
+                        dueOn: null,
+                        manualPaymentId: row.id,
+                        dealResponseId: null,
+                      },
+                    },
+                  })
+              : undefined
+          }
         />
       )}
+
+      {/* Wins, receipts and returns on Today (WAVE56-CONTRACT.md 5.12). */}
+      {section === "today" ? (
+        <WinBands
+          bands={winBands}
+          onAction={b => {
+            const name =
+              clients.find(x => String(x.taskId) === b.taskId)?.name ??
+              b.text.replace(/^.*\((.*)\)$/, "$1");
+            if (
+              b.kind === "accepted_no_agreement" &&
+              b.taskId &&
+              b.ref.proposalId
+            )
+              navigate(
+                `/clients/${encodeURIComponent(b.taskId)}/proposals/${String(b.ref.proposalId)}`,
+              );
+            else if (b.kind === "invoice_paid_untied" && b.taskId)
+              navigate(`/clients/${encodeURIComponent(b.taskId)}?tab=money`);
+            else if (b.kind === "tie_waiting") navigate("/money?tab=wins");
+            else if (b.kind === "receipt_in" || b.kind === "receipt_checked")
+              navigate("/money?tab=billing");
+            else if (b.kind === "back" && b.taskId)
+              setTicketOpen({
+                type: "client_relaunch",
+                taskId: b.taskId,
+                name: String(name),
+                details: `${String(name)} is back in the cockpit: relaunch their ads.`,
+              });
+            else if (b.kind === "due_no_money" && b.taskId)
+              setSendOpen({
+                taskId: b.taskId,
+                name: String(name),
+                preset: {
+                  formKey: "bank_receipt",
+                  origin: "billing",
+                  context: b.ref,
+                },
+              });
+          }}
+        />
+      ) : null}
 
       {/* Client forms out and the client's voice on Today (WAVE34-CONTRACT.md 5.3). */}
       {section === "today" && (more?.invites || more?.voice) ? (
@@ -3899,38 +4177,45 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
             it gets added.
           </p>
           <div className="grid gap-4 lg:grid-cols-2 lg:gap-6">
-            {linkGroupsFor(liveList).map(g => (
-              <SectionCard key={g.title} title={g.title} sub={g.blurb} flush>
-                {g.rows.map(r => (
-                  <div
-                    key={r.url + r.label}
-                    className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 sm:px-6"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <ExtLink href={r.url} className="text-sm font-medium">
-                        {r.label}
-                      </ExtLink>
-                      {r.note && (
-                        <div className="text-xs text-muted-foreground">
-                          {r.note}
-                        </div>
-                      )}
-                      <OldForm url={oldFormOf(r, liveList)} />
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        void navigator.clipboard.writeText(r.url);
-                        toast.success("Link copied");
-                      }}
+            {linkGroupsFor(liveWithWins(liveList, Boolean(w56?.wins.open))).map(
+              g => (
+                <SectionCard key={g.title} title={g.title} sub={g.blurb} flush>
+                  {g.rows.map(r => (
+                    <div
+                      key={r.url + r.label}
+                      className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 sm:px-6"
                     >
-                      Copy
-                    </Button>
-                  </div>
-                ))}
-              </SectionCard>
-            ))}
+                      <div className="min-w-0 flex-1">
+                        <ExtLink href={r.url} className="text-sm font-medium">
+                          {r.label}
+                        </ExtLink>
+                        {r.note && (
+                          <div className="text-xs text-muted-foreground">
+                            {r.note}
+                          </div>
+                        )}
+                        <OldForm
+                          url={oldFormOf(
+                            r,
+                            liveWithWins(liveList, Boolean(w56?.wins.open)),
+                          )}
+                        />
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          void navigator.clipboard.writeText(r.url);
+                          toast.success("Link copied");
+                        }}
+                      >
+                        Copy
+                      </Button>
+                    </div>
+                  ))}
+                </SectionCard>
+              ),
+            )}
           </div>
         </div>
       )}
@@ -4335,7 +4620,11 @@ function MoneySection({
   const clients = Number(
     clientsEdit ?? saved?.clients ?? qualifyingFrom(snap.clients ?? []),
   );
-  const counts: Counts = { ...(saved?.counts ?? {}), ...countEdits };
+  // Waves 5-6 (4.8): with Log a win open, the four Rs read the wins ledger.
+  const fromWins = useWinCounts(client);
+  const counts: Counts = fromWins
+    ? fromWins
+    : { ...(saved?.counts ?? {}), ...countEdits };
   const pay = computePay(clients, churn, counts);
   const gap = target - pay.total;
   const closes = closeTheGap(gap);
@@ -4528,7 +4817,11 @@ function MoneySection({
 
       <SectionCard
         title="The four Rs, where the rest of the money is"
-        sub={FOUR_RS.map(x => `${x.r}: ${x.meaning}`).join(" · ")}
+        sub={
+          fromWins
+            ? `From your wins this month. ${FOUR_RS.map(x => `${x.r}: ${x.meaning}`).join(" · ")}`
+            : FOUR_RS.map(x => `${x.r}: ${x.meaning}`).join(" · ")
+        }
         flush
       >
         {EARNERS.map(e => {
@@ -4550,8 +4843,8 @@ function MoneySection({
                     {e.note}
                   </div>
                 )}
-                {e.form && (
-                  <ExtLink href={e.form} className="mt-0.5 text-xs">
+                {e.oldForm && !fromWins && (
+                  <ExtLink href={e.oldForm} className="mt-0.5 text-xs">
                     Log it in the form
                   </ExtLink>
                 )}
@@ -4560,22 +4853,32 @@ function MoneySection({
                 <span className="text-xs text-muted-foreground">
                   {rateLabel(e)}
                 </span>
-                <input
-                  className={field}
-                  value={String(n)}
-                  inputMode={e.kind === "share" ? "decimal" : "numeric"}
-                  aria-label={
-                    e.kind === "share"
-                      ? `${e.label}, how much`
-                      : `${e.label}, how many`
-                  }
-                  onChange={ev =>
-                    setCountEdits({
-                      ...countEdits,
-                      [e.id]: Number(ev.target.value) || 0,
-                    })
-                  }
-                />
+                {fromWins ? (
+                  <span
+                    className="w-24 text-right text-sm tabular-nums"
+                    data-from-wins={e.id}
+                    title="From your wins this month"
+                  >
+                    {e.kind === "share" ? usd(n) : n}
+                  </span>
+                ) : (
+                  <input
+                    className={field}
+                    value={String(n)}
+                    inputMode={e.kind === "share" ? "decimal" : "numeric"}
+                    aria-label={
+                      e.kind === "share"
+                        ? `${e.label}, how much`
+                        : `${e.label}, how many`
+                    }
+                    onChange={ev =>
+                      setCountEdits({
+                        ...countEdits,
+                        [e.id]: Number(ev.target.value) || 0,
+                      })
+                    }
+                  />
+                )}
                 <span className="w-20 text-right font-semibold tabular-nums">
                   {usd(earned(e, n))}
                 </span>
@@ -4899,6 +5202,93 @@ export function useDoors(client: SupabaseClient | null): Doors | null {
   return doors;
 }
 
+/**
+ * "From your wins" (WAVE56-CONTRACT.md 4.8): this month's wins counted for
+ * the four Rs; null while Log a win is not open or the read fails, so the
+ * typed numbers stay.
+ */
+function useWinCounts(client: SupabaseClient | null): Counts | null {
+  const doors = useW56Doors(client);
+  const [counts, setCounts] = useState<Counts | null>(null);
+  const open = Boolean(doors?.wins.open);
+  useEffect(() => {
+    if (!client || !open) return;
+    let live = true;
+    const today = kuwaitToday();
+    void winsListRead(client, `${today.slice(0, 8)}01`, today)
+      .then(
+        r =>
+          live &&
+          setCounts(
+            countsFromWins(r.wins.map(w => ({ ...w, kind: String(w.kind) }))),
+          ),
+      )
+      .catch(() => live && setCounts(null));
+    return () => {
+      live = false;
+    };
+  }, [client, open]);
+  return open ? counts : null;
+}
+
+/** Waves 5-6's doors with why each is closed, read once per page load. */
+let w56Read: { client: SupabaseClient; read: Promise<W56Doors> } | null = null;
+
+export function useW56Doors(client: SupabaseClient | null): W56Doors | null {
+  const [doors, setDoors] = useState<W56Doors | null>(null);
+  useEffect(() => {
+    if (!client) {
+      setDoors({ ...W56_CLOSED });
+      return;
+    }
+    if (!w56Read || w56Read.client !== client)
+      w56Read = { client, read: formDoorsW56(client) };
+    let live = true;
+    void w56Read.read.then(d => {
+      if (live) setDoors(d);
+    });
+    return () => {
+      live = false;
+    };
+  }, [client]);
+  return doors;
+}
+
+/**
+ * Today's wins and receipts bands (5.12): read only while the wins door is
+ * open, every 5 minutes on Today; a failed read shows no band, never a guess.
+ */
+function useWinBands(
+  client: SupabaseClient | null,
+  w56: W56Doors | null,
+  on: boolean,
+  ceo: boolean,
+  version: number,
+): Band[] {
+  const [rows, setRows] = useState<BandInput[]>([]);
+  const open = Boolean(w56?.wins.open);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: version reads again
+  useEffect(() => {
+    if (!client || !open || !on) return;
+    let live = true;
+    const read = () =>
+      winsToday(client)
+        .then(r => live && setRows(r))
+        .catch(() => live && setRows([]));
+    void read();
+    const t = setInterval(read, 5 * 60_000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [client, open, on, version]);
+  return useMemo(
+    () =>
+      open && on ? winTodayBands(rows, { ceo, today: kuwaitToday() }) : [],
+    [rows, open, on, ceo],
+  );
+}
+
 /** Waves 3-4's doors; null until read, every one closed without a client. */
 export function useMoreDoors(client: SupabaseClient | null): MoreDoors | null {
   const [more, setMore] = useState<MoreDoors | null>(null);
@@ -5058,6 +5448,10 @@ type DoorOpen = {
   /** That survey is on the card only by the link's hidden id (nobody has checked it). */
   surveyUnverified?: boolean;
   noticeOn?: string | null;
+  /** Set MRR from a paid recurring win (WAVE56-CONTRACT.md 4.3.7): the monthly amount to add. */
+  addMrrUsd?: number | null;
+  /** That win, sent with the MRR edit as its win_id. */
+  winId?: string | null;
 };
 
 /** What opens the request form: the ticket type, the client and its details line. */
@@ -5210,6 +5604,26 @@ export function DoorSheet({
           source: "the termination survey",
         });
     }
+    // Add a paid recurring win's monthly amount to the card's MRR, reason Upsell (4.3.7).
+    if (form === "mrr" && typeof door?.addMrrUsd === "number") {
+      const i = rows.findIndex(r => r.key === "mrrUsd");
+      const card =
+        i >= 0 && typeof rows[i].value === "number"
+          ? (rows[i].value as number)
+          : 0;
+      const next = {
+        key: "mrrUsd",
+        value: Math.round((card + door.addMrrUsd) * 100) / 100,
+        source: "the card plus the upsell's monthly amount",
+      };
+      if (i >= 0) rows[i] = next;
+      else rows.push(next);
+      rows.push({
+        key: "reasonCat",
+        value: "upsell",
+        source: "the upsell win",
+      });
+    }
     if (form === "resume" && !has("nextDate")) {
       const card = read?.card ?? {};
       const next = suggestedNextDate(
@@ -5225,7 +5639,7 @@ export function DoorSheet({
         });
     }
     return rows;
-  }, [read, form, door?.noticeOn, useSurvey, today]);
+  }, [read, form, door?.noticeOn, door?.addMrrUsd, useSurvey, today]);
 
   const liveUntil = read?.grant?.until ?? door?.liveUntil ?? null;
   // The pause consent (WAVE34-CONTRACT.md 4.3.6): once the form is live, a
@@ -5297,7 +5711,13 @@ export function DoorSheet({
       loading={loading}
       prefillError={error}
       submit={(a, requestId) =>
-        SENDERS[door.form](client, door.taskId, a, requestId, options)
+        SENDERS[door.form](
+          client,
+          door.taskId,
+          door.winId ? { ...a, winId: door.winId } : a,
+          requestId,
+          options,
+        )
       }
       trail={ref => formTrail(client, ref)}
       aside={surveyCheck}
@@ -5693,10 +6113,13 @@ export function TodayBands({
   onDoor,
   onTicket,
   onChanged,
+  onAskReceipt,
 }: {
   client: SupabaseClient | null;
   doors: Doors | null;
   bands: ReturnType<typeof useTodayBands>;
+  /** Waves 5-6: ask the client for a logged transfer's receipt (the receipts door open). */
+  onAskReceipt?: (row: CheckRow) => void;
   types: Set<string> | null;
   clients: Client[];
   checker: boolean;
@@ -5717,7 +6140,15 @@ export function TodayBands({
         ? {
             // The band shows only with the door open (useTodayBands), so it is not read again.
             door: async () => Boolean(doors?.checks),
-            list: () => manualPaymentsToCheck(client),
+            list: async () => {
+              const { data, error } = await client.rpc(
+                "cockpit_manual_payments_to_check",
+              );
+              if (error) return manualPaymentsToCheck(client);
+              return (Array.isArray(data) ? data : []).map(toCheckRow);
+            },
+            receiptUrl: (responseId, field) =>
+              receiptUrl(client, responseId, field),
             check: p => checkManualPayment(client, p),
             ticketType: async () =>
               Boolean(types?.has("payment_receipt_check")),
@@ -6119,6 +6550,7 @@ export function TodayBands({
                 canCheck={checker}
                 framed={false}
                 onChecked={onChanged}
+                onAskReceipt={onAskReceipt}
                 renderTicket={row =>
                   row.taskId ? (
                     <TicketButton

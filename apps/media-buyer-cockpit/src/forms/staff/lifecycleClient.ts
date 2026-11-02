@@ -17,13 +17,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   Answers,
   CallPick,
-  FormKey,
   FormTrailRow,
   PauseConsent,
   Prefill,
+  SheetKey,
   SubmitRef,
+  W56Doors,
 } from "./formSheetCore";
-import { kuwaitDay, usd } from "./formSheetCore";
+import { ALL_CLOSED, kuwaitDay, readDoorsW56, usd } from "./formSheetCore";
 
 type Any = any;
 
@@ -178,6 +179,8 @@ export function mrrEdit(a: Answers, requestId: string) {
     reason: text(a.reason),
     effective: text(a.effective),
     requestId,
+    // A paid recurring win's "Add to MRR?" (WAVE56-CONTRACT.md 4.3.7): the live mrr kind's win_id key.
+    ...(text(a.winId) ? { winId: text(a.winId) } : {}),
   };
 }
 
@@ -383,7 +386,7 @@ const prefillRows = (v: unknown): Prefill[] =>
 /** One read per sheet open: each value with the sentence that says where it came from. */
 export async function formPrefill(
   c: SupabaseClient,
-  formKey: FormKey,
+  formKey: SheetKey,
   taskId: string,
 ): Promise<PrefillRead> {
   const d =
@@ -470,6 +473,62 @@ export async function formDoors(c: SupabaseClient): Promise<Doors> {
   } catch {
     return { ...NO_DOORS };
   }
+}
+
+/**
+ * Waves 5-6's six doors with why each is closed (WAVE56-CONTRACT.md 3.10):
+ * `missing` reads "Opens after the next cockpit update.", `off` reads "Not
+ * switched on yet.". Any error reads as every door missing, and nothing is
+ * called behind a closed one.
+ */
+export async function formDoorsW56(
+  c: SupabaseClient | null,
+): Promise<W56Doors> {
+  if (!c) return { ...ALL_CLOSED };
+  try {
+    return readDoorsW56(await rpc(c, "cockpit_form_doors"));
+  } catch {
+    return { ...ALL_CLOSED };
+  }
+}
+
+/** Client is back's arguments (4.12): one audited act, the departure named. */
+export function reactivateArgs(
+  taskId: string,
+  departureId: number,
+  a: Answers,
+  requestId: string,
+) {
+  return {
+    requestId,
+    taskId,
+    departureId,
+    returnOn: text(a.returnOn),
+    status: a.status === "Onboarding Booked" ? "Onboarding Booked" : "Active",
+    nextPaymentDate: text(a.nextPaymentDate),
+    mrrUsd: number(a.mrrUsd),
+    agreementUrl: text(a.agreementUrl),
+    why: text(a.why),
+    callId: text(a.callId),
+  };
+}
+
+/** Reopen a churned client (cockpit_client_lifecycle_confirm 'reactivate'). */
+export async function reactivateClient(
+  c: SupabaseClient,
+  taskId: string,
+  departureId: number,
+  a: Answers,
+  requestId: string,
+): Promise<SendResult> {
+  const data = await rpc(c, "cockpit_client_lifecycle_confirm", {
+    p_kind: "reactivate",
+    p_args: reactivateArgs(taskId, departureId, a, requestId),
+  });
+  return sendResult(
+    data,
+    `back from ${dayWords(a.returnOn) ?? "today"} as ${a.status === "Onboarding Booked" ? "onboarding again" : "Active"}`,
+  );
 }
 
 /** "Not leaving" on a notice, or "Handled" on a pause request, with what the client said. */
@@ -676,6 +735,11 @@ export type Lifecycle = {
   churnConfirmedAt: string | null;
   daysLate: number | null;
   ladderStep: string | null;
+  /** Waves 5-6 (20261102i): the confirmed departure's return day, once Client is back reopened it. */
+  returnedOn?: string | null;
+  /** The departure's reason and churn type, for Client is back's facts, when the read carries them. */
+  reason?: string | null;
+  churnType?: string | null;
 };
 
 /** One card's lifecycle row (cockpit_client_lifecycle_read); null when it has none. */
@@ -699,6 +763,9 @@ export async function lifecycleRead(
     churnConfirmedAt: text(r.churn_confirmed_at ?? r.churnConfirmedAt),
     daysLate: number(r.days_late ?? r.daysLate),
     ladderStep: text(r.ladder_step ?? r.ladderStep),
+    returnedOn: text(r.returned_on ?? r.returnedOn),
+    reason: text(r.churn_reason ?? r.reason),
+    churnType: text(r.churn_type ?? r.churnType),
   };
 }
 
