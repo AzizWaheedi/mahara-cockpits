@@ -207,7 +207,7 @@ export const LINK_GROUPS: LinkGroup[] = [
       {
         label: "Offboarding / exit call SOP",
         url: "https://www.skool.com/maharamedia-8165/classroom/68fc87a8?md=00c398fc4e774d00ab0ed3f426cab1bd",
-        note: "Before you ever send a cancellation form",
+        note: "Before you press Client is leaving: the old cancellation form is closed",
       },
       {
         label:
