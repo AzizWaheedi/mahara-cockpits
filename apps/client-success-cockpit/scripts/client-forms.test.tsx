@@ -228,6 +228,21 @@ describe("the presence line and the default channels, per form (3.3, 5.1)", () =
     expect(core.sendLabel("exit_survey")).toBe("Send the exit survey");
   });
 
+  test("the receipt and onboarding forms keep the cockpit's name, not the client's title", () => {
+    const receipt = { en: "Send your transfer receipt", ar: "أرسل لنا إيصال التحويل" };
+    const onboarding = { en: "Tell us about your business", ar: "" };
+    expect(core.sendLabel("bank_receipt", receipt)).toBe(
+      "Send the receipt request",
+    );
+    expect(core.formWords("bank_receipt", receipt)).toBe("Receipt request");
+    expect(core.sendLabel("onboarding", onboarding)).toBe(
+      "Send the onboarding form",
+    );
+    expect(core.networkSentence("bank_receipt", receipt)).toBe(
+      "Not sent. Check your connection and press Send the receipt request again.",
+    );
+  });
+
   test("a view read defensively: missing counts stay null, never 0", () => {
     const v = core.inviteView({
       taskId: "86exfix01",
