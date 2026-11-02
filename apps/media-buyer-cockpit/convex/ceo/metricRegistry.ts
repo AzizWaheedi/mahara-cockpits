@@ -960,7 +960,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "ratio",
     "Clients launched more than 60 days ago are not asked. Old Typeform answers with no client; canary answers.",
   ),
-  // The wins ledger (WAVE56-CONTRACT 4.8, 6.4): counted from cockpit_wins_v by the money refresh.
+  // The wins ledger (WAVE56-CONTRACT 4.8, 6.4): counted from cockpit_wins_v by the money refresh, so section money.
   ...(
     [
       ["clients.wins.reviews", "Google reviews", "review"],
@@ -973,7 +973,9 @@ export const DEFINITIONS: MetricDefinition[] = [
   ).map(([metric, label, kind]) =>
     d(
       metric,
-      "clients",
+      // Published by the money section (the money refresh reads cockpit_wins_v), so its definition
+      // sits under money: the publish refuses a value whose definition names another section.
+      "money",
       label,
       `Wins of kind ${kind} the CSM or the CEO logged in the cockpit with their proof, by win date in the window; a voided win does not count.`,
       `${TRIAGE} cockpit_wins_v (the wins ledger, cockpit_csm_wins)`,
