@@ -12,6 +12,7 @@ sweeps, sent by this function only, as mahara-club-bot.
 | Kickoff complete | #csm-general | the creative director |
 | Kickoff in, card not updated (20 minutes without the Kickoff Handoff comment and the card at Brand Blueprint Booked, both) | #csm-general | the CSM, the systems manager |
 | Second kickoff (a line in either) | | the CSM |
+| Still open from the kickoff (a line in either, after the handoff line: the setup questions not done yet, in the form's fixed words, or that nothing is open; no line without stored kickoff answers) | | |
 | Kickoff card updated (a reply under a late notice, once the card looks done and has the Kickoff Handoff comment) | its thread | nobody |
 | Brand Blueprint complete, or closed with a card update to check | #csm-general | the CSM |
 | Brand Blueprint completed, for media | #media-general | nobody |
@@ -75,6 +76,11 @@ there is work (`cockpit_slack_notices_kick()`).
    looks done, from what the late notice saw, never the post time) reads the comments too:
    it posts only once the comment is there, else it waits 10 minutes (not an
    attempt); the claim lets it go 48 hours after the kickoff.
+   Both kickoff variants carry the open setup items (Stage 4 plan B4) from the
+   queued facts' `openItems` (`cockpit_slack_notice_kickoff_facts`, read by
+   ref from the stored answers): `text.ts` prints an item only when it is one
+   of its fixed phrases (the form's own option labels) and counts anything
+   else, so a typed answer never reaches Slack. No list, no line.
 4. Tags resolve to `<@U...>`; a seat without a Slack id is looked up by email,
    and Slack's answer is kept in `cockpit_slack_people` for the Settings card;
    anything still missing is the role label in plain text, plus a

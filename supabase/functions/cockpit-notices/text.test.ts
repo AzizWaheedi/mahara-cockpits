@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { SERVICE_LABEL as BRIEF_SERVICE_LABEL } from "../../../apps/client-success-cockpit/src/present/blueprintBrief";
+import { KICKOFF_FIELDS } from "../../../apps/client-success-cockpit/src/forms/kickoff";
 import { CRITERIA as GRADE_CRITERIA } from "../cockpit-forms-api/prompts/grade.ts";
 import {
+  KICKOFF_OPEN_FIXED, KICKOFF_OPEN_PICKS, kickoffOpenLine, OPEN_ITEMS_SHOWN,
   CHURN_REASONS, CLIENT_FORM_KINDS, CRITERIA, cleanStatus, MONEY_KINDS, OFFER_WORDS, WIN_KIND_WORDS, FEEDBACK_KIND_WORDS, FEEDBACK_TOPIC_WORDS, cutAtWord, escapeSlack, kuwaitClock, kuwaitDay, kuwaitWhen, LIFECYCLE_KINDS, NOTICE_KINDS, type NoticeFacts, type NoticeKind, noticeLinks, noticeText, sampleFacts,
   SECTION_MAX, SERVICE_LABEL, type SlackBlock, type TextMention, VARIANTS, type Variant,
 } from "./text";
@@ -227,6 +229,104 @@ describe("every row of the copy table (contract 4.5)", () => {
   });
 });
 
+describe("the kickoff's open setup items (Stage 4 plan B4)", () => {
+  const kickoffFacts = base({ submittedAt: "2026-10-25T11:02:00Z", filledByRole: "the CSM", clientStatus: "Brand Blueprint Booked♠️", blueprintLink: true, handoffAt: "2026-10-25T11:04:00Z", commentCheck: "found", second: false, mentions: [CREATIVE] });
+  const late = { ...kickoffFacts, commentCheck: "missing", handoffAt: null, mentions: [CSM, SYSTEMS] };
+  const four = ["funded card not linked", "Google Calendar not connected", "Facebook access: Waiting on Client", "contract: Sent and waiting on client"];
+  const fourLine = "Still open from the kickoff: funded card not linked; Google Calendar not connected; Facebook access: Waiting on Client; contract: Sent and waiting on client.";
+  const NONE = "Nothing open from the kickoff's setup questions.";
+  // One open option for every question, in the form's order.
+  const eight = [
+    "funded card not linked", "Google Calendar not connected", "Facebook access: Need Tech Help", "WhatsApp CRM sync: Needs Integrating",
+    "Mahara OS access: Didn't Receive Access", "training course: Waiting On Client", "contract: Adjustments requested by client", "lead file missing",
+  ];
+
+  test("complete: the items, one line after the handoff line; the notification text is unchanged", () => {
+    const { text, blocks } = noticeText("kickoff", "complete", { ...kickoffFacts, openItems: four });
+    expect(text).toBe(`Kickoff complete: Acme Interiors. Next is the Brand Blueprint call. Ref ${REF}`);
+    expect(lines(blocks)).toEqual([
+      "*Kickoff complete: Acme Interiors*",
+      "Filled by the CSM on Sun 25 Oct, 14:02.",
+      "The card shows Brand Blueprint Booked, and the Brand Blueprint link.",
+      "The Kickoff Handoff comment is on the card (14:04).",
+      fourLine,
+      "Next is the Brand Blueprint call. <@U0B2SHGS1JA>",
+    ]);
+    // A second kickoff's line comes after it.
+    const second = lines(noticeText("kickoff", "complete", { ...kickoffFacts, openItems: four, second: true }).blocks);
+    expect(second[4]).toBe(fourLine);
+    expect(second[5]).toStartWith("This is the second kickoff for this client.");
+  });
+  test("late: the items after the handoff line (which carries the tags), before the second kickoff's line", () => {
+    for (const commentCheck of ["missing", "unread", "found"]) {
+      const out = lines(noticeText("kickoff", "late", { ...late, commentCheck, openItems: four, second: true }).blocks);
+      expect(out[2]).toEndWith("Do not send the kickoff again. <@U0C5JHUCTPG> <@U0AS90SHMH8>");
+      expect(out.slice(3)).toEqual([fourLine, "This is the second kickoff for this client. Do not send it a third time."]);
+    }
+  });
+  test("every answered item done: the nothing-open line; a done option is never printed as open", () => {
+    expect(lines(noticeText("kickoff", "complete", { ...kickoffFacts, openItems: [] }).blocks)[4]).toBe(NONE);
+    expect(lines(noticeText("kickoff", "late", { ...late, openItems: [] }).blocks)[3]).toBe(NONE);
+    const done = ["Facebook access: Access Confirmed", "WhatsApp CRM sync: Not Integrating", "Mahara OS access: Doesn't Want To", "training course: Confirmed", "contract: NA - already signed"];
+    expect(lines(noticeText("kickoff", "complete", { ...kickoffFacts, openItems: done }).blocks)[4]).toBe(NONE);
+    expect(lines(noticeText("kickoff", "complete", { ...kickoffFacts, openItems: [...done, "funded card not linked"] }).blocks)[4]).toBe("Still open from the kickoff: funded card not linked.");
+  });
+  test("no stored kickoff answers (no list, or a notice queued before B4): no line at all", () => {
+    const plain = lines(noticeText("kickoff", "complete", kickoffFacts).blocks);
+    expect(plain).toHaveLength(5);
+    for (const openItems of [undefined, null, "funded card not linked", { a: 1 }, 0]) {
+      expect(lines(noticeText("kickoff", "complete", { ...kickoffFacts, openItems }).blocks)).toEqual(plain);
+      const l = lines(noticeText("kickoff", "late", { ...late, openItems }).blocks);
+      expect(l).toHaveLength(3);
+      expect(l.join("\n")).not.toContain("open from the kickoff");
+    }
+  });
+  test("long lists stay readable: one item per question is one line in the form's order; repeats are named once; past eight the rest are counted", () => {
+    const all = lines(noticeText("kickoff", "complete", { ...kickoffFacts, openItems: eight }).blocks)[4];
+    expect(all).toBe(
+      "Still open from the kickoff: funded card not linked; Google Calendar not connected; Facebook access: Need Tech Help; WhatsApp CRM sync: Needs Integrating; Mahara OS access: Didn't Receive Access; training course: Waiting On Client; contract: Adjustments requested by client; lead file missing.",
+    );
+    expect(all.length).toBeLessThan(320);
+    expect(kickoffOpenLine([...four, ...four])).toBe(fourLine);
+    // Every phrase there is, twice, and one typed answer: eight named, the rest counted, nothing typed quoted.
+    const every = [...KICKOFF_OPEN_FIXED, ...KICKOFF_OPEN_PICKS.flatMap(p => p.open.map(o => `${p.words}: ${o}`))];
+    expect(every).toHaveLength(19);
+    const long = kickoffOpenLine([...every, ...every, "Facebook access: SECRET-TYPED-1"]) ?? "";
+    expect(long.split("; ")).toHaveLength(OPEN_ITEMS_SHOWN + 1);
+    expect(long).toEndWith("; 12 more, see the kickoff in the cockpit.");
+    expect(long).not.toContain("SECRET");
+    expect(long.length).toBeLessThan(320);
+    expect(lines(noticeText("kickoff", "complete", { ...kickoffFacts, openItems: [...every, ...every] }).blocks)).toHaveLength(6);
+  });
+  test("an item that is not a fixed phrase is counted, never quoted, and never read as nothing open", () => {
+    expect(kickoffOpenLine(["Facebook access: my cousin <@U999> will do it", 42, null])).toBe("Still open from the kickoff: 3 items, see the kickoff in the cockpit.");
+    expect(kickoffOpenLine([""])).toBe("Still open from the kickoff: 1 item, see the kickoff in the cockpit.");
+    expect(kickoffOpenLine(["lead file missing", "SECRET-TYPED-2"])).toBe("Still open from the kickoff: lead file missing; 1 more, see the kickoff in the cockpit.");
+    // Spacing, case and a curly apostrophe still match a fixed phrase, printed in its own words.
+    expect(kickoffOpenLine(["  mahara os access:  Didn\u2019t receive access ", "TRAINING COURSE: waiting on client"])).toBe(
+      "Still open from the kickoff: Mahara OS access: Didn't Receive Access; training course: Waiting On Client.",
+    );
+  });
+  test("the fixed phrases are the form's own: each pick's open and done options are its labels, label for label", () => {
+    const byRef = new Map(KICKOFF_FIELDS.filter(f => f.ref).map(f => [f.ref as string, f]));
+    for (const p of KICKOFF_OPEN_PICKS) {
+      const field = byRef.get(p.ref);
+      expect(field?.type).toBe("choice");
+      const labels = (field?.options ?? []).map(o => o.label);
+      expect([...p.open, ...p.done].sort()).toEqual([...labels].sort());
+      expect(p.open.filter(o => p.done.includes(o))).toEqual([]);
+    }
+    // The yes/no questions and the lead file questions are on the form too.
+    for (const ref of ["8bee68fc-0764-41a8-b90a-db2a3f401e9d", "3bebf47d-c00b-4f26-8624-933b84e42ebc", "dff79b66-89dd-43ef-9664-3fa4e6a61d69", "85d7ebb5-ce36-4ac3-aff8-3ce464737abd", "86a6cce0-9111-4d98-97e7-7af5b6d518c8"]) {
+      expect(byRef.has(ref)).toBe(true);
+    }
+  });
+  test("a test post shows the line from the sample's items", () => {
+    const { blocks } = noticeText("kickoff", "complete", { ...sampleFacts("kickoff"), ref: REF, rehearsal: true });
+    expect(section(blocks)).toContain("\nStill open from the kickoff: funded card not linked; Facebook access: Waiting on Client.\n");
+  });
+});
+
 describe("rules every notice keeps", () => {
   const all: [NoticeKind, Variant][] = NOTICE_KINDS.flatMap(k => VARIANTS[k].map(v => [k, v] as [NoticeKind, Variant]));
   const nasty = {
@@ -248,7 +348,9 @@ describe("rules every notice keeps", () => {
     summary: "SECRET-SUMMARY-5",
     payment: "SECRET-PAYMENT-6",
     price: "SECRET-PRICE-7",
-    mentions: [{ label: "the CSM & <friends>", slackId: null }, { label: "x", slackId: "<!channel>" }],
+    // Typed text in the kickoff's open items is counted, never quoted.
+    openItems: ["funded card not linked", "SECRET-OPEN-8 <!channel>", "contract: SECRET-OPEN-9"],
+    mentions:[{ label: "the CSM & <friends>", slackId: null }, { label: "x", slackId: "<!channel>" }],
   };
   test.each(all)("%s %s: text ends with the Ref, everything is escaped, no secret key is read, no broadcast", (kind, variant) => {
     const { text, blocks } = noticeText(kind, variant, nasty);

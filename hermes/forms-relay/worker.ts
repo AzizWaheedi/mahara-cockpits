@@ -5,9 +5,10 @@
  *   bun hermes/forms-relay/worker.ts run
  *
  * Keys by name only, first file wins, from FORMS_RELAY_ENV_FILES (run.sh points it at the native runtime file):
- * SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GOOGLE_APPLICATION_CREDENTIALS, GITHUB_DISPATCH_TOKEN. The switch
- * FORMS_RELAY_APPLY only from ~/.forms-relay/switches.env; the sheet and dispatch settings only from
- * ~/.forms-relay/config.env (filled at D-S4.0 from the saved Make 13 blueprint). Never a value printed.
+ * SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GITHUB_DISPATCH_TOKEN. The switch FORMS_RELAY_APPLY only from
+ * ~/.forms-relay/switches.env; the dispatch settings only from ~/.forms-relay/config.env (filled at D-S4F from
+ * the saved Make 13 blueprint). No Google key and no Client Data setting: the relay writes nothing to Client
+ * Data (20261102l), so old CLIENT_DATA_* lines in config.env are ignored. Never a value printed.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -15,7 +16,6 @@ import {
   ledgerFetch,
   makeDb,
   makeGithub,
-  makeSheet,
   SUPABASE,
   type Env,
 } from "./providers.ts";
@@ -24,7 +24,6 @@ import { type Deps, readConfig, runOnce, type Row } from "./relay.ts";
 export const ENV_KEYS = [
   "SUPABASE_URL",
   "SUPABASE_SERVICE_ROLE_KEY",
-  "GOOGLE_APPLICATION_CREDENTIALS",
   "GITHUB_DISPATCH_TOKEN",
 ] as const;
 
@@ -97,14 +96,11 @@ export type DoctorDeps = {
   apply: boolean;
   config: ReturnType<typeof readConfig>;
   counts: () => Promise<Row>;
-  sheetRead: () => Promise<unknown[][]>;
   repoStatus: () => Promise<number>;
 };
 
-/** Reads only: the keys by name, the credential file's shape, the config, the database, one sheet read, one repository read. */
-export async function doctor(
-  d: DoctorDeps,
-): Promise<{
+/** Reads only: the keys by name, the config, the database, one repository read. */
+export async function doctor(d: DoctorDeps): Promise<{
   ok: boolean;
   problems: string[];
   keys: Record<string, boolean>;
@@ -115,22 +111,6 @@ export async function doctor(
   for (const k of ENV_KEYS)
     if (!d.env[k]) problems.push(`${k} is not set in the relay's key files.`);
   const checks: Row = { apply: d.apply };
-  if (d.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    try {
-      const account = JSON.parse(
-        readFileSync(d.env.GOOGLE_APPLICATION_CREDENTIALS, "utf8"),
-      );
-      if (
-        typeof account?.client_email !== "string" ||
-        typeof account?.private_key !== "string"
-      )
-        problems.push(
-          "The Google credential file has no client_email or private_key.",
-        );
-    } catch {
-      problems.push("The Google credential file could not be read.");
-    }
-  }
   problems.push(...d.config.problems);
   try {
     checks.outbox = (await d.counts())?.byState ?? {};
@@ -138,15 +118,6 @@ export async function doctor(
     problems.push(
       `The relay outbox could not be read: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`,
     );
-  }
-  if (d.config.config && d.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    try {
-      checks.clientDataRows = (await d.sheetRead()).length;
-    } catch (e) {
-      problems.push(
-        `Client Data could not be read: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`,
-      );
-    }
   }
   if (d.config.config && d.env.GITHUB_DISPATCH_TOKEN) {
     try {
@@ -193,9 +164,6 @@ async function main() {
     db.receipt,
     `forms-relay:${cmd}:${crypto.randomUUID()}`,
   );
-  const sheet = config.config
-    ? makeSheet(read.env, config.config, fetcher)
-    : null;
   const github = config.config
     ? makeGithub(read.env, config.config, fetcher)
     : null;
@@ -205,8 +173,6 @@ async function main() {
       apply,
       config,
       counts: () => db.rpc("cockpit_form_relay_counts"),
-      sheetRead: () =>
-        sheet ? sheet.read() : Promise.reject(new Error("No config.")),
       repoStatus: () =>
         github
           ? github.repoReadable()
@@ -226,10 +192,6 @@ async function main() {
     config: config.config,
     configProblems: config.problems,
     db,
-    sheet: sheet ?? {
-      read: async () => [],
-      append: async () => ({ ok: false, status: 0, definite: true }),
-    },
     github: github ?? {
       dispatch: async () => ({ ok: false, status: 0, definite: true }),
     },

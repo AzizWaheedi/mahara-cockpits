@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
-import { FORMS_NOT_A_CARD, HAPPINESS_OPTIONS, SAY_FORMS, sha256 } from "./forms";
+import { CARD_FACTS, FORMS_NOT_A_CARD, HAPPINESS_OPTIONS, SAY_FORMS, sha256 } from "./forms";
 import {
   anotherRunNote,
   boardAge,
@@ -890,7 +890,14 @@ describe("the forms job beside the others", () => {
   function formsHarness(
     env: Record<string, string>,
     items: any[],
-    opts: { now?: () => number; fail?: (c: Call) => Error | undefined; begin?: (params: any) => any; inputs?: () => any } = {},
+    opts: {
+      now?: () => number;
+      fail?: (c: Call) => Error | undefined;
+      begin?: (params: any) => any;
+      inputs?: () => any;
+      /** Answer a call before the harness's own card does (undefined: the harness answers). */
+      answer?: (c: Call) => any;
+    } = {},
   ) {
     const calls: Call[] = [];
     const rpcs: { name: string; params: any }[] = [];
@@ -922,6 +929,8 @@ describe("the forms job beside the others", () => {
           calls.push(c);
           const failure = opts.fail?.(c);
           if (failure) throw failure;
+          const own = opts.answer?.(c);
+          if (own !== undefined) return own;
           const task = /^task\/([^/]+)$/.exec(path)?.[1];
           if (method === "GET" && task) return cardTask(task, days.get(task), happy.get(task));
           // ClickUp keeps a date-only value at 03:00Z on its day and answers a dropdown with its orderindex.
@@ -965,6 +974,61 @@ describe("the forms job beside the others", () => {
     const badOut = await runForms(bad.deps);
     expect(bad.releases().map(r => r.p_note)).toEqual(["Held: kickoff card writes are not switched on."]);
     expect(badOut.note).toContain("CLICKUP_WRITEBACK_FORMS_KEYS names something that is not checkin, kickoff or onboarding");
+  });
+
+  it("card_facts (plan B8): a row that writes one field and keeps another settles delivered with the kept sentence as its error", async () => {
+    // Review (writer): the card has Consultation Types = Online, the form says In Office, ADs Platform is empty.
+    const CONSULT = "45fdd2ea-f83c-4721-bce7-2e6187a43541";
+    const ADS = "2de15aa5-7fe9-48bf-86a1-e4cfee1306c9";
+    const optionOf = (fieldId: string, name: string) =>
+      Object.entries(CARD_FACTS[fieldId].options ?? {}).find(([, n]) => n === name)?.[0] as string;
+    const consultOptions = Object.keys(CARD_FACTS[CONSULT].options ?? {});
+    const adsOptions = Object.keys(CARD_FACTS[ADS].options ?? {});
+    const factsRow = (id: string, fields: any[]) => {
+      const plan = { taskId: CARD, fields };
+      return {
+        ...row("happiness"),
+        id,
+        payload: { formKey: "kickoff", responseId: RESPONSE, effectId: `e-${id}`, effectKey: "card_facts", taskId: CARD, clientName: "Acme Interiors", ...plan },
+        effect: { id: `e-${id}`, state: "queued", plan },
+      };
+    };
+    const consult = { fieldId: CONSULT, kind: "labels", label: "Consultation Types", optionIds: [optionOf(CONSULT, "In Office")], onlyIfEmpty: true, source: "kickoff" };
+    const ads = { fieldId: ADS, kind: "drop_down", label: "ADs Platform", optionId: optionOf(ADS, "Facebook/Meta"), onlyIfEmpty: true, source: "kickoff" };
+    /** A card with the two fields, keeping what it is sent: labels by option id, a dropdown by its orderindex. */
+    const factsCard = (values: Map<string, unknown>) => (c: Call) => {
+      if (c.method === "GET" && c.path === `task/${CARD}`)
+        return {
+          id: CARD,
+          list: { id: CLIENTS_LIST },
+          custom_fields: [
+            { id: CONSULT, type: "labels", type_config: { options: consultOptions.map(id => ({ id })) }, value: values.get(CONSULT) },
+            { id: ADS, type: "drop_down", type_config: { options: adsOptions.map((id, orderindex) => ({ id, orderindex })) }, value: values.get(ADS) },
+          ],
+        };
+      if (c.method === "POST" && c.path === `task/${CARD}/field/${ADS}`) values.set(ADS, adsOptions.indexOf(c.body?.value));
+      else if (c.method === "POST" && c.path === `task/${CARD}/field/${CONSULT}`) values.set(CONSULT, c.body?.value);
+      else return undefined;
+      return {};
+    };
+    const said = "kept: the card already has a value for Consultation Types; Consultation Types differs from the form, so check it on the card";
+    const env = { ...LIVE, CLICKUP_WRITEBACK_FORMS_KEYS: "checkin,kickoff" };
+    const mixed = formsHarness(env, [factsRow("q-facts", [consult, ads])], {
+      answer: factsCard(new Map<string, unknown>([[CONSULT, [optionOf(CONSULT, "Online")]]])),
+    });
+    const out = await runForms(mixed.deps);
+    expect(out.counts).toMatchObject({ delivered: 1, failed: 0 });
+    expect(mixed.writes().map(c => c.path)).toEqual([`task/${CARD}/field/${ADS}`]);
+    const settled = mixed.saves().at(-1);
+    expect(settled).toMatchObject({ state: "delivered", error: said });
+    // The step carries it too: the queue trigger copies progress.steps.card_facts into the effect's receipt.step.
+    expect(settled.progress.steps.card_facts).toMatchObject({ state: "done", note: said });
+    // Every field written: no note, a delivered row with no error, as before.
+    const clean = formsHarness(env, [factsRow("q-facts-clean", [consult, ads])], { answer: factsCard(new Map()) });
+    await runForms(clean.deps);
+    expect(clean.writes()).toHaveLength(2);
+    expect(clean.saves().at(-1)).toMatchObject({ state: "delivered", error: null });
+    expect(clean.saves().at(-1).progress.steps.card_facts.note).toBeUndefined();
   });
 
   it("JOBS adds forms and forms_doctor (and billing_doctor after them, waves 1-2)", () => {

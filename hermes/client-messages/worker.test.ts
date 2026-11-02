@@ -10,11 +10,12 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProviderError, Transport } from "../ad-billing-guard/transport.ts";
-import { CARD_GROUP_FIELD, maskInviteLink, sha256, type Verdict } from "./core.ts";
+import { CARD_GROUP_FIELD, maskFolder, maskInviteLink, sha256, type Verdict } from "./core.ts";
 import type { Db, Health } from "./db.ts";
 import type { OldSenders } from "./oldSenders.ts";
 import { readMessage, type SendOutcome, type WaMessage } from "./whapi.ts";
 import {
+  BAD_FOLDER,
   BAD_GROUP,
   CARD_BAD_ID,
   CARD_CACHE_MS,
@@ -37,6 +38,8 @@ import {
   LINK_ALREADY_MADE,
   LINK_FORM_CLOSED,
   LINK_NOT_MADE,
+  NO_FOLDER,
+  NO_FOLDER_COLUMN,
   NO_GROUP,
   NOT_A_CARD,
   NOTHING,
@@ -1688,6 +1691,7 @@ describe("the doctor", () => {
       card: A,
       clientData: "present, 0001",
       cardField: "same",
+      driveLink: "no Google Drive Link column",
     });
     expect(JSON.stringify(r)).not.toContain(G1);
     const none = await ok({ task: "86nogroup1" });
@@ -1707,6 +1711,7 @@ describe("the doctor", () => {
       card: A,
       clientData: "present, 0001",
       cardField: unread,
+      driveLink: "no Google Drive Link column",
     });
     expect((await ok({ providers, task: "86nogroup1" })).task).toEqual({
       card: "86nogroup1",
@@ -1847,5 +1852,202 @@ describe("phase 3 and phase 4 messages (docs/forms/WAVE56-CONTRACT.md 4.13.3, 4.
     writeFileSync(path, "CLIENT_MESSAGES_APPLY=true\nCLIENT_MESSAGES_KINDS=recap_checkin,phase4\nCLIENT_MESSAGES_ONLY_CARDS=86eywg1cq\n");
     expect(readSwitches(path)).toMatchObject({ apply: true, kinds: ["recap_checkin", "phase4"], onlyCards: ["86eywg1cq"], error: null });
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("the content folder in phase 3 and phase 4 messages (docs/forms/WAVE56-CONTRACT.md D-S4.0)", () => {
+  // Make 13 [48]'s text verbatim, its map expression as {map_link} (filled by the database at draft) and its
+  // Client Data column H expression as {content_folder} (filled here at send).
+  const TEMPLATE =
+    "أكملنا المرحلة الثانية: نموذج التعريف بالنشاط.\nالمرحلة التالية: مكالمة التعريف.\n\nاطّلع على المطلوب منك وما سنعمل عليه بعد ذلك:\n{map_link}\n\n*إذا ما رفعتوا المحتوى للحين:*\nارفعوا كل الصور والفيديوهات في مجلد المحتوى الموحد عشان توصل مباشرة لفريق الإبداع والمونتاج:\n{content_folder}";
+  const PHASE3 = TEMPLATE.replace("{map_link}", "https://mahara-onboarding-map.vercel.app/?phase=3&cid=86abc0001");
+  const FOLDER = "https://drive.google.com/drive/folders/1InventedFolderId0000";
+  const OTHER = "https://drive.google.com/drive/folders/1OtherCardFolder0000";
+  const HEAD = ["Status", "Client Name", "Clickup ID", "GHL ID", "GHL API", "WA GROUP ID", "Report Document ID", "Google Drive Link", "Sheet Link"];
+  const sheetWith = (link: unknown) => [
+    HEAD,
+    ["Active", "Acme Interiors", A, "", "", G1, "", link, ""],
+    ["Active", "Beta Build", "86abc0002", "", "", G2, "", OTHER, ""],
+  ];
+  const sent = PHASE3.replace("{content_folder}", FOLDER);
+  const phaseClaim = { ...claimRow, kind: "phase3", body: PHASE3, bodySha256: sha256(PHASE3) };
+  const phaseWork = { unknowns: [], unread: [], approved: [{ ...approvedRow, kind: "phase3" }] };
+  const ON: Switches = { ...APPLY, kinds: ["recap_checkin", "phase3", "phase4"] };
+
+  test("the card's Google Drive Link goes where the placeholder is, in the one POST only; the stored text keeps it", async () => {
+    const w = world({
+      switches: ON,
+      sheet: sheetWith(` ${FOLDER} `),
+      work: phaseWork,
+      claim: { busy: false, rows: [phaseClaim] },
+      messages: [{ id: "wamid-test-1", fromMe: true, from: null, body: sent, at: null }],
+    });
+    const r = await runOnce(w.deps);
+    expect(w.names()).toEqual(["sweep", "work", "claim", "intent", "result", "result"]);
+    expect(w.sends).toEqual([{ group: G1, body: sent }]);
+    expect(sent.endsWith(`والمونتاج:\n${FOLDER}`)).toBe(true);
+    expect(sent).not.toContain("{content_folder}");
+    expect(w.rpcs.filter(c => c.name.endsWith("_result")).map(c => c.args.p_outcome)).toEqual(["sent", "read_back"]);
+    expect(r.ok).toBe(true);
+    expect(w.healths[0].note).toBe("Sent one phase 3 message to the client's group (WhatsApp group ending 0001).");
+    // The link is in nothing the run writes or reports; the claimed text is the template.
+    const written = JSON.stringify({ healths: w.healths, report: r, rpcs: w.rpcs });
+    expect(written.includes(FOLDER)).toBe(false);
+    expect(written.includes("drive.google.com")).toBe(false);
+    expect(phaseClaim.body).toContain("{content_folder}");
+  });
+
+  test("phase 4 the same way; a phase text without the placeholder sends unchanged, with or without a link", async () => {
+    const PHASE4 = PHASE3.replace("المرحلة الثانية", "المرحلة الثالثة");
+    const four = world({
+      switches: ON,
+      sheet: sheetWith(FOLDER),
+      work: { ...phaseWork, approved: [{ ...approvedRow, kind: "phase4" }] },
+      claim: { busy: false, rows: [{ ...phaseClaim, kind: "phase4", body: PHASE4, bodySha256: sha256(PHASE4) }] },
+    });
+    await runOnce(four.deps);
+    expect(four.sends).toEqual([{ group: G1, body: PHASE4.replace("{content_folder}", FOLDER) }]);
+    const plain = PHASE3.replace("\n{content_folder}", "");
+    for (const link of [FOLDER, "", "Drive"]) {
+      const w = world({
+        switches: ON,
+        sheet: sheetWith(link),
+        work: phaseWork,
+        claim: { busy: false, rows: [{ ...phaseClaim, body: plain, bodySha256: sha256(plain) }] },
+      });
+      await runOnce(w.deps);
+      expect(w.sends).toEqual([{ group: G1, body: plain }]);
+    }
+  });
+
+  test("no link, no link there, or no column: refused before the wait, nothing sent, no card read", async () => {
+    for (const [values, reason] of [
+      [sheetWith(""), NO_FOLDER],
+      [sheetWith("   "), NO_FOLDER],
+      [sheetWith("Drive folder"), BAD_FOLDER],
+      [sheetWith(`see ${FOLDER}`), BAD_FOLDER],
+      [sheetWith("ftp://drive.google.com/x"), BAD_FOLDER],
+      [sheetWith(FOLDER).map(r => r.slice(0, 7)), NO_FOLDER_COLUMN],
+    ] as const) {
+      const w = world({ switches: ON, sheet: values as unknown[][], work: phaseWork, claim: { busy: false, rows: [phaseClaim] } });
+      const r = await runOnce(w.deps);
+      expect(w.sends).toEqual([]);
+      expect(w.sleeps).toEqual([]);
+      expect(w.keys.some(k => k.includes(" task "))).toBe(false);
+      expect(w.names()).toEqual(["sweep", "work", "claim", "result"]);
+      expect(w.rpcs.at(-1)?.args).toMatchObject({ p_outcome: "refused", p_reason: reason });
+      expect(r).toMatchObject({ ok: true, note: reason });
+      expect(r.detail.refused).toBe(1);
+    }
+    // Plain and actionable, in the style of NO_GROUP: what is missing, where it goes, then try again.
+    for (const s of [NO_FOLDER, BAD_FOLDER, NO_FOLDER_COLUMN]) {
+      expect(s).toContain("Google Drive Link");
+      expect(s.endsWith("then try again.")).toBe(true);
+    }
+    for (const s of [NO_FOLDER, BAD_FOLDER]) expect(s).toContain("column H");
+    // No header means column H may now be another column: the tech lead checks, as for
+    // COLUMN_MOVED, and no one is told to rename a column by its letter.
+    expect(NO_FOLDER_COLUMN).toContain("The tech lead checks the sheet");
+    expect(NO_FOLDER_COLUMN).not.toMatch(/column [A-Z]\b|\bName column\b/);
+  });
+
+  test("column H deleted: the Sheet Link that shifts into H is never sent as the content folder", async () => {
+    const SHEET = "https://docs.google.com/spreadsheets/d/1InventedSheetId0000";
+    const values = sheetWith(FOLDER).map((r, i) => [...r.slice(0, 7), i === 0 ? r[8] : SHEET]);
+    expect(values[0][7]).toBe("Sheet Link");
+    const w = world({ switches: ON, sheet: values, work: phaseWork, claim: { busy: false, rows: [phaseClaim] } });
+    const r = await runOnce(w.deps);
+    expect(w.sends).toEqual([]);
+    expect(w.rpcs.at(-1)?.args).toMatchObject({ p_outcome: "refused", p_reason: NO_FOLDER_COLUMN });
+    expect(r).toMatchObject({ ok: true, note: NO_FOLDER_COLUMN });
+    expect(JSON.stringify({ healths: w.healths, report: r, rpcs: w.rpcs }).includes(SHEET)).toBe(false);
+  });
+
+  test("the group check comes first: no group is refused with its own sentence", async () => {
+    const values = sheetWith(FOLDER).map((r, i) => (i === 1 ? r.map((c, j) => (j === 5 ? "" : c)) : r));
+    const w = world({ switches: ON, sheet: values, work: phaseWork, claim: { busy: false, rows: [phaseClaim] } });
+    expect((await runOnce(w.deps)).note).toBe(NO_GROUP);
+    expect(w.sends).toEqual([]);
+  });
+
+  test("the fingerprint check stays on the stored text, the template", async () => {
+    const w = world({
+      switches: ON,
+      sheet: sheetWith(FOLDER),
+      work: phaseWork,
+      claim: { busy: false, rows: [{ ...phaseClaim, bodySha256: sha256(sent) }] },
+    });
+    await runOnce(w.deps);
+    expect(w.sends).toEqual([]);
+    expect(w.rpcs.at(-1)?.args).toMatchObject({ p_outcome: "release" });
+  });
+
+  test("group searches mask the exact link: an unknown's reconcile and a read-back by fingerprint find the sent text", async () => {
+    const unread = { ...phaseClaim, providerId: "wamid-other", sentAt: "2026-10-29T10:00:00Z" };
+    const unknown = { ...phaseClaim, id: "u1", claimToken: "tok-u1" };
+    const w = world({
+      switches: ON,
+      sheet: sheetWith(FOLDER),
+      work: { unknowns: [unknown], unread: [unread], approved: [] },
+      messages: [{ id: "wamid-found", fromMe: true, from: null, body: `${sent}\n`, at: null }],
+    });
+    const r = await runOnce(w.deps);
+    expect(w.rpcs.filter(c => c.name.endsWith("_result")).map(c => c.args)).toEqual([
+      { p_id: "u1", p_claim: "tok-u1", p_outcome: "reconciled", p_provider_id: "wamid-found", p_reason: null, p_read_back: { by: "body_sha256" } },
+      { p_id: M1, p_claim: T1, p_outcome: "read_back", p_provider_id: null, p_reason: null, p_read_back: { by: "body_sha256", providerId: "wamid-found" } },
+    ]);
+    expect(r.reconciled).toBe(1);
+    expect(r.readBack).toBe(1);
+    expect(maskFolder(sent, FOLDER)).toBe(PHASE3);
+  });
+
+  test("a text with another card's link, or a link changed on Client Data since the send, is never taken for it", async () => {
+    const unknown = { ...phaseClaim, id: "u1", claimToken: "tok-u1" };
+    for (const [link, body] of [
+      [FOLDER, PHASE3.replace("{content_folder}", OTHER)],
+      [OTHER, sent],
+      ["", sent],
+    ]) {
+      const w = world({
+        switches: ON,
+        sheet: sheetWith(link),
+        work: { unknowns: [unknown], unread: [], approved: [] },
+        messages: [{ id: "wamid-found", fromMe: true, from: null, body, at: null }],
+      });
+      const r = await runOnce(w.deps);
+      expect(w.names()).not.toContain("result");
+      expect(r.reconciled).toBe(0);
+      expect(r.detail.unknown).toBe(1);
+    }
+  });
+
+  test("the doctor's --task says whether the card has its link, never the link", async () => {
+    const doc = (link: unknown) =>
+      doctor({
+        read: {
+          env: {
+            AD_BILLING_WHAPI_TOKEN: "w",
+            CLICKUP_API_TOKEN: "c",
+            GOOGLE_APPLICATION_CREDENTIALS: "/x",
+            SUPABASE_URL: "https://bldgtotkfmhoxmlzowdx.supabase.co",
+            SUPABASE_SERVICE_ROLE_KEY: "s",
+            TYPEFORM_TOKEN: "t",
+            MAKE_API_KEY: "m",
+            MAKE_ZONE: "eu2",
+          },
+          from: {},
+        },
+        switches: DRY,
+        db: () => world().deps.db,
+        providers: world({ sheet: sheetWith(link) }).deps.providers,
+        health: async () => ({ status: "AUTH", channelLast4: "1234" }),
+        oldSenders: async () => OFF,
+        task: A,
+      });
+    const present = await doc(FOLDER);
+    expect(present.task).toEqual({ card: A, clientData: "present, 0001", cardField: "same", driveLink: "present" });
+    expect(JSON.stringify(present)).not.toContain("drive.google.com");
+    expect((await doc("")).task.driveLink).toBe("none");
+    expect((await doc("Drive")).task.driveLink).toBe("not a link");
   });
 });

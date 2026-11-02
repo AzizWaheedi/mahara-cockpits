@@ -23,6 +23,34 @@
  * every onboarding effect once; the relay's claim, send, unknown and retry; a card with a stored
  * Typeform answer (no invite, no effects, legacy); the Typeform door equal to the portal answer;
  * system requests deduped; the phase messages' approve and claim; the parity plan writes nothing.
+ *
+ * Then 20261102l (D-S4.0: Make 13 [31] only searches Client Data, so the cockpit writes no row):
+ * no client_data_row in the builder, the parity plan, either onboarding array or the relay outbox;
+ * the rest of the onboarding plan in 20261102j's order; the registry moved from 20261102j's array
+ * (version 1, or version 2 after a go-live) with one audit row; the outbox refusing a Client Data
+ * row and the file stopping on one; the drift guard; a second apply changing nothing. l's own tests
+ * read l's state back inside their rolled-back step (lState), since 20261102o replaces its builder.
+ *
+ * Then 20261102o (the CEO's "Yes, match Make"; its texts are proven against make_parity.py's evaluator
+ * in stage4-match-make-supabase.test.ts): the whole chain g to o applies a second time; where o
+ * changes what j and l planned, the assertion says so beside it (Make's handoff, Client Profile and
+ * raw answers texts, Service Advertised ticked first, lists in the read model as ticked, the dispatch's
+ * typed Business Name, the handoff as each onboarding task's comment in both parts' queue payloads and
+ * no request details, whatsappAdd a long text); a portal answer keeps its line breaks and spaces as
+ * Typeform keeps them, and KFRCXPFx's longest stored answers fit; an onboarding answer at the portal's
+ * limits in Arabic and the kickoff after it plan every effect whole past 128 KB, and a plan past 2 MB
+ * fails only its own step, with a plain reason, while the kickoff still sends.
+ *
+ * Then 20261102p (Make is the floor, better data on top; its briefs, open items and card facts are
+ * proven line by line, and every Make-mirroring part against 20261102o's builder, in
+ * stage4-better-data-supabase.test.ts): the whole chain g to p applies a second time; where p adds to
+ * what o planned, the assertion says so beside it (card_facts in both version-2 arrays, the onboarding
+ * tasks' brief as the request's details); through the real request writer the brief reaches each part's
+ * description under the request's heading while the handoff stays the comment, the Brand DNA task gets
+ * its brief, card_facts queues its fields, the kickoff notice's facts carry the open items, a type with
+ * no details field makes the tasks with the plan saying the brief stayed out, and a registry already on
+ * o's version-2 array moves to p's with one audit row. (o and p were first drafted as m and n; the goals
+ * sheet's 20261102m and 20261102n reached live first, 2026-11-02.)
  * Every person, client and value is invented; the CEO's address is read from the CEO gate.
  */
 import {
@@ -33,7 +61,7 @@ import {
   setDefaultTimeout,
   test,
 } from "bun:test";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import type { PGlite } from "@electric-sql/pglite";
 import { KICKOFF_SQL } from "../../../hermes/ceo-refresh/native/adapters/growth.js";
 import {
@@ -1137,6 +1165,15 @@ const W56 = [
   "20261102i_client_tail.sql",
 ] as const;
 const J = "20261102j_stage4_native.sql";
+/** D-S4.0 finding 1: the native onboarding writes no Client Data row. */
+const NO_CLIENT_DATA = "20261102l_stage4_no_client_data_row.sql";
+/**
+ * The CEO's "Yes, match Make": Make's texts, the onboarding tasks' comment, answers kept as typed
+ * (stage4-match-make-supabase.test.ts proves the texts against make_parity.py's evaluator).
+ */
+const MATCH_MAKE = "20261102o_stage4_match_make.sql";
+/** Make is the floor, better data on top: the briefs, the kickoff's open items, card_facts. */
+const BETTER_DATA = "20261102p_stage4_better_data.sql";
 /** g, h and i when all three are on the branch (the merged branch); else client-tail's stand-in below. */
 const REAL_W56 = W56.every(onBranch);
 
@@ -1313,6 +1350,9 @@ beforeAll(async () => {
     for (const file of W56) await db.exec(withoutCron(migration(file)));
   } else await db.exec(CLIENT_TAIL_STANDIN);
   await db.exec(withoutCron(migration(J)));
+  await db.exec(migration(NO_CLIENT_DATA));
+  await db.exec(migration(MATCH_MAKE));
+  await db.exec(migration(BETTER_DATA));
   await seedStage4();
 }, 900_000);
 afterAll(async () => {
@@ -1449,12 +1489,23 @@ async function addRequestTypes() {
 // --- The file --------------------------------------------------------------------------------
 
 describe("the file (2.1, 2.6)", () => {
-  // The merged chain: g, h, i and j applied once already; all four again, in order, change nothing.
+  // The merged chain: g, h, i, j, l, o and p applied once already; all seven again, in order, change nothing.
+  // 20261102o replaces two of i's functions (the client form schema and answers checks), so i's own
+  // guard, which reads them on its second pass, first gets i's bodies back, as before o.
   test.if(REAL_W56)(
-    "the merged waves 5-6 chain (g, h, i, j) applies a second time in order",
+    "the merged waves 5-6 chain (g, h, i, j, l, o, p) applies a second time in order",
     async () => {
       await rolledBack(async () => {
-        for (const file of [...W56, J])
+        const i = migration(W56[2]);
+        for (const name of ["cockpit_form_schema_check", "cockpit_form_answers_check"])
+          await ex(
+            cut(
+              i,
+              new RegExp(`CREATE OR REPLACE FUNCTION public\\.${name}\\([\\s\\S]*?\\nEND \\$\\$;`),
+              name,
+            ),
+          );
+        for (const file of [...W56, J, NO_CLIENT_DATA, MATCH_MAKE, BETTER_DATA])
           try {
             await ex(
               withoutCron(migration(file))
@@ -1691,6 +1742,7 @@ describe("the file (2.1, 2.6)", () => {
       "cockpit_form_hook_onboarding(uuid)",
       "cockpit_kickoff_answers_check(jsonb)",
       "cockpit_form_stage4_effects(text,integer)",
+      "cockpit_form_stage4_build(jsonb)",
       "cockpit_form_effect_gate(text,text)",
       "cockpit_forms_effects_valid(jsonb)",
     ])
@@ -1751,11 +1803,12 @@ describe("the go-live (4.15.2)", () => {
     for (const a of arrays)
       for (const e of a)
         if (e.key === "recap") expect(e.owner).not.toBe("cockpit");
+    // 20261102p: card_facts (empty card fields from the answers) after profile_fields and card_fields.
     expect(arrays[1].map((e: any) => [e.key, e.delivery])).toEqual([
       ["profile_fields", "clickup_queue"],
+      ["card_facts", "clickup_queue"],
       ["raw_answers_comment", "clickup_queue"],
       ["map_phase3", "clickup_queue"],
-      ["client_data_row", "relay"],
       ["github_dispatch", "relay"],
       ["phase3_whatsapp", "client_message"],
       ["brand_dna_task", "sql"],
@@ -1765,6 +1818,7 @@ describe("the go-live (4.15.2)", () => {
       ["handoff_comment", "clickup_queue"],
       ["native_status", "clickup_queue"],
       ["card_fields", "clickup_queue"],
+      ["card_facts", "clickup_queue"],
       ["onboarding_tasks", "sql"],
       ["map_phase4", "clickup_queue"],
       ["phase4_whatsapp", "client_message"],
@@ -1795,12 +1849,15 @@ describe("the kickoff (4.13, 3.3)", () => {
         json(a),
       ]);
     expect((await check(KICKOFF_ANSWERS)).ok).toBe(true);
+    // 20261102o: whatsappAdd is a long text, as tG7dnxBn asks it, so it takes 4,000 characters (it
+    // took 500 as a short text) and keeps its line breaks; a short text such as dailyBudget keeps 500.
     const bad = await check({
       contractStatus: "Maybe",
       serviceAdvertised: ["Pools"],
       paymentAmount: "x",
       callRecording: "not a link",
-      whatsappAdd: "y".repeat(501),
+      whatsappAdd: "y".repeat(4001),
+      dailyBudget: "y".repeat(501),
       surprise: 1,
     });
     expect(bad.errors).toEqual({
@@ -1809,9 +1866,13 @@ describe("the kickoff (4.13, 3.3)", () => {
       paymentAmount: "range",
       callRecording: "format",
       whatsappAdd: "length",
+      dailyBudget: "length",
       surprise: "unknown",
       newMrrUsd: "required",
     });
+    expect(
+      (await check({ ...KICKOFF_ANSWERS, whatsappAdd: `${"y".repeat(501)}\r\nSara` })).answers.whatsappAdd,
+    ).toBe(`${"y".repeat(501)}\nSara`);
     expect((await check({ ...KICKOFF_ANSWERS, newMrrUsd: -1 })).errors).toEqual(
       { newMrrUsd: "range" },
     );
@@ -1869,7 +1930,9 @@ describe("the kickoff (4.13, 3.3)", () => {
         ["Client Status", "Brand Blueprint Booked♠️"],
         ["Mahara OS Access", "Logged In"],
         ["Contract Status", "Signed"],
-        ["Service Advertised", "Design and build"],
+        // 20261102o: Make 12 [21] writes the service ticked first (KICKOFF_ANSWERS ticks Fit out and
+        // renovation first); 20261102j wrote the first in the form's option order (Design and build).
+        ["Service Advertised", "Fit out and renovation"],
         [
           "🧬 Brand Blueprint Form Link",
           `https://cockpit.maharamedia.com/client-success/clients/${TEST_CARD}/present/blueprint?view=prep`,
@@ -1895,8 +1958,10 @@ describe("the kickoff (4.13, 3.3)", () => {
       expect(model.response_id).toBe(out.responseId);
       expect(model.payment).toBe("1500");
       expect(model.recording).toBe("https://fathom.video/share/abcdef");
+      // 20261102o: a list in the read model is in the order it was ticked, as a Typeform answer is
+      // (20261102j wrote the form's option order).
       expect(model.answers.find((a: any) => a.ref === KREF.service).value).toBe(
-        "Design and build, Fit out and renovation",
+        "Fit out and renovation, Design and build",
       );
       expect(model.answers.find((a: any) => a.ref === KREF.contract)).toEqual({
         ref: KREF.contract,
@@ -1944,11 +2009,14 @@ describe("the kickoff (4.13, 3.3)", () => {
           [A],
         ),
       ).toBe(2500);
+      // 20261102o: the handoff is Make 12 [11]'s text (its 110 lines; the client is the typed Business
+      // Name of the card's onboarding answer), which prints no New MRR line; 20261102j wrote its own.
       const handoff = fx.handoff_comment.plan.comment_text as string;
-      expect(handoff).toStartWith("KICKOFF HANDOFF for Acme Interiors");
-      expect(handoff).toContain("Business name: Acme Interiors Co");
-      expect(handoff).toContain("Contract status: Signed");
-      expect(handoff).toContain("New MRR: $2500 a month");
+      expect(handoff).toStartWith("*KICKOFF HANDOFF*\n*Client:* Acme Interiors Co\n");
+      expect(handoff.split("\n")).toHaveLength(110);
+      expect(handoff).toContain("\n*Contract status:* Signed\n");
+      expect(handoff).toContain("\n*Payment amount:* 1500\n");
+      expect(handoff).not.toContain("New MRR");
       const msg = await one<any>(
         "SELECT to_jsonb(m) AS r FROM public.cockpit_client_messages m WHERE id = $1::uuid",
         [fx.phase4_whatsapp.delivery_ref],
@@ -1971,6 +2039,50 @@ describe("the kickoff (4.13, 3.3)", () => {
           [fx.onboarding_tasks.delivery_ref],
         ),
       ).toBe(2);
+      // 20261102o: the handoff is no request detail (Make 12 [17] and [22] write no description) but the
+      // comment each task gets, whole, on the request and in both parts' queue payloads (Make 12 [18], [23]).
+      // 20261102p: the request's details are the cockpit brief (B1), which each part's description carries
+      // under the request's heading; the handoff stays the comment alone.
+      expect(reqRow.task_comment).toBe(handoff);
+      const brief = fx.onboarding_tasks.plan.details as string;
+      expect(brief).toStartWith("From the onboarding and kickoff forms (cockpit)\n");
+      expect(fx.onboarding_tasks.plan.detailsKind).toBe("brief");
+      expect([...brief].length).toBeLessThanOrEqual(3600);
+      expect(reqRow.answers).toEqual({ details: brief });
+      const parts = await q<Row>(
+        `SELECT p.part, q.payload FROM public.cockpit_request_parts p
+           JOIN public.cockpit_clickup_writeback_queue q ON q.id = p.queue_id
+          WHERE p.request_id = $1::uuid ORDER BY p.part`,
+        [fx.onboarding_tasks.delivery_ref],
+      );
+      expect(parts.map(p => [p.part, p.payload.taskComment === handoff])).toEqual([
+        ["creative", true],
+        ["tech", true],
+      ]);
+      for (const p of parts) {
+        expect(p.payload.descriptionMarkdown).not.toContain("KICKOFF HANDOFF");
+        expect(p.payload.descriptionMarkdown).toStartWith("**Client onboarding** for ");
+        expect(p.payload.descriptionMarkdown).toContain(`\n\n${brief}\n\n`);
+      }
+      // 20261102p: the kickoff notice's facts name the open setup items (none here: the contract is
+      // signed and Mahara OS logged in), and card_facts queues the card's empty-field facts (B8).
+      expect(
+        await one(
+          "SELECT facts->'openItems' AS r FROM public.cockpit_slack_notices WHERE id = $1::uuid",
+          [fx.kickoff_notice.delivery_ref],
+        ),
+      ).toEqual([]);
+      expect(fx.card_facts.state).toBe("queued");
+      const facts = await one<any>(
+        "SELECT payload AS r FROM public.cockpit_clickup_writeback_queue WHERE id = $1::uuid",
+        [fx.card_facts.delivery_ref],
+      );
+      expect(facts).toMatchObject({ formKey: "kickoff", effectKey: "card_facts", taskId: A });
+      expect(facts.fields.map((f: any) => [f.label, f.kind, f.source, f.onlyIfEmpty])).toEqual([
+        ["Fathom", "url", "kickoff", true],
+        ["Onboarding Call Date", "date", "kickoff_day", true],
+      ]);
+      expect(facts.lines).toBeUndefined();
       const again = await submit(CSM_A, A, KICKOFF_ANSWERS, req);
       expect(again).toMatchObject({
         ok: true,
@@ -2197,15 +2309,17 @@ describe("the kickoff (4.13, 3.3)", () => {
 
 // --- The onboarding ----------------------------------------------------------------------------
 
+// 20261102o (B3): the revenues are numbers, the four links https and the phones E.164, as the
+// version-2 onboarding now asks them (KFRCXPFx's typed inputs).
 const ONB_ANSWERS = {
   fullName: "Cedar Owner",
-  phone: "+965 5000 0002",
+  phone: "+96550000002",
   email: "owner@cedar.invalid",
   businessName: "Owner Business Co",
   address: "Block 1, Street 2",
-  website: "cedar.invalid",
-  instagram: "@cedar",
-  facebook: "cedar page",
+  website: "https://cedar.invalid",
+  instagram: "https://instagram.com/cedar",
+  facebook: "https://facebook.com/cedar.page",
   paymentOptions: "Full payment or two parts",
   frontDeskPhone: "+96550000003",
   personalPhone: "+96550000004",
@@ -2226,15 +2340,72 @@ const ONB_ANSWERS = {
   whyJoined: "To grow",
   freeConsults: "yes",
   marketing: "Instagram posts",
-  lastRevenue: "250000",
+  lastRevenue: 250000,
   challenges: "Finding clients",
-  goal90: "100000",
-  goal12: "1000000",
+  goal90: 100000,
+  goal12: 1000000,
 };
+/** onboarding.raw_titles as D-S4F fills it (20261102o). */
+const RAW_TITLES = JSON.parse(
+  readFileSync(
+    new URL("../../../scripts/dev/forms-deploy/stage4-raw-titles.json", import.meta.url),
+    "utf8",
+  ),
+);
+/** Arabic typed over several lines with double spaces, n characters, nothing to trim at either end (invented). */
+const arabic = (n: number) => {
+  const line = "نبي نركز على الفلل الجديدة في الشمال\nوالدفع على  دفعتين ";
+  return `${line.repeat(Math.ceil(n / line.length)).slice(0, n - 1)}ن`;
+};
+/** The reason a step gets when its plan is past the 2 MB the table keeps (20261102o). */
+const TOO_LARGE =
+  "This step carries more than the 2 MB the cockpit keeps for one step, so it did not run. Do it by hand from the stored answers.";
 
 describe("the onboarding (4.14, 3.3)", () => {
   test("not live: the portal shows the Typeform", async () => {
     expect(await portalOpen("locCedar01", C)).toEqual({ live: false });
+  });
+
+  test("the portal keeps an answer as typed, as Typeform keeps it for Make; KFRCXPFx's long answers fit (20261102o)", async () => {
+    await rolledBack(async () => {
+      await goLive("onboarding", true);
+      const inv = await portalOpen("locCedar01", C);
+      const typed = {
+        ...ONB_ANSWERS,
+        address: " Block 1,\r\nStreet  2\r\n",
+        hours: "Sun to Thu  9 to 5\nFriday closed",
+        marketing: "انستقرام\r\n\r\nواعلانات  قوقل ",
+        projectsDone: "p".repeat(224),
+        faqs: `${"q\n".repeat(1347)}q`,
+      };
+      const done = await as<any>(
+        "service",
+        "SELECT public.portal_form_submit('locCedar01', $1, 'owner@client.invalid', 'admin', $2::uuid, $3::jsonb, $4::uuid, 'en') AS r",
+        [C, inv.inviteId, json(typed), uuid()],
+      );
+      expect(done.ok).toBe(true);
+      const stored = await one<any>(
+        "SELECT answers AS r FROM public.cockpit_form_responses WHERE id = $1::uuid",
+        [done.responseId],
+      );
+      // Line breaks as line feeds, both ends trimmed, everything between as typed (20261102j folded it all).
+      expect(stored).toMatchObject({
+        address: "Block 1,\nStreet  2",
+        hours: "Sun to Thu  9 to 5\nFriday closed",
+        marketing: "انستقرام\n\nواعلانات  قوقل",
+        projectsDone: "p".repeat(224),
+        faqs: typed.faqs,
+      });
+      const model = await one<any>(
+        "SELECT forms->'onboarding' AS r FROM public.cockpit_client_onboarding WHERE clickup_task_id = $1",
+        [C],
+      );
+      expect(
+        model.answers.find((a: any) => a.ref === "e5caee43-e9b5-427d-8583-6982c5dd9be8").value,
+      ).toBe("Block 1,\nStreet  2");
+      // Every other client form still folds (the pause consent, say): checked against 20261102i in
+      // stage4-match-make-supabase.test.ts.
+    });
   });
 
   test("live: one invite, the answer runs every effect once, then answeredAt", async () => {
@@ -2242,6 +2413,8 @@ describe("the onboarding (4.14, 3.3)", () => {
       await goLive("onboarding", true);
       await settings("onboarding.map_urls", MAPS);
       await settings("stage4.messages", MESSAGES);
+      // 20261102o: the raw answers comment needs KFRCXPFx's full titles, filled at D-S4F.
+      await settings("onboarding.raw_titles", RAW_TITLES);
       await addRequestTypes();
       const first = await portalOpen("locCedar01", C);
       expect(first.live).toBe(true);
@@ -2258,11 +2431,11 @@ describe("the onboarding (4.14, 3.3)", () => {
         "profile_fields",
         "raw_answers_comment",
         "map_phase3",
-        "client_data_row",
         "github_dispatch",
         "phase3_whatsapp",
       ])
         expect(fx[k].state).toBe("queued");
+      expect(fx.client_data_row).toBeUndefined();
       expect(fx.brand_dna_task.state).toBe("delivered");
       expect(fx.read_model.state).toBe("delivered");
       const model = await one<any>(
@@ -2285,38 +2458,40 @@ describe("the onboarding (4.14, 3.3)", () => {
         label: "Kickoff Form Link",
         value: `https://cockpit.maharamedia.com/client-success/clients/${C}?form=kickoff`,
       });
-      expect(profile[0].value).toContain("Revenue last year: 250000");
+      // 20261102o: the Client Profile is Make 13 [29]'s seven labels (20261102j wrote its own).
+      expect(profile[0].value).toStartWith(
+        "Last Year's Total Revenue: 250000\n\n90-Day Goal Revenue: 100000\n\n",
+      );
+      expect(fx.raw_answers_comment.plan.comment_text).toStartWith(
+        `**Raw Onboarding Form Answers**\n\n**${RAW_TITLES.fields[0].title}**\nCedar Owner\n\n`,
+      );
       const relay = await q<Row>(
         "SELECT effect_key, state, payload FROM public.cockpit_form_relay_outbox WHERE response_id = $1 ORDER BY effect_key",
         [done.responseId],
       );
+      // The market intel dispatch is the only relay row: nothing for Client Data (20261102l). Its
+      // client is the typed Business Name, as Make 13 [25] sends it (20261102o; 20261102j sent the card's name).
       expect(relay.map(r => [r.effect_key, r.state])).toEqual([
-        ["client_data_row", "queued"],
         ["github_dispatch", "queued"],
       ]);
-      expect(relay[1].payload).toEqual({ taskId: C, client: "Cedar Homes" });
+      expect(relay[0].payload).toEqual({ taskId: C, client: "Owner Business Co" });
       expect((await portalOpen("locCedar01", C)).answeredAt).toBeTruthy();
       // The relay: a claim, a send, a settle.
       const claim = await as<any>(
         "service",
         "SELECT public.cockpit_form_relay_claim(5) AS r",
       );
-      expect(claim.rows).toHaveLength(2);
-      const gh = claim.rows.find((r: any) => r.effectKey === "github_dispatch");
-      const cd = claim.rows.find((r: any) => r.effectKey === "client_data_row");
+      expect(claim.rows.map((r: any) => r.effectKey)).toEqual([
+        "github_dispatch",
+      ]);
+      const gh = claim.rows[0];
       await as(
         "service",
         "SELECT public.cockpit_form_relay_done($1, $2::uuid, 'sent', '{\"reason\":\"Dispatched.\"}'::jsonb) AS r",
         [gh.id, gh.claim],
       );
-      await as(
-        "service",
-        "SELECT public.cockpit_form_relay_done($1, $2::uuid, 'unknown', '{\"reason\":\"The sheet did not answer.\"}'::jsonb) AS r",
-        [cd.id, cd.claim],
-      );
       const after = byKey(await effects(done.responseId));
       expect(after.github_dispatch.state).toBe("delivered");
-      expect(after.client_data_row.state).toBe("unknown");
       expect(
         (
           await as<any>(
@@ -2331,6 +2506,159 @@ describe("the onboarding (4.14, 3.3)", () => {
         [C, done.responseId],
       );
       expect(dup.reused).toBe(true);
+    });
+  });
+
+  test("answers as long as the portal takes, in Arabic: every plan is kept whole past 128 KB, and the kickoff after them sends (20261102o)", async () => {
+    await rolledBack(async () => {
+      await goLive("onboarding", true);
+      await goLive("kickoff", true);
+      await settings("onboarding.map_urls", MAPS);
+      await settings("stage4.messages", MESSAGES);
+      await settings("onboarding.raw_titles", RAW_TITLES);
+      await addRequestTypes();
+      // Every long text of the version-2 onboarding at its limit (15 of 10,000 characters).
+      const v2 = await one<any>(
+        "SELECT schema AS r FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2",
+      );
+      const longs: [string, number][] = v2.fields
+        .filter((f: any) => f.type === "longtext")
+        .map((f: any) => [f.key, f.maxLength]);
+      expect(longs).toHaveLength(15);
+      expect(new Set(longs.map(([, n]) => n))).toEqual(new Set([10000]));
+      const typed: Record<string, unknown> = {
+        ...ONB_ANSWERS,
+        ...Object.fromEntries(longs.map(([k, n]) => [k, arabic(n)])),
+      };
+      const inv = await portalOpen("locCedar01", C);
+      const done = await as<any>(
+        "service",
+        "SELECT public.portal_form_submit('locCedar01', $1, 'owner@client.invalid', 'admin', $2::uuid, $3::jsonb, $4::uuid, 'ar') AS r",
+        [C, inv.inviteId, json(typed), uuid()],
+      );
+      expect(done.ok).toBe(true);
+      const fx = byKey(await effects(done.responseId));
+      expect(Object.values(fx).filter(e => e.state === "failed")).toEqual([]);
+      for (const k of [
+        "profile_fields",
+        "raw_answers_comment",
+        "map_phase3",
+        "github_dispatch",
+        "phase3_whatsapp",
+      ])
+        expect(fx[k].state).toBe("queued");
+      expect(fx.brand_dna_task.state).toBe("delivered");
+      expect(fx.read_model.state).toBe("delivered");
+      const bytes = Object.fromEntries(
+        (
+          await q<Row>(
+            "SELECT effect_key, octet_length(plan::text) AS n FROM public.cockpit_form_effects WHERE response_id = $1",
+            [done.responseId],
+          )
+        ).map(r => [r.effect_key, r.n]),
+      );
+      expect(bytes.raw_answers_comment).toBeGreaterThan(2 * 131072);
+      expect(bytes.read_model).toBeGreaterThan(2 * 131072);
+      // The raw answers comment holds each answer whole, as typed.
+      for (const [k] of longs)
+        expect(fx.raw_answers_comment.plan.comment_text).toContain(`**\n${typed[k]}\n`);
+
+      // The kickoff on that card, its 12 long texts at their limit too (in English: the kickoff's
+      // stored answers stay within 64 KB, 20261102f).
+      const kickoffLongs = (
+        await one<any[]>("SELECT public.cockpit_form_stage4_fields('kickoff') AS r")
+      )
+        .filter(f => f.type === "longtext")
+        .map(f => f.key as string);
+      expect(kickoffLongs).toHaveLength(12);
+      const out = await submit(CEO, C, {
+        ...KICKOFF_ANSWERS,
+        ...Object.fromEntries(
+          kickoffLongs.map(k => [k, `${"Invented note, typed long. ".repeat(150).slice(0, 3999)}.`]),
+        ),
+      });
+      expect(out.ok).toBe(true);
+      const kx = byKey(await effects(out.responseId));
+      expect(Object.values(kx).filter(e => e.state === "failed")).toEqual([]);
+      expect(kx.handoff_comment.state).toBe("queued");
+      expect(kx.onboarding_tasks.state).toBe("delivered");
+      const handoff = kx.handoff_comment.plan.comment_text as string;
+      expect(new TextEncoder().encode(handoff).length).toBeGreaterThan(131072);
+      expect(handoff).toContain(`\n*Address:* ${typed.address}\n`);
+      expect(handoff).toContain(`\n*Client notes:* ${typed.additionalInfo}\n`);
+      const reqRow = await one<any>(
+        "SELECT to_jsonb(q) AS r FROM public.cockpit_requests q WHERE id = $1::uuid",
+        [kx.onboarding_tasks.delivery_ref],
+      );
+      expect(reqRow.task_comment).toBe(handoff);
+    });
+  });
+
+  test("a plan past 2 MB fails only its own step, with a plain reason, and the kickoff still sends (20261102o)", async () => {
+    await rolledBack(async () => {
+      await goLive("kickoff", true);
+      await settings("onboarding.map_urls", MAPS);
+      await settings("stage4.messages", MESSAGES);
+      await addRequestTypes();
+      // A Typeform answer in the read model can be longer than anything the portal takes: nine answers
+      // the handoff prints, at 240,000 characters each, put it past 2 MB.
+      const long = "Invented answer, typed long. ".repeat(8300).slice(0, 240000);
+      const onboarding = typeformOnboarding("tokCedarLong1", "2026-10-25T09:00:00Z");
+      onboarding.answers.push(
+        ...[
+          "e5caee43-e9b5-427d-8583-6982c5dd9be8",
+          "b7873d40-d154-42ac-bf24-cb3b667e84cc",
+          "0a80a0a8-3a09-4907-a1d1-6c57e57d4c47",
+          "6271b610-6946-4056-bb08-d03ffc274141",
+          "ee25f923-d5e1-4d1a-a95f-cd9c17abbe83",
+          "bf8c7c7b-fff9-463f-b30a-8d8ca8b622f6",
+          "fcf43e6a-cc84-4ae7-9cef-2336069d0280",
+          "7426c6c5-344f-44c9-9999-3b9daf3a06b8",
+          "41d2d5bb-b023-4fa4-906c-72aeef7a5e46",
+        ].map(ref => ({ ref, title: "Stored title", value: long })),
+      );
+      await q(
+        "UPDATE public.cockpit_client_onboarding SET forms = jsonb_build_object('onboarding', $2::jsonb) WHERE clickup_task_id = $1",
+        [C, json(onboarding)],
+      );
+      const req = uuid();
+      const out = await submit(CEO, C, KICKOFF_ANSWERS, req);
+      expect(out.ok).toBe(true);
+      const fx = byKey(await effects(out.responseId));
+      for (const k of ["handoff_comment", "onboarding_tasks"]) {
+        expect(fx[k]).toMatchObject({
+          owner: "cockpit",
+          state: "failed",
+          reason: TOO_LARGE,
+          delivery_ref: null,
+        });
+        expect(Object.keys(fx[k].plan).sort()).toEqual(["lines", "planBytes"]);
+        expect(fx[k].plan.planBytes).toBeGreaterThan(2097152);
+      }
+      // Every other step runs as before; no request was made.
+      for (const k of [
+        "native_status",
+        "card_fields",
+        "map_phase4",
+        "phase4_whatsapp",
+        "kickoff_notice",
+      ])
+        expect(fx[k].state).toBe("queued");
+      expect(fx.new_mrr.state).toBe("delivered");
+      expect(
+        await one(
+          "SELECT count(*)::int AS r FROM public.cockpit_requests WHERE form_response_id = $1::uuid",
+          [out.responseId],
+        ),
+      ).toBe(0);
+      // A second press shows the same trail, the two steps failed with their reason.
+      const again = await submit(CEO, C, KICKOFF_ANSWERS, req);
+      expect(again).toMatchObject({ ok: true, reused: true });
+      expect(again.trail).toContainEqual({
+        step: "handoff_comment",
+        state: "failed",
+        reason: TOO_LARGE,
+      });
     });
   });
 
@@ -2351,9 +2679,10 @@ describe("the onboarding (4.14, 3.3)", () => {
       ).rows[0];
       await as(
         "service",
-        "SELECT public.cockpit_form_relay_done($1, $2::uuid, 'failed', '{\"reason\":\"Google refused it (403).\"}'::jsonb) AS r",
+        "SELECT public.cockpit_form_relay_done($1, $2::uuid, 'failed', '{\"reason\":\"GitHub refused the dispatch (403).\"}'::jsonb) AS r",
         [c1.id, c1.claim],
       );
+      expect(c1.effectKey).toBe("github_dispatch");
       expect(byKey(await effects(done.responseId))[c1.effectKey].state).toBe(
         "queued",
       );
@@ -2372,8 +2701,29 @@ describe("the onboarding (4.14, 3.3)", () => {
           "service",
           "SELECT public.cockpit_form_relay_claim(5) AS r",
         )
-      ).rows.map((r: any) => r.id);
-      expect(later).toContain(c1.id);
+      ).rows;
+      const c2 = later.find((r: any) => r.id === c1.id);
+      expect(c2).toBeTruthy();
+      // An unclear second try is unknown: the effect says so and the row is never claimed again.
+      await as(
+        "service",
+        "SELECT public.cockpit_form_relay_done($1, $2::uuid, 'unknown', '{\"reason\":\"GitHub did not answer.\"}'::jsonb) AS r",
+        [c2.id, c2.claim],
+      );
+      expect(byKey(await effects(done.responseId)).github_dispatch.state).toBe(
+        "unknown",
+      );
+      await ex(
+        `UPDATE public.cockpit_form_relay_outbox SET updated_at = now() - interval '11 minutes' WHERE id = ${c1.id}`,
+      );
+      expect(
+        (
+          await as<any>(
+            "service",
+            "SELECT public.cockpit_form_relay_claim(5) AS r",
+          )
+        ).rows,
+      ).toHaveLength(0);
     });
   });
 
@@ -2721,11 +3071,14 @@ describe("the parity plan (4.15.1)", () => {
       "Brand Blueprint Booked♠️",
       "Tech Issue",
       "Signed",
-      "Interior design",
+      // 20261102o: Make 12 [21] writes switch(first(list)), the service ticked first; 20261102j wrote
+      // the first listed one the option map knows (Interior design).
+      "Fit out and renovation",
       `https://cockpit.maharamedia.com/client-success/clients/${C}/present/blueprint?view=prep`,
     ]);
+    // 20261102o: Make 12 [11]'s handoff lines (20261102j wrote "Business name: ...").
     expect(fx.handoff_comment.plan.comment_text).toContain(
-      "Business name: Cedar Homes Co",
+      "\n*Legal business name:* Cedar Homes Co\n",
     );
     expect(fx.handoff_comment.plan.comment_text).not.toContain("ignored_key");
     expect(fx.new_mrr.plan).toMatchObject({ from: 0, to: 1000 });
@@ -2741,5 +3094,446 @@ describe("the parity plan (4.15.1)", () => {
     expect(
       await one("SELECT count(*)::int AS r FROM public.cockpit_form_effects"),
     ).toBe(writes);
+  });
+});
+
+// --- 20261102l: no Client Data write (D-S4.0) --------------------------------------------------
+
+/** A file without its BEGIN and COMMIT, to run inside a rolled-back test. */
+const inTest = (file: string) =>
+  withoutCron(migration(file))
+    .replace(/^BEGIN;/m, "")
+    .replace(/COMMIT;\s*$/m, "");
+/** 20261102j's bodies back (its effects arrays and builder, as live has them before 20261102l). */
+const jBodies = () => ex(inTest(J));
+/**
+ * 20261102l's state, as live will have it before 20261102o: j's bodies, then l. 20261102o replaces l's
+ * builder and j's readers, so l's own tests read l from here, inside their rolled-back step.
+ */
+const lState = async () => {
+  await jBodies();
+  await ex(inTest(NO_CLIENT_DATA));
+};
+/** The outbox CHECKs as 20261102j made them (live before 20261102l). */
+const J_RELAY_CHECKS = `
+  ALTER TABLE public.cockpit_form_relay_outbox DROP CONSTRAINT cockpit_form_relay_outbox_effect_key_check;
+  ALTER TABLE public.cockpit_form_relay_outbox ADD CONSTRAINT cockpit_form_relay_outbox_effect_key_check
+    CHECK (effect_key IN ('client_data_row','github_dispatch'));
+  ALTER TABLE public.cockpit_form_relay_outbox DROP CONSTRAINT cockpit_form_relay_outbox_dedupe_key_check;
+  ALTER TABLE public.cockpit_form_relay_outbox ADD CONSTRAINT cockpit_form_relay_outbox_dedupe_key_check
+    CHECK (dedupe_key ~ '^relay:[0-9a-f-]{36}:(client_data_row|github_dispatch)$');`;
+const relayChecks = async () =>
+  Object.fromEntries(
+    (
+      await q<Row>(
+        `SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint
+          WHERE conrelid = 'public.cockpit_form_relay_outbox'::regclass
+            AND conname IN ('cockpit_form_relay_outbox_effect_key_check', 'cockpit_form_relay_outbox_dedupe_key_check')`,
+      )
+    ).map(r => [r.conname.replace("cockpit_form_relay_outbox_", ""), r.def]),
+  );
+const NARROWED = {
+  effect_key_check: "CHECK ((effect_key = 'github_dispatch'::text))",
+  dedupe_key_check:
+    "CHECK ((dedupe_key ~ '^relay:[0-9a-f-]{36}:github_dispatch$'::text))",
+};
+const onboardingRegistry = () =>
+  one<any>(
+    "SELECT to_jsonb(f) AS r FROM public.cockpit_forms f WHERE key = 'onboarding'",
+  );
+const setOnboardingEffects = (effects: unknown) =>
+  q(
+    "UPDATE public.cockpit_forms SET effects = $1::jsonb WHERE key = 'onboarding'",
+    [json(effects)],
+  );
+const movedAudits = () =>
+  one<number>(
+    "SELECT count(*)::int AS r FROM public.cockpit_audit_log WHERE action = 'forms.stage4_no_client_data_row'",
+  );
+const withoutClientData = (effects: Row[]) =>
+  effects.filter(e => e.key !== "client_data_row");
+const keys = (effects: Row[]) => effects.map(e => e.key);
+const STAGE4_FNS = [
+  "cockpit_form_stage4_effects(text,integer)",
+  "cockpit_form_stage4_build(jsonb)",
+];
+
+describe("20261102l: no Client Data write (D-S4.0)", () => {
+  test("from 20261102j as live has it: version 1 loses client_data_row with one audit row, the outbox narrows, the go-live still works", async () => {
+    await rolledBack(async () => {
+      await jBodies();
+      await ex(J_RELAY_CHECKS);
+      // The definitions this file narrows from, exactly as the live read printed them.
+      expect(await relayChecks()).toEqual({
+        effect_key_check:
+          "CHECK ((effect_key = ANY (ARRAY['client_data_row'::text, 'github_dispatch'::text])))",
+        dedupe_key_check:
+          "CHECK ((dedupe_key ~ '^relay:[0-9a-f-]{36}:(client_data_row|github_dispatch)$'::text))",
+      });
+      const jV1 = await one<Row[]>(
+        "SELECT public.cockpit_form_stage4_effects('onboarding', 1) AS r",
+      );
+      expect(keys(jV1)).toContain("client_data_row");
+      await setOnboardingEffects(jV1);
+      const before = await movedAudits();
+      await ex(inTest(NO_CLIENT_DATA));
+      const row = await onboardingRegistry();
+      expect(keys(row.effects)).toEqual([
+        "card_fields",
+        "phase3_whatsapp",
+        "brand_dna_task",
+        "github_dispatch",
+      ]);
+      expect(row.effects).toEqual(withoutClientData(jV1));
+      expect(row).toMatchObject({
+        provider: "typeform",
+        version: 1,
+        updated_by: "migration 20261102l",
+      });
+      expect(await movedAudits()).toBe(before + 1);
+      expect(await relayChecks()).toEqual(NARROWED);
+      await goLive("onboarding", true);
+      expect(keys((await onboardingRegistry()).effects)).not.toContain(
+        "client_data_row",
+      );
+      await goLive("onboarding", false);
+      expect((await onboardingRegistry()).effects).toEqual(
+        withoutClientData(jV1),
+      );
+    });
+  });
+
+  test("after a go-live under 20261102j: version 2 loses client_data_row and a native answer plans no Client Data row", async () => {
+    await rolledBack(async () => {
+      await jBodies();
+      await setOnboardingEffects(
+        await one(
+          "SELECT public.cockpit_form_stage4_effects('onboarding', 1) AS r",
+        ),
+      );
+      await goLive("onboarding", true);
+      const jV2 = (await onboardingRegistry()).effects;
+      expect(keys(jV2)).toContain("client_data_row");
+      await ex(inTest(NO_CLIENT_DATA));
+      const row = await onboardingRegistry();
+      expect(row.effects).toEqual(withoutClientData(jV2));
+      expect(row).toMatchObject({ provider: "native", version: 2 });
+      const inv = await portalOpen("locCedar01", C);
+      const done = await as<any>(
+        "service",
+        "SELECT public.portal_form_submit('locCedar01', $1, 'owner@client.invalid', 'admin', $2::uuid, $3::jsonb, $4::uuid, 'en') AS r",
+        [C, inv.inviteId, json(ONB_ANSWERS), uuid()],
+      );
+      const fx = await effects(done.responseId);
+      expect(fx.map(e => e.effect_key)).not.toContain("client_data_row");
+      expect(byKey(fx).github_dispatch.state).toBe("queued");
+      expect(
+        await q<Row>(
+          "SELECT effect_key, state FROM public.cockpit_form_relay_outbox WHERE response_id = $1",
+          [done.responseId],
+        ),
+      ).toEqual([{ effect_key: "github_dispatch", state: "queued" }]);
+    });
+  });
+
+  test("the outbox refuses a Client Data row, and a Client Data row already there stops the file", async () => {
+    await rolledBack(async () => {
+      await lState();
+      await goLive("onboarding", true);
+      const inv = await portalOpen("locCedar01", C);
+      const done = await as<any>(
+        "service",
+        "SELECT public.portal_form_submit('locCedar01', $1, 'owner@client.invalid', 'admin', $2::uuid, $3::jsonb, $4::uuid, 'en') AS r",
+        [C, inv.inviteId, json(ONB_ANSWERS), uuid()],
+      );
+      const put = (effectKey: string, dedupe: string) =>
+        ex(`INSERT INTO public.cockpit_form_relay_outbox(response_id, effect_key, task_id, payload, dedupe_key)
+            VALUES ('${done.responseId}', '${effectKey}', '${C}', '{}', 'relay:${done.responseId}:${dedupe}')`);
+      expect(
+        (await refusal(() => put("client_data_row", "client_data_row"))).code,
+      ).toBe("23514");
+      expect(
+        (await refusal(() => put("github_dispatch", "client_data_row"))).code,
+      ).toBe("23514");
+      await ex(J_RELAY_CHECKS);
+      await put("client_data_row", "client_data_row");
+      const r = await refusal(() => ex(inTest(NO_CLIENT_DATA)));
+      expect(r.code).toBe("55000");
+      expect(r.message).toBe(
+        "The relay outbox holds Client Data rows (1), so it cannot be narrowed to the GitHub dispatch and this file stops. Check each card's row on Client Data by hand, then ask the tech lead how to retire those rows (forms records are never deleted).",
+      );
+    });
+  });
+
+  test("the drift guard: live values are 20261102j's bodies, after values this file's; a changed body or registry array stops it", async () => {
+    const sql = migration(NO_CLIENT_DATA);
+    const guard = (fn: string) =>
+      sql.split("\n").find(l => l.includes(`('public.${fn}', '`)) ?? "";
+    await rolledBack(async () => {
+      await lState();
+      for (const fn of STAGE4_FNS)
+        expect(guard(fn)).toContain(`'${await md5Of(`public.${fn}`)}')`);
+    });
+    await rolledBack(async () => {
+      await jBodies();
+      for (const fn of STAGE4_FNS)
+        expect(guard(fn)).toContain(
+          `('public.${fn}', '${await md5Of(`public.${fn}`)}', '`,
+        );
+    });
+    await rolledBack(async () => {
+      await lState();
+      const def = await one<string>(
+        "SELECT pg_get_functiondef('public.cockpit_form_stage4_build(jsonb)'::regprocedure) AS r",
+      );
+      await ex(
+        def.replace(
+          "-- read model. Nothing writes Client Data",
+          "-- read model. Changed. Nothing writes Client Data",
+        ),
+      );
+      const r = await refusal(() => ex(inTest(NO_CLIENT_DATA)));
+      expect(r.code).toBe("55000");
+      expect(r.message).toBe(
+        "cockpit_form_stage4_build(jsonb) changed since 20261102j; stop and re-read it.",
+      );
+    });
+    await rolledBack(async () => {
+      await lState();
+      await setOnboardingEffects([]);
+      const r = await refusal(() => ex(inTest(NO_CLIENT_DATA)));
+      expect(r.code).toBe("55000");
+      expect(r.message).toBe(
+        "The onboarding effects changed since 20261102j; stop and re-read them.",
+      );
+    });
+  });
+
+  test("applies a second time and changes nothing", async () => {
+    const snapshot = async () => ({
+      effects: (await onboardingRegistry()).effects,
+      checks: await relayChecks(),
+      md5: await Promise.all(STAGE4_FNS.map(fn => md5Of(`public.${fn}`))),
+      audits: await movedAudits(),
+    });
+    await rolledBack(async () => {
+      await lState();
+      const before = await snapshot();
+      expect(before.checks).toEqual(NARROWED);
+      await ex(inTest(NO_CLIENT_DATA));
+      expect(await snapshot()).toEqual(before);
+    });
+  });
+
+  test("the builder and the parity plan plan no Client Data row; every other effect and array is 20261102j's, in its order", async () => {
+    const onboarding = {
+      taskId: E,
+      client: "Elm Works",
+      submittedAt: "2026-11-02T09:00:00Z",
+      token: "tokParity02",
+      answers: [
+        {
+          ref: OREF.businessName,
+          title: "Business Name",
+          value: "Elm Works Co",
+        },
+        {
+          ref: OREF.lastRevenue,
+          title: "Last Calendar Year - How Much Total Revenue did you do?",
+          value: "90000",
+        },
+      ],
+    };
+    const kickoff = {
+      taskId: C,
+      client: "Cedar Homes",
+      submittedAt: "2026-10-20T11:55:11Z",
+      token: "tokParity03",
+      cardMrr: 0,
+      newMrrUsd: 1000,
+      answers: [
+        { ref: KREF.contract, title: "Contract status", value: "Signed" },
+      ],
+    };
+    const read = async () => ({
+      onboarding: (
+        await as<any>(
+          "service",
+          "SELECT public.cockpit_form_parity_plan('onboarding', $1::jsonb) AS r",
+          [json(onboarding)],
+        )
+      ).effects as Row[],
+      kickoff: (
+        await as<any>(
+          "service",
+          "SELECT public.cockpit_form_parity_plan('kickoff', $1::jsonb) AS r",
+          [json(kickoff)],
+        )
+      ).effects as Row[],
+      arrays: await one<Record<string, Row[]>>(
+        `SELECT jsonb_build_object('k1', public.cockpit_form_stage4_effects('kickoff', 1),
+                                   'k2', public.cockpit_form_stage4_effects('kickoff', 2),
+                                   'o1', public.cockpit_form_stage4_effects('onboarding', 1),
+                                   'o2', public.cockpit_form_stage4_effects('onboarding', 2)) AS r`,
+      ),
+    });
+    // 20261102l's plan as it planned it, before 20261102o changed the texts (whose own tests compare
+    // every other effect with this one's in stage4-match-make-supabase.test.ts).
+    const was: {
+      j?: Awaited<ReturnType<typeof read>>;
+      l?: Awaited<ReturnType<typeof read>>;
+    } = {};
+    await rolledBack(async () => {
+      await lState();
+      was.l = await read();
+    });
+    const now = was.l!;
+    expect(keys(now.onboarding)).toEqual([
+      "profile_fields",
+      "raw_answers_comment",
+      "map_phase3",
+      "github_dispatch",
+      "phase3_whatsapp",
+      "brand_dna_task",
+      "read_model",
+    ]);
+    expect(keys(now.onboarding)).toEqual(keys(now.arrays.o2));
+    // 20261102o plans the same effects in the same order, with the same arrays; 20261102p adds card_facts
+    // after profile_fields and card_fields, in the plans and in both version-2 arrays (B8).
+    const m = await read();
+    const withoutFacts = (effects: Row[]) => effects.filter(e => e.key !== "card_facts");
+    expect(keys(withoutFacts(m.onboarding))).toEqual(keys(now.onboarding));
+    expect(keys(withoutFacts(m.kickoff))).toEqual(keys(now.kickoff));
+    expect(keys(m.onboarding)[1]).toBe("card_facts");
+    expect(keys(m.kickoff)[3]).toBe("card_facts");
+    expect({ ...m.arrays, k2: withoutFacts(m.arrays.k2), o2: withoutFacts(m.arrays.o2) }).toEqual(now.arrays);
+    await rolledBack(async () => {
+      await jBodies();
+      was.j = await read();
+    });
+    const j = was.j!;
+    expect(keys(j.onboarding)).toContain("client_data_row");
+    expect(now.onboarding).toEqual(withoutClientData(j.onboarding));
+    expect(now.kickoff).toEqual(j.kickoff);
+    expect(now.arrays.k1).toEqual(j.arrays.k1);
+    expect(now.arrays.k2).toEqual(j.arrays.k2);
+    expect(now.arrays.o1).toEqual(withoutClientData(j.arrays.o1));
+    expect(now.arrays.o2).toEqual(withoutClientData(j.arrays.o2));
+  });
+});
+
+// --- 20261102p: Make is the floor, better data on top ---------------------------------------------
+
+const cardFactsAudits = () =>
+  one<number>(
+    "SELECT count(*)::int AS r FROM public.cockpit_audit_log WHERE action = 'forms.stage4_card_facts'",
+  );
+
+describe("20261102p: better data on top of Make's", () => {
+  test("a registry already on 20261102o's version-2 arrays (a go-live before p) moves to p's, one audit row each; off still works", async () => {
+    await rolledBack(async () => {
+      await goLive("kickoff", true);
+      await goLive("onboarding", true);
+      // o's arrays: p's without card_facts.
+      await ex(`UPDATE public.cockpit_forms f SET effects = (SELECT jsonb_agg(e ORDER BY n) FROM jsonb_array_elements(f.effects)
+                  WITH ORDINALITY AS u(e, n) WHERE e->>'key' <> 'card_facts') WHERE key IN ('kickoff', 'onboarding')`);
+      const before = await cardFactsAudits();
+      await ex(inTest(BETTER_DATA));
+      for (const form of ["kickoff", "onboarding"]) {
+        const row = await one<any>("SELECT to_jsonb(f) AS r FROM public.cockpit_forms f WHERE key = $1", [form]);
+        expect(row.effects).toEqual(
+          await one("SELECT public.cockpit_form_stage4_effects($1, 2) AS r", [form]),
+        );
+        expect(row).toMatchObject({ provider: "native", version: 2, updated_by: "migration 20261102p" });
+      }
+      expect(await cardFactsAudits()).toBe(before + 2);
+      // A second apply moves nothing more.
+      await ex(inTest(BETTER_DATA));
+      expect(await cardFactsAudits()).toBe(before + 2);
+      await goLive("kickoff", false);
+      expect(
+        await one("SELECT effects = public.cockpit_form_stage4_effects('kickoff', 1) AS r FROM public.cockpit_forms WHERE key = 'kickoff'"),
+      ).toBe(true);
+    });
+  });
+
+  test("the onboarding: the Brand DNA task's description carries its brief; card_facts queues the Company Website", async () => {
+    await rolledBack(async () => {
+      await goLive("onboarding", true);
+      await settings("onboarding.raw_titles", RAW_TITLES);
+      await addRequestTypes();
+      const inv = await portalOpen("locCedar01", C);
+      const done = await as<any>(
+        "service",
+        "SELECT public.portal_form_submit('locCedar01', $1, 'owner@client.invalid', 'admin', $2::uuid, $3::jsonb, $4::uuid, 'en') AS r",
+        [C, inv.inviteId, json(ONB_ANSWERS), uuid()],
+      );
+      expect(done.ok).toBe(true);
+      const fx = byKey(await effects(done.responseId));
+      expect(fx.brand_dna_task.state).toBe("delivered");
+      const brief = fx.brand_dna_task.plan.details as string;
+      expect(brief).toStartWith("For the Brand DNA doc (cockpit)\nTyped in the onboarding form as: Owner Business Co\n");
+      expect(fx.brand_dna_task.plan.detailsKind).toBe("dna_brief");
+      for (const v of [ONB_ANSWERS.fullName, ONB_ANSWERS.phone, ONB_ANSWERS.email, ONB_ANSWERS.personalPhone])
+        expect(brief).not.toContain(v);
+      const req = await one<any>(
+        "SELECT to_jsonb(q) AS r FROM public.cockpit_requests q WHERE id = $1::uuid",
+        [fx.brand_dna_task.delivery_ref],
+      );
+      expect(req.answers).toEqual({ details: brief });
+      expect(req.task_comment).toBeNull();
+      const part = await one<any>(
+        `SELECT q.payload AS r FROM public.cockpit_request_parts p JOIN public.cockpit_clickup_writeback_queue q ON q.id = p.queue_id
+          WHERE p.request_id = $1::uuid`,
+        [fx.brand_dna_task.delivery_ref],
+      );
+      expect(part.descriptionMarkdown).toContain(`\n\n${brief}\n\n`);
+      expect(part.taskComment).toBeUndefined();
+      expect(fx.card_facts.state).toBe("queued");
+      const facts = await one<any>(
+        "SELECT payload AS r FROM public.cockpit_clickup_writeback_queue WHERE id = $1::uuid",
+        [fx.card_facts.delivery_ref],
+      );
+      expect(facts.fields).toEqual([
+        {
+          fieldId: "5d57fdde-eb70-4610-a23b-88f718b4451d",
+          kind: "url",
+          label: "Company Website",
+          value: "https://cedar.invalid",
+          onlyIfEmpty: true,
+          source: "onboarding",
+        },
+      ]);
+    });
+  });
+
+  test("a client_onboarding type with no details field: the tasks are made, and the plan says the brief stayed out", async () => {
+    await rolledBack(async () => {
+      await goLive("kickoff", true);
+      await addRequestTypes();
+      await ex(`UPDATE public.cockpit_request_types SET fields = (SELECT jsonb_agg(f ORDER BY n)
+                  FROM jsonb_array_elements(fields) WITH ORDINALITY AS u(f, n) WHERE f->>'key' <> 'details')
+                 WHERE key = 'client_onboarding'`);
+      const out = await submit(CSM_A, A, KICKOFF_ANSWERS);
+      const fx = byKey(await effects(out.responseId));
+      const say =
+        "The brief stays out of the task description: the client_onboarding request type has no details field. Add one (key details, kind details) to carry it.";
+      expect(fx.onboarding_tasks.state).toBe("delivered");
+      expect(fx.onboarding_tasks.plan.detailsMissing).toBe(say);
+      expect(fx.onboarding_tasks.plan.lines).toEqual([
+        "Technical Onboarding Check and Creative Onboarding tasks",
+        say,
+      ]);
+      const view = await one<any>(
+        "SELECT public.cockpit_form_effect_view(e) AS r FROM public.cockpit_form_effects e WHERE e.response_id = $1::uuid AND e.effect_key = 'onboarding_tasks'",
+        [out.responseId],
+      );
+      expect(view.lines).toContain(say);
+      expect(
+        await one("SELECT answers AS r FROM public.cockpit_requests WHERE id = $1::uuid", [
+          fx.onboarding_tasks.delivery_ref,
+        ]),
+      ).toEqual({});
+    });
   });
 });

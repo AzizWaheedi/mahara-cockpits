@@ -406,7 +406,11 @@ export async function kickoffPrefill(
   };
 }
 
-/** cockpit_kickoff_submit: the answers keyed by field, one request id per open sheet. */
+/**
+ * cockpit_kickoff_submit: the answers keyed by field, one request id per open
+ * sheet. An answer the check refused stores nothing ({ok: false, errors}):
+ * `refused` names each one by key, with its code.
+ */
 export async function kickoffSubmit(
   c: WinsClient | null,
   taskId: string,
@@ -415,6 +419,7 @@ export async function kickoffSubmit(
 ): Promise<{
   responseId: string | null;
   trail: { step: string; state: string }[];
+  refused?: Record<string, string>;
 }> {
   const d =
     (await rpc(c, "cockpit_kickoff_submit", {
@@ -422,6 +427,16 @@ export async function kickoffSubmit(
       p_answers: answers,
       p_request_id: requestId,
     })) ?? {};
+  if (d.ok === false)
+    return {
+      responseId: null,
+      trail: [],
+      refused: Object.fromEntries(
+        Object.entries(
+          d.errors && typeof d.errors === "object" ? d.errors : {},
+        ).map(([k, v]) => [k, String(v)]),
+      ),
+    };
   return {
     responseId: text(d.responseId),
     trail: rows(d.trail)

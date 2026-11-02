@@ -23,16 +23,33 @@
 // progress whole into cockpit_audit_log.
 //
 // Stage 4 (docs/forms/WAVE56-CONTRACT.md 4.13.4, 4.14): the native kickoff and onboarding add seven effect
-// keys on the same rails: the handoff and raw answers comments (found again by their marker like the to-do
-// comment), the task status IN PROGRESS, two sets of card fields (each field read back), and the Onboarding
-// Map at phase 3 or 4, which never moves back: a card already at that phase or later is kept. A row of a form
-// not listed in CLICKUP_WRITEBACK_FORMS_KEYS (default checkin) is held by run.ts and never written here.
+// keys on the same rails: the handoff and raw answers comments, the task status IN PROGRESS, two sets of card
+// fields (each field read back, a text as long as Make writes it), and the Onboarding Map at phase 3 or 4,
+// which never moves back: a card already at that phase or later is kept. The two comments carry Make's text
+// alone, with no Cockpit ref (X37, "match Make"). A row of a form not listed in CLICKUP_WRITEBACK_FORMS_KEYS
+// (default checkin) is held by run.ts and never written here.
+//
+// card_facts (better-data plan B8, kickoff and onboarding): an addition on top of Make's output, separate from
+// card_fields, that fills five card fields from typed answers ONLY while the card leaves them empty (CARD_FACTS:
+// Consultation Types, ADs Platform, Fathom, Onboarding Call Date, Company Website; never Country, Daily Budget or any
+// other field). The plan names each field with onlyIfEmpty true; an unknown field id, kind or option fails the row
+// with no call. The card is read fresh: an empty field is written and read back, a set field is left as it is
+// ("kept", with a note when its value differs from the form's). progress.steps.card_facts.fields is the receipt,
+// saved before the first write: for each field id, `before` ("empty" or "set", what the first read saw) and `state`
+// ("due", "written" or "kept"), plus `differs` and `note` on a kept field whose value is not the form's. Any kept
+// field is said: a row that wrote nothing is skipped with the kept sentence as its reason; a row that wrote some
+// fields is delivered with that sentence as its note (the queue row's error, and the step's own `note`, which the
+// queue trigger copies into the effect's receipt.step). make_parity
+// grades a write over a set value from it ("differs: overwrote a card value"); this writer never makes one.
 //
 // Retry safety: every write records "started" before the call and "done"
-// after its read-back. A comment is found by its marker (Cockpit ref F- and
-// the first 10 hex of the response id) before anything is posted again, and
-// once ClickUp has answered a comment with its id it is never posted a second
-// time. Field writes read the card first and again after the write; dates
+// after its read-back. The to-do comment is found by its marker (Cockpit ref
+// F- and the first 10 hex of the response id) before anything is posted
+// again; a Stage 4 comment by the id ClickUp answered with, else by its text
+// (requests.ts commentKey) among the card's comments since its step started,
+// or by the marker a writer before this one appended. Once ClickUp has
+// answered a comment with its id it is never posted a second time. Field
+// writes read the card first and again after the write; dates
 // move forward only, by the Kuwait calendar day, never by the millisecond
 // (ClickUp keeps a date-only value at its own hour: 03:00Z or 04:00Z). A call
 // ClickUp does not answer is unknown once its step has started (the write may
@@ -60,6 +77,7 @@ import {
   type RequestOutcome,
   SAY,
   type Save,
+  sameText,
   StepBook,
 } from "./requests.ts";
 import { CLIENTS_LIST, type Row } from "./rules.ts";
@@ -74,7 +92,7 @@ export const FORM_KEYS = [
   "last_checkin_call",
 ] as const;
 export type FormKey = (typeof FORM_KEYS)[number];
-/** Stage 4's effect keys (4.13.4): the kickoff's four, the onboarding's three. */
+/** Stage 4's effect keys (4.13.4): the kickoff's four, the onboarding's three, and card_facts on both (plan B8). */
 export const STAGE4_KEYS = [
   "handoff_comment",
   "native_status",
@@ -83,10 +101,14 @@ export const STAGE4_KEYS = [
   "profile_fields",
   "raw_answers_comment",
   "map_phase3",
+  "card_facts",
 ] as const;
 export type Stage4Key = (typeof STAGE4_KEYS)[number];
-/** Which form each Stage 4 key belongs to. */
-export const STAGE4_FORM: Record<Stage4Key, "kickoff" | "onboarding"> = {
+/** Which form each Stage 4 key belongs to: card_facts comes from either. */
+export const STAGE4_FORM: Record<
+  Stage4Key,
+  "kickoff" | "onboarding" | "either"
+> = {
   handoff_comment: "kickoff",
   native_status: "kickoff",
   card_fields: "kickoff",
@@ -94,6 +116,7 @@ export const STAGE4_FORM: Record<Stage4Key, "kickoff" | "onboarding"> = {
   profile_fields: "onboarding",
   raw_answers_comment: "onboarding",
   map_phase3: "onboarding",
+  card_facts: "either",
 };
 /** The form keys CLICKUP_WRITEBACK_FORMS_KEYS may list. */
 export const FORMS_FORM_KEYS = ["checkin", "kickoff", "onboarding"] as const;
@@ -120,6 +143,45 @@ export const STAGE4_FIELDS: Record<
   profile_fields: {
     "7755485f-74a8-496c-85d8-562588e77944": "text",
     "87d7d889-afea-42f8-9485-6f3ead5b857f": "url",
+  },
+};
+/** The kinds of field card_facts writes. */
+export type CardFactKind = "labels" | "drop_down" | "url" | "date";
+/**
+ * The ONLY fields card_facts may write (better-data plan B8), with their kinds, the trail's names and, for a labels
+ * or dropdown field, the options it may write by id (the s40 snapshot of the Clients - Mahara list; the forms doctor
+ * reads them live). Never Country, Daily Budget or any other field.
+ */
+export const CARD_FACTS: Record<
+  string,
+  { kind: CardFactKind; label: string; options?: Record<string, string> }
+> = {
+  "45fdd2ea-f83c-4721-bce7-2e6187a43541": {
+    kind: "labels",
+    label: "Consultation Types",
+    options: {
+      "82279634-6601-4dd2-a1bc-af6737260b6b": "In Office",
+      "387c686d-5652-4635-abe6-10621f8359b3": "In Home / On Site",
+      "d9c0f5a6-6db5-4e97-8dd4-cc80247b96ae": "Online",
+    },
+  },
+  "2de15aa5-7fe9-48bf-86a1-e4cfee1306c9": {
+    kind: "drop_down",
+    label: "ADs Platform",
+    options: {
+      "88d55b4b-f296-4a0b-abc6-3b228889444a": "Facebook/Meta",
+      "c115bdfe-661f-4855-a86b-69a54b2e616a": "Tiktok",
+      "97b22a7b-c18b-4be9-bd03-ff271bacfd77": "Snapchat",
+    },
+  },
+  "abaa31ee-28ff-46f6-83bf-6c6d357a26d5": { kind: "url", label: "Fathom" },
+  "ee9bf855-e05b-4afc-addf-1063cb54d3f0": {
+    kind: "date",
+    label: "Onboarding Call Date",
+  },
+  "5d57fdde-eb70-4610-a23b-88f718b4451d": {
+    kind: "url",
+    label: "Company Website",
   },
 };
 /** The phase an Onboarding Map link points at, or null. */
@@ -181,6 +243,11 @@ export const SAY_FORMS = {
     "The 1-1 notes comment did not read back on the card. The next run looks for it by its Cockpit ref.",
   commentLost:
     "ClickUp answered the 1-1 notes comment with its id, but the comment is not on the card now. It is not posted again: check the card in ClickUp.",
+  /** A Stage 4 comment carries no Cockpit ref (X37): it is looked for by its id, else by its text. */
+  textMissing: (what: string) =>
+    `The ${what} did not read back on the card. The next run looks for it.`,
+  textLost: (what: string) =>
+    `ClickUp answered the ${what} with its id, but the comment is not on the card now. It is not posted again: check the card in ClickUp.`,
   heldOff: "Held: the 1-1 notes writer is off until the switch-over.",
   /** A row of a form CLICKUP_WRITEBACK_FORMS_KEYS does not list (4.13.4). */
   heldForm: (form: string) => `Held: ${form} card writes are not switched on.`,
@@ -188,6 +255,18 @@ export const SAY_FORMS = {
   mapKept: (phase: number) => `kept: the map is already at phase ${phase}`,
   noFieldOption: (label: string, name: string) =>
     `ClickUp's ${label} has no "${name}" option, so nothing was written. The tech lead runs the forms doctor.`,
+  noFieldOptionStarted: (label: string, name: string) =>
+    `ClickUp's ${label} has no "${name}" option now, and a write may have reached the card first, so check it in ClickUp. The tech lead runs the forms doctor.`,
+  /** card_facts (plan B8): what the trail reads when every field it would fill is already set on the card. */
+  factsKept: (kept: string[], differs: string[]) =>
+    `kept: the card already has a value for ${listWords(kept)}${
+      differs.length
+        ? `; ${listWords(differs)} ${differs.length === 1 ? "differs" : "differ"} from the form, so check ${differs.length === 1 ? "it" : "them"} on the card`
+        : ""
+    }`,
+  /** A kept card_facts field's note in the receipt, never its value. */
+  factDiffers: "kept: the card already has another value",
+  factRaced: "kept: another value reached the card during this write",
   statusNotBack:
     "The task status did not read back as IN PROGRESS. The next run reads it again.",
   heldLimited: "Held: the 1-1 notes writer is open only for the test card.",
@@ -217,6 +296,13 @@ export const SAY_FORMS = {
   tokenUnsure:
     "ClickUp refused a card and did not answer the check on the cockpit's token, so the writes wait and use no try. The next run checks again.",
 } as const;
+
+/** "A", "A and B", "A, B and C". */
+function listWords(words: string[]): string {
+  return words.length < 2
+    ? (words[0] ?? "")
+    : `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
+}
 
 /** "26 Oct" from "2026-10-26". */
 export function shortDay(day: string): string {
@@ -375,7 +461,9 @@ export type FormStep =
       key: "todo_comment" | "handoff_comment" | "raw_answers_comment";
       type: "comment";
       taskId: string;
+      /** What is posted: the to-do comment with its marker last, a Stage 4 comment as Make's text alone. */
       text: string;
+      /** The to-do comment's own marker; for a Stage 4 comment, the line a writer before this one appended. */
       marker: string;
     }
   | {
@@ -408,7 +496,30 @@ export type FormStep =
       fieldId: string;
       value: string;
       phase: number;
-    };
+    }
+  | { key: "card_facts"; type: "facts"; taskId: string; fields: CardFact[] };
+
+/**
+ * One field card_facts fills while the card leaves it empty: labels by option ids, a dropdown by option id, a link,
+ * or a date as its Kuwait day (written at noon Kuwait). `label` is CARD_FACTS' name for it, never the plan's.
+ */
+export type CardFact = {
+  fieldId: string;
+  kind: CardFactKind;
+  label: string;
+  optionIds?: string[];
+  optionId?: string;
+  value?: string;
+  day?: string;
+};
+
+/** One field's line in card_facts' receipt (progress.steps.card_facts.fields[fieldId]): states and notes, never values. */
+export type FactReceipt = {
+  before: "empty" | "set";
+  state: "due" | "written" | "kept";
+  differs?: true;
+  note?: string;
+};
 
 /** One card field a Stage 4 key writes: a dropdown by option id or name, a link or a text. */
 export type CardField = {
@@ -443,8 +554,17 @@ const isKey = (k: unknown): k is FormKey =>
 const isStage4 = (k: unknown): k is Stage4Key =>
   typeof k === "string" && (STAGE4_KEYS as readonly string[]).includes(k);
 const HTTPS = /^https:\/\/\S+$/;
+/** The Stage 4 comments that mirror Make's (Make 12 [11], Make 13 [47]): posted as Make's text alone (X37). */
+const MAKE_TEXT_KEYS = new Set<string>([
+  "handoff_comment",
+  "raw_answers_comment",
+]);
 
-/** Stage 4's check of one row (4.13.4): its form, its card, its comment's sha256, and only its own fields. */
+/**
+ * Stage 4's check of one row (4.13.4): its form, its card, its comment's sha256, and only its own fields. A text
+ * field is written as long as Make writes it (Make 13 [29] writes the Client Profile uncut, X37): only its kind and,
+ * for a link, https are checked, and a value ClickUp itself refuses is reported as any refusal is.
+ */
 async function stage4Step(
   item: FormItem,
   key: Stage4Key,
@@ -452,7 +572,13 @@ async function stage4Step(
   const p = item.payload ?? {};
   const plan = item.effect?.plan ?? {};
   const card = item.task_id as string;
-  if (p.formKey !== STAGE4_FORM[key]) return { fail: SAY_FORMS.mismatch };
+  const form = STAGE4_FORM[key];
+  if (
+    form === "either"
+      ? p.formKey !== "kickoff" && p.formKey !== "onboarding"
+      : p.formKey !== form
+  )
+    return { fail: SAY_FORMS.mismatch };
   if (key === "handoff_comment" || key === "raw_answers_comment") {
     const text = plan.comment_text;
     if (
@@ -468,14 +594,15 @@ async function stage4Step(
       !/[0-9a-f]{10}/i.test(p.responseId.replace(/-/g, ""))
     )
       return { fail: SAY_FORMS.mismatch };
-    const marker = formMarker(p.responseId);
+    // Make's text alone. The marker is kept on the step only to find a comment a writer before this one posted
+    // with it (writeComment).
     return {
       step: {
         key,
         type: "comment",
         taskId: card,
-        text: `${text}\n\n${marker}`,
-        marker,
+        text,
+        marker: formMarker(p.responseId),
       },
     };
   }
@@ -507,6 +634,7 @@ async function stage4Step(
       },
     };
   }
+  if (key === "card_facts") return factsStep(plan, card);
   const allowed = STAGE4_FIELDS[key];
   const raw: Row[] = Array.isArray(plan.fields) ? plan.fields : [];
   if (!raw.length) return { fail: SAY_FORMS.mismatch };
@@ -528,7 +656,6 @@ async function stage4Step(
     } else {
       if (
         typeof f.value !== "string" ||
-        f.value.length > 5000 ||
         (kind === "url" && !HTTPS.test(f.value))
       )
         return { fail: SAY_FORMS.mismatch };
@@ -536,6 +663,91 @@ async function stage4Step(
     }
   }
   return { step: { key, type: "fields", taskId: card, fields } };
+}
+
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+/** A calendar day as written, when it is one ("2026-02-30" is not). */
+function realDay(d: unknown): string | null {
+  if (typeof d !== "string" || !DAY.test(d)) return null;
+  const ms = Date.parse(`${d}T09:00:00Z`);
+  return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === d
+    ? d
+    : null;
+}
+/** An instant with its zone written out ("...Z" or "...+03:00"); one without a zone could be any day. */
+const ZONED =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:?\d{2})$/;
+/**
+ * A card_facts date's Kuwait day: the plan's value as "YYYY-MM-DD", or an instant (milliseconds, or ISO with its
+ * zone, as a call's starts_at) read as its Kuwait day. With `day` the plan names, both must be one day. A day outside
+ * 2020 to 2099 (seconds taken for milliseconds read as 1970) is null, as is anything else.
+ */
+function factDay(f: Row): string | null {
+  const v = f.value;
+  let day: string | null = null;
+  if (typeof v === "string" && DAY.test(v)) day = realDay(v);
+  else if (typeof v === "string" && ZONED.test(v))
+    day = kuwaitDay(Date.parse(v));
+  else if (
+    (typeof v === "number" && Number.isInteger(v)) ||
+    (typeof v === "string" && /^\d{1,16}$/.test(v))
+  )
+    day = kuwaitDay(Number(v));
+  if (!day || day < "2020-01-01" || day > "2099-12-31") return null;
+  return f.day === undefined || realDay(f.day) === day ? day : null;
+}
+
+/**
+ * card_facts' check before any call (plan B8): one to five fields, each in CARD_FACTS with its own kind, onlyIfEmpty
+ * true, a label, and a value of its kind: labels by known option ids, a dropdown by one known option id, a link on
+ * https, a date as a real day. A field twice, an unknown field id, kind or option, or anything else fails the row.
+ */
+function factsStep(
+  plan: Row,
+  card: string,
+): { step: FormStep } | { fail: string } {
+  const raw: Row[] = Array.isArray(plan.fields) ? plan.fields : [];
+  const no = { fail: SAY_FORMS.mismatch };
+  if (!raw.length || raw.length > Object.keys(CARD_FACTS).length) return no;
+  const fields: CardFact[] = [];
+  const seen = new Set<string>();
+  for (const f of raw) {
+    const fieldId = String(f?.fieldId ?? "");
+    const known = Object.hasOwn(CARD_FACTS, fieldId)
+      ? CARD_FACTS[fieldId]
+      : undefined;
+    if (
+      !known ||
+      seen.has(fieldId) ||
+      f.kind !== known.kind ||
+      f.onlyIfEmpty !== true ||
+      typeof f.label !== "string"
+    )
+      return no;
+    seen.add(fieldId);
+    const base = { fieldId, kind: known.kind, label: known.label };
+    const option = (id: unknown) =>
+      typeof id === "string" &&
+      known.options !== undefined &&
+      Object.hasOwn(known.options, id);
+    if (known.kind === "labels") {
+      const ids: unknown[] = Array.isArray(f.optionIds) ? f.optionIds : [];
+      if (!ids.length || !ids.every(option) || new Set(ids).size !== ids.length)
+        return no;
+      fields.push({ ...base, optionIds: ids as string[] });
+    } else if (known.kind === "drop_down") {
+      if (!option(f.optionId)) return no;
+      fields.push({ ...base, optionId: f.optionId });
+    } else if (known.kind === "url") {
+      if (typeof f.value !== "string" || !HTTPS.test(f.value)) return no;
+      fields.push({ ...base, value: f.value });
+    } else {
+      const day = factDay(f);
+      if (!day) return no;
+      fields.push({ ...base, day });
+    }
+  }
+  return { step: { key: "card_facts", type: "facts", taskId: card, fields } };
 }
 
 /**
@@ -682,35 +894,56 @@ const fieldOf = (card: Row, fieldId: string): Row | undefined =>
     (f: Row) => f.id === fieldId,
   );
 
+/**
+ * The text a Stage 4 comment posts: Make's alone. A step a writer before this one froze ends with its Cockpit ref
+ * line, which is not posted again.
+ */
+export function makeText(step: Extract<FormStep, { type: "comment" }>): string {
+  const line = `\n\n${step.marker}`;
+  return step.text.endsWith(line)
+    ? step.text.slice(0, -line.length)
+    : step.text;
+}
+
 async function writeComment(
   x: Ctx & { step: Extract<FormStep, { type: "comment" }> },
 ): Promise<RequestOutcome> {
   const { provider, book, step, item } = x;
   const st = book.get(step.key);
   const since = () => book.startedAt(step.key, item.created_at) - 60_000;
+  const mirrorsMake = MAKE_TEXT_KEYS.has(step.key);
+  const text = mirrorsMake ? makeText(step) : step.text;
+  const what = mirrorsMake
+    ? STAGE4_WORDS[step.key as Stage4Key].toLowerCase()
+    : "";
+  // The to-do comment is found by its marker (and its id, once ClickUp gave one). A Stage 4 comment carries no
+  // marker: with an id from ClickUp it is found by that id alone, else by its text since the step started, or by
+  // the marker a writer before this one appended.
+  const match = (id: string | null) =>
+    !mirrorsMake ? step.marker : id ? "" : sameText(text, since(), step.marker);
   if (st?.state === "started") {
-    const found =
-      (await findComment(provider, step.taskId, step.marker, since())) ??
-      (st.commentId
-        ? await findComment(
-            provider,
-            step.taskId,
-            "",
-            since(),
-            String(st.commentId),
-          )
-        : undefined);
+    const id = st.commentId ? String(st.commentId) : null;
+    const found = mirrorsMake
+      ? await findComment(provider, step.taskId, match(id), since(), id)
+      : ((await findComment(provider, step.taskId, step.marker, since())) ??
+        (id
+          ? await findComment(provider, step.taskId, "", since(), id)
+          : undefined));
     if (found) {
       await book.set(step.key, "done", { commentId: String(found.id) });
       return { state: "delivered", progress: book.progress };
     }
-    // ClickUp gave this comment an id once: a second post would put the notes on the card twice.
-    if (st.commentId) throw halt("unknown", SAY_FORMS.commentLost);
+    // ClickUp gave this comment an id once: a second post would put it on the card twice.
+    if (id)
+      throw halt(
+        "unknown",
+        mirrorsMake ? SAY_FORMS.textLost(what) : SAY_FORMS.commentLost,
+      );
   }
   await book.start(step.key);
   const made = await book.write(() =>
     provider.call("clickup", "POST", `task/${step.taskId}/comment`, {
-      comment_text: step.text,
+      comment_text: text,
       notify_all: false,
     }),
   );
@@ -720,11 +953,15 @@ async function writeComment(
   const back = await findComment(
     provider,
     step.taskId,
-    step.marker,
+    match(cid),
     since(),
     cid,
   );
-  if (!back) throw halt("unknown", SAY_FORMS.commentMissing);
+  if (!back)
+    throw halt(
+      "unknown",
+      mirrorsMake ? SAY_FORMS.textMissing(what) : SAY_FORMS.commentMissing,
+    );
   await book.set(step.key, "done", { commentId: String(back.id) });
   return { state: "delivered", progress: book.progress };
 }
@@ -924,6 +1161,209 @@ async function writeFields(
   return { state: "delivered", progress: book.progress };
 }
 
+// --- card_facts (plan B8): fill a field only while the card leaves it empty -------------------------
+
+/** Nothing on the card in this field: no value, an empty text, or no labels. */
+function factEmpty(field: Row): boolean {
+  const v = field.value;
+  return (
+    v === undefined ||
+    v === null ||
+    (typeof v === "string" && v.trim() === "") ||
+    (Array.isArray(v) && v.length === 0)
+  );
+}
+
+/** Does the card's field hold exactly what this fact writes? Labels as a set of option ids, a dropdown by id or orderindex, a date by its Kuwait day. */
+function factMatches(card: Row, f: CardFact): boolean {
+  const field = fieldOf(card, f.fieldId);
+  if (!field || factEmpty(field)) return false;
+  const v = field.value;
+  if (f.kind === "labels") {
+    const on = (Array.isArray(v) ? v : []).map((x: unknown) =>
+      String(x !== null && typeof x === "object" ? (x as Row).id : x),
+    );
+    const want = f.optionIds ?? [];
+    return (
+      new Set(on).size === want.length && want.every(id => on.includes(id))
+    );
+  }
+  if (f.kind === "drop_down")
+    return fieldMatches(card, f.fieldId, "select", f.optionId);
+  if (f.kind === "date") return kuwaitDay(v) === f.day;
+  return String(v).trim() === String(f.value ?? "").trim();
+}
+
+/** What ClickUp is sent for one fact: a date at noon Kuwait as a date-only value, as the check-in dates are. */
+function factBody(f: CardFact): Row {
+  if (f.kind === "labels") return { value: f.optionIds };
+  if (f.kind === "drop_down") return { value: f.optionId };
+  if (f.kind === "date")
+    return { value: noonKuwait(String(f.day)), value_options: { time: false } };
+  return { value: f.value };
+}
+
+/** The receipt's fields as saved, when the step has started before. */
+function savedReceipt(saved: Row | undefined): Record<string, FactReceipt> {
+  const f = saved?.fields;
+  return f && typeof f === "object" && !Array.isArray(f)
+    ? structuredClone(f)
+    : {};
+}
+
+/** The trail's kept sentence for a card_facts row: which fields the card already had, and which differ. */
+function factsKeptSaid(
+  step: Extract<FormStep, { type: "facts" }>,
+  receipt: Record<string, FactReceipt>,
+): string {
+  const kept = step.fields.filter(f => receipt[f.fieldId]?.state === "kept");
+  return SAY_FORMS.factsKept(
+    kept.map(f => f.label),
+    kept.filter(f => receipt[f.fieldId]?.differs).map(f => f.label),
+  );
+}
+
+/**
+ * A delivered card_facts row's note (plan B8): the same kept sentence when it wrote some fields and kept others, so a
+ * kept field, and one whose value differs from the form's above all, is said on a delivered row too. None when
+ * nothing was kept.
+ */
+function factsKeptNote(
+  step: Extract<FormStep, { type: "facts" }>,
+  receipt: Record<string, FactReceipt>,
+): string | undefined {
+  return step.fields.some(f => receipt[f.fieldId]?.state === "kept")
+    ? factsKeptSaid(step, receipt)
+    : undefined;
+}
+
+/**
+ * card_facts (plan B8): the card read fresh, each field written only when it is empty and read back; a set field is
+ * left as it is ("kept", noted when its value is not the form's). The receipt (progress.steps.card_facts.fields) is
+ * saved before the first write and keeps what the FIRST read saw, so a resume never takes this writer's own value for
+ * one the card already had: a field it found empty and now holds the form's value is written; still empty, it is
+ * written again (the same value, so nothing doubles); holding another value, another writer filled it meanwhile and
+ * it is kept. Every field and option is checked on the card before anything is written. Nothing written at all reads
+ * "skipped" with the trail's kept sentence, as the map's kept row does. Some written and some kept reads "delivered"
+ * with that sentence as its note, saved on the step too (progress.steps.card_facts.note).
+ */
+async function writeFacts(
+  x: Ctx & { step: Extract<FormStep, { type: "facts" }> },
+): Promise<RequestOutcome> {
+  const { provider, book, step } = x;
+  const resumed = book.get(step.key)?.state === "started";
+  const first = savedReceipt(book.get(step.key));
+  const card = await readCard(x);
+  for (const f of step.fields)
+    if (!fieldOf(card, f.fieldId))
+      throw halt(
+        "failed",
+        resumed
+          ? SAY_FORMS.noFieldStarted(f.label)
+          : SAY_FORMS.noField(f.label),
+      );
+  const receipt: Record<string, FactReceipt> = {};
+  const due: CardFact[] = [];
+  const differs = (raced: boolean): FactReceipt => ({
+    before: raced ? "empty" : "set",
+    state: "kept",
+    differs: true,
+    note: raced ? SAY_FORMS.factRaced : SAY_FORMS.factDiffers,
+  });
+  for (const f of step.fields) {
+    const was = first[f.fieldId]?.before;
+    const field = fieldOf(card, f.fieldId) as Row;
+    if (was === "set") receipt[f.fieldId] = first[f.fieldId];
+    else if (factEmpty(field)) {
+      receipt[f.fieldId] = { before: "empty", state: "due" };
+      due.push(f);
+    } else if (was === "empty")
+      // Found empty before this writer's write: its own value is "written"; another value got there meanwhile.
+      receipt[f.fieldId] = factMatches(card, f)
+        ? { before: "empty", state: "written" }
+        : differs(true);
+    else
+      receipt[f.fieldId] = factMatches(card, f)
+        ? { before: "set", state: "kept" }
+        : differs(false);
+  }
+  // Every option the writes send is on its field now, before anything is written.
+  for (const f of due) {
+    if (f.kind !== "labels" && f.kind !== "drop_down") continue;
+    const options = fieldOf(card, f.fieldId)?.type_config?.options;
+    const on: Row[] = Array.isArray(options) ? options : [];
+    const ids =
+      f.kind === "labels" ? (f.optionIds ?? []) : [String(f.optionId)];
+    const gone = ids.find(id => !on.some(o => String(o.id) === id));
+    if (gone !== undefined) {
+      const name = CARD_FACTS[f.fieldId]?.options?.[gone] ?? gone;
+      throw halt(
+        "failed",
+        resumed
+          ? SAY_FORMS.noFieldOptionStarted(f.label, name)
+          : SAY_FORMS.noFieldOption(f.label, name),
+      );
+    }
+  }
+  const settle = async (): Promise<RequestOutcome> => {
+    if (Object.values(receipt).some(r => r.state === "written")) {
+      const note = factsKeptNote(step, receipt);
+      await book.set(step.key, "done", {
+        fields: receipt,
+        ...(note ? { note } : {}),
+      });
+      return {
+        state: "delivered",
+        progress: book.progress,
+        ...(note ? { note } : {}),
+      };
+    }
+    await book.set(step.key, "skipped", { fields: receipt });
+    return {
+      state: "skipped",
+      progress: book.progress,
+      error: factsKeptSaid(step, receipt),
+    };
+  };
+  if (!due.length) return settle();
+  await book.start(step.key, { fields: receipt });
+  for (const [i, f] of due.entries()) {
+    try {
+      await book.write(() =>
+        provider.call(
+          "clickup",
+          "POST",
+          `task/${step.taskId}/field/${f.fieldId}`,
+          factBody(f),
+        ),
+      );
+    } catch (e) {
+      // A 429 or 401 on a write that never landed starts its step clean (StepBook.forget). Once a write before this
+      // one may be on the card, in this run or an earlier one, the step keeps its receipt instead: started clean, the
+      // next read would take this writer's own value for one the card already had. The row then reads unknown and
+      // the next run reads the card back first.
+      const status = /rejected the request \((\d{3})/.exec(errorText(e))?.[1];
+      if ((resumed || i > 0) && (errorKind(e) === "retry" || status === "401"))
+        book.writing = false;
+      throw e;
+    }
+  }
+  const back = await readCard(x);
+  const missing: CardFact[] = [];
+  for (const f of due) {
+    const field = fieldOf(back, f.fieldId);
+    if (field && factMatches(back, f))
+      receipt[f.fieldId] = { before: "empty", state: "written" };
+    else if (field && !factEmpty(field)) receipt[f.fieldId] = differs(true);
+    else missing.push(f);
+  }
+  if (missing.length) {
+    await book.set(step.key, "started", { fields: receipt });
+    throw halt("unknown", SAY_FORMS.notBack(missing[0].label, "written"));
+  }
+  return settle();
+}
+
 /** The Onboarding Map at phase 3 or 4, never moved back: a card at that phase or later is kept (4.13.4). */
 async function writeMap(
   x: Ctx & { step: Extract<FormStep, { type: "map" }> },
@@ -1087,6 +1527,16 @@ export async function executeForm(
         progress: book.progress,
         error: SAY_FORMS.mapKept(done.cardPhase),
       };
+    if (done.state === "skipped" && step.type === "facts")
+      return {
+        state: "skipped",
+        progress: book.progress,
+        error: factsKeptSaid(step, savedReceipt(done)),
+      };
+    if (step.type === "facts") {
+      const note = factsKeptNote(step, savedReceipt(done));
+      if (note) return { state: "delivered", progress: book.progress, note };
+    }
     return { state: "delivered", progress: book.progress };
   }
   try {
@@ -1095,6 +1545,7 @@ export async function executeForm(
     if (step.type === "status") return await writeStatus({ ...x, step });
     if (step.type === "fields") return await writeFields({ ...x, step });
     if (step.type === "map") return await writeMap({ ...x, step });
+    if (step.type === "facts") return await writeFacts({ ...x, step });
     return await writeDate({ ...x, step });
   } catch (e) {
     if (
@@ -1158,6 +1609,7 @@ const STAGE4_WORDS: Record<Stage4Key, string> = {
   profile_fields: "Client Profile and kickoff link",
   raw_answers_comment: "Raw onboarding answers comment",
   map_phase3: "Onboarding Map",
+  card_facts: "Empty card fields filled from the answers",
 };
 
 export function planForm(item: FormItem): Row[] {
@@ -1178,7 +1630,9 @@ export function planForm(item: FormItem): Row[] {
               ? "IN PROGRESS"
               : key === "map_phase3" || key === "map_phase4"
                 ? `phase ${key === "map_phase3" ? 3 : 4}`
-                : `${Array.isArray(p.fields) ? p.fields.length : 0} fields`,
+                : key === "card_facts"
+                  ? `up to ${Array.isArray(p.fields) ? p.fields.length : 0}, each only where the card is empty`
+                  : `${Array.isArray(p.fields) ? p.fields.length : 0} fields`,
       },
     ];
   return [
@@ -1291,6 +1745,32 @@ export async function formsDoctorChecks(
         problems.push(
           `The ${form} writes a field (${id.slice(0, 8)}) that is not on the Clients - Mahara list.`,
         );
+    // card_facts' five fields (plan B8), while the kickoff or the onboarding is switched on: each on the list, of its
+    // kind, with every option the writer may send (read live; the ids came from a snapshot).
+    if (forms.includes("kickoff") || forms.includes("onboarding"))
+      for (const [id, fact] of Object.entries(CARD_FACTS)) {
+        const f = fields.find(x => x.id === id);
+        if (!f) {
+          problems.push(
+            `Card facts write ${fact.label} (${id.slice(0, 8)}), which is not on the Clients - Mahara list.`,
+          );
+          continue;
+        }
+        if (String(f.type) !== fact.kind) {
+          problems.push(
+            `${fact.label} is a ${String(f.type)} field in ClickUp, not ${fact.kind}, so card facts would not write it.`,
+          );
+          continue;
+        }
+        const on: Row[] = Array.isArray(f.type_config?.options)
+          ? f.type_config.options
+          : [];
+        for (const [optionId, name] of Object.entries(fact.options ?? {}))
+          if (!on.some(o => String(o.id) === optionId))
+            problems.push(
+              `${fact.label} has no "${name}" option in ClickUp any more, so a card facts write with it would fail.`,
+            );
+      }
     for (const key of ["last_poc", "last_checkin_call"] as const) {
       const f = fields.find(x => x.id === FORM_FIELDS[key]);
       if (!f)

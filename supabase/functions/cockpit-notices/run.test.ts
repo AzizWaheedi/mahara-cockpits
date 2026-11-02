@@ -193,6 +193,37 @@ describe("the kickoff notice", () => {
     expect(text).toContain("This is the second kickoff for this client. Do not send it a third time.");
     expect(text.match(/<@U0C5JHUCTPG>/g)).toHaveLength(1);
   });
+
+  test("the open setup items (plan B4) go from the queued facts into the post, after the handoff line; a row queued without them has none", async () => {
+    const openItems = ["funded card not linked", "Facebook access: Waiting on Client", "Facebook access: typed by someone"];
+    const sectionLines = (kit: ReturnType<typeof deps>) => {
+      const blocks = detailOf(lastResult(kit)).blocks as { type: string; text?: { text: string } }[];
+      return String(blocks[0].text?.text).split("\n");
+    };
+    // Complete.
+    const done = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(claimed({ facts: { ...claimed().facts as Record<string, unknown>, openItems } })) }) });
+    done.clickup.handoff("task0001", minutesAgo(23));
+    await runNotices(done.deps);
+    expect(lastResult(done).p_outcome).toBe("posted");
+    const complete = sectionLines(done);
+    expect(complete[3]).toStartWith("The Kickoff Handoff comment is on the card (");
+    expect(complete[4]).toBe("Still open from the kickoff: funded card not linked; Facebook access: Waiting on Client; 1 more, see the kickoff in the cockpit.");
+    expect(JSON.stringify(done.slack.posts())).not.toContain("typed by someone");
+    // What the notice saw is kept on the row; the items stay in the queued facts, not in it.
+    expect(detailOf(lastResult(done)).facts).not.toHaveProperty("openItems");
+    // Late, with nothing open.
+    const lateRow = claimed({ facts: { ...claimed().facts as Record<string, unknown>, openItems: [], submittedAt: minutesAgo(21) } });
+    const late = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(lateRow) }) });
+    await runNotices(late.deps);
+    const lateLines = sectionLines(late);
+    expect(lateLines[2]).toStartWith("The card has no Kickoff Handoff comment 20 minutes after the kickoff.");
+    expect(lateLines[3]).toBe("Nothing open from the kickoff's setup questions.");
+    // Queued before B4 (no openItems key): no line.
+    const old = deps({ rpc: fakeRpc({ cockpit_slack_notice_claim: claimOnce(claimed()) }) });
+    old.clickup.handoff("task0001", minutesAgo(23));
+    await runNotices(old.deps);
+    expect(sectionLines(old).join("\n")).not.toContain("open from the kickoff");
+  });
 });
 
 describe("the bot check", () => {

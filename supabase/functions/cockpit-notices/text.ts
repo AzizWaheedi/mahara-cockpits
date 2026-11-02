@@ -18,6 +18,12 @@
  * outbox's facts, and only for a private channel; the grade tags nobody,
  * whatever mentions are passed, because it is about a person's call.
  *
+ * The kickoff's open setup items (Stage 4 plan B4): `openItems`, filled by
+ * cockpit_slack_notice_kickoff_facts from the stored kickoff's answers, read
+ * by ref. Each item is printed only when it is one of the fixed phrases below
+ * (KICKOFF_OPEN_FIXED, KICKOFF_OPEN_PICKS: the form's own option labels), so
+ * no typed answer can reach Slack; anything else is counted, never quoted.
+ *
  * The client lifecycle notices (docs/forms/WAVE12-CONTRACT.md 3.4): names and
  * dates only, never an amount, a lead count, an email or a phone. A
  * termination survey that came with no card id is "unmatched": it names the
@@ -363,10 +369,68 @@ function filledLine(f: NoticeFacts): string {
   return `Filled ${by ? `by ${escapeSlack(by)}` : "in Typeform"} on ${kuwaitWhen(str(f.submittedAt))}.`;
 }
 
+/**
+ * The kickoff's open setup items (Stage 4 plan B4). The yes/no questions and
+ * the lead file print fixed words; each pick prints "<question>: <option>",
+ * the option one of the form's own labels (apps/client-success-cockpit
+ * src/forms/kickoff.ts, KICKOFF_FIELDS; text.test.ts checks them label for
+ * label). An option in `done` is never open, so it is never printed.
+ */
+export const KICKOFF_OPEN_FIXED: readonly string[] = [
+  "funded card not linked", // 8bee68fc answered No
+  "Google Calendar not connected", // 3bebf47d answered No
+  "lead file missing", // dff79b66 and 85d7ebb5 both Yes, 86a6cce0 empty
+];
+export const KICKOFF_OPEN_PICKS: readonly { words: string; ref: string; open: readonly string[]; done: readonly string[] }[] = [
+  { words: "Facebook access", ref: "6fcbd33c-60e9-4df7-bfaa-e76b588dd887", open: ["Requested", "Waiting on Client", "Pending", "Need Tech Help"], done: ["Access Confirmed", "Using Ours", "Their Page Our Ad Acc"] },
+  { words: "WhatsApp CRM sync", ref: "a813378f-06ce-499e-8f0e-14761b89b474", open: ["Requested", "Waiting on Client", "Needs Integrating", "Pending"], done: ["Integrated", "Not Integrating"] },
+  { words: "Mahara OS access", ref: "ad562fc2-6858-4e37-81c5-c4cc2375a330", open: ["Tech Issue", "Didn't Receive Access"], done: ["Logged In", "Doesn't Want To"] },
+  { words: "training course", ref: "c56a7e2d-6f18-4bf9-a9f6-11367eab4c11", open: ["Requested", "Need Tech Help", "Waiting On Client"], done: ["Confirmed"] },
+  { words: "contract", ref: "c0000001-0000-4000-8000-00000000000a", open: ["Sent and waiting on client", "Adjustments requested by client", "Not sent yet"], done: ["Signed", "NA - already signed"] },
+];
+/** At most this many items are named; the rest are counted. One per question is eight, so a real kickoff never reaches it. */
+export const OPEN_ITEMS_SHOWN = 8;
+
+const openKey = (s: string) => s.replace(/[\u2018\u2019]/g, "'").replace(/\s+/g, " ").trim().toLowerCase();
+// Each known phrase to its printed words; a done option to null.
+const OPEN_WORDS: ReadonlyMap<string, string | null> = new Map<string, string | null>([
+  ...KICKOFF_OPEN_FIXED.map(w => [openKey(w), w] as [string, string]),
+  ...KICKOFF_OPEN_PICKS.flatMap(p => [
+    ...p.open.map(o => [openKey(`${p.words}: ${o}`), `${p.words}: ${o}`] as [string, string]),
+    ...p.done.map(o => [openKey(`${p.words}: ${o}`), null] as [string, null]),
+  ]),
+]);
+
+/**
+ * The line after the handoff line in both kickoff variants. No list (no stored
+ * kickoff answers, or a notice queued before B4) leaves the line out. An item
+ * this file does not know is counted and the line points at the cockpit, so a
+ * typed answer is never quoted and an open item is never said to be closed.
+ */
+export function kickoffOpenLine(items: unknown): string | null {
+  if (!Array.isArray(items)) return null;
+  const named: string[] = [];
+  let other = 0;
+  for (const item of items) {
+    const words = typeof item === "string" ? OPEN_WORDS.get(openKey(item)) : undefined;
+    if (words === null) continue;
+    if (words === undefined) other++;
+    else if (!named.includes(words)) named.push(words);
+  }
+  const shown = named.slice(0, OPEN_ITEMS_SHOWN);
+  const more = named.length - shown.length + other;
+  if (!shown.length && !more) return "Nothing open from the kickoff's setup questions.";
+  const parts = shown.map(escapeSlack);
+  if (more) parts.push(`${shown.length ? `${more} more` : `${more} ${more === 1 ? "item" : "items"}`}, see the kickoff in the cockpit`);
+  return `Still open from the kickoff: ${parts.join("; ")}.`;
+}
+
 function kickoff(variant: Variant, f: NoticeFacts, who: Who): Built {
   const client = escapeSlack(f.client);
   const l = noticeLinks(f.taskId);
   const links = [{ url: l.cockpit, words: "Open in the cockpit" }, { url: l.card, words: "Open the ClickUp card" }];
+  // Plan B4: one line after the handoff line, in both variants.
+  const open = kickoffOpenLine(f.openItems);
   if (variant === "complete") {
     const status = cleanStatus(str(f.clientStatus));
     const lines = [
@@ -375,6 +439,7 @@ function kickoff(variant: Variant, f: NoticeFacts, who: Who): Built {
       `The card shows ${status ? escapeSlack(status) : "no client status"}${f.blueprintLink === true ? ", and the Brand Blueprint link" : ""}.`,
       str(f.handoffAt) ? `The Kickoff Handoff comment is on the card (${kuwaitClock(str(f.handoffAt))}).` : "The Kickoff Handoff comment is on the card.",
     ];
+    if (open) lines.push(open);
     if (f.second === true) {
       lines.push("This is the second kickoff for this client. The card has a new Kickoff Handoff comment, so check it for a second Technical and Creative task, and do not send it a third time.");
     }
@@ -400,6 +465,7 @@ function kickoff(variant: Variant, f: NoticeFacts, who: Who): Built {
       who,
     ),
   ];
+  if (open) lines.push(open);
   if (f.second === true) lines.push("This is the second kickoff for this client. Do not send it a third time.");
   return { text: `Kickoff in, card not updated: ${client}. Open the card and check it.`, lines, links, inline: false, footer: "Client success", placed: true };
 }
@@ -805,6 +871,8 @@ export function sampleFacts(kind: NoticeKind, now: Date = new Date()): NoticeFac
     handoffAt: at(-4),
     commentCheck: "found",
     second: false,
+    // The kickoff's open setup items: two of the fixed phrases.
+    openItems: ["funded card not linked", "Facebook access: Waiting on Client"],
     cardUpdatedAt: at(-2),
     source: "cockpit",
     settled: "done",

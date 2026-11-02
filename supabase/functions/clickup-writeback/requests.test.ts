@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
   cardCommentText,
+  commentKey,
   createBody,
   doctorChecks,
   errorKind,
@@ -13,11 +14,14 @@ import {
   normName,
   payloadProblem,
   planRequest,
+  REQUEST_STEPS,
   requestsGate,
   requestStepKeys,
   runContext,
   SAY,
+  sameText,
   STEP_REFUSED,
+  TASK_COMMENT_MAX,
 } from "./requests";
 import { DOUBT_MINUTES, finalWords, gate, HOLD_MS, kpiGate, runRequestsDoctor, STILL_CHECKING, WAITING } from "./run";
 import {
@@ -1477,12 +1481,281 @@ describe("the requests doctor (contract 4.5)", () => {
   });
 });
 
+// --- The task comment (docs/forms/WAVE56-CONTRACT.md X37: "match Make") ------------------------------------------
+
+/**
+ * An invented kickoff handoff in Make 12 [11]'s shape: bold marks, a rule line, a line break and a doubled space
+ * inside an answer, underscores, Arabic and an emoji. No real client, answer or card.
+ */
+const HANDOFF = [
+  "*KICKOFF HANDOFF*",
+  "*Client:* Acme Interiors",
+  "*Call recording:* Not provided",
+  "",
+  "____________________________________",
+  "",
+  "*Business Name:* Acme  Interiors 🛋️",
+  "*Address:* Block 1,\nStreet 2",
+  "*Notes:* call_center and snake_case_words",
+  "*المنطقة:* حولي",
+].join("\n");
+
+/**
+ * The handoff as ClickUp may hand it back (requests.ts commentKey): each `*` and the rule line dropped, its markdown's
+ * backslash before each underscore, spaces and new lines changed.
+ */
+const asClickUpReturns = (text: string) =>
+  `${text
+    .split("\n")
+    .filter(l => !/^_{3,}$/.test(l))
+    .join("\n")
+    .replace(/\*/g, "")
+    .replace(/_/g, "\\_")
+    .replace(/ {2,}/g, " ")
+    .replace(/\n/g, "  \r\n")}\n`;
+
+describe("the task comment: Make's text alone, posted once on the task the part made (X37)", () => {
+  const onTask = (c: { method: string; path: string }) => c.method === "POST" && /^task\/86new\d+\/comment$/.test(c.path);
+  const commentsOn = (h: ReturnType<typeof harness>, row: { task_id: string | null }) => h.clickup.comments.get(row.task_id!) ?? [];
+
+  it("posts the payload's taskComment once, byte for byte with no Cockpit ref, after the task is built and before the card's link", async () => {
+    const h = harness(LIVE);
+    const row = h.db.enqueue("request", requestPayload({ setRequestType: true, taskComment: HANDOFF }));
+    await h.run();
+    expect(row.state).toBe("delivered");
+    expect(row.steps).toEqual(["create", "checklist", "tag", "request_type", "task_comment", "card_comment"]);
+    const posted = h.clickup.writes().filter(onTask);
+    expect(posted).toEqual([
+      { actionId: row.id, provider: "clickup", method: "POST", path: `task/${row.task_id}/comment`, body: { comment_text: HANDOFF, notify_all: false } },
+    ]);
+    expect(commentsOn(h, row).map(c => c.comment_text)).toEqual([HANDOFF]);
+    expect(steps(row)).toMatchObject({ request_type: "done", task_comment: "done", card_comment: "done" });
+    expect(row.progress?.steps?.task_comment?.commentId).toBe(commentsOn(h, row)[0].id);
+    // The task's own Request Type is written before the comment, the card's link after it.
+    const writes = h.clickup.writes().map(c => c.path);
+    expect(writes.indexOf(`task/${row.task_id}/field/${RT_FIELD}`)).toBeLessThan(writes.indexOf(`task/${row.task_id}/comment`));
+    expect(writes.indexOf(`task/${row.task_id}/comment`)).toBeLessThan(writes.indexOf(`task/${CARD}/comment`));
+    // The text never reaches progress, which the queue's audit trigger copies whole.
+    for (const s of h.db.saves(row.id)) expect(JSON.stringify(s)).not.toContain("Block 1");
+  });
+
+  it("a template part (the onboarding tasks' kind) posts it after its description, owner and checklist", async () => {
+    const h = harness(LIVE);
+    const [techP] = pausePayloads();
+    const row = h.db.enqueue("request", { ...techP, taskComment: HANDOFF });
+    await h.run();
+    expect(row.state).toBe("delivered");
+    expect(row.steps).toEqual(["create", "description", "owner_due_priority", "checklist", "tag", "task_comment", "card_comment"]);
+    expect(commentsOn(h, row).map(c => c.comment_text)).toEqual([HANDOFF]);
+    // The description keeps its Cockpit ref, so the task is never made twice; the comment carries none.
+    expect(h.clickup.task(row.task_id!)!.markdown_description).toContain(`Cockpit ref R-${REF_HEX}-tech`);
+    expect(commentsOn(h, row)[0].comment_text).not.toContain("Cockpit ref");
+  });
+
+  it("no taskComment, a blank one or null: no step, and nothing is posted on the task", async () => {
+    for (const taskComment of [undefined, null, "", "  \n\t "]) {
+      const h = harness(LIVE);
+      const row = h.db.enqueue("request", requestPayload(taskComment === undefined ? {} : { taskComment }));
+      await h.run();
+      expect(row.state).toBe("delivered");
+      expect(row.steps).toEqual(["create", "checklist", "tag", "card_comment"]);
+      expect(commentsOn(h, row)).toEqual([]);
+    }
+  });
+
+  it("a row whose steps were frozen before the step existed never posts it (ship the writer before 20261102o)", async () => {
+    const h = harness(LIVE);
+    const row = h.db.enqueue("request", requestPayload({ taskComment: HANDOFF }), { steps: ["create", "checklist", "tag", "card_comment"] });
+    await h.run();
+    expect(row.state).toBe("delivered");
+    expect(commentsOn(h, row)).toEqual([]);
+  });
+
+  it("resume after a POST ClickUp did not answer: found by its text, as ClickUp rewrote it, and never posted twice", async () => {
+    const h = harness(LIVE);
+    let lost = false;
+    h.clickup.lose = c => !lost && onTask(c) && (lost = true);
+    const row = h.db.enqueue("request", requestPayload({ taskComment: HANDOFF }));
+    await h.run();
+    expect(row.state).toBe("unknown");
+    expect(row.progress?.steps?.task_comment).toMatchObject({ state: "started" });
+    expect(row.progress?.steps?.task_comment?.commentId).toBeUndefined();
+    // The post landed; ClickUp keeps it with its marks dropped and its underscores escaped.
+    const landed = commentsOn(h, row)[0];
+    landed.comment_text = asClickUpReturns(HANDOFF);
+    expect(landed.comment_text).not.toBe(HANDOFF);
+    h.advance(60_000);
+    await h.run();
+    expect(row.state).toBe("delivered");
+    expect(h.clickup.writes().filter(onTask)).toHaveLength(1);
+    expect(commentsOn(h, row)).toHaveLength(1);
+    expect(row.progress?.steps?.task_comment).toMatchObject({ state: "done", commentId: landed.id });
+  });
+
+  it("resume after a POST ClickUp answered: found by its id alone, whatever its text reads back as", async () => {
+    const h = harness(LIVE);
+    let failed = false;
+    h.clickup.fail = c => (!failed && c.method === "GET" && /^task\/86new\d+\/comment/.test(c.path) ? ((failed = true), rejected(503)) : undefined);
+    const row = h.db.enqueue("request", requestPayload({ taskComment: HANDOFF }));
+    await h.run();
+    expect(row.state).toBe("unknown");
+    const landed = commentsOn(h, row)[0];
+    expect(row.progress?.steps?.task_comment).toMatchObject({ state: "started", commentId: landed.id });
+    landed.comment_text = "Edited in ClickUp by a person";
+    h.advance(60_000);
+    await h.run();
+    expect(row.state).toBe("delivered");
+    expect(h.clickup.writes().filter(onTask)).toHaveLength(1);
+    expect(row.progress?.steps?.task_comment).toMatchObject({ state: "done", commentId: landed.id });
+  });
+
+  it("the read-back after a post ClickUp answered goes by that id, however ClickUp rewrote the text", async () => {
+    const h = harness(LIVE);
+    const real = h.clickup.handle.bind(h.clickup);
+    h.clickup.handle = async c => {
+      const out = await real(c);
+      // ClickUp keeps the comment in its own words: nothing a text match could find.
+      if (onTask(c)) for (const cm of h.clickup.comments.get(c.path.split("/")[1]) ?? []) cm.comment_text = "Rendered by ClickUp";
+      return out;
+    };
+    const row = h.db.enqueue("request", requestPayload({ taskComment: HANDOFF }));
+    await h.run();
+    expect(row.state).toBe("delivered");
+    expect(row.progress?.steps?.task_comment).toMatchObject({ state: "done", commentId: commentsOn(h, row)[0].id });
+  });
+
+  it("a comment ClickUp gave an id to and no longer shows is never posted again", async () => {
+    const h = harness(LIVE);
+    let failed = false;
+    h.clickup.fail = c => (!failed && c.method === "GET" && /^task\/86new\d+\/comment/.test(c.path) ? ((failed = true), rejected(503)) : undefined);
+    const row = h.db.enqueue("request", requestPayload({ taskComment: HANDOFF }));
+    await h.run();
+    h.clickup.comments.set(row.task_id!, []);
+    h.advance(60_000);
+    await h.run();
+    expect(row).toMatchObject({ state: "unknown", error: SAY.taskCommentLost });
+    expect(h.clickup.writes().filter(onTask)).toHaveLength(1);
+  });
+
+  it("a comment that does not read back after the post is unknown, and found by its id next run", async () => {
+    const h = harness(LIVE);
+    const real = h.clickup.handle.bind(h.clickup);
+    let hide = true;
+    h.clickup.handle = async c => {
+      const out = await real(c);
+      // ClickUp answers the post, then lists nothing yet.
+      return hide && c.method === "GET" && /^task\/86new\d+\/comment/.test(c.path) ? { comments: [] } : out;
+    };
+    const row = h.db.enqueue("request", requestPayload({ taskComment: HANDOFF }));
+    await h.run();
+    expect(row).toMatchObject({ state: "unknown", error: SAY.taskComment });
+    hide = false;
+    h.advance(60_000);
+    await h.run();
+    expect(row.state).toBe("delivered");
+    expect(h.clickup.writes().filter(onTask)).toHaveLength(1);
+  });
+
+  it("a different comment with similar text, or the same text from before the step, is never taken for it", async () => {
+    const h = harness(LIVE);
+    let failed = false;
+    // The first post never reaches ClickUp, and the writer cannot tell: the step stays started with no id.
+    h.clickup.fail = c => (!failed && onTask(c) ? ((failed = true), unknownError()) : undefined);
+    const row = h.db.enqueue("request", requestPayload({ taskComment: HANDOFF }));
+    await h.run();
+    expect(row.state).toBe("unknown");
+    expect(commentsOn(h, row)).toEqual([]);
+    const lines = HANDOFF.split("\n");
+    const at = (ms: number) => String(ms);
+    h.clickup.comments.set(row.task_id!, [
+      { id: "c-short", comment_text: lines.slice(0, -1).join("\n"), date: at(NOW + 1_000), user: { id: PEOPLE.csm } },
+      { id: "c-long", comment_text: `${HANDOFF}\n*Extra:* one more line`, date: at(NOW + 2_000), user: { id: PEOPLE.csm } },
+      { id: "c-word", comment_text: HANDOFF.replace("Block 1", "Block 7"), date: at(NOW + 3_000), user: { id: PEOPLE.csm } },
+      { id: "c-early", comment_text: HANDOFF, date: at(NOW - 2 * 60_000), user: { id: PEOPLE.csm } },
+    ]);
+    h.advance(60_000);
+    await h.run();
+    expect(row.state).toBe("delivered");
+    const ours = commentsOn(h, row).filter(c => !c.id.startsWith("c-"));
+    expect(ours.map(c => c.comment_text)).toEqual([HANDOFF]);
+    expect(row.progress?.steps?.task_comment?.commentId).toBe(ours[0].id);
+  });
+
+  it("ClickUp refusing the comment never fails the part: the task is there, and the note says what to do", async () => {
+    const h = harness(LIVE);
+    h.clickup.fail = c => (onTask(c) ? rejected(400, "Comment too long") : undefined);
+    const row = h.db.enqueue("request", requestPayload({ taskComment: HANDOFF }));
+    await h.run();
+    expect(row.state).toBe("delivered");
+    expect(row.error).toBe(STEP_REFUSED.task_comment);
+    expect(steps(row)).toMatchObject({ task_comment: "mismatch", card_comment: "done" });
+  });
+
+  it("a task ClickUp no longer has stops the part before any comment is posted again", async () => {
+    const h = harness(LIVE);
+    let lost = false;
+    h.clickup.lose = c => !lost && onTask(c) && (lost = true);
+    const row = h.db.enqueue("request", requestPayload({ taskComment: HANDOFF }));
+    await h.run();
+    h.clickup.tasks.delete(row.task_id!);
+    h.advance(60_000);
+    await h.run();
+    expect(row).toMatchObject({ state: "failed", error: SAY.gone });
+    expect(h.clickup.writes().filter(onTask)).toHaveLength(1);
+  });
+
+  it("the dry run shows the comment's length, never its text", () => {
+    const plan = planRequest({ id: "q1", kind: "request", payload: requestPayload({ taskComment: HANDOFF }), attempts: 0, created_at: "" });
+    expect(plan.find(p => p.field === "comment on the new task")).toEqual({
+      queueId: "q1",
+      kind: "request",
+      taskId: null,
+      field: "comment on the new task",
+      old: null,
+      new: `${HANDOFF.length} characters`,
+    });
+    expect(JSON.stringify(plan)).not.toContain("Block 1");
+  });
+
+  it("commentKey reads a comment as ClickUp hands it back; any other difference is another comment", () => {
+    expect(commentKey(asClickUpReturns(HANDOFF))).toBe(commentKey(HANDOFF));
+    expect(commentKey("a\\_b \\*c\\* \\\\ d")).toBe("a_b c \\ d");
+    expect(commentKey("x\r\n---\r\ny")).toBe("x y");
+    expect(commentKey(HANDOFF.replace("Block 1", "Block 7"))).not.toBe(commentKey(HANDOFF));
+    expect(commentKey(HANDOFF.replace("call_center", "call-center"))).not.toBe(commentKey(HANDOFF));
+    expect(commentKey("*** \n ___")).toBe("");
+    const since = NOW - 60_000;
+    const match = sameText(HANDOFF, since, "Cockpit ref F-5b1e2c3d4f");
+    expect(match(asClickUpReturns(HANDOFF), { date: String(since) })).toBe(true);
+    expect(match(HANDOFF, { date: String(since - 1) })).toBe(false);
+    // A comment ClickUp shows with no date is taken as possibly this one.
+    expect(match(HANDOFF, {})).toBe(true);
+    // The marker the writer before this one appended finds its comment, at any date.
+    expect(match(`${HANDOFF}\n\nCockpit ref F-5b1e2c3d4f`, { date: "1" })).toBe(true);
+    // A text that keys to nothing never matches by text.
+    expect(sameText("***", since)("", { date: String(NOW) })).toBe(false);
+  });
+});
+
 describe("the unit pieces", () => {
   it("freezes only the steps a payload needs, in the contract's order", () => {
     expect(requestStepKeys(requestPayload())).toEqual(["create", "checklist", "tag", "card_comment"]);
     expect(requestStepKeys(whatsappPayload({ setRequestType: true, replacesTaskId: "86old0001", fields: [{ fieldId: "f" }] }))).toEqual([
       "create", "description", "owner_due_priority", "checklist", "tag", "fields", "request_type", "card_comment", "replaces",
     ]);
+    const all = requestStepKeys(whatsappPayload({ setRequestType: true, replacesTaskId: "86old0001", fields: [{ fieldId: "f" }], taskComment: "A handoff" }));
+    expect(all).toEqual(["create", "description", "owner_due_priority", "checklist", "tag", "fields", "request_type", "task_comment", "card_comment", "replaces"]);
+    expect(all).toEqual(REQUEST_STEPS);
+  });
+  it("refuses a task comment that is not text or is longer than any the cockpit makes", () => {
+    for (const taskComment of [42, { text: "x" }, ["x"], true]) expect(payloadProblem(requestPayload({ taskComment }))).toBe(SAY.badTaskComment);
+    expect(payloadProblem(requestPayload({ taskComment: "x".repeat(TASK_COMMENT_MAX + 1) }))).toBe(SAY.badTaskComment);
+    for (const taskComment of [undefined, null, "", "x".repeat(TASK_COMMENT_MAX), HANDOFF]) expect(payloadProblem(requestPayload({ taskComment }))).toBeNull();
+    // Far above any real handoff (3,769 to 4,656 characters).
+    expect(TASK_COMMENT_MAX).toBeGreaterThan(40 * 4_656);
+    // The 2 MB a kickoff plan holds (20261102o), so no handoff the cockpit plans fails its part.
+    const m = readFileSync(new URL("../../migrations/20261102o_stage4_match_make.sql", import.meta.url), "utf8");
+    expect(m).toContain(`THEN ${TASK_COMMENT_MAX} ELSE 131072 END`);
   });
   it("the card link names the requester by role", () => {
     expect(cardCommentText(requestPayload({ requesterLabel: "the media buyer", listName: "Call Center", typeLabel: "Low show rate" }), "https://app.clickup.com/t/x1")).toBe(
@@ -1546,7 +1819,11 @@ describe("the database the writer calls (migration 20261026r)", () => {
   it("the payload keys the writer reads are the ones the plan freezes and the sync trigger copies", () => {
     const plan = /FUNCTION public\.cockpit_request_plan\([\s\S]*?END \$\$;/.exec(SQL)?.[0] ?? "";
     const trigger = /FUNCTION public\.cockpit_request_queue_sync\(\)[\s\S]*?END \$\$;/.exec(SQL)?.[0] ?? "";
-    const writerReads = [...new Set([...CALLERS.matchAll(/\bp\.(\w+)/g)].map(m => m[1]))].filter(k => !["op", "actor", "requesterOfTask", "actionId", "checklistId", "itemId", "itemName", "from", "to", "text", "statusSeen"].includes(k));
+    // taskComment: the system's requests add it to each part's payload (20261102o cockpit_request_create_system).
+    const system = /FUNCTION public\.cockpit_request_create_system\([\s\S]*?END \$\$;/.exec(read("../../migrations/20261102o_stage4_match_make.sql"))?.[0] ?? "";
+    expect(system).toContain("jsonb_build_object('taskComment', v_comment)");
+    const writerReads = [...new Set([...CALLERS.matchAll(/\bp\.(\w+)/g)].map(m => m[1]))].filter(k => !["op", "actor", "requesterOfTask", "actionId", "checklistId", "itemId", "itemName", "from", "to", "text", "statusSeen", "taskComment"].includes(k));
+    expect(CALLERS).toContain("p.taskComment");
     for (const key of writerReads) expect([key, plan.includes(`'${key}'`) || trigger.includes(`'${key}'`)]).toEqual([key, true]);
     for (const key of ["op", "requestId", "part", "taskId", "listId", "taskName", "ownerClickupId", "typeKey", "setRequestType", "clientTaskId"])
       expect(trigger).toContain(`'${key}'`);

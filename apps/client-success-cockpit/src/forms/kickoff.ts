@@ -5,7 +5,7 @@ import { kickoffRail } from "./formRail";
 import { kickoffAlready, kickoffCardDone } from "./formStatus";
 import { buildHidden, KICKOFF_HIDDEN } from "./prefill";
 import type { Answers, FieldDef, FormDef } from "./staff/formSheetCore";
-import { kuwaitDay } from "./staff/formSheetCore";
+import { kuwaitDay, shown } from "./staff/formSheetCore";
 
 /**
  * The kickoff's configuration (docs/csm-forms/KICKOFF.md 2 to 4), and the
@@ -108,6 +108,59 @@ const opts = (list: string[]) => list.map(v => ({ value: v, label: v }));
 type KickoffField = FieldDef & {
   /** The Typeform question this answer stands for (tG7dnxBn), so the read model keeps its shape. */
   ref: string | null;
+  /**
+   * cockpit_kickoff_answers_check takes this answer as a list (its field type
+   * multi), sent in the order the CSM ticked it: Typeform handed Make a list in
+   * that order, and Make 12 [21] writes the first one to the card.
+   */
+  list?: true;
+  /** How a refusal names this answer when its words are not its own (four boxes say "Anything to add?"). */
+  named?: string;
+  /** A text's most characters, as cockpit_kickoff_answers_check counts them. */
+  max?: number;
+};
+
+/**
+ * The questions tG7dnxBn requires (each one's validations.required). The
+ * CSM may skip every other one, as Typeform lets them; Make 12 then writes
+ * "Not provided" on its handoff line and leaves the card's field alone.
+ */
+const TYPEFORM_REQUIRED = new Set([
+  "c0000001-0000-4000-8000-000000000001",
+  "c0000001-0000-4000-8000-000000000012",
+  "c0000001-0000-4000-8000-000000000003",
+  "c0000001-0000-4000-8000-000000000013",
+  "c0000001-0000-4000-8000-000000000005",
+  "c0000001-0000-4000-8000-000000000014",
+  "c0000001-0000-4000-8000-000000000007",
+  "c0000001-0000-4000-8000-000000000008",
+  "c0000001-0000-4000-8000-000000000009",
+  "c0000001-0000-4000-8000-000000000015",
+  "c0000001-0000-4000-8000-00000000000a",
+  "dff79b66-89dd-43ef-9664-3fa4e6a61d69",
+  "b5578678-d0c2-475b-b66f-7ea54d55fe31",
+]);
+
+/**
+ * A long text as Typeform hands it to Make, and as cockpit_form_typeform_text
+ * keeps it (20261102o): each line break a line feed, no white space at either
+ * end (JavaScript's trim takes the same characters as its btrim), everything
+ * between as typed.
+ */
+export const typeformText = (v: string) => v.replace(/\r\n?/g, "\n").trim();
+
+/**
+ * cockpit_kickoff_answers_check's longest answer: 4,000 characters for a
+ * long text, 500 for any other text with its spaces folded, counted as the
+ * database counts them, so the sheet says it before the send.
+ */
+const tooLong = (long: boolean, max: number) => (v: unknown) => {
+  const s = long
+    ? typeformText(String(v))
+    : String(v).replace(/\s+/g, " ").trim();
+  return [...s].length > max
+    ? `Shorten it to ${max.toLocaleString("en-US")} characters or fewer.`
+    : null;
 };
 
 const yesNo = (key: string, ref: string, label: string): KickoffField => ({
@@ -115,7 +168,6 @@ const yesNo = (key: string, ref: string, label: string): KickoffField => ({
   ref,
   label,
   type: "choice",
-  required: true,
   options: YES_NO,
 });
 const pick = (
@@ -128,7 +180,6 @@ const pick = (
   ref,
   label,
   type: "choice",
-  required: true,
   options: opts(list),
 });
 const words = (
@@ -136,65 +187,121 @@ const words = (
   ref: string,
   label: string,
   long = false,
-): KickoffField => ({ key, ref, label, type: long ? "longtext" : "text" });
+  max = long ? 4000 : 500,
+): KickoffField => ({
+  key,
+  ref,
+  label,
+  type: long ? "longtext" : "text",
+  max,
+  check: tooLong(long, max),
+});
+/** A group's own "Anything to add?" box; a refusal names it with its group. */
+const addTo = (key: string, ref: string, group: string): KickoffField => ({
+  ...words(key, ref, "Anything to add?", true),
+  named: `Anything to add? (${group})`,
+});
+/** A long text tG7dnxBn asks only when its logic jumps to it. */
+const followUp = (
+  key: string,
+  ref: string,
+  label: string,
+  when: (a: Answers) => boolean,
+): KickoffField => ({ ...words(key, ref, label, true), showIf: when });
+const saidNo = (key: string) => (a: Answers) => a[key] === "No";
 const heading = (key: string, label: string): KickoffField => ({
   key,
   ref: null,
   label,
   type: "heading",
 });
+/** Each answer required exactly where tG7dnxBn requires it; New MRR keeps its own rule. */
+const asTypeform = (fields: KickoffField[]): KickoffField[] =>
+  fields.map(f =>
+    f.ref === null || f.type === "heading"
+      ? f
+      : { ...f, required: TYPEFORM_REQUIRED.has(f.ref) },
+  );
 
 /**
- * The kickoff's 38 answers in the Typeform's order, with its own words and
- * each one's ref (11.2-o), in three groups, then New MRR (Q21). The groups
- * are headings, never answers. Choice options are the ones the stored
- * kickoffs carry.
+ * The kickoff's 46 answers in the Typeform's order, each under the key and
+ * with the options cockpit_form_stage4_fields('kickoff') holds (the database
+ * checks the send against them), with the cockpit's own words and each one's
+ * ref (11.2-o), in three groups, then New MRR (Q21). The groups are headings,
+ * never answers. Each answer is required where tG7dnxBn requires it, and
+ * tG7dnxBn's logic decides what is asked: its five follow-ups (c0000001-...-0012
+ * to -0015 and -000b) only after a No or an adjustment, and the leads
+ * questions only after a Yes. A question the sheet does not show sends no
+ * answer, as Typeform hands Make none from a branch it skipped.
  */
-export const KICKOFF_FIELDS: KickoffField[] = [
+export const KICKOFF_FIELDS: KickoffField[] = asTypeform([
   heading("groupBusiness", "The client's business"),
   yesNo(
-    "businessOk",
+    "detailsCorrect",
     "c0000001-0000-4000-8000-000000000001",
     "Are the business details still correct?",
   ),
-  words(
-    "businessAdd",
+  addTo(
+    "detailsFix",
     "c0000001-0000-4000-8000-000000000002",
-    "Anything to add?",
-    true,
+    "business details",
+  ),
+  followUp(
+    "detailsCorrection",
+    "c0000001-0000-4000-8000-000000000012",
+    "What is wrong? Give the correct details.",
+    saidNo("detailsCorrect"),
   ),
   yesNo(
-    "linksOk",
+    "linksCorrect",
     "c0000001-0000-4000-8000-000000000003",
     "Are the online links still correct?",
   ),
-  words(
-    "linksAdd",
-    "c0000001-0000-4000-8000-000000000004",
-    "Anything to add?",
-    true,
+  addTo("linksFix", "c0000001-0000-4000-8000-000000000004", "online links"),
+  followUp(
+    "linksCorrection",
+    "c0000001-0000-4000-8000-000000000013",
+    "Which link is wrong, and what is the correct one?",
+    saidNo("linksCorrect"),
   ),
   yesNo(
-    "operateOk",
+    "operationsCorrect",
     "c0000001-0000-4000-8000-000000000005",
     "Is how they operate still correct?",
   ),
-  words(
-    "operateAdd",
+  addTo(
+    "operationsFix",
     "c0000001-0000-4000-8000-000000000006",
-    "Anything to add?",
-    true,
+    "how they operate",
   ),
-  words(
-    "serviceAdvertised",
-    "c0000001-0000-4000-8000-000000000007",
-    "Which service are we advertising?",
+  followUp(
+    "operationsCorrection",
+    "c0000001-0000-4000-8000-000000000014",
+    "What has changed? Give the correct details.",
+    saidNo("operationsCorrect"),
   ),
+  {
+    key: "serviceAdvertised",
+    ref: "c0000001-0000-4000-8000-000000000007",
+    label: "Which service are we advertising?",
+    type: "multi",
+    list: true,
+    options: opts([
+      "Design and build",
+      "Interior design",
+      "Architectural design",
+      "Fit out and renovation",
+      "Construction only",
+      "Other",
+    ]),
+    hint: "Tick the main service first: the card's Service Advertised takes the first one you tick.",
+  },
   {
     key: "consultationTypes",
     ref: "c0000001-0000-4000-8000-000000000008",
     label: "Which consultation types do they offer?",
     type: "multi",
+    list: true,
     options: opts(["In-office", "In-home or onsite", "Online"]),
   },
   yesNo(
@@ -202,17 +309,44 @@ export const KICKOFF_FIELDS: KickoffField[] = [
     "c0000001-0000-4000-8000-000000000009",
     "Is the profile complete?",
   ),
+  addTo("profileFix", "c0000001-0000-4000-8000-000000000011", "client profile"),
+  followUp(
+    "profileMissing",
+    "c0000001-0000-4000-8000-000000000015",
+    "What is missing?",
+    saidNo("profileComplete"),
+  ),
   pick(
     "contractStatus",
     "c0000001-0000-4000-8000-00000000000a",
     "Contract status",
-    ["Not sent yet", "Sent and waiting on client", "Signed"],
+    [
+      "Signed",
+      "Sent and waiting on client",
+      "Adjustments requested by client",
+      "Not sent yet",
+      "NA - already signed",
+    ],
+  ),
+  followUp(
+    "contractChanges",
+    "c0000001-0000-4000-8000-00000000000b",
+    "What needs changing in the contract?",
+    a => a.contractStatus === "Adjustments requested by client",
   ),
   heading("groupSetup", "Set-up and access"),
   yesNo(
-    "whatsappAdded",
+    "inWhatsappGroup",
     "3db082bb-1939-444b-8b32-d0067fc9878c",
     "Have you been added to the WhatsApp group?",
+  ),
+  // A long text in tG7dnxBn and in cockpit_form_stage4_fields: a list of
+  // people keeps its line breaks, as Make hands them on.
+  words(
+    "whatsappAdd",
+    "071c480f-17f9-48db-8155-56030f952e85",
+    "Who else should we add to the WhatsApp group?",
+    true,
   ),
   yesNo(
     "driveDiscussed",
@@ -223,15 +357,15 @@ export const KICKOFF_FIELDS: KickoffField[] = [
     "whatsappStatus",
     "92fab954-d771-431c-9fc4-b9f15c53cbb8",
     "WhatsApp Status",
-    ["Access confirmed.", "Invited.", "Pending."],
+    ["Access confirmed.", "Pending.", "Invited.", "Waiting on client."],
   ),
+  // One text in the database: the ticks are joined in the order they were made.
   {
-    key: "platforms",
+    key: "adPlatforms",
     ref: "7d16afbb-b99a-4ee9-8718-4418cbeba534",
     label: "Which platforms will we advertise on?",
     type: "multi",
-    required: true,
-    options: opts(["Meta (Facebook/Instagram)", "Snapchat"]),
+    options: opts(["Tiktok", "Meta (Facebook/Instagram)", "Snapchat"]),
   },
   words(
     "dailyBudget",
@@ -244,7 +378,7 @@ export const KICKOFF_FIELDS: KickoffField[] = [
     "What is the name of the ad account? (has to be exact)",
   ),
   words(
-    "facebookPage",
+    "facebookPageName",
     "940f494c-f99b-4920-b203-200576ddd780",
     "What is the name of the Facebook page? (has to be exact)",
   ),
@@ -257,13 +391,28 @@ export const KICKOFF_FIELDS: KickoffField[] = [
     "facebookAccess",
     "6fcbd33c-60e9-4df7-bfaa-e76b588dd887",
     "Facebook Access Status?",
-    ["Pending", "Requested", "Waiting on Client"],
+    [
+      "Requested",
+      "Waiting on Client",
+      "Access Confirmed",
+      "Pending",
+      "Using Ours",
+      "Need Tech Help",
+      "Their Page Our Ad Acc",
+    ],
   ),
   pick(
     "whatsappSynced",
     "a813378f-06ce-499e-8f0e-14761b89b474",
     "Whatsapp synced to Mahara OS?",
-    ["Integrated", "Needs Integrating", "Pending"],
+    [
+      "Requested",
+      "Waiting on Client",
+      "Integrated",
+      "Needs Integrating",
+      "Pending",
+      "Not Integrating",
+    ],
   ),
   yesNo(
     "bookingConnects",
@@ -271,21 +420,29 @@ export const KICKOFF_FIELDS: KickoffField[] = [
     "Does the booking platform connect to ours?",
   ),
   yesNo(
-    "calendarDone",
+    "calendarComplete",
     "3bebf47d-c00b-4f26-8624-933b84e42ebc",
     "Google Calendar Integration Complete?",
   ),
   pick(
-    "bookingStatus",
+    "calendarStatus",
     "b657c5a5-d199-42b5-8437-c8d04f78e376",
     "Booking platform & Google Calendar Integration Status",
-    ["Integrated", "Pending", "Waiting on Client"],
+    [
+      "Requested",
+      "Waiting on Client",
+      "Integrated",
+      "Needs Integrating",
+      "Pending",
+      "Not Integrating",
+      "Google Synched - Not Integrated",
+    ],
   ),
   pick(
-    "osAccess",
+    "maharaOsAccess",
     "ad562fc2-6858-4e37-81c5-c4cc2375a330",
     "Mahara OS Access Status",
-    ["Logged In", "Didn't Receive Access", "Tech Issue"],
+    ["Logged In", "Tech Issue", "Didn't Receive Access", "Doesn't Want To"],
   ),
   heading("groupContent", "Content, leads and training"),
   words(
@@ -300,63 +457,74 @@ export const KICKOFF_FIELDS: KickoffField[] = [
     "Content Discussed",
   ),
   yesNo(
-    "templatedDiscussed",
+    "templatedAdsDiscussed",
     "f54986bc-e120-4345-afee-31c1000a5a9a",
     "Templated Ads Discussed",
   ),
   pick(
-    "templatedStatus",
+    "templatedAdsStatus",
     "eb7ed18c-8388-4d84-9b5c-2e3d4a030287",
     "Templated Ads Status",
-    ["Approved", "Waiting On Client", "Wants To See Them First"],
+    ["Approved", "Declined", "Waiting On Client", "Wants To See Them First"],
   ),
   yesNo(
-    "existingLeads",
+    "hasLeads",
     "dff79b66-89dd-43ef-9664-3fa4e6a61d69",
     "Do you have pre-existing leads?",
   ),
-  yesNo(
-    "reachLeads",
-    "85d7ebb5-ce36-4ac3-aff8-3ce464737abd",
-    "Do you want us to reach out to those leads?",
+  // tG7dnxBn skips both after a No to leads, and the links after a No to reaching out.
+  {
+    ...yesNo(
+      "reachLeads",
+      "85d7ebb5-ce36-4ac3-aff8-3ce464737abd",
+      "Do you want us to reach out to those leads?",
+    ),
+    showIf: a => a.hasLeads === "Yes",
+  },
+  followUp(
+    "leadsLinks",
+    "86a6cce0-9111-4d98-97e7-7af5b6d518c8",
+    "Provide link or notes for those leads.",
+    a => a.hasLeads === "Yes" && a.reachLeads !== "No",
   ),
   yesNo(
-    "coldExperience",
+    "coldLeadsExperience",
     "0cb88b75-f193-43a1-b802-d382178a0946",
     "Do you have experience selling to cold leads (leads from ads)?",
   ),
   words(
-    "closeRate",
+    "coldCloseRate",
     "079812c4-bb7e-4cc3-8e57-24c3b9e886d9",
     "What is your current close rate on cold leads?",
   ),
   yesNo(
-    "academy",
+    "academyConfirmed",
     "4379c2f7-c5cf-4104-92c5-9b2294d65b59",
     "Premium Projects Academy Confirmed?",
   ),
   yesNo(
-    "firstSteps",
+    "firstStepsDiscussed",
     "dc6eafd2-516e-4ca9-9d9c-89dee060e224",
     "Discussed First Steps and Important Videos?",
   ),
   pick(
-    "training",
+    "trainingAccess",
     "c56a7e2d-6f18-4bf9-a9f6-11367eab4c11",
     "Training Course Access",
-    ["Confirmed", "Requested", "Waiting On Client", "Need Tech Help"],
+    ["Confirmed", "Requested", "Need Tech Help", "Waiting On Client"],
   ),
   {
     ...words(
-      "recording",
+      "callRecording",
       "b5578678-d0c2-475b-b66f-7ea54d55fe31",
       "Call Recording Link",
     ),
     placeholder: "https://",
     check: v =>
-      /^https:\/\/\S+$/i.test(String(v).trim())
+      tooLong(false, 500)(v) ??
+      (/^https:\/\/\S+$/i.test(String(v).trim())
         ? null
-        : "A link starts with https://.",
+        : "A link starts with https://."),
   },
   {
     key: "paymentAmount",
@@ -365,7 +533,7 @@ export const KICKOFF_FIELDS: KickoffField[] = [
     type: "number",
   },
   yesNo(
-    "postCallForm",
+    "postCallFormFilled",
     "34310b2e-4df4-4ed5-b67e-9aefa9087d6e",
     "Post call form filled?",
   ),
@@ -379,9 +547,9 @@ export const KICKOFF_FIELDS: KickoffField[] = [
     hint: "What this client pays us each month from now. 0 if they paid in full with no monthly fee.",
     message: "Write the new MRR in dollars a month, 0 or more.",
   },
-];
+]);
 
-/** The 38 Typeform answers (headings and New MRR aside). */
+/** The 46 Typeform answers (headings and New MRR aside). */
 export const KICKOFF_ANSWER_FIELDS = KICKOFF_FIELDS.filter(
   f => f.ref !== null && f.type !== "heading",
 );
@@ -445,23 +613,38 @@ export function kickoffDef(
         },
       ],
     },
-    fields: [...again, ...KICKOFF_FIELDS.map(({ ref: _ref, ...f }) => f)],
+    fields: [
+      ...again,
+      ...KICKOFF_FIELDS.map(
+        ({ ref: _ref, list: _list, named: _named, max: _max, ...f }) => f,
+      ),
+    ],
   };
 }
 
 /**
- * The answers cockpit_kickoff_submit takes: every field by its key, a multi
- * pick joined the way the Typeform stores it ("In-office, Online"), numbers
- * as numbers, empty answers left out, and the replace reason when asked.
+ * The answers cockpit_kickoff_submit takes: every field by its key; a pick
+ * the database takes as a list (`list`) sent as a list, any other multi pick
+ * joined the way the Typeform stores it ("Snapchat, Meta (Facebook/Instagram)"),
+ * both in the order the CSM ticked them and never sorted (Make 12 writes the
+ * first ticked service to the card); numbers as numbers, empty answers and
+ * the answers to questions the sheet does not show left out (Typeform hands
+ * Make nothing from a branch its logic skipped), and the replace reason when
+ * asked. A text loses only its outer white space, as Typeform's answers
+ * reach Make with none: a long text goes as Typeform hands it on
+ * (typeformText), its line breaks and repeated spaces as typed (Make writes
+ * them into the handoff unchanged).
  */
 export function kickoffAnswers(a: Answers): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const f of KICKOFF_FIELDS) {
-    if (f.type === "heading") continue;
+    if (f.type === "heading" || !shown(f, a)) continue;
     const v = a[f.key];
     if (v === null || v === undefined || v === "") continue;
-    if (Array.isArray(v)) {
-      if (v.length) out[f.key] = v.map(String).join(", ");
+    if (f.list || Array.isArray(v)) {
+      // Only a list counts: anything else (an old draft's text) shows nothing ticked, so nothing goes.
+      const ticked = Array.isArray(v) ? [...new Set(v.map(String))] : [];
+      if (ticked.length) out[f.key] = f.list ? ticked : ticked.join(", ");
       continue;
     }
     if (f.type === "number") {
@@ -469,7 +652,12 @@ export function kickoffAnswers(a: Answers): Record<string, unknown> {
       if (Number.isFinite(n)) out[f.key] = n;
       continue;
     }
-    out[f.key] = typeof v === "string" ? v.trim() : v;
+    out[f.key] =
+      typeof v !== "string"
+        ? v
+        : f.type === "longtext"
+          ? typeformText(v)
+          : v.trim();
   }
   const reason =
     typeof a.replaceReason === "string" ? a.replaceReason.trim() : "";
@@ -481,3 +669,53 @@ export function kickoffAnswers(a: Answers): Record<string, unknown> {
 export const KICKOFF_REFS: Record<string, string> = Object.fromEntries(
   KICKOFF_ANSWER_FIELDS.map(f => [f.key, f.ref as string]),
 );
+
+/** Each answer by key, for naming what cockpit_kickoff_answers_check refused. */
+const KICKOFF_BY_KEY: Record<string, KickoffField> = Object.fromEntries(
+  KICKOFF_FIELDS.filter(f => f.type !== "heading").map(f => [f.key, f]),
+);
+
+/** What to do about each code cockpit_kickoff_answers_check gives, or null for one the CSM cannot fix. */
+function refusedFix(f: KickoffField, code: string): string | null {
+  switch (code) {
+    case "required":
+      return "answer it";
+    case "option":
+      return "pick one of its choices";
+    case "length":
+      return `shorten it to ${(f.max ?? 500).toLocaleString("en-US")} characters or fewer`;
+    case "format":
+      return "paste the whole link, starting with https://";
+    case "range":
+      return f.key === "newMrrUsd"
+        ? "write a number from 0 to 100,000"
+        : "write a number from 0 to 10,000,000, with 2 decimals at most";
+    default:
+      return null;
+  }
+}
+
+/**
+ * The sentence for a kickoff the database did not store (cockpit_kickoff_submit
+ * answered reason invalid): each question to fix, by its words (a shared
+ * "Anything to add?" with its group), and what to do about it; answers that
+ * each passed but together do not fit the room a kickoff has
+ * ({_answers: too_large}, which cockpit_kickoff_answers_check gives alone)
+ * to be shortened; or the tech lead when it named an answer the sheet does
+ * not ask or a code the CSM cannot fix.
+ */
+export function kickoffRefused(errors: Record<string, string>): string {
+  const keys = Object.keys(errors);
+  if (keys.length === 1 && errors._answers === "too_large")
+    return "The kickoff was not stored: its answers together are too long. Shorten the longest answers, then send it again. Your answers are still here.";
+  const lines = keys.map(k => {
+    const f = KICKOFF_BY_KEY[k];
+    const fix = f ? refusedFix(f, errors[k]) : null;
+    return f && fix
+      ? `${(f.named ?? f.label).replace(/[?.]$/, "")}: ${fix}.`
+      : null;
+  });
+  if (!keys.length || lines.some(l => !l))
+    return "The kickoff was not stored: the database did not take the sheet's answers. Your answers are still here. Tell the tech lead.";
+  return `The kickoff was not stored. ${lines.join(" ")} Then send it again.`;
+}

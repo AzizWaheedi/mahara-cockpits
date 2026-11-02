@@ -1174,13 +1174,15 @@ export async function runForms(deps: Deps, limit = 8): Promise<JobResult> {
         const gaveUp = o.state !== "delivered" && o.state !== "skipped" && o.state !== "failed" && tries > RETRY_MINUTES.length;
         // The row's error is what the effect's trail prints (3.6). ClickUp's own wording, or the database's when our
         // save failed, stays out of it: it goes on progress.lastDetail and in the run's note. A retry row's error
-        // reaches no effect, so it keeps the wording.
+        // reaches no effect, so it keeps the wording. A delivered row keeps its note as its error, as a delivered
+        // request does: card_facts' kept sentence when it wrote some fields and kept others (plan B8). The effect
+        // reads it from receipt.step.note, since the queue trigger gives a delivered effect no reason.
         const closing = o.state === "failed" || o.state === "unknown" || gaveUp;
         if (closing && o.plain) lastSaid = redact(o.error ?? "");
         const progress = closing && o.plain ? { ...o.progress, lastDetail: redact(o.error ?? "") } : o.progress;
         const settle: Row =
           o.state === "delivered"
-            ? { state: "delivered", progress, delivered_at: isoAt(now), error: null }
+            ? { state: "delivered", progress, delivered_at: isoAt(now), error: o.note ? redact(o.note) : null }
             : o.state === "skipped"
               ? { state: "skipped", progress, error: o.error ? redact(o.error) : null }
               : o.state === "failed"

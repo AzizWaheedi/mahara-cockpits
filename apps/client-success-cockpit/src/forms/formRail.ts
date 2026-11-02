@@ -49,6 +49,181 @@ const isUrl = (s: string | null) => Boolean(s && /^https?:\/\/\S+$/i.test(s));
 export const onboardingSource = (e: FormEntry | null) =>
   e ? `Onboarding form, ${kuwaitShortDay(e.submitted_at)}` : null;
 
+// --- Check with the client (Stage 4 plan B5) --------------------------------
+
+/** A typed link as a URL, with or without its https://; null for text that is not a link. */
+function urlOf(s: string | null | undefined): URL | null {
+  const t = s?.trim();
+  if (!t || /\s/.test(t)) return null;
+  try {
+    const u = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(t) ? t : `https://${t}`);
+    if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+    return u.hostname.includes(".") ? u : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A typed link's host, lower case and without "www."; null when it is not a link. */
+export function hostOf(s: string | null | undefined): string | null {
+  return (
+    urlOf(s)
+      ?.hostname.toLowerCase()
+      .replace(/^www\./, "") ?? null
+  );
+}
+
+/** The host is one of these domains or a subdomain of one (m.facebook.com). */
+const onHost = (h: string | null, domains: readonly string[]) =>
+  h !== null && domains.some(d => h === d || h.endsWith(`.${d}`));
+
+const FACEBOOK = ["facebook.com", "fb.com", "fb.me"];
+const INSTAGRAM = ["instagram.com", "instagr.am"];
+const DRIVE = ["drive.google.com", "docs.google.com"];
+const NOT_A_SITE = [...INSTAGRAM, ...FACEBOOK, "linktr.ee"];
+
+/** A Google Maps link: maps.google.*, google.*\/maps, maps.app.goo.gl, goo.gl/maps. */
+function isMapsLink(s: string): boolean {
+  const u = urlOf(s);
+  const h = hostOf(s);
+  if (!u || !h) return false;
+  if (h === "maps.app.goo.gl" || /^maps\.google\.[a-z.]+$/.test(h)) return true;
+  return (
+    (h === "goo.gl" || /^google\.[a-z.]+$/.test(h)) &&
+    /^\/maps(?:\/|$)/.test(u.pathname)
+  );
+}
+
+/** Their answer is on Google Drive or Docs. */
+export const isDriveLink = (s: string | null) => onHost(hostOf(s), DRIVE);
+
+/** A number as the form's number question stores it ("120000", "120,000"); else null. */
+function plainNumber(s: string | null): number | null {
+  const t = s?.replace(/[\s,]/g, "");
+  if (!t || !/^\d+(?:\.\d+)?$/.test(t)) return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** A name's words, loosely: no marks or hamza seats, lower case, without "and" or "&". */
+const nameWords = (s: string) =>
+  s
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f\u064B-\u065F\u0670\u0640]/g, "")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(w => w && w !== "and" && w !== "the" && w !== "و");
+
+/**
+ * The typed business name and the card's name are the same name: one
+ * contains the other, in Latin or Arabic letters (a card may carry both),
+ * or every word of one is in the other.
+ */
+export function sameName(typed: string, card: string): boolean {
+  const a = nameWords(typed);
+  const b = nameWords(card);
+  if (!a.length || !b.length) return true;
+  const key = (ws: string[], re: RegExp) => ws.filter(w => re.test(w)).join("");
+  const within = (x: string, y: string) =>
+    x.length >= 3 && y.length >= 3 && (x.includes(y) || y.includes(x));
+  const subset = (x: string[], y: string[]) => x.every(w => y.includes(w));
+  return (
+    within(key(a, /[a-z\d]/), key(b, /[a-z\d]/)) ||
+    within(key(a, /[\u0600-\u06FF]/), key(b, /[\u0600-\u06FF]/)) ||
+    subset(a, b) ||
+    subset(b, a)
+  );
+}
+
+/** None-like booking answers beyond EMPTY's: "not yet", "x", "لا يوجد حاليا". */
+const NO_SYSTEM = /^(?:not yet|nope|x|لايوجد|لا يوجد حاليا|لا يوجد حالياً)$/i;
+
+/** One thing to check with the client: the question it is about, and a fixed sentence. */
+export interface ClientCheck {
+  id:
+    | "facebook-instagram"
+    | "facebook-other"
+    | "instagram"
+    | "website"
+    | "name"
+    | "units"
+    | "goal"
+    | "booking";
+  /** The question in their onboarding form it is about. */
+  topic: string;
+  say: string;
+}
+
+/** The fixed sentences: what was checked, then what to ask. Never their typed words. */
+export const CHECK_SAYS: Record<ClientCheck["id"], string> = {
+  "facebook-instagram":
+    "Their Facebook page answer is an Instagram link. Ask for the Facebook page's link.",
+  "facebook-other":
+    "Their Facebook page answer is not a Facebook link. Ask for the Facebook page's link.",
+  instagram:
+    "Their Instagram answer is not an Instagram link. Ask for their Instagram link.",
+  website:
+    "Their website answer is an Instagram, Facebook, Linktree or Google Maps link. Ask if they have a website.",
+  name: "The business name they typed is not the card's name. Confirm which name the ads use.",
+  units: "Last year's revenue is under 1,000. Check the units.",
+  goal: "Their 90-day goal is more than all of last year's revenue. Check both numbers.",
+  booking:
+    "No booking software given, so there is no system to connect. Ask how they take bookings today.",
+};
+
+/**
+ * What the onboarding answers say the CSM should check on the call (Stage
+ * 4 plan B5): only the flags that hold, each a fixed sentence. A blank
+ * answer is never a flag (it is said as missing elsewhere), except the
+ * booking software, where none given is the point. Display only: nothing
+ * is stored, prefilled or blocked. Pure.
+ */
+export function clientChecks(
+  onb: FormEntry | null,
+  cardName: string,
+): ClientCheck[] {
+  if (!onb) return [];
+  const out: ClientCheck[] = [];
+  const add = (id: ClientCheck["id"], topic: string) =>
+    out.push({ id, topic, say: CHECK_SAYS[id] });
+
+  const facebook = answerOf(onb, ONB.facebook);
+  if (facebook) {
+    const h = hostOf(facebook);
+    if (onHost(h, INSTAGRAM)) add("facebook-instagram", "Facebook page");
+    else if (!onHost(h, FACEBOOK)) add("facebook-other", "Facebook page");
+  }
+  const instagram = answerOf(onb, ONB.instagram);
+  if (instagram && !onHost(hostOf(instagram), INSTAGRAM))
+    add("instagram", "Instagram");
+  const website = answerOf(onb, ONB.website);
+  if (website && (onHost(hostOf(website), NOT_A_SITE) || isMapsLink(website)))
+    add("website", "Website");
+
+  const typed = answerOf(onb, ONB.businessName);
+  if (typed && !sameName(typed, cardName)) add("name", "Business name");
+
+  // Make writes a revenue of 0 as nothing, so 0 is not an answer to check.
+  const last = plainNumber(answerOf(onb, ONB.lastRevenue));
+  const goal90 = plainNumber(answerOf(onb, ONB.goal90));
+  if (last !== null && last > 0 && last < 1000) add("units", "Revenue");
+  // Under 1,000 the goal is compared with a number in other units: one flag is enough.
+  else if (last !== null && last > 0 && goal90 !== null && goal90 > last)
+    add("goal", "Revenue");
+
+  const booking = (answerOf(onb, ONB.booking) ?? "")
+    .trim()
+    .replace(/[.!؟?]+$/, "");
+  if (booking.length <= 2 || EMPTY.test(booking) || NO_SYSTEM.test(booking))
+    add("booking", "Booking software");
+  return out;
+}
+
+/** Under the Content row when their Drive answer is some other link or text. */
+export const NOT_DRIVE = "Their answer is not a Drive folder.";
+
 /**
  * The card's contract as one of the form's five choices: Contract Status
  * first, then Contract Signed (Sent reads "Sent and waiting on client").
@@ -417,7 +592,41 @@ export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
     [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
   const booking = answerOf(onb, ONB.booking);
   const length = answerOf(onb, ONB.appointmentLength);
+  // Content: their Drive answer when it is a Drive link; else the card's
+  // Drive folder (the field the rest of the cockpit opens first), with a
+  // hint when what they gave is something else.
   const drive = answerOf(onb, ONB.drive);
+  const theirDrive = isDriveLink(drive);
+  const cardFolder = str(row.links?.drive_folder);
+  const cardDrive = cardFolder ?? str(row.links?.drive);
+  const notDrive = drive !== null && !theirDrive ? NOT_DRIVE : undefined;
+  const contentRow: RailRow =
+    theirDrive || !cardDrive
+      ? {
+          id: "content",
+          label: "Content",
+          value: drive,
+          source: fromOnb,
+          href: isUrl(drive) ? (drive ?? undefined) : undefined,
+          linkLabel: isUrl(drive)
+            ? theirDrive
+              ? "Their Drive link"
+              : "Their link"
+            : undefined,
+          hint: notDrive,
+          missing: NOT_ON_RECORD,
+        }
+      : {
+          id: "content",
+          label: "Content",
+          value: cardDrive,
+          source: `ClickUp card, ${cardFolder ? "Drive Folder" : "Drive Link"}`,
+          href: cardDrive,
+          linkLabel: "The card's Drive folder",
+          hint: notDrive,
+          missing: NOT_ON_RECORD,
+        };
+  const checks = clientChecks(onb, row.client_name);
   const order: RailRow[] = [
     serviceRow,
     {
@@ -461,15 +670,7 @@ export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
       hint: booking && length ? `Appointments: ${length}` : undefined,
       missing: NOT_ON_RECORD,
     },
-    {
-      id: "content",
-      label: "Content",
-      value: drive,
-      source: fromOnb,
-      href: isUrl(drive) ? (drive ?? undefined) : undefined,
-      linkLabel: isUrl(drive) ? "Their Drive link" : undefined,
-      missing: NOT_ON_RECORD,
-    },
+    contentRow,
     {
       id: "recording",
       label: "Call recording link",
@@ -541,6 +742,18 @@ export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
       title: "Still missing",
       rows: missing,
       tone: "warn",
+    });
+  // Display only: drawn as chips and sentences (FormPanel's CheckPart).
+  if (checks.length)
+    parts.push({
+      id: "check",
+      title: "Check with the client",
+      rows: checks.map(c => ({
+        id: `check-${c.id}`,
+        label: c.topic,
+        value: c.say,
+        source: fromOnb,
+      })),
     });
   parts.push({
     id: "client",

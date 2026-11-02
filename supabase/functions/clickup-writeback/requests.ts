@@ -22,7 +22,10 @@
 // ref as a whole token (or, from a template, its exact name), a comment by
 // its marker, a checklist by its name. Two matches are never guessed between:
 // the row goes to 'unknown' for a person, and once they cancel all but one
-// in ClickUp, the one left open is adopted.
+// in ClickUp, the one left open is adopted. The one comment that carries no
+// marker, the task comment (Make's text alone, docs/forms/WAVE56-CONTRACT.md
+// X37), is found by the id ClickUp answered with, else by its text
+// (commentKey) among the task's comments since its step started.
 //
 // Dates read back by the Kuwait calendar day, never the millisecond: ClickUp
 // stores a date-only due date at its own hour (06:00 Kuwait was seen for a
@@ -84,6 +87,11 @@ export const SAY = {
   checklistShort: "The SOP checklist did not read back in full. The next run adds what is missing.",
   noChecklistId: "ClickUp did not return the new checklist's id. The next run looks for it by name.",
   cardComment: "The link comment on the client card did not read back. The next run looks for it.",
+  taskComment: "The comment on the new task did not read back. The next run looks for it.",
+  /** ClickUp gave the task comment an id, so a second post would put it on the task twice. */
+  taskCommentLost:
+    "ClickUp answered the comment on the new task with its id, but the comment is not on the task now. It is not posted again: check the task in ClickUp.",
+  badTaskComment: "This request's comment for its task is not text, or is longer than any the cockpit makes, so nothing was written. Tell the tech lead.",
   oldComment: "The comment on the old ticket did not read back. The next run looks for it.",
   oldGone: "The old ticket was already moved or closed.",
   /** Review R2: a routing request whose old ticket the team handled in ClickUp while it waited makes no task. */
@@ -109,6 +117,8 @@ export const STEP_REFUSED: Record<string, string> = {
   tag: "The client tag did not save in ClickUp.",
   fields: "Some fields did not save in ClickUp. They are in the description.",
   request_type: "Request Type did not save in ClickUp.",
+  /** Only the client onboarding tasks carry a task comment today: the kickoff handoff (20261102o). */
+  task_comment: "The comment did not post on the task in ClickUp. The task itself is there: copy the Kickoff Handoff comment from the client card onto it.",
   card_comment: "The link comment on the client card did not post in ClickUp. The task itself is there.",
   replaces: "The old ticket was not routed in ClickUp. Close it there.",
 };
@@ -147,16 +157,20 @@ export async function readTask(provider: Provider, id: string, allowMissing = fa
   }
 }
 
+/** How a comment is known again: a marker its text holds, or a test of its text as ClickUp hands it back. */
+export type CommentMatch = string | ((text: string, comment: Row) => boolean);
+
 /**
- * The comment holding `marker` (and `id`, when given), newest first, paging back
+ * The comment that `match` finds (and with the id `id`, when given), newest first, paging back
  * with start and start_id until the comments are older than `sinceMs`.
  */
-export async function findComment(provider: Provider, taskId: string, marker: string, sinceMs: number, id?: string | null, maxPages = 10): Promise<Row | undefined> {
+export async function findComment(provider: Provider, taskId: string, match: CommentMatch, sinceMs: number, id?: string | null, maxPages = 10): Promise<Row | undefined> {
+  const holds = typeof match === "string" ? (c: Row) => commentText(c).includes(match) : (c: Row) => match(commentText(c), c);
   let query = "";
   for (let page = 0; page < maxPages; page++) {
     const r = await provider.call("clickup", "GET", `task/${taskId}/comment${query}`);
     const comments: Row[] = Array.isArray(r.comments) ? r.comments : [];
-    const hit = comments.find(c => (!id || String(c.id) === String(id)) && commentText(c).includes(marker));
+    const hit = comments.find(c => (!id || String(c.id) === String(id)) && holds(c));
     if (hit) return hit;
     if (comments.length < 25) return undefined;
     const oldest = comments[comments.length - 1];
@@ -164,6 +178,42 @@ export async function findComment(provider: Provider, taskId: string, marker: st
     query = `?start=${encodeURIComponent(String(oldest.date))}&start_id=${encodeURIComponent(String(oldest.id))}`;
   }
   return undefined;
+}
+
+/** A line that is only a rule: three or more underscores or hyphens (scripts/dev/make_parity.py RULE). */
+const RULE_LINE = /^\s*[_-]{3,}\s*$/;
+
+/**
+ * A comment's text as the cockpit compares it with what ClickUp hands back, for a comment posted with no Cockpit
+ * ref (Make's text alone, X37). ClickUp rewrites a comment it stores. Plain text reads back as sent
+ * (cockpit-csm-api/core.ts compares it byte for byte). Make's handoff and raw answers comments, as ClickUp holds them
+ * on the 12 real cards make_parity.py's fidelity check reads (docs/forms/WAVE56-CONTRACT.md 4.15.1, its test
+ * test_fidelity_reads_clickup_as_it_returns_comments), come back with each `*` dropped, each rule line (`____`)
+ * dropped and their spaces and new lines changed. ClickUp's markdown also writes a backslash before a mark it
+ * escapes (`tech\_two`, holdsMarker below). So a backslash before ASCII punctuation goes, then every rule line,
+ * then every `*`, and each run of spaces and new lines (a \r\n too) is one space, none at either end. Any other
+ * difference, one word or one line more or less, is another comment.
+ */
+export function commentKey(text: unknown): string {
+  return String(text ?? "")
+    .replace(/\\([!-/:-@[-`{-~])/g, "$1")
+    .split(/\r\n|\r|\n/)
+    .filter(line => !RULE_LINE.test(line))
+    .join("\n")
+    .replace(/\*/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Finds a comment posted with `text` alone: the same commentKey, dated at or after `sinceMs` (a comment ClickUp shows
+ * with no date is taken as possibly this one, never missed, as a checklist is). A text that keys to nothing never
+ * matches by text. `oldMarker`, for a step the writer before this one started: the Cockpit ref line it appended,
+ * which still finds its comment.
+ */
+export function sameText(text: string, sinceMs: number, oldMarker?: string): (said: string, comment: Row) => boolean {
+  const key = commentKey(text);
+  return (said, c) => (key !== "" && !(Number(c.date) < sinceMs) && commentKey(said) === key) || (Boolean(oldMarker) && said.includes(oldMarker!));
 }
 
 /** A value read back: a select by option id or its orderindex, a number by value, else the text. */
@@ -470,7 +520,17 @@ export function refusedForGood(e: unknown): boolean {
 
 // --- The request steps (contract 4.3) -------------------------------------------------
 
-export const REQUEST_STEPS = ["create", "description", "owner_due_priority", "checklist", "tag", "fields", "request_type", "card_comment", "replaces"];
+export const REQUEST_STEPS = ["create", "description", "owner_due_priority", "checklist", "tag", "fields", "request_type", "task_comment", "card_comment", "replaces"];
+
+/**
+ * The longest task comment a payload may carry. Only the client onboarding tasks carry one, the kickoff handoff
+ * (20261102o): real ones run 3,769 to 4,656 characters. It comes from a kickoff plan, which 20261102o lets hold
+ * 2 MB (cockpit_form_effects_plan_check), and a text's UTF-16 length never passes its UTF-8 bytes, so every handoff
+ * the cockpit plans fits; a longer value was built wrong, and is refused before anything reaches ClickUp. A long one
+ * ClickUp itself refuses is that step's refusal, and the task stays.
+ */
+export const TASK_COMMENT_MAX = 2_097_152;
+const hasTaskComment = (p: Row) => typeof p.taskComment === "string" && p.taskComment.trim() !== "";
 
 /** The steps this payload needs, in order. They are frozen on the row before the first write. */
 export function requestStepKeys(p: Row): string[] {
@@ -481,6 +541,10 @@ export function requestStepKeys(p: Row): string[] {
   if (p.clientTag) keys.push("tag");
   if (Array.isArray(p.fields) && p.fields.length) keys.push("fields");
   if (p.setRequestType === true) keys.push("request_type");
+  // Once the task is built, the comment Make posts on it (Make 12 [18], [23]), before the card's link comment.
+  // Ship order: this writer deploys before 20261102o is applied, because a part frozen by a writer without the
+  // step never posts its taskComment.
+  if (hasTaskComment(p)) keys.push("task_comment");
   if (p.clientTaskId) keys.push("card_comment");
   if (p.replacesTaskId) keys.push("replaces");
   return keys;
@@ -496,6 +560,8 @@ export function payloadProblem(p: Row): string | null {
   for (const k of ["clientTaskId", "replacesTaskId"]) if (p[k] && !ID.test(String(p[k]))) return SAY.badPayload;
   if (p.ownerClickupId !== null && p.ownerClickupId !== undefined && !/^\d{1,15}$/.test(String(p.ownerClickupId))) return SAY.badPayload;
   if (p.dueOn && !/^\d{4}-\d{2}-\d{2}$/.test(String(p.dueOn))) return SAY.badPayload;
+  if (p.taskComment !== undefined && p.taskComment !== null && (typeof p.taskComment !== "string" || p.taskComment.length > TASK_COMMENT_MAX))
+    return SAY.badTaskComment;
   return null;
 }
 
@@ -578,6 +644,8 @@ export function planRequest(item: RequestsItem): Planned[] {
   if (p.clientTag) out.push({ ...base, taskId: null, field: "tag", old: null, new: p.clientTag, note: "Only when the space has this tag." });
   for (const f of fieldsOf(p)) out.push({ ...base, taskId: null, field: String(f.label ?? f.fieldId), fieldId: f.fieldId, old: null, new: f.display ?? f.value });
   if (p.setRequestType === true) out.push({ ...base, taskId: null, field: "Request Type", fieldId: REQUEST_TYPE_FIELD, old: null, new: p.requestTypeOptionName });
+  // Its length, never its text: the handoff holds the client's answers.
+  if (hasTaskComment(p)) out.push({ ...base, taskId: null, field: "comment on the new task", old: null, new: `${String(p.taskComment).length} characters` });
   if (p.clientTaskId) out.push({ ...base, taskId: String(p.clientTaskId), field: "comment", old: null, new: cardCommentText(p, "(the new task's link)") });
   if (p.replacesTaskId)
     out.push({ ...base, taskId: String(p.replacesTaskId), field: "comment and status", old: null, new: { comment: oldTicketComment(p, "(the new task's link)"), status: "cancelled" } });
@@ -974,6 +1042,39 @@ async function postComment(x: Ctx, key: string, taskId: string, text: string, ma
   return String(back.id);
 }
 
+/**
+ * The comment Make posts on each task it makes (Make 12 [18], [23]): the payload's taskComment, posted once with
+ * Make's text alone and no Cockpit ref (X37). Found again by the id ClickUp answered the post with, and only by it,
+ * so once ClickUp gave it an id it is never posted again; with no id, by its text (sameText) among the task's
+ * comments since the step started, less a minute.
+ */
+async function stepTaskComment(x: Ctx) {
+  const { p, provider, book } = x;
+  const key = "task_comment";
+  if (!hasTaskComment(p)) return book.set(key, "skipped", { why: "This request has no comment for its task." });
+  // The task is read first: one ClickUp no longer has stops the part (SAY.gone), never a refused comment.
+  await current(x);
+  const taskId = book.progress.task!.id;
+  const text = String(p.taskComment);
+  const st = book.get(key);
+  if (st?.state === "started") {
+    const since = book.startedAt(key, x.item.created_at) - 60_000;
+    const found = st.commentId
+      ? await findComment(provider, taskId, "", since, String(st.commentId))
+      : await findComment(provider, taskId, sameText(text, since), since);
+    if (found) return book.set(key, "done", { commentId: String(found.id) });
+    if (st.commentId) throw halt("unknown", SAY.taskCommentLost);
+  }
+  await book.start(key);
+  const since = book.startedAt(key, x.item.created_at) - 60_000;
+  const made = await write(x, () => provider.call("clickup", "POST", `task/${taskId}/comment`, { comment_text: text, notify_all: false }));
+  const cid = made?.id === undefined || made?.id === null ? null : String(made.id);
+  if (cid) await book.set(key, "started", { commentId: cid });
+  const back = await findComment(provider, taskId, cid ? "" : sameText(text, since), since, cid);
+  if (!back) throw halt("unknown", SAY.taskComment);
+  return book.set(key, "done", { commentId: String(back.id) });
+}
+
 async function stepCardComment(x: Ctx) {
   const { p, book } = x;
   const card = String(p.clientTaskId);
@@ -1030,6 +1131,7 @@ const STEP_RUNNERS: Record<string, (x: Ctx) => Promise<unknown>> = {
   tag: stepTag,
   fields: stepFields,
   request_type: stepRequestType,
+  task_comment: stepTaskComment,
   card_comment: stepCardComment,
   replaces: stepReplaces,
 };

@@ -1,0 +1,238 @@
+{
+ "flow": [
+  {
+   "id": 1,
+   "module": "typeform:WatchEventsWithResponses",
+   "mapper": {},
+   "filter": null,
+   "parameters": {}
+  },
+  {
+   "id": 11,
+   "module": "clickup:postATaskComment",
+   "mapper": {
+    "task_id": "{{1.hidden.onboarding_client_id}}",
+    "notify_all": false,
+    "comment_text": "*KICKOFF HANDOFF*\n*Client:* {{ifempty(1.hidden.legal_name; \"Not provided\")}}\n*Call recording:* {{ifempty(get(1.mappable_answers; \"b5578678-d0c2-475b-b66f-7ea54d55fe31\"); \"Not provided\")}}\n\n____________________________________\n\n*CLIENT DETAILS*\n*Legal business name:* {{ifempty(1.hidden.legal_name; \"Not provided\")}}\n*Phone:* {{ifempty(1.hidden.phone; \"Not provided\")}}\n*Email:* {{ifempty(1.hidden.email; \"Not provided\")}}\n*Address:* {{ifempty(1.hidden.address; \"Not provided\")}}\n*Google Maps:* {{ifempty(1.hidden.maps_link; \"Not provided\")}}\n*Instagram:* {{ifempty(1.hidden.instagram; \"Not provided\")}}\n*Website:* {{ifempty(1.hidden.website; \"Not provided\")}}\n*Facebook:* {{ifempty(1.hidden.facebook; \"Not provided\")}}\n*Business details confirmed:* {{switch(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000001\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Business notes:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000002\"); \"Not provided\")}}\n*Business corrections:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000012\"); \"Not provided\")}}\n*Online links confirmed:* {{switch(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000003\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Online-link notes:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000004\"); \"Not provided\")}}\n*Online-link corrections:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000013\"); \"Not provided\")}}\n\n____________________________________\n\n*AVAILABILITY AND OPERATIONS*\n*Booking platform:* {{ifempty(1.hidden.booking_platform; \"Not provided\")}}\n*Working hours / availability:* {{ifempty(1.hidden.hours; \"Not provided\")}}\n*Consultants available:* {{ifempty(1.hidden.consultants; \"Not provided\")}}\n*Original service focus:* {{ifempty(1.hidden.service_focus; \"Not provided\")}}\n*Original consultation types:* {{ifempty(1.hidden.consultation_types; \"Not provided\")}}\n*Payment options:* {{ifempty(1.hidden.payment_options; \"Not provided\")}}\n*Operations confirmed:* {{switch(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000005\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Operations notes:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000006\"); \"Not provided\")}}\n*Operations corrections:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000014\"); \"Not provided\")}}\n*Services we are advertising:* {{ifempty(join(flatten(add(emptyarray; get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000007\"))); \", \"); \"Not provided\")}}\n*Consultation types confirmed at kickoff:* {{ifempty(join(flatten(add(emptyarray; get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000008\"))); \", \"); \"Not provided\")}}\n\n____________________________________\n\n*GOALS AND CLIENT CONTEXT*\n*Previous revenue:* {{ifempty(1.hidden.last_revenue; \"Not provided\")}}\n*90-day goal:* {{ifempty(1.hidden.goal_90d; \"Not provided\")}}\n*12-24 month goal:* {{ifempty(1.hidden.goal_12_24; \"Not provided\")}}\n*Marketing tried before:* {{ifempty(1.hidden.marketing_tried; \"Not provided\")}}\n*Current challenges:* {{ifempty(1.hidden.challenges; \"Not provided\")}}\n*Why they joined Mahara:* {{ifempty(1.hidden.why_joined; \"Not provided\")}}\n*Client notes:* {{ifempty(1.hidden.client_notes; \"Not provided\")}}\n*Profile complete:* {{switch(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000009\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Profile notes:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000011\"); \"Not provided\")}}\n*Missing profile information:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000015\"); \"Not provided\")}}\n\n____________________________________\n\n*CONTRACT AND PAYMENT*\n*Contract status:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-00000000000a\"); \"Not provided\")}}\n*Contract changes needed:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-00000000000b\"); \"Not provided\")}}\n*Payment amount:* {{ifempty(get(1.mappable_answers; \"75e97e7d-4c19-437a-b4b8-67570c29344f\"); \"Not provided\")}}\n\n____________________________________\n\n*SUPPORT SETUP*\n*Added to WhatsApp group:* {{switch(get(1.mappable_answers; \"3db082bb-1939-444b-8b32-d0067fc9878c\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Other people to add:* {{ifempty(get(1.mappable_answers; \"071c480f-17f9-48db-8155-56030f952e85\"); \"Not provided\")}}\n*Drive folders and spreadsheets discussed:* {{switch(get(1.mappable_answers; \"87c68a44-b19b-4a86-a286-0a2c8c32134e\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*WhatsApp status:* {{ifempty(get(1.mappable_answers; \"92fab954-d771-431c-9fc4-b9f15c53cbb8\"); \"Not provided\")}}\n\n____________________________________\n\n*ADVERTISING SETUP*\n*Advertising platforms:* {{ifempty(join(flatten(add(emptyarray; get(1.mappable_answers; \"7d16afbb-b99a-4ee9-8718-4418cbeba534\"))); \", \"); \"Not provided\")}}\n*Daily ad budget:* {{ifempty(get(1.mappable_answers; \"cf53482c-3d7d-45ab-b294-0230e917ea5f\"); \"Not provided\")}}\n*Ad account name:* {{ifempty(get(1.mappable_answers; \"e4b9dbd3-c12c-4d6f-a0e3-c3ba17c97728\"); \"Not provided\")}}\n*Facebook page name:* {{ifempty(get(1.mappable_answers; \"940f494c-f99b-4920-b203-200576ddd780\"); \"Not provided\")}}\n*Correct funded card linked:* {{switch(get(1.mappable_answers; \"8bee68fc-0764-41a8-b90a-db2a3f401e9d\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Facebook access status:* {{ifempty(get(1.mappable_answers; \"6fcbd33c-60e9-4df7-bfaa-e76b588dd887\"); \"Not provided\")}}\n*WhatsApp synced to CRM:* {{ifempty(get(1.mappable_answers; \"a813378f-06ce-499e-8f0e-14761b89b474\"); \"Not provided\")}}\n\n____________________________________\n\n*BOOKING, CALENDAR AND CRM*\n*Booking platform connects to ours:* {{switch(get(1.mappable_answers; \"03b0600d-04d2-40a0-a7de-75a488888eb7\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Google Calendar integration complete:* {{switch(get(1.mappable_answers; \"3bebf47d-c00b-4f26-8624-933b84e42ebc\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Booking and calendar integration status:* {{ifempty(get(1.mappable_answers; \"b657c5a5-d199-42b5-8437-c8d04f78e376\"); \"Not provided\")}}\n*Client CRM access status:* {{ifempty(get(1.mappable_answers; \"ad562fc2-6858-4e37-81c5-c4cc2375a330\"); \"Not provided\")}}\n\n____________________________________\n\n*CONTENT AND CREATIVE*\n*Client content Drive:* {{ifempty(1.hidden.content_drive; \"Not provided\")}}\n*Marketing content links / notes:* {{ifempty(get(1.mappable_answers; \"3418ef58-72df-49aa-aac3-1e095e155d45\"); \"Not provided\")}}\n*Content discussed:* {{switch(get(1.mappable_answers; \"753c4cde-4d28-4719-8459-06e4db640180\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Templated ads discussed:* {{switch(get(1.mappable_answers; \"f54986bc-e120-4345-afee-31c1000a5a9a\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Templated ads status:* {{ifempty(get(1.mappable_answers; \"eb7ed18c-8388-4d84-9b5c-2e3d4a030287\"); \"Not provided\")}}\n\n____________________________________\n\n*LEADS AND SALES READINESS*\n*Has pre-existing leads:* {{switch(get(1.mappable_answers; \"dff79b66-89dd-43ef-9664-3fa4e6a61d69\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Wants Mahara to contact those leads:* {{switch(get(1.mappable_answers; \"85d7ebb5-ce36-4ac3-aff8-3ce464737abd\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Lead file / notes:* {{ifempty(get(1.mappable_answers; \"86a6cce0-9111-4d98-97e7-7af5b6d518c8\"); \"Not provided\")}}\n*Experience selling to cold leads:* {{switch(get(1.mappable_answers; \"0cb88b75-f193-43a1-b802-d382178a0946\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Current cold-lead close rate:* {{ifempty(get(1.mappable_answers; \"079812c4-bb7e-4cc3-8e57-24c3b9e886d9\"); \"Not provided\")}}\n\n____________________________________\n\n*TRAINING AND COMPLETION*\n*Premium Projects Academy confirmed:* {{switch(get(1.mappable_answers; \"4379c2f7-c5cf-4104-92c5-9b2294d65b59\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*First steps and important videos discussed:* {{switch(get(1.mappable_answers; \"dc6eafd2-516e-4ca9-9d9c-89dee060e224\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Training course access:* {{ifempty(get(1.mappable_answers; \"c56a7e2d-6f18-4bf9-a9f6-11367eab4c11\"); \"Not provided\")}}\n*Post-call form completed:* {{switch(get(1.mappable_answers; \"34310b2e-4df4-4ed5-b67e-9aefa9087d6e\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}",
+    "map_or_select": "map"
+   },
+   "filter": null,
+   "parameters": {}
+  },
+  {
+   "id": 20,
+   "module": "clickup:editATaskAdvanced",
+   "mapper": {
+    "status": "IN PROGRESS",
+    "task_id": "{{1.hidden.onboarding_client_id}}",
+    "archived": false,
+    "assignees": {},
+    "notify_all": false,
+    "due_date_time": false,
+    "start_date_time": false
+   },
+   "filter": null,
+   "parameters": {}
+  },
+  {
+   "id": 14,
+   "module": "builtin:BasicRouter",
+   "mapper": {},
+   "filter": null,
+   "parameters": {},
+   "routes": [
+    {
+     "flow": [
+      {
+       "id": 17,
+       "module": "clickup:createATaskFromATemplate",
+       "mapper": {
+        "name": "{{1.hidden.legal_name}} - Technical Onboarding Check 🚀",
+        "list_id": "901816723190",
+        "team_id": "90182518398",
+        "space_id": "901810248115",
+        "folder_id": "901812879297",
+        "template_id": "t-86ex8x9xw",
+        "map_or_select": "select"
+       },
+       "filter": {
+        "name": "TECH",
+        "conditions": []
+       },
+       "parameters": {}
+      },
+      {
+       "id": 18,
+       "module": "clickup:postATaskComment",
+       "mapper": {
+        "task_id": "{{17.id}}",
+        "notify_all": false,
+        "comment_text": "*KICKOFF HANDOFF*\n*Client:* {{ifempty(1.hidden.legal_name; \"Not provided\")}}\n*Call recording:* {{ifempty(get(1.mappable_answers; \"b5578678-d0c2-475b-b66f-7ea54d55fe31\"); \"Not provided\")}}\n\n____________________________________\n\n*CLIENT DETAILS*\n*Legal business name:* {{ifempty(1.hidden.legal_name; \"Not provided\")}}\n*Phone:* {{ifempty(1.hidden.phone; \"Not provided\")}}\n*Email:* {{ifempty(1.hidden.email; \"Not provided\")}}\n*Address:* {{ifempty(1.hidden.address; \"Not provided\")}}\n*Google Maps:* {{ifempty(1.hidden.maps_link; \"Not provided\")}}\n*Instagram:* {{ifempty(1.hidden.instagram; \"Not provided\")}}\n*Website:* {{ifempty(1.hidden.website; \"Not provided\")}}\n*Facebook:* {{ifempty(1.hidden.facebook; \"Not provided\")}}\n*Business details confirmed:* {{switch(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000001\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Business notes:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000002\"); \"Not provided\")}}\n*Business corrections:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000012\"); \"Not provided\")}}\n*Online links confirmed:* {{switch(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000003\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Online-link notes:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000004\"); \"Not provided\")}}\n*Online-link corrections:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000013\"); \"Not provided\")}}\n\n____________________________________\n\n*AVAILABILITY AND OPERATIONS*\n*Booking platform:* {{ifempty(1.hidden.booking_platform; \"Not provided\")}}\n*Working hours / availability:* {{ifempty(1.hidden.hours; \"Not provided\")}}\n*Consultants available:* {{ifempty(1.hidden.consultants; \"Not provided\")}}\n*Original service focus:* {{ifempty(1.hidden.service_focus; \"Not provided\")}}\n*Original consultation types:* {{ifempty(1.hidden.consultation_types; \"Not provided\")}}\n*Payment options:* {{ifempty(1.hidden.payment_options; \"Not provided\")}}\n*Operations confirmed:* {{switch(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000005\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Operations notes:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000006\"); \"Not provided\")}}\n*Operations corrections:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000014\"); \"Not provided\")}}\n*Services we are advertising:* {{ifempty(join(flatten(add(emptyarray; get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000007\"))); \", \"); \"Not provided\")}}\n*Consultation types confirmed at kickoff:* {{ifempty(join(flatten(add(emptyarray; get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000008\"))); \", \"); \"Not provided\")}}\n\n____________________________________\n\n*GOALS AND CLIENT CONTEXT*\n*Previous revenue:* {{ifempty(1.hidden.last_revenue; \"Not provided\")}}\n*90-day goal:* {{ifempty(1.hidden.goal_90d; \"Not provided\")}}\n*12-24 month goal:* {{ifempty(1.hidden.goal_12_24; \"Not provided\")}}\n*Marketing tried before:* {{ifempty(1.hidden.marketing_tried; \"Not provided\")}}\n*Current challenges:* {{ifempty(1.hidden.challenges; \"Not provided\")}}\n*Why they joined Mahara:* {{ifempty(1.hidden.why_joined; \"Not provided\")}}\n*Client notes:* {{ifempty(1.hidden.client_notes; \"Not provided\")}}\n*Profile complete:* {{switch(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000009\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Profile notes:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000011\"); \"Not provided\")}}\n*Missing profile information:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000015\"); \"Not provided\")}}\n\n____________________________________\n\n*CONTRACT AND PAYMENT*\n*Contract status:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-00000000000a\"); \"Not provided\")}}\n*Contract changes needed:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-00000000000b\"); \"Not provided\")}}\n*Payment amount:* {{ifempty(get(1.mappable_answers; \"75e97e7d-4c19-437a-b4b8-67570c29344f\"); \"Not provided\")}}\n\n____________________________________\n\n*SUPPORT SETUP*\n*Added to WhatsApp group:* {{switch(get(1.mappable_answers; \"3db082bb-1939-444b-8b32-d0067fc9878c\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Other people to add:* {{ifempty(get(1.mappable_answers; \"071c480f-17f9-48db-8155-56030f952e85\"); \"Not provided\")}}\n*Drive folders and spreadsheets discussed:* {{switch(get(1.mappable_answers; \"87c68a44-b19b-4a86-a286-0a2c8c32134e\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*WhatsApp status:* {{ifempty(get(1.mappable_answers; \"92fab954-d771-431c-9fc4-b9f15c53cbb8\"); \"Not provided\")}}\n\n____________________________________\n\n*ADVERTISING SETUP*\n*Advertising platforms:* {{ifempty(join(flatten(add(emptyarray; get(1.mappable_answers; \"7d16afbb-b99a-4ee9-8718-4418cbeba534\"))); \", \"); \"Not provided\")}}\n*Daily ad budget:* {{ifempty(get(1.mappable_answers; \"cf53482c-3d7d-45ab-b294-0230e917ea5f\"); \"Not provided\")}}\n*Ad account name:* {{ifempty(get(1.mappable_answers; \"e4b9dbd3-c12c-4d6f-a0e3-c3ba17c97728\"); \"Not provided\")}}\n*Facebook page name:* {{ifempty(get(1.mappable_answers; \"940f494c-f99b-4920-b203-200576ddd780\"); \"Not provided\")}}\n*Correct funded card linked:* {{switch(get(1.mappable_answers; \"8bee68fc-0764-41a8-b90a-db2a3f401e9d\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Facebook access status:* {{ifempty(get(1.mappable_answers; \"6fcbd33c-60e9-4df7-bfaa-e76b588dd887\"); \"Not provided\")}}\n*WhatsApp synced to CRM:* {{ifempty(get(1.mappable_answers; \"a813378f-06ce-499e-8f0e-14761b89b474\"); \"Not provided\")}}\n\n____________________________________\n\n*BOOKING, CALENDAR AND CRM*\n*Booking platform connects to ours:* {{switch(get(1.mappable_answers; \"03b0600d-04d2-40a0-a7de-75a488888eb7\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Google Calendar integration complete:* {{switch(get(1.mappable_answers; \"3bebf47d-c00b-4f26-8624-933b84e42ebc\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Booking and calendar integration status:* {{ifempty(get(1.mappable_answers; \"b657c5a5-d199-42b5-8437-c8d04f78e376\"); \"Not provided\")}}\n*Client CRM access status:* {{ifempty(get(1.mappable_answers; \"ad562fc2-6858-4e37-81c5-c4cc2375a330\"); \"Not provided\")}}\n\n____________________________________\n\n*CONTENT AND CREATIVE*\n*Client content Drive:* {{ifempty(1.hidden.content_drive; \"Not provided\")}}\n*Marketing content links / notes:* {{ifempty(get(1.mappable_answers; \"3418ef58-72df-49aa-aac3-1e095e155d45\"); \"Not provided\")}}\n*Content discussed:* {{switch(get(1.mappable_answers; \"753c4cde-4d28-4719-8459-06e4db640180\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Templated ads discussed:* {{switch(get(1.mappable_answers; \"f54986bc-e120-4345-afee-31c1000a5a9a\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Templated ads status:* {{ifempty(get(1.mappable_answers; \"eb7ed18c-8388-4d84-9b5c-2e3d4a030287\"); \"Not provided\")}}\n\n____________________________________\n\n*LEADS AND SALES READINESS*\n*Has pre-existing leads:* {{switch(get(1.mappable_answers; \"dff79b66-89dd-43ef-9664-3fa4e6a61d69\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Wants Mahara to contact those leads:* {{switch(get(1.mappable_answers; \"85d7ebb5-ce36-4ac3-aff8-3ce464737abd\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Lead file / notes:* {{ifempty(get(1.mappable_answers; \"86a6cce0-9111-4d98-97e7-7af5b6d518c8\"); \"Not provided\")}}\n*Experience selling to cold leads:* {{switch(get(1.mappable_answers; \"0cb88b75-f193-43a1-b802-d382178a0946\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Current cold-lead close rate:* {{ifempty(get(1.mappable_answers; \"079812c4-bb7e-4cc3-8e57-24c3b9e886d9\"); \"Not provided\")}}\n\n____________________________________\n\n*TRAINING AND COMPLETION*\n*Premium Projects Academy confirmed:* {{switch(get(1.mappable_answers; \"4379c2f7-c5cf-4104-92c5-9b2294d65b59\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*First steps and important videos discussed:* {{switch(get(1.mappable_answers; \"dc6eafd2-516e-4ca9-9d9c-89dee060e224\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Training course access:* {{ifempty(get(1.mappable_answers; \"c56a7e2d-6f18-4bf9-a9f6-11367eab4c11\"); \"Not provided\")}}\n*Post-call form completed:* {{switch(get(1.mappable_answers; \"34310b2e-4df4-4ed5-b67e-9aefa9087d6e\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}",
+        "map_or_select": "map"
+       },
+       "filter": null,
+       "parameters": {}
+      }
+     ]
+    },
+    {
+     "flow": [
+      {
+       "id": 21,
+       "module": "clickup:editATask",
+       "mapper": {
+        "list_id": "901816559981",
+        "task_id": "{{1.hidden.onboarding_client_id}}",
+        "team_id": "90182518398",
+        "space_id": "901810155402",
+        "assignees": {},
+        "folder_id": "folderlessList",
+        "custom_fields": {
+         "1b7a4a74-d0e7-4a7f-9218-59c80a738186": "https://cockpit.maharamedia.com/creative/blueprint/{{1.hidden.onboarding_client_id}}",
+         "924bba47-32d4-4557-94d4-f475cd548dd2": "{{switch(1.mappable_answers.`ad562fc2-6858-4e37-81c5-c4cc2375a330`; \"Logged In\"; \"6239c1b7-afe7-4a5a-9fb8-e27be7618519\"; \"Tech Issue\"; \"09b8d156-c066-4e09-86cf-14639d91ed82\"; \"Didn't Receive Access\"; \"311acc2c-9195-4e90-a955-64063d4ca1fd\"; \"Doesn't Want To\"; \"b797963f-1aa9-4c0f-bc7b-d632e47e31e8\")}}",
+         "9368ca9e-3549-4320-84ff-9abd0a2901cb": "dbd21650-59ce-429c-882d-5afd7d8aaa8a",
+         "a1520ef3-ec23-47a4-9584-e24257486a3e": "{{switch(1.mappable_answers.`b657c5a5-d199-42b5-8437-c8d04f78e376`; \"Requested\"; \"00ddd5fe-be00-4b7a-b47c-fc42393fccae\"; \"Waiting on Client\"; \"b570f540-7120-477a-b788-3755a2f8c321\"; \"Integrated\"; \"261025ab-318d-41d5-87a4-9ac96698bfbf\"; \"Needs Integrating\"; \"4d323459-20d7-4b3d-9f7e-f60a42eb19da\"; \"Pending\"; \"2e7ffa65-1296-446a-81bf-4baa65e91410\"; \"Not Integrating\"; \"f8a3eedf-3a14-4e63-b9e2-c8e969b6943f\"; \"Google Synched - Not Integrated\"; \"9cce6a6d-a3b4-470e-8f6c-4bcdb97b4ac0\")}}",
+         "ac976d4a-409b-441c-8c13-4b0e73a0c12f": "{{switch(1.mappable_answers.`c0000001-0000-4000-8000-00000000000a`; \"Signed\"; \"ac8a68fa-ba2e-41da-9fcc-2e9b7d03d2e2\"; \"Sent and waiting on client\"; \"595bef14-bc45-406c-ae49-68e8e359a7b5\"; \"Adjustments requested by client\"; \"5b4db3e6-8c4a-4176-a786-d04e8a689e88\"; \"Not sent yet\"; \"0667c501-3955-4443-829a-a4eb9a1d7176\"; \"NA - already signed\"; \"8f396286-2035-46de-a475-25bb9684bb3f\")}}",
+         "bab9a58b-15af-4b0d-8e20-b8e5a4bee2cc": "{{switch(first(1.mappable_answers.`c0000001-0000-4000-8000-000000000007`); \"Design and build\"; \"cb4f5a2c-764a-41a6-9603-754c37b5a225\"; \"Interior design\"; \"e9883783-96ef-49e9-83c3-efba1aebc738\"; \"Architectural design\"; \"2e788bec-bd0d-41e6-a422-9029dce0aacb\"; \"Fit out and renovation\"; \"889744ae-e3c5-4dc0-bf29-7f6c183be11e\"; \"Construction only\"; \"77bda402-2a02-4d9b-8c49-e5de65abf6b8\"; \"Other\"; \"a662124f-7c42-4f8e-a95e-aa6289fde081\")}}",
+         "bc7e70a2-1623-426f-8ed7-fac8fed9b160": "{{switch(1.mappable_answers.`6fcbd33c-60e9-4df7-bfaa-e76b588dd887`; \"Requested\"; \"d8104e7c-d448-4f1f-983e-f064d2776c6c\"; \"Waiting on Client\"; \"ff93cb85-8a4a-4525-9de8-57893e6f5c80\"; \"Access Confirmed\"; \"03996b63-1830-4e0e-bb05-624dcb779eff\"; \"Pending\"; \"75ebe363-c704-49b2-a53d-79f608d188a4\"; \"Using Ours\"; \"1c2f63c7-1e12-480e-98e9-ddf035aeec60\"; \"Need Tech Help\"; \"8bfb9e3e-7d87-42b1-92d1-ca9979b378c9\"; \"Their Page Our Ad Acc\"; \"12f2ccd6-6187-443c-a7c2-394429212d6e\")}}",
+         "cc14ad2d-28ca-4eac-bbef-89b4f299ef8f": "{{switch(1.mappable_answers.`a813378f-06ce-499e-8f0e-14761b89b474`; \"Requested\"; \"c3b6c322-0d62-40c3-94f5-010d41e66672\"; \"Waiting on Client\"; \"46079c7a-37e5-4e5d-9204-3d08b072d48d\"; \"Integrated\"; \"e9267774-a2fd-47f6-a289-da382a38da9e\"; \"Needs Integrating\"; \"46d81b43-1ae6-43cf-9649-f93db17eb351\"; \"Pending\"; \"9d5716ce-0979-41a1-8e96-7a81f956b403\"; \"Not Integrating\"; \"d16895f7-9f32-45a2-aaef-b21361e1daa0\")}}",
+         "d113cd99-9d35-4b12-a8fa-0cd0c19ec777": "{{switch(1.mappable_answers.`92fab954-d771-431c-9fc4-b9f15c53cbb8`; \"Access confirmed.\"; \"e7525662-19fe-49af-9fc3-dd19ca80bd91\"; \"Pending.\"; \"7638ccf7-ebf5-4099-a01e-e6ddb9ae4376\"; \"Invited.\"; \"6e75bcd8-b75b-4075-8e18-cff22b2061d6\"; \"Waiting on client.\"; \"13517dc1-627a-43a3-8df3-3ba0a798633b\")}}",
+         "e7d158a8-e303-4df8-a78a-61a0eb3843eb": "{{switch(1.mappable_answers.`eb7ed18c-8388-4d84-9b5c-2e3d4a030287`; \"Approved\"; \"96e90cfb-4916-4265-b26a-a1c60da55dc4\"; \"Declined\"; \"30922d6c-c8b5-418e-9119-a4ecf236b574\"; \"Waiting On Client\"; \"002cfa79-439e-472a-9e85-f027dac825c8\"; \"Wants To See Them First\"; \"1b89a70e-f625-4ffb-8829-9c5bd1bb2e16\")}}",
+         "f0a20cef-e902-4200-8f55-43431b2574c6": "{{switch(1.mappable_answers.`c56a7e2d-6f18-4bf9-a9f6-11367eab4c11`; \"Confirmed\"; \"1ddf801a-3aed-46c7-99d6-61519a386462\"; \"Requested\"; \"814779bc-690a-41bd-b618-561cc967d21f\"; \"Need Tech Help\"; \"adffc7b9-b3cb-4347-ae56-6124a695a3c8\"; \"Waiting On Client\"; \"84b8a5a9-25b4-47fa-b4bd-d6b1c43d31f6\")}}"
+        },
+        "addCustomFieldDateTime": false,
+        "parseCustomFieldDateTimeOutput": false
+       },
+       "filter": null,
+       "parameters": {}
+      }
+     ]
+    },
+    {
+     "flow": [
+      {
+       "id": 22,
+       "module": "clickup:createATaskFromATemplate",
+       "mapper": {
+        "name": "{{1.hidden.legal_name}} - Creative Onboarding 🚀",
+        "list_id": "901818016338",
+        "team_id": "90182518398",
+        "space_id": "901810248115",
+        "folder_id": "901812879297",
+        "template_id": "t-86eyu1w3d",
+        "map_or_select": "select"
+       },
+       "filter": {
+        "name": "CREATIVE",
+        "conditions": []
+       },
+       "parameters": {}
+      },
+      {
+       "id": 23,
+       "module": "clickup:postATaskComment",
+       "mapper": {
+        "task_id": "{{22.id}}",
+        "notify_all": false,
+        "comment_text": "*KICKOFF HANDOFF*\n*Client:* {{ifempty(1.hidden.legal_name; \"Not provided\")}}\n*Call recording:* {{ifempty(get(1.mappable_answers; \"b5578678-d0c2-475b-b66f-7ea54d55fe31\"); \"Not provided\")}}\n\n____________________________________\n\n*CLIENT DETAILS*\n*Legal business name:* {{ifempty(1.hidden.legal_name; \"Not provided\")}}\n*Phone:* {{ifempty(1.hidden.phone; \"Not provided\")}}\n*Email:* {{ifempty(1.hidden.email; \"Not provided\")}}\n*Address:* {{ifempty(1.hidden.address; \"Not provided\")}}\n*Google Maps:* {{ifempty(1.hidden.maps_link; \"Not provided\")}}\n*Instagram:* {{ifempty(1.hidden.instagram; \"Not provided\")}}\n*Website:* {{ifempty(1.hidden.website; \"Not provided\")}}\n*Facebook:* {{ifempty(1.hidden.facebook; \"Not provided\")}}\n*Business details confirmed:* {{switch(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000001\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Business notes:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000002\"); \"Not provided\")}}\n*Business corrections:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000012\"); \"Not provided\")}}\n*Online links confirmed:* {{switch(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000003\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Online-link notes:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000004\"); \"Not provided\")}}\n*Online-link corrections:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000013\"); \"Not provided\")}}\n\n____________________________________\n\n*AVAILABILITY AND OPERATIONS*\n*Booking platform:* {{ifempty(1.hidden.booking_platform; \"Not provided\")}}\n*Working hours / availability:* {{ifempty(1.hidden.hours; \"Not provided\")}}\n*Consultants available:* {{ifempty(1.hidden.consultants; \"Not provided\")}}\n*Original service focus:* {{ifempty(1.hidden.service_focus; \"Not provided\")}}\n*Original consultation types:* {{ifempty(1.hidden.consultation_types; \"Not provided\")}}\n*Payment options:* {{ifempty(1.hidden.payment_options; \"Not provided\")}}\n*Operations confirmed:* {{switch(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000005\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Operations notes:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000006\"); \"Not provided\")}}\n*Operations corrections:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000014\"); \"Not provided\")}}\n*Services we are advertising:* {{ifempty(join(flatten(add(emptyarray; get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000007\"))); \", \"); \"Not provided\")}}\n*Consultation types confirmed at kickoff:* {{ifempty(join(flatten(add(emptyarray; get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000008\"))); \", \"); \"Not provided\")}}\n\n____________________________________\n\n*GOALS AND CLIENT CONTEXT*\n*Previous revenue:* {{ifempty(1.hidden.last_revenue; \"Not provided\")}}\n*90-day goal:* {{ifempty(1.hidden.goal_90d; \"Not provided\")}}\n*12-24 month goal:* {{ifempty(1.hidden.goal_12_24; \"Not provided\")}}\n*Marketing tried before:* {{ifempty(1.hidden.marketing_tried; \"Not provided\")}}\n*Current challenges:* {{ifempty(1.hidden.challenges; \"Not provided\")}}\n*Why they joined Mahara:* {{ifempty(1.hidden.why_joined; \"Not provided\")}}\n*Client notes:* {{ifempty(1.hidden.client_notes; \"Not provided\")}}\n*Profile complete:* {{switch(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000009\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Profile notes:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000011\"); \"Not provided\")}}\n*Missing profile information:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-000000000015\"); \"Not provided\")}}\n\n____________________________________\n\n*CONTRACT AND PAYMENT*\n*Contract status:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-00000000000a\"); \"Not provided\")}}\n*Contract changes needed:* {{ifempty(get(1.mappable_answers; \"c0000001-0000-4000-8000-00000000000b\"); \"Not provided\")}}\n*Payment amount:* {{ifempty(get(1.mappable_answers; \"75e97e7d-4c19-437a-b4b8-67570c29344f\"); \"Not provided\")}}\n\n____________________________________\n\n*SUPPORT SETUP*\n*Added to WhatsApp group:* {{switch(get(1.mappable_answers; \"3db082bb-1939-444b-8b32-d0067fc9878c\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Other people to add:* {{ifempty(get(1.mappable_answers; \"071c480f-17f9-48db-8155-56030f952e85\"); \"Not provided\")}}\n*Drive folders and spreadsheets discussed:* {{switch(get(1.mappable_answers; \"87c68a44-b19b-4a86-a286-0a2c8c32134e\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*WhatsApp status:* {{ifempty(get(1.mappable_answers; \"92fab954-d771-431c-9fc4-b9f15c53cbb8\"); \"Not provided\")}}\n\n____________________________________\n\n*ADVERTISING SETUP*\n*Advertising platforms:* {{ifempty(join(flatten(add(emptyarray; get(1.mappable_answers; \"7d16afbb-b99a-4ee9-8718-4418cbeba534\"))); \", \"); \"Not provided\")}}\n*Daily ad budget:* {{ifempty(get(1.mappable_answers; \"cf53482c-3d7d-45ab-b294-0230e917ea5f\"); \"Not provided\")}}\n*Ad account name:* {{ifempty(get(1.mappable_answers; \"e4b9dbd3-c12c-4d6f-a0e3-c3ba17c97728\"); \"Not provided\")}}\n*Facebook page name:* {{ifempty(get(1.mappable_answers; \"940f494c-f99b-4920-b203-200576ddd780\"); \"Not provided\")}}\n*Correct funded card linked:* {{switch(get(1.mappable_answers; \"8bee68fc-0764-41a8-b90a-db2a3f401e9d\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Facebook access status:* {{ifempty(get(1.mappable_answers; \"6fcbd33c-60e9-4df7-bfaa-e76b588dd887\"); \"Not provided\")}}\n*WhatsApp synced to CRM:* {{ifempty(get(1.mappable_answers; \"a813378f-06ce-499e-8f0e-14761b89b474\"); \"Not provided\")}}\n\n____________________________________\n\n*BOOKING, CALENDAR AND CRM*\n*Booking platform connects to ours:* {{switch(get(1.mappable_answers; \"03b0600d-04d2-40a0-a7de-75a488888eb7\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Google Calendar integration complete:* {{switch(get(1.mappable_answers; \"3bebf47d-c00b-4f26-8624-933b84e42ebc\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Booking and calendar integration status:* {{ifempty(get(1.mappable_answers; \"b657c5a5-d199-42b5-8437-c8d04f78e376\"); \"Not provided\")}}\n*Client CRM access status:* {{ifempty(get(1.mappable_answers; \"ad562fc2-6858-4e37-81c5-c4cc2375a330\"); \"Not provided\")}}\n\n____________________________________\n\n*CONTENT AND CREATIVE*\n*Client content Drive:* {{ifempty(1.hidden.content_drive; \"Not provided\")}}\n*Marketing content links / notes:* {{ifempty(get(1.mappable_answers; \"3418ef58-72df-49aa-aac3-1e095e155d45\"); \"Not provided\")}}\n*Content discussed:* {{switch(get(1.mappable_answers; \"753c4cde-4d28-4719-8459-06e4db640180\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Templated ads discussed:* {{switch(get(1.mappable_answers; \"f54986bc-e120-4345-afee-31c1000a5a9a\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Templated ads status:* {{ifempty(get(1.mappable_answers; \"eb7ed18c-8388-4d84-9b5c-2e3d4a030287\"); \"Not provided\")}}\n\n____________________________________\n\n*LEADS AND SALES READINESS*\n*Has pre-existing leads:* {{switch(get(1.mappable_answers; \"dff79b66-89dd-43ef-9664-3fa4e6a61d69\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Wants Mahara to contact those leads:* {{switch(get(1.mappable_answers; \"85d7ebb5-ce36-4ac3-aff8-3ce464737abd\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Lead file / notes:* {{ifempty(get(1.mappable_answers; \"86a6cce0-9111-4d98-97e7-7af5b6d518c8\"); \"Not provided\")}}\n*Experience selling to cold leads:* {{switch(get(1.mappable_answers; \"0cb88b75-f193-43a1-b802-d382178a0946\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Current cold-lead close rate:* {{ifempty(get(1.mappable_answers; \"079812c4-bb7e-4cc3-8e57-24c3b9e886d9\"); \"Not provided\")}}\n\n____________________________________\n\n*TRAINING AND COMPLETION*\n*Premium Projects Academy confirmed:* {{switch(get(1.mappable_answers; \"4379c2f7-c5cf-4104-92c5-9b2294d65b59\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*First steps and important videos discussed:* {{switch(get(1.mappable_answers; \"dc6eafd2-516e-4ca9-9d9c-89dee060e224\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}\n*Training course access:* {{ifempty(get(1.mappable_answers; \"c56a7e2d-6f18-4bf9-a9f6-11367eab4c11\"); \"Not provided\")}}\n*Post-call form completed:* {{switch(get(1.mappable_answers; \"34310b2e-4df4-4ed5-b67e-9aefa9087d6e\"); true; \"Yes\"; false; \"No\"; \"Not provided\")}}",
+        "map_or_select": "map"
+       },
+       "filter": null,
+       "parameters": {}
+      }
+     ]
+    },
+    {
+     "flow": [
+      {
+       "id": 26,
+       "module": "clickup:editATask",
+       "mapper": {
+        "list_id": "901816559981",
+        "task_id": "{{1.hidden.onboarding_client_id}}",
+        "team_id": "90182518398",
+        "space_id": "901810155402",
+        "assignees": {},
+        "folder_id": "folderlessList",
+        "custom_fields": {
+         "51f49cb1-9f76-48be-b639-c42ca552d20a": "https://mahara-onboarding-map.vercel.app/?phase=4&cid={{1.hidden.onboarding_client_id}}"
+        },
+        "addCustomFieldDateTime": false,
+        "parseCustomFieldDateTimeOutput": false
+       },
+       "filter": null,
+       "parameters": {}
+      },
+      {
+       "id": 27,
+       "module": "clickup:getATask",
+       "mapper": {
+        "task_id": "{{1.hidden.onboarding_client_id}}",
+        "map_or_select": "map",
+        "include_subtasks": false,
+        "include_markdown_description": false
+       },
+       "filter": null,
+       "parameters": {}
+      },
+      {
+       "id": 24,
+       "module": "google-sheets:filterRows",
+       "mapper": {
+        "from": "share",
+        "filter": [
+         [
+          {
+           "a": "C",
+           "b": "{{1.hidden.onboarding_client_id}}",
+           "o": "text:equal:ci"
+          }
+         ]
+        ],
+        "sheetId": "Client Data",
+        "sortOrder": "asc",
+        "spreadsheetId": "1_0Nv-IFvzhH4NBNh1dxCUm6Ryp414ctM_8EO5QORBF0",
+        "tableFirstRow": "A1:Z1",
+        "includesHeaders": true,
+        "valueRenderOption": "FORMATTED_VALUE",
+        "dateTimeRenderOption": "FORMATTED_STRING"
+       },
+       "filter": null,
+       "parameters": {}
+      },
+      {
+       "id": 28,
+       "module": "util:FunctionSleep",
+       "mapper": {
+        "duration": "{{floor(random * 91) + 30}}"
+       },
+       "filter": null,
+       "parameters": {}
+      },
+      {
+       "id": 25,
+       "module": "whapi-cloud:text",
+       "mapper": {
+        "to": "{{24.`5`}}",
+        "body": "أكملنا المرحلة الثالثة: مكالمة التعريف.\nالمرحلة التالية: بناء الهوية والعرض.\n\nاطّلع على المطلوب منك وما سنعمل عليه بعد ذلك:\n{{27.custom_fields.`Onboarding Map`}}\n\n*إذا ما رفعتوا المحتوى للحين:*\nارفعوا كل الصور والفيديوهات في مجلد المحتوى الموحد عشان توصل مباشرة لفريق الإبداع والمونتاج:\n{{24.`7`}}"
+       },
+       "filter": {
+        "name": "WhatsApp group exists",
+        "conditions": [
+         [
+          {
+           "a": "{{24.`5`}}",
+           "b": "",
+           "o": "text:notequal"
+          }
+         ]
+        ]
+       },
+       "parameters": {}
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

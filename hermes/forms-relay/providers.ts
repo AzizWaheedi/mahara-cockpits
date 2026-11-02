@@ -1,10 +1,9 @@
 /**
  * The relay's doors: the database (PostgREST with the service key; the relay RPCs, the provider ledger and the
- * health row only), the ledger every provider call goes through, Google Sheets with the shared service account,
- * and GitHub's repository_dispatch with a token read by name. Never a key, a token or a value in a log line.
+ * health row only), the ledger every provider call goes through, and GitHub's repository_dispatch with a token
+ * read by name. No Google door: the relay writes nothing to Client Data (20261102l). Never a key, a token or a
+ * value in a log line.
  */
-import { createSign } from "node:crypto";
-import { readFileSync } from "node:fs";
 import type { Answer, Config, Row } from "./relay.ts";
 
 export const SUPABASE = "https://bldgtotkfmhoxmlzowdx.supabase.co";
@@ -83,12 +82,10 @@ export function makeDb(env: Env, request: typeof fetch = fetch) {
 }
 
 const PROVIDERS: Record<string, string> = {
-  "sheets.googleapis.com": "google",
-  "oauth2.googleapis.com": "google",
   "api.github.com": "github",
 };
 
-/** Host and path with every id collapsed: never a sheet id, a repository, a card or a token. */
+/** Host and path with every id collapsed: never a repository id, a card or a token. */
 export function resourceOf(url: URL): string {
   const parts = url.pathname.split("/").map(seg => {
     if (!seg) return seg;
@@ -104,8 +101,7 @@ export class NotSent extends Error {}
 
 /**
  * Every provider call writes an intent receipt before it leaves (no receipt, no call) and a response or unknown
- * receipt after. Only the three hosts, and only GET and the three POSTs this worker makes (the token exchange,
- * the sheet append and the dispatch).
+ * receipt after. Only GitHub, and only GET and the one POST this worker makes (the dispatch).
  */
 export function ledgerFetch(
   insert: (r: Row) => Promise<void>,
@@ -120,18 +116,14 @@ export function ledgerFetch(
     );
     const provider = PROVIDERS[url.host];
     if (!provider || url.protocol !== "https:")
-      throw new NotSent("Only Google and GitHub are called from this worker.");
+      throw new NotSent("Only GitHub is called from this worker.");
     const method = String(init?.method ?? "GET").toUpperCase();
     const allowedPost =
       method === "POST" &&
-      (url.href === "https://oauth2.googleapis.com/token" ||
-        /^\/v4\/spreadsheets\/[^/]+\/values\/[^/]+:append$/.test(
-          url.pathname,
-        ) ||
-        /^\/repos\/[^/]+\/[^/]+\/dispatches$/.test(url.pathname));
+      /^\/repos\/[^/]+\/[^/]+\/dispatches$/.test(url.pathname);
     if (method !== "GET" && !allowedPost)
       throw new NotSent(
-        "Only GET reads and the three named POSTs leave this worker.",
+        "Only GET reads and the dispatch POST leave this worker.",
       );
     const base = {
       provider,
@@ -166,95 +158,6 @@ export function ledgerFetch(
       headers: res.headers,
     });
   }) as typeof fetch;
-}
-
-/** Client Data through the shared service account (read and append), every call through the ledger. */
-export function makeSheet(env: Env, config: Config, request: typeof fetch) {
-  let token: string | null = null;
-  const base = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.sheetId)}/values`;
-  const range = encodeURIComponent(`${config.tab}!A:ZZ`);
-  async function auth(): Promise<string> {
-    if (token) return token;
-    const path = env.GOOGLE_APPLICATION_CREDENTIALS;
-    if (!path)
-      throw new Error("Missing named key: GOOGLE_APPLICATION_CREDENTIALS");
-    const account = JSON.parse(readFileSync(path, "utf8"));
-    const enc = (v: unknown) =>
-      Buffer.from(JSON.stringify(v)).toString("base64url");
-    const now = Math.floor(Date.now() / 1000);
-    const unsigned = `${enc({ alg: "RS256", typ: "JWT" })}.${enc({
-      iss: account.client_email,
-      scope: "https://www.googleapis.com/auth/spreadsheets",
-      aud: "https://oauth2.googleapis.com/token",
-      iat: now,
-      exp: now + 3600,
-    })}`;
-    const signature = createSign("RSA-SHA256")
-      .update(unsigned)
-      .sign(account.private_key)
-      .toString("base64url");
-    const res = await request("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-        assertion: `${unsigned}.${signature}`,
-      }).toString(),
-      signal: AbortSignal.timeout(20_000),
-    });
-    const j = (await res.json().catch(() => ({}))) as Row;
-    if (!res.ok || typeof j.access_token !== "string")
-      throw new Error(`Google gave no credential (${res.status}).`);
-    token = j.access_token;
-    return token;
-  }
-  return {
-    async read(): Promise<unknown[][]> {
-      const res = await request(`${base}/${range}`, {
-        headers: { Authorization: `Bearer ${await auth()}` },
-        signal: AbortSignal.timeout(20_000),
-      });
-      if (!res.ok)
-        throw new Error(
-          `Google answered the Client Data read with ${res.status}.`,
-        );
-      const j = (await res.json()) as Row;
-      if (!Array.isArray(j.values))
-        throw new Error("Client Data came back without its rows.");
-      return j.values;
-    },
-    async append(row: string[]): Promise<Answer> {
-      let res: Response;
-      try {
-        res = await request(
-          `${base}/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${await auth()}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ values: [row] }),
-            signal: AbortSignal.timeout(20_000),
-          },
-        );
-      } catch (e) {
-        if (e instanceof NotSent)
-          return { ok: false, status: 0, definite: true };
-        return { ok: false, status: 0, definite: false };
-      }
-      if (res.ok) return { ok: true, status: res.status };
-      return {
-        ok: false,
-        status: res.status,
-        definite:
-          res.status >= 400 &&
-          res.status < 500 &&
-          res.status !== 408 &&
-          res.status !== 429,
-      };
-    },
-  };
 }
 
 /** GitHub's repository_dispatch with GITHUB_DISPATCH_TOKEN, through the ledger. 204 is the only yes. */

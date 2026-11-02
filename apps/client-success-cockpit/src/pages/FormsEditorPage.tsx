@@ -64,6 +64,7 @@ import {
   historyLine,
   kuwaitDay,
   LOW_SCORE_BOUND,
+  maxLengthCap,
   moveField,
   NPS_BOUNDS,
   type NpsRule,
@@ -1867,12 +1868,12 @@ function QuestionEditor({
             id={`len-${field.key}`}
             type="number"
             min={1}
-            max={field.type === "text" ? 200 : 2000}
+            max={maxLengthCap(draft.key, field.type)}
             className="font-mono tabular-nums"
             value={field.maxLength ?? ""}
             disabled={disabled}
             onChange={e => {
-              const hi = field.type === "text" ? 200 : 2000;
+              const hi = maxLengthCap(draft.key, field.type);
               set({
                 maxLength: Math.max(
                   1,

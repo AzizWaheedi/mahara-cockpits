@@ -591,6 +591,22 @@ table):
 }
 ```
 
+- `taskComment` (optional; `20261102o`): the comment the writer posts once on the
+  task this part makes, Make's text alone (4.3 step 8). Only a system request
+  handed a `comment_text` carries it (the two client onboarding parts: the
+  kickoff handoff, whole). A value that is not text, or over 2,097,152 UTF-16
+  units, fails the part before any write. A part's steps freeze before its
+  first write, so a part frozen by a writer without the step never posts it.
+- The Stage 4 system requests' `{details}` (`20261102p`, WAVE56 2.10 and 4.16):
+  the two client onboarding parts carry the cockpit brief (first line `From
+  the onboarding and kickoff forms (cockpit)`) and the Brand DNA part its own
+  (`For the Brand DNA doc (cockpit)`), each at most 3,600 characters, under the
+  description's heading like any request's details. Nothing in this path
+  changed: `cockpit_request_create_system` keeps details only for a field keyed
+  `details` and `cockpit_request_plan` prints them only for kind `details`, so
+  the types `client_onboarding` and `brand_dna` are seeded with
+  `{key: 'details', kind: 'details'}`. Without it the brief is left out, and
+  the planner says so on the plan; the tasks are still made.
 - `ref`: `R-` plus the first 10 hex characters of the request id without
   dashes, `-`, the part.
 - `taskName`: `{client} - {label}{name_suffix}`; with no client
@@ -1161,7 +1177,8 @@ read-back; a step found already in the wanted state records `unchanged`.
 
 ### 4.3 A `request` item, step by step
 
-The marker line is `Cockpit ref {payload.ref}`.
+The marker line is `Cockpit ref {payload.ref}`. The task comment (step 8) is the one write that carries no
+marker: it is Make's text alone (`docs/forms/WAVE56-CONTRACT.md` 4.13.4, X37).
 
 | # | Step | Write | Read-back | On resume (started, not done) |
 |---|---|---|---|---|
@@ -1173,9 +1190,10 @@ The marker line is `Cockpit ref {payload.ref}`.
 | 5 | `tag` | When `clientTag` is in `GET space/901810248115/tag` (read once a run, compared in lower case): `POST task/{id}/tag/{tag}` | `tags` holds it (lower case) | Read |
 | 6 | `fields` | For each `fields` entry: `POST task/{id}/field/{fieldId}` `{value}` | `GET task/{id}` `custom_fields`: a select by option id or its orderindex, else the exact value | Read; write what differs. A field that will not save is `mismatch` with its label, not a failure: the answer is in the description. The item's note lists them: "Some fields did not save in ClickUp: {labels}. They are in the description." An entry naming `e9fd8024`, `09abf737` or `d3ac52c5` (any case) is never posted and counts as `mismatch` the same way (the database never freezes one; a second guard, retest round 2) |
 | 7 | `request_type` (only when `setRequestType`) | In order (review round 2): the value already set, `done` or `unchanged`; the type's switch off now (read again with `cockpit_request_doctor_inputs` once a run, and turned off at once in the run by a two-minute check that calls rt_off), `skipped` with the note "Request Type is off for this type now, so the cockpit left it empty." (the read failing: `retry`); the option missing or renamed on `e9fd8024-…` (`GET list/{listId}/field`, names compared trimmed with spaces collapsed), `skipped`, never written and never a failure, with the note "ClickUp renamed or removed this type's Request Type option, so the cockpit left Request Type empty. The systems manager can rename it back in ClickUp or turn Set Request Type off for this type in Requests settings."; another value already there, `mismatch`; else `POST task/{id}/field/e9fd8024-8abe-4094-ac08-e6c0e736ad7e` `{value: option id}`. Nothing about Request Type is checked before the create | The value is the option id or its orderindex | Read; write only if empty |
-| 8 | `card_comment` (when a client) | `POST task/{clientTaskId}/comment` `{comment_text, notify_all: false}`, text: `Cockpit · {Requester label} asked {listName}: {typeLabel}` newline `{task url}` blank line `Cockpit ref {ref}-card` | The answer's `id`; `GET task/{card}/comment` holds that id and the marker (contains, not equals) | Page back with `start` and `start_id` until older than `started - 60 s`; adopt the comment with the marker |
-| 9 | `replaces` (when `replacesTaskId`) | `GET task/{replacesTaskId}`: still on `901816723226` and not closed, else `skipped` with why "The old ticket was already moved or closed." and the part's note "The old ticket was moved or closed in ClickUp before the cockpit could route it, so it was left as it is. Check that the work is not done twice." (review round 2). Then `POST task/{replacesTaskId}/comment` "Routed in the cockpit as {typeLabel}: {task url}" + marker `-old`, then `PUT task/{replacesTaskId}` `{status: 'cancelled'}` | The comment by id and marker; `status.type` is `closed` | Read |
-| 10 | settle | `delivered`, `task_id`, `progress.task = {id, url}`, `delivered_at` | | |
+| 8 | `task_comment` (when `taskComment` is a non-blank string; today only the two client onboarding parts, `20261102o`) | `GET task/{id}` first (a task that is gone stops the part, as for any step). Then `POST task/{id}/comment` `{comment_text: taskComment, notify_all: false}`, the text exactly as given, with no marker | By the answer's `id` alone when ClickUp gave one; with none, by its text: a comment on the task dated at or after `started - 60 s` (or with no date) whose `commentKey` equals the text's (`requests.ts`: a backslash before ASCII punctuation, every rule line of three or more `_` or `-` and every `*` dropped, runs of spaces and new lines one space, both ends trimmed; equal keys, never `includes`). A miss is `unknown`, "The comment on the new task did not read back. The next run looks for it." ClickUp refusing it for good: `mismatch`, the part `delivered` with the note "The comment did not post on the task in ClickUp. The task itself is there: copy the Kickoff Handoff comment from the client card onto it." | With a saved `commentId`: by that id only, never posted again (gone: `unknown`, "ClickUp answered the comment on the new task with its id, but the comment is not on the task now. It is not posted again: check the task in ClickUp."). Without one: by its text as after the write, else post it |
+| 9 | `card_comment` (when a client) | `POST task/{clientTaskId}/comment` `{comment_text, notify_all: false}`, text: `Cockpit · {Requester label} asked {listName}: {typeLabel}` newline `{task url}` blank line `Cockpit ref {ref}-card` | The answer's `id`; `GET task/{card}/comment` holds that id and the marker (contains, not equals) | Page back with `start` and `start_id` until older than `started - 60 s`; adopt the comment with the marker |
+| 10 | `replaces` (when `replacesTaskId`) | `GET task/{replacesTaskId}`: still on `901816723226` and not closed, else `skipped` with why "The old ticket was already moved or closed." and the part's note "The old ticket was moved or closed in ClickUp before the cockpit could route it, so it was left as it is. Check that the work is not done twice." (review round 2). Then `POST task/{replacesTaskId}/comment` "Routed in the cockpit as {typeLabel}: {task url}" + marker `-old`, then `PUT task/{replacesTaskId}` `{status: 'cancelled'}` | The comment by id and marker; `status.type` is `closed` | Read |
+| 11 | settle | `delivered`, `task_id`, `progress.task = {id, url}`, `delivered_at` | | |
 
 ### 4.4 A `task_action` item
 
@@ -1195,7 +1213,7 @@ its own to every comment." before any call (retest round 2).
 | Op | Precondition | Write | Read-back |
 |---|---|---|---|
 | `tick` / `untick` | The item is in that checklist, its name equals `itemName`, its `resolved` equals `from`. Already `to`: `unchanged`. Name differs or gone: `skipped`, "ClickUp changed this step. Open the task there." | `PUT checklist/{checklistId}/checklist_item/{itemId}` `{resolved: to}` | `GET task/{taskId}`: the item's `resolved` equals `to` |
-| `comment` | none | `POST task/{taskId}/comment` `{comment_text: "{Actor label} wrote in the cockpit: {text}\n\nCockpit ref {ref}", notify_all: false}` | The answer's id; the comment list holds it with the marker. Resume as step 8 |
+| `comment` | none | `POST task/{taskId}/comment` `{comment_text: "{Actor label} wrote in the cockpit: {text}\n\nCockpit ref {ref}", notify_all: false}` | The answer's id; the comment list holds it with the marker. Resume as step 9 |
 | `done` | `status.status` equals `statusSeen`. Already a `done` type: `unchanged`. Otherwise changed: `skipped`, "Someone moved this task in ClickUp. Open it there." | The list's status whose type is `done` (`GET list/{listId}`, cached for the run; `complete` on all six lists today); `PUT task/{taskId}` `{status}` | `status.status` equals it and `status.type` is `done` |
 | `verify` | none | none, or once `PUT task/{taskId}` `{assignees: {add: [owner], rem: []}}` | `GET task/{taskId}`. With no `ownerClickupId`, only the list and name are checked. The owner is there: `verify 'kept'`. Missing: put it back once and read again; there now: `'restored'`; gone again: `failed`, `verify 'removed'`, "A ClickUp rule on {listName} keeps removing the owner." When `setRequestType` was on and the list or the name changed: `verify 'moved'`, call `cockpit_request_type_rt_off(typeKey, "ClickUp moved or renamed {taskName} after its Request Type was set, so Request Type is off for this type.")`, put nothing back. Parts of the type still queued or in retry then leave Request Type empty (4.3 step 7); a part delivered inside those two minutes has its own check, which finds its own move. Another person added by a list rule: `verifyNote` "ClickUp also added another person." On time only (review round 2): due 2 minutes after the write it judges (review round 3: `madeAt` for rt_off, `ownerAt` then `madeAt` for the owner put-back, each falling back to the check's `created_at`; a value that is not an ISO time with its offset is absent, `taskActions.ts` `stampMs`); more than 15 minutes after that, a check that would call rt_off or put the owner back changes nothing: `skipped`, no `progress.verify`, `verifyNote` and error "{what it saw} This check ran too late to tell a ClickUp rule from a person's change, so the cockpit changed nothing." A move seen on time (`steps.verify.movedAt`) still calls rt_off on a late retry; a `putBack` begun on time is only read back. A late check with nothing to act on reads as before |
 
@@ -2203,7 +2221,9 @@ quiet (`writer=unknown`).
   `queued`, `sending`, `retry`, `unknown`, `time_col 'created_at'`, 15
   minutes, owner "the tech lead", action "Run the requests doctor
   (clickup-writeback job requests_doctor); an unknown needs a person to
-  look in ClickUp for its Cockpit ref (RUNBOOK, Requests writer).",
+  look in ClickUp for the task by its Cockpit ref, or for the task comment
+  its error names (RUNBOOK, Requests writer)." (the task comment clause since
+  `20261102o`: that comment carries no ref, 4.3 step 8),
   `status_col 'state'`, `kind_col 'kind'`, `kinds ('request','task_action')`,
   `failed_col 'updated_at'`; add `cockpit_clickup_writeback_queue` to
   `WITH_ERROR`. Integration round 2: `held_unless ('clickup-writeback:requests',
