@@ -1,3 +1,5 @@
+> **Superseded (2026-11-02):** the current handoff is [`HANDOFF-2026-11-02.md`](HANDOFF-2026-11-02.md). Waves 1-6 of `CSM-CLIENT-FORMS-PLAN.md` are live; this file is the 2026-10-26 history.
+
 # Handover: forms, ticketing, task alerts (2026-10-26)
 
 This is from the Claude session that ran the forms program between 2026-10-25 and 10-26. It is written for the next agent, and it says what is live, what is half-built and what to do next. Read it in full before acting.
