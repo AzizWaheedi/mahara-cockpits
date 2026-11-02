@@ -3,10 +3,13 @@
  * 4.3, 3b): where a card's WhatsApp group is, whether the card agrees, how a
  * sent text is matched again, and the wait before a send. No I/O here.
  *
- * Client Data is read by two header names only, `clickup id` and `wa group
- * id`; no other column is read and no row is ever logged. A group id is a
- * WhatsApp group JID (digits, an optional -digits, @g.us); anything else is
- * no group.
+ * Client Data is read by three header names only, `clickup id`, `wa group
+ * id` and `google drive link`; no other column is read and no row or link is
+ * ever logged. A group id is a WhatsApp group JID (digits, an optional
+ * -digits, @g.us); anything else is no group. The Google Drive Link is the
+ * client's content folder, read from the same one row as the group, for the
+ * phase 3 and phase 4 messages that end with it (docs/forms/WAVE56-CONTRACT.md
+ * D-S4.0); it is one http(s) link or none.
  */
 import { createHash } from "node:crypto";
 
@@ -24,25 +27,45 @@ const header = (v: unknown) =>
     .toLowerCase();
 const cell = (v: unknown) => String(v ?? "").trim();
 
-/** Where the two columns are in the header row; -1 when a name is missing. */
+/** Where the three columns are in the header row; -1 when a name is missing. */
 export function columnsOf(values: unknown[][]): {
   task: number;
   group: number;
+  folder: number;
 } {
   const head = Array.isArray(values?.[0]) ? values[0].map(header) : [];
   return {
     task: head.indexOf("clickup id"),
     group: head.indexOf("wa group id"),
+    folder: head.indexOf("google drive link"),
   };
 }
 
+/** The card's content folder link on its Client Data row, or why there is none to put in a message. */
+export type Folder =
+  | { ok: true; link: string }
+  | { ok: false; why: "no_column" | "none" | "invalid" };
+
 export type GroupFound =
-  | { ok: true; group: string }
+  | { ok: true; group: string; folder: Folder }
   | { ok: false; why: "no_columns" | "none" | "many" | "invalid" };
 
-/** The card's group on Client Data: exactly one row for the card, with a valid group id. */
+/** One link a client can open: http or https, a host, no spaces (a cell with words around a link is no link). */
+export function isFolderLink(v: string): boolean {
+  if (!/^https?:\/\/\S+$/i.test(v)) return false;
+  try {
+    return new URL(v).hostname !== "";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The card's group on Client Data: exactly one row for the card, with a valid
+ * group id, and that same row's Google Drive Link as its content folder.
+ */
 export function groupOf(values: unknown[][], taskId: string): GroupFound {
-  const { task, group } = columnsOf(values);
+  const { task, group, folder } = columnsOf(values);
   if (task < 0 || group < 0) return { ok: false, why: "no_columns" };
   const want = cell(taskId);
   const rows = (Array.isArray(values) ? values.slice(1) : []).filter(
@@ -53,7 +76,19 @@ export function groupOf(values: unknown[][], taskId: string): GroupFound {
   const jid = cell(rows[0][group]);
   if (!jid) return { ok: false, why: "none" };
   if (!GROUP_JID.test(jid)) return { ok: false, why: "invalid" };
-  return { ok: true, group: jid };
+  const link = folder < 0 ? "" : cell(rows[0][folder]);
+  return {
+    ok: true,
+    group: jid,
+    folder:
+      folder < 0
+        ? { ok: false, why: "no_column" }
+        : !link
+          ? { ok: false, why: "none" }
+          : isFolderLink(link)
+            ? { ok: true, link }
+            : { ok: false, why: "invalid" },
+  };
 }
 
 /** Whether Client Data still keeps the group in column F (the tech lead checks a moved sheet first). */
@@ -140,6 +175,31 @@ export const FORM_LINK = "{form_link}";
  */
 export function maskInviteLink(text: string): string {
   return String(text ?? "").replace(INVITE_LINK, FORM_LINK);
+}
+
+/** The placeholder a phase 3 or phase 4 text keeps where the client's content folder link goes at send. */
+export const CONTENT_FOLDER = "{content_folder}";
+/** The kinds whose text may carry it (Make 13 [48] and Make 12 [25] end with Client Data column H). */
+export const FOLDER_KINDS: readonly string[] = ["phase3", "phase4"];
+
+/** Whether a message needs the card's content folder link put in before it goes. */
+export function needsFolder(kind: string, body: string): boolean {
+  return FOLDER_KINDS.includes(kind) && String(body ?? "").includes(CONTENT_FOLDER);
+}
+
+/** The approved text with every {content_folder} replaced by the link, taken as plain text (a `$` in it stays). */
+export function withFolder(body: string, link: string): string {
+  return String(body ?? "").split(CONTENT_FOLDER).join(link);
+}
+
+/**
+ * A group message with the exact folder link put in at send masked back to
+ * {content_folder}, so a sent phase message matches its approved text by
+ * fingerprint. No link, no change.
+ */
+export function maskFolder(text: string, link: string | null): string {
+  const t = String(text ?? "");
+  return link ? t.split(link).join(CONTENT_FOLDER) : t;
 }
 
 /** sha256 of the exact UTF-8 bytes, hex. */

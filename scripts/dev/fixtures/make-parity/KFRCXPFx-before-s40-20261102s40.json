@@ -1,0 +1,343 @@
+{
+ "id": "KFRCXPFx",
+ "fields": [
+  {
+   "id": "DeKwvEGFuJe4",
+   "ref": "533f14a0-712f-4de9-9ac7-67e1be6bc0c8",
+   "type": "short_text",
+   "title": "Full Name | الاسم الكامل",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "dcguMzaavIUh",
+   "ref": "64f2fb80-b074-4017-b8b7-b7d549947e52",
+   "type": "phone_number",
+   "title": "Phone | رقم التليفون",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "FGsv6MhUsoxJ",
+   "ref": "7994f0d2-baeb-451b-983a-816290873a68",
+   "type": "email",
+   "title": "Email | الايميل",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "ASUaucn4Epcw",
+   "ref": "514bfd3f-4ca1-469e-b9e7-87656503f65c",
+   "type": "short_text",
+   "title": "Business Name | اسم الشركه (بالانقليزي)",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "1IcJP8RLqGnd",
+   "ref": "4f14f57a-f7ce-42cf-abb6-b9577e1c0c33",
+   "type": "inline_group",
+   "title": "Current Business Address | عنوان الشركه",
+   "properties": {
+    "allow_multiple_selection": false,
+    "fields": [
+     {
+      "id": "n2rwUn3z1iVW",
+      "ref": "e5caee43-e9b5-427d-8583-6982c5dd9be8",
+      "type": "long_text",
+      "title": "Please enter your business address. | الرجاء كتابة عنوان الشركة",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     },
+     {
+      "id": "Va67eLla6rtN",
+      "ref": "f7f9f2eb-1761-4c28-83ed-a53621c2cf88",
+      "type": "short_text",
+      "title": "Paste a Google Maps link to your location (optional). | ضع رابط موقعك على خرائط جوجل (اختياري)",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "Jc6YB1HnPKPw",
+   "ref": "454a425f-2ac6-4d94-92db-cec08618600e",
+   "type": "website",
+   "title": "Website URL | رابط الموقع الالكتروني",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "kejzHbuV5u6F",
+   "ref": "adecfe45-5d55-4319-98ff-3761e04bfc9b",
+   "type": "website",
+   "title": "Instagram URL | رابط حساب الانستقرام",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "VzvgjhoKXyQS",
+   "ref": "575d17ed-e26d-4e55-87d3-7cb31cb71939",
+   "type": "website",
+   "title": "Facebook Page URL | رابط حساب فيسبوك",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "lh6QcQ2O08VC",
+   "ref": "ee25f923-d5e1-4d1a-a95f-cd9c17abbe83",
+   "type": "long_text",
+   "title": "What payment options do you currently offer to your clients (e.g., full payment, installment plans, minimum down payment, in-house financing, third-party financing, etc.)? | ما هي خيارات الدفع التي تقدمها حالياً لعملائك (مثل: الدفع الكامل، خطط التقسيط، دفعة مقدمة، تمويل داخلي، تمويل من طرف ثالث،)؟",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "LgQteMWZiCdr",
+   "ref": "282dac48-5031-4acb-96b6-ea469e8a5a8b",
+   "type": "phone_number",
+   "title": "Front Desk Phone | رقم هاتف الشركه",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "9dsDsRcpoVQK",
+   "ref": "09d2e62a-51d4-4665-a3a9-30f5279b71bc",
+   "type": "phone_number",
+   "title": "Personal Phone Number | الرقم الهاتف الشخصي",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "S3lupFyhJTgw",
+   "ref": "ed1ba2fe-2827-4eea-a678-62205f1ce9f5",
+   "type": "short_text",
+   "title": "How long have you been in business? | منذ متى وأنتم في مجال العمل؟",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "ygvxpC238mwf",
+   "ref": "0a6b5704-c46d-480c-a592-b59108683596",
+   "type": "short_text",
+   "title": "How many projects has your company completed to date? | كم عدد المشاريع التي أنجزتها شركتكم حتى الآن؟",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "wnIRTZPP0X91",
+   "ref": "7a120dbb-0169-4bcc-9193-5c525a470d02",
+   "type": "short_text",
+   "title": "Current booking software | برنامج الحجز الحالي",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "gW4iIuEifMyb",
+   "ref": "ddf2767d-5725-4df2-b200-f0aab77a2db5",
+   "type": "dropdown",
+   "title": "Do you have a facebook business manager or have you ever ran ads on meta (Facebook & Instagram) in the past? | هل عندك مدير أعمال في فيسبوك أو سبق واشتغلت إعلانات على ميتا (فيسبوك وإنستغرام) من قبل؟",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "AXYrEOrQusgI",
+   "ref": "b7873d40-d154-42ac-bf24-cb3b667e84cc",
+   "type": "long_text",
+   "title": "Business hours - When are you open to schedule? | ساعات العمل — متى تكون متاحًا للحجز؟",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "oEyRgkTuEN3s",
+   "ref": "d976036f-6c2e-4d5d-999a-64cf9bb2ef02",
+   "type": "long_text",
+   "title": "1) What services do you offer list all of them? Also I want to know which ones have the HIGHEST price point and Highest Profit \n2) What is the PRICE of the services? | ما الخدمات التي تقدّمها لكتب جميعهم؟وكمان أريد معرفة: أيّها الأعلى سعراً والأعلى ربحية،ما أسعار هذه الخدمات؟",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "0rXnb5fMag3L",
+   "ref": "6271b610-6946-4056-bb08-d03ffc274141",
+   "type": "short_text",
+   "title": "Out of those what is the #1 service/type of project you want to focus on scaling? | من بين كل ما سبق، ما هي الخدمة أو نوع المشروع رقم ١ الذي ترغب في التركيز على تطويره وتوسيعه؟",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "Q0tmTJvmJa4h",
+   "ref": "f2b7bc2b-2a79-4640-9e21-377e7aa39d45",
+   "type": "long_text",
+   "title": "What are your top five most frequently asked questions and their answers? (Feel free to add more — the more detailed, the better.) | ما هي أكثر خمسة أسئلة شائعة للشركه مع إجاباتها؟ (لا تتردد بإضافة المزيد — كلما كانت التفاصيل أكثر كان أفضل.)",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "T43e61PYB8Lf",
+   "ref": "6c819933-3eb9-4db8-bd59-d39be11cb7f0",
+   "type": "long_text",
+   "title": "Please describe your ideal project in detail. | يرجى وصف مشروعك المثالي بالتفصيل.",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "4Q9if3BkY6CD",
+   "ref": "fa017616-3fb5-4e64-9fbd-39cea6e26c47",
+   "type": "long_text",
+   "title": "What service areas do you cover? Please list all cities and neighborhoods you serve so we can target your ads precisely. | ما المناطق التي تغطيها بالخدمة؟ يُرجى إدراج جميع المدن والأحياء التي تخدمها حتى نتمكن من استهداف إعلاناتك بدقة",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "Ec3P2OIsb5qp",
+   "ref": "b370341c-6ea3-43c9-bd8c-16e278a2d2d5",
+   "type": "multiple_choice",
+   "title": "ما أنواع المواعيد التي تقدمونها؟ (يمكن اختيار أكثر من خيار)\n| What types of appointments do you offer? (Select all that apply)",
+   "properties": {
+    "allow_multiple_selection": true
+   }
+  },
+  {
+   "id": "ubFbPpnVV2QG",
+   "ref": "35ea63c3-090a-425d-b75c-e3d183d48cd1",
+   "type": "short_text",
+   "title": "What's the maximum distance you would travel from your office to do an in-home consultation? | ما هي أقصى مسافة يمكنك قطعها من مكتبك لإجراء استشارة في منزل العميل؟",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "cDWYTmdctdbb",
+   "ref": "b7c403ea-8d66-4814-80cf-7e8d7fdb8d11",
+   "type": "long_text",
+   "title": "Local Landmark Information (Please type this in the format shown) - Located next to the Burger King down King Saud street on the left hand side. | معلومات المعالم القريبة لمكتبكم (يُرجى الكتابة بالصيغة نفسها): يقع بجوار مطعم برغر كينغ في شارع الملك سعود على الجهة اليسرى.",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "RUD0ylN0ZDWa",
+   "ref": "a20cfc1a-0228-413d-80ab-d97fc97574e0",
+   "type": "long_text",
+   "title": "Appointment length + details + buffer | مدة الموعد + التفاصيل + الفاصل",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "asMnWkPvFyHk",
+   "ref": "0a80a0a8-3a09-4907-a1d1-6c57e57d4c47",
+   "type": "long_text",
+   "title": "من هم المهندسين في شركتكم الذين سيعطون الاستشارات ضمن هالبرنامج؟ Who are the engineers in your business that will be giving these consultations?",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "26GYpkpIqs4h",
+   "ref": "7426c6c5-344f-44c9-9999-3b9daf3a06b8",
+   "type": "long_text",
+   "title": "ما الذي حفّزك للانضمام إلى برنامجنا؟ ما السبب الذي جعلك تسجّل معنا؟ | What motivated you to join our program? What was the reason you signed up?",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "CyUynyNM1F3V",
+   "ref": "ec89854f-d006-402b-958a-91738e2b3e7a",
+   "type": "dropdown",
+   "title": "Do you offer free consultations? | هل تقدم استشارات مجانية؟",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "YTBwO3arWuuD",
+   "ref": "bf8c7c7b-fff9-463f-b30a-8d8ca8b622f6",
+   "type": "long_text",
+   "title": "What is your marketing process? In other words... please explain EVERYTHING A-Z that you have in place or have tried to generate new projects | ما هي عمليتك التسويقية؟ بمعنى آخر... اشرح لنا بالتفصيل كل ما لديك أو جربته من الألف إلى الياء لجذب مشاريع جديدة",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "fJLvbC4epW5P",
+   "ref": "7ff5d37a-df7f-4002-8248-d0b4af6c28e8",
+   "type": "number",
+   "title": "Last Calendar Year - How Much Total Revenue did you do? | في السنة التقويمية الماضية، كم كان إجمالي الإيرادات التي حققتها؟",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "Vqjn2p3FVjT3",
+   "ref": "fcf43e6a-cc84-4ae7-9cef-2336069d0280",
+   "type": "long_text",
+   "title": "What are the TOP 3 challenges that - if we were able to help you with - would make you 100% satisfied with your investment? - Be specific, and note some down we can immediately help with | ما هي أهم ٣ تحديات — إذا تمكّنا من مساعدتك في حلّها — ستشعر أنك راضٍ تمامًا عن استثمارك معنا؟ كن محددًا، واذكر بعض الأمور التي يمكننا البدء بمساعدتك فيها فورًا",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "LJtJjjx2STWO",
+   "ref": "791b99b8-c7e9-40a4-96d6-868399e1ae97",
+   "type": "number",
+   "title": "What is your realistic goal revenue in 90 Days?This question is required. | ما هو هدفك الواقعي من الإيرادات خلال ٩٠ يومًا؟ هذا السؤال إلزامي.",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "xMWWaLdTm7Hw",
+   "ref": "f4b96a9b-bd7c-4398-98b4-6a28a7d3595a",
+   "type": "number",
+   "title": "What is your ideal/stretch revenue goal within the next 12-24 months? | ما هو هدفك المثالي (أو الطموح) من الإيرادات خلال الـ ١٢ إلى ٢٤ شهرًا القادمة؟",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "nc8g2zm8qrvg",
+   "ref": "64d23c81-1784-4f07-8356-107af764fc95",
+   "type": "website",
+   "title": "Please attach a Google Drive link to all the content you have for your office (See check list below)",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "kU25t2UBD6Uw",
+   "ref": "41d2d5bb-b023-4fa4-906c-72aeef7a5e46",
+   "type": "long_text",
+   "title": "Any additional information we should know before starting? | هل هناك أي معلومات إضافية نحتاج إلى معرفتها قبل البدء؟",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  }
+ ],
+ "hidden": [
+  "onboarding_client_id"
+ ]
+}

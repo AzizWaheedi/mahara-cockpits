@@ -23,6 +23,12 @@
  * every onboarding effect once; the relay's claim, send, unknown and retry; a card with a stored
  * Typeform answer (no invite, no effects, legacy); the Typeform door equal to the portal answer;
  * system requests deduped; the phase messages' approve and claim; the parity plan writes nothing.
+ *
+ * Then 20261102l (D-S4.0: Make 13 [31] only searches Client Data, so the cockpit writes no row):
+ * no client_data_row in the builder, the parity plan, either onboarding array or the relay outbox;
+ * the rest of the onboarding plan in 20261102j's order; the registry moved from 20261102j's array
+ * (version 1, or version 2 after a go-live) with one audit row; the outbox refusing a Client Data
+ * row and the file stopping on one; the drift guard; a second apply changing nothing.
  * Every person, client and value is invented; the CEO's address is read from the CEO gate.
  */
 import {
@@ -1137,6 +1143,8 @@ const W56 = [
   "20261102i_client_tail.sql",
 ] as const;
 const J = "20261102j_stage4_native.sql";
+/** D-S4.0 finding 1: the native onboarding writes no Client Data row. */
+const NO_CLIENT_DATA = "20261102l_stage4_no_client_data_row.sql";
 /** g, h and i when all three are on the branch (the merged branch); else client-tail's stand-in below. */
 const REAL_W56 = W56.every(onBranch);
 
@@ -1313,6 +1321,7 @@ beforeAll(async () => {
     for (const file of W56) await db.exec(withoutCron(migration(file)));
   } else await db.exec(CLIENT_TAIL_STANDIN);
   await db.exec(withoutCron(migration(J)));
+  await db.exec(migration(NO_CLIENT_DATA));
   await seedStage4();
 }, 900_000);
 afterAll(async () => {
@@ -1691,6 +1700,7 @@ describe("the file (2.1, 2.6)", () => {
       "cockpit_form_hook_onboarding(uuid)",
       "cockpit_kickoff_answers_check(jsonb)",
       "cockpit_form_stage4_effects(text,integer)",
+      "cockpit_form_stage4_build(jsonb)",
       "cockpit_form_effect_gate(text,text)",
       "cockpit_forms_effects_valid(jsonb)",
     ])
@@ -1755,7 +1765,6 @@ describe("the go-live (4.15.2)", () => {
       ["profile_fields", "clickup_queue"],
       ["raw_answers_comment", "clickup_queue"],
       ["map_phase3", "clickup_queue"],
-      ["client_data_row", "relay"],
       ["github_dispatch", "relay"],
       ["phase3_whatsapp", "client_message"],
       ["brand_dna_task", "sql"],
@@ -2258,11 +2267,11 @@ describe("the onboarding (4.14, 3.3)", () => {
         "profile_fields",
         "raw_answers_comment",
         "map_phase3",
-        "client_data_row",
         "github_dispatch",
         "phase3_whatsapp",
       ])
         expect(fx[k].state).toBe("queued");
+      expect(fx.client_data_row).toBeUndefined();
       expect(fx.brand_dna_task.state).toBe("delivered");
       expect(fx.read_model.state).toBe("delivered");
       const model = await one<any>(
@@ -2290,33 +2299,28 @@ describe("the onboarding (4.14, 3.3)", () => {
         "SELECT effect_key, state, payload FROM public.cockpit_form_relay_outbox WHERE response_id = $1 ORDER BY effect_key",
         [done.responseId],
       );
+      // The market intel dispatch is the only relay row: nothing for Client Data (20261102l).
       expect(relay.map(r => [r.effect_key, r.state])).toEqual([
-        ["client_data_row", "queued"],
         ["github_dispatch", "queued"],
       ]);
-      expect(relay[1].payload).toEqual({ taskId: C, client: "Cedar Homes" });
+      expect(relay[0].payload).toEqual({ taskId: C, client: "Cedar Homes" });
       expect((await portalOpen("locCedar01", C)).answeredAt).toBeTruthy();
       // The relay: a claim, a send, a settle.
       const claim = await as<any>(
         "service",
         "SELECT public.cockpit_form_relay_claim(5) AS r",
       );
-      expect(claim.rows).toHaveLength(2);
-      const gh = claim.rows.find((r: any) => r.effectKey === "github_dispatch");
-      const cd = claim.rows.find((r: any) => r.effectKey === "client_data_row");
+      expect(claim.rows.map((r: any) => r.effectKey)).toEqual([
+        "github_dispatch",
+      ]);
+      const gh = claim.rows[0];
       await as(
         "service",
         "SELECT public.cockpit_form_relay_done($1, $2::uuid, 'sent', '{\"reason\":\"Dispatched.\"}'::jsonb) AS r",
         [gh.id, gh.claim],
       );
-      await as(
-        "service",
-        "SELECT public.cockpit_form_relay_done($1, $2::uuid, 'unknown', '{\"reason\":\"The sheet did not answer.\"}'::jsonb) AS r",
-        [cd.id, cd.claim],
-      );
       const after = byKey(await effects(done.responseId));
       expect(after.github_dispatch.state).toBe("delivered");
-      expect(after.client_data_row.state).toBe("unknown");
       expect(
         (
           await as<any>(
@@ -2351,9 +2355,10 @@ describe("the onboarding (4.14, 3.3)", () => {
       ).rows[0];
       await as(
         "service",
-        "SELECT public.cockpit_form_relay_done($1, $2::uuid, 'failed', '{\"reason\":\"Google refused it (403).\"}'::jsonb) AS r",
+        "SELECT public.cockpit_form_relay_done($1, $2::uuid, 'failed', '{\"reason\":\"GitHub refused the dispatch (403).\"}'::jsonb) AS r",
         [c1.id, c1.claim],
       );
+      expect(c1.effectKey).toBe("github_dispatch");
       expect(byKey(await effects(done.responseId))[c1.effectKey].state).toBe(
         "queued",
       );
@@ -2372,8 +2377,29 @@ describe("the onboarding (4.14, 3.3)", () => {
           "service",
           "SELECT public.cockpit_form_relay_claim(5) AS r",
         )
-      ).rows.map((r: any) => r.id);
-      expect(later).toContain(c1.id);
+      ).rows;
+      const c2 = later.find((r: any) => r.id === c1.id);
+      expect(c2).toBeTruthy();
+      // An unclear second try is unknown: the effect says so and the row is never claimed again.
+      await as(
+        "service",
+        "SELECT public.cockpit_form_relay_done($1, $2::uuid, 'unknown', '{\"reason\":\"GitHub did not answer.\"}'::jsonb) AS r",
+        [c2.id, c2.claim],
+      );
+      expect(byKey(await effects(done.responseId)).github_dispatch.state).toBe(
+        "unknown",
+      );
+      await ex(
+        `UPDATE public.cockpit_form_relay_outbox SET updated_at = now() - interval '11 minutes' WHERE id = ${c1.id}`,
+      );
+      expect(
+        (
+          await as<any>(
+            "service",
+            "SELECT public.cockpit_form_relay_claim(5) AS r",
+          )
+        ).rows,
+      ).toHaveLength(0);
     });
   });
 
@@ -2741,5 +2767,297 @@ describe("the parity plan (4.15.1)", () => {
     expect(
       await one("SELECT count(*)::int AS r FROM public.cockpit_form_effects"),
     ).toBe(writes);
+  });
+});
+
+// --- 20261102l: no Client Data write (D-S4.0) --------------------------------------------------
+
+/** A file without its BEGIN and COMMIT, to run inside a rolled-back test. */
+const inTest = (file: string) =>
+  withoutCron(migration(file))
+    .replace(/^BEGIN;/m, "")
+    .replace(/COMMIT;\s*$/m, "");
+/** 20261102j's bodies back (its effects arrays and builder, as live has them before 20261102l). */
+const jBodies = () => ex(inTest(J));
+/** The outbox CHECKs as 20261102j made them (live before 20261102l). */
+const J_RELAY_CHECKS = `
+  ALTER TABLE public.cockpit_form_relay_outbox DROP CONSTRAINT cockpit_form_relay_outbox_effect_key_check;
+  ALTER TABLE public.cockpit_form_relay_outbox ADD CONSTRAINT cockpit_form_relay_outbox_effect_key_check
+    CHECK (effect_key IN ('client_data_row','github_dispatch'));
+  ALTER TABLE public.cockpit_form_relay_outbox DROP CONSTRAINT cockpit_form_relay_outbox_dedupe_key_check;
+  ALTER TABLE public.cockpit_form_relay_outbox ADD CONSTRAINT cockpit_form_relay_outbox_dedupe_key_check
+    CHECK (dedupe_key ~ '^relay:[0-9a-f-]{36}:(client_data_row|github_dispatch)$');`;
+const relayChecks = async () =>
+  Object.fromEntries(
+    (
+      await q<Row>(
+        `SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint
+          WHERE conrelid = 'public.cockpit_form_relay_outbox'::regclass
+            AND conname IN ('cockpit_form_relay_outbox_effect_key_check', 'cockpit_form_relay_outbox_dedupe_key_check')`,
+      )
+    ).map(r => [r.conname.replace("cockpit_form_relay_outbox_", ""), r.def]),
+  );
+const NARROWED = {
+  effect_key_check: "CHECK ((effect_key = 'github_dispatch'::text))",
+  dedupe_key_check:
+    "CHECK ((dedupe_key ~ '^relay:[0-9a-f-]{36}:github_dispatch$'::text))",
+};
+const onboardingRegistry = () =>
+  one<any>(
+    "SELECT to_jsonb(f) AS r FROM public.cockpit_forms f WHERE key = 'onboarding'",
+  );
+const setOnboardingEffects = (effects: unknown) =>
+  q(
+    "UPDATE public.cockpit_forms SET effects = $1::jsonb WHERE key = 'onboarding'",
+    [json(effects)],
+  );
+const movedAudits = () =>
+  one<number>(
+    "SELECT count(*)::int AS r FROM public.cockpit_audit_log WHERE action = 'forms.stage4_no_client_data_row'",
+  );
+const withoutClientData = (effects: Row[]) =>
+  effects.filter(e => e.key !== "client_data_row");
+const keys = (effects: Row[]) => effects.map(e => e.key);
+const STAGE4_FNS = [
+  "cockpit_form_stage4_effects(text,integer)",
+  "cockpit_form_stage4_build(jsonb)",
+];
+
+describe("20261102l: no Client Data write (D-S4.0)", () => {
+  test("from 20261102j as live has it: version 1 loses client_data_row with one audit row, the outbox narrows, the go-live still works", async () => {
+    await rolledBack(async () => {
+      await jBodies();
+      await ex(J_RELAY_CHECKS);
+      // The definitions this file narrows from, exactly as the live read printed them.
+      expect(await relayChecks()).toEqual({
+        effect_key_check:
+          "CHECK ((effect_key = ANY (ARRAY['client_data_row'::text, 'github_dispatch'::text])))",
+        dedupe_key_check:
+          "CHECK ((dedupe_key ~ '^relay:[0-9a-f-]{36}:(client_data_row|github_dispatch)$'::text))",
+      });
+      const jV1 = await one<Row[]>(
+        "SELECT public.cockpit_form_stage4_effects('onboarding', 1) AS r",
+      );
+      expect(keys(jV1)).toContain("client_data_row");
+      await setOnboardingEffects(jV1);
+      const before = await movedAudits();
+      await ex(inTest(NO_CLIENT_DATA));
+      const row = await onboardingRegistry();
+      expect(keys(row.effects)).toEqual([
+        "card_fields",
+        "phase3_whatsapp",
+        "brand_dna_task",
+        "github_dispatch",
+      ]);
+      expect(row.effects).toEqual(withoutClientData(jV1));
+      expect(row).toMatchObject({
+        provider: "typeform",
+        version: 1,
+        updated_by: "migration 20261102l",
+      });
+      expect(await movedAudits()).toBe(before + 1);
+      expect(await relayChecks()).toEqual(NARROWED);
+      await goLive("onboarding", true);
+      expect(keys((await onboardingRegistry()).effects)).not.toContain(
+        "client_data_row",
+      );
+      await goLive("onboarding", false);
+      expect((await onboardingRegistry()).effects).toEqual(
+        withoutClientData(jV1),
+      );
+    });
+  });
+
+  test("after a go-live under 20261102j: version 2 loses client_data_row and a native answer plans no Client Data row", async () => {
+    await rolledBack(async () => {
+      await jBodies();
+      await setOnboardingEffects(
+        await one(
+          "SELECT public.cockpit_form_stage4_effects('onboarding', 1) AS r",
+        ),
+      );
+      await goLive("onboarding", true);
+      const jV2 = (await onboardingRegistry()).effects;
+      expect(keys(jV2)).toContain("client_data_row");
+      await ex(inTest(NO_CLIENT_DATA));
+      const row = await onboardingRegistry();
+      expect(row.effects).toEqual(withoutClientData(jV2));
+      expect(row).toMatchObject({ provider: "native", version: 2 });
+      const inv = await portalOpen("locCedar01", C);
+      const done = await as<any>(
+        "service",
+        "SELECT public.portal_form_submit('locCedar01', $1, 'owner@client.invalid', 'admin', $2::uuid, $3::jsonb, $4::uuid, 'en') AS r",
+        [C, inv.inviteId, json(ONB_ANSWERS), uuid()],
+      );
+      const fx = await effects(done.responseId);
+      expect(fx.map(e => e.effect_key)).not.toContain("client_data_row");
+      expect(byKey(fx).github_dispatch.state).toBe("queued");
+      expect(
+        await q<Row>(
+          "SELECT effect_key, state FROM public.cockpit_form_relay_outbox WHERE response_id = $1",
+          [done.responseId],
+        ),
+      ).toEqual([{ effect_key: "github_dispatch", state: "queued" }]);
+    });
+  });
+
+  test("the outbox refuses a Client Data row, and a Client Data row already there stops the file", async () => {
+    await rolledBack(async () => {
+      await goLive("onboarding", true);
+      const inv = await portalOpen("locCedar01", C);
+      const done = await as<any>(
+        "service",
+        "SELECT public.portal_form_submit('locCedar01', $1, 'owner@client.invalid', 'admin', $2::uuid, $3::jsonb, $4::uuid, 'en') AS r",
+        [C, inv.inviteId, json(ONB_ANSWERS), uuid()],
+      );
+      const put = (effectKey: string, dedupe: string) =>
+        ex(`INSERT INTO public.cockpit_form_relay_outbox(response_id, effect_key, task_id, payload, dedupe_key)
+            VALUES ('${done.responseId}', '${effectKey}', '${C}', '{}', 'relay:${done.responseId}:${dedupe}')`);
+      expect(
+        (await refusal(() => put("client_data_row", "client_data_row"))).code,
+      ).toBe("23514");
+      expect(
+        (await refusal(() => put("github_dispatch", "client_data_row"))).code,
+      ).toBe("23514");
+      await ex(J_RELAY_CHECKS);
+      await put("client_data_row", "client_data_row");
+      const r = await refusal(() => ex(inTest(NO_CLIENT_DATA)));
+      expect(r.code).toBe("55000");
+      expect(r.message).toBe(
+        "The relay outbox holds Client Data rows (1), so it cannot be narrowed to the GitHub dispatch and this file stops. Check each card's row on Client Data by hand, then ask the tech lead how to retire those rows (forms records are never deleted).",
+      );
+    });
+  });
+
+  test("the drift guard: live values are 20261102j's bodies, after values this file's; a changed body or registry array stops it", async () => {
+    const sql = migration(NO_CLIENT_DATA);
+    const guard = (fn: string) =>
+      sql.split("\n").find(l => l.includes(`('public.${fn}', '`)) ?? "";
+    for (const fn of STAGE4_FNS)
+      expect(guard(fn)).toContain(`'${await md5Of(`public.${fn}`)}')`);
+    await rolledBack(async () => {
+      await jBodies();
+      for (const fn of STAGE4_FNS)
+        expect(guard(fn)).toContain(
+          `('public.${fn}', '${await md5Of(`public.${fn}`)}', '`,
+        );
+    });
+    await rolledBack(async () => {
+      const def = await one<string>(
+        "SELECT pg_get_functiondef('public.cockpit_form_stage4_build(jsonb)'::regprocedure) AS r",
+      );
+      await ex(
+        def.replace(
+          "-- read model. Nothing writes Client Data",
+          "-- read model. Changed. Nothing writes Client Data",
+        ),
+      );
+      const r = await refusal(() => ex(inTest(NO_CLIENT_DATA)));
+      expect(r.code).toBe("55000");
+      expect(r.message).toBe(
+        "cockpit_form_stage4_build(jsonb) changed since 20261102j; stop and re-read it.",
+      );
+    });
+    await rolledBack(async () => {
+      await setOnboardingEffects([]);
+      const r = await refusal(() => ex(inTest(NO_CLIENT_DATA)));
+      expect(r.code).toBe("55000");
+      expect(r.message).toBe(
+        "The onboarding effects changed since 20261102j; stop and re-read them.",
+      );
+    });
+  });
+
+  test("applies a second time and changes nothing", async () => {
+    const snapshot = async () => ({
+      effects: (await onboardingRegistry()).effects,
+      checks: await relayChecks(),
+      md5: await Promise.all(STAGE4_FNS.map(fn => md5Of(`public.${fn}`))),
+      audits: await movedAudits(),
+    });
+    await rolledBack(async () => {
+      const before = await snapshot();
+      expect(before.checks).toEqual(NARROWED);
+      await ex(inTest(NO_CLIENT_DATA));
+      expect(await snapshot()).toEqual(before);
+    });
+  });
+
+  test("the builder and the parity plan plan no Client Data row; every other effect and array is 20261102j's, in its order", async () => {
+    const onboarding = {
+      taskId: E,
+      client: "Elm Works",
+      submittedAt: "2026-11-02T09:00:00Z",
+      token: "tokParity02",
+      answers: [
+        {
+          ref: OREF.businessName,
+          title: "Business Name",
+          value: "Elm Works Co",
+        },
+        {
+          ref: OREF.lastRevenue,
+          title: "Last Calendar Year - How Much Total Revenue did you do?",
+          value: "90000",
+        },
+      ],
+    };
+    const kickoff = {
+      taskId: C,
+      client: "Cedar Homes",
+      submittedAt: "2026-10-20T11:55:11Z",
+      token: "tokParity03",
+      cardMrr: 0,
+      newMrrUsd: 1000,
+      answers: [
+        { ref: KREF.contract, title: "Contract status", value: "Signed" },
+      ],
+    };
+    const read = async () => ({
+      onboarding: (
+        await as<any>(
+          "service",
+          "SELECT public.cockpit_form_parity_plan('onboarding', $1::jsonb) AS r",
+          [json(onboarding)],
+        )
+      ).effects as Row[],
+      kickoff: (
+        await as<any>(
+          "service",
+          "SELECT public.cockpit_form_parity_plan('kickoff', $1::jsonb) AS r",
+          [json(kickoff)],
+        )
+      ).effects as Row[],
+      arrays: await one<Record<string, Row[]>>(
+        `SELECT jsonb_build_object('k1', public.cockpit_form_stage4_effects('kickoff', 1),
+                                   'k2', public.cockpit_form_stage4_effects('kickoff', 2),
+                                   'o1', public.cockpit_form_stage4_effects('onboarding', 1),
+                                   'o2', public.cockpit_form_stage4_effects('onboarding', 2)) AS r`,
+      ),
+    });
+    const now = await read();
+    expect(keys(now.onboarding)).toEqual([
+      "profile_fields",
+      "raw_answers_comment",
+      "map_phase3",
+      "github_dispatch",
+      "phase3_whatsapp",
+      "brand_dna_task",
+      "read_model",
+    ]);
+    expect(keys(now.onboarding)).toEqual(keys(now.arrays.o2));
+    const was: { j?: Awaited<ReturnType<typeof read>> } = {};
+    await rolledBack(async () => {
+      await jBodies();
+      was.j = await read();
+    });
+    const j = was.j!;
+    expect(keys(j.onboarding)).toContain("client_data_row");
+    expect(now.onboarding).toEqual(withoutClientData(j.onboarding));
+    expect(now.kickoff).toEqual(j.kickoff);
+    expect(now.arrays.k1).toEqual(j.arrays.k1);
+    expect(now.arrays.k2).toEqual(j.arrays.k2);
+    expect(now.arrays.o1).toEqual(withoutClientData(j.arrays.o1));
+    expect(now.arrays.o2).toEqual(withoutClientData(j.arrays.o2));
   });
 });

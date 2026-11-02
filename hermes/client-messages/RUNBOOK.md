@@ -240,6 +240,52 @@ approves it in the cockpit's Messages card; nothing goes without that press.
 - **Switch off:** remove the kind from the line. Approved messages wait; a
   person skips them if they should not go.
 
+### The content folder (`{content_folder}`)
+
+Make 13 [48] and Make 12 [25] end both texts with the client's content folder,
+Client Data column H (`Google Drive Link`). The texts in `stage4.messages` keep
+`{content_folder}` there; the database leaves it in the draft, and the CSM
+approves the text with it (the Messages card shows it as "the client's Google
+Drive link from Client Data"). At send, after the database's last check, the
+worker reads the link from the card's one Client Data row, the same row as the
+group, by its header name, and puts it where `{content_folder}` is. The stored
+text stays the template, so the fingerprint check is unchanged, and every
+group search (read-back, the unknown reconcile) turns that exact link back into
+`{content_folder}` before it compares. The link is in no report, health row,
+receipt or log line. Only `phase3` and `phase4` get this; a phase text without
+the placeholder sends as approved.
+
+Make sent a blank line when column H was empty. The worker never sends a blank
+or the placeholder: the message is refused before the wait, the row reads
+`Not sent` on the Messages card with one of these, and nothing reached the
+group:
+
+- `No Google Drive link on Client Data for this card, and this message needs it. Add the client's content folder link to Client Data column H (Google Drive Link), then try again.`
+- `The Google Drive link on Client Data for this card is not a link. Put the client's content folder link, and nothing else, in Client Data column H (Google Drive Link), then try again.`
+- `Client Data has no Google Drive Link column, so this message was not sent. The tech lead checks the sheet, then try again.`
+
+For the first two, add the link (one `https://` link alone in the cell), then
+press Try again on the Messages card and approve it again; each try counts
+toward the three.
+
+The third is the tech lead's. The worker finds the link by its header, not its
+letter, so with no `Google Drive Link` header column H may now hold another
+column: a deleted column H moves `Sheet Link` (the client's stat sheet) into H.
+Never rename whatever sits in H. Put the content folder links back under their
+own `Google Drive Link` header (restore the column, or rename the old header
+back if it was only renamed), check a few rows hold drive folder links, then
+press Try again.
+
+Before a canary (D-S4K, D-S4O), check the test card has its link:
+`run.sh doctor --task 86eywg1cq` prints `driveLink` as `present`, `none`,
+`not a link` or `no Google Drive Link column`, never the link. Dry mode's plan
+does not say it: the approved list carries no text, so it cannot tell whether
+the text keeps the placeholder.
+
+A link changed on Client Data between the send and a read-back is not masked,
+so that read-back finds nothing: the row stays unread or unknown for a person
+(below), and it is never sent again.
+
 ## Reading an unknown
 
 An `unknown` recap may be in the group. The cockpit never sends it twice; the
@@ -331,6 +377,13 @@ proven`, which counts as failed. It writes `client-messages-g5`, ok only for
 The form link tests are in `worker.test.ts` (`form links`) and `core.test.ts`
 (`maskInviteLink`); the database side is
 `apps/media-buyer-cockpit/scripts/forms-invites-supabase.test.ts`.
+
+The content folder tests are in `worker.test.ts` (`the content folder in phase
+3 and phase 4 messages`) and `core.test.ts` (`the content folder`); the
+database side, both verbatim texts through `cockpit_form_stage4_message`, is
+`apps/media-buyer-cockpit/scripts/stage4-content-folder-supabase.test.ts`, and
+the Messages card's words are in
+`apps/client-success-cockpit/scripts/client-messages.test.tsx`.
 
 
 ```

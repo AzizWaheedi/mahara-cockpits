@@ -1,6 +1,7 @@
 /**
- * hermes/forms-relay (docs/forms/WAVE56-CONTRACT.md 3.8, 4.14.4): a fake database outbox, a fake Client Data sheet
- * and a fake GitHub. Every client, card and value is invented; nothing reaches a provider.
+ * hermes/forms-relay (docs/forms/WAVE56-CONTRACT.md 3.8, 4.14.4; 20261102l): a fake database outbox and a
+ * fake GitHub. Every client, card and value is invented; nothing reaches a provider. The relay has no sheet
+ * door: a stray client_data_row row is skipped, and the ledger refuses any Google call.
  */
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -9,52 +10,45 @@ import { join } from "node:path";
 import { ledgerFetch, NotSent, resourceOf } from "./providers.ts";
 import {
   type Answer,
-  columnIndex,
   type Config,
   dispatchBody,
-  hasCardRow,
-  kuwaitDay,
   readConfig,
   type RelayRow,
   type Row,
-  rowValues,
   runOnce,
   SAY,
   TEST_CARD,
 } from "./relay.ts";
-import { doctor, readApply, readEnv } from "./worker.ts";
+import { doctor, ENV_KEYS, readApply, readEnv } from "./worker.ts";
 
-const REF_NAME = "514bfd3f-4ca1-469e-b9e7-87656503f65c";
 const VALUES = {
-  CLIENT_DATA_SHEET_ID: "sheetInvented01",
-  CLIENT_DATA_TAB: "Client Data",
-  CLIENT_DATA_CARD_COLUMN: "C",
-  CLIENT_DATA_COLUMNS: JSON.stringify({
-    A: "client",
-    B: "kuwaitDay",
-    C: "task",
-    E: `answer:${REF_NAME}`,
-    F: "const:",
-  }),
   DISPATCH_OWNER: "invented-org",
   DISPATCH_REPO: "market-intel",
   DISPATCH_NAME_KEY: "client_name",
   DISPATCH_ID_KEY: "clickup_id",
+};
+/** The Client Data lines a config.env written before 20261102l may still hold. */
+const OLD_CLIENT_DATA = {
+  CLIENT_DATA_SHEET_ID: "sheetInvented01",
+  CLIENT_DATA_TAB: "Client Data",
+  CLIENT_DATA_CARD_COLUMN: "C",
+  CLIENT_DATA_COLUMNS: JSON.stringify({ A: "client", C: "task" }),
 };
 const CONFIG = readConfig(VALUES).config as Config;
 const PAYLOAD = {
   taskId: "86card0001",
   client: "Cedar Homes",
   submittedAt: "2026-11-02T21:30:00Z",
-  answers: { [REF_NAME]: "Cedar Homes Co" },
+  answers: { "514bfd3f-4ca1-469e-b9e7-87656503f65c": "Cedar Homes Co" },
+};
+const BODY = {
+  event_type: "market_intel",
+  client_payload: { client_name: "Cedar Homes", clickup_id: "86card0001" },
 };
 
 function world(
   opts: {
     rows?: RelayRow[];
-    sheet?: unknown[][];
-    append?: Answer;
-    keep?: boolean;
     dispatch?: Answer;
     counts?: Row | "throw";
     apply?: boolean;
@@ -62,13 +56,7 @@ function world(
 ) {
   const rpcs: { name: string; args: Row }[] = [];
   const healths: Row[] = [];
-  const sheet = opts.sheet ?? [
-    ["Client", "Day", "Card"],
-    ["Old Client", "2026-10-01", "86old00001"],
-  ];
-  const appended: string[][] = [];
   const dispatched: Row[] = [];
-  let reads = 0;
   const deps = {
     apply: opts.apply ?? true,
     config: CONFIG,
@@ -88,17 +76,6 @@ function world(
         healths.push(h);
       },
     },
-    sheet: {
-      read: async () => {
-        reads++;
-        return structuredClone(sheet);
-      },
-      append: async (row: string[]) => {
-        appended.push(row);
-        if (opts.keep !== false && (opts.append?.ok ?? true)) sheet.push(row);
-        return opts.append ?? { ok: true, status: 200 };
-      },
-    },
     github: {
       dispatch: async (body: Row) => {
         dispatched.push(body);
@@ -110,19 +87,11 @@ function world(
     rpcs
       .filter(r => r.name === "cockpit_form_relay_done")
       .map(r => [r.args.p_id, r.args.p_outcome, r.args.p_detail.reason]);
-  return {
-    deps,
-    rpcs,
-    healths,
-    appended,
-    dispatched,
-    done,
-    reads: () => reads,
-  };
+  return { deps, rpcs, healths, dispatched, done };
 }
 const row = (
   id: number,
-  effectKey: RelayRow["effectKey"],
+  effectKey: string,
   taskId = PAYLOAD.taskId,
   payload: Row = PAYLOAD,
 ): RelayRow => ({
@@ -136,53 +105,28 @@ const row = (
 });
 
 describe("the config", () => {
-  test("every line named when missing, never a value; the card column must hold the card", () => {
-    expect(readConfig({}).problems).toHaveLength(8);
-    expect(readConfig({}).problems[0]).toBe(
-      "CLIENT_DATA_SHEET_ID is not set in ~/.forms-relay/config.env.",
-    );
-    expect(
-      readConfig({ ...VALUES, CLIENT_DATA_COLUMNS: "{not json" }).problems,
-    ).toEqual(["CLIENT_DATA_COLUMNS is not a JSON object of column letters."]);
-    expect(
-      readConfig({
-        ...VALUES,
-        CLIENT_DATA_COLUMNS: JSON.stringify({ A: "task" }),
-      }).problems,
-    ).toEqual([
-      "CLIENT_DATA_COLUMNS must put the card id (task) in CLIENT_DATA_CARD_COLUMN.",
+  test("every dispatch line named when missing, never a value; no Client Data line is asked for or kept", () => {
+    expect(readConfig({}).problems).toEqual([
+      "DISPATCH_OWNER is not set in ~/.forms-relay/config.env.",
+      "DISPATCH_REPO is not set in ~/.forms-relay/config.env.",
+      "DISPATCH_NAME_KEY is not set in ~/.forms-relay/config.env.",
+      "DISPATCH_ID_KEY is not set in ~/.forms-relay/config.env.",
     ]);
-    expect(
-      readConfig({
-        ...VALUES,
-        CLIENT_DATA_COLUMNS: JSON.stringify({ C: "task", D: "phone_of_owner" }),
-      }).problems,
-    ).toEqual([
-      "CLIENT_DATA_COLUMNS gives column D a source the relay does not know.",
+    const old = readConfig({ ...VALUES, ...OLD_CLIENT_DATA });
+    expect(old.problems).toEqual([]);
+    expect(old.config).toEqual(CONFIG);
+    expect(Object.keys(CONFIG).sort()).toEqual([
+      "dispatchEvent",
+      "dispatchIdKey",
+      "dispatchNameKey",
+      "dispatchOwner",
+      "dispatchRepo",
     ]);
     expect(CONFIG.dispatchEvent).toBe("market_intel");
   });
 
-  test("the row from A to the last mapped column, the dispatch body under the blueprint's keys", () => {
-    expect(columnIndex("A")).toBe(0);
-    expect(columnIndex("AA")).toBe(26);
-    expect(kuwaitDay("2026-11-02T21:30:00Z")).toBe("2026-11-03");
-    expect(rowValues(CONFIG, PAYLOAD)).toEqual([
-      "Cedar Homes",
-      "2026-11-03",
-      "86card0001",
-      "",
-      "Cedar Homes Co",
-      "",
-    ]);
-    expect(dispatchBody(CONFIG, PAYLOAD)).toEqual({
-      event_type: "market_intel",
-      client_payload: { client_name: "Cedar Homes", clickup_id: "86card0001" },
-    });
-    expect(hasCardRow([["a", "b", " 86card0001 "]], "C", "86card0001")).toBe(
-      true,
-    );
-    expect(hasCardRow([["86card0001"]], "C", "86card0001")).toBe(false);
+  test("the dispatch body under the blueprint's keys", () => {
+    expect(dispatchBody(CONFIG, PAYLOAD)).toEqual(BODY);
   });
 });
 
@@ -191,12 +135,7 @@ describe("a run", () => {
     const w = world({ apply: false, counts: { queued: 2, sent: 4 } });
     const r = await runOnce(w.deps);
     expect(w.rpcs.map(x => x.name)).toEqual(["cockpit_form_relay_counts"]);
-    expect(r.note).toBe(
-      SAY.dry(
-        2,
-        "Client Data columns A, B, C, E, F; dispatch keys client_name, clickup_id",
-      ),
-    );
+    expect(r.note).toBe(SAY.dry(2, "dispatch keys client_name, clickup_id"));
     expect(r.note).not.toContain("Cedar");
     const empty = world({ apply: false, counts: { sent: 4 } });
     expect((await runOnce(empty.deps)).note).toBe("Nothing to relay.");
@@ -207,100 +146,79 @@ describe("a run", () => {
     });
   });
 
-  test("the sheet is read before writing; a row already there is sent once with nothing written", async () => {
-    const w = world({
-      rows: [row(1, "client_data_row")],
-      sheet: [["Cedar Homes", "2026-11-03", "86card0001"]],
-    });
+  test("the dispatch is sent once and recorded sent", async () => {
+    const w = world({ rows: [row(2, "github_dispatch")] });
     const r = await runOnce(w.deps);
-    expect(w.appended).toEqual([]);
-    expect(w.done()).toEqual([[1, "sent", "already there"]]);
-    expect(r).toMatchObject({ ok: true, counts: { sent: 1 } });
+    expect(w.dispatched).toEqual([BODY]);
+    expect(w.done()).toEqual([[2, "sent", "Dispatched."]]);
+    expect(r.note).toBe("Relayed 1 row: 1 sent.");
+    expect(w.healths[0]).toMatchObject({ key: "forms-relay", ok: true });
   });
 
-  test("a new row is appended once, read back, and recorded sent; the dispatch is sent once", async () => {
+  test("a stray client_data_row row is skipped and written to no sheet; the dispatch beside it still goes", async () => {
     const w = world({
       rows: [row(1, "client_data_row"), row(2, "github_dispatch")],
     });
     const r = await runOnce(w.deps);
-    expect(w.appended).toEqual([
-      ["Cedar Homes", "2026-11-03", "86card0001", "", "Cedar Homes Co", ""],
-    ]);
-    expect(w.reads()).toBe(2);
-    expect(w.dispatched).toEqual([
-      {
-        event_type: "market_intel",
-        client_payload: {
-          client_name: "Cedar Homes",
-          clickup_id: "86card0001",
-        },
-      },
-    ]);
     expect(w.done()).toEqual([
-      [1, "sent", "Written."],
+      [1, "skipped", SAY.notDispatch],
       [2, "sent", "Dispatched."],
     ]);
-    expect(r.note).toBe("Relayed 2 rows: 2 sent.");
-    expect(w.healths[0]).toMatchObject({ key: "forms-relay", ok: true });
-  });
-
-  test("the test card is never written to the sheet or dispatched", async () => {
-    const w = world({
-      rows: [
-        row(1, "client_data_row", TEST_CARD),
-        row(2, "github_dispatch", TEST_CARD),
+    expect(w.dispatched).toEqual([BODY]);
+    expect(r).toMatchObject({
+      ok: true,
+      note: "Relayed 2 rows: 1 sent, 1 skipped.",
+    });
+    // The relay has no sheet door, and its ledger lets no Google call out (no token, no read, no append).
+    expect("sheet" in w.deps).toBe(false);
+    const calls: string[] = [];
+    const f = ledgerFetch(async () => {}, "forms-relay:run:test", (async (
+      input: RequestInfo | URL,
+    ) => {
+      calls.push(String(input));
+      return new Response("{}");
+    }) as typeof fetch);
+    for (const [url, method] of [
+      ["https://oauth2.googleapis.com/token", "POST"],
+      [
+        "https://sheets.googleapis.com/v4/spreadsheets/sheetInvented01/values/Client%20Data!A%3AZZ:append",
+        "POST",
       ],
-    });
-    await runOnce(w.deps);
-    expect(w.appended).toEqual([]);
-    expect(w.dispatched).toEqual([]);
-    expect(w.done()).toEqual([
-      [1, "skipped", SAY.canarySheet],
-      [2, "skipped", SAY.canaryDispatch],
-    ]);
-    // Its own row on the sheet still reads as already there.
-    const there = world({
-      rows: [row(1, "client_data_row", TEST_CARD)],
-      sheet: [["Test card", "", TEST_CARD]],
-    });
-    await runOnce(there.deps);
-    expect(there.done()).toEqual([[1, "sent", "already there"]]);
+      [
+        "https://sheets.googleapis.com/v4/spreadsheets/sheetInvented01/values/Client%20Data!A%3AZZ",
+        "GET",
+      ],
+    ])
+      await expect(f(url, { method })).rejects.toBeInstanceOf(NotSent);
+    expect(calls).toEqual([]);
   });
 
-  test("a refused write is failed (tried again by the database); an unclear one or a row that never shows is unknown", async () => {
-    const refused = world({
-      rows: [row(1, "client_data_row")],
-      append: { ok: false, status: 403, definite: true },
-    });
-    expect((await runOnce(refused.deps)).ok).toBe(false);
-    expect(refused.done()).toEqual([[1, "failed", SAY.sheetRefused(403)]]);
-    const unclear = world({
-      rows: [row(1, "client_data_row")],
-      append: { ok: false, status: 503, definite: false },
-    });
-    await runOnce(unclear.deps);
-    expect(unclear.done()).toEqual([[1, "unknown", SAY.sheetUnsure]]);
-    const lost = world({ rows: [row(1, "client_data_row")], keep: false });
-    await runOnce(lost.deps);
-    expect(lost.done()).toEqual([[1, "unknown", SAY.notBack]]);
+  test("the test card is never dispatched", async () => {
+    const w = world({ rows: [row(2, "github_dispatch", TEST_CARD)] });
+    await runOnce(w.deps);
+    expect(w.dispatched).toEqual([]);
+    expect(w.done()).toEqual([[2, "skipped", SAY.canaryDispatch]]);
+  });
+
+  test("a refused dispatch is failed (tried again by the database); an unclear one is unknown", async () => {
     const gh = world({
       rows: [row(2, "github_dispatch")],
       dispatch: { ok: false, status: 0, definite: false },
     });
-    await runOnce(gh.deps);
+    expect((await runOnce(gh.deps)).ok).toBe(false);
     expect(gh.done()).toEqual([[2, "unknown", SAY.dispatchUnsure]]);
     const ghNo = world({
       rows: [row(2, "github_dispatch")],
       dispatch: { ok: false, status: 404, definite: true },
     });
-    await runOnce(ghNo.deps);
+    expect((await runOnce(ghNo.deps)).ok).toBe(false);
     expect(ghNo.done()).toEqual([[2, "failed", SAY.dispatchRefused(404)]]);
   });
 
   test("nothing claimed: Nothing to relay; no config: nothing claimed and the gap said", async () => {
     const w = world({ rows: [] });
     expect((await runOnce(w.deps)).note).toBe("Nothing to relay.");
-    const none = world({ rows: [row(1, "client_data_row")] });
+    const none = world({ rows: [row(2, "github_dispatch")] });
     const r = await runOnce({
       ...none.deps,
       config: null,
@@ -317,7 +235,7 @@ describe("a run", () => {
 });
 
 describe("the ledger", () => {
-  test("an intent receipt before each call, a response after; only the named hosts and POSTs; ids collapsed", async () => {
+  test("an intent receipt before each call, a response after; only GitHub and its dispatch POST; ids collapsed", async () => {
     const receipts: Row[] = [];
     const calls: string[] = [];
     const f = ledgerFetch(
@@ -345,12 +263,8 @@ describe("the ledger", () => {
       "api.github.com/repos/invented-org/market-intel/dispatches",
     );
     expect(
-      resourceOf(
-        new URL(
-          "https://sheets.googleapis.com/v4/spreadsheets/1_0Nv-IFvzhH4NBNh1dx/values/A:ZZ",
-        ),
-      ),
-    ).toBe("sheets.googleapis.com/v4/spreadsheets/:id/values/A:ZZ");
+      resourceOf(new URL("https://api.github.com/repos/invented-org/r2d2x9")),
+    ).toBe("api.github.com/repos/invented-org/:id");
     await expect(f("https://evil.example/x")).rejects.toBeInstanceOf(NotSent);
     await expect(
       f("https://api.github.com/repos/a/b/issues", { method: "POST" }),
@@ -370,20 +284,17 @@ describe("the ledger", () => {
 });
 
 describe("the doctor and the files", () => {
-  test("keys by name, the switch only from its file, the config's gaps, reads only", async () => {
+  test("keys by name with no Google key, the switch only from its file, the config's gaps, reads only", async () => {
+    expect([...ENV_KEYS]).toEqual([
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "GITHUB_DISPATCH_TOKEN",
+    ]);
     const dir = mkdtempSync(join(tmpdir(), "relay-"));
     const keys = join(dir, "keys.env");
-    const cred = join(dir, "cred.json");
     writeFileSync(
       keys,
-      "GITHUB_DISPATCH_TOKEN=invented-token\nFORMS_RELAY_APPLY=true\n",
-    );
-    writeFileSync(
-      cred,
-      JSON.stringify({
-        client_email: "relay@invented.iam",
-        private_key: "invented",
-      }),
+      "GITHUB_DISPATCH_TOKEN=invented-token\nFORMS_RELAY_APPLY=true\nGOOGLE_APPLICATION_CREDENTIALS=/invented/cred.json\n",
     );
     const read = readEnv([keys]);
     expect(read.env).toEqual({ GITHUB_DISPATCH_TOKEN: "invented-token" });
@@ -396,20 +307,23 @@ describe("the doctor and the files", () => {
     const r = await doctor({
       env: {
         ...read.env,
-        GOOGLE_APPLICATION_CREDENTIALS: cred,
         SUPABASE_URL: "x",
         SUPABASE_SERVICE_ROLE_KEY: "y",
       },
       apply: false,
-      config: readConfig(VALUES),
+      config: readConfig({ ...VALUES, ...OLD_CLIENT_DATA }),
       counts: async () => ({ byState: { queued: 1 } }),
-      sheetRead: async () => [["a"], ["b"]],
       repoStatus: async () => 200,
     });
-    expect(r).toMatchObject({
+    expect(r).toEqual({
       ok: true,
       problems: [],
-      checks: { outbox: { queued: 1 }, clientDataRows: 2, repository: 200 },
+      keys: {
+        SUPABASE_URL: true,
+        SUPABASE_SERVICE_ROLE_KEY: true,
+        GITHUB_DISPATCH_TOKEN: true,
+      },
+      checks: { apply: false, outbox: { queued: 1 }, repository: 200 },
     });
     expect(JSON.stringify(r)).not.toContain("invented-token");
     const bad = await doctor({
@@ -417,12 +331,14 @@ describe("the doctor and the files", () => {
       apply: false,
       config: readConfig({}),
       counts: async () => ({}),
-      sheetRead: async () => [],
       repoStatus: async () => 404,
     });
     expect(bad.ok).toBe(false);
     expect(bad.problems).toContain(
       "GITHUB_DISPATCH_TOKEN is not set in the relay's key files.",
+    );
+    expect(bad.problems.join(" ")).not.toMatch(
+      /Google|Client Data|CLIENT_DATA/,
     );
     rmSync(dir, { recursive: true, force: true });
   });

@@ -1,0 +1,563 @@
+{
+ "id": "tG7dnxBn",
+ "fields": [
+  {
+   "id": "6P7gQXmoV0vp",
+   "ref": "c0000001-0000-4000-8000-00000000000e",
+   "type": "inline_group",
+   "title": "Are the business details still correct?",
+   "properties": {
+    "allow_multiple_selection": false,
+    "fields": [
+     {
+      "id": "tTdZSxnFUAi2",
+      "ref": "c0000001-0000-4000-8000-000000000001",
+      "type": "yes_no",
+      "title": "Is all of the above still correct?",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     },
+     {
+      "id": "9HIY9rknwmex",
+      "ref": "c0000001-0000-4000-8000-000000000002",
+      "type": "long_text",
+      "title": "Anything to add?",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "XqSbm4Wiq5Ps",
+   "ref": "c0000001-0000-4000-8000-000000000012",
+   "type": "long_text",
+   "title": "What is wrong? Give the correct details.",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "CFiBw03jF7HH",
+   "ref": "c0000001-0000-4000-8000-00000000000f",
+   "type": "inline_group",
+   "title": "Are the online links still correct?",
+   "properties": {
+    "allow_multiple_selection": false,
+    "fields": [
+     {
+      "id": "Hausf7Aok3uF",
+      "ref": "c0000001-0000-4000-8000-000000000003",
+      "type": "yes_no",
+      "title": "Is all of the above still correct?",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     },
+     {
+      "id": "HuJ0A9WNHaLG",
+      "ref": "c0000001-0000-4000-8000-000000000004",
+      "type": "long_text",
+      "title": "Anything to add?",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "PFZSndPz9z6M",
+   "ref": "c0000001-0000-4000-8000-000000000013",
+   "type": "long_text",
+   "title": "Which link is wrong, and what is the correct one?",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "EcqGj2gwBCBQ",
+   "ref": "c0000001-0000-4000-8000-00000000000d",
+   "type": "inline_group",
+   "title": "Is how they operate still correct?",
+   "properties": {
+    "allow_multiple_selection": false,
+    "fields": [
+     {
+      "id": "bp9UcFkJt18U",
+      "ref": "c0000001-0000-4000-8000-000000000005",
+      "type": "yes_no",
+      "title": "Is all of the above still correct?",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     },
+     {
+      "id": "pyhMZbQY9wc0",
+      "ref": "c0000001-0000-4000-8000-000000000006",
+      "type": "long_text",
+      "title": "Anything to add?",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "o5IVpT6YIUqT",
+   "ref": "c0000001-0000-4000-8000-000000000014",
+   "type": "long_text",
+   "title": "What has changed? Give the correct details.",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "BAd6hqFM4Vga",
+   "ref": "c0000001-0000-4000-8000-000000000007",
+   "type": "multiple_choice",
+   "title": "Which service are we advertising?",
+   "properties": {
+    "allow_multiple_selection": true
+   }
+  },
+  {
+   "id": "d6NCnO0vvGVG",
+   "ref": "c0000001-0000-4000-8000-000000000008",
+   "type": "multiple_choice",
+   "title": "Which consultation types do they offer?",
+   "properties": {
+    "allow_multiple_selection": true
+   }
+  },
+  {
+   "id": "ohe8uj1O8C6C",
+   "ref": "c0000001-0000-4000-8000-000000000010",
+   "type": "inline_group",
+   "title": "Client profile complete?",
+   "properties": {
+    "allow_multiple_selection": false,
+    "fields": [
+     {
+      "id": "4C1Vtx6N6Bq7",
+      "ref": "c0000001-0000-4000-8000-000000000009",
+      "type": "yes_no",
+      "title": "Is the profile complete?",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     },
+     {
+      "id": "1jDd4PjZl9zQ",
+      "ref": "c0000001-0000-4000-8000-000000000011",
+      "type": "long_text",
+      "title": "Anything to add?",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "lvTXwCsptOGM",
+   "ref": "c0000001-0000-4000-8000-000000000015",
+   "type": "long_text",
+   "title": "What is missing?",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "b1yDpCpcn2TM",
+   "ref": "c0000001-0000-4000-8000-00000000000a",
+   "type": "dropdown",
+   "title": "Contract status",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "uVuwwlpTJ1Kl",
+   "ref": "c0000001-0000-4000-8000-00000000000b",
+   "type": "long_text",
+   "title": "What needs changing in the contract?",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "7B4CjgIrvWag",
+   "ref": "7115a698-5032-4244-a14a-30db226f73dc",
+   "type": "inline_group",
+   "title": "Support System",
+   "properties": {
+    "allow_multiple_selection": false,
+    "fields": [
+     {
+      "id": "CYlhGacRPXUw",
+      "ref": "3db082bb-1939-444b-8b32-d0067fc9878c",
+      "type": "yes_no",
+      "title": "Have you been added to the WhatsApp group?",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     },
+     {
+      "id": "XHRZFxQXkqnL",
+      "ref": "071c480f-17f9-48db-8155-56030f952e85",
+      "type": "long_text",
+      "title": "Who else should we add to the WhatsApp group?",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     },
+     {
+      "id": "zt9Aqk2xypdJ",
+      "ref": "87c68a44-b19b-4a86-a286-0a2c8c32134e",
+      "type": "yes_no",
+      "title": "Have drive folders and filling out spreadsheets been discussed? (Intro message Whatsapp group)",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     },
+     {
+      "id": "rK3Vj5AapFsG",
+      "ref": "92fab954-d771-431c-9fc4-b9f15c53cbb8",
+      "type": "dropdown",
+      "title": "WhatsApp Status",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "bA9ba1wyEEl7",
+   "ref": "7a333b83-da34-4c6f-9dd7-8d15f560b457",
+   "type": "inline_group",
+   "title": "Advertising Platforms and Details",
+   "properties": {
+    "allow_multiple_selection": false,
+    "fields": [
+     {
+      "id": "At6WlnDWk78m",
+      "ref": "7d16afbb-b99a-4ee9-8718-4418cbeba534",
+      "type": "multiple_choice",
+      "title": "Which platforms will we advertise on?",
+      "properties": {
+       "allow_multiple_selection": true
+      }
+     },
+     {
+      "id": "qrW5XNvcK1qi",
+      "ref": "cf53482c-3d7d-45ab-b294-0230e917ea5f",
+      "type": "short_text",
+      "title": "What is your daily budget for the ads?",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "r1l3gvXj8Oqk",
+   "ref": "a0034e03-f410-4857-8535-19f9d8f2176a",
+   "type": "inline_group",
+   "title": "Facebook access",
+   "properties": {
+    "allow_multiple_selection": false,
+    "fields": [
+     {
+      "id": "om9d7P4zcpWW",
+      "ref": "e4b9dbd3-c12c-4d6f-a0e3-c3ba17c97728",
+      "type": "short_text",
+      "title": "What is the name of the ad account? (has to be exact)",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     },
+     {
+      "id": "D0fGGaSGEhta",
+      "ref": "940f494c-f99b-4920-b203-200576ddd780",
+      "type": "short_text",
+      "title": "What is the name of the Facebook page? (has to be exact)",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     },
+     {
+      "id": "sb1ff1kO1ytO",
+      "ref": "8bee68fc-0764-41a8-b90a-db2a3f401e9d",
+      "type": "yes_no",
+      "title": "Correct Card Linked To The Account With Funds?",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     },
+     {
+      "id": "5PYYj2TsAtYM",
+      "ref": "6fcbd33c-60e9-4df7-bfaa-e76b588dd887",
+      "type": "dropdown",
+      "title": "Facebook Access Status?",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "8woGf2s6bh55",
+   "ref": "a813378f-06ce-499e-8f0e-14761b89b474",
+   "type": "dropdown",
+   "title": "Whatsapp synced to Mahara OS?",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "s5eCKOcumjes",
+   "ref": "474b6f59-601f-49e6-aa64-ce4f9ec0b177",
+   "type": "inline_group",
+   "title": "Calendar Integration/CRM",
+   "properties": {
+    "allow_multiple_selection": false,
+    "fields": [
+     {
+      "id": "6Gn1vs5xQCYy",
+      "ref": "03b0600d-04d2-40a0-a7de-75a488888eb7",
+      "type": "yes_no",
+      "title": "Does the booking platform connect to ours?",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     },
+     {
+      "id": "fIsMHeHZGeWU",
+      "ref": "3bebf47d-c00b-4f26-8624-933b84e42ebc",
+      "type": "yes_no",
+      "title": "Google Calendar Integration Complete?",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     },
+     {
+      "id": "3JO94KTFR9a7",
+      "ref": "b657c5a5-d199-42b5-8437-c8d04f78e376",
+      "type": "dropdown",
+      "title": "Booking platform & Google Calendar Integration Status",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     },
+     {
+      "id": "tpk6ngtwkEpn",
+      "ref": "ad562fc2-6858-4e37-81c5-c4cc2375a330",
+      "type": "dropdown",
+      "title": "Mahara OS Access Status",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "hblTCkCsMRVI",
+   "ref": "8cd23521-5f80-420c-8b23-6a3d139a939b",
+   "type": "inline_group",
+   "title": "Content",
+   "properties": {
+    "allow_multiple_selection": false,
+    "fields": [
+     {
+      "id": "IBWvYApDH6PO",
+      "ref": "3418ef58-72df-49aa-aac3-1e095e155d45",
+      "type": "long_text",
+      "title": "Provide any marketing content links or notes.",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     },
+     {
+      "id": "zxHajoideN0p",
+      "ref": "753c4cde-4d28-4719-8459-06e4db640180",
+      "type": "yes_no",
+      "title": "Content Discussed",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     },
+     {
+      "id": "Et8J9ZfhMr0y",
+      "ref": "f54986bc-e120-4345-afee-31c1000a5a9a",
+      "type": "yes_no",
+      "title": "Templated Ads Discussed",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     },
+     {
+      "id": "uVSszReeSk9K",
+      "ref": "eb7ed18c-8388-4d84-9b5c-2e3d4a030287",
+      "type": "dropdown",
+      "title": "Templated Ads Status",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "xDa4R0QOhnFh",
+   "ref": "aa18b411-1e74-4bc2-b584-7ad343442647",
+   "type": "statement",
+   "title": "Fast Cash Play🤑",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "0fkNqPh5yMmh",
+   "ref": "dff79b66-89dd-43ef-9664-3fa4e6a61d69",
+   "type": "yes_no",
+   "title": "Do you have pre-existing leads?",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "RXvPzsb3pLSH",
+   "ref": "85d7ebb5-ce36-4ac3-aff8-3ce464737abd",
+   "type": "yes_no",
+   "title": "Do you want us to reach out to those leads?",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "xGwPgpPPC4nD",
+   "ref": "86a6cce0-9111-4d98-97e7-7af5b6d518c8",
+   "type": "long_text",
+   "title": "Provide link or notes for those leads.",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "TxWUXBWMpPQ3",
+   "ref": "0cb88b75-f193-43a1-b802-d382178a0946",
+   "type": "yes_no",
+   "title": "Do you have experience selling to cold leads (leads from ads)?",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "nZh6kaQTLgJP",
+   "ref": "079812c4-bb7e-4cc3-8e57-24c3b9e886d9",
+   "type": "short_text",
+   "title": "What is your current close rate on cold leads?",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "A0fu1GgjOKmG",
+   "ref": "56e16df1-8373-44c5-8fdc-944011cfc8cc",
+   "type": "inline_group",
+   "title": "Client Training Portal",
+   "properties": {
+    "allow_multiple_selection": false,
+    "fields": [
+     {
+      "id": "VbysL3LK4KQb",
+      "ref": "4379c2f7-c5cf-4104-92c5-9b2294d65b59",
+      "type": "yes_no",
+      "title": "Premium Projects Academy Confirmed?",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     },
+     {
+      "id": "omxsbnqNHGHz",
+      "ref": "dc6eafd2-516e-4ca9-9d9c-89dee060e224",
+      "type": "yes_no",
+      "title": "Discussed First Steps and Important Videos?",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     },
+     {
+      "id": "PbzpYP9Do1iX",
+      "ref": "c56a7e2d-6f18-4bf9-a9f6-11367eab4c11",
+      "type": "dropdown",
+      "title": "Training Course Access",
+      "properties": {
+       "allow_multiple_selection": false
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "6sDmTyWhTLnw",
+   "ref": "b5578678-d0c2-475b-b66f-7ea54d55fe31",
+   "type": "website",
+   "title": "Call Recording Link",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "MKddWp0Ic9SU",
+   "ref": "75e97e7d-4c19-437a-b4b8-67570c29344f",
+   "type": "number",
+   "title": "Payment Amount",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  },
+  {
+   "id": "8Ipl7XURTLH7",
+   "ref": "34310b2e-4df4-4ed5-b67e-9aefa9087d6e",
+   "type": "yes_no",
+   "title": "Post call form filled?",
+   "properties": {
+    "allow_multiple_selection": false
+   }
+  }
+ ],
+ "hidden": [
+  "onboarding_client_id",
+  "legal_name",
+  "phone",
+  "email",
+  "address",
+  "maps_link",
+  "instagram",
+  "website",
+  "facebook",
+  "booking_platform",
+  "hours",
+  "consultants",
+  "service_focus",
+  "consultation_types",
+  "payment_options",
+  "last_revenue",
+  "goal_90d",
+  "goal_12_24",
+  "marketing_tried",
+  "challenges",
+  "why_joined",
+  "client_notes",
+  "content_drive"
+ ]
+}

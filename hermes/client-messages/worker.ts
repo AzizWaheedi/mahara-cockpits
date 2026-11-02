@@ -32,6 +32,18 @@
  * made for the message is never sent again: the row turns unknown and a person
  * looks in the group.
  *
+ * A phase 3 or phase 4 text may keep {content_folder} where Make 13 [48] and
+ * Make 12 [25] put the client's content folder (Client Data column H, Google
+ * Drive Link; docs/forms/WAVE56-CONTRACT.md D-S4.0). The worker reads that link
+ * from the card's one Client Data row, the row its group comes from, and puts it
+ * where the placeholder is in the one POST, as with a form link: the stored text
+ * keeps the placeholder, so its fingerprint check is unchanged, and every group
+ * search masks that exact link back to {content_folder} before it compares. A
+ * text that needs it while the row has no link there, or no http(s) link, is
+ * refused with a sentence before the wait: never a blank line or the
+ * placeholder in the group. The link never goes into a report, a health row or
+ * a log line.
+ *
  * Two switches must both be on to send: the checkin registry's recap owner
  * (the database refuses every approval and claim while Make owns it) and
  * CLIENT_MESSAGES_APPLY=true in ~/.client-messages/switches.env, read only
@@ -70,14 +82,19 @@ import {
   cardGroup,
   cardRead,
   cardVerdict,
+  type Folder,
+  type GroupFound,
   groupOf,
   jitterMs,
   last4,
+  maskFolder,
   maskInviteLink,
+  needsFolder,
   normalise,
   sha256,
   sheetShape,
   type Verdict,
+  withFolder,
 } from "./core.ts";
 import { type Db, makeDb, SUPABASE } from "./db.ts";
 import { type LedgerState, ledgerFetch } from "./ledger.ts";
@@ -173,6 +190,25 @@ export const INVITE_URL = /^https:\/\/portal\.maharamedia\.com\/f#f1[A-Za-z0-9_-
 export function withLink(body: string, url: string): string {
   return body.replace("{form_link}", url);
 }
+/** A phase message that keeps {content_folder} goes only with the card's link from Client Data column H. */
+export const NO_FOLDER =
+  "No Google Drive link on Client Data for this card, and this message needs it. Add the client's content folder link to Client Data column H (Google Drive Link), then try again.";
+export const BAD_FOLDER =
+  "The Google Drive link on Client Data for this card is not a link. Put the client's content folder link, and nothing else, in Client Data column H (Google Drive Link), then try again.";
+/** The link is found by header, not letter; with no header, column H may hold another column, so the tech lead checks, as for COLUMN_MOVED. */
+export const NO_FOLDER_COLUMN =
+  "Client Data has no Google Drive Link column, so this message was not sent. The tech lead checks the sheet, then try again.";
+const FOLDER_REFUSAL: Record<Extract<Folder, { ok: false }>["why"], string> = {
+  none: NO_FOLDER,
+  invalid: BAD_FOLDER,
+  no_column: NO_FOLDER_COLUMN,
+};
+/** The doctor's word for the card's Google Drive Link, never the link. */
+const FOLDER_WORD: Record<Extract<Folder, { ok: false }>["why"], string> = {
+  none: "none",
+  invalid: "not a link",
+  no_column: "no Google Drive Link column",
+};
 export const SWITCHED_OFF =
   "The switches changed during the wait and no longer allow this recap, so nothing was sent. It stays approved.";
 export const TOO_LATE =
@@ -470,9 +506,17 @@ const say = (e: unknown, fallback: string) => {
     .slice(0, 200);
   return /[.!?]$/.test(m) ? m : `${m}.`;
 };
-/** A group message against an approved text, a form link masked back to its placeholder first. */
-const same = (a: string, b: string) =>
-  sha256(normalise(maskInviteLink(a))) === sha256(normalise(b));
+/**
+ * A group message against an approved text, a form link and the content
+ * folder link put in at send masked back to their placeholders first.
+ */
+const same = (a: string, b: string, folder: string | null = null) =>
+  sha256(normalise(maskFolder(maskInviteLink(a), folder))) ===
+  sha256(normalise(b));
+
+/** The folder link a sent message holds, as the card's Client Data row has it now; null when its text keeps no {content_folder}. */
+const folderSent = (r: { kind: string; body: string }, g: GroupFound) =>
+  g.ok && g.folder.ok && needsFolder(r.kind, r.body) ? g.folder.link : null;
 
 /** The note of a run that threw part way. Its health row is still written; the sweep settles what it held. */
 export const STOPPED = (reason: string) =>
@@ -610,11 +654,12 @@ async function steps(
     try {
       const g = groupOf(await sheet(), u.taskId);
       if (!g.ok) continue;
+      const folder = folderSent(u, g);
       const found = (
         await deps
           .providers(`client-messages:${u.id}`)
           .listMessages(g.group, epoch(u.claimedAt, deps.now()) - 60)
-      ).find((m: WaMessage) => m.fromMe && same(m.body, u.body));
+      ).find((m: WaMessage) => m.fromMe && same(m.body, u.body, folder));
       if (!found) continue;
       await db.rpc("cockpit_client_message_result", {
         p_id: u.id,
@@ -745,6 +790,20 @@ async function steps(
     return finish(true, reason);
   }
 
+  // 8b. A phase message that keeps {content_folder} needs the card's Google
+  // Drive Link on that same Client Data row. Without one it is refused, so a
+  // person adds it: never sent with a blank line or the placeholder.
+  let folder: string | null = null;
+  if (needsFolder(row.kind, row.body)) {
+    if (!g.folder.ok) {
+      const reason = FOLDER_REFUSAL[g.folder.why];
+      await result("refused", { p_reason: reason });
+      report.detail.refused += 1;
+      return finish(true, reason);
+    }
+    folder = g.folder.link;
+  }
+
   // 9. The card agrees (empty or the same group); never sent unchecked: an
   // answer that does not list the card's fields is no read of the card. What
   // only a person can fix is refused, so it leaves the head of the queue; what
@@ -853,6 +912,11 @@ async function steps(
     text = withLink(row.body, made.url);
   }
 
+  // 11c. The content folder: the link step 8b read, put where {content_folder}
+  // is. As with a form link, the stored text keeps the placeholder and the
+  // link is in nothing this run writes but the one POST.
+  if (folder) text = withFolder(text, folder);
+
   // 12. The one POST.
   const out = await provider.sendText(g.group, text);
   report.steps.push(`send ${out.state}`);
@@ -903,9 +967,10 @@ async function readBack(
     .providers(`client-messages:${s.id}`)
     .listMessages(g.group, since);
   const byId = messages.find(m => m.id === s.providerId);
+  const folder = folderSent(s, g);
   const byHash = byId
     ? null
-    : messages.find(m => m.fromMe && same(m.body, s.body));
+    : messages.find(m => m.fromMe && same(m.body, s.body, folder));
   const found = byId ?? byHash;
   if (!found) return false;
   await deps.db.rpc("cockpit_client_message_result", {
@@ -1123,6 +1188,10 @@ export async function doctor(deps: DoctorDeps): Promise<Record<string, any>> {
       const g = groupOf(values, task);
       out.task.clientData = g.ok ? `present, ${last4(g.group) ?? "?"}` : "none";
       if (g.ok) {
+        // A phase message that keeps {content_folder} is refused without it; never the link itself.
+        out.task.driveLink = g.folder.ok
+          ? "present"
+          : FOLDER_WORD[g.folder.why];
         try {
           const verdict = cardVerdict(
             g.group,

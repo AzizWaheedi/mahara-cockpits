@@ -4,15 +4,22 @@ import {
   cardGroup,
   cardRead,
   cardVerdict,
+  CONTENT_FOLDER,
   columnLetter,
+  columnsOf,
+  FOLDER_KINDS,
   groupOf,
   groupVerdict,
+  isFolderLink,
   jitterMs,
   last4,
+  maskFolder,
   maskInviteLink,
+  needsFolder,
   normalise,
   sha256,
   sheetShape,
+  withFolder,
 } from "./core.ts";
 
 // Every card, group and client here is invented.
@@ -29,7 +36,7 @@ const head = [
 ];
 const sheet = (...rows: unknown[][]) => [head, ...rows];
 
-describe("Client Data, by its two headers only", () => {
+describe("Client Data, by its three headers only", () => {
   test("one row for the card with a group id gives the group", () => {
     expect(
       groupOf(
@@ -44,14 +51,14 @@ describe("Client Data, by its two headers only", () => {
         ]),
         "86abc0001",
       ),
-    ).toEqual({ ok: true, group: G1 });
+    ).toEqual({ ok: true, group: G1, folder: { ok: false, why: "no_column" } });
     // Old-style group ids with a dash are groups too.
     expect(
       groupOf(
         sheet(["x", "", "", "", "86abc0001", "96550000000-1600000000@g.us"]),
         "86abc0001",
       ),
-    ).toEqual({ ok: true, group: "96550000000-1600000000@g.us" });
+    ).toMatchObject({ ok: true, group: "96550000000-1600000000@g.us" });
   });
   test("no row, an empty cell, two rows, a non-group id, or the columns missing", () => {
     expect(
@@ -114,6 +121,111 @@ describe("Client Data, by its two headers only", () => {
     expect(columnLetter(0)).toBe("A");
     expect(columnLetter(25)).toBe("Z");
     expect(columnLetter(26)).toBe("AA");
+  });
+});
+
+describe("the content folder: Client Data's Google Drive Link on the card's one row (WAVE56 D-S4.0)", () => {
+  // The live header row, A to I (Make 13 [31] searches it; [48] reads H, its `7`).
+  const live = [
+    "Status",
+    "Client Name",
+    "Clickup ID",
+    "GHL ID",
+    "GHL API",
+    "WA GROUP ID",
+    "Report Document ID",
+    " Google  Drive Link ",
+    "Sheet Link",
+  ];
+  const FOLDER = "https://drive.google.com/drive/folders/1InventedFolderId0000";
+  const row = (link: unknown, task = "86abc0001", group: unknown = G1) => [
+    "Active",
+    "Acme Interiors",
+    task,
+    "SECRET-GHL",
+    "SECRET-KEY",
+    group,
+    "SECRET-DOC",
+    link,
+    "SECRET-SHEET",
+  ];
+  test("found by its header name, from the same row as the group; column H on the live sheet", () => {
+    expect(columnsOf([live])).toEqual({ task: 2, group: 5, folder: 7 });
+    expect(columnLetter(columnsOf([live]).folder)).toBe("H");
+    expect(groupOf([live, row(` ${FOLDER} `)], "86abc0001")).toEqual({
+      ok: true,
+      group: G1,
+      folder: { ok: true, link: FOLDER },
+    });
+    // Another card's link is never this card's.
+    expect(
+      groupOf(
+        [live, row("", "86abc0001"), row(FOLDER, "86abc0002", G2)],
+        "86abc0001",
+      ),
+    ).toEqual({ ok: true, group: G1, folder: { ok: false, why: "none" } });
+  });
+  test("an empty cell is none; words, two links or another scheme are no link; a sheet without the header has no column", () => {
+    for (const cell of ["", "   ", null, undefined])
+      expect(groupOf([live, row(cell)], "86abc0001")).toMatchObject({
+        folder: { ok: false, why: "none" },
+      });
+    for (const cell of [
+      "Drive",
+      "drive.google.com/drive/folders/x",
+      `Folder: ${FOLDER}`,
+      `${FOLDER} ${FOLDER}`,
+      "ftp://drive.google.com/x",
+      "javascript:alert(1)",
+      "https://",
+      7,
+    ])
+      expect(groupOf([live, row(cell)], "86abc0001")).toMatchObject({
+        folder: { ok: false, why: "invalid" },
+      });
+    expect(
+      groupOf(
+        [live.map(h => (h.includes("Drive") ? "Drive" : h)), row(FOLDER)],
+        "86abc0001",
+      ),
+    ).toMatchObject({ ok: true, folder: { ok: false, why: "no_column" } });
+    expect(isFolderLink("http://drive.google.com/x")).toBe(true);
+    expect(isFolderLink(FOLDER)).toBe(true);
+  });
+  test("a missing folder never stops the group: recaps read the row as before", () => {
+    expect(groupOf([live, row("")], "86abc0001")).toMatchObject({
+      ok: true,
+      group: G1,
+    });
+    expect(sheetShape([live])).toEqual({ ok: true, column: "F" });
+  });
+  test("only a phase 3 or phase 4 text that keeps the placeholder needs it", () => {
+    expect(CONTENT_FOLDER).toBe("{content_folder}");
+    expect(FOLDER_KINDS).toEqual(["phase3", "phase4"]);
+    expect(needsFolder("phase3", "x\n{content_folder}")).toBe(true);
+    expect(needsFolder("phase4", "{content_folder}")).toBe(true);
+    expect(needsFolder("phase4", "no folder here")).toBe(false);
+    for (const kind of ["recap_checkin", "form_invite", "phase5"])
+      expect(needsFolder(kind, "{content_folder}")).toBe(false);
+  });
+  test("filled as plain text, every placeholder; masked back by the exact link, so the fingerprint matches", () => {
+    const body = "ارفعوا المحتوى هني:\n{content_folder}";
+    const sent = withFolder(body, FOLDER);
+    expect(sent).toBe(`ارفعوا المحتوى هني:\n${FOLDER}`);
+    expect(sha256(normalise(maskFolder(`${sent}  \n`, FOLDER)))).toBe(
+      sha256(normalise(body)),
+    );
+    // A `$` in a link is never read as a replacement pattern.
+    const odd = "https://drive.google.com/x?a=$&b=$1";
+    expect(withFolder("{content_folder} and {content_folder}", odd)).toBe(
+      `${odd} and ${odd}`,
+    );
+    expect(maskFolder(`${odd} and ${odd}`, odd)).toBe(
+      "{content_folder} and {content_folder}",
+    );
+    // No link, or another link: nothing changes.
+    expect(maskFolder(sent, null)).toBe(sent);
+    expect(maskFolder(sent, "https://drive.google.com/other")).toBe(sent);
   });
 });
 

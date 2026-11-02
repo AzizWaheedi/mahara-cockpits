@@ -501,8 +501,8 @@ def run_relay(ctx: Context) -> Result:
     unknown = [r for r in rows if r.get("state") == "unknown"]
     stuck = [r for r in rows if r.get("state") == "claimed" and (age_min(r.get("updated_at"), ctx.now) or 0) > RELAY_CLAIM_MIN]
     if unknown:
-        return warn(f"{_plural(len(unknown), 'relay row')} may or may not have reached the Client Data sheet or GitHub "
-                    "(unknown). Read the sheet before anything else; never retry an unknown.",
+        return warn(f"{_plural(len(unknown), 'relay row')} may or may not have queued market intel on GitHub "
+                    "(unknown). Check the dispatch repository's market intel runs before anything else; never retry an unknown.",
                     items=[str(r.get("id")) for r in unknown][:20])
     if stuck:
         return warn(f"{_plural(len(stuck), 'relay row')} {'has' if len(stuck) == 1 else 'have'} been claimed for over "
@@ -575,8 +575,8 @@ CHECKS = (
           f"Warn: a step failed or unknown. Fail: a native answer with no steps after {EFFECTS_GRACE_MIN} minutes.",
           run_stage4_effects, owner="the tech lead", action=f"Run the planner for the answer ({RUNBOOK}).", confirm=1, clear=1),
     Check("relay", "workers", "Forms relay",
-          "The Client Data row and the GitHub dispatch of a native onboarding are sent once.", "medium",
+          "The GitHub dispatch of a native onboarding is sent once.", "medium",
           "cockpit_form_relay_outbox claimed or unknown.",
           f"Warn: claimed for over {RELAY_CLAIM_MIN} minutes, or any unknown.", run_relay, owner="the tech lead",
-          action="Read the sheet before anything; never retry an unknown.", confirm=1, clear=1),
+          action="Check the dispatch repository's market intel runs; never retry an unknown.", confirm=1, clear=1),
 )

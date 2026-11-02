@@ -266,8 +266,49 @@ export function messagesIO(
 
 const URL_RE = /(https?:\/\/\S+)/g;
 
-/** One run of text: links kept left to right inside the right-to-left message. */
-function Run({ text }: { text: string }) {
+/**
+ * The placeholder a phase 3 or phase 4 text keeps where the client's content
+ * folder goes (docs/forms/WAVE56-CONTRACT.md D-S4.0). hermes/client-messages
+ * puts the card's Google Drive Link from Client Data column H there when it
+ * sends, as it puts a form link where {form_link} is, and refuses the message
+ * while that cell holds no link. The surface shows it in the CSM's words.
+ */
+export const CONTENT_FOLDER = "{content_folder}";
+const FOLDER_KINDS: ReadonlySet<string> = new Set(["phase3", "phase4"]);
+export const FOLDER_WORDS = {
+  token: "the client's Google Drive link from Client Data",
+  note: "The client's Google Drive link from Client Data column H goes in when it sends. With no link there, it is not sent.",
+  hint: "Keep {content_folder} in the text: the client's Google Drive link from Client Data column H goes there when it sends.",
+} as const;
+
+/** {content_folder} as a label chip, left to right inside the message: what goes there, never a link. */
+function FolderToken() {
+  return (
+    <bdi dir="ltr" data-placeholder="content_folder">
+      <Chip dot={false} className="align-baseline">
+        {FOLDER_WORDS.token}
+      </Chip>
+    </bdi>
+  );
+}
+
+/**
+ * One run of text: links kept left to right inside the right-to-left
+ * message; with `folder`, each {content_folder} drawn as the words it
+ * stands for.
+ */
+function Run({ text, folder = false }: { text: string; folder?: boolean }) {
+  if (folder && text.includes(CONTENT_FOLDER))
+    return (
+      <>
+        {text
+          .split(CONTENT_FOLDER)
+          .flatMap((p, i) => [
+            ...(i > 0 ? [<FolderToken key={`folder-${i}`} />] : []),
+            <Run key={`text-${i}`} text={p} />,
+          ])}
+      </>
+    );
   const parts = text.split(URL_RE);
   return (
     <>
@@ -288,17 +329,29 @@ function Run({ text }: { text: string }) {
 const SURFACE =
   "w-full whitespace-pre-wrap break-words rounded-xl rounded-s-none border-s-2 border-primary-ink bg-muted/40 px-4 py-3 text-[15px] leading-[1.7]";
 
-/** The message as WhatsApp draws it: right to left, single-star bold, nothing else changed. */
-export function MessageSurface({ body, id }: { body: string; id?: string }) {
+/**
+ * The message as WhatsApp draws it: right to left, single-star bold, nothing
+ * else changed but a phase message's {content_folder} (`folder`), shown as
+ * the words for the link the sender puts there.
+ */
+export function MessageSurface({
+  body,
+  id,
+  folder = false,
+}: {
+  body: string;
+  id?: string;
+  folder?: boolean;
+}) {
   return (
     <div id={id} dir="rtl" lang="ar" style={NOTES_FONT} className={SURFACE}>
       {whatsappPieces(body).map((p, i) =>
         p.bold ? (
           <strong key={i} className="font-semibold">
-            <Run text={p.text} />
+            <Run text={p.text} folder={folder} />
           </strong>
         ) : (
-          <Run key={i} text={p.text} />
+          <Run key={i} text={p.text} folder={folder} />
         ),
       )}
     </div>
@@ -481,6 +534,11 @@ export function RecapApproval({
   const draft = message.state === "draft";
   // After a rollback, or with its three tries spent: Skip is all that is left.
   const closing = skipOnly(message);
+  // A phase message's {content_folder}: shown in words, and said under the text while it waits.
+  const folder = FOLDER_KINDS.has(message.kind);
+  const shown = closing ? message.body : text;
+  const folderNote =
+    folder && draft && !closing && shown.includes(CONTENT_FOLDER);
   const describedBy = [`${id}-status`, error ? `${id}-error` : null]
     .filter(Boolean)
     .join(" ");
@@ -642,6 +700,7 @@ export function RecapApproval({
                 SURFACE,
                 "resize-y focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ink",
               )}
+              aria-describedby={folderNote ? `${id}-folder` : undefined}
             />
             <p className="flex flex-wrap items-center justify-between gap-x-3 text-xs text-muted-foreground">
               <span>
@@ -670,9 +729,25 @@ export function RecapApproval({
                 {[...text].length.toLocaleString("en-US")} / 4,096
               </span>
             </p>
+            {folderNote ? (
+              <p
+                id={`${id}-folder`}
+                className="text-xs text-muted-foreground"
+                data-folder-note
+              >
+                {FOLDER_WORDS.hint}
+              </p>
+            ) : null}
           </div>
         ) : (
-          <MessageSurface body={closing ? message.body : text} />
+          <div className="space-y-1">
+            <MessageSurface body={shown} folder={folder} />
+            {folderNote ? (
+              <p className="text-xs text-muted-foreground" data-folder-note>
+                {FOLDER_WORDS.note}
+              </p>
+            ) : null}
+          </div>
         )
       ) : (
         <details className="group/message text-sm">
@@ -680,7 +755,7 @@ export function RecapApproval({
             Show the message
           </summary>
           <div className="mt-2">
-            <MessageSurface body={message.body} />
+            <MessageSurface body={message.body} folder={folder} />
           </div>
         </details>
       )}

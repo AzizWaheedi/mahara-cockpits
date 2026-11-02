@@ -106,6 +106,8 @@ const {
   stateLine,
   messageLead,
   onItsWay,
+  CONTENT_FOLDER,
+  FOLDER_WORDS,
 } = await import("../src/forms/RecapApproval");
 const lib = await import("../src/lib/clientMessages");
 const { approveRecap } = await import("../src/forms/checkinClient");
@@ -1576,5 +1578,90 @@ describe("the text rests while its approval runs (5.1's signature)", () => {
     await act(async () => h.release());
     await settle();
     expect(h.posted[0].body).toBe("the words she read");
+  });
+});
+
+describe("a phase message's content folder (docs/forms/WAVE56-CONTRACT.md D-S4.0)", () => {
+  // Make 13 [48]'s ending, verbatim; {map_link} is filled at draft, {content_folder} by the sender.
+  const PHASE3 =
+    "اطّلع على المطلوب منك وما سنعمل عليه بعد ذلك:\nhttps://mahara-onboarding-map.vercel.app/?phase=3&cid=86exfix01\n\n*إذا ما رفعتوا المحتوى للحين:*\nارفعوا كل الصور والفيديوهات في مجلد المحتوى الموحد عشان توصل مباشرة لفريق الإبداع والمونتاج:\n{content_folder}";
+  const phase = (over: any = {}) => ({
+    ...st.draft,
+    kind: "phase3",
+    body: PHASE3,
+    ...over,
+  });
+  const surfaceOf = (host: any) =>
+    host.querySelector('[data-message] [dir="rtl"][lang="ar"]');
+
+  test("the surface says what goes there in words, left to right, and the line under it says where it comes from", async () => {
+    const { node } = card([phase()]);
+    const host = await mount(node);
+    const surface = surfaceOf(host);
+    const token = surface.querySelector(
+      'bdi[dir="ltr"][data-placeholder="content_folder"]',
+    );
+    expect(text(token)).toBe(FOLDER_WORDS.token);
+    expect(String(token.querySelector("span")?.className)).toContain(
+      "rounded-full",
+    );
+    expect(surface.textContent).not.toContain(CONTENT_FOLDER);
+    expect(surface.textContent).toBe(
+      PHASE3.replace(
+        "*إذا ما رفعتوا المحتوى للحين:*",
+        "إذا ما رفعتوا المحتوى للحين:",
+      ).replace(CONTENT_FOLDER, FOLDER_WORDS.token),
+    );
+    // The map link stays a left-to-right run of its own.
+    expect(text(surface.querySelector('bdi[dir="ltr"].break-all'))).toBe(
+      "https://mahara-onboarding-map.vercel.app/?phase=3&cid=86exfix01",
+    );
+    expect(text(host.querySelector("[data-folder-note]"))).toBe(
+      FOLDER_WORDS.note,
+    );
+  });
+
+  test("Edit keeps the placeholder in the text, with the hint the field is described by; approving sends it as stored", async () => {
+    const { io, node } = card([phase()]);
+    const host = await mount(node);
+    await click(named("Edit")[0]);
+    const field = host.querySelector("[data-message] textarea");
+    expect(field.value).toBe(PHASE3);
+    const hint = host.querySelector("[data-folder-note]");
+    expect(text(hint)).toBe(FOLDER_WORDS.hint);
+    expect(field.getAttribute("aria-describedby")).toBe(hint.id);
+    // Taken out, the text goes without the link and the hint goes too.
+    await typeInto(field, PHASE3.replace(`\n${CONTENT_FOLDER}`, ""));
+    expect(host.querySelector("[data-folder-note]")).toBeNull();
+    expect(field.getAttribute("aria-describedby")).toBeNull();
+    await click(named("Undo my edits")[0]);
+    await click(named("Approve and send")[0]);
+    expect(io.calls.find(c => c.name === "approve")?.args).toEqual({
+      messageId: fx.MESSAGE_ID,
+      body: PHASE3,
+      acceptWarnings: false,
+    });
+    // Approved and after: the words under Show the message, no note.
+    const surface = surfaceOf(host);
+    expect(
+      text(surface.querySelector('[data-placeholder="content_folder"]')),
+    ).toBe(FOLDER_WORDS.token);
+    expect(host.querySelector("[data-folder-note]")).toBeNull();
+  });
+
+  test("only phase 3 and phase 4: any other message shows its text as it is", async () => {
+    const { node } = card([{ ...st.draft, body: `x ${CONTENT_FOLDER}` }]);
+    const host = await mount(node);
+    expect(surfaceOf(host).textContent).toBe(`x ${CONTENT_FOLDER}`);
+    expect(host.querySelector("[data-placeholder]")).toBeNull();
+    expect(host.querySelector("[data-folder-note]")).toBeNull();
+    const four = await mount(
+      <RecapApproval
+        message={phase({ kind: "phase4" })}
+        io={fx.fakeMessages([]) as any}
+        onChange={() => {}}
+      />,
+    );
+    expect(four.querySelector("[data-placeholder]")).toBeTruthy();
   });
 });
