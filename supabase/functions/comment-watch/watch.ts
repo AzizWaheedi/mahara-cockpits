@@ -132,13 +132,23 @@ const KIND_LABEL: Record<string, string> = {
   note: 'a comment someone typed',
 };
 
-/** The Convex digest prompt (commentWatch.ts digestPrompt), word for word. */
+/**
+ * How much of a comment the digest reads. The Convex prompt read 12,000 characters of every kind. A kickoff-kind
+ * comment (a Kickoff Handoff, or the onboarding form's raw answers) reads 16,000 (Stage 4 plan B7): 2 of the 42
+ * rebuilt raw answers comments run past 12,000 (the longest about 13,300), and their last answers are the
+ * additional information and the Drive link. 16,000 plus the prompt's own words (1,914 before the client's name and
+ * the author) leaves about 12,000 of cockpit_comment_watch_record's 30,000 for the card's Do's & Don'ts.
+ */
+export const DIGEST_TEXT_MAX = 12_000;
+export const DIGEST_KICKOFF_TEXT_MAX = 16_000;
+
+/** The Convex digest prompt (commentWatch.ts digestPrompt), word for word, but for the longer cut of a kickoff-kind comment. */
 export function digestPrompt(client: string, kind: string, at: number, by: string, text: string, current: string): string {
   return `You are reading one comment from the ClickUp card of Mahara Media's client "${client}". Mahara runs Meta lead-generation ads for construction, architecture, interior design and contracting firms in the Gulf. The team is a media buyer (Meta campaigns), a creative director (scripts and videos) and a client success manager.
 
 The comment is ${KIND_LABEL[kind] ?? 'a comment'}, posted ${new Date(at).toISOString().slice(0, 10)} by ${by || 'someone'}:
 ---
-${text.slice(0, 12000)}
+${text.slice(0, kind === 'kickoff' ? DIGEST_KICKOFF_TEXT_MAX : DIGEST_TEXT_MAX)}
 ---
 
 The client's current Do's & Don'ts:

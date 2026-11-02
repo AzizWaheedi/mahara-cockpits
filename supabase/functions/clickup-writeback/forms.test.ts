@@ -9,6 +9,7 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
+  CARD_FACTS,
   cardRefused,
   checkToken,
   executeForm,
@@ -2290,5 +2291,799 @@ describe("Stage 4 keys (4.13.4)", () => {
       field: "Onboarding Map",
       new: "phase 4",
     });
+  });
+});
+
+// --- card_facts (better-data plan B8): fill a card field only while the card leaves it empty ------------------
+
+const CONSULT = "45fdd2ea-f83c-4721-bce7-2e6187a43541";
+const ADS = "2de15aa5-7fe9-48bf-86a1-e4cfee1306c9";
+const FATHOM = "abaa31ee-28ff-46f6-83bf-6c6d357a26d5";
+const CALL_DATE = "ee9bf855-e05b-4afc-addf-1063cb54d3f0";
+const WEBSITE = "5d57fdde-eb70-4610-a23b-88f718b4451d";
+const optionOfName = (fieldId: string, name: string) =>
+  Object.entries(CARD_FACTS[fieldId].options ?? {}).find(
+    ([, n]) => n === name,
+  )?.[0] as string;
+const IN_OFFICE = optionOfName(CONSULT, "In Office");
+const ONLINE = optionOfName(CONSULT, "Online");
+const META = optionOfName(ADS, "Facebook/Meta");
+const TIKTOK = optionOfName(ADS, "Tiktok");
+const CALL_LINK = "https://fathom.video/share/invented-call-0001";
+const SITE = "https://acme-interiors.example";
+
+/** The five facts as the planner writes them: one of each kind, onlyIfEmpty, a source. Every value is invented. */
+const facts = (): Row[] => [
+  {
+    fieldId: CONSULT,
+    kind: "labels",
+    label: "Consultation Types",
+    optionIds: [IN_OFFICE, ONLINE],
+    onlyIfEmpty: true,
+    source: "kickoff: consultation types",
+  },
+  {
+    fieldId: ADS,
+    kind: "drop_down",
+    label: "ADs Platform",
+    optionId: META,
+    onlyIfEmpty: true,
+    source: "kickoff: ad platforms",
+  },
+  {
+    fieldId: FATHOM,
+    kind: "url",
+    label: "Fathom",
+    value: CALL_LINK,
+    onlyIfEmpty: true,
+    source: "kickoff: call recording",
+  },
+  {
+    fieldId: CALL_DATE,
+    kind: "date",
+    label: "Onboarding Call Date",
+    value: "2026-10-27",
+    onlyIfEmpty: true,
+    source: "kickoff: submitted day",
+  },
+  {
+    fieldId: WEBSITE,
+    kind: "url",
+    label: "Company Website",
+    value: SITE,
+    onlyIfEmpty: true,
+    source: "onboarding: website",
+  },
+];
+const only = (...ids: string[]) => facts().filter(f => ids.includes(f.fieldId));
+
+/**
+ * One client card with the five fields, as ClickUp keeps them: labels as a list of option ids, a dropdown read back as
+ * its orderindex, a link as sent, a date-only value at 03:00Z of its day. Last write wins, as on ClickUp.
+ */
+class FactsCard {
+  calls: Call[] = [];
+  values = new Map<string, unknown>();
+  /** Answer this call with an error before ClickUp does anything. */
+  fail?: (c: Call) => Error | undefined;
+  /** A field whose writes ClickUp answers and never keeps. */
+  dropField?: string;
+  /** Another writer's value that lands right after our write to its field (theirs is last, so it stays). */
+  raceAfterWrite?: { fieldId: string; value: unknown };
+  fields: Row[] = [
+    {
+      id: CONSULT,
+      name: "Consultation Types",
+      type: "labels",
+      type_config: {
+        options: Object.entries(CARD_FACTS[CONSULT].options ?? {}).map(
+          ([id, label]) => ({ id, label, color: null }),
+        ),
+      },
+    },
+    {
+      id: ADS,
+      name: "ADs Platform",
+      type: "drop_down",
+      type_config: {
+        options: Object.entries(CARD_FACTS[ADS].options ?? {}).map(
+          ([id, name], orderindex) => ({ id, name, orderindex }),
+        ),
+      },
+    },
+    { id: FATHOM, name: "Fathom", type: "url", type_config: {} },
+    {
+      id: CALL_DATE,
+      name: "Onboarding Call Date",
+      type: "date",
+      type_config: {},
+    },
+    { id: WEBSITE, name: "Company Website", type: "url", type_config: {} },
+  ];
+  provider(): Provider {
+    return {
+      call: async (_p, method, path, body) =>
+        this.handle({ method, path, body }),
+    };
+  }
+  writes() {
+    return this.calls.filter(c => c.method !== "GET");
+  }
+  setDay(fieldId: string, day: string, hour = 3) {
+    this.values.set(fieldId, String(Date.parse(`${day}T0${hour}:00:00Z`)));
+  }
+  private handle(c: Call): Row {
+    this.calls.push(structuredClone(c));
+    const failure = this.fail?.(c);
+    if (failure) throw failure;
+    if (c.method === "GET" && /^list\/\d+\/field$/.test(c.path))
+      return { fields: structuredClone(this.fields) };
+    const m = /^task\/([^/]+)(?:\/field\/([^/]+))?$/.exec(c.path);
+    if (!m || (m[1] !== CARD && m[1] !== FORMS_TEST_CARD_ID))
+      throw rejected(404);
+    if (c.method === "GET" && !m[2])
+      return {
+        id: CARD,
+        list: { id: CARDS_LIST },
+        custom_fields: this.fields.map(f => ({
+          ...structuredClone(f),
+          value: structuredClone(this.values.get(f.id)),
+        })),
+      };
+    if (c.method === "POST" && m[2]) {
+      const f = this.fields.find(x => x.id === m[2]);
+      if (!f) throw rejected(400);
+      const opts: Row[] = f.type_config?.options ?? [];
+      const v = c.body?.value;
+      let kept: unknown = v;
+      if (f.type === "labels") {
+        if (!Array.isArray(v) || v.some(id => !opts.some(o => o.id === id)))
+          throw rejected(400);
+      } else if (f.type === "drop_down") {
+        const opt = opts.find(o => o.id === v);
+        if (!opt) throw rejected(400);
+        kept = opt.orderindex;
+      } else if (f.type === "date") {
+        if (c.body?.value_options?.time !== false) throw rejected(400);
+        kept = String(
+          Date.parse(
+            `${new Date(Number(v)).toISOString().slice(0, 10)}T03:00:00Z`,
+          ),
+        );
+      }
+      if (this.dropField !== f.id) this.values.set(f.id, kept);
+      if (this.raceAfterWrite?.fieldId === f.id) {
+        this.values.set(f.id, this.raceAfterWrite.value);
+        this.raceAfterWrite = undefined;
+      }
+      return {};
+    }
+    throw rejected(404);
+  }
+}
+const FORMS_TEST_CARD_ID = "86eywg1cq";
+
+async function factsItem(
+  fields: Row[],
+  over: { formKey?: string; progress?: Row; plan?: Row } = {},
+): Promise<FormItem> {
+  return stage4Item(
+    "card_facts",
+    { fields, lines: ["Card facts"], ...(over.plan ?? {}) },
+    {
+      payload: { formKey: over.formKey ?? "kickoff" },
+      progress: over.progress,
+    },
+  );
+}
+
+/** Check, freeze and execute one card_facts row against the fake card; every progress save kept. */
+async function runFacts(card: FactsCard, it: FormItem) {
+  const checked = await formStep(it);
+  if ("fail" in checked) throw new Error(checked.fail);
+  const step = frozenStep(it, checked.step);
+  if (!step) throw new Error("frozen step mismatch");
+  const saves: Row[] = [];
+  const out = await executeForm(
+    it,
+    step,
+    card.provider(),
+    async patch => {
+      saves.push(structuredClone(patch));
+    },
+    () => NOW,
+  );
+  return { out, saves, step };
+}
+const receiptOf = (out: { progress: unknown }) =>
+  (out.progress as Row).steps?.card_facts?.fields as Row;
+
+describe("card_facts (plan B8): only empty fields, never over a card value", () => {
+  it("formStep: the five fields on either form, each of its kind with onlyIfEmpty; the trail's names are the writer's", async () => {
+    const ok = await formStep(await factsItem(facts()));
+    expect(ok).toEqual({
+      step: {
+        key: "card_facts",
+        type: "facts",
+        taskId: CARD,
+        fields: [
+          {
+            fieldId: CONSULT,
+            kind: "labels",
+            label: "Consultation Types",
+            optionIds: [IN_OFFICE, ONLINE],
+          },
+          {
+            fieldId: ADS,
+            kind: "drop_down",
+            label: "ADs Platform",
+            optionId: META,
+          },
+          { fieldId: FATHOM, kind: "url", label: "Fathom", value: CALL_LINK },
+          {
+            fieldId: CALL_DATE,
+            kind: "date",
+            label: "Onboarding Call Date",
+            day: "2026-10-27",
+          },
+          {
+            fieldId: WEBSITE,
+            kind: "url",
+            label: "Company Website",
+            value: SITE,
+          },
+        ],
+      },
+    });
+    expect(
+      "step" in
+        (await formStep(
+          await factsItem(only(WEBSITE), { formKey: "onboarding" }),
+        )),
+    ).toBe(true);
+    expect(
+      await formStep(await factsItem(facts(), { formKey: "checkin" })),
+    ).toEqual({ fail: SAY_FORMS.mismatch });
+    // A date as the planner may name it: a day, noon Kuwait in ms, or a call's starts_at with its zone.
+    const dayOf = async (value: unknown, day?: string) => {
+      const r = await formStep(
+        await factsItem([
+          { ...only(CALL_DATE)[0], value, ...(day ? { day } : {}) },
+        ]),
+      );
+      return "step" in r && r.step.type === "facts"
+        ? r.step.fields[0].day
+        : null;
+    };
+    expect(await dayOf(noonKuwait("2026-10-27"))).toBe("2026-10-27");
+    expect(await dayOf(String(noonKuwait("2026-10-27")), "2026-10-27")).toBe(
+      "2026-10-27",
+    );
+    expect(await dayOf("2026-10-27T22:30:00Z")).toBe("2026-10-28"); // 01:30 Kuwait the next day
+    expect(await dayOf("2026-10-27T10:00:00+03:00")).toBe("2026-10-27");
+    for (const [value, day] of [
+      ["2026-02-30", undefined],
+      ["2026-10-27T10:00:00", undefined], // no zone: any day
+      [1761552000, undefined], // seconds read as ms: 1970
+      [noonKuwait("2026-10-27"), "2026-10-28"],
+      ["27/10/2026", undefined],
+      [null, undefined],
+    ] as const)
+      expect(await dayOf(value, day)).toBeNull();
+  });
+
+  it("an unknown field id, kind or option, or a field without onlyIfEmpty, fails the row with no call", async () => {
+    const one = (patch: Row, base = facts()[0]) => [{ ...base, ...patch }];
+    const bad: Row[][] = [
+      // Fields outside the five: Client Happiness, a Make card field, an invented Country-like id.
+      one({ fieldId: FORM_FIELDS.happiness }),
+      one({ fieldId: STATUS, kind: "drop_down", optionId: META }),
+      one({
+        fieldId: "e0ca65e7-0000-4000-8000-000000000000",
+        kind: "drop_down",
+      }),
+      // The wrong kind, or a value of another kind.
+      one({ kind: "drop_down", optionId: IN_OFFICE }),
+      one({ kind: "url", value: SITE }),
+      // Options: unknown, empty, twice, by name only, another field's.
+      one({ optionIds: ["00000000-0000-4000-8000-000000000000"] }),
+      one({ optionIds: [] }),
+      one({ optionIds: [IN_OFFICE, IN_OFFICE] }),
+      one({ optionId: undefined, optionName: "Facebook/Meta" }, facts()[1]),
+      one({ optionId: IN_OFFICE }, facts()[1]),
+      one({ optionId: [META] }, facts()[1]),
+      // onlyIfEmpty must be true itself.
+      one({ onlyIfEmpty: undefined }),
+      one({ onlyIfEmpty: false }),
+      one({ onlyIfEmpty: "true" }),
+      // A link not on https, or not a text.
+      one({ value: "http://acme-interiors.example" }, facts()[4]),
+      one({ value: "javascript:alert(1)" }, facts()[2]),
+      one({ value: ["https://a.example"] }, facts()[4]),
+      // No label; a field twice; nothing at all; more than five.
+      one({ label: undefined }),
+      [...only(FATHOM), ...only(FATHOM)],
+      [],
+      [...facts(), only(FATHOM)[0]],
+    ];
+    for (const fields of bad)
+      expect(await formStep(await factsItem(fields))).toEqual({
+        fail: SAY_FORMS.mismatch,
+      });
+    // No plan list at all.
+    const none = await factsItem([]);
+    none.effect!.plan = { taskId: CARD };
+    expect(await formStep(none)).toEqual({ fail: SAY_FORMS.mismatch });
+    // The fake card was never called: formStep makes no call, and run.ts fails a row it refuses before any.
+    expect(new FactsCard().calls).toEqual([]);
+  });
+
+  it("empty fields are written once each and read back; the receipt says each was empty before", async () => {
+    const card = new FactsCard();
+    const { out, saves } = await runFacts(card, await factsItem(facts()));
+    expect(out.state).toBe("delivered");
+    expect(card.calls.map(c => `${c.method} ${c.path}`)).toEqual([
+      `GET task/${CARD}`,
+      `POST task/${CARD}/field/${CONSULT}`,
+      `POST task/${CARD}/field/${ADS}`,
+      `POST task/${CARD}/field/${FATHOM}`,
+      `POST task/${CARD}/field/${CALL_DATE}`,
+      `POST task/${CARD}/field/${WEBSITE}`,
+      `GET task/${CARD}`,
+    ]);
+    expect(card.writes().map(c => c.body)).toEqual([
+      { value: [IN_OFFICE, ONLINE] },
+      { value: META },
+      { value: CALL_LINK },
+      // Noon Kuwait as a date-only value, as the check-in dates are; ClickUp keeps it at 03:00Z of the day.
+      {
+        value: Date.parse("2026-10-27T09:00:00Z"),
+        value_options: { time: false },
+      },
+      { value: SITE },
+    ]);
+    expect(kuwaitDay(card.values.get(CALL_DATE))).toBe("2026-10-27");
+    expect(card.values.get(ADS)).toBe(0); // the dropdown reads back as its orderindex
+    const written = { before: "empty", state: "written" };
+    expect(out.progress.steps.card_facts.state).toBe("done");
+    // Nothing kept: no note on the row or the step.
+    expect(out.note).toBeUndefined();
+    expect(out.progress.steps.card_facts.note).toBeUndefined();
+    expect(receiptOf(out)).toEqual({
+      [CONSULT]: written,
+      [ADS]: written,
+      [FATHOM]: written,
+      [CALL_DATE]: written,
+      [WEBSITE]: written,
+    });
+    // The receipt was saved before the first write, every field due.
+    const due = { before: "empty", state: "due" };
+    const first = saves.find(
+      s => s.progress?.steps?.card_facts?.state === "started",
+    );
+    expect(first?.progress.steps.card_facts.fields).toEqual({
+      [CONSULT]: due,
+      [ADS]: due,
+      [FATHOM]: due,
+      [CALL_DATE]: due,
+      [WEBSITE]: due,
+    });
+    // No value, only states, in the progress the audit trigger copies.
+    expect(JSON.stringify(out.progress)).not.toContain(SITE);
+    expect(JSON.stringify(out.progress)).not.toContain(CALL_LINK);
+    // A settled row is never written again.
+    const again = await runFacts(
+      card,
+      await factsItem(facts(), { progress: out.progress as Row }),
+    );
+    expect(again.out.state).toBe("delivered");
+    expect(again.out.note).toBeUndefined();
+    expect(card.writes()).toHaveLength(5);
+    expect(card.calls).toHaveLength(7);
+  });
+
+  it("a row that writes one field and keeps another is delivered with the kept sentence as its note, differs said; a rerun says it again", async () => {
+    // Review (writer): the card already has Consultation Types = Online, the form says In Office, ADs Platform is empty.
+    const card = new FactsCard();
+    card.values.set(CONSULT, [ONLINE]);
+    const plan = [
+      { ...only(CONSULT)[0], optionIds: [IN_OFFICE] },
+      ...only(ADS),
+    ];
+    const said =
+      "kept: the card already has a value for Consultation Types; Consultation Types differs from the form, so check it on the card";
+    const { out, saves } = await runFacts(card, await factsItem(plan));
+    expect(out).toMatchObject({ state: "delivered", note: said });
+    expect(card.writes()).toEqual([
+      {
+        method: "POST",
+        path: `task/${CARD}/field/${ADS}`,
+        body: { value: META },
+      },
+    ]);
+    expect(card.values.get(CONSULT)).toEqual([ONLINE]);
+    expect(out.progress.steps.card_facts).toMatchObject({
+      state: "done",
+      note: said,
+      fields: {
+        [CONSULT]: {
+          before: "set",
+          state: "kept",
+          differs: true,
+          note: SAY_FORMS.factDiffers,
+        },
+        [ADS]: { before: "empty", state: "written" },
+      },
+    });
+    // The note is saved with the settled step, the progress the queue trigger copies into the effect's receipt.step.
+    expect(saves.at(-1)?.progress.steps.card_facts.note).toBe(said);
+    // A settled row read again says it again, with no call.
+    const calls = card.calls.length;
+    const again = await runFacts(
+      card,
+      await factsItem(plan, { progress: out.progress as Row }),
+    );
+    expect(again.out).toMatchObject({ state: "delivered", note: said });
+    expect(card.calls).toHaveLength(calls);
+    // The same value kept beside a write: the kept sentence alone, no "differs".
+    const same = new FactsCard();
+    same.values.set(FATHOM, CALL_LINK);
+    expect(
+      (await runFacts(same, await factsItem(only(FATHOM, WEBSITE)))).out,
+    ).toMatchObject({
+      state: "delivered",
+      note: "kept: the card already has a value for Fathom",
+    });
+  });
+
+  it("a set field is kept: the same value with no note, another value with one; only the empty ones are written", async () => {
+    const card = new FactsCard();
+    card.values.set(CONSULT, [ONLINE, IN_OFFICE]); // the same two, in another order
+    card.values.set(ADS, 1); // Tiktok, by orderindex: the form says Facebook/Meta
+    card.setDay(CALL_DATE, "2026-10-27", 4); // the same Kuwait day at another hour
+    card.values.set(WEBSITE, "https://another-site.example");
+    const { out } = await runFacts(card, await factsItem(facts()));
+    expect(out).toMatchObject({
+      state: "delivered",
+      note: "kept: the card already has a value for Consultation Types, ADs Platform, Onboarding Call Date and Company Website; ADs Platform and Company Website differ from the form, so check them on the card",
+    });
+    expect(card.writes()).toEqual([
+      {
+        method: "POST",
+        path: `task/${CARD}/field/${FATHOM}`,
+        body: { value: CALL_LINK },
+      },
+    ]);
+    expect(receiptOf(out)).toEqual({
+      [CONSULT]: { before: "set", state: "kept" },
+      [ADS]: {
+        before: "set",
+        state: "kept",
+        differs: true,
+        note: SAY_FORMS.factDiffers,
+      },
+      [FATHOM]: { before: "empty", state: "written" },
+      [CALL_DATE]: { before: "set", state: "kept" },
+      [WEBSITE]: {
+        before: "set",
+        state: "kept",
+        differs: true,
+        note: SAY_FORMS.factDiffers,
+      },
+    });
+    expect(card.values.get(ADS)).toBe(1);
+    expect(card.values.get(WEBSITE)).toBe("https://another-site.example");
+    // A labels field that holds fewer labels is set: never added to.
+    const fewer = new FactsCard();
+    fewer.values.set(CONSULT, [IN_OFFICE]);
+    const r = await runFacts(fewer, await factsItem(only(CONSULT)));
+    expect(fewer.writes()).toEqual([]);
+    expect(receiptOf(r.out)[CONSULT]).toMatchObject({
+      before: "set",
+      state: "kept",
+      differs: true,
+    });
+  });
+
+  it("nothing to write reads skipped with the trail's kept sentence; a retry reads it again with no call", async () => {
+    const card = new FactsCard();
+    card.values.set(CONSULT, [IN_OFFICE, ONLINE]);
+    card.values.set(ADS, 1);
+    const said =
+      "kept: the card already has a value for Consultation Types and ADs Platform; ADs Platform differs from the form, so check it on the card";
+    const { out } = await runFacts(card, await factsItem(only(CONSULT, ADS)));
+    expect(out).toMatchObject({ state: "skipped", error: said });
+    expect(card.writes()).toEqual([]);
+    expect(out.progress.steps.card_facts).toMatchObject({
+      state: "skipped",
+      fields: {
+        [CONSULT]: { before: "set", state: "kept" },
+        [ADS]: { before: "set", state: "kept", differs: true },
+      },
+    });
+    const calls = card.calls.length;
+    const again = await runFacts(
+      card,
+      await factsItem(only(CONSULT, ADS), { progress: out.progress as Row }),
+    );
+    expect(again.out).toMatchObject({ state: "skipped", error: said });
+    expect(card.calls).toHaveLength(calls);
+    // The same value alone: no "differs".
+    const same = new FactsCard();
+    same.values.set(FATHOM, CALL_LINK);
+    expect(
+      (await runFacts(same, await factsItem(only(FATHOM)))).out,
+    ).toMatchObject({
+      state: "skipped",
+      error: "kept: the card already has a value for Fathom",
+    });
+    expect(SAY_FORMS.factsKept(["A", "B", "C"], ["B", "C"])).toBe(
+      "kept: the card already has a value for A, B and C; B and C differ from the form, so check them on the card",
+    );
+  });
+
+  it("a race: another value fills the field between the read and the read-back; it is kept with a note, never written twice", async () => {
+    const card = new FactsCard();
+    card.raceAfterWrite = {
+      fieldId: FATHOM,
+      value: "https://fathom.video/share/another-call",
+    };
+    const { out } = await runFacts(
+      card,
+      await factsItem(only(FATHOM, WEBSITE)),
+    );
+    expect(out).toMatchObject({
+      state: "delivered",
+      note: "kept: the card already has a value for Fathom; Fathom differs from the form, so check it on the card",
+    });
+    expect(receiptOf(out)).toEqual({
+      [FATHOM]: {
+        before: "empty",
+        state: "kept",
+        differs: true,
+        note: SAY_FORMS.factRaced,
+      },
+      [WEBSITE]: { before: "empty", state: "written" },
+    });
+    expect(card.writes()).toHaveLength(2);
+    expect(card.values.get(FATHOM)).toBe(
+      "https://fathom.video/share/another-call",
+    );
+    // The raced field alone: nothing of ours stayed, so skipped with the sentence, not unknown.
+    const alone = new FactsCard();
+    alone.raceAfterWrite = {
+      fieldId: FATHOM,
+      value: "https://fathom.video/share/another-call",
+    };
+    expect(
+      (await runFacts(alone, await factsItem(only(FATHOM)))).out,
+    ).toMatchObject({
+      state: "skipped",
+      error:
+        "kept: the card already has a value for Fathom; Fathom differs from the form, so check it on the card",
+    });
+    expect(alone.writes()).toHaveLength(1);
+    // An earlier run's write went unanswered and another value is there now: kept, no second write.
+    const resumed = new FactsCard();
+    resumed.values.set(FATHOM, "https://fathom.video/share/another-call");
+    const progress = {
+      steps: {
+        card_facts: {
+          state: "started",
+          at: new Date(NOW - 60_000).toISOString(),
+          startedAt: new Date(NOW - 60_000).toISOString(),
+          fields: { [FATHOM]: { before: "empty", state: "due" } },
+        },
+      },
+    };
+    const r = await runFacts(
+      resumed,
+      await factsItem(only(FATHOM), { progress }),
+    );
+    expect(r.out.state).toBe("skipped");
+    expect(receiptOf(r.out)[FATHOM]).toEqual({
+      before: "empty",
+      state: "kept",
+      differs: true,
+      note: SAY_FORMS.factRaced,
+    });
+    expect(resumed.writes()).toEqual([]);
+  });
+
+  it("a write that does not read back is unknown; the next run reads first, never takes its own value for the card's, and writes only what is still empty", async () => {
+    const card = new FactsCard();
+    card.dropField = WEBSITE;
+    const first = await runFacts(card, await factsItem(only(FATHOM, WEBSITE)));
+    expect(first.out).toMatchObject({
+      state: "unknown",
+      error: SAY_FORMS.notBack("Company Website", "written"),
+    });
+    expect(first.out.progress.steps.card_facts).toMatchObject({
+      state: "started",
+      fields: {
+        [FATHOM]: { before: "empty", state: "written" },
+        [WEBSITE]: { before: "empty", state: "due" },
+      },
+    });
+    card.dropField = undefined;
+    card.calls = [];
+    const next = await runFacts(
+      card,
+      await factsItem(only(FATHOM, WEBSITE), {
+        progress: first.out.progress as Row,
+      }),
+    );
+    expect(next.out.state).toBe("delivered");
+    // Fathom now holds this writer's own value: still "empty before", and not written again.
+    expect(card.writes()).toEqual([
+      {
+        method: "POST",
+        path: `task/${CARD}/field/${WEBSITE}`,
+        body: { value: SITE },
+      },
+    ]);
+    expect(receiptOf(next.out)).toEqual({
+      [FATHOM]: { before: "empty", state: "written" },
+      [WEBSITE]: { before: "empty", state: "written" },
+    });
+    // ClickUp kept the late write after all: read back, nothing written.
+    const late = new FactsCard();
+    late.values.set(WEBSITE, SITE);
+    const r = await runFacts(
+      late,
+      await factsItem(only(WEBSITE), {
+        progress: {
+          steps: {
+            card_facts: {
+              state: "started",
+              at: new Date(NOW).toISOString(),
+              fields: { [WEBSITE]: { before: "empty", state: "due" } },
+            },
+          },
+        },
+      }),
+    );
+    expect(r.out.state).toBe("delivered");
+    expect(late.writes()).toEqual([]);
+    expect(receiptOf(r.out)[WEBSITE]).toEqual({
+      before: "empty",
+      state: "written",
+    });
+  });
+
+  it("a 429 on a later write keeps the receipt and reads unknown; on the first write of a fresh step it starts clean", async () => {
+    const card = new FactsCard();
+    card.fail = c =>
+      c.method === "POST" && c.path.endsWith(WEBSITE)
+        ? rejected(429)
+        : undefined;
+    const first = await runFacts(card, await factsItem(only(FATHOM, WEBSITE)));
+    expect(first.out.state).toBe("unknown");
+    expect(first.out.progress.steps.card_facts).toMatchObject({
+      state: "started",
+      fields: {
+        [FATHOM]: { before: "empty", state: "due" },
+        [WEBSITE]: { before: "empty", state: "due" },
+      },
+    });
+    card.fail = undefined;
+    const next = await runFacts(
+      card,
+      await factsItem(only(FATHOM, WEBSITE), {
+        progress: first.out.progress as Row,
+      }),
+    );
+    expect(next.out.state).toBe("delivered");
+    expect(receiptOf(next.out)).toEqual({
+      [FATHOM]: { before: "empty", state: "written" },
+      [WEBSITE]: { before: "empty", state: "written" },
+    });
+    expect(card.writes().map(c => c.path)).toEqual([
+      `task/${CARD}/field/${FATHOM}`,
+      `task/${CARD}/field/${WEBSITE}`, // refused (429): never landed
+      `task/${CARD}/field/${WEBSITE}`,
+    ]);
+    // The first write of a fresh step refused with a 429: nothing landed, so the step starts clean.
+    const fresh = new FactsCard();
+    fresh.fail = c => (c.method === "POST" ? rejected(429) : undefined);
+    const r = await runFacts(fresh, await factsItem(only(FATHOM, WEBSITE)));
+    expect(r.out.state).toBe("retry");
+    expect(r.out.progress.steps.card_facts).toBeUndefined();
+    // A resumed step keeps its receipt even on its first write.
+    const resumed = new FactsCard();
+    resumed.values.set(FATHOM, CALL_LINK);
+    resumed.fail = c => (c.method === "POST" ? rejected(429) : undefined);
+    const again = await runFacts(
+      resumed,
+      await factsItem(only(FATHOM, WEBSITE), {
+        progress: first.out.progress as Row,
+      }),
+    );
+    expect(again.out.state).toBe("unknown");
+    expect(again.out.progress.steps.card_facts.fields[FATHOM]).toEqual({
+      before: "empty",
+      state: "written",
+    });
+  });
+
+  it("an option ClickUp no longer has, or a field gone from the card, fails before any write", async () => {
+    const card = new FactsCard();
+    card.fields[1].type_config.options =
+      card.fields[1].type_config.options.filter((o: Row) => o.id !== TIKTOK);
+    const tiktok = [{ ...only(ADS)[0], optionId: TIKTOK }, ...only(FATHOM)];
+    expect((await runFacts(card, await factsItem(tiktok))).out).toMatchObject({
+      state: "failed",
+      error: SAY_FORMS.noFieldOption("ADs Platform", "Tiktok"),
+    });
+    expect(card.writes()).toEqual([]);
+    // Set already, the field is kept whatever its options: Fathom is written.
+    card.values.set(ADS, 0);
+    expect((await runFacts(card, await factsItem(tiktok))).out.state).toBe(
+      "delivered",
+    );
+    expect(card.writes().map(c => c.path)).toEqual([
+      `task/${CARD}/field/${FATHOM}`,
+    ]);
+    const gone = new FactsCard();
+    gone.fields = gone.fields.filter(f => f.id !== WEBSITE);
+    expect(
+      (await runFacts(gone, await factsItem(only(FATHOM, WEBSITE)))).out,
+    ).toMatchObject({
+      state: "failed",
+      error: SAY_FORMS.noField("Company Website"),
+    });
+    expect(gone.writes()).toEqual([]);
+    // Off the Clients - Mahara list: failed, nothing written (readCard).
+  });
+
+  it("a held row shows words; the doctor names a missing field, a field of another kind and a missing option", async () => {
+    expect(planForm(await factsItem(only(FATHOM, WEBSITE)))).toEqual([
+      {
+        queueId: "q-card_facts",
+        kind: "form",
+        taskId: CARD,
+        field: "Empty card fields filled from the answers",
+        old: null,
+        new: "up to 2, each only where the card is empty",
+      },
+    ]);
+    const mine = (problems: string[]) =>
+      problems.filter(p =>
+        /Consultation Types|ADs Platform|Fathom|Onboarding Call Date|Company Website|Card facts/.test(
+          p,
+        ),
+      );
+    const card = new FactsCard();
+    const inputs = {};
+    expect(
+      mine(
+        (await formsDoctorChecks(inputs, card.provider(), [], ["kickoff"]))
+          .problems,
+      ),
+    ).toEqual([]);
+    // Off for check-in alone.
+    const off = new FactsCard();
+    off.fields = [];
+    expect(
+      mine(
+        (await formsDoctorChecks(inputs, off.provider(), [], ["checkin"]))
+          .problems,
+      ),
+    ).toEqual([]);
+    const broken = new FactsCard();
+    broken.fields = broken.fields.filter(f => f.id !== WEBSITE);
+    broken.fields[1] = { ...broken.fields[1], type: "labels" };
+    broken.fields[0].type_config.options =
+      broken.fields[0].type_config.options.filter((o: Row) => o.id !== ONLINE);
+    expect(
+      mine(
+        (await formsDoctorChecks(inputs, broken.provider(), [], ["onboarding"]))
+          .problems,
+      ),
+    ).toEqual([
+      'Consultation Types has no "Online" option in ClickUp any more, so a card facts write with it would fail.',
+      "ADs Platform is a labels field in ClickUp, not drop_down, so card facts would not write it.",
+      "Card facts write Company Website (5d57fdde), which is not on the Clients - Mahara list.",
+    ]);
   });
 });

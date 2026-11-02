@@ -2,7 +2,7 @@ import {describe, expect, test} from 'bun:test';
 import {cardCommentText} from '../clickup-writeback/requests.ts';
 import {CLIENTS_LIST, DOS_DONTS_FIELD, NOTES_MARK} from '../clickup-writeback/rules.ts';
 import {
-  type Admin, CLICKUP_GAP_MS, type Clock, DatabaseError, DIGEST_LIMIT, digestPrompt, gate, handle, isCurrent, kindOf, liveSources, mergeRules,
+  type Admin, CLICKUP_GAP_MS, type Clock, DatabaseError, DIGEST_KICKOFF_TEXT_MAX, DIGEST_LIMIT, DIGEST_TEXT_MAX, digestPrompt, gate, handle, isCurrent, kindOf, liveSources, mergeRules,
   nearDuplicate, type PendingRule, type RecordItem, rotation, RULES_BUDGET_MS, runWatch, SCAN_BUDGET_MS, type Store, supabaseStore,
 } from './watch.ts';
 
@@ -158,6 +158,45 @@ describe('the Convex rules, ported', () => {
     expect(p).not.toContain('x'.repeat(12_001));
     expect(digestPrompt('Acme', 'note', NOW, '', 'Hello', '')).toContain('a comment someone typed, posted 2026-10-09 by someone');
     expect(digestPrompt('Acme', 'note', NOW, '', 'Hello', '')).toContain('(none yet)');
+  });
+
+  test('a kickoff-kind comment is read to 16,000 characters; every other kind stops at 12,000 (Stage 4 plan B7)', () => {
+    expect([DIGEST_TEXT_MAX, DIGEST_KICKOFF_TEXT_MAX]).toEqual([12_000, 16_000]);
+    // A 13,500-character raw answers comment passes whole, its last answers (the Drive link) included.
+    const head = 'Onboarding Form Answers\n';
+    const tail = '\nDrive folder: https://drive.example.test/folder/END-OF-ANSWERS';
+    const long = head + 'a'.repeat(13_500 - head.length - tail.length) + tail;
+    expect(long).toHaveLength(13_500);
+    expect(kindOf(long, 'sara')).toBe('kickoff');
+    expect(digestPrompt('Acme', 'kickoff', NOW, 'sara', long, '')).toContain(`---\n${long}\n---`);
+    // A 20,000-character one stops at 16,000.
+    const huge = digestPrompt('Acme', 'kickoff', NOW, 'sara', 'x'.repeat(20_000), '');
+    expect(huge).toContain('x'.repeat(16_000) + '\n---');
+    expect(huge).not.toContain('x'.repeat(16_001));
+    // Every other kind stops at 12,000, the 13,500-character comment too.
+    for (const kind of ['call', 'brief', 'note', 'other']) {
+      const p = digestPrompt('Acme', kind, NOW, 'sara', long, '');
+      expect(p).toContain(`---\n${long.slice(0, 12_000)}\n---`);
+      expect(p).not.toContain('END-OF-ANSWERS');
+      expect(digestPrompt('Acme', kind, NOW, 'sara', 'x'.repeat(20_000), '')).not.toContain('x'.repeat(12_001));
+    }
+    // cockpit_comment_watch_record takes a prompt of at most 30,000: a full kickoff cut, a 200-character author and
+    // a 100-character client still leave over 11,500 for the card's Do's & Don'ts.
+    const rules = 'DO\n- Show villas';
+    const most = digestPrompt('C'.repeat(100), 'kickoff', NOW, 'b'.repeat(200), 'x'.repeat(20_000), rules);
+    expect(30_000 - (most.length - rules.length)).toBeGreaterThan(11_500);
+  });
+
+  test('a run queues a 13,500-character kickoff-kind comment with all of it in the prompt', async () => {
+    const tail = '\nAdditional information: END-OF-ANSWERS';
+    const long = `KICKOFF HANDOFF\n${'k'.repeat(13_500 - 16 - tail.length)}${tail}`;
+    expect(long).toHaveLength(13_500);
+    const w = world({comments: {t1: [cmt('c-kick', long)]}});
+    const {store, state} = memoryStore();
+    await runWatch(store, w.sources, gate(n => w.env[n as keyof typeof w.env]), w.clock);
+    const item = state.recorded.find(i => i.commentId === 'c-kick');
+    expect(item?.kind).toBe('kickoff');
+    expect(item?.prompt).toContain(`---\n${long}\n---`);
   });
 
   test('new rules are tagged with their source, merged in the clean format, and repeats are dropped', () => {

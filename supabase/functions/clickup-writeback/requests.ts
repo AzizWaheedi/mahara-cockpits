@@ -117,7 +117,7 @@ export const STEP_REFUSED: Record<string, string> = {
   tag: "The client tag did not save in ClickUp.",
   fields: "Some fields did not save in ClickUp. They are in the description.",
   request_type: "Request Type did not save in ClickUp.",
-  /** Only the client onboarding tasks carry a task comment today: the kickoff handoff (20261102m). */
+  /** Only the client onboarding tasks carry a task comment today: the kickoff handoff (20261102o). */
   task_comment: "The comment did not post on the task in ClickUp. The task itself is there: copy the Kickoff Handoff comment from the client card onto it.",
   card_comment: "The link comment on the client card did not post in ClickUp. The task itself is there.",
   replaces: "The old ticket was not routed in ClickUp. Close it there.",
@@ -524,7 +524,7 @@ export const REQUEST_STEPS = ["create", "description", "owner_due_priority", "ch
 
 /**
  * The longest task comment a payload may carry. Only the client onboarding tasks carry one, the kickoff handoff
- * (20261102m): real ones run 3,769 to 4,656 characters. It comes from a kickoff plan, which 20261102m lets hold
+ * (20261102o): real ones run 3,769 to 4,656 characters. It comes from a kickoff plan, which 20261102o lets hold
  * 2 MB (cockpit_form_effects_plan_check), and a text's UTF-16 length never passes its UTF-8 bytes, so every handoff
  * the cockpit plans fits; a longer value was built wrong, and is refused before anything reaches ClickUp. A long one
  * ClickUp itself refuses is that step's refusal, and the task stays.
@@ -542,7 +542,7 @@ export function requestStepKeys(p: Row): string[] {
   if (Array.isArray(p.fields) && p.fields.length) keys.push("fields");
   if (p.setRequestType === true) keys.push("request_type");
   // Once the task is built, the comment Make posts on it (Make 12 [18], [23]), before the card's link comment.
-  // Ship order: this writer deploys before 20261102m is applied, because a part frozen by a writer without the
+  // Ship order: this writer deploys before 20261102o is applied, because a part frozen by a writer without the
   // step never posts its taskComment.
   if (hasTaskComment(p)) keys.push("task_comment");
   if (p.clientTaskId) keys.push("card_comment");

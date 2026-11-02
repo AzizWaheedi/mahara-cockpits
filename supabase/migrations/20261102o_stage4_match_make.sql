@@ -1,6 +1,8 @@
 -- Stage 4 writes what Make writes (docs/forms/WAVE56-CONTRACT.md 4.13.3, 4.14.3, 4.15.1 and the D-S4F
 -- findings; the CEO's decision of 2026-11-02: "Yes, match Make"). Creative Triage (bldgtotkfmhoxmlzowdx).
--- Applies twice; stands on 20261102l.
+-- Applies twice; stands on 20261102l. First drafted as 20261102m: the goals sheet's 20261102m reached
+-- live first (2026-11-02), so under the letter rule this file took the next free letter, o. Comments
+-- inside the function bodies still say 20261102m, so their md5s stay as stated.
 --
 -- For the same answers the native kickoff and onboarding now write what Make 12 (8925654) and Make 13
 -- (8922994) write, byte for byte where Make writes text. The reference is scripts/dev/make_parity.py's
@@ -91,6 +93,44 @@
 --    run, and neither the client's answer nor the CSM's kickoff send stops. Before this file such a plan
 --    stopped the planner whole: the client's onboarding planned nothing, and the kickoff send refused
 --    with the table's error.
+-- 13. Typeform's typed inputs on the native onboarding (version 2, in place under 11's guard). KFRCXPFx
+--    asks the three revenues (lastRevenue 7ff5d37a, goal90 791b99b8, goal12 f4b96a9b) as number
+--    questions, the four links (website 454a425f, instagram adecfe45, facebook 575d17ed, driveLink
+--    64d23c81) as website questions and the three phones (phone 64f2fb80, frontDeskPhone 282dac48,
+--    personalPhone 09d2e62a) as phone_number questions, so Make has only seen a plain number, an https
+--    link and an E.164 phone there (the 46 stored answers, counts only: 138 of 138 revenues plain whole
+--    numbers, 46, 46, 46 and 19 of 19 links https, 138 of 138 phones E.164). Version 2 asks them so too:
+--    each revenue is a number from 0 to 1,000,000,000 with no decimals, stored as a number and printed
+--    in Make's texts as Make prints Typeform's (0 is blank), so "1,500,000" or "2 million" never reaches
+--    the Client Profile as typed; the four links have the url format (the portal writes https:// before
+--    a "www." or a bare domain); mapsLink stays plain (1 of 24 past answers is not a link). The client
+--    onboarding's answers check stores each phone as E.164: spaces (direction marks too), dashes, dots
+--    and brackets taken out, Arabic-Indic digits read as digits, a leading 00 read as +, then "+" and 8
+--    to 15 digits; a number with no country code gets the phone refusal the portal shows (format).
+--    Every other form's phone check is 20261102i's. No question's words change.
+-- 14. The comment a request part posts on its task (2 above) stays out of the audit log. The writeback
+--    queue's audit trigger (cockpit_clickup_writeback_audit, 20261026t's) copied each queue row into
+--    cockpit_audit_log on its insert and on each change of state, so each part would have copied the
+--    whole kickoff handoff, the client's phone and email in it, several times. It now keeps a queue
+--    row's payload.taskComment as its length only (payload.taskCommentChars), as it keeps a focus-view
+--    comment (task_action) as its length. Every other table, kind and key is audited as before.
+-- 15. Room for a long Arabic kickoff. cockpit_form_responses kept a kickoff's answers in 64 KB (20261102f),
+--    so a kickoff with the long texts the sheet allows (12 at 4,000 characters, two bytes each in Arabic:
+--    with the short texts about 105 KB) failed the table's check and the CSM saw its raw error (23514).
+--    A kickoff now has 256 KB (every other form keeps 20261102f's room): the sheet's maxima fit in any
+--    script, four bytes a letter included (about 207 KB), and the kickoff's handoff, with the
+--    onboarding's answers in it, stays well under 12's 2 MB. Answers that still do not fit (only
+--    characters JSON writes as six-byte escapes can do it) are refused by cockpit_kickoff_answers_check
+--    as {_answers: too_large}: cockpit_kickoff_submit returns that refusal ({ok: false, reason invalid})
+--    and stores nothing, as it does for any other refused answer.
+-- 16. One stored shape for a version-2 answer, whichever door it came through. The Typeform door
+--    (cockpit_form_onboarding_typeform, X26) maps a late KFRCXPFx delivery into version-2 answers with
+--    20261102j's mapping, which keeps a revenue as the text of Typeform's number ("250000"), while the
+--    portal stores the number 250000 (13 above). The door now stores each number question of the
+--    version it writes as a number when its text is a number as the cockpit writes one (Typeform's
+--    number question always hands one); any other text is kept as it came. Make's texts are unchanged:
+--    they print "250000" and 250000 alike. The mapping itself (cockpit_form_stage4_native_answers, the
+--    question list) and the parity plan's read model stay 20261102j's.
 --
 -- 20261102j's input and parity plan stay as they are: they read the replaced question list, hidden values
 -- and answers list by name. The planner changes only in what it hands a system request (2 above) and in a
@@ -104,9 +144,11 @@ BEGIN;
 
 -- ---------------------------------------------------------------------------
 -- 0. What this file stands on (20261102l), then the drift guard: each replaced body is the one live
---    holds (read 2026-11-02; 20261102i's for the two client form checks, 20261102j's for the kickoff's),
---    20261102l's for the builder (20261102l replaces it first), or this file's own (a second apply).
---    The onboarding's version 2 is 20261102j's, unused, or this file's.
+--    holds (read 2026-11-02; 20261102i's for the two client form checks, 20261102j's for the kickoff's
+--    and for the onboarding Typeform door, 20261026t's for the writeback queue's audit trigger),
+--    20261102l's for the builder (20261102l
+--    replaces it first), or this file's own (a second apply). The onboarding's version 2 is 20261102j's,
+--    unused, or this file's.
 
 DO $$
 BEGIN
@@ -115,7 +157,7 @@ BEGIN
      OR to_regprocedure('public.cockpit_form_stage4_hidden_map()') IS NULL
      OR (SELECT md5(regexp_replace(p.prosrc, '\s+', ' ', 'g')) FROM pg_catalog.pg_proc p
           WHERE p.oid = to_regprocedure('public.cockpit_form_stage4_build(jsonb)')) = 'a704e72a3921191d2f06a24855d7f219' THEN
-    RAISE EXCEPTION 'Apply 20261102l before 20261102m.' USING ERRCODE = '55000';
+    RAISE EXCEPTION 'Apply 20261102l before 20261102o.' USING ERRCODE = '55000';
   END IF;
 END $$;
 
@@ -131,8 +173,10 @@ BEGIN
       ('public.cockpit_request_create_system(text,text,jsonb,uuid)', '295e926095e7832e7d7a220b4d233a23', '45207dde9903fee3c1d0aa0b20eea18f'),
       ('public.cockpit_form_stage4_plan(uuid,boolean)', 'cb27a3730e539bcfbb46dea136af96ae', '1b13ba4315097727973c4bff54f027c3'),
       ('public.cockpit_form_schema_check(jsonb)', '1f5d9016571ed472b83dbffa17363095', '07f88396a8df9e1b2b42f41b5c3e189a'),
-      ('public.cockpit_form_answers_check(jsonb,jsonb,jsonb)', 'd1d8bb66ae056415f8a2a968627220df', '18ea942206537f7037c10db67ca8e1b5'),
-      ('public.cockpit_kickoff_answers_check(jsonb)', '8a02898fe501f501b7f7cc8653453db6', 'd382c5d9c6638f4f73148196cc7dd7c9')
+      ('public.cockpit_form_answers_check(jsonb,jsonb,jsonb)', 'd1d8bb66ae056415f8a2a968627220df', 'ac54af52c93ca8f2517a5f55b507cfa7'),
+      ('public.cockpit_kickoff_answers_check(jsonb)', '8a02898fe501f501b7f7cc8653453db6', '8c3045bcdcf0906294d78d9ca7377a9b'),
+      ('public.cockpit_clickup_writeback_audit()', 'd595491be9d1cac3e385382a2e84814a', '4127726aa23cffe1ce78fc5ceafb8292'),
+      ('public.cockpit_form_onboarding_typeform(jsonb)', '25a794296916c1e01447633d308cecc7', 'ddefa9130061bc21b8b05c882d778d72')
     ) AS x(fn, live_md5, after_md5)
   LOOP
     v_now := NULL;
@@ -145,13 +189,13 @@ BEGIN
   END LOOP;
 END $$;
 
--- The onboarding's version 2 (11 above): md5 of the stored schema's text, 20261102j's (live) or this
--- file's. 20261102j's changes in place only while no answer or invite uses it.
+-- The onboarding's version 2 (11 and 13 above): md5 of the stored schema's text, 20261102j's (live) or
+-- this file's. 20261102j's changes in place only while no answer or invite uses it.
 DO $$
 DECLARE v_md5 text; v_used bigint;
 BEGIN
   SELECT md5(v.schema::text) INTO v_md5 FROM public.cockpit_form_versions v WHERE v.form_key = 'onboarding' AND v.version = 2;
-  IF v_md5 IS NULL OR v_md5 NOT IN ('8fa1f38dfd4307f22d0b3faec8604ce7', '2b9cd946f44235e963d4ad6bf017afe8') THEN
+  IF v_md5 IS NULL OR v_md5 NOT IN ('8fa1f38dfd4307f22d0b3faec8604ce7', 'bc89ca36000ebf7943c6ec569cd1be73') THEN
     RAISE EXCEPTION 'The onboarding form''s version 2 changed since 20261102j; stop and re-read it.' USING ERRCODE = '55000';
   END IF;
   IF v_md5 = '8fa1f38dfd4307f22d0b3faec8604ce7' THEN
@@ -170,7 +214,7 @@ END $$;
 --    questions of the saved KFRCXPFx (D-S4.0) in its order, each {ref, title}. Existing keys win.
 
 INSERT INTO public.cockpit_settings(key, value, updated_by)
-VALUES ('onboarding.raw_titles', '{}'::jsonb, 'migration 20261102m') ON CONFLICT (key) DO NOTHING;
+VALUES ('onboarding.raw_titles', '{}'::jsonb, 'migration 20261102o') ON CONFLICT (key) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
 -- 2. The comment each task of a request gets once it is made, whole: the kickoff handoff on the two
@@ -195,6 +239,27 @@ BEGIN
     ALTER TABLE public.cockpit_form_effects ADD CONSTRAINT cockpit_form_effects_plan_check
       CHECK (jsonb_typeof(plan) = 'object'
              AND octet_length(plan::text) <= CASE WHEN form_key IN ('kickoff','onboarding') THEN 2097152 ELSE 131072 END);
+  END IF;
+END $$;
+
+-- The room a kickoff's answers have (15 above): 256 KB; 1 MB for the New Client Form and the onboarding
+-- and 64 KB for every other form, as 20261102f made them. cockpit_kickoff_answers_check refuses answers
+-- past the 256 KB by name (too_large), so the send never meets this check. The guard reads the check as
+-- live holds it (read 2026-11-02, 20261102f's) or as this file leaves it, with its white space folded.
+DO $$
+DECLARE v_def text;
+BEGIN
+  SELECT regexp_replace(pg_get_constraintdef(c.oid), '\s+', ' ', 'g') INTO v_def FROM pg_catalog.pg_constraint c
+   WHERE c.conrelid = 'public.cockpit_form_responses'::regclass AND c.conname = 'cockpit_form_responses_answers_check';
+  IF v_def IS DISTINCT FROM 'CHECK (((jsonb_typeof(answers) = ''object''::text) AND (octet_length((answers)::text) <= CASE WHEN (form_key = ANY (ARRAY[''new_client''::text, ''onboarding''::text])) THEN 1048576 WHEN (form_key = ''kickoff''::text) THEN 262144 ELSE 65536 END)))' THEN
+    IF v_def IS DISTINCT FROM 'CHECK (((jsonb_typeof(answers) = ''object''::text) AND (octet_length((answers)::text) <= CASE WHEN (form_key = ANY (ARRAY[''new_client''::text, ''onboarding''::text])) THEN 1048576 ELSE 65536 END)))' THEN
+      RAISE EXCEPTION 'cockpit_form_responses_answers_check changed since 20261102f; stop and re-read it.' USING ERRCODE = '55000';
+    END IF;
+    ALTER TABLE public.cockpit_form_responses DROP CONSTRAINT cockpit_form_responses_answers_check;
+    ALTER TABLE public.cockpit_form_responses ADD CONSTRAINT cockpit_form_responses_answers_check
+      CHECK (jsonb_typeof(answers) = 'object'
+             AND octet_length(answers::text) <= CASE WHEN form_key IN ('new_client', 'onboarding') THEN 1048576
+                                                     WHEN form_key = 'kickoff' THEN 262144 ELSE 65536 END);
   END IF;
 END $$;
 
@@ -783,6 +848,42 @@ BEGIN
   RETURN jsonb_build_object('ok', true, 'requestId', v_id, 'reused', false, 'parts', jsonb_array_length(v_plan));
 END $$;
 
+-- The writeback queue's audit trigger (14 above): 20261026t's (live, read 2026-11-02), except that a queue
+-- row's payload.taskComment (the comment a request part posts on its task: the kickoff handoff, with the
+-- client's phone and email) is kept as its length, payload.taskCommentChars, before and after, as
+-- cockpit_request_create_system's own audit row keeps it. A taskComment that is not text keeps no
+-- length (null), never a 0. Every other table, kind and key is audited as before; the function keeps
+-- its live grant (service_role), as 20261026t left it.
+CREATE OR REPLACE FUNCTION public.cockpit_clickup_writeback_audit() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE after_row jsonb:=to_jsonb(NEW)-'planned'-'steps'; before_row jsonb;
+BEGIN
+ IF TG_OP='UPDATE' THEN before_row:=to_jsonb(OLD)-'planned'-'steps'; END IF;
+ IF TG_TABLE_NAME='cockpit_clickup_writeback_queue' AND after_row->>'kind'='task_action' THEN
+   IF jsonb_typeof(after_row->'payload'->'text')='string' THEN
+     after_row:=jsonb_set(after_row,'{payload,text}',to_jsonb(format('(%s characters, left out of the audit)',length(after_row->'payload'->>'text'))));
+   END IF;
+   IF jsonb_typeof(before_row->'payload'->'text')='string' THEN
+     before_row:=jsonb_set(before_row,'{payload,text}',to_jsonb(format('(%s characters, left out of the audit)',length(before_row->'payload'->>'text'))));
+   END IF;
+ END IF;
+ IF TG_TABLE_NAME='cockpit_clickup_writeback_queue' THEN
+   IF jsonb_typeof(after_row->'payload')='object' AND after_row->'payload' ? 'taskComment' THEN
+     after_row:=jsonb_set(after_row,'{payload}',(after_row->'payload')-'taskComment'
+       ||jsonb_build_object('taskCommentChars',CASE WHEN jsonb_typeof(after_row->'payload'->'taskComment')='string' THEN char_length(after_row->'payload'->>'taskComment') END));
+   END IF;
+   IF jsonb_typeof(before_row->'payload')='object' AND before_row->'payload' ? 'taskComment' THEN
+     before_row:=jsonb_set(before_row,'{payload}',(before_row->'payload')-'taskComment'
+       ||jsonb_build_object('taskCommentChars',CASE WHEN jsonb_typeof(before_row->'payload'->'taskComment')='string' THEN char_length(before_row->'payload'->>'taskComment') END));
+   END IF;
+ END IF;
+ INSERT INTO public.cockpit_audit_log(action,entity_type,entity_id,actor_email,source_app,source_system,"before","after",metadata)
+ VALUES(lower(TG_OP)||':'||coalesce(after_row->>'state',after_row->>'status',CASE WHEN after_row->>'finished_at' IS NOT NULL THEN 'finished' ELSE 'started' END),
+  TG_TABLE_NAME,after_row->>'id',CASE WHEN TG_TABLE_NAME LIKE 'cockpit_media_tracking%' THEN 'tracking-audit' ELSE 'clickup-writeback' END,
+  'media-buyer','supabase',before_row,after_row,'{}'::jsonb);
+ RETURN NEW;
+END $$;
+
 -- The planner: 20261102j's, except that a system request (the onboarding tasks, the Brand DNA task) is
 -- handed the plan's comment_text beside its details, and that a plan too large to keep fails its one
 -- effect instead of stopping the planner (12 above).
@@ -1302,7 +1403,8 @@ END $$;
 
 -- The client form answers check: 20261102i's, except that the client onboarding keeps each text and long
 -- text answer as Typeform keeps it (cockpit_form_typeform_text): its line breaks and spaces as typed,
--- and its length counted on that. Every other form folds each run of white space to one space, as before.
+-- and its length counted on that; and stores each phone as E.164 (13 above). Every other form folds each
+-- run of white space to one space and checks a phone as before.
 CREATE OR REPLACE FUNCTION public.cockpit_form_answers_check(p_schema jsonb, p_answers jsonb, p_context jsonb)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -1397,6 +1499,22 @@ BEGIN
             IF v_req THEN v_errors := v_errors || jsonb_build_object(k, 'required'); END IF;
           ELSIF char_length(v_s) > coalesce((f->>'maxLength')::integer, CASE t WHEN 'text' THEN 200 ELSE 2000 END) THEN
             v_errors := v_errors || jsonb_build_object(k, 'length');
+          ELSIF t = 'text' AND f->>'format' = 'phone' AND p_schema->>'key' = 'onboarding' THEN
+            -- The client onboarding stores a phone as E.164, as KFRCXPFx's phone_number question handed
+            -- it to Make (20261102m, 13): spaces (direction marks too), dashes, dots and brackets out,
+            -- Arabic-Indic digits as digits, a leading 00 as +, then "+" and 8 to 15 digits. A number
+            -- with no country code is refused with the phone code (format).
+            v_s := translate(translate(v_s, '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789'),
+                             E' \t\n\r\x0b\f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u200b\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u202f\u205f\u2066\u2067\u2068\u2069\u3000\ufeff-\u2010\u2011\u2012\u2013\u2014\u2015\u2212.()[]\uff08\uff09',
+                             '');
+            IF left(v_s, 2) = '00' THEN
+              v_s := '+' || substr(v_s, 3);
+            END IF;
+            IF v_s ~ '^\+[0-9]{8,15}$' THEN
+              v_out := v_out || jsonb_build_object(k, v_s);
+            ELSE
+              v_errors := v_errors || jsonb_build_object(k, 'format');
+            END IF;
           ELSIF t = 'text' AND (CASE f->>'format'
                   WHEN 'url' THEN v_s !~ '^https?://[^\s]+\.[^\s]+$'
                   WHEN 'email' THEN v_s !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'
@@ -1500,7 +1618,8 @@ END $$;
 -- still folded to one space per run of white space. {ok, errors: {key: code}, answers} with the codes of
 -- W34 3.1 (required, range, option, length, unknown) plus format. A choice is one of its options, a list
 -- a subset, a number a number (New MRR 0 to 100,000), a link https. replaceReason is the second
--- kickoff's reason and is checked by the submit, not here.
+-- kickoff's reason and is checked by the submit, not here. Answers that pass but do not fit the 256 KB a
+-- kickoff's answers have (15 above) give {_answers: too_large} and nothing else.
 CREATE OR REPLACE FUNCTION public.cockpit_kickoff_answers_check(p_answers jsonb)
 RETURNS jsonb LANGUAGE plpgsql IMMUTABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -1575,19 +1694,27 @@ BEGIN
         END IF;
     END CASE;
   END LOOP;
+  -- Answers past the 256 KB cockpit_form_responses keeps for a kickoff (15 above): one refusal by name,
+  -- never the table's error on the send. Only when every answer passed, so a fix the CSM can make is
+  -- never hidden behind it.
+  IF v_errors = '{}'::jsonb AND octet_length(v_out::text) > 262144 THEN
+    v_errors := jsonb_build_object('_answers', 'too_large');
+  END IF;
   RETURN jsonb_build_object('ok', v_errors = '{}'::jsonb, 'errors', v_errors, 'answers', v_out);
 END $$;
 
 -- ---------------------------------------------------------------------------
--- 8. The native onboarding's definition (11 above): 20261102j's version 2 in place, unused (the guard in
---    0 stops the file otherwise). The four questions KFRCXPFx asks as long_text are long texts; every
---    text takes 1,000 characters and every long text 10,000. Everything else in it stays. The registry's
---    copy changes with it when the form is already live on version 2. One audit row each
---    (cockpit_forms_audit).
+-- 8. The native onboarding's definition (11 and 13 above): 20261102j's version 2 in place, unused (the
+--    guard in 0 stops the file otherwise). The four questions KFRCXPFx asks as long_text are long texts;
+--    the three revenues are numbers from 0 to 1,000,000,000 with no decimals (no length limit: a number
+--    has none); the four links KFRCXPFx asks as website questions have the url format; every other text
+--    takes 1,000 characters (the links and phones too) and every long text 10,000. Labels, hints, the
+--    phones' format and everything else stay. The registry's copy changes with it when the form is
+--    already live on version 2. One audit row each (cockpit_forms_audit).
 
 DO $$
 BEGIN
-  PERFORM set_config('cockpit.audit_actor', 'migration 20261102m', true);
+  PERFORM set_config('cockpit.audit_actor', 'migration 20261102o', true);
   PERFORM set_config('cockpit.audit_source', 'migration', true);
   PERFORM set_config('cockpit.forms_action', 'forms.stage4_long_texts', true);
   UPDATE public.cockpit_form_versions v
@@ -1595,12 +1722,16 @@ BEGIN
            SELECT jsonb_agg(CASE
                     WHEN f->>'key' IN ('address','hours','landmark','appointmentLength') OR f->>'type' = 'longtext'
                       THEN f || '{"type":"longtext","maxLength":10000}'::jsonb
+                    WHEN f->>'key' IN ('lastRevenue','goal90','goal12')
+                      THEN (f - 'maxLength' - 'format') || '{"type":"number","min":0,"max":1000000000,"decimals":0}'::jsonb
+                    WHEN f->>'key' IN ('website','instagram','facebook','driveLink')
+                      THEN f || '{"maxLength":1000,"format":"url"}'::jsonb
                     WHEN f->>'type' = 'text' THEN f || '{"maxLength":1000}'::jsonb
                     ELSE f END ORDER BY n)
              FROM jsonb_array_elements(v.schema->'fields') WITH ORDINALITY AS u(f, n)))
    WHERE v.form_key = 'onboarding' AND v.version = 2 AND md5(v.schema::text) = '8fa1f38dfd4307f22d0b3faec8604ce7';
   UPDATE public.cockpit_forms f
-     SET schema = v.schema, updated_by = 'migration 20261102m', updated_at = now()
+     SET schema = v.schema, updated_by = 'migration 20261102o', updated_at = now()
     FROM public.cockpit_form_versions v
    WHERE f.key = 'onboarding' AND f.version = 2 AND md5(f.schema::text) = '8fa1f38dfd4307f22d0b3faec8604ce7'
      AND v.form_key = 'onboarding' AND v.version = 2;
@@ -1608,7 +1739,151 @@ BEGIN
 END $$;
 
 -- ---------------------------------------------------------------------------
--- 9. Privileges: every function here is the owner's only, as 20261102i and 20261102j left them.
+-- 9. The onboarding Typeform door stores a number as a number (16 above)
+
+-- Answers with each number question of a form version (p_schema, by its fields' key and type) as a
+-- number: an answer that is the text of a number as the cockpit writes one (digits, a minus sign and a
+-- point only, no leading zero and no trailing zero after the point, as cockpit_form_stage4_text writes
+-- Typeform's number) becomes that number. Any other answer, and any other text, is left as it is; with
+-- no schema the answers are as they came.
+CREATE OR REPLACE FUNCTION public.cockpit_form_stage4_numbers(p_schema jsonb, p_answers jsonb)
+RETURNS jsonb LANGUAGE sql IMMUTABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT CASE WHEN jsonb_typeof(p_answers) IS DISTINCT FROM 'object' THEN p_answers
+    ELSE p_answers || coalesce((
+      SELECT jsonb_object_agg(f->>'key', (p_answers->>(f->>'key'))::numeric)
+        FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p_schema->'fields') = 'array' THEN p_schema->'fields' ELSE '[]'::jsonb END) f
+       WHERE f->>'type' = 'number'
+         AND jsonb_typeof(p_answers->(f->>'key')) = 'string'
+         AND CASE WHEN p_answers->>(f->>'key') ~ '^-?[0-9]+(\.[0-9]+)?$'
+                  THEN trim_scale((p_answers->>(f->>'key'))::numeric)::text = p_answers->>(f->>'key')
+                  ELSE false END), '{}'::jsonb) END
+$$;
+
+-- A KFRCXPFx delivery after the onboarding go-live (X26): 20261102j's, with one change. Its version-2
+-- answers keep each number question as a number (cockpit_form_stage4_numbers over the schema of the
+-- version it is stored on), as the portal stores it, so a version-2 answer has one shape whichever door
+-- it came through. The mapping, the cards it plans for, the legacy path and its grant (service_role, as
+-- 20261102j left it) are 20261102j's.
+CREATE OR REPLACE FUNCTION public.cockpit_form_onboarding_typeform(p_payload jsonb)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  f public.cockpit_forms;
+  v_token text := p_payload->>'externalId';
+  v_at timestamptz;
+  v_raw jsonb;
+  v_hidden jsonb;
+  v_card text;
+  v_task text;
+  v_client text;
+  v_answered timestamptz;
+  v_onboarding boolean := false;
+  v_native jsonb;
+  v_version integer;
+  v_id uuid;
+  v_state text;
+  v_plan jsonb;
+  v_prev_action text := current_setting('cockpit.forms_action', true);
+  v_prev_actor text := current_setting('cockpit.audit_actor', true);
+  v_prev_source text := current_setting('cockpit.audit_source', true);
+BEGIN
+  PERFORM public.cockpit_hours_require_service();
+  IF jsonb_typeof(p_payload) IS DISTINCT FROM 'object' OR p_payload->>'formKey' IS DISTINCT FROM 'onboarding' THEN
+    RAISE EXCEPTION 'Only the client onboarding form is taken here.' USING ERRCODE = '22023';
+  END IF;
+  IF v_token IS NULL OR v_token !~ '^[A-Za-z0-9]{8,64}$' THEN
+    RAISE EXCEPTION 'That is not a Typeform response token.' USING ERRCODE = '22023';
+  END IF;
+  v_at := public.cockpit_form_stage4_ts(p_payload->>'submittedAt');
+  IF v_at IS NULL THEN
+    RAISE EXCEPTION 'The response has no readable submit time.' USING ERRCODE = '22023';
+  END IF;
+  IF jsonb_typeof(p_payload->'answers') IS DISTINCT FROM 'object' OR jsonb_typeof(p_payload->'answers'->'fields') IS DISTINCT FROM 'array'
+     OR octet_length((p_payload->'answers')::text) > 1048576 THEN
+    RAISE EXCEPTION 'Send the answers as {fields: [...]} under 1 MB.' USING ERRCODE = '22023';
+  END IF;
+  SELECT * INTO f FROM public.cockpit_forms x WHERE x.key = 'onboarding';
+  v_raw := CASE WHEN jsonb_typeof(p_payload->'hidden') = 'object' THEN p_payload->'hidden' ELSE '{}'::jsonb END;
+  v_hidden := jsonb_strip_nulls(jsonb_build_object(
+    'client_name', CASE WHEN jsonb_typeof(v_raw->'client_name') = 'string' THEN left(nullif(btrim(v_raw->>'client_name'), ''), 200) END,
+    'onboarding_client_id', CASE WHEN jsonb_typeof(v_raw->'onboarding_client_id') = 'string'
+                                 THEN left(nullif(btrim(v_raw->>'onboarding_client_id'), ''), 60) END));
+  v_card := coalesce(nullif(btrim(p_payload->>'taskId'), ''), v_hidden->>'onboarding_client_id');
+  IF v_card ~ '^[A-Za-z0-9_-]{1,40}$' THEN
+    SELECT x.t, x.n INTO v_task, v_client FROM (
+      SELECT a.clickup_task_id AS t, a.client_name AS n, 1 AS o FROM public.cockpit_billing_accounts a WHERE a.clickup_task_id = v_card
+      UNION ALL
+      SELECT o.clickup_task_id, o.client_name, 2 FROM public.cockpit_client_onboarding o WHERE o.clickup_task_id = v_card) x
+     ORDER BY x.o LIMIT 1;
+  END IF;
+  -- A token already stored: the same answer again.
+  SELECT r.id, r.state INTO v_id, v_state FROM public.cockpit_form_responses r WHERE r.form_key = 'onboarding' AND r.external_id = v_token;
+  IF v_id IS NOT NULL THEN
+    RETURN jsonb_build_object('inserted', false, 'responseId', v_id, 'taskId', v_task, 'stored', v_state);
+  END IF;
+  IF v_task IS NOT NULL THEN
+    v_answered := public.cockpit_form_stage4_answered_at(v_task, NULL, v_token);
+    v_onboarding := EXISTS (SELECT 1 FROM public.cockpit_client_onboarding o
+                             WHERE o.clickup_task_id = v_task
+                               AND (coalesce(o.in_onboarding, false) OR o.signup_on >= public.cockpit_billing_today() - 30))
+                 OR EXISTS (SELECT 1 FROM public.cockpit_billing_accounts a
+                             WHERE a.clickup_task_id = v_task AND a.stage_group = 'pipeline')
+                 OR EXISTS (SELECT 1 FROM public.cockpit_billing_deal_cards() dc
+                              JOIN public.cockpit_sales_deals d ON d.response_id = dc.deal_response_id
+                             WHERE dc.clickup_task_id = v_task AND d.submitted_at >= now() - interval '30 days');
+  END IF;
+
+  PERFORM set_config('cockpit.audit_actor', 'typeform', true);
+  PERFORM set_config('cockpit.audit_source', 'forms-door', true);
+  IF v_task IS NULL OR v_answered IS NOT NULL OR NOT v_onboarding THEN
+    -- Kept as an old link's answer (4.15.3), version 1's Typeform shape, never planned.
+    PERFORM set_config('cockpit.forms_action', 'forms.legacy_recorded', true);
+    INSERT INTO public.cockpit_form_responses(form_key, form_version, source, external_id, task_id, client_name, mode, state,
+      answers, answer_meta, hidden, created_by, submitted_by, submitted_at)
+    VALUES ('onboarding', 1, 'typeform_webhook', v_token, v_task, coalesce(v_client, v_hidden->>'client_name'), 'live', 'legacy',
+            p_payload->'answers',
+            jsonb_build_object('notice_on', public.cockpit_form_kuwait_day(v_at), 'owner', 'cockpit',
+                               'why', CASE WHEN v_task IS NULL THEN 'no_card' WHEN v_answered IS NOT NULL THEN 'answered'
+                                           ELSE 'not_onboarding' END)
+              || CASE WHEN v_task IS NOT NULL THEN jsonb_build_object('match', 'hidden_id_unverified') ELSE '{}'::jsonb END,
+            v_hidden, 'forms-door', 'typeform', v_at)
+    RETURNING id INTO v_id;
+    PERFORM public.cockpit_slack_notice_queue('legacy.received', 'legacy:' || v_id::text, v_task,
+      CASE WHEN v_task IS NOT NULL THEN v_client END,
+      jsonb_strip_nulls(jsonb_build_object('responseId', v_id, 'form', 'onboarding', 'matched', v_task IS NOT NULL, 'taskId', v_task,
+        'client', CASE WHEN v_task IS NOT NULL THEN v_client END, 'submittedAt', public.cockpit_slack_notice_iso(v_at))),
+      NULL, NULL, NULL);
+    PERFORM set_config('cockpit.forms_action', coalesce(v_prev_action, ''), true);
+    PERFORM set_config('cockpit.audit_actor', coalesce(v_prev_actor, ''), true);
+    PERFORM set_config('cockpit.audit_source', coalesce(v_prev_source, ''), true);
+    RETURN jsonb_build_object('inserted', true, 'responseId', v_id, 'taskId', v_task, 'stored', 'legacy');
+  END IF;
+
+  -- 20261102j's mapping, then each number question of the version it is stored on as a number (16).
+  v_version := greatest(coalesce(public.cockpit_form_client_version('onboarding'), 2), 2);
+  v_native := public.cockpit_form_stage4_numbers(
+    (SELECT v.schema FROM public.cockpit_form_versions v WHERE v.form_key = 'onboarding' AND v.version = v_version),
+    public.cockpit_form_stage4_native_answers('onboarding', p_payload->'answers'->'fields'));
+  PERFORM set_config('cockpit.forms_action', 'forms.onboarding_typeform', true);
+  INSERT INTO public.cockpit_form_responses(form_key, form_version, source, external_id, task_id, client_name, mode, state,
+    answers, answer_meta, hidden, created_by, submitted_by, submitted_at)
+  VALUES ('onboarding', v_version, 'typeform_webhook', v_token, v_task,
+          v_client, 'live', 'submitted', v_native - '_unmapped',
+          jsonb_strip_nulls(jsonb_build_object('notice_on', public.cockpit_form_kuwait_day(v_at), 'owner', 'cockpit', 'via', 'typeform',
+            'match', 'hidden_id_unverified', 'unmapped', v_native->'_unmapped')),
+          v_hidden, 'forms-door', 'typeform', v_at)
+  RETURNING id INTO v_id;
+  PERFORM set_config('cockpit.forms_action', coalesce(v_prev_action, ''), true);
+  v_plan := public.cockpit_form_hook_onboarding(v_id);
+  PERFORM set_config('cockpit.audit_actor', coalesce(v_prev_actor, ''), true);
+  PERFORM set_config('cockpit.audit_source', coalesce(v_prev_source, ''), true);
+  RETURN jsonb_build_object('inserted', true, 'responseId', v_id, 'taskId', v_task, 'stored', 'native',
+    'effects', jsonb_array_length(coalesce(v_plan->'effects', '[]'::jsonb)));
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- 10. Privileges: every function here is the owner's only, as 20261102i and 20261102j left them. The
+--    writeback queue's audit trigger keeps its live grant (service_role), as 20261026t left it, and the
+--    onboarding Typeform door keeps its live grant (service_role, forms-door), as 20261102j left it.
 
 REVOKE ALL ON FUNCTION public.cockpit_form_typeform_text(text), public.cockpit_form_stage4_make_text(text,text),
   public.cockpit_form_stage4_handoff_text(jsonb,jsonb),
@@ -1617,7 +1892,7 @@ REVOKE ALL ON FUNCTION public.cockpit_form_typeform_text(text), public.cockpit_f
   public.cockpit_form_stage4_typeform_answers(text,jsonb), public.cockpit_form_stage4_build(jsonb),
   public.cockpit_request_create_system(text,text,jsonb,uuid), public.cockpit_form_stage4_plan(uuid,boolean),
   public.cockpit_form_schema_check(jsonb), public.cockpit_form_answers_check(jsonb,jsonb,jsonb),
-  public.cockpit_kickoff_answers_check(jsonb)
+  public.cockpit_kickoff_answers_check(jsonb), public.cockpit_form_stage4_numbers(jsonb,jsonb)
   FROM PUBLIC, anon, authenticated, service_role;
 
 NOTIFY pgrst, 'reload schema';

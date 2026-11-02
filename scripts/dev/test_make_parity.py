@@ -69,13 +69,69 @@ KICKOFF = [  # a stored tG7dnxBn kickoff, as the read model holds it (yes/no as 
     {"ref": "75e97e7d-4c19-437a-b4b8-67570c29344f", "title": "Payment Amount", "value": "1500"},
     {"ref": "071c480f-17f9-48db-8155-56030f952e85", "title": "Who else should we add to the WhatsApp group?", "value": ANSWER},
 ]
+# card_facts' five fields (make_parity.CARD_FACTS) and invented option ids for the two that take options.
+CONSULT, PLATFORM, FATHOM, CALL_DATE, WEBSITE = (
+    "45fdd2ea-f83c-4721-bce7-2e6187a43541", "2de15aa5-7fe9-48bf-86a1-e4cfee1306c9", "abaa31ee-28ff-46f6-83bf-6c6d357a26d5",
+    "ee9bf855-e05b-4afc-addf-1063cb54d3f0", "5d57fdde-eb70-4610-a23b-88f718b4451d")
+COUNTRY = "e0ca65e7-7656-4113-9aae-9feda834c3f9"
+IN_OFFICE, ONLINE, META = ("0f000000-0000-4000-8000-000000000001", "0f000000-0000-4000-8000-000000000002",
+                           "0f000000-0000-4000-8000-000000000003")
 OPTIONS = [
     {"field_id": CONTRACT, "options": [{"id": "ac8a68fa-ba2e-41da-9fcc-2e9b7d03d2e2", "name": "Signed", "orderindex": 0},
                                        {"id": "0667c501-3955-4443-829a-a4eb9a1d7176", "name": "Not sent yet", "orderindex": 3}]},
     {"field_id": STATUS, "options": [{"id": "dbd21650-59ce-429c-882d-5afd7d8aaa8a", "name": "Brand Blueprint Booked♠️", "orderindex": 4}]},
     {"field_id": SERVICE, "options": [{"id": "e9883783-96ef-49e9-83c3-efba1aebc738", "name": "Interior design", "orderindex": 1}]},
     {"field_id": "924bba47-32d4-4557-94d4-f475cd548dd2", "options": [{"id": "6239c1b7-afe7-4a5a-9fb8-e27be7618519", "name": "Logged In", "orderindex": 0}]},
+    {"field_id": CONSULT, "options": [{"id": IN_OFFICE, "name": None, "orderindex": 0}, {"id": ONLINE, "name": None, "orderindex": 2}]},
+    {"field_id": PLATFORM, "options": [{"id": META, "name": None, "orderindex": 0}]},
 ]
+# The request types' fields as D-S4F step 9 seeds them: a details field keeps the brief (cockpit_request_create_system).
+TYPE_FIELDS = [{"key": "client", "label": "Client", "kind": "client", "required": True},
+               {"key": "details", "label": "Details", "kind": "details", "required": False}]
+ROUTE = "equal + intended: task_name, dedupe, request_route"
+KICKOFF_TARGETS = [{"list_id": "901816723190", "template_id": "t-86ex8x9xw"}, {"list_id": "901818016338", "template_id": "t-86eyu1w3d"}]
+
+
+def legend_lines(*names):
+    return [f"intended {n}: {mp.INTENDED[n]}" for n in names]
+
+
+def brief(header=mp.BRIEF_HEADER, size=None):
+    """A synthetic brief: its header line, invented lines, and padding to `size` characters when given."""
+    text = f"{header}\nRead from the cockpit on 2026-11-02 (Kuwait). Answers are as typed.\n\nLinks\n- Drive folder (from the card): not on the card yet"
+    return text if size is None else (text + "\n" + "x" * size)[:size]
+
+
+def facts(*fields, skip=None, receipt=None):
+    """A card_facts effect with the given planned fields, the skip reason the planner gives one with no field, and the
+    writer's receipt when a run has read one (any shape make_parity.fact_receipt reads)."""
+    effect = {"key": "card_facts", "plan": {"fields": list(fields)}}
+    if skip is not None:
+        effect["skip"] = skip
+    if receipt is not None:
+        effect["receipt"] = receipt
+    return effect
+
+
+NOT_READ = "intended: card_facts (receipt not read)"
+NOTHING = "No card field to fill from this kickoff."
+
+
+def kept_or_written(before, state, **more):
+    """One field's line of the writer's receipt as forms.ts writeFacts saves it (FactReceipt): words, never values."""
+    return dict({"before": before, "state": state}, **more)
+
+
+def fact(fid, **change):
+    """One planned card_facts field of the five, valid as given; change replaces or (with None) drops a key."""
+    base = {CONSULT: {"kind": "labels", "label": "Consultation Types", "optionIds": [IN_OFFICE, ONLINE]},
+            PLATFORM: {"kind": "drop_down", "label": "ADs Platform", "optionId": META},
+            FATHOM: {"kind": "url", "label": "Fathom", "value": "https://fathom.video/share/invented"},
+            CALL_DATE: {"kind": "date", "label": "Onboarding Call Date", "value": "2026-10-20"},
+            WEBSITE: {"kind": "url", "label": "Company Website", "value": "https://cedar.example"}}.get(fid, {"kind": "url", "value": "https://x.example"})
+    out = dict({"fieldId": fid, "onlyIfEmpty": True, "source": "kickoff c0000001-0000-4000-8000-000000000008"}, **base)
+    out.update(change)
+    return {k: v for k, v in out.items() if v is not None}
 
 
 def trim_module(m: dict) -> dict:
@@ -600,7 +656,7 @@ class Oracle(unittest.TestCase):
             self.assertEqual(tasks({"comment_text": handoff + "\n"}),
                              "differs: the handoff on the tasks, whitespace only; nothing posts comment_text on the two tasks")
         with mock.patch.object(mp, "TASK_COMMENT_STEP", "task_comment"):
-            self.assertEqual(tasks({"comment_text": handoff}), "equal")
+            self.assertEqual(tasks({"comment_text": handoff}), ROUTE)
             self.assertEqual(tasks({"comment_text": handoff + "\n"}), "differs: the handoff on the tasks, whitespace only")
             self.assertEqual(tasks({"details": handoff}),
                              "differs: Make posts the handoff on each task as a comment, the cockpit only in the task description; "
@@ -611,11 +667,11 @@ class Oracle(unittest.TestCase):
             self.assertEqual(tasks({"details": "x" * 4000}, long),
                              "differs: Make posts the handoff on each task as a comment, the cockpit only in the task description "
                              "(4,000 characters at most, and Make's is longer); the cockpit writes a task description Make does not")
-            self.assertEqual(tasks({"comment_text": "x" * 4001}, long), "equal")
+            self.assertEqual(tasks({"comment_text": "x" * 4001}, long), ROUTE)
             # A description beside Make's comment still differs: [17] and [22] make the tasks with none.
             self.assertEqual(tasks({"comment_text": handoff, "details": handoff[:4000]}),
                              "differs: the cockpit writes a task description Make does not")
-            self.assertEqual(tasks({"comment_text": handoff, "details": " \n"}), "equal")
+            self.assertEqual(tasks({"comment_text": handoff, "details": " \n"}), ROUTE)
             targets["client_onboarding"][0]["template_id"] = "t-other0001"
             self.assertEqual(tasks({"comment_text": handoff + "!"}), "differs: lists or templates; the handoff on the tasks")
 
@@ -630,8 +686,8 @@ class Oracle(unittest.TestCase):
             return [v for key, v in mp.compare_onboarding([{"key": "brand_dna_task", "plan": plan}], o, {"relay": {}, "targets": targets})
                     if key == "brand_dna_task"][0]
 
-        self.assertEqual(task({"typeKey": "brand_dna"}), "equal")
-        self.assertEqual(task({"typeKey": "brand_dna", "details": None}), "equal")
+        self.assertEqual(task({"typeKey": "brand_dna"}), ROUTE)
+        self.assertEqual(task({"typeKey": "brand_dna", "details": None}), ROUTE)
         self.assertEqual(task({"typeKey": "brand_dna", "details": "Raw Onboarding Form Answers\nBusiness Name: Cedar Homes"}),
                          "differs: the cockpit writes a task description Make does not")
         targets["brand_dna"][0]["list_id"] = "901800000000"
@@ -730,7 +786,7 @@ async function stepTaskComment(x: Ctx) {
             return (dict(kick)["handoff_comment"], [v for key, v in kick if key == "onboarding_tasks"][0],
                     dict(onb)["raw_answers_comment"])
 
-        self.assertEqual(lines(handoff, raw, handoff), ("equal", "equal", "equal"))
+        self.assertEqual(lines(handoff, raw, handoff), ("equal", ROUTE, "equal"))
         added = "differs: the writer adds a Cockpit ref line Make does not post"
         with mock.patch.object(mp, "REF_LINE", frozenset({"handoff_comment", "raw_answers_comment", "onboarding_tasks"})):
             self.assertEqual(lines(handoff, raw, handoff), (added, added, added))
@@ -750,6 +806,312 @@ async function stepTaskComment(x: Ctx) {
         self.assertEqual(mp.summary("onboarding", 1, 1, set()), ("FAIL: 1 run of 8922994, 1 difference.", 1))
         self.assertEqual(mp.summary("kickoff", 2, 0, {"phase4"}),
                          ("NOT PROVEN: 2 runs of 8925654, 0 differences; stage4.messages has no phase 4 text, so it was not compared.", 1))
+        # card_facts graded on its plan alone is said, not counted as proven by the writer's receipt.
+        self.assertEqual(mp.summary("kickoff", 7, 0, set(), 7),
+                         ("PASS: 7 runs of 8925654, 0 differences; card_facts' writer receipt not read on 7 runs, so only its "
+                          "plan was graded.", 0))
+
+
+MIGRATIONS = Path(__file__).resolve().parents[2] / "supabase" / "migrations"
+
+
+class OnTopOfMake(unittest.TestCase):
+    """The CEO's 2026-11-02 words: Make's output is the floor, graded byte for byte; an addition is accepted only in a
+    registered slot, one verdict per effect. Every answer here is invented."""
+
+    def setUp(self):
+        self.k, self.o = make12_mods(), make13_mods()
+        self.handoff = self.k[11]["input"]["comment_text"]
+        m46 = self.o[46]["input"]
+        self.ctx = {"targets": {"client_onboarding": KICKOFF_TARGETS,
+                                "brand_dna": [{"list_id": m46["list_id"], "owner_clickup_id": m46["assignees"][0]}]},
+                    "fields": {"client_onboarding": TYPE_FIELDS, "brand_dna": TYPE_FIELDS},
+                    "options": {o["field_id"]: o["options"] for o in OPTIONS}, "relay": dict(RELAY), "messages": PHASES}
+
+    def kick(self, effects, ctx=None):
+        return mp.compare_kickoff(effects, self.k, self.ctx if ctx is None else ctx)
+
+    def onb(self, effects, ctx=None):
+        return mp.compare_onboarding(effects, self.o, self.ctx if ctx is None else ctx)
+
+    def tasks(self, plan, ctx=None):
+        with mock.patch.object(mp, "TASK_COMMENT_STEP", "task_comment"):
+            return dict(self.kick([{"key": "onboarding_tasks", "plan": plan}], ctx))["onboarding_tasks"]
+
+    def dna(self, plan, ctx=None):
+        return dict(self.onb([{"key": "brand_dna_task", "plan": plan}], ctx))["brand_dna_task"]
+
+    def test_the_ceos_words_stand_behind_every_addition(self):
+        self.assertEqual(mp.CEO_WORDS, "You can even improve what's already there with the data that you have. "
+                                       "So you can add more if it gives us better data.")
+        for name in ("brief", "dna_brief", "card_facts", "request_route"):
+            self.assertIn(f'the CEO, 2026-11-02: "{mp.CEO_WORDS}"', mp.INTENDED[name], name)
+        self.assertIn(mp.BRIEF_HEADER, mp.INTENDED["brief"])
+        self.assertIn(mp.DNA_BRIEF_HEADER, mp.INTENDED["dna_brief"])
+        self.assertEqual({k: v[:2] for k, v in mp.SLOTS.items()},
+                         {"onboarding_tasks": ("brief", mp.BRIEF_HEADER), "brand_dna_task": ("dna_brief", mp.DNA_BRIEF_HEADER)})
+        self.assertEqual(sorted(k[:8] for k in mp.CARD_FACTS), ["2de15aa5", "45fdd2ea", "5d57fdde", "abaa31ee", "ee9bf855"])
+        self.assertFalse(set(mp.CARD_FACTS) & set(mp.CARD_FACTS_NEVER))
+        # Make 12 [21] and Make 13 [29] write none of the five, so filling them never touches Make's part.
+        written = set(mp.custom_fields(self.k[21]["input"])) | set(mp.custom_fields(self.o[29]["input"]))
+        self.assertFalse(written & set(mp.CARD_FACTS))
+        self.assertEqual(mp.legend(["equal + intended: request_route, brief", "intended: card_facts", "equal", "differs: x"]),
+                         legend_lines("request_route", "brief", "card_facts"))
+        self.assertEqual(mp.legend([NOT_READ]), legend_lines("card_facts"))
+        with self.assertRaises(KeyError):
+            mp.equal_plus("an_unregistered_addition")
+
+    def test_one_verdict_per_effect(self):
+        kick = mp.plan_lines("kickoff", {"effects": [facts(skip=NOTHING)]}, self.k, self.ctx)
+        onb = mp.plan_lines("onboarding", {"effects": [facts(skip="No card field to fill: there is no website answer.")]},
+                            self.o, self.ctx)
+        for lines in (kick, onb):
+            keys = [k for k, _ in lines]
+            self.assertEqual(len(keys), len(set(keys)), keys)
+        self.assertIn(("card_facts", NOT_READ), kick)
+        self.assertIn(("card_facts", NOT_READ), onb)
+
+    def test_a_registered_brief_on_the_onboarding_tasks_is_intended(self):
+        good = {"typeKey": "client_onboarding", "comment_text": self.handoff, "details": brief(), "detailsKind": "brief"}
+        self.assertEqual(self.tasks(good), ROUTE + ", brief")
+        self.assertEqual(self.tasks(dict(good, details=brief(size=3600))), ROUTE + ", brief")
+        self.assertEqual(self.tasks(dict(good, details=mp.BRIEF_HEADER)), ROUTE + ", brief")  # the header line alone
+        # The brief never hides a difference in Make's part.
+        self.assertEqual(self.tasks(dict(good, comment_text=self.handoff + " ")),
+                         "differs: the handoff on the tasks, whitespace only")
+
+    def test_a_brief_outside_its_slot_differs(self):
+        good = {"typeKey": "client_onboarding", "comment_text": self.handoff, "details": brief(), "detailsKind": "brief"}
+        description = "differs: the cockpit writes a task description Make does not"
+        for name, plan in (
+                ("an unregistered header", dict(good, details=brief("From the cockpit"))),
+                ("the Brand DNA header", dict(good, details=brief(mp.DNA_BRIEF_HEADER))),
+                ("the header not a line of its own", dict(good, details=mp.BRIEF_HEADER + " and more\nx")),
+                ("the header after a line", dict(good, details="\n" + brief())),
+                ("a carriage return after the header", dict(good, details=brief().replace("\n", "\r\n", 1))),
+                ("no detailsKind", {k: v for k, v in good.items() if k != "detailsKind"}),
+                ("the Brand DNA kind", dict(good, detailsKind="dna_brief"))):
+            self.assertEqual(self.tasks(plan), description, name)
+        self.assertEqual(self.tasks(dict(good, details=brief(size=3601))), "differs: the brief is 3,601 characters, over 3,600")
+        # A brief over the cap counts characters, not bytes: 3,600 Arabic letters still fit.
+        self.assertEqual(self.tasks(dict(good, details=mp.BRIEF_HEADER + "\n" + "ع" * (3600 - len(mp.BRIEF_HEADER) - 1))), ROUTE + ", brief")
+        dropped = "differs: the brief would be dropped (the type has no details field)"
+        self.assertEqual(self.tasks(good, dict(self.ctx, fields={"client_onboarding": TYPE_FIELDS[:1]})), dropped)
+        self.assertEqual(self.tasks(good, {k: v for k, v in self.ctx.items() if k != "fields"}), dropped)
+        # Keyed details but not of the kind the description shows: the answer is kept, the brief is not in the description.
+        self.assertEqual(self.tasks(good, dict(self.ctx, fields={"client_onboarding": [dict(TYPE_FIELDS[1], kind="text")]})), dropped)
+        # The brief in Make's comment instead of the description: Make's text with a trailing block differs.
+        self.assertEqual(self.tasks({"typeKey": "client_onboarding", "comment_text": self.handoff + "\n\n" + brief()}),
+                         "differs: the handoff on the tasks")
+
+    def test_a_registered_brief_on_the_brand_dna_task_is_intended(self):
+        good = {"typeKey": "brand_dna", "details": brief(mp.DNA_BRIEF_HEADER), "detailsKind": "dna_brief"}
+        self.assertEqual(self.dna(good), ROUTE + ", dna_brief")
+        self.assertEqual(self.dna(dict(good, details=brief(mp.DNA_BRIEF_HEADER, 3600))), ROUTE + ", dna_brief")
+        self.assertEqual(self.dna(dict(good, details=brief(mp.DNA_BRIEF_HEADER, 3601))),
+                         "differs: the dna_brief is 3,601 characters, over 3,600")
+        description = "differs: the cockpit writes a task description Make does not"
+        self.assertEqual(self.dna(dict(good, details=brief())), description)  # the onboarding tasks' header
+        self.assertEqual(self.dna(dict(good, detailsKind="brief")), description)
+        self.assertEqual(self.dna(dict(good, details="Raw Onboarding Form Answers\nBusiness Name: Cedar Homes")), description)
+        self.assertEqual(self.dna(good, dict(self.ctx, fields={"brand_dna": []})),
+                         "differs: the brief would be dropped (the type has no details field)")
+        ctx = dict(self.ctx, targets=dict(self.ctx["targets"], brand_dna=[dict(self.ctx["targets"]["brand_dna"][0], list_id="901800000000")]))
+        self.assertEqual(self.dna(good, ctx), "differs: list")
+
+    def test_card_facts_fills_only_the_five_fields_while_they_are_empty(self):
+        every = [fact(CONSULT), fact(PLATFORM), fact(FATHOM), fact(CALL_DATE), fact(WEBSITE)]
+        verdict = lambda effect: dict(self.kick([effect]))["card_facts"]  # noqa: E731
+        self.assertEqual(verdict(facts(*every)), NOT_READ)
+        self.assertEqual(verdict(facts(skip=NOTHING)), NOT_READ)  # nothing to fill: the runner skips it with its reason
+        # A date as clickup-writeback's factDay takes it: a real day, an instant with its zone, epoch milliseconds.
+        for value in (1760961320000, "1760961320000", "2026-10-20T08:00:00+00:00", "2026-10-20T08:00Z",
+                      "2026-10-20T08:00:00.123456+0300"):
+            self.assertEqual(verdict(facts(fact(CALL_DATE, value=value))), NOT_READ, value)
+        self.assertEqual(verdict(facts(fact(CALL_DATE, value="2026-10-20T22:00:00Z", day="2026-10-21"))), NOT_READ)
+        self.assertEqual(dict(self.onb([facts(fact(WEBSITE))]))["card_facts"], NOT_READ)
+        for name, effect, said in (
+                ("Country", facts(fact(CONSULT), fact(COUNTRY, label="Country")), "card_facts plans a field outside the five (e0ca65e7)"),
+                ("Daily Budget", facts(fact("539743c2-b6cd-4eeb-bf2f-abaf64769a5e")), "card_facts plans a field outside the five (539743c2)"),
+                ("a Make field", facts(fact(STATUS)), "card_facts plans a field outside the five (9368ca9e)"),
+                ("no onlyIfEmpty", facts(fact(FATHOM, onlyIfEmpty=None)), "card_facts could overwrite a card value: no onlyIfEmpty on abaa31ee"),
+                ("onlyIfEmpty false", facts(fact(FATHOM, onlyIfEmpty=False)), "card_facts could overwrite a card value: no onlyIfEmpty on abaa31ee"),
+                ("twice", facts(fact(FATHOM), fact(FATHOM)), "card_facts plans a field twice (abaa31ee)"),
+                ("the wrong kind", facts(fact(PLATFORM, kind="labels")), "card_facts plans the wrong kind for 2de15aa5"),
+                ("an empty value", facts(fact(WEBSITE, value="")), "card_facts plans no usable value for 5d57fdde"),
+                ("a link that is not https", facts(fact(WEBSITE, value="www.cedar.example")), "card_facts plans no usable value for 5d57fdde"),
+                ("a date that is not one", facts(fact(CALL_DATE, value="soon")), "card_facts plans no usable value for ee9bf855"),
+                ("no option", facts(fact(PLATFORM, optionId=None)), "card_facts plans no usable value for 2de15aa5"),
+                ("no labels", facts(fact(CONSULT, optionIds=[])), "card_facts plans no usable value for 45fdd2ea"),
+                ("an unknown option", facts(fact(CONSULT, optionIds=[IN_OFFICE, "0f000000-0000-4000-8000-0000000000ff"])),
+                 "card_facts plans an option the field does not have on 45fdd2ea"),
+                ("no source", facts(fact(FATHOM, source=" ")), "card_facts names no source for abaa31ee"),
+                # What clickup-writeback's factsStep refuses (SAY_FORMS.mismatch) differs: a row it would fail is no addition.
+                ("no label", facts(fact(FATHOM, label=None)), "card_facts plans no label for abaa31ee"),
+                ("a label that is no text", facts(fact(FATHOM, label=["Fathom"])), "card_facts plans no label for abaa31ee"),
+                ("an option twice", facts(fact(CONSULT, optionIds=[IN_OFFICE, IN_OFFICE])), "card_facts plans an option twice on 45fdd2ea"),
+                ("a day that does not exist", facts(fact(CALL_DATE, value="2026-02-31")), "card_facts plans no usable value for ee9bf855"),
+                ("an instant that does not exist", facts(fact(CALL_DATE, value="2026-02-31T08:00Z")),
+                 "card_facts plans no usable value for ee9bf855"),
+                ("an instant with no zone", facts(fact(CALL_DATE, value="2026-10-20T08:00")), "card_facts plans no usable value for ee9bf855"),
+                ("seconds for milliseconds", facts(fact(CALL_DATE, value=1760961320)), "card_facts plans no usable value for ee9bf855"),
+                ("seconds as text", facts(fact(CALL_DATE, value="1760961320")), "card_facts plans no usable value for ee9bf855"),
+                ("a day before 2020", facts(fact(CALL_DATE, value="2019-12-31")), "card_facts plans no usable value for ee9bf855"),
+                ("a day after 2099", facts(fact(CALL_DATE, value="2100-01-01")), "card_facts plans no usable value for ee9bf855"),
+                ("a day of other digits", facts(fact(CALL_DATE, value="٢٠٢٦-١٠-٢٠")), "card_facts plans no usable value for ee9bf855"),
+                ("a yes for a date", facts(fact(CALL_DATE, value=True)), "card_facts plans no usable value for ee9bf855"),
+                ("two days", facts(fact(CALL_DATE, day="2026-10-21")), "card_facts plans no usable value for ee9bf855"),
+                ("a null day", facts(dict(fact(CALL_DATE), day=None)), "card_facts plans no usable value for ee9bf855"),
+                ("a link with a line after it", facts(fact(FATHOM, value="https://fathom.video/share/invented\n")),
+                 "card_facts plans no usable value for abaa31ee")):
+            self.assertEqual(verdict(effect), f"differs: {said}", name)
+        self.assertEqual(verdict({"key": "card_facts", "plan": {}}), "differs: card_facts plans no list of fields")
+        # No field and no skip: the runner queues it and the writer fails the row (an empty list is a mismatch).
+        empty = "differs: card_facts plans no field and no skip (the writer refuses an empty list)"
+        self.assertEqual(verdict(facts()), empty)
+        self.assertEqual(verdict(facts(skip=" ")), empty)
+        self.assertEqual(verdict(facts(skip=True)), empty)
+        # Options unknown to the field map cannot be proven, so they differ.
+        self.assertEqual(dict(self.kick([facts(fact(PLATFORM))], dict(self.ctx, options={})))["card_facts"],
+                         "differs: card_facts plans an option the field does not have on 2de15aa5")
+        # A field Make writes itself is Make's to write.
+        made = copy.deepcopy(self.k)
+        made[21]["input"]["custom_fields"][FATHOM] = "https://fathom.video/share/make"
+        self.assertEqual(dict(mp.compare_kickoff([facts(fact(FATHOM))], made, self.ctx))["card_facts"],
+                         "differs: Make writes abaa31ee itself")
+
+    def test_card_facts_over_a_set_field_differs(self):
+        # The writer's own receipt, in the shape clickup-writeback/forms.ts writeFacts saves it at the queue row's
+        # progress.steps.card_facts.fields: {fieldId: {before "empty" | "set", state "due" | "written" | "kept"}}.
+        verdict = lambda effect: dict(self.kick([effect]))["card_facts"]  # noqa: E731
+        plan = (fact(FATHOM), fact(CONSULT), fact(CALL_DATE))
+        good = {FATHOM: kept_or_written("empty", "written"),
+                CONSULT: kept_or_written("set", "kept", differs=True, note="The card already had another value; it was kept."),
+                CALL_DATE: kept_or_written("empty", "kept", differs=True, note="Another value got there first; it was kept.")}
+        self.assertEqual(verdict(facts(*plan, receipt=good)), "intended: card_facts")  # read, and nothing written over
+        self.assertEqual(verdict(facts(*plan, receipt={FATHOM: kept_or_written("empty", "due")})), "intended: card_facts")
+        over = dict(good, **{FATHOM: kept_or_written("set", "written")})
+        self.assertEqual(verdict(facts(*plan, receipt=over)), "differs: overwrote a card value (abaa31ee)")
+        # The same receipt wherever it is handed over: the step, the queue row's progress, the effect row's receipt,
+        # and under the old key "receipts", where a list was expected: never passed over in silence.
+        step = {"state": "done", "at": "2026-11-02T08:00:00.000Z", "fields": over}
+        for name, receipt in (("the step", step), ("the progress", {"steps": {"card_facts": step, "card_fields": {"state": "done"}}}),
+                              ("the effect row", {"table": "cockpit_clickup_writeback_queue", "id": RESPONSE, "state": "delivered",
+                                                  "at": "2026-11-02T08:00:01Z", "step": step})):
+            self.assertEqual(verdict(facts(*plan, receipt=receipt)), "differs: overwrote a card value (abaa31ee)", name)
+        legacy = {"key": "card_facts", "plan": {"fields": list(plan)}, "receipts": over}
+        self.assertEqual(verdict(legacy), "differs: overwrote a card value (abaa31ee)")
+        # A progress whose writer has not reached card_facts, or an effect row with no step, is no receipt.
+        self.assertEqual(verdict(facts(*plan, receipt={"steps": {}})), NOT_READ)
+        self.assertEqual(verdict(facts(*plan, receipt={"table": "cockpit_clickup_writeback_queue", "step": None})), NOT_READ)
+        # `before` is the writer's word for what its first read saw: "empty" on every fill, never the card's value.
+        self.assertEqual(verdict(facts(*plan, receipt={FATHOM: kept_or_written("empty", "written"),
+                                                       CALL_DATE: kept_or_written("empty", "written")})), "intended: card_facts")
+        # A field the writer wrote that the plan does not name differs, as an overwrite does.
+        self.assertEqual(verdict(facts(fact(FATHOM), receipt={WEBSITE: kept_or_written("empty", "written")})),
+                         "differs: the writer wrote a field the plan does not name (5d57fdde)")
+        self.assertEqual(verdict(facts(fact(FATHOM), receipt={COUNTRY: kept_or_written("set", "written")})),
+                         "differs: overwrote a card value (e0ca65e7)")
+        # A receipt in any other shape differs: the invented list of {fieldId, outcome, before value}, a value in
+        # `before`, a state the writer has no word for, a key it never saves, nothing at all.
+        shape = "differs: the writer's receipt is not in its shape ({fieldId: {before, state}})"
+        for name, receipt in (
+                ("a list", [{"fieldId": FATHOM, "outcome": "written", "before": "https://fathom.video/share/earlier"}]),
+                ("a value in before", {FATHOM: kept_or_written("https://fathom.video/share/earlier", "written")}),
+                ("no before", {FATHOM: {"state": "written"}}),
+                ("an outcome, not a state", {FATHOM: {"before": "empty", "outcome": "written"}}),
+                ("a state the writer has not", {FATHOM: kept_or_written("empty", "done")}),
+                ("a value kept beside it", {FATHOM: kept_or_written("empty", "written", value="https://fathom.video/share/x")}),
+                ("no field", {}), ("a step with no fields", {"state": "started"}), ("a text", "written")):
+            self.assertEqual(verdict(facts(*plan, receipt=receipt)), shape, name)
+        # The plan's own problems and the receipt's are named together, never one hiding the other.
+        self.assertEqual(verdict(facts(fact(FATHOM, onlyIfEmpty=False), receipt={FATHOM: kept_or_written("set", "written")})),
+                         "differs: overwrote a card value (abaa31ee); card_facts could overwrite a card value: no onlyIfEmpty on abaa31ee")
+
+    def test_the_receipt_words_are_the_writers(self):
+        # FactReceipt's keys and words, the step that saves it and factDay's zone pattern and range, read from
+        # clickup-writeback/forms.ts as the TASK_COMMENT_STEP and REF_LINE checks read the writer: the two cannot drift.
+        writer = (WRITER / "forms.ts").read_text()
+        block = re.search(r"export type FactReceipt = \{(.*?)\};", writer, re.S)
+        self.assertIsNotNone(block, "forms.ts has no FactReceipt type: teach this test where the receipt's shape is")
+        props = {m.group(1): m.group(3) for m in re.finditer(r"(\w+)(\??):\s*([^;]+);", block.group(1))}
+        words = lambda t: set(re.findall(r'"([^"]+)"', t))  # noqa: E731
+        self.assertEqual(set(props), set(mp.FACT_KEYS))
+        self.assertEqual(words(props["before"]), set(mp.FACT_BEFORE))
+        self.assertEqual(words(props["state"]), set(mp.FACT_STATE))
+        facts_body = ts_body(writer, "writeFacts")
+        self.assertRegex(facts_body, r"book\.start\(step\.key,\s*\{\s*fields: receipt\s*\}\)")
+        self.assertRegex(facts_body, r'book\.set\(step\.key,\s*"done",\s*\{\s*fields: receipt\b')
+        self.assertRegex(ts_body(writer, "factsStep"), r'key: "' + mp.FACT_STEP + r'", type: "facts"')
+        zoned = re.search(r"const ZONED =\s*/(.+)/;", writer)
+        self.assertIsNotNone(zoned, "forms.ts has no ZONED pattern: teach this test where factDay's instants are read")
+        self.assertEqual(zoned.group(1), mp.FACT_ZONED.pattern)
+        self.assertEqual(re.findall(r'"(20\d\d-\d\d-\d\d)"', ts_body(writer, "factDay")), list(mp.FACT_DAYS))
+
+    def test_the_dispatch_sends_makes_two_keys_and_nothing_else(self):
+        def dispatch(payload):
+            return dict(self.onb([{"key": "github_dispatch", "plan": {"payload": payload}}]))["github_dispatch"]
+
+        base = {"taskId": CARD, "client": "Cedar Homes"}
+        self.assertEqual(dispatch(base), "equal")
+        self.assertEqual(dispatch(dict(base, source="cockpit")), "differs: the cockpit sends keys Make does not (source)")
+        self.assertEqual(dispatch(dict(base, phone=PHONE)),
+                         "differs: the cockpit sends keys Make does not (phone), the cockpit sends a contact answer")
+        nested = dict(base, onboarding={"answers": [{"ref": "64f2fb80-b074-4017-b8b7-b7d549947e52", "value": PHONE}]})
+        with mock.patch.object(mp, "DISPATCH_EXTRA_KEYS", frozenset({"source", "onboarding"})):
+            self.assertEqual(dispatch(dict(base, source="cockpit")), "equal")
+            self.assertEqual(dispatch(nested), "differs: the cockpit sends a contact answer")
+        self.assertNotIn(PHONE, dispatch(dict(base, **{"a key with spaces": PHONE})))
+        self.assertEqual(dispatch({"taskId": CARD, "client": "Cedar Homes Trading Co"}), "differs: client name")
+
+    def test_makes_texts_with_a_trailing_block_differ(self):
+        block = "\n\n" + brief()
+        handoff = dict(self.kick([{"key": "handoff_comment", "plan": {"comment_text": self.handoff + block}}]))
+        self.assertEqual(handoff["handoff_comment"], "differs: text")
+        raw = self.o[47]["input"]["comment_text"]
+        profile = self.o[29]["input"]["custom_fields"][mp.FIELD["profile"]]
+        onb = dict(self.onb([{"key": "raw_answers_comment", "plan": {"comment_text": raw + block}},
+                             {"key": "profile_fields", "plan": {"fields": [{"fieldId": mp.FIELD["profile"], "value": profile + block}]}}]))
+        self.assertEqual(onb["raw_answers_comment"], "differs: text")
+        self.assertEqual(onb["profile_fields"], "differs: 7755485f")
+        onb = dict(self.onb([{"key": "profile_fields", "plan": {"fields": [
+            {"fieldId": mp.FIELD["profile"], "value": profile}, {"fieldId": WEBSITE, "kind": "url", "value": "https://cedar.example"}]}}]))
+        self.assertEqual(onb["profile_fields"], "differs: Make 13 [29] writes no 5d57fdde")
+        self.assertEqual(dict(self.onb([{"key": "profile_fields", "plan": {"fields": [{"fieldId": mp.FIELD["profile"], "value": profile}]}}]))
+                         ["profile_fields"], "equal + intended: kickoff_link")
+        # A card field Make 12 [21] never writes, placed among Make's card fields, differs too.
+        fields = [{"fieldId": fid, "kind": "drop_down", "optionName": None} for fid in mp.custom_fields(self.k[21]["input"])
+                  if fid != BLUEPRINT] + [{"fieldId": FATHOM, "kind": "url", "value": "https://fathom.video/share/invented"}]
+        card = dict(self.kick([{"key": "card_fields", "plan": {"fields": fields}}]))["card_fields"]
+        self.assertTrue(card.startswith("differs: ") and "abaa31ee" in card, card)
+
+    def test_an_effect_no_entry_registers_differs(self):
+        lines = mp.plan_lines("kickoff", {"effects": [{"key": "client_brief", "plan": {}}, {"key": "Not a key!", "plan": {}}]},
+                              self.k, self.ctx)
+        self.assertIn(("client_brief", "differs: an addition no INTENDED entry registers"), lines)
+        self.assertIn(("effect", "differs: an addition no INTENDED entry registers"), lines)
+        lines = mp.plan_lines("onboarding", {"effects": [{"key": "kickoff_notice", "plan": {}}]}, self.o, self.ctx)
+        self.assertIn(("kickoff_notice", "differs: an addition no INTENDED entry registers"), lines)
+
+    def test_the_headers_and_fields_are_the_migrations_and_the_writers(self):
+        # The briefs' first lines, their kinds and cap, and card_facts' fields, as migration 20261102p plans them
+        # (read as the Stage 4 tests read a migration: by its full file stem on the branch, so the goals sheet's
+        # 20261102m and 20261102n never match) and as clickup-writeback allows them.
+        files = sorted(MIGRATIONS.glob("20261102p_stage4_better_data.sql"))
+        self.assertEqual(len(files), 1, "20261102p_stage4_better_data.sql is not on the branch: the briefs' headers cannot be "
+                                        "checked against the planner")
+        sql = files[0].read_text()
+        for header, kind in ((mp.BRIEF_HEADER, "brief"), (mp.DNA_BRIEF_HEADER, "dna_brief")):
+            # A SQL string literal that opens with the header and ends, or breaks the line, right after it.
+            self.assertRegex(sql, r"(?<![\w'])E?'" + re.escape(header) + r"(?='|\n|\\n)",
+                             f"{files[0].name} has no string literal starting with the line {header!r}")
+            self.assertRegex(sql, r"""['"]detailsKind['"]\s*[,:]\s*['"]""" + kind + r"""['"]""", f"detailsKind {kind}")
+        self.assertRegex(sql, r"(?<![\d,])3,?600(?!\d)", "the briefs' 3,600-character cap")
+        self.assertIn("card_facts", sql)
+        writer = (WRITER / "forms.ts").read_text()
+        for name, text in ((files[0].name, sql), ("clickup-writeback/forms.ts", writer)):
+            self.assertEqual({fid for fid in mp.CARD_FACTS if fid not in text}, set(), f"{name} does not name every card_facts field")
+            self.assertEqual({fid for fid in mp.CARD_FACTS_NEVER if fid in text}, set(), f"{name} names a field card_facts never writes")
 
 
 class Answer:
@@ -776,7 +1138,15 @@ class Net:
         self.receipt_fails = set()
         self.messages = dict(PHASES)
         self.targets = [{"key": "client_onboarding", "targets": [{"list_id": "901816723190", "template_id": "t-86ex8x9xw"},
-                                                                 {"list_id": "901818016338", "template_id": "t-86eyu1w3d"}]}]
+                                                                 {"list_id": "901818016338", "template_id": "t-86eyu1w3d"}],
+                         "fields": TYPE_FIELDS}]
+        # What this round adds on top of Make; None while the plan carries none of it.
+        self.brief = None
+        self.dna_brief = None
+        self.card_facts = {"kickoff": None, "onboarding": None}
+        # The writer's side of card_facts: cockpit_form_effects rows by response id, queue rows' progress by id.
+        self.fact_rows: dict = {}
+        self.queue: dict = {}
         self.card_name = "Cedar Homes"
         self.with_client_data_row = True
         self.unmapped = None
@@ -805,6 +1175,10 @@ class Net:
         if form == "kickoff":
             assert inp["hidden"]["legal_name"] == "Cedar Homes" and "maps_link" not in inp["hidden"]
             body = (self.messages.get("phase4") or "").replace("{map_link}", "https://mahara-onboarding-map.vercel.app/?phase=4&cid=" + CARD)
+            tasks = {"typeKey": "client_onboarding", "comment_text": self.handoff}
+            if self.brief is not None:
+                tasks.update(details=self.brief, detailsKind="brief")
+            more = [facts(*self.card_facts["kickoff"])] if self.card_facts["kickoff"] is not None else []
             return [{"key": "handoff_comment", "plan": {"comment_text": self.handoff}},
                     {"key": "native_status", "plan": {"status": "IN PROGRESS"}},
                     {"key": "card_fields", "plan": {"fields": [
@@ -813,10 +1187,10 @@ class Net:
                         {"fieldId": SERVICE, "kind": "drop_down", "optionName": "Interior design"},
                         {"fieldId": "924bba47-32d4-4557-94d4-f475cd548dd2", "kind": "drop_down", "optionName": "Logged In"},
                         {"fieldId": BLUEPRINT, "kind": "url", "value": "https://cockpit.maharamedia.com/x"}]}},
-                    {"key": "onboarding_tasks", "plan": {"typeKey": "client_onboarding", "comment_text": self.handoff}},
+                    {"key": "onboarding_tasks", "plan": tasks},
                     {"key": "map_phase4", "plan": {"value": "https://mahara-onboarding-map.vercel.app/?phase=4&cid=" + CARD}},
                     {"key": "phase4_whatsapp", "plan": {"body": body or None}, "missing": None if body else "not set up"},
-                    {"key": "kickoff_notice", "plan": {}}, {"key": "new_mrr", "plan": {}}, {"key": "recap", "plan": {}}]
+                    {"key": "kickoff_notice", "plan": {}}, {"key": "new_mrr", "plan": {}}, {"key": "recap", "plan": {}}] + more
         assert inp["hidden"] == {} and inp["answers"][3]["value"] == "Cedar Homes"
         body = (self.messages.get("phase3") or "").replace("{map_link}", "https://mahara-onboarding-map.vercel.app/?phase=3&cid=" + CARD)
         out = [{"key": "profile_fields", "plan": {"fields": [{"fieldId": mp.FIELD["profile"],
@@ -825,8 +1199,11 @@ class Net:
                {"key": "map_phase3", "plan": {"value": "https://mahara-onboarding-map.vercel.app/?phase=3&cid=" + CARD}},
                {"key": "github_dispatch", "plan": {"payload": {"taskId": CARD, "client": inp["client"]}}},
                {"key": "phase3_whatsapp", "plan": {"body": body or None}, "missing": None if body else "not set up"},
-               {"key": "brand_dna_task", "plan": {"typeKey": "brand_dna"}},
+               {"key": "brand_dna_task", "plan": dict({"typeKey": "brand_dna"}, **(
+                   {"details": self.dna_brief, "detailsKind": "dna_brief"} if self.dna_brief is not None else {}))},
                {"key": "read_model", "plan": {}}]
+        if self.card_facts["onboarding"] is not None:
+            out.append(facts(*self.card_facts["onboarding"]))
         if self.with_client_data_row:
             out.insert(3, {"key": "client_data_row", "plan": {"payload": {"taskId": CARD}}})
         return out
@@ -841,6 +1218,7 @@ class Net:
         if path.startswith("/rest/v1/cockpit_clickup_fields?"):
             return 200, OPTIONS
         if path.startswith("/rest/v1/cockpit_request_types?"):
+            assert "select=key,targets,fields&" in path
             return 200, self.targets
         if path.startswith("/rest/v1/cockpit_settings?"):
             assert "key=eq.stage4.messages" in path
@@ -858,6 +1236,15 @@ class Net:
         if path.startswith("/rest/v1/cockpit_billing_accounts?"):
             assert f"clickup_task_id=in.({CARD})" in path
             return 200, [{"clickup_task_id": CARD, "client_name": self.card_name}]
+        if path.startswith("/rest/v1/cockpit_form_effects?"):
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
+            assert query["select"] == ["delivery_ref"] and query["effect_key"] == ["eq.card_facts"], path
+            return 200, self.fact_rows.get(query["response_id"][0][len("eq."):], [])
+        if path.startswith("/rest/v1/cockpit_clickup_writeback_queue?"):
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
+            assert query["select"] == ["progress"], path
+            ref = query["id"][0][len("eq."):]
+            return 200, [{"progress": self.queue[ref]}] if ref in self.queue else []
         if path == "/rest/v1/rpc/cockpit_form_parity_plan":
             return 200, {"formKey": body["p_form_key"], "effects": self.plan(body["p_form_key"], body["p_input"]), "unmapped": self.unmapped}
         if url.startswith("https://api.clickup.com/api/v2/task/"):
@@ -908,17 +1295,97 @@ class Parity(unittest.TestCase):
             f"kickoff run 1: from response {RESPONSE}",
             "kickoff run 1: handoff_comment equal",
             "kickoff run 1: native_status equal",
-            "kickoff run 1: card_fields equal",
-            "kickoff run 1: card_fields intended: the Blueprint link points at the cockpit Blueprint",
-            "kickoff run 1: onboarding_tasks equal",
-            f"kickoff run 1: onboarding_tasks intended: {mp.INTENDED['task_name']}; {mp.INTENDED['dedupe']}",
+            "kickoff run 1: card_fields equal + intended: blueprint",
+            f"kickoff run 1: onboarding_tasks {ROUTE}",
             "kickoff run 1: map_phase4 equal",
-            "kickoff run 1: phase4_whatsapp intended: waits for the CSM's approval (2b rule)",
-            "kickoff run 1: kickoff_notice intended: the cockpit's Stage 1 notice (Make posts none)",
-            "kickoff run 1: new_mrr intended: new (Q21)",
-            "kickoff run 1: recap intended: stays off (Q22)",
-            "kickoff run 1: fidelity equal",
-            "PASS: 1 run of 8925654, 0 differences."])
+            "kickoff run 1: phase4_whatsapp equal + intended: approval",
+            "kickoff run 1: kickoff_notice intended: notice",
+            "kickoff run 1: new_mrr intended: new_mrr",
+            "kickoff run 1: recap intended: recap",
+            "kickoff run 1: fidelity equal"]
+            + legend_lines("blueprint", "task_name", "dedupe", "request_route", "approval", "notice", "new_mrr", "recap")
+            + ["PASS: 1 run of 8925654, 0 differences."])
+
+    def test_the_additions_on_top_of_make_pass_with_one_verdict_each_and_the_ceos_words(self):
+        self.net.brief = brief()
+        self.net.dna_brief = brief(mp.DNA_BRIEF_HEADER)
+        self.net.card_facts = {"kickoff": [fact(CONSULT), fact(PLATFORM), fact(CALL_DATE)], "onboarding": [fact(WEBSITE)]}
+        code, out = self.run_cmd("kickoff", "--last", "1")
+        self.assertEqual(code, 0, out)
+        lines = out.strip().splitlines()
+        self.assertIn(f"kickoff run 1: onboarding_tasks {ROUTE}, brief", lines)
+        self.assertIn(f"kickoff run 1: card_facts {NOT_READ}", lines)  # no card_facts row for the response yet
+        legend = [x for x in lines if x.startswith("intended ")]
+        self.assertEqual(lines[-len(legend) - 1:-1], legend)  # the legend closes the run, before the summary
+        self.assertEqual(legend, legend_lines("blueprint", "task_name", "dedupe", "request_route", "brief", "approval", "notice",
+                                              "new_mrr", "recap", "card_facts"))
+        self.assertEqual(sum(mp.CEO_WORDS in x for x in legend), 3)  # request_route, brief, card_facts
+        self.assertEqual(lines[-1], "PASS: 1 run of 8925654, 0 differences; card_facts' writer receipt not read on 1 run, "
+                                    "so only its plan was graded.")
+        self.assertNotIn(mp.BRIEF_HEADER + "\n", out)  # the brief itself is never printed
+        self.net.targets = [{"key": "brand_dna", "targets": [{"list_id": "901818016338", "owner_clickup_id": 100000001}],
+                             "fields": TYPE_FIELDS}]
+        code, out = self.run_cmd("onboarding", "--last", "1")
+        self.assertIn(f"onboarding run 1: brand_dna_task {ROUTE}, dna_brief\n", out)
+        self.assertIn(f"onboarding run 1: card_facts {NOT_READ}\n", out)
+        self.assertIn(legend_lines("dna_brief")[0] + "\n", out)
+        self.assertEqual(out.strip().splitlines()[-1], "FAIL: 1 run of 8922994, 1 difference; card_facts' writer receipt not "
+                                                       "read on 1 run, so only its plan was graded.")  # the Client Data row only
+        self.assertIn("client_data_row differs", out)
+
+    def test_the_vps_run_grades_card_facts_by_the_writers_receipt(self):
+        # The response's card_facts effect row names its queue row; the writer's receipt is that row's
+        # progress.steps.card_facts.fields, read only. A write over a set value fails the run.
+        self.net.card_facts["kickoff"] = [fact(FATHOM), fact(CALL_DATE)]
+        ref = "4e0d2c1b-0a9f-4e8d-9c7b-6a5f4e3d2c1b"
+        self.net.fact_rows[RESPONSE] = [{"delivery_ref": ref}]
+        written = {"state": "done", "at": "2026-11-02T08:00:00.000Z",
+                   "fields": {FATHOM: kept_or_written("empty", "written"), CALL_DATE: kept_or_written("set", "kept")}}
+        self.net.queue[ref] = {"steps": {"card_facts": written}}
+        code, out = self.run_cmd("kickoff", "--last", "1")
+        self.assertEqual(code, 0, out)
+        self.assertIn("kickoff run 1: card_facts intended: card_facts\n", out)
+        self.assertEqual(out.strip().splitlines()[-1], "PASS: 1 run of 8925654, 0 differences.")
+        reads = [r for r in self.net.requests if "cockpit_form_effects" in r["url"] or "writeback_queue" in r["url"]]
+        self.assertEqual([r["method"] for r in reads], ["GET", "GET"])
+        self.assertIn(f"response_id=eq.{RESPONSE}", reads[0]["url"])
+        self.assertIn(f"id=eq.{ref}", reads[1]["url"])
+        written["fields"][CALL_DATE] = kept_or_written("set", "written")
+        code, out = self.run_cmd("kickoff", "--last", "1")
+        self.assertEqual(code, 1)
+        self.assertIn("kickoff run 1: card_facts differs: overwrote a card value (ee9bf855)\n", out)
+        self.assertEqual(out.strip().splitlines()[-1], "FAIL: 1 run of 8925654, 1 difference.")
+        # A receipt the run cannot read as the writer's fails rather than passing unread.
+        self.net.queue[ref] = {"steps": {"card_facts": {"state": "done", "fields": [{"fieldId": FATHOM, "outcome": "written"}]}}}
+        code, out = self.run_cmd("kickoff", "--last", "1")
+        self.assertIn("card_facts differs: the writer's receipt is not in its shape", out)
+        # A queued row the writer has not claimed yet, or no row at all: said, not counted as proven.
+        self.net.queue[ref] = {}
+        code, out = self.run_cmd("kickoff", "--last", "1")
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"kickoff run 1: card_facts {NOT_READ}\n", out)
+        self.assertTrue(out.strip().endswith("card_facts' writer receipt not read on 1 run, so only its plan was graded."))
+        # No card_facts planned: nothing of the writer's is read.
+        self.net = Net()
+        self.run_cmd("kickoff", "--last", "1")
+        self.assertFalse([r for r in self.net.requests if "cockpit_form_effects" in r["url"] or "writeback_queue" in r["url"]])
+
+    def test_a_brief_the_request_type_would_drop_fails_the_vps_run(self):
+        self.net.brief = brief()
+        self.net.targets[0]["fields"] = TYPE_FIELDS[:1]
+        code, out = self.run_cmd("kickoff", "--last", "1")
+        self.assertEqual(code, 1)
+        self.assertIn("kickoff run 1: onboarding_tasks differs: the brief would be dropped (the type has no details field)\n", out)
+        self.assertNotIn("intended brief:", out)
+        self.net.targets[0]["fields"] = TYPE_FIELDS
+        self.net.brief = brief(size=3601)
+        code, out = self.run_cmd("kickoff", "--last", "1")
+        self.assertIn("kickoff run 1: onboarding_tasks differs: the brief is 3,601 characters, over 3,600\n", out)
+        self.net.brief = None
+        self.net.card_facts["kickoff"] = [fact(COUNTRY)]
+        code, out = self.run_cmd("kickoff", "--last", "1")
+        self.assertIn("kickoff run 1: card_facts differs: card_facts plans a field outside the five (e0ca65e7)\n", out)
+        self.assertEqual(out.strip().splitlines()[-1], "FAIL: 1 run of 8925654, 1 difference.")
 
     def test_a_planned_task_comment_nothing_posts_fails_the_vps_run(self):
         with mock.patch.object(mp, "TASK_COMMENT_STEP", None):
@@ -981,16 +1448,16 @@ class Parity(unittest.TestCase):
             "onboarding [31] search",
             "onboarding run 1: from response 7d1c0e2a-9b8f-4e5d-8c3b-2a1f0e9d8c7b",
             "onboarding run 1: github_dispatch equal",
-            "onboarding run 1: profile_fields equal",
-            f"onboarding run 1: profile_fields intended: {mp.INTENDED['kickoff_link']}",
+            "onboarding run 1: profile_fields equal + intended: kickoff_link",
             "onboarding run 1: raw_answers_comment equal",
             "onboarding run 1: client_data_row differs: Make 13 [31] only searches Client Data, so Make writes no row",
             "onboarding run 1: map_phase3 equal",
             "onboarding run 1: phase3_whatsapp setting missing",
             "onboarding run 1: brand_dna_task differs: the brand_dna request type is not set up",
-            f"onboarding run 1: read_model intended: {mp.INTENDED['read_model']}",
-            "onboarding run 1: fidelity equal",
-            "FAIL: 1 run of 8922994, 2 differences; stage4.messages has no phase 3 text, so it was not compared."])
+            "onboarding run 1: read_model intended: read_model",
+            "onboarding run 1: fidelity equal"]
+            + legend_lines("kickoff_link", "read_model")
+            + ["FAIL: 1 run of 8922994, 2 differences; stage4.messages has no phase 3 text, so it was not compared."])
         self.net.with_client_data_row = False
         self.net.messages = dict(PHASES)
         self.net.targets = [{"key": "brand_dna", "targets": [{"list_id": "901818016338", "owner_clickup_id": 100000001}]}]
@@ -998,8 +1465,8 @@ class Parity(unittest.TestCase):
         code, out = self.run_cmd("onboarding")
         self.assertNotIn("client_data_row", out)
         self.assertIn("onboarding run 1: github_dispatch differs: client name", out)
-        self.assertIn("onboarding run 1: brand_dna_task equal", out)
-        self.assertIn("onboarding run 1: phase3_whatsapp intended: waits for the CSM's approval (2b rule)", out)
+        self.assertIn(f"onboarding run 1: brand_dna_task {ROUTE}\n", out)
+        self.assertIn("onboarding run 1: phase3_whatsapp equal + intended: approval\n", out)
         self.assertIn("FAIL: 1 run of 8922994, 1 difference.", out)
         (self.tmp / "relay.env").write_text("")
         code, out = self.run_cmd("onboarding")
@@ -1089,10 +1556,10 @@ class Parity(unittest.TestCase):
             mods = make12_mods(kickoff)
             return mods[21]["input"]["custom_fields"][SERVICE], [v for k, v in mp.compare_kickoff(plan, mods, ctx) if k == "card_fields"]
 
-        blueprint = f"intended: {mp.INTENDED['blueprint']}"
-        self.assertEqual(card("Interior design, Other"), ("e9883783-96ef-49e9-83c3-efba1aebc738", ["equal", blueprint]))
-        self.assertEqual(card("Fit out and renovation"), ("889744ae-e3c5-4dc0-bf29-7f6c183be11e", ["differs: bab9a58b", blueprint]))
-        self.assertEqual(card("Landscaping"), (None, ["differs: bab9a58b", blueprint]))
+        # One verdict per effect: the Blueprint link is named only while Make's part is equal.
+        self.assertEqual(card("Interior design, Other"), ("e9883783-96ef-49e9-83c3-efba1aebc738", ["equal + intended: blueprint"]))
+        self.assertEqual(card("Fit out and renovation"), ("889744ae-e3c5-4dc0-bf29-7f6c183be11e", ["differs: bab9a58b"]))
+        self.assertEqual(card("Landscaping"), (None, ["differs: bab9a58b"]))
         self.assertNotIn("service", mp.INTENDED)
 
 

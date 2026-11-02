@@ -126,6 +126,13 @@ export type BriefInput = {
    * row as `voice`; either way only an answer under 30 days old is said.
    */
   voice?: VoiceBrief[] | null;
+  /**
+   * The billing sheet's country code ("SA", "KW", "QT"), when the caller
+   * already reads it: a revenue goal's assumed currency, before the
+   * onboarding phone's code (Stage 4 plan B6). The client page does not
+   * read billing, so today the phone is the fallback that runs.
+   */
+  billingCountry?: string | null;
 };
 
 /** One score the brief may say: the survey, the score, its time and the low-score line. */
@@ -1215,6 +1222,47 @@ function currencyOf(s: string): string | null {
   if (/ريال|riyal/i.test(s)) return "riyals";
   if (/دينار|dinar/i.test(s)) return "dinars";
   return null;
+}
+
+/** The billing sheet's country codes ("QT" is how it writes Qatar) as their currency. */
+const BILLING_CURRENCY: Record<string, string> = {
+  SA: "SAR",
+  KW: "KWD",
+  AE: "AED",
+  QT: "QAR",
+  QA: "QAR",
+  BH: "BHD",
+  OM: "OMR",
+};
+
+/** GCC dialling codes as their currency. */
+const DIAL_CURRENCY: [string, string][] = [
+  ["+966", "SAR"],
+  ["+965", "KWD"],
+  ["+971", "AED"],
+  ["+974", "QAR"],
+  ["+973", "BHD"],
+  ["+968", "OMR"],
+];
+
+/**
+ * The onboarding form's Phone answer (Typeform ref 64f2fb80, the native
+ * form's key "phone") as its dialling code's currency. Only the code is
+ * ever said, never the number; a number without its country code says
+ * nothing.
+ */
+function dialCurrency(
+  form: TimelineForm | undefined,
+): { code: string; cur: string } | null {
+  const a = form?.answers.find(
+    x => String(x.ref ?? "").startsWith("64f2fb80") || x.ref === "phone",
+  );
+  const phone = answerText(a?.value)
+    .replace(/[\s\-.()]/g, "")
+    .replace(/^00/, "+");
+  if (!/^\+\d{8,15}$/.test(phone)) return null;
+  const hit = DIAL_CURRENCY.find(([code]) => phone.startsWith(code));
+  return hit ? { code: hit[0], cur: hit[1] } : null;
 }
 
 /** Damaged text: most of its Arabic words are one or two letters long. */
@@ -2597,6 +2645,18 @@ export function buildBrief(input: BriefInput): Brief {
       const cur = currencyOf(answerText(a.value));
       if (cur) return { cur, from: "another answer on their onboarding form" };
     }
+    // Neither says it: assumed from where they are, and said to be assumed.
+    const billing =
+      BILLING_CURRENCY[
+        String(input.billingCountry ?? "")
+          .trim()
+          .toUpperCase()
+      ];
+    if (billing)
+      return { cur: billing, from: "their billing country, assumed" };
+    const dial = dialCurrency(onboarding);
+    if (dial)
+      return { cur: dial.cur, from: `their ${dial.code} phone, assumed` };
     return null;
   })();
   const kickoffGoals = new Map<string, string>();

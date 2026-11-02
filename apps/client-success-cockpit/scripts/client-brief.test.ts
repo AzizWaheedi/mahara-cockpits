@@ -1705,7 +1705,9 @@ describe("ad changes and numbers", () => {
 });
 
 describe("who they are", () => {
-  const onboardingForm = (answers: { title: string; value: unknown }[]) => ({
+  const onboardingForm = (
+    answers: { ref?: string; title: string; value: unknown }[],
+  ) => ({
     token: "o1",
     formId: "KFRCXPFx",
     kind: "onboarding",
@@ -1736,6 +1738,112 @@ describe("who they are", () => {
     expect(b.who.find(l => l.label === "90-day revenue goal")?.text).toBe(
       "2,000,000 (SAR, from the 8 Oct call)",
     );
+  });
+
+  // Stage 4 plan B6: when neither the calls nor the answers say it, the
+  // currency is assumed from the billing country, then the Phone answer's
+  // dialling code, and said to be assumed. Synthetic numbers only.
+  const GOAL = {
+    title: "What is your realistic goal revenue in 90 Days?",
+    value: 900000,
+  };
+  const PHONE = "64f2fb80-b074-4017-b8b7-b7d549947e52";
+  const goalWith = (
+    answers: { ref?: string; title: string; value: unknown }[],
+    more: { billingCountry?: string | null; calls?: TimelineCall[] } = {},
+  ) =>
+    buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      billingCountry: more.billingCountry,
+      timeline: timeline({
+        calls: more.calls ?? [],
+        forms: [onboardingForm([GOAL, ...answers])],
+      }),
+    }).who.find(l => l.label === "90-day revenue goal")?.text;
+
+  test("no currency said: the Phone answer's code, said as assumed", () => {
+    const cases: [string, string][] = [
+      ["+966 50 000 0000", "SAR"],
+      ["+965 5555 0000", "KWD"],
+      ["+971 50 000 0000", "AED"],
+      ["+974 3300 0000", "QAR"],
+      ["+973 3600 0000", "BHD"],
+      ["+968 9100 0000", "OMR"],
+    ];
+    for (const [phone, cur] of cases)
+      expect(
+        goalWith([{ ref: PHONE, title: "Phone | رقم التليفون", value: phone }]),
+      ).toBe(
+        `900,000 (${cur}, from their ${phone.slice(0, 4)} phone, assumed)`,
+      );
+    // Spaces, dashes, dots and brackets are dropped; 00 is a +.
+    expect(
+      goalWith([{ ref: PHONE, title: "Phone", value: "00966-(50).000.0000" }]),
+    ).toBe("900,000 (SAR, from their +966 phone, assumed)");
+    // The native onboarding form's key.
+    expect(
+      goalWith([{ ref: "phone", title: "Phone", value: "+96550000000" }]),
+    ).toBe("900,000 (KWD, from their +965 phone, assumed)");
+  });
+
+  test("a phone with no GCC code, or no code at all, still says the currency is not stated", () => {
+    for (const value of ["+1 415 555 0100", "50000000", "+966", ""])
+      expect(goalWith([{ ref: PHONE, title: "Phone", value }])).toBe(
+        "900,000 (currency not stated)",
+      );
+    // Only the Phone answer is read: never the front desk or personal numbers.
+    expect(
+      goalWith([
+        {
+          ref: "282dac48-0000-4000-8000-000000000000",
+          title: "Front Desk Phone",
+          value: "+966 50 000 0000",
+        },
+      ]),
+    ).toBe("900,000 (currency not stated)");
+  });
+
+  test("the billing country, when the caller has it, comes before the phone", () => {
+    const phone = [{ ref: PHONE, title: "Phone", value: "+966 50 000 0000" }];
+    expect(goalWith(phone, { billingCountry: "KW" })).toBe(
+      "900,000 (KWD, from their billing country, assumed)",
+    );
+    // The billing sheet writes Qatar "QT".
+    expect(goalWith([], { billingCountry: "QT" })).toBe(
+      "900,000 (QAR, from their billing country, assumed)",
+    );
+    expect(goalWith([], { billingCountry: "sa" })).toBe(
+      "900,000 (SAR, from their billing country, assumed)",
+    );
+    // A country with no currency here falls through to the phone.
+    expect(goalWith(phone, { billingCountry: "US" })).toBe(
+      "900,000 (SAR, from their +966 phone, assumed)",
+    );
+    expect(goalWith(phone, { billingCountry: null })).toBe(
+      "900,000 (SAR, from their +966 phone, assumed)",
+    );
+  });
+
+  test("what the call or another answer says still wins over an assumed currency", () => {
+    const phone = { ref: PHONE, title: "Phone", value: "+966 50 000 0000" };
+    expect(
+      goalWith([phone], {
+        billingCountry: "SA",
+        calls: [
+          fathomCall(
+            "## Key takeaways\n  - **Goal:** 900k Kuwaiti dinar in 90 days.",
+          ),
+        ],
+      }),
+    ).toBe("900,000 (KWD, from the 8 Oct call)");
+    expect(
+      goalWith(
+        [phone, { title: "Payment options", value: "Cash in KWD only" }],
+        { billingCountry: "SA" },
+      ),
+    ).toBe("900,000 (KWD, from another answer on their onboarding form)");
   });
 
   test("no 'wants to grow': what they do and where; damaged Arabic is skipped", () => {

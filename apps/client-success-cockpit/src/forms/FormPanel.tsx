@@ -1,7 +1,7 @@
 import { Check, ChevronRight, Copy, RefreshCw, RotateCcw } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Dot, ExtLink, Kicker } from "@/components/kit";
+import { Chip, Dot, ExtLink, Kicker } from "@/components/kit";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -747,6 +747,7 @@ function Part({
   onJump: (id: string) => void;
   onRecheck: () => Promise<void>;
 }) {
+  if (part.id === "check") return <CheckPart part={part} />;
   const rows = (
     <ul className="divide-y">
       {part.rows.map(r => (
@@ -786,6 +787,35 @@ function Part({
       {head}
       {part.problem ? <p className="txt-warn text-xs">{part.problem}</p> : null}
       {rows}
+    </section>
+  );
+}
+
+/**
+ * "Check with the client" (Stage 4 plan B5): what their own onboarding
+ * answers say to ask about on the call, one chip for the question it is
+ * about and one fixed sentence each, behind a warning rule in the margin
+ * like a reviewer's pencil mark. Display only: nothing to press, nothing
+ * stored, the form never blocked.
+ */
+export function CheckPart({ part }: { part: RailPart }) {
+  const source = part.rows.find(r => r.source)?.source ?? null;
+  return (
+    <section aria-label={part.title} className="space-y-1.5">
+      <Kicker>
+        {part.title} · {part.rows.length}
+      </Kicker>
+      <div className="border-l-2 border-warning/60 pl-3">
+        <ul className="space-y-2.5 py-0.5">
+          {part.rows.map(r => (
+            <li key={r.id} className="space-y-1">
+              <Chip tone="warn">{r.label}</Chip>
+              <p className="text-sm leading-5">{r.value}</p>
+            </li>
+          ))}
+        </ul>
+        {source ? <SourceTag>{source}</SourceTag> : null}
+      </div>
     </section>
   );
 }

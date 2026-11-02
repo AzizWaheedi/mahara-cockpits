@@ -143,7 +143,7 @@ const TYPEFORM_REQUIRED = new Set([
 
 /**
  * A long text as Typeform hands it to Make, and as cockpit_form_typeform_text
- * keeps it (20261102m): each line break a line feed, no white space at either
+ * keeps it (20261102o): each line break a line feed, no white space at either
  * end (JavaScript's trim takes the same characters as its btrim), everything
  * between as typed.
  */
@@ -698,12 +698,16 @@ function refusedFix(f: KickoffField, code: string): string | null {
 /**
  * The sentence for a kickoff the database did not store (cockpit_kickoff_submit
  * answered reason invalid): each question to fix, by its words (a shared
- * "Anything to add?" with its group), and what to do about it; or the tech
- * lead when it named an answer the sheet does not ask or a code the CSM
- * cannot fix.
+ * "Anything to add?" with its group), and what to do about it; answers that
+ * each passed but together do not fit the room a kickoff has
+ * ({_answers: too_large}, which cockpit_kickoff_answers_check gives alone)
+ * to be shortened; or the tech lead when it named an answer the sheet does
+ * not ask or a code the CSM cannot fix.
  */
 export function kickoffRefused(errors: Record<string, string>): string {
   const keys = Object.keys(errors);
+  if (keys.length === 1 && errors._answers === "too_large")
+    return "The kickoff was not stored: its answers together are too long. Shorten the longest answers, then send it again. Your answers are still here.";
   const lines = keys.map(k => {
     const f = KICKOFF_BY_KEY[k];
     const fix = f ? refusedFix(f, errors[k]) : null;

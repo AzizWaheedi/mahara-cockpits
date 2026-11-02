@@ -1,8 +1,8 @@
 /**
- * Stage 4 writes what Make writes (20261102m_stage4_match_make.sql; docs/forms/WAVE56-CONTRACT.md
+ * Stage 4 writes what Make writes (20261102o_stage4_match_make.sql; docs/forms/WAVE56-CONTRACT.md
  * 4.13.3, 4.14.3, 4.15.1 and the D-S4F findings; the CEO's decision of 2026-11-02: "Yes, match Make").
  *
- * The functions 20261102m reads or replaces are cut from their canonical migrations (20260921a,
+ * The functions 20261102o reads or replaces are cut from their canonical migrations (20260921a,
  * 20261025n, 20261026r, 20261027f, 20261029s, 20261029w, 20261102a, 20261102i, 20261102j, 20261102l),
  * the way stage4-content-folder-supabase.test.ts stands on what j reads, and the ground proves each
  * replaced body is the live one (20261102l's for the builder) by the md5 the file's drift guard names,
@@ -24,6 +24,13 @@
  * keeps it (line breaks as line feeds, both ends trimmed, everything between as typed): the client
  * onboarding's answers check and the kickoff's long texts, so multi-line Arabic and English answers,
  * double spaces and carriage returns typed natively give the texts Make writes for the same typing.
+ * The onboarding's version 2 asks what KFRCXPFx typed (13): the revenues are numbers, printed as Make
+ * prints Typeform's, the four links https, and each phone is stored as E.164. The writeback queue's
+ * audit trigger (20261026t's, live; 20261009f's triggers on the stand-in queue) keeps a request part's
+ * comment as its length (14), and a kickoff's answers have 256 KB, past which the check refuses them by
+ * name (15; the stand-in responses table carries 20261102f's answers check, live). The onboarding
+ * Typeform door (20261102j's, live, with its live grant) stores a late KFRCXPFx delivery in the portal's
+ * shape, each revenue a number (16; stand-ins give it what it reads beside this ground).
  * Every client, card, person and answer is invented.
  */
 import {
@@ -46,14 +53,17 @@ const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const I = "20261102i_client_tail.sql";
 const J = "20261102j_stage4_native.sql";
 const L = "20261102l_stage4_no_client_data_row.sql";
-const M = "20261102m_stage4_match_make.sql";
+// M (and BEFORE_M, AFTER_M, V2_M_MD5 below) keeps the letter the file was first drafted under: the goals
+// sheet's 20261102m reached live first (2026-11-02), so match Make is 20261102o.
+const M = "20261102o_stage4_match_make.sql";
 const TITLES_FILE = "scripts/dev/forms-deploy/stage4-raw-titles.json";
 /** onboarding.raw_titles as D-S4F fills it. */
 const RAW_TITLES = JSON.parse(readFileSync(`${ROOT}${TITLES_FILE}`, "utf8"));
 
 /**
- * md5(whitespace folded prosrc) of the bodies 20261102m replaces, as live holds them (read 2026-11-02:
- * 20261102i's two client form checks, 20261102j's kickoff answers check) and 20261102l's builder.
+ * md5(whitespace folded prosrc) of the bodies 20261102o replaces, as live holds them (read 2026-11-02:
+ * 20261102i's two client form checks, 20261102j's kickoff answers check and onboarding Typeform door)
+ * and 20261102l's builder.
  */
 const BEFORE_M = {
   "cockpit_form_stage4_fields(text)": "8c36fd1cf1b0a60b0c776241765eddf7",
@@ -68,8 +78,10 @@ const BEFORE_M = {
   "cockpit_form_answers_check(jsonb,jsonb,jsonb)":
     "d1d8bb66ae056415f8a2a968627220df",
   "cockpit_kickoff_answers_check(jsonb)": "8a02898fe501f501b7f7cc8653453db6",
+  "cockpit_clickup_writeback_audit()": "d595491be9d1cac3e385382a2e84814a",
+  "cockpit_form_onboarding_typeform(jsonb)": "25a794296916c1e01447633d308cecc7",
 } as const;
-/** 20261102m's own bodies (the after values of its drift guard). */
+/** 20261102o's own bodies (the after values of its drift guard). */
 const AFTER_M = {
   "cockpit_form_stage4_fields(text)": "2b874cb1ed7fcf92a3d7fd9ca00547c5",
   "cockpit_form_stage4_hidden(text)": "c43644ee277f532770e523e61e389aad",
@@ -81,23 +93,37 @@ const AFTER_M = {
   "cockpit_form_stage4_plan(uuid,boolean)": "1b13ba4315097727973c4bff54f027c3",
   "cockpit_form_schema_check(jsonb)": "07f88396a8df9e1b2b42f41b5c3e189a",
   "cockpit_form_answers_check(jsonb,jsonb,jsonb)":
-    "18ea942206537f7037c10db67ca8e1b5",
-  "cockpit_kickoff_answers_check(jsonb)": "d382c5d9c6638f4f73148196cc7dd7c9",
+    "ac54af52c93ca8f2517a5f55b507cfa7",
+  "cockpit_kickoff_answers_check(jsonb)": "8c3045bcdcf0906294d78d9ca7377a9b",
+  "cockpit_clickup_writeback_audit()": "4127726aa23cffe1ce78fc5ceafb8292",
+  "cockpit_form_onboarding_typeform(jsonb)": "ddefa9130061bc21b8b05c882d778d72",
 } as const;
-/** md5 of the onboarding's version-2 schema text: 20261102j's (live, read 2026-11-02) and 20261102m's. */
+/** The trigger function 20261102o replaces that keeps its live grant (service_role), as 20261026t left it. */
+const AUDIT_FN = "cockpit_clickup_writeback_audit()";
+/** The onboarding Typeform door (X26), which keeps its live grant (service_role, forms-door), as 20261102j left it. */
+const DOOR_FN = "cockpit_form_onboarding_typeform(jsonb)";
+/** md5 of the onboarding's version-2 schema text: 20261102j's (live, read 2026-11-02) and 20261102o's. */
 const V2_J_MD5 = "8fa1f38dfd4307f22d0b3faec8604ce7";
-const V2_M_MD5 = "2b9cd946f44235e963d4ad6bf017afe8";
+const V2_M_MD5 = "bc89ca36000ebf7943c6ec569cd1be73";
 /** 20261102j's builder, live before 20261102l. */
 const J_BUILD_MD5 = "a704e72a3921191d2f06a24855d7f219";
 /**
- * cockpit_form_effects_plan_check, white space folded: 20261027f's (live, read 2026-11-02) and 20261102m's,
+ * cockpit_form_effects_plan_check, white space folded: 20261027f's (live, read 2026-11-02) and 20261102o's,
  * which gives a kickoff or onboarding plan 2 MB.
  */
 const ROOM_F =
   "CHECK (((jsonb_typeof(plan) = 'object'::text) AND (octet_length((plan)::text) <= 131072)))";
 const ROOM_M =
   "CHECK (((jsonb_typeof(plan) = 'object'::text) AND (octet_length((plan)::text) <= CASE WHEN (form_key = ANY (ARRAY['kickoff'::text, 'onboarding'::text])) THEN 2097152 ELSE 131072 END)))";
-/** The reason a step gets when its plan is past the 2 MB the table keeps (20261102m, 12). */
+/**
+ * cockpit_form_responses_answers_check, white space folded: 20261102f's (live, read 2026-11-02, word for word)
+ * and 20261102o's, which gives a kickoff's answers 256 KB (15).
+ */
+const ANSWERS_F =
+  "CHECK (((jsonb_typeof(answers) = 'object'::text) AND (octet_length((answers)::text) <= CASE WHEN (form_key = ANY (ARRAY['new_client'::text, 'onboarding'::text])) THEN 1048576 ELSE 65536 END)))";
+const ANSWERS_M =
+  "CHECK (((jsonb_typeof(answers) = 'object'::text) AND (octet_length((answers)::text) <= CASE WHEN (form_key = ANY (ARRAY['new_client'::text, 'onboarding'::text])) THEN 1048576 WHEN (form_key = 'kickoff'::text) THEN 262144 ELSE 65536 END)))";
+/** The reason a step gets when its plan is past the 2 MB the table keeps (20261102o, 12). */
 const TOO_LARGE =
   "This step carries more than the 2 MB the cockpit keeps for one step, so it did not run. Do it by hand from the stored answers.";
 const NEW_FNS = [
@@ -106,8 +132,9 @@ const NEW_FNS = [
   "cockpit_form_stage4_handoff_text(jsonb,jsonb)",
   "cockpit_form_stage4_profile_text(jsonb)",
   "cockpit_form_stage4_raw_answers_text(jsonb,jsonb)",
+  "cockpit_form_stage4_numbers(jsonb,jsonb)",
 ] as const;
-/** j's bodies 20261102m keeps (live, read 2026-11-02): they read the replaced readers by name. */
+/** j's bodies 20261102o keeps (live, read 2026-11-02): they read the replaced readers by name. */
 const KEPT_J = {
   "cockpit_form_stage4_input(uuid)": "a40d17418bda54193c278e63ae524fcd",
   "cockpit_form_parity_plan(text,jsonb)": "7a089ccc09d745caafba489ac23e0313",
@@ -188,6 +215,7 @@ const kept = (typed: string) => typed.replace(/\r\n?/g, "\n").trim();
 let db: PGlite;
 const groundMd5: Record<string, string> = {};
 let groundRoom = "";
+let groundAnswersRoom = "";
 
 function fnDef(sql: string, name: string): string {
   const start = sql.indexOf(`CREATE OR REPLACE FUNCTION public.${name}(`);
@@ -232,13 +260,19 @@ const md5Of = (fn: string) =>
     "SELECT md5(regexp_replace(p.prosrc, '\\s+', ' ', 'g')) AS r FROM pg_proc p WHERE p.oid = to_regprocedure($1)",
     [`public.${fn}`],
   );
-/** cockpit_form_effects_plan_check with its white space folded, as 20261102m's guard reads it. */
+/** cockpit_form_effects_plan_check with its white space folded, as 20261102o's guard reads it. */
 const planCheck = () =>
   one<string>(
     `SELECT regexp_replace(pg_get_constraintdef(c.oid), '\\s+', ' ', 'g') AS r FROM pg_constraint c
       WHERE c.conrelid = 'public.cockpit_form_effects'::regclass AND c.conname = 'cockpit_form_effects_plan_check'`,
   );
-/** md5 of the onboarding's version-2 schema text, as 20261102m's guard reads it. */
+/** cockpit_form_responses_answers_check with its white space folded, as 20261102o's guard reads it. */
+const answersCheck = () =>
+  one<string>(
+    `SELECT regexp_replace(pg_get_constraintdef(c.oid), '\\s+', ' ', 'g') AS r FROM pg_constraint c
+      WHERE c.conrelid = 'public.cockpit_form_responses'::regclass AND c.conname = 'cockpit_form_responses_answers_check'`,
+  );
+/** md5 of the onboarding's version-2 schema text, as 20261102o's guard reads it. */
 const v2Md5 = () =>
   one<string>(
     "SELECT md5(schema::text) AS r FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2",
@@ -429,7 +463,7 @@ const MULTI_LINE: Answer[] = [
 /**
  * The columns cockpit_form_stage4_input, cockpit_form_stage4_hidden, the planner and
  * cockpit_request_create_system read (stand-ins), with the effects' plan check as 20261027f made it (live,
- * read 2026-11-02; 20261102m widens it), and the request plan as each part's payload: its description is
+ * read 2026-11-02; 20261102o widens it), and the request plan as each part's payload: its description is
  * the type's heading and the request's details, as cockpit_request_plan writes them.
  */
 const STAND_INS = `
@@ -484,7 +518,7 @@ const OTHER_FNS: [string, string][] = [
   ["20261027f_forms_core.sql", "cockpit_form_kuwait_day"],
   ["20261102a_forms_invites.sql", "cockpit_form_schema_pair"],
 ];
-/** 20261102i's client form checks (live), which 20261102m replaces. */
+/** 20261102i's client form checks (live), which 20261102o replaces. */
 const I_FNS = ["cockpit_form_schema_check", "cockpit_form_answers_check"] as const;
 const J_FNS = [
   "cockpit_form_stage4_effects",
@@ -508,8 +542,9 @@ const J_FNS = [
   "cockpit_form_stage4_answered_at",
   "cockpit_request_create_system",
   "cockpit_form_stage4_plan",
+  "cockpit_form_onboarding_typeform",
 ] as const;
-/** 20261102l's plan and 20261102j's kickoff answers check, under _l names, beside 20261102m's. */
+/** 20261102l's plan and 20261102j's kickoff answers check, under _l names, beside 20261102o's. */
 function keptAsL(j: string, l: string): string {
   const rename = (sql: string) =>
     [
@@ -542,7 +577,7 @@ function keptAsL(j: string, l: string): string {
     .map(rename)
     .join("\n\n");
 }
-/** 20261102i's client form checks under _i names, beside 20261102m's. */
+/** 20261102i's client form checks under _i names, beside 20261102o's. */
 const keptAsI = (i: string) =>
   I_FNS.map(name =>
     fnDef(i, name).replace(`FUNCTION public.${name}(`, `FUNCTION public.${name}_i(`),
@@ -567,6 +602,27 @@ beforeAll(async () => {
     fnDef(migration("20261102a_forms_invites.sql"), "cockpit_client_text_ok"),
   );
   await db.exec(STAND_INS);
+  // The responses table's answers check as live holds it: 20261027f's, then 20261102f's.
+  await db.exec(
+    "ALTER TABLE public.cockpit_form_responses ADD CONSTRAINT cockpit_form_responses_answers_check CHECK (jsonb_typeof(answers) = 'object' AND octet_length(answers::text) <= 65536)",
+  );
+  await db.exec(inTest("20261102f_form_responses_answer_size.sql"));
+  // The writeback queue's audit trigger as live holds it (20261026t's body, 20261009f's grant and triggers).
+  await db.exec(fnDef(migration("20261026t_task_alerts.sql"), "cockpit_clickup_writeback_audit"));
+  const f9 = migration("20261009f_clickup_writeback_native.sql");
+  await db.exec(
+    cut(f9, /REVOKE ALL ON FUNCTION public\.cockpit_clickup_writeback_audit\(\) FROM PUBLIC,anon,authenticated;/, "audit grant"),
+  );
+  for (const name of ["insert", "state"])
+    await db.exec(
+      cut(
+        f9,
+        new RegExp(
+          `DROP TRIGGER IF EXISTS cockpit_clickup_writeback_queue_audit_${name} ON public\\.cockpit_clickup_writeback_queue;\\nCREATE TRIGGER[\\s\\S]*?EXECUTE FUNCTION public\\.cockpit_clickup_writeback_audit\\(\\);`,
+        ),
+        `queue audit trigger ${name}`,
+      ),
+    );
   const j = migration(J);
   await db.exec(
     cut(
@@ -600,6 +656,11 @@ beforeAll(async () => {
   for (const [file, name] of OTHER_FNS)
     await db.exec(fnDef(migration(file), name));
   for (const name of J_FNS) await db.exec(fnDef(j, name));
+  // The door's grant as 20261102j leaves it (live: the owner and service_role, for forms-door).
+  await db.exec(
+    `REVOKE ALL ON FUNCTION public.${DOOR_FN} FROM PUBLIC, anon, authenticated, service_role;
+     GRANT EXECUTE ON FUNCTION public.${DOOR_FN} TO service_role;`,
+  );
   const l = migration(L);
   await db.exec(fnDef(l, "cockpit_form_stage4_effects"));
   await db.exec(fnDef(l, "cockpit_form_stage4_build"));
@@ -612,6 +673,7 @@ beforeAll(async () => {
     groundMd5[fn] = await md5Of(fn);
   groundMd5.v2 = await v2Md5();
   groundRoom = await planCheck();
+  groundAnswersRoom = await answersCheck();
   await db.exec(migration(M));
 });
 afterAll(async () => {
@@ -637,7 +699,7 @@ const onboardingInput = (answers: Answer[]) => ({
 
 // --- The file ------------------------------------------------------------------------------------
 
-describe("20261102m: the file", () => {
+describe("20261102o: the file", () => {
   test("the ground holds the bodies the drift guard names: live's, and 20261102l's builder", () => {
     expect(groundMd5).toEqual({ ...BEFORE_M, ...KEPT_J, v2: V2_J_MD5 });
     const sql = migration(M);
@@ -674,6 +736,7 @@ describe("20261102m: the file", () => {
           WHERE a.attrelid = 'public.cockpit_requests'::regclass AND a.attname = 'task_comment' AND NOT a.attisdropped`,
       ),
       room: await planCheck(),
+      answersRoom: await answersCheck(),
     });
     await rolledBack(async () => {
       await setting("onboarding.raw_titles", RAW_TITLES);
@@ -687,6 +750,7 @@ describe("20261102m: the file", () => {
       expect((before.titles as Row).fields).toHaveLength(36);
       expect(before.column).toBe("text");
       expect(before.room).toBe(ROOM_M);
+      expect(before.answersRoom).toBe(ANSWERS_M);
     });
   });
 
@@ -695,7 +759,7 @@ describe("20261102m: the file", () => {
       await one(
         "SELECT jsonb_build_object('value', value, 'by', updated_by) AS r FROM public.cockpit_settings WHERE key = 'onboarding.raw_titles'",
       ),
-    ).toEqual({ value: {}, by: "migration 20261102m" });
+    ).toEqual({ value: {}, by: "migration 20261102o" });
   });
 
   test("a changed body stops the file; 20261102j's builder asks for 20261102l first", async () => {
@@ -706,6 +770,8 @@ describe("20261102m: the file", () => {
       "cockpit_form_answers_check(jsonb,jsonb,jsonb)",
       "cockpit_form_schema_check(jsonb)",
       "cockpit_kickoff_answers_check(jsonb)",
+      AUDIT_FN,
+      DOOR_FN,
     ])
       await rolledBack(async () => {
         const def = await one<string>(
@@ -725,7 +791,7 @@ describe("20261102m: the file", () => {
       const r = await refusal(() => db.exec(inTest(M)));
       expect(r).toEqual({
         code: "55000",
-        message: "Apply 20261102l before 20261102m.",
+        message: "Apply 20261102l before 20261102o.",
       });
     });
   });
@@ -777,6 +843,68 @@ describe("20261102m: the file", () => {
       expect(await refusal(() => db.exec(inTest(M)))).toEqual({
         code: "55000",
         message: "cockpit_form_effects_plan_check changed since 20261027f; stop and re-read it.",
+      });
+    });
+  });
+
+  test("a kickoff's answers have 256 KB, the New Client Form and the onboarding 1 MB and every other form 64 KB as before; another check stops the file", async () => {
+    // The ground is 20261102f's check as live holds it, word for word.
+    expect(groundAnswersRoom).toBe(ANSWERS_F);
+    expect(await answersCheck()).toBe(ANSWERS_M);
+    const sql = migration(M);
+    for (const room of [ANSWERS_F, ANSWERS_M])
+      expect(sql).toContain(`'${room.replace(/'/g, "''")}'`);
+    // {"t": "x…x"} is the x's and 9 bytes.
+    const answer = (form: string, bytes: number) =>
+      db.query(
+        `INSERT INTO public.cockpit_form_responses(id, form_key, answers)
+         VALUES (gen_random_uuid(), $1, jsonb_build_object('t', repeat('x', $2::int - 9)))`,
+        [form, bytes],
+      );
+    for (const [form, room] of [
+      ["kickoff", 262144],
+      ["onboarding", 1048576],
+      ["new_client", 1048576],
+      ["exit_survey", 65536],
+    ] as const) {
+      await rolledBack(async () => {
+        await answer(form, room);
+        expect(
+          await one<number>(
+            "SELECT max(octet_length(answers::text)) AS r FROM public.cockpit_form_responses WHERE form_key = $1",
+            [form],
+          ),
+        ).toBe(room);
+      });
+      await rolledBack(async () => {
+        expect((await refusal(() => answer(form, room + 1))).code).toBe("23514");
+      });
+    }
+    const swap = (check: string) =>
+      db.exec(`ALTER TABLE public.cockpit_form_responses DROP CONSTRAINT cockpit_form_responses_answers_check;
+        ALTER TABLE public.cockpit_form_responses ADD CONSTRAINT cockpit_form_responses_answers_check CHECK (${check})`);
+    // 20261102f's check (live) becomes this file's; a kickoff past 64 KB, refused before, is kept.
+    await rolledBack(async () => {
+      await swap(
+        "jsonb_typeof(answers) = 'object' AND octet_length(answers::text) <= CASE WHEN form_key IN ('new_client', 'onboarding') THEN 1048576 ELSE 65536 END",
+      );
+      expect(await answersCheck()).toBe(ANSWERS_F);
+      expect((await refusal(() => answer("kickoff", 65537))).code).toBe("23514");
+    });
+    await rolledBack(async () => {
+      await swap(
+        "jsonb_typeof(answers) = 'object' AND octet_length(answers::text) <= CASE WHEN form_key IN ('new_client', 'onboarding') THEN 1048576 ELSE 65536 END",
+      );
+      await db.exec(inTest(M));
+      expect(await answersCheck()).toBe(ANSWERS_M);
+      await answer("kickoff", 65537);
+    });
+    // Any other check stops the file.
+    await rolledBack(async () => {
+      await swap("jsonb_typeof(answers) = 'object' AND octet_length(answers::text) <= 65536");
+      expect(await refusal(() => db.exec(inTest(M)))).toEqual({
+        code: "55000",
+        message: "cockpit_form_responses_answers_check changed since 20261102f; stop and re-read it.",
       });
     });
   });
@@ -834,21 +962,28 @@ describe("20261102m: the file", () => {
         await one(
           "SELECT jsonb_build_object('md5', md5(schema::text), 'by', updated_by) AS r FROM public.cockpit_forms WHERE key = 'onboarding'",
         ),
-      ).toEqual({ md5: V2_M_MD5, by: "migration 20261102m" });
+      ).toEqual({ md5: V2_M_MD5, by: "migration 20261102o" });
     });
   });
 
-  test("the owner runs every function it makes or replaces, and nobody else", async () => {
-    const grants = await one<Row>(
-      `SELECT jsonb_object_agg(f || ':' || r, has_function_privilege(r, 'public.' || f, 'EXECUTE')) AS r
-         FROM unnest($1::text[]) f, unnest(ARRAY['anon','authenticated','service_role']) r`,
-      [[...Object.keys(BEFORE_M), ...NEW_FNS]],
-    );
-    expect(
-      Object.entries(grants)
+  test("the owner runs every function it makes or replaces, and nobody else; the queue's audit trigger and the Typeform door keep their live grants", async () => {
+    const granted = async (fns: string[]) =>
+      Object.entries(
+        await one<Row>(
+          `SELECT jsonb_object_agg(f || ':' || r, has_function_privilege(r, 'public.' || f, 'EXECUTE')) AS r
+             FROM unnest($1::text[]) f, unnest(ARRAY['anon','authenticated','service_role']) r`,
+          [fns],
+        ),
+      )
         .filter(([, v]) => v)
-        .map(([k]) => k),
+        .map(([k]) => k);
+    expect(
+      await granted([...Object.keys(BEFORE_M).filter(fn => fn !== AUDIT_FN && fn !== DOOR_FN), ...NEW_FNS]),
     ).toEqual([]);
+    // 20261009f revoked it from PUBLIC, anon and authenticated; service_role keeps it, as live.
+    expect(await granted([AUDIT_FN])).toEqual([`${AUDIT_FN}:service_role`]);
+    // forms-door calls it with the service key, as 20261102j granted it.
+    expect(await granted([DOOR_FN])).toEqual([`${DOOR_FN}:service_role`]);
   });
 
   test("the deploy file holds the 36 questions of the saved KFRCXPFx, in its order, with its full titles", () => {
@@ -1576,13 +1711,14 @@ const NATIVE_KICKOFF = {
   callRecording: "https://fathom.video/share/invented0001",
   newMrrUsd: 2500,
 };
+/** A native onboarding answer as the check stores it: a revenue is a number (20261102o, 13). */
 const NATIVE_ONBOARDING = {
   fullName: "Invented Owner",
   businessName: "Cedar Homes Invented",
   appointmentTypes: ["office", "online"],
   freeConsults: "yes",
-  lastRevenue: "0",
-  goal90: "60000",
+  lastRevenue: 0,
+  goal90: 60000,
   marketing: ARABIC_NOTE,
   additionalInfo: "Nothing else for now.",
 };
@@ -1787,13 +1923,25 @@ const ONB_TYPED: Record<string, unknown> = {
   whyJoined: "\n We want  steady\r\nconsultations. \n",
   freeConsults: "yes",
   marketing: `\u3000${MULTI_AR}\r\n`,
-  lastRevenue: "120000",
+  lastRevenue: 120000,
   challenges: MULTI_EN.replace(/\n/g, "\r\n"),
-  goal90: "60000",
-  goal12: "250000",
+  goal90: 60000,
+  goal12: 250000,
   additionalInfo: "سؤال:\r\n  متى نبدأ؟\r\n",
   driveLink: "https://drive.example.invalid/folder",
 };
+/** KFRCXPFx's three number questions (20261102o, 13): the portal sends each as a number. */
+const REVENUES = ["lastRevenue", "goal90", "goal12"];
+/** KFRCXPFx's four website questions: the url format. mapsLink, a short text there, stays plain. */
+const LINKS = ["website", "instagram", "facebook", "driveLink"];
+/** KFRCXPFx's three phone_number questions, as the check stores ONB_TYPED's: E.164. */
+const E164: Record<string, string> = {
+  phone: "+96500000001",
+  frontDeskPhone: "+96500000002",
+  personalPhone: "+96500000003",
+};
+/** ONB_TYPED's revenues as round 3's version 2 asked them, short texts. */
+const REVENUE_TEXTS = { lastRevenue: "120000", goal90: "60000", goal12: "250000" };
 const onboardingCheck = (answers: unknown, suffix = "", schema?: Row) =>
   schema
     ? one<Row>(
@@ -1843,33 +1991,68 @@ describe("a native answer keeps what was typed, as Typeform keeps it for Make", 
     ).toBeNull();
   });
 
-  test("the onboarding's version 2: four long texts, 1,000 and 10,000 characters, everything else 20261102j's; the schema check holds every other form to 200 and 2,000", async () => {
+  test("the onboarding's version 2: four long texts, three numbers, four links, 1,000 and 10,000 characters, everything else 20261102j's; the schema check holds every other form to 200 and 2,000", async () => {
     const now = await v2Schema();
     const was = await jV2Schema();
     const retyped = ["address", "hours", "landmark", "appointmentLength"];
     expect({ ...now, fields: null }).toEqual({ ...was, fields: null });
     expect(now.fields).toEqual(
-      was.fields.map((f: Row) =>
-        retyped.includes(f.key)
+      was.fields.map((f: Row) => {
+        const { maxLength: _, ...rest } = f;
+        return retyped.includes(f.key)
           ? { ...f, type: "longtext", maxLength: 10000 }
-          : f.type === "longtext"
-            ? { ...f, maxLength: 10000 }
-            : f.type === "text"
-              ? { ...f, maxLength: 1000 }
-              : f,
-      ),
+          : REVENUES.includes(f.key)
+            ? { ...rest, type: "number", min: 0, max: 1000000000, decimals: 0 }
+            : LINKS.includes(f.key)
+              ? { ...f, maxLength: 1000, format: "url" }
+              : f.type === "longtext"
+                ? { ...f, maxLength: 10000 }
+                : f.type === "text"
+                  ? { ...f, maxLength: 1000 }
+                  : f;
+      }),
     );
     expect(
       was.fields.filter((f: Row) => retyped.includes(f.key)).map((f: Row) => [f.type, f.maxLength]),
     ).toEqual(Array(4).fill(["text", 200]));
-    // Each question KFRCXPFx asks as long_text is a long text in it, by its Typeform ref.
+    // 20261102j asked the revenues and the links as plain short texts; the phones already had the phone
+    // format and keep it, and mapsLink stays plain. No label or hint changes.
+    const shape = (schema: Row, key: string) => {
+      const f = schema.fields.find((x: Row) => x.key === key);
+      return [key, f.type, f.format ?? "plain", f.maxLength ?? null];
+    };
+    expect([...REVENUES, ...LINKS, "mapsLink", ...Object.keys(E164)].map(k => shape(was, k))).toEqual([
+      ...REVENUES.map(k => [k, "text", "plain", 200]),
+      ...LINKS.map(k => [k, "text", "plain", 200]),
+      ["mapsLink", "text", "plain", 200],
+      ...Object.keys(E164).map(k => [k, "text", "phone", 200]),
+    ]);
+    expect([...REVENUES, ...LINKS, "mapsLink", ...Object.keys(E164)].map(k => shape(now, k))).toEqual([
+      ...REVENUES.map(k => [k, "number", "plain", null]),
+      ...LINKS.map(k => [k, "text", "url", 1000]),
+      ["mapsLink", "text", "plain", 1000],
+      ...Object.keys(E164).map(k => [k, "text", "phone", 1000]),
+    ]);
+    const words = (schema: Row) => schema.fields.map((f: Row) => [f.key, f.label, f.hint ?? null, f.required ?? null]);
+    expect(words(now)).toEqual(words(was));
+    // Each question KFRCXPFx asks as long_text is a long text in it, as number a number, as website a
+    // link and as phone_number a phone, by its Typeform ref; no other question is.
     const refs = await one<Row[]>(
       "SELECT public.cockpit_form_stage4_fields('onboarding') AS r",
     );
-    for (const x of (evaluate([]).onboarding as Row[]).filter(y => y.type === "long_text")) {
-      const key = refs.find(f => f.typeformRef === x.ref).key;
-      expect([key, now.fields.find((f: Row) => f.key === key).type]).toEqual([key, "longtext"]);
-    }
+    const asked = (evaluate([]).onboarding as Row[]).map(x => ({
+      ...x,
+      key: refs.find(f => f.typeformRef === x.ref).key,
+    }));
+    for (const x of asked.filter(y => y.type === "long_text"))
+      expect([x.key, now.fields.find((f: Row) => f.key === x.key).type]).toEqual([x.key, "longtext"]);
+    const keysOf = (type: string) => asked.filter(y => y.type === type).map(y => y.key).sort();
+    expect(keysOf("number")).toEqual([...REVENUES].sort());
+    expect(keysOf("website")).toEqual([...LINKS].sort());
+    expect(keysOf("phone_number")).toEqual(Object.keys(E164).sort());
+    expect(now.fields.filter((f: Row) => f.type === "number").map((f: Row) => f.key).sort()).toEqual([...REVENUES].sort());
+    expect(now.fields.filter((f: Row) => f.format === "url").map((f: Row) => f.key).sort()).toEqual([...LINKS].sort());
+    expect(now.fields.filter((f: Row) => f.format === "phone").map((f: Row) => f.key).sort()).toEqual(Object.keys(E164).sort());
     const schemaCheck = (schema: Row, suffix = "") =>
       one<string | null>(`SELECT public.cockpit_form_schema_check${suffix}($1::jsonb) AS r`, [json(schema)]);
     expect(await schemaCheck(now)).toBeNull();
@@ -1899,9 +2082,11 @@ describe("a native answer keeps what was typed, as Typeform keeps it for Make", 
     expect([out.ok, out.errors]).toEqual([true, {}]);
     const schema = await v2Schema();
     const texts = schema.fields.filter((f: Row) => ["text", "longtext"].includes(f.type));
-    expect(texts).toHaveLength(33);
+    expect(texts).toHaveLength(30);
+    // Every text as typed, but a phone, which is stored as E.164 (13).
     for (const f of texts)
-      expect([f.key, out.answers[f.key]]).toEqual([f.key, kept(ONB_TYPED[f.key] as string)]);
+      expect([f.key, out.answers[f.key]]).toEqual([f.key, E164[f.key] ?? kept(ONB_TYPED[f.key] as string)]);
+    for (const key of REVENUES) expect([key, out.answers[key]]).toEqual([key, ONB_TYPED[key]]);
     expect(out.answers).toMatchObject({
       fullName: "Invented  Owner",
       address: "قطعة ٣\nشارع ٢٠، منزل ٧",
@@ -1928,7 +2113,7 @@ describe("a native answer keeps what was typed, as Typeform keeps it for Make", 
     const iOut = await onboardingCheck(ONB_TYPED, "_i");
     expect(iOut.answers.address).toBe("قطعة ٣ شارع ٢٠، منزل ٧");
     expect(iOut.answers.businessName).toBe("Cedar Homes Invented");
-    expect((await onboardingCheck(ONB_TYPED, "_i", await jV2Schema())).errors).toEqual({
+    expect((await onboardingCheck({ ...ONB_TYPED, ...REVENUE_TEXTS }, "_i", await jV2Schema())).errors).toEqual({
       mapsLink: "length",
       projectsDone: "length",
       faqs: "length",
@@ -1951,14 +2136,16 @@ describe("a native answer keeps what was typed, as Typeform keeps it for Make", 
         "SELECT public.cockpit_form_stage4_input($1) AS r",
         [id],
       );
-      // Each text the planner reads is what Typeform would have handed Make for the same typing.
+      // Each text the planner reads is what Typeform would have handed Make for the same typing: a phone
+      // as E.164 (phone_number), a revenue as its number (number), every other text as typed.
       const fields = await one<Row[]>(
         "SELECT public.cockpit_form_stage4_fields('onboarding') AS r",
       );
       for (const f of fields.filter(x => ["text", "longtext"].includes(x.type)))
         expect([f.key, input.answers.find((x: Answer) => x.ref === f.typeformRef)?.value]).toEqual([
           f.key,
-          kept(ONB_TYPED[f.key] as string),
+          E164[f.key] ??
+            (REVENUES.includes(f.key) ? String(ONB_TYPED[f.key]) : kept(ONB_TYPED[f.key] as string)),
         ]);
       const made = evaluate([
         { id: "typed", form: "onboarding", task: TASK, answers: input.answers },
@@ -2039,6 +2226,538 @@ describe("a native answer keeps what was typed, as Typeform keeps it for Make", 
         "*Working hours / availability:* Sat to Thu  9-5\nFriday closed\n",
       ])
         expect(kMade.handoff[0]).toContain(part);
+    });
+  });
+});
+
+// --- Typeform's typed inputs (13) -----------------------------------------------------------------
+
+/** Characters a phone copied from a chat or a contact card can carry, written by code point. */
+const CH = {
+  nbsp: String.fromCodePoint(0xa0),
+  lrm: String.fromCodePoint(0x200e),
+  lre: String.fromCodePoint(0x202a),
+  pdf: String.fromCodePoint(0x202c),
+  enDash: String.fromCodePoint(0x2013),
+  minus: String.fromCodePoint(0x2212),
+};
+/**
+ * Whole answers in the shapes the 46 stored KFRCXPFx answers have (counts only, read 2026-11-02): every
+ * revenue a plain whole number (0 among them), every link https (a path, a query, a trailing slash),
+ * every phone E.164 with its country code, mapsLink a link or a few words, driveLink often unanswered.
+ */
+const PAST_SHAPES: Record<string, unknown>[] = [
+  ONB_TYPED,
+  {
+    ...ONB_TYPED,
+    phone: "+966500000001",
+    frontDeskPhone: "+971500000002",
+    personalPhone: "+15550100003",
+    website: "https://www.cedar.invalid/",
+    instagram: "https://www.instagram.com/cedar.invented/?hl=en",
+    facebook: "https://www.facebook.com/profile.php?id=100000000000001",
+    mapsLink: "https://maps.app.goo.gl/Invented0001",
+    driveLink: "https://drive.google.com/drive/folders/Invented0001?usp=sharing",
+    lastRevenue: 0,
+    goal90: 0,
+    goal12: 0,
+  },
+  {
+    ...ONB_TYPED,
+    phone: "+96550000001",
+    frontDeskPhone: "+96522000002",
+    personalPhone: "+96560000003",
+    mapsLink: "Next to the co-op, Block 4",
+    driveLink: undefined,
+    lastRevenue: 250000000,
+    goal90: 1000000000,
+    goal12: 1000000000,
+  },
+];
+
+describe("the onboarding asks what KFRCXPFx typed: numbers, https links and E.164 phones", () => {
+  test("a revenue is a whole number from 0 to 1,000,000,000: \"2 million\", \"1,500,000\" and any text are refused", async () => {
+    const errors = async (answers: Row) => (await onboardingCheck({ ...ONB_TYPED, ...answers })).errors;
+    for (const ok of [0, 1, 1500000, 1000000000])
+      expect([ok, await errors({ lastRevenue: ok, goal90: ok, goal12: ok })]).toEqual([ok, {}]);
+    for (const no of ["2 million", "1,500,000", "1500000", "", -1, 1.5, 1000000001])
+      expect([no, await errors({ lastRevenue: no })]).toEqual([
+        no,
+        no === "" ? { lastRevenue: "required" } : { lastRevenue: "range" },
+      ]);
+    // Each is required, as KFRCXPFx asks it.
+    const { lastRevenue: _, ...without } = ONB_TYPED;
+    expect((await onboardingCheck(without)).errors).toEqual({ lastRevenue: "required" });
+    // A whole number written with a decimal point or an exponent is the same number.
+    const out = await one<Row>(
+      `SELECT public.cockpit_form_answers_check(schema, $1::jsonb || '{"goal90": 60000.0, "goal12": 1.5e6}'::jsonb, '{}'::jsonb) AS r
+         FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2`,
+      [json(ONB_TYPED)],
+    );
+    expect([out.ok, out.answers.goal90, out.answers.goal12]).toEqual([true, 60000, 1500000]);
+  });
+
+  test("a revenue prints in Make's texts as Make prints Typeform's number: 1500000 is 1500000, 0 is blank (make_parity.py)", async () => {
+    await rolledBack(async () => {
+      await setting("onboarding.raw_titles", RAW_TITLES);
+      const checked = await one<Row>(
+        `SELECT public.cockpit_form_answers_check(schema, $1::jsonb || '{"lastRevenue": 1500000, "goal90": 0, "goal12": 1e9}'::jsonb, '{}'::jsonb) AS r
+           FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2`,
+        [json(ONB_TYPED)],
+      );
+      expect([checked.ok, checked.answers.lastRevenue, checked.answers.goal90, checked.answers.goal12]).toEqual([
+        true,
+        1500000,
+        0,
+        1000000000,
+      ]);
+      const id = await nativeResponse("onboarding", checked.answers);
+      const input = await one<Row>("SELECT public.cockpit_form_stage4_input($1) AS r", [id]);
+      const value = (ref: string) => input.answers.find((x: Answer) => x.ref === ref)?.value;
+      // The answers list holds each number as Typeform hands it to Make: its digits, 0 as 0.
+      expect([value(O.lastRevenue), value(O.goal90), value(O.goal12)]).toEqual(["1500000", "0", "1000000000"]);
+      // Make's side from what Typeform hands Make for the same typing (its number questions as numbers).
+      const typeform = CARD_ONBOARDING.filter(x => ![O.lastRevenue, O.goal90].includes(x.ref)).concat([
+        a(O.lastRevenue, "1500000"),
+        a(O.goal90, "0"),
+        a(O.goal12, "1000000000"),
+      ]);
+      const made = evaluate([
+        { id: "native", form: "onboarding", task: TASK, answers: input.answers },
+        { id: "typeform", form: "onboarding", task: TASK, answers: typeform },
+        { id: "link", form: "kickoff", task: TASK, answers: [], hiddenFrom: { source: "make13", onboarding: typeform } },
+      ]);
+      const plan = byKey(await build(input));
+      expect(plan.profile_fields.plan.fields[0].value).toBe(made.native.profile);
+      expect(plan.raw_answers_comment.plan.comment_text).toBe(made.native.raw);
+      const lines = (text: string) =>
+        text.split("\n").filter(l => /^(Last Year's Total Revenue|90-Day Goal Revenue|12-24 Month Revenue Goal): /.test(l));
+      expect(lines(plan.profile_fields.plan.fields[0].value)).toEqual(lines(made.typeform.profile));
+      expect(lines(made.typeform.profile)).toEqual([
+        "Last Year's Total Revenue: 1500000",
+        "90-Day Goal Revenue: ",
+        "12-24 Month Revenue Goal: 1000000000",
+      ]);
+      const title = (ref: string) => RAW_TITLES.fields.find((f: Row) => f.ref === ref).title;
+      for (const [ref, printed] of [
+        [O.lastRevenue, "1500000"],
+        [O.goal90, ""],
+        [O.goal12, "1000000000"],
+      ]) {
+        // (The comment's last answer has no blank line after it.)
+        expect(`${made.typeform.raw}\n`).toContain(`**${title(ref)}**\n${printed}\n\n`);
+        expect(`${plan.raw_answers_comment.plan.comment_text}\n`).toContain(`**${title(ref)}**\n${printed}\n\n`);
+      }
+      // The next kickoff's link values: the number's digits, and 0 as nothing.
+      await readModel(plan.read_model.plan.entry);
+      const hidden = await hiddenOf(TASK);
+      expect({
+        last: hidden.last_revenue,
+        goal90: hidden.goal_90d,
+        goal12: hidden.goal_12_24,
+      }).toEqual({ last: made.link.hidden.last_revenue, goal90: undefined, goal12: made.link.hidden.goal_12_24 });
+      expect([hidden.last_revenue, hidden.goal_12_24]).toEqual(["1500000", "1000000000"]);
+      expect(made.link.hidden.goal_90d ?? "").toBe("");
+    });
+  });
+
+  test("a late KFRCXPFx delivery mapped into version 2 (X26) writes the texts the portal's answer writes for the same typing", async () => {
+    const schema = await v2Schema();
+    for (const [n, answers] of PAST_SHAPES.entries()) {
+      const portal = (await onboardingCheck(answers)).answers;
+      // What Typeform hands the door for the same typing, then the mapping into version 2 (20261102j's,
+      // unchanged, which the parity plan's read model also uses): a revenue is the text of Typeform's
+      // number, every other answer is what the portal stores.
+      const handed = await one<Row[]>(
+        "SELECT public.cockpit_form_stage4_typeform_answers('onboarding', $1::jsonb) AS r",
+        [json(portal)],
+      );
+      const mapped = await one<Row>(
+        "SELECT public.cockpit_form_stage4_native_answers('onboarding', $1::jsonb) AS r",
+        [json(handed)],
+      );
+      expect([n, mapped]).toEqual([
+        n,
+        { ...portal, ...Object.fromEntries(REVENUES.map(k => [k, String(portal[k])])) },
+      ]);
+      // The door then stores each number question of version 2 as a number (16): the portal's answer.
+      const door = await one<Row>(
+        "SELECT public.cockpit_form_stage4_numbers($1::jsonb, $2::jsonb) AS r",
+        [json(schema), json(mapped)],
+      );
+      expect([n, door]).toEqual([n, portal]);
+      // Every text reads the same answers list from either.
+      for (const stored of [mapped, door]) {
+        const again = await one<Row[]>(
+          "SELECT public.cockpit_form_stage4_typeform_answers('onboarding', $1::jsonb) AS r",
+          [json(stored)],
+        );
+        expect([n, again]).toEqual([n, handed]);
+      }
+    }
+  });
+
+  test("a number question's answer is stored as the number its text writes; any other text stays as it came", async () => {
+    const schema = await v2Schema();
+    const numbers = (answers: unknown, s: unknown = schema) =>
+      one<Row>("SELECT public.cockpit_form_stage4_numbers($1::jsonb, $2::jsonb) AS r", [json(s), json(answers)]);
+    // A number as cockpit_form_stage4_text writes Typeform's; only the number questions change.
+    expect(
+      await numbers({ lastRevenue: "0", goal90: "60000", goal12: "1000000000", yearsInBusiness: "12", website: "123" }),
+    ).toEqual({ lastRevenue: 0, goal90: 60000, goal12: 1000000000, yearsInBusiness: "12", website: "123" });
+    expect(await numbers({ lastRevenue: "1500.5", goal90: "-5" })).toEqual({ lastRevenue: 1500.5, goal90: -5 });
+    // Any other text is kept as it came, so every text prints it as before; a number stays a number.
+    for (const text of ["2 million", "1,500,000", "060000", "60000.50", "1e6", "+5", "-0", " 5", "٦٠٠٠٠", ""])
+      expect([text, await numbers({ goal90: text, goal12: 250000 })]).toEqual([text, { goal90: text, goal12: 250000 }]);
+    // No schema, or answers that are not an object: as they came.
+    expect(await numbers({ goal90: "60000" }, null)).toEqual({ goal90: "60000" });
+    expect(
+      await one("SELECT public.cockpit_form_stage4_numbers(NULL, '{\"goal90\": \"60000\"}'::jsonb) AS r"),
+    ).toEqual({ goal90: "60000" });
+    expect(await numbers(["60000"])).toEqual(["60000"]);
+  });
+
+  test("the Typeform door (X26) stores a late KFRCXPFx delivery as the portal stores the same answer, each revenue a number", async () => {
+    await rolledBack(async () => {
+      // What 20261102j's door reads beside this ground, as stand-ins: the service gate, the card's
+      // onboarding signals and the planner's hook (stage4-native-supabase.test.ts runs the real ones).
+      await db.exec(`
+        ALTER TABLE public.cockpit_form_responses ALTER COLUMN id SET DEFAULT gen_random_uuid(),
+          ADD COLUMN created_by text, ADD COLUMN submitted_by text;
+        ALTER TABLE public.cockpit_client_onboarding ADD COLUMN in_onboarding boolean, ADD COLUMN signup_on date;
+        ALTER TABLE public.cockpit_billing_accounts ADD COLUMN stage_group text;
+        CREATE TABLE public.cockpit_sales_deals (response_id uuid, submitted_at timestamptz);
+        CREATE FUNCTION public.cockpit_hours_require_service() RETURNS void LANGUAGE plpgsql AS $$ BEGIN END $$;
+        CREATE FUNCTION public.cockpit_billing_today() RETURNS date LANGUAGE sql AS $$ SELECT current_date $$;
+        CREATE FUNCTION public.cockpit_billing_deal_cards() RETURNS TABLE (clickup_task_id text, deal_response_id uuid)
+          LANGUAGE sql AS $$ SELECT NULL::text, NULL::uuid WHERE false $$;
+        CREATE FUNCTION public.cockpit_form_hook_onboarding(p_response_id uuid) RETURNS jsonb
+          LANGUAGE sql AS $$ SELECT '{"effects": []}'::jsonb $$;`);
+      await db.exec(fnDef(migration("20261102a_forms_invites.sql"), "cockpit_form_client_version"));
+      // The card is in the pipeline group on the billing sheet: onboarding now.
+      await billing();
+      await db.query(
+        "UPDATE public.cockpit_billing_accounts SET stage_group = 'pipeline' WHERE clickup_task_id = $1",
+        [TASK],
+      );
+      const deliver = async (token: string, fields: Row[]) => {
+        const out = await one<Row>("SELECT public.cockpit_form_onboarding_typeform($1::jsonb) AS r", [
+          json({
+            formKey: "onboarding",
+            externalId: token,
+            submittedAt: "2026-11-02T09:00:00Z",
+            answers: { fields },
+            hidden: { onboarding_client_id: TASK },
+            taskId: TASK,
+          }),
+        ]);
+        expect(out).toMatchObject({ inserted: true, stored: "native", taskId: TASK });
+        return one<Row>(
+          `SELECT jsonb_build_object('version', form_version, 'answers', answers,
+                    'types', (SELECT jsonb_object_agg(k, jsonb_typeof(answers->k)) FROM unnest($2::text[]) k)) AS r
+             FROM public.cockpit_form_responses WHERE id = $1::uuid`,
+          [out.responseId, REVENUES],
+        );
+      };
+      const numbers = { lastRevenue: "number", goal90: "number", goal12: "number" };
+      let handed: Row[] = [];
+      for (const [n, answers] of PAST_SHAPES.entries()) {
+        const portal = (await onboardingCheck(answers)).answers;
+        handed = await one<Row[]>(
+          "SELECT public.cockpit_form_stage4_typeform_answers('onboarding', $1::jsonb) AS r",
+          [json(portal)],
+        );
+        const stored = await deliver(`tokDoorShape${n}`, handed);
+        expect([n, stored]).toEqual([n, { version: 2, answers: portal, types: numbers }]);
+        // The version-2 check takes the stored answer again as it is: one shape whichever door.
+        const again = await onboardingCheck(stored.answers);
+        expect([n, again.ok, again.answers]).toEqual([n, true, portal]);
+      }
+      // A revenue Typeform's number question never hands is kept as it came, so Make's texts print it as before.
+      const odd = handed.map(x => (x.ref === O.lastRevenue ? { ...x, value: "2 million" } : x));
+      const stored = await deliver("tokDoorOdd0001", odd);
+      expect([stored.answers.lastRevenue, stored.types]).toEqual(["2 million", { ...numbers, lastRevenue: "string" }]);
+    });
+  });
+
+  test("the four links are https, as KFRCXPFx's website questions; mapsLink stays plain", async () => {
+    const errors = async (answers: Row) => (await onboardingCheck({ ...ONB_TYPED, ...answers })).errors;
+    for (const key of LINKS) {
+      for (const ok of ["https://cedar.invalid", "http://cedar.invalid/a?b=c", "https://www.instagram.com/cedar.invented/"])
+        expect([key, ok, await errors({ [key]: ok })]).toEqual([key, ok, {}]);
+      // The portal writes https:// before a "www." or a bare domain; what reaches the check without it is refused.
+      for (const no of ["cedar.invalid", "www.cedar.invalid", "@cedar.invented", "cedar page", "https://cedar"])
+        expect([key, no, await errors({ [key]: no })]).toEqual([key, no, { [key]: "format" }]);
+    }
+    // driveLink is optional, as in KFRCXPFx; the other three are required.
+    const { driveLink: _, ...noDrive } = ONB_TYPED;
+    expect((await onboardingCheck(noDrive)).errors).toEqual({});
+    for (const plain of ["Next to the co-op, Block 4", "https://maps.app.goo.gl/Invented0001", "قرب الجمعية"])
+      expect([plain, await errors({ mapsLink: plain })]).toEqual([plain, {}]);
+  });
+
+  test("a phone is stored as E.164; a number with no country code is refused; every other form checks a phone as before", async () => {
+    const stored = async (typed: string) => {
+      const out = await onboardingCheck({ ...ONB_TYPED, phone: typed, frontDeskPhone: typed, personalPhone: typed });
+      return out.ok ? [out.answers.phone, out.answers.frontDeskPhone, out.answers.personalPhone] : out.errors;
+    };
+    for (const [typed, e164] of [
+      ["+966 50 000 0001", "+966500000001"],
+      ["+965 5000 0001", "+96550000001"],
+      ["00965 5000-0001", "+96550000001"],
+      ["(+965) 5000.0001", "+96550000001"],
+      ["+1 (555) 010-0001", "+15550100001"],
+      ["[+971] 50 000 0001", "+971500000001"],
+      ["+٩٦٥ ٥٠٠٠ ٠٠٠١", "+96550000001"],
+      ["+۹۶۶ ۵۰ ۰۰۰ ۰۰۰۱", "+966500000001"],
+      [`+965${CH.nbsp}5000${CH.nbsp}0001`, "+96550000001"],
+      [`${CH.lre}+965 5000 0001${CH.pdf}`, "+96550000001"],
+      [`${CH.lrm}+965${CH.enDash}5000${CH.minus}0001`, "+96550000001"],
+      ["+96550000001", "+96550000001"],
+      ["+12345678", "+12345678"],
+      ["+123456789012345", "+123456789012345"],
+    ])
+      expect([typed, await stored(typed)]).toEqual([typed, [e164, e164, e164]]);
+    const refused = { phone: "format", frontDeskPhone: "format", personalPhone: "format" };
+    for (const typed of [
+      "5000 0001",
+      "0501234567",
+      "96550000001",
+      "+965 5000",
+      "+1234567890123456",
+      "+965 5000 0001 ext 2",
+      "Phone: +96550000001",
+      "+965 5000 0001 / +965 5000 0002",
+      "+96550000001+",
+      "---",
+    ])
+      expect([typed, await stored(typed)]).toEqual([typed, refused]);
+    // Blank is still no answer: each phone is required, as KFRCXPFx asks it.
+    expect(await stored(" ")).toEqual({ phone: "required", frontDeskPhone: "required", personalPhone: "required" });
+    // Every other form's phone is 20261102i's, answer for answer.
+    const schema = await v2Schema();
+    for (const key of ["onboarding_copy", "exit_survey"])
+      for (const typed of ["+965 5000-0001", "5000 0001", "(965) 5000 0001", "+٩٦٥ ٥٠٠٠ ٠٠٠١", "00965 5000 0001"]) {
+        const answers = { ...ONB_TYPED, phone: typed };
+        expect(await onboardingCheck(answers, "", { ...schema, key })).toEqual(
+          await onboardingCheck(answers, "_i", { ...schema, key }),
+        );
+      }
+    expect((await onboardingCheck({ ...ONB_TYPED, phone: "5000 0001" }, "", { ...schema, key: "exit_survey" })).answers.phone).toBe(
+      "5000 0001",
+    );
+  });
+
+  test("answers in every shape the 46 stored KFRCXPFx answers have pass, and keep what Typeform handed Make", async () => {
+    for (const [n, answers] of PAST_SHAPES.entries()) {
+      const out = await onboardingCheck(answers);
+      expect([n, out.ok, out.errors]).toEqual([n, true, {}]);
+      for (const key of [...REVENUES, ...LINKS, "mapsLink"])
+        expect([n, key, out.answers[key]]).toEqual([
+          n,
+          key,
+          typeof answers[key] === "string" ? kept(answers[key] as string) : answers[key],
+        ]);
+      for (const key of Object.keys(E164))
+        expect([n, key, out.answers[key]]).toEqual([n, key, (answers[key] as string).replace(/ /g, "")]);
+    }
+  });
+});
+
+// --- The writeback queue's audit (14) -------------------------------------------------------------
+
+describe("the audit log keeps a request part's comment as its length, never its words", () => {
+  const queueAudit = () =>
+    db.query<Row>(
+      `SELECT a.action, a.before, a.after FROM public.cockpit_audit_log a
+        WHERE a.entity_type = 'cockpit_clickup_writeback_queue' ORDER BY a.created_at, a.action`,
+    );
+
+  test("a native kickoff's onboarding tasks: each part's insert and change of state is audited with the comment's length", async () => {
+    await rolledBack(async () => {
+      await liveForms();
+      await billing();
+      await readModel({ form_id: "native", answers: CARD_ONBOARDING });
+      const id = await nativeResponse("kickoff", NATIVE_KICKOFF);
+      const out = await one<Row>("SELECT public.cockpit_form_stage4_plan($1, true) AS r", [id]);
+      expect(byKey(out.effects).onboarding_tasks.state).toBe("delivered");
+      const { request, parts } = await requestOf(id, "client_onboarding");
+      const comment = request.task_comment as string;
+      // The handoff holds the client's email and phone, which the audit must not copy.
+      expect(comment).toContain("owner@cedar.invalid");
+      expect(comment).toContain("+965 0000 0001");
+      // The queue keeps the comment whole: the writer posts it.
+      for (const part of Object.values(parts)) expect(part.taskComment).toBe(comment);
+      await db.query(
+        "UPDATE public.cockpit_clickup_writeback_queue SET state = 'sent' WHERE source_id = $1",
+        [request.id],
+      );
+      const rows = (await queueAudit()).rows;
+      expect(rows.map(r => r.action).sort()).toEqual(["insert:queued", "insert:queued", "update:sent", "update:sent"]);
+      for (const r of rows) {
+        for (const side of [r.after, r.before].filter(Boolean)) {
+          expect(side.payload).not.toHaveProperty("taskComment");
+          expect(side.payload.taskCommentChars).toBe(Array.from(comment).length);
+          expect(side.payload.requestId).toBe(request.id);
+        }
+      }
+      expect(rows.filter(r => r.before).length).toBe(2);
+      // Nothing in the audit log holds the comment's words.
+      expect(
+        await one<number>(
+          `SELECT count(*)::int AS r FROM public.cockpit_audit_log a
+            WHERE strpos(to_jsonb(a)::text, 'owner@cedar.invalid') > 0 OR strpos(to_jsonb(a)::text, '+965 0000 0001') > 0`,
+        ),
+      ).toBe(0);
+    });
+  });
+
+  test("every other kind is audited as 20261026t audits it: a focus-view comment as its length, the rest whole", async () => {
+    await rolledBack(async () => {
+      const insert = (kind: string, payload: Row) =>
+        one<Row>(
+          `INSERT INTO public.cockpit_clickup_writeback_queue(dedupe_key, kind, source_table, source_id, payload)
+           VALUES (gen_random_uuid()::text, $1, 'test', 'x', $2::jsonb) RETURNING to_jsonb(cockpit_clickup_writeback_queue) AS r`,
+          [kind, json(payload)],
+        );
+      const focus = await insert("task_action", { action: "comment", text: "Call the client back" });
+      const field = await insert("card_field", { fieldId: "f-1", value: "Invented value", comment: "kept" });
+      const odd = await insert("request", { requestId: "r-1", taskComment: 42 });
+      const rows = (await queueAudit()).rows;
+      const after = (id: string) => rows.find(r => r.after.id === id).after;
+      expect(after(focus.id)).toEqual({
+        ...focus,
+        payload: { action: "comment", text: "(20 characters, left out of the audit)" },
+      });
+      expect(after(field.id)).toEqual(field);
+      // A comment that is not text keeps no length: missing, never 0.
+      expect(after(odd.id).payload).toEqual({ requestId: "r-1", taskCommentChars: null });
+    });
+  });
+});
+
+// --- Room for a long Arabic kickoff (15) -----------------------------------------------------------
+
+/** n characters of unit, counted as the database counts them (code points). */
+const fill = (unit: string, n: number) =>
+  Array.from(unit.repeat(Math.ceil(n / Array.from(unit).length)))
+    .slice(0, n)
+    .join("");
+/**
+ * A kickoff with every answer the sheet takes at its longest: each long text 4,000 characters and each
+ * other text 500 (the check's limits, as the sheet counts them), every choice and list answered.
+ */
+async function kickoffAtMaxima(longUnit: string, shortUnit: string): Promise<Row> {
+  const specs = await one<Row[]>("SELECT public.cockpit_form_stage4_fields('kickoff') AS r");
+  const answers: Row = { newMrrUsd: 100000 };
+  for (const s of specs)
+    answers[s.key] =
+      s.type === "longtext"
+        ? `${fill(longUnit, 3998)}..`
+        : s.type === "text"
+          ? `${fill(shortUnit, 498)}..`
+          : s.type === "url"
+            ? `https://fathom.video/share/${"x".repeat(500 - 27)}`
+            : s.type === "choice"
+              ? s.options[s.options.length - 1]
+              : s.type === "multi"
+                ? s.options
+                : 9999999.99;
+  return answers;
+}
+const ARABIC_LONG = "نبي نركز على الفلل الجديدة في الشمال\nوالدفع على  دفعتين ";
+const ARABIC_SHORT = "المدير الفني وفريق المبيعات ";
+
+describe("a long Arabic kickoff is kept: 256 KB for its answers, a plain refusal past them", () => {
+  const bytes = (v: unknown) =>
+    one<number>("SELECT octet_length($1::jsonb::text) AS r", [json(v)]);
+  const kickoffCheck = (answers: Row) =>
+    one<Row>("SELECT public.cockpit_kickoff_answers_check($1::jsonb) AS r", [json(answers)]);
+
+  test("the sheet's longest Arabic answers pass the check and are stored; 20261102f's 64 KB refused them with the table's error", async () => {
+    const answers = await kickoffAtMaxima(ARABIC_LONG, ARABIC_SHORT);
+    const specs = await one<Row[]>("SELECT public.cockpit_form_stage4_fields('kickoff') AS r");
+    expect(specs.filter(s => s.type === "longtext")).toHaveLength(12);
+    const check = await kickoffCheck(answers);
+    expect([check.ok, check.errors]).toEqual([true, {}]);
+    const size = await bytes(check.answers);
+    expect(size).toBeGreaterThan(65536);
+    expect(size).toBeLessThan(120000);
+    await rolledBack(async () => {
+      await nativeResponse("kickoff", check.answers);
+    });
+    // Under 20261102f's check (live) the same send failed with 23514, which the CSM saw raw.
+    await rolledBack(async () => {
+      await db.exec(`ALTER TABLE public.cockpit_form_responses DROP CONSTRAINT cockpit_form_responses_answers_check;
+        ALTER TABLE public.cockpit_form_responses ADD CONSTRAINT cockpit_form_responses_answers_check
+          CHECK (jsonb_typeof(answers) = 'object' AND octet_length(answers::text) <= CASE WHEN form_key IN ('new_client', 'onboarding') THEN 1048576 ELSE 65536 END)`);
+      expect(await answersCheck()).toBe(ANSWERS_F);
+      expect((await refusal(() => nativeResponse("kickoff", check.answers))).code).toBe("23514");
+    });
+    // Four bytes a letter (a script outside the first plane) fit too.
+    const wide = await kickoffCheck(
+      await kickoffAtMaxima(String.fromCodePoint(0x1d49c), String.fromCodePoint(0x1d4b7)),
+    );
+    expect([wide.ok, wide.errors]).toEqual([true, {}]);
+    expect(await bytes(wide.answers)).toBeGreaterThan(200000);
+    expect(await bytes(wide.answers)).toBeLessThanOrEqual(262144);
+    await rolledBack(async () => {
+      await nativeResponse("kickoff", wide.answers);
+    });
+  });
+
+  test("past 256 KB the check refuses the answers by name (too_large) and the send stores nothing; a fix the CSM can make comes first", async () => {
+    // Only characters JSON writes as six-byte escapes can pass every limit and still not fit.
+    const control = String.fromCodePoint(1);
+    const answers = await kickoffAtMaxima(control, ARABIC_SHORT);
+    const check = await kickoffCheck(answers);
+    expect(await bytes(check.answers)).toBeGreaterThan(262144);
+    expect([check.ok, check.errors]).toEqual([false, { _answers: "too_large" }]);
+    await rolledBack(async () => {
+      expect((await refusal(() => nativeResponse("kickoff", check.answers))).code).toBe("23514");
+    });
+    // Another refusal is named alone, so the sheet says what to fix.
+    expect((await kickoffCheck({ ...answers, detailsCorrect: "Maybe" })).errors).toEqual({ detailsCorrect: "option" });
+    // 20261102j's send returns the check's refusal before it stores anything (this file keeps that send).
+    const j = migration(J);
+    const send = fnDef(j, "cockpit_kickoff_submit");
+    const refuse = send.indexOf(
+      "v_check := public.cockpit_kickoff_answers_check(p_answers);\n  IF NOT (v_check->>'ok')::boolean THEN\n    RETURN jsonb_build_object('ok', false, 'reason', 'invalid', 'errors', v_check->'errors');",
+    );
+    expect(refuse).toBeGreaterThan(0);
+    expect(refuse).toBeLessThan(send.indexOf("INSERT INTO public.cockpit_form_responses"));
+    expect(migration(M)).not.toContain("FUNCTION public.cockpit_kickoff_submit(");
+  });
+
+  test("with the onboarding's long answers beside it, every step of the kickoff is kept well under 2 MB", async () => {
+    const check = await kickoffCheck(await kickoffAtMaxima(ARABIC_LONG, ARABIC_SHORT));
+    expect(check.ok).toBe(true);
+    await rolledBack(async () => {
+      await liveForms();
+      await billing();
+      // The card's onboarding answer with the nine long ones the handoff prints at 10,000 Arabic characters.
+      const long = [O.address, O.hours, "0a80a0a8-3a09-4907-a1d1-6c57e57d4c47", "6271b610-6946-4056-bb08-d03ffc274141",
+        "ee25f923-d5e1-4d1a-a95f-cd9c17abbe83", O.marketing, O.challenges, O.whyJoined, O.additional];
+      await readModel({
+        form_id: "native",
+        answers: [
+          ...CARD_ONBOARDING.filter(x => !long.includes(x.ref)),
+          ...long.map(ref => a(ref, fill(ARABIC_LONG, 10000))),
+        ],
+      });
+      const id = await nativeResponse("kickoff", check.answers);
+      const out = await one<Row>("SELECT public.cockpit_form_stage4_plan($1, true) AS r", [id]);
+      for (const e of out.effects) expect([e.key, e.reason]).not.toEqual([e.key, TOO_LARGE]);
+      expect(byKey(out.effects).onboarding_tasks).toMatchObject({ state: "delivered", reason: null });
+      const largest = await one<number>(
+        "SELECT max(octet_length(plan::text)) AS r FROM public.cockpit_form_effects WHERE response_id = $1",
+        [id],
+      );
+      // Past 20261027f's 128 KB, kept whole, and under half of the 2 MB a step has.
+      expect(largest).toBeGreaterThan(131072);
+      expect(largest).toBeLessThan(1048576);
+      const { request } = await requestOf(id, "client_onboarding");
+      expect(request.task_comment).toContain(`*Business notes:* ${fill(ARABIC_LONG, 3998)}..\n`);
     });
   });
 });
@@ -2380,7 +3099,7 @@ describe("the onboarding tasks carry the handoff to the request writer; the Bran
 /** A list answer with its options in one order, whichever order they were ticked in. */
 const anyOrder = (value: string) => value.split(", ").sort().join(", ");
 /**
- * An effect with the parts 20261102m changes taken out: the five texts, the onboarding tasks' comment
+ * An effect with the parts 20261102o changes taken out: the five texts, the onboarding tasks' comment
  * (20261102l's cut copy in details), the Brand DNA task's details (none now) and the order of a list
  * in the read model (as ticked now, the form's option order in 20261102l).
  */

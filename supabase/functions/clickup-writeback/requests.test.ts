@@ -1563,7 +1563,7 @@ describe("the task comment: Make's text alone, posted once on the task the part 
     }
   });
 
-  it("a row whose steps were frozen before the step existed never posts it (ship the writer before 20261102m)", async () => {
+  it("a row whose steps were frozen before the step existed never posts it (ship the writer before 20261102o)", async () => {
     const h = harness(LIVE);
     const row = h.db.enqueue("request", requestPayload({ taskComment: HANDOFF }), { steps: ["create", "checklist", "tag", "card_comment"] });
     await h.run();
@@ -1753,8 +1753,8 @@ describe("the unit pieces", () => {
     for (const taskComment of [undefined, null, "", "x".repeat(TASK_COMMENT_MAX), HANDOFF]) expect(payloadProblem(requestPayload({ taskComment }))).toBeNull();
     // Far above any real handoff (3,769 to 4,656 characters).
     expect(TASK_COMMENT_MAX).toBeGreaterThan(40 * 4_656);
-    // The 2 MB a kickoff plan holds (20261102m), so no handoff the cockpit plans fails its part.
-    const m = readFileSync(new URL("../../migrations/20261102m_stage4_match_make.sql", import.meta.url), "utf8");
+    // The 2 MB a kickoff plan holds (20261102o), so no handoff the cockpit plans fails its part.
+    const m = readFileSync(new URL("../../migrations/20261102o_stage4_match_make.sql", import.meta.url), "utf8");
     expect(m).toContain(`THEN ${TASK_COMMENT_MAX} ELSE 131072 END`);
   });
   it("the card link names the requester by role", () => {
@@ -1819,8 +1819,8 @@ describe("the database the writer calls (migration 20261026r)", () => {
   it("the payload keys the writer reads are the ones the plan freezes and the sync trigger copies", () => {
     const plan = /FUNCTION public\.cockpit_request_plan\([\s\S]*?END \$\$;/.exec(SQL)?.[0] ?? "";
     const trigger = /FUNCTION public\.cockpit_request_queue_sync\(\)[\s\S]*?END \$\$;/.exec(SQL)?.[0] ?? "";
-    // taskComment: the system's requests add it to each part's payload (20261102m cockpit_request_create_system).
-    const system = /FUNCTION public\.cockpit_request_create_system\([\s\S]*?END \$\$;/.exec(read("../../migrations/20261102m_stage4_match_make.sql"))?.[0] ?? "";
+    // taskComment: the system's requests add it to each part's payload (20261102o cockpit_request_create_system).
+    const system = /FUNCTION public\.cockpit_request_create_system\([\s\S]*?END \$\$;/.exec(read("../../migrations/20261102o_stage4_match_make.sql"))?.[0] ?? "";
     expect(system).toContain("jsonb_build_object('taskComment', v_comment)");
     const writerReads = [...new Set([...CALLERS.matchAll(/\bp\.(\w+)/g)].map(m => m[1]))].filter(k => !["op", "actor", "requesterOfTask", "actionId", "checklistId", "itemId", "itemName", "from", "to", "text", "statusSeen", "taskComment"].includes(k));
     expect(CALLERS).toContain("p.taskComment");

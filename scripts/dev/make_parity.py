@@ -18,24 +18,38 @@ prefilled from the card's onboarding answers, or what the cockpit's own kickoff 
 run says so when the card shows it was that one). The cockpit's side is cockpit_form_parity_plan (read only, writes
 nothing) on the same answers. A fidelity check proves the evaluator on real data: the evaluated Make 12 [11]
 handoff (or Make 13 [47] raw answers) comment must equal a comment ClickUp holds on the card, whitespace folded and
-ClickUp's markdown marks ignored. One line per effect:
+ClickUp's markdown marks ignored. One line per effect, then one line for each INTENDED name the run used:
 
   kickoff run 1: from response 6f0c9d2e-...
   kickoff run 1: handoff_comment equal
   kickoff run 1: card_fields differs: 924bba47
-  kickoff run 1: card_fields intended: the Blueprint link points at the cockpit Blueprint
+  kickoff run 1: onboarding_tasks equal + intended: task_name, dedupe, request_route, brief
   kickoff run 1: phase4_whatsapp setting missing
+  kickoff run 1: card_facts intended: card_facts (receipt not read)
   kickoff run 1: fidelity equal
+  intended brief: the two onboarding tasks' description carries the cockpit brief ...
 
 plus one line for Make 12's [24] (or Make 13's [31]): "[24] search", or "[24] writes: {columns}", which stops Stage
-4 until the write is its own effect. Pass = every effect equal or intended and the fidelity equal, on every run. A
-text Make writes (the handoff, also posted on each onboarding task by [18] and [23], the raw answers comment, the
-Client Profile, a phase text) is equal only byte for byte (the CEO's rule, 2026-11-02); "differs: text, whitespace
-only" names a difference of spaces or new lines alone. The comments are graded as ClickUp receives them, not only
-as planned: the handoff on the onboarding tasks differs while the request writer has no step that posts it
-(TASK_COMMENT_STEP), and a comment differs while the writer posts it with a Cockpit ref line after Make's text
-(REF_LINE). A task description the plan writes (details) differs too: Make 12 [17], [22] and Make 13 [46] write
-none. A phase text compares as a template ({map_link}, {content_folder}); while stage4.messages has no text for it,
+4 until the write is its own effect. Pass = every effect equal or intended and the fidelity equal, on every run.
+
+The parity rule: Make's output is the floor. Its part of each effect is graded byte for byte, always; the cockpit may
+add to it only in a slot registered here, each under the CEO's words of 2026-11-02 (CEO_WORDS), and one effect gets
+one verdict: "equal + intended: <names>" when Make's part is equal and every addition is registered, "differs" when
+either is not (an addition never hides a difference). A text Make writes (the handoff, also posted on each onboarding
+task by [18] and [23], the raw answers comment, the Client Profile, a phase text) is equal only byte for byte;
+"differs: text, whitespace only" names a difference of spaces or new lines alone, and a block after Make's text
+differs like any other text. The comments are graded as ClickUp receives them, not only as planned: the handoff on
+the onboarding tasks differs while the request writer has no step that posts it (TASK_COMMENT_STEP), and a comment
+differs while the writer posts it with a Cockpit ref line after Make's text (REF_LINE). A task description (details)
+Make 12 [17], [22] and Make 13 [46] write none of: it is INTENDED 'brief' on the onboarding tasks and 'dna_brief' on
+the Brand DNA task only with its exact first line (BRIEF_HEADER, DNA_BRIEF_HEADER), its detailsKind and BRIEF_MAX
+characters at most, on a request type with a details field (else the brief would be dropped); any other details
+differs. card_facts fills only CARD_FACTS' five fields, only while empty, with a plan clickup-writeback's factsStep
+takes (onlyIfEmpty, a label, a value of the field's kind, a real day; no field only with its skip reason); the
+writer's own receipt (progress.steps.card_facts.fields of its queue row, read only when the response has one) differs
+when a field went "written" over a card value that was "set", and without one the verdict says "(receipt not read)"
+and the summary counts it: only the plan was graded. The dispatch sends Make's two keys and nothing else (DISPATCH_EXTRA_KEYS). An effect key no entry
+names differs. A phase text compares as a template ({map_link}, {content_folder}); while stage4.messages has no text for it,
 it is "setting missing" and the run is not proven. oracle() is one stored answer's two inputs with no network (what
 cockpit_form_parity_plan is sent, and Make's evaluated modules), so a branch's SQL can be planned and compared off
 the VPS; plan_lines() and summary() print such a run as this one does. It prints ids, field ids, effect keys, run
@@ -55,7 +69,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 NATIVE_CURRENT = "/home/hermes/cockpit-native-current"
@@ -76,6 +90,16 @@ FIELD = {
     "kickoff_link": "87d7d889-afea-42f8-9485-6f3ead5b857f",
     "service": "bab9a58b-15af-4b0d-8e20-b8e5a4bee2cc",
 }
+# The CEO's words of 2026-11-02, after "Yes, match Make": what lets the cockpit add to Make's output. Make's output
+# stays the floor, graded byte for byte; an addition is accepted only in a slot registered here (INTENDED, SLOTS,
+# CARD_FACTS), and every such entry quotes these words.
+CEO_WORDS = ("You can even improve what's already there with the data that you have. "
+             "So you can add more if it gives us better data.")
+UNDER_CEO = f'the CEO, 2026-11-02: "{CEO_WORDS}"'
+# The two briefs' first lines; supabase/migrations/20261102p holds the same strings (test_make_parity.py reads it).
+BRIEF_HEADER = "From the onboarding and kickoff forms (cockpit)"
+DNA_BRIEF_HEADER = "For the Brand DNA doc (cockpit)"
+BRIEF_MAX = 3600
 INTENDED = {
     "blueprint": "the Blueprint link points at the cockpit Blueprint",
     "task_name": "the request names the task {client} - {type label}",
@@ -87,7 +111,68 @@ INTENDED = {
     "recap": "stays off (Q22)",
     "read_model": "the cockpit's own record (Make writes none)",
     "dedupe": "one task each per card (Make doubles them on a second submit)",
+    # The request route (X38; listed as cannot match until 2026-11-02, contract 11.9).
+    "request_route": ("each task gets what every request gives its task beyond Make's name, list and template or "
+                      "assignee: the template's text and the Cockpit ref in its description (the marker that keeps a task "
+                      "from being made twice), a due date, a priority, owners by rule, the client tag, the Request Type field "
+                      f"and a link comment on the client card; under {UNDER_CEO}"),
+    "brief": (f'the two onboarding tasks\' description carries the cockpit brief under the template\'s text ("{BRIEF_HEADER}" '
+              f"first, detailsKind brief, {BRIEF_MAX:,} characters at most); Make's handoff stays each task's comment, alone; "
+              f"under {UNDER_CEO}"),
+    "dna_brief": (f'the Brand DNA task\'s description carries the cockpit brief ("{DNA_BRIEF_HEADER}" first, detailsKind '
+                  f"dna_brief, {BRIEF_MAX:,} characters at most), where Make writes none; under {UNDER_CEO}"),
+    "card_facts": ("fills a card field Make leaves alone, only Consultation Types, ADs Platform, Fathom, Onboarding Call Date "
+                   "or Company Website and only while it is empty (onlyIfEmpty: the writer reads the card first and keeps a "
+                   f"value the card holds); under {UNDER_CEO}"),
 }
+# The registered description slots: effect -> (INTENDED name and detailsKind, first line, request type). A plan's
+# details anywhere else, or without its exact first line and kind, is a description Make does not write.
+SLOTS = {"onboarding_tasks": ("brief", BRIEF_HEADER, "client_onboarding"),
+         "brand_dna_task": ("dna_brief", DNA_BRIEF_HEADER, "brand_dna")}
+DROPPED = "the brief would be dropped (the type has no details field)"
+# card_facts (B8): the only card fields it may fill, by full id, with the kind each is written as. Make 12 [21] and
+# Make 13 [29] write none of them. Country, Daily Budget and ADs Platforms (CARD_FACTS_NEVER) are not among them:
+# billing reads Country, and the Blueprint never writes the other two.
+CARD_FACTS = {
+    "45fdd2ea-f83c-4721-bce7-2e6187a43541": ("labels", "Consultation Types"),
+    "2de15aa5-7fe9-48bf-86a1-e4cfee1306c9": ("drop_down", "ADs Platform"),
+    "abaa31ee-28ff-46f6-83bf-6c6d357a26d5": ("url", "Fathom"),
+    "ee9bf855-e05b-4afc-addf-1063cb54d3f0": ("date", "Onboarding Call Date"),
+    "5d57fdde-eb70-4610-a23b-88f718b4451d": ("url", "Company Website"),
+}
+CARD_FACTS_NEVER = {"e0ca65e7-7656-4113-9aae-9feda834c3f9": "Country", "539743c2-b6cd-4eeb-bf2f-abaf64769a5e": "Daily Budget",
+                    "8db2aa82-cbad-4d26-8deb-ee0637e97512": "ADs Platforms"}
+# The writer's card_facts receipt (clickup-writeback/forms.ts FactReceipt), kept at its queue row's
+# progress.steps.card_facts.fields: for each field id, `before` (what the first card read saw, a word, never the value)
+# and `state`, plus `differs` and `note` on a kept field. A write over a set value is state "written" with before
+# "set". test_make_parity.py reads these words from forms.ts.
+FACT_STEP = "card_facts"
+FACT_BEFORE = frozenset({"empty", "set"})
+FACT_STATE = frozenset({"due", "written", "kept"})
+FACT_KEYS = frozenset({"before", "state", "differs", "note"})
+# A card_facts date as forms.ts factDay takes it: a real day (YYYY-MM-DD), an instant with its zone written out
+# (FACT_ZONED, the writer's ZONED), or epoch milliseconds, read as its Kuwait day, which must fall in FACT_DAYS (seconds
+# taken for milliseconds read as 1970). An instant whose day does not exist ("2026-02-31T08:00Z", which the writer's
+# Date.parse rolls into March) is refused here too.
+FACT_ZONED = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:?\d{2})$", re.ASCII)
+FACT_DAYS = ("2020-01-01", "2099-12-31")
+UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+# The dispatch: Make 13 [25] sends two keys, the cockpit plans them as client and taskId. Extra keys wait on the
+# CEO's word (plan CEO-1): until then this stays empty and any other key differs, and a contact answer never goes.
+DISPATCH_KEYS = frozenset({"client", "taskId"})
+DISPATCH_EXTRA_KEYS: frozenset = frozenset()
+CONTACT_REFS = frozenset({"533f14a0-712f-4de9-9ac7-67e1be6bc0c8", "64f2fb80-b074-4017-b8b7-b7d549947e52",
+                          "7994f0d2-baeb-451b-983a-816290873a68", "282dac48-5031-4acb-96b6-ea469e8a5a8b",
+                          "09d2e62a-51d4-4665-a3a9-30f5279b71bc"})
+CONTACT_KEYS = frozenset({"fullName", "phone", "email", "frontDeskPhone", "personalPhone"})
+# Every effect the planner may plan; any other key is an addition no entry registers.
+KNOWN_EFFECTS = {
+    "kickoff": frozenset({"handoff_comment", "native_status", "card_fields", "onboarding_tasks", "map_phase4",
+                          "phase4_whatsapp", "kickoff_notice", "new_mrr", "recap", "card_facts"}),
+    "onboarding": frozenset({"github_dispatch", "profile_fields", "raw_answers_comment", "client_data_row", "map_phase3",
+                             "phase3_whatsapp", "brand_dna_task", "read_model", "card_facts"}),
+}
+NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,39}$")
 # The request writer's step that posts a request's taskComment once on the task it made (REQUEST_STEPS in
 # supabase/functions/clickup-writeback/requests.ts): what carries the onboarding_tasks plan's comment_text to
 # ClickUp, as Make 12 [18] and [23] post the handoff. None while the writer has no such step: then nothing posts it,
@@ -915,6 +1000,49 @@ def relay_row(config: dict, payload: dict) -> dict:
     return out
 
 
+def equal_plus(*names: Optional[str]) -> str:
+    """One effect's verdict when Make's part is equal: "equal", or "equal + intended: <names>" for its registered
+    additions (names of INTENDED). An addition is named only once Make's part is equal; it never hides a difference."""
+    named = [n for n in names if n]
+    for n in named:
+        if n not in INTENDED:
+            raise KeyError(f"{n} is not an INTENDED entry")
+    return f"equal + intended: {', '.join(named)}" if named else "equal"
+
+
+def only_intended(name: str) -> str:
+    """The verdict of an effect Make has no part in: "intended: <name>"."""
+    if name not in INTENDED:
+        raise KeyError(f"{name} is not an INTENDED entry")
+    return f"intended: {name}"
+
+
+def intended_names(verdict: str) -> list:
+    """The INTENDED names a verdict gives ("equal + intended: a, b" or "intended: a", with or without a note in
+    brackets after it, as card_facts' "(receipt not read)")."""
+    m = re.match(r"^(?:equal \+ )?intended: ([^(]+?)(?: \(.*\))?$", verdict)
+    return [n.strip() for n in m.group(1).split(",")] if m else []
+
+
+def legend(verdicts: list) -> list:
+    """One line per INTENDED name the verdicts use, in first-use order: "intended <name>: <why>"."""
+    seen: list = []
+    for v in verdicts:
+        seen += [n for n in intended_names(v) if n in INTENDED and n not in seen]
+    return [f"intended {n}: {INTENDED[n]}" for n in seen]
+
+
+def short_id(value: Any) -> str:
+    """A field id as its first 8 characters, or "a field" for anything that is not an id (never a value)."""
+    s = str(value or "")
+    return s[:8] if re.fullmatch(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}", s) else "a field"
+
+
+def safe_name(value: Any) -> str:
+    """A key or effect name as it is, or "a key" when it is not a plain identifier (never a value)."""
+    return str(value) if NAME.match(str(value)) else "a key"
+
+
 def phase_verdict(phase: str, made: Optional[dict], effect: Optional[dict], ctx: dict) -> str:
     """A phase text compares as a template: stage4.messages.<phase> against Make's body with its map link and
     content folder as {map_link} and {content_folder}."""
@@ -922,13 +1050,13 @@ def phase_verdict(phase: str, made: Optional[dict], effect: Optional[dict], ctx:
     if not isinstance(text, str) or not text.strip():
         return "setting missing"
     if made is None:
-        return f"intended: {INTENDED['no_group']}"
+        return only_intended("no_group")
     same = text_verdict(text_of(made, "body", "text", "message"), text)
     if same != "equal":
         return same
     if not ((effect or {}).get("plan") or {}).get("body") or (effect or {}).get("missing"):
         return f"differs: the cockpit drafts no {phase.replace('phase', 'phase ')} message"
-    return f"intended: {INTENDED['approval']}"
+    return equal_plus("approval")
 
 
 def task_comment(m18: Optional[dict], m23: Optional[dict], planned: dict) -> Optional[str]:
@@ -956,15 +1084,220 @@ def delivered(effect: str, verdict: str) -> str:
     return f"{verdict}; {REF_ADDED}" if verdict.startswith("differs") else f"differs: {REF_ADDED}"
 
 
-def description(planned: dict) -> Optional[str]:
-    """Make 12 [17], [22] and Make 13 [46] make their tasks with no description; a plan's details is one. The
-    request marker and template text the writer puts there are a recorded cannot-match, not graded here."""
-    return DESCRIPTION if str(planned.get("details") or "").strip() else None
+def has_details_field(ctx: dict, type_key: str) -> bool:
+    """Whether the request type puts a details answer in the task description: cockpit_request_create_system drops
+    details silently unless a field is keyed details (20261102o), and cockpit_request_plan writes into the description
+    the field of kind details (20261026r). Unknown (no field list read) counts as none."""
+    fields = (ctx.get("fields") or {}).get(type_key)
+    return isinstance(fields, list) and any(isinstance(f, dict) and f.get("key") == "details" and f.get("kind") == "details"
+                                            for f in fields)
+
+
+def details_slot(effect: str, planned: dict, ctx: dict) -> tuple:
+    """A plan's details (the task description; Make 12 [17], [22] and Make 13 [46] write none) as (difference,
+    intended name). Accepted only in the effect's registered slot (SLOTS): its exact first line, its detailsKind and
+    BRIEF_MAX characters at most, on a request type that keeps details. Any other details is a description Make does
+    not write. The template's text and the Cockpit ref the writer puts above and below it are INTENDED['request_route']."""
+    details = planned.get("details")
+    if details is None or not str(details).strip():
+        return None, None
+    name, header, type_key = SLOTS[effect]
+    if not isinstance(details, str) or details.split("\n", 1)[0] != header or planned.get("detailsKind") != name:
+        return DESCRIPTION, None
+    if len(details) > BRIEF_MAX:
+        return f"the {name} is {len(details):,} characters, over {BRIEF_MAX:,}", None
+    if not has_details_field(ctx, type_key):
+        return DROPPED, None
+    return None, name
+
+
+def real_day(d: Any) -> Optional[str]:
+    """A calendar day as written, when it is one (forms.ts realDay: "2026-02-31" is not)."""
+    if not isinstance(d, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", d):
+        return None
+    try:
+        datetime.strptime(d, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return d
+
+
+def kuwait_day(ms: Any) -> Optional[str]:
+    """An instant in epoch milliseconds as its Kuwait day (UTC+3), as requests.ts kuwaitDay reads it; None for none."""
+    try:
+        n = float(ms)
+        return (datetime(1970, 1, 1) + timedelta(milliseconds=n + 3 * 3_600_000)).date().isoformat() \
+            if math.isfinite(n) and n > 0 else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def zoned_day(v: str) -> Optional[str]:
+    """An instant with its zone written out (FACT_ZONED) as its Kuwait day; None when its day or time does not exist."""
+    m = re.fullmatch(r"([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.([0-9]{1,6}))?)?"
+                     r"(?:Z|([+-])([0-9]{2}):?([0-9]{2}))", v)
+    if not m:
+        return None
+    y, mo, d, h, mi, s, frac, sign, oh, om = m.groups()
+    try:
+        at = datetime(int(y), int(mo), int(d), int(h), int(mi), int(s or 0), int((frac or "0").ljust(6, "0")))
+        if sign:
+            if int(oh) > 23 or int(om) > 59:
+                return None
+            shift = timedelta(hours=int(oh), minutes=int(om))
+            at = at - shift if sign == "+" else at + shift
+        return (at + timedelta(hours=3)).date().isoformat()
+    except (ValueError, OverflowError):
+        return None
+
+
+def fact_day(f: dict) -> Optional[str]:
+    """A card_facts date's Kuwait day as forms.ts factDay takes it, else None: a real day, an instant with its zone, or
+    epoch milliseconds (a number or up to 16 digits), inside FACT_DAYS; with the `day` the plan names, both one day."""
+    v = f.get("value")
+    day = None
+    if isinstance(v, str) and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", v):
+        day = real_day(v)
+    elif isinstance(v, str) and FACT_ZONED.fullmatch(v):
+        day = zoned_day(v)
+    elif (isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and float(v).is_integer()) \
+            or (isinstance(v, str) and re.fullmatch(r"[0-9]{1,16}", v)):
+        day = kuwait_day(v)
+    if not day or not FACT_DAYS[0] <= day <= FACT_DAYS[1]:
+        return None
+    return day if "day" not in f or real_day(f["day"]) == day else None
+
+
+def fact_receipt(value: Any) -> Any:
+    """The writer's card_facts receipt as {fieldId: {before, state, differs?, note?}}, from wherever it is handed over:
+    the fields alone, the step (progress.steps.card_facts: {state, at, fields, note?}), the queue row's progress
+    ({steps: {card_facts: ...}}) or the effect row's receipt ({table, id, state, at, step}). None when there is none;
+    False when there is one that is not the writer's shape (FactReceipt in forms.ts: `before` "empty" or "set", never a
+    value; `state` "due", "written" or "kept"), so a receipt in another shape is never passed over in silence."""
+    if isinstance(value, dict) and "table" in value and "step" in value:
+        value = value["step"]
+    if isinstance(value, dict) and "steps" in value:
+        value = value["steps"].get(FACT_STEP) if isinstance(value["steps"], dict) else False
+    if value is None:
+        return None
+    if isinstance(value, dict) and "fields" in value:
+        value = value["fields"]
+    if not isinstance(value, dict) or not value:
+        return False
+    for fid, r in value.items():
+        if not (isinstance(fid, str) and isinstance(r, dict) and set(r) <= FACT_KEYS
+                and r.get("before") in FACT_BEFORE and r.get("state") in FACT_STATE):
+            return False
+    return value
+
+
+def card_facts_verdict(effect: dict, made: dict, ctx: dict) -> str:
+    """card_facts (B8), an effect Make has no part in, graded as clickup-writeback's factsStep takes its plan and by the
+    writer's own receipt. "intended: card_facts" only when every planned field is one of CARD_FACTS, written as its
+    kind, with a label, a value of that kind (an https link; a date fact_day reads) or options the field has, each
+    once, a source and onlyIfEmpty, and Make writes none of them itself (made: Make's custom field writes on the card).
+    A plan of no field carries its skip reason: the runner skips only that, and the writer refuses an empty list. The
+    receipt (effect["receipt"], or "receipts", in any shape fact_receipt reads) differs when a field went "written"
+    over a card value that was "set", when the writer wrote a field the plan does not name, or when it is not the
+    writer's shape. With no receipt the verdict says "(receipt not read)": only the plan was graded."""
+    fields = (effect.get("plan") or {}).get("fields")
+    if not isinstance(fields, list):
+        return "differs: card_facts plans no list of fields"
+    if not fields and not (isinstance(effect.get("skip"), str) and effect["skip"].strip()):
+        return "differs: card_facts plans no field and no skip (the writer refuses an empty list)"
+    found: dict = {k: [] for k in ("over", "unplanned", "outside", "twice", "unguarded", "kind", "label", "value",
+                                   "repeat", "option", "source", "make")}
+    seen: set = set()
+    for f in fields:
+        fid = str((f or {}).get("fieldId") or "") if isinstance(f, dict) else ""
+        if fid not in CARD_FACTS:
+            found["outside"].append(short_id(fid))
+            continue
+        short, kind = fid[:8], CARD_FACTS[fid][0]
+        if fid in seen:
+            found["twice"].append(short)
+        seen.add(fid)
+        if f.get("onlyIfEmpty") is not True:
+            found["unguarded"].append(short)
+        if f.get("kind") != kind:
+            found["kind"].append(short)
+        if not isinstance(f.get("label"), str):
+            found["label"].append(short)
+        if not isinstance(f.get("source"), str) or not f["source"].strip():
+            found["source"].append(short)
+        if kind == "url":
+            v = f.get("value")
+            if not (isinstance(v, str) and re.fullmatch(r"https://\S+\.\S+", v)):
+                found["value"].append(short)
+        elif kind == "date":
+            if fact_day(f) is None:
+                found["value"].append(short)
+        else:
+            picked = [f.get("optionId")] if kind == "drop_down" else f.get("optionIds")
+            if not isinstance(picked, list) or not picked or not all(isinstance(x, str) and x for x in picked):
+                found["value"].append(short)
+            else:
+                if len(set(picked)) != len(picked):
+                    found["repeat"].append(short)
+                known = {str(o.get("id")) for o in (ctx.get("options") or {}).get(fid) or [] if isinstance(o, dict)}
+                if not set(picked) <= known:
+                    found["option"].append(short)
+        if not is_empty(made.get(fid)):
+            found["make"].append(short)
+    receipt = fact_receipt(effect.get("receipt", effect.get("receipts")))
+    planned = {str(f.get("fieldId")) for f in fields if isinstance(f, dict)}
+    for fid, r in (receipt or {}).items():
+        if r["state"] != "written":
+            continue
+        if r["before"] != "empty":
+            found["over"].append(short_id(fid))
+        elif fid not in planned:
+            found["unplanned"].append(short_id(fid))
+    said = {"over": "overwrote a card value ({})",
+            "unplanned": "the writer wrote a field the plan does not name ({})",
+            "outside": "card_facts plans a field outside the five ({})",
+            "twice": "card_facts plans a field twice ({})",
+            "unguarded": "card_facts could overwrite a card value: no onlyIfEmpty on {}",
+            "kind": "card_facts plans the wrong kind for {}",
+            "label": "card_facts plans no label for {}",
+            "value": "card_facts plans no usable value for {}",
+            "repeat": "card_facts plans an option twice on {}",
+            "option": "card_facts plans an option the field does not have on {}",
+            "source": "card_facts names no source for {}",
+            "make": "Make writes {} itself"}
+    what = [said[k].format(", ".join(sorted(set(v)))) for k, v in found.items() if v]
+    if receipt is False:
+        what.append("the writer's receipt is not in its shape ({fieldId: {before, state}})")
+    if what:
+        return f"differs: {'; '.join(what)}"
+    return only_intended("card_facts") + ("" if receipt else " (receipt not read)")
+
+
+def contact_in(value: Any) -> bool:
+    """Whether a payload holds a contact answer anywhere: one of the five contact refs or keys, as a key or a ref."""
+    if isinstance(value, dict):
+        return any(str(k) in CONTACT_REFS or str(k) in CONTACT_KEYS or contact_in(v) for k, v in value.items()) \
+            or str(value.get("ref") or "") in CONTACT_REFS
+    if isinstance(value, list):
+        return any(contact_in(v) for v in value)
+    return False
+
+
+def dispatch_extras(payload: dict) -> list:
+    """What the cockpit's dispatch payload holds beyond Make 13 [25]'s two keys (client, taskId): any key not
+    allowed by DISPATCH_EXTRA_KEYS (empty until the CEO's word on CEO-1), and any contact answer."""
+    what = []
+    extra = sorted(safe_name(k) for k in payload if k not in DISPATCH_KEYS and k not in DISPATCH_EXTRA_KEYS)
+    if extra:
+        what.append(f"the cockpit sends keys Make does not ({', '.join(extra)})")
+    if contact_in(payload):
+        what.append("the cockpit sends a contact answer")
+    return what
 
 
 def compare_kickoff(plan: list, mods: dict, ctx: dict) -> list:
-    """One (effect, verdict) per effect of Make 12; verdict is equal, differs: {what}, intended: {why} or
-    setting missing."""
+    """One (effect, verdict) per effect of Make 12, and one for card_facts when it is planned; verdict is equal,
+    equal + intended: {names}, intended: {name}, differs: {what} or setting missing."""
     fx = {e["key"]: e for e in plan}
     out = []
     p = lambda k: (fx.get(k) or {}).get("plan") or {}  # noqa: E731
@@ -992,18 +1325,22 @@ def compare_kickoff(plan: list, mods: dict, ctx: dict) -> list:
             if fid == FIELD["blueprint"]:
                 continue
             raw = made.get(fid)
-            # Service Advertised too (X37): Make 12 [21] writes switch(first(list)), so a service the cockpit
-            # writes where Make writes none differs.
-            got = option_name(ctx.get("options", {}), fid, raw) if raw not in (None, "") else None
-            if got != f.get("optionName"):
+            if fid not in made:
+                diffs.append(short_id(fid))  # a field Make 12 [21] never writes
+            elif f.get("kind") == "drop_down" or "optionName" in f:
+                # Service Advertised too (X37): Make 12 [21] writes switch(first(list)), so a service the cockpit
+                # writes where Make writes none differs.
+                got = option_name(ctx.get("options", {}), fid, raw) if raw not in (None, "") else None
+                if got != f.get("optionName"):
+                    diffs.append(fid[:8])
+            elif to_text(raw) != to_text(f.get("value")):
                 diffs.append(fid[:8])
         for fid, value in made.items():
             if fid == FIELD["blueprint"] or value in (None, ""):
                 continue
             if not any(f["fieldId"] == fid for f in fields):
                 diffs.append(fid[:8])
-        out.append(("card_fields", f"differs: {', '.join(sorted(set(diffs)))}" if diffs else "equal"))
-        out.append(("card_fields", f"intended: {INTENDED['blueprint']}"))
+        out.append(("card_fields", f"differs: {', '.join(sorted(set(diffs)))}" if diffs else equal_plus("blueprint")))
     targets = ctx.get("targets", {}).get("client_onboarding") or []
     m17, m22 = need(17), need(22)
     if m17 is None or m22 is None:
@@ -1014,9 +1351,10 @@ def compare_kickoff(plan: list, mods: dict, ctx: dict) -> list:
         made = {(str(m.get("list_id") or ""), str(m.get("template_id") or "")) for m in (m17, m22)}
         want = {(str(t.get("list_id") or ""), str(t.get("template_id") or "")) for t in targets}
         what = [] if made == want else ["lists or templates"]
-        what += [x for x in [task_comment(need(18), need(23), p("onboarding_tasks")), description(p("onboarding_tasks"))] if x]
-        out.append(("onboarding_tasks", f"differs: {'; '.join(what)}" if what else "equal"))
-        out.append(("onboarding_tasks", f"intended: {INTENDED['task_name']}; {INTENDED['dedupe']}"))
+        slot, brief = details_slot("onboarding_tasks", p("onboarding_tasks"), ctx)
+        what += [x for x in [task_comment(need(18), need(23), p("onboarding_tasks")), slot] if x]
+        out.append(("onboarding_tasks", f"differs: {'; '.join(what)}" if what
+                    else equal_plus("task_name", "dedupe", "request_route", brief)))
     m26 = need(26)
     want_map = p("map_phase4").get("value")
     url = custom_fields(m26).get(FIELD["map"]) if m26 else None
@@ -1024,9 +1362,11 @@ def compare_kickoff(plan: list, mods: dict, ctx: dict) -> list:
                 else "differs: the phase 4 map link is not set up" if not want_map
                 else "equal" if str(url or "").strip() == want_map else "differs: value"))
     out.append(("phase4_whatsapp", phase_verdict("phase4", need(25), fx.get("phase4_whatsapp"), ctx)))
-    out.append(("kickoff_notice", f"intended: {INTENDED['notice']}"))
-    out.append(("new_mrr", f"intended: {INTENDED['new_mrr']}"))
-    out.append(("recap", f"intended: {INTENDED['recap']}"))
+    out.append(("kickoff_notice", only_intended("notice")))
+    out.append(("new_mrr", only_intended("new_mrr")))
+    out.append(("recap", only_intended("recap")))
+    if "card_facts" in fx:
+        out.append(("card_facts", card_facts_verdict(fx["card_facts"], custom_fields(m21 or {}), ctx)))
     return out
 
 
@@ -1066,15 +1406,21 @@ def compare_onboarding(plan: list, mods: dict, ctx: dict) -> list:
                 what.append("client name")
             if str(sent[id_key]) != str(payload.get("taskId") or ""):
                 what.append("card id")
+        what += dispatch_extras(payload if isinstance(payload, dict) else {})
         out.append(("github_dispatch", f"differs: {', '.join(what)}" if what else "equal"))
     m29 = need(29)
     if m29 is None:
         out.append(("profile_fields", "differs: module [29] not in the run"))
     else:
         made = custom_fields(m29)
-        profile = next((f.get("value") for f in p("profile_fields").get("fields") or [] if f["fieldId"] == FIELD["profile"]), None)
-        out.append(("profile_fields", text_verdict(made.get(FIELD["profile"]), profile, FIELD["profile"][:8])))
-        out.append(("profile_fields", f"intended: {INTENDED['kickoff_link']}"))
+        fields = p("profile_fields").get("fields") or []
+        profile = next((f.get("value") for f in fields if f["fieldId"] == FIELD["profile"]), None)
+        same = text_verdict(made.get(FIELD["profile"]), profile, FIELD["profile"][:8])
+        # Make 13 [29] writes the Client Profile and the kickoff link only; any other field here is not Make's.
+        other = sorted({short_id(f.get("fieldId")) for f in fields if f.get("fieldId") not in made})
+        what = [same[len("differs: "):]] if same != "equal" else []
+        what += [f"Make 13 [29] writes no {', '.join(other)}"] if other else []
+        out.append(("profile_fields", f"differs: {'; '.join(what)}" if what else equal_plus("kickoff_link")))
     m47 = need(47)
     out.append(("raw_answers_comment", "differs: module [47] not in the run" if m47 is None
                 else delivered("raw_answers_comment", text_verdict(text_of(m47, "comment_text", "commentText", "comment"),
@@ -1118,10 +1464,13 @@ def compare_onboarding(plan: list, mods: dict, ctx: dict) -> list:
             ("template", m46.get("template_id"), t.get("template_id")),
             ("assignee", assignees[0] if assignees else None, t.get("owner_clickup_id")))
             if str(made or "") != str(want or "")]
-        what += [x for x in [description(p("brand_dna_task"))] if x]
-        out.append(("brand_dna_task", f"differs: {', '.join(what)}" if what else "equal"))
-        out.append(("brand_dna_task", f"intended: {INTENDED['task_name']}; {INTENDED['dedupe']}"))
-    out.append(("read_model", f"intended: {INTENDED['read_model']}"))
+        slot, brief = details_slot("brand_dna_task", p("brand_dna_task"), ctx)
+        what += [x for x in [slot] if x]
+        out.append(("brand_dna_task", f"differs: {', '.join(what)}" if what
+                    else equal_plus("task_name", "dedupe", "request_route", brief)))
+    out.append(("read_model", only_intended("read_model")))
+    if "card_facts" in fx:
+        out.append(("card_facts", card_facts_verdict(fx["card_facts"], custom_fields(m29 or {}), ctx)))
     return out
 
 
@@ -1129,6 +1478,9 @@ def plan_lines(form: str, out: dict, mods: dict, ctx: dict) -> list:
     """Every (effect, verdict) of one run: the comparison of the cockpit's parity plan (out) with Make's modules, and
     the answers the cockpit maps no option for. The fidelity line is the caller's."""
     lines = compare_kickoff(out["effects"], mods, ctx) if form == "kickoff" else compare_onboarding(out["effects"], mods, ctx)
+    # An effect the planner plans that is neither Make's nor registered is an addition no INTENDED entry names.
+    for key in sorted({str(e.get("key")) for e in out["effects"] if isinstance(e, dict)} - KNOWN_EFFECTS[form]):
+        lines.append((key if NAME.match(key) else "effect", "differs: an addition no INTENDED entry registers"))
     # Full refs: the kickoff's own questions all start c0000001, so a cut ref cannot say which map to fix.
     unmapped = sorted({str(u) for u in out.get("unmapped") or []})
     if unmapped:
@@ -1136,11 +1488,15 @@ def plan_lines(form: str, out: dict, mods: dict, ctx: dict) -> list:
     return lines
 
 
-def summary(form: str, runs: int, failures: int, missing: set) -> tuple:
-    """The last line and the exit code: PASS, FAIL or NOT PROVEN."""
+def summary(form: str, runs: int, failures: int, missing: set, unread: int = 0) -> tuple:
+    """The last line and the exit code: PASS, FAIL or NOT PROVEN. unread: the runs whose card_facts was graded on its
+    plan alone, with no writer receipt to read (none is written before the go-live), said so rather than counted as
+    proven."""
     plural = lambda k, word: f"{k} {word}{'' if k == 1 else 's'}"  # noqa: E731
     gap = (f"; stage4.messages has no {' or '.join(p.replace('phase', 'phase ') for p in sorted(missing))} text, "
            f"so it was not compared") if missing else ""
+    if unread:
+        gap += f"; card_facts' writer receipt not read on {plural(unread, 'run')}, so only its plan was graded"
     verdict = "PASS" if not failures and not missing else "FAIL" if failures else "NOT PROVEN"
     return f"{verdict}: {plural(runs, 'run')} of {SCENARIOS[form][0]}, {plural(failures, 'difference')}{gap}.", 0 if verdict == "PASS" else 1
 
@@ -1280,6 +1636,23 @@ class Run:
             raise Stop(f"The cockpit's parity plan could not be read (HTTP {status}). Apply 20261102j first.")
         return out
 
+    def card_facts_step(self, response_id: Any) -> Any:
+        """The writer's card_facts step for one stored response, read only: the response's card_facts effect row
+        (cockpit_form_effects) and its queue row's progress.steps.card_facts ({state, fields}). None when the response
+        has no such row yet, or the writer has not reached the step."""
+        rid = str(response_id or "")
+        if not UUID.fullmatch(rid):
+            return None
+        rows = self.rows(f"/rest/v1/cockpit_form_effects?select=delivery_ref&response_id=eq.{rid}&effect_key=eq.{FACT_STEP}",
+                         "The card_facts effect row")
+        ref = next((str(r.get("delivery_ref")) for r in rows if isinstance(r, dict) and r.get("delivery_ref")), "")
+        if not UUID.fullmatch(ref):
+            return None
+        rows = self.rows(f"/rest/v1/cockpit_clickup_writeback_queue?select=progress&id=eq.{ref}", "The card_facts writer row")
+        progress = next((r.get("progress") for r in rows if isinstance(r, dict)), None)
+        steps = progress.get("steps") if isinstance(progress, dict) else None
+        return steps.get(FACT_STEP) if isinstance(steps, dict) else None
+
     def card_names(self, tasks: list) -> dict:
         ids = sorted({t for t in tasks if isinstance(t, str) and CARD_ID.match(t)})
         if not ids:
@@ -1290,21 +1663,23 @@ class Run:
 
 
 def context(run: Run) -> dict:
-    """What the comparisons read from the cockpit: dropdown options, the request types' targets, the phase texts,
-    the relay's settings."""
+    """What the comparisons read from the cockpit: dropdown options, the request types' targets and fields (a brief
+    needs a details field), the phase texts, the relay's settings."""
     options = {}
     for f in run.rows("/rest/v1/cockpit_clickup_fields?select=field_id,options", "The ClickUp field map"):
         if isinstance(f, dict) and isinstance(f.get("options"), list):
             options[str(f.get("field_id"))] = f["options"]
-    targets = {}
-    for t in run.rows("/rest/v1/cockpit_request_types?select=key,targets&key=in.(client_onboarding,brand_dna)", "The request types"):
+    targets, fields = {}, {}
+    for t in run.rows("/rest/v1/cockpit_request_types?select=key,targets,fields&key=in.(client_onboarding,brand_dna)",
+                      "The request types"):
         if isinstance(t, dict):
             targets[str(t.get("key"))] = t.get("targets") or []
+            fields[str(t.get("key"))] = t.get("fields") if isinstance(t.get("fields"), list) else []
     messages = {}
     for s in run.rows("/rest/v1/cockpit_settings?select=key,value&key=eq.stage4.messages", "The phase texts"):
         if isinstance(s, dict) and isinstance(s.get("value"), dict):
             messages = s["value"]
-    return {"options": options, "targets": targets, "messages": messages, "relay": env_file(RELAY_CONFIG)}
+    return {"options": options, "targets": targets, "fields": fields, "messages": messages, "relay": env_file(RELAY_CONFIG)}
 
 
 def parity(run: Run, form: str, last: int, blueprint_dir: str, typeform_dir: str) -> int:
@@ -1321,7 +1696,7 @@ def parity(run: Run, form: str, last: int, blueprint_dir: str, typeform_dir: str
     ctx = context(run)
     names = run.card_names([r["task"] for r in runs])
     labels = comment_labels(form, saved["make12"], saved["onboarding"])
-    failures, missing = 0, set()
+    failures, missing, verdicts, unread = 0, set(), [], 0
     for n, rec in enumerate(runs, start=1):
         head = f"{form} run {n}:"
         print(f"{head} from response {rec['responseId']}" if rec.get("responseId") else f"{head} from the read model")
@@ -1343,14 +1718,25 @@ def parity(run: Run, form: str, last: int, blueprint_dir: str, typeform_dir: str
         if side["source"] and SOURCES[side["source"]]:
             print(f"{head} hidden values from {SOURCES[side['source']]}, not Make 13 [29]'s")
         out = run.plan(form, side["input"])
+        # card_facts is graded by the writer's own receipt as well, when this response has a card_facts row.
+        facts = [e for e in out["effects"] if isinstance(e, dict) and e.get("key") == FACT_STEP]
+        if facts:
+            step = run.card_facts_step(rec.get("responseId"))
+            for e in facts:
+                e["receipt"] = step
         lines = plan_lines(form, out, side["mods"], ctx) + [("fidelity", proof)]
         for key, verdict in lines:
             print(f"{head} {key} {verdict}")
+            verdicts.append(verdict)
             if verdict.startswith("differs"):
                 failures += 1
             if verdict == "setting missing":
                 missing.add(key.split("_")[0])
-    text, code = summary(form, len(runs), failures, missing)
+            if key == FACT_STEP and verdict.endswith("(receipt not read)"):
+                unread += 1
+    for line in legend(verdicts):
+        print(line)
+    text, code = summary(form, len(runs), failures, missing, unread)
     print(text)
     return code
 

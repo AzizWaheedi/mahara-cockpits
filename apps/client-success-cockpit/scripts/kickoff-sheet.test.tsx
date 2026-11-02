@@ -1060,6 +1060,18 @@ describe("the kickoff door (5.13)", () => {
     expect(kick.kickoffRefused({ callRecording: "format" })).toBe(
       "The kickoff was not stored. Call Recording Link: paste the whole link, starting with https://. Then send it again.",
     );
+    // Only too_large, and only alone (as cockpit_kickoff_answers_check gives it), has its own sentence.
+    expect(kick.kickoffRefused({ _answers: "surprise" })).toBe(
+      "The kickoff was not stored: the database did not take the sheet's answers. Your answers are still here. Tell the tech lead.",
+    );
+    expect(
+      kick.kickoffRefused({ _answers: "too_large", contractStatus: "option" }),
+    ).toBe(
+      "The kickoff was not stored: the database did not take the sheet's answers. Your answers are still here. Tell the tech lead.",
+    );
+    expect(kick.kickoffRefused({})).toBe(
+      "The kickoff was not stored: the database did not take the sheet's answers. Your answers are still here. Tell the tech lead.",
+    );
     expect(
       kick.kickoffRefused({
         serviceAdvertised: "required",
@@ -1072,6 +1084,23 @@ describe("the kickoff door (5.13)", () => {
     ).toBe(
       "The kickoff was not stored. Which service are we advertising: answer it. Who else should we add to the WhatsApp group: shorten it to 4,000 characters or fewer. Provide any marketing content links or notes: shorten it to 4,000 characters or fewer. What is your daily budget for the ads: shorten it to 500 characters or fewer. Payment Amount: write a number from 0 to 10,000,000, with 2 decimals at most. New MRR (USD a month): write a number from 0 to 100,000. Then send it again.",
     );
+    await clear(root);
+  });
+
+  test("answers that together are too large are refused by name: the sheet stays open and says to shorten them", async () => {
+    // cockpit_kickoff_answers_check: every answer passed, but together they do not fit a kickoff's 256 KB.
+    const { api, calls } = stub(null, { _answers: "too_large" });
+    const root = await answered(api);
+    await click(pill("Design and build"));
+    await click(pill("Online"));
+    await click(body().querySelector(".fs-foot .fs-btn"));
+    expect(calls.filter(c => c.name === "submit")).toHaveLength(1);
+    expect(text(body())).toContain(
+      "The kickoff was not stored: its answers together are too long. Shorten the longest answers, then send it again. Your answers are still here.",
+    );
+    expect(text(body())).not.toContain("Tell the tech lead");
+    expect(toasts).not.toContain("Sent.");
+    expect(body().querySelector(".fs-foot .fs-btn")).toBeTruthy();
     await clear(root);
   });
 });
