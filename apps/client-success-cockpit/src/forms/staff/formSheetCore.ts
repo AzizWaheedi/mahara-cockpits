@@ -24,7 +24,9 @@ export type FieldType =
   | "yesno"
   | "call"
   | "tick"
-  | "readonly";
+  | "readonly"
+  /** A group's title between fields (the kickoff's three groups); never answered. */
+  | "heading";
 
 export type FieldDef = {
   key: string;
@@ -49,6 +51,8 @@ export type FieldDef = {
   placeholder?: string;
   /** An optional call pick's way back to none ("No exit call"). */
   noneLabel?: string;
+  /** A choice drawn in groups, each under its small heading (Log a win's "Upsells"). */
+  optionGroups?: { label: string | null; values: string[] }[];
 };
 
 export type FormKey =
@@ -58,9 +62,29 @@ export type FormKey =
   | "churn_confirm"
   | "mrr";
 
+/**
+ * Every sheet FormSheet opens: the five registry forms above, and waves 5
+ * and 6's code-defined sheets (docs/forms/WAVE56-CONTRACT.md 5.1, 5.11,
+ * 5.13): Log a win, Client is back and the kickoff. These three keep their
+ * own sends; FORM_DEFS stays the five.
+ */
+export type SheetKey = FormKey | "win" | "reactivate" | "kickoff";
+
+/** A trail's own words for a sheet whose steps read differently (5.1, 5.11, 5.13). */
+export type TrailWords = {
+  stored: string;
+  storing?: string;
+  cardQueued: string;
+  cardDone: string;
+  /** The card step while its kind is held off (waves 5-6: "Waits for the switch-on"). */
+  held: string;
+  /** Steps between the card and the notice, read from the trail's `extra` states. */
+  extras?: { key: string; done: string; waiting: string }[];
+};
+
 export type FormDef = {
-  key: FormKey;
-  version: 1;
+  key: SheetKey;
+  version: 1 | 2;
   title: string;
   fields: FieldDef[];
   submitLabel: (a: Answers) => string;
@@ -77,6 +101,8 @@ export type FormDef = {
   ticketNone: string;
   /** False when the form posts no Slack notice (Set MRR). */
   notice: boolean;
+  /** The trail's own words; the five registry forms use the defaults. */
+  words?: TrailWords;
 };
 
 /**
@@ -137,7 +163,7 @@ export type TrailState =
   | "none";
 
 export type TrailStep = {
-  key: "stored" | "card" | "notice" | "ticket";
+  key: "stored" | "card" | "notice" | "ticket" | (string & {});
   state: TrailState;
   label: string;
   detail?: string;
@@ -160,6 +186,8 @@ export type FormTrailRow = {
     error?: string | null;
     permalink?: string | null;
   } | null;
+  /** The extra steps a sheet names (the kickoff's tasks and phase 4 message): key -> state. */
+  extra?: Record<string, string | null> | null;
 };
 
 /** What a send names, so the trail can be read for it. */
@@ -167,6 +195,8 @@ export type SubmitRef = {
   eventId?: number;
   responseId?: string;
   departureId?: number;
+  /** A win's id (Log a win): its trail is read by the win. */
+  winId?: string;
 };
 
 // --- Dates and money (the CEO kit's format.ts, copied) -----------------------
@@ -316,7 +346,7 @@ export function validate(
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const f of def.fields) {
-    if (!shown(f, a) || f.type === "readonly") continue;
+    if (!shown(f, a) || f.type === "readonly" || f.type === "heading") continue;
     const v = a[f.key];
     if (isEmpty(v)) {
       if (required(f, a)) out[f.key] = f.message ?? generic(f);
@@ -441,19 +471,20 @@ function cardStep(t: FormTrailRow, def: FormDef | null): TrailStep {
   const at = card?.at ? kuwaitTime(card.at) : "";
   const err = String(card?.error ?? "").trim();
   const words = def?.cardWords ?? "this kind";
+  const own = def?.words;
   switch (state) {
     case "delivered":
       return {
         key: "card",
         state: "done",
-        label: "Card shows it",
+        label: own?.cardDone ?? "Card shows it",
         detail: at || undefined,
       };
     case "queued":
       return {
         key: "card",
         state: "waiting",
-        label: "Queued for the ClickUp card",
+        label: own?.cardQueued ?? "Queued for the ClickUp card",
       };
     case "sending":
     case "retry":
@@ -466,7 +497,9 @@ function cardStep(t: FormTrailRow, def: FormDef | null): TrailStep {
       return {
         key: "card",
         state: "held",
-        label: `Held: card writes for ${words} are off. When the CEO turns them on, this edit is reviewed and sent or closed.`,
+        label:
+          own?.held ??
+          `Held: card writes for ${words} are off. When the CEO turns them on, this edit is reviewed and sent or closed.`,
       };
     case "failed":
       return {
@@ -559,17 +592,22 @@ export function trailFrom(
   def: FormDef | null = null,
   ticketHref?: (type: string) => string,
 ): TrailStep[] {
+  const own = def?.words;
   const stored: TrailStep =
     t.stored?.state === "done"
       ? {
           key: "stored",
           state: "done",
-          label: "Saved in the cockpit",
+          label: own?.stored ?? "Saved in the cockpit",
           detail: t.stored?.at
             ? kuwaitTime(t.stored.at) || undefined
             : undefined,
         }
-      : { key: "stored", state: "waiting", label: "Saving in the cockpit" };
+      : {
+          key: "stored",
+          state: "waiting",
+          label: own?.storing ?? "Saving in the cockpit",
+        };
   // The step says where the ticket stands; opening it is the action, said once.
   const ticket: TrailStep = def?.ticket
     ? {
@@ -587,6 +625,24 @@ export function trailFrom(
         state: "none",
         label: def?.ticketNone ?? "No ticket for this form",
       };
+  const extras: TrailStep[] = (own?.extras ?? []).map(x => {
+    const st = String(t.extra?.[x.key] ?? "none");
+    const done = st === "done" || st === "delivered" || st === "sent";
+    const state: TrailState = done
+      ? "done"
+      : st === "failed"
+        ? "failed"
+        : st === "skipped"
+          ? "skipped"
+          : st === "held"
+            ? "held"
+            : st === "none"
+              ? "none"
+              : "waiting";
+    return { key: x.key, state, label: done ? x.done : x.waiting };
+  });
+  // The waves 5-6 sheets have no ticket step: their trail ends at the notice.
+  if (own) return [stored, cardStep(t, def), ...extras, noticeStep(t, def)];
   return [stored, cardStep(t, def), noticeStep(t, def), ticket];
 }
 
@@ -603,4 +659,71 @@ export function stepTone(
   if (s === "waiting" || s === "held") return "warning";
   if (s === "failed") return "critical";
   return "neutral";
+}
+
+// --- Waves 5-6 doors (docs/forms/WAVE56-CONTRACT.md 3.10) ---------------------------
+
+/** A door whose functions are not on the database yet. */
+export const NOT_YET = "Opens after the next cockpit update.";
+/** A door whose functions exist and whose switch is off. */
+export const NOT_ON = "Not switched on yet.";
+
+export type DoorWhy = "missing" | "off" | null;
+export type Door = { open: boolean; why: DoorWhy };
+export type W56DoorKey =
+  | "wins"
+  | "receipts"
+  | "reactivate"
+  | "kickoff"
+  | "agent"
+  | "ltv";
+export type W56Doors = Record<W56DoorKey, Door>;
+
+export const W56_KEYS: W56DoorKey[] = [
+  "wins",
+  "receipts",
+  "reactivate",
+  "kickoff",
+  "agent",
+  "ltv",
+];
+export const CLOSED: Door = { open: false, why: "missing" };
+export const ALL_CLOSED: W56Doors = {
+  wins: CLOSED,
+  receipts: CLOSED,
+  reactivate: CLOSED,
+  kickoff: CLOSED,
+  agent: CLOSED,
+  ltv: CLOSED,
+};
+
+/**
+ * cockpit_form_doors() read for the six wave 5-6 flags. `why` may come as
+ * `why: {wins: "off"}` or `winsWhy: "off"`; a false flag with no `why` is
+ * read as missing (an older function knows nothing of the door).
+ */
+export function readDoorsW56(raw: unknown): W56Doors {
+  const d =
+    raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const whyMap =
+    d.why && typeof d.why === "object"
+      ? (d.why as Record<string, unknown>)
+      : {};
+  const out = { ...ALL_CLOSED };
+  for (const k of W56_KEYS) {
+    if (d[k] === true) {
+      out[k] = { open: true, why: null };
+      continue;
+    }
+    const why = whyMap[k] ?? d[`${k}Why`];
+    out[k] = { open: false, why: why === "off" ? "off" : "missing" };
+  }
+  return out;
+}
+
+/** The line a closed door shows in its place; null when it is open. */
+export function doorLine(door: Door | null | undefined): string | null {
+  if (!door) return NOT_YET;
+  if (door.open) return null;
+  return door.why === "off" ? NOT_ON : NOT_YET;
 }

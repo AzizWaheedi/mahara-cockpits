@@ -17,8 +17,12 @@ export type Earner = {
   /** Which of the four Rs this belongs to. */
   r: "Resell" | "Renew" | "Refer" | "Review";
   note?: string;
-  /** The form that tells the company. What pays is the CEO's entry with its evidence. */
-  form?: string;
+  /**
+   * The Typeform that told the company before the wins ledger
+   * (WAVE56-CONTRACT.md C7). Shown as the old form only while Log a win is
+   * not open; once it is, the row reads "From your wins".
+   */
+  oldForm?: string;
 };
 
 /** His base on the roster (PAY-PLANS.md decision 1). */
@@ -128,7 +132,7 @@ export const EARNERS: Earner[] = [
   },
   {
     id: "recurring_first",
-    form: "https://maharamedia.typeform.com/to/IVHO9BMC",
+    oldForm: "https://maharamedia.typeform.com/to/IVHO9BMC",
     label: "Recurring service, first month's revenue ($)",
     kind: "share",
     rate: 0.2,
@@ -159,7 +163,7 @@ export const EARNERS: Earner[] = [
   },
   {
     id: "referral",
-    form: "https://maharamedia.typeform.com/to/bAmbMKM2",
+    oldForm: "https://maharamedia.typeform.com/to/bAmbMKM2",
     label: "Client referral that signs",
     kind: "each",
     rate: 250,
@@ -167,7 +171,7 @@ export const EARNERS: Earner[] = [
   },
   {
     id: "testimonial",
-    form: "https://maharamedia.typeform.com/to/ETEynRgb",
+    oldForm: "https://maharamedia.typeform.com/to/ETEynRgb",
     label: "Video testimonial (real results)",
     kind: "each",
     rate: 150,
@@ -175,7 +179,7 @@ export const EARNERS: Earner[] = [
   },
   {
     id: "review",
-    form: "https://maharamedia.typeform.com/to/ETEynRgb",
+    oldForm: "https://maharamedia.typeform.com/to/ETEynRgb",
     label: "Google 5★ review (fully written)",
     kind: "each",
     rate: 75,
@@ -192,6 +196,50 @@ export const EARNERS: Earner[] = [
 ];
 
 export type Counts = Record<string, number>;
+
+/** A win as "From your wins" counts it (cockpit_csm_wins_list's rows). */
+export type WinLike = {
+  kind: string;
+  stage: string;
+  recurring?: boolean;
+  tiedCheckedUsd?: number | null;
+};
+
+const KIND_EARNER: Record<string, string> = {
+  review: "review",
+  video_testimonial: "testimonial",
+  podcast: "podcast",
+  referral: "referral",
+  renewal: "renewal",
+  reactivation: "reactivation",
+};
+
+/**
+ * "From your wins" (WAVE56-CONTRACT.md 4.8): the four Rs counted from the
+ * wins ledger in place of typed numbers. Voided wins count nothing; an
+ * upsell counts its checked, tied cash only once it is paid (recurring
+ * cash as the first month's). What pays is still the CEO's confirmed entry.
+ */
+export function countsFromWins(wins: WinLike[]): Counts {
+  const out: Counts = {};
+  const add = (id: string, n: number) => {
+    out[id] = Math.round(((out[id] ?? 0) + n) * 100) / 100;
+  };
+  for (const w of wins) {
+    if (w.stage === "void") continue;
+    const each = KIND_EARNER[w.kind];
+    if (each) {
+      add(each, 1);
+      continue;
+    }
+    if (/^upsell_/.test(w.kind) && w.stage === "paid") {
+      const cash = w.tiedCheckedUsd;
+      if (typeof cash === "number" && Number.isFinite(cash))
+        add(w.recurring ? "recurring_first" : "upsell_cash", cash);
+    }
+  }
+  return out;
+}
 
 /** A signed dollar amount: "-$250", never "$-250"; cents only when there are any. */
 export function usd(n: number): string {

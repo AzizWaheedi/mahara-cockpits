@@ -175,6 +175,7 @@ export function buildChurnPage(input: unknown): ChurnPage {
   // schema strips keys it does not name, so it is read from the raw rows.
   const rawDeps = (input as { deps?: unknown } | null)?.deps;
   const invites = new Map<number, ReturnType<typeof surveyInviteOf>>();
+  const returns = new Map<number, string>();
   for (const r of Array.isArray(rawDeps) ? rawDeps : []) {
     const id = Number((r as { id?: unknown })?.id);
     const si = surveyInviteOf(
@@ -182,6 +183,15 @@ export function buildChurnPage(input: unknown): ChurnPage {
         ?.surveyInvite ?? (r as { survey_invite?: unknown })?.survey_invite,
     );
     if (Number.isFinite(id) && si) invites.set(id, si);
+    // Waves 5-6 (20261102i): the return day of a reopened departure, read the same way.
+    const back = day(
+      String(
+        (r as { returnedOn?: unknown })?.returnedOn ??
+          (r as { returned_on?: unknown })?.returned_on ??
+          "",
+      ) || null,
+    );
+    if (Number.isFinite(id) && back) returns.set(id, back);
   }
   const {
     today,
@@ -199,7 +209,8 @@ export function buildChurnPage(input: unknown): ChurnPage {
   const departures = deps.map(r => {
     const d = departureOf(r);
     const si = invites.get(d.id);
-    return si ? { ...d, surveyInvite: si } : d;
+    const back = returns.get(d.id) ?? null;
+    return { ...d, ...(si ? { surveyInvite: si } : {}), returnedOn: back };
   });
   const billing = new Map(cards.map(c => [String(c.clickup_task_id), c]));
   const rosterByKey = new Map(r.cards.map(c => [c.key, c]));

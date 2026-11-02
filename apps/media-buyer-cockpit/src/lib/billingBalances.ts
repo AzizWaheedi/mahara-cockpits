@@ -271,7 +271,22 @@ export type ReadSalesCard = {
 };
 
 /** What cockpit_billing_balances_read() returns (PLAN 3.1, as built in 20261023x). */
+/**
+ * What Confirm paid would write as the card's next payment date
+ * (WAVE56-CONTRACT.md 4.6.5, 20261102g): per part, the date the rule would
+ * write, or none with the sentence that says why.
+ */
+export type ReadDateIfConfirmed = {
+  taskId: string;
+  part: string;
+  partNo?: number | null;
+  date?: string | null;
+  why?: string | null;
+};
+
 export type BalancesRead = {
+  /** Waves 5-6: Confirm paid's next-date rule, per part; absent from an older read. */
+  datesIfConfirmed?: ReadDateIfConfirmed[];
   today: string;
   ceo: boolean;
   moneyAsOf: string | null;
@@ -430,7 +445,46 @@ export type Confirmable = {
    * record): the form starts empty, never at $0.
    */
   emptyUsd: number | null;
+  /** Waves 5-6 (4.6.5): the next payment date a confirm of this part would write. */
+  dateIfConfirmed?: string | null;
+  /** Why it would write none ("Next payment date stays 2 Dec: …"). */
+  dateWhy?: string | null;
 };
+
+/**
+ * The line Confirm paid shows before the press (5.6): "Next payment moves
+ * to 2 Dec", or the rule's own sentence when it moves nothing; null when the
+ * read says nothing (an older read, or the rule switched off).
+ */
+export function nextDateLine(
+  c: Pick<Confirmable, "dateIfConfirmed" | "dateWhy">,
+  today?: string,
+): string | null {
+  if (c.dateIfConfirmed)
+    return `Next payment moves to ${dayText(c.dateIfConfirmed, today)}`;
+  return c.dateWhy ? c.dateWhy : null;
+}
+
+/** Each confirmable part with the date its confirm would write (4.6.5). */
+function withDates(
+  list: Confirmable[],
+  taskId: string,
+  read: BalancesRead,
+): Confirmable[] {
+  const dates = read.datesIfConfirmed ?? [];
+  if (!dates.length) return list;
+  return list.map(c => {
+    const hit = dates.find(
+      d =>
+        d.taskId === taskId &&
+        d.part === c.part &&
+        Number(d.partNo ?? 0) === Number(c.partNo ?? 0),
+    );
+    return hit
+      ? { ...c, dateIfConfirmed: hit.date ?? null, dateWhy: hit.why ?? null }
+      : c;
+  });
+}
 
 export type PendingRow = {
   taskId: string;
@@ -2632,6 +2686,8 @@ export function buildPending(
     if (asks) rows.push(rowFor(c, null, read.rails, ctx));
   }
   rows.sort(rowOrder);
+  for (const r of [...rows, ...quietRows])
+    r.confirmable = withDates(r.confirmable, r.taskId, read);
   const asked = (c: ReadCard) => {
     const usd = numOrNull(c.nextUsd);
     const day = c.nextDate && DAY_RE.test(c.nextDate) ? c.nextDate : null;

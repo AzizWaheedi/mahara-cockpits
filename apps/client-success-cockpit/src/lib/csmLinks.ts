@@ -23,7 +23,7 @@ export type LinkRow = {
    * row says so and keeps the old link below it; once live, the old link
    * goes.
    */
-  form?: { key: string; oldUrl: string };
+  form?: { key: string; oldUrl: string; waiting?: string };
 };
 export type LinkGroup = { title: string; blurb: string; rows: LinkRow[] };
 
@@ -34,6 +34,22 @@ export const NOT_LIVE_YET =
   "Opens with the portal forms (after the switch-on).";
 /** The words above the old link while the Typeform still runs. */
 export const OLD_FORM = "Old form, still live:";
+/**
+ * Log a win (WAVE56-CONTRACT.md 1.1, 5.1): its rows follow the wins door,
+ * passed in the live list as this key, and keep the Four Rs Typeform as the
+ * old form until it is open.
+ */
+export const WINS_DOOR = "door:wins";
+export const WINS_WAITING = "Log a win opens after its switch-on.";
+
+/** The live list with the wins door in it, when it is open. */
+export function liveWithWins(
+  live: readonly string[] | null,
+  winsOpen: boolean,
+): string[] | null {
+  return winsOpen ? [...(live ?? []), WINS_DOOR] : live ? [...live] : null;
+}
+
 const SEND_NOTE =
   "Open the client, then Send a form. It goes to their portal, or by WhatsApp link.";
 
@@ -208,20 +224,32 @@ export const LINK_GROUPS: LinkGroup[] = [
   {
     title: "Money, the four Rs",
     blurb:
-      "Refer, resell, renew, review. Fill the form the same day it happens, no form, no commission.",
+      "Refer, resell, renew, review. Log it with Log a win the same day it happens, with its proof: no proof, no commission.",
     rows: [
       {
         label: "Google review link (the same ask for every client)",
         url: "https://g.page/r/CeRMcUwFPpe7EAI/review",
-        note: "Then log it in the client review form",
+        note: "Then log it with Log a win on the client's page",
       },
       {
-        label: "Client review form (review or video testimonial)",
-        url: "https://maharamedia.typeform.com/to/ETEynRgb",
+        label: "Log a win: a Google review or a video testimonial",
+        url: CLIENT_PAGE,
+        note: "Open the client, then Log a win. Add the review, screenshot or video link.",
+        form: {
+          key: WINS_DOOR,
+          oldUrl: "https://maharamedia.typeform.com/to/ETEynRgb",
+          waiting: WINS_WAITING,
+        },
       },
       {
-        label: "Referral form",
-        url: "https://maharamedia.typeform.com/to/bAmbMKM2",
+        label: "Log a win: a referral",
+        url: CLIENT_PAGE,
+        note: "Open the client, then Log a win, and pick the referred client's signed deal.",
+        form: {
+          key: WINS_DOOR,
+          oldUrl: "https://maharamedia.typeform.com/to/bAmbMKM2",
+          waiting: WINS_WAITING,
+        },
       },
       {
         label: "Referral programme, how it works",
@@ -229,16 +257,34 @@ export const LINK_GROUPS: LinkGroup[] = [
         note: "Send or explain this before asking for the referral",
       },
       {
-        label: "Website upsell form",
-        url: "https://maharamedia.typeform.com/to/VP3zmaj2",
+        label: "Log a win: a website upsell",
+        url: CLIENT_PAGE,
+        note: "Open the client, then Log a win, or Mark as offered on the sent proposal.",
+        form: {
+          key: WINS_DOOR,
+          oldUrl: "https://maharamedia.typeform.com/to/VP3zmaj2",
+          waiting: WINS_WAITING,
+        },
       },
       {
-        label: "Social media management upsell form",
-        url: "https://maharamedia.typeform.com/to/IVHO9BMC",
+        label: "Log a win: a social media management upsell",
+        url: CLIENT_PAGE,
+        note: "Open the client, then Log a win, or Mark as offered on the sent proposal.",
+        form: {
+          key: WINS_DOOR,
+          oldUrl: "https://maharamedia.typeform.com/to/IVHO9BMC",
+          waiting: WINS_WAITING,
+        },
       },
       {
-        label: "Backend program upsell form",
-        url: "https://maharamedia.typeform.com/to/cKItPZVI",
+        label: "Log a win: a back-end programme upsell",
+        url: CLIENT_PAGE,
+        note: "Open the client, then Log a win, or Mark as offered on the sent proposal.",
+        form: {
+          key: WINS_DOOR,
+          oldUrl: "https://maharamedia.typeform.com/to/cKItPZVI",
+          waiting: WINS_WAITING,
+        },
       },
     ],
   },
@@ -319,7 +365,10 @@ export function linkGroupsFor(
     ...g,
     rows: g.rows.map(r => {
       if (!r.form || live?.includes(r.form.key)) return r;
-      return { ...r, note: `${r.note ?? ""} ${NOT_LIVE_YET}`.trim() };
+      return {
+        ...r,
+        note: `${r.note ?? ""} ${r.form.waiting ?? NOT_LIVE_YET}`.trim(),
+      };
     }),
   }));
 }

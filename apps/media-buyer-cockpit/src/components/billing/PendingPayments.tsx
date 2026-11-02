@@ -20,6 +20,7 @@ import {
   dayText,
   type Figure,
   type Hint,
+  nextDateLine,
   type Part,
   type PendingRow,
   type PendingView,
@@ -125,6 +126,28 @@ export type PendingApi = {
   }) => Promise<string>;
   /** CEO cockpit only: count a payment left out of program money again. */
   unexclude?: (p: { paymentId: string; reason: string }) => Promise<string>;
+  /**
+   * Waves 5-6 (WAVE56-CONTRACT.md 4.10.5, 5.6): ask the client for a part's
+   * bank transfer receipt (the Send panel on the bank receipt, origin
+   * billing). `outSince` names the day an open request went out, so the
+   * button waits. Absent where the receipt form is not live.
+   */
+  receipts?: {
+    ask: (p: ReceiptAsk) => void;
+    outSince: (taskId: string) => string | null;
+  };
+};
+
+/** One part's receipt request: its invite context (3.6). */
+export type ReceiptAsk = {
+  taskId: string;
+  name: string;
+  part: "deposit" | "onboarding" | "later" | "all";
+  partNo: number;
+  expectedAmount: number;
+  currency: "USD" | "KWD";
+  dueOn: string | null;
+  dealResponseId: string | null;
 };
 
 /**
@@ -851,6 +874,11 @@ function ConfirmForm({
             Your word, not money: it holds the part until {railWord(rail)} shows
             the payment, and never counts toward cash, LTV or pay.
           </p>
+          {nextDateLine(part, today) ? (
+            <p className="text-xs" data-next-date>
+              {nextDateLine(part, today)}
+            </p>
+          ) : null}
           <div>
             <Button size="sm" disabled={busy || !ready} onClick={confirm}>
               {busy ? <Loader2 className={spin} aria-hidden /> : null}
@@ -1140,7 +1168,16 @@ function lateWords(p: Part): string {
   return ` · in ${plural(-p.daysLate, "day")}`;
 }
 
-function Parts({ row, today }: { row: PendingRow; today: string }) {
+function Parts({
+  row,
+  today,
+  receipts,
+}: {
+  row: PendingRow;
+  today: string;
+  receipts?: PendingApi["receipts"];
+}) {
+  const out = receipts ? receipts.outSince(row.taskId) : null;
   // Amounts nobody can work out are never drawn as parts (missing is never zero).
   if (!row.parts.length || !row.amountsKnown) return null;
   return (
@@ -1174,6 +1211,37 @@ function Parts({ row, today }: { row: PendingRow; today: string }) {
                   {s}
                 </span>
               ))}
+              {receipts && p.notSeen + p.notDue + p.another > 0 ? (
+                out ? (
+                  <span
+                    className="block pt-1 text-xs text-muted-foreground"
+                    data-receipt-out
+                  >
+                    A receipt request is already out, sent{" "}
+                    {dayText(out.slice(0, 10), today)}.
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    data-ask-receipt={p.key}
+                    className="mt-1 inline-flex rounded-sm text-xs font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    onClick={() =>
+                      receipts.ask({
+                        taskId: row.taskId,
+                        name: row.name,
+                        part: p.kind,
+                        partNo: p.kind === "later" ? p.no : 0,
+                        expectedAmount: p.notSeen + p.notDue + p.another,
+                        currency: "USD",
+                        dueOn: p.due,
+                        dealResponseId: row.deal?.responseId ?? null,
+                      })
+                    }
+                  >
+                    Ask for the receipt
+                  </button>
+                )
+              ) : null}
             </span>
             <span className="tabular-nums">{usdText(p.usd)}</span>
           </li>
@@ -1667,7 +1735,7 @@ function RowPanel({
       className="grid gap-5 border-t bg-muted/30 px-4 py-4 @2xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] @2xl:gap-8 @3xl:px-6"
     >
       <div className="grid min-w-0 content-start gap-5">
-        <Parts row={row} today={view.today} />
+        <Parts row={row} today={view.today} receipts={api.receipts} />
         {row.cardOnly ? (
           <CardOnlyPay
             row={row}

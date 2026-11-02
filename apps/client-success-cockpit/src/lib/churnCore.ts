@@ -55,7 +55,25 @@ export type Departure = {
   confirm?: DepartureConfirm;
   /** The native exit survey's invite (waves 3-4, 20261102b); absent before it. */
   surveyInvite?: SurveyInvite | null;
+  /**
+   * Waves 5-6 (20261102i): the day Client is back reopened the card. The
+   * departure stays: the month they left keeps its churn.
+   */
+  returnedOn?: string | null;
 };
+
+/** "Back since 4 Nov" for a reopened departure (WAVE56-CONTRACT.md 4.12.4); null when not returned. */
+export function backLine(
+  d: Pick<Departure, "returnedOn">,
+  words: (day: string) => string,
+): string | null {
+  return d.returnedOn ? `Back since ${words(d.returnedOn)}` : null;
+}
+
+/** Whether the tracker row offers "Back": a confirmed departure not yet returned, on a card. */
+export function canComeBack(d: Departure): boolean {
+  return Boolean(d.clickupTaskId && d.confirm?.confirmedAt && !d.returnedOn);
+}
 
 /** cockpit_csm_churn_read's surveyInvite (WAVE34-CONTRACT.md 4.4.5). */
 export type SurveyInvite = {

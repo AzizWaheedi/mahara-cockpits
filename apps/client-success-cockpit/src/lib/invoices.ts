@@ -179,7 +179,62 @@ export async function requestInvoice(
     p_args: args,
   });
   fail(error);
-  return data as InvoiceRow;
+  const row = data as InvoiceRow;
+  await linkWaitingWin(client, args.taskId, row);
+  return row;
+}
+
+// --- "Invoice this" from a win (docs/forms/WAVE56-CONTRACT.md 4.3.3) ------------
+
+const WIN_KEY = "mahara.win-invoice";
+
+/** Remember the win "Invoice this" was pressed on, for the next invoice on that client (one hour). */
+export function rememberWinInvoice(winId: string, taskId: string): void {
+  try {
+    window.sessionStorage.setItem(
+      WIN_KEY,
+      JSON.stringify({ winId, taskId, at: Date.now() }),
+    );
+  } catch {
+    /* No storage: the invoice is made, the win is tied by hand. */
+  }
+}
+
+/** The waiting win for this client, if "Invoice this" was pressed in the last hour. */
+export function waitingWin(taskId: string): string | null {
+  try {
+    const v = JSON.parse(window.sessionStorage.getItem(WIN_KEY) ?? "null");
+    return v && v.taskId === taskId && Date.now() - Number(v.at) < 3600_000
+      ? String(v.winId)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Once the invoice is requested, link it to the win (cockpit_csm_win_invoice_link),
+ * so its rail payment can be tied when it arrives. A refusal is not the
+ * invoice's failure: the invoice stands and the link waits for a person.
+ */
+async function linkWaitingWin(
+  client: SupabaseClient,
+  taskId: string,
+  row: InvoiceRow,
+): Promise<void> {
+  const winId = waitingWin(taskId);
+  const id = (row as { id?: unknown } | null)?.id;
+  if (!winId || typeof id !== "string") return;
+  const { error } = await client.rpc("cockpit_csm_win_invoice_link", {
+    p_win_id: winId,
+    p_invoice_id: id,
+  });
+  if (!error)
+    try {
+      window.sessionStorage.removeItem(WIN_KEY);
+    } catch {
+      /* Nothing to clear. */
+    }
 }
 
 export async function changeInvoice(

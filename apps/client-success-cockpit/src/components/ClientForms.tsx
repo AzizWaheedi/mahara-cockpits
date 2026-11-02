@@ -30,7 +30,16 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import { consentLine, type PauseConsent } from "@/forms/staff/formSheetCore";
+import { kickoffAnswers, kickoffDef } from "@/forms/kickoff";
+import { FormSheet } from "@/forms/staff/FormSheet";
+import {
+  consentLine,
+  type Door,
+  doorLine,
+  type FormTrailRow,
+  type PauseConsent,
+  type SubmitRef,
+} from "@/forms/staff/formSheetCore";
 import type { ApproveResult, FormsIO } from "@/lib/clientForms";
 import {
   type AnswerRead,
@@ -78,6 +87,7 @@ import {
   lowScoreRowText,
 } from "@/lib/clientVoice";
 import { cn } from "@/lib/utils";
+import type { KickoffPrefill } from "@/lib/wins";
 
 /**
  * Client forms on the client page and on Today (docs/forms/WAVE34-CONTRACT.md
@@ -173,9 +183,16 @@ export function useInviteView(
 
 // --- Send a form ---------------------------------------------------------------------------
 
+/**
+ * What opens the Send panel already on a form: the form, its origin and
+ * the invite's context. Waves 5-6 (WAVE56-CONTRACT.md 3.6, 4.10.5): Pending
+ * payments and Checks waiting open it on the bank receipt with origin
+ * `billing` and the part's context; the kickoff page on the onboarding form.
+ */
 export type SendPreset = {
   formKey?: string;
-  origin?: "csm" | "churn";
+  origin?: "csm" | "churn" | "billing";
+  context?: Record<string, unknown>;
 };
 
 function Choice({
@@ -395,9 +412,11 @@ function SendFormBody({
         note: note.trim() || null,
         lang,
         push: push && picked.includes("portal"),
-        context: {},
+        context: preset?.context ?? {},
         requestId: requestId.current,
-        origin: preset?.origin ?? "csm",
+        // `billing` is the bank receipt's origin (20261102i); clientForms.ts
+        // passes it through unchanged.
+        origin: (preset?.origin ?? "csm") as "csm",
       });
       toast.success(sendToast(out.delivered));
       setPhase({
@@ -1724,4 +1743,119 @@ function addDaysIso(day: string, n: number): string {
   return new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000)
     .toISOString()
     .slice(0, 10);
+}
+
+// --- Stage 4: the kickoff sheet (docs/forms/WAVE56-CONTRACT.md 4.13, 5.13) ---------
+
+export type KickoffApi = {
+  prefill: (taskId: string) => Promise<KickoffPrefill>;
+  submit: (
+    taskId: string,
+    answers: Record<string, unknown>,
+    requestId: string,
+  ) => Promise<{
+    responseId: string | null;
+    trail: { step: string; state: string }[];
+  }>;
+  trail: (ref: SubmitRef) => Promise<FormTrailRow>;
+};
+
+/**
+ * The kickoff in the cockpit once its switch is on: Send the kickoff opens
+ * FormSheet with the 38 answers in their three groups, the prefill chips
+ * (from the onboarding form, from the card) and New MRR at the end. While it
+ * is off the page keeps today's embedded Typeform and says so; while its
+ * functions are missing it says the next update opens it. Nothing is read
+ * behind a closed door.
+ */
+export function KickoffDoor({
+  door,
+  api,
+  taskId,
+  clientName,
+  autoOpen = false,
+  onSent,
+}: {
+  door: Door | null;
+  api: KickoffApi | null;
+  taskId: string;
+  clientName: string;
+  /** The page was opened with ?form=kickoff (the card's Kickoff Form Link). */
+  autoOpen?: boolean;
+  onSent?: (message: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [read, setRead] = useState<KickoffPrefill | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const extras = useRef<Record<string, string>>({});
+  const live = door?.open === true;
+  const start = useCallback(async () => {
+    if (!api || !live) return;
+    setOpen(true);
+    setError(null);
+    try {
+      setRead(await api.prefill(taskId));
+    } catch (e) {
+      setError(said(e));
+    }
+  }, [api, live, taskId]);
+  const auto = useRef(false);
+  useEffect(() => {
+    if (autoOpen && live && !auto.current) {
+      auto.current = true;
+      void start();
+    }
+  }, [autoOpen, live, start]);
+  if (!live)
+    return (
+      <p className="text-xs text-muted-foreground" data-kickoff-door="closed">
+        {door?.why === "off"
+          ? "The kickoff moves into the cockpit after its switch-on."
+          : doorLine(door)}
+      </p>
+    );
+  const def = kickoffDef(clientName, read?.answered?.at ?? null);
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => void start()}
+        data-kickoff-door="open"
+      >
+        Send the kickoff
+      </Button>
+      {open && api ? (
+        <FormSheet
+          open={open}
+          onOpenChange={setOpen}
+          def={def}
+          client={{ taskId, name: clientName }}
+          prefill={read?.prefill ?? []}
+          loading={!read && !error}
+          prefillError={error}
+          status={read?.card.status ?? undefined}
+          submit={async (a, requestId) => {
+            const out = await api.submit(taskId, kickoffAnswers(a), requestId);
+            extras.current = Object.fromEntries(
+              out.trail.map(t => [t.step, t.state]),
+            );
+            toast.success("Sent.");
+            return {
+              message: "the card, the tasks and the phase 4 message follow",
+              ref: out.responseId ? { responseId: out.responseId } : {},
+            };
+          }}
+          trail={async ref => {
+            const row = await api.trail(ref);
+            return {
+              ...row,
+              extra: { ...extras.current, ...(row.extra ?? {}) },
+            };
+          }}
+          onSent={onSent}
+        />
+      ) : null}
+    </>
+  );
 }

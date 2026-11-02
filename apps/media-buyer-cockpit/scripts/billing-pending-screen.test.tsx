@@ -1531,9 +1531,16 @@ describe("the client's voice in the billing log: survey and nps_sent (review W34
   const tables = sheetTables(read);
   const sheetApiOf = (events: any[]): BillingApi => ({
     sheet: async () =>
-      buildSheet(tables.accounts.map(accountFrom), events, tables.inbox, "2026-10-23"),
+      buildSheet(
+        tables.accounts.map(accountFrom),
+        events,
+        tables.inbox,
+        "2026-10-23",
+      ),
     edit: async a =>
-      accountFrom(tables.accounts.find(x => x.clickup_task_id === a.taskId) as any),
+      accountFrom(
+        tables.accounts.find(x => x.clickup_task_id === a.taskId) as any,
+      ),
     logPayment: async () => "Logged.",
     ledgerLine: "It goes straight into the ledger.",
   });
@@ -1542,7 +1549,13 @@ describe("the client's voice in the billing log: survey and nps_sent (review W34
     tables.accounts.find(a =>
       win.document.getElementById(`billing-row-${a.clickup_task_id}`),
     ) as any;
-  const voice = (id: number, task: any, kind: string, at: string, extra: any) => ({
+  const voice = (
+    id: number,
+    task: any,
+    kind: string,
+    at: string,
+    extra: any,
+  ) => ({
     id,
     clickup_task_id: task.clickup_task_id,
     client_name: task.client_name,
@@ -1577,14 +1590,24 @@ describe("the client's voice in the billing log: survey and nps_sent (review W34
       voice(902, task, "survey", "2026-10-23T08:00:00Z", {
         to_value: null,
         reason: "Exit survey answered",
-        detail: { form_key: "exit_survey", notice_on: "2026-10-20", via: "portal" },
+        detail: {
+          form_key: "exit_survey",
+          notice_on: "2026-10-20",
+          via: "portal",
+        },
       }),
       ...[3, 4, 5, 6, 7, 8, 9, 10].map(i =>
-        voice(900 + i, task, i % 2 ? "survey" : "nps_sent", `2026-10-23T0${(i % 7) + 1}:00:00Z`, {
-          to_value: i % 2 ? null : "2026-10-23",
-          reason: null,
-          detail: i % 2 ? {} : { on: "2026-10-23" },
-        }),
+        voice(
+          900 + i,
+          task,
+          i % 2 ? "survey" : "nps_sent",
+          `2026-10-23T0${(i % 7) + 1}:00:00Z`,
+          {
+            to_value: i % 2 ? null : "2026-10-23",
+            reason: null,
+            detail: i % 2 ? {} : { on: "2026-10-23" },
+          },
+        ),
       ),
       ...Array.from({ length: 30 }, (_, i) => money(i + 1, task, i + 1)),
     ];
@@ -1618,7 +1641,9 @@ describe("the client's voice in the billing log: survey and nps_sent (review W34
         .getElementById(`billing-row-${task.clickup_task_id}`)
         ?.querySelector("button"),
     );
-    const row = win.document.getElementById(`billing-row-${task.clickup_task_id}`);
+    const row = win.document.getElementById(
+      `billing-row-${task.clickup_task_id}`,
+    );
     const items = [...(row?.querySelectorAll("li") ?? [])].map((x: any) =>
       String(x.textContent),
     );
@@ -2049,5 +2074,118 @@ describe("checked money's pure readers (lib/paymentChecks.ts, the Money tab's li
       ),
     ).toBeNull();
     expect(uncheckedSince(payload([]), "2026-11-01")).toBeNull();
+  });
+});
+
+// Waves 5-6 (docs/forms/WAVE56-CONTRACT.md 4.6, 4.10.5, 5.6): Confirm paid
+// says where the next payment date goes before the press, and each open part
+// can ask the client for the bank transfer receipt (once at a time).
+describe("waves 5-6: the next date and the receipt ask", () => {
+  const metals = rowOf(/المعادن/);
+  const { nextDateLine } =
+    require("../src/lib/billingBalances") as typeof import("../src/lib/billingBalances");
+
+  test("the date line comes from dateIfConfirmed, or its sentence; nothing from an older read", () => {
+    expect(nextDateLine({ dateIfConfirmed: "2026-11-23" }, "2026-10-23")).toBe(
+      "Next payment moves to 23 Nov",
+    );
+    expect(
+      nextDateLine({
+        dateIfConfirmed: null,
+        dateWhy:
+          "Next payment date stays 2 Nov: this payment was not the one due on it.",
+      }),
+    ).toBe(
+      "Next payment date stays 2 Nov: this payment was not the one due on it.",
+    );
+    expect(nextDateLine({})).toBeNull();
+    const read = copyRead(LIVE_2026_10_23);
+    read.datesIfConfirmed = [
+      {
+        taskId: metals.taskId,
+        part: "onboarding",
+        partNo: 0,
+        date: "2026-11-23",
+        why: null,
+      },
+    ];
+    const row = buildPending(read, NOW).rows.find(
+      r => r.taskId === metals.taskId,
+    );
+    expect(
+      row?.confirmable.find(c => c.part === "onboarding")?.dateIfConfirmed,
+    ).toBe("2026-11-23");
+    const plain = buildPending(LIVE_2026_10_23, NOW).rows.find(
+      r => r.taskId === metals.taskId,
+    );
+    expect(plain?.confirmable.every(c => c.dateIfConfirmed === undefined)).toBe(
+      true,
+    );
+  });
+
+  test("Confirm paid shows Next payment moves to {date} before the press", async () => {
+    const read = copyRead(LIVE_2026_10_23);
+    read.datesIfConfirmed = [
+      {
+        taskId: metals.taskId,
+        part: "onboarding",
+        partNo: 0,
+        date: "2026-11-23",
+        why: null,
+      },
+    ];
+    const api = apiOf(async () => buildPending(read, NOW));
+    await render(h(PendingPayments, { api }));
+    await openRow(metals.taskId);
+    const panel = () =>
+      win.document.getElementById(`pending-${metals.taskId}`) as any;
+    await click(button("Tap", panel()));
+    expect(String(panel().querySelector("[data-next-date]")?.textContent)).toBe(
+      "Next payment moves to 23 Nov",
+    );
+    await render(h("div"));
+  });
+
+  test("Ask for the receipt on an open part sends its context; one already out waits", async () => {
+    const asked: unknown[] = [];
+    const api = apiOf(async () => view(), {
+      receipts: { ask: p => asked.push(p), outSince: () => null },
+    });
+    await render(h(PendingPayments, { api }));
+    await openRow(metals.taskId);
+    const panel = () =>
+      win.document.getElementById(`pending-${metals.taskId}`) as any;
+    const asks = panel().querySelectorAll("[data-ask-receipt]");
+    expect(asks.length).toBeGreaterThan(0);
+    expect(String(asks[0].textContent)).toBe("Ask for the receipt");
+    await click(asks[0]);
+    expect(asked[0]).toMatchObject({
+      taskId: metals.taskId,
+      currency: "USD",
+      dealResponseId:
+        LIVE_2026_10_23.deals.find(d => d.taskId === metals.taskId)
+          ?.responseId ?? null,
+    });
+    expect(
+      (asked[0] as { expectedAmount: number }).expectedAmount,
+    ).toBeGreaterThan(0);
+    await render(h("div"));
+    const out = apiOf(async () => view(), {
+      receipts: { ask: () => {}, outSince: () => "2026-10-21T09:00:00Z" },
+    });
+    await render(h(PendingPayments, { api: out }));
+    await openRow(metals.taskId);
+    expect(
+      String(panel().querySelector("[data-receipt-out]")?.textContent),
+    ).toBe("A receipt request is already out, sent 21 Oct.");
+    expect(panel().querySelector("[data-ask-receipt]")).toBeNull();
+    await render(h("div"));
+  });
+
+  test("without a receipts api (the form not live) no part offers the ask", async () => {
+    await render(h(PendingPayments, { api: apiOf(async () => view()) }));
+    await openRow(metals.taskId);
+    expect(win.document.querySelector("[data-ask-receipt]")).toBeNull();
+    await render(h("div"));
   });
 });
