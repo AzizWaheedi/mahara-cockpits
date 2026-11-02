@@ -32,7 +32,7 @@ const ID = "7a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9";
 const F = Object.fromEntries(Object.entries(BILLING_FIELDS).map(([k, v]) => [k, v.id])) as Record<string, string>;
 
 const option = (prefix: string, names: readonly string[]) => names.map((name, i) => ({ id: `${prefix}-${i}`, name, orderindex: i }));
-const STATUS_OPTIONS = option("st", ["Active", "Paused", "Stopped"]);
+const STATUS_OPTIONS = option("st", ["Active", "Paused", "Stopped", "Onboarding Booked"]);
 const METHOD_OPTIONS = option("pm", ["Card on file", "Bank transfer", "Tap link", "Whop link", "Check"]);
 const REASON_NAMES = ["Cancelled", "Refund", "Chargeback", "Non-payment 14+ days", "Paused past 14 days", "Ghosted", "Completed term, did not renew"];
 const REASON_OPTIONS = option("cr", REASON_NAMES);
@@ -605,5 +605,127 @@ describe("migration 20261009j", () => {
     expect(SQL).not.toMatch(/EXCEPTION WHEN/);
     expect(/GRANT [^;]* TO (anon|authenticated)/.test(SQL)).toBe(false);
     expect(SQL).toMatch(/REVOKE ALL ON FUNCTION[\s\S]*cockpit_billing_writeback_writes[\s\S]*cockpit_billing_writeback_enqueue\(\)\s*FROM PUBLIC,anon,authenticated,service_role;/);
+  });
+});
+
+describe("waves 5-6 kinds: win only comments, reactivate reopens the card (contract 3.5)", () => {
+  // The payloads 20261102g's trigger queues (money-rails-w5-supabase.test.ts asserts the same writes and comments).
+  const WIN_COMMENT = "WIN: Google review on 2026-11-01\nStage: Logged\nProof: https://g.page/r/review-link\nBy: the CSM";
+  const win = item({ kind: "win", writes: [], comment: WIN_COMMENT });
+  const REACTIVATE_COMMENT = [
+    "REACTIVATED 2026-11-02",
+    "Back as: Onboarding Booked",
+    "Churned 2026-10-12: Non-payment 14+ days (Mid-programme loss (counts as churn))",
+    "Why they came back: They paid the overdue invoice and asked to restart.",
+    "By: the CEO",
+  ].join("\n");
+  const reactivate = item({
+    kind: "reactivate",
+    source: "ceo",
+    writes: [
+      { field: "status", value: "Onboarding Booked", old: "Stopped" },
+      { field: "churnDate", value: null },
+      { field: "churnReason", value: null },
+      { field: "churnType", value: null },
+      { field: "pausedOn", value: null },
+      { field: "resumeOn", value: null },
+      { field: "nextDate", value: "2026-11-20" },
+    ],
+    comment: REACTIVATE_COMMENT,
+  });
+  const stopped = () =>
+    card({
+      [F.status]: 2,
+      [F.churnDate]: String(ms("2026-10-12")),
+      [F.churnReason]: 3,
+      [F.churnType]: 0,
+      [F.pausedOn]: String(ms("2026-09-20")),
+      [F.resumeOn]: String(ms("2026-10-01")),
+      [F.nextDate]: String(ms("2026-10-05")),
+    });
+
+  it("a win writes no field and posts its comment as written, with the reference line", async () => {
+    expect(steps(win)).toEqual([{ key: "billing_comment", type: "comment", taskId: "task_a", text: `${WIN_COMMENT}\n\n${refLine(ID)}` }]);
+    const p = fakeProvider(onCard(card({})));
+    const out = await executeItem(win, steps(win), p, async () => {}, boardFields, clientFields);
+    expect(out.state).toBe("delivered");
+    expect(writes(p.calls)).toEqual([
+      { provider: "clickup", method: "POST", path: "task/task_a/comment", body: { comment_text: `${WIN_COMMENT}\n\n${refLine(ID)}`, notify_all: false } },
+    ]);
+    expect(WIN_COMMENT).not.toContain("@");
+  });
+
+  it("reactivate writes Client Status by its option id, clears the five fields, then the date, then comments", async () => {
+    const built = steps(reactivate);
+    expect(built.map(s => s.key)).toEqual(["status", "churnDate", "churnReason", "churnType", "pausedOn", "resumeOn", "nextDate", "billing_comment"]);
+    expect(built.slice(1, 6).every(s => (s as BillingStep).value === null)).toBe(true);
+    const p = fakeProvider(onCard(stopped()));
+    const out = await executeItem(reactivate, built, p, async () => {}, boardFields, clientFields);
+    expect(out.state).toBe("delivered");
+    expect(writes(p.calls).map(c => `${c.method} ${c.path.split("/").pop()}`)).toEqual([
+      `POST ${F.status}`, `DELETE ${F.churnDate}`, `DELETE ${F.churnReason}`, `DELETE ${F.churnType}`,
+      `DELETE ${F.pausedOn}`, `DELETE ${F.resumeOn}`, `POST ${F.nextDate}`, "POST comment",
+    ]);
+    expect(writes(p.calls)[0].body).toEqual({ value: "st-3" });
+    expect(writes(p.calls).filter(c => c.method === "DELETE").every(c => c.body === undefined)).toBe(true);
+    expect(writes(p.calls)[6].body).toEqual({ value: ms("2026-11-20"), value_options: { time: false } });
+  });
+
+  it("read back first: a field already empty is not cleared again, a status already back is not written", async () => {
+    const partly = card({ [F.status]: 3, [F.churnDate]: String(ms("2026-10-12")) });
+    const p = fakeProvider(onCard(partly));
+    const out = await executeItem(reactivate, steps(reactivate), p, async () => {}, boardFields, clientFields);
+    expect(out.state).toBe("delivered");
+    expect(writes(p.calls).map(c => `${c.method} ${c.path.split("/").pop()}`)).toEqual([`DELETE ${F.churnDate}`, `POST ${F.nextDate}`, "POST comment"]);
+    for (const k of ["status", "churnReason", "churnType", "pausedOn", "resumeOn"]) expect(out.progress[k]).toMatchObject({ done: true, unchanged: true });
+  });
+
+  it("a status option the list lacks fails the item before a comment says the card is back", async () => {
+    const fewer = LIST_FIELDS.map(f => (f.id === F.status ? { ...f, type_config: { options: STATUS_OPTIONS.filter(o => o.name !== "Onboarding Booked") } } : f));
+    const p = fakeProvider(onCard(stopped()));
+    const out = await executeItem(reactivate, steps(reactivate), p, async () => {}, boardFields, async () => fewer);
+    expect(out.state).toBe("failed");
+    expect(writes(p.calls).some(c => c.path.endsWith("/comment"))).toBe(false);
+  });
+
+  it("each kind waits behind CLICKUP_WRITEBACK_BILLING_KINDS: held while unlisted, written once listed", async () => {
+    const runWith = async (env: Record<string, string>, queued: QueueItem[]) => {
+      let items = structuredClone(queued);
+      const saves: any[] = [];
+      const calls: Call[] = [];
+      const deps: Deps = {
+        env: k => env[k],
+        now: () => NOW,
+        uuid: () => "11111111-2222-3333-4444-555555555555",
+        rpc: async (name, params = {}) => {
+          if (name === "cockpit_clickup_writeback_begin") return { id: "run-1" };
+          if (name === "cockpit_clickup_writeback_inputs") return { campaigns: [] };
+          if (name === "cockpit_clickup_writeback_claim") { const out = items; items = []; return out; }
+          if (name === "cockpit_billing_writeback_held") return { held: 0, heldOpenKind: 0, byKind: {} };
+          if (name === "cockpit_clickup_writeback_save") saves.push(structuredClone(params.p_patch));
+          return null;
+        },
+        providerFor: () => ({
+          async call(provider, method, path, body) {
+            calls.push({ provider, method, path, body });
+            if (method === "GET" && path === `list/${CLIENTS_LIST}/field`) return { fields: LIST_FIELDS };
+            if (method === "GET" && path === "task/task_a") return stopped();
+            if (method === "POST" && path.endsWith("/comment")) return { id: "c-1" };
+            return {};
+          },
+        }),
+        syncState: async () => {},
+      };
+      await runLog(deps);
+      return { states: saves.filter(s => s.state).map(s => s.state), writes: calls.filter(c => c.method !== "GET") };
+    };
+    const back = { ...reactivate, id: "4a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9" };
+    const live = { CLICKUP_API_TOKEN: "x", CLICKUP_WRITEBACK_APPLY_BILLING: "true", CLICKUP_WRITEBACK_BILLING_KINDS: "churn,extension,date,payment,pause,resume,mrr,late,survey" };
+    const held = await runWith(live, [win, back]);
+    expect(held.states).toEqual(["dry_run", "dry_run"]);
+    expect(held.writes).toEqual([]);
+    const open = await runWith({ ...live, CLICKUP_WRITEBACK_BILLING_KINDS: `${live.CLICKUP_WRITEBACK_BILLING_KINDS},win,reactivate` }, [win, back]);
+    expect(open.states).toEqual(["delivered", "delivered"]);
+    expect(open.writes.filter(c => c.method === "DELETE")).toHaveLength(5);
   });
 });

@@ -28,7 +28,7 @@ import { providerTools, slackTools, type SlackHealthRow, type SlackTools } from 
 import type { Rpc } from "../cockpit-hours-sync/db.ts";
 import { slackReceiptConfirmed } from "../_shared/slackReceipt.ts";
 import { cachedLookup, type ClaimMentions, type Mention, mentionsFor, type PersonLooked, personNote, plainLabels, readMention, resolveMentions } from "./mentions.ts";
-import { CLIENT_FORM_KINDS, isNoticeKind, isVariantOf, LIFECYCLE_KINDS, type NoticeFacts, type NoticeKind, noticeText, sampleFacts, type SlackBlock, type TextMention, type Variant } from "./text.ts";
+import { CLIENT_FORM_KINDS, isNoticeKind, isVariantOf, LIFECYCLE_KINDS, MONEY_KINDS, type NoticeFacts, type NoticeKind, noticeText, sampleFacts, type SlackBlock, type TextMention, type Variant } from "./text.ts";
 
 // ------------------------------------------------------------------ deps and the ledger
 
@@ -192,6 +192,9 @@ export function pickVariant(kind: NoticeKind, facts: Record<string, unknown>, li
   // A pause consent the client said has the wrong dates (waves 3-4, 3.4) says so in its facts.
   if (kind === "pause.consent") return facts.datesWrong === true ? "dates_wrong" : "signed";
   if (isClientForm(kind)) return "post";
+  // Wins and money (waves 5-6, 3.9): an upsell's stage picks its sentence.
+  if (kind === "win.logged") return facts.stage === "quote_given" ? "offered" : facts.stage === "signed" ? "accepted" : "post";
+  if (isMoney(kind)) return "post";
   if (kind === "blueprint.close") return facts.source === "typeform" ? "typeform" : facts.settled === "reconcile" ? "reconcile" : "done";
   if (kind === "blueprint.media") {
     const phase = Number(facts.mapPhase);
@@ -215,6 +218,8 @@ export function wantedMentions(kind: NoticeKind, variant: Variant, mentions: Cla
 export const isLifecycle = (kind: NoticeKind): boolean => (LIFECYCLE_KINDS as readonly string[]).includes(kind);
 /** The client's voice and forms (waves 3-4, 3.4): their own live rule, like the lifecycle's. */
 export const isClientForm = (kind: NoticeKind): boolean => (CLIENT_FORM_KINDS as readonly string[]).includes(kind);
+/** Wins and money (waves 5-6, 3.9): their own live rule too. */
+export const isMoney = (kind: NoticeKind): boolean => (MONEY_KINDS as readonly string[]).includes(kind);
 
 /** A test's variant: its facts' variant when it is one the kind has, else the plain one. */
 export function rehearsalVariant(kind: NoticeKind, facts: Record<string, unknown>): Variant {
@@ -225,6 +230,7 @@ export function rehearsalVariant(kind: NoticeKind, facts: Record<string, unknown
   if (isLifecycle(kind)) return "post";
   if (kind === "pause.consent") return "signed";
   if (isClientForm(kind)) return "post";
+  if (isMoney(kind)) return "post";
   return kind === "kickoff" ? "complete" : kind === "blueprint.close" ? "done" : kind === "blueprint.media" ? "new" : "top";
 }
 
@@ -449,9 +455,9 @@ export async function sendClaimed(ctx: SendContext, row: ClaimedRow): Promise<Se
     variant = pickVariant(kind, row.facts, row.live, row.threadTs);
   }
 
-  // A lifecycle or client form notice whose news stopped being true after it
+  // A lifecycle, client form or money notice whose news stopped being true after it
   // was queued (its live rule, read by the claim just now) is not posted, and says why.
-  if (!rehearsal && (isLifecycle(kind) || isClientForm(kind)) && row.live.stillTrue === false) {
+  if (!rehearsal && (isLifecycle(kind) || isClientForm(kind) || isMoney(kind)) && row.live.stillTrue === false) {
     const why = typeof row.live.why === "string" && row.live.why ? row.live.why : "What it would say is no longer true.";
     return record(deps, row.id, "failed", { error: `Not posted: ${why.charAt(0).toLowerCase()}${why.slice(1)}`.slice(0, 240) });
   }

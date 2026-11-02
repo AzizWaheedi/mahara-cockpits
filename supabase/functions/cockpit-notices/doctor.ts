@@ -8,7 +8,7 @@
 import type { SlackTools } from "../cockpit-csm-api/tools.ts";
 import { cachedLookup, labelOf, type Mention, readMention } from "./mentions.ts";
 import { isTokenCode, type NoticeDeps, slackFor } from "./send.ts";
-import { CLIENT_FORM_KINDS, LIFECYCLE_KINDS, NOTICE_KINDS } from "./text.ts";
+import { CLIENT_FORM_KINDS, LIFECYCLE_KINDS, MONEY_KINDS, NOTICE_KINDS } from "./text.ts";
 
 // The doctor answers the tech lead, so it names the secret and the function;
 // the sender's reasons on the team's screens do not (send.ts).
@@ -111,12 +111,14 @@ export async function runDoctor(deps: NoticeDeps): Promise<Doctor> {
       ready: s.channel === null ? null : checked ? (checked.get(s.channel) ?? false) : null,
     }));
   // Kinds the sender has words for and the settings lack. A family seeded only in part (waves 1-2's
-  // lifecycle six, waves 3-4's client forms six) is a problem; one not seeded at all waits for its migration.
+  // lifecycle six, waves 3-4's client forms six, waves 5-6's money three) is a problem; one not seeded at all
+  // waits for its migration.
   const seeded = new Set(inputs.settings.map(s => s.kind));
   const unseeded = NOTICE_KINDS.filter(k => !seeded.has(k));
   const partly = [
     ["20261101l", LIFECYCLE_KINDS],
     ["20261102a", CLIENT_FORM_KINDS],
+    ["20261102g", MONEY_KINDS],
   ].flatMap(([file, family]) => {
     const missing = (family as readonly string[]).filter(k => !seeded.has(k));
     return missing.length && missing.length < family.length ? [`No settings row for ${missing.join(", ")}: check ${file as string} applied in full.`] : [];
