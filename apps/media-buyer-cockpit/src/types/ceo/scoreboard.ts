@@ -1,5 +1,4 @@
 import { cpbConfirmedOfDays } from "../../pages/ceo/deliveryCost";
-import type { CallCenterMetrics } from "./callCenterContract";
 import type {
   CallsPayload,
   ClientsPayload,
@@ -36,6 +35,16 @@ import type {
  * 3. Month-shaped numbers (MRR collection, the P&L) say so with `monthOnly`.
  *    Asked for a window that is not a whole month they return null, because a
  *    fifth of a month's MRR collection is not a number anybody should read.
+ *
+ * One reader per key (2026-11-02, hw-notes/goals-sheet/truth/SYNTHESIS.md
+ * fix 3). The CEO: "make this one the main source of truth so everything else
+ * ties into it." Every key the monthly Goals sheet has is read from the sheet's
+ * own roll-up (pages/ceo/goalsSheetData.ts `readRange`, through
+ * lib/ceoGoalsModel.ts), and so are the call centre's leads and bookings and
+ * back-end cash, which the sheet holds as parts of a column. Their readers here
+ * are gone, so no key has a second rule: the board had scored CPA on lead-gen
+ * spend only, profit on bank lines and rates rounded to two places. What is
+ * left below is what the sheet does not have.
  */
 
 export type Unit = "usd" | "count" | "rate" | "days" | "x" | "pts" | "text";
@@ -118,7 +127,7 @@ export const GROUPS: { key: GroupKey; label: string; blurb: string }[] = [
   { key: "team", label: "Team", blurb: "Payroll, hiring and who we keep." },
 ];
 
-// biome-ignore lint/suspicious/noExplicitAny: payloads are read defensively
+// Payloads are read defensively.
 type Any = Record<string, any>;
 
 export type Payloads = {
@@ -129,8 +138,6 @@ export type Payloads = {
   calls?: CallsPayload | null;
   organic?: OrganicPayload | null;
   expenses?: ExpensesPayload | null;
-  /** Distinct totals for exactly this window; never add daily reports together. */
-  callsWindow?: { from: string; to: string; overall: CallCenterMetrics } | null;
 };
 
 const r2 = (x: number) => Math.round(x * 100) / 100;
@@ -169,21 +176,6 @@ function sum(
   return r2(rows.reduce((t, d) => t + (pick(d) ?? 0), 0));
 }
 
-/** Money in the window by side and kind, from the attributed payment list. */
-function cash(
-  p: Payloads,
-  from: string,
-  to: string,
-  keep: (t: Any) => boolean,
-): number | null {
-  const tx = (p.money as Any)?.attribution?.transactions as Any[] | undefined;
-  if (!tx) return null;
-  const rows = tx.filter(
-    t => t.day >= from && t.day <= to && t.direction === "in" && keep(t),
-  );
-  return r2(rows.reduce((n, t) => n + Number(t.usd ?? 0), 0));
-}
-
 function out(p: Payloads, from: string, to: string): number | null {
   const tx = (p.money as Any)?.attribution?.transactions as Any[] | undefined;
   if (!tx) return null;
@@ -207,92 +199,28 @@ function monthOf(from: string, to: string): string | null {
   return from.endsWith("-01") ? from.slice(0, 7) : null;
 }
 
-function callTotals(p: Payloads, from: string, to: string) {
-  const w = p.callsWindow;
-  return w && w.from === from && w.to === to ? w.overall : null;
-}
-
 type Reader = (p: Payloads, from: string, to: string) => number | null;
 
 /**
- * The catalogue. Order inside a group is the order the plan shows, and for
- * the front end that order is the funnel itself, because the screen draws it
- * as a ladder and a rung out of order would be a lie about the business.
+ * The readers for the keys the Goals sheet does not have (2026-11-02). Every
+ * other measured key is the sheet's, read by lib/ceoGoalsModel.ts; a test
+ * (scripts/goals-board-sheet.test.ts) fails if a reader here answers for a
+ * key the sheet has.
  */
 const READERS: Record<string, Reader> = {
-  // --- front end, in funnel order ---
-  spend: (p, f, t) => sum(p, f, t, d => d.spend),
-  spendRetargeting: (p, f, t) => sum(p, f, t, d => d.spendRetargeting),
-  leads: (p, f, t) => sum(p, f, t, d => d.leads),
-  cpl: (p, f, t) =>
-    div(
-      sum(p, f, t, d => d.spend),
-      sum(p, f, t, d => d.leads),
-    ),
+  // --- front end, the ladder's rungs the Goals sheet has no column for ---
   bookableLeads: (p, f, t) => sum(p, f, t, d => d.qualified),
   costPerBookableLead: (p, f, t) =>
     div(
       sum(p, f, t, d => d.spend),
       sum(p, f, t, d => d.qualified),
     ),
-  leadToBooked: (p, f, t) =>
-    div(
-      sum(p, f, t, d => d.bookedLeads),
-      sum(p, f, t, d => d.leads),
-    ),
-  introsBooked: (p, f, t) => sum(p, f, t, d => d.introsBooked),
-  costPerIntroBooked: (p, f, t) =>
-    div(
-      sum(p, f, t, d => d.spend),
-      sum(p, f, t, d => d.introsBooked),
-    ),
-  introShowRate: (p, f, t) =>
-    div(
-      sum(p, f, t, d => d.introsShown),
-      sum(p, f, t, d => d.introsDue),
-    ),
-  introsShown: (p, f, t) => sum(p, f, t, d => d.introsShown),
-  costPerIntroShown: (p, f, t) =>
-    div(
-      sum(p, f, t, d => d.spend),
-      sum(p, f, t, d => d.introsShown),
-    ),
-  demosBooked: (p, f, t) => sum(p, f, t, d => d.demosBooked),
-  costPerDemoBooked: (p, f, t) =>
-    div(
-      sum(p, f, t, d => d.spend),
-      sum(p, f, t, d => d.demosBooked),
-    ),
-  demoShowRate: (p, f, t) =>
-    div(
-      sum(p, f, t, d => d.demosShown),
-      sum(p, f, t, d => d.demosDue),
-    ),
-  demosShown: (p, f, t) => sum(p, f, t, d => d.demosShown),
-  costPerDemoShown: (p, f, t) =>
-    div(
-      sum(p, f, t, d => d.spend),
-      sum(p, f, t, d => d.demosShown),
-    ),
   demosQualified: (p, f, t) => sum(p, f, t, d => d.demosQualified),
-  closeRate: (p, f, t) =>
-    div(
-      sum(p, f, t, d => d.closes),
-      sum(p, f, t, d => d.demosShown),
-    ),
-  closes: (p, f, t) => sum(p, f, t, d => d.closes),
-  cac: (p, f, t) =>
-    div(
-      sum(p, f, t, d => d.spend),
-      sum(p, f, t, d => d.closes),
-    ),
-  contracted: (p, f, t) => sum(p, f, t, d => d.contracted),
   aov: (p, f, t) =>
     div(
       sum(p, f, t, d => d.contracted),
       sum(p, f, t, d => d.closes),
     ),
-  newCash: (p, f, t) => cash(p, f, t, x => x.side === "front_end"),
   roasContracted: (p, f, t) =>
     div(
       sum(p, f, t, d => d.contracted),
@@ -300,24 +228,6 @@ const READERS: Record<string, Reader> = {
     ),
 
   // --- back end ---
-  backEndCash: (p, f, t) => cash(p, f, t, x => x.side === "back_end"),
-  mrrProjected: (p, f, t) => {
-    const m = monthOf(f, t);
-    const book = (p.money as Any)?.book;
-    return m && book?.month === m ? r2(Number(book.projectedMrr ?? 0)) : null;
-  },
-  mrrCollected: (p, f, t) => {
-    const m = monthOf(f, t);
-    const book = (p.money as Any)?.book;
-    return m && book?.month === m ? r2(Number(book.collected ?? 0)) : null;
-  },
-  mrrCollectionRate: (p, f, t) => {
-    const m = monthOf(f, t);
-    const book = (p.money as Any)?.book;
-    return m && book?.month === m && book.collectionRate !== null
-      ? r2(Number(book.collectionRate))
-      : null;
-  },
   averageRetainer: (p, f, t) => {
     const m = monthOf(f, t);
     const book = (p.money as Any)?.book;
@@ -332,18 +242,7 @@ const READERS: Record<string, Reader> = {
   },
 
   // --- money ---
-  totalCash: (p, f, t) => cash(p, f, t, () => true),
   moneyOut: (p, f, t) => out(p, f, t),
-  profit: (p, f, t) => {
-    const inn = cash(p, f, t, () => true);
-    const o = out(p, f, t);
-    return inn !== null && o !== null ? r2(inn - o) : null;
-  },
-  margin: (p, f, t) => {
-    const inn = cash(p, f, t, () => true);
-    const o = out(p, f, t);
-    return inn !== null && o !== null && inn > 0 ? r2((inn - o) / inn) : null;
-  },
 
   // --- client results ---
   clientSpend: (p, f, t) => {
@@ -358,25 +257,11 @@ const READERS: Record<string, Reader> = {
     );
     return rows.length ? rows.reduce((n, d) => n + d.leads, 0) : null;
   },
-  // Confirmed bookings by the day they were made, and the cost per
-  // confirmed booking: spend on the days the board stores bookings over
-  // them (R10, 2026-10-22; src/pages/ceo/deliveryCost.ts is the same rule).
-  // Null for a day range with no stored day, or rows computed before the
-  // board's counts, never the old total under the new name.
+  // Confirmed bookings by the day they were made (R10, 2026-10-22;
+  // src/pages/ceo/deliveryCost.ts is the same rule). Null for a day range
+  // with no stored day, or rows computed before the board's counts, never
+  // the old total under the new name. Client cost per booking is the sheet's.
   clientBookings: (p, f, t) => confirmedDays(p, f, t)?.confirmed ?? null,
-  clientCpl: (p, f, t) =>
-    div(READERS.clientSpend(p, f, t), READERS.clientLeads(p, f, t)),
-  clientCpb: (p, f, t) => {
-    const c = confirmedDays(p, f, t);
-    return c ? div(c.spend, c.confirmed) : null;
-  },
-
-  callLeads: (p, f, t) => callTotals(p, f, t)?.leads ?? null,
-  callLeadToBooking: (p, f, t) => {
-    const c = callTotals(p, f, t);
-    return c ? div(c.confirmedBookings, c.leads) : null;
-  },
-  callBookings: (p, f, t) => callTotals(p, f, t)?.confirmedBookings ?? null,
 
   // --- content ---
   contentPosts: (p, f, t) => {
@@ -514,8 +399,7 @@ export const METRICS: MetricDef[] = [
     "front_end",
     "rate",
     "up",
-    "Held intros that went on to a demo, B2B's intro_to_demo. A demo booked straight from a lead is not in it. Typed on a plan.",
-    { manual: true },
+    "Held intros whose contact booked a demo after the intro, over intros held, added up by day (B2B's intro_to_demo). A demo booked straight from a lead is not in it.",
   ),
   m(
     "directDemos",
@@ -583,7 +467,7 @@ export const METRICS: MetricDef[] = [
     "front_end",
     "usd",
     "down",
-    "Lead-gen spend over clients signed.",
+    "All of Mahara's ad spend, lead gen and retargeting, over clients signed.",
     { level: true },
   ),
   m(
@@ -609,7 +493,7 @@ export const METRICS: MetricDef[] = [
     "front_end",
     "usd",
     "up",
-    "Payments attributed to the front end: deposits at signing and the rest of the cash inside the front-end window.",
+    "Front-end cash from the deal ledger: money paid on closer-form deals, by the day it was paid.",
   ),
   m(
     "roasContracted",
@@ -627,7 +511,7 @@ export const METRICS: MetricDef[] = [
     "back_end",
     "usd",
     "up",
-    "Payments matched to an existing client after its front-end window.",
+    "Every payment in that is not the deal ledger's front-end cash, over the same days: the back-end part of Total revenue.",
   ),
   m(
     "mrrProjected",
@@ -635,7 +519,7 @@ export const METRICS: MetricDef[] = [
     "back_end",
     "usd",
     "up",
-    "The MRR field on active ClickUp cards on a recurring plan. A number somebody typed on a card, not measured revenue.",
+    "Back end only: what the recurring cards of clients who were clients before the month owe, from the month's billing snapshot. Cards new that month or still on their closer-form deal are front end and left out.",
     { monthOnly: true },
   ),
   m(
@@ -644,7 +528,7 @@ export const METRICS: MetricDef[] = [
     "back_end",
     "usd",
     "up",
-    "Cash attributed to those same clients in the month, every rail.",
+    "Back end only: recurring-card payments from those same clients in the month, every rail.",
     { monthOnly: true },
   ),
   m(
@@ -653,7 +537,7 @@ export const METRICS: MetricDef[] = [
     "back_end",
     "rate",
     "up",
-    "Collected over due, on the clients the book says are recurring.",
+    "Back-end MRR collected over back-end MRR due.",
     { monthOnly: true },
   ),
   m(
@@ -680,8 +564,7 @@ export const METRICS: MetricDef[] = [
     "back_end",
     "usd",
     "up",
-    "Upsells closed on the existing book. Nothing in the cockpit separates an upsell payment from a retainer yet, so this is typed.",
-    { manual: true },
+    "Checked payments tied to an upsell in the wins ledger, by the day paid. The ledger opened on 2 Nov 2026.",
   ),
   m(
     "upsellRate",
@@ -698,8 +581,7 @@ export const METRICS: MetricDef[] = [
     "back_end",
     "count",
     "up",
-    "Deals that came from an existing client, typed.",
-    { manual: true },
+    "Referral wins in the wins ledger, by the day won.",
   ),
   m(
     "churnRate",
@@ -710,8 +592,22 @@ export const METRICS: MetricDef[] = [
     "Clients lost over clients held. Typed until the cockpit reads a leaving date on every card.",
     { manual: true },
   ),
-  m("testimonials", "Video testimonials", "back_end", "count", "up", "Typed."),
-  m("googleReviews", "Google reviews", "back_end", "count", "up", "Typed."),
+  m(
+    "testimonials",
+    "Video testimonials",
+    "back_end",
+    "count",
+    "up",
+    "Video testimonial wins in the wins ledger, by the day won.",
+  ),
+  m(
+    "googleReviews",
+    "Google reviews",
+    "back_end",
+    "count",
+    "up",
+    "Review wins in the wins ledger, by the day won.",
+  ),
   m(
     "caseStudies",
     "Case studies recorded",
@@ -728,7 +624,7 @@ export const METRICS: MetricDef[] = [
     "money",
     "usd",
     "up",
-    "Every payment in, on every rail, in the window.",
+    "Total revenue (with AR): every payment in on the rails, less refunds logged by hand. The CEO's own test payments are left out.",
   ),
   m(
     "moneyOut",
@@ -744,16 +640,16 @@ export const METRICS: MetricDef[] = [
     "money",
     "usd",
     "up",
-    "Cash in less money out. Payroll paid outside the statement is not in it.",
+    "Total revenue less overhead, labour and marketing, as the Goals sheet reads them.",
   ),
-  m("margin", "Margin", "money", "rate", "up", "Profit over cash in."),
+  m("margin", "Margin", "money", "rate", "up", "Profit over total revenue."),
   m(
     "labour",
     "Payroll",
     "money",
     "usd",
     "down",
-    "What the team costs this period. Typed until every payment runs through one rail.",
+    "What the team costs in the month, typed on the Goals sheet until payroll is approved in Team & payroll.",
     { manual: true },
   ),
   m(
@@ -798,7 +694,7 @@ export const METRICS: MetricDef[] = [
     "delivery",
     "usd",
     "down",
-    "Client ad spend over client leads: the standard we sell.",
+    "Client ad spend over the clients' CRM ad leads, paired by client and day: the standard we sell.",
     { level: true },
   ),
   m(
@@ -1047,8 +943,9 @@ export const METRIC_BY_KEY: Record<string, MetricDef> = Object.fromEntries(
 );
 
 /**
- * Read every measurable metric for a window. A key with no reader, or one
- * whose source could not answer, is absent rather than zero.
+ * Read every measurable metric the Goals sheet does not have, for a window.
+ * A key with no reader, or one whose source could not answer, is absent
+ * rather than zero; a key the sheet has is never answered here (2026-11-02).
  */
 export function scoreboard(
   p: Payloads,

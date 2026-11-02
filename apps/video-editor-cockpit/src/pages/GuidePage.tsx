@@ -1,18 +1,20 @@
 import { ArrowUpRight } from "lucide-react";
 import { Page, PageHeader } from "../components/bits";
-import { COCKPIT_GUIDES, COCKPIT_SOP } from "../lib/cockpits";
+import { SopVideo } from "../components/SopVideo";
+import {
+  COCKPIT_GUIDES,
+  COCKPIT_SOP,
+  SOP_VIDEOS,
+  TEAM_GUIDES,
+} from "../lib/cockpits";
 
 /**
  * How to use this desk: the demo video and both SOPs, the same rows the
  * client success cockpit's Links page shows (csmLinks.ts). The guides were
- * written on 2026-10-07 and had no page here until now.
+ * written on 2026-10-07 and had no page here until now. The demo plays on
+ * the page itself (2026-11-02), above the links.
  */
 const ROWS = [
-  {
-    label: "Watch the demo",
-    url: COCKPIT_GUIDES.editor.video,
-    note: "The desk on real jobs, step by step",
-  },
   {
     label: "The simple SOP",
     url: COCKPIT_GUIDES.editor.simple,
@@ -28,6 +30,11 @@ const ROWS = [
     url: COCKPIT_SOP.editor,
     note: "The SOP for this desk, in ClickUp",
   },
+  {
+    label: "Raise a ticket (the SOP for every team)",
+    url: TEAM_GUIDES.ticket.doc,
+    note: "Ask another team with Ask a team, follow it, and work the tickets assigned to you",
+  },
 ];
 
 export default function GuidePage() {
@@ -37,6 +44,8 @@ export default function GuidePage() {
         title="How to use this desk"
         sub="Watch the demo once, then keep the simple SOP open beside you while you learn the day."
       />
+      <SopVideo video={SOP_VIDEOS.editor.demo} className="mb-4" />
+      <SopVideo video={SOP_VIDEOS.team.ticket} className="mb-4" />
       <ul className="divide-y overflow-hidden rounded-2xl border bg-card">
         {ROWS.map(r => (
           <li key={r.label}>

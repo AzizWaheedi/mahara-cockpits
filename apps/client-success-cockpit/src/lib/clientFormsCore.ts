@@ -348,13 +348,20 @@ export function issueResult(d: unknown): IssueResult | null {
 
 // --- Words ---------------------------------------------------------------------
 
-/** The form's name as a chip says it (5.1). */
+/**
+ * The form's name as a chip says it (5.1). Every client form needs one: the
+ * server sends the client's own title ("Send your transfer receipt"), which
+ * reads wrong inside "Send the …". The two tail forms follow the server's
+ * words (cockpit_form_invite_tail_forms: "A receipt request").
+ */
 export const FORM_WORDS: Record<string, string> = {
   nps: "NPS survey",
   csat: "Onboarding survey",
   exit_survey: "Exit survey",
   pause_consent: "Pause consent",
   portal_feedback: "Portal feedback",
+  bank_receipt: "Receipt request",
+  onboarding: "Onboarding form",
 };
 
 export function formWords(key: string, title?: Bilingual | null): string {

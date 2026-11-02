@@ -584,12 +584,15 @@ describe("the metric registry: the waves 1-2 rows", () => {
 });
 
 describe("the goal sheet and the lock-in read the lifecycle", () => {
-  test("extensionsGiven is measured from the grants, and a typed day adds to it", async () => {
+  // 2026-11-02: a typed day now replaces that day's grants, like every other
+  // column (goals sheet round 2, truth/SYNTHESIS.md fix 4: adding counted one
+  // client twice in October). goals-sheet-round2.test.ts holds the full rule.
+  test("extensionsGiven is measured from the grants, and a typed day replaces that day's grants", async () => {
     const m = await import("../src/pages/ceo/goalsSheetModel");
-    expect(m.COLUMN_BY_KEY.extensionsGiven.source).toBe("From the billing sheet and the client page; typed days add to it.");
+    expect(m.COLUMN_BY_KEY.extensionsGiven.source).toContain("A typed day replaces that day's grants.");
     const life = m.lifecycleOf({ lifecycle: { extensions: [{ grantId: 301, grantedOn: "2026-11-03" }, { grantId: 302, grantedOn: "2026-11-03" }, { grantId: 303, grantedOn: "2026-11-04" }], latePayments: null, departures: null, missing: ["x"] } });
     expect(m.lifecycleDayParts(life)).toEqual({ "2026-11-03": { extensionsGiven: 2 }, "2026-11-04": { extensionsGiven: 1 } });
-    expect(m.dayRow({ extensionsGiven: 2, leads: 5 }, { extensionsGiven: 1, leads: 9 })).toMatchObject({ extensionsGiven: 3, leads: 9 });
+    expect(m.dayRow({ extensionsGiven: 2, leads: 5 }, { extensionsGiven: 1, leads: 9 })).toMatchObject({ extensionsGiven: 1, leads: 9 });
     expect(m.dayRow(undefined, { extensionsGiven: 1 })).toMatchObject({ extensionsGiven: 1 });
     expect(m.lifecycleOf({})).toBeNull();
   });

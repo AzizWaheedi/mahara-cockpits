@@ -74,12 +74,14 @@ async function run(o: {
   syncBookings?: { date: string; campaignName: string; count: number; copies: number }[];
   /** cockpit_board_targets cpl rows, or "fail" for a read that fails. */
   targets?: { scope_key: string; good: number }[] | "fail";
+  /** The media feed is not ready, so Creative Triage is not read and Delivery falls back to the media buyer's rows. */
+  feedNotReady?: boolean;
 }) {
   const days = o.days ?? [{ client_id: "acc-a", day: yesterday, spend_usd: 400, leads: 40 }];
   const answer = (query: string): unknown[] => {
     if (query.includes("cockpit_client_days")) return o.boardRows ?? [board(yesterday, 4, 1)];
     if (query.includes("cockpit_media_feed_state"))
-      return [{ ready: true, source_rows: 2, actual_rows: 2, snapshot_ms: now, first_day: addDays(today, -90), last_day: yesterday }];
+      return [{ ready: !o.feedNotReady, source_rows: 2, actual_rows: 2, snapshot_ms: now, first_day: addDays(today, -90), last_day: yesterday }];
     if (query.includes("board_rows"))
       return (o.ties ?? [alphaTie]).map(t => ({ ...t, hidden: false, currency: "USD", ad_account: null, matched_by: "board ad account", board_rows: 1 }));
     if (query.includes("round(sum(l.spend), 2)")) return [];
@@ -160,6 +162,36 @@ describe("how current the board's counts are", () => {
     expect(payload.last7).toMatchObject({ confirmed: 3, spendMeasured: 150, cpbConfirmed: 50 });
     // The daily series has the gap as null, not 0.
     expect(payload.daily.find((r: { date: string }) => r.date === yesterday)).toMatchObject({ confirmed: null, spendMeasured: null });
+  });
+});
+
+describe("client CPL on the CRM (2026-11-02, Goals sheet fix 9)", () => {
+  test("the daily series and the windows carry the board's CRM ad leads with the same clients' spend; Meta's leads stay beside", async () => {
+    const { payload } = await run({
+      boardRows: [
+        { ...board(addDays(today, -2), 3, 0), crm_ad_leads: 12 } as BoardRow,
+        { ...board(yesterday, 4, 1), crm_ad_leads: 25 } as BoardRow,
+      ],
+      days: [
+        { client_id: "acc-a", day: addDays(today, -2), spend_usd: 150, leads: 10 },
+        { client_id: "acc-a", day: yesterday, spend_usd: 250, leads: 30 },
+      ],
+    });
+    expect(payload.daily.find((r: { date: string }) => r.date === yesterday)).toMatchObject({ leads: 30, spend: 250, crmAdLeads: 25, crmSpend: 250 });
+    expect(payload.daily.find((r: { date: string }) => r.date === addDays(today, -3))).toMatchObject({ crmAdLeads: null, crmSpend: null });
+    expect(payload.last7).toMatchObject({ leads: 40, spend: 400, crmAdLeads: 37, crmSpend: 400, crmLeftOut: [] });
+  });
+
+  test("Creative Triage not read: the fallback windows and days carry the CRM fields as missing, the same shape", async () => {
+    const { payload } = await run({ feedNotReady: true, boardRows: [{ ...board(yesterday, 4, 1), crm_ad_leads: 25 } as BoardRow] });
+    expect(payload.yesterday).toMatchObject({ crmAdLeads: null, crmSpend: null, crmLeftOut: null });
+    expect(payload.daily.every((r: { crmAdLeads: number | null; crmSpend: number | null }) => r.crmAdLeads === null && r.crmSpend === null)).toBe(true);
+  });
+
+  test("a board that stores no CRM count: missing on every day and window, never zero leads", async () => {
+    const { payload } = await run({});
+    expect(payload.daily.every((r: { crmAdLeads: number | null; crmSpend: number | null }) => r.crmAdLeads === null && r.crmSpend === null)).toBe(true);
+    expect(payload.yesterday).toMatchObject({ leads: 40, crmAdLeads: null, crmSpend: null, crmLeftOut: [{ client: "Alpha", spend: 400 }] });
   });
 });
 

@@ -95,6 +95,16 @@ describe("the chain", () => {
     expect(p.leadToBookingForGate).toBe(0.25);
   });
 
+  test("the cost per client is all of Mahara's ad spend over clients signed, as the sheet's CPA", () => {
+    // 2026-11-02 (truth/SYNTHESIS.md fix 15): Hammer Them is in it, other
+    // marketing is not, so a CPA target this plan writes is judged like for like.
+    const d = driversFromTargets(SEPTEMBER);
+    const p = project({ ...d, otherMarketing: 900 });
+    expect(p.cac).toBeCloseTo((6600 + 600) / (p.closes ?? 1), 9);
+    const noHammer = project({ ...d, spendRetargeting: null });
+    expect(noHammer.cac).toBeCloseTo(6600 / (noHammer.closes ?? 1), 9);
+  });
+
   test("an empty input is not a zero: what depends on it stays empty", () => {
     const d = { ...driversFromTargets(SEPTEMBER), cpl: null };
     const p = project(d);
@@ -146,5 +156,44 @@ describe("the targets it writes", () => {
   test("every metric the model sets is one the catalogue knows", async () => {
     const { METRIC_BY_KEY } = await import("../convex/ceo/scoreboard");
     for (const key of MODEL_KEYS) expect(METRIC_BY_KEY[key]).toBeDefined();
+  });
+});
+
+describe("refunds", () => {
+  test("come off the money collected, as on his sheet; fees are on what came in", () => {
+    const d = driversFromTargets(SEPTEMBER);
+    const before = project(d);
+    const after = project({ ...d, refundAmount: 1000 });
+    expect(after.totalCash as number).toBeCloseTo(
+      (before.totalCash as number) - 1000,
+      6,
+    );
+    expect(after.processingFees).toBe(before.processingFees);
+    expect(after.profit as number).toBeCloseTo(
+      (before.profit as number) - 1000,
+      6,
+    );
+    // An empty box plans none.
+    expect(project({ ...d, refundAmount: null }).totalCash).toBe(
+      before.totalCash,
+    );
+  });
+
+  test("are read from the plan's own row and carried as typed, not as a model target", () => {
+    const d = driversFromTargets({
+      ...SEPTEMBER,
+      totalCash: 79400,
+      refundAmount: 1000,
+    });
+    expect(d.refundAmount).toBe(1000);
+    // The fee rate is over the money in before refunds.
+    expect(d.feeRate).toBeCloseTo(3100 / 80400, 9);
+    // The catalogue has no refunds metric, so Plan next month keeps the row
+    // as typed at the value the total took off.
+    expect(MODEL_KEYS.has("refundAmount")).toBe(false);
+    const total = modelTargets(d, project(d), say).find(
+      r => r.key === "totalCash",
+    );
+    expect(total?.how).toContain("less $1000 refunds");
   });
 });

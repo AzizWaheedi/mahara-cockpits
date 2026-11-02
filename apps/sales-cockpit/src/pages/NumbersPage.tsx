@@ -394,7 +394,7 @@ export default function NumbersPage({ me }: { me: Me }) {
           reads, with one difference: a deal B2B voided is taken out here, and
           B2B's scorecard (and so the CEO cockpit, for now) still counts it.
           {voided.closes
-            ? ` In this window that is ${voided.closes} voided ${voided.closes === 1 ? "deal" : "deals"}, ${money(voided.cash)} of cash.`
+            ? ` In this window that is ${voided.closes} voided ${voided.closes === 1 ? "deal" : "deals"}, ${money(voided.cash)} of typed deposits.`
             : " This window has none."}{" "}
           B2B copies HighLevel every 15 minutes; the cockpit copies B2B every 3
           minutes and reads the scorecard again every 15
@@ -404,11 +404,12 @@ export default function NumbersPage({ me }: { me: Me }) {
           .
         </p>
         <p>
-          Booked: calls whose time falls in the window. Due: booked calls whose
-          time has passed. Shown: marked showed, or confirmed or disqualified
-          once past. A past call nobody marked counts as shown until it is
-          marked. Show rate: shown ÷ due. No-show and disqualified rates are
-          also on due calls.
+          Scheduled: intros and demos whose time falls in the window, by the day
+          of the call. Due: scheduled calls whose time has passed. Shown: marked
+          showed, or confirmed or disqualified once past. A past call nobody
+          marked counts as shown until it is marked. Call show rate (intros and
+          demos): shown ÷ due. No-show and disqualified rates are also on due
+          calls.
         </p>
         <p>
           Qualified: shown minus disqualified. Qualified rate: qualified ÷
@@ -417,9 +418,11 @@ export default function NumbersPage({ me }: { me: Me }) {
           Client Form, so a short window can pass 100%.
         </p>
         <p>
-          Cash collected: the deposits recorded on the New Client Form. Revenue:
-          the contracted value. Average deal: revenue ÷ closes. Cash per call:
-          cash ÷ demos due. Cash per show: cash ÷ demos shown.
+          Deposits typed: the deposits recorded on the New Client Form, not
+          money seen on a payment rail; cash collected on the deal ledger is on
+          the CEO's Goals sheet. Revenue: the contracted value. Average deal:
+          revenue ÷ closes. Deposits per call: deposits ÷ demos due. Deposits
+          per show: deposits ÷ demos shown.
         </p>
         <p>
           Team total adds everyone's counts, the calls B2B could not put a name

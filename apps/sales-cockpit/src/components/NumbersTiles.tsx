@@ -10,7 +10,7 @@ import { SectionCard, StatTile } from "./kit";
  * to divide by is n/a, never 0%.
  */
 
-/** "62.5% show rate", or what is missing when the rate cannot be worked out. */
+/** "62.5% call show rate", or what is missing when the rate cannot be worked out. */
 function rateLine(value: string, words: string, none: string): string {
   return value === "n/a" ? none : `${value} ${words}`;
 }
@@ -32,11 +32,14 @@ export function NumbersCalls({
     <SectionCard title="Calls" side={side}>
       <div className="@container">
         <div className="grid grid-cols-2 gap-4 @md:grid-cols-3 @2xl:grid-cols-4">
+          {/* calls_scheduled is by the day of the call, so "Scheduled", not
+              "Booked": bookings by the day they were made are another count
+              (2026-11-02, Goals sheet round 2, fix 17). */}
           <StatTile
             variant="plain"
-            label="Booked"
+            label="Scheduled"
             value={count(card.calls_scheduled)}
-            hint="Intros and demos whose time falls in this window."
+            hint="Intros and demos whose time falls in this window, by the day of the call. Calls booked in the window, by the day they were booked, are another count."
           />
           <StatTile
             variant="plain"
@@ -50,10 +53,10 @@ export function NumbersCalls({
             value={count(card.calls_shown)}
             sub={rateLine(
               pct(card.show_rate, 1),
-              "show rate",
+              "call show rate (intros and demos)",
               "No calls due yet",
             )}
-            hint="Marked showed, or confirmed or disqualified once the call time has passed. A past call nobody marked counts as shown until it is marked."
+            hint="Marked showed, or confirmed or disqualified once the call time has passed. A past call nobody marked counts as shown until it is marked. The call show rate is intros and demos together, shown over due; the CEO's Goals sheet shows the intro and demo show rates apart."
           />
           <StatTile
             variant="plain"
@@ -118,11 +121,15 @@ export function NumbersClosing({ card }: { card: Scorecard }) {
             sub={`on ${count(card.demos_qualified)} qualified demos`}
             hint="B2B's close rate: closes over demos that showed and were not disqualified."
           />
+          {/* The scorecard's cash_collected is the deposit typed on the form.
+              "Cash collected" is the deal ledger's money on the CEO's Goals
+              sheet, so this tile says what it is (2026-11-02, fix 14). */}
           <StatTile
             variant="plain"
-            label="Cash collected"
+            label="Deposits typed"
             value={money(card.cash_collected)}
-            sub="deposits on the New Client Form"
+            sub="on the New Client Form"
+            hint="The deposits the closers typed on the New Client Form, not money seen on a payment rail. Cash collected, the money actually paid on signed deals (the deal ledger), is on the CEO's Goals sheet."
           />
           <StatTile
             variant="plain"
@@ -137,15 +144,15 @@ export function NumbersClosing({ card }: { card: Scorecard }) {
           />
           <StatTile
             variant="plain"
-            label="Cash per call"
+            label="Deposits per call"
             value={money(per(card.cash_collected, card.demos_due))}
-            sub={`over ${count(card.demos_due)} demos due`}
+            sub={`typed, over ${count(card.demos_due)} demos due`}
           />
           <StatTile
             variant="plain"
-            label="Cash per show"
+            label="Deposits per show"
             value={money(per(card.cash_collected, card.demos_shown))}
-            sub={`over ${count(card.demos_shown)} demos shown`}
+            sub={`typed, over ${count(card.demos_shown)} demos shown`}
           />
         </div>
       </div>

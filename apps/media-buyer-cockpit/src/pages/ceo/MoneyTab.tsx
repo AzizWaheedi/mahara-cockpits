@@ -241,7 +241,8 @@ export function MoneyTab({ sections, now, day, goTab }: CeoTabProps) {
           <SectionCard
             id="money-cash"
             kicker={month(monthKey, { long: true, year: true })}
-            title="Cash collected"
+            // Every rail, not the deal ledger's Cash collected (2026-11-02, fix 14).
+            title={cashHeadline(payload).title}
             section={section}
             notes={withNotes(notes.cash, [cashHeadline(payload).note])}
             order={0}
@@ -540,8 +541,8 @@ function CashBody({ p, today }: { p: MoneyPayload; today: string }) {
   return (
     <div className="grid gap-8 @3xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] @3xl:gap-10">
       <div className="flex min-w-0 flex-col">
-        {/* The card is titled Cash collected and the kicker names the month,
-            so the figure's label only says which rails it covers. */}
+        {/* The card is titled Cash in, every rail, and the kicker names the
+            month, so the figure's label only says which rails it covers. */}
         <HeroFigure
           label={`From ${headline.scope}`}
           value={cash.mtd}
@@ -1957,8 +1958,60 @@ function AdSpendBody({ e }: { e: ExpensesPayload }) {
   );
 }
 
+/**
+ * Why profit is not drawn, each reason once. The worker writes one "a cost
+ * group is missing" per group (expenses.js:184), so October read the same
+ * words three times in one sentence (2026-11-02, Goals sheet round 2, fix
+ * 14). The groups are named instead, from the same payload; any other
+ * sentence is kept, with a repeated clause dropped.
+ */
+export function profitWhy(e: ExpensesPayload): string | null {
+  const why = e.profit.why;
+  if (!why) return null;
+  const cut = why.indexOf(" because ");
+  if (cut < 0) return why;
+  const head = why.slice(0, cut);
+  const groups: [string, ExpensesPayload["software"]][] = [
+    ["Software", e.software],
+    ["Overhead", e.overhead],
+    ["Labour", e.labour],
+    ["Lead-gen ad spend", e.ownAdSpend],
+  ];
+  const named = (q: "missing" | "floor") =>
+    groups.filter(([, g]) => g?.quality === q).map(([name]) => name);
+  const missing = named("missing");
+  const floor = named("floor");
+  const verb = (n: string[]) => (n.length === 1 ? "is" : "are");
+  if (/a cost group is/.test(why) && (missing.length || floor.length)) {
+    const parts = [
+      missing.length ? `${listOf(missing)} ${verb(missing)} missing` : null,
+      floor.length
+        ? `${listOf(floor)} ${verb(floor)} counted only in part`
+        : null,
+    ].filter(Boolean);
+    return `${head} because ${parts.join(", and ")}. Each one's card above says why.`;
+  }
+  const clauses = why
+    .slice(cut + " because ".length)
+    .replace(/\.$/, "")
+    .split(" and ")
+    .filter(c => c.trim());
+  // Every group measured still leaves profit undrawn while cash in is Whop
+  // only (expenses.js REVENUE_IS_COMPLETE); the worker then names no reason.
+  if (!clauses.length)
+    return `${head} because Whop cash in is not every rail's money, so the month's revenue is not complete.`;
+  return `${head} because ${[...new Set(clauses)].join(" and ")}.`;
+}
+
+/** "Software", "Software and Labour", "Software, Overhead and Labour". */
+function listOf(parts: string[]): string {
+  if (parts.length <= 1) return parts.join("");
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
 function TotalsBody({ e }: { e: ExpensesPayload }) {
   const items = categoryItems(e.byCategory);
+  const why = profitWhy(e);
   return (
     <div className="grid gap-8 @3xl:grid-cols-2 @3xl:gap-10">
       <div className="min-w-0">
@@ -1984,18 +2037,23 @@ function TotalsBody({ e }: { e: ExpensesPayload }) {
             sub="Money moved to a card, not money spent."
             naHint="The import carries no card unload lines for this month."
           />
+          {/* Whop only (expenses.js reads whop_payments), so the label says
+              so (2026-11-02, Goals sheet round 2, fix 14): October read
+              $10,050 here against $27,980.62 in on every rail. */}
           <StatTile
             variant="plain"
-            label="Cash in for the same month"
+            label="Whop cash in"
             value={money(e.revenue)}
-            naHint="Cash for this month is not available, so no profit can be drawn."
+            sub="Same month. Tap, bank and hand-logged money are not in it."
+            hint="Whop payments for the statement's month, net of Whop refunds. Every rail's cash in is the Cash in, every rail card at the top of this tab."
+            naHint="Whop cash for this month is not available, so no profit can be drawn."
           />
           <StatTile
             variant="plain"
             label="Profit"
             value={money(e.profit.amount)}
             naHint={
-              e.profit.why ??
+              why ??
               "Profit is only drawn when every line inside spend is measured."
             }
           />
@@ -2004,13 +2062,12 @@ function TotalsBody({ e }: { e: ExpensesPayload }) {
             label="Margin"
             value={pct(e.profit.margin)}
             naHint={
-              e.profit.why ??
-              "A margin is only drawn when profit itself can be drawn."
+              why ?? "A margin is only drawn when profit itself can be drawn."
             }
           />
         </div>
-        {e.profit.why ? (
-          <Explain summary="Why profit is not drawn">{e.profit.why}</Explain>
+        {why ? (
+          <Explain summary="Why profit is not drawn">{why}</Explain>
         ) : null}
       </div>
       <div className="min-w-0">

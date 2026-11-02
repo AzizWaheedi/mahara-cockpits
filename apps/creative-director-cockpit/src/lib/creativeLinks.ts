@@ -13,7 +13,13 @@
  * ClickUp form (docs/requests/CLICKUP-DOWNGRADE.md).
  */
 
-import { COCKPIT_GUIDES, COCKPIT_SOP } from "./cockpits";
+import {
+  COCKPIT_GUIDES,
+  COCKPIT_SOP,
+  SOP_VIDEOS,
+  type SopVideoInfo,
+  TEAM_GUIDES,
+} from "./cockpits";
 import { portalUrl } from "./portal";
 
 /**
@@ -25,6 +31,8 @@ export type LinkRow = {
   url?: string;
   note?: string;
   to?: { path: string; label: string };
+  /** A how-to video: the Links page plays it in place (SopVideo). */
+  video?: SopVideoInfo;
 };
 export type LinkGroup = { title: string; blurb: string; rows: LinkRow[] };
 
@@ -37,6 +45,7 @@ export const LINK_GROUPS: LinkGroup[] = [
       {
         label: "Watch the demo",
         url: COCKPIT_GUIDES.creative.video,
+        video: SOP_VIDEOS.creative.demo,
         note: "Two minutes on the real cockpit, step by step",
       },
       {
@@ -56,6 +65,16 @@ export const LINK_GROUPS: LinkGroup[] = [
         url: COCKPIT_SOP.creative,
         note: "The SOP for this cockpit, in ClickUp",
       },
+      {
+        label: "Raise a ticket (the SOP for every team)",
+        url: TEAM_GUIDES.ticket.doc,
+        note: "Ask another team with Ask a team, follow it, and work the tickets assigned to you",
+      },
+      {
+        label: "Raise a ticket and work one (video)",
+        url: TEAM_GUIDES.ticket.video,
+        video: SOP_VIDEOS.team.ticket,
+      },
     ],
   },
   {
@@ -71,6 +90,7 @@ export const LINK_GROUPS: LinkGroup[] = [
       {
         label: "Brand Blueprint call: run it in this cockpit (video)",
         url: COCKPIT_GUIDES.creative.howTo.blueprint,
+        video: SOP_VIDEOS.creative.blueprint,
         note: "Three minutes, silent: from the client's card to the locked offer, the whole call in this cockpit. Watch it before your first one",
       },
       {

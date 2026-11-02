@@ -23,6 +23,7 @@ import {
   pct,
   pct1,
   plural,
+  shiftMonth,
 } from "@/components/ceo/format";
 import { churnHeadline, highRiskCount } from "@/components/ceo/metrics";
 import { Na } from "@/components/ceo/Na";
@@ -45,7 +46,7 @@ import type {
   DeliveryPayload,
   Note,
 } from "@/types/ceo/payloads";
-import { CHURN_PAGE, churnView } from "./churnRegister";
+import { CHURN_PAGE, churnView, registerMonths } from "./churnRegister";
 import {
   CPB_CONFIRMED_LABEL,
   cpbConfirmedOf,
@@ -56,6 +57,36 @@ import {
 import { statusRule } from "./deliveryStatus";
 import { DeliveryTimeframeCard } from "./timeframeCards";
 import type { CeoTabProps } from "./types";
+
+/**
+ * Last month's departures by the confirm's churn type (mid-programme counts,
+ * a finished term does not), beside the register's day-90 figure. The two
+ * disagree on purpose: October 2026 read 5 of 21 on the day-90 rule and 6 by
+ * the confirms, which the Goals sheet and the metric registry use (2026-11-02,
+ * Goals sheet round 2, fix 18). Null when the departures were not read (an
+ * older payload or a failed read): never 0.
+ */
+export function confirmedTypeLastMonth(
+  p: ClientsPayload | null | undefined,
+  today: string,
+): { count: number; words: string } | null {
+  const life = p?.lifecycle;
+  const last = shiftMonth(today.slice(0, 7), -1);
+  if (!life?.read || !Array.isArray(life.departures) || !last) return null;
+  const n = life.departures.filter(
+    d => typeof d.leftOn === "string" && d.leftOn.startsWith(last) && d.counts,
+  ).length;
+  const start =
+    registerMonths(p?.churnRegister)?.find(r => r.month === last)
+      ?.activeAtStart ?? null;
+  return {
+    count: n,
+    words:
+      isNum(start) && start > 0
+        ? `${count(n)} of ${count(start)} (${pct1(n / start)})`
+        : plural(n, "departure"),
+  };
+}
 
 type GoTab = CeoTabProps["goTab"];
 
@@ -232,6 +263,7 @@ function BookCard({
     clients?.payload?.churnRegister,
     today.slice(0, 7),
   );
+  const typed = confirmedTypeLastMonth(clients?.payload, today);
   const retainer = clients?.payload?.retainer ?? null;
   const active = m?.groups.find(g => g.group === "active") ?? null;
   const paused = m?.groups.find(g => g.group === "paused") ?? null;
@@ -365,8 +397,11 @@ function BookCard({
           items={[
             {
               label: register ? `${register.lastName}` : "Last month",
-              value: register?.last ?? null,
-              hint: "Last month in the churn register: lost before day 90, of the clients active at the start.",
+              value:
+                register?.last && typed
+                  ? `${register.last} · ${count(typed.count)} by confirmed type`
+                  : (register?.last ?? null),
+              hint: `Last month in the churn register: lost before day 90, of the clients active at the start.${typed ? ` By confirmed type, ${typed.words}, the way the Goals sheet's Clients churned and the metric registry count it: every departure whose confirm calls it churn rather than a finished term, before or after day 90. The day-90 rule is kept for pay.` : ""}`,
             },
             {
               label: "Rolling three months",

@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import {
+  ArrowUpRight,
   Library,
   LogOut,
   Megaphone,
@@ -14,13 +15,28 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { STATUS_COLOR } from "@/components/ceo/StatusChip";
 import { useCeo } from "@/components/ceo/useCeo";
+import { SopVideo } from "@/components/SopVideo";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Wordmark } from "@/components/Wordmark";
 import { useTheme } from "@/contexts/ThemeContext";
-import { COCKPIT_ICON, COCKPIT_SOP } from "@/lib/cockpits";
+import {
+  COCKPIT_GUIDES,
+  COCKPIT_ICON,
+  COCKPIT_SOP,
+  SOP_VIDEOS,
+  TEAM_GUIDES,
+} from "@/lib/cockpits";
 import { openSearch } from "@/lib/search";
 import { ceoBadges } from "@/pages/CeoPage";
 import { CEO_NAV } from "@/pages/ceo/nav";
@@ -61,16 +77,16 @@ const navItems = [
     also: ["/eod"],
   },
   {
-    href: "/clients",
-    label: "Clients",
-    icon: Users,
+    href: "/ads",
+    label: "Ads",
+    icon: Megaphone,
     role: "media_buyer",
     also: [] as string[],
   },
   {
-    href: "/ads",
-    label: "Ads",
-    icon: Megaphone,
+    href: "/clients",
+    label: "Clients",
+    icon: Users,
     role: "media_buyer",
     also: [] as string[],
   },
@@ -87,26 +103,88 @@ const navItems = [
 const DENSE = "cockpit-nav-link lg:h-7";
 
 /** The cockpit's SOP: a row like the others, opening ClickUp in a new tab. */
-function SopLink({ href }: { href: string }) {
+/**
+ * How to use this cockpit: the demo plays here, with the two Google Docs and
+ * the written SOP in ClickUp under it, instead of a ClickUp tab
+ * (Aziz, 2026-11-02: "embed them into the cockpit").
+ */
+function SopLink() {
   const { setOpenMobile } = useSidebar();
+  const [open, setOpen] = useState(false);
   const Icon = COCKPIT_ICON.sop;
+  const docs = [
+    {
+      label: "The simple SOP",
+      url: COCKPIT_GUIDES.media_buyer.simple,
+      note: "Your day step by step, with a picture of every step",
+    },
+    {
+      label: "The in-depth SOP",
+      url: COCKPIT_GUIDES.media_buyer.deep,
+      note: "Every screen, and how to use it",
+    },
+    {
+      label: "The written SOP, in ClickUp",
+      url: COCKPIT_SOP.media_buyer,
+      note: "The day in ten steps, for signed-in ClickUp members",
+    },
+    {
+      label: "Raise a ticket (the SOP for every team)",
+      url: TEAM_GUIDES.ticket.doc,
+      note: "Ask another team with Ask a team, follow it, and work the tickets assigned to you",
+    },
+  ];
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
-        asChild
         tooltip="How to use this cockpit"
         className="cockpit-nav-link"
+        onClick={() => {
+          setOpenMobile(false);
+          setOpen(true);
+        }}
       >
-        <a
-          href={href}
-          target="_blank"
-          rel="noreferrer"
-          onClick={() => setOpenMobile(false)}
-        >
-          <Icon />
-          <span>How to use this cockpit</span>
-        </a>
+        <Icon />
+        <span>How to use this cockpit</span>
       </SidebarMenuButton>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>How to use this cockpit</DialogTitle>
+            <DialogDescription>
+              Watch the demo once, then keep the simple SOP open beside you
+              while you learn the day.
+            </DialogDescription>
+          </DialogHeader>
+          {open ? (
+            <SopVideo video={SOP_VIDEOS.media_buyer.demo} startOpen />
+          ) : null}
+          <SopVideo video={SOP_VIDEOS.team.ticket} />
+          <ul className="divide-y rounded-xl border">
+            {docs.map(d => (
+              <li key={d.url}>
+                <a
+                  href={d.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium">{d.label}</span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">
+                      {d.note}
+                    </span>
+                  </span>
+                  <ArrowUpRight
+                    aria-hidden
+                    className="size-4 shrink-0 text-muted-foreground"
+                  />
+                </a>
+              </li>
+            ))}
+          </ul>
+        </DialogContent>
+      </Dialog>
     </SidebarMenuItem>
   );
 }
@@ -320,69 +398,39 @@ function SidebarNav() {
 
   return (
     <SidebarContent>
-      <SidebarGroup>
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {auth.isCeo ? (
-              <NavLink
-                href="/ceo"
-                label="CEO"
-                icon={COCKPIT_ICON.ceo}
-                isActive={location.pathname.startsWith("/ceo")}
-              />
-            ) : null}
-            {auth.isAdmin ? (
-              <NavLink
-                href="/admin"
-                label="Admin"
-                icon={COCKPIT_ICON.admin}
-                isActive={location.pathname === "/admin"}
-              />
-            ) : null}
-            {/* Every lead and appointment, for checking the numbers. */}
-            {auth.isAdmin ? (
-              <NavLink
-                href="/data"
-                label="Data"
-                icon={Table2}
-                isActive={location.pathname === "/data"}
-              />
-            ) : null}
-            {/* Everybody's: the team's meetings and their agendas. */}
-            {auth.isAuthenticated ? (
-              <NavLink
-                href="/team"
-                label="Team meetings"
-                icon={COCKPIT_ICON.team}
-                isActive={location.pathname.startsWith("/team")}
-              />
-            ) : null}
-            {/* Everybody's: ask another team for something; it becomes a
-                ClickUp task with its SOP steps and an owner (2026-10-26). */}
-            {auth.isAuthenticated ? (
-              <NavLink
-                href="/requests"
-                label="Ask a team"
-                icon={COCKPIT_ICON.requests}
-                isActive={location.pathname.startsWith("/requests")}
-              />
-            ) : null}
-            {/* Everybody's: every client against its targets (2026-10-16). */}
-            {auth.isAuthenticated ? (
-              <NavLink
-                href="/performance"
-                label="Client performance"
-                icon={COCKPIT_ICON.performance}
-                isActive={location.pathname === "/performance"}
-              />
-            ) : null}
-            {/* The media buyer's SOP, in ClickUp, in a new tab. */}
-            {allowed.includes("media_buyer") ? (
-              <SopLink href={COCKPIT_SOP.media_buyer} />
-            ) : null}
-          </SidebarMenu>
-        </SidebarGroupContent>
-      </SidebarGroup>
+      {auth.isCeo || auth.isAdmin ? (
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {auth.isCeo ? (
+                <NavLink
+                  href="/ceo"
+                  label="CEO"
+                  icon={COCKPIT_ICON.ceo}
+                  isActive={location.pathname.startsWith("/ceo")}
+                />
+              ) : null}
+              {auth.isAdmin ? (
+                <NavLink
+                  href="/admin"
+                  label="Admin"
+                  icon={COCKPIT_ICON.admin}
+                  isActive={location.pathname === "/admin"}
+                />
+              ) : null}
+              {/* Every lead and appointment, for checking the numbers. */}
+              {auth.isAdmin ? (
+                <NavLink
+                  href="/data"
+                  label="Data"
+                  icon={Table2}
+                  isActive={location.pathname === "/data"}
+                />
+              ) : null}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      ) : null}
       {items.length ? (
         <SidebarGroup>
           <SidebarGroupLabel>Media buyer</SidebarGroupLabel>
@@ -400,6 +448,46 @@ function SidebarNav() {
                   }
                 />
               ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      ) : null}
+      {auth.isAuthenticated || allowed.includes("media_buyer") ? (
+        <SidebarGroup>
+          <SidebarGroupLabel>More</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {/* Everybody's: the team's meetings and their agendas. */}
+              {auth.isAuthenticated ? (
+                <NavLink
+                  href="/team"
+                  label="Team meetings"
+                  icon={COCKPIT_ICON.team}
+                  isActive={location.pathname.startsWith("/team")}
+                />
+              ) : null}
+              {/* Everybody's: ask another team for something; it becomes a
+                  ClickUp task with its SOP steps and an owner (2026-10-26).
+                  The Raise a ticket SOP and the phone bar's More point here. */}
+              {auth.isAuthenticated ? (
+                <NavLink
+                  href="/requests"
+                  label="Ask a team"
+                  icon={COCKPIT_ICON.requests}
+                  isActive={location.pathname.startsWith("/requests")}
+                />
+              ) : null}
+              {/* Everybody's: every client against its targets (2026-10-16). */}
+              {auth.isAuthenticated ? (
+                <NavLink
+                  href="/performance"
+                  label="Client performance"
+                  icon={COCKPIT_ICON.performance}
+                  isActive={location.pathname === "/performance"}
+                />
+              ) : null}
+              {/* The media buyer's SOP: the demo and the docs, in a window. */}
+              {allowed.includes("media_buyer") ? <SopLink /> : null}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

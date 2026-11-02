@@ -690,9 +690,12 @@ function WeekCard({ me, view }: { me: Me; view: ScopeView }) {
     >
       <div className="@container">
         <div className="grid grid-cols-2 gap-4 @lg:grid-cols-4">
+          {/* The same names as the Numbers page (2026-11-02, Goals sheet
+              round 2, fixes 14 and 17): calls by the day of the call, and
+              the deposits typed on the form, not the deal ledger's cash. */}
           <StatTile
             variant="plain"
-            label="Booked"
+            label="Scheduled"
             value={count(sum("calls_scheduled"))}
             status={pace(sum("calls_scheduled"), goals?.booked)}
           />
@@ -710,7 +713,7 @@ function WeekCard({ me, view }: { me: Me; view: ScopeView }) {
           />
           <StatTile
             variant="plain"
-            label="Cash collected"
+            label="Deposits typed"
             value={money(sum("cash_collected"))}
             status={pace(sum("cash_collected"), goals?.cash)}
           />

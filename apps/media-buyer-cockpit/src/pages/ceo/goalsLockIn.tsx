@@ -10,6 +10,7 @@ import type { SheetData } from "./goalsSheetData";
 import {
   COLUMN_BY_KEY,
   lifecycleOf,
+  lineLabel,
   type ManualLogged,
   type MeasuredLine,
   manualLoggedOf,
@@ -401,7 +402,7 @@ export function LockIn({
                   >
                     <div className="grid gap-x-4 gap-y-1 lg:grid-cols-[minmax(0,14rem)_minmax(0,14rem)_minmax(0,1fr)]">
                       <p className="text-sm font-medium" dir="auto">
-                        {r.label}
+                        {lineLabel(r)}
                       </p>
                       <p className="flex flex-wrap items-baseline gap-2 text-sm">
                         <span className="font-semibold tabular-nums" dir="auto">

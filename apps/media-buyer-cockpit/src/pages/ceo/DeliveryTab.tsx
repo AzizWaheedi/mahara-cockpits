@@ -7,6 +7,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
+import { clientCplOf, META_FORM_LEADS } from "@/components/ceo/clientCpl";
 import { type Column, DataTable } from "@/components/ceo/DataTable";
 import { Delta } from "@/components/ceo/Delta";
 import { EmptyState } from "@/components/ceo/EmptyState";
@@ -422,6 +423,7 @@ function Headline({
   // counted meetings by the day they were for and says so.
   const byBookingDay = d.bookingSource === "board";
   const cost = cpbConfirmedOf(w, d.bookingSource);
+  const cpl = clientCplOf(w);
 
   const tiles = [
     {
@@ -444,29 +446,41 @@ function Headline({
       ),
     },
     {
+      // Meta's count, named as such: the cost per lead beside it divides by
+      // CRM ad leads once the worker pairs them (2026-11-02, fix 9).
       key: "leads",
       lines: lines(count, x => x.leads),
       tile: (
         <StatTile
           variant="plain"
-          label="Leads"
+          label={META_FORM_LEADS}
           value={count(w.leads)}
           delta={<Delta value={change(w.leads, p.leads)} vs={vs} />}
+          hint="Lead-form leads Meta counted on the clients' ad accounts, as the Client Performance board's Meta leads column counts them."
         />
       ),
     },
     {
+      // CRM ad leads over the spend paired with them, the Goals sheet's
+      // client CPL (2026-11-02, fix 9); Meta's on an older payload.
       key: "cpl",
-      lines: lines(money, x => x.cpl),
+      lines: lines(money, x => clientCplOf(x).value),
       tile: (
         <StatTile
           variant="plain"
           label="Cost per lead"
-          value={money(w.cpl)}
-          naHint="No leads in the last 7 days, so there is no cost per lead."
-          status={gateChip(w.cpl, gates.cpl, "lead")}
-          delta={<Delta value={change(w.cpl, p.cpl)} goodWhen="down" vs={vs} />}
-          hint={`Spend divided by leads. The gate is ${money(gates.cpl)}.`}
+          value={money(cpl.value)}
+          naHint={cpl.naHint}
+          status={gateChip(cpl.value, gates.cpl, "lead")}
+          sub={cpl.sub ?? undefined}
+          delta={
+            <Delta
+              value={change(cpl.value, clientCplOf(p).value)}
+              goodWhen="down"
+              vs={vs}
+            />
+          }
+          hint={`${cpl.hint} The gate is ${money(gates.cpl)}.`}
         />
       ),
     },
@@ -582,14 +596,14 @@ function DailyCharts({ d }: { d: DeliveryPayload }) {
       <TimeSeriesChart
         initialRange="30d"
         data={rows}
-        series={[{ key: "leads", label: "Leads" }]}
+        series={[{ key: "leads", label: META_FORM_LEADS }]}
         kind="area"
         unit="count"
-        title="Leads"
+        title={META_FORM_LEADS}
         summary={`${count(leads)} total`}
         height={180}
         syncId="ceo-delivery-daily"
-        ariaLabel={`Client leads per day, ${span}. ${count(leads)} in total, ${count(last?.leads)} on the last day.`}
+        ariaLabel={`Client Meta form leads per day, ${span}. ${count(leads)} in total, ${count(last?.leads)} on the last day.`}
       />
       <TimeSeriesChart
         initialRange="30d"
@@ -972,16 +986,18 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
       cell: r => money(r.spend7d),
       sortValue: r => r.spend7d,
     },
+    // Per client the worker pairs no CRM count, so these stay Meta's, as on
+    // the Client Performance board, and say so (2026-11-02, fix 9).
     {
       key: "leads",
-      header: "Leads",
+      header: "Meta leads",
       numeric: true,
       cell: r => count(r.leads7d),
       sortValue: r => r.leads7d,
     },
     {
       key: "cpl",
-      header: "Cost per lead",
+      header: "Cost per Meta lead",
       numeric: true,
       cell: r => <GateCell value={r.cpl7d} gate={d.gates.cpl} noun="lead" />,
       sortValue: r => r.cpl7d,

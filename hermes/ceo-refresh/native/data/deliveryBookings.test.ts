@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   bookingLedger,
   clientBookingWindow,
+  crmPairs,
   daysOf,
   deliveryDaily,
   deliveryWindow,
@@ -143,10 +144,10 @@ describe("the daily series", () => {
     const t = fixture();
     const rows = deliveryDaily(t, bookingLedger(t), day(14), day(17));
     expect(rows).toEqual([
-      { date: day(14), spend: 169.25, leads: 11, bookings: 3, confirmed: 2, provisional: 1, spendMeasured: 160, spendDoneWithYou: 0 },
-      { date: day(15), spend: 80.5, leads: 3, bookings: 2, confirmed: 2, provisional: 0, spendMeasured: 50, spendDoneWithYou: 0 },
-      { date: day(16), spend: 40, leads: 1, bookings: 1, confirmed: 1, provisional: 0, spendMeasured: 0, spendDoneWithYou: 0 },
-      { date: day(17), spend: 0, leads: 0, bookings: 0, confirmed: null, provisional: null, spendMeasured: null, spendDoneWithYou: 0 },
+      { date: day(14), spend: 169.25, leads: 11, bookings: 3, confirmed: 2, provisional: 1, spendMeasured: 160, spendDoneWithYou: 0, crmAdLeads: null, crmSpend: null },
+      { date: day(15), spend: 80.5, leads: 3, bookings: 2, confirmed: 2, provisional: 0, spendMeasured: 50, spendDoneWithYou: 0, crmAdLeads: null, crmSpend: null },
+      { date: day(16), spend: 40, leads: 1, bookings: 1, confirmed: 1, provisional: 0, spendMeasured: 0, spendDoneWithYou: 0, crmAdLeads: null, crmSpend: null },
+      { date: day(17), spend: 0, leads: 0, bookings: 0, confirmed: null, provisional: null, spendMeasured: null, spendDoneWithYou: 0, crmAdLeads: null, crmSpend: null },
     ]);
     // The series adds up to the window: one rule, any run of days.
     const w = deliveryWindow(t, bookingLedger(t), day(14), day(16));
@@ -266,8 +267,8 @@ describe("done with you and churned (23 Oct 2026)", () => {
     const t = more();
     const rows = deliveryDaily(t, bookingLedger(t), day(14), day(15));
     expect(rows).toEqual([
-      { date: day(14), spend: 289.75, leads: 20, bookings: 3, confirmed: 2, provisional: 1, spendMeasured: 160, spendDoneWithYou: 120.5 },
-      { date: day(15), spend: 159.3, leads: 11, bookings: 2, confirmed: 2, provisional: 0, spendMeasured: 50, spendDoneWithYou: 71.83 },
+      { date: day(14), spend: 289.75, leads: 20, bookings: 3, confirmed: 2, provisional: 1, spendMeasured: 160, spendDoneWithYou: 120.5, crmAdLeads: null, crmSpend: null },
+      { date: day(15), spend: 159.3, leads: 11, bookings: 2, confirmed: 2, provisional: 0, spendMeasured: 50, spendDoneWithYou: 71.83, crmAdLeads: null, crmSpend: null },
     ]);
     // The series still adds up to the window, one rule for any run of days.
     const w = deliveryWindow(t, bookingLedger(t), day(14), day(15));
@@ -317,5 +318,110 @@ describe("done with you and churned (23 Oct 2026)", () => {
     expect(w.doneWithYou).toEqual([]);
     expect(w.confirmed).toBe(7);
     expect(w.spendMeasured).toBe(402.33);
+  });
+});
+
+/**
+ * Client cost per lead on the clients' own CRM (2026-11-02, Goals sheet fix 9; the CEO: "leads, I
+ * would get them from the CRM, not just Meta"). The board's ad leads (cockpit_client_days.crm_ad_leads)
+ * over the spend of the same clients on the same days: a client pairs on a day when every location it
+ * ties to stores a CRM count. October 2026 on live data: $12,550.97 over 929 is $13.51, where Meta's
+ * 954 form leads give $13.17.
+ */
+describe("client CPL on the CRM, paired by client and day (fix 9)", () => {
+  function crm() {
+    const t = fixture();
+    const at = (loc: string, date: string, n: number | null) => {
+      const r = t.bookingDays.find(b => b.locationId === loc && b.date === date) as Record<string, unknown> | undefined;
+      if (r) r.crmAdLeads = n;
+      else t.bookingDays.push({ locationId: loc, date, confirmed: 0, provisional: 0, crmAdLeads: n } as (typeof t.bookingDays)[number]);
+    };
+    at("loc-a", day(14), 4);
+    at("loc-a", day(15), 2);
+    // A stored count on a day Alpha spent nothing: its leads count, with $0 of its spend.
+    at("loc-a", day(16), 1);
+    at("loc-b", day(14), 3);
+    // Beta's 15th has a booking count but no CRM count: Beta is in neither side that day.
+    at("loc-b", day(15), null);
+    // A location no client here ties to: in no figure.
+    at("loc-x", day(14), 9);
+    return t;
+  }
+
+  test("each day: the paired clients' ad leads and their spend that day; a day nothing pairs is null, never zero", () => {
+    const t = crm();
+    const rows = deliveryDaily(t, bookingLedger(t), day(14), day(17));
+    expect(rows.map(r => [r.date, r.crmAdLeads, r.crmSpend])).toEqual([
+      // Alpha 4 + Beta 3 over Alpha $100 + Beta $60; Pidco (no CRM count) and the untied account are out.
+      [day(14), 7, 160],
+      // Alpha only: 2 over $50. Beta's $40 is not paired with nothing.
+      [day(15), 2, 50],
+      [day(16), 1, 0],
+      [day(17), null, null],
+    ]);
+    // Meta's form leads and the whole spend stay beside it for comparison.
+    expect(rows.map(r => [r.leads, r.spend])).toEqual([[11, 169.25], [3, 80.5], [1, 40], [0, 0]]);
+  });
+
+  test("a window sums its paired days, the same rule for any run of days, and is null when none pairs", () => {
+    const t = crm();
+    const ledger = bookingLedger(t);
+    expect(deliveryWindow(t, ledger, day(14), day(17))).toMatchObject({ crmAdLeads: 10, crmSpend: 210 });
+    // What it leaves out, named: Beta's 16th has no CRM count, Pidco's board stores none, Art Vision ties to no location.
+    expect(deliveryWindow(t, ledger, day(14), day(17)).crmLeftOut).toEqual([
+      { client: "Beta", spend: 40 },
+      { client: "Pidco", spend: 30.5 },
+      { client: "Art Vision", spend: 9.25 },
+    ]);
+    const rows = deliveryDaily(t, ledger, day(14), day(17));
+    expect(rows.reduce((n, r) => n + (r.crmAdLeads ?? 0), 0)).toBe(10);
+    expect(rows.reduce((n, r) => n + (r.crmSpend ?? 0), 0)).toBe(210);
+    expect(deliveryWindow(t, ledger, day(20), day(21))).toMatchObject({ crmAdLeads: null, crmSpend: null });
+    // The board stores no CRM count at all: not measured, never zero leads.
+    const plain = fixture();
+    expect(deliveryWindow(plain, bookingLedger(plain), day(14), day(16))).toMatchObject({ crmAdLeads: null, crmSpend: null });
+    // Then every dollar is left out, and said.
+    expect(deliveryWindow(plain, bookingLedger(plain), day(14), day(16)).crmLeftOut.reduce((n: number, x: { spend: number }) => n + x.spend, 0)).toBe(289.75);
+  });
+
+  test("a client on two locations pairs only when both store a count; a location two clients share counts once", () => {
+    const t = crm();
+    t.clients = t.clients.map(c => (c.clientId === "acc-a" ? { ...c, locationIds: ["loc-a", "loc-a2"] } : c));
+    t.bookingDays.push({ locationId: "loc-a2", date: day(14), confirmed: 0, provisional: 0, crmAdLeads: 5 } as (typeof t.bookingDays)[number]);
+    const rows = crmPairs(t, bookingLedger(t), day(14), day(15));
+    // 14th: loc-a 4 + loc-a2 5 + Beta 3 over $160; 15th: loc-a2 has no count, so Alpha does not pair.
+    expect(rows.get(day(14))).toEqual({ crmAdLeads: 12, crmSpend: 160 });
+    expect(rows.get(day(15))).toEqual({ crmAdLeads: null, crmSpend: null });
+    const shared = crm();
+    shared.clients = shared.clients.map(c => (c.clientId === "acc-b" ? { ...c, locationIds: ["loc-a"] } : c));
+    // Alpha and Beta both on loc-a: its 4 once, both clients' spend.
+    expect(crmPairs(shared, bookingLedger(shared), day(14), day(14)).get(day(14))).toEqual({ crmAdLeads: 4, crmSpend: 160 });
+  });
+
+  test("a client-day whose spend was not read (a currency with no rate) pairs on neither side (review, 2026-11-02)", () => {
+    const t = crm();
+    // Alpha's 14th also ran an account in a currency the rate table lacks: part of its spend is unknown, so its
+    // 4 CRM ad leads would sit over $100 of a larger spend. It is out of both sums, never $0 of spend.
+    (t as { spendUnknownDays?: { clientId: string; date: string }[] }).spendUnknownDays = [{ clientId: "acc-a", date: day(14) }];
+    const rows = crmPairs(t, bookingLedger(t), day(14), day(15));
+    expect(rows.get(day(14))).toEqual({ crmAdLeads: 3, crmSpend: 60 });
+    expect(rows.get(day(15))).toEqual({ crmAdLeads: 2, crmSpend: 50 });
+    // Its read part is named with what the window leaves out.
+    expect(deliveryWindow(t, bookingLedger(t), day(14), day(15)).crmLeftOut).toEqual([
+      { client: "Alpha", spend: 100 },
+      { client: "Pidco", spend: 30.5 },
+      { client: "Art Vision", spend: 9.25 },
+    ]);
+    // A client whose only spend that day was unread: no spend row at all, still not paired on its CRM count.
+    (t as { spendUnknownDays?: { clientId: string; date: string }[] }).spendUnknownDays = [{ clientId: "acc-a", date: day(16) }];
+    expect(crmPairs(t, bookingLedger(t), day(16), day(16)).get(day(16))).toEqual({ crmAdLeads: null, crmSpend: null });
+  });
+
+  test("Done With You stays in client CPL, as in every cost per lead", () => {
+    const t = crm();
+    t.clients.push({ clientId: "acc-n", name: "نهوض نجد", clickupTaskId: "task-n", status: "Active", serviceMode: "DWY", locationIds: ["loc-n"] } as (typeof t.clients)[number]);
+    t.days.push({ clientId: "acc-n", date: day(14), spend: 120.5, leads: 9 });
+    t.bookingDays.push({ locationId: "loc-n", date: day(14), confirmed: 2, provisional: 1, serviceMode: "DWY", crmAdLeads: 8 } as (typeof t.bookingDays)[number]);
+    expect(crmPairs(t, bookingLedger(t), day(14), day(14)).get(day(14))).toEqual({ crmAdLeads: 15, crmSpend: 280.5 });
   });
 });

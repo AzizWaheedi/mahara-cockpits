@@ -26,7 +26,7 @@ import { isNum, money, month as monthLabel, pct, pct1, plural } from "./format";
 export const VOIDED_OUT =
   "Voided deals are left out, though the B2B dashboard still counts them.";
 
-// --- Cash collected ------------------------------------------------------
+// --- Cash in, every rail -------------------------------------------------
 
 /**
  * The headline cash number, the same on Today, Frontend and Money.
@@ -37,6 +37,12 @@ export const VOIDED_OUT =
  * falls back to the Whop figures the rest of the cockpit reads, and `note`
  * says so. The label always names the connected rails, so a total is never
  * read as more than it covers.
+ *
+ * Named "Cash in, every rail" since 2026-11-02 (Goals sheet round 2, fix 14):
+ * "Cash collected" is the deal ledger's money on signed deals, as on the
+ * Goals sheet, so this all-rails total (back-end payments included) must not
+ * carry that name too. October 2026 read $27,980.62 here against the sheet's
+ * $24,377.36 under one name.
  */
 export type CashHeadline = {
   /** Cash over the connected rails, or the Whop-only fallback. */
@@ -51,7 +57,9 @@ export type CashHeadline = {
   railed: boolean;
   /** The connected rails in words: "Whop only", "Whop and Tap", "Whop, Tap and hand-logged". */
   scope: string;
-  /** "Cash collected this month, Whop only": the hero label on every tab that shows it. */
+  /** "Cash in, every rail", or "Cash in, Whop only" before the rails: the card title on every tab that shows it. */
+  title: string;
+  /** "Cash in this month, Whop and Tap": the hero label on every tab that shows it. */
   label: string;
   /** The caveat the card must carry whenever the number is narrower than all the money coming in. */
   note: Note | null;
@@ -109,7 +117,9 @@ export function cashHeadline(p: MoneyPayload): CashHeadline {
     manual,
     railed,
     scope,
-    label: `Cash collected this month, ${scope}`,
+    // A payload stored before the rails is Whop only, so its title says so.
+    title: railed ? "Cash in, every rail" : "Cash in, Whop only",
+    label: `Cash in this month, ${scope}`,
     note: railed ? null : RAILS_MISSING,
   };
 }
@@ -400,15 +410,52 @@ export const CANCEL_RATE = {
 } as const;
 
 /**
- * Front-end ROAS, the main one: front-end cash over lead-gen spend. Since
- * 2026-10-18 front-end cash is money paid on signed deals (MONEY-ATTRIBUTION.md
- * rule 6), never the amounts typed on the forms.
+ * Front-end ROAS, the main one: front-end cash over all Mahara ad spend, lead
+ * gen and retargeting. Since 2026-10-18 front-end cash is money paid on signed
+ * deals (MONEY-ATTRIBUTION.md rule 6), never the amounts typed on the forms.
+ *
+ * The denominator changed on 2026-11-02 (Goals sheet round 2, fix 15): the
+ * CEO's 30 Oct rule divides by all Mahara ad spend, so CEO Sales and Frontend
+ * read the sheet's FE ROAS (13.09x for October) instead of 14.73x on lead-gen
+ * spend alone. `of` divides the window's own fields, the same division the
+ * growth worker now publishes as `roasCash`, so a payload stored before that
+ * release reads on this rule too rather than showing the old figure under the
+ * new words. A window with no retargeting figure is n/a, never lead gen alone.
  */
+const ROAS_CASH_NA =
+  "No Mahara ad spend in this window, or front-end cash is not read yet (it shows once the money refresh has published the deal ledger).";
+
 export const ROAS_CASH = {
   label: "Front-end ROAS",
-  hint: `Front-end cash over lead-gen ad spend in the same window. Front-end cash is the money paid on signed deals, credited to their closers, on every rail, by the day it arrived; the deposit typed on the closer form and the kickoff form's amount are not in it. ${VOIDED_OUT}`,
-  naHint:
-    "No lead-gen spend in this window, or front-end cash is not read yet (it shows once the money refresh has published the deal ledger).",
+  hint: `Front-end cash over all Mahara ad spend, lead gen and retargeting, in the same window: the Goals sheet's FE ROAS. Front-end cash is the money paid on signed deals, credited to their closers, on every rail, by the day it arrived; the deposit typed on the closer form and the kickoff form's amount are not in it. ${VOIDED_OUT}`,
+  naHint: ROAS_CASH_NA,
+  of(w: Pick<FunnelWindow, "spend" | "raw" | "frontEndCash">): {
+    value: number | null;
+    naHint: string;
+  } {
+    const paid = w.frontEndCash?.paid;
+    if (!isNum(paid))
+      return {
+        value: null,
+        naHint:
+          "Front-end cash is not read yet: it shows once the money refresh has published the deal ledger.",
+      };
+    const retargeting = w.raw?.spend_retargeting;
+    if (!isNum(retargeting))
+      return {
+        value: null,
+        naHint:
+          "The B2B window function gave no retargeting spend for this window, so all Mahara ad spend cannot be added up.",
+      };
+    const spend = w.spend + retargeting;
+    if (!(spend > 0))
+      return { value: null, naHint: "No Mahara ad spend in this window." };
+    // Two places, as the worker rounds it, so the tile and the window agree.
+    return {
+      value: Math.round((paid / spend) * 100) / 100,
+      naHint: ROAS_CASH_NA,
+    };
+  },
 } as const;
 
 /** Contracted ROAS: contracted value over lead-gen spend. */

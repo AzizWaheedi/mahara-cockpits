@@ -94,6 +94,8 @@ export type AdsFilter = {
   label: string;
   /** Reads the row's numbers for the picked range, not the 7-day snapshot. */
   ranged?: boolean;
+  /** The everyday filters, shown before "More filters". */
+  primary?: boolean;
   /** `n` is undefined while the row's range is being read or failed. */
   test: (c: Campaign, n: RowNumbers | undefined) => boolean;
 };
@@ -106,7 +108,7 @@ export type AdsFilter = {
  * frames). The Call and the day average stay on 7 days, as their columns do.
  */
 export const ADS_FILTERS: AdsFilter[] = [
-  { label: "Everything", test: () => true },
+  { label: "Everything", primary: true, test: () => true },
   // No lead on 2 x the $15 gate or more is critical; under it there is not
   // enough data yet (decision 4, 23 Oct 2026). Judged on the cents the
   // Spend cell shows, so $29.99 is not and $30.00 is. Earlier leads that
@@ -114,6 +116,7 @@ export const ADS_FILTERS: AdsFilter[] = [
   {
     label: "Critical",
     ranged: true,
+    primary: true,
     test: (c, n) =>
       c.verdict === "kill" ||
       c.verdict === "off board" ||
@@ -134,6 +137,7 @@ export const ADS_FILTERS: AdsFilter[] = [
   {
     label: "Below KPI",
     ranged: true,
+    primary: true,
     test: (_c, n) =>
       n !== undefined &&
       typeof n.leads === "number" &&

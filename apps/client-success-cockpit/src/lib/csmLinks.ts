@@ -11,7 +11,13 @@
  * in the cockpit (Write 1-1 notes on the client's page), and the Typeform is closed.
  */
 
-import { COCKPIT_GUIDES, COCKPIT_SOP } from "./cockpits";
+import {
+  COCKPIT_GUIDES,
+  COCKPIT_SOP,
+  SOP_VIDEOS,
+  type SopVideoInfo,
+  TEAM_GUIDES,
+} from "./cockpits";
 
 export type LinkRow = {
   label: string;
@@ -24,6 +30,8 @@ export type LinkRow = {
    * goes.
    */
   form?: { key: string; oldUrl: string; waiting?: string };
+  /** A how-to video: the Links page plays it in place (SopVideo). */
+  video?: SopVideoInfo;
 };
 export type LinkGroup = { title: string; blurb: string; rows: LinkRow[] };
 
@@ -62,6 +70,7 @@ export const LINK_GROUPS: LinkGroup[] = [
       {
         label: "Watch the demo",
         url: COCKPIT_GUIDES.csm.video,
+        video: SOP_VIDEOS.csm.demo,
         note: "Two minutes on the real cockpit, step by step",
       },
       {
@@ -77,22 +86,70 @@ export const LINK_GROUPS: LinkGroup[] = [
       {
         label: "Onboarding call: run the deck and the kickoff form (video)",
         url: COCKPIT_GUIDES.csm.howTo.onboarding,
+        video: SOP_VIDEOS.csm.onboarding,
         note: "Three minutes, silent: prep, present with your notes, then submit the kickoff with the client so the Brand Blueprint is booked",
       },
       {
         label: "Launch call: run the launch deck (video)",
         url: COCKPIT_GUIDES.csm.howTo.launch,
+        video: SOP_VIDEOS.csm.launch,
         note: "Three minutes, silent: from prep to the client's green light",
       },
       {
         label: "Offers: pitch an offer and send a proposal (video)",
         url: COCKPIT_GUIDES.csm.howTo.offers,
+        video: SOP_VIDEOS.csm.offers,
         note: "Under three minutes, silent: Money → Offers, step by step. Watch it before your first pitch",
       },
       {
         label: "Client success cockpit, how to use it",
         url: COCKPIT_SOP.csm,
         note: "The SOP for this cockpit, in ClickUp",
+      },
+      {
+        label: "Raise a ticket (the SOP for every team)",
+        url: TEAM_GUIDES.ticket.doc,
+        note: "Ask another team with Ask a team, follow it, and work the tickets assigned to you",
+      },
+      {
+        label: "Raise a ticket and work one (video)",
+        url: TEAM_GUIDES.ticket.video,
+        video: SOP_VIDEOS.team.ticket,
+        note: "Under three minutes, silent, for every seat",
+      },
+    ],
+  },
+  {
+    // Aziz, 2026-11-02: one simple SOP for everything the CSM logs, with a
+    // video per part. The old Typeforms it replaces are closed.
+    title: "Log money and client changes",
+    blurb:
+      "Log it the same day: a payment, an invoice, more time, a pause, a client leaving or coming back, a win, and your 1-1 notes. The SOP opens with one table of where each one goes.",
+    rows: [
+      {
+        label: "Logging money and client changes (the SOP)",
+        url: COCKPIT_GUIDES.csm.sops.logging,
+        note: "It happened → where you log it, then four parts with a picture of every step",
+      },
+      {
+        label: "Money in: log a payment and send an invoice (video)",
+        url: COCKPIT_GUIDES.csm.howTo.money,
+        video: SOP_VIDEOS.csm.money,
+      },
+      {
+        label: "Give more time, pause, stop or bring back a client (video)",
+        url: COCKPIT_GUIDES.csm.howTo.changes,
+        video: SOP_VIDEOS.csm.changes,
+      },
+      {
+        label: "Log a review, referral, upsell or back-end programme (video)",
+        url: COCKPIT_GUIDES.csm.howTo.wins,
+        video: SOP_VIDEOS.csm.wins,
+      },
+      {
+        label: "What to log after a check-in call (video)",
+        url: COCKPIT_GUIDES.csm.howTo.afterCall,
+        video: SOP_VIDEOS.csm.afterCall,
       },
     ],
   },
@@ -150,7 +207,7 @@ export const LINK_GROUPS: LinkGroup[] = [
       {
         label: "Offboarding / exit call SOP",
         url: "https://www.skool.com/maharamedia-8165/classroom/68fc87a8?md=00c398fc4e774d00ab0ed3f426cab1bd",
-        note: "Before you ever send a cancellation form",
+        note: "Before you press Client is leaving: the old cancellation form is closed",
       },
       {
         label:
