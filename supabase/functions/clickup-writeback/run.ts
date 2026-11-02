@@ -22,7 +22,11 @@
 //                                        comment, Client Happiness, Last POC and Last
 //                                        Check-in Call), and nothing else (forms.ts
 //                                        formsGate). CLICKUP_WRITEBACK_FORMS_ONLY_CARDS
-//                                        narrows it to listed client cards (a canary)
+//                                        narrows it to listed client cards (a canary).
+//                                        CLICKUP_WRITEBACK_FORMS_KEYS lists the forms whose
+//                                        card writes are on (checkin, kickoff, onboarding;
+//                                        checkin when unset, forms.ts formsKeysGate): a row
+//                                        of another form is held, never written (Stage 4)
 //   CLICKUP_WRITEBACK_APPLY_BILLING      billing edits in the log (kind billing), and
 //                                        only those whose event kind is listed in
 //                                        CLICKUP_WRITEBACK_BILLING_KINDS (comma list,
@@ -82,6 +86,7 @@ import {
   formsDb,
   formsDoctorChecks,
   formsGate,
+  formsKeysGate,
   formsWords,
   frozenStep,
   planForm,
@@ -1029,6 +1034,8 @@ export async function formsIdle(db: ReturnType<typeof formsDb>, g: ReturnType<ty
 
 export async function runForms(deps: Deps, limit = 8): Promise<JobResult> {
   const g = formsGate(deps.env);
+  // Stage 4 (4.13.4): only the forms CLICKUP_WRITEBACK_FORMS_KEYS lists are written; checkin when unset.
+  const fk = formsKeysGate(deps.env);
   const onlyCards = [...g.onlyCards];
   const db = formsDb(deps.rpc);
   // A card list the gate cannot read keeps the writer off, and every answer of this run says so first (the row keeps
@@ -1121,6 +1128,14 @@ export async function runForms(deps: Deps, limit = 8): Promise<JobResult> {
         await handBack(item, g.error ?? (g.mode === "apply_limited" ? SAY_FORMS.heldLimited : SAY_FORMS.heldOff), HOLD_MS);
         continue;
       }
+      if (!fk.has(item.payload?.formKey ?? "checkin")) {
+        // This form's card writes are not switched on: back to the queue, untouched, like a held card.
+        counts.held += 1;
+        counts.heldOff += 1;
+        planned.push(...planForm(item));
+        await handBack(item, SAY_FORMS.heldForm(String(item.payload?.formKey ?? "checkin")), HOLD_MS);
+        continue;
+      }
       try {
         const checked = await formStep(item);
         const step = "step" in checked ? frozenStep(item, checked.step) : null;
@@ -1195,6 +1210,7 @@ export async function runForms(deps: Deps, limit = 8): Promise<JobResult> {
     const toRetry = counts.retry + counts.unknown;
     const tail = [
       counts.skipped ? `${counts.skipped} kept as ClickUp has them.` : "",
+      fk.error ?? "",
       went,
       refusedCards.size ? `ClickUp refused the cockpit's token on ${refusedCards.size === 1 ? "card" : "cards"} ${[...refusedCards].join(", ")}.` : "",
       stop ? `Stopped: ${stop}` : "",
@@ -1221,7 +1237,7 @@ export async function runForms(deps: Deps, limit = 8): Promise<JobResult> {
 }
 
 /** Secrets the forms jobs read, by name only (never a value). */
-export const FORMS_SECRETS = ["CLICKUP_API_TOKEN", "CRON_SECRET", "CLICKUP_WRITEBACK_APPLY_FORMS", "CLICKUP_WRITEBACK_FORMS_ONLY_CARDS"];
+export const FORMS_SECRETS = ["CLICKUP_API_TOKEN", "CRON_SECRET", "CLICKUP_WRITEBACK_APPLY_FORMS", "CLICKUP_WRITEBACK_FORMS_ONLY_CARDS", "CLICKUP_WRITEBACK_FORMS_KEYS"];
 
 /**
  * The forms doctor: reads only. Secrets by name, the mode, the six Client Happiness options and the two date
@@ -1230,6 +1246,7 @@ export const FORMS_SECRETS = ["CLICKUP_API_TOKEN", "CRON_SECRET", "CLICKUP_WRITE
  */
 export async function runFormsDoctor(deps: Deps): Promise<JobResult & { problems: string[]; secrets: Row; onlyCards: string[] }> {
   const fw = formsWords(deps.env);
+  const fk = formsKeysGate(deps.env);
   const secrets = Object.fromEntries(FORMS_SECRETS.map(k => [k, Boolean(deps.env(k))]));
   const problems: string[] = [];
   let counts: Row = {};
@@ -1237,6 +1254,7 @@ export async function runFormsDoctor(deps: Deps): Promise<JobResult & { problems
   if (!secrets.CLICKUP_API_TOKEN) problems.push(SAY.noToken);
   if (!secrets.CRON_SECRET) problems.push("CRON_SECRET is not set on this Edge Function, so the cron cannot start a 1-1 notes run.");
   if (fw.error) problems.push(fw.error);
+  if (fk.error) problems.push(fk.error);
   try {
     inputs = (await formsDb(deps.rpc).doctorInputs()) ?? {};
   } catch (e) {
@@ -1244,7 +1262,7 @@ export async function runFormsDoctor(deps: Deps): Promise<JobResult & { problems
   }
   if (secrets.CLICKUP_API_TOKEN) {
     try {
-      const checked = await formsDoctorChecks(inputs, paced(deps.providerFor(deps.uuid()), deps.pace), fw.cards);
+      const checked = await formsDoctorChecks(inputs, paced(deps.providerFor(deps.uuid()), deps.pace), fw.cards, [...fk.keys]);
       problems.push(...checked.problems);
       counts = checked.counts;
     } catch (e) {
@@ -1252,7 +1270,8 @@ export async function runFormsDoctor(deps: Deps): Promise<JobResult & { problems
     }
   }
   const ok = problems.length === 0;
-  const head = `1-1 notes writes: ${fw.text}.`;
+  const formsOn = [...fk.keys];
+  const head = `1-1 notes writes: ${fw.text}.${formsOn.join(",") === "checkin" ? "" : ` Forms written: ${formsOn.join(", ")}.`}`;
   const cards = counts.cards ? ` The test card ${(counts.cards as string[]).join(", ")} is on Clients - Mahara.` : "";
   const note = ok
     ? `Ready. ${head} Client Happiness has its six options and Last POC and Last Check-in Call are date fields on Clients - Mahara.${cards}`
@@ -1264,7 +1283,7 @@ export async function runFormsDoctor(deps: Deps): Promise<JobResult & { problems
       ...(ok ? { last_ok_at: at } : {}),
       ok,
       note: note.slice(0, 500),
-      detail: { mode: fw.mode, onlyCards: fw.cards, secrets, problems, counts, owners: inputs.owners ?? null, queue: inputs.queue ?? null, at },
+      detail: { mode: fw.mode, onlyCards: fw.cards, forms: [...fk.keys], secrets, problems, counts, owners: inputs.owners ?? null, queue: inputs.queue ?? null, at },
       updated_at: at,
     });
   } catch (e) {

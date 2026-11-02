@@ -11,6 +11,9 @@ the keys live:
   csat [--dry]            the old onboarding survey (KbcbPA73): the same
   onboarding [--dry]      the client's onboarding form (KFRCXPFx), still live: stored submitted, Make keeps every effect
   new_client [--dry]      the New Client Form (BTzMwXiw), still live: recorded only; nothing here submits it
+  kickoff --count         Stage 4's recorded inputs (docs/forms/WAVE56-CONTRACT.md 4.15.4): counts only of the
+                          kickoff read model (forms.kickoff, by form id), the kickoff responses (pointer and native)
+                          and the stored onboarding answers. No Typeform call, nothing written.
 
 It reads every response of the form through Typeform's responses API (read only) and builds each one exactly as
 forms-door does: the termination survey, the pause request, NPS and CSAT as legacyInput (no email or phone answer,
@@ -67,7 +70,7 @@ ARABIC = re.compile(r"[\u0600-\u06ff]")
 KEY_SHAPES = re.compile(r"sk-[A-Za-z0-9_-]{16,}|sb_secret_[A-Za-z0-9_-]{8,}|tfp_[A-Za-z0-9_-]{8,}"
                         r"|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")
 USAGE = ("Name the form: exit_survey, pause_request, nps, csat, onboarding or new_client, then --dry to read and "
-         "count without writing.")
+         "count without writing; or kickoff --count for Stage 4's recorded inputs.")
 
 
 class Stop(Exception):
@@ -107,13 +110,13 @@ def runtime_file() -> dict:
 class Run:
     """One run: the database door, the Typeform token, the receipts, and every key a message hides."""
 
-    def __init__(self, env: dict):
+    def __init__(self, env: dict, typeform: bool = True):
         self.url = str(env.get("SUPABASE_URL") or "").rstrip("/")
         self.service = str(env.get("SUPABASE_SERVICE_ROLE_KEY") or "")
         self.token = str(env.get("TYPEFORM_TOKEN") or "")
         if not self.url or not self.service:
             raise Stop("The native runtime file has no SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.")
-        if not self.token:
+        if typeform and not self.token:
             raise Stop("The native runtime file has no TYPEFORM_TOKEN.")
         self.run_key = f"forms-backfill:{uuid.uuid4()}"
         self.missed = 0
@@ -444,17 +447,53 @@ def backfill(run: Run, form: str, dry: bool) -> int:
     return 1 if failed or bad else 0
 
 
+def rows_of(run: Run, path: str, what: str) -> list:
+    """One PostgREST read as a list, or a Stop that says what could not be counted (missing is never zero)."""
+    try:
+        status, text = run.supabase("GET", path)
+        rows = json.loads(text) if status == 200 else None
+    except (NoAnswer, ValueError):
+        rows = None
+    if not isinstance(rows, list):
+        raise Stop(f"{what} could not be read, so it is not counted. Nothing was written.")
+    return [r for r in rows if isinstance(r, dict)]
+
+
+def kickoff_counts(run: Run) -> int:
+    """Stage 4's recorded inputs, counts only (4.15.4): never an answer, a card or a name."""
+    model = rows_of(run, "/rest/v1/cockpit_client_onboarding?select=kickoff:forms->kickoff->>form_id,"
+                         "onboarding:forms->onboarding->>form_id", "The client record")
+    responses_ = rows_of(run, "/rest/v1/cockpit_form_responses?select=form_key,form_version,state"
+                              "&form_key=in.(kickoff,onboarding)", "The stored answers")
+    by_form: dict = {}
+    for r in model:
+        if r.get("kickoff"):
+            by_form[r["kickoff"]] = by_form.get(r["kickoff"], 0) + 1
+    kick = [r for r in responses_ if r.get("form_key") == "kickoff"]
+    onb = [r for r in responses_ if r.get("form_key") == "onboarding"]
+    pointer = sum(1 for r in kick if r.get("form_version") == 1)
+    native = sum(1 for r in kick if isinstance(r.get("form_version"), int) and r["form_version"] >= 2)
+    onb_model = sum(1 for r in model if r.get("onboarding"))
+    forms = ", ".join(f"{k} {by_form[k]}" for k in sorted(by_form))
+    print(f"kickoff read model {sum(by_form.values())}" + (f" ({forms})" if forms else "")
+          + f", kickoff responses {len(kick)} (pointer {pointer}, native {native})"
+          + f", onboarding answers {len(onb)} (legacy {sum(1 for r in onb if r.get('state') == 'legacy')})"
+          + f", onboarding read model {onb_model} (counts only: nothing written)")
+    return 0
+
+
 def main(argv: Optional[list] = None) -> int:
     args = sys.argv[1:] if argv is None else list(argv)
     form = args[0] if args else ""
     flags = args[1:]
-    if form not in FORMS or any(f != "--dry" for f in flags):
+    count_mode = form == "kickoff" and flags == ["--count"]
+    if not count_mode and (form not in FORMS or any(f != "--dry" for f in flags)):
         print(USAGE)
         return 2
     run = None
     try:
-        run = Run(runtime_file())
-        code = backfill(run, form, "--dry" in flags)
+        run = Run(runtime_file(), typeform=not count_mode)
+        code = kickoff_counts(run) if count_mode else backfill(run, form, "--dry" in flags)
     except Stop as e:
         print(run.redact(e) if run else KEY_SHAPES.sub("[key]", str(e)))
         code = 1

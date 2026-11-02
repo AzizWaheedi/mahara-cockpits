@@ -216,6 +216,30 @@ Send the form again from the client page (Send again withdraws the old one).
 Never read a token from anywhere: the database cannot give one back, and none
 is stored.
 
+## Phase 3 and phase 4 messages (`phase3`, `phase4`, Stage 4, waves 5-6)
+
+The native kickoff drafts the phase 4 message and the native onboarding the
+phase 3 message (`docs/forms/WAVE56-CONTRACT.md` 4.13.3, 4.14.3; migration
+`20261102j_stage4_native.sql`). The text is `stage4.messages.phase3` /
+`.phase4` with the client's name and the map link put in; the database refuses
+a blank text, one over 1,500 characters and one that breaks the client text
+rule (no leads or cost per lead, no results guarantee). The CSM reads and
+approves it in the cockpit's Messages card; nothing goes without that press.
+
+- **Switch on:** add the kind to `CLIENT_MESSAGES_KINDS` in
+  `~/.client-messages/switches.env`, for example
+  `CLIENT_MESSAGES_KINDS=recap_checkin,phase4`. With the canary card list
+  (`CLIENT_MESSAGES_ONLY_CARDS=86eywg1cq`) only the test card's group gets it
+  (D-S4K for `phase4`, D-S4O for `phase3`).
+- **The database's gate:** until `cockpit_form_stage4_go_live` turns the form
+  native, only the test card's phase messages pass the owner gate; every other
+  card's is Make's (Make 12 [25] and Make 13 [48] still send them).
+- **No group on Client Data:** refused with the same sentence as a recap. Make
+  skipped such a card silently; here a person reads the sentence and presses
+  Skip, or adds the group to column F and reopens it.
+- **Switch off:** remove the kind from the line. Approved messages wait; a
+  person skips them if they should not go.
+
 ## Reading an unknown
 
 An `unknown` recap may be in the group. The cockpit never sends it twice; the
