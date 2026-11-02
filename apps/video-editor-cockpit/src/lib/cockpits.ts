@@ -107,3 +107,116 @@ export const COCKPIT_GUIDES = {
     howTo?: Record<string, string>;
   }
 >;
+
+/**
+ * The same videos, played inside the cockpit rather than from ClickUp or a
+ * Drive tab (Aziz, 2026-11-02: "embed them into the cockpit"). Each one shows
+ * where its work happens: Offers holds the pitch video, a call's prep holds
+ * that call's, and each cockpit's links or guide page holds its demo. The
+ * lengths are Drive's own (GOOGLEDRIVE_GET_FILE_METADATA) or the ClickUp
+ * "Cockpit SOPs" doc's, which read them from Drive.
+ *
+ * They play from Wistia, folder "Cockpit SOP videos" (`nstot7gi7y`): each
+ * media is its Drive file byte for byte, copied on 2026-11-02. Drive's own
+ * player needs a Google sign-in the frame cannot show (and Safari blocks
+ * it), so a re-recorded Drive file needs its Wistia media replaced too.
+ */
+export type SopVideoInfo = {
+  key: string;
+  /** The Wistia media that plays it. */
+  wistia: string;
+  title: string;
+  url: string;
+  length: string;
+  note: string;
+};
+
+export const SOP_VIDEOS = {
+  csm: {
+    demo: {
+      key: "csm-demo",
+      wistia: "r4687x6rcf",
+      title: "Watch the demo",
+      url: COCKPIT_GUIDES.csm.video,
+      length: "1:31",
+      note: "The real cockpit, step by step",
+    },
+    onboarding: {
+      key: "csm-onboarding",
+      wistia: "w1ermr0af1",
+      title: "Onboarding call: run the deck and the kickoff form",
+      url: COCKPIT_GUIDES.csm.howTo.onboarding,
+      length: "3:00",
+      note: "Silent: prep, present with your notes, then submit the kickoff with the client so the Brand Blueprint is booked",
+    },
+    launch: {
+      key: "csm-launch",
+      wistia: "59u4ud4r2j",
+      title: "Launch call: run the launch deck",
+      url: COCKPIT_GUIDES.csm.howTo.launch,
+      length: "3:02",
+      note: "Silent: from prep to the client's green light",
+    },
+    offers: {
+      key: "csm-offers",
+      wistia: "7nqvimzoia",
+      title: "Pitch an offer and send a proposal",
+      url: COCKPIT_GUIDES.csm.howTo.offers,
+      length: "2:46",
+      note: "Silent: Money → Offers, step by step. Watch it before your first pitch",
+    },
+  },
+  media_buyer: {
+    demo: {
+      key: "media-buyer-demo",
+      wistia: "vfud6aor8d",
+      title: "Watch the demo",
+      url: COCKPIT_GUIDES.media_buyer.video,
+      length: "1:59",
+      note: "The real cockpit, step by step",
+    },
+  },
+  creative: {
+    demo: {
+      key: "creative-demo",
+      wistia: "zlyzg8usv6",
+      title: "Watch the demo",
+      url: COCKPIT_GUIDES.creative.video,
+      length: "2:10",
+      note: "The real cockpit, step by step",
+    },
+    blueprint: {
+      key: "creative-blueprint",
+      wistia: "nsbse355za",
+      title: "Brand Blueprint call: run it in this cockpit",
+      url: COCKPIT_GUIDES.creative.howTo.blueprint,
+      length: "3:00",
+      note: "Silent. Watch it before your first Blueprint call",
+    },
+  },
+  editor: {
+    demo: {
+      key: "editor-demo",
+      wistia: "g5c3dindbp",
+      title: "Watch the demo",
+      url: COCKPIT_GUIDES.editor.video,
+      length: "1:45",
+      note: "The desk on real jobs, step by step",
+    },
+  },
+  sales: {
+    demo: {
+      key: "sales-demo",
+      wistia: "zrk219w6nb",
+      title: "Watch the demo",
+      url: COCKPIT_GUIDES.sales.video,
+      length: "2:09",
+      note: "The setter's and the closer's day, step by step",
+    },
+  },
+} satisfies Record<string, Record<string, SopVideoInfo>>;
+
+/** Wistia's public player for a media: it plays without a sign-in. */
+export function wistiaPlayer(media: string): string {
+  return `https://fast.wistia.net/embed/iframe/${media}`;
+}

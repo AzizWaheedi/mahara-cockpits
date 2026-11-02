@@ -11,7 +11,12 @@
  * in the cockpit (Write 1-1 notes on the client's page), and the Typeform is closed.
  */
 
-import { COCKPIT_GUIDES, COCKPIT_SOP } from "./cockpits";
+import {
+  COCKPIT_GUIDES,
+  COCKPIT_SOP,
+  SOP_VIDEOS,
+  type SopVideoInfo,
+} from "./cockpits";
 
 export type LinkRow = {
   label: string;
@@ -24,6 +29,8 @@ export type LinkRow = {
    * goes.
    */
   form?: { key: string; oldUrl: string; waiting?: string };
+  /** A how-to video: the Links page plays it in place (SopVideo). */
+  video?: SopVideoInfo;
 };
 export type LinkGroup = { title: string; blurb: string; rows: LinkRow[] };
 
@@ -62,6 +69,7 @@ export const LINK_GROUPS: LinkGroup[] = [
       {
         label: "Watch the demo",
         url: COCKPIT_GUIDES.csm.video,
+        video: SOP_VIDEOS.csm.demo,
         note: "Two minutes on the real cockpit, step by step",
       },
       {
@@ -77,16 +85,19 @@ export const LINK_GROUPS: LinkGroup[] = [
       {
         label: "Onboarding call: run the deck and the kickoff form (video)",
         url: COCKPIT_GUIDES.csm.howTo.onboarding,
+        video: SOP_VIDEOS.csm.onboarding,
         note: "Three minutes, silent: prep, present with your notes, then submit the kickoff with the client so the Brand Blueprint is booked",
       },
       {
         label: "Launch call: run the launch deck (video)",
         url: COCKPIT_GUIDES.csm.howTo.launch,
+        video: SOP_VIDEOS.csm.launch,
         note: "Three minutes, silent: from prep to the client's green light",
       },
       {
         label: "Offers: pitch an offer and send a proposal (video)",
         url: COCKPIT_GUIDES.csm.howTo.offers,
+        video: SOP_VIDEOS.csm.offers,
         note: "Under three minutes, silent: Money → Offers, step by step. Watch it before your first pitch",
       },
       {

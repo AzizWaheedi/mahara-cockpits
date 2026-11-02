@@ -11,8 +11,9 @@ import {
   SectionCard,
 } from "../components/kit";
 import { ReferenceAsks, ReferenceList } from "../components/References";
+import { SopVideo } from "../components/SopVideo";
 import { api } from "../lib/api";
-import { COCKPIT_GUIDES } from "../lib/cockpits";
+import { COCKPIT_GUIDES, SOP_VIDEOS } from "../lib/cockpits";
 import { useLinks } from "../lib/data";
 import { toast } from "../lib/toast";
 import type { Me, SalesLink } from "../lib/types";
@@ -234,16 +235,7 @@ export default function LinksPage({ me }: { me: Me }) {
           <h1 className="text-2xl font-semibold tracking-tight">Links</h1>
           <p className="muted mt-1 text-sm">
             The deck, forms and calculators for your calls, and the proof to
-            send after them. New here?{" "}
-            <a
-              href={COCKPIT_GUIDES.sales.video}
-              target="_blank"
-              rel="noreferrer"
-              className="underline underline-offset-2 hover:text-[color:var(--foreground)]"
-            >
-              Watch the demo
-            </a>
-            , then keep{" "}
+            send after them. New here? Watch the demo below, then keep{" "}
             <a
               href={COCKPIT_GUIDES.sales.simple}
               target="_blank"
@@ -257,6 +249,8 @@ export default function LinksPage({ me }: { me: Me }) {
         </div>
         {manager && !adding ? addButton : null}
       </header>
+
+      <SopVideo video={SOP_VIDEOS.sales.demo} />
 
       {manager && adding ? (
         <SectionCard title="Add a link">

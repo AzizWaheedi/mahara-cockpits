@@ -8,7 +8,9 @@ import {
   Upload,
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { SopVideo } from "@/components/SopVideo";
 import { Button } from "@/components/ui/button";
+import { SOP_VIDEOS, type SopVideoInfo } from "@/lib/cockpits";
 import { cn } from "@/lib/utils";
 import { focusOf } from "./AdsStage";
 import { makeAddFiles } from "./adsActions";
@@ -43,6 +45,18 @@ import { PrepVideos } from "./VideoPrep";
 
 const strings = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+
+/**
+ * The how-to video for this deck, played on its prep (Aziz, 2026-11-02).
+ * The Blueprint's is on the creative director's page above the frame, so
+ * the deck itself shows none.
+ */
+export function prepVideo(deck: DeckKind): SopVideoInfo | null {
+  if (deck === "onboarding") return SOP_VIDEOS.csm.onboarding;
+  if (deck === "launch") return SOP_VIDEOS.csm.launch;
+  if (isOfferDeck(deck)) return SOP_VIDEOS.csm.offers;
+  return null;
+}
 
 export interface PrepLinks {
   client: string;
@@ -276,6 +290,11 @@ export function PrepView({
           />
         </div>
       ) : null}
+
+      {(() => {
+        const video = hosted ? null : prepVideo(deck);
+        return video ? <SopVideo video={video} className="mx-4 mt-3" /> : null;
+      })()}
 
       <div
         className={cn(
