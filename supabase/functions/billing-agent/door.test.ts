@@ -126,6 +126,140 @@ describe("unknown keys cost little (the door is public)", () => {
   });
 });
 
+describe("a revoked key is refused like an unknown one (pre-deploy review C7)", () => {
+  const REVOKED = { ok: false, outcome: "refused", status: 401, error: "This key was revoked." };
+
+  test("a revoked key writes no receipt and is refused from memory for a minute, then asked again", async () => {
+    let t = 5_000_000;
+    const calls: string[] = [];
+    const health: HealthRow[] = [];
+    const door = makeAgentDoor({
+      rpc: async name => {
+        calls.push(name);
+        return REVOKED;
+      },
+      insertHealth: async row => {
+        health.push(row);
+      },
+      sha256Hex,
+      uuid: () => RID,
+      now: () => t,
+    });
+    for (let i = 0; i < 5; i++) {
+      const res = await door(post({ op: "chase", body: { taskId: "t1" } }));
+      expect(res.status).toBe(401);
+      expect((await res.json()).error).toBe("This key was revoked.");
+    }
+    expect(calls).toHaveLength(1);
+    expect(health).toHaveLength(0);
+    t += 61_000;
+    expect((await door(post({ what: "ladder" }))).status).toBe(401);
+    expect(calls).toHaveLength(2);
+    expect(health).toHaveLength(0);
+  });
+
+  test("a key that worked and is then revoked loses its pass: refused from memory, and shed in a flood", async () => {
+    let t = 5_000_000;
+    let revoked = false;
+    const calls: string[] = [];
+    const goodHash = createHash("sha256").update(KEY).digest("hex");
+    const door = makeAgentDoor({
+      rpc: async (_name, args) => {
+        calls.push(String(args.p_key_sha256));
+        if (args.p_key_sha256 !== goodHash) return { ok: false, outcome: "refused", status: 401, error: "This key is not known." };
+        return revoked ? REVOKED : { ok: true, outcome: "ok", status: 200, result: {} };
+      },
+      insertHealth: async () => undefined,
+      sha256Hex,
+      uuid: () => RID,
+      now: () => t,
+    });
+    expect((await door(post({ what: "ladder" }))).status).toBe(200);
+    revoked = true;
+    expect((await door(post({ what: "ladder" }))).status).toBe(401);
+    expect((await door(post({ what: "ladder" }))).status).toBe(401);
+    expect(calls.filter(c => c === goodHash)).toHaveLength(2);
+    // A minute on, with the miss window full of other keys, the revoked key is not exempt any more.
+    t += 61_000;
+    for (let i = 0; i < UNKNOWN_PER_MINUTE; i++) await door(post({ what: "ladder" }, `Bearer mak_${String(i).padStart(43, "r")}`));
+    expect((await door(post({ what: "ladder" }))).status).toBe(429);
+    expect(calls.filter(c => c === goodHash)).toHaveLength(2);
+  });
+});
+
+describe("a flood of random keys never locks out the real agent (pre-deploy review L4)", () => {
+  const UNKNOWN = { ok: false, outcome: "refused", status: 401, error: "This key is not known." };
+  const keyN = (n: number) => `mak_${String(n).padStart(43, "f")}`;
+  const goodHash = createHash("sha256").update(KEY).digest("hex");
+  function floodKit(listKeys?: () => Promise<{ key_sha256: string; revoked_at: string | null }[]>) {
+    const st = { t: 9_000_000, calls: [] as string[], lists: 0, health: [] as HealthRow[] };
+    const door = makeAgentDoor({
+      rpc: async (_name, args) => {
+        st.calls.push(String(args.p_key_sha256));
+        return args.p_key_sha256 === goodHash ? { ok: true, outcome: "ok", status: 200, result: {} } : UNKNOWN;
+      },
+      insertHealth: async row => {
+        st.health.push(row);
+      },
+      sha256Hex,
+      uuid: () => RID,
+      now: () => st.t,
+      listKeys: listKeys
+        ? async () => {
+            st.lists += 1;
+            return listKeys();
+          }
+        : undefined,
+    });
+    return { door, st };
+  }
+
+  test("on a fresh instance the real key still reaches the database after 20 random keys; random keys stay shed", async () => {
+    const revokedKey = `mak_${"R".repeat(43)}`;
+    const revokedHash = createHash("sha256").update(revokedKey).digest("hex");
+    const { door, st } = floodKit(async () => [
+      { key_sha256: goodHash, revoked_at: null },
+      { key_sha256: revokedHash, revoked_at: "2026-11-02T00:00:00Z" },
+    ]);
+    for (let i = 0; i < UNKNOWN_PER_MINUTE; i++) expect((await door(post({ what: "ladder" }, `Bearer ${keyN(i)}`))).status).toBe(401);
+    expect(st.lists).toBe(0);
+    expect((await door(post({ what: "ladder" }))).status).toBe(200);
+    expect(st.calls.at(-1)).toBe(goodHash);
+    const before = st.calls.length;
+    for (let i = 100; i < 150; i++) expect((await door(post({ what: "ladder" }, `Bearer ${keyN(i)}`))).status).toBe(429);
+    const rev = await door(post({ what: "ladder" }, `Bearer ${revokedKey}`));
+    expect([rev.status, (await rev.json()).error]).toEqual([401, "This key was revoked."]);
+    expect(st.calls.length).toBe(before);
+    // The key list is read once a minute at most, however long the flood.
+    expect(st.lists).toBe(1);
+    expect(st.health.map(h => h.http_status)).toEqual([200]);
+  });
+
+  test("an unknown key answered from memory spends none of the minute's budget", async () => {
+    const { door, st } = floodKit();
+    for (let i = 0; i < 50; i++) expect((await door(post({ what: "ladder" }, `Bearer ${keyN(1)}`))).status).toBe(401);
+    expect(st.calls).toHaveLength(1);
+    expect((await door(post({ what: "ladder" }))).status).toBe(200);
+  });
+
+  test("when the key list cannot be read the door sheds as before and tries the list again a minute later", async () => {
+    let fail = true;
+    const { door, st } = floodKit(async () => {
+      if (fail) throw new Error("list down");
+      return [{ key_sha256: goodHash, revoked_at: null }];
+    });
+    for (let i = 0; i < UNKNOWN_PER_MINUTE; i++) await door(post({ what: "ladder" }, `Bearer ${keyN(i)}`));
+    expect((await door(post({ what: "ladder" }))).status).toBe(429);
+    expect((await door(post({ what: "ladder" }))).status).toBe(429);
+    expect(st.lists).toBe(1);
+    fail = false;
+    st.t += 61_000;
+    for (let i = 200; i < 200 + UNKNOWN_PER_MINUTE; i++) await door(post({ what: "ladder" }, `Bearer ${keyN(i)}`));
+    expect((await door(post({ what: "ladder" }))).status).toBe(200);
+    expect(st.lists).toBe(2);
+  });
+});
+
 describe("the body", () => {
   test("a write and a read, strictly; a request id is a UUID or one is made", () => {
     const id = () => "00000000-0000-4000-8000-000000000009";

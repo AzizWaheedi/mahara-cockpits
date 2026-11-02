@@ -54,14 +54,14 @@ BEGIN
       ('public.cockpit_slack_notice_rehearse(text)', '2ea83a6770947fce31d587f214d16817', '0c278023edeae28729cb209dd466c27f'),
       ('public.cockpit_slack_notice_rehearse_service(text,text)', '044ba3be2c44da6d6ebe8fa73f20d5d8', 'f3fc3ea803a89918850fa96b2dfc09ea'),
       ('public.cockpit_slack_notice_read(text)', '56e3035431a069a6f4d2f74b3425a267', '9fb46adcbbcbe599b2dfdcc93f29a639'),
-      ('public.cockpit_billing_writeback_writes(text,text,text,jsonb)', '547e7750bfaf4473c50365bcbdcf8dac', '27abd8e1c88a7e06a2773d4753dbbc6b'),
+      ('public.cockpit_billing_writeback_writes(text,text,text,jsonb)', '547e7750bfaf4473c50365bcbdcf8dac', 'e1d9601beae815d0511e855a612a4091'),
       ('public.cockpit_billing_writeback_comment(text,text,text,jsonb,text)', '850a7430b7b8cfc62a170ecccf127d63', '3f84c6e1fb7fcc3cc19bc7fe35887692'),
       ('public.cockpit_billing_detail(text,jsonb)', '6b483cc5047953d545123e00cb87cb07', 'cdd2a451965794db25e7330c789420fe'),
       ('public.cockpit_billing_canary(text,jsonb)', '066b53ffb9b4a8be423ee464e4d897c5', 'c73b594b4589bf2b17f3b55e30025333'),
       ('public.cockpit_billing_daily_run(date)', '1c4087aa6bd3fda9ef35a5b8360fc38c', 'a6d921d8f53471526af298779968590e'),
       ('public.cockpit_billing_balance_write(text,jsonb)', 'fb245e7e7c292a68f07b91e8cb2aaa79', '37f45147c089f984c9e31e75d4611741'),
       ('public.cockpit_billing_balances_read()', 'cfd508625131949f69ca153ef457e2d3', '840d9bf5540a31db6a74c34dc88a979b'),
-      ('public.cockpit_form_doors()', '2991d3cbadd1003f4f85d0a91de10af2', '87a1f657c81293fb45211720f4285535')
+      ('public.cockpit_form_doors()', '2991d3cbadd1003f4f85d0a91de10af2', '709af1bfae87a41adaa5edf46ca5f0a9')
     ) AS x(fn, live_md5, after_md5)
   LOOP
     v_now := NULL;
@@ -629,14 +629,30 @@ RETURNS date LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
    WHERE l.launch IS NOT NULL AND p_part_no BETWEEN 1 AND 36
 $$;
 
+-- Whether an audited move explains a part's day (billingBalances.ts step 3): an unvoided extension
+-- or date event on the card moved a day within 7 days of p_around (the part's plan day) to p_day, at
+-- any gap and either way. Only a check of the day the browser sent, never a day of its own.
+CREATE OR REPLACE FUNCTION public.cockpit_billing_moved_to(p_task text, p_around date, p_day date, p_slack integer DEFAULT 7)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT p_around IS NOT NULL AND p_day IS NOT NULL AND EXISTS (
+    SELECT 1 FROM public.cockpit_billing_events e
+     WHERE e.clickup_task_id = p_task AND e.kind IN ('extension', 'date')
+       AND public.cockpit_billing_day(e.to_value) = p_day
+       AND public.cockpit_billing_day(e.from_value) IS DISTINCT FROM p_day
+       AND abs(public.cockpit_billing_day(e.from_value) - p_around) <= greatest(coalesce(p_slack, 7), 0)
+       AND NOT EXISTS (SELECT 1 FROM public.cockpit_billing_event_voids v WHERE v.event_id = e.id))
+$$;
+
 -- The rule (4.6.1, 4.6.2): the part confirmed is a later part due within the window of the card's
 -- date; the date moves to the next unconfirmed later part of the same deal, else a month on for a
 -- monthly plan, else it stays. The server works the days out: with a launch day on record the
--- part's day is launch + partNo months (or the card's date when the card moved it 1 to 21 days on)
--- and the next part's is launch + nextPartNo months; without one the next part sits 30 days a part
--- after this one (the screen's onboarding + 30 days rule, less up to 21 days a card moved). The
--- browser's dueOn, nextPartNo and nextDueOn are only checked against that: a mismatch is "stale"
--- (the confirm is refused with "Reload the page"), never written. {on, move, from, to, fromRule, why, stale}.
+-- part's day is launch + partNo months (or the card's date when the card moved it 1 to 21 days on,
+-- or the day an unvoided extension or date event moved it to, cockpit_billing_moved_to) and the
+-- next part's is launch + nextPartNo months (or its moved day the same way); without one the next
+-- part sits 30 days a part after this one (the screen's onboarding + 30 days rule, less up to 21
+-- days a card moved, or an audited move of it). The browser's dueOn, nextPartNo and nextDueOn are
+-- only checked against that: a mismatch never aborts the confirm (review fix): the date stays and
+-- why says so (stale true). {on, move, from, to, fromRule, why, stale}.
 CREATE OR REPLACE FUNCTION public.cockpit_billing_confirm_date_rule(p_task text, p_deal text, p_part text, p_part_no integer, p_args jsonb)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -655,14 +671,22 @@ BEGIN
     RETURN jsonb_build_object('on', true, 'move', false, 'from', NULL, 'why', c->>'why');
   END IF;
   v_stale := jsonb_build_object('on', true, 'move', false, 'stale', true, 'from', v_from,
-    'why', format('Next payment date stays %s: the payment plan changed since this page loaded. Reload the page and confirm again.',
+    'why', format('Next payment date stays %s: the payment plan changed since this page loaded. Reload the page and set the date by hand if it should move.',
                   public.cockpit_billing_day_words(v_from)));
   v_sent := public.cockpit_billing_day(a->>'dueOn');
   v_plan := public.cockpit_billing_later_due(p_task, p_part_no);
   IF v_plan IS NOT NULL THEN
-    -- The part's own day: its plan day, or the card's date when the card moved it 1 to 21 days on.
+    -- The part's own day: its plan day, or the card's date when the card moved it 1 to 21 days on,
+    -- or the day an audited extension or date event moved it to (at any gap, later or earlier).
     v_due := CASE WHEN v_from - v_plan BETWEEN 1 AND 21 THEN v_from ELSE v_plan END;
-    IF v_sent IS NOT NULL AND v_sent IS DISTINCT FROM v_due AND v_sent IS DISTINCT FROM v_plan THEN RETURN v_stale; END IF;
+    IF v_sent IS NOT NULL AND v_sent IS DISTINCT FROM v_due AND v_sent IS DISTINCT FROM v_plan THEN
+      IF NOT public.cockpit_billing_moved_to(p_task, v_plan, v_sent) THEN
+        RETURN jsonb_build_object('on', true, 'move', false, 'stale', true, 'from', v_from,
+          'why', format('Next payment date stays %s: the card''s date was moved by hand or by an extension the plan does not explain. Set it by hand if it should move.',
+                        public.cockpit_billing_day_words(v_from)));
+      END IF;
+      v_due := v_sent;
+    END IF;
   ELSE
     -- No launch day: the screen's day (onboarding + 30 days a part) stands, checked against the card's date below.
     v_due := v_sent;
@@ -681,11 +705,16 @@ BEGIN
     END IF;
     IF v_plan IS NOT NULL THEN
       v_next := public.cockpit_billing_later_due(p_task, v_next_no);
-      IF v_next IS DISTINCT FROM v_sent_next THEN RETURN v_stale; END IF;
+      IF v_next IS DISTINCT FROM v_sent_next AND NOT public.cockpit_billing_moved_to(p_task, v_next, v_sent_next) THEN
+        RETURN v_stale;
+      END IF;
+      v_next := v_sent_next;
     ELSE
-      -- No launch day: each later part is 30 days after the one before; the card may have moved this one up to 21 days on.
+      -- No launch day: each later part is 30 days after the one before; the card may have moved this one up to 21 days on,
+      -- or an audited extension or date event moved the next part from about that day.
       v_gap := v_sent_next - v_from;
-      IF v_gap < 30 * (v_next_no - coalesce(p_part_no, 0)) - 21 OR v_gap > 30 * (v_next_no - coalesce(p_part_no, 0)) THEN
+      IF (v_gap < 30 * (v_next_no - coalesce(p_part_no, 0)) - 21 OR v_gap > 30 * (v_next_no - coalesce(p_part_no, 0)))
+         AND NOT public.cockpit_billing_moved_to(p_task, v_from + 30 * (v_next_no - coalesce(p_part_no, 0)) - 10, v_sent_next, 18) THEN
         RETURN v_stale;
       END IF;
       v_next := v_sent_next;
@@ -708,9 +737,7 @@ DECLARE r jsonb; v_acc public.cockpit_billing_accounts; v_next public.cockpit_bi
 BEGIN
   r := public.cockpit_billing_confirm_date_rule(p_conf.clickup_task_id, p_conf.deal_response_id, p_conf.part, p_conf.part_no, p_args);
   IF NOT (r->>'on')::boolean THEN RETURN jsonb_build_object('on', false, 'moved', false); END IF;
-  IF coalesce((r->>'stale')::boolean, false) THEN
-    RAISE EXCEPTION 'The payment plan changed since this page loaded. Reload the page and confirm again.' USING ERRCODE = '22023';
-  END IF;
+  -- A day the server does not find (stale) never aborts the confirm (review fix): the date stays and why says so.
   IF NOT (r->>'move')::boolean THEN
     RETURN jsonb_build_object('on', true, 'moved', false, 'from', r->'from', 'why', r->'why',
       'sentence', CASE WHEN r->>'from' IS NOT NULL
@@ -887,8 +914,8 @@ BEGIN
   RETURN v_id;
 END $$;
 
--- The door's common start (3.4): the key, a revoked key, a repeated request,
--- the rate limit. NULL to go on; else the answer to give (logged where a key exists).
+-- The door's common start (3.4): the key, a revoked key, the rate limit (every
+-- call, a repeat included), a repeated request. NULL to go on; else the answer to give (logged where a key exists).
 CREATE OR REPLACE FUNCTION public.cockpit_agent_door_open(k public.cockpit_agent_keys, p_op text, p_request_id uuid, p_read boolean)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE f public.cockpit_agent_calls; v_n integer; v_out jsonb;
@@ -900,7 +927,18 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended('cockpit_agent_door:' || k.id::text, 0));
   IF k.revoked_at IS NOT NULL THEN
     v_out := jsonb_build_object('ok', false, 'outcome', 'refused', 'status', 401, 'error', 'This key was revoked.');
-    PERFORM public.cockpit_agent_call_log(k.id, p_op, NULL, 'refused', jsonb_build_object('response', v_out));
+    -- A revoked (leaked) key writes at most one call row a minute: its flood adds no rows and no audit (review C7).
+    IF NOT EXISTS (SELECT 1 FROM public.cockpit_agent_calls c
+                    WHERE c.key_id = k.id AND c.outcome = 'refused' AND c.at >= k.revoked_at AND c.at > now() - interval '1 minute') THEN
+      PERFORM public.cockpit_agent_call_log(k.id, p_op, NULL, 'refused', jsonb_build_object('response', v_out));
+    END IF;
+    RETURN v_out;
+  END IF;
+  -- Every call counts toward the 60 a minute, a repeated request id included (review fix).
+  SELECT count(*) INTO v_n FROM public.cockpit_agent_calls c WHERE c.key_id = k.id AND c.at > now() - interval '1 minute';
+  IF v_n >= 60 THEN
+    v_out := jsonb_build_object('ok', false, 'outcome', 'limited', 'status', 429, 'error', 'That is 60 calls in a minute. Wait a minute and try again.');
+    PERFORM public.cockpit_agent_call_log(k.id, p_op, NULL, 'limited', jsonb_build_object('response', v_out));
     RETURN v_out;
   END IF;
   IF p_request_id IS NOT NULL THEN
@@ -912,12 +950,6 @@ BEGIN
       RETURN coalesce(f.detail->'response', jsonb_build_object('ok', false, 'status', 409, 'error', 'The first call''s answer was not kept.'))
              || jsonb_build_object('outcome', 'duplicate', 'firstCallId', f.id);
     END IF;
-  END IF;
-  SELECT count(*) INTO v_n FROM public.cockpit_agent_calls c WHERE c.key_id = k.id AND c.at > now() - interval '1 minute';
-  IF v_n >= 60 THEN
-    v_out := jsonb_build_object('ok', false, 'outcome', 'limited', 'status', 429, 'error', 'That is 60 calls in a minute. Wait a minute and try again.');
-    PERFORM public.cockpit_agent_call_log(k.id, p_op, NULL, 'limited', jsonb_build_object('response', v_out));
-    RETURN v_out;
   END IF;
   RETURN NULL;
 END $$;
@@ -1907,7 +1939,9 @@ BEGIN
   IF d->'clear_paused'='true'::jsonb THEN w:=w||jsonb_build_object('field','pausedOn','value',NULL,'clear',true); END IF;
  WHEN 'mrr' THEN w:=jsonb_build_array(jsonb_build_object('field','mrr',
    'value',CASE WHEN p_to~num THEN p_to::numeric END,'old',CASE WHEN p_from~num THEN p_from::numeric END));
- WHEN 'ltv' THEN w:=jsonb_build_array(jsonb_build_object('field','ltv','value',CASE WHEN p_to~num THEN p_to::numeric END));
+ -- Review fix: the card's value at plan time rides as old, so only a change of the LTV field itself makes the write stale.
+ WHEN 'ltv' THEN w:=jsonb_build_array(jsonb_build_object('field','ltv',
+   'value',CASE WHEN p_to~num THEN p_to::numeric END,'old',CASE WHEN p_from~num THEN p_from::numeric END));
  -- Waves 3-4 (20261102b, contract 3.8): NPS Survey Sent is the Kuwait day the NPS invite went out.
  WHEN 'nps_sent' THEN w:=jsonb_build_array(jsonb_build_object('field','npsSent','value',d->>'on'));
  -- An exit survey changes no card field (D11): its comment is its whole write.
@@ -3368,7 +3402,7 @@ BEGIN
   v_new := jsonb_build_object(
     'wins', jsonb_build_array(to_regprocedure('public.cockpit_csm_win_log(jsonb)') IS NOT NULL,
                               coalesce(v_marks->>'wins', '') = 'true'),
-    'receipts', jsonb_build_array(to_regprocedure('public.portal_form_file_slot(text,text,text,uuid,text,text,bigint,text)') IS NOT NULL,
+    'receipts', jsonb_build_array(to_regprocedure('public.portal_form_file_slot(text,text,text,text,uuid,text,text,bigint,text)') IS NOT NULL,
                                   coalesce(v_live, '[]'::jsonb) ? 'bank_receipt'),
     'reactivate', jsonb_build_array(EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a
                                              WHERE a.attrelid = 'public.cockpit_churn_departures'::regclass AND a.attname = 'returned_on'
@@ -3481,6 +3515,7 @@ REVOKE ALL ON FUNCTION
   public.cockpit_billing_plan_monthly(text),
   public.cockpit_billing_confirm_date_card(text),
   public.cockpit_billing_later_due(text,integer),
+  public.cockpit_billing_moved_to(text,date,date,integer),
   public.cockpit_billing_confirm_date_rule(text,text,text,integer,jsonb),
   public.cockpit_billing_confirm_date_apply(public.cockpit_billing_confirmations,jsonb,text,text,text),
   public.cockpit_billing_confirm_date_undo(public.cockpit_billing_confirmations,text,text,text),

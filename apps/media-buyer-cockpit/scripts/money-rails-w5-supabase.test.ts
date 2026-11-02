@@ -1093,6 +1093,12 @@ describe("20261102g applies, twice, and is dark at deploy", () => {
     });
   });
 
+  test("the after-md5 values in the guard are this file's own bodies", async () => {
+    const rows = [...driftGuard().matchAll(/\('(public\.[^']+)', '([0-9a-f]{32})', '([0-9a-f]{32})'\)/g)];
+    expect(rows).toHaveLength(19);
+    for (const [, fn, , after] of rows) expect([fn, await md5Of(fn)]).toEqual([fn, after]);
+  });
+
   test("the drift guard refuses a replaced function whose body changed since the contract read it", async () => {
     await rolledBack(async () => {
       await q("CREATE OR REPLACE FUNCTION public.cockpit_billing_canary(p_kind text, p_args jsonb) RETURNS bigint LANGUAGE sql AS $$ SELECT 1::bigint $$");
@@ -1319,7 +1325,8 @@ describe("the LTV plan and the morning writer", () => {
       const [e] = await ltvEvents("ardon01");
       expect(e).toMatchObject({ source: "system", from_value: "2000", to_value: "4000" });
       expect(e.detail).toMatchObject({ sum: 2000, rows: 1, baseline: 2000, baseline_day: "2026-10-01", checked_usd: 2000, seat_role: "system" });
-      expect((await queued(e.id))?.writes).toEqual([{ field: "ltv", value: 4000 }]);
+      // The card's value at plan time rides along, so a later edit of another field never makes it stale.
+      expect((await queued(e.id))?.writes).toEqual([{ field: "ltv", value: 4000, old: 2000 }]);
       expect(await q("SELECT task_id, target, delta FROM public.cockpit_ltv_held WHERE released_at IS NULL")).toEqual([{ task_id: "big0001", target: "7000.00", delta: "6000.00" }]);
       expect(await ltvEvents("big0001")).toHaveLength(0);
 
@@ -1471,19 +1478,73 @@ describe("Confirm paid moves the next payment date", () => {
       const crafted = { part: "later", partNo: 1, dealResponseId: "dealA", dueOn: "2026-11-05", nextPartNo: 2, nextDueOn: "2027-01-04" };
       const p = await preview(crafted);
       expect(p.dateIfConfirmed).toBeNull();
-      expect(p.dateWhy).toBe("Next payment date stays 5 Nov: the payment plan changed since this page loaded. Reload the page and confirm again.");
-      const conf0 = await confirmation();
-      expect((await refusal(() => apply(conf0, crafted))).message).toBe(
-        "The payment plan changed since this page loaded. Reload the page and confirm again.");
+      expect(p.dateWhy).toBe("Next payment date stays 5 Nov: the payment plan changed since this page loaded. Reload the page and set the date by hand if it should move.");
+      // The confirm is never aborted by the date rule: it saves and the date stays.
+      expect(await apply(await confirmation(), crafted)).toMatchObject({ on: true, moved: false, sentence: "Confirmed. Next payment date stays 5 Nov." });
       expect(await cardDate()).toBe("2026-11-05");
       expect(await dateEvents()).toHaveLength(0);
-      // A part the card's date is not for (the browser says part 1 is due 20 Nov) is refused the same way.
-      expect((await preview({ part: "later", partNo: 1, dealResponseId: "dealA", dueOn: "2026-11-20" })).dateWhy).toContain("Reload the page");
+      // A part day nothing explains (the browser says part 1 is due 20 Nov) moves nothing either.
+      expect((await preview({ part: "later", partNo: 1, dealResponseId: "dealA", dueOn: "2026-11-20" })).dateWhy).toBe(
+        "Next payment date stays 5 Nov: the card's date was moved by hand or by an extension the plan does not explain. Set it by hand if it should move.");
       // The real next part moves the date to the server's own day.
       const real = { part: "later", partNo: 1, dealResponseId: "dealA", dueOn: "2026-11-05", nextPartNo: 2, nextDueOn: "2026-12-05" };
       expect((await preview(real)).dateIfConfirmed).toBe("2026-12-05");
       expect(await apply(await confirmation(), real)).toMatchObject({ moved: true, to: "2026-12-05", fromRule: "next_part" });
       expect(await cardDate()).toBe("2026-12-05");
+    });
+  });
+
+  test("a part an audited extension or date event moved (over 21 days on, or earlier) still confirms and moves the date", async () => {
+    const launch = async () => {
+      // Launched 11 Jul: part 3 is due 11 Oct, part 4 on 11 Nov.
+      await q(`INSERT INTO public.cockpit_client_billing_days(day, clickup_task_id, client_name, stage, launch_date, captured_at)
+               VALUES ((now() AT TIME ZONE 'Asia/Kuwait')::date, $1, 'Acme Interiors', 'Active', '2026-07-11', now())
+               ON CONFLICT DO NOTHING`, [A]);
+      await q("UPDATE public.cockpit_client_billing_days SET launch_date = '2026-07-11' WHERE clickup_task_id = $1", [A]);
+    };
+    // Liwan's shape: an extension moved 15 Oct (4 days from part 3's day) to 2 Nov, 22 days after the plan day.
+    await rolledBack(async () => {
+      await merge("billing.confirm_date", { on: true });
+      await launch();
+      await q("UPDATE public.cockpit_billing_accounts SET next_payment_date = '2026-11-02' WHERE clickup_task_id = $1", [A]);
+      await event("extension", "csm", { weeks: 3 }, "2026-10-15", "2026-11-02");
+      const args = { part: "later", partNo: 3, dealResponseId: "dealA", dueOn: "2026-11-02", nextPartNo: 4, nextDueOn: "2026-11-11" };
+      expect((await preview(args)).dateIfConfirmed).toBe("2026-11-11");
+      expect(await apply(await confirmation(3), args)).toMatchObject({ moved: true, from: "2026-11-02", to: "2026-11-11", fromRule: "next_part" });
+      expect(await cardDate()).toBe("2026-11-11");
+    });
+    // A four-week extension that also moved part 4: the next part's moved day is taken too.
+    await rolledBack(async () => {
+      await merge("billing.confirm_date", { on: true });
+      await launch();
+      await q("UPDATE public.cockpit_billing_accounts SET next_payment_date = '2026-11-08' WHERE clickup_task_id = $1", [A]);
+      await event("extension", "csm", { weeks: 4 }, "2026-10-11", "2026-11-08");
+      await event("extension", "csm", { weeks: 4 }, "2026-11-11", "2026-12-09");
+      const args = { part: "later", partNo: 3, dealResponseId: "dealA", dueOn: "2026-11-08", nextPartNo: 4, nextDueOn: "2026-12-09" };
+      expect(await apply(await confirmation(3), args)).toMatchObject({ moved: true, to: "2026-12-09", fromRule: "next_part" });
+    });
+    // A date event that moved part 3 earlier, to 1 Oct.
+    await rolledBack(async () => {
+      await merge("billing.confirm_date", { on: true });
+      await launch();
+      await q("UPDATE public.cockpit_billing_accounts SET next_payment_date = '2026-10-01', payment_plan = 'Monthly' WHERE clickup_task_id = $1", [A]);
+      await event("date", "csm", {}, "2026-10-12", "2026-10-01");
+      const args = { part: "later", partNo: 3, dealResponseId: "dealA", dueOn: "2026-10-01" };
+      expect(await apply(await confirmation(3), args)).toMatchObject({ moved: true, from: "2026-10-01", to: "2026-11-01", fromRule: "plus_month" });
+    });
+    // A voided move is not taken, and a day nothing explains never aborts the confirm: the date stays.
+    await rolledBack(async () => {
+      await merge("billing.confirm_date", { on: true });
+      await launch();
+      await q("UPDATE public.cockpit_billing_accounts SET next_payment_date = '2026-11-02' WHERE clickup_task_id = $1", [A]);
+      const ev = await event("extension", "csm", { weeks: 3 }, "2026-10-15", "2026-11-02");
+      await q("INSERT INTO public.cockpit_billing_event_voids(event_id, reason, voided_by) VALUES ($1, 'Logged on the wrong card', 'test')", [ev]);
+      const args = { part: "later", partNo: 3, dealResponseId: "dealA", dueOn: "2026-11-02", nextPartNo: 4, nextDueOn: "2026-11-11" };
+      const why = "Next payment date stays 2 Nov: the card's date was moved by hand or by an extension the plan does not explain. Set it by hand if it should move.";
+      expect(await preview(args)).toMatchObject({ dateIfConfirmed: null, dateWhy: why });
+      expect(await apply(await confirmation(3), args)).toMatchObject({ on: true, moved: false, why, sentence: "Confirmed. Next payment date stays 2 Nov." });
+      expect(await cardDate()).toBe("2026-11-02");
+      expect(await dateEvents()).toHaveLength(0);
     });
   });
 
@@ -1545,6 +1606,8 @@ describe("the billing agent's own login", () => {
       expect((await refusal(() => as(CSM_A, "SELECT public.cockpit_agent_key_revoke($1, 'leaked') AS r", [id]))).code).toBe("42501");
       expect((await as<Row>(CEO, "SELECT public.cockpit_agent_key_revoke($1, 'Leaked in a log') AS r", [id])).sentence).toBe("Revoked. The agent cannot write until a new key is set on the server.");
       expect(await write(KEY, "chase", { taskId: A, step: "D+3" })).toMatchObject({ ok: false, status: 401, error: "This key was revoked." });
+      // A leaked key's flood writes one call row a minute, not one per call (review C7).
+      for (let i = 0; i < 4; i++) expect(await read(KEY, "balances")).toMatchObject({ ok: false, status: 401, error: "This key was revoked." });
       expect(await q("SELECT outcome FROM public.cockpit_agent_calls ORDER BY id")).toEqual([{ outcome: "ok" }, { outcome: "refused" }]);
       // A new key replaces the old one; only its hash is kept, and no read ever shows it.
       await putKey(KEY2);
@@ -1623,6 +1686,17 @@ describe("the billing agent's own login", () => {
       expect(again).toMatchObject({ ok: true, outcome: "duplicate", result: { pauseReviewDay: 4 } });
       expect(await q("SELECT request_id, outcome FROM public.cockpit_agent_calls ORDER BY id DESC LIMIT 2")).toEqual([
         { request_id: null, outcome: "duplicate" }, { request_id: rid, outcome: "ok" }]);
+    });
+  });
+
+  test("a repeated request id counts toward the 60 calls a minute", async () => {
+    await rolledBack(async () => {
+      await putKey(KEY);
+      const rid = "31111111-2222-4333-8444-555555555555";
+      for (let i = 0; i < 60; i++) expect((await read(KEY, "balances", { requestId: rid })).ok).toBe(true);
+      expect(await read(KEY, "balances", { requestId: rid })).toEqual({ ok: false, outcome: "limited", status: 429, error: "That is 60 calls in a minute. Wait a minute and try again." });
+      const w = "41111111-2222-4333-8444-555555555555";
+      expect(await write(KEY, "chase", { taskId: A, step: "D+3" }, w)).toMatchObject({ outcome: "limited", status: 429 });
     });
   });
 

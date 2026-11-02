@@ -21,6 +21,7 @@ from guard.redact import clean
 RUNBOOK = "RUNBOOK.md, Wins, cash and the client tail (waves 5 and 6)"
 KUWAIT = timezone(timedelta(hours=3))
 DAILY_KEY = "billing-daily"
+LTV_KEY = "billing-ltv"
 DAILY_MAX_MIN = 26 * 60
 HELD_DAYS = 3
 DRIFT_DAYS = 2
@@ -115,8 +116,35 @@ def _usd(v: float) -> str:
 
 # ---- ltv-daily -----------------------------------------------------------------------------------------------
 
+def _ltv_writer(ctx: Context, setting_row: Optional[dict[str, Any]]) -> Optional[Result]:
+    """The writer's own row (billing-ltv). The morning run catches an LTV error or refusal, writes it here with ok=false
+    and still reports billing-daily ok, so this row, not billing-daily, says whether lifetime value was written. A
+    missing or old row is not yet a failure while billing.ltv was turned on less than DAILY_MAX_MIN ago (the first run
+    is still due); ok=false always is. None when the writer is fine."""
+    rows = _maybe(ctx, "cockpit_sync_state", "key,ok,note,last_run_at", where=[("key", "eq", LTV_KEY)], limit=1)
+    row = rows[0] if rows else None
+    note = clean((row or {}).get("note"), 300)
+    ev = {"billing_ltv_last_run_at": (row or {}).get("last_run_at"), "billing_ltv_ok": (row or {}).get("ok")}
+    if row is not None and row.get("ok") is not True:
+        return fail(f"The lifetime value writer did not write this morning (billing-ltv): {note}", evidence=ev,
+                    since=parse_time(row.get("last_run_at")))
+    age = age_min(row.get("last_run_at"), ctx.now) if row else None
+    if row is not None and row.get("ok") is True and age is not None and age <= DAILY_MAX_MIN:
+        return None
+    turned_on = age_min((setting_row or {}).get("updated_at"), ctx.now)
+    if turned_on is not None and turned_on <= DAILY_MAX_MIN:
+        return ok(f"The lifetime value writer was turned on {ago(turned_on)} ago; its first morning run is still due "
+                  "(pg_cron mahara-billing-daily, 05:10 UTC).", evidence=ev)
+    if row is None:
+        return fail("The lifetime value writer is on but has never reported (billing-ltv): the morning billing run "
+                    "(pg_cron mahara-billing-daily) has not reached it.", evidence=ev)
+    return fail(f"The lifetime value writer has not reported for {ago(age)} (billing-ltv, limit {ago(DAILY_MAX_MIN)}): "
+                f"{note}", evidence=ev, since=parse_time(row.get("last_run_at")))
+
+
 def run_ltv_daily(ctx: Context) -> Result:
-    setting = _setting(ctx, "billing.ltv")
+    setting_row = _setting_row(ctx, "billing.ltv")
+    setting = setting_row.get("value") if setting_row and isinstance(setting_row.get("value"), dict) else None
     if setting is None:
         return ok("Not set up yet: billing.ltv is not seeded (20261102g).")
     if setting.get("on") is not True:
@@ -134,6 +162,9 @@ def run_ltv_daily(ctx: Context) -> Result:
     if age is None or age > DAILY_MAX_MIN:
         return fail(f"The morning billing run, which writes lifetime value, has not run for {ago(age)} (limit "
                     f"{ago(DAILY_MAX_MIN)}).", evidence=ev, since=parse_time(row.get("last_run_at")))
+    writer = _ltv_writer(ctx, setting_row)
+    if writer is not None and writer.status == "fail":
+        return writer
     held = _maybe(ctx, "cockpit_ltv_held", "id,task_id,first_held_on,released_at", where=[("released_at", "is", None)])
     if held is None:
         return ok("Not set up yet: the held lifetime value table is not there (20261102g).")
@@ -143,6 +174,8 @@ def run_ltv_daily(ctx: Context) -> Result:
         return warn(f"{_plural(len(old), 'lifetime value jump')} over the cap {'waits' if len(old) == 1 else 'wait'} for "
                     f"the CEO for more than {HELD_DAYS} days. Release or leave each one on the Billing tab's Lifetime "
                     "value card.", items=[str(h.get("task_id")) for h in old][:20], evidence=ev)
+    if writer is not None:
+        return writer
     return ok(f"The morning billing run ran {ago(age)} ago: {clean(row.get('note'), 200)}", evidence=ev)
 
 

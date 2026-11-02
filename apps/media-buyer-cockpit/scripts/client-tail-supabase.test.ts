@@ -3414,4 +3414,50 @@ describe("review fixes: receipts, slots, returns and the Today rows", () => {
       ).toBe(false);
     });
   });
+
+  test("the receipts door opens on the real cockpit_form_doors() once i is applied and bank_receipt is live", async () => {
+    await rolledBack(async () => {
+      await q(
+        "UPDATE public.cockpit_settings SET value = jsonb_set(value, '{live}', '[]') WHERE key = 'forms.client'",
+      );
+      const off = await as<Row>(CSM_A, "SELECT public.cockpit_form_doors() AS r");
+      expect([off.receipts, off.why.receipts]).toEqual([false, "off"]);
+      await q(
+        "UPDATE public.cockpit_settings SET value = jsonb_set(value, '{live}', '[\"bank_receipt\"]') WHERE key = 'forms.client'",
+      );
+      const on = await as<Row>(CSM_A, "SELECT public.cockpit_form_doors() AS r");
+      expect([on.receipts, on.why.receipts]).toEqual([true, null]);
+    });
+  });
+
+  test("no invite over 10 minutes goes out (canary included) until a waves 5-6 portal form is live; onboarding is not held", async () => {
+    await rolledBack(async () => {
+      await q(
+        `INSERT INTO public.cockpit_form_versions(form_key, version, schema, published_by, note)
+         SELECT form_key, version + 1, jsonb_set(schema, '{minutes}', '25'), 'test', 'a long NPS'
+           FROM public.cockpit_form_versions WHERE form_key = 'nps' AND version = public.cockpit_form_client_version('nps')`,
+      );
+      await q(
+        "UPDATE public.cockpit_settings SET value = jsonb_set(value, '{live}', '[\"nps\"]') WHERE key = 'forms.client'",
+      );
+      const held = await refusal(() =>
+        q("SELECT public.cockpit_form_invite_canary('nps', '{}'::jsonb) AS r"),
+      );
+      expect(held.message).toBe(
+        "This form takes 25 minutes, and the client portal shows a form of 10 minutes at most until the new portal is live. Publish it with 10 minutes or less.",
+      );
+      expect(
+        await one<number>(
+          "SELECT count(*)::int AS r FROM public.cockpit_form_invites WHERE form_key = 'nps' AND task_id = '86eywg1cq'",
+        ),
+      ).toBe(0);
+      await q(
+        "UPDATE public.cockpit_settings SET value = jsonb_set(value, '{live}', '[\"nps\",\"bank_receipt\"]') WHERE key = 'forms.client'",
+      );
+      const sent = await one<Row>(
+        "SELECT public.cockpit_form_invite_canary('nps', '{}'::jsonb) AS r",
+      );
+      expect(sent.inviteId).toBeTruthy();
+    });
+  });
 });

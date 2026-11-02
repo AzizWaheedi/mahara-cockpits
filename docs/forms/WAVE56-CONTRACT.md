@@ -562,9 +562,21 @@ through the existing `_shared` HTTP helpers (so every call lands in the health l
 `billing-agent:<op>`). It never logs the key, its hash or the body. Rate limit: 60 calls a minute per
 key, counted in SQL from `cockpit_agent_calls` (`limited` → 429).
 
+The door is public, so a refused key costs as little as it can (11.7, C7 and L4). A key the database
+answers `This key is not known.` or `This key was revoked.` (401) gets no health receipt, is refused again
+from memory with the same sentence for a minute without a database call, and never joins the keys seen
+working (a revoked key loses its pass). Answers from memory spend nothing. Above 20 such database answers
+a minute per instance, a key the instance has not seen work is checked against the key list
+(`cockpit_agent_keys` `key_sha256, revoked_at` over REST with the service key, read at most once a minute
+per instance, hashes only): a live key goes on to the database, a revoked one gets its sentence, any
+other key 429 `Too many calls with keys this cockpit does not know.` A random-key flood therefore never
+locks the real agent out of a fresh instance. In SQL a revoked key writes at most one `refused` call row a
+minute (`cockpit_agent_door_open`), so a leaked key's flood adds no rows and no audit.
+
 SQL (`g`): both functions first resolve `p_key_sha256` to an unrevoked `cockpit_agent_keys` row
 (`This key is not known.` / `This key was revoked.`); the identity is that row's `agent`, never a
-parameter. Both are `VOLATILE`. Every call writes one `cockpit_agent_calls` row. A repeated
+parameter. Both are `VOLATILE`. Every call writes one `cockpit_agent_calls` row, except a revoked key's
+repeats within a minute of its last `refused` row. A repeated
 `p_request_id` returns the first result and writes a `duplicate` row with `request_id` NULL and
 `detail.firstCallId` (the unique index stays on first calls only).
 
@@ -950,9 +962,12 @@ Reviews" (protect the range; the CEO's sheet, read back); enable `win.logged`; r
    `reactivations`, `upsells`, `recurring`, an entry whose `evidenceRef` is not `win:<uuid>` needs
    `outsideLedger` (10..300 characters), stored as the entry note prefixed `Outside the wins ledger: `
    (`This part comes from the wins ledger. Confirm its proposal, or say why it is not in the ledger.`);
-   a second non-void entry with the same `win:` reference and part for the same proposal month (its
-   own month, or the `For {month}` note of a carried confirm) is refused (`This win is already paid
-   for {month}.`). Adjustments and every other part are byte for byte as today. Nothing
+   for `upsells` and `recurring`, a second non-void entry with the same `win:` reference and part for
+   the same proposal month (its own month, or the `For {month}` note of a carried confirm) is refused
+   (`This win is already paid for {month}.`); a flat part (every other listed part) pays once per win,
+   so a second live entry with the same `win:` reference and part is refused whatever its month (the
+   same sentence), and so is an entry for a win whose voided twin (11.7, C3) is still paid
+   (`Already paid on the win of {day} that was voided since.`). Adjustments and every other part are byte for byte as today. Nothing
    ever posts pay by itself (E12); `cockpit_pay_compute` is unchanged and reads the entries.
 4. Closer commission stays measured from the deal ledger as today (MONEY-ATTRIBUTION rule 1); it is not
    a proposal, and the back-end rule keeps upsell cash out of it.
@@ -1405,7 +1420,7 @@ on`, `Switched off {date}`, `Closed {date}`, `Removed {date}`, `Archive from {da
 
 | Check id | Reads | Warn / fail |
 |---|---|---|
-| `ltv-daily` | `cockpit_sync_state` `billing-daily` note | fail when older than 26 h while `billing.ltv.on`; warn on any held row older than 3 days |
+| `ltv-daily` | `cockpit_sync_state` `billing-daily` note, and the writer's own row `billing-ltv` | fail when `billing-daily` is older than 26 h while `billing.ltv.on`; fail, quoting its note, when `billing-ltv` is `ok=false`, missing or older than 26 h (a missing or old row is ok only within 26 h of `billing.ltv` being turned on: the first run is still due); warn on any held row older than 3 days |
 | `ltv-drift` | `cockpit_billing_accounts.ltv_field_usd` vs the last delivered `ltv` event target per card | warn when they differ 2 days after delivery ("{n} cards show a different LTV than the cockpit wrote") |
 | `ltv-second-source` | checked `cockpit_manual_payments` by `clickup_task_id` plus rail payments with a live payment tie to the card, since `baseline_day`, straight from the rail and tie tables, vs `cockpit_ltv_plan(today).checked_usd` | warn when that floor exceeds `checked_usd` by more than $1 on any card ("{n} cards: payments tied straight to the card exceed the cockpit's LTV sum") |
 | `agent-separation` | setting `billing.agent.separated` | warn while it is false after D-AG ("The billing agent can still read the old key on the server.") |
@@ -1606,7 +1621,7 @@ after D-S4.0 passed and on different days (one Make switch-off window a day).
 | X28 | The bank receipt's date trigger (E20) is a Today band, not a scheduled send | A due part with no money yet may be paid by card (Whop, Tap, Ecom) in a day; a scheduled receipt request would ask card payers for a bank receipt. The CSM sees `Payment due {date}, no money in` and sends it in one press. |
 | X29 | A checked receipt moves the next payment date through Confirm paid (a Today band on the part), not by a new trigger on the check | Plan 5.17 says the date moves through billing kind `payment` after the check; the cockpit's one date-moving act since W12 is Confirm paid (4.6, one date write per save). A trigger on `cockpit_manual_payment_check` would replace a live W12 RPC and could write a second date for one save. |
 | X30 | Reactivate needs a confirmed departure; a Stopped card without one is refused with "Confirm the churn first" | The departure register is what keeps the month they left counted (X12); a reopen without it would have no left-on day, no reason and nothing to mark returned. |
-| X31 | A win tie cannot take cash already paid to the closer in an approved month, and cannot be cleared once the CSM was paid for it in an approved month | Approved months are never rewritten (memory pay-plans), so either move would pay the same cash twice. The CEO keeps the typed entry with a reason (4.9) for a real exception. |
+| X31 | A win tie cannot take cash already paid to the closer or the setter in an approved month (an approved month whose frozen result lists the payment, or the deal ledger row now or as recorded on the tie when the CEO confirmed it), and cannot be cleared once the CSM was paid for it in an approved month | Approved months are never rewritten (memory pay-plans), so either move would pay the same cash twice. The CEO keeps the typed entry with a reason (4.9) for a real exception. |
 | X32 | A pay proposal whose month is approved is confirmed into the first open month, carrying its own month in the note | Wins can be logged up to 30 days back and months approve from the 3rd; refusing would leave the proposal stuck and push the CEO to typing (against E12). The proposal key keeps it to one payment. |
 | X33 | Tie candidates exclude only a deal's own contract money (deposit rows, Whop deal link, payer tie); a rule-2 card-match remainder is a candidate, shown with "counts for the closer now" and needing the CEO's reason | Q23's day-30 upsell is exactly a rule-2 card match; excluding every deal-ledger row would make it untieable, while the reason and X31 keep closer money from moving silently. |
 
@@ -1733,3 +1748,28 @@ and memory first. Applied (the migrations are not live, so g to j were edited in
 Not applied: none of the findings were rejected outright. Not done in this revision: the 375/1280
 light/dark screenshots and the Hallmark slop test of the CEO screens (the harness now makes them possible;
 they wait on a browser session), and the CEO's read of the Arabic drafts under aziz-kuwaiti-voice (1.3).
+
+### 11.7 Pre-deploy review 2026-11-02
+
+An independent review of the whole branch (cockpits and portal) before the deploy confirmed 10 findings
+and listed 5 lows; each was reproduced in a PGlite or bun test first (red) and then answered. The
+migrations are still not live, so g to j are edited in place and still apply twice; drift-guard "after"
+md5s are recomputed for every guarded body that changed.
+
+| # | Finding | How it is answered |
+|---|---|---|
+| C1 (high, `h`) | A referral is paid twice when the referred deal's first payment day moves to another month | Flat parts (referral, review, testimonial, podcast, renewal, reactivation) pay once per win: once any month of `win:{id}:{part}:%` is decided, `cockpit_win_pay_rows` reads the win in that month only, and `cockpit_win_first_day` never starts after it. The C7 entry rule refuses a second live entry with the same win reference and a flat part whatever its month ("This win is already paid for {month}."). `wins-pay-supabase.test.ts`, "a referral pays once when the first payment moves". |
+| C2 (high, `h`) | The closer-paid guard stops working once the money refresh drops the win-tied payment from the deal ledger | The tie confirm records the payment's ledger membership on `cockpit_win_tie_proposals` (`ledger_deal_response_id`, `ledger_day`, `ledger_closer_id`, `ledger_setter_id`). `cockpit_win_closer_paid` first reads approved months whose frozen `commission[].payments` list the payment, then the live ledger row or, once it is gone, the recorded membership. |
+| C3 (medium, `h`) | A paid referral or renewal the CEO voids can be logged again and paid again | `cockpit_win_paid_twin` matches a void win that still has a live pay entry by the same proof link, referred deal, agreement link (renewal, reactivation) or return (departure, or a Reactivate within 60 days). Log a win refuses it; a later-cleared win waits with "Already paid on the win of {day} that was voided since"; the C7 rule refuses its entry. Removing the old entry (an open month only) lets it be paid again. |
+| C4 (medium, `h`) | Recurring upsell: tying an earlier month later pays the 20% first-month rate twice | The engagement's start month is fixed by the first live confirmed recurring entry (its month less its engagement month). A payment from before it waits: "Paid before {month}, the engagement's first paid month, whose first-month rate is already paid. Add it by hand with a reason if more is owed." |
+| C5 (medium, `h`) | The closer-paid guard ignores the setter's commission on the same deal cash | `cockpit_win_deal_people` resolves the deal's closer and setter as `cockpit_pay_facts_sales` keys them (`personId`), else by folded roster name with one hit; the guard reads paid when either person's approved month covers the payment, and the refusal names "the closer" or "the setter". |
+| C6 (medium, `j`) | A forged Typeform onboarding answer locks out the real client and runs the native planner on attacker data | A row `cockpit_form_onboarding_typeform` stored from the hidden card id only (`owner` cockpit, `match` `hidden_id_unverified`), and the read-model entry of the same token, no longer count in `cockpit_form_stage4_answered_at` (so `portal_form_onboarding_open` and the planner's once-per-card check) or `cockpit_form_card_allows`; a `confirmed_by_person` row and Make-era rows still count. A later real answer is planned as the first. Open: the forged answer still runs the planner once, and no CSM confirm path exists for an unverified Typeform answer. |
+| C7 (medium, `billing-agent`) | A revoked (leaked) key is never throttled: every call writes database rows and a health receipt | The door treats a revoked 401 like an unknown key: no receipt, no pass as a key seen working, refused from memory for a minute (3.4; `door.test.ts`, "a revoked key is refused like an unknown one"). In `g`, `cockpit_agent_door_open` writes a revoked key's `refused` row at most once a minute (counting the per-key rate first would still write a `limited` row per call). |
+| C8 (high, `g`) | The receipts door probes the old file-slot signature, so it can never open | The probe names the current signature, `portal_form_file_slot(text,text,text,text,uuid,text,text,bigint,text)`; `cockpit_form_doors()`'s after-md5 is recomputed and a test applies g to j with `bank_receipt` live and reads `receipts` true. |
+| C9 (high, `g`) | The new stale rule refuses Confirm paid for parts an audited extension or date event moved more than 21 days later, or earlier | The date rule never aborts the confirm: a mismatch is a "Next payment date stays …" non-move, and a day moved by an unvoided extension or date event on the card is accepted as the screen shows it. |
+| C10 (medium, guardian) | An LTV writer error is silent: the run writes `billing-daily` ok=true and nothing reads `billing-ltv` | `ltv-daily` also reads `billing-ltv` while `billing.ltv.on` and fails, quoting its note, when the row is `ok=false`, missing or older than 26 h, with a 26-hour grace after the writer is turned on (6.2 table; `tests/test_wins_cash.py`). |
+| L1 (`g`) | The ltv write carries no `old`, so any card edit after the 05:10 event makes the writer skip it as stale | The ltv step passes the card's value as `old`, so only a change to the LTV field itself blocks the write. |
+| L2 (`h`) | After a tie clear and re-tie, a voided pay entry still counts as paid | The decided sum counts a decline, or a confirm whose entry is still live; a confirmed row whose entry was removed reads "Its pay entry was removed." and its cash is proposed again as a top-up. |
+| L3 (`g`) | Repeating a requestId skips the 60-calls-a-minute limit | `cockpit_agent_door_open` counts calls, repeats included, before the repeat lookup, so a repeat over 60 in the minute is answered 429. |
+| L4 (`billing-agent`) | A flood of random keys makes the door answer 429 to the real agent on an instance that has not seen its key work | Over the minute's budget the door checks an unseen key against the key list (read at most once a minute) instead of shedding it: the real key goes on, a revoked one is refused, random keys stay 429; answers from memory no longer spend the budget (3.4; `door.test.ts`, "a flood of random keys never locks out the real agent"). |
+| L5 (`i`, portal) | The minutes cap rises to 60 while the live portal (v1.6.0) still refuses any invite over 10 minutes | `cockpit_form_invite_issue_core` refuses a form other than onboarding over 10 minutes, canary included, until `bank_receipt` or `onboarding` is live for clients (both go-lives come after D-P1): "Publish it with 10 minutes or less." Onboarding is never held. |

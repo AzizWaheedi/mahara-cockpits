@@ -1523,7 +1523,7 @@ describe("20261102h applies on the chain, twice, and guards against drift", () =
     expect(md5).toEqual([
       {
         proname: "cockpit_ceo_pay_entry_save",
-        m: "8a6dddff39d81969176ac94c60d31df6",
+        m: "ab5b20c25b41ec18ae2d8344f47d9fab",
       },
       {
         proname: "cockpit_ceo_payment_tie",
@@ -3577,6 +3577,385 @@ describe("review fixes: each payment pays once, in its own month", () => {
         referralDealResponseId: "resp_other",
       });
       expect(ok.ok).toBe(true);
+    });
+  });
+});
+
+// --- Pre-deploy review: money safety ---------------------------------------------------------------
+
+describe("pre-deploy review: a win's money is paid once", () => {
+  /** A confirmed win tie written straight, as a confirmed proposal would leave it. */
+  async function tieStraight(
+    win: string,
+    pid: string,
+    usd: number,
+    paidOn: string,
+  ) {
+    await ex(`WITH t AS (INSERT INTO public.cockpit_payment_ties(payment_id, clickup_task_id, note, set_by, win_id)
+        VALUES ('${pid}', '${A}', 'Upsell payment', 'test', '${win}') RETURNING id)
+      INSERT INTO public.cockpit_win_tie_proposals(win_id, payment_id, usd, paid_on, rail, state, proposed_by_role, decided_by, decided_at, tie_id)
+      SELECT '${win}', '${pid}', ${usd}, '${paidOn}', 'whop', 'confirmed', 'the CSM', 'test', now(), t.id FROM t`);
+  }
+  async function approve(person: number, ym: string, result: unknown = {}) {
+    await q(
+      `INSERT INTO public.cockpit_pay_months(person_id, month, status, parts_usd, result, result_hash, approved_by)
+       VALUES ($1, $2::date, 'approved', 0, $3::jsonb, $4, 'test')`,
+      [person, `${ym}-01`, JSON.stringify(result), "0".repeat(32)],
+    );
+  }
+  const confirm = (ym: string, key: string) =>
+    rpc(CEO, "cockpit_ceo_pay_proposal_decide", {
+      month: ym,
+      key,
+      decision: "confirm",
+    });
+  const liveEntries = (win: string) =>
+    one<number>(
+      "SELECT count(*)::int AS r FROM public.cockpit_pay_entries WHERE evidence_ref = $1 AND voided_at IS NULL",
+      [`win:${win}`],
+    );
+  const prev = () => prevMonth(M0);
+
+  test("a referral pays once, even when the referred deal's first payment moves to an earlier month", async () => {
+    await rolledBack(async () => {
+      await setting("forms.doors", { wins: true });
+      await setting("pay.proposals", { on: true });
+      const ref = await log(CSM_A, {
+        kind: "referral",
+        referralDealResponseId: "resp_ref",
+      });
+      await ex(`INSERT INTO public.cockpit_deal_payments(payment_id, deal_response_id, day, usd, rail, kind, deposit_usd, matched_by, active)
+        VALUES ('whop:pay_ref_now', 'resp_ref', '${TODAY}', 1000, 'whop', 'remainder', 0, 'deal_id', true)`);
+      const key = `win:${ref.winId}:referrals:${M0}`;
+      expect((await confirm(M0, key)).state).toBe("confirmed");
+      // A bank deposit dated last month joins the deal ledger afterwards.
+      await ex(`INSERT INTO public.cockpit_deal_payments(payment_id, deal_response_id, day, usd, rail, kind, deposit_usd, matched_by, active)
+        VALUES ('bank:dep_ref_late', 'resp_ref', '${prev()}-28', 500, 'bank', 'deposit', 500, 'deal_id', true)`);
+      expect(
+        (await rows(prev())).filter(r => r.win_id === ref.winId),
+      ).toHaveLength(0);
+      expect(
+        (await rows(M0))
+          .filter(r => r.win_id === ref.winId)
+          .map(r => [r.key, r.state]),
+      ).toEqual([[key, "confirmed"]]);
+      expect(
+        (
+          await refusal(() =>
+            confirm(prev(), `win:${ref.winId}:referrals:${prev()}`),
+          )
+        ).message,
+      ).toBe(`That proposal is not in ${monthWords(prev())}. Reload the list.`);
+      // The C7 rule: a flat part pays once per win, whatever the month.
+      expect(
+        (
+          await refusal(() =>
+            rpc(CEO, "cockpit_ceo_pay_entry_save", {
+              personId: NOURA,
+              month: prev(),
+              partKey: "referrals",
+              quantity: 1,
+              client: "Acme Interiors",
+              clearedOn: `${prev()}-28`,
+              evidenceRef: `win:${ref.winId}`,
+            }),
+          )
+        ).message,
+      ).toBe(`This win is already paid for ${monthWords(M0)}.`);
+      expect(await liveEntries(ref.winId)).toBe(1);
+      const read = await as(
+        CSM_A,
+        "SELECT public.cockpit_csm_wins_read($1) AS r",
+        [A],
+      );
+      expect(
+        read.wins.find((w: { id: string }) => w.id === ref.winId).pay,
+      ).toMatchObject({ state: "confirmed", amountUsd: 250 });
+    });
+    // The other way: paid in last month's row, then that payment leaves the ledger.
+    await rolledBack(async () => {
+      await setting("forms.doors", { wins: true });
+      await setting("pay.proposals", { on: true });
+      const ref = await log(CSM_A, {
+        kind: "referral",
+        referralDealResponseId: "resp_ref",
+      });
+      await ex(`INSERT INTO public.cockpit_deal_payments(payment_id, deal_response_id, day, usd, rail, kind, deposit_usd, matched_by, active)
+        VALUES ('bank:dep_ref_first', 'resp_ref', '${prev()}-27', 500, 'bank', 'deposit', 500, 'deal_id', true),
+               ('whop:pay_ref_later', 'resp_ref', '${TODAY}', 1000, 'whop', 'remainder', 0, 'deal_id', true)`);
+      await confirm(prev(), `win:${ref.winId}:referrals:${prev()}`);
+      await ex(
+        "UPDATE public.cockpit_deal_payments SET active = false WHERE payment_id = 'bank:dep_ref_first'",
+      );
+      expect(
+        (await rows(M0)).filter(r => r.win_id === ref.winId),
+      ).toHaveLength(0);
+      expect(
+        (await rows(prev()))
+          .filter(r => r.win_id === ref.winId)
+          .map(r => r.state),
+      ).toEqual(["confirmed"]);
+      const read = await as(
+        CSM_A,
+        "SELECT public.cockpit_csm_wins_read($1) AS r",
+        [A],
+      );
+      expect(
+        read.wins.find((w: { id: string }) => w.id === ref.winId).pay.state,
+      ).toBe("confirmed");
+    });
+  });
+
+  test("a payment tied while the closer's month was open stays the closer's after the money refresh drops it from the deal ledger", async () => {
+    const ym = monthOf(day(-1));
+    for (const [label, result, after] of [
+      [
+        "frozen month lists it",
+        {
+          commission: [
+            { line: 1, basis: "closed_cash", payments: ["whop:pay_acme_rem"] },
+          ],
+        },
+        "waiting",
+      ],
+      ["frozen month without payment lists", {}, "waiting"],
+      [
+        "frozen month lists other payments only",
+        {
+          commission: [
+            { line: 1, basis: "closed_cash", payments: ["whop:pay_acme_link"] },
+          ],
+        },
+        "proposed",
+      ],
+    ] as const) {
+      await rolledBack(async () => {
+        await setting("forms.doors", { wins: true });
+        const up = await acceptedUpsell("upsell_backend", { wonOn: TODAY });
+        const pr = await propose(CSM_A, up, "whop:pay_acme_rem");
+        const ok = await decide(
+          pr.proposalId,
+          "confirm",
+          "The client paid the website upsell",
+        );
+        expect(ok.state).toBe("confirmed");
+        const tp = (
+          await q(
+            "SELECT ledger_deal_response_id, ledger_day::text AS ledger_day, ledger_closer_id::int AS closer FROM public.cockpit_win_tie_proposals WHERE id = $1",
+            [pr.proposalId],
+          )
+        )[0];
+        expect([tp?.ledger_deal_response_id, tp?.ledger_day, tp?.closer]).toEqual(
+          ["resp_acme", day(-1), CLOSER],
+        );
+        await approve(CLOSER, ym, result);
+        const before = (await rows(ym)).find(r => r.win_id === up);
+        expect([label, before?.state, before?.why]).toEqual([
+          label,
+          "waiting",
+          `This payment was paid to the closer in ${monthWords(ym)}.`,
+        ]);
+        // The next money refresh moves the payment to back-end cash (rule 7).
+        await ex(
+          "UPDATE public.cockpit_deal_payments SET active = false WHERE payment_id = 'whop:pay_acme_rem'",
+        );
+        const x = (await rows(ym)).find(r => r.win_id === up);
+        expect([label, x?.state]).toEqual([label, after]);
+      });
+    }
+  });
+
+  test("a voided referral, renewal or reactivation that was paid is never paid again on a new win", async () => {
+    await rolledBack(async () => {
+      await setting("forms.doors", { wins: true });
+      await setting("pay.proposals", { on: true });
+      // Referral: the same referred deal.
+      const ref = await log(CSM_A, {
+        kind: "referral",
+        referralDealResponseId: "resp_ref",
+      });
+      await ex(`INSERT INTO public.cockpit_deal_payments(payment_id, deal_response_id, day, usd, rail, kind, deposit_usd, matched_by, active)
+        VALUES ('whop:pay_ref_v', 'resp_ref', '${TODAY}', 1000, 'whop', 'remainder', 0, 'deal_id', true)`);
+      await confirm(M0, `win:${ref.winId}:referrals:${M0}`);
+      await stage(CEO, { winId: ref.winId, act: "void", reason: "Wrong date" });
+      expect(
+        (
+          await refusal(() =>
+            log(CSM_A, { kind: "referral", referralDealResponseId: "resp_ref" }),
+          )
+        ).message,
+      ).toContain("That deal was paid for on a referral win of");
+
+      // Renewal: the same agreement, at log and when the agreement is added later.
+      const rn = await log(CSM_A, { kind: "renewal", agreementUrl: AGREEMENT });
+      await confirm(M0, `win:${rn.winId}:renewals:${M0}`);
+      await stage(CEO, { winId: rn.winId, act: "void", reason: "Wrong date" });
+      expect(
+        (
+          await refusal(() =>
+            log(CSM_A, {
+              kind: "renewal",
+              agreementUrl: AGREEMENT,
+              confirmDuplicate: true,
+            }),
+          )
+        ).message,
+      ).toContain("That agreement was paid for on a win of");
+      const rn2 = await log(CSM_A, { kind: "renewal", confirmDuplicate: true });
+      await stage(CSM_A, {
+        winId: rn2.winId,
+        act: "proof",
+        agreementUrl: AGREEMENT,
+      });
+      const r2 = (await rows(M0)).find(r => r.win_id === rn2.winId);
+      expect([r2?.state, r2?.amount_usd, r2?.why]).toEqual([
+        "waiting",
+        null,
+        expect.stringContaining("Already paid on the win of"),
+      ]);
+      expect(
+        (await refusal(() => confirm(M0, `win:${rn2.winId}:renewals:${M0}`)))
+          .message,
+      ).toContain("Already paid on the win of");
+
+      // Reactivation: the same agreement.
+      const rx = await log(CSM_A, {
+        kind: "reactivation",
+        agreementUrl: `${AGREEMENT}-back`,
+      });
+      await confirm(M0, `win:${rx.winId}:reactivations:${M0}`);
+      await stage(CEO, { winId: rx.winId, act: "void", reason: "Wrong date" });
+      expect(
+        (
+          await refusal(() =>
+            log(CSM_A, {
+              kind: "reactivation",
+              agreementUrl: `${AGREEMENT}-back`,
+            }),
+          )
+        ).message,
+      ).toContain("That agreement was paid for on a win of");
+
+      // Once the CEO removed the old pay entry, the deal can be logged and paid again.
+      const old = await one<number>(
+        "SELECT id::int AS r FROM public.cockpit_pay_entries WHERE evidence_ref = $1 AND voided_at IS NULL",
+        [`win:${ref.winId}`],
+      );
+      await rpc(CEO, "cockpit_ceo_pay_entry_void", {
+        id: old,
+        reason: "Voided win",
+      });
+      const again = await log(CSM_A, {
+        kind: "referral",
+        referralDealResponseId: "resp_ref",
+      });
+      expect(
+        (await rows(M0)).find(r => r.win_id === again.winId)?.state,
+      ).toBe("proposed");
+    });
+  });
+
+  test("a recurring upsell keeps its first paid month once a share is confirmed", async () => {
+    await rolledBack(async () => {
+      await setting("forms.doors", { wins: true });
+      await setting("pay.proposals", { on: true });
+      const rec = await acceptedUpsell("upsell_smm", {
+        recurring: true,
+        monthlyUsd: 1000,
+        wonOn: TODAY,
+      });
+      await tieStraight(rec, "whop:pay_rec_now", 1000, `${M0}-01`);
+      const first = (await rows(M0)).find(r => r.win_id === rec);
+      expect([first?.engagement_month, Number(first?.amount_usd)]).toEqual([
+        1, 200,
+      ]);
+      await confirm(M0, `win:${rec}:recurring:${M0}`);
+      // An earlier month's payment is tied afterwards.
+      await tieStraight(rec, "whop:pay_rec_early", 1000, `${prev()}-25`);
+      const early = (await rows(prev())).find(r => r.win_id === rec);
+      expect([early?.state, early?.amount_usd, early?.why]).toEqual([
+        "waiting",
+        null,
+        `Paid before ${monthWords(M0)}, the engagement's first paid month, whose first-month rate is already paid. Add it by hand with a reason if more is owed.`,
+      ]);
+      const now = (await rows(M0)).find(r => r.win_id === rec);
+      expect([now?.state, now?.engagement_month, Number(now?.amount_usd)]).toEqual(
+        ["confirmed", 1, 200],
+      );
+      await tieStraight(rec, "whop:pay_rec_next", 1000, `${nextMonth(M0)}-03`);
+      const next = (await rows(nextMonth(M0))).find(r => r.win_id === rec);
+      expect([next?.engagement_month, Number(next?.amount_usd)]).toEqual([
+        2, 50,
+      ]);
+    });
+  });
+
+  test("the setter's approved month keeps the deal's cash with the deal too", async () => {
+    const ym = monthOf(day(-1));
+    await rolledBack(async () => {
+      await setting("forms.doors", { wins: true });
+      const setter = await one<number>(
+        "INSERT INTO public.cockpit_people(name, email, role, active, added_by) VALUES ('Setter Test', 'setter@tests.invalid', 'Setter', true, 'test') RETURNING id::int AS r",
+      );
+      // Pay facts' own rule names the setter (rep aliases, the CEO's confirmation, the intro).
+      await ex(`CREATE FUNCTION public.cockpit_pay_facts_sales(p_from date, p_to date) RETURNS jsonb
+        LANGUAGE sql STABLE SET search_path = '' AS $f$
+          SELECT jsonb_build_object('deals', jsonb_build_array(jsonb_build_object('responseId', 'resp_acme',
+            'closer', jsonb_build_object('name', 'Closer Test', 'personId', NULL),
+            'setter', jsonb_build_object('name', 'Setter Test', 'personId', ${setter}))))
+        $f$`);
+      await approve(setter, ym);
+      const up = await acceptedUpsell("upsell_backend", { wonOn: TODAY });
+      const pr = await propose(CSM_A, up, "whop:pay_acme_rem");
+      expect(
+        (
+          await refusal(() =>
+            decide(pr.proposalId, "confirm", "The client paid the upsell"),
+          )
+        ).message,
+      ).toBe(
+        `This payment was paid to the setter in ${monthWords(ym)}. It stays with the deal.`,
+      );
+      await tieStraight(up, "whop:pay_acme_rem", 900, day(-1));
+      const x = (await rows(ym)).find(r => r.win_id === up);
+      expect([x?.state, x?.why]).toEqual([
+        "waiting",
+        `This payment was paid to the setter in ${monthWords(ym)}.`,
+      ]);
+    });
+  });
+
+  test("after a tie clear and a re-tie, a removed pay entry no longer counts as paid", async () => {
+    const ym = monthOf(day(-2));
+    await rolledBack(async () => {
+      await setting("forms.doors", { wins: true });
+      await setting("pay.proposals", { on: true });
+      const up = await acceptedUpsell("upsell_backend", { wonOn: TODAY });
+      const pr = await propose(CSM_A, up, "whop:pay_acme_free");
+      await decide(pr.proposalId, "confirm");
+      const c = await confirm(ym, `win:${up}:upsells:${ym}`);
+      const cleared = await rpc(CEO, "cockpit_ceo_win_tie_clear", {
+        winId: up,
+        reason: "Tied by mistake",
+      });
+      expect(cleared.entries).toHaveLength(1);
+      await rpc(CEO, "cockpit_ceo_pay_entry_void", {
+        id: c.entryId,
+        reason: "Tie cleared",
+      });
+      const pr2 = await propose(CSM_A, up, "whop:pay_acme_free");
+      await decide(pr2.proposalId, "confirm");
+      const got = (await rows(ym))
+        .filter(r => r.win_id === up)
+        .map(r => [r.key, r.state, Number(r.cash_usd), r.amount_usd === null ? null : Number(r.amount_usd)]);
+      expect(got).toEqual([
+        [`win:${up}:upsells:${ym}`, "confirmed", 1200, 120],
+        [`win:${up}:upsells:${ym}:2`, "proposed", 1200, 120],
+      ]);
+      expect((await confirm(ym, `win:${up}:upsells:${ym}:2`)).state).toBe(
+        "confirmed",
+      );
+      expect(await liveEntries(up)).toBe(1);
     });
   });
 });

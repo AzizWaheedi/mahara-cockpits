@@ -2418,6 +2418,76 @@ describe("the onboarding (4.14, 3.3)", () => {
     });
   });
 
+  test("a Typeform answer found only by its hidden card id never uses up the card's one onboarding answer", async () => {
+    await rolledBack(async () => {
+      await goLive("onboarding", true);
+      await settings("onboarding.map_urls", MAPS);
+      await settings("stage4.messages", MESSAGES);
+      await ex(
+        `UPDATE public.cockpit_client_onboarding SET in_onboarding = true WHERE clickup_task_id = '${E}'`,
+      );
+      const v2 = await one<any>(
+        "SELECT public.cockpit_form_stage4_typeform_answers('onboarding', $1::jsonb) AS r",
+        [json(ONB_ANSWERS)],
+      );
+      const deliver = (token: string) =>
+        as<any>("service", "SELECT public.cockpit_form_onboarding_typeform($1::jsonb) AS r", [
+          json({
+            formKey: "onboarding",
+            externalId: token,
+            submittedAt: "2026-11-02T09:00:00Z",
+            answers: { fields: v2 },
+            hidden: { onboarding_client_id: E, client_name: "Elm Works" },
+          }),
+        ]);
+      // Someone holding the public link sets Elm Works' card id and answers first.
+      const forged = await deliver("tokForged001");
+      expect(forged).toMatchObject({ inserted: true, stored: "native", taskId: E });
+      expect(
+        await one(
+          "SELECT answer_meta->>'match' AS r FROM public.cockpit_form_responses WHERE id = $1::uuid",
+          [forged.responseId],
+        ),
+      ).toBe("hidden_id_unverified");
+      // The planner's read model now holds the forged token; neither it nor the row counts as the card's answer.
+      expect(
+        await one(
+          "SELECT forms->'onboarding'->>'response_id' AS r FROM public.cockpit_client_onboarding WHERE clickup_task_id = $1",
+          [E],
+        ),
+      ).toBe("tokForged001");
+      expect(
+        await one("SELECT public.cockpit_form_stage4_answered_at($1, NULL) AS r", [E]),
+      ).toBeNull();
+      expect(
+        await one("SELECT public.cockpit_form_card_allows($1, 'onboarding') AS r", [E]),
+      ).toBeNull();
+      const open = await portalOpen("locElm01", E);
+      expect(open.answeredAt).toBeNull();
+      expect(open.inviteId).toBeTruthy();
+      // The real client's later Typeform answer is planned, not kept as "answered".
+      const real = await deliver("tokRealElm01");
+      expect(real).toMatchObject({ inserted: true, stored: "native", taskId: E });
+      expect(
+        (await effects(real.responseId)).filter(r => r.state === "skipped").map(r => r.effect_key),
+      ).toEqual([]);
+      // Once a person confirms the card (no confirm path for onboarding yet, so the row is marked directly
+      // past the sent-answer guard), the answer counts.
+      await ex(
+        `SET LOCAL session_replication_role = replica;
+         UPDATE public.cockpit_form_responses SET answer_meta = answer_meta || '{"match":"confirmed_by_person"}'::jsonb
+          WHERE id = '${real.responseId}';
+         SET LOCAL session_replication_role = origin;`,
+      );
+      expect(
+        await one("SELECT public.cockpit_form_stage4_answered_at($1, NULL) IS NOT NULL AS r", [E]),
+      ).toBe(true);
+      expect(
+        await one("SELECT public.cockpit_form_card_allows($1, 'onboarding') AS r", [E]),
+      ).toContain("An onboarding answer is already stored");
+    });
+  });
+
   test("the version-2 schema holds the portal's parse contract: a context list, a required flag on every field, honest minutes", async () => {
     const v2 = await one<any>(
       "SELECT schema AS r FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2",

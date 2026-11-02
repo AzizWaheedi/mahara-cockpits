@@ -479,7 +479,11 @@ $$;
 -- response that is not void: Typeform, legacy or native), else its first stored kickoff (the card is
 -- past onboarding). NULL when neither. The once-per-card rule of 4.14. p_except leaves one response
 -- out, and p_except_ref the read model entry of the same answer (its Typeform token, which the
--- onboarding sync may have written first).
+-- onboarding sync may have written first). Review fix: an answer cockpit_form_onboarding_typeform
+-- stored from the link's hidden card id only (owner cockpit, match hidden_id_unverified), and the
+-- read model entry of that token, never count until a person confirms the card (confirmed_by_person):
+-- anyone holding the public link can set that id, so a forged answer must not use up the card's one
+-- answer. A later portal, native or Typeform answer for the card is then planned as the first.
 CREATE OR REPLACE FUNCTION public.cockpit_form_stage4_answered_at(p_task_id text, p_except uuid, p_except_ref text DEFAULT NULL)
 RETURNS timestamptz LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
   SELECT coalesce(
@@ -488,10 +492,16 @@ RETURNS timestamptz LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS
          FROM public.cockpit_client_onboarding o
         WHERE o.clickup_task_id = p_task_id AND jsonb_typeof(o.forms->'onboarding') = 'object'
           AND (p_except IS NULL OR o.forms->'onboarding'->>'response_id' IS DISTINCT FROM p_except::text)
-          AND (p_except_ref IS NULL OR o.forms->'onboarding'->>'response_id' IS DISTINCT FROM p_except_ref)),
+          AND (p_except_ref IS NULL OR o.forms->'onboarding'->>'response_id' IS DISTINCT FROM p_except_ref)
+          AND NOT EXISTS (SELECT 1 FROM public.cockpit_form_responses u
+                           WHERE u.form_key = 'onboarding' AND u.task_id = p_task_id
+                             AND u.external_id = o.forms->'onboarding'->>'response_id'
+                             AND coalesce(u.answer_meta->>'owner', '') = 'cockpit'
+                             AND coalesce(u.answer_meta->>'match', '') = 'hidden_id_unverified')),
       (SELECT min(coalesce(r.submitted_at, r.created_at)) FROM public.cockpit_form_responses r
         WHERE r.form_key = 'onboarding' AND r.task_id = p_task_id AND r.state NOT IN ('draft','void') AND r.mode = 'live'
-          AND (p_except IS NULL OR r.id <> p_except))),
+          AND (p_except IS NULL OR r.id <> p_except)
+          AND NOT (coalesce(r.answer_meta->>'owner', '') = 'cockpit' AND coalesce(r.answer_meta->>'match', '') = 'hidden_id_unverified'))),
     public.cockpit_form_stage4_kickoff_at(p_task_id, p_except))
 $$;
 

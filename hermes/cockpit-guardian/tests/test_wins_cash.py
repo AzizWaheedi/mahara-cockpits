@@ -81,13 +81,17 @@ class NotSetUpYet(unittest.TestCase):
 class LtvDaily(unittest.TestCase):
     on = setting("billing.ltv", {"on": True, "maxDeltaUsd": 5000})
 
+    ltv_ok = {"key": "billing-ltv", "ok": True, "note": "LTV: 2 written, 0 held for the CEO, 4 missing a baseline.",
+              "last_run_at": fakes.ago(60)}
+
     def test_on_and_no_run_in_26_hours_fails_and_a_fresh_run_is_ok(self):
         stale = {"key": "billing-daily", "ok": True, "note": "Ran.", "last_run_at": fakes.ago(27 * 60)}
-        self.assertEqual(run(wc.run_ltv_daily, {"cockpit_settings": [self.on], "cockpit_sync_state": [stale],
+        self.assertEqual(run(wc.run_ltv_daily, {"cockpit_settings": [self.on], "cockpit_sync_state": [stale, self.ltv_ok],
                                                 "cockpit_ltv_held": []}).status, "fail")
         self.assertEqual(run(wc.run_ltv_daily, {"cockpit_settings": [self.on], "cockpit_sync_state": []}).status, "fail")
         fresh = {**stale, "last_run_at": fakes.ago(60), "note": "LTV: 2 written, 0 held for the CEO, 4 missing a baseline."}
-        r = run(wc.run_ltv_daily, {"cockpit_settings": [self.on], "cockpit_sync_state": [fresh], "cockpit_ltv_held": []})
+        r = run(wc.run_ltv_daily, {"cockpit_settings": [self.on], "cockpit_sync_state": [fresh, self.ltv_ok],
+                                   "cockpit_ltv_held": []})
         self.assertEqual(r.status, "ok")
         self.assertIn("LTV: 2 written", r.summary)
 
@@ -95,9 +99,44 @@ class LtvDaily(unittest.TestCase):
         fresh = {"key": "billing-daily", "ok": True, "note": "Ran.", "last_run_at": fakes.ago(60)}
         held = [{"id": 1, "task_id": "taskA1", "first_held_on": day(4), "released_at": None},
                 {"id": 2, "task_id": "taskB1", "first_held_on": day(1), "released_at": None}]
-        r = run(wc.run_ltv_daily, {"cockpit_settings": [self.on], "cockpit_sync_state": [fresh], "cockpit_ltv_held": held})
+        r = run(wc.run_ltv_daily, {"cockpit_settings": [self.on], "cockpit_sync_state": [fresh, self.ltv_ok],
+                                   "cockpit_ltv_held": held})
         self.assertEqual(r.status, "warn")
         self.assertEqual(r.items, ["taskA1"])
+
+    # Pre-deploy review C10: the morning run catches an LTV error and still reports billing-daily ok, so the
+    # writer's own row (billing-ltv) is what says whether lifetime value was written.
+    def test_a_writer_error_or_refusal_fails_quoting_the_writer_note_though_the_morning_run_is_ok(self):
+        daily = {"key": "billing-daily", "ok": True, "last_run_at": fakes.ago(60),
+                 "note": "Ran for 2026-10-03: 0 extensions cleared, 0 late records opened, 0 closed. LTV: not written (error)."}
+        for note in ("LTV: not written (error). division by zero",
+                     "LTV: not written. The money section is older than a day; refresh it first."):
+            with self.subTest(note=note):
+                ltv = {"key": "billing-ltv", "ok": False, "note": note, "last_run_at": fakes.ago(60)}
+                r = run(wc.run_ltv_daily, {"cockpit_settings": [self.on], "cockpit_sync_state": [daily, ltv],
+                                           "cockpit_ltv_held": []})
+                self.assertEqual(r.status, "fail", r.summary)
+                self.assertIn(note, r.summary)
+
+    def test_a_writer_row_missing_or_older_than_26_hours_fails_unless_the_writer_was_just_turned_on(self):
+        daily = {"key": "billing-daily", "ok": True, "note": "Ran.", "last_run_at": fakes.ago(60)}
+        r = run(wc.run_ltv_daily, {"cockpit_settings": [self.on], "cockpit_sync_state": [daily], "cockpit_ltv_held": []})
+        self.assertEqual(r.status, "fail", r.summary)
+        self.assertIn("billing-ltv", r.summary)
+        old = {**self.ltv_ok, "last_run_at": fakes.ago(27 * 60), "note": "LTV: 1 written, 0 held for the CEO, 0 missing a baseline."}
+        r = run(wc.run_ltv_daily, {"cockpit_settings": [self.on], "cockpit_sync_state": [daily, old], "cockpit_ltv_held": []})
+        self.assertEqual(r.status, "fail", r.summary)
+        self.assertIn("LTV: 1 written", r.summary)
+        # Turned on two hours ago: the first writer run is still due, so no row yet (or an old one) is not a failure.
+        just_on = setting("billing.ltv", {"on": True, "maxDeltaUsd": 5000}, minutes_ago=120)
+        for rows in ([daily], [daily, old]):
+            r = run(wc.run_ltv_daily, {"cockpit_settings": [just_on], "cockpit_sync_state": rows, "cockpit_ltv_held": []})
+            self.assertEqual(r.status, "ok", r.summary)
+            self.assertIn("first", r.summary)
+        # A writer error is a failure even on the first morning.
+        bad = {**self.ltv_ok, "ok": False, "note": "LTV: not written (error). boom"}
+        r = run(wc.run_ltv_daily, {"cockpit_settings": [just_on], "cockpit_sync_state": [daily, bad], "cockpit_ltv_held": []})
+        self.assertEqual(r.status, "fail", r.summary)
 
 
 class LtvDrift(unittest.TestCase):

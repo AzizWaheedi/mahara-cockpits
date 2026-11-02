@@ -35,8 +35,8 @@ BEGIN
     SELECT * FROM (VALUES
       ('public.cockpit_form_schema_check(jsonb)', '30b96e79a5257d98cb0c22b5d00d7af9', '1f5d9016571ed472b83dbffa17363095'),
       ('public.cockpit_form_answers_check(jsonb,jsonb,jsonb)', 'ae2318509ab88246c8b9deb15ef6c8b6', 'd1d8bb66ae056415f8a2a968627220df'),
-      ('public.cockpit_form_card_allows(text,text)', 'd6f88a6602190b25c3e795124bd95335', '7f51b4364ee45a5dedebeab079aed4a3'),
-      ('public.cockpit_form_invite_issue_core(text,text,text[],text,text,boolean,jsonb,uuid,text,jsonb)', 'd9fd866ad86caeaf87b4887684c1fe3e', '3177aa72c0933c62f54c961245e2c256'),
+      ('public.cockpit_form_card_allows(text,text)', 'd6f88a6602190b25c3e795124bd95335', '972374b009d453246503b585858a65b3'),
+      ('public.cockpit_form_invite_issue_core(text,text,text[],text,text,boolean,jsonb,uuid,text,jsonb)', 'd9fd866ad86caeaf87b4887684c1fe3e', 'da7a50edf7252dc8ff3deb2779348e9a'),
       ('public.cockpit_form_invite_issue(text,text,text[],text,text,boolean,jsonb,uuid,text)', 'd1240e841250b3fb3d89f78af903ff4e', 'f08f6e3a20e2ec3a500317048a196bb7'),
       ('public.cockpit_form_invite_issue_system(text,text,text[],jsonb,text)', '408eeff14da78b14089948764b306a5c', '3d6a1d9540ae56120c43289d63630925'),
       ('public.cockpit_form_invite_view(text)', '8822e64244f5b953756108fd9a1e16a4', '70c02ed29db88796bd226e26d10e98cd'),
@@ -1836,7 +1836,9 @@ END $$;
 -- (20261102i): a departure the client came back from is closed; the bank receipt goes to a card on
 -- the billing sheet that is not Stopped; the onboarding form never goes to a card that already has an
 -- onboarding answer or a kickoff, whatever form it came through. A card the mirror does not hold (the
--- test card) passes the mirror's rules.
+-- test card) passes the mirror's rules. Review fix: an answer the cockpit's own Typeform door stored
+-- from a hidden card id only (owner cockpit, match hidden_id_unverified), and the read model entry of
+-- the same token, do not count until a person confirms the card (match confirmed_by_person).
 CREATE OR REPLACE FUNCTION public.cockpit_form_card_allows(p_task_id text, p_form_key text)
 RETURNS text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE a public.cockpit_billing_accounts; v_dep jsonb; v_name text; v_at timestamptz; o jsonb;
@@ -1845,16 +1847,25 @@ BEGIN
   v_name := coalesce(nullif(btrim(a.client_name), ''), 'This client');
   IF p_form_key = 'onboarding' THEN
     SELECT x.forms INTO o FROM public.cockpit_client_onboarding x WHERE x.clickup_task_id = p_task_id;
+    IF jsonb_typeof(o->'onboarding') = 'object'
+       AND EXISTS (SELECT 1 FROM public.cockpit_form_responses u
+                    WHERE u.form_key = 'onboarding' AND u.task_id = p_task_id AND u.external_id = o->'onboarding'->>'response_id'
+                      AND coalesce(u.answer_meta->>'owner', '') = 'cockpit'
+                      AND coalesce(u.answer_meta->>'match', '') = 'hidden_id_unverified') THEN
+      o := o - 'onboarding';
+    END IF;
     IF jsonb_typeof(o->'onboarding') = 'object' THEN
       v_at := CASE WHEN o->'onboarding'->>'submitted_at' ~ '^\d{4}-\d{2}-\d{2}' THEN (o->'onboarding'->>'submitted_at')::timestamptz END;
     END IF;
     IF v_at IS NULL THEN
       SELECT min(coalesce(r.submitted_at, r.created_at)) INTO v_at FROM public.cockpit_form_responses r
-       WHERE r.form_key = 'onboarding' AND r.task_id = p_task_id AND r.state IN ('submitted','confirmed','legacy') AND r.mode = 'live';
+       WHERE r.form_key = 'onboarding' AND r.task_id = p_task_id AND r.state IN ('submitted','confirmed','legacy') AND r.mode = 'live'
+         AND NOT (coalesce(r.answer_meta->>'owner', '') = 'cockpit' AND coalesce(r.answer_meta->>'match', '') = 'hidden_id_unverified');
     END IF;
     IF v_at IS NOT NULL OR jsonb_typeof(o->'onboarding') = 'object'
        OR EXISTS (SELECT 1 FROM public.cockpit_form_responses r
-                   WHERE r.form_key = 'onboarding' AND r.task_id = p_task_id AND r.state IN ('submitted','confirmed','legacy') AND r.mode = 'live') THEN
+                   WHERE r.form_key = 'onboarding' AND r.task_id = p_task_id AND r.state IN ('submitted','confirmed','legacy') AND r.mode = 'live'
+                     AND NOT (coalesce(r.answer_meta->>'owner', '') = 'cockpit' AND coalesce(r.answer_meta->>'match', '') = 'hidden_id_unverified')) THEN
       RETURN 'An onboarding answer is already stored for ' || coalesce(nullif(btrim(a.client_name), ''), 'this client')
              || coalesce(' (' || public.cockpit_form_day_words(v_at) || ')', '') || '.';
     END IF;
@@ -1948,6 +1959,15 @@ BEGIN
   v_problem := coalesce(public.cockpit_form_schema_check(v_schema), public.cockpit_form_schema_text_problem(v_schema));
   IF v_problem IS NOT NULL THEN
     RAISE EXCEPTION 'This form''s version % cannot be sent: %', v_ver, v_problem USING ERRCODE = '22023';
+  END IF;
+  -- Review fix: the portal before waves 5-6 (v1.6.0) refuses an invite over 10 minutes, and its
+  -- release (D-P1) comes after this file. Until a waves 5-6 portal form (the bank receipt or the
+  -- onboarding form) is live for clients, which the deploy order puts after D-P1, a longer form is
+  -- not sent. The onboarding form is never held: it reaches clients only after its own go-live.
+  IF p_form_key <> 'onboarding' AND (v_schema->>'minutes') ~ '^[0-9]{1,2}$' AND (v_schema->>'minutes')::integer > 10
+     AND NOT (public.cockpit_form_client_live('bank_receipt') OR public.cockpit_form_client_live('onboarding')) THEN
+    RAISE EXCEPTION 'This form takes % minutes, and the client portal shows a form of 10 minutes at most until the new portal is live. Publish it with 10 minutes or less.',
+      (v_schema->>'minutes')::integer USING ERRCODE = '22023';
   END IF;
   IF p_form_key = 'pause_consent' AND p_origin NOT IN ('pause','canary') THEN
     RAISE EXCEPTION 'Send the pause consent from Pause this client.' USING ERRCODE = '22023';

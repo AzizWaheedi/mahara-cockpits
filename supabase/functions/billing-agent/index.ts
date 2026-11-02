@@ -7,7 +7,7 @@
 // for these writes. Every call is receipted in cockpit_csm_provider_health as
 // billing-agent:<op>. See door.ts for the bodies and answers.
 import { restRpc } from "../cockpit-hours-sync/db.ts";
-import { type HealthRow, makeAgentDoor, sha256Hex } from "./door.ts";
+import { type HealthRow, type KeyRow, makeAgentDoor, sha256Hex } from "./door.ts";
 
 const env = (name: string) => Deno.env.get(name) ?? "";
 const url = env("SUPABASE_URL");
@@ -23,9 +23,19 @@ async function insertHealth(row: HealthRow): Promise<void> {
   if (!res.ok) throw new Error("The billing agent's receipt could not be saved.");
 }
 
+/** The agent keys' hashes and revocation, read only while a flood fills the miss window (door.ts). */
+async function listKeys(): Promise<KeyRow[]> {
+  const res = await fetch(`${url}/rest/v1/cockpit_agent_keys?select=key_sha256,revoked_at`, {
+    headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+  });
+  if (!res.ok) throw new Error("The agent key list could not be read.");
+  return await res.json();
+}
+
 Deno.serve(makeAgentDoor({
   rpc: restRpc(url, serviceKey),
   insertHealth,
+  listKeys,
   sha256Hex,
   uuid: () => crypto.randomUUID(),
 }));
