@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
+import { SopVideo } from "@/components/SopVideo";
 import { Button } from "@/components/ui/button";
+import { SOP_VIDEOS } from "@/lib/cockpits";
 import { supabase } from "@/lib/supabase";
 import { CatalogDeckPreview } from "../../../present/offer/CatalogDeckPreview";
 import {
@@ -46,6 +48,8 @@ export function OffersTab({
     );
   return (
     <div className="space-y-6">
+      {/* The SOP for this tab, played here (Aziz, 2026-11-02). */}
+      <SopVideo video={SOP_VIDEOS.csm.offers} />
       <section className="dko-panel">
         <h2>Pitch decks</h2>
         <p className="dko-help">

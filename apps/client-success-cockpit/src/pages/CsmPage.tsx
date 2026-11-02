@@ -86,6 +86,7 @@ import { KitSummary, OnboardingKit } from "@/components/OnboardingKit";
 import { PortalTasksButton } from "@/components/PortalTasks";
 import { ReportIssue } from "@/components/ReportIssue";
 import { CallList } from "@/components/results/CallList";
+import { SopVideo } from "@/components/SopVideo";
 import { SyncStrip } from "@/components/SyncStrip";
 import { RequestForm } from "@/components/tasks/RequestForm";
 import { YourTasks } from "@/components/tasks/YourTasks";
@@ -4180,39 +4181,48 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
             {linkGroupsFor(liveWithWins(liveList, Boolean(w56?.wins.open))).map(
               g => (
                 <SectionCard key={g.title} title={g.title} sub={g.blurb} flush>
-                  {g.rows.map(r => (
-                    <div
-                      key={r.url + r.label}
-                      className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 sm:px-6"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <ExtLink href={r.url} className="text-sm font-medium">
-                          {r.label}
-                        </ExtLink>
-                        {r.note && (
-                          <div className="text-xs text-muted-foreground">
-                            {r.note}
-                          </div>
-                        )}
-                        <OldForm
-                          url={oldFormOf(
-                            r,
-                            liveWithWins(liveList, Boolean(w56?.wins.open)),
-                          )}
-                        />
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          void navigator.clipboard.writeText(r.url);
-                          toast.success("Link copied");
-                        }}
+                  {g.rows.map(r =>
+                    r.video ? (
+                      <SopVideo
+                        key={r.url + r.label}
+                        video={r.video}
+                        flat
+                        className="px-4 py-3 sm:px-6"
+                      />
+                    ) : (
+                      <div
+                        key={r.url + r.label}
+                        className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 sm:px-6"
                       >
-                        Copy
-                      </Button>
-                    </div>
-                  ))}
+                        <div className="min-w-0 flex-1">
+                          <ExtLink href={r.url} className="text-sm font-medium">
+                            {r.label}
+                          </ExtLink>
+                          {r.note && (
+                            <div className="text-xs text-muted-foreground">
+                              {r.note}
+                            </div>
+                          )}
+                          <OldForm
+                            url={oldFormOf(
+                              r,
+                              liveWithWins(liveList, Boolean(w56?.wins.open)),
+                            )}
+                          />
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            void navigator.clipboard.writeText(r.url);
+                            toast.success("Link copied");
+                          }}
+                        >
+                          Copy
+                        </Button>
+                      </div>
+                    ),
+                  )}
                 </SectionCard>
               ),
             )}

@@ -22,6 +22,7 @@ import {
   type Tone,
 } from "@/components/BlueprintCard";
 import { DeckFrame, type FrameTrouble } from "@/components/DeckFrame";
+import { SopVideo } from "@/components/SopVideo";
 import { Button } from "@/components/ui/button";
 import {
   type BlueprintRow,
@@ -36,6 +37,7 @@ import {
   stampOf,
   waited,
 } from "@/lib/blueprint";
+import { SOP_VIDEOS } from "@/lib/cockpits";
 import {
   blueprintCall,
   blueprintFrame,
@@ -812,6 +814,8 @@ export function BlueprintCall({
             Only the creative director sends the parts.
           </p>
         ) : null}
+        {/* How the call runs, played here (Aziz, 2026-11-02). */}
+        <SopVideo video={SOP_VIDEOS.creative.blueprint} className="mt-4" />
         <div className="mt-5">
           <PartsRail read={read} onRetry={() => void reload()} />
         </div>

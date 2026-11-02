@@ -109,6 +109,11 @@ for f in cockpits.ts clarity.ts; do
   done
 done
 
+# The SOP video player: one look for every how-to video, in every cockpit.
+for app in "$MB" "$CD" "$ED" "$SA"; do
+  same SopVideo.tsx "apps/client-success-cockpit/src/components/SopVideo.tsx" "$app/src/components/SopVideo.tsx"
+done
+
 # The two Supabase cockpits' search box sits in the same dependency-free
 # dialog: Escape, a click outside, focus kept inside and handed back.
 same dialog.tsx "$ED/src/components/ui/dialog.tsx" "$SA/src/components/ui/dialog.tsx"
