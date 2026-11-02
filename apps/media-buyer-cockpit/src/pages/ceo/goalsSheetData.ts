@@ -1,7 +1,13 @@
 import { money, shortDate } from "@/components/ceo/format";
 import type { SheetContext } from "@/lib/ceoGoalSheetClient";
 import type { DriverKey } from "./goalsModel";
-import { modelTargets, REPLACED, tidy } from "./goalsModel";
+import {
+  holdsOnDeal,
+  modelTargets,
+  ON_DEAL,
+  REPLACED,
+  tidy,
+} from "./goalsModel";
 import {
   addDays,
   allColumns,
@@ -563,10 +569,25 @@ export function buildSheet(ctx: SheetContext): SheetData {
   const facts = factsOf(month);
   const prevFacts = factsOf(prev);
 
+  // The month's plan's own line for the instalments owed on signed deals
+  // (2026-11-02): undefined with no plan, null when the plan has no such line.
+  const onDealTarget = ctx.targets.find(
+    t => String(t.metric_key) === ON_DEAL.key,
+  );
+  const mrrTarget = ctx.targets.find(
+    t => String(t.metric_key) === "mrrProjected",
+  );
   const columns = allColumns(custom).map(c =>
     tabColumn(c, {
       crm,
       onDeals: onDeals[month],
+      planned: ctx.plan
+        ? onDealTarget
+          ? num(onDealTarget.target)
+          : null
+        : undefined,
+      mrrTarget: ctx.plan && mrrTarget ? num(mrrTarget.target) : null,
+      backEnd: facts.mrrProjected ?? null,
       software: softwareSource[month],
     }),
   );
@@ -600,7 +621,16 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 /** A column as this tab reads it: client CPL's leads before the release, the month's left-out MRR and software point. */
 function tabColumn(
   c: SheetColumn,
-  t: { crm: boolean; onDeals?: number | null; software?: string },
+  t: {
+    crm: boolean;
+    onDeals?: number | null;
+    /** The plan's instalments owed on signed deals: undefined with no plan, null when the plan has no such line. */
+    planned?: number | null;
+    /** The plan's Projected MRR target, and the book's back end it is judged against. */
+    mrrTarget?: number | null;
+    backEnd?: number | null;
+    software?: string;
+  },
 ): SheetColumn {
   if (c.custom) return c;
   if (c.key === "clientCpl" && !t.crm)
@@ -617,7 +647,37 @@ function tabColumn(
   )
     return {
       ...c,
-      source: `${c.source} Left out as new this month or still on their closer-form deal (front end): ${money(t.onDeals)} of MRR.`,
+      // Where those instalments are counted and planned (2026-11-02): an
+      // MRR target set on the whole book read red against the back end. It
+      // says only what the plan's rows show: a target above the back end is
+      // named, and what a typed target was meant to hold is never guessed.
+      source: `${c.source} Left out as new this month or still on their closer-form deal (front end): ${money(t.onDeals)} of MRR. Their instalments are counted in Cash collected${
+        typeof t.planned === "number"
+          ? `, and this month's plan counts ${money(t.planned)} of them there, as instalments owed on signed deals.`
+          : t.planned === null
+            ? `. This month's plan does not plan them on a line of their own.${
+                typeof t.mrrTarget === "number" &&
+                typeof t.backEnd === "number" &&
+                t.mrrTarget > t.backEnd + 0.5
+                  ? ` Its Projected MRR target, ${money(t.mrrTarget)}, is above the book's back end, ${money(t.backEnd)}, so these columns read harder than they are.`
+                  : ""
+              }`
+            : "."
+      }`,
+    };
+  if (
+    (c.key === "newCash" || c.key === "totalNewCash") &&
+    (typeof t.planned === "number" || typeof t.onDeals === "number")
+  )
+    return {
+      ...c,
+      source: `${c.source} ${
+        typeof t.planned === "number"
+          ? `This month's plan puts the instalments owed on signed deals, ${money(t.planned)}, in its target at its MRR collection rate.`
+          : t.planned === null
+            ? `This month ${money(t.onDeals)} of MRR is still on its deal, and this month's plan does not plan those instalments on a line of their own.`
+            : `This month ${money(t.onDeals)} of MRR is still on its deal.`
+      }`,
     };
   if (c.key === "software" && t.software)
     return { ...c, source: `${c.source} This month: ${t.software}` };
@@ -710,6 +770,8 @@ function factsFor(
     } else {
       facts.mrrProjected = num(entry.projectedExisting);
       facts.mrrCollected = num(entry.collectedBackEnd);
+      // What is owed on signed deals, for Plan next month's box: no column.
+      facts.onDealDue = num(entry.projectedOnDeals);
       say.onDeals(num(entry.projectedOnDeals));
       if (facts.mrrProjected === null || facts.mrrCollected === null)
         mrrWhy(
@@ -1103,6 +1165,9 @@ export function inputsFromTargets(t: TargetMap): PlanInputs {
     spendRetargeting: hammer,
     mrrDue: v("mrrProjected"),
     mrrCollectionRate: v("mrrCollectionRate"),
+    // A plan from before 2026-11-02 has no such row: not planned, never 0
+    // owed. Its stored targets stay as they are until one is typed.
+    onDealDue: v(ON_DEAL.key),
     upsellCash: v("upsellCash"),
     labour: v("labour"),
     overhead: v("software") ?? v("overhead"),
@@ -1160,7 +1225,10 @@ const SECTION_GROUP = Object.fromEntries(
  * row carries the sentence the Goals model writes, so the board and the formula
  * bar explain a number the same way. A mirror, a retired metric and one he
  * added never get a row here: the mirror's target is its source's, and a
- * retired metric's stored target (AOV, direct demos) is left as it is.
+ * retired metric's stored target (AOV, direct demos) is left as it is. The
+ * one input with no column, the instalments owed on signed deals, is written
+ * while the plan has a number for it (2026-11-02), so a target typed on the
+ * sheet carries it; a plan without one gets no row: not planned.
  */
 export function targetRows(
   inputs: PlanInputs,
@@ -1181,8 +1249,11 @@ export function targetRows(
     typeof v === "number" && Number.isFinite(v) ? say.money(v) : "?";
   const n = (v: number | null | undefined) =>
     typeof v === "number" && Number.isFinite(v) ? say.count(v) : "?";
-  how.totalCash = `${$(byColumn.newCash)} new cash, ${$(byColumn.upsellCash ?? 0)} upsell cash and ${$(byColumn.mrrCollected)} MRR collected, less ${$(byColumn.refundAmount ?? 0)} refunds.`;
+  how.totalCash = `${$(byColumn.newCash)} new cash${typeof p.onDealCash === "number" && p.onDealCash > 0 ? ` (${$(p.onDealCash)} of it instalments on signed deals)` : ""}, ${$(byColumn.upsellCash ?? 0)} upsell cash and ${$(byColumn.mrrCollected)} MRR collected, less ${$(byColumn.refundAmount ?? 0)} refunds.`;
   how.profit = `${$(byColumn.totalCash)} revenue less ${$(byColumn.software ?? 0)} overhead, ${$(byColumn.labour ?? 0)} labour and ${$(byColumn.marketingExpenses ?? 0)} marketing.`;
+  // FE ROAS's own sentence (2026-11-02), so a change of the instalments,
+  // which are in Cash collected, never leaves an old ratio's words on it.
+  how.roasFrontEnd = `Cash collected over Mahara's ad spend, lead gen and Hammer Them: ${$(byColumn.newCash)} over ${$((byColumn.spend ?? 0) + (byColumn.spendRetargeting ?? 0))}.`;
   how.introsDue = `The ${n(byColumn.introsBooked)} intros booked: each falls due once.`;
   how.demosDue = `The ${n(byColumn.demosBooked)} demos booked: each falls due once.`;
   const rows: Record<string, unknown>[] = [];
@@ -1203,5 +1274,78 @@ export function targetRows(
       sort: 1000 + sort,
     });
   });
+  const owed = inputs.onDealDue;
+  if (typeof owed === "number" && Number.isFinite(owed))
+    rows.push({
+      groupKey: ON_DEAL.group,
+      metricKey: ON_DEAL.key,
+      label: ON_DEAL.label,
+      unit: ON_DEAL.unit,
+      direction: ON_DEAL.direction,
+      target: tidy(owed, ON_DEAL.unit),
+      note: keptNotes[ON_DEAL.key] ?? ON_DEAL.note,
+      // Beside Collections %, where the sheet's MRR rows are.
+      sort: 1000 + SHEET_COLUMNS.findIndex(c => c.key === "mrrCollectionRate"),
+    });
   return rows;
+}
+
+/**
+ * The instalments owed on signed deals as one change of the plan (2026-11-02).
+ * When Projected MRR's target already holds them (holdsOnDeal: it sits above
+ * the book's back end by at least as much, as a target set on the whole book
+ * does), the same save moves them out of it, so the cards are counted once
+ * and the funnel is asked for what it was asked for before: plan 6's $11,333
+ * becomes $3,333 with $8,000 on deals, and its $3,900 of spend stands.
+ * `moved` is what came out of MRR due, null when nothing did.
+ */
+export function withOnDeal(
+  inputs: PlanInputs,
+  owed: number,
+  backEnd: number | null,
+): { next: PlanInputs; moved: number | null } {
+  const next: PlanInputs = { ...inputs, onDealDue: owed };
+  if (!holdsOnDeal(inputs.mrrDue, backEnd, owed) || inputs.mrrDue === null)
+    return { next, moved: null };
+  return { next: { ...next, mrrDue: inputs.mrrDue - owed }, moved: owed };
+}
+
+/**
+ * The rows one change of the plan saves (2026-11-02): the rows typed, and
+ * every row whose number or sentence the change moves. A row it leaves alone
+ * is not sent, so it keeps its stored number and note: a total he typed
+ * (plan 6's $65,833 contracted) or a count the model rounds another way is
+ * never rewritten by a target typed somewhere else. A moved row keeps a
+ * stored note that was not the model's own sentence while its number stands;
+ * on a number that is gone, or where the note was the model's old sentence,
+ * the model's new sentence takes its place, so no note describes a number
+ * the plan no longer has. `typed` maps each typed row to its note.
+ */
+export function savedRows(
+  before: PlanInputs,
+  next: PlanInputs,
+  stored: TargetMap,
+  typed: Record<string, string>,
+  say: {
+    money: (v: number) => string;
+    count: (v: number) => string;
+    pct: (v: number) => string;
+  },
+): Record<string, unknown>[] {
+  const was = new Map(
+    targetRows(before, {}, say).map(r => [String(r.metricKey), r]),
+  );
+  return targetRows(next, {}, say).flatMap((r): Record<string, unknown>[] => {
+    const k = String(r.metricKey);
+    if (k in typed) return [{ ...r, note: typed[k] }];
+    const o = was.get(k);
+    if (o && o.target === r.target && o.note === r.note) return [];
+    const s = stored[k];
+    // Only the sentence moved: the stored number stays, whatever it is.
+    const target = s && o && o.target === r.target ? s.value : r.target;
+    const note =
+      s?.note && s.note !== o?.note && s.value === target ? s.note : r.note;
+    if (s && s.value === target && s.note === note) return [];
+    return [{ ...r, target, note }];
+  });
 }

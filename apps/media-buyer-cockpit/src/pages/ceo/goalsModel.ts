@@ -28,6 +28,14 @@ import { CPB_GATE } from "@/lib/kpi";
  *
  * Refunds come off the money collected, as on his sheet's Total revenue
  * (2026-11-02), so this plan and the Goals sheet's plan read one revenue.
+ *
+ * MRR due is back end only since 2026-11-02 (SPEC-ROUND2 fix 8): the cards of
+ * clients who were clients before the month. A card still on its closer-form
+ * deal owes an instalment the deal ledger counts in Cash collected, so the
+ * plan holds those as their own input, the instalments owed on signed deals
+ * (`onDealDue`, the Money tab's `projectedOnDeals`), collected at the same
+ * collection rate as MRR and planned inside Cash collected, never on the
+ * lead-gen funnel. An empty box is not planned: nothing is added for it.
  */
 
 export type DriverKey =
@@ -46,6 +54,7 @@ export type DriverKey =
   | "spendRetargeting"
   | "mrrDue"
   | "mrrCollectionRate"
+  | "onDealDue"
   | "upsellCash"
   | "refundAmount"
   | "labour"
@@ -84,6 +93,7 @@ export const DRIVERS: Record<
   spendRetargeting: { unit: "usd", better: null },
   mrrDue: { unit: "usd", better: null },
   mrrCollectionRate: { unit: "rate", better: "up" },
+  onDealDue: { unit: "usd", better: null },
   upsellCash: { unit: "usd", better: null },
   refundAmount: { unit: "usd", better: null },
   labour: { unit: "usd", better: null },
@@ -124,6 +134,11 @@ export type Projection = {
   demosQualified: number | null;
   closes: number | null;
   contracted: number | null;
+  /** The month's own deals' cash: contracted revenue's share collected in the month. */
+  dealCash: number | null;
+  /** Instalments on deals signed before the month, collected at the MRR collection rate; 0 when not planned. */
+  onDealCash: number | null;
+  /** Cash collected, as the deal ledger counts it: the month's deals' cash and the instalments on earlier ones. */
   newCash: number | null;
   costPerBookableLead: number | null;
   costPerIntroBooked: number | null;
@@ -158,12 +173,22 @@ export function project(d: Drivers): Projection {
   const demosShown = times(demosBooked, d.demoShowRate);
   const closes = times(demosShown, d.closeRate);
   const contracted = times(closes, d.aov);
-  const newCash = times(contracted, d.cashShare);
+  const dealCash = times(contracted, d.cashShare);
+  // Instalments owed on deals signed before the month (2026-11-02): collected
+  // at the back end's rate and counted in Cash collected, as the deal ledger
+  // counts them. An empty box plans none; owed with no rate is not known.
+  const onDealCash = ok(d.onDealDue)
+    ? times(d.onDealDue, d.mrrCollectionRate)
+    : 0;
+  const newCash =
+    dealCash === null || onDealCash === null ? null : dealCash + onDealCash;
   const backEndCash = times(d.mrrDue, d.mrrCollectionRate);
+  // With the funnel empty the back end and the instalments still stand on
+  // their own, as the back end always has.
   const cashIn =
     newCash === null && backEndCash === null
       ? null
-      : plus(newCash, backEndCash, d.upsellCash);
+      : plus(dealCash, onDealCash, backEndCash, d.upsellCash);
   // His sheet's Total revenue takes the refunds off (2026-11-02). Fees are
   // charged on what came in, refunded or not.
   const totalCash =
@@ -189,6 +214,8 @@ export function project(d: Drivers): Projection {
     demosQualified: times(demosShown, d.qualifiedDemoShare),
     closes,
     contracted,
+    dealCash,
+    onDealCash,
     newCash,
     costPerBookableLead: over(d.spend, times(leads, d.qualifiedShare)),
     costPerIntroBooked: over(d.spend, introsBooked),
@@ -221,6 +248,13 @@ export type ByKey = Record<string, number | null | undefined>;
  * month's 107 demos from 177 intros shown is a 60% intro-to-demo rate.
  */
 export function driversFromTargets(t: ByKey): Drivers {
+  // Cash collected holds the instalments on signed deals (2026-11-02), so the
+  // share of contracted collected is read without them: none when not planned.
+  const onDealCash = ok(t.onDealDue)
+    ? times(t.onDealDue, t.mrrCollectionRate)
+    : 0;
+  const dealCash =
+    ok(t.newCash) && onDealCash !== null ? t.newCash - onDealCash : null;
   return {
     spend: t.spend ?? null,
     cpl: t.cpl ?? over(t.spend, t.leads),
@@ -233,10 +267,11 @@ export function driversFromTargets(t: ByKey): Drivers {
     qualifiedDemoShare: over(t.demosQualified, t.demosShown),
     closeRate: t.closeRate ?? over(t.closes, t.demosShown),
     aov: t.aov ?? over(t.contracted, t.closes),
-    cashShare: over(t.newCash, t.contracted),
+    cashShare: t.cashShare ?? over(dealCash, t.contracted),
     spendRetargeting: t.spendRetargeting ?? null,
     mrrDue: t.mrrProjected ?? over(t.backEndCash, t.mrrCollectionRate),
     mrrCollectionRate: t.mrrCollectionRate ?? null,
+    onDealDue: t.onDealDue ?? null,
     upsellCash: t.upsellCash ?? null,
     refundAmount: t.refundAmount ?? null,
     labour: t.labour ?? null,
@@ -285,10 +320,16 @@ export function driversFromActuals(
     ),
     closeRate: pick(m.closeRate, "closeRate"),
     aov: pick(m.aov, "aov"),
-    cashShare: pick(over(m.newCash, m.contracted), "cashShare"),
+    // UF cash %, the month's own deals (2026-11-02): Cash collected over
+    // contracted would count earlier deals' instalments, which are planned
+    // on their own line, twice.
+    cashShare: pick(m.cashShare, "cashShare"),
     spendRetargeting: pick(whole(m.spendRetargeting), "spendRetargeting"),
+    // What the cards owe is the month's book, never grown: the back end, and
+    // the instalments still owed on signed deals.
     mrrDue: pick(m.mrrProjected, "mrrDue"),
     mrrCollectionRate: pick(m.mrrCollectionRate, "mrrCollectionRate"),
+    onDealDue: pick(m.onDealDue, "onDealDue"),
     upsellCash: fallback.upsellCash,
     refundAmount: fallback.refundAmount,
     labour: fallback.labour,
@@ -344,6 +385,45 @@ export const ALWAYS = new Set([
 export const REPLACED: Record<string, string> = {
   clientLeadToBooking: "callLeadToBooking",
 };
+
+/**
+ * The plan's row for the instalments owed on signed deals (2026-11-02). An
+ * input stored as a target, as AOV is, and no column of the Goals sheet: the
+ * Goals catalogue has no such metric, so Plan next month writes the row
+ * itself, and the sheet and the board keep it off their lists. Its group
+ * never changes: targets are saved on (plan, group, metric).
+ */
+export const ON_DEAL = {
+  key: "onDealDue",
+  label: "Instalments owed on signed deals",
+  group: "back_end",
+  unit: "usd",
+  direction: "up",
+  note: "Recurring cards still on their closer-form deal, from the Money tab's book: their instalments are collected as Cash collected, at the MRR collection rate, and are not in MRR due.",
+} as const;
+
+/**
+ * Whether an MRR due target already holds `owed` of the instalments owed on
+ * signed deals (2026-11-02): it sits above the book's back end by at least
+ * that much, as a target set on the whole book before round 2 does (plan 6:
+ * $11,333 on a $3,333 back end and $8,000 on deals). Planned on their own
+ * line as well, those cards would be counted twice. Not known without the
+ * book's back end.
+ */
+export function holdsOnDeal(
+  mrrDue: number | null | undefined,
+  backEnd: number | null | undefined,
+  owed: number | null | undefined,
+): boolean {
+  return (
+    ok(mrrDue) &&
+    ok(backEnd) &&
+    ok(owed) &&
+    owed > 0 &&
+    mrrDue > backEnd + 0.5 &&
+    mrrDue >= backEnd + owed - 0.5
+  );
+}
 
 type Say = {
   money: (v: number) => string;
@@ -420,7 +500,9 @@ export function modelTargets(
     [
       "newCash",
       p.newCash,
-      `${r(d.cashShare)} of ${$(p.contracted)} contracted, collected in the month.`,
+      ok(d.onDealDue)
+        ? `${r(d.cashShare)} of ${$(p.contracted)} contracted, plus ${r(d.mrrCollectionRate)} of ${$(d.onDealDue)} instalments owed on signed deals, collected in the month.`
+        : `${r(d.cashShare)} of ${$(p.contracted)} contracted, collected in the month. Instalments owed on signed deals are not planned.`,
     ],
     ["roasContracted", p.roasContracted, null],
     ["mrrProjected", d.mrrDue, null],
@@ -442,9 +524,7 @@ export function modelTargets(
     [
       "totalCash",
       p.totalCash,
-      ok(d.refundAmount) && d.refundAmount > 0
-        ? `New-client cash, back-end cash and upsells, less ${$(d.refundAmount)} refunds.`
-        : "New-client cash, back-end cash and upsells.",
+      `${ok(p.onDealCash) && p.onDealCash > 0 ? "Cash collected (new clients and instalments on signed deals)" : "New-client cash"}, back-end cash and upsells${ok(d.refundAmount) && d.refundAmount > 0 ? `, less ${$(d.refundAmount)} refunds` : ""}.`,
     ],
     ["labour", d.labour, null],
     ["overhead", d.overhead, null],

@@ -21,7 +21,7 @@ import { api, useAction } from "@/lib/cockpitApi";
 import { cn } from "@/lib/utils";
 import { planTitle } from "./goalsKit";
 import { LockIn } from "./goalsLockIn";
-import { tidy } from "./goalsModel";
+import { holdsOnDeal, ON_DEAL, tidy } from "./goalsModel";
 import {
   type CellWrite,
   COLOUR_TONE,
@@ -57,8 +57,9 @@ import {
   revenueFor,
   rowsOf,
   type SheetRange,
-  targetRows,
+  savedRows,
   targetsOf,
+  withOnDeal,
 } from "./goalsSheetData";
 import {
   ADDABLE_SECTIONS,
@@ -70,6 +71,7 @@ import {
   fixedHintOf,
   isLevel,
   isWorkingDay,
+  type PlanInputs,
   paceFor,
   partsOf,
   rollUp,
@@ -160,6 +162,23 @@ const PLAN_IS_TARGET: ReadonlySet<string> = new Set([
   "totalContracted",
   "marketingExpenses",
 ]);
+
+/**
+ * The plan's instalments owed on signed deals as the column a target save
+ * takes (2026-11-02). It is no column of the grid: the line over it sets it,
+ * and the save works the rest of the plan out from it, as a Target row does.
+ */
+const ON_DEAL_COLUMN: SheetColumn = {
+  key: ON_DEAL.key,
+  label: ON_DEAL.label,
+  section: "collections",
+  unit: ON_DEAL.unit,
+  direction: ON_DEAL.direction,
+  rollup: { kind: "last", part: ON_DEAL.key },
+  editable: true,
+  source: ON_DEAL.note,
+  driver: "onDealDue",
+};
 
 /** "Open as table" on a phone, kept on the device. */
 const TABLE_PREF = "ceo.goals.sheetAsTable";
@@ -572,7 +591,11 @@ export function GoalsSheet({
   );
 
   const commitTarget = useCallback(
-    (c: SheetColumn, value: number | null) => {
+    (
+      c: SheetColumn,
+      value: number | null,
+      opts?: { note?: string; backEnd?: number | null },
+    ) => {
       const at = ctxRef.current;
       if (!at) return;
       const now = targetsOf(at);
@@ -582,13 +605,25 @@ export function GoalsSheet({
       if (inputKey) {
         // A goal for the cash keeps the chain working back from it. A number
         // typed lower down moves the goal unless the goal is what was typed.
-        const next = { ...inputsFromTargets(now), [inputKey]: value };
+        const before = inputsFromTargets(now);
+        let next: PlanInputs = { ...before, [inputKey]: value };
         if (inputKey === "spend") next.goalCash = null;
-        const keptNotes: Record<string, string | null> = {};
-        for (const [k, t] of Object.entries(now)) keptNotes[k] = t.note;
         // A typed number's own assumption no longer holds.
-        keptNotes[c.key] = "Typed on the sheet.";
-        rows = targetRows(next, keptNotes, SAY);
+        const typed: Record<string, string> = {
+          [c.key]: opts?.note ?? "Typed on the sheet.",
+        };
+        // The instalments owed on signed deals (2026-11-02): a Projected MRR
+        // target that holds them already gives them up in the same save, so
+        // the cards count once and the spend stays where it was.
+        if (inputKey === ON_DEAL.key && value !== null) {
+          const split = withOnDeal(next, value, opts?.backEnd ?? null);
+          next = split.next;
+          if (split.moved !== null)
+            typed.mrrProjected = `The book's back end. ${money(split.moved)} of cards still on their closer-form deal moved out of this target to the plan's instalments owed on signed deals, which Cash collected's target counts.`;
+        }
+        // Only what the change moves is written: a target set elsewhere,
+        // and its note, stay as they are (2026-11-02).
+        rows = savedRows(before, next, now, typed, SAY);
       } else {
         const section = SHEET_SECTIONS.find(s => s.key === c.section);
         rows = [
@@ -640,7 +675,7 @@ export function GoalsSheet({
             });
           setProblem({
             text: `The target for ${c.label} was not saved: ${reasonOf(e)}. The old target is back.`,
-            retry: () => commitTarget(c, value),
+            retry: () => commitTarget(c, value, opts),
           });
         })
         .finally(() => settle(at.month));
@@ -1207,6 +1242,34 @@ export function GoalsSheet({
             </div>
           </div>
 
+          <OnDealLine
+            key={sheet.month}
+            value={inputs.onDealDue}
+            rate={inputs.mrrCollectionRate}
+            book={
+              typeof sheet.facts.onDealDue === "number"
+                ? sheet.facts.onDealDue
+                : null
+            }
+            mrrTarget={inputs.mrrDue}
+            bookBackEnd={
+              typeof sheet.facts.mrrProjected === "number"
+                ? sheet.facts.mrrProjected
+                : null
+            }
+            onSave={(v, fromBook) =>
+              commitTarget(ON_DEAL_COLUMN, v, {
+                note: fromBook
+                  ? `${ON_DEAL.note} From the ${monthName(sheet.month, "long")} book: ${money(v)}.`
+                  : `${ON_DEAL.note} Typed on the sheet.`,
+                backEnd:
+                  typeof sheet.facts.mrrProjected === "number"
+                    ? sheet.facts.mrrProjected
+                    : null,
+              })
+            }
+          />
+
           {adding ? (
             <AddMetric
               onAdd={async m => {
@@ -1629,6 +1692,124 @@ function RollRow({
 
 const field =
   "w-full rounded-md border bg-background px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
+/**
+ * The instalments owed on signed deals (2026-11-02): cards still on their
+ * closer-form deal, which the Money tab's book leaves out of Projected MRR.
+ * The plan collects them at its Collections % inside Cash collected's target,
+ * and no ad bought them, so the funnel is never asked for them. An empty box
+ * is not planned; 0 plans none. A Projected MRR target that holds them
+ * already (one set on the whole book) gives them up in the same save, and
+ * the line says so before it happens.
+ */
+function OnDealLine({
+  value,
+  rate,
+  book,
+  mrrTarget,
+  bookBackEnd,
+  onSave,
+}: {
+  value: number | null;
+  rate: number | null;
+  book: number | null;
+  /** Projected MRR's target, and the book's back end, to catch a target set on the whole book. */
+  mrrTarget: number | null;
+  bookBackEnd: number | null;
+  /** Saves the line; `fromBook` when the number is the book's own. */
+  onSave: (v: number, fromBook: boolean) => void;
+}) {
+  const shown = value === null ? "" : String(tidy(value, "usd"));
+  const [text, setText] = useState(shown);
+  /** The text last saved: Enter, then the blur that follows, save once. */
+  const sent = useRef<string | null>(null);
+  // A save or a fresh read puts the plan's own number back in the box.
+  useEffect(() => {
+    setText(shown);
+    sent.current = null;
+  }, [shown]);
+  const isBookNumber = (v: number) =>
+    book !== null && tidy(v, "usd") === tidy(book, "usd");
+  const commit = () => {
+    const t = text.replace(/[,$\s]/g, "");
+    const n = Number(t);
+    if (t === shown || t === sent.current) return;
+    if (t === "" || !Number.isFinite(n) || n < 0) {
+      setText(shown);
+      return;
+    }
+    sent.current = t;
+    onSave(n, isBookNumber(n));
+  };
+  // Projected MRR's target at the back end plus these is the whole book.
+  // Before a save the line says the save takes them out of it; after one
+  // that left them in both (a plan written elsewhere), it offers to.
+  const takesOut =
+    value === null &&
+    book !== null &&
+    mrrTarget !== null &&
+    bookBackEnd !== null &&
+    holdsOnDeal(mrrTarget, bookBackEnd, book)
+      ? ` Projected MRR's target, ${money(mrrTarget)}, holds them already (the book's back end is ${money(bookBackEnd)}): saving the book's ${money(book)} here takes it out of that target, to ${money(mrrTarget - book)}, so they count once and the spend stays.`
+      : "";
+  const twice =
+    value !== null &&
+    mrrTarget !== null &&
+    bookBackEnd !== null &&
+    holdsOnDeal(mrrTarget, bookBackEnd, value)
+      ? ` Projected MRR's target, ${money(mrrTarget)}, holds them as well (the book's back end is ${money(bookBackEnd)}), so they count twice.`
+      : "";
+  const isBook = value !== null && isBookNumber(value);
+  const bookWords =
+    book === null || isBook
+      ? ""
+      : ` The book holds ${money(book)} on signed deals this month.`;
+  const words =
+    value === null
+      ? `Not planned. Cards still on their closer-form deal pay instalments counted in Cash collected, not in Projected MRR.${bookWords}${takesOut}`
+      : rate === null
+        ? `Collected at the Collections % target: give it one to plan what comes in.${twice}`
+        : `${pct(rate)} of it, ${money(value * rate)}, is in Cash collected's target, not in Projected MRR: the funnel is not asked for it.${bookWords}${twice}`;
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border px-3 py-2 text-xs">
+      <label className="inline-flex items-center gap-2 font-medium">
+        {ON_DEAL.label}
+        <span className="inline-flex items-center rounded-md border bg-background text-sm focus-within:ring-2 focus-within:ring-ring">
+          <span className="pl-2 text-muted-foreground" aria-hidden>
+            $
+          </span>
+          <input
+            className="w-24 bg-transparent px-1.5 py-1 text-right tabular-nums outline-none"
+            inputMode="decimal"
+            placeholder="Not planned"
+            value={text}
+            onChange={e => setText(e.target.value)}
+            onBlur={commit}
+            onKeyDown={e => {
+              if (e.key === "Enter") commit();
+              if (e.key === "Escape") setText(shown);
+            }}
+          />
+        </span>
+      </label>
+      <span className="min-w-0 flex-1 text-muted-foreground">{words}</span>
+      {book !== null && !isBook ? (
+        <Button variant="outline" size="sm" onClick={() => onSave(book, true)}>
+          {`Use the book's ${money(book)}`}
+        </Button>
+      ) : null}
+      {twice && value !== null ? (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => onSave(value, isBook)}
+        >
+          Take them out of Projected MRR
+        </Button>
+      ) : null}
+    </div>
+  );
+}
 
 function AddMetric({
   onAdd,

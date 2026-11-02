@@ -410,6 +410,9 @@ export function PlanEditor({
   );
 }
 
+/** The plan input the sheet's instalments line owns (goalsSheet.tsx OnDealLine). */
+const ON_DEAL_KEY = "onDealDue";
+
 /** Every target already on the plan, editable in place. */
 function TargetList({
   rows,
@@ -445,6 +448,10 @@ function TargetList({
         {rows.map(t => {
           const set = (patch: Partial<Draft>) =>
             setEdits(x => ({ ...x, [t.id]: { ...x[t.id], ...patch } }));
+          // The instalments owed on signed deals move Cash collected, FE ROAS
+          // and the spend together, so they change on the sheet's own line,
+          // never alone here (2026-11-02).
+          const onSheet = t.metricKey === ON_DEAL_KEY;
           return (
             <div
               key={t.id}
@@ -453,13 +460,16 @@ function TargetList({
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{t.label}</p>
                 <p className="text-xs text-muted-foreground">
-                  {`${t.groupKey.replace(/_/g, " ")} · now ${fmt(t.actual, t.unit)}`}
+                  {onSheet
+                    ? "Change it on the monthly sheet's instalments line, so Cash collected and the spend follow."
+                    : `${t.groupKey.replace(/_/g, " ")} · now ${fmt(t.actual, t.unit)}`}
                 </p>
               </div>
               <input
                 className={field}
                 aria-label={`${t.label} target`}
                 inputMode="decimal"
+                disabled={onSheet}
                 defaultValue={t.target ?? ""}
                 onChange={ev => set({ target: ev.target.value })}
               />
@@ -467,6 +477,7 @@ function TargetList({
                 className={field}
                 aria-label={`${t.label} stretch`}
                 inputMode="decimal"
+                disabled={onSheet}
                 defaultValue={t.stretch ?? ""}
                 onChange={ev => set({ stretch: ev.target.value })}
               />
@@ -475,14 +486,14 @@ function TargetList({
                 aria-label={`${t.label} actual, typed in`}
                 inputMode="decimal"
                 placeholder={t.source === "measured" ? "measured" : "actual"}
-                disabled={t.source === "measured"}
+                disabled={onSheet || t.source === "measured"}
                 defaultValue=""
                 onChange={ev => set({ actualManual: ev.target.value })}
               />
               <Button
                 variant="outline"
                 size="icon"
-                disabled={busy || saving}
+                disabled={onSheet || busy || saving}
                 aria-label={`Take ${t.label} off the plan`}
                 onClick={async () => {
                   setSaving(true);

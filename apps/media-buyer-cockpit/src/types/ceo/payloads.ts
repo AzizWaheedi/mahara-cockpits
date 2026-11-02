@@ -832,7 +832,11 @@ export type FunnelWindow = {
   demoShowRate: number | null;
   /** The dashboard's `intro_show_rate`, the same rule for intro calls. */
   introShowRate: number | null;
-  /** The dashboard's `intro_to_demo`: intros that went on to book a demo, over intros shown. */
+  /**
+   * The dashboard's `intro_to_demo`: intros that went on to book a demo, over
+   * intros shown, 0..1 to three places. A window rebuilt from days divides
+   * the days' `introsAdvanced` by their `introsShown` (since 2026-11-02).
+   */
   introToDemo: number | null;
   /** Past demos in the window still marked confirmed. They count as shown under the dashboard's rule. */
   demosStillConfirmed: number;
@@ -907,6 +911,14 @@ export type FunnelWindow = {
     /** Front-end payments in the window, and the deals they are on. */
     payments?: number | null;
     paidDeals?: number | null;
+    /**
+     * Front-end money paid inside the window on deals whose form was signed
+     * inside the window (growth.js since release goal1102, 2026-11-02): UF
+     * cash % = paidOnWindowDeals / contracted. A month measure, never kept per
+     * day, so a window rebuilt from days leaves it null. Null when the deal
+     * ledger was not read; absent on a payload stored before.
+     */
+    paidOnWindowDeals?: number | null;
     /** `paid` by rail; a bank transfer and a statement line are both bank. */
     byRail?: Record<"whop" | "tap" | "ecom" | "bank" | "manual", number> | null;
     /** `paid` by the deal's closer, biggest first. */
@@ -939,7 +951,15 @@ export type FunnelWindow = {
   cac: number | null;
   /** The dashboard's `roas`: contracted over lead-gen spend. Same as `roasContracted`. */
   roas: number | null;
-  /** Front-end ROAS, the main one: front-end cash over lead-gen spend. */
+  /**
+   * Front-end ROAS, the main one: front-end cash (`frontEndCash.paid`) over
+   * all Mahara ad spend, lead gen and retargeting (`spend` +
+   * `raw.spend_retargeting`, the webinar's left out). Since 2026-11-02
+   * (Goals sheet round 2, fix 15); a window stored before was over lead-gen
+   * spend only, so the tile works it out from the window's own fields
+   * (metrics.ts ROAS_CASH). Null when the deal ledger or retargeting is not
+   * read, or there is no spend.
+   */
   roasCash: number | null;
   /** Contracted ROAS: contracted over lead-gen spend. */
   roasContracted: number | null;
@@ -966,6 +986,12 @@ export type GrowthDay = {
   /** Lead-gen spend. */
   spend: number;
   spendRetargeting?: number;
+  /**
+   * Lead-gen unique link clicks by Meta day, the webinar's left out (growth.js
+   * since release goal1102, 2026-11-02). Null when a lead-gen ad that spent
+   * that day has no unique count: not known, never 0. Absent before.
+   */
+  uniqueLinkClicks?: number | null;
   /** ROAS-tagged leads created that day. */
   leads: number;
   qualified?: number;
@@ -991,6 +1017,15 @@ export type GrowthDay = {
   introsDue?: number;
   demosDue?: number;
   introsShown?: number;
+  /**
+   * Of that day's intros shown, those whose contact has a demo booked at or
+   * after the intro's start: b2b_window_metrics' own intro_handoff rule, so
+   * intro to demo for any run of days is sum(introsAdvanced) /
+   * sum(introsShown) (growth.js since release goal1102, 2026-11-02). Read as
+   * of the refresh, so a day can still rise. Absent on a payload stored
+   * before; such a day is not read, never 0.
+   */
+  introsAdvanced?: number | null;
   demosShown?: number;
   demosQualified?: number;
   introsCancelled?: number;
@@ -1287,6 +1322,22 @@ export type DeliveryWindow = {
    * `notMeasured`. Absent on payloads stored before then.
    */
   doneWithYou?: { client: string; spend: number }[];
+  /**
+   * Client CPL on the CRM (2026-11-02, Goals sheet round 2, fix 9): each
+   * client's CRM ad leads (cockpit_client_days.crm_ad_leads) and its spend on
+   * the same days, paired by client and day, so crmSpend / crmAdLeads is like
+   * for like (src/components/ceo/clientCpl.ts). Both null when no client pairs
+   * in the window or Creative Triage was not read: not measured, never zero.
+   * Absent on payloads stored before release goal1102.
+   */
+  crmAdLeads?: number | null;
+  /** Two decimals. */
+  crmSpend?: number | null;
+  /**
+   * Spend with no CRM count, per client: what the CRM cost per lead leaves
+   * out. Null only when Creative Triage was not read.
+   */
+  crmLeftOut?: { client: string; spend: number }[] | null;
 };
 
 /** A client's funnel rates over a window, the three booking metrics and the Mahara OS outcomes. */
@@ -1340,6 +1391,15 @@ export type DeliveryDay = {
    * `confirmed` or `provisional`. Absent on rows stored before then.
    */
   spendDoneWithYou?: number | null;
+  /**
+   * That day's CRM ad leads and the spend of the clients they pair with
+   * (fix 9, as on DeliveryWindow), so any run of days divides
+   * sum(crmSpend) by sum(crmAdLeads). Null on a day no client pairs; absent
+   * before release goal1102. The left-out list is kept on windows only.
+   */
+  crmAdLeads?: number | null;
+  /** Four decimals. */
+  crmSpend?: number | null;
 };
 
 export type DeliveryPayload = {

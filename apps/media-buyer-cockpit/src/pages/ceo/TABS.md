@@ -215,7 +215,7 @@ in a note that this is Whop only.
 | Cost per lead | `growth.windows.<w>.cpl` |
 | Intro calls booked | `growth.windows.<w>.introsBooked` |
 | Demos booked | `growth.windows.<w>.demosBooked` |
-| Intro to demo (the step into demos booked) | `growth.windows.<w>.introToDemo` |
+| Intro to demo (the step into demos booked) | `growth.windows.<w>.introToDemo`; a range with no window of its own (30 days, custom) is the sum of `growth.daily[].introsAdvanced` ÷ the sum of `introsShown` (`timeframe.ts` `windowFromDaily`, since 2 Nov 2026) |
 | Demos shown | `growth.windows.<w>.demosShown` |
 | Demo show rate | `growth.windows.<w>.demoShowRate` |
 | Closes | `growth.windows.<w>.closes` |
@@ -418,7 +418,7 @@ demo that did not happen has to be marked no-show in GHL.
 | Deals signed last month | `money.deals.lastMonth` |
 | Contracted this month | `contractedHeadline(money).value`: closer form plus hand-logged deal values |
 | Contracted last month | `contractedHeadline(money).lastMonth` |
-| Intro to demo (the funnel step into demos booked) | `growth.windows.<w>.introToDemo` |
+| Intro to demo (the funnel step into demos booked) | `growth.windows.<w>.introToDemo`; a range with no window of its own (30 days, custom) is the sum of `growth.daily[].introsAdvanced` ÷ the sum of `introsShown` (`timeframe.ts` `windowFromDaily`, since 2 Nov 2026) |
 | Average contract, last 90 days | `money.deals.avgContract90d` |
 
 `closeRate` is the dashboard's `close_rate`: deals signed over qualified demos
