@@ -331,6 +331,10 @@ export const delivery = {
                 cpb: bookings > 0 && trackedSpend > 0
                     ? usd(trackedSpend / bookings)
                     : null,
+                // The CRM pairing needs Creative Triage: not read here, missing (2026-11-02, fix 9).
+                crmAdLeads: null,
+                crmSpend: null,
+                crmLeftOut: null,
             };
         };
         const windowOf = (from, to) => triageWindow(from, to) ?? boardWindow(from, to);
@@ -365,6 +369,9 @@ export const delivery = {
                     spend: usd(r?.spend ?? 0),
                     leads: r?.leads ?? 0,
                     bookings: r?.bookings ?? 0,
+                    // The CRM pairing needs Creative Triage: not read here, missing (2026-11-02, fix 9).
+                    crmAdLeads: null,
+                    crmSpend: null,
                 });
             }
         }

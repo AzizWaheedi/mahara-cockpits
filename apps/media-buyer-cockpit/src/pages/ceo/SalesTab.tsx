@@ -564,6 +564,7 @@ function ClosingBody({
 }) {
   const avgContract = per(w.contracted, w.closes);
   const fe = frontEndTile(w, prev, attributedAt, now);
+  const roas = ROAS_CASH.of(w);
   const tiles: Tile[] = [
     {
       label: "Closes",
@@ -602,15 +603,17 @@ function ClosingBody({
     },
     {
       label: ROAS_CASH.label,
-      // On paid money only: a payload from before 2026-10-18 divided the typed figure.
-      value: ratio(fe.paid === null ? null : w.roasCash),
+      // Paid money over all Mahara ad spend (2026-11-02, fix 15), worked out
+      // from the window so a payload from before the worker's change reads on
+      // the same rule as the Goals sheet; paid money only, never typed.
+      value: ratio(roas.value),
       delta: deltaFor(
         vs,
-        fe.paid === null ? null : change(w.roasCash, prev?.roasCash),
+        change(roas.value, prev ? ROAS_CASH.of(prev).value : null),
         "up",
       ),
       hint: ROAS_CASH.hint,
-      naHint: ROAS_CASH.naHint,
+      naHint: roas.naHint,
     },
     {
       label: ROAS_CONTRACTED.label,

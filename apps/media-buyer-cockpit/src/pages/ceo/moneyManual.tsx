@@ -802,7 +802,7 @@ export function LogPaymentCard({
             </AlertDialogTitle>
             <AlertDialogDescription>
               {confirm?.reference
-                ? "Checked against the bank reference, it adds to cash collected on the Manual rail"
+                ? "Checked against the bank reference, it adds to cash in on the Manual rail"
                 : "It waits as logged, not checked: it is not cash until it is checked against the bank"}
               {confirm?.deal !== null && confirm?.deal !== undefined
                 ? ", and the deal value adds to contracted"
@@ -1180,7 +1180,7 @@ function entryStatus(
   return {
     tone: "good",
     label: "Counted",
-    hint: "In cash collected on the Manual rail.",
+    hint: "In cash in, every rail, on the Manual rail.",
   };
 }
 

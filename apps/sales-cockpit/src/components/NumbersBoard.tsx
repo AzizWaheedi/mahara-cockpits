@@ -9,8 +9,10 @@ import { EmptyState, Failed, SectionCard } from "./kit";
  * the counts left out). A table from sm up; stacked rows on a phone.
  */
 
+// Intros and demos together, named so (2026-11-02, Goals sheet round 2, fix
+// 17): the CEO's sheet shows the intro and demo show rates apart.
 const COLUMNS: { key: keyof BoardRow; label: string }[] = [
-  { key: "show_rate", label: "Show rate" },
+  { key: "show_rate", label: "Call show rate (intros and demos)" },
   { key: "qualified_rate", label: "Qualified rate" },
   { key: "close_rate", label: "Close rate" },
   { key: "qualified_close_rate", label: "Qualified close rate" },

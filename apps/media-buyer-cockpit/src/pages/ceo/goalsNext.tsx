@@ -97,6 +97,13 @@ function sayDriver(v: number | null, unit: DriverUnit): string {
 
 const NONE = Object.fromEntries(DRIVER_KEYS.map(k => [k, null])) as Drivers;
 
+/**
+ * Inputs written as their own target rows though the Goals model does not
+ * set them (the catalogue has no refunds metric): the ladder's box is the
+ * row, never a typed row as well.
+ */
+const INPUT_ROWS: ReadonlySet<string> = new Set(["refundAmount"]);
+
 /** Inputs that are themselves targets: a plan's stretch on one carries over. */
 const INPUT_TARGETS: Record<string, DriverKey> = {
   spend: "spend",
@@ -110,6 +117,7 @@ const INPUT_TARGETS: Record<string, DriverKey> = {
   mrrProjected: "mrrDue",
   mrrCollectionRate: "mrrCollectionRate",
   upsellCash: "upsellCash",
+  refundAmount: "refundAmount",
   labour: "labour",
   overhead: "overhead",
   callLeads: "callLeads",
@@ -271,14 +279,19 @@ export function NextMonth({
   );
   const p = useMemo(() => project(used), [used]);
 
-  // Everything the funnel does not cover stays a row you type.
+  // Everything the funnel does not cover stays a row you type. Refunds are
+  // an input of the money ladder since 2026-11-02 (revenue takes them off on
+  // the sheet and here): typed in this table they never reached the goal.
   const tableGroups = useMemo(
     () =>
       groups
         .map(g => ({
           ...g,
           targets: g.targets.filter(
-            t => !MODEL_KEYS.has(t.metricKey) && !REPLACED[t.metricKey],
+            t =>
+              !MODEL_KEYS.has(t.metricKey) &&
+              !REPLACED[t.metricKey] &&
+              !INPUT_ROWS.has(t.metricKey),
           ),
         }))
         .filter(g => g.targets.length),
@@ -349,13 +362,42 @@ export function NextMonth({
     [used, p, wanted, costs, pay],
   );
   const missing = wanted.filter(k => !model.some(t => t.key === k));
+  // The refunds row, from the box beside Upsell cash: written when last
+  // month's plan had one or a number is in the box.
+  const refundBefore = prev.get("refundAmount") ?? null;
+  const refundRows =
+    drivers.refundAmount === null && !refundBefore
+      ? []
+      : [
+          {
+            groupKey: refundBefore?.groupKey ?? "back_end",
+            metricKey: "refundAmount",
+            label: refundBefore?.label ?? "Refunds amount",
+            unit: "usd" as const,
+            direction: "down" as const,
+            target:
+              drivers.refundAmount === null
+                ? undefined
+                : tidy(drivers.refundAmount, "usd"),
+            stretch: refundBefore?.stretch ?? undefined,
+            baseline:
+              measured.refundAmount ??
+              refundBefore?.actual ??
+              refundBefore?.target ??
+              undefined,
+            note: refundBefore?.note ?? "",
+            sort:
+              catalogue.get("refundAmount")?.i ??
+              1000 + (refundBefore?.sort ?? 0),
+          },
+        ];
   // A draft already written for these days is updated, never doubled: its
   // targets are replaced metric by metric.
   const draft =
     (board.plans ?? []).find(
       x => x.periodFrom === from && x.periodTo === to && x.status === "draft",
     ) ?? null;
-  const total = model.length + tableRows.length;
+  const total = model.length + tableRows.length + refundRows.length;
 
   const changed =
     DRIVER_KEYS.filter(k => text[k] !== toText(planOrReal[k], DRIVERS[k].unit))
@@ -621,8 +663,11 @@ export function NextMonth({
               <InputRung label="Upsell cash">
                 {input("upsellCash", "Upsell cash")}
               </InputRung>
+              <InputRung label="Refunds">
+                {input("refundAmount", "Refunds")}
+              </InputRung>
               <Rung
-                label="Total cash collected"
+                label="Total revenue (with AR)"
                 value={p.totalCash}
                 unit="usd"
                 strong
@@ -942,7 +987,7 @@ export function NextMonth({
                 }));
                 await saveTargets({
                   planId: made.id,
-                  targets: [...modelRows, ...typedRows],
+                  targets: [...modelRows, ...refundRows, ...typedRows],
                 });
                 onSaved(made.id);
               } catch (e) {

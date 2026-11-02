@@ -113,7 +113,8 @@ export function bookingLedger(triage) {
             days = new Map();
             byLoc.set(r.locationId, days);
         }
-        days.set(r.date, { confirmed: r.confirmed, provisional: r.provisional });
+        // crmAdLeads: the board's CRM ad leads that day, null when not stored (2026-11-02, fix 9).
+        days.set(r.date, { confirmed: r.confirmed, provisional: r.provisional, crmAdLeads: r.crmAdLeads ?? null });
     }
     const clients = new Map(triage.clients.map(c => [c.clientId, c]));
     const tied = new Set(triage.clients.flatMap(c => c.locationIds ?? []));
@@ -132,6 +133,90 @@ export function dwyDay(ledger, d) {
         return isDoneWithYou(d.serviceMode);
     return (ledger.dwyAccounts ?? new Set()).has(d.clientId);
 }
+/**
+ * Client cost per lead on the clients' own CRM (2026-11-02, Goals sheet fix 9; the CEO: "leads, I
+ * would get them from the CRM, not just Meta"): the Client Performance board's ad leads
+ * (cockpit_client_days.crm_ad_leads, a contact with an ad id or a Facebook-ad attribution) over the
+ * spend of the same clients on the same days, so crmSpend / crmAdLeads is like for like. A client
+ * pairs on a day when every board location it ties to stores a CRM count that day: its spend that
+ * day (0 when it spent nothing) and its locations' ad leads go in together, each location once. A
+ * client with no board location, or a day not stored, is in neither (October 2026: Pidco Group,
+ * cancelled, $635.94 and 11 Meta leads, the board stores no row for it). Nor is a client on a day
+ * part of its spend was not read (an account in a currency with no rate, triage's
+ * spendUnknownDays): unknown spend is never $0 of spend beside counted leads (review, 2026-11-02).
+ * Done With You clients stay in, as in every cost per lead. A day no client pairs is null on both:
+ * not measured, never zero. Meta's form leads stay in `leads`, beside it. Keyed by day, from `from` to `to`.
+ */
+const crmAt = (ledger, loc, date) => ledger.byLoc.get(loc)?.get(date)?.crmAdLeads ?? null;
+/** The client-days whose spend was not read, as `client|day` keys. */
+const spendUnread = (triage) => new Set((triage.spendUnknownDays ?? []).map(d => `${d.clientId}|${d.date}`));
+/** Whether a client pairs on a day: its spend that day was read, it ties to a board location and every one stores a CRM count. */
+function crmPairsOn(ledger, client, date, unread) {
+    const locs = client?.locationIds ?? [];
+    return locs.length > 0 && !unread.has(`${client.clientId}|${date}`) && locs.every(loc => crmAt(ledger, loc, date) !== null);
+}
+export function crmPairs(triage, ledger, from, to) {
+    const unread = spendUnread(triage);
+    const spendBy = new Map();
+    for (const d of triage.days) {
+        if (d.date < from || d.date > to)
+            continue;
+        const key = `${d.clientId}|${d.date}`;
+        spendBy.set(key, (spendBy.get(key) ?? 0) + d.spend);
+    }
+    const out = new Map();
+    for (const date of daysOf(from, to)) {
+        let paired = false;
+        let crmAdLeads = 0;
+        let crmSpend = 0;
+        const counted = new Set();
+        for (const c of ledger.clients.values()) {
+            if (!crmPairsOn(ledger, c, date, unread))
+                continue;
+            paired = true;
+            crmSpend += spendBy.get(`${c.clientId}|${date}`) ?? 0;
+            for (const loc of c.locationIds) {
+                if (counted.has(loc))
+                    continue;
+                counted.add(loc);
+                crmAdLeads += crmAt(ledger, loc, date);
+            }
+        }
+        out.set(date, paired ? { crmAdLeads, crmSpend } : { crmAdLeads: null, crmSpend: null });
+    }
+    return out;
+}
+
+/**
+ * crmPairs summed over a window, null when no day of it pairs (not measured, never zero), and the
+ * spend it leaves out named by client (`crmLeftOut`): spend on a day the client does not pair, so
+ * the note beside client CPL can say what it leaves out.
+ */
+function crmWindow(triage, ledger, from, to) {
+    let any = false;
+    let crmAdLeads = 0;
+    let crmSpend = 0;
+    for (const p of crmPairs(triage, ledger, from, to).values()) {
+        if (p.crmAdLeads === null)
+            continue;
+        any = true;
+        crmAdLeads += p.crmAdLeads;
+        crmSpend += p.crmSpend;
+    }
+    const left = new Map();
+    const unread = spendUnread(triage);
+    for (const d of triage.days) {
+        if (d.date < from || d.date > to || !(d.spend > 0) || crmPairsOn(ledger, ledger.clients.get(d.clientId), d.date, unread))
+            continue;
+        left.set(d.clientId, (left.get(d.clientId) ?? 0) + d.spend);
+    }
+    const crmLeftOut = [...left]
+        .filter(([, x]) => usd(x) > 0)
+        .map(([clientId, x]) => ({ client: ledger.clients.get(clientId)?.name ?? clientId, spend: usd(x) }))
+        .sort((a, b) => b.spend - a.spend || a.client.localeCompare(b.client));
+    return any ? { crmAdLeads, crmSpend: usd(crmSpend), crmLeftOut } : { crmAdLeads: null, crmSpend: null, crmLeftOut };
+}
+
 /** Whether every one of `locs` has a stored confirmed count on `date`. */
 function storedOn(ledger, locs, date) {
     if (!locs.length)
@@ -285,6 +370,8 @@ export function deliveryWindow(triage, ledger, from, to) {
         cpbConfirmed: confirmed !== null && confirmed > 0 && s.spendMeasured > 0 ? usd(s.spendMeasured / confirmed) : null,
         notMeasured: s.notMeasured,
         doneWithYou: s.doneWithYou,
+        // Client CPL on the CRM, paired by client and day (2026-11-02, fix 9): crmSpend / crmAdLeads.
+        ...crmWindow(triage, ledger, from, to),
     };
 }
 
@@ -325,6 +412,7 @@ export function deliveryDaily(triage, ledger, from, to) {
         if (storedOn(ledger, locs, d.date))
             row.spendMeasured = (row.spendMeasured ?? 0) + d.spend;
     }
+    const crm = crmPairs(triage, ledger, from, to);
     // Spend per day keeps four places, so any run of days a screen adds up
     // rounds once and lands on the same cent as the server's own window.
     return [...out.values()].map(r => ({
@@ -336,6 +424,9 @@ export function deliveryDaily(triage, ledger, from, to) {
         provisional: r.provisional,
         spendMeasured: r.spendMeasured === null ? null : fine(r.spendMeasured),
         spendDoneWithYou: fine(r.spendDoneWithYou),
+        // The CRM's ad leads and the spend of the same clients that day (2026-11-02, fix 9).
+        crmAdLeads: crm.get(r.date)?.crmAdLeads ?? null,
+        crmSpend: crm.get(r.date)?.crmSpend == null ? null : fine(crm.get(r.date).crmSpend),
     }));
 }
 

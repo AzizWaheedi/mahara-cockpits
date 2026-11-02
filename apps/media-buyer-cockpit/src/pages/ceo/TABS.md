@@ -495,7 +495,7 @@ its own tab.
 | --- | --- |
 | Client ad spend, month to date | `delivery.mtd.spend` |
 | Leads | `delivery.mtd.leads` |
-| Cost per lead | `delivery.mtd.cpl` |
+| Cost per lead (CRM ad leads, 2026-11-02) | `delivery.mtd.crmSpend` ÷ `delivery.mtd.crmAdLeads` (`components/ceo/clientCpl.ts`); Meta's `delivery.mtd.cpl`, labelled "Meta form leads", on a payload without the CRM fields |
 | Bookings | `delivery.mtd.bookings` |
 | Cost per booking | `delivery.mtd.cpb` |
 | The same for the last 7 days | `delivery.last7.*` |
@@ -850,7 +850,7 @@ overhead. Neither is ever added to the other. Say all of this on the card.
 | What was actually spent | `expenses.spend` |
 | Card unloads inside `total` | `expenses.unloads` |
 | Every category as imported | `expenses.byCategory[]` (`{category, amount, rows}`) |
-| Cash in for the same month | `expenses.revenue` |
+| Whop cash in (was "Cash in for the same month"; Whop only) | `expenses.revenue` |
 | Profit | `expenses.profit.amount` |
 | Margin | `expenses.profit.margin` |
 | Why profit is null | `expenses.profit.why` |

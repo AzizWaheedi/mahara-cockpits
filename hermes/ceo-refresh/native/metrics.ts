@@ -573,7 +573,8 @@ export const DEFINITIONS: MetricDefinition[] = [
     "growth.roas_cash",
     "growth",
     "Front-end ROAS",
-    "Front-end cash (money paid, credited to the closer) over lead-gen spend.",
+    // All Mahara ad spend since release goal1102 (2026-11-02, Goals sheet fix 15, the CEO's 30 Oct rule).
+    "Front-end cash (money paid, credited to the closer) over all Mahara ad spend, lead gen and retargeting (the webinar's left out). Values stored before this rule (November 2026) are over lead-gen spend only, so they read higher.",
     `${TRIAGE} cockpit_deal_payments; spend from ${B2B}`,
     "ratio",
     VOIDED_OUT,
