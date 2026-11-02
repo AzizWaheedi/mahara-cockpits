@@ -474,6 +474,11 @@ describe("Below KPI follows the golden rule (2026-10-21)", () => {
   });
 });
 
+test("the board keeps three everyday filters in reach, the rest behind More", () => {
+  const primary = ADS_FILTERS.filter(f => f.primary).map(f => f.label);
+  expect(primary).toEqual(["Everything", "Critical", "Below KPI"]);
+});
+
 test("every filter on the range's numbers says so, and the page applies the module's rule", () => {
   const ranged = ADS_FILTERS.filter(f => f.ranged).map(f => f.label);
   expect(ranged).toEqual(["Critical", "Below KPI", CPB, "No bookings"]);
