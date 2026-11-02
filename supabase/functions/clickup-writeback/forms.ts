@@ -23,16 +23,20 @@
 // progress whole into cockpit_audit_log.
 //
 // Stage 4 (docs/forms/WAVE56-CONTRACT.md 4.13.4, 4.14): the native kickoff and onboarding add seven effect
-// keys on the same rails: the handoff and raw answers comments (found again by their marker like the to-do
-// comment), the task status IN PROGRESS, two sets of card fields (each field read back), and the Onboarding
-// Map at phase 3 or 4, which never moves back: a card already at that phase or later is kept. A row of a form
-// not listed in CLICKUP_WRITEBACK_FORMS_KEYS (default checkin) is held by run.ts and never written here.
+// keys on the same rails: the handoff and raw answers comments, the task status IN PROGRESS, two sets of card
+// fields (each field read back, a text as long as Make writes it), and the Onboarding Map at phase 3 or 4,
+// which never moves back: a card already at that phase or later is kept. The two comments carry Make's text
+// alone, with no Cockpit ref (X37, "match Make"). A row of a form not listed in CLICKUP_WRITEBACK_FORMS_KEYS
+// (default checkin) is held by run.ts and never written here.
 //
 // Retry safety: every write records "started" before the call and "done"
-// after its read-back. A comment is found by its marker (Cockpit ref F- and
-// the first 10 hex of the response id) before anything is posted again, and
-// once ClickUp has answered a comment with its id it is never posted a second
-// time. Field writes read the card first and again after the write; dates
+// after its read-back. The to-do comment is found by its marker (Cockpit ref
+// F- and the first 10 hex of the response id) before anything is posted
+// again; a Stage 4 comment by the id ClickUp answered with, else by its text
+// (requests.ts commentKey) among the card's comments since its step started,
+// or by the marker a writer before this one appended. Once ClickUp has
+// answered a comment with its id it is never posted a second time. Field
+// writes read the card first and again after the write; dates
 // move forward only, by the Kuwait calendar day, never by the millisecond
 // (ClickUp keeps a date-only value at its own hour: 03:00Z or 04:00Z). A call
 // ClickUp does not answer is unknown once its step has started (the write may
@@ -60,6 +64,7 @@ import {
   type RequestOutcome,
   SAY,
   type Save,
+  sameText,
   StepBook,
 } from "./requests.ts";
 import { CLIENTS_LIST, type Row } from "./rules.ts";
@@ -181,6 +186,11 @@ export const SAY_FORMS = {
     "The 1-1 notes comment did not read back on the card. The next run looks for it by its Cockpit ref.",
   commentLost:
     "ClickUp answered the 1-1 notes comment with its id, but the comment is not on the card now. It is not posted again: check the card in ClickUp.",
+  /** A Stage 4 comment carries no Cockpit ref (X37): it is looked for by its id, else by its text. */
+  textMissing: (what: string) =>
+    `The ${what} did not read back on the card. The next run looks for it.`,
+  textLost: (what: string) =>
+    `ClickUp answered the ${what} with its id, but the comment is not on the card now. It is not posted again: check the card in ClickUp.`,
   heldOff: "Held: the 1-1 notes writer is off until the switch-over.",
   /** A row of a form CLICKUP_WRITEBACK_FORMS_KEYS does not list (4.13.4). */
   heldForm: (form: string) => `Held: ${form} card writes are not switched on.`,
@@ -375,7 +385,9 @@ export type FormStep =
       key: "todo_comment" | "handoff_comment" | "raw_answers_comment";
       type: "comment";
       taskId: string;
+      /** What is posted: the to-do comment with its marker last, a Stage 4 comment as Make's text alone. */
       text: string;
+      /** The to-do comment's own marker; for a Stage 4 comment, the line a writer before this one appended. */
       marker: string;
     }
   | {
@@ -443,8 +455,17 @@ const isKey = (k: unknown): k is FormKey =>
 const isStage4 = (k: unknown): k is Stage4Key =>
   typeof k === "string" && (STAGE4_KEYS as readonly string[]).includes(k);
 const HTTPS = /^https:\/\/\S+$/;
+/** The Stage 4 comments that mirror Make's (Make 12 [11], Make 13 [47]): posted as Make's text alone (X37). */
+const MAKE_TEXT_KEYS = new Set<string>([
+  "handoff_comment",
+  "raw_answers_comment",
+]);
 
-/** Stage 4's check of one row (4.13.4): its form, its card, its comment's sha256, and only its own fields. */
+/**
+ * Stage 4's check of one row (4.13.4): its form, its card, its comment's sha256, and only its own fields. A text
+ * field is written as long as Make writes it (Make 13 [29] writes the Client Profile uncut, X37): only its kind and,
+ * for a link, https are checked, and a value ClickUp itself refuses is reported as any refusal is.
+ */
 async function stage4Step(
   item: FormItem,
   key: Stage4Key,
@@ -468,14 +489,15 @@ async function stage4Step(
       !/[0-9a-f]{10}/i.test(p.responseId.replace(/-/g, ""))
     )
       return { fail: SAY_FORMS.mismatch };
-    const marker = formMarker(p.responseId);
+    // Make's text alone. The marker is kept on the step only to find a comment a writer before this one posted
+    // with it (writeComment).
     return {
       step: {
         key,
         type: "comment",
         taskId: card,
-        text: `${text}\n\n${marker}`,
-        marker,
+        text,
+        marker: formMarker(p.responseId),
       },
     };
   }
@@ -528,7 +550,6 @@ async function stage4Step(
     } else {
       if (
         typeof f.value !== "string" ||
-        f.value.length > 5000 ||
         (kind === "url" && !HTTPS.test(f.value))
       )
         return { fail: SAY_FORMS.mismatch };
@@ -682,35 +703,56 @@ const fieldOf = (card: Row, fieldId: string): Row | undefined =>
     (f: Row) => f.id === fieldId,
   );
 
+/**
+ * The text a Stage 4 comment posts: Make's alone. A step a writer before this one froze ends with its Cockpit ref
+ * line, which is not posted again.
+ */
+export function makeText(step: Extract<FormStep, { type: "comment" }>): string {
+  const line = `\n\n${step.marker}`;
+  return step.text.endsWith(line)
+    ? step.text.slice(0, -line.length)
+    : step.text;
+}
+
 async function writeComment(
   x: Ctx & { step: Extract<FormStep, { type: "comment" }> },
 ): Promise<RequestOutcome> {
   const { provider, book, step, item } = x;
   const st = book.get(step.key);
   const since = () => book.startedAt(step.key, item.created_at) - 60_000;
+  const mirrorsMake = MAKE_TEXT_KEYS.has(step.key);
+  const text = mirrorsMake ? makeText(step) : step.text;
+  const what = mirrorsMake
+    ? STAGE4_WORDS[step.key as Stage4Key].toLowerCase()
+    : "";
+  // The to-do comment is found by its marker (and its id, once ClickUp gave one). A Stage 4 comment carries no
+  // marker: with an id from ClickUp it is found by that id alone, else by its text since the step started, or by
+  // the marker a writer before this one appended.
+  const match = (id: string | null) =>
+    !mirrorsMake ? step.marker : id ? "" : sameText(text, since(), step.marker);
   if (st?.state === "started") {
-    const found =
-      (await findComment(provider, step.taskId, step.marker, since())) ??
-      (st.commentId
-        ? await findComment(
-            provider,
-            step.taskId,
-            "",
-            since(),
-            String(st.commentId),
-          )
-        : undefined);
+    const id = st.commentId ? String(st.commentId) : null;
+    const found = mirrorsMake
+      ? await findComment(provider, step.taskId, match(id), since(), id)
+      : ((await findComment(provider, step.taskId, step.marker, since())) ??
+        (id
+          ? await findComment(provider, step.taskId, "", since(), id)
+          : undefined));
     if (found) {
       await book.set(step.key, "done", { commentId: String(found.id) });
       return { state: "delivered", progress: book.progress };
     }
-    // ClickUp gave this comment an id once: a second post would put the notes on the card twice.
-    if (st.commentId) throw halt("unknown", SAY_FORMS.commentLost);
+    // ClickUp gave this comment an id once: a second post would put it on the card twice.
+    if (id)
+      throw halt(
+        "unknown",
+        mirrorsMake ? SAY_FORMS.textLost(what) : SAY_FORMS.commentLost,
+      );
   }
   await book.start(step.key);
   const made = await book.write(() =>
     provider.call("clickup", "POST", `task/${step.taskId}/comment`, {
-      comment_text: step.text,
+      comment_text: text,
       notify_all: false,
     }),
   );
@@ -720,11 +762,15 @@ async function writeComment(
   const back = await findComment(
     provider,
     step.taskId,
-    step.marker,
+    match(cid),
     since(),
     cid,
   );
-  if (!back) throw halt("unknown", SAY_FORMS.commentMissing);
+  if (!back)
+    throw halt(
+      "unknown",
+      mirrorsMake ? SAY_FORMS.textMissing(what) : SAY_FORMS.commentMissing,
+    );
   await book.set(step.key, "done", { commentId: String(back.id) });
   return { state: "delivered", progress: book.progress };
 }

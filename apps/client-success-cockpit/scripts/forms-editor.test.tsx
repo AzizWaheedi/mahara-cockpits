@@ -7,7 +7,8 @@ import {
   setDefaultTimeout,
   test,
 } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { Window } from "happy-dom";
 
 /**
@@ -683,6 +684,33 @@ describe("the core", () => {
     expect(core.ruleProblem([core.LOW_SCORE_BOUND], { max: 9 })).toBe(
       "The low-score line is a whole number from 0 to 8.",
     );
+  });
+
+  test("a question's longest answer is capped where the server caps it, the client onboarding at its Typeform's room", () => {
+    // The latest migration that defines cockpit_form_schema_check, read where it caps a text's maxLength.
+    const dir = resolve(import.meta.dir, "../../../supabase/migrations");
+    const sql = readdirSync(dir)
+      .filter(f => f.endsWith(".sql"))
+      .sort()
+      .map(f => readFileSync(resolve(dir, f), "utf8"))
+      .filter(s => s.includes("FUNCTION public.cockpit_form_schema_check("))
+      .at(-1) as string;
+    const caps =
+      /v_max := CASE WHEN p_schema->>'key' = 'onboarding' THEN CASE t WHEN 'text' THEN (\d+) ELSE (\d+) END\s+ELSE CASE t WHEN 'text' THEN (\d+) ELSE (\d+) END END;/.exec(
+        sql.slice(
+          sql.lastIndexOf("FUNCTION public.cockpit_form_schema_check("),
+        ),
+      );
+    expect(caps).not.toBeNull();
+    expect([
+      core.maxLengthCap("onboarding", "text"),
+      core.maxLengthCap("onboarding", "longtext"),
+      core.maxLengthCap("csat", "text"),
+      core.maxLengthCap("csat", "longtext"),
+    ]).toEqual(caps?.slice(1).map(Number) as number[]);
+    // A new question starts inside every form's cap.
+    expect(core.newField("text", []).maxLength).toBe(200);
+    expect(core.newField("longtext", []).maxLength).toBe(2000);
   });
 
   test("keys, moves and locks", () => {

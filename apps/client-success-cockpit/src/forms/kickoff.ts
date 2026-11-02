@@ -142,12 +142,22 @@ const TYPEFORM_REQUIRED = new Set([
 ]);
 
 /**
+ * A long text as Typeform hands it to Make, and as cockpit_form_typeform_text
+ * keeps it (20261102m): each line break a line feed, no white space at either
+ * end (JavaScript's trim takes the same characters as its btrim), everything
+ * between as typed.
+ */
+export const typeformText = (v: string) => v.replace(/\r\n?/g, "\n").trim();
+
+/**
  * cockpit_kickoff_answers_check's longest answer: 4,000 characters for a
  * long text, 500 for any other text with its spaces folded, counted as the
  * database counts them, so the sheet says it before the send.
  */
 const tooLong = (long: boolean, max: number) => (v: unknown) => {
-  const s = long ? String(v).trim() : String(v).replace(/\s+/g, " ").trim();
+  const s = long
+    ? typeformText(String(v))
+    : String(v).replace(/\s+/g, " ").trim();
   return [...s].length > max
     ? `Shorten it to ${max.toLocaleString("en-US")} characters or fewer.`
     : null;
@@ -330,15 +340,13 @@ export const KICKOFF_FIELDS: KickoffField[] = asTypeform([
     "3db082bb-1939-444b-8b32-d0067fc9878c",
     "Have you been added to the WhatsApp group?",
   ),
-  // A long text in tG7dnxBn: a list of people keeps its line breaks. The
-  // database still takes it as a text of 500 characters at most; raise this
-  // to 4,000 once cockpit_form_stage4_fields types it longtext.
+  // A long text in tG7dnxBn and in cockpit_form_stage4_fields: a list of
+  // people keeps its line breaks, as Make hands them on.
   words(
     "whatsappAdd",
     "071c480f-17f9-48db-8155-56030f952e85",
     "Who else should we add to the WhatsApp group?",
     true,
-    500,
   ),
   yesNo(
     "driveDiscussed",
@@ -622,7 +630,10 @@ export function kickoffDef(
  * first ticked service to the card); numbers as numbers, empty answers and
  * the answers to questions the sheet does not show left out (Typeform hands
  * Make nothing from a branch its logic skipped), and the replace reason when
- * asked.
+ * asked. A text loses only its outer white space, as Typeform's answers
+ * reach Make with none: a long text goes as Typeform hands it on
+ * (typeformText), its line breaks and repeated spaces as typed (Make writes
+ * them into the handoff unchanged).
  */
 export function kickoffAnswers(a: Answers): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -641,7 +652,12 @@ export function kickoffAnswers(a: Answers): Record<string, unknown> {
       if (Number.isFinite(n)) out[f.key] = n;
       continue;
     }
-    out[f.key] = typeof v === "string" ? v.trim() : v;
+    out[f.key] =
+      typeof v !== "string"
+        ? v
+        : f.type === "longtext"
+          ? typeformText(v)
+          : v.trim();
   }
   const reason =
     typeof a.replaceReason === "string" ? a.replaceReason.trim() : "";

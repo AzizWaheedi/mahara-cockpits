@@ -1493,6 +1493,47 @@ const PROFILE = "7755485f-74a8-496c-85d8-562588e77944";
 const KICKOFF_LINK = "87d7d889-afea-42f8-9485-6f3ead5b857f";
 const mapUrl = (phase: number) =>
   `https://mahara-onboarding-map.vercel.app/?phase=${phase}&cid=${CARD}`;
+/**
+ * An invented handoff and raw answers comment in Make's shapes (Make 12 [11], Make 13 [47]): bold marks, a rule
+ * line, a line break and a doubled space inside an answer, underscores, Arabic and an emoji.
+ */
+const HANDOFF4 = [
+  "*KICKOFF HANDOFF*",
+  "*Client:* Acme Interiors",
+  "",
+  "____________________________________",
+  "",
+  "*Business Name:* Acme  Interiors 🛋️",
+  "*Address:* Block 1,\nStreet 2",
+  "*Notes:* snake_case_words",
+  "*المنطقة:* حولي",
+].join("\n");
+const RAW4 =
+  "Raw Onboarding Form Answers\n\nWhat is your business name?\nAcme  Interiors 🛋️\n\nWhere are you?\nBlock 1,\nStreet 2";
+/** As ClickUp may hand a comment back (requests.ts commentKey): no `*` or rule line, `\_`, spaces and new lines changed. */
+const asClickUpReturns = (text: string) =>
+  `${text
+    .split("\n")
+    .filter(l => !/^_{3,}$/.test(l))
+    .join("\n")
+    .replace(/\*/g, "")
+    .replace(/_/g, "\\_")
+    .replace(/ {2,}/g, " ")
+    .replace(/\n/g, "  \r\n")}\n`;
+/** A comment step an earlier run started `minutes` ago, with the id ClickUp answered its post with when it did. */
+const startedAt = (key: string, minutes: number, commentId?: string) => {
+  const at = new Date(NOW - minutes * 60_000).toISOString();
+  return {
+    steps: {
+      [key]: {
+        state: "started",
+        at,
+        startedAt: at,
+        ...(commentId ? { commentId } : {}),
+      },
+    },
+  };
+};
 
 /** One client card with the Stage 4 fields, a status and comments; it keeps what it is sent. */
 class Stage4Card {
@@ -1936,17 +1977,294 @@ describe("Stage 4 keys (4.13.4)", () => {
     ]);
   });
 
-  it("the handoff comment is posted once with its marker and read back", async () => {
-    const card = new Stage4Card();
-    const text =
-      "KICKOFF HANDOFF for Acme Interiors\n\nCLIENT DETAILS\nClient ID: 86card0001";
-    const { out } = await run4(
-      card,
-      await stage4Item("handoff_comment", { comment_text: text }),
+  it("the handoff and raw answers comments post Make's text alone, with no Cockpit ref, once, read back by id", async () => {
+    for (const [key, text] of [
+      ["handoff_comment", HANDOFF4],
+      ["raw_answers_comment", RAW4],
+    ] as const) {
+      const card = new Stage4Card();
+      const { out, step } = await run4(
+        card,
+        await stage4Item(key, { comment_text: text }),
+      );
+      expect(step).toEqual({
+        key,
+        type: "comment",
+        taskId: CARD,
+        text,
+        marker: MARKER,
+      });
+      expect(out.state).toBe("delivered");
+      expect(card.writes()).toEqual([
+        {
+          method: "POST",
+          path: `task/${CARD}/comment`,
+          body: { comment_text: text, notify_all: false },
+        },
+      ]);
+      expect(card.comments.map(c => c.comment_text)).toEqual([text]);
+      expect(out.progress.steps[key]).toMatchObject({
+        state: "done",
+        commentId: card.comments[0].id,
+      });
+      expect(JSON.stringify(out.progress)).not.toContain("Block 1");
+    }
+  });
+
+  it("resume after a POST ClickUp did not answer: found by its text as ClickUp hands it back, behind 27 newer notes, never posted twice", async () => {
+    const cards = new FakeCards();
+    cards.comments.push({
+      id: "90cm-landed",
+      comment_text: asClickUpReturns(HANDOFF4),
+      date: String(NOW - 3 * 60_000),
+    });
+    cards.addComments(27, NOW - 60_000);
+    const { out } = await run(
+      cards,
+      await stage4Item(
+        "handoff_comment",
+        { comment_text: HANDOFF4 },
+        { progress: startedAt("handoff_comment", 4) },
+      ),
     );
     expect(out.state).toBe("delivered");
-    expect(card.comments).toHaveLength(1);
-    expect(card.comments[0].comment_text).toBe(`${text}\n\n${MARKER}`);
+    expect(out.progress.steps.handoff_comment).toMatchObject({
+      state: "done",
+      commentId: "90cm-landed",
+    });
+    expect(cards.writes()).toEqual([]);
+  });
+
+  it("resume after a POST ClickUp answered: found by its id alone; gone, it is never posted again", async () => {
+    const cards = new FakeCards();
+    cards.comments.push({
+      id: "90cm-landed",
+      comment_text: "Edited in ClickUp by a person",
+      date: String(NOW - 3 * 60_000),
+    });
+    const withId = startedAt("raw_answers_comment", 4, "90cm-landed");
+    const { out } = await run(
+      cards,
+      await stage4Item(
+        "raw_answers_comment",
+        { comment_text: RAW4 },
+        { progress: withId },
+      ),
+    );
+    expect(out.progress.steps.raw_answers_comment).toMatchObject({
+      state: "done",
+      commentId: "90cm-landed",
+    });
+    expect(cards.writes()).toEqual([]);
+    // The same text on the card under another id is not it: ClickUp gave this one its own id.
+    const again = new FakeCards();
+    again.comments.push({
+      id: "90cm-other",
+      comment_text: RAW4,
+      date: String(NOW - 3 * 60_000),
+    });
+    const lost = await run(
+      again,
+      await stage4Item(
+        "raw_answers_comment",
+        { comment_text: RAW4 },
+        { progress: withId },
+      ),
+    );
+    expect(lost.out).toMatchObject({
+      state: "unknown",
+      error: SAY_FORMS.textLost("raw onboarding answers comment"),
+    });
+    expect(again.writes()).toEqual([]);
+  });
+
+  it("a different comment with similar text, or the same text from before the step, is never taken for it", async () => {
+    const cards = new FakeCards();
+    const lines = HANDOFF4.split("\n");
+    cards.comments.push(
+      {
+        id: "c-early",
+        comment_text: HANDOFF4,
+        date: String(NOW - 6 * 60_000),
+      },
+      {
+        id: "c-short",
+        comment_text: lines.slice(0, -1).join("\n"),
+        date: String(NOW - 3 * 60_000),
+      },
+      {
+        id: "c-long",
+        comment_text: `${HANDOFF4}\n*Extra:* one more line`,
+        date: String(NOW - 2 * 60_000),
+      },
+      {
+        id: "c-word",
+        comment_text: HANDOFF4.replace("Block 1", "Block 7"),
+        date: String(NOW - 2 * 60_000 + 1),
+      },
+      {
+        id: "c-other-ref",
+        comment_text: `${HANDOFF4}\n\nCockpit ref F-0000000000`,
+        date: String(NOW - 2 * 60_000 + 2),
+      },
+    );
+    const { out } = await run(
+      cards,
+      await stage4Item(
+        "handoff_comment",
+        { comment_text: HANDOFF4 },
+        { progress: startedAt("handoff_comment", 4) },
+      ),
+    );
+    expect(out.state).toBe("delivered");
+    expect(cards.writes()).toEqual([
+      {
+        method: "POST",
+        path: `task/${CARD}/comment`,
+        body: { comment_text: HANDOFF4, notify_all: false },
+      },
+    ]);
+    expect(out.progress.steps.handoff_comment.commentId).toMatch(/^90cm/);
+  });
+
+  it("a comment the writer before this one started is found by its marker; one it froze is posted without it", async () => {
+    // Its post landed with the ref line, then its answer was lost.
+    const cards = new FakeCards();
+    cards.comments.push({
+      id: "90cm-old",
+      comment_text: `${HANDOFF4}\n\n${MARKER}`,
+      date: String(NOW - 10 * 60_000),
+    });
+    const old: FormStep = {
+      key: "handoff_comment",
+      type: "comment",
+      taskId: CARD,
+      text: `${HANDOFF4}\n\n${MARKER}`,
+      marker: MARKER,
+    };
+    const resumed = await stage4Item(
+      "handoff_comment",
+      { comment_text: HANDOFF4 },
+      { progress: startedAt("handoff_comment", 4) },
+    );
+    resumed.steps = [old];
+    const found = await run(cards, resumed);
+    expect(found.out.progress.steps.handoff_comment).toMatchObject({
+      state: "done",
+      commentId: "90cm-old",
+    });
+    expect(cards.writes()).toEqual([]);
+    // Frozen by it, its post never landed: what goes now is Make's text alone.
+    for (const progress of [{}, startedAt("handoff_comment", 4)]) {
+      const fresh = new FakeCards();
+      const it4 = await stage4Item(
+        "handoff_comment",
+        { comment_text: HANDOFF4 },
+        { progress },
+      );
+      it4.steps = [old];
+      const { out, step } = await run(fresh, it4);
+      expect(step).toBe(old);
+      expect(out.state).toBe("delivered");
+      expect(fresh.writes().map(c => c.body?.comment_text)).toEqual([HANDOFF4]);
+    }
+  });
+
+  it("the read-back after a post ClickUp answered goes by that id, however ClickUp rewrote the text", async () => {
+    const cards = new FakeCards();
+    const orig = cards.handle.bind(cards);
+    cards.handle = async (c: Call) => {
+      const r = await orig(c);
+      // ClickUp keeps the comment in its own words: nothing a text match could find.
+      if (c.method === "POST")
+        for (const cm of cards.comments)
+          cm.comment_text = "Rendered by ClickUp";
+      return r;
+    };
+    const { out } = await run(
+      cards,
+      await stage4Item("raw_answers_comment", { comment_text: RAW4 }),
+    );
+    expect(out.state).toBe("delivered");
+    expect(out.progress.steps.raw_answers_comment).toMatchObject({
+      state: "done",
+      commentId: cards.comments[0].id,
+    });
+  });
+
+  it("a comment that does not read back after the post is unknown, and says the next run looks for it", async () => {
+    const cards = new FakeCards();
+    const orig = cards.handle.bind(cards);
+    cards.handle = async (c: Call) => {
+      const r = await orig(c);
+      return c.method === "GET" && c.path.includes("/comment")
+        ? { comments: [] }
+        : r;
+    };
+    const { out } = await run(
+      cards,
+      await stage4Item("handoff_comment", { comment_text: HANDOFF4 }),
+    );
+    expect(out).toMatchObject({
+      state: "unknown",
+      error:
+        "The kickoff handoff comment did not read back on the card. The next run looks for it.",
+    });
+    expect(out.progress.steps.handoff_comment).toMatchObject({
+      state: "started",
+      commentId: expect.any(String),
+    });
+  });
+
+  it("the Client Profile is written whole: 6,000 characters with emoji pass to the write unchanged, and a long kickoff link too", async () => {
+    const unit = "Revenue: 1,500 KWD 🚀 حولي  two spaces\nnext line\n";
+    const body = unit.repeat(Math.floor(5990 / unit.length));
+    const profile = `${body}${"x".repeat(6000 - body.length)}`;
+    expect(profile.length).toBe(6000);
+    const link = `https://example.com/kickoff#client=${"%D8%AD".repeat(1000)}`;
+    expect(link.length).toBeGreaterThan(5000);
+    const fields = [
+      {
+        fieldId: PROFILE,
+        kind: "text",
+        value: profile,
+        label: "Client Profile",
+      },
+      {
+        fieldId: KICKOFF_LINK,
+        kind: "url",
+        value: link,
+        label: "Kickoff Form Link",
+      },
+    ];
+    const card = new Stage4Card();
+    const { out, step } = await run4(
+      card,
+      await stage4Item("profile_fields", { fields }),
+    );
+    expect(step).toMatchObject({ key: "profile_fields", fields });
+    expect(out.state).toBe("delivered");
+    expect(card.writes()).toEqual([
+      {
+        method: "POST",
+        path: `task/${CARD}/field/${PROFILE}`,
+        body: { value: profile },
+      },
+      {
+        method: "POST",
+        path: `task/${CARD}/field/${KICKOFF_LINK}`,
+        body: { value: link },
+      },
+    ]);
+    // The kind and https checks stay.
+    for (const bad of [
+      { ...fields[0], value: 6000 },
+      { ...fields[1], value: `http://example.com/${"a".repeat(6000)}` },
+      { ...fields[0], kind: "url" },
+    ])
+      expect(
+        await formStep(await stage4Item("profile_fields", { fields: [bad] })),
+      ).toEqual({ fail: SAY_FORMS.mismatch });
   });
 
   it("a held row shows words, never the text or a value", async () => {

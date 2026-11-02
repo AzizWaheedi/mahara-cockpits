@@ -347,6 +347,18 @@ export function newField(type: FieldType, taken: Iterable<string>): FormField {
   }
 }
 
+/**
+ * The longest answer a text question of a form may allow, as
+ * cockpit_form_schema_check takes it: 200 characters for a text and 2,000 for
+ * a long text, except on the client onboarding, which takes what its Typeform
+ * took (1,000 and 10,000, migration 20261102m).
+ */
+export function maxLengthCap(formKey: string, type: string): number {
+  const onboarding = formKey === "onboarding";
+  if (type === "text") return onboarding ? 1000 : 200;
+  return onboarding ? 10000 : 2000;
+}
+
 // --- Draft edits (each returns a new schema) --------------------------------
 
 export function updateField(

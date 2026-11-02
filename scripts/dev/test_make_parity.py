@@ -20,6 +20,7 @@ import urllib.error
 import urllib.parse
 from contextlib import redirect_stdout
 from pathlib import Path
+from typing import Optional
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -154,6 +155,160 @@ def make12_mods(kickoff=KICKOFF, onboarding=ONBOARDING):
 def make13_mods(onboarding=ONBOARDING):
     return mp.make_modules(mp.blueprint_of(fixture("8922994")),
                            mp.trigger_bundle(fixture("KFRCXPFx"), mp.clean(onboarding), {"onboarding_client_id": CARD}))
+
+
+# --- What the request writer posts, read from its source (as the REQUEST_STEPS test reads it) -----------------------
+WRITER = Path(__file__).resolve().parents[2] / "supabase" / "functions" / "clickup-writeback"
+# A Cockpit ref in TypeScript: a marker variable or property, the helpers that make one, or its words.
+MARK = re.compile(r"(?<![\w$])(?:marker|markerOf|formMarker|ANY_REF)(?![\w$])|Cockpit ref")
+IDENT = re.compile(r"(?<![\w$.])[A-Za-z_$][\w$]*")
+
+
+def ts_skip(src: str, i: int) -> Optional[int]:
+    """Just past the string, template literal, comment or regex literal that opens at i; None for code."""
+    c = src[i]
+    if src.startswith("//", i):
+        j = src.find("\n", i)
+        return len(src) if j < 0 else j
+    if src.startswith("/*", i):
+        j = src.find("*/", i + 2)
+        return len(src) if j < 0 else j + 2
+    if c in "'\"`":
+        return ts_string_end(src, i)
+    if c == "/":
+        k = i - 1
+        while k >= 0 and src[k] in " \t\n":
+            k -= 1
+        if k < 0 or src[k] in "(,=:[!&|?{};" or re.search(r"\b(?:return|typeof|case)$", src[max(0, k - 6):k + 1]):
+            j, group = i + 1, False
+            while j < len(src) and src[j] != "\n":
+                if src[j] == "\\":
+                    j += 2
+                    continue
+                if src[j] in "[]":
+                    group = src[j] == "["
+                elif src[j] == "/" and not group:
+                    return j + 1
+                j += 1
+    return None
+
+
+def ts_string_end(src: str, i: int) -> int:
+    """Just past the string or template literal opening at i (its ${...} parts stepped over)."""
+    quote, i = src[i], i + 1
+    while i < len(src):
+        if src[i] == "\\":
+            i += 2
+        elif src[i] == quote:
+            return i + 1
+        elif quote == "`" and src.startswith("${", i):
+            i = ts_end(src, i + 2, "}") + 1
+        else:
+            i += 1
+    return len(src)
+
+
+def ts_end(src: str, i: int, stops: str) -> int:
+    """The first of `stops` at nesting depth 0 from i, or the bracket that closes the one i sits in; strings,
+    template literals, comments and regex literals are stepped over."""
+    depth = 0
+    while i < len(src):
+        skip = ts_skip(src, i)
+        if skip is not None:
+            i = skip
+            continue
+        c = src[i]
+        if depth == 0 and c in stops:
+            return i
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth < 0:
+                return i
+        i += 1
+    return len(src)
+
+
+def ts_scan(src: str) -> tuple:
+    """Every code brace pair {open: close} and every template literal, in one pass."""
+    pairs, stack, templates, i = {}, [], [], 0
+    while i < len(src):
+        skip = ts_skip(src, i)
+        if skip is not None:
+            if src[i] == "`":
+                templates.append(src[i:skip])
+            i = skip
+            continue
+        if src[i] == "{":
+            stack.append(i)
+        elif src[i] == "}" and stack:
+            pairs[stack.pop()] = i
+        i += 1
+    return pairs, templates
+
+
+def ts_body(src: str, name: str) -> str:
+    """A function declaration's body, its braces included."""
+    at = src.index(f"function {name}(")
+    params = ts_end(src, at + len(f"function {name}("), ")")
+    start = re.compile(r"\{[ \t]*\n").search(src, params).start()
+    return src[start:ts_end(src, start + 1, "}") + 1]
+
+
+def ts_resolve(src: str, expr: str, at: int, depth: int = 4) -> str:
+    """`expr` with what each name it reads holds appended: the nearest const or let before `at`, `depth` deep."""
+    out = expr
+    for name in sorted(set(IDENT.findall(expr))) if depth else ():
+        decls = list(re.finditer(rf"\b(?:const|let)\s+{re.escape(name)}\s*(?::[^=;]+)?=(?!=)", src[:at]))
+        if decls:
+            begin = decls[-1].end()
+            out += " " + ts_resolve(src, src[begin:ts_end(src, begin, ";")], decls[-1].start(), depth - 1)
+    return out
+
+
+def ts_objects(src: str, needle: str) -> list:
+    """The innermost braces around each code occurrence of `needle`, as {property: (expression, position)}."""
+    pairs, out = ts_scan(src)[0], []
+    for hit in re.finditer(re.escape(needle), src):
+        around = [o for o, c in pairs.items() if o < hit.start() < c]
+        if not around:
+            continue
+        i = max(around) + 1
+        end, props = pairs[i - 1], {}
+        while i < end:
+            j = min(ts_end(src, i, ","), end)
+            m = re.match(r"([A-Za-z_$][\w$]*)\s*(?::\s*(.*))?$", src[i:j].strip(), re.S)
+            if m:
+                props[m.group(1)] = ((m.group(2) or m.group(1)).strip(), i)
+            i = j + 1
+        out.append(props)
+    return out
+
+
+def ref_lines(forms_ts: str, requests_ts: str) -> set:
+    """The comments that mirror Make which the writer posts with a Cockpit ref, read from its source: forms.ts
+    stage4Step's comment step text and what writeComment posts (handoff_comment, raw_answers_comment); requests.ts's
+    post of the payload's taskComment (onboarding_tasks)."""
+    out = set()
+    stage4 = ts_body(forms_ts, "stage4Step")
+    steps = [o for o in ts_objects(stage4, 'type: "comment"') if "text" in o]
+    if not steps:
+        raise AssertionError("forms.ts stage4Step makes no comment step with a text: teach ref_lines where it does")
+    write = ts_body(forms_ts, "writeComment")
+    posts = [o["comment_text"] for o in ts_objects(write, "comment_text") if "comment_text" in o]
+    if not posts:
+        raise AssertionError("forms.ts writeComment posts no comment_text: teach ref_lines where it does")
+    if any(MARK.search(ts_resolve(stage4, *o["text"])) for o in steps) or any(MARK.search(ts_resolve(write, *p)) for p in posts):
+        out |= {"handoff_comment", "raw_answers_comment"}
+    task = [ts_resolve(requests_ts, *o["comment_text"]) for o in ts_objects(requests_ts, "comment_text")
+            if "comment_text" in o and "taskComment" in ts_resolve(requests_ts, *o["comment_text"])]
+    joined = [t for t in ts_scan(requests_ts)[1] if "taskComment" in t and MARK.search(t)]
+    if any(MARK.search(t) for t in task) or joined:
+        out.add("onboarding_tasks")
+    if mp.TASK_COMMENT_STEP and not task:
+        raise AssertionError("requests.ts posts no taskComment as a comment's text: teach ref_lines where it does")
+    return out
 
 
 class Evaluator(unittest.TestCase):
@@ -497,6 +652,96 @@ class Oracle(unittest.TestCase):
                          "make_parity.TASK_COMMENT_STEP and clickup-writeback's REQUEST_STEPS disagree: set it to the step "
                          "that posts taskComment on the task the request made, or None while there is none")
 
+    def test_the_writer_posts_each_comment_that_mirrors_make_alone(self):
+        # REF_LINE says which of Make's comments the writer posts with a Cockpit ref line after the text; the writer's
+        # own source is the truth, read as ClickUp would receive it: forms.ts stage4Step's comment step and what
+        # writeComment posts, requests.ts's post of taskComment.
+        found = ref_lines((WRITER / "forms.ts").read_text(), (WRITER / "requests.ts").read_text())
+        self.assertEqual(mp.REF_LINE, frozenset(found),
+                         "make_parity.REF_LINE and clickup-writeback disagree: name each comment the writer posts with a "
+                         "Cockpit ref line after Make's text")
+        # Make posts the handoff, the raw answers and the tasks' comment as the text alone (the CEO's "match Make").
+        self.assertEqual(found, set(), "the writer posts a comment that mirrors Make with a Cockpit ref line after "
+                                       "Make's text; post the text alone and find it again by its id or its text")
+
+    def test_the_source_reader_tells_a_text_alone_from_one_with_its_ref(self):
+        # Invented TypeScript in the writer's shapes: the step's text, the post, a regex literal holding a backtick and
+        # a brace, and the card's link comment (which keeps its marker and is not one of Make's).
+        forms = """
+async function stage4Step(
+  item: FormItem,
+  key: Stage4Key,
+): Promise<{ step: FormStep } | { fail: string }> {
+  const plan = item.effect?.plan ?? {};
+  if (key === "handoff_comment" || key === "raw_answers_comment") {
+    const text = plan.comment_text;
+    return { step: { key, type: "comment", taskId: card, TEXT, marker: formMarker(p.responseId) } };
+  }
+  return { fail: SAY_FORMS.mismatch };
+}
+
+async function writeComment(
+  x: Ctx & { step: Extract<FormStep, { type: "comment" }> },
+): Promise<RequestOutcome> {
+  const { provider, step } = x;
+  const text = mirrorsMake ? makeText(step) : step.text;
+  await provider.call("clickup", "POST", `task/${step.taskId}/comment`, { comment_text: POSTED, notify_all: false });
+}
+"""
+        requests = """
+const ESCAPED = /\\\\([!-/:-@[-`{-~])/g;
+async function stepCardComment(x: Ctx) {
+  const text = `${cardLink(x.p)}\\n\\n${markerOf(x.p)}`;
+  return postComment(x, "card_comment", card, text, markerOf(x.p));
+}
+async function stepTaskComment(x: Ctx) {
+  const text = TASK;
+  const made = await write(x, () => x.provider.call("clickup", "POST", `task/${id}/comment`, { comment_text: text, notify_all: false }));
+}
+"""
+        alone = {"TEXT": "text", "POSTED": "text", "TASK": "String(x.p.taskComment)"}
+
+        def read(**change):
+            put = dict(alone, **change)
+            return ref_lines(re.sub(r"TEXT|POSTED", lambda m: put[m.group(0)], forms), requests.replace("TASK", put["TASK"]))
+
+        self.assertEqual(read(), set())
+        both = {"handoff_comment", "raw_answers_comment"}
+        self.assertEqual(read(TEXT="text: `${text}\\n\\n${marker}`"), both)  # the writer before 2026-11-02
+        self.assertEqual(read(POSTED="`${step.text}\\n\\n${step.marker}`"), both)
+        self.assertEqual(read(TASK="`${String(x.p.taskComment)}\\n\\n${markerOf(x.p)}`"), {"onboarding_tasks"})
+        self.assertEqual(read(TASK="String(x.p.taskComment) + `\\n\\nCockpit ref ${x.p.ref}`"), {"onboarding_tasks"})
+        with self.assertRaisesRegex(AssertionError, "posts no taskComment"):
+            read(TASK="String(x.p.details)")
+        with mock.patch.object(mp, "TASK_COMMENT_STEP", None):
+            self.assertEqual(read(TASK="String(x.p.details)"), set())
+
+    def test_a_comment_posted_with_its_ref_line_is_not_makes(self):
+        k, o = make12_mods(), make13_mods()
+        handoff, raw = k[11]["input"]["comment_text"], o[47]["input"]["comment_text"]
+        targets = {"client_onboarding": [{"list_id": "901816723190", "template_id": "t-86ex8x9xw"},
+                                         {"list_id": "901818016338", "template_id": "t-86eyu1w3d"}]}
+
+        def lines(handoff_text, raw_text, task_text):
+            kick = mp.compare_kickoff([{"key": "handoff_comment", "plan": {"comment_text": handoff_text}},
+                                       {"key": "onboarding_tasks", "plan": {"comment_text": task_text}}], k, {"targets": targets})
+            onb = mp.compare_onboarding([{"key": "raw_answers_comment", "plan": {"comment_text": raw_text}}], o,
+                                        {"relay": {}, "targets": {}})
+            return (dict(kick)["handoff_comment"], [v for key, v in kick if key == "onboarding_tasks"][0],
+                    dict(onb)["raw_answers_comment"])
+
+        self.assertEqual(lines(handoff, raw, handoff), ("equal", "equal", "equal"))
+        added = "differs: the writer adds a Cockpit ref line Make does not post"
+        with mock.patch.object(mp, "REF_LINE", frozenset({"handoff_comment", "raw_answers_comment", "onboarding_tasks"})):
+            self.assertEqual(lines(handoff, raw, handoff), (added, added, added))
+            self.assertEqual(lines(handoff + "\n", raw, handoff + "!")[:2],
+                             ("differs: text, whitespace only; the writer adds a Cockpit ref line Make does not post",
+                              "differs: the handoff on the tasks; the writer adds a Cockpit ref line Make does not post"))
+        with mock.patch.object(mp, "REF_LINE", frozenset({"onboarding_tasks"})), \
+                mock.patch.object(mp, "TASK_COMMENT_STEP", None):
+            # Nothing posts the comment, so no ref line reaches the tasks either.
+            self.assertEqual(lines(handoff, raw, handoff)[1], "differs: nothing posts comment_text on the two tasks")
+
     def test_plan_lines_and_the_summary_read_as_the_vps_run(self):
         out = {"effects": [], "unmapped": ["c0000001-0000-4000-8000-00000000000a"]}
         lines = mp.plan_lines("onboarding", out, {}, {"relay": {}, "targets": {}})
@@ -635,7 +880,7 @@ class Parity(unittest.TestCase):
                                                                "CLICKUP_API_TOKEN": CLICKUP_KEY}))
         (self.tmp / "relay.env").write_text("".join(f"{k}={v}\n" for k, v in RELAY.items()))
         self.net = Net()
-        # The fake cockpit matches Make, so its request writer posts the tasks' comment; one test runs the writer as it is.
+        # The fake cockpit matches Make, so its request writer posts the tasks' comment; one test runs a writer with none.
         for patch in (mock.patch.object(mp, "TASK_COMMENT_STEP", "task_comment"),
                       mock.patch.object(mp, "NATIVE_CURRENT", str(self.tmp / "current")),
                       mock.patch.object(mp, "NATIVE_STATE", str(state)),

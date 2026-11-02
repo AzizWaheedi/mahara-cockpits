@@ -3,26 +3,28 @@
  * 4.13.3, 4.14.3, 4.15.1 and the D-S4F findings; the CEO's decision of 2026-11-02: "Yes, match Make").
  *
  * The functions 20261102m reads or replaces are cut from their canonical migrations (20260921a,
- * 20261025n, 20261026r, 20261029s, 20261029w, 20261102a, 20261102j, 20261102l), the way
- * stage4-content-folder-supabase.test.ts stands on what j reads, and the ground proves each replaced
- * body is the live one (20261102l's for the builder) by the md5 the file's drift guard names.
- * Stand-in tables give cockpit_form_stage4_input, cockpit_form_stage4_hidden, the planner and
- * cockpit_request_create_system the columns they read, and a stand-in cockpit_request_plan gives each
- * request part a payload (its description from the request's details, as the real one writes them).
- * 20261102l's builder and j's question list,
- * hidden values, Typeform answers list, native answers, input and parity plan are also kept under a
- * _l name, so every effect is compared with what 20261102l plans for the same input.
+ * 20261025n, 20261026r, 20261027f, 20261029s, 20261029w, 20261102a, 20261102i, 20261102j, 20261102l),
+ * the way stage4-content-folder-supabase.test.ts stands on what j reads, and the ground proves each
+ * replaced body is the live one (20261102l's for the builder) by the md5 the file's drift guard names,
+ * and the onboarding's version 2 is 20261102j's by the md5 of its text. Stand-in tables give
+ * cockpit_form_stage4_input, cockpit_form_stage4_hidden, the planner, cockpit_request_create_system and
+ * the version-2 guard the columns they read, and a stand-in cockpit_request_plan gives each request
+ * part a payload (its description from the request's details, as the real one writes them).
+ * 20261102l's builder and j's question list, hidden values, Typeform answers list, native answers,
+ * input, parity plan and kickoff answers check are also kept under a _l name, and 20261102i's two client
+ * form checks under an _i name, so every effect and every other form is compared with what it was.
  *
  * Make's side is scripts/dev/make_parity.py's evaluator (python3), run on the saved blueprints and
  * Typeform definitions in scripts/dev/fixtures/make-parity: for the same answers the SQL text must
  * equal the evaluator's for the handoff (Make 12 [11]) and the comment on each onboarding task ([18],
- * [23], kept whole on the request each task's comment is posted from), Service Advertised ([21]), the
- * kickoff's hidden values (Make 13 [29]'s Kickoff Form Link), the raw answers comment (Make 13 [47]),
- * the Client Profile ([29]) and the dispatch ([25]); the Brand DNA task carries no text, as [46]
- * writes none. Two places still differ from Make, as the file says: until the request writer posts
- * taskComment, each onboarding task's description keeps 20261102l's first 4,000 characters of the
- * handoff, and the Client Profile keeps its 5,000-character cut until clickup-writeback's forms.ts
- * takes longer text. Every client, card, person and answer is invented.
+ * [23], kept whole on the request and in each part's queue payload, the task carrying no details),
+ * Service Advertised ([21]), the kickoff's hidden values (Make 13 [29]'s Kickoff Form Link), the raw
+ * answers comment (Make 13 [47]), the Client Profile ([29], never cut) and the dispatch ([25]); the
+ * Brand DNA task carries no text, as [46] writes none. A native answer keeps what was typed as Typeform
+ * keeps it (line breaks as line feeds, both ends trimmed, everything between as typed): the client
+ * onboarding's answers check and the kickoff's long texts, so multi-line Arabic and English answers,
+ * double spaces and carriage returns typed natively give the texts Make writes for the same typing.
+ * Every client, card, person and answer is invented.
  */
 import {
   afterAll,
@@ -41,6 +43,7 @@ import { cockpitTestDb, migration } from "./lib/cockpitTestDb";
 setDefaultTimeout(120_000);
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+const I = "20261102i_client_tail.sql";
 const J = "20261102j_stage4_native.sql";
 const L = "20261102l_stage4_no_client_data_row.sql";
 const M = "20261102m_stage4_match_make.sql";
@@ -48,7 +51,10 @@ const TITLES_FILE = "scripts/dev/forms-deploy/stage4-raw-titles.json";
 /** onboarding.raw_titles as D-S4F fills it. */
 const RAW_TITLES = JSON.parse(readFileSync(`${ROOT}${TITLES_FILE}`, "utf8"));
 
-/** md5(whitespace folded prosrc) of the bodies 20261102m replaces, as live holds them (read 2026-11-02) and 20261102l's builder. */
+/**
+ * md5(whitespace folded prosrc) of the bodies 20261102m replaces, as live holds them (read 2026-11-02:
+ * 20261102i's two client form checks, 20261102j's kickoff answers check) and 20261102l's builder.
+ */
 const BEFORE_M = {
   "cockpit_form_stage4_fields(text)": "8c36fd1cf1b0a60b0c776241765eddf7",
   "cockpit_form_stage4_hidden(text)": "cb8d434b635091957a15c7ca96652848",
@@ -58,10 +64,44 @@ const BEFORE_M = {
   "cockpit_request_create_system(text,text,jsonb,uuid)":
     "295e926095e7832e7d7a220b4d233a23",
   "cockpit_form_stage4_plan(uuid,boolean)": "cb27a3730e539bcfbb46dea136af96ae",
+  "cockpit_form_schema_check(jsonb)": "1f5d9016571ed472b83dbffa17363095",
+  "cockpit_form_answers_check(jsonb,jsonb,jsonb)":
+    "d1d8bb66ae056415f8a2a968627220df",
+  "cockpit_kickoff_answers_check(jsonb)": "8a02898fe501f501b7f7cc8653453db6",
 } as const;
+/** 20261102m's own bodies (the after values of its drift guard). */
+const AFTER_M = {
+  "cockpit_form_stage4_fields(text)": "2b874cb1ed7fcf92a3d7fd9ca00547c5",
+  "cockpit_form_stage4_hidden(text)": "c43644ee277f532770e523e61e389aad",
+  "cockpit_form_stage4_typeform_answers(text,jsonb)":
+    "c9ad150b861d72d497ccb6f3af16cf7e",
+  "cockpit_form_stage4_build(jsonb)": "a565db2d881852ff3a1481a438768e20",
+  "cockpit_request_create_system(text,text,jsonb,uuid)":
+    "45207dde9903fee3c1d0aa0b20eea18f",
+  "cockpit_form_stage4_plan(uuid,boolean)": "1b13ba4315097727973c4bff54f027c3",
+  "cockpit_form_schema_check(jsonb)": "07f88396a8df9e1b2b42f41b5c3e189a",
+  "cockpit_form_answers_check(jsonb,jsonb,jsonb)":
+    "18ea942206537f7037c10db67ca8e1b5",
+  "cockpit_kickoff_answers_check(jsonb)": "d382c5d9c6638f4f73148196cc7dd7c9",
+} as const;
+/** md5 of the onboarding's version-2 schema text: 20261102j's (live, read 2026-11-02) and 20261102m's. */
+const V2_J_MD5 = "8fa1f38dfd4307f22d0b3faec8604ce7";
+const V2_M_MD5 = "2b9cd946f44235e963d4ad6bf017afe8";
 /** 20261102j's builder, live before 20261102l. */
 const J_BUILD_MD5 = "a704e72a3921191d2f06a24855d7f219";
+/**
+ * cockpit_form_effects_plan_check, white space folded: 20261027f's (live, read 2026-11-02) and 20261102m's,
+ * which gives a kickoff or onboarding plan 2 MB.
+ */
+const ROOM_F =
+  "CHECK (((jsonb_typeof(plan) = 'object'::text) AND (octet_length((plan)::text) <= 131072)))";
+const ROOM_M =
+  "CHECK (((jsonb_typeof(plan) = 'object'::text) AND (octet_length((plan)::text) <= CASE WHEN (form_key = ANY (ARRAY['kickoff'::text, 'onboarding'::text])) THEN 2097152 ELSE 131072 END)))";
+/** The reason a step gets when its plan is past the 2 MB the table keeps (20261102m, 12). */
+const TOO_LARGE =
+  "This step carries more than the 2 MB the cockpit keeps for one step, so it did not run. Do it by hand from the stored answers.";
 const NEW_FNS = [
+  "cockpit_form_typeform_text(text)",
   "cockpit_form_stage4_make_text(text,text)",
   "cockpit_form_stage4_handoff_text(jsonb,jsonb)",
   "cockpit_form_stage4_profile_text(jsonb)",
@@ -130,6 +170,9 @@ const APPT = {
 const FREE_YES =
   "Yes, we do offer free consultations / نعم، نقدم استشارات مجانية✅";
 const ARABIC_NOTE = "نبي نركز على الفلل الجديدة في الشمال، والدفع على دفعتين";
+/** Answers typed over several lines, with double spaces and a space before a line break (invented). */
+const MULTI_AR = "نشتغل على:\nالفلل  الجديدة \n\nوالشقق في الشمال";
+const MULTI_EN = "Instagram ads in 2024 \nGoogle ads  in 2025\n\n- flyers";
 
 type Row = Record<string, any>;
 type Answer = { ref: string; title: string; value: string };
@@ -139,11 +182,12 @@ const a = (ref: string, value: string, title = "Stored title"): Answer => ({
   value,
 });
 const json = (v: unknown) => JSON.stringify(v);
-/** SQL's left(text, n): the first n characters (code points, not UTF-16 units). */
-const leftChars = (text: string, n: number) => Array.from(text).slice(0, n).join("");
+/** What Typeform keeps of a typed answer and hands to Make: line feeds for line breaks, both ends trimmed. */
+const kept = (typed: string) => typed.replace(/\r\n?/g, "\n").trim();
 
 let db: PGlite;
 const groundMd5: Record<string, string> = {};
+let groundRoom = "";
 
 function fnDef(sql: string, name: string): string {
   const start = sql.indexOf(`CREATE OR REPLACE FUNCTION public.${name}(`);
@@ -187,6 +231,21 @@ const md5Of = (fn: string) =>
   one<string>(
     "SELECT md5(regexp_replace(p.prosrc, '\\s+', ' ', 'g')) AS r FROM pg_proc p WHERE p.oid = to_regprocedure($1)",
     [`public.${fn}`],
+  );
+/** cockpit_form_effects_plan_check with its white space folded, as 20261102m's guard reads it. */
+const planCheck = () =>
+  one<string>(
+    `SELECT regexp_replace(pg_get_constraintdef(c.oid), '\\s+', ' ', 'g') AS r FROM pg_constraint c
+      WHERE c.conrelid = 'public.cockpit_form_effects'::regclass AND c.conname = 'cockpit_form_effects_plan_check'`,
+  );
+/** md5 of the onboarding's version-2 schema text, as 20261102m's guard reads it. */
+const v2Md5 = () =>
+  one<string>(
+    "SELECT md5(schema::text) AS r FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2",
+  );
+const v2Schema = () =>
+  one<Row>(
+    "SELECT schema AS r FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2",
   );
 const setting = (key: string, value: unknown) =>
   db.query(
@@ -243,7 +302,8 @@ onb = mp.saved_file(fx, mp.ONBOARDING_FORM)
 m21 = next(m for m in mp.flat_modules(make12["flow"]) if m["id"] == 21)
 labels = {i: n for n, i in re.findall(r'"([^"]+)"; "([0-9a-f-]{36})"', m21["mapper"]["custom_fields"][mp.FIELD["service"]])}
 out = {"titles": [{"ref": f["ref"], "title": f["title"]} for f in mp.question_fields(onb)],
-       "kickoff": [{"ref": f["ref"], "title": f["title"], "type": f["type"]} for f in mp.question_fields(kick)]}
+       "kickoff": [{"ref": f["ref"], "title": f["title"], "type": f["type"]} for f in mp.question_fields(kick)],
+       "onboarding": [{"ref": f["ref"], "type": f["type"]} for f in mp.question_fields(onb)]}
 for case in json.load(sys.stdin):
     answers = mp.clean(case["answers"])
     if case["form"] == "kickoff":
@@ -354,13 +414,23 @@ const ONBOARDING: Answer[] = [
   a(O.marketing, `${ARABIC_NOTE}\nInstagram ads in 2024`),
   a(O.whyJoined, "We want steady consultations."),
 ];
+/** An onboarding answer as Typeform hands it to Make when the client typed over several lines. */
+const MULTI_LINE: Answer[] = [
+  a(O.address, "قطعة ٣\nشارع ٢٠، منزل ٧"),
+  a(O.hours, "Sat to Thu  9-5\nFriday closed"),
+  a(O.marketing, MULTI_AR),
+  a(O.challenges, MULTI_EN),
+  a(O.whyJoined, "We want  steady\nconsultations."),
+  a(O.additional, "سؤال:\n  متى نبدأ؟"),
+];
 
 // --- The ground ----------------------------------------------------------------------------------
 
 /**
  * The columns cockpit_form_stage4_input, cockpit_form_stage4_hidden, the planner and
- * cockpit_request_create_system read (stand-ins), and the request plan as each part's payload: its
- * description is the type's heading and the request's details, as cockpit_request_plan writes them.
+ * cockpit_request_create_system read (stand-ins), with the effects' plan check as 20261027f made it (live,
+ * read 2026-11-02; 20261102m widens it), and the request plan as each part's payload: its description is
+ * the type's heading and the request's details, as cockpit_request_plan writes them.
  */
 const STAND_INS = `
   CREATE TABLE public.cockpit_form_responses (id uuid PRIMARY KEY, form_key text, form_version integer, source text,
@@ -369,10 +439,16 @@ const STAND_INS = `
   CREATE TABLE public.cockpit_billing_accounts (clickup_task_id text PRIMARY KEY, client_name text, mrr_usd numeric);
   CREATE TABLE public.cockpit_client_onboarding (clickup_task_id text PRIMARY KEY, client_name text, forms jsonb,
     synced_at timestamptz);
-  CREATE TABLE public.cockpit_forms (key text PRIMARY KEY, provider text, effects jsonb);
+  CREATE TABLE public.cockpit_forms (key text PRIMARY KEY, provider text, effects jsonb, version integer, schema jsonb,
+    updated_by text, updated_at timestamptz);
+  CREATE TABLE public.cockpit_form_versions (form_key text, version integer, schema jsonb, published_by text, note text,
+    PRIMARY KEY (form_key, version));
+  CREATE TABLE public.cockpit_form_invites (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), form_key text, form_version integer,
+    state text);
   CREATE TABLE public.cockpit_form_effects (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), response_id uuid, form_key text,
-    effect_key text, dedupe_key text, owner text, delivery text, plan jsonb, state text, reason text, delivery_ref text,
-    receipt jsonb, UNIQUE (response_id, effect_key));
+    effect_key text, dedupe_key text, owner text, delivery text,
+    plan jsonb CHECK (jsonb_typeof(plan) = 'object' AND octet_length(plan::text) <= 131072), state text, reason text,
+    delivery_ref text, receipt jsonb, UNIQUE (response_id, effect_key));
   CREATE TABLE public.cockpit_request_types (key text PRIMARY KEY, version integer, label text, enabled boolean,
     fields jsonb, targets jsonb, due_days integer, priority text);
   CREATE TABLE public.cockpit_requests (id uuid PRIMARY KEY, type_key text, type_version integer, type_label text,
@@ -404,7 +480,12 @@ const OTHER_FNS: [string, string][] = [
   ["20261026r_requests.sql", "cockpit_request_hash"],
   ["20261026r_requests.sql", "cockpit_request_audit"],
   ["20261025n_slack_notices.sql", "cockpit_slack_notice_role_of"],
+  // What the client form checks call.
+  ["20261027f_forms_core.sql", "cockpit_form_kuwait_day"],
+  ["20261102a_forms_invites.sql", "cockpit_form_schema_pair"],
 ];
+/** 20261102i's client form checks (live), which 20261102m replaces. */
+const I_FNS = ["cockpit_form_schema_check", "cockpit_form_answers_check"] as const;
 const J_FNS = [
   "cockpit_form_stage4_effects",
   "cockpit_form_stage4_fields",
@@ -428,7 +509,7 @@ const J_FNS = [
   "cockpit_request_create_system",
   "cockpit_form_stage4_plan",
 ] as const;
-/** 20261102l's plan, under _l names, beside 20261102m's. */
+/** 20261102l's plan and 20261102j's kickoff answers check, under _l names, beside 20261102m's. */
 function keptAsL(j: string, l: string): string {
   const rename = (sql: string) =>
     [
@@ -439,6 +520,7 @@ function keptAsL(j: string, l: string): string {
       "cockpit_form_stage4_build",
       "cockpit_form_stage4_input",
       "cockpit_form_parity_plan",
+      "cockpit_kickoff_answers_check",
     ].reduce(
       (s, name) =>
         s.replace(
@@ -455,10 +537,22 @@ function keptAsL(j: string, l: string): string {
     fnDef(l, "cockpit_form_stage4_build"),
     fnDef(j, "cockpit_form_stage4_input"),
     fnDef(j, "cockpit_form_parity_plan"),
+    fnDef(j, "cockpit_kickoff_answers_check"),
   ]
     .map(rename)
     .join("\n\n");
 }
+/** 20261102i's client form checks under _i names, beside 20261102m's. */
+const keptAsI = (i: string) =>
+  I_FNS.map(name =>
+    fnDef(i, name).replace(`FUNCTION public.${name}(`, `FUNCTION public.${name}_i(`),
+  ).join("\n\n");
+/** The onboarding's version 2 as 20261102j inserts it (live). */
+const V2_INSERT = cut(
+  migration(J),
+  /INSERT INTO public\.cockpit_form_versions\(form_key, version, schema, published_by, note\)\nVALUES \('onboarding', 2,[\s\S]*?ON CONFLICT \(form_key, version\) DO NOTHING;/,
+  "onboarding version 2",
+);
 
 beforeAll(async () => {
   db = await cockpitTestDb({ supabaseDefaultPrivileges: true });
@@ -510,8 +604,14 @@ beforeAll(async () => {
   await db.exec(fnDef(l, "cockpit_form_stage4_effects"));
   await db.exec(fnDef(l, "cockpit_form_stage4_build"));
   await db.exec(keptAsL(j, l));
+  const i = migration(I);
+  for (const name of I_FNS) await db.exec(fnDef(i, name));
+  await db.exec(keptAsI(i));
+  await db.exec(V2_INSERT);
   for (const fn of [...Object.keys(BEFORE_M), ...Object.keys(KEPT_J)])
     groundMd5[fn] = await md5Of(fn);
+  groundMd5.v2 = await v2Md5();
+  groundRoom = await planCheck();
   await db.exec(migration(M));
 });
 afterAll(async () => {
@@ -539,29 +639,33 @@ const onboardingInput = (answers: Answer[]) => ({
 
 describe("20261102m: the file", () => {
   test("the ground holds the bodies the drift guard names: live's, and 20261102l's builder", () => {
-    expect(groundMd5).toEqual({ ...BEFORE_M, ...KEPT_J });
+    expect(groundMd5).toEqual({ ...BEFORE_M, ...KEPT_J, v2: V2_J_MD5 });
     const sql = migration(M);
     for (const [fn, md5] of Object.entries(BEFORE_M))
       expect(sql).toContain(`('public.${fn}', '${md5}', '`);
     for (const fn of Object.keys(KEPT_J))
       expect(sql).not.toContain(`FUNCTION public.${fn.split("(")[0]}(`);
+    expect(sql).toContain(`v_md5 NOT IN ('${V2_J_MD5}', '${V2_M_MD5}')`);
   });
 
   test("the after values are this file's bodies; a second apply changes nothing; j's input and parity plan stay", async () => {
     const sql = migration(M);
     for (const fn of Object.keys(BEFORE_M)) {
       const now = await md5Of(fn);
+      expect(now).toBe(AFTER_M[fn as keyof typeof AFTER_M]);
       expect(
         sql.split("\n").find(x => x.includes(`('public.${fn}', '`)),
       ).toContain(`', '${now}')`);
       expect(now).not.toBe(BEFORE_M[fn as keyof typeof BEFORE_M]);
     }
+    expect(await v2Md5()).toBe(V2_M_MD5);
     for (const [fn, md5] of Object.entries(KEPT_J))
       expect(await md5Of(fn)).toBe(md5);
     const snapshot = async () => ({
       md5: await Promise.all(
         [...Object.keys(BEFORE_M), ...NEW_FNS].map(fn => md5Of(fn)),
       ),
+      v2: await v2Md5(),
       titles: await one(
         "SELECT value AS r FROM public.cockpit_settings WHERE key = 'onboarding.raw_titles'",
       ),
@@ -569,14 +673,20 @@ describe("20261102m: the file", () => {
         `SELECT format_type(a.atttypid, a.atttypmod) AS r FROM pg_attribute a
           WHERE a.attrelid = 'public.cockpit_requests'::regclass AND a.attname = 'task_comment' AND NOT a.attisdropped`,
       ),
+      room: await planCheck(),
     });
     await rolledBack(async () => {
       await setting("onboarding.raw_titles", RAW_TITLES);
+      // A response on version 2 after this file changes nothing either: the guard reads it only on j's.
+      await db.query(
+        "INSERT INTO public.cockpit_form_invites(form_key, form_version, state) VALUES ('onboarding', 2, 'open')",
+      );
       const before = await snapshot();
       await db.exec(inTest(M));
       expect(await snapshot()).toEqual(before);
       expect((before.titles as Row).fields).toHaveLength(36);
       expect(before.column).toBe("text");
+      expect(before.room).toBe(ROOM_M);
     });
   });
 
@@ -593,6 +703,9 @@ describe("20261102m: the file", () => {
       "cockpit_form_stage4_typeform_answers(text,jsonb)",
       "cockpit_form_stage4_hidden(text)",
       "cockpit_request_create_system(text,text,jsonb,uuid)",
+      "cockpit_form_answers_check(jsonb,jsonb,jsonb)",
+      "cockpit_form_schema_check(jsonb)",
+      "cockpit_kickoff_answers_check(jsonb)",
     ])
       await rolledBack(async () => {
         const def = await one<string>(
@@ -614,6 +727,114 @@ describe("20261102m: the file", () => {
         code: "55000",
         message: "Apply 20261102l before 20261102m.",
       });
+    });
+  });
+
+  test("a kickoff or onboarding plan has 2 MB, every other form 128 KB as before; another check stops the file", async () => {
+    expect(groundRoom).toBe(ROOM_F);
+    expect(await planCheck()).toBe(ROOM_M);
+    const sql = migration(M);
+    for (const room of [ROOM_F, ROOM_M])
+      expect(sql).toContain(`'${room.replace(/'/g, "''")}'`);
+    // {"t": "x…x"} is the x's and 9 bytes.
+    const effect = (form: string, bytes: number) =>
+      db.query(
+        `INSERT INTO public.cockpit_form_effects(response_id, form_key, effect_key, plan)
+         VALUES (gen_random_uuid(), $1, 'x_y', jsonb_build_object('t', repeat('x', $2::int - 9)))`,
+        [form, bytes],
+      );
+    for (const [form, room] of [
+      ["kickoff", 2097152],
+      ["onboarding", 2097152],
+      ["checkin", 131072],
+    ] as const) {
+      await rolledBack(async () => {
+        await effect(form, room);
+        expect(
+          await one<number>(
+            "SELECT max(octet_length(plan::text)) AS r FROM public.cockpit_form_effects WHERE form_key = $1",
+            [form],
+          ),
+        ).toBe(room);
+      });
+      await rolledBack(async () => {
+        expect((await refusal(() => effect(form, room + 1))).code).toBe("23514");
+      });
+    }
+    const swap = (check: string) =>
+      db.exec(`ALTER TABLE public.cockpit_form_effects DROP CONSTRAINT cockpit_form_effects_plan_check;
+        ALTER TABLE public.cockpit_form_effects ADD CONSTRAINT cockpit_form_effects_plan_check CHECK (${check})`);
+    // 20261027f's check (live) becomes this file's.
+    await rolledBack(async () => {
+      await swap("jsonb_typeof(plan) = 'object' AND octet_length(plan::text) <= 131072");
+      expect(await planCheck()).toBe(ROOM_F);
+      await db.exec(inTest(M));
+      expect(await planCheck()).toBe(ROOM_M);
+    });
+    // Any other check stops the file.
+    await rolledBack(async () => {
+      await swap("jsonb_typeof(plan) = 'object' AND octet_length(plan::text) <= 65536");
+      expect(await refusal(() => db.exec(inTest(M)))).toEqual({
+        code: "55000",
+        message: "cockpit_form_effects_plan_check changed since 20261027f; stop and re-read it.",
+      });
+    });
+  });
+
+  test("the onboarding's version 2 changes in place only from 20261102j's and only while nothing uses it", async () => {
+    const jV2 = async () => {
+      await db.query(
+        "DELETE FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2",
+      );
+      await db.exec(V2_INSERT);
+      expect(await v2Md5()).toBe(V2_J_MD5);
+    };
+    // From 20261102j's: exactly this file's.
+    await rolledBack(async () => {
+      await jV2();
+      await db.exec(inTest(M));
+      expect(await v2Md5()).toBe(V2_M_MD5);
+    });
+    // A version 2 already answered, or with an open invite, stops the file.
+    for (const use of [
+      "INSERT INTO public.cockpit_form_responses(id, form_key, form_version, task_id) VALUES (gen_random_uuid(), 'onboarding', 2, 'taskX')",
+      "INSERT INTO public.cockpit_form_invites(form_key, form_version, state) VALUES ('onboarding', 2, 'open')",
+    ])
+      await rolledBack(async () => {
+        await jV2();
+        await db.query(use);
+        expect(await refusal(() => db.exec(inTest(M)))).toEqual({
+          code: "55000",
+          message:
+            "The onboarding form's version 2 is in use (1 answers and invites), so it cannot change in place: stop, and give its long texts and limits a version 3 instead.",
+        });
+      });
+    // A version 2 that is neither, or none, stops it.
+    for (const change of [
+      "UPDATE public.cockpit_form_versions SET schema = schema || '{\"minutes\": 30}' WHERE form_key = 'onboarding' AND version = 2",
+      "DELETE FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2",
+    ])
+      await rolledBack(async () => {
+        await db.query(change);
+        expect(await refusal(() => db.exec(inTest(M)))).toEqual({
+          code: "55000",
+          message:
+            "The onboarding form's version 2 changed since 20261102j; stop and re-read it.",
+        });
+      });
+    // The registry's copy changes with it when the form is already live on version 2 with j's.
+    await rolledBack(async () => {
+      await jV2();
+      await db.query(
+        `INSERT INTO public.cockpit_forms(key, provider, version, schema)
+         SELECT 'onboarding', 'native', 2, schema FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2`,
+      );
+      await db.exec(inTest(M));
+      expect(
+        await one(
+          "SELECT jsonb_build_object('md5', md5(schema::text), 'by', updated_by) AS r FROM public.cockpit_forms WHERE key = 'onboarding'",
+        ),
+      ).toEqual({ md5: V2_M_MD5, by: "migration 20261102m" });
     });
   });
 
@@ -650,7 +871,8 @@ describe("the kickoff asks every question Make 12 [11] prints", () => {
     );
     expect(now).toHaveLength(46);
     const keys = now.map(f => f.key);
-    // The 41 keep their order and words; only Post call form filled changes, to tG7dnxBn's yes/no.
+    // The 41 keep their order and words; only Post call form filled changes, to tG7dnxBn's yes/no, and
+    // Who else should we add to the WhatsApp group, to tG7dnxBn's long text.
     expect(keys.filter(k => was.some(w => w.key === k))).toEqual(
       was.map(w => w.key),
     );
@@ -658,9 +880,12 @@ describe("the kickoff asks every question Make 12 [11] prints", () => {
       expect(now.find(f => f.key === w.key)).toEqual(
         w.key === "postCallFormFilled"
           ? { ...w, type: "choice", options: ["Yes", "No"] }
-          : w,
+          : w.key === "whatsappAdd"
+            ? { ...w, type: "longtext" }
+            : w,
       );
-    const tf = evaluate([]).kickoff as Row[];
+    const made = evaluate([]);
+    const tf = made.kickoff as Row[];
     const added = now.filter(f => !was.some(w => w.key === f.key));
     expect(
       added.map(f => [f.key, f.typeformRef, f.title, f.type, keys[keys.indexOf(f.key) - 1]]),
@@ -676,11 +901,31 @@ describe("the kickoff asks every question Make 12 [11] prints", () => {
       tf.map(x => x.ref).sort(),
     );
     expect(tf.find(x => x.ref === K.postCall).type).toBe("yes_no");
-    expect(
-      await one("SELECT public.cockpit_form_stage4_fields('onboarding') AS r"),
-    ).toEqual(
-      await one("SELECT public.cockpit_form_stage4_fields_l('onboarding') AS r"),
+    // Every question tG7dnxBn asks as long_text is a long text here.
+    for (const x of tf.filter(y => y.type === "long_text"))
+      expect([x.ref, now.find(f => f.typeformRef === x.ref).type]).toEqual([
+        x.ref,
+        "longtext",
+      ]);
+    // The onboarding's 36: the four KFRCXPFx asks as long_text that 20261102j made short are long texts.
+    const onb = await one<Row[]>(
+      "SELECT public.cockpit_form_stage4_fields('onboarding') AS r",
     );
+    const onbWas = await one<Row[]>(
+      "SELECT public.cockpit_form_stage4_fields_l('onboarding') AS r",
+    );
+    const retyped = ["address", "hours", "landmark", "appointmentLength"];
+    expect(onb).toEqual(
+      onbWas.map(w => (retyped.includes(w.key) ? { ...w, type: "longtext" } : w)),
+    );
+    expect(onbWas.filter(w => retyped.includes(w.key)).map(w => w.type)).toEqual(
+      ["text", "text", "text", "text"],
+    );
+    for (const x of (made.onboarding as Row[]).filter(y => y.type === "long_text"))
+      expect([x.ref, onb.find(f => f.typeformRef === x.ref).type]).toEqual([
+        x.ref,
+        "longtext",
+      ]);
   });
 
   test("the answers check takes the five follow-ups and only Yes or No for Post call form filled", async () => {
@@ -707,6 +952,52 @@ describe("the kickoff asks every question Make 12 [11] prints", () => {
     expect(await check({ postCallFormFilled: "No" })).toMatchObject({
       ok: true,
     });
+  });
+
+  test("the answers check keeps a long text as Typeform keeps it, and still folds a short one", async () => {
+    const check = (answers: Row, suffix = "") =>
+      one<Row>(
+        `SELECT public.cockpit_kickoff_answers_check${suffix}($1::jsonb) AS r`,
+        [json({ newMrrUsd: 0, ...answers })],
+      );
+    const typed = {
+      whatsappAdd: "\r\n  المدير الفني\r\nوفريق  المبيعات (Sales team)\r\n\n",
+      detailsFix: " First line  \n\n  second line\u00a0",
+      contractChanges: `\u3000${"x".repeat(4000)}\n`,
+      adPlatforms: "Tiktok,\n  Snapchat ",
+    };
+    expect(await check(typed)).toEqual({
+      ok: true,
+      errors: {},
+      answers: {
+        whatsappAdd: "المدير الفني\nوفريق  المبيعات (Sales team)",
+        detailsFix: "First line  \n\n  second line",
+        contractChanges: "x".repeat(4000),
+        adPlatforms: "Tiktok, Snapchat",
+        newMrrUsd: 0,
+      },
+    });
+    // Each kept text is what JavaScript's trim() keeps of it, its carriage returns read as line feeds.
+    for (const key of ["whatsappAdd", "detailsFix", "contractChanges"] as const)
+      expect((await check(typed)).answers[key]).toBe(kept(typed[key]));
+    // 20261102j folded every long text's ends only of spaces and its short whatsappAdd to one line.
+    expect((await check(typed, "_l")).answers).toMatchObject({
+      whatsappAdd: "المدير الفني وفريق المبيعات (Sales team)",
+      adPlatforms: "Tiktok, Snapchat",
+    });
+    // A long text takes 4,000 characters (whatsappAdd took 500 as a short text); white space alone is no answer.
+    expect(await check({ whatsappAdd: "y".repeat(4000) })).toMatchObject({ ok: true });
+    expect(await check({ whatsappAdd: "y".repeat(501) }, "_l")).toMatchObject({
+      ok: false,
+      errors: { whatsappAdd: "length" },
+    });
+    expect(await check({ whatsappAdd: "y".repeat(4001) })).toMatchObject({
+      ok: false,
+      errors: { whatsappAdd: "length" },
+    });
+    expect(
+      await check({ whatsappAdd: "\r\n\u00a0\u3000\r\n", detailsFix: " \n " }),
+    ).toEqual({ ok: true, errors: {}, answers: { newMrrUsd: 0 } });
   });
 });
 
@@ -736,6 +1027,23 @@ describe("the texts equal the evaluator's on the same answers", () => {
           a(K.inGroup, "No"),
           a(K.postCall, "Done"),
           a(K.contentDiscussed, "  "),
+        ],
+      },
+      {
+        id: "multiLine",
+        form: "kickoff",
+        task: TASK,
+        hidden: {
+          onboarding_client_id: TASK,
+          address: "Block 3\nStreet 20",
+          hours: "Sat to Thu  9-5\nFriday closed",
+          marketing_tried: MULTI_AR,
+          challenges: MULTI_EN,
+        },
+        answers: [
+          a(K.detailsNote, MULTI_AR),
+          a(K.whatsappAdd, "Sara (sales)\nOmar  (design)"),
+          a(K.contractChanges, MULTI_EN),
         ],
       },
       ...[
@@ -795,6 +1103,17 @@ describe("the texts equal the evaluator's on the same answers", () => {
       "*Post-call form completed:* Yes",
     ])
       expect(full).toContain(line);
+    // A multi-line answer or hidden value is written whole, its line breaks and double spaces kept.
+    for (const part of [
+      `*Address:* Block 3\nStreet 20\n`,
+      `*Working hours / availability:* Sat to Thu  9-5\nFriday closed\n`,
+      `*Business notes:* ${MULTI_AR}\n`,
+      `*Marketing tried before:* ${MULTI_AR}\n`,
+      `*Current challenges:* ${MULTI_EN}\n`,
+      `*Contract changes needed:* ${MULTI_EN}\n`,
+      `*Other people to add:* Sara (sales)\nOmar  (design)\n`,
+    ])
+      expect(made.multiLine.handoff[0]).toContain(part);
     expect(made.empty.handoff[0].match(/Not provided/g)).toHaveLength(69);
     expect(made.yes_no.handoff[0]).toContain(
       "*Post-call form completed:* Not provided",
@@ -833,6 +1152,7 @@ describe("the texts equal the evaluator's on the same answers", () => {
           a(O.challenges, "Leads\nTime"),
         ],
       },
+      { id: "multiLine", form: "onboarding", task: TASK, answers: MULTI_LINE },
     ];
     const made = evaluate(cases);
     for (const c of cases) {
@@ -850,6 +1170,9 @@ describe("the texts equal the evaluator's on the same answers", () => {
     );
     expect(made.numbers.profile).toStartWith(
       "Last Year's Total Revenue: 120000\n\n90-Day Goal Revenue: 12.5\n\n12-24 Month Revenue Goal: 250,000 KWD\n\n",
+    );
+    expect(made.multiLine.profile).toBe(
+      `Last Year's Total Revenue: \n\n90-Day Goal Revenue: \n\n12-24 Month Revenue Goal: \n\nMarketing they've tried A-Z: ${MULTI_AR}\n\nTop 3 challenges: ${MULTI_EN}\n\nWhy they joined: We want  steady\nconsultations.\n\nAdditional notes: سؤال:\n  متى نبدأ؟`,
     );
   });
 
@@ -874,6 +1197,7 @@ describe("the texts equal the evaluator's on the same answers", () => {
           a(O.email, "owner@cedar.invalid"),
         ],
       },
+      { id: "multiLine", form: "onboarding", task: TASK, answers: MULTI_LINE },
     ];
     const made = evaluate(cases);
     for (const c of cases) {
@@ -900,6 +1224,10 @@ describe("the texts equal the evaluator's on the same answers", () => {
       "**A question the form no longer has**\nAn old answer\n",
     );
     expect(made.edges.raw).toContain(`**${title(O.goal12)}**\n90000\n`);
+    expect(made.multiLine.raw).toContain(
+      `**${title(O.address)}**\nقطعة ٣\nشارع ٢٠، منزل ٧\n\n**${title(O.hours)}**\nSat to Thu  9-5\nFriday closed\n\n`,
+    );
+    expect(made.multiLine.raw).toContain(`**${title(O.marketing)}**\n${MULTI_AR}\n\n`);
   });
 
   test("a recorded kickoff through the parity plan: the handoff, the comment on each onboarding task and Service Advertised", async () => {
@@ -963,13 +1291,11 @@ describe("the texts equal the evaluator's on the same answers", () => {
         handoff,
       ]);
       // Make 12 [17] and [22] make each task from its template with no description; [18] and [23]
-      // post the handoff on it, whole. Until the request writer posts it, the details keep
-      // 20261102l's first 4,000 characters of it, so no task is made without the handoff.
+      // post the handoff on it, whole. So the plan carries the comment and no details.
       expect([c.id, plan.onboarding_tasks.plan]).toEqual([
         c.id,
         {
           typeKey: "client_onboarding",
-          details: leftChars(task18, 4000),
           comment_text: task18,
           lines: ["Technical Onboarding Check and Creative Onboarding tasks"],
         },
@@ -1007,11 +1333,11 @@ describe("the texts equal the evaluator's on the same answers", () => {
     );
     expect(long.onboarding_tasks.plan.comment_text).toBeUndefined();
     expect(Array.from(long.onboarding_tasks.plan.details as string).length).toBe(4000);
-    // The long handoff is cut in the details as 20261102l cut its own, and whole in the comment.
+    // 20261102l cut the long handoff into the details; now it is whole in the comment and in no description.
     const now = byKey(
       (await parity("kickoff", kickoffInput(cases[4].answers, made.long.hidden))).effects,
     );
-    expect(Array.from(now.onboarding_tasks.plan.details as string).length).toBe(4000);
+    expect(now.onboarding_tasks.plan).not.toHaveProperty("details");
     expect(now.onboarding_tasks.plan.comment_text).toBe(made.long.handoff[1]);
   });
 
@@ -1084,6 +1410,7 @@ describe("the texts equal the evaluator's on the same answers", () => {
             (x, i, all) => all.findLastIndex(y => y.ref === x.ref) === i,
           ),
         },
+        { id: "multiLine", form: "onboarding", task: TASK, answers: MULTI_LINE },
       ];
       const made = evaluate(cases);
       for (const c of cases) {
@@ -1095,15 +1422,11 @@ describe("the texts equal the evaluator's on the same answers", () => {
           made[c.id].raw,
         ]);
         expect(plan.raw_answers_comment.missing).toBeNull();
-        expect([c.id, plan.profile_fields.plan.fields[0]]).toMatchObject([
+        // The Client Profile whole, whatever its length, as Make 13 [29] writes it.
+        expect([c.id, plan.profile_fields.plan.fields[0]]).toEqual([
           c.id,
-          { fieldId: PROFILE_FIELD, value: leftChars(made[c.id].profile, 5000) },
+          { fieldId: PROFILE_FIELD, kind: "text", value: made[c.id].profile, label: "Client Profile" },
         ]);
-        // Every text value is one clickup-writeback's forms.ts takes (5,000 UTF-16 units at most), so
-        // the row, with the Kickoff Form Link in it, is written.
-        for (const f of plan.profile_fields.plan.fields as Row[])
-          if (f.kind === "text")
-            expect([c.id, f.value.length <= 5000]).toEqual([c.id, true]);
         expect(
           [c.id, plan.profile_fields.plan.fields.map((f: Row) => f.label)],
         ).toEqual([c.id, ["Client Profile", "Kickoff Form Link"]]);
@@ -1123,14 +1446,13 @@ describe("the texts equal the evaluator's on the same answers", () => {
         client_name: "",
         clickup_id: TASK,
       });
-      // Make 13 [29] has no limit. The plan cuts the Client Profile at 5,000 characters, as 20261102l
-      // did, until forms.ts takes longer text: a profile this long cannot match Make yet.
+      // Make 13 [29] has no limit, and the plan none: a profile over 5,000 characters is written whole
+      // (20261102l cut it there).
       expect(Array.from(made.long.profile as string).length).toBeGreaterThan(5000);
       const long = byKey(
         (await parity("onboarding", onboardingInput(cases[3].answers))).effects,
       );
-      expect(long.profile_fields.plan.fields[0].value).toHaveLength(5000);
-      expect(made.long.profile).toStartWith(long.profile_fields.plan.fields[0].value);
+      expect(long.profile_fields.plan.fields[0].value).toBe(made.long.profile);
       expect(long.profile_fields.plan.lines[0]).toBe(
         `Client Profile (${Array.from(made.long.profile as string).length} characters)`,
       );
@@ -1322,7 +1644,7 @@ describe("a native answer (version 2) is planned as Make would write the same an
       const plan = byKey(await build(input));
       expect(plan.handoff_comment.plan.comment_text).toBe(made.handoff[0]);
       expect(plan.onboarding_tasks.plan.comment_text).toBe(made.handoff[1]);
-      expect(plan.onboarding_tasks.plan.details).toBe(leftChars(made.handoff[1], 4000));
+      expect(plan.onboarding_tasks.plan).not.toHaveProperty("details");
       expect(
         plan.card_fields.plan.fields.find(
           (f: Row) => f.fieldId === SERVICE_FIELD,
@@ -1422,6 +1744,301 @@ describe("a native answer (version 2) is planned as Make would write the same an
       expect((await hiddenOf(TASK)).consultation_types).toBe(
         `${APPT.office},${APPT.onsite},${APPT.online}`,
       );
+    });
+  });
+});
+
+// --- What was typed --------------------------------------------------------------------------------
+
+/**
+ * A client's whole native onboarding answer, typed over several lines in Arabic and English, with
+ * double spaces, carriage returns and white space at the ends (invented). mapsLink, projectsDone and
+ * faqs are as long as the longest stored KFRCXPFx answers to a short and a long text (431, 224, 2,695).
+ */
+const FAQ = "س: متى تبدأون؟\nج: بعد التوقيع بأسبوع.\n\n";
+const ONB_TYPED: Record<string, unknown> = {
+  fullName: "  Invented  Owner\u00a0",
+  phone: "+965 0000 0001",
+  email: "owner@cedar.invalid",
+  businessName: "Cedar  Homes Invented ",
+  address: "قطعة ٣\r\nشارع ٢٠، منزل ٧\r\n",
+  mapsLink: `https://maps.example.invalid/${"m".repeat(402)}`,
+  website: "https://cedar.invalid",
+  instagram: "https://instagram.com/cedar.invented",
+  facebook: "https://facebook.com/cedar.invented",
+  paymentOptions: "50% upfront\n50% on handover",
+  frontDeskPhone: "+965 0000 0002",
+  personalPhone: "+965 0000 0003",
+  yearsInBusiness: "12 years",
+  bookingSoftware: "None  yet",
+  facebookAds: "unsure",
+  projectsDone: "p".repeat(224),
+  hours: "Sat to Thu  9-5\r\nFriday closed",
+  services: MULTI_EN.replace(/\n/g, "\r\n"),
+  serviceFocus: "Villas",
+  faqs: `${FAQ.repeat(60)}${"q".repeat(2695 - Array.from(FAQ.repeat(60)).length)}`,
+  idealProject: MULTI_AR,
+  serviceAreas: "Kuwait City\rHawalli",
+  appointmentTypes: ["office", "online"],
+  maxDistance: "30 km",
+  landmark: "Next to the co-op \n(blue gate)",
+  appointmentLength: "60 minutes\r\n+ 15 buffer",
+  consultants: "Eng. Invented One\nEng. Invented Two",
+  whyJoined: "\n We want  steady\r\nconsultations. \n",
+  freeConsults: "yes",
+  marketing: `\u3000${MULTI_AR}\r\n`,
+  lastRevenue: "120000",
+  challenges: MULTI_EN.replace(/\n/g, "\r\n"),
+  goal90: "60000",
+  goal12: "250000",
+  additionalInfo: "سؤال:\r\n  متى نبدأ؟\r\n",
+  driveLink: "https://drive.example.invalid/folder",
+};
+const onboardingCheck = (answers: unknown, suffix = "", schema?: Row) =>
+  schema
+    ? one<Row>(
+        `SELECT public.cockpit_form_answers_check${suffix}($1::jsonb, $2::jsonb, '{}'::jsonb) AS r`,
+        [json(schema), json(answers)],
+      )
+    : one<Row>(
+        `SELECT public.cockpit_form_answers_check${suffix}(schema, $1::jsonb, '{}'::jsonb) AS r
+           FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2`,
+        [json(answers)],
+      );
+/** 20261102j's version-2 schema (as live holds it), read back inside a rolled-back step. */
+async function jV2Schema(): Promise<Row> {
+  let schema: Row = {};
+  await rolledBack(async () => {
+    await db.query(
+      "DELETE FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2",
+    );
+    await db.exec(V2_INSERT);
+    schema = await v2Schema();
+  });
+  return schema;
+}
+
+describe("a native answer keeps what was typed, as Typeform keeps it for Make", () => {
+  test("cockpit_form_typeform_text: line breaks as line feeds, both ends trimmed as JavaScript's trim(), everything between as typed", async () => {
+    const typed = [
+      "",
+      "plain",
+      "  two  spaces  inside  ",
+      "a\r\nb\rc\nd",
+      "\r\n\r\nblank lines\r\n\r\n\r\nkept inside\r\n",
+      "\t\u000b\f\u00a0\u1680\u2000\u2005\u200a\u2028\u2029\u202f\u205f\u3000\ufeff edges \u3000\u00a0",
+      "سطر أول \nسطر  ثاني\n\nسطر ثالث",
+      "\u00a0inside\u00a0no-break\u00a0",
+      " \n\t ",
+    ];
+    const sql = await one<(string | null)[]>(
+      "SELECT jsonb_agg(public.cockpit_form_typeform_text(x) ORDER BY n) AS r FROM unnest($1::text[]) WITH ORDINALITY AS u(x, n)",
+      [typed],
+    );
+    expect(sql).toEqual(typed.map(kept));
+    expect(sql[3]).toBe("a\nb\nc\nd");
+    expect(sql[7]).toBe("inside\u00a0no-break");
+    expect(
+      await one("SELECT public.cockpit_form_typeform_text(NULL) AS r"),
+    ).toBeNull();
+  });
+
+  test("the onboarding's version 2: four long texts, 1,000 and 10,000 characters, everything else 20261102j's; the schema check holds every other form to 200 and 2,000", async () => {
+    const now = await v2Schema();
+    const was = await jV2Schema();
+    const retyped = ["address", "hours", "landmark", "appointmentLength"];
+    expect({ ...now, fields: null }).toEqual({ ...was, fields: null });
+    expect(now.fields).toEqual(
+      was.fields.map((f: Row) =>
+        retyped.includes(f.key)
+          ? { ...f, type: "longtext", maxLength: 10000 }
+          : f.type === "longtext"
+            ? { ...f, maxLength: 10000 }
+            : f.type === "text"
+              ? { ...f, maxLength: 1000 }
+              : f,
+      ),
+    );
+    expect(
+      was.fields.filter((f: Row) => retyped.includes(f.key)).map((f: Row) => [f.type, f.maxLength]),
+    ).toEqual(Array(4).fill(["text", 200]));
+    // Each question KFRCXPFx asks as long_text is a long text in it, by its Typeform ref.
+    const refs = await one<Row[]>(
+      "SELECT public.cockpit_form_stage4_fields('onboarding') AS r",
+    );
+    for (const x of (evaluate([]).onboarding as Row[]).filter(y => y.type === "long_text")) {
+      const key = refs.find(f => f.typeformRef === x.ref).key;
+      expect([key, now.fields.find((f: Row) => f.key === key).type]).toEqual([key, "longtext"]);
+    }
+    const schemaCheck = (schema: Row, suffix = "") =>
+      one<string | null>(`SELECT public.cockpit_form_schema_check${suffix}($1::jsonb) AS r`, [json(schema)]);
+    expect(await schemaCheck(now)).toBeNull();
+    expect(await schemaCheck(was)).toBeNull();
+    expect(await schemaCheck(was, "_i")).toBeNull();
+    // 20261102i's check would refuse the new limits; the client onboarding's are its own.
+    expect(await schemaCheck(now, "_i")).toBe("Question fullName allows at most 200 characters.");
+    const withLimit = (schema: Row, key: string, maxLength: number) => ({
+      ...schema,
+      fields: schema.fields.map((f: Row) => (f.key === key ? { ...f, maxLength } : f)),
+    });
+    expect(await schemaCheck(withLimit(now, "fullName", 1001))).toBe(
+      "Question fullName allows at most 1000 characters.",
+    );
+    expect(await schemaCheck(withLimit(now, "address", 10001))).toBe(
+      "Question address allows at most 10000 characters.",
+    );
+    // Every other form keeps 20261102i's limits, word for word.
+    const other = { ...now, key: "onboarding_copy" };
+    for (const schema of [other, withLimit({ ...was, key: "onboarding_copy" }, "faqs", 2001), { ...was, key: "onboarding_copy" }])
+      expect(await schemaCheck(schema)).toBe(await schemaCheck(schema, "_i"));
+    expect(await schemaCheck(other)).toBe("Question fullName allows at most 200 characters.");
+  });
+
+  test("the onboarding's answers check keeps each text as Typeform keeps it and takes what KFRCXPFx took; every other form folds as before", async () => {
+    const out = await onboardingCheck(ONB_TYPED);
+    expect([out.ok, out.errors]).toEqual([true, {}]);
+    const schema = await v2Schema();
+    const texts = schema.fields.filter((f: Row) => ["text", "longtext"].includes(f.type));
+    expect(texts).toHaveLength(33);
+    for (const f of texts)
+      expect([f.key, out.answers[f.key]]).toEqual([f.key, kept(ONB_TYPED[f.key] as string)]);
+    expect(out.answers).toMatchObject({
+      fullName: "Invented  Owner",
+      address: "قطعة ٣\nشارع ٢٠، منزل ٧",
+      serviceAreas: "Kuwait City\nHawalli",
+      landmark: "Next to the co-op \n(blue gate)",
+      whyJoined: "We want  steady\nconsultations.",
+      appointmentTypes: ["office", "online"],
+      facebookAds: "unsure",
+    });
+    for (const [key, length] of [["mapsLink", 431], ["projectsDone", 224], ["faqs", 2695]] as const)
+      expect([key, Array.from(out.answers[key] as string).length]).toEqual([key, length]);
+    // The limits count what is kept: 1,000 for a text, 10,000 for a long text, line breaks included.
+    const limits = async (answers: Row) => (await onboardingCheck({ ...ONB_TYPED, ...answers })).errors;
+    expect(await limits({ mapsLink: ` ${"m".repeat(1000)}\n`, faqs: `\r\n${"f\r\n".repeat(5000)}` })).toEqual({});
+    expect(await limits({ mapsLink: "m".repeat(1001), faqs: `${"f\n".repeat(5000)}f` })).toEqual({
+      mapsLink: "length",
+      faqs: "length",
+    });
+    // White space alone is no answer: a required question says so, an optional one is left out.
+    const blank = await onboardingCheck({ ...ONB_TYPED, hours: "\r\n\u00a0\u3000", additionalInfo: "\u00a0" });
+    expect(blank.errors).toEqual({ hours: "required" });
+    expect(blank.answers).not.toHaveProperty("additionalInfo");
+    // 20261102i's check folded every answer, and refused what KFRCXPFx took.
+    const iOut = await onboardingCheck(ONB_TYPED, "_i");
+    expect(iOut.answers.address).toBe("قطعة ٣ شارع ٢٠، منزل ٧");
+    expect(iOut.answers.businessName).toBe("Cedar Homes Invented");
+    expect((await onboardingCheck(ONB_TYPED, "_i", await jV2Schema())).errors).toEqual({
+      mapsLink: "length",
+      projectsDone: "length",
+      faqs: "length",
+    });
+    // Every other form folds as before, answer for answer.
+    for (const key of ["onboarding_copy", "exit_survey"]) {
+      const other = { ...schema, key };
+      expect(await onboardingCheck(ONB_TYPED, "", other)).toEqual(
+        await onboardingCheck(ONB_TYPED, "_i", other),
+      );
+    }
+  });
+
+  test("typed natively, the onboarding writes Make's raw answers comment, Client Profile, dispatch and kickoff link values for the same typing", async () => {
+    await rolledBack(async () => {
+      await setting("onboarding.raw_titles", RAW_TITLES);
+      const checked = await onboardingCheck(ONB_TYPED);
+      const id = await nativeResponse("onboarding", checked.answers);
+      const input = await one<Row>(
+        "SELECT public.cockpit_form_stage4_input($1) AS r",
+        [id],
+      );
+      // Each text the planner reads is what Typeform would have handed Make for the same typing.
+      const fields = await one<Row[]>(
+        "SELECT public.cockpit_form_stage4_fields('onboarding') AS r",
+      );
+      for (const f of fields.filter(x => ["text", "longtext"].includes(x.type)))
+        expect([f.key, input.answers.find((x: Answer) => x.ref === f.typeformRef)?.value]).toEqual([
+          f.key,
+          kept(ONB_TYPED[f.key] as string),
+        ]);
+      const made = evaluate([
+        { id: "typed", form: "onboarding", task: TASK, answers: input.answers },
+        {
+          id: "link",
+          form: "kickoff",
+          task: TASK,
+          answers: [],
+          hiddenFrom: { source: "make13", onboarding: input.answers },
+        },
+      ]);
+      const plan = byKey(await build(input));
+      expect(plan.raw_answers_comment.plan.comment_text).toBe(made.typed.raw);
+      expect(plan.profile_fields.plan.fields[0].value).toBe(made.typed.profile);
+      expect(plan.github_dispatch.plan.payload).toEqual({
+        taskId: made.typed.dispatch.clickup_id,
+        client: made.typed.dispatch.client_name,
+      });
+      expect(made.typed.dispatch.client_name).toBe("Cedar  Homes Invented");
+      const title = (ref: string) =>
+        RAW_TITLES.fields.find((f: Row) => f.ref === ref).title;
+      expect(made.typed.raw).toContain(
+        `**${title(O.address)}**\nقطعة ٣\nشارع ٢٠، منزل ٧\n\n`,
+      );
+      expect(made.typed.raw).toContain(`**${title(O.whyJoined)}**\nWe want  steady\nconsultations.\n\n`);
+      expect(made.typed.profile).toContain(`Marketing they've tried A-Z: ${MULTI_AR}\n\nTop 3 challenges: ${MULTI_EN}\n\n`);
+      expect(made.typed.profile).toEndWith("Additional notes: سؤال:\n  متى نبدأ؟");
+      // The read model it writes gives the next kickoff Make 13 [29]'s link values, line breaks kept.
+      expect(plan.read_model.plan.entry.answers).toEqual(input.answers);
+      await readModel(plan.read_model.plan.entry);
+      const hidden = await hiddenOf(TASK);
+      expect(hidden).toEqual(filled(made.link.hidden));
+      expect(hidden).toMatchObject({
+        address: "قطعة ٣\nشارع ٢٠، منزل ٧",
+        hours: "Sat to Thu  9-5\nFriday closed",
+        marketing_tried: MULTI_AR,
+        challenges: MULTI_EN,
+        client_notes: "سؤال:\n  متى نبدأ؟",
+      });
+
+      // The kickoff that follows, its long texts typed over several lines: Make 12 [11]'s handoff.
+      const kTyped = {
+        ...NATIVE_KICKOFF,
+        detailsFix: "ملاحظة أولى\r\n  ملاحظة  ثانية\r\n",
+        whatsappAdd: " Sara (sales)\r\nOmar  (design) ",
+        contentLinks: "https://drive.example.invalid/a\nhttps://drive.example.invalid/b",
+        adPlatforms: "Tiktok,\n  Snapchat",
+      };
+      const kCheck = await one<Row>(
+        "SELECT public.cockpit_kickoff_answers_check($1::jsonb) AS r",
+        [json(kTyped)],
+      );
+      expect([kCheck.ok, kCheck.errors]).toEqual([true, {}]);
+      const kId = await nativeResponse("kickoff", kCheck.answers);
+      const kInput = await one<Row>(
+        "SELECT public.cockpit_form_stage4_input($1) AS r",
+        [kId],
+      );
+      const kMade = evaluate([
+        {
+          id: "k",
+          form: "kickoff",
+          task: TASK,
+          answers: kInput.answers,
+          hiddenFrom: { source: "make13", onboarding: input.answers },
+        },
+      ]).k;
+      expect(kInput.hidden).toEqual(filled(kMade.hidden));
+      const kPlan = byKey(await build(kInput));
+      expect(kPlan.handoff_comment.plan.comment_text).toBe(kMade.handoff[0]);
+      expect(kPlan.onboarding_tasks.plan.comment_text).toBe(kMade.handoff[1]);
+      for (const part of [
+        "*Business notes:* ملاحظة أولى\n  ملاحظة  ثانية\n",
+        "*Other people to add:* Sara (sales)\nOmar  (design)\n",
+        "*Marketing content links / notes:* https://drive.example.invalid/a\nhttps://drive.example.invalid/b\n",
+        "*Advertising platforms:* Tiktok, Snapchat\n",
+        "*Address:* قطعة ٣\nشارع ٢٠، منزل ٧\n",
+        "*Working hours / availability:* Sat to Thu  9-5\nFriday closed\n",
+      ])
+        expect(kMade.handoff[0]).toContain(part);
     });
   });
 });
@@ -1590,16 +2207,14 @@ describe("the onboarding tasks carry the handoff to the request writer; the Bran
       });
       const { request, parts, audit } = await requestOf(id, "client_onboarding");
       expect(request.task_comment).toBe(task18);
-      // Until the request writer posts taskComment, each task's description keeps 20261102l's first
-      // 4,000 characters of the handoff (the details, trimmed of spaces as a request's details are).
-      const details = leftChars(task18, 4000).replace(/^ +| +$/g, "");
-      expect(Array.from(details).length).toBeLessThan(Array.from(task18).length);
-      expect(request.answers).toEqual({ details });
+      // No details: each task's description holds only what the request writer adds, as Make writes
+      // none, and both parts, tech and creative, carry the whole handoff for their task's comment.
+      expect(request.answers).toEqual({});
       expect(Object.keys(parts)).toEqual(["creative", "tech"]);
       for (const part of Object.values(parts)) {
         expect(part.taskComment).toBe(task18);
         expect(part.descriptionMarkdown).toBe(
-          `**Client Onboarding** for Cedar Homes Invented\n\n${details}`,
+          "**Client Onboarding** for Cedar Homes Invented",
         );
       }
       expect([
@@ -1610,13 +2225,90 @@ describe("the onboarding tasks carry the handoff to the request writer; the Bran
       ]).toEqual(["901816723190", "t-86ex8x9xw", "901818016338", "t-86eyu1w3d"]);
       // The audit row holds how long the comment is, not what it says.
       expect(audit.after).not.toHaveProperty("task_comment");
-      expect(audit.after.answers).toEqual({ details });
+      expect(audit.after.answers).toEqual({});
       expect(audit.meta.taskCommentChars).toBe(Array.from(task18).length);
       // The plan again makes no second request.
       await one("SELECT public.cockpit_form_stage4_plan($1, true) AS r", [id]);
       expect(
         await one<number>("SELECT count(*)::int AS r FROM public.cockpit_requests"),
       ).toBe(1);
+    });
+  });
+
+  test("a handoff past 128 KB is kept whole; past 2 MB the two steps that carry it fail with a plain reason and the rest runs", async () => {
+    /** The card's onboarding answer with the nine the handoff prints at n characters each. */
+    const longAnswers = (text: string, n: number) => [
+      ...CARD_ONBOARDING.filter(x => x.ref !== O.address && x.ref !== O.hours && x.ref !== O.marketing),
+      ...[
+        O.address,
+        O.hours,
+        "0a80a0a8-3a09-4907-a1d1-6c57e57d4c47",
+        "6271b610-6946-4056-bb08-d03ffc274141",
+        "ee25f923-d5e1-4d1a-a95f-cd9c17abbe83",
+        O.marketing,
+        O.challenges,
+        O.whyJoined,
+        O.additional,
+      ].map(ref => a(ref, text.repeat(Math.ceil(n / text.length)).slice(0, n))),
+    ];
+    const planBytes = (id: string, key: string) =>
+      one<number>(
+        "SELECT octet_length(plan::text) AS r FROM public.cockpit_form_effects WHERE response_id = $1 AND effect_key = $2",
+        [id, key],
+      );
+    // The nine at 10,000 Arabic characters each, as many as a native answer takes (two bytes a letter).
+    await rolledBack(async () => {
+      await liveForms();
+      await billing();
+      await readModel({ form_id: "native", answers: longAnswers(`${ARABIC_NOTE}\n`, 10000) });
+      const id = await nativeResponse("kickoff", NATIVE_KICKOFF);
+      const out = await one<Row>("SELECT public.cockpit_form_stage4_plan($1, true) AS r", [id]);
+      expect(byKey(out.effects).onboarding_tasks).toMatchObject({ state: "delivered", reason: null });
+      expect(await planBytes(id, "handoff_comment")).toBeGreaterThan(131072);
+      expect(await planBytes(id, "onboarding_tasks")).toBeGreaterThan(131072);
+      const handoff = await one<string>(
+        "SELECT plan->>'comment_text' AS r FROM public.cockpit_form_effects WHERE response_id = $1 AND effect_key = 'handoff_comment'",
+        [id],
+      );
+      expect(handoff).toContain(`\n*Marketing tried before:* ${`${ARABIC_NOTE}\n`.repeat(200).slice(0, 10000)}\n`);
+      const { request, parts } = await requestOf(id, "client_onboarding");
+      expect(request.task_comment).toBe(handoff);
+      for (const part of Object.values(parts)) expect(part.taskComment).toBe(handoff);
+    });
+    // The nine at 240,000 characters each, as a Typeform answer in the read model can be.
+    await rolledBack(async () => {
+      await liveForms();
+      await billing();
+      await readModel({ form_id: "KFRCXPFx", answers: longAnswers("Invented answer, typed long. ", 240000) });
+      const id = await nativeResponse("kickoff", NATIVE_KICKOFF);
+      const out = await one<Row>("SELECT public.cockpit_form_stage4_plan($1, true) AS r", [id]);
+      const fx = byKey(out.effects);
+      for (const key of ["handoff_comment", "onboarding_tasks"]) {
+        expect(fx[key]).toMatchObject({ owner: "cockpit", state: "failed", reason: TOO_LARGE });
+        const plan = await one<Row>(
+          "SELECT plan AS r FROM public.cockpit_form_effects WHERE response_id = $1 AND effect_key = $2",
+          [id, key],
+        );
+        expect(Object.keys(plan).sort()).toEqual(["lines", "planBytes"]);
+        expect(plan.planBytes).toBeGreaterThan(2097152);
+      }
+      expect(TOO_LARGE.length).toBeLessThanOrEqual(240);
+      expect(
+        await one<number>("SELECT count(*)::int AS r FROM public.cockpit_requests"),
+      ).toBe(0);
+      // Every other step is planned as a dry run of the same answer plans it, which still shows the whole
+      // handoff (the queue here is a stand-in, so the ClickUp steps go no further than planned).
+      const dry = byKey((await one<Row>("SELECT public.cockpit_form_stage4_plan($1, false) AS r", [id])).effects);
+      expect(dry.handoff_comment.plan.comment_text.length).toBeGreaterThan(2097152);
+      const stored = await db.query<Row>(
+        "SELECT effect_key, plan FROM public.cockpit_form_effects WHERE response_id = $1 AND effect_key NOT IN ('handoff_comment', 'onboarding_tasks')",
+        [id],
+      );
+      expect(stored.rows.length).toBe(Object.keys(dry).length - 2);
+      for (const e of stored.rows) {
+        expect(fx[e.effect_key].reason).not.toBe(TOO_LARGE);
+        expect(e.plan).toEqual(dry[e.effect_key].plan ?? {});
+      }
     });
   });
 

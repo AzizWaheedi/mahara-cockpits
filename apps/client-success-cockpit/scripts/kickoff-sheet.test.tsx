@@ -514,18 +514,30 @@ describe("the kickoff's fields (4.13)", () => {
     ).toBe("Card queued");
   });
   test("each answer is the database's question: its key, ref and options, a list where it takes one", () => {
-    // The latest migration that defines cockpit_form_stage4_fields: the kickoff's list, as the check reads it.
+    // The latest migration that defines a function: the kickoff's list as the check reads it, and the check.
     const dir = resolve(import.meta.dir, "../../../supabase/migrations");
-    const file = readdirSync(dir)
-      .filter(f => f.endsWith(".sql"))
-      .sort()
-      .filter(f =>
-        readFileSync(resolve(dir, f), "utf8").includes(
-          "FUNCTION public.cockpit_form_stage4_fields(",
-        ),
-      )
-      .at(-1) as string;
-    const sql = readFileSync(resolve(dir, file), "utf8");
+    const latest = (fn: string) => {
+      const file = readdirSync(dir)
+        .filter(f => f.endsWith(".sql"))
+        .sort()
+        .filter(f =>
+          readFileSync(resolve(dir, f), "utf8").includes(
+            `FUNCTION public.${fn}(`,
+          ),
+        )
+        .at(-1) as string;
+      const text = readFileSync(resolve(dir, file), "utf8");
+      const at = text.lastIndexOf(`FUNCTION public.${fn}(`);
+      return { text, body: text.slice(at, text.indexOf("END $$;", at)) };
+    };
+    const sql = latest("cockpit_form_stage4_fields").text;
+    // The longest text cockpit_kickoff_answers_check takes, a long text's and any other's.
+    const caps =
+      /char_length\(v_text\)\s*>\s*\(CASE s->>'type' WHEN 'longtext' THEN (\d+) ELSE (\d+) END\)/.exec(
+        latest("cockpit_kickoff_answers_check").body,
+      );
+    expect(caps).not.toBeNull();
+    const [LONG, SHORT] = [Number(caps?.[1]), Number(caps?.[2])];
     const at = sql.indexOf("IF p_form_key = 'kickoff' THEN");
     const begin = sql.indexOf("RETURN '", at) + "RETURN '".length;
     const specs = JSON.parse(
@@ -549,23 +561,21 @@ describe("the kickoff's fields (4.13)", () => {
           x.key,
           x.options,
         ]);
-      // A long text keeps its line breaks only where the database takes a long text, and a
-      // text is never longer than the database takes. Who else to add to the WhatsApp group is
-      // a long text in tG7dnxBn; until cockpit_form_stage4_fields types it longtext too, the
-      // check folds its line breaks into spaces and the sheet keeps it to 500 characters.
-      const cap = x.type === "longtext" ? 4000 : 500;
-      // (The platforms go as one text joined from at most three choices, never near 500.)
+      // A long text is one exactly where the database takes a long text (it keeps its line
+      // breaks there), and a text is never longer than the database takes.
+      const cap = x.type === "longtext" ? LONG : SHORT;
+      // (The platforms go as one text joined from at most three choices, never near the cap.)
       if (["text", "longtext", "url"].includes(x.type) && f?.type !== "multi")
-        expect([x.key, f?.max]).toEqual([
-          x.key,
-          x.key === "whatsappAdd" ? Math.min(cap, 500) : cap,
-        ]);
-      if (x.key !== "whatsappAdd")
-        expect([x.key, f?.type === "longtext"]).toEqual([
-          x.key,
-          x.type === "longtext",
-        ]);
+        expect([x.key, f?.max]).toEqual([x.key, cap]);
+      expect([x.key, f?.type === "longtext"]).toEqual([
+        x.key,
+        x.type === "longtext",
+      ]);
     }
+    // Who else to add to the WhatsApp group is a long text in tG7dnxBn, so in both.
+    expect(
+      kick.KICKOFF_ANSWER_FIELDS.find(f => f.key === "whatsappAdd"),
+    ).toMatchObject({ type: "longtext", max: LONG });
     expect(kick.KICKOFF_REFS.serviceAdvertised).toBe(
       "c0000001-0000-4000-8000-000000000007",
     );
@@ -795,6 +805,30 @@ describe("the kickoff's fields (4.13)", () => {
       hasLeads: "No",
       whatsappAdd: "The office manager\nThe sales lead",
     });
+    // A long text goes as Typeform hands it to Make (cockpit_form_typeform_text): blank lines, a
+    // line's own indent and repeated spaces stay, the white space at either end goes (a no-break
+    // space too), and a \r\n or a lone \r is a line feed; nothing turns a line break into a space.
+    const typed = "First:  the logo\n\n  - Second line\nThird\t line";
+    expect(
+      kick.kickoffAnswers({
+        contentLinks: `\n\u00a0 ${typed}  \n`,
+        whatsappAdd: "The office manager\r\n\r\nThe sales lead\rThe owner",
+        dailyBudget: "  20 KWD  ",
+      }),
+    ).toEqual({
+      contentLinks: typed,
+      whatsappAdd: "The office manager\n\nThe sales lead\nThe owner",
+      dailyBudget: "20 KWD",
+    });
+    // The sheet counts a long text as the database does: trimmed, never folded.
+    const field = kick
+      .kickoffDef("Cedar Interiors")
+      .fields.find(f => f.key === "whatsappAdd");
+    expect(field?.type).toBe("longtext");
+    expect(field?.check?.(`${"a\n\n".repeat(1333)}a`, {}, "")).toBeNull();
+    expect(field?.check?.("a\n".repeat(2001), {}, "")).toBe(
+      "Shorten it to 4,000 characters or fewer.",
+    );
   });
 
   test("the sheet stops a text longer than the database takes, counted as it counts", () => {
@@ -1036,7 +1070,7 @@ describe("the kickoff door (5.13)", () => {
         newMrrUsd: "range",
       }),
     ).toBe(
-      "The kickoff was not stored. Which service are we advertising: answer it. Who else should we add to the WhatsApp group: shorten it to 500 characters or fewer. Provide any marketing content links or notes: shorten it to 4,000 characters or fewer. What is your daily budget for the ads: shorten it to 500 characters or fewer. Payment Amount: write a number from 0 to 10,000,000, with 2 decimals at most. New MRR (USD a month): write a number from 0 to 100,000. Then send it again.",
+      "The kickoff was not stored. Which service are we advertising: answer it. Who else should we add to the WhatsApp group: shorten it to 4,000 characters or fewer. Provide any marketing content links or notes: shorten it to 4,000 characters or fewer. What is your daily budget for the ads: shorten it to 500 characters or fewer. Payment Amount: write a number from 0 to 10,000,000, with 2 decimals at most. New MRR (USD a month): write a number from 0 to 100,000. Then send it again.",
     );
     await clear(root);
   });

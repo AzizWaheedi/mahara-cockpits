@@ -191,6 +191,8 @@ its own files.
    still raises.
 6. **Plan size** (db). `cockpit_form_effects.plan` holds at most 131,072 bytes:
    a full write-through of long Arabic notes passes 32 KB.
+   Since `20261102m` a `kickoff` or `onboarding` plan holds up to 2,097,152
+   bytes (`docs/forms/WAVE56-CONTRACT.md` 2.9); every other form keeps 131,072.
 7. **A gone candidate leaves the queue** (db, the replaced
    `cockpit_csm_unmatched_list`). Call items whose call row is a `candidate`
    with `status 'gone'` are left out; every other filter is unchanged.

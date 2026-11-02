@@ -31,11 +31,12 @@ plus one line for Make 12's [24] (or Make 13's [31]): "[24] search", or "[24] wr
 4 until the write is its own effect. Pass = every effect equal or intended and the fidelity equal, on every run. A
 text Make writes (the handoff, also posted on each onboarding task by [18] and [23], the raw answers comment, the
 Client Profile, a phase text) is equal only byte for byte (the CEO's rule, 2026-11-02); "differs: text, whitespace
-only" names a difference of spaces or new lines alone. The handoff on the onboarding tasks is graded as delivered,
-not only planned: it differs while the request writer has no step that posts it (TASK_COMMENT_STEP). A task
-description the plan writes (details) differs too: Make 12 [17], [22] and Make 13 [46] write none. A phase text
-compares as a template ({map_link}, {content_folder}); while stage4.messages has no text for it, it is "setting
-missing" and the run is not proven. oracle() is one stored answer's two inputs with no network (what
+only" names a difference of spaces or new lines alone. The comments are graded as ClickUp receives them, not only
+as planned: the handoff on the onboarding tasks differs while the request writer has no step that posts it
+(TASK_COMMENT_STEP), and a comment differs while the writer posts it with a Cockpit ref line after Make's text
+(REF_LINE). A task description the plan writes (details) differs too: Make 12 [17], [22] and Make 13 [46] write
+none. A phase text compares as a template ({map_link}, {content_folder}); while stage4.messages has no text for it,
+it is "setting missing" and the run is not proven. oracle() is one stored answer's two inputs with no network (what
 cockpit_form_parity_plan is sent, and Make's evaluated modules), so a branch's SQL can be planned and compared off
 the VPS; plan_lines() and summary() print such a run as this one does. It prints ids, field ids, effect keys, run
 numbers and verdicts only: never a name, an answer, a phone number, a token or a key. Every ClickUp read writes an
@@ -91,8 +92,15 @@ INTENDED = {
 # supabase/functions/clickup-writeback/requests.ts): what carries the onboarding_tasks plan's comment_text to
 # ClickUp, as Make 12 [18] and [23] post the handoff. None while the writer has no such step: then nothing posts it,
 # whatever the plan says. test_make_parity.py fails while this and that file disagree.
-TASK_COMMENT_STEP: Optional[str] = None
+TASK_COMMENT_STEP: Optional[str] = "task_comment"
 NO_TASK_COMMENT = "nothing posts comment_text on the two tasks"
+# The comments that mirror Make which the writer posts with a Cockpit ref line after the text (supabase/functions/
+# clickup-writeback/forms.ts stage4Step for handoff_comment and raw_answers_comment; requests.ts's TASK_COMMENT_STEP
+# for onboarding_tasks). Make posts the text alone, so while an effect is here ClickUp receives another comment than
+# Make's, whatever the plan says. Empty while the writer posts each text alone; test_make_parity.py reads both files
+# and fails while this and they disagree.
+REF_LINE: frozenset = frozenset()
+REF_ADDED = "the writer adds a Cockpit ref line Make does not post"
 DESCRIPTION = "the cockpit writes a task description Make does not"
 # What the fidelity check reads: the module whose comment ClickUp holds, and how that comment starts.
 FIDELITY = {"kickoff": (11, "KICKOFF HANDOFF", "handoff"), "onboarding": (47, "Raw Onboarding Form Answers", "raw answers")}
@@ -925,8 +933,9 @@ def phase_verdict(phase: str, made: Optional[dict], effect: Optional[dict], ctx:
 
 def task_comment(m18: Optional[dict], m23: Optional[dict], planned: dict) -> Optional[str]:
     """Make 12 [18] and [23] post the handoff as a comment on each onboarding task; the cockpit's onboarding_tasks plan
-    must carry the same text as comment_text, byte for byte, and the request writer must post it (TASK_COMMENT_STEP).
-    None when both hold. The request's details (the task description, 4,000 characters at most) is not a comment."""
+    must carry the same text as comment_text, byte for byte, and the request writer must post it (TASK_COMMENT_STEP),
+    alone (REF_LINE). None when all hold. The request's details (the task description, 4,000 characters at most) is not
+    a comment."""
     texts = [text_of(m or {}, "comment_text") for m in (m18, m23)]
     if "comment_text" not in planned:
         cut = any(isinstance(t, str) and len(t) > 4000 for t in texts)
@@ -934,8 +943,17 @@ def task_comment(m18: Optional[dict], m23: Optional[dict], planned: dict) -> Opt
                 + (" (4,000 characters at most, and Make's is longer)" if cut else ""))
     verdicts = [text_verdict(t, planned.get("comment_text"), "the handoff on the tasks") for t in texts]
     what = [x for x in [next((v[len("differs: "):] for v in verdicts if v != "equal"), None),
-                        NO_TASK_COMMENT if TASK_COMMENT_STEP is None else None] if x]
+                        NO_TASK_COMMENT if TASK_COMMENT_STEP is None
+                        else REF_ADDED if "onboarding_tasks" in REF_LINE else None] if x]
     return "; ".join(what) or None
+
+
+def delivered(effect: str, verdict: str) -> str:
+    """A comment's text verdict as ClickUp receives it: the writer's Cockpit ref line differs from Make's comment even
+    where the plan's text equals it (REF_LINE)."""
+    if effect not in REF_LINE:
+        return verdict
+    return f"{verdict}; {REF_ADDED}" if verdict.startswith("differs") else f"differs: {REF_ADDED}"
 
 
 def description(planned: dict) -> Optional[str]:
@@ -956,7 +974,8 @@ def compare_kickoff(plan: list, mods: dict, ctx: dict) -> list:
 
     m11 = need(11)
     out.append(("handoff_comment", "differs: module [11] not in the run" if m11 is None
-                else text_verdict(text_of(m11, "comment_text", "commentText", "comment"), p("handoff_comment").get("comment_text"))))
+                else delivered("handoff_comment", text_verdict(text_of(m11, "comment_text", "commentText", "comment"),
+                                                               p("handoff_comment").get("comment_text")))))
     m20 = need(20)
     status = text_of(m20 or {}, "status") or ""
     out.append(("native_status", "differs: module [20] not in the run" if m20 is None
@@ -1058,7 +1077,8 @@ def compare_onboarding(plan: list, mods: dict, ctx: dict) -> list:
         out.append(("profile_fields", f"intended: {INTENDED['kickoff_link']}"))
     m47 = need(47)
     out.append(("raw_answers_comment", "differs: module [47] not in the run" if m47 is None
-                else text_verdict(text_of(m47, "comment_text", "commentText", "comment"), p("raw_answers_comment").get("comment_text"))))
+                else delivered("raw_answers_comment", text_verdict(text_of(m47, "comment_text", "commentText", "comment"),
+                                                                   p("raw_answers_comment").get("comment_text")))))
     kind31 = str(mods.get(31, {}).get("module") or "")
     if "client_data_row" in fx:
         m31 = need(31)

@@ -134,15 +134,17 @@ QUEUES = (
     Queue("queue-clickup-requests", "cockpit_clickup_writeback_queue", "request or task change bound for ClickUp",
           ("queued", "sending", "retry", "unknown"), "created_at", 15, "the tech lead",
           "Run the requests doctor (clickup-writeback job requests_doctor); an unknown needs a person to look in ClickUp "
-          "for its Cockpit ref (RUNBOOK, Requests writer).", "", status_col="state", kind_col="kind", kinds=REQUEST_KINDS,
+          "for the task by its Cockpit ref, or for the task comment its error names (RUNBOOK, Requests writer).", "",
+          status_col="state", kind_col="kind", kinds=REQUEST_KINDS,
           failed_col="updated_at", held_unless=("clickup-writeback:requests", "mode", "apply")),
     # The 1-1 notes writer (docs/forms/STAGE2B-CONTRACT.md 4.1 and section 6): clickup-writeback job forms writes the
     # four check-in effects of a response to its card. Until the writer reports mode apply its queued rows are held on
     # purpose; while it runs limited to the canary card (apply_limited, cut-over step 6), that card's rows are live.
     Queue("queue-clickup-forms", "cockpit_clickup_writeback_queue", "1-1 notes write bound for ClickUp",
           ("queued", "sending", "retry", "unknown"), "created_at", 15, "the tech lead",
-          "Run the forms doctor (clickup-writeback job forms_doctor); an unknown needs a person to look in ClickUp for its "
-          "Cockpit ref F- (RUNBOOK, 1-1 notes writer).", status_col="state", kind_col="kind", kinds=("form",),
+          "Run the forms doctor (clickup-writeback job forms_doctor); an unknown needs a person to look on the card for "
+          "the comment or field its error names: a 1-1 notes comment by its Cockpit ref F-, a Stage 4 comment by its "
+          "opening line (RUNBOOK, 1-1 notes writer).", status_col="state", kind_col="kind", kinds=("form",),
           failed_col="updated_at", held_unless=("clickup-writeback:forms", "mode", "apply"),
           held_label="until the 1-1 notes writer opens", limited=("apply_limited", "onlyCards", "task_id")),
     # The 1-1 notes dispatch (20261029w): the sweep runs every minute and fails a waiting effect with a sentence after

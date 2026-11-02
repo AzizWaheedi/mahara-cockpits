@@ -743,6 +743,8 @@ class RequestsAndTaskMirror(unittest.TestCase):
         self.assertIn("cockpit_clickup_writeback_queue", queues.WITH_ERROR)
         self.assertIn("requests_doctor", q.action)
         self.assertIn("RUNBOOK, Requests writer", q.action)
+        # The task comment carries no ref (WAVE56 4.13.4).
+        self.assertIn("task comment", q.action)
         self.assertIn("kind in (request, task_action)", checks_mod.by_id()["queue-clickup-requests"].reads)
 
     def test_a_request_waiting_past_15_minutes_warns_and_the_log_jobs_kinds_are_left_alone(self):
@@ -905,6 +907,8 @@ class StageTwoBQueues(unittest.TestCase):
                           "until the 1-1 notes writer opens", ("apply_limited", "onlyCards", "task_id")))
         self.assertIn("forms_doctor", f.action)
         self.assertIn("Cockpit ref F-", f.action)
+        # A Stage 4 comment carries Make's text alone, with no ref (WAVE56 4.13.4).
+        self.assertIn("opening line", f.action)
         e = self.q("queue-form-effects")
         self.assertEqual((e.table, e.states, e.time_col, e.limit_min, e.kind_col, e.kinds, e.status_col, e.failed_col),
                          ("cockpit_form_effects", ("planned", "queued", "unknown"), "created_at", 30, "delivery",

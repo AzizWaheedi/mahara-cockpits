@@ -28,7 +28,18 @@
  * no client_data_row in the builder, the parity plan, either onboarding array or the relay outbox;
  * the rest of the onboarding plan in 20261102j's order; the registry moved from 20261102j's array
  * (version 1, or version 2 after a go-live) with one audit row; the outbox refusing a Client Data
- * row and the file stopping on one; the drift guard; a second apply changing nothing.
+ * row and the file stopping on one; the drift guard; a second apply changing nothing. l's own tests
+ * read l's state back inside their rolled-back step (lState), since 20261102m replaces its builder.
+ *
+ * Then 20261102m (the CEO's "Yes, match Make"; its texts are proven against make_parity.py's evaluator
+ * in stage4-match-make-supabase.test.ts): the whole chain g to m applies a second time; where m
+ * changes what j and l planned, the assertion says so beside it (Make's handoff, Client Profile and
+ * raw answers texts, Service Advertised ticked first, lists in the read model as ticked, the dispatch's
+ * typed Business Name, the handoff as each onboarding task's comment in both parts' queue payloads and
+ * no request details, whatsappAdd a long text); a portal answer keeps its line breaks and spaces as
+ * Typeform keeps them, and KFRCXPFx's longest stored answers fit; an onboarding answer at the portal's
+ * limits in Arabic and the kickoff after it plan every effect whole past 128 KB, and a plan past 2 MB
+ * fails only its own step, with a plain reason, while the kickoff still sends.
  * Every person, client and value is invented; the CEO's address is read from the CEO gate.
  */
 import {
@@ -39,7 +50,7 @@ import {
   setDefaultTimeout,
   test,
 } from "bun:test";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import type { PGlite } from "@electric-sql/pglite";
 import { KICKOFF_SQL } from "../../../hermes/ceo-refresh/native/adapters/growth.js";
 import {
@@ -1145,6 +1156,11 @@ const W56 = [
 const J = "20261102j_stage4_native.sql";
 /** D-S4.0 finding 1: the native onboarding writes no Client Data row. */
 const NO_CLIENT_DATA = "20261102l_stage4_no_client_data_row.sql";
+/**
+ * The CEO's "Yes, match Make": Make's texts, the onboarding tasks' comment, answers kept as typed
+ * (stage4-match-make-supabase.test.ts proves the texts against make_parity.py's evaluator).
+ */
+const MATCH_MAKE = "20261102m_stage4_match_make.sql";
 /** g, h and i when all three are on the branch (the merged branch); else client-tail's stand-in below. */
 const REAL_W56 = W56.every(onBranch);
 
@@ -1322,6 +1338,7 @@ beforeAll(async () => {
   } else await db.exec(CLIENT_TAIL_STANDIN);
   await db.exec(withoutCron(migration(J)));
   await db.exec(migration(NO_CLIENT_DATA));
+  await db.exec(migration(MATCH_MAKE));
   await seedStage4();
 }, 900_000);
 afterAll(async () => {
@@ -1458,12 +1475,23 @@ async function addRequestTypes() {
 // --- The file --------------------------------------------------------------------------------
 
 describe("the file (2.1, 2.6)", () => {
-  // The merged chain: g, h, i and j applied once already; all four again, in order, change nothing.
+  // The merged chain: g, h, i, j, l and m applied once already; all six again, in order, change nothing.
+  // 20261102m replaces two of i's functions (the client form schema and answers checks), so i's own
+  // guard, which reads them on its second pass, first gets i's bodies back, as before m.
   test.if(REAL_W56)(
-    "the merged waves 5-6 chain (g, h, i, j) applies a second time in order",
+    "the merged waves 5-6 chain (g, h, i, j, l, m) applies a second time in order",
     async () => {
       await rolledBack(async () => {
-        for (const file of [...W56, J])
+        const i = migration(W56[2]);
+        for (const name of ["cockpit_form_schema_check", "cockpit_form_answers_check"])
+          await ex(
+            cut(
+              i,
+              new RegExp(`CREATE OR REPLACE FUNCTION public\\.${name}\\([\\s\\S]*?\\nEND \\$\\$;`),
+              name,
+            ),
+          );
+        for (const file of [...W56, J, NO_CLIENT_DATA, MATCH_MAKE])
           try {
             await ex(
               withoutCron(migration(file))
@@ -1804,12 +1832,15 @@ describe("the kickoff (4.13, 3.3)", () => {
         json(a),
       ]);
     expect((await check(KICKOFF_ANSWERS)).ok).toBe(true);
+    // 20261102m: whatsappAdd is a long text, as tG7dnxBn asks it, so it takes 4,000 characters (it
+    // took 500 as a short text) and keeps its line breaks; a short text such as dailyBudget keeps 500.
     const bad = await check({
       contractStatus: "Maybe",
       serviceAdvertised: ["Pools"],
       paymentAmount: "x",
       callRecording: "not a link",
-      whatsappAdd: "y".repeat(501),
+      whatsappAdd: "y".repeat(4001),
+      dailyBudget: "y".repeat(501),
       surprise: 1,
     });
     expect(bad.errors).toEqual({
@@ -1818,9 +1849,13 @@ describe("the kickoff (4.13, 3.3)", () => {
       paymentAmount: "range",
       callRecording: "format",
       whatsappAdd: "length",
+      dailyBudget: "length",
       surprise: "unknown",
       newMrrUsd: "required",
     });
+    expect(
+      (await check({ ...KICKOFF_ANSWERS, whatsappAdd: `${"y".repeat(501)}\r\nSara` })).answers.whatsappAdd,
+    ).toBe(`${"y".repeat(501)}\nSara`);
     expect((await check({ ...KICKOFF_ANSWERS, newMrrUsd: -1 })).errors).toEqual(
       { newMrrUsd: "range" },
     );
@@ -1878,7 +1913,9 @@ describe("the kickoff (4.13, 3.3)", () => {
         ["Client Status", "Brand Blueprint Booked♠️"],
         ["Mahara OS Access", "Logged In"],
         ["Contract Status", "Signed"],
-        ["Service Advertised", "Design and build"],
+        // 20261102m: Make 12 [21] writes the service ticked first (KICKOFF_ANSWERS ticks Fit out and
+        // renovation first); 20261102j wrote the first in the form's option order (Design and build).
+        ["Service Advertised", "Fit out and renovation"],
         [
           "🧬 Brand Blueprint Form Link",
           `https://cockpit.maharamedia.com/client-success/clients/${TEST_CARD}/present/blueprint?view=prep`,
@@ -1904,8 +1941,10 @@ describe("the kickoff (4.13, 3.3)", () => {
       expect(model.response_id).toBe(out.responseId);
       expect(model.payment).toBe("1500");
       expect(model.recording).toBe("https://fathom.video/share/abcdef");
+      // 20261102m: a list in the read model is in the order it was ticked, as a Typeform answer is
+      // (20261102j wrote the form's option order).
       expect(model.answers.find((a: any) => a.ref === KREF.service).value).toBe(
-        "Design and build, Fit out and renovation",
+        "Fit out and renovation, Design and build",
       );
       expect(model.answers.find((a: any) => a.ref === KREF.contract)).toEqual({
         ref: KREF.contract,
@@ -1953,11 +1992,14 @@ describe("the kickoff (4.13, 3.3)", () => {
           [A],
         ),
       ).toBe(2500);
+      // 20261102m: the handoff is Make 12 [11]'s text (its 110 lines; the client is the typed Business
+      // Name of the card's onboarding answer), which prints no New MRR line; 20261102j wrote its own.
       const handoff = fx.handoff_comment.plan.comment_text as string;
-      expect(handoff).toStartWith("KICKOFF HANDOFF for Acme Interiors");
-      expect(handoff).toContain("Business name: Acme Interiors Co");
-      expect(handoff).toContain("Contract status: Signed");
-      expect(handoff).toContain("New MRR: $2500 a month");
+      expect(handoff).toStartWith("*KICKOFF HANDOFF*\n*Client:* Acme Interiors Co\n");
+      expect(handoff.split("\n")).toHaveLength(110);
+      expect(handoff).toContain("\n*Contract status:* Signed\n");
+      expect(handoff).toContain("\n*Payment amount:* 1500\n");
+      expect(handoff).not.toContain("New MRR");
       const msg = await one<any>(
         "SELECT to_jsonb(m) AS r FROM public.cockpit_client_messages m WHERE id = $1::uuid",
         [fx.phase4_whatsapp.delivery_ref],
@@ -1980,6 +2022,22 @@ describe("the kickoff (4.13, 3.3)", () => {
           [fx.onboarding_tasks.delivery_ref],
         ),
       ).toBe(2);
+      // 20261102m: the handoff is no request detail (Make 12 [17] and [22] write no description) but the
+      // comment each task gets, whole, on the request and in both parts' queue payloads (Make 12 [18], [23]).
+      expect(reqRow.task_comment).toBe(handoff);
+      expect(reqRow.answers).toEqual({});
+      const parts = await q<Row>(
+        `SELECT p.part, q.payload FROM public.cockpit_request_parts p
+           JOIN public.cockpit_clickup_writeback_queue q ON q.id = p.queue_id
+          WHERE p.request_id = $1::uuid ORDER BY p.part`,
+        [fx.onboarding_tasks.delivery_ref],
+      );
+      expect(parts.map(p => [p.part, p.payload.taskComment === handoff])).toEqual([
+        ["creative", true],
+        ["tech", true],
+      ]);
+      for (const p of parts)
+        expect(p.payload.descriptionMarkdown).not.toContain("KICKOFF HANDOFF");
       const again = await submit(CSM_A, A, KICKOFF_ANSWERS, req);
       expect(again).toMatchObject({
         ok: true,
@@ -2240,10 +2298,67 @@ const ONB_ANSWERS = {
   goal90: "100000",
   goal12: "1000000",
 };
+/** onboarding.raw_titles as D-S4F fills it (20261102m). */
+const RAW_TITLES = JSON.parse(
+  readFileSync(
+    new URL("../../../scripts/dev/forms-deploy/stage4-raw-titles.json", import.meta.url),
+    "utf8",
+  ),
+);
+/** Arabic typed over several lines with double spaces, n characters, nothing to trim at either end (invented). */
+const arabic = (n: number) => {
+  const line = "نبي نركز على الفلل الجديدة في الشمال\nوالدفع على  دفعتين ";
+  return `${line.repeat(Math.ceil(n / line.length)).slice(0, n - 1)}ن`;
+};
+/** The reason a step gets when its plan is past the 2 MB the table keeps (20261102m). */
+const TOO_LARGE =
+  "This step carries more than the 2 MB the cockpit keeps for one step, so it did not run. Do it by hand from the stored answers.";
 
 describe("the onboarding (4.14, 3.3)", () => {
   test("not live: the portal shows the Typeform", async () => {
     expect(await portalOpen("locCedar01", C)).toEqual({ live: false });
+  });
+
+  test("the portal keeps an answer as typed, as Typeform keeps it for Make; KFRCXPFx's long answers fit (20261102m)", async () => {
+    await rolledBack(async () => {
+      await goLive("onboarding", true);
+      const inv = await portalOpen("locCedar01", C);
+      const typed = {
+        ...ONB_ANSWERS,
+        address: " Block 1,\r\nStreet  2\r\n",
+        hours: "Sun to Thu  9 to 5\nFriday closed",
+        marketing: "انستقرام\r\n\r\nواعلانات  قوقل ",
+        projectsDone: "p".repeat(224),
+        faqs: `${"q\n".repeat(1347)}q`,
+      };
+      const done = await as<any>(
+        "service",
+        "SELECT public.portal_form_submit('locCedar01', $1, 'owner@client.invalid', 'admin', $2::uuid, $3::jsonb, $4::uuid, 'en') AS r",
+        [C, inv.inviteId, json(typed), uuid()],
+      );
+      expect(done.ok).toBe(true);
+      const stored = await one<any>(
+        "SELECT answers AS r FROM public.cockpit_form_responses WHERE id = $1::uuid",
+        [done.responseId],
+      );
+      // Line breaks as line feeds, both ends trimmed, everything between as typed (20261102j folded it all).
+      expect(stored).toMatchObject({
+        address: "Block 1,\nStreet  2",
+        hours: "Sun to Thu  9 to 5\nFriday closed",
+        marketing: "انستقرام\n\nواعلانات  قوقل",
+        projectsDone: "p".repeat(224),
+        faqs: typed.faqs,
+      });
+      const model = await one<any>(
+        "SELECT forms->'onboarding' AS r FROM public.cockpit_client_onboarding WHERE clickup_task_id = $1",
+        [C],
+      );
+      expect(
+        model.answers.find((a: any) => a.ref === "e5caee43-e9b5-427d-8583-6982c5dd9be8").value,
+      ).toBe("Block 1,\nStreet  2");
+      // Every other client form still folds (the pause consent, say): checked against 20261102i in
+      // stage4-match-make-supabase.test.ts.
+    });
   });
 
   test("live: one invite, the answer runs every effect once, then answeredAt", async () => {
@@ -2251,6 +2366,8 @@ describe("the onboarding (4.14, 3.3)", () => {
       await goLive("onboarding", true);
       await settings("onboarding.map_urls", MAPS);
       await settings("stage4.messages", MESSAGES);
+      // 20261102m: the raw answers comment needs KFRCXPFx's full titles, filled at D-S4F.
+      await settings("onboarding.raw_titles", RAW_TITLES);
       await addRequestTypes();
       const first = await portalOpen("locCedar01", C);
       expect(first.live).toBe(true);
@@ -2294,16 +2411,23 @@ describe("the onboarding (4.14, 3.3)", () => {
         label: "Kickoff Form Link",
         value: `https://cockpit.maharamedia.com/client-success/clients/${C}?form=kickoff`,
       });
-      expect(profile[0].value).toContain("Revenue last year: 250000");
+      // 20261102m: the Client Profile is Make 13 [29]'s seven labels (20261102j wrote its own).
+      expect(profile[0].value).toStartWith(
+        "Last Year's Total Revenue: 250000\n\n90-Day Goal Revenue: 100000\n\n",
+      );
+      expect(fx.raw_answers_comment.plan.comment_text).toStartWith(
+        `**Raw Onboarding Form Answers**\n\n**${RAW_TITLES.fields[0].title}**\nCedar Owner\n\n`,
+      );
       const relay = await q<Row>(
         "SELECT effect_key, state, payload FROM public.cockpit_form_relay_outbox WHERE response_id = $1 ORDER BY effect_key",
         [done.responseId],
       );
-      // The market intel dispatch is the only relay row: nothing for Client Data (20261102l).
+      // The market intel dispatch is the only relay row: nothing for Client Data (20261102l). Its
+      // client is the typed Business Name, as Make 13 [25] sends it (20261102m; 20261102j sent the card's name).
       expect(relay.map(r => [r.effect_key, r.state])).toEqual([
         ["github_dispatch", "queued"],
       ]);
-      expect(relay[0].payload).toEqual({ taskId: C, client: "Cedar Homes" });
+      expect(relay[0].payload).toEqual({ taskId: C, client: "Owner Business Co" });
       expect((await portalOpen("locCedar01", C)).answeredAt).toBeTruthy();
       // The relay: a claim, a send, a settle.
       const claim = await as<any>(
@@ -2335,6 +2459,159 @@ describe("the onboarding (4.14, 3.3)", () => {
         [C, done.responseId],
       );
       expect(dup.reused).toBe(true);
+    });
+  });
+
+  test("answers as long as the portal takes, in Arabic: every plan is kept whole past 128 KB, and the kickoff after them sends (20261102m)", async () => {
+    await rolledBack(async () => {
+      await goLive("onboarding", true);
+      await goLive("kickoff", true);
+      await settings("onboarding.map_urls", MAPS);
+      await settings("stage4.messages", MESSAGES);
+      await settings("onboarding.raw_titles", RAW_TITLES);
+      await addRequestTypes();
+      // Every long text of the version-2 onboarding at its limit (15 of 10,000 characters).
+      const v2 = await one<any>(
+        "SELECT schema AS r FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2",
+      );
+      const longs: [string, number][] = v2.fields
+        .filter((f: any) => f.type === "longtext")
+        .map((f: any) => [f.key, f.maxLength]);
+      expect(longs).toHaveLength(15);
+      expect(new Set(longs.map(([, n]) => n))).toEqual(new Set([10000]));
+      const typed: Record<string, unknown> = {
+        ...ONB_ANSWERS,
+        ...Object.fromEntries(longs.map(([k, n]) => [k, arabic(n)])),
+      };
+      const inv = await portalOpen("locCedar01", C);
+      const done = await as<any>(
+        "service",
+        "SELECT public.portal_form_submit('locCedar01', $1, 'owner@client.invalid', 'admin', $2::uuid, $3::jsonb, $4::uuid, 'ar') AS r",
+        [C, inv.inviteId, json(typed), uuid()],
+      );
+      expect(done.ok).toBe(true);
+      const fx = byKey(await effects(done.responseId));
+      expect(Object.values(fx).filter(e => e.state === "failed")).toEqual([]);
+      for (const k of [
+        "profile_fields",
+        "raw_answers_comment",
+        "map_phase3",
+        "github_dispatch",
+        "phase3_whatsapp",
+      ])
+        expect(fx[k].state).toBe("queued");
+      expect(fx.brand_dna_task.state).toBe("delivered");
+      expect(fx.read_model.state).toBe("delivered");
+      const bytes = Object.fromEntries(
+        (
+          await q<Row>(
+            "SELECT effect_key, octet_length(plan::text) AS n FROM public.cockpit_form_effects WHERE response_id = $1",
+            [done.responseId],
+          )
+        ).map(r => [r.effect_key, r.n]),
+      );
+      expect(bytes.raw_answers_comment).toBeGreaterThan(2 * 131072);
+      expect(bytes.read_model).toBeGreaterThan(2 * 131072);
+      // The raw answers comment holds each answer whole, as typed.
+      for (const [k] of longs)
+        expect(fx.raw_answers_comment.plan.comment_text).toContain(`**\n${typed[k]}\n`);
+
+      // The kickoff on that card, its 12 long texts at their limit too (in English: the kickoff's
+      // stored answers stay within 64 KB, 20261102f).
+      const kickoffLongs = (
+        await one<any[]>("SELECT public.cockpit_form_stage4_fields('kickoff') AS r")
+      )
+        .filter(f => f.type === "longtext")
+        .map(f => f.key as string);
+      expect(kickoffLongs).toHaveLength(12);
+      const out = await submit(CEO, C, {
+        ...KICKOFF_ANSWERS,
+        ...Object.fromEntries(
+          kickoffLongs.map(k => [k, `${"Invented note, typed long. ".repeat(150).slice(0, 3999)}.`]),
+        ),
+      });
+      expect(out.ok).toBe(true);
+      const kx = byKey(await effects(out.responseId));
+      expect(Object.values(kx).filter(e => e.state === "failed")).toEqual([]);
+      expect(kx.handoff_comment.state).toBe("queued");
+      expect(kx.onboarding_tasks.state).toBe("delivered");
+      const handoff = kx.handoff_comment.plan.comment_text as string;
+      expect(new TextEncoder().encode(handoff).length).toBeGreaterThan(131072);
+      expect(handoff).toContain(`\n*Address:* ${typed.address}\n`);
+      expect(handoff).toContain(`\n*Client notes:* ${typed.additionalInfo}\n`);
+      const reqRow = await one<any>(
+        "SELECT to_jsonb(q) AS r FROM public.cockpit_requests q WHERE id = $1::uuid",
+        [kx.onboarding_tasks.delivery_ref],
+      );
+      expect(reqRow.task_comment).toBe(handoff);
+    });
+  });
+
+  test("a plan past 2 MB fails only its own step, with a plain reason, and the kickoff still sends (20261102m)", async () => {
+    await rolledBack(async () => {
+      await goLive("kickoff", true);
+      await settings("onboarding.map_urls", MAPS);
+      await settings("stage4.messages", MESSAGES);
+      await addRequestTypes();
+      // A Typeform answer in the read model can be longer than anything the portal takes: nine answers
+      // the handoff prints, at 240,000 characters each, put it past 2 MB.
+      const long = "Invented answer, typed long. ".repeat(8300).slice(0, 240000);
+      const onboarding = typeformOnboarding("tokCedarLong1", "2026-10-25T09:00:00Z");
+      onboarding.answers.push(
+        ...[
+          "e5caee43-e9b5-427d-8583-6982c5dd9be8",
+          "b7873d40-d154-42ac-bf24-cb3b667e84cc",
+          "0a80a0a8-3a09-4907-a1d1-6c57e57d4c47",
+          "6271b610-6946-4056-bb08-d03ffc274141",
+          "ee25f923-d5e1-4d1a-a95f-cd9c17abbe83",
+          "bf8c7c7b-fff9-463f-b30a-8d8ca8b622f6",
+          "fcf43e6a-cc84-4ae7-9cef-2336069d0280",
+          "7426c6c5-344f-44c9-9999-3b9daf3a06b8",
+          "41d2d5bb-b023-4fa4-906c-72aeef7a5e46",
+        ].map(ref => ({ ref, title: "Stored title", value: long })),
+      );
+      await q(
+        "UPDATE public.cockpit_client_onboarding SET forms = jsonb_build_object('onboarding', $2::jsonb) WHERE clickup_task_id = $1",
+        [C, json(onboarding)],
+      );
+      const req = uuid();
+      const out = await submit(CEO, C, KICKOFF_ANSWERS, req);
+      expect(out.ok).toBe(true);
+      const fx = byKey(await effects(out.responseId));
+      for (const k of ["handoff_comment", "onboarding_tasks"]) {
+        expect(fx[k]).toMatchObject({
+          owner: "cockpit",
+          state: "failed",
+          reason: TOO_LARGE,
+          delivery_ref: null,
+        });
+        expect(Object.keys(fx[k].plan).sort()).toEqual(["lines", "planBytes"]);
+        expect(fx[k].plan.planBytes).toBeGreaterThan(2097152);
+      }
+      // Every other step runs as before; no request was made.
+      for (const k of [
+        "native_status",
+        "card_fields",
+        "map_phase4",
+        "phase4_whatsapp",
+        "kickoff_notice",
+      ])
+        expect(fx[k].state).toBe("queued");
+      expect(fx.new_mrr.state).toBe("delivered");
+      expect(
+        await one(
+          "SELECT count(*)::int AS r FROM public.cockpit_requests WHERE form_response_id = $1::uuid",
+          [out.responseId],
+        ),
+      ).toBe(0);
+      // A second press shows the same trail, the two steps failed with their reason.
+      const again = await submit(CEO, C, KICKOFF_ANSWERS, req);
+      expect(again).toMatchObject({ ok: true, reused: true });
+      expect(again.trail).toContainEqual({
+        step: "handoff_comment",
+        state: "failed",
+        reason: TOO_LARGE,
+      });
     });
   });
 
@@ -2747,11 +3024,14 @@ describe("the parity plan (4.15.1)", () => {
       "Brand Blueprint Booked♠️",
       "Tech Issue",
       "Signed",
-      "Interior design",
+      // 20261102m: Make 12 [21] writes switch(first(list)), the service ticked first; 20261102j wrote
+      // the first listed one the option map knows (Interior design).
+      "Fit out and renovation",
       `https://cockpit.maharamedia.com/client-success/clients/${C}/present/blueprint?view=prep`,
     ]);
+    // 20261102m: Make 12 [11]'s handoff lines (20261102j wrote "Business name: ...").
     expect(fx.handoff_comment.plan.comment_text).toContain(
-      "Business name: Cedar Homes Co",
+      "\n*Legal business name:* Cedar Homes Co\n",
     );
     expect(fx.handoff_comment.plan.comment_text).not.toContain("ignored_key");
     expect(fx.new_mrr.plan).toMatchObject({ from: 0, to: 1000 });
@@ -2779,6 +3059,14 @@ const inTest = (file: string) =>
     .replace(/COMMIT;\s*$/m, "");
 /** 20261102j's bodies back (its effects arrays and builder, as live has them before 20261102l). */
 const jBodies = () => ex(inTest(J));
+/**
+ * 20261102l's state, as live will have it before 20261102m: j's bodies, then l. 20261102m replaces l's
+ * builder and j's readers, so l's own tests read l from here, inside their rolled-back step.
+ */
+const lState = async () => {
+  await jBodies();
+  await ex(inTest(NO_CLIENT_DATA));
+};
 /** The outbox CHECKs as 20261102j made them (live before 20261102l). */
 const J_RELAY_CHECKS = `
   ALTER TABLE public.cockpit_form_relay_outbox DROP CONSTRAINT cockpit_form_relay_outbox_effect_key_check;
@@ -2903,6 +3191,7 @@ describe("20261102l: no Client Data write (D-S4.0)", () => {
 
   test("the outbox refuses a Client Data row, and a Client Data row already there stops the file", async () => {
     await rolledBack(async () => {
+      await lState();
       await goLive("onboarding", true);
       const inv = await portalOpen("locCedar01", C);
       const done = await as<any>(
@@ -2933,8 +3222,11 @@ describe("20261102l: no Client Data write (D-S4.0)", () => {
     const sql = migration(NO_CLIENT_DATA);
     const guard = (fn: string) =>
       sql.split("\n").find(l => l.includes(`('public.${fn}', '`)) ?? "";
-    for (const fn of STAGE4_FNS)
-      expect(guard(fn)).toContain(`'${await md5Of(`public.${fn}`)}')`);
+    await rolledBack(async () => {
+      await lState();
+      for (const fn of STAGE4_FNS)
+        expect(guard(fn)).toContain(`'${await md5Of(`public.${fn}`)}')`);
+    });
     await rolledBack(async () => {
       await jBodies();
       for (const fn of STAGE4_FNS)
@@ -2943,6 +3235,7 @@ describe("20261102l: no Client Data write (D-S4.0)", () => {
         );
     });
     await rolledBack(async () => {
+      await lState();
       const def = await one<string>(
         "SELECT pg_get_functiondef('public.cockpit_form_stage4_build(jsonb)'::regprocedure) AS r",
       );
@@ -2959,6 +3252,7 @@ describe("20261102l: no Client Data write (D-S4.0)", () => {
       );
     });
     await rolledBack(async () => {
+      await lState();
       await setOnboardingEffects([]);
       const r = await refusal(() => ex(inTest(NO_CLIENT_DATA)));
       expect(r.code).toBe("55000");
@@ -2976,6 +3270,7 @@ describe("20261102l: no Client Data write (D-S4.0)", () => {
       audits: await movedAudits(),
     });
     await rolledBack(async () => {
+      await lState();
       const before = await snapshot();
       expect(before.checks).toEqual(NARROWED);
       await ex(inTest(NO_CLIENT_DATA));
@@ -3035,7 +3330,17 @@ describe("20261102l: no Client Data write (D-S4.0)", () => {
                                    'o2', public.cockpit_form_stage4_effects('onboarding', 2)) AS r`,
       ),
     });
-    const now = await read();
+    // 20261102l's plan as it planned it, before 20261102m changed the texts (whose own tests compare
+    // every other effect with this one's in stage4-match-make-supabase.test.ts).
+    const was: {
+      j?: Awaited<ReturnType<typeof read>>;
+      l?: Awaited<ReturnType<typeof read>>;
+    } = {};
+    await rolledBack(async () => {
+      await lState();
+      was.l = await read();
+    });
+    const now = was.l!;
     expect(keys(now.onboarding)).toEqual([
       "profile_fields",
       "raw_answers_comment",
@@ -3046,7 +3351,11 @@ describe("20261102l: no Client Data write (D-S4.0)", () => {
       "read_model",
     ]);
     expect(keys(now.onboarding)).toEqual(keys(now.arrays.o2));
-    const was: { j?: Awaited<ReturnType<typeof read>> } = {};
+    // 20261102m plans the same effects in the same order, with the same arrays.
+    const m = await read();
+    expect(keys(m.onboarding)).toEqual(keys(now.onboarding));
+    expect(keys(m.kickoff)).toEqual(keys(now.kickoff));
+    expect(m.arrays).toEqual(now.arrays);
     await rolledBack(async () => {
       await jBodies();
       was.j = await read();
