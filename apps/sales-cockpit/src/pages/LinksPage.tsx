@@ -13,7 +13,7 @@ import {
 import { ReferenceAsks, ReferenceList } from "../components/References";
 import { SopVideo } from "../components/SopVideo";
 import { api } from "../lib/api";
-import { COCKPIT_GUIDES, SOP_VIDEOS } from "../lib/cockpits";
+import { COCKPIT_GUIDES, SOP_VIDEOS, TEAM_GUIDES } from "../lib/cockpits";
 import { useLinks } from "../lib/data";
 import { toast } from "../lib/toast";
 import type { Me, SalesLink } from "../lib/types";
@@ -244,13 +244,23 @@ export default function LinksPage({ me }: { me: Me }) {
             >
               the simple SOP
             </a>{" "}
-            open beside you.
+            open beside you. To ask another team for something, read{" "}
+            <a
+              href={TEAM_GUIDES.ticket.doc}
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-2 hover:text-[color:var(--foreground)]"
+            >
+              Raise a ticket
+            </a>
+            .
           </p>
         </div>
         {manager && !adding ? addButton : null}
       </header>
 
       <SopVideo video={SOP_VIDEOS.sales.demo} />
+      <SopVideo video={SOP_VIDEOS.team.ticket} />
 
       {manager && adding ? (
         <SectionCard title="Add a link">

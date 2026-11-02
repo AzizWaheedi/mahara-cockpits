@@ -5,8 +5,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { FilterChips, type FilterOption } from "@/components/ceo/FilterChips";
+import { SopVideo } from "@/components/SopVideo";
 import { RequestForm } from "@/components/tasks/RequestForm";
 import { Button } from "@/components/ui/button";
+import { SOP_VIDEOS, TEAM_GUIDES } from "@/lib/cockpits";
 import { cancelRequest, errorWords, readRequests } from "@/lib/requestsClient";
 import {
   kuwaitToday,
@@ -162,7 +164,16 @@ export function RequestsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Requests</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Ask another team for something. It becomes a ClickUp task with its
-            SOP steps and an owner.
+            SOP steps and an owner. New here? Watch the video below or read{" "}
+            <a
+              href={TEAM_GUIDES.ticket.doc}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="rounded-sm font-medium text-[color:var(--tk-ink,var(--primary))] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              Raise a ticket
+            </a>
+            .
           </p>
         </div>
         <Link
@@ -193,6 +204,10 @@ export function RequestsPage() {
           onChange={k => go({ view: k === "ask" ? null : k })}
         />
       </div>
+
+      {/* The SOP for this page, played here (Aziz, 2026-11-02): only on
+          Ask, so the lists keep their place. */}
+      {view === "ask" ? <SopVideo video={SOP_VIDEOS.team.ticket} /> : null}
 
       {view === "ask" ? (
         // The page's full width (tickets-look-1028): the department map takes

@@ -35,6 +35,7 @@ import {
   COCKPIT_ICON,
   COCKPIT_SOP,
   SOP_VIDEOS,
+  TEAM_GUIDES,
 } from "@/lib/cockpits";
 import { openSearch } from "@/lib/search";
 import { ceoBadges } from "@/pages/CeoPage";
@@ -127,6 +128,11 @@ function SopLink() {
       url: COCKPIT_SOP.media_buyer,
       note: "The day in ten steps, for signed-in ClickUp members",
     },
+    {
+      label: "Raise a ticket (the SOP for every team)",
+      url: TEAM_GUIDES.ticket.doc,
+      note: "Ask another team with Ask a team, follow it, and work the tickets assigned to you",
+    },
   ];
   return (
     <SidebarMenuItem>
@@ -153,6 +159,7 @@ function SopLink() {
           {open ? (
             <SopVideo video={SOP_VIDEOS.media_buyer.demo} startOpen />
           ) : null}
+          <SopVideo video={SOP_VIDEOS.team.ticket} />
           <ul className="divide-y rounded-xl border">
             {docs.map(d => (
               <li key={d.url}>

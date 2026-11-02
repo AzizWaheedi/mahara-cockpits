@@ -8,15 +8,24 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { SopVideo } from "../src/components/SopVideo";
-import { COCKPIT_GUIDES, SOP_VIDEOS, wistiaPlayer } from "../src/lib/cockpits";
+import {
+  COCKPIT_GUIDES,
+  SOP_VIDEOS,
+  TEAM_GUIDES,
+  wistiaPlayer,
+} from "../src/lib/cockpits";
 import { LINK_GROUPS } from "../src/lib/csmLinks";
+import { TAB_VIDEO } from "../src/pages/money/tabVideos";
 import { prepVideo } from "../src/present/PrepView";
 
-test("every SOP video is a cockpit guide's Drive file", () => {
-  const guides = Object.values(COCKPIT_GUIDES).flatMap(g => [
-    g.video,
-    ...Object.values("howTo" in g ? g.howTo : {}),
-  ]);
+test("every SOP video is a cockpit or team guide's Drive file", () => {
+  const guides = [
+    ...Object.values(COCKPIT_GUIDES).flatMap(g => [
+      g.video,
+      ...Object.values("howTo" in g ? g.howTo : {}),
+    ]),
+    ...Object.values(TEAM_GUIDES).map(g => g.video),
+  ];
   const videos = Object.values(SOP_VIDEOS).flatMap(c => Object.values(c));
   expect(videos.map(v => v.url).sort()).toEqual([...guides].sort());
   for (const v of videos) expect(v.length).toMatch(/^\d:\d\d$/);
@@ -40,16 +49,34 @@ test("each call's prep holds its own video", () => {
   expect(prepVideo("blueprint")).toBeNull();
 });
 
-test("the Links page plays the demo and the three how-to videos", () => {
+test("the Links page plays the demo, the how-to videos and the ticket's", () => {
   const guide = LINK_GROUPS.find(g => g.title === "How this cockpit works");
   expect(guide?.rows.filter(r => r.video).map(r => r.video?.key)).toEqual([
     "csm-demo",
     "csm-onboarding",
     "csm-launch",
     "csm-offers",
+    "team-ticket",
   ]);
-  for (const r of guide?.rows ?? [])
+  const logging = LINK_GROUPS.find(
+    g => g.title === "Log money and client changes",
+  );
+  expect(logging?.rows.filter(r => r.video).map(r => r.video?.key)).toEqual([
+    "csm-money",
+    "csm-changes",
+    "csm-wins",
+    "csm-after-call",
+  ]);
+  for (const r of LINK_GROUPS.flatMap(g => g.rows))
     if (r.video) expect(r.url).toBe(r.video.url);
+});
+
+test("Money plays money in on Billing and Invoices, wins on Wins", () => {
+  expect(TAB_VIDEO).toEqual({
+    billing: SOP_VIDEOS.csm.money,
+    invoices: SOP_VIDEOS.csm.money,
+    wins: SOP_VIDEOS.csm.wins,
+  });
 });
 
 test("folded, the player loads nothing; opened, it plays the file", () => {
