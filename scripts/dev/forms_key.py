@@ -12,8 +12,9 @@ where the keys live:
   unregister-webhook  delete the webhook in Fathom and mark the registration off
 
   Since Stage 2b (docs/forms/STAGE2B-CONTRACT.md 4.8), each form's signed Typeform webhook to forms-door.
-  <form> is kickoff (tG7dnxBn), exit_survey (the termination survey, knIe4eF3) or pause_request (the client's
-  pause request, CTUjv6l3; docs/forms/WAVE12-CONTRACT.md 4.4); any other exits 2:
+  <form> is kickoff (tG7dnxBn), exit_survey (the termination survey, knIe4eF3), pause_request (the client's
+  pause request, CTUjv6l3; docs/forms/WAVE12-CONTRACT.md 4.4), onboarding (the client's onboarding form, KFRCXPFx)
+  or new_client (the New Client Form, BTzMwXiw; docs/forms/WAVE34-CONTRACT.md 4.7, 4.8); any other exits 2:
   typeform-secret <form>      make a signing key (32 random bytes, base64url) and save it; never printed
   register-typeform <form>    read the form's webhooks, put the cockpit one, read it back, mark the key connected
   probe-typeform <form>       send forms-door one unsigned and one signed probe (401, then 200)
@@ -23,7 +24,9 @@ fathom, deepseek, register-webhook and unregister-webhook change the CEO's keys 
 the CEO runs them, or someone with his permission (contract A3). status, doctor and probe-webhook change
 nothing in Fathom. register-typeform and unregister-typeform change only the cockpit webhook of the named
 form (B3 for kickoff at deploy step D17, Z22; D-F4 for exit_survey and D-C2 for pause_request in the waves 1-2
-contract); every other webhook of the form is read before and after and never touched.
+contract; D-C6 for onboarding and D-NCF for new_client in the waves 3-4 contract); every other webhook of the form
+is read before and after and never touched. Make owns every effect of onboarding and new_client: their cockpit
+webhook only records the answers, and nothing here ever submits a form.
 
 The Fathom key is the api-keys.env copy, not the one in the native runtime file that hermes/csm-calls
 reads (the two values differ, and heavy reads are 10 a minute per key); the webhook is registered and
@@ -60,10 +63,13 @@ SUPABASE = "https://bldgtotkfmhoxmlzowdx.supabase.co"
 FATHOM = "https://api.fathom.ai/external/v1"
 TYPEFORM = "https://api.typeform.com"
 # The forms with a cockpit Typeform webhook, each with its own signing key's provider: kickoff since 2b (Z58), the
-# termination survey and the pause request since waves 1-2 (4.4). The webhook's tag is the same on each form.
+# termination survey and the pause request since waves 1-2 (4.4), client onboarding and the New Client Form since
+# waves 3-4 (4.7, 4.8). The webhook's tag is the same on each form.
 TYPEFORM_FORMS = {"kickoff": "typeform_kickoff", "exit_survey": "typeform_exit_survey",
-                  "pause_request": "typeform_pause_request"}
-ONLY_KICKOFF = "Name kickoff, exit_survey or pause_request: only these forms have a cockpit webhook."
+                  "pause_request": "typeform_pause_request", "onboarding": "typeform_onboarding",
+                  "new_client": "typeform_new_client"}
+ONLY_KICKOFF = ("Name kickoff, exit_survey, pause_request, onboarding or new_client: only these forms have a cockpit "
+                "webhook.")
 TYPEFORM_ID = re.compile(r"^[A-Za-z0-9]{4,32}$")
 WEBHOOK_TAG = "cockpit"
 DEEPSEEK_MODELS = "https://api.deepseek.com/models"

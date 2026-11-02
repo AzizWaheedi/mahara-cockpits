@@ -1,0 +1,37 @@
+{
+  "_note": "cockpit_form_record_make's input for new-client-response.json with backfill true, as forms-door builds it (makeInput): the webhook and the backfill (scripts/dev/forms_legacy_backfill.py) must both equal it.",
+  "p": {
+    "formKey": "new_client",
+    "externalId": "ncf0000token0001",
+    "submittedAt": "2026-10-30T11:00:00Z",
+    "backfill": true,
+    "answers": {
+      "fields": [
+        {
+          "ref": "business-ref",
+          "type": "short_text",
+          "title": "Business name",
+          "value": "Harbour Homes"
+        },
+        {
+          "ref": "plan-ref",
+          "type": "multiple_choice",
+          "title": "Payment plan",
+          "value": "Monthly"
+        },
+        {
+          "ref": "amount-ref",
+          "type": "number",
+          "title": "Amount paid",
+          "value": 2000
+        }
+      ]
+    },
+    "hidden": {
+      "contact_id": "ghlContact0001",
+      "closer": "Closer Test",
+      "setter": "Setter Test"
+    },
+    "taskId": null
+  }
+}

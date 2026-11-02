@@ -13,6 +13,7 @@ import {
   ClientsPage,
   EndOfDayPage,
   FirstSignInPage,
+  FormsEditorPage,
   InboxPage,
   KeyLinksPage,
   LandingPage,
@@ -80,6 +81,14 @@ export function AuthenticatedRoutes() {
             sidebar or data provider is mounted for another seat. */}
         <Route element={<BillingReviewLayout />}>
           <Route path="/notices" element={<NoticesPage />} />
+        </Route>
+        {/* The forms editor (docs/forms/WAVE34-CONTRACT.md 4.9, 5.13): admins
+            and the CEO, whatever their other roles, so any signed-in seat
+            opens it and cockpit_form_editor_seat decides; anyone else reads
+            "Only an admin or the CEO edits forms." No CSM sidebar is mounted. */}
+        <Route element={<BillingReviewLayout wide />}>
+          <Route path="/forms-editor" element={<FormsEditorPage />} />
+          <Route path="/forms-editor/:key" element={<FormsEditorPage />} />
         </Route>
         {/* The Brand Blueprint call (docs/brand-blueprint/SPEC.md 4.7): the
             creative director presents it, the CSM reads it. Its static

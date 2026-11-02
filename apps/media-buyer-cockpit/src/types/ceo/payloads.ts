@@ -1762,8 +1762,30 @@ export type ClientsPayload = {
   /** The days `rows[].daily` covers; null when the media history was not read. Absent on older payloads. */
   dailyFrom?: string | null;
   dailyTo?: string | null;
+  /** The client's own scores, NPS and the onboarding survey (WAVE34 4.6.4). Absent on payloads stored before it. */
+  voice?: VoicePayload;
   notes: Note[];
 };
+
+/** The clients section's `voice` (hermes/ceo-refresh/native/voice.js voicePayload). */
+export type VoiceAnswer = {
+  taskId: string;
+  form: string;
+  day: string;
+  at: number;
+  score: number | null;
+  band: string | null;
+};
+export type VoicePayload =
+  | {
+      read: true;
+      today: string;
+      firstDay: string | null;
+      answers: VoiceAnswer[];
+      answered: { taskId: string; day: string }[];
+      daily: { day: string; form: string; issued: number; answered: number }[];
+    }
+  | { read: false; error?: string };
 
 /** One month of the churn register, as churnCore's rollUp returns it. */
 export type ChurnRegisterMonth = {

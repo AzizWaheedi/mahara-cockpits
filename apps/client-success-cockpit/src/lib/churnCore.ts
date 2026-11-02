@@ -53,7 +53,61 @@ export type Departure = {
   updatedAt: string;
   /** The confirm's columns; absent on a read from before 20261101o. */
   confirm?: DepartureConfirm;
+  /** The native exit survey's invite (waves 3-4, 20261102b); absent before it. */
+  surveyInvite?: SurveyInvite | null;
 };
+
+/** cockpit_csm_churn_read's surveyInvite (WAVE34-CONTRACT.md 4.4.5). */
+export type SurveyInvite = {
+  inviteId: string;
+  state: "open" | "answered" | "withdrawn" | "expired";
+  channels: string[];
+  issuedAt: string | null;
+  answeredAt: string | null;
+};
+
+/** One departure's surveyInvite, read defensively; null when there is none. */
+export function surveyInviteOf(v: unknown): SurveyInvite | null {
+  const o =
+    v && typeof v === "object" && !Array.isArray(v)
+      ? (v as Record<string, unknown>)
+      : null;
+  const id = typeof o?.inviteId === "string" ? o.inviteId : null;
+  if (!o || !id) return null;
+  const state = ["open", "answered", "withdrawn", "expired"].includes(
+    String(o.state),
+  )
+    ? (o.state as SurveyInvite["state"])
+    : "open";
+  const str = (x: unknown) => (typeof x === "string" && x ? x : null);
+  return {
+    inviteId: id,
+    state,
+    channels: Array.isArray(o.channels) ? o.channels.map(String) : [],
+    issuedAt: str(o.issuedAt),
+    answeredAt: str(o.answeredAt),
+  };
+}
+
+/**
+ * The native exit survey on a departure row (5.11): "Exit survey sent 3 Nov
+ * · portal", "Exit survey answered 5 Nov", or "Not sent".
+ */
+export function surveyInviteLine(
+  si: SurveyInvite | null | undefined,
+  dayWords: (d: string | null) => string,
+): string {
+  const day = (d: string | null) => dayWords(d) || "on a day not recorded";
+  if (!si) return "Not sent";
+  if (si.state === "answered" || si.answeredAt)
+    return `Exit survey answered ${day(si.answeredAt)}`;
+  const by = si.channels.includes("portal") ? "portal" : "link";
+  if (si.state === "withdrawn")
+    return `Exit survey withdrawn · sent ${day(si.issuedAt)} · ${by}`;
+  if (si.state === "expired")
+    return `Exit survey not answered in 14 days · sent ${day(si.issuedAt)} · ${by}`;
+  return `Exit survey sent ${day(si.issuedAt)} · ${by}`;
+}
 
 export type CountsAs = "churn" | "completed" | "unknown";
 

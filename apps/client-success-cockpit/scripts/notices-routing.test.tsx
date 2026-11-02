@@ -929,3 +929,36 @@ describe("the reply label", () => {
     ).toBe("Posted in #csm-general at 14:03");
   });
 });
+
+describe("the client forms list (waves 3-4, 5.12)", () => {
+  test("its own heading and line, its six rows, absent while 20261102a is not seeded", async () => {
+    const read = settingsReadFixture({ forms: true });
+    const host = await draw(
+      <NoticesRouting io={fakeNoticesIO(read)} initial={read} />,
+    );
+    const section = host
+      .querySelector("#notices-client-forms")
+      ?.closest("section");
+    expect(section).toBeTruthy();
+    expect(text(section)).toContain(
+      "Posts when a client answers a form or shares feedback. Names, dates and scores only, never their words.",
+    );
+    for (const kind of [
+      "pause.consent",
+      "nps.received",
+      "csat.received",
+      "voice.low",
+      "feedback.received",
+      "legacy.received",
+    ])
+      expect(section.querySelector(`li[data-kind="${kind}"]`)).toBeTruthy();
+    // No email, answer text or score words in the settings card itself.
+    expect(text(section)).not.toMatch(/@[a-z0-9.-]+\.[a-z]/i);
+
+    const plain = settingsReadFixture({ forms: false });
+    const without = await draw(
+      <NoticesRouting io={fakeNoticesIO(plain)} initial={plain} />,
+    );
+    expect(without.querySelector("#notices-client-forms")).toBeNull();
+  });
+});

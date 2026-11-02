@@ -30,6 +30,19 @@ import {
 // biome-ignore lint/suspicious/noExplicitAny: generic billing payload
 type Any = any;
 
+/** The billing kinds that are the client's voice, not money acts (20261102b/c). */
+export const BILLING_VOICE_KINDS = ["survey", "nps_sent"] as const;
+
+/** Two event reads as one log, newest first (ties keep the money row first). */
+export function mergeNewestFirst<T extends { at?: string | null }>(
+  money: T[],
+  voice: T[],
+): T[] {
+  return [...money, ...voice].sort((a, b) =>
+    String(b.at ?? "").localeCompare(String(a.at ?? "")),
+  );
+}
+
 export async function fetchBillingSheet(
   client: SupabaseClient,
   allowedClients?: string[] | null,
@@ -37,15 +50,26 @@ export async function fetchBillingSheet(
   const [
     { data: accountsData, error: aErr },
     { data: eventsData, error: eErr },
+    { data: voiceData, error: vErr },
     { data: inboxData, error: iErr },
     ladder,
   ] = await Promise.all([
     client.from("cockpit_billing_accounts").select("*"),
+    // The newest 60 money acts, and the client's voice (an NPS sent, an exit
+    // survey answered) read on its own, so a busy day of surveys never pushes
+    // payments, dates and pauses out of the log (review W34).
     client
       .from("cockpit_billing_events")
       .select("*")
+      .not("kind", "in", `(${BILLING_VOICE_KINDS.join(",")})`)
       .order("at", { ascending: false })
       .limit(60),
+    client
+      .from("cockpit_billing_events")
+      .select("*")
+      .in("kind", [...BILLING_VOICE_KINDS])
+      .order("at", { ascending: false })
+      .limit(20),
     client
       .from("cockpit_billing_inbox")
       .select("*")
@@ -62,10 +86,11 @@ export async function fetchBillingSheet(
 
   if (aErr) throw aErr;
   if (eErr) throw eErr;
+  if (vErr) throw vErr;
   if (iErr) throw iErr;
 
   const accounts: Account[] = (accountsData ?? []).map(accountFrom);
-  const events = eventsData ?? [];
+  const events = mergeNewestFirst(eventsData ?? [], voiceData ?? []);
   const inbox = inboxData ?? [];
 
   const s = buildSheet(accounts, events, inbox, undefined, stepsFrom(ladder));

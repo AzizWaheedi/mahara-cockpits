@@ -8,11 +8,14 @@
 // against a second implementation. People, clients, links and values are invented.
 import { describe, expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { formsFor } from "../../../apps/client-success-cockpit/src/lib/onboardingCore.ts";
 import {
   FORM_KEYS,
   formKeyOf,
   legacyInput,
   MAX_BODY_BYTES,
+  makeInput,
   MISSING_SECRET_TTL_MS,
   makeHandler,
   recordInput,
@@ -118,6 +121,8 @@ type Fake = {
   registries?: Record<string, Row[]>;
   secrets?: Record<string, string>;
   legacy?: Row | { status: number; code: string; message: string };
+  /** The two Make forms (waves 3-4): the record_make answer. */
+  make?: Row | { status: number; code: string; message: string };
 };
 
 function harness(over: Partial<Fake> = {}) {
@@ -152,7 +157,7 @@ function harness(over: Partial<Fake> = {}) {
       auth: new Headers(init.headers).get("Authorization"),
     });
     const other =
-      /^\/rest\/v1\/cockpit_forms\?select=provider,typeform_id&key=eq\.(exit_survey|pause_request)$/.exec(
+      /^\/rest\/v1\/cockpit_forms\?select=provider,typeform_id&key=eq\.(exit_survey|pause_request|onboarding|new_client)$/.exec(
         path,
       );
     if (method === "GET" && other)
@@ -185,6 +190,20 @@ function harness(over: Partial<Fake> = {}) {
         matched: false,
         noticeQueued: true,
         taskId: "86eyjkdc8",
+      }) as Row;
+      if (typeof r.status === "number")
+        return new Response(
+          JSON.stringify({ message: r.message, code: r.code }),
+          { status: r.status },
+        );
+      return Response.json(r);
+    }
+    if (path === "/rest/v1/rpc/cockpit_form_record_make") {
+      const r = (fake.make ?? {
+        inserted: true,
+        responseId: "33333333-3333-4333-8333-333333333333",
+        taskId: null,
+        readModel: "no_card",
       }) as Row;
       if (typeof r.status === "number")
         return new Response(
@@ -297,7 +316,8 @@ describe("the route", () => {
     for (const form of [
       "checkin",
       "blueprint",
-      "onboarding",
+      "nps",
+      "csat",
       "Kickoff",
       "kickoff%20",
       "",
@@ -305,7 +325,13 @@ describe("the route", () => {
       expect(
         (await h.post("{}", {}, `/forms-door/typeform/${form}`)).status,
       ).toBe(404);
-    expect(FORM_KEYS).toEqual(["kickoff", "exit_survey", "pause_request"]);
+    expect(FORM_KEYS).toEqual([
+      "kickoff",
+      "exit_survey",
+      "pause_request",
+      "onboarding",
+      "new_client",
+    ]);
     expect(h.calls).toEqual([]);
   });
 
@@ -1085,13 +1111,14 @@ describe("the termination survey and the pause request (waves 1-2, 4.4)", () => 
     ]);
   });
 
-  test("a form no longer filled in Typeform is 404; no key saved is 503 with its sentence; a store refusal is 500 with the code only", async () => {
-    const moved = clientHarness({
-      registries: {
-        exit_survey: [{ provider: "native", typeform_id: EXIT_ID }],
-      },
-    });
-    expect((await moved.post("{}", {}, EXIT_ROUTE)).status).toBe(404);
+  test("a form with no Typeform id, or not filled there, is 404; no key saved is 503 with its sentence; a store refusal is 500 with the code only", async () => {
+    for (const row of [
+      { provider: "native", typeform_id: null },
+      { provider: "clickup", typeform_id: EXIT_ID },
+    ]) {
+      const moved = clientHarness({ registries: { exit_survey: [row] } });
+      expect((await moved.post("{}", {}, EXIT_ROUTE)).status).toBe(404);
+    }
     const nokey = clientHarness({ secrets: {} });
     expect((await nokey.post("{}", {}, PAUSE_ROUTE)).status).toBe(503);
     expect(nokey.rpcs("cockpit_forms_door_seen")).toEqual([
@@ -1174,5 +1201,223 @@ describe("the termination survey and the pause request (waves 1-2, 4.4)", () => 
       clientName: null,
       backfill: true,
     });
+  });
+});
+
+// ----------------------------------------------------------------- waves 3-4: the two Make forms and the old exit link
+
+const fixture = (name: string): Row =>
+  JSON.parse(
+    readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"),
+  );
+const ONBOARDING_ID = "KFRCXPFx";
+const NEW_CLIENT_ID = "BTzMwXiw";
+const ONB_SECRET = ["invented", "onboarding", "signing", "key"].join("-");
+const NCF_SECRET = ["invented", "new", "client", "signing", "key"].join("-");
+const ONB_ROUTE = "/forms-door/typeform/onboarding";
+const NCF_ROUTE = "/forms-door/typeform/new_client";
+
+function makeHarness(over: Partial<Fake> = {}) {
+  return harness({
+    registries: {
+      onboarding: [{ provider: "typeform", typeform_id: ONBOARDING_ID }],
+      new_client: [{ provider: "typeform", typeform_id: NEW_CLIENT_ID }],
+      exit_survey: [{ provider: "native", typeform_id: EXIT_ID }],
+    },
+    secrets: {
+      typeform_onboarding: ONB_SECRET,
+      typeform_new_client: NCF_SECRET,
+      typeform_exit_survey: EXIT_SECRET,
+    },
+    ...over,
+  });
+}
+
+describe("client onboarding and the New Client Form (waves 3-4, 4.7 and 4.8)", () => {
+  test("a bad signature is 401 before anything is parsed or stored, each form with its own key", async () => {
+    const h = makeHarness();
+    for (const [route, other] of [
+      [ONB_ROUTE, NCF_SECRET],
+      [NCF_ROUTE, ONB_SECRET],
+    ] as const) {
+      const raw = "{not json";
+      expect((await h.post(raw, {}, route)).status).toBe(401);
+      expect(
+        (await h.post(raw, { "Typeform-Signature": sign(other, raw) }, route))
+          .status,
+      ).toBe(401);
+    }
+    expect(h.rpcs("cockpit_form_record_make")).toEqual([]);
+    expect(h.rpcs("cockpit_forms_key_get")).toEqual([
+      { p_provider: "typeform_onboarding" },
+      { p_provider: "typeform_new_client" },
+    ]);
+  });
+
+  test("an onboarding answer is recorded through cockpit_form_record_make with formsFor's own entry, and no Typeform call", async () => {
+    const h = makeHarness({
+      make: {
+        inserted: true,
+        responseId: "33333333-3333-4333-8333-333333333333",
+        taskId: "86exc1tyw",
+        readModel: "written",
+      },
+    });
+    const body = fixture("onboarding-response.json");
+    const raw = JSON.stringify(body);
+    expect(
+      await read(
+        await h.post(
+          raw,
+          { "Typeform-Signature": sign(ONB_SECRET, raw) },
+          ONB_ROUTE,
+        ),
+      ),
+    ).toEqual({ status: 200, body: { ok: true, inserted: true } });
+    const [call] = h.rpcs("cockpit_form_record_make");
+    // The onboarding sync's own mapping on the same response: the read model gets exactly this entry.
+    const expected = formsFor("86exc1tyw", {
+      definitions: { onboarding: body.form_response.definition },
+      responses: { onboarding: [body.form_response] },
+    }).onboarding;
+    expect(expected).toBeDefined();
+    expect(call).toEqual({
+      p: {
+        formKey: "onboarding",
+        externalId: "onb0000token0001",
+        submittedAt: "2026-10-30T07:15:00Z",
+        backfill: false,
+        answers: { fields: expected!.answers },
+        hidden: { client_name: "City Wood", onboarding_client_id: "86exc1tyw" },
+        taskId: "86exc1tyw",
+      },
+    });
+    // Titles cleaned as the sync cleans them: the English half, recalled hidden values, no markdown leftovers.
+    expect(expected!.answers.map(a => a.title)).toEqual([
+      "Company name",
+      "Your email for City Wood",
+      "WhatsApp number",
+      "Main services",
+      "Monthly budget (KWD)",
+      "Website",
+      "Showroom opening date",
+    ]);
+    expect(h.calls.every(c => c.path.startsWith("/rest/v1/"))).toBe(true);
+    expect(h.rpcs("cockpit_form_record_legacy")).toEqual([]);
+    expect(h.rpcs("cockpit_form_record_typeform")).toEqual([]);
+    expect(h.rpcs("cockpit_forms_door_seen").at(-1)).toEqual({
+      p_form_key: "onboarding",
+      p_outcome: "recorded",
+      p_reason: null,
+    });
+    expect(h.logs).toEqual(["forms-door onboarding recorded"]);
+  });
+
+  test("an onboarding answer with no card id keeps the same mapping and no card", () => {
+    const body = fixture("onboarding-response.json").form_response;
+    const p = makeInput("onboarding", {
+      ...body,
+      hidden: { client_name: "City Wood" },
+    });
+    expect(p.taskId).toBeNull();
+    expect(p.hidden).toEqual({ client_name: "City Wood" });
+    expect(p.answers.fields).toEqual(makeInput("onboarding", body).answers.fields);
+    expect(
+      makeInput("onboarding", {
+        ...body,
+        hidden: { onboarding_client_id: "not a card!" },
+      }).taskId,
+    ).toBeNull();
+  });
+
+  test("a New Client Form answer is recorded only: no email or phone, its three hidden ids, no card", async () => {
+    const h = makeHarness();
+    const raw = JSON.stringify(fixture("new-client-response.json"));
+    expect(
+      (
+        await h.post(
+          raw,
+          { "Typeform-Signature": sign(NCF_SECRET, raw) },
+          NCF_ROUTE,
+        )
+      ).status,
+    ).toBe(200);
+    const [call] = h.rpcs("cockpit_form_record_make");
+    expect(call.p).toMatchObject({
+      formKey: "new_client",
+      externalId: "ncf0000token0001",
+      submittedAt: "2026-10-30T11:00:00Z",
+      hidden: {
+        contact_id: "ghlContact0001",
+        closer: "Closer Test",
+        setter: "Setter Test",
+      },
+      taskId: null,
+      backfill: false,
+    });
+    expect(call.p.answers.fields.map((f: Row) => f.ref)).toEqual([
+      "business-ref",
+      "plan-ref",
+      "amount-ref",
+    ]);
+    const text = JSON.stringify(call);
+    for (const secretish of ["owner@harbour.example", "+965 0000 0002", "kept-out"])
+      expect(text).not.toContain(secretish);
+    expect(h.logs).toEqual(["forms-door new_client recorded"]);
+  });
+
+  test("a repeat is a repeat, a store refusal is 500 with the code only, and no log line holds a value", async () => {
+    const repeat = makeHarness({
+      make: { inserted: false, responseId: "x", taskId: null, readModel: "no_card" },
+    });
+    const raw = JSON.stringify(fixture("onboarding-response.json"));
+    const headers = { "Typeform-Signature": sign(ONB_SECRET, raw) };
+    expect((await repeat.post(raw, headers, ONB_ROUTE)).status).toBe(200);
+    expect(repeat.rpcs("cockpit_forms_door_seen").at(-1)?.p_outcome).toBe("repeat");
+    const refused = makeHarness({
+      make: { status: 400, code: "22023", message: "owner@citywood.example" },
+    });
+    expect((await refused.post(raw, headers, ONB_ROUTE)).status).toBe(500);
+    expect(refused.rpcs("cockpit_forms_door_seen").at(-1)).toEqual({
+      p_form_key: "onboarding",
+      p_outcome: "failed",
+      p_reason: "The store refused the response (22023).",
+    });
+    for (const line of [...repeat.logs, ...refused.logs])
+      for (const secretish of ["owner@citywood.example", "City Wood", "86exc1tyw", "onb0000token0001", ONB_SECRET])
+        expect(line).not.toContain(secretish);
+  });
+
+  test("a termination survey through the old link after the exit survey turned native is still stored as legacy (V16)", async () => {
+    const h = makeHarness();
+    const raw = JSON.stringify(exitDelivery());
+    expect(
+      (
+        await h.post(
+          raw,
+          { "Typeform-Signature": sign(EXIT_SECRET, raw) },
+          EXIT_ROUTE,
+        )
+      ).status,
+    ).toBe(200);
+    expect(h.rpcs("cockpit_form_record_legacy")[0].p.formKey).toBe("exit_survey");
+    expect(h.rpcs("cockpit_form_record_make")).toEqual([]);
+  });
+
+  test("kickoff still needs its Typeform row: a native kickoff row is 404", async () => {
+    const h = harness({ registry: [{ provider: "native", typeform_id: FORM_ID }] });
+    expect((await h.post("{}")).status).toBe(404);
+  });
+});
+
+describe("the golden inputs the backfill matches (scripts/dev/test_forms_legacy_backfill.py reads the same files)", () => {
+  test("makeInput on each recorded payload equals its golden file", () => {
+    for (const [payload, form, golden] of [
+      ["onboarding-response.json", "onboarding", "onboarding-expected.json"],
+      ["new-client-response.json", "new_client", "new-client-expected.json"],
+    ] as const)
+      expect(makeInput(form, fixture(payload).form_response, true)).toEqual(
+        fixture(golden).p,
+      );
   });
 });

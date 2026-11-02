@@ -13,6 +13,8 @@ import {
   type MonthInput,
   mergePrefill,
   rollUp,
+  surveyInviteLine,
+  surveyInviteOf,
   typeNote,
   verdictLine,
 } from "../src/lib/churnCore";
@@ -578,5 +580,84 @@ describe("the confirm's prefill", () => {
       { key: "leftOn", value: "2026-10-18", source: "the churn register" },
       { key: "mrrLostUsd", value: 2000, source: "the churn register" },
     ]);
+  });
+});
+
+// Waves 3-4 (docs/forms/WAVE34-CONTRACT.md 4.4.5, 5.11): the native exit
+// survey's invite on each departure, and its line on the row.
+describe("the exit survey on a departure (5.11)", () => {
+  const day = (d: string | null) => (d ? `${Number(d.slice(8, 10))} Nov` : "");
+  test("Sent by portal or by link, Answered, or Not sent", () => {
+    expect(surveyInviteLine(null, day)).toBe("Not sent");
+    expect(
+      surveyInviteLine(
+        {
+          inviteId: "i",
+          state: "open",
+          channels: ["portal", "whatsapp"],
+          issuedAt: "2026-11-03T07:00:00Z",
+          answeredAt: null,
+        },
+        day,
+      ),
+    ).toBe("Exit survey sent 3 Nov · portal");
+    expect(
+      surveyInviteLine(
+        {
+          inviteId: "i",
+          state: "open",
+          channels: ["whatsapp"],
+          issuedAt: "2026-11-03T07:00:00Z",
+          answeredAt: null,
+        },
+        day,
+      ),
+    ).toBe("Exit survey sent 3 Nov · link");
+    expect(
+      surveyInviteLine(
+        {
+          inviteId: "i",
+          state: "answered",
+          channels: ["whatsapp"],
+          issuedAt: "2026-11-03T07:00:00Z",
+          answeredAt: "2026-11-05T07:00:00Z",
+        },
+        day,
+      ),
+    ).toBe("Exit survey answered 5 Nov");
+  });
+
+  test("the read carries surveyInvite past the schema; a malformed one is left out", () => {
+    const input = read();
+    (input.deps as Record<string, unknown>[])[0] = {
+      ...input.deps[0],
+      surveyInvite: {
+        inviteId: "inv-1",
+        state: "open",
+        channels: ["portal"],
+        issuedAt: "2026-11-02T07:00:00Z",
+        answeredAt: null,
+      },
+    };
+    (input.deps as Record<string, unknown>[])[1] = {
+      ...input.deps[1],
+      surveyInvite: { state: "open" },
+    };
+    const page = buildChurnPage(input);
+    const id0 = Number(input.deps[0].id);
+    const id1 = Number(input.deps[1].id);
+    expect(page.departures.find(d => d.id === id0)?.surveyInvite).toEqual({
+      inviteId: "inv-1",
+      state: "open",
+      channels: ["portal"],
+      issuedAt: "2026-11-02T07:00:00Z",
+      answeredAt: null,
+    });
+    expect(
+      page.departures.find(d => d.id === id1)?.surveyInvite,
+    ).toBeUndefined();
+    expect(surveyInviteOf({ inviteId: "x", state: "weird" })?.state).toBe(
+      "open",
+    );
   });
 });

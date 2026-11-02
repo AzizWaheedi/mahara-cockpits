@@ -6,8 +6,11 @@ import { RpcError } from "../cockpit-hours-sync/db.ts";
 import { makeDoor } from "./door.ts";
 import { sha256 } from "./drafts.ts";
 import {
+  approveInvite,
   approveRecap,
   forReviewer,
+  INVITE_MAX,
+  inviteRefusal,
   MESSAGE_MAX,
   SAY_MESSAGES,
 } from "./messages.ts";
@@ -341,5 +344,68 @@ describe("the door routes recap.approve as a seat op", () => {
       error: "The service key runs the doctor only.",
     });
     expect(f.service.named("cockpit_client_message_approve")).toEqual([]);
+  });
+});
+
+describe("invite.approve (docs/forms/WAVE34-CONTRACT.md 3.9, 4.1.5)", () => {
+  const LINK_BODY = "هلا فريق City Wood، عندنا سؤال سريع من مهارة: شكثر ممكن تنصحون فينا؟ ما ياخذ إلا دقيقة: {form_link}";
+  const STORED_INVITE = { ...STORED, kind: "form_invite", formKey: "nps", owner: "cockpit" };
+  function inviteWorld(o: { state?: string; kind?: string } = {}) {
+    return fakeDeps({
+      seat: {
+        cockpit_client_message_read: {
+          id: MID,
+          kind: o.kind ?? "form_invite",
+          state: o.state ?? "draft",
+          taskId: "86exCITYW",
+          clientName: "City Wood",
+          body: LINK_BODY,
+        },
+      },
+      rpc: { cockpit_forms_actor: csmActor, cockpit_client_message_approve: STORED_INVITE },
+    });
+  }
+  const refused = async (f: ReturnType<typeof inviteWorld>, body: unknown) => {
+    try {
+      await approveInvite(opOf(f.deps), { messageId: MID, body });
+    } catch (e) {
+      return (e as Error).message;
+    }
+    throw new Error("Expected a refusal");
+  };
+
+  test("the exact text keeps {form_link}; its sha256 and the verified seat go to the service RPC", async () => {
+    const f = inviteWorld();
+    expect(await approveInvite(opOf(f.deps), { messageId: MID, body: LINK_BODY })).toEqual({ message: STORED_INVITE, warnings: [] });
+    const call = f.service.named("cockpit_client_message_approve")[0];
+    expect(call?.args).toEqual({ p_id: MID, p_body: LINK_BODY, p_body_sha256: await sha256(LINK_BODY), p_actor: csmActor.actorId, p_warnings: [] });
+  });
+
+  test("the link exactly once, the leads, money and guarantee checks, 1,000 characters", async () => {
+    expect(inviteRefusal(LINK_BODY)).toBeNull();
+    expect(inviteRefusal(LINK_BODY.replace("{form_link}", ""))).toBe(SAY_MESSAGES.inviteLink);
+    expect(inviteRefusal(`${LINK_BODY} {form_link}`)).toBe(SAY_MESSAGES.inviteLink);
+    expect(inviteRefusal(`${LINK_BODY} جبنا لكم ليدز`)).toBe(SAY_MESSAGES.inviteLeads);
+    expect(inviteRefusal(`Your CPL is down {form_link}`)).toBe(SAY_MESSAGES.inviteLeads);
+    expect(inviteRefusal(`It cost $500 this month {form_link}`)).toBe(SAY_MESSAGES.inviteMoney);
+    expect(inviteRefusal(`We guarantee results {form_link}`)).toBe(SAY_MESSAGES.inviteGuarantee);
+    expect(inviteRefusal(`نضمن لكم {form_link}`)).toBe(SAY_MESSAGES.inviteGuarantee);
+    expect(inviteRefusal(`${"a".repeat(INVITE_MAX - 10)} {form_link}`)).toBe(SAY_MESSAGES.inviteTooLong);
+    expect(inviteRefusal("   ")).toBe(SAY_MESSAGES.inviteNoText);
+    const f = inviteWorld();
+    expect(await refused(f, LINK_BODY.replace("{form_link}", "https://portal.maharamedia.com/f#f1abc"))).toBe(SAY_MESSAGES.inviteLink);
+    expect(f.service.named("cockpit_client_message_approve")).toHaveLength(0);
+  });
+
+  test("each op refuses the other's kind, and a message no longer waiting", async () => {
+    expect(await refused(inviteWorld({ kind: "recap_checkin" }), LINK_BODY)).toBe("Approve recaps from the Messages card.");
+    expect(await refused(inviteWorld({ state: "approved" }), LINK_BODY)).toBe(SAY_MESSAGES.inviteNotDraft);
+    const f = inviteWorld();
+    try {
+      await approveRecap(opOf(f.deps), { messageId: MID, body: LINK_BODY });
+      throw new Error("Expected a refusal");
+    } catch (e) {
+      expect((e as Error).message).toBe("Approve a form link from Send a form.");
+    }
   });
 });

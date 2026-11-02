@@ -278,9 +278,12 @@ class FormsKey(unittest.TestCase):
             "typeform kickoff: not saved",
             "typeform exit_survey: not saved",
             "typeform pause_request: not saved",
+            "typeform onboarding: not saved",
+            "typeform new_client: not saved",
         ])
         self.assertEqual([r["p_provider"] for r in self.net.rpcs("cockpit_forms_key_get")],
-                         [*fk.PROVIDERS, "typeform_kickoff", "typeform_exit_survey", "typeform_pause_request"])
+                         [*fk.PROVIDERS, "typeform_kickoff", "typeform_exit_survey", "typeform_pause_request",
+                          "typeform_onboarding", "typeform_new_client"])
         self.assertEqual(self.net.provider_calls(), [])
         self.assertEqual(self.net.receipts(), [])
 
@@ -642,10 +645,11 @@ class FormsKey(unittest.TestCase):
 
     def test_a_form_other_than_kickoff_exits_2_before_anything_is_read(self):
         for args in (("typeform-secret", "checkin"), ("register-typeform", "blueprint"), ("probe-typeform", "KICKOFF"),
-                     ("unregister-typeform", "onboarding"), ("register-typeform",)):
+                     ("unregister-typeform", "nps"), ("register-typeform", "csat"), ("register-typeform",)):
             code, out = self.run_cmd(*args)
             self.assertEqual(code, 2)
-            self.assertEqual(out.strip(), "Name kickoff, exit_survey or pause_request: only these forms have a cockpit webhook.")
+            self.assertEqual(out.strip(), "Name kickoff, exit_survey, pause_request, onboarding or new_client: only these "
+                                          "forms have a cockpit webhook.")
         self.assertEqual(self.net.requests, [])
 
     def test_typeform_secret_saves_32_random_bytes_and_never_prints_them(self):
@@ -959,6 +963,55 @@ class FormsKey(unittest.TestCase):
         posts = self.net.made(f"{DB}/functions/v1/forms-door/typeform/pause_request", "POST")
         self.assertEqual(len(posts), 2)
         self.assertEqual([r["p_provider"] for r in self.net.rpcs("cockpit_forms_key_get")], ["typeform_pause_request"])
+
+
+    # ------------------------------------------------------------- the two Make forms (waves 3-4, 4.7 and 4.8)
+
+    def test_typeform_secret_saves_onboarding_and_the_new_client_form_under_their_own_providers(self):
+        for form in ("onboarding", "new_client"):
+            code, out = self.run_cmd("typeform-secret", form)
+            self.assertEqual(code, 0, out)
+            self.assertIn(f"Next: register-typeform {form}.", out)
+        puts = [r["p"] for r in self.net.rpcs("cockpit_forms_key_put")]
+        self.assertEqual([p["provider"] for p in puts], ["typeform_onboarding", "typeform_new_client"])
+        self.assertNotEqual(puts[0]["secret"], puts[1]["secret"])
+        for p in puts:
+            self.assertNotIn(p["secret"], out)
+        self.assertEqual(self.net.provider_calls(), [])
+
+    def test_register_typeform_new_client_reads_every_other_webhook_before_and_after_and_touches_none(self):
+        # The New Client Form's four other webhooks (Cortana, Make 4014052, HighLevel and the old Make hook): read, never
+        # changed (D-NCF). Nothing here submits the form.
+        self.net.registry = [{"provider": "typeform", "typeform_id": "BTzMwXiw"}]
+        others = [
+            {"id": "01HCORTANA", "form_id": "BTzMwXiw", "tag": "cortana", "url": "https://cortana.invalid/hook", "enabled": True, "verify_ssl": True},
+            {"id": "01HMAKE1", "form_id": "BTzMwXiw", "tag": "WHTP4014052", "url": "https://hook.eu1.make.com/invented-1", "enabled": True, "verify_ssl": True},
+            {"id": "01HGHL", "form_id": "BTzMwXiw", "tag": "highlevel", "url": "https://services.leadconnectorhq.com/invented", "enabled": True, "verify_ssl": True},
+            {"id": "01HMAKE2", "form_id": "BTzMwXiw", "tag": "WHTP4096881", "url": "https://hook.eu1.make.com/invented-2", "enabled": True, "verify_ssl": True},
+        ]
+        self.net.hooks = [dict(h) for h in others]
+        self.net.keys["typeform_new_client"] = {**self.exit_row(), "provider": "typeform_new_client", "secret": EXIT_SECRET,
+                                                "meta": {"form": "new_client", "tag": "cockpit"}}
+        code, out = self.run_cmd("register-typeform", "new_client")
+        self.assertEqual(code, 0, out)
+        [put] = self.net.made("https://api.typeform.com/forms/BTzMwXiw/webhooks/cockpit", "PUT")
+        self.assertEqual(put["json"]["url"], f"{DB}/functions/v1/forms-door/typeform/new_client")
+        self.assertEqual(put["json"]["event_types"], {"form_response": True})
+        self.assertEqual([h for h in self.net.hooks if h["tag"] != "cockpit"], others)
+        self.assertEqual(len(self.net.made("https://api.typeform.com/forms/BTzMwXiw/webhooks", "GET")), 2)
+        self.assertEqual([r for r in self.net.requests if r["method"] == "POST" and "typeform.com/forms/BTzMwXiw/responses" in r["url"]], [])
+        [mark] = self.net.rpcs("cockpit_forms_key_mark")
+        self.assertEqual((mark["p"]["provider"], mark["p"]["state"]), ("typeform_new_client", "connected"))
+        self.assertIn("4 other webhooks of the form unchanged. Next: probe-typeform new_client.", out)
+        self.assertNotIn(EXIT_SECRET, out)
+
+    def test_probe_typeform_checks_the_onboarding_door_with_its_own_key(self):
+        self.net.keys["typeform_onboarding"] = {**self.exit_row(), "provider": "typeform_onboarding",
+                                                "secret": PAUSE_SECRET, "last4": PAUSE_SECRET[-4:]}
+        code, out = self.run_cmd("probe-typeform", "onboarding")
+        self.assertEqual(code, 0, out)
+        self.assertIn("forms-door checks the onboarding form's signature.", out)
+        self.assertEqual(len(self.net.made(f"{DB}/functions/v1/forms-door/typeform/onboarding", "POST")), 2)
 
 
 if __name__ == "__main__":

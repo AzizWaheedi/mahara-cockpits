@@ -1526,6 +1526,109 @@ describe("inside the billing sheet", () => {
   });
 });
 
+describe("the client's voice in the billing log: survey and nps_sent (review W34)", () => {
+  const read = billingRead("confirmed", NOW);
+  const tables = sheetTables(read);
+  const sheetApiOf = (events: any[]): BillingApi => ({
+    sheet: async () =>
+      buildSheet(tables.accounts.map(accountFrom), events, tables.inbox, "2026-10-23"),
+    edit: async a =>
+      accountFrom(tables.accounts.find(x => x.clickup_task_id === a.taskId) as any),
+    logPayment: async () => "Logged.",
+    ledgerLine: "It goes straight into the ledger.",
+  });
+  // The first account the sheet lists as a row of its own.
+  const shown = () =>
+    tables.accounts.find(a =>
+      win.document.getElementById(`billing-row-${a.clickup_task_id}`),
+    ) as any;
+  const voice = (id: number, task: any, kind: string, at: string, extra: any) => ({
+    id,
+    clickup_task_id: task.clickup_task_id,
+    client_name: task.client_name,
+    kind,
+    from_value: null,
+    source: "system",
+    by_whom: "the cockpit",
+    at,
+    ...extra,
+  });
+  const money = (id: number, task: any, n: number) => ({
+    id,
+    clickup_task_id: task.clickup_task_id,
+    client_name: task.client_name,
+    kind: "note",
+    from_value: null,
+    to_value: null,
+    reason: `Money note ${n}`,
+    detail: {},
+    source: "ceo",
+    by_whom: "ceo@example.test",
+    // Newest first: note 1 is the newest, note 30 the oldest.
+    at: new Date(Date.parse("2026-10-22T23:00:00Z") - n * 60_000).toISOString(),
+  });
+  async function renderWith(task: any) {
+    const events = [
+      voice(901, task, "nps_sent", "2026-10-23T09:00:00Z", {
+        to_value: "2026-10-23",
+        reason: "NPS survey sent",
+        detail: { invite_id: "i-1", on: "2026-10-23", round: 2 },
+      }),
+      voice(902, task, "survey", "2026-10-23T08:00:00Z", {
+        to_value: null,
+        reason: "Exit survey answered",
+        detail: { form_key: "exit_survey", notice_on: "2026-10-20", via: "portal" },
+      }),
+      ...[3, 4, 5, 6, 7, 8, 9, 10].map(i =>
+        voice(900 + i, task, i % 2 ? "survey" : "nps_sent", `2026-10-23T0${(i % 7) + 1}:00:00Z`, {
+          to_value: i % 2 ? null : "2026-10-23",
+          reason: null,
+          detail: i % 2 ? {} : { on: "2026-10-23" },
+        }),
+      ),
+      ...Array.from({ length: 30 }, (_, i) => money(i + 1, task, i + 1)),
+    ];
+    await render(h(BillingSheet, { api: sheetApiOf(events) }));
+  }
+
+  test("both kinds read as plain sentences, never the raw kind", async () => {
+    await render(h(BillingSheet, { api: sheetApiOf([]) }));
+    const task = shown();
+    expect(task).toBeTruthy();
+    await renderWith(task);
+    const t = page();
+    expect(t).toContain(
+      "The cockpit sent the NPS survey (round 2); NPS Survey Sent is set to 23 Oct on the card.",
+    );
+    expect(t).toContain(
+      "The client answered the exit survey (notice received 20 Oct); the answers are posted on the card.",
+    );
+    expect(t).not.toMatch(/: (nps_sent|survey)[.,]/);
+  });
+
+  test("survey and NPS rows never push a money act out of the log's 30 or a client's last 8", async () => {
+    await render(h(BillingSheet, { api: sheetApiOf([]) }));
+    const task = shown();
+    await renderWith(task);
+    // The global log: all 30 money notes still show beside the ten voice rows.
+    expect(page()).toContain("Money note 30");
+    // The client's own list: its 8 newest money notes, the voice rows besides.
+    await click(
+      win.document
+        .getElementById(`billing-row-${task.clickup_task_id}`)
+        ?.querySelector("button"),
+    );
+    const row = win.document.getElementById(`billing-row-${task.clickup_task_id}`);
+    const items = [...(row?.querySelectorAll("li") ?? [])].map((x: any) =>
+      String(x.textContent),
+    );
+    const notes = items.filter(x => /Money note \d+$/.test(x));
+    expect(notes).toHaveLength(8);
+    expect(notes.at(-1)).toContain("Money note 8");
+    expect(items.some(x => x.includes("sent the NPS survey"))).toBe(true);
+  });
+});
+
 describe("a receipt logged by hand that nobody has checked (20261101n)", () => {
   const castello = () => rowOf(/^Castello Industries$/);
   const dealOf = (read: BalancesRead) =>

@@ -10,6 +10,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { AnswerSheet, SendFormSheet } from "@/components/ClientForms";
 import {
   Chip,
   Kicker,
@@ -35,7 +36,6 @@ import {
   answerNotice,
   confirmChurn,
   type Doors,
-  formDoors,
   formPrefill,
   formTrail,
   matchLegacy,
@@ -64,10 +64,17 @@ import {
   PROGRAMME_DAYS,
   type PrefillLine,
   SURVEY_WORDS,
+  surveyInviteLine,
   TARGET_PCT,
   typeNote,
   verdictLine,
 } from "@/lib/churnCore";
+import {
+  formsIO,
+  type MoreDoors,
+  NO_MORE_DOORS,
+  readAllDoors,
+} from "@/lib/clientForms";
 import { plural, shortDay } from "@/lib/format";
 import { readRequestTypes } from "@/lib/requestsClient";
 import { cn } from "@/lib/utils";
@@ -187,12 +194,22 @@ export function ChurnPage({ embedded = false }: { embedded?: boolean }) {
   const [opened, setOpened] = useState(0);
   const [prefill, setPrefill] = useState<PrefillState | null>(null);
   const [ticket, setTicket] = useState<TicketTarget | null>(null);
+  // Waves 3-4 (WAVE34-CONTRACT.md 5.11): Send exit survey, once invites are live.
+  const [more, setMore] = useState<MoreDoors>(NO_MORE_DOORS);
+  const fio = useMemo(() => (client ? formsIO(client) : null), [client]);
+  const [surveyFor, setSurveyFor] = useState<{
+    taskId: string;
+    name: string;
+  } | null>(null);
+  const [answerFor, setAnswerFor] = useState<string | null>(null);
 
   useEffect(() => {
     if (!client) return;
     let live = true;
-    void formDoors(client).then(d => {
-      if (live) setDoors(d);
+    void readAllDoors(client).then(d => {
+      if (!live) return;
+      setDoors(d.doors);
+      setMore(d.more);
     });
     return () => {
       live = false;
@@ -474,6 +491,13 @@ export function ChurnPage({ embedded = false }: { embedded?: boolean }) {
       <Register
         departures={page.departures}
         canConfirm={doors.churnConfirm}
+        surveyDoor={more.invites}
+        onSendSurvey={d =>
+          d.clickupTaskId
+            ? setSurveyFor({ taskId: d.clickupTaskId, name: d.client })
+            : undefined
+        }
+        onReadSurvey={setAnswerFor}
         onConfirm={d =>
           d.clickupTaskId
             ? openConfirm({
@@ -561,6 +585,22 @@ export function ChurnPage({ embedded = false }: { embedded?: boolean }) {
             return { message: r.message, ref: r.ref };
           }}
           trail={ref => formTrail(client, ref)}
+          afterSent={
+            more.invites ? (
+              <button
+                type="button"
+                className="fs-btn fs-btn-quiet"
+                data-send-exit-survey
+                onClick={() => {
+                  const c = confirming;
+                  setConfirming(null);
+                  setSurveyFor({ taskId: c.taskId, name: c.name });
+                }}
+              >
+                Send exit survey
+              </button>
+            ) : undefined
+          }
           onTicket={
             ticketTypes.has("client_offboarding")
               ? type =>
@@ -578,6 +618,21 @@ export function ChurnPage({ embedded = false }: { embedded?: boolean }) {
           onSent={() => void refresh()}
         />
       ) : null}
+
+      <SendFormSheet
+        io={fio}
+        open={surveyFor !== null}
+        taskId={surveyFor?.taskId ?? ""}
+        clientName={surveyFor?.name ?? ""}
+        preset={{ formKey: "exit_survey", origin: "churn" }}
+        onClose={() => setSurveyFor(null)}
+        onSent={() => void refresh()}
+      />
+      <AnswerSheet
+        io={fio}
+        responseId={answerFor}
+        onClose={() => setAnswerFor(null)}
+      />
 
       <Sheet
         open={ticket !== null}
@@ -1383,15 +1438,65 @@ function ConfirmButton({
   );
 }
 
+/** The native exit survey on a departure (5.11): where it stands, then Send or Read. */
+function SurveyCell({
+  d,
+  onSend,
+  onRead,
+}: {
+  d: Departure;
+  onSend: () => void;
+  onRead?: (responseId: string) => void;
+}) {
+  const si = d.surveyInvite ?? null;
+  const answered = si?.state === "answered" || Boolean(si?.answeredAt);
+  const responseId = d.confirm?.surveyResponseId ?? null;
+  const canSend = !si || si.state === "withdrawn" || si.state === "expired";
+  return (
+    <span
+      className="flex min-w-0 flex-col items-start gap-1 sm:items-end"
+      data-survey-cell
+    >
+      <span className="font-mono text-[11px] text-muted-foreground">
+        {surveyInviteLine(si, x => shortDay(x))}
+      </span>
+      <span className="flex flex-wrap gap-2">
+        {canSend ? (
+          <Button type="button" size="sm" variant="outline" onClick={onSend}>
+            Send exit survey
+          </Button>
+        ) : null}
+        {answered && responseId && onRead ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => onRead(responseId)}
+          >
+            Read the answer
+          </Button>
+        ) : null}
+      </span>
+    </span>
+  );
+}
+
 function Register({
   departures,
   canConfirm,
+  surveyDoor = false,
+  onSendSurvey,
+  onReadSurvey,
   onConfirm,
   onEdit,
   onAdd,
 }: {
   departures: Departure[];
   canConfirm: boolean;
+  /** The native exit survey is open to send (doors.invites, 5.11). */
+  surveyDoor?: boolean;
+  onSendSurvey?: (d: Departure) => void;
+  onReadSurvey?: (responseId: string) => void;
   onConfirm: (d: Departure) => void;
   onEdit: (d: Departure) => void;
   onAdd: () => void;
@@ -1414,15 +1519,10 @@ function Register({
               : ""}
           </p>
         </div>
-        {canConfirm ? (
-          <div className="flex flex-col items-start gap-1 sm:items-end">
-            <Button type="button" size="sm" variant="outline" disabled>
-              Send exit survey
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              Client forms come with the client portal.
-            </span>
-          </div>
+        {canConfirm && !surveyDoor ? (
+          <span className="text-xs text-muted-foreground">
+            Send exit survey: Opens after the next cockpit update.
+          </span>
         ) : null}
       </div>
       {departures.length ? (
@@ -1529,6 +1629,13 @@ function Register({
                         </span>
                       ) : null}
                     </span>
+                  ) : null}
+                  {surveyDoor && canConfirm && d.clickupTaskId ? (
+                    <SurveyCell
+                      d={d}
+                      onSend={() => onSendSurvey?.(d)}
+                      onRead={onReadSurvey}
+                    />
                   ) : null}
                   {c && canConfirm && !c.confirmedAt ? (
                     <ConfirmButton onClick={() => onConfirm(d)} />

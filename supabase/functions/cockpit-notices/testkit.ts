@@ -309,3 +309,28 @@ export function lifecycleRow(kind: string, over: Partial<ClaimedRow> & { id?: st
     ...over,
   });
 }
+
+export const NPS_FEEDBACK = "C09TTGBRQ0G";
+
+/** A claimed client form notice (waves 3-4, 3.4): its facts as the hooks queue them, its live rule true. */
+export function clientFormRow(kind: string, over: Partial<ClaimedRow> & { id?: string } = {}): Record<string, unknown> {
+  const facts: Record<string, Record<string, unknown>> = {
+    "pause.consent": { responseId: ID(70), submittedAt: minutesAgo(2), client: "Acme Interiors", datesWrong: false },
+    "nps.received": { responseId: ID(71), submittedAt: minutesAgo(2), client: "Acme Interiors", score: 9, results: 8 },
+    "csat.received": { responseId: ID(72), submittedAt: minutesAgo(2), client: "Acme Interiors", score: 7 },
+    "voice.low": { responseId: ID(73), submittedAt: minutesAgo(2), client: "Acme Interiors", score: 5, form: "nps" },
+    "feedback.received": { responseId: ID(74), submittedAt: minutesAgo(2), client: "Acme Interiors", feedbackKind: "idea", topic: "portal" },
+    "legacy.received": { responseId: ID(75), submittedAt: minutesAgo(2), form: "nps", matched: false },
+  };
+  const toNps = kind === "nps.received" || kind === "csat.received";
+  return claimed({
+    kind: kind as ClaimedRow["kind"],
+    clientName: kind === "legacy.received" ? null : "Acme Interiors",
+    taskId: kind === "legacy.received" ? null : "task0001",
+    target: toNps ? NPS_FEEDBACK : CSM_GENERAL,
+    facts: facts[kind] ?? {},
+    live: { stillTrue: true },
+    mentions: { main: ["pause.consent", "voice.low", "feedback.received"].includes(kind) ? [CSM] : [] },
+    ...over,
+  });
+}

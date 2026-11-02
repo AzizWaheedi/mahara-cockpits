@@ -8,7 +8,13 @@
  * Shared byte for byte by the client success and CEO cockpits.
  */
 
-import type { Answers, FieldDef, FormDef, FormKey } from "./formSheetCore";
+import type {
+  Answers,
+  FieldDef,
+  FormDef,
+  FormKey,
+  PauseConsent,
+} from "./formSheetCore";
 import { addDays, daysBetween, kuwaitDay, usd } from "./formSheetCore";
 
 /** The extension's client limitations, the cockpit's own list in this order (W17). */
@@ -463,6 +469,51 @@ export function extensionDef(liveUntil: string | null | undefined): FormDef {
     ...extension,
     title: "Add to the extension",
     lede: `An extension runs to ${kuwaitDay(liveUntil)}; these weeks add from that date.`,
+  };
+}
+
+/**
+ * The pause once the client signs it in the portal or by link
+ * (WAVE34-CONTRACT.md 4.3.6, 5.2): for a client request the two ticks give
+ * way to the sheet's consent row (FormSheet `after`), the action reads
+ * Confirm pause, and a restart other than the signed one is refused in the
+ * database's words. The field keys stay the registry's (W19); a
+ * non-payment pause is unchanged.
+ */
+export function pauseConsentDef(consent: PauseConsent | null): FormDef {
+  return {
+    ...pause,
+    submitLabel: a =>
+      isClientRequest(a) ? "Confirm pause" : "Pause this client",
+    fields: pause.fields.map(f => {
+      if (f.key === "consentTerm" || f.key === "consentOver14")
+        return { ...f, required: false, showIf: () => false };
+      if (f.key === "restart")
+        return {
+          ...f,
+          check: (v, a, today) => {
+            if (String(v) <= today)
+              return "Pick the restart date, after today.";
+            if (
+              isClientRequest(a) &&
+              consent?.state === "signed" &&
+              consent.restart &&
+              String(v) !== consent.restart
+            )
+              return `The client signed a restart of ${kuwaitDay(consent.restart)}. Use that date or send a new consent.`;
+            // The pause runs from today; a later signed start waits for its day (the database refuses it too).
+            if (
+              isClientRequest(a) &&
+              consent?.state === "signed" &&
+              consent.start &&
+              consent.start > today
+            )
+              return `The client signed a pause from ${kuwaitDay(consent.start)}. Confirm it on that day or send a new consent.`;
+            return null;
+          },
+        };
+      return f;
+    }),
   };
 }
 

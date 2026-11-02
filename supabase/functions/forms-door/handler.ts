@@ -1,6 +1,7 @@
 // forms-door's one route (docs/forms/STAGE2B-CONTRACT.md 4.8, build 8;
-// docs/forms/WAVE12-CONTRACT.md 4.4; README.md here). Typeform posts each
-// response of three forms, each signed with its own secret saved at
+// docs/forms/WAVE12-CONTRACT.md 4.4; docs/forms/WAVE34-CONTRACT.md 4.7 and
+// 4.8; README.md here). Typeform posts each response of five forms, each
+// signed with its own secret saved at
 // registration (scripts/dev/forms_key.py register-typeform {form}), which the
 // vault keeps (cockpit_forms_key_get('typeform_{form}')):
 //
@@ -16,7 +17,20 @@
 //   sits in a public link, so the database keeps the match as
 //   hidden_id_unverified and never attaches the survey to a departure (a
 //   person does). It queues the "Termination notice in" for the CSM; a pause
-//   request is a row on Today. No card field changes (D11).
+//   request is a row on Today. No card field changes (D11). Once the exit
+//   survey turns native (C4b) its registry row keeps the Typeform id, so an
+//   answer through the old link is still stored here, and the database posts
+//   "Old form link used" (V16).
+// - onboarding (the client's onboarding form, KFRCXPFx) and new_client (the
+//   New Client Form, BTzMwXiw), waves 3-4 (C6, 4.8): Make owns every effect of
+//   both; the door only records them through cockpit_form_record_make (no
+//   notice, V23). An onboarding answer is shaped by the onboarding sync's own
+//   mapping (formsFor in apps/client-success-cockpit/src/lib/onboardingCore.ts,
+//   imported, never copied: one response, no Typeform API call), so the
+//   onboarding read model gets the same entry the 10-minute read writes. The
+//   New Client Form keeps the legacy forms' mapping, less every email and
+//   phone, and its three hidden ids (contact_id, closer, setter). Nothing here
+//   ever submits a form.
 //
 // It never delivers anything itself. Everything that touches the network or
 // the clock comes in through Deps, so `bun test` runs it offline.
@@ -41,6 +55,12 @@
 // fields (client_name, onboarding_client_id) are kept.
 
 import {
+  FORMS,
+  type FormData,
+  formEntry,
+  formsFor,
+} from "../../../apps/client-success-cockpit/src/lib/onboardingCore.ts";
+import {
   fieldTitles,
   formAnswers,
   recordingIn,
@@ -59,15 +79,29 @@ export type Deps = {
 
 /**
  * The forms with a cockpit webhook: kickoff since 2b (Z58), the termination survey and the pause request since waves
- * 1-2 (4.4). The checkin row also has a typeform_id and provider typeform, so the door names its forms itself.
+ * 1-2 (4.4), client onboarding and the New Client Form since waves 3-4 (4.7, 4.8). The checkin row also has a
+ * typeform_id and provider typeform, so the door names its forms itself.
  */
-export const FORM_KEYS = ["kickoff", "exit_survey", "pause_request"] as const;
+export const FORM_KEYS = [
+  "kickoff",
+  "exit_survey",
+  "pause_request",
+  "onboarding",
+  "new_client",
+] as const;
 export type FormKey = (typeof FORM_KEYS)[number];
 /** The two forms stored as legacy responses (cockpit_form_record_legacy), not through kickoff's store. */
 export const LEGACY_FORMS: ReadonlySet<string> = new Set([
   "exit_survey",
   "pause_request",
 ]);
+/** The two live Typeforms Make owns, recorded only (cockpit_form_record_make, waves 3-4 4.7 and 4.8). */
+export const MAKE_FORMS: ReadonlySet<string> = new Set([
+  "onboarding",
+  "new_client",
+]);
+/** The New Client Form's hidden fields (cockpit_sales_client_forms.hidden): the lead and who sent it. */
+const NEW_CLIENT_HIDDEN = ["contact_id", "closer", "setter"] as const;
 /** Answer and field types that carry a person's email or phone: never stored from the two client forms. */
 const CONTACT_TYPES = new Set(["email", "phone_number", "contact_info"]);
 /** The only hidden fields the two client forms set (inventory 3.3, 3.4). */
@@ -257,6 +291,96 @@ export function legacyInput(
   };
 }
 
+/** A delivery's hidden object, or an empty one. */
+function hiddenOf(response: Row): Row {
+  return response.hidden &&
+    typeof response.hidden === "object" &&
+    !Array.isArray(response.hidden)
+    ? response.hidden
+    : {};
+}
+
+/** The named hidden fields only, each a trimmed non-empty string. */
+function pickHidden(given: Row, keys: readonly string[]): Row {
+  const out: Row = {};
+  for (const k of keys) {
+    const v = typeof given[k] === "string" ? given[k].trim() : "";
+    if (v) out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * The client onboarding answer as the onboarding sync shapes it (4.7.2): a FormData of this one response and its
+ * definition, through formsFor for the card the hidden onboarding_client_id names, so the stored answers equal the
+ * entry the 10-minute read writes into cockpit_client_onboarding.forms.onboarding. A response with no card id is
+ * shaped by the same file's formEntry. No Typeform API call: the webhook carries the definition.
+ */
+export function onboardingAnswers(response: Row): {
+  taskId: string | null;
+  answers: unknown[];
+} {
+  const hidden = pickHidden(hiddenOf(response), [
+    "onboarding_client_id",
+    "client_name",
+  ]);
+  const taskId =
+    typeof hidden.onboarding_client_id === "string" &&
+    CARD_ID.test(hidden.onboarding_client_id)
+      ? hidden.onboarding_client_id
+      : null;
+  const definition = response.definition ?? {};
+  if (taskId) {
+    const data: FormData = {
+      definitions: { onboarding: definition },
+      responses: { onboarding: [response] },
+    };
+    const entry = formsFor(taskId, data).onboarding;
+    if (entry) return { taskId, answers: entry.answers };
+  }
+  return {
+    taskId,
+    answers: formEntry(FORMS.onboarding, definition, response).answers,
+  };
+}
+
+/**
+ * cockpit_form_record_make's input for client onboarding or the New Client Form (4.7.3): the answers as {fields: [...]},
+ * each form's own hidden fields, the card from onboarding's hidden id (the database keeps it only when it mirrors the
+ * card). The New Client Form keeps the legacy mapping less every email and phone answer, and no card (Make makes it).
+ */
+export function makeInput(
+  formKey: string,
+  response: Row,
+  backfill = false,
+): Row {
+  const base = {
+    formKey,
+    externalId: String(response.token ?? response.response_id ?? ""),
+    submittedAt: String(response.submitted_at ?? ""),
+    backfill,
+  };
+  if (formKey === "onboarding") {
+    const { taskId, answers } = onboardingAnswers(response);
+    return {
+      ...base,
+      answers: { fields: answers },
+      hidden: pickHidden(hiddenOf(response), [
+        "client_name",
+        "onboarding_client_id",
+      ]),
+      taskId,
+    };
+  }
+  const legacy = legacyInput(formKey, response, backfill);
+  return {
+    ...base,
+    answers: legacy.answers,
+    hidden: pickHidden(hiddenOf(response), NEW_CLIENT_HIDDEN),
+    taskId: null,
+  };
+}
+
 export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
   const env = (n: string) => (deps.env(n) ?? "").trim();
   let door: Rpc | null = null;
@@ -374,7 +498,8 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       await seen(outcome, reason);
     };
 
-    // The form must still be filled in Typeform: the registry row with its typeform_id and provider typeform.
+    // The form must still be filled in Typeform: the registry row with its typeform_id and provider typeform. A legacy
+    // form that turned native keeps its Typeform id, so an answer through the old link is still kept (V16).
     let registry: Row | null;
     try {
       registry = await registryOf(formKey);
@@ -383,7 +508,10 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     }
     const formId =
       typeof registry?.typeform_id === "string" ? registry.typeform_id : "";
-    if (!formId || registry?.provider !== "typeform")
+    const filledInTypeform =
+      registry?.provider === "typeform" ||
+      (registry?.provider === "native" && LEGACY_FORMS.has(formKey));
+    if (!formId || !filledInTypeform)
       return answer("not_typeform", 404, { ok: false });
 
     // Nothing of the body is read before the signature holds: no key, or a key that cannot be read, is a 503.
@@ -438,16 +566,19 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       return answer("ignored", 202, { ignored: true });
     }
     try {
-      // Kickoff keeps its 2b store; the two client forms are legacy records (3.1).
-      const legacy = LEGACY_FORMS.has(formKey);
+      // Kickoff keeps its 2b store; the two client forms are legacy records (3.1); the two Make forms are records only.
       const out = (
-        legacy
+        LEGACY_FORMS.has(formKey)
           ? await db("cockpit_form_record_legacy", {
               p: legacyInput(formKey, response),
             })
-          : await db("cockpit_form_record_typeform", {
-              p: recordInput(formKey, response),
-            })
+          : MAKE_FORMS.has(formKey)
+            ? await db("cockpit_form_record_make", {
+                p: makeInput(formKey, response),
+              })
+            : await db("cockpit_form_record_typeform", {
+                p: recordInput(formKey, response),
+              })
       ) as Row | null;
       if (typeof out?.inserted !== "boolean")
         throw new Error("The record RPC answered without inserted");

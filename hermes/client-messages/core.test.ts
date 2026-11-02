@@ -9,6 +9,7 @@ import {
   groupVerdict,
   jitterMs,
   last4,
+  maskInviteLink,
   normalise,
   sha256,
   sheetShape,
@@ -209,5 +210,22 @@ describe("matching a sent text again, and the wait", () => {
     expect(last4(G1)).toBe("0001");
     expect(last4("12")).toBeNull();
     expect(last4(null)).toBeNull();
+  });
+});
+
+describe("maskInviteLink (docs/forms/WAVE34-CONTRACT.md 4.1.6)", () => {
+  const token = `f1${"Zz9_-".repeat(8)}abc`;
+  test("a sent form link reads back as its placeholder, every time it appears", () => {
+    expect(maskInviteLink(`Answer here: https://portal.maharamedia.com/f#${token}`)).toBe("Answer here: {form_link}");
+    expect(sha256(normalise(maskInviteLink(`x https://portal.maharamedia.com/f#${token} `)))).toBe(sha256(normalise("x {form_link}")));
+  });
+  test("anything that is not a whole minted link is left as it is", () => {
+    for (const t of [
+      "https://portal.maharamedia.com/f#f1short",
+      `https://portal.maharamedia.com/f/${token}`,
+      `https://example.test/f#${token}`,
+      "no link at all",
+    ])
+      expect(maskInviteLink(t)).toBe(t);
   });
 });

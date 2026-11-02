@@ -17,6 +17,7 @@ import {
 import {
   ACTION_DEADLINE_MS,
   answerBy,
+  isRecap,
   MESSAGES_FAILED,
   type MessagesIO,
   type MessageView,
@@ -170,7 +171,10 @@ export function ClientMessages({
     () => given ?? (auth.client ? messagesIO(auth.client) : null),
     [given, auth.client],
   );
-  const read = useClientMessages(io, taskId, { ...poll, clock });
+  const all = useClientMessages(io, taskId, { ...poll, clock });
+  // A form link's message is approved from Send a form and Forms out
+  // (WAVE34-CONTRACT.md 5.1, 5.2), so the recap card leaves it out.
+  const read = { ...all, messages: all.messages.filter(isRecap) };
   const now = clock.now();
   const stopped = (m: MessageView) => read.stopped && onItsWay(m, now);
   // The last action's sentence and the row it was about, as the action
@@ -312,7 +316,7 @@ export function RecapsWaiting({
     ).then(
       list => {
         if (!live) return;
-        setRows(list);
+        setRows(list.filter(isRecap));
         setFailed(false);
       },
       () => {

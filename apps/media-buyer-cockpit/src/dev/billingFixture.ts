@@ -327,6 +327,16 @@ function rowsQuery(rows: () => Row[]) {
       steps.push(r => r.filter(x => x[col] === v));
       return q;
     },
+    // The billing log reads money acts and the client's voice apart (billing.ts).
+    in: (col: string, vs: unknown[]) => {
+      steps.push(r => r.filter(x => vs.includes(x[col])));
+      return q;
+    },
+    not: (col: string, op: string, v: string) => {
+      const vs = op === "in" ? v.replace(/^\(|\)$/g, "").split(",") : [v];
+      steps.push(r => r.filter(x => !vs.includes(String(x[col]))));
+      return q;
+    },
     // biome-ignore lint/suspicious/noThenProperty: a thenable like supabase-js's builder
     then: (resolve: (a: Answer) => unknown) => {
       out = steps.reduce((r, f) => f(r), rows());

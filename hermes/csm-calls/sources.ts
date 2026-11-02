@@ -63,6 +63,78 @@ export const FORMS: Record<string, string> = {
   // Needs 20261101q_readers.sql live (the form_id and form_kind CHECKs) before this worker is released.
   knIe4eF3: "exit_survey",
 };
+/**
+ * The client's own answers in the cockpit (waves 3-4, docs/forms/WAVE34-CONTRACT.md 4.6.5): NPS, the onboarding survey
+ * and portal feedback join the client's timeline beside the Typeform forms. They are read from cockpit_form_responses
+ * (live, submitted or confirmed, on a card; canary answers never) and stored in the call store under their own form ids,
+ * matched by the cockpit (matched_by cockpit_form). Needs 20261102c live (the widened form_id and form_kind CHECKs): until
+ * its marker forms.doors.voice reads true, nothing is read or written. The labels are the forms' English questions.
+ */
+export const NATIVE_FORMS: Record<string, { formId: string; labels: [key: string, title: string, type: string][] }> = {
+  nps: {
+    formId: "cockpit-nps",
+    labels: [
+      ["recommend", "How likely are you to recommend Mahara to a friend or another business owner?", "opinion_scale"],
+      ["results", "How happy are you with the results so far?", "opinion_scale"],
+      ["communication", "How is communication with your Mahara team?", "opinion_scale"],
+      ["startStop", "What should we start or stop doing?", "long_text"],
+    ],
+  },
+  csat: {
+    formId: "cockpit-csat",
+    labels: [
+      ["onboarding", "How would you rate getting started with Mahara?", "opinion_scale"],
+      ["liked", "What did you like?", "long_text"],
+      ["disliked", "What could we have done better?", "long_text"],
+    ],
+  },
+  portal_feedback: {
+    formId: "cockpit-feedback",
+    labels: [
+      ["kind", "Kind of feedback", "multiple_choice"],
+      ["topic", "About", "multiple_choice"],
+      ["rating", "Rating (1 to 5)", "rating"],
+      ["message", "Message", "long_text"],
+      ["contactOk", "Happy to be contacted", "yes_no"],
+    ],
+  },
+};
+
+/** The native answers as call-store rows, or none (with the reason in the count) before 20261102c is live. */
+export async function readNativeForms(ctx: Ctx): Promise<{ rows: Row[]; count: Row }> {
+  const doors = await ctx.db.all("cockpit_settings", "select=value&key=eq.forms.doors");
+  if (doors[0]?.value?.voice !== true) return { rows: [], count: { total: 0, skipped: "Client voice is not live yet (20261102c)." } };
+  const found = await ctx.db.all(
+    "cockpit_form_responses",
+    `select=id,form_key,task_id,submitted_at,answers,answer_meta&form_key=in.(${Object.keys(NATIVE_FORMS).join(",")})&mode=eq.live&state=in.(submitted,confirmed)&task_id=not.is.null&order=submitted_at.asc`,
+  );
+  const valid = new Set(ctx.clients.map(c => c.taskId));
+  const rows: Row[] = [];
+  const byForm: Record<string, number> = {};
+  for (const r of found) {
+    const form = NATIVE_FORMS[String(r.form_key)];
+    if (!form || r.answer_meta?.canary === true || !r.task_id || !Number.isFinite(Date.parse(r.submitted_at))) continue;
+    const answers = form.labels
+      .filter(([key]) => r.answers?.[key] !== undefined && r.answers?.[key] !== null && r.answers?.[key] !== "")
+      .map(([key, title, type]) => ({ ref: key, type, title, value: r.answers[key] }));
+    rows.push({
+      token: `cockpit:${r.id}`,
+      form_id: form.formId,
+      form_kind: String(r.form_key),
+      task_id: String(r.task_id),
+      typed_client: null,
+      matched_by: "cockpit_form",
+      submitted_at: r.submitted_at,
+      answers,
+      hidden: {},
+      recording_url: null,
+      updated_at: iso(ctx.now),
+    });
+    byForm[String(r.form_key)] = (byForm[String(r.form_key)] ?? 0) + 1;
+  }
+  return { rows, count: { total: rows.length, onBoard: rows.filter(x => valid.has(String(x.task_id))).length, byForm } };
+}
+
 const TRANSCRIPT_REF = "0773087f-beda-4e2c-bf50-acdac0dcbe05";
 /** A Fathom share link as the 1-1 form carries it. */
 const SHARE = /https:\/\/fathom\.video\/share\/[A-Za-z0-9_-]+/;
@@ -312,7 +384,8 @@ export async function checkinCutover(db: Db): Promise<number | null> {
   return at;
 }
 /** Every Typeform response read and matched to a client, before the 1-1 forms are linked to their calls. */
-export type FormsRead = { formRows: Row[]; checkins: Checkin[]; counts: Record<string, Row> };
+/** counts is the Typeform per-form map (FORMS keys only); native is the cockpit's own answers, kept apart (review W34). */
+export type FormsRead = { formRows: Row[]; checkins: Checkin[]; counts: Record<string, Row>; native: Row };
 
 /**
  * Reads every response of every form and matches it to a client. The 1-1 forms' Fathom links go into
@@ -410,8 +483,12 @@ export async function readTypeforms(ctx: Ctx): Promise<FormsRead> {
       ...(form === "fRokTITH" ? { byMethod, disagree, late } : {}),
     };
   }
+  // The client's own answers in the cockpit join the same timeline (4.6.5).
+  const native = await readNativeForms(ctx);
+  formRows.push(...native.rows);
   ctx.plan.typeform = counts;
-  return { formRows, checkins, counts };
+  ctx.plan.native = native.count;
+  return { formRows, checkins, counts, native: native.count };
 }
 
 /**
@@ -421,7 +498,7 @@ export async function readTypeforms(ctx: Ctx): Promise<FormsRead> {
  */
 export async function linkTypeforms(ctx: Ctx, read: FormsRead): Promise<Health[]> {
   const { db } = ctx;
-  const { formRows, checkins, counts } = read;
+  const { formRows, checkins, counts, native } = read;
   const out: Health[] = [];
   // Link each 1-1 form to its call. A form whose Fathom link is a stored recording of the same client
   // belongs under that recording: its booking when the booking is on the card and not gone, else the
@@ -508,15 +585,26 @@ export async function linkTypeforms(ctx: Ctx, read: FormsRead): Promise<Health[]
     note: `${ck.stored} of ${ck.total} 1-1 forms stored, ${ck.matched} matched to a client (${ck.byMethod.hidden_field ?? 0} by the client page's link, ${ck.byMethod.typed_task_id ?? 0} by the typed ID${ck.byMethod.manual ? `, ${ck.byMethod.manual} by hand` : ""}; ${toRecording} linked to their recording, ${linked} to a booked check-in, ${own.length} on their own), ${ck.unmatched} with no client link and no typed ID on the board${ck.disagree ? `, ${ck.disagree} where the link and the typed ID differ` : ""}. Newest ${String(ck.newest).slice(0, 10)}.${lateNote}`,
     detail: { ...ck, linked, toRecording, ownCalls: own.length },
   });
-  const others = Object.entries(counts).filter(([f]) => f !== "fRokTITH");
+  // Typeform forms only: an entry with no FORMS label (such as a native count) would make rows NaN.
+  const others = Object.entries(counts).filter(([f]) => f !== "fRokTITH" && f in FORMS);
   out.push({
     key: "csm-forms-history",
     ok: true,
-    rows: others.reduce((n, [, c]) => n + c.stored, 0),
-    note: others.map(([f, c]) => `${FORMS[f]} ${c.stored}/${c.total} (${c.matched} matched)`).join(", ") + ".",
-    detail: Object.fromEntries(others),
+    rows: others.reduce((n, [, c]) => n + (Number(c.stored) || 0), 0) + (Number(native?.total) || 0),
+    note: `${others.map(([f, c]) => `${FORMS[f]} ${c.stored}/${c.total} (${c.matched} matched)`).join(", ")}.${nativeNote(native)}`,
+    detail: { ...Object.fromEntries(others), native },
   });
   return out;
+}
+
+const NATIVE_NAMES: Record<string, string> = { nps: "NPS", csat: "onboarding survey", portal_feedback: "portal feedback" };
+
+/** The cockpit's own answers in one plain sentence for the csm-forms-history note. */
+function nativeNote(native: Row | undefined): string {
+  if (!native) return "";
+  if (native.skipped) return ` The client's own forms in the cockpit are not read yet: ${native.skipped}`;
+  const parts = Object.entries((native.byForm ?? {}) as Record<string, number>).map(([k, n]) => `${n} ${NATIVE_NAMES[k] ?? k}`);
+  return ` The client's own forms in the cockpit: ${native.total} ${native.total === 1 ? "answer" : "answers"} stored, ${native.onBoard} on a client card${parts.length ? ` (${parts.join(", ")})` : ""}.`;
 }
 
 /** Read and link in one go, for a run of the Typeform source alone (worker.ts runs the Fathom source in between). */

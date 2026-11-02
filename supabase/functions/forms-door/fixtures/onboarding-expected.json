@@ -1,0 +1,53 @@
+{
+  "_note": "cockpit_form_record_make's input for onboarding-response.json with backfill true, as forms-door builds it (makeInput): the webhook and the backfill (scripts/dev/forms_legacy_backfill.py) must both equal it.",
+  "p": {
+    "formKey": "onboarding",
+    "externalId": "onb0000token0001",
+    "submittedAt": "2026-10-30T07:15:00Z",
+    "backfill": true,
+    "answers": {
+      "fields": [
+        {
+          "ref": "company-ref",
+          "title": "Company name",
+          "value": "City Wood Interiors"
+        },
+        {
+          "ref": "email-ref",
+          "title": "Your email for City Wood",
+          "value": "owner@citywood.example"
+        },
+        {
+          "ref": "phone-ref",
+          "title": "WhatsApp number",
+          "value": "+965 0000 0001"
+        },
+        {
+          "ref": "services-ref",
+          "title": "Main services",
+          "value": "Interior design, Fit out and renovation, Kitchens"
+        },
+        {
+          "ref": "budget-ref",
+          "title": "Monthly budget (KWD)",
+          "value": "900"
+        },
+        {
+          "ref": "site-ref",
+          "title": "Website",
+          "value": "https://citywood.example"
+        },
+        {
+          "ref": "open-ref",
+          "title": "Showroom opening date",
+          "value": "2026-12-01"
+        }
+      ]
+    },
+    "hidden": {
+      "client_name": "City Wood",
+      "onboarding_client_id": "86exc1tyw"
+    },
+    "taskId": "86exc1tyw"
+  }
+}

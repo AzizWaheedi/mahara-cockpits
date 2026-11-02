@@ -128,14 +128,10 @@ describe("the overdue steps: a pause review on day 4, a cancel review on day 15"
     expect(at("2026-10-31").rung).toBe("day1");
     expect(at("2026-10-29").rung).toBe("call"); // 3 late: still a call
     expect(at("2026-10-28").rung).toBe("pause"); // day 4
-    expect(at("2026-10-28").label).toBe(
-      "Pause review, call first",
-    );
+    expect(at("2026-10-28").label).toBe("Pause review, call first");
     expect(at("2026-10-18").rung).toBe("pause"); // day 14
     expect(at("2026-10-17").rung).toBe("churn"); // day 15
-    expect(at("2026-10-17").label).toBe(
-      "Cancel review, call first",
-    );
+    expect(at("2026-10-17").label).toBe("Cancel review, call first");
   });
 
   test("the CEO's own days move every row", () => {
@@ -313,5 +309,96 @@ describe("the MRR check's words (cockpit_mrr_read)", () => {
     expect(v?.rows[0].mrrUsd).toBeNull();
     expect(sheet.mrrViewFrom(null)).toBeNull();
     expect(sheet.mrrViewFrom("nope")).toBeNull();
+  });
+});
+
+describe("the billing log's read (review W34: survey and nps_sent never crowd out money acts)", () => {
+  // A fake client: each from() records its filters and answers from the rows given.
+  function fakeClient(events: { id: number; kind: string; at: string }[]) {
+    const reads: {
+      table: string;
+      not?: string;
+      in?: string[];
+      limit?: number;
+    }[] = [];
+    const client = {
+      from(table: string) {
+        const q: {
+          table: string;
+          not?: string;
+          in?: string[];
+          limit?: number;
+        } = { table };
+        reads.push(q);
+        const b = {
+          select: () => b,
+          eq: () => b,
+          order: () => b,
+          not: (_c: string, _op: string, v: string) => {
+            q.not = v;
+            return b;
+          },
+          in: (_c: string, v: string[]) => {
+            q.in = v;
+            return b;
+          },
+          limit: (n: number) => {
+            q.limit = n;
+            return b;
+          },
+          // biome-ignore lint/suspicious/noThenProperty: a thenable like supabase-js's builder
+          then(ok: (r: { data: unknown[]; error: null }) => unknown) {
+            let rows: unknown[] = [];
+            if (table === "cockpit_billing_events") {
+              const voice = ["survey", "nps_sent"];
+              rows = events
+                .filter(e =>
+                  q.in
+                    ? q.in.includes(e.kind)
+                    : q.not
+                      ? !voice.includes(e.kind)
+                      : true,
+                )
+                .sort((a, b2) => b2.at.localeCompare(a.at))
+                .slice(0, q.limit ?? 1000);
+            }
+            return Promise.resolve({ data: rows, error: null }).then(ok);
+          },
+        };
+        return b;
+      },
+      rpc: () => Promise.resolve({ data: null, error: null }),
+    };
+    return { client, reads };
+  }
+
+  test("60 money acts still reach the log on a day of 40 NPS sends, and the NPS rows come too", async () => {
+    const { fetchBillingSheet } = await import("../src/lib/billing");
+    const events: { id: number; kind: string; at: string }[] = [];
+    for (let i = 0; i < 60; i++)
+      events.push({
+        id: i + 1,
+        kind: "payment",
+        at: `2026-10-${String(1 + (i % 28)).padStart(2, "0")}T0${i % 10}:00:00+00:00`,
+      });
+    for (let i = 0; i < 40; i++)
+      events.push({
+        id: 100 + i,
+        kind: i % 2 ? "nps_sent" : "survey",
+        at: `2026-11-02T0${i % 10}:${String(i).padStart(2, "0")}:00+00:00`,
+      });
+    const { client, reads } = fakeClient(events);
+    const s = await fetchBillingSheet(
+      client as unknown as Parameters<typeof fetchBillingSheet>[0],
+    );
+    expect(s.events.filter(e => e.kind === "payment")).toHaveLength(60);
+    expect(s.events.filter(e => e.kind !== "payment").length).toBe(20);
+    // Newest first across both reads.
+    const ats = s.events.map(e => String(e.at));
+    expect([...ats].sort().reverse()).toEqual(ats);
+    const ev = reads.filter(r => r.table === "cockpit_billing_events");
+    expect(ev).toHaveLength(2);
+    expect(ev[0]).toMatchObject({ not: "(survey,nps_sent)", limit: 60 });
+    expect(ev[1]).toMatchObject({ in: ["survey", "nps_sent"], limit: 20 });
   });
 });

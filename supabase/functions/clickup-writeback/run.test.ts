@@ -176,6 +176,7 @@ describe("the billing doctor job (waves 1-2 4.1 step 2)", () => {
       { id: "a121f39a-f8a4-41f5-905e-a735ee729071", name: "Churn Type", type: "drop_down", type_config: { options: ["Mid-programme loss (counts as churn)", "Completed term (does NOT count as churn)"].map((name, i) => ({ id: `t${i}`, name, orderindex: i })) } },
       { id: "48eb6023-8944-4404-9e30-b01fc8a38256", name: "MRR", type: "currency" },
       { id: "11d70e58-20e7-4ff0-85c6-51de42f044d2", name: "LTV", type: "currency" },
+      { id: "34b2d7c0-6a95-4382-8c5b-5dcb83a9ac53", name: "NPS Survey Sent", type: "date" },
       { id: "9cfdb353-0000-4000-8000-000000000001", name: "Will not continue", type: "checkbox" },
     ].map(over);
   function doctorHarness(env: Record<string, string>, fields: any) {
@@ -194,9 +195,9 @@ describe("the billing doctor job (waves 1-2 4.1 step 2)", () => {
     expect(h.calls.map(c => [c.method, c.path, c.actionId])).toEqual([["GET", `list/${CLIENTS_LIST}/field`, "11111111-2222-3333-4444-555555555555"]]);
     expect(h.writes()).toEqual([]);
     expect(h.rpcs.find(r => r.name === "cockpit_clickup_fields_put")?.params).toMatchObject({ p_list: CLIENTS_LIST });
-    expect(out.note).toContain("Ready. 14 fields stored.");
+    expect(out.note).toContain("Ready. 15 fields stored.");
     expect(out.note).toContain("Churn Reason options: Cancelled, Refund, Chargeback, Non-payment 14+ days, Paused past 14 days, Ghosted, Completed term, did not renew.");
-    expect(h.state()).toMatchObject({ ok: true, detail: { gaps: [], stored: 14, reasonMap: { "Completed term, did not renew": "Completed term, did not renew" }, willNotContinue: "9cfdb353-0000-4000-8000-000000000001" } });
+    expect(h.state()).toMatchObject({ ok: true, detail: { gaps: [], stored: 15, reasonMap: { "Completed term, did not renew": "Completed term, did not renew" }, willNotContinue: "9cfdb353-0000-4000-8000-000000000001" } });
   });
 
   it("lists every gap in a sentence and stays ok: a gap is never a stop", async () => {

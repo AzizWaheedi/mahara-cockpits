@@ -441,6 +441,11 @@ export const FORM_NAMES: Record<string, string> = {
   kickoff: "Kickoff form",
   kickoff_old: "Kickoff form (retired)",
   blueprint: "Brand Blueprint form",
+  exit_survey: "Exit survey",
+  // The client's own answers in the cockpit (waves 3-4, hermes/csm-calls NATIVE_FORMS).
+  nps: "NPS survey",
+  csat: "Onboarding survey",
+  portal_feedback: "Portal feedback",
 };
 export const CALL_NAMES: Record<string, string> = {
   onboarding: "Onboarding call",

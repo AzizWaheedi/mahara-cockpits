@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProviderError, Transport } from "../ad-billing-guard/transport.ts";
-import { CARD_GROUP_FIELD, sha256, type Verdict } from "./core.ts";
+import { CARD_GROUP_FIELD, maskInviteLink, sha256, type Verdict } from "./core.ts";
 import type { Db, Health } from "./db.ts";
 import type { OldSenders } from "./oldSenders.ts";
 import { readMessage, type SendOutcome, type WaMessage } from "./whapi.ts";
@@ -26,12 +26,17 @@ import {
   CLAIM_BY_MS,
   CLICKUP_UNREAD,
   COLUMN_MOVED,
+  DEFAULT_KINDS,
   cardKey,
   cardRefusal,
   DRY_NOTHING,
   doctor,
   fileCardCache,
   GROUP_DIFFERS,
+  KINDS,
+  LINK_ALREADY_MADE,
+  LINK_FORM_CLOSED,
+  LINK_NOT_MADE,
   NO_GROUP,
   NOT_A_CARD,
   NOTHING,
@@ -59,6 +64,10 @@ const A = "86abc0001";
 const G1 = "120363000000000001@g.us";
 const G2 = "120363000000000002@g.us";
 const BODY = "مرحبا، هذا ملخص تجريبي للمكالمة.\n\nInvented booking block.";
+/** A form link message as approved: the placeholder kept (docs/forms/WAVE34-CONTRACT.md 3.9). */
+const INVITE_BODY = "هلا فريق Acme Interiors، عندنا سؤال سريع من مهارة: شكثر ممكن تنصحون فينا؟ ما ياخذ إلا دقيقة: {form_link}";
+const TOKEN = `f1${"Ab0_-".repeat(8)}xyz`;
+const LINK = `https://portal.maharamedia.com/f#${TOKEN}`;
 const M1 = "00000000-0000-4000-8000-0000000000m1".replace("m1", "a1");
 const T1 = "00000000-0000-4000-8000-0000000000t1".replace("t1", "b1");
 const SHEET = [
@@ -133,6 +142,8 @@ type World = {
   onSleep?: () => void;
   /** The send's response receipt is lost after the POST left, as the real ledger counts it. */
   loseSendReceipt?: boolean;
+  /** cockpit_client_message_invite_link's answer for a form link (waves 3-4). */
+  inviteLink?: { ok: boolean; url?: string; reason?: string } | "crash";
 };
 
 function world(w: World = {}) {
@@ -159,6 +170,10 @@ function world(w: World = {}) {
         if (w.intent === "crash")
           throw new Error("The database did not answer");
         return w.intent ?? { ok: true };
+      }
+      if (name === "cockpit_client_message_invite_link") {
+        if (w.inviteLink === "crash") throw new Error("The database did not answer");
+        return w.inviteLink ?? { ok: true, url: LINK };
       }
       if (name === "cockpit_client_message_result") {
         clock += w.resultMs ?? 0;
@@ -1212,7 +1227,7 @@ describe("dry mode, the keys and the switches", () => {
     );
     const s = readSwitches(path);
     expect(s.error).toBe(
-      "CLIENT_MESSAGES_KINDS names a kind 2b does not send (phase5). Set it to recap_checkin.",
+      "CLIENT_MESSAGES_KINDS names a kind this worker does not send (phase5). Set it to recap_checkin, or recap_checkin,form_invite.",
     );
     expect(s.apply).toBe(false);
     const w = world({ switches: s });
@@ -1698,5 +1713,106 @@ describe("the doctor", () => {
       clientData: "none",
       cardField: unread,
     });
+  });
+});
+
+describe("form links (docs/forms/WAVE34-CONTRACT.md 3.9, 4.1.6)", () => {
+  const inviteClaim = { ...claimRow, kind: "form_invite", body: INVITE_BODY, bodySha256: sha256(INVITE_BODY) };
+  const inviteWork = { unknowns: [], unread: [], approved: [{ ...approvedRow, kind: "form_invite" }] };
+  const BOTH: Switches = { ...APPLY, kinds: ["recap_checkin", "form_invite"] };
+  const sent = INVITE_BODY.replace("{form_link}", LINK);
+
+  test("the link is minted after the intent and put where the placeholder is; nothing this run writes holds it", async () => {
+    expect(TOKEN).toMatch(/^f1[A-Za-z0-9_-]{43}$/);
+    const w = world({
+      switches: BOTH,
+      work: inviteWork,
+      claim: { busy: false, rows: [inviteClaim] },
+      messages: [{ id: "wamid-test-1", fromMe: true, from: null, body: sent, at: null }],
+    });
+    const r = await runOnce(w.deps);
+    expect(w.names()).toEqual(["sweep", "work", "claim", "intent", "invite_link", "result", "result"]);
+    expect(w.rpcs.find(c => c.name.endsWith("_invite_link"))?.args).toEqual({ p_id: M1, p_claim: T1 });
+    expect(w.sends).toEqual([{ group: G1, body: sent }]);
+    expect(w.rpcs.filter(c => c.name.endsWith("_result")).map(c => c.args.p_outcome)).toEqual(["sent", "read_back"]);
+    expect(r.ok).toBe(true);
+    expect(w.healths[0].note).toBe("Sent one form link to the client's group (WhatsApp group ending 0001).");
+    const written = JSON.stringify({ healths: w.healths, report: r, rpcs: w.rpcs });
+    expect(written.includes(TOKEN)).toBe(false);
+    expect(written.includes("portal.maharamedia.com/f#")).toBe(false);
+  });
+
+  test("a link already made for the message is never sent again: unknown, and a person looks in the group", async () => {
+    const w = world({ switches: BOTH, work: inviteWork, claim: { busy: false, rows: [inviteClaim] }, inviteLink: { ok: false, reason: "already_made" } });
+    const r = await runOnce(w.deps);
+    expect(w.sends).toEqual([]);
+    expect(w.rpcs.at(-1)?.args).toMatchObject({ p_outcome: "unknown", p_reason: LINK_ALREADY_MADE });
+    expect(r).toMatchObject({ ok: false, note: LINK_ALREADY_MADE });
+    expect(r.detail.unknown).toBe(1);
+  });
+
+  test("a form closed before its link was made, and a mint that fails, send nothing and say why", async () => {
+    const closed = world({ switches: BOTH, work: inviteWork, claim: { busy: false, rows: [inviteClaim] }, inviteLink: { ok: false, reason: "closed" } });
+    expect((await runOnce(closed.deps)).note).toBe(LINK_FORM_CLOSED);
+    expect(closed.sends).toEqual([]);
+    expect(closed.rpcs.at(-1)?.args).toMatchObject({ p_outcome: "failed", p_reason: LINK_FORM_CLOSED });
+    const crash = world({ switches: BOTH, work: inviteWork, claim: { busy: false, rows: [inviteClaim] }, inviteLink: "crash" });
+    const r = await runOnce(crash.deps);
+    expect(crash.sends).toEqual([]);
+    expect(crash.rpcs.at(-1)?.args).toMatchObject({ p_outcome: "failed", p_reason: LINK_NOT_MADE });
+    expect(r.ok).toBe(false);
+    // The cockpit hides form_invite rows from the Messages card, so the failed text points at the path a CSM has
+    // (review W34): withdraw, then Send a form. A reopened row would only meet already_made and turn unknown.
+    expect(LINK_NOT_MADE).toBe("The form link could not be made, so nothing was sent. Withdraw the form and send it again from Send a form.");
+    expect(LINK_NOT_MADE).not.toContain("Reopen");
+    const odd = world({ switches: BOTH, work: inviteWork, claim: { busy: false, rows: [inviteClaim] }, inviteLink: { ok: true, url: "https://evil.example/f#x" } });
+    await runOnce(odd.deps);
+    expect(odd.sends).toEqual([]);
+  });
+
+  test("the fingerprint check stays on the stored text, the template", async () => {
+    const w = world({ switches: BOTH, work: inviteWork, claim: { busy: false, rows: [{ ...inviteClaim, bodySha256: sha256(sent) }] } });
+    await runOnce(w.deps);
+    expect(w.sends).toEqual([]);
+    expect(w.names()).not.toContain("invite_link");
+  });
+
+  test("group searches mask the link: a read-back by fingerprint and an unknown's reconcile find the sent link", async () => {
+    const unread = { ...inviteClaim, providerId: "wamid-other", sentAt: "2026-10-29T10:00:00Z" };
+    const unknown = { ...inviteClaim, id: "u1", claimToken: "tok-u1" };
+    const w = world({
+      switches: BOTH,
+      work: { unknowns: [unknown], unread: [unread], approved: [] },
+      messages: [{ id: "wamid-found", fromMe: true, from: null, body: sent, at: null }],
+    });
+    const r = await runOnce(w.deps);
+    const results = w.rpcs.filter(c => c.name.endsWith("_result")).map(c => c.args);
+    expect(results).toEqual([
+      { p_id: "u1", p_claim: "tok-u1", p_outcome: "reconciled", p_provider_id: "wamid-found", p_reason: null, p_read_back: { by: "body_sha256" } },
+      { p_id: M1, p_claim: T1, p_outcome: "read_back", p_provider_id: null, p_reason: null, p_read_back: { by: "body_sha256", providerId: "wamid-found" } },
+    ]);
+    expect(r.reconciled).toBe(1);
+    expect(r.readBack).toBe(1);
+    expect(maskInviteLink(`see ${LINK} and ${LINK}`)).toBe("see {form_link} and {form_link}");
+    expect(maskInviteLink("https://portal.maharamedia.com/f#short")).toBe("https://portal.maharamedia.com/f#short");
+  });
+
+  test("the switches: form links only when CLIENT_MESSAGES_KINDS lists them; a missing line is recaps only", () => {
+    expect(KINDS).toEqual(["recap_checkin", "form_invite"]);
+    expect(DEFAULT_KINDS).toEqual(["recap_checkin"]);
+    const dir = mkdtempSync(join(tmpdir(), "cm-forms-"));
+    const path = join(dir, "switches.env");
+    writeFileSync(path, "CLIENT_MESSAGES_APPLY=true\n");
+    expect(readSwitches(path).kinds).toEqual(["recap_checkin"]);
+    writeFileSync(path, "CLIENT_MESSAGES_APPLY=true\nCLIENT_MESSAGES_KINDS=recap_checkin,form_invite\nCLIENT_MESSAGES_ONLY_CARDS=86eywg1cq\n");
+    expect(readSwitches(path)).toMatchObject({ apply: true, kinds: ["recap_checkin", "form_invite"], onlyCards: ["86eywg1cq"], error: null });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a form link the switches do not list is never claimed", async () => {
+    const w = world({ work: inviteWork, claim: { busy: false, rows: [] } });
+    const r = await runOnce(w.deps);
+    expect(r.detail.approved).toBe(0);
+    expect(w.names()).not.toContain("claim");
   });
 });

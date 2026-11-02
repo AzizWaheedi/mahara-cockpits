@@ -146,10 +146,27 @@ export const LIFECYCLE_NOTICE_KINDS = [
 export const LIFECYCLE_KINDS: ReadonlySet<string> = new Set(
   LIFECYCLE_NOTICE_KINDS,
 );
+/**
+ * The client's voice and forms (docs/forms/WAVE34-CONTRACT.md 3.4, 5.12), in
+ * the settings' order, seeded by 20261102a. Their own list on the card, so a
+ * database before that file shows the card exactly as before.
+ */
+export const CLIENT_FORM_NOTICE_KINDS = [
+  "pause.consent",
+  "nps.received",
+  "csat.received",
+  "voice.low",
+  "feedback.received",
+  "legacy.received",
+] as const;
+export const CLIENT_FORM_KINDS: ReadonlySet<string> = new Set(
+  CLIENT_FORM_NOTICE_KINDS,
+);
 /** Every kind the card shows, in its order. */
 export const ALL_NOTICE_KINDS = [
   ...NOTICE_KINDS,
   ...LIFECYCLE_NOTICE_KINDS,
+  ...CLIENT_FORM_NOTICE_KINDS,
 ] as const;
 
 /**

@@ -171,8 +171,8 @@ if [ -f apps/media-buyer-cockpit/scripts/forms-dispatch-supabase.test.ts ]; then
   done
   extras=$("$py_bin" scripts/dev/fn_extras.py . forms-door) \
     || { echo "the import list of forms-door cannot be read ($py_bin scripts/dev/fn_extras.py . forms-door)"; exit 1; }
-  [ "$extras" = "hermes/csm-calls/callMatch.ts hermes/csm-calls/match.ts supabase/functions/_shared/clickupRetry.ts supabase/functions/cockpit-ceo-api/tools.ts supabase/functions/cockpit-hours-sync/db.ts supabase/functions/team-onboarding-intake/signature.ts" ] \
-    || { echo "forms-door imports other files than its six extras ($py_bin scripts/dev/fn_extras.py . forms-door)"; exit 1; }
+  [ "$extras" = "apps/client-success-cockpit/src/lib/onboardingCore.ts hermes/csm-calls/callMatch.ts hermes/csm-calls/match.ts supabase/functions/_shared/clickupRetry.ts supabase/functions/cockpit-ceo-api/tools.ts supabase/functions/cockpit-hours-sync/db.ts supabase/functions/team-onboarding-intake/signature.ts" ] \
+    || { echo "forms-door imports other files than its seven extras ($py_bin scripts/dev/fn_extras.py . forms-door)"; exit 1; }
   (cd apps/media-buyer-cockpit && bun test scripts/checkin-notices-supabase.test.ts scripts/client-messages-supabase.test.ts scripts/slack-notices-supabase.test.ts >/dev/null 2>&1) \
     || { echo "the check-in notices or client messages database tests fail (cd apps/media-buyer-cockpit && bun test scripts/checkin-notices-supabase.test.ts scripts/client-messages-supabase.test.ts scripts/slack-notices-supabase.test.ts)"; exit 1; }
   # E5 (contract 4.2): the Slack notices suite cannot load the 2a base, so the proof that 20261029u leaves Stage 1 as it was is checkin-notices-supabase.test.ts's body-diff case, run above.

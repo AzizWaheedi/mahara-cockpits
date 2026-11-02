@@ -79,6 +79,49 @@ export type FormDef = {
   notice: boolean;
 };
 
+/**
+ * The card's latest pause consent (cockpit_pause_consent_for through
+ * cockpit_form_prefill, WAVE34-CONTRACT.md 4.3.4): signed only when answered
+ * within 14 days, the dates not marked wrong, and no pause after it.
+ */
+export type PauseConsent = {
+  state: "none" | "sent" | "signed" | "dates_wrong" | "expired";
+  inviteId: string | null;
+  sentAt: string | null;
+  responseId: string | null;
+  signedAt: string | null;
+  via: "portal" | "link" | null;
+  /** "the client admin", or the typed name on a link. */
+  signer: string | null;
+  start: string | null;
+  restart: string | null;
+  datesNote: string | null;
+  /** Whether pause_consent is live (cockpit_form_prefill adds it); absent elsewhere. */
+  live?: boolean;
+};
+
+/** The consent row's state line (5.2), word for word. */
+export function consentLine(c: PauseConsent | null): string {
+  const day = (v: string | null) => kuwaitDay(v) || "a day not recorded";
+  switch (c?.state ?? "none") {
+    case "sent":
+      return `Waiting for the client's signed consent. Sent ${day(c?.sentAt ?? null)}.`;
+    case "signed":
+      return c?.via === "link"
+        ? `Signed by link by ${c.signer ?? "someone with the link"} on ${day(c.signedAt)}. Check the name, then confirm the pause.`
+        : `Signed by the client admin in the portal on ${day(c?.signedAt ?? null)}. Confirm the pause.`;
+    case "dates_wrong":
+      return `The client says the dates are wrong: "${c?.datesNote ?? "no note"}". Change the restart and send a new consent.`;
+    case "expired":
+      return "The client has not signed the pause consent in the last 14 days. Send it again.";
+    default:
+      return "Not sent yet.";
+  }
+}
+
+/** Confirm's hint while the consent is not signed (5.2). */
+export const CONSENT_WAIT = "Confirm opens once the client signs.";
+
 /** One prefilled value and where it came from ("the ClickUp card"). NULL is a sentence, never 0. */
 export type Prefill = { key: string; value: unknown; source: string };
 

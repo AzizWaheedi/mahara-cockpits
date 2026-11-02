@@ -19,11 +19,17 @@ import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { FormBody } from "@/forms/staff/FormSheet";
-import { extensionDef, FORM_DEFS } from "@/forms/staff/formDefs";
-import type {
-  Answers,
-  FormTrailRow,
-  SubmitRef,
+import {
+  extensionDef,
+  FORM_DEFS,
+  pauseConsentDef,
+} from "@/forms/staff/formDefs";
+import {
+  type Answers,
+  CONSENT_WAIT,
+  consentLine,
+  type FormTrailRow,
+  type SubmitRef,
 } from "@/forms/staff/formSheetCore";
 import type {
   Doors,
@@ -482,8 +488,19 @@ function StaffForm({
     // `reads` reads the prefill again after a send (a grant is now live).
   }, [forms, formKey, row.taskId, reads]);
   const grant = formKey === "extension" ? (read?.grant ?? null) : null;
+  // The pause consent (WAVE34-CONTRACT.md 4.3.6): once the form is live, a
+  // client-requested pause is confirmed on the client's signed consent, not
+  // two ticks. The consent is sent from the client page (Send a form); here
+  // the sheet shows where it stands and confirms once it is signed.
+  const consent = formKey === "pause" ? (read?.consent ?? null) : null;
+  const consentMode = consent?.live === true;
+  const signed = consentMode && consent?.state === "signed";
   const def =
-    formKey === "extension" ? extensionDef(grant?.until) : FORM_DEFS[formKey];
+    formKey === "extension"
+      ? extensionDef(grant?.until)
+      : formKey === "pause" && consentMode
+        ? pauseConsentDef(consent)
+        : FORM_DEFS[formKey];
   const status = `${row.status ?? "No status"} · ${
     row.group === "paused"
       ? row.pausedOn
@@ -507,7 +524,29 @@ function StaffForm({
       submit={(a, requestId) =>
         forms.send(formKey, row.taskId, a, requestId, {
           replacesGrantId: grant?.grantId ?? null,
+          ...(signed && consent?.responseId
+            ? { consentResponseId: consent.responseId }
+            : {}),
         })
+      }
+      after={
+        consentMode
+          ? a =>
+              a.pauseKind === "client_request" ? (
+                <p className="fs-note" data-billing-consent>
+                  {consentLine(consent)}
+                  {signed
+                    ? ""
+                    : " Send the pause consent from the client page (Send a form)."}
+                </p>
+              ) : null
+          : undefined
+      }
+      blocked={
+        consentMode
+          ? a =>
+              a.pauseKind === "client_request" && !signed ? CONSENT_WAIT : null
+          : undefined
       }
       trail={forms.trail}
       onSent={() => {
@@ -629,7 +668,10 @@ function Panel({
       }),
     }));
 
-  const mine = events.filter(e => e.clickup_task_id === row.taskId).slice(0, 8);
+  const mine = moneyWindow(
+    events.filter(e => e.clickup_task_id === row.taskId),
+    8,
+  );
   const forms = api.forms;
   // A door opens only when its migration is live (cockpit_form_doors);
   // while the doors are read, it says so rather than "closed".
@@ -1216,6 +1258,30 @@ export function seatWords(role: string): string {
   return SEAT_WORDS[role] ?? role.charAt(0).toUpperCase() + role.slice(1);
 }
 
+// The client's voice on the billing rails (20261102b/c): an NPS sent and an
+// exit survey answered. They are not money acts, so they never count toward
+// how many money rows a list shows (review W34).
+const VOICE_KINDS = new Set(["survey", "nps_sent"]);
+
+/**
+ * The newest `n` money acts, newest first, with every survey or NPS row that
+ * falls among them. The list must already be newest first.
+ */
+function moneyWindow<T extends { kind: string }>(list: T[], n: number): T[] {
+  const out: T[] = [];
+  let money = 0;
+  for (const e of list) {
+    if (VOICE_KINDS.has(e.kind)) {
+      out.push(e);
+      continue;
+    }
+    if (money === n) break;
+    out.push(e);
+    money += 1;
+  }
+  return out;
+}
+
 function sentenceOf(e: EventRow): string {
   const d = (e.detail ?? {}) as Record<string, unknown>;
   // The staff forms and the daily step carry the seat as words ("the CSM",
@@ -1286,6 +1352,14 @@ function sentenceOf(e: EventRow): string {
     }
     case "unexclude":
       return `${who} counted a payment as program money again${e.reason ? `: ${e.reason}` : "."}`;
+    // The client's voice (20261102b/c): the cockpit's own rows, never a money act.
+    case "nps_sent": {
+      const on = e.to_value ?? (typeof d.on === "string" ? d.on : null);
+      const round = Number(d.round);
+      return `${who} sent the NPS survey${Number.isInteger(round) && round > 0 ? ` (round ${round})` : ""}${on ? `; NPS Survey Sent is set to ${shortDay(on)} on the card.` : "."}`;
+    }
+    case "survey":
+      return `The client answered the exit survey${typeof d.notice_on === "string" && d.notice_on ? ` (notice received ${shortDay(d.notice_on)})` : ""}; the answers are posted on the card.`;
     default:
       return `${who}: ${e.kind}${e.reason ? `, ${e.reason}` : ""}.`;
   }
@@ -2015,7 +2089,7 @@ export function BillingSheet({ api }: { api: BillingApi }) {
         </p>
         {data.events.length ? (
           <ul className="mt-3 grid gap-2 text-sm">
-            {data.events.slice(0, 30).map(e => (
+            {moneyWindow(data.events, 30).map(e => (
               <li
                 key={e.id}
                 className="grid gap-x-4 sm:grid-cols-[4.5rem_minmax(0,11rem)_minmax(0,1fr)]"

@@ -45,7 +45,7 @@ const LIST_FIELDS: any[] = [
   { id: F.plan, type: "drop_down", type_config: { options: option("pp", ["Monthly"]) } },
   { id: F.churnReason, type: "drop_down", type_config: { options: REASON_OPTIONS } },
   { id: F.churnType, type: "drop_down", type_config: { options: TYPE_OPTIONS } },
-  ...[F.nextDate, F.pausedOn, F.resumeOn, F.churnDate].map(id => ({ id, type: "date" })),
+  ...[F.nextDate, F.pausedOn, F.resumeOn, F.churnDate, F.npsSent].map(id => ({ id, type: "date" })),
   ...[F.nextAmount, F.extension].map(id => ({ id, type: "number" })),
   ...[F.mrr, F.ltv].map(id => ({ id, type: "currency" })),
   { id: CHECKBOX, type: "checkbox" },
@@ -110,8 +110,10 @@ describe("the billing fields are Convex's", () => {
       status: ["9368ca9e", "dropdown"], method: ["665e5754", "dropdown"], plan: ["17d17129", "dropdown"], nextAmount: ["f071ee8f", "number"],
       nextDate: ["669ae046", "date"], pausedOn: ["930c49eb", "date"], extension: ["8cb9d308", "number"], resumeOn: ["d3c46259", "date"],
       churnDate: ["42429a6e", "date"], churnReason: ["796f25e7", "dropdown"], churnType: ["a121f39a", "dropdown"], mrr: ["48eb6023", "number"],
-      ltv: ["11d70e58", "number"], willNotContinue: ["9cfdb353", "checkbox"],
+      ltv: ["11d70e58", "number"], willNotContinue: ["9cfdb353", "checkbox"], npsSent: ["34b2d7c0", "date"],
     });
+    // NPS Survey Sent (waves 3-4, contract 3.8): the full id read from the stored field map (11.2-f).
+    expect(BILLING_FIELDS.npsSent).toEqual({ id: "34b2d7c0-6a95-4382-8c5b-5dcb83a9ac53", name: "NPS Survey Sent", format: "date" });
     expect(BILLING_FIELDS.extension.name).toBe("Current extension (weeks)");
     expect(BILLING_FIELDS.willNotContinue).toMatchObject({ id: "9cfdb353", byPrefix: true });
   });
@@ -448,6 +450,105 @@ describe("waves 1-2 fields: written in their format, read back first (contract 3
     expect(out.state).toBe("skipped");
     expect(writes(p.calls)).toEqual([]);
     expect(out.progress.billing_comment).toMatchObject({ done: true, skipped: true });
+  });
+});
+
+describe("waves 3-4 kinds: nps_sent writes NPS Survey Sent, survey only comments (contract 3.8)", () => {
+  // The payloads 20261102b's trigger queues (client-lifecycle-supabase.test.ts asserts the same writes and comment).
+  const npsSent = item({ kind: "nps_sent", source: "system", by: "the cockpit", writes: [{ field: "npsSent", value: "2026-11-03" }], comment: null });
+  const SURVEY_COMMENT = [
+    "CONTRACT TERMINATION SURVEY (notice received 2026-11-01)",
+    "Why: The results, A cheaper provider",
+    "Ads 6/10 · The people who reached them 4/10 · Communication 9/10",
+    "Would recommend: 5/10",
+    "What would have kept them: More calls in the first month.",
+    "Comments: none",
+    "Filled: by link",
+    "Confirm the churn or answer the notice in the cockpit.",
+  ].join("\n");
+  const survey = item({ kind: "survey", source: "system", by: "the cockpit", writes: [], comment: SURVEY_COMMENT });
+
+  it("nps_sent is one date write on NPS Survey Sent, written when the card differs and read back first", async () => {
+    expect(steps(npsSent)).toEqual([
+      { key: "npsSent", type: "billing_field", taskId: "task_a", fieldId: F.npsSent, field: "NPS Survey Sent", format: "date", value: "2026-11-03", at: EDIT_AT },
+    ]);
+    const empty = fakeProvider(onCard(card({})));
+    const out = await executeItem(npsSent, steps(npsSent), empty, async () => {}, boardFields, clientFields);
+    expect(out.state).toBe("delivered");
+    expect(empty.calls.filter(c => c.method === "GET").map(c => c.path)).toEqual(["task/task_a"]);
+    expect(writes(empty.calls)).toEqual([
+      { provider: "clickup", method: "POST", path: `task/task_a/field/${F.npsSent}`, body: { value: ms("2026-11-03"), value_options: { time: false } } },
+    ]);
+    // The card already shows the day: nothing is written again.
+    const shows = fakeProvider(onCard(card({ [F.npsSent]: String(ms("2026-11-03")) })));
+    const again = await executeItem(npsSent, steps(npsSent), shows, async () => {}, boardFields, clientFields);
+    expect(writes(shows.calls)).toEqual([]);
+    expect(again.progress.npsSent).toMatchObject({ done: true, unchanged: true });
+    // A later NPS round moves the day forward.
+    const older = fakeProvider(onCard(card({ [F.npsSent]: String(ms("2026-08-05")) })));
+    expect((await executeItem(npsSent, steps(npsSent), older, async () => {}, boardFields, clientFields)).state).toBe("delivered");
+    expect(writes(older.calls).map(c => c.path.split("/").pop())).toEqual([F.npsSent]);
+  });
+
+  it("a survey item writes no field and posts its comment as written, with the reference line", async () => {
+    expect(steps(survey)).toEqual([{ key: "billing_comment", type: "comment", taskId: "task_a", text: `${SURVEY_COMMENT}\n\n${refLine(ID)}` }]);
+    const p = fakeProvider(onCard(card({})));
+    const out = await executeItem(survey, steps(survey), p, async () => {}, boardFields, clientFields);
+    expect(out.state).toBe("delivered");
+    expect(writes(p.calls)).toEqual([
+      { provider: "clickup", method: "POST", path: "task/task_a/comment", body: { comment_text: `${SURVEY_COMMENT}\n\n${refLine(ID)}`, notify_all: false } },
+    ]);
+    expect(writes(p.calls).some(c => c.path.includes("/field/"))).toBe(false);
+    expect(SURVEY_COMMENT).not.toContain("@");
+  });
+
+  it("each kind waits behind CLICKUP_WRITEBACK_BILLING_KINDS: held while unlisted, written once listed, on the test card first", async () => {
+    const runWith = async (env: Record<string, string>, queued: QueueItem[]) => {
+      let items = structuredClone(queued);
+      const saves: any[] = [];
+      const calls: Call[] = [];
+      const deps: Deps = {
+        env: k => env[k],
+        now: () => NOW,
+        uuid: () => "11111111-2222-3333-4444-555555555555",
+        rpc: async (name, params = {}) => {
+          if (name === "cockpit_clickup_writeback_begin") return { id: "run-1" };
+          if (name === "cockpit_clickup_writeback_inputs") return { campaigns: [] };
+          if (name === "cockpit_clickup_writeback_claim") { const out = items; items = []; return out; }
+          if (name === "cockpit_billing_writeback_held") return { held: 0, heldOpenKind: 0, byKind: {} };
+          if (name === "cockpit_clickup_writeback_save") saves.push(structuredClone(params.p_patch));
+          return null;
+        },
+        providerFor: () => ({
+          async call(provider, method, path, body) {
+            calls.push({ provider, method, path, body });
+            if (method === "GET" && path === `list/${CLIENTS_LIST}/field`) return { fields: LIST_FIELDS };
+            if (method === "GET" && path === "task/task_a") return card({});
+            if (method === "POST" && path.endsWith("/comment")) return { id: "c-1" };
+            return {};
+          },
+        }),
+        syncState: async () => {},
+      };
+      await runLog(deps);
+      return { states: saves.filter(s => s.state).map(s => s.state), writes: calls.filter(c => c.method !== "GET") };
+    };
+    const npsItem = { ...npsSent, id: "3a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9" };
+    // W12's kinds open (D-B0 deploys this file with the kinds as they are): both new kinds are held.
+    const w12 = { CLICKUP_API_TOKEN: "x", CLICKUP_WRITEBACK_APPLY_BILLING: "true", CLICKUP_WRITEBACK_BILLING_KINDS: "churn,extension,date,payment,pause,resume,mrr,late" };
+    const held = await runWith(w12, [survey, npsItem]);
+    expect(held.states).toEqual(["dry_run", "dry_run"]);
+    expect(held.writes).toEqual([]);
+    // D-C4B: survey on the test card only; the item on another card waits.
+    const canary = await runWith({ ...w12, CLICKUP_WRITEBACK_BILLING_KINDS: `${w12.CLICKUP_WRITEBACK_BILLING_KINDS},survey`, CLICKUP_WRITEBACK_BILLING_ONLY_CARDS: "86eywg1cq" }, [survey]);
+    expect(canary.states).toEqual(["dry_run"]);
+    // Then open: the survey comment is written, nps_sent still waits for D-C5.
+    const open = await runWith({ ...w12, CLICKUP_WRITEBACK_BILLING_KINDS: `${w12.CLICKUP_WRITEBACK_BILLING_KINDS},survey` }, [survey, npsItem]);
+    expect(open.states).toEqual(["delivered", "dry_run"]);
+    expect(open.writes.map(c => c.path.split("/").pop())).toEqual(["comment"]);
+    const both = await runWith({ ...w12, CLICKUP_WRITEBACK_BILLING_KINDS: `${w12.CLICKUP_WRITEBACK_BILLING_KINDS},survey,nps_sent` }, [npsItem]);
+    expect(both.states).toEqual(["delivered"]);
+    expect(both.writes.map(c => c.path.split("/").pop())).toEqual([F.npsSent]);
   });
 });
 

@@ -93,13 +93,16 @@ export const LINK_GROUPS: LinkGroup[] = [
     blurb: "The client fills these in, not you.",
     rows: [
       {
-        label: "Onboarding experience survey",
-        url: "https://maharamedia.typeform.com/to/KbcbPA73",
-        note: "Send once onboarding is done",
+        // Waves 3-4 (docs/forms/WAVE34-CONTRACT.md 4.11): the client forms
+        // move into the client success cockpit; this list is reference only.
+        label: "Onboarding survey (in the cockpit)",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Send a form. It goes to their portal, or by WhatsApp link. Opens with the portal forms (after the switch-on). Old form, still live: https://maharamedia.typeform.com/to/KbcbPA73",
       },
       {
-        label: "NPS survey",
-        url: "https://maharamedia.typeform.com/to/fuPgs85S",
+        label: "NPS survey (in the cockpit)",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Send a form. It goes to their portal, or by WhatsApp link. Opens with the portal forms (after the switch-on). Old form, still live: https://maharamedia.typeform.com/to/fuPgs85S",
       },
     ],
   },
@@ -171,9 +174,9 @@ export const LINK_GROUPS: LinkGroup[] = [
       "One form per change. Never agree to any of these over WhatsApp, get them on a call first.",
     rows: [
       {
-        label: "Pause request form",
-        url: "https://maharamedia.typeform.com/to/CTUjv6l3",
-        note: "Client wants to freeze. A freeze over 14 days counts as churn",
+        label: "Pause consent (in the cockpit)",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Pause this client. The client signs the consent in their portal or by link. Opens with the portal forms (after the switch-on). Old form, still live: https://maharamedia.typeform.com/to/CTUjv6l3",
       },
       {
         // The extension Typeform closes at the C1 window: Give more time on the
@@ -183,9 +186,9 @@ export const LINK_GROUPS: LinkGroup[] = [
         note: "Open the client, then Give more time. The ClickUp card updates itself.",
       },
       {
-        label: "Contract termination survey (cancellation form)",
-        url: "https://maharamedia.typeform.com/to/knIe4eF3",
-        note: "After the exit call only, never instead of it",
+        label: "Exit survey (in the cockpit)",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Client is leaving or Send a form. Opens with the portal forms (after the switch-on). Old form, still live: https://maharamedia.typeform.com/to/knIe4eF3",
       },
       {
         label: "Client exit process",

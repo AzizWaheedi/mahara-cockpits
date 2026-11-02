@@ -30,6 +30,20 @@
  * `VITE_SUPABASE_URL=https://bldgtotkfmhoxmlzowdx.supabase.co
  * VITE_SUPABASE_ANON_KEY=harness bunx vite`.
  *
+ * Waves 3-4 (docs/forms/WAVE34-CONTRACT.md 5.0 to 5.4, the 375 and 1280 px,
+ * light and dark checks), over clientFormsFixtures and a stand-in FormsIO:
+ * state=forms draws Send a form (send=0 to close it; view= recent | none |
+ * closed | notReported | quiet | membersOnly | leaving | empty; preset=
+ * exit_survey) beside Forms out and Today's form bands; state=voice draws the
+ * Client voice card (empty=1 | failed=1 | low=1); state=consent draws Pause
+ * this client with the consent live (consent= none | sent | signed |
+ * dates_wrong | expired; live=0 draws the old two ticks).
+ * state=editor draws the forms editor (5.13) over formsEditorFixtures and its
+ * in-memory stand-in: the list, or form=<key> for one form (nps and csat have
+ * a history; kickoff and extension are the read-only rows); draft=1 seeds a
+ * draft the server refused (its sentence and where), refuse=1 makes the next
+ * Publish refused in the database's words, door=0 the editor not open yet.
+ *
  * Typeform is a stand-in drawn here: no Typeform page loads and nothing is
  * submitted anywhere. Its "submit" only calls the panel's own handler, and
  * the harness's record and checks stay in memory.
@@ -49,9 +63,22 @@ import {
   type ChecksApi,
   ChecksWaitingView,
 } from "@/components/billing/ChecksWaiting";
+import {
+  FormBands,
+  FormsOut,
+  PauseConsentRow,
+  SendFormSheet,
+  useInviteView,
+} from "@/components/ClientForms";
+import { ClientVoiceCard } from "@/components/ClientVoice";
 import { NoticesRouting } from "@/components/NoticesRouting";
 import { OnboardingKit } from "@/components/OnboardingKit";
 import { Button } from "@/components/ui/button";
+import {
+  copy as copyEditor,
+  editorOneFixture,
+  fakeFormsEditorIO,
+} from "@/dev/formsEditorFixtures";
 import type { BookProps, FormIO } from "@/forms/FormPanel";
 import {
   blockedFor,
@@ -61,10 +88,27 @@ import {
 import type { FormContext } from "@/forms/formConfig";
 import { KICKOFF } from "@/forms/kickoff";
 import { FormBody, FormSheet } from "@/forms/staff/FormSheet";
-import { FORM_DEFS } from "@/forms/staff/formDefs";
-import type { FormKey } from "@/forms/staff/formSheetCore";
+import { FORM_DEFS, pauseConsentDef } from "@/forms/staff/formDefs";
+import {
+  CONSENT_WAIT,
+  type FormKey,
+  kuwaitIso,
+} from "@/forms/staff/formSheetCore";
 import { checkManualPayment, manualPaymentsToCheck } from "@/lib/paymentChecks";
+import { FormsEditorView } from "@/pages/FormsEditorPage";
 import { standIn } from "@/practice/fixtures/typeformStandIn";
+import {
+  CONSENTS,
+  NAME as FORMS_NAME,
+  NOW as FORMS_NOW,
+  TASK as FORMS_TASK,
+  fakeFormsIO,
+  LOW_SCORES,
+  TODAY_ROWS,
+  VIEWS,
+  VOICE_FULL,
+  VOICE_NONE,
+} from "./clientFormsFixtures";
 import {
   FULL_ANSWERS,
   fixtureCall,
@@ -650,9 +694,215 @@ function ChecksHarness() {
   );
 }
 
+/** Send a form, Forms out and Today's form bands over a stand-in FormsIO (5.1 to 5.3). */
+function FormsHarness() {
+  const view = VIEWS[params.get("view") ?? "recent"] ?? VIEWS.recent;
+  const io = useMemo(() => fakeFormsIO({ view, delay: 250 }), [view]);
+  const read = useInviteView(io, FORMS_TASK, true);
+  const [open, setOpen] = useState(params.get("send") !== "0");
+  const preset = params.get("preset");
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <div className="mx-auto w-full max-w-3xl space-y-6">
+        <Button variant="outline" onClick={() => setOpen(true)}>
+          Send a form
+        </Button>
+        <FormsOut io={io} read={read} onSend={() => setOpen(true)} />
+        <FormBands
+          io={io}
+          bands={{
+            invites: { rows: TODAY_ROWS, error: null },
+            low: { rows: LOW_SCORES, error: null },
+            reload: () => {},
+          }}
+          ticketTypes={new Set(["client_low_score"])}
+          onSend={() => setOpen(true)}
+          onOpenClient={() => {}}
+          onTicket={() => {}}
+          onChanged={() => {}}
+        />
+        <SendFormSheet
+          io={io}
+          open={open}
+          taskId={FORMS_TASK}
+          clientName={FORMS_NAME}
+          now={FORMS_NOW}
+          preset={preset ? { formKey: preset, origin: "churn" } : undefined}
+          onClose={() => setOpen(false)}
+        />
+      </div>
+      <Toaster />
+    </div>
+  );
+}
+
+/** The Client voice card (5.4). */
+function VoiceHarness() {
+  const low = params.get("low") === "1";
+  const voice =
+    params.get("empty") === "1"
+      ? VOICE_NONE
+      : low
+        ? {
+            ...VOICE_FULL,
+            nps: {
+              ...VOICE_FULL.nps,
+              latest: VOICE_FULL.nps.latest
+                ? { ...VOICE_FULL.nps.latest, score: 4 }
+                : null,
+            },
+          }
+        : VOICE_FULL;
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <div className="mx-auto w-full max-w-2xl">
+        <ClientVoiceCard
+          state={
+            params.get("failed") === "1"
+              ? { status: "failed", error: "Failed to fetch" }
+              : { status: "ready", voice }
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Pause this client with the pause consent live (4.3.6, 5.2). */
+function ConsentHarness() {
+  const key = (params.get("consent") ?? "sent") as keyof typeof CONSENTS;
+  const consent = CONSENTS[key] ?? CONSENTS.sent;
+  const live = params.get("live") !== "0";
+  const io = useMemo(() => fakeFormsIO({ delay: 300 }), []);
+  const [open, setOpen] = useState(true);
+  const today = kuwaitIso();
+  const def = live ? pauseConsentDef(consent) : FORM_DEFS.pause;
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <div className="mx-auto w-full max-w-2xl space-y-4">
+        <Button variant="outline" onClick={() => setOpen(true)}>
+          Open Pause this client
+        </Button>
+        <FormSheet
+          open={open}
+          onOpenChange={setOpen}
+          def={def}
+          client={CLIENT}
+          prefill={[
+            {
+              key: "pauseKind",
+              value: "client_request",
+              source: "the pause request",
+            },
+            {
+              key: "restart",
+              value: consent.restart ?? "2026-11-20",
+              source: "the consent",
+            },
+          ]}
+          calls={CALLS}
+          status="Active · due 2 Nov"
+          submit={async () => {
+            await new Promise(r => setTimeout(r, 600));
+            return {
+              message: "from today, restarts 20 Nov",
+              ref: { eventId: 1 },
+            };
+          }}
+          trail={async () => TRAIL_ROWS.held}
+          onTicket={() => {}}
+          after={
+            live
+              ? a =>
+                  a.pauseKind === "client_request" ? (
+                    <PauseConsentRow
+                      io={io}
+                      taskId={CLIENT.taskId}
+                      consent={consent}
+                      answers={a}
+                      today={today}
+                      onSent={() => {}}
+                    />
+                  ) : null
+              : undefined
+          }
+          blocked={
+            live
+              ? a =>
+                  a.pauseKind === "client_request" && consent.state !== "signed"
+                    ? CONSENT_WAIT
+                    : null
+              : undefined
+          }
+        />
+      </div>
+      <Toaster />
+    </div>
+  );
+}
+
+/** The forms editor (5.13) over its fixtures: nothing leaves the page. */
+function EditorHarness() {
+  const [formKey, setFormKey] = useState<string | null>(params.get("form"));
+  const io = useMemo(() => {
+    const fake = fakeFormsEditorIO();
+    const key = params.get("form");
+    if (key && params.get("draft") === "1") {
+      const one = editorOneFixture(key);
+      if (one.published) {
+        const schema = copyEditor(one.published.schema);
+        schema.intro = {
+          en: `${schema.intro?.en ?? ""} We read every answer the same day.`.trim(),
+          ar: `${schema.intro?.ar ?? ""} نقرا كل رد بنفس اليوم.`.trim(),
+        };
+        fake.state.ones.set(key, {
+          ...one,
+          draft: {
+            schema,
+            baseVersion: one.published.version,
+            savedAt: "2026-11-01T09:12:00Z",
+            savedBy: "an admin",
+            stale: false,
+            problem:
+              "Client messages never quote leads or cost per lead. Say how the campaign is doing, or count appointments for clients we book for.",
+            where: ".intro.en",
+          },
+        });
+      }
+    }
+    if (params.get("refuse") === "1")
+      fake.refuse(
+        "publish",
+        "How likely are you to recommend Mahara? is read by the low-score call on Today, so its type, range and choices stay as they are.",
+        ".fields.recommend",
+      );
+    return fake;
+  }, []);
+  return (
+    <div className="min-h-dvh bg-background p-4 text-foreground sm:p-6">
+      <FormsEditorView
+        io={io}
+        door={params.get("door") === "0" ? false : true}
+        formKey={formKey}
+        onOpen={setFormKey}
+        onBack={() => setFormKey(null)}
+      />
+      <Toaster />
+    </div>
+  );
+}
+
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
-    {scenario === "staff" ? (
+    {scenario === "editor" ? (
+      <EditorHarness />
+    ) : scenario === "forms" ? (
+      <FormsHarness />
+    ) : scenario === "voice" ? (
+      <VoiceHarness />
+    ) : scenario === "consent" ? (
+      <ConsentHarness />
+    ) : scenario === "staff" ? (
       <StaffHarness />
     ) : scenario === "bands" ? (
       <Suspense fallback={null}>

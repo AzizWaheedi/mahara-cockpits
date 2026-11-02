@@ -69,6 +69,8 @@ import type {
   PortalPayload,
   RenewalEvidence,
   TermClient,
+  VoiceAnswer,
+  VoicePayload,
 } from "@/types/ceo/payloads";
 import { FormsConnections } from "./FormsConnections";
 import type { CeoTabProps } from "./types";
@@ -277,7 +279,8 @@ type CardKey =
   | "terms"
   | "churn"
   | "roster"
-  | "portal";
+  | "portal"
+  | "voice";
 
 /**
  * Where each note from the clients payload belongs. A note can qualify more
@@ -296,6 +299,8 @@ const NOTE_ROUTES: readonly (readonly [RegExp, CardKey[]])[] = [
     /extension form|extension grant|extensions are|current extension|first launch|average retainer|billing fields/i,
     ["extensions"],
   ],
+  // Before the portal route: the voice notes name the portal as where clients answer.
+  [/client voice|\bNPS\b/i, ["voice"]],
   [/portal/i, ["portal", "roster"]],
 ];
 
@@ -362,6 +367,7 @@ const OWN_NOTES: Record<CardKey, Note[]> = {
     },
   ],
   roster: [],
+  voice: [],
   portal: [
     {
       level: "info",
@@ -527,6 +533,17 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
           order={5}
         >
           {p => <ExtensionsLaunches payload={p} />}
+        </SectionCard>
+
+        <SectionCard
+          kicker={w ? w.label : "Month to date"}
+          title="Client voice"
+          description="NPS and the onboarding survey, from the clients' own answers in their portal or by WhatsApp link"
+          section={clients}
+          notes={cardNotes(routed, "voice")}
+          order={5}
+        >
+          {p => <ClientVoice payload={p} />}
         </SectionCard>
 
         <SectionCard
@@ -1086,6 +1103,138 @@ function ExtensionList({ rows }: { rows: Extensions["perClient"] }) {
         />
       ) : null}
     </>
+  );
+}
+
+// --- Client voice (docs/forms/WAVE34-CONTRACT.md 4.6.4) ---
+
+/**
+ * NPS, its answers and the onboarding average over one window, the same rule as
+ * voice.js npsOf and SQL cockpit_client_voice_nps: each client once with the
+ * latest NPS answer, promoters (9-10) minus detractors (0-6) over n; checked
+ * against the clients with an answered invite. No answers is null, never 0.
+ */
+export function voiceIn(
+  voice: Extract<VoicePayload, { read: true }>,
+  from: string,
+  to: string,
+) {
+  const inWin = (day: string) => day >= from && day <= to;
+  const latest = new Map<string, VoiceAnswer>();
+  for (const a of voice.answers)
+    if (a.form === "nps" && a.band && a.score !== null && inWin(a.day)) {
+      const had = latest.get(a.taskId);
+      if (!had || a.at > had.at || (a.at === had.at && a.day >= had.day))
+        latest.set(a.taskId, a);
+    }
+  const bands = { promoter: 0, passive: 0, detractor: 0 };
+  for (const a of latest.values()) bands[a.band as keyof typeof bands] += 1;
+  const n = latest.size;
+  const cards = new Set(
+    voice.answered.filter(x => inWin(x.day)).map(x => x.taskId),
+  ).size;
+  const csat = voice.answers
+    .filter(a => a.form === "csat" && a.score !== null && inWin(a.day))
+    .map(a => a.score as number);
+  const sum = (form: string, key: "issued" | "answered") =>
+    voice.daily
+      .filter(d => d.form === form && inWin(d.day))
+      .reduce((t, d) => t + d[key], 0);
+  return {
+    nps:
+      n > 0 ? Math.round((100 * (bands.promoter - bands.detractor)) / n) : null,
+    n,
+    ...bands,
+    cardsAnswered: cards,
+    csatAverage: csat.length
+      ? Math.round((csat.reduce((t, x) => t + x, 0) / csat.length) * 10) / 10
+      : null,
+    csatN: csat.length,
+    npsSent: sum("nps", "issued"),
+    npsAnswered: sum("nps", "answered"),
+  };
+}
+
+const signed = (n: number) =>
+  n > 0 ? `+${n}` : n < 0 ? `\u2212${Math.abs(n)}` : "0";
+
+/**
+ * The client's own scores for the window the bar picked: NPS, how many clients
+ * answered it, and the onboarding survey's average, apart. A read that failed
+ * says so; a window nobody answered in says "No scores yet", never 0.
+ */
+function ClientVoice({ payload }: { payload: ClientsPayload }) {
+  const voice = payload.voice;
+  const win = useContext(ClientWindow);
+  if (!voice)
+    return (
+      <EmptyState
+        icon={MessageSquare}
+        title="Not computed yet"
+        text="Client voice fills in after the next refresh of the clients section."
+        compact
+      />
+    );
+  if (!voice.read)
+    return (
+      <EmptyState
+        icon={MessageSquare}
+        title="Client voice could not be read"
+        text="NPS and the onboarding survey are missing this run, not zero. The next refresh reads them again."
+        compact
+      />
+    );
+  const from = win?.w?.from ?? `${voice.today.slice(0, 7)}-01`;
+  const to = win?.w?.to ?? voice.today;
+  const v = voiceIn(voice, from, to);
+  const mismatch = v.n > 0 && v.cardsAnswered !== v.n;
+  return (
+    <div className="@container">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3">
+        <StatTile
+          variant="plain"
+          label="NPS"
+          value={v.nps === null ? null : signed(v.nps)}
+          naHint="No scores yet: no client answered the NPS survey in this timeframe"
+          sub={
+            v.n > 0
+              ? `${plural(v.promoter, "promoter")} \u00b7 ${plural(v.passive, "passive")} \u00b7 ${plural(v.detractor, "detractor")}`
+              : "No scores yet"
+          }
+          status={
+            mismatch ? (
+              <StatusChip
+                tone="warning"
+                label="Counts differ"
+                hint={`Clients with an answered invite ${v.cardsAnswered}, clients with an answer ${v.n}.`}
+              />
+            ) : undefined
+          }
+          hint="Promoters (9 or 10) minus detractors (0 to 6), over the clients who answered, times 100. Each client counts once, with their latest answer in the timeframe."
+        />
+        <StatTile
+          variant="plain"
+          label="Clients who answered NPS"
+          value={count(v.n)}
+          sub={`${plural(v.npsSent, "survey")} sent \u00b7 ${count(v.npsAnswered)} answered`}
+          hint="Checked against the clients with an answered NPS invite in the same timeframe. Sent counts each invite, by the day it went out."
+        />
+        <StatTile
+          variant="plain"
+          label="Onboarding survey"
+          value={v.csatAverage === null ? null : `${decimal(v.csatAverage)}/10`}
+          naHint="No onboarding survey answers in this timeframe"
+          sub={v.csatN > 0 ? plural(v.csatN, "answer") : "No answers yet"}
+          hint="The average of how clients rated getting started, 1 to 10, kept apart from NPS. Clients launched more than 60 days ago are not asked."
+        />
+      </div>
+      <p className="mt-4 border-t border-[color:var(--ceo-grid)] pt-3 text-xs leading-relaxed text-muted-foreground">
+        From the clients' own answers
+        {voice.firstDay ? ` since ${date(voice.firstDay)}` : ""}. The 2 old
+        Typeform answers could not be matched to a client, so they are left out.
+        Portal feedback ratings never count here.
+      </p>
+    </div>
   );
 }
 
@@ -2968,10 +3117,6 @@ const NOT_MEASURED: { label: string; why: string }[] = [
   {
     label: "Client requests and response time",
     why: "No ticket or request table exists in any source the cockpit reads.",
-  },
-  {
-    label: "A survey score from the client",
-    why: "Happiness and DEFCON are set by the team on the card and in the call notes, not answered by the client, so there is no NPS or CSAT.",
   },
 ];
 

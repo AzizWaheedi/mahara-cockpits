@@ -8,6 +8,7 @@ import {
   REASONS,
   type Reason,
   rollUp,
+  surveyInviteOf,
 } from "./churnCore";
 import {
   type ChurnSource,
@@ -170,6 +171,18 @@ function monthInputOf(r: MonthSource): MonthInput {
 
 const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
 export function buildChurnPage(input: unknown): ChurnPage {
+  // The native exit survey's invite rides on each departure (20261102b); the
+  // schema strips keys it does not name, so it is read from the raw rows.
+  const rawDeps = (input as { deps?: unknown } | null)?.deps;
+  const invites = new Map<number, ReturnType<typeof surveyInviteOf>>();
+  for (const r of Array.isArray(rawDeps) ? rawDeps : []) {
+    const id = Number((r as { id?: unknown })?.id);
+    const si = surveyInviteOf(
+      (r as { surveyInvite?: unknown; survey_invite?: unknown })
+        ?.surveyInvite ?? (r as { survey_invite?: unknown })?.survey_invite,
+    );
+    if (Number.isFinite(id) && si) invites.set(id, si);
+  }
   const {
     today,
     month,
@@ -183,7 +196,11 @@ export function buildChurnPage(input: unknown): ChurnPage {
     unmatched = [],
     stoppedNotInRegister = [],
   }: ChurnSource = churnSourceSchema.parse(input);
-  const departures = deps.map(departureOf);
+  const departures = deps.map(r => {
+    const d = departureOf(r);
+    const si = invites.get(d.id);
+    return si ? { ...d, surveyInvite: si } : d;
+  });
   const billing = new Map(cards.map(c => [String(c.clickup_task_id), c]));
   const rosterByKey = new Map(r.cards.map(c => [c.key, c]));
 
