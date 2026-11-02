@@ -50,15 +50,45 @@ export type SheetContext = {
   metrics: Record<string, any>[];
   cells: SheetCell[];
   growthDaily: Record<string, any>[];
-  windows: { from: string | null; raw: Record<string, any> | null }[];
+  windows: {
+    from: string | null;
+    raw: Record<string, any> | null;
+    /** The growth window's front-end cash (20261102m): paidOnWindowDeals for UF cash %. */
+    frontEndCash?: {
+      paid?: number | null;
+      paidOnWindowDeals?: number | null;
+    } | null;
+  }[];
   cashDaily: { date: string; usd: number }[];
   book: {
     month: string;
     projectedMrr: number;
     collected: number;
-    history?: { month: string; projected: number; collected: number }[];
+    /**
+     * Back end only (CEO refresh release goal1102, 2026-11-02): recurring-card
+     * payments from clients who were clients before the month, over what those
+     * cards owe; `projectedOnDeals` is what is left out as front end. Absent
+     * from an older worker.
+     */
+    collectedBackEnd?: number | null;
+    projectedExisting?: number | null;
+    projectedOnDeals?: number | null;
+    history?: {
+      month: string;
+      projected: number;
+      collected: number;
+      collectedBackEnd?: number | null;
+      projectedExisting?: number | null;
+      projectedOnDeals?: number | null;
+    }[];
   } | null;
-  refundsMonthly: { month: string; refunds: number }[];
+  /** refundsManual and refundCount arrive with the money refresh's goal1102 release, when passed. */
+  refundsMonthly: {
+    month: string;
+    refunds: number;
+    refundsManual?: number;
+    refundCount?: number;
+  }[];
   bankThrough: string | null;
   deliveryDaily: Record<string, any>[];
   mediaDaily: Record<string, any>[];
@@ -80,8 +110,98 @@ export type SheetContext = {
         confirmedBookings: number;
         shows: number;
         noShow: number;
+        /** Deals clients marked won, the report's own (2026-11-02): the close rate reads one system. */
+        closed?: number;
       }[]
     | null;
+  // --- Round 2 (migration 20261102m, 2026-11-02). Each is absent on an older
+  // server and null when its store was not read (readsMissing then says why).
+  // A ranged store's day inside from..through with no row is 0; outside, not known.
+  /** Money in the CEO left out of cashDaily (his own test payment). */
+  cashExcluded?:
+    | {
+        date: string;
+        id: string;
+        rail: string;
+        usd: number;
+        reason: string;
+        note: string | null;
+      }[]
+    | null;
+  /** The wins ledger by day and kind. */
+  winsDaily?:
+    | (SheetRanged<{ date: string; kind: string; count: number }> & {
+        ledgerFrom?: string;
+      })
+    | null;
+  /** Checked payments tied to an upsell win, by the day paid. */
+  upsellCashDaily?:
+    | (SheetRanged<{ date: string; usd: number; payments: number }> & {
+        ledgerFrom?: string;
+      })
+    | null;
+  /** Signed or paid upsells at their quoted price, by the day signed. */
+  upsellContracted?:
+    | (SheetRanged<{ date: string; usd: number; count: number }> & {
+        ledgerFrom?: string;
+      })
+    | null;
+  /** Refunds by day: Whop (already netted off its charge) and logged by hand. */
+  refundsDaily?: SheetRanged<{
+    date: string;
+    count: number;
+    usd: number;
+    whopCount: number;
+    whopUsd: number;
+    manualCount: number;
+    manualUsd: number;
+  }> | null;
+  /** The closer's filed EODs by day; a day with no row is not recorded. */
+  salesEodDaily?: {
+    rows: { date: string; offers: number | null; eods: number }[];
+    source?: string;
+  } | null;
+  /** Extension grants in the billing log by the day given. */
+  extensionsDaily?:
+    | (SheetRanged<{
+        date: string;
+        count: number;
+        grants: {
+          grantId: number;
+          client: string;
+          weeks: number;
+          state: string;
+        }[];
+      }> & { logFrom?: string })
+    | null;
+  /** Overhead per month: a past month's point, today's lines for the current month. */
+  softwareByMonth?:
+    | {
+        month: string;
+        usd: number | null;
+        basis: "point" | "lines" | "missing" | "not_started";
+        capturedAt: string | null;
+        source: string;
+      }[]
+    | null;
+  /** Growth's front-end cash by whole month: paidOnWindowDeals is UF cash %'s cash. */
+  frontEndMonths?:
+    | {
+        month: string;
+        paid: number;
+        paidOnWindowDeals: number | null;
+      }[]
+    | null;
+  /** A sentence for each round-2 read that is not live or failed. */
+  readsMissing?: string[] | null;
+};
+
+/** A store read over a run of days: from/through are null when no day was read. */
+export type SheetRanged<R> = {
+  from: string | null;
+  through: string | null;
+  rows: R[];
+  source?: string;
 };
 
 async function rpc(
@@ -107,7 +227,16 @@ function monthBack(month: string): string {
 
 export async function readGoalSheet(
   client: SupabaseClient | null,
-  args: { month: string },
+  args: {
+    month: string;
+    /**
+     * The report the screen already holds for this month. The quiet re-read
+     * after a save passes it (2026-11-02): a typed cell never changes the
+     * call centre's numbers, and reading the slow report again held every
+     * save up.
+     */
+    callDaily?: SheetContext["callDaily"];
+  },
 ): Promise<SheetContext> {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(args.month))
     throw new Error("Choose a month like 2026-11");
@@ -116,6 +245,8 @@ export async function readGoalSheet(
   })) as SheetContext;
   if (!data || typeof data !== "object" || data.month !== args.month)
     throw new Error("The sheet answered for the wrong month");
+  if (args.callDaily !== undefined)
+    return { ...data, callDaily: args.callDaily };
   // The report is slow and can time out on its own: its columns then read
   // missing, and the rest of the sheet still opens.
   let callDaily: SheetContext["callDaily"] = null;
@@ -137,6 +268,9 @@ export async function readGoalSheet(
         confirmedBookings: d.confirmedBookings,
         shows: d.shows,
         noShow: d.noShow,
+        // Carried since 2026-11-02 so the close rate divides the report's own
+        // closed by its own shows (truth/SYNTHESIS.md fix 12).
+        closed: d.closed,
       }));
     } catch {
       callDaily = null;

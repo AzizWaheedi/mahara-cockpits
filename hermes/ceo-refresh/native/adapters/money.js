@@ -337,6 +337,44 @@ function tieReaches(tie, deal, payment) {
   return tie.scope === "payment" || daysFrom(deal.day, payment.day) >= -BEFORE_FORM_DAYS;
 }
 
+/**
+ * An index's value for a key: the exact key, else, for keys CONTAINS_MIN long or longer, the
+ * longest key that contains it or that it contains. Moved out of attributePayments unchanged
+ * (2026-11-02) so the back-end book's card match is attribution's own.
+ */
+function longestMatch(index, key) {
+  if (!key) return null;
+  if (index.has(key)) return index.get(key);
+  if (key.length < CONTAINS_MIN) return null;
+  let best = null;
+  let bestLength = 0;
+  for (const [candidate, value] of index) {
+    if (candidate.length >= CONTAINS_MIN && (key.includes(candidate) || candidate.includes(key)) && candidate.length > bestLength) {
+      best = value;
+      bestLength = candidate.length;
+    }
+  }
+  return best;
+}
+
+/**
+ * The client card a closer-form deal belongs to: its business name on the card's names, else the
+ * form's email on the card's portal logins. attributePayments uses it, and so does the back-end
+ * book (2026-11-02, fix 8), so a deal sits on the same card in both.
+ */
+export function cardForDealOf(cards) {
+  const byEmail = new Map();
+  const byName = new Map();
+  for (const card of cards) {
+    for (const email of card.emails ?? []) if (lowerEmail(email)) byEmail.set(lowerEmail(email), card);
+    for (const name of card.names ?? []) {
+      const key = nameKey(name);
+      if (key.length >= 4) byName.set(key, card);
+    }
+  }
+  return deal => longestMatch(byName, nameKey(deal.business)) ?? (lowerEmail(deal.email) ? byEmail.get(lowerEmail(deal.email)) ?? null : null);
+}
+
 export function attributePayments(payments, deals, cards, tieRows = []) {
   const dealById = new Map();
   const dealsByEmail = new Map();
@@ -363,20 +401,7 @@ export function attributePayments(payments, deals, cards, tieRows = []) {
       if (key.length >= 4) cardByName.set(key, card);
     }
   }
-  const lookup = (index, key) => {
-    if (!key) return null;
-    if (index.has(key)) return index.get(key);
-    if (key.length < CONTAINS_MIN) return null;
-    let best = null;
-    let bestLength = 0;
-    for (const [candidate, value] of index) {
-      if (candidate.length >= CONTAINS_MIN && (key.includes(candidate) || candidate.includes(key)) && candidate.length > bestLength) {
-        best = value;
-        bestLength = candidate.length;
-      }
-    }
-    return best;
-  };
+  const lookup = longestMatch;
   // The deal whose form sits closest to the payment, a form on or before it
   // preferred: gap = payment - deal, as the Edge copy (changed 2026-10-18).
   const nearest = (candidates, day) => candidates.reduce((best, deal) => {
@@ -384,7 +409,8 @@ export function attributePayments(payments, deals, cards, tieRows = []) {
     const score = gap >= 0 ? gap : Math.abs(gap) * 10;
     return !best || score < best.score ? { deal, score } : best;
   }, null)?.deal ?? null;
-  const cardForDeal = deal => lookup(cardByName, nameKey(deal.business)) ?? (lowerEmail(deal.email) ? cardByEmail.get(lowerEmail(deal.email)) ?? null : null);
+  // One card match for a deal, shared with the back-end book (2026-11-02) so both tie a deal to the same card.
+  const cardForDeal = cardForDealOf(cards);
   const dealsByCard = new Map();
   for (const deal of deals) {
     const card = cardForDeal(deal);
@@ -641,6 +667,96 @@ export async function readWins(read, today) {
   }
 }
 
+/**
+ * A month's refunds (2026-11-02, Goals sheet fix 1): Whop's refunds plus the refunds logged by
+ * hand, the hand-logged part apart as `refundsManual` because Whop cash is already net of its
+ * refunds (net_amount), so revenue takes off refundsManual only and a Whop refund is never taken
+ * off twice. `refundCount` counts both. A hand-logged refund counts while it waits on its check,
+ * as refunds.mtd does: money out is never held back. Pure, for the tests.
+ */
+export function withManualRefunds(row, manualRefunds) {
+  const mine = manualRefunds.filter(item => item.day.slice(0, 7) === row.month);
+  const refundsManual = ROUND2(mine.reduce((sum, item) => sum + item.amountUsd, 0));
+  return { ...row, refunds: ROUND2(row.refunds + refundsManual), refundsManual, refundCount: row.refundCount + mine.length };
+}
+
+/**
+ * The client cards still on their closer-form deal in a month (2026-11-02, Goals sheet fix 8), from
+ * each deal's state at the month's start, never from what was paid during the month: a deal tied
+ * to the card (cardForDealOf, attribution's own match) that was signed in the month, or signed
+ * before it and at the month's start still inside DEAL_TERM_DAYS with its contract not paid in
+ * full. attributePayments makes those cards' payments front-end money, the deal's (new cash, the
+ * closer's), so they owe no back-end MRR that month. `attributedAll` is every attributed payment,
+ * the seed months before the 12 included, so "paid before the month" is the contract's own count.
+ * A term that ends inside the month keeps the card on its deal for that month. Pure, for the tests.
+ */
+export function cardsOnDeals(deals, cardForDeal, attributedAll, month) {
+  const first = `${month}-01`;
+  const last = addDays(monthStart(addDays(first, 32)), -1);
+  const paidBefore = new Map();
+  for (const row of attributedAll) {
+    if (row.dealResponseId && row.day < first) paidBefore.set(row.dealResponseId, (paidBefore.get(row.dealResponseId) ?? 0) + row.usd);
+  }
+  const out = new Set();
+  for (const deal of deals) {
+    if (!deal.day || deal.day > last) continue;
+    const card = cardForDeal(deal);
+    if (!card) continue;
+    const signedInMonth = deal.day >= first;
+    const inTerm = daysFrom(deal.day, first) <= DEAL_TERM_DAYS;
+    const open = !(deal.contracted > 0) || (paidBefore.get(deal.responseId) ?? 0) + 0.01 < deal.contracted;
+    if (signedInMonth || (inTerm && open)) out.add(card.taskId);
+  }
+  return out;
+}
+
+/**
+ * MRR collected and owed on the back end (2026-11-02, Goals sheet fix 8; the CEO's choice: back
+ * end only, as the plan's `mrrCollected` is back-end cash). A recurring card (active, an MRR, a
+ * recurring plan) is a client from before the month, owing back-end MRR, unless it is on its deal
+ * that month (`onDeals`, cardsOnDeals: new in the month, or still paying a deal in its term) or
+ * took front-end money in the month anyway (a payment made up to BEFORE_FORM_DAYS ahead of a later
+ * form). Those cards' money that month is the deal's, new cash, never MRR, so their MRR is left out
+ * of what is owed (`projectedOnDeals`, said beside it) and none of their money is collected.
+ * Deciding it from the deal, not from whether an instalment landed, keeps the rate's base fixed:
+ * an instalment arriving never shrinks what is owed (review, 2026-11-02: the earlier stand-in
+ * moved November's base from 11,333 to 5,333 as Madana, Al Ola and Ardon paid).
+ * `collectedBackEnd` is the back-end payments on the owing cards, so both sides are one set.
+ * October 2026 (live, read 2 Nov): $1,300 (Safad) of $4,999 (Joe and Sera 1,666, Liwan 1,333,
+ * Safad 1,300, Nohod 700) = 26.0%; $10,000 left out on Madana (signed 2 Oct), Al Ola, Ardon,
+ * Castello and Arcturus (each $2,000, all mid-deal). The whole book reads $7,321.20 of $14,999.
+ * Pure, for the tests.
+ */
+export function backEndBook(attributed, recurring, month, onDeals = new Set()) {
+  const inMonth = attributed.filter(row => row.clientTaskId && row.day.slice(0, 7) === month);
+  const newCards = new Set(inMonth.filter(row => row.side === "front_end").map(row => row.clientTaskId));
+  const leftOut = row => onDeals.has(row.taskId) || newCards.has(row.taskId);
+  const existing = recurring.filter(row => !leftOut(row));
+  const ids = new Set(existing.map(row => row.taskId));
+  return {
+    collectedBackEnd: ROUND2(inMonth.filter(row => row.side === "back_end" && ids.has(row.clientTaskId)).reduce((sum, row) => sum + row.usd, 0)),
+    projectedExisting: ROUND2(existing.reduce((sum, row) => sum + num(row.mrrUsd), 0)),
+    projectedOnDeals: ROUND2(recurring.filter(leftOut).reduce((sum, row) => sum + num(row.mrrUsd), 0)),
+  };
+}
+
+/** The recurring cards of a billing snapshot, the book's own rule: active, an MRR, a recurring plan. */
+export function recurringCards(rows) {
+  return rows.filter(row => groupOf(row.stage) === "active" && typeof row.mrrUsd === "number" && Number.isFinite(row.mrrUsd) && row.paymentPlan && !isOneOffPlan(row.paymentPlan));
+}
+
+/**
+ * Each past month's last billing snapshot (cockpit_client_billing_days), for the back-end book of
+ * book.history (2026-11-02, fix 8): a past month's recurring cards are that month's, never today's
+ * (Arcturus stopped on 1 Nov and is in October's book). The table starts on 7 Oct 2026, so earlier
+ * months have no snapshot and read missing, not zero.
+ */
+export function bookMonthEndsSql(from, before) {
+  return `/* ceo-refresh:money.book_month_ends */ SELECT to_char(day,'YYYY-MM') AS month,clickup_task_id,stage,mrr_usd::float8 AS mrr_usd,payment_plan
+    FROM public.cockpit_client_billing_days
+    WHERE day IN (SELECT max(day) FROM public.cockpit_client_billing_days WHERE day>=date '${from}' AND day<date '${before}' GROUP BY date_trunc('month',day))`;
+}
+
 function normalizeDeal(row) {
   return {
     responseId: String(field(row, "response_id", "responseId") ?? ""),
@@ -756,11 +872,12 @@ export function createMoneyAdapter(snapshot) {
       const monthRows = await sql(B2B, `/* ceo-refresh:money.monthly */
         WITH months AS (SELECT generate_series(date '${dates.from12.slice(0, 7)}-01',date '${monthStart(today)}',interval '1 month')::date AS month),
         cash AS (SELECT date_trunc('month',paid_on)::date AS month,sum(net_amount) AS cash FROM public.whop_payments WHERE status='paid' AND currency='usd' AND paid_on>=date '${dates.from12}' GROUP BY 1),
-        refunds AS (SELECT date_trunc('month',(refunded_at AT TIME ZONE 'Asia/Kuwait')::date)::date AS month,sum(refunded_amount) AS refunds FROM public.whop_payments WHERE status='paid' AND currency='usd' AND refunded_amount>0 AND (refunded_at AT TIME ZONE 'Asia/Kuwait')::date>=date '${dates.from12}' GROUP BY 1),
+        refunds AS (SELECT date_trunc('month',(refunded_at AT TIME ZONE 'Asia/Kuwait')::date)::date AS month,sum(refunded_amount) AS refunds,count(*) AS refund_count FROM public.whop_payments WHERE status='paid' AND currency='usd' AND refunded_amount>0 AND (refunded_at AT TIME ZONE 'Asia/Kuwait')::date>=date '${dates.from12}' GROUP BY 1),
         deals AS (SELECT date_trunc('month',(submitted_at AT TIME ZONE 'Asia/Kuwait')::date)::date AS month,count(*) AS deals,sum(contracted_revenue) AS contracted FROM public.closed_deals d WHERE (submitted_at AT TIME ZONE 'Asia/Kuwait')::date>=date '${dates.from12}' AND NOT EXISTS(SELECT 1 FROM public.record_voids rv WHERE rv.entity='closed_deal' AND rv.record_id=d.response_id) GROUP BY 1)
-        SELECT to_char(m.month,'YYYY-MM') AS month,coalesce(c.cash,0) AS cash,coalesce(r.refunds,0) AS refunds,coalesce(d.deals,0) AS deals,coalesce(d.contracted,0) AS contracted
+        SELECT to_char(m.month,'YYYY-MM') AS month,coalesce(c.cash,0) AS cash,coalesce(r.refunds,0) AS refunds,coalesce(r.refund_count,0) AS refund_count,coalesce(d.deals,0) AS deals,coalesce(d.contracted,0) AS contracted
         FROM months m LEFT JOIN cash c USING(month) LEFT JOIN refunds r USING(month) LEFT JOIN deals d USING(month) ORDER BY m.month`);
-      const monthly = monthRows.map(row => ({ month: String(row.month), cash: ROUND2(num(row.cash)), refunds: ROUND2(num(row.refunds)), deals: num(row.deals), contracted: ROUND2(num(row.contracted)) }));
+      // refundCount here is Whop's; monthlyWithManual adds the hand-logged refunds to both (2026-11-02).
+      const monthly = monthRows.map(row => ({ month: String(row.month), cash: ROUND2(num(row.cash)), refunds: ROUND2(num(row.refunds)), refundCount: num(row.refund_count), deals: num(row.deals), contracted: ROUND2(num(row.contracted)) }));
       const byMonth = new Map(monthly.map(row => [row.month, row]));
       const cashByDay = new Map(whopDayRows.map(row => [dateText(row.day), num(row.cash)]));
       const cashDaily = [];
@@ -934,7 +1051,9 @@ export function createMoneyAdapter(snapshot) {
       // The CEO's ties come through the same fenced snapshot as the payer mapping (contract section 3).
       const tieRows = rowsFor(snapshot, "ties");
       // Every payment read decides each deal's contract; only the 12 months are published (the ledger rewrite covers them).
-      const attributed = attributePayments(paymentRows, deals, cards, tieRows).filter(row => row.day >= dates.from12);
+      // The seed months stay in attributedAll for the back-end book's "paid before the month" (2026-11-02, fix 8).
+      const attributedAll = attributePayments(paymentRows, deals, cards, tieRows);
+      const attributed = attributedAll.filter(row => row.day >= dates.from12);
       const ties = tieSummary(tieRows, attributed, deals, cards);
       // Pay and front-end cash read the deal ledger, so it holds checked money only.
       const dealPayments = dealLedgerRows(attributed);
@@ -1179,7 +1298,7 @@ export function createMoneyAdapter(snapshot) {
       }));
       if (!billingRows.length) failSource("Client billing snapshots", "no canonical billing snapshot is available");
       const billing = summariseBilling(billingRows);
-      const recurring = billingRows.filter(row => groupOf(row.stage) === "active" && typeof row.mrrUsd === "number" && row.paymentPlan && !isOneOffPlan(row.paymentPlan));
+      const recurring = recurringCards(billingRows);
       const projectedMrr = ROUND2(recurring.reduce((sum, row) => sum + num(row.mrrUsd), 0));
       const recurringIds = new Set(recurring.map(row => row.taskId));
       const collected = ROUND2(attributed.filter(row => row.clientTaskId && recurringIds.has(row.clientTaskId) && row.day.slice(0, 7) === dates.month).reduce((sum, row) => sum + row.usd, 0));
@@ -1201,23 +1320,43 @@ export function createMoneyAdapter(snapshot) {
         .map(row => ({ metric: String(field(row, "metric") ?? ""), month: dateText(field(row, "day", "date")).slice(0, 7), value: num(field(row, "value")) }))
         .filter(row => /^\d{4}-\d{2}$/.test(row.month));
       const collectedByMonth = new Map(seriesPoints.filter(row => row.metric === "money.book.collected").map(row => [row.month, row.value]));
+      // Each past month's recurring cards from its last billing snapshot, for the back-end book
+      // (2026-11-02, fix 8). An optional read: on failure the history's back-end fields read missing.
+      const monthEnds = await withOptionalReads(async () => {
+        try { return { rows: await sql(TRIAGE, bookMonthEndsSql(dates.from12, monthStart(today))) }; }
+        catch (error) { return { rows: null, error: cleanText(error instanceof Error ? error.message : String(error), 200) }; }
+      });
+      const monthEndCards = new Map();
+      for (const row of monthEnds.rows ?? []) {
+        const list = monthEndCards.get(String(row.month)) ?? [];
+        list.push({ taskId: String(row.clickup_task_id ?? ""), stage: row.stage ?? null, mrrUsd: row.mrr_usd == null || row.mrr_usd === "" ? undefined : Number(row.mrr_usd), paymentPlan: row.payment_plan ?? undefined });
+        monthEndCards.set(String(row.month), list);
+      }
+      // Which cards are still on their deal in a month, from the deals' state at its start (2026-11-02, fix 8).
+      const cardForDeal = cardForDealOf(cards);
+      const onDealsIn = month => cardsOnDeals(deals, cardForDeal, attributedAll, month);
       const bookHistory = [...new Map(seriesPoints.filter(row => row.metric === "money.book.projected" && row.month !== dates.month).map(row => [row.month, row])).values()]
         .sort((a, b) => a.month.localeCompare(b.month))
         .map(row => {
           const got = collectedByMonth.get(row.month) ?? 0;
-          return { month: row.month, projected: ROUND2(row.value), collected: ROUND2(got), rate: row.value > 0 ? Math.round(got / row.value * 1000) / 1000 : null };
+          const cardsThen = monthEndCards.get(row.month);
+          // No snapshot for the month (before 7 Oct 2026, or the read failed): missing, never zero.
+          const backEnd = cardsThen ? backEndBook(attributed, recurringCards(cardsThen), row.month, onDealsIn(row.month)) : { collectedBackEnd: null, projectedExisting: null, projectedOnDeals: null };
+          return { month: row.month, projected: ROUND2(row.value), collected: ROUND2(got), rate: row.value > 0 ? Math.round(got / row.value * 1000) / 1000 : null, ...backEnd };
         });
       const bookPayload = {
         month: dates.month, projectedMrr, projectedCards: recurring.length, collected,
         collectionRate: projectedMrr > 0 ? Math.round(collected / projectedMrr * 1000) / 1000 : null,
         averageRetainer: recurring.length ? ROUND2(projectedMrr / recurring.length) : null,
+        // Back end only (2026-11-02, fix 8): the Goals sheet's MRR collected and Collections %.
+        ...backEndBook(attributed, recurring, dates.month, onDealsIn(dates.month)),
         history: bookHistory,
       };
       const manualRefundsMtd = ROUND2(manualRefunds.filter(row => row.day >= monthStart(today) && row.day <= today).reduce((sum, row) => sum + row.amountUsd, 0));
       const manualRefunds90 = ROUND2(manualRefunds.filter(row => row.day >= dates.from90 && row.day <= today).reduce((sum, row) => sum + row.amountUsd, 0));
       const bankLatestMonth = bankFacts.latestStatementDay.slice(0, 7);
       const bankMonthLines = bankLines.filter(line => line.day.slice(0, 7) === bankLatestMonth && line.usd < 0 && ["expense", "fee", "excluded"].includes(line.kind));
-      const monthlyWithManual = monthly.map(row => ({ ...row, manualCash: ROUND2(countedManual.filter(item => item.day.slice(0, 7) === row.month).reduce((sum, item) => sum + item.amountUsd, 0)), manualContracted: ROUND2(liveManual.filter(item => item.day.slice(0, 7) === row.month && item.dealContractedUsd !== null).reduce((sum, item) => sum + num(item.dealContractedUsd), 0)) }));
+      const monthlyWithManual = monthly.map(row => ({ ...withManualRefunds(row, manualRefunds), manualCash: ROUND2(countedManual.filter(item => item.day.slice(0, 7) === row.month).reduce((sum, item) => sum + item.amountUsd, 0)), manualContracted: ROUND2(liveManual.filter(item => item.day.slice(0, 7) === row.month && item.dealContractedUsd !== null).reduce((sum, item) => sum + num(item.dealContractedUsd), 0)) }));
       const daily = [
         { date: today, metric: "money.failedCharges.count30d", scope: "company", value: num(summary.failed_count_30) },
         { date: today, metric: "money.failedCharges.amount30d", scope: "company", value: ROUND2(num(summary.failed_amount_30)) },
@@ -1270,6 +1409,8 @@ export function createMoneyAdapter(snapshot) {
           ...(manualCoveredByBank ? [{ level: "info", text: `${manualCoveredByBank} manual payments match bank client-payment lines and were counted once.` }] : []),
           ...(ctrTargetNote ? [ctrTargetNote] : []),
           ...(wins.read ? [] : [{ level: "warn", text: `The wins ledger could not be read this run (${wins.error}), so wins, upsells and upsell cash are missing, not zero.` }]),
+          ...(monthEnds.rows ? [] : [{ level: "warn", text: `The month-end billing snapshots could not be read this run (${monthEnds.error}), so earlier months' back-end MRR (collected and owed by clients from before the month) is missing, not zero.` }]),
+          ...(monthEnds.rows && bookHistory.some(row => row.projectedExisting === null) ? [{ level: "info", text: `Back-end MRR (collected and owed by clients from before the month) needs the month's last billing snapshot, so it reads missing, not zero, for ${bookHistory.filter(row => row.projectedExisting === null).map(row => row.month).join(", ")}${monthEndCards.size ? `; the snapshots start in ${[...monthEndCards.keys()].sort()[0]}` : ""}.` }] : []),
         ],
       };
       const liveManualStamp = epoch(field(snapshot, "newestManualChange", "newest_manual_change"));

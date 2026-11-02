@@ -179,14 +179,21 @@ function cardNotes(
 
 // --- What marketing has no source for at all ---
 
-const NO_ANALYTICS =
-  "No web analytics source is connected to the cockpit at all.";
+// Meta does count landing page views; what is missing is the B2B mirror's
+// column for them (2026-11-02, Goals sheet round 2, fix 16), so "no analytics
+// at all" was wrong. The Goals sheet's LPC is leads per unique link click,
+// which is measured, so the rate row says it is a different measure.
+const NO_LANDING_VIEWS =
+  "Meta records landing page views; the B2B mirror does not store them yet.";
 
 // Impressions, link clicks, Link CTR and cost per click are measured: they
 // are on the Ads tab, per ad and for the account (NOT_MEASURED_NOTES says so).
 const NOT_MEASURED: { label: string; why: string }[] = [
-  { label: "Landing page views", why: NO_ANALYTICS },
-  { label: "Landing page conversion rate", why: NO_ANALYTICS },
+  { label: "Landing page views", why: NO_LANDING_VIEWS },
+  {
+    label: "Landing page conversion rate",
+    why: `${NO_LANDING_VIEWS} The Goals sheet's LPC is leads per unique link click, which is measured.`,
+  },
   {
     label: "Email and owned social as lead sources",
     why: "Organic is split by the ad id rule on the sources card. Email and owned social carry no marker of their own on a contact, so they cannot be told apart from it.",

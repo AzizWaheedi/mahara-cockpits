@@ -264,8 +264,11 @@ function stagesOf(w: B2bAdWindow, freqHint: string): Stage[] {
       key: "signed",
       label: "Signed",
       value: count(w.closes),
-      facts: [{ label: "CAC", v: w.cac, f: money }],
-      hint: "Signed deals credited to the ad. CAC is spend over signed.",
+      // Not "CAC": the Goals sheet's CPA divides all Mahara ad spend by every
+      // deal, and this is one ad's spend over the deals credited to it
+      // (2026-11-02, Goals sheet round 2, fix 15).
+      facts: [{ label: "Cost per signed", v: w.cac, f: money }],
+      hint: "Signed deals credited to the ad. Cost per signed is the ad's spend over the deals credited to it; the Goals sheet's CPA divides all Mahara ad spend by every deal.",
     },
     {
       key: "revenue",
@@ -275,7 +278,7 @@ function stagesOf(w: B2bAdWindow, freqHint: string): Stage[] {
         { label: "ROAS", v: w.roas, f: times },
         { label: "Cash ROAS", v: w.cashRoas, f: times },
       ],
-      hint: "ROAS is contracted over spend; cash ROAS is cash collected over spend.",
+      hint: "ROAS is contracted over spend; cash ROAS is the deposit typed on the closer form over spend, not money seen on a rail.",
     },
   ];
 }
@@ -810,8 +813,9 @@ const COLS: Col[] = [
   { key: "closes", label: "Signed", get: w => w.closes, fmt: count },
   {
     key: "cac",
-    label: "CAC",
-    title: "Spend over signed",
+    label: "$/signed",
+    title:
+      "Spend over signed deals credited to the ad (not the Goals sheet's CPA)",
     get: w => w.cac,
     fmt: money,
     low: true,

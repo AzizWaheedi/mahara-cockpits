@@ -944,9 +944,12 @@ describe("front-end cash is the money paid, with the typed amounts beside it", (
   test("a custom range rebuilds from the paid days and takes its closers from the payments", () => {
     const w = tf.windowFromDaily(
       [
+        // Retargeting on each day: since 2026-11-02 front-end ROAS divides
+        // lead gen plus retargeting, the Goals sheet's rule.
         {
           date: "2026-10-09",
           spend: 100,
+          spendRetargeting: 0,
           leads: 1,
           booked: 0,
           closes: 0,
@@ -955,6 +958,7 @@ describe("front-end cash is the money paid, with the typed amounts beside it", (
         {
           date: "2026-10-10",
           spend: 100,
+          spendRetargeting: 50,
           leads: 1,
           booked: 0,
           closes: 1,
@@ -964,6 +968,7 @@ describe("front-end cash is the money paid, with the typed amounts beside it", (
         {
           date: "2026-10-11",
           spend: 100,
+          spendRetargeting: 0,
           leads: 1,
           booked: 0,
           closes: 0,
@@ -975,7 +980,8 @@ describe("front-end cash is the money paid, with the typed amounts beside it", (
       "2026-10-11",
     );
     expect(tf.paidFrontEnd(w)).toBe(500);
-    expect(w.roasCash).toBe(1.67);
+    // $500 over $300 lead gen + $50 retargeting.
+    expect(w.roasCash).toBe(1.43);
     expect(tf.frontEndOf(w).paidFrom).toBe("2026-10-10");
     const facts = frontEndFacts(w, LINES);
     expect(facts[0].value).toBe("Closer One $500");
@@ -998,6 +1004,65 @@ describe("front-end cash is the money paid, with the typed amounts beside it", (
     expect(src("money/AttributeSheet.tsx")).not.toMatch(
       /refreshNow|cockpit_ceo_refresh/,
     );
+  });
+});
+
+// Goals sheet round 2, fix 14 (2026-11-02): the Totals card's cash is Whop
+// only and says so, and why profit is not drawn names each group once.
+const { profitWhy } = await import("../src/pages/ceo/MoneyTab");
+describe("the Money tab's totals say what they are", () => {
+  const group = (quality: "measured" | "floor" | "missing") => ({
+    amount: null,
+    headline: null,
+    excluded: [],
+    vendors: [],
+    quality,
+    why: null,
+  });
+  const expenses = (why: string | null, q: Record<string, string> = {}) =>
+    ({
+      software: group((q.software ?? "missing") as never),
+      overhead: group((q.overhead ?? "missing") as never),
+      labour: group((q.labour ?? "floor") as never),
+      ownAdSpend: group((q.ownAdSpend ?? "measured") as never),
+      profit: { amount: null, margin: null, why },
+    }) as never;
+
+  test("the worker's repeated clause becomes the groups, each once", () => {
+    const why = profitWhy(
+      expenses(
+        "Profit is not drawn for October 2026 because a cost group is missing and a cost group is missing and a cost group is a known floor.",
+      ),
+    );
+    expect(why).toBe(
+      "Profit is not drawn for October 2026 because Software and Overhead are missing, and Labour is counted only in part. Each one's card above says why.",
+    );
+    expect(why?.match(/missing/g)?.length).toBe(1);
+  });
+
+  test("other sentences keep their words, a repeat dropped", () => {
+    expect(
+      profitWhy(expenses("Profit is not drawn because x and x and y.")),
+    ).toBe("Profit is not drawn because x and y.");
+    expect(
+      profitWhy(
+        expenses("Profit is not drawn for October 2026 because .", {
+          software: "measured",
+          overhead: "measured",
+          labour: "measured",
+        }),
+      ),
+    ).toContain("Whop cash in is not every rail's money");
+    expect(profitWhy(expenses(null))).toBeNull();
+  });
+
+  test("the cash beside profit is labelled Whop cash in", () => {
+    const tab = readFileSync(
+      new URL("../src/pages/ceo/MoneyTab.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(tab).toContain('label="Whop cash in"');
+    expect(tab).not.toContain('label="Cash in for the same month"');
   });
 });
 

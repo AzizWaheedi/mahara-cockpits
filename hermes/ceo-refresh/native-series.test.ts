@@ -128,7 +128,7 @@ describe("Front-end cash is the paid deal ledger (MONEY-ATTRIBUTION.md rule 6)",
       { day: "2026-10-16", taskId: "t-c", client: "Client C", amount: 5750, confirmed: 0, rail: null },
       { day: "2026-10-14", taskId: "t-a", client: "Client A", amount: 5500, confirmed: 5500, rail: "whop" },
     ];
-    const window = { from: "2026-10-01", to: "2026-10-18", spend: 700, frontEndCash: { deposit: 1250, kickoff: 11250, total: null, deals: 3, dealsConfirmed: 1, confirmed: 500, confirmedShare: 0.4 }, roasCash: null };
+    const window = { from: "2026-10-01", to: "2026-10-18", spend: 700, raw: { spend_retargeting: 0 }, frontEndCash: { deposit: 1250, kickoff: 11250, total: null, deals: 3, dealsConfirmed: 1, confirmed: 500, confirmedShare: 0.4 }, roasCash: null };
     const w = withPaid(window, ledger, deals, kickoffs);
     expect(w.frontEndCash.total).toBe(7000);
     expect(w.frontEndCash.paid).toBe(7000);

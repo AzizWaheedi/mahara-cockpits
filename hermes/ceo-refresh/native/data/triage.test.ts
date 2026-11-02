@@ -39,7 +39,7 @@ const SCHEMA = `
   CREATE TABLE public.client_opportunities(location_id text, status text, last_stage_change_at timestamptz, updated_at timestamptz, monetary_value numeric);
   CREATE TABLE portal_data.appointment_outcomes(appointment_id text, attendance text, deal text, revision integer, captured_at timestamptz);
   CREATE TABLE public.cockpit_board_clients(location_id text PRIMARY KEY, clickup_id text, client_name text, service_mode text, status text, ad_account_ids text[]);
-  CREATE TABLE public.cockpit_client_days(location_id text, day date, confirmed_bookings integer, provisional_bookings integer, computed_at timestamptz);
+  CREATE TABLE public.cockpit_client_days(location_id text, day date, confirmed_bookings integer, provisional_bookings integer, computed_at timestamptz, crm_ad_leads integer);
   CREATE TABLE public.cockpit_churned_ad_accounts(account_id text PRIMARY KEY, client_name text NOT NULL, status text NOT NULL DEFAULT 'Churned',
     evidence text NOT NULL, added_by text NOT NULL, added_at timestamptz NOT NULL DEFAULT now());
   CREATE TABLE public.cockpit_board_targets(scope_key text, metric text, good numeric NOT NULL, watch numeric, direction text, note text,
@@ -52,6 +52,10 @@ type Opts = {
   moved?: boolean;
   noBoardDays?: boolean;
   noBoardTable?: boolean;
+  /** The board stores CRM ad leads on its stored days: 7 on Ardon's, 0 elsewhere (2026-11-02, fix 9). */
+  crmAdLeads?: boolean;
+  /** Ardon's account is in a currency the rate table lacks, so its snapshot ad-days carry no USD (2026-11-02). */
+  unknownCurrency?: boolean;
   shared?: boolean;
   loose?: boolean;
   cents?: boolean;
@@ -120,7 +124,9 @@ async function seed(db: { exec(sql: string): Promise<unknown> }, opts: Opts = {}
       ('loc-usd','${D(-1)}',1,null,now()),
       ('loc-usd','${D(-60)}',4,0,now()),
       ('loc-pro','${D(-1)}',3,0,now());`}
+    ${opts.crmAdLeads ? `UPDATE public.cockpit_client_days SET crm_ad_leads = CASE location_id WHEN 'loc-sar' THEN 7 ELSE 0 END WHERE confirmed_bookings IS NOT NULL;` : ""}
     ${opts.noBoardTable ? "DROP TABLE public.cockpit_client_days;" : ""}
+    ${opts.unknownCurrency ? `UPDATE public.clients SET currency = 'XYZ' WHERE id = '${SAR}';` : ""}
     INSERT INTO public.ghl_calendars VALUES
       ('loc-sar','cal-main','Main Appointment Calendar',now()),
       ('loc-sar','cal-prov','Not Confirmed Appointments',now());
@@ -233,6 +239,7 @@ type Result = {
   sharedAccounts: Row[];
   media: { firstDay: string; untied: Row[]; frozenRows: number };
   unknownCurrencies: string[];
+  spendUnknownDays: { clientId: string; date: string }[];
 };
 
 describe("clientDelivery on the live media table (R2) with PGlite", () => {
@@ -268,6 +275,18 @@ describe("clientDelivery on the live media table (R2) with PGlite", () => {
     // Mahara's own hidden account is not a client row.
     expect(result.clients.map(c => c.clientId).sort()).toEqual([SAR, USD].sort());
     expect(result.unknownCurrencies).toEqual([]);
+    expect(result.spendUnknownDays).toEqual([]);
+  });
+
+  test("an ad-day in a currency with no rate is left out of spend and named by client and day (2026-11-02, fix 9)", async () => {
+    const result = await withDb({ unknownCurrency: true }, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
+    expect(result.unknownCurrencies).toEqual(["XYZ"]);
+    // Ardon's snapshot ad-days (D-30, the off-board ad on D-2, the ghost campaign's D-12) carry no USD: no spend
+    // row, and the client-days are named so client CPL on the CRM pairs neither their spend nor their leads.
+    expect(result.spendUnknownDays.filter(d => d.clientId === SAR).map(d => d.date).sort()).toEqual([D(-30), D(-12), D(-2)].sort());
+    expect(result.days.some(d => d.clientId === SAR && d.source === "frozen")).toBe(false);
+    // The live media table is already USD: D-2's $120.50 still counts.
+    expect(result.days.filter(d => d.clientId === SAR && d.date === D(-2)).map(d => d.spend)).toEqual([120.5]);
   });
 
   test("a feed that is not ready, or mid-rewrite, raises instead of reading as zero", async () => {
@@ -291,6 +310,13 @@ describe("Bookings from the Client Performance board (R2, 2026-10-22) with PGlit
     const by = (loc: string) => result.bookingDays.filter(b => b.locationId === loc).map(b => [b.date, b.confirmed, b.provisional]);
     expect(by("loc-sar")).toEqual([[D(-2), 2, 1]]);
     expect(by("loc-usd")).toEqual([[D(-1), 1, null]]);
+    // The board's CRM ad leads come back with each stored day, a NULL left null (2026-11-02, fix 9).
+    expect(result.bookingDays.map(b => [b.locationId, b.date, b.crmAdLeads])).toEqual([
+      ["loc-pro", D(-1), null], ["loc-sar", D(-2), null], ["loc-usd", D(-1), null],
+    ]);
+    const crm = await withDb({ crmAdLeads: true }, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
+    expect(crm.bookingDays.filter(b => b.locationId === "loc-sar").map(b => [b.date, b.crmAdLeads])).toEqual([[D(-2), 7]]);
+    expect(crm.bookingDays.find(b => b.locationId === "loc-usd")?.crmAdLeads).toBe(0);
     // Outside the window: not read.
     expect(result.bookingDays.some(b => b.date === D(-60))).toBe(false);
     // Bookings on a board client with no ad spend here are named, in no figure.

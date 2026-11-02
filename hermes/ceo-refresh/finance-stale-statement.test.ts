@@ -56,6 +56,7 @@ function reader(overrides: Record<string, Fixture> = {}) {
       "money.ecom_state": [{ ok: true, note: null, ok_ms: now }],
       "money.ecom_invoices": [],
     "money.media_feed": [{ ready: true, source_rows: 2, actual_rows: 2, snapshot_ms: now - 600_000, first_day: "2026-08-13", last_day: today }],
+    "money.book_month_ends": [],
     "money.client_ads": [
       { client_id: "c-1", day: today, spend_usd: 40, leads: 2, campaigns: ["Camp A"], currency: "USD", source: "media", own: false },
       { client_id: "own-1", day: today, spend_usd: 25, leads: 1, campaigns: ["Mahara own"], currency: "USD", source: "media", own: true },
@@ -161,7 +162,8 @@ describe("Money keeps the LTV baseline and the book history (R4, A124)", () => {
     const ltv = (money.daily ?? []).filter(p => p.metric === "money.ltv.card");
     expect(ltv).toEqual([{ date: today, metric: "money.ltv.card", scope: "client:task-a", value: 9000.5 }]);
     const book = (money.payload as Row & { book: { history: Row[] } }).book;
-    expect(book.history).toEqual([{ month: addDays(today, -40).slice(0, 7), projected: 2000, collected: 1500, rate: 0.75 }]);
+    // No billing snapshot for that month: its back-end book is missing, not zero (2026-11-02, fix 8).
+    expect(book.history).toEqual([{ month: addDays(today, -40).slice(0, 7), projected: 2000, collected: 1500, rate: 0.75, collectedBackEnd: null, projectedExisting: null, projectedOnDeals: null }]);
     expect((money.payload as Row & { attribution: Row }).attribution.kickoffRead).toBe(true);
   });
 
@@ -249,5 +251,95 @@ describe("The worker's dry run accepts a stale statement end to end", () => {
     expect(report.status).toBe("dry-run");
     expect(report.ok).toBe(true);
     expect(report.sections.map(s => s.status)).toEqual(["computed", "computed"]);
+  });
+});
+
+/**
+ * The Goals sheet, round 2 (2026-11-02), end to end through Money: a month's refunds carry the
+ * hand-logged part apart and the count (fix 1), and the book carries the back-end MRR for this
+ * month and for each past month from that month's own billing snapshot (fix 8).
+ */
+describe("Money for the Goals sheet, round 2 (2026-11-02)", () => {
+  const month = today.slice(0, 7);
+  const past = addDays(today, -40);
+  const pastMonth = past.slice(0, 7);
+  async function computeWith(overrides: Record<string, Fixture>, manual: Row[] = []) {
+    const snap = { ...snapshot(addDays(today, -2)), manual };
+    return withRuntime(runtimeWith(reader(overrides)), () => createMoneyAdapter(snap).compute({ repository: {} as Runtime["repository"] }));
+  }
+
+  test("monthly refunds: Whop's plus the hand-logged ones, the hand-logged part and the count beside them", async () => {
+    const refund = { id: "m-refund", day: today, amount: 50, currency: "USD", amount_usd: 50, client_name: "Client A", rail: "bank", kind: "refund", check_state: "logged", added_at: new Date(now).toISOString(), added_by: "ceo" };
+    const money = await computeWith({ "money.monthly": [{ month, cash: 100, refunds: 120, refund_count: 1, deals: 1, contracted: 500 }], "money.book_month_ends": [] }, [refund]);
+    const p = money.payload as Row & { monthly: Row[]; refunds: Row };
+    expect(p.monthly.find(r => r.month === month)).toMatchObject({ refunds: 170, refundsManual: 50, refundCount: 2 });
+    // The month's Whop part is netted already, so only refundsManual is taken off revenue; the
+    // total ties the tab's own refunds line, which already added the hand-logged ones.
+    expect(p.refunds).toMatchObject({ manualMtd: 50 });
+  });
+
+  test("the book's back end: this month on today's cards, a past month on that month's last snapshot", async () => {
+    const money = await computeWith({
+      "money.attribution.whop": [
+        // A client from before the month paying its retainer: back end, on its card by name.
+        { payment_id: "pay_a", day: past, net_amount: 400, final_amount: 400, refunded_amount: 0, refund_day: null, email: null, billing: "Client A", username: null, deal_response_id: null, billing_reason: "subscription_cycle" },
+        // A new deal's deposit on Client B's card: front end, so Client B is a new client that month.
+        { payment_id: "pay_b", day: past, net_amount: 500, final_amount: 500, refunded_amount: 0, refund_day: null, email: null, billing: "Client B", username: null, deal_response_id: "deal-b", billing_reason: "one_time" },
+      ],
+      "money.attribution.deals": [{ response_id: "deal-b", day: past, email: null, business: "Client B", contact: null, closer: "Closer One", csm: null, cash_collected: 500, payment_structure: "Monthly", contracted: 6000 }],
+      "money.book_month_ends": [
+        { month: pastMonth, clickup_task_id: "task-a", stage: "Active", mrr_usd: 1000, payment_plan: "Monthly" },
+        { month: pastMonth, clickup_task_id: "task-b", stage: "Active", mrr_usd: 2000, payment_plan: "Monthly" },
+        { month: pastMonth, clickup_task_id: "task-c", stage: "Active", mrr_usd: 700, payment_plan: "Monthly" },
+        { month: pastMonth, clickup_task_id: "task-d", stage: "Active", mrr_usd: 2000, payment_plan: "Paid in full (90 days)" },
+      ],
+    });
+    const book = (money.payload as Row & { book: Row & { history: Row[] } }).book;
+    // Client B signed that month: its $2,000 is left out of what is owed, said beside it.
+    expect(book.history).toEqual([{ month: pastMonth, projected: 2000, collected: 1500, rate: 0.75, collectedBackEnd: 400, projectedExisting: 1700, projectedOnDeals: 2000 }]);
+    // This month: today's one recurring card (Client A, $1,000) with no deal money; the statement's
+    // "Client A" line is its back-end money when it falls in this month.
+    const lineDay = addDays(addDays(today, -2), -1);
+    expect(book.projectedExisting).toBe(1000);
+    expect(book.collectedBackEnd).toBe(lineDay.slice(0, 7) === month ? 326 : 0);
+    const notes = (money.payload as Row & { notes: { level: string; text: string }[] }).notes;
+    expect(notes.some(n => n.text.includes("Back-end MRR"))).toBe(false);
+  });
+
+  test("a client from before the month still paying its deal owes no MRR that month, decided from the deal (review, 2026-11-02)", async () => {
+    // Client A signed 30 days before the past month, $6,000, nothing paid by then: inside its 120 days with the
+    // contract open, so its payment that month is the deal's front-end money, and its MRR is not owed on the back end.
+    const dealDay = addDays(`${pastMonth}-01`, -30);
+    const money = await computeWith({
+      "money.attribution.whop": [
+        { payment_id: "pay_a", day: past, net_amount: 400, final_amount: 400, refunded_amount: 0, refund_day: null, email: null, billing: "Client A", username: null, deal_response_id: null, billing_reason: "subscription_cycle" },
+      ],
+      "money.attribution.deals": [{ response_id: "deal-a", day: dealDay, email: null, business: "Client A", contact: null, closer: "Closer One", csm: null, cash_collected: 2000, payment_structure: "Monthly", contracted: 6000 }],
+      "money.book_month_ends": [
+        { month: pastMonth, clickup_task_id: "task-a", stage: "Active", mrr_usd: 1000, payment_plan: "Monthly" },
+        { month: pastMonth, clickup_task_id: "task-c", stage: "Active", mrr_usd: 700, payment_plan: "Monthly" },
+      ],
+    });
+    const book = (money.payload as Row & { book: Row & { history: Row[] } }).book;
+    expect(book.history).toEqual([{ month: pastMonth, projected: 2000, collected: 1500, rate: 0.75, collectedBackEnd: 0, projectedExisting: 700, projectedOnDeals: 1000 }]);
+    // This month too: Client A's deal is still inside its 120 days with $5,600 unpaid at the 1st.
+    expect(book).toMatchObject({ collectedBackEnd: 0, projectedExisting: 0, projectedOnDeals: 1000 });
+  });
+
+  test("a failed snapshot read leaves past months' back end missing with a warning; Money still publishes", async () => {
+    const money = await computeWith({ "money.book_month_ends": () => { throw new Error("permission denied for table cockpit_client_billing_days"); } });
+    const p = money.payload as Row & { book: Row & { history: Row[] }; notes: { level: string; text: string }[] };
+    expect(p.book.history).toEqual([{ month: pastMonth, projected: 2000, collected: 1500, rate: 0.75, collectedBackEnd: null, projectedExisting: null, projectedOnDeals: null }]);
+    expect(p.book.projectedExisting).toBe(1000);
+    expect(p.notes.find(n => n.text.startsWith("The month-end billing snapshots could not be read"))).toMatchObject({ level: "warn" });
+    for (const source of money.sources) expect(source.ok).toBe(true);
+  });
+
+  test("a past month before the first snapshot is missing, not zero, and says so", async () => {
+    const money = await computeWith({ "money.book_month_ends": [{ month, clickup_task_id: "task-a", stage: "Active", mrr_usd: 1000, payment_plan: "Monthly" }] });
+    const p = money.payload as Row & { book: Row & { history: Row[] }; notes: { level: string; text: string }[] };
+    expect(p.book.history[0]).toMatchObject({ collectedBackEnd: null, projectedExisting: null });
+    expect(p.notes.find(n => n.text.startsWith("Back-end MRR"))).toMatchObject({ level: "info" });
+    expect(p.notes.find(n => n.text.startsWith("Back-end MRR"))?.text).toContain(`missing, not zero, for ${pastMonth}`);
   });
 });

@@ -198,12 +198,17 @@ export function paceVerdict(
 // Goals
 // ---------------------------------------------------------------------------
 
-/** The goals the cockpit can score, in the order they are shown. */
+/**
+ * The goals the cockpit can score, in the order they are shown. The keys stay
+ * so saved goals carry over; the labels name what each is scored by
+ * (2026-11-02, Goals sheet round 2, fixes 14 and 17): calls_scheduled is by
+ * the day of the call, and cash_collected is the deposit typed on the form.
+ */
 export const GOAL_FIELDS: { key: GoalKey; label: string; money?: boolean }[] = [
-  { key: "booked", label: "Booked" },
+  { key: "booked", label: "Scheduled" },
   { key: "shown", label: "Shown" },
   { key: "closes", label: "Closes" },
-  { key: "cash", label: "Cash collected", money: true },
+  { key: "cash", label: "Deposits typed", money: true },
   { key: "dials", label: "Outbound dials" },
 ];
 

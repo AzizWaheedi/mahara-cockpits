@@ -44,12 +44,99 @@ const harnessExtra = () =>
     .then(r => (r.ok ? r.json() : null))
     .catch(() => null));
 
-/** The Goals sheet, from tmp/harness/goalsheet.json (real context, git-ignored), changed in memory only. */
+/**
+ * The Goals sheet, from tmp/harness/goalsheet.json (real context, git-ignored), changed in memory only.
+ * ?sheet=pre reads goalsheet.pre-goal1102.json, the context from before the CEO refresh release of
+ * 2 Nov 2026, to see an older payload; ?sheet=m adds the keys migration 20261102m adds (2026-11-02),
+ * made up: every store read over the days the migration would read and holding nothing, so the
+ * round-2 paths (0 on a read day, not known outside) can be seen without the migration.
+ */
 let goalSheetFile: Promise<Record<string, any> | null> | null = null;
+const sheetMode = () =>
+  new URLSearchParams(window.location.search).get("sheet") ?? "";
 const harnessGoalSheet = () =>
-  (goalSheetFile ??= fetch("/tmp/harness/goalsheet.json")
+  (goalSheetFile ??= fetch(
+    sheetMode() === "pre"
+      ? "/tmp/harness/goalsheet.pre-goal1102.json"
+      : "/tmp/harness/goalsheet.json",
+  )
     .then(r => (r.ok ? r.json() : null))
     .catch(() => null));
+
+/** The 20261102m keys for one tab, made up (see above): read, and empty. */
+function withRound2(tab: Record<string, any>): Record<string, any> {
+  if (sheetMode() !== "m" || "readsMissing" in tab) return tab;
+  const month = String(tab.month);
+  const [y, m] = month.split("-").map(Number);
+  const fromDay = new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 10);
+  const lastDay = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+  const today = String(tab.today);
+  const through = [lastDay, today].sort()[0];
+  const read = (from: string) =>
+    from <= through ? { from, through } : { from: null, through: null };
+  const ledger = read([fromDay, "2026-11-02"].sort()[1]);
+  const thisMonth = today.slice(0, 7);
+  const prev = fromDay.slice(0, 7);
+  const software = (ms: string) =>
+    ms === thisMonth
+      ? {
+          month: ms,
+          usd: tab.softwareMonthly,
+          basis: "lines",
+          capturedAt: null,
+          source: "Today's lines (harness).",
+        }
+      : ms > thisMonth
+        ? {
+            month: ms,
+            usd: null,
+            basis: "not_started",
+            capturedAt: null,
+            source: "Not started.",
+          }
+        : {
+            month: ms,
+            usd: null,
+            basis: "missing",
+            capturedAt: null,
+            source: "No month point in the harness.",
+          };
+  return {
+    ...tab,
+    cashExcluded: [],
+    winsDaily: {
+      ...ledger,
+      ledgerFrom: "2026-11-02",
+      rows: [],
+      source: "harness",
+    },
+    upsellCashDaily: {
+      ...ledger,
+      ledgerFrom: "2026-11-02",
+      rows: [],
+      source: "harness",
+    },
+    upsellContracted: {
+      ...ledger,
+      ledgerFrom: "2026-11-02",
+      rows: [],
+      source: "harness",
+    },
+    refundsDaily: { ...read(fromDay), rows: [], source: "harness" },
+    salesEodDaily: { rows: [], source: "harness" },
+    extensionsDaily: {
+      ...read([fromDay, "2026-09-23"].sort()[1]),
+      logFrom: "2026-09-23",
+      rows: [],
+      source: "harness",
+    },
+    softwareByMonth: [software(prev), software(month)],
+    frontEndMonths: null,
+    readsMissing: [
+      "Harness: the 20261102m keys are made up, every store read and empty.",
+    ],
+  };
+}
 
 /** The morning note's switch (A372), made up and held in memory. */
 const nudge = {
@@ -242,20 +329,35 @@ export function installCeoHarness(client: SupabaseClient): void {
       case "cockpit_ceo_goal_sheet_context": {
         const f = await harnessGoalSheet();
         return f?.[String(args.p_month)]
-          ? ok(f[String(args.p_month)])
+          ? ok(withRound2(f[String(args.p_month)]))
           : refuse("No goal sheet fixture for this month");
       }
       case "cockpit_ceo_call_center_report": {
         const r = await fetch("/tmp/harness/callreport.json").then(x =>
           x.ok ? x.json() : null,
         );
+        // The fixture covers a wide range; each read gets only its own days,
+        // as the real function answers (parseCallCenterReport refuses others).
+        const from = String(args.p_from);
+        const to = String(args.p_to);
         return r
-          ? ok({ ...r, from: args.p_from, to: args.p_to })
+          ? ok({
+              ...r,
+              from,
+              to,
+              daily: r.daily.filter(
+                (d: { day: string }) => d.day >= from && d.day <= to,
+              ),
+            })
           : refuse("No call report fixture");
       }
       case "cockpit_ceo_goals_context": {
+        // boards holds each plan's own context by id (fixture.py); board is
+        // the default plan, answered when no id is asked for.
         const f = await harnessGoalSheet();
-        return f?.board ? ok(f.board) : refuse("No goals fixture");
+        const id = args.p_plan_id == null ? null : String(args.p_plan_id);
+        const board = id ? (f?.boards?.[id] ?? f?.board) : f?.board;
+        return board ? ok(board) : refuse("No goals fixture");
       }
       case "cockpit_ceo_goal_sheet_save_cells": {
         const f = await harnessGoalSheet();

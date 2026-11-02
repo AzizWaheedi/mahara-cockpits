@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, mock, test } from "bun:test";
 import type { PGlite } from "@electric-sql/pglite";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { SheetContext } from "../src/lib/ceoGoalSheetClient";
 import {
   copyGoalPlan,
   getGoalContext,
@@ -10,7 +11,7 @@ import {
   saveGoalTargets,
 } from "../src/lib/ceoGoalsClient";
 import { buildGoalsBoard, goalTargetPatch } from "../src/lib/ceoGoalsModel";
-import type { CallCenterMetrics } from "../src/types/ceo/callCenterContract";
+import { buildSheet } from "../src/pages/ceo/goalsSheetData";
 import { scoreboard } from "../src/types/ceo/scoreboard";
 import {
   actor,
@@ -48,8 +49,15 @@ const functions: Record<string, { sql: string; keys: string[] }> = {
     keys: ["p_args", "p_baselines", "p_expected_snapshot"],
   },
 };
+/**
+ * Reads the test database does not hold, answered here (2026-11-02): the
+ * Goals sheet's context, which the board now reads every sheet key from.
+ * Unanswered, the board reads those keys missing, as on a failed read.
+ */
+const answers: Record<string, (args: Record<string, unknown>) => unknown> = {};
 const client = {
   async rpc(name: string, args: Record<string, unknown>) {
+    if (answers[name]) return { data: answers[name](args), error: null };
     const fn = functions[name];
     if (!fn) throw new Error(`Unexpected RPC: ${name}`);
     expect(Object.keys(args).sort()).toEqual([...fn.keys].sort());
@@ -328,7 +336,38 @@ test("client rejects empty success receipts and nonfinite input", async () => {
   await expect(readGoalsBoard(null)).rejects.toThrow("Sign in");
 });
 
-test("measured actuals, including zero, come from stored section facts and carry into copies", async () => {
+/** A September sheet, invented: leads 0 and spend $10.50 over the plan's days. */
+function septemberSheet(today: string): SheetContext {
+  return {
+    today,
+    month: "2026-09",
+    plan: null,
+    plans: [],
+    targets: [],
+    metrics: [],
+    cells: [],
+    growthDaily: [
+      { date: "2026-09-01", leads: 0, spend: 10.5 },
+      { date: "2026-09-19", leads: 0, spend: 0 },
+    ],
+    windows: [],
+    cashDaily: [],
+    book: null,
+    refundsMonthly: [],
+    bankThrough: null,
+    deliveryDaily: [],
+    mediaDaily: [],
+    clientDaily: [],
+    churned: [],
+    churnMonths: [],
+    softwareMonthly: null,
+    lockin: [],
+    locked: null,
+    callDaily: null,
+  };
+}
+
+test("measured actuals, including zero, come from the Goals sheet and carry into copies", async () => {
   await owner(db);
   await db.query(
     "INSERT INTO public.cockpit_sections(key,label,computed_at,payload) VALUES('growth','Fixture',now(),$1::jsonb)",
@@ -341,6 +380,11 @@ test("measured actuals, including zero, come from stored section facts and carry
       }),
     ],
   );
+  // The sheet reads the same days; the copy below reads it through the client.
+  answers.cockpit_ceo_goal_sheet_context = args => {
+    expect(args).toEqual({ p_month: "2026-09" });
+    return septemberSheet("2026-09-20");
+  };
   await actor(db, founder);
   await saveGoalTargets(client, {
     planId,
@@ -365,7 +409,10 @@ test("measured actuals, including zero, come from stored section facts and carry
     ],
   });
   const board = buildGoalsBoard(
-    await getGoalContext(client, planId),
+    {
+      ...(await getGoalContext(client, planId)),
+      sheet: buildSheet(septemberSheet("2026-09-20")),
+    },
     "2026-09-20",
   );
   expect(
@@ -374,6 +421,14 @@ test("measured actuals, including zero, come from stored section facts and carry
   expect(
     board.groups.flatMap(g => g.targets).find(t => t.metricKey === "spend"),
   ).toMatchObject({ actual: 10.5, source: "measured" });
+  // Without the sheet the same keys read missing, never the payload's figure.
+  const unread = buildGoalsBoard(
+    await getGoalContext(client, planId),
+    "2026-09-20",
+  );
+  expect(
+    unread.groups.flatMap(g => g.targets).find(t => t.metricKey === "leads"),
+  ).toMatchObject({ actual: null, onPace: null });
   const copy = await copyGoalPlan(client, {
     fromPlanId: planId,
     periodFrom: "2026-12-01",
@@ -385,6 +440,7 @@ test("measured actuals, including zero, come from stored section facts and carry
       t => t.metric_key === "leads",
     )?.baseline,
   ).toBe(0);
+  delete answers.cockpit_ceo_goal_sheet_context;
 });
 
 test("actual API dispatcher calls the real goals operations and rejects unknown routes", async () => {
@@ -419,34 +475,29 @@ test("actual API dispatcher calls the real goals operations and rejects unknown 
   expect(api.ceo.goals.board).toBe(api.ceo.goals.board);
 });
 
-test("native goals score distinct call-window totals, never daily sums or a missing report as zero", () => {
-  const overall: CallCenterMetrics = {
-    dials: 500, providerDials: 500, connections: 200, talkSeconds: 1000,
-    leads: 100, leadsDialed: 90, leadsContacted: 80, noVerifiedDial: 10,
-    confirmedBookings: 25, provisionalBookings: 10, unclassifiedBookings: 5,
-    shows: 10, noShow: 2, closed: 3, values: [],
-    showRate: null, closeRate: null, connectionRate: null, avgSpeedSeconds: null,
-    medianSpeedSeconds: null, speedSamples: 0, withinTwoMinutes: 0,
-    withinTwoMinutesRate: null, avgCallGapSeconds: null, callGapSamples: 0,
-  };
-  const payloads = { callsWindow: { from: "2026-09-01", to: "2026-09-19", overall } };
-  expect(scoreboard(payloads, "2026-09-01", "2026-09-19")).toMatchObject({
-    callLeads: 100, callBookings: 25, callLeadToBooking: 0.25,
-  });
-  expect(scoreboard(payloads, "2026-09-02", "2026-09-19").callLeads).toBeUndefined();
-  expect(scoreboard({}, "2026-09-01", "2026-09-19").callBookings).toBeUndefined();
-  const zero = scoreboard({ callsWindow: { ...payloads.callsWindow, overall: {
-    ...overall, leads: 0, confirmedBookings: 0,
-  } } }, "2026-09-01", "2026-09-19");
-  expect(zero.callLeads).toBe(0);
-  expect(zero.callBookings).toBe(0);
-  expect(zero.callLeadToBooking).toBeUndefined();
+test("the call centre's numbers have one rule, the sheet's: the catalogue never answers them", () => {
+  // Before 2026-11-02 the board scored these from its own window report; the
+  // sheet adds the report up by day, and the two could differ by a call.
+  // scripts/goals-board-sheet.test.ts checks the board reads the sheet's.
+  const payloads = {
+    callsWindow: {
+      from: "2026-09-01",
+      to: "2026-09-19",
+      overall: { leads: 100, confirmedBookings: 25 },
+    },
+  } as never;
+  const read = scoreboard(payloads, "2026-09-01", "2026-09-19");
+  expect(read.callLeads).toBeUndefined();
+  expect(read.callBookings).toBeUndefined();
+  expect(read.callLeadToBooking).toBeUndefined();
 });
 
 test("target edits omit stale metadata, clear only edited blanks and reject invalid numbers", () => {
   expect(goalTargetPatch(4, { target: "12" })).toEqual({ id: 4, target: 12 });
   expect(goalTargetPatch(4, { stretch: "", actualManual: "0" })).toEqual({
-    id: 4, stretch: null, actualManual: 0,
+    id: 4,
+    stretch: null,
+    actualManual: 0,
   });
   expect(goalTargetPatch(4, {})).toEqual({ id: 4 });
   expect(() => goalTargetPatch(4, { target: "Infinity" })).toThrow("finite");

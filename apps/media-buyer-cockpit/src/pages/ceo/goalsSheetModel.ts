@@ -14,6 +14,15 @@ import { project, tidy } from "./goalsModel";
  * last 4, 7, 14 and 30 days and the month to date above the days, and This
  * Month Actual, On Pace For, Target and Colour under them.
  *
+ * Aziz, 2026-11-02: "Remove all the other metrics that aren't in the example
+ * spreadsheet I gave ... Total revenue the same way the spreadsheet is." So
+ * the sections are his NOV 2026 tab's (lead gen, intro calls, demo calls,
+ * collections, customer success, business totals), customer success keeps
+ * extensions, referrals, testimonials and reviews, client media buying and
+ * call center stay as the cockpit had them, and creative is one typed count.
+ * A key is kept wherever the metric already existed, so stored targets and
+ * typed days carry over.
+ *
  * Three things differ from his sheet, on purpose:
  * 1. A rate over a run of days divides the totals. His sheet averages each
  *    day's rate, which is how October's Offer % read 113% and 200%.
@@ -24,30 +33,91 @@ import { project, tidy } from "./goalsModel";
  */
 
 export type SectionKey =
-  | "sales_marketing"
-  | "client_success"
-  | "sales_x_cs"
-  | "finances"
+  | "lead_gen"
+  | "intro_calls"
+  | "demo_calls"
+  | "collections"
+  | "customer_success"
+  | "business_totals"
   | "client_media"
   | "call_center"
   | "creative"
   | "custom";
 
-/** The order and names of his outline. */
+/**
+ * The order and names of his sheet. `group` is the target group a metric's
+ * plan row is stored under: saveTargets upserts on (plan, group, metric), so a
+ * metric that moves section keeps its group and never makes a second row.
+ */
 export const SHEET_SECTIONS: {
   key: SectionKey;
   label: string;
   group: string;
 }[] = [
-  { key: "sales_marketing", label: "Sales & marketing", group: "front_end" },
-  { key: "client_success", label: "Client success", group: "back_end" },
-  { key: "sales_x_cs", label: "Sales × client success", group: "money" },
-  { key: "finances", label: "Finances", group: "money" },
+  { key: "lead_gen", label: "Ad spend / lead gen", group: "front_end" },
+  { key: "intro_calls", label: "Intro calls", group: "front_end" },
+  { key: "demo_calls", label: "Demo calls", group: "front_end" },
+  { key: "collections", label: "Collections", group: "back_end" },
+  { key: "customer_success", label: "Customer success", group: "back_end" },
+  { key: "business_totals", label: "Business totals", group: "money" },
   { key: "client_media", label: "Client media buying", group: "delivery" },
   { key: "call_center", label: "Call center", group: "calls" },
   { key: "creative", label: "Creative", group: "creative" },
   { key: "custom", label: "Added by you", group: "team" },
 ];
+
+/**
+ * The section keys before 2026-11-02, which cockpit_goal_sheet_metrics may
+ * still hold (its CHECK allows only these until it is widened). A metric added
+ * under one lands at the end of where that section now ends.
+ */
+const LEGACY_SECTIONS: Record<string, SectionKey> = {
+  sales_marketing: "demo_calls",
+  client_success: "customer_success",
+  sales_x_cs: "business_totals",
+  finances: "business_totals",
+};
+
+/** A stored section, old or new, as a section of today's sheet. */
+export function sectionOf(raw: unknown): SectionKey {
+  const key = String(raw);
+  if (SHEET_SECTIONS.some(s => s.key === key)) return key as SectionKey;
+  return LEGACY_SECTIONS[key] ?? "custom";
+}
+
+/**
+ * The section key a metric added now is saved under (2026-11-02). The CHECK
+ * on cockpit_goal_sheet_metrics.section still allows only the keys from
+ * before, so a new key would be refused with a raw constraint error: each
+ * section is saved as the old one it falls in and read back by `sectionOf`.
+ * Once a migration widens the CHECK this can return the key itself.
+ */
+const STORED_SECTION: Record<SectionKey, string> = {
+  lead_gen: "sales_marketing",
+  intro_calls: "sales_marketing",
+  demo_calls: "sales_marketing",
+  collections: "client_success",
+  customer_success: "client_success",
+  business_totals: "finances",
+  client_media: "client_media",
+  call_center: "call_center",
+  creative: "creative",
+  custom: "custom",
+};
+
+export function storedSection(key: SectionKey): string {
+  return STORED_SECTION[key];
+}
+
+/**
+ * The sections the Add a metric form can offer today: those a metric comes
+ * back under. One added under Ad spend / lead gen or Intro calls would be
+ * saved as Sales & marketing and come back under Demo calls, so those two
+ * wait for the CHECK to be widened.
+ */
+export const ADDABLE_SECTIONS = SHEET_SECTIONS.filter(
+  s => sectionOf(storedSection(s.key)) === s.key,
+);
 
 /** What one day holds. Every number is a part a column adds up or divides. */
 export type DayParts = Record<string, number | null | undefined>;
@@ -70,6 +140,13 @@ export type Rollup =
 export type SheetColumn = {
   key: string;
   label: string;
+  /**
+   * The name the plan's target row is stored under, where `label` only reads
+   * right under its section's header: the Goals board, Edit this plan and
+   * Plan next month list the rows with no section, and "Showed calls" or
+   * "Show rate %" twice there cannot be told apart (2026-11-02).
+   */
+  boardLabel?: string;
   section: SectionKey;
   unit: Unit;
   direction: "up" | "down";
@@ -78,11 +155,36 @@ export type SheetColumn = {
   editable: boolean;
   /** The month's target is typed here and the model reworks what depends on it. */
   driver?: DriverKey;
+  /**
+   * A mirror: this column's target, plan and typed cells are another column's
+   * (2026-11-02). Its target is read-only here and no target row is written
+   * under its own key. Read it with `targetKeyOf`.
+   */
+  targetKey?: string;
   /** Plain words: where the actual comes from and what it leaves out. */
   source: string;
   /** Added by Aziz from the sheet: can be removed. */
   custom?: boolean;
 };
+
+/** The key a column's target, plan and Colour are read under: a mirror's is the column it mirrors. */
+export function targetKeyOf(c: SheetColumn): string {
+  return c.targetKey ?? c.key;
+}
+
+/** Why a column cannot be typed, in plain words (2026-11-02). */
+export function fixedHintOf(c: SheetColumn): string {
+  if (c.key === "clientsChurned")
+    return "From the churn register, so it is not typed here.";
+  if (c.rollup.kind === "ratio" && c.rollup.under.join() === "one")
+    return "Added up from its parts, so it follows them.";
+  return "Worked out from the columns it divides, so it follows them.";
+}
+
+/** The column's name on its stored target row, where no section header is beside it. */
+export function boardLabelOf(c: SheetColumn): string {
+  return c.boardLabel ?? c.label;
+}
 
 const sum = (part: string): Rollup => ({ kind: "sum", part });
 const ratio = (over: string[], under: string[], scale?: number): Rollup => ({
@@ -100,7 +202,13 @@ function col(
   direction: "up" | "down",
   rollup: Rollup,
   source: string,
-  extra: { driver?: DriverKey } = {},
+  extra: {
+    driver?: DriverKey;
+    targetKey?: string;
+    boardLabel?: string;
+    /** A count its record keeps, never typed (2026-11-02: the churn register). */
+    editable?: boolean;
+  } = {},
 ): SheetColumn {
   return {
     key,
@@ -116,15 +224,33 @@ function col(
 }
 
 /**
- * His outline, in his order. The keys are the Goals catalogue's where it has
- * the number, so a target here is the same row the Goals board scores.
+ * Metrics the sheet no longer shows (2026-11-02): not on his sheet, and the
+ * creative ones he cannot track. Their targets stay on the plan untouched, AOV
+ * and direct demos still feed it as inputs, and their typed days are kept. The
+ * Goals board hides them too.
+ */
+export const RETIRED_SHEET_KEYS: ReadonlySet<string> = new Set([
+  "directDemos",
+  "aov",
+  "roasContracted",
+  "clientsAtStart",
+  "churnRate",
+  "scriptsPerDay",
+  "newAngles",
+  "videosPerDay",
+  "revisionsPerVideo",
+]);
+
+/**
+ * His sheet, in his order. The keys are the Goals catalogue's where it has the
+ * number, so a target here is the same row the Goals board scores.
  */
 export const SHEET_COLUMNS: SheetColumn[] = [
-  // Sales & marketing.
+  // Ad spend / lead gen.
   col(
     "spendRetargeting",
     "Hammer Them ad spend",
-    "sales_marketing",
+    "lead_gen",
     "usd",
     "up",
     sum("spendRetargeting"),
@@ -133,45 +259,45 @@ export const SHEET_COLUMNS: SheetColumn[] = [
   ),
   col(
     "spend",
-    "Lead gen ad spend",
-    "sales_marketing",
+    "Ad spend",
+    "lead_gen",
     "usd",
     "up",
     sum("spend"),
-    "Lead-gen spend on Mahara's own account, by Meta day. Retargeting is beside it.",
-    { driver: "spend" },
+    "Lead-gen spend on Mahara's own account, by Meta day. The webinar's campaigns and Hammer Them retargeting are not in it.",
+    { driver: "spend", boardLabel: "Lead gen ad spend" },
   ),
   col(
     "uniqueLinkClicks",
     "Unique link clicks",
-    "sales_marketing",
+    "lead_gen",
     "count",
     "up",
     sum("uniqueLinkClicks"),
-    "Link clicks on the lead-gen campaigns. Read whole months only from B2B's window, so a day is typed. Meta's link clicks, not de-duplicated people.",
+    "Each ad's unique link clicks summed by Meta day, on the same lead-gen ads as Ad spend, the webinar's left out. A person who clicks two ads, or on two days, counts twice (Meta's own account-day sum for October is 2,383). A day Meta gave no unique count for is not known, so a run of days over it reads missing, never a smaller count. An ended month whose days do not carry it reads B2B's whole-month link clicks instead, which count every click and so read higher; the month in progress waits for its days.",
   ),
   col(
     "cpc",
     "CPC",
-    "sales_marketing",
+    "lead_gen",
     "usd",
     "down",
     ratio(["spend"], ["uniqueLinkClicks"]),
-    "Lead-gen spend over link clicks.",
+    "Ad spend over unique link clicks. A day Meta gave no unique count for leaves the run missing, so its spend never sits over fewer clicks. November's targets were set on inline clicks, which count more, so they read harder than they are.",
   ),
   col(
     "landingPageConversion",
-    "Landing page conversion",
-    "sales_marketing",
+    "LPC (lead per click)",
+    "lead_gen",
     "rate",
     "up",
     ratio(["leads"], ["uniqueLinkClicks"]),
-    "Leads over link clicks. Only as good as the tagging: leads are the ROAS tags.",
+    "Lead per click: ROAS leads (CRM) over unique link clicks (Meta). Only as good as the tagging: leads are the ROAS tags.",
   ),
   col(
     "leads",
     "Leads",
-    "sales_marketing",
+    "lead_gen",
     "count",
     "up",
     sum("leads"),
@@ -180,7 +306,7 @@ export const SHEET_COLUMNS: SheetColumn[] = [
   col(
     "cpl",
     "CPL",
-    "sales_marketing",
+    "lead_gen",
     "usd",
     "down",
     ratio(["spend"], ["leads"]),
@@ -189,64 +315,79 @@ export const SHEET_COLUMNS: SheetColumn[] = [
   ),
   col(
     "leadToBooked",
-    "L2B",
-    "sales_marketing",
+    "L2B %",
+    "lead_gen",
     "rate",
     "up",
     ratio(["bookedLeads"], ["leads"]),
-    "Leads that ever booked an intro or a demo, over leads. Setters tag by hand, so this likely reads high until every lead is tagged.",
+    "Leads that ever booked an intro or a demo, over leads. Ever booked: a cancelled booking still counts, so a past month can still rise. Setters tag by hand, so this likely reads high until every lead is tagged.",
     { driver: "leadToBooked" },
   ),
+
+  // Intro calls.
   col(
     "introsBooked",
-    "Intro calls",
-    "sales_marketing",
+    "Intro calls booked",
+    "intro_calls",
     "count",
     "up",
     sum("introsBooked"),
-    "Intro calls booked, by the day they were booked.",
+    "Intro calls booked, by the day they were booked. The webinar's calls are left out.",
   ),
   col(
     "costPerIntroBooked",
-    "Cost per intro",
-    "sales_marketing",
+    "Cost per intro call",
+    "intro_calls",
     "usd",
     "down",
     ratio(["spend"], ["introsBooked"]),
-    "Lead-gen spend over intros booked.",
+    "Ad spend over intro calls booked.",
+  ),
+  col(
+    "introsDue",
+    "Intro calls scheduled for the day",
+    "intro_calls",
+    "count",
+    "up",
+    sum("introsDue"),
+    "Intro calls set for that day whose time has passed, whatever came of them: cancelled and no-shows are in, the webinar's are out. What the show rate divides by, the B2B rule. Calls later today are not in it yet.",
+    { boardLabel: "Intro calls due" },
   ),
   col(
     "introsShown",
-    "Intros showed",
-    "sales_marketing",
+    "Showed calls",
+    "intro_calls",
     "count",
     "up",
     sum("introsShown"),
-    "Intro calls held, by call day. Showed, or confirmed once past.",
+    "Intro calls held, by call day: showed, or confirmed or invalid (held, not a fit) once its time passed. Invalid calls count as shown, the B2B rule.",
+    { boardLabel: "Intros showed" },
   ),
   col(
     "introShowRate",
-    "Intro show rate",
-    "sales_marketing",
+    "Show rate %",
+    "intro_calls",
     "rate",
     "up",
     ratio(["introsShown"], ["introsDue"]),
-    "Intros shown over intros whose time has passed, the B2B rule.",
-    { driver: "introShowRate" },
+    "Showed calls over intro calls scheduled for the day, the two columns beside it.",
+    { driver: "introShowRate", boardLabel: "Intro show rate" },
   ),
   col(
     "costPerIntroShown",
-    "Cost per live intro",
-    "sales_marketing",
+    "Cost per live intro call",
+    "intro_calls",
     "usd",
     "down",
     ratio(["spend"], ["introsShown"]),
-    "Lead-gen spend over intros held.",
+    "Ad spend over intro calls held.",
   ),
+
+  // Demo calls.
   col(
     "demosBooked",
-    "Demo calls",
-    "sales_marketing",
+    "Demo calls booked",
+    "demo_calls",
     "count",
     "up",
     sum("demosBooked"),
@@ -254,83 +395,84 @@ export const SHEET_COLUMNS: SheetColumn[] = [
   ),
   col(
     "costPerDemoBooked",
-    "Cost per demo",
-    "sales_marketing",
+    "Cost per demo call",
+    "demo_calls",
     "usd",
     "down",
     ratio(["spend"], ["demosBooked"]),
-    "Lead-gen spend over demos booked.",
+    "Ad spend over demo calls booked.",
   ),
   col(
     "introToDemo",
     "Intro to demo %",
-    "sales_marketing",
+    "demo_calls",
     "rate",
     "up",
     ratio(["introsAdvanced"], ["introsShown"]),
-    "Held intros that went on to a demo, B2B's intro_to_demo. Read whole months only; a demo booked straight from a lead is not in it.",
+    "Held intros whose contact went on to book a demo, over intros held, by the intro's call day, B2B's intro_to_demo. Read as of the refresh, so a day can still rise. A demo booked straight from a lead is not in it. Not the old sheet's demos booked ÷ intros scheduled.",
     { driver: "introToDemo" },
   ),
   col(
-    "directDemos",
-    "Direct demos",
-    "sales_marketing",
+    "demosDue",
+    "Demo calls scheduled for the day",
+    "demo_calls",
     "count",
     "up",
-    sum("directDemos"),
-    "Demos with no held intro before them. Not in his outline; the plan needs it, because 17 of October's 29 demo leads came this way. Typed.",
-    { driver: "directDemos" },
+    sum("demosDue"),
+    "Demo calls set for that day whose time has passed, whatever came of them: cancelled and no-shows are in, the webinar's are out. What the show rate divides by. Calls later today are not in it yet.",
+    { boardLabel: "Demo calls due" },
   ),
   col(
     "demosShown",
-    "Demos showed",
-    "sales_marketing",
+    "Showed calls",
+    "demo_calls",
     "count",
     "up",
     sum("demosShown"),
-    "Demo calls held, by call day.",
+    "Demo calls held, by call day: showed, or confirmed or invalid (held, not a fit) once its time passed. Invalid calls count as shown, the B2B rule.",
+    { boardLabel: "Demos showed" },
   ),
   col(
     "demoShowRate",
-    "Demo show rate",
-    "sales_marketing",
+    "Show rate %",
+    "demo_calls",
     "rate",
     "up",
     ratio(["demosShown"], ["demosDue"]),
-    "Demos shown over demos whose time has passed.",
-    { driver: "demoShowRate" },
+    "Showed calls over demo calls scheduled for the day, the two columns beside it.",
+    { driver: "demoShowRate", boardLabel: "Demo show rate" },
   ),
   col(
     "costPerDemoShown",
     "Cost per live demo",
-    "sales_marketing",
+    "demo_calls",
     "usd",
     "down",
     ratio(["spend"], ["demosShown"]),
-    "Lead-gen spend over demos held.",
+    "Ad spend over demo calls held.",
   ),
   col(
     "offersMade",
     "Offers made",
-    "sales_marketing",
+    "demo_calls",
     "count",
     "up",
     sum("offersMade"),
-    "Typed: only the closer knows. The sales EOD carries it on the days one is filed.",
+    "The closer's EOD, on the days one was filed; a typed day wins. A day with no EOD is empty, not zero, and the CEO's own demos are on no EOD.",
   ),
   col(
     "offerRate",
     "Offer %",
-    "sales_marketing",
+    "demo_calls",
     "rate",
     "up",
     ratio(["offersMade"], ["demosShown"]),
-    "Offers over demos held.",
+    "Offers over demos held. An offer made on an intro call counts too, so it can pass 100%.",
   ),
   col(
     "closes",
     "Closed deals",
-    "sales_marketing",
+    "demo_calls",
     "count",
     "up",
     sum("closes"),
@@ -339,7 +481,7 @@ export const SHEET_COLUMNS: SheetColumn[] = [
   col(
     "closeRate",
     "Close rate %",
-    "sales_marketing",
+    "demo_calls",
     "rate",
     "up",
     ratio(["closes"], ["demosShown"]),
@@ -349,7 +491,7 @@ export const SHEET_COLUMNS: SheetColumn[] = [
   col(
     "newCash",
     "Cash collected",
-    "sales_marketing",
+    "demo_calls",
     "usd",
     "up",
     sum("newCash"),
@@ -357,226 +499,202 @@ export const SHEET_COLUMNS: SheetColumn[] = [
   ),
   col(
     "contracted",
-    "Contracted rev",
-    "sales_marketing",
+    "Contracted revenue",
+    "demo_calls",
     "usd",
     "up",
     sum("contracted"),
-    "Contract value typed on the closer form.",
+    "Contract value typed on the closer form, by the day the form was filled.",
   ),
   col(
     "cashShare",
     "UF cash %",
-    "sales_marketing",
+    "demo_calls",
     "rate",
     "up",
-    ratio(["newCash"], ["contracted"]),
-    "Cash collected over contracted. The actual includes the rest of earlier deals; the plan means this month's deals only.",
+    ratio(["paidOnWindowDeals"], ["monthContracted"]),
+    "Cash paid in the month on deals signed in the month, over the month's contracted revenue, both to the newest refresh. A month measure: a day or a run of days has none. Earlier deals' instalments are in Cash collected, not here, as the plan's share means.",
     { driver: "cashShare" },
-  ),
-  col(
-    "aov",
-    "AOV",
-    "sales_marketing",
-    "usd",
-    "up",
-    ratio(["contracted"], ["closes"]),
-    "Contracted over deals.",
-    { driver: "aov" },
   ),
   col(
     "roasFrontEnd",
     "FE ROAS",
-    "sales_marketing",
+    "demo_calls",
     "x",
     "up",
     ratio(["newCash"], ["spend", "spendRetargeting"]),
-    "Cash collected over all of Mahara's ad spend.",
-  ),
-  col(
-    "roasContracted",
-    "Contracted ROAS",
-    "sales_marketing",
-    "x",
-    "up",
-    ratio(["contracted"], ["spend", "spendRetargeting"]),
-    "Contracted over all of Mahara's ad spend, his definition (30 Oct).",
+    "Cash collected over all of Mahara's ad spend, lead gen and Hammer Them retargeting. The plan's FE ROAS divides by the same two.",
   ),
   col(
     "cac",
-    "CAC",
-    "sales_marketing",
+    "CPA",
+    "demo_calls",
     "usd",
     "down",
     ratio(["spend", "spendRetargeting"], ["closes"]),
-    "All of Mahara's ad spend over deals, his definition (30 Oct). Payroll is not in it.",
+    "All of Mahara's ad spend, Hammer Them included, over closed deals, his definition (30 Oct). Payroll is not in it. The plan's CPA divides the same two.",
   ),
 
-  // Client success.
-  col(
-    "clientsAtStart",
-    "Clients at start",
-    "client_success",
-    "count",
-    "up",
-    { kind: "last", part: "clientsAtStart" },
-    "Active clients on the first of the month, from the churn register. What churn is measured over.",
-  ),
-  col(
-    "clientsChurned",
-    "Clients churned",
-    "client_success",
-    "count",
-    "down",
-    sum("clientsChurned"),
-    "The churn register, by the day the client left. A finished term is logged apart. The Churn page counts only losses before day 90, so it can read lower.",
-  ),
-  col(
-    "churnRate",
-    "Churn rate",
-    "client_success",
-    "rate",
-    "down",
-    ratio(["clientsChurned"], ["clientsAtStart"]),
-    "Clients churned over clients at the start.",
-  ),
+  // Collections.
   col(
     "mrrProjected",
-    "Projected MRR",
-    "client_success",
+    "Projected MRR to collect",
+    "collections",
     "usd",
     "up",
     { kind: "last", part: "mrrProjected" },
-    "The MRR field on active cards on a Monthly plan, the Money tab's book. Split-pay second halves and renewals are not in it.",
+    "What recurring cards owe in the month from clients who were clients before the month (the Money tab's book, back end only). New clients' first payments are in Cash collected, and a card still on its closer-form deal is front end. A whole-month number: a day or a run of days has none of its own.",
     { driver: "mrrDue" },
   ),
   col(
     "mrrCollected",
-    "MRR collection",
-    "client_success",
+    "MRR collected",
+    "collections",
     "usd",
     "up",
     { kind: "last", part: "mrrCollected" },
-    "Cash on those same cards in the month, every rail, the Money tab's book.",
+    "Payments on those same cards in the month so far, every rail: clients who were clients before the month. New clients' first payments are in Cash collected. A whole-month number: a day or a run of days has none of its own.",
   ),
   col(
     "mrrCollectionRate",
-    "Collection %",
-    "client_success",
+    "Collections %",
+    "collections",
     "rate",
     "up",
     ratio(["mrrCollected"], ["mrrProjected"]),
-    "Collected over projected.",
+    "MRR collected over projected MRR to collect: clients who were clients before the month. New clients' first payments are in Cash collected.",
     { driver: "mrrCollectionRate" },
   ),
+
+  // Customer success.
   col(
-    "extensionsGiven",
-    "Client extensions given",
-    "client_success",
+    "clientsChurned",
+    "Clients churned",
+    "customer_success",
     "count",
     "down",
-    sum("extensionsGiven"),
-    "From the billing sheet and the client page; typed days add to it.",
+    sum("clientsChurned"),
+    "The churn register, by the day the client left: the register is the record, so this is not typed here. A day the register was read with nobody leaving is 0. A finished term is logged apart. The Churn page counts only losses before day 90, so it can read lower.",
+    { editable: false },
   ),
   col(
     "upsells",
     "Upsells",
-    "client_success",
+    "customer_success",
     "count",
     "up",
     sum("upsells"),
-    "Typed. Nothing separates an upsell payment from a retainer yet.",
+    "Upsells signed or paid in the wins ledger, by the day each was signed. A typed day replaces the ledger's count. The ledger opened on 2 Nov 2026; a day before it is not known.",
   ),
   col(
     "upsellCash",
-    "Upsells cash",
-    "client_success",
+    "Upsell cash",
+    "customer_success",
     "usd",
     "up",
     sum("upsellCash"),
-    "Typed, for the same reason.",
+    "Checked payments tied to an upsell win in the wins ledger, by the day each was paid. A typed day replaces the ledger's. Paid on a rail, it is already inside Total revenue's back-end cash, so revenue does not add it again.",
     { driver: "upsellCash" },
   ),
   col(
     "refunds",
     "Refunds",
-    "client_success",
+    "customer_success",
     "count",
     "down",
     sum("refunds"),
-    "Typed. The amount beside it is measured.",
+    "Refunds in the money refresh's rows, Whop and logged by hand, by the day of the refund. A typed day replaces the count read.",
   ),
   col(
     "refundAmount",
-    "Refund amount",
-    "client_success",
+    "Refunds amount",
+    "customer_success",
     "usd",
     "down",
     sum("refundAmount"),
-    "Refunds on Whop and logged by hand, the Money tab's number.",
+    "Refunds on Whop and logged by hand, the Money tab's number, by the day of the refund. Total revenue takes off only the ones logged by hand: Whop cash is already net of its refunds. The plan takes the target off its revenue, so a target typed here moves the spend.",
+    { driver: "refundAmount" },
+  ),
+  col(
+    "extensionsGiven",
+    "Extensions given",
+    "customer_success",
+    "count",
+    "down",
+    sum("extensionsGiven"),
+    "Extension grants in the billing log (Give more time on the client page, Extend on the billing sheet), by the day given, voids applied. A typed day replaces that day's grants. The log began on 23 Sep 2026; a day before it is not known.",
   ),
   col(
     "referrals",
     "Referrals",
-    "client_success",
+    "customer_success",
     "count",
     "up",
     sum("referrals"),
-    "Typed.",
+    "Referral deals logged in the wins ledger, by the win date. A typed day replaces the ledger's count. The ledger opened on 2 Nov 2026; a day before it is not known.",
   ),
   col(
     "testimonials",
     "Testimonials",
-    "client_success",
+    "customer_success",
     "count",
     "up",
     sum("testimonials"),
-    "Typed.",
+    "Video testimonials logged in the wins ledger, by the win date. A typed day replaces the ledger's count. The ledger opened on 2 Nov 2026; a day before it is not known.",
   ),
   col(
     "googleReviews",
     "Reviews",
-    "client_success",
+    "customer_success",
     "count",
     "up",
     sum("googleReviews"),
-    "Typed.",
+    "Google reviews logged in the wins ledger, by the win date. A typed day replaces the ledger's count. The ledger opened on 2 Nov 2026; a day before it is not known.",
   ),
 
-  // Sales x client success.
+  // Business totals.
   col(
-    "totalCash",
+    "totalNewCash",
     "Total new cash",
-    "sales_x_cs",
+    "business_totals",
     "usd",
     "up",
-    sum("totalCash"),
-    "Every payment in, on every rail: new deals, retainers and upsells. Type a new target here and the plan works back up the funnel.",
+    sum("newCash"),
+    "The same number as Cash collected under demo calls, as on his sheet: money paid on a signed deal, on the day it arrived. Its target is Cash collected's, and a day typed here is typed there.",
+    { targetKey: "newCash" },
+  ),
+  col(
+    "totalCash",
+    "Total revenue (with AR)",
+    "business_totals",
+    "usd",
+    "up",
+    ratio(["cashIn"], ["one"]),
+    "Total new cash plus back-end cash, less refunds logged by hand: every payment in on the rails (Money's daily cash in) less the refunds logged by hand, as Whop cash is already net of its refunds. Back-end cash is every payment in less Total new cash over the same days, so retainers, upsells and a payment matched to no client are in it; Upsell cash and MRR collected are inside it and are not added again. Works for a day, a run of days or the month. With any part not read, revenue is missing, never smaller. Type a new target here and the plan works back up the funnel.",
   ),
   col(
     "totalContracted",
     "Total contracted",
-    "sales_x_cs",
+    "business_totals",
     "usd",
     "up",
-    ratio(["contracted", "upsellCash"], ["one"]),
-    "Contracted on new deals plus upsells.",
+    ratio(["contracted", "upsellContracted"], ["one"]),
+    "Contracted on new deals (the closer form) plus upsells signed or paid at their quoted price (the wins ledger), by the day each was signed. A day the ledger did not read is not known, so a run over it is missing, never smaller; 0 typed in Upsells for a day makes that day's upsells contracted 0 too.",
   ),
-
-  // Finances.
   col(
-    "marketingExpenses",
-    "Marketing expenses",
-    "finances",
+    "software",
+    "Overhead expenses",
+    "business_totals",
     "usd",
     "down",
-    ratio(["spend", "spendRetargeting", "otherMarketing"], ["one"]),
-    "Mahara's ad spend from Meta, plus other marketing if typed. A card that pays Meta is not read from the bank.",
+    { kind: "last", part: "software" },
+    "What software runs at for the month, not what the bank was charged: the Costs page's active lines in dollars, a yearly plan as a twelfth. A past month reads the lines as kept when it closed; the current month reads today's. Lines in another currency and overhead that is not software are not in it. A number typed on a day replaces it.",
+    { driver: "overhead" },
   ),
   col(
     "labour",
     "Labour expenses",
-    "finances",
+    "business_totals",
     "usd",
     "down",
     { kind: "last", part: "labour" },
@@ -584,32 +702,31 @@ export const SHEET_COLUMNS: SheetColumn[] = [
     { driver: "labour" },
   ),
   col(
-    "software",
-    "Software expenses",
-    "finances",
+    "marketingExpenses",
+    "Marketing expenses",
+    "business_totals",
     "usd",
     "down",
-    { kind: "last", part: "software" },
-    "Typed, or the Costs page's active software lines. The bank's own total stops at the last uploaded statement.",
-    { driver: "overhead" },
+    ratio(["spend", "spendRetargeting", "otherMarketing"], ["one"]),
+    "Mahara's ad spend from Meta, plus other marketing if typed. A card that pays Meta is not read from the bank.",
   ),
   col(
     "profit",
     "Total profit",
-    "finances",
+    "business_totals",
     "usd",
     "up",
-    ratio(["totalCash"], ["one"]),
-    "Total new cash less the three expense lines. Fees and refunds are not in it.",
+    ratio(["newCash"], ["one"]),
+    "His sheet's rule: Total revenue less Overhead, Labour and Marketing expenses, as this row shows them. Overhead and labour are whole-month numbers, so the month so far carries all of them, and On pace for adds them once to the paced revenue and marketing. Processing fees are not in it. With revenue or any cost missing, profit is missing, never bigger.",
   ),
   col(
     "margin",
     "Margin %",
-    "finances",
+    "business_totals",
     "rate",
     "up",
-    ratio(["profitParts"], ["totalCash"]),
-    "Profit over total new cash.",
+    ratio(["newCash"], ["one"]),
+    "Total profit over total revenue. Missing when either is.",
   ),
 
   // Client media buying.
@@ -646,9 +763,9 @@ export const SHEET_COLUMNS: SheetColumn[] = [
     "client_media",
     "usd",
     "down",
-    ratio(["clientSpend"], ["clientLeads"]),
-    "Spend on client ad accounts over their leads, CEO Delivery's number.",
-    { driver: "clientCpl" },
+    ratio(["clientCplSpend"], ["clientCplLeads"]),
+    "Client ad spend over the clients' CRM ad leads (a contact with an ad id or a Facebook-ad attribution), paired by client and day so both sides count the same clients. A day no client pairs is left out of both. Meta's form leads stay on CEO Delivery for comparison.",
+    { driver: "clientCpl", boardLabel: "Client CPL" },
   ),
   col(
     "clientCpb",
@@ -668,7 +785,7 @@ export const SHEET_COLUMNS: SheetColumn[] = [
     "rate",
     "up",
     ratio(["callBookings"], ["callLeads"]),
-    "Confirmed bookings over new client leads in the shared call centre report. Provisional bookings are out.",
+    "Confirmed bookings over new client leads in the shared call centre report. Provisional bookings are out. The report's rule: the Client Performance board's booking rate drops cancelled bookings, so it reads lower.",
     { driver: "callLeadToBooking" },
   ),
   col(
@@ -679,6 +796,7 @@ export const SHEET_COLUMNS: SheetColumn[] = [
     "up",
     ratio(["callShows"], ["callShowsAndNoShows"]),
     "Showed over showed plus no-show on marked appointments. An appointment nobody marked is in neither.",
+    { boardLabel: "Call centre show rate" },
   ),
   col(
     "callLeadQuality",
@@ -695,46 +813,20 @@ export const SHEET_COLUMNS: SheetColumn[] = [
     "call_center",
     "rate",
     "up",
-    ratio(["clientCloses"], ["callShows"]),
-    "Deals the client marked won over shown appointments. Reads low until clients report.",
+    ratio(["callCloses"], ["callShows"]),
+    "Deals marked won over shown appointments, both from the shared call centre report. Clients mark won deals in the portal and most do not, so 0 means 0 recorded, not none closed.",
+    { boardLabel: "Call centre close rate" },
   ),
 
-  // Creative.
+  // Creative: one count he types (2026-11-02, "how many videos today").
   col(
-    "scriptsPerDay",
-    "Scripts per day",
+    "videosCompleted",
+    "Videos completed",
     "creative",
     "count",
     "up",
-    { kind: "perWorkingDay", part: "scripts" },
-    "Scripts typed per day, from the creative director's EOD. A day with no EOD filed is missing, so the month's rate is a floor.",
-  ),
-  col(
-    "newAngles",
-    "New angles tested",
-    "creative",
-    "count",
-    "up",
-    sum("newAngles"),
-    "Typed. New concepts launched, not new cuts of an old one.",
-  ),
-  col(
-    "videosPerDay",
-    "Videos per day",
-    "creative",
-    "count",
-    "up",
-    { kind: "perWorkingDay", part: "videos" },
-    "Videos finished per day, typed from the editors' EODs. A day with no EOD filed is missing.",
-  ),
-  col(
-    "revisionsPerVideo",
-    "Revision per video",
-    "creative",
-    "x",
-    "down",
-    { kind: "avg", part: "revisionsPerVideo" },
-    "Typed. Frame.io versions are not being recorded yet, so nothing measures it.",
+    sum("videos"),
+    "Videos finished that day, typed: nothing measures finished edits yet. Days typed under the old Videos per day carry over. The target is the month's total.",
   ),
 ];
 
@@ -757,7 +849,7 @@ export function customColumn(m: CustomMetric): SheetColumn {
   return {
     key: m.key,
     label: m.label,
-    section: m.section,
+    section: sectionOf(m.section),
     unit: m.unit,
     direction: m.direction,
     rollup: { kind: m.rollup, part: m.key },
@@ -767,7 +859,7 @@ export function customColumn(m: CustomMetric): SheetColumn {
   };
 }
 
-/** All columns for a tab: his outline, with anything added at the end of its section. */
+/** All columns for a tab: his sheet, with anything added at the end of its section. */
 export function allColumns(custom: CustomMetric[]): SheetColumn[] {
   const extra = custom.map(customColumn);
   return SHEET_SECTIONS.flatMap(s => [
@@ -820,6 +912,30 @@ function addUp(rows: DayParts[], part: string): number | null {
 }
 
 /**
+ * The flag a day carries for a part its store did not read that day
+ * (2026-11-02): the wins ledger before it opened, the billing log before 23
+ * Sep, refunds and money in outside the money refresh's window, a growth day
+ * from before the release that added the field. A store that was read and
+ * holds nothing for a day is 0; one that was not read is not known, so any
+ * run of days over it is missing, never a smaller total. A typed day replaces
+ * it, as it replaces a read number.
+ */
+export function unknownFlag(part: string): string {
+  return `${part}?`;
+}
+
+/** Whether a day does not know this part: its store did not read it and nothing was typed. */
+export function unknownOn(row: DayParts, part: string): boolean {
+  return row[unknownFlag(part)] === 1 && !ok(row[part]);
+}
+
+/** A run's total of a part: missing when any day of it is not known, the days that recorded it otherwise. */
+function addKnown(rows: DayParts[], part: string): number | null {
+  if (rows.some(r => unknownOn(r, part))) return null;
+  return addUp(rows, part);
+}
+
+/**
  * Parts worked out from other parts, added to one day (or to one month's
  * totals) so a ratio never has to know them.
  */
@@ -829,13 +945,38 @@ export function withComputed(p: DayParts): DayParts {
   const noShows = p.callNoShows;
   if (ok(shows) || ok(noShows))
     out.callShowsAndNoShows = (shows ?? 0) + (noShows ?? 0);
+  // No upsell signed that day (the ledger's 0, or a 0 typed in Upsells) is no
+  // upsell contracted either: the two count the same wins on the same day,
+  // so a day before the ledger opened can be completed from Upsells alone
+  // (2026-11-02). A count above 0 with no price read stays not known.
+  if (!ok(p.upsellContracted) && p.upsells === 0) out.upsellContracted = 0;
   return out;
+}
+
+/**
+ * The parts a column reads, so a missing number can say which part it waits
+ * on (2026-11-02). Revenue reads money in and the hand-logged refunds; profit
+ * and margin read revenue's parts and the three costs.
+ */
+export function partsOf(c: SheetColumn): string[] {
+  if (!c.custom) {
+    const revenue = ["cashIn", "refundsManual", "newCash"];
+    const costs = ["software", "labour", "spend", "spendRetargeting"];
+    if (c.key === "totalCash") return revenue;
+    if (c.key === "profit" || c.key === "margin") return [...revenue, ...costs];
+    if (c.key === "marketingExpenses") return ["spend", "spendRetargeting"];
+  }
+  const r = c.rollup;
+  return r.kind === "ratio"
+    ? [...r.over, ...r.under].filter(p => p !== "one")
+    : [r.part];
 }
 
 /**
  * One column over a run of days, or null when nothing recorded it. `facts`
  * are month-level numbers that do not divide by day (B2B's window, the book):
- * they win for the whole month and are not used on a shorter range.
+ * they win for the whole month and are not used on a shorter range. A caller
+ * passes `facts` only for a whole month (the month so far, last month).
  */
 export function rollUp(
   column: SheetColumn,
@@ -845,7 +986,7 @@ export function rollUp(
 ): number | null {
   const total = (part: string): number | null => {
     const fact = facts?.[part];
-    return ok(fact) ? fact : addUp(rows, part);
+    return ok(fact) ? fact : addKnown(rows, part);
   };
   const r = column.rollup;
   switch (r.kind) {
@@ -858,40 +999,53 @@ export function rollUp(
         : null;
     }
     case "last": {
-      const fact = facts?.[r.part];
-      if (ok(fact)) return fact;
+      // A number typed on a day is his figure for the month and wins over
+      // the month's own (2026-11-02): overhead's source line always said so,
+      // and the month's fact used to hide it.
       for (let i = rows.length - 1; i >= 0; i--) {
         const v = rows[i][r.part];
         if (ok(v)) return v;
       }
-      return null;
+      const fact = facts?.[r.part];
+      return ok(fact) ? fact : null;
     }
     case "perWorkingDay": {
       const t = total(r.part);
       return t !== null && workingDays > 0 ? t / workingDays : null;
     }
     case "ratio": {
-      if (column.key === "totalContracted")
-        return plusParts(total("contracted"), total("upsellCash"));
+      if (column.custom) break;
+      if (column.key === "totalCash")
+        return revenueOf(rows, workingDays, facts).value;
+      if (column.key === "totalContracted") {
+        // Both parts are needed: a missing one leaves the total missing.
+        const a = total("contracted");
+        const b = total("upsellContracted");
+        return ok(a) && ok(b) ? a + b : null;
+      }
       if (column.key === "marketingExpenses")
         return plusParts(
           total("spend"),
           total("spendRetargeting"),
           total("otherMarketing"),
         );
-      if (column.key === "profit") return profitOf(total);
+      if (column.key === "profit") return profitOf(rows, workingDays, facts);
       if (column.key === "margin") {
-        const profit = profitOf(total);
-        const cash = total("totalCash");
-        return profit !== null && ok(cash) && cash > 0 ? profit / cash : null;
+        const profit = profitOf(rows, workingDays, facts);
+        const revenue = revenueOf(rows, workingDays, facts).value;
+        return ok(profit) && ok(revenue) && revenue > 0
+          ? profit / revenue
+          : null;
       }
-      const over = plusParts(...r.over.map(total));
-      const under = plusParts(...r.under.map(total));
-      return over !== null && under !== null && under > 0
-        ? (over / under) * (r.scale ?? 1)
-        : null;
+      break;
     }
   }
+  if (r.kind !== "ratio") return null;
+  const over = plusParts(...r.over.map(total));
+  const under = plusParts(...r.under.map(total));
+  return over !== null && under !== null && under > 0
+    ? (over / under) * (r.scale ?? 1)
+    : null;
 }
 
 function plusParts(...xs: (number | null)[]): number | null {
@@ -900,40 +1054,117 @@ function plusParts(...xs: (number | null)[]): number | null {
     : null;
 }
 
-function profitOf(total: (part: string) => number | null): number | null {
-  const cash = total("totalCash");
-  const labour = total("labour");
-  const software = total("software");
-  // Payroll or software with no number is a missing profit, not a bigger one.
-  if (!ok(cash) || !ok(labour) || !ok(software)) return null;
-  const ads = plusParts(
-    total("spend"),
-    total("spendRetargeting"),
-    total("otherMarketing"),
-  );
-  return ads === null ? null : cash - ads - labour - software;
+/**
+ * Total revenue (with AR), 2026-11-02 (truth/SYNTHESIS.md fix 1): Total new
+ * cash plus back-end cash, less the refunds logged by hand. Back-end cash
+ * over any run of days is every payment in on the rails (`cashIn`, Money's
+ * daily cash in, the CEO's excluded test payment already out) less the deal
+ * ledger's new cash over the same days, so new cash plus back-end cash is the
+ * money in. Upsell cash and MRR collected are inside back-end cash and are
+ * never added again: his sheet's AU rule (new cash + upsell cash + MRR
+ * collected) counted October's three new clients' first payments twice.
+ * Whop cash is already net of its refunds, so only the hand-logged ones come
+ * off. A Cash collected typed over the ledger moves revenue by what it
+ * changed, as a part typed anywhere else would.
+ */
+export type Revenue = {
+  value: number | null;
+  /** Each part over the same days: new cash, back-end cash, hand-logged refunds. */
+  parts: {
+    newCash: number | null;
+    backEndCash: number | null;
+    refundsManual: number | null;
+  };
+  /** Parts not read for some of these days, by name: revenue is missing. */
+  missing: string[];
+  /** Money in the CEO left out, said beside the number (filled by the sheet, which knows the days). */
+  leftOut: string[];
+  /** Every payment in on the rails over the same days, the check revenue is built on. */
+  cashIn: number | null;
+  /** Sentences beside the number: new cash above the money in, never clamped. */
+  notes: string[];
+};
+
+export const REVENUE_PART_NAMES = {
+  cashIn: "every payment in (Money's daily cash in)",
+  refundsManual: "refunds logged by hand",
+} as const;
+
+/** Revenue over a run of days, day, rolling run or month alike. `facts` may carry the month's hand-logged refunds. */
+export function revenueOf(
+  rows: DayParts[],
+  _workingDays: number,
+  facts?: DayParts,
+): Revenue {
+  const missing: string[] = [];
+  const notes: string[] = [];
+  const cashIn = addKnown(rows, "cashIn");
+  const factRefunds = facts?.refundsManual;
+  const refundsManual = ok(factRefunds)
+    ? factRefunds
+    : addKnown(rows, "refundsManual");
+  if (cashIn === null) missing.push(REVENUE_PART_NAMES.cashIn);
+  if (refundsManual === null) missing.push(REVENUE_PART_NAMES.refundsManual);
+  const newCash = addUp(rows, "newCash");
+  const measured = addUp(rows, "newCashMeasured") ?? 0;
+  const backEndCash = cashIn === null ? null : round2(cashIn - measured);
+  if (backEndCash !== null && backEndCash < -0.005)
+    notes.push(
+      `Total new cash is ${money(-backEndCash)} more than every payment in over these days (the deal ledger and the money refresh read at different times), so back-end cash reads ${money(backEndCash)}; it is not set to 0.`,
+    );
+  const value =
+    missing.length || cashIn === null || refundsManual === null
+      ? null
+      : round2(cashIn + ((newCash ?? 0) - measured) - refundsManual);
+  return {
+    value,
+    parts: { newCash, backEndCash, refundsManual },
+    missing,
+    leftOut: [],
+    cashIn,
+    notes,
+  };
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** His Total profit: revenue less the three expense columns, each as its own column reads it. */
+function profitOf(
+  rows: DayParts[],
+  workingDays: number,
+  facts?: DayParts,
+): number | null {
+  const revenue = revenueOf(rows, workingDays, facts).value;
+  const cost = (key: string) =>
+    rollUp(COLUMN_BY_KEY[key], rows, workingDays, facts);
+  const overhead = cost("software");
+  const labour = cost("labour");
+  const marketing = cost("marketingExpenses");
+  // Payroll or overhead with no number is a missing profit, not a bigger one.
+  if (!ok(revenue) || !ok(overhead) || !ok(labour) || !ok(marketing))
+    return null;
+  return revenue - (overhead + labour + marketing);
 }
 
 /**
- * Parts where a typed day adds to what was measured instead of replacing it:
- * an extension given in the cockpit is measured, and one agreed but entered
- * nowhere is typed beside it (WAVE12-CONTRACT 4.11.5).
+ * A cell typed over what was measured wins for that day (2026-11-02: every
+ * part, extensions included; a typed day used to add to the grants, which
+ * counted Liwan twice in October).
  */
-export const ADDITIVE_PARTS: ReadonlySet<string> = new Set(["extensionsGiven"]);
-
-/** A cell typed over what was measured wins for that day, except an additive part, which adds. */
 export function dayRow(
   measured: DayParts | undefined,
   typed: Record<string, number> | undefined,
 ): DayParts {
-  const out: DayParts = { ...(measured ?? {}), ...(typed ?? {}) };
-  for (const part of ADDITIVE_PARTS) {
-    const m = measured?.[part];
-    const t = typed?.[part];
-    if (typeof m === "number" && typeof t === "number") out[part] = m + t;
-  }
-  return withComputed(out);
+  return withComputed({ ...(measured ?? {}), ...(typed ?? {}) });
 }
+
+/** Totals made of other columns that add up over the month, so they pace like a count. */
+const ADDS_UP = new Set([
+  "totalCash",
+  "totalContracted",
+  "marketingExpenses",
+  "profit",
+]);
 
 /** Whether a metric only means something whole: a rate, a cost, a per-day figure. */
 export function isLevel(c: SheetColumn): boolean {
@@ -941,7 +1172,7 @@ export function isLevel(c: SheetColumn): boolean {
   if (r.kind === "avg" || r.kind === "last" || r.kind === "perWorkingDay")
     return true;
   if (r.kind !== "ratio") return false;
-  return !["totalContracted", "marketingExpenses", "profit"].includes(c.key);
+  return !ADDS_UP.has(c.key);
 }
 
 /**
@@ -958,6 +1189,46 @@ export function onPaceFor(
   if (isLevel(c)) return actual;
   if (workedSoFar <= 0) return null;
   return (actual / workedSoFar) * workingDays;
+}
+
+/**
+ * On pace for, worked out from the parts where a column mixes counts and
+ * whole-month numbers (2026-11-02), so the row adds up across: profit is
+ * revenue's pace less overhead, labour and marketing's paces (the first two
+ * counted once, not stretched), and margin divides the two. Revenue's parts
+ * all add up over the month, so it paces like a count, as on his sheet. Every
+ * other column is `onPaceFor` of its actual. `facts` are the month's, as for
+ * `rollUp`.
+ */
+export function paceFor(
+  c: SheetColumn,
+  rows: DayParts[],
+  workedSoFar: number,
+  workingDays: number,
+  facts?: DayParts,
+): number | null {
+  const of = (key: string) =>
+    paceFor(COLUMN_BY_KEY[key], rows, workedSoFar, workingDays, facts);
+  if (!c.custom && c.key === "profit") {
+    if (rollUp(c, rows, workedSoFar, facts) === null) return null;
+    const parts = ["totalCash", "software", "labour", "marketingExpenses"].map(
+      of,
+    );
+    if (!parts.every(ok)) return null;
+    const [revenue, overhead, labour, marketing] = parts as number[];
+    return revenue - (overhead + labour + marketing);
+  }
+  if (!c.custom && c.key === "margin") {
+    const profit = of("profit");
+    const revenue = of("totalCash");
+    return ok(profit) && ok(revenue) && revenue > 0 ? profit / revenue : null;
+  }
+  return onPaceFor(
+    c,
+    rollUp(c, rows, workedSoFar, facts),
+    workedSoFar,
+    workingDays,
+  );
 }
 
 export type Colour = "green" | "yellow" | "red";
@@ -1005,11 +1276,17 @@ export type PlanInputs = Drivers & {
  * The lead-gen spend that collects `goalCash`, walking the same chain as
  * `project` backwards: cash over the deal, deals over the rates, intros over
  * lead to booking, leads at the cost per lead. Null when a rung is empty.
+ * The goal is revenue by his sheet's rule, so the new cash it needs is the
+ * goal less MRR collected and upsell cash (the plan's back-end cash), plus
+ * the refunds it must cover (`refundAmount`, an empty box plans none).
  */
 export function solveSpend(i: PlanInputs): number | null {
   const need =
     ok(i.goalCash) && ok(i.mrrDue) && ok(i.mrrCollectionRate)
-      ? i.goalCash - i.mrrDue * i.mrrCollectionRate - (i.upsellCash ?? 0)
+      ? i.goalCash -
+        i.mrrDue * i.mrrCollectionRate -
+        (i.upsellCash ?? 0) +
+        (i.refundAmount ?? 0)
       : null;
   const perDeal = ok(i.aov) && ok(i.cashShare) ? i.aov * i.cashShare : null;
   if (need === null || !perDeal) return null;
@@ -1051,6 +1328,10 @@ export function planNumbers(i: PlanInputs): {
     ok(spend) || ok(hammer)
       ? (spend ?? 0) + (hammer ?? 0) + (i.otherMarketing ?? 0)
       : null;
+  // FE ROAS and CPA divide by Meta ad spend only, lead gen and Hammer Them, as
+  // the actuals do (2026-11-02, truth/SYNTHESIS.md fix 15): other marketing is
+  // a cost of the month, not of the ads.
+  const adSpend = ok(spend) || ok(hammer) ? (spend ?? 0) + (hammer ?? 0) : null;
   const totalContracted = ok(p.contracted)
     ? p.contracted + (i.upsellCash ?? 0)
     : null;
@@ -1058,7 +1339,15 @@ export function planNumbers(i: PlanInputs): {
     marketing !== null || ok(i.labour) || ok(i.overhead)
       ? (marketing ?? 0) + (i.labour ?? 0) + (i.overhead ?? 0)
       : null;
-  const profit = ok(p.totalCash) && costs !== null ? p.totalCash - costs : null;
+  // His sheet's revenue on the plan's own numbers (2026-11-02). Upsells and
+  // refunds are lines that add up, so an empty one plans nothing; new cash and
+  // MRR collected are the funnel and the book, and either missing leaves
+  // revenue missing, never smaller.
+  const revenue =
+    ok(p.newCash) && ok(p.backEndCash)
+      ? p.newCash + (i.upsellCash ?? 0) + p.backEndCash - (i.refundAmount ?? 0)
+      : null;
+  const profit = ok(revenue) && costs !== null ? revenue - costs : null;
   const byColumn: Record<string, number | null> = {
     spendRetargeting: hammer,
     spend,
@@ -1071,6 +1360,9 @@ export function planNumbers(i: PlanInputs): {
     leadToBooked: i.leadToBooked,
     introsBooked: p.introsBooked,
     costPerIntroBooked: p.costPerIntroBooked,
+    // The plan books each intro once and it falls due once, so the month's
+    // intros due are its intros booked; the show rate is planned over them.
+    introsDue: p.introsBooked,
     introsShown: p.introsShown,
     introShowRate: i.introShowRate,
     costPerIntroShown: p.costPerIntroShown,
@@ -1078,6 +1370,7 @@ export function planNumbers(i: PlanInputs): {
     costPerDemoBooked: p.costPerDemoBooked,
     introToDemo: i.introToDemo,
     directDemos: i.directDemos,
+    demosDue: p.demosBooked,
     demosShown: p.demosShown,
     demoShowRate: i.demoShowRate,
     costPerDemoShown: p.costPerDemoShown,
@@ -1089,25 +1382,22 @@ export function planNumbers(i: PlanInputs): {
     contracted: p.contracted,
     cashShare: i.cashShare,
     aov: i.aov,
-    roasFrontEnd: ok(p.newCash) && marketing ? p.newCash / marketing : null,
+    roasFrontEnd: ok(p.newCash) && adSpend ? p.newCash / adSpend : null,
     roasContracted:
       ok(p.contracted) && marketing ? p.contracted / marketing : null,
-    cac:
-      ok(p.closes) && p.closes > 0 && marketing ? marketing / p.closes : null,
+    cac: ok(p.closes) && p.closes > 0 && adSpend ? adSpend / p.closes : null,
     mrrProjected: i.mrrDue,
     mrrCollected: p.backEndCash,
     mrrCollectionRate: i.mrrCollectionRate,
     upsellCash: i.upsellCash,
-    totalCash: p.totalCash,
+    refundAmount: i.refundAmount ?? null,
+    totalCash: revenue,
     totalContracted,
     marketingExpenses: marketing,
     labour: i.labour,
     software: i.overhead,
     profit,
-    margin:
-      ok(profit) && ok(p.totalCash) && p.totalCash > 0
-        ? profit / p.totalCash
-        : null,
+    margin: ok(profit) && ok(revenue) && revenue > 0 ? profit / revenue : null,
     clientCpl: i.clientCpl,
     clientCpb: p.clientCpb,
     callLeadToBooking: i.callLeadToBooking,
@@ -1117,6 +1407,14 @@ export function planNumbers(i: PlanInputs): {
 
 /** The first guess at the gates, from the one place they are declared. */
 export const GATES = { cpl: CPL_GATE, cpb: CPB_GATE };
+
+/**
+ * Whether a column has a plan row of its own: a mirror's is the column it
+ * mirrors, a retired metric's stays as it was, and one he added is typed.
+ */
+export function writesTarget(c: SheetColumn): boolean {
+  return !c.targetKey && !c.custom && !RETIRED_SHEET_KEYS.has(c.key);
+}
 
 /** Column to Goals-catalogue metric: the Goals board scores these by their own key. */
 export function planRowsFor(
@@ -1135,6 +1433,7 @@ export function planRowsFor(
     note: string | null;
   }[] = [];
   for (const c of SHEET_COLUMNS) {
+    if (!writesTarget(c)) continue;
     const v = byColumn[c.key];
     if (!ok(v)) continue;
     rows.push({
@@ -1248,6 +1547,22 @@ export function lifecycleDayParts(
     out[e.grantedOn] = day;
   }
   return out;
+}
+
+/**
+ * A lock-in line's name: the sheet's own for a metric the sheet has
+ * (2026-11-02), so October's "Total new cash" line, written with the key
+ * totalCash before the sheet's revenue rule, reads "Total revenue (with AR)",
+ * the number it shows. The name a metric carries with no section header
+ * beside it, as on the board, since the lock-in's sections are not the
+ * sheet's. The key is never remapped: the line keeps what it was saved under.
+ */
+export function lineLabel(r: {
+  label: string;
+  metric_key: string | null;
+}): string {
+  const c = r.metric_key ? COLUMN_BY_KEY[r.metric_key] : undefined;
+  return c ? boardLabelOf(c) : r.label;
 }
 
 /** One measured lock-in line: what the cockpit holds for a client in a section, with where it came from. */

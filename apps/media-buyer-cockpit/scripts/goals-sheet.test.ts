@@ -14,6 +14,7 @@ import {
   colourFor,
   daysOfMonth,
   evenDailyPlan,
+  fixedHintOf,
   isLevel,
   isWorkingDay,
   onPaceFor,
@@ -21,9 +22,24 @@ import {
   planNumbers,
   rollUp,
   SHEET_COLUMNS,
+  SHEET_SECTIONS,
+  type SheetColumn,
   solveSpend,
   withComputed,
 } from "../src/pages/ceo/goalsSheetModel";
+
+// A per-working-day column. None is on his sheet since 2026-11-02 (Scripts per
+// day retired), but the rollup stays for a metric he adds.
+const PER_DAY: SheetColumn = {
+  key: "scriptsPerDay",
+  label: "Scripts per day",
+  section: "custom",
+  unit: "count",
+  direction: "up",
+  rollup: { kind: "perWorkingDay", part: "scripts" },
+  editable: true,
+  source: "Typed.",
+};
 
 const NOVEMBER: PlanInputs = {
   spend: null,
@@ -42,6 +58,7 @@ const NOVEMBER: PlanInputs = {
   mrrDue: 11333,
   mrrCollectionRate: 0.65,
   upsellCash: 2000,
+  refundAmount: null,
   labour: 14840,
   overhead: 5325,
   otherMarketing: null,
@@ -108,18 +125,27 @@ describe("the plan works back from the money", () => {
     expect(keys).toContain("spend");
     expect(keys).toContain("totalCash");
     for (const k of keys) expect(COLUMN_BY_KEY[k]).toBeDefined();
+    // AOV and direct demos are off the sheet (2026-11-02): their stored rows
+    // stay on the plan untouched and still feed it.
+    const kept = [
+      { metric_key: "directDemos", target: 17, note: null },
+      { metric_key: "aov", target: 6000, note: null },
+    ];
     const ctx = {
-      targets: rows.map((r, i) => ({
-        id: i + 1,
-        metric_key: r.metricKey,
-        target: r.target,
-        note: r.note,
-      })),
+      targets: [
+        ...rows.map(r => ({
+          metric_key: r.metricKey,
+          target: r.target,
+          note: r.note,
+        })),
+        ...kept,
+      ].map((t, i) => ({ id: i + 1, ...t })),
     } as unknown as SheetContext;
     const back = inputsFromTargets(targetsOf(ctx));
     expect(back.goalCash).toBe(43300);
     expect(back.cpl).toBe(15);
     expect(back.directDemos).toBe(17);
+    expect(back.aov).toBe(6000);
     expect(back.overhead).toBe(5325);
   });
 });
@@ -151,8 +177,7 @@ describe("a column over a run of days", () => {
   });
 
   test("a per-day metric is the total over the working days", () => {
-    const scripts = COLUMN_BY_KEY.scriptsPerDay;
-    expect(rollUp(scripts, [{ scripts: 12 }, { scripts: 7 }], 26)).toBeCloseTo(
+    expect(rollUp(PER_DAY, [{ scripts: 12 }, { scripts: 7 }], 26)).toBeCloseTo(
       19 / 26,
       6,
     );
@@ -160,9 +185,20 @@ describe("a column over a run of days", () => {
 
   test("profit with no payroll is missing, not bigger", () => {
     const profit = COLUMN_BY_KEY.profit;
-    const parts = [{ totalCash: 1000, spend: 100, software: 50 }];
-    expect(rollUp(profit, parts, 1)).toBeNull();
-    expect(rollUp(profit, [{ ...parts[0], labour: 300 }], 1)).toBe(550);
+    // 2026-11-02: revenue is the money in (1,400) less the refunds logged by hand.
+    const days = [
+      {
+        newCash: 1000,
+        newCashMeasured: 1000,
+        cashIn: 1400,
+        refundsManual: 0,
+        spend: 100,
+      },
+    ];
+    const facts = { software: 50 };
+    expect(rollUp(profit, days, 1, facts)).toBeNull();
+    // Revenue 1,400 less overhead 50, labour 300 and marketing 100.
+    expect(rollUp(profit, [{ ...days[0], labour: 300 }], 1, facts)).toBe(950);
   });
 
   test("show rate on the call centre counts only marked appointments", () => {
@@ -176,8 +212,9 @@ describe("pace and colour", () => {
   test("a count paces over working days; a rate is judged whole", () => {
     expect(onPaceFor(COLUMN_BY_KEY.leads, 50, 13, 26)).toBe(100);
     expect(onPaceFor(COLUMN_BY_KEY.cpl, 18, 13, 26)).toBe(18);
-    expect(isLevel(COLUMN_BY_KEY.scriptsPerDay)).toBe(true);
+    expect(isLevel(PER_DAY)).toBe(true);
     expect(isLevel(COLUMN_BY_KEY.totalContracted)).toBe(false);
+    expect(isLevel(COLUMN_BY_KEY.totalCash)).toBe(false);
   });
 
   test("on the line is green, within a tenth yellow, further red", () => {
@@ -204,84 +241,123 @@ describe("pace and colour", () => {
 });
 
 describe("his outline is all there", () => {
-  const outline = {
-    sales_marketing: [
-      "Hammer Them ad spend",
-      "Lead gen ad spend",
-      "Unique link clicks",
-      "CPC",
-      "Landing page conversion",
-      "Leads",
-      "CPL",
-      "L2B",
-      "Intro calls",
-      "Cost per intro",
-      "Intros showed",
-      "Intro show rate",
-      "Cost per live intro",
-      "Demo calls",
-      "Cost per demo",
-      "Intro to demo %",
-      "Demos showed",
-      "Demo show rate",
-      "Cost per live demo",
-      "Offers made",
-      "Offer %",
-      "Closed deals",
-      "Close rate %",
-      "Cash collected",
-      "Contracted rev",
-      "UF cash %",
-      "AOV",
-      "FE ROAS",
-      "Contracted ROAS",
-      "CAC",
+  // His NOV 2026 tab (2026-11-02), plus customer success's four extra lines,
+  // the cockpit's client media buying and call center, and one creative count.
+  const outline: Record<string, [string, string][]> = {
+    lead_gen: [
+      ["spendRetargeting", "Hammer Them ad spend"],
+      ["spend", "Ad spend"],
+      ["uniqueLinkClicks", "Unique link clicks"],
+      ["cpc", "CPC"],
+      ["landingPageConversion", "LPC (lead per click)"],
+      ["leads", "Leads"],
+      ["cpl", "CPL"],
+      ["leadToBooked", "L2B %"],
     ],
-    client_success: [
-      "Clients churned",
-      "Churn rate",
-      "Projected MRR",
-      "MRR collection",
-      "Client extensions given",
-      "Upsells",
-      "Upsells cash",
-      "Refunds",
-      "Refund amount",
-      "Referrals",
-      "Testimonials",
-      "Reviews",
+    intro_calls: [
+      ["introsBooked", "Intro calls booked"],
+      ["costPerIntroBooked", "Cost per intro call"],
+      ["introsDue", "Intro calls scheduled for the day"],
+      ["introsShown", "Showed calls"],
+      ["introShowRate", "Show rate %"],
+      ["costPerIntroShown", "Cost per live intro call"],
     ],
-    sales_x_cs: ["Total new cash", "Total contracted"],
-    finances: [
-      "Marketing expenses",
-      "Labour expenses",
-      "Software expenses",
-      "Total profit",
-      "Margin %",
+    demo_calls: [
+      ["demosBooked", "Demo calls booked"],
+      ["costPerDemoBooked", "Cost per demo call"],
+      ["introToDemo", "Intro to demo %"],
+      ["demosDue", "Demo calls scheduled for the day"],
+      ["demosShown", "Showed calls"],
+      ["demoShowRate", "Show rate %"],
+      ["costPerDemoShown", "Cost per live demo"],
+      ["offersMade", "Offers made"],
+      ["offerRate", "Offer %"],
+      ["closes", "Closed deals"],
+      ["closeRate", "Close rate %"],
+      ["newCash", "Cash collected"],
+      ["contracted", "Contracted revenue"],
+      ["cashShare", "UF cash %"],
+      ["roasFrontEnd", "FE ROAS"],
+      ["cac", "CPA"],
     ],
-    client_media: ["CPM", "Link CTR", "Opt in %", "CPL", "CPB"],
+    collections: [
+      ["mrrProjected", "Projected MRR to collect"],
+      ["mrrCollected", "MRR collected"],
+      ["mrrCollectionRate", "Collections %"],
+    ],
+    customer_success: [
+      ["clientsChurned", "Clients churned"],
+      ["upsells", "Upsells"],
+      ["upsellCash", "Upsell cash"],
+      ["refunds", "Refunds"],
+      ["refundAmount", "Refunds amount"],
+      ["extensionsGiven", "Extensions given"],
+      ["referrals", "Referrals"],
+      ["testimonials", "Testimonials"],
+      ["googleReviews", "Reviews"],
+    ],
+    business_totals: [
+      ["totalNewCash", "Total new cash"],
+      ["totalCash", "Total revenue (with AR)"],
+      ["totalContracted", "Total contracted"],
+      ["software", "Overhead expenses"],
+      ["labour", "Labour expenses"],
+      ["marketingExpenses", "Marketing expenses"],
+      ["profit", "Total profit"],
+      ["margin", "Margin %"],
+    ],
+    client_media: [
+      ["clientCpm", "CPM"],
+      ["clientLinkCtr", "Link CTR"],
+      ["clientOptIn", "Opt in %"],
+      ["clientCpl", "CPL"],
+      ["clientCpb", "CPB"],
+    ],
     call_center: [
-      "Lead to booking",
-      "Show rate %",
-      "Avg lead quality",
-      "Close rate %",
+      ["callLeadToBooking", "Lead to booking"],
+      ["callShowRate", "Show rate %"],
+      ["callLeadQuality", "Avg lead quality"],
+      ["callCloseRate", "Close rate %"],
     ],
-    creative: [
-      "Scripts per day",
-      "New angles tested",
-      "Videos per day",
-      "Revision per video",
-    ],
-  } as const;
+    creative: [["videosCompleted", "Videos completed"]],
+  };
 
-  for (const [section, labels] of Object.entries(outline)) {
-    test(`${section} has every line`, () => {
-      const have = SHEET_COLUMNS.filter(c => c.section === section).map(
-        c => c.label,
-      );
-      for (const l of labels) expect(have).toContain(l);
+  test("the sections are his, in his order", () => {
+    expect(SHEET_SECTIONS.map(s => s.key)).toEqual([
+      ...Object.keys(outline),
+      "custom",
+    ]);
+  });
+
+  for (const [section, lines] of Object.entries(outline)) {
+    test(`${section} has exactly his lines, in order`, () => {
+      const have = SHEET_COLUMNS.filter(c => c.section === section).map(c => [
+        c.key,
+        c.label,
+      ]);
+      expect(have).toEqual(lines);
     });
   }
+
+  test("nothing else is on the sheet", () => {
+    expect(SHEET_COLUMNS.map(c => c.key)).toEqual(
+      Object.values(outline).flatMap(l => l.map(([k]) => k)),
+    );
+  });
+
+  test("a metric keeps the target group its stored rows are under", () => {
+    const group = (key: string) =>
+      SHEET_SECTIONS.find(s => s.key === COLUMN_BY_KEY[key].section)?.group;
+    for (const k of ["spend", "uniqueLinkClicks", "introsBooked", "cac"])
+      expect(group(k)).toBe("front_end");
+    for (const k of ["mrrProjected", "mrrCollected", "upsellCash", "refunds"])
+      expect(group(k)).toBe("back_end");
+    for (const k of ["totalCash", "totalContracted", "software", "profit"])
+      expect(group(k)).toBe("money");
+    expect(group("clientCpb")).toBe("delivery");
+    expect(group("callShowRate")).toBe("calls");
+    expect(group("videosCompleted")).toBe("creative");
+  });
 
   test("every key is unique, and a day can only be typed where it adds up", () => {
     const keys = SHEET_COLUMNS.map(c => c.key);
@@ -296,14 +372,14 @@ describe("his outline is all there", () => {
       {
         key: "ccases",
         label: "Case studies",
-        section: "client_success",
+        section: "customer_success",
         unit: "count",
         direction: "up",
         rollup: "sum",
         note: null,
       },
     ]);
-    const success = cols.filter(c => c.section === "client_success");
+    const success = cols.filter(c => c.section === "customer_success");
     expect(success[success.length - 1].key).toBe("ccases");
   });
 });
@@ -359,10 +435,19 @@ describe("the tab", () => {
   });
 
   test("the month's facts come from their own month", () => {
-    expect(sheet.facts.uniqueLinkClicks).toBe(2639);
+    // October is the month in progress here (today is 30 Oct): its window runs
+    // to today and its days to yesterday, so it never stands in (2026-11-02).
+    expect(sheet.facts.uniqueLinkClicks).toBeUndefined();
+    expect(sheet.monthWhy["2026-10"].uniqueLinkClicks).toContain(
+      "wait on the CEO refresh release",
+    );
+    // September has ended: its whole-month window still stands in for its days.
     expect(sheet.prevFacts.uniqueLinkClicks).toBe(1768);
-    expect(sheet.facts.mrrProjected).toBe(14999);
-    expect(sheet.prevFacts.mrrProjected).toBe(14332);
+    // MRR is back end only: a book from before the release says why it is not used.
+    expect(sheet.facts.mrrProjected).toBeUndefined();
+    expect(sheet.monthWhy["2026-10"].mrrCollected).toContain(
+      "holds new clients' first payments",
+    );
     expect(sheet.facts.clientsChurned).toBe(1);
     expect(sheet.facts.clientsAtStart).toBe(20);
   });
@@ -378,5 +463,37 @@ describe("the tab", () => {
     const next = buildSheet({ ...ctx, month: "2026-11" });
     expect(next.through).toBeNull();
     expect(next.workedSoFar).toBe(0);
+  });
+});
+
+describe("older plan keys and read-only columns (2026-11-02)", () => {
+  test("an older plan's overhead and client lead to booking show on the sheet's columns", () => {
+    // Made-up numbers in October's shape: the plan stores the older keys only.
+    const older = [
+      { id: 1, metric_key: "overhead", target: 6000, note: null },
+      { id: 2, metric_key: "clientLeadToBooking", target: 0.3, note: null },
+    ];
+    const both = [
+      ...older,
+      { id: 3, metric_key: "software", target: 5000, note: null },
+      { id: 4, metric_key: "callLeadToBooking", target: 0.4, note: null },
+    ];
+    const only = targetsOf({ targets: older } as unknown as SheetContext);
+    expect(only.software?.value).toBe(6000);
+    expect(only.callLeadToBooking?.value).toBe(0.3);
+    // The sheet's own key wins when the plan has both.
+    const mixed = targetsOf({ targets: both } as unknown as SheetContext);
+    expect(mixed.software?.value).toBe(5000);
+    expect(mixed.callLeadToBooking?.value).toBe(0.4);
+  });
+
+  test("a column that cannot be typed says why in its own words", () => {
+    expect(fixedHintOf(COLUMN_BY_KEY.clientsChurned)).toContain(
+      "churn register",
+    );
+    expect(fixedHintOf(COLUMN_BY_KEY.totalCash)).toContain(
+      "Added up from its parts",
+    );
+    expect(fixedHintOf(COLUMN_BY_KEY.cpl)).toContain("divides");
   });
 });

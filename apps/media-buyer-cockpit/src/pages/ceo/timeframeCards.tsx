@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { clientCplOfDays, META_FORM_LEADS } from "@/components/ceo/clientCpl";
 import { count, kuwaitDay, money, pct } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
@@ -70,6 +71,11 @@ export function DeliveryTimeframeCard({
   );
   const spend = inRange.reduce((t, r) => t + r.spend, 0);
   const leads = inRange.reduce((t, r) => t + r.leads, 0);
+  // CRM ad leads over the spend paired with them, the Goals sheet's client
+  // CPL (2026-11-02, fix 9); Meta's on a payload from before the pairing.
+  const cpl = bounds
+    ? clientCplOfDays(inRange, bounds.from, bounds.to)
+    : clientCplOfDays([], "", "");
   // Confirmed bookings by the day they were made, over the spend on the days
   // the board stores them (./deliveryCost.ts, the one rule every tab uses).
   const source = section?.payload?.bookingSource;
@@ -104,12 +110,18 @@ export function DeliveryTimeframeCard({
               label="Client ad spend"
               value={money(spend)}
             />
-            <StatTile variant="plain" label="Leads" value={count(leads)} />
+            <StatTile
+              variant="plain"
+              label={META_FORM_LEADS}
+              value={count(leads)}
+            />
             <StatTile
               variant="plain"
               label="Cost per lead"
-              value={money(leads > 0 ? spend / leads : null)}
-              naHint="No leads in these days."
+              value={money(cpl.value)}
+              sub={cpl.sub ?? undefined}
+              hint={cpl.hint}
+              naHint={cpl.naHint}
             />
             <StatTile
               variant="plain"

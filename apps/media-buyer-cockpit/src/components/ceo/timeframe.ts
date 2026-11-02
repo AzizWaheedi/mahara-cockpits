@@ -142,7 +142,11 @@ export function windowFromDaily(
   const sum = (pick: (d: GrowthDay) => number | undefined) =>
     rows.reduce((t, d) => t + (pick(d) ?? 0), 0);
   const spend = r2(sum(d => d.spend));
-  const spendRt = r2(sum(d => d.spendRetargeting));
+  // Retargeting is read only when every day carries it (2026-11-02): a day
+  // without the field is not $0 of retargeting, so the window's all-spend
+  // figures (front-end ROAS, cost to win) read n/a rather than lead gen alone.
+  const rtRead = rows.length > 0 && rows.every(d => isNum(d.spendRetargeting));
+  const spendRt = rtRead ? r2(sum(d => d.spendRetargeting)) : null;
   const leads = sum(d => d.leads);
   const qualified = sum(d => d.qualified);
   const unqualified = sum(d => d.unqualified);
@@ -261,7 +265,13 @@ export function windowFromDaily(
     frontEndCash: fe,
     cac: closes > 0 ? r2(spend / closes) : null,
     roas: spend > 0 ? r2(contracted / spend) : null,
-    roasCash: paid !== null && spend > 0 ? r2(paid / spend) : null,
+    // Over all Mahara ad spend, lead gen and retargeting (2026-11-02, Goals
+    // sheet round 2, fix 15), the worker's window rule, so a custom range
+    // ties to the sheet's FE ROAS (13.09x for October), not lead gen alone.
+    roasCash:
+      paid !== null && spendRt !== null && spend + spendRt > 0
+        ? r2(paid / (spend + spendRt))
+        : null,
     roasContracted: spend > 0 ? r2(contracted / spend) : null,
     raw: {
       spend,
