@@ -245,10 +245,16 @@ const ok = (data: unknown): Answer => ({ data, error: null });
 
 /** Made-up Hermes conversations for the chat panel (newest first, as the server sends). */
 function hermesThread() {
-  const mode = new URLSearchParams(window.location.search).get("hermes") ?? "thread";
+  const mode =
+    new URLSearchParams(window.location.search).get("hermes") ?? "thread";
   if (mode === "empty") return [];
   const ago = (min: number) => new Date(Date.now() - min * 60000).toISOString();
-  const job = (n: number, prompt: string, reply: string | null, min: number) => ({
+  const job = (
+    n: number,
+    prompt: string,
+    reply: string | null,
+    min: number,
+  ) => ({
     id: `00000000-0000-4000-8000-00000000000${n}`,
     status: reply ? "completed" : "claimed",
     phase: reply ? "completed" : "pending",
@@ -265,10 +271,22 @@ function hermesThread() {
     feedback: n === 1 ? 1 : null,
   });
   const thread = [
-    job(2, "اعطني كابشن للإعلان الثاني", "**الإعلان الثاني** يبين أرضية رخام في فيلا قيد التشطيب.\n\n- أرضيتك أول شي ينشاف\n- نوريك الخيارات قبل ما تقرر\n\nتواصل معنا اليوم.", 3),
-    job(1, "How is Acme Tiles doing this week?", "Acme Tiles spent **$342.20** in the last 7 days for 12 leads, a cost per lead of **$28.52**.\n\n---\n\n1. \"Showroom tour\" brings most leads at $21 each.\n2. \"Before and after\" spent $90 with 1 lead: pause it or refresh the hook.\n\nSource: media buyer campaign board, synced today.", 9),
+    job(
+      2,
+      "اعطني كابشن للإعلان الثاني",
+      "**الإعلان الثاني** يبين أرضية رخام في فيلا قيد التشطيب.\n\n- أرضيتك أول شي ينشاف\n- نوريك الخيارات قبل ما تقرر\n\nتواصل معنا اليوم.",
+      3,
+    ),
+    job(
+      1,
+      "How is Acme Tiles doing this week?",
+      'Acme Tiles spent **$342.20** in the last 7 days for 12 leads, a cost per lead of **$28.52**.\n\n---\n\n1. "Showroom tour" brings most leads at $21 each.\n2. "Before and after" spent $90 with 1 lead: pause it or refresh the hook.\n\nSource: media buyer campaign board, synced today.',
+      9,
+    ),
   ];
-  return mode === "pending" ? [job(3, "Which ad should I pause?", null, 0.3), ...thread] : thread;
+  return mode === "pending"
+    ? [job(3, "Which ad should I pause?", null, 0.3), ...thread]
+    : thread;
 }
 
 /** Patch the client's rpc and functions.invoke; returns the scenario in use. */

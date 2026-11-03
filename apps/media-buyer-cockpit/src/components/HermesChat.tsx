@@ -71,10 +71,7 @@ function HermesThinking({ label, since }: { label: string; since: number }) {
     (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
   useEffect(() => {
     if (reduced.current) return;
-    const timer = window.setInterval(
-      () => setPhase(p => (p + 1 / 8) % 1),
-      80,
-    );
+    const timer = window.setInterval(() => setPhase(p => (p + 1 / 8) % 1), 80);
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {
@@ -85,7 +82,10 @@ function HermesThinking({ label, since }: { label: string; since: number }) {
   const seed = [0.55, 0.3, 0.15, 0.85, 0.55, 0.3, 1, 0.85, 0.55];
   return (
     <>
-      <div role="status" className="flex items-center gap-2.5 text-muted-foreground">
+      <div
+        role="status"
+        className="flex items-center gap-2.5 text-muted-foreground"
+      >
         <span aria-hidden="true" className="grid grid-cols-3 gap-0.5">
           {Array.from({ length: 9 }, (_, n) => {
             const col = n % 3;
@@ -133,9 +133,7 @@ function HermesBlocks({ text, animate }: { text: string; animate: boolean }) {
     <div className="space-y-2">
       {parseHermesText(text).map((b, i) => {
         const anim = animate ? " hermes-rise" : "";
-        const delay = animate
-          ? { animationDelay: `${i * 60}ms` }
-          : undefined;
+        const delay = animate ? { animationDelay: `${i * 60}ms` } : undefined;
         if (b.kind === "bullets" || b.kind === "numbered") {
           const cls = `space-y-1 ps-5 text-sm leading-6 ${
             b.kind === "bullets" ? "list-disc" : "list-decimal"
@@ -581,8 +579,8 @@ export function HermesChat() {
             {count === 0 && !isLoading ? (
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">
-                  Ask about clients, ads and numbers. Hermes reads this cockpit's
-                  data and answers here in under a minute.
+                  Ask about clients, ads and numbers. Hermes reads this
+                  cockpit's data and answers here in under a minute.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {hermesSuggestions(APP, clientName).map(s => (
@@ -645,9 +643,7 @@ export function HermesChat() {
                 </div>
               ),
             )}
-            {live ? (
-              <HermesThinking label={liveLabel} since={live.at} />
-            ) : null}
+            {live ? <HermesThinking label={liveLabel} since={live.at} /> : null}
             <div ref={endRef} />
           </div>
           <div className="border-t-0 p-3">

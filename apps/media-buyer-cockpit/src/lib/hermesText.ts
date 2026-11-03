@@ -40,7 +40,10 @@ export function parseHermesText(text: string): HermesBlock[] {
 
   const flush = () => {
     if (kind === "paragraph" && paragraph.length > 0) {
-      blocks.push({ kind: "paragraph", spans: parseInline(paragraph.join("\n")) });
+      blocks.push({
+        kind: "paragraph",
+        spans: parseInline(paragraph.join("\n")),
+      });
     }
     if ((kind === "bullets" || kind === "numbered") && items.length > 0) {
       blocks.push({ kind, items: items.map(parseInline) });
