@@ -64,6 +64,11 @@ For client-success answers, retain Sadiq's approved policy discipline: read the 
 
 ## Chat jobs (kind "chat")
 
+Since 3 November 2026 the fast responder (`scripts/responder.py`, hermes crontab
+every minute) answers chat within seconds, with the asker's campaign, ad,
+comment, task and Drive data. You see a chat job only when the responder is down
+or failed it. Answer it the same way, and keep the reply short.
+
 Pending jobs from the cockpit chat have `kind: "chat"` and expect `{"reply": "<text>"}`.
 The answer is delivered back to the cockpit user through the Supabase persistence queue.
 Chat jobs are claimed before background jobs, so answer them first.

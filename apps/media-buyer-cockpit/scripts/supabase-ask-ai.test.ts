@@ -1,7 +1,7 @@
 import {expect,test} from "bun:test";
 import type {SupabaseClient} from "@supabase/supabase-js";
 import {actor,cockpitTestDb,member,migration,owner} from "./lib/cockpitTestDb";
-import {submitAskAiJob,getAskAiJob,getAskAiThread,clearAskAiThread,jobsToChatMessages} from "../src/lib/askAiClient";
+import {submitAskAiJob,getAskAiJob,getAskAiThread,clearAskAiThread,jobsToChatMessages,rateAskAiJob} from "../src/lib/askAiClient";
 const A="00000000-0000-4000-8000-000000000001", B="00000000-0000-4000-8000-000000000002";
 const C="00000000-0000-4000-8000-000000000003", F="00000000-0000-4000-8000-000000000004";
 async function fixture(){
@@ -13,6 +13,7 @@ async function fixture(){
  await db.exec(migration("20260927a_cockpit_ask_ai_jobs.sql"));
  await db.exec(migration("20260927a_cockpit_ask_ai_jobs.sql"));
  expect((await db.query<any>("select pg_get_functiondef('cockpit_client_allowed(text)'::regprocedure) as body")).rows[0].body).toBe(before);
+ await db.exec(migration("20261103j_ask_ai_feedback.sql"));
  await member(db,A,"a@tests.invalid",["media_buyer"]);
  await member(db,B,"b@tests.invalid",["media_buyer"]);
  await member(db,C,"c@tests.invalid",["csm"]);
@@ -22,6 +23,7 @@ async function fixture(){
  const params:Record<string,string[]> = {
   cockpit_submit_ask_ai_job:["p_app","p_role","p_prompt","p_client_name","p_kind","p_context","p_idempotency_key"],
   cockpit_get_ask_ai_job:["p_job_id"],cockpit_get_ask_ai_thread:["p_app","p_limit"],cockpit_clear_ask_ai_thread:["p_app"],
+  cockpit_rate_ask_ai_job:["p_job_id","p_rating"],
  };
  const client={async rpc(name:string,args:Record<string,unknown>){
    const keys=params[name]; expect(keys).toBeDefined(); expect(Object.keys(args).sort()).toEqual([...keys].sort());
@@ -118,4 +120,23 @@ test("adapters reject success-shaped objects and malformed history instead of in
  expect((await getAskAiJob(fake,A)).error).not.toBeNull();
  expect((await getAskAiThread(fake,"media-buyer")).error).not.toBeNull();
  expect((await clearAskAiThread(fake,"media-buyer")).success).toBe(false);
+});
+test("owners rate completed chat answers and clear the rating",async()=>{
+ const {db,client}=await fixture();try{
+  const saved=await submitAskAiJob(client,input);expect(saved.error).toBeNull();
+  await worker(db);const claim=(await db.query<any>("select * from cockpit_claim_ask_ai_jobs('w')")).rows[0];
+  expect((await db.query<any>("select cockpit_complete_ask_ai_job($1,$2,'{\"reply\":\"Rated answer\"}','w') as ok",[claim.id,claim.lease_token])).rows[0].ok).toBe(true);
+  await actor(db,A);
+  const up=await rateAskAiJob(client,saved.jobId!,1);expect(up.success).toBe(true);expect(up.error).toBeNull();
+  expect((await getAskAiJob(client,saved.jobId!)).job?.feedback).toBe(1);
+  const messages=jobsToChatMessages((await getAskAiThread(client,"media-buyer")).thread);
+  expect(messages.at(-1)?.feedback).toBe(1);expect(messages.at(-1)?.jobId).toBe(saved.jobId);
+  const cleared=await rateAskAiJob(client,saved.jobId!,0);expect(cleared.success).toBe(true);
+  expect((await getAskAiJob(client,saved.jobId!)).job?.feedback).toBeNull();
+  const queued=await submitAskAiJob(client,{...input,prompt:"Still queued",idempotencyKey:"request-2"});
+  expect(queued.error).toBeNull();
+  expect((await rateAskAiJob(client,queued.jobId!,1)).error?.message).toContain("Only a completed chat answer can be rated");
+  await actor(db,B);expect((await rateAskAiJob(client,saved.jobId!,1)).error?.message).toContain("Access denied");
+  await actor(db,A);expect((await rateAskAiJob(client,saved.jobId!,2 as never)).error?.message).toContain("Invalid rating");
+ }finally{await db.close();}
 });

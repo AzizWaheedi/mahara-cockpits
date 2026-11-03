@@ -1,0 +1,17 @@
+import {expect,test} from "bun:test";
+import {hermesSuggestions,parseHermesText} from "../src/lib/hermesText";
+const span=(text:string,bold=false)=>({text,bold});
+test("empty or whitespace text has no blocks",()=>{expect(parseHermesText("")).toEqual([]);expect(parseHermesText(" \n\n\t ")).toEqual([]);});
+test("one paragraph keeps consecutive lines together",()=>{expect(parseHermesText("first line\nsecond line")).toEqual([{kind:"paragraph",spans:[span("first line\nsecond line")]}]);});
+test("mixed bullet markers form one list",()=>{expect(parseHermesText("- one\n* two\n• three")).toEqual([{kind:"bullets",items:[[span("one")],[span("two")],[span("three")]]}]);});
+test("numbered markers 1. and 2) form one list",()=>{expect(parseHermesText("1. one\n2) two")).toEqual([{kind:"numbered",items:[[span("one")],[span("two")]]}]);});
+test("a hash heading is its own block",()=>{expect(parseHermesText("## Title")).toEqual([{kind:"heading",spans:[span("Title")]}]);});
+test("a blank line splits paragraphs",()=>{expect(parseHermesText("one\n\ntwo")).toEqual([{kind:"paragraph",spans:[span("one")]},{kind:"paragraph",spans:[span("two")]}]);});
+test("bold pairs become bold spans",()=>{expect(parseHermesText("**bold** and plain")).toEqual([{kind:"paragraph",spans:[span("bold",true),span(" and plain")]}]);});
+test("an unmatched bold marker stays literal",()=>{expect(parseHermesText("**open")).toEqual([{kind:"paragraph",spans:[span("**open")]}]);});
+test("Arabic text passes through unchanged",()=>{const arabic="مرحبا بكم في محرة";expect(parseHermesText(arabic)).toEqual([{kind:"paragraph",spans:[span(arabic)]}]);});
+test("media buyer suggestions name the client when there is one",()=>{expect(hermesSuggestions("media-buyer","Client A")).toEqual(["How is Client A doing this week?","Which Client A ad has the best cost per lead?","Write 3 captions for Client A's best ad"]);expect(hermesSuggestions("media-buyer")).toEqual(["Which campaigns need attention today?","Where did cost per lead rise this week?","Summarise yesterday's spend and leads"]);});
+test("client success suggestions name the client when there is one",()=>{expect(hermesSuggestions("client-success","Client A")).toEqual(["Summarise Client A's latest updates","What should I tell Client A this week?","Any open tasks for Client A?"]);expect(hermesSuggestions("client-success",null)).toEqual(["Which clients need a check-in?","Summarise this week's client comments","Which clients have lead sync problems?"]);});
+test("creative suggestions name the client when there is one",()=>{expect(hermesSuggestions("creative","Client A")).toEqual(["Which Client A ads are winning?","Give me 3 new angles for Client A","What does Client A want changed?"]);expect(hermesSuggestions("creative")).toEqual(["Which clients need new creatives?","What creative requests are open?","Give me 3 hook ideas for a design firm"]);});
+test("a blank client string counts as no client",()=>{expect(hermesSuggestions("media-buyer","   ")).toEqual(hermesSuggestions("media-buyer"));expect(hermesSuggestions("client-success"," ")).toEqual(hermesSuggestions("client-success"));expect(hermesSuggestions("creative","\t")).toEqual(hermesSuggestions("creative"));});
+test("divider lines (---, ***, ___) split blocks and never show as text",()=>{expect(parseHermesText("one\n---\ntwo\n***\n- a")).toEqual([{kind:"paragraph",spans:[span("one")]},{kind:"paragraph",spans:[span("two")]},{kind:"bullets",items:[[span("a")]]}]);expect(parseHermesText("--")).toEqual([{kind:"paragraph",spans:[span("--")]}]);});

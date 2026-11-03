@@ -221,6 +221,8 @@ done
 
 same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$CS/src/lib/askAiClient.ts"
 same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$CD/src/lib/askAiClient.ts"
+same hermesText.ts "$MB/src/lib/hermesText.ts" "$CS/src/lib/hermesText.ts"
+same hermesText.ts "$MB/src/lib/hermesText.ts" "$CD/src/lib/hermesText.ts"
 same personalEod.ts "$MB/src/lib/personalEod.ts" "$CS/src/lib/personalEod.ts"
 same personalEod.ts "$MB/src/lib/personalEod.ts" "$CD/src/lib/personalEod.ts"
 same convex/billingCore.ts "$MB/convex/billingCore.ts" "$CS/convex/billingCore.ts"

@@ -27,6 +27,7 @@ export interface AskAiJobItem {
   error: string | null;
   created_at: string;
   completed_at: string | null;
+  feedback?: -1 | 0 | 1 | null;
 }
 
 export interface ChatMessage {
@@ -37,6 +38,7 @@ export interface ChatMessage {
   at: number;
   jobId?: string;
   error?: string | null;
+  feedback?: -1 | 0 | 1 | null;
 }
 
 export function extractAnswerText(result: unknown): string {
@@ -63,6 +65,13 @@ function checkedJob(value: unknown): AskAiJobItem {
     !["media-buyer", "client-success", "creative"].includes(j.app) ||
     typeof j.prompt !== "string" ||
     !Number.isFinite(Date.parse(j.created_at)) ||
+    !(
+      j.feedback === undefined ||
+      j.feedback === null ||
+      j.feedback === -1 ||
+      j.feedback === 0 ||
+      j.feedback === 1
+    ) ||
     (j.status === "completed" && !extractAnswerText(j.result).trim())
   ) {
     throw new Error("The server returned an invalid conversation receipt.");
@@ -168,6 +177,30 @@ export async function clearAskAiThread(
   }
 }
 
+export async function rateAskAiJob(
+  client: SupabaseClient,
+  jobId: string,
+  rating: -1 | 0 | 1,
+): Promise<{ success: boolean; error: Error | null }> {
+  try {
+    const { data, error } = await client.rpc("cockpit_rate_ask_ai_job", {
+      p_job_id: jobId,
+      p_rating: rating,
+    });
+    if (error) {
+      return { success: false, error: new Error(error.message) };
+    }
+    if (data !== true)
+      throw new Error("The rating was not confirmed by the server.");
+    return { success: true, error: null };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err instanceof Error ? err : new Error(String(err)),
+    };
+  }
+}
+
 export function jobsToChatMessages(jobs: AskAiJobItem[]): ChatMessage[] {
   const messages: ChatMessage[] = [];
   // Server returns newest first, so reverse to chronological
@@ -199,6 +232,8 @@ export function jobsToChatMessages(jobs: AskAiJobItem[]): ChatMessage[] {
         text: extractAnswerText(j.result),
         status: "answered",
         at: j.completed_at ? new Date(j.completed_at).getTime() : Date.now(),
+        jobId: j.id,
+        feedback: j.feedback ?? null,
       });
     }
   }
