@@ -132,6 +132,43 @@ export interface BlueprintBundle {
   settings: z.infer<typeof settingsSchema>;
   row: BlueprintRow | null;
   outbox: Record<string, OutboxRow | null>;
+  /**
+   * The kickoff's daily budget (CEO item 5): its dollars at the cockpit's
+   * rate and the currency it was given in. Absent before the kickoff amounts
+   * migration (B5) and for a kickoff with no budget.
+   */
+  kickoffBudget?: { usd: number | null; currency: string | null } | null;
+}
+
+/**
+ * The kickoff's budget from the Blueprint's read: B5's `kit.budgetUsd` and
+ * `kit.budgetCurrency` (cockpit_blueprint_sources, 20261103f; legacy text
+ * read as dollars there too), else the read model's own
+ * `forms.kickoff.budget {usd, currency}`. A usd that is not a number stays
+ * null, never 0.
+ */
+export function kickoffBudgetOf(
+  src: Record<string, unknown>,
+): { usd: number | null; currency: string | null } | null {
+  const num = (v: unknown) =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+  const word = (v: unknown) =>
+    typeof v === "string" && v.trim() ? v.trim().toUpperCase() : null;
+  const kit = (src.kit ?? null) as Record<string, unknown> | null;
+  // B5 (20261103f) puts them on the kit; a top-level pair is read the same way.
+  for (const at of [kit, src])
+    if (at && ("budgetUsd" in at || "budgetCurrency" in at)) {
+      const usd = num(at.budgetUsd);
+      const currency = word(at.budgetCurrency);
+      return usd === null && currency === null ? null : { usd, currency };
+    }
+  const forms = (kit?.forms ?? null) as Record<string, unknown> | null;
+  const kickoff = (forms?.kickoff ?? null) as Record<string, unknown> | null;
+  const b = (kickoff?.budget ?? null) as Record<string, unknown> | null;
+  if (!b || typeof b !== "object") return null;
+  const usd = num(b.usd);
+  const currency = word(b.currency);
+  return usd === null && currency === null ? null : { usd, currency };
 }
 
 /** The kit as the deck model reads it: the OnboardingRow fields, the rest empty. */
@@ -189,6 +226,7 @@ export function loadedFromBlueprint(src: BlueprintSources): Loaded {
         ...(src.outbox ?? {}),
         ...(src.blueprint?.outbox ?? {}),
       },
+      kickoffBudget: kickoffBudgetOf(src as Record<string, unknown>),
     },
   };
 }

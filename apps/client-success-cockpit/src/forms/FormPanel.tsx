@@ -779,6 +779,9 @@ function Part({
           />
           {head}
         </summary>
+        {part.problem ? (
+          <p className="txt-warn mt-1 text-xs">{part.problem}</p>
+        ) : null}
         <div className="mt-1">{rows}</div>
       </details>
     );
@@ -990,6 +993,11 @@ function Row({
               >
                 {row.value}
               </bdi>
+              {row.chip ? (
+                <Chip tone={row.chip.tone} className="shrink-0">
+                  {row.chip.label}
+                </Chip>
+              ) : null}
             </div>
           ) : null}
           {row.value === null ? (

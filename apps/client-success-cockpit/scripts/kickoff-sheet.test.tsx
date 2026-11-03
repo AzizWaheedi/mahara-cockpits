@@ -551,11 +551,26 @@ describe("the kickoff's fields (4.13)", () => {
     expect(kick.KICKOFF_ANSWER_FIELDS.map(f => f.key).sort()).toEqual(
       specs.map(x => x.key).sort(),
     );
+    // CEO item 5 (4.21): the budget is an amount and a currency, the close rate a
+    // percent. Before the kickoff amounts migration (B5) the database still lists
+    // both as text, and the sheet then sends them as Make's text (kickoffNeedsText).
+    const AMOUNTS: Record<string, string[]> = {
+      dailyBudget: ["text", "amount"],
+      coldCloseRate: ["text", "percent"],
+    };
     for (const x of specs) {
       const f = kick.KICKOFF_ANSWER_FIELDS.find(k => k.key === x.key);
       expect([x.key, f?.ref]).toEqual([x.key, x.typeformRef]);
       // A list goes as a list only where the database takes one.
       expect([x.key, f?.list === true]).toEqual([x.key, x.type === "multi"]);
+      if (AMOUNTS[x.key]) {
+        expect([x.key, AMOUNTS[x.key].includes(x.type)]).toEqual([x.key, true]);
+        expect(f?.type).toBe(x.key === "dailyBudget" ? "amount" : "percent");
+        // The currencies, where the database lists them, are the sheet's in its order.
+        const cur = (x as { currencies?: string[] }).currencies ?? x.options;
+        if (x.type === "amount" && cur) expect(f?.currencies).toEqual(cur);
+        continue;
+      }
       if (x.options)
         expect([x.key, f?.options?.map(o => o.value)]).toEqual([
           x.key,
@@ -591,6 +606,11 @@ describe("the kickoff's fields (4.13)", () => {
       website: "text",
       number: "number",
     };
+    // Two short texts became typed answers (CEO item 5): the budget and the close rate.
+    const TYPED: Record<string, string> = {
+      "cf53482c-3d7d-45ab-b294-0230e917ea5f": "amount",
+      "079812c4-bb7e-4cc3-8e57-24c3b9e886d9": "percent",
+    };
     expect(kick.KICKOFF_ANSWER_FIELDS.map(f => f.ref)).toEqual(
       TG7_QUESTIONS.map(x => x.ref),
     );
@@ -598,7 +618,7 @@ describe("the kickoff's fields (4.13)", () => {
       const f = kick.KICKOFF_ANSWER_FIELDS.find(k => k.ref === x.ref);
       expect([x.ref, f?.type, f?.required === true]).toEqual([
         x.ref,
-        SHEET_TYPE[x.type],
+        TYPED[x.ref] ?? SHEET_TYPE[x.type],
         x.required,
       ]);
       const choices =
@@ -654,9 +674,13 @@ describe("the kickoff's fields (4.13)", () => {
             ? f.options?.[0].value
             : f.type === "number"
               ? 1500
-              : f.key === "callRecording"
-                ? "https://example.test/call"
-                : "A note.";
+              : f.type === "amount"
+                ? { amount: "40", currency: "USD" }
+                : f.type === "percent"
+                  ? "20"
+                  : f.key === "callRecording"
+                    ? "https://example.test/call"
+                    : "A note.";
     }
     const wrong: string[] = [];
     let combos = 0;
@@ -813,12 +837,12 @@ describe("the kickoff's fields (4.13)", () => {
       kick.kickoffAnswers({
         contentLinks: `\n\u00a0 ${typed}  \n`,
         whatsappAdd: "The office manager\r\n\r\nThe sales lead\rThe owner",
-        dailyBudget: "  20 KWD  ",
+        adAccountName: "  Cedar Ads  ",
       }),
     ).toEqual({
       contentLinks: typed,
       whatsappAdd: "The office manager\n\nThe sales lead\nThe owner",
-      dailyBudget: "20 KWD",
+      adAccountName: "Cedar Ads",
     });
     // The sheet counts a long text as the database does: trimmed, never folded.
     const field = kick
@@ -839,12 +863,12 @@ describe("the kickoff's fields (4.13)", () => {
     expect(say("linksFix", "a".repeat(4001))).toBe(
       "Shorten it to 4,000 characters or fewer.",
     );
-    expect(say("dailyBudget", "a".repeat(500))).toBeNull();
+    expect(say("adAccountName", "a".repeat(500))).toBeNull();
     // The database folds a text's spaces before it counts.
     expect(
-      say("dailyBudget", `${"a ".repeat(250)}${" ".repeat(50)}`),
+      say("adAccountName", `${"a ".repeat(250)}${" ".repeat(50)}`),
     ).toBeNull();
-    expect(say("dailyBudget", "a".repeat(501))).toBe(
+    expect(say("adAccountName", "a".repeat(501))).toBe(
       "Shorten it to 500 characters or fewer.",
     );
     expect(say("callRecording", `https://x.test/${"a".repeat(490)}`)).toBe(
@@ -1077,12 +1101,22 @@ describe("the kickoff door (5.13)", () => {
         serviceAdvertised: "required",
         whatsappAdd: "length",
         contentLinks: "length",
-        dailyBudget: "length",
+        dailyBudget: "range",
         paymentAmount: "range",
         newMrrUsd: "range",
       }),
     ).toBe(
-      "The kickoff was not stored. Which service are we advertising: answer it. Who else should we add to the WhatsApp group: shorten it to 4,000 characters or fewer. Provide any marketing content links or notes: shorten it to 4,000 characters or fewer. What is your daily budget for the ads: shorten it to 500 characters or fewer. Payment Amount: write a number from 0 to 10,000,000, with 2 decimals at most. New MRR (USD a month): write a number from 0 to 100,000. Then send it again.",
+      "The kickoff was not stored. Which service are we advertising: answer it. Who else should we add to the WhatsApp group: shorten it to 4,000 characters or fewer. Provide any marketing content links or notes: shorten it to 4,000 characters or fewer. What is your daily budget for the ads: write an amount above 0 and up to 100,000, with 2 decimals at most. Payment Amount: write a number from 0 to 10,000,000, with 2 decimals at most. New MRR (USD a month): write a number from 0 to 100,000. Then send it again.",
+    );
+    // The amounts check's own codes (B5), each a fix the CSM can make.
+    expect(kick.kickoffRefused({ dailyBudget: "option" })).toBe(
+      "The kickoff was not stored. What is your daily budget for the ads: choose the currency: USD, SAR, KWD, AED, QAR or BHD. Then send it again.",
+    );
+    expect(kick.kickoffRefused({ dailyBudget: "format" })).toBe(
+      "The kickoff was not stored. What is your daily budget for the ads: write the amount as a number and choose its currency. Then send it again.",
+    );
+    expect(kick.kickoffRefused({ coldCloseRate: "range" })).toBe(
+      "The kickoff was not stored. What is your current close rate on cold leads: write a whole number from 0 to 100. Then send it again.",
     );
     await clear(root);
   });
@@ -1101,6 +1135,396 @@ describe("the kickoff door (5.13)", () => {
     expect(text(body())).not.toContain("Tell the tech lead");
     expect(toasts).not.toContain("Sent.");
     expect(body().querySelector(".fs-foot .fs-btn")).toBeTruthy();
+    await clear(root);
+  });
+});
+
+// --- CEO item 5: the daily budget as an amount and a currency; CEO item 7: the items after the send ---
+
+const budget = await import("../src/lib/kickoffBudget");
+const items = await import("../src/dev/kickoffItemsFixtures");
+
+describe("the daily budget as an amount and a currency (4.21, 5.16)", () => {
+  test("the sheet's rates are the cockpit's: currency.ts and cockpit_board_usd_rate, BHD in neither", () => {
+    const root = resolve(import.meta.dir, "../../..");
+    const ts = readFileSync(
+      resolve(root, "apps/media-buyer-cockpit/convex/currency.ts"),
+      "utf8",
+    );
+    const table = /USD_PER[^{]*\{([^}]*)\}/.exec(ts)?.[1] ?? "";
+    const fromTs = Object.fromEntries(
+      [...table.matchAll(/([A-Z]{3}):\s*([\d.]+)/g)].map(m => [
+        m[1],
+        Number(m[2]),
+      ]),
+    );
+    expect(fromTs).toEqual({ ...budget.USD_PER });
+    // The newest migration that defines the SQL rate, read as it is written.
+    const dir = resolve(root, "supabase/migrations");
+    const file = readdirSync(dir)
+      .filter(f => f.endsWith(".sql"))
+      .sort()
+      .filter(f =>
+        readFileSync(resolve(dir, f), "utf8").includes(
+          "FUNCTION public.cockpit_board_usd_rate(",
+        ),
+      )
+      .at(-1) as string;
+    const sql = readFileSync(resolve(dir, file), "utf8");
+    const at = sql.lastIndexOf("FUNCTION public.cockpit_board_usd_rate(");
+    const fn = sql.slice(at, sql.indexOf("$$;", at));
+    const fromSql = Object.fromEntries(
+      [...fn.matchAll(/WHEN '([A-Z]{3})' THEN ([\d.]+)/g)].map(m => [
+        m[1],
+        Number(m[2]),
+      ]),
+    );
+    expect(fromSql).toEqual({ ...budget.USD_PER });
+    expect(budget.KICKOFF_CURRENCIES).toEqual([
+      "USD",
+      "SAR",
+      "KWD",
+      "AED",
+      "QAR",
+      "BHD",
+    ]);
+  });
+
+  test("the dollars and the words: ≈ at the cockpit's rate, no rate for BHD, Make's text", () => {
+    expect(budget.budgetUsd(150, "SAR")).toBe(39.99);
+    expect(budget.budgetUsd(37.5, "QAR")).toBe(10.3);
+    expect(budget.budgetUsd(20, "KWD")).toBe(65.2);
+    expect(budget.budgetUsd(100, "BHD")).toBeNull();
+    expect(budget.budgetLine(150, "SAR")).toBe(
+      "≈ $39.99 a day at the cockpit's rate.",
+    );
+    expect(budget.budgetLine(20, "kwd")).toBe(
+      "≈ $65.20 a day at the cockpit's rate.",
+    );
+    expect(budget.budgetLine(1000, "AED")).toBe(
+      "≈ $272.30 a day at the cockpit's rate.",
+    );
+    expect(budget.budgetLine(100, "BHD")).toBe(
+      "No fixed rate for BHD yet, so the media buyers see the amount as typed.",
+    );
+    expect(budget.budgetLine(40, "USD")).toBeNull();
+    expect(budget.budgetLine(null, "SAR")).toBeNull();
+    expect(budget.budgetText(37.5, "sar")).toBe("37.5 SAR");
+    expect(budget.budgetText(1500, "KWD")).toBe("1500 KWD");
+    expect(budget.budgetText(40.1, "USD")).toBe("40.1 USD");
+    expect(budget.saleQuick(40)).toEqual({
+      label: "Same as the sale: $40",
+      value: { amount: "40", currency: "USD" },
+    });
+    expect(budget.saleQuick(32.5)?.label).toBe("Same as the sale: $32.50");
+    // Missing is never a zero to fill, and 1,000 or more looks like a month (B6's guard).
+    expect(budget.saleQuick(null)).toBeNull();
+    expect(budget.saleQuick(0)).toBeNull();
+    expect(budget.saleQuick(1000)).toBeNull();
+  });
+
+  test("checked before the send as the amounts check takes them", () => {
+    const def = kick.kickoffDef("Cedar Interiors");
+    const said = (dailyBudget: unknown, coldCloseRate?: unknown) => {
+      const out = staff.validate(def, { dailyBudget, coldCloseRate });
+      return [out.dailyBudget ?? null, out.coldCloseRate ?? null];
+    };
+    const RULE = staff.AMOUNT_RULE;
+    for (const bad of ["0", "100001", "1.234", "abc", "-5", "40 dollars"])
+      expect([bad, said({ amount: bad, currency: "SAR" })[0]]).toEqual([
+        bad,
+        RULE,
+      ]);
+    for (const ok of ["40", "37.5", "100000", "1,500", "0.5"])
+      expect([ok, said({ amount: ok, currency: "USD" })[0]]).toEqual([
+        ok,
+        null,
+      ]);
+    // A blank amount is no answer (the question is optional), whatever the currency.
+    expect(said({ amount: "", currency: "KWD" })[0]).toBeNull();
+    for (const bad of ["101", "12.5", "abc", "-1"])
+      expect([bad, said(undefined, bad)[1]]).toEqual([bad, staff.PERCENT_RULE]);
+    for (const ok of ["0", "20", "100", "35%"])
+      expect([ok, said(undefined, ok)[1]]).toEqual([ok, null]);
+    expect(staff.PERCENT_RULE).toBe("Write a whole number from 0 to 100.");
+    expect(RULE).toBe(
+      "Write an amount above 0 and up to 100,000, with 2 decimals at most.",
+    );
+  });
+
+  test("a comma groups thousands only; a decimal comma is refused, never read as 10x", () => {
+    const def = kick.kickoffDef("Cedar Interiors");
+    const said = (amount: string, currency = "USD") =>
+      staff.validate(def, { dailyBudget: { amount, currency } }).dailyBudget ??
+      null;
+    // "37,5" and "1,50" were read as 375 and 150 and passed: now refused with the decimal sentence.
+    for (const bad of ["37,5", "1,50", " 37,50 "]) {
+      expect(staff.amountNumber(bad)).toBeNull();
+      expect([bad, said(bad)]).toEqual([bad, staff.DECIMAL_COMMA_RULE]);
+      expect([bad, said(bad, "SAR")]).toEqual([bad, staff.DECIMAL_COMMA_RULE]);
+    }
+    // Any other misplaced comma keeps the amount rule.
+    for (const bad of [
+      "1,5000",
+      "15,00,000",
+      ",500",
+      "1,",
+      "1,500,",
+      "100,001",
+    ]) {
+      expect(staff.amountNumber(bad)).toBeNull();
+      expect([bad, said(bad)]).toEqual([bad, staff.AMOUNT_RULE]);
+    }
+    // Thousands groups still read as before.
+    expect(staff.amountNumber("1,500.25")).toBe(1500.25);
+    expect(staff.amountNumber("1,500")).toBe(1500);
+    expect(staff.amountNumber("100,000")).toBe(100000);
+    expect(said("1,500.25")).toBeNull();
+    // Nothing is sent for a refused amount, and the ≈ line stays quiet.
+    const live = def.fields.find(f => f.key === "dailyBudget")?.live;
+    expect(live?.({ amount: "37,5", currency: "SAR" })).toBeNull();
+    expect(live?.({ amount: "1,500.25", currency: "SAR" })).not.toBeNull();
+    expect(
+      kick.kickoffAnswers({ dailyBudget: { amount: "37,5", currency: "USD" } })
+        .dailyBudget,
+    ).toBeUndefined();
+    expect(
+      kick.kickoffAnswers({
+        dailyBudget: { amount: "1,500.25", currency: "SAR" },
+      }).dailyBudget,
+    ).toEqual({ amount: 1500.25, currency: "SAR" });
+    expect(staff.DECIMAL_COMMA_RULE).toBe(
+      "Use a point for decimals, as in 37.5. A comma only groups thousands, as in 1,500.",
+    );
+  });
+
+  test("sent as {amount, currency} and a whole number; as Make's text only for the older check", () => {
+    const a = {
+      dailyBudget: { amount: " 37.50 ", currency: "SAR" },
+      coldCloseRate: "20",
+    };
+    expect(kick.kickoffAnswers(a)).toEqual({
+      dailyBudget: { amount: 37.5, currency: "SAR" },
+      coldCloseRate: 20,
+    });
+    expect(kick.kickoffAnswers(a, { text: true })).toEqual({
+      dailyBudget: "37.5 SAR",
+      coldCloseRate: "20%",
+    });
+    // A blank amount and a blank rate send nothing ("Not provided" on Make's line).
+    expect(
+      kick.kickoffAnswers({
+        dailyBudget: { amount: "", currency: "KWD" },
+        coldCloseRate: "",
+      }),
+    ).toEqual({});
+    // The older check gives `length` to a value that is not a string; the amounts check never does here.
+    expect(kick.kickoffNeedsText({ dailyBudget: "length" })).toBe(true);
+    expect(kick.kickoffNeedsText({ coldCloseRate: "length" })).toBe(true);
+    expect(kick.kickoffNeedsText({ dailyBudget: "range" })).toBe(false);
+    expect(kick.kickoffNeedsText({ linksFix: "length" })).toBe(false);
+  });
+
+  const pill = (label: string) =>
+    [...body().querySelectorAll(".fs-pill")]
+      .find((l: any) => text(l) === label)
+      ?.querySelector("input") as any;
+  /** Every required question answered with its first choice, as the door tests do. */
+  async function answerAll() {
+    const groups = new Map<string, any>();
+    for (const r of body().querySelectorAll('input[type="radio"]'))
+      if (!groups.has(r.name)) groups.set(r.name, r);
+    for (const r of groups.values()) await click(r);
+    await click(pill("Meta (Facebook/Instagram)"));
+    await click(pill("Design and build"));
+    await click(pill("Online"));
+    const link = [...body().querySelectorAll(".fs-field")]
+      .find(
+        (x: any) =>
+          text(x.querySelector(".fs-label")) === "Call Recording Link",
+      )
+      ?.querySelector("input") as any;
+    await typeInto(link, "https://example.test/call");
+  }
+  /** Opens the live sheet with these props. */
+  async function sheet(props: Record<string, unknown>) {
+    return draw(
+      createElement(KickoffDoor, {
+        door: OPEN,
+        taskId: "86exmpl01",
+        clientName: "Cedar Interiors",
+        autoOpen: true,
+        ...props,
+      } as any),
+    );
+  }
+  const budgetField = () =>
+    [...body().querySelectorAll(".fs-field")].find(
+      (x: any) =>
+        text(x.querySelector(".fs-label")) ===
+        "What is your daily budget for the ads? (optional)",
+    ) as any;
+  async function typeInto(el: any, value: string) {
+    const setter = Object.getOwnPropertyDescriptor(
+      Object.getPrototypeOf(el),
+      "value",
+    )?.set;
+    await act(async () => {
+      setter?.call(el, value);
+      el.dispatchEvent(new (win as any).Event("input", { bubbles: true }));
+    });
+    await flush();
+  }
+
+  test("one row: the number, the six currencies, the ≈ line under a non-USD amount, the hint", async () => {
+    const { api } = stub();
+    const root = await sheet({ api });
+    const f = budgetField();
+    expect(f).toBeTruthy();
+    const segs = [...f.querySelectorAll('.fs-seg input[type="radio"]')];
+    expect(segs.map((x: any) => x.value)).toEqual([
+      "USD",
+      "SAR",
+      "KWD",
+      "AED",
+      "QAR",
+      "BHD",
+    ]);
+    expect(segs[0].checked).toBe(true);
+    expect(f.querySelector(".fs-seg").getAttribute("role")).toBe("radiogroup");
+    expect(text(f)).toContain(
+      "All their ads together, per day. Never shown on a slide.",
+    );
+    const input = f.querySelector(".fs-amount-input");
+    expect(input.getAttribute("inputmode")).toBe("decimal");
+    await typeInto(input, "150");
+    // Dollars say nothing more.
+    expect(f.querySelector(".fs-live")).toBeNull();
+    await click(segs[1]);
+    expect(text(budgetField().querySelector(".fs-live"))).toBe(
+      "≈ $39.99 a day at the cockpit's rate.",
+    );
+    await click(budgetField().querySelector('.fs-seg input[value="BHD"]'));
+    expect(text(budgetField().querySelector(".fs-live"))).toBe(
+      "No fixed rate for BHD yet, so the media buyers see the amount as typed.",
+    );
+    // No sale figure on the card: no "Same as the sale".
+    expect(budgetField().querySelector(".fs-quick")).toBeNull();
+    // The close rate is a number with a % beside it.
+    const rate = [...body().querySelectorAll(".fs-field")].find(
+      (x: any) =>
+        text(x.querySelector(".fs-label")) ===
+        "What is your current close rate on cold leads? (optional)",
+    ) as any;
+    expect(rate.querySelector(".fs-suffix-mark")?.textContent).toBe("%");
+    expect(text(rate)).toContain("Leave it empty if they do not know.");
+    await clear(root);
+  });
+
+  test("Same as the sale fills the card's dollars in one tap, never by itself, never from 1,000 or more", async () => {
+    const { api } = stub();
+    let root = await sheet({ api, saleBudgetUsd: 40 });
+    const quick = budgetField().querySelector(".fs-quick");
+    expect(text(quick)).toBe("Same as the sale: $40");
+    // Not a prefill: the amount starts empty.
+    expect(budgetField().querySelector(".fs-amount-input").value).toBe("");
+    await click(quick);
+    expect(budgetField().querySelector(".fs-amount-input").value).toBe("40");
+    expect(
+      budgetField().querySelector('.fs-seg input[value="USD"]').checked,
+    ).toBe(true);
+    await clear(root);
+    root = await sheet({ api, saleBudgetUsd: 1500 });
+    expect(budgetField().querySelector(".fs-quick")).toBeNull();
+    await clear(root);
+  });
+
+  test("no Same as the sale once a kickoff is on record: the card's figure may be that kickoff's own", async () => {
+    // Item 5's card_facts fills an empty Daily Budget from the kickoff, so on a send-again it is not the sale's.
+    const def = kick.kickoffDef("Cedar Interiors", "2026-10-20T08:00:00Z", {
+      saleBudgetUsd: 39.99,
+    });
+    expect(def.fields.find(f => f.key === "dailyBudget")?.quick).toBeNull();
+    expect(
+      kick
+        .kickoffDef("Cedar Interiors", null, { saleBudgetUsd: 40 })
+        .fields.find(f => f.key === "dailyBudget")?.quick?.label,
+    ).toBe("Same as the sale: $40");
+    const { api } = stub("2026-10-20T08:00:00Z");
+    const root = await sheet({ api, saleBudgetUsd: 39.99 });
+    expect(budgetField()).toBeTruthy();
+    expect(budgetField().querySelector(".fs-quick")).toBeNull();
+    expect(text(body())).not.toContain("Same as the sale");
+    await clear(root);
+  });
+
+  test("against the older check the same answers go once more as Make's text, on the same request id", async () => {
+    const calls: { a: Record<string, unknown>; r: string }[] = [];
+    const api = {
+      ...stub().api,
+      submit: async (_t: string, a: Record<string, unknown>, r: string) => {
+        calls.push({ a, r });
+        if (calls.length === 1)
+          return {
+            responseId: null,
+            trail: [],
+            refused: { dailyBudget: "length", coldCloseRate: "length" },
+          };
+        return { responseId: "resp-k1", trail: [] };
+      },
+    };
+    const root = await sheet({ api });
+    await answerAll();
+    await typeInto(budgetField().querySelector(".fs-amount-input"), "150");
+    await click(budgetField().querySelector('.fs-seg input[value="SAR"]'));
+    const rate = [...body().querySelectorAll(".fs-percent-input")][0] as any;
+    await typeInto(rate, "20");
+    await click(body().querySelector(".fs-foot .fs-btn"));
+    expect(calls).toHaveLength(2);
+    expect(calls[0].a.dailyBudget).toEqual({ amount: 150, currency: "SAR" });
+    expect(calls[0].a.coldCloseRate).toBe(20);
+    expect(calls[1].a.dailyBudget).toBe("150 SAR");
+    expect(calls[1].a.coldCloseRate).toBe("20%");
+    expect(calls[1].r).toBe(calls[0].r);
+    expect(toasts).toContain("Sent.");
+    toasts.length = 0;
+    await clear(root);
+  });
+
+  test("after the send the trail carries on with what the kickoff left open, a Yes or No each", async () => {
+    const { api: itemsApi, calls } = items.fakeItemsApi({
+      "86exmpl01": items.rawRead([items.rawItem()], { taskId: "86exmpl01" }),
+    });
+    const root = await draw(
+      createElement(KickoffDoor, {
+        door: OPEN,
+        api: stub().api,
+        itemsApi,
+        taskId: "86exmpl01",
+        clientName: "Cedar Interiors",
+        autoOpen: true,
+      } as any),
+    );
+    // Nothing is read before the kickoff is stored.
+    expect(calls).toHaveLength(0);
+    await answerAll();
+    await click(body().querySelector(".fs-foot .fs-btn"));
+    expect(calls.map(c => c.name)).toEqual(["read"]);
+    const after = body().querySelector(".fs-after");
+    expect(text(after)).toContain("Still open from the kickoff · 1");
+    expect(text(after)).toContain("Raise Card missing for ads?");
+    expect(button("Change it first")).toBe(undefined);
+    await click(
+      [...after.querySelectorAll("button")].find(
+        (b: any) =>
+          b.getAttribute("aria-label") ===
+          "Yes, raise Card missing for ads for Cedar Interiors",
+      ),
+    );
+    expect(text(after.querySelector("[data-receipt]"))).toBe(
+      "Raised: Card missing for ads · In ClickUp",
+    );
+    toasts.length = 0;
     await clear(root);
   });
 });

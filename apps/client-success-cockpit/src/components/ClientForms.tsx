@@ -14,6 +14,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { DeliveryLine } from "@/components/DeliveryLine";
+import { KickoffItems } from "@/components/KickoffItems";
 import { Chip, Dot, LINK_INK, SectionCard } from "@/components/kit";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,7 +31,12 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import { kickoffAnswers, kickoffDef, kickoffRefused } from "@/forms/kickoff";
+import {
+  kickoffAnswers,
+  kickoffDef,
+  kickoffNeedsText,
+  kickoffRefused,
+} from "@/forms/kickoff";
 import { FormSheet } from "@/forms/staff/FormSheet";
 import {
   consentLine,
@@ -86,6 +92,7 @@ import {
   lowScoreLine,
   lowScoreRowText,
 } from "@/lib/clientVoice";
+import type { KickoffItemsApi } from "@/lib/kickoffItemsClient";
 import { cn } from "@/lib/utils";
 import type { KickoffPrefill } from "@/lib/wins";
 
@@ -1768,19 +1775,31 @@ export type KickoffApi = {
  * is off the page keeps today's embedded Typeform and says so; while its
  * functions are missing it says the next update opens it. Nothing is read
  * behind a closed door.
+ *
+ * After the send, the sheet's trail carries on with what the kickoff left
+ * open (CEO item 7, 4.20): each item a Yes or No, read once the kickoff is
+ * stored (its read model is written in the same call). The daily budget is
+ * an amount and a currency (CEO item 5, 4.21), with "Same as the sale" from
+ * the card's Daily Budget.
  */
 export function KickoffDoor({
   door,
   api,
+  itemsApi = null,
   taskId,
   clientName,
+  saleBudgetUsd = null,
   autoOpen = false,
   onSent,
 }: {
   door: Door | null;
   api: KickoffApi | null;
+  /** The kickoff items' calls; null leaves the sheet's trail as it was. */
+  itemsApi?: KickoffItemsApi | null;
   taskId: string;
   clientName: string;
+  /** The card's Daily Budget in dollars (the sale's figure), for "Same as the sale". */
+  saleBudgetUsd?: number | null;
   /** The page was opened with ?form=kickoff (the card's Kickoff Form Link). */
   autoOpen?: boolean;
   onSent?: (message: string) => void;
@@ -1788,6 +1807,8 @@ export function KickoffDoor({
   const [open, setOpen] = useState(false);
   const [read, setRead] = useState<KickoffPrefill | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The send that stored the kickoff: its items are read after it.
+  const [stored, setStored] = useState(0);
   const extras = useRef<Record<string, string>>({});
   const live = door?.open === true;
   const start = useCallback(async () => {
@@ -1815,7 +1836,9 @@ export function KickoffDoor({
           : doorLine(door)}
       </p>
     );
-  const def = kickoffDef(clientName, read?.answered?.at ?? null);
+  const def = kickoffDef(clientName, read?.answered?.at ?? null, {
+    saleBudgetUsd,
+  });
   return (
     <>
       <Button
@@ -1837,9 +1860,18 @@ export function KickoffDoor({
           prefillError={error}
           status={read?.card.status ?? undefined}
           submit={async (a, requestId) => {
-            const out = await api.submit(taskId, kickoffAnswers(a), requestId);
+            let out = await api.submit(taskId, kickoffAnswers(a), requestId);
+            // A server before the kickoff amounts (B5) takes the budget and the close rate as
+            // text: nothing was stored, so the same answers go once more as Make's text.
+            if (out.refused && kickoffNeedsText(out.refused))
+              out = await api.submit(
+                taskId,
+                kickoffAnswers(a, { text: true }),
+                requestId,
+              );
             // Nothing was stored: the sheet stays open with its answers and says what to check.
             if (out.refused) throw new Error(kickoffRefused(out.refused));
+            setStored(n => n + 1);
             extras.current = Object.fromEntries(
               out.trail.map(t => [t.step, t.state]),
             );
@@ -1857,6 +1889,17 @@ export function KickoffDoor({
             };
           }}
           onSent={onSent}
+          afterSent={
+            itemsApi && stored ? (
+              <KickoffItems
+                api={itemsApi}
+                taskId={taskId}
+                clientName={clientName}
+                variant="sheet"
+                reloadKey={stored}
+              />
+            ) : undefined
+          }
         />
       ) : null}
     </>

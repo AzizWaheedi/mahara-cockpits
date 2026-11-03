@@ -2122,6 +2122,89 @@ A non-Drive answer adds `Their answer is not a Drive folder.`; with no card link
 link`. Display only: the hidden values the Typeform kickoff link carries are unchanged, and the send is never blocked.
 Checked by static markup tests; a 375px and dark-mode look in the browser is still owed (11.10).
 
+### 5.16 The CSM screens for items 5, 6 and 7 (the next-design plan's build B7)
+
+Design plan, written before the code under `mahara-context/skills/frontend-design/SKILL.md`, inside the cockpit's own
+system. **Subject:** the CSM in the minutes after a kickoff call and the next morning on Today, closing what the
+kickoff and the sale left open; the CEO reading how many sales sit on their card. **One job per screen:** the kickoff
+sheet takes the agreed daily budget as an amount and a currency; the rail and the onboarding kit say what the sale
+promised and how sure its tie to the card is; each open kickoff item becomes a ticket, or a recorded No, in one tap.
+**Tokens:** no new palette. `--mahara-teal` (`--primary`, `--fs-ink` for words) for a pressed pill, the raised ring,
+"Same as the sale" and the "Tied by phone / email" chips; `--warning` (`--fs-warn`) for an open item's ring and the
+2px margin rule (the same pencil mark as 5.15) and for sales waiting on a person; `--muted-foreground` for the route
+line, a No, the ≈ line and sources; `--border` / `--fs-edge` for pill and segment rings; `--destructive` only for a
+refusal. Dark mode comes from the same tokens (`formSheet.css` and the new `kickoffItems.css` hold no literal colour).
+**Type:** Geist 14/20 for sentences and asks; Geist Mono 11px uppercase kicker (`STILL OPEN FROM THE KICKOFF · 3`,
+`SALES NOT ON A CARD`); the kit `Chip` at 12px medium for an item's short name and the tie method; Geist Mono 12px with
+tabular figures for the route line (`CLIENT SUCCESS · THE CSM · DUE TUE 4 NOV · HIGH`), a receipt's time and the
+amount. **Layout:**
+
+```
+Kickoff sheet, "What is your daily budget for the ads?" (optional)
+[ 150        ]  ( USD | SAR | KWD | AED | QAR | BHD )      Same as the sale: $40
+≈ $39.99 a day at the cockpit's rate.
+All their ads together, per day. Never shown on a slide.
+
+Kickoff sheet after the send (FormSheet afterSent), the trail carries on:
+(ring) Kickoff stored · (ring) Card confirmed · ... · (ring) Posted in #csm-general
+STILL OPEN FROM THE KICKOFF · 2
+┃ (open ring) [Funded card]  The card with funds is not linked to the ad account.
+┃             Raise Card missing for ads?                       ( Yes ) ( No )
+┃             CLIENT SUCCESS · THE CSM · DUE TUE 4 NOV · HIGH
+┃ (teal check) Raised: General tech request · In ClickUp ↗
+┃              Operations / Tech · the systems manager · due Wed 5 Nov · 10:42
+
+Rail, "From the sale" (folded):   Sale  Signed 12 Oct  [Tied by phone]
+                                  Go-live expectation / Handoff problems / What they believe they're getting /
+                                  Closer / Closer's notes, each with its source
+Today, "Sales not on a card" N:   Cedar Interiors · signed 12 Oct · closer
+                                  No card has this sale's phone or email after 2 days.
+                                  [Yes, tie it to Cedar Interiors] [Another card] [Not a client card]
+```
+
+At 375px: the currency segments wrap under the amount; Yes and No sit on a 2-column grid, each at least 44px tall;
+the route line wraps; the band's buttons wrap; 16px gutters; nothing scrolls sideways. **Signatures (one per item):**
+item 7, the trail ring: in the kickoff sheet each item is one more trail step (`fs-step`, `fs-ring` with
+`data-tone`, the shared classes used, not changed), so answering turns the open warning ring into a teal check or a
+muted dash and the kickoff's trail grows by the CSM's decisions; on the page and in Today the same ring is the row's
+mark under the warning rule. Item 5, the live line `≈ $39.99 a day at the cockpit's rate.` under a non-USD amount (BHD:
+`No fixed rate for BHD yet, so the media buyers see the amount as typed.`). Item 6, the sale stub: one quiet line
+(signed day, closer, the method chip) above the sale's answers, so a CSM knows whether to trust the words below.
+**Critique pass, dropped:** a "Raise all" button (a Yes or No per item was asked; bulk invites raising unread); a
+per-type icon beside the ring; a filled teal Yes (Yes and No are equal pills, as the kickoff's own Yes/No questions);
+a second "Agreed at kickoff" tile on the client page (the media buyers' chain already shows it, B6); a stat tile row
+for the sale counts (one CEO sentence says it). **Motion:** the ring's change only, 160ms, none under
+`prefers-reduced-motion`. **Words:** 4.20's refusals and kickoff-requests.md 5's table word for word; `Kickoff items
+open after the next cockpit update.`, `Sales tie to their cards after the next cockpit update.` when a function is
+missing (PGRST202), never an error page; the kickoff sheet works against the server before and after the kickoff
+amounts migration (B5): it sends `{amount, currency}` and a whole-number close rate, and when the older check answers
+`length` for either it sends the same answers once more as Make's text (`150 SAR`, `20%`), which is what B5 writes.
+Checked by static markup and interaction tests on fakes; a 375px and dark-mode look on the test card is owed at the
+ship (11.10).
+
+**What the screens read, by build.** B5 (4.21): the sheet sends `dailyBudget {amount: <number>, currency}` and
+`coldCloseRate <whole number>`, and says 4.21's refusal sentences; the Blueprint reads `kit.budgetUsd` and
+`kit.budgetCurrency` from `cockpit_blueprint_sources` (else the read model's `forms.kickoff.budget`), and the brief
+reads `budgetUsd` and `budgetCurrency` from the part-1 payload when the payload carries them (it does not yet: until it
+does, the brief compares the first number of what was said, as before). B3 (4.19): `cockpit_csm_sale_read`
+`{on, cards: [{taskId, state, signedAt, tiedBy, closer, goLive, handoffProblems, expectations, salesCallLink,
+voidedInB2B, otherSales}]}`, `cockpit_sale_tie_list` `{on, rows, summary}` (the CEO's line from `summary`: `sales`,
+`onCard`, `byPhone` + `byPhoneAndEmail` as "by phone", `byEmail`, `byPerson`, `forPerson` as "waiting for a person";
+while `on` is false the CEO reads `Sales are not tied yet.` and a CSM nothing; every card then reads `off` and the
+kickoff rail draws no "From the sale" stub, so nothing tells a CSM to have a sale tied that cannot be tied), and
+`cockpit_sale_tie_decide` (a toast `Tied to {clientName}` or `Marked not a client card`). A seat a read refuses with
+`42501` (an admin seat without the csm role) sees nothing from the sale read or the kickoff items read, never an alert.
+B4 (4.20): the five RPCs as written; a preview note in Postgres's own words is shown as the plain sentence. The rail's
+sale row is `Daily budget at the sale` (source `ClickUp card (the sale)`; 1,000 or more says it looks like a month or
+another currency) until a kickoff is on record; after one it is `Daily Budget on the card` (source `ClickUp card`),
+because item 5's `card_facts` fills an empty Daily Budget from the kickoff. "Same as the sale" is never offered from
+1,000 or more, nor once a kickoff is on record. The amount takes a comma only as a thousands group (`1,500.25`); a
+decimal comma (`37,5`) is refused with `Use a point for decimals, as in 37.5. A comma only groups thousands, as in
+1,500.`, never read as 375. **Tests:** `apps/client-success-cockpit/scripts/`
+`kickoff-items.test.tsx` (new), `sale-tie.test.tsx` (new), `kickoff-sheet.test.tsx`, `form-rail.test.ts`,
+`csm-page.test.tsx`, `blueprint-prefill.test.ts`, `blueprint-brief.test.ts`, `form-panel.test.tsx`,
+`form-contract.test.ts`; `scripts/check-shared.sh` (the sheet's three files copied to the media-buyer cockpit).
+
 ---
 
 ## 6. Workers, crons, monitoring and the runbook

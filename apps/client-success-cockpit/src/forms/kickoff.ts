@@ -1,11 +1,23 @@
 import { blueprintPrepUrl } from "@/lib/blueprintStatus";
+import {
+  budgetLine,
+  budgetText,
+  KICKOFF_CURRENCIES,
+  saleQuick,
+} from "@/lib/kickoffBudget";
 import { FORMS, onboardingFormLink } from "@/lib/onboardingCore";
 import type { FormConfig, FormKey } from "./formConfig";
 import { kickoffRail } from "./formRail";
 import { kickoffAlready, kickoffCardDone } from "./formStatus";
 import { buildHidden, KICKOFF_HIDDEN } from "./prefill";
 import type { Answers, FieldDef, FormDef } from "./staff/formSheetCore";
-import { kuwaitDay, shown } from "./staff/formSheetCore";
+import {
+  amountNumber,
+  amountParts,
+  kuwaitDay,
+  percentNumber,
+  shown,
+} from "./staff/formSheetCore";
 
 /**
  * The kickoff's configuration (docs/csm-forms/KICKOFF.md 2 to 4), and the
@@ -367,11 +379,22 @@ export const KICKOFF_FIELDS: KickoffField[] = asTypeform([
     type: "multi",
     options: opts(["Tiktok", "Meta (Facebook/Instagram)", "Snapchat"]),
   },
-  words(
-    "dailyBudget",
-    "cf53482c-3d7d-45ab-b294-0230e917ea5f",
-    "What is your daily budget for the ads?",
-  ),
+  // CEO item 5 (WAVE56-CONTRACT.md 4.21, 5.16): an amount and its currency.
+  // The server writes Make's text ("150 SAR") for the handoff line and keeps
+  // {amount, currency, usd} beside the answers; the sheet says the dollars.
+  {
+    key: "dailyBudget",
+    ref: "cf53482c-3d7d-45ab-b294-0230e917ea5f",
+    label: "What is your daily budget for the ads?",
+    type: "amount",
+    currencies: [...KICKOFF_CURRENCIES],
+    initial: () => ({ amount: "", currency: KICKOFF_CURRENCIES[0] }),
+    hint: "All their ads together, per day. Never shown on a slide.",
+    live: v => {
+      const p = amountParts(v, [...KICKOFF_CURRENCIES]);
+      return budgetLine(amountNumber(p.amount), p.currency);
+    },
+  },
   words(
     "adAccountName",
     "e4b9dbd3-c12c-4d6f-a0e3-c3ba17c97728",
@@ -492,11 +515,14 @@ export const KICKOFF_FIELDS: KickoffField[] = asTypeform([
     "0cb88b75-f193-43a1-b802-d382178a0946",
     "Do you have experience selling to cold leads (leads from ads)?",
   ),
-  words(
-    "coldCloseRate",
-    "079812c4-bb7e-4cc3-8e57-24c3b9e886d9",
-    "What is your current close rate on cold leads?",
-  ),
+  // A whole number from 0 to 100; the server writes it as "N%" for Make's line.
+  {
+    key: "coldCloseRate",
+    ref: "079812c4-bb7e-4cc3-8e57-24c3b9e886d9",
+    label: "What is your current close rate on cold leads?",
+    type: "percent",
+    hint: "Leave it empty if they do not know.",
+  },
   yesNo(
     "academyConfirmed",
     "4379c2f7-c5cf-4104-92c5-9b2294d65b59",
@@ -566,7 +592,15 @@ export const kickoffAgainLine = (answeredAt: string | null) =>
 export function kickoffDef(
   client: string,
   answeredAt: string | null = null,
+  /**
+   * The card's Daily Budget (the sale's figure, USD), for the one-tap "Same
+   * as the sale". Never offered when a kickoff is on record (`answeredAt`):
+   * card_facts fills an empty Daily Budget from the kickoff (item 5), so the
+   * card's figure may be the earlier kickoff's own, not the sale's.
+   */
+  opts: { saleBudgetUsd?: number | null } = {},
 ): FormDef {
+  const quick = answeredAt ? null : saleQuick(opts.saleBudgetUsd);
   const again: FieldDef[] = answeredAt
     ? [
         {
@@ -616,7 +650,8 @@ export function kickoffDef(
     fields: [
       ...again,
       ...KICKOFF_FIELDS.map(
-        ({ ref: _ref, list: _list, named: _named, max: _max, ...f }) => f,
+        ({ ref: _ref, list: _list, named: _named, max: _max, ...f }) =>
+          f.type === "amount" ? { ...f, quick } : f,
       ),
     ],
   };
@@ -635,12 +670,35 @@ export function kickoffDef(
  * (typeformText), its line breaks and repeated spaces as typed (Make writes
  * them into the handoff unchanged).
  */
-export function kickoffAnswers(a: Answers): Record<string, unknown> {
+export function kickoffAnswers(
+  a: Answers,
+  /**
+   * `text`: the daily budget and the close rate as Make's text ("150 SAR",
+   * "20%"), for a server whose check still takes them as text (before the
+   * kickoff amounts migration, B5). Everything else is the same.
+   */
+  opts: { text?: boolean } = {},
+): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const f of KICKOFF_FIELDS) {
     if (f.type === "heading" || !shown(f, a)) continue;
     const v = a[f.key];
     if (v === null || v === undefined || v === "") continue;
+    // The amount as {amount, currency} (a number, a currency of the list); a blank amount sends nothing.
+    if (f.type === "amount") {
+      const p = amountParts(v, f.currencies);
+      const n = amountNumber(p.amount);
+      if (n !== null)
+        out[f.key] = opts.text
+          ? budgetText(n, p.currency)
+          : { amount: n, currency: p.currency };
+      continue;
+    }
+    if (f.type === "percent") {
+      const n = percentNumber(v);
+      if (n !== null) out[f.key] = opts.text ? `${n}%` : n;
+      continue;
+    }
     if (f.list || Array.isArray(v)) {
       // Only a list counts: anything else (an old draft's text) shows nothing ticked, so nothing goes.
       const ticked = Array.isArray(v) ? [...new Set(v.map(String))] : [];
@@ -675,8 +733,35 @@ const KICKOFF_BY_KEY: Record<string, KickoffField> = Object.fromEntries(
   KICKOFF_FIELDS.filter(f => f.type !== "heading").map(f => [f.key, f]),
 );
 
+/**
+ * True when the server's check took the daily budget or the close rate as
+ * text (`length` is what the older check gives a value that is not a
+ * string; the amounts check never gives it for these two): the door then
+ * sends the same answers once more as Make's text, which is what B5 writes.
+ */
+export function kickoffNeedsText(refused: Record<string, string>): boolean {
+  return refused.dailyBudget === "length" || refused.coldCloseRate === "length";
+}
+
 /** What to do about each code cockpit_kickoff_answers_check gives, or null for one the CSM cannot fix. */
 function refusedFix(f: KickoffField, code: string): string | null {
+  if (f.type === "amount")
+    switch (code) {
+      case "required":
+        return "answer it";
+      case "range":
+        return "write an amount above 0 and up to 100,000, with 2 decimals at most";
+      case "option":
+        return "choose the currency: USD, SAR, KWD, AED, QAR or BHD";
+      case "format":
+        return "write the amount as a number and choose its currency";
+      default:
+        return null;
+    }
+  if (f.type === "percent")
+    return code === "range" || code === "format"
+      ? "write a whole number from 0 to 100"
+      : null;
   switch (code) {
     case "required":
       return "answer it";

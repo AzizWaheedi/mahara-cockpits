@@ -1,0 +1,854 @@
+import {
+  afterAll,
+  describe,
+  expect,
+  mock,
+  setDefaultTimeout,
+  test,
+} from "bun:test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { Window } from "happy-dom";
+
+/**
+ * Kickoff items as requests (CEO item 7; docs/forms/WAVE56-CONTRACT.md 4.20
+ * and 5.16; kickoff-requests.md 5): every state of a row in words, the
+ * aria-labels, focus after a press, one request id per item's Yes kept
+ * through a retry, No recorded, "Raise it after all", "Count it", the type
+ * turned off, the form-only type, a card the requests cannot reach, "Change
+ * it first" opening the ticket form and counting what it sends, no "Change
+ * it first" in the sheet, the Today band, and one plain line while the
+ * functions are not applied. Every RPC is a stand-in (src/dev/
+ * kickoffItemsFixtures.ts): nothing reaches the database or ClickUp.
+ *
+ * Run: bun test scripts/kickoff-items.test.tsx
+ */
+
+setDefaultTimeout(30_000);
+
+const win = new Window({
+  url: "https://localhost/client-success/clients/86eywg1cq?tab=onboarding",
+  width: 1280,
+  height: 900,
+});
+const DOM = [
+  "window",
+  "document",
+  "navigator",
+  "HTMLElement",
+  "HTMLButtonElement",
+  "HTMLAnchorElement",
+  "HTMLInputElement",
+  "HTMLTextAreaElement",
+  "HTMLSelectElement",
+  "HTMLFormElement",
+  "Element",
+  "Node",
+  "Event",
+  "CustomEvent",
+  "KeyboardEvent",
+  "MouseEvent",
+  "PointerEvent",
+  "FocusEvent",
+  "DocumentFragment",
+  "Text",
+  "NodeFilter",
+  "MutationObserver",
+  "getComputedStyle",
+  "sessionStorage",
+  "localStorage",
+  "InputEvent",
+  "ResizeObserver",
+  "DOMRect",
+  "requestAnimationFrame",
+  "cancelAnimationFrame",
+  "matchMedia",
+];
+for (const k of DOM)
+  Object.defineProperty(globalThis, k, {
+    configurable: true,
+    writable: true,
+    value:
+      k === "window"
+        ? win
+        : typeof (win as any)[k] === "function" && /^[a-z]/.test(k)
+          ? (win as any)[k].bind(win)
+          : (win as any)[k],
+  });
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const toasts: string[] = [];
+mock.module("sonner", () => ({
+  toast: Object.assign((m: string) => toasts.push(m), {
+    success: (m: string) => toasts.push(m),
+    error: (m: string) => toasts.push(m),
+  }),
+  Toaster: () => null,
+}));
+
+const { createRoot } = await import("react-dom/client");
+const { act, createElement } = await import("react");
+const { MemoryRouter } = await import("react-router");
+const words = await import("../src/lib/kickoffItems");
+const { KickoffItems, KickoffItemsBand } = await import(
+  "../src/components/KickoffItems"
+);
+const fx = await import("../src/dev/kickoffItemsFixtures");
+const { RequestError } = await import("../src/lib/requestsClient");
+const { itemsMissing } = await import("../src/lib/kickoffItemsClient");
+
+const roots: ReturnType<typeof createRoot>[] = [];
+afterAll(async () => {
+  for (const r of roots) await act(async () => r.unmount());
+  await win.happyDOM.close();
+});
+const flush = () =>
+  act(async () => {
+    for (let i = 0; i < 8; i++) await new Promise(r => setTimeout(r, 0));
+  });
+async function draw(el: any) {
+  const host = win.document.createElement("div");
+  win.document.body.append(host);
+  const root = createRoot(host as unknown as Element);
+  roots.push(root);
+  await act(async () => root.render(createElement(MemoryRouter, null, el)));
+  await flush();
+  return root;
+}
+async function clear(root: any) {
+  await act(async () => root.unmount());
+  roots.splice(roots.indexOf(root), 1);
+  await flush();
+  win.document.body.innerHTML = "";
+  toasts.length = 0;
+}
+const body = () => win.document.body as any;
+const text = (el: any) =>
+  String(el?.textContent ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+const button = (label: string, within: any = body()) =>
+  [...within.querySelectorAll("button")].find(
+    (b: any) => text(b) === label || b.getAttribute("aria-label") === label,
+  ) as any;
+const item = (key: string) =>
+  body().querySelector(`[data-item="${key}"]`) as any;
+async function click(el: any) {
+  expect(el).toBeTruthy();
+  await act(async () => el.click());
+  await flush();
+}
+
+const T = fx.ITEMS_TASK;
+const C = fx.ITEMS_CLIENT;
+
+describe("the words (kickoff-requests.md 5)", () => {
+  test("rows are read leniently: an unknown state or a row with no item is left out", () => {
+    expect(words.readItemRow({ item: "x", state: "surprise" })).toBeNull();
+    expect(words.readItemRow({ state: "open" })).toBeNull();
+    const r = words.readItemRow(fx.rawItem());
+    expect(r).toMatchObject({
+      item: "funded_card",
+      state: "open",
+      oneTap: true,
+      actions: { raise: true, decline: true, link: true },
+    });
+    const read = words.readItems(
+      fx.rawRead([], { reason: "no_answers", note: "x" }),
+      T,
+    );
+    expect(read.reason).toBe("no_answers");
+    expect(read.kickoff?.inOnboarding).toBe(true);
+    expect(words.readItems({ reason: "surprise" }, T).reason).toBeNull();
+  });
+
+  test("the route line: team, owner by role, due day, priority only when not normal", () => {
+    const funded = words.readItemRow(fx.rawItem()) as any;
+    expect(words.routeLine(funded.route)).toBe(
+      "Client Success · the CSM · due Wed 4 Nov · high",
+    );
+    const os = words.readItemRow(fx.rawMaharaOs()) as any;
+    expect(words.routeLine(os.route)).toBe(
+      "Operations / Tech · the systems manager · due Thu 5 Nov",
+    );
+    expect(words.routeLine(null)).toBeNull();
+    expect(
+      words.routeLine({ ...funded.route, teamLabel: null, note: "No route." }),
+    ).toBe("No route.");
+  });
+
+  test("receipts: raised, counted, declined, by you or by a role, in Kuwait time", () => {
+    const up = words.readItemRow(fx.raised(fx.rawItem())) as any;
+    expect(words.receiptWords(up)).toEqual({
+      head: "Raised: Card missing for ads",
+      sub: "due Wed 4 Nov · high · by you · Tue 3 Nov 10:42",
+    });
+    const linked = words.readItemRow(
+      fx.raised(fx.rawItem(), {
+        decision: {
+          answer: "raised",
+          how: "linked",
+          byLabel: "the CSM lead",
+          at: "2026-11-03T07:42:00Z",
+          mine: false,
+        },
+      }),
+    ) as any;
+    expect(words.receiptWords(linked)?.head).toBe(
+      "Counted: Card missing for ads",
+    );
+    expect(words.receiptWords(linked)?.sub).toContain("by the CSM lead");
+    const no = words.readItemRow(fx.declined(fx.rawItem())) as any;
+    expect(words.receiptWords(no)?.head).toBe(
+      "Not raised. You said No on Tue 3 Nov at 10:45.",
+    );
+    const theirs = words.readItemRow(
+      fx.declined(fx.rawItem(), {
+        decision: {
+          answer: "declined",
+          byLabel: "the CSM",
+          at: "2026-11-03T07:45:00Z",
+          mine: false,
+          note: "They linked it after the call.",
+        },
+      }),
+    ) as any;
+    expect(words.receiptWords(theirs)).toEqual({
+      head: "Not raised. The CSM said No on Tue 3 Nov at 10:45.",
+      sub: "They linked it after the call.",
+    });
+    expect(words.receiptWords(words.readItemRow(fx.rawItem()) as any)).toBe(
+      null,
+    );
+  });
+
+  test("a raised request in words: in ClickUp, held, failed, cancelled, another seat's", () => {
+    const req = (over: Record<string, unknown>) =>
+      (words.readItemRow(fx.raised(fx.rawItem(), {})) as any).request &&
+      words.requestWords({
+        ...(words.readItemRow(fx.raised(fx.rawItem())) as any).request,
+        ...over,
+      });
+    expect(req({})).toEqual({
+      text: "In ClickUp",
+      tone: "good",
+      url: "https://app.clickup.com/t/86fxkick1",
+    });
+    expect(req({ held: true, heldNote: null, url: null }).text).toBe(
+      "Saved, not sent yet. It goes to ClickUp once requests open.",
+    );
+    expect(req({ held: true, heldNote: "Requests are paused." }).text).toBe(
+      "Requests are paused.",
+    );
+    expect(req({ state: "failed" })).toMatchObject({
+      text: "Did not reach ClickUp. Raise it again.",
+      tone: "critical",
+    });
+    expect(req({ state: "cancelled" }).text).toBe(
+      "The request was cancelled. Raise it again if it is still needed.",
+    );
+    expect(req({ mayOpen: false, raisedBy: "the systems manager" }).text).toBe(
+      "Raised by the systems manager.",
+    );
+    expect(req({ url: null, state: "queued", partState: "queued" }).text).toBe(
+      "Sending to ClickUp",
+    );
+    const queued = words.readItemRow(
+      fx.raised(fx.rawItem(), {
+        request: {
+          state: "queued",
+          partState: "queued",
+          mayOpen: true,
+          url: null,
+        },
+      }),
+    ) as any;
+    expect(words.stillSending(queued)).toBe(true);
+    expect(
+      words.stillSending(words.readItemRow(fx.raised(fx.rawItem())) as any),
+    ).toBe(false);
+  });
+
+  test("the sentences of 4.20, word for word", () => {
+    const funded = words.readItemRow(fx.rawItem()) as any;
+    const os = words.readItemRow(fx.rawMaharaOs()) as any;
+    expect(words.kickerWords(3)).toBe("Still open from the kickoff · 3");
+    expect(words.askWords(funded)).toBe("Raise Card missing for ads?");
+    expect(words.yesLabel(funded, C)).toBe(
+      "Yes, raise Card missing for ads for Cedar Interiors",
+    );
+    expect(words.NO_LABEL).toBe("No, do not raise it");
+    expect(words.typeOffWords(funded)).toBe(
+      "Card missing for ads is turned off in Requests settings, so it cannot be raised here. Ask the systems manager.",
+    );
+    expect(words.formOnlyWords(os)).toBe(
+      "General tech request needs answers the kickoff does not have.",
+    );
+    const open = (row: any) =>
+      words.existingWords({
+        ...row,
+        existing: {
+          requestId: "r1",
+          typeLabel: row.typeLabel,
+          createdAt: "2026-11-02T09:00:00Z",
+          requesterLabel: "the CSM",
+          imported: false,
+          mayOpen: true,
+        },
+      });
+    expect(open(funded)).toBe(
+      "A Card missing for ads request is already open for this client, raised Mon 2 Nov by the CSM.",
+    );
+    expect(open(os)).toBe(
+      "A General tech request is already open for this client, raised Mon 2 Nov by the CSM.",
+    );
+    expect(words.ITEMS_MISSING).toBe(
+      "Kickoff items open after the next cockpit update.",
+    );
+    expect(words.TOAST.declined).toBe("Saved: not raised.");
+    expect(words.TOAST.raised(funded)).toBe("Raised: Card missing for ads.");
+    expect(words.TOAST.counted(os)).toBe("Counted: General tech request.");
+    // The rings take the trail's tones.
+    expect(words.itemTone(funded)).toEqual({ tone: "warning", mark: "open" });
+    expect(
+      words.itemTone(words.readItemRow(fx.raised(fx.rawItem())) as any),
+    ).toEqual({ tone: "good", mark: "check" });
+    expect(
+      words.itemTone(words.readItemRow(fx.declined(fx.rawItem())) as any),
+    ).toEqual({ tone: "neutral", mark: "dash" });
+    expect(itemsMissing(new RequestError("x", "PGRST202"))).toBe(true);
+    expect(itemsMissing(new RequestError("x", "42501"))).toBe(false);
+  });
+});
+
+const onPage = (api: any, onTicket?: (t: any) => void) =>
+  createElement(KickoffItems, {
+    api,
+    taskId: T,
+    clientName: C,
+    variant: "page",
+    onTicket,
+  });
+
+describe("the client page's card (variant page)", () => {
+  test("open items ask Raise …? with equal Yes and No, the route line and Change it first", async () => {
+    const { api } = fx.fakeItemsApi({
+      [T]: fx.rawRead([fx.rawItem(), fx.rawMaharaOs()]),
+    });
+    const root = await draw(onPage(api, () => {}));
+    expect(text(body())).toContain("Kickoff items");
+    expect(text(body())).toContain(
+      "From the kickoff on Tue 3 Nov. Yes raises the request; No records it.",
+    );
+    expect(text(body().querySelector(".ki-kicker"))).toBe(
+      "Still open from the kickoff · 2",
+    );
+    const funded = item("funded_card");
+    expect(text(funded)).toContain(
+      "The card with funds is not linked to the ad account.",
+    );
+    expect(text(funded)).toContain("Raise Card missing for ads?");
+    expect(text(funded.querySelector(".ki-route"))).toBe(
+      "Client Success · the CSM · due Wed 4 Nov · high",
+    );
+    // Equal pills, never a filled Yes; the names a screen reader hears.
+    const yes = button(
+      "Yes, raise Card missing for ads for Cedar Interiors",
+      funded,
+    );
+    const no = button("No, do not raise it", funded);
+    expect(yes.className).toBe(no.className);
+    expect(text(yes)).toBe("Yes");
+    expect(text(no)).toBe("No");
+    expect(button("Change it first", funded)).toBeTruthy();
+    // The open ring is the trail's warning ring.
+    expect(funded.querySelector(".fs-ring").getAttribute("data-tone")).toBe(
+      "warning",
+    );
+    await clear(root);
+  });
+
+  test("Yes raises in one tap: the server's row folds into its receipt, focus moves to it, the ring turns teal", async () => {
+    const { api, calls } = fx.fakeItemsApi({
+      [T]: fx.rawRead([fx.rawItem(), fx.rawMaharaOs()]),
+    });
+    const root = await draw(onPage(api, () => {}));
+    await click(button("Yes, raise Card missing for ads for Cedar Interiors"));
+    const raise = calls.find(c => c.name === "raise");
+    expect(raise?.args.slice(0, 2)).toEqual([T, "funded_card"]);
+    expect(String(raise?.args[2])).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    const funded = item("funded_card");
+    expect(text(funded.querySelector("[data-receipt]"))).toBe(
+      "Raised: Card missing for ads · In ClickUp",
+    );
+    expect(funded.querySelector("a").getAttribute("href")).toBe(
+      "https://app.clickup.com/t/86fxkick1",
+    );
+    expect(text(funded.querySelector(".ki-sub"))).toBe(
+      "due Wed 4 Nov · high · by you · Tue 3 Nov 10:42",
+    );
+    expect(funded.querySelector(".fs-ring").getAttribute("data-tone")).toBe(
+      "good",
+    );
+    expect(win.document.activeElement?.getAttribute("data-receipt")).toBe(
+      "raised",
+    );
+    expect(button("Yes, raise Card missing for ads for Cedar Interiors")).toBe(
+      undefined,
+    );
+    expect(toasts).toContain("Raised: Card missing for ads.");
+    // One left to decide; the decided item moves under it.
+    expect(text(body().querySelector(".ki-kicker"))).toBe(
+      "Still open from the kickoff · 1",
+    );
+    const order = [...body().querySelectorAll("[data-item]")].map((x: any) =>
+      x.getAttribute("data-item"),
+    );
+    expect(order).toEqual(["mahara_os", "funded_card"]);
+    await clear(root);
+  });
+
+  test("a refused Yes says the server's sentence and keeps its request id for the next press", async () => {
+    const { api, calls } = fx.fakeItemsApi(
+      { [T]: fx.rawRead([fx.rawItem()]) },
+      {
+        failRaise:
+          "Card missing for ads is turned off in Requests settings, so it cannot be raised here. Ask the systems manager.",
+      },
+    );
+    const root = await draw(onPage(api));
+    await click(button("Yes, raise Card missing for ads for Cedar Interiors"));
+    await click(button("Yes, raise Card missing for ads for Cedar Interiors"));
+    const ids = calls.filter(c => c.name === "raise").map(c => c.args[2]);
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).toBe(ids[1]);
+    expect(text(body().querySelector('[role="alert"]'))).toBe(
+      "Card missing for ads is turned off in Requests settings, so it cannot be raised here. Ask the systems manager.",
+    );
+    await clear(root);
+  });
+
+  test("No is recorded with nothing asked; Raise it after all raises it", async () => {
+    const { api, calls } = fx.fakeItemsApi({
+      [T]: fx.rawRead([fx.rawMaharaOs()]),
+    });
+    const root = await draw(onPage(api));
+    await click(button("No, do not raise it"));
+    expect(calls.find(c => c.name === "decline")?.args).toEqual([
+      T,
+      "mahara_os",
+      null,
+    ]);
+    const os = item("mahara_os");
+    expect(text(os.querySelector("[data-receipt]"))).toBe(
+      "Not raised. You said No on Tue 3 Nov at 10:45.",
+    );
+    expect(os.querySelector(".fs-ring").getAttribute("data-tone")).toBe(
+      "neutral",
+    );
+    expect(toasts).toContain("Saved: not raised.");
+    expect(win.document.activeElement?.getAttribute("data-receipt")).toBe(
+      "declined",
+    );
+    // The keyboard is on "Raise it after all"; the button unmounts and focus lands on the new receipt.
+    const again = button("Raise it after all");
+    await act(async () => again.focus());
+    expect(win.document.activeElement).toBe(again);
+    await click(again);
+    expect(calls.filter(c => c.name === "raise")).toHaveLength(1);
+    expect(text(item("mahara_os").querySelector("[data-receipt]"))).toBe(
+      "Raised: General tech request · In ClickUp",
+    );
+    expect(win.document.activeElement?.getAttribute("data-receipt")).toBe(
+      "raised",
+    );
+    await clear(root);
+  });
+
+  test("Change it first opens the prefilled ticket form and counts what it sends", async () => {
+    const { api, calls } = fx.fakeItemsApi({
+      [T]: fx.rawRead([fx.rawMaharaOs()]),
+    });
+    const asked: any[] = [];
+    const root = await draw(onPage(api, t => asked.push(t)));
+    await click(button("Change it first"));
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatchObject({
+      type: "general_tech",
+      item: "mahara_os",
+      details:
+        "Raised from the kickoff on Tue 3 Nov: Mahara OS access is Tech Issue. Get the client logged in to Mahara OS, then tell their CSM.",
+    });
+    // The ticket form sent its request: it is counted for the item.
+    await act(async () => asked[0].onSent({ id: "req-from-form" }));
+    await flush();
+    expect(calls.find(c => c.name === "link")?.args).toEqual([
+      T,
+      "mahara_os",
+      "req-from-form",
+    ]);
+    expect(text(item("mahara_os").querySelector("[data-receipt]"))).toBe(
+      "Counted: General tech request · In ClickUp",
+    );
+    expect(toasts).toContain("Counted: General tech request.");
+    await clear(root);
+  });
+
+  test("an open request of the type already on the card: Count it or No, nothing raised twice", async () => {
+    const { api, calls } = fx.fakeItemsApi({
+      [T]: fx.rawRead([
+        fx.rawItem({
+          state: "already_open",
+          actions: { raise: false, decline: true, link: true },
+          existing: {
+            requestId: "req-open-1",
+            typeLabel: "Card missing for ads",
+            createdAt: "2026-11-02T09:00:00Z",
+            requesterLabel: "the CSM",
+            imported: false,
+            mayOpen: true,
+          },
+        }),
+      ]),
+    });
+    const root = await draw(onPage(api));
+    expect(text(item("funded_card"))).toContain(
+      "A Card missing for ads request is already open for this client, raised Mon 2 Nov by the CSM.",
+    );
+    expect(button("Yes, raise Card missing for ads for Cedar Interiors")).toBe(
+      undefined,
+    );
+    await click(button("Count it"));
+    expect(calls.find(c => c.name === "link")?.args).toEqual([
+      T,
+      "funded_card",
+      "req-open-1",
+    ]);
+    await clear(root);
+  });
+
+  test("a type turned off, a type that needs the form, a card the requests cannot reach", async () => {
+    const { api } = fx.fakeItemsApi({
+      [T]: fx.rawRead([
+        fx.rawItem({
+          state: "type_off",
+          typeEnabled: false,
+          offered: false,
+          actions: { raise: false, decline: false, link: true },
+        }),
+        fx.rawMaharaOs({
+          oneTap: false,
+          actions: { raise: false, decline: true, link: true },
+        }),
+        fx.rawItem({
+          item: "whatsapp_sync",
+          short: "WhatsApp sync",
+          typeKey: "whatsapp_connection",
+          typeLabel: "WhatsApp connection issue",
+          line: "WhatsApp is not synced to Mahara OS: Needs Integrating.",
+          blocked:
+            "This client is not on the cockpit's client list yet, so a request cannot be raised for it here. Raise it in ClickUp.",
+          actions: { raise: false, decline: true, link: false },
+        }),
+      ]),
+    });
+    const asked: any[] = [];
+    const root = await draw(onPage(api, t => asked.push(t)));
+    const off = item("funded_card");
+    expect(text(off)).toContain(
+      "Card missing for ads is turned off in Requests settings, so it cannot be raised here. Ask the systems manager.",
+    );
+    expect(off.querySelectorAll("button")).toHaveLength(0);
+    const form = item("mahara_os");
+    expect(text(form)).toContain(
+      "General tech request needs answers the kickoff does not have.",
+    );
+    await click(button("Raise it with the form", form));
+    expect(asked[0]?.type).toBe("general_tech");
+    expect(button("No, do not raise it", form)).toBeTruthy();
+    const blocked = item("whatsapp_sync");
+    expect(text(blocked)).toContain(
+      "This client is not on the cockpit's client list yet, so a request cannot be raised for it here. Raise it in ClickUp.",
+    );
+    expect([...blocked.querySelectorAll("button")].map(text)).toEqual(["No"]);
+    await clear(root);
+  });
+
+  test("a held writer says the server's note under the ask", async () => {
+    const { api } = fx.fakeItemsApi({
+      [T]: fx.rawRead([
+        fx.rawItem({
+          route: {
+            ...(fx.rawItem().route as any),
+            writer: {
+              canSend: false,
+              held: true,
+              note: "Saved, not sent yet. It goes to ClickUp once requests open.",
+            },
+          },
+        }),
+      ]),
+    });
+    const root = await draw(onPage(api));
+    expect(text(item("funded_card"))).toContain(
+      "Saved, not sent yet. It goes to ClickUp once requests open.",
+    );
+    await clear(root);
+  });
+
+  test("missing functions say one line; no stored answers say where they are; nothing open draws nothing", async () => {
+    let root = await draw(onPage(fx.fakeItemsApi({}, { missing: true }).api));
+    expect(text(body())).toBe(
+      "Kickoff items open after the next cockpit update.",
+    );
+    await clear(root);
+    root = await draw(
+      onPage(
+        fx.fakeItemsApi({
+          [T]: fx.rawRead([], { reason: "no_answers" }),
+        }).api,
+      ),
+    );
+    expect(text(body())).toContain(
+      "The kickoff's answers are not in the cockpit, so its open items cannot show here. They are in the card's Kickoff Handoff comment.",
+    );
+    await clear(root);
+    root = await draw(
+      onPage(
+        fx.fakeItemsApi({
+          [T]: fx.rawRead([], {
+            reason: "no_answers",
+            kickoff: { at: null, answered: false, inOnboarding: false },
+          }),
+        }).api,
+      ),
+    );
+    expect(text(body())).toBe("");
+    await clear(root);
+    root = await draw(
+      onPage(fx.fakeItemsApi({ [T]: fx.rawRead([], { reason: "none" }) }).api),
+    );
+    expect(text(body())).toBe("");
+    await clear(root);
+    // A seat the read refuses (an admin seat without the csm role) sees nothing, never an alert.
+    for (const variant of ["page", "sheet"] as const) {
+      const refused = fx.fakeItemsApi({}).api;
+      refused.read = async () => {
+        throw new RequestError(
+          "Only the CEO or the client's CSM decides kickoff items.",
+          "42501",
+        );
+      };
+      root = await draw(
+        createElement(KickoffItems, {
+          api: refused,
+          taskId: T,
+          clientName: C,
+          variant,
+        }),
+      );
+      expect([variant, text(body())]).toEqual([variant, ""]);
+      expect(body().querySelector('[role="alert"]')).toBeNull();
+      await clear(root);
+    }
+    // Any other refusal still says it could not be read.
+    const down = fx.fakeItemsApi({}).api;
+    down.read = async () => {
+      throw new RequestError(
+        "The database could not answer just now.",
+        "P0001",
+      );
+    };
+    root = await draw(onPage(down));
+    expect(text(body().querySelector('[role="alert"]'))).toBe(
+      "Kickoff items could not be read: The database could not answer just now.",
+    );
+    await clear(root);
+  });
+
+  test("a route note in Postgres's own words is never shown; the preview's own sentence is", async () => {
+    const raw = fx.rawItem();
+    const rawRoute = {
+      ...(raw.route as Record<string, unknown>),
+      teamLabel: null,
+      note: "permission denied for function cockpit_request_preview",
+    };
+    let root = await draw(
+      onPage(
+        fx.fakeItemsApi({ [T]: fx.rawRead([{ ...raw, route: rawRoute }]) }).api,
+      ),
+    );
+    expect(text(body())).not.toContain("permission denied");
+    expect(text(item("funded_card").querySelector(".ki-route"))).toBe(
+      "The database could not answer just now. Try again in a minute; if it keeps happening, tell the systems manager.",
+    );
+    await clear(root);
+    root = await draw(
+      onPage(
+        fx.fakeItemsApi({
+          [T]: fx.rawRead([
+            {
+              ...raw,
+              route: { ...rawRoute, note: "This request type is turned off." },
+            },
+          ]),
+        }).api,
+      ),
+    );
+    expect(text(item("funded_card").querySelector(".ki-route"))).toBe(
+      "This request type is turned off.",
+    );
+    await clear(root);
+  });
+});
+
+describe("the kickoff sheet's trail (variant sheet)", () => {
+  test("the items carry on the trail; no Change it first and no form button in the sheet", async () => {
+    const { api } = fx.fakeItemsApi({
+      [T]: fx.rawRead([
+        fx.rawItem(),
+        fx.rawMaharaOs({
+          oneTap: false,
+          actions: { raise: false, decline: true, link: true },
+        }),
+      ]),
+    });
+    const root = await draw(
+      createElement(KickoffItems, {
+        api,
+        taskId: T,
+        clientName: C,
+        variant: "sheet",
+        // A sheet never opens a second sheet, even when one is handed in.
+        onTicket: () => {},
+      } as any),
+    );
+    expect(body().querySelector("ol.fs-trail")).toBeTruthy();
+    expect(body().querySelectorAll("ol.fs-trail > li.fs-step")).toHaveLength(2);
+    expect(button("Change it first")).toBe(undefined);
+    expect(button("Raise it with the form")).toBe(undefined);
+    expect(text(item("mahara_os"))).toContain(
+      "Raise it with the form from the client page.",
+    );
+    await clear(root);
+  });
+});
+
+describe("Today, Kickoff items to decide (variant band)", () => {
+  const due = {
+    asOf: "2026-11-03T08:00:00Z",
+    rows: [
+      {
+        taskId: T,
+        clientName: C,
+        kickoffAt: "2026-11-01T09:00:00Z",
+        kickoffDay: "Sun 1 Nov",
+        due: 2,
+        items: [fx.rawItem({ route: null }), fx.rawMaharaOs({ route: null })],
+      },
+      {
+        taskId: "86eyfake02",
+        clientName: "Juniper Fit-Out",
+        kickoffAt: "2026-11-02T09:00:00Z",
+        kickoffDay: "Mon 2 Nov",
+        due: 1,
+        items: [fx.rawItem({ route: null })],
+      },
+    ],
+    more: false,
+    note: null,
+  };
+
+  test("one row per card, the kickoff's day in mono, its items inline; a Yes raises on that card", async () => {
+    const { api, calls } = fx.fakeItemsApi(
+      {
+        [T]: fx.rawRead([fx.rawItem(), fx.rawMaharaOs()]),
+        "86eyfake02": fx.rawRead([fx.rawItem()], { taskId: "86eyfake02" }),
+      },
+      { due },
+    );
+    const asked: any[] = [];
+    const root = await draw(
+      createElement(KickoffItemsBand, { api, onTicket: t => asked.push(t) }),
+    );
+    const h2 = body().querySelector("h2");
+    expect(text(h2.firstChild)).toBe("Kickoff items to decide");
+    expect(text(h2.querySelector("span"))).toBe("3");
+    const rows = [...body().querySelectorAll("[data-kickoff-band-row]")];
+    expect(
+      rows.map((r: any) => r.getAttribute("data-kickoff-band-row")),
+    ).toEqual([T, "86eyfake02"]);
+    expect(text(rows[0])).toContain("Cedar Interiors kickoff Sun 1 Nov");
+    expect(rows[0].querySelector("a").getAttribute("href")).toBe(
+      "/clients/86eywg1cq?tab=onboarding",
+    );
+    const second = rows[1] as any;
+    await click(
+      button("Yes, raise Card missing for ads for Juniper Fit-Out", second),
+    );
+    expect(calls.find(c => c.name === "raise")?.args.slice(0, 2)).toEqual([
+      "86eyfake02",
+      "funded_card",
+    ]);
+    // Change it first names the card it is for.
+    await click(button("Change it first", rows[0]));
+    expect(asked[0]).toMatchObject({
+      taskId: T,
+      name: C,
+      type: "card_missing",
+    });
+    await clear(root);
+  });
+
+  test("nothing to decide draws nothing; a seat outside client success sees nothing; missing says one line", async () => {
+    let root = await draw(
+      createElement(KickoffItemsBand, {
+        api: fx.fakeItemsApi({}, { due: { rows: [] } }).api,
+      }),
+    );
+    expect(text(body())).toBe("");
+    await clear(root);
+    const refused = fx.fakeItemsApi({}).api;
+    refused.due = async () => {
+      throw new RequestError(
+        "Kickoff items are for the client success team.",
+        "42501",
+      );
+    };
+    root = await draw(createElement(KickoffItemsBand, { api: refused }));
+    expect(text(body())).toBe("");
+    await clear(root);
+    root = await draw(
+      createElement(KickoffItemsBand, {
+        api: fx.fakeItemsApi({}, { missing: true }).api,
+      }),
+    );
+    expect(text(body())).toBe(
+      "Kickoff items open after the next cockpit update.",
+    );
+    await clear(root);
+  });
+});
+
+describe("the look (5.16)", () => {
+  const css = readFileSync(
+    resolve(import.meta.dir, "../src/components/kickoffItems.css"),
+    "utf8",
+  );
+  test("tokens only, the 44px pills on two columns at phone width, no motion when reduced", () => {
+    expect(css).not.toMatch(/#[0-9a-fA-F]{3,8}\b|\b(rgba?|hsla?|oklch)\(/);
+    const phone = css.slice(css.indexOf("@media (max-width: 767px)"));
+    expect(phone).toContain("grid-template-columns: repeat(2, minmax(0, 1fr))");
+    expect(phone).toContain("min-height: 44px");
+    expect(css).toContain("@media (prefers-reduced-motion: reduce)");
+    // The rings are the shared trail's, used and not changed.
+    const shared = readFileSync(
+      resolve(import.meta.dir, "../src/forms/staff/formSheet.css"),
+      "utf8",
+    );
+    expect(shared).toContain('.fs-ring[data-tone="good"]');
+    expect(css).not.toMatch(/^\.fs-ring\b/m);
+  });
+});

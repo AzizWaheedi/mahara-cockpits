@@ -1,5 +1,6 @@
 import type { TimelineCall } from "@/lib/csmCalls";
 import type { FormEntry, Handover } from "@/lib/onboardingCore";
+import { NOT_TIED, tiedByTone, tiedByWords } from "@/lib/saleTie";
 import { cleanAnswer, EMPTY, serviceChips } from "@/present/clean";
 import {
   isOtherWord,
@@ -465,6 +466,8 @@ export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
     typeof h.daily_budget === "number" && h.daily_budget > 0
       ? h.daily_budget
       : null;
+  // A kickoff on record (Typeform or the cockpit's own): the card's figure is no longer surely the sale's.
+  const kickoffOnRecord = Boolean(row.forms?.kickoff);
   const billing = lines(h.billing_notes);
   const paymentHint = [
     billing.length ? `Billing on the card: ${billing.join(" · ")}` : null,
@@ -646,13 +649,26 @@ export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
       required: true,
       missing: ASK_CONTRACT,
     },
+    // The sale's figure (CEO item 5): the kickoff asks the agreed one, which
+    // differs on 4 of 5 cards, so this is said as the sale's, never as a
+    // prefill. Once a kickoff is on record the card's Daily Budget can be the
+    // kickoff's own (card_facts fills it when empty), so it is said as the
+    // card's, not the sale's.
     {
       id: "daily-budget",
-      label: "Daily budget",
+      label: kickoffOnRecord
+        ? "Daily Budget on the card"
+        : "Daily budget at the sale",
       value: budget === null ? null : `${dollars(budget)} a day`,
       copyValue: budget === null ? undefined : money(budget),
-      source: "ClickUp card",
+      source: kickoffOnRecord ? "ClickUp card" : "ClickUp card (the sale)",
       copy: true,
+      hint:
+        budget !== null && budget >= 1000
+          ? "Looks like a month or another currency. Ask the client for the daily amount."
+          : budget !== null && kickoffOnRecord
+            ? "May be the last kickoff's figure: an empty Daily Budget is filled from the kickoff."
+            : undefined,
       missing: NOT_ON_RECORD,
     },
     {
@@ -710,26 +726,102 @@ export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
     },
   ];
 
-  // --- From the sale -------------------------------------------------------
+  // --- From the sale (CEO item 6, sale-tie.md 2.10) -------------------------
+  // The card's own fields first; the tied New Client Form's answers while
+  // they are empty. The stub says how sure the tie is; a card with no tied
+  // sale says so, never a blank. While the sale read is not there (not read,
+  // its function not applied yet, or a seat it does not serve) or sale ties
+  // are off (`off`: nothing can be tied yet) the part keeps the card's rows
+  // alone: no stub tells anyone to tie a sale that cannot be tied.
+  const saleView = ctx.sale ?? null;
+  const tied = saleView?.state === "tied" ? saleView : null;
+  const signed = tied?.signedAt ? kuwaitShortDay(tied.signedAt) : "";
+  const fromSale = signed ? `New Client Form, ${signed}` : "New Client Form";
+  const cardOr = (card: unknown, fromForm: string | null | undefined) => {
+    const c = str(card);
+    const f = str(fromForm);
+    return {
+      value: c ?? f,
+      source: c ? "ClickUp card" : f ? fromSale : null,
+    };
+  };
+  const stub: RailRow[] = tied
+    ? [
+        {
+          id: "sale-stub",
+          label: "Sale",
+          value: signed ? `Signed ${signed}` : "Signed, day not recorded",
+          source: null,
+          chip: {
+            label: tiedByWords(tied.tiedBy),
+            tone: tiedByTone(tied.tiedBy),
+          },
+          hint:
+            [
+              tied.voidedInB2B ? "Voided in B2B." : null,
+              tied.otherSales > 0
+                ? `${tied.otherSales} earlier ${tied.otherSales === 1 ? "sale" : "sales"} on this card.`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" ") || undefined,
+          href: tied.salesCallLink ?? undefined,
+          linkLabel: tied.salesCallLink ? "Watch the sales call" : undefined,
+        },
+      ]
+    : saleView?.state === "none"
+      ? [
+          {
+            id: "sale-stub",
+            label: "Sale",
+            value: null,
+            source: null,
+            missing: NOT_TIED,
+          },
+        ]
+      : [];
+  const goLive = cardOr(h.go_live, tied?.goLive);
+  const handoff = cardOr(h.handoff_risks, tied?.handoffProblems);
+  const closer = cardOr(h.closer, tied?.closer);
   const sale: RailRow[] = [
+    ...stub,
+    {
+      id: "go-live",
+      label: "Go-live expectation",
+      ...goLive,
+      missing: NOT_ON_RECORD,
+    },
+    {
+      id: "handoff-problems",
+      label: "Handoff problems",
+      ...handoff,
+      missing: NOT_ON_RECORD,
+    },
+    ...(tied?.expectations
+      ? [
+          {
+            id: "expectations",
+            label: "What they believe they're getting",
+            value: tied.expectations,
+            source: fromSale,
+          },
+        ]
+      : []),
     {
       id: "closer",
       label: "Closer",
-      value: str(h.closer),
-      source: "ClickUp card",
+      ...closer,
+      // Display only: the card's Closer is never written from here.
+      hint:
+        !str(h.closer) && closer.value
+          ? "From the New Client Form. The card's Closer is empty."
+          : undefined,
       missing: NOT_ON_RECORD,
     },
     {
       id: "closer-notes",
       label: "Closer's notes",
       value: str(h.closer_notes),
-      source: "ClickUp card",
-      missing: NOT_ON_RECORD,
-    },
-    {
-      id: "handoff-risks",
-      label: "Handoff risks",
-      value: str(h.handoff_risks),
       source: "ClickUp card",
       missing: NOT_ON_RECORD,
     },
@@ -773,6 +865,9 @@ export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
     title: "From the sale",
     rows: foldEmpty(sale, pointed),
     fold: true,
+    problem: ctx.failed.sale
+      ? "The sale tied to this card could not be read just now."
+      : undefined,
   });
   return parts;
 }

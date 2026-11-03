@@ -263,6 +263,23 @@ const invoked: { fn: string; body: any }[] = [];
 /** The rows cockpit_requests_read answers; a test may swap them. */
 let requestRowsNow: any[] = myRequestRows;
 const requestReads: Record<string, unknown>[] = [];
+/**
+ * CEO items 6 and 7 (WAVE56-CONTRACT.md 4.19, 4.20, 5.16): the kickoff items
+ * on Today and the client page, and the sales not on a card. Null answers as
+ * PostgREST does while the functions are not applied (PGRST202).
+ */
+let kickoffDueNow: any = null;
+let kickoffReadNow: any = null;
+let saleListNow: any = null;
+let saleReadNow: any = null;
+const missingFn = (name: string) =>
+  Promise.resolve({
+    data: null,
+    error: {
+      code: "PGRST202",
+      message: `Could not find the function public.${name}`,
+    },
+  });
 
 const mockClient: any = {
   auth: {
@@ -282,6 +299,37 @@ const mockClient: any = {
     signOut: async () => ({ error: null }),
   },
   rpc: (name: string, _args: any) => {
+    if (name === "cockpit_kickoff_items_due")
+      return kickoffDueNow
+        ? Promise.resolve({ data: kickoffDueNow, error: null })
+        : missingFn(name);
+    if (name === "cockpit_kickoff_items_read")
+      return kickoffReadNow
+        ? Promise.resolve({ data: kickoffReadNow, error: null })
+        : missingFn(name);
+    if (
+      name === "cockpit_kickoff_item_raise" ||
+      name === "cockpit_kickoff_item_decline" ||
+      name === "cockpit_kickoff_item_link"
+    ) {
+      watched.push({ name, args: _args });
+      return missingFn(name);
+    }
+    if (name === "cockpit_sale_tie_list")
+      return saleListNow
+        ? Promise.resolve({ data: saleListNow, error: null })
+        : missingFn(name);
+    if (name === "cockpit_sale_tie_decide") {
+      watched.push({ name, args: _args });
+      return Promise.resolve({
+        data: { ok: true, cardName: "Cedar Interiors" },
+        error: null,
+      });
+    }
+    if (name === "cockpit_csm_sale_read")
+      return saleReadNow
+        ? Promise.resolve({ data: saleReadNow, error: null })
+        : missingFn(name);
     // Stage 2b (docs/forms/STAGE2B-CONTRACT.md 4.10, 5.1): the entry rule,
     // the queue of calls with no client and its writer, the recaps waiting.
     if (name === "cockpit_form_entry" && entryAnswer)
@@ -727,6 +775,33 @@ mock.module("@/components/tasks/RequestForm", () => ({
     return null;
   },
 }));
+
+/**
+ * The app's Sheet without Radix's portal: an open sheet draws its content in
+ * place (happy-dom here has no layout for Radix's presence), a closed one
+ * draws nothing, as Radix does. Only the ticket sheet's content is read.
+ */
+mock.module("@/components/ui/sheet", () => {
+  const { createElement: h } = require("react");
+  const pass =
+    (tag: string) =>
+    ({ children }: { children?: unknown }) =>
+      h(tag, null, children);
+  return {
+    Sheet: ({ open, children }: { open?: boolean; children?: unknown }) =>
+      open ? h("div", { "data-sheet": "open" }, children) : null,
+    SheetContent: ({ children }: { children?: unknown }) =>
+      h("div", { role: "dialog" }, children),
+    SheetTitle: pass("h2"),
+    SheetDescription: pass("p"),
+    SheetHeader: pass("div"),
+    SheetFooter: pass("div"),
+    SheetClose: pass("span"),
+    SheetTrigger: pass("span"),
+    SheetPortal: pass("div"),
+    SheetOverlay: () => null,
+  };
+});
 
 mock.module("sonner", () => ({
   toast: {
@@ -2800,4 +2875,269 @@ test("dark until native: no Messages card or Client recaps at provider typeform;
     entryAnswer = null;
     forgetFormsRegistry();
   }
+});
+
+// --- CEO items 6 and 7 on the page (WAVE56-CONTRACT.md 5.16) ------------------
+
+const itemsFx = await import("../src/dev/kickoffItemsFixtures");
+
+/**
+ * An invented onboarding client on the test card for these tests: the sales,
+ * handoff notes and kickoff items below are made up, so they never sit on a
+ * real client's name or card. Cloned from the fixture's onboarding row with
+ * every free-text field replaced.
+ */
+const CEDAR = itemsFx.ITEMS_TASK;
+const CEDAR_NAME = itemsFx.ITEMS_CLIENT;
+const onboardingRow = (snapshot.clients as any[]).find(
+  c => c.bucket === "onboarding",
+);
+const cedarSnapshot = {
+  ...snapshot,
+  clients: [
+    ...snapshot.clients,
+    {
+      ...onboardingRow,
+      _id: "cedar-invented",
+      name: CEDAR_NAME,
+      taskId: CEDAR,
+      taskUrl: `https://app.clickup.com/t/${CEDAR}`,
+      sheetLink: "https://docs.google.com/spreadsheets/d/invented-cedar/edit",
+      todo: "Book the kickoff call.",
+      loose: [],
+      changes: [],
+      commitments: [],
+      hot: [],
+    },
+  ],
+};
+const cedarKit = {
+  ...KITS.rows[0],
+  clickup_task_id: CEDAR,
+  client_name: CEDAR_NAME,
+  handover: {},
+  forms: {
+    onboarding: { ...KITS.rows[0].forms.onboarding, response_id: "r-cedar" },
+  },
+};
+
+/** One section rendered on the invented client and read after its reads settle. */
+async function settled(section: string, url = "/") {
+  const host = win.document.createElement("div");
+  win.document.body.appendChild(host);
+  const root = createRoot(host as unknown as Element);
+  currentSnapshot = cedarSnapshot;
+  isSnapshotLoading = false;
+  snapshotError = null;
+  KITS.rows.push(cedarKit as (typeof KITS.rows)[number]);
+  await reactAct(async () => {
+    root.render(
+      createElement(
+        MemoryRouter,
+        { initialEntries: [url] },
+        pageFor(section, CEDAR),
+      ),
+    );
+  });
+  for (let i = 0; i < 6; i++)
+    await reactAct(async () => {
+      await new Promise(r => setTimeout(r, 0));
+    });
+  return {
+    host,
+    text: () => (host.textContent ?? "").replace(/\s+/g, " "),
+    done: async () => {
+      await reactAct(async () => root.unmount());
+      KITS.rows.splice(KITS.rows.indexOf(cedarKit as never), 1);
+      currentSnapshot = snapshot;
+    },
+  };
+}
+
+test("before the functions are applied, Today says one line for the kickoff items and nothing about sales to a CSM", async () => {
+  kickoffDueNow = null;
+  saleListNow = null;
+  const page = await settled("today");
+  expect(page.text()).toContain(
+    "Kickoff items open after the next cockpit update.",
+  );
+  expect(page.text()).not.toContain("Kickoff items to decide");
+  // The sale tie is the CEO's to hear about; a CSM's Today stays quiet.
+  expect(page.text()).not.toContain("Sales tie to their cards");
+  expect(page.text()).not.toContain("Sales not on a card");
+  await page.done();
+});
+
+test("Today: Kickoff items to decide and Sales not on a card, each a yes or no on the server", async () => {
+  kickoffDueNow = {
+    asOf: "2026-11-03T08:00:00Z",
+    rows: [
+      {
+        taskId: CEDAR,
+        clientName: CEDAR_NAME,
+        kickoffAt: "2026-11-01T09:00:00Z",
+        kickoffDay: "Sun 1 Nov",
+        due: 1,
+        items: [itemsFx.rawItem({ route: null })],
+      },
+    ],
+    more: false,
+    note: null,
+  };
+  saleListNow = {
+    asOf: "2026-11-03T08:00:00Z",
+    counts: null,
+    rows: [
+      {
+        responseId: "tfResp0001",
+        businessName: CEDAR_NAME,
+        signedAt: "2026-10-12T09:00:00Z",
+        closer: "Rania",
+        state: "unmatched",
+        sentence:
+          "No card has this sale's phone or email after 2 days. Check Make 10's run, or pick the card.",
+        suggestion: {
+          taskId: CEDAR,
+          name: CEDAR_NAME,
+          reason: "Billing ties this sale to this card by its payments",
+        },
+        candidates: [],
+      },
+    ],
+    note: null,
+  };
+  watched.length = 0;
+  const page = await settled("today");
+  const text = page.text();
+  expect(text).toContain("Kickoff items to decide");
+  expect(text).toContain("Raise Card missing for ads?");
+  expect(text).toContain("Sales not on a card");
+  expect(text).toContain(
+    "No card has this sale's phone or email after 2 days. Check Make 10's run, or pick the card.",
+  );
+  expect(text).toContain("Billing ties this sale to this card by its payments");
+  // The band's order on Today: the kickoff items, then the sales, then Your tasks.
+  expect(text.indexOf("Kickoff items to decide")).toBeLessThan(
+    text.indexOf("Sales not on a card"),
+  );
+  const yes = [...page.host.querySelectorAll("button")].find(
+    b => (b.textContent ?? "").trim() === "Yes, tie it",
+  );
+  expect(yes).toBeDefined();
+  await reactAct(async () => {
+    (yes as any).click();
+    await new Promise(r => setTimeout(r, 0));
+  });
+  expect(watched.find(w => w.name === "cockpit_sale_tie_decide")?.args).toEqual(
+    {
+      p_response_id: "tfResp0001",
+      p_choice: "yes",
+      p_task: CEDAR,
+      p_note: null,
+    },
+  );
+  // A Yes on an item reaches the raise function with its own request id.
+  const raise = [...page.host.querySelectorAll("button")].find(
+    b =>
+      b.getAttribute("aria-label") ===
+      "Yes, raise Card missing for ads for Cedar Interiors",
+  );
+  await reactAct(async () => {
+    (raise as any).click();
+    await new Promise(r => setTimeout(r, 0));
+  });
+  const call = watched.find(w => w.name === "cockpit_kickoff_item_raise");
+  expect(call?.args.p_task_id).toBe(CEDAR);
+  expect(call?.args.p_item).toBe("funded_card");
+  expect(String(call?.args.p_request_id)).toMatch(/^[0-9a-f-]{36}$/);
+  await page.done();
+  kickoffDueNow = null;
+  saleListNow = null;
+});
+
+test("the client page's Onboarding tab opens with the kickoff items card, above the onboarding kit", async () => {
+  kickoffReadNow = itemsFx.rawRead([itemsFx.rawItem(), itemsFx.rawMaharaOs()], {
+    taskId: CEDAR,
+  });
+  const page = await settled("client", `/clients/${CEDAR}?tab=onboarding`);
+  const text = page.text();
+  expect(text).toContain("Still open from the kickoff · 2");
+  expect(text).toContain("Raise General tech request?");
+  expect(text).toContain("Change it first");
+  expect(text.indexOf("Kickoff items")).toBeLessThan(
+    text.indexOf("Before the call"),
+  );
+  // Change it first opens the prefilled ticket form, which reports what it sends.
+  const change = [...page.host.querySelectorAll("button")].find(
+    b => (b.textContent ?? "").trim() === "Change it first",
+  );
+  expect(change).toBeDefined();
+  requestFormProps = null;
+
+  await reactAct(async () => {
+    (change as any).click();
+    await new Promise(r => setTimeout(r, 0));
+  });
+  for (let i = 0; i < 4; i++)
+    await reactAct(async () => {
+      await new Promise(r => setTimeout(r, 0));
+    });
+  expect(requestFormProps?.presetType).toBe("card_missing");
+  expect(requestFormProps?.presetClient).toEqual({
+    taskId: CEDAR,
+    name: CEDAR_NAME,
+  });
+  expect(typeof requestFormProps?.onSent).toBe("function");
+  expect(requestFormProps?.presetDetails).toBe(
+    "The card with funds is not linked to the ad account.",
+  );
+  // What the form sends is counted for the item, on the server.
+  watched.length = 0;
+  await reactAct(async () => {
+    const onSent = requestFormProps?.onSent as (r: unknown) => void;
+    onSent({ id: "req-from-form" });
+    await new Promise(r => setTimeout(r, 0));
+  });
+  expect(
+    watched.find(w => w.name === "cockpit_kickoff_item_link")?.args,
+  ).toEqual({
+    p_task_id: CEDAR,
+    p_item: "funded_card",
+    p_request_id: "req-from-form",
+  });
+  await page.done();
+  kickoffReadNow = null;
+});
+
+test("the onboarding kit's notes from the sale read the tied New Client Form while the card's fields are empty, with the method chip", async () => {
+  saleReadNow = {
+    cards: {
+      [CEDAR]: {
+        signedAt: "2026-10-12T09:00:00Z",
+        tiedBy: "phone",
+        closer: "Rania",
+        goLive: "Within two weeks of the kickoff.",
+        handoffProblems: "They want villa work only.",
+        expectations: null,
+        salesCallLink: null,
+        voidedInB2B: false,
+        otherSales: 0,
+      },
+    },
+  };
+  const page = await settled("client", `/clients/${CEDAR}?tab=onboarding`);
+  const text = page.text();
+  expect(text).toContain("Notes from the sale");
+  expect(text).toContain("Tied by phone");
+  expect(text).toContain("Handoff problems: They want villa work only.");
+  expect(text).toContain(
+    "Go-live expectation: Within two weeks of the kickoff.",
+  );
+  await page.done();
+  // Before the sale tie is applied the kit keeps the card's own words, and says nothing more.
+  saleReadNow = null;
+  const before = await settled("client", `/clients/${CEDAR}?tab=onboarding`);
+  expect(before.text()).not.toContain("Tied by");
+  expect(before.text()).not.toContain("Notes from the sale");
+  await before.done();
 });
