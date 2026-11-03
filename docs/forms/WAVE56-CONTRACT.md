@@ -2341,6 +2341,98 @@ on the VPS as the radar's user, env file mode 600, `doctor` green, the two cron 
 lines in the guardian's manifest); the guardian release. MI-2 (the CEO's yes): `market_intel.on` true in shadow, the 5
 October clients through `backfill` (about USD 4), side by side with the current reports.
 
+#### 4.23.1 The card writer, MI-1b (`clickup-writeback` job `research`; no migration of its own)
+
+A published run's two card outputs, written as today's job writes them and through the writer's discipline: one
+queue row each, kind `research`, read fresh, written exactly once, read back, a receipt on the row and an audit row for
+every state change (the queue's own trigger). Files: `supabase/functions/clickup-writeback/research.ts` (switch, check,
+writer, doctor checks), `run.ts` (`runResearch`, `runResearchDoctor`, the general doctor's line), `index.ts` (jobs
+`research` and `research_doctor`, at the forms jobs' pace), tests `research.test.ts` and the shared golden
+`fixtures/research-outputs.json`, which `hermes/market-intel/tests/test_writer_contract.py` checks against
+`mi/render.py outputs()`.
+
+| Row (`payload.effectKey`) | What is written | Rule |
+|---|---|---|
+| `research_field` | Market Research doc `7489dbcc` (a `url` field; `cockpit_clickup_fields` read 2026-11-03) = the run's `https://docs.google.com/document/d/<id>/edit` | Written only while the field is empty or holds a Doc of an **earlier** published run of this card (`plan.replaceable`). This run's Doc already there (any suffix) is delivered with no write. Any other value is kept: a person's link, today's job's Docs (7 of 70 cards, `.../edit?usp=drivesdk`), the old ClickUp docs (18): skipped with "kept: the card's Market Research doc already holds another link, so it stays." Read back by Doc id; another link arriving during the write is kept ("raced"). Receipt `progress.steps.research_field` = `{state, before: empty or ours or same or set, result: written or kept, raced?}`, never the link |
+| `research_comment` | One comment, `notify_all: false`, the worker's text, last line `Cockpit ref MI-<first 8 hex of the run id>` | The card is searched for the marker before the first post (found: delivered, nothing posted); once ClickUp answered the post with an id it is never posted again ("check the card" if it is gone); found again by marker and id. Receipt `progress.steps.research_comment` = `{state, commentId}` |
+
+**Checked before any call** (a mismatch fails the row with no call): the row's, payload's and plan's card are one
+card; `payload.runId` is the claimed run's id; the run is `mode = 'live'` in `publishing` or `done`, or ended `failed`
+or `needs_person` with this Doc kept (`run.docId` the payload's); a run back in progress (`queued` through `checking`:
+`cockpit_market_intel_release` sends a run that already published back to `queued` after an error, an outage or a
+pause) hands the row back with no try used ("Held: this research run is running again ..."), never fails it; a shadow
+run, a cancelled one or one that ended without its Doc fails in words; `payload.docId` is the link's Doc id; the
+link's and the comment's sha256 equal `payload.valueSha256` / `payload.commentSha256`; the comment links this run's Doc and ends with its marker, once;
+`replaceable` is at most 20 Doc ids. Links at most 300 characters, comments at most 2,000.
+
+**Switch** (Edge secrets, `researchGate`; no other switch opens it): `CLICKUP_WRITEBACK_APPLY_RESEARCH` exactly `true`;
+`CLICKUP_WRITEBACK_RESEARCH_KEYS` the outputs written, `field` and/or `comment`; **unset means none**, so every row is
+held (handed back, no try used) until MI-3 lists them; anything else in the list opens nothing and reads not ok;
+`CLICKUP_WRITEBACK_RESEARCH_ONLY_CARDS` narrows to canary cards (`86eywg1cq` first), a value that is not card ids
+opens nothing. Each run reports `cockpit_sync_state` `clickup-writeback:research` (`detail.mode`, `detail.keys`,
+`detail.onlyCards`, `detail.at`, counts). The general `doctor` names the switch ("Market research writes: ..."), and
+`research_doctor` reads only: the switch, the queue and the publish brake from the database, field `7489dbcc` on
+Clients - Mahara as a `url` field, and the canary card (`clickup-writeback:research-doctor`).
+
+**What the database must add (the MI-3 migration; MI-1b has no letter and applies nothing).** Until then the job
+answers "Market research writes open with the MI-3 migration: the database has no research queue yet ... Nothing was
+read or written." (not ok; never "Nothing to write"), and the doctor names the same gap.
+
+1. `cockpit_clickup_writeback_queue_kind_check` and `cockpit_clickup_writeback_runs_job_check` gain `research` (each
+   under its own definition guard, as `20261029t` did); `cockpit_clickup_writeback_begin` accepts job `research`;
+   `cockpit_clickup_writeback_release` hands a `research` row back (queued, or retry once its steps hold anything);
+   **the generic claim `cockpit_clickup_writeback_claim(uuid,integer)` never takes one**: `AND q.kind NOT IN
+   ('request','task_action','form','research')`, the change `20261029t` made for `form` ("so the deployed log job never
+   settles one skipped"). Without it the log job (pg_cron `mahara-clickup-writeback-log`, every 2 minutes) takes a due
+   research row first, past this writer's switch and the research claim, finds no branch for it in `buildSteps` and
+   settles it `skipped` ("A question or a request, not a change ..."), and it reclaims a research row left `sending`
+   for 10 minutes, so the field and comment are never written. `cockpit_clickup_writeback_idle` accepts job `research`
+   too (else index.ts's crash line for the job is dropped). Each replaced body under a drift guard on its live md5, read
+   as `20261029t` reads it (`md5(regexp_replace(prosrc, '\s+', ' ', 'g'))`), live 2026-11-03 (read-only), all four
+   `20261029t`'s: claim `2a3313b36fb6e0b4b86d1312ea922697` (its `md5(pg_get_functiondef(oid))` is
+   `ad74062c01574dfd75540b2af2573449`), idle `08b5e5a296dfa7f00c0d6da422f4cd54`, begin
+   `4d649b297933116a4bf1e5a954bf552a`, release `19526fc6726c6273b180cfedf527e1b7`; read them again before writing.
+2. An enqueue, service role only, called by the worker once the run's Doc exists (state `publishing`): one row per
+   output, `dedupe_key` `research:<run>:<key>`, `source_table` `cockpit_market_intel_runs`, `task_id` the card,
+   `payload` `{kind:'research', effectKey, runId, taskId, docId, valueSha256 + valueChars | commentSha256 +
+   commentChars}`, **never the link or the text** (the audit trigger copies payloads); the link stays on the run
+   (`doc_url`) and the comment text in a column of the run (or an outputs table) that only the claim reads. Refused
+   for a shadow run, for a Doc link that is not `^https://docs\.google\.com/document/d/`, and while
+   `market_intel.apply_clickup` is off or the card is outside a non-empty `only_cards`. Called again for the same run
+   (a run that resumes and publishes again, or a resend), it reopens a `failed` or `skipped` row of that `dedupe_key`
+   (back to `queued`, `attempts` 0, `error` cleared, its `steps` and `progress` kept, so a write already on the card is
+   found and never made twice) instead of deduping it away; a `delivered`, open or `sending` row is left as it is.
+3. `cockpit_clickup_writeback_claim_research(p_token uuid, p_limit int)` (service role only): takes nothing unless
+   `clickup-writeback:research` is younger than 15 minutes with a live mode (and only its `onlyCards` when
+   `apply_limited`) **and** `market_intel.apply_clickup` is on; takes due rows and, as the forms and requests claims
+   do, its own rows left `sending` for more than 10 minutes (the generic claim no longer takes them, item 1); per card,
+   a newer run's rows wait while an older run's rows are open; field before comment; `attempts + 1`; returns each row
+   with `run: {id, state, mode, docId, plan}` where `docId` is the run's `doc_id` and `plan` is `{taskId,
+   fieldId:'7489dbcc-…', kind:'url', value:<doc_url>, replaceable:[doc ids of this card's live runs that finished
+   before this one]}` for the field and `{taskId, text}` for the comment. It hands out a row only while its run is
+   `publishing` or `done`, or has ended `failed` or `needs_person` with its Doc kept (`doc_id` the payload's `docId`);
+   a row whose run is back in progress (`queued` through `checking`) is not handed out and stays as it is, no try
+   used, until the run publishes again. A row whose run is gone, cancelled, a shadow run or ended without its Doc is
+   settled `skipped` with a sentence. The writer checks the same again (above), so a claim that hands out a row of a
+   run back in progress costs no try.
+4. `cockpit_clickup_research_doctor_inputs()` (service role only): `{queue:{state:n}, oldestDue, stuckSending,
+   field:'7489dbcc-fbbd-4eec-abfd-1306be7ff4b8', applyClickup, onlyCards}`.
+5. A trigger on a research row's settle that mirrors the receipt onto the run (`field_state` `written` or `kept`,
+   `comment_id`) with a `cockpit_market_intel_audit` row, and a minute kick (`pg_cron`) that posts `{"job":"research"}`
+   only while a research row is due, as the forms kick does.
+6. `research.test.ts` turns its skipped check on by itself once a migration in the tree defines the claim: every RPC
+   `research.ts` calls defined there, revoked from `PUBLIC, anon, authenticated` and granted to `service_role` only;
+   and, read from the definitions in force after every migration in the tree (`mi3Gaps`), the generic claim and the
+   release list `research` in their kind `NOT IN`, begin and idle in their job `NOT IN`, and the research claim
+   reclaims its own `sending` rows after 10 minutes and reads its run's `publishing` state.
+
+**Deploy (at MI-3, after that migration):** `fdeploy.sh clickup-writeback <rev> --dry`, then live with the live
+`verify_jwt`; `research_doctor` reads Ready; then `CLICKUP_WRITEBACK_APPLY_RESEARCH=true`,
+`CLICKUP_WRITEBACK_RESEARCH_ONLY_CARDS=86eywg1cq`, `CLICKUP_WRITEBACK_RESEARCH_KEYS=field,comment`, `market_intel`
+`apply_clickup` true with `only_cards` the test card; one run published on the test card, its field and comment read
+back; then widen. Deploying this code before MI-3 changes nothing on any card: the job is not scheduled, and called by
+hand it reads the gap above.
+
 ---
 
 ## 5. The screens: design plans and copy

@@ -24,8 +24,15 @@
 //                   (20261101m)         map (cockpit_clickup_fields), checked against what the
 //                                       billing writes need (Client Status, Churn Type and Reason
 //                                       options, the dates, MRR, LTV, the 9cfdb353 checkbox)
+//   research  from MI-3 (its migration    the market research writes (kind 'research', plan build
+//             adds the schedule)        MI-1b): the card's Market Research doc 7489dbcc and one
+//                                       comment for each published run of hermes/market-intel,
+//                                       research.ts
+//   research_doctor  on demand          reads only: the Market Research doc on Clients - Mahara as
+//                                       a link field, the canary card, the research queue and the
+//                                       setting market_intel.apply_clickup
 //
-// Dry run by default. Six secrets open writes to ClickUp, each only when it
+// Dry run by default. Seven secrets open writes to ClickUp, each only when it
 // is exactly "true" (run.ts OUTWARD SAFETY):
 //   CLICKUP_WRITEBACK_APPLY              the log and Do's & Don'ts, never a billing
 //                                        edit (waves 1-2 W2)
@@ -59,6 +66,11 @@
 //                                        (client card ids) narrows it to a canary card
 //                                        (86eywg1cq). Every log run reports the switch in
 //                                        cockpit_sync_state clickup-writeback:billing.
+//   CLICKUP_WRITEBACK_APPLY_RESEARCH     the market research writes only, and only the outputs
+//                                        CLICKUP_WRITEBACK_RESEARCH_KEYS lists (field, comment;
+//                                        none when unset, so every row is held until MI-3 lists
+//                                        them); CLICKUP_WRITEBACK_RESEARCH_ONLY_CARDS (client card
+//                                        ids) narrows it to a canary card (86eywg1cq).
 // The kpi job reports ok=false while it is a dry run, on a run limited to
 // CLICKUP_WRITEBACK_ONLY_TASKS, when no card had Last Updated written and when
 // a write failed, so the health line never says ok over frozen numbers.
@@ -67,7 +79,8 @@
 // CLICKUP_WRITEBACK_ONLY_TASKS (comma-separated task ids for a one-card live
 // check; it narrows APPLY and APPLY_KPI, not client success tickets) and the
 // pace: CLICKUP_REQUESTS_CALLS_PER_MINUTE for the two requests jobs (default
-// 25), CLICKUP_FORMS_CALLS_PER_MINUTE for the two forms jobs (default 10) and
+// 25), CLICKUP_FORMS_CALLS_PER_MINUTE for the two forms jobs and the two research
+// jobs (default 10) and
 // CLICKUP_CALLS_PER_MINUTE for the others (default 30), never above 60
 // (run.ts writebackPerMinute, formsPerMinute). Each pace is one Edge Function
 // call's; the requests and forms jobs each open one run at a time (an
@@ -96,6 +109,8 @@ import {
   runLog,
   runRequests,
   runRequestsDoctor,
+  runResearch,
+  runResearchDoctor,
   unknownJobNote,
   writebackPerMinute,
 } from "./run.ts";
@@ -135,7 +150,8 @@ Deno.serve(async (req: Request) => {
   } catch {
     return json({ ok: false, note: noJobNote }, 400);
   }
-  const formsJob = job === "forms" || job === "forms_doctor";
+  // The research jobs write the same client cards at the forms jobs' low pace (MI-1b).
+  const formsJob = job === "forms" || job === "forms_doctor" || job === "research" || job === "research_doctor";
   const deps: Deps = {
     env,
     rpc: (name, params = {}) => rest(url, service, `rpc/${name}`, params),
@@ -164,6 +180,8 @@ Deno.serve(async (req: Request) => {
       : job === "forms" ? await runForms(deps)
       : job === "forms_doctor" ? await runFormsDoctor(deps)
       : job === "billing_doctor" ? await runBillingDoctor(deps)
+      : job === "research" ? await runResearch(deps)
+      : job === "research_doctor" ? await runResearchDoctor(deps)
       : null;
     if (!result) return json({ ok: false, note: unknownJobNote(job) }, 400);
     console.log(`clickup-writeback ${job} ${result.ok ? "ok" : "FAILED"}: ${result.note}`);
