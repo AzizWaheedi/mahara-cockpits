@@ -316,6 +316,30 @@ def ts_body(src: str, name: str) -> str:
     return src[start:ts_end(src, start + 1, "}") + 1]
 
 
+def ts_const(src: str, name: str) -> str:
+    """An exported const object literal's body, its braces included ("" when there is none)."""
+    at = re.search(rf"export const {re.escape(name)}\b[^=\n]*=\s*\{{", src)
+    if not at:
+        return ""
+    start = at.end() - 1
+    return src[start:ts_end(src, start + 1, "}") + 1]
+
+
+DAILY_BUDGET = "539743c2-b6cd-4eeb-bf2f-abaf64769a5e"
+
+
+def daily_budget_problem(writer: str) -> str:
+    """Why clickup-writeback/forms.ts names Daily Budget other than once, as CARD_FACTS' USD currency field
+    ("" when it names it exactly so)."""
+    times = writer.count(DAILY_BUDGET)
+    if times != 1:
+        return f"names Daily Budget {times} times, not once"
+    entry = r'"' + DAILY_BUDGET + r'":\s*\{\s*kind: "currency",\s*label: "Daily Budget",\s*\}'
+    if not re.search(entry, ts_const(writer, "CARD_FACTS")):
+        return "names Daily Budget other than as CARD_FACTS' USD currency field"
+    return ""
+
+
 def ts_resolve(src: str, expr: str, at: int, depth: int = 4) -> str:
     """`expr` with what each name it reads holds appended: the nearest const or let before `at`, `depth` deep."""
     out = expr
@@ -1126,9 +1150,44 @@ class OnTopOfMake(unittest.TestCase):
         self.assertRegex(sql, r"(?<![\d,])3,?600(?!\d)", "the briefs' 3,600-character cap")
         self.assertIn("card_facts", sql)
         writer = (WRITER / "forms.ts").read_text()
-        for name, text in ((files[0].name, sql), ("clickup-writeback/forms.ts", writer)):
+        # Build B1 (next-design item 5): the writer may take Daily Budget, only in CARD_FACTS as a USD currency field
+        # filled while empty, before any planner plans it (B5's migration does, and takes it out of CARD_FACTS_NEVER).
+        # 20261102p's planner still never names it. The exception is one occurrence, in that one entry.
+        writer_may = {DAILY_BUDGET} if DAILY_BUDGET in mp.CARD_FACTS_NEVER else set()
+        if writer_may:
+            self.assertEqual(daily_budget_problem(writer), "", "clickup-writeback/forms.ts")
+        for name, text, may in ((files[0].name, sql, set()), ("clickup-writeback/forms.ts", writer, writer_may)):
             self.assertEqual({fid for fid in mp.CARD_FACTS if fid not in text}, set(), f"{name} does not name every card_facts field")
-            self.assertEqual({fid for fid in mp.CARD_FACTS_NEVER if fid in text}, set(), f"{name} names a field card_facts never writes")
+            self.assertEqual({fid for fid in mp.CARD_FACTS_NEVER if fid in text and fid not in may}, set(),
+                             f"{name} names a field card_facts never writes")
+
+    def test_the_daily_budget_exception_is_one_entry_in_card_facts(self):
+        # A writer shaped like forms.ts (invented ids but Daily Budget's): the exception holds only for one
+        # occurrence, inside CARD_FACTS, as a currency field labelled Daily Budget.
+        entry = f'  "{DAILY_BUDGET}": {{\n    kind: "currency",\n    label: "Daily Budget",\n  }},\n'
+        stage4 = 'export const STAGE4_FIELDS: Record<string, { card: string[] }> = {\n  kickoff: { card: ["f-1"] },\n};\n'
+        facts = ('export const CARD_FACTS: Record<string, FactSpec> = {\n'
+                 '  "f-1": {\n    kind: "labels",\n    label: "Invented",\n    options: { "o-1": "One" },\n  },\n'
+                 + entry + '};\n')
+        profile = 'export const PROFILE_BACKFILL: Record<string, FactSpec> = {\n  "f-2": { kind: "text", label: "Profile" },\n};\n'
+        good = stage4 + facts + profile
+        self.assertEqual(daily_budget_problem(good), "")
+        self.assertIn(f'"{DAILY_BUDGET}"', ts_const(good, "CARD_FACTS"))
+        self.assertNotIn(DAILY_BUDGET, ts_const(good, "STAGE4_FIELDS") + ts_const(good, "PROFILE_BACKFILL"))
+        # Named again anywhere else, the CARD_FACTS entry kept: in STAGE4_FIELDS, another allowlist, or a bare path.
+        for extra in (good.replace('["f-1"]', f'["f-1", "{DAILY_BUDGET}"]'),
+                      good.replace('  "f-2"', entry + '  "f-2"'),
+                      good + f'const budgetPath = "{DAILY_BUDGET}";\n',
+                      good + f"// {DAILY_BUDGET}\n"):
+            self.assertEqual(daily_budget_problem(extra), "names Daily Budget 2 times, not once")
+        # Once, but outside CARD_FACTS, or inside it with another kind.
+        moved = stage4 + facts.replace(entry, "") + profile.replace('  "f-2"', entry + '  "f-2"')
+        self.assertEqual(daily_budget_problem(moved), "names Daily Budget other than as CARD_FACTS' USD currency field")
+        self.assertEqual(daily_budget_problem(good.replace('kind: "currency"', 'kind: "number"')),
+                         "names Daily Budget other than as CARD_FACTS' USD currency field")
+        self.assertEqual(daily_budget_problem(good.replace("export const CARD_FACTS", "export const OTHER_FACTS")),
+                         "names Daily Budget other than as CARD_FACTS' USD currency field")
+        self.assertEqual(daily_budget_problem(stage4 + facts.replace(entry, "") + profile), "names Daily Budget 0 times, not once")
 
 
 class Answer:

@@ -23,10 +23,19 @@
 //                                        Check-in Call), and nothing else (forms.ts
 //                                        formsGate). CLICKUP_WRITEBACK_FORMS_ONLY_CARDS
 //                                        narrows it to listed client cards (a canary).
-//                                        CLICKUP_WRITEBACK_FORMS_KEYS lists the forms whose
-//                                        card writes are on (checkin, kickoff, onboarding;
-//                                        checkin when unset, forms.ts formsKeysGate): a row
-//                                        of another form is held, never written (Stage 4)
+//                                        CLICKUP_WRITEBACK_FORMS_KEYS lists the lanes whose
+//                                        card writes are on (checkin, kickoff, onboarding,
+//                                        new_client, profile_backfill; checkin when unset,
+//                                        forms.ts formsKeysGate and formLane): a row of
+//                                        another lane is held, never written (Stage 4). A held
+//                                        row keeps its created_at, so as the oldest open row on
+//                                        its card it holds back every later form row there, 1-1
+//                                        notes included (the claim's per-card order, 20261029t).
+//                                        A lane comes out only once none of its rows is queued,
+//                                        sending, retry or unknown: profile_backfill, the Client
+//                                        Profile backfill's one-shot lane, after its last row
+//                                        settles. new_client is listed before
+//                                        forms.sale_tie.fill is turned on.
 //   CLICKUP_WRITEBACK_APPLY_BILLING      billing edits in the log (kind billing), and
 //                                        only those whose event kind is listed in
 //                                        CLICKUP_WRITEBACK_BILLING_KINDS (comma list,
@@ -83,6 +92,7 @@ import {
   executeForm,
   type FormItem,
   formStep,
+  formLane,
   formsDb,
   formsDoctorChecks,
   formsGate,
@@ -1128,12 +1138,15 @@ export async function runForms(deps: Deps, limit = 8): Promise<JobResult> {
         await handBack(item, g.error ?? (g.mode === "apply_limited" ? SAY_FORMS.heldLimited : SAY_FORMS.heldOff), HOLD_MS);
         continue;
       }
-      if (!fk.has(item.payload?.formKey ?? "checkin")) {
-        // This form's card writes are not switched on: back to the queue, untouched, like a held card.
+      // The row's lane: its form, or profile_backfill for a Client Profile backfill row (forms.ts formLane), so
+      // onboarding in the list never opens a backfill row and profile_backfill never opens an onboarding row.
+      const lane = formLane(item.payload);
+      if (!fk.has(lane)) {
+        // This lane's card writes are not switched on: back to the queue, untouched, like a held card.
         counts.held += 1;
         counts.heldOff += 1;
         planned.push(...planForm(item));
-        await handBack(item, SAY_FORMS.heldForm(String(item.payload?.formKey ?? "checkin")), HOLD_MS);
+        await handBack(item, SAY_FORMS.heldForm(lane), HOLD_MS);
         continue;
       }
       try {
