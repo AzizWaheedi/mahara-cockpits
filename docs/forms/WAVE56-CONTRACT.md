@@ -1385,7 +1385,8 @@ stops that item.
    language drafted under the voice skill and listed in the slice report, then shown to the CEO in
    the forms editor before D-S4O, 1.3), `heading` items for its three screens, prefill context from
    the New Client Form answers the cockpit stores (`cockpit_form_responses` `new_client`: business
-   name, the closer's notes) and the card. **Branching ("onsite logic", plan 5.16):** the builder
+   name, the closer's notes) and the card (since `20261103g`, 4.19, the business name is the card's
+   newest tied sale's own answer `a1be4eee`; before it the read matched no stored sale). **Branching ("onsite logic", plan 5.16):** the builder
    derives which questions are conditional from the 46 stored answers (a question absent from some
    answers) and expresses each as schema v1's single-equality `showIf`; a test asserts the renderer
    and the SQL checker hide the same fields. D-S4.0 reads the saved definition's `logic` and stops if
@@ -1884,6 +1885,283 @@ the way `o` changed version 2, and adds `KFRCXPFx`'s fifth Meta choice to the St
    `stage4-better-data-supabase.test.ts` (the brief's Meta line), `test_make_parity.py` (Make 13 prints the label; a run
    with it passes once the plan maps it and fails with `answers differs` while it does not), and the client-success
    `form-prefill` and `form-rail` tests (a native entry reads as a full record).
+
+### 4.19 The sale tie: every New Client Form on its card (CEO-6 decided; build B3, migration `20261103g`)
+
+The CEO, 2026-11-02, on CEO-6: **"Should already be synced, if not do it fully now."** It was not: 0 of 55 stored
+sales sat on a card, and the two card fields the CSM screens read for go-live (`d4483463`) and handoff problems
+(`e17a1c27`) were filled on 0 of 70 cards (design `next-design/sale-tie.md` section 1). B3 is the backend of "fully":
+every stored and every new sale tied to its card by an exact phone or email (never a name), the tie mirrored on the
+stored sale, the two fields filled only where empty on cards on the books, and the portal's business-name context
+fixed. The screens (the rail's "From the sale", the OnboardingKit's chip, the "Sales not on a card" band, the CEO's
+forms-health line) are build B7 against the reads below. Billing's money tie (`cockpit_billing_deal_assignments`, live
+`c0930161…`) is read as a second source and **never changed**.
+
+**Keys.** Phone first, then email, exact and unique only. One normaliser, `cockpit_sale_tie_norm(kind, value)`: a
+`phone` (the sale's typed answer, the card's Phone Number) must carry its country code (`+` or `00`; spaces, dashes,
+dots and brackets out); a `raw_phone` (the sale's raw-phone answer `f322053a`, typed without the `+`, and the client's
+onboarding answer `64f2fb80`) gets a `+` in front of 10 to 15 digits; the result must match `^\+[1-9][0-9]{7,14}$`, or
+there is no key (a national number never is one). An email is `lower(btrim())` and must look like one; no folding of
+dots or plus tags. Keys are kept **only as HMAC-SHA256 digests** (`hmac('<kind>:<key>', pepper)`, hex) under the vault
+secret `cockpit_sale_tie_pepper`, made by the migration from 32 random bytes when absent and read only by owner
+functions. A value travels into the database inside one service call and is digested at once; no table, audit row,
+count, note, log line or answer holds a value or a digest outside `cockpit_sale_ties` and `cockpit_sale_tie_cards`.
+
+| Side | Key | Source |
+|---|---|---|
+| Sale, on arrival | phone, email | the delivery's own typed `95a3901f` (phone_number) and `a6ea04df` (email), read by ref and type before the door's contact filter (`tieKeys`) |
+| Sale, stored (backfill, and the sweep when the door opened no row) | phone | `f322053a` with a `+`, only when its last 8 digits equal `cockpit_sales_deals.phone8` |
+| | email | `cockpit_sales_deals.email` |
+| Card, K1 | phone, email | the card's own Phone Number `085d5e18-16f5-4cf5-8669-b8acf10700a5` and Email `a90c8230-fa67-4e41-b6ed-39306f061fc3` (Make writes both from the sale), and its ClickUp `date_created`, sent by the onboarding sync |
+| Card, K2 | phone, email | the client's onboarding answer in `cockpit_client_onboarding.forms.onboarding` (`64f2fb80`, `7994f0d2`) |
+
+**The match rule** (`cockpit_sale_tie_match`, every path). Candidates are cards on `cockpit_billing_accounts`, and a card
+the onboarding sync keeps (`cockpit_client_onboarding`) that billing-sync has not listed yet (billing-sync runs
+`7,37 3-18 * * *` and `17 21 * * *` UTC, so a card Make makes in the Kuwait evening would otherwise wait 2.5 to 6 hours;
+read 2026-11-03: 70 onboarding cards, 68 on billing, the 2 others the playing account and an internal test), never the
+playing account or an internal test (billing's own pattern, on the billing name, else the onboarding name), whose K1 or
+K2 digest is the sale's. Make's card ties at the sweep that ends the sync run which first saw it.
+
+1. One card by phone ties `phone`; `phone_email` when the email points at it too. The email on other cards only is a
+   `conflict` (candidates: all of them).
+2. Several cards share the key (a returning client; Make makes a card on every sale): the one card ClickUp made in
+   [sale − 10 minutes, sale + 48 hours] ties, the others are kept in `also_on`. When the phone's cards are several and
+   none is in the window, an email that resolves to one of them ties `phone_email`.
+3. **While the sale is under 2 days old, a card made before that window never ties it**: the row waits for the card
+   Make is making (decision B3-1 below). After 2 days the rules above apply to every candidate.
+4. No phone key or no phone card: the same by email (`email`).
+5. Still several cards: `ambiguous`. No card: `waiting` for 2 days, then `unmatched`. Voided in B2B: `void`.
+6. A person's decision is never changed by the system. The door, the offer and the sweep check only `waiting` and
+   `unmatched` system rows again; the backfill job also checks the system's own `ambiguous` and `conflict` rows and its
+   own `tied` rows whose card notes are not planned yet (no `sale_facts` effect): it has every card's K1 and creation
+   time, so a tie a sweep made from K2 alone moves to the in-window card, or becomes a `conflict` for a person when K1
+   points elsewhere. A tie with a `sale_facts` effect stays as it is (`cockpit_sale_tie_apply` answers `kept`).
+
+`key_source` says which card key matched: `card_fields` (K1), `onboarding_answer` (K2) or `both`. Each decision records
+billing's card and method (`billing_task_id`, `billing_matched_by`); a disagreement never blocks an exact tie.
+
+**Migration `20261103g_sale_tie.sql`** (applies twice; stops with `Apply 20261102o (Stage 4, match Make) and the billing
+balances (20261023x) before 20261103g.` without them; drift guard on the three bodies it replaces):
+
+| Object | Shape and rule |
+|---|---|
+| `cockpit_sale_ties` | append-only, one live row per sale (`UNIQUE (response_id) WHERE cleared_at IS NULL`): `response_id` (the Typeform token), `form_response_id`, `state` (`waiting`, `tied`, `ambiguous`, `conflict`, `unmatched`, `void`, `not_client`), `clickup_task_id` and `matched_by` (`phone`, `email`, `phone_email`, `person`) exactly when tied, `key_source`, `candidates[]`, `also_on[]`, `suggested_task_id`/`suggested_by` (`billing`, `sales_call`), `billing_task_id`/`billing_matched_by`, `phone_key`/`email_key` (digests), `note` (3 to 500, required for a person's tie and `not_client`), `set_by` (`system:forms-door`, `system:onboarding-sync`, `system:backfill` or a seat's address), `set_at`, `cleared_by/at/reason` (set once). Delete and truncate refused (`cockpit_hours_refuse_delete`); a lock trigger allows only setting `cleared_*` once. Its own audit trigger writes one row per insert and clear: ids, states and methods, the choice and role of a person's decision; never a digest, a note or a reason's text |
+| `cockpit_sale_tie_cards` | K1 per card: `phone_key`, `email_key` (digests), `created_at` (ClickUp's), `seen_at`, `seen_by`. Written only by the offer and the backfill, changed rows only, one audit row per call (`forms.sale_tie_cards_seen`, counts). Delete and truncate refused. (Decision B3-2) |
+| Grants | row security on both, no policy; every grant revoked from PUBLIC, anon, authenticated and service_role, then `SELECT` to service_role (the guardian); the sequence revoked |
+| Pepper | vault secret `cockpit_sale_tie_pepper`, created once with an audit row `forms.sale_tie_pepper_created` (`{"bytes":32}`); never printed, never rotated by a file |
+| Setting `forms.sale_tie` | `{"on": false, "fill": false, "salesLink": false}`, seeded with the merge rule of 2.1 (a second apply never turns a switch off); every change audited by the live `cockpit_settings_forms_audit` (`forms.switch_set`) |
+| Registry | `new_client` keeps Make's four entries and gains `{"key":"sale_tie","label":"Sale tied to its card","owner":"cockpit","delivery":"sql"}` and `{"key":"sale_facts","label":"Go-live and handoff problems on the card, when empty","owner":"cockpit","delivery":"clickup_queue"}`, one audit row each (`forms.sale_tie_registry`) |
+| `cockpit_form_responses_guard()` | replaced; live `d013e81456ebe7a8791270fe8858b972`, after **`f6caf2beba4c83801001f7e603844e62`**; owner only. One carve-out under `cockpit.forms_legacy = 'sale_tie'`: a `new_client` response in state `submitted`, answers unchanged, `answer_meta` changed only in `match` (`phone`, `email`, `phone_email`, `confirmed_by_person`) and `matched` (keys `by`, `at`, `via`, `taskId`, `from` only, `taskId` the card), `task_id` equal to its live tied row's card, or none (and no `match`/`matched`) when the live row is not tied. Every other refusal is as live |
+| `portal_form_onboarding_open(text,text,text,text)` | replaced; live `81c9ede6f7c2c511d1e34c22388ddf24`, after **`fce6f339b02986b2d5cfcc09729a5def`**; service_role as live. The business-name context (4.14.1) is the card's newest live, tied sale's own answer `a1be4eee` (trimmed, 200 characters); nothing else changes. Before, it read `answers->>'businessName'` on a sale with a card, which no stored sale has |
+| `cockpit_form_doors()` | replaced; live `709af1bfae87a41adaa5edf46ca5f0a9`, after **`2f0ada3d4b667de7d9d7139677960bdf`**; authenticated as live. Adds `saleTie` (list, decide and read exist, and `on`), `saleFacts` (`fill`) and `salesLink` (`salesLink`), each with its `why` (`missing`, `off` or null), as the waves 5-6 doors |
+
+**Functions.** Owner only unless said: `_flags`, `_norm`, `_digest`, `_pepper`, `_key`, `_answer`, `_ts`,
+`_stored_keys`, `_card_keys`, `_resolve`, `_match`, `_billing`, `_suggest`, `_evaluate`, `_card_name`, `_write` (clears
+and inserts, then mirrors the response under the carve-out: `task_id`, `client_name` from the billing sheet,
+`answer_meta.match` and `matched {by, at, via:'sale_tie', taskId, from?}`), `_apply`, `_plan_facts`, `_plan_pending`,
+`_store_cards`. Service role (each also checks `cockpit_hours_require_service` inside):
+
+| Function | Who calls it | Contract |
+|---|---|---|
+| `cockpit_sale_tie_open(p jsonb)` | forms-door, after `cockpit_form_record_make` (inserted or repeat) | `p = {externalId, submittedAt, tieKeys: {phone, email}}` (each text or null). A sale with a live row answers `{ok, state, tieId, repeat: true}` and changes nothing. Else one row: `waiting` with the two digests while `on` is off; the match rule while on (a tie plans its card fields when `fill` is on). Sets `detail.tie = 'ok'` on `forms-door:new_client`. Refusals: `That is not a Typeform response token.`, `Send tieKeys as {phone, email}, each text or null.` |
+| `cockpit_sale_tie_door_failed()` | forms-door, when the call above failed | `detail.tie = 'failed'`, `tieAt` on `forms-door:new_client` (the guardian's reading) |
+| `cockpit_sale_tie_waiting()` | onboarding-sync, start of each run | `{on, waiting, since}`: live `waiting` rows and the oldest one's signing time |
+| `cockpit_sale_tie_offer(p_run bigint, p_cards jsonb)` | onboarding-sync, per card page while sales wait | `p_cards = [{taskId, createdAt, phone, email}]`, at most 200. Off: `{on: false, offered, stored: 0, tied: 0, waiting}` and no write. On: stores K1 digests and creation times, checks the waiting and unmatched system rows, plans the fields of new ties (fill on), answers `{on, offered, stored, tied, waiting}` |
+| `cockpit_sale_tie_sweep(p_run bigint DEFAULT NULL)` | onboarding-sync, end of each run | Off: `{on: false}`. On: a row for every stored live sale without one (keys from the stored sources), the waiting and unmatched system rows checked again (waiting over 2 days becomes `unmatched`), every tie without a `sale_facts` effect planned while `fill` is on (newest sale first), and the health row `cockpit_sync_state` `sale-ties` (`ok`, a counts sentence, `detail {opened, tied, planned, waiting, unmatched, forPerson, run}`; while `fill` is on and the gate has no `(new_client, sale_facts)` branch, the sentence ends "Card notes wait for the forms gate that passes them (20261103c), so none were planned."). Answers the same counts |
+| `cockpit_sale_tie_backfill(p_cards jsonb, p_dry boolean)` | the onboarding-sync job `{"job":"saleTies","dryRun":true|false}` | every card's K1 (at most 2,000). A dry run writes nothing. A real run needs `on` (`Sale ties are off. Read the dry run first, then turn forms.sale_tie.on on and run the job again.`), stores the card keys, writes each changed system decision (every system row but `void`, `not_client` and a tie with a `sale_facts` effect: rule 6), plans the fields while `fill` is on. Counts only: `sales, tied, phone, email, phoneEmail, person, cardFields, onboardingAnswer, both, waiting, ambiguous, conflict, unmatched, void, notClient, billingAgree, billingDisagree, billingOnly, salesCallAgree, salesCallDisagree, fillCards, fillOnBooks, fillInOnboarding, fillGone, cards, cardsWithPhone, cardsWithEmail, billingRead, dryRun, written, planned` (where every sale stands after the run) |
+
+**The cockpit's reads and the one write** (authenticated, `SECURITY DEFINER`, the gate first; B7 builds to these, and
+reads PGRST202 as "opens after the next cockpit update"):
+
+- `cockpit_sale_tie_list()` → `{on, fill, salesLink, rows, summary}`. CEO or CSM seat (`cockpit_has_role('csm')`, so an
+  admin too), else 42501 `Only a client success seat or the CEO sees the sales not on a card.` `rows`: each live
+  `ambiguous`, `conflict` or `unmatched` sale, each `waiting` sale signed over 2 hours ago, and for the CEO only each tie
+  billing puts on another card: `{responseId (the token), state, sentence, businessName, signedAt, signedOn (Kuwait
+  day), closer (the sale's "Who closed" answer, else the hidden closer), tiedTo {taskId, clientName, tiedBy} | null,
+  candidates [{taskId, clientName, reason}], suggestion {taskId, clientName, by?, reason} | null}`. Sentences: waiting
+  "No card has this sale's phone or email yet. The next sync looks again."; unmatched "No card has this sale's phone or
+  email after 2 days. Check Make 10's run, or pick the card."; ambiguous "More than one card has this sale's phone or
+  email. Pick the right card."; conflict "The phone points to one card and the email to another. Pick the right
+  card."; billing "Billing ties this sale to another card." Reasons: "Same phone as the card", "Same email as the
+  card", "Same phone and email as the card", "Billing ties this sale to this card by its payments" (ledger), "... by its
+  name" (name, alias), "The CEO linked this sale to this card in billing" (link), "Same sales-call link as the card".
+  A CSM sees a row only when a candidate or the suggestion is one of their clients (`cockpit_client_allowed`), and only
+  those cards. `summary` (counts only): `sales, onCard, byPhone, byEmail, byPhoneAndEmail, byPerson, forPerson, waiting,
+  void, notClient, rows`; the CEO's line is "<sales> sales: <onCard> on their card (<byPhone + byPhoneAndEmail> by
+  phone, <byEmail> by email, <byPerson> by a person), <forPerson> waiting for a person." and, before the migration,
+  "Sales are not tied yet." Never a phone, an email or a digest.
+- `cockpit_sale_tie_decide(p_response_id text, p_choice text, p_task text, p_note text)` → `{ok, responseId, state,
+  taskId, clientName, facts, movedFrom?, handFill?}`. `yes` ties to the suggestion (billing's card, else the one sales-call card),
+  else the one candidate; `pick` ties to `p_task` (on the billing sheet, never the playing account or a test);
+  `not_client` (a test or duplicate sale) and `clear` (take a tie off; the row becomes `unmatched` with the old card as
+  its candidate) need a note of 3 to 500 characters. The CEO decides any row; a CSM only for cards of their own
+  clients, never moves or clears a tie whose `sale_facts` is `queued`, `unknown` or `delivered` ("This sale's go-live
+  and handoff notes are already on another card. Ask the CEO to move it."), and marks `not_client` only a sale that
+  shows one of their clients. The CEO's move, clear or `not_client` of a tie whose write has not started (effect
+  `queued`, queue row `queued` or `retry`, no step started or done) **takes that write back** in the same transaction
+  (`cockpit_sale_tie_take_back`): the queue row ends `skipped` "The CEO took this sale off this card before its notes
+  were written, so nothing was written.", the live settle trigger skips the effect, the gate answers "This write was
+  settled in the cockpit, so nothing was written.", and the audit row names that card as `factsTakenBack`. While the
+  write is in flight (queue row `sending`, effect `unknown`, or a step started) the CEO is refused (55000) "This sale's
+  go-live and handoff notes are being written to its card now. Try again once that write finishes." A written
+  (`delivered`) tie may be moved; its audit row names the first card (`factsOnCard`) for a hand clear. One `sale_facts`
+  effect per sale (unique on response and key), so the new card gets no cockpit write: the answer carries
+  `handFill {taskId, sentence}` ("This sale's notes were planned for another card first, and the cockpit writes them
+  once. Fill Go-live expectation and Handoff problems on this card by hand if they are empty.") when the new card is
+  on the books and the sale has a go-live or handoff text. Needs `on` ("Sale ties are off. They open once the CEO
+  turns them on."). Other
+  refusals, plain: `Only a client success seat or the CEO ties a sale to a card.` (42501), `<client> is not one of your
+  clients. Ask its CSM or the CEO to tie this sale.` (42501), `This sale has no suggested card. Pick one from the list.`,
+  `That card is not on the billing sheet. Pick another.`, `This sale is already on that card.`, `This sale is not on a
+  card.`, `Say why in a note of 3 to 500 characters.`, `The cockpit does not store a sale with that ID.` Toasts (B7):
+  "Tied to <card>", "Marked not a client card".
+- `cockpit_csm_sale_read(p_task_ids text[])` → `{on, cards: [{taskId, state: 'none'} | {taskId, state: 'tied',
+  responseId, signedAt, signedOn, tiedBy, closer, goLive, handoffProblems, expectations, salesCallLink (https only),
+  voidedInB2B, otherSales}]}`, gated like `cockpit_csm_onboarding_read` (`cockpit_csm_actor`, then
+  `cockpit_csm_client_gate` per card, at most 200). The newest live tie per card; the texts as typed
+  (`cockpit_form_typeform_text`). Never the raw phone, a name, a money answer or the transcript.
+
+**Card fields (2.8, the writer is build B1's, live).** With `fill` on, the newest live tie on a card on the books
+(`cockpit_billing_card_listed(task, true)`) plans one `cockpit_form_effects` row `new_client`/`sale_facts` (owner
+cockpit, delivery `clickup_queue`) and its queue row, exactly B1's contract: the plan `{taskId, tieId, fields:
+[{fieldId, kind, label, value, onlyIfEmpty: true, source}], lines}` holds the texts (Go-live expectation `d4483463`
+from `e30bc458` and Handoff problems `e17a1c27` from `3cf4bfdf`, as typed, "No" written as typed, no cut; the Sales
+Meeting Link `1f2e9ad1` from `52ca9be9`, `url`, https only, **only while `salesLink` is on**); the queue payload is
+exactly `{formKey: 'new_client', effectKey: 'sale_facts', effectId, responseId, taskId}`, never a text. A gone card plans
+a skipped effect "The client has left: no card fields to fill."; an older sale on the card "A newer sale on this card
+fills its fields."; a sale with both answers empty "The sale left go-live and handoff problems empty, so there is nothing
+to write." While `fill` is off nothing is planned ("Card writes for sales are off."), so turning it on plans every tie
+at the next sweep (decision B3-3). Never the Closer `63af118b`, Closer Notes `890d4ab8`, Daily Budget `539743c2`,
+Country `e0ca65e7`, Email, Phone Number or a billing field. Two waits spend nothing (no effect, the next sweep tries
+again): a card billing-sync has not listed yet ("This card is not on the billing sheet yet, so its notes wait for the
+next sync after billing lists it."), and **a gate without build B2's `(new_client, sale_facts)` branch**
+(`cockpit_sale_tie_gate_ready()` reads `cockpit_form_effect_gate`'s body for `'sale_facts'`; "Card notes wait for the
+forms gate that passes them (20261103c), so none were planned."). Today's gate (20261102j) does not hold such a row:
+the claim's first pass (`cockpit_clickup_writeback_claim_forms`, live 20261029t) asks the gate of every open form row in
+every mode and settles a refused one `skipped` "Make owns this again.", which would spend the sale's one effect slot.
+With the branch, the writer holds every `new_client` row until `CLICKUP_WRITEBACK_FORMS_KEYS` lists `new_client`, and
+**a held row holds back every later form row on its card** (20261029t), so `fill` goes on in the same step as the lane
+(deploy step 6). B3 does not touch the gate. **Required of B2's branch** (defence in depth; this file already takes a
+moved or switched-off write back): pass a `(new_client, sale_facts)` row only while `plan.tieId` is still the sale's
+live `tied` row on `plan.taskId` and `cockpit_sale_tie_flags()` has `on` and `fill` true, else refuse with a plain
+reason (the claim then settles it). The PGlite test holds the planned row against B1's own `formStep`, and runs the live
+claim against 20261102j's gate plus B2's documented branch until 20261103c is on the branch.
+
+**Taking a write back** (`cockpit_sale_tie_take_back(p_response uuid, p_reason text)`, owner only): each queue row of a
+`queued` `sale_facts` effect that is `queued` or `retry` with no step started or done ends `skipped` with the reason;
+the live `cockpit_form_effects_from_queue` trigger settles its effect `skipped` (a move the effects guard allows);
+anything in flight is left and counted (`{takenBack, inFlight}`). Two callers: the CEO's decide above, and the trigger
+`cockpit_sale_tie_switch_off` on `cockpit_settings` (`forms.sale_tie` updated without both `on` and `fill` true, or
+deleted): "Card writes for sales were turned off, so nothing was written." Every queue and effect change is audited by
+those tables' own triggers, the switch by `cockpit_settings_forms_audit`.
+
+**forms-door** (`supabase/functions/forms-door/handler.ts`, README): `makeInput('new_client')` also returns `tieKeys`
+(`tieKeysOf`: the typed `95a3901f` and `a6ea04df` answers only, by ref and type) and drops the raw phone `f322053a` by its
+ref; the record gets `recordOf(makeInput(...))`, never the keys. After the record answers and its outcome is recorded,
+the door calls `cockpit_sale_tie_open`; a failure calls `cockpit_sale_tie_door_failed` and never changes the 200. The log
+line stays `forms-door new_client {outcome}`. The golden `fixtures/new-client-expected.json` holds `p` and `tieKeys`;
+`scripts/dev/forms_legacy_backfill.py` ports both (`tie_keys_of`, `record_of`) and, after each stored sale, posts
+`cockpit_sale_tie_open` too (a failure is counted, never printed: "sale ties not opened N (the onboarding sync's sweep
+opens them)").
+
+**onboarding-sync** (`supabase/functions/onboarding-sync/sync.ts`): `cockpit_sale_tie_waiting` at the start of a run;
+while on and something waits, each page's cards made since a day before the oldest waiting sale go to
+`cockpit_sale_tie_offer` (K1 from the two card fields, `createdAt` from `date_created`); `cockpit_sale_tie_sweep` at the
+end. The run's counts gain `sale_ties_offered`, `sale_ties_tied`, `sale_ties_waiting` only while on and every call
+answered (missing is never zero); a failure adds "Sales could not be matched to their cards this run. Ties already made
+are unchanged; the next run tries again." to the run's problem and never fails the run; a function not there yet
+(PGRST202) is "not set up", no note. The job `{"job":"saleTies","dryRun":true|false}` (dry unless `dryRun` is `false`)
+reads every card once, refuses to match on a partial read, and answers `{ok, job, dryRun, counts, note}`; any other job is
+400. The database's error text is never passed on.
+
+**Guardian** (`hermes/cockpit-guardian/checks/sale_ties.py`, registered in `checks/__init__.py`, report-only): one check
+`sale-ties` (owner the CEO): warn on a delivered sale with no tie row after 15 minutes, the door's `detail.tie =
+'failed'`, and while on a sale waiting for its card over 2 hours or for a person over 3 days, and a B2B sale of the last
+30 days the cockpit does not store (the second source); billing's disagreements are information. The door's mark warns
+only while a delivered sale still has no tie row (the mark itself clears only at the next delivery, and sales are
+rare, so a failure the sweep already fixed never warns for days). "Not set up yet"
+before the migration, never zero; it reads ids, states and times only.
+
+**Deploy (D-ST), in order** (the plan's step 9 and 12; B1 is live, B2's gate before step 6):
+
+1. `guard_check.py supabase/migrations '20261103g*'` (3 rows, each live), then `mig.py dry` and `mig.py apply`. Read
+   back: the pepper exists (count 1, no value read), the setting all false, the registry's six entries, the three md5s
+   above, grants and row security, `cockpit_form_doors()` reading the three switches `off`.
+2. `fdeploy.sh forms-door <rev>`, then `fdeploy.sh onboarding-sync <rev>`, each with its live `verify_jwt` (both `off`).
+   With `on` false the door stores digests in waiting rows only.
+3. `{"job":"saleTies","dryRun":true}` through the cron secret (counts only). Expected with K2 alone, read 2026-11-03
+   (second source, the design's own figures reproduced read-only with this file's normaliser): 55 sales, 39 tied (33
+   by phone, 21 of them by phone and email, 6 by email only), 0 conflicts, 0 ambiguous, 2 void, 14 with no card (13
+   with billing's card as the one-tap suggestion, 1 with none). K1 can only raise the tied count; the dry run says K1
+   coverage (`cardsWithPhone`, `cardsWithEmail`). The CEO reads the counts.
+4. `update public.cockpit_settings set value = value || '{"on":true}', updated_by = '<who>' where key = 'forms.sale_tie'`
+   (owner SQL, audited), then the job with `"dryRun":false` at once (a sync run in between opens the stored sales' rows
+   from K2 alone, with no card creation times; the job then settles every system row, its tied rows included, with each
+   card's K1 and creation time, because `fill` is still off and no tie has a `sale_facts` effect yet). Read back:
+   `forms.sale_tied` audit rows, the stored sales' `task_id` on the tied ones, the counts again.
+5. B7 ships (`scripts/ship.sh client-success`): the band, the rail, the kit, the forms-health line. The CEO or a CSM works
+   "Sales not on a card".
+6. In one step: `forms.sale_tie.fill` true (and `salesLink` true, CEO item 6 "do it fully" = yes), `new_client` added to
+   `CLICKUP_WRITEBACK_FORMS_KEYS` with `CLICKUP_WRITEBACK_FORMS_ONLY_CARDS` set to one in-onboarding card the CEO names;
+   the next sweep plans; read back both fields on that card and the effect's receipt; then remove the only-cards limit.
+   About 19 cards × 2 (3 with the link) writes, only where empty.
+7. The guardian release under its run lock.
+8. Verify on production: the next real sale ties within one sync run; the rail shows the stub; the portal context
+   returns the business name for an in-onboarding card. Record the session in mahara-context `shared/sessions/`.
+9. Only on the CEO's word, after step 4: a one-time guarded strip of `f322053a` from the stored sales (owner SQL under
+   the guard's own rules, an audit row, counts only). Not in this file (decision B3-4).
+
+Rollback: `forms.sale_tie` all false stops ties and new plans at once, and its trigger takes back every card write
+that has not started (queue row and effect `skipped`, "Card writes for sales were turned off, so nothing was
+written."); a write already `sending` or `unknown` finishes, and the effects' trail shows where it landed. A
+taken-back sale's one effect slot is spent, so turning `fill` on again does not re-plan it: its notes are a hand step.
+Taking `new_client` out of `CLICKUP_WRITEBACK_FORMS_KEYS` is not the rollback (a held row blocks every later form row
+on its card). The three bodies from `notes/forms-w56/deploy/before-<name>.sql`; ties are append-only (a person clears
+one with a reason); fills are only-if-empty and every written card is in the effects' trail.
+
+**Decisions this build takes (B3-n).**
+
+- **B3-1, the window guard.** Design 2.3 rule 2 would tie a fresh sale of a returning client to the old card as soon as
+  any sweep ran before Make's new card reached the sync. Under 2 days a card made before the sale's window never ties
+  it; after 2 days the design's rules apply as written. A first sale ties at the first offer that carries Make's card.
+- **B3-2, the card key store.** The door's "ties at once when a card with K1 is already known" and the window rule need
+  K1 and creation times after the offer call, so `cockpit_sale_tie_cards` keeps them as digests (the same exposure as
+  the sale's own digests), written only by the offer and the backfill with one audit row per call.
+- **B3-3, fill off plans nothing.** The design's "Card writes for sales are off" skipped effect would have taken the
+  effect's one slot per sale for good (an effect never goes back from skipped), so nothing is planned while `fill` is
+  off and the sweep plans every tie once it is on.
+- **B3-4, the raw phone.** The door stops storing `f322053a` from this build (its own rule). The 55 stored answers keep
+  it until the CEO's word, because the backfill derives their phone digests from it (losing the pepper would need it).
+- **B3-5, a CSM's limits.** Beyond design 2.7: a CSM may not move or clear a tie whose `sale_facts` is `queued` or
+  `unknown` either (in flight), and marks `not_client` only a sale showing one of their clients.
+- **B3-6, a write follows its tie or is taken back** (review fix-up, 2026-11-03). A queued write planned for a card the
+  CEO has just rejected, or queued while `fill` goes off, would still reach that card (the gate and the writer check
+  only that the queue, payload and plan agree). The CEO's decide and the switch's trigger take back every write that has
+  not started; a move waits for a write in flight; the new card's notes are a hand step (`handFill`), because one effect
+  per sale is the effects table's own rule.
+- **B3-7, cards before billing lists them** (review fix-up). A card the onboarding sync keeps is a candidate before
+  billing-sync lists it (playing account and internal tests excluded by name), so "tied within one sync run" holds
+  overnight; its notes wait for billing's listing, since `cockpit_billing_card_listed` is the only "on the books" test.
+- **B3-8, no plan before the gate can pass it** (review fix-up). Planning probes the live gate for B2's branch, so `fill`
+  turned on early spends nothing; the sweep's note says why nothing was planned.
+
+**Tests.** `apps/media-buyer-cockpit/scripts/sale-tie-supabase.test.ts` (PGlite, every case of design section 4: two
+applies keeping a switch on, the prerequisite stop, each drift guard, the after md5s, the pepper once, row security and
+grants, the normaliser and keys against node's own HMAC, the door off and on, phone, phone_email, the window and
+`also_on`, the fresh-sale wait, ambiguous, conflict, waiting then unmatched then tied by K2, void, the playing account and
+tests never candidates, the backfill job dry and real, who may decide and every refusal, a person's tie never changed by
+the sweep or the backfill, append-only, the carve-out and every other guard refusal, an exit survey's match, fill off and
+on, the newest sale only, a gone card, the payload exactly B1's and the plan passing B1's `formStep`, the Sales Meeting
+Link only with its switch and on https, a card the onboarding sync keeps before billing lists it (tied at the sweep,
+planned once billing lists it; an internal test never), nothing planned before B2's gate branch with the sweep saying
+so, today's gate settling a row skipped in the claim's first pass (never a hold) and B2's passing it, a planned tie kept
+by the job, the job settling a sweep's K2 tie with K1 (the in-window card, and a conflict), a CSM's move refused, the
+CEO's move taking back an unstarted write (queue and effect skipped, the gate refusing, `handFill`), a move refused
+while the write is sending or unknown and allowed once delivered with the first card in the trail, `fill` off taking
+back every unstarted write so the live claim hands the writer no `sale_facts` row, the CSM read, the list with billing's disagreement
+and the sales-call suggestion, the portal context from a stored-shape sale, the doors, and no value or digest in any audit
+row or answer); `supabase/functions/forms-door/handler.test.ts`; `supabase/functions/onboarding-sync/sync.test.ts`;
+`scripts/dev/test_forms_legacy_backfill.py`; `hermes/cockpit-guardian/tests/test_sale_ties.py`.
 
 ### 4.23 Market research, MI-1 (CEO-1 decided: replicate and improve; build MI-1, migration `20261103i`)
 
@@ -2452,6 +2730,12 @@ after D-S4F passed and on different days (one Make switch-off window a day).
   - **CEO-5: the kickoff daily budget.** Recommended: a structured amount and currency on the kickoff sheet, printed
     `<amount> <CUR>` on Make's `Daily ad budget:` line, in place before the first native kickoff; never write the card's
     Daily Budget `539743c2`.
+  - **CEO-6, decided 2026-11-02: "Should already be synced, if not do it fully now"** (build B3, `20261103g`, 4.19; the
+    screens are build B7). It was not synced; B3 ties every sale by an exact phone or email, never a name, and fills
+    the two fields only where empty on cards on the books. Taken with the defaults (stop-asking rule, reported after):
+    fill on-the-books cards only, and the Sales Meeting Link yes (behind `forms.sale_tie.salesLink`). Still his: reading
+    the dry run before `on`, and the one-time strip of the stored raw phone (`f322053a`) after the backfill. The
+    original question, kept for the record:
   - **CEO-6: tie the New Client Form to cards** (go-live expectation on 42 of 42, handoff risks on 25 of 42; the card
     fields filled on 0 of 70). Recommended: its own workstream after go-live, tied only by an exact, unique phone or
     email with a dry-run list first, filling only empty fields, leaving Closer out.
