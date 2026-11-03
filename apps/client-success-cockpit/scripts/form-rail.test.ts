@@ -73,6 +73,28 @@ describe("the parts, in order", () => {
     ]);
   });
 
+  test("a portal onboarding answer (form_id native) reads as a full record, never as the form not filled (F1)", () => {
+    const typeform = onboardingEntry();
+    const native = { ...typeform, form_id: "native" };
+    const parts = rail(
+      fixtureContext({ row: fixtureRow({ forms: { onboarding: native } }) }),
+    );
+    expect(parts.map(p => p.id)).toEqual(["client", "order", "sale"]);
+    expect(JSON.stringify(parts)).not.toContain(
+      "has not filled the onboarding form",
+    );
+    // The same rail as the same answers through Typeform.
+    expect(JSON.stringify(parts)).toBe(
+      JSON.stringify(
+        rail(
+          fixtureContext({
+            row: fixtureRow({ forms: { onboarding: typeform } }),
+          }),
+        ),
+      ),
+    );
+  });
+
   test("Still missing comes first, with one line for each required fact the cockpit cannot suggest", () => {
     const ctx = fixtureContext({
       row: fixtureRow({ forms: {}, handover: {} }),
