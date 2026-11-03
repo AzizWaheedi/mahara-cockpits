@@ -1,8 +1,10 @@
 import {
+  Anchor,
+  Aperture,
   ArrowUp,
   Check,
   Copy,
-  MessageCircle,
+  Signal,
   ThumbsDown,
   ThumbsUp,
   X,
@@ -23,10 +25,17 @@ import {
   submitAskAiJob,
 } from "@/lib/askAiClient";
 import {
+  ASSISTANTS,
   type HermesSpan,
   hermesSuggestions,
   parseHermesText,
 } from "@/lib/hermesText";
+
+const ASSISTANT_ICONS = {
+  "media-buyer": Signal,
+  "client-success": Anchor,
+  creative: Aperture,
+} as const;
 
 const APP: CockpitApp = "media-buyer";
 const LAUNCHER_BOTTOM = "bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))]";
@@ -226,10 +235,12 @@ function HermesComposerGlow({
 
 function HermesActions({
   m,
+  name,
   rating,
   onRate,
 }: {
   m: ChatMessage;
+  name: string;
   rating: -1 | 0 | 1 | null;
   onRate: (next: -1 | 0 | 1) => void;
 }) {
@@ -272,7 +283,9 @@ function HermesActions({
       >
         <ThumbsDown className="size-4" />
       </button>
-      <span className="ms-1 font-mono text-[11px]">Hermes · {ago(m.at)}</span>
+      <span className="ms-1 font-mono text-[11px]">
+        {name} · {ago(m.at)}
+      </span>
     </div>
   );
 }
@@ -280,6 +293,8 @@ function HermesActions({
 /** Server history is authoritative; pending jobs are reloaded across refresh. */
 export function HermesChat() {
   const app: CockpitApp = APP;
+  const assistant = ASSISTANTS[APP];
+  const AssistantIcon = ASSISTANT_ICONS[APP];
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [storedThread, setThread] = useState<ChatMessage[]>([]);
@@ -467,14 +482,8 @@ export function HermesChat() {
         ? `Reading ${clientName}'s numbers`
         : "Reading the cockpit"
       : live?.status === "sent"
-        ? "Waiting for Hermes"
+        ? `Waiting for ${assistant.name}`
         : "Sending";
-  const appLabel =
-    APP === "media-buyer"
-      ? "Media buyer"
-      : APP === "client-success"
-        ? "Client success"
-        : "Creative";
 
   const count = thread.length;
   useEffect(() => {
@@ -516,13 +525,13 @@ export function HermesChat() {
         type="button"
         onClick={() => setOpen(v => !v)}
         className={`glow-teal fixed right-4 ${LAUNCHER_BOTTOM} z-40 flex h-11 items-center gap-2 rounded-full border bg-card/95 px-3.5 text-[13px] font-semibold text-foreground backdrop-blur hover:bg-muted sm:px-4 lg:right-6 lg:bottom-6`}
-        aria-label="Ask Hermes"
+        aria-label={`Ask ${assistant.name}`}
       >
-        <MessageCircle className="size-4 sm:hidden" aria-hidden />
+        <AssistantIcon className="size-4 sm:hidden" aria-hidden />
         <span
           className={`inline-block size-2 rounded-full bg-[color:var(--mahara-teal)] ${live ? "animate-pulse" : ""}`}
         />
-        <span className="hidden sm:inline">Ask Hermes</span>
+        <span className="hidden sm:inline">Ask {assistant.name}</span>
         {live && !open ? (
           <span className="hidden text-muted-foreground sm:inline">
             {" · thinking "}
@@ -533,11 +542,17 @@ export function HermesChat() {
       {open ? (
         <section
           className={`fixed right-4 ${PANEL_BOTTOM} z-40 flex h-[min(72vh,680px)] w-[min(92vw,440px)] flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl dark:shadow-none lg:right-6 lg:bottom-20`}
-          aria-label="Hermes chat"
+          aria-label={`${assistant.name} chat`}
         >
           <header className="flex items-center justify-between gap-2 border-b py-1.5 pr-1.5 pl-4">
             <div className="flex min-w-0 items-center">
-              <span className="text-sm font-semibold">Hermes</span>
+              <AssistantIcon
+                className="size-4 text-[color:var(--mahara-teal)]"
+                aria-hidden
+              />
+              <span className="ml-1.5 text-sm font-semibold">
+                {assistant.name}
+              </span>
               {clientName ? (
                 <span className="ml-2 inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
                   <span className="size-1.5 rounded-full bg-primary" />
@@ -547,7 +562,7 @@ export function HermesChat() {
                 </span>
               ) : (
                 <span className="ml-2 text-xs text-muted-foreground">
-                  {appLabel}
+                  {assistant.role}
                 </span>
               )}
             </div>
@@ -564,7 +579,7 @@ export function HermesChat() {
                 type="button"
                 className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground pointer-coarse:size-10"
                 onClick={() => setOpen(false)}
-                aria-label="Close Hermes"
+                aria-label={`Close ${assistant.name}`}
               >
                 <X className="size-4" />
               </button>
@@ -579,8 +594,7 @@ export function HermesChat() {
             {count === 0 && !isLoading ? (
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">
-                  Ask about clients, ads and numbers. Hermes reads this
-                  cockpit's data and answers here in under a minute.
+                  {assistant.intro} Answers come here in under a minute.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {hermesSuggestions(APP, clientName).map(s => (
@@ -633,6 +647,7 @@ export function HermesChat() {
                   />
                   <HermesActions
                     m={m}
+                    name={assistant.name}
                     rating={
                       (m.jobId ? ratings.get(m.jobId) : undefined) ??
                       m.feedback ??
@@ -673,7 +688,9 @@ export function HermesChat() {
                   }}
                   rows={1}
                   placeholder={
-                    clientName ? `Ask about ${clientName}…` : "Ask Hermes…"
+                    clientName
+                      ? `Ask about ${clientName}…`
+                      : `Ask ${assistant.name}…`
                   }
                   className="flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
                 />

@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import { hermesSuggestions, parseHermesText } from "../src/lib/hermesText";
+import {
+  ASSISTANTS,
+  hermesSuggestions,
+  parseHermesText,
+} from "../src/lib/hermesText";
 
 const span = (text: string, bold = false) => ({ text, bold });
 test("empty or whitespace text has no blocks", () => {
@@ -57,7 +61,7 @@ test("media buyer suggestions name the client when there is one", () => {
   expect(hermesSuggestions("media-buyer")).toEqual([
     "Which campaigns need attention today?",
     "Where did cost per lead rise this week?",
-    "Summarise yesterday's spend and leads",
+    "How are the ads doing today so far?",
   ]);
 });
 test("client success suggestions name the client when there is one", () => {
@@ -94,6 +98,26 @@ test("a blank client string counts as no client", () => {
   expect(hermesSuggestions("creative", "\t")).toEqual(
     hermesSuggestions("creative"),
   );
+});
+const APPS = ["media-buyer", "client-success", "creative"] as const;
+test("each cockpit has its own assistant name", () => {
+  expect(ASSISTANTS["media-buyer"].name).toBe("Signal");
+  expect(ASSISTANTS["client-success"].name).toBe("Anchor");
+  expect(ASSISTANTS.creative.name).toBe("Lens");
+});
+test("each assistant intro names the assistant itself", () => {
+  for (const app of APPS) {
+    expect(ASSISTANTS[app].intro).toContain(ASSISTANTS[app].name);
+  }
+});
+test("no assistant role or intro has an em dash or an emoji", () => {
+  for (const app of APPS) {
+    const { role, intro } = ASSISTANTS[app];
+    for (const text of [role, intro]) {
+      expect(text.includes("\u2014")).toBe(false);
+      expect(/\p{Extended_Pictographic}/u.test(text)).toBe(false);
+    }
+  }
 });
 test("divider lines (---, ***, ___) split blocks and never show as text", () => {
   expect(parseHermesText("one\n---\ntwo\n***\n- a")).toEqual([

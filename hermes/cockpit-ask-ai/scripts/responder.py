@@ -19,8 +19,10 @@ OAuth keys. The only writes are the queue RPCs (claim, complete, fail).
 Commands (run with the Hermes venv python, as the hermes user on the VPS):
   responder.py doctor                      keys, Hermes import, model chain (booleans only)
   responder.py run [--seconds 55] --apply  answer chat jobs for up to N seconds
-  responder.py replay <job_id> [...]       replay finished jobs: build the data, call the
-                                           model, print the answer. Posts nothing.
+  responder.py replay <job_id> [...] [--as=<app>]
+                                           replay finished jobs: build the data, call the
+                                           model, print the answer. Posts nothing. --as
+                                           asks as another cockpit's assistant.
 Without --apply, run only reads the queue and prints what it would claim.
 """
 from __future__ import annotations
@@ -173,14 +175,14 @@ def client_pack(rest: str, key: str, client: str) -> tuple[str, list[str]]:
         lines.append("Campaign board: no live campaign is tied to this client.")
     else:
         sources.append("media buyer campaign board")
-        lines.append(f"Campaign board (synced {kuwait_time(camps[0].get('synced_at'))} Kuwait time; today = the Kuwait day so far; verdict scale = doing well, hold = watch, kill = should stop):")
+        lines.append(f"Campaign board (synced {kuwait_time(camps[0].get('synced_at'))} Kuwait time; today = the Kuwait day so far):")
         for c in camps:
             lines.append(
-                f"- {c.get('name') or 'campaign'}: verdict {c.get('verdict') or 'none'}"
+                f"- {c.get('name') or 'campaign'}: verdict {plain_verdict(c.get('verdict'))}"
                 f" ({(c.get('reason') or '').strip()[:160]}); last 7 days spend {money(num(c.get('spend_7d')))},"
                 f" leads {int(num(c.get('leads_7d')))}, cost per lead {money(num(c.get('cpl'))) if c.get('cpl') else 'n/a'},"
                 f" bookings {c.get('bookings') if c.get('bookings') is not None else 'not measured'}, cost per booking {money(num(c.get('cpb'))) if c.get('cpb') else 'n/a'},"
-                f" frequency {num(c.get('frequency')):.2f}, link CTR {num(c.get('link_ctr')):.2f}%; today spend {money(num(c.get('spend_today')))}, leads {int(num(c.get('leads_today')))}"
+                f" frequency {num(c.get('frequency')):.2f}, link CTR {num(c.get('link_ctr')):.2f}%; today spend {money(num(c.get('spend_today')))}, leads {int(num(c.get('leads_today')))}, today cost per lead {today_cpl(c)}"
             )
     accounts = {str(c["meta_account_id"]).replace("act_", "") for c in camps or [] if c.get("meta_account_id")}
     tied = get(rest, key, "clients", {"name": f"ilike.{client}", "select": "meta_ad_account_id"}) or []
@@ -264,16 +266,38 @@ def overview_pack(rest: str, key: str, names: list[str]) -> tuple[str, list[str]
     lines = [
         f"Campaign board for every live campaign of the clients this person can see (synced {synced} Kuwait time).",
         f"Totals: today so far (Kuwait day, up to the sync) spend {money(s_today)}, leads {l_today}; last 7 days spend {money(s7)}, leads {l7}, cost per lead {money(s7 / l7) if l7 else 'n/a'}.",
-        "Per campaign (verdict: scale = doing well, hold = watch, kill = should stop):",
     ]
+    # Grouped by verdict so the answer copies the groups instead of re-sorting them.
+    groups: dict[str, list[dict[str, Any]]] = {}
     for c in camps:
-        lines.append(
-            f"- {c.get('client_name')} / {c.get('name') or 'campaign'}: {c.get('verdict') or 'no verdict'};"
-            f" today spend {money(num(c.get('spend_today')))}, leads {int(num(c.get('leads_today')))};"
-            f" last 7 days spend {money(num(c.get('spend_7d')))}, leads {int(num(c.get('leads_7d')))}, cost per lead {money(num(c.get('cpl'))) if c.get('cpl') else 'n/a'},"
-            f" bookings {c.get('bookings') if c.get('bookings') is not None else 'not measured'}. {(c.get('reason') or '')[:120]}"
-        )
+        groups.setdefault(plain_verdict(c.get("verdict")), []).append(c)
+    order = ["doing well", "watch", "should stop"]
+    for verdict in order + sorted(set(groups) - set(order)):
+        if verdict in groups:
+            lines.append(f"Verdict {verdict} ({len(groups[verdict])} campaigns):")
+            lines += [overview_line(c) for c in groups[verdict]]
     return "\n".join(lines), ["media buyer campaign board"]
+
+
+def overview_line(c: dict[str, Any]) -> str:
+    return (
+        f"- {c.get('client_name')} / {c.get('name') or 'campaign'}:"
+        f" today spend {money(num(c.get('spend_today')))}, leads {int(num(c.get('leads_today')))}, cost per lead {today_cpl(c)};"
+        f" last 7 days spend {money(num(c.get('spend_7d')))}, leads {int(num(c.get('leads_7d')))}, cost per lead {money(num(c.get('cpl'))) if c.get('cpl') else 'n/a'},"
+        f" bookings {c.get('bookings') if c.get('bookings') is not None else 'not measured'}. {(c.get('reason') or '')[:120]}"
+    )
+
+
+VERDICT_WORDS = {"scale": "doing well", "hold": "watch", "kill": "should stop"}
+
+
+def plain_verdict(v: Any) -> str:
+    return VERDICT_WORDS.get(str(v or "").lower(), str(v) if v else "no verdict")
+
+
+def today_cpl(c: dict[str, Any]) -> str:
+    leads = int(num(c.get("leads_today")))
+    return money(num(c.get("spend_today")) / leads) if leads else "n/a (no leads today)"
 
 
 def kuwait_time(ts: Any) -> str:
@@ -317,12 +341,12 @@ def drive_pack(e: dict[str, str], texts: list[str]) -> tuple[str, list[dict[str,
         return "", [], []
     token = drive_token(e)
     if not token:
-        return "Drive files: Hermes has no Drive access configured, so the linked files could not be opened.", [], []
+        return "Drive files: the assistant has no Drive access configured, so the linked files could not be opened.", [], []
     notes, images = ["Linked Drive files, in the order they were sent:"], []
     for n, fid in enumerate(ids[:MAX_IMAGES], 1):
         meta_raw = fetch(f"https://www.googleapis.com/drive/v3/files/{fid}?supportsAllDrives=true&fields=name,mimeType,size,thumbnailLink,videoMediaMetadata(durationMillis,width,height)", token, 200_000)
         if not meta_raw:
-            notes.append(f"File {n}: Hermes cannot open it (no access, or it was deleted). Ask for it to be shared with the team Drive.")
+            notes.append(f"File {n}: the assistant cannot open it (no access, or it was deleted). Ask for it to be shared with the team Drive.")
             continue
         m = json.loads(meta_raw)
         mime, name = m.get("mimeType", ""), m.get("name", "file")
@@ -340,9 +364,9 @@ def drive_pack(e: dict[str, str], texts: list[str]) -> tuple[str, list[dict[str,
         elif mime.startswith("video/"):
             v = m.get("videoMediaMetadata") or {}
             secs = round(num(v.get("durationMillis")) / 1000)
-            notes.append(f"{label}: a video, {secs} s long, {v.get('width')}x{v.get('height')}. Hermes sees only its thumbnail frame, not the sound or the full video.")
+            notes.append(f"{label}: a video, {secs} s long, {v.get('width')}x{v.get('height')}. The assistant sees only its thumbnail frame, not the sound or the full video.")
         else:
-            notes.append(f"{label}: attached as an image below." if img else f"{label}: Hermes can see only the name of this file type.")
+            notes.append(f"{label}: attached as an image below." if img else f"{label}: the assistant can see only the name of this file type.")
         if img:
             images.append({"type": "image_url", "image_url": {"url": f"data:{mime_img};base64,{base64.b64encode(img).decode()}"}})
     return "\n".join(notes), images, (["Google Drive files"] if len(notes) > 1 else [])
@@ -350,7 +374,27 @@ def drive_pack(e: dict[str, str], texts: list[str]) -> tuple[str, list[dict[str,
 
 # ---------------------------------------------------------------- prompt
 
-SYSTEM = """You are Hermes, the assistant inside Mahara Media's cockpits. You answer one team member at a time.
+# Each cockpit has its own assistant (decision 2026-11-03). The chat panel shows
+# the same names from hermesText.ts ASSISTANTS; keep the two in step.
+ASSISTANTS = {
+    "media-buyer": ("Signal", """You are Signal, the media buyer's ads assistant.
+Lead with ad results: spend, leads, cost per lead, bookings, which campaigns are doing well or should stop, and which ads look tired.
+Client relationships belong to Anchor in the client success cockpit and creative work to Lens in the creative cockpit: answer what the DATA shows, then say who covers the rest."""),
+    "client-success": ("Anchor", """You are Anchor, the client success assistant.
+Lead with each client as a relationship: their comments, lead sync problems, open tasks and what to tell them next. Ad numbers support that story; they are not the headline.
+Ad decisions belong to Signal in the media buyer cockpit and creative work to Lens in the creative cockpit: answer what the DATA shows, then say who covers the rest."""),
+    "creative": ("Lens", """You are Lens, the creative assistant.
+Lead with creative: open creative requests and their reasons, which ads, hooks and angles have the best cost per lead, and fresh angles to try. Ad numbers support creative choices.
+Budget and campaign decisions belong to Signal in the media buyer cockpit and client relationships to Anchor in the client success cockpit: answer what the DATA shows, then say who covers the rest."""),
+}
+DEFAULT_ASSISTANT = ("the cockpit assistant", "You are the cockpit assistant.")
+
+
+def assistant_for(app: Any) -> tuple[str, str]:
+    return ASSISTANTS.get(str(app), DEFAULT_ASSISTANT)
+
+
+SYSTEM = """You work inside Mahara Media's cockpits and answer one team member at a time. Use only your own name; never call yourself Hermes.
 Mahara runs Meta ads and sales follow-up for construction and design businesses in the Gulf.
 
 Answer rules:
@@ -358,9 +402,10 @@ Answer rules:
 - Lead with the answer. Keep it short: under 180 words unless the person asks for more or for copy.
 - Use only the DATA block, the COCKPIT GUIDE and the attached files. Never invent a number, a name or a status.
 - Answer straight away. When the exact window asked for is not in the DATA, give the closest window you have and name it in the first line. Never ask "do you want me to"; just answer. When nothing in the DATA fits, say what is missing in one line.
-- Every number you give says its window ("today so far", "last 7 days"). Money is always USD.
+- Every number you give says its window ("today so far", "last 7 days"). Never put a 7-day figure beside a today figure in one line without naming both windows. Money is always USD.
 - "How do I", "where do I" and "from where" questions are answered from the COCKPIT GUIDE: name the menu item and the button. Never name a page, button or setting that is not in the guide or the DATA, and never describe what a page does beyond what the guide says.
 - You cannot act: you never upload, edit, publish, pause, message clients or change settings. If asked, say so in one line and point to the place in the COCKPIT GUIDE where the person does it, then help with what you can (a checklist, a draft, copy).
+- Never add a "to do this, go to" line unless the person asked where or how.
 - Say campaign verdicts in plain words (doing well, watch, should stop), not "scale / hold / kill" or "gates".
 - A short reply such as "yes", "نعم" or "do it" answers your previous message: continue from it.
 - When a file is attached, describe what you actually see in it before you write copy for it.
@@ -378,7 +423,7 @@ House rules for ad copy:
 SHARED_GUIDE = """- Ask a team (menu, Team section): ask another team for something; it becomes a ClickUp task with its SOP steps and an owner.
 - Team meetings (menu).
 - Client performance (menu): every active client against its targets; open a client for its ads.
-- Ask Hermes (round button, bottom right): this chat."""
+- The round button at the bottom right ("Ask" and your name): this chat."""
 
 COCKPIT_GUIDE = {
     "media-buyer": """Media buyer cockpit menu:
@@ -413,7 +458,8 @@ def build_messages(job: dict[str, Any], data: str, images: list[dict[str, Any]],
     now = datetime.now(KUWAIT).strftime("%Y-%m-%d %H:%M")
     data_block = f"DATA (read {now} Kuwait time; cockpit {job.get('app')}; the person's role {job.get('role')}; page {page or 'unknown'})\n{data}"
     guide = COCKPIT_GUIDE.get(str(job.get("app")), SHARED_GUIDE)
-    msgs: list[dict[str, Any]] = [{"role": "system", "content": f"{SYSTEM}\n\nCOCKPIT GUIDE (where things are)\n{guide}\n\n{data_block}"}]
+    _, identity = assistant_for(job.get("app"))
+    msgs: list[dict[str, Any]] = [{"role": "system", "content": f"{identity}\n{SYSTEM}\n\nCOCKPIT GUIDE (where things are)\n{guide}\n\n{data_block}"}]
     for h in reversed((ctx.get("history") or [])[:8]):  # history arrives newest first
         reply = askai_reply(h.get("result"))
         if h.get("prompt") and reply:
@@ -566,7 +612,8 @@ def run(seconds: int, apply: bool) -> int:
                     log(f"FAIL job={job['id'][:8]} complete rejected: {json.dumps(ok)[:200]}")
             except Exception as exc:
                 failed += 1
-                reason = "Hermes could not reach its model right now. It will try again in a moment." if "RuntimeError" in type(exc).__name__ else "Hermes hit an error while reading the data. It will try again in a moment."
+                name = assistant_for(job.get("app"))[0].capitalize()
+                reason = f"{name} could not reach its model right now. It will try again in a moment." if "RuntimeError" in type(exc).__name__ else f"{name} hit an error while reading the data. It will try again in a moment."
                 askai.call(f"{rest}/rpc/cockpit_fail_ask_ai_job", key, {"p_job_id": job["id"], "p_lease_token": job["lease_token"], "p_error": reason, "p_worker_id": worker}, method="POST")
                 log(f"FAIL job={job['id'][:8]} {type(exc).__name__}: {str(exc)[:300]}")
         if not claimed:
@@ -577,7 +624,7 @@ def run(seconds: int, apply: bool) -> int:
     return 0 if not (failed or errors) else 1
 
 
-def replay(job_ids: list[str]) -> int:
+def replay(job_ids: list[str], as_app: str | None = None) -> int:
     e = load_env()
     rest, key = supabase(e)
     chain = model_chain()
@@ -590,7 +637,8 @@ def replay(job_ids: list[str]) -> int:
             continue
         started = time.time()
         try:
-            result = answer(rows[0], e, rest, key, chain)
+            job = {**rows[0], "app": as_app} if as_app else rows[0]
+            result = answer(job, e, rest, key, chain)
             print(json.dumps({"job": jid[:8], "secs": round(time.time() - started, 1), "question": rows[0]["prompt"][:200], **result}, ensure_ascii=False, indent=1), flush=True)
         except Exception as exc:
             bad += 1
@@ -624,7 +672,8 @@ def main(argv: list[str]) -> int:
         secs = int(argv[argv.index("--seconds") + 1]) if "--seconds" in argv else 55
         return run(max(5, min(secs, 600)), "--apply" in argv and "--dry-run" not in argv)
     if cmd == "replay":
-        return replay([a for a in argv[1:] if not a.startswith("-")])
+        as_app = next((a.split("=", 1)[1] for a in argv if a.startswith("--as=")), None)
+        return replay([a for a in argv[1:] if not a.startswith("-")], as_app)
     print(__doc__)
     return 2
 

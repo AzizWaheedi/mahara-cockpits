@@ -128,6 +128,20 @@ class TestBuildMessages(unittest.TestCase):
         self.assertEqual(msgs[-1]["content"][0], {"type": "text", "text": "current question"})
         self.assertEqual(msgs[-1]["content"][1], IMAGE)
 
+    def test_each_cockpit_speaks_as_its_own_assistant(self):
+        for app, name in (("media-buyer", "Signal"), ("client-success", "Anchor"), ("creative", "Lens")):
+            job = {**self.job(), "app": app}
+            system = responder.build_messages(job, "data", [], None)[0]["content"]
+            self.assertTrue(system.startswith(f"You are {name}"), app)
+            others = {"Signal", "Anchor", "Lens"} - {name}
+            self.assertTrue(all(o in system for o in others), f"{app} names who covers the rest")
+            self.assertNotIn("You are Hermes", system)
+            self.assertNotIn("—", system)
+
+    def test_unknown_cockpit_gets_a_neutral_assistant(self):
+        system = responder.build_messages({**self.job(), "app": "sales"}, "data", [], None)[0]["content"]
+        self.assertTrue(system.startswith("You are the cockpit assistant."))
+
 
 class TestAskaiReply(unittest.TestCase):
     def test_string_passes_through(self):
@@ -356,6 +370,37 @@ class TestDrivePack(unittest.TestCase):
         self.assertNotIn("File 2", notes)
         self.assertEqual(images, [])
         self.assertEqual(sources, ["Google Drive files"])
+
+
+class TestPlainNumbers(unittest.TestCase):
+    """The data block already says verdicts in plain words and gives today's own cost per lead."""
+
+    def test_verdicts_are_plain_words(self):
+        self.assertEqual([responder.plain_verdict(v) for v in ("scale", "HOLD", "kill", None, "pending")], ["doing well", "watch", "should stop", "no verdict", "pending"])
+
+    def test_today_cost_per_lead_uses_today_only(self):
+        self.assertEqual(responder.today_cpl({"spend_today": 34.15, "leads_today": 2}), responder.money(17.075))
+        self.assertEqual(responder.today_cpl({"spend_today": 9.62, "leads_today": 0}), "n/a (no leads today)")
+
+    def test_overview_has_no_raw_verdicts(self):
+        rows = [{"client_name": "Cedar Homes", "name": "Leads_1", "verdict": "kill", "spend_today": 10, "leads_today": 2, "spend_7d": 70, "leads_7d": 5, "cpl": 14, "synced_at": "2026-11-03T14:51:00Z"}]
+        with patch.object(responder, "get", lambda *a, **k: rows):
+            text, _ = responder.overview_pack("r", "k", ["Cedar Homes"])
+        self.assertIn("should stop", text)
+        self.assertIn("cost per lead " + responder.money(5), text)
+        self.assertNotIn("kill", text)
+        self.assertNotIn("scale", text)
+
+    def test_overview_groups_campaigns_by_verdict(self):
+        rows = [
+            {"client_name": "Acme Tiles", "name": "A", "verdict": "kill", "spend_today": 1, "leads_today": 0},
+            {"client_name": "Blue Marble Co", "name": "B", "verdict": "hold", "spend_today": 1, "leads_today": 0},
+            {"client_name": "Cedar Homes", "name": "C", "verdict": "scale", "spend_today": 1, "leads_today": 0},
+        ]
+        with patch.object(responder, "get", lambda *a, **k: rows):
+            text, _ = responder.overview_pack("r", "k", ["Acme Tiles", "Blue Marble Co", "Cedar Homes"])
+        order = [text.index(s) for s in ("Verdict doing well (1", "Cedar Homes", "Verdict watch (1", "Blue Marble Co", "Verdict should stop (1", "Acme Tiles")]
+        self.assertEqual(order, sorted(order))
 
 
 class TestVisibleClients(unittest.TestCase):

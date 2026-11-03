@@ -10,6 +10,32 @@ export type HermesBlock =
   | { kind: "paragraph" | "heading"; spans: HermesSpan[] }
   | { kind: "bullets" | "numbered"; items: HermesSpan[][] };
 
+export type AssistantApp = "media-buyer" | "client-success" | "creative";
+
+export const ASSISTANTS: Record<
+  AssistantApp,
+  { name: string; role: string; intro: string }
+> = {
+  "media-buyer": {
+    name: "Signal",
+    role: "Ads assistant",
+    intro:
+      "I'm Signal. I watch your ads: spend, leads, cost per lead and which ads are getting tired. Ask me about any client or campaign.",
+  },
+  "client-success": {
+    name: "Anchor",
+    role: "Client assistant",
+    intro:
+      "I'm Anchor. I keep track of your clients: their comments, lead sync, open tasks and what to tell them next.",
+  },
+  creative: {
+    name: "Lens",
+    role: "Creative assistant",
+    intro:
+      "I'm Lens. I follow creative requests and which ads and hooks work best, and I help you find new angles.",
+  },
+};
+
 const BULLET = /^[-*•]\s+/;
 const NUMBERED = /^\d+[.)]\s+/;
 const HEADING = /^#{1,3} /;
@@ -94,7 +120,7 @@ export function parseHermesText(text: string): HermesBlock[] {
 }
 
 export function hermesSuggestions(
-  app: "media-buyer" | "client-success" | "creative",
+  app: AssistantApp,
   client?: string | null,
 ): string[] {
   const name = client?.trim() ? client.trim() : null;
@@ -108,7 +134,7 @@ export function hermesSuggestions(
       : [
           "Which campaigns need attention today?",
           "Where did cost per lead rise this week?",
-          "Summarise yesterday's spend and leads",
+          "How are the ads doing today so far?",
         ];
   }
   if (app === "client-success") {
