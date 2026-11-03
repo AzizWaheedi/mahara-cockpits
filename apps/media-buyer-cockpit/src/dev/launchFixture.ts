@@ -14,12 +14,15 @@ const brief = {
   sentAt: "2026-10-23T09:00:00Z",
   answers: {
     service: "fitout",
-    daily_budget: 30,
+    // Blueprint part 1 stores {usd, said} (20261024a); 20261103e reads it.
+    daily_budget: { usd: 30, said: "30 dollars a day" },
     destination: "lead_form",
     identity: "their_page",
     red_lines:
       "Use completed client projects. No price promises or invented offers.",
   },
+  // Part 1's daily_budget as it was sent (parts.1.sent), which the chain reads.
+  sentBudget: { usd: 30, said: "30 dollars a day" },
 };
 function client(
   id: string,
@@ -103,6 +106,16 @@ export function launchFixture(state = "all"): LaunchPipeline {
   let clients: LaunchClient[] = [
     client("1", "Harbour Fitout", "ready", {
       history: history.map(h => ({ ...h, account_id: "11111100001" })),
+      // The agreed budget's other sources (20261103e): the desk lists them under the field.
+      kickoffBudget: {
+        amount: 150,
+        currency: "SAR",
+        usd: 39.99,
+        fromText: false,
+        said: null,
+        at: "2026-10-28T10:00:00Z",
+      },
+      handover: { daily_budget: 25 },
     }),
     client("2", "Dune Interiors", "onboarding", {
       accounts: [],
