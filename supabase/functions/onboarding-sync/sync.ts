@@ -17,6 +17,19 @@
 // 4. closes the run with its counts and plain problem, and records its
 //    freshness in cockpit_sync_state under key 'onboarding-sync'.
 //
+// The sale tie (docs/forms/WAVE56-CONTRACT.md 4.19, 20261103g) rides the same
+// card read, while forms.sale_tie.on is on: at the start of a run
+// cockpit_sale_tie_waiting says how many sales wait for their card and since
+// when; while any wait, each page sends the cards ClickUp made since a day
+// before that, as {taskId, createdAt, phone, email} (the card's own Phone
+// Number and Email, K1), to cockpit_sale_tie_offer, which keeps only digests;
+// at the end cockpit_sale_tie_sweep checks every waiting sale again. The run's
+// counts gain sale_ties_offered, sale_ties_tied and sale_ties_waiting (counts
+// only: no phone, email or digest reaches a count, a note or a log). A sale tie
+// failure never fails the run; it is said in the run's problem. The job
+// {"job":"saleTies","dryRun":true|false} reads every card once and sends them
+// all to cockpit_sale_tie_backfill (a dry run writes nothing).
+//
 // Every ClickUp and Typeform call goes through cockpit-csm-api/tools.ts, so it
 // lands in cockpit_csm_provider_health. Calls are spaced (ClickUp 2 s apart, 30
 // a minute: ClickUp Business allows 100 a minute for the one token the Supabase
@@ -54,11 +67,28 @@ export type Clock = {now: () => number; sleep: (ms: number) => Promise<void>};
 export const systemClock: Clock = {now: () => Date.now(), sleep: ms => new Promise(resolve => setTimeout(resolve, ms))};
 export type Published = {written: number; unchanged: number; identitySkipped: number};
 export type StateRow = {ok: boolean; note: string; rows_seen: number | null};
+/** The card's own Phone Number (phone) and Email (email) on Clients - Mahara, which Make copies from the sale. */
+export const CARD_PHONE_FIELD = '085d5e18-16f5-4cf5-8669-b8acf10700a5';
+export const CARD_EMAIL_FIELD = 'a90c8230-fa67-4e41-b6ed-39306f061fc3';
+/** Cards per cockpit_sale_tie_offer call (the function's own limit). */
+export const SALE_TIE_BATCH = 200;
+/** One card's sale tie keys (K1) as ClickUp holds them: sent only to the sale tie's RPCs, which keep digests. */
+export type SaleTieCard = {taskId: string; createdAt: string | null; phone: string | null; email: string | null};
+export type SaleTieWaiting = {on: boolean; waiting: number; since: string | null};
+export type SaleTies = {
+  /** null when the sale tie is not set up yet (its migration is not applied): no count, no note. */
+  waiting(): Promise<SaleTieWaiting | null>;
+  offer(run: number, cards: SaleTieCard[]): Promise<{tied: number}>;
+  sweep(run: number): Promise<{tied: number; waiting: number}>;
+  backfill(cards: SaleTieCard[], dryRun: boolean): Promise<Record<string, number | boolean>>;
+};
 export type Store = {
   begin(): Promise<{busy: true} | {busy: false; run: number; resumePage: number}>;
   publish(run: number, rows: OnboardingRow[], formsVerified: boolean): Promise<Published>;
   finish(run: number, ok: boolean, counts: Record<string, number>, problem: string | null): Promise<void>;
   state(row: StateRow): Promise<void>;
+  /** The sale tie (4.19); a store without it (a dry run) offers nothing. */
+  saleTies?: SaleTies;
 };
 /** Built inside the run, so a missing key becomes the run's plain problem. */
 export type Sources = {clickup: () => Provider; typeform: () => TypeformReader};
@@ -135,6 +165,26 @@ function typeformProblem(e: unknown): string {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+/** A card's sale tie keys (K1) from the list endpoint's task: its own Phone Number and Email, and when ClickUp made it. */
+export function saleTieCard(t: Any): SaleTieCard {
+  const value = (id: string) => {
+    const f = Array.isArray(t?.custom_fields) ? t.custom_fields.find((x: Any) => x?.id === id) : undefined;
+    const v = f?.value;
+    return typeof v === 'string' && v.trim() !== '' && v.length <= 320 ? v.trim() : null;
+  };
+  const ms = Number(t?.date_created);
+  return {
+    taskId: String(t.id),
+    createdAt: Number.isFinite(ms) && ms > 0 ? new Date(ms).toISOString() : null,
+    phone: value(CARD_PHONE_FIELD),
+    email: value(CARD_EMAIL_FIELD),
+  };
+}
+
+/** The sale tie's functions are not there yet (the migration is not applied): not a failure, nothing to count. */
+const notSetUp = (e: unknown) => /PGRST202|Could not find the function/i.test(message(e));
+const SALE_TIE_PROBLEM = 'Sales could not be matched to their cards this run. Ties already made are unchanged; the next run tries again.';
+
 /** One scheduled run over every card on Clients - Mahara. */
 export async function syncAll(store: Store, sources: Sources, clock: Clock = systemClock): Promise<Result> {
   const start = clock.now();
@@ -146,6 +196,18 @@ export async function syncAll(store: Store, sources: Sources, clock: Clock = sys
   let problem: string | null = null;
   let ok = false;
   let detail = '';
+  // The sale tie (4.19): counts only while it is on; a failure is said, never fatal.
+  let ties: SaleTieWaiting | null = null;
+  let tieFailed = false;
+  const tieCounts = {sale_ties_offered: 0, sale_ties_tied: 0, sale_ties_waiting: 0};
+  if (store.saleTies) {
+    try {
+      ties = await store.saleTies.waiting();
+    } catch (e) {
+      if (!notSetUp(e)) tieFailed = true;
+    }
+  }
+  const offerFrom = ties?.on && ties.waiting > 0 && ties.since ? Date.parse(ties.since) - 24 * 3_600_000 : null;
   try {
     let clickupTools: Provider;
     try {
@@ -201,6 +263,21 @@ export async function syncAll(store: Store, sources: Sources, clock: Clock = sys
         if (forms) row.forms = formsFor(row.clickup_task_id, forms);
         rows.push(row);
       }
+      if (store.saleTies && offerFrom !== null && Number.isFinite(offerFrom) && !tieFailed) {
+        const offered = tasks
+          .filter(t => readable(t) && rows.some(r => r.clickup_task_id === String(t.id)))
+          .map(saleTieCard)
+          .filter(c => c.createdAt !== null && Date.parse(c.createdAt) >= offerFrom);
+        for (let i = 0; i < offered.length && !tieFailed; i += SALE_TIE_BATCH) {
+          try {
+            const out = await store.saleTies.offer(run, offered.slice(i, i + SALE_TIE_BATCH));
+            tieCounts.sale_ties_offered += Math.min(SALE_TIE_BATCH, offered.length - i);
+            tieCounts.sale_ties_tied += out.tied;
+          } catch {
+            tieFailed = true;
+          }
+        }
+      }
       for (let i = 0; i < rows.length; i += BATCH) {
         let saved: Published;
         try {
@@ -227,7 +304,18 @@ export async function syncAll(store: Store, sources: Sources, clock: Clock = sys
       throw new Plain('ClickUp returned no readable client cards, so nothing changed. Check that the ClickUp token can still see the Clients - Mahara list.');
     // Missing is never zero: form counts only when every form was read.
     if (forms) Object.assign(counts, withForms);
-    const notes: (string | null)[] = [missingFieldsProblem(fields), formsProblem];
+    if (store.saleTies && ties?.on && !tieFailed) {
+      try {
+        const swept = await store.saleTies.sweep(run);
+        tieCounts.sale_ties_tied += swept.tied;
+        tieCounts.sale_ties_waiting = swept.waiting;
+      } catch {
+        tieFailed = true;
+      }
+    }
+    // Sale tie counts only while it is on and every call answered (missing is never zero).
+    if (ties?.on && !tieFailed) Object.assign(counts, tieCounts);
+    const notes: (string | null)[] = [missingFieldsProblem(fields), formsProblem, tieFailed ? SALE_TIE_PROBLEM : null];
     if (counts.identity_skipped)
       notes.push(`${plural(counts.identity_skipped, 'card was', 'cards were')} not updated because the card name differs from the client roster. They update after the roster refreshes.`);
     if (counts.unreadable)
@@ -296,7 +384,76 @@ export function supabaseStore(admin: Admin, clock: Clock = systemClock): Store {
         .upsert({key: 'onboarding-sync', last_run_at: at, updated_at: at, ...row, ...(row.ok ? {last_ok_at: at} : {})}, {onConflict: 'key'});
       if (error) throw Error(error.message);
     },
+    saleTies: saleTiesStore(admin),
   };
+}
+
+/** The sale tie's four service functions (20261103g). Their answers are counts; an error's text is never passed on. */
+export function saleTiesStore(admin: Admin): SaleTies {
+  const call = async (name: string, args: Record<string, unknown>) => {
+    const {data, error} = await admin.rpc(name, args);
+    if (error) throw Error(/PGRST202|Could not find the function/i.test(error.message) ? `Could not find the function ${name}` : `${name} refused the call.`);
+    return (data ?? {}) as Record<string, unknown>;
+  };
+  const n = (x: unknown) => (typeof x === 'number' && Number.isInteger(x) && x >= 0 ? x : 0);
+  return {
+    async waiting() {
+      const d = await call('cockpit_sale_tie_waiting', {});
+      return {on: d.on === true, waiting: n(d.waiting), since: typeof d.since === 'string' ? d.since : null};
+    },
+    async offer(run, cards) {
+      const d = await call('cockpit_sale_tie_offer', {p_run: run, p_cards: cards});
+      return {tied: n(d.tied)};
+    },
+    async sweep(run) {
+      const d = await call('cockpit_sale_tie_sweep', {p_run: run});
+      return {tied: n(d.tied), waiting: n(d.waiting)};
+    },
+    async backfill(cards, dryRun) {
+      const d = await call('cockpit_sale_tie_backfill', {p_cards: cards, p_dry: dryRun});
+      // Counts and flags only: anything else the database might add is left out.
+      return Object.fromEntries(Object.entries(d).filter(([, v]) => typeof v === 'number' || typeof v === 'boolean')) as Record<string, number | boolean>;
+    },
+  };
+}
+
+/**
+ * The job {"job":"saleTies","dryRun":...}: every card on Clients - Mahara read once (K1 and its creation time), then all
+ * of them to cockpit_sale_tie_backfill. A dry run writes nothing; a real run needs forms.sale_tie.on (the database says
+ * so). Every card must be read, or nothing is matched: a partial read would give counts that are not the list's.
+ */
+export async function saleTiesJob(ties: Pick<SaleTies, 'backfill'>, sources: Sources, dryRun: boolean, clock: Clock = systemClock): Promise<Result & {job: 'saleTies'; dryRun: boolean}> {
+  const start = clock.now();
+  const out = (r: Result) => ({...r, job: 'saleTies' as const, dryRun});
+  let tools: Provider;
+  try {
+    tools = sources.clickup();
+  } catch (e) {
+    return out({ok: false, note: clickupProblem(e)});
+  }
+  const clickup: Provider = {call: paced((method: 'GET' | 'POST', path: string, body?: Record<string, unknown>) => tools.call(method, path, body), CLICKUP_GAP_MS, clock, start + HARD_MS)};
+  const cards = new Map<string, SaleTieCard>();
+  let reachedEnd = false;
+  try {
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const body = await clickup.call('GET', `list/${LIST_ID}/task?page=${page}&include_closed=true&subtasks=false&archived=false`);
+      if (!body || !Array.isArray(body.tasks)) return out({ok: false, note: 'ClickUp returned a card page without its cards, so nothing was matched. Check the provider health ledger.'});
+      for (const t of body.tasks as Any[]) if (readable(t) && !cards.has(String(t.id))) cards.set(String(t.id), saleTieCard(t));
+      if (body.last_page !== false || body.tasks.length === 0) {
+        reachedEnd = true;
+        break;
+      }
+    }
+  } catch (e) {
+    return out({ok: false, note: e instanceof OutOfTime ? 'The job ran out of time before reading every card, so nothing was matched. Run it again.' : clickupProblem(e)});
+  }
+  if (!reachedEnd) return out({ok: false, note: `Clients - Mahara has more than ${MAX_PAGES * 100} cards, so nothing was matched. Ask an administrator to raise the limit.`});
+  try {
+    const counts = await ties.backfill([...cards.values()], dryRun);
+    return out({ok: true, counts: counts as Record<string, number>, note: dryRun ? 'Dry run: nothing was written.' : 'Sales matched to their cards.'});
+  } catch (e) {
+    return out({ok: false, note: notSetUp(e) ? 'The sale tie is not set up yet: apply 20261103g first.' : 'The database refused the sale tie job. Read its sentence in the function log, or run it as a dry run first.'});
+  }
 }
 
 /** The same tools and the same ledger as the one-card Refresh. */
@@ -362,6 +519,11 @@ export async function handle(
   const url = (env('SUPABASE_URL') ?? '').trim(), key = (env('SUPABASE_SERVICE_ROLE_KEY') ?? '').trim();
   if (!url || !key) return reply({ok: false, note: 'SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set on this Edge Function.'}, 503);
   const admin = connect(url, key);
+  if (body.job !== undefined) {
+    if (body.job !== 'saleTies') return reply({ok: false, note: 'The only job is saleTies.'}, 400);
+    // Dry unless dryRun is false, said in so many words.
+    return reply(await saleTiesJob(saleTiesStore(admin), liveSources(env, admin, request), body.dryRun !== false, clock));
+  }
   const store = body.dryRun === true ? dryRunStore() : supabaseStore(admin, clock);
   try {
     const result = await syncAll(store, liveSources(env, admin, request), clock);
