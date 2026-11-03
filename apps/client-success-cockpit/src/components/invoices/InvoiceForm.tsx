@@ -20,7 +20,9 @@ import {
   type ClientFolder,
   cents,
   type InvoiceClient,
+  type InvoicePrefill,
   type InvoiceRequest,
+  type LinkMode,
 } from "@/lib/invoices";
 import {
   type InvoiceDraft,
@@ -52,6 +54,25 @@ export const KINDS: { key: InvoiceKind; label: string; hint: string }[] = [
   },
 ];
 
+/** Pay online's link choice. The labels stay short for a phone; the hint says the rest. */
+export const LINKS: { key: LinkMode; label: string; hint: string }[] = [
+  {
+    key: "ecom",
+    label: "Ecom link (KWD)",
+    hint: "KNET and cards, charged in KWD at today's rate. The usual one.",
+  },
+  {
+    key: "whop",
+    label: "Whop link (USD)",
+    hint: "Cards and Apple Pay, charged in USD. Use it when Ecom does not work for the client.",
+  },
+  {
+    key: "paste",
+    label: "Paste a link",
+    hint: "Use a payment link you already have. It goes on the invoice as a Pay now button.",
+  },
+];
+
 const METHODS = ["Bank transfer", "Card", "Ecom", "Whop", "Tap", "Cash"];
 const MAX_PAYMENTS = 12;
 
@@ -74,14 +95,17 @@ type State = {
   period: string;
   payNote: string;
   dueDate: string;
-  /** "Pay online": the worker creates the Whop link, or a person pastes one. */
-  linkMode: "ecom" | "paste";
+  /** "Pay online": the worker makes an Ecom or a Whop link, or a person pastes one. */
+  linkMode: LinkMode;
   checkoutUrl: string;
   payments: PayLine[];
 };
 
 /** What the preview's Pay now button points at until the worker makes the real link. */
-const ECOM_PREVIEW = "https://invoice.ecom.io/";
+const PREVIEW_LINK: Record<"ecom" | "whop", string> = {
+  ecom: "https://invoice.ecom.io/",
+  whop: "https://whop.com/checkout/",
+};
 
 let nextKey = 1;
 const blankPayment = (today: string): PayLine => ({
@@ -118,9 +142,9 @@ const fresh = (
 
 /**
  * "Invoice this" on an accepted upsell (WAVE56-CONTRACT.md 4.3.3): the desk
- * opens on the client, Pay online with an Ecom link (Whop stays the backup),
- * the quoted amount and the offer's name. The invoice is linked to the win
- * once it is requested (invoices.ts).
+ * opens on the client, Pay online with an Ecom link (the usual one; Whop is
+ * the pill beside it), the quoted amount and the offer's name. The invoice
+ * is linked to the win once it is requested (invoices.ts).
  */
 function fromWin(s: State): State {
   if (typeof window === "undefined") return s;
@@ -207,6 +231,7 @@ export function InvoiceForm({
   taxIds,
   today,
   canSetFolder,
+  prefill,
   onDraft,
   onIssue,
   onSetFolder,
@@ -217,11 +242,18 @@ export function InvoiceForm({
   taxIds: Record<string, string>;
   today: string;
   canSetFolder: boolean;
+  /**
+   * The form opens filled with these ("Same invoice with Whop"). The page
+   * gives the form a new key with each one, so it opens fresh.
+   */
+  prefill?: InvoicePrefill | null;
   onDraft: (draft: InvoiceDraft) => void;
   onIssue: (args: InvoiceRequest) => Promise<boolean>;
   onSetFolder: (taskId: string, link: string) => Promise<boolean>;
 }) {
-  const [s, setS] = useState<State>(() => fromWin(fresh(today)));
+  const [s, setS] = useState<State>(() =>
+    prefill ? { ...fresh(today), ...prefill } : fromWin(fresh(today)),
+  );
   const [asking, setAsking] = useState(false);
   const [sending, setSending] = useState(false);
   const [folderLink, setFolderLink] = useState("");
@@ -276,13 +308,13 @@ export function InvoiceForm({
       issue_date: today,
       due_date: s.kind === "paid" ? null : s.dueDate || today,
       checkout_source:
-        s.linkMode === "ecom" && s.kind === "checkout" ? "ecom" : "pasted",
+        s.kind === "checkout" && s.linkMode !== "paste" ? s.linkMode : "pasted",
       checkout_url:
         s.kind !== "checkout"
           ? null
-          : s.linkMode === "ecom"
-            ? ECOM_PREVIEW
-            : s.checkoutUrl.trim(),
+          : s.linkMode === "paste"
+            ? s.checkoutUrl.trim()
+            : PREVIEW_LINK[s.linkMode],
       payments:
         s.kind === "paid"
           ? s.payments.map(p => {
@@ -320,7 +352,11 @@ export function InvoiceForm({
           ? s.checkoutUrl.trim()
           : undefined,
       createLink:
-        s.kind === "checkout" && s.linkMode === "ecom" ? true : undefined,
+        s.kind === "checkout" && s.linkMode !== "paste" ? true : undefined,
+      provider:
+        s.kind === "checkout" && s.linkMode !== "paste"
+          ? s.linkMode
+          : undefined,
       payments:
         s.kind === "paid"
           ? s.payments.map(p => ({
@@ -344,6 +380,7 @@ export function InvoiceForm({
   }
 
   const kind = KINDS.find(k => k.key === s.kind) ?? KINDS[0];
+  const link = LINKS.find(l => l.key === s.linkMode) ?? LINKS[0];
   return (
     <form
       className="space-y-6 rounded-2xl border bg-card p-4 sm:p-6"
@@ -608,25 +645,18 @@ export function InvoiceForm({
           <Kicker>Payment</Kicker>
           {s.kind === "checkout" ? (
             <div className="space-y-2">
-              <PillRow>
-                <Pill
-                  active={s.linkMode === "ecom"}
-                  onClick={() => set({ linkMode: "ecom" })}
-                >
-                  Create an Ecom link (KWD at today's rate)
-                </Pill>
-                <Pill
-                  active={s.linkMode === "paste"}
-                  onClick={() => set({ linkMode: "paste" })}
-                >
-                  Paste a link
-                </Pill>
+              <PillRow className="flex-wrap">
+                {LINKS.map(l => (
+                  <Pill
+                    key={l.key}
+                    active={l.key === s.linkMode}
+                    onClick={() => set({ linkMode: l.key })}
+                  >
+                    {l.label}
+                  </Pill>
+                ))}
               </PillRow>
-              <p className="text-xs text-muted-foreground">
-                {s.linkMode === "ecom"
-                  ? "The worker converts USD to KWD at today's rate and creates an Ecom payment link for the Pay now button."
-                  : "Use a payment link you already have. It goes on the invoice as a Pay now button."}
-              </p>
+              <p className="text-xs text-muted-foreground">{link.hint}</p>
             </div>
           ) : null}
           <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_10rem]">
@@ -696,7 +726,9 @@ export function InvoiceForm({
               the client can see it, and is locked against edits.
               {s.kind === "checkout" && s.linkMode === "ecom"
                 ? " The worker also creates its Ecom payment link in KWD first."
-                : null}
+                : s.kind === "checkout" && s.linkMode === "whop"
+                  ? " The worker also creates its Whop payment link in USD first."
+                  : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

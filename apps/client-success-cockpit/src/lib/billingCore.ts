@@ -47,13 +47,17 @@ export const F = {
   country: "e0ca65e7-7656-4113-9aae-9feda834c3f9",
 } as const;
 
-/** The dropdown options exactly as ClickUp spells them. */
+/**
+ * The dropdown options exactly as ClickUp spells them, and only those:
+ * cockpit_billing_write refuses any other name, and the card has no option
+ * to show it (media-buyer-cockpit/scripts/billing.test.ts pins both lists
+ * to the server's).
+ */
 export const METHODS = [
   "Card on file",
   "Bank transfer",
   "Tap link",
   "Whop link",
-  "Ecom link",
   "Check",
 ] as const;
 export const PLANS = [
