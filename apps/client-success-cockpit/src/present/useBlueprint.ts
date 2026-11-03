@@ -340,6 +340,8 @@ export function useBlueprint({
       blueprintPrefill({
         forms: (loaded?.kit?.forms as never) ?? null,
         cardBudget: loaded?.kit?.handover?.daily_budget ?? null,
+        budgetUsd: bundle?.kickoffBudget?.usd ?? null,
+        budgetCurrency: bundle?.kickoffBudget?.currency ?? null,
         onboardingPrep: loaded?.prep.onboarding ?? {},
         dosDonts: d?.dosDonts ?? { do: [], dont: [] },
         card: bundle?.card ?? null,

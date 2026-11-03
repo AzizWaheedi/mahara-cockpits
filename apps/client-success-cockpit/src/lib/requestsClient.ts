@@ -90,6 +90,17 @@ export function plainError(code: string | null, message: string): string {
   return PLAIN_ERRORS.other;
 }
 
+/**
+ * A sentence the database put inside an answer (not a refusal), such as a
+ * preview's note: its own words as they are, Postgres's own wording as plain
+ * words. Null for nothing.
+ */
+export function plainNote(message: string | null | undefined): string | null {
+  const m = (message ?? "").trim();
+  if (!m) return null;
+  return RAW_DATABASE.test(m) ? plainError(null, m) : m;
+}
+
 /** One RPC, its refusal turned into a RequestError. */
 export async function callRequests<T>(
   client: SupabaseClient,

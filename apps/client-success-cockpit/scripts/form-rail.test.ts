@@ -23,7 +23,7 @@ import {
   fixtureTimeline,
   onboardingEntry,
 } from "../src/dev/formFixtures";
-import { CheckPart } from "../src/forms/FormPanel";
+import { CheckPart, RailView } from "../src/forms/FormPanel";
 import type { FormContext, RailPart } from "../src/forms/formConfig";
 import {
   CHECK_SAYS,
@@ -128,7 +128,7 @@ describe("the parts, in order", () => {
     const order = part(parts, "order")?.rows ?? [];
     const empties = order.find(r => r.empties);
     expect(empties?.empties).toEqual([
-      "Daily budget",
+      "Daily budget at the sale",
       "Facebook access",
       "Calendar",
       "Content",
@@ -179,7 +179,7 @@ describe("the parts, in order", () => {
     expect(
       rail(ctx)
         .flatMap(p => p.rows)
-        .find(r => r.empties?.includes("Daily budget")),
+        .find(r => r.empties?.includes("Daily budget at the sale")),
     ).toBeTruthy();
   });
 });
@@ -404,13 +404,74 @@ describe("in the form's order", () => {
     expect(row(rail(), "consultation-types")?.suggest).toBe(true);
   });
 
-  test("daily budget: the card's, in its dollars, with a copy button that copies digits", () => {
+  test("daily budget: the card's, said as the sale's figure (CEO item 5), in its dollars, with a copy button that copies digits", () => {
     expect(row(rail(), "daily-budget")).toMatchObject({
+      label: "Daily budget at the sale",
       value: "$40 a day",
       copyValue: "40",
       copy: true,
-      source: "ClickUp card",
+      source: "ClickUp card (the sale)",
     });
+    expect(row(rail(), "daily-budget")?.hint).toBeUndefined();
+    // 1,000 or more looks like a month or another currency (the media buyers' guard).
+    const big = rail(
+      fixtureContext({
+        row: fixtureRow({
+          handover: { ...fixtureRow().handover, daily_budget: 1500 },
+        }),
+      }),
+    );
+    expect(row(big, "daily-budget")).toMatchObject({
+      value: "$1,500 a day",
+      hint: "Looks like a month or another currency. Ask the client for the daily amount.",
+    });
+  });
+
+  test("daily budget after a kickoff: said as the card's, never the sale's (card_facts may have filled it from the kickoff)", () => {
+    const kickoff = {
+      form_id: "native-kickoff",
+      response_id: "kickresponse000001",
+      submitted_at: "2026-10-20T08:00:00Z",
+      answers: [],
+    };
+    const after = rail(
+      fixtureContext({
+        row: fixtureRow({
+          forms: { onboarding: onboardingEntry(), kickoff },
+        }),
+      }),
+    );
+    expect(row(after, "daily-budget")).toMatchObject({
+      label: "Daily Budget on the card",
+      value: "$40 a day",
+      source: "ClickUp card",
+      hint: "May be the last kickoff's figure: an empty Daily Budget is filled from the kickoff.",
+    });
+    expect(JSON.stringify(after)).not.toContain("Daily budget at the sale");
+    expect(JSON.stringify(after)).not.toContain("ClickUp card (the sale)");
+    // An empty card folds under the neutral label, never a zero.
+    const empty = rail(
+      fixtureContext({
+        row: fixtureRow({
+          forms: { onboarding: onboardingEntry(), kickoff },
+          handover: { ...fixtureRow().handover, daily_budget: undefined },
+        }),
+      }),
+    );
+    const slot = empty
+      .flatMap(p => p.rows)
+      .find(
+        r =>
+          r.id === "daily-budget" ||
+          r.empties?.includes("Daily Budget on the card"),
+      );
+    expect(slot).toBeTruthy();
+    if (slot?.id === "daily-budget")
+      expect(slot).toMatchObject({
+        label: "Daily Budget on the card",
+        value: null,
+        missing: "Not on record.",
+      });
   });
 
   test("calendar and content from the onboarding form", () => {
@@ -811,4 +872,205 @@ describe("check with the client: only the flags that hold", () => {
     expect(html.match(/Onboarding form, 13 Oct/g)?.length).toBe(1);
     expect(html).not.toMatch(/<button|<input|<a /);
   });
+});
+
+describe("from the sale (CEO item 6, sale-tie.md 2.10)", () => {
+  const tied = {
+    state: "tied" as const,
+    signedAt: "2026-10-12T09:00:00Z",
+    tiedBy: "phone" as const,
+    closer: "Rania",
+    goLive: "Within two weeks of the kickoff.",
+    handoffProblems: "No",
+    expectations: "Ten booked consultations in the first month.",
+    salesCallLink: "https://fathom.video/share/example-call",
+    voidedInB2B: false,
+    otherSales: 0,
+  };
+  const emptyCard = (over: Record<string, unknown> = {}) =>
+    fixtureRow({
+      handover: {
+        billing_notes: "-Cash collected: 500",
+        daily_budget: 40,
+        ...over,
+      } as never,
+    });
+  const sale = (ctx: FormContext) => part(rail(ctx), "sale");
+
+  test("a tied sale opens with its stub: the signed day and the method chip, then its answers where the card is empty", () => {
+    const p = sale(fixtureContext({ row: emptyCard(), sale: tied }));
+    expect(p?.fold).toBe(true);
+    expect(p?.rows.map(r => r.id)).toEqual([
+      "sale-stub",
+      "go-live",
+      "handoff-problems",
+      "expectations",
+      "closer",
+      "closer-notes",
+    ]);
+    expect(p?.rows[0]).toMatchObject({
+      label: "Sale",
+      value: "Signed 12 Oct",
+      chip: { label: "Tied by phone", tone: "accent" },
+      href: "https://fathom.video/share/example-call",
+      linkLabel: "Watch the sales call",
+    });
+    const r = (id: string) => p?.rows.find(x => x.id === id);
+    expect(r("go-live")).toMatchObject({
+      label: "Go-live expectation",
+      value: "Within two weeks of the kickoff.",
+      source: "New Client Form, 12 Oct",
+    });
+    // "No" is the closer's real answer to the question, written as typed.
+    expect(r("handoff-problems")).toMatchObject({
+      label: "Handoff problems",
+      value: "No",
+      source: "New Client Form, 12 Oct",
+    });
+    expect(r("expectations")).toMatchObject({
+      label: "What they believe they're getting",
+      value: "Ten booked consultations in the first month.",
+    });
+    // Display only: the card's Closer is never written from here.
+    expect(r("closer")).toMatchObject({
+      value: "Rania",
+      source: "New Client Form, 12 Oct",
+      hint: "From the New Client Form. The card's Closer is empty.",
+    });
+  });
+
+  test("the card's own fields come first; each method has its chip; a person's tie is the neutral chip", () => {
+    const p = sale(
+      fixtureContext({
+        row: fixtureRow({
+          handover: {
+            ...fixtureRow().handover,
+            go_live: "Next month.",
+          },
+        }),
+        sale: { ...tied, tiedBy: "person" },
+      }),
+    );
+    const r = (id: string) => p?.rows.find(x => x.id === id);
+    expect(r("go-live")).toMatchObject({
+      value: "Next month.",
+      source: "ClickUp card",
+    });
+    expect(r("handoff-problems")).toMatchObject({
+      value: "Budget is tight for the first month.",
+      source: "ClickUp card",
+    });
+    expect(r("closer")).toMatchObject({
+      value: "Omar",
+      source: "ClickUp card",
+    });
+    expect(r("closer")?.hint).toBeUndefined();
+    expect(r("sale-stub")?.chip).toEqual({
+      label: "Tied by a person",
+      tone: "neutral",
+    });
+    for (const [by, words] of [
+      ["email", "Tied by email"],
+      ["phone_email", "Tied by phone and email"],
+    ] as const)
+      expect(
+        sale(fixtureContext({ sale: { ...tied, tiedBy: by } }))?.rows[0].chip
+          ?.label,
+      ).toBe(words);
+    // A voided sale and earlier sales on the card are said under the stub.
+    expect(
+      sale(
+        fixtureContext({
+          sale: { ...tied, voidedInB2B: true, otherSales: 1 },
+        }),
+      )?.rows[0].hint,
+    ).toBe("Voided in B2B. 1 earlier sale on this card.");
+  });
+
+  test("no tied sale says so, never a blank or a zero, and is never folded into Not on record", () => {
+    const p = sale(
+      fixtureContext({ row: emptyCard(), sale: { state: "none" } }),
+    );
+    expect(p?.rows[0]).toMatchObject({
+      id: "sale-stub",
+      label: "Sale",
+      value: null,
+      missing:
+        "Not tied to a New Client Form yet. The CEO can tie it under Sales not on a card.",
+    });
+    // The card's empty rows fold into one line after the stub.
+    expect(p?.rows[1].empties).toEqual([
+      "Go-live expectation",
+      "Handoff problems",
+      "Closer",
+      "Closer's notes",
+    ]);
+  });
+
+  test("before the sale tie (not read, or its function missing) the part keeps the card's rows; a failed read says so", () => {
+    for (const ctx of [
+      fixtureContext(),
+      fixtureContext({ sale: { state: "missing" } }),
+      // Sale ties off: nothing can be tied, so no stub sends anyone to tie it.
+      fixtureContext({ sale: { state: "off" } }),
+    ]) {
+      const p = sale(ctx);
+      expect(p?.rows.map(r => r.id)).not.toContain("sale-stub");
+      expect(p?.rows.find(r => r.id === "handoff-problems")?.value).toBe(
+        "Budget is tight for the first month.",
+      );
+      expect(p?.problem).toBeUndefined();
+    }
+    expect(sale(fixtureContext({ failed: { sale: "down" } }))?.problem).toBe(
+      "The sale tied to this card could not be read just now.",
+    );
+  });
+});
+
+test("the rail draws the sale stub's chip beside its value, and a folded part's problem", () => {
+  const parts = rail(
+    fixtureContext({
+      sale: {
+        state: "tied",
+        signedAt: "2026-10-12T09:00:00Z",
+        tiedBy: "email",
+        closer: null,
+        goLive: null,
+        handoffProblems: null,
+        expectations: null,
+        salesCallLink: null,
+        voidedInB2B: false,
+        otherSales: 0,
+      },
+    }),
+  );
+  const html = renderToStaticMarkup(
+    createElement(RailView, {
+      config: { title: "Kickoff" },
+      parts,
+      notes: [],
+      failedSends: null,
+      after: null,
+      jumped: null,
+      onJump: () => {},
+      onRecheck: async () => {},
+    }),
+  );
+  expect(html).toContain("Signed 12 Oct");
+  expect(html).toContain("Tied by email");
+  const failed = renderToStaticMarkup(
+    createElement(RailView, {
+      config: { title: "Kickoff" },
+      parts: rail(fixtureContext({ failed: { sale: "down" } })),
+      notes: [],
+      failedSends: null,
+      after: null,
+      jumped: null,
+      onJump: () => {},
+      onRecheck: async () => {},
+    }),
+  );
+  expect(failed).toContain(
+    "The sale tied to this card could not be read just now.",
+  );
 });

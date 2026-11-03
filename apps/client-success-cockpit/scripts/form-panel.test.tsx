@@ -1149,7 +1149,7 @@ describe("the window", () => {
     expect(button(host, "Copy their onboarding link")).toBeTruthy();
     // The empty rows in a row are one line.
     expect(host.textContent).toContain(
-      "Not on record: Daily budget, Facebook access, Calendar, Content.",
+      "Not on record: Daily budget at the sale, Facebook access, Calendar, Content.",
     );
   });
 

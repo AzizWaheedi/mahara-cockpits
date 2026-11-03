@@ -483,6 +483,7 @@ director cockpit has, or copies, each one:
 | `@/lib/onboardingCore` | `FORMS` (the onboarding form's ID); the types `OnboardingRow`, `FormEntry`, `LinkKey` |
 | `@/lib/csmCalls` | the types `Timeline`, `TimelineForm` |
 | `@/present/sources` | the type `DeckSources` (the context's deck read) |
+| `@/lib/saleTie` | the type `SaleView` (the context's tied sale, CEO item 6; a pure file with no React) |
 
 And the CSS the panel's class names need, beyond Tailwind's own:
 
