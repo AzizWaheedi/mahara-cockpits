@@ -134,7 +134,7 @@ function HermesBlocks({ text, animate }: { text: string; animate: boolean }) {
       {parseHermesText(text).map((b, i) => {
         const anim = animate ? " hermes-rise" : "";
         const delay = animate ? { animationDelay: `${i * 60}ms` } : undefined;
-        if (b.kind === "bullets" || b.kind === "numbered") {
+        if ("items" in b) {
           const cls = `space-y-1 ps-5 text-sm leading-6 ${
             b.kind === "bullets" ? "list-disc" : "list-decimal"
           }${anim}`;
