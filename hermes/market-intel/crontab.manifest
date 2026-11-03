@@ -1,0 +1,8 @@
+# hermes/market-intel (MI-1, dark). NOT INSTALLED by this branch. At MI-1's install step, as the radar's user (hermes),
+# after `python3 mi.py doctor` reads "No blocker.": back the crontab up (crontab -l > ~/crontab-backup-<date>.txt), add
+# these two lines, read them back, and add the same two lines to hermes/cockpit-guardian/crontab.manifest in the same
+# commit so its vps-crontab check watches them. Every line sources the env file (mode 600); no secret is on a line.
+# pending: scan for new onboarding answers, claim one run, research it. A run takes 15 to 25 minutes; flock -n skips
+# the 2-minute ticks while one is running. prune: Saturdays 06:23 Kuwait, evidence bodies and run folders past 180 days.
+*/2 * * * * flock -n $HOME/.market-intel/pending.lock bash -c 'set -a; . $HOME/.market-intel/env; set +a; cd $HOME/mahara-cockpits/hermes/market-intel && python3 mi.py --quiet pending' >> $HOME/.market-intel/cron.log 2>&1
+23 3 * * 6  flock -n $HOME/.market-intel/prune.lock bash -c 'set -a; . $HOME/.market-intel/env; set +a; cd $HOME/mahara-cockpits/hermes/market-intel && python3 mi.py --quiet prune --days 180' >> $HOME/.market-intel/cron.log 2>&1

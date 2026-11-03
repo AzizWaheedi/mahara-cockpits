@@ -1,0 +1,6 @@
+[{"name": "Invented Reviewer A", "reviewerId": "111", "reviewerUrl": "https://www.google.com/maps/contrib/111", "reviewerPhotoUrl": "https://lh3.example/a.jpg",
+  "text": "Tidy work, finished the majlis on time.", "stars": 5, "publishedAtDate": "2026-10-01T10:00:00.000Z", "originalLanguage": "en",
+  "responseFromOwnerText": "Thank you", "title": "Cedar Invented Interiors", "url": "https://www.google.com/maps/place/?q=place_id:ChIJcedarInvented", "totalScore": 4.6, "reviewsCount": 88},
+ {"name": "Invented Reviewer B", "reviewerId": "222", "text": "Slow to answer messages.", "stars": 2, "publishedAtDate": "2026-09-12T08:00:00.000Z", "originalLanguage": "en",
+  "responseFromOwnerText": null, "title": "Cedar Invented Interiors", "totalScore": 4.6, "reviewsCount": 88},
+ {"name": "Invented Reviewer C", "text": "", "stars": 4, "publishedAtDate": "2026-08-02T08:00:00.000Z"}]

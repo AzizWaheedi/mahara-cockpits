@@ -1712,6 +1712,64 @@ Account - Meta and ADs Platforms (inferred values, or no reader). The market int
 Profile backfill, the onboarding's hints and optional questions, a version 3, the kickoff daily budget, New Client Form
 ties and open items as requests are the CEO's (section 10, CEO-1 to CEO-7).
 
+### 4.23 Market research, MI-1 (CEO-1 decided: replicate and improve; build MI-1, migration `20261103i`)
+
+The CEO, 2026-11-02: "Find it in the context somewhere, find the market intel, or make it even better and replicate
+and improve it with a better scraper." Found: the teammate's `market_intel_job.py` on a self-hosted runner. Replaced,
+in stages, by `hermes/market-intel` (design `next-design/market-intel.md`, plan section 3 MI-1). **MI-1 is dark**:
+the worker, the tables and the gated reads; nothing is published, and the old job keeps running until the cutover.
+
+**What runs.** A VPS worker in the radar's discipline (keys by name from `~/.market-intel/env`, `doctor`, tests with
+fakes and recorded shapes, cron every 2 minutes under `flock`, a weekly prune, a RUNBOOK section, one
+`cockpit_sync_state` row `market-intel` per tick). Code does every pull (Apify, ScrapeCreators, direct website
+reads, each call in `cockpit_csm_provider_health` with run key `market-intel:<run>`); Claude on the VPS picks 6 rivals
+and 2 reserves from a code-scored shortlist of 25 and writes the findings, with no tools, from the evidence fenced as
+data. Engine switch `MARKET_INTEL_MODEL_PROVIDER`: `vps` (default, the proxy on the CEO's sign-in) or `cli`
+(`claude -p`, every tool off, a setup token). Numbers are filled by code from the evidence, with a second source for
+the rating, review count and followers that ship.
+
+**Migration `20261103i_market_intel.sql`** (replaces no live function; a drift guard on its own 22 bodies; applies
+twice):
+
+| Object | Shape and rule |
+|---|---|
+| `cockpit_market_intel_runs` | one row per run: reason (`onboarding`, `shadow`, `rerun`, `backfill`, `kickoff_refresh`), mode, state (`queued` to `publishing`, then `done`, `needs_person`, `failed`, `cancelled`), lease, attempts, `stage_progress` (ids and states only), cumulative spend (never goes down), counts, the sentence. One open run per card; one onboarding or shadow run per stored answer |
+| `cockpit_market_intel_evidence` | `E1...` per run: kind, subject (`client`, `market`, `K<n>` candidate, `C<n>` rival), URL, time, source, cost, trimmed body, sha256. Inserted once (a resume never rewrites); a review naming its reviewer is refused; bodies pruned after 180 days |
+| `cockpit_market_intel_findings` | per language: the findings and each rule's result |
+| `cockpit_market_intel_competitors` | the picks, their numbers (NULL is "not checked"), the "Not a competitor" flag (kept across upserts) |
+| Grants | row security on all four; nothing for anon or authenticated; `SELECT` only for `service_role`; every write through a function below, each with a `cockpit_audit_log` row |
+| Worker functions (`service_role`) | `enqueue`, `scan` (answers since `shadow_since`, while on), `claim` (one at a time, 60-minute lease, a lapsed lease resumed first, three tries), `progress` (hands back `on` and the caps, so a run stops or tightens mid-run), `store`, `release` (back to the queue for N minutes; `p_kind` `error` is a try, `outage` and `paused` give the claim's try back, an outage's wait doubles to 4 hours and 24 hours of outages end the run `needs_person`), `done` (a shadow run cannot record a Doc, a field write or a comment), `input` and `preview` (never the five contact answers), `nap` (match, differs or not_checked; the number stays in the database), `month_usd`, `prune`, `settings`, `effect` |
+| Cockpit functions (`authenticated`, gated inside) | `view` (CEO, admin, creative, media buyer, a CSM on their own clients through `cockpit_csm_client_gate`; the budget only for CEO and admin; findings only from a `done` run), `rerun` (CEO or admin, setting on, a reason of 10 to 300 characters, no open run, the month not spent), `flag_competitor` (CEO or admin). Reached through `cockpit-csm-api` operations `marketIntel.view`, `marketIntel.rerun`, `marketIntel.flag` (a verified sign-in first; the database's refusal is the cockpit's sentence; PGRST202 reads "Market research opens after the next cockpit update.") |
+| Setting `market_intel` | `{on:false, mode:'shadow', apply_drive, apply_clickup, apply_kb: false, only_cards:[], usd_cap_run:2, usd_cap_month:25, refresh_on_kickoff:false, shadow_since:<apply time>}`, seeded once with an audit row; every later change audited by this file's own trigger `cockpit_market_intel_setting_audit` (`market_intel.setting_set`, value before and after; the live forms and billing trigger untouched) |
+| Effect | `{"key":"market_intel","label":"Market research","owner":"cockpit","delivery":"sql"}` is catalogued (`cockpit_market_intel_effect()`) and is **not** in `cockpit_form_stage4_effects` or any registry row; the cutover migration adds it at D-S4O with the owner's agreement, and `make_parity.py` gets `INTENDED['market_intel']` then (after B8, plan 2.10) |
+
+**The validator** (`mi/check.py`, before anything is stored as findings): 1 shape (13 sections, both editions);
+2 every claim cites evidence this run pulled, every URL is an evidence URL; 3 no typed number (metric references
+only; a duration in the 90-day plan is allowed); 4 Arabic and English carry the same claims; 5 at least 5 rivals with
+2 independent sources each, 20 evidence items, the client's presence checked on 4 of 6 channels; 6 form answers only
+as the client's claims with the form date, no mystery shop; 7 no phone, email or internal id; 8 the positioning and
+plan sections are recommendations. One repair call; a second failure ends `needs_person` with the rule's sentence.
+
+**Money.** Run cap USD 2.00 and month cap USD 25.00 (the lower of the setting and the worker's env), enforced before
+every pull; Apify runs carry `maxItems` and `maxTotalChargeUsd`, and the meter holds each run's ceiling while it is
+in flight, so runs side by side never add up past a cap; an aborted run's cost is read and counted; at most 40
+actor runs a report. A typical run is
+USD 0.50 to 0.75 of Apify plus about USD 0.05 of ScrapeCreators (design 2.4; measured in shadow).
+
+**Outputs in MI-1.** The three tabs as text and as the Docs `batchUpdate` requests (UTF-16 indexes, the Arabic tab
+right to left), the card field `7489dbcc` value and the one comment (marker `Cockpit ref MI-<8 hex>`, not notifying)
+in `outputs.json` with `sent: false`. The Onboarding Answers tab leaves the contact answers out ("Contact details are
+on the client card", Q4 pending).
+
+**Guardian** (`checks/market_intel.py`, report-only): `mi-stuck` (fail: a lease lapsed over 10 minutes, or a run open
+over 3 hours), `mi-missing` (warn, while on: an answer since `shadow_since` over 3 hours old with no `done` run),
+`mi-spend` (warn over 80 percent of the month cap, fail at the cap).
+
+**Deploy (MI-1 install, then MI-2):** the migration (dark); `cockpit-csm-api` with its live `verify_jwt`; the worker
+on the VPS as the radar's user, env file mode 600, `doctor` green, the two cron lines (crontab backup first, the same
+lines in the guardian's manifest); the guardian release. MI-2 (the CEO's yes): `market_intel.on` true in shadow, the 5
+October clients through `backfill` (about USD 4), side by side with the current reports.
+
 ---
 
 ## 5. The screens: design plans and copy
@@ -2184,6 +2242,9 @@ after D-S4F passed and on different days (one Make switch-off window a day).
 - **Match Make (X37): what cannot match without his word** (11.9). The ref line the writer added after every Stage 4 comment is gone (round 3, 4.13.4): under "match Make" the comments that mirror Make's carry its text alone and are still posted exactly once, found again by ClickUp's id or by their text, so it no longer waits on him. (1) What the request route adds to the three tasks Make makes (a description rewritten as the template's text, a rule, the request's own lines and its marker `Cockpit ref R-…`, which keeps a task from being made twice; a due date, a priority, owners by rule on the onboarding tasks, the client tag, the Request Type field and a link comment on the client card per task) no longer waits either: his later words (X39) make it intended (`request_route`, 4.15.1). The route stays (X38). Still waiting: (2) The phase 3 map and message for a card with no Client Data row or several (Make acts once per row; the cockpit moves the map once and sends only for exactly one row). (3) A Business Name holding `"`, `\` or a line break: Make 13 [25] pastes it into its JSON unescaped and its request fails; the relay sends it escaped, so matching would copy the failure. The parity run does not grade these (it reads the plan).
 - **Better data (X39): the CEO's decisions still open** (the better-data plan's "For the CEO", each with its
   recommendation; none is built):
+  - **CEO-1, decided 2026-11-02: replicate and improve the market intel job inside the cockpits** (build MI-1, 4.23;
+    MI-1b, MI-1c, MI-3 and MI-4 follow). Still open for D-S4O: the owner's answer below (MI-0), the Apify key and
+    budget, and the engine. The original question, kept for the record:
   - **CEO-1, urgent, before D-S4O: where the market intel job reads the answers, and the dispatch keys.** The job
     most likely reads Typeform (its folders are keyed by response hash and its report reads back all 36 answers); the
     market intel repository could not be read from this seat. If it does, a portal-native onboarding gives it nothing,
