@@ -1,0 +1,5 @@
+{"success": true, "credits_charged": 1, "results": [
+  {"ad_archive_id": "900000000000001", "page_id": "100000000000001", "page_name": "Cedar Invented Interiors", "start_date": 1754006400, "is_active": true,
+   "publisher_platform": ["FACEBOOK", "INSTAGRAM"], "snapshot": {"title": "Free design visit", "body": {"text": "Book a visit this month"}, "cta_text": "Book now", "display_format": "VIDEO", "videos": [{"video_hd_url": "https://video.example/1.mp4"}]}},
+  {"ad_archive_id": "900000000000002", "page_id": "100000000000001", "page_name": "Cedar Invented Interiors", "start_date": 1761955200, "is_active": true,
+   "publisher_platform": ["INSTAGRAM"], "snapshot": {"title": "Kitchens", "body": {"text": "New kitchen collection"}, "display_format": "IMAGE"}}], "cursor": null}

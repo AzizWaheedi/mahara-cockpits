@@ -9,6 +9,7 @@ import {runReportOperation,ReportAccessError} from './reportOperation.ts';
 import {runWhatsappProbe,WhatsappProbeAccessError} from './whatsappProbe.ts';
 import {runLaunchAds,LaunchAdsError,LAUNCH_AD_OPERATIONS} from './launchAds.ts';
 import {runUpsell,UpsellError,UPSELL_OPERATIONS} from './upsell.ts';
+import {runMarketIntel,MarketIntelError,MARKET_INTEL_OPERATIONS} from './marketIntel.ts';
 const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,apikey,content-type,x-client-info','Access-Control-Allow-Methods':'POST,OPTIONS'};
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{...cors,'Content-Type':'application/json'}});
 const canonical=(v:any):string=>JSON.stringify(v&&typeof v==='object'?(Array.isArray(v)?v.map(x=>JSON.parse(canonical(x))):Object.fromEntries(Object.keys(v).sort().filter(k=>v[k]!==undefined).map(k=>[k,JSON.parse(canonical(v[k]))]))):v);
@@ -45,6 +46,12 @@ Deno.serve(async(req:Request)=>{
    const {data:user,error:authError}=await client.auth.getUser();if(authError||!user.user)return json({error:'Sign in first'},401);
    try{return json(await runUpsell(client,createClient(url,service,{auth:{persistSession:false}}),input,name=>Deno.env.get(name)));}
    catch(error){if(error instanceof UpsellError)return json({error:error.message},error.status);throw error;}
+  }
+  if(MARKET_INTEL_OPERATIONS.includes(operation)){
+   // Market research (marketIntel.ts): a verified sign-in, then the seat's own RPC, gated in the database.
+   const {data:user,error:authError}=await client.auth.getUser();if(authError||!user.user)return json({error:'Sign in first'},401);
+   try{return json(await runMarketIntel(client,input));}
+   catch(error){if(error instanceof MarketIntelError)return json({error:error.message},error.status);throw error;}
   }
   if(operation==='reports.create')return json(await runReportOperation(client,createClient(url,service,{auth:{persistSession:false}}),input,name=>Deno.env.get(name)));
   if(operation==='checkIns.prepare'||operation==='checkIns.contact'||operation==='checkIns.book'){

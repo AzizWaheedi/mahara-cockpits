@@ -7,6 +7,7 @@ from guard.model import Check
 from . import (claude_proxy, clickup_budget, client_messages, edge_functions, guardian_self, hermes_monitors, keys, live_calls, pg_cron,
                queues, sections, sites, supabase, syncs, vps_cron, vps_resources, whatsapp, worker_status, native, csm_calls,
                ad_billing, task_assignments, forms_billing, client_forms, wins_cash)
+from . import market_intel  # 20261103i, contract 4.23 (one line per build, plan 2.13)
 
 # supabase-health runs first: when Creative Triage does not answer it trips the
 # breaker, so the rest of the scan does not wait 30 s per read. The live-calls
@@ -17,7 +18,7 @@ from . import (claude_proxy, clickup_budget, client_messages, edge_functions, gu
 # the retire list, Stage 4) last.
 MODULES = (supabase, guardian_self, claude_proxy, sections, csm_calls, client_messages, vps_resources, vps_cron, worker_status,
            syncs, clickup_budget, live_calls, pg_cron, edge_functions, whatsapp, keys, queues, sites, hermes_monitors, ad_billing,
-           task_assignments, forms_billing, client_forms, wins_cash)
+           task_assignments, forms_billing, client_forms, wins_cash, market_intel)
 
 
 def all_checks(backend: str | None = None) -> list[Check]:
