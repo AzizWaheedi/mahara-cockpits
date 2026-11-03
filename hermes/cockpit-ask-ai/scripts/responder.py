@@ -173,7 +173,7 @@ def client_pack(rest: str, key: str, client: str) -> tuple[str, list[str]]:
         lines.append("Campaign board: no live campaign is tied to this client.")
     else:
         sources.append("media buyer campaign board")
-        lines.append(f"Campaign board (synced {str(camps[0].get('synced_at'))[:16]}):")
+        lines.append(f"Campaign board (synced {kuwait_time(camps[0].get('synced_at'))} Kuwait time; today = the Kuwait day so far; verdict scale = doing well, hold = watch, kill = should stop):")
         for c in camps:
             lines.append(
                 f"- {c.get('name') or 'campaign'}: verdict {c.get('verdict') or 'none'}"
@@ -251,17 +251,36 @@ def client_pack(rest: str, key: str, client: str) -> tuple[str, list[str]]:
 
 
 def overview_pack(rest: str, key: str, names: list[str]) -> tuple[str, list[str]]:
-    camps = get(rest, key, "cockpit_campaigns", {"source_deleted": "is.false", "select": "client_name,verdict,reason,spend_7d,leads_7d,cpl,synced_at,name:raw_data->>campaignName", "order": "client_name"})
+    camps = get(rest, key, "cockpit_campaigns", {"source_deleted": "is.false", "select": "client_name,verdict,reason,spend_7d,leads_7d,cpl,spend_today,leads_today,synced_at,name:raw_data->>campaignName,bookings:raw_data->>bookings7d", "order": "client_name"})
     if camps is None:
         return "Campaign board: could not be read right now.", []
     allowed = {n.lower().strip() for n in names}
     camps = [c for c in camps if (c.get("client_name") or "").lower().strip() in allowed]
     if not camps:
         return "Campaign board: no live campaign for the clients this person can see.", []
-    lines = [f"Campaign board for every client this person can see (synced {str(camps[0].get('synced_at'))[:16]}):"]
+    synced = kuwait_time(camps[0].get("synced_at"))
+    s_today, l_today = sum(num(c.get("spend_today")) for c in camps), sum(int(num(c.get("leads_today"))) for c in camps)
+    s7, l7 = sum(num(c.get("spend_7d")) for c in camps), sum(int(num(c.get("leads_7d"))) for c in camps)
+    lines = [
+        f"Campaign board for every live campaign of the clients this person can see (synced {synced} Kuwait time).",
+        f"Totals: today so far (Kuwait day, up to the sync) spend {money(s_today)}, leads {l_today}; last 7 days spend {money(s7)}, leads {l7}, cost per lead {money(s7 / l7) if l7 else 'n/a'}.",
+        "Per campaign (verdict: scale = doing well, hold = watch, kill = should stop):",
+    ]
     for c in camps:
-        lines.append(f"- {c.get('client_name')} / {c.get('name') or 'campaign'}: {c.get('verdict') or 'no verdict'}, 7d spend {money(num(c.get('spend_7d')))}, leads {int(num(c.get('leads_7d')))}, cost per lead {money(num(c.get('cpl'))) if c.get('cpl') else 'n/a'}. {(c.get('reason') or '')[:120]}")
+        lines.append(
+            f"- {c.get('client_name')} / {c.get('name') or 'campaign'}: {c.get('verdict') or 'no verdict'};"
+            f" today spend {money(num(c.get('spend_today')))}, leads {int(num(c.get('leads_today')))};"
+            f" last 7 days spend {money(num(c.get('spend_7d')))}, leads {int(num(c.get('leads_7d')))}, cost per lead {money(num(c.get('cpl'))) if c.get('cpl') else 'n/a'},"
+            f" bookings {c.get('bookings') if c.get('bookings') is not None else 'not measured'}. {(c.get('reason') or '')[:120]}"
+        )
     return "\n".join(lines), ["media buyer campaign board"]
+
+
+def kuwait_time(ts: Any) -> str:
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00")).astimezone(KUWAIT).strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return str(ts)[:16]
 
 
 # ---------------------------------------------------------------- Google Drive
@@ -337,9 +356,12 @@ Mahara runs Meta ads and sales follow-up for construction and design businesses 
 Answer rules:
 - Answer in the language and dialect of the question. Arabic questions get natural Gulf Arabic, not formal MSA.
 - Lead with the answer. Keep it short: under 180 words unless the person asks for more or for copy.
-- Use only the DATA block and the attached files. Never invent a number, a name or a status. If the data needed is missing, say what is missing in one line and where to find it.
-- Every number you give says its window (for example "last 7 days"). Money is always USD.
-- You cannot act: you never upload, edit, publish, pause, message clients or change settings. If asked, say so in one line, then help with what you can (a checklist, a draft, copy). Never name a cockpit screen, button, setting or person that is not in the DATA.
+- Use only the DATA block, the COCKPIT GUIDE and the attached files. Never invent a number, a name or a status.
+- Answer straight away. When the exact window asked for is not in the DATA, give the closest window you have and name it in the first line. Never ask "do you want me to"; just answer. When nothing in the DATA fits, say what is missing in one line.
+- Every number you give says its window ("today so far", "last 7 days"). Money is always USD.
+- "How do I", "where do I" and "from where" questions are answered from the COCKPIT GUIDE: name the menu item and the button. Never name a page, button or setting that is not in the guide or the DATA, and never describe what a page does beyond what the guide says.
+- You cannot act: you never upload, edit, publish, pause, message clients or change settings. If asked, say so in one line and point to the place in the COCKPIT GUIDE where the person does it, then help with what you can (a checklist, a draft, copy).
+- Say campaign verdicts in plain words (doing well, watch, should stop), not "scale / hold / kill" or "gates".
 - A short reply such as "yes", "نعم" or "do it" answers your previous message: continue from it.
 - When a file is attached, describe what you actually see in it before you write copy for it.
 - Format: short paragraphs, "- " bullets, **bold** for the key figure. No tables, no "---" lines, no emoji, no em dashes.
@@ -351,6 +373,38 @@ House rules for ad copy:
 - Headline under 40 characters. Primary text 2 to 4 short lines. Arabic copy in Gulf spoken register.
 - When asked for options, give distinct angles: outcome, objection, proof, question, direct offer."""
 
+# Where things are, per cockpit: menu names from each app's AppSidebar.tsx and
+# the buttons people ask about. Keep it in step when a menu or button moves.
+SHARED_GUIDE = """- Ask a team (menu, Team section): ask another team for something; it becomes a ClickUp task with its SOP steps and an owner.
+- Team meetings (menu).
+- Client performance (menu): every active client against its targets; open a client for its ads.
+- Ask Hermes (round button, bottom right): this chat."""
+
+COCKPIT_GUIDE = {
+    "media-buyer": """Media buyer cockpit menu:
+- Today: the day's tasks and numbers.
+- Ads: the campaign board. Each campaign card and each ad has a "New creative" button: pick a reason (more ads to test, new angle or hook, refresh a fatigued ad, improve the edit) and the request goes to the creative director. The same card has "This is not for me" to send a request to another team's ClickUp board.
+- Clients: every client's account; open a client to see its campaigns, ads and the same "New creative" button.
+- Library: the SOPs (the simple SOP, the in-depth SOP, the written SOP in ClickUp, raise a ticket).
+""" + SHARED_GUIDE,
+    "client-success": """Client success cockpit menu:
+- Today
+- Inbox
+- Clients: every client; open one for its details.
+- Money
+- Links
+""" + SHARED_GUIDE,
+    "creative": """Creative director cockpit menu:
+- Today
+- Clients: the client database.
+- Library (what works)
+- Social: the social calendar.
+- Funnels
+- Links
+New creative requests from media buyers arrive here from the Ads page "New creative" button in the media buyer cockpit.
+""" + SHARED_GUIDE,
+}
+
 
 def build_messages(job: dict[str, Any], data: str, images: list[dict[str, Any]], page: str | None) -> list[dict[str, Any]]:
     # The data goes with the rules, so the chat reads in order and a short reply
@@ -358,7 +412,8 @@ def build_messages(job: dict[str, Any], data: str, images: list[dict[str, Any]],
     ctx = job.get("context") or {}
     now = datetime.now(KUWAIT).strftime("%Y-%m-%d %H:%M")
     data_block = f"DATA (read {now} Kuwait time; cockpit {job.get('app')}; the person's role {job.get('role')}; page {page or 'unknown'})\n{data}"
-    msgs: list[dict[str, Any]] = [{"role": "system", "content": f"{SYSTEM}\n\n{data_block}"}]
+    guide = COCKPIT_GUIDE.get(str(job.get("app")), SHARED_GUIDE)
+    msgs: list[dict[str, Any]] = [{"role": "system", "content": f"{SYSTEM}\n\nCOCKPIT GUIDE (where things are)\n{guide}\n\n{data_block}"}]
     for h in reversed((ctx.get("history") or [])[:8]):  # history arrives newest first
         reply = askai_reply(h.get("result"))
         if h.get("prompt") and reply:
@@ -395,13 +450,40 @@ def guess_client(job: dict[str, Any], names: list[str], chain: list[tuple[str, s
     return next((n for n in names if n.lower() == pick.lower()), None)
 
 
+CEO_EMAILS = {"aziz@maharamedia.com", "awaheedi2008@gmail.com"}
+
+
+def visible_clients(rest: str, key: str, uid: str | None, profile_names: list[str]) -> list[str]:
+    """Every client the asker may see, by the database's own rule (cockpit_ask_ai_owner_allowed).
+
+    Admins, the CEO and members with no client list see every client, including
+    board clients that have no profile row. Others see only their own list.
+    When the member cannot be read, the scoped profile names are the safe answer.
+    """
+    member = get(rest, key, "cockpit_members", {"auth_user_id": f"eq.{uid}", "active": "is.true", "select": "email,roles,clients"}) if uid else None
+    if not member:
+        return profile_names
+    m = member[0]
+    mine = [c for c in (m.get("clients") or []) if c]
+    names = list(profile_names)
+    if "admin" in (m.get("roles") or []) or (m.get("email") or "").lower() in CEO_EMAILS or not mine:
+        board = get(rest, key, "cockpit_campaigns", {"source_deleted": "is.false", "select": "client_name"}) or []
+        names += [b["client_name"] for b in board if b.get("client_name")]
+    else:
+        names += mine
+    seen: dict[str, str] = {}
+    for n in names:
+        seen.setdefault(n.strip().lower(), n.strip())
+    return list(seen.values())
+
+
 def prepare(job: dict[str, Any], e: dict[str, str], rest: str, key: str, chain: list[tuple[str, str]]) -> tuple[list[dict[str, Any]], list[str], str | None]:
     ctx = job.get("context") or {}
     profiles = ctx.get("profiles") or []
-    names = [p.get("client_name") for p in profiles if p.get("client_name")]
-    client = find_client(job, names) or (guess_client(job, names, chain) if names else None)
-    meta = get(rest, key, "cockpit_ask_ai_jobs", {"id": f"eq.{job['id']}", "select": "metadata->request->context->>page"})
+    meta = get(rest, key, "cockpit_ask_ai_jobs", {"id": f"eq.{job['id']}", "select": "auth_user_id,page:metadata->request->context->>page"})
     page = (meta[0].get("page") if meta else None) or None
+    names = visible_clients(rest, key, meta[0].get("auth_user_id") if meta else None, [p.get("client_name") for p in profiles if p.get("client_name")])
+    client = find_client(job, names) or (guess_client(job, names, chain) if names else None)
     parts = [f"Clients this person can see: {', '.join(names) if names else 'none'}."]
     sources: list[str] = []
     prof = next((p for p in profiles if client and (p.get("client_name") or "").lower() == client.lower()), None)

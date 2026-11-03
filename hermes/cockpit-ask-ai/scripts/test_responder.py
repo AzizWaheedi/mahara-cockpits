@@ -358,5 +358,38 @@ class TestDrivePack(unittest.TestCase):
         self.assertEqual(sources, ["Google Drive files"])
 
 
+class TestVisibleClients(unittest.TestCase):
+    """Access follows the database rule, so board clients without a profile row are never dropped."""
+
+    def fake(self, member):
+        def get(rest, key, table, query):
+            if table == "cockpit_members":
+                return member
+            if table == "cockpit_campaigns":
+                return [{"client_name": "Acme Tiles"}, {"client_name": "Cedar Homes"}, {"client_name": "acme tiles"}]
+            return []
+        return get
+
+    def test_member_without_client_list_sees_every_board_client(self):
+        with patch.object(responder, "get", self.fake([{"email": "buyer@tests.invalid", "roles": ["media_buyer"], "clients": []}])):
+            names = responder.visible_clients("r", "k", "u1", ["Blue Marble Co"])
+        self.assertEqual(sorted(names), ["Acme Tiles", "Blue Marble Co", "Cedar Homes"])
+
+    def test_restricted_member_sees_only_own_clients(self):
+        with patch.object(responder, "get", self.fake([{"email": "buyer@tests.invalid", "roles": ["media_buyer"], "clients": ["Cedar Homes"]}])):
+            names = responder.visible_clients("r", "k", "u1", ["Cedar Homes"])
+        self.assertEqual(names, ["Cedar Homes"])
+
+    def test_admin_sees_every_board_client(self):
+        with patch.object(responder, "get", self.fake([{"email": "boss@tests.invalid", "roles": ["admin"], "clients": ["Cedar Homes"]}])):
+            names = responder.visible_clients("r", "k", "u1", [])
+        self.assertEqual(sorted(names), ["Acme Tiles", "Cedar Homes"])
+
+    def test_unreadable_member_falls_back_to_scoped_profiles(self):
+        with patch.object(responder, "get", self.fake(None)):
+            self.assertEqual(responder.visible_clients("r", "k", "u1", ["Cedar Homes"]), ["Cedar Homes"])
+        self.assertEqual(responder.visible_clients("r", "k", None, ["Cedar Homes"]), ["Cedar Homes"])
+
+
 if __name__ == "__main__":
     unittest.main()
