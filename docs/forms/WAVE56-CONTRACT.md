@@ -839,6 +839,10 @@ now):
 { "key": "aboutYou", "type": "heading", "label": {...}, "hint": {...} | null }        // display only, never answered
 ```
 
+A `hint` may hold line breaks (`\n`, one item per line: the onboarding's Drive checklist since `20261103b`, 4.18)
+and an `https://` link in its text. The schema stays the same; the portal shows each line (`white-space: pre-line`)
+and makes a link only of an allowlisted host (`app.leadsie.com`), any other URL staying text (P1).
+
 Answers: `file` → `{"path": "...", "mime": "...", "bytes": 12345, "sha256": "<64 hex>", "name": "<≤ 120 chars, display only>"}`;
 `date` → `"YYYY-MM-DD"`; `number` → a JSON number; `heading` → never present (`unknown` if sent).
 New codes: `file_missing` (required file absent, or the object is not in `storage.objects` for bucket
@@ -1390,7 +1394,10 @@ stops that item.
    white space at either end), as Typeform hands it to Make. Since round 4 (B3, X39; 2.9, 3.6) the three revenues are
    numbers (0 to 1,000,000,000, no decimals), the four links have the url format (`mapsLink` stays plain) and the three
    phones are stored as E.164, as `KFRCXPFx` asks them; no question's words change. This in-place change is allowed only
-   while version 2 has 0 answers and 0 invites (read-only check, guarded in `o`).
+   while version 2 has 0 answers and 0 invites (read-only check, guarded in `o`). Since `20261103b` (B0, 4.18; the
+   CEO's "Yes" to CEO-3) version 2 also carries `KFRCXPFx`'s nine hints, its optional `address`, `projectsDone` and
+   `landmark`, "(in English)" on the Business Name label and the fifth Meta choice `restricted`, under the same
+   guard (md5 `38d371cd…`).
 2. **The portal path:** Getting started shows "Your onboarding form" when
    `portal_form_onboarding_open` answers `live`; the form renders in `FormRenderer` with the normal
    invite RPCs; a locked workspace can open it (W34 rule). The Typeform embed (`PersonalForm.tsx`)
@@ -1711,6 +1718,71 @@ watcher on the tasks (two CSM sources disagree on 10 cards); card writes for Cou
 Account - Meta and ADs Platforms (inferred values, or no reader). The market intel dispatch's extra keys, a Client
 Profile backfill, the onboarding's hints and optional questions, a version 3, the kickoff daily budget, New Client Form
 ties and open items as requests are the CEO's (section 10, CEO-1 to CEO-7).
+
+### 4.18 Typeform's hints and optional questions on the native onboarding (B0, `20261103b`)
+
+The CEO, 2026-11-02, on "Restore Typeform's hints and optional questions" (CEO-3): **"Yes"**. Version 2 asked
+`KFRCXPFx`'s questions with their words but dropped what Typeform shows under them. `20261103b` puts it back, in place,
+the way `o` changed version 2, and adds `KFRCXPFx`'s fifth Meta choice to the Stage 4 question list (finding F3).
+
+1. **What changes in version 2** (and nothing else: the order, the 39 items, every other question and setting stay):
+
+   | Key | Change | English | Arabic |
+   |---|---|---|---|
+   | `personalPhone` | hint | We send appointment confirmations and updates to this number. Write one number only. If more people should get them, tell us on the onboarding call. | على هالرقم نرسل تأكيد المواعيد والتحديثات. اكتبوا رقم واحد بس، وإذا تبون أحد ثاني يوصله، قولوا لنا بمكالمة الانطلاق. |
+   | `facebookAds` | hint | If you have a Facebook business manager, give us access before the onboarding call: https://app.leadsie.com/connect/maharamedia/manage | إذا عندكم حساب أعمال على فيسبوك، عطونا صلاحية عليه قبل مكالمة الانطلاق من هالرابط: https://app.leadsie.com/connect/maharamedia/manage |
+   | `facebookAds` | fifth choice `restricted` | My account is restricted | حسابي مقيّد |
+   | `hours` | hint | For example: Sunday to Thursday, 9am to 5pm. | مثلاً: من الأحد لين الخميس، من ٩ الصبح لين ٥ العصر. |
+   | `landmark` | hint, and optional | Only if clients visit your office. | بس إذا العملاء يزورونكم بالمكتب. |
+   | `appointmentLength` | hint | For example: a 60-minute appointment with 15 minutes between appointments. | مثلاً: الموعد ٦٠ دقيقة، وبين كل موعد والثاني ١٥ دقيقة. |
+   | `consultants` | hint | For each one: name, speciality, nationality and qualifications. | لكل واحد: الاسم، التخصص، الجنسية، والمؤهلات. |
+   | `freeConsults` | hint | Companies that offer a free consultation often get better results and more projects. | الشركات اللي تقدم استشارة مجانية عادةً تحصّل نتايج أحسن ومشاريع أكثر. |
+   | `challenges` | hint | Name a few we can help with right away. | اذكروا كم شي نقدر نساعدكم فيه سيده. |
+   | `driveLink` | hint (replaces the one-line summary; one item per line) | What to put in it: / Team photos / Photos with homeowners and clients / Before and after photos of projects / Testimonial and reaction videos from past clients / Videos of you, your team and your work in action / Educational content about your services / Time-lapse or walkthrough videos of projects in progress / Your logo as a PDF | شنو تحطون فيه: / صور الفريق / صور مع أصحاب البيوت والعملاء / صور قبل وبعد للمشاريع / فيديوهات آراء العملاء السابقين وردة فعلهم / فيديوهات لكم ولفريقكم وانتو تشتغلون / محتوى تعليمي عن خدماتكم / فيديوهات تايم لابس أو جولات بمشاريع شغالة / الشعار كملف PDF |
+   | `businessName` | label | Business Name (in English) | اسم الشركة (بالإنقليزي) |
+   | `address`, `projectsDone` | optional | (no word changes) | |
+
+   29 questions are required (32 before) and 10 have a hint (`maxDistance` keeps its own). The wording was drafted under
+   `aziz-kuwaiti-voice` (plural address, no em dash and no guillemets, Arabic-Indic digits with no `٬`); every hint is
+   within the 600 characters `cockpit_form_schema_check` allows, and none holds a word the client text rule refuses.
+   The Typeform originals (the question descriptions and the Meta dropdown's choices, the fifth label included) are in
+   D-S4.0's full backup of the `KFRCXPFx` definition, `~/typeform-backups/KFRCXPFx-before-s40-20261102s40.json` (the
+   D-S4.0 row in 9; the saved file `MAKE_PARITY_SAVED_DIR` points at), outside the repository. The file of that name
+   in `scripts/dev/fixtures/make-parity` is trimmed to what the parity evaluator reads (4.15): it holds no description
+   and no Meta choice, so it cannot show the originals. The English hours example now says the Gulf week, as
+   Typeform's Arabic did.
+2. **The window.** The file changes version 2 only from `o`'s text (md5 `bc89ca36000ebf7943c6ec569cd1be73`) and only
+   while no answer and no invite uses version 2 (read 2026-11-03: none of either). Otherwise it stops: "The onboarding
+   form's version 2 is in use (N answers and invites), so it cannot change in place: stop, and put these hints in
+   version 3." It builds the new definition from the stored one, key by key, and stops unless the result is exactly the
+   drafted one: **md5 `38d371cd509ced4fef9b7cad6e09fb80`** (the same text the portal's copy carries, P1). A second apply
+   changes nothing. The registry's copy (`cockpit_forms`) follows when the onboarding is already live on version 2. One
+   audit row per changed row, action `forms.stage4_v2_hints` (`cockpit_forms_audit`).
+3. **The fifth Meta choice in Make's texts.** `cockpit_form_stage4_fields('onboarding')` is `o`'s list with one more
+   option on `facebookAds` (`ddf2767d`): `{"value":"restricted","typeform":"My Account is restricted | حسابي مقيّد"}`,
+   `KFRCXPFx`'s own label. Drift guard: `o`'s body `2b874cb1ed7fcf92a3d7fd9ca00547c5` (live) or this file's
+   **`eadfda57d24997ad958ec6c68a1f5703`**; B5's guard reads this after value. The kickoff's list is `o`'s, byte for byte.
+   A native `restricted` answer now prints Typeform's label in the read model, the raw answers comment (Make 13 [47])
+   and the onboarding tasks' brief (`p`, B1: the label, with no access-link note); a late `KFRCXPFx` delivery that
+   chose it is stored as `restricted` by the Typeform door (X26) and mapped by the parity plan. Before, the door put it
+   in `answer_meta.unmapped` and Make's texts lost the answer (0 of the 46 stored answers chose it).
+4. **F1, the cockpit reader.** `apps/client-success-cockpit/src/forms/prefill.ts` `completedOnboarding()` read only a
+   `KFRCXPFx` entry, so after D-S4O the kickoff panel and the kickoff rail would have said every portal client "has not
+   filled the onboarding form". It now also reads the read model's `form_id 'native'` (`NATIVE_FORM_ID`), whose answers
+   carry `KFRCXPFx`'s refs and titles. Shipped with `scripts/ship.sh client-success`.
+5. **Order and production writes.** The CEO approves the wording in 1 (section 10, CEO-3), then: the migration
+   (version 2 in place, `stage4_fields`, 1 audit row while the registry is on version 1), `scripts/ship.sh
+   client-success` (F1), and the parity run on the VPS from the merge (7/7 kickoff, 5/5 onboarding, verdicts as before).
+   **It must apply before D-S4O's first invite**; D-S4O waits for it. If that window closes first, the same wording
+   rides version 3 (B8) with no other change. Read back: the version-2 md5 `38d371cd…`, the fields md5 `eadfda57…`, 36
+   onboarding questions in the list with the fifth option, `cockpit_form_stage4_fields` still the owner's only.
+6. **Tests.** `stage4-match-make-supabase.test.ts` (the md5s and guards, each refusal, the registry copy, a native and a
+   Typeform answer with the fifth choice equal to `make_parity.py`'s evaluator, the door storing `restricted`),
+   `stage4-native-supabase.test.ts` (the merged chain with the real audit trigger, go-live and portal: one audit row, the
+   first invite stopping the file, a portal answer with the fifth choice and the three optional questions empty),
+   `stage4-better-data-supabase.test.ts` (the brief's Meta line), `test_make_parity.py` (Make 13 prints the label; a run
+   with it passes once the plan maps it and fails with `answers differs` while it does not), and the client-success
+   `form-prefill` and `form-rail` tests (a native entry reads as a full record).
 
 ### 4.23 Market research, MI-1 (CEO-1 decided: replicate and improve; build MI-1, migration `20261103i`)
 
@@ -2260,7 +2332,9 @@ after D-S4F passed and on different days (one Make switch-off window a day).
   - **CEO-2: Client Profile backfill.** 31 of the 42 cards with stored onboarding answers have an empty Client Profile
     (every card from April to July, 5 from August). Recommended: only cards still in onboarding (3 today), Make's exact
     text, only where empty, through the writer with audit rows, after a dry run; skip launched clients.
-  - **CEO-3: the native onboarding's hints and optional questions (client-facing).** Restore 7 hints Typeform shows (the
+  - **CEO-3: decided 2026-11-02, "Yes" (B0, `20261103b`, 4.18); the exact English and Arabic in 4.18 wait on his
+    approval before the apply.** The question as it was put: **the native onboarding's hints and optional questions
+    (client-facing).** Restore 7 hints Typeform shows (the
     access link on the Meta question, the consultants format, examples for hours and appointment length, a few more)
     and "in English" on the Arabic Business Name label (Arabic under the voice skill); make address, projects completed
     and landmark optional again (skipped 9, 12 and 3 times); decide on a phone country picker (default the billing
@@ -2726,7 +2800,7 @@ record.
 | The digest's headroom | `watch.ts` now cuts kind `kickoff` at 16,000, so its prompt is no longer the Convex prompt word for word; about 12,000 of the 30,000-character record limit stay for the Do's & Don'ts field, whose real length no mirror holds | Watch the first long kickoff digest |
 | The portal's decisions log | The portal's `AGENTS.md` asks for durable decisions in mahara-context `context/DECISIONS.md` | Two entries proposed (outside these repos' files): the portal keeps the onboarding's text as typed and sends phones as E.164 and links with `https://`; the form answer body cap is 1 MB + 16 KB |
 | The Client Profile text in the audit | a `profile_fields` queue row's `fields` hold the Client Profile text, still audited whole (11.9) | Left as it is; no contact field is in it |
-| Coupling | the portal mirrors `o`'s version 2, phone set, caps and `typeformText`; `p` stands on `o`'s builder | If `o`'s version-2 transform changes, move the portal copy, the portal's and the cockpit's `V2_M_MD5` together; if `o`'s builder changes, rebase `p`'s builder, its `a565…` constant (file and test) and its after md5s |
+| Coupling | the portal mirrors `o`'s version 2, phone set, caps and `typeformText`; `p` stands on `o`'s builder | If `o`'s version-2 transform changes, move the portal copy, the portal's and the cockpit's `V2_M_MD5` together; if `o`'s builder changes, rebase `p`'s builder, its `a565…` constant (file and test) and its after md5s. Since `20261103b` (4.18) version 2 is `38d371cd…` (`V2_B_MD5` beside `V2_M_MD5`, which stays as history): the portal's copy moves to it in P1, and a later change to version 2 in place moves both again, or goes into version 3 |
 | Cosmetic | the drift guard's message for the audit trigger says `changed since 20261102l`; its baseline is `20261026t`'s body | None: the guard itself works |
 
 Closed after the review: the native test that failed on the Typeform door's revenues passes unchanged (the door

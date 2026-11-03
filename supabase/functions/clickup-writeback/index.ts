@@ -17,7 +17,9 @@
 //             waits (20261029t)         comment, Client Happiness, Last POC and Last Check-in Call
 //                                       on a client card, forms.ts
 //   forms_doctor  on demand             reads only: the six Client Happiness options, the two
-//                                       date fields and the test card on Clients - Mahara
+//                                       date fields and the test card on Clients - Mahara, and
+//                                       each listed lane's fields (card facts with Daily Budget
+//                                       in USD, the Client Profile, the sale's fields)
 //   billing_doctor  daily at 03:41 UTC  reads only: the Clients - Mahara fields, stored as the field
 //                   (20261101m)         map (cockpit_clickup_fields), checked against what the
 //                                       billing writes need (Client Status, Churn Type and Reason
@@ -39,6 +41,18 @@
 //                                        them and this one opens nothing else.
 //                                        CLICKUP_WRITEBACK_FORMS_ONLY_CARDS (client card
 //                                        ids) narrows it to a canary card (86eywg1cq).
+//                                        CLICKUP_WRITEBACK_FORMS_KEYS lists the lanes it
+//                                        writes (checkin when unset): checkin, kickoff,
+//                                        onboarding, new_client (the sale's card facts) and
+//                                        profile_backfill, the Client Profile backfill's
+//                                        one-shot lane. A row of a lane not listed is held,
+//                                        never written, and keeps its place as the oldest open
+//                                        row on its card, so every later form row on that card
+//                                        (1-1 notes included) waits behind it (the claim's
+//                                        per-card order, 20261029t). Take a lane out only once
+//                                        none of its rows is queued, sending, retry or unknown
+//                                        (profile_backfill after its last row settles), and
+//                                        list new_client before forms.sale_tie.fill is on.
 //   CLICKUP_WRITEBACK_APPLY_BILLING      billing edits in the log only, and only of the event
 //                                        kinds in CLICKUP_WRITEBACK_BILLING_KINDS (comma list,
 //                                        empty means none); CLICKUP_WRITEBACK_BILLING_ONLY_CARDS
