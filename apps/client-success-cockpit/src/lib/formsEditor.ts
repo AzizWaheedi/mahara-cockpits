@@ -6,11 +6,13 @@ import type {
   EditorRead,
   Routing,
   RoutingPatch,
+  StructuredRead,
 } from "@/lib/formsEditorCore";
 
 /**
  * The forms editor's reads and writes (docs/forms/WAVE34-CONTRACT.md 2.6,
- * 4.9; supabase/migrations/20261102d_forms_editor.sql): six gated RPCs
+ * 4.9; supabase/migrations/20261102d_forms_editor.sql): six gated RPCs,
+ * and the structured version's read (20261103h, WAVE56-CONTRACT.md 4.22),
  * through the signed-in seat's own client. The database checks the seat
  * (an admin or the CEO), the base version, the schema, the text rule and
  * the field guard, and writes every audit row; this file only carries the
@@ -41,6 +43,11 @@ export type FormsEditorIO = {
     note: string | null,
   ) => Promise<PublishResult>;
   setRouting: (patch: RoutingPatch) => Promise<Routing>;
+  /**
+   * The form's newest version when it is in client form schema version 2 (the structured onboarding,
+   * 20261103h), else null. Optional: a stand-in without it shows the plain read-only view.
+   */
+  structured?: (key: string) => Promise<StructuredRead | null>;
 };
 
 /** A refusal in the server's words, with its code and the path it points at. */
@@ -202,6 +209,33 @@ const publishResult = z.object({
   read: editorOne,
 });
 
+const text = z.object({ en: z.string(), ar: z.string() });
+const structuredRead = z
+  .object({
+    version: z.number(),
+    schema: z
+      .object({
+        v: z.literal(2),
+        key: z.string(),
+        title: text,
+        minutes: z.number(),
+        fields: z.array(
+          z
+            .object({ key: z.string(), type: z.string(), label: text })
+            .passthrough(),
+        ),
+      })
+      .passthrough(),
+    publishedAt: z.string().nullable(),
+    publishedBy: z.string(),
+    note: z.string().nullable(),
+    state: z.enum(["off", "canary", "on"]),
+    issuing: z.number().nullable(),
+    answers: z.number(),
+    openInvites: z.number(),
+  })
+  .nullable();
+
 function parse<T>(shape: z.ZodType, data: unknown): T {
   const out = shape.safeParse(data);
   if (!out.success) throw new FormsEditorError(SHAPE);
@@ -260,6 +294,13 @@ export function supabaseFormsEditorIO(client: Rpc): FormsEditorIO {
       parse<Routing>(
         routing,
         await call(client, "cockpit_form_routing_set", { p_patch: patch }),
+      ),
+    structured: async key =>
+      parse<StructuredRead | null>(
+        structuredRead,
+        await call(client, "cockpit_form_editor_structured", {
+          p_form_key: key,
+        }),
       ),
   };
 }

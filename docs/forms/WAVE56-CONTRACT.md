@@ -897,6 +897,10 @@ with no country code gets `format`. Every other form's phones, links and numbers
 mirrors every rule character for character (`e164Phone`, `typedLink`, `maxLengthCap`, `typeformText`) and its copy of
 version 2 carries `o`'s md5 `bc89ca36…` (its own test; portal `docs/CLIENT-FORMS.md`).
 
+**Client form schema version 2** (`"v": 2`, the structured onboarding's language since `20261103h`): rows, notes,
+show-ifs on `in` and `includes`, `currencyFrom`, 64 questions and 30 choices; the onboarding only. Its rules, codes
+and fixture section are in 4.22.
+
 ### 3.7 The retire registry (`i`)
 
 `cockpit_retire_items`: `id text PRIMARY KEY` (`make:<id>`, `typeform:<id>`, `webhook:<tag>`),
@@ -1784,6 +1788,175 @@ the way `o` changed version 2, and adds `KFRCXPFx`'s fifth Meta choice to the St
    with it passes once the plan maps it and fails with `answers differs` while it does not), and the client-success
    `form-prefill` and `form-rail` tests (a native entry reads as a full record).
 
+### 4.22 Client form schema version 2 and the structured onboarding, version 3 (CEO-4 decided; build B8, `20261103h`)
+
+The CEO, 2026-11-02, on "The structured onboarding (version 3)": **"Do the whole redesign"**. Version 3 asks what
+`KFRCXPFx` asked, structured (design `next-design/onboarding-v3.md` 2, plan B8): rows for the services, FAQs and
+consultants, show-ifs, an area picker per country, a prefilled currency, appointment length and buffer in minutes,
+the year the business started, "No Facebook page" and "No website yet" ticks. **It is stored, not live**: every
+invite, the go-live and the portal stay on version 2 until `forms.client.schema_v2` opens it (6 below), after the
+portal's schema-v2 release (P2). The Typeform door stays on version 2.
+
+1. **Client form schema version 2** (`"v": 2`, the client onboarding's only; every other form, and the onboarding's
+   version 2, stays version 1, checked by `o`'s bodies byte for byte, now `cockpit_form_schema_check_v1` and
+   `cockpit_form_answers_check_v1`; the entry points dispatch on `v`). Additions to 3.6:
+
+   ```jsonc
+   { "key": "services", "type": "rows", "label": {...}, "hint": {...}|null, "required": true,
+     "minRows": 1, "maxRows": 25, "addLabel": {"en": "...", "ar": "..."},                // 0..30, 1..30, ≤ 60 each
+     "columns": [ { "key": "name", "type": "text", "label": {...}, "required": true, "maxLength": 300 },
+                  { "key": "price", "type": "number", "min": 0, "max": 1000000000, "decimals": 0,
+                    "currencyFrom": "currency", "label": {...}, "required": false },     // 1..6 columns:
+                  { "key": "unit", "type": "choice", "options": [...], ... },            // text, longtext, number,
+                  { "key": "topPrice", "type": "tick", ... } ] }                         // choice (2..12), tick
+   { "key": "metaAccess", "type": "note", "label": {...},                               // ≤ 300 each; never answered
+     "showIf": {"key": "facebookAds", "in": ["yes", "never_ran"]},
+     "link": {"href": "https://app.leadsie.com/...", "label": {...}} }                   // https, allowlisted host
+   "showIf": {"key": "bookingTools", "includes": "other_software"}                       // one of equals | in | includes
+   { "key": "lastRevenue", "type": "number", ..., "currencyFrom": "currency" }           // display only (P2's read-back)
+   ```
+
+   64 questions (version 1 keeps 40); a several-choices question up to 30 choices; texts 1,000 and 10,000 characters.
+   `in` names 1 to 12 choices of an earlier choice question, `includes` one choice of an earlier several-choices
+   question; a question whose source is hidden or unanswered is hidden, and an unanswered tick reads false. Every
+   `{en, ar}` text is required and a missing one is refused (finding F-B8-1 below). **Answers:** a rows answer is a
+   list of objects with the column keys only; a row whose every cell is missing, null, a blank text or `false` is
+   dropped before rows are counted; a required rows question needs `max(1, minRows)` rows: none is `required`, fewer
+   `rows_few`, more than `maxRows` `rows_many` alone, given before any cell is read (so a list of any length costs the
+   check one pass while it holds the invite's lock; review finding, 2026-11-03); a cell's code (`required`, `length`, `range`, `option`, `unknown`) is
+   keyed `<question>.<row>.<column>`, the row counted from 0 in the list as sent; an answer that is not a list of
+   objects is `required`; a note is never answered (`unknown`). Text cells are kept as the onboarding's texts are
+   (`cockpit_form_typeform_text`). The shared fixture gains `schemaV2About`, `schemaV2Schemas` and 28
+   `schemaV2Rows` (written here, copied byte for byte by the portal's P2; md5 of the file after this build
+   `7498f2992a08eee46b2b31830ea1c3af`).
+2. **Version 3** (`cockpit_form_versions` onboarding 3, md5 `86966f19afcab5dca6f009e24ffe6802`, 31,302 bytes): 59 items
+   in four sections (54 answered, 4 headings, 1 note), 3 rows questions, 13 show-ifs (3 `equals`, 1 `in`, 9
+   `includes`), about 30 minutes; the wording is the design's (2.2), English and Arabic under `aziz-kuwaiti-voice`,
+   for the CEO's look in the preview. One audit row (`forms.onboarding_v3_stored`); the registry is untouched.
+   **The area lists** are the design's draft (Saudi Arabia 19, Kuwait 7 by governorate, UAE 9, Qatar 8, Bahrain 5,
+   Oman 6), not yet reconciled with the Ads Management board's Advertising Cities `b98aa20e` (the read is
+   `cockpit-media-api` `board.advertisingCityOptions`, unreachable while the Supabase egress restriction holds):
+   reconcile before the switch leaves `off`; a change is a version-3 text change in a later migration while version 3
+   has no answer and no invite.
+3. **The printer** (`cockpit_form_stage4_print(form, version, answers)`, IMMUTABLE). A version without a print map
+   (every kickoff, the onboarding's version 2) prints through `cockpit_form_stage4_typeform_answers`, byte for byte.
+   Version 3 applies `cockpit_form_stage4_print_map(3)` (server only, never sent to the portal), in the order and with
+   the titles of `cockpit_form_stage4_fields('onboarding')`, so a version-3 answer's list has the shape a version-2
+   answer's has, and every reader (Make's texts, the hidden values, the briefs, the rail) keeps reading by ref:
+
+   | Ref | Prints | Ref | Prints |
+   |---|---|---|---|
+   | `454a425f` website | "No website yet" when ticked, else the link | `d976036f` services | one line per row: `<name>: [starting from ]<price, grouped> <CUR>[ per …][ (highest price)][ (most profit)]` |
+   | `575d17ed` facebook | "No Facebook page" when ticked, else the link | `f2b7bc2b` FAQs | `<n>. <question>\n<answer>`, a blank line between |
+   | `ee25f923` payment | the options ticked, then the details line | `fa017616` areas | `Kuwait: Hawalli, Capital` per country, `Other: …`, then the note |
+   | `ed1ba2fe` years | `Since <year>` | `35ea63c3` distance | `<n> km` or "Anywhere in our service areas" |
+   | `7a120dbb` booking | the tools ticked, the software's name for "Other" | `a20cfc1a` appointment | `<n> minutes, <n> minutes between appointments` ("no time" for 0), then the details |
+   | `b7873d40` hours | `Sun, Mon: <hours>` | `0a80a0a8` consultants | the filled cells joined with " - ", one per line |
+   | `bf8c7c7b` marketing | `Channels: …`, then the text | revenues | plain whole numbers (Make prints 0 blank) |
+
+   Choice questions print `KFRCXPFx`'s own labels (the fifth Meta choice included); a list keeps the order it was
+   ticked; an empty answer prints nothing (Make's "Not provided" applies); the currency appears only inside a
+   typed-looking price line, never in a revenue line. `cockpit_form_stage4_print_problem(version, schema)` refuses a
+   map that does not print exactly the 36 refs or reads a question the version does not ask (checked at the store
+   and at every switch). **Goldens:** `scripts/dev/fixtures/onboarding-v3-print.json`, five invented cases from the
+   design's reference printer (`v3_print.py`) covering every branch; the SQL printer equals them, a one-label change
+   fails them, and Make 13's evaluator (`make_parity.py`) on the printed lists gives the cockpit's raw answers comment,
+   Client Profile and dispatch name byte for byte.
+4. **The input and the read model.** `cockpit_form_stage4_input` prints with the answer's version (the one-line
+   change) and, for a version-3 answer, adds `structured`: its answers without the five contact keys (`fullName`,
+   `phone`, `email`, `frontDeskPhone`, `personalPhone`) with `schemaVersion: 3`
+   (`cockpit_form_stage4_structured`). The builder (`p`'s, one addition) puts it beside `answers` in the read model's
+   onboarding entry, cockpit only; `cockpit_client_onboarding_keep_native` keeps the entry whole. The planner plans
+   every version from 2 with version 2's effects array (unchanged). `make_parity.py` registers
+   `INTENDED['structured']` (quoting the CEO's words) and grades the read model with `read_model_verdict`: an entry
+   key no entry registers, a contact key in `structured`, or a revenue that is not a plain whole number on a version-3
+   entry differs. A version-2 plan is `p`'s byte for byte.
+5. **The prefill** (`cockpit_form_onboarding_context(card)`): `{currency, areaCountries}` from the billing sheet's
+   country (SA, KW, AE, QT, BH, OM), else the newest sale tied to the card without a conflict
+   (`cockpit_billing_deal_cards`, `cockpit_sales_deals` writes Qatar `QA`), else `{}`; `QT` and `QA` are both Qatar.
+   `cockpit_form_invite_issue_core` still refuses any onboarding fact from its caller, then sets this one itself, **on a
+   structured version's invite only** (the design said harmless on version 2; keeping version-2 invites exactly as
+   today is safer). **How the portal receives it:** the portal reads an invite's context only through
+   `cockpit_form_client_context(invite)` (`portal_form_get` on the portal page, `portal_form_token_open` on the link
+   page, both under `invite.context`), which passes only the schema's declared context facts, its `boldIf` keys and
+   `over14`; a context fact cannot be a list, so version 3 declares none. This file replaces it (20261102a's body,
+   guard live `4c8c10ad…` → after `92dcf3a2…`): an onboarding invite whose schema has `"v": 2` also passes `currency`
+   and `areaCountries`; every other invite passes exactly what it passed before, and it stays owner only. The portal's
+   `prefillAnswers(schema, invite.context)` fills both and they stay editable. `portal_form_onboarding_open` is not
+   touched (B3 owns it); B3 may later add `businessName` from the tied sale here.
+6. **The switch** `forms.client.schema_v2` = `{"state": "off" | "canary" | "on"}`, seeded `off` (the forms settings
+   trigger audits it; anything else reads `off`). `cockpit_form_client_version` counts a schema-v2 version only while
+   it is `on`. While it is `canary`, the canary invite on the test card `86eywg1cq`
+   (`cockpit_form_invite_canary('onboarding', '{}')`) opens version 3 and every other invite stays on version 2. **The
+   design said a boolean**; a third state is needed because the design's own order (a canary that stores and prints,
+   then the setting on) cannot run with a boolean. The only door is `cockpit_form_schema_v2_switch(state, actor)`,
+   owner only: `canary` and `on` need the version to pass the schema check, the text rule and its print map; `on`
+   also needs a stored version-3 answer on the test card; one audit row (`forms.schema_v2_switch`, state before and
+   after, the version new invites get); once the onboarding is native the registry's copy follows the version clients
+   get (`forms.schema_v2_registry`). An invite already open keeps its version (an answer is checked against its
+   invite's version), and both versions plan the same effects. Turning it `off` sends new invites back to version 2;
+   stored version-3 answers keep printing (the printer reads no setting).
+7. **The Typeform door** (X26) stores every `KFRCXPFx` delivery on version 2 (`v_version := 2`), whatever the portal
+   issues: a structured version's keys are not Typeform's, and mapping into them would lose the answers to
+   `_unmapped`. Make 8979157 [40] keeps sending `KFRCXPFx` until its own step.
+8. **The forms editor, read only on the server.** `cockpit_form_editor_kind` lists a form whose newest version is in
+   schema version 2 as client and read only: "Its structured questions change in a migration for now." Draft,
+   publish and go back refuse with that sentence (before this file the editor offered the onboarding's version 2,
+   and a publish would have made a version-1 version 4 that overtakes version 3). `cockpit_form_editor_structured(form)`
+   (signed-in seats; admin or CEO inside) gives the page that version: its schema, who stored it in role words, the
+   switch's state, the version new invites get, and its answers and open invites. **The page** (design plan in the
+   page's header comment; frontend-design loaded first; the cockpit's tokens and kit only): under the read-only
+   sentence, one strip (`v3`, Structured, the state chip: Stored, not live / On the test card only / Live for new
+   invites) and one line ("New invites get version 2. No answer or open invite uses version 3 yet."), then the form in
+   its four sections, each question one row with its words, its kind ("Rows, 1 to 25", "Several choices (19)",
+   "Note with a link"), "optional" when it is, the Arabic right to left and when it shows ("Shows when “We don't have a
+   website yet” is not ticked"); a rows question draws its columns as mono chips. No Save, Publish or Go back. Before
+   this file is applied the RPC is missing (PGRST202) and the page shows the plain read-only view. Label and hint
+   edits on a structured version can come later, in the editor, with their own server rule. **From the apply on,
+   the editor neither shows nor edits version 2** (the version clients get until the switch is `on`): a version-2
+   wording change after it is a migration, as `20261103b` was. That is why this file applies only after D-S4O's look
+   at version 2 in the editor (10 below).
+9. **Drift guard** (live md5s read 2026-11-03 → this file's): `cockpit_form_schema_check` `07f88396…` → `9bd159ba…`;
+   `cockpit_form_answers_check` `ac54af52…` → `5c77fa86…`; `cockpit_form_client_version` `05e4c13d…` → `4087f8f1…`;
+   `cockpit_form_stage4_input` `a40d1741…` → `dcc471e6…`; `cockpit_form_stage4_build` `5f52c05d…` → `d2965481…`;
+   `cockpit_form_invite_issue_core` `da7a50ed…` → `ba1e7b02…`; `cockpit_form_onboarding_typeform` `ddefa913…` →
+   `cb982b25…`; `cockpit_form_editor_kind` `e3c824d5…` → `b6500a68…`; `cockpit_form_client_context` `4c8c10ad…` →
+   `92dcf3a2…` (5 above). Prerequisites: `p` (its card facts), `o` (its
+   Typeform text), `20261103b`'s version 2 `38d371cd…` and its fifth Meta choice (read by behaviour, not by md5, so
+   B5's later change to the kickoff list does not stop this file). Version 3 must be free or this file's own; no
+   version 4. Grants: every function the owner's only, but `cockpit_form_editor_structured` (authenticated) and the
+   Typeform door (service_role, as live). It applies twice and changes nothing the second time.
+10. **Production writes.** At apply (step 18 of the plan, inert for clients, but **not before** both of these; review
+    findings, 2026-11-03): (a) the `hermes/csm-calls` release that reads each native answer with its own version's
+    questions (`readStage4Forms`) is deployed on the VPS and its tests pass there, because the release before it reads
+    every native answer with the newest stored version's questions, which is version 3 from this file on, and upserts
+    the timeline rows on every run; (b) D-S4O's look at version 2 in the forms editor is done and any version-2
+    wording is published (8 above). So it lands after D-S4O, not before. The migration (version 3, its audit row, the
+    setting seed and its audit row, the replaced bodies). Nothing reaches ClickUp, Make, the portal or a client. Read
+    back: version 3's md5, `cockpit_form_client_version('onboarding')` = 2, the setting `off`, the nine after md5s,
+    the grants. **Later (step 19), each on the CEO's go:** P2 released and verified; the area lists
+    reconciled; `select public.cockpit_form_schema_v2_switch('canary', '<who>')`; the canary link
+    (`cockpit_form_invite_canary('onboarding', '{}')`) answered on the portal as the CEO's preview of the wording; its
+    plan read back (the printed list in the read model, the raw answers comment); then
+    `cockpit_form_schema_v2_switch('on', '<who>')`. Back: `cockpit_form_schema_v2_switch('off', '<who>')`.
+11. **Tests.** `apps/media-buyer-cockpit/scripts/onboarding-schema-v2-supabase.test.ts` (37: the ground, the guards,
+    a second apply, grants, the store and its audit row, every schema-v2 refusal, version 1 unchanged on every fixture
+    row, the 28 schema-v2 fixture rows, a version-3 answer at its limits within the 1 MB answer and the 2 MB plan, the
+    goldens, a printing mistake caught, version 2 and the kickoff byte for byte, the map's fit, Make 13's texts equal
+    on the printed lists, the input and the builder against `j`'s and `p`'s, the switch's states, refusals, audit rows
+    and registry copy, the prefill, the invites in each state, the prefill as `portal_form_token_open` and
+    `portal_form_get` return it in canary and on (a version-2 invite and every other form equal to 20261102a's
+    body), `rows_many` alone before any cell on a 20,000-row list, the door pinned, the editor's server refusals and
+    its read); `hermes/csm-calls/sources.test.ts` (each native answer read with its own version's questions beside a
+    stored version 3, rows as text one line per row, an answer on an unread version left as it is and said); `scripts/dev/test_make_parity.py` (`StructuredOnboarding`: `INTENDED['structured']`, every
+    `read_model_verdict` case, `compare_onboarding`, Make 13 on every golden);
+    `apps/client-success-cockpit/scripts/forms-editor.test.tsx` (the list row, the read-only view, the three states,
+    the plain view without the RPC, a refusal, the IO's shape check, the outline core).
+12. **Findings.** **F-B8-1:** `cockpit_form_schema_pair(NULL)` reads NULL, so version 1's
+    `NOT cockpit_form_schema_pair(...)` lets a missing label, title or button text pass (a schema with no `label` on a
+    question passes `cockpit_form_schema_check_v1`). The editor never sends one, and version 1 is kept byte for byte
+    here; version 2 reads every text through `coalesce(…, false)`. A version-1 fix is a later, separate migration.
+
 ### 4.23 Market research, MI-1 (CEO-1 decided: replicate and improve; build MI-1, migration `20261103i`)
 
 The CEO, 2026-11-02: "Find it in the context somewhere, find the market intel, or make it even better and replicate
@@ -2341,9 +2514,11 @@ after D-S4F passed and on different days (one Make switch-off window a day).
     country, else Saudi Arabia). Recommended: approve the hints and optional flags now, so they ride the same in-place
     window as B3 (version 2 unused) before the first invite; after it they need a version 3. Max distance waits (its
     show-if needs an "includes" operator).
-  - **CEO-4: a version 3 with structured questions** (booking software as a choice, a "no Facebook page" tick, a revenue
-    currency line, appointment length in minutes, a service-area picker, services and FAQs as rows). Recommended: not
-    before go-live; revisit with 4 to 6 weeks of version-2 answers.
+  - **CEO-4: decided 2026-11-02, "Do the whole redesign" (B8, `20261103h`, 4.22): version 3 is stored, not live;
+    the switch waits on P2, the area lists' reconcile and his look at the wording in the canary preview.** The question
+    as it was put: **a version 3 with structured questions** (booking software as a choice, a "no Facebook page" tick, a
+    revenue currency line, appointment length in minutes, a service-area picker, services and FAQs as rows).
+    Recommended then: not before go-live; revisit with 4 to 6 weeks of version-2 answers.
   - **CEO-5: the kickoff daily budget.** Recommended: a structured amount and currency on the kickoff sheet, printed
     `<amount> <CUR>` on Make's `Daily ad budget:` line, in place before the first native kickoff; never write the card's
     Daily Budget `539743c2`.

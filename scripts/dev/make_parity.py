@@ -1295,6 +1295,50 @@ def dispatch_extras(payload: dict) -> list:
     return what
 
 
+# ---------------------------------------------------------------- B8: the structured onboarding (20261103h) -------------
+# The CEO, 2026-11-02, on "The structured onboarding (version 3)": "Do the whole redesign" (docs/forms/WAVE56-CONTRACT.md
+# 4.22). A version-3 answer is printed into KFRCXPFx's refs before any of Make's texts read it (cockpit_form_stage4_print),
+# so Make's part of every effect is graded on the printed list as on any other answer; the printer has its own goldens
+# (scripts/dev/fixtures/onboarding-v3-print.json). The read model's onboarding entry may carry one addition beside the
+# Typeform-shaped answers: structured, the version-3 answers without a contact key. Any other entry key differs, and so do
+# a contact key in structured and, on a version-3 entry, a revenue the printed list does not hold as a plain whole number.
+V3_WORDS = "Do the whole redesign"
+INTENDED["structured"] = ("the read model's onboarding entry carries the structured version-3 answers beside the "
+                          "Typeform-shaped list, cockpit only and without a contact answer; under the CEO, 2026-11-02: "
+                          f'"{V3_WORDS}"')
+READ_MODEL_KEYS = frozenset({"form_id", "response_id", "submitted_at", "answers"})
+READ_MODEL_ADDS = {"structured": "structured"}  # entry key -> its INTENDED name
+REVENUE_REFS = frozenset({"7ff5d37a-df7f-4002-8248-d0b4af6c28e8", "791b99b8-c7e9-40a4-96d6-868399e1ae97",
+                          "f4b96a9b-bd7c-4398-98b4-6a28a7d3595a"})
+
+
+def read_model_verdict(effect: Optional[dict]) -> str:
+    """The read_model effect, which Make has no part in: "intended: read_model", with "structured" when its entry carries
+    the version-3 sidecar. It differs on an entry key no INTENDED entry registers, on a contact key in structured, and, on
+    a version-3 entry, on a revenue that is not a plain whole number (a currency in a revenue line)."""
+    entry = ((effect or {}).get("plan") or {}).get("entry")
+    if not isinstance(entry, dict):
+        return only_intended("read_model")
+    extra = sorted(str(k) for k in entry if k not in READ_MODEL_KEYS)
+    unknown = [k for k in extra if k not in READ_MODEL_ADDS]
+    what = [f"an addition no INTENDED entry registers ({', '.join(k if NAME.match(k) else 'a key' for k in unknown)})"] \
+        if unknown else []
+    if "structured" in entry:
+        structured = entry["structured"]
+        if not isinstance(structured, dict):
+            what.append("structured is not an object")
+        elif CONTACT_KEYS & set(structured):
+            what.append("structured holds a contact answer")
+        answers = entry.get("answers") if isinstance(entry.get("answers"), list) else []
+        if any(isinstance(a, dict) and a.get("ref") in REVENUE_REFS and not re.fullmatch(r"\d+", str(a.get("value") or ""))
+               for a in answers):
+            what.append("a currency in a revenue line")
+    if what:
+        return f"differs: {'; '.join(what)}"
+    return "intended: " + ", ".join(["read_model"] + [READ_MODEL_ADDS[k] for k in extra])
+# ---------------------------------------------------------------- end of B8's block -----------------------------------
+
+
 def compare_kickoff(plan: list, mods: dict, ctx: dict) -> list:
     """One (effect, verdict) per effect of Make 12, and one for card_facts when it is planned; verdict is equal,
     equal + intended: {names}, intended: {name}, differs: {what} or setting missing."""
@@ -1468,7 +1512,7 @@ def compare_onboarding(plan: list, mods: dict, ctx: dict) -> list:
         what += [x for x in [slot] if x]
         out.append(("brand_dna_task", f"differs: {', '.join(what)}" if what
                     else equal_plus("task_name", "dedupe", "request_route", brief)))
-    out.append(("read_model", only_intended("read_model")))
+    out.append(("read_model", read_model_verdict(fx.get("read_model"))))
     if "card_facts" in fx:
         out.append(("card_facts", card_facts_verdict(fx["card_facts"], custom_fields(m29 or {}), ctx)))
     return out
