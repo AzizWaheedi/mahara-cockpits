@@ -1,0 +1,6 @@
+[{"searchQuery": {"term": "interior design Hawalli", "url": "https://www.google.com/search?q=interior+design+Hawalli"},
+  "url": "https://www.google.com/search?q=interior+design+Hawalli",
+  "organicResults": [{"title": "Rival One Invented Studio", "url": "https://rival1.example/", "description": "Villa interiors", "position": 1},
+                     {"title": "A directory", "url": "https://directory.example/interior", "description": "List", "position": 2}],
+  "paidResults": [{"title": "Rival Four Invented Villas | Free consultation", "url": "https://rival4.example/offer", "displayedUrl": "rival4.example", "description": "Book now"}],
+  "peopleAlsoAsk": [{"question": "How much does interior design cost in Kuwait?"}]}]

@@ -54,6 +54,7 @@ import {
   targetUnit,
 } from "@/lib/boardColumns";
 import { cn } from "@/lib/utils";
+import { AgreedAgainstNow, AgreedSubline, agreedHelp } from "./AgreedBudget";
 import { clientTarget, FirstBreakLine } from "./BoardGrid";
 import {
   BoardDot,
@@ -159,6 +160,7 @@ function NumberRow({
             {target.source === "client" ? " This client's own." : ""}
           </span>
         ) : null}
+        {column.key === "dailyBudget" ? <AgreedSubline cell={cell} /> : null}
       </span>
       <HelpCell
         label={`${column.name}`}
@@ -174,7 +176,9 @@ function NumberRow({
                 ? noOutcomeWords(row)
                 : column.key === "budgetUsed"
                   ? budgetYesterdayWords(cell)
-                  : null
+                  : column.key === "dailyBudget"
+                    ? agreedHelp(cell)
+                    : null
             }
           />
         }
@@ -455,6 +459,7 @@ function BudgetPart({
   const off = statusOf(row?.values.budgetUsed) === "off";
   return (
     <div className="space-y-4">
+      <AgreedAgainstNow cell={row?.values.dailyBudget} />
       {off && canLever ? (
         <div className="flex justify-end">
           <Button size="sm" variant="teal" onClick={onLever}>

@@ -59,6 +59,10 @@ ONBOARDING = [  # the card's stored KFRCXPFx answers, as the read model holds th
     {"ref": "791b99b8-c7e9-40a4-96d6-868399e1ae97", "title": "Goal", "value": "60000"},
     {"ref": "41d2d5bb-b023-4fa4-906c-72aeef7a5e46", "title": "Anything else", "value": ANSWER},
 ]
+# KFRCXPFx's Meta question and its fifth choice, as Typeform hands it to Make (finding F3: the cockpit maps it since
+# 20261103b; 0 of the 46 stored answers chose it).
+META_REF = "ddf2767d-5725-4df2-b200-f0aab77a2db5"
+RESTRICTED = "My Account is restricted | حسابي مقيّد"
 KICKOFF = [  # a stored tG7dnxBn kickoff, as the read model holds it (yes/no as Yes/No, lists joined)
     {"ref": "c0000001-0000-4000-8000-000000000001", "title": "Is all of the above still correct?", "value": "Yes"},
     {"ref": "c0000001-0000-4000-8000-000000000003", "title": "Is all of the above still correct?", "value": "No"},
@@ -312,6 +316,30 @@ def ts_body(src: str, name: str) -> str:
     return src[start:ts_end(src, start + 1, "}") + 1]
 
 
+def ts_const(src: str, name: str) -> str:
+    """An exported const object literal's body, its braces included ("" when there is none)."""
+    at = re.search(rf"export const {re.escape(name)}\b[^=\n]*=\s*\{{", src)
+    if not at:
+        return ""
+    start = at.end() - 1
+    return src[start:ts_end(src, start + 1, "}") + 1]
+
+
+DAILY_BUDGET = "539743c2-b6cd-4eeb-bf2f-abaf64769a5e"
+
+
+def daily_budget_problem(writer: str) -> str:
+    """Why clickup-writeback/forms.ts names Daily Budget other than once, as CARD_FACTS' USD currency field
+    ("" when it names it exactly so)."""
+    times = writer.count(DAILY_BUDGET)
+    if times != 1:
+        return f"names Daily Budget {times} times, not once"
+    entry = r'"' + DAILY_BUDGET + r'":\s*\{\s*kind: "currency",\s*label: "Daily Budget",\s*\}'
+    if not re.search(entry, ts_const(writer, "CARD_FACTS")):
+        return "names Daily Budget other than as CARD_FACTS' USD currency field"
+    return ""
+
+
 def ts_resolve(src: str, expr: str, at: int, depth: int = 4) -> str:
     """`expr` with what each name it reads holds appended: the nearest const or let before `at`, `depth` deep."""
     out = expr
@@ -531,6 +559,19 @@ class Evaluator(unittest.TestCase):
         self.assertEqual(mp.line_of(fixture("8922994"), 31), "[31] search")
         self.assertEqual(mp.line_of(fixture("8925654"), 24), "[24] search")
         self.assertEqual(mp.line_of({}, 24), "[24] not found in the blueprint")
+
+    def test_make13_prints_the_fifth_meta_choice_as_typeform_hands_it(self):
+        # The floor the cockpit's texts are graded against: Make 13 [47] prints the label as typed under the saved
+        # title; the Client Profile and the kickoff link carry no Meta answer, so they stay as they were.
+        mods, plain = make13_mods(ONBOARDING + [{"ref": META_REF, "title": "Meta", "value": RESTRICTED}]), make13_mods()
+        titles = {f["ref"]: f["title"] for f in mp.question_fields(fixture("KFRCXPFx"))}
+        raw = mods[47]["input"]["comment_text"]
+        self.assertIn(f"\n**{titles[META_REF]}**\n{RESTRICTED}\n", raw)
+        self.assertEqual(raw.count("\n**"), len(ONBOARDING) + 1)
+        self.assertEqual(mp.trigger_bundle(fixture("KFRCXPFx"), [{"ref": META_REF, "title": "Meta", "value": RESTRICTED}],
+                                           {})["mappable_answers"], {META_REF: RESTRICTED})  # one dropdown choice, as typed
+        for field in (mp.FIELD["profile"], mp.FIELD["kickoff_link"]):
+            self.assertEqual(mods[29]["input"]["custom_fields"][field], plain[29]["input"]["custom_fields"][field])
 
     def test_fidelity_reads_clickup_as_it_returns_comments(self):
         made = make12_mods()[11]["input"]["comment_text"]
@@ -1109,9 +1150,44 @@ class OnTopOfMake(unittest.TestCase):
         self.assertRegex(sql, r"(?<![\d,])3,?600(?!\d)", "the briefs' 3,600-character cap")
         self.assertIn("card_facts", sql)
         writer = (WRITER / "forms.ts").read_text()
-        for name, text in ((files[0].name, sql), ("clickup-writeback/forms.ts", writer)):
+        # Build B1 (next-design item 5): the writer may take Daily Budget, only in CARD_FACTS as a USD currency field
+        # filled while empty, before any planner plans it (B5's migration does, and takes it out of CARD_FACTS_NEVER).
+        # 20261102p's planner still never names it. The exception is one occurrence, in that one entry.
+        writer_may = {DAILY_BUDGET} if DAILY_BUDGET in mp.CARD_FACTS_NEVER else set()
+        if writer_may:
+            self.assertEqual(daily_budget_problem(writer), "", "clickup-writeback/forms.ts")
+        for name, text, may in ((files[0].name, sql, set()), ("clickup-writeback/forms.ts", writer, writer_may)):
             self.assertEqual({fid for fid in mp.CARD_FACTS if fid not in text}, set(), f"{name} does not name every card_facts field")
-            self.assertEqual({fid for fid in mp.CARD_FACTS_NEVER if fid in text}, set(), f"{name} names a field card_facts never writes")
+            self.assertEqual({fid for fid in mp.CARD_FACTS_NEVER if fid in text and fid not in may}, set(),
+                             f"{name} names a field card_facts never writes")
+
+    def test_the_daily_budget_exception_is_one_entry_in_card_facts(self):
+        # A writer shaped like forms.ts (invented ids but Daily Budget's): the exception holds only for one
+        # occurrence, inside CARD_FACTS, as a currency field labelled Daily Budget.
+        entry = f'  "{DAILY_BUDGET}": {{\n    kind: "currency",\n    label: "Daily Budget",\n  }},\n'
+        stage4 = 'export const STAGE4_FIELDS: Record<string, { card: string[] }> = {\n  kickoff: { card: ["f-1"] },\n};\n'
+        facts = ('export const CARD_FACTS: Record<string, FactSpec> = {\n'
+                 '  "f-1": {\n    kind: "labels",\n    label: "Invented",\n    options: { "o-1": "One" },\n  },\n'
+                 + entry + '};\n')
+        profile = 'export const PROFILE_BACKFILL: Record<string, FactSpec> = {\n  "f-2": { kind: "text", label: "Profile" },\n};\n'
+        good = stage4 + facts + profile
+        self.assertEqual(daily_budget_problem(good), "")
+        self.assertIn(f'"{DAILY_BUDGET}"', ts_const(good, "CARD_FACTS"))
+        self.assertNotIn(DAILY_BUDGET, ts_const(good, "STAGE4_FIELDS") + ts_const(good, "PROFILE_BACKFILL"))
+        # Named again anywhere else, the CARD_FACTS entry kept: in STAGE4_FIELDS, another allowlist, or a bare path.
+        for extra in (good.replace('["f-1"]', f'["f-1", "{DAILY_BUDGET}"]'),
+                      good.replace('  "f-2"', entry + '  "f-2"'),
+                      good + f'const budgetPath = "{DAILY_BUDGET}";\n',
+                      good + f"// {DAILY_BUDGET}\n"):
+            self.assertEqual(daily_budget_problem(extra), "names Daily Budget 2 times, not once")
+        # Once, but outside CARD_FACTS, or inside it with another kind.
+        moved = stage4 + facts.replace(entry, "") + profile.replace('  "f-2"', entry + '  "f-2"')
+        self.assertEqual(daily_budget_problem(moved), "names Daily Budget other than as CARD_FACTS' USD currency field")
+        self.assertEqual(daily_budget_problem(good.replace('kind: "currency"', 'kind: "number"')),
+                         "names Daily Budget other than as CARD_FACTS' USD currency field")
+        self.assertEqual(daily_budget_problem(good.replace("export const CARD_FACTS", "export const OTHER_FACTS")),
+                         "names Daily Budget other than as CARD_FACTS' USD currency field")
+        self.assertEqual(daily_budget_problem(stage4 + facts.replace(entry, "") + profile), "names Daily Budget 0 times, not once")
 
 
 class Answer:
@@ -1150,6 +1226,9 @@ class Net:
         self.card_name = "Cedar Homes"
         self.with_client_data_row = True
         self.unmapped = None
+        # The card's stored KFRCXPFx answer (the read model and its response row); o_mods is what the fake cockpit
+        # plans from it, as a cockpit that matches Make plans.
+        self.onboarding = ONBOARDING
         self.k_mods, self.o_mods = make12_mods(), make13_mods()
         self.handoff = self.k_mods[11]["input"]["comment_text"]
         self.contract = "Signed"
@@ -1226,12 +1305,12 @@ class Net:
         if path.startswith("/rest/v1/cockpit_client_onboarding?"):
             return 200, [{"clickup_task_id": CARD, "client_name": "Cedar Homes (old)",
                           "kickoff": {"form_id": "tG7dnxBn", "response_id": "tokKick00001", "submitted_at": "2026-10-20T11:55:11Z", "answers": KICKOFF},
-                          "onboarding": {"form_id": "KFRCXPFx", "response_id": "tokOnb00001", "submitted_at": "2026-10-01T08:00:00Z", "answers": ONBOARDING}}]
+                          "onboarding": {"form_id": "KFRCXPFx", "response_id": "tokOnb00001", "submitted_at": "2026-10-01T08:00:00Z", "answers": self.onboarding}}]
         if path.startswith("/rest/v1/cockpit_form_responses?"):
             return 200, [{"id": RESPONSE, "form_key": "kickoff", "external_id": "tokKick00001", "task_id": CARD, "client_name": "Cedar Homes",
                           "submitted_at": "2026-10-20T11:55:11+00:00", "answers": {"formId": "tG7dnxBn", "token": "tokKick00001"}},
                          {"id": "7d1c0e2a-9b8f-4e5d-8c3b-2a1f0e9d8c7b", "form_key": "onboarding", "external_id": "tokOnb00001", "task_id": CARD,
-                          "client_name": "Cedar Homes", "submitted_at": "2026-10-01T08:00:00+00:00", "answers": {"fields": ONBOARDING},
+                          "client_name": "Cedar Homes", "submitted_at": "2026-10-01T08:00:00+00:00", "answers": {"fields": self.onboarding},
                           "hidden": {"onboarding_client_id": CARD}}]
         if path.startswith("/rest/v1/cockpit_billing_accounts?"):
             assert f"clickup_task_id=in.({CARD})" in path
@@ -1471,6 +1550,33 @@ class Parity(unittest.TestCase):
         (self.tmp / "relay.env").write_text("")
         code, out = self.run_cmd("onboarding")
         self.assertIn("github_dispatch differs: the relay's dispatch settings are not filled (~/.forms-relay/config.env)", out)
+
+    def test_a_stored_answer_with_the_fifth_meta_choice_passes_once_the_cockpit_maps_it(self):
+        # A late KFRCXPFx answer that chose "My Account is restricted" (finding F3). Make 13 prints it; a cockpit that
+        # maps it (20261103b) plans the same texts and the run passes. The run prints refs and verdicts only, never
+        # the answer.
+        answers = ONBOARDING + [{"ref": META_REF, "title": "Meta", "value": RESTRICTED}]
+        self.net.onboarding = answers
+        self.net.o_mods = make13_mods(answers)
+        self.net.comments = [{"id": "c0", "date": "1759305700000",
+                              "comment_text": self.net.o_mods[47]["input"]["comment_text"].replace("**", "")}]
+        self.net.with_client_data_row = False
+        self.net.targets = [{"key": "brand_dna", "targets": [{"list_id": "901818016338", "owner_clickup_id": 100000001}]}]
+        code, out = self.run_cmd("onboarding", "--last", "1")
+        self.assertEqual(code, 0, out)
+        self.assertIn("onboarding run 1: raw_answers_comment equal\n", out)
+        self.assertNotIn("answers differs", out)
+        self.assertIn("PASS: 1 run of 8922994, 0 differences", out)
+        self.assertNotIn(RESTRICTED, out)
+        # The cockpit before 20261103b: the answer is unmapped and its line is missing from the raw answers comment.
+        self.net.unmapped = [META_REF]
+        self.net.o_mods = make13_mods(ONBOARDING)
+        code, out = self.run_cmd("onboarding", "--last", "1")
+        self.assertEqual(code, 1)
+        self.assertIn("onboarding run 1: raw_answers_comment differs: text", out)
+        self.assertIn(f"onboarding run 1: answers differs: the cockpit maps no option for {META_REF}\n", out)
+        self.assertIn("FAIL: 1 run of 8922994, 2 differences.", out)
+        self.assertNotIn(RESTRICTED, out)
 
     def test_every_clickup_read_sits_between_its_receipts_and_none_is_made_without_one(self):
         self.run_cmd("kickoff", "--last", "1")

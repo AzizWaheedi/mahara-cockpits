@@ -21,11 +21,13 @@ import { KICKOFF } from "../src/forms/kickoff";
 import {
   buildHidden,
   canonicalHidden,
+  completedOnboarding,
   formLink,
   hiddenSha256,
   KICKOFF_HIDDEN,
   LONG_LINK,
   MIRROR_CUT,
+  NATIVE_FORM_ID,
   parseFormLink,
   readCardLink,
   sameValue,
@@ -116,6 +118,37 @@ describe("the kickoff's hidden fields", () => {
     expect(
       hidden(fixtureRow({ forms: { onboarding: foreign } })).values.email,
     ).toBeUndefined();
+    // An unfinished portal answer is no answer either.
+    const unsent = {
+      ...onboardingEntry(),
+      form_id: "native",
+      submitted_at: "",
+    };
+    expect(
+      completedOnboarding(fixtureRow({ forms: { onboarding: unsent } })),
+    ).toBeNull();
+  });
+
+  test("a portal answer (the read model's form_id native) fills a kickoff as a KFRCXPFx answer does (F1)", () => {
+    // The portal's onboarding stores KFRCXPFx's refs and titles under form_id "native"
+    // (cockpit_form_stage4_input); before F1 the kickoff said the client had not filled the form.
+    expect(NATIVE_FORM_ID).toBe("native");
+    const typeform = onboardingEntry();
+    const native = {
+      ...typeform,
+      form_id: NATIVE_FORM_ID,
+      response_id: "0b6e2f4a-1c3d-4e5f-8a9b-0c1d2e3f4a5b",
+    };
+    const row = fixtureRow({ forms: { onboarding: native } });
+    expect(completedOnboarding(row)).toBe(native);
+    const p = hidden(row);
+    expect(p.onboarding?.form_id).toBe("native");
+    expect(p.noOnboarding).toBeNull();
+    expect(p.copy).toBeUndefined();
+    // The same values from the same answers, whichever door they came through.
+    const t = hidden(fixtureRow({ forms: { onboarding: typeform } }));
+    expect(p.values).toEqual(t.values);
+    expect(p.from).toEqual(t.from);
   });
 
   test('"0" is kept, and a multi-choice answer keeps the mirror\'s ", " join', () => {

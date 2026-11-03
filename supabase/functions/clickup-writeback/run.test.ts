@@ -973,7 +973,7 @@ describe("the forms job beside the others", () => {
     const bad = formsHarness({ ...LIVE, CLICKUP_WRITEBACK_FORMS_KEYS: "kickoff,pools" }, [map]);
     const badOut = await runForms(bad.deps);
     expect(bad.releases().map(r => r.p_note)).toEqual(["Held: kickoff card writes are not switched on."]);
-    expect(badOut.note).toContain("CLICKUP_WRITEBACK_FORMS_KEYS names something that is not checkin, kickoff or onboarding");
+    expect(badOut.note).toContain("CLICKUP_WRITEBACK_FORMS_KEYS names something that is not checkin, kickoff, onboarding, new_client or profile_backfill");
   });
 
   it("card_facts (plan B8): a row that writes one field and keeps another settles delivered with the kept sentence as its error", async () => {
@@ -1029,6 +1029,165 @@ describe("the forms job beside the others", () => {
     expect(clean.writes()).toHaveLength(2);
     expect(clean.saves().at(-1)).toMatchObject({ state: "delivered", error: null });
     expect(clean.saves().at(-1).progress.steps.card_facts.note).toBeUndefined();
+  });
+
+  describe("build B1: the Client Profile backfill and the sale's card facts each wait in their own lane", () => {
+    const PROFILE = "7755485f-74a8-496c-85d8-562588e77944";
+    const GO_LIVE = "d4483463-840f-4730-ae7f-bfa77c5bb22a";
+    const HANDOFF = "e17a1c27-ec34-4f87-8796-3cf1f8fa80f9";
+    // Make 13 [29]'s seven labels around invented answers.
+    const TEXT = [
+      "Last Year's Total Revenue: 120000",
+      "90-Day Goal Revenue: ",
+      "12-24 Month Revenue Goal: 300000",
+      "Marketing they've tried A-Z: Invented flyers",
+      "Top 3 challenges: Invented leads",
+      "Why they joined: An invented referral",
+      "Additional notes: Nothing invented to add",
+    ].join("\n\n");
+    const backfillRow = async (id = "q-backfill") => {
+      const plan = { taskId: CARD, fields: [{ fieldId: PROFILE, kind: "text", label: "Client Profile", value: TEXT, onlyIfEmpty: true }] };
+      return {
+        ...row("happiness"),
+        id,
+        payload: { formKey: "onboarding", effectKey: "profile_backfill", effectId: `e-${id}`, responseId: RESPONSE, taskId: CARD, valueChars: TEXT.length, valueSha256: await sha256(TEXT) },
+        effect: { id: `e-${id}`, state: "queued", plan },
+      };
+    };
+    const onboardingRow = {
+      ...row("happiness"),
+      id: "q-map3",
+      payload: { formKey: "onboarding", responseId: RESPONSE, effectId: "e-map3", effectKey: "map_phase3", taskId: CARD, fieldId: "51f49cb1-9f76-48be-b639-c42ca552d20a", phase: 3,
+                 value: `https://mahara-onboarding-map.vercel.app/?phase=3&cid=${CARD}` },
+      effect: { id: "e-map3", state: "queued", plan: { taskId: CARD, fieldId: "51f49cb1-9f76-48be-b639-c42ca552d20a", phase: 3,
+                 value: `https://mahara-onboarding-map.vercel.app/?phase=3&cid=${CARD}` } },
+    };
+    const saleRow = () => {
+      const plan = {
+        taskId: CARD,
+        fields: [
+          { fieldId: GO_LIVE, kind: "text", label: "Go live", value: "In two invented weeks", onlyIfEmpty: true, source: "new_client" },
+          { fieldId: HANDOFF, kind: "text", label: "Handoff problems", value: "None", onlyIfEmpty: true, source: "new_client" },
+        ],
+      };
+      return {
+        ...row("happiness"),
+        id: "q-sale",
+        payload: { formKey: "new_client", effectKey: "sale_facts", effectId: "e-q-sale", responseId: RESPONSE, taskId: CARD },
+        effect: { id: "e-q-sale", state: "queued", plan },
+      };
+    };
+    /** A card with the Client Profile and the sale's two texts, keeping what it is sent. */
+    const textCard = (values: Map<string, unknown>) => (c: Call) => {
+      if (c.method === "GET" && c.path === `task/${CARD}`)
+        return {
+          id: CARD,
+          list: { id: CLIENTS_LIST },
+          custom_fields: [PROFILE, GO_LIVE, HANDOFF].map(id => ({ id, type: "text", type_config: {}, value: values.get(id) })),
+        };
+      const m = /^task\/[^/]+\/field\/([^/]+)$/.exec(c.path);
+      if (c.method === "POST" && m) {
+        values.set(m[1], c.body?.value);
+        return {};
+      }
+      return undefined;
+    };
+
+    it("onboarding in the keys never opens a backfill row; profile_backfill opens it and never an onboarding row", async () => {
+      const values = new Map<string, unknown>();
+      const onboardingOnly = formsHarness({ ...LIVE, CLICKUP_WRITEBACK_FORMS_KEYS: "checkin,onboarding" }, [await backfillRow()], { answer: textCard(values) });
+      const held = await runForms(onboardingOnly.deps);
+      expect(held.counts).toMatchObject({ claimed: 1, delivered: 0, held: 1, heldOff: 1 });
+      expect(onboardingOnly.releases().map(r => [r.p_id, r.p_note])).toEqual([["q-backfill", "Held: profile_backfill card writes are not switched on."]]);
+      expect(onboardingOnly.calls).toEqual([]);
+      // The held row's planned line names the length, never the text.
+      expect(JSON.stringify(onboardingOnly.releases())).not.toContain("Invented");
+      const lane = formsHarness({ ...LIVE, CLICKUP_WRITEBACK_FORMS_KEYS: "checkin,profile_backfill" }, [onboardingRow, await backfillRow()], { answer: textCard(values) });
+      const out = await runForms(lane.deps);
+      expect(out.counts).toMatchObject({ claimed: 2, delivered: 1, held: 1, heldOff: 1 });
+      expect(lane.releases().map(r => [r.p_id, r.p_note])).toEqual([["q-map3", "Held: onboarding card writes are not switched on."]]);
+      // A fresh read, the one write, the read-back: three calls, each through the paced provider (the ledger).
+      expect(lane.calls.map(c => `${c.method} ${c.path}`)).toEqual([`GET task/${CARD}`, `POST task/${CARD}/field/${PROFILE}`, `GET task/${CARD}`]);
+      expect(lane.calls.every(c => c.actionId === "q-backfill")).toBe(true);
+      expect(values.get(PROFILE)).toBe(TEXT);
+      const settled = lane.saves().at(-1);
+      expect(settled).toMatchObject({ state: "delivered", error: null });
+      expect(settled.progress.steps.profile_backfill).toMatchObject({ state: "done", fields: { [PROFILE]: { before: "empty", state: "written" } } });
+      // The step was frozen before the write: the frozen step holds the text; progress never does.
+      expect(lane.saves()[0]).toMatchObject({ steps: [{ key: "profile_backfill", type: "facts", taskId: CARD }] });
+      for (const s of lane.saves()) expect(JSON.stringify(s.progress ?? {})).not.toContain("Invented");
+    });
+
+    it("a Client Profile a person filled first is kept: the row is skipped with the kept sentence, nothing written", async () => {
+      const values = new Map<string, unknown>([[PROFILE, "An invented profile a person typed"]]);
+      const h = formsHarness({ ...LIVE, CLICKUP_WRITEBACK_FORMS_KEYS: "checkin,profile_backfill" }, [await backfillRow()], { answer: textCard(values) });
+      const out = await runForms(h.deps);
+      expect(out.counts).toMatchObject({ skipped: 1, failed: 0 });
+      expect(h.writes()).toEqual([]);
+      expect(h.saves().at(-1)).toMatchObject({
+        state: "skipped",
+        error: "kept: the card already has a value for Client Profile; Client Profile differs from the form, so check it on the card",
+      });
+    });
+
+    it("a backfill row whose text does not match its sha256 fails with no call", async () => {
+      const bad = await backfillRow();
+      bad.payload = { ...bad.payload, valueSha256: await sha256(`${TEXT} changed`) };
+      const h = formsHarness({ ...LIVE, CLICKUP_WRITEBACK_FORMS_KEYS: "checkin,profile_backfill" }, [bad]);
+      const out = await runForms(h.deps);
+      expect(out.counts).toMatchObject({ failed: 1 });
+      expect(h.calls).toEqual([]);
+      expect(h.saves().at(-1)).toEqual({ state: "failed", error: SAY_FORMS.mismatch });
+    });
+
+    it("a sale_facts row is held until the keys list new_client, then fills only what is empty", async () => {
+      const values = new Map<string, unknown>([[GO_LIVE, "An invented answer a person typed"]]);
+      const off = formsHarness({ ...LIVE, CLICKUP_WRITEBACK_FORMS_KEYS: "checkin,kickoff,onboarding,profile_backfill" }, [saleRow()], { answer: textCard(values) });
+      await runForms(off.deps);
+      expect(off.releases().map(r => r.p_note)).toEqual(["Held: new_client card writes are not switched on."]);
+      expect(off.calls).toEqual([]);
+      const on = formsHarness({ ...LIVE, CLICKUP_WRITEBACK_FORMS_KEYS: "checkin,new_client" }, [saleRow()], { answer: textCard(values) });
+      const out = await runForms(on.deps);
+      expect(out.counts).toMatchObject({ delivered: 1, failed: 0 });
+      expect(on.writes().map(c => [c.path, c.body])).toEqual([[`task/${CARD}/field/${HANDOFF}`, { value: "None" }]]);
+      expect(values.get(GO_LIVE)).toBe("An invented answer a person typed");
+      expect(on.saves().at(-1)).toMatchObject({
+        state: "delivered",
+        error: "kept: the card already has a value for Go-live expectation; Go-live expectation differs from the form, so check it on the card",
+      });
+      expect(on.saves().at(-1).progress.steps.sale_facts.fields).toEqual({
+        [GO_LIVE]: { before: "set", state: "kept", differs: true, note: SAY_FORMS.factDiffers },
+        [HANDOFF]: { before: "empty", state: "written" },
+      });
+      // The canary narrows it too: another card's sale row waits.
+      const canary = formsHarness({ ...LIVE, CLICKUP_WRITEBACK_FORMS_KEYS: "checkin,new_client", CLICKUP_WRITEBACK_FORMS_ONLY_CARDS: TEST_CARD }, [saleRow()]);
+      await runForms(canary.deps);
+      expect(canary.releases().map(r => r.p_note)).toEqual([SAY_FORMS.heldLimited]);
+      expect(canary.calls).toEqual([]);
+    });
+
+    it("the forms doctor checks a listed lane's fields: the Client Profile missing reads not ok and names it", async () => {
+      const h = formsHarness({ CLICKUP_API_TOKEN: "x", CRON_SECRET: "s", CLICKUP_WRITEBACK_FORMS_KEYS: "checkin,profile_backfill" }, []);
+      const out = await runFormsDoctor(h.deps);
+      expect(out.ok).toBe(false);
+      expect(out.problems).toContain("The Client Profile backfill writes Client Profile (7755485f), which is not on the Clients - Mahara list.");
+      expect(out.note).toContain("Forms written: checkin, profile_backfill.");
+      const saved = h.rpcs.find(r => r.name === "syncState:clickup-writeback:forms-doctor")?.params;
+      expect(saved.detail.forms).toEqual(["checkin", "profile_backfill"]);
+      // With the field on the list as a text: Ready.
+      const ready = formsHarness({ CLICKUP_API_TOKEN: "x", CRON_SECRET: "s", CLICKUP_WRITEBACK_FORMS_KEYS: "checkin,profile_backfill" }, [], {
+        answer: c =>
+          c.method === "GET" && c.path === `list/${CLIENTS_LIST}/field`
+            ? { fields: cardTask(CARD).custom_fields.concat([
+                { id: "032203ad-e327-4d76-a0ce-c07496da6486", type: "date" },
+                { id: PROFILE, type: "text", type_config: {} },
+              ]) }
+            : undefined,
+      });
+      const ok = await runFormsDoctor(ready.deps);
+      expect(ok.problems).toEqual([]);
+      expect(ok.note.startsWith("Ready.")).toBe(true);
+    });
   });
 
   it("JOBS adds forms and forms_doctor (and billing_doctor after them, waves 1-2)", () => {

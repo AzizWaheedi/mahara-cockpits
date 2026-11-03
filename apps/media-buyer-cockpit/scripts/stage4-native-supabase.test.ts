@@ -3537,3 +3537,135 @@ describe("20261102p: better data on top of Make's", () => {
     });
   });
 });
+
+// --- 20261103b: Typeform's hints and the fifth Meta choice on version 2 (B0) ----------------------
+
+/**
+ * The CEO's "Yes" to restoring Typeform's hints and optional questions: version 2 in place, only while
+ * nothing uses it, and KFRCXPFx's fifth Meta choice. stage4-match-make-supabase.test.ts proves the texts
+ * against make_parity.py's evaluator; here the file runs on the merged chain (j, l, o, p) with the real
+ * audit trigger, go-live, portal invite and portal answer.
+ */
+const V2_HINTS = "20261103b_onboarding_v2_hints.sql";
+/** md5 of version 2's text: 20261102o's (live, read 2026-11-03) and 20261103b's. */
+const V2_O_MD5 = "bc89ca36000ebf7943c6ec569cd1be73";
+const V2_HINTS_MD5 = "38d371cd509ced4fef9b7cad6e09fb80";
+const RESTRICTED = "My Account is restricted | حسابي مقيّد";
+const META_REF = "ddf2767d-5725-4df2-b200-f0aab77a2db5";
+const v2Md5 = () =>
+  one<string>(
+    "SELECT md5(schema::text) AS r FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2",
+  );
+const hintAudits = () =>
+  q<Row>(
+    `SELECT entity_type, entity_id, before, after, metadata->>'op' AS op FROM public.cockpit_audit_log
+      WHERE action = 'forms.stage4_v2_hints' ORDER BY entity_type`,
+  );
+/** ONB_ANSWERS with the restricted account, and the three questions KFRCXPFx asks as optional left empty. */
+const { address: _address, projectsDone: _projects, landmark: _landmark, ...ONB_LEAN } = ONB_ANSWERS;
+const ONB_RESTRICTED = { ...ONB_LEAN, facebookAds: "restricted" };
+
+describe("20261103b: Typeform's hints and the fifth Meta choice on version 2 (B0)", () => {
+  test("on the merged chain: version 2 changes in place with one audit row; a second apply writes nothing", async () => {
+    await rolledBack(async () => {
+      expect(await v2Md5()).toBe(V2_O_MD5);
+      await ex(inTest(V2_HINTS));
+      expect(await v2Md5()).toBe(V2_HINTS_MD5);
+      expect(await hintAudits()).toEqual([
+        {
+          entity_type: "cockpit_form_versions",
+          entity_id: "onboarding:2",
+          before: { key: "onboarding", version: 2 },
+          after: { key: "onboarding", version: 2 },
+          op: "update",
+        },
+      ]);
+      const v2 = await one<any>(
+        "SELECT schema AS r FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2",
+      );
+      expect(await one("SELECT public.cockpit_form_schema_check($1::jsonb) AS r", [json(v2)])).toBeNull();
+      expect(await one("SELECT public.cockpit_form_schema_text_problem($1::jsonb) AS r", [json(v2)])).toBeNull();
+      expect(v2.fields.filter((f: any) => f.hint)).toHaveLength(10);
+      // The registry stays on Typeform, version 1 (live, read 2026-11-03).
+      expect(await one("SELECT jsonb_build_object('p', provider, 'v', version) AS r FROM public.cockpit_forms WHERE key = 'onboarding'")).toEqual({
+        p: "typeform",
+        v: 1,
+      });
+      await ex(inTest(V2_HINTS));
+      expect(await v2Md5()).toBe(V2_HINTS_MD5);
+      expect(await hintAudits()).toHaveLength(1);
+    });
+  });
+
+  test("live on version 2 before it: the registry's copy moves too, with its own audit row", async () => {
+    await rolledBack(async () => {
+      await goLive("onboarding", true);
+      expect(await one("SELECT md5(schema::text) AS r FROM public.cockpit_forms WHERE key = 'onboarding'")).toBe(V2_O_MD5);
+      await ex(inTest(V2_HINTS));
+      expect(
+        await one(
+          "SELECT jsonb_build_object('md5', md5(schema::text), 'by', updated_by, 'v', version) AS r FROM public.cockpit_forms WHERE key = 'onboarding'",
+        ),
+      ).toEqual({ md5: V2_HINTS_MD5, by: "migration 20261103b", v: 2 });
+      expect((await hintAudits()).map(r => [r.entity_type, r.op])).toEqual([
+        ["cockpit_form_versions", "update"],
+        ["cockpit_forms", "update"],
+      ]);
+    });
+  });
+
+  test("the first portal invite on version 2 closes the window: the file stops and says version 3", async () => {
+    await rolledBack(async () => {
+      await goLive("onboarding", true);
+      expect((await portalOpen("locCedar01", C)).inviteId).toBeTruthy();
+      expect(await refusal(() => ex(inTest(V2_HINTS)))).toEqual({
+        code: "55000",
+        message:
+          "The onboarding form's version 2 is in use (1 answers and invites), so it cannot change in place: stop, and put these hints in version 3.",
+      });
+    });
+  });
+
+  test("a portal answer with a restricted account and the three optional questions empty: refused on 20261102o's, stored on 20261103b's with KFRCXPFx's label", async () => {
+    const send = async () => {
+      await goLive("onboarding", true);
+      await settings("onboarding.map_urls", MAPS);
+      await settings("stage4.messages", MESSAGES);
+      await settings("onboarding.raw_titles", RAW_TITLES);
+      await addRequestTypes();
+      const inv = await portalOpen("locCedar01", C);
+      return as<any>(
+        "service",
+        "SELECT public.portal_form_submit('locCedar01', $1, 'owner@client.invalid', 'admin', $2::uuid, $3::jsonb, $4::uuid, 'en') AS r",
+        [C, inv.inviteId, json(ONB_RESTRICTED), uuid()],
+      );
+    };
+    await rolledBack(async () => {
+      const refused = await send();
+      expect([refused.ok, refused.reason, Object.keys(refused.errors).sort()]).toEqual([
+        false,
+        "invalid",
+        ["address", "facebookAds", "landmark", "projectsDone"],
+      ]);
+    });
+    await rolledBack(async () => {
+      await ex(inTest(V2_HINTS));
+      const done = await send();
+      expect(done.ok).toBe(true);
+      const stored = await one<any>("SELECT answers AS r FROM public.cockpit_form_responses WHERE id = $1::uuid", [
+        done.responseId,
+      ]);
+      expect(stored.facebookAds).toBe("restricted");
+      for (const k of ["address", "projectsDone", "landmark"]) expect(stored).not.toHaveProperty(k);
+      const model = await one<any>(
+        "SELECT forms->'onboarding' AS r FROM public.cockpit_client_onboarding WHERE clickup_task_id = $1",
+        [C],
+      );
+      expect(model.answers.find((a: any) => a.ref === META_REF).value).toBe(RESTRICTED);
+      const fx = byKey(await effects(done.responseId));
+      const title = RAW_TITLES.fields.find((f: any) => f.ref === META_REF).title;
+      expect(fx.raw_answers_comment.plan.comment_text).toContain(`\n**${title}**\n${RESTRICTED}\n`);
+      expect(fx.raw_answers_comment.state).toBe("queued");
+    });
+  });
+});
