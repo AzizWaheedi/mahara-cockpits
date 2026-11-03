@@ -16,6 +16,10 @@ import {
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import {
+  BudgetSources,
+  budgetLimitWords,
+} from "@/components/launch/BudgetSources";
+import {
   ClientActivity,
   ClientDirectory,
   ClientTasks,
@@ -38,6 +42,8 @@ import {
   accountTone,
   adsHref,
   bestPast,
+  briefBudgetWords,
+  clientAgreedBudget,
   contractedBudget,
   defaultAccount,
   firstBlock,
@@ -214,6 +220,8 @@ function LaunchDetail({
     history: c.history.filter(h => h.account_id === account),
   });
   const cap = ready?.budget?.cap;
+  // The agreed budget the desk's default and its 2x cap follow (20261103e).
+  const agreed = clientAgreedBudget(c);
   // A switch on with no card makes the card, so it needs the launch form's answers first.
   const switchName =
     route === "switchOn"
@@ -600,9 +608,7 @@ function LaunchDetail({
                     ["Destination", c.brief.answers?.destination],
                     [
                       "Daily budget",
-                      c.brief.answers?.daily_budget
-                        ? `$${c.brief.answers.daily_budget}`
-                        : null,
+                      briefBudgetWords(c.brief.answers?.daily_budget),
                     ],
                     ["Identity", c.brief.answers?.identity],
                     ["Starter ads", c.brief.answers?.starter],
@@ -894,12 +900,19 @@ function LaunchDetail({
                           <span>/ day</span>
                         </div>
                         <small>
-                          {ready.budget.contractedUsd
-                            ? `$${ready.budget.contractedUsd} contracted · ${ready.budget.source}`
-                            : "No contracted budget recorded"}{" "}
-                          · Limit ${cap}
+                          {budgetLimitWords(cap, ready.budget.contractedUsd) ??
+                            "The limit is read with the account."}
                         </small>
                       </label>
+                      <BudgetSources
+                        agreed={agreed}
+                        live={ready.budget}
+                        cap={cap}
+                        onUse={usd => {
+                          setBudget(String(usd));
+                          setPlan(null);
+                        }}
+                      />
                       {needsCard && (
                         <LaunchCardDetails
                           key={`${account}-${pending?.id ?? source}`}
