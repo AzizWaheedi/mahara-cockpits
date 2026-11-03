@@ -20,7 +20,10 @@ forms-door does: the termination survey, the pause request, NPS and CSAT as lega
 only the hidden client_name and onboarding_client_id, the card from the hidden id; never a card for NPS and CSAT),
 posted to cockpit_form_record_legacy; onboarding as the onboarding sync's formEntry (onboardingCore.ts, ported below
 and held to the same golden file as forms-door's test) and the New Client Form as legacyInput with its three hidden
-ids, posted to cockpit_form_record_make. Always with backfill true, so no notice is queued for an old answer and a
+ids and no raw phone (f322053a, dropped by its ref), posted to cockpit_form_record_make; then, as the door does
+(docs/forms/WAVE56-CONTRACT.md 4.19), the sale's typed phone and email (tieKeys) go to cockpit_sale_tie_open alone,
+which keeps only their digests. A sale tie that cannot be opened is counted, never printed, and the onboarding sync's
+sweep opens it later. Always with backfill true, so no notice is queued for an old answer and a
 response already stored is left as it is. --dry reads and counts and writes nothing. It prints counts only, never an
 answer, a name, a token or a key:
 
@@ -65,6 +68,11 @@ CONTACT_TYPES = {"email", "phone_number", "contact_info"}
 LEGACY_HIDDEN = ("client_name", "onboarding_client_id")
 # The New Client Form's hidden fields (handler.ts NEW_CLIENT_HIDDEN; cockpit_sales_client_forms.hidden).
 NEW_CLIENT_HIDDEN = ("contact_id", "closer", "setter")
+# The New Client Form's own refs (handler.ts NEW_CLIENT_REF): the typed phone and email the sale tie reads, and the
+# raw-phone short_text, never stored (handler.ts NEW_CLIENT_DROP_REFS).
+NEW_CLIENT_PHONE_REF = "95a3901f-4130-454e-8e45-14c9a99dd096"
+NEW_CLIENT_EMAIL_REF = "a6ea04df-7b41-4a9f-b92b-8b5347a585be"
+NEW_CLIENT_DROP_REFS = ("f322053a-3b86-4e8c-8596-93d31a096679",)
 ONBOARDING_FORM_ID = "KFRCXPFx"
 ARABIC = re.compile(r"[\u0600-\u06ff]")
 KEY_SHAPES = re.compile(r"sk-[A-Za-z0-9_-]{16,}|sb_secret_[A-Za-z0-9_-]{8,}|tfp_[A-Za-z0-9_-]{8,}"
@@ -325,8 +333,25 @@ def _pick(given: Any, keys: tuple) -> dict:
     return out
 
 
+def tie_keys_of(item: dict) -> dict:
+    """The sale's typed phone (95a3901f, phone_number) and email (a6ea04df, email), by ref and type only (handler.ts
+    tieKeysOf): each a trimmed string or None. Only cockpit_sale_tie_open receives them."""
+    def typed(ref: str, kind: str) -> Optional[str]:
+        for a in item.get("answers") or []:
+            if not isinstance(a, dict) or a.get("type") != kind:
+                continue
+            field = a.get("field") if isinstance(a.get("field"), dict) else {}
+            if field.get("ref") != ref:
+                continue
+            v = a.get(kind)
+            return v.strip() if isinstance(v, str) and v.strip() and len(v) <= 320 else None
+        return None
+    return {"phone": typed(NEW_CLIENT_PHONE_REF, "phone_number"), "email": typed(NEW_CLIENT_EMAIL_REF, "email")}
+
+
 def make_input(form: str, item: dict, titles: dict, definition: Any) -> dict:
-    """cockpit_form_record_make's input for one response (handler.ts makeInput, backfill true)."""
+    """cockpit_form_record_make's input for one response (handler.ts makeInput, backfill true). The New Client Form's
+    carries tieKeys beside it, which record_of takes off before the record is posted."""
     base = {"formKey": form, "externalId": str(item.get("token") or item.get("response_id") or ""),
             "submittedAt": str(item.get("submitted_at") or ""), "backfill": True}
     if form == "onboarding":
@@ -334,8 +359,16 @@ def make_input(form: str, item: dict, titles: dict, definition: Any) -> dict:
         card = hidden.get("onboarding_client_id")
         return {**base, "answers": {"fields": onboarding_answers(definition, item)}, "hidden": hidden,
                 "taskId": card if isinstance(card, str) and CARD_ID.match(card) else None}
-    legacy = legacy_input(form, item, titles)
-    return {**base, "answers": legacy["answers"], "hidden": _pick(item.get("hidden"), NEW_CLIENT_HIDDEN), "taskId": None}
+    kept = [a for a in item.get("answers") or []
+            if not (isinstance(a, dict) and isinstance(a.get("field"), dict) and a["field"].get("ref") in NEW_CLIENT_DROP_REFS)]
+    legacy = legacy_input(form, {**item, "answers": kept}, titles)
+    return {**base, "answers": legacy["answers"], "hidden": _pick(item.get("hidden"), NEW_CLIENT_HIDDEN), "taskId": None,
+            "tieKeys": tie_keys_of(item)}
+
+
+def record_of(record: dict) -> dict:
+    """The record RPC's input alone: make_input less the sale tie's keys (handler.ts recordOf)."""
+    return {k: v for k, v in record.items() if k != "tieKeys"}
 
 
 # ---------------------------------------------------------------- the run
@@ -413,11 +446,11 @@ def backfill(run: Run, form: str, dry: bool) -> int:
         print(f"read {len(items)}, would store up to {len(records)}, unmatched {unmatched}"
               + (f", unreadable {len(bad)}" if bad else "") + " (dry run: nothing written)")
         return 0
-    stored = repeat = unmatched = filled = 0
+    stored = repeat = unmatched = filled = tie_missed = 0
     failed: list = []
     for r in records:
         try:
-            status, text = run.supabase("POST", f"/rest/v1/rpc/{rpc}", {"p": r})
+            status, text = run.supabase("POST", f"/rest/v1/rpc/{rpc}", {"p": record_of(r)})
             out = json.loads(text) if text else None
         except NoAnswer:
             status, out = 0, None
@@ -436,15 +469,31 @@ def backfill(run: Run, form: str, dry: bool) -> int:
             unmatched += 1
         if out.get("readModel") == "written":
             filled += 1
+        if form == "new_client" and not open_tie(run, r):
+            tie_missed += 1
     line = f"read {len(items)}, stored {stored}, already there {repeat}, unmatched {unmatched}"
     if form == "onboarding":
         line += f", read model filled {filled}"
+    if tie_missed:
+        line += f", sale ties not opened {tie_missed} (the onboarding sync's sweep opens them)"
     if bad:
         line += f", unreadable {len(bad)}"
     if failed:
         line += f", not stored {len(failed)} ({', '.join(sorted(set(failed)))})"
     print(line)
     return 1 if failed or bad else 0
+
+
+def open_tie(run: Run, record: dict) -> bool:
+    """The sale tie after a stored New Client Form (4.19), as the door does: the sale's two typed keys go to
+    cockpit_sale_tie_open alone. False when it could not be opened (nothing printed: its answer can hold a value)."""
+    p = {"externalId": record["externalId"], "submittedAt": record["submittedAt"], "tieKeys": record.get("tieKeys") or {}}
+    try:
+        status, text = run.supabase("POST", "/rest/v1/rpc/cockpit_sale_tie_open", {"p": p})
+        out = json.loads(text) if text else None
+    except (NoAnswer, ValueError):
+        return False
+    return status == 200 and isinstance(out, dict) and out.get("ok") is True
 
 
 def rows_of(run: Run, path: str, what: str) -> list:

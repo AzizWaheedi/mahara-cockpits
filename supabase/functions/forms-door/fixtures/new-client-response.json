@@ -1,5 +1,5 @@
 {
-  "_note": "A New Client Form (BTzMwXiw) webhook delivery in Typeform's shape, every value invented. Recorded payloads only: no test, canary or deploy step ever submits this form.",
+  "_note": "A New Client Form (BTzMwXiw) webhook delivery in Typeform's shape, every value invented (the phone in the unassigned 0000 block). The email and phone questions carry the form's own refs (95a3901f, a6ea04df), which the sale tie reads as tieKeys, and the raw-phone short_text (f322053a) is never stored. Recorded payloads only: no test, canary or deploy step ever submits this form.",
   "event_id": "01JTESTNEWCLIENT",
   "event_type": "form_response",
   "form_response": {
@@ -12,16 +12,18 @@
       "title": "New Client Form",
       "fields": [
         { "id": "n1", "ref": "business-ref", "type": "short_text", "title": "Business name" },
-        { "id": "n2", "ref": "email-ref", "type": "email", "title": "Client email" },
-        { "id": "n3", "ref": "phone-ref", "type": "phone_number", "title": "Client phone" },
+        { "id": "n2", "ref": "a6ea04df-7b41-4a9f-b92b-8b5347a585be", "type": "email", "title": "Client email" },
+        { "id": "n3", "ref": "95a3901f-4130-454e-8e45-14c9a99dd096", "type": "phone_number", "title": "Client phone" },
+        { "id": "n6", "ref": "f322053a-3b86-4e8c-8596-93d31a096679", "type": "short_text", "title": "Raw Phone (No+ e.g. 96500000000)" },
         { "id": "n4", "ref": "plan-ref", "type": "multiple_choice", "title": "Payment plan" },
         { "id": "n5", "ref": "amount-ref", "type": "number", "title": "Amount paid" }
       ]
     },
     "answers": [
       { "type": "text", "text": "Harbour Homes", "field": { "id": "n1", "ref": "business-ref", "type": "short_text" } },
-      { "type": "email", "email": "owner@harbour.example", "field": { "id": "n2", "ref": "email-ref", "type": "email" } },
-      { "type": "phone_number", "phone_number": "+965 0000 0002", "field": { "id": "n3", "ref": "phone-ref", "type": "phone_number" } },
+      { "type": "email", "email": "owner@harbour.example", "field": { "id": "n2", "ref": "a6ea04df-7b41-4a9f-b92b-8b5347a585be", "type": "email" } },
+      { "type": "phone_number", "phone_number": "+965 0000 0002", "field": { "id": "n3", "ref": "95a3901f-4130-454e-8e45-14c9a99dd096", "type": "phone_number" } },
+      { "type": "text", "text": "96500000002", "field": { "id": "n6", "ref": "f322053a-3b86-4e8c-8596-93d31a096679", "type": "short_text" } },
       { "type": "choice", "choice": { "label": "Monthly" }, "field": { "id": "n4", "ref": "plan-ref", "type": "multiple_choice" } },
       { "type": "number", "number": 2000, "field": { "id": "n5", "ref": "amount-ref", "type": "number" } }
     ]

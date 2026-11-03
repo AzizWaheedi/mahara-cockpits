@@ -152,6 +152,7 @@ directory; for the portal, `ln -s /Users/abdulazizwaheedi/mahara-worktrees/porta
 | Door markers `agent`, `ltv` (CEO cards) | `forms.doors` markers | database | `false` | D-AG, D-LTV |
 | `cockpit_form_doors()` flags `kickoff` | functions exist **and** `forms.stage4.kickoff` | database | false | D-S4K |
 | `card_facts` (Consultation Types, ADs Platform, Fathom, Onboarding Call Date, Company Website; only while empty, X39) | its form's key in `CLICKUP_WRITEBACK_FORMS_KEYS` **and** the form's version-2 array (`20261102p`) | Edge secrets, database | FORMS_KEYS `checkin`; registry on version 1 | D-S4K (kickoff), D-S4O (onboarding) |
+| The Client Profile backfill (`profile_backfill`, 4.17; only while empty, one-off) | `profile_backfill` in `CLICKUP_WRITEBACK_FORMS_KEYS` (its own lane; `onboarding` in the list never opens it) **and** rows only from `cockpit_form_profile_backfill('apply', …)`, which the deploy session runs | Edge secrets, database | lane not listed; no rows | D-PB, then the lane taken out again |
 
 ---
 
@@ -172,6 +173,7 @@ take `20261102g` to `j`:
 | 5 | `supabase/migrations/20261102l_stage4_no_client_data_row.sql` | D-S4.0 fixes (branch `forms-s4-fixes`) | `client_data_row` out of the onboarding arrays, the plan builder and the relay outbox (2.8, X34); `20261102k` was already taken by a pay correction outside the forms program |
 | 6 | `supabase/migrations/20261102o_stage4_match_make.sql` | D-S4F fixes (branch `forms-s4-fixes`) | Make 12's and Make 13's texts and choices built in SQL, the five kickoff follow-ups, the handoff carried whole to each onboarding task's comment, `onboarding.raw_titles`, the onboarding's answers and the kickoff's long texts kept as typed, the onboarding's version 2 retyped in place (2.9, X37); since round 4 (X39) also Typeform's typed inputs on that version 2 (numbers, links, E.164 phones), the queue audit keeping a task comment as its length, and 256 KB for a kickoff's answers. First drafted as `20261102m`: the worktree `goals-sheet` then held an untracked `20261102m_goal_sheet_truth.sql` (11.2-v), which reached live and main first (11.2-x), so under the letter rule this file moved to the next free letter, `o` (2026-11-02, 11.10) |
 | 7 | `supabase/migrations/20261102p_stage4_better_data.sql` | better data (round 4 on `forms-s4-fixes`, X39) | the cockpit briefs on the three tasks, `card_facts` in both version-2 arrays, the kickoff notice's open items (2.10). It stands on `o` and stops with `Apply 20261102o before 20261102p.` otherwise. First drafted as `20261102n`: live and origin/main hold `20261102m_goal_sheet_truth` and `20261102n_goal_sheet_media_dedupe` (11.2-x, read at the end of round 4), so under the letter rule this branch's `m` and `n` reached live second and were renamed `o` and `p` on the branch before D-S4F (2026-11-02, 11.10) |
+| 8 | `supabase/migrations/20261103c_stage4_profile_backfill.sql` | the Client Profile backfill (next-design plan B2, branch `profile-backfill`) | `j`'s gate plus the two keyed branches `(onboarding, profile_backfill)` and `(new_client, sale_facts)`, and `cockpit_form_profile_backfill` (4.17). Stands on `o`; the letter was read free on live, origin/main and every worktree on 2026-11-03 (live holds `20261103a`, `b`, `e`, `i`) |
 
 **The rename (2026-11-02).** The goals-sheet session's `20261102m_goal_sheet_truth` and `20261102n_goal_sheet_media_dedupe` reached live and origin/main first, so under the letter rule this branch's match-Make and better-data files, first drafted as `m` and `n`, became `20261102o_stage4_match_make.sql` and `20261102p_stage4_better_data.sql` (with their messages, audit actors, tests, harness and docs; no function body changed, so every md5 stands), while `l` was free and kept its letter.
 
@@ -1383,7 +1385,8 @@ stops that item.
    language drafted under the voice skill and listed in the slice report, then shown to the CEO in
    the forms editor before D-S4O, 1.3), `heading` items for its three screens, prefill context from
    the New Client Form answers the cockpit stores (`cockpit_form_responses` `new_client`: business
-   name, the closer's notes) and the card. **Branching ("onsite logic", plan 5.16):** the builder
+   name, the closer's notes) and the card (since `20261103g`, 4.19, the business name is the card's
+   newest tied sale's own answer `a1be4eee`; before it the read matched no stored sale). **Branching ("onsite logic", plan 5.16):** the builder
    derives which questions are conditional from the 46 stored answers (a question absent from some
    answers) and expresses each as schema v1's single-equality `showIf`; a test asserts the renderer
    and the SQL checker hide the same fields. D-S4.0 reads the saved definition's `logic` and stops if
@@ -1678,8 +1681,9 @@ real stored answers; that output is now the **floor**, and every addition sits o
 | **B8** `card_facts` | a new effect on both forms, after `card_fields` / `profile_fields`, written by `clickup-writeback` (4.13.4) | kickoff: Consultation Types from the appointment types (`c0000001-…-0008`: In-office → In Office, In-home or onsite → In Home / On Site, Online → Online; every ticked type must map, in ticked order); ADs Platform from `7d16afbb` (meta, facebook or instagram → Facebook/Meta; tik tok → Tiktok; snap → Snapchat; only when exactly one matches); Fathom from `b5578678` when it is a fathom.video link, else the call store's recording; Onboarding Call Date from the call store's day, else the kickoff's submitted day (Kuwait). A call store row counts only when an exact sign or a person placed it on the card (A7.14 rule 2; `cockpit_form_stage4_onboarding_call`, 2.10). Onboarding: Company Website from `454a425f` | ADs Platform: `csmProfiles`, `csmProfileCalculations`; Onboarding Call Date: `csmCadence`, `csmSync`, `onboardingCore`; Fathom and Website: `onboardingCore`; Consultation Types: `creativeProducer` | a field with no usable answer is not planned and its line says why; with no field the effect is skipped with a sentence and never queued; a set card field is kept (noted when it differs); no submit time, no date | `intended: card_facts` |
 
 **Fields deliberately never written:** Country `e0ca65e7` (billing-sync reads it into billing; a phone-code guess must
-not become a finance fact), ADs Platforms `8db2aa82` (no code reader), Daily Budget `539743c2` (CEO-5), and City,
-Ad Account - Meta, Language and Time Zone (no card reader). Option ids come from the s40 snapshot; the forms doctor
+not become a finance fact), ADs Platforms `8db2aa82` (no code reader), and City, Ad Account - Meta, Language and
+Time Zone (no card reader). Daily Budget `539743c2` was here until CEO-5 was decided: since `20261103f` (4.21) a
+kickoff fills it only while it is empty, in dollars, from the kickoff's own budget. Option ids come from the s40 snapshot; the forms doctor
 checks them live once a Stage 4 form is in `CLICKUP_WRITEBACK_FORMS_KEYS`, and a changed option fails its row with no
 write. Filling an empty Onboarding Call Date changes `csmCadence`: the CSM lead is told before D-S4K (11.10).
 
@@ -1718,6 +1722,105 @@ watcher on the tasks (two CSM sources disagree on 10 cards); card writes for Cou
 Account - Meta and ADs Platforms (inferred values, or no reader). The market intel dispatch's extra keys, a Client
 Profile backfill, the onboarding's hints and optional questions, a version 3, the kickoff daily budget, New Client Form
 ties and open items as requests are the CEO's (section 10, CEO-1 to CEO-7).
+
+### 4.17 The Client Profile backfill (CEO-2 decided: "Sure"; build B2, migration `20261103c`)
+
+The CEO, 2026-11-02, to "Fill the Client Profile for cards still in onboarding, with Make's exact text, only where it
+is empty, after a dry run" (CEO-2): **"Sure"**. Design `next-design/backfill.md`; plan build B2.
+
+**Scope (read only, 2026-11-03; counts and ids only).** `cockpit_client_onboarding` holds 70 cards; 42 have a stored
+onboarding answer and 31 of those an empty Client Profile (`7755485f`); 7 are in onboarding (`inOnboarding()`), 6 of
+them with an answer, and **3** with an answer and an empty profile: `86exnk0v4`, `86ey3303x`, `86eyew6mt`, **all
+GHOSTED** with no launch date and no kickoff (answers from May, June and July). The three clients actively onboarding
+already have Make's profile. The 6 Active cards with an empty profile stay out unless the CEO says so (the function
+refuses a card not in onboarding; adding them is a one-line change and a fresh review). **Stop gate before the first
+write:** the CEO is asked "The three cards your 'Sure' covers are all GHOSTED (no launch date, no kickoff). The three clients actually onboarding now already have Make's Client Profile. Fill the three anyway? The 6 Active clients with an empty profile stay out unless you say so." The deploy goes on only after he answers yes to the three; otherwise nothing
+further is done. The apply's actor records that re-confirmation (`CEO-2 approved 2026-11-02 (Sure); scope re-confirmed by the CEO on <YYYY-MM-DD>; D-PB`), not only the 2026-11-02
+Sure. The RUNBOOK row "The Client Profile backfill", step (2), holds the same words.
+
+**Why a key of its own.** `profile_fields` overwrites a set field, also writes the Kickoff Form Link, carries the
+profile in its queue payload (which the queue audit copies into `cockpit_audit_log`) and is refused by the gate for a
+Typeform answer. `card_facts` may write only its own allowlist (4.16), which `make_parity` guards.
+
+**Migration `20261103c_stage4_profile_backfill.sql`** (applies twice; owner-run):
+
+| Object | Shape and rule |
+|---|---|
+| Guards | The gate's md5 is `j`'s (`a683c23676194229cc175e4d47cb8b2b`, live) or this file's **`4ca44d25514e25806229a7e6d185673b`**, else `cockpit_form_effect_gate(text,text) changed since 20261102j; stop and re-read it.` (55000, a `(sig, live, after)` row `guard_check.py` reads). It stands on `o`'s `cockpit_form_stage4_profile_text` `6c652fb1…`, `cockpit_form_typeform_text` `4509bcd5…`, `cockpit_form_stage4_make_text` `b14bfda4…` and the claim `cockpit_clickup_writeback_claim_forms` `c79ffe4c…` (`20261029t`): a missing text body stops it with `Apply 20261102o before this file (… is missing).`, a changed one with `… changed since 20261102o (this file stands on it); stop and re-read it.` (`20261029t` for the claim) |
+| `cockpit_form_effect_gate(text,text)` | `j`'s body byte for byte plus **exactly two keyed branches** after the canary branch: `p_delivery = 'clickup_queue'`, the effect `queued` or `unknown`, owner `cockpit`, and `(form_key, effect_key)` = `(onboarding, profile_backfill)` or `(new_client, sale_facts)` (B3 plans the second; the plan's 2.2 puts it here so the gate changes once). Such an effect passes on its own, whatever the registry and the native window say: the backfill's answer is an old Typeform one, and the New Client Form has no native window (`cockpit_form_native_since` is NULL). Every other case answers exactly as `j`'s (the PGlite test compares both gates on 704 cases). The switch is not here: a refusal settles the row (`claim_forms`); the switch is the writer's lane. ACL: the owner's only. |
+| `cockpit_form_profile_backfill(p_mode text, p_cards text[], p_actor text)` | `SECURITY DEFINER`, empty search path, `cockpit_hours_require_service()` first; revoked from all four roles, EXECUTE to `service_role` only. The deploy session calls it as the owner with the service claim set in the same statement (RUNBOOK). Refusals (22023): `Say dry_run, apply or cancel.`; `Name the cards: 1 to 10 different ClickUp ids.` (none, more than 10, a duplicate, a NULL or an id outside `^[A-Za-z0-9_-]{1,40}$`); `Say who approved this.` (apply or cancel with no actor, or one over 200 characters). There is no "every eligible card" mode. |
+| `dry_run` | Writes nothing (no row in any table, no audit). Per card: `{taskId, state, reason, responseId, sentOn (Kuwait day), chars, answered (of 7), sha256 (first 12 hex)}`; never the text; `state` is `would_queue` or `skip`. `chars` and `sha256` are NULL on a skipped card (missing is never zero). |
+| `apply` | Per card, in order, the client record locked `FOR UPDATE` (two applies take turns), one transaction each: the effect `(response, 'onboarding', 'profile_backfill', '<response>:profile_backfill', 'cockpit', 'clickup_queue', plan, 'planned')`; the queue row `profile_backfill:<card>`, kind `form`, source `cockpit_form_effects`/effect id, `task_id` the card; the effect `queued` with `delivery_ref` the queue id and `receipt {queueId}`. An error in one card's writes skips that card with its sentence, and the others go on. Idempotent: a second apply says `Skipped: already queued once for this card.` (the queue's `dedupe_key` and the effect's `(response_id, effect_key)` are unique). |
+| The plan (B1's contract) | `{taskId, fields: [{fieldId: '7755485f-74a8-496c-85d8-562588e77944', kind: 'text', label: 'Client Profile', value: <text>, onlyIfEmpty: true}], lines: ["Client Profile from the stored onboarding answer (N characters)", "Only where the card's Client Profile is empty"]}`. The text is `cockpit_form_stage4_profile_text` over the stored answers as Typeform hands them to Make (`cockpit_form_typeform_text`, a ref answered twice giving its last answer): Make 13 [29]'s seven labels, uncut. |
+| The payload (B1's contract) | Exactly `{formKey: 'onboarding', effectKey: 'profile_backfill', effectId, responseId, taskId, valueChars, valueSha256}` (lowercase hex sha256 of the UTF-8 text). **The text is never in the payload** (the queue audit copies payloads); the writer reads it from the claimed plan and checks it against `valueSha256` and `PROFILE_LABELS` before any call. |
+| `cancel` | A backfill row in `queued` or `retry` with no step `started` or `done` becomes `skipped`, error `Cancelled before it reached ClickUp, so nothing was written.`; the from-queue trigger settles its effect `skipped` with the same sentence. A row that started, is `sending` or `unknown` is left alone: `Not cancelled: a write may have reached the card. Let the writer finish, then read the card.` No row: `Nothing to cancel: no Client Profile backfill was queued for this card.`; an ended one: `Nothing to cancel: this write already ended (<state>).` A cancelled card is not queued again. |
+| Audit | Every effect insert and state change (`cockpit_forms_audit`, action `forms.profile_backfill_queued`, then `forms.effect_settled`, never the plan) and every queue insert and state change (`cockpit_clickup_writeback_audit`, the payload with no text). `apply` and `cancel` add one row `forms.profile_backfill_apply` / `forms.profile_backfill_cancel`, actor `p_actor`, metadata `{cards, counts, rows: [{taskId, state, effectId, queueId}]}`: ids and counts only. |
+
+**Skip reasons** (in this order; each `state: 'skip'`):
+
+| Check | Sentence |
+|---|---|
+| a client record | `Skipped: this card is not in the client records.` |
+| in onboarding | `Skipped: this client is not in onboarding.` |
+| the mirror's Client Profile empty (trimmed) | `Skipped: the card already has a Client Profile.` |
+| a stored onboarding answer (an array of at least 1) | `Skipped: no stored onboarding answer for this card.` |
+| a Typeform answer (`form_id` `KFRCXPFx`) | `Skipped: this client answered the onboarding in the portal, so its own Client Profile step fills the card.` |
+| exactly one `cockpit_form_responses` row, form `onboarding`, this card, `external_id` = the read model's `response_id`, `submitted` or `confirmed`, mode `live` | `Skipped: the stored answer is not in the forms records. Tell the tech lead.` |
+| its `answers->'fields'` equal to the read model's answers | `Skipped: the stored answer and the client record disagree, so nothing was queued. Tell the tech lead.` |
+| no `profile_backfill` effect on any of the card's responses and no queue row `profile_backfill:<card>` | `Skipped: already queued once for this card.` |
+| no open `profile_fields` effect (planned, queued or unknown) on the card | `Skipped: the native onboarding is writing this card's Client Profile now.` |
+| at least one of the seven profile answers (a revenue of 0 prints blank, as Make prints it) | `Skipped: the stored answer has none of the seven Client Profile answers, so there is nothing to write.` |
+| the text has Make's seven labels (`PROFILE_LABELS`; a revenue answer holding a line break fails it) | `Skipped: the Client Profile built from this answer does not have Make's seven labels, so nothing was queued. Tell the tech lead.` |
+
+The last two keep a row the writer would fail as a mismatch from ever being queued: a failed `clickup_queue` effect has
+no requeue.
+
+**The writer** (build B1, live from `origin/main` `482e0fc6`): the row's lane is `profile_backfill`, held (`Held:
+profile_backfill card writes are not switched on.`) until `CLICKUP_WRITEBACK_FORMS_KEYS` lists it. `backfillStep`
+checks exactly one field, that id, kind `text`, `onlyIfEmpty`, Make's seven labels and the sha256, then `writeFacts`
+reads the card fresh, saves the receipt `{before: empty|set, state}`, writes only an empty field, reads it back
+(trimmed) and keeps any value it finds: `kept: the card already has a value for Client Profile …`. Three ClickUp calls a
+card at the forms pace, each in the provider ledger. A held row also holds back every later form row on its card, so
+the lane opens just before the apply and closes after the last row settles.
+
+**The text is Make's (two sources).** On the 11 cards whose profile Make wrote, the same function gives 10 byte-equal
+texts; the 11th was edited by hand after Make (`backfill.md` 1.2). The PGlite test builds the text a second way (an
+independent builder of the seven labels, Typeform's trim and Make's number print) and runs B1's own `formStep` on the
+row the real claim hands out.
+
+**The dry run expected on the three cards** (read only, 2026-11-03, with `o`'s bodies inlined because the read-only
+role may not execute them; D-PB's dry run recomputes it with the live functions and must agree): 3 `would_queue`, 0
+skipped.
+
+| Card | answered | chars | sha256 (first 12) |
+|---|---|---|---|
+| `86exnk0v4` | 6 | 265 | `9553c5c35200` |
+| `86ey3303x` | 7 | 283 | `3e413fc47bfd` |
+| `86eyew6mt` | 6 | 577 | `1854c2482e00` |
+
+Each card has exactly one onboarding response (`typeform_sync`, version 1, `live`, `submitted`) whose answers equal the
+read model's, no effect, no form queue row and no open `profile_fields`; the three texts match Make's seven labels.
+
+**Deploy (D-PB, section 9).** After B1 is live and, recommended, after D-S4K's canary, so the backfill is not the first
+live `writeFacts` call; and after Supabase egress is back (the writer and onboarding-sync are Edge functions). Production
+writes: the migration; 3 effects, 3 queue rows and their audit rows; `CLICKUP_WRITEBACK_FORMS_KEYS` `+profile_backfill`,
+then removed; 3 Client Profile writes, each only where empty. The steps are the RUNBOOK row "The Client Profile backfill".
+
+**Tests.** `apps/media-buyer-cockpit/scripts/stage4-profile-backfill-supabase.test.ts` (17): every body it stands on
+equals its live md5, the tables' live CHECKs and triggers, the gate's text (`j`'s plus the block) and after md5, two
+applies, both guards, grants (anon, authenticated, the service role on the gate and the owner without the claim
+refused; the RUNBOOK's call works), every refusal, the dry run writing no row in any table and never the text, each
+skip reason, apply under B1's contract with the claim and `formStep`, idempotence, one card's error not stopping the
+next card in the same call, the RUNBOOK's stop gate and the actor that records the CEO's re-confirmation, the claim keeping a held row in every mode (and `j`'s gate settling it), the `sale_facts` pass, the 704-case
+matrix against `j`'s gate, cancel, and audit rows holding no text or contact value. The `forms-registry`,
+`forms-invites`, `stage4-native`, `forms-writeback`, `stage4-match-make` and `stage4-better-data` tests stay green
+unchanged, and `test_make_parity.py` is unchanged (the builder never plans `profile_backfill`).
+
+**Rollback.** Before a write: `cancel` the cards and take `profile_backfill` out of FORMS_KEYS. After a write: the
+receipt names each card written, and each field was empty before, so undoing it is a person clearing the Client Profile
+in ClickUp, only on the CEO's word. Code: the gate's saved `j` body (`before-cockpit_form_effect_gate.sql`); the function
+is inert without rows. A `failed` row is final (no requeue for a `clickup_queue` effect); a second try needs the CEO's
+word and a new dedupe key, which is not built.
 
 ### 4.18 Typeform's hints and optional questions on the native onboarding (B0, `20261103b`)
 
@@ -1783,6 +1886,402 @@ the way `o` changed version 2, and adds `KFRCXPFx`'s fifth Meta choice to the St
    `stage4-better-data-supabase.test.ts` (the brief's Meta line), `test_make_parity.py` (Make 13 prints the label; a run
    with it passes once the plan maps it and fails with `answers differs` while it does not), and the client-success
    `form-prefill` and `form-rail` tests (a native entry reads as a full record).
+
+### 4.19 The sale tie: every New Client Form on its card (CEO-6 decided; build B3, migration `20261103g`)
+
+The CEO, 2026-11-02, on CEO-6: **"Should already be synced, if not do it fully now."** It was not: 0 of 55 stored
+sales sat on a card, and the two card fields the CSM screens read for go-live (`d4483463`) and handoff problems
+(`e17a1c27`) were filled on 0 of 70 cards (design `next-design/sale-tie.md` section 1). B3 is the backend of "fully":
+every stored and every new sale tied to its card by an exact phone or email (never a name), the tie mirrored on the
+stored sale, the two fields filled only where empty on cards on the books, and the portal's business-name context
+fixed. The screens (the rail's "From the sale", the OnboardingKit's chip, the "Sales not on a card" band, the CEO's
+forms-health line) are build B7 against the reads below. Billing's money tie (`cockpit_billing_deal_assignments`, live
+`c0930161…`) is read as a second source and **never changed**.
+
+**Keys.** Phone first, then email, exact and unique only. One normaliser, `cockpit_sale_tie_norm(kind, value)`: a
+`phone` (the sale's typed answer, the card's Phone Number) must carry its country code (`+` or `00`; spaces, dashes,
+dots and brackets out); a `raw_phone` (the sale's raw-phone answer `f322053a`, typed without the `+`, and the client's
+onboarding answer `64f2fb80`) gets a `+` in front of 10 to 15 digits; the result must match `^\+[1-9][0-9]{7,14}$`, or
+there is no key (a national number never is one). An email is `lower(btrim())` and must look like one; no folding of
+dots or plus tags. Keys are kept **only as HMAC-SHA256 digests** (`hmac('<kind>:<key>', pepper)`, hex) under the vault
+secret `cockpit_sale_tie_pepper`, made by the migration from 32 random bytes when absent and read only by owner
+functions. A value travels into the database inside one service call and is digested at once; no table, audit row,
+count, note, log line or answer holds a value or a digest outside `cockpit_sale_ties` and `cockpit_sale_tie_cards`.
+
+| Side | Key | Source |
+|---|---|---|
+| Sale, on arrival | phone, email | the delivery's own typed `95a3901f` (phone_number) and `a6ea04df` (email), read by ref and type before the door's contact filter (`tieKeys`) |
+| Sale, stored (backfill, and the sweep when the door opened no row) | phone | `f322053a` with a `+`, only when its last 8 digits equal `cockpit_sales_deals.phone8` |
+| | email | `cockpit_sales_deals.email` |
+| Card, K1 | phone, email | the card's own Phone Number `085d5e18-16f5-4cf5-8669-b8acf10700a5` and Email `a90c8230-fa67-4e41-b6ed-39306f061fc3` (Make writes both from the sale), and its ClickUp `date_created`, sent by the onboarding sync |
+| Card, K2 | phone, email | the client's onboarding answer in `cockpit_client_onboarding.forms.onboarding` (`64f2fb80`, `7994f0d2`) |
+
+**The match rule** (`cockpit_sale_tie_match`, every path). Candidates are cards on `cockpit_billing_accounts`, and a card
+the onboarding sync keeps (`cockpit_client_onboarding`) that billing-sync has not listed yet (billing-sync runs
+`7,37 3-18 * * *` and `17 21 * * *` UTC, so a card Make makes in the Kuwait evening would otherwise wait 2.5 to 6 hours;
+read 2026-11-03: 70 onboarding cards, 68 on billing, the 2 others the playing account and an internal test), never the
+playing account or an internal test (billing's own pattern, on the billing name, else the onboarding name), whose K1 or
+K2 digest is the sale's. Make's card ties at the sweep that ends the sync run which first saw it.
+
+1. One card by phone ties `phone`; `phone_email` when the email points at it too. The email on other cards only is a
+   `conflict` (candidates: all of them).
+2. Several cards share the key (a returning client; Make makes a card on every sale): the one card ClickUp made in
+   [sale − 10 minutes, sale + 48 hours] ties, the others are kept in `also_on`. When the phone's cards are several and
+   none is in the window, an email that resolves to one of them ties `phone_email`.
+3. **While the sale is under 2 days old, a card made before that window never ties it**: the row waits for the card
+   Make is making (decision B3-1 below). After 2 days the rules above apply to every candidate.
+4. No phone key or no phone card: the same by email (`email`).
+5. Still several cards: `ambiguous`. No card: `waiting` for 2 days, then `unmatched`. Voided in B2B: `void`.
+6. A person's decision is never changed by the system. The door, the offer and the sweep check only `waiting` and
+   `unmatched` system rows again; the backfill job also checks the system's own `ambiguous` and `conflict` rows and its
+   own `tied` rows whose card notes are not planned yet (no `sale_facts` effect): it has every card's K1 and creation
+   time, so a tie a sweep made from K2 alone moves to the in-window card, or becomes a `conflict` for a person when K1
+   points elsewhere. A tie with a `sale_facts` effect stays as it is (`cockpit_sale_tie_apply` answers `kept`).
+
+`key_source` says which card key matched: `card_fields` (K1), `onboarding_answer` (K2) or `both`. Each decision records
+billing's card and method (`billing_task_id`, `billing_matched_by`); a disagreement never blocks an exact tie.
+
+**Migration `20261103g_sale_tie.sql`** (applies twice; stops with `Apply 20261102o (Stage 4, match Make) and the billing
+balances (20261023x) before 20261103g.` without them; drift guard on the three bodies it replaces):
+
+| Object | Shape and rule |
+|---|---|
+| `cockpit_sale_ties` | append-only, one live row per sale (`UNIQUE (response_id) WHERE cleared_at IS NULL`): `response_id` (the Typeform token), `form_response_id`, `state` (`waiting`, `tied`, `ambiguous`, `conflict`, `unmatched`, `void`, `not_client`), `clickup_task_id` and `matched_by` (`phone`, `email`, `phone_email`, `person`) exactly when tied, `key_source`, `candidates[]`, `also_on[]`, `suggested_task_id`/`suggested_by` (`billing`, `sales_call`), `billing_task_id`/`billing_matched_by`, `phone_key`/`email_key` (digests), `note` (3 to 500, required for a person's tie and `not_client`), `set_by` (`system:forms-door`, `system:onboarding-sync`, `system:backfill` or a seat's address), `set_at`, `cleared_by/at/reason` (set once). Delete and truncate refused (`cockpit_hours_refuse_delete`); a lock trigger allows only setting `cleared_*` once. Its own audit trigger writes one row per insert and clear: ids, states and methods, the choice and role of a person's decision; never a digest, a note or a reason's text |
+| `cockpit_sale_tie_cards` | K1 per card: `phone_key`, `email_key` (digests), `created_at` (ClickUp's), `seen_at`, `seen_by`. Written only by the offer and the backfill, changed rows only, one audit row per call (`forms.sale_tie_cards_seen`, counts). Delete and truncate refused. (Decision B3-2) |
+| Grants | row security on both, no policy; every grant revoked from PUBLIC, anon, authenticated and service_role, then `SELECT` to service_role (the guardian); the sequence revoked |
+| Pepper | vault secret `cockpit_sale_tie_pepper`, created once with an audit row `forms.sale_tie_pepper_created` (`{"bytes":32}`); never printed, never rotated by a file |
+| Setting `forms.sale_tie` | `{"on": false, "fill": false, "salesLink": false}`, seeded with the merge rule of 2.1 (a second apply never turns a switch off); every change audited by the live `cockpit_settings_forms_audit` (`forms.switch_set`) |
+| Registry | `new_client` keeps Make's four entries and gains `{"key":"sale_tie","label":"Sale tied to its card","owner":"cockpit","delivery":"sql"}` and `{"key":"sale_facts","label":"Go-live and handoff problems on the card, when empty","owner":"cockpit","delivery":"clickup_queue"}`, one audit row each (`forms.sale_tie_registry`) |
+| `cockpit_form_responses_guard()` | replaced; live `d013e81456ebe7a8791270fe8858b972`, after **`f6caf2beba4c83801001f7e603844e62`**; owner only. One carve-out under `cockpit.forms_legacy = 'sale_tie'`: a `new_client` response in state `submitted`, answers unchanged, `answer_meta` changed only in `match` (`phone`, `email`, `phone_email`, `confirmed_by_person`) and `matched` (keys `by`, `at`, `via`, `taskId`, `from` only, `taskId` the card), `task_id` equal to its live tied row's card, or none (and no `match`/`matched`) when the live row is not tied. Every other refusal is as live |
+| `portal_form_onboarding_open(text,text,text,text)` | replaced; live `81c9ede6f7c2c511d1e34c22388ddf24`, after **`fce6f339b02986b2d5cfcc09729a5def`**; service_role as live. The business-name context (4.14.1) is the card's newest live, tied sale's own answer `a1be4eee` (trimmed, 200 characters); nothing else changes. Before, it read `answers->>'businessName'` on a sale with a card, which no stored sale has |
+| `cockpit_form_doors()` | replaced; live `709af1bfae87a41adaa5edf46ca5f0a9`, after **`2f0ada3d4b667de7d9d7139677960bdf`**; authenticated as live. Adds `saleTie` (list, decide and read exist, and `on`), `saleFacts` (`fill`) and `salesLink` (`salesLink`), each with its `why` (`missing`, `off` or null), as the waves 5-6 doors |
+
+**Functions.** Owner only unless said: `_flags`, `_norm`, `_digest`, `_pepper`, `_key`, `_answer`, `_ts`,
+`_stored_keys`, `_card_keys`, `_resolve`, `_match`, `_billing`, `_suggest`, `_evaluate`, `_card_name`, `_write` (clears
+and inserts, then mirrors the response under the carve-out: `task_id`, `client_name` from the billing sheet,
+`answer_meta.match` and `matched {by, at, via:'sale_tie', taskId, from?}`), `_apply`, `_plan_facts`, `_plan_pending`,
+`_store_cards`. Service role (each also checks `cockpit_hours_require_service` inside):
+
+| Function | Who calls it | Contract |
+|---|---|---|
+| `cockpit_sale_tie_open(p jsonb)` | forms-door, after `cockpit_form_record_make` (inserted or repeat) | `p = {externalId, submittedAt, tieKeys: {phone, email}}` (each text or null). A sale with a live row answers `{ok, state, tieId, repeat: true}` and changes nothing. Else one row: `waiting` with the two digests while `on` is off; the match rule while on (a tie plans its card fields when `fill` is on). Sets `detail.tie = 'ok'` on `forms-door:new_client`. Refusals: `That is not a Typeform response token.`, `Send tieKeys as {phone, email}, each text or null.` |
+| `cockpit_sale_tie_door_failed()` | forms-door, when the call above failed | `detail.tie = 'failed'`, `tieAt` on `forms-door:new_client` (the guardian's reading) |
+| `cockpit_sale_tie_waiting()` | onboarding-sync, start of each run | `{on, waiting, since}`: live `waiting` rows and the oldest one's signing time |
+| `cockpit_sale_tie_offer(p_run bigint, p_cards jsonb)` | onboarding-sync, per card page while sales wait | `p_cards = [{taskId, createdAt, phone, email}]`, at most 200. Off: `{on: false, offered, stored: 0, tied: 0, waiting}` and no write. On: stores K1 digests and creation times, checks the waiting and unmatched system rows, plans the fields of new ties (fill on), answers `{on, offered, stored, tied, waiting}` |
+| `cockpit_sale_tie_sweep(p_run bigint DEFAULT NULL)` | onboarding-sync, end of each run | Off: `{on: false}`. On: a row for every stored live sale without one (keys from the stored sources), the waiting and unmatched system rows checked again (waiting over 2 days becomes `unmatched`), every tie without a `sale_facts` effect planned while `fill` is on (newest sale first), and the health row `cockpit_sync_state` `sale-ties` (`ok`, a counts sentence, `detail {opened, tied, planned, waiting, unmatched, forPerson, run}`; while `fill` is on and the gate has no `(new_client, sale_facts)` branch, the sentence ends "Card notes wait for the forms gate that passes them (20261103c), so none were planned."). Answers the same counts |
+| `cockpit_sale_tie_backfill(p_cards jsonb, p_dry boolean)` | the onboarding-sync job `{"job":"saleTies","dryRun":true|false}` | every card's K1 (at most 2,000). A dry run writes nothing. A real run needs `on` (`Sale ties are off. Read the dry run first, then turn forms.sale_tie.on on and run the job again.`), stores the card keys, writes each changed system decision (every system row but `void`, `not_client` and a tie with a `sale_facts` effect: rule 6), plans the fields while `fill` is on. Counts only: `sales, tied, phone, email, phoneEmail, person, cardFields, onboardingAnswer, both, waiting, ambiguous, conflict, unmatched, void, notClient, billingAgree, billingDisagree, billingOnly, salesCallAgree, salesCallDisagree, fillCards, fillOnBooks, fillInOnboarding, fillGone, cards, cardsWithPhone, cardsWithEmail, billingRead, dryRun, written, planned` (where every sale stands after the run) |
+
+**The cockpit's reads and the one write** (authenticated, `SECURITY DEFINER`, the gate first; B7 builds to these, and
+reads PGRST202 as "opens after the next cockpit update"):
+
+- `cockpit_sale_tie_list()` → `{on, fill, salesLink, rows, summary}`. CEO or CSM seat (`cockpit_has_role('csm')`, so an
+  admin too), else 42501 `Only a client success seat or the CEO sees the sales not on a card.` `rows`: each live
+  `ambiguous`, `conflict` or `unmatched` sale, each `waiting` sale signed over 2 hours ago, and for the CEO only each tie
+  billing puts on another card: `{responseId (the token), state, sentence, businessName, signedAt, signedOn (Kuwait
+  day), closer (the sale's "Who closed" answer, else the hidden closer), tiedTo {taskId, clientName, tiedBy} | null,
+  candidates [{taskId, clientName, reason}], suggestion {taskId, clientName, by?, reason} | null}`. Sentences: waiting
+  "No card has this sale's phone or email yet. The next sync looks again."; unmatched "No card has this sale's phone or
+  email after 2 days. Check Make 10's run, or pick the card."; ambiguous "More than one card has this sale's phone or
+  email. Pick the right card."; conflict "The phone points to one card and the email to another. Pick the right
+  card."; billing "Billing ties this sale to another card." Reasons: "Same phone as the card", "Same email as the
+  card", "Same phone and email as the card", "Billing ties this sale to this card by its payments" (ledger), "... by its
+  name" (name, alias), "The CEO linked this sale to this card in billing" (link), "Same sales-call link as the card".
+  A CSM sees a row only when a candidate or the suggestion is one of their clients (`cockpit_client_allowed`), and only
+  those cards. `summary` (counts only): `sales, onCard, byPhone, byEmail, byPhoneAndEmail, byPerson, forPerson, waiting,
+  void, notClient, rows`; the CEO's line is "<sales> sales: <onCard> on their card (<byPhone + byPhoneAndEmail> by
+  phone, <byEmail> by email, <byPerson> by a person), <forPerson> waiting for a person." and, before the migration,
+  "Sales are not tied yet." Never a phone, an email or a digest.
+- `cockpit_sale_tie_decide(p_response_id text, p_choice text, p_task text, p_note text)` → `{ok, responseId, state,
+  taskId, clientName, facts, movedFrom?, handFill?}`. `yes` ties to the suggestion (billing's card, else the one sales-call card),
+  else the one candidate; `pick` ties to `p_task` (on the billing sheet, never the playing account or a test);
+  `not_client` (a test or duplicate sale) and `clear` (take a tie off; the row becomes `unmatched` with the old card as
+  its candidate) need a note of 3 to 500 characters. The CEO decides any row; a CSM only for cards of their own
+  clients, never moves or clears a tie whose `sale_facts` is `queued`, `unknown` or `delivered` ("This sale's go-live
+  and handoff notes are already on another card. Ask the CEO to move it."), and marks `not_client` only a sale that
+  shows one of their clients. The CEO's move, clear or `not_client` of a tie whose write has not started (effect
+  `queued`, queue row `queued` or `retry`, no step started or done) **takes that write back** in the same transaction
+  (`cockpit_sale_tie_take_back`): the queue row ends `skipped` "The CEO took this sale off this card before its notes
+  were written, so nothing was written.", the live settle trigger skips the effect, the gate answers "This write was
+  settled in the cockpit, so nothing was written.", and the audit row names that card as `factsTakenBack`. While the
+  write is in flight (queue row `sending`, effect `unknown`, or a step started) the CEO is refused (55000) "This sale's
+  go-live and handoff notes are being written to its card now. Try again once that write finishes." A written
+  (`delivered`) tie may be moved; its audit row names the first card (`factsOnCard`) for a hand clear. One `sale_facts`
+  effect per sale (unique on response and key), so the new card gets no cockpit write: the answer carries
+  `handFill {taskId, sentence}` ("This sale's notes were planned for another card first, and the cockpit writes them
+  once. Fill Go-live expectation and Handoff problems on this card by hand if they are empty.") when the new card is
+  on the books and the sale has a go-live or handoff text. Needs `on` ("Sale ties are off. They open once the CEO
+  turns them on."). Other
+  refusals, plain: `Only a client success seat or the CEO ties a sale to a card.` (42501), `<client> is not one of your
+  clients. Ask its CSM or the CEO to tie this sale.` (42501), `This sale has no suggested card. Pick one from the list.`,
+  `That card is not on the billing sheet. Pick another.`, `This sale is already on that card.`, `This sale is not on a
+  card.`, `Say why in a note of 3 to 500 characters.`, `The cockpit does not store a sale with that ID.` Toasts (B7):
+  "Tied to <card>", "Marked not a client card".
+- `cockpit_csm_sale_read(p_task_ids text[])` → `{on, cards: [{taskId, state: 'none'} | {taskId, state: 'tied',
+  responseId, signedAt, signedOn, tiedBy, closer, goLive, handoffProblems, expectations, salesCallLink (https only),
+  voidedInB2B, otherSales}]}`, gated like `cockpit_csm_onboarding_read` (`cockpit_csm_actor`, then
+  `cockpit_csm_client_gate` per card, at most 200). The newest live tie per card; the texts as typed
+  (`cockpit_form_typeform_text`). Never the raw phone, a name, a money answer or the transcript.
+
+**Card fields (2.8, the writer is build B1's, live).** With `fill` on, the newest live tie on a card on the books
+(`cockpit_billing_card_listed(task, true)`) plans one `cockpit_form_effects` row `new_client`/`sale_facts` (owner
+cockpit, delivery `clickup_queue`) and its queue row, exactly B1's contract: the plan `{taskId, tieId, fields:
+[{fieldId, kind, label, value, onlyIfEmpty: true, source}], lines}` holds the texts (Go-live expectation `d4483463`
+from `e30bc458` and Handoff problems `e17a1c27` from `3cf4bfdf`, as typed, "No" written as typed, no cut; the Sales
+Meeting Link `1f2e9ad1` from `52ca9be9`, `url`, https only, **only while `salesLink` is on**); the queue payload is
+exactly `{formKey: 'new_client', effectKey: 'sale_facts', effectId, responseId, taskId}`, never a text. A gone card plans
+a skipped effect "The client has left: no card fields to fill."; an older sale on the card "A newer sale on this card
+fills its fields."; a sale with both answers empty "The sale left go-live and handoff problems empty, so there is nothing
+to write." While `fill` is off nothing is planned ("Card writes for sales are off."), so turning it on plans every tie
+at the next sweep (decision B3-3). Never the Closer `63af118b`, Closer Notes `890d4ab8`, Daily Budget `539743c2`,
+Country `e0ca65e7`, Email, Phone Number or a billing field. Two waits spend nothing (no effect, the next sweep tries
+again): a card billing-sync has not listed yet ("This card is not on the billing sheet yet, so its notes wait for the
+next sync after billing lists it."), and **a gate without build B2's `(new_client, sale_facts)` branch**
+(`cockpit_sale_tie_gate_ready()` reads `cockpit_form_effect_gate`'s body for `'sale_facts'`; "Card notes wait for the
+forms gate that passes them (20261103c), so none were planned."). Today's gate (20261102j) does not hold such a row:
+the claim's first pass (`cockpit_clickup_writeback_claim_forms`, live 20261029t) asks the gate of every open form row in
+every mode and settles a refused one `skipped` "Make owns this again.", which would spend the sale's one effect slot.
+With the branch, the writer holds every `new_client` row until `CLICKUP_WRITEBACK_FORMS_KEYS` lists `new_client`, and
+**a held row holds back every later form row on its card** (20261029t), so `fill` goes on in the same step as the lane
+(deploy step 6). B3 does not touch the gate. **Required of B2's branch** (defence in depth; this file already takes a
+moved or switched-off write back): pass a `(new_client, sale_facts)` row only while `plan.tieId` is still the sale's
+live `tied` row on `plan.taskId` and `cockpit_sale_tie_flags()` has `on` and `fill` true, else refuse with a plain
+reason (the claim then settles it). The PGlite test holds the planned row against B1's own `formStep`, and runs the live
+claim against 20261102j's gate plus B2's documented branch until 20261103c is on the branch.
+
+**Taking a write back** (`cockpit_sale_tie_take_back(p_response uuid, p_reason text)`, owner only): each queue row of a
+`queued` `sale_facts` effect that is `queued` or `retry` with no step started or done ends `skipped` with the reason;
+the live `cockpit_form_effects_from_queue` trigger settles its effect `skipped` (a move the effects guard allows);
+anything in flight is left and counted (`{takenBack, inFlight}`). Two callers: the CEO's decide above, and the trigger
+`cockpit_sale_tie_switch_off` on `cockpit_settings` (`forms.sale_tie` updated without both `on` and `fill` true, or
+deleted): "Card writes for sales were turned off, so nothing was written." Every queue and effect change is audited by
+those tables' own triggers, the switch by `cockpit_settings_forms_audit`.
+
+**forms-door** (`supabase/functions/forms-door/handler.ts`, README): `makeInput('new_client')` also returns `tieKeys`
+(`tieKeysOf`: the typed `95a3901f` and `a6ea04df` answers only, by ref and type) and drops the raw phone `f322053a` by its
+ref; the record gets `recordOf(makeInput(...))`, never the keys. After the record answers and its outcome is recorded,
+the door calls `cockpit_sale_tie_open`; a failure calls `cockpit_sale_tie_door_failed` and never changes the 200. The log
+line stays `forms-door new_client {outcome}`. The golden `fixtures/new-client-expected.json` holds `p` and `tieKeys`;
+`scripts/dev/forms_legacy_backfill.py` ports both (`tie_keys_of`, `record_of`) and, after each stored sale, posts
+`cockpit_sale_tie_open` too (a failure is counted, never printed: "sale ties not opened N (the onboarding sync's sweep
+opens them)").
+
+**onboarding-sync** (`supabase/functions/onboarding-sync/sync.ts`): `cockpit_sale_tie_waiting` at the start of a run;
+while on and something waits, each page's cards made since a day before the oldest waiting sale go to
+`cockpit_sale_tie_offer` (K1 from the two card fields, `createdAt` from `date_created`); `cockpit_sale_tie_sweep` at the
+end. The run's counts gain `sale_ties_offered`, `sale_ties_tied`, `sale_ties_waiting` only while on and every call
+answered (missing is never zero); a failure adds "Sales could not be matched to their cards this run. Ties already made
+are unchanged; the next run tries again." to the run's problem and never fails the run; a function not there yet
+(PGRST202) is "not set up", no note. The job `{"job":"saleTies","dryRun":true|false}` (dry unless `dryRun` is `false`)
+reads every card once, refuses to match on a partial read, and answers `{ok, job, dryRun, counts, note}`; any other job is
+400. The database's error text is never passed on.
+
+**Guardian** (`hermes/cockpit-guardian/checks/sale_ties.py`, registered in `checks/__init__.py`, report-only): one check
+`sale-ties` (owner the CEO): warn on a delivered sale with no tie row after 15 minutes, the door's `detail.tie =
+'failed'`, and while on a sale waiting for its card over 2 hours or for a person over 3 days, and a B2B sale of the last
+30 days the cockpit does not store (the second source); billing's disagreements are information. The door's mark warns
+only while a delivered sale still has no tie row (the mark itself clears only at the next delivery, and sales are
+rare, so a failure the sweep already fixed never warns for days). "Not set up yet"
+before the migration, never zero; it reads ids, states and times only.
+
+**Deploy (D-ST), in order** (the plan's step 9 and 12; B1 is live, B2's gate before step 6):
+
+1. `guard_check.py supabase/migrations '20261103g*'` (3 rows, each live), then `mig.py dry` and `mig.py apply`. Read
+   back: the pepper exists (count 1, no value read), the setting all false, the registry's six entries, the three md5s
+   above, grants and row security, `cockpit_form_doors()` reading the three switches `off`.
+2. `fdeploy.sh forms-door <rev>`, then `fdeploy.sh onboarding-sync <rev>`, each with its live `verify_jwt` (both `off`).
+   With `on` false the door stores digests in waiting rows only.
+3. `{"job":"saleTies","dryRun":true}` through the cron secret (counts only). Expected with K2 alone, read 2026-11-03
+   (second source, the design's own figures reproduced read-only with this file's normaliser): 55 sales, 39 tied (33
+   by phone, 21 of them by phone and email, 6 by email only), 0 conflicts, 0 ambiguous, 2 void, 14 with no card (13
+   with billing's card as the one-tap suggestion, 1 with none). K1 can only raise the tied count; the dry run says K1
+   coverage (`cardsWithPhone`, `cardsWithEmail`). The CEO reads the counts.
+4. `update public.cockpit_settings set value = value || '{"on":true}', updated_by = '<who>' where key = 'forms.sale_tie'`
+   (owner SQL, audited), then the job with `"dryRun":false` at once (a sync run in between opens the stored sales' rows
+   from K2 alone, with no card creation times; the job then settles every system row, its tied rows included, with each
+   card's K1 and creation time, because `fill` is still off and no tie has a `sale_facts` effect yet). Read back:
+   `forms.sale_tied` audit rows, the stored sales' `task_id` on the tied ones, the counts again.
+5. B7 ships (`scripts/ship.sh client-success`): the band, the rail, the kit, the forms-health line. The CEO or a CSM works
+   "Sales not on a card".
+6. In one step: `forms.sale_tie.fill` true (and `salesLink` true, CEO item 6 "do it fully" = yes), `new_client` added to
+   `CLICKUP_WRITEBACK_FORMS_KEYS` with `CLICKUP_WRITEBACK_FORMS_ONLY_CARDS` set to one in-onboarding card the CEO names;
+   the next sweep plans; read back both fields on that card and the effect's receipt; then remove the only-cards limit.
+   About 19 cards × 2 (3 with the link) writes, only where empty.
+7. The guardian release under its run lock.
+8. Verify on production: the next real sale ties within one sync run; the rail shows the stub; the portal context
+   returns the business name for an in-onboarding card. Record the session in mahara-context `shared/sessions/`.
+9. Only on the CEO's word, after step 4: a one-time guarded strip of `f322053a` from the stored sales (owner SQL under
+   the guard's own rules, an audit row, counts only). Not in this file (decision B3-4).
+
+Rollback: `forms.sale_tie` all false stops ties and new plans at once, and its trigger takes back every card write
+that has not started (queue row and effect `skipped`, "Card writes for sales were turned off, so nothing was
+written."); a write already `sending` or `unknown` finishes, and the effects' trail shows where it landed. A
+taken-back sale's one effect slot is spent, so turning `fill` on again does not re-plan it: its notes are a hand step.
+Taking `new_client` out of `CLICKUP_WRITEBACK_FORMS_KEYS` is not the rollback (a held row blocks every later form row
+on its card). The three bodies from `notes/forms-w56/deploy/before-<name>.sql`; ties are append-only (a person clears
+one with a reason); fills are only-if-empty and every written card is in the effects' trail.
+
+**Decisions this build takes (B3-n).**
+
+- **B3-1, the window guard.** Design 2.3 rule 2 would tie a fresh sale of a returning client to the old card as soon as
+  any sweep ran before Make's new card reached the sync. Under 2 days a card made before the sale's window never ties
+  it; after 2 days the design's rules apply as written. A first sale ties at the first offer that carries Make's card.
+- **B3-2, the card key store.** The door's "ties at once when a card with K1 is already known" and the window rule need
+  K1 and creation times after the offer call, so `cockpit_sale_tie_cards` keeps them as digests (the same exposure as
+  the sale's own digests), written only by the offer and the backfill with one audit row per call.
+- **B3-3, fill off plans nothing.** The design's "Card writes for sales are off" skipped effect would have taken the
+  effect's one slot per sale for good (an effect never goes back from skipped), so nothing is planned while `fill` is
+  off and the sweep plans every tie once it is on.
+- **B3-4, the raw phone.** The door stops storing `f322053a` from this build (its own rule). The 55 stored answers keep
+  it until the CEO's word, because the backfill derives their phone digests from it (losing the pepper would need it).
+- **B3-5, a CSM's limits.** Beyond design 2.7: a CSM may not move or clear a tie whose `sale_facts` is `queued` or
+  `unknown` either (in flight), and marks `not_client` only a sale showing one of their clients.
+- **B3-6, a write follows its tie or is taken back** (review fix-up, 2026-11-03). A queued write planned for a card the
+  CEO has just rejected, or queued while `fill` goes off, would still reach that card (the gate and the writer check
+  only that the queue, payload and plan agree). The CEO's decide and the switch's trigger take back every write that has
+  not started; a move waits for a write in flight; the new card's notes are a hand step (`handFill`), because one effect
+  per sale is the effects table's own rule.
+- **B3-7, cards before billing lists them** (review fix-up). A card the onboarding sync keeps is a candidate before
+  billing-sync lists it (playing account and internal tests excluded by name), so "tied within one sync run" holds
+  overnight; its notes wait for billing's listing, since `cockpit_billing_card_listed` is the only "on the books" test.
+- **B3-8, no plan before the gate can pass it** (review fix-up). Planning probes the live gate for B2's branch, so `fill`
+  turned on early spends nothing; the sweep's note says why nothing was planned.
+
+**Tests.** `apps/media-buyer-cockpit/scripts/sale-tie-supabase.test.ts` (PGlite, every case of design section 4: two
+applies keeping a switch on, the prerequisite stop, each drift guard, the after md5s, the pepper once, row security and
+grants, the normaliser and keys against node's own HMAC, the door off and on, phone, phone_email, the window and
+`also_on`, the fresh-sale wait, ambiguous, conflict, waiting then unmatched then tied by K2, void, the playing account and
+tests never candidates, the backfill job dry and real, who may decide and every refusal, a person's tie never changed by
+the sweep or the backfill, append-only, the carve-out and every other guard refusal, an exit survey's match, fill off and
+on, the newest sale only, a gone card, the payload exactly B1's and the plan passing B1's `formStep`, the Sales Meeting
+Link only with its switch and on https, a card the onboarding sync keeps before billing lists it (tied at the sweep,
+planned once billing lists it; an internal test never), nothing planned before B2's gate branch with the sweep saying
+so, today's gate settling a row skipped in the claim's first pass (never a hold) and B2's passing it, a planned tie kept
+by the job, the job settling a sweep's K2 tie with K1 (the in-window card, and a conflict), a CSM's move refused, the
+CEO's move taking back an unstarted write (queue and effect skipped, the gate refusing, `handFill`), a move refused
+while the write is sending or unknown and allowed once delivered with the first card in the trail, `fill` off taking
+back every unstarted write so the live claim hands the writer no `sale_facts` row, the CSM read, the list with billing's disagreement
+and the sales-call suggestion, the portal context from a stored-shape sale, the doors, and no value or digest in any audit
+row or answer); `supabase/functions/forms-door/handler.test.ts`; `supabase/functions/onboarding-sync/sync.test.ts`;
+`scripts/dev/test_forms_legacy_backfill.py`; `hermes/cockpit-guardian/tests/test_sale_ties.py`.
+
+### 4.21 The kickoff's amounts and the ads chain (CEO-5 decided; B5 `20261103f`, B6 `20261103e`, writer B1)
+
+The CEO, 2026-11-02, on the kickoff daily budget (CEO-5): **"Yes and sync it in the ass as well"**, read as "the ads"
+(plan section 1, item 5; design `next-design/budget-ads.md`). The kickoff asks the daily budget as an **amount and a
+currency** and the cold-lead close rate as a **number**; the figure joins the media buyers' agreed-budget chain; and the
+client card's Daily Budget is filled in dollars **only while it is empty**. Nothing writes Meta, an Ads card outside a
+launch a media buyer presses, a set Daily Budget, or GHL.
+
+1. **The sheet's answer shape (what B7's FormSheet sends to `cockpit_kickoff_submit`).** Every other key is as before.
+
+   | Key | Send | Refused (`errors[key]`) | Stored on the response | Printed (Make's texts, the read model's `answers[]`) |
+   |---|---|---|---|---|
+   | `dailyBudget` (`cf53482c`, optional) | `{"amount": <JSON number>, "currency": "USD"\|"SAR"\|"KWD"\|"AED"\|"QAR"\|"BHD"}`, or leave the key out. An object with no amount (`{"currency":"USD"}`, `amount` null or `""`) is no answer | `range`: the amount is 0 or less, over 100,000 or has 3 decimals; `option`: no currency or one outside the six (case matters); `format`: a string, a number, a list, an amount that is not a number, or any key besides `amount` and `currency` | `dailyBudget: "<amount> <CUR>"` (no thousands mark, no trailing zeros: `"40 USD"`, `"37.5 SAR"`) and `dailyBudgetParts: {amount, currency}` (internal: the sheet never sends it, `unknown` if it does) | `*Daily ad budget:* 150 SAR` (handoff line 71), `Not provided` when left out |
+   | `coldCloseRate` (`079812c4`, optional) | a whole JSON number from 0 to 100, or leave the key out | `range`: anything else (101, 12.5, -1, `"20%"`, `"20"`) | `coldCloseRate: "20%"` | `*Current cold-lead close rate:* 20%` (line 102) |
+
+   The question list (`cockpit_form_stage4_fields('kickoff')`) carries the rules the sheet draws: `dailyBudget`
+   `{"type":"amount","currencies":["USD","SAR","KWD","AED","QAR","BHD"],"max":100000,"decimals":2}` and `coldCloseRate`
+   `{"type":"percent","min":0,"max":100}`. Sentences for the refusals (B7's `kickoffRefused`, plain and active): range
+   "Write an amount above 0 and up to 100,000, with 2 decimals at most."; option "Choose the currency: USD, SAR, KWD,
+   AED, QAR or BHD."; format "Write the amount as a number and choose its currency."; the close rate "Write a whole
+   number from 0 to 100." The live line under the amount uses the cockpit's fixed rates (`currency.ts` `USD_PER`, equal
+   to `cockpit_board_usd_rate`; BHD has none: "No fixed rate for BHD yet, so the media buyers see the amount as
+   typed.").
+
+2. **Migration `20261103f_stage4_kickoff_amounts.sql`** (applies twice; writes no row; every function made or replaced is
+   the owner's only, except the send and the Blueprint's sources, which keep their grant to `authenticated`). Drift guard,
+   live md5 then this file's:
+
+   | Function | Live (read 2026-11-03) | After | Change |
+   |---|---|---|---|
+   | `cockpit_form_stage4_fields(text)` | `eadfda57d24997ad958ec6c68a1f5703` (B0's) | `922d1d6f9b4b9f6a8c74ed131f888bb4` | the two kickoff questions above; every other byte B0's, the onboarding's list included |
+   | `cockpit_kickoff_answers_check(jsonb)` | `8c3045bcdcf0906294d78d9ca7377a9b` (`o`'s) | `7f7c5ad2038431f1e3e2460d593c666a` | types `amount` and `percent` (1 above); every other answer `o`'s |
+   | `cockpit_kickoff_submit(text,jsonb,uuid)` | `bc569e54e47b14ecf4c99d714fdb3e92` (`j`'s) | `1760ef776ce5e9497b3cff8ba1a79e14` | the read model's two side keys (3 below) |
+   | `cockpit_form_stage4_card_facts(text,text,jsonb,timestamptz)` | `71dbdcbec818527002f08cdff97f36fa` (`p`'s) | `9535abd07330ccdc2ac3dd90da3147d2` | Daily Budget (4 below); every other field `p`'s |
+   | `cockpit_blueprint_sources(text)` | `91de3df5b9c21c0f45472bc9dc1dd615` (`20261025o`'s) | `dfba8692570efc6e1d96cb31a9f4c09f` | `kit.budgetUsd`, `kit.budgetCurrency` (5 below) |
+
+   New, owner only: `cockpit_kickoff_budget_of(numeric,text)` (the parts at the fixed rate), `cockpit_kickoff_budget_read(text)`
+   (an answer text) and `cockpit_kickoff_budget(text)` (one card). **The window:** kickoff version 2 changes in place
+   only while no kickoff was stored from the cockpit (any source but `typeform_webhook` and `typeform_sync`) outside the
+   CEO's canary on the test card (`answer_meta.canary` true on `86eywg1cq`, plan 2.6) and `forms.stage4.kickoff` is off
+   (read 2026-11-03: 0 and off). Otherwise: "The kickoff is live in the cockpit (N sent there outside the test card…),
+   so its questions cannot change in place: stop, and ask the amount and the close rate in a kickoff version 3." A
+   second apply (the list already this file's) is not stopped. The version row `cockpit_form_versions('kickoff', 2)`
+   stays the staff marker `o` left it (the send checks answers against the question list only).
+
+3. **The read model.** `forms.kickoff` gains, beside `payment` and `recording`, each only when answered:
+   `budget: {amount, currency, usd, rate, said}` (`usd` = amount at the fixed rate, to the cent; `null` with no rate
+   or when the dollars round below a cent (0.01 QAR, SAR or AED: `rate` kept, `usd` null), never 0;
+   `said` = `"<amount> <CUR>"`) and `close_rate` (the number). The Typeform-shaped `answers[]` keep the texts,
+   so `growth.js`, Pending payments, the Blueprint SQL, the briefs and the handoff read what they read today.
+   **`cockpit_kickoff_budget(task)`** returns `{amount, currency, usd, rate, said, from_text}` or NULL: the side key
+   first, converted at read time (a rate added later reaches it); else the answer text by `cockpit_kickoff_budget_read`:
+   the kickoff's own `"<amount> <CUR>"` (`from_text` false), else a typed figure read as dollars by
+   `blueprintPrefill.parseBudget`'s rule (Arabic-Indic digits read, a thousands comma dropped; none when the text names
+   another currency or a range; the first number, from 1 to 100,000, to the cent; `from_text` true, `said` as typed).
+   Read 2026-11-03: all 6 stored Typeform budget answers read as dollars (none names a currency or a range).
+
+4. **`card_facts`, Daily Budget `539743c2`** (kickoff only, after Onboarding Call Date): `{fieldId, kind: "currency",
+   label: "Daily Budget", value: <USD as a JSON number>, onlyIfEmpty: true, source: "kickoff" | "kickoff_text"}`, planned
+   only from 1 to 100,000 dollars (B1's contract: a text, 0, over 100,000 or 3 decimals fails the row). Lines: "Daily
+   Budget, if empty on the card: 39.99 USD a day, from 150 SAR at the cockpit's rate"; not planned: "…the cockpit has no
+   fixed rate for BHD yet.", "…0.27 USD a day is outside 1 to 100,000 dollars.", "…0.01 QAR a day is less than a
+   cent in dollars, outside 1 to 100,000 dollars.", "…the answer is not an amount the cockpit can read." The value is USD because the field is a USD currency field (the forms doctor checks
+   `type_config.currency_type = 'USD'` live). `clickup-writeback` (B1, live) writes it only while the card leaves it empty:
+   the sale's figure (Make 10 "Add Billing Info", 21 of 25 cards since July) is kept, `kept` with `differs` when it
+   is another figure.
+
+5. **The Blueprint.** `cockpit_blueprint_sources` adds `kit.budgetUsd` and `kit.budgetCurrency` (from
+   `cockpit_kickoff_budget`; both null with no kickoff budget, `budgetUsd` null with no rate or below a cent, never 0) beside `kit.handover.daily_budget`.
+   B7's `blueprintPrefill` prefers them ("From 150 SAR at the cockpit's rate: confirm it in dollars." when not USD), and
+   `blueprintBrief` compares the confirmed dollars with `budgetUsd`, not with `firstNumber(said)`. The Blueprint still
+   never writes Daily Budget (`cockpit-creative-api/blueprint.test.ts`).
+
+6. **Parity.** `make_parity.py`: Daily Budget joins `CARD_FACTS` (`currency`) and leaves `CARD_FACTS_NEVER`; a planned
+   Daily Budget is `intended: card_facts` only when its value is the run's own kickoff budget in dollars (the answer
+   Make's trigger holds, read by `kickoff_budget_usd`, the port of `cockpit_kickoff_budget_read`) with that reading's
+   source; anything else reads `card_facts plans Daily Budget other than as the kickoff's own budget in dollars`. A
+   Typeform kickoff never passes through the new types (`cockpit_form_stage4_native_answers` and `_typeform_answers`
+   keep its texts as they came), so every Make text stays byte for byte on the stored kickoffs; their `card_facts` may
+   now plan Daily Budget from the typed figure (`kickoff_text`), graded as above.
+
+7. **The ads half (B6, `20261103e`, live; `docs/media-launch/SPEC.md` 2.4).** One chain, newest agreed first, sets the
+   launch desk's default and its 2x cap and the client page's "Agreed $40 a day (kickoff, 150 SAR). Set now: $25 a day."
+   note: the Ads card's Daily Ad Spend, Blueprint part 1 as sent (`daily_budget.usd`, the object-shape bug fixed), the
+   kickoff in dollars (`cockpit_launch_kickoff_budget`, which reads `cockpit_kickoff_budget(text)` once this file
+   exists: labels `Kickoff, 150 SAR` or `Kickoff, as typed: $60`; BHD keeps its amount and is not the default), then the
+   sale (relabelled "Sale (card Daily Budget)"); a figure under $2.50 or (Blueprint, kickoff, sale) $1,000 or more is
+   listed but never the default. The desk writes the Ads card's Daily Ad Spend only at a switch-on a media buyer
+   presses. **When `20261103f` applies, the chain starts reading the stored Typeform kickoff budgets** (read as typed
+   dollars): on the cards where the kickoff is higher than the sale (4 of 5 checked), the desk's default and its 2x cap
+   rise. The media lead hears this before the apply.
+
+8. **Order and production writes.** After B0 (live) and B1 (live, Daily Budget in `CARD_FACTS`), with the CEO's reading
+   of item 5 (decided by default 2026-11-03): `guard_check.py` on `20261103f*.sql` (5 live, 0 after), the dry run, then
+   the migration; it lands **in the same window as B7's ship, migration first** (the sheet must send the new shape),
+   both before kickoff go-live. Read back: the five after md5s; `select public.cockpit_kickoff_answers_check('{"dailyBudget":{"amount":150,"currency":"SAR"},"coldCloseRate":20,"newMrrUsd":0}')`
+   gives `150 SAR` and `20%`; a count of cards whose `cockpit_kickoff_budget` is not null (counts only, no value
+   printed); the parity run on the VPS from the merge (7/7 kickoff, 5/5 onboarding; `card_facts` may now name Daily
+   Budget, still `intended`). Then the B5 canary: a CSM (or the CEO on the test card) sends one kickoff with the amount
+   field, and the handoff's line 71 and the test card's Daily Budget (only if it was empty) are checked in ClickUp. Undo,
+   only before go-live: the five saved bodies in one transaction and `drop function` the three new ones (B6's reader then
+   falls back to the side key).
+
+9. **Tests.** `stage4-kickoff-amounts-supabase.test.ts` (PGlite, 35): the guard (live and after md5s, a second apply, a
+   changed body, the window: a send off the test card, the switch, the canary and the Typeform kickoffs); the question
+   list; the check's cases (40 USD, 37.5 SAR, 0, 100001, three decimals, EUR, a plain string; 20, 101, 12.5; blanks;
+   `dailyBudgetParts` refused; every other answer `o`'s); the send (`budget` with `usd` null for BHD, `close_rate`, no
+   side key unanswered, `j`'s entry otherwise, the canary); handoff lines 71 and 102; 8 Typeform-shaped kickoffs equal
+   through the parity plan's mapping; `cockpit_kickoff_budget` (side key, a rate added later, Typeform text, a range) and
+   B6's reader on it; `card_facts` planned or not, `p`'s otherwise, the value taken by B1's `budgetAmount`; the
+   Blueprint's two keys with `20261025o`'s gate and keys otherwise; the second source (the SQL dollars equal
+   `currency.ts` `USD_PER` to the cent on 13 amounts in six currencies, `usdToBudget` gives the amount back within 2
+   hundredths, the typed-text rule equals `parseBudget` on 25 texts); grants. `test_make_parity.py`: "plans Daily Budget
+   only from a converted kickoff budget". `kickoff-sheet.test.tsx` reads the new list.
+
+10. **Waits on people (section 10).** The media lead: the new order and the $1,000 guard, and whether the kickoff's
+    budget is per campaign or for all ads (the hint's words depend on it). The CEO or the finance owner: BHD (2.6596) and
+    OMR (2.6008) rates, or leave Bahrain budgets unconverted. A CSM: the B5 canary before go-live.
 
 ### 4.23 Market research, MI-1 (CEO-1 decided: replicate and improve; build MI-1, migration `20261103i`)
 
@@ -2383,6 +2882,7 @@ with W12's held-edit review over every open kind (W34 11.4).
 | D-S4.0 | **Stage 4 groundwork (run 2026-11-02; stopped on three differences, 11.8):** the test card's internal WhatsApp group and Client Data row were not there yet (1.3; now needed before D-S4K). Done: the blueprints of `8925654`, `8922994` and `8979157` saved to `~/make-backups/{id}-before-s40-20261102s40.json` and the definitions of `tG7dnxBn` and `KFRCXPFx` to `~/typeform-backups/` under the same names, with their webhook lists; Make 12 [24] is `google-sheets:filterRows`, a search on Client Data column C, so no extra effect; `KFRCXPFx`'s `logic` has one jump, a single equality on an earlier field, which fits `showIf`; `cockpit_form_option_maps` equals Make 12 [21]'s `switch()` on 47 of 47 answers; `onboarding.map_urls` filled for phases 3 and 4 (from Make 13 [49] and Make 12 [26]) and read back on the test card. Found: Make 13 [31] is a search too, so `client_data_row` is a write Make never makes (X34); the phase 3 and phase 4 texts end with the client's content folder link from Client Data column H (X35); `make_parity.py` cannot read Make's executions (X36). Held for D-S4F: `stage4.messages`, the relay config, the `brand_dna` and `client_onboarding` request types, the parity run | the deploy log's "D-S4.0 groundwork" section: each save, the [24] module type, the logic jump, 47 of 47, the map read-back; the three differences fixed on branch `forms-s4-fixes` | none needed: nothing changed in Make or Typeform, and `onboarding.map_urls` is read only by the Stage 4 planner |
 | D-S4F | **Stage 4 fixes and better data, after branch `forms-s4-fixes` is reviewed and merged (X34 to X39), and only once nothing in 11.9's or 11.10's open tables is marked before the merge:** (0) **The oracle run** (4.15.5; the Mac, read only) on the merged tree, before anything is applied. (1) **`20261102l`:** the letter rule (live held `j` and `k` on 2026-11-02, so `l` was free); `python3 scripts/dev/forms-deploy/guard_check.py supabase/migrations '20261102l*'` (widened on this branch to match function names with digits; read 2026-11-02: `n` 2, `live` 2, `odd` null), live must be `afa3e203…` and `a704e72a…`; save `before-cockpit_form_stage4_effects.sql`, `before-cockpit_form_stage4_build.sql`, the two outbox CHECK definitions and the onboarding registry `effects`; `mig.py dry` then `mig.py apply`. (2) **`clickup-writeback`, before `o` and `p`** (4.13.4; the ship order): the request writer's `task_comment` step, the Stage 4 comments posted as Make's text alone, Stage 4 text fields of any length, and `card_facts` (round 4: `STAGE4_KEYS`, `factsStep`, the `CARD_FACTS` allowlist and the forms doctor's field checks): `fdeploy.sh clickup-writeback <merge rev> --dry`, then live with `--verify-jwt` equal to the live value (read it again; W34 read `off`). It goes before (3) because the writer freezes a request part's steps before its first write, so a part frozen by the previous writer never posts its `taskComment`; and before (3b) because a `card_facts` queue row reaching a writer without the key fails as a mismatch. Until (3) no payload carries a `taskComment` and `CLICKUP_WRITEBACK_FORMS_KEYS` lists no Stage 4 form, so nothing it writes changes. (3) **`20261102o`, right after (2)** (2.9): the letter rule again (first drafted as `20261102m`; the goals sheet's `20261102m_goal_sheet_truth` and `20261102n_goal_sheet_media_dedupe` reached live and main first, so this file and (3b) took `o` and `p` on the branch and 2.1 was amended, 11.2-x and 11.10; read the letters again before the apply); `guard_check.py supabase/migrations '20261102o*'` (read 2026-11-02, round 4: `n` 11, `live` 10, `odd` the builder; after (1) the builder must read `l`'s after `7e5f7fda…` and the other ten their live values, the queue audit trigger `d595491b…` and the onboarding Typeform door `25a79429…`); `select md5(schema::text) from public.cockpit_form_versions where form_key = 'onboarding' and version = 2` reads `8fa1f38d…` and no response or invite uses version 2 (counts only; the in-place window for B3 closes at the first invite); save `before-` of the eleven functions 2.9 replaces (the queue's `cockpit_clickup_writeback_audit()` and the onboarding Typeform door `cockpit_form_onboarding_typeform(jsonb)` included), the onboarding's version-2 schema (`before-onboarding-v2-schema.json`), the definition of `cockpit_form_effects_plan_check` (it must read `20261027f`'s 131,072 bytes) and the definition of `cockpit_form_responses_answers_check` (it must read `20261102f`'s: 1,048,576 bytes for `new_client` and `onboarding`, 65,536 for every other form); `mig.py dry` then `mig.py apply`. (3b) **`20261102p`, right after (3)** (2.10): the letter rule again (first drafted as `20261102n`; renamed with (3) because live and main took `20261102m` and `20261102n` for the goals sheet, 11.2-x and 11.10); `guard_check.py supabase/migrations '20261102p*'` (read 2026-11-02: `n` 3, `live` 1, `odd` the builder and the effects; after (1) and (3) the builder must read `o`'s after `a565db2d…`, the effects `l`'s after `1b01ccc5…`, the kickoff facts their live `3ecb0f63…`); save `before-` of the three functions it replaces and both registry `effects`; `mig.py dry` then `mig.py apply`. (4) **`onboarding.raw_titles`** = `scripts/dev/forms-deploy/stage4-raw-titles.json` from the merge, as it is (owner SQL, `updated_by` `deploy D-S4F`), right after (3). (5) **client-messages release** (file-scoped, `hermes/client-messages/RUNBOOK.md`): staged doctor and dry run, link swapped under the worker lock; `CLIENT_MESSAGES_KINDS` unchanged. (6) **`cockpit-forms-api`** (phase drafts approvable, 11.8, 11.9): `fdeploy.sh cockpit-forms-api <merge rev> --dry`, then live with `--verify-jwt` equal to the live value (read it again; W34 read `on`); then `scripts/ship.sh client-success` from the merge (the Messages card draws `{content_folder}` as the Client Data link and counts a phase text to 1,500; the forms editor caps the onboarding's texts at 1,000 and 10,000 characters; the kickoff sheet with its questions, long texts sent as typed, stays behind `forms.stage4.kickoff`; the kickoff rail's Check with the client and the card's Drive folder, and the CSM brief's assumed currency, are display only and live on ship, 4.16). (7) **forms-relay release** of the new files (`hermes/forms-relay/RUNBOOK.md`); `~/.forms-relay/config.env` holds only `DISPATCH_OWNER`, `DISPATCH_REPO`, `DISPATCH_EVENT`, `DISPATCH_NAME_KEY` and `DISPATCH_ID_KEY`, from Make 13 [25] in the saved blueprint (no `CLIENT_DATA_*` line; the relay holds no Google key); `GITHUB_DISPATCH_TOKEN` in `keys.env` is still the CEO's to add; `FORMS_RELAY_APPLY=false`; then the guardian's `checks/wins_cash.py` and `checks/queues.py` released under its run lock (the `relay` check now names only the dispatch; the two ClickUp queue checks say how to find a comment that carries no ref; round 4 changes no guardian code). (7b) **`cockpit-notices` and `comment-watch`** (round 4, B4 and B7; either order against (3b): a notice queued without `openItems` prints no line): `fdeploy.sh cockpit-notices <merge rev> --dry` and `fdeploy.sh comment-watch <merge rev> --dry`, then live, each with `--verify-jwt` equal to its live value (read it again). (8) **`stage4.messages`** = the two templates of X35, verbatim from `MESSAGES` in `apps/media-buyer-cockpit/scripts/stage4-content-folder-supabase.test.ts` (owner SQL, `updated_by` `deploy D-S4F`), only after (5) is live. (9) The fills D-S4.0 held: the request types `client_onboarding` (two targets, 4.13.3) and `brand_dna` (4.14.3; no template, as Make 13 [46]) through `cockpit_request_type_add`, the ClickUp Request Type option added first, **each with a field `{key: 'details', kind: 'details'}`** (round 4, 2.10: `cockpit_request_create_system` keeps details only for a field keyed `details`, and `cockpit_request_plan` prints them only for kind `details`; without it the brief stays out of the task and the parity run says so). Live 2026-11-02: neither type exists (0 of 2). (10) `make_parity.py kickoff` and `make_parity.py onboarding` on the VPS from the merged file | (0) the harness's last lines: `PASS` for both forms, the kickoff on both hidden-value passes: every effect `equal` or `intended`, `onboarding_tasks` included (graded against the writer's own `TASK_COMMENT_STEP` and an empty `REF_LINE`; the plan carries no details), `onboarding_tasks_runner` equal, and `PASS: the onboarding form keeps typed text through the native store`; since round 4 also `onboarding_tasks` and `brand_dna_task` reading `equal + intended: task_name, dedupe, request_route, brief` (or `dna_brief`), `card_facts` `intended: card_facts (receipt not read)`, `brand_dna_task_runner` equal, the native store keeping every number, `delivery: 12 of 12 registered briefs reach every part's description whole` and `PASS: the additions keep the contracts between the planner, the writer, the notice and the portal`; the deploy log keeps counts and verdicts only (round 3 on the branch, 11.9, and round 4, 11.10: all of these). (1) both md5s read the after values `1b01ccc5…` and `7e5f7fda…` (`guard_check.py` again: `after` 2); the outbox CHECKs read `effect_key = 'github_dispatch'` and the `github_dispatch` dedupe pattern; the onboarding registry `effects` equal `cockpit_form_stage4_effects('onboarding', 1)` (the go-live drift check's condition), neither onboarding array holds `client_data_row`, the kickoff arrays are unchanged; one audit row `forms.stage4_no_client_data_row`; both ACLs owner only. (2) the function's version and `updated_at` moved, `verify_jwt` unchanged; the requests doctor (`{"job":"requests_doctor"}`) ok, and `clickup-writeback:requests` and `clickup-writeback:forms` report the mode they reported before the deploy; the writer's tests green on the merge (requests 109, forms 76, run 103). (3) `guard_check.py … '20261102o*'`: `after` 11; fifteen functions of 2.9 owner only (no EXECUTE for PUBLIC, anon, authenticated or service_role) and `cockpit_clickup_writeback_audit()` and `cockpit_form_onboarding_typeform(jsonb)` with their live grant (service_role) unchanged; `cockpit_requests.task_comment` exists; `cockpit_form_stage4_fields('kickoff')` holds 46 entries with `whatsappAdd` `longtext`, and `('onboarding')` 36 with `address`, `hours`, `landmark` and `appointmentLength` `longtext`; the onboarding's version-2 schema md5 reads `bc89ca36…` (its three revenues `number` 0 to 1,000,000,000 with 0 decimals, its four links `format url`, `mapsLink` plain), with one audit row `forms.stage4_long_texts`, and the registry row still reads `typeform`, version 1; `cockpit_form_responses_answers_check` reads 262,144 bytes for `kickoff`, 1,048,576 for `new_client` and `onboarding`, 65,536 else; `select public.cockpit_form_typeform_text(E' a\r\nb  c ') = E'a\nb  c'` is true; `cockpit_form_effects_plan_check` reads 2,097,152 bytes for `kickoff` and `onboarding` and 131,072 for every other form; `onboarding.raw_titles` reads `{}`. (3b) `guard_check.py … '20261102p*'`: `after` 3 (`5f52c05d…`, `a9cb7e47…`, `4e47c07e…`); its fourteen functions owner only; `cockpit_form_stage4_effects('kickoff', 2)` holds 10 entries with `card_facts` after `card_fields`, `('onboarding', 2)` 8 with `card_facts` after `profile_fields`, both version-1 arrays unchanged; both registry rows still on version 1 with their version-1 arrays and no `forms.stage4_card_facts` audit row (one per form only if a go-live came first). (4) its `fields` hold 36 entries whose refs, in order, and titles equal the file's (compared on the Mac; print counts and booleans only). (5) doctor ok; `run.sh doctor --task 86eywg1cq` prints `driveLink` (it must read `present` before any canary); a run prints "Nothing approved to send.". (6) the function's version and `updated_at` moved, `verify_jwt` unchanged; `ship.sh`'s own checks pass; the phase approve itself is proven by D-S4K's canary. (7) the doctor names no Client Data line and no Google key, only what is still missing (the token); a run prints "Nothing to relay.". (7b) each function's version and `updated_at` moved, `verify_jwt` unchanged; the notices dry run (`{"job":"dryRun","responseId":"<the newest kickoff's response_id>"}`) builds the kickoff notice with its `Still open from the kickoff: …` line once (3b) is applied (before it: no line). (8) `cockpit_form_stage4_message('phase3' / 'phase4', <the test card's client>, cockpit_form_stage4_map_url(3 / 4, '86eywg1cq'))` returns a `body` and no `missing`: the map link filled, `{content_folder}` kept exactly once, 1,500 characters or less (print booleans and lengths only). (9) both types listed with their targets and their `details` field (key and kind `details`); `select public.cockpit_form_stage4_details_note('client_onboarding'), public.cockpit_form_stage4_details_note('brand_dna')` gives two nulls. (10) `PASS` for both forms; each `differs` of 11.8 and 11.9 gone, or recorded as intended in 11.1 first, with the CEO's word (X37, X39); no `the brief would be dropped` | (0) none: it only reads. (1) the saved bodies, both CHECKs from their saved definitions and the registry `effects` from the saved array, in one transaction (a body without its matching array fails the go-live drift check), and only after (3) is rolled back. (2) `clickup-writeback` back to its previous version only while `o` and `p` are not applied, or after (3b) and (3) are rolled back: with `o` applied, a part frozen by the previous writer never gets its task comment, the Stage 4 comments carry the ref line again and a Client Profile over 5,000 characters is refused; with `p` applied, a `card_facts` row fails as a mismatch. Before D-S4K only canaries are at stake. (3) only after (3b) is rolled back: the ten saved bodies (the queue's audit trigger keeps its service_role grant) and the saved version-2 schema in one transaction (the schema only while no answer or invite uses version 2); `cockpit_form_responses_answers_check` from its saved definition only while no `kickoff` answer is over 65,536 bytes (count first; otherwise it stays, as the plan CHECK does); `task_comment`, `onboarding.raw_titles`, the five new functions and the 2 MB plan CHECK stay (only `o`'s bodies read or call the functions, and a plan already over 131,072 bytes would refuse the old CHECK); restored, the onboarding's answers are folded again, its phones checked by `i`'s pattern, and its version 2 is `j`'s again (revenues as text, links without the url format). (3b) the three saved bodies (`o`'s builder, `l`'s effects, the live kickoff facts) in one transaction with the saved registry `effects` when `p` moved them (a row left on `p`'s version-2 array after its body is gone fails the go-live drift check); the eleven new functions stay (only `p`'s bodies call them). The briefs, `card_facts` and the open-items line then stop for new answers; queued `card_facts` rows still run on the writer from (2). (4) `onboarding.raw_titles` back to `{}` (the raw answers comment then fails with its sentence). (5) the link back to `b7ab2d11` (no phase kind is listed, so nothing sends a template). (6) `cockpit-forms-api` back to its previous version (its rev recorded before the deploy), so phase drafts cannot be approved; the cockpit back to its previous deployment. (7) the link back to `b7ab2d11` (after (1) the outbox holds no Client Data row for its old path to write); `config.env` back to empty; the guardian's previous `checks/wins_cash.py` and `checks/queues.py`. (7b) each function back to its previous version (revs recorded before the deploy): the notice loses its line, the digest cuts every kind at 12,000. (8) `stage4.messages` back to `{}`. (9) the types stay: only the Stage 4 planner files them, and it runs for no real card before a go-live. (10) a `FAIL` or `NOT PROVEN` stops Stage 4: fix on a branch, deploy it the same way, run (0) and (10) again |
 | D-S4K | **Kickoff native (one hour), only after D-S4F passed (the oracle run and the VPS run, the phase approve deployed, the request writer posting the task comment, `p` applied, the request types seeded with their `details` field) and the CSM lead has been told that `card_facts` can fill an empty Onboarding Call Date, which moves `csmCadence` (4.16). The queue audit's handling of the handoff, open in 11.9, is decided and built (`o` round 4: `taskCommentChars`):** note the window start; `run.sh doctor --task 86eywg1cq` (client-messages) reads `driveLink present`; `CLICKUP_WRITEBACK_FORMS_KEYS=checkin,kickoff`, `CLICKUP_WRITEBACK_FORMS_ONLY_CARDS=86eywg1cq`, `CLIENT_MESSAGES_KINDS` + `phase4` with `CLIENT_MESSAGES_ONLY_CARDS=86eywg1cq`, `FORMS_RELAY_APPLY=true`; the forms doctor (`{"job":"forms_doctor"}`) with `kickoff` in the keys reads ok (the five `card_facts` fields on Clients - Mahara with their types and every allowlisted option; a changed option is fixed in `CARD_FACTS` on a branch first); canary kickoff submit on the test card as the CEO's seat: every effect read back (the handoff comment byte-equal to the plan's, with no ref line; status; the nine fields, Service Advertised the option ticked first; Blueprint link; `card_facts`: each planned field written only where the test card had it empty and read back, a set one `kept`, `progress.steps.card_facts.fields` holding states and no values; map URL; two tasks made, each part's frozen `steps` listing `task_comment` between `request_type` and `card_comment`, each task's description holding the request's heading and then the brief (its first line `From the onboarding and kickoff forms (cockpit)`, 3,600 characters at most; print booleans and lengths only), each task with exactly one comment byte-equal to the handoff (found by the id ClickUp answered), and that comment as ClickUp returns it equal to the handoff under `commentKey`, which checks the writer's read-back rule once on live data (print booleans only); the audit rows of both parts hold `taskCommentChars` and no `taskComment`; then cancelled through `cockpit_request_cancel` with the reason "Canary on the test card"; the phase 4 draft approved and **sent to the test card's internal group** with the test card's content folder link in place of `{content_folder}`, and read back, notice muted (its dry run shows the `Still open from the kickoff` line or the nothing-open line), `mrr` voided); clear the card lists; `cockpit_form_stage4_go_live('kickoff', true, ...)` (the registry `effects` read back equal to `cockpit_form_stage4_effects('kickoff', 2)`, 10 entries with `card_facts`); a second canary on the test card later finds the filled fields set and reads `kept`; edit Make `8979157` module [45] so its Kickoff Form Link `87d7d889` is the cockpit kickoff link (blueprint saved, only that value changed, diff read back, the scenario stays active); save and close `tG7dnxBn`, remove `WHTP3992232` and the `postcallsummary` webhook on it (lists before/after), switch off Make `8925654` (read back) | the parity record from D-S4F linked in the log; each canary read-back; registry native with the version-2 array; the [45] diff; scenario off; the first real kickoff watched (D-Z) | go-live off (version-1 array back); scenario on from its blueprint; 8979157 restored from its blueprint; form reopened; webhooks re-added; kinds and keys back |
+| D-PB | **The Client Profile backfill (4.17), after B1 is live and, recommended, after D-S4K; with Supabase egress back:** save `before-cockpit_form_effect_gate.sql`; the letter rule and `guard_check.py supabase/migrations '20261103c*'` (live = `a683c236…`); apply `20261103c`; read back `to_regprocedure('public.cockpit_form_profile_backfill(text,text[],text)')` non-NULL, the gate's md5 `4ca44d25…`, its `proacl` the owner's only and the function's `{postgres=X/postgres,service_role=X/postgres}`; dry run on `86exnk0v4`, `86ey3303x`, `86eyew6mt` (expected 3 `would_queue`, answered 6/7/6, 265/283/577 characters, sha256 `9553c5c35200`/`3e413fc47bfd`/`1854c2482e00`; counts and prefixes only in the log); **stop gate:** the CEO is asked the RUNBOOK row's step (2) question (the same words as 4.17) and the deploy goes on only after he answers yes to the three, otherwise nothing further is done; FORMS_KEYS read from the doctor and `profile_backfill` added (never the list replaced), doctor Ready; apply `86exnk0v4` alone, then the other two (actor `CEO-2 approved 2026-11-02 (Sure); scope re-confirmed by the CEO on <YYYY-MM-DD>; D-PB`, the date and the confirmer of that yes), the RUNBOOK row's reads after each; the lane taken out once no backfill row is open | per card: the queue row `delivered`, `progress.steps.profile_backfill.fields` `{before: empty, state: written}`, the effect `delivered`, 3 ClickUp calls; after one onboarding-sync the mirror equal to the plan's text as a boolean; at the end 0 in onboarding with an answer and an empty profile, 28 of 42 empty overall | before a write `cancel` and the lane out; after one, a person clears the field (each was empty before), only on the CEO's word; the gate's saved body |
 | D-S4O | **Onboarding native (one hour), only after D-S4F passed (the phase approve deployed, `onboarding.raw_titles` filled; 11.9), the portal release that keeps the onboarding's answers as typed, takes its version 2 and sends Typeform's typed inputs (round 4: numbers, https links, E.164 phones; branch `forms-s4-portal`) is live (11.9, 11.10), the CEO has answered CEO-1 (where the market intel job reads the answers: **urgent**, section 10) and has looked at the drafted questions and the new whole-number sentence (1.3, 5.10):** keys + `onboarding`, kinds + `phase3`, card lists narrowed to the test card; the forms doctor with `onboarding` in the keys reads ok; canary `cockpit_form_invite_canary('onboarding', ...)`, answer by link in the built-in browser, every effect read back (the canary's answers include a long text the Client Profile shows, such as the top three challenges, with a line break and a double space, which read back unchanged in the stored response, the raw comment and the profile; a revenue typed with separators, a `www.` website and a phone typed with spaces or `00`, which read back as a number, an `https://` link and E.164; the profile text byte-equal to the plan's, whole; kickoff link; the raw comment byte-equal to the plan's, with the full titles and no ref line; Company Website (`card_facts`) written only if the test card's field was empty; map URL; Brand DNA request made, its description holding the request's heading and then the brief (first line `For the Brand DNA doc (cockpit)`, 3,600 characters at most), then cancelled the same way, the phase 3 draft approved and sent to the test card's internal group with its content folder link, read back; nothing written to Client Data; GitHub dispatch: relay dry print compared with the blueprint's body, its client name the typed Business Name, not sent for the test card); a signed forms-door probe with a recorded `KFRCXPFx` payload rewritten to the test card shows it is stored `legacy` (the card is already answered) with no effects; clear the lists; `cockpit_form_stage4_go_live('onboarding', true, ...)` (the registry `effects` read back equal to `cockpit_form_stage4_effects('onboarding', 2)`, 8 entries with `card_facts`); remove `WHTP3991048` (Make's hook) and switch off Make `8922994` (read back). `KFRCXPFx` **stays open** and Make `8979157` [40] is **not changed** (X26): its link now feeds the native planner through forms-door | each read-back; the portal's Getting started shows the native form for a staff preview; the first real native onboarding answer (portal or Typeform door) watched: its relay row `sent` (market intel dispatched), its phase 3 message sent with the card's content folder link (D-Z) | go-live off (the embed returns, version-1 array back); 8922994 on; webhook re-added |
 | D-Z | Watch the first real press and answer of each piece: Log a win, Mark as offered, Accepted, a tie (CSM and CEO), a pay proposal confirm, the morning LTV run, a Confirm paid that moves the date, the agent's door calls, a client receipt and its check, a Reactivate, a native kickoff, a native onboarding; write the session note | one line each in the deploy log | per piece's runbook row |
 
@@ -2421,7 +2921,10 @@ after D-S4F passed and on different days (one Make switch-off window a day).
     off until the owner confirms. Option B: send `response_id`, `source` and `card_name` only, plus a new server-gated
     cockpit read for the job (another door, in the health ledger). Trade-off: A puts business answers into that
     repository's Actions events; the job already copies the same answers into its report doc.
-  - **CEO-2: Client Profile backfill.** 31 of the 42 cards with stored onboarding answers have an empty Client Profile
+  - **CEO-2: decided 2026-11-02, "Sure" (B2, `20261103c`, 4.17); built. Before the first write he is asked whether to
+    fill the 3 cards anyway (all GHOSTED; the 6 Active cards with an empty profile stay out), and D-PB stops unless
+    he answers yes (4.17; RUNBOOK step 2).** The question as it was put:
+    **Client Profile backfill.** 31 of the 42 cards with stored onboarding answers have an empty Client Profile
     (every card from April to July, 5 from August). Recommended: only cards still in onboarding (3 today), Make's exact
     text, only where empty, through the writer with audit rows, after a dry run; skip launched clients.
   - **CEO-3: decided 2026-11-02, "Yes" (B0, `20261103b`, 4.18); the exact English and Arabic in 4.18 wait on his
@@ -2436,9 +2939,19 @@ after D-S4F passed and on different days (one Make switch-off window a day).
   - **CEO-4: a version 3 with structured questions** (booking software as a choice, a "no Facebook page" tick, a revenue
     currency line, appointment length in minutes, a service-area picker, services and FAQs as rows). Recommended: not
     before go-live; revisit with 4 to 6 weeks of version-2 answers.
-  - **CEO-5: the kickoff daily budget.** Recommended: a structured amount and currency on the kickoff sheet, printed
-    `<amount> <CUR>` on Make's `Daily ad budget:` line, in place before the first native kickoff; never write the card's
-    Daily Budget `539743c2`.
+  - **CEO-5: decided 2026-11-02, "Yes and sync it in the ass as well", read as "the ads" (B1 writer, B5 `20261103f`,
+    B6 `20261103e`; 4.21).** The question as it was put: **the kickoff daily budget.** Recommended then: a structured
+    amount and currency on the kickoff sheet, printed `<amount> <CUR>` on Make's `Daily ad budget:` line, in place before
+    the first native kickoff; never write the card's Daily Budget `539743c2`. Built: that, plus the media buyers' chain
+    and an empty-only fill of Daily Budget in dollars (the reading taken by default on 2026-11-03 under the stop-asking
+    rule; the CEO hears it after). Still open: the BHD and OMR rates, and the media lead's per-campaign or all-ads
+    answer for the hint.
+  - **CEO-6, decided 2026-11-02: "Should already be synced, if not do it fully now"** (build B3, `20261103g`, 4.19; the
+    screens are build B7). It was not synced; B3 ties every sale by an exact phone or email, never a name, and fills
+    the two fields only where empty on cards on the books. Taken with the defaults (stop-asking rule, reported after):
+    fill on-the-books cards only, and the Sales Meeting Link yes (behind `forms.sale_tie.salesLink`). Still his: reading
+    the dry run before `on`, and the one-time strip of the stored raw phone (`f322053a`) after the backfill. The
+    original question, kept for the record:
   - **CEO-6: tie the New Client Form to cards** (go-live expectation on 42 of 42, handoff risks on 25 of 42; the card
     fields filled on 0 of 70). Recommended: its own workstream after go-live, tied only by an exact, unique phone or
     email with a dry-run list first, filling only empty fields, leaving Closer out.
