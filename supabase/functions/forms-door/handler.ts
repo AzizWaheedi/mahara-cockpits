@@ -39,6 +39,16 @@
 //   an onboarding answer goes to cockpit_form_onboarding_typeform with
 //   onboardingAnswers' entry, so it runs the same native planner as a portal
 //   answer, once per card (a card already answered stores it legacy).
+// - The sale tie (docs/forms/WAVE56-CONTRACT.md 4.19, 20261103g): after a New
+//   Client Form is recorded (inserted or a repeat), the delivery's own typed
+//   phone (95a3901f) and email (a6ea04df), read before the contact filter drops
+//   them, go to cockpit_sale_tie_open as tieKeys, which keeps only their
+//   digests and opens the sale's row. They are never stored, logged or sent
+//   anywhere else. A failed call never changes the 200: the door marks
+//   detail.tie 'failed' on forms-door:new_client (cockpit_sale_tie_door_failed)
+//   and the onboarding sync's sweep opens the row from what the cockpit stores.
+//   The raw-phone answer (f322053a, a short_text the type filter misses) is
+//   dropped by its ref, so no client phone is stored with the answers.
 //
 // It never delivers anything itself. Everything that touches the network or
 // the clock comes in through Deps, so `bun test` runs it offline.
@@ -115,6 +125,19 @@ export const STAGE4_FORMS: ReadonlySet<string> = new Set([
 ]);
 /** The New Client Form's hidden fields (cockpit_sales_client_forms.hidden): the lead and who sent it. */
 const NEW_CLIENT_HIDDEN = ["contact_id", "closer", "setter"] as const;
+/** The New Client Form's own refs the door reads or drops (apps/sales-cockpit/src/lib/clientForm.ts REF). */
+export const NEW_CLIENT_REF = {
+  phone: "95a3901f-4130-454e-8e45-14c9a99dd096",
+  email: "a6ea04df-7b41-4a9f-b92b-8b5347a585be",
+  rawPhone: "f322053a-3b86-4e8c-8596-93d31a096679",
+} as const;
+/**
+ * New Client Form answers never stored, by ref: the raw phone is typed into a short_text, so the type filter below
+ * misses it (sale-tie.md 1 and 2.5).
+ */
+const NEW_CLIENT_DROP_REFS: ReadonlySet<string> = new Set([
+  NEW_CLIENT_REF.rawPhone,
+]);
 /** Answer and field types that carry a person's email or phone: never stored from the two client forms. */
 const CONTACT_TYPES = new Set(["email", "phone_number", "contact_info"]);
 /** The only hidden fields the two client forms set (inventory 3.3, 3.4). */
@@ -357,10 +380,43 @@ export function onboardingAnswers(response: Row): {
   };
 }
 
+/** The sale's two keys for the sale tie, as typed: each a trimmed string, or null. */
+export type TieKeys = { phone: string | null; email: string | null };
+
+/**
+ * The New Client Form's own typed phone (95a3901f, a phone_number answer) and email (a6ea04df, an email answer), read
+ * from the raw delivery before the contact filter drops them (4.19). Only these two answers, by ref and by type: never
+ * the raw-phone short_text, a hidden field or another answer. Only cockpit_sale_tie_open receives them.
+ */
+export function tieKeysOf(response: Row): TieKeys {
+  const raw: Row[] = Array.isArray(response.answers) ? response.answers : [];
+  const typed = (ref: string, type: "phone_number" | "email") => {
+    const a = raw.find(
+      x =>
+        x &&
+        typeof x === "object" &&
+        x.type === type &&
+        x.field &&
+        typeof x.field === "object" &&
+        x.field.ref === ref,
+    );
+    const v = a?.[type];
+    return typeof v === "string" && v.trim() !== "" && v.length <= 320
+      ? v.trim()
+      : null;
+  };
+  return {
+    phone: typed(NEW_CLIENT_REF.phone, "phone_number"),
+    email: typed(NEW_CLIENT_REF.email, "email"),
+  };
+}
+
 /**
  * cockpit_form_record_make's input for client onboarding or the New Client Form (4.7.3): the answers as {fields: [...]},
  * each form's own hidden fields, the card from onboarding's hidden id (the database keeps it only when it mirrors the
- * card). The New Client Form keeps the legacy mapping less every email and phone answer, and no card (Make makes it).
+ * card). The New Client Form keeps the legacy mapping less every email and phone answer and its raw phone (by ref), and
+ * no card (Make makes it); beside the record it carries tieKeys (4.19), which the handler sends to the sale tie alone
+ * and never to the record (recordOf).
  */
 export function makeInput(
   formKey: string,
@@ -385,13 +441,30 @@ export function makeInput(
       taskId,
     };
   }
-  const legacy = legacyInput(formKey, response, backfill);
+  const answers: Row[] = Array.isArray(response.answers) ? response.answers : [];
+  const legacy = legacyInput(
+    formKey,
+    {
+      ...response,
+      answers: answers.filter(
+        a => !NEW_CLIENT_DROP_REFS.has(String(a?.field?.ref ?? "")),
+      ),
+    },
+    backfill,
+  );
   return {
     ...base,
     answers: legacy.answers,
     hidden: pickHidden(hiddenOf(response), NEW_CLIENT_HIDDEN),
     taskId: null,
+    tieKeys: tieKeysOf(response),
   };
+}
+
+/** The record RPC's input alone: makeInput less the sale tie's keys, which never reach the record. */
+export function recordOf(input: Row): Row {
+  const { tieKeys: _keys, ...p } = input;
+  return p;
 }
 
 export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
@@ -511,6 +584,23 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       await seen(outcome, reason);
     };
 
+    // The sale tie (4.19): the sale's row, opened once with the two typed keys' digests. Best effort: a refusal or an
+    // outage never changes the answer Typeform gets; it marks detail.tie on forms-door:new_client for the guardian, and
+    // the onboarding sync's sweep opens the row from what the cockpit stores.
+    const tieOpen = async (input: Row) => {
+      try {
+        await db("cockpit_sale_tie_open", {
+          p: {
+            externalId: input.externalId,
+            submittedAt: input.submittedAt,
+            tieKeys: input.tieKeys,
+          },
+        });
+      } catch {
+        await db("cockpit_sale_tie_door_failed", {}).catch(() => {});
+      }
+    };
+
     // The form must still be filled in Typeform: the registry row with its typeform_id and provider typeform. A legacy
     // form that turned native keeps its Typeform id, so an answer through the old link is still kept (V16).
     let registry: Row | null;
@@ -598,7 +688,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
                 })
               : MAKE_FORMS.has(formKey)
                 ? await db("cockpit_form_record_make", {
-                    p: makeInput(formKey, response),
+                    p: recordOf(makeInput(formKey, response)),
                   })
                 : await db("cockpit_form_record_typeform", {
                     p: recordInput(formKey, response),
@@ -607,6 +697,8 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       if (typeof out?.inserted !== "boolean")
         throw new Error("The record RPC answered without inserted");
       await seen(out.inserted ? "recorded" : "repeat", null);
+      if (formKey === "new_client" && !native)
+        await tieOpen(makeInput(formKey, response));
       return answer(out.inserted ? "recorded" : "repeat", 200, {
         ok: true,
         inserted: out.inserted,
