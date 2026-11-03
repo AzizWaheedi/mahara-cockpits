@@ -1678,6 +1678,31 @@ status, and writes `cockpit_sync_state` key `clickup-writeback:requests-doctor`.
 | A seat cannot be assigned or see "Assigned to me" | Its seat is not linked to a ClickUp user: Requests settings, People in ClickUp, pick the user (the hourly seats read links by exact email; a hand link is never overwritten) | an editor |
 | The `[TEST]` rehearsal tickets after the check | Set each to cancelled in ClickUp. Never delete them; the requests stay in the cockpit as the record | the systems manager |
 
+## Kickoff items as requests
+
+After a kickoff, each open item that maps to a request type is one question with equal Yes and No pills
+(`docs/forms/WAVE56-CONTRACT.md` 4.20, migration `20261103d_kickoff_items.sql`; the CEO's CEO-7). Yes raises it in
+one tap through the same `cockpit_request_submit` the ticket form uses, with the type's default due day and priority;
+No is recorded; "Change it first" opens the prefilled ticket form and counts its request for the item. It shows in the
+kickoff sheet after the send, as the first card of the client page's Onboarding tab, and on Today as "Kickoff items to
+decide" (screens: build B7). Only the CEO, or a CSM the client gate lets in for the card, decides; one decision per
+card per item, each with an audit row (`kickoff_item.raised`, `.linked`, `.declined`). The items on are the CEO's
+three: funded card No (`card_missing`), Mahara OS Tech Issue or Didn't Receive Access (`general_tech`), WhatsApp Needs
+Integrating (`whatsapp_connection`). An item is offered while the card is in onboarding or for 14 days after its
+kickoff. Nothing here posts by itself: a Yes is a request like any other, sent by the requests writer.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| An item reads "{type} is turned off in Requests settings, so it cannot be raised here. Ask the systems manager." | Its request type is off. Turn it back on in Requests settings, or, if the item should stop, turn it off (next row). The guardian's `kickoff-items` warns with the same sentence | the systems manager |
+| Turn an item on or off, or stop the feature | Only on the CEO's word. `select public.cockpit_kickoff_items_switch(ARRAY['funded_card','mahara_os','whatsapp_sync'], '<who>');` with the keys to keep on (the others: `training_access`, `facebook_access`, `calendar`, `whatsapp_pending`); `'{}'::text[]` stops every item. The settings trigger writes `forms.switch_set`. Decisions already made stay shown. Always use the switch: the setting fails closed, so a deleted row or a hand-written `{"on": false}` also turns every item off, and the guardian's `kickoff-items` warns "forms.kickoff_items: the setting is missing ..." or "... is not a list of items ..." until the switch sets it | the systems manager, on the CEO's go |
+| Yes says "{type} needs answers the kickoff does not have. Raise it with the form." | Someone added a required question to the type in Requests settings (other than client, details, due day and priority), so Yes cannot fill it. The row offers "Raise it with the form". To bring one tap back, make that question optional | the systems manager |
+| A Yes made a task due tomorrow for the CSM | Expected: `card_missing` and `whatsapp_connection` are owned by the card's CSM, due in 1 working day, high priority, with the overdue alert. If the work is not needed, cancel the request in My requests: the item reopens by itself, and the CSM can then press No | the CSM |
+| A wrong No | "Raise it after all" on the row raises it (audit `kickoff_item.raised` with `again`) | the CSM |
+| "The kickoff's answers are not in the cockpit, so its open items cannot show here." | The card holds a kickoff without its answers (an old pointer row). The items are in the card's Kickoff Handoff comment: raise any by the ticket form | the CSM |
+| "This client is not on the cockpit's client list yet, so a request cannot be raised for it here." | The card has no onboarding row, so the requests refuse it. Raise it in ClickUp; a No can still be recorded | the CSM |
+| The guardian's `kickoff-items` warns or fails | It prints the doctor's sentences: a type missing, off or asking more than the kickoff has, or an option the kickoff no longer asks (a kickoff redesign renamed it; update the item catalogue in a migration on a branch). A fail means Yes can no longer reach `cockpit_request_submit` (its 8 arguments or the `client_page` source changed): every Yes fails until `20261103d`'s functions are fixed on a branch. A fail with "The kickoff items doctor could not run: ..." means a function or column the doctor calls changed or is gone (a 42883 or 42703, for example after a later migration changed `cockpit_form_stage4_fields`): the five browser calls likely fail the same way; fix `20261103d`'s functions on a branch. Read it: `select report from public.cockpit_kickoff_items_doctor_v;` (service role) | the systems manager; the tech lead for a fail |
+| Roll it back | Stop the feature: `select public.cockpit_kickoff_items_switch('{}'::text[], '<who>');` (no item is offered; decisions stay shown). To take the screens' calls away too, drop the five browser functions (`cockpit_kickoff_items_read`, `cockpit_kickoff_item_raise`, `cockpit_kickoff_item_link`, `cockpit_kickoff_item_decline`, `cockpit_kickoff_items_due`) in one transaction with `NOTIFY pgrst, 'reload schema'`: PostgREST then answers PGRST202 and the screens say "Kickoff items open after the next cockpit update." The table and its rows stay, and requests already raised stay requests | the tech lead |
+
 ## Task mirror and alerts (cockpit-tasks)
 
 "Your tasks" on every Today, the alerts bell in every cockpit and the focus

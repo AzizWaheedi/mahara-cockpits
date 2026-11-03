@@ -1712,6 +1712,120 @@ Account - Meta and ADs Platforms (inferred values, or no reader). The market int
 Profile backfill, the onboarding's hints and optional questions, a version 3, the kickoff daily budget, New Client Form
 ties and open items as requests are the CEO's (section 10, CEO-1 to CEO-7).
 
+### 4.20 Kickoff items as requests (CEO-7; the next-design plan's build B4, `20261103d_kickoff_items.sql`)
+
+The CEO, 2026-11-02: "Yes we can do that as well an easy way for the CSM to just yes or no like the ticketing form".
+Each open kickoff item that maps to a request type becomes one question with equal **Yes** and **No** pills. Yes
+raises it in one tap through the unchanged `cockpit_request_submit`, with the type's default due day and priority, as
+the ticket form would. No is recorded, with no reason needed. "Change it first" opens the existing prefilled ticket
+form and its request is counted for the item. There is one decision per card per item, on the server, with an audit
+row. The backend is this section; the screens are build B7 (`KickoffItems`, the kickoff sheet's `afterSent`, the
+Onboarding tab card and the Today band "Kickoff items to decide").
+
+**The items** (`cockpit_kickoff_item_catalog`, read through `cockpit_form_stage4_fields('kickoff')`: only an exact
+option of the question counts, typed text never reaches a sentence; the only variable parts are the option label and
+the kickoff's Kuwait day). On by default, the CEO's three; the other four are off until he says yes.
+
+| Item | Offered when the kickoff says | Type | On |
+|---|---|---|---|
+| `funded_card` (Funded card) | `8bee68fc` = No | `card_missing` | yes |
+| `mahara_os` (Mahara OS access) | `ad562fc2` = Tech Issue or Didn't Receive Access | `general_tech` | yes |
+| `whatsapp_sync` (WhatsApp sync) | `a813378f` = Needs Integrating | `whatsapp_connection` | yes |
+| `training_access` (Training course) | `c56a7e2d` = Need Tech Help | `general_tech` | no |
+| `facebook_access` (Facebook access) | `6fcbd33c` = Need Tech Help | `general_marketing` | no |
+| `calendar` (Calendar) | `b657c5a5` = Needs Integrating | `general_tech` | no |
+| `whatsapp_pending` (WhatsApp sync) | `a813378f` = Pending or Requested | `whatsapp_connection` | no |
+
+**The switch** is `cockpit_settings` `forms.kickoff_items` `{"on": [item keys]}`, seeded once with the three and
+changed by the owner's `cockpit_kickoff_items_switch(items, who)`; the settings trigger writes `forms.switch_set`.
+`{"on": []}` stops the feature; decisions already made stay shown. The switch fails closed: a missing row, or an `on`
+that is not a list (the `{"on": false}` other forms switches take), turns every item off, and the doctor names it as a
+problem ("forms.kickoff_items: the setting is missing, ..." or "... is not a list of items, so every kickoff item is
+off. ..."), so the guardian warns. The defaults live only in the one-time seed. A type turned off in Requests settings
+turns its item off by itself (`type_off`, no pills).
+
+**Which kickoff, and the window.** The card's read model (`cockpit_client_onboarding.forms->kickoff`, Typeform and
+native alike), else the newest live native kickoff (source `cockpit`, version 2 or later; never the Typeform sync's
+version-1 pointer rows). An undecided item is offered while the card is `in_onboarding` or its kickoff was sent 14 or
+fewer Kuwait days ago. A kickoff sent again recomputes the items; a decision already made stays and is shown. A card
+with no onboarding row is not on the requests' client list, so there only a No can be recorded and the row says why.
+
+**The table** `cockpit_kickoff_item_answers` (primary key `(task_id, item)`): the kickoff it was made on (`kickoff_ref`,
+`kickoff_at`, `kickoff_value`, a fixed label), `answer` `raised` or `declined`, `request_id` (one request counts for
+one item at most), `how` `one_tap` | `form` | `linked`, `type_key`, an optional `note` for a No (240 characters),
+and who decided (member, email, role label). Row security on; revoked from every role, then `SELECT` for the service
+role; delete and truncate refused ("A kickoff item's answer is never deleted.").
+
+**The gate** (`cockpit_kickoff_items_seat`): the CEO, or a seat with the `csm` role that `cockpit_csm_client_gate`
+lets in for the card (the kickoff's own rule). Anyone else: `42501` "Only the CEO or the client's CSM decides kickoff
+items." Today (`cockpit_kickoff_items_due`) is for the CEO and `csm` seats ("Kickoff items are for the client success
+team."): the CEO and admins see every card their client list allows; a CSM its own cards (it sent the kickoff, or the
+card's CSM resolves to its seat by the `csm_of_card` rule) and the unmatched ones (no sender seat and no CSM seat).
+
+**The RPC contract** (every one `SECURITY DEFINER SET search_path = ''`, gate first, granted to `authenticated`;
+refusals are plain sentences, `42501` who, `22023` what, `55000` state):
+
+| RPC | Answers |
+|---|---|
+| `cockpit_kickoff_items_read(p_task_id text)` | `{asOf, taskId, kickoff: {at, day, formId, ref, source, answered, inOnboarding} \| null, inWindow, reason, note, items: [ItemRow]}`; `reason` `no_kickoff`, `no_answers`, `closed` or `none` with its `note`, else null |
+| `cockpit_kickoff_item_raise(p_task_id text, p_item text, p_request_id uuid)` | `{ok, raised, reused, item: ItemRow, submit: {id, state, held, note}}`, `submit` on a retry (`reused`) too, built from the counted request as the submit answers its own retry (`held` now, the send gate's `note` when held); when an open request of the type is already on the card `{ok, raised: false, state: 'already_open', item}` and nothing is written |
+| `cockpit_kickoff_item_link(p_task_id text, p_item text, p_request_id uuid)` | `{ok, linked, reused, item}`: counts "Change it first" (`how` `form`: this seat's request, 10 minutes old or less) or "Count it" (`linked`) |
+| `cockpit_kickoff_item_decline(p_task_id text, p_item text, p_note text DEFAULT NULL)` | `{ok, declined, reused, item}` |
+| `cockpit_kickoff_items_due()` | `{asOf, rows: [{taskId, clientName, kickoffAt, kickoffDay, due, items: [ItemRow without route]}], more, note}`, oldest kickoff first, 30 cards at most |
+
+`ItemRow` = `{item, short, line, value, typeKey, typeLabel, typeEnabled, oneTap, details, priority, state, offered,
+stillOpen, blocked, actions: {raise, decline, link}, route, decision, request, existing}`.
+- `state`: `open`, `already_open`, `type_off` (undecided, in the window), `raised`, `declined`, `reopened` (its
+  request was cancelled or failed while the kickoff still leaves it open). `offered`: to decide now (in the window,
+  `open`, `already_open` or `reopened`); Today counts these.
+- `actions` say what the server will take: `raise` (one tap; false when the type asks more than the kickoff has, is
+  off, a request is already open or the card is blocked), `decline`, `link`.
+- `route` (read only): `{teamLabel, ownerLabel, ownerNote, dueDefault, dueWords, priority, writer: {canSend, held, note}}`
+  from `cockpit_request_preview`, owners by role; `{note}` when the preview refused.
+- `decision`: `{answer, how, typeKey, byLabel, at, note, mine, kickoffRef}`. `request`: `{id, state, done, typeKey,
+  typeLabel, dueOn, priority, held, heldNote, url, partState, mayOpen: true}` when `cockpit_request_may_open`, else
+  `{state, done, typeLabel, raisedBy, mayOpen: false}`. `existing`: `{requestId, typeLabel, createdAt, requesterLabel,
+  imported, mayOpen}` (open = not cancelled, failed or routed, not done, made since the kickoff day less one day, not
+  counted for another item; an old form ticket counts).
+
+Refusals, word for word: "Send the request id, so a second press raises nothing twice."; "That is not a kickoff item.
+Reload the page."; "That item is not open on this client's kickoff any more."; "Already raised on {Dy D Mon} by
+{role}."; "{type} is turned off in Requests settings, so it cannot be raised here. Ask the systems manager."; "{type}
+needs answers the kickoff does not have. Raise it with the form."; "This was raised as a request. Cancel the request in
+My requests if it is not needed."; "This client is not on the cockpit's client list yet, so a request cannot be raised
+for it here. Raise it in ClickUp."; for link: "That request is not for this client.", "That request was cancelled or
+did not reach ClickUp, so it cannot be counted. Raise the item again.", "That request is older than the kickoff, so it
+is not counted for it.", "That request is already counted for another kickoff item.", "You cannot count that request.
+Ask whoever raised it."
+
+**Yes, in order.** The gate; the request id; `pg_advisory_xact_lock` on the card and item (two presses on two screens
+are taken in turn); a retry of the same request id answers `reused`; the state refusals above; `already_open` returns
+with nothing written; then `cockpit_request_submit(id, type, card, answers, cockpit_request_due_default(due_days),
+priority, 'client_page', NULL)` with `answers` = the fixed details sentence under the type's `details` question only
+when it has one. The nested call keeps the caller's sign-in, so the requests gate, the client check, the checks, the
+hash, `request.submitted` and the writer's kick run as for the form. Any refusal rolls the whole call back. Then the
+decision row and `kickoff_item.raised` (`cockpit_request_audit`; before and after rows, `{item, type, requestId,
+kickoffRef, value, how, again}`; no client name, no details text).
+
+**The doctor** `cockpit_kickoff_items_doctor()` (service role) and its one-row view `cockpit_kickoff_items_doctor_v`
+(service role `SELECT`): each item on is still asked with its options, its type exists, is on and raises in one tap,
+and the submit keeps its 8 arguments and `client_page`; counts (`cards`, `offered`, `typeOff`, `reopened`, `raised`,
+`declined`, `oldestUndecidedDays`); no client data. The guardian's `kickoff-items` check (`checks/kickoff_items.py`)
+warns on any problem and fails when Yes cannot reach the submit. It reads "Not set up yet" (ok) only when the error is
+about the view itself (PGRST205, or a 42P01 naming `cockpit_kickoff_items_doctor_v`); any other read error, such as a
+42883 or 42703 from a function or column the doctor calls, fails with "The kickoff items doctor could not run: ...".
+An outage stays "could not be checked".
+
+**The guard.** The file stops, changing nothing, unless the requests build and Stage 4 are applied and
+`cockpit_request_submit(uuid,text,text,jsonb,date,text,text,text)` returns jsonb and takes `client_page` (live body md5
+`b85da715…`, white space folded, read 2026-11-03). It replaces no function.
+
+**Checked live (read only, 2026-11-03):** 3 cards in the window, all in onboarding; the three items on would offer
+funded card on 3, Mahara OS on 2 and WhatsApp on 0, so 5 decisions on the first morning. The off items would add
+WhatsApp Pending on 2 and training on 1. The 8 live kickoff responses are the Typeform sync's version-1 pointer rows;
+all 8 cards also hold read-model answers. Tests: `apps/media-buyer-cockpit/scripts/kickoff-items-supabase.test.ts`
+(the ground's 27 bodies equal their live md5) and `hermes/cockpit-guardian/tests/test_kickoff_items.py`.
+
 ---
 
 ## 5. The screens: design plans and copy
@@ -2216,7 +2330,9 @@ after D-S4F passed and on different days (one Make switch-off window a day).
     fields filled on 0 of 70). Recommended: its own workstream after go-live, tied only by an exact, unique phone or
     email with a dry-run list first, filling only empty fields, leaving Closer out.
   - **CEO-7: open kickoff items as requests** (`card_missing`, `general_tech`, `whatsapp_connection`). Recommended: not
-    yet; B4 and B1 show the items; revisit after a month of notices.
+    yet; B4 and B1 show the items; revisit after a month of notices. **Decided 2026-11-02: yes** ("an easy way for the
+    CSM to just yes or no like the ticketing form"); built as 4.20 (backend, `20261103d`), screens in build B7. Still
+    his: the four items that stay off, and `high` or the type's `normal` for Mahara OS.
   - Also for his look: the portal's new client sentence `Write a whole number, with no decimals.`
     (`اكتب الرقم بدون كسور.`), and whether on-screen Arabic numbers keep the `٬` mark (5.10).
 
