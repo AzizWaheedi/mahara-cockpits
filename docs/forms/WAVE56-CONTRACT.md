@@ -1681,8 +1681,9 @@ real stored answers; that output is now the **floor**, and every addition sits o
 | **B8** `card_facts` | a new effect on both forms, after `card_fields` / `profile_fields`, written by `clickup-writeback` (4.13.4) | kickoff: Consultation Types from the appointment types (`c0000001-…-0008`: In-office → In Office, In-home or onsite → In Home / On Site, Online → Online; every ticked type must map, in ticked order); ADs Platform from `7d16afbb` (meta, facebook or instagram → Facebook/Meta; tik tok → Tiktok; snap → Snapchat; only when exactly one matches); Fathom from `b5578678` when it is a fathom.video link, else the call store's recording; Onboarding Call Date from the call store's day, else the kickoff's submitted day (Kuwait). A call store row counts only when an exact sign or a person placed it on the card (A7.14 rule 2; `cockpit_form_stage4_onboarding_call`, 2.10). Onboarding: Company Website from `454a425f` | ADs Platform: `csmProfiles`, `csmProfileCalculations`; Onboarding Call Date: `csmCadence`, `csmSync`, `onboardingCore`; Fathom and Website: `onboardingCore`; Consultation Types: `creativeProducer` | a field with no usable answer is not planned and its line says why; with no field the effect is skipped with a sentence and never queued; a set card field is kept (noted when it differs); no submit time, no date | `intended: card_facts` |
 
 **Fields deliberately never written:** Country `e0ca65e7` (billing-sync reads it into billing; a phone-code guess must
-not become a finance fact), ADs Platforms `8db2aa82` (no code reader), Daily Budget `539743c2` (CEO-5), and City,
-Ad Account - Meta, Language and Time Zone (no card reader). Option ids come from the s40 snapshot; the forms doctor
+not become a finance fact), ADs Platforms `8db2aa82` (no code reader), and City, Ad Account - Meta, Language and
+Time Zone (no card reader). Daily Budget `539743c2` was here until CEO-5 was decided: since `20261103f` (4.21) a
+kickoff fills it only while it is empty, in dollars, from the kickoff's own budget. Option ids come from the s40 snapshot; the forms doctor
 checks them live once a Stage 4 form is in `CLICKUP_WRITEBACK_FORMS_KEYS`, and a changed option fails its row with no
 write. Filling an empty Onboarding Call Date changes `csmCadence`: the CSM lead is told before D-S4K (11.10).
 
@@ -2162,6 +2163,125 @@ back every unstarted write so the live claim hands the writer no `sale_facts` ro
 and the sales-call suggestion, the portal context from a stored-shape sale, the doors, and no value or digest in any audit
 row or answer); `supabase/functions/forms-door/handler.test.ts`; `supabase/functions/onboarding-sync/sync.test.ts`;
 `scripts/dev/test_forms_legacy_backfill.py`; `hermes/cockpit-guardian/tests/test_sale_ties.py`.
+
+### 4.21 The kickoff's amounts and the ads chain (CEO-5 decided; B5 `20261103f`, B6 `20261103e`, writer B1)
+
+The CEO, 2026-11-02, on the kickoff daily budget (CEO-5): **"Yes and sync it in the ass as well"**, read as "the ads"
+(plan section 1, item 5; design `next-design/budget-ads.md`). The kickoff asks the daily budget as an **amount and a
+currency** and the cold-lead close rate as a **number**; the figure joins the media buyers' agreed-budget chain; and the
+client card's Daily Budget is filled in dollars **only while it is empty**. Nothing writes Meta, an Ads card outside a
+launch a media buyer presses, a set Daily Budget, or GHL.
+
+1. **The sheet's answer shape (what B7's FormSheet sends to `cockpit_kickoff_submit`).** Every other key is as before.
+
+   | Key | Send | Refused (`errors[key]`) | Stored on the response | Printed (Make's texts, the read model's `answers[]`) |
+   |---|---|---|---|---|
+   | `dailyBudget` (`cf53482c`, optional) | `{"amount": <JSON number>, "currency": "USD"\|"SAR"\|"KWD"\|"AED"\|"QAR"\|"BHD"}`, or leave the key out. An object with no amount (`{"currency":"USD"}`, `amount` null or `""`) is no answer | `range`: the amount is 0 or less, over 100,000 or has 3 decimals; `option`: no currency or one outside the six (case matters); `format`: a string, a number, a list, an amount that is not a number, or any key besides `amount` and `currency` | `dailyBudget: "<amount> <CUR>"` (no thousands mark, no trailing zeros: `"40 USD"`, `"37.5 SAR"`) and `dailyBudgetParts: {amount, currency}` (internal: the sheet never sends it, `unknown` if it does) | `*Daily ad budget:* 150 SAR` (handoff line 71), `Not provided` when left out |
+   | `coldCloseRate` (`079812c4`, optional) | a whole JSON number from 0 to 100, or leave the key out | `range`: anything else (101, 12.5, -1, `"20%"`, `"20"`) | `coldCloseRate: "20%"` | `*Current cold-lead close rate:* 20%` (line 102) |
+
+   The question list (`cockpit_form_stage4_fields('kickoff')`) carries the rules the sheet draws: `dailyBudget`
+   `{"type":"amount","currencies":["USD","SAR","KWD","AED","QAR","BHD"],"max":100000,"decimals":2}` and `coldCloseRate`
+   `{"type":"percent","min":0,"max":100}`. Sentences for the refusals (B7's `kickoffRefused`, plain and active): range
+   "Write an amount above 0 and up to 100,000, with 2 decimals at most."; option "Choose the currency: USD, SAR, KWD,
+   AED, QAR or BHD."; format "Write the amount as a number and choose its currency."; the close rate "Write a whole
+   number from 0 to 100." The live line under the amount uses the cockpit's fixed rates (`currency.ts` `USD_PER`, equal
+   to `cockpit_board_usd_rate`; BHD has none: "No fixed rate for BHD yet, so the media buyers see the amount as
+   typed.").
+
+2. **Migration `20261103f_stage4_kickoff_amounts.sql`** (applies twice; writes no row; every function made or replaced is
+   the owner's only, except the send and the Blueprint's sources, which keep their grant to `authenticated`). Drift guard,
+   live md5 then this file's:
+
+   | Function | Live (read 2026-11-03) | After | Change |
+   |---|---|---|---|
+   | `cockpit_form_stage4_fields(text)` | `eadfda57d24997ad958ec6c68a1f5703` (B0's) | `922d1d6f9b4b9f6a8c74ed131f888bb4` | the two kickoff questions above; every other byte B0's, the onboarding's list included |
+   | `cockpit_kickoff_answers_check(jsonb)` | `8c3045bcdcf0906294d78d9ca7377a9b` (`o`'s) | `7f7c5ad2038431f1e3e2460d593c666a` | types `amount` and `percent` (1 above); every other answer `o`'s |
+   | `cockpit_kickoff_submit(text,jsonb,uuid)` | `bc569e54e47b14ecf4c99d714fdb3e92` (`j`'s) | `1760ef776ce5e9497b3cff8ba1a79e14` | the read model's two side keys (3 below) |
+   | `cockpit_form_stage4_card_facts(text,text,jsonb,timestamptz)` | `71dbdcbec818527002f08cdff97f36fa` (`p`'s) | `9535abd07330ccdc2ac3dd90da3147d2` | Daily Budget (4 below); every other field `p`'s |
+   | `cockpit_blueprint_sources(text)` | `91de3df5b9c21c0f45472bc9dc1dd615` (`20261025o`'s) | `dfba8692570efc6e1d96cb31a9f4c09f` | `kit.budgetUsd`, `kit.budgetCurrency` (5 below) |
+
+   New, owner only: `cockpit_kickoff_budget_of(numeric,text)` (the parts at the fixed rate), `cockpit_kickoff_budget_read(text)`
+   (an answer text) and `cockpit_kickoff_budget(text)` (one card). **The window:** kickoff version 2 changes in place
+   only while no kickoff was stored from the cockpit (any source but `typeform_webhook` and `typeform_sync`) outside the
+   CEO's canary on the test card (`answer_meta.canary` true on `86eywg1cq`, plan 2.6) and `forms.stage4.kickoff` is off
+   (read 2026-11-03: 0 and off). Otherwise: "The kickoff is live in the cockpit (N sent there outside the test card…),
+   so its questions cannot change in place: stop, and ask the amount and the close rate in a kickoff version 3." A
+   second apply (the list already this file's) is not stopped. The version row `cockpit_form_versions('kickoff', 2)`
+   stays the staff marker `o` left it (the send checks answers against the question list only).
+
+3. **The read model.** `forms.kickoff` gains, beside `payment` and `recording`, each only when answered:
+   `budget: {amount, currency, usd, rate, said}` (`usd` = amount at the fixed rate, to the cent; `null` with no rate
+   or when the dollars round below a cent (0.01 QAR, SAR or AED: `rate` kept, `usd` null), never 0;
+   `said` = `"<amount> <CUR>"`) and `close_rate` (the number). The Typeform-shaped `answers[]` keep the texts,
+   so `growth.js`, Pending payments, the Blueprint SQL, the briefs and the handoff read what they read today.
+   **`cockpit_kickoff_budget(task)`** returns `{amount, currency, usd, rate, said, from_text}` or NULL: the side key
+   first, converted at read time (a rate added later reaches it); else the answer text by `cockpit_kickoff_budget_read`:
+   the kickoff's own `"<amount> <CUR>"` (`from_text` false), else a typed figure read as dollars by
+   `blueprintPrefill.parseBudget`'s rule (Arabic-Indic digits read, a thousands comma dropped; none when the text names
+   another currency or a range; the first number, from 1 to 100,000, to the cent; `from_text` true, `said` as typed).
+   Read 2026-11-03: all 6 stored Typeform budget answers read as dollars (none names a currency or a range).
+
+4. **`card_facts`, Daily Budget `539743c2`** (kickoff only, after Onboarding Call Date): `{fieldId, kind: "currency",
+   label: "Daily Budget", value: <USD as a JSON number>, onlyIfEmpty: true, source: "kickoff" | "kickoff_text"}`, planned
+   only from 1 to 100,000 dollars (B1's contract: a text, 0, over 100,000 or 3 decimals fails the row). Lines: "Daily
+   Budget, if empty on the card: 39.99 USD a day, from 150 SAR at the cockpit's rate"; not planned: "…the cockpit has no
+   fixed rate for BHD yet.", "…0.27 USD a day is outside 1 to 100,000 dollars.", "…0.01 QAR a day is less than a
+   cent in dollars, outside 1 to 100,000 dollars.", "…the answer is not an amount the cockpit can read." The value is USD because the field is a USD currency field (the forms doctor checks
+   `type_config.currency_type = 'USD'` live). `clickup-writeback` (B1, live) writes it only while the card leaves it empty:
+   the sale's figure (Make 10 "Add Billing Info", 21 of 25 cards since July) is kept, `kept` with `differs` when it
+   is another figure.
+
+5. **The Blueprint.** `cockpit_blueprint_sources` adds `kit.budgetUsd` and `kit.budgetCurrency` (from
+   `cockpit_kickoff_budget`; both null with no kickoff budget, `budgetUsd` null with no rate or below a cent, never 0) beside `kit.handover.daily_budget`.
+   B7's `blueprintPrefill` prefers them ("From 150 SAR at the cockpit's rate: confirm it in dollars." when not USD), and
+   `blueprintBrief` compares the confirmed dollars with `budgetUsd`, not with `firstNumber(said)`. The Blueprint still
+   never writes Daily Budget (`cockpit-creative-api/blueprint.test.ts`).
+
+6. **Parity.** `make_parity.py`: Daily Budget joins `CARD_FACTS` (`currency`) and leaves `CARD_FACTS_NEVER`; a planned
+   Daily Budget is `intended: card_facts` only when its value is the run's own kickoff budget in dollars (the answer
+   Make's trigger holds, read by `kickoff_budget_usd`, the port of `cockpit_kickoff_budget_read`) with that reading's
+   source; anything else reads `card_facts plans Daily Budget other than as the kickoff's own budget in dollars`. A
+   Typeform kickoff never passes through the new types (`cockpit_form_stage4_native_answers` and `_typeform_answers`
+   keep its texts as they came), so every Make text stays byte for byte on the stored kickoffs; their `card_facts` may
+   now plan Daily Budget from the typed figure (`kickoff_text`), graded as above.
+
+7. **The ads half (B6, `20261103e`, live; `docs/media-launch/SPEC.md` 2.4).** One chain, newest agreed first, sets the
+   launch desk's default and its 2x cap and the client page's "Agreed $40 a day (kickoff, 150 SAR). Set now: $25 a day."
+   note: the Ads card's Daily Ad Spend, Blueprint part 1 as sent (`daily_budget.usd`, the object-shape bug fixed), the
+   kickoff in dollars (`cockpit_launch_kickoff_budget`, which reads `cockpit_kickoff_budget(text)` once this file
+   exists: labels `Kickoff, 150 SAR` or `Kickoff, as typed: $60`; BHD keeps its amount and is not the default), then the
+   sale (relabelled "Sale (card Daily Budget)"); a figure under $2.50 or (Blueprint, kickoff, sale) $1,000 or more is
+   listed but never the default. The desk writes the Ads card's Daily Ad Spend only at a switch-on a media buyer
+   presses. **When `20261103f` applies, the chain starts reading the stored Typeform kickoff budgets** (read as typed
+   dollars): on the cards where the kickoff is higher than the sale (4 of 5 checked), the desk's default and its 2x cap
+   rise. The media lead hears this before the apply.
+
+8. **Order and production writes.** After B0 (live) and B1 (live, Daily Budget in `CARD_FACTS`), with the CEO's reading
+   of item 5 (decided by default 2026-11-03): `guard_check.py` on `20261103f*.sql` (5 live, 0 after), the dry run, then
+   the migration; it lands **in the same window as B7's ship, migration first** (the sheet must send the new shape),
+   both before kickoff go-live. Read back: the five after md5s; `select public.cockpit_kickoff_answers_check('{"dailyBudget":{"amount":150,"currency":"SAR"},"coldCloseRate":20,"newMrrUsd":0}')`
+   gives `150 SAR` and `20%`; a count of cards whose `cockpit_kickoff_budget` is not null (counts only, no value
+   printed); the parity run on the VPS from the merge (7/7 kickoff, 5/5 onboarding; `card_facts` may now name Daily
+   Budget, still `intended`). Then the B5 canary: a CSM (or the CEO on the test card) sends one kickoff with the amount
+   field, and the handoff's line 71 and the test card's Daily Budget (only if it was empty) are checked in ClickUp. Undo,
+   only before go-live: the five saved bodies in one transaction and `drop function` the three new ones (B6's reader then
+   falls back to the side key).
+
+9. **Tests.** `stage4-kickoff-amounts-supabase.test.ts` (PGlite, 35): the guard (live and after md5s, a second apply, a
+   changed body, the window: a send off the test card, the switch, the canary and the Typeform kickoffs); the question
+   list; the check's cases (40 USD, 37.5 SAR, 0, 100001, three decimals, EUR, a plain string; 20, 101, 12.5; blanks;
+   `dailyBudgetParts` refused; every other answer `o`'s); the send (`budget` with `usd` null for BHD, `close_rate`, no
+   side key unanswered, `j`'s entry otherwise, the canary); handoff lines 71 and 102; 8 Typeform-shaped kickoffs equal
+   through the parity plan's mapping; `cockpit_kickoff_budget` (side key, a rate added later, Typeform text, a range) and
+   B6's reader on it; `card_facts` planned or not, `p`'s otherwise, the value taken by B1's `budgetAmount`; the
+   Blueprint's two keys with `20261025o`'s gate and keys otherwise; the second source (the SQL dollars equal
+   `currency.ts` `USD_PER` to the cent on 13 amounts in six currencies, `usdToBudget` gives the amount back within 2
+   hundredths, the typed-text rule equals `parseBudget` on 25 texts); grants. `test_make_parity.py`: "plans Daily Budget
+   only from a converted kickoff budget". `kickoff-sheet.test.tsx` reads the new list.
+
+10. **Waits on people (section 10).** The media lead: the new order and the $1,000 guard, and whether the kickoff's
+    budget is per campaign or for all ads (the hint's words depend on it). The CEO or the finance owner: BHD (2.6596) and
+    OMR (2.6008) rates, or leave Bahrain budgets unconverted. A CSM: the B5 canary before go-live.
 
 ### 4.23 Market research, MI-1 (CEO-1 decided: replicate and improve; build MI-1, migration `20261103i`)
 
@@ -2727,9 +2847,13 @@ after D-S4F passed and on different days (one Make switch-off window a day).
   - **CEO-4: a version 3 with structured questions** (booking software as a choice, a "no Facebook page" tick, a revenue
     currency line, appointment length in minutes, a service-area picker, services and FAQs as rows). Recommended: not
     before go-live; revisit with 4 to 6 weeks of version-2 answers.
-  - **CEO-5: the kickoff daily budget.** Recommended: a structured amount and currency on the kickoff sheet, printed
-    `<amount> <CUR>` on Make's `Daily ad budget:` line, in place before the first native kickoff; never write the card's
-    Daily Budget `539743c2`.
+  - **CEO-5: decided 2026-11-02, "Yes and sync it in the ass as well", read as "the ads" (B1 writer, B5 `20261103f`,
+    B6 `20261103e`; 4.21).** The question as it was put: **the kickoff daily budget.** Recommended then: a structured
+    amount and currency on the kickoff sheet, printed `<amount> <CUR>` on Make's `Daily ad budget:` line, in place before
+    the first native kickoff; never write the card's Daily Budget `539743c2`. Built: that, plus the media buyers' chain
+    and an empty-only fill of Daily Budget in dollars (the reading taken by default on 2026-11-03 under the stop-asking
+    rule; the CEO hears it after). Still open: the BHD and OMR rates, and the media lead's per-campaign or all-ads
+    answer for the hint.
   - **CEO-6, decided 2026-11-02: "Should already be synced, if not do it fully now"** (build B3, `20261103g`, 4.19; the
     screens are build B7). It was not synced; B3 ties every sale by an exact phone or email, never a name, and fills
     the two fields only where empty on cards on the books. Taken with the defaults (stop-asking rule, reported after):

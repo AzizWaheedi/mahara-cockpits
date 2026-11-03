@@ -73,7 +73,15 @@ KICKOFF = [  # a stored tG7dnxBn kickoff, as the read model holds it (yes/no as 
     {"ref": "75e97e7d-4c19-437a-b4b8-67570c29344f", "title": "Payment Amount", "value": "1500"},
     {"ref": "071c480f-17f9-48db-8155-56030f952e85", "title": "Who else should we add to the WhatsApp group?", "value": ANSWER},
 ]
-# card_facts' five fields (make_parity.CARD_FACTS) and invented option ids for the two that take options.
+
+
+def budget_answer(value):
+    """tG7dnxBn's daily budget answer (cf53482c) as the read model holds it (build B5 reads it into Daily Budget)."""
+    return {"ref": mp.KICKOFF_BUDGET_REF, "title": "What is your daily budget for the ads?", "value": value}
+
+
+# card_facts' fields (make_parity.CARD_FACTS; Daily Budget, the sixth, is DAILY_BUDGET below) and invented option ids
+# for the two that take options.
 CONSULT, PLATFORM, FATHOM, CALL_DATE, WEBSITE = (
     "45fdd2ea-f83c-4721-bce7-2e6187a43541", "2de15aa5-7fe9-48bf-86a1-e4cfee1306c9", "abaa31ee-28ff-46f6-83bf-6c6d357a26d5",
     "ee9bf855-e05b-4afc-addf-1063cb54d3f0", "5d57fdde-eb70-4610-a23b-88f718b4451d")
@@ -127,12 +135,15 @@ def kept_or_written(before, state, **more):
 
 
 def fact(fid, **change):
-    """One planned card_facts field of the five, valid as given; change replaces or (with None) drops a key."""
+    """One planned card_facts field of the six, valid as given; change replaces or (with None) drops a key. Daily
+    Budget's default is 40 dollars from a kickoff that answered "40 USD" (budget_answer)."""
     base = {CONSULT: {"kind": "labels", "label": "Consultation Types", "optionIds": [IN_OFFICE, ONLINE]},
             PLATFORM: {"kind": "drop_down", "label": "ADs Platform", "optionId": META},
             FATHOM: {"kind": "url", "label": "Fathom", "value": "https://fathom.video/share/invented"},
             CALL_DATE: {"kind": "date", "label": "Onboarding Call Date", "value": "2026-10-20"},
-            WEBSITE: {"kind": "url", "label": "Company Website", "value": "https://cedar.example"}}.get(fid, {"kind": "url", "value": "https://x.example"})
+            WEBSITE: {"kind": "url", "label": "Company Website", "value": "https://cedar.example"},
+            DAILY_BUDGET: {"kind": "currency", "label": "Daily Budget", "value": 40, "source": "kickoff"}}.get(
+                fid, {"kind": "url", "value": "https://x.example"})
     out = dict({"fieldId": fid, "onlyIfEmpty": True, "source": "kickoff c0000001-0000-4000-8000-000000000008"}, **base)
     out.update(change)
     return {k: v for k, v in out.items() if v is not None}
@@ -856,6 +867,14 @@ async function stepTaskComment(x: Ctx) {
 MIGRATIONS = Path(__file__).resolve().parents[2] / "supabase" / "migrations"
 
 
+def newest_migration(fn: str) -> Path:
+    """The newest migration on the branch that makes or replaces public.<fn>."""
+    files = [f for f in sorted(MIGRATIONS.glob("2*.sql")) if f"FUNCTION public.{fn}(" in f.read_text()]
+    if not files:
+        raise AssertionError(f"no migration makes public.{fn}")
+    return files[-1]
+
+
 class OnTopOfMake(unittest.TestCase):
     """The CEO's 2026-11-02 words: Make's output is the floor, graded byte for byte; an addition is accepted only in a
     registered slot, one verdict per effect. Every answer here is invented."""
@@ -891,9 +910,10 @@ class OnTopOfMake(unittest.TestCase):
         self.assertIn(mp.DNA_BRIEF_HEADER, mp.INTENDED["dna_brief"])
         self.assertEqual({k: v[:2] for k, v in mp.SLOTS.items()},
                          {"onboarding_tasks": ("brief", mp.BRIEF_HEADER), "brand_dna_task": ("dna_brief", mp.DNA_BRIEF_HEADER)})
-        self.assertEqual(sorted(k[:8] for k in mp.CARD_FACTS), ["2de15aa5", "45fdd2ea", "5d57fdde", "abaa31ee", "ee9bf855"])
+        self.assertEqual(sorted(k[:8] for k in mp.CARD_FACTS),
+                         ["2de15aa5", "45fdd2ea", "539743c2", "5d57fdde", "abaa31ee", "ee9bf855"])
         self.assertFalse(set(mp.CARD_FACTS) & set(mp.CARD_FACTS_NEVER))
-        # Make 12 [21] and Make 13 [29] write none of the five, so filling them never touches Make's part.
+        # Make 12 [21] and Make 13 [29] write none of the six, so filling them never touches Make's part.
         written = set(mp.custom_fields(self.k[21]["input"])) | set(mp.custom_fields(self.o[29]["input"]))
         self.assertFalse(written & set(mp.CARD_FACTS))
         self.assertEqual(mp.legend(["equal + intended: request_route, brief", "intended: card_facts", "equal", "differs: x"]),
@@ -960,7 +980,7 @@ class OnTopOfMake(unittest.TestCase):
         ctx = dict(self.ctx, targets=dict(self.ctx["targets"], brand_dna=[dict(self.ctx["targets"]["brand_dna"][0], list_id="901800000000")]))
         self.assertEqual(self.dna(good, ctx), "differs: list")
 
-    def test_card_facts_fills_only_the_five_fields_while_they_are_empty(self):
+    def test_card_facts_fills_only_the_six_fields_while_they_are_empty(self):
         every = [fact(CONSULT), fact(PLATFORM), fact(FATHOM), fact(CALL_DATE), fact(WEBSITE)]
         verdict = lambda effect: dict(self.kick([effect]))["card_facts"]  # noqa: E731
         self.assertEqual(verdict(facts(*every)), NOT_READ)
@@ -972,9 +992,9 @@ class OnTopOfMake(unittest.TestCase):
         self.assertEqual(verdict(facts(fact(CALL_DATE, value="2026-10-20T22:00:00Z", day="2026-10-21"))), NOT_READ)
         self.assertEqual(dict(self.onb([facts(fact(WEBSITE))]))["card_facts"], NOT_READ)
         for name, effect, said in (
-                ("Country", facts(fact(CONSULT), fact(COUNTRY, label="Country")), "card_facts plans a field outside the five (e0ca65e7)"),
-                ("Daily Budget", facts(fact("539743c2-b6cd-4eeb-bf2f-abaf64769a5e")), "card_facts plans a field outside the five (539743c2)"),
-                ("a Make field", facts(fact(STATUS)), "card_facts plans a field outside the five (9368ca9e)"),
+                ("Country", facts(fact(CONSULT), fact(COUNTRY, label="Country")), "card_facts plans a field outside the six (e0ca65e7)"),
+                ("ADs Platforms", facts(fact("8db2aa82-cbad-4d26-8deb-ee0637e97512")), "card_facts plans a field outside the six (8db2aa82)"),
+                ("a Make field", facts(fact(STATUS)), "card_facts plans a field outside the six (9368ca9e)"),
                 ("no onlyIfEmpty", facts(fact(FATHOM, onlyIfEmpty=None)), "card_facts could overwrite a card value: no onlyIfEmpty on abaa31ee"),
                 ("onlyIfEmpty false", facts(fact(FATHOM, onlyIfEmpty=False)), "card_facts could overwrite a card value: no onlyIfEmpty on abaa31ee"),
                 ("twice", facts(fact(FATHOM), fact(FATHOM)), "card_facts plans a field twice (abaa31ee)"),
@@ -1020,6 +1040,60 @@ class OnTopOfMake(unittest.TestCase):
         made[21]["input"]["custom_fields"][FATHOM] = "https://fathom.video/share/make"
         self.assertEqual(dict(mp.compare_kickoff([facts(fact(FATHOM))], made, self.ctx))["card_facts"],
                          "differs: Make writes abaa31ee itself")
+
+    def test_card_facts_plans_daily_budget_only_from_a_converted_kickoff_budget(self):
+        # Build B5 (20261103f): Daily Budget is the run's own kickoff budget in dollars, as cockpit_kickoff_budget_read
+        # reads the answer Make's trigger holds: the kickoff's own '<amount> <CUR>' at the cockpit's rates (source
+        # kickoff), or a typed figure read as dollars (source kickoff_text); a number from 1 to 100,000 with 2 decimals
+        # at most, as clickup-writeback's budgetAmount takes it. Every answer and figure here is invented.
+        def verdict(answer, effect, form="kickoff"):
+            if form == "onboarding":
+                return dict(self.onb([effect]))["card_facts"]
+            answers = KICKOFF + ([] if answer is None else [budget_answer(answer)])
+            return dict(mp.compare_kickoff([effect], make12_mods(kickoff=answers), self.ctx))["card_facts"]
+        budget = lambda **change: facts(fact(DAILY_BUDGET, **change))  # noqa: E731
+        for answer, value, source in (("40 USD", 40, "kickoff"), ("150 SAR", 39.99, "kickoff"), ("37.5 SAR", 10, "kickoff"),
+                                      ("12.25 KWD", 39.94, "kickoff"), ("75 AED", 20.42, "kickoff"), ("100 QAR", 27.47, "kickoff"),
+                                      ("$60", 60, "kickoff_text"), ("60", 60.0, "kickoff_text"), ("٤٠ دولار", 40, "kickoff_text"),
+                                      ("$1,500 a month", 1500, "kickoff_text")):
+            self.assertEqual(verdict(answer, budget(value=value, source=source)), NOT_READ, answer)
+        # Beside the other fields, and read through the run's own trigger by plan_lines as on the VPS.
+        lines = mp.plan_lines("kickoff", {"effects": [facts(fact(FATHOM), fact(DAILY_BUDGET))]},
+                              make12_mods(kickoff=KICKOFF + [budget_answer("40 USD")]), self.ctx)
+        self.assertIn(("card_facts", NOT_READ), lines)
+        other = "differs: card_facts plans Daily Budget other than as the kickoff's own budget in dollars (539743c2)"
+        unusable = "differs: card_facts plans no usable value for 539743c2"
+        for name, answer, effect, said in (
+                ("no budget answer", None, budget(), other),
+                ("another figure", "40 USD", budget(value=41), other),
+                ("SAR taken as dollars", "150 SAR", budget(value=150), other),
+                ("the other source", "40 USD", budget(source="kickoff_text"), other),
+                ("a typed figure named as the kickoff's own", "$60", budget(value=60, source="kickoff"), other),
+                ("no fixed rate", "20 BHD", budget(value=20), other),
+                ("a range", "40 to 50", budget(value=40, source="kickoff_text"), other),
+                ("another currency typed", "KWD 15", budget(value=15, source="kickoff_text"), other),
+                ("under a dollar", "1 SAR", budget(value=0.27), unusable),
+                ("a text", "40 USD", budget(value="40"), unusable),
+                ("0", "0 USD", budget(value=0), unusable),
+                ("past 100,000", "100000 KWD", budget(value=326000), unusable),
+                ("3 decimals", "40 USD", budget(value=40.001), unusable),
+                ("a yes", "40 USD", budget(value=True), unusable),
+                ("no value", "40 USD", budget(value=None), unusable),
+                ("the wrong kind", "40 USD", budget(kind="number"), "differs: card_facts plans the wrong kind for 539743c2"),
+                ("no onlyIfEmpty", "40 USD", budget(onlyIfEmpty=None),
+                 "differs: card_facts could overwrite a card value: no onlyIfEmpty on 539743c2"),
+                ("no source", "40 USD", budget(source=None), f"differs: card_facts names no source for 539743c2; {other[9:]}")):
+            self.assertEqual(verdict(answer, effect), said, name)
+        # An onboarding never plans it: there is no kickoff budget on that run.
+        self.assertEqual(verdict(None, budget(), "onboarding"), other)
+        # The reader itself, on the answers the kickoff and the old Typeform form hold.
+        for answer, want in (("40 USD", ("40", "kickoff")), ("150 SAR", ("39.99", "kickoff")), ("20 BHD", None),
+                             ("150 EUR", None), ("0 USD", None), ("$40 a day", ("40", "kickoff_text")), ("40-50", None),
+                             ("15 دينار", None), ("0.5", None), ("100001", None), ("TBD", None), ("", None), (None, None),
+                             ("0.01 QAR", None), ("0.01 SAR", None), ("0.02 QAR", ("0.01", "kickoff"))):
+            got = mp.kickoff_budget_usd(answer)
+            self.assertEqual(None if got is None else (str(got[0].normalize()), got[1]),
+                             None if want is None else (str(mp.Decimal(want[0]).normalize()), want[1]), answer)
 
     def test_card_facts_over_a_set_field_differs(self):
         # The writer's own receipt, in the shape clickup-writeback/forms.ts writeFacts saves it at the queue row's
@@ -1150,13 +1224,14 @@ class OnTopOfMake(unittest.TestCase):
         self.assertRegex(sql, r"(?<![\d,])3,?600(?!\d)", "the briefs' 3,600-character cap")
         self.assertIn("card_facts", sql)
         writer = (WRITER / "forms.ts").read_text()
-        # Build B1 (next-design item 5): the writer may take Daily Budget, only in CARD_FACTS as a USD currency field
-        # filled while empty, before any planner plans it (B5's migration does, and takes it out of CARD_FACTS_NEVER).
-        # 20261102p's planner still never names it. The exception is one occurrence, in that one entry.
-        writer_may = {DAILY_BUDGET} if DAILY_BUDGET in mp.CARD_FACTS_NEVER else set()
-        if writer_may:
-            self.assertEqual(daily_budget_problem(writer), "", "clickup-writeback/forms.ts")
-        for name, text, may in ((files[0].name, sql, set()), ("clickup-writeback/forms.ts", writer, writer_may)):
+        # card_facts' fields as the newest migration that plans them names them (20261103f since build B5: Daily Budget
+        # joined CARD_FACTS and left CARD_FACTS_NEVER), and the writer (build B1) takes Daily Budget once, only in
+        # CARD_FACTS as a USD currency field.
+        planner = newest_migration("cockpit_form_stage4_card_facts")
+        self.assertEqual(planner.name, "20261103f_stage4_kickoff_amounts.sql")
+        self.assertNotIn(DAILY_BUDGET, mp.CARD_FACTS_NEVER)
+        self.assertEqual(daily_budget_problem(writer), "", "clickup-writeback/forms.ts")
+        for name, text, may in ((planner.name, planner.read_text(), set()), ("clickup-writeback/forms.ts", writer, set())):
             self.assertEqual({fid for fid in mp.CARD_FACTS if fid not in text}, set(), f"{name} does not name every card_facts field")
             self.assertEqual({fid for fid in mp.CARD_FACTS_NEVER if fid in text and fid not in may}, set(),
                              f"{name} names a field card_facts never writes")
@@ -1463,7 +1538,7 @@ class Parity(unittest.TestCase):
         self.net.brief = None
         self.net.card_facts["kickoff"] = [fact(COUNTRY)]
         code, out = self.run_cmd("kickoff", "--last", "1")
-        self.assertIn("kickoff run 1: card_facts differs: card_facts plans a field outside the five (e0ca65e7)\n", out)
+        self.assertIn("kickoff run 1: card_facts differs: card_facts plans a field outside the six (e0ca65e7)\n", out)
         self.assertEqual(out.strip().splitlines()[-1], "FAIL: 1 run of 8925654, 1 difference.")
 
     def test_a_planned_task_comment_nothing_posts_fails_the_vps_run(self):
