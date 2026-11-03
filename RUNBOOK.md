@@ -2905,6 +2905,25 @@ the cutover. Switches: `cockpit_settings` `market_intel` (`on`, `mode`, the caps
 | `mi-missing`: an onboarding answer from over 3 hours ago has no finished research | Only while `market_intel.on`. Look for its run (`python3 mi.py shadow`): queued behind another (one at a time), waiting on the engine, `needs_person` (row above) or none at all (an answer stored before `shadow_since`: queue it with `backfill`). | Systems manager |
 | Go back to the old job, or stop research for good | Research writes nothing outward in MI-1, so turning `market_intel.on` false is the whole go-back; the teammate's job and Make 13 [25] are untouched until the cutover (a later migration, with his agreement). Remove the two `market-intel` crontab lines (backup first) to stop the worker; its rows stay. | Systems manager |
 
+### The card writer (clickup-writeback job `research`, MI-1b)
+
+A published run's Market Research doc link (field `7489dbcc`) and its one card comment are written by `clickup-writeback`
+job `research` (contract 4.23.1), never by the worker. The field is written only while it is empty or holds an earlier
+report of this worker; any other link stays and the row reads "kept: ...". The comment is posted once, not notifying,
+and found again by `Cockpit ref MI-<8 hex>`. **Off until MI-3**: every row is held while
+`CLICKUP_WRITEBACK_RESEARCH_KEYS` lists nothing, and the database adds the research queue only with the MI-3 migration.
+Check: `select key, ok, note, detail->>'mode', detail->'keys', last_run_at from public.cockpit_sync_state where key like 'clickup-writeback:research%';`
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| `clickup-writeback:research` reads "Market research writes open with the MI-3 migration ..." | Expected before MI-3: the queue is not in the database yet. Nothing was read or written. It clears once the MI-3 migration is applied. | Tech lead |
+| A research row reads "Held: ..." | The switch keeps it out, with no try used: `CLICKUP_WRITEBACK_APPLY_RESEARCH` is not `true`, `CLICKUP_WRITEBACK_RESEARCH_KEYS` does not list `field` or `comment`, or the card is outside `CLICKUP_WRITEBACK_RESEARCH_ONLY_CARDS`; a row that starts with a secret's name ("CLICKUP_WRITEBACK_RESEARCH_KEYS names something ...") means that secret cannot be read, so fix its value. Open it at MI-3 (test card first), then run job `research_doctor` until it reads `Ready.` | Tech lead, on the CEO's go |
+| A research row reads "Held: this research run is running again ..." | Right by design: the run published, then went back to the queue (an error, an outage or research turned off) and resumes. The row waits with no try used and is written once the run publishes again. If the run ends `needs_person` or `failed` it is still written while the run keeps its Doc. | Systems manager, only when the run itself needs a person (rows above) |
+| A field row reads "kept: the card's Market Research doc already holds another link" | Right by design: a person's link, today's job's Doc or an old ClickUp doc stays. The new report is in the card comment and the cockpit. To show the new one, paste its link into the field by hand. | CSM |
+| A row reads "... is not on this card", "... not a link" or "not a published run" | The card left Clients - Mahara, the field changed in ClickUp, or the run was a shadow run, was cancelled or ended without its Doc. Nothing was written. Run job `research_doctor`, put the card or the field right in ClickUp, then publish the run again (MI-3's publish; no new pulls). | Tech lead |
+| "ClickUp answered the market research comment with its id, but the comment is not on the card now" | It is never posted twice. Look at the card in ClickUp; if a person deleted it, leave it. | CSM |
+| `Stopped: ClickUp refused the cockpit's token (401) ...` | As the 1-1 notes writer: fix `CLICKUP_API_TOKEN`; no try is used and the rows wait. | Tech lead |
+
 ## What never needs a person
 
 - Rate limits: every Google, ClickUp and Meta call waits and retries.

@@ -833,9 +833,9 @@ describe("the requests switch beside the other jobs (contract 4.1)", () => {
     expect(k.writes()).toEqual([]);
   });
 
-  it("the unknown-job sentence names all nine jobs", () => {
-    expect(unknownJobNote("checkins")).toBe('Unknown job "checkins". Use kpi, log, dosdonts, doctor, requests, requests_doctor, forms, forms_doctor or billing_doctor.');
-    expect(noJobNote).toBe("Send a JSON body with a job: kpi, log, dosdonts, doctor, requests, requests_doctor, forms, forms_doctor or billing_doctor.");
+  it("the unknown-job sentence names all eleven jobs", () => {
+    expect(unknownJobNote("checkins")).toBe('Unknown job "checkins". Use kpi, log, dosdonts, doctor, requests, requests_doctor, forms, forms_doctor, billing_doctor, research or research_doctor.');
+    expect(noJobNote).toBe("Send a JSON body with a job: kpi, log, dosdonts, doctor, requests, requests_doctor, forms, forms_doctor, billing_doctor, research or research_doctor.");
   });
 
   it("the doctor names the requests mode and the canary cards", async () => {
@@ -1190,8 +1190,8 @@ describe("the forms job beside the others", () => {
     });
   });
 
-  it("JOBS adds forms and forms_doctor (and billing_doctor after them, waves 1-2)", () => {
-    expect(JOBS).toEqual(["kpi", "log", "dosdonts", "doctor", "requests", "requests_doctor", "forms", "forms_doctor", "billing_doctor"]);
+  it("JOBS adds forms and forms_doctor (and billing_doctor after them, waves 1-2; research and research_doctor last, MI-1b)", () => {
+    expect(JOBS).toEqual(["kpi", "log", "dosdonts", "doctor", "requests", "requests_doctor", "forms", "forms_doctor", "billing_doctor", "research", "research_doctor"]);
   });
 
   it("a dry run claims nothing and reports dry_run: Nothing to write.", async () => {
