@@ -127,8 +127,21 @@ use the recorded-shape payloads in `fixtures/`.
   with exactly the entry the 10-minute read writes, when that key is empty or
   older. The card is the hidden `onboarding_client_id` when the cockpit mirrors
   it (`hidden_id_unverified`).
-- `new_client`: the legacy mapping (no email or phone answer) and the form's
-  three hidden ids (`contact_id`, `closer`, `setter`); no card (Make makes it).
+- `new_client`: the legacy mapping (no email or phone answer, and no raw phone:
+  `f322053a` is a short_text the type filter misses, so it is dropped by its
+  ref) and the form's three hidden ids (`contact_id`, `closer`, `setter`); no
+  card (Make makes it). Then the sale tie (`docs/forms/WAVE56-CONTRACT.md` 4.19,
+  `20261103g`): after the record answers (inserted or a repeat) and its outcome
+  is recorded, the delivery's own typed phone (`95a3901f`, a `phone_number`
+  answer) and email (`a6ea04df`, an `email` answer), read by ref and type before
+  the contact filter drops them (`tieKeysOf`), go to
+  `cockpit_sale_tie_open({externalId, submittedAt, tieKeys})`. The database keeps
+  only their HMAC digests and opens the sale's row (waiting while
+  `forms.sale_tie.on` is off). They never reach the record (`recordOf`), a log
+  line, a health row or an audit row. A failed call never changes the 200: the
+  door calls `cockpit_sale_tie_door_failed()`, which sets `detail.tie = 'failed'`
+  on `forms-door:new_client` for the guardian's `sale-ties` check, and the
+  onboarding sync's sweep opens the row from what the cockpit stores.
 - A termination survey through the old link after the exit survey turned
   native (C4b) is still stored: the registry row keeps its Typeform id, so the
   door accepts a native `exit_survey` or `pause_request` row and the database
@@ -212,4 +225,6 @@ key accepted at once, the answer mapping of a signed body, the record call's key
 body, answer or hidden value in any log line; for the two client forms, their own keys, the legacy record's
 input with no email or phone, an unmatched survey, and a pause request on the same path; for the two Make forms,
 their own keys, `formsFor`'s entry on the recorded payload, the New Client Form's hidden ids with no contact
-details, the native exit survey's old link, and the golden inputs the backfill shares.
+details and no raw phone, the sale tie's keys from the typed answers only (sent to `cockpit_sale_tie_open` alone, a
+failure kept off the 200 and marked for the guardian, no key in a log line), the native exit survey's old link, and
+the golden inputs the backfill shares (`new-client-expected.json` holds the record's `p` and the `tieKeys` beside it).

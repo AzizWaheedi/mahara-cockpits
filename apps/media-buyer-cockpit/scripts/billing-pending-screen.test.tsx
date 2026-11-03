@@ -1525,7 +1525,45 @@ describe("inside the billing sheet", () => {
       { taskId: ard.taskId, edit: { kind: "amount", value: 2000 } },
     ]);
     expect(String(panel?.textContent)).toContain(
-      "Set on the card. ClickUp gets it when write-back is on.",
+      "Set on the card. ClickUp shows it in about two minutes.",
+    );
+  });
+
+  test("How they pay offers only the card's methods, saves through the edit path and says when ClickUp shows it", async () => {
+    const { api, edits } = sheetApi(undefined);
+    await render(h(BillingSheet, { api }));
+    const ard = rowOf(/^Ardon$/);
+    await click(
+      win.document
+        .getElementById(`billing-row-${ard.taskId}`)
+        ?.querySelector("button"),
+    );
+    const row = win.document.getElementById(`billing-row-${ard.taskId}`) as any;
+    await click(button("How they pay", row));
+    const methods = selectIn(row, "Payment method");
+    await click(methods);
+    const offered = [...win.document.querySelectorAll("[role='option']")].map(
+      (o: any) => String(o.textContent).trim(),
+    );
+    expect(offered).toEqual([
+      "Not set",
+      "Card on file",
+      "Bank transfer",
+      "Tap link",
+      "Whop link",
+      "Check",
+    ]);
+    await click(
+      [...win.document.querySelectorAll("[role='option']")].find(
+        (o: any) => String(o.textContent).trim() === "Card on file",
+      ),
+    );
+    await click(button("Save", row));
+    expect(edits).toEqual([
+      { taskId: ard.taskId, edit: { kind: "method", value: "Card on file" } },
+    ]);
+    expect(page()).toContain(
+      "Saved: Ardon pays by card on file. ClickUp shows it in about two minutes.",
     );
   });
 });

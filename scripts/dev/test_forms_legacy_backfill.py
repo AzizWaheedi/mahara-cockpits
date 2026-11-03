@@ -89,6 +89,7 @@ class Net:
         self.forms = {}  # other Typeform forms: form id -> (definition, items)
         self.onboarding_rows = []  # cockpit_client_onboarding cards
         self.responses = []  # cockpit_form_responses rows (kickoff --count)
+        self.tie_refuse = None  # (status, body) cockpit_sale_tie_open answers when set
 
     def made(self, prefix, method=None):
         return [r for r in self.requests if r["url"].startswith(prefix) and (method is None or r["method"] == method)]
@@ -126,6 +127,10 @@ class Net:
             card = p["taskId"] if p["taskId"] in known else None
             return 200, {"inserted": inserted, "responseId": "33333333-3333-4333-8333-333333333333", "taskId": card,
                          "readModel": "written" if card and inserted else ("no_card" if not card else "newer_kept")}
+        if url == f"{DB}/rest/v1/rpc/cockpit_sale_tie_open":
+            if self.tie_refuse:
+                return self.tie_refuse
+            return 200, {"ok": True, "state": "waiting", "tieId": 1, "repeat": False}
         if url == f"{DB}/rest/v1/rpc/cockpit_form_record_legacy":
             if self.refuse:
                 return self.refuse
@@ -296,7 +301,10 @@ class Backfill(unittest.TestCase):
                                       ("new-client-response.json", "new_client", "new-client-expected.json")):
             item = self.fixture(payload)["form_response"]
             definition = item["definition"]
-            self.assertEqual(fb.make_input(form, item, fb.field_titles(definition), definition), self.fixture(golden)["p"])
+            built = fb.make_input(form, item, fb.field_titles(definition), definition)
+            self.assertEqual(fb.record_of(built), self.fixture(golden)["p"])
+            # The sale tie's keys ride beside the record, never in it (4.19).
+            self.assertEqual(built.get("tieKeys"), self.fixture(golden).get("tieKeys"))
 
     def test_onboarding_is_recorded_through_record_make_and_says_how_many_read_model_rows_it_filled(self):
         item = self.fixture("onboarding-response.json")["form_response"]
@@ -326,10 +334,43 @@ class Backfill(unittest.TestCase):
         [p] = self.made_make()
         self.assertEqual(p["hidden"], {"contact_id": "ghlContact0001", "closer": "Closer Test", "setter": "Setter Test"})
         self.assertIsNone(p["taskId"])
-        self.assertNotIn("owner@harbour.example", json.dumps(p))
+        for value in ("owner@harbour.example", "+965 0000 0002", "96500000002", "tieKeys", fb.NEW_CLIENT_DROP_REFS[0]):
+            self.assertNotIn(value, json.dumps(p))
         self.assertEqual(self.records(), [])
+        # As the door does: the two typed keys go to the sale tie alone, after the record.
+        ties = [r["json"] for r in self.net.made(f"{DB}/rest/v1/rpc/cockpit_sale_tie_open")]
+        self.assertEqual(ties, [{"p": {"externalId": "ncf0000token0001", "submittedAt": "2026-10-30T11:00:00Z",
+                                       "tieKeys": {"phone": "+965 0000 0002", "email": "owner@harbour.example"}}}])
+        for value in ("owner@harbour.example", "+965 0000 0002"):
+            self.assertNotIn(value, out)
         # Read only: nothing here posts to Typeform.
         self.assertEqual([r for r in self.net.requests if r["url"].startswith("https://api.typeform.com/") and r["method"] != "GET"], [])
+
+    def test_a_sale_tie_that_cannot_be_opened_is_counted_never_printed_and_a_dry_run_opens_none(self):
+        item = self.fixture("new-client-response.json")["form_response"]
+        definition = item.pop("definition")
+        self.net.registry = [{"provider": "typeform", "typeform_id": "BTzMwXiw"}]
+        self.net.forms = {"BTzMwXiw": (definition, [item])}
+        code, out = self.run_cmd("new_client", "--dry")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.net.made(f"{DB}/rest/v1/rpc/cockpit_sale_tie_open"), [])
+        self.net.tie_refuse = (500, {"message": "owner@harbour.example +965 0000 0002", "code": "XX000"})
+        code, out = self.run_cmd("new_client")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out.strip(), "read 1, stored 1, already there 0, unmatched 1, "
+                                      "sale ties not opened 1 (the onboarding sync's sweep opens them)")
+        for value in ("owner@harbour.example", "+965 0000 0002"):
+            self.assertNotIn(value, out)
+
+    def test_the_sale_tie_keys_come_from_the_typed_answers_only(self):
+        item = self.fixture("new-client-response.json")["form_response"]
+        self.assertEqual(fb.tie_keys_of(item), {"phone": "+965 0000 0002", "email": "owner@harbour.example"})
+        raw_only = {**item, "answers": [a for a in item["answers"] if a["field"]["ref"] in fb.NEW_CLIENT_DROP_REFS],
+                    "hidden": {"phone": "+96500000003"}}
+        self.assertEqual(fb.tie_keys_of(raw_only), {"phone": None, "email": None})
+        other = {**item, "answers": [{"type": "phone_number", "phone_number": "+96500000005",
+                                      "field": {"ref": "other-phone", "type": "phone_number"}}]}
+        self.assertEqual(fb.tie_keys_of(other), {"phone": None, "email": None})
 
     def test_the_old_nps_and_csat_answers_are_read_from_their_native_rows_and_never_get_a_card(self):
         for form, fid in (("nps", "fuPgs85S"), ("csat", "KbcbPA73")):
