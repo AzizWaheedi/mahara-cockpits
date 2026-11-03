@@ -30,17 +30,30 @@
 // (default checkin) is held by run.ts and never written here.
 //
 // card_facts (better-data plan B8, kickoff and onboarding): an addition on top of Make's output, separate from
-// card_fields, that fills five card fields from typed answers ONLY while the card leaves them empty (CARD_FACTS:
-// Consultation Types, ADs Platform, Fathom, Onboarding Call Date, Company Website; never Country, Daily Budget or any
-// other field). The plan names each field with onlyIfEmpty true; an unknown field id, kind or option fails the row
-// with no call. The card is read fresh: an empty field is written and read back, a set field is left as it is
-// ("kept", with a note when its value differs from the form's). progress.steps.card_facts.fields is the receipt,
+// card_fields, that fills card fields from typed answers ONLY while the card leaves them empty (CARD_FACTS:
+// Consultation Types, ADs Platform, Fathom, Onboarding Call Date, Company Website and, since build B1 (item 5), Daily
+// Budget in USD; never Country or any other field). The plan names each field with onlyIfEmpty true; an unknown field
+// id, kind or option fails the row with no call. The card is read fresh: an empty field is written and read back, a
+// set field is left as it is ("kept", with a note when its value differs from the form's).
+// progress.steps.card_facts.fields is the receipt,
 // saved before the first write: for each field id, `before` ("empty" or "set", what the first read saw) and `state`
 // ("due", "written" or "kept"), plus `differs` and `note` on a kept field whose value is not the form's. Any kept
 // field is said: a row that wrote nothing is skipped with the kept sentence as its reason; a row that wrote some
 // fields is delivered with that sentence as its note (the queue row's error, and the step's own `note`, which the
 // queue trigger copies into the effect's receipt.step). make_parity
 // grades a write over a set value from it ("differs: overwrote a card value"); this writer never makes one.
+//
+// Two more keys ride writeFacts unchanged (build B1, next-design plan items 2 and 6), each with its own allowlist and
+// its own lane in CLICKUP_WRITEBACK_FORMS_KEYS (formLane):
+// - profile_backfill (form onboarding, lane profile_backfill): Make 13 [29]'s Client Profile text from a stored
+//   Typeform answer, written only into an empty Client Profile (PROFILE_BACKFILL, one field). The text is never in
+//   the queue payload (the queue's audit trigger copies payloads): it comes from the effect's plan through the claim
+//   and must carry Make's seven labels in order and match the payload's valueSha256 before any call.
+// - sale_facts (form new_client, lane new_client): the sale's go-live expectation and handoff problems, and the
+//   Sales Meeting Link, only where the card leaves them empty (SALE_FACTS). Never the Closer, Closer Notes, Daily
+//   Budget, Country, Email, Phone Number or a billing field.
+// factsStep, saleFactsStep and backfillStep each take only their own allowlist: a field from another key's list fails
+// the row with no call.
 //
 // Retry safety: every write records "started" before the call and "done"
 // after its read-back. The to-do comment is found by its marker (Cockpit ref
@@ -92,7 +105,10 @@ export const FORM_KEYS = [
   "last_checkin_call",
 ] as const;
 export type FormKey = (typeof FORM_KEYS)[number];
-/** Stage 4's effect keys (4.13.4): the kickoff's four, the onboarding's three, and card_facts on both (plan B8). */
+/**
+ * Stage 4's effect keys (4.13.4): the kickoff's four, the onboarding's three, card_facts on both (plan B8), and since
+ * build B1 the Client Profile backfill (item 2, onboarding) and the sale's card facts (item 6, new_client).
+ */
 export const STAGE4_KEYS = [
   "handoff_comment",
   "native_status",
@@ -102,12 +118,14 @@ export const STAGE4_KEYS = [
   "raw_answers_comment",
   "map_phase3",
   "card_facts",
+  "profile_backfill",
+  "sale_facts",
 ] as const;
 export type Stage4Key = (typeof STAGE4_KEYS)[number];
-/** Which form each Stage 4 key belongs to: card_facts comes from either. */
+/** Which form each Stage 4 key belongs to: card_facts comes from either the kickoff or the onboarding. */
 export const STAGE4_FORM: Record<
   Stage4Key,
-  "kickoff" | "onboarding" | "either"
+  "kickoff" | "onboarding" | "either" | "new_client"
 > = {
   handoff_comment: "kickoff",
   native_status: "kickoff",
@@ -117,9 +135,31 @@ export const STAGE4_FORM: Record<
   raw_answers_comment: "onboarding",
   map_phase3: "onboarding",
   card_facts: "either",
+  profile_backfill: "onboarding",
+  sale_facts: "new_client",
 };
-/** The form keys CLICKUP_WRITEBACK_FORMS_KEYS may list. */
-export const FORMS_FORM_KEYS = ["checkin", "kickoff", "onboarding"] as const;
+/**
+ * The lanes CLICKUP_WRITEBACK_FORMS_KEYS may list: one per form, plus profile_backfill, the one-shot lane of the Client
+ * Profile backfill (formLane), opened for its run and taken out only once none of its rows is queued, sending, retry
+ * or unknown: a held row holds back every later form row on its card (run.ts OUTWARD SAFETY).
+ */
+export const FORMS_FORM_KEYS = [
+  "checkin",
+  "kickoff",
+  "onboarding",
+  "new_client",
+  "profile_backfill",
+] as const;
+/**
+ * The lane a queue row waits in until CLICKUP_WRITEBACK_FORMS_KEYS lists it: profile_backfill for a backfill row, else
+ * its form (checkin when the payload names none). So onboarding in the list never opens a backfill row, and
+ * profile_backfill never opens an onboarding row.
+ */
+export function formLane(payload: Row | null | undefined): string {
+  const p = payload ?? {};
+  if (p.effectKey === "profile_backfill") return "profile_backfill";
+  return String(p.formKey ?? "checkin");
+}
 /** The Onboarding Map field (a link with ?phase=N). */
 export const MAP_FIELD = "51f49cb1-9f76-48be-b639-c42ca552d20a";
 /** The only card fields each Stage 4 key may write, with their kinds (20261102j_stage4_native.sql). */
@@ -145,17 +185,25 @@ export const STAGE4_FIELDS: Record<
     "87d7d889-afea-42f8-9485-6f3ead5b857f": "url",
   },
 };
-/** The kinds of field card_facts writes. */
-export type CardFactKind = "labels" | "drop_down" | "url" | "date";
+/** The kinds of field the facts keys write (card_facts, profile_backfill, sale_facts). */
+export type CardFactKind =
+  "labels" | "drop_down" | "url" | "date" | "text" | "currency";
+/** One allowlisted field: its kind, the trail's name for it and, for a labels or dropdown field, its options by id. */
+export type FactSpec = {
+  kind: CardFactKind;
+  label: string;
+  options?: Record<string, string>;
+};
+/** A Daily Budget the writer takes: a finite number from 1 to 100,000 USD with 2 decimals at most (budget-ads.md S2). */
+export const BUDGET_MIN = 1;
+export const BUDGET_MAX = 100_000;
 /**
  * The ONLY fields card_facts may write (better-data plan B8), with their kinds, the trail's names and, for a labels
  * or dropdown field, the options it may write by id (the s40 snapshot of the Clients - Mahara list; the forms doctor
- * reads them live). Never Country, Daily Budget or any other field.
+ * reads them live). Since build B1, Daily Budget too (item 5): in USD, the field's own currency, only while empty; it
+ * is inert until a migration plans it. Never Country or any other field.
  */
-export const CARD_FACTS: Record<
-  string,
-  { kind: CardFactKind; label: string; options?: Record<string, string> }
-> = {
+export const CARD_FACTS: Record<string, FactSpec> = {
   "45fdd2ea-f83c-4721-bce7-2e6187a43541": {
     kind: "labels",
     label: "Consultation Types",
@@ -182,6 +230,47 @@ export const CARD_FACTS: Record<
   "5d57fdde-eb70-4610-a23b-88f718b4451d": {
     kind: "url",
     label: "Company Website",
+  },
+  // Item 5 (next-design plan B1, budget-ads.md 5.3 S2): the kickoff's budget converted to USD, only into an empty
+  // Daily Budget; a set one (the sale's figure) is kept. Drop this entry if the CEO declines the empty-only fill.
+  "539743c2-b6cd-4eeb-bf2f-abaf64769a5e": {
+    kind: "currency",
+    label: "Daily Budget",
+  },
+};
+/**
+ * The ONLY field the Client Profile backfill writes (item 2, backfill.md 3.2): the Client Profile, as Make 13 [29]
+ * writes it, only while the card leaves it empty.
+ */
+export const CLIENT_PROFILE_FIELD = "7755485f-74a8-496c-85d8-562588e77944";
+export const PROFILE_BACKFILL: Record<string, FactSpec> = {
+  [CLIENT_PROFILE_FIELD]: { kind: "text", label: "Client Profile" },
+};
+/**
+ * Make 13 [29]'s Client Profile: its seven labels in order, each line pair apart (cockpit_form_stage4_profile_text,
+ * 20261102o). The three revenues are one line each; the four texts may hold line breaks.
+ */
+export const PROFILE_LABELS =
+  /^Last Year's Total Revenue: [^\n]*\n\n90-Day Goal Revenue: [^\n]*\n\n12-24 Month Revenue Goal: [^\n]*\n\nMarketing they've tried A-Z: [\s\S]*\n\nTop 3 challenges: [\s\S]*\n\nWhy they joined: [\s\S]*\n\nAdditional notes: [\s\S]*$/;
+/**
+ * The ONLY fields the sale's card facts write (item 6, sale-tie.md 2.8), only while the card leaves them empty: the
+ * two the sale alone knows, and its sales-call link. Never the Closer, Closer Notes, Daily Budget, Country, Email,
+ * Phone Number or a billing field.
+ */
+export const SALE_FACTS: Record<string, FactSpec> = {
+  "d4483463-840f-4730-ae7f-bfa77c5bb22a": {
+    kind: "text",
+    label: "Go-live expectation",
+  },
+  "e17a1c27-ec34-4f87-8796-3cf1f8fa80f9": {
+    kind: "text",
+    label: "Handoff problems",
+  },
+  // The Sales Meeting Link, https only. Its planner plans it only while forms.sale_tie.salesLink is on (build B3, off
+  // at deploy). Drop this entry if the CEO says no to the Sales Meeting Link fill.
+  "1f2e9ad1-98d8-410d-9994-ac6da91ff91d": {
+    kind: "url",
+    label: "Sales Meeting Link",
   },
 };
 /** The phase an Onboarding Map link points at, or null. */
@@ -257,6 +346,11 @@ export const SAY_FORMS = {
     `ClickUp's ${label} has no "${name}" option, so nothing was written. The tech lead runs the forms doctor.`,
   noFieldOptionStarted: (label: string, name: string) =>
     `ClickUp's ${label} has no "${name}" option now, and a write may have reached the card first, so check it in ClickUp. The tech lead runs the forms doctor.`,
+  /** A money field the writer fills in USD only (Daily Budget): its ClickUp currency, read off the card. */
+  notUsd: (label: string, currency: string) =>
+    `ClickUp's ${label} is ${currency ? `in ${currency}` : "in no named currency"}, not USD, so nothing was written. The tech lead runs the forms doctor.`,
+  notUsdStarted: (label: string, currency: string) =>
+    `ClickUp's ${label} is now ${currency ? `in ${currency}` : "in no named currency"}, not USD, and a write may have reached the card first, so check it in ClickUp. The tech lead runs the forms doctor.`,
   /** card_facts (plan B8): what the trail reads when every field it would fill is already set on the card. */
   factsKept: (kept: string[], differs: string[]) =>
     `kept: the card already has a value for ${listWords(kept)}${
@@ -373,11 +467,12 @@ export function formsWords(env: (name: string) => string | undefined) {
 
 /** Never names what the secret holds. */
 export const FORMS_KEYS_BAD =
-  "CLICKUP_WRITEBACK_FORMS_KEYS names something that is not checkin, kickoff or onboarding, so only checkin is written.";
+  "CLICKUP_WRITEBACK_FORMS_KEYS names something that is not checkin, kickoff, onboarding, new_client or profile_backfill, so only checkin is written.";
 
 /**
- * Which forms' card writes are on: CLICKUP_WRITEBACK_FORMS_KEYS, a comma list of checkin, kickoff and onboarding,
- * checkin when unset (4.13.4). A list with anything else keeps checkin alone and says so: it never widens.
+ * Which lanes' card writes are on: CLICKUP_WRITEBACK_FORMS_KEYS, a comma list of checkin, kickoff, onboarding,
+ * new_client and profile_backfill, checkin when unset (4.13.4). A list with anything else keeps checkin alone and says
+ * so: it never widens. A row's lane is formLane's.
  */
 export function formsKeysGate(env: (name: string) => string | undefined) {
   const raw = env("CLICKUP_WRITEBACK_FORMS_KEYS");
@@ -497,11 +592,26 @@ export type FormStep =
       value: string;
       phase: number;
     }
-  | { key: "card_facts"; type: "facts"; taskId: string; fields: CardFact[] };
+  | {
+      key: FactsKey;
+      type: "facts";
+      taskId: string;
+      fields: CardFact[];
+    };
+
+/** The keys whose one write is writeFacts': fill a field only while the card leaves it empty. */
+export type FactsKey = "card_facts" | "profile_backfill" | "sale_facts";
+/** Each facts key's own allowlist: a key names only its own fields. */
+export const FACTS_ALLOWED: Record<FactsKey, Record<string, FactSpec>> = {
+  card_facts: CARD_FACTS,
+  profile_backfill: PROFILE_BACKFILL,
+  sale_facts: SALE_FACTS,
+};
 
 /**
- * One field card_facts fills while the card leaves it empty: labels by option ids, a dropdown by option id, a link,
- * or a date as its Kuwait day (written at noon Kuwait). `label` is CARD_FACTS' name for it, never the plan's.
+ * One field a facts key fills while the card leaves it empty: labels by option ids, a dropdown by option id, a link
+ * or a text, a date as its Kuwait day (written at noon Kuwait), or a USD amount. `label` is the allowlist's name for
+ * it, never the plan's.
  */
 export type CardFact = {
   fieldId: string;
@@ -511,6 +621,7 @@ export type CardFact = {
   optionId?: string;
   value?: string;
   day?: string;
+  amount?: number;
 };
 
 /** One field's line in card_facts' receipt (progress.steps.card_facts.fields[fieldId]): states and notes, never values. */
@@ -635,6 +746,8 @@ async function stage4Step(
     };
   }
   if (key === "card_facts") return factsStep(plan, card);
+  if (key === "sale_facts") return saleFactsStep(plan, card);
+  if (key === "profile_backfill") return backfillStep(item, plan, card);
   const allowed = STAGE4_FIELDS[key];
   const raw: Row[] = Array.isArray(plan.fields) ? plan.fields : [];
   if (!raw.length) return { fail: SAY_FORMS.mismatch };
@@ -698,23 +811,35 @@ function factDay(f: Row): string | null {
 }
 
 /**
- * card_facts' check before any call (plan B8): one to five fields, each in CARD_FACTS with its own kind, onlyIfEmpty
- * true, a label, and a value of its kind: labels by known option ids, a dropdown by one known option id, a link on
- * https, a date as a real day. A field twice, an unknown field id, kind or option, or anything else fails the row.
+ * A USD amount as a money field takes it: a number (never a text), finite, from 1 to 100,000, with 2 decimals at
+ * most. It is sent as whole cents over 100, so a float's noise (40.00000000000001) never reaches ClickUp.
  */
-function factsStep(
+export function budgetAmount(v: unknown): number | null {
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  if (v < BUDGET_MIN || v > BUDGET_MAX) return null;
+  const cents = Math.round(v * 100);
+  return Math.abs(v * 100 - cents) < 1e-6 ? cents / 100 : null;
+}
+
+/**
+ * The facts keys' shared check before any call: one field at least and no more than the allowlist holds, each in
+ * THIS key's allowlist with its own kind, onlyIfEmpty true, a label, and a value of its kind: labels by known option
+ * ids, a dropdown by one known option id, a link on https, a text that is not blank, a date as a real day, a USD
+ * amount (budgetAmount). A field twice, a field of another key's list, an unknown field id, kind or option, or
+ * anything else is null, and the row fails with no call.
+ */
+function allowedFacts(
   plan: Row,
-  card: string,
-): { step: FormStep } | { fail: string } {
+  allowed: Record<string, FactSpec>,
+): CardFact[] | null {
   const raw: Row[] = Array.isArray(plan.fields) ? plan.fields : [];
-  const no = { fail: SAY_FORMS.mismatch };
-  if (!raw.length || raw.length > Object.keys(CARD_FACTS).length) return no;
+  if (!raw.length || raw.length > Object.keys(allowed).length) return null;
   const fields: CardFact[] = [];
   const seen = new Set<string>();
   for (const f of raw) {
     const fieldId = String(f?.fieldId ?? "");
-    const known = Object.hasOwn(CARD_FACTS, fieldId)
-      ? CARD_FACTS[fieldId]
+    const known = Object.hasOwn(allowed, fieldId)
+      ? allowed[fieldId]
       : undefined;
     if (
       !known ||
@@ -723,7 +848,7 @@ function factsStep(
       f.onlyIfEmpty !== true ||
       typeof f.label !== "string"
     )
-      return no;
+      return null;
     seen.add(fieldId);
     const base = { fieldId, kind: known.kind, label: known.label };
     const option = (id: unknown) =>
@@ -733,21 +858,79 @@ function factsStep(
     if (known.kind === "labels") {
       const ids: unknown[] = Array.isArray(f.optionIds) ? f.optionIds : [];
       if (!ids.length || !ids.every(option) || new Set(ids).size !== ids.length)
-        return no;
+        return null;
       fields.push({ ...base, optionIds: ids as string[] });
     } else if (known.kind === "drop_down") {
-      if (!option(f.optionId)) return no;
+      if (!option(f.optionId)) return null;
       fields.push({ ...base, optionId: f.optionId });
     } else if (known.kind === "url") {
-      if (typeof f.value !== "string" || !HTTPS.test(f.value)) return no;
+      if (typeof f.value !== "string" || !HTTPS.test(f.value)) return null;
       fields.push({ ...base, value: f.value });
+    } else if (known.kind === "text") {
+      // Written as typed, as long as it is (Make writes texts uncut); a blank text would read back as empty.
+      if (typeof f.value !== "string" || !f.value.trim()) return null;
+      fields.push({ ...base, value: f.value });
+    } else if (known.kind === "currency") {
+      const amount = budgetAmount(f.value);
+      if (amount === null) return null;
+      fields.push({ ...base, amount });
     } else {
       const day = factDay(f);
-      if (!day) return no;
+      if (!day) return null;
       fields.push({ ...base, day });
     }
   }
+  return fields;
+}
+
+/**
+ * card_facts' check before any call (plan B8): one field at least, each in CARD_FACTS and nowhere else, as
+ * allowedFacts checks it. Daily Budget (item 5) is a USD amount.
+ */
+function factsStep(
+  plan: Row,
+  card: string,
+): { step: FormStep } | { fail: string } {
+  const fields = allowedFacts(plan, CARD_FACTS);
+  if (!fields) return { fail: SAY_FORMS.mismatch };
   return { step: { key: "card_facts", type: "facts", taskId: card, fields } };
+}
+
+/**
+ * sale_facts' check before any call (item 6): the go-live expectation and the handoff problems as texts, and the Sales
+ * Meeting Link on https, only from SALE_FACTS. A CARD_FACTS field, the Closer or any other field fails the row.
+ */
+function saleFactsStep(
+  plan: Row,
+  card: string,
+): { step: FormStep } | { fail: string } {
+  const fields = allowedFacts(plan, SALE_FACTS);
+  if (!fields) return { fail: SAY_FORMS.mismatch };
+  return { step: { key: "sale_facts", type: "facts", taskId: card, fields } };
+}
+
+/**
+ * profile_backfill's check before any call (item 2, backfill.md 3.2): exactly one field, the Client Profile, a text
+ * with onlyIfEmpty true; Make 13 [29]'s seven labels in order; and its sha256 equal to the payload's valueSha256, so
+ * the text written is the text the backfill queued (the payload never holds it). Anything else fails the row.
+ */
+async function backfillStep(
+  item: FormItem,
+  plan: Row,
+  card: string,
+): Promise<{ step: FormStep } | { fail: string }> {
+  const no = { fail: SAY_FORMS.mismatch };
+  const fields = allowedFacts(plan, PROFILE_BACKFILL);
+  if (!fields || fields.length !== 1) return no;
+  const [f] = fields;
+  if (f.fieldId !== CLIENT_PROFILE_FIELD || f.kind !== "text") return no;
+  const value = f.value ?? "";
+  if (!PROFILE_LABELS.test(value)) return no;
+  const want = item.payload?.valueSha256;
+  if (typeof want !== "string" || (await sha256(value)) !== want) return no;
+  return {
+    step: { key: "profile_backfill", type: "facts", taskId: card, fields },
+  };
 }
 
 /**
@@ -1191,15 +1374,34 @@ function factMatches(card: Row, f: CardFact): boolean {
   if (f.kind === "drop_down")
     return fieldMatches(card, f.fieldId, "select", f.optionId);
   if (f.kind === "date") return kuwaitDay(v) === f.day;
-  return String(v).trim() === String(f.value ?? "").trim();
+  // A money field to the cent: ClickUp may hand it back as a number or as a text ("39.99", "40.00").
+  if (f.kind === "currency") {
+    const n = Number(v);
+    return (
+      typeof f.amount === "number" &&
+      (typeof v === "number" || typeof v === "string") &&
+      Number.isFinite(n) &&
+      Math.round(n * 100) === Math.round(f.amount * 100)
+    );
+  }
+  // A text as ClickUp keeps it: trimmed, with its line ends as \n.
+  const same = (s: unknown) =>
+    String(s ?? "")
+      .replace(/\r\n?/g, "\n")
+      .trim();
+  return same(v) === same(f.value);
 }
 
-/** What ClickUp is sent for one fact: a date at noon Kuwait as a date-only value, as the check-in dates are. */
+/**
+ * What ClickUp is sent for one fact: a date at noon Kuwait as a date-only value, as the check-in dates are; a money
+ * field as a number, as the billing writes send MRR (billing.ts).
+ */
 function factBody(f: CardFact): Row {
   if (f.kind === "labels") return { value: f.optionIds };
   if (f.kind === "drop_down") return { value: f.optionId };
   if (f.kind === "date")
     return { value: noonKuwait(String(f.day)), value_options: { time: false } };
+  if (f.kind === "currency") return { value: f.amount };
   return { value: f.value };
 }
 
@@ -1245,7 +1447,9 @@ function factsKeptNote(
  * written again (the same value, so nothing doubles); holding another value, another writer filled it meanwhile and
  * it is kept. Every field and option is checked on the card before anything is written. Nothing written at all reads
  * "skipped" with the trail's kept sentence, as the map's kept row does. Some written and some kept reads "delivered"
- * with that sentence as its note, saved on the step too (progress.steps.card_facts.note).
+ * with that sentence as its note, saved on the step too (progress.steps.card_facts.note). profile_backfill and
+ * sale_facts are written the same way, under their own step key (progress.steps.profile_backfill,
+ * progress.steps.sale_facts), and a Daily Budget only into a field ClickUp keeps in USD.
  */
 async function writeFacts(
   x: Ctx & { step: Extract<FormStep, { type: "facts" }> },
@@ -1287,8 +1491,21 @@ async function writeFacts(
         ? { before: "set", state: "kept" }
         : differs(false);
   }
-  // Every option the writes send is on its field now, before anything is written.
+  // Every option the writes send is on its field now, and a money field is in USD, before anything is written.
   for (const f of due) {
+    if (f.kind === "currency") {
+      const currency = String(
+        fieldOf(card, f.fieldId)?.type_config?.currency_type ?? "",
+      ).trim();
+      if (currency.toUpperCase() !== "USD")
+        throw halt(
+          "failed",
+          resumed
+            ? SAY_FORMS.notUsdStarted(f.label, currency)
+            : SAY_FORMS.notUsd(f.label, currency),
+        );
+      continue;
+    }
     if (f.kind !== "labels" && f.kind !== "drop_down") continue;
     const options = fieldOf(card, f.fieldId)?.type_config?.options;
     const on: Row[] = Array.isArray(options) ? options : [];
@@ -1296,7 +1513,7 @@ async function writeFacts(
       f.kind === "labels" ? (f.optionIds ?? []) : [String(f.optionId)];
     const gone = ids.find(id => !on.some(o => String(o.id) === id));
     if (gone !== undefined) {
-      const name = CARD_FACTS[f.fieldId]?.options?.[gone] ?? gone;
+      const name = FACTS_ALLOWED[step.key][f.fieldId]?.options?.[gone] ?? gone;
       throw halt(
         "failed",
         resumed
@@ -1610,7 +1827,17 @@ const STAGE4_WORDS: Record<Stage4Key, string> = {
   raw_answers_comment: "Raw onboarding answers comment",
   map_phase3: "Onboarding Map",
   card_facts: "Empty card fields filled from the answers",
+  profile_backfill: "Client Profile from the stored answer, only if empty",
+  sale_facts: "Go-live and handoff problems from the sale, only where empty",
 };
+
+/** How many fields a facts row would fill: its plan's list, else its payload's (a held row's words, never values). */
+function factCount(item: FormItem): number {
+  const fromPlan = item.effect?.plan?.fields;
+  if (Array.isArray(fromPlan)) return fromPlan.length;
+  const fromPayload = item.payload?.fields;
+  return Array.isArray(fromPayload) ? fromPayload.length : 0;
+}
 
 export function planForm(item: FormItem): Row[] {
   const p = item.payload ?? {};
@@ -1632,7 +1859,11 @@ export function planForm(item: FormItem): Row[] {
                 ? `phase ${key === "map_phase3" ? 3 : 4}`
                 : key === "card_facts"
                   ? `up to ${Array.isArray(p.fields) ? p.fields.length : 0}, each only where the card is empty`
-                  : `${Array.isArray(p.fields) ? p.fields.length : 0} fields`,
+                  : key === "sale_facts"
+                    ? `up to ${factCount(item)}, each only where the card is empty`
+                    : key === "profile_backfill"
+                      ? `${Number(p.valueChars) || 0} characters, only if the card's Client Profile is empty`
+                      : `${Array.isArray(p.fields) ? p.fields.length : 0} fields`,
       },
     ];
   return [
@@ -1658,9 +1889,53 @@ export function planForm(item: FormItem): Row[] {
 // --- The doctor's checks, reads only ---------------------------------------------------------------
 
 /**
+ * One facts allowlist against the list's fields as ClickUp reads them now: each field on the list, of its kind, with
+ * every option the writer may send, and a money field in USD. One plain sentence per problem.
+ */
+function factsFieldProblems(
+  fields: Row[],
+  allowed: Record<string, FactSpec>,
+  words: { writes: (label: string, id: string) => string; who: string },
+): string[] {
+  const problems: string[] = [];
+  for (const [id, fact] of Object.entries(allowed)) {
+    const f = fields.find(x => x.id === id);
+    if (!f) {
+      problems.push(words.writes(fact.label, id.slice(0, 8)));
+      continue;
+    }
+    if (String(f.type) !== fact.kind) {
+      problems.push(
+        `${fact.label} is a ${String(f.type)} field in ClickUp, not ${fact.kind}, so ${words.who} would not write it.`,
+      );
+      continue;
+    }
+    if (fact.kind === "currency") {
+      const currency = String(f.type_config?.currency_type ?? "").trim();
+      if (currency.toUpperCase() !== "USD")
+        problems.push(
+          `${fact.label} is ${currency ? `in ${currency}` : "in no named currency"} in ClickUp, not USD, so ${words.who} would not write it.`,
+        );
+      continue;
+    }
+    const on: Row[] = Array.isArray(f.type_config?.options)
+      ? f.type_config.options
+      : [];
+    for (const [optionId, name] of Object.entries(fact.options ?? {}))
+      if (!on.some(o => String(o.id) === optionId))
+        problems.push(
+          `${fact.label} has no "${name}" option in ClickUp any more, so a ${words.who} write with it would fail.`,
+        );
+  }
+  return problems;
+}
+
+/**
  * Against ClickUp, reads only: the six Client Happiness options the planner writes are on the field (and the
  * database names the same six), Last POC and Last Check-in Call are date fields, the three field ids are the
  * ones the database plans with, and each canary card (the test card when none is set) is on Clients - Mahara.
+ * Each lane CLICKUP_WRITEBACK_FORMS_KEYS lists adds its own fields: kickoff or onboarding card_facts' (Daily Budget a
+ * USD currency field), profile_backfill the Client Profile (text), new_client the sale's two texts and its link.
  */
 export async function formsDoctorChecks(
   inputs: Row,
@@ -1745,32 +2020,34 @@ export async function formsDoctorChecks(
         problems.push(
           `The ${form} writes a field (${id.slice(0, 8)}) that is not on the Clients - Mahara list.`,
         );
-    // card_facts' five fields (plan B8), while the kickoff or the onboarding is switched on: each on the list, of its
-    // kind, with every option the writer may send (read live; the ids came from a snapshot).
+    // card_facts' fields (plan B8), while the kickoff or the onboarding is switched on: each on the list, of its
+    // kind, with every option the writer may send (read live; the ids came from a snapshot), and Daily Budget in USD.
     if (forms.includes("kickoff") || forms.includes("onboarding"))
-      for (const [id, fact] of Object.entries(CARD_FACTS)) {
-        const f = fields.find(x => x.id === id);
-        if (!f) {
-          problems.push(
-            `Card facts write ${fact.label} (${id.slice(0, 8)}), which is not on the Clients - Mahara list.`,
-          );
-          continue;
-        }
-        if (String(f.type) !== fact.kind) {
-          problems.push(
-            `${fact.label} is a ${String(f.type)} field in ClickUp, not ${fact.kind}, so card facts would not write it.`,
-          );
-          continue;
-        }
-        const on: Row[] = Array.isArray(f.type_config?.options)
-          ? f.type_config.options
-          : [];
-        for (const [optionId, name] of Object.entries(fact.options ?? {}))
-          if (!on.some(o => String(o.id) === optionId))
-            problems.push(
-              `${fact.label} has no "${name}" option in ClickUp any more, so a card facts write with it would fail.`,
-            );
-      }
+      problems.push(
+        ...factsFieldProblems(fields, CARD_FACTS, {
+          writes: (label, id) =>
+            `Card facts write ${label} (${id}), which is not on the Clients - Mahara list.`,
+          who: "card facts",
+        }),
+      );
+    // The Client Profile backfill's one field (item 2), while its one-shot lane is open.
+    if (forms.includes("profile_backfill"))
+      problems.push(
+        ...factsFieldProblems(fields, PROFILE_BACKFILL, {
+          writes: (label, id) =>
+            `The Client Profile backfill writes ${label} (${id}), which is not on the Clients - Mahara list.`,
+          who: "the backfill",
+        }),
+      );
+    // The sale's card facts (item 6), while new_client is switched on.
+    if (forms.includes("new_client"))
+      problems.push(
+        ...factsFieldProblems(fields, SALE_FACTS, {
+          writes: (label, id) =>
+            `The sale's card facts write ${label} (${id}), which is not on the Clients - Mahara list.`,
+          who: "the sale's card facts",
+        }),
+      );
     for (const key of ["last_poc", "last_checkin_call"] as const) {
       const f = fields.find(x => x.id === FORM_FIELDS[key]);
       if (!f)

@@ -1481,7 +1481,9 @@ def plan_lines(form: str, out: dict, mods: dict, ctx: dict) -> list:
     # An effect the planner plans that is neither Make's nor registered is an addition no INTENDED entry names.
     for key in sorted({str(e.get("key")) for e in out["effects"] if isinstance(e, dict)} - KNOWN_EFFECTS[form]):
         lines.append((key if NAME.match(key) else "effect", "differs: an addition no INTENDED entry registers"))
-    # Full refs: the kickoff's own questions all start c0000001, so a cut ref cannot say which map to fix.
+    # Full refs: the kickoff's own questions all start c0000001, so a cut ref cannot say which map to fix. An answer
+    # Make prints that the cockpit cannot map also loses its line in the cockpit's texts: KFRCXPFx's fifth Meta choice
+    # ("My Account is restricted", ddf2767d) was one until 20261103b (finding F3).
     unmapped = sorted({str(u) for u in out.get("unmapped") or []})
     if unmapped:
         lines.append(("answers", f"differs: the cockpit maps no option for {', '.join(unmapped)}"))

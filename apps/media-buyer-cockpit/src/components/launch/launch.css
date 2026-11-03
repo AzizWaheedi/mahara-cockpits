@@ -84,3 +84,18 @@
 .launch-card-fixed dd a { display: inline-flex; align-items: center; gap: 4px; }
 .launch-card-fixed > div:last-child { border-bottom: 0; }
 @media(max-width: 600px) { .launch-card-questions { grid-template-columns: minmax(0, 1fr); } .launch-card-form { padding: 14px; } .launch-card-form-head { flex-direction: column; } .launch-card-tag { max-width: 100%; } }
+/* The agreed budget under the budget field (20261103e): every source found, the default on the teal spine. */
+.launch-agreed { display: grid; gap: 8px; margin-top: -6px; max-width: 520px; }
+.launch-agreed ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
+.launch-agreed li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 9px 0 9px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.launch-agreed li.is-default { box-shadow: inset 2px 0 var(--mahara-teal, var(--primary)); }
+.launch-agreed-label { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
+.launch-agreed-usd { font-variant-numeric: tabular-nums; font-weight: 500; }
+.launch-agreed li.is-held .launch-agreed-usd { color: var(--muted-foreground); font-weight: 400; }
+.launch-agreed li > small { font-size: 11px; color: var(--muted-foreground); }
+.launch-agreed li > .launch-agreed-note { flex-basis: 100%; display: flex; align-items: baseline; gap: 7px; line-height: 1.5; }
+.launch-agreed-note .launch-dot { transform: translateY(-1px); }
+.launch-agreed button { font-size: 11px; font-weight: 500; color: var(--mahara-teal, var(--primary)); min-height: 28px; padding: 0 2px; border-radius: 6px; }
+.launch-agreed button:hover { text-decoration: underline; text-underline-offset: 3px; }
+.launch-agreed button:focus-visible { outline: 2px solid var(--mahara-teal, var(--primary)); outline-offset: 2px; }
+.launch-agreed-empty { font-size: 12px; line-height: 1.6; color: var(--muted-foreground); margin-top: -6px; }
