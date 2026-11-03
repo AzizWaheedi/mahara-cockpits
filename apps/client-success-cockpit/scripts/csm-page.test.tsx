@@ -776,33 +776,6 @@ mock.module("@/components/tasks/RequestForm", () => ({
   },
 }));
 
-/**
- * The app's Sheet without Radix's portal: an open sheet draws its content in
- * place (happy-dom here has no layout for Radix's presence), a closed one
- * draws nothing, as Radix does. Only the ticket sheet's content is read.
- */
-mock.module("@/components/ui/sheet", () => {
-  const { createElement: h } = require("react");
-  const pass =
-    (tag: string) =>
-    ({ children }: { children?: unknown }) =>
-      h(tag, null, children);
-  return {
-    Sheet: ({ open, children }: { open?: boolean; children?: unknown }) =>
-      open ? h("div", { "data-sheet": "open" }, children) : null,
-    SheetContent: ({ children }: { children?: unknown }) =>
-      h("div", { role: "dialog" }, children),
-    SheetTitle: pass("h2"),
-    SheetDescription: pass("p"),
-    SheetHeader: pass("div"),
-    SheetFooter: pass("div"),
-    SheetClose: pass("span"),
-    SheetTrigger: pass("span"),
-    SheetPortal: pass("div"),
-    SheetOverlay: () => null,
-  };
-});
-
 mock.module("sonner", () => ({
   toast: {
     success: () => {},
@@ -812,16 +785,8 @@ mock.module("sonner", () => ({
   },
 }));
 
-const { CsmPage, MY_REQUESTS_LIMIT, requestsSince } = await import(
-  "../src/pages/CsmPage"
-);
-const { forgetWriterMode } = await import("../src/lib/requestsOpen");
-const { ClientPerformancePage } = await import(
-  "../src/pages/ClientPerformancePage"
-);
-const { createRoot } = await import("react-dom/client");
-const { createElement, act: reactAct } = await import("react");
-const { MemoryRouter } = await import("react-router");
+// The test DOM is in place before the page is imported: Radix decides at import time whether
+// it has a document, and Bun shares that module with every other file in the same run.
 const { Window } = await import("happy-dom");
 
 const originalGlobalProps: Record<string, any> = {};
@@ -836,6 +801,15 @@ const globalKeys = [
   "Node",
   "getComputedStyle",
   "IS_REACT_ACT_ENVIRONMENT",
+  // Bun has its own Event classes; Radix's sheet dispatches them on happy-dom elements, so the window's are used.
+  "Event",
+  "CustomEvent",
+  "KeyboardEvent",
+  "MouseEvent",
+  "PointerEvent",
+  "FocusEvent",
+  "InputEvent",
+  "NodeFilter",
 ];
 for (const k of globalKeys) {
   originalGlobalProps[k] = (globalThis as any)[k];
@@ -851,6 +825,17 @@ g.HTMLFormElement = win.HTMLFormElement;
 g.MutationObserver = win.MutationObserver;
 g.Element = win.Element;
 g.Node = win.Node;
+for (const k of [
+  "Event",
+  "CustomEvent",
+  "KeyboardEvent",
+  "MouseEvent",
+  "PointerEvent",
+  "FocusEvent",
+  "InputEvent",
+  "NodeFilter",
+])
+  g[k] = (win as unknown as Record<string, unknown>)[k];
 
 for (const key of Object.getOwnPropertyNames(win)) {
   if (
@@ -865,6 +850,17 @@ for (const key of Object.getOwnPropertyNames(win)) {
 }
 g.getComputedStyle ??= win.getComputedStyle.bind(win);
 g.IS_REACT_ACT_ENVIRONMENT = true;
+
+const { CsmPage, MY_REQUESTS_LIMIT, requestsSince } = await import(
+  "../src/pages/CsmPage"
+);
+const { forgetWriterMode } = await import("../src/lib/requestsOpen");
+const { ClientPerformancePage } = await import(
+  "../src/pages/ClientPerformancePage"
+);
+const { createRoot } = await import("react-dom/client");
+const { createElement, act: reactAct } = await import("react");
+const { MemoryRouter } = await import("react-router");
 
 afterAll(() => {
   for (const k of Object.keys(originalGlobalProps)) {
