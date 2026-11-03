@@ -227,5 +227,47 @@ class Monitors(unittest.TestCase):
         self.assertEqual(hermes_monitors.run_jobs(make(snap)).status, WARN)
 
 
+class BillingAgent(unittest.TestCase):
+    """Maher's and Faris's daily runs fail loudly: Hermes keeps their failures local."""
+
+    def jobs(self, **maher):
+        m = {"id": "37e587ed75c1", "name": "Billing Agent Daily", "enabled": True, "last_status": "ok",
+             "last_run_at": fakes.ago(8 * 60)}
+        m.update(maher)
+        f = {"id": "034aef11ec5d", "name": "Overdue payments daily check", "enabled": True, "last_status": "ok",
+             "last_run_at": fakes.ago(8 * 60)}
+        return fakes.snapshot(hermes_jobs=[m, f])
+
+    def test_both_ran_today(self):
+        self.assertEqual(hermes_monitors.run_billing_agent(make(self.jobs())).status, OK)
+
+    def test_an_expired_sign_in_fails_and_names_the_sign_in(self):
+        r = hermes_monitors.run_billing_agent(make(self.jobs(
+            last_status="error", last_error="RuntimeError: HTTP 401: OAuth access token has expired. Re-authenticate to continue.")))
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("Billing Agent Daily failed its last run", r.summary)
+        self.assertIn("hermes auth add anthropic", r.action)
+        self.assertEqual(r.items, ["Billing Agent Daily"])
+
+    def test_a_rate_limit_fails_without_blaming_the_sign_in(self):
+        r = hermes_monitors.run_billing_agent(make(self.jobs(
+            last_status="error", last_error="RuntimeError: HTTP 429: This request would exceed your account's rate limit")))
+        self.assertEqual(r.status, FAIL)
+        self.assertNotIn("hermes auth add", r.action)
+
+    def test_a_missed_morning_or_a_switched_off_job_fails(self):
+        self.assertEqual(hermes_monitors.run_billing_agent(make(self.jobs(last_run_at=fakes.ago(27 * 60)))).status, FAIL)
+        self.assertEqual(hermes_monitors.run_billing_agent(make(self.jobs(enabled=False))).status, FAIL)
+
+    def test_faris_may_skip_a_friday(self):
+        snap = self.jobs()
+        snap["hermes_jobs"][1]["last_run_at"] = fakes.ago(32 * 60)
+        self.assertEqual(hermes_monitors.run_billing_agent(make(snap)).status, OK)
+
+    def test_it_is_not_quiet_behind_the_hermes_monitors(self):
+        from checks import by_id
+        self.assertIsNone(by_id()["billing-agent"].quiet_because)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -914,3 +914,110 @@
   text-decoration: line-through;
 }
 
+
+/* --- An amount and its currency, a percent (WAVE56-CONTRACT.md 5.16) ------ */
+
+/* The number, then the currency as one segmented choice, then the quiet
+   "Same as the sale" fill; at phone width the segments wrap under the number. */
+.fs-amount {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+}
+.fs-amount-input {
+  flex: 0 1 160px;
+  width: 160px;
+  font-variant-numeric: tabular-nums;
+}
+.fs-seg {
+  display: inline-flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  border: 1px solid var(--fs-edge);
+  border-radius: 12px;
+  background: var(--card);
+  overflow: hidden;
+}
+.fs-seg-item {
+  position: relative;
+  display: inline-flex;
+  cursor: pointer;
+}
+.fs-seg-item input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  margin: 0;
+  opacity: 0;
+  appearance: none;
+}
+.fs-seg-item span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  min-height: 40px;
+  padding: 8px 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1;
+  color: var(--muted-foreground);
+  transition: background-color 120ms ease;
+}
+.fs-seg-item + .fs-seg-item span {
+  border-inline-start: 1px solid var(--border);
+}
+.fs-seg-item:hover span {
+  background: var(--fs-quiet);
+  color: var(--foreground);
+}
+.fs-seg-item input:checked + span {
+  background: var(--fs-on);
+  color: var(--foreground);
+  font-weight: 600;
+}
+.fs-seg-item input:focus-visible + span {
+  outline: 2px solid var(--fs-ink);
+  outline-offset: -2px;
+}
+.fs-quick {
+  font-variant-numeric: tabular-nums;
+}
+.fs-live {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.fs-suffix {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 120px;
+  max-width: 100%;
+}
+.fs-percent-input {
+  padding-inline-end: 32px;
+  font-variant-numeric: tabular-nums;
+}
+.fs-suffix-mark {
+  position: absolute;
+  inset-inline-end: 12px;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  pointer-events: none;
+}
+@media (max-width: 767px) {
+  .fs-amount-input {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fs-seg-item span {
+    transition: none;
+  }
+}

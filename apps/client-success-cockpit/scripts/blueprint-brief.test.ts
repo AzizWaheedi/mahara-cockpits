@@ -387,3 +387,51 @@ test("the brief and the notes name the five services as the slides do", async ()
   ] as const)
     expect(B.SERVICE_LABEL[k]).toBe(SERVICES[k].name.en);
 });
+
+describe("the daily budget against the kickoff's dollars (CEO item 5, budget-ads.md 5.3 S3)", () => {
+  const brief = (usd: number, extra: Partial<B.BlueprintPayload>) =>
+    B.launchBrief(
+      base(1, { ...PART1, daily_budget: { usd, said: "150 SAR" } }, extra),
+      { assigned: true },
+    )
+      .split("\n")
+      .find(l => l.startsWith("Daily budget:"));
+
+  test("dollars equal to the cent: no false correction, the kickoff's own words said", () => {
+    expect(
+      brief(39.99, {
+        kickoff: { budgetSaid: "150 SAR" },
+        budgetUsd: 39.99,
+        budgetCurrency: "SAR",
+      }),
+    ).toBe("Daily budget: 39.99 USD a day (the kickoff said 150 SAR)");
+    expect(
+      brief(60, {
+        kickoff: { budgetSaid: "60 USD" },
+        budgetUsd: 60,
+        budgetCurrency: "USD",
+      }),
+    ).toBe("Daily budget: 60 USD a day");
+  });
+
+  test("a different figure on the call is a correction; without the dollars the words decide, as before", () => {
+    expect(
+      brief(50, {
+        kickoff: { budgetSaid: "150 SAR" },
+        budgetUsd: 39.99,
+        budgetCurrency: "SAR",
+      }),
+    ).toBe(
+      'Daily budget: 50 USD a day (the kickoff said "150 SAR"; corrected on the call)',
+    );
+    // Before B5 the first number of the words is compared: 150 against $39.99 reads as corrected.
+    expect(brief(39.99, { kickoff: { budgetSaid: "150 SAR" } })).toBe(
+      'Daily budget: 39.99 USD a day (the kickoff said "150 SAR"; corrected on the call)',
+    );
+    expect(B.budgetNote(40, "$40 a day", null, null)).toBe("");
+    expect(B.budgetNote(40, null, 40, "USD")).toBe("");
+    expect(B.budgetNote(undefined, null, 40, "USD")).toBe(
+      ' (the kickoff said "40 USD"; corrected on the call)',
+    );
+  });
+});

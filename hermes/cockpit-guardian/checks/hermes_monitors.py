@@ -7,6 +7,7 @@ so "Hermes already alerts" no longer holds.
 """
 from __future__ import annotations
 
+import re
 from statistics import median_high
 
 from guard.context import Context, SourceError
@@ -139,6 +140,53 @@ def run_jobs(ctx: Context) -> Result:
     return ok(f"All {len(jobs) - len(off)} enabled Hermes jobs passed their last run ({len(off)} switched off).", evidence=ev)
 
 
+# The billing jobs the CEO reads every morning: Maher's digest in #client-billing and Faris's overdue
+# questions. Hermes keeps their failures local (deliver: local), so hermes-jobs' quiet warning was all
+# there was: on 2 Nov 2026 both failed at 06:00 UTC on an expired Anthropic sign-in and nobody heard.
+# Each is (id, name, the longest gap between runs in minutes); Faris skips Fridays.
+BILLING_JOBS = (("37e587ed75c1", "Billing Agent Daily", 26 * 60),
+                ("034aef11ec5d", "Overdue payments daily check", 50 * 60))
+SIGNED_OUT_ERROR = re.compile(r"(?i)\b401\b|oauth access token|re-authenticate")
+
+
+def run_billing_agent(ctx: Context) -> Result:
+    jobs = ctx.snap_part("hermes_jobs")
+    if not isinstance(jobs, list) or not jobs:
+        raise SourceError("Hermes's jobs file is empty")
+    problems: list[str] = []
+    names: list[str] = []
+    signed_out = False
+    ev: dict = {}
+    for jid, name, gap in BILLING_JOBS:
+        j = next((x for x in jobs if x.get("id") == jid), None) or next((x for x in jobs if x.get("name") == name), None)
+        if j is None:
+            problems.append(f"{name} is gone from Hermes's jobs")
+            names.append(name)
+            continue
+        age = age_min(j.get("last_run_at"), ctx.now)
+        ev[name] = {"enabled": j.get("enabled"), "last_status": j.get("last_status"),
+                    "last_run_at": j.get("last_run_at"), "error": clean(j.get("last_error"), 120)}
+        if not j.get("enabled"):
+            problems.append(f"{name} is switched off")
+        elif j.get("last_status") not in ("ok", None):
+            signed_out = signed_out or bool(SIGNED_OUT_ERROR.search(str(j.get("last_error") or "")))
+            problems.append(f"{name} failed its last run ({clean(j.get('last_error'), 90)})")
+        elif age is None or age > gap:
+            problems.append(f"{name} has not run for {ago(age)}")
+        else:
+            continue
+        names.append(name)
+    if problems:
+        action = ("Sign Hermes's Anthropic provider in again on the VPS as user hermes (never root): "
+                  "`hermes auth add anthropic --type oauth`, then `hermes cron run 37e587ed75c1`."
+                  if signed_out else
+                  "Read the job's last_error and its output in Hermes (data/cron/output/<id>/), then "
+                  "`hermes cron run <id>` as user hermes.")
+        return fail("The billing agent's daily runs are not working: " + "; ".join(problems) + ".",
+                    evidence=ev, action=action, items=names)
+    return ok("Maher's billing digest and Faris's overdue check ran on schedule.", evidence=ev)
+
+
 def run_backup(ctx: Context) -> Result:
     mons = ctx.snap_part("monitors")
     sites = mons.get("public-sites") or {}
@@ -197,6 +245,13 @@ CHECKS = [
           means="Hermes's own scheduled jobs pass.", severity="low", reads="/opt/data/cron/jobs.json (last_status, last_error)",
           threshold="An enabled job whose last run failed: warn (the Cron guardian job already watches these).",
           run=run_jobs, quiet_because="hermes", owner="Hermes", action="Read the job's last_error in Hermes."),
+    Check(id="billing-agent", area="monitors", name="Billing agent",
+          means="Maher's daily billing digest and Faris's overdue check run, so late payers are chased each morning.",
+          severity="high", reads="/opt/data/cron/jobs.json (jobs 37e587ed75c1 and 034aef11ec5d: enabled, last_status, "
+                                 "last_error, last_run_at)",
+          threshold="Either job switched off, failing its last run, or not run for 26 h (Faris: 50 h, he skips Fridays): fail.",
+          run=run_billing_agent, owner="the CEO",
+          action="Read the job's last_error in Hermes, fix it, then run the job once."),
     Check(id="vps-backup", area="monitors", name="VPS backup", means="The VPS is backed up to GitHub nightly.",
           severity="medium", reads="The public-sites monitor's backup-vps incident and the Nightly Backup job",
           threshold="Either says the backup failed or is old: fail.", run=run_backup, quiet_because="hermes",

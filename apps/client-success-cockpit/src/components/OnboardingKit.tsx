@@ -52,6 +52,12 @@ import {
   type Step,
   stepOf,
 } from "@/lib/onboardingCore";
+import {
+  readSaleTie,
+  type SaleView,
+  tiedByTone,
+  tiedByWords,
+} from "@/lib/saleTie";
 import { cn } from "@/lib/utils";
 import { openNamed, PresentDeckLinks } from "@/present/PresentButton";
 
@@ -426,6 +432,7 @@ export function OnboardingKit({
   blueprintRead,
   noticesRead,
   timelineRead,
+  saleRead,
 }: {
   client: Client;
   /** undefined while loading, null when the table has no row for the card. */
@@ -445,6 +452,8 @@ export function OnboardingKit({
   noticesRead?: (taskId: string) => Promise<NoticeRead>;
   /** Stand-in for cockpit_csm_client_timeline (the Blueprint nudge's calls). */
   timelineRead?: (taskId: string) => Promise<Pick<Timeline, "calls">>;
+  /** Stand-in for cockpit_csm_sale_read (the sale tied to this card, CEO item 6). */
+  saleRead?: (taskId: string) => Promise<SaleView>;
 }) {
   const auth = useCockpitAuth();
   const [reading, setReading] = useState<Reading | null>(null);
@@ -473,15 +482,38 @@ export function OnboardingKit({
           ? "done"
           : "later";
 
+  const db = auth.client;
+  // The sale tied to this card (sale-tie.md 2.10): its go-live and handoff
+  // answers stand in while the card's own fields are still empty.
+  const saleReader = useMemo(
+    () => saleRead ?? (db ? (id: string) => readSaleTie(db, id) : null),
+    [saleRead, db],
+  );
+  const saleLoaded = useCardRead(
+    kit !== undefined,
+    client.taskId,
+    saleReader,
+    bpAgain,
+  );
+  const sale =
+    saleLoaded && !failed(saleLoaded) && saleLoaded.state === "tied"
+      ? saleLoaded
+      : null;
   const links = kit?.links ?? {};
   const h = kit?.handover ?? {};
   const f = kit?.forms ?? {};
-  const salesCall = links.sales_call ?? links.fathom;
+  const salesCall =
+    links.sales_call ?? links.fathom ?? sale?.salesCallLink ?? undefined;
+  const handoff = h.handoff_risks ?? sale?.handoffProblems ?? null;
+  const goLive = h.go_live ?? sale?.goLive ?? null;
   const notes = h.closer_notes
     ? h.closer_notes
     : [
-        h.handoff_risks ? `Handoff risks: ${h.handoff_risks}` : "",
-        h.go_live ? `Go live: ${h.go_live}` : "",
+        handoff ? `Handoff problems: ${handoff}` : "",
+        goLive ? `Go-live expectation: ${goLive}` : "",
+        sale?.expectations
+          ? `What they believe they're getting: ${sale.expectations}`
+          : "",
       ]
         .filter(Boolean)
         .join("\n\n");
@@ -507,7 +539,6 @@ export function OnboardingKit({
   const status = bp && !failed(bp) ? bp : null;
   const closed = Boolean(status?.parts?.["2"]);
   const kickoffId = f.kickoff?.response_id ?? kickSend?.responseId ?? null;
-  const db = auth.client;
   const noticeReader = useMemo(
     () => noticesRead ?? (db ? (id: string) => readNotices(db, id) : null),
     [noticesRead, db],
@@ -637,8 +668,8 @@ export function OnboardingKit({
               label="Sales call"
               status={
                 salesCall
-                  ? h.closer
-                    ? `Closed by ${h.closer}`
+                  ? (h.closer ?? sale?.closer)
+                    ? `Closed by ${h.closer ?? sale?.closer}`
                     : null
                   : "No recording on the card. It comes from the closer's New Client Form."
               }
@@ -698,7 +729,15 @@ export function OnboardingKit({
             {notes ? (
               <details className="pl-3 text-xs">
                 <summary className="cursor-pointer text-sm font-medium">
-                  Closer's notes
+                  Notes from the sale
+                  {sale ? (
+                    <Chip
+                      tone={tiedByTone(sale.tiedBy)}
+                      className="ml-2 align-middle font-normal"
+                    >
+                      {tiedByWords(sale.tiedBy)}
+                    </Chip>
+                  ) : null}
                 </summary>
                 <div
                   className="mt-1.5 whitespace-pre-line break-words text-muted-foreground"

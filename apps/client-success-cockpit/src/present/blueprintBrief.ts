@@ -96,6 +96,14 @@ export interface BlueprintPayload {
     >
   > | null;
   cardBudget?: number | null;
+  /**
+   * The kickoff's daily budget in dollars at the cockpit's rate, and the
+   * currency it was given in (CEO item 5, forms.kickoff.budget through B5's
+   * payload). With it the brief compares dollars with dollars, so "150 SAR"
+   * against $39.99 is never called a correction.
+   */
+  budgetUsd?: number | null;
+  budgetCurrency?: string | null;
   settings?: {
     assignee: { id: string; label: string | null } | null;
     pack: string | null;
@@ -304,6 +312,35 @@ function grouped(n: number): string {
   const [whole, frac] = String(n).split(".");
   return whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",") + (frac ? `.${frac}` : "");
 }
+/**
+ * What the brief says beside the confirmed daily budget. With the kickoff's
+ * converted dollars (CEO item 5) it compares dollars with dollars to the
+ * cent: equal says where the figure came from when it was another currency
+ * ("the kickoff said 150 SAR"); different says it was corrected on the call.
+ * Without them, the first number of what was said, as before.
+ */
+export function budgetNote(
+  usd: number | undefined,
+  said: string | null,
+  kickUsd: number | null | undefined,
+  kickCurrency: string | null | undefined,
+): string {
+  const k =
+    typeof kickUsd === "number" && Number.isFinite(kickUsd) ? kickUsd : null;
+  const cur =
+    typeof kickCurrency === "string" ? kickCurrency.trim().toUpperCase() : "";
+  if (k !== null) {
+    const was = said ?? `${grouped(k)} USD`;
+    if (usd === undefined || Math.round(usd * 100) !== Math.round(k * 100))
+      return ` (the kickoff said "${was}"; corrected on the call)`;
+    return cur && cur !== "USD" && said ? ` (the kickoff said ${said})` : "";
+  }
+  const kickNumber = firstNumber(said);
+  return said && kickNumber !== usd
+    ? ` (the kickoff said "${said}"; corrected on the call)`
+    : "";
+}
+
 /** The first number in what was said, Arabic-Indic digits read too. */
 export function firstNumber(said: unknown): number | null {
   if (typeof said !== "string") return null;
@@ -518,11 +555,7 @@ export function launchBrief(
   }
   const usd = (a.daily_budget as { usd?: number } | undefined)?.usd;
   const said = str(k.budgetSaid);
-  const kickNumber = firstNumber(said);
-  const note =
-    said && kickNumber !== usd
-      ? ` (the kickoff said "${said}"; corrected on the call)`
-      : "";
+  const note = budgetNote(usd, said, p.budgetUsd, p.budgetCurrency);
   lines.push(
     `Daily budget: ${usd !== undefined ? `${grouped(Number(usd))} USD a day` : "not confirmed"}${note}`,
   );

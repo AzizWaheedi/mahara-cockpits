@@ -1,5 +1,6 @@
 import type { Timeline } from "@/lib/csmCalls";
 import type { FormEntry, LinkKey, OnboardingRow } from "@/lib/onboardingCore";
+import type { SaleView } from "@/lib/saleTie";
 import type { DeckSources } from "@/present/sources";
 import type { Prefill } from "./prefill";
 
@@ -108,6 +109,13 @@ export interface FormContext {
    * the trail then has no Slack stop.
    */
   notices?: NoticeRead | null;
+  /**
+   * cockpit_csm_sale_read, this card (CEO item 6): the sale tied to it, `none`,
+   * `off` while sale ties are not turned on, or `missing` while the function is
+   * not on the database (or the seat is not one it serves). Undefined when
+   * this screen does not read it; the rail then keeps the card's own rows.
+   */
+  sale?: SaleView | null;
   me: { email: string; firstName: string | null };
   /** The server's clock at the last read, and this browser's clock then. */
   now: string;
@@ -118,6 +126,7 @@ export interface FormContext {
     timeline?: string;
     sends?: string;
     notices?: string;
+    sale?: string;
   };
 }
 
@@ -153,6 +162,8 @@ export interface RailRow {
   suggest?: boolean;
   /** A "Check again" button that re-reads the call store, while the value is missing. */
   recheck?: boolean;
+  /** A chip beside the value ("Tied by phone", the sale stub). */
+  chip?: { label: string; tone: "accent" | "neutral" | "warn" };
   /** "Still missing" rows: the row in the panel this one points to. */
   anchor?: string;
   /** "Still missing" rows: a copy action in the row itself ("Copy their onboarding link"). */

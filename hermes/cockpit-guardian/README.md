@@ -576,4 +576,5 @@ waits on a person in Messages by design (Z36).
 | `hermes-monitor-dialer` |  | No tick for 3 min, or an alert undelivered for 30 min: fail; open incidents: listed. |  |
 | `deadman-beats` |  | A Hermes monitor's beat older than 15 min, or more KV writes a day than Cloudflare's free 1,000: warn. |  |
 | `hermes-jobs` |  | An enabled job whose last run failed: warn (the Cron guardian job already watches these). |  |
+| `billing-agent` |  | Maher's Billing Agent Daily or Faris's overdue check switched off, failing its last run, or not run for 26 h (Faris 50 h): fail. Hermes keeps their failures local, so this one alerts. |  |
 | `vps-backup` |  | Either says the backup failed or is old: fail. |  |

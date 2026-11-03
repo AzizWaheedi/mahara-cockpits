@@ -47,6 +47,7 @@ import {
 } from "@/components/ui/sheet";
 import {
   type Answers,
+  amountParts,
   type CallPick,
   draftKey,
   type FieldDef,
@@ -917,6 +918,91 @@ function Field({
           {str || "Nobody holds this yet"}
         </p>
       </div>
+    );
+
+  if (f.type === "amount") {
+    const currencies = f.currencies?.length ? f.currencies : ["USD"];
+    const parts = amountParts(value, currencies);
+    const line = f.live ? f.live(value) : null;
+    return (
+      <FieldShell
+        id={id}
+        f={f}
+        answers={answers}
+        error={error}
+        from={from}
+        group
+      >
+        <div className="fs-amount">
+          <input
+            id={id}
+            className="fs-input fs-amount-input"
+            type="text"
+            inputMode="decimal"
+            autoComplete="off"
+            aria-label={`${f.label} (amount)`}
+            value={parts.amount}
+            placeholder={f.placeholder}
+            onChange={e => onChange({ ...parts, amount: e.target.value })}
+            {...aria}
+          />
+          <div
+            className="fs-seg"
+            role="radiogroup"
+            aria-label={`${f.label} (currency)`}
+          >
+            {currencies.map(c => (
+              <label key={c} className="fs-seg-item">
+                <input
+                  type="radio"
+                  name={`${id}-currency`}
+                  value={c}
+                  checked={parts.currency === c}
+                  onChange={() => onChange({ ...parts, currency: c })}
+                />
+                <span>{c}</span>
+              </label>
+            ))}
+          </div>
+          {f.quick ? (
+            <button
+              type="button"
+              className="fs-link fs-quick"
+              onClick={() => onChange(f.quick?.value)}
+            >
+              {f.quick.label}
+            </button>
+          ) : null}
+        </div>
+        {line ? (
+          <span className="fs-live" aria-live="polite">
+            {line}
+          </span>
+        ) : null}
+      </FieldShell>
+    );
+  }
+
+  if (f.type === "percent")
+    return (
+      <FieldShell id={id} f={f} answers={answers} error={error} from={from}>
+        <span className="fs-suffix">
+          <input
+            id={id}
+            className="fs-input fs-percent-input"
+            type="text"
+            inputMode="numeric"
+            autoComplete="off"
+            value={str}
+            placeholder={f.placeholder}
+            onChange={e => onChange(e.target.value)}
+            {...aria}
+          />
+          <span className="fs-suffix-mark" aria-hidden>
+            %
+          </span>
+        </span>
+      </FieldShell>
     );
 
   if (f.type === "longtext")

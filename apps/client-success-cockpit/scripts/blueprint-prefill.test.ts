@@ -8,6 +8,7 @@ import {
   servicesOf,
   summary,
 } from "../src/present/blueprintPrefill";
+import { kickoffBudgetOf } from "../src/present/blueprintSources";
 
 /**
  * What the Brand Blueprint knows before the call (docs/brand-blueprint/
@@ -159,6 +160,90 @@ describe("the daily figure (1.6)", () => {
       "The kickoff said KWD 15 a day: confirm it in dollars.",
     );
   });
+});
+
+describe("the kickoff's amount and currency (CEO item 5, budget-ads.md 5.3 S3)", () => {
+  test("the converted dollars come first, with a note to confirm them in dollars when the kickoff was another currency", () => {
+    const sar = blueprintPrefill(
+      base({
+        forms: { kickoff: KICK([k("cf53482c-1", "Q", "150 SAR")]) },
+        budgetUsd: 39.99,
+        budgetCurrency: "SAR",
+        cardBudget: 30,
+      }),
+    );
+    expect(sar.values.daily_budget).toMatchObject({
+      value: { usd: 39.99, said: "150 SAR" },
+      from: "kickoff",
+      kind: "P",
+      note: "From 150 SAR at the cockpit's rate: confirm it in dollars.",
+    });
+    expect(sar.notes).toEqual([
+      "From 150 SAR at the cockpit's rate: confirm it in dollars.",
+    ]);
+    // Dollars need no note, and the card's figure never wins over the kickoff's.
+    const usd = blueprintPrefill(
+      base({
+        forms: { kickoff: KICK([k("cf53482c-1", "Q", "60 USD")]) },
+        budgetUsd: 60,
+        budgetCurrency: "usd",
+        cardBudget: 30,
+      }),
+    );
+    expect(usd.values.daily_budget?.value).toEqual({ usd: 60, said: "60 USD" });
+    expect(usd.values.daily_budget?.note).toBeUndefined();
+    expect(usd.notes.join(" ")).not.toContain("confirm it in dollars");
+  });
+
+  test("no rate (BHD) or no structured figure falls back to the words, then the card, as before", () => {
+    const bhd = blueprintPrefill(
+      base({
+        forms: { kickoff: KICK([k("cf53482c-1", "Q", "20 BHD")]) },
+        budgetUsd: null,
+        budgetCurrency: "BHD",
+        cardBudget: 30,
+      }),
+    );
+    expect(bhd.values.daily_budget?.from).toBe("card.budget");
+    expect(bhd.notes).toContain(
+      "The kickoff said 20 BHD: confirm it in dollars.",
+    );
+    // A figure outside the field's range is not used, never read as a zero.
+    for (const bad of [0, 0.5, 100_001, Number.NaN])
+      expect(
+        blueprintPrefill(
+          base({
+            forms: { kickoff: KICK([k("cf53482c-1", "Q", "$40")]) },
+            budgetUsd: bad,
+            budgetCurrency: "USD",
+          }),
+        ).values.daily_budget?.value,
+      ).toEqual({ usd: 40, said: "$40" });
+  });
+});
+
+test("the Blueprint's read carries the kickoff's dollars on the kit (B5), else the read model's own budget; none is never 0", () => {
+  expect(
+    kickoffBudgetOf({ kit: { budgetUsd: 39.99, budgetCurrency: "SAR" } }),
+  ).toEqual({ usd: 39.99, currency: "SAR" });
+  // No rate: the currency without dollars.
+  expect(
+    kickoffBudgetOf({ kit: { budgetUsd: null, budgetCurrency: "bhd" } }),
+  ).toEqual({ usd: null, currency: "BHD" });
+  expect(
+    kickoffBudgetOf({ kit: { budgetUsd: null, budgetCurrency: null } }),
+  ).toBeNull();
+  expect(
+    kickoffBudgetOf({
+      kit: { forms: { kickoff: { budget: { usd: 60, currency: "USD" } } } },
+    }),
+  ).toEqual({ usd: 60, currency: "USD" });
+  expect(kickoffBudgetOf({ budgetUsd: 40, budgetCurrency: "USD" })).toEqual({
+    usd: 40,
+    currency: "USD",
+  });
+  expect(kickoffBudgetOf({ kit: { budgetUsd: "40" } })).toBeNull();
+  expect(kickoffBudgetOf({})).toBeNull();
 });
 
 describe("the statuses", () => {

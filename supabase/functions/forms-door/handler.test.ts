@@ -3,7 +3,9 @@
 // Typeform body, the record call's shape, each outcome forms-door:{form}
 // records (3.9), the termination survey and the pause request stored as legacy
 // records with their own keys, and no body, answer or hidden value in any log
-// line. A fake database and a signer written with
+// line; the sale tie's keys (4.19) from the New Client Form's typed answers only,
+// sent to cockpit_sale_tie_open alone, its failure kept off the answer, and the
+// raw phone never stored. A fake database and a signer written with
 // node:crypto, so the door's check (team-onboarding-intake/signature.ts) is held
 // against a second implementation. People, clients, links and values are invented.
 import { describe, expect, test } from "bun:test";
@@ -18,7 +20,10 @@ import {
   makeInput,
   MISSING_SECRET_TTL_MS,
   makeHandler,
+  NEW_CLIENT_REF,
   recordInput,
+  recordOf,
+  tieKeysOf,
   SECRET_TTL_MS,
   UNSIGNED_SEEN_TTL_MS,
 } from "./handler.ts";
@@ -125,6 +130,8 @@ type Fake = {
   make?: Row | { status: number; code: string; message: string };
   /** Stage 4: cockpit_form_onboarding_typeform's answer once onboarding is native. */
   door?: Row;
+  /** The sale tie (4.19): cockpit_sale_tie_open's answer, or a refusal. */
+  tie?: Row | { status: number; code: string; message: string };
 };
 
 function harness(over: Partial<Fake> = {}) {
@@ -224,6 +231,14 @@ function harness(over: Partial<Fake> = {}) {
         );
       return Response.json(r);
     }
+    if (path === "/rest/v1/rpc/cockpit_sale_tie_open") {
+      const r = (fake.tie ?? { ok: true, state: "waiting", tieId: 7, repeat: false }) as Row;
+      if (typeof r.status === "number")
+        return new Response(JSON.stringify({ message: r.message, code: r.code }), { status: r.status });
+      return Response.json(r);
+    }
+    if (path === "/rest/v1/rpc/cockpit_sale_tie_door_failed")
+      return Response.json({ ok: true });
     if (path === "/rest/v1/rpc/cockpit_forms_key_get") {
       if (fake.secret === "throw")
         return new Response(JSON.stringify({ message: "boom" }), {
@@ -1373,9 +1388,68 @@ describe("client onboarding and the New Client Form (waves 3-4, 4.7 and 4.8)", (
       "amount-ref",
     ]);
     const text = JSON.stringify(call);
-    for (const secretish of ["owner@harbour.example", "+965 0000 0002", "kept-out"])
+    // No email, no phone, and no raw phone (f322053a, a short_text, dropped by its ref).
+    for (const secretish of ["owner@harbour.example", "+965 0000 0002", "96500000002", NEW_CLIENT_REF.rawPhone, "kept-out", "tieKeys"])
       expect(text).not.toContain(secretish);
+    // The sale tie gets the two typed keys, after the record and its outcome.
+    expect(h.rpcs("cockpit_sale_tie_open")).toEqual([
+      {
+        p: {
+          externalId: "ncf0000token0001",
+          submittedAt: "2026-10-30T11:00:00Z",
+          tieKeys: { phone: "+965 0000 0002", email: "owner@harbour.example" },
+        },
+      },
+    ]);
+    const order = h.calls.map(c => c.path.replace("/rest/v1/rpc/", "")).filter(p => !p.startsWith("/"));
+    expect(order.slice(-3)).toEqual(["cockpit_form_record_make", "cockpit_forms_door_seen", "cockpit_sale_tie_open"]);
+    expect(h.rpcs("cockpit_sale_tie_door_failed")).toEqual([]);
     expect(h.logs).toEqual(["forms-door new_client recorded"]);
+  });
+
+  test("the sale tie's keys come from the form's typed phone and email answers only", () => {
+    const body = fixture("new-client-response.json").form_response;
+    expect(tieKeysOf(body)).toEqual({ phone: "+965 0000 0002", email: "owner@harbour.example" });
+    // A phone in a hidden field, the raw-phone short_text, or a typed answer under another ref is never a key.
+    const only = (answers: Row[], hidden: Row = {}) => tieKeysOf({ ...body, answers, hidden });
+    expect(only([], { phone: "+96500000003", email: "hidden@harbour.example" })).toEqual({ phone: null, email: null });
+    expect(only([{ type: "text", text: "96500000004", field: { ref: NEW_CLIENT_REF.rawPhone, type: "short_text" } }]))
+      .toEqual({ phone: null, email: null });
+    expect(only([
+      { type: "phone_number", phone_number: "+96500000005", field: { ref: "other-phone", type: "phone_number" } },
+      { type: "email", email: "other@harbour.example", field: { ref: "other-email", type: "email" } },
+      { type: "text", text: "+96500000006", field: { ref: NEW_CLIENT_REF.phone, type: "phone_number" } },
+    ])).toEqual({ phone: null, email: null });
+    expect(only([{ type: "email", email: "   ", field: { ref: NEW_CLIENT_REF.email, type: "email" } }])).toEqual({ phone: null, email: null });
+    // The record's input never carries them; the termination survey's mapping is unchanged by the raw-phone rule.
+    expect(recordOf(makeInput("new_client", body))).not.toHaveProperty("tieKeys");
+    expect(makeInput("onboarding", fixture("onboarding-response.json").form_response)).not.toHaveProperty("tieKeys");
+  });
+
+  test("a failed sale tie still answers 200, marks the door's health and logs no key; a repeat delivery opens the tie again", async () => {
+    const h = makeHarness({ tie: { status: 500, code: "XX000", message: "owner@harbour.example +965 0000 0002" } });
+    const raw = JSON.stringify(fixture("new-client-response.json"));
+    const headers = { "Typeform-Signature": sign(NCF_SECRET, raw) };
+    expect(await read(await h.post(raw, headers, NCF_ROUTE))).toEqual({ status: 200, body: { ok: true, inserted: true } });
+    expect(h.rpcs("cockpit_sale_tie_door_failed")).toEqual([{}]);
+    expect(h.rpcs("cockpit_forms_door_seen").at(-1)).toEqual({ p_form_key: "new_client", p_outcome: "recorded", p_reason: null });
+    expect(h.logs).toEqual(["forms-door new_client recorded"]);
+    for (const line of h.logs)
+      for (const secretish of ["owner@harbour.example", "+965 0000 0002", "96500000002", "ncf0000token0001"])
+        expect(line).not.toContain(secretish);
+    const repeat = makeHarness({ make: { inserted: false, responseId: "x", taskId: null, readModel: "not_onboarding" },
+      tie: { ok: true, state: "tied", tieId: 3, repeat: true } });
+    expect(await read(await repeat.post(raw, headers, NCF_ROUTE))).toEqual({ status: 200, body: { ok: true, inserted: false } });
+    expect(repeat.rpcs("cockpit_sale_tie_open")).toHaveLength(1);
+    // A store refusal never reaches the tie.
+    const refused = makeHarness({ make: { status: 400, code: "22023", message: "x" } });
+    expect((await refused.post(raw, headers, NCF_ROUTE)).status).toBe(500);
+    expect(refused.rpcs("cockpit_sale_tie_open")).toEqual([]);
+    // The client onboarding form never opens a tie.
+    const onb = makeHarness();
+    const onbRaw = JSON.stringify(fixture("onboarding-response.json"));
+    expect((await onb.post(onbRaw, { "Typeform-Signature": sign(ONB_SECRET, onbRaw) }, ONB_ROUTE)).status).toBe(200);
+    expect(onb.rpcs("cockpit_sale_tie_open")).toEqual([]);
   });
 
   test("a repeat is a repeat, a store refusal is 500 with the code only, and no log line holds a value", async () => {
@@ -1470,9 +1544,11 @@ describe("the golden inputs the backfill matches (scripts/dev/test_forms_legacy_
     for (const [payload, form, golden] of [
       ["onboarding-response.json", "onboarding", "onboarding-expected.json"],
       ["new-client-response.json", "new_client", "new-client-expected.json"],
-    ] as const)
-      expect(makeInput(form, fixture(payload).form_response, true)).toEqual(
-        fixture(golden).p,
-      );
+    ] as const) {
+      const input = makeInput(form, fixture(payload).form_response, true);
+      expect(recordOf(input)).toEqual(fixture(golden).p);
+      // The sale tie's keys ride beside the record, never in it (4.19).
+      expect(input.tieKeys).toEqual(fixture(golden).tieKeys);
+    }
   });
 });
