@@ -1691,5 +1691,1232 @@
         "receipt": "file_missing"
       }
     }
+  ],
+  "schemaV2About": "Client form schema version 2 (docs/forms/WAVE56-CONTRACT.md 4.22), the structured onboarding's language, kept apart so the version-1 tests read only their own parts. Written by onboarding-schema-v2 (B8); the client portal's client-form-schema-v2 (P2) copies this file byte for byte. A version-2 schema is the client onboarding's only, so its key is onboarding and its texts are kept as typed (line breaks as line feeds, both ends trimmed). New: rows (columns text, longtext, number, choice, tick; minRows, maxRows, addLabel), note (shown, never answered: unknown if sent), showIf with exactly one of equals, in (the checked answer is one of the list) or includes (the checked list holds the value), currencyFrom (display only). A question whose source is hidden or unanswered is hidden; an unanswered tick reads false. A rows answer is a list of objects; a row whose every cell is missing, null, a blank text or false is dropped before rows are counted; an answer that is not a list of objects answers required. A required rows question needs max(1, minRows) rows: none is required, fewer is rows_few, more than maxRows is rows_many; an optional one may be left empty, and once it has rows it takes minRows to maxRows of them. A cell's code (required, length, range, option, unknown) is keyed <question>.<row>.<column>, the row counted from 0 in the list as sent. stored is what the check keeps: the rows with something in them, each with its checked cells only; a rows question with any error keeps nothing.",
+  "schemaV2Schemas": {
+    "structured": {
+      "v": 2,
+      "key": "onboarding",
+      "title": {
+        "en": "Tell us about your work",
+        "ar": "عرّفونا على شغلكم"
+      },
+      "intro": null,
+      "minutes": 5,
+      "audience": "any",
+      "signer": "none",
+      "context": [],
+      "fields": [
+        {
+          "key": "about",
+          "type": "heading",
+          "required": false,
+          "label": {
+            "en": "About your business",
+            "ar": "عن شغلكم"
+          }
+        },
+        {
+          "key": "noSite",
+          "type": "tick",
+          "required": false,
+          "label": {
+            "en": "We don't have a website yet",
+            "ar": "ما عندنا موقع ليلحين"
+          }
+        },
+        {
+          "key": "site",
+          "type": "text",
+          "required": true,
+          "format": "url",
+          "maxLength": 1000,
+          "label": {
+            "en": "Website",
+            "ar": "الموقع"
+          },
+          "showIf": {
+            "key": "noSite",
+            "equals": false
+          }
+        },
+        {
+          "key": "ads",
+          "type": "choice",
+          "required": true,
+          "label": {
+            "en": "Have you run ads before?",
+            "ar": "شغّلتوا إعلانات قبل؟"
+          },
+          "options": [
+            {
+              "value": "yes",
+              "label": {
+                "en": "Yes",
+                "ar": "إي"
+              }
+            },
+            {
+              "value": "never",
+              "label": {
+                "en": "Never",
+                "ar": "أبد"
+              }
+            },
+            {
+              "value": "restricted",
+              "label": {
+                "en": "Our account is restricted",
+                "ar": "حسابنا مقيّد"
+              }
+            }
+          ]
+        },
+        {
+          "key": "access",
+          "type": "note",
+          "required": false,
+          "label": {
+            "en": "Give us access before the onboarding call.",
+            "ar": "عطونا صلاحية قبل مكالمة الانطلاق."
+          },
+          "showIf": {
+            "key": "ads",
+            "in": [
+              "yes",
+              "never"
+            ]
+          },
+          "link": {
+            "href": "https://app.leadsie.com/connect/maharamedia/manage",
+            "label": {
+              "en": "Give access",
+              "ar": "عطونا الصلاحية"
+            }
+          }
+        },
+        {
+          "key": "tools",
+          "type": "multi",
+          "required": true,
+          "label": {
+            "en": "How do clients book with you?",
+            "ar": "شلون يحجزون العملاء عندكم؟"
+          },
+          "options": [
+            {
+              "value": "whatsapp",
+              "label": {
+                "en": "WhatsApp messages",
+                "ar": "رسايل واتساب"
+              }
+            },
+            {
+              "value": "phone",
+              "label": {
+                "en": "Phone calls",
+                "ar": "اتصالات"
+              }
+            },
+            {
+              "value": "other_software",
+              "label": {
+                "en": "Other booking software",
+                "ar": "برنامج حجز ثاني"
+              }
+            }
+          ]
+        },
+        {
+          "key": "toolName",
+          "type": "text",
+          "required": true,
+          "maxLength": 100,
+          "label": {
+            "en": "Which booking software?",
+            "ar": "شنو اسم البرنامج؟"
+          },
+          "showIf": {
+            "key": "tools",
+            "includes": "other_software"
+          }
+        },
+        {
+          "key": "toolNote",
+          "type": "text",
+          "required": false,
+          "maxLength": 100,
+          "label": {
+            "en": "What is it called in your own words?",
+            "ar": "شنو تسمونه انتو؟"
+          },
+          "showIf": {
+            "key": "toolName",
+            "equals": "Other"
+          }
+        },
+        {
+          "key": "currency",
+          "type": "choice",
+          "required": true,
+          "label": {
+            "en": "Which currency do you price in?",
+            "ar": "بأي عملة تسعّرون؟"
+          },
+          "options": [
+            {
+              "value": "kwd",
+              "label": {
+                "en": "Kuwaiti dinar (KWD)",
+                "ar": "دينار كويتي"
+              }
+            },
+            {
+              "value": "sar",
+              "label": {
+                "en": "Saudi riyal (SAR)",
+                "ar": "ريال سعودي"
+              }
+            }
+          ]
+        },
+        {
+          "key": "services",
+          "type": "rows",
+          "required": true,
+          "minRows": 2,
+          "maxRows": 3,
+          "label": {
+            "en": "List your services.",
+            "ar": "اكتبوا خدماتكم."
+          },
+          "addLabel": {
+            "en": "Add another service",
+            "ar": "ضيفوا خدمة ثانية"
+          },
+          "columns": [
+            {
+              "key": "name",
+              "type": "text",
+              "required": true,
+              "maxLength": 20,
+              "label": {
+                "en": "Service",
+                "ar": "الخدمة"
+              }
+            },
+            {
+              "key": "detail",
+              "type": "longtext",
+              "required": false,
+              "maxLength": 40,
+              "label": {
+                "en": "Details",
+                "ar": "التفاصيل"
+              }
+            },
+            {
+              "key": "price",
+              "type": "number",
+              "required": false,
+              "min": 0,
+              "max": 100000,
+              "decimals": 0,
+              "currencyFrom": "currency",
+              "label": {
+                "en": "Price",
+                "ar": "السعر"
+              }
+            },
+            {
+              "key": "unit",
+              "type": "choice",
+              "required": false,
+              "label": {
+                "en": "Price is",
+                "ar": "السعر"
+              },
+              "options": [
+                {
+                  "value": "project",
+                  "label": {
+                    "en": "per project",
+                    "ar": "للمشروع"
+                  }
+                },
+                {
+                  "value": "sqm",
+                  "label": {
+                    "en": "per square metre",
+                    "ar": "للمتر المربع"
+                  }
+                }
+              ]
+            },
+            {
+              "key": "top",
+              "type": "tick",
+              "required": false,
+              "label": {
+                "en": "Highest price",
+                "ar": "الأعلى سعر"
+              }
+            }
+          ]
+        },
+        {
+          "key": "helpers",
+          "type": "rows",
+          "required": false,
+          "maxRows": 2,
+          "label": {
+            "en": "Who else helps on a visit?",
+            "ar": "منو ثاني يساعد بالزيارة؟"
+          },
+          "addLabel": {
+            "en": "Add another person",
+            "ar": "ضيفوا شخص ثاني"
+          },
+          "columns": [
+            {
+              "key": "name",
+              "type": "text",
+              "required": true,
+              "maxLength": 50,
+              "label": {
+                "en": "Name",
+                "ar": "الاسم"
+              }
+            }
+          ]
+        },
+        {
+          "key": "revenue",
+          "type": "number",
+          "required": false,
+          "min": 0,
+          "max": 1000000000,
+          "decimals": 0,
+          "currencyFrom": "currency",
+          "label": {
+            "en": "Last year's revenue",
+            "ar": "دخل السنة اللي طافت"
+          }
+        }
+      ],
+      "reads": {
+        "profile": [
+          "revenue",
+          "services"
+        ]
+      },
+      "submit": {
+        "en": "Send",
+        "ar": "أرسلوا"
+      },
+      "done": {
+        "en": "Thank you. Your team will read it before the call.",
+        "ar": "مشكورين. فريقكم بيقراه قبل المكالمة."
+      }
+    }
+  },
+  "schemaV2Rows": [
+    {
+      "name": "structured: every question answered, the rows as typed",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "  Villa fit out ",
+            "detail": "Two\r\nfloors",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen",
+            "top": false
+          }
+        ],
+        "helpers": [
+          {
+            "name": "Eng. Invented"
+          }
+        ],
+        "revenue": 350000
+      },
+      "context": {},
+      "ok": true,
+      "errors": {},
+      "stored": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "detail": "Two\nfloors",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen",
+            "top": false
+          }
+        ],
+        "helpers": [
+          {
+            "name": "Eng. Invented"
+          }
+        ],
+        "revenue": 350000
+      }
+    },
+    {
+      "name": "equals: no website ticked hides the website, and a website sent anyway is hidden",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen"
+          }
+        ],
+        "noSite": true
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "site": "hidden"
+      }
+    },
+    {
+      "name": "equals: an unanswered tick reads false, so the website is asked",
+      "schema": "structured",
+      "answers": {
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen"
+          }
+        ]
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "site": "required"
+      }
+    },
+    {
+      "name": "equals: no website ticked, nothing sent for it",
+      "schema": "structured",
+      "answers": {
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen"
+          }
+        ],
+        "noSite": true
+      },
+      "context": {},
+      "ok": true,
+      "errors": {},
+      "stored": {
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen"
+          }
+        ],
+        "noSite": true
+      }
+    },
+    {
+      "name": "in: the note is shown and never answered",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen"
+          }
+        ],
+        "access": "seen"
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "access": "unknown"
+      }
+    },
+    {
+      "name": "in: a restricted account hides the note, and an answer to it is still refused",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "restricted",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen"
+          }
+        ],
+        "access": "seen"
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "access": "unknown"
+      }
+    },
+    {
+      "name": "includes: other booking software asks its name",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp",
+          "other_software"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen"
+          }
+        ]
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "toolName": "required"
+      }
+    },
+    {
+      "name": "includes: its name, kept as typed",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "other_software"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen"
+          }
+        ],
+        "toolName": " Invented Booking "
+      },
+      "context": {},
+      "ok": true,
+      "errors": {},
+      "stored": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "other_software"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen"
+          }
+        ],
+        "toolName": "Invented Booking"
+      }
+    },
+    {
+      "name": "includes: a name sent without other booking software ticked is hidden",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen"
+          }
+        ],
+        "toolName": "Invented Booking"
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "toolName": "hidden"
+      }
+    },
+    {
+      "name": "cascade: a question whose source is hidden is hidden",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen"
+          }
+        ],
+        "toolNote": "Ours"
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "toolNote": "hidden"
+      }
+    },
+    {
+      "name": "cascade: shown once its source is answered as it says",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "other_software"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen"
+          }
+        ],
+        "toolName": "Other",
+        "toolNote": "Ours"
+      },
+      "context": {},
+      "ok": true,
+      "errors": {},
+      "stored": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "other_software"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen"
+          }
+        ],
+        "toolName": "Other",
+        "toolNote": "Ours"
+      }
+    },
+    {
+      "name": "rows: a fully blank row is dropped before rows are counted",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out"
+          },
+          {
+            "name": "  ",
+            "detail": "",
+            "top": false,
+            "price": null
+          },
+          {
+            "name": "Kitchen"
+          }
+        ]
+      },
+      "context": {},
+      "ok": true,
+      "errors": {},
+      "stored": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out"
+          },
+          {
+            "name": "Kitchen"
+          }
+        ]
+      }
+    },
+    {
+      "name": "rows: rows_few, one row where two are needed",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out"
+          }
+        ]
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "services": "rows_few"
+      }
+    },
+    {
+      "name": "rows: rows_few counts rows with something in them",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out"
+          },
+          {
+            "detail": " ",
+            "top": false
+          }
+        ]
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "services": "rows_few"
+      }
+    },
+    {
+      "name": "rows: rows_many, four rows where three at most",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "A1"
+          },
+          {
+            "name": "B2"
+          },
+          {
+            "name": "C3"
+          },
+          {
+            "name": "D4"
+          }
+        ]
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "services": "rows_many"
+      }
+    },
+    {
+      "name": "rows: a required rows question with no rows",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": []
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "services": "required"
+      }
+    },
+    {
+      "name": "rows: a required rows question with only blank rows",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": ""
+          },
+          {}
+        ]
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "services": "required"
+      }
+    },
+    {
+      "name": "rows: an optional rows question left empty is not stored",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen"
+          }
+        ],
+        "helpers": []
+      },
+      "context": {},
+      "ok": true,
+      "errors": {},
+      "stored": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen"
+          }
+        ]
+      }
+    },
+    {
+      "name": "rows: one cell code each, keyed key.row.column from row 0 as sent",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "detail": "No name"
+          },
+          {
+            "name": "A service name over twenty",
+            "price": -1,
+            "unit": "acre",
+            "top": "yes",
+            "colour": "red"
+          },
+          {
+            "name": "Third",
+            "price": 12.5
+          }
+        ]
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "services.0.name": "required",
+        "services.1.name": "length",
+        "services.1.price": "range",
+        "services.1.unit": "option",
+        "services.1.top": "option",
+        "services.1.colour": "unknown",
+        "services.2.price": "range"
+      }
+    },
+    {
+      "name": "rows: the row index counts a dropped blank row",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out"
+          },
+          {},
+          {
+            "price": 10
+          }
+        ]
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "services.2.name": "required"
+      }
+    },
+    {
+      "name": "rows: a text cell that is not text is required",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": 7
+          },
+          {
+            "name": "Kitchen"
+          }
+        ]
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "services.0.name": "required"
+      }
+    },
+    {
+      "name": "rows: an answer that is not a list of rows is required",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": "Villa fit out, Kitchen"
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "services": "required"
+      }
+    },
+    {
+      "name": "rows: a list of texts is not a list of rows",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          "Villa fit out",
+          "Kitchen"
+        ]
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "services": "required"
+      }
+    },
+    {
+      "name": "rows: an optional rows question takes up to its most",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen"
+          }
+        ],
+        "helpers": [
+          {
+            "name": "A1"
+          },
+          {
+            "name": "B2"
+          },
+          {
+            "name": "C3"
+          }
+        ]
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "helpers": "rows_many"
+      }
+    },
+    {
+      "name": "several choices: a choice the question does not have",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "fax"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen"
+          }
+        ]
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "tools": "option"
+      }
+    },
+    {
+      "name": "a number read in the form's currency is still just a number",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen"
+          }
+        ],
+        "revenue": -5
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "revenue": "range"
+      }
+    },
+    {
+      "name": "a heading is never answered",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen"
+          }
+        ],
+        "about": "hello"
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "about": "unknown"
+      }
+    },
+    {
+      "name": "a key the form does not have",
+      "schema": "structured",
+      "answers": {
+        "site": "https://cedar.example",
+        "ads": "never",
+        "tools": [
+          "whatsapp"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Villa fit out",
+            "price": 25000,
+            "unit": "project",
+            "top": true
+          },
+          {
+            "name": "Kitchen"
+          }
+        ],
+        "extra": 1
+      },
+      "context": {},
+      "ok": false,
+      "errors": {
+        "extra": "unknown"
+      }
+    }
   ]
 }

@@ -586,6 +586,336 @@ describe("one client form", () => {
   });
 });
 
+/** Version 3 of the onboarding as 20261103h stores it (read from the migration, so the page and the SQL agree). */
+const V3_SQL = readFileSync(
+  new URL(
+    "../../../supabase/migrations/20261103h_onboarding_schema_v2.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const V3 = JSON.parse(
+  (/v_schema jsonb := '([\s\S]*?)'::jsonb;/.exec(V3_SQL)?.[1] ?? "{}").replace(
+    /''/g,
+    "'",
+  ),
+);
+/** The stand-in RPCs with the onboarding read only, as the server lists it once version 3 is stored. */
+function structuredIO(
+  over: Record<string, unknown> = {},
+  answer: (key: string) => Promise<unknown> = async key =>
+    key === "onboarding"
+      ? {
+          version: 3,
+          schema: V3,
+          publishedAt: "2026-11-03T06:00:00Z",
+          publishedBy: "a migration",
+          note: "The structured onboarding, stored and not live.",
+          state: "off",
+          issuing: 2,
+          answers: 0,
+          openInvites: 0,
+          ...over,
+        }
+      : null,
+) {
+  const read = fx.editorReadFixture();
+  const i = read.forms.findIndex(f => f.key === "onboarding");
+  read.forms[i] = {
+    ...read.forms[i]!,
+    group: "client",
+    editable: false,
+    why: core.STRUCTURED_WHY,
+    live: false,
+  };
+  const io = fx.fakeFormsEditorIO(read);
+  io.state.ones.set(
+    "onboarding",
+    fx.editorOneFixture("onboarding", {
+      form: { ...read.forms[i]! },
+      record: { fields: [], lives: "typeform", typeformId: "KFRCXPFx" },
+    }),
+  );
+  const asked: string[] = [];
+  return Object.assign(io, {
+    asked,
+    structured: async (key: string) => {
+      asked.push(key);
+      return (await answer(key)) as never;
+    },
+  });
+}
+
+describe("the structured onboarding (version 3), read only", () => {
+  test("the list shows the onboarding read only, in the server's words", async () => {
+    const io = structuredIO();
+    const { host } = await draw({ io });
+    const row = host.querySelector('[data-form="onboarding"]');
+    expect(row.closest("[data-group]").getAttribute("data-group")).toBe(
+      "client",
+    );
+    expect(text(row.querySelector("[data-why]"))).toBe(
+      "Its structured questions change in a migration for now.",
+    );
+    expect(text(row)).toContain("Read only");
+  });
+
+  test("its state, what uses it, and its questions in their sections, with no Save, Publish or Go back", async () => {
+    const io = structuredIO();
+    const { host } = await draw({ io, formKey: "onboarding" });
+    expect(io.asked).toEqual(["onboarding"]);
+    const panel = host.querySelector('[data-structured="3"]');
+    expect(panel).not.toBeNull();
+    expect(text(host)).toContain(
+      "Its structured questions change in a migration for now.",
+    );
+    expect(text(panel.querySelector('[data-structured-state="off"]'))).toBe(
+      "Stored, not live",
+    );
+    expect(text(panel.querySelector("[data-structured-use]"))).toBe(
+      "New invites get version 2. No answer or open invite uses version 3 yet.",
+    );
+    expect(text(panel)).toContain(
+      "54 questions in 4 sections · about 30 minutes · stored 3 Nov · a migration",
+    );
+    const titles = Array.from(
+      panel.querySelectorAll("[data-structured-section] h3 > span"),
+    ).map(text);
+    expect(titles).toEqual([
+      "About you and your business",
+      "How you work with clients",
+      "Your services and where you work",
+      "Your goals and marketing",
+    ]);
+    expect(panel.querySelectorAll("[data-structured-question]").length).toBe(
+      55,
+    );
+    const q = (key: string) =>
+      panel.querySelector(`[data-structured-question="${key}"]`);
+    // The signature: a rows question draws the columns of each row.
+    expect(
+      Array.from(q("services").querySelectorAll("[data-columns] li")).map(text),
+    ).toEqual(["Service", "Price", "Price is", "Highest price", "Most profit"]);
+    expect(text(q("services").querySelector("[data-kind]"))).toBe(
+      "Rows, 1 to 25",
+    );
+    expect(text(q("faqs").querySelector("[data-kind]"))).toBe("Rows, 3 to 20");
+    expect(text(q("website").querySelector("[data-shows]"))).toBe(
+      "Shows when “We don't have a website yet” is not ticked",
+    );
+    expect(text(q("bookingOther").querySelector("[data-shows]"))).toBe(
+      "Shows when “How do clients book appointments with you today? (Select all that apply)” includes Other booking software",
+    );
+    expect(text(q("metaAccess").querySelector("[data-kind]"))).toBe(
+      "Note with a link",
+    );
+    expect(text(q("metaAccess").querySelector("[data-shows]"))).toContain(
+      "is Yes or I have a business account but have never run ads",
+    );
+    expect(text(q("areasSA").querySelector("[data-kind]"))).toBe(
+      "Several choices (19)",
+    );
+    expect(text(q("projectsDone").querySelector("[data-kind]"))).toBe(
+      "Number · optional",
+    );
+    expect(text(q("lastRevenue").querySelector("[data-kind]"))).toBe(
+      "Number, read back in the form's currency",
+    );
+    const ar = q("currency").querySelector('bdi[dir="rtl"]');
+    expect(ar.getAttribute("lang")).toBe("ar");
+    expect(text(ar)).toBe("بأي عملة تسعّرون؟");
+    for (const action of ["save", "publish", "discard"])
+      expect(host.querySelector(`[data-action="${action}"]`)).toBeNull();
+    expect(host.querySelector('[data-action^="restore-"]')).toBeNull();
+    expect(text(host.querySelector('[data-readonly="onboarding"]'))).toContain(
+      "Typeform KFRCXPFx",
+    );
+  });
+
+  test("the switch's other states read as their own words, with what uses version 3", async () => {
+    for (const [over, chip, use] of [
+      [
+        { state: "canary" },
+        "On the test card only",
+        "New invites get version 2. No answer or open invite uses version 3 yet.",
+      ],
+      [
+        { state: "on", issuing: 3, answers: 2, openInvites: 1 },
+        "Live for new invites",
+        "New invites get version 3. 2 answers and 1 open invite on version 3.",
+      ],
+    ] as const) {
+      const io = structuredIO(over as Record<string, unknown>);
+      const { host } = await draw({ io, formKey: "onboarding" });
+      expect(
+        text(host.querySelector(`[data-structured-state="${over.state}"]`)),
+      ).toBe(chip);
+      expect(text(host.querySelector("[data-structured-use]"))).toBe(use);
+      for (const h of hosts.splice(0)) await act(async () => h.root.unmount());
+      win.document.body.innerHTML = "";
+    }
+  });
+
+  test("no structured version, or a server before 20261103h, keeps the plain read-only view; any other failure says so", async () => {
+    const plain = structuredIO();
+    let drawn = await draw({ io: plain, formKey: "portal_feedback" });
+    expect(plain.asked).toEqual(["portal_feedback"]);
+    expect(drawn.host.querySelector("[data-structured]")).toBeNull();
+    expect(
+      drawn.host.querySelector('[data-readonly="portal_feedback"]'),
+    ).not.toBeNull();
+    // A staff or Typeform form never asks.
+    drawn = await draw({ io: plain, formKey: "extension" });
+    expect(plain.asked).toEqual(["portal_feedback"]);
+    const before = structuredIO({}, async () => {
+      throw Object.assign(
+        new Error(
+          "Could not find the function public.cockpit_form_editor_structured(p_form_key) in the schema cache",
+        ),
+        { code: "PGRST202" },
+      );
+    });
+    drawn = await draw({ io: before, formKey: "onboarding" });
+    expect(drawn.host.querySelector("[data-structured]")).toBeNull();
+    expect(drawn.host.querySelector('[data-refusal="structured"]')).toBeNull();
+    expect(text(drawn.host)).toContain(
+      "Its structured questions change in a migration for now.",
+    );
+    const failing = structuredIO({}, async () => {
+      throw Object.assign(new Error("Only an admin or the CEO edits forms."), {
+        code: "42501",
+      });
+    });
+    drawn = await draw({ io: failing, formKey: "onboarding" });
+    expect(text(drawn.host.querySelector('[data-refusal="structured"]'))).toBe(
+      "Only an admin or the CEO edits forms.",
+    );
+  });
+
+  test("the IO reads the structured version through its RPC, refuses a shape it does not know, and names a missing RPC", async () => {
+    const { supabaseFormsEditorIO } = await import("../src/lib/formsEditor");
+    const answer = {
+      version: 3,
+      schema: V3,
+      publishedAt: "2026-11-03T06:00:00Z",
+      publishedBy: "a migration",
+      note: null,
+      state: "off",
+      issuing: 2,
+      answers: 0,
+      openInvites: 0,
+    };
+    const seen: unknown[] = [];
+    const client = (data: unknown, error: unknown = null) => ({
+      rpc: async (fn: string, args: unknown) => {
+        seen.push([fn, args]);
+        return { data, error };
+      },
+    });
+    const io = supabaseFormsEditorIO(client(answer) as never);
+    expect((await io.structured?.("onboarding"))?.schema.fields.length).toBe(
+      59,
+    );
+    expect(seen).toEqual([
+      ["cockpit_form_editor_structured", { p_form_key: "onboarding" }],
+    ]);
+    expect(
+      await supabaseFormsEditorIO(client(null) as never).structured?.("nps"),
+    ).toBeNull();
+    await expect(
+      supabaseFormsEditorIO(
+        client({ ...answer, schema: { ...V3, v: 1 } }) as never,
+      ).structured?.("onboarding"),
+    ).rejects.toThrow(
+      "The server answered in a shape this page does not read. Tell the tech lead.",
+    );
+    await expect(
+      supabaseFormsEditorIO(
+        client(null, {
+          message: "Could not find the function",
+          code: "PGRST202",
+        }) as never,
+      ).structured?.("onboarding"),
+    ).rejects.toThrow("Opens after the next cockpit update.");
+  });
+});
+
+describe("the core: the structured outline", () => {
+  test("version 3 reads as four sections of its questions, each with its kind and when it shows", () => {
+    const outline = core.structuredOutline(V3);
+    expect(outline.map(s => [s.title?.en, s.items.length])).toEqual([
+      ["About you and your business", 15],
+      ["How you work with clients", 17],
+      ["Your services and where you work", 14],
+      ["Your goals and marketing", 9],
+    ]);
+    expect(core.structuredAsked(V3)).toBe(54);
+    const all = outline.flatMap(s => s.items);
+    expect(all.filter(i => i.columns.length).map(i => i.key)).toEqual([
+      "consultants",
+      "services",
+      "faqs",
+    ]);
+    expect(all.filter(i => i.shows).length).toBe(13);
+    expect(all.find(i => i.key === "areasKW")?.shows).toBe(
+      "Shows when “Which countries do you work in?” includes Kuwait",
+    );
+    expect(all.find(i => i.key === "maxDistanceKm")?.shows).toBe(
+      "Shows when “How far do you travel for a home visit?” is Up to a set distance",
+    );
+  });
+
+  test("the words of each kind, show-if and use line", () => {
+    const f = (o: Record<string, unknown>) =>
+      ({ key: "k", label: { en: "Q", ar: "س" }, ...o }) as never;
+    expect(
+      core.structuredKind(f({ type: "rows", required: false, maxRows: 2 })),
+    ).toBe("Rows, 0 to 2");
+    expect(core.structuredKind(f({ type: "note" }))).toBe("Note");
+    expect(core.structuredKind(f({ type: "text" }))).toBe("Short answer");
+    expect(core.structuredKind(f({ type: "mystery" }))).toBe("mystery");
+    const src = new Map([
+      [
+        "pick",
+        f({
+          key: "pick",
+          type: "choice",
+          label: { en: "Pick", ar: "اختار" },
+          options: [{ value: "a", label: { en: "Ay", ar: "أ" } }],
+        }),
+      ],
+    ]);
+    expect(
+      core.showIfWords(
+        f({ type: "text", showIf: { key: "pick", equals: "a" } }),
+        src,
+      ),
+    ).toBe("Shows when “Pick” is Ay");
+    expect(
+      core.showIfWords(
+        f({ type: "text", showIf: { key: "pick", in: ["a", "b"] } }),
+        src,
+      ),
+    ).toBe("Shows when “Pick” is Ay or b");
+    expect(
+      core.showIfWords(
+        f({ type: "text", showIf: { key: "gone", equals: true } }),
+        src,
+      ),
+    ).toBe("Shows when “gone” is true");
+    expect(core.showIfWords(f({ type: "text" }), src)).toBeNull();
+    const read = {
+      version: 3,
+      issuing: null,
+      answers: 1,
+      openInvites: 0,
+    } as never;
+    expect(core.structuredUse(read)).toBe(
+      "No version goes to clients yet. 1 answer and 0 open invites on version 3.",
+    );
+  });
+});
+
 describe("the page's own rules", () => {
   test("no literal colour and no browser storage in the screen's code", () => {
     for (const file of [
@@ -687,19 +1017,23 @@ describe("the core", () => {
   });
 
   test("a question's longest answer is capped where the server caps it, the client onboarding at its Typeform's room", () => {
-    // The latest migration that defines cockpit_form_schema_check, read where it caps a text's maxLength.
+    // The latest migration that defines the version-1 schema check (the editor edits version-1 forms; since
+    // 20261103h it is cockpit_form_schema_check_v1, the entry point dispatching to it), read where it caps a
+    // text's maxLength.
     const dir = resolve(import.meta.dir, "../../../supabase/migrations");
+    const v1 = (s: string) =>
+      s.includes("FUNCTION public.cockpit_form_schema_check_v1(")
+        ? "FUNCTION public.cockpit_form_schema_check_v1("
+        : "FUNCTION public.cockpit_form_schema_check(";
     const sql = readdirSync(dir)
       .filter(f => f.endsWith(".sql"))
       .sort()
       .map(f => readFileSync(resolve(dir, f), "utf8"))
-      .filter(s => s.includes("FUNCTION public.cockpit_form_schema_check("))
+      .filter(s => s.includes(v1(s)))
       .at(-1) as string;
     const caps =
       /v_max := CASE WHEN p_schema->>'key' = 'onboarding' THEN CASE t WHEN 'text' THEN (\d+) ELSE (\d+) END\s+ELSE CASE t WHEN 'text' THEN (\d+) ELSE (\d+) END END;/.exec(
-        sql.slice(
-          sql.lastIndexOf("FUNCTION public.cockpit_form_schema_check("),
-        ),
+        sql.slice(sql.lastIndexOf(v1(sql))),
       );
     expect(caps).not.toBeNull();
     expect([

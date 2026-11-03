@@ -1669,5 +1669,79 @@ class Parity(unittest.TestCase):
         self.assertNotIn("service", mp.INTENDED)
 
 
+
+# --- B8: the structured onboarding (version 3, 20261103h; contract 4.22) ---------------------------------------------
+# The CEO, 2026-11-02, on "The structured onboarding (version 3)": "Do the whole redesign". The goldens are the design's
+# reference printer on invented answers (fixtures/onboarding-v3-print.json); the SQL printer must equal them
+# (apps/media-buyer-cockpit/scripts/onboarding-schema-v2-supabase.test.ts), and here Make 13 is evaluated on them.
+V3_GOLDENS = json.loads((Path(__file__).resolve().parent / "fixtures" / "onboarding-v3-print.json").read_text())
+V3_SQL = (Path(__file__).resolve().parents[2] / "supabase" / "migrations" / "20261103h_onboarding_schema_v2.sql").read_text()
+REVENUE = ("7ff5d37a-df7f-4002-8248-d0b4af6c28e8", "791b99b8-c7e9-40a4-96d6-868399e1ae97", "f4b96a9b-bd7c-4398-98b4-6a28a7d3595a")
+
+
+def v3_entry(case, **extra):
+    """The read model's onboarding entry the cockpit plans for a version-3 answer: the printed list and structured."""
+    entry = {"form_id": "native", "response_id": "00000000-0000-4000-8000-0000000000b8", "submitted_at": "2026-11-03T09:00:00Z",
+             "answers": case["printed"], "structured": case["structured"]}
+    entry.update(extra)
+    return {"key": "read_model", "plan": {"entry": entry, "lines": ["Answers in the client record"]}}
+
+
+class StructuredOnboarding(unittest.TestCase):
+    def test_structured_is_registered_under_the_ceos_words(self):
+        self.assertIn('"Do the whole redesign"', mp.INTENDED["structured"])
+        self.assertEqual(mp.READ_MODEL_KEYS, frozenset({"form_id", "response_id", "submitted_at", "answers"}))
+        self.assertEqual(set(mp.REVENUE_REFS), set(REVENUE))
+        # The sidecar leaves out exactly make_parity's contact keys (the SQL map says so in its sidecar).
+        keys = json.loads(re.search(r'"keysExcluded":(\[[^\]]*\])', V3_SQL).group(1))
+        self.assertEqual(set(keys), set(mp.CONTACT_KEYS))
+
+    def test_the_read_model_verdict(self):
+        case = V3_GOLDENS["cases"][0]
+        self.assertEqual(mp.read_model_verdict(None), "intended: read_model")
+        self.assertEqual(mp.read_model_verdict({"key": "read_model", "plan": {}}), "intended: read_model")
+        self.assertEqual(mp.read_model_verdict(v3_entry(case)), "intended: read_model, structured")
+        self.assertEqual(mp.legend([mp.read_model_verdict(v3_entry(case))]), legend_lines("read_model", "structured"))
+        # A version-2 entry (no structured) reads as before.
+        entry = v3_entry(case)
+        del entry["plan"]["entry"]["structured"]
+        self.assertEqual(mp.read_model_verdict(entry), "intended: read_model")
+        # An addition nobody registered, a contact answer in structured, a currency in a revenue line: each differs.
+        self.assertEqual(mp.read_model_verdict(v3_entry(case, currency="kwd")),
+                         "differs: an addition no INTENDED entry registers (currency)")
+        self.assertEqual(mp.read_model_verdict(v3_entry(case, structured=dict(case["structured"], phone="+96550000000"))),
+                         "differs: structured holds a contact answer")
+        self.assertEqual(mp.read_model_verdict(v3_entry(case, structured=["not", "an", "object"])),
+                         "differs: structured is not an object")
+        priced = [dict(a, value=a["value"] + " KWD") if a["ref"] == REVENUE[0] else a for a in case["printed"]]
+        self.assertEqual(mp.read_model_verdict(v3_entry(case, answers=priced)), "differs: a currency in a revenue line")
+        # The same text in a Typeform answer (no structured) is Make's own answer: not this check's to grade.
+        legacy = v3_entry(case, answers=priced)
+        del legacy["plan"]["entry"]["structured"]
+        self.assertEqual(mp.read_model_verdict(legacy), "intended: read_model")
+
+    def test_the_onboarding_comparison_names_structured(self):
+        case = V3_GOLDENS["cases"][0]
+        mods = make13_mods(case["printed"])
+        verdicts = dict(mp.compare_onboarding([v3_entry(case)], mods, {"relay": {}, "targets": {}, "messages": PHASES}))
+        self.assertEqual(verdicts["read_model"], "intended: read_model, structured")
+
+    def test_make_13_reads_every_golden_as_a_typeform_answer(self):
+        # Make 13 [29]'s Client Profile and [47]'s raw answers carry the printed values as Typeform's answers would be:
+        # each revenue a plain whole number, the business name for the dispatch, nothing it cannot map.
+        for case in V3_GOLDENS["cases"]:
+            mods = make13_mods(case["printed"])
+            by_ref = {a["ref"]: a["value"] for a in case["printed"]}
+            for ref in REVENUE:
+                if ref in by_ref:
+                    self.assertRegex(by_ref[ref], r"^\d+$", case["name"])
+            body = json.loads(mods[25]["input"]["jsonStringBodyContent"])["client_payload"]
+            self.assertIn(by_ref.get("514bfd3f-4ca1-469e-b9e7-87656503f65c", ""), body.values(), case["name"])
+            raw = mods[47]["input"]["comment_text"]
+            for a in case["printed"]:
+                if a["ref"] not in REVENUE:
+                    self.assertIn(a["value"], raw, (case["name"], a["ref"][:8]))
+
+
 if __name__ == "__main__":
     unittest.main()
