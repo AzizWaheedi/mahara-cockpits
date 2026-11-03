@@ -193,18 +193,18 @@ export const SOP_VIDEOS = {
     },
     money: {
       key: "csm-money",
-      wistia: "uiuydjyh91",
+      wistia: "9w2an4u831",
       title: "Money in: log a payment and send an invoice",
       url: COCKPIT_GUIDES.csm.howTo.money,
-      length: "2:58",
-      note: "Silent: a bank transfer and its receipt, Confirm paid, the date, MRR and invoices",
+      length: "3:17",
+      note: "Silent: a bank transfer and its receipt, Confirm paid, the date, MRR and invoices (Ecom or Whop)",
     },
     changes: {
       key: "csm-changes",
-      wistia: "he7a2xwwc9",
+      wistia: "4jb5y6v7c3",
       title: "Give more time, pause, stop or bring back a client",
       url: COCKPIT_GUIDES.csm.howTo.changes,
-      length: "2:57",
+      length: "3:20",
       note: "Silent: the buttons on the client's page. Stopping is one process, whatever they call it",
     },
     wins: {
