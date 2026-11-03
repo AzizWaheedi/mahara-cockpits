@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { F as CONVEX_F } from "../../../apps/media-buyer-cockpit/convex/billingCore";
+import { METHODS as SHEET_METHODS, PLANS as SHEET_PLANS } from "../../../apps/media-buyer-cockpit/src/lib/billingCore";
 import { CFB as SYNC_CFB, F as SYNC_F } from "../billing-sync/billing";
 import {
   BILLING_FIELDS,
@@ -727,5 +728,138 @@ describe("waves 5-6 kinds: win only comments, reactivate reopens the card (contr
     const open = await runWith({ ...live, CLICKUP_WRITEBACK_BILLING_KINDS: `${live.CLICKUP_WRITEBACK_BILLING_KINDS},win,reactivate` }, [win, back]);
     expect(open.states).toEqual(["delivered", "delivered"]);
     expect(open.writes.filter(c => c.method === "DELETE")).toHaveLength(5);
+  });
+});
+
+describe("How they pay: method, plan and amount reach the card once their kinds are open (20261103a)", () => {
+  // Payment Method and Payment Plan as a live GET of the Clients - Mahara list returned them (2026-11-02).
+  // The run looks each option up by name, so these ids are what ClickUp is sent.
+  const CARD_METHODS = [
+    { id: "f5f2bd55-5dfa-4664-a7fb-ba3381ee9e3a", name: "Card on file", orderindex: 0 },
+    { id: "139c8364-8a6c-4333-951f-b3e6d925b0d2", name: "Bank transfer", orderindex: 1 },
+    { id: "f3e4f93b-90d8-4904-92c0-f6cebca7cd69", name: "Tap link", orderindex: 2 },
+    { id: "482d3b2e-dbf3-48df-8c1e-f1f96d913feb", name: "Whop link", orderindex: 3 },
+    { id: "1d836d92-bb96-4dff-bb00-f799f177a964", name: "Check", orderindex: 4 },
+  ];
+  const CARD_PLANS = [
+    { id: "9fa1643e-af33-4e56-83f2-ec562ad879ef", name: "Paid in full (90 days)", orderindex: 0 },
+    { id: "aaca2362-a934-4ba1-a5ac-ca201899a2f6", name: "Split Pay (2x payments)", orderindex: 1 },
+    { id: "d140956c-5add-4272-a1a5-6f34f982c258", name: "Monthly", orderindex: 2 },
+    { id: "d56813f8-565c-4d70-91ab-b92d2127dace", name: "1.0K Start / $2K Months After", orderindex: 3 },
+    { id: "3b35d025-d9b5-416c-b1f6-a02c379efd05", name: "Performance ($3k/$3k)", orderindex: 4 },
+  ];
+  const HOW_FIELDS: any[] = LIST_FIELDS.map(f =>
+    f.id === F.method ? { ...f, type_config: { options: CARD_METHODS } }
+    : f.id === F.plan ? { ...f, type_config: { options: CARD_PLANS } }
+    // Next Payment Amount is a USD currency field on the card.
+    : f.id === F.nextAmount ? { ...f, type: "currency", type_config: { currency_type: "USD", precision: 2 } }
+    : f,
+  );
+  const TEST_CARD = "86eywg1cq";
+  /** The CLICKUP_WRITEBACK_BILLING_KINDS read live from cockpit_sync_state on 2026-11-02. */
+  const LIVE_KINDS = "churn,date,extension,late,ltv,mrr,nps_sent,pause,payment,reactivate,resume,survey,win";
+  const env = (over: Record<string, string> = {}) => ({
+    CLICKUP_API_TOKEN: "x",
+    CLICKUP_WRITEBACK_APPLY_BILLING: "true",
+    CLICKUP_WRITEBACK_BILLING_KINDS: LIVE_KINDS,
+    ...over,
+  });
+  /** The three events a How they pay save (or the canary) queues, as cockpit_billing_writeback_writes builds them. */
+  const how = (taskId: string, n: number) => [
+    item({ kind: "method", taskId, source: "ceo", writes: [{ field: "method", value: "Card on file", old: null }] }, { id: `${n}1b2c3d-0000-4000-8000-00000000000${n}` }),
+    item({ kind: "plan", taskId, source: "ceo", writes: [{ field: "plan", value: "Monthly", old: null }] }, { id: `${n}2b2c3d-0000-4000-8000-00000000000${n}` }),
+    item({ kind: "amount", taskId, source: "ceo", writes: [{ field: "nextAmount", value: 1234, old: null }] }, { id: `${n}3b2c3d-0000-4000-8000-00000000000${n}` }),
+  ];
+  const cardOf = (taskId: string, values: Record<string, unknown> = {}) => ({
+    id: taskId,
+    list: { id: CLIENTS_LIST },
+    date_updated: String(EDIT_AT - 86_400_000),
+    custom_fields: HOW_FIELDS.map(f => ({ ...f, ...(f.id in values ? { value: values[f.id] } : {}) })),
+  });
+
+  const runWith = async (vars: Record<string, string>, queued: QueueItem[]) => {
+    let items = structuredClone(queued);
+    const saves: any[] = [];
+    const calls: Call[] = [];
+    const rows: Record<string, any> = {};
+    const deps: Deps = {
+      env: k => vars[k],
+      now: () => NOW,
+      uuid: () => "11111111-2222-3333-4444-555555555555",
+      rpc: async (name, params = {}) => {
+        if (name === "cockpit_clickup_writeback_begin") return { id: "run-1" };
+        if (name === "cockpit_clickup_writeback_inputs") return { campaigns: [] };
+        if (name === "cockpit_clickup_writeback_claim") { const out = items; items = []; return out; }
+        if (name === "cockpit_billing_writeback_held") return { held: 0, heldOpenKind: 0, byKind: {} };
+        if (name === "cockpit_clickup_writeback_save") saves.push(structuredClone(params.p_patch));
+        return null;
+      },
+      providerFor: () => ({
+        async call(provider, method, path, body) {
+          calls.push({ provider, method, path, body });
+          if (method === "GET" && path === `list/${CLIENTS_LIST}/field`) return { fields: HOW_FIELDS };
+          const task = path.match(/^task\/([A-Za-z0-9_]+)$/);
+          if (method === "GET" && task) return cardOf(task[1]);
+          return {};
+        },
+      }),
+      syncState: async (key, row) => {
+        rows[key] = row;
+      },
+    };
+    await runLog(deps);
+    return { states: saves.filter(s => s.state).map(s => s.state), writes: calls.filter(c => c.method !== "GET"), billing: rows["clickup-writeback:billing"] };
+  };
+
+  it("every method and plan the cockpit offers is an option on the card, sent by its option id", () => {
+    const step = (fieldId: string, value: string): BillingStep => ({ key: "k", type: "billing_field", taskId: TEST_CARD, fieldId, field: "x", format: "dropdown", value, at: EDIT_AT });
+    for (const m of SHEET_METHODS)
+      expect([m, billingRequest(step(F.method, m), HOW_FIELDS)]).toEqual([m, { method: "POST", body: { value: CARD_METHODS.find(o => o.name === m)?.id } }]);
+    for (const p of SHEET_PLANS)
+      expect([p, billingRequest(step(F.plan, p), HOW_FIELDS)]).toEqual([p, { method: "POST", body: { value: CARD_PLANS.find(o => o.name === p)?.id } }]);
+    expect(SHEET_METHODS.length).toBe(CARD_METHODS.length);
+    expect(SHEET_PLANS.length).toBe(CARD_PLANS.length);
+    // The card has no Ecom link, so the cockpit no longer offers one.
+    expect(() => billingRequest(step(F.method, "Ecom link"), HOW_FIELDS)).toThrow('"Ecom link" is not an option on that ClickUp field.');
+  });
+
+  it("with the live kinds all three wait as dry runs and nothing is written", async () => {
+    const out = await runWith(env(), how(TEST_CARD, 1));
+    expect(out.states).toEqual(["dry_run", "dry_run", "dry_run"]);
+    expect(out.writes).toEqual([]);
+    expect(out.billing.detail).toMatchObject({ mode: "apply", held: 3, delivered: 0 });
+    expect(out.billing.detail.kinds).not.toContain("method");
+  });
+
+  it("listed, on the test card only: Payment Method and Payment Plan by option id, Next Payment Amount as the number", async () => {
+    const elsewhere = item({ kind: "method", source: "csm", writes: [{ field: "method", value: "Bank transfer", old: null }] }, { id: "9a1b2c3d-0000-4000-8000-000000000009" });
+    const out = await runWith(env({ CLICKUP_WRITEBACK_BILLING_KINDS: `${LIVE_KINDS},method,plan,amount`, CLICKUP_WRITEBACK_BILLING_ONLY_CARDS: TEST_CARD }), [...how(TEST_CARD, 2), elsewhere]);
+    expect(out.states).toEqual(["delivered", "delivered", "delivered", "dry_run"]);
+    expect(out.writes).toEqual([
+      { provider: "clickup", method: "POST", path: `task/${TEST_CARD}/field/665e5754-b9c6-4776-9386-111ad221dead`, body: { value: "f5f2bd55-5dfa-4664-a7fb-ba3381ee9e3a" } },
+      { provider: "clickup", method: "POST", path: `task/${TEST_CARD}/field/17d17129-43c4-441b-a55c-6eca83b9f776`, body: { value: "d140956c-5add-4272-a1a5-6f34f982c258" } },
+      { provider: "clickup", method: "POST", path: `task/${TEST_CARD}/field/f071ee8f-b7ce-49e8-899b-6bef649d86ba`, body: { value: 1234 } },
+    ]);
+    // No comment: method, plan and amount post none (20261102g's comment function returns NULL for them).
+    expect(out.writes.some(c => c.path.endsWith("/comment"))).toBe(false);
+    expect(out.billing.note).toStartWith("Billing: apply_limited (amount, churn, date, extension, late, ltv, method, mrr, nps_sent, pause, payment, plan, reactivate, resume, survey, win) on 86eywg1cq");
+    // With the card list cleared, the edit on the real card is written too.
+    const open = await runWith(env({ CLICKUP_WRITEBACK_BILLING_KINDS: `${LIVE_KINDS},method,plan,amount` }), [elsewhere]);
+    expect(open.states).toEqual(["delivered"]);
+    expect(open.writes).toEqual([
+      { provider: "clickup", method: "POST", path: `task/task_a/field/${F.method}`, body: { value: "139c8364-8a6c-4333-951f-b3e6d925b0d2" } },
+    ]);
+  });
+
+  it("a card already showing How they pay is read as unchanged and not written again", async () => {
+    const shows = cardOf(TEST_CARD, { [F.method]: 0, [F.plan]: "d140956c-5add-4272-a1a5-6f34f982c258", [F.nextAmount]: "1234" });
+    for (const it of how(TEST_CARD, 3)) {
+      const p = fakeProvider(x => (x.method === "GET" && x.path === `task/${TEST_CARD}` ? shows : x.method === "GET" ? new Error("unexpected read") : {}));
+      const out = await executeItem(it, steps(it), p, async () => {}, boardFields, async () => HOW_FIELDS);
+      expect(out.state).toBe("delivered");
+      expect(writes(p.calls)).toEqual([]);
+      const key = String((it.payload.writes as any[])[0].field);
+      expect(out.progress[key]).toMatchObject({ done: true, unchanged: true });
+    }
   });
 });

@@ -283,7 +283,11 @@ def snapshot(**over: Any) -> dict:
             "dialer": {"at": NOW.isoformat(), "not_ok": {}, "checks": 39, "incidents": {}, "outbox": 0,
                        "outbox_oldest": None, "beat_last_ok": now_s, "beat_failures": 0},
         },
-        "hermes_jobs": [{"id": "a", "name": "Nightly Backup", "enabled": True, "last_status": "ok"}],
+        "hermes_jobs": [{"id": "a", "name": "Nightly Backup", "enabled": True, "last_status": "ok"},
+                        {"id": "37e587ed75c1", "name": "Billing Agent Daily", "enabled": True, "last_status": "ok",
+                         "last_run_at": ago(8 * 60)},
+                        {"id": "034aef11ec5d", "name": "Overdue payments daily check", "enabled": True,
+                         "last_status": "ok", "last_run_at": ago(8 * 60)}],
         "fixer": {"mtime": now_s - 7200, "last_action_at": now_s - 7200},
         "rooms": {"file": False, "unit": "inactive"},
     }
