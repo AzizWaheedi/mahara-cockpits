@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { type Account, amountProblem, ladderOf } from "../convex/billingCore";
+import { readdirSync, readFileSync } from "node:fs";
+import {
+  type Account,
+  amountProblem,
+  METHODS as convexMethods,
+  PLANS as convexPlans,
+  ladderOf,
+} from "../convex/billingCore";
 import { bankCanBe } from "../convex/ceo/manualMatch";
 import * as sheet from "../src/lib/billingCore";
 
@@ -400,5 +407,96 @@ describe("the billing log's read (review W34: survey and nps_sent never crowd ou
     expect(ev).toHaveLength(2);
     expect(ev[0]).toMatchObject({ not: "(survey,nps_sent)", limit: 60 });
     expect(ev[1]).toMatchObject({ in: ["survey", "nps_sent"], limit: 20 });
+  });
+});
+
+describe("How they pay offers only what the server takes (20261103a)", () => {
+  const MIGRATIONS = new URL("../../../supabase/migrations/", import.meta.url);
+
+  /** The body of a function's newest CREATE across the migrations, and its file. */
+  function newestBody(fn: string): { file: string; body: string } {
+    const files = readdirSync(MIGRATIONS)
+      .filter(f => /^\d.*\.sql$/.test(f))
+      .sort()
+      .reverse();
+    const create = new RegExp(
+      `CREATE (?:OR REPLACE )?FUNCTION public\\.${fn}\\(`,
+      "gi",
+    );
+    for (const file of files) {
+      const sql = readFileSync(new URL(file, MIGRATIONS), "utf8").replace(
+        /\r\n/g,
+        "\n",
+      );
+      const at = [...sql.matchAll(create)].pop()?.index;
+      if (at === undefined) continue;
+      const tag = sql.slice(at).match(/AS\s+(\$[A-Za-z_]*\$)/);
+      if (!tag || tag.index === undefined) continue;
+      const start = at + tag.index + tag[0].length;
+      return { file, body: sql.slice(start, sql.indexOf(tag[1], start)) };
+    }
+    throw new Error(`No migration defines ${fn}`);
+  }
+
+  /** The quoted names of the first NOT IN (...) after `marker`. */
+  function allowList(body: string, marker: string): string[] {
+    const at = body.indexOf(marker);
+    if (at < 0) throw new Error(`No ${marker} in the body`);
+    let i = body.indexOf("NOT IN (", at);
+    if (i < 0) throw new Error(`No NOT IN after ${marker}`);
+    i += "NOT IN (".length;
+    const names: string[] = [];
+    for (;;) {
+      while (/[\s,]/.test(body[i])) i++;
+      if (body[i] === ")") return names;
+      if (body[i] !== "'")
+        throw new Error(`Not a list of names after ${marker}`);
+      let name = "";
+      for (i++; ; i++) {
+        if (body[i] === "'" && body[i + 1] === "'") {
+          name += "'";
+          i++;
+        } else if (body[i] === "'") break;
+        else name += body[i];
+      }
+      names.push(name);
+      i++;
+    }
+  }
+
+  const sorted = (xs: readonly string[]) => [...xs].sort();
+  const write = newestBody("cockpit_billing_write");
+  const canary = newestBody("cockpit_billing_canary");
+
+  test("the sheet's methods and plans are cockpit_billing_write's, so no pick is refused on Save", () => {
+    const methods = allowList(write.body, "WHEN 'method' THEN");
+    const plans = allowList(write.body, "WHEN 'plan' THEN");
+    expect(methods).toHaveLength(5);
+    expect(plans).toHaveLength(5);
+    expect([write.file, sorted(sheet.METHODS)]).toEqual([
+      write.file,
+      sorted(methods),
+    ]);
+    expect([write.file, sorted(sheet.PLANS)]).toEqual([
+      write.file,
+      sorted(plans),
+    ]);
+    // Maher's copy of the rules says the same.
+    expect(sorted(convexMethods)).toEqual(sorted(methods));
+    expect(sorted(convexPlans)).toEqual(sorted(plans));
+    // "Ecom link" is not an option on the card's Payment Method field.
+    expect(sheet.METHODS as readonly string[]).not.toContain("Ecom link");
+  });
+
+  test("the test card's canary takes the same names as the real save", () => {
+    // A floor, not a name: a later canary migration passes when its lists
+    // still match the real save.
+    expect(canary.file >= "20261103a").toBe(true);
+    expect(sorted(allowList(canary.body, "p_kind = 'method'"))).toEqual(
+      sorted(allowList(write.body, "WHEN 'method' THEN")),
+    );
+    expect(sorted(allowList(canary.body, "p_kind = 'plan'"))).toEqual(
+      sorted(allowList(write.body, "WHEN 'plan' THEN")),
+    );
   });
 });

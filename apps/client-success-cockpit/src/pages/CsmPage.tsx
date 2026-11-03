@@ -28,6 +28,7 @@ import {
   ChecksWaitingView,
   toCheckRow,
 } from "@/components/billing/ChecksWaiting";
+import { HowTheyPay } from "@/components/billing/HowTheyPay";
 import {
   ClientCallerChip,
   ClientCallerLine,
@@ -3221,6 +3222,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                     </span>
                   ) : null}
                 </p>
+                <HowTheyPay client={auth.client} taskId={String(c.taskId)} />
                 <div className="flex flex-wrap gap-2">
                   <Button size="sm" variant="outline" asChild>
                     <Link to="/money?tab=billing">Open billing</Link>

@@ -1055,7 +1055,7 @@ function Panel({
                     }
                     return {
                       message: changed.length
-                        ? `Saved: ${row.name} ${changed.join(", ")}.`
+                        ? `Saved: ${row.name} ${changed.join(", ")}. ClickUp shows it in about two minutes.`
                         : "Nothing had changed, so nothing was saved.",
                       updated,
                     };
@@ -1607,7 +1607,7 @@ export function BillingSheet({ api }: { api: BillingApi }) {
     // The card's row shows the new values at once; Pending payments' own
     // onChanged reads the sheet again behind it.
     showAccount(updated);
-    return "Set on the card. ClickUp gets it when write-back is on.";
+    return "Set on the card. ClickUp shows it in about two minutes.";
   };
 
   /** The footnote's clients: the sheet's Late view, brought into view. */
