@@ -719,6 +719,28 @@ describe("B1: the onboarding tasks' brief", () => {
     });
   });
 
+  test("20261103b's question list (B0): a restricted account prints KFRCXPFx's label with no access-link note; unsure keeps its note", async () => {
+    // KFRCXPFx's fifth Meta choice, which 20261103b adds to cockpit_form_stage4_fields (live after B0).
+    const RESTRICTED = "My Account is restricted | حسابي مقيّد";
+    const meta = async (value: string) => {
+      await card({ onboarding: ONBOARDING.map(x => (x.ref === O.facebookAds ? a(O.facebookAds, value) : x)) });
+      const { details } = await brief(kickoffInput(KICKOFF));
+      return (details as string).split("\n").filter(l => l.startsWith("- Meta Business Manager: "));
+    };
+    for (const [value, line] of [
+      [RESTRICTED, `- Meta Business Manager: ${RESTRICTED}`],
+      [UNSURE, `- Meta Business Manager: ${UNSURE} (needs the access link)`],
+    ])
+      await rolledBack(async () => {
+        await db.exec(fnDef(migration("20261103b_onboarding_v2_hints.sql"), "cockpit_form_stage4_fields"));
+        const options = await one<Row[]>(
+          "SELECT f->'options' AS r FROM jsonb_array_elements(public.cockpit_form_stage4_fields('onboarding')) f WHERE f->>'key' = 'facebookAds'",
+        );
+        expect(options.map(o => o.value)).toEqual(["yes", "unsure", "ran_before", "never_ran", "restricted"]);
+        expect([value, await meta(value)]).toEqual([value, [line]]);
+      });
+  });
+
   test("no recording anywhere: the line is left out and named; the kickoff's types hide max distance", async () => {
     await rolledBack(async () => {
       await card();

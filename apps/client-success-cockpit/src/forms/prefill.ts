@@ -125,12 +125,24 @@ export const KICKOFF_HIDDEN: readonly HiddenSpec[] = [
   { key: "content_drive", ref: ONB.drive, label: "Content Drive link" },
 ];
 
-/** The newest completed onboarding response on record, or null. */
+/**
+ * The read model's form_id for an onboarding answer the client gave in the portal (version 2,
+ * cockpit_form_stage4_input in supabase/migrations/20261102j). Its answers carry KFRCXPFx's refs and
+ * titles, so every reader here reads it as it reads a Typeform answer.
+ */
+export const NATIVE_FORM_ID = "native";
+
+/** The newest completed onboarding response on record (Typeform's or the portal's), or null. */
 export function completedOnboarding(
   row: Pick<OnboardingRow, "forms">,
 ): FormEntry | null {
   const e = row.forms?.onboarding;
-  if (!e || e.form_id !== FORMS.onboarding || !e.submitted_at) return null;
+  if (
+    !e ||
+    (e.form_id !== FORMS.onboarding && e.form_id !== NATIVE_FORM_ID) ||
+    !e.submitted_at
+  )
+    return null;
   return e;
 }
 

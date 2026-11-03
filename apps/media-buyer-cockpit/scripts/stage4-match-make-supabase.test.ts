@@ -31,6 +31,10 @@
  * name (15; the stand-in responses table carries 20261102f's answers check, live). The onboarding
  * Typeform door (20261102j's, live, with its live grant) stores a late KFRCXPFx delivery in the portal's
  * shape, each revenue a number (16; stand-ins give it what it reads beside this ground).
+ * 20261103b (B0) runs on this ground, inside rolled-back steps: version 2 takes KFRCXPFx's hints, optional
+ * questions and fifth Meta choice in place, only from 20261102o's text and only while nothing uses it,
+ * and a native or Typeform answer that chose "My Account is restricted" prints KFRCXPFx's label in the
+ * same texts as the evaluator's (finding F3).
  * Every client, card, person and answer is invented.
  */
 import {
@@ -105,6 +109,16 @@ const DOOR_FN = "cockpit_form_onboarding_typeform(jsonb)";
 /** md5 of the onboarding's version-2 schema text: 20261102j's (live, read 2026-11-02) and 20261102o's. */
 const V2_J_MD5 = "8fa1f38dfd4307f22d0b3faec8604ce7";
 const V2_M_MD5 = "bc89ca36000ebf7943c6ec569cd1be73";
+/**
+ * 20261103b (build B0, the CEO's "Yes" to restoring Typeform's hints): version 2 in place with KFRCXPFx's
+ * hints, optional questions and fifth Meta choice (the drafted text's md5), and cockpit_form_stage4_fields
+ * with that choice (the after value of its drift guard). The history above stays: 20261103b stands on V2_M_MD5.
+ */
+const B = "20261103b_onboarding_v2_hints.sql";
+const V2_B_MD5 = "38d371cd509ced4fef9b7cad6e09fb80";
+const AFTER_B_FIELDS = "eadfda57d24997ad958ec6c68a1f5703";
+/** KFRCXPFx's fifth Meta choice, as Typeform hands it to Make (0 of the 46 stored answers chose it). */
+const RESTRICTED = "My Account is restricted | حسابي مقيّد";
 /** 20261102j's builder, live before 20261102l. */
 const J_BUILD_MD5 = "a704e72a3921191d2f06a24855d7f219";
 /**
@@ -3273,5 +3287,357 @@ describe("every effect not named is 20261102l's, byte for byte", () => {
           ),
       ),
     ).toEqual(kWas.filter(x => x.ref !== K.service && x.ref !== K.consult));
+  });
+});
+
+// --- 20261103b: Typeform's hints and the fifth Meta choice on version 2 (B0) ----------------------
+
+/** The nine hints KFRCXPFx gives that version 2 dropped, as drafted under aziz-kuwaiti-voice (onboarding-v3 1.2). */
+const B_HINTS: Record<string, { en: string; ar: string }> = {
+  personalPhone: {
+    en: "We send appointment confirmations and updates to this number. Write one number only. If more people should get them, tell us on the onboarding call.",
+    ar: "على هالرقم نرسل تأكيد المواعيد والتحديثات. اكتبوا رقم واحد بس، وإذا تبون أحد ثاني يوصله، قولوا لنا بمكالمة الانطلاق.",
+  },
+  facebookAds: {
+    en: "If you have a Facebook business manager, give us access before the onboarding call: https://app.leadsie.com/connect/maharamedia/manage",
+    ar: "إذا عندكم حساب أعمال على فيسبوك، عطونا صلاحية عليه قبل مكالمة الانطلاق من هالرابط: https://app.leadsie.com/connect/maharamedia/manage",
+  },
+  hours: {
+    en: "For example: Sunday to Thursday, 9am to 5pm.",
+    ar: "مثلاً: من الأحد لين الخميس، من ٩ الصبح لين ٥ العصر.",
+  },
+  landmark: {
+    en: "Only if clients visit your office.",
+    ar: "بس إذا العملاء يزورونكم بالمكتب.",
+  },
+  appointmentLength: {
+    en: "For example: a 60-minute appointment with 15 minutes between appointments.",
+    ar: "مثلاً: الموعد ٦٠ دقيقة، وبين كل موعد والثاني ١٥ دقيقة.",
+  },
+  consultants: {
+    en: "For each one: name, speciality, nationality and qualifications.",
+    ar: "لكل واحد: الاسم، التخصص، الجنسية، والمؤهلات.",
+  },
+  freeConsults: {
+    en: "Companies that offer a free consultation often get better results and more projects.",
+    ar: "الشركات اللي تقدم استشارة مجانية عادةً تحصّل نتايج أحسن ومشاريع أكثر.",
+  },
+  challenges: {
+    en: "Name a few we can help with right away.",
+    ar: "اذكروا كم شي نقدر نساعدكم فيه سيده.",
+  },
+  driveLink: {
+    en: "What to put in it:\nTeam photos\nPhotos with homeowners and clients\nBefore and after photos of projects\nTestimonial and reaction videos from past clients\nVideos of you, your team and your work in action\nEducational content about your services\nTime-lapse or walkthrough videos of projects in progress\nYour logo as a PDF",
+    ar: "شنو تحطون فيه:\nصور الفريق\nصور مع أصحاب البيوت والعملاء\nصور قبل وبعد للمشاريع\nفيديوهات آراء العملاء السابقين وردة فعلهم\nفيديوهات لكم ولفريقكم وانتو تشتغلون\nمحتوى تعليمي عن خدماتكم\nفيديوهات تايم لابس أو جولات بمشاريع شغالة\nالشعار كملف PDF",
+  },
+};
+const B_OPTIONAL = ["address", "projectsDone", "landmark"];
+const B_LABEL = { en: "Business Name (in English)", ar: "اسم الشركة (بالإنقليزي)" };
+const B_OPTION = { value: "restricted", label: { en: "My account is restricted", ar: "حسابي مقيّد" } };
+const fieldsOf = (form: string) =>
+  one<Row[]>("SELECT public.cockpit_form_stage4_fields($1) AS r", [form]);
+/** What 20261102j's door reads beside this ground, as stand-ins (as the door test above makes them). */
+const doorGround = async () => {
+  await db.exec(`
+    ALTER TABLE public.cockpit_form_responses ALTER COLUMN id SET DEFAULT gen_random_uuid(),
+      ADD COLUMN created_by text, ADD COLUMN submitted_by text;
+    ALTER TABLE public.cockpit_client_onboarding ADD COLUMN in_onboarding boolean, ADD COLUMN signup_on date;
+    ALTER TABLE public.cockpit_billing_accounts ADD COLUMN stage_group text;
+    CREATE TABLE public.cockpit_sales_deals (response_id uuid, submitted_at timestamptz);
+    CREATE FUNCTION public.cockpit_hours_require_service() RETURNS void LANGUAGE plpgsql AS $$ BEGIN END $$;
+    CREATE FUNCTION public.cockpit_billing_today() RETURNS date LANGUAGE sql AS $$ SELECT current_date $$;
+    CREATE FUNCTION public.cockpit_billing_deal_cards() RETURNS TABLE (clickup_task_id text, deal_response_id uuid)
+      LANGUAGE sql AS $$ SELECT NULL::text, NULL::uuid WHERE false $$;
+    CREATE FUNCTION public.cockpit_form_hook_onboarding(p_response_id uuid) RETURNS jsonb
+      LANGUAGE sql AS $$ SELECT '{"effects": []}'::jsonb $$;`);
+  await db.exec(fnDef(migration("20261102a_forms_invites.sql"), "cockpit_form_client_version"));
+  await billing();
+  await db.query(
+    "UPDATE public.cockpit_billing_accounts SET stage_group = 'pipeline' WHERE clickup_task_id = $1",
+    [TASK],
+  );
+};
+/** A late KFRCXPFx delivery through the Typeform door: what it stores. */
+const deliverOnboarding = async (token: string, fields: Answer[]) => {
+  const out = await one<Row>("SELECT public.cockpit_form_onboarding_typeform($1::jsonb) AS r", [
+    json({
+      formKey: "onboarding",
+      externalId: token,
+      submittedAt: "2026-11-03T09:00:00Z",
+      answers: { fields },
+      hidden: { onboarding_client_id: TASK },
+      taskId: TASK,
+    }),
+  ]);
+  expect(out).toMatchObject({ inserted: true, stored: "native", taskId: TASK });
+  return one<Row>(
+    "SELECT jsonb_build_object('answers', answers, 'meta', answer_meta) AS r FROM public.cockpit_form_responses WHERE id = $1::uuid",
+    [out.responseId],
+  );
+};
+
+describe("20261103b: Typeform's hints, optional questions and fifth Meta choice on version 2 (B0)", () => {
+  test("the drift guard names 20261102o's fields body and both version-2 texts; the file leaves the drafted version 2", async () => {
+    const sql = migration(B);
+    expect(sql).toContain(
+      `('public.cockpit_form_stage4_fields(text)', '${AFTER_M["cockpit_form_stage4_fields(text)"]}', '${AFTER_B_FIELDS}')`,
+    );
+    expect(sql).toContain(`v_md5 NOT IN ('${V2_M_MD5}', '${V2_B_MD5}')`);
+    expect(sql).toContain(`IS DISTINCT FROM '${V2_B_MD5}'`);
+    await rolledBack(async () => {
+      // The ground is 20261102o's, as live holds it (read 2026-11-03).
+      expect(await v2Md5()).toBe(V2_M_MD5);
+      expect(await md5Of("cockpit_form_stage4_fields(text)")).toBe(AFTER_M["cockpit_form_stage4_fields(text)"]);
+      const before = await v2Schema();
+      await db.exec(inTest(B));
+      expect(await v2Md5()).toBe(V2_B_MD5);
+      expect(await md5Of("cockpit_form_stage4_fields(text)")).toBe(AFTER_B_FIELDS);
+      const after = await v2Schema();
+      // Only the fields change; every other setting of the form stays.
+      expect({ ...after, fields: null }).toEqual({ ...before, fields: null });
+      expect(after.fields.map((f: Row) => f.key)).toEqual(before.fields.map((f: Row) => f.key));
+      const was = Object.fromEntries(before.fields.map((f: Row) => [f.key, f]));
+      for (const f of after.fields as Row[]) {
+        const expected = { ...was[f.key] };
+        if (B_HINTS[f.key]) expected.hint = B_HINTS[f.key];
+        if (B_OPTIONAL.includes(f.key)) expected.required = false;
+        if (f.key === "businessName") expected.label = B_LABEL;
+        if (f.key === "facebookAds") expected.options = [...was.facebookAds.options, B_OPTION];
+        expect([f.key, f]).toEqual([f.key, expected]);
+      }
+      // The three were required in 20261102o's; each hint is new but the Drive link's, which replaces a summary.
+      for (const k of B_OPTIONAL) expect([k, was[k].required]).toEqual([k, true]);
+      expect(Object.keys(B_HINTS).filter(k => was[k].hint)).toEqual(["driveLink"]);
+      const count = (s: Row, p: (f: Row) => boolean) => (s.fields as Row[]).filter(p).length;
+      expect([count(before, f => f.required === true), count(after, f => f.required === true)]).toEqual([32, 29]);
+      expect([count(after, f => f.type !== "heading"), count(after, f => Boolean(f.hint))]).toEqual([36, 10]);
+      // The check every published form passes, and the client text rule on every new word.
+      expect(await one("SELECT public.cockpit_form_schema_check($1::jsonb) AS r", [json(after)])).toBeNull();
+      for (const t of [...Object.values(B_HINTS), B_LABEL, B_OPTION.label])
+        for (const text of [t.en, t.ar]) {
+          expect([text, await one("SELECT public.cockpit_client_text_ok($1) AS r", [text])]).toEqual([text, null]);
+          expect(Array.from(text).length).toBeLessThanOrEqual(600);
+          expect(text).not.toMatch(/[—–«»٬]/);
+        }
+    });
+  });
+
+  test("the fifth Meta choice joins 20261102o's question list; the kickoff's list and every other question stay", async () => {
+    await rolledBack(async () => {
+      const kickoff = await fieldsOf("kickoff");
+      const onboarding = await fieldsOf("onboarding");
+      await db.exec(inTest(B));
+      expect(await fieldsOf("kickoff")).toEqual(kickoff);
+      const now = await fieldsOf("onboarding");
+      expect(now).toHaveLength(36);
+      const meta = now.find(s => s.key === "facebookAds") as Row;
+      expect(meta.typeformRef).toBe(O.facebookAds);
+      expect(meta.options.at(-1)).toEqual({ value: "restricted", typeform: RESTRICTED });
+      expect(now.map(s => (s.key === "facebookAds" ? { ...s, options: s.options.slice(0, -1) } : s))).toEqual(onboarding);
+      // The kickoff's list in the file is 20261102o's text, byte for byte (the sheet's test reads the newest file).
+      const listOf = (file: string, form: string) => {
+        const sql = migration(file);
+        const at = sql.indexOf(`p_form_key = '${form}' THEN`, sql.indexOf("FUNCTION public.cockpit_form_stage4_fields("));
+        const begin = sql.indexOf("RETURN '", at);
+        return sql.slice(begin, sql.indexOf("'::jsonb", begin));
+      };
+      expect(listOf(B, "kickoff")).toBe(listOf(M, "kickoff"));
+      expect(listOf(B, "onboarding")).not.toBe(listOf(M, "onboarding"));
+    });
+  });
+
+  test("a second apply changes nothing, even once version 2 is in use", async () => {
+    await rolledBack(async () => {
+      await db.exec(inTest(B));
+      const snapshot = async () => ({
+        v2: await v2Md5(),
+        fields: await md5Of("cockpit_form_stage4_fields(text)"),
+      });
+      const before = await snapshot();
+      expect(before).toEqual({ v2: V2_B_MD5, fields: AFTER_B_FIELDS });
+      await db.query(
+        "INSERT INTO public.cockpit_form_invites(form_key, form_version, state) VALUES ('onboarding', 2, 'open')",
+      );
+      await db.exec(inTest(B));
+      expect(await snapshot()).toEqual(before);
+    });
+  });
+
+  test("an answer or an invite on version 2 stops the file: the hints go into version 3", async () => {
+    for (const use of [
+      "INSERT INTO public.cockpit_form_responses(id, form_key, form_version, task_id) VALUES (gen_random_uuid(), 'onboarding', 2, 'taskX')",
+      "INSERT INTO public.cockpit_form_invites(form_key, form_version, state) VALUES ('onboarding', 2, 'open')",
+    ])
+      await rolledBack(async () => {
+        await db.query(use);
+        expect(await refusal(() => db.exec(inTest(B)))).toEqual({
+          code: "55000",
+          message:
+            "The onboarding form's version 2 is in use (1 answers and invites), so it cannot change in place: stop, and put these hints in version 3.",
+        });
+      });
+    // An answer or invite on another version is no use of version 2.
+    await rolledBack(async () => {
+      await db.query(
+        "INSERT INTO public.cockpit_form_invites(form_key, form_version, state) VALUES ('onboarding', 1, 'open'), ('kickoff', 2, 'open')",
+      );
+      await db.exec(inTest(B));
+      expect(await v2Md5()).toBe(V2_B_MD5);
+    });
+  });
+
+  test("a version 2, a registry copy or a fields body that is neither 20261102o's nor this file's stops it", async () => {
+    for (const change of [
+      "UPDATE public.cockpit_form_versions SET schema = schema || '{\"minutes\": 30}' WHERE form_key = 'onboarding' AND version = 2",
+      "DELETE FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2",
+    ])
+      await rolledBack(async () => {
+        await db.query(change);
+        expect(await refusal(() => db.exec(inTest(B)))).toEqual({
+          code: "55000",
+          message: "The onboarding form's version 2 changed since 20261102o; stop and re-read it.",
+        });
+      });
+    await rolledBack(async () => {
+      await db.query(
+        `INSERT INTO public.cockpit_forms(key, provider, version, schema)
+         SELECT 'onboarding', 'native', 2, schema || '{"minutes": 30}' FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2`,
+      );
+      expect(await refusal(() => db.exec(inTest(B)))).toEqual({
+        code: "55000",
+        message: "The registry's copy of the onboarding form's version 2 changed since 20261102o; stop and re-read it.",
+      });
+    });
+    // 20261102j's fields body (live before 20261102o), or any other, stops it.
+    await rolledBack(async () => {
+      await db.exec(fnDef(migration(J), "cockpit_form_stage4_fields"));
+      expect(await md5Of("cockpit_form_stage4_fields(text)")).toBe(BEFORE_M["cockpit_form_stage4_fields(text)"]);
+      expect(await refusal(() => db.exec(inTest(B)))).toEqual({
+        code: "55000",
+        message: "cockpit_form_stage4_fields(text) changed since 20261102o; stop and re-read it.",
+      });
+    });
+    // A drafted text that would not come out exactly stops it before anything is written.
+    await rolledBack(async () => {
+      const off = inTest(B).replace("Only if clients visit your office.", "Only if clients visit you.");
+      expect(off).not.toBe(inTest(B));
+      const r = await refusal(() => db.exec(off));
+      expect(r.code).toBe("55000");
+      expect(r.message).toStartWith("The onboarding form's new version 2 is not the drafted one (md5 ");
+    });
+  });
+
+  test("the registry's copy follows when the onboarding is already live on version 2", async () => {
+    await rolledBack(async () => {
+      await db.query(
+        `INSERT INTO public.cockpit_forms(key, provider, version, schema)
+         SELECT 'onboarding', 'native', 2, schema FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2`,
+      );
+      await db.exec(inTest(B));
+      expect(
+        await one(
+          "SELECT jsonb_build_object('md5', md5(schema::text), 'by', updated_by) AS r FROM public.cockpit_forms WHERE key = 'onboarding'",
+        ),
+      ).toEqual({ md5: V2_B_MD5, by: "migration 20261103b" });
+    });
+    // On version 1 (live, read 2026-11-03: Typeform), the registry is not touched.
+    await rolledBack(async () => {
+      await db.query(
+        "INSERT INTO public.cockpit_forms(key, provider, version, schema) VALUES ('onboarding', 'typeform', 1, NULL)",
+      );
+      await db.exec(inTest(B));
+      expect(
+        await one("SELECT to_jsonb(f) - 'effects' AS r FROM public.cockpit_forms f WHERE key = 'onboarding'"),
+      ).toEqual({ key: "onboarding", provider: "typeform", version: 1, schema: null, updated_by: null, updated_at: null });
+    });
+  });
+
+  test("the owner runs the replaced question list, and nobody else", async () => {
+    await rolledBack(async () => {
+      await db.exec(inTest(B));
+      expect(
+        await one(
+          `SELECT jsonb_object_agg(r, has_function_privilege(r, 'public.cockpit_form_stage4_fields(text)', 'EXECUTE')) AS r
+             FROM unnest(ARRAY['anon','authenticated','service_role']) r`,
+        ),
+      ).toEqual({ anon: false, authenticated: false, service_role: false });
+    });
+  });
+
+  test("the portal's check takes restricted and the three questions left empty; the answer prints KFRCXPFx's label in Make's texts", async () => {
+    const { address: _a, projectsDone: _p, landmark: _l, ...lean } = ONB_TYPED;
+    const restricted = { ...lean, facebookAds: "restricted" };
+    await rolledBack(async () => {
+      await setting("onboarding.raw_titles", RAW_TITLES);
+      // 20261102o's version 2 refuses all four, and its list has no label for restricted.
+      const refused = await onboardingCheck(restricted);
+      expect([refused.ok, Object.keys(refused.errors).sort()]).toEqual([
+        false,
+        ["address", "facebookAds", "landmark", "projectsDone"],
+      ]);
+      expect(
+        await one<Answer[]>(
+          "SELECT public.cockpit_form_stage4_typeform_answers('onboarding', '{\"facebookAds\": \"restricted\"}'::jsonb) AS r",
+        ),
+      ).toEqual([]);
+      await db.exec(inTest(B));
+      const taken = await onboardingCheck(restricted);
+      expect([taken.ok, taken.errors, taken.answers.facebookAds]).toEqual([true, {}, "restricted"]);
+      for (const k of B_OPTIONAL) expect(taken.answers).not.toHaveProperty(k);
+      // The stored answer prints Typeform's label into the answers list Make's texts are built from.
+      const id = await nativeResponse("onboarding", { ...NATIVE_ONBOARDING, facebookAds: "restricted" });
+      const input = await one<Row>("SELECT public.cockpit_form_stage4_input($1) AS r", [id]);
+      expect(input.answers.find((x: Answer) => x.ref === O.facebookAds)?.value).toBe(RESTRICTED);
+      const made = evaluate([{ id: "restricted", form: "onboarding", task: TASK, answers: input.answers }]);
+      const plan = byKey(await build(input));
+      expect(plan.raw_answers_comment.plan.comment_text).toBe(made.restricted.raw);
+      const title = RAW_TITLES.fields.find((f: Row) => f.ref === O.facebookAds).title;
+      expect(made.restricted.raw).toContain(`\n**${title}**\n${RESTRICTED}\n`);
+      expect(plan.profile_fields.plan.fields[0].value).toBe(made.restricted.profile);
+    });
+  });
+
+  test("a stored KFRCXPFx answer with the fifth choice: the parity plan maps it and its texts equal Make's (finding F3)", async () => {
+    const answers = [...ONBOARDING, a(O.facebookAds, RESTRICTED)];
+    await rolledBack(async () => {
+      await setting("onboarding.raw_titles", RAW_TITLES);
+      const made = evaluate([{ id: "restricted", form: "onboarding", task: TASK, answers }]);
+      const raw = (r: Row) => byKey(r.effects).raw_answers_comment.plan.comment_text;
+      // Before: the answer goes to _unmapped and Make's line for it is lost.
+      const was = await parity("onboarding", onboardingInput(answers));
+      expect(was.unmapped).toEqual([O.facebookAds]);
+      expect(raw(was)).not.toBe(made.restricted.raw);
+      expect(raw(was)).not.toContain(RESTRICTED);
+      const plain = await parity("onboarding", onboardingInput(ONBOARDING));
+      await db.exec(inTest(B));
+      const now = await parity("onboarding", onboardingInput(answers));
+      expect(now.unmapped).toBeNull();
+      expect(raw(now)).toBe(made.restricted.raw);
+      expect(raw(now)).toContain(RESTRICTED);
+      // Every answer without it plans as before, byte for byte.
+      expect(await parity("onboarding", onboardingInput(ONBOARDING))).toEqual(plain);
+    });
+  });
+
+  test("the Typeform door stores a late delivery that chose it as restricted, with nothing unmapped", async () => {
+    const fields = [a(O.fullName, "Invented Owner"), a(O.businessName, "Cedar Homes Invented"), a(O.facebookAds, RESTRICTED)];
+    // Before: the door drops the answer into answer_meta.unmapped, so Make's texts lose it. (That stored
+    // answer is a use of version 2, so this file could no longer change it in place: the next step starts again.)
+    await rolledBack(async () => {
+      await doorGround();
+      const was = await deliverOnboarding("tokDoorMeta0001", fields);
+      expect(was.answers).not.toHaveProperty("facebookAds");
+      expect(was.meta.unmapped).toEqual([O.facebookAds]);
+      expect((await refusal(() => db.exec(inTest(B)))).message).toContain("put these hints in version 3");
+    });
+    await rolledBack(async () => {
+      await doorGround();
+      await db.exec(inTest(B));
+      const now = await deliverOnboarding("tokDoorMeta0002", fields);
+      expect(now.answers.facebookAds).toBe("restricted");
+      expect(now.meta).not.toHaveProperty("unmapped");
+      // The stored answer passes version 2's check as it is.
+      expect((await onboardingCheck({ ...ONB_TYPED, facebookAds: now.answers.facebookAds })).ok).toBe(true);
+    });
   });
 });
