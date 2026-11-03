@@ -9,8 +9,19 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
+  BUDGET_MAX,
+  BUDGET_MIN,
+  budgetAmount,
   CARD_FACTS,
+  CLIENT_PROFILE_FIELD,
   cardRefused,
+  FACTS_ALLOWED,
+  FORMS_FORM_KEYS,
+  formLane,
+  PROFILE_BACKFILL,
+  PROFILE_LABELS,
+  SALE_FACTS,
+  STAGE4_KEYS,
   checkToken,
   executeForm,
   FORM_FIELDS,
@@ -1729,7 +1740,7 @@ describe("Stage 4 keys (4.13.4)", () => {
     );
     expect([...bad.keys]).toEqual(["checkin"]);
     expect(bad.error).toBe(
-      "CLICKUP_WRITEBACK_FORMS_KEYS names something that is not checkin, kickoff or onboarding, so only checkin is written.",
+      "CLICKUP_WRITEBACK_FORMS_KEYS names something that is not checkin, kickoff, onboarding, new_client or profile_backfill, so only checkin is written.",
     );
     expect(SAY_FORMS.heldForm("kickoff")).toBe(
       "Held: kickoff card writes are not switched on.",
@@ -2301,6 +2312,10 @@ const ADS = "2de15aa5-7fe9-48bf-86a1-e4cfee1306c9";
 const FATHOM = "abaa31ee-28ff-46f6-83bf-6c6d357a26d5";
 const CALL_DATE = "ee9bf855-e05b-4afc-addf-1063cb54d3f0";
 const WEBSITE = "5d57fdde-eb70-4610-a23b-88f718b4451d";
+const BUDGET = "539743c2-b6cd-4eeb-bf2f-abaf64769a5e";
+const GO_LIVE = "d4483463-840f-4730-ae7f-bfa77c5bb22a";
+const HANDOFF = "e17a1c27-ec34-4f87-8796-3cf1f8fa80f9";
+const SALES_LINK = "1f2e9ad1-98d8-410d-9994-ac6da91ff91d";
 const optionOfName = (fieldId: string, name: string) =>
   Object.entries(CARD_FACTS[fieldId].options ?? {}).find(
     ([, n]) => n === name,
@@ -2364,6 +2379,8 @@ const only = (...ids: string[]) => facts().filter(f => ids.includes(f.fieldId));
 class FactsCard {
   calls: Call[] = [];
   values = new Map<string, unknown>();
+  /** The list the card sits on: Clients - Mahara unless a test moves it. */
+  list = CARDS_LIST;
   /** Answer this call with an error before ClickUp does anything. */
   fail?: (c: Call) => Error | undefined;
   /** A field whose writes ClickUp answers and never keeps. */
@@ -2399,6 +2416,33 @@ class FactsCard {
       type_config: {},
     },
     { id: WEBSITE, name: "Company Website", type: "url", type_config: {} },
+    // Daily Budget (item 5, build B1): a ClickUp currency field kept in USD.
+    {
+      id: BUDGET,
+      name: "Daily Budget",
+      type: "currency",
+      type_config: { currency_type: "USD", precision: 2 },
+    },
+    // The Client Profile (item 2) and the sale's three fields (item 6), each on Clients - Mahara.
+    { id: PROFILE, name: "Client Profile", type: "text", type_config: {} },
+    {
+      id: GO_LIVE,
+      name: "How soon do they want to go live?",
+      type: "text",
+      type_config: {},
+    },
+    {
+      id: HANDOFF,
+      name: "Is there any potential Client Success handoff problems that may occur?",
+      type: "text",
+      type_config: {},
+    },
+    {
+      id: SALES_LINK,
+      name: "Sales Meeting Link",
+      type: "url",
+      type_config: {},
+    },
   ];
   provider(): Provider {
     return {
@@ -2424,7 +2468,7 @@ class FactsCard {
     if (c.method === "GET" && !m[2])
       return {
         id: CARD,
-        list: { id: CARDS_LIST },
+        list: { id: this.list },
         custom_fields: this.fields.map(f => ({
           ...structuredClone(f),
           value: structuredClone(this.values.get(f.id)),
@@ -2450,6 +2494,12 @@ class FactsCard {
             `${new Date(Number(v)).toISOString().slice(0, 10)}T03:00:00Z`,
           ),
         );
+      } else if (f.type === "currency") {
+        // A money field takes a number and hands it back as a text, as ClickUp does.
+        if (typeof v !== "number" || !Number.isFinite(v)) throw rejected(400);
+        kept = String(v);
+      } else if (f.type === "text") {
+        if (typeof v !== "string") throw rejected(400);
       }
       if (this.dropField !== f.id) this.values.set(f.id, kept);
       if (this.raceAfterWrite?.fieldId === f.id) {
@@ -3084,6 +3134,927 @@ describe("card_facts (plan B8): only empty fields, never over a card value", () 
       'Consultation Types has no "Online" option in ClickUp any more, so a card facts write with it would fail.',
       "ADs Platform is a labels field in ClickUp, not drop_down, so card facts would not write it.",
       "Card facts write Company Website (5d57fdde), which is not on the Clients - Mahara list.",
+    ]);
+  });
+});
+
+// --- Build B1 (next-design plan items 2, 5 and 6): profile_backfill, the Daily Budget and sale_facts -------------
+// Every client, text and link here is invented. The field ids are ClickUp's own (Clients - Mahara), no secret.
+
+/** Make 13 [29]'s Client Profile in its seven labels, with invented answers: a line break, an emoji, Arabic and the
+ * trailing space Make leaves after an empty last answer. */
+const PROFILE_TEXT = [
+  "Last Year's Total Revenue: 120000",
+  "",
+  "90-Day Goal Revenue: 45000",
+  "",
+  "12-24 Month Revenue Goal: 300000",
+  "",
+  "Marketing they've tried A-Z: Flyers,\nan invented radio spot",
+  "",
+  "Top 3 challenges: Leads 🛋️, staff, السعر",
+  "",
+  "Why they joined: An invented referral",
+  "",
+  "Additional notes: ",
+].join("\n");
+const OTHER_PROFILE = PROFILE_TEXT.replace("120000", "99000");
+
+/** A profile_backfill row as the claim returns it: the text only in the effect's plan, its sha256 in the payload. */
+async function backfillItem(
+  over: {
+    value?: string;
+    fields?: Row[];
+    payload?: Row;
+    progress?: Row;
+  } = {},
+): Promise<FormItem> {
+  const value = over.value ?? PROFILE_TEXT;
+  const fields = over.fields ?? [
+    {
+      fieldId: PROFILE,
+      kind: "text",
+      label: "Client Profile",
+      value,
+      onlyIfEmpty: true,
+    },
+  ];
+  const plan = { taskId: CARD, fields };
+  return {
+    id: "q-profile_backfill",
+    kind: "form",
+    attempts: 1,
+    created_at: new Date(NOW - 60_000).toISOString(),
+    task_id: CARD,
+    steps: null,
+    progress: over.progress ?? {},
+    payload: {
+      formKey: "onboarding",
+      effectKey: "profile_backfill",
+      effectId: "e-profile_backfill",
+      responseId: RESPONSE,
+      taskId: CARD,
+      valueChars: value.length,
+      valueSha256: await sha256(value),
+      ...(over.payload ?? {}),
+    },
+    effect: { id: "e-profile_backfill", state: "queued", plan },
+  };
+}
+
+/** A sale_facts row as the claim returns it: the values only in the effect's plan, never in the payload. */
+function saleItem(
+  fields: Row[],
+  over: { formKey?: string; progress?: Row } = {},
+): FormItem {
+  return {
+    id: "q-sale_facts",
+    kind: "form",
+    attempts: 1,
+    created_at: new Date(NOW - 60_000).toISOString(),
+    task_id: CARD,
+    steps: null,
+    progress: over.progress ?? {},
+    payload: {
+      formKey: over.formKey ?? "new_client",
+      effectKey: "sale_facts",
+      effectId: "e-sale_facts",
+      responseId: RESPONSE,
+      taskId: CARD,
+    },
+    effect: {
+      id: "e-sale_facts",
+      state: "queued",
+      plan: { taskId: CARD, fields },
+    },
+  };
+}
+const GO_LIVE_TEXT = "In two weeks,\nafter the invented shop opening";
+const sale = (): Row[] => [
+  {
+    fieldId: GO_LIVE,
+    kind: "text",
+    label: "Go live",
+    value: GO_LIVE_TEXT,
+    onlyIfEmpty: true,
+    source: "new_client: e30bc458",
+  },
+  {
+    fieldId: HANDOFF,
+    kind: "text",
+    label: "Handoff problems",
+    value: "No",
+    onlyIfEmpty: true,
+    source: "new_client: 3cf4bfdf",
+  },
+  {
+    fieldId: SALES_LINK,
+    kind: "url",
+    label: "Sales Meeting Link",
+    value: "https://fathom.video/share/invented-sale-call",
+    onlyIfEmpty: true,
+    source: "new_client: 52ca9be9",
+  },
+];
+const budget = (value: unknown): Row => ({
+  fieldId: BUDGET,
+  kind: "currency",
+  label: "Daily Budget",
+  value,
+  onlyIfEmpty: true,
+  source: "kickoff",
+});
+const steps = (out: { progress: unknown }, key: string) =>
+  (out.progress as Row).steps?.[key] as Row;
+const MISMATCH = { fail: SAY_FORMS.mismatch };
+
+describe("build B1: the lanes (CLICKUP_WRITEBACK_FORMS_KEYS)", () => {
+  it("lists new_client and profile_backfill; a row's lane is profile_backfill for a backfill row, else its form", () => {
+    expect([...FORMS_FORM_KEYS]).toEqual([
+      "checkin",
+      "kickoff",
+      "onboarding",
+      "new_client",
+      "profile_backfill",
+    ]);
+    const keys = formsKeysGate(n =>
+      n === "CLICKUP_WRITEBACK_FORMS_KEYS"
+        ? "checkin,new_client,profile_backfill"
+        : undefined,
+    );
+    expect(keys.error).toBeNull();
+    expect(keys.has("profile_backfill")).toBe(true);
+    expect(keys.has("new_client")).toBe(true);
+    expect(keys.has("onboarding")).toBe(false);
+    expect(
+      formLane({ formKey: "onboarding", effectKey: "profile_backfill" }),
+    ).toBe("profile_backfill");
+    expect(formLane({ formKey: "onboarding", effectKey: "card_facts" })).toBe(
+      "onboarding",
+    );
+    expect(formLane({ formKey: "new_client", effectKey: "sale_facts" })).toBe(
+      "new_client",
+    );
+    expect(formLane({ effectKey: "happiness" })).toBe("checkin");
+    expect(formLane(undefined)).toBe("checkin");
+    expect(SAY_FORMS.heldForm("profile_backfill")).toBe(
+      "Held: profile_backfill card writes are not switched on.",
+    );
+    expect(STAGE4_KEYS).toContain("profile_backfill");
+    expect(STAGE4_KEYS).toContain("sale_facts");
+  });
+});
+
+describe("build B1: the allowlists, each key only its own", () => {
+  it("SALE_FACTS holds exactly its three ids; PROFILE_BACKFILL the Client Profile alone; CARD_FACTS gains Daily Budget alone", () => {
+    expect(SALE_FACTS).toEqual({
+      "d4483463-840f-4730-ae7f-bfa77c5bb22a": {
+        kind: "text",
+        label: "Go-live expectation",
+      },
+      "e17a1c27-ec34-4f87-8796-3cf1f8fa80f9": {
+        kind: "text",
+        label: "Handoff problems",
+      },
+      "1f2e9ad1-98d8-410d-9994-ac6da91ff91d": {
+        kind: "url",
+        label: "Sales Meeting Link",
+      },
+    });
+    expect(PROFILE_BACKFILL).toEqual({
+      [CLIENT_PROFILE_FIELD]: { kind: "text", label: "Client Profile" },
+    });
+    expect(CLIENT_PROFILE_FIELD).toBe(PROFILE);
+    expect(Object.keys(CARD_FACTS).map(id => id.slice(0, 8))).toEqual([
+      "45fdd2ea",
+      "2de15aa5",
+      "abaa31ee",
+      "ee9bf855",
+      "5d57fdde",
+      "539743c2",
+    ]);
+    expect(CARD_FACTS[BUDGET]).toEqual({
+      kind: "currency",
+      label: "Daily Budget",
+    });
+    // Never written by the sale's facts or the backfill: the Closer, Closer Notes, Daily Budget, Country, Email, Phone
+    // Number, Payment Plan, Next Payment, Billing and the transcript (sale-tie.md 2.8); never by card_facts: Country.
+    const never = [
+      "63af118b",
+      "890d4ab8",
+      "539743c2",
+      "e0ca65e7",
+      "a90c8230",
+      "085d5e18",
+      "17d17129",
+      "f071ee8f",
+      "f9bdf6b8",
+      "68f71f79",
+    ];
+    for (const list of [SALE_FACTS, PROFILE_BACKFILL])
+      expect(
+        Object.keys(list).filter(id => never.includes(id.slice(0, 8))),
+      ).toEqual([]);
+    expect(
+      Object.keys(CARD_FACTS).filter(id =>
+        ["e0ca65e7", "63af118b", "890d4ab8"].includes(id.slice(0, 8)),
+      ),
+    ).toEqual([]);
+    // No id is on two lists.
+    const all = Object.values(FACTS_ALLOWED).flatMap(l => Object.keys(l));
+    expect(new Set(all).size).toBe(all.length);
+  });
+
+  it("a key never takes another key's field, or another form's row; each refusal makes no call", async () => {
+    const card = new FactsCard();
+    const kickoffFacts = (fields: Row[]) => factsItem(fields);
+    const cases: [string, FormItem][] = [
+      // sale_facts from a kickoff or an onboarding row.
+      ["sale_facts from a kickoff", saleItem(sale(), { formKey: "kickoff" })],
+      [
+        "sale_facts from an onboarding",
+        saleItem(sale(), { formKey: "onboarding" }),
+      ],
+      // card_facts from the sale.
+      [
+        "card_facts from new_client",
+        await factsItem(only(FATHOM), { formKey: "new_client" }),
+      ],
+      // A card_facts field on sale_facts, the Closer, the Client Profile or Daily Budget.
+      ["a card_facts link on sale_facts", saleItem(only(FATHOM))],
+      [
+        "the Closer on sale_facts",
+        saleItem([
+          {
+            ...sale()[0],
+            fieldId: "63af118b-bb16-48ba-9ddb-d0185b32fb23",
+          },
+        ]),
+      ],
+      [
+        "the Client Profile on sale_facts",
+        saleItem([{ ...sale()[0], fieldId: PROFILE }]),
+      ],
+      ["Daily Budget on sale_facts", saleItem([budget(40)])],
+      // A sale field, or the Client Profile, on card_facts.
+      ["a sale text on card_facts", await kickoffFacts([sale()[0]])],
+      ["the sales link on card_facts", await kickoffFacts([sale()[2]])],
+      [
+        "the Client Profile on card_facts",
+        await kickoffFacts([
+          {
+            fieldId: PROFILE,
+            kind: "text",
+            label: "Client Profile",
+            value: PROFILE_TEXT,
+            onlyIfEmpty: true,
+          },
+        ]),
+      ],
+      // A sale field on profile_backfill, even in the profile's shape.
+      [
+        "a sale field on profile_backfill",
+        await backfillItem({
+          fields: [
+            {
+              fieldId: GO_LIVE,
+              kind: "text",
+              label: "Client Profile",
+              value: PROFILE_TEXT,
+              onlyIfEmpty: true,
+            },
+          ],
+        }),
+      ],
+      // sale_facts' own checks: a link not on https, a blank text, a text sent as a link, no onlyIfEmpty, twice.
+      [
+        "an http sales link",
+        saleItem([{ ...sale()[2], value: "http://fathom.video/share/x" }]),
+      ],
+      ["a blank text", saleItem([{ ...sale()[0], value: "  \n " }])],
+      ["a text as a link", saleItem([{ ...sale()[0], kind: "url" }])],
+      ["no onlyIfEmpty", saleItem([{ ...sale()[1], onlyIfEmpty: undefined }])],
+      ["a field twice", saleItem([sale()[0], sale()[0]])],
+      ["no field", saleItem([])],
+      ["four fields", saleItem([...sale(), sale()[0]])],
+    ];
+    for (const [name, it] of cases)
+      expect([name, await formStep(it)]).toEqual([name, MISMATCH]);
+    expect(card.calls).toEqual([]);
+  });
+});
+
+describe("build B1: profile_backfill (item 2), Make's Client Profile only into an empty one", () => {
+  it("formStep: one field, the Client Profile, a text with Make's seven labels whose sha256 is the payload's", async () => {
+    expect(PROFILE_LABELS.test(PROFILE_TEXT)).toBe(true);
+    expect(await formStep(await backfillItem())).toEqual({
+      step: {
+        key: "profile_backfill",
+        type: "facts",
+        taskId: CARD,
+        fields: [
+          {
+            fieldId: PROFILE,
+            kind: "text",
+            label: "Client Profile",
+            value: PROFILE_TEXT,
+          },
+        ],
+      },
+    });
+    const card = new FactsCard();
+    const field = {
+      fieldId: PROFILE,
+      kind: "text",
+      label: "Client Profile",
+      value: PROFILE_TEXT,
+      onlyIfEmpty: true,
+    };
+    const swapped = PROFILE_TEXT.replace(
+      "Top 3 challenges: Leads 🛋️, staff, السعر\n\nWhy they joined: An invented referral",
+      "Why they joined: An invented referral\n\nTop 3 challenges: Leads 🛋️, staff, السعر",
+    );
+    const bad: [string, FormItem][] = [
+      [
+        "the sha256 of another text",
+        await backfillItem({
+          payload: { valueSha256: await sha256(OTHER_PROFILE) },
+        }),
+      ],
+      [
+        "no sha256",
+        await backfillItem({ payload: { valueSha256: undefined } }),
+      ],
+      [
+        "a text without Make's labels",
+        await backfillItem({ value: "An invented free-text profile" }),
+      ],
+      ["the labels out of order", await backfillItem({ value: swapped })],
+      [
+        "a label missing",
+        await backfillItem({
+          value: PROFILE_TEXT.replace("\n\nAdditional notes: ", ""),
+        }),
+      ],
+      [
+        "a revenue over two lines",
+        await backfillItem({
+          value: PROFILE_TEXT.replace("120000", "120000\nand more"),
+        }),
+      ],
+      [
+        "two fields",
+        await backfillItem({
+          fields: [field, { ...field, fieldId: KICKOFF_LINK, kind: "url" }],
+        }),
+      ],
+      ["the field twice", await backfillItem({ fields: [field, field] })],
+      [
+        "the Kickoff Form Link",
+        await backfillItem({
+          fields: [
+            {
+              ...field,
+              fieldId: KICKOFF_LINK,
+              kind: "url",
+              value: "https://x.example",
+            },
+          ],
+        }),
+      ],
+      [
+        "no onlyIfEmpty",
+        await backfillItem({ fields: [{ ...field, onlyIfEmpty: undefined }] }),
+      ],
+      [
+        "onlyIfEmpty false",
+        await backfillItem({ fields: [{ ...field, onlyIfEmpty: false }] }),
+      ],
+      ["kind url", await backfillItem({ fields: [{ ...field, kind: "url" }] })],
+      [
+        "a kickoff row",
+        await backfillItem({ payload: { formKey: "kickoff" } }),
+      ],
+      [
+        "a new_client row",
+        await backfillItem({ payload: { formKey: "new_client" } }),
+      ],
+      ["no field", await backfillItem({ fields: [] })],
+    ];
+    for (const [name, it] of bad)
+      expect([name, await formStep(it)]).toEqual([name, MISMATCH]);
+    expect(card.calls).toEqual([]);
+  });
+
+  it("an empty Client Profile is written once and read back: three calls, the receipt saved before the write, no text in progress", async () => {
+    const card = new FactsCard();
+    const { out, saves } = await runFacts(card, await backfillItem());
+    expect(out.state).toBe("delivered");
+    expect(out.note).toBeUndefined();
+    expect(card.calls.map(c => `${c.method} ${c.path}`)).toEqual([
+      `GET task/${CARD}`,
+      `POST task/${CARD}/field/${PROFILE}`,
+      `GET task/${CARD}`,
+    ]);
+    // The text whole, line breaks, emoji, Arabic and the trailing space included.
+    expect(card.writes()[0].body).toEqual({ value: PROFILE_TEXT });
+    expect(steps(out, "profile_backfill")).toMatchObject({
+      state: "done",
+      fields: { [PROFILE]: { before: "empty", state: "written" } },
+    });
+    const first = saves.find(
+      s => s.progress?.steps?.profile_backfill?.state === "started",
+    );
+    expect(first?.progress.steps.profile_backfill.fields).toEqual({
+      [PROFILE]: { before: "empty", state: "due" },
+    });
+    for (const s of saves)
+      expect(JSON.stringify(s)).not.toContain("invented radio spot");
+    // Settled: read again, no call.
+    const again = await runFacts(
+      card,
+      await backfillItem({ progress: out.progress as Row }),
+    );
+    expect(again.out.state).toBe("delivered");
+    expect(card.calls).toHaveLength(3);
+    // A blank Client Profile (white space alone) is empty too.
+    const blank = new FactsCard();
+    blank.values.set(PROFILE, "  \n ");
+    expect((await runFacts(blank, await backfillItem())).out.state).toBe(
+      "delivered",
+    );
+    expect(blank.values.get(PROFILE)).toBe(PROFILE_TEXT);
+  });
+
+  it("a Client Profile already there is kept, never written over: the same text says so alone, another says it differs", async () => {
+    const same = new FactsCard();
+    same.values.set(PROFILE, `${PROFILE_TEXT.trimEnd()}`);
+    const kept = await runFacts(same, await backfillItem());
+    expect(kept.out).toMatchObject({
+      state: "skipped",
+      error: "kept: the card already has a value for Client Profile",
+    });
+    expect(same.writes()).toEqual([]);
+    const other = new FactsCard();
+    other.values.set(PROFILE, OTHER_PROFILE);
+    const r = await runFacts(other, await backfillItem());
+    expect(r.out).toMatchObject({
+      state: "skipped",
+      error:
+        "kept: the card already has a value for Client Profile; Client Profile differs from the form, so check it on the card",
+    });
+    expect(steps(r.out, "profile_backfill").fields[PROFILE]).toEqual({
+      before: "set",
+      state: "kept",
+      differs: true,
+      note: SAY_FORMS.factDiffers,
+    });
+    expect(other.writes()).toEqual([]);
+    expect(other.values.get(PROFILE)).toBe(OTHER_PROFILE);
+  });
+
+  it("a race: a person's profile lands between the read and the read-back; it stays, kept with the raced note", async () => {
+    const card = new FactsCard();
+    card.raceAfterWrite = { fieldId: PROFILE, value: OTHER_PROFILE };
+    const { out } = await runFacts(card, await backfillItem());
+    expect(out).toMatchObject({
+      state: "skipped",
+      error:
+        "kept: the card already has a value for Client Profile; Client Profile differs from the form, so check it on the card",
+    });
+    expect(steps(out, "profile_backfill").fields[PROFILE]).toEqual({
+      before: "empty",
+      state: "kept",
+      differs: true,
+      note: SAY_FORMS.factRaced,
+    });
+    expect(card.writes()).toHaveLength(1);
+    expect(card.values.get(PROFILE)).toBe(OTHER_PROFILE);
+    // ClickUp handing the text back with \r\n line ends is still this writer's own text.
+    const crlf = new FactsCard();
+    crlf.raceAfterWrite = {
+      fieldId: PROFILE,
+      value: PROFILE_TEXT.replace(/\n/g, "\r\n"),
+    };
+    expect((await runFacts(crlf, await backfillItem())).out.state).toBe(
+      "delivered",
+    );
+  });
+
+  it("a resume after a write ClickUp did not answer reads first: its own text is written, still empty is written once, another is kept", async () => {
+    const started = {
+      steps: {
+        profile_backfill: {
+          state: "started",
+          at: new Date(NOW - 60_000).toISOString(),
+          startedAt: new Date(NOW - 60_000).toISOString(),
+          fields: { [PROFILE]: { before: "empty", state: "due" } },
+        },
+      },
+    };
+    const landed = new FactsCard();
+    landed.values.set(PROFILE, PROFILE_TEXT);
+    const a = await runFacts(
+      landed,
+      await backfillItem({ progress: structuredClone(started) }),
+    );
+    expect(a.out.state).toBe("delivered");
+    expect(landed.writes()).toEqual([]);
+    expect(steps(a.out, "profile_backfill").fields[PROFILE]).toEqual({
+      before: "empty",
+      state: "written",
+    });
+    const still = new FactsCard();
+    const b = await runFacts(
+      still,
+      await backfillItem({ progress: structuredClone(started) }),
+    );
+    expect(b.out.state).toBe("delivered");
+    expect(still.writes()).toHaveLength(1);
+    const other = new FactsCard();
+    other.values.set(PROFILE, OTHER_PROFILE);
+    const c = await runFacts(
+      other,
+      await backfillItem({ progress: structuredClone(started) }),
+    );
+    expect(c.out.state).toBe("skipped");
+    expect(other.writes()).toEqual([]);
+    expect(steps(c.out, "profile_backfill").fields[PROFILE].note).toBe(
+      SAY_FORMS.factRaced,
+    );
+  });
+
+  it("a 429 on the write is a plain retry that starts clean; a card off the list or gone fails with no write", async () => {
+    const card = new FactsCard();
+    card.fail = c => (c.method === "POST" ? rejected(429) : undefined);
+    const r = await runFacts(card, await backfillItem());
+    expect(r.out.state).toBe("retry");
+    expect(steps(r.out, "profile_backfill")).toBeUndefined();
+    card.fail = undefined;
+    const next = await runFacts(
+      card,
+      await backfillItem({ progress: r.out.progress as Row }),
+    );
+    expect(next.out.state).toBe("delivered");
+    expect(card.values.get(PROFILE)).toBe(PROFILE_TEXT);
+    const off = new FactsCard();
+    off.list = "901800000099";
+    expect((await runFacts(off, await backfillItem())).out).toMatchObject({
+      state: "failed",
+      error: SAY_FORMS.offList,
+    });
+    expect(off.writes()).toEqual([]);
+    const gone = new FactsCard();
+    gone.fail = c => (c.method === "GET" ? rejected(404) : undefined);
+    expect((await runFacts(gone, await backfillItem())).out).toMatchObject({
+      state: "failed",
+      error: SAY_FORMS.offList,
+    });
+    expect(gone.writes()).toEqual([]);
+    // The Client Profile missing on the card: failed, nothing written.
+    const nofield = new FactsCard();
+    nofield.fields = nofield.fields.filter(f => f.id !== PROFILE);
+    expect((await runFacts(nofield, await backfillItem())).out).toMatchObject({
+      state: "failed",
+      error: SAY_FORMS.noField("Client Profile"),
+    });
+  });
+
+  it("a held row shows its words and the text's length, never the text", async () => {
+    const planned = planForm(await backfillItem());
+    expect(planned).toEqual([
+      {
+        queueId: "q-profile_backfill",
+        kind: "form",
+        taskId: CARD,
+        field: "Client Profile from the stored answer, only if empty",
+        old: null,
+        new: `${PROFILE_TEXT.length} characters, only if the card's Client Profile is empty`,
+      },
+    ]);
+    expect(JSON.stringify(planned)).not.toContain("invented");
+  });
+});
+
+describe("build B1: sale_facts (item 6), the sale's notes only where the card is empty", () => {
+  it("formStep: the two texts and the link from a new_client row, by the writer's own names", async () => {
+    expect(await formStep(saleItem(sale()))).toEqual({
+      step: {
+        key: "sale_facts",
+        type: "facts",
+        taskId: CARD,
+        fields: [
+          {
+            fieldId: GO_LIVE,
+            kind: "text",
+            label: "Go-live expectation",
+            value: GO_LIVE_TEXT,
+          },
+          {
+            fieldId: HANDOFF,
+            kind: "text",
+            label: "Handoff problems",
+            value: "No",
+          },
+          {
+            fieldId: SALES_LINK,
+            kind: "url",
+            label: "Sales Meeting Link",
+            value: "https://fathom.video/share/invented-sale-call",
+          },
+        ],
+      },
+    });
+    // The two texts alone, as the planner sends them while the Sales Meeting Link is off.
+    expect("step" in (await formStep(saleItem(sale().slice(0, 2))))).toBe(true);
+  });
+
+  it("empty fields are written as typed ('No' too) and read back; a set one is kept and said", async () => {
+    const card = new FactsCard();
+    const { out } = await runFacts(card, saleItem(sale()));
+    expect(out.state).toBe("delivered");
+    expect(card.writes().map(c => [c.path, c.body])).toEqual([
+      [`task/${CARD}/field/${GO_LIVE}`, { value: GO_LIVE_TEXT }],
+      [`task/${CARD}/field/${HANDOFF}`, { value: "No" }],
+      [
+        `task/${CARD}/field/${SALES_LINK}`,
+        { value: "https://fathom.video/share/invented-sale-call" },
+      ],
+    ]);
+    const written = { before: "empty", state: "written" };
+    expect(steps(out, "sale_facts").fields).toEqual({
+      [GO_LIVE]: written,
+      [HANDOFF]: written,
+      [SALES_LINK]: written,
+    });
+    expect(JSON.stringify(out.progress)).not.toContain("invented shop");
+    // A person wrote the go-live expectation first: kept, the other two written, the row says it.
+    const set = new FactsCard();
+    set.values.set(GO_LIVE, "An invented answer a person typed");
+    const r = await runFacts(set, saleItem(sale()));
+    expect(r.out).toMatchObject({
+      state: "delivered",
+      note: "kept: the card already has a value for Go-live expectation; Go-live expectation differs from the form, so check it on the card",
+    });
+    expect(set.values.get(GO_LIVE)).toBe("An invented answer a person typed");
+    expect(set.writes().map(c => c.path)).toEqual([
+      `task/${CARD}/field/${HANDOFF}`,
+      `task/${CARD}/field/${SALES_LINK}`,
+    ]);
+  });
+
+  it("a held row shows its words and how many fields, never a value", async () => {
+    const planned = planForm(saleItem(sale()));
+    expect(planned).toEqual([
+      {
+        queueId: "q-sale_facts",
+        kind: "form",
+        taskId: CARD,
+        field: "Go-live and handoff problems from the sale, only where empty",
+        old: null,
+        new: "up to 3, each only where the card is empty",
+      },
+    ]);
+    expect(JSON.stringify(planned)).not.toContain("invented");
+  });
+});
+
+describe("build B1: Daily Budget (item 5), USD only into an empty field", () => {
+  it("takes a finite USD amount from 1 to 100,000 with 2 decimals at most, as a number", async () => {
+    expect([BUDGET_MIN, BUDGET_MAX]).toEqual([1, 100_000]);
+    for (const v of [1, 40, 39.99, 37.5, 100_000])
+      expect([v, budgetAmount(v)]).toEqual([v, v]);
+    // A float's noise is sent as the cents it means.
+    expect(budgetAmount(0.1 + 0.2 + 39.7)).toBe(40);
+    for (const v of [
+      0,
+      0.99,
+      -5,
+      100_000.01,
+      100_001,
+      12.345,
+      "40",
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      null,
+      undefined,
+      { usd: 40 },
+    ])
+      expect([v, budgetAmount(v)]).toEqual([v, null]);
+    const step = await formStep(await factsItem([budget(39.99)]));
+    expect(step).toEqual({
+      step: {
+        key: "card_facts",
+        type: "facts",
+        taskId: CARD,
+        fields: [
+          {
+            fieldId: BUDGET,
+            kind: "currency",
+            label: "Daily Budget",
+            amount: 39.99,
+          },
+        ],
+      },
+    });
+    for (const bad of [
+      budget(0),
+      budget(100_001),
+      budget(12.345),
+      budget("40"),
+      budget(null),
+      { ...budget(40), kind: "number" },
+      { ...budget(40), onlyIfEmpty: undefined },
+    ])
+      expect(await formStep(await factsItem([bad]))).toEqual(MISMATCH);
+    // On an onboarding row too: the allowlist is card_facts', whichever of its two forms plans it.
+    expect(
+      "step" in
+        (await formStep(
+          await factsItem([budget(40)], { formKey: "onboarding" }),
+        )),
+    ).toBe(true);
+  });
+
+  it("an empty Daily Budget gets the number and reads back to the cent as ClickUp's text; set (0 included) it is kept", async () => {
+    for (const empty of [undefined, null, ""]) {
+      const card = new FactsCard();
+      if (empty !== undefined) card.values.set(BUDGET, empty);
+      const { out } = await runFacts(card, await factsItem([budget(39.99)]));
+      expect(out.state).toBe("delivered");
+      expect(card.writes()).toEqual([
+        {
+          method: "POST",
+          path: `task/${CARD}/field/${BUDGET}`,
+          body: { value: 39.99 },
+        },
+      ]);
+      expect(card.values.get(BUDGET)).toBe("39.99");
+      expect(steps(out, "card_facts").fields[BUDGET]).toEqual({
+        before: "empty",
+        state: "written",
+      });
+      expect(JSON.stringify(out.progress)).not.toContain("39.99");
+    }
+    // The sale's figure, the same to the cent: kept with no note of a difference.
+    const same = new FactsCard();
+    same.values.set(BUDGET, "40.00");
+    expect(
+      (await runFacts(same, await factsItem([budget(40)]))).out,
+    ).toMatchObject({
+      state: "skipped",
+      error: "kept: the card already has a value for Daily Budget",
+    });
+    // Another figure, or 0: kept, said to differ, never written over.
+    for (const set of ["30", 0, "0"]) {
+      const card = new FactsCard();
+      card.values.set(BUDGET, set);
+      const r = await runFacts(card, await factsItem([budget(60)]));
+      expect(r.out).toMatchObject({
+        state: "skipped",
+        error:
+          "kept: the card already has a value for Daily Budget; Daily Budget differs from the form, so check it on the card",
+      });
+      expect(card.writes()).toEqual([]);
+      expect(card.values.get(BUDGET)).toBe(set);
+    }
+    // ClickUp keeping another figure than the one sent (to the cent) is not this writer's: kept, raced.
+    const off = new FactsCard();
+    off.raceAfterWrite = { fieldId: BUDGET, value: "39.98" };
+    const raced = await runFacts(off, await factsItem([budget(39.99)]));
+    expect(steps(raced.out, "card_facts").fields[BUDGET]).toEqual({
+      before: "empty",
+      state: "kept",
+      differs: true,
+      note: SAY_FORMS.factRaced,
+    });
+  });
+
+  it("a Daily Budget ClickUp keeps in another currency, or none named, fails before any write; a set one is just kept", async () => {
+    for (const [currency, said] of [
+      ["SAR", "in SAR"],
+      [undefined, "in no named currency"],
+    ] as const) {
+      const card = new FactsCard();
+      const field = card.fields.find(f => f.id === BUDGET) as Row;
+      field.type_config = currency ? { currency_type: currency } : {};
+      const r = await runFacts(
+        card,
+        await factsItem([budget(40), ...only(FATHOM)]),
+      );
+      expect(r.out).toMatchObject({
+        state: "failed",
+        error: SAY_FORMS.notUsd("Daily Budget", currency ?? ""),
+      });
+      expect(SAY_FORMS.notUsd("Daily Budget", currency ?? "")).toBe(
+        `ClickUp's Daily Budget is ${said}, not USD, so nothing was written. The tech lead runs the forms doctor.`,
+      );
+      expect(card.writes()).toEqual([]);
+    }
+    const kept = new FactsCard();
+    (kept.fields.find(f => f.id === BUDGET) as Row).type_config = {
+      currency_type: "SAR",
+    };
+    kept.values.set(BUDGET, "30");
+    expect(
+      (await runFacts(kept, await factsItem([budget(40), ...only(FATHOM)]))).out
+        .state,
+    ).toBe("delivered");
+    expect(kept.writes().map(c => c.path)).toEqual([
+      `task/${CARD}/field/${FATHOM}`,
+    ]);
+  });
+});
+
+describe("build B1: the forms doctor reads each listed lane's fields", () => {
+  const ours = (problems: string[]) =>
+    problems.filter(p =>
+      /Daily Budget|Client Profile|Go-live expectation|Handoff problems|Sales Meeting Link|backfill|sale's/.test(
+        p,
+      ),
+    );
+  it("nothing to say while every field is there with its kind and Daily Budget is in USD", async () => {
+    const card = new FactsCard();
+    expect(
+      ours(
+        (
+          await formsDoctorChecks(
+            {},
+            card.provider(),
+            [],
+            ["checkin", "kickoff", "new_client", "profile_backfill"],
+          )
+        ).problems,
+      ),
+    ).toEqual([]);
+  });
+
+  it("names a missing field, a field of another kind and a Daily Budget not in USD, each only while its lane is listed", async () => {
+    const broken = new FactsCard();
+    broken.fields = broken.fields
+      .filter(f => f.id !== PROFILE && f.id !== GO_LIVE)
+      .map(f =>
+        f.id === HANDOFF
+          ? { ...f, type: "short_text" }
+          : f.id === SALES_LINK
+            ? { ...f, type: "text" }
+            : f.id === BUDGET
+              ? { ...f, type_config: { currency_type: "KWD" } }
+              : f,
+      );
+    const said = async (forms: string[]) =>
+      ours(
+        (await formsDoctorChecks({}, broken.provider(), [], forms)).problems,
+      );
+    expect(await said(["checkin"])).toEqual([]);
+    expect(await said(["checkin", "profile_backfill"])).toEqual([
+      "The Client Profile backfill writes Client Profile (7755485f), which is not on the Clients - Mahara list.",
+    ]);
+    expect(await said(["new_client"])).toEqual([
+      "The sale's card facts write Go-live expectation (d4483463), which is not on the Clients - Mahara list.",
+      "Handoff problems is a short_text field in ClickUp, not text, so the sale's card facts would not write it.",
+      "Sales Meeting Link is a text field in ClickUp, not url, so the sale's card facts would not write it.",
+    ]);
+    expect(await said(["kickoff"])).toEqual([
+      "Daily Budget is in KWD in ClickUp, not USD, so card facts would not write it.",
+    ]);
+    // The Client Profile of another kind: the backfill's own sentence.
+    const short = new FactsCard();
+    (short.fields.find(f => f.id === PROFILE) as Row).type = "short_text";
+    expect(
+      ours(
+        (
+          await formsDoctorChecks(
+            {},
+            short.provider(),
+            [],
+            ["profile_backfill"],
+          )
+        ).problems,
+      ),
+    ).toEqual([
+      "Client Profile is a short_text field in ClickUp, not text, so the backfill would not write it.",
+    ]);
+    // Daily Budget gone, or of another kind.
+    const gone = new FactsCard();
+    gone.fields = gone.fields.filter(f => f.id !== BUDGET);
+    expect(
+      ours(
+        (await formsDoctorChecks({}, gone.provider(), [], ["onboarding"]))
+          .problems,
+      ),
+    ).toEqual([
+      "Card facts write Daily Budget (539743c2), which is not on the Clients - Mahara list.",
+    ]);
+    const number = new FactsCard();
+    (number.fields.find(f => f.id === BUDGET) as Row).type = "number";
+    expect(
+      ours(
+        (await formsDoctorChecks({}, number.provider(), [], ["kickoff"]))
+          .problems,
+      ),
+    ).toEqual([
+      "Daily Budget is a number field in ClickUp, not currency, so card facts would not write it.",
     ]);
   });
 });
