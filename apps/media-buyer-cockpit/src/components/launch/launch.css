@@ -99,3 +99,4 @@
 .launch-agreed button:hover { text-decoration: underline; text-underline-offset: 3px; }
 .launch-agreed button:focus-visible { outline: 2px solid var(--mahara-teal, var(--primary)); outline-offset: 2px; }
 .launch-agreed-empty { font-size: 12px; line-height: 1.6; color: var(--muted-foreground); margin-top: -6px; }
+.launch-budget-scope { max-width: 520px; padding: 12px 14px; border-left: 2px solid var(--launch-warn); background: color-mix(in oklch, var(--launch-warn) 7%, var(--card)); border-radius: 0 9px 9px 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }

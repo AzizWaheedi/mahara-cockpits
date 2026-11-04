@@ -20,8 +20,8 @@ const perfFixture = await Bun.file(
 const KITS = {
   rows: [
     {
-      clickup_task_id: "86exnk0v4",
-      client_name: "Greystone Contracting",
+      clickup_task_id: "fixture01",
+      client_name: "DUNEWORKS DESIGN",
       clickup_status: "in onboarding",
       client_status: "Active",
       in_onboarding: true,
@@ -69,10 +69,10 @@ function createDeferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
-/** cockpit_csm_client_ads v3 for Greystone: one live campaign, one ad. */
+/** cockpit_csm_client_ads v3 for Duneworks: one live campaign, one ad. */
 const ADS_READ = {
-  taskId: "86exnk0v4",
-  clientName: "Greystone Contracting",
+  taskId: "fixture01",
+  clientName: "DUNEWORKS DESIGN",
   start: "2026-09-01",
   end: "2026-09-30",
   at: "2026-10-13T09:00:00Z",
@@ -84,10 +84,10 @@ const ADS_READ = {
   feedLast: "2026-10-12",
   campaigns: [
     {
-      name: "Greystone | Leads",
+      name: "Duneworks | Leads",
       metaCampaignId: "111",
       accountId: "999",
-      accountName: "greystone ads",
+      accountName: "duneworks ads",
       currency: "USD",
       budgetDaily: 30,
       budgetLevel: "campaign",
@@ -111,7 +111,7 @@ const ADS_READ = {
     {
       id: "5001",
       name: "Villas",
-      campaignName: "Greystone | Leads",
+      campaignName: "Duneworks | Leads",
       status: "ACTIVE",
       effectiveStatus: "ACTIVE",
     },
@@ -121,7 +121,7 @@ const ADS_READ = {
       id: "7001",
       name: "Villa reel",
       adsetId: "5001",
-      campaignName: "Greystone | Leads",
+      campaignName: "Duneworks | Leads",
       status: "ACTIVE",
       effectiveStatus: "ACTIVE",
       accountId: "999",
@@ -130,7 +130,7 @@ const ADS_READ = {
   rows: [
     {
       date: "2026-09-10",
-      campaignName: "Greystone | Leads",
+      campaignName: "Duneworks | Leads",
       adSetName: "Villas",
       adName: "Villa reel",
       adId: "7001",
@@ -155,8 +155,8 @@ const eodOpens: any[] = [];
 const EOD_CALLS = [
   {
     id: 7,
-    taskId: "86exnk0v4",
-    clientName: "Greystone Contracting",
+    taskId: "fixture01",
+    clientName: "DUNEWORKS DESIGN",
     startsAt: "2026-10-26T08:00:00Z",
     summary:
       "## Meeting Purpose\n\n[Plan the villa shoot for next week.](https://fathom.video/share/x) Then more.",
@@ -184,8 +184,8 @@ const requestRow = (over: Record<string, unknown>) => ({
   typeLabel: "General tech request",
   team: "tech",
   teamLabel: "Operations / Tech",
-  clientTaskId: "86exnk0v4",
-  clientName: "Greystone Contracting",
+  clientTaskId: "fixture01",
+  clientName: "DUNEWORKS DESIGN",
   requesterLabel: "the CSM",
   mine: true,
   dueOn: null,
@@ -201,7 +201,7 @@ const requestRow = (over: Record<string, unknown>) => ({
       part: "main",
       listName: "Operations / Tech",
       teamLabel: "Operations / Tech",
-      taskName: "Greystone Contracting - General tech request",
+      taskName: "DUNEWORKS DESIGN - General tech request",
       owner: { label: "the systems manager", how: "rule", note: null },
       state: "delivered",
       error: null,
@@ -226,7 +226,7 @@ const myRequestRows = [
         part: "tech",
         listName: "Operations / Tech",
         teamLabel: "Operations / Tech",
-        taskName: "Greystone Contracting - Client pause (Tech)",
+        taskName: "DUNEWORKS DESIGN - Client pause (Tech)",
         owner: { label: "the systems manager", how: "rule", note: null },
         state: "failed",
         error: "ClickUp refused the template.",
@@ -263,6 +263,23 @@ const invoked: { fn: string; body: any }[] = [];
 /** The rows cockpit_requests_read answers; a test may swap them. */
 let requestRowsNow: any[] = myRequestRows;
 const requestReads: Record<string, unknown>[] = [];
+/**
+ * CEO items 6 and 7 (WAVE56-CONTRACT.md 4.19, 4.20, 5.16): the kickoff items
+ * on Today and the client page, and the sales not on a card. Null answers as
+ * PostgREST does while the functions are not applied (PGRST202).
+ */
+let kickoffDueNow: any = null;
+let kickoffReadNow: any = null;
+let saleListNow: any = null;
+let saleReadNow: any = null;
+const missingFn = (name: string) =>
+  Promise.resolve({
+    data: null,
+    error: {
+      code: "PGRST202",
+      message: `Could not find the function public.${name}`,
+    },
+  });
 
 const mockClient: any = {
   auth: {
@@ -282,6 +299,37 @@ const mockClient: any = {
     signOut: async () => ({ error: null }),
   },
   rpc: (name: string, _args: any) => {
+    if (name === "cockpit_kickoff_items_due")
+      return kickoffDueNow
+        ? Promise.resolve({ data: kickoffDueNow, error: null })
+        : missingFn(name);
+    if (name === "cockpit_kickoff_items_read")
+      return kickoffReadNow
+        ? Promise.resolve({ data: kickoffReadNow, error: null })
+        : missingFn(name);
+    if (
+      name === "cockpit_kickoff_item_raise" ||
+      name === "cockpit_kickoff_item_decline" ||
+      name === "cockpit_kickoff_item_link"
+    ) {
+      watched.push({ name, args: _args });
+      return missingFn(name);
+    }
+    if (name === "cockpit_sale_tie_list")
+      return saleListNow
+        ? Promise.resolve({ data: saleListNow, error: null })
+        : missingFn(name);
+    if (name === "cockpit_sale_tie_decide") {
+      watched.push({ name, args: _args });
+      return Promise.resolve({
+        data: { ok: true, cardName: "Cedar Interiors" },
+        error: null,
+      });
+    }
+    if (name === "cockpit_csm_sale_read")
+      return saleReadNow
+        ? Promise.resolve({ data: saleReadNow, error: null })
+        : missingFn(name);
     // Stage 2b (docs/forms/STAGE2B-CONTRACT.md 4.10, 5.1): the entry rule,
     // the queue of calls with no client and its writer, the recaps waiting.
     if (name === "cockpit_form_entry" && entryAnswer)
@@ -375,11 +423,11 @@ const mockClient: any = {
     if (name === "cockpit_blueprint_read") {
       return Promise.resolve({
         data: {
-          rows: (_args.p_task_ids as string[]).includes("86exnk0v4")
+          rows: (_args.p_task_ids as string[]).includes("fixture01")
             ? [
                 {
-                  taskId: "86exnk0v4",
-                  clientName: "Greystone Contracting",
+                  taskId: "fixture01",
+                  clientName: "DUNEWORKS DESIGN",
                   parts: {
                     "1": {
                       firstAt: "2026-10-05T07:12:00Z",
@@ -461,9 +509,9 @@ const mockClient: any = {
         data: {
           clients: [
             {
-              taskId: "86exnk0v4",
-              locationId: "loc-greystone",
-              clientName: "Greystone Contracting",
+              taskId: "fixture01",
+              locationId: "loc-duneworks",
+              clientName: "DUNEWORKS DESIGN",
               callers: [
                 { email: "caller@example.test", name: "Example Caller" },
               ],
@@ -486,11 +534,11 @@ const mockClient: any = {
           note: null,
           dayStart: Date.now() - 60 * 60_000,
           taskId: _args.p_task_id,
-          clientName: "Greystone Contracting",
+          clientName: "DUNEWORKS DESIGN",
           threads: [
             {
               threadId: "wa-1",
-              name: "Omar Greystone",
+              name: "Omar Duneworks",
               isGroup: false,
               archived: false,
               awaitingUs: true,
@@ -737,16 +785,8 @@ mock.module("sonner", () => ({
   },
 }));
 
-const { CsmPage, MY_REQUESTS_LIMIT, requestsSince } = await import(
-  "../src/pages/CsmPage"
-);
-const { forgetWriterMode } = await import("../src/lib/requestsOpen");
-const { ClientPerformancePage } = await import(
-  "../src/pages/ClientPerformancePage"
-);
-const { createRoot } = await import("react-dom/client");
-const { createElement, act: reactAct } = await import("react");
-const { MemoryRouter } = await import("react-router");
+// The test DOM is in place before the page is imported: Radix decides at import time whether
+// it has a document, and Bun shares that module with every other file in the same run.
 const { Window } = await import("happy-dom");
 
 const originalGlobalProps: Record<string, any> = {};
@@ -761,6 +801,15 @@ const globalKeys = [
   "Node",
   "getComputedStyle",
   "IS_REACT_ACT_ENVIRONMENT",
+  // Bun has its own Event classes; Radix's sheet dispatches them on happy-dom elements, so the window's are used.
+  "Event",
+  "CustomEvent",
+  "KeyboardEvent",
+  "MouseEvent",
+  "PointerEvent",
+  "FocusEvent",
+  "InputEvent",
+  "NodeFilter",
 ];
 for (const k of globalKeys) {
   originalGlobalProps[k] = (globalThis as any)[k];
@@ -776,6 +825,17 @@ g.HTMLFormElement = win.HTMLFormElement;
 g.MutationObserver = win.MutationObserver;
 g.Element = win.Element;
 g.Node = win.Node;
+for (const k of [
+  "Event",
+  "CustomEvent",
+  "KeyboardEvent",
+  "MouseEvent",
+  "PointerEvent",
+  "FocusEvent",
+  "InputEvent",
+  "NodeFilter",
+])
+  g[k] = (win as unknown as Record<string, unknown>)[k];
 
 for (const key of Object.getOwnPropertyNames(win)) {
   if (
@@ -790,6 +850,17 @@ for (const key of Object.getOwnPropertyNames(win)) {
 }
 g.getComputedStyle ??= win.getComputedStyle.bind(win);
 g.IS_REACT_ACT_ENVIRONMENT = true;
+
+const { CsmPage, MY_REQUESTS_LIMIT, requestsSince } = await import(
+  "../src/pages/CsmPage"
+);
+const { forgetWriterMode } = await import("../src/lib/requestsOpen");
+const { ClientPerformancePage } = await import(
+  "../src/pages/ClientPerformancePage"
+);
+const { createRoot } = await import("react-dom/client");
+const { createElement, act: reactAct } = await import("react");
+const { MemoryRouter } = await import("react-router");
 
 afterAll(() => {
   for (const k of Object.keys(originalGlobalProps)) {
@@ -812,13 +883,13 @@ const SECTIONS = [
   "eod",
 ] as const;
 
-/** Greystone Contracting in the fixture: an onboarding client. */
-const GREYSTONE = "86exnk0v4";
+/** DUNEWORKS DESIGN in the fixture: an onboarding client. */
+const DUNEWORKS = "fixture01";
 /** MOFAG in the fixture: commitments from a call, and a report due. */
 const MOFAG = "86exr5zcm";
 
-/** The page for one section, the client page on Greystone. */
-const pageFor = (section: string, clientKey = GREYSTONE) =>
+/** The page for one section, the client page on Duneworks. */
+const pageFor = (section: string, clientKey = DUNEWORKS) =>
   createElement(CsmPage, {
     section: section as never,
     ...(section === "client" ? { clientKey } : {}),
@@ -863,7 +934,7 @@ for (const section of SECTIONS) {
 async function renderSection(
   section: string,
   url = "/",
-  clientKey = GREYSTONE,
+  clientKey = DUNEWORKS,
 ): Promise<string> {
   const host = win.document.createElement("div");
   win.document.body.appendChild(host);
@@ -1377,7 +1448,7 @@ test("the diagnosis footer says the gates and the 60% line, and the watch line r
   profileDeferred = null;
   try {
     const page = diagnosisText(
-      await renderSection("client", `/clients/${GREYSTONE}`),
+      await renderSection("client", `/clients/${DUNEWORKS}`),
     );
     expect(page).toContain(
       `Lines: cost per lead under $15 · cost per booking under $60 · a quarter of leads booked · show rate (${AIM}; ${SHOW_RATE_GOOD}% is the line, under it is a watch, not a fix) · a fifth of attended closed. Fixes come from Diagnosing & Fixing Acquisition Constraints, one leak at a time.`,
@@ -1405,7 +1476,7 @@ test("the diagnosis footer says the gates and the 60% line, and the watch line r
       },
     });
     const watched = diagnosisText(
-      await renderSection("client", `/clients/${GREYSTONE}`),
+      await renderSection("client", `/clients/${DUNEWORKS}`),
     );
     expect(watched).toContain(
       "Watch: Show rate is 50%, under the 60% line. 50% of appointments with an outcome were no-shows; confirmation discipline fixes it, not more leads.",
@@ -1448,7 +1519,7 @@ test("the day blocks read in order and the quiet screens stay quiet", async () =
   expect(start).toContain("File my end of day");
   const list = await renderSection("clients");
   expect(list).not.toContain("Onboarding, get them live");
-  expect(list).toContain("Greystone Contracting");
+  expect(list).toContain("DUNEWORKS DESIGN");
   // End of day is the report only.
   const eod = await renderSection("eod");
   expect(eod).not.toContain("Onboarding, get them live");
@@ -1498,11 +1569,11 @@ test("an onboarding client's row and page show its onboarding steps", async () =
     });
     await settle();
     const row = [...host.querySelectorAll("a")].find(a =>
-      (a.textContent ?? "").includes("Greystone Contracting"),
+      (a.textContent ?? "").includes("DUNEWORKS DESIGN"),
     );
     expect(row).toBeDefined();
     // The row opens the client's own page.
-    expect(row?.getAttribute("href")).toBe(`/clients/${GREYSTONE}`);
+    expect(row?.getAttribute("href")).toBe(`/clients/${DUNEWORKS}`);
     // The forms' line on the row.
     expect(row?.textContent).toContain("Onboarding form");
     expect(row?.textContent).toContain("Kickoff");
@@ -1516,7 +1587,7 @@ test("an onboarding client's row and page show its onboarding steps", async () =
       root2.render(
         createElement(
           MemoryRouter,
-          { initialEntries: [`/clients/${GREYSTONE}?tab=onboarding`] },
+          { initialEntries: [`/clients/${DUNEWORKS}?tab=onboarding`] },
           pageFor("client"),
         ),
       );
@@ -1608,9 +1679,9 @@ test("an onboarding client's row and page show its onboarding steps", async () =
         ),
       ).toBeTruthy();
       await reactAct(async () => fills[0]?.click());
-      expect(opened).toEqual([["", "mahara-form-86exnk0v4-kickoff"]]);
+      expect(opened).toEqual([["", "mahara-form-fixture01-kickoff"]]);
       expect(replaced).toEqual([
-        "/client-success/clients/86exnk0v4/forms/kickoff",
+        "/client-success/clients/fixture01/forms/kickoff",
       ]);
       // A window of its own, so Zoom can share the form alone.
       expect(features[0]).toMatch(/^popup,width=\d+,height=\d+/);
@@ -1636,8 +1707,8 @@ test("an onboarding client's row and page show its onboarding steps", async () =
 test("a client's page has one booking button, the actions and four tabs", async () => {
   profileDeferred = null;
   try {
-    const text = await renderSection("client", `/clients/${GREYSTONE}`);
-    expect(text).toContain("Greystone Contracting");
+    const text = await renderSection("client", `/clients/${DUNEWORKS}`);
+    expect(text).toContain("DUNEWORKS DESIGN");
     expect(text).toContain("All clients");
     expect(text.match(/Book a call/g)?.length).toBe(1);
     expect(text).toContain("Or send the booking link");
@@ -1672,12 +1743,12 @@ test("a client's page has one booking button, the actions and four tabs", async 
     // The client's WhatsApp for the day, with the reply box under it.
     expect(text).toContain("Can we move the shoot to Thursday?");
     expect(text).toContain("Waiting on us");
-    expect(text).toContain("Send to Omar Greystone");
+    expect(text).toContain("Send to Omar Duneworks");
     expect(text).toContain("Today: 1 from them, 0 from us");
     // Results: the period and the report at the top.
     const results = await renderSection(
       "client",
-      `/clients/${GREYSTONE}?tab=results&period=lastMonth`,
+      `/clients/${DUNEWORKS}?tab=results&period=lastMonth`,
     );
     expect(results).toContain("Print report");
     expect(results).toContain("Write the Google Doc");
@@ -1772,7 +1843,7 @@ test("the header's Join stays while a call runs, after the next call has moved o
   };
   // The store's read carries the booking to join beside the next call.
   const row = withCallSummary(
-    { taskId: GREYSTONE } as Record<string, unknown>,
+    { taskId: DUNEWORKS } as Record<string, unknown>,
     summary,
     "2026-10-06",
   );
@@ -1787,7 +1858,7 @@ test("the header's Join stays while a call runs, after the next call has moved o
   expect(
     "joinCallAt" in
       withCallSummary(
-        { taskId: GREYSTONE } as Record<string, unknown>,
+        { taskId: DUNEWORKS } as Record<string, unknown>,
         { nextCallAt: null },
         "2026-10-06",
       ),
@@ -1813,7 +1884,7 @@ test("the header's Join stays while a call runs, after the next call has moved o
   expect(joinLink(booking, at + 3_600_001)).toBeNull();
   expect(joinLink({ ...booking, joinCallUrl: null }, at)).toBeNull();
 
-  /** The header's meeting links for Greystone with these call fields. */
+  /** The header's meeting links for Duneworks with these call fields. */
   const joins = async (calls: Record<string, unknown>) => {
     const host = win.document.createElement("div");
     win.document.body.appendChild(host);
@@ -1821,7 +1892,7 @@ test("the header's Join stays while a call runs, after the next call has moved o
     currentSnapshot = {
       ...snapshot,
       clients: snapshot.clients.map((c: Record<string, unknown>) =>
-        c.taskId === GREYSTONE ? { ...c, ...calls } : c,
+        c.taskId === DUNEWORKS ? { ...c, ...calls } : c,
       ),
     };
     isSnapshotLoading = false;
@@ -1831,7 +1902,7 @@ test("the header's Join stays while a call runs, after the next call has moved o
         root.render(
           createElement(
             MemoryRouter,
-            { initialEntries: [`/clients/${GREYSTONE}`] },
+            { initialEntries: [`/clients/${DUNEWORKS}`] },
             pageFor("client"),
           ),
         );
@@ -1973,8 +2044,8 @@ test("the Ads tab shows the ads read only, and Results links to it", async () =>
     return (host.textContent ?? "").replace(/\s+/g, " ");
   };
   try {
-    const ads = await show(`/clients/${GREYSTONE}?tab=ads&period=lastMonth`);
-    expect(adsReads.at(-1)).toMatchObject({ p_task_id: GREYSTONE });
+    const ads = await show(`/clients/${DUNEWORKS}?tab=ads&period=lastMonth`);
+    expect(adsReads.at(-1)).toMatchObject({ p_task_id: DUNEWORKS });
     // Said once, in muted text: the media buyer makes the changes.
     expect(
       ads.match(/Read only: the media buyer makes every change/g)?.length,
@@ -2028,7 +2099,7 @@ test("the Ads tab shows the ads read only, and Results links to it", async () =>
 
     // Results: one line to the Ads tab, and the notes without system lines.
     const results = await show(
-      `/clients/${GREYSTONE}?tab=results&period=lastMonth`,
+      `/clients/${DUNEWORKS}?tab=results&period=lastMonth`,
     );
     expect(results).toContain("on the Ads tab");
     expect(results).not.toContain("Campaigns, ad sets and ads");
@@ -2085,7 +2156,7 @@ test("the Ads tab shows the ads read only, and Results links to it", async () =>
     try {
       // The same address in another order: a fresh page, not a re-render.
       const failed = await show(
-        `/clients/${GREYSTONE}?period=lastMonth&tab=results`,
+        `/clients/${DUNEWORKS}?period=lastMonth&tab=results`,
       );
       await settle();
       const now = (host.textContent ?? "").replace(/\s+/g, " ");
@@ -2111,7 +2182,7 @@ test("the Ads tab shows the ads read only, and Results links to it", async () =>
     // after the profile, not once without it and again with it.
     profileDeferred = createDeferred();
     adsReads.length = 0;
-    const waiting = await show(`/clients/${GREYSTONE}?tab=ads&period=all`);
+    const waiting = await show(`/clients/${DUNEWORKS}?tab=ads&period=all`);
     expect(adsReads).toHaveLength(0);
     expect(waiting).toContain("Loading the ads…");
     await reactAct(async () => profileDeferred?.resolve(withLost));
@@ -2123,7 +2194,7 @@ test("the Ads tab shows the ads read only, and Results links to it", async () =>
     // (The same address in another order: a fresh page, not a re-render.)
     profileDeferred = createDeferred();
     adsReads.length = 0;
-    await show(`/clients/${GREYSTONE}?period=all&tab=ads`);
+    await show(`/clients/${DUNEWORKS}?period=all&tab=ads`);
     expect(adsReads).toHaveLength(0);
     await reactAct(async () =>
       profileDeferred?.reject(new Error("The profile could not be read.")),
@@ -2283,7 +2354,7 @@ test("the EOD drafts the call summary from the day's calls and asks before repla
     },
     eodDecisions: [
       logged("MOFAG", "Held a call", "Walked through the October report"),
-      logged("Greystone Contracting", "Held a call", null),
+      logged("DUNEWORKS DESIGN", "Held a call", null),
       logged("MOFAG", "Upsell pitched", null),
     ],
     callHealth: [
@@ -2324,10 +2395,10 @@ test("the EOD drafts the call summary from the day's calls and asks before repla
 
     await reactAct(async () => button("Draft from today's calls")?.click());
     await reactAct(async () => button("Replace")?.click());
-    // In call order: the Greystone recording started before the MOFAG call.
+    // In call order: the Duneworks recording started before the MOFAG call.
     expect(box().value).toBe(
       [
-        "Greystone Contracting: Plan the villa shoot for next week.",
+        "DUNEWORKS DESIGN: Plan the villa shoot for next week.",
         "MOFAG: Walked through the October report",
       ].join("\n"),
     );
@@ -2382,11 +2453,11 @@ test("Today lists the requests you raised today, with their state and ClickUp li
 
 test("the client page's Ask a team is the request form, with the client fixed", async () => {
   requestFormProps = null;
-  const text = await renderSection("client", `/clients/${GREYSTONE}?act=task`);
+  const text = await renderSection("client", `/clients/${DUNEWORKS}?act=task`);
   expect(text).toContain("Ask a team");
   expect(requestFormProps).toEqual({
     source: "client_page",
-    presetClient: { taskId: GREYSTONE, name: "Greystone Contracting" },
+    presetClient: { taskId: DUNEWORKS, name: "DUNEWORKS DESIGN" },
     compact: true,
   });
   // The old ticket select and its button are gone; the reminder stays.
@@ -2426,7 +2497,7 @@ test("until requests open, the client page keeps the old Ask a team and AddTask'
     forgetWriterMode(mockClient);
     requestFormProps = null;
     sent.length = 0;
-    const page = await renderLive("client", `/clients/${GREYSTONE}?act=task`);
+    const page = await renderLive("client", `/clients/${DUNEWORKS}?act=task`);
     try {
       const text = page.text();
       // The decision-log ticket, exactly as on main.
@@ -2450,7 +2521,7 @@ test("until requests open, the client page keeps the old Ask a team and AddTask'
       expect(ticket).toMatchObject({
         kind: "ticket",
         department: "tech",
-        taskId: GREYSTONE,
+        taskId: DUNEWORKS,
         action: "Switch this campaign to a landing page",
       });
     } finally {
@@ -2527,7 +2598,7 @@ test("a request in ClickUp with a step the cockpit could not finish says what to
         {
           ...requestRow({}).parts[0],
           part: "tech",
-          taskName: "Greystone Contracting - Client pause (Tech)",
+          taskName: "DUNEWORKS DESIGN - Client pause (Tech)",
           error: refused,
         },
       ],
@@ -2601,7 +2672,7 @@ test("Log a call: Write 1-1 notes only opens the notes; Log the call without not
       root.render(
         createElement(
           MemoryRouter,
-          { initialEntries: [`/clients/${GREYSTONE}`] },
+          { initialEntries: [`/clients/${DUNEWORKS}`] },
           pageFor("client"),
         ),
       );
@@ -2639,7 +2710,7 @@ test("Log a call: Write 1-1 notes only opens the notes; Log the call without not
     await wait2b();
     const act = invoked.find(i => i.fn === "cockpit-csm-api");
     expect(act?.body?.operation).toBe("act");
-    expect(act?.body?.args).toMatchObject({ taskId: GREYSTONE, kind: "call" });
+    expect(act?.body?.args).toMatchObject({ taskId: DUNEWORKS, kind: "call" });
   } finally {
     win.open = open;
     await reactAct(async () => root.unmount());
@@ -2764,7 +2835,7 @@ test("dark until native: no Messages card or Client recaps at provider typeform;
     const dark = await render(
       "typeform",
       pageFor("client"),
-      `/clients/${GREYSTONE}`,
+      `/clients/${DUNEWORKS}`,
     );
     try {
       expect(watched.some(w => w.name === "cockpit_client_messages_read")).toBe(
@@ -2788,7 +2859,7 @@ test("dark until native: no Messages card or Client recaps at provider typeform;
     const live = await render(
       "native",
       pageFor("client"),
-      `/clients/${GREYSTONE}`,
+      `/clients/${DUNEWORKS}`,
     );
     try {
       expect(live.host.querySelector("#messages")).toBeTruthy();
@@ -2800,4 +2871,269 @@ test("dark until native: no Messages card or Client recaps at provider typeform;
     entryAnswer = null;
     forgetFormsRegistry();
   }
+});
+
+// --- CEO items 6 and 7 on the page (WAVE56-CONTRACT.md 5.16) ------------------
+
+const itemsFx = await import("../src/dev/kickoffItemsFixtures");
+
+/**
+ * An invented onboarding client on the test card for these tests: the sales,
+ * handoff notes and kickoff items below are made up, so they never sit on a
+ * real client's name or card. Cloned from the fixture's onboarding row with
+ * every free-text field replaced.
+ */
+const CEDAR = itemsFx.ITEMS_TASK;
+const CEDAR_NAME = itemsFx.ITEMS_CLIENT;
+const onboardingRow = (snapshot.clients as any[]).find(
+  c => c.bucket === "onboarding",
+);
+const cedarSnapshot = {
+  ...snapshot,
+  clients: [
+    ...snapshot.clients,
+    {
+      ...onboardingRow,
+      _id: "cedar-invented",
+      name: CEDAR_NAME,
+      taskId: CEDAR,
+      taskUrl: `https://app.clickup.com/t/${CEDAR}`,
+      sheetLink: "https://docs.google.com/spreadsheets/d/invented-cedar/edit",
+      todo: "Book the kickoff call.",
+      loose: [],
+      changes: [],
+      commitments: [],
+      hot: [],
+    },
+  ],
+};
+const cedarKit = {
+  ...KITS.rows[0],
+  clickup_task_id: CEDAR,
+  client_name: CEDAR_NAME,
+  handover: {},
+  forms: {
+    onboarding: { ...KITS.rows[0].forms.onboarding, response_id: "r-cedar" },
+  },
+};
+
+/** One section rendered on the invented client and read after its reads settle. */
+async function settled(section: string, url = "/") {
+  const host = win.document.createElement("div");
+  win.document.body.appendChild(host);
+  const root = createRoot(host as unknown as Element);
+  currentSnapshot = cedarSnapshot;
+  isSnapshotLoading = false;
+  snapshotError = null;
+  KITS.rows.push(cedarKit as (typeof KITS.rows)[number]);
+  await reactAct(async () => {
+    root.render(
+      createElement(
+        MemoryRouter,
+        { initialEntries: [url] },
+        pageFor(section, CEDAR),
+      ),
+    );
+  });
+  for (let i = 0; i < 6; i++)
+    await reactAct(async () => {
+      await new Promise(r => setTimeout(r, 0));
+    });
+  return {
+    host,
+    text: () => (host.textContent ?? "").replace(/\s+/g, " "),
+    done: async () => {
+      await reactAct(async () => root.unmount());
+      KITS.rows.splice(KITS.rows.indexOf(cedarKit as never), 1);
+      currentSnapshot = snapshot;
+    },
+  };
+}
+
+test("before the functions are applied, Today says one line for the kickoff items and nothing about sales to a CSM", async () => {
+  kickoffDueNow = null;
+  saleListNow = null;
+  const page = await settled("today");
+  expect(page.text()).toContain(
+    "Kickoff items open after the next cockpit update.",
+  );
+  expect(page.text()).not.toContain("Kickoff items to decide");
+  // The sale tie is the CEO's to hear about; a CSM's Today stays quiet.
+  expect(page.text()).not.toContain("Sales tie to their cards");
+  expect(page.text()).not.toContain("Sales not on a card");
+  await page.done();
+});
+
+test("Today: Kickoff items to decide and Sales not on a card, each a yes or no on the server", async () => {
+  kickoffDueNow = {
+    asOf: "2026-11-03T08:00:00Z",
+    rows: [
+      {
+        taskId: CEDAR,
+        clientName: CEDAR_NAME,
+        kickoffAt: "2026-11-01T09:00:00Z",
+        kickoffDay: "Sun 1 Nov",
+        due: 1,
+        items: [itemsFx.rawItem({ route: null })],
+      },
+    ],
+    more: false,
+    note: null,
+  };
+  saleListNow = {
+    asOf: "2026-11-03T08:00:00Z",
+    counts: null,
+    rows: [
+      {
+        responseId: "tfResp0001",
+        businessName: CEDAR_NAME,
+        signedAt: "2026-10-12T09:00:00Z",
+        closer: "Rania",
+        state: "unmatched",
+        sentence:
+          "No card has this sale's phone or email after 2 days. Check Make 10's run, or pick the card.",
+        suggestion: {
+          taskId: CEDAR,
+          name: CEDAR_NAME,
+          reason: "Billing ties this sale to this card by its payments",
+        },
+        candidates: [],
+      },
+    ],
+    note: null,
+  };
+  watched.length = 0;
+  const page = await settled("today");
+  const text = page.text();
+  expect(text).toContain("Kickoff items to decide");
+  expect(text).toContain("Raise Card missing for ads?");
+  expect(text).toContain("Sales not on a card");
+  expect(text).toContain(
+    "No card has this sale's phone or email after 2 days. Check Make 10's run, or pick the card.",
+  );
+  expect(text).toContain("Billing ties this sale to this card by its payments");
+  // The band's order on Today: the kickoff items, then the sales, then Your tasks.
+  expect(text.indexOf("Kickoff items to decide")).toBeLessThan(
+    text.indexOf("Sales not on a card"),
+  );
+  const yes = [...page.host.querySelectorAll("button")].find(
+    b => (b.textContent ?? "").trim() === "Yes, tie it",
+  );
+  expect(yes).toBeDefined();
+  await reactAct(async () => {
+    (yes as any).click();
+    await new Promise(r => setTimeout(r, 0));
+  });
+  expect(watched.find(w => w.name === "cockpit_sale_tie_decide")?.args).toEqual(
+    {
+      p_response_id: "tfResp0001",
+      p_choice: "yes",
+      p_task: CEDAR,
+      p_note: null,
+    },
+  );
+  // A Yes on an item reaches the raise function with its own request id.
+  const raise = [...page.host.querySelectorAll("button")].find(
+    b =>
+      b.getAttribute("aria-label") ===
+      "Yes, raise Card missing for ads for Cedar Interiors",
+  );
+  await reactAct(async () => {
+    (raise as any).click();
+    await new Promise(r => setTimeout(r, 0));
+  });
+  const call = watched.find(w => w.name === "cockpit_kickoff_item_raise");
+  expect(call?.args.p_task_id).toBe(CEDAR);
+  expect(call?.args.p_item).toBe("funded_card");
+  expect(String(call?.args.p_request_id)).toMatch(/^[0-9a-f-]{36}$/);
+  await page.done();
+  kickoffDueNow = null;
+  saleListNow = null;
+});
+
+test("the client page's Onboarding tab opens with the kickoff items card, above the onboarding kit", async () => {
+  kickoffReadNow = itemsFx.rawRead([itemsFx.rawItem(), itemsFx.rawMaharaOs()], {
+    taskId: CEDAR,
+  });
+  const page = await settled("client", `/clients/${CEDAR}?tab=onboarding`);
+  const text = page.text();
+  expect(text).toContain("Still open from the kickoff · 2");
+  expect(text).toContain("Raise General tech request?");
+  expect(text).toContain("Change it first");
+  expect(text.indexOf("Kickoff items")).toBeLessThan(
+    text.indexOf("Before the call"),
+  );
+  // Change it first opens the prefilled ticket form, which reports what it sends.
+  const change = [...page.host.querySelectorAll("button")].find(
+    b => (b.textContent ?? "").trim() === "Change it first",
+  );
+  expect(change).toBeDefined();
+  requestFormProps = null;
+
+  await reactAct(async () => {
+    (change as any).click();
+    await new Promise(r => setTimeout(r, 0));
+  });
+  for (let i = 0; i < 4; i++)
+    await reactAct(async () => {
+      await new Promise(r => setTimeout(r, 0));
+    });
+  expect(requestFormProps?.presetType).toBe("card_missing");
+  expect(requestFormProps?.presetClient).toEqual({
+    taskId: CEDAR,
+    name: CEDAR_NAME,
+  });
+  expect(typeof requestFormProps?.onSent).toBe("function");
+  expect(requestFormProps?.presetDetails).toBe(
+    "The card with funds is not linked to the ad account.",
+  );
+  // What the form sends is counted for the item, on the server.
+  watched.length = 0;
+  await reactAct(async () => {
+    const onSent = requestFormProps?.onSent as (r: unknown) => void;
+    onSent({ id: "req-from-form" });
+    await new Promise(r => setTimeout(r, 0));
+  });
+  expect(
+    watched.find(w => w.name === "cockpit_kickoff_item_link")?.args,
+  ).toEqual({
+    p_task_id: CEDAR,
+    p_item: "funded_card",
+    p_request_id: "req-from-form",
+  });
+  await page.done();
+  kickoffReadNow = null;
+});
+
+test("the onboarding kit's notes from the sale read the tied New Client Form while the card's fields are empty, with the method chip", async () => {
+  saleReadNow = {
+    cards: {
+      [CEDAR]: {
+        signedAt: "2026-10-12T09:00:00Z",
+        tiedBy: "phone",
+        closer: "Rania",
+        goLive: "Within two weeks of the kickoff.",
+        handoffProblems: "They want villa work only.",
+        expectations: null,
+        salesCallLink: null,
+        voidedInB2B: false,
+        otherSales: 0,
+      },
+    },
+  };
+  const page = await settled("client", `/clients/${CEDAR}?tab=onboarding`);
+  const text = page.text();
+  expect(text).toContain("Notes from the sale");
+  expect(text).toContain("Tied by phone");
+  expect(text).toContain("Handoff problems: They want villa work only.");
+  expect(text).toContain(
+    "Go-live expectation: Within two weeks of the kickoff.",
+  );
+  await page.done();
+  // Before the sale tie is applied the kit keeps the card's own words, and says nothing more.
+  saleReadNow = null;
+  const before = await settled("client", `/clients/${CEDAR}?tab=onboarding`);
+  expect(before.text()).not.toContain("Tied by");
+  expect(before.text()).not.toContain("Notes from the sale");
+  await before.done();
 });

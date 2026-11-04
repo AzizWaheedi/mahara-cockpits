@@ -34,6 +34,14 @@ export interface PrefillInput {
   forms: { onboarding?: FormLike | null; kickoff?: FormLike | null } | null;
   /** handover.daily_budget from the card (USD a day). */
   cardBudget?: number | null;
+  /**
+   * The kickoff's daily budget in dollars at the cockpit's rate
+   * (forms.kickoff.budget.usd, CEO item 5 / B5's cockpit_blueprint_sources
+   * budgetUsd). Null when the kickoff gave none or its currency has no rate.
+   */
+  budgetUsd?: number | null;
+  /** The currency the kickoff's budget was given in ("SAR"), beside budgetUsd. */
+  budgetCurrency?: string | null;
   /** The onboarding deck's prep (service_focus, service_chosen_at, red_lines). */
   onboardingPrep: Record<string, unknown>;
   /** The card's Do's & Don'ts, split as the decks split them. */
@@ -328,9 +336,33 @@ export function blueprintPrefill(input: PrefillInput): PrefillOut {
   if (pack && isDriveFolder(pack))
     put("pack_url", pack, "settings.pack", LABEL.settings, null, "P");
 
-  // 1.6 The daily figure: the kickoff's words, then the card's.
+  // 1.6 The daily figure: the kickoff's converted figure (an amount and a
+  // currency, CEO item 5), then the kickoff's words, then the card's. A
+  // figure from another currency is said with its note: confirm in dollars.
   const said = parseBudget(K("budget"));
-  if (said?.usd)
+  const usd =
+    typeof input.budgetUsd === "number" &&
+    Number.isFinite(input.budgetUsd) &&
+    input.budgetUsd >= 1 &&
+    input.budgetUsd <= 100_000
+      ? input.budgetUsd
+      : null;
+  const currency = str(input.budgetCurrency)?.toUpperCase() ?? null;
+  if (usd !== null)
+    put(
+      "daily_budget",
+      { usd, ...(said ? { said: said.said } : {}) },
+      "kickoff",
+      LABEL.kickoff,
+      kDay,
+      "P",
+      currency && currency !== "USD"
+        ? {
+            note: `From ${said?.said ?? currency} at the cockpit's rate: confirm it in dollars.`,
+          }
+        : {},
+    );
+  else if (said?.usd)
     put(
       "daily_budget",
       { usd: said.usd, said: said.said },
@@ -351,7 +383,11 @@ export function blueprintPrefill(input: PrefillInput): PrefillOut {
         ? { note: `The kickoff said ${said.said}: confirm it in dollars.` }
         : {},
     );
-  if (said && !said.usd)
+  if (usd !== null && currency && currency !== "USD")
+    notes.push(
+      `From ${said?.said ?? currency} at the cockpit's rate: confirm it in dollars.`,
+    );
+  else if (said && !said.usd && usd === null)
     notes.push(`The kickoff said ${said.said}: confirm it in dollars.`);
 
   // 1.7 Lead form when starter = yes.

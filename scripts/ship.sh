@@ -32,6 +32,9 @@ scripts/ship-preflight.sh "${1:-all}" || exit 1
 
 # Nothing ships if the copies of a shared page have drifted apart.
 scripts/check-shared.sh || exit 1
+# The cockpit assistants answer how-to questions from these guides, so a guide that
+# no longer matches its menu, page addresses or button text must stop the ship.
+"$py_bin" scripts/check-assistant-guides.py || { echo "an assistant guide no longer matches its cockpit: update apps/<app>/assistant-guide.md as the lines above say"; exit 1; }
 # The guard that keeps a backend deploy from removing someone else's
 # functions (convex-removals.ts, below) is itself tested first.
 bun test scripts/convex-removals.test.ts >/dev/null 2>&1 \
@@ -112,8 +115,8 @@ fi
 # a ticket that lands on the wrong team or nowhere, a task alert nobody gets, or one
 # that floods a bell.
 if [ -f apps/media-buyer-cockpit/scripts/requests-supabase.test.ts ]; then
-  (cd apps/media-buyer-cockpit && bun test scripts/requests-supabase.test.ts scripts/request-types-seed.test.ts scripts/request-routes-supabase.test.ts scripts/task-alerts-supabase.test.ts scripts/requests-fit-supabase.test.ts scripts/tasks-core.test.ts scripts/your-tasks.test.tsx scripts/requests-core.test.ts scripts/request-form.test.tsx scripts/requests-page.test.tsx scripts/requests-settings.test.tsx scripts/request-held-gate-supabase.test.ts scripts/clickup-cron-spread-supabase.test.ts >/dev/null 2>&1) \
-    || { echo "the requests or task alerts tests fail (cd apps/media-buyer-cockpit && bun test scripts/requests-supabase.test.ts scripts/request-types-seed.test.ts scripts/request-routes-supabase.test.ts scripts/task-alerts-supabase.test.ts scripts/requests-fit-supabase.test.ts scripts/tasks-core.test.ts scripts/your-tasks.test.tsx scripts/requests-core.test.ts scripts/request-form.test.tsx scripts/requests-page.test.tsx scripts/requests-settings.test.tsx scripts/request-held-gate-supabase.test.ts scripts/clickup-cron-spread-supabase.test.ts)"; exit 1; }
+  (cd apps/media-buyer-cockpit && bun test scripts/requests-supabase.test.ts scripts/request-types-seed.test.ts scripts/request-routes-supabase.test.ts scripts/task-alerts-supabase.test.ts scripts/requests-fit-supabase.test.ts scripts/tasks-core.test.ts scripts/your-tasks.test.tsx scripts/requests-core.test.ts scripts/request-form.test.tsx scripts/requests-page.test.tsx scripts/requests-settings.test.tsx scripts/request-held-gate-supabase.test.ts scripts/clickup-cron-spread-supabase.test.ts scripts/kickoff-items-supabase.test.ts >/dev/null 2>&1) \
+    || { echo "the requests or task alerts tests fail (cd apps/media-buyer-cockpit && bun test scripts/requests-supabase.test.ts scripts/request-types-seed.test.ts scripts/request-routes-supabase.test.ts scripts/task-alerts-supabase.test.ts scripts/requests-fit-supabase.test.ts scripts/tasks-core.test.ts scripts/your-tasks.test.tsx scripts/requests-core.test.ts scripts/request-form.test.tsx scripts/requests-page.test.tsx scripts/requests-settings.test.tsx scripts/request-held-gate-supabase.test.ts scripts/clickup-cron-spread-supabase.test.ts scripts/kickoff-items-supabase.test.ts)"; exit 1; }
   (bun test supabase/functions/clickup-writeback supabase/functions/cockpit-tasks supabase/functions/comment-watch/watch.test.ts supabase/functions/_shared/clickupRetry.test.ts supabase/functions/cockpit-media-api/tools.test.ts supabase/functions/cockpit-csm-api/tools.test.ts supabase/functions/cockpit-ceo-api/tools.test.ts supabase/functions/onboarding-sync >/dev/null 2>&1) \
     || { echo "the requests writer, task mirror, comment watch or ClickUp pacing function tests fail (bun test supabase/functions/clickup-writeback supabase/functions/cockpit-tasks supabase/functions/comment-watch/watch.test.ts supabase/functions/_shared/clickupRetry.test.ts supabase/functions/cockpit-media-api/tools.test.ts supabase/functions/cockpit-csm-api/tools.test.ts supabase/functions/cockpit-ceo-api/tools.test.ts supabase/functions/onboarding-sync)"; exit 1; }
   # ClickUp Business (docs/requests/CLICKUP-DOWNGRADE.md): no link to the old ticket form, and the

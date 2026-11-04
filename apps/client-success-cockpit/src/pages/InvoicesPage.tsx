@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { InvoiceForm } from "@/components/invoices/InvoiceForm";
@@ -9,11 +9,15 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   changeInvoice,
   deskProblem,
+  fetchDeskStatus,
   fetchInvoices,
+  type InvoicePrefill,
   type InvoiceRequest,
+  type InvoiceRow,
   type InvoicesData,
   kuwaitToday,
   requestInvoice,
+  sameWithWhop,
   setClientFolder,
 } from "@/lib/invoices";
 import {
@@ -30,8 +34,9 @@ const message = (e: unknown) =>
  * Invoices: a client success, finance, sales, admin or CEO seat makes an
  * invoice here and sees the page the client gets as it is typed (Muhammed,
  * 11 Oct 2026: "so the client success manager can generate invoices for
- * himself from the cockpit directly"). The invoice worker numbers it, files
- * it locked in the client's Drive folder and adds it to the register.
+ * himself from the cockpit directly"). The invoice worker numbers it, makes
+ * the Ecom or Whop link a Pay online invoice asks for, files it locked in the
+ * client's Drive folder and adds it to the register.
  */
 export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
   const auth = useCockpitAuth();
@@ -40,6 +45,12 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
   const [template, setTemplate] = useState<string | null>(null);
   const [draft, setDraft] = useState<InvoiceDraft | null>(null);
   const [html, setHtml] = useState<string | null>(null);
+  // "Same invoice with Whop": the form opens again on these, once per press.
+  const [prefill, setPrefill] = useState<{
+    nonce: number;
+    values: InvoicePrefill;
+  } | null>(null);
+  const formTop = useRef<HTMLDivElement>(null);
   const today = useMemo(() => kuwaitToday(), []);
 
   // Each client's tax number from their newest invoice that had one; the list is newest first.
@@ -87,6 +98,26 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
     return () => window.clearInterval(timer);
   }, [pending, load]);
 
+  // The worker's check-in ages while the page stays open: read it again every
+  // minute and when the tab comes back, so a long form does not show a false
+  // "last checked in N minutes ago". A failed read keeps the last reading.
+  useEffect(() => {
+    if (!auth.client) return;
+    const client = auth.client;
+    const refresh = () => {
+      if (document.hidden) return;
+      fetchDeskStatus(client)
+        .then(desk => setData(d => (d ? { ...d, desk } : d)))
+        .catch(() => {});
+    };
+    const timer = window.setInterval(refresh, 60_000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [auth.client]);
+
   // The paper follows the form a moment after typing stops.
   useEffect(() => {
     if (!template || !draft) return;
@@ -119,12 +150,16 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
   );
 
   const change = useCallback(
-    async (id: string, action: "cancel" | "retry") => {
+    async (id: string, action: "cancel" | "retry" | "whop") => {
       if (!auth.client) return false;
       try {
         await changeInvoice(auth.client, id, action);
         toast.success(
-          action === "retry" ? "Sent back to be issued" : "Invoice cancelled",
+          action === "retry"
+            ? "Sent back to be issued"
+            : action === "whop"
+              ? "Sent back to be issued with a Whop link"
+              : "Invoice cancelled",
         );
         await load();
         return true;
@@ -152,6 +187,23 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
     [auth.client, load],
   );
 
+  /** The same invoice again with a Whop link, in the form, for the CSM to check and issue. */
+  const againWithWhop = useCallback(
+    (inv: InvoiceRow) => {
+      setPrefill(prev => ({
+        nonce: (prev?.nonce ?? 0) + 1,
+        values: sameWithWhop(inv, today),
+      }));
+      formTop.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      toast.success(
+        "The form has the same invoice with a Whop link. Check it and issue it, then send the client the new link. The old Ecom link stays payable until it expires.",
+        // Long enough to read on a phone.
+        { duration: 10_000 },
+      );
+    },
+    [today],
+  );
+
   const deskNote = data ? deskProblem(data.desk) : null;
   return (
     <section
@@ -160,7 +212,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
       <PageHeader
         as={embedded ? "h2" : "h1"}
         title="Invoices"
-        sub="Issue an invoice for a client. It is numbered, filed locked in the client's Drive folder and added to the invoice register."
+        sub="Issue an invoice for a client. It is numbered, filed locked in the client's Drive folder and added to the invoice register. Pay online invoices get an Ecom or Whop link."
       />
 
       {error ? (
@@ -174,16 +226,20 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
 
       {data ? (
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:items-start lg:gap-6">
-          <InvoiceForm
-            clients={data.clients}
-            folders={data.folders}
-            taxIds={taxIds}
-            today={today}
-            canSetFolder={auth.isAdmin || auth.isCeo}
-            onDraft={setDraft}
-            onIssue={issue}
-            onSetFolder={saveFolder}
-          />
+          <div ref={formTop} className="min-w-0 scroll-mt-20 lg:scroll-mt-4">
+            <InvoiceForm
+              key={prefill?.nonce ?? 0}
+              clients={data.clients}
+              folders={data.folders}
+              taxIds={taxIds}
+              today={today}
+              canSetFolder={auth.isAdmin || auth.isCeo}
+              prefill={prefill?.values}
+              onDraft={setDraft}
+              onIssue={issue}
+              onSetFolder={saveFolder}
+            />
+          </div>
           <div className="lg:sticky lg:top-4">
             <InvoicePaper
               html={html}
@@ -204,7 +260,18 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
             <Kicker>Recent invoices</Kicker>
             {deskNote ? <p className="txt-warn text-xs">{deskNote}</p> : null}
           </div>
-          <InvoiceList invoices={data.invoices} onChange={change} />
+          {data.paid === null ? (
+            <p className="text-xs text-muted-foreground">
+              Whether the Ecom links were paid did not load. Reload the page to
+              see it.
+            </p>
+          ) : null}
+          <InvoiceList
+            invoices={data.invoices}
+            paid={data.paid}
+            onChange={change}
+            onWhop={againWithWhop}
+          />
         </div>
       ) : null}
     </section>

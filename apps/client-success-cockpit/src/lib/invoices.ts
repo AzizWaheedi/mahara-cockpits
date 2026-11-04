@@ -4,8 +4,9 @@ import type { InvoiceKind, InvoicePayment } from "./invoiceTemplate";
 /**
  * Invoices made from the cockpit. The page only asks: cockpit_invoice_request
  * checks the seat, the client scope and the numbers, and queues the row. The
- * invoice worker (hermes/invoice-desk) numbers it, prints it, files it locked
- * in the client's Drive folder and adds it to the invoice register.
+ * invoice worker (hermes/invoice-desk) numbers it, makes the Ecom or Whop
+ * link a Pay online invoice asks for, prints it, files it locked in the
+ * client's Drive folder and adds it to the invoice register.
  */
 
 export type InvoiceStatus =
@@ -15,6 +16,15 @@ export type InvoiceStatus =
   | "failed"
   | "cancelled";
 
+/** Where a Pay online invoice's link comes from. */
+export type LinkSource = "pasted" | "whop" | "ecom";
+
+/**
+ * The form's link choice: Ecom (KNET and cards, in KWD) is the usual one,
+ * Whop (cards, in USD) the backup when Ecom does not work for the client.
+ */
+export type LinkMode = "ecom" | "whop" | "paste";
+
 export type InvoiceRow = {
   id: string;
   clickup_task_id: string;
@@ -22,13 +32,16 @@ export type InvoiceRow = {
   kind: InvoiceKind;
   amount_usd: number;
   description: string;
+  line_note: string | null;
+  client_detail: string | null;
   client_tax_id: string | null;
   period: string | null;
+  pay_note: string | null;
   issue_date: string;
   due_date: string | null;
   payments: InvoicePayment[];
-  /** "ecom" is the default new link; legacy Whop and pasted links remain readable. */
-  checkout_source: "pasted" | "whop" | "ecom";
+  /** "ecom" is the usual link the worker makes, "whop" the backup, "pasted" one a person had. */
+  checkout_source: LinkSource;
   checkout_url: string | null;
   whop_plan_id: string | null;
   ecom_invoice_id: string | null;
@@ -42,6 +55,13 @@ export type InvoiceRow = {
   requested_by: string;
   requested_at: string;
   issued_at: string | null;
+};
+
+/** What Ecom says about an invoice's link: PAID, UNPAID, EXPIRED or DELETED. */
+export type PaymentState = {
+  status: string;
+  paid_at: string | null;
+  method: string | null;
 };
 
 export type InvoiceClient = {
@@ -79,8 +99,10 @@ export type InvoiceRequest = {
   payNote?: string;
   dueDate?: string;
   checkoutUrl?: string;
-  /** "Pay online" only: the invoice worker creates an Ecom link in KWD at today's rate. */
+  /** "Pay online" only: the invoice worker makes the link. */
   createLink?: boolean;
+  /** Which link the worker makes: Ecom (KNET and cards, in KWD) or Whop (cards, in USD). */
+  provider?: "ecom" | "whop";
   payments?: { date: string; method: string; amount: string; ref?: string }[];
 };
 
@@ -89,10 +111,15 @@ export type InvoicesData = {
   clients: InvoiceClient[];
   folders: Record<string, ClientFolder>;
   desk: DeskStatus;
+  /**
+   * Ecom's word on each issued Ecom invoice, by invoice id; null when the
+   * lookup failed, so the list says nothing rather than "Not paid yet".
+   */
+  paid: Record<string, PaymentState> | null;
 };
 
 const COLUMNS =
-  "id,clickup_task_id,client_name,kind,amount_usd,description,client_tax_id,period,issue_date,due_date,payments,checkout_source,checkout_url,whop_plan_id,ecom_invoice_id,amount_kwd,kwd_rate,status,invoice_no,drive_url,error,attempts,requested_by,requested_at,issued_at";
+  "id,clickup_task_id,client_name,kind,amount_usd,description,line_note,client_detail,client_tax_id,period,pay_note,issue_date,due_date,payments,checkout_source,checkout_url,whop_plan_id,ecom_invoice_id,amount_kwd,kwd_rate,status,invoice_no,drive_url,error,attempts,requested_by,requested_at,issued_at";
 
 function fail(error: { message?: string } | null): void {
   if (error) throw new Error(error.message || "The database did not answer.");
@@ -103,6 +130,8 @@ export async function fetchInvoices(
   allowedClients?: string[] | null,
 ): Promise<InvoicesData> {
   const [inv, acc, fold, desk] = await Promise.all([
+    // The worker's check-in is also read again on its own every minute
+    // (fetchDeskStatus), so an open page does not age a reading it took once.
     client
       .from("cockpit_invoices")
       .select(COLUMNS)
@@ -153,22 +182,75 @@ export async function fetchInvoices(
     };
   }
 
+  const invoices: InvoiceRow[] = (inv.data ?? []).map(r => ({
+    ...(r as unknown as InvoiceRow),
+    amount_usd: Number(r.amount_usd),
+    payments: Array.isArray(r.payments) ? r.payments : [],
+  }));
+
   return {
-    invoices: (inv.data ?? []).map(r => ({
-      ...(r as unknown as InvoiceRow),
-      amount_usd: Number(r.amount_usd),
-      payments: Array.isArray(r.payments) ? r.payments : [],
-    })),
+    invoices,
     clients,
     folders,
-    desk: desk.data
-      ? {
-          beatAt: String(desk.data.beat_at),
-          ok: Boolean(desk.data.ok),
-          detail: desk.data.detail ? String(desk.data.detail) : null,
-        }
-      : null,
+    paid: await fetchPaid(client, invoices),
+    desk: deskFromRow(desk.data),
   };
+}
+
+function deskFromRow(
+  row: { beat_at: unknown; ok: unknown; detail: unknown } | null,
+): DeskStatus {
+  return row
+    ? {
+        beatAt: String(row.beat_at),
+        ok: Boolean(row.ok),
+        detail: row.detail ? String(row.detail) : null,
+      }
+    : null;
+}
+
+/** The invoice worker's last check-in only, for the page to read again while it stays open. */
+export async function fetchDeskStatus(
+  client: SupabaseClient,
+): Promise<DeskStatus> {
+  const { data, error } = await client
+    .from("cockpit_invoice_desk_status")
+    .select("beat_at,ok,detail")
+    .maybeSingle();
+  fail(error);
+  return deskFromRow(data);
+}
+
+/**
+ * Whether each issued Ecom link was paid (cockpit_invoice_payments: only the
+ * invoices this seat can see; cockpit_ecom_invoices itself is finance-only).
+ * A refusal leaves the list without payment words instead of failing the page.
+ */
+async function fetchPaid(
+  client: SupabaseClient,
+  invoices: InvoiceRow[],
+): Promise<Record<string, PaymentState> | null> {
+  const ids = invoices
+    .filter(i => i.checkout_source === "ecom" && i.status === "issued")
+    .map(i => i.id);
+  if (!ids.length) return {};
+  const { data, error } = await client.rpc("cockpit_invoice_payments", {
+    p_ids: ids,
+  });
+  if (error) return null;
+  const paid: Record<string, PaymentState> = {};
+  for (const x of (Array.isArray(data) ? data : []) as Record<
+    string,
+    unknown
+  >[]) {
+    if (typeof x.id === "string")
+      paid[x.id] = {
+        status: String(x.status ?? ""),
+        paid_at: typeof x.paid_at === "string" ? x.paid_at : null,
+        method: typeof x.method === "string" ? x.method : null,
+      };
+  }
+  return paid;
 }
 
 export async function requestInvoice(
@@ -240,7 +322,7 @@ async function linkWaitingWin(
 export async function changeInvoice(
   client: SupabaseClient,
   id: string,
-  action: "cancel" | "retry",
+  action: "cancel" | "retry" | "whop",
 ): Promise<InvoiceRow> {
   const { data, error } = await client.rpc("cockpit_invoice_change", {
     p_id: id,
@@ -273,6 +355,13 @@ export function kuwaitToday(now = new Date()): string {
   }).format(now);
 }
 
+/** A Kuwait date some days after another, as YYYY-MM-DD. */
+export function addDays(day: string, n: number): string {
+  const d = new Date(`${day}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
 /** Cents from a typed dollar amount, or null when it is not one. */
 export function cents(typed: string): number | null {
   const m = /^(\d{1,6})(?:\.(\d{1,2}))?$/.exec(typed.trim());
@@ -298,4 +387,114 @@ export function deskProblem(desk: DeskStatus, now = Date.now()): string | null {
     return `The invoice worker last checked in ${quiet} minutes ago. Invoices wait in the list until it is back. Tell Muhammed.`;
   }
   return null;
+}
+
+/** Can this failed invoice go out again with a Whop link (cockpit_invoice_change 'whop')? */
+export function canSwitchToWhop(i: InvoiceRow): boolean {
+  return (
+    i.status === "failed" &&
+    i.kind === "checkout" &&
+    i.checkout_source === "ecom" &&
+    !i.ecom_invoice_id &&
+    !i.checkout_url
+  );
+}
+
+/**
+ * Paid, waiting or expired, from Ecom; null when there is nothing to say.
+ * Whop payments are not mirrored in the cockpit, so a Whop row says where to
+ * look; a pasted link's payment is not tracked at all.
+ */
+export function paymentWord(
+  i: InvoiceRow,
+  p: PaymentState | undefined,
+): { text: string; tone: "good" | "warn" | "neutral" } | null {
+  if (i.kind === "paid" && i.status === "issued")
+    return { text: "Paid", tone: "good" };
+  if (i.kind !== "checkout" || i.status !== "issued") return null;
+  if (i.checkout_source === "whop")
+    return { text: "Payment shows in Whop", tone: "neutral" };
+  if (i.checkout_source !== "ecom") return null;
+  const s = p?.status?.toUpperCase();
+  if (s === "PAID") return { text: "Paid", tone: "good" };
+  if (s === "EXPIRED") return { text: "Link expired", tone: "warn" };
+  if (s === "DELETED") return { text: "Link deleted", tone: "warn" };
+  return { text: "Not paid yet", tone: "neutral" };
+}
+
+/** Which issued invoice offers "Same invoice with Whop": Ecom, Pay online, not paid. */
+export function canRedoWithWhop(
+  i: InvoiceRow,
+  p: PaymentState | undefined,
+): boolean {
+  return (
+    i.kind === "checkout" &&
+    i.checkout_source === "ecom" &&
+    i.status === "issued" &&
+    paymentWord(i, p)?.text !== "Paid"
+  );
+}
+
+/**
+ * The Whop copy already asked for of this Ecom invoice: a later Pay online
+ * Whop invoice for the same client and amount that was not cancelled. An
+ * issued invoice cannot be cancelled and the server stops a repeat for two
+ * minutes only, so while a copy exists the Ecom row offers no second one.
+ * The list is newest first, so a copy is on screen whenever its Ecom row is.
+ */
+export function whopCopyOf(
+  i: InvoiceRow,
+  all: InvoiceRow[],
+): InvoiceRow | null {
+  const after = Date.parse(i.requested_at);
+  return (
+    all.find(
+      c =>
+        c.id !== i.id &&
+        c.kind === "checkout" &&
+        c.checkout_source === "whop" &&
+        c.status !== "cancelled" &&
+        c.clickup_task_id === i.clickup_task_id &&
+        Number(c.amount_usd) === Number(i.amount_usd) &&
+        Date.parse(c.requested_at) > after,
+    ) ?? null
+  );
+}
+
+/** The form's fields, refilled from an invoice. */
+export type InvoicePrefill = {
+  taskId: string;
+  kind: InvoiceKind;
+  amount: string;
+  description: string;
+  lineNote: string;
+  clientDetail: string;
+  taxId: string;
+  period: string;
+  payNote: string;
+  dueDate: string;
+  linkMode: LinkMode;
+};
+
+/**
+ * "Same invoice with Whop": the same client, amount and words, Pay online
+ * with a Whop link. A due date already past moves to three days from today.
+ */
+export function sameWithWhop(i: InvoiceRow, today: string): InvoicePrefill {
+  return {
+    taskId: i.clickup_task_id,
+    kind: "checkout",
+    amount: String(i.amount_usd),
+    description: i.description,
+    lineNote: i.line_note ?? "",
+    clientDetail: i.client_detail ?? "",
+    taxId: i.client_tax_id ?? "",
+    period: i.period ?? "",
+    payNote: i.pay_note ?? "",
+    dueDate:
+      i.due_date && i.due_date >= today
+        ? i.due_date.slice(0, 10)
+        : addDays(today, 3),
+    linkMode: "whop",
+  };
 }

@@ -158,6 +158,25 @@ export async function fetchBillingSheet(
 }
 
 /**
+ * One client's billing row, by ClickUp card: the client page's How they pay
+ * line. A How they pay save updates this row in the save's own transaction,
+ * so it is current before the ClickUp card is. null: the card has no row in
+ * the billing sheet.
+ */
+export async function fetchBillingAccount(
+  client: SupabaseClient,
+  taskId: string,
+): Promise<Account | null> {
+  const { data, error } = await client
+    .from("cockpit_billing_accounts")
+    .select("*")
+    .eq("clickup_task_id", taskId)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? accountFrom(data) : null;
+}
+
+/**
  * A refusal the sheet can show. Every billing write goes through the
  * cockpit_billing_write RPC (supabase/migrations/20261009a_billing_native_sync.sql):
  * the server checks the seat and the client, writes the billing log and the

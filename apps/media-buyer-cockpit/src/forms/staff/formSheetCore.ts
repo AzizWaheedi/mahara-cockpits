@@ -26,7 +26,15 @@ export type FieldType =
   | "tick"
   | "readonly"
   /** A group's title between fields (the kickoff's three groups); never answered. */
-  | "heading";
+  | "heading"
+  /**
+   * An amount and its currency on one row (the kickoff's daily budget,
+   * WAVE56-CONTRACT.md 5.16): the answer is {amount, currency}, the amount as
+   * typed, the currency one of `currencies` (the first is the default).
+   */
+  | "amount"
+  /** A whole number from 0 to 100, drawn with a % (the kickoff's close rate). */
+  | "percent";
 
 export type FieldDef = {
   key: string;
@@ -53,6 +61,12 @@ export type FieldDef = {
   noneLabel?: string;
   /** A choice drawn in groups, each under its small heading (Log a win's "Upsells"). */
   optionGroups?: { label: string | null; values: string[] }[];
+  /** An amount's currencies, the first the default ("USD"). */
+  currencies?: string[];
+  /** A one-tap fill beside the field ("Same as the sale: $40"); null or absent draws nothing. */
+  quick?: { label: string; value: unknown } | null;
+  /** A muted line under the field, from its answer ("≈ $39.99 a day at the cockpit's rate."); null for none. */
+  live?: (value: unknown) => string | null;
 };
 
 export type FormKey =
@@ -306,14 +320,83 @@ export function kwdWithUsd(
 
 // --- Answers ------------------------------------------------------------------
 
-/** True when a field has no answer (an empty text, no pick, an unticked box). */
+/** True when a field has no answer (an empty text, no pick, an unticked box, an amount with no number). */
 export function isEmpty(v: unknown): boolean {
   if (v === null || v === undefined) return true;
   if (typeof v === "string") return v.trim() === "";
   if (Array.isArray(v)) return v.length === 0;
   if (typeof v === "boolean") return v === false;
   if (typeof v === "number") return !Number.isFinite(v);
+  if (typeof v === "object" && "amount" in v)
+    return isEmpty((v as { amount?: unknown }).amount);
   return false;
+}
+
+/**
+ * An amount answer as its two parts: the amount as typed (a number kept as
+ * its digits) and the currency, one of the field's (else the first). An old
+ * draft's plain text becomes the amount, so nothing typed is lost.
+ */
+export function amountParts(
+  v: unknown,
+  currencies: string[] = ["USD"],
+): { amount: string; currency: string } {
+  const first = currencies[0] ?? "USD";
+  const o =
+    v && typeof v === "object" && !Array.isArray(v)
+      ? (v as { amount?: unknown; currency?: unknown })
+      : { amount: v };
+  const a = o.amount;
+  const amount =
+    typeof a === "number" && Number.isFinite(a)
+      ? String(a)
+      : typeof a === "string"
+        ? a
+        : "";
+  const c = typeof o.currency === "string" ? o.currency : "";
+  return { amount, currency: currencies.includes(c) ? c : first };
+}
+
+/** An amount above 0 and at most 100,000, with 2 decimals at most, as the kickoff check takes it. */
+export const AMOUNT_RULE =
+  "Write an amount above 0 and up to 100,000, with 2 decimals at most.";
+// Kept off the export line: check-shared.sh reads "export … from " as an import.
+const PERCENT_WORDS = "Write a whole number from 0 to 100.";
+/** A whole number between 0 and 100 (the close rate). */
+export const PERCENT_RULE = PERCENT_WORDS;
+
+/**
+ * A comma only groups thousands ("1,500", "1,500.25"). Any other comma is
+ * refused, never dropped: "37,5" read as 375 would pass the rule and fill an
+ * empty Daily Budget with ten times the amount.
+ */
+const AMOUNT_TYPED = /^(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?$/;
+/** Said when a comma stands where the decimal point goes ("37,5", "1,50"). */
+export const DECIMAL_COMMA_RULE =
+  "Use a point for decimals, as in 37.5. A comma only groups thousands, as in 1,500.";
+
+/** The typed amount as a number when it keeps the rule, else null. */
+export function amountNumber(typed: string): number | null {
+  const t = typed.trim();
+  if (!AMOUNT_TYPED.test(t)) return null;
+  const n = Number(t.replace(/,/g, ""));
+  return Number.isFinite(n) && n > 0 && n <= 100_000 ? n : null;
+}
+
+/** The sentence for an amount the rule refuses: a decimal comma gets its own. */
+export function amountRule(typed: string): string {
+  return /^\d+,\d{1,2}$/.test(typed.trim()) ? DECIMAL_COMMA_RULE : AMOUNT_RULE;
+}
+
+/** The typed percent as a whole number from 0 to 100, else null. */
+export function percentNumber(v: unknown): number | null {
+  const t = String(v ?? "")
+    .trim()
+    .replace(/%$/, "")
+    .trim();
+  if (!/^\d{1,3}$/.test(t)) return null;
+  const n = Number(t);
+  return n <= 100 ? n : null;
 }
 
 /** Shown on screen: a field is shown unless its showIf says no. */
@@ -367,6 +450,17 @@ export function validate(
     }
     if (f.type === "number" && !Number.isFinite(Number(v))) {
       out[f.key] = "Type a number, digits only.";
+      continue;
+    }
+    if (f.type === "amount") {
+      const parts = amountParts(v, f.currencies);
+      if (amountNumber(parts.amount) === null) {
+        out[f.key] = amountRule(parts.amount);
+        continue;
+      }
+    }
+    if (f.type === "percent" && percentNumber(v) === null) {
+      out[f.key] = PERCENT_RULE;
       continue;
     }
     if (f.type === "date" && !ISO_DAY.test(String(v))) {

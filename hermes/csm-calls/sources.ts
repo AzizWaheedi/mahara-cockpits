@@ -140,7 +140,7 @@ export async function readNativeForms(ctx: Ctx): Promise<{ rows: Row[]; count: R
  * native onboarding the client answers in the portal or by link join the timeline under their own form ids. The
  * Typeform door's onboarding answers after the go-live are not read here: this worker's Typeform read already
  * stores them under KFRCXPFx. Each answer is read with the questions of its own version (2, or the structured 3 of
- * 20261103h, 4.22), never the newest one's: the rows are upserted on every run, so a wrong version would rewrite them.
+ * 20261104d, 4.22), never the newest one's: the rows are upserted on every run, so a wrong version would rewrite them.
  * Needs 20261102j live (the widened form_id CHECK): until forms.stage4 has a form on, nothing is read or written.
  */
 export const STAGE4_FORMS: Record<string, string> = { kickoff: "cockpit-kickoff", onboarding: "cockpit-onboarding" };

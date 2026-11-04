@@ -1359,7 +1359,7 @@ describe("readStage4Forms: the native kickoff and onboarding join the timeline (
       .toContain(" Sent in the cockpit since Stage 4: 1 kickoff and 0 onboarding forms, 1 on a client card.");
   });
 
-  // 20261103h stores the structured onboarding as version 3 (4.22): from then on it is the newest version, switch off or on.
+  // 20261104d stores the structured onboarding as version 3 (4.22): from then on it is the newest version, switch off or on.
   const v3 = { form_key: "onboarding", version: 3, schema: { v: 2, fields: [
     { key: "aboutYou", type: "heading", label: { en: "About you", ar: "عنك" } },
     { key: "metaAccess", type: "note", label: { en: "Give us access in Leadsie", ar: "عطونا الصلاحية" } },

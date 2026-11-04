@@ -1,0 +1,26 @@
+{
+  "_note": "Synthetic: the test card and an invented run and Doc. hermes/market-intel tests/test_writer_contract.py checks that mi/render.py outputs() still makes exactly this; clickup-writeback research.test.ts checks that the writer takes it.",
+  "inputs": {
+    "taskId": "86eywg1cq",
+    "runId": "5d1c0a7e-3b2f-4c6d-9e8f-0a1b2c3d4e5f",
+    "docId": "1SynthDocForTheWriterContractTestsOnly0000aa",
+    "competitorsN": 6,
+    "sourcesN": 31,
+    "docUrl": "https://docs.google.com/document/d/1SynthDocForTheWriterContractTestsOnly0000aa/edit"
+  },
+  "outputs": {
+    "field": {
+      "id": "7489dbcc-fbbd-4eec-abfd-1306be7ff4b8",
+      "value": "https://docs.google.com/document/d/1SynthDocForTheWriterContractTestsOnly0000aa/edit",
+      "state": "not_due",
+      "sent": false,
+      "why": ""
+    },
+    "comment": {
+      "text": "Market research is ready: https://docs.google.com/document/d/1SynthDocForTheWriterContractTestsOnly0000aa/edit. 6 competitors, 31 sources. Cockpit: https://cockpit.maharamedia.com/client-success/clients/86eywg1cq/research.\nCockpit ref MI-5d1c0a7e",
+      "marker": "Cockpit ref MI-5d1c0a7e",
+      "notifyAll": false,
+      "sent": false
+    }
+  }
+}

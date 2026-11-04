@@ -663,7 +663,7 @@ export function blankTexts(schema: ClientFormSchema): string[] {
 }
 
 // --- The structured onboarding (client form schema version 2), read only here --------------------------------
-// supabase/migrations/20261103h_onboarding_schema_v2.sql (docs/forms/WAVE56-CONTRACT.md 4.22): a form whose newest
+// supabase/migrations/20261104d_onboarding_schema_v2.sql (docs/forms/WAVE56-CONTRACT.md 4.22): a form whose newest
 // version is written in schema version 2 is read only in the editor, on the server; its questions change in a
 // migration. The page shows that version's outline from cockpit_form_editor_structured.
 

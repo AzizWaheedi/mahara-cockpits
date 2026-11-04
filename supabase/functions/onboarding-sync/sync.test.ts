@@ -1,7 +1,7 @@
 import {describe, expect, test} from 'bun:test';
 import {F, FORMS, LIST_ID, formsFor, type FormData, type OnboardingRow} from '../../../apps/client-success-cockpit/src/lib/onboardingCore.ts';
 import {TYPEFORM_UNVERIFIED} from '../cockpit-csm-api/onboarding.ts';
-import {BATCH, BUDGET_MS, CLICKUP_GAP_MS, TYPEFORM_GAP_MS, dryRunStore, handle, liveSources, newestOnly, redact, supabaseStore, syncAll, type Admin, type Clock, type Published, type StateRow, type Store} from './sync.ts';
+import {BATCH, BUDGET_MS, CARD_EMAIL_FIELD, CARD_PHONE_FIELD, CLICKUP_GAP_MS, TYPEFORM_GAP_MS, dryRunStore, handle, liveSources, newestOnly, redact, saleTieCard, saleTiesJob, saleTiesStore, supabaseStore, syncAll, type Admin, type Clock, type Published, type SaleTieCard, type SaleTies, type StateRow, type Store} from './sync.ts';
 
 // The scheduled bulk sync: how it walks every card, joins the forms, spaces
 // and retries provider calls, stops in time and resumes, and what it says.
@@ -373,4 +373,166 @@ describe('the HTTP door', () => {
 test('redaction removes provider keys and tokens', () => {
   expect(redact('pk_12345_ABCDEF and tfp_abcdefgh and eyJhbGciOiJIUzI1NiJ9.e30.sig')).toBe('[key] and [key] and [key]');
   expect(dryRunStore()).toBeDefined();
+});
+
+// --- The sale tie (docs/forms/WAVE56-CONTRACT.md 4.19, 20261103g) ------------------------------------------------
+// Every phone and email here is invented (the unassigned 0000 block, .invalid addresses).
+
+describe('the sale tie (4.19)', () => {
+  const PHONE = '+965 0000 0707';
+  const EMAIL = 'owner@cedar.invalid';
+  const DAY = 24 * 3_600_000;
+  /** A card ClickUp made at `made` (ms), with or without its own Phone Number and Email. */
+  const tieCard = (i: number, made: number, keys = true) =>
+    card(i, {date_created: String(made), custom_fields: [{id: F.clientStatus, value: 0},
+      ...(keys ? [{id: CARD_PHONE_FIELD, type: 'phone', value: PHONE}, {id: CARD_EMAIL_FIELD, type: 'email', value: EMAIL}] : [])]});
+  function fakeTies(waiting: Awaited<ReturnType<SaleTies['waiting']>> | Error, over: Partial<SaleTies> = {}) {
+    const offers: {run: number; cards: SaleTieCard[]}[] = [];
+    const sweeps: number[] = [];
+    const ties: SaleTies = {
+      waiting: async () => {if (waiting instanceof Error) throw waiting; return waiting;},
+      offer: async (run, cards) => {offers.push({run, cards}); return {tied: cards.length ? 1 : 0};},
+      sweep: async run => {sweeps.push(run); return {tied: 2, waiting: 3};},
+      backfill: async () => ({}),
+      ...over,
+    };
+    return {ties, offers, sweeps};
+  }
+
+  test('no offer while nothing waits; the sweep still runs and the counts say so', async () => {
+    const w = world({pages: [{tasks: [tieCard(1, Date.parse('2026-10-01T00:00:00Z'))], last_page: true}]});
+    const m = memoryStore();
+    const t = fakeTies({on: true, waiting: 0, since: null});
+    const result = await syncAll({...m.store, saleTies: t.ties}, w.sources, w.clock);
+    expect(t.offers).toEqual([]);
+    expect(t.sweeps).toEqual([7]);
+    expect(result.counts).toMatchObject({sale_ties_offered: 0, sale_ties_tied: 2, sale_ties_waiting: 3});
+    expect(result.problem).toBeNull();
+  });
+
+  test('offers go only for cards ClickUp made since a day before the oldest waiting sale, with their own two keys', async () => {
+    const since = '2026-10-20T10:00:00Z';
+    const at = Date.parse(since);
+    const w = world({pages: [{tasks: [tieCard(1, at - 3 * DAY), tieCard(2, at - DAY + 60_000), tieCard(3, at + 3_600_000, false), tieCard(4, at + 2 * 3_600_000)], last_page: true}]});
+    const m = memoryStore();
+    const t = fakeTies({on: true, waiting: 2, since});
+    const result = await syncAll({...m.store, saleTies: t.ties}, w.sources, w.clock);
+    expect(t.offers).toHaveLength(1);
+    expect(t.offers[0].run).toBe(7);
+    expect(t.offers[0].cards).toEqual([
+      {taskId: 'cu-2', createdAt: new Date(at - DAY + 60_000).toISOString(), phone: PHONE, email: EMAIL},
+      {taskId: 'cu-3', createdAt: new Date(at + 3_600_000).toISOString(), phone: null, email: null},
+      {taskId: 'cu-4', createdAt: new Date(at + 2 * 3_600_000).toISOString(), phone: PHONE, email: EMAIL},
+    ]);
+    expect(result.counts).toMatchObject({sale_ties_offered: 3, sale_ties_tied: 3, sale_ties_waiting: 3});
+    // No contact value reaches the counts, the notes, the saved state or the run's close.
+    const said = JSON.stringify({result, finished: m.finished, states: m.states});
+    for (const v of [PHONE, EMAIL, '00000707', 'cedar.invalid']) expect(said).not.toContain(v);
+    // The cards written to the read model are the same cards: the sale tie is beside the sync, never instead of it.
+    expect(m.batches.flatMap(b => b.rows.map(r => r.clickup_task_id))).toEqual(['cu-1', 'cu-2', 'cu-3', 'cu-4']);
+  });
+
+  test('off, or not set up yet: no offer, no sweep, no counts and no note', async () => {
+    for (const waiting of [{on: false, waiting: 4, since: '2026-10-20T10:00:00Z'}, null]) {
+      const w = world({pages: [{tasks: [tieCard(1, Date.parse('2026-10-21T00:00:00Z'))], last_page: true}]});
+      const m = memoryStore();
+      const t = fakeTies(waiting);
+      const result = await syncAll({...m.store, saleTies: t.ties}, w.sources, w.clock);
+      expect([t.offers, t.sweeps]).toEqual([[], []]);
+      expect(result.counts).not.toHaveProperty('sale_ties_offered');
+      expect(result.problem).toBeNull();
+    }
+    // A store whose functions are missing reads as not set up, never as a failure.
+    const missing = saleTiesStore({rpc: async () => ({data: null, error: {message: 'Could not find the function public.cockpit_sale_tie_waiting without parameters (PGRST202)'}}), from: () => ({})});
+    const w = world();
+    const m = memoryStore();
+    const result = await syncAll({...m.store, saleTies: missing}, w.sources, w.clock);
+    expect(result.problem).toBeNull();
+    expect(result.ok).toBe(true);
+  });
+
+  test('a sale tie failure is said in the run and never fails it, and its text is never passed on', async () => {
+    const w = world({pages: [{tasks: [tieCard(1, Date.parse('2026-10-21T00:00:00Z'))], last_page: true}]});
+    const m = memoryStore();
+    const t = fakeTies({on: true, waiting: 1, since: '2026-10-20T10:00:00Z'}, {offer: async () => {throw Error(`refused ${PHONE}`);}});
+    const result = await syncAll({...m.store, saleTies: t.ties}, w.sources, w.clock);
+    expect(result.ok).toBe(true);
+    expect(result.problem).toBe('Sales could not be matched to their cards this run. Ties already made are unchanged; the next run tries again.');
+    expect(t.sweeps).toEqual([]);
+    expect(result.counts).not.toHaveProperty('sale_ties_offered');
+    expect(JSON.stringify(result)).not.toContain(PHONE);
+    // The store hides the database's text too.
+    const store = saleTiesStore({rpc: async () => ({data: null, error: {message: `bad ${EMAIL}`}}), from: () => ({})});
+    await expect(store.offer(1, [])).rejects.toThrow('cockpit_sale_tie_offer refused the call.');
+  });
+
+  test('the store calls the four functions with their arguments and keeps counts only', async () => {
+    const calls: {name: string; args: Record<string, unknown>}[] = [];
+    const admin: Admin = {
+      rpc: async (name, args) => {
+        calls.push({name, args});
+        if (name === 'cockpit_sale_tie_waiting') return {data: {on: true, waiting: 2, since: '2026-10-20T10:00:00+00:00'}, error: null};
+        if (name === 'cockpit_sale_tie_backfill') return {data: {sales: 55, tied: 39, dryRun: true, note: 'not a count'}, error: null};
+        return {data: {tied: 1, waiting: 4, stored: 9}, error: null};
+      },
+      from: () => ({}),
+    };
+    const store = saleTiesStore(admin);
+    const one: SaleTieCard = {taskId: 'cu-1', createdAt: null, phone: PHONE, email: null};
+    expect(await store.waiting()).toEqual({on: true, waiting: 2, since: '2026-10-20T10:00:00+00:00'});
+    expect(await store.offer(7, [one])).toEqual({tied: 1});
+    expect(await store.sweep(7)).toEqual({tied: 1, waiting: 4});
+    expect(await store.backfill([one], true)).toEqual({sales: 55, tied: 39, dryRun: true});
+    expect(calls.map(c => [c.name, c.args])).toEqual([
+      ['cockpit_sale_tie_waiting', {}],
+      ['cockpit_sale_tie_offer', {p_run: 7, p_cards: [one]}],
+      ['cockpit_sale_tie_sweep', {p_run: 7}],
+      ['cockpit_sale_tie_backfill', {p_cards: [one], p_dry: true}],
+    ]);
+  });
+
+  test('saleTieCard reads only the two fields and the creation time', () => {
+    expect(saleTieCard(tieCard(9, Date.parse('2026-10-21T00:00:00Z')))).toEqual({taskId: 'cu-9', createdAt: '2026-10-21T00:00:00.000Z', phone: PHONE, email: EMAIL});
+    expect(saleTieCard(card(8, {date_created: 'x', custom_fields: [{id: CARD_PHONE_FIELD, value: '   '}, {id: 'other', value: PHONE}]})))
+      .toEqual({taskId: 'cu-8', createdAt: null, phone: null, email: null});
+  });
+
+  test('the job reads every card once and sends them all; a dry run writes nothing and answers counts only', async () => {
+    const w = world({pages: [{tasks: [tieCard(1, Date.parse('2026-04-01T00:00:00Z')), tieCard(2, Date.parse('2026-05-01T00:00:00Z'), false)], last_page: false},
+      {tasks: [tieCard(3, Date.parse('2026-06-01T00:00:00Z')), tieCard(1, 0)], last_page: true}]});
+    const sent: {cards: SaleTieCard[]; dry: boolean}[] = [];
+    const result = await saleTiesJob({backfill: async (cards, dry) => {sent.push({cards, dry}); return {sales: 3, tied: 2, cards: cards.length, dryRun: dry};}}, w.sources, true, w.clock);
+    expect(result).toMatchObject({ok: true, job: 'saleTies', dryRun: true, counts: {sales: 3, tied: 2, cards: 3, dryRun: true}, note: 'Dry run: nothing was written.'});
+    expect(sent).toHaveLength(1);
+    expect(sent[0].dry).toBe(true);
+    expect(sent[0].cards.map(c => c.taskId)).toEqual(['cu-1', 'cu-2', 'cu-3']);
+    expect(paths(w.calls).filter(p => p.startsWith('typeform'))).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain(PHONE);
+    // A partial read matches nothing.
+    const partial = world({respond: url => (url.searchParams.get('page') === '1' ? new Response('{}', {status: 500}) : undefined),
+      pages: [{tasks: [tieCard(1, 1)], last_page: false}]});
+    const none: unknown[] = [];
+    const r2 = await saleTiesJob({backfill: async c => {none.push(c); return {};}}, partial.sources, false, partial.clock);
+    expect(r2.ok).toBe(false);
+    expect(none).toEqual([]);
+    // Not set up yet.
+    const r3 = await saleTiesJob({backfill: async () => {throw Error('Could not find the function cockpit_sale_tie_backfill');}}, world().sources, true, virtualClock());
+    expect(r3).toMatchObject({ok: false, note: 'The sale tie is not set up yet: apply 20261103g first.'});
+  });
+
+  test('the HTTP door runs the job dry unless dryRun is false, and refuses any other job', async () => {
+    const env = (name: string) => ({CRON_SECRET: 'cron-secret', SUPABASE_URL: 'https://example.invalid', SUPABASE_SERVICE_ROLE_KEY: 'service', CLICKUP_API_TOKEN: 'pk_1'} as Record<string, string>)[name];
+    const post = (body: string) => new Request('https://example.invalid/functions/v1/onboarding-sync', {method: 'POST', headers: {'x-cron-secret': 'cron-secret'}, body});
+    const rpcs: {name: string; args: Record<string, unknown>}[] = [];
+    const admin: Admin = {rpc: async (name, args) => {rpcs.push({name, args}); return {data: {sales: 1}, error: null};}, from: () => ({insert: async () => ({error: null})})};
+    const request = (async () => new Response(JSON.stringify({tasks: [tieCard(1, Date.parse('2026-10-01T00:00:00Z'))], last_page: true}))) as unknown as typeof fetch;
+    for (const [body, dry] of [['{"job":"saleTies"}', true], ['{"job":"saleTies","dryRun":true}', true], ['{"job":"saleTies","dryRun":false}', false]] as const) {
+      rpcs.length = 0;
+      const res = await (await handle(post(body), env, () => admin, virtualClock(), request)).json();
+      expect(res).toMatchObject({ok: true, job: 'saleTies', dryRun: dry, counts: {sales: 1}});
+      expect(rpcs.map(r => r.name)).toEqual(['cockpit_sale_tie_backfill']);
+      expect(rpcs[0].args.p_dry).toBe(dry);
+    }
+    expect((await handle(post('{"job":"other"}'), env, () => admin, virtualClock(), request)).status).toBe(400);
+  });
 });

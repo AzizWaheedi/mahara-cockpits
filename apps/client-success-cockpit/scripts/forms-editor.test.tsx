@@ -586,10 +586,10 @@ describe("one client form", () => {
   });
 });
 
-/** Version 3 of the onboarding as 20261103h stores it (read from the migration, so the page and the SQL agree). */
+/** Version 3 of the onboarding as 20261104d stores it (read from the migration, so the page and the SQL agree). */
 const V3_SQL = readFileSync(
   new URL(
-    "../../../supabase/migrations/20261103h_onboarding_schema_v2.sql",
+    "../../../supabase/migrations/20261104d_onboarding_schema_v2.sql",
     import.meta.url,
   ),
   "utf8",
@@ -756,7 +756,7 @@ describe("the structured onboarding (version 3), read only", () => {
     }
   });
 
-  test("no structured version, or a server before 20261103h, keeps the plain read-only view; any other failure says so", async () => {
+  test("no structured version, or a server before 20261104d, keeps the plain read-only view; any other failure says so", async () => {
     const plain = structuredIO();
     let drawn = await draw({ io: plain, formKey: "portal_feedback" });
     expect(plain.asked).toEqual(["portal_feedback"]);
@@ -1018,7 +1018,7 @@ describe("the core", () => {
 
   test("a question's longest answer is capped where the server caps it, the client onboarding at its Typeform's room", () => {
     // The latest migration that defines the version-1 schema check (the editor edits version-1 forms; since
-    // 20261103h it is cockpit_form_schema_check_v1, the entry point dispatching to it), read where it caps a
+    // 20261104d it is cockpit_form_schema_check_v1, the entry point dispatching to it), read where it caps a
     // text's maxLength.
     const dir = resolve(import.meta.dir, "../../../supabase/migrations");
     const v1 = (s: string) =>

@@ -16,8 +16,10 @@ import {
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import {
+  BudgetScopeNote,
   BudgetSources,
   budgetLimitWords,
+  waitingBudgetWords,
 } from "@/components/launch/BudgetSources";
 import {
   ClientActivity,
@@ -461,16 +463,18 @@ function LaunchDetail({
                   <details className="launch-waiting-budgets">
                     <summary>
                       {ready.waitingBudgets.length} switched-on campaign
-                      {ready.waitingBudgets.length === 1 ? "" : "s"}
+                      {ready.waitingBudgets.length === 1 ? "" : "s"} on this
+                      account
                     </summary>
+                    <p>
+                      Other accounts are not included. Some budgets may not be
+                      shown.
+                    </p>
                     {ready.waitingBudgets.map((b: any) => (
                       <p key={b.id}>
                         {b.name}
                         <small>
-                          {b.usd != null
-                            ? `$${b.usd.toFixed(2)} a day`
-                            : "Ad-set budget"}{" "}
-                          · {b.owner.name}
+                          {waitingBudgetWords(b.usd)} · {b.owner.name}
                         </small>
                       </p>
                     ))}
@@ -883,7 +887,7 @@ function LaunchDetail({
                         }}
                       />
                       <label htmlFor="launch-detail-4">
-                        Daily budget, USD
+                        Campaign daily budget, USD
                         <div className="launch-budget">
                           <span>$</span>
                           <Input
@@ -904,6 +908,7 @@ function LaunchDetail({
                             "The limit is read with the account."}
                         </small>
                       </label>
+                      <BudgetScopeNote />
                       <BudgetSources
                         agreed={agreed}
                         live={ready.budget}

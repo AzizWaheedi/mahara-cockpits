@@ -1,10 +1,10 @@
 /**
- * Client form schema version 2 and the structured onboarding, version 3 (20261103h_onboarding_schema_v2.sql;
+ * Client form schema version 2 and the structured onboarding, version 3 (20261104d_onboarding_schema_v2.sql;
  * docs/forms/WAVE56-CONTRACT.md 4.22; plan build B8; the CEO, 2026-11-02: "Do the whole redesign").
  *
  * The ground is stage4-match-make-supabase.test.ts's (the functions 20261102o reads or replaces, cut from their
  * canonical migrations, with stand-in tables), then the real 20261102o, 20261102p (with 20261025n's kickoff facts) and
- * 20261103b, the way live holds them (read 2026-11-03), plus what 20261103h replaces or reads beside them: 20261102a's
+ * 20261103b, the way live holds them (read 2026-11-03), plus what 20261104d replaces or reads beside them: 20261102a's
  * client version and client live, 20261102i's issue core, 20261102d's editor, 20261027f's forms audit trigger and
  * 20261101p's settings audit trigger, each cut from its canonical file; stand-ins for the card's workspace, the invite
  * events, the sale ties and the editor's seat. 20261102j's input and 20261102p's builder are also kept under _j and _p
@@ -49,7 +49,7 @@ const L = "20261102l_stage4_no_client_data_row.sql";
 const M = "20261102o_stage4_match_make.sql";
 const P = "20261102p_stage4_better_data.sql";
 const B = "20261103b_onboarding_v2_hints.sql";
-const H = "20261103h_onboarding_schema_v2.sql";
+const H = "20261104d_onboarding_schema_v2.sql";
 const N25 = "20261025n_slack_notices.sql";
 const TITLES_FILE = "scripts/dev/forms-deploy/stage4-raw-titles.json";
 const RAW_TITLES = JSON.parse(readFileSync(`${ROOT}${TITLES_FILE}`, "utf8"));
@@ -73,7 +73,7 @@ const FIXTURE = JSON.parse(
   schemaV2Rows: FixRow[];
 };
 
-/** md5(white space folded prosrc) of the bodies 20261103h replaces, as live holds them (read 2026-11-03). */
+/** md5(white space folded prosrc) of the bodies 20261104d replaces, as live holds them (read 2026-11-03). */
 const BEFORE_H = {
   "cockpit_form_schema_check(jsonb)": "07f88396a8df9e1b2b42f41b5c3e189a",
   "cockpit_form_answers_check(jsonb,jsonb,jsonb)":
@@ -89,7 +89,7 @@ const BEFORE_H = {
   "cockpit_form_client_context(public.cockpit_form_invites)":
     "4c8c10adadf7908a8ae6a06472aa1d33",
 } as const;
-/** 20261103h's own bodies (the after values of its drift guard). */
+/** 20261104d's own bodies (the after values of its drift guard). */
 const AFTER_H = {
   "cockpit_form_schema_check(jsonb)": "9bd159ba3782c744236ed92e6a75ee41",
   "cockpit_form_answers_check(jsonb,jsonb,jsonb)":
@@ -122,9 +122,10 @@ const NEW_FNS = [
   "cockpit_form_editor_structured(text)",
   "cockpit_form_schema_v2_switch(text,text)",
 ] as const;
-/** md5 of the onboarding's stored definitions: version 2 (20261103b's) and version 3 (this file's). */
-const V2_B_MD5 = "38d371cd509ced4fef9b7cad6e09fb80";
-const V3_MD5 = "86966f19afcab5dca6f009e24ffe6802";
+/** md5 of the onboarding's stored definitions: version 2 after 20261104c and version 3 (this file's). */
+const V2_B_MD5 = "230653a3d7bd14a79ee7edba40976cb4";
+let oldV2Schema: unknown;
+const V3_MD5 = "2e187490c06d61169588bc9724870aed";
 const READ_ONLY = "Its structured questions change in a migration for now.";
 const TEST_CARD = "86eywg1cq";
 const TASK = "86exv3001";
@@ -644,6 +645,11 @@ beforeAll(async () => {
   await db.exec(fnDef(migration(N25), "cockpit_slack_notice_kickoff_facts"));
   await db.exec(migration(P));
   await db.exec(migration(B));
+  oldV2Schema = await one(
+    "SELECT schema AS r FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 2",
+  );
+  await setting("forms.stage4", { kickoff: false, onboarding: false });
+  await db.exec(migration("20261104c_onboarding_v2_wording.sql"));
   // 20261102j's input and 20261102p's builder, kept beside this file's.
   await db.exec(
     renamed(j, "cockpit_form_stage4_input", "_j").replaceAll(
@@ -669,8 +675,8 @@ const guardLine = (fn: string) =>
 
 // --- The file ------------------------------------------------------------------------------------------------------
 
-describe("20261103h: the file", () => {
-  test("the ground holds the bodies the drift guard names (live, read 2026-11-03) and 20261103b's version 2", () => {
+describe("20261104d: the file", () => {
+  test("the ground holds the guarded bodies and corrected version 2", () => {
     expect(groundMd5).toEqual({ ...BEFORE_H, v2: V2_B_MD5 });
     for (const [fn, md5] of Object.entries(BEFORE_H))
       expect(guardLine(fn)).toContain(`('public.${fn}', '${md5}', '`);
@@ -698,6 +704,21 @@ describe("20261103h: the file", () => {
     );
   });
 
+  test("version 3 uses the reviewed onboarding wording", async () => {
+    const copy = await one<Row>(`SELECT jsonb_build_object(
+      'intro_en', schema #>> '{intro,en}',
+      'intro_ar', schema #>> '{intro,ar}',
+      'free_hint', (SELECT f->'hint' FROM jsonb_array_elements(schema->'fields') f WHERE f->>'key' = 'freeConsults'),
+      'challenge_hint_ar', (SELECT f #>> '{hint,ar}' FROM jsonb_array_elements(schema->'fields') f WHERE f->>'key' = 'challenges')
+    ) AS r FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 3`);
+    expect(copy).toEqual({
+      intro_en: "Tell us about your business so your onboarding call starts in the right place.",
+      intro_ar: "عرّفونا على شغلكم عشان مكالمة الانطلاق تبدي من المكان الصح.",
+      free_hint: null,
+      challenge_hint_ar: "اذكروا جم شي نقدر نساعدكم فيه سيده.",
+    });
+  });
+
   test("a second apply changes nothing", async () => {
     const snapshot = async () => ({
       md5: await Promise.all(
@@ -723,11 +744,18 @@ describe("20261103h: the file", () => {
     });
   });
 
-  test("it stands on 20261102p and 20261103b: another version 2, or no fifth Meta choice, stops it", async () => {
+  test("it refuses the uncorrected version 2, schema drift, or a missing prerequisite", async () => {
     const stop = {
       code: "55000",
-      message: "Apply 20261102p and 20261103b before 20261103h.",
+      message: "Apply 20261102p, 20261103b and 20261104c before 20261104d.",
     };
+    await rolledBack(async () => {
+      await db.query(
+        "UPDATE public.cockpit_form_versions SET schema = $1::jsonb WHERE form_key = 'onboarding' AND version = 2",
+        [json(oldV2Schema)],
+      );
+      expect(await refusal(() => db.exec(inTest(H)))).toEqual(stop);
+    });
     await rolledBack(async () => {
       await db.exec(
         "UPDATE public.cockpit_form_versions SET schema = jsonb_set(schema, '{minutes}', '26') WHERE form_key = 'onboarding' AND version = 2",
@@ -844,7 +872,7 @@ describe("20261103h: the file", () => {
     expect(stored.map(r => [r.entity_id, r.actor_email, r.after])).toEqual([
       [
         "onboarding:3",
-        "migration 20261103h",
+        "migration 20261104d",
         { key: "onboarding", version: 3 },
       ],
     ]);
@@ -1981,10 +2009,10 @@ const linkOpen = async (invite: string, digit: string) => {
     "INSERT INTO public.cockpit_form_invite_tokens(invite_id, channel, token_sha256, made_by) VALUES ($1::uuid, 'copy', $2, 'the tech lead')",
     [invite, digit.repeat(64)],
   );
-  return one<Row>(
-    "SELECT public.portal_form_token_open($1, $2, NULL) AS r",
-    [digit.repeat(64), NET],
-  );
+  return one<Row>("SELECT public.portal_form_token_open($1, $2, NULL) AS r", [
+    digit.repeat(64),
+    NET,
+  ]);
 };
 /** The invite as the signed-in portal page reads it (an invented client person). */
 const portalGet = (invite: string) =>
@@ -2014,11 +2042,9 @@ describe("the prefill reaches the client (portal_form_token_open, portal_form_ge
       await switchTo("canary");
       const canary = await issue(TEST_CARD, "canary", ["copy"]);
       const opened = await linkOpen(canary.inviteId, "1");
-      expect([opened.ok, opened.invite.version, opened.invite.context]).toEqual([
-        true,
-        3,
-        { currency: "kwd", areaCountries: ["kw"] },
-      ]);
+      expect([opened.ok, opened.invite.version, opened.invite.context]).toEqual(
+        [true, 3, { currency: "kwd", areaCountries: ["kw"] }],
+      );
       // A client's invite stays on version 2: nothing of the prefill, even if its row held those keys.
       const client = await issue(TASK, "csm", ["portal"]);
       await db.query(
@@ -2028,9 +2054,7 @@ describe("the prefill reaches the client (portal_form_token_open, portal_form_ge
       );
       const got = await portalGet(client.inviteId);
       expect([got.invite.version, got.invite.context]).toEqual([2, {}]);
-      expect((await linkOpen(client.inviteId, "2")).invite.context).toEqual(
-        {},
-      );
+      expect((await linkOpen(client.inviteId, "2")).invite.context).toEqual({});
       expect(await contextPair(client.inviteId)).toEqual({ now: {}, was: {} });
     });
   });
@@ -2066,11 +2090,9 @@ describe("the prefill reaches the client (portal_form_token_open, portal_form_ge
         { currency: "kwd", areaCountries: ["kw"] },
       ]);
       const opened = await linkOpen(after.inviteId, "3");
-      expect([opened.ok, opened.invite.version, opened.invite.context]).toEqual([
-        true,
-        3,
-        { currency: "kwd", areaCountries: ["kw"] },
-      ]);
+      expect([opened.ok, opened.invite.version, opened.invite.context]).toEqual(
+        [true, 3, { currency: "kwd", areaCountries: ["kw"] }],
+      );
       expect(await contextPair(after.inviteId)).toEqual({
         now: { currency: "kwd", areaCountries: ["kw"] },
         was: {},

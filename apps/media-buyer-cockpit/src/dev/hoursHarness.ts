@@ -243,6 +243,52 @@ function costsContext() {
 type Answer = { data: unknown; error: { message: string } | null };
 const ok = (data: unknown): Answer => ({ data, error: null });
 
+/** Made-up Hermes conversations for the chat panel (newest first, as the server sends). */
+function hermesThread() {
+  const mode =
+    new URLSearchParams(window.location.search).get("hermes") ?? "thread";
+  if (mode === "empty") return [];
+  const ago = (min: number) => new Date(Date.now() - min * 60000).toISOString();
+  const job = (
+    n: number,
+    prompt: string,
+    reply: string | null,
+    min: number,
+  ) => ({
+    id: `00000000-0000-4000-8000-00000000000${n}`,
+    status: reply ? "completed" : "claimed",
+    phase: reply ? "completed" : "pending",
+    app: "media-buyer",
+    role: "ceo",
+    client_name: "Acme Tiles",
+    kind: "chat",
+    prompt,
+    result: reply ? { reply } : null,
+    error: null,
+    attempts: 1,
+    created_at: ago(min),
+    completed_at: reply ? ago(min - 0.2) : null,
+    feedback: n === 1 ? 1 : null,
+  });
+  const thread = [
+    job(
+      2,
+      "اعطني كابشن للإعلان الثاني",
+      "**الإعلان الثاني** يبين أرضية رخام في فيلا قيد التشطيب.\n\n- أرضيتك أول شي ينشاف\n- نوريك الخيارات قبل ما تقرر\n\nتواصل معنا اليوم.",
+      3,
+    ),
+    job(
+      1,
+      "How is Acme Tiles doing this week?",
+      'Acme Tiles spent **$342.20** in the last 7 days for 12 leads, a cost per lead of **$28.52**.\n\n---\n\n1. "Showroom tour" brings most leads at $21 each.\n2. "Before and after" spent $90 with 1 lead: pause it or refresh the hook.\n\nSource: media buyer campaign board, synced today.',
+      9,
+    ),
+  ];
+  return mode === "pending"
+    ? [job(3, "Which ad should I pause?", null, 0.3), ...thread]
+    : thread;
+}
+
 /** Patch the client's rpc and functions.invoke; returns the scenario in use. */
 export function installHoursHarness(client: SupabaseClient): HarnessScenario {
   const scenario = hoursScenario();
@@ -277,6 +323,14 @@ export function installHoursHarness(client: SupabaseClient): HarnessScenario {
       }
     }
     switch (name) {
+      // Hermes chat panel: ?hermes=empty | pending | thread (default thread).
+      case "cockpit_get_ask_ai_thread":
+        return ok(hermesThread());
+      case "cockpit_rate_ask_ai_job":
+      case "cockpit_clear_ask_ai_thread":
+        return ok(true);
+      case "cockpit_submit_ask_ai_job":
+        return ok("00000000-0000-4000-8000-0000000000ff");
       case "cockpit_get_ceo_sections":
         return ok({ sections: {}, day: "2026-10-09" });
       case "cockpit_ceo_people_list":

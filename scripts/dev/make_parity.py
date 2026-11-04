@@ -44,7 +44,7 @@ differs while the writer posts it with a Cockpit ref line after Make's text (REF
 Make 12 [17], [22] and Make 13 [46] write none of: it is INTENDED 'brief' on the onboarding tasks and 'dna_brief' on
 the Brand DNA task only with its exact first line (BRIEF_HEADER, DNA_BRIEF_HEADER), its detailsKind and BRIEF_MAX
 characters at most, on a request type with a details field (else the brief would be dropped); any other details
-differs. card_facts fills only CARD_FACTS' five fields, only while empty, with a plan clickup-writeback's factsStep
+differs. card_facts fills only CARD_FACTS' six fields, only while empty, with a plan clickup-writeback's factsStep
 takes (onlyIfEmpty, a label, a value of the field's kind, a real day; no field only with its skip reason); the
 writer's own receipt (progress.steps.card_facts.fields of its queue row, read only when the response has one) differs
 when a field went "written" over a card value that was "set", and without one the verdict says "(receipt not read)"
@@ -69,6 +69,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from decimal import ROUND_HALF_UP, Decimal
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -121,8 +122,9 @@ INTENDED = {
               f"under {UNDER_CEO}"),
     "dna_brief": (f'the Brand DNA task\'s description carries the cockpit brief ("{DNA_BRIEF_HEADER}" first, detailsKind '
                   f"dna_brief, {BRIEF_MAX:,} characters at most), where Make writes none; under {UNDER_CEO}"),
-    "card_facts": ("fills a card field Make leaves alone, only Consultation Types, ADs Platform, Fathom, Onboarding Call Date "
-                   "or Company Website and only while it is empty (onlyIfEmpty: the writer reads the card first and keeps a "
+    "card_facts": ("fills a card field Make leaves alone, only Consultation Types, ADs Platform, Fathom, Onboarding Call Date, "
+                   "Company Website or Daily Budget (in dollars, only from the kickoff's own budget converted at the cockpit's "
+                   "rates) and only while it is empty (onlyIfEmpty: the writer reads the card first and keeps a "
                    f"value the card holds); under {UNDER_CEO}"),
 }
 # The registered description slots: effect -> (INTENDED name and detailsKind, first line, request type). A plan's
@@ -131,17 +133,75 @@ SLOTS = {"onboarding_tasks": ("brief", BRIEF_HEADER, "client_onboarding"),
          "brand_dna_task": ("dna_brief", DNA_BRIEF_HEADER, "brand_dna")}
 DROPPED = "the brief would be dropped (the type has no details field)"
 # card_facts (B8): the only card fields it may fill, by full id, with the kind each is written as. Make 12 [21] and
-# Make 13 [29] write none of them. Country, Daily Budget and ADs Platforms (CARD_FACTS_NEVER) are not among them:
-# billing reads Country, and the Blueprint never writes the other two.
+# Make 13 [29] write none of them. Country and ADs Platforms (CARD_FACTS_NEVER) are not among them: billing reads
+# Country, and the Blueprint never writes ADs Platforms. Daily Budget joined with build B5 (20261103f, item 5; see the
+# Daily Budget block below): in dollars, only from the kickoff's converted budget, only while the card leaves it empty.
+# The Blueprint still never writes it (blueprint.test.ts).
 CARD_FACTS = {
     "45fdd2ea-f83c-4721-bce7-2e6187a43541": ("labels", "Consultation Types"),
     "2de15aa5-7fe9-48bf-86a1-e4cfee1306c9": ("drop_down", "ADs Platform"),
     "abaa31ee-28ff-46f6-83bf-6c6d357a26d5": ("url", "Fathom"),
     "ee9bf855-e05b-4afc-addf-1063cb54d3f0": ("date", "Onboarding Call Date"),
     "5d57fdde-eb70-4610-a23b-88f718b4451d": ("url", "Company Website"),
+    "539743c2-b6cd-4eeb-bf2f-abaf64769a5e": ("currency", "Daily Budget"),
 }
-CARD_FACTS_NEVER = {"e0ca65e7-7656-4113-9aae-9feda834c3f9": "Country", "539743c2-b6cd-4eeb-bf2f-abaf64769a5e": "Daily Budget",
-                    "8db2aa82-cbad-4d26-8deb-ee0637e97512": "ADs Platforms"}
+CARD_FACTS_NEVER = {"e0ca65e7-7656-4113-9aae-9feda834c3f9": "Country", "8db2aa82-cbad-4d26-8deb-ee0637e97512": "ADs Platforms"}
+
+# ---- Daily Budget (build B5, 20261103f; plan next-design B5, budget-ads.md 5.3 S2) -----------------------------------
+# card_facts may plan the client card's Daily Budget (a USD currency field) only with the run's own kickoff budget in
+# dollars, as cockpit_kickoff_budget_read reads the answer (cf53482c): the kickoff's own '<amount> <CUR>' at the
+# cockpit's fixed rates (cockpit_board_usd_rate = currency.ts USD_PER; BHD has none), source kickoff; else a typed
+# figure read as dollars by blueprintPrefill.parseBudget's rule (the first number; none when the text names another
+# currency or a range), source kickoff_text. Only from 1 to 100,000 dollars, as a number with 2 decimals at most
+# (clickup-writeback forms.ts budgetAmount). Anything else planned there differs.
+DAILY_BUDGET = "539743c2-b6cd-4eeb-bf2f-abaf64769a5e"
+KICKOFF_BUDGET_REF = "cf53482c-3d7d-45ab-b294-0230e917ea5f"
+KICKOFF_CURRENCIES = ("USD", "SAR", "KWD", "AED", "QAR", "BHD")
+USD_PER = {"USD": Decimal("1"), "SAR": Decimal("0.2666"), "QAR": Decimal("0.2747"), "AED": Decimal("0.2723"),
+           "KWD": Decimal("3.26")}
+BUDGET_MIN, BUDGET_MAX = Decimal("1"), Decimal("100000")
+OWN_BUDGET = re.compile(r"^([0-9]{1,6}(?:\.[0-9]{1,2})?) ([A-Z]{3})$")
+OTHER_CURRENCY = re.compile(r"\b(?:KWD|KD|SAR|SR|AED|QAR|BHD|OMR|EUR|GBP)\b|دينار|ريال|درهم|جنيه|يورو", re.I)
+BUDGET_RANGE = re.compile(r"[0-9]\s*(?:-|–|to|إلى|الى|لين|لـ|ل)\s*[0-9]|[٠-٩]\s*(?:-|–|إلى|الى|لين)\s*[٠-٩]", re.I)
+LATIN_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
+CENT = Decimal("0.01")
+
+
+def kickoff_budget_usd(answer: Any) -> Optional[tuple]:
+    """The kickoff's daily budget answer in dollars, as 20261103f's cockpit_kickoff_budget_read reads it: (usd, source)
+    with usd a Decimal to the cent and source kickoff or kickoff_text, or None (no answer, no rate, below a cent, no
+    figure)."""
+    said = str(answer).strip() if isinstance(answer, (str, int, float)) and not isinstance(answer, bool) else ""
+    if not said:
+        return None
+    own = OWN_BUDGET.match(said)
+    if own:
+        amount, cur = Decimal(own.group(1)), own.group(2)
+        if cur in KICKOFF_CURRENCIES and Decimal(0) < amount <= BUDGET_MAX:
+            rate = USD_PER.get(cur)
+            usd = None if rate is None else (amount * rate).quantize(CENT, ROUND_HALF_UP)
+            return (usd, "kickoff") if usd is not None and usd > 0 else None  # below a cent is no figure, never 0
+    latin = re.sub(r"([0-9]),(?=[0-9]{3}\b)", r"\1", said.translate(LATIN_DIGITS))
+    if OTHER_CURRENCY.search(latin) or BUDGET_RANGE.search(latin):
+        return None
+    first = re.search(r"[0-9]+(?:\.[0-9]+)?", latin)
+    n = Decimal(first.group(0)) if first else None
+    if n is None or not BUDGET_MIN <= n <= BUDGET_MAX:
+        return None
+    return n.quantize(CENT, ROUND_HALF_UP), "kickoff_text"
+
+
+def budget_amount(v: Any) -> Optional[Decimal]:
+    """A Daily Budget value as clickup-writeback's budgetAmount takes it: a number (never a text or a yes), finite,
+    from 1 to 100,000, with 2 decimals at most; None otherwise."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not 1 <= v <= 100_000:
+        return None
+    cents = round(v * 100)
+    return Decimal(cents) / 100 if abs(v * 100 - cents) < 1e-6 else None
+
+
+# ---- end of the Daily Budget block ------------------------------------------------------------------------------------
+
 # The writer's card_facts receipt (clickup-writeback/forms.ts FactReceipt), kept at its queue row's
 # progress.steps.card_facts.fields: for each field id, `before` (what the first card read saw, a word, never the value)
 # and `state`, plus `differs` and `note` on a kept field. A write over a set value is state "written" with before
@@ -1191,7 +1251,7 @@ def fact_receipt(value: Any) -> Any:
     return value
 
 
-def card_facts_verdict(effect: dict, made: dict, ctx: dict) -> str:
+def card_facts_verdict(effect: dict, made: dict, ctx: dict, answers: Optional[dict] = None) -> str:
     """card_facts (B8), an effect Make has no part in, graded as clickup-writeback's factsStep takes its plan and by the
     writer's own receipt. "intended: card_facts" only when every planned field is one of CARD_FACTS, written as its
     kind, with a label, a value of that kind (an https link; a date fact_day reads) or options the field has, each
@@ -1199,14 +1259,16 @@ def card_facts_verdict(effect: dict, made: dict, ctx: dict) -> str:
     A plan of no field carries its skip reason: the runner skips only that, and the writer refuses an empty list. The
     receipt (effect["receipt"], or "receipts", in any shape fact_receipt reads) differs when a field went "written"
     over a card value that was "set", when the writer wrote a field the plan does not name, or when it is not the
-    writer's shape. With no receipt the verdict says "(receipt not read)": only the plan was graded."""
+    writer's shape. With no receipt the verdict says "(receipt not read)": only the plan was graded. Daily Budget
+    (kind currency) is graded by the Daily Budget block: its value is the run's own kickoff budget in dollars (answers:
+    the kickoff's answers by ref as Make's trigger holds them; none on an onboarding), with that reading's source."""
     fields = (effect.get("plan") or {}).get("fields")
     if not isinstance(fields, list):
         return "differs: card_facts plans no list of fields"
     if not fields and not (isinstance(effect.get("skip"), str) and effect["skip"].strip()):
         return "differs: card_facts plans no field and no skip (the writer refuses an empty list)"
     found: dict = {k: [] for k in ("over", "unplanned", "outside", "twice", "unguarded", "kind", "label", "value",
-                                   "repeat", "option", "source", "make")}
+                                   "repeat", "option", "source", "budget", "make")}
     seen: set = set()
     for f in fields:
         fid = str((f or {}).get("fieldId") or "") if isinstance(f, dict) else ""
@@ -1232,6 +1294,12 @@ def card_facts_verdict(effect: dict, made: dict, ctx: dict) -> str:
         elif kind == "date":
             if fact_day(f) is None:
                 found["value"].append(short)
+        elif kind == "currency":
+            usd = budget_amount(f.get("value"))
+            if usd is None:
+                found["value"].append(short)
+            elif kickoff_budget_usd((answers or {}).get(KICKOFF_BUDGET_REF)) != (usd, f.get("source")):
+                found["budget"].append(short)
         else:
             picked = [f.get("optionId")] if kind == "drop_down" else f.get("optionIds")
             if not isinstance(picked, list) or not picked or not all(isinstance(x, str) and x for x in picked):
@@ -1255,7 +1323,7 @@ def card_facts_verdict(effect: dict, made: dict, ctx: dict) -> str:
             found["unplanned"].append(short_id(fid))
     said = {"over": "overwrote a card value ({})",
             "unplanned": "the writer wrote a field the plan does not name ({})",
-            "outside": "card_facts plans a field outside the five ({})",
+            "outside": "card_facts plans a field outside the six ({})",
             "twice": "card_facts plans a field twice ({})",
             "unguarded": "card_facts could overwrite a card value: no onlyIfEmpty on {}",
             "kind": "card_facts plans the wrong kind for {}",
@@ -1264,6 +1332,7 @@ def card_facts_verdict(effect: dict, made: dict, ctx: dict) -> str:
             "repeat": "card_facts plans an option twice on {}",
             "option": "card_facts plans an option the field does not have on {}",
             "source": "card_facts names no source for {}",
+            "budget": "card_facts plans Daily Budget other than as the kickoff's own budget in dollars ({})",
             "make": "Make writes {} itself"}
     what = [said[k].format(", ".join(sorted(set(v)))) for k, v in found.items() if v]
     if receipt is False:
@@ -1295,7 +1364,7 @@ def dispatch_extras(payload: dict) -> list:
     return what
 
 
-# ---------------------------------------------------------------- B8: the structured onboarding (20261103h) -------------
+# ---------------------------------------------------------------- B8: the structured onboarding (20261104d) -------------
 # The CEO, 2026-11-02, on "The structured onboarding (version 3)": "Do the whole redesign" (docs/forms/WAVE56-CONTRACT.md
 # 4.22). A version-3 answer is printed into KFRCXPFx's refs before any of Make's texts read it (cockpit_form_stage4_print),
 # so Make's part of every effect is graded on the printed list as on any other answer; the printer has its own goldens
@@ -1410,7 +1479,11 @@ def compare_kickoff(plan: list, mods: dict, ctx: dict) -> list:
     out.append(("new_mrr", only_intended("new_mrr")))
     out.append(("recap", only_intended("recap")))
     if "card_facts" in fx:
-        out.append(("card_facts", card_facts_verdict(fx["card_facts"], custom_fields(m21 or {}), ctx)))
+        # The kickoff's answers as Make's trigger holds them: the only source a Daily Budget may come from.
+        trigger = next((m.get("output") for m in mods.values() if str(m.get("module") or "").startswith("typeform:")), None)
+        answers = trigger.get("mappable_answers") if isinstance(trigger, dict) else None
+        out.append(("card_facts", card_facts_verdict(fx["card_facts"], custom_fields(m21 or {}), ctx,
+                                                     answers if isinstance(answers, dict) else {})))
     return out
 
 

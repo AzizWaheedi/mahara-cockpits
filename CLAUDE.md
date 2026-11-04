@@ -54,6 +54,14 @@ and a change-triggered fixer (the unattended fixer opens PRs; agents working wit
   clear failure line so the monitor can tell them apart.
 - A new route, cron or worker that matters to users needs a freshness signal (last success timestamp and a stuck/failed count).
 - Never let a health route call providers, write data, or be cached.
+- A screen that says its data is late ("stale", "last checked in N minutes
+  ago", "n/a") must read that time again before it says so. Use
+  `useReadBeforeLate` (`src/lib/readBeforeLate.ts` in the media buyer, creative,
+  sales and client success cockpits; copy it to another cockpit and add it to
+  `scripts/check-shared.sh`), or poll the time more often than
+  its limit. It must also read again when the tab comes back. A time read
+  once at page load and compared with the clock shows a false warning on a
+  page left open. That happened on the invoice banner on 4 November 2026.
 
 ## Tests: run only the files for your change (26 October 2026)
 
@@ -75,6 +83,29 @@ crashed.
   usual.
 - Run a full suite only when Muhammed or Aziz asks for one in the session. Run
   it alone, with the other sessions idle.
+
+## Assistant guides: update them with every screen change (4 November 2026)
+
+The cockpit chat assistants (Signal in the media buyer cockpit, Anchor in
+client success, Lens in creative director) answer "how do I" questions from
+one guide per cockpit: `apps/media-buyer-cockpit/assistant-guide.md`,
+`apps/client-success-cockpit/assistant-guide.md` and
+`apps/creative-director-cockpit/assistant-guide.md`. They read the guide from
+`main` every 10 minutes, so a stale guide sends the team to the wrong place.
+
+This rule applies to every commit by any person or agent, including Aziz's
+and Muhammed's sessions and the unattended fixer.
+
+- When you add, rename, move or remove a menu item, page, tab or button in one
+  of these three cockpits, update that cockpit's guide in the same commit.
+- Put interface text in double quotes exactly as it appears on screen.
+  Describe only what the code does. Plain English, no em dashes.
+- Run `python scripts/check-assistant-guides.py` before you push.
+  `scripts/ship.sh` runs it too. It stops the release when a guide misses a
+  menu item or page address, or quotes button text that no longer exists.
+- When the check prints a NOTE that screen files changed since the guide was
+  last updated, read those changes. Update the guide if anything a person sees
+  has changed.
 
 ## Decisions and plans
 

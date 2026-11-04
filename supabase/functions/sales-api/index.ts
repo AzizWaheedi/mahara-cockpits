@@ -4358,8 +4358,7 @@ async function dialQueue(who: Who, b: Row) {
           list.filter(
             c =>
               (who.manager && !who.ghl_user_id) ||
-              c.demo_rep === who.ghl_user_id ||
-              c.appt?.assigned === who.ghl_user_id ||
+              (who.ghl_user_id && (c.demo_rep === who.ghl_user_id || c.appt?.assigned === who.ghl_user_id)) ||
               c.hot_owner === me,
           ),
           me,
@@ -7383,7 +7382,8 @@ async function pipelineBoard(who: Who, b: Row) {
       continue;
     }
     if (l.opp_status && l.opp_status !== "open") continue;
-    if (mineOnly && l.assigned_to !== who.ghl_user_id && hot?.owner_email !== who.email) continue;
+    // A rep with no HighLevel user yet owns no unowned lead: null never matches null (2026-11-04).
+    if (mineOnly && !(who.ghl_user_id && l.assigned_to === who.ghl_user_id) && hot?.owner_email !== who.email) continue;
     const next = [
       hot?.next_at ? { at: ms(hot.next_at), what: "Hot follow-up" } : null,
       st?.callback_at ? { at: ms(st.callback_at), what: "Call back" } : null,

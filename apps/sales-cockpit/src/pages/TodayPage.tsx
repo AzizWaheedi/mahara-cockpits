@@ -48,6 +48,7 @@ import {
   when,
 } from "../lib/format";
 import { keepOpenRow } from "../lib/heldRows";
+import { useReadBeforeLate } from "../lib/readBeforeLate";
 import { liveChip } from "../lib/reschedule";
 import type { CalendarRow, Lead, Me } from "../lib/types";
 
@@ -614,6 +615,10 @@ function WeekCard({ me, view }: { me: Me; view: ScopeView }) {
   const readAt = mirror.data?.scorecards_at
     ? Date.parse(mirror.data.scorecards_at)
     : null;
+  useReadBeforeLate(
+    mirror.reload,
+    readAt === null ? null : readAt + 30 * 60_000,
+  );
   const read = readAt !== null && Date.now() - readAt < 30 * 60_000;
   const theirRow = (week.data ?? []).find(r => r.person_key === view.repId);
   const rows =

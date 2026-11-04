@@ -28,6 +28,7 @@ import {
   ChecksWaitingView,
   toCheckRow,
 } from "@/components/billing/ChecksWaiting";
+import { HowTheyPay } from "@/components/billing/HowTheyPay";
 import {
   ClientCallerChip,
   ClientCallerLine,
@@ -68,6 +69,7 @@ import {
   winsApi,
 } from "@/components/ClientWins";
 import { FormsButton } from "@/components/FormsButton";
+import { KickoffItems, KickoffItemsBand } from "@/components/KickoffItems";
 import {
   Chip,
   Dot,
@@ -82,10 +84,12 @@ import {
   StatTile,
   type Tone,
 } from "@/components/kit";
+import { MarketResearchCard } from "@/components/MarketResearch";
 import { KitSummary, OnboardingKit } from "@/components/OnboardingKit";
 import { PortalTasksButton } from "@/components/PortalTasks";
 import { ReportIssue } from "@/components/ReportIssue";
 import { CallList } from "@/components/results/CallList";
+import { SalesNotOnCard } from "@/components/SalesNotOnCard";
 import { SopVideo } from "@/components/SopVideo";
 import { SyncStrip } from "@/components/SyncStrip";
 import { RequestForm } from "@/components/tasks/RequestForm";
@@ -214,6 +218,7 @@ import {
 } from "@/lib/format";
 import { notesNative, useCheckinEntry } from "@/lib/formsRegistry";
 import { rememberWinInvoice } from "@/lib/invoices";
+import { kickoffItemsApi } from "@/lib/kickoffItemsClient";
 import { useNotCalled } from "@/lib/notCalled";
 import {
   readOnboardingKits,
@@ -230,11 +235,13 @@ import { readRequests, readRequestTypes } from "@/lib/requestsClient";
 import {
   type RequestRow,
   requestHeld,
+  type SubmitResult,
   stateChip,
   stateHint,
   unfinishedNote,
 } from "@/lib/requestsCore";
 import { useRequestsOpen, useWriterMode } from "@/lib/requestsOpen";
+import { saleTieApi } from "@/lib/saleTie";
 import { fold, matchScore } from "@/lib/search";
 import { actOnTask } from "@/lib/tasksClient";
 import {
@@ -1872,6 +1879,16 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
     () => (auth.client ? winsApi(auth.client) : null),
     [auth.client],
   );
+  // CEO items 6 and 7 (WAVE56-CONTRACT.md 4.19, 4.20, 5.16): the sale tie and
+  // the kickoff items, each saying one line until its functions are applied.
+  const itemsApi = useMemo(
+    () => (auth.client ? kickoffItemsApi(auth.client) : null),
+    [auth.client],
+  );
+  const saleApi = useMemo(
+    () => (auth.client ? saleTieApi(auth.client) : null),
+    [auth.client],
+  );
   const kickApi = useMemo<KickoffApi | null>(
     () =>
       auth.client
@@ -2618,8 +2635,16 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               <KickoffDoor
                 door={w56?.kickoff ?? null}
                 api={kickApi}
+                itemsApi={itemsApi}
                 taskId={String(c.taskId)}
                 clientName={String(c.name)}
+                // Once a kickoff is on record the card's Daily Budget can be the
+                // kickoff's own (item 5 fills it when empty): no longer the sale's.
+                saleBudgetUsd={
+                  kitOf(c)?.forms?.kickoff
+                    ? null
+                    : (kitOf(c)?.handover?.daily_budget ?? null)
+                }
                 autoOpen={params.get("form") === "kickoff"}
                 onSent={() => setLifeVersion(v => v + 1)}
               />
@@ -3180,6 +3205,23 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
 
         {clientTab === "onboarding" && (
           <div className="space-y-6">
+            {/* CEO item 7: what the kickoff left open, a Yes or No each (4.20). */}
+            <KickoffItems
+              api={itemsApi}
+              taskId={String(c.taskId)}
+              clientName={String(c.name)}
+              variant="page"
+              reloadKey={lifeVersion}
+              onTicket={t =>
+                setTicketOpen({
+                  type: t.type,
+                  taskId: String(c.taskId),
+                  name: String(c.name),
+                  details: t.details,
+                  onSent: t.onSent,
+                })
+              }
+            />
             <OnboardingKit
               client={c}
               kit={kitOf(c)}
@@ -3188,6 +3230,11 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               refreshing={kitRefreshing === String(c.taskId)}
               onRefresh={() => void refreshKit(String(c.taskId))}
               kickSend={kickSend}
+            />
+            <MarketResearchCard
+              key={String(c.taskId)}
+              client={auth.client}
+              taskId={String(c.taskId)}
             />
             <section className="space-y-3">
               <h2 className="text-[15px] font-semibold">Their links</h2>
@@ -3221,6 +3268,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                     </span>
                   ) : null}
                 </p>
+                <HowTheyPay client={auth.client} taskId={String(c.taskId)} />
                 <div className="flex flex-wrap gap-2">
                   <Button size="sm" variant="outline" asChild>
                     <Link to="/money?tab=billing">Open billing</Link>
@@ -3684,6 +3732,35 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
       ) : null}
       {section === "today" && more && !more.invites ? (
         <p className="text-xs text-muted-foreground">Client forms: {NOT_YET}</p>
+      ) : null}
+
+      {/* CEO item 7: kickoff items to decide, a Yes or No each (4.20). */}
+      {section === "today" ? (
+        <KickoffItemsBand
+          api={itemsApi}
+          reloadKey={lifeVersion}
+          onTicket={t =>
+            setTicketOpen({
+              type: t.type,
+              taskId: t.taskId,
+              name: t.name,
+              details: t.details,
+              onSent: t.onSent,
+            })
+          }
+        />
+      ) : null}
+
+      {/* CEO item 6: sales the cockpit could not tie to a card (4.19). */}
+      {section === "today" ? (
+        <SalesNotOnCard
+          api={saleApi}
+          isCeo={auth.isCeo}
+          cards={clients.map(x => ({
+            taskId: String(x.taskId),
+            name: String(x.name),
+          }))}
+        />
       ) : null}
 
       {/* Your tasks (PLAN.md D19): your own open ClickUp tasks, five at
@@ -5470,6 +5547,11 @@ type TicketOpen = {
   taskId: string;
   name: string;
   details: string;
+  /**
+   * Called with the request the form sent (RequestForm's own onSent): a
+   * kickoff item's "Change it first" counts it for the item (4.20).
+   */
+  onSent?: (r: SubmitResult) => void;
 };
 
 const SENDERS: Record<
@@ -5799,6 +5881,7 @@ export function TicketSheet({
               presetType={ticket.type}
               presetDetails={ticket.details}
               compact
+              onSent={ticket.onSent}
             />
           </div>
         ) : null}

@@ -123,7 +123,7 @@ import { cn } from "@/lib/utils";
  *   → Restored as version {m}; Open the real preview; refusals are the
  *   server's own sentences with the place they point at; No changes yet.
  *
- * The structured onboarding, read only (20261103h; WAVE56-CONTRACT.md 4.22;
+ * The structured onboarding, read only (20261104d; WAVE56-CONTRACT.md 4.22;
  * frontend-design loaded first). Subject: the CEO or an admin opening the
  * client onboarding and finding version 3, a structured form stored in the
  * database and not live yet. Job: see what version 3 asks and how a client
@@ -830,7 +830,7 @@ function ReadOnlyForm({ one, io }: { one: EditorOne; io: FormsEditorIO }) {
       e => {
         if (!live) return;
         const m = editorError(e).message;
-        // Before 20261103h the read does not exist: the plain read-only view stands alone.
+        // Before 20261104d the read does not exist: the plain read-only view stands alone.
         setStructuredError(m === COPY.doorClosed ? null : m);
       },
     );

@@ -12,7 +12,7 @@ import type {
 /**
  * The forms editor's reads and writes (docs/forms/WAVE34-CONTRACT.md 2.6,
  * 4.9; supabase/migrations/20261102d_forms_editor.sql): six gated RPCs,
- * and the structured version's read (20261103h, WAVE56-CONTRACT.md 4.22),
+ * and the structured version's read (20261104d, WAVE56-CONTRACT.md 4.22),
  * through the signed-in seat's own client. The database checks the seat
  * (an admin or the CEO), the base version, the schema, the text rule and
  * the field guard, and writes every audit row; this file only carries the
@@ -45,7 +45,7 @@ export type FormsEditorIO = {
   setRouting: (patch: RoutingPatch) => Promise<Routing>;
   /**
    * The form's newest version when it is in client form schema version 2 (the structured onboarding,
-   * 20261103h), else null. Optional: a stand-in without it shows the plain read-only view.
+   * 20261104d), else null. Optional: a stand-in without it shows the plain read-only view.
    */
   structured?: (key: string) => Promise<StructuredRead | null>;
 };

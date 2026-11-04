@@ -7,6 +7,7 @@ import {
   refreshOnboardingKits,
 } from "@/lib/onboardingClient";
 import type { KitsPage } from "@/lib/onboardingCore";
+import { readSaleTie, type SaleView } from "@/lib/saleTie";
 import { type DeckSources, readDeckSources } from "@/present/sources";
 import { readFormSends, recordFormSend, type SendInput } from "./formClient";
 import type {
@@ -62,6 +63,11 @@ export interface FormReads {
    * kickoff window reads it; the deck, on the client's screen, does not.
    */
   notices?(): Promise<NoticeRead>;
+  /**
+   * cockpit_csm_sale_read, this card: the sale tied to it (the rail's "From
+   * the sale"). Only the kickoff reads it.
+   */
+  sale?(): Promise<SaleView>;
   /** Tells the cockpit's own tab. */
   announce?(news: FormNews): void;
 }
@@ -88,6 +94,7 @@ export function formReads(
     announce: announceForm,
   };
   if (opts.notices) reads.notices = async () => readNotices(need(), taskId);
+  if (form === "kickoff") reads.sale = async () => readSaleTie(need(), taskId);
   return reads;
 }
 
@@ -162,13 +169,15 @@ export function useLiveForm({
   }, []);
 
   const load = useCallback(async () => {
-    const [kits, deck, timeline, sends, notices] = await Promise.allSettled([
-      reads.kits(),
-      reads.deck(),
-      reads.timeline(),
-      reads.sends(),
-      reads.notices ? reads.notices() : Promise.resolve(null),
-    ]);
+    const [kits, deck, timeline, sends, notices, sale] =
+      await Promise.allSettled([
+        reads.kits(),
+        reads.deck(),
+        reads.timeline(),
+        reads.sends(),
+        reads.notices ? reads.notices() : Promise.resolve(null),
+        reads.sale ? reads.sale() : Promise.resolve(undefined),
+      ]);
     if (kits.status === "rejected") {
       setState(blockedFor(kits.reason, cfg, taskId));
       return;
@@ -187,6 +196,7 @@ export function useLiveForm({
         timeline: timeline.status === "fulfilled" ? timeline.value : null,
         sends: sends.status === "fulfilled" ? sends.value.sends : [],
         notices: notices.status === "fulfilled" ? notices.value : null,
+        sale: sale.status === "fulfilled" ? sale.value : undefined,
         me,
         now: kits.value.now,
         readAt: Date.now(),
@@ -199,6 +209,7 @@ export function useLiveForm({
             notices.status === "rejected"
               ? said(notices.reason) || "No reason was given."
               : undefined,
+          sale: sale.status === "rejected" ? said(sale.reason) : undefined,
         },
       },
     });
