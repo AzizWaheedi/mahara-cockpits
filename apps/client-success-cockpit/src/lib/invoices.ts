@@ -130,6 +130,8 @@ export async function fetchInvoices(
   allowedClients?: string[] | null,
 ): Promise<InvoicesData> {
   const [inv, acc, fold, desk] = await Promise.all([
+    // The worker's check-in is also read again on its own every minute
+    // (fetchDeskStatus), so an open page does not age a reading it took once.
     client
       .from("cockpit_invoices")
       .select(COLUMNS)
@@ -191,14 +193,32 @@ export async function fetchInvoices(
     clients,
     folders,
     paid: await fetchPaid(client, invoices),
-    desk: desk.data
-      ? {
-          beatAt: String(desk.data.beat_at),
-          ok: Boolean(desk.data.ok),
-          detail: desk.data.detail ? String(desk.data.detail) : null,
-        }
-      : null,
+    desk: deskFromRow(desk.data),
   };
+}
+
+function deskFromRow(
+  row: { beat_at: unknown; ok: unknown; detail: unknown } | null,
+): DeskStatus {
+  return row
+    ? {
+        beatAt: String(row.beat_at),
+        ok: Boolean(row.ok),
+        detail: row.detail ? String(row.detail) : null,
+      }
+    : null;
+}
+
+/** The invoice worker's last check-in only, for the page to read again while it stays open. */
+export async function fetchDeskStatus(
+  client: SupabaseClient,
+): Promise<DeskStatus> {
+  const { data, error } = await client
+    .from("cockpit_invoice_desk_status")
+    .select("beat_at,ok,detail")
+    .maybeSingle();
+  fail(error);
+  return deskFromRow(data);
 }
 
 /**
