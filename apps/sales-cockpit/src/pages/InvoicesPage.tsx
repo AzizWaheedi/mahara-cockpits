@@ -54,7 +54,6 @@ import {
   paymentWord,
   requestInvoice,
 } from "../lib/invoices";
-import { supabase } from "../lib/supabase";
 import {
   fillInvoice,
   framed,
@@ -63,6 +62,7 @@ import {
   loadInvoiceTemplate,
   money,
 } from "../lib/invoiceTemplate";
+import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { Me } from "../lib/types";
 
