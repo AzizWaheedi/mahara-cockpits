@@ -57,6 +57,7 @@ const SEATS: Record<string, Row> = {
     ghl_user_id: "u-tahreer",
     b2b_rep_id: "rep-tahreer",
   },
+  "seat-unlinked": { signed_in: true, seat: true, manager: false, email: "new@boardr.invalid", name: "New Setter", role: "setter", ghl_user_id: null },
 };
 
 const STAGES = [
@@ -240,6 +241,14 @@ describe("pipeline.board: signed clients stay, in Closed", () => {
     const cards = r.body.cards as Row[];
     expect(ids(cards.filter(c => c.closed))).toContain("c-deal");
     expect(ids(cards.filter(c => !c.closed))).toEqual(["c-open"]);
+  });
+
+  test("Mine, for a setter with no HighLevel user yet: nobody's lead is his (2026-11-04)", async () => {
+    db.seed("cockpit_sales_leads", [lead("c-nobody", { assigned_to: null })]);
+    const team = await call("seat-manager", { action: "pipeline.board" });
+    expect(ids((team.body.cards as Row[]).filter(c => !c.closed))).toContain("c-nobody");
+    const r = await call("seat-unlinked", { action: "pipeline.board", scope: "mine" });
+    expect(ids((r.body.cards as Row[]).filter(c => !c.closed))).toEqual([]);
   });
 
   test("a pipeline with no won stage: the cockpit's own Signed column", async () => {

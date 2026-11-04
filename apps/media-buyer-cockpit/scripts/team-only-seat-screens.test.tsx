@@ -357,6 +357,84 @@ describe("the Admin seat choice", () => {
     expect(saved).toBe(1);
   });
 
+  test("a Sales seat sends its role, Setter unless another is chosen", async () => {
+    const calls: { name: string; args: unknown }[] = [];
+    await act(async () => {
+      root.render(
+        h(MemberDialog, {
+          member: null,
+          clientNames: ["Harbor Dental"],
+          supabase: {
+            rpc: async (name: string, args: unknown) => {
+              calls.push({ name, args });
+              return { data: null, error: null };
+            },
+          },
+          onSaved: () => {},
+          onClose: () => {},
+        }),
+      );
+    });
+    await flush();
+    const email = win.document.querySelector("#m-email") as any;
+    await act(async () => {
+      const set = Object.getOwnPropertyDescriptor(
+        Object.getPrototypeOf(email),
+        "value",
+      )?.set;
+      set?.call(email, "new.setter@example.com");
+      email.dispatchEvent(new win.Event("input", { bubbles: true }) as any);
+    });
+    await flush(2);
+    // Another domain is said before the save, and does not stop it.
+    expect(page()).toContain("Not a maharamedia.com address.");
+    await click(button("Sales"));
+    await click(button("Add"));
+    await flush();
+    expect(calls).toEqual([
+      {
+        name: "cockpit_admin_upsert_member",
+        args: {
+          p_email: "new.setter@example.com",
+          p_name: "",
+          p_roles: ["sales"],
+          p_clients: [],
+          p_sales_role: "setter",
+        },
+      },
+    ]);
+  });
+
+  test("editing a closer keeps closer, and the choice can move it", async () => {
+    const calls: { args: Record<string, unknown> }[] = [];
+    await act(async () => {
+      root.render(
+        h(MemberDialog, {
+          member: {
+            email: "closer@example.com",
+            name: "A Closer",
+            roles: ["sales"],
+            clients: [],
+            salesRole: "closer",
+          },
+          clientNames: [],
+          supabase: {
+            rpc: async (_: string, args: Record<string, unknown>) => {
+              calls.push({ args });
+              return { data: null, error: null };
+            },
+          },
+          onSaved: () => {},
+          onClose: () => {},
+        }),
+      );
+    });
+    await flush();
+    await click(button("Save"));
+    await flush();
+    expect(calls[0].args.p_sales_role).toBe("closer");
+  });
+
   test("choosing a cockpit after Call center brings the All clients switch back", async () => {
     await act(async () => {
       root.render(

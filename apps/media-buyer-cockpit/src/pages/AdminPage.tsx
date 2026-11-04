@@ -114,6 +114,7 @@ export function memberPayload(form: {
   roles: string[];
   allClients: boolean;
   clients: string[];
+  salesRole?: string;
 }) {
   const teamOnly = form.roles.includes(TEAM_ONLY_ROLE);
   return {
@@ -121,6 +122,9 @@ export function memberPayload(form: {
     p_name: form.name.trim(),
     p_roles: teamOnly ? [TEAM_ONLY_ROLE] : form.roles,
     p_clients: form.allClients && !teamOnly ? [] : form.clients,
+    ...(form.roles.includes("sales") && form.salesRole
+      ? { p_sales_role: form.salesRole }
+      : {}),
   };
 }
 
@@ -129,7 +133,7 @@ type SalesRole = "setter" | "closer" | "both" | "manager";
 /**
  * What a person with the Sales seat does there, chosen in the same form as
  * the seat (Aziz, 2026-09-24: "Just let me add them like the main cockpit
- * easily"). The portal pushes it to the sales cockpit's seat list.
+ * easily"). The Admin save writes it to the sales cockpit's seat list.
  */
 const SALES_ROLE_META: { key: SalesRole; label: string; hint: string }[] = [
   { key: "setter", label: "Setter", hint: "Calls new leads and books intros." },
@@ -936,6 +940,14 @@ export function MemberDialog({
                 onChange={e => setEmail(e.target.value)}
                 placeholder="name@maharamedia.com"
               />
+              {!member &&
+              email.includes("@") &&
+              !email.trim().toLowerCase().endsWith("@maharamedia.com") ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  Not a maharamedia.com address. Check the spelling: whoever
+                  controls this address gets the seat.
+                </p>
+              ) : null}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="m-name">Name</Label>
@@ -1100,7 +1112,14 @@ export function MemberDialog({
                 try {
                   const { error: rpcErr } = await supabase.rpc(
                     "cockpit_admin_upsert_member",
-                    memberPayload({ email, name, roles, allClients, clients }),
+                    memberPayload({
+                      email,
+                      name,
+                      roles,
+                      allClients,
+                      clients,
+                      salesRole,
+                    }),
                   );
                   if (rpcErr) {
                     setError(rpcErr.message);
