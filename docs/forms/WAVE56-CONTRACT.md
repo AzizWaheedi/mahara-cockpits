@@ -2551,8 +2551,8 @@ portal's schema-v2 release (P2). The Typeform door stays on version 2.
     reconciled; `select public.cockpit_form_schema_v2_switch('canary', '<who>')`; the canary link
     (`cockpit_form_invite_canary('onboarding', '{}')`) answered on the portal as the CEO's preview of the wording; its
     plan read back (the printed list in the read model, the raw answers comment); then
-    `cockpit_form_schema_v2_switch('on', '<who>')`. Back: `cockpit_form_schema_v2_switch('off', '<who>')`.
-11. **Tests.** `apps/media-buyer-cockpit/scripts/onboarding-schema-v2-supabase.test.ts` (37: the ground, the guards,
+    `cockpit_form_schema_v2_switch('on', '<who>')`. Back: the guarded `scripts/dev/forms-deploy/rollback-onboarding-v3.sql` switches new invites to version 2 while preserving existing version-3 invites and answers. Keep the version-aware CSM calls reader: the previous reader is unsafe while version 3 is stored. A full code/data reversal is a separate review.
+11. **Tests.** `apps/media-buyer-cockpit/scripts/onboarding-schema-v2-supabase.test.ts` (40: the ground, the guards,
     a second apply, grants, the store and its audit row, every schema-v2 refusal, version 1 unchanged on every fixture
     row, the 28 schema-v2 fixture rows, a version-3 answer at its limits within the 1 MB answer and the 2 MB plan, the
     goldens, a printing mistake caught, version 2 and the kickoff byte for byte, the map's fit, Make 13's texts equal

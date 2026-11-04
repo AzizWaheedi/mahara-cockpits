@@ -712,7 +712,8 @@ describe("20261104d: the file", () => {
       'challenge_hint_ar', (SELECT f #>> '{hint,ar}' FROM jsonb_array_elements(schema->'fields') f WHERE f->>'key' = 'challenges')
     ) AS r FROM public.cockpit_form_versions WHERE form_key = 'onboarding' AND version = 3`);
     expect(copy).toEqual({
-      intro_en: "Tell us about your business so your onboarding call starts in the right place.",
+      intro_en:
+        "Tell us about your business so your onboarding call starts in the right place.",
       intro_ar: "عرّفونا على شغلكم عشان مكالمة الانطلاق تبدي من المكان الصح.",
       free_hint: null,
       challenge_hint_ar: "اذكروا جم شي نقدر نساعدكم فيه سيده.",
@@ -2029,6 +2030,76 @@ const contextPair = (invite: string) =>
   );
 
 describe("the prefill reaches the client (portal_form_token_open, portal_form_get)", () => {
+  test("switching off preserves issued version-3 forms and answers while new invitations return to version 2", async () => {
+    await rolledBack(async () => {
+      await db.query(
+        "INSERT INTO public.cockpit_billing_accounts(clickup_task_id, client_name, country) VALUES ($1, 'Cedar Homes Invented', 'KW')",
+        [TASK],
+      );
+      await db.exec(
+        "UPDATE public.cockpit_forms SET provider = 'native' WHERE key = 'onboarding'",
+      );
+      await setting("forms.client", { live: ["onboarding"], presence: false });
+      await respond(3, GOLDENS.cases[0].answers, TEST_CARD);
+      await switchTo("canary");
+      await switchTo("on");
+      const issued = await issue(TASK, "csm", ["portal"]);
+      expect((await portalGet(issued.inviteId)).invite.version).toBe(3);
+      const answersBefore = await one<number>(
+        "SELECT count(*)::int AS r FROM public.cockpit_form_responses WHERE form_key = 'onboarding' AND form_version = 3",
+      );
+      const rollback = readFileSync(
+        `${ROOT}/scripts/dev/forms-deploy/rollback-onboarding-v3.sql`,
+        "utf8",
+      )
+        .replace(/^BEGIN;/m, "")
+        .replace(/COMMIT;\s*$/m, "");
+      await db.exec(rollback);
+      expect(await clientVersion()).toBe(2);
+      expect((await portalGet(issued.inviteId)).invite.version).toBe(3);
+      expect(await versionMd5(3)).toBe(V3_MD5);
+      expect(
+        await one<number>(
+          "SELECT count(*)::int AS r FROM public.cockpit_form_responses WHERE form_key = 'onboarding' AND form_version = 3",
+        ),
+      ).toBe(answersBefore);
+      await db.query(
+        "UPDATE public.cockpit_form_invites SET state = 'withdrawn' WHERE id = $1::uuid",
+        [issued.inviteId],
+      );
+      const next = await issue(TASK, "csm", ["portal"]);
+      expect((await portalGet(next.inviteId)).invite.version).toBe(2);
+    });
+  });
+
+  test("the rollback stops if its schema or switch implementation has drifted", async () => {
+    const rollback = readFileSync(
+      `${ROOT}/scripts/dev/forms-deploy/rollback-onboarding-v3.sql`,
+      "utf8",
+    )
+      .replace(/^BEGIN;/m, "")
+      .replace(/COMMIT;\s*$/m, "");
+    await rolledBack(async () => {
+      await db.exec(
+        "UPDATE public.cockpit_form_versions SET schema = jsonb_set(schema, '{minutes}', '31') WHERE form_key = 'onboarding' AND version = 3",
+      );
+      expect(await refusal(() => step(() => db.exec(rollback)))).toEqual({
+        code: "55000",
+        message: "Onboarding schemas changed; stop and re-read them.",
+      });
+    });
+    await rolledBack(async () => {
+      await db.exec(
+        "CREATE OR REPLACE FUNCTION public.cockpit_form_schema_v2_state() RETURNS text LANGUAGE sql STABLE AS $$ SELECT 'off'::text $$",
+      );
+      expect(await refusal(() => step(() => db.exec(rollback)))).toEqual({
+        code: "55000",
+        message:
+          "Rollback function public.cockpit_form_schema_v2_state() changed; stop and re-read it.",
+      });
+    });
+  });
+
   test("canary: the canary's link page gets version 3 with currency and areaCountries; a version-2 invite still gets nothing", async () => {
     await rolledBack(async () => {
       await db.query(
