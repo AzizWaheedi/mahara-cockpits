@@ -508,6 +508,25 @@ describe("whose lead it is (Aziz, 2026-09-27)", () => {
   });
 });
 
+describe("a rep with no HighLevel user yet (2026-11-04)", () => {
+  const intro: Appt = { id: "i1", type: "intro", start: NOW + 60_000, booked: NOW - 3_600_000, status: "confirmed", assigned: "ghl-ahmed", confirmed: false, last_try: null };
+  const demo: Appt = { id: "d1", type: "demo", start: NOW + 2 * 3_600_000, booked: NOW - 2 * 86_400_000, status: "confirmed", assigned: "ghl-ahmed", confirmed: false, last_try: null };
+  test("another rep's live intro is not on a setter's queue, and is on a manager's", () => {
+    const c = lead({ contact_id: "i", appt: intro });
+    expect(rankForSetter([c], "new", NOW, null, false).filter(x => x.kind === "intro")).toEqual([]);
+    expect(rankForSetter([c], "boss", NOW, null, true).filter(x => x.kind === "intro")).toHaveLength(1);
+  });
+  test("an intro with no host is still anyone's", () => {
+    const c = lead({ contact_id: "i", appt: { ...intro, assigned: null } });
+    expect(rankForSetter([c], "new", NOW, null, false).filter(x => x.kind === "intro")).toHaveLength(1);
+  });
+  test("another closer's demo is not a closer's to confirm", () => {
+    const c = lead({ contact_id: "d", appt: demo });
+    expect(rankForCloser([c], "new", NOW, null, false).filter(x => x.kind === "confirm")).toEqual([]);
+    expect(rankForCloser([c], "boss", NOW, null, true).filter(x => x.kind === "confirm")).toHaveLength(1);
+  });
+});
+
 describe("the call centre's rules: missed calls and early call-backs (2026-09-27)", () => {
   test("a lead who called in the last ten minutes, and nobody answered, is called first", () => {
     const q = rankForSetter([lead({ contact_id: "m", inbound_call_at: NOW - 3 * 60_000, last_dial_at: NOW - 86_400_000, reached: true })], "me", NOW);

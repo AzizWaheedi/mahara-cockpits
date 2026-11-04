@@ -61,9 +61,9 @@ person looking at it. Email and password still works as a direct way in on a day
 down.
 
 The sales cockpit, added 2026-09-24 for Mahara's own setters and closers, is built the same
-way with three differences. Its seats are `cockpit_sales_people`, written by
-`convex/salesPortal.ts` at `/portal/sales-session` (the portal's Admin page gives the Sales seat
-and chooses setter, closer, both or manager). It never writes from the browser: every change
+way with three differences. Its seats are `cockpit_sales_people`, written by the Admin page's
+save, `cockpit_admin_upsert_member` (it gives the Sales seat and chooses setter, closer, both or
+manager; 20261104a). It never writes from the browser: every change
 (marking a call, notes, proposals, seats, links) goes through the Edge Function `sales-api` in
 Creative Triage, which asks the database who the caller is (`cockpit_sales_whoami`), writes an
 audit row and is the only thing that talks to HighLevel. And its data is a copy: B2B

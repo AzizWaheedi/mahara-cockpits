@@ -58,10 +58,10 @@ SELECT
   (SELECT count(*) FROM public.cockpit_members WHERE active AND auth_user_id IS NOT NULL) AS linked_active_members,
   (SELECT count(*) FROM public.cockpit_audit_log WHERE entity_type = 'cockpit_members') AS member_audits,
   has_function_privilege('authenticated', 'public.cockpit_get_my_access()', 'EXECUTE') AS member_can_get_access,
-  has_function_privilege('authenticated', 'public.cockpit_admin_upsert_member(text,text,text[],text[])', 'EXECUTE') AS member_can_call_upsert,
+  has_function_privilege('authenticated', 'public.cockpit_admin_upsert_member(text,text,text[],text[],text)', 'EXECUTE') AS member_can_call_upsert,
   has_function_privilege('authenticated', 'public.cockpit_admin_remove_member(text)', 'EXECUTE') AS member_can_call_remove,
   has_function_privilege('anon', 'public.cockpit_get_my_access()', 'EXECUTE') AS anon_can_get_access,
-  has_function_privilege('anon', 'public.cockpit_admin_upsert_member(text,text,text[],text[])', 'EXECUTE') AS anon_can_call_upsert,
+  has_function_privilege('anon', 'public.cockpit_admin_upsert_member(text,text,text[],text[],text)', 'EXECUTE') AS anon_can_call_upsert,
   has_table_privilege('authenticated', 'public.cockpit_members', 'INSERT') AS browser_can_insert_members,
   has_table_privilege('authenticated', 'public.cockpit_members', 'UPDATE') AS browser_can_update_members,
   has_table_privilege('authenticated', 'public.cockpit_members', 'DELETE') AS browser_can_delete_members;
