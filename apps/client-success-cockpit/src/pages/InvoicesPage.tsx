@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   changeInvoice,
   deskProblem,
+  fetchDeskStatus,
   fetchInvoices,
   type InvoicePrefill,
   type InvoiceRequest,
@@ -96,6 +97,26 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
     }, 5000);
     return () => window.clearInterval(timer);
   }, [pending, load]);
+
+  // The worker's check-in ages while the page stays open: read it again every
+  // minute and when the tab comes back, so a long form does not show a false
+  // "last checked in N minutes ago". A failed read keeps the last reading.
+  useEffect(() => {
+    if (!auth.client) return;
+    const client = auth.client;
+    const refresh = () => {
+      if (document.hidden) return;
+      fetchDeskStatus(client)
+        .then(desk => setData(d => (d ? { ...d, desk } : d)))
+        .catch(() => {});
+    };
+    const timer = window.setInterval(refresh, 60_000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [auth.client]);
 
   // The paper follows the form a moment after typing stops.
   useEffect(() => {
