@@ -41,9 +41,18 @@ class GuideCheckTests(unittest.TestCase):
     def write_guide(self, text):
         (self.app / "assistant-guide.md").write_text(text, encoding="utf-8")
 
-    def run_check(self):
+    def make_app(self, app, files):
+        """Write a second fixture app and return its folder."""
+        folder = self.root / "apps" / app
+        for rel, body in files.items():
+            path = folder / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body, encoding="utf-8")
+        return folder
+
+    def run_check(self, app=APP):
         return subprocess.run(
-            [sys.executable, str(SCRIPT), "--root", str(self.root), APP],
+            [sys.executable, str(SCRIPT), "--root", str(self.root), app],
             capture_output=True, text=True,
         )
 
@@ -93,6 +102,44 @@ class GuideCheckTests(unittest.TestCase):
         done = self.run_check()
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertNotIn("Sales", done.stdout)
+
+    def test_a_listed_app_reads_its_own_menu_and_routes(self):
+        app = "sales-cockpit"
+        folder = self.make_app(app, {
+            "src/components/Sidebar.tsx": 'const items = [{ label: "Board" }];\n',
+            "src/components/MacOSDock.tsx": "export const dock = [];\n",
+            "src/App.tsx": 'path="/board" path="/login"\n',
+            # The old pair is present and would fail if it were read instead.
+            "src/components/AppSidebar.tsx": 'const items = [{ label: "Wrong" }];\n',
+            "src/auth/authenticated/AuthenticatedAppRoutes.tsx": 'path="/wrong"\n',
+        })
+        guide = "Board /board " + " ".join(["text"] * 1600)
+        (folder / "assistant-guide.md").write_text(guide + "\n", encoding="utf-8")
+        done = self.run_check(app)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
+    def test_an_unlisted_app_uses_the_default_files(self):
+        app = "unlisted-cockpit"
+        folder = self.make_app(app, {
+            "src/components/AppSidebar.tsx": 'const items = [{ label: "Fallback" }];\n',
+            "src/auth/authenticated/AuthenticatedAppRoutes.tsx": 'path="/fallback"\n',
+            # A file the sales pair would read, and would fail on.
+            "src/App.tsx": 'path="/other"\n',
+        })
+        guide = "Fallback /fallback " + " ".join(["text"] * 1600)
+        (folder / "assistant-guide.md").write_text(guide + "\n", encoding="utf-8")
+        done = self.run_check(app)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
+    def test_review_routes_are_skipped(self):
+        routes = (self.app / "src/auth/authenticated/AuthenticatedAppRoutes.tsx")
+        routes.write_text(
+            ROUTES.strip() + ' path="/review/:id"\n', encoding="utf-8"
+        )
+        self.write_guide(make_guide())
+        done = self.run_check()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertNotIn("/review", done.stdout)
 
 
 if __name__ == "__main__":

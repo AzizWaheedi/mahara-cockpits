@@ -3,8 +3,10 @@ import {
   Aperture,
   ArrowUp,
   Check,
+  Clapperboard,
   Copy,
   Signal,
+  Target,
   ThumbsDown,
   ThumbsUp,
   X,
@@ -37,6 +39,8 @@ const ASSISTANT_ICONS = {
   "media-buyer": Signal,
   "client-success": Anchor,
   creative: Aperture,
+  sales: Target,
+  editor: Clapperboard,
 } as const;
 
 const APP: CockpitApp = "creative";
@@ -313,6 +317,8 @@ export function HermesChat() {
       "media-buyer": "media_buyer",
       "client-success": "csm",
       creative: "creative",
+      sales: "sales",
+      editor: "editor",
     } as const
   )[app];
   const activeRole: CockpitRole = auth.isCeo

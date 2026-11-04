@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
+import { HermesChat } from "./components/HermesChat";
 import { LoadingSkeleton } from "./components/LoadingSkeleton";
 import { MacOSDock, SALES_DOCK_ITEMS } from "./components/MacOSDock";
 import { MacOSMenuBar } from "./components/MacOSMenuBar";
@@ -409,6 +410,8 @@ export function Seated({
       <SearchBox isManager={Boolean(me.manager)} />
       {/* One task, in place, wherever the address has ?focus=. */}
       <TaskFocusHost />
+      {/* The chat sits above the phone dock; the public review page has none. */}
+      {pathname.startsWith("/review/") ? null : <HermesChat />}
     </div>
   );
 }

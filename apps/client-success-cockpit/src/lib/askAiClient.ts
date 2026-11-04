@@ -1,7 +1,19 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-export type CockpitApp = "media-buyer" | "client-success" | "creative";
-export type CockpitRole = "media_buyer" | "csm" | "creative" | "admin" | "ceo";
+export type CockpitApp =
+  | "media-buyer"
+  | "client-success"
+  | "creative"
+  | "sales"
+  | "editor";
+export type CockpitRole =
+  | "media_buyer"
+  | "csm"
+  | "creative"
+  | "sales"
+  | "editor"
+  | "admin"
+  | "ceo";
 export type JobStatus = "queued" | "claimed" | "completed" | "failed";
 
 export interface SubmitJobParams {
@@ -62,7 +74,9 @@ function checkedJob(value: unknown): AskAiJobItem {
     typeof j !== "object" ||
     !UUID.test(j.id) ||
     !["queued", "claimed", "completed", "failed"].includes(j.status) ||
-    !["media-buyer", "client-success", "creative"].includes(j.app) ||
+    !["media-buyer", "client-success", "creative", "sales", "editor"].includes(
+      j.app,
+    ) ||
     typeof j.prompt !== "string" ||
     !Number.isFinite(Date.parse(j.created_at)) ||
     !(

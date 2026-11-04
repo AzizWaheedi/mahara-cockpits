@@ -8,6 +8,7 @@ import {
   useLocation,
   useParams,
 } from "react-router";
+import { HermesChat } from "./components/HermesChat";
 import { LoadingSkeleton } from "./components/LoadingSkeleton";
 import { JobsHome, Library } from "./components/Places";
 import { SearchBox } from "./components/SearchBox";
@@ -326,6 +327,7 @@ function Shell() {
       <SearchBox />
       {/* One task, in place, wherever the address has ?focus=. */}
       <TaskFocusHost />
+      <HermesChat />
     </div>
   );
 }

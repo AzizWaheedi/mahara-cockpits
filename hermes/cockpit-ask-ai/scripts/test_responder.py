@@ -27,6 +27,20 @@ Verifies:
     number is stripped, and the list is capped
   - build_messages: a supplied guide and changes reach the system message, and an
     empty changes value says None read.
+  - build_messages: the sales cockpit speaks as Ace and the editor cockpit as Frame
+  - sales_lead: a /lead/<id> page answers without a read, 8+ digits read phone8 with
+    the last 8 digits, one model match returns its id, several matches give a note
+    listing them, and no match says so
+  - get_url: the or= filter keeps its commas and stars and escapes Arabic names
+  - lead_pack: messages print oldest first, automated ones are marked, and a failed
+    read says could not be read
+  - sales_day: a rep's reads carry their person filters and a manager's carry none
+  - sales_numbers: only non-voided deals naming the rep count, cash is summed, a
+    setter counts setter deals, and dials use the one-minute conversation rule
+  - prepare: the sales path skips clients and Drive and returns client None
+  - editor_pack: a non-manager filters by their email, managers do not, and
+    cancelled and live jobs are dropped
+  - guides: both new cockpits are in GUIDE_DIRS and COCKPIT_GUIDE
 
 No network calls: get, ask_model, drive_token, fetch, github_get and urlopen are patched.
 All data is fictional.
@@ -148,8 +162,16 @@ class TestBuildMessages(unittest.TestCase):
             self.assertNotIn("—", system)
 
     def test_unknown_cockpit_gets_a_neutral_assistant(self):
-        system = responder.build_messages({**self.job(), "app": "sales"}, "data", [], None)[0]["content"]
+        system = responder.build_messages({**self.job(), "app": "webinar"}, "data", [], None)[0]["content"]
         self.assertTrue(system.startswith("You are the cockpit assistant."))
+
+    def test_sales_and_editor_speak_as_ace_and_frame(self):
+        for app, name in (("sales", "Ace"), ("editor", "Frame")):
+            job = {**self.job(), "app": app}
+            system = responder.build_messages(job, "data", [], None)[0]["content"]
+            self.assertTrue(system.startswith(f"You are {name}"), app)
+            self.assertNotIn("You are Hermes", system)
+            self.assertNotIn("—", system)
 
 
 class TestAskaiReply(unittest.TestCase):
@@ -445,7 +467,7 @@ class TestLiveGuide(unittest.TestCase):
 
     def test_unknown_app_uses_the_shared_guide_without_github(self):
         with patch.object(responder, "github_get") as mock_get:
-            guide, changes, source = responder.live_guide({"GITHUB_TOKEN": "t"}, "sales")
+            guide, changes, source = responder.live_guide({"GITHUB_TOKEN": "t"}, "webinar")
         self.assertEqual((guide, changes, source), (responder.SHARED_GUIDE, "", "built-in"))
         self.assertFalse(mock_get.called)
 
@@ -540,6 +562,316 @@ class TestVisibleClients(unittest.TestCase):
         with patch.object(responder, "get", self.fake(None)):
             self.assertEqual(responder.visible_clients("r", "k", "u1", ["Cedar Homes"]), ["Cedar Homes"])
         self.assertEqual(responder.visible_clients("r", "k", None, ["Cedar Homes"]), ["Cedar Homes"])
+
+
+class TestSalesLead(unittest.TestCase):
+    """The lead comes from the page, the phone number, or the fastest model."""
+
+    CHAIN = [("p", "sonnet-x"), ("p", "haiku-y")]
+
+    @patch("responder.ask_model")
+    @patch("responder.get")
+    def test_lead_page_id_answers_without_a_read(self, mock_get, mock_ask):
+        mock_get.side_effect = AssertionError("no read expected")
+        found = responder.sales_lead("r", "k", {"prompt": "this lead?"}, "/lead/abc123", self.CHAIN)
+        self.assertEqual(found, ("abc123", ""))
+        self.assertFalse(mock_ask.called)
+
+    @patch("responder.ask_model")
+    @patch("responder.get")
+    def test_eight_digits_read_phone8_with_the_last_eight(self, mock_get, mock_ask):
+        calls = []
+
+        def fake(rest, key, table, query):
+            calls.append((table, query))
+            return [{"contact_id": "c9", "name": "Phone Lead", "company": ""}]
+
+        mock_get.side_effect = fake
+        found = responder.sales_lead("r", "k", {"prompt": "please call 991234567 now"}, "/calendar", self.CHAIN)
+        self.assertEqual(found, ("c9", ""))
+        self.assertEqual(calls[0][0], "cockpit_sales_leads")
+        self.assertEqual(calls[0][1]["phone8"], "eq.91234567")
+        self.assertFalse(mock_ask.called)
+
+    @patch("responder.ask_model")
+    @patch("responder.get")
+    def test_one_model_match_returns_its_id_and_filters_by_name(self, mock_get, mock_ask):
+        mock_ask.return_value = ("Gulf Builders", "p/haiku-y")
+        calls = []
+        mock_get.side_effect = lambda rest, key, table, query: calls.append((table, query)) or [
+            {"contact_id": "c1", "name": "Gulf Builders", "company": "Gulf"}
+        ]
+        found = responder.sales_lead("r", "k", {"prompt": "what about gulf builders"}, "/calendar", self.CHAIN)
+        self.assertEqual(found, ("c1", ""))
+        self.assertEqual(calls[0][0], "cockpit_sales_leads")
+        self.assertIn("name.ilike.*Gulf Builders*", calls[0][1]["or"])
+        self.assertIn("company.ilike.*Gulf Builders*", calls[0][1]["or"])
+        self.assertEqual(mock_ask.call_args[0][1][0], ("p", "haiku-y"))
+
+    @patch("responder.ask_model")
+    @patch("responder.get")
+    def test_several_matches_return_a_note_listing_them(self, mock_get, mock_ask):
+        mock_ask.return_value = ("Gulf", "p/haiku-y")
+        mock_get.return_value = [
+            {"contact_id": "c1", "name": "Gulf Builders", "company": "Gulf"},
+            {"contact_id": "c2", "name": "Gulf Interiors", "company": "Gulf"},
+            {"contact_id": "c3", "name": "Gulf Homes", "company": ""},
+        ]
+        found, note = responder.sales_lead("r", "k", {"prompt": "gulf?"}, "/calendar", self.CHAIN)
+        self.assertIsNone(found)
+        self.assertTrue(note.startswith('Several leads match "Gulf":'))
+        self.assertIn("Gulf Builders (Gulf)", note)
+        self.assertIn("Gulf Homes", note)
+
+    @patch("responder.ask_model")
+    @patch("responder.get")
+    def test_no_match_says_so(self, mock_get, mock_ask):
+        mock_ask.return_value = ("Gulf", "p/haiku-y")
+        mock_get.return_value = []
+        found, note = responder.sales_lead("r", "k", {"prompt": "gulf?"}, "/calendar", self.CHAIN)
+        self.assertIsNone(found)
+        self.assertEqual(note, 'No lead matches "Gulf".')
+
+    @patch("responder.ask_model")
+    @patch("responder.get")
+    def test_model_none_or_error_names_no_lead(self, mock_get, mock_ask):
+        mock_ask.return_value = ("NONE", "p/haiku-y")
+        self.assertEqual(responder.sales_lead("r", "k", {"prompt": "who?"}, "/calendar", self.CHAIN), (None, ""))
+        mock_ask.side_effect = RuntimeError("down")
+        self.assertEqual(responder.sales_lead("r", "k", {"prompt": "who?"}, "/calendar", self.CHAIN), (None, ""))
+        self.assertFalse(mock_get.called)
+
+    def test_or_filter_url_keeps_syntax_and_escapes_arabic(self):
+        url = responder.get_url("https://r/rest/v1", "cockpit_sales_leads", {
+            "or": "(name.ilike.*مؤسسة البناء*,company.ilike.*مؤسسة البناء*)",
+        })
+        self.assertIn("or=(name.ilike.*", url)
+        self.assertIn(",company.ilike.*", url)
+        self.assertIn("*", url)
+        self.assertNotIn("%2A", url)
+        self.assertIn("%D9%85", url)
+
+
+class TestLeadPack(unittest.TestCase):
+    """Messages read oldest first, and a failed read is never zero."""
+
+    @patch("responder.get")
+    def test_messages_oldest_first_automated_marked_and_none_says_so(self, mock_get):
+        now = datetime.now(responder.KUWAIT).isoformat()
+
+        def fake(rest, key, table, query):
+            if table == "cockpit_sales_conversation_messages":
+                return [
+                    {"at": now, "direction": "inbound", "channel": "whatsapp", "body": "newest words", "automated": False},
+                    {"at": now, "direction": "outbound", "channel": "whatsapp", "body": "oldest words", "automated": True},
+                ]
+            if table == "cockpit_sales_call_notes":
+                return None
+            return []
+
+        mock_get.side_effect = fake
+        text, sources = responder.lead_pack("r", "k", "c1")
+        self.assertLess(text.index("oldest words"), text.index("newest words"))
+        self.assertIn("(automated)", text)
+        self.assertIn("Call notes: could not be read.", text)
+        self.assertIn("messages", sources)
+        self.assertNotIn("call notes", sources)
+
+
+class TestSalesDay(unittest.TestCase):
+    """A rep sees their own day; a manager sees the team's."""
+
+    def rows(self, table):
+        if table == "cockpit_sales_calendar":
+            return [{"start_at": "2026-11-04T07:00:00Z", "call_type": "intro", "contact_name": "Lead One", "status": "confirmed", "assigned_user_name": "Rep One"}]
+        return []
+
+    def rep(self):
+        return {"email": "rep@tests.invalid", "roles": ["sales"], "name": "Rep One", "role": "closer", "ghl": "g1", "b2b": "b1", "maqsam": "", "manager": False}
+
+    def manager(self):
+        return {**self.rep(), "roles": ["admin"], "role": "manager", "manager": True}
+
+    @patch("responder.get")
+    def test_rep_reads_carry_their_person_filter(self, mock_get):
+        calls = []
+        mock_get.side_effect = lambda rest, key, table, query: calls.append((table, query)) or self.rows(table)
+        text, _ = responder.sales_day("r", "k", self.rep())
+        query = next(q for t, q in calls if t == "cockpit_sales_calendar")
+        self.assertEqual(query["assigned_user_id"], "eq.g1")
+        self.assertEqual(next(q for t, q in calls if t == "cockpit_sales_followups")["owner_email"], "eq.rep@tests.invalid")
+        self.assertEqual(next(q for t, q in calls if t == "cockpit_sales_hot")["owner_email"], "eq.rep@tests.invalid")
+        self.assertEqual(next(q for t, q in calls if t == "cockpit_sales_conversations")["assigned_to"], "eq.g1")
+        leads = [q for t, q in calls if t == "cockpit_sales_leads"]
+        self.assertTrue(leads and all(q.get("assigned_to") == "eq.g1" for q in leads))
+        self.assertIn("10:00", text)
+
+    @patch("responder.get")
+    def test_manager_reads_have_no_person_filter(self, mock_get):
+        calls = []
+        mock_get.side_effect = lambda rest, key, table, query: calls.append((table, query)) or self.rows(table)
+        responder.sales_day("r", "k", self.manager())
+        for table, query in calls:
+            self.assertNotIn("assigned_user_id", query, table)
+            self.assertNotIn("owner_email", query, table)
+            self.assertNotIn("assigned_to", query, table)
+
+    @patch("responder.get")
+    def test_rep_without_a_highlevel_user_says_so(self, mock_get):
+        who = {**self.rep(), "ghl": ""}
+        text, _ = responder.sales_day("r", "k", who)
+        self.assertIn("Your seat has no HighLevel user", text)
+
+
+class TestSalesNumbers(unittest.TestCase):
+    """The month-to-date count follows the sales cockpit's end of day rule."""
+
+    def fake(self, deals, reps, dials=None):
+        def get(rest, key, table, query):
+            if table == "cockpit_sales_reps":
+                return reps
+            if table == "cockpit_sales_deals":
+                return deals
+            if table == "cockpit_sales_dials":
+                return dials or []
+            return []
+        return get
+
+    @patch("responder.get")
+    def test_closer_counts_non_voided_deals_and_sums_cash(self, mock_get):
+        mock_get.side_effect = self.fake(
+            [
+                {"closer": "Rep One", "setter": "Setter X", "cash_collected": 100, "contracted_revenue": 1000, "voided": False},
+                {"closer": " rep one ", "setter": "", "cash_collected": 200, "contracted_revenue": 2000, "voided": False},
+                {"closer": "Other Person", "setter": "Rep One", "cash_collected": 999, "contracted_revenue": 9999, "voided": False},
+                {"closer": "Rep One", "setter": "", "cash_collected": 500, "contracted_revenue": 5000, "voided": True},
+            ],
+            [{"display_name": "Rep One", "closer_aliases": ["R1"]}],
+        )
+        who = {"email": "rep@tests.invalid", "name": "Rep One", "role": "closer", "b2b": "b1", "maqsam": "", "manager": False}
+        text, _ = responder.sales_numbers("r", "k", who)
+        self.assertIn("Deals: 2", text)
+        self.assertIn(responder.money(300), text)
+        self.assertIn(responder.money(3000), text)
+        self.assertNotIn("999", text)
+
+    @patch("responder.get")
+    def test_setter_counts_setter_deals_and_dials(self, mock_get):
+        mock_get.side_effect = self.fake(
+            [
+                {"closer": "Closer X", "setter": "Setter One", "cash_collected": 50, "contracted_revenue": 500, "voided": False},
+                {"closer": "Setter One", "setter": "Closer X", "cash_collected": 70, "contracted_revenue": 700, "voided": False},
+            ],
+            [{"display_name": "Setter One", "closer_aliases": []}],
+            [
+                {"state": "completed", "duration_s": 90},
+                {"state": "completed", "duration_s": 10},
+                {"state": "no_answer", "duration_s": 0},
+            ],
+        )
+        who = {"email": "setter@tests.invalid", "name": "Setter One", "role": "setter", "b2b": "b2", "maqsam": "line@tests.invalid", "manager": False}
+        text, _ = responder.sales_numbers("r", "k", who)
+        self.assertIn("Deals: 1", text)
+        self.assertIn(responder.money(50), text)
+        self.assertIn("Dials: 3", text)
+        self.assertIn("Answered: 2", text)
+        self.assertIn("Conversations: 1", text)
+
+    @patch("responder.get")
+    def test_a_seat_without_a_rep_id_says_it_cannot_count(self, mock_get):
+        who = {"email": "rep@tests.invalid", "name": "Rep One", "role": "closer", "b2b": "", "maqsam": "", "manager": False}
+        text, _ = responder.sales_numbers("r", "k", who)
+        self.assertIn("not linked to a sales rep", text)
+        self.assertFalse(mock_get.called)
+
+
+class TestPrepareSales(unittest.TestCase):
+    """The sales path never touches client visibility or Drive."""
+
+    @patch("responder.live_guide", return_value=("GUIDE", "", "built-in"))
+    @patch("responder.drive_pack")
+    @patch("responder.visible_clients")
+    @patch("responder.get")
+    def test_sales_prepare_skips_clients_and_drive(self, mock_get, mock_visible, mock_drive, mock_guide):
+        def fake(rest, key, table, query):
+            if table == "cockpit_ask_ai_jobs":
+                return [{"auth_user_id": "u1", "page": "/lead/c1"}]
+            if table == "cockpit_members":
+                return [{"email": "rep@tests.invalid", "roles": ["sales"]}]
+            if table == "cockpit_sales_people":
+                return [{"name": "Rep One", "role": "closer", "ghl_user_id": "g1", "b2b_rep_id": "b1", "maqsam_email": "", "active": True}]
+            return []
+
+        mock_get.side_effect = fake
+        job = {"id": "j1", "app": "sales", "prompt": "prep this lead", "context": {}}
+        messages, sources, client = responder.prepare(job, {}, "r", "k", [("p", "haiku-y")])
+        self.assertIsNone(client)
+        mock_visible.assert_not_called()
+        mock_drive.assert_not_called()
+        self.assertTrue(any(s.startswith("cockpit guide (") for s in sources))
+        self.assertIn("You are Ace", messages[0]["content"])
+        self.assertIn("Person: Rep One (closer), manager: no.", messages[0]["content"])
+
+
+class TestEditorPack(unittest.TestCase):
+    """The editor's own jobs, without cancelled or live work."""
+
+    def jobs(self):
+        return [
+            {"task_id": "t1", "name": "Keep me", "client": "Acme", "status": "In progress", "due_at": "2026-11-05T09:00:00Z", "state": "ready", "missing": [], "url": "https://x"},
+            {"task_id": "t2", "name": "Cancelled job", "client": "Acme", "status": "cancelled", "due_at": None, "state": "ready", "missing": [], "url": ""},
+            {"task_id": "t3", "name": "Live job", "client": "Acme", "status": "live 3 days", "due_at": None, "state": "ready", "missing": [], "url": ""},
+        ]
+
+    @patch("responder.get")
+    def test_non_manager_filters_by_email_and_drops_finished_jobs(self, mock_get):
+        calls = []
+
+        def fake(rest, key, table, query):
+            calls.append((table, query))
+            return self.jobs() if table == "editor_jobs" else []
+
+        mock_get.side_effect = fake
+        who = {"email": "editor@tests.invalid", "name": "Editor One", "role": "editor", "manager": False}
+        text, _ = responder.editor_pack("r", "k", who, None)
+        query = next(q for t, q in calls if t == "editor_jobs")
+        self.assertEqual(query["editors"], 'cs.[{"email":"editor@tests.invalid"}]')
+        self.assertIn("Keep me", text)
+        self.assertNotIn("Cancelled job", text)
+        self.assertNotIn("Live job", text)
+
+    @patch("responder.get")
+    def test_manager_has_no_email_filter_and_sees_every_job(self, mock_get):
+        calls = []
+
+        def fake(rest, key, table, query):
+            calls.append((table, query))
+            return self.jobs() if table == "editor_jobs" else []
+
+        mock_get.side_effect = fake
+        who = {"email": "boss@tests.invalid", "name": "Boss", "role": "admin", "manager": True}
+        text, _ = responder.editor_pack("r", "k", who, None)
+        query = next(q for t, q in calls if t == "editor_jobs")
+        self.assertNotIn("editors", query)
+        self.assertIn("Keep me", text)
+        self.assertNotIn("Cancelled job", text)
+        self.assertNotIn("Live job", text)
+
+
+class TestGuideCoverage(unittest.TestCase):
+    def test_both_new_cockpits_have_a_directory_and_a_fallback_guide(self):
+        self.assertEqual(responder.GUIDE_DIRS["sales"], "apps/sales-cockpit")
+        self.assertEqual(responder.GUIDE_DIRS["editor"], "apps/video-editor-cockpit")
+        sales = responder.COCKPIT_GUIDE["sales"]
+        editor = responder.COCKPIT_GUIDE["editor"]
+        self.assertTrue(sales.startswith("Sales cockpit menu:"))
+        self.assertTrue(editor.startswith("Video editor cockpit menu:"))
+        for label in ("Today", "Calendar", "Leads", "Dialer", "Pipeline", "Intelligence", "Proposals", "Contracts", "Invoices", "Numbers", "Goals", "End of day", "Follow-ups", "Recordings", "Links", "Pitch deck"):
+            self.assertIn(f"- {label}", sales)
+        for label in ("Jobs", "Footage", "Send for review", "Library", "Meetings", "End of day", "How to use this desk"):
+            self.assertIn(f"- {label}", editor)
+        self.assertIn(responder.SHARED_GUIDE, sales)
+        self.assertIn(responder.SHARED_GUIDE, editor)
 
 
 if __name__ == "__main__":
