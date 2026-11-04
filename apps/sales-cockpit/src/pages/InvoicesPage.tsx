@@ -54,6 +54,7 @@ import {
   paymentWord,
   requestInvoice,
 } from "../lib/invoices";
+import { supabase } from "../lib/supabase";
 import {
   fillInvoice,
   framed,
@@ -296,6 +297,36 @@ export default function InvoicesPage({ me }: { me: Me }) {
     }, 5000);
     return () => window.clearInterval(t);
   }, [pending, load]);
+
+  // The worker's check-in ages while the page stays open: read it again every
+  // minute and when the tab comes back, so a long form does not show a false
+  // "last checked in N minutes ago". A failed read keeps the last reading.
+  useEffect(() => {
+    const refresh = () => {
+      if (document.hidden) return;
+      void supabase
+        .from("cockpit_invoice_desk_status")
+        .select("beat_at,ok,detail")
+        .maybeSingle()
+        .then(({ data: row, error: e }) => {
+          if (e) return;
+          const desk = row
+            ? {
+                beatAt: String(row.beat_at),
+                ok: Boolean(row.ok),
+                detail: row.detail ? String(row.detail) : null,
+              }
+            : null;
+          setData(d => (d ? { ...d, desk } : d));
+        });
+    };
+    const t = window.setInterval(refresh, 60_000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(t);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, []);
 
   const clients = data?.clients ?? [];
   const chosen = clients.find(c => c.taskId === s.taskId) ?? null;
