@@ -19,8 +19,16 @@ Verifies:
     untied account say so, and the ad query strips the act_ prefix
   - drive_pack: no links means nothing, a missing token says so, link forms are read,
     and the same file twice is read once
+  - live_guide: a fresh GitHub read is cached and reported as github, a young cache
+    skips the network, an expired cache is returned as stale cache when GitHub fails,
+    an unknown app and a failed first read use the built-in guides, and a missing
+    GITHUB_TOKEN means no request is opened
+  - recent_changes: merge commits and two-parent commits are skipped, a trailing PR
+    number is stripped, and the list is capped
+  - build_messages: a supplied guide and changes reach the system message, and an
+    empty changes value says None read.
 
-No network calls: get, ask_model, drive_token and fetch are patched.
+No network calls: get, ask_model, drive_token, fetch, github_get and urlopen are patched.
 All data is fictional.
 """
 import io
@@ -28,6 +36,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import types
 import unittest
 import warnings
@@ -370,6 +379,95 @@ class TestDrivePack(unittest.TestCase):
         self.assertNotIn("File 2", notes)
         self.assertEqual(images, [])
         self.assertEqual(sources, ["Google Drive files"])
+
+
+class TestLiveGuide(unittest.TestCase):
+    """The guide comes from GitHub main, with a saved copy for a bad minute."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patcher = patch.object(responder, "STATE_DIR", self.tmp.name)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def commit(self, subject, date="2026-11-01T10:00:00Z", parents=1):
+        return {"commit": {"message": subject, "committer": {"date": date}}, "parents": [{}] * parents}
+
+    def fake_github(self, guide, commits):
+        def get(e, url, raw=False):
+            return guide if raw else commits
+
+        return get
+
+    def cache_path(self, app):
+        return os.path.join(self.tmp.name, "guides", f"{app}.json")
+
+    def test_fresh_fetch_reports_github_and_writes_the_cache(self):
+        commits = [self.commit("Add ads filter (#167)", "2026-11-02T09:00:00Z")]
+        with patch.object(responder, "github_get", self.fake_github("GUIDE TEXT", commits)):
+            guide, changes, source = responder.live_guide({"GITHUB_TOKEN": "t"}, "media-buyer")
+        self.assertEqual((guide, source), ("GUIDE TEXT", "github"))
+        self.assertEqual(changes, "- 2026-11-02: Add ads filter")
+        with open(self.cache_path("media-buyer"), encoding="utf-8") as f:
+            saved = json.load(f)
+        self.assertEqual((saved["guide"], saved["changes"]), ("GUIDE TEXT", changes))
+
+    def test_young_cache_makes_no_github_call(self):
+        with patch.object(responder, "github_get", side_effect=self.fake_github("GUIDE TEXT", [])) as first:
+            responder.live_guide({"GITHUB_TOKEN": "t"}, "media-buyer")
+        self.assertTrue(first.called)
+        with patch.object(responder, "github_get") as second:
+            guide, _, source = responder.live_guide({"GITHUB_TOKEN": "t"}, "media-buyer")
+        self.assertFalse(second.called)
+        self.assertEqual((guide, source), ("GUIDE TEXT", "cache"))
+
+    def test_expired_cache_is_returned_when_github_fails(self):
+        os.makedirs(os.path.dirname(self.cache_path("creative")))
+        with open(self.cache_path("creative"), "w", encoding="utf-8") as f:
+            json.dump({"fetched_at": time.time() - responder.GUIDE_TTL_SECONDS - 60, "guide": "OLD GUIDE", "changes": "- 2026-10-01: Old"}, f)
+        with patch.object(responder, "github_get", return_value=None), redirect_stdout(io.StringIO()):
+            guide, changes, source = responder.live_guide({"GITHUB_TOKEN": "t"}, "creative")
+        self.assertEqual((guide, changes, source), ("OLD GUIDE", "- 2026-10-01: Old", "stale cache"))
+
+    def test_failed_first_read_uses_the_built_in_guide(self):
+        with patch.object(responder, "github_get", return_value=None), redirect_stdout(io.StringIO()):
+            guide, changes, source = responder.live_guide({"GITHUB_TOKEN": "t"}, "creative")
+        self.assertEqual((guide, changes, source), (responder.COCKPIT_GUIDE["creative"], "", "built-in"))
+
+    def test_unknown_app_uses_the_shared_guide_without_github(self):
+        with patch.object(responder, "github_get") as mock_get:
+            guide, changes, source = responder.live_guide({"GITHUB_TOKEN": "t"}, "sales")
+        self.assertEqual((guide, changes, source), (responder.SHARED_GUIDE, "", "built-in"))
+        self.assertFalse(mock_get.called)
+
+    def test_no_token_opens_no_request(self):
+        with patch.object(responder.urllib.request, "urlopen") as urlopen:
+            self.assertIsNone(responder.github_get({}, "https://api.github.com/x"))
+            self.assertIsNone(responder.github_get({"GITHUB_TOKEN": "   "}, "https://api.github.com/x"))
+        self.assertFalse(urlopen.called)
+
+    def test_recent_changes_skips_merges_strips_pr_and_caps(self):
+        commits = [
+            self.commit("Fix ads grid (#167)", "2026-11-03T10:00:00Z"),
+            self.commit("Merge branch main", "2026-11-02T10:00:00Z"),
+            self.commit("Two parent commit", "2026-11-02T09:00:00Z", parents=2),
+        ] + [self.commit(f"Change {n}", "2026-11-01T10:00:00Z") for n in range(70)]
+        lines = responder.recent_changes(commits).splitlines()
+        self.assertEqual(len(lines), responder.CHANGES_MAX)
+        self.assertEqual(lines[0], "- 2026-11-03: Fix ads grid")
+        self.assertFalse(any("Merge" in line for line in lines))
+        self.assertFalse(any("Two parent" in line for line in lines))
+        self.assertFalse(any("(#" in line for line in lines))
+
+    def test_build_messages_uses_the_supplied_guide_and_changes(self):
+        job = {"prompt": "where is the ads page", "app": "media-buyer", "role": "buyer"}
+        system = responder.build_messages(job, "data", [], None, guide="GUIDE-X", changes="- 2026-11-01: Y")[0]["content"]
+        self.assertIn("GUIDE-X", system)
+        self.assertIn("- 2026-11-01: Y", system)
+        self.assertNotIn("None read.", system)
+        plain = responder.build_messages(job, "data", [], None, guide="GUIDE-X")[0]["content"]
+        self.assertIn("None read.", plain)
 
 
 class TestPlainNumbers(unittest.TestCase):

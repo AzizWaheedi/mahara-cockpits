@@ -406,6 +406,8 @@ Answer rules:
 - "How do I", "where do I" and "from where" questions are answered from the COCKPIT GUIDE: name the menu item and the button. Never name a page, button or setting that is not in the guide or the DATA, and never describe what a page does beyond what the guide says.
 - You cannot act: you never upload, edit, publish, pause, message clients or change settings. If asked, say so in one line and point to the place in the COCKPIT GUIDE where the person does it, then help with what you can (a checklist, a draft, copy).
 - Never add a "to do this, go to" line unless the person asked where or how.
+- For a how-to question, answer from the COCKPIT GUIDE: name the menu item, the page and the exact button text. If the guide does not cover it, say it is not in your guide yet and suggest Ask a team. Never invent a page, a button or a step.
+- RECENT CHANGES are developer notes. Use them to answer what is new or what changed, in plain words. Never quote them word for word and never mention commit, file or ticket numbers.
 - Say campaign verdicts in plain words (doing well, watch, should stop), not "scale / hold / kill" or "gates".
 - A short reply such as "yes", "نعم" or "do it" answers your previous message: continue from it.
 - When a file is attached, describe what you actually see in it before you write copy for it.
@@ -419,7 +421,8 @@ House rules for ad copy:
 - When asked for options, give distinct angles: outcome, objection, proof, question, direct offer."""
 
 # Where things are, per cockpit: menu names from each app's AppSidebar.tsx and
-# the buttons people ask about. Keep it in step when a menu or button moves.
+# the buttons people ask about. These are the built-in fallback used only when
+# GitHub cannot be read; the live guide in apps/<app>/assistant-guide.md wins.
 SHARED_GUIDE = """- Ask a team (menu, Team section): ask another team for something; it becomes a ClickUp task with its SOP steps and an owner.
 - Team meetings (menu).
 - Client performance (menu): every active client against its targets; open a client for its ads.
@@ -450,16 +453,115 @@ New creative requests from media buyers arrive here from the Ads page "New creat
 """ + SHARED_GUIDE,
 }
 
+# The guide files and each cockpit's last month of commit subjects live on
+# GitHub main, so an answer describes the code that is actually deployed and
+# not a copy that drifted. A ten-minute cache keeps one GitHub read per app per
+# cycle without a call on every question.
+GUIDE_REPO = "AzizWaheedi/mahara-cockpits"
+GUIDE_DIRS = {
+    "media-buyer": "apps/media-buyer-cockpit",
+    "client-success": "apps/client-success-cockpit",
+    "creative": "apps/creative-director-cockpit",
+}
+GUIDE_TTL_SECONDS = 600
+GUIDE_MAX_CHARS = 40000
+CHANGES_DAYS = 30
+CHANGES_MAX = 60
 
-def build_messages(job: dict[str, Any], data: str, images: list[dict[str, Any]], page: str | None) -> list[dict[str, Any]]:
+
+def github_get(e: dict[str, str], url: str, raw: bool = False) -> Any | None:
+    """One read from the GitHub API. None means no token or an unreadable answer."""
+    token = (e.get("GITHUB_TOKEN") or "").strip()
+    if not token:
+        return None
+    headers = {
+        "Authorization": "Bearer " + token,
+        "User-Agent": "cockpit-ask-ai",
+        "Accept": "application/vnd.github.raw" if raw else "application/vnd.github+json",
+    }
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=15) as r:
+            body = r.read()
+        text = body.decode("utf-8", "replace")
+        return text if raw else json.loads(text)
+    except Exception:
+        return None
+
+
+def recent_changes(commits: list) -> str:
+    """Developer notes from the commits API, one plain line each, newest first."""
+    lines: list[str] = []
+    for c in commits or []:
+        if len(c.get("parents") or []) > 1:
+            continue
+        commit = c.get("commit") or {}
+        subject = (commit.get("message") or "").split("\n", 1)[0].strip()
+        if subject.startswith("Merge"):
+            continue
+        subject = re.sub(r"\s*\(#\d+\)$", "", subject).strip()
+        day = str((commit.get("committer") or {}).get("date") or "")[:10]
+        if subject:
+            lines.append(f"- {day}: {subject[:160]}")
+        if len(lines) >= CHANGES_MAX:
+            break
+    return "\n".join(lines)
+
+
+def live_guide(e: dict[str, str], app: str) -> tuple[str, str, str]:
+    """The cockpit's guide and recent changes, from a ten-minute cache or GitHub.
+
+    The cache stores exactly what GitHub returned, so an expired copy is still
+    useful when GitHub is down. A corrupt cache counts as no cache.
+    """
+    if app not in GUIDE_DIRS:
+        return SHARED_GUIDE, "", "built-in"
+    directory = GUIDE_DIRS[app]
+    path = os.path.join(STATE_DIR, "guides", f"{app}.json")
+    cache: dict[str, Any] | None = None
+    try:
+        with open(path, encoding="utf-8") as f:
+            cached = json.load(f)
+        if isinstance(cached, dict) and isinstance(cached.get("fetched_at"), (int, float)):
+            cache = cached
+    except Exception:
+        cache = None
+    if cache and time.time() - cache["fetched_at"] < GUIDE_TTL_SECONDS:
+        return str(cache.get("guide") or ""), str(cache.get("changes") or ""), "cache"
+    since = (datetime.now(timezone.utc) - timedelta(days=CHANGES_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    guide = github_get(e, f"https://api.github.com/repos/{GUIDE_REPO}/contents/{directory}/assistant-guide.md?ref=main", raw=True)
+    if isinstance(guide, str) and guide.strip():
+        guide = guide[:GUIDE_MAX_CHARS]
+        commits = github_get(e, f"https://api.github.com/repos/{GUIDE_REPO}/commits?sha=main&path={directory}/src&since={since}&per_page=100")
+        changes = recent_changes(commits if isinstance(commits, list) else [])
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"fetched_at": time.time(), "guide": guide, "changes": changes}, f)
+            os.replace(tmp, path)
+        except Exception as exc:
+            log(f"WARN guide app={app} cache not written ({type(exc).__name__})")
+        return guide, changes, "github"
+    if cache:
+        try:
+            when = datetime.fromtimestamp(cache["fetched_at"], timezone.utc).astimezone(KUWAIT).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            when = str(cache["fetched_at"])
+        log(f"WARN guide app={app} GitHub unreadable, using the copy from {when}")
+        return str(cache.get("guide") or ""), str(cache.get("changes") or ""), "stale cache"
+    log(f"WARN guide app={app} GitHub unreadable and no saved copy, using the built-in guide")
+    return COCKPIT_GUIDE[app], "", "built-in"
+
+
+def build_messages(job: dict[str, Any], data: str, images: list[dict[str, Any]], page: str | None, guide: str | None = None, changes: str = "") -> list[dict[str, Any]]:
     # The data goes with the rules, so the chat reads in order and a short reply
     # ("yes", "do it") lands right after the answer it refers to.
     ctx = job.get("context") or {}
     now = datetime.now(KUWAIT).strftime("%Y-%m-%d %H:%M")
     data_block = f"DATA (read {now} Kuwait time; cockpit {job.get('app')}; the person's role {job.get('role')}; page {page or 'unknown'})\n{data}"
-    guide = COCKPIT_GUIDE.get(str(job.get("app")), SHARED_GUIDE)
+    guide = COCKPIT_GUIDE.get(str(job.get("app")), SHARED_GUIDE) if guide is None else guide
     _, identity = assistant_for(job.get("app"))
-    msgs: list[dict[str, Any]] = [{"role": "system", "content": f"{identity}\n{SYSTEM}\n\nCOCKPIT GUIDE (where things are)\n{guide}\n\n{data_block}"}]
+    msgs: list[dict[str, Any]] = [{"role": "system", "content": f"{identity}\n{SYSTEM}\n\nCOCKPIT GUIDE (how this cockpit works today, read from the code on main)\n{guide}\n\nRECENT CHANGES (developer notes from the last 30 days, newest first)\n{changes or 'None read.'}\n\n{data_block}"}]
     for h in reversed((ctx.get("history") or [])[:8]):  # history arrives newest first
         reply = askai_reply(h.get("result"))
         if h.get("prompt") and reply:
@@ -547,7 +649,9 @@ def prepare(job: dict[str, Any], e: dict[str, str], rest: str, key: str, chain: 
     if notes:
         parts.append(notes)
     sources += dsrc
-    return build_messages(job, "\n\n".join(parts), images, page), sources, client
+    guide, changes, source = live_guide(e, str(job.get("app")))
+    sources.append(f"cockpit guide ({source})")
+    return build_messages(job, "\n\n".join(parts), images, page, guide=guide, changes=changes), sources, client
 
 
 def answer(job: dict[str, Any], e: dict[str, str], rest: str, key: str, chain: list[tuple[str, str]]) -> dict[str, Any]:
@@ -560,7 +664,8 @@ def answer(job: dict[str, Any], e: dict[str, str], rest: str, key: str, chain: l
         # A model that refuses images still answers from the text and the file notes.
         messages[-1]["content"] = messages[-1]["content"][0]["text"] + "\n(The attached images could not be sent to the model.)"
         text, used = ask_model(messages, chain)
-    return {"reply": text, "model": used, "sources": sources, "client": client, "engine": "responder-v2"}
+    guide_source = next((s[len("cockpit guide ("):-1] for s in sources if s.startswith("cockpit guide (") and s.endswith(")")), None)
+    return {"reply": text, "model": used, "sources": sources, "client": client, "guide_source": guide_source, "engine": "responder-v2"}
 
 
 # ---------------------------------------------------------------- loop
@@ -606,6 +711,7 @@ def run(seconds: int, apply: bool) -> int:
                 if ok is True:
                     answered += 1
                     state["last_success_at"] = datetime.now(timezone.utc).isoformat()
+                    state.setdefault("guides", {})[str(job.get("app"))] = {"source": result.get("guide_source"), "at": datetime.now(timezone.utc).isoformat()}
                     log(f"OK job={job['id'][:8]} model={result['model']} client={result['client'] or '-'} sources={len(result['sources'])} secs={time.time() - started:.1f}")
                 else:
                     failed += 1
@@ -651,6 +757,7 @@ def doctor() -> int:
     report: dict[str, Any] = {"keys_file": askai.KEYS, "keys_file_exists": os.path.exists(askai.KEYS)}
     report["supabase_configured"] = bool((e.get("COCKPIT_SUPABASE_URL") or "").startswith("https://") and len(e.get("COCKPIT_SUPABASE_KEY") or "") >= 20)
     report["drive_configured"] = all(e.get(k) for k in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"))
+    report["github_configured"] = bool(e.get("GITHUB_TOKEN"))
     report["model_chain"] = [f"{p}/{m}" for p, m in model_chain()]
     try:
         sys.path.insert(0, HERMES_SRC)

@@ -32,6 +32,9 @@ scripts/ship-preflight.sh "${1:-all}" || exit 1
 
 # Nothing ships if the copies of a shared page have drifted apart.
 scripts/check-shared.sh || exit 1
+# The cockpit assistants answer how-to questions from these guides, so a guide that
+# no longer matches its menu, page addresses or button text must stop the ship.
+"$py_bin" scripts/check-assistant-guides.py || { echo "an assistant guide no longer matches its cockpit: update apps/<app>/assistant-guide.md as the lines above say"; exit 1; }
 # The guard that keeps a backend deploy from removing someone else's
 # functions (convex-removals.ts, below) is itself tested first.
 bun test scripts/convex-removals.test.ts >/dev/null 2>&1 \
