@@ -1,5 +1,5 @@
 /**
- * Prints the visible text of every CSM screen from a real snapshot, so we can see what
+ * Prints the visible text of every CSM screen from a synthetic snapshot, so we can see what
  * the CSM sees without a browser (the screenshot tool does not work in this project).
  *
  * Run: bun scripts/csm-render-dump.tsx [section]
