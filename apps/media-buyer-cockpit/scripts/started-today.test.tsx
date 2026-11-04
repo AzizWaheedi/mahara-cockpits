@@ -13,8 +13,12 @@ for (const e of envs) Object.assign(e, ENV);
 const { parseStartedToday, readStartedToday } = await import(
   "../src/lib/startedToday"
 );
-const { StartedTodayCells, StartedTodayError, startedTodayCampaigns } =
-  await import("../src/components/StartedToday");
+const {
+  StartedTodayCells,
+  StartedTodayError,
+  startedLabel,
+  startedTodayCampaigns,
+} = await import("../src/components/StartedToday");
 
 const FEED_AT = "2026-11-04T13:07:26.570Z";
 
@@ -71,6 +75,23 @@ test("parseStartedToday coerces numeric strings and keeps a missing card null", 
   expect(read.rows[1].card).toBeNull();
 });
 
+test("parseStartedToday keeps startedOn and gives null when it is missing", () => {
+  const read = parseStartedToday({
+    ...fixture,
+    rows: [{ ...fixture.rows[0], startedOn: "2026-11-04" }, fixture.rows[1]],
+  });
+  expect(read.rows[0].startedOn).toBe("2026-11-04");
+  expect(read.rows[1].startedOn).toBeNull();
+});
+
+test("startedLabel names the day a campaign started", () => {
+  expect(startedLabel("2026-11-05", "2026-11-05")).toBe("Started today");
+  expect(startedLabel(null, "2026-11-05")).toBe("Started today");
+  expect(startedLabel("2026-11-04", undefined)).toBe("Started today");
+  expect(startedLabel("2026-11-04", "2026-11-05")).toBe("Started 4 Nov");
+  expect(startedLabel("2026-10-30", "2026-10-31")).toBe("Started 30 Oct");
+});
+
 test("parseStartedToday throws for a shape it cannot read", () => {
   expect(() => parseStartedToday(null)).toThrow();
   expect(() => parseStartedToday({ day: "x" })).toThrow();
@@ -101,12 +122,12 @@ test("readStartedToday throws the RPC's error message", async () => {
   await expect(readStartedToday(client)).rejects.toThrow("denied");
 });
 
-const cells = (row: unknown, feedAt: string | null = FEED_AT) =>
+const cells = (row: unknown, feedAt: string | null = FEED_AT, day?: string) =>
   renderToStaticMarkup(
     <table>
       <tbody>
         <tr>
-          <StartedTodayCells row={row as any} feedAt={feedAt} />
+          <StartedTodayCells row={row as any} feedAt={feedAt} day={day} />
         </tr>
       </tbody>
     </table>,
@@ -140,6 +161,18 @@ test("a row with no lead and no card says so", () => {
   expect(html).not.toContain("USD ");
 });
 
+test("a row that started yesterday says when it started and shows figures since then", () => {
+  const read = parseStartedToday(fixture);
+  const html = cells(
+    { ...read.rows[0], startedOn: "2026-11-04" },
+    FEED_AT,
+    "2026-11-05",
+  );
+  expect(html).toContain("Started 4 Nov");
+  expect(html).toContain("figures since then from Meta at");
+  expect(html).not.toContain("Started today");
+});
+
 test("startedTodayCampaigns joins the client group the list already uses", () => {
   const read = parseStartedToday({
     ...fixture,
@@ -167,6 +200,12 @@ test("startedTodayCampaigns joins the client group the list already uses", () =>
   expect(rows[0]._id).toBe("started-today-120253046528170064");
   expect(rows[0].startedToday.campaignName).toBe("Monshaat_Leads_4/11");
   expect(rows[0].feedAt).toBe(FEED_AT);
+});
+
+test("startedTodayCampaigns puts the read's day on each row", () => {
+  const read = parseStartedToday(fixture);
+  const rows = startedTodayCampaigns(read, []);
+  expect(rows[0].day).toBe("2026-11-04");
 });
 
 test("startedTodayCampaigns keeps the read's client name when the list has none", () => {
