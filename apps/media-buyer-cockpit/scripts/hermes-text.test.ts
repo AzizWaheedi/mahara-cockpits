@@ -1,8 +1,10 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
   ASSISTANTS,
   hermesSuggestions,
+  nextPollDelay,
   parseHermesText,
+  sameThread,
 } from "../src/lib/hermesText";
 
 const span = (text: string, bold = false) => ({ text, bold });
@@ -128,4 +130,37 @@ test("divider lines (---, ***, ___) split blocks and never show as text", () => 
   expect(parseHermesText("--")).toEqual([
     { kind: "paragraph", spans: [span("--")] },
   ]);
+});
+describe("nextPollDelay", () => {
+  test("an error waits 5 seconds even while busy", () => {
+    expect(nextPollDelay({ busy: true, error: true, open: true })).toBe(5000);
+  });
+  test("a pending answer polls every 1.5 seconds", () => {
+    expect(nextPollDelay({ busy: true, error: false, open: false })).toBe(1500);
+  });
+  test("an open idle panel polls every 15 seconds", () => {
+    expect(nextPollDelay({ busy: false, error: false, open: true })).toBe(15000);
+  });
+  test("a closed idle panel stops polling", () => {
+    expect(nextPollDelay({ busy: false, error: false, open: false })).toBeNull();
+  });
+});
+describe("sameThread", () => {
+  test("equal arrays are the same thread", () => {
+    expect(sameThread([{ id: "a" }], [{ id: "a" }])).toBe(true);
+  });
+  test("a changed status is a different thread", () => {
+    expect(
+      sameThread(
+        [{ id: "a", status: "sent" }],
+        [{ id: "a", status: "answered" }],
+      ),
+    ).toBe(false);
+  });
+  test("a different length is a different thread", () => {
+    expect(sameThread([{ id: "a" }], [])).toBe(false);
+  });
+  test("two empty arrays are the same thread", () => {
+    expect(sameThread([], [])).toBe(true);
+  });
 });

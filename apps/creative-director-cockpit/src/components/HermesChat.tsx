@@ -28,7 +28,9 @@ import {
   ASSISTANTS,
   type HermesSpan,
   hermesSuggestions,
+  nextPollDelay,
   parseHermesText,
+  sameThread,
 } from "@/lib/hermesText";
 
 const ASSISTANT_ICONS = {
@@ -334,6 +336,7 @@ export function HermesChat() {
   ]);
   const currentScope = useRef(scopeKey);
   currentScope.current = scopeKey;
+  const loadedScope = useRef<string | null>(null);
   const sending = useRef(false);
   const thread = threadOwner === scopeKey ? storedThread : [];
   const clientName = useMemo(() => {
@@ -352,6 +355,7 @@ export function HermesChat() {
     setThread([]);
     setThreadOwner(scopeKey);
     setThreadError(null);
+    loadedScope.current = null;
     setText("");
   }, [scopeKey]);
 
@@ -360,25 +364,26 @@ export function HermesChat() {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const load = async () => {
-      setIsLoading(true);
+      if (loadedScope.current !== scopeKey) setIsLoading(true);
       const { thread: jobs, error } = await getAskAiThread(client, app, 50);
       if (cancelled || currentScope.current !== scopeKey) return;
       setIsLoading(false);
+      loadedScope.current = scopeKey;
       if (error) {
         setThread([]);
         setThreadError("Could not load the conversation. " + error.message);
       } else {
-        setThread(jobsToChatMessages(jobs));
+        const next = jobsToChatMessages(jobs);
+        setThread(prev => (sameThread(prev, next) ? prev : next));
         setThreadOwner(scopeKey);
         setThreadError(null);
       }
-      if (
-        open ||
-        error ||
-        jobs.some(j => j.status === "queued" || j.status === "claimed")
-      ) {
-        timer = setTimeout(load, error ? 5000 : 1500);
-      }
+      const delay = nextPollDelay({
+        busy: jobs.some(j => j.status === "queued" || j.status === "claimed"),
+        error: Boolean(error),
+        open,
+      });
+      if (delay !== null) timer = setTimeout(load, delay);
     };
     void load();
     return () => {

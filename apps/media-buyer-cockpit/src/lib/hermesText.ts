@@ -162,3 +162,23 @@ export function hermesSuggestions(
         "Give me 3 hook ideas for a design firm",
       ];
 }
+
+/** Poll fast only while an answer is pending and slow when idle, so the panel does not blink. */
+export function nextPollDelay(s: {
+  busy: boolean;
+  error: boolean;
+  open: boolean;
+}): number | null {
+  if (s.error) return 5000;
+  if (s.busy) return 1500;
+  if (s.open) return 15000;
+  return null;
+}
+
+/** Keep the previous array when nothing changed, so the list does not redraw. */
+export function sameThread(
+  a: readonly unknown[],
+  b: readonly unknown[],
+): boolean {
+  return a.length === b.length && JSON.stringify(a) === JSON.stringify(b);
+}
