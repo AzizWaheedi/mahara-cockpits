@@ -1127,16 +1127,20 @@ def person_numbers(rest: str, key: str, name: str, role: str, b2b: str, maqsam: 
         actual: dict[str, Any] = {"cash": cash, "closes": count, "dials": dials_count}
         for g in goals:
             metric = str(g.get("metric") or "")
-            if metric not in ("cash", "closes", "dials") or g.get("goal") is None:
+            if g.get("goal") is not None:
+                label, target = "Goal", num(g.get("goal"))
+            elif g.get("forecast") is not None:
+                # The manager has not set a goal yet; the rep's own forecast is the target on the Goals page.
+                label, target = "No goal set yet; the rep's own forecast", num(g.get("forecast"))
+            else:
                 continue
-            goal = num(g.get("goal"))
             got = actual.get(metric)
-            goal_text = money(goal) if metric == "cash" else f"{int(goal)}"
+            goal_text = money(target) if metric == "cash" else f"{int(target)}"
             if got is None:
-                lines.append(f"Goal {metric}: {goal_text}; it is not measured this month so far.")
+                lines.append(f"{label} for {metric}: {goal_text}; the cockpit does not count {metric} here.")
             else:
                 got_text = money(num(got)) if metric == "cash" else f"{int(num(got))}"
-                lines.append(f"Goal {metric}: {goal_text} against {got_text} this month so far.")
+                lines.append(f"{label} for {metric}: {goal_text} against {got_text} this month so far.")
     return "\n".join(lines), sources
 
 
