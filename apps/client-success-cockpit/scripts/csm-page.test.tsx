@@ -20,8 +20,8 @@ const perfFixture = await Bun.file(
 const KITS = {
   rows: [
     {
-      clickup_task_id: "86exnk0v4",
-      client_name: "Greystone Contracting",
+      clickup_task_id: "fixture01",
+      client_name: "DUNEWORKS DESIGN",
       clickup_status: "in onboarding",
       client_status: "Active",
       in_onboarding: true,
@@ -69,10 +69,10 @@ function createDeferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
-/** cockpit_csm_client_ads v3 for Greystone: one live campaign, one ad. */
+/** cockpit_csm_client_ads v3 for Duneworks: one live campaign, one ad. */
 const ADS_READ = {
-  taskId: "86exnk0v4",
-  clientName: "Greystone Contracting",
+  taskId: "fixture01",
+  clientName: "DUNEWORKS DESIGN",
   start: "2026-09-01",
   end: "2026-09-30",
   at: "2026-10-13T09:00:00Z",
@@ -84,10 +84,10 @@ const ADS_READ = {
   feedLast: "2026-10-12",
   campaigns: [
     {
-      name: "Greystone | Leads",
+      name: "Duneworks | Leads",
       metaCampaignId: "111",
       accountId: "999",
-      accountName: "greystone ads",
+      accountName: "duneworks ads",
       currency: "USD",
       budgetDaily: 30,
       budgetLevel: "campaign",
@@ -111,7 +111,7 @@ const ADS_READ = {
     {
       id: "5001",
       name: "Villas",
-      campaignName: "Greystone | Leads",
+      campaignName: "Duneworks | Leads",
       status: "ACTIVE",
       effectiveStatus: "ACTIVE",
     },
@@ -121,7 +121,7 @@ const ADS_READ = {
       id: "7001",
       name: "Villa reel",
       adsetId: "5001",
-      campaignName: "Greystone | Leads",
+      campaignName: "Duneworks | Leads",
       status: "ACTIVE",
       effectiveStatus: "ACTIVE",
       accountId: "999",
@@ -130,7 +130,7 @@ const ADS_READ = {
   rows: [
     {
       date: "2026-09-10",
-      campaignName: "Greystone | Leads",
+      campaignName: "Duneworks | Leads",
       adSetName: "Villas",
       adName: "Villa reel",
       adId: "7001",
@@ -155,8 +155,8 @@ const eodOpens: any[] = [];
 const EOD_CALLS = [
   {
     id: 7,
-    taskId: "86exnk0v4",
-    clientName: "Greystone Contracting",
+    taskId: "fixture01",
+    clientName: "DUNEWORKS DESIGN",
     startsAt: "2026-10-26T08:00:00Z",
     summary:
       "## Meeting Purpose\n\n[Plan the villa shoot for next week.](https://fathom.video/share/x) Then more.",
@@ -184,8 +184,8 @@ const requestRow = (over: Record<string, unknown>) => ({
   typeLabel: "General tech request",
   team: "tech",
   teamLabel: "Operations / Tech",
-  clientTaskId: "86exnk0v4",
-  clientName: "Greystone Contracting",
+  clientTaskId: "fixture01",
+  clientName: "DUNEWORKS DESIGN",
   requesterLabel: "the CSM",
   mine: true,
   dueOn: null,
@@ -201,7 +201,7 @@ const requestRow = (over: Record<string, unknown>) => ({
       part: "main",
       listName: "Operations / Tech",
       teamLabel: "Operations / Tech",
-      taskName: "Greystone Contracting - General tech request",
+      taskName: "DUNEWORKS DESIGN - General tech request",
       owner: { label: "the systems manager", how: "rule", note: null },
       state: "delivered",
       error: null,
@@ -226,7 +226,7 @@ const myRequestRows = [
         part: "tech",
         listName: "Operations / Tech",
         teamLabel: "Operations / Tech",
-        taskName: "Greystone Contracting - Client pause (Tech)",
+        taskName: "DUNEWORKS DESIGN - Client pause (Tech)",
         owner: { label: "the systems manager", how: "rule", note: null },
         state: "failed",
         error: "ClickUp refused the template.",
@@ -423,11 +423,11 @@ const mockClient: any = {
     if (name === "cockpit_blueprint_read") {
       return Promise.resolve({
         data: {
-          rows: (_args.p_task_ids as string[]).includes("86exnk0v4")
+          rows: (_args.p_task_ids as string[]).includes("fixture01")
             ? [
                 {
-                  taskId: "86exnk0v4",
-                  clientName: "Greystone Contracting",
+                  taskId: "fixture01",
+                  clientName: "DUNEWORKS DESIGN",
                   parts: {
                     "1": {
                       firstAt: "2026-10-05T07:12:00Z",
@@ -509,9 +509,9 @@ const mockClient: any = {
         data: {
           clients: [
             {
-              taskId: "86exnk0v4",
-              locationId: "loc-greystone",
-              clientName: "Greystone Contracting",
+              taskId: "fixture01",
+              locationId: "loc-duneworks",
+              clientName: "DUNEWORKS DESIGN",
               callers: [
                 { email: "caller@example.test", name: "Example Caller" },
               ],
@@ -534,11 +534,11 @@ const mockClient: any = {
           note: null,
           dayStart: Date.now() - 60 * 60_000,
           taskId: _args.p_task_id,
-          clientName: "Greystone Contracting",
+          clientName: "DUNEWORKS DESIGN",
           threads: [
             {
               threadId: "wa-1",
-              name: "Omar Greystone",
+              name: "Omar Duneworks",
               isGroup: false,
               archived: false,
               awaitingUs: true,
@@ -883,13 +883,13 @@ const SECTIONS = [
   "eod",
 ] as const;
 
-/** Greystone Contracting in the fixture: an onboarding client. */
-const GREYSTONE = "86exnk0v4";
+/** DUNEWORKS DESIGN in the fixture: an onboarding client. */
+const DUNEWORKS = "fixture01";
 /** MOFAG in the fixture: commitments from a call, and a report due. */
 const MOFAG = "86exr5zcm";
 
-/** The page for one section, the client page on Greystone. */
-const pageFor = (section: string, clientKey = GREYSTONE) =>
+/** The page for one section, the client page on Duneworks. */
+const pageFor = (section: string, clientKey = DUNEWORKS) =>
   createElement(CsmPage, {
     section: section as never,
     ...(section === "client" ? { clientKey } : {}),
@@ -934,7 +934,7 @@ for (const section of SECTIONS) {
 async function renderSection(
   section: string,
   url = "/",
-  clientKey = GREYSTONE,
+  clientKey = DUNEWORKS,
 ): Promise<string> {
   const host = win.document.createElement("div");
   win.document.body.appendChild(host);
@@ -1448,7 +1448,7 @@ test("the diagnosis footer says the gates and the 60% line, and the watch line r
   profileDeferred = null;
   try {
     const page = diagnosisText(
-      await renderSection("client", `/clients/${GREYSTONE}`),
+      await renderSection("client", `/clients/${DUNEWORKS}`),
     );
     expect(page).toContain(
       `Lines: cost per lead under $15 · cost per booking under $60 · a quarter of leads booked · show rate (${AIM}; ${SHOW_RATE_GOOD}% is the line, under it is a watch, not a fix) · a fifth of attended closed. Fixes come from Diagnosing & Fixing Acquisition Constraints, one leak at a time.`,
@@ -1476,7 +1476,7 @@ test("the diagnosis footer says the gates and the 60% line, and the watch line r
       },
     });
     const watched = diagnosisText(
-      await renderSection("client", `/clients/${GREYSTONE}`),
+      await renderSection("client", `/clients/${DUNEWORKS}`),
     );
     expect(watched).toContain(
       "Watch: Show rate is 50%, under the 60% line. 50% of appointments with an outcome were no-shows; confirmation discipline fixes it, not more leads.",
@@ -1519,7 +1519,7 @@ test("the day blocks read in order and the quiet screens stay quiet", async () =
   expect(start).toContain("File my end of day");
   const list = await renderSection("clients");
   expect(list).not.toContain("Onboarding, get them live");
-  expect(list).toContain("Greystone Contracting");
+  expect(list).toContain("DUNEWORKS DESIGN");
   // End of day is the report only.
   const eod = await renderSection("eod");
   expect(eod).not.toContain("Onboarding, get them live");
@@ -1569,11 +1569,11 @@ test("an onboarding client's row and page show its onboarding steps", async () =
     });
     await settle();
     const row = [...host.querySelectorAll("a")].find(a =>
-      (a.textContent ?? "").includes("Greystone Contracting"),
+      (a.textContent ?? "").includes("DUNEWORKS DESIGN"),
     );
     expect(row).toBeDefined();
     // The row opens the client's own page.
-    expect(row?.getAttribute("href")).toBe(`/clients/${GREYSTONE}`);
+    expect(row?.getAttribute("href")).toBe(`/clients/${DUNEWORKS}`);
     // The forms' line on the row.
     expect(row?.textContent).toContain("Onboarding form");
     expect(row?.textContent).toContain("Kickoff");
@@ -1587,7 +1587,7 @@ test("an onboarding client's row and page show its onboarding steps", async () =
       root2.render(
         createElement(
           MemoryRouter,
-          { initialEntries: [`/clients/${GREYSTONE}?tab=onboarding`] },
+          { initialEntries: [`/clients/${DUNEWORKS}?tab=onboarding`] },
           pageFor("client"),
         ),
       );
@@ -1679,9 +1679,9 @@ test("an onboarding client's row and page show its onboarding steps", async () =
         ),
       ).toBeTruthy();
       await reactAct(async () => fills[0]?.click());
-      expect(opened).toEqual([["", "mahara-form-86exnk0v4-kickoff"]]);
+      expect(opened).toEqual([["", "mahara-form-fixture01-kickoff"]]);
       expect(replaced).toEqual([
-        "/client-success/clients/86exnk0v4/forms/kickoff",
+        "/client-success/clients/fixture01/forms/kickoff",
       ]);
       // A window of its own, so Zoom can share the form alone.
       expect(features[0]).toMatch(/^popup,width=\d+,height=\d+/);
@@ -1707,8 +1707,8 @@ test("an onboarding client's row and page show its onboarding steps", async () =
 test("a client's page has one booking button, the actions and four tabs", async () => {
   profileDeferred = null;
   try {
-    const text = await renderSection("client", `/clients/${GREYSTONE}`);
-    expect(text).toContain("Greystone Contracting");
+    const text = await renderSection("client", `/clients/${DUNEWORKS}`);
+    expect(text).toContain("DUNEWORKS DESIGN");
     expect(text).toContain("All clients");
     expect(text.match(/Book a call/g)?.length).toBe(1);
     expect(text).toContain("Or send the booking link");
@@ -1743,12 +1743,12 @@ test("a client's page has one booking button, the actions and four tabs", async 
     // The client's WhatsApp for the day, with the reply box under it.
     expect(text).toContain("Can we move the shoot to Thursday?");
     expect(text).toContain("Waiting on us");
-    expect(text).toContain("Send to Omar Greystone");
+    expect(text).toContain("Send to Omar Duneworks");
     expect(text).toContain("Today: 1 from them, 0 from us");
     // Results: the period and the report at the top.
     const results = await renderSection(
       "client",
-      `/clients/${GREYSTONE}?tab=results&period=lastMonth`,
+      `/clients/${DUNEWORKS}?tab=results&period=lastMonth`,
     );
     expect(results).toContain("Print report");
     expect(results).toContain("Write the Google Doc");
@@ -1843,7 +1843,7 @@ test("the header's Join stays while a call runs, after the next call has moved o
   };
   // The store's read carries the booking to join beside the next call.
   const row = withCallSummary(
-    { taskId: GREYSTONE } as Record<string, unknown>,
+    { taskId: DUNEWORKS } as Record<string, unknown>,
     summary,
     "2026-10-06",
   );
@@ -1858,7 +1858,7 @@ test("the header's Join stays while a call runs, after the next call has moved o
   expect(
     "joinCallAt" in
       withCallSummary(
-        { taskId: GREYSTONE } as Record<string, unknown>,
+        { taskId: DUNEWORKS } as Record<string, unknown>,
         { nextCallAt: null },
         "2026-10-06",
       ),
@@ -1884,7 +1884,7 @@ test("the header's Join stays while a call runs, after the next call has moved o
   expect(joinLink(booking, at + 3_600_001)).toBeNull();
   expect(joinLink({ ...booking, joinCallUrl: null }, at)).toBeNull();
 
-  /** The header's meeting links for Greystone with these call fields. */
+  /** The header's meeting links for Duneworks with these call fields. */
   const joins = async (calls: Record<string, unknown>) => {
     const host = win.document.createElement("div");
     win.document.body.appendChild(host);
@@ -1892,7 +1892,7 @@ test("the header's Join stays while a call runs, after the next call has moved o
     currentSnapshot = {
       ...snapshot,
       clients: snapshot.clients.map((c: Record<string, unknown>) =>
-        c.taskId === GREYSTONE ? { ...c, ...calls } : c,
+        c.taskId === DUNEWORKS ? { ...c, ...calls } : c,
       ),
     };
     isSnapshotLoading = false;
@@ -1902,7 +1902,7 @@ test("the header's Join stays while a call runs, after the next call has moved o
         root.render(
           createElement(
             MemoryRouter,
-            { initialEntries: [`/clients/${GREYSTONE}`] },
+            { initialEntries: [`/clients/${DUNEWORKS}`] },
             pageFor("client"),
           ),
         );
@@ -2044,8 +2044,8 @@ test("the Ads tab shows the ads read only, and Results links to it", async () =>
     return (host.textContent ?? "").replace(/\s+/g, " ");
   };
   try {
-    const ads = await show(`/clients/${GREYSTONE}?tab=ads&period=lastMonth`);
-    expect(adsReads.at(-1)).toMatchObject({ p_task_id: GREYSTONE });
+    const ads = await show(`/clients/${DUNEWORKS}?tab=ads&period=lastMonth`);
+    expect(adsReads.at(-1)).toMatchObject({ p_task_id: DUNEWORKS });
     // Said once, in muted text: the media buyer makes the changes.
     expect(
       ads.match(/Read only: the media buyer makes every change/g)?.length,
@@ -2099,7 +2099,7 @@ test("the Ads tab shows the ads read only, and Results links to it", async () =>
 
     // Results: one line to the Ads tab, and the notes without system lines.
     const results = await show(
-      `/clients/${GREYSTONE}?tab=results&period=lastMonth`,
+      `/clients/${DUNEWORKS}?tab=results&period=lastMonth`,
     );
     expect(results).toContain("on the Ads tab");
     expect(results).not.toContain("Campaigns, ad sets and ads");
@@ -2156,7 +2156,7 @@ test("the Ads tab shows the ads read only, and Results links to it", async () =>
     try {
       // The same address in another order: a fresh page, not a re-render.
       const failed = await show(
-        `/clients/${GREYSTONE}?period=lastMonth&tab=results`,
+        `/clients/${DUNEWORKS}?period=lastMonth&tab=results`,
       );
       await settle();
       const now = (host.textContent ?? "").replace(/\s+/g, " ");
@@ -2182,7 +2182,7 @@ test("the Ads tab shows the ads read only, and Results links to it", async () =>
     // after the profile, not once without it and again with it.
     profileDeferred = createDeferred();
     adsReads.length = 0;
-    const waiting = await show(`/clients/${GREYSTONE}?tab=ads&period=all`);
+    const waiting = await show(`/clients/${DUNEWORKS}?tab=ads&period=all`);
     expect(adsReads).toHaveLength(0);
     expect(waiting).toContain("Loading the ads…");
     await reactAct(async () => profileDeferred?.resolve(withLost));
@@ -2194,7 +2194,7 @@ test("the Ads tab shows the ads read only, and Results links to it", async () =>
     // (The same address in another order: a fresh page, not a re-render.)
     profileDeferred = createDeferred();
     adsReads.length = 0;
-    await show(`/clients/${GREYSTONE}?period=all&tab=ads`);
+    await show(`/clients/${DUNEWORKS}?period=all&tab=ads`);
     expect(adsReads).toHaveLength(0);
     await reactAct(async () =>
       profileDeferred?.reject(new Error("The profile could not be read.")),
@@ -2354,7 +2354,7 @@ test("the EOD drafts the call summary from the day's calls and asks before repla
     },
     eodDecisions: [
       logged("MOFAG", "Held a call", "Walked through the October report"),
-      logged("Greystone Contracting", "Held a call", null),
+      logged("DUNEWORKS DESIGN", "Held a call", null),
       logged("MOFAG", "Upsell pitched", null),
     ],
     callHealth: [
@@ -2395,10 +2395,10 @@ test("the EOD drafts the call summary from the day's calls and asks before repla
 
     await reactAct(async () => button("Draft from today's calls")?.click());
     await reactAct(async () => button("Replace")?.click());
-    // In call order: the Greystone recording started before the MOFAG call.
+    // In call order: the Duneworks recording started before the MOFAG call.
     expect(box().value).toBe(
       [
-        "Greystone Contracting: Plan the villa shoot for next week.",
+        "DUNEWORKS DESIGN: Plan the villa shoot for next week.",
         "MOFAG: Walked through the October report",
       ].join("\n"),
     );
@@ -2453,11 +2453,11 @@ test("Today lists the requests you raised today, with their state and ClickUp li
 
 test("the client page's Ask a team is the request form, with the client fixed", async () => {
   requestFormProps = null;
-  const text = await renderSection("client", `/clients/${GREYSTONE}?act=task`);
+  const text = await renderSection("client", `/clients/${DUNEWORKS}?act=task`);
   expect(text).toContain("Ask a team");
   expect(requestFormProps).toEqual({
     source: "client_page",
-    presetClient: { taskId: GREYSTONE, name: "Greystone Contracting" },
+    presetClient: { taskId: DUNEWORKS, name: "DUNEWORKS DESIGN" },
     compact: true,
   });
   // The old ticket select and its button are gone; the reminder stays.
@@ -2497,7 +2497,7 @@ test("until requests open, the client page keeps the old Ask a team and AddTask'
     forgetWriterMode(mockClient);
     requestFormProps = null;
     sent.length = 0;
-    const page = await renderLive("client", `/clients/${GREYSTONE}?act=task`);
+    const page = await renderLive("client", `/clients/${DUNEWORKS}?act=task`);
     try {
       const text = page.text();
       // The decision-log ticket, exactly as on main.
@@ -2521,7 +2521,7 @@ test("until requests open, the client page keeps the old Ask a team and AddTask'
       expect(ticket).toMatchObject({
         kind: "ticket",
         department: "tech",
-        taskId: GREYSTONE,
+        taskId: DUNEWORKS,
         action: "Switch this campaign to a landing page",
       });
     } finally {
@@ -2598,7 +2598,7 @@ test("a request in ClickUp with a step the cockpit could not finish says what to
         {
           ...requestRow({}).parts[0],
           part: "tech",
-          taskName: "Greystone Contracting - Client pause (Tech)",
+          taskName: "DUNEWORKS DESIGN - Client pause (Tech)",
           error: refused,
         },
       ],
@@ -2672,7 +2672,7 @@ test("Log a call: Write 1-1 notes only opens the notes; Log the call without not
       root.render(
         createElement(
           MemoryRouter,
-          { initialEntries: [`/clients/${GREYSTONE}`] },
+          { initialEntries: [`/clients/${DUNEWORKS}`] },
           pageFor("client"),
         ),
       );
@@ -2710,7 +2710,7 @@ test("Log a call: Write 1-1 notes only opens the notes; Log the call without not
     await wait2b();
     const act = invoked.find(i => i.fn === "cockpit-csm-api");
     expect(act?.body?.operation).toBe("act");
-    expect(act?.body?.args).toMatchObject({ taskId: GREYSTONE, kind: "call" });
+    expect(act?.body?.args).toMatchObject({ taskId: DUNEWORKS, kind: "call" });
   } finally {
     win.open = open;
     await reactAct(async () => root.unmount());
@@ -2835,7 +2835,7 @@ test("dark until native: no Messages card or Client recaps at provider typeform;
     const dark = await render(
       "typeform",
       pageFor("client"),
-      `/clients/${GREYSTONE}`,
+      `/clients/${DUNEWORKS}`,
     );
     try {
       expect(watched.some(w => w.name === "cockpit_client_messages_read")).toBe(
@@ -2859,7 +2859,7 @@ test("dark until native: no Messages card or Client recaps at provider typeform;
     const live = await render(
       "native",
       pageFor("client"),
-      `/clients/${GREYSTONE}`,
+      `/clients/${DUNEWORKS}`,
     );
     try {
       expect(live.host.querySelector("#messages")).toBeTruthy();
