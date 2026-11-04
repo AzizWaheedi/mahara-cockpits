@@ -147,6 +147,7 @@ How to:
 ## Pages you reach from other pages
 
 - /clients/:key: one client's page. Open it from a Clients row or from the search box.
+- /clients/:key/research: the client's market research. Open "Open research" from "Market research" on the client's Onboarding tab. A completed run shows competitor candidates and links to the available report. Missing values say "Not checked". The CEO or an admin can use "Run research again" or mark a candidate "Not a competitor"; the server checks access. Research can be off or still in progress.
 - /clients/:key/proposals/:id: a proposal for one client. Open it from "Make a proposal" or the proposals card on the client's Money tab.
 - /clients/:key/present/offer/:offer: an offer deck. Open it from the Offers tab or the proposal flow.
 - /clients/:key/present/:deck: an onboarding, launch or Blueprint deck. Open it from "Present".
