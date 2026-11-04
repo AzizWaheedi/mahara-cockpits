@@ -37,6 +37,7 @@ import {
 } from "@/components/launch/LaunchLinks";
 import { Onboardings } from "@/components/Onboardings";
 import { RangePicker } from "@/components/RangePicker";
+import { StartedToday } from "@/components/StartedToday";
 import { StatusToggle } from "@/components/StatusToggle";
 import { TodayMeetings } from "@/components/TodayMeetings";
 import { TrackingIssues } from "@/components/TrackingIssues";
@@ -4035,6 +4036,7 @@ function Cockpit({ view }: { view: View }) {
             </table>
           </div>
 
+          {adsTab === "running" && <StartedToday />}
           {adsTab === "running" && (
             <ClientsNotListed
               range={globalRange}

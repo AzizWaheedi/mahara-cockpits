@@ -65,6 +65,7 @@ import {
 } from "./mediaNativeClient";
 import { readMediaStats } from "./mediaStatsClient";
 import { markStale, retryDelay, toError } from "./readHealth";
+import { readStartedToday } from "./startedToday";
 import { supabase } from "./supabase";
 import { api as swipeApi } from "./swipe";
 import {
@@ -396,6 +397,9 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
   // A client's totals over a range, stopped campaigns included (R8).
   if (domain === "stats" && sub === "clientRange")
     return readClientRange(supabase, args);
+  // Campaigns that started spending today, before the sync lists them.
+  if (domain === "stats" && sub === "startedToday")
+    return readStartedToday(supabase);
   if (MEDIA_READS.has(endpoint)) return mediaAction(endpoint, args);
   if (MEDIA_WRITES.has(endpoint))
     return mediaAction(endpoint, args, { apply: true });
