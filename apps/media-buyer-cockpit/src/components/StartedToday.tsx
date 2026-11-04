@@ -1,6 +1,15 @@
-import { money } from "@/components/ceo/format";
-import { api, useQueryState } from "@/lib/cockpitApi";
 import type { StartedTodayRead, StartedTodayRow } from "@/lib/startedToday";
+
+/**
+ * Campaigns that started spending today sit in the Ads list as ordinary rows,
+ * in their client's group and in name order, with a grey "Started today" line
+ * under the name (Muhammed, 2026-11-04). The list's own numbers start after a
+ * full day of spend, so these rows carry today's figures from Meta's hourly
+ * read until the sync lists them after midnight.
+ */
+
+// biome-ignore lint/suspicious/noExplicitAny: the board's rows are untyped
+type Campaign = any;
 
 const time = new Intl.DateTimeFormat("en-GB", {
   timeZone: "Asia/Kuwait",
@@ -8,92 +17,127 @@ const time = new Intl.DateTimeFormat("en-GB", {
   minute: "2-digit",
 });
 
-function spendText(r: StartedTodayRow): string {
-  if (typeof r.spendUsd === "number") {
-    const usd = money(r.spendUsd);
-    return r.currency && r.currency !== "USD"
-      ? `${usd} (${r.currency} ${r.spend.toFixed(2)})`
-      : usd;
-  }
-  return `${r.currency ?? ""} ${r.spend.toFixed(2)}`.trim();
-}
+const usd = (n: number, d = 0) =>
+  `$${n.toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: d })}`;
+
+const norm = (s: unknown) =>
+  String(s ?? "")
+    .trim()
+    .toLowerCase();
 
 /**
- * Campaigns that started spending today, before the Ads list has them: the
- * list shows a campaign once it has a full day of spend. Each row carries
- * today's figures and the ClickUp card when the ads board has one.
+ * Board-shaped rows for today's new campaigns. Each takes the client name the
+ * list already uses for that client (same ad account first, then the same
+ * name in any case), so it lands under the existing client header.
  */
-export function StartedTodayList({
-  read,
-  error,
+export function startedTodayCampaigns(
+  read: StartedTodayRead | undefined,
+  campaigns: Campaign[],
+): Campaign[] {
+  if (!read) return [];
+  const listed = new Set(campaigns.map(c => norm(c.campaignName)));
+  return read.rows
+    .filter(r => !listed.has(norm(r.campaignName)))
+    .map(r => {
+      const own = r.clientName ?? r.accountName ?? "Unassigned";
+      const peer =
+        campaigns.find(c => String(c.metaAccountId ?? "") === r.accountId) ??
+        campaigns.find(c => norm(c.clientName ?? c.accountName) === norm(own));
+      return {
+        _id: `started-today-${r.campaignId}`,
+        campaignName: r.campaignName,
+        clientName: peer ? (peer.clientName ?? peer.accountName) : own,
+        clientTag: peer?.clientTag,
+        accountName: r.accountName,
+        metaAccountId: r.accountId,
+        metaCampaignId: r.campaignId,
+        startedToday: r,
+        feedAt: read.feedAt,
+      };
+    });
+}
+
+const na = (title: string) => (
+  <span className="font-normal text-muted-foreground" title={title}>
+    n/a
+  </span>
+);
+
+/** The eight cells of a started-today row, in the board's column order. */
+export function StartedTodayCells({
+  row,
+  feedAt,
 }: {
-  read: StartedTodayRead | undefined;
-  error: Error | null;
+  row: StartedTodayRow;
+  feedAt: string | null;
 }) {
-  if (error)
-    return (
-      <p className="mt-6 border-t pt-4 text-xs text-muted-foreground">
-        Campaigns that started today could not be read. Reload the page to try
-        again.
-      </p>
-    );
-  if (!read || read.rows.length === 0) return null;
-  const at = read.feedAt ? time.format(new Date(read.feedAt)) : null;
+  const at = feedAt ? time.format(new Date(feedAt)) : null;
+  const cpl =
+    typeof row.spendUsd === "number" && row.leads > 0
+      ? usd(row.spendUsd / row.leads, 2)
+      : null;
+  const later = "Read once the campaign has a full day of spend.";
   return (
-    <div className="mt-6 border-t pt-4">
-      <h3 className="text-sm font-semibold">
-        Started today{" "}
-        <span className="font-normal text-muted-foreground">
-          {read.rows.length}
+    <>
+      <td className="py-2.5 pr-2">
+        <span className="font-bold" dir="auto">
+          {row.campaignName}
         </span>
-      </h3>
-      <p className="mt-1 text-xs text-muted-foreground">
-        {
-          "These campaigns started spending today. The list above shows a campaign once it has a full day of spend, so they join it after midnight with their 7-day numbers. Today's figures come from Meta's hourly read"
-        }
-        {at ? ` at ${at}` : ""}.
-      </p>
-      <ul className="mt-3 divide-y text-sm">
-        {read.rows.map(r => (
-          <li
-            key={r.campaignId}
-            className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5"
-          >
-            <span className="min-w-0 font-medium" dir="auto">
-              {r.campaignName}
-            </span>
-            <span className="text-xs text-muted-foreground" dir="auto">
-              {r.clientName ?? r.accountName}
-              {` · ${spendText(r)}`}
-              {` · ${r.leads} ${r.leads === 1 ? "lead" : "leads"}`}
-              {` · ${r.ads} ${r.ads === 1 ? "ad" : "ads"}`}
-            </span>
-            {r.card === null ? (
-              <span className="text-xs text-amber-700 dark:text-amber-400">
-                No card on the ads board yet
-              </span>
-            ) : r.card.url ? (
+        <div
+          className="text-xs text-muted-foreground"
+          title="The list's 7-day numbers start after a full day of spend, so this row shows today's figures until midnight."
+        >
+          Started today
+          {at ? ` · today's figures from Meta at ${at}` : ""}
+          {row.card?.url ? (
+            <>
+              {" · "}
               <a
-                href={r.card.url}
+                href={row.card.url}
                 target="_blank"
                 rel="noreferrer"
-                className="text-xs text-muted-foreground underline-offset-2 hover:underline sm:ml-auto"
+                className="underline-offset-2 hover:underline"
               >
-                ClickUp card{r.card.adStatus ? ` · ${r.card.adStatus}` : ""}
+                ClickUp card
               </a>
-            ) : (
-              <span className="text-xs text-muted-foreground sm:ml-auto">
-                ClickUp card{r.card.adStatus ? ` · ${r.card.adStatus}` : ""}
-              </span>
-            )}
-          </li>
-        ))}
-      </ul>
-    </div>
+            </>
+          ) : null}
+        </div>
+        {row.card === null && (
+          <div className="text-xs text-amber-700 dark:text-amber-400">
+            No card on the ads board yet
+          </div>
+        )}
+      </td>
+      <td className="px-2 tabular-nums font-semibold">
+        {typeof row.spendUsd === "number" ? usd(row.spendUsd) : na(later)}
+        {row.currency && row.currency !== "USD" && (
+          <div className="text-xs font-normal text-muted-foreground">
+            {row.currency} {row.spend.toFixed(2)}
+          </div>
+        )}
+      </td>
+      <td className="px-2 tabular-nums font-semibold">{row.leads}</td>
+      <td className="px-2 tabular-nums font-semibold">
+        {cpl ?? na("No lead yet today.")}
+      </td>
+      <td className="px-2 tabular-nums">{na(later)}</td>
+      <td className="px-2 tabular-nums">{na(later)}</td>
+      <td className="px-2 tabular-nums">{na(later)}</td>
+      <td className="px-2 text-xs text-muted-foreground" title={later}>
+        Too early to call
+      </td>
+    </>
   );
 }
 
-export function StartedToday() {
-  const q = useQueryState<StartedTodayRead>(api.stats.startedToday, {});
-  return <StartedTodayList read={q.data} error={q.error} />;
+/** Said under the board when today's new campaigns could not be read. */
+export function StartedTodayError({ error }: { error: Error | null }) {
+  if (!error) return null;
+  return (
+    <p className="mt-3 text-xs text-muted-foreground">
+      Campaigns that started today could not be read. Reload the page to try
+      again.
+    </p>
+  );
 }
