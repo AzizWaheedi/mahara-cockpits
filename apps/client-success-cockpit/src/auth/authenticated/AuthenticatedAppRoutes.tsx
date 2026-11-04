@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router";
 import { AdBillingReviewPage } from "@/components/AdBillingReview";
 import { AppLayout } from "@/components/AppLayout";
+import { MarketResearchPage } from "@/components/MarketResearch";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { PublicLayout } from "@/components/PublicLayout";
 import { PublicOnlyRoute } from "@/components/PublicOnlyRoute";
@@ -25,7 +26,6 @@ import {
   TodayPage,
 } from "@/pages";
 import { InvoicesPage } from "@/pages/InvoicesPage";
-import { MarketResearchPage } from "@/components/MarketResearch";
 import { DeckRouteBoundary } from "@/present/DeckBoundary";
 
 /** The client decks, loaded only when a deck window opens. */
@@ -228,7 +228,10 @@ export function AuthenticatedRoutes() {
             <Route path="/inbox" element={<InboxPage />} />
             <Route path="/clients" element={<ClientsPage />} />
             <Route path="/clients/:key" element={<ClientPage />} />
-            <Route path="/clients/:key/research" element={<MarketResearchPage />} />
+            <Route
+              path="/clients/:key/research"
+              element={<MarketResearchPage />}
+            />
             <Route
               path="/clients/:key/proposals/:id"
               element={
