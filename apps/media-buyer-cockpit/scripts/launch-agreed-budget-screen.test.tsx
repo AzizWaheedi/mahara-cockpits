@@ -8,8 +8,10 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
+  BudgetScopeNote,
   BudgetSources,
   budgetLimitWords,
+  waitingBudgetWords,
 } from "../src/components/launch/BudgetSources";
 import { launchFixture } from "../src/dev/launchFixture";
 import { agreedBudget, clientAgreedBudget } from "../src/lib/launchModel";
@@ -146,14 +148,32 @@ test("a Blueprint draft changed after the send and a kickoff under the floor say
 
 test("the limit is said with its reason", () => {
   expect(budgetLimitWords(79.98, 39.99)).toBe(
-    "Limit $79.98 a day, twice the agreed budget.",
+    "Campaign limit $79.98 a day, twice the agreed budget.",
   );
   expect(budgetLimitWords(100, null)).toBe(
-    "Limit $100 a day until a budget is agreed.",
+    "Campaign limit $100 a day until a budget is agreed.",
   );
-  // The founder's seat: the limit alone.
-  expect(budgetLimitWords(5000, 40)).toBe("Limit $5,000 a day.");
+  // The $5,000 ceiling can also be the founder limit, so do not attribute it
+  // to twice the agreement even when those numbers happen to match.
+  for (const agreed of [40, 2500, 3000]) {
+    expect(budgetLimitWords(5000, agreed)).toBe("Campaign limit $5,000 a day.");
+  }
   expect(budgetLimitWords(undefined, 40)).toBeNull();
+});
+
+test("the all-ads kickoff budget is distinguished from the campaign-only limit", () => {
+  const h = html(<BudgetScopeNote />);
+  expect(text(h)).toContain("The kickoff budget is for all the client's ads.");
+  expect(text(h)).toContain("This limit checks this campaign only.");
+  expect(text(h)).toContain("across the client's accounts and ad platforms");
+  expect(h).toContain("data-budget-scope");
+});
+
+test("unknown or unsupported budget values do not claim an ad-set budget", () => {
+  expect(waitingBudgetWords(25)).toBe("$25.00 a day");
+  for (const value of [null, undefined, NaN, 0, -1]) {
+    expect(waitingBudgetWords(value)).toBe("Budget not shown. Check Meta");
+  }
 });
 
 test("the harness fixture's client reads its Blueprint, kickoff and sale", () => {

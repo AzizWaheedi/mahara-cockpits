@@ -88,11 +88,29 @@ export function budgetLimitWords(
   if (cap == null || !Number.isFinite(cap)) return null;
   const why =
     agreedUsd != null && agreedUsd > 0
-      ? cap === Math.min(5000, agreedUsd * 2)
+      ? cap < 5000 && cap === agreedUsd * 2
         ? ", twice the agreed budget"
         : ""
       : cap === 100
         ? " until a budget is agreed"
         : "";
-  return `Limit ${usdWords(cap)} a day${why}.`;
+  return `Campaign limit ${usdWords(cap)} a day${why}.`;
+}
+
+/** The kickoff amount covers the client's full ad budget, while the current check is per campaign. */
+export function BudgetScopeNote() {
+  return (
+    <p className="launch-budget-scope" data-budget-scope>
+      The kickoff budget is for all the client's ads. This limit checks this
+      campaign only. Before switching on, check the combined daily budget across
+      the client's accounts and ad platforms.
+    </p>
+  );
+}
+
+/** Missing campaign-level budget can mean an ad-set or lifetime budget, or an unsupported currency. */
+export function waitingBudgetWords(usd: number | null | undefined): string {
+  return typeof usd === "number" && Number.isFinite(usd) && usd > 0
+    ? `$${usd.toFixed(2)} a day`
+    : "Budget not shown. Check Meta";
 }
