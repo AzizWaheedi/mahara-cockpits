@@ -47,6 +47,11 @@ HERMES_HOME = os.environ.get("HERMES_HOME", "/docker/hermes-agent-ff5p/data")
 HERMES_SRC = os.environ.get("HERMES_SRC", "/opt/hermes-host")
 KEYS_FILES = (os.path.join(HERMES_HOME, "bibi/api-keys.env"), "/opt/data/bibi/api-keys.env")
 ASK_AI_CRON_NAME = "Cockpit Ask AI"
+# The chat model, ahead of the cron job's model (gpt-6-astra, kept as the first
+# backup). On 4 Nov 2026 gpt-6-sol answered the 30 how-to test questions as
+# well as astra in 4.1 s on average instead of 6.7 s, with shorter answers.
+# gpt-6-terra is not offered on the ChatGPT Codex login.
+CHAT_MODEL: tuple[str, str] | None = ("openai-codex", "gpt-6-sol")
 STATE_DIR = os.environ.get("ASKAI_STATE_DIR", os.path.expanduser("~/.cockpit-ask-ai"))
 KUWAIT = timezone(timedelta(hours=3))
 LEASE_SECONDS = 180
@@ -80,8 +85,8 @@ def supabase(e: dict[str, str]) -> tuple[str, str]:
 
 
 def model_chain() -> list[tuple[str, str]]:
-    """The Ask AI cron job's model first, then Hermes' fallback order. Read fresh each cycle."""
-    chain: list[tuple[str, str]] = []
+    """CHAT_MODEL first, then the Ask AI cron job's model, then Hermes' fallback order. Read fresh each cycle."""
+    chain: list[tuple[str, str]] = [CHAT_MODEL] if CHAT_MODEL else []
     try:
         jobs = json.load(open(os.path.join(HERMES_HOME, "cron/jobs.json")))
         jobs = jobs.get("jobs", jobs) if isinstance(jobs, dict) else jobs

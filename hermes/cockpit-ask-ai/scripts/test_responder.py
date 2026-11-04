@@ -182,10 +182,18 @@ class TestModelChain(unittest.TestCase):
         with open(os.path.join(self.home, name), "w", encoding="utf-8") as f:
             f.write(text)
 
-    def chain(self):
-        with patch.object(responder, "HERMES_HOME", self.home), redirect_stdout(io.StringIO()), warnings.catch_warnings():
+    def chain(self, chat_model=None):
+        with patch.object(responder, "HERMES_HOME", self.home), patch.object(responder, "CHAT_MODEL", chat_model), redirect_stdout(io.StringIO()), warnings.catch_warnings():
             warnings.simplefilter("ignore", ResourceWarning)
             return responder.model_chain()
+
+    def test_chat_model_leads_and_is_not_repeated(self):
+        self.write("cron/jobs.json", json.dumps({"jobs": [{"name": responder.ASK_AI_CRON_NAME, "provider": "p1", "model": "m1"}]}))
+        self.write("config.yaml", "fallback_providers:\n  - provider: c0\n    model: chat\n  - provider: p2\n    model: m2\n")
+        self.assertEqual(self.chain(("c0", "chat")), [("c0", "chat"), ("p1", "m1"), ("p2", "m2")])
+
+    def test_shipped_chat_model_is_gpt_6_sol(self):
+        self.assertEqual(responder.CHAT_MODEL, ("openai-codex", "gpt-6-sol"))
 
     def test_cron_job_model_leads_then_fallbacks_without_duplicates(self):
         self.write(
