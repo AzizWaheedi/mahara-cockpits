@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { api, useAction } from "@/lib/social";
 
 import { useConfirm } from "./Confirm";
@@ -149,10 +150,7 @@ export function AccountsPicker({
         <span className="mb-1.5 block text-sm font-medium">
           Instagram and Facebook
         </span>
-        <p className="flex items-center gap-2 text-xs text-muted-foreground">
-          <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-          Loading the Pages
-        </p>
+        <LoadingSkeleton variant="list" rows={3} label="Loading the Pages" />
       </div>
     );
 

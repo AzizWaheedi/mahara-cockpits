@@ -9,7 +9,6 @@ import {
   ChevronDown,
   ChevronRight,
   CircleDashed,
-  Loader2,
   TriangleAlert,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
@@ -17,6 +16,7 @@ import { AppointmentFeedback } from "@/components/AppointmentFeedback";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { date, isNum, money, shortDate } from "@/components/ceo/format";
 import { KICKER, Kicker } from "@/components/ceo/Kicker";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -1087,10 +1087,13 @@ export function ClientPanel({
         {!data ? (
           // A failed read with nothing kept says so above, with Try again.
           page.status === "loading" || page.status === "idle" ? (
-            <p className="flex items-center gap-2 border-t px-5 py-6 text-sm text-muted-foreground sm:px-6">
-              <Loader2 aria-hidden className="size-4 animate-spin" />
-              Reading the appointments, the ads and the levers
-            </p>
+            <div className="border-t px-5 py-6 sm:px-6">
+              <LoadingSkeleton
+                variant="detail"
+                label="Reading the appointments, the ads and the levers"
+                rows={3}
+              />
+            </div>
           ) : null
         ) : (
           <>

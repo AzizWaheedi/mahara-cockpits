@@ -9,6 +9,7 @@ import {
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Chip, Dot, ExtLink, Kicker, Pill } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -449,9 +450,9 @@ export function NoticesRouting({
       )}
 
       {read === null ? (
-        <p className="mt-4 text-sm text-muted-foreground" role="status">
-          Reading the notice settings…
-        </p>
+        <div className="mt-4">
+          <LoadingSkeleton variant="form" label="Reading the notice settings" />
+        </div>
       ) : "error" in read ? (
         // One thing to do: read again, then the tech lead. The cause is a
         // short clause with no advice of its own (readProblem).

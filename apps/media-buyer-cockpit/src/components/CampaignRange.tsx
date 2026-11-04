@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { shortDate } from "@/components/ceo/format";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { bookingCostCell } from "@/lib/booking-cost";
 import { api, useQuery } from "@/lib/cockpitApi";
 import {
@@ -191,9 +192,11 @@ export function CampaignRange({
       )}
 
       {data === undefined && (
-        <div className="rounded-lg bg-background/60 p-3 text-sm text-muted-foreground">
-          Loading {range.label.toLowerCase()}…
-        </div>
+        <LoadingSkeleton
+          variant="table"
+          label={`Loading ${range.label.toLowerCase()}`}
+          rows={4}
+        />
       )}
 
       {data && !data.hasData && (

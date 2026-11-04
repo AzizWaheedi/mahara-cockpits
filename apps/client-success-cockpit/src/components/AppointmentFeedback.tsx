@@ -1,5 +1,6 @@
 import { Clock3, MessageSquare, RefreshCw } from "lucide-react";
 import { useId, useState } from "react";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import {
   FEEDBACK_PAGE_SIZE,
@@ -242,9 +243,12 @@ function FeedbackBody({
         </p>
       ) : null}
       {read.enabled && read.status === "loading" ? (
-        <p role="status" className="mt-4 text-sm text-muted-foreground">
-          Reading client feedback…
-        </p>
+        <LoadingSkeleton
+          variant="list"
+          label="Reading client feedback"
+          rows={3}
+          className="mt-4"
+        />
       ) : null}
       {read.status === "error" ? (
         <div role="alert" className="mt-4 rounded-xl bg-muted/40 p-3 text-sm">

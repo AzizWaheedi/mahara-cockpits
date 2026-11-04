@@ -5,6 +5,7 @@ import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { dateTime, shortDate } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip, type StatusTone } from "@/components/ceo/StatusChip";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import {
   type FormsKeyProvider,
@@ -346,10 +347,11 @@ export function FormsConnections({
           </Button>
         </div>
       ) : !status ? (
-        <p className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" aria-hidden />
-          Reading the connections
-        </p>
+        <LoadingSkeleton
+          variant="list"
+          label="Reading the connections"
+          rows={3}
+        />
       ) : (
         <div className="divide-y">
           {rows.slice(0, 1).map(r => (

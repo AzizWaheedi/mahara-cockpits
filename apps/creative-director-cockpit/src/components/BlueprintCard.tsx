@@ -10,6 +10,7 @@ import {
 import { Link } from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import {
@@ -331,9 +332,9 @@ function Shell({
         {actions}
       </div>
       {loading ? (
-        <p className="mt-3 text-sm text-muted-foreground">
-          Reading the Blueprint…
-        </p>
+        <div className="mt-3">
+          <LoadingSkeleton variant="detail" label="Reading the Blueprint" />
+        </div>
       ) : (
         <div className="mt-3">{children}</div>
       )}

@@ -17,6 +17,7 @@ import {
 } from "react";
 import { Link, useParams } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -247,10 +248,12 @@ export function MeetingPage() {
         {error ? (
           <p className="mt-4 text-sm text-destructive">{error}</p>
         ) : (
-          <p className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" aria-hidden /> Opening the
-            meeting
-          </p>
+          <LoadingSkeleton
+            variant="detail"
+            label="Opening the meeting"
+            rows={3}
+            className="mt-4"
+          />
         )}
       </div>
     );
@@ -448,10 +451,12 @@ export function MeetingPage() {
         fallback={
           <section className="rounded-2xl border bg-card p-4 sm:p-6">
             <h2 className="text-[15px] font-semibold">The doc</h2>
-            <p className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" aria-hidden /> Opening
-              the doc
-            </p>
+            <LoadingSkeleton
+              variant="detail"
+              label="Opening the doc"
+              rows={3}
+              className="mt-3"
+            />
           </section>
         }
       >

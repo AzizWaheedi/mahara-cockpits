@@ -19,6 +19,7 @@ import { KICKER } from "@/components/ceo/Kicker";
 import { Na } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip, StatusDot } from "@/components/ceo/StatusChip";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { api, useAction } from "@/lib/cockpitApi";
@@ -565,10 +566,7 @@ export function GoalsTab({ sections, goTab }: CeoTabProps) {
   if (busy && !board)
     return (
       <SectionCard title="This month's plan" order={0}>
-        <p className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" aria-hidden />
-          Reading the plan
-        </p>
+        <LoadingSkeleton variant="page" label="Reading the plan" rows={4} />
       </SectionCard>
     );
 

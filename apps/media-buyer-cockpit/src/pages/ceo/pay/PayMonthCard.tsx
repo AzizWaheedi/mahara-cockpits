@@ -27,6 +27,7 @@ import { KICKER } from "@/components/ceo/Kicker";
 import { Na } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip } from "@/components/ceo/StatusChip";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import {
@@ -2092,10 +2093,7 @@ export function ProposedFromWins({
     );
   else if (!data)
     inner = (
-      <p className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" aria-hidden />
-        Reading the wins
-      </p>
+      <LoadingSkeleton variant="list" label="Reading the wins" rows={5} />
     );
   else if (!data.on)
     inner = (

@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { shortDate } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -383,10 +384,7 @@ export function ScorecardTemplates({ order }: { order?: number }) {
           <p className="text-sm text-[var(--ceo-critical)]">{error}</p>
         ) : null}
         {rows === null ? (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" aria-hidden />
-            Reading them
-          </p>
+          <LoadingSkeleton variant="list" label="Reading them" rows={4} />
         ) : rows.length ? (
           <ul className="-mx-2 divide-y">
             {rows.map(t => (

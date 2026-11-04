@@ -1,14 +1,8 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useId, useMemo, useState } from "react";
 import { Link } from "react-router";
-import {
-  chip,
-  Empty,
-  Page,
-  PageHeader,
-  Problem,
-  Spinner,
-} from "../components/bits";
+import { chip, Empty, Page, PageHeader, Problem } from "../components/bits";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { AnimatedSelect } from "../components/ui/animated-select";
 import { useAllAssets, useJobs, useStills } from "../lib/data";
 import { GAP_ORDER, gapOf, jobsWithoutFootage } from "../lib/footageGaps";
@@ -158,7 +152,7 @@ export default function VideosPage() {
         </p>
       ) : null}
       {assets.loading && !assets.data ? (
-        <Spinner what="Reading the footage" />
+        <LoadingSkeleton variant="media" label="Reading the footage" />
       ) : null}
       {notReadShown.length ? (
         <NotRead

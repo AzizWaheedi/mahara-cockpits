@@ -15,6 +15,7 @@ import {
   SourceNote,
   StatusChip,
 } from "../components/kit";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { GradeChip } from "../components/ReviewCard";
 import {
   PAGE,
@@ -230,7 +231,7 @@ function Calls({
       {calls.error ? (
         <Failed what="The calls" error={calls.error} retry={calls.reload} />
       ) : calls.loading && !rows.length ? (
-        <p className="muted text-sm">Reading the calls…</p>
+        <LoadingSkeleton variant="list" label="Reading the calls" />
       ) : !rows.length ? (
         <section className="panel">
           <EmptyState
@@ -393,7 +394,7 @@ function Reviews({
           retry={reviews.reload}
         />
       ) : reviews.loading && !rows.length ? (
-        <p className="muted text-sm">Reading the reviews…</p>
+        <LoadingSkeleton variant="list" label="Reading the reviews" />
       ) : !rows.length ? (
         <section className="panel">
           <EmptyState
@@ -510,7 +511,7 @@ function AzizReviews({ me }: { me: Me }) {
           retry={reviews.reload}
         />
       ) : reviews.loading && !reviews.data ? (
-        <p className="muted text-sm">Reading the reviews…</p>
+        <LoadingSkeleton variant="list" label="Reading the reviews" />
       ) : (
         <CoachReviewList
           me={me}

@@ -19,6 +19,7 @@ import {
   StatusChip,
   StatusDot,
 } from "@/components/ceo/StatusChip";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -217,13 +218,11 @@ export function WatchCard({
           compact
         />
       ) : (
-        <p
-          role="status"
-          className="flex items-center gap-2 text-sm text-muted-foreground"
-        >
-          <Loader2 className="ceo-spin size-4 animate-spin" aria-hidden />
-          Reading Hubstaff watch
-        </p>
+        <LoadingSkeleton
+          variant="list"
+          label="Reading Hubstaff watch"
+          rows={4}
+        />
       )}
       {board ? (
         <WatchSettingsSheet

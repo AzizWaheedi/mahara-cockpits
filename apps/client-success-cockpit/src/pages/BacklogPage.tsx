@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { ExtLink, PageHeader } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { fetchBacklog, queueGap } from "@/lib/backlog";
 
@@ -68,7 +69,8 @@ export function BacklogPage({ embedded = false }: { embedded?: boolean }) {
         {error}
       </p>
     );
-  if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (!data)
+    return <LoadingSkeleton variant="page" label="Loading the backlog" />;
   const { rows, counts, activeClients } = data as Any;
 
   return (

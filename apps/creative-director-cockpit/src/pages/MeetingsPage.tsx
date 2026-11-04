@@ -2,6 +2,7 @@ import { ArrowUpRight } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import {
   fetchMeetingsOverview,
   linkCalendar,
@@ -272,7 +273,8 @@ function MeetingsContent() {
         {loadError}
       </p>
     );
-  if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (!data)
+    return <LoadingSkeleton variant="page" label="Loading the meetings" />;
   const {
     today,
     upcoming,

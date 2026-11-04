@@ -1,6 +1,7 @@
 import { ArrowUpRight, Check } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { useTaskSeat } from "@/lib/taskSeat";
 import {
   actOnTask,
@@ -252,9 +253,7 @@ function FocusView({
             {refused}
           </p>
         ) : (
-          <p className="tk-note" aria-busy="true">
-            {TASK_SENTENCES.opening}
-          </p>
+          <LoadingSkeleton variant="detail" label={TASK_SENTENCES.opening} />
         )}
       </TaskPanel>
     );

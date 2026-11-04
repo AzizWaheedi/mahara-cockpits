@@ -4,6 +4,7 @@ import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { count, kuwaitDay, relative, shortDate } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip } from "@/components/ceo/StatusChip";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import type {
@@ -433,10 +434,11 @@ export function ConnectionsCard({
               </Button>
             </div>
           ) : !status ? (
-            <p className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" aria-hidden />
-              Reading the connections
-            </p>
+            <LoadingSkeleton
+              variant="list"
+              label="Reading the connections"
+              rows={3}
+            />
           ) : (
             <div className="divide-y">
               {[hub, tt].map(s =>

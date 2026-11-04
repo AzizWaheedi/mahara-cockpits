@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { BookCallButton } from "@/components/ClientCheckIn";
 import { PageHeader, Pill, PillRow } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import {
   type Book,
   type Edit,
@@ -277,14 +278,11 @@ export function ProjectionsPage({ embedded = false }: { embedded?: boolean }) {
           </section>
         ))}
       {page === undefined ? (
-        <div className="space-y-6" aria-busy>
-          {[0, 1].map(i => (
-            <div
-              key={i}
-              className="h-64 animate-pulse rounded-2xl border bg-card"
-            />
-          ))}
-        </div>
+        <LoadingSkeleton
+          variant="cards"
+          rows={2}
+          label="Reading the projections"
+        />
       ) : (
         <>
           <ProjectionStrip page={page} onEdit={onEdit} />

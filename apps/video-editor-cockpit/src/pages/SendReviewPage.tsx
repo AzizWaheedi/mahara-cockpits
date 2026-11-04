@@ -23,8 +23,8 @@ import {
   PageHeader,
   Problem,
   Section,
-  Spinner,
 } from "../components/bits";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { Button, buttonClass } from "../components/ui/button";
 import { day } from "../lib/format";
 import { supabase } from "../lib/supabase";
@@ -480,7 +480,7 @@ export default function SendReviewPage() {
 
         <Section title="Sent already">
           {rows === null ? (
-            <Spinner what="Reading the links" />
+            <LoadingSkeleton variant="list" label="Reading the links" />
           ) : listError ? (
             <Problem>
               The links already sent could not be read: {listError}. Reload the

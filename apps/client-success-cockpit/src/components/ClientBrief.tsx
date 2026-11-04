@@ -16,6 +16,7 @@ import {
 } from "react";
 import { parseDosDonts } from "@/components/DosDonts";
 import { Chip, Dot, Kicker } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import {
   type Brief,
   type BriefInput,
@@ -328,11 +329,18 @@ export function ClientBrief({
     return (
       <section className="rounded-2xl border border-primary/30 bg-card p-4 sm:p-6">
         <h2 className="text-[15px] font-semibold">Before the call</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {error
-            ? `The call history could not be read, so there is no brief yet: ${error}. Reload the page; if it stays, report it with the button above.`
-            : "Reading their calls, forms and changes…"}
-        </p>
+        {error ? (
+          <p className="mt-2 text-sm text-muted-foreground">
+            {`The call history could not be read, so there is no brief yet: ${error}. Reload the page; if it stays, report it with the button above.`}
+          </p>
+        ) : (
+          <div className="mt-2">
+            <LoadingSkeleton
+              variant="detail"
+              label="Reading their calls, forms and changes"
+            />
+          </div>
+        )}
       </section>
     );
 

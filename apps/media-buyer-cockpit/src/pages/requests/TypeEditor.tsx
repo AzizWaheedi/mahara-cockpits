@@ -13,6 +13,7 @@ import {
   StatusDot,
   type StatusTone,
 } from "@/components/ceo/StatusChip";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { TaskPanel } from "@/components/tasks/TaskPanel";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -706,7 +707,11 @@ function TypeEditor({
         {versions ? (
           <Part title="Versions">
             {versions.status === "loading" ? (
-              <Waiting text="Reading the versions" />
+              <LoadingSkeleton
+                variant="list"
+                label="Reading the versions"
+                rows={3}
+              />
             ) : versions.status === "error" ? (
               <p className="text-[13px] text-destructive">{versions.error}</p>
             ) : (
@@ -1245,18 +1250,6 @@ function Field({
       {children}
       {help ? <p className="text-xs text-muted-foreground">{help}</p> : null}
     </div>
-  );
-}
-
-function Waiting({ text }: { text: string }) {
-  return (
-    <p
-      className="flex items-center gap-2 text-[13px] text-muted-foreground"
-      role="status"
-    >
-      <LoaderCircle aria-hidden className="size-4 animate-spin" />
-      {text}
-    </p>
   );
 }
 

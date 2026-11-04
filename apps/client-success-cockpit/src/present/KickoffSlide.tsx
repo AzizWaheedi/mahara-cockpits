@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { Dot, ExtLink } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import {
   AfterSend,
@@ -645,9 +646,11 @@ export function KickoffNotes({
   const { jumped, jump } = useJump();
   if (!view)
     return (
-      <p className="text-muted-foreground">
-        Reading the client's record for the kickoff…
-      </p>
+      <LoadingSkeleton
+        variant="detail"
+        label="Reading the client's record for the kickoff"
+        rows={4}
+      />
     );
   const name = KICKOFF.title.toLowerCase();
   const head = (
@@ -668,13 +671,19 @@ export function KickoffNotes({
     return (
       <div className="space-y-3">
         {head}
-        <p role="status">
-          {view.status === "loading"
-            ? "Reading the client's record for the kickoff…"
-            : view.status === "unread"
+        {view.status === "loading" ? (
+          <LoadingSkeleton
+            variant="detail"
+            label="Reading the client's record for the kickoff"
+            rows={4}
+          />
+        ) : (
+          <p role="status">
+            {view.status === "unread"
               ? "This card has not been read yet. Refresh reads ClickUp and Typeform now."
               : view.blocked?.text}
-        </p>
+          </p>
+        )}
         <div className="flex flex-wrap items-center gap-3">
           {view.status === "unread" ? (
             <Button

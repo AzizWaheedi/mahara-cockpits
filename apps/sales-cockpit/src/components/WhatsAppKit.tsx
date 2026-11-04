@@ -14,6 +14,7 @@ import {
   templateLive,
 } from "../lib/whatsapp";
 import { button, buttonPrimary, field, Segmented } from "./kit";
+import { LoadingSkeleton } from "./LoadingSkeleton";
 
 /**
  * The team's ready-made WhatsApp messages, filled in for this lead, one click
@@ -85,11 +86,16 @@ export function SnippetPicker({
           </div>
           {snippets.error ? (
             <p className="px-1 text-xs">The messages could not be read.</p>
+          ) : !groups.length && snippets.loading ? (
+            <LoadingSkeleton
+              variant="list"
+              label="Reading the ready-made messages"
+              rows={2}
+            />
           ) : !groups.length ? (
             <p className="muted px-1 text-xs">
-              {snippets.loading
-                ? "Reading…"
-                : "No ready-made messages in this language yet. A manager adds them under Follow-ups, WhatsApp library."}
+              No ready-made messages in this language yet. A manager adds them
+              under Follow-ups, WhatsApp library.
             </p>
           ) : (
             groups.map(g => (

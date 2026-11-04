@@ -11,6 +11,7 @@ import {
   StatusChip,
   select,
 } from "../components/kit";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { NumbersBoard } from "../components/NumbersBoard";
 import { DIALS_CAP, NumbersDials } from "../components/NumbersDials";
 import { NumbersGoals } from "../components/NumbersGoals";
@@ -301,7 +302,11 @@ export default function NumbersPage({ me }: { me: Me }) {
       ) : rows.error ? (
         <Failed what="The scorecard" error={rows.error} retry={rows.reload} />
       ) : firstLoad ? (
-        <p className="muted text-sm">Loading the scorecard…</p>
+        <LoadingSkeleton
+          variant="cards"
+          label="Loading the scorecard"
+          rows={4}
+        />
       ) : !card ? (
         <section className="panel">
           <EmptyState
@@ -329,7 +334,7 @@ export default function NumbersPage({ me }: { me: Me }) {
 
       {noSeat ? null : !team && !seatRead ? (
         people.error ? null : (
-          <p className="muted text-sm">Loading the seat…</p>
+          <LoadingSkeleton variant="cards" label="Loading the seat" rows={2} />
         )
       ) : (
         <>

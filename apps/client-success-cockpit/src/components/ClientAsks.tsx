@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Chip, ExtLink } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
@@ -119,7 +120,7 @@ export function ClientAsks({
           </button>
         </p>
       ) : !view ? (
-        <p className="text-muted-foreground">Reading their asks…</p>
+        <LoadingSkeleton variant="cards" label="Reading their asks" />
       ) : (
         <>
           {view.problem ? (

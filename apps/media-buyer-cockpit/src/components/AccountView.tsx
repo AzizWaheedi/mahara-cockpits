@@ -18,6 +18,7 @@ import {
   type StatusTone,
 } from "@/components/ceo/StatusChip";
 import { FunnelSplit, FunnelTag } from "@/components/FunnelSplit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { LostLeads } from "@/components/LostLeads";
 import { LeadPageSection } from "@/components/pageform/LeadPageSection";
 import { RangePicker } from "@/components/RangePicker";
@@ -872,9 +873,11 @@ export function AccountView({
 
         <div className="@container mt-4">
           {numbersLoading ? (
-            <p className="rounded-xl bg-muted/40 p-3 text-sm text-muted-foreground">
-              Loading {range.label.toLowerCase()}…
-            </p>
+            <LoadingSkeleton
+              variant="cards"
+              label={`Loading ${range.label.toLowerCase()}`}
+              rows={4}
+            />
           ) : allFailed && !whole ? (
             <EmptyState
               compact
@@ -1115,9 +1118,12 @@ export function AccountView({
           </p>
         )}
         {loading ? (
-          <p className="mt-4 rounded-xl bg-muted/40 p-3 text-sm text-muted-foreground">
-            Loading the ads for {range.label.toLowerCase()}…
-          </p>
+          <LoadingSkeleton
+            variant="cards"
+            label={`Loading the ads for ${range.label.toLowerCase()}`}
+            rows={6}
+            className="mt-4"
+          />
         ) : cards.length === 0 ? (
           <EmptyState
             compact

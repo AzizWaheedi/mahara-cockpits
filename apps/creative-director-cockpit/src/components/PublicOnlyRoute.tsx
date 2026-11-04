@@ -11,7 +11,12 @@ import { Skeleton } from "./ui/skeleton";
 
 function AuthFormSkeleton() {
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4">
+    <div
+      role="status"
+      aria-busy="true"
+      className="min-h-screen flex flex-col items-center justify-center p-4"
+    >
+      <span className="sr-only">Loading the sign-in form</span>
       <div className="w-full max-w-md">
         <Skeleton className="h-9 w-32 mx-auto mb-8" />
         <Card>

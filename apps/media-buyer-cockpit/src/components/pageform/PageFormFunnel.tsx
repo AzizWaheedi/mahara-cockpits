@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { count, dateTime, pct, shortDate } from "@/components/ceo/format";
 import { STATUS_COLOR, StatusChip } from "@/components/ceo/StatusChip";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { notCountedYet } from "@/lib/funnelSplit";
@@ -156,17 +157,26 @@ export function PageFormFunnel({
         </div>
       </div>
 
-      <p className="mt-2 text-xs text-muted-foreground">
-        {metaCampaigns.length + waitingCampaigns.length === 0
-          ? NO_WEBSITE
-          : meta.error
-            ? `Meta's clicks could not be read: ${meta.error}`
-            : !meta.data
-              ? "Reading Meta's clicks…"
-              : onMeta === 0
-                ? NO_WEBSITE
-                : `Meta, same ${days} days: ${clicks === null ? "n/a" : count(clicks)} link clicks and ${views === null ? "n/a" : count(views)} landing page views on ${onMeta === 1 ? "the website campaign" : `${onMeta} website campaigns`}${f?.counts ? `; the page recorded ${count(f.counts.ads)} ${f.counts.ads === 1 ? "visit" : "visits"} from ads` : ""}.${joining.length ? ` ${notCountedYet(joining)}` : ""}`}
-      </p>
+      {metaCampaigns.length + waitingCampaigns.length === 0 ? (
+        <p className="mt-2 text-xs text-muted-foreground">{NO_WEBSITE}</p>
+      ) : meta.error ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {`Meta's clicks could not be read: ${meta.error}`}
+        </p>
+      ) : !meta.data ? (
+        <LoadingSkeleton
+          variant="list"
+          label="Reading Meta's clicks"
+          rows={1}
+          className="mt-2"
+        />
+      ) : onMeta === 0 ? (
+        <p className="mt-2 text-xs text-muted-foreground">{NO_WEBSITE}</p>
+      ) : (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {`Meta, same ${days} days: ${clicks === null ? "n/a" : count(clicks)} link clicks and ${views === null ? "n/a" : count(views)} landing page views on ${onMeta === 1 ? "the website campaign" : `${onMeta} website campaigns`}${f?.counts ? `; the page recorded ${count(f.counts.ads)} ${f.counts.ads === 1 ? "visit" : "visits"} from ads` : ""}.${joining.length ? ` ${notCountedYet(joining)}` : ""}`}
+        </p>
+      )}
 
       {funnel.error ? (
         <div className="callout-warn mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2 text-xs">
@@ -181,9 +191,12 @@ export function PageFormFunnel({
           </Button>
         </div>
       ) : !f ? (
-        <p className="mt-3 text-xs text-muted-foreground">
-          Reading the visits…
-        </p>
+        <LoadingSkeleton
+          variant="list"
+          label="Reading the visits"
+          rows={3}
+          className="mt-3"
+        />
       ) : opened === 0 && !f.lastAt ? (
         f.source === "ads" ? (
           <p className="mt-3 text-sm text-muted-foreground">

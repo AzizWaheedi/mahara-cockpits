@@ -2,6 +2,7 @@ import { CalendarDays, Loader2, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { YourTasks } from "@/components/tasks/YourTasks";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
@@ -137,10 +138,11 @@ export function TeamPage() {
           {error ? (
             <p className="text-sm text-destructive">{error}</p>
           ) : (
-            <p className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" aria-hidden /> Reading
-              the team's meetings
-            </p>
+            <LoadingSkeleton
+              variant="list"
+              label="Reading the team's meetings"
+              rows={4}
+            />
           )}
         </div>
       </div>

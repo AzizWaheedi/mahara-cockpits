@@ -1,6 +1,7 @@
 import { Bell, CheckCheck, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { useTaskSeat } from "@/lib/taskSeat";
 import { focusSearch, useTaskFeed } from "@/lib/tasksClient";
 import {
@@ -211,9 +212,11 @@ export function AlertsBell({
         ) : null}
         {lateAt ? <LateLine at={lateAt} /> : null}
         {!data && !feed.error.alerts ? (
-          <p className="tk-note" aria-busy="true">
-            Reading your alerts…
-          </p>
+          <LoadingSkeleton
+            variant="list"
+            label="Reading your alerts"
+            rows={3}
+          />
         ) : null}
         {alerts.length ? (
           <ul className="tk-alerts">

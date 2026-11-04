@@ -16,6 +16,7 @@ import {
   StatusChip,
   type Tone,
 } from "../components/kit";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { Segmented } from "../components/ScriptParts";
 import { api } from "../lib/api";
 import { CLIENT_NOTE } from "../lib/clients";
@@ -349,9 +350,7 @@ export default function PipelinePage({ me }: { me: Me }) {
                       ? ` · ${board.counts.signed} signed${closedStage && !closedStage.synthetic ? ` in ${plainStage(closedStage.name)}` : ""}`
                       : ""
                   }. Drag a card to move it in HighLevel.`
-                : error
-                  ? null
-                  : "Reading the pipeline…"}
+                : null}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -424,6 +423,10 @@ export default function PipelinePage({ me }: { me: Me }) {
 
       {view === "hot" ? (
         <HotSheet me={me} scope={scope} nonce={hotNonce} />
+      ) : !board && !error ? (
+        <div className="-mx-4 overflow-x-auto px-4 pb-2 md:-mx-6 md:px-6">
+          <LoadingSkeleton variant="board" label="Reading the pipeline" />
+        </div>
       ) : hidden || !board ? null : empty ? (
         <div className="panel">
           <EmptyState

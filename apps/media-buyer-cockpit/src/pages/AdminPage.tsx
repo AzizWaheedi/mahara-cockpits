@@ -14,6 +14,7 @@ import {
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { YourTasks } from "@/components/tasks/YourTasks";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -386,8 +387,12 @@ export function AdminPage() {
             <TableBody>
               {membersLoading ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-muted-foreground">
-                    Loading…
+                  <TableCell colSpan={5} className="p-3">
+                    <LoadingSkeleton
+                      variant="list"
+                      label="Loading the team directory"
+                      rows={4}
+                    />
                   </TableCell>
                 </TableRow>
               ) : membersError ? (
@@ -674,8 +679,12 @@ export function AdminPage() {
                 <TableBody>
                   {overviewLoading ? (
                     <TableRow>
-                      <TableCell colSpan={5}>
-                        Reading native worker ledgers…
+                      <TableCell colSpan={5} className="p-3">
+                        <LoadingSkeleton
+                          variant="table"
+                          label="Reading native worker ledgers"
+                          rows={4}
+                        />
                       </TableCell>
                     </TableRow>
                   ) : (overview?.scheduled ?? []).length === 0 ? (

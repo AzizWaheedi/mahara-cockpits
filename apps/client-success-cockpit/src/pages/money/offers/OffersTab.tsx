@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { SopVideo } from "@/components/SopVideo";
 import { Button } from "@/components/ui/button";
 import { SOP_VIDEOS } from "@/lib/cockpits";
@@ -38,12 +39,20 @@ export function OffersTab({
     return (
       <div className="dko-panel">
         <h2>Offers</h2>
-        <p role={error ? "alert" : "status"}>
-          {error ?? "Reading the catalogue…"}
-        </p>
         {error ? (
-          <Button onClick={() => void reload()}>Try again</Button>
-        ) : null}
+          <>
+            <p role="alert">{error}</p>
+            <Button onClick={() => void reload()}>Try again</Button>
+          </>
+        ) : (
+          <div className="mt-2">
+            <LoadingSkeleton
+              variant="cards"
+              label="Reading the catalogue"
+              rows={3}
+            />
+          </div>
+        )}
       </div>
     );
   return (

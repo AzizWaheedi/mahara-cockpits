@@ -108,13 +108,12 @@ export function useLaunchNotices(): ExtraAlerts | undefined {
     return {
       label: "Client alerts",
       ready: !!data && !failed && !tasksLate,
+      loading: !data && !failed,
       note: failed
         ? "Client alerts could not refresh. Try again in a minute."
-        : !data
-          ? "Reading client alerts…"
-          : tasksLate
-            ? "Task updates are unavailable. Check Today or ClickUp."
-            : null,
+        : tasksLate
+          ? "Task updates are unavailable. Check Today or ClickUp."
+          : null,
       items: notices.map(n => ({
         id: n.id,
         version: n.version,

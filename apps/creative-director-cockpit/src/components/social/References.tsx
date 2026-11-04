@@ -1,6 +1,7 @@
 import { Check, Library, LoaderCircle, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { api, useAction } from "@/lib/social";
 import { useUploader } from "./media";
 
@@ -147,10 +148,13 @@ export function References({
       {picking ? (
         <div className="mt-2 rounded-lg border p-2">
           {photos === null ? (
-            <p className="flex items-center gap-2 p-2 text-xs text-muted-foreground">
-              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-              Opening the library
-            </p>
+            <div className="p-1">
+              <LoadingSkeleton
+                variant="media"
+                label="Opening the library"
+                className="max-w-[18rem]"
+              />
+            </div>
           ) : photos.length === 0 ? (
             <p className="p-2 text-xs text-muted-foreground">
               This client has no photos in their library yet. Add their own

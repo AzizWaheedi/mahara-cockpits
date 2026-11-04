@@ -1,10 +1,4 @@
-import {
-  ArrowUpRight,
-  ChevronRight,
-  ImageOff,
-  Lightbulb,
-  LoaderCircle,
-} from "lucide-react";
+import { ArrowUpRight, ChevronRight, ImageOff, Lightbulb } from "lucide-react";
 import {
   type ReactNode,
   useCallback,
@@ -13,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { BoardStrip, ForeplayLinks } from "../components/Foreplay";
 import {
   clock,
@@ -366,10 +361,11 @@ export function SwipePage() {
       ) : null}
 
       {!ads && !error ? (
-        <p className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
-          <LoaderCircle className="size-4 animate-spin" aria-hidden />
-          Reading the swipe file
-        </p>
+        <LoadingSkeleton
+          variant="cards"
+          label="Reading the swipe file"
+          rows={6}
+        />
       ) : null}
 
       {ads && !shown.length ? (

@@ -19,6 +19,7 @@ import { ago } from "../lib/format";
 import { toast } from "../lib/toast";
 import type { Deal } from "../lib/types";
 import { button, buttonPrimary, StatusChip } from "./kit";
+import { LoadingSkeleton } from "./LoadingSkeleton";
 
 /**
  * The New Client Form on a lead's page: Typeform's own form, embedded with
@@ -37,6 +38,7 @@ export function ClientFormSheet({
   ctx,
   hidden,
   already,
+  alreadyUnread = null,
   onSent,
 }: {
   open: boolean;
@@ -48,6 +50,8 @@ export function ClientFormSheet({
   hidden: Record<string, string>;
   /** A form already sent for this lead: when and by whom. */
   already: { at: string; by: string | null } | null;
+  /** The forms already sent could not be read, so this may be a second one. */
+  alreadyUnread?: string | null;
   /** The cockpit noted the response on the lead. */
   onSent: () => void;
 }) {
@@ -128,6 +132,16 @@ export function ClientFormSheet({
           </button>
         </header>
 
+        {alreadyUnread && !already ? (
+          <p
+            className="callout-warn border-b px-4 py-2 text-sm md:px-6"
+            role="note"
+          >
+            The forms already sent for this lead could not be read:{" "}
+            {alreadyUnread}. Sending one here may start the onboarding a second
+            time. Reload the page before you send.
+          </p>
+        ) : null}
         {already ? (
           <p
             className="callout-warn border-b px-4 py-2 text-sm md:px-6"
@@ -273,24 +287,28 @@ function Embed({
       <div ref={box} className="min-h-0 flex-1" />
       {!ready ? (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
-          <p className="muted pointer-events-auto max-w-sm text-center text-sm">
-            {slow ? (
-              <>
-                The form has not loaded here.{" "}
-                <a
-                  href={link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline"
-                >
-                  Open it in a new tab
-                </a>
-                : it carries the same lead, closer and setter.
-              </>
-            ) : (
-              "Loading the form…"
-            )}
-          </p>
+          {slow ? (
+            <p className="muted pointer-events-auto max-w-sm text-center text-sm">
+              The form has not loaded here.{" "}
+              <a
+                href={link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline"
+              >
+                Open it in a new tab
+              </a>
+              : it carries the same lead, closer and setter.
+            </p>
+          ) : (
+            <div className="pointer-events-auto w-full max-w-sm">
+              <LoadingSkeleton
+                variant="form"
+                label="Loading the form"
+                rows={2}
+              />
+            </div>
+          )}
         </div>
       ) : null}
     </div>
@@ -512,21 +530,47 @@ function RailItem({
  */
 export function ClientFormStatus({
   sent,
+  error = null,
+  loading = false,
   deals,
   signedAt,
   canFill,
   onFill,
+  onRetry,
 }: {
   sent: ClientFormSent[] | null;
+  /** The read failed: say so, rather than wait forever. */
+  error?: string | null;
+  loading?: boolean;
   deals: Deal[];
   /** When the newest contract was signed, if it was. */
   signedAt: string | null;
   canFill: boolean;
   onFill: () => void;
+  onRetry?: () => void;
 }) {
-  if (!sent)
-    return <p className="muted text-sm">Reading the form's history…</p>;
-  const last = sent[0];
+  if (!sent && error)
+    return (
+      <div className="space-y-2">
+        <p className="callout-bad rounded-[var(--radius-md)] border px-3 py-2 text-sm">
+          The forms already sent for this lead could not be read: {error}
+        </p>
+        {onRetry ? (
+          <button type="button" className={button} onClick={onRetry}>
+            Try again
+          </button>
+        ) : null}
+      </div>
+    );
+  if (!sent && loading)
+    return (
+      <LoadingSkeleton
+        variant="list"
+        label="Reading the form's history"
+        rows={2}
+      />
+    );
+  const last = sent?.[0];
   if (last) {
     const arrived = deals.find(d => d.response_id === last.response_id);
     return (

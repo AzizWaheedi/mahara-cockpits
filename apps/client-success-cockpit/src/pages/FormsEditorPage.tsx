@@ -27,6 +27,7 @@ import {
   PageHeader,
   SectionCard,
 } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -221,9 +222,7 @@ export function FormsEditorView({
         sub="Change what clients read in their forms and when surveys go. Each change publishes as a new version you can go back from."
       />
       {door === null ? (
-        <p className="text-sm text-muted-foreground" role="status">
-          Reading the forms…
-        </p>
+        <LoadingSkeleton variant="cards" label="Reading the forms" />
       ) : !door || !io ? (
         <SectionCard title="Not open yet">
           <p className="text-sm text-muted-foreground" data-door="closed">
@@ -389,11 +388,7 @@ function FormList({
     return <ReadFailed message={(error as Error).message} onRetry={load} />;
   }
   if (!read)
-    return (
-      <p className="text-sm text-muted-foreground" role="status">
-        Reading the forms…
-      </p>
-    );
+    return <LoadingSkeleton variant="cards" label="Reading the forms" />;
   const groups: FormGroup[] = ["client", "staff", "typeform"];
   return (
     <div className="space-y-6">
@@ -790,9 +785,7 @@ function OneForm({
     return (
       <div className="space-y-4">
         {back}
-        <p className="text-sm text-muted-foreground" role="status">
-          Reading the form…
-        </p>
+        <LoadingSkeleton variant="form" label="Reading the form" rows={6} />
       </div>
     );
   return (

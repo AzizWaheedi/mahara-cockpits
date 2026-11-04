@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
@@ -2373,10 +2374,12 @@ export function PendingPayments({
             </div>
           </div>
         ) : (
-          <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className={`size-4 ${spin}`} aria-hidden />
-            Reading pending payments
-          </p>
+          <LoadingSkeleton
+            variant="list"
+            label="Reading pending payments"
+            rows={5}
+            className="mt-2"
+          />
         )}
       </section>
     );

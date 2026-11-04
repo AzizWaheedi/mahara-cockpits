@@ -11,6 +11,7 @@ import {
 import { Navigate, useLocation, useParams } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { BookCallButton } from "@/components/ClientCheckIn";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -74,7 +75,9 @@ export default function FormWindow() {
     (auth.isAdmin || auth.isCeo);
   if (form === "checkin")
     return (
-      <Suspense fallback={null}>
+      <Suspense
+        fallback={<LoadingSkeleton variant="form" label="Opening the form" />}
+      >
         <CheckinWindow
           key={`${key}:${rehearse}`}
           taskId={key}
@@ -304,7 +307,9 @@ export function FormWindowView({
 
       <main className="flex min-h-0 flex-1 flex-col">
         {state.kind === "loading" ? (
-          <Plain>Loading the form…</Plain>
+          <div className="m-auto w-full max-w-md p-8">
+            <LoadingSkeleton variant="form" label="Loading the form" rows={5} />
+          </div>
         ) : state.kind === "blocked" ? (
           <Plain
             actions={

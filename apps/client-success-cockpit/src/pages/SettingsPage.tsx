@@ -17,6 +17,7 @@ import {
   requestCockpitPasswordReset,
 } from "@/auth/supabaseAccess";
 import { PageHeader, SectionCard } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { NoticesRouting } from "@/components/NoticesRouting";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -453,9 +454,7 @@ export function RetiredForms({
               : error}
           </p>
         ) : !items ? (
-          <p className="text-sm text-muted-foreground" role="status">
-            Reading the list
-          </p>
+          <LoadingSkeleton variant="list" label="Reading the list" rows={3} />
         ) : (
           <ul className="grid divide-y">
             {items.map(i => (

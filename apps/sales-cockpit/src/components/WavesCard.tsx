@@ -38,6 +38,7 @@ import {
   StatusChip,
   select,
 } from "./kit";
+import { LoadingSkeleton } from "./LoadingSkeleton";
 
 /**
  * Backlog waves on the Follow-ups page (P3 phase 1): each running wave in
@@ -283,7 +284,7 @@ export function WavesCard({
       {waves.error ? (
         <Failed what="The waves" error={waves.error} retry={waves.reload} />
       ) : !waves.data ? (
-        <p className="muted text-sm">Reading the waves…</p>
+        <LoadingSkeleton variant="list" label="Reading the waves" />
       ) : !open.length ? (
         <EmptyState
           compact
@@ -452,7 +453,13 @@ export function WavesCard({
               retry={meta.reload}
             />
           ) : !meta.data ? (
-            <p className="muted mt-2 text-sm">Reading the batch…</p>
+            <div className="mt-2">
+              <LoadingSkeleton
+                variant="list"
+                label="Reading the batch"
+                rows={2}
+              />
+            </div>
           ) : (
             <>
               <div className="mt-2 flex flex-wrap items-center gap-2">

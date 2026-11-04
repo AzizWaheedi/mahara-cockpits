@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase";
 import { READY_WORDS } from "../../pages/money/offers/OfferHotRow";
@@ -48,7 +49,14 @@ export function OfferPicker({
         <Button onClick={() => setRetry(n => n + 1)}>Try again</Button>
       </div>
     );
-  if (!data) return <p role="status">Reading this client's offers…</p>;
+  if (!data)
+    return (
+      <LoadingSkeleton
+        variant="list"
+        rows={4}
+        label="Reading this client's offers"
+      />
+    );
   const row = (key: OfferKey) => {
     const o = data.offers.find(v => v.key === key);
     if (!o) return null;

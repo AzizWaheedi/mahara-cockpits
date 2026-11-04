@@ -79,6 +79,7 @@ import { toast } from "../lib/toast";
 import type { Me } from "../lib/types";
 import type { Lang } from "../lib/zoomLink";
 import { button, field, Segmented } from "./kit";
+import { LoadingSkeleton } from "./LoadingSkeleton";
 import { TellThem } from "./TellThem";
 
 /**
@@ -1196,9 +1197,11 @@ export function CallPicker({
     body = null;
   } else if (!slots) {
     body = (
-      <p className="muted text-sm">
-        Reading the {kindNoun(callKind)} calendar's free times…
-      </p>
+      <LoadingSkeleton
+        variant="list"
+        label={`Reading the ${kindNoun(callKind)} calendar's free times`}
+        rows={3}
+      />
     );
   } else if (mode === "book" && slots.existing) {
     const ex = slots.existing;
@@ -1465,7 +1468,11 @@ export function CallPicker({
             )}
           </div>
         ) : reading ? (
-          <p className="muted text-sm">Reading the calendar…</p>
+          <LoadingSkeleton
+            variant="list"
+            label="Reading the calendar"
+            rows={3}
+          />
         ) : (
           <p className="muted text-sm">
             No free time this week.{" "}

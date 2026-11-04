@@ -1,5 +1,6 @@
 import { Check, ImageOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -257,9 +258,9 @@ export function PagePreview({
         sandbox="allow-scripts allow-same-origin"
       />
       {!ready && (
-        <p className="absolute inset-x-6 top-1/2 -translate-y-1/2 text-center text-xs text-muted-foreground">
-          Loading the page…
-        </p>
+        <div className="absolute inset-6 flex items-center justify-center">
+          <LoadingSkeleton variant="media" label="Loading the page" />
+        </div>
       )}
     </>
   );

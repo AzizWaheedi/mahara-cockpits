@@ -28,6 +28,7 @@ import {
   Segmented,
   StatusChip,
 } from "./kit";
+import { LoadingSkeleton } from "./LoadingSkeleton";
 
 /**
  * The WhatsApp library: the approved templates that reach a lead whose
@@ -81,7 +82,7 @@ export function WhatsAppLibrary({ manager }: { manager: boolean }) {
             retry={templates.reload}
           />
         ) : templates.loading && !templates.data ? (
-          <p className="muted text-sm">Reading the templates…</p>
+          <LoadingSkeleton variant="list" label="Reading the templates" />
         ) : (
           <ul className="divide-y hairline">
             {(templates.data ?? []).map(t => (
@@ -438,7 +439,7 @@ function SnippetLibrary({ manager }: { manager: boolean }) {
           retry={snippets.reload}
         />
       ) : snippets.loading && !snippets.data ? (
-        <p className="muted text-sm">Reading the messages…</p>
+        <LoadingSkeleton variant="list" label="Reading the messages" />
       ) : !groups.length ? (
         <EmptyState
           icon={MessageSquareText}

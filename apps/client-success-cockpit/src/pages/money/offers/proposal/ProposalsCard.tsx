@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { ProposalCard } from "./ProposalCard";
 import { type ProposalCardRow, readProposals } from "./proposalSources";
@@ -48,9 +49,9 @@ export function ProposalsCard({ taskId }: { taskId: string }) {
           {error}
         </p>
       ) : !rows ? (
-        <p role="status" className="mt-4 text-sm text-muted-foreground">
-          Loading proposals
-        </p>
+        <div className="mt-2">
+          <LoadingSkeleton variant="list" rows={3} label="Loading proposals" />
+        </div>
       ) : rows.length ? (
         <div className="mt-2 divide-y">
           {rows.map(row => (

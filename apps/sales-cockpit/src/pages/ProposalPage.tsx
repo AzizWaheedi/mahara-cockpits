@@ -18,6 +18,7 @@ import {
   page,
   SectionCard,
 } from "../components/kit";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { DraftWaitNotice, ProposalChip } from "../components/ProposalPanel";
 import { api } from "../lib/api";
 import { useLead, useProposal, useProposalHtml, useRequest } from "../lib/data";
@@ -221,7 +222,7 @@ export default function ProposalPage({ me }: { me: Me }) {
     return (
       <Shell>
         {proposal.loading ? (
-          <p className="muted text-sm">Loading the proposal…</p>
+          <LoadingSkeleton variant="detail" label="Loading the proposal" />
         ) : (
           <EmptyState
             title="This proposal is not here"
@@ -377,7 +378,10 @@ export default function ProposalPage({ me }: { me: Me }) {
             }}
           />
         ) : (
-          <p className="muted text-sm">Reading where the draft is…</p>
+          <LoadingSkeleton
+            variant="inline"
+            label="Reading where the draft is"
+          />
         )
       ) : null}
       {p.status === "failed" ? (

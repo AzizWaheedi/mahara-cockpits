@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { PageHeader } from "@/components/PageHeader";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
@@ -313,7 +314,9 @@ export function ScriptingCalendar({
     );
 
   if (cal === undefined) {
-    return <p className="text-sm text-muted-foreground">Loading…</p>;
+    return (
+      <LoadingSkeleton variant="page" label="Loading the scripting calendar" />
+    );
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: query payload is untyped

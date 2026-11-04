@@ -1,8 +1,9 @@
-import { ChevronRight, CircleDashed, TriangleAlert } from "lucide-react";
+import { ChevronRight, TriangleAlert } from "lucide-react";
 import { type ReactNode, useMemo } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { STATUS_COLOR, StatusDot } from "@/components/ceo/StatusChip";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { cn } from "@/lib/utils";
 import type {
   EodDay,
@@ -262,7 +263,9 @@ export function EodRadarCard({
       />
     );
   else if (!board)
-    body = <EmptyState icon={CircleDashed} title="Reading EOD Radar" compact />;
+    body = (
+      <LoadingSkeleton variant="list" label="Reading EOD Radar" rows={4} />
+    );
   else {
     const active = board.people.filter(p => p.active);
     const gone = board.people.filter(p => !p.active);

@@ -1,7 +1,7 @@
 import { Link, Navigate } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { BackendWait } from "@/components/BackendWait";
-import { Spinner } from "@/components/ui/spinner";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Wordmark } from "@/components/Wordmark";
 import { COCKPIT_ICON } from "@/lib/cockpits";
 
@@ -55,10 +55,12 @@ export function PortalHome() {
   if (!ready) {
     return (
       <BackendWait>
-        <div className="flex flex-1 items-center justify-center gap-2 p-10 text-sm text-muted-foreground">
-          <Spinner />
-          One moment…
-        </div>
+        <LoadingSkeleton
+          variant="cards"
+          label="One moment"
+          rows={4}
+          className="mx-auto max-w-2xl p-10"
+        />
       </BackendWait>
     );
   }
@@ -76,9 +78,11 @@ function Chooser() {
 
   if (!ready)
     return (
-      <div className="p-10 text-sm text-muted-foreground">
-        Checking your access…
-      </div>
+      <LoadingSkeleton
+        variant="page"
+        label="Checking your access"
+        className="mx-auto max-w-2xl p-10"
+      />
     );
 
   if (isCeo) return <Navigate to="/ceo" replace />;

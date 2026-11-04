@@ -48,6 +48,7 @@ import { TabLink } from "@/components/ceo/TabLink";
 import { TargetMeter } from "@/components/ceo/TargetMeter";
 import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
 import type { CeoSection } from "@/components/ceo/useCeo";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { type Door, doorLine } from "@/forms/staff/formSheetCore";
@@ -2323,9 +2324,11 @@ export function UpsellTies({
         </p>
       ) : null}
       {rows === null && !error ? (
-        <p className="text-sm text-muted-foreground" role="status">
-          Reading the tie proposals
-        </p>
+        <LoadingSkeleton
+          variant="list"
+          label="Reading the tie proposals"
+          rows={3}
+        />
       ) : rows && !rows.length ? (
         <p className="text-sm text-muted-foreground">
           No upsell payment waits for you.

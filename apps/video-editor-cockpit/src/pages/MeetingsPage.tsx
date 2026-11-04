@@ -7,8 +7,8 @@ import {
   PageHeader,
   Problem,
   Prose,
-  Spinner,
 } from "../components/bits";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { Button } from "../components/ui/button";
 import { useMeetings } from "../lib/data";
 import { moment } from "../lib/format";
@@ -74,7 +74,7 @@ export default function MeetingsPage() {
         </Problem>
       ) : null}
       {meetings.loading && !meetings.data ? (
-        <Spinner what="Reading the meetings" />
+        <LoadingSkeleton variant="list" label="Reading the meetings" />
       ) : null}
       {!meetings.loading && !meetings.error && !mine.length ? (
         <Empty>

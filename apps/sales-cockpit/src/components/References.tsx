@@ -18,6 +18,7 @@ import {
   StatusChip,
   type Tone,
 } from "./kit";
+import { LoadingSkeleton } from "./LoadingSkeleton";
 
 /**
  * Client references: who a prospect can speak to, what a rep may say about
@@ -115,7 +116,7 @@ export function ReferenceList({ manager }: { manager: boolean }) {
       <Failed what="The references" error={refs.error} retry={refs.reload} />
     );
   if (refs.loading && !refs.data)
-    return <p className="muted text-sm">Reading the references…</p>;
+    return <LoadingSkeleton variant="list" label="Reading the references" />;
   const list = refs.data ?? [];
   return (
     <div className="space-y-3">

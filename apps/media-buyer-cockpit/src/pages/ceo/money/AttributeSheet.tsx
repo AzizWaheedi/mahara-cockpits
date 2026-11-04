@@ -1,6 +1,7 @@
 import { Check, Loader2, Search } from "lucide-react";
 import { type ReactNode, useId, useMemo, useState } from "react";
 import { money, NA, plural, shortDate } from "@/components/ceo/format";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import {
@@ -842,10 +843,11 @@ function DealPicker({
         </p>
       ) : null}
       {loading ? (
-        <p className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Loader2 className="size-3.5 animate-spin" aria-hidden />
-          Reading the closer form
-        </p>
+        <LoadingSkeleton
+          variant="list"
+          label="Reading the closer form"
+          rows={4}
+        />
       ) : hits.length === 0 ? (
         <p className="text-xs text-muted-foreground">
           {query.trim()

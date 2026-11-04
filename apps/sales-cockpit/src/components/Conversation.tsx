@@ -24,6 +24,7 @@ import {
 } from "../lib/whatsapp";
 import { ChannelGlyph } from "./ChannelGlyph";
 import { buttonPrimary, field } from "./kit";
+import { LoadingSkeleton } from "./LoadingSkeleton";
 import { SnippetPicker, TemplateComposer } from "./WhatsAppKit";
 
 /**
@@ -634,7 +635,7 @@ export function Conversation({
             ? "The conversation could not be read."
             : data
               ? `Read from HighLevel ${ago(data.read_at)}`
-              : "Reading the conversation…"}
+              : null}
         </p>
         <button
           type="button"
@@ -663,6 +664,13 @@ export function Conversation({
           >
             {convo.loadingOlder ? "Reading…" : "Earlier messages"}
           </button>
+        ) : null}
+        {!data && !error ? (
+          <LoadingSkeleton
+            variant="list"
+            label="Reading the conversation"
+            rows={4}
+          />
         ) : null}
         {data && !shown.length ? (
           <p className="muted py-6 text-center text-sm">

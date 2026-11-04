@@ -36,6 +36,7 @@ import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip, type StatusTone } from "@/components/ceo/StatusChip";
 import type { CeoSection } from "@/components/ceo/useCeo";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -542,13 +543,20 @@ export function LogPaymentCard({
       order={order}
     >
       <form onSubmit={onSubmit} noValidate className="grid gap-5">
-        {infoError || optionsError || !info?.historyReady ? (
+        {infoError || optionsError ? (
           <p role="alert" className="text-sm text-muted-foreground">
-            {infoError ||
-              optionsError ||
-              (info
-                ? "Existing payment history must be imported and reconciled before this log can accept new entries."
-                : "Loading payment configuration.")}
+            {infoError || optionsError}
+          </p>
+        ) : !info ? (
+          <LoadingSkeleton
+            variant="form"
+            label="Loading payment configuration"
+            rows={4}
+          />
+        ) : !info.historyReady ? (
+          <p role="alert" className="text-sm text-muted-foreground">
+            Existing payment history must be imported and reconciled before this
+            log can accept new entries.
           </p>
         ) : null}
         {info?.tapLive === null ? (
@@ -1438,9 +1446,7 @@ export function ManualEntriesCard({
           </button>
         </p>
       ) : rows === undefined ? (
-        <p className="py-6 text-center text-xs text-muted-foreground">
-          Loading the entries.
-        </p>
+        <LoadingSkeleton variant="table" label="Loading the entries" rows={4} />
       ) : rows.length === 0 ? (
         <EmptyState
           icon={HandCoins}

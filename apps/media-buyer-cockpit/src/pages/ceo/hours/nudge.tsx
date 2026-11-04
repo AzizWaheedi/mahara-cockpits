@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { relative } from "@/components/ceo/format";
 import { useNow } from "@/components/ceo/useCeo";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Switch } from "@/components/ui/switch";
 import type { NudgeState } from "@/lib/ceoHoursClient";
 import { api, useAction } from "@/lib/cockpitApi";
@@ -114,7 +115,7 @@ export function MorningNoteSetting() {
           aria-label="Send me a Slack note each morning listing who should track and did not"
         />
       </div>
-      <p
+      <div
         aria-live="polite"
         className={cn(
           "text-xs",
@@ -123,12 +124,18 @@ export function MorningNoteSetting() {
             : "text-muted-foreground",
         )}
       >
-        {read.kind === "loading"
-          ? "Reading the setting"
-          : read.kind === "error"
-            ? `The setting could not be read: ${read.text}. Nothing is sent while it cannot be read.`
-            : `${on ? "On" : "Off"}${read.state.updatedAt && read.state.updatedBy?.includes("@") ? `, switched ${relative(Date.parse(read.state.updatedAt), now)} by ${read.state.updatedBy}` : ""}. ${lastRunLine(read.state, now)}`}
-      </p>
+        {read.kind === "loading" ? (
+          <LoadingSkeleton
+            variant="list"
+            label="Reading the setting"
+            rows={1}
+          />
+        ) : read.kind === "error" ? (
+          `The setting could not be read: ${read.text}. Nothing is sent while it cannot be read.`
+        ) : (
+          `${on ? "On" : "Off"}${read.state.updatedAt && read.state.updatedBy?.includes("@") ? `, switched ${relative(Date.parse(read.state.updatedAt), now)} by ${read.state.updatedBy}` : ""}. ${lastRunLine(read.state, now)}`
+        )}
+      </div>
     </div>
   );
 }

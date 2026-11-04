@@ -307,12 +307,12 @@ for f in $TASK_SET; do
   case "$f" in *Core.ts|*.css) continue ;; esac
   [ -f "$CS/$f" ] || continue
   if grep -oE "(from|import) +[\"'][^\"']+[\"']" "$CS/$f" \
-    | grep -vE "[\"'](react|react-dom|react-router|lucide-react|@supabase/supabase-js|@/lib/(taskSeat|tasksClient|tasksCore|requestsClient|requestsCore)|\./(TaskPanel|YourTasks|AlertsBell|TaskFocus|RequestForm|tasks\.css|requests\.css))[\"']$" >/dev/null; then
+    | grep -vE "[\"'](react|react-dom|react-router|lucide-react|@supabase/supabase-js|@/components/LoadingSkeleton|@/lib/(taskSeat|tasksClient|tasksCore|requestsClient|requestsCore)|\./(TaskPanel|YourTasks|AlertsBell|TaskFocus|RequestForm|tasks\.css|requests\.css))[\"']$" >/dev/null; then
     echo "IMPORTS  $CS/$f may import only react, react-dom, react-router, lucide-react, the Supabase client type, @/lib/taskSeat and the set itself"
     fails=$((fails + 1))
   fi
   if grep -E "[\"']@supabase/supabase-js[\"']" "$CS/$f" \
-    | grep -vqE "^import type \{ SupabaseClient \} from [\"']@supabase/supabase-js[\"'];$"; then
+    | grep -vqE "^import type \{ SupabaseClient \} from [\"']@supabase/supabase-js[\"'];[[:space:]]*$"; then
     echo "IMPORTS  $CS/$f may take only the SupabaseClient type from @supabase/supabase-js"
     fails=$((fails + 1))
   fi
@@ -354,12 +354,12 @@ if [ -f "$CS/src/forms/staff/formSheetCore.ts" ] \
   && grep -qE '^(import |export .* from )' "$CS/src/forms/staff/formSheetCore.ts"; then
   echo "IMPORTS  $CS/src/forms/staff/formSheetCore.ts must stay import-free"; fails=$((fails + 1))
 fi
-form_imports src/forms/staff/FormSheet.tsx 'react|lucide-react|@/components/ui/sheet|\./formSheetCore|\./formSheet\.css'
+form_imports src/forms/staff/FormSheet.tsx 'react|lucide-react|@/components/ui/sheet|@/components/LoadingSkeleton|\./formSheetCore|\./formSheet\.css'
 form_imports src/forms/staff/formDefs.ts '\./formSheetCore'
 form_imports src/forms/staff/lifecycleClient.ts '@supabase/supabase-js|\./formSheetCore'
 if [ -f "$CS/src/forms/staff/lifecycleClient.ts" ] \
   && grep -E "[\"']@supabase/supabase-js[\"']" "$CS/src/forms/staff/lifecycleClient.ts" \
-  | grep -vqE "^import type \{ SupabaseClient \} from [\"']@supabase/supabase-js[\"'];$"; then
+  | grep -vqE "^import type \{ SupabaseClient \} from [\"']@supabase/supabase-js[\"'];[[:space:]]*$"; then
   echo "IMPORTS  $CS/src/forms/staff/lifecycleClient.ts may take only the SupabaseClient type"
   fails=$((fails + 1))
 fi

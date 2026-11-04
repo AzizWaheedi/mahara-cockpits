@@ -1,10 +1,11 @@
 // The CEO kit's status colours (StatusChip, StatusDot) live here.
 import "@/components/ceo/ceo.css";
-import { ChevronRight, CircleAlert, Inbox, LoaderCircle } from "lucide-react";
+import { ChevronRight, CircleAlert, Inbox } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { FilterChips, type FilterOption } from "@/components/ceo/FilterChips";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { SopVideo } from "@/components/SopVideo";
 import { RequestForm } from "@/components/tasks/RequestForm";
 import { Button } from "@/components/ui/button";
@@ -342,13 +343,12 @@ function ListBody({
 }) {
   if (!state || state.status === "loading")
     return (
-      <p
-        className="flex items-center gap-2 px-5 py-6 text-sm text-muted-foreground"
-        role="status"
-      >
-        <LoaderCircle aria-hidden className="size-4 animate-spin" />
-        Reading requests
-      </p>
+      <LoadingSkeleton
+        variant="list"
+        label="Reading requests"
+        rows={5}
+        className="px-5 py-6"
+      />
     );
   if (state.status === "error")
     return (

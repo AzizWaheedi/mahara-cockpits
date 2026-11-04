@@ -14,6 +14,7 @@ import { count, money, NA, pct, shortDate } from "@/components/ceo/format";
 import { KICKER } from "@/components/ceo/Kicker";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusDot } from "@/components/ceo/StatusChip";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import type { SheetContext } from "@/lib/ceoGoalSheetClient";
@@ -1589,10 +1590,7 @@ export function GoalsSheet({
       ) : null}
 
       {!sheet && !error ? (
-        <p className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" aria-hidden />
-          Opening the sheet
-        </p>
+        <LoadingSkeleton variant="table" label="Opening the sheet" rows={5} />
       ) : null}
     </SectionCard>
   );

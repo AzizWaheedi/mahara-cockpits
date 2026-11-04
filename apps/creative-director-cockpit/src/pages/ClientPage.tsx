@@ -22,6 +22,7 @@ import {
   useLocalStills,
 } from "@/components/CreativePreview";
 import { DosDontsCard } from "@/components/DosDonts";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { TemplateCard } from "@/components/TemplateCard";
 import { bucketDays, TrendChart } from "@/components/TrendChart";
 import { AnimatedSelect } from "@/components/ui/animated-select";
@@ -491,9 +492,9 @@ export function ClientPage() {
 
   if (d === undefined) {
     return (
-      <p className="mx-auto w-full max-w-6xl text-sm text-muted-foreground">
-        Loading…
-      </p>
+      <div className="mx-auto w-full max-w-6xl">
+        <LoadingSkeleton variant="detail" label={`Loading ${name}`} rows={6} />
+      </div>
     );
   }
   if (d === null) {
@@ -1434,7 +1435,8 @@ function TheirFunnel({ name }: { name: string }) {
     };
   }, [auth.client, name]);
 
-  if (!data) return <p className="text-[13px]">Loading…</p>;
+  if (!data)
+    return <LoadingSkeleton variant="list" label="Loading live ads" rows={4} />;
   if (data.rows.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">

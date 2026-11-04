@@ -4,6 +4,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { BookCallButton } from "@/components/ClientCheckIn";
 import { Dot, Kicker, LINK_INK } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -313,7 +314,13 @@ export function CheckinWindowView({
         {header}
         <main className="flex min-h-0 flex-1 flex-col">
           {m.phase.kind === "loading" ? (
-            <Plain>Loading the notes…</Plain>
+            <div className="m-auto w-full max-w-4xl p-6">
+              <LoadingSkeleton
+                variant="detail"
+                label="Loading the notes"
+                rows={5}
+              />
+            </div>
           ) : (
             <Plain
               actions={
@@ -1113,9 +1120,11 @@ function Rail({
           </span>
         </p>
       ) : m.rail.loading ? (
-        <p className="text-xs text-muted-foreground">
-          Reading the call history…
-        </p>
+        <LoadingSkeleton
+          variant="list"
+          label="Reading the call history"
+          rows={3}
+        />
       ) : (
         <>
           <section className="space-y-2">

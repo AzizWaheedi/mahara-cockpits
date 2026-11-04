@@ -15,6 +15,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { KICKOFF } from "@/forms/kickoff";
 import { cn } from "@/lib/utils";
@@ -463,7 +464,9 @@ export function NotesWindow({
   const links = useMemo(() => (d ? groupLinks(d) : null), [d]);
   if (!d || !slide)
     return (
-      <div className="p-6 text-sm text-muted-foreground">Reading the deck…</div>
+      <div className="p-6">
+        <LoadingSkeleton variant="detail" label="Reading the deck" rows={5} />
+      </div>
     );
 
   const elapsed = at ? now - at.startedAt : 0;

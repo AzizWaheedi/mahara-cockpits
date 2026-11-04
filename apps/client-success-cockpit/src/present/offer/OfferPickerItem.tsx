@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState } from "react";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import {
   Dialog,
   DialogContent,
@@ -32,7 +33,11 @@ export function OfferPickerItem({ taskId }: { taskId: string }) {
             </DialogDescription>
           </DialogHeader>
           {open ? (
-            <Suspense fallback={<p>Reading offers…</p>}>
+            <Suspense
+              fallback={
+                <LoadingSkeleton variant="list" label="Reading offers" />
+              }
+            >
               <OfferPicker taskId={taskId} />
             </Suspense>
           ) : null}
