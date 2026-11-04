@@ -20,6 +20,29 @@ command -v python >/dev/null 2>&1 || py_bin="python3"
 # one missing piece at a time).
 scripts/ship-preflight.sh "${1:-all}" || exit 1
 
+# Two more checks that take seconds and used to stop a ship only after the
+# 20-minute readiness step (3 and 4 November 2026: five of eight failed ships).
+# Packages with files missing or cut short in a worktree (all five apps,
+# because the readiness step builds all five):
+node scripts/check-installs.mjs || exit 1
+# Lint for the app(s) shipping, the same command ship() runs below:
+case "${1:-all}" in
+  all) early_lint=(apps/client-success-cockpit apps/creative-director-cockpit apps/media-buyer-cockpit
+                   apps/video-editor-cockpit apps/sales-cockpit) ;;
+  media-buyer)    early_lint=(apps/media-buyer-cockpit) ;;
+  client-success) early_lint=(apps/client-success-cockpit) ;;
+  creative)       early_lint=(apps/creative-director-cockpit) ;;
+  video-editor)   early_lint=(apps/video-editor-cockpit) ;;
+  sales)          early_lint=(apps/sales-cockpit) ;;
+esac
+for d in "${early_lint[@]}"; do
+  (cd "$d" && bunx biome check --line-ending=auto src >/dev/null) \
+    || { echo "lint failed in $d (run: cd $d && bunx biome check --line-ending=auto --write src)"; exit 1; }
+done
+echo "Packages and lint: ready."
+node --test scripts/check-installs.test.mjs >/dev/null \
+  || { echo "the package check's tests fail (node --test scripts/check-installs.test.mjs)"; exit 1; }
+
 # Authentication is shared by all five apps. Check live settings before publishing.
 "$py_bin" -m unittest discover -s scripts -p test_check_cockpit_auth_config.py
 "$py_bin" -m unittest discover -s scripts -p test_vercel_project_guard.py
@@ -338,7 +361,20 @@ ship() {
     [ -f "$dir/.vercel/project.json" ] || { echo "$dir is not linked to a Vercel project (.vercel/project.json missing): copy it from a linked checkout"; exit 1; }
     # An archived upload avoids the per-file fetch failures observed during
     # the native branch preview run. It does not change the deployment target.
-    out=$(cd "$dir" && "${vercel_cli[@]}" deploy --prod --yes --force --archive tgz ${build_env[@]+"${build_env[@]}"} ${tok[@]+"${tok[@]}"} 2>&1) || { echo "$out" | tail -20; echo "vercel deploy failed for $app"; exit 1; }
+    # A network drop during the upload is tried once more after 20 s
+    # (2026-11-04: a media buyer ship passed every check, then lost 28
+    # minutes on "fetch failed"). Any other failure stops the ship as before.
+    local net_drop='fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|socket hang up|Bad Gateway|Service Unavailable|Gateway Timeout'
+    if ! out=$(cd "$dir" && "${vercel_cli[@]}" deploy --prod --yes --force --archive tgz ${build_env[@]+"${build_env[@]}"} ${tok[@]+"${tok[@]}"} 2>&1); then
+      if printf '%s\n' "$out" | grep -Eq "$net_drop"; then
+        echo "  the upload to Vercel dropped on the network; trying once more in 20 s"
+        sleep 20
+        out=$(cd "$dir" && "${vercel_cli[@]}" deploy --prod --yes --force --archive tgz ${build_env[@]+"${build_env[@]}"} ${tok[@]+"${tok[@]}"} 2>&1) \
+          || { echo "$out" | tail -20; echo "vercel deploy failed for $app (second try)"; exit 1; }
+      else
+        echo "$out" | tail -20; echo "vercel deploy failed for $app"; exit 1
+      fi
+    fi
   else
     # Publication needs the same scoped CLI for ownership reads, promotion
     # and read-back. Stop before uploading when those checks are unavailable.
