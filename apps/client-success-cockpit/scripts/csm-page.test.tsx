@@ -885,8 +885,8 @@ const SECTIONS = [
 
 /** DUNEWORKS DESIGN in the fixture: an onboarding client. */
 const DUNEWORKS = "fixture01";
-/** MOFAG in the fixture: commitments from a call, and a report due. */
-const MOFAG = "86exr5zcm";
+/** OASIS is a fictional client with commitments from a call and a report due. */
+const OASIS = "fixture02";
 
 /** The page for one section, the client page on Duneworks. */
 const pageFor = (section: string, clientKey = DUNEWORKS) =>
@@ -957,7 +957,7 @@ async function renderSection(
   return text;
 }
 
-test("the hot list and the message drafts render real client copy", async () => {
+test("the hot list and the message drafts render synthetic client copy", async () => {
   const host = win.document.createElement("div");
   win.document.body.appendChild(host);
   // biome-ignore lint/suspicious/noExplicitAny: happy-dom element into React DOM
@@ -1777,8 +1777,8 @@ test("closing a commitment is not contact with the client", async () => {
       root.render(
         createElement(
           MemoryRouter,
-          { initialEntries: [`/clients/${MOFAG}`] },
-          pageFor("client", MOFAG),
+          { initialEntries: [`/clients/${OASIS}`] },
+          pageFor("client", OASIS),
         ),
       );
     });
@@ -2353,9 +2353,9 @@ test("the EOD drafts the call summary from the day's calls and asks before repla
       submittedAt: null,
     },
     eodDecisions: [
-      logged("MOFAG", "Held a call", "Walked through the October report"),
+      logged("OASIS", "Held a call", "Walked through the October report"),
       logged("DUNEWORKS DESIGN", "Held a call", null),
-      logged("MOFAG", "Upsell pitched", null),
+      logged("OASIS", "Upsell pitched", null),
     ],
     callHealth: [
       { key: "csm-fathom", ok: true, lastOkAt: new Date().toISOString() },
@@ -2395,11 +2395,11 @@ test("the EOD drafts the call summary from the day's calls and asks before repla
 
     await reactAct(async () => button("Draft from today's calls")?.click());
     await reactAct(async () => button("Replace")?.click());
-    // In call order: the Duneworks recording started before the MOFAG call.
+    // In call order: the Duneworks recording started before the OASIS call.
     expect(box().value).toBe(
       [
         "DUNEWORKS DESIGN: Plan the villa shoot for next week.",
-        "MOFAG: Walked through the October report",
+        "OASIS: Walked through the October report",
       ].join("\n"),
     );
     expect(text()).toContain(
