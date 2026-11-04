@@ -302,6 +302,27 @@ describe("Our ads: every ad with activity in the window is on the tree (audit A)
     expect(payload.account.w7.bookRate).toBeLessThanOrEqual(1);
   });
 
+  test("demo evidence is per contact, excludes cancelled demos and does not count future attendance", async () => {
+    const { payload } = await fixture(`
+      insert into public.meta_ad_snapshots values ${days(FROM7, TODAY).map(d => snapshot(d, "journey", "Journey", LG, "ACTIVE", 1)).join(",")};
+      insert into public.leads values
+        ('demo-booked', 'journey', '{roas-qualified}', '2026-10-10 05:00+00'),
+        ('demo-shown', 'journey', '{roas-qualified}', '2026-10-10 05:00+00'),
+        ('demo-cancelled', 'journey', '{roas-qualified}', '2026-10-10 05:00+00'),
+        ('future-shown', 'journey', '{roas-qualified}', '2026-10-10 05:00+00');
+      insert into public.calls values
+        ('demo-booked', 'journey', 'demo', '2026-10-11 06:00+00', '2030-01-15 08:00+00', 'confirmed', 'u2'),
+        ('demo-shown', 'journey', 'demo', '2026-10-11 06:00+00', '2026-10-14 08:00+00', 'showed', 'u2'),
+        ('demo-shown', 'journey', 'demo', '2026-10-12 06:00+00', '2026-10-15 08:00+00', 'showed', 'u2'),
+        ('demo-cancelled', 'journey', 'demo', '2026-10-11 06:00+00', '2026-10-14 08:00+00', 'cancelled', 'u2'),
+        ('future-shown', 'journey', 'demo', '2026-10-11 06:00+00', '2030-01-15 08:00+00', 'showed', 'u2');
+    `);
+    expect(adOf(payload, "journey").w7).toMatchObject({
+      leads: 4, leadsToIntro: 3, leadsToConfirmedIntro: 3,
+      leadsToProgressedDemo: 3, leadsToDemoAttended: 1,
+    });
+  });
+
   test("intros and confirmed intros count each lead once, on the lead's own ad (the CEO, 2026-10-18)", async () => {
     // "For intros, it shouldn't count re-scheduled either. It should just count once."
     const { payload } = await fixture(`
@@ -329,7 +350,7 @@ describe("Our ads: every ad with activity in the window is on the tree (audit A)
         -- Cancelled, then rebooked and still confirmed after its time: one intro, confirmed.
         ('held', 'intros', 'intro', '2026-10-12 06:00+00', '2026-10-13 08:00+00', 'cancelled', 'u1'),
         ('held', 'intros', 'intro', '2026-10-13 06:00+00', '2026-10-14 08:00+00', 'confirmed', 'u1'),
-        -- Straight to a demo with no intro: not an intro.
+        -- The demo establishes intro progression even without an intro record.
         ('straight', 'intros', 'demo', '2026-10-13 06:00+00', '2026-10-15 08:00+00', 'showed', 'u2'),
         -- A lead from last year, and a contact with no ROAS tag, rebooking this week: neither is this window's lead.
         ('veteran', 'intros', 'intro', '2026-10-12 06:00+00', '2026-10-13 08:00+00', 'showed', 'u1'),
@@ -337,8 +358,8 @@ describe("Our ads: every ad with activity in the window is on the tree (audit A)
     `);
     const ad = adOf(payload, "intros");
     for (const w of [ad.w7, ad.w30]) {
-      expect(w).toMatchObject({ spend: 21, leads: 6, leadsToIntro: 4, leadsToConfirmedIntro: 2 });
-      expect(w).toMatchObject({ bookRate: 0.6667, costPerIntro: 5.25, costPerConfirmedIntro: 10.5, confirmedIntroRate: 0.5 });
+      expect(w).toMatchObject({ spend: 21, leads: 6, leadsToIntro: 5, leadsToConfirmedIntro: 3, leadsToProgressedDemo: 1, leadsToDemoAttended: 1 });
+      expect(w).toMatchObject({ bookRate: 0.8333, costPerIntro: 4.2, costPerConfirmedIntro: 7, confirmedIntroRate: 0.6 });
       // The appointments the tab used to show: ten, rebookings, cancels and older leads included.
       expect(w.introsBooked).toBe(10);
     }
@@ -348,13 +369,13 @@ describe("Our ads: every ad with activity in the window is on the tree (audit A)
     expect((ad as unknown as { people: { setter: unknown } }).people.setter).toEqual({ name: "Setter One", shown: 5, due: 6 });
     // The account row and the campaign add the ads' leads up, never the appointments.
     // This ad, "Seen First | Hook 3" (Makers and c2) and "Referrals Are Not A System" (c4).
-    expect(payload.account.w7).toMatchObject({ leadsToIntro: 4 + 2 + 1, leadsToConfirmedIntro: 2 + 2 + 1 });
+    expect(payload.account.w7).toMatchObject({ leadsToIntro: 5 + 2 + 1, leadsToConfirmedIntro: 3 + 2 + 1 });
     const lg = campaignOf(payload, "lg")!.w7;
-    expect(lg.costPerConfirmedIntro).toBe(Math.round(((lg.spend ?? 0) / 5) * 100) / 100);
+    expect(lg.costPerConfirmedIntro).toBe(Math.round(((lg.spend ?? 0) / 6) * 100) / 100);
     const text = payload.notes.map((n: { text: string }) => n.text).join(" ");
     expect(text).toContain("Intros are counted once per lead, however often the intro was rebooked");
-    expect(text).toContain("A lead that went straight to a demo is not an intro.");
-    expect(text).toContain("that was not cancelled. An intro marked invalid was held, so it counts.");
+    expect(text).toContain("A demo establishes intro progression even when the intro record is missing.");
+    expect(text).toContain("that was not cancelled. An intro marked invalid still counts.");
     expect(text).not.toContain("cancelled or marked invalid");
     expect(text).not.toMatch(/cost per demo/i);
   });

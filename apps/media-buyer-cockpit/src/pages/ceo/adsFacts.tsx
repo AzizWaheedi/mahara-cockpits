@@ -119,7 +119,10 @@ export type IntroFigures = {
 
 /** A window's intro figures, or all n/a on a payload from before they were counted once per lead. */
 export function introFigures(w: B2bAdWindow): IntroFigures {
-  if (w.leadsToConfirmedIntro === undefined)
+  if (
+    w.leadsToConfirmedIntro === undefined ||
+    w.leadsToProgressedDemo === undefined
+  )
     return {
       known: false,
       intros: null,
@@ -243,11 +246,32 @@ export const LEAD_TO_INTRO_HINT =
 
 /** The Ads tab's intro: a lead, never an appointment. */
 export const INTROS_HINT =
-  "Leads from these days, on this ad, that booked an intro at or after they came in. Each lead counts once however often the intro was rebooked; a lead whose intros were all cancelled, or who went straight to a demo, is not an intro. An intro marked invalid was held, so it counts. Cost is spend over intros.";
+  "Leads from these days on this ad with a non-cancelled intro or demo booked after they came in. A demo establishes intro progression even if the intro record is missing. Each lead counts once; an intro marked invalid still counts. Cost is spend over intros.";
 
 /** The CEO's rule: confirmed or showed counts as shown. */
 export const CONFIRMED_INTROS_HINT =
-  "Of those intros, the leads whose intro showed, or is still marked confirmed after its time. No-shows, cancelled and invalid are left out, and an intro still ahead counts once its time passes. Cost is spend over confirmed intros.";
+  "Each lead once: an intro marked showed or still confirmed after its time, or a non-cancelled demo booked for the same contact. A demo is treated as evidence of intro progression. Cost is spend over these leads.";
+
+export const DEMO_PROGRESSION_HINT =
+  "Leads from this period with a non-cancelled demo booked by the end of the period. Each lead counts once. A demo establishes intro progression even if the intro record is missing. Demo attended counts only a demo explicitly marked showed by the period end; it is not inferred from a booking.";
+
+export function demoFigures(w: B2bAdWindow) {
+  const demos = w.leadsToProgressedDemo ?? null;
+  const attended = w.leadsToDemoAttended ?? null;
+  const confirmed =
+    w.leadsToProgressedDemo === undefined
+      ? null
+      : (w.leadsToConfirmedIntro ?? null);
+  return {
+    demos,
+    attended,
+    rate:
+      demos !== null && confirmed !== null && confirmed > 0
+        ? demos / confirmed
+        : null,
+    na: w.leadsToProgressedDemo === undefined ? NA_REFRESH : NA_ZERO,
+  };
+}
 
 /**
  * Who worked an ad's calls is read over the payload's thirty days (the

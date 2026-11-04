@@ -25,7 +25,7 @@ const DISABLE_REASON: Record<number, string> = {
 // Link clicks are kept out of COUNTS: a day Meta sent without them makes them
 // not known (null), and the sums and rates over them have to carry that.
 const COUNTS = [
-  'impressions', 'clicks', 'metaLeads', 'leads', 'qualifiedLeads', 'notReadyLeads', 'leadsToIntro', 'leadsToConfirmedIntro', 'leadsToDemo',
+  'impressions', 'clicks', 'metaLeads', 'leads', 'qualifiedLeads', 'notReadyLeads', 'leadsToIntro', 'leadsToConfirmedIntro', 'leadsToDemo', 'leadsToProgressedDemo', 'leadsToDemoAttended',
   'introsBooked', 'introsDue', 'introsShown', 'introsQualified', 'introsCancelled', 'introsAdvanced',
   'demosBooked', 'demosDue', 'demosShown', 'demosQualified', 'demosShownMature', 'demosCancelled', 'closes',
 ] as const;
@@ -34,6 +34,7 @@ const COLUMN: Record<CountKey, string> = {
   impressions: 'impressions', clicks: 'clicks', metaLeads: 'meta_leads',
   leads: 'leads', qualifiedLeads: 'qualified_leads', notReadyLeads: 'not_ready_leads',
   leadsToIntro: 'leads_to_intro', leadsToConfirmedIntro: 'leads_to_confirmed_intro', leadsToDemo: 'leads_to_demo',
+  leadsToProgressedDemo: 'leads_to_progressed_demo', leadsToDemoAttended: 'leads_to_demo_attended',
   introsBooked: 'intros_booked', introsDue: 'intros_due', introsShown: 'intros_shown',
   introsQualified: 'intros_qualified', introsCancelled: 'intros_cancelled', introsAdvanced: 'intros_advanced',
   demosBooked: 'demos_booked', demosDue: 'demos_due', demosShown: 'demos_shown',
@@ -45,10 +46,10 @@ export type B2bAdWindow = {
   spend: number; impressions: number; clicks: number; linkClicks: number | null; metaLeads: number; leads: number;
   qualifiedLeads: number; notReadyLeads: number;
   /**
-   * Leads in the window that booked an intro (not cancelled; invalid was held and counts), or a demo, at or after they arrived: per lead,
-   * never per appointment. `leadsToConfirmedIntro`: of those intros, one that showed or is still confirmed after its time.
+   * Per lead: a non-cancelled intro or demo booked after arrival. A demo also
+   * establishes confirmed intro progression; attendance requires showed.
    */
-  leadsToIntro: number; leadsToConfirmedIntro: number; leadsToDemo: number;
+  leadsToIntro: number; leadsToConfirmedIntro: number; leadsToDemo: number; leadsToProgressedDemo: number; leadsToDemoAttended: number;
   introsBooked: number; introsDue: number; introsShown: number;
   introsQualified: number; introsCancelled: number; introsAdvanced: number; demosBooked: number; demosDue: number;
   demosShown: number; demosQualified: number;
@@ -198,7 +199,7 @@ function finish(window: B2bAdWindow): B2bAdWindow {
 function emptyWindow(): B2bAdWindow {
   const window = {
     spend: 0, impressions: 0, clicks: 0, linkClicks: 0, metaLeads: 0, leads: 0, qualifiedLeads: 0, notReadyLeads: 0,
-    leadsToIntro: 0, leadsToConfirmedIntro: 0, leadsToDemo: 0,
+    leadsToIntro: 0, leadsToConfirmedIntro: 0, leadsToDemo: 0, leadsToProgressedDemo: 0, leadsToDemoAttended: 0,
     introsBooked: 0, introsDue: 0, introsShown: 0, introsQualified: 0, introsCancelled: 0, introsAdvanced: 0,
     demosBooked: 0, demosDue: 0, demosShown: 0, demosQualified: 0, demosShownMature: 0, demosCancelled: 0, closes: 0, contracted: 0, cash: 0,
     frequency: null, cpm: null, ctr: null, ctrLink: null, cpc: null, cpl: null, qualifiedPct: null, costPerQualified: null,
@@ -217,7 +218,7 @@ function windowOf(row: Row, prefix: 'w7' | 'w30'): B2bAdWindow {
     impressions: get('impressions'), clicks: get('clicks'),
     linkClicks: optionalNumber(row[`${prefix}_link_clicks`], `${prefix} link clicks`), metaLeads: get('meta_leads'),
     leads: get('leads'), qualifiedLeads: get('qualified_leads'), notReadyLeads: get('not_ready_leads'),
-    leadsToIntro: get('leads_to_intro'), leadsToConfirmedIntro: get('leads_to_confirmed_intro'), leadsToDemo: get('leads_to_demo'),
+    leadsToIntro: get('leads_to_intro'), leadsToConfirmedIntro: get('leads_to_confirmed_intro'), leadsToDemo: get('leads_to_demo'), leadsToProgressedDemo: get('leads_to_progressed_demo'), leadsToDemoAttended: get('leads_to_demo_attended'),
     introsBooked: get('intros_booked'), introsDue: get('intros_due'), introsShown: get('intros_shown'),
     introsQualified: get('intros_qualified'), introsCancelled: get('intros_cancelled'), introsAdvanced: get('intros_advanced'),
     demosBooked: get('demos_booked'), demosDue: get('demos_due'), demosShown: get('demos_shown'),
@@ -267,6 +268,12 @@ const metaFrequency = (level: Map<string, LevelFrequency>, id: string): number |
 
 export function treeSql(from7: string, from30: string, to: string): string {
   const roasLead = `('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[])))`;
+  // A non-cancelled demo for the same lead is evidence of intro progression.
+  // Limit every event to the selected window's end, including attendance.
+  const demo = `exists (select 1 from public.calls d where d.contact_id = l.contact_id and d.call_type = 'demo' and d.booked_at >= l.lead_created_at and (d.booked_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)} and coalesce(d.status, '') <> 'cancelled')`;
+  const intro = `exists (select 1 from public.calls b where b.contact_id = l.contact_id and b.call_type = 'intro' and b.booked_at >= l.lead_created_at and (b.booked_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)} and coalesce(b.status, '') <> 'cancelled')`;
+  const confirmed = `exists (select 1 from public.calls b where b.contact_id = l.contact_id and b.call_type = 'intro' and b.booked_at >= l.lead_created_at and (b.booked_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)} and (b.start_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)} and b.start_at <= now() and b.status in ('showed','confirmed'))`;
+  const demoAttended = `exists (select 1 from public.calls d where d.contact_id = l.contact_id and d.call_type = 'demo' and d.booked_at >= l.lead_created_at and (d.booked_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)} and (d.start_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)} and d.start_at <= now() and d.status = 'showed')`;
   // `status` narrows which of the lead's calls count; null counts every call.
   const leadsBooked = (type: 'intro' | 'demo', as: string, status: string | null = null) => `count(*) filter (where ${roasLead} and exists (select 1 from public.calls b where b.contact_id = l.contact_id and b.call_type = '${type}'${status ? ` and ${status}` : ''} and b.booked_at >= l.lead_created_at and (b.booked_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)})) as ${as}`;
   const funnel = (from: string, alias: 'w7' | 'w30') => `
@@ -285,13 +292,13 @@ export function treeSql(from7: string, from30: string, to: string): string {
       count(*) filter (where 'roas-qualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unqualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unprepared' = any(coalesce(l.tags, '{}'::text[]))) as not_ready_leads,
       -- Per lead, never per appointment (the CEO, 2026-10-18: "it should just
       -- count once"): a lead with a no-show and a rebooked intro is one intro.
-      -- An intro leaves out a lead whose every intro was cancelled, one marked
-      -- invalid was held, so it stays (B2B's show rule counts invalid as
-      -- shown). A confirmed intro showed, or is still confirmed once its time
-      -- has passed (the CEO's rule, B2B's intros_qualified).
-      ${leadsBooked('intro', 'leads_to_intro', "coalesce(b.status, '') <> 'cancelled'")},
-      ${leadsBooked('intro', 'leads_to_confirmed_intro', "(b.status = 'showed' or (b.status = 'confirmed' and b.start_at <= now()))")},
-      ${leadsBooked('demo', 'leads_to_demo')}
+      -- A non-cancelled demo establishes intro progression, and a demo is
+      -- attended only when explicitly marked showed by the end of the window.
+      count(*) filter (where ${roasLead} and (${intro} or ${demo})) as leads_to_intro,
+      count(*) filter (where ${roasLead} and (${confirmed} or ${demo})) as leads_to_confirmed_intro,
+      ${leadsBooked('demo', 'leads_to_demo')},
+      count(*) filter (where ${roasLead} and ${demo}) as leads_to_progressed_demo,
+      count(*) filter (where ${roasLead} and ${demoAttended}) as leads_to_demo_attended
     from public.leads l
     where l.ad_id is not null
       and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from)} and ${dateLiteral(to)}
@@ -337,6 +344,8 @@ export function treeSql(from7: string, from30: string, to: string): string {
     coalesce(${prefix}_leads.leads_to_intro,0) as ${prefix}_leads_to_intro,
     coalesce(${prefix}_leads.leads_to_confirmed_intro,0) as ${prefix}_leads_to_confirmed_intro,
     coalesce(${prefix}_leads.leads_to_demo,0) as ${prefix}_leads_to_demo,
+    coalesce(${prefix}_leads.leads_to_progressed_demo,0) as ${prefix}_leads_to_progressed_demo,
+    coalesce(${prefix}_leads.leads_to_demo_attended,0) as ${prefix}_leads_to_demo_attended,
     coalesce(${prefix}_calls.intros_booked,0) as ${prefix}_intros_booked,
     coalesce(${prefix}_calls.intros_due,0) as ${prefix}_intros_due,
     coalesce(${prefix}_calls.intros_shown,0) as ${prefix}_intros_shown,
@@ -624,7 +633,7 @@ function buildAdsNotes(payload: B2bAdsPayload, staleSince: string | null, freshn
   });
   payload.notes.push({
     level: 'info',
-    text: `Every row follows an ad from the first impression to the signed contract, through its leads, their intros and the deals credited to it. Intros are counted once per lead, however often the intro was rebooked: the leads from these days, on their own ad, with an intro booked at or after they came in that was not cancelled. An intro marked invalid was held, so it counts. A confirmed intro is one of those whose intro showed, or is still marked confirmed after its time. A lead that went straight to a demo is not an intro. Calls and deals are credited to the ad on the contact's lead record when it is one of this account's ads and was already running when the call was booked or the deal signed; otherwise they keep the ad on the call or deal. An ad switched off before the window still shows here, at $0 spend, when its leads, calls or deals fall inside it. Both comparison windows use exactly ${payload.windows.from7} to ${payload.windows.to}. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per intro and per confirmed intro have no gate set, so they are shown and never judged. Frequency is Meta's own: impressions ÷ people reached over the window at each level, on Meta's account days (${payload.windows.metaTimeZone}, through ${payload.windows.metaUntil}).`,
+    text: `Every row follows an ad from the first impression to the signed contract, through its leads, their intros and the deals credited to it. Intros are counted once per lead, however often the intro was rebooked: the leads from these days, on their own ad, with an intro or demo booked at or after they came in that was not cancelled. An intro marked invalid still counts. A confirmed intro is one whose intro showed or is still confirmed after its time, or whose non-cancelled demo was booked by the end of the period. A demo establishes intro progression even when the intro record is missing. Demos attended count only an explicit showed status, by the period end. These use current CRM statuses, so later corrections can change past periods. Calls and deals are credited to the ad on the contact's lead record when it is one of this account's ads and was already running when the call was booked or the deal signed; otherwise they keep the ad on the call or deal. An ad switched off before the window still shows here, at $0 spend, when its leads, calls or deals fall inside it. Both comparison windows use exactly ${payload.windows.from7} to ${payload.windows.to}. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per intro and per confirmed intro have no gate set, so they are shown and never judged. Frequency is Meta's own: impressions ÷ people reached over the window at each level, on Meta's account days (${payload.windows.metaTimeZone}, through ${payload.windows.metaUntil}).`,
   });
   payload.notes.push({
     level: 'info',

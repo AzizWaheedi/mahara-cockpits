@@ -57,6 +57,8 @@ import {
   COVERAGE_HINT,
   constraintText,
   coverageLine,
+  DEMO_PROGRESSION_HINT,
+  demoFigures,
   Fact,
   FIT_HINT,
   frequencyFact,
@@ -109,9 +111,8 @@ import type { CeoTabProps } from "./types";
  * further: the funnel from the impression to the signed contract, with the
  * unit cost at each stage, the conversion between stages, the stage that is
  * holding a campaign back, and the people who worked its calls. A switch on
- * every row. Per ad the calls stop at the intro (the CEO, 2026-10-18: "the
- * link to intro, that's it"): intros and confirmed intros, each lead once.
- * Demos are read on the Sales tab.
+ * every row. The lead-level journey now includes demo bookings and attendance,
+ * each lead once, alongside the existing intro and signed figures.
  *
  * Two ways to look at it. The funnel view lists the campaigns: a campaign
  * that spent carries the full stage-by-stage ribbon, and its ad sets and ads
@@ -185,6 +186,7 @@ type Stage = {
 /** `freqHint` names whose frequency it is and the days it covers (`frequencyHint`). */
 function stagesOf(w: B2bAdWindow, freqHint: string): Stage[] {
   const i = introFigures(w);
+  const d = demoFigures(w);
   return [
     {
       key: "impressions",
@@ -259,6 +261,16 @@ function stagesOf(w: B2bAdWindow, freqHint: string): Stage[] {
         { label: "Cost", v: i.costPerConfirmed, f: money, na: i.na },
       ],
       hint: CONFIRMED_INTROS_HINT,
+    },
+    {
+      key: "demos",
+      label: "Demos booked",
+      value: d.demos === null ? <Na hint={d.na} /> : count(d.demos),
+      facts: [
+        { label: "Intro to demo", v: d.rate, f: pct, na: d.na },
+        { label: "Attended", v: d.attended, f: count, na: d.na },
+      ],
+      hint: DEMO_PROGRESSION_HINT,
     },
     {
       key: "signed",
@@ -376,6 +388,7 @@ function CompactLine({
   children?: ReactNode;
 }) {
   const i = introFigures(w);
+  const d = demoFigures(w);
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs tabular-nums text-muted-foreground">
       <Fact label="Spend">{money(w.spend)}</Fact>
@@ -390,6 +403,15 @@ function CompactLine({
           </Fact>
           <Fact label="Confirmed" hint={CONFIRMED_INTROS_HINT}>
             <Num v={i.confirmed} f={count} na={i.na} />
+          </Fact>
+          <Fact label="Demos" hint={DEMO_PROGRESSION_HINT}>
+            <Num v={d.demos} f={count} na={d.na} />
+          </Fact>
+          <Fact label="Intro to demo" hint={DEMO_PROGRESSION_HINT}>
+            <Num v={d.rate} f={pct} na={d.na} />
+          </Fact>
+          <Fact label="Demo attended" hint={DEMO_PROGRESSION_HINT}>
+            <Num v={d.attended} f={count} na={d.na} />
           </Fact>
         </>
       ) : null}
@@ -808,6 +830,30 @@ const COLS: Col[] = [
     get: w => introFigures(w).costPerConfirmed,
     fmt: money,
     low: true,
+    intro: true,
+  },
+  {
+    key: "progressedDemos",
+    label: "Demos",
+    title: DEMO_PROGRESSION_HINT,
+    get: w => demoFigures(w).demos,
+    fmt: count,
+    intro: true,
+  },
+  {
+    key: "introToDemoLeads",
+    label: "Intro to demo",
+    title: DEMO_PROGRESSION_HINT,
+    get: w => demoFigures(w).rate,
+    fmt: pct,
+    intro: true,
+  },
+  {
+    key: "demoAttendedLeads",
+    label: "Demo attended",
+    title: DEMO_PROGRESSION_HINT,
+    get: w => demoFigures(w).attended,
+    fmt: count,
     intro: true,
   },
   { key: "closes", label: "Signed", get: w => w.closes, fmt: count },
@@ -1308,7 +1354,7 @@ export function AdsTab({ sections, now }: CeoTabProps) {
                     ? undefined
                     : `${count(ai.confirmed)} of ${plural(ai.intros, "intro")} confirmed`
                 }
-                hint="Lead-gen spend over the leads whose intro showed, or is still marked confirmed after its time. Each lead counts once, however often the intro was rebooked."
+                hint={CONFIRMED_INTROS_HINT}
               />
               <StatTile
                 variant="plain"

@@ -25,6 +25,8 @@ import {
   closerHint,
   constraintText,
   coverageLine,
+  DEMO_PROGRESSION_HINT,
+  demoFigures,
   Fact,
   FIT_HINT,
   INTROS_HINT,
@@ -151,20 +153,11 @@ describe("the funnel's hints", () => {
 
   test("intros and confirmed intros count each lead once, and say so (the CEO, 2026-10-18)", () => {
     expect(LEAD_TO_INTRO_HINT).toContain("a rebooked intro counts once");
-    expect(INTROS_HINT).toContain(
-      "Each lead counts once however often the intro was rebooked",
-    );
-    expect(INTROS_HINT).toContain("went straight to a demo, is not an intro");
-    // An intro marked invalid was held: B2B's show rule counts it, so it is an intro (never a confirmed one).
-    expect(INTROS_HINT).toContain(
-      "An intro marked invalid was held, so it counts.",
-    );
-    expect(INTROS_HINT).not.toContain("cancelled or marked invalid");
+    expect(INTROS_HINT).toContain("Each lead counts once");
+    expect(INTROS_HINT).toContain("demo establishes intro progression");
+    expect(INTROS_HINT).toContain("intro marked invalid still counts");
     expect(CONFIRMED_INTROS_HINT).toContain(
-      "showed, or is still marked confirmed after its time",
-    );
-    expect(CONFIRMED_INTROS_HINT).toContain(
-      "No-shows, cancelled and invalid are left out",
+      "non-cancelled demo booked for the same contact",
     );
     const html = text(
       renderToStaticMarkup(
@@ -242,16 +235,14 @@ describe("the funnel's hints", () => {
     expect(src).not.toContain("function People(");
   });
 
-  test("no demo is left on the Ads tab: ribbon, table, tiles, verdicts or constraint", () => {
+  test("demo progression is visible without reusing appointment-based rates", () => {
     const src = read("src/pages/ceo/AdsTab.tsx");
     for (const gone of [
       "demosBooked",
       "demosShown",
       "demoShowRate",
       "costPerDemo",
-      "introToDemo",
       "closeRate",
-      '"Demos booked"',
       '"Demos shown"',
       '"$/demo"',
       '"Close rate"',
@@ -261,6 +252,25 @@ describe("the funnel's hints", () => {
       "costPerIntroShown",
     ])
       expect(src).not.toContain(gone);
+    expect(src).toContain('label: "Demos booked"');
+    expect(src).toContain('label: "Intro to demo"');
+    expect(src).toContain('label: "Demo attended"');
+    expect(DEMO_PROGRESSION_HINT).toContain("explicitly marked showed");
+    expect(
+      demoFigures({
+        leadsToProgressedDemo: 2,
+        leadsToDemoAttended: 1,
+        leadsToConfirmedIntro: 4,
+      } as B2bAdWindow),
+    ).toMatchObject({ demos: 2, attended: 1, rate: 0.5 });
+    expect(
+      demoFigures({ leadsToConfirmedIntro: 4 } as B2bAdWindow),
+    ).toMatchObject({
+      demos: null,
+      attended: null,
+      rate: null,
+      na: NA_REFRESH,
+    });
     // Old payloads can still carry the retired constraint stages; the screen leaves them out.
     expect(src).toContain("!RETIRED_STAGES.has(c.constraint.stage)");
     expect(RETIRED_STAGES.has("intros shown to demos booked")).toBe(true);
@@ -302,6 +312,8 @@ describe("the funnel's hints", () => {
       leads: 14,
       leadsToIntro: 9,
       leadsToConfirmedIntro: 2,
+      leadsToProgressedDemo: 1,
+      leadsToDemoAttended: 1,
       bookRate: 0.6429,
       costPerIntro: 69.04,
       costPerConfirmedIntro: 310.69,
@@ -322,6 +334,8 @@ describe("the funnel's hints", () => {
       leads: 0,
       leadsToIntro: 0,
       leadsToConfirmedIntro: 0,
+      leadsToProgressedDemo: 0,
+      leadsToDemoAttended: 0,
       bookRate: null,
       costPerIntro: null,
       costPerConfirmedIntro: null,
@@ -408,6 +422,8 @@ const w30 = (o: Partial<B2bAdWindow>) =>
     leads: 0,
     leadsToIntro: 0,
     leadsToConfirmedIntro: 0,
+    leadsToProgressedDemo: 0,
+    leadsToDemoAttended: 0,
     closes: 0,
     ...o,
   }) as B2bAdWindow;
