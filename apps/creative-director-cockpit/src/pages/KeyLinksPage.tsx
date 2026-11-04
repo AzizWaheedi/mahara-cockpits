@@ -2,6 +2,7 @@ import { ArrowUpRight, ChevronRight, Copy } from "lucide-react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/PageHeader";
+import { SopVideo } from "@/components/SopVideo";
 import { Button } from "@/components/ui/button";
 import { LINK_GROUPS } from "@/lib/creativeLinks";
 
@@ -32,6 +33,16 @@ export function KeyLinksPage() {
             <ul className="divide-y border-t">
               {g.rows.map(r => {
                 const url = r.url;
+                if (r.video)
+                  return (
+                    <li key={(url ?? "") + r.label}>
+                      <SopVideo
+                        video={r.video}
+                        flat
+                        className="px-4 py-3 sm:px-6"
+                      />
+                    </li>
+                  );
                 return (
                   <li
                     key={(url ?? "") + r.label}

@@ -32,6 +32,7 @@ import {
 import { PageHeader } from "@/components/PageHeader";
 import { SyncHealth } from "@/components/SyncHealth";
 import { TemplateCard } from "@/components/TemplateCard";
+import { YourTasks } from "@/components/tasks/YourTasks";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -399,6 +400,10 @@ function Creative({ view }: { view: View }) {
                 )}
               </Section>
             )}
+            {/* Your tasks (PLAN.md D19): your own open ClickUp tasks, five at
+                most, each opening in place. Script tickets assigned to you
+                show here and in Script requests below (TD 11.4). */}
+            <YourTasks />
             {/* What clients said on WhatsApp, with the reply already drafted. */}
             <WhatsAppDesk desk="creative" />
             <Checklist

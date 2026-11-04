@@ -55,7 +55,7 @@ Deno.serve(async(req:Request)=>{
   const provider=providerTools(env,async(row)=>{
    if(row.phase==='intent'&&row.method!=='GET')await checkScope();
    const {error}=await admin.from('cockpit_media_provider_health').insert({...row,action_id:actionId??null});if(error)throw new Error('Could not save provider receipt');
-  });
+  },fetch,{retry429:true});
   let existing:any=null;let prepared:any;let patch:any;
   if(operation==='request'){
    let query=admin.from('cockpit_creative_requests').select('*').eq('campaign_name',args.campaignName).not('status','in','(reviewed,cancelled)');

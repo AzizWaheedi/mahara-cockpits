@@ -1,3 +1,4 @@
+import { BUILT_OFFER_DECKS, type OfferDeckKind } from "../present/offer/kinds";
 /**
  * The client decks from fixtures, to see and screenshot every slide without
  * signing in. `bunx vite`, then open
@@ -187,6 +188,10 @@ function Harness() {
       onboarding: {},
       launch: {},
       blueprint: {},
+      ...(Object.fromEntries(BUILT_OFFER_DECKS.map(k => [k, {}])) as Record<
+        OfferDeckKind,
+        Overrides
+      >),
     };
     const loaded = fixed.loaded;
     store.onboarding = loaded.prep.onboarding;

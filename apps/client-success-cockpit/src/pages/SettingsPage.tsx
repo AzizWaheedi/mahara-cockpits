@@ -1,13 +1,22 @@
 import type { User as AuthUser } from "@supabase/supabase-js";
-import { ChevronRight, Loader2, Moon, Palette, Sun, User } from "lucide-react";
+import {
+  ChevronRight,
+  ClipboardList,
+  Loader2,
+  Moon,
+  Palette,
+  Sun,
+  User,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import {
   cockpitAuthError,
   completeCockpitPasswordReset,
   requestCockpitPasswordReset,
 } from "@/auth/supabaseAccess";
-import { PageHeader } from "@/components/kit";
+import { PageHeader, SectionCard } from "@/components/kit";
 import { NoticesRouting } from "@/components/NoticesRouting";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -24,6 +33,15 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useTheme } from "@/contexts/ThemeContext";
 import { portalUrl } from "@/lib/portal";
+import { retireItems } from "@/lib/wins";
+import {
+  kuwaitToday,
+  NOT_YET,
+  type RetireItem,
+  retireKind,
+  retireReplacementWords,
+  retireState,
+} from "@/lib/winsCore";
 
 export function SettingsPage() {
   const auth = useCockpitAuth();
@@ -149,7 +167,7 @@ export function SettingsPage() {
     <div className="mx-auto w-full max-w-6xl space-y-6">
       <PageHeader
         title="Settings"
-        sub="Your account, how the cockpit looks, and where it posts in Slack"
+        sub="Your account, how the cockpit looks, where it posts in Slack, and the client forms"
       />
 
       <div className="max-w-2xl space-y-6">
@@ -254,6 +272,31 @@ export function SettingsPage() {
         {/* D17: who hears in Slack, and who is tagged, changed here and
             never in code. Seats without the right to see it see nothing. */}
         <NoticesRouting />
+
+        {/* The forms editor (waves 3-4, ED): the client forms' questions,
+            words and schedules, in data. The page itself tells a seat that
+            is not an admin or the CEO that it cannot edit. */}
+        <section className="rounded-2xl border bg-card p-4 sm:p-6">
+          <h2 className="flex items-center gap-2 text-[15px] font-semibold">
+            <ClipboardList className="size-4 text-muted-foreground" />
+            Client forms
+          </h2>
+          <Link
+            to="/forms-editor"
+            className="mt-4 flex w-full items-center justify-between rounded-xl bg-muted/40 p-4 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <div>
+              <p className="text-sm font-medium">Open the forms editor</p>
+              <p className="text-sm text-muted-foreground">
+                Change the questions and words clients see, and when surveys go.
+                Admins and the CEO.
+              </p>
+            </div>
+            <ChevronRight className="size-4 text-muted-foreground" />
+          </Link>
+        </section>
+
+        {auth.isCeo || auth.isAdmin ? <RetiredForms /> : null}
       </div>
 
       {emailPasswordAvailable && (
@@ -366,6 +409,89 @@ export function SettingsPage() {
           </DialogContent>
         </Dialog>
       )}
+    </div>
+  );
+}
+
+/**
+ * Old forms and scenarios (docs/forms/WAVE56-CONTRACT.md 3.7, 5.14): every
+ * Make scenario and Typeform the CSM work used, what replaced it, who owns
+ * it and where it stands, with the 14-quiet-days archive rule. Never empty:
+ * the list is seeded. Read only: switch-offs and archives are deploy steps.
+ */
+export function RetiredForms({
+  read,
+  now,
+}: {
+  /** A stand-in for the harness and the tests. */
+  read?: () => Promise<RetireItem[]>;
+  now?: number;
+}) {
+  const auth = useCockpitAuth();
+  const [items, setItems] = useState<RetireItem[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    (read ? read() : retireItems(auth.client))
+      .then(r => live && setItems(r))
+      .catch(e => live && setError(String((e as Error)?.message ?? e)));
+    return () => {
+      live = false;
+    };
+  }, [read, auth.client]);
+  const today = kuwaitToday(now);
+  return (
+    <div data-retired-forms>
+      <SectionCard
+        title="Old forms and scenarios"
+        sub="What the cockpit replaced. An item is archived only after it has been off and quiet for 14 days; nothing is deleted."
+      >
+        {error ? (
+          <p className="text-sm text-muted-foreground">
+            {/does not exist|not found|404|schema cache/i.test(error)
+              ? NOT_YET
+              : error}
+          </p>
+        ) : !items ? (
+          <p className="text-sm text-muted-foreground" role="status">
+            Reading the list
+          </p>
+        ) : (
+          <ul className="grid divide-y">
+            {items.map(i => (
+              <li
+                key={i.id}
+                className="grid gap-0.5 py-2.5 text-sm"
+                data-retire={i.id}
+              >
+                <span className="flex flex-wrap items-baseline justify-between gap-x-3">
+                  <span className="min-w-0 font-medium">
+                    {i.name}
+                    <span className="font-normal text-muted-foreground">
+                      {" · "}
+                      {retireKind(i.kind)}
+                    </span>
+                  </span>
+                  <span className="font-mono text-xs">
+                    {retireState(i, today)}
+                  </span>
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {i.replacement
+                    ? `Replaced by ${retireReplacementWords(i.replacement)}`
+                    : "No replacement"}
+                  {i.ownerRole ? ` · owner: ${i.ownerRole}` : ""}
+                </span>
+                {i.note ? (
+                  <span className="text-xs" data-retire-next>
+                    Next: {i.note}
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </SectionCard>
     </div>
   );
 }

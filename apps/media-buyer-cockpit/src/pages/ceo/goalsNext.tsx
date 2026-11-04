@@ -22,8 +22,10 @@ import {
   type DriverUnit,
   driversFromActuals,
   driversFromTargets,
+  holdsOnDeal,
   MODEL_KEYS,
   modelTargets,
+  ON_DEAL,
   project,
   REPLACED,
   tidy,
@@ -97,6 +99,21 @@ function sayDriver(v: number | null, unit: DriverUnit): string {
 
 const NONE = Object.fromEntries(DRIVER_KEYS.map(k => [k, null])) as Drivers;
 
+/**
+ * Inputs written as their own target rows though the Goals model does not
+ * set them (the catalogue has no refunds metric, nor one for the instalments
+ * owed on signed deals): the ladder's box is the row, never a typed row as
+ * well.
+ */
+const INPUT_ROWS: ReadonlySet<string> = new Set(["refundAmount", ON_DEAL.key]);
+
+/**
+ * What the cards owe is the book's, not a performance (2026-11-02): MRR due,
+ * back end only, and the instalments owed on signed deals start from the
+ * newest book, and from last month's plan only when the book was not read.
+ */
+const FROM_THE_BOOK: ReadonlySet<DriverKey> = new Set(["mrrDue", "onDealDue"]);
+
 /** Inputs that are themselves targets: a plan's stretch on one carries over. */
 const INPUT_TARGETS: Record<string, DriverKey> = {
   spend: "spend",
@@ -110,6 +127,7 @@ const INPUT_TARGETS: Record<string, DriverKey> = {
   mrrProjected: "mrrDue",
   mrrCollectionRate: "mrrCollectionRate",
   upsellCash: "upsellCash",
+  refundAmount: "refundAmount",
   labour: "labour",
   overhead: "overhead",
   callLeads: "callLeads",
@@ -205,10 +223,16 @@ export function NextMonth({
   );
   // Where last month's plan had no number (the call centre's leads, before
   // they were planned), start from what really happened, never from empty.
+  // The book's numbers start from the book (FROM_THE_BOOK).
   const planOrReal = useMemo(
     () =>
       Object.fromEntries(
-        DRIVER_KEYS.map(k => [k, fromPlan[k] ?? fromReal[k]]),
+        DRIVER_KEYS.map(k => [
+          k,
+          FROM_THE_BOOK.has(k)
+            ? (fromReal[k] ?? fromPlan[k])
+            : (fromPlan[k] ?? fromReal[k]),
+        ]),
       ) as Drivers,
     [fromPlan, fromReal],
   );
@@ -249,7 +273,13 @@ export function NextMonth({
         introsShown: first.introsShown,
         demosShown: first.demosShown,
         closes: first.closes,
-        mrrDue: drivers.mrrDue,
+        // The MRR a manager looks after is every recurring card, those still
+        // on their closer-form deal too: MRR due is the back end only since
+        // 2026-11-02, so the instalments owed on signed deals are added back.
+        mrrDue:
+          drivers.mrrDue === null
+            ? null
+            : drivers.mrrDue + (drivers.onDealDue ?? 0),
         qualifiedIntroShare,
       },
       costs.usdPer,
@@ -271,14 +301,19 @@ export function NextMonth({
   );
   const p = useMemo(() => project(used), [used]);
 
-  // Everything the funnel does not cover stays a row you type.
+  // Everything the funnel does not cover stays a row you type. Refunds are
+  // an input of the money ladder since 2026-11-02 (revenue takes them off on
+  // the sheet and here): typed in this table they never reached the goal.
   const tableGroups = useMemo(
     () =>
       groups
         .map(g => ({
           ...g,
           targets: g.targets.filter(
-            t => !MODEL_KEYS.has(t.metricKey) && !REPLACED[t.metricKey],
+            t =>
+              !MODEL_KEYS.has(t.metricKey) &&
+              !REPLACED[t.metricKey] &&
+              !INPUT_ROWS.has(t.metricKey),
           ),
         }))
         .filter(g => g.targets.length),
@@ -355,7 +390,83 @@ export function NextMonth({
     (board.plans ?? []).find(
       x => x.periodFrom === from && x.periodTo === to && x.status === "draft",
     ) ?? null;
-  const total = model.length + tableRows.length;
+  // The refunds row, from the box beside Upsell cash: written when last
+  // month's plan had one, a draft is being updated, or a number is in the
+  // box. An empty box sends no number (2026-11-02): an absent target would
+  // leave a draft's old one standing, so the plan said one thing and its
+  // revenue another.
+  const refundBefore = prev.get("refundAmount") ?? null;
+  const refundRows =
+    drivers.refundAmount === null && !refundBefore && !draft
+      ? []
+      : [
+          {
+            groupKey: refundBefore?.groupKey ?? "back_end",
+            metricKey: "refundAmount",
+            label: refundBefore?.label ?? "Refunds amount",
+            unit: "usd" as const,
+            direction: "down" as const,
+            target:
+              drivers.refundAmount === null
+                ? null
+                : tidy(drivers.refundAmount, "usd"),
+            stretch: refundBefore?.stretch ?? undefined,
+            baseline:
+              measured.refundAmount ??
+              refundBefore?.actual ??
+              refundBefore?.target ??
+              undefined,
+            note: refundBefore?.note ?? "",
+            sort:
+              catalogue.get("refundAmount")?.i ??
+              1000 + (refundBefore?.sort ?? 0),
+          },
+        ];
+  // The instalments owed on signed deals (2026-11-02), from the box under MRR
+  // due, written the same way: when last month's plan had the row, a draft
+  // is being updated, or a number is in the box. An empty box is not
+  // planned, never $0 owed, and is saved as no number.
+  const onDealBefore = prev.get(ON_DEAL.key) ?? null;
+  const bookOnDeal =
+    typeof measured.onDealDue === "number" ? measured.onDealDue : null;
+  const bookBackEnd =
+    typeof measured.mrrProjected === "number" ? measured.mrrProjected : null;
+  const onDealRows =
+    drivers.onDealDue === null && !onDealBefore && !draft
+      ? []
+      : [
+          {
+            groupKey: onDealBefore?.groupKey ?? ON_DEAL.group,
+            metricKey: ON_DEAL.key,
+            label: onDealBefore?.label ?? ON_DEAL.label,
+            unit: ON_DEAL.unit,
+            direction: ON_DEAL.direction,
+            target:
+              drivers.onDealDue === null
+                ? null
+                : tidy(drivers.onDealDue, "usd"),
+            stretch: onDealBefore?.stretch ?? undefined,
+            baseline:
+              bookOnDeal ??
+              onDealBefore?.actual ??
+              onDealBefore?.target ??
+              undefined,
+            note:
+              drivers.onDealDue !== null &&
+              bookOnDeal !== null &&
+              tidy(drivers.onDealDue, "usd") === tidy(bookOnDeal, "usd")
+                ? `${ON_DEAL.note} From ${mon}'s book: ${money(bookOnDeal)}.`
+                : ON_DEAL.note,
+            // Beside the Collections % row.
+            sort:
+              onDealBefore?.sort ?? catalogue.get("mrrCollectionRate")?.i ?? 0,
+          },
+        ];
+  // An input row sent with no number clears a draft's own; it is no target.
+  const total =
+    model.length +
+    tableRows.length +
+    [...refundRows, ...onDealRows].filter(r => r.target !== null).length;
 
   const changed =
     DRIVER_KEYS.filter(k => text[k] !== toText(planOrReal[k], DRIVERS[k].unit))
@@ -403,7 +514,12 @@ export function NextMonth({
               title={`Use ${mon}'s plan`}
               onClick={() => set(k, fromPlan[k])}
             >
-              {`${mon} plan ${sayDriver(fromPlan[k], unit)}`}
+              {`${mon} plan ${sayDriver(fromPlan[k], unit)}${
+                k === "mrrDue" &&
+                holdsOnDeal(fromPlan.mrrDue, bookBackEnd, bookOnDeal)
+                  ? " (whole book)"
+                  : ""
+              }`}
             </button>
           ) : null}
           {fromReal[k] !== null ? (
@@ -582,7 +698,12 @@ export function NextMonth({
                 "Share of contracted revenue collected in the month",
               )}
             </Via>
-            <Rung label="New-client cash" value={p.newCash} unit="usd" strong />
+            <Rung
+              label="New-client cash"
+              value={p.dealCash}
+              unit="usd"
+              strong
+            />
             <Facts>
               <Fact
                 label="Per intro booked"
@@ -618,11 +739,32 @@ export function NextMonth({
                 {input("mrrCollectionRate", "MRR collection rate")}
               </Via>
               <Rung label="Back-end cash" value={p.backEndCash} unit="usd" />
+              <InputRung label={ON_DEAL.label}>
+                {input("onDealDue", ON_DEAL.label)}
+              </InputRung>
+              <li className="flex items-baseline justify-between gap-3 py-1.5">
+                <span className="text-sm font-medium">
+                  Instalments collected
+                </span>
+                {drivers.onDealDue === null ? (
+                  <span className="text-sm text-muted-foreground">
+                    Not planned
+                  </span>
+                ) : (
+                  <Worked value={p.onDealCash} unit="usd" />
+                )}
+              </li>
+              <li className="pb-1.5 text-xs text-muted-foreground">
+                {onDealWords(drivers, p, bookBackEnd, mon)}
+              </li>
               <InputRung label="Upsell cash">
                 {input("upsellCash", "Upsell cash")}
               </InputRung>
+              <InputRung label="Refunds">
+                {input("refundAmount", "Refunds")}
+              </InputRung>
               <Rung
-                label="Total cash collected"
+                label="Total revenue (with AR)"
                 value={p.totalCash}
                 unit="usd"
                 strong
@@ -942,7 +1084,12 @@ export function NextMonth({
                 }));
                 await saveTargets({
                   planId: made.id,
-                  targets: [...modelRows, ...typedRows],
+                  targets: [
+                    ...modelRows,
+                    ...refundRows,
+                    ...onDealRows,
+                    ...typedRows,
+                  ],
                 });
                 onSaved(made.id);
               } catch (e) {
@@ -977,6 +1124,39 @@ export function NextMonth({
       </div>
     </SectionCard>
   );
+}
+
+/**
+ * Where the instalments owed on signed deals go (2026-11-02): into Cash
+ * collected, at MRR's collection rate, never into MRR due. With MRR due set
+ * on the whole book (last month's plan, before round 2), the same cards
+ * would be counted there too, and the payroll basis with them: it says so.
+ */
+function onDealWords(
+  d: Drivers,
+  p: {
+    dealCash: number | null;
+    onDealCash: number | null;
+    newCash: number | null;
+  },
+  backEnd: number | null,
+  mon: string,
+): string {
+  if (d.onDealDue === null)
+    return "Cards still on their closer-form deal pay instalments the deal ledger counts in Cash collected, not MRR. Leave it empty and none are planned.";
+  const twice =
+    d.mrrDue !== null &&
+    backEnd !== null &&
+    holdsOnDeal(d.mrrDue, backEnd, d.onDealDue)
+      ? ` MRR due, ${money(d.mrrDue)}, looks set on the whole book (${mon}'s back end is ${money(backEnd)}), so these instalments would count twice: set MRR due to the back end.`
+      : "";
+  if (p.onDealCash === null)
+    return `Collected at the MRR collection rate above: fill it to plan what comes in.${twice}`;
+  const total =
+    p.newCash === null
+      ? ""
+      : ` With the new clients' ${money(p.dealCash)}, Cash collected's target is ${money(p.newCash)}.`;
+  return `${pct(d.mrrCollectionRate)} of ${money(d.onDealDue)}, collected as Cash collected, not as MRR.${total}${twice}`;
 }
 
 /** How a client booking's cost follows from the two numbers that make it. */

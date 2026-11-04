@@ -636,7 +636,9 @@ export function rankForSetter(
     // The intro that just rang out waits its five minutes out of sight.
     if (introWaiting(c.appt, now)) continue;
     const h = heat(c, now);
-    const job = appointmentWork(c.appt, now, "setter", meGhl) ?? hotFollowUp(c, me, now, manager);
+    // No HighLevel user means every host only for a manager; a rep not linked
+    // yet hosts nothing, so other reps' intros stay off their queue (2026-11-04).
+    const job = appointmentWork(c.appt, now, "setter", meGhl ?? (manager ? null : "__none__")) ?? hotFollowUp(c, me, now, manager);
     if (job) {
       place(out, c, h, job);
       continue;
@@ -749,7 +751,7 @@ export function rankForCloser(
     if (!routePhone(c.phone).ok) continue;
     if (c.claimed_by && c.claimed_by !== me) continue;
     const h = heat(c, now);
-    const job = appointmentWork(c.appt, now, "closer", meGhl) ?? hotFollowUp(c, me, now, manager);
+    const job = appointmentWork(c.appt, now, "closer", meGhl ?? (manager ? null : "__none__")) ?? hotFollowUp(c, me, now, manager);
     if (job) {
       place(out, c, h, job);
       continue;

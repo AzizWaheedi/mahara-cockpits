@@ -1,0 +1,109 @@
+{
+  "createdAt": "2026-10-28",
+  "rows": [
+    {
+      "scene": "camera-operator",
+      "jobId": "5fde028f-d41b-4298-9197-22dabc605c52",
+      "source": "https://d8j0ntlcm91z4.cloudfront.net/user_34bsudhJNBIfExXCGC8sl0DjTIN/hf_20261028_124823_5fde028f-d41b-4298-9197-22dabc605c52.png",
+      "model": "gpt_image_2_5",
+      "status": "completed",
+      "prompt": "Photorealistic editorial documentary photograph for a premium Gulf construction company's filming-day explainer. 16:9 landscape. Natural light, realistic materials and skin, restrained cinematic contrast, muted sand, warm oak, charcoal and sage palette. Believable real-world lens perspective, no illustration, no drawing, no CGI look, no logos, no writing, no watermark. This is a fictional illustrative scene, not a real identifiable company. Compose the people/action mainly in the right two-thirds, leaving clean quieter architectural space on the left for titles added later. Avoid uncanny hands and malformed equipment. An experienced professional camera operator, seen from three-quarter rear, filming a newly completed contemporary Riyadh villa interior using a realistic mirrorless cinema camera on a tripod. An assistant checks framing from a respectful distance. Tall travertine walls, oak details, daylight through wide glazing, ordinary tidy filming kit. Candid behind-the-scenes atmosphere; the actual camera and operator are the focus.",
+      "format": {
+        "prompt": "Photorealistic editorial documentary photograph for a premium Gulf construction company's filming-day explainer. 16:9 landscape. Natural light, realistic materials and skin, restrained cinematic contrast, muted sand, warm oak, charcoal and sage palette. Believable real-world lens perspective, no illustration, no drawing, no CGI look, no logos, no writing, no watermark. This is a fictional illustrative scene, not a real identifiable company. Compose the people/action mainly in the right two-thirds, leaving clean quieter architectural space on the left for titles added later. Avoid uncanny hands and malformed equipment. An experienced professional camera operator, seen from three-quarter rear, filming a newly completed contemporary Riyadh villa interior using a realistic mirrorless cinema camera on a tripod. An assistant checks framing from a respectful distance. Tall travertine walls, oak details, daylight through wide glazing, ordinary tidy filming kit. Candid behind-the-scenes atmosphere; the actual camera and operator are the focus.",
+        "aspect_ratio": "16:9",
+        "medias": [],
+        "width": 1344,
+        "height": 752,
+        "quality": "low",
+        "resolution": "1k",
+        "model": "flare",
+        "remove_bg": false,
+        "reference_elements": []
+      },
+      "provenance": "AI-generated illustrative scene via the user's requested Higgsfield workflow. Not a documented Mahara client or shoot.",
+      "file": "camera-operator.png",
+      "sha256": "f9b984be4738c0b0cbb0aed95d427bc85b7914880e3527cccd48e930e32bc640",
+      "width": 1344,
+      "height": 752,
+      "bytes": 1351118
+    },
+    {
+      "scene": "construction-progress",
+      "jobId": "21e171f0-81ef-4a17-b968-e30276a8529a",
+      "source": "https://d8j0ntlcm91z4.cloudfront.net/user_34bsudhJNBIfExXCGC8sl0DjTIN/hf_20261028_124822_21e171f0-81ef-4a17-b968-e30276a8529a.png",
+      "model": "gpt_image_2_5",
+      "status": "completed",
+      "prompt": "Photorealistic editorial documentary photograph for a premium Gulf construction company's filming-day explainer. 16:9 landscape. Natural light, realistic materials and skin, restrained cinematic contrast, muted sand, warm oak, charcoal and sage palette. Believable real-world lens perspective, no illustration, no drawing, no CGI look, no logos, no writing, no watermark. This is a fictional illustrative scene, not a real identifiable company. Compose the people/action mainly in the right two-thirds, leaving clean quieter architectural space on the left for titles added later. Avoid uncanny hands and malformed equipment. A genuine-looking active residential fit-out site in Saudi Arabia, partially finished modern villa interior, exposed ceiling services, neatly stacked plasterboard and protected flooring. Two construction workers in appropriate hard hats and workwear carefully discussing a wall finish with an engineer holding a plan. Safe work area, convincing progress details, no dramatic danger, honest documentary work-in-progress scene.",
+      "format": {
+        "prompt": "Photorealistic editorial documentary photograph for a premium Gulf construction company's filming-day explainer. 16:9 landscape. Natural light, realistic materials and skin, restrained cinematic contrast, muted sand, warm oak, charcoal and sage palette. Believable real-world lens perspective, no illustration, no drawing, no CGI look, no logos, no writing, no watermark. This is a fictional illustrative scene, not a real identifiable company. Compose the people/action mainly in the right two-thirds, leaving clean quieter architectural space on the left for titles added later. Avoid uncanny hands and malformed equipment. A genuine-looking active residential fit-out site in Saudi Arabia, partially finished modern villa interior, exposed ceiling services, neatly stacked plasterboard and protected flooring. Two construction workers in appropriate hard hats and workwear carefully discussing a wall finish with an engineer holding a plan. Safe work area, convincing progress details, no dramatic danger, honest documentary work-in-progress scene.",
+        "aspect_ratio": "16:9",
+        "medias": [],
+        "width": 1344,
+        "height": 752,
+        "quality": "low",
+        "resolution": "1k",
+        "model": "flare",
+        "remove_bg": false,
+        "reference_elements": []
+      },
+      "provenance": "AI-generated illustrative scene via the user's requested Higgsfield workflow. Not a documented Mahara client or shoot.",
+      "file": "construction-progress.png",
+      "sha256": "b6e4e62ed182b5894b93142f818f8e5b5918bd0b85229a268e4ace05f54493d8",
+      "width": 1344,
+      "height": 752,
+      "bytes": 1438902
+    },
+    {
+      "scene": "finished-interior",
+      "jobId": "c11d90de-9d75-435c-b8d9-77eb5bbc99d0",
+      "source": "https://d8j0ntlcm91z4.cloudfront.net/user_34bsudhJNBIfExXCGC8sl0DjTIN/hf_20261028_124822_c11d90de-9d75-435c-b8d9-77eb5bbc99d0.png",
+      "model": "gpt_image_2_5",
+      "status": "completed",
+      "prompt": "Photorealistic editorial documentary photograph for a premium Gulf construction company's filming-day explainer. 16:9 landscape. Natural light, realistic materials and skin, restrained cinematic contrast, muted sand, warm oak, charcoal and sage palette. Believable real-world lens perspective, no illustration, no drawing, no CGI look, no logos, no writing, no watermark. This is a fictional illustrative scene, not a real identifiable company. Compose the people/action mainly in the right two-thirds, leaving clean quieter architectural space on the left for titles added later. Avoid uncanny hands and malformed equipment. A finished contemporary Gulf villa living room photographed for an architectural portfolio: warm limestone and travertine, oak joinery, linen seating, delicate natural daylight, carefully resolved construction details, a courtyard beyond full-height glazing. No people. Truly photographic, lived-in restraint rather than a glossy computer render.",
+      "format": {
+        "prompt": "Photorealistic editorial documentary photograph for a premium Gulf construction company's filming-day explainer. 16:9 landscape. Natural light, realistic materials and skin, restrained cinematic contrast, muted sand, warm oak, charcoal and sage palette. Believable real-world lens perspective, no illustration, no drawing, no CGI look, no logos, no writing, no watermark. This is a fictional illustrative scene, not a real identifiable company. Compose the people/action mainly in the right two-thirds, leaving clean quieter architectural space on the left for titles added later. Avoid uncanny hands and malformed equipment. A finished contemporary Gulf villa living room photographed for an architectural portfolio: warm limestone and travertine, oak joinery, linen seating, delicate natural daylight, carefully resolved construction details, a courtyard beyond full-height glazing. No people. Truly photographic, lived-in restraint rather than a glossy computer render.",
+        "aspect_ratio": "16:9",
+        "medias": [],
+        "width": 1344,
+        "height": 752,
+        "quality": "low",
+        "resolution": "1k",
+        "model": "flare",
+        "remove_bg": false,
+        "reference_elements": []
+      },
+      "provenance": "AI-generated illustrative scene via the user's requested Higgsfield workflow. Not a documented Mahara client or shoot.",
+      "file": "finished-interior.png",
+      "sha256": "d0f271e9d63f72b01d521111f05e52d3e69e684994cdea9cfdcd3d7201f6f791",
+      "width": 1344,
+      "height": 752,
+      "bytes": 1517611
+    },
+    {
+      "scene": "team-at-work",
+      "jobId": "c5d5d044-3fea-489d-8908-4b768f279950",
+      "source": "https://d8j0ntlcm91z4.cloudfront.net/user_34bsudhJNBIfExXCGC8sl0DjTIN/hf_20261028_124823_c5d5d044-3fea-489d-8908-4b768f279950.png",
+      "model": "gpt_image_2_5",
+      "status": "completed",
+      "prompt": "Photorealistic editorial documentary photograph for a premium Gulf construction company's filming-day explainer. 16:9 landscape. Natural light, realistic materials and skin, restrained cinematic contrast, muted sand, warm oak, charcoal and sage palette. Believable real-world lens perspective, no illustration, no drawing, no CGI look, no logos, no writing, no watermark. This is a fictional illustrative scene, not a real identifiable company. Compose the people/action mainly in the right two-thirds, leaving clean quieter architectural space on the left for titles added later. Avoid uncanny hands and malformed equipment. A small Gulf construction business team at work during a location shoot: a project manager and two colleagues collaboratively review material samples beside a large architectural work table, in a real contemporary site office overlooking an unfinished building. Diverse natural adult faces, candid gestures, authentic working environment, sophisticated but realistic. No posing to camera.",
+      "format": {
+        "prompt": "Photorealistic editorial documentary photograph for a premium Gulf construction company's filming-day explainer. 16:9 landscape. Natural light, realistic materials and skin, restrained cinematic contrast, muted sand, warm oak, charcoal and sage palette. Believable real-world lens perspective, no illustration, no drawing, no CGI look, no logos, no writing, no watermark. This is a fictional illustrative scene, not a real identifiable company. Compose the people/action mainly in the right two-thirds, leaving clean quieter architectural space on the left for titles added later. Avoid uncanny hands and malformed equipment. A small Gulf construction business team at work during a location shoot: a project manager and two colleagues collaboratively review material samples beside a large architectural work table, in a real contemporary site office overlooking an unfinished building. Diverse natural adult faces, candid gestures, authentic working environment, sophisticated but realistic. No posing to camera.",
+        "aspect_ratio": "16:9",
+        "medias": [],
+        "width": 1344,
+        "height": 752,
+        "quality": "low",
+        "resolution": "1k",
+        "model": "flare",
+        "remove_bg": false,
+        "reference_elements": []
+      },
+      "provenance": "AI-generated illustrative scene via the user's requested Higgsfield workflow. Not a documented Mahara client or shoot.",
+      "file": "team-at-work.png",
+      "sha256": "c7024bf036cb55c597b1232c47e17f8c961ee0118177d81e40d020001b022142",
+      "width": 1344,
+      "height": 752,
+      "bytes": 1323658
+    }
+  ]
+}

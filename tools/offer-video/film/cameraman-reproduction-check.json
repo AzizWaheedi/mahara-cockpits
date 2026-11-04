@@ -1,0 +1,24 @@
+{
+  "comparedFiles": [
+    "index.html",
+    "cameraman-en.srt",
+    "cameraman-en.vtt",
+    "assets/audio/voice.wav",
+    "compositions/cameraman-02-02.html",
+    "compositions/cameraman-05-02.html",
+    "compositions/cameraman-03-03.html",
+    "compositions/cameraman-01-01.html",
+    "compositions/cameraman-03-04.html",
+    "compositions/cameraman-04-01.html",
+    "compositions/cameraman-02-01.html",
+    "compositions/cameraman-06-01.html",
+    "compositions/cameraman-03-01.html",
+    "compositions/cameraman-03-02.html",
+    "compositions/captions.html",
+    "compositions/cameraman-07-01.html",
+    "compositions/cameraman-06-02.html",
+    "compositions/cameraman-05-01.html"
+  ],
+  "differences": [],
+  "allVisualAudioSubtitleBytesMatch": true
+}

@@ -10,7 +10,9 @@
  * done), Log it as a payment handing over to the sheet's own form, Withdraw,
  * Link to a card, Open Transactions, Put the next part on the card, the
  * CEO's Leave a payment out of program money and Count it again (20261024p),
- * and the billing log's sentences for the six new kinds. No network.
+ * the billing log's sentences for the six new kinds, a receipt logged by hand
+ * nobody has checked ("Receipt in, not checked", 20261101n) and Checks
+ * waiting (Check, Reject, the receipt-check ticket). No network.
  */
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -93,6 +95,11 @@ const { billingRead, sheetTables } = await import("../src/dev/billingFixture");
 const { CASTELLO_WEBSITE, LIVE_2026_10_23, copyRead, websiteLeftOut } =
   await import("./fixtures/billingBalances20261023");
 const { tieOpener } = await import("../src/pages/ceo/billingTie");
+const { ChecksWaitingView } = await import(
+  "../src/components/billing/ChecksWaiting"
+);
+type ChecksApi = import("../src/components/billing/ChecksWaiting").ChecksApi;
+type CheckWaiting = import("../src/lib/paymentChecks").CheckWaiting;
 
 type PendingApi =
   import("../src/components/billing/PendingPayments").PendingApi;
@@ -906,6 +913,10 @@ describe("Confirm paid", () => {
       paidOn: "2026-10-23",
       evidenceUrl: null,
       note: null,
+      // Waves 5-6 (4.6.5): the part's due day as the list shows it, and no next later part.
+      dueOn: "2026-10-19",
+      nextPartNo: null,
+      nextDueOn: null,
     });
     await act(async () => release("Confirmed by you · waiting for Tap"));
     await flush();
@@ -1269,6 +1280,33 @@ describe("inside the billing sheet", () => {
       by_whom: "ceo@example.test",
       at: "2026-10-23T14:00:00Z",
     },
+    // The churn confirm stores the seat as a code, the money acts as words.
+    {
+      id: 8,
+      clickup_task_id: tables.accounts[0].clickup_task_id,
+      client_name: tables.accounts[0].client_name,
+      kind: "churn",
+      from_value: "Active",
+      to_value: "Stopped",
+      reason: "Cancelled",
+      detail: { seat_role: "csm", left_on: "2026-10-22" },
+      source: "csm",
+      by_whom: "sara@example.test",
+      at: "2026-10-22T15:00:00Z",
+    },
+    {
+      id: 9,
+      clickup_task_id: tables.accounts[0].clickup_task_id,
+      client_name: tables.accounts[0].client_name,
+      kind: "extension",
+      from_value: "2026-10-20",
+      to_value: "2026-11-03",
+      reason: "Ad account broke",
+      detail: { seat_role: "the CEO", weeks: 2, new_date: "2026-11-03" },
+      source: "ceo",
+      by_whom: "ceo@example.test",
+      at: "2026-10-22T14:00:00Z",
+    },
     {
       id: 5,
       clickup_task_id: tables.accounts[0].clickup_task_id,
@@ -1337,6 +1375,10 @@ describe("inside the billing sheet", () => {
     expect(t).not.toMatch(
       /: (confirm|unconfirm|link|unlink|exclude|unexclude)[.,]/,
     );
+    // A seat code reads as its role, never "Csm".
+    expect(t).toContain("The CSM confirmed the client has left: Cancelled");
+    expect(t).toContain("The CEO gave 2 weeks to 3 Nov: Ad account broke");
+    expect(t).not.toContain("Csm ");
     // A payment row with no amount on record says so, never "$NaN".
     expect(t).toContain("Maher logged a payment.");
     expect(t).not.toContain("NaN");
@@ -1483,7 +1525,769 @@ describe("inside the billing sheet", () => {
       { taskId: ard.taskId, edit: { kind: "amount", value: 2000 } },
     ]);
     expect(String(panel?.textContent)).toContain(
-      "Set on the card. ClickUp gets it when write-back is on.",
+      "Set on the card. ClickUp shows it in about two minutes.",
     );
+  });
+
+  test("How they pay offers only the card's methods, saves through the edit path and says when ClickUp shows it", async () => {
+    const { api, edits } = sheetApi(undefined);
+    await render(h(BillingSheet, { api }));
+    const ard = rowOf(/^Ardon$/);
+    await click(
+      win.document
+        .getElementById(`billing-row-${ard.taskId}`)
+        ?.querySelector("button"),
+    );
+    const row = win.document.getElementById(`billing-row-${ard.taskId}`) as any;
+    await click(button("How they pay", row));
+    const methods = selectIn(row, "Payment method");
+    await click(methods);
+    const offered = [...win.document.querySelectorAll("[role='option']")].map(
+      (o: any) => String(o.textContent).trim(),
+    );
+    expect(offered).toEqual([
+      "Not set",
+      "Card on file",
+      "Bank transfer",
+      "Tap link",
+      "Whop link",
+      "Check",
+    ]);
+    await click(
+      [...win.document.querySelectorAll("[role='option']")].find(
+        (o: any) => String(o.textContent).trim() === "Card on file",
+      ),
+    );
+    await click(button("Save", row));
+    expect(edits).toEqual([
+      { taskId: ard.taskId, edit: { kind: "method", value: "Card on file" } },
+    ]);
+    expect(page()).toContain(
+      "Saved: Ardon pays by card on file. ClickUp shows it in about two minutes.",
+    );
+  });
+});
+
+describe("the client's voice in the billing log: survey and nps_sent (review W34)", () => {
+  const read = billingRead("confirmed", NOW);
+  const tables = sheetTables(read);
+  const sheetApiOf = (events: any[]): BillingApi => ({
+    sheet: async () =>
+      buildSheet(
+        tables.accounts.map(accountFrom),
+        events,
+        tables.inbox,
+        "2026-10-23",
+      ),
+    edit: async a =>
+      accountFrom(
+        tables.accounts.find(x => x.clickup_task_id === a.taskId) as any,
+      ),
+    logPayment: async () => "Logged.",
+    ledgerLine: "It goes straight into the ledger.",
+  });
+  // The first account the sheet lists as a row of its own.
+  const shown = () =>
+    tables.accounts.find(a =>
+      win.document.getElementById(`billing-row-${a.clickup_task_id}`),
+    ) as any;
+  const voice = (
+    id: number,
+    task: any,
+    kind: string,
+    at: string,
+    extra: any,
+  ) => ({
+    id,
+    clickup_task_id: task.clickup_task_id,
+    client_name: task.client_name,
+    kind,
+    from_value: null,
+    source: "system",
+    by_whom: "the cockpit",
+    at,
+    ...extra,
+  });
+  const money = (id: number, task: any, n: number) => ({
+    id,
+    clickup_task_id: task.clickup_task_id,
+    client_name: task.client_name,
+    kind: "note",
+    from_value: null,
+    to_value: null,
+    reason: `Money note ${n}`,
+    detail: {},
+    source: "ceo",
+    by_whom: "ceo@example.test",
+    // Newest first: note 1 is the newest, note 30 the oldest.
+    at: new Date(Date.parse("2026-10-22T23:00:00Z") - n * 60_000).toISOString(),
+  });
+  async function renderWith(task: any) {
+    const events = [
+      voice(901, task, "nps_sent", "2026-10-23T09:00:00Z", {
+        to_value: "2026-10-23",
+        reason: "NPS survey sent",
+        detail: { invite_id: "i-1", on: "2026-10-23", round: 2 },
+      }),
+      voice(902, task, "survey", "2026-10-23T08:00:00Z", {
+        to_value: null,
+        reason: "Exit survey answered",
+        detail: {
+          form_key: "exit_survey",
+          notice_on: "2026-10-20",
+          via: "portal",
+        },
+      }),
+      ...[3, 4, 5, 6, 7, 8, 9, 10].map(i =>
+        voice(
+          900 + i,
+          task,
+          i % 2 ? "survey" : "nps_sent",
+          `2026-10-23T0${(i % 7) + 1}:00:00Z`,
+          {
+            to_value: i % 2 ? null : "2026-10-23",
+            reason: null,
+            detail: i % 2 ? {} : { on: "2026-10-23" },
+          },
+        ),
+      ),
+      ...Array.from({ length: 30 }, (_, i) => money(i + 1, task, i + 1)),
+    ];
+    await render(h(BillingSheet, { api: sheetApiOf(events) }));
+  }
+
+  test("both kinds read as plain sentences, never the raw kind", async () => {
+    await render(h(BillingSheet, { api: sheetApiOf([]) }));
+    const task = shown();
+    expect(task).toBeTruthy();
+    await renderWith(task);
+    const t = page();
+    expect(t).toContain(
+      "The cockpit sent the NPS survey (round 2); NPS Survey Sent is set to 23 Oct on the card.",
+    );
+    expect(t).toContain(
+      "The client answered the exit survey (notice received 20 Oct); the answers are posted on the card.",
+    );
+    expect(t).not.toMatch(/: (nps_sent|survey)[.,]/);
+  });
+
+  test("survey and NPS rows never push a money act out of the log's 30 or a client's last 8", async () => {
+    await render(h(BillingSheet, { api: sheetApiOf([]) }));
+    const task = shown();
+    await renderWith(task);
+    // The global log: all 30 money notes still show beside the ten voice rows.
+    expect(page()).toContain("Money note 30");
+    // The client's own list: its 8 newest money notes, the voice rows besides.
+    await click(
+      win.document
+        .getElementById(`billing-row-${task.clickup_task_id}`)
+        ?.querySelector("button"),
+    );
+    const row = win.document.getElementById(
+      `billing-row-${task.clickup_task_id}`,
+    );
+    const items = [...(row?.querySelectorAll("li") ?? [])].map((x: any) =>
+      String(x.textContent),
+    );
+    const notes = items.filter(x => /Money note \d+$/.test(x));
+    expect(notes).toHaveLength(8);
+    expect(notes.at(-1)).toContain("Money note 8");
+    expect(items.some(x => x.includes("sent the NPS survey"))).toBe(true);
+  });
+});
+
+describe("a receipt logged by hand that nobody has checked (20261101n)", () => {
+  const castello = () => rowOf(/^Castello Industries$/);
+  const dealOf = (read: BalancesRead) =>
+    read.deals.find(d => d.taskId === castello().taskId)?.responseId as string;
+  /** Castello's $2,000 transfer for month 3, logged by hand on 20 Oct. */
+  const withReceipt = (checked: boolean | undefined) => {
+    const read = copyRead(LIVE_2026_10_23);
+    read.rails.push({
+      dealResponseId: dealOf(read),
+      paymentId: "manual:receipt-castello",
+      day: "2026-10-20",
+      usd: 2000,
+      rail: "manual",
+      kind: "remainder",
+      fromLedger: false,
+      byHand: true,
+      ...(checked === undefined ? {} : { checked }),
+    });
+    return read;
+  };
+  const rowIn = (v: PendingView) =>
+    v.rows.find(r => r.taskId === castello().taskId);
+
+  test("the rule: it fills the parts as a receipt, never as rail money, and has its own figure", () => {
+    const before = rowIn(view());
+    const v = view(withReceipt(false));
+    const row = rowIn(v);
+    expect(row?.railsUsd).toBe(before?.railsUsd);
+    expect(row?.loggedUsd).toBe(2000);
+    expect(row?.finished).toBe(false);
+    expect(row?.parts.reduce((n, p) => n + p.logged, 0)).toBe(2000);
+    expect(row?.parts.reduce((n, p) => n + p.rails, 0)).toBe(before?.railsUsd);
+    for (const p of row?.parts ?? [])
+      expect(
+        p.rails + p.logged + p.person + p.notSeen + p.another + p.notDue,
+      ).toBeCloseTo(p.usd, 2);
+    expect(row?.ribbon.some(s => s.state === "logged")).toBe(true);
+    expect(row?.dueLine).toBe(
+      "Receipt in, not checked: $2,000 logged by hand (transfer, 20 Oct)",
+    );
+    expect(row?.sources).toContain(
+      "Receipts in, not checked: transfer $2,000 (20 Oct, logged by hand)",
+    );
+    expect(row?.confirmable.every(c => (c.emptyUsd ?? 0) < 2000)).toBe(true);
+    expect(v.figures.logged).toEqual({ usd: 2000, count: 1, unknown: 0 });
+    // Later parts no longer counts Castello's month 2 as not seen.
+    expect(v.figures.later.usd).toBeLessThan(
+      view().figures.later.usd as number,
+    );
+  });
+
+  test("once checked it reads as rail money; a read from before the rule counts it as before", () => {
+    for (const flag of [true, undefined]) {
+      const row = rowIn(view(withReceipt(flag)));
+      expect(row?.railsUsd).toBe(5500);
+      expect(row?.loggedUsd).toBe(0);
+      expect(row?.ribbon.some(s => s.state === "logged")).toBe(false);
+    }
+  });
+
+  test("the screen: the figure line names it, the row says Receipt in, not checked, never paid", async () => {
+    const api = apiOf(async () => view(withReceipt(false)));
+    await render(h(PendingPayments, { api }));
+    expect(page()).toContain("Receipt in, not checked$2,000 · 1 client");
+    await click(button(/^Still to come/));
+    if (!li(castello().taskId)) await click(button(/^Show all/));
+    expect(
+      li(castello().taskId)?.querySelector("[data-state='logged']"),
+    ).toBeTruthy();
+    await openRow(castello().taskId);
+    const panel = win.document.getElementById(`pending-${castello().taskId}`);
+    const text = String(panel?.textContent ?? "");
+    expect(text).toContain("$500 receipt in, not checked");
+    expect(text).toContain(
+      "Receipts in, not checked: transfer $2,000 (20 Oct, logged by hand)",
+    );
+    expect(text).toContain(
+      "$2,000 logged by hand waits on a check against the bank, so it is not counted as paid yet.",
+    );
+    expect(text).not.toContain("Paid in full");
+  });
+
+  test("checked, the same row reads as it does today: no receipt line, no logged figure", async () => {
+    const api = apiOf(async () => view(withReceipt(true)));
+    await render(h(PendingPayments, { api }));
+    expect(page()).not.toContain("Receipt in, not checked");
+  });
+});
+
+describe("Checks waiting (components/billing/ChecksWaiting.tsx)", () => {
+  const ROWS: CheckWaiting[] = [
+    {
+      id: "pay-old",
+      day: "2026-10-27",
+      clientName: "مدانة العمرانية",
+      taskId: "task_m",
+      amount: 615,
+      currency: "KWD",
+      amountUsd: 2004.9,
+      rail: "bank_transfer",
+      kind: "payment",
+      reference: "FT-26300042",
+      evidenceUrl: "https://example.test/receipt.pdf",
+      addedBy: "Client success",
+      addedAt: "2026-10-27T09:00:00Z",
+      daysWaiting: 5,
+    },
+    {
+      id: "pay-new",
+      day: "2026-10-31",
+      clientName: "Acme",
+      taskId: null,
+      amount: 1000,
+      currency: "USD",
+      amountUsd: 1000,
+      rail: "cheque",
+      kind: "payment",
+      reference: null,
+      evidenceUrl: null,
+      addedBy: "The CEO",
+      addedAt: "2026-10-31T09:00:00Z",
+      daysWaiting: 0,
+    },
+  ];
+  function checksApi(over: Partial<ChecksApi> = {}) {
+    const calls: { name: string; args: unknown }[] = [];
+    const api: ChecksApi = {
+      door: async () => true,
+      list: async () => ROWS,
+      check: async p => {
+        calls.push({ name: "check", args: p });
+        return {
+          id: p.id,
+          state: p.verdict,
+          checkedAt: "2026-11-01T10:00:00Z",
+          sentence: p.verdict === "checked" ? "Checked" : "Rejected",
+        };
+      },
+      ticketType: async () => false,
+      ...over,
+    };
+    return { api, calls };
+  }
+  const rowEl = (id: string) =>
+    win.document.querySelector(`[data-check-row="${id}"]`) as any;
+  const inputIn = (scope: any, labelText: string) => {
+    const lab = [...scope.querySelectorAll("label")].find(
+      (l: any) => String(l.textContent).trim() === labelText,
+    ) as any;
+    return scope.querySelector(`[id="${lab.getAttribute("for")}"]`);
+  };
+
+  test("finance reads each row: client in <bdi>, the amount as typed and in dollars, when, how, which reference, how long", async () => {
+    const { api } = checksApi();
+    await render(h(ChecksWaitingView, { api, canCheck: true }));
+    const t = page();
+    expect(t).toContain("Checks waiting2");
+    expect(t).toContain(
+      "Payments logged by hand. Check each one against the bank: until then it is not cash, pay or LTV.",
+    );
+    const old = rowEl("pay-old");
+    expect(old.querySelector("bdi")?.textContent).toBe("مدانة العمرانية");
+    expect(String(old.textContent)).toContain("615.000 KWD$2,004.90");
+    expect(String(old.textContent)).toContain(
+      "Received 27 Oct · Bank transfer · ref FT-26300042 · logged by client success · waiting 5 days",
+    );
+    expect(old.querySelector("a")?.getAttribute("href")).toBe(
+      "https://example.test/receipt.pdf",
+    );
+    expect(String(rowEl("pay-new").textContent)).toContain(
+      "no reference given · logged by the CEO · logged today",
+    );
+    expect(old.querySelector("[data-ring='waiting']")).toBeTruthy();
+    // No ticket type yet (before deploy step D-R1): no ticket button.
+    expect(button("Open the receipt check")).toBeUndefined();
+  });
+
+  test("Check asks for the proof, sends it once, and the row reads Checked in place", async () => {
+    const { api, calls } = checksApi();
+    const landed: unknown[] = [];
+    await render(
+      h(ChecksWaitingView, {
+        api,
+        canCheck: true,
+        onChecked: (r: unknown) => landed.push(r),
+      }),
+    );
+    const old = rowEl("pay-old");
+    await click(button("Check", old));
+    const form = old.querySelector("form");
+    await click(button("Check", form));
+    expect(String(form.textContent)).toContain(
+      "Name the bank reference or pick the statement line, so the check reads back.",
+    );
+    expect(calls).toEqual([]);
+    await type(inputIn(form, "Bank reference"), "FT-26300042");
+    await click(button("Check", form));
+    expect(calls).toEqual([
+      {
+        name: "check",
+        args: {
+          id: "pay-old",
+          verdict: "checked",
+          ref: "FT-26300042",
+          statementLineId: null,
+        },
+      },
+    ]);
+    expect(String(rowEl("pay-old").textContent)).toContain(
+      "Checked against FT-26300042. It counts from the next money refresh.",
+    );
+    expect(
+      rowEl("pay-old").querySelector("[data-ring='checked']"),
+    ).toBeTruthy();
+    expect(button("Check", rowEl("pay-old"))).toBeUndefined();
+    expect(landed).toEqual([
+      {
+        id: "pay-old",
+        state: "checked",
+        checkedAt: "2026-11-01T10:00:00Z",
+        sentence: "Checked",
+      },
+    ]);
+    expect(page()).toContain("Checks waiting1");
+  });
+
+  test("Reject needs a reason; a refusal shows the server's sentence and changes nothing", async () => {
+    const { api } = checksApi({
+      check: async () => {
+        throw new Error("This payment was already checked on 1 Nov 2026.");
+      },
+    });
+    await render(h(ChecksWaitingView, { api, canCheck: true }));
+    const row = rowEl("pay-new");
+    await click(button("Reject", row));
+    const form = row.querySelector("form");
+    await click(button("Reject", form));
+    expect(String(form.textContent)).toContain(
+      "Say why it is rejected (3 to 200 characters), so the log reads back.",
+    );
+    await type(
+      inputIn(form, "Why is it rejected?"),
+      "Not on the bank statement",
+    );
+    await click(button("Reject", form));
+    expect(String(row.textContent)).toContain(
+      "This payment was already checked on 1 Nov 2026.",
+    );
+    expect(row.querySelector("[data-ring='waiting']")).toBeTruthy();
+  });
+
+  test("a success manager reads their rows with no control; nothing at all when none is theirs", async () => {
+    const { api } = checksApi();
+    await render(h(ChecksWaitingView, { api, canCheck: false }));
+    expect(page()).toContain(
+      "Payments logged by hand that finance has not checked against the bank yet.",
+    );
+    expect(button("Check")).toBeUndefined();
+    expect(button("Reject")).toBeUndefined();
+    await render(
+      h(ChecksWaitingView, {
+        api: checksApi({ list: async () => [] }).api,
+        canCheck: false,
+      }),
+    );
+    expect(win.document.querySelector("[data-checks-waiting]")).toBeNull();
+  });
+
+  test("empty, door closed, loading and a failed read each say what is true", async () => {
+    await render(
+      h(ChecksWaitingView, {
+        api: checksApi({ list: async () => [] }).api,
+        canCheck: true,
+      }),
+    );
+    expect(page()).toContain("Nothing waiting on a check.");
+    await render(
+      h(ChecksWaitingView, {
+        api: checksApi({ door: async () => false }).api,
+        canCheck: true,
+      }),
+    );
+    expect(page()).toContain(
+      "Checks waiting opens here once the check rule is live on the database.",
+    );
+    await render(
+      h(ChecksWaitingView, {
+        api: checksApi({ door: async () => false }).api,
+        canCheck: false,
+      }),
+    );
+    expect(win.document.querySelector("[data-checks-waiting]")).toBeNull();
+    let fail = true;
+    await render(
+      h(ChecksWaitingView, {
+        api: checksApi({
+          list: async () => {
+            if (fail)
+              throw new Error(
+                "Checks waiting need a finance, client success or CEO seat. Ask an admin to add the role.",
+              );
+            return ROWS;
+          },
+        }).api,
+        canCheck: true,
+      }),
+    );
+    expect(page()).toContain(
+      "The list did not load: Checks waiting need a finance, client success or CEO seat. Ask an admin to add the role.",
+    );
+    fail = false;
+    await click(button("Try again"));
+    expect(page()).toContain("Checks waiting2");
+  });
+
+  test("Open the receipt check shows once the ticket type exists, and opens the request form in place", async () => {
+    const { api } = checksApi({ ticketType: async () => true });
+    await render(
+      h(ChecksWaitingView, {
+        api,
+        canCheck: true,
+        renderTicket: (r: CheckWaiting) =>
+          h("p", { "data-ticket": r.id }, `ticket for ${r.clientName}`),
+      }),
+    );
+    const row = rowEl("pay-old");
+    expect(win.document.querySelector("[data-ticket]")).toBeNull();
+    await click(button("Open the receipt check", row));
+    expect(row.querySelector("[data-ticket='pay-old']")?.textContent).toBe(
+      "ticket for مدانة العمرانية",
+    );
+  });
+});
+
+describe("checked money's pure readers (lib/paymentChecks.ts, the Money tab's lines)", () => {
+  test("manualLoggedOf reads rails.manualLogged, and an older payload says nothing (null), never 0", async () => {
+    const { manualLoggedOf, isUnchecked, manualChecksOf, checkProblem } =
+      await import("../src/lib/paymentChecks");
+    expect(
+      manualLoggedOf({
+        rails: {
+          manualLogged: { count: 2, usd: 3000.5, oldestDay: "2026-10-27" },
+        },
+      }),
+    ).toEqual({ count: 2, usd: 3000.5, oldestDay: "2026-10-27" });
+    expect(manualLoggedOf({ rails: {} })).toBeNull();
+    expect(
+      manualLoggedOf({ rails: { manualLogged: { count: -1, usd: 1 } } }),
+    ).toBeNull();
+    expect(isUnchecked({ checked: false })).toBe(true);
+    expect(isUnchecked({ checked: true })).toBe(false);
+    expect(isUnchecked({})).toBe(false);
+    const map = manualChecksOf({
+      manualChecks: [
+        { id: "a", state: "checked", at: "2026-11-01T09:00:00Z", ref: "CBK 1" },
+        { id: "b", state: "maybe" },
+      ],
+    });
+    expect([...map.keys()]).toEqual(["a"]);
+    expect(checkProblem("checked", "", "")).toBe(
+      "Name the bank reference or pick the statement line, so the check reads back.",
+    );
+    expect(checkProblem("checked", "", "9001")).toBeNull();
+    expect(checkProblem("rejected", "no", "")).toBe(
+      "Keep the bank reference or the reason between 3 and 200 characters.",
+    );
+  });
+
+  test("the standing line: bank transfers since the newest statement, until a client-income statement reaches last month's end", async () => {
+    // The Money tab reaches the cockpit sign-in, which wants its two public
+    // settings: placeholders for the import, put back after.
+    const ENV = {
+      VITE_SUPABASE_URL: "https://bldgtotkfmhoxmlzowdx.supabase.co",
+      VITE_SUPABASE_ANON_KEY: "test-placeholder-key",
+    };
+    const envs = [process.env, (import.meta as any).env].filter(Boolean);
+    const envBefore = envs.map(e =>
+      Object.fromEntries(Object.keys(ENV).map(k => [k, e[k]])),
+    );
+    for (const e of envs) Object.assign(e, ENV);
+    const { uncheckedSince } = await import(
+      "../src/pages/ceo/MoneyTab"
+    ).finally(() =>
+      envs.forEach((e, i) => {
+        for (const [k, v] of Object.entries(envBefore[i]))
+          if (v === undefined) delete e[k];
+          else e[k] = v;
+      }),
+    );
+    const card = {
+      id: "1",
+      account: "x4348",
+      accountKind: "card",
+      fromDay: "2026-09-01",
+      toDay: "2026-10-02",
+      lines: 1,
+      importedAt: null,
+    };
+    const payload = (statements: unknown[]) =>
+      ({ bank: { statements } }) as never;
+    expect(uncheckedSince(payload([card]), "2026-11-01")).toBe("2026-10-02");
+    expect(
+      uncheckedSince(
+        payload([
+          card,
+          { ...card, id: "2", accountKind: "account", toDay: "2026-10-15" },
+        ]),
+        "2026-11-01",
+      ),
+    ).toBe("2026-10-15");
+    expect(
+      uncheckedSince(
+        payload([
+          card,
+          { ...card, id: "3", accountKind: "account", toDay: "2026-10-31" },
+        ]),
+        "2026-11-01",
+      ),
+    ).toBeNull();
+    expect(uncheckedSince(payload([]), "2026-11-01")).toBeNull();
+  });
+});
+
+// Waves 5-6 (docs/forms/WAVE56-CONTRACT.md 4.6, 4.10.5, 5.6): Confirm paid
+// says where the next payment date goes before the press, and each open part
+// can ask the client for the bank transfer receipt (once at a time).
+describe("waves 5-6: the next date and the receipt ask", () => {
+  const metals = rowOf(/المعادن/);
+  const { nextDateLine } =
+    require("../src/lib/billingBalances") as typeof import("../src/lib/billingBalances");
+
+  test("the date line comes from dateIfConfirmed, or its sentence; nothing from an older read", () => {
+    expect(nextDateLine({ dateIfConfirmed: "2026-11-23" }, "2026-10-23")).toBe(
+      "Next payment moves to 23 Nov",
+    );
+    expect(
+      nextDateLine({
+        dateIfConfirmed: null,
+        dateWhy:
+          "Next payment date stays 2 Nov: this payment was not the one due on it.",
+      }),
+    ).toBe(
+      "Next payment date stays 2 Nov: this payment was not the one due on it.",
+    );
+    expect(nextDateLine({})).toBeNull();
+    const read = copyRead(LIVE_2026_10_23);
+    read.datesIfConfirmed = [
+      {
+        taskId: metals.taskId,
+        part: "onboarding",
+        partNo: 0,
+        date: "2026-11-23",
+        why: null,
+      },
+    ];
+    const row = buildPending(read, NOW).rows.find(
+      r => r.taskId === metals.taskId,
+    );
+    expect(
+      row?.confirmable.find(c => c.part === "onboarding")?.dateIfConfirmed,
+    ).toBe("2026-11-23");
+    const plain = buildPending(LIVE_2026_10_23, NOW).rows.find(
+      r => r.taskId === metals.taskId,
+    );
+    expect(plain?.confirmable.every(c => c.dateIfConfirmed === undefined)).toBe(
+      true,
+    );
+  });
+
+  test("the card's rule inputs (20261102g) give the line as the server's rule would", () => {
+    const { confirmDateOf } =
+      require("../src/lib/billingBalances") as typeof import("../src/lib/billingBalances");
+    const card = {
+      on: true,
+      windowDays: 7,
+      cardDate: "2026-11-02",
+      monthlyPlan: false,
+      plusMonth: null,
+      why: null,
+    };
+    const later = {
+      part: "later" as const,
+      partNo: 1,
+      dueOn: "2026-11-04",
+      nextPartNo: 2,
+      nextDueOn: "2026-12-02",
+    };
+    expect(confirmDateOf(later, card, true)).toEqual({
+      date: "2026-12-02",
+      why: null,
+    });
+    // Off, or not a later part: nothing to say.
+    expect(confirmDateOf(later, { ...card, on: false }, true)).toBeNull();
+    expect(
+      confirmDateOf({ ...later, part: "onboarding", partNo: 0 }, card, true),
+    ).toBeNull();
+    // Due outside the window of the card's date: it stays.
+    expect(
+      confirmDateOf({ ...later, dueOn: "2026-11-20" }, card, true)?.why,
+    ).toMatch(
+      /^Next payment date stays .*: this payment was not the one due on it\.$/,
+    );
+    // No next part: a month on for a monthly plan, else it stays.
+    const last = { ...later, nextPartNo: null, nextDueOn: null };
+    expect(
+      confirmDateOf(
+        last,
+        { ...card, monthlyPlan: true, plusMonth: "2026-12-02" },
+        true,
+      ),
+    ).toEqual({
+      date: "2026-12-02",
+      why: null,
+    });
+    expect(confirmDateOf(last, card, true)?.why).toMatch(
+      /there is no later payment on this plan/,
+    );
+    // A card with no date says why.
+    expect(
+      confirmDateOf(
+        later,
+        { ...card, cardDate: null, why: "The card has no next payment date." },
+        true,
+      ),
+    ).toEqual({
+      date: null,
+      why: "The card has no next payment date.",
+    });
+  });
+
+  test("Confirm paid shows Next payment moves to {date} before the press", async () => {
+    const read = copyRead(LIVE_2026_10_23);
+    read.datesIfConfirmed = [
+      {
+        taskId: metals.taskId,
+        part: "onboarding",
+        partNo: 0,
+        date: "2026-11-23",
+        why: null,
+      },
+    ];
+    const api = apiOf(async () => buildPending(read, NOW));
+    await render(h(PendingPayments, { api }));
+    await openRow(metals.taskId);
+    const panel = () =>
+      win.document.getElementById(`pending-${metals.taskId}`) as any;
+    await click(button("Tap", panel()));
+    expect(String(panel().querySelector("[data-next-date]")?.textContent)).toBe(
+      "Next payment moves to 23 Nov",
+    );
+    await render(h("div"));
+  });
+
+  test("Ask for the receipt on an open part sends its context; one already out waits", async () => {
+    const asked: unknown[] = [];
+    const api = apiOf(async () => view(), {
+      receipts: { ask: p => asked.push(p), outSince: () => null },
+    });
+    await render(h(PendingPayments, { api }));
+    await openRow(metals.taskId);
+    const panel = () =>
+      win.document.getElementById(`pending-${metals.taskId}`) as any;
+    const asks = panel().querySelectorAll("[data-ask-receipt]");
+    expect(asks.length).toBeGreaterThan(0);
+    expect(String(asks[0].textContent)).toBe("Ask for the receipt");
+    await click(asks[0]);
+    // No dollar figure goes to a client whose billing currency is not on record (5.6).
+    expect(asked[0]).toMatchObject({
+      taskId: metals.taskId,
+      expectedAmount: null,
+      currency: null,
+      dealResponseId:
+        LIVE_2026_10_23.deals.find(d => d.taskId === metals.taskId)
+          ?.responseId ?? null,
+    });
+    await render(h("div"));
+    const out = apiOf(async () => view(), {
+      receipts: { ask: () => {}, outSince: () => "2026-10-21T09:00:00Z" },
+    });
+    await render(h(PendingPayments, { api: out }));
+    await openRow(metals.taskId);
+    expect(
+      String(panel().querySelector("[data-receipt-out]")?.textContent),
+    ).toBe("A receipt request is already out, sent 21 Oct.");
+    expect(panel().querySelector("[data-ask-receipt]")).toBeNull();
+    await render(h("div"));
+  });
+
+  test("without a receipts api (the form not live) no part offers the ask", async () => {
+    await render(h(PendingPayments, { api: apiOf(async () => view()) }));
+    await openRow(metals.taskId);
+    expect(win.document.querySelector("[data-ask-receipt]")).toBeNull();
+    await render(h("div"));
   });
 });

@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   Check,
   ChevronRight,
@@ -13,9 +14,11 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { Facts } from "@/components/ceo/Facts";
 import { FilterChips } from "@/components/ceo/FilterChips";
@@ -60,7 +63,10 @@ import {
   approvePayload,
   baseNote,
   basisWords,
+  CASH_NOT_CHECKED,
   CONDITIONS_SENTENCE,
+  cashCheckSentence,
+  confirmedLine,
   confirmFor,
   dayText,
   driftNote,
@@ -69,18 +75,26 @@ import {
   isCashPart,
   isTypedPart,
   lineWorking,
+  manualLoggedOfFacts,
   monthChips,
   monthHeadline,
   monthName,
   nextMonth,
+  noWinsFor,
+  type PayProposal,
+  type PayProposals,
+  PROPOSALS_OFF,
   partChip,
   partNote,
   payUsd,
   payWhen,
   planPartOf,
   planSourceWords,
+  proposalLine,
   statusChip,
   thisMonth,
+  toProposals,
+  uncheckedCash,
   valueText,
   whyNotApproved,
 } from "./payCopy";
@@ -178,6 +192,13 @@ export function PayMonthCard({
   const [withdrawing, setWithdrawing] = useState<PayPerson | null>(null);
   const latest = useRef(ym);
   latest.current = ym;
+  // Waves 5-6 (WAVE56-CONTRACT.md 4.9, 5.4): proposals from the wins ledger.
+  const auth = useCockpitAuth();
+  const proposalsApi = useMemo(
+    () => (auth.client ? payProposalsApi(auth.client) : null),
+    [auth.client],
+  );
+  const [proposalsOn, setProposalsOn] = useState(false);
   const current = useRef(onCurrent);
   current.current = onCurrent;
 
@@ -253,7 +274,8 @@ export function PayMonthCard({
         savePerson,
         onRosterChanged,
         run,
-        onEntry: setEntry,
+        // With proposals on, a typed win-backed part needs a win or its reason (C7).
+        onEntry: t => setEntry({ ...t, winsLedger: proposalsOn }),
         onVoid: (e, label) => setVoiding({ e, label }),
         onConfirm: setConfirming,
         onWithdraw: setWithdrawing,
@@ -403,6 +425,19 @@ export function PayMonthCard({
           {error && shown ? (
             <p className="text-sm text-[var(--ceo-critical)]">{error}</p>
           ) : null}
+          {proposalsApi ? (
+            <ProposedFromWins
+              api={proposalsApi}
+              ym={ym}
+              people={people.map(p => ({ personId: p.personId, name: p.name }))}
+              reloadKey={reloadKey}
+              onOn={setProposalsOn}
+              onDone={async text => {
+                say(text);
+                await refresh();
+              }}
+            />
+          ) : null}
           <div
             aria-busy={loading}
             className={
@@ -443,7 +478,7 @@ export function PayMonthCard({
               month={shown}
               people={ready}
               leftOut={shown.people.flatMap(p => {
-                const why = whyNotApproved(p);
+                const why = whyNotApproved(p, shown.facts);
                 return why ? [{ name: p.name, why }] : [];
               })}
               onClose={() => setApproving(false)}
@@ -903,6 +938,8 @@ function CommissionLineRow({
   const ym = a.month.month.slice(0, 7);
   const working = lineWorking(line);
   const waiting = arr(line.waiting).map(obj);
+  // Hand-logged cash not checked against the bank: the line waits, and the person is left out of Approve.
+  const unchecked = approved ? null : uncheckedCash(line, a.month.facts);
   const value =
     line.state === "not_here" ? (
       <span className="text-xs font-normal text-muted-foreground">
@@ -921,9 +958,18 @@ function CommissionLineRow({
           {line.state === "waiting" ? (
             <StatusChip tone="warning" label="Waiting for you" />
           ) : null}
+          {unchecked ? (
+            <StatusChip tone="warning" label={CASH_NOT_CHECKED} />
+          ) : null}
         </span>
       }
-      note={[working, line.note].filter(Boolean).join(" · ")}
+      note={[
+        working,
+        line.note,
+        unchecked ? cashCheckSentence(unchecked) : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")}
       value={
         line.state === "waiting" && line.amountUsd !== null ? (
           <span>
@@ -1511,6 +1557,7 @@ function WhereFrom({ month }: { month: PayMonth }) {
   const calls = obj(facts.calls);
   const clients = obj(facts.clients);
   const sales = obj(facts.sales);
+  const logged = manualLoggedOfFacts(month.facts);
   const nothing =
     !arr(ads.clients).length &&
     !arr(calls.agents).length &&
@@ -1538,6 +1585,12 @@ function WhereFrom({ month }: { month: PayMonth }) {
         {nothing ? (
           <p className="text-xs text-muted-foreground">
             {`Nothing was read for ${monthName(month.month)}: no ads, calls, client or deal figures.`}
+          </p>
+        ) : null}
+        {logged?.count ? (
+          <p className="flex flex-wrap items-baseline gap-2 text-xs text-muted-foreground">
+            <StatusChip tone="warning" label={CASH_NOT_CHECKED} />
+            <span>{`${plural(logged.count, "hand-logged payment")}, ${payUsd(logged.usd)}, not checked against the bank yet. Commission on that cash waits until finance or the CEO checks it on the Money tab.`}</span>
           </p>
         ) : null}
         {arr(ads.clients).length || notesOf(ads.note).length ? (
@@ -1891,6 +1944,280 @@ function SalesFacts({ sales }: { sales: Obj }) {
         </p>
       ) : null}
       <FactNotes note={sales.note} />
+    </section>
+  );
+}
+
+// --- Proposed from wins (docs/forms/WAVE56-CONTRACT.md 4.9, 5.4) -------------------
+
+export type ProposalsApi = {
+  read: (ym: string) => Promise<PayProposals>;
+  decide: (p: {
+    month: string;
+    key: string;
+    decision: "confirm" | "decline";
+    personId?: number;
+    reason?: string;
+  }) => Promise<{ sentence: string | null; entryMonth: string | null }>;
+};
+
+export function payProposalsApi(c: SupabaseClient): ProposalsApi {
+  const rpc = async (name: string, args: Record<string, unknown>) => {
+    const { data, error } = await c.rpc(name, args);
+    if (error)
+      throw new Error(
+        String(error.message ?? "").trim() ||
+          "The server refused this with no reason. Try again in a minute.",
+      );
+    return data;
+  };
+  return {
+    read: async ym =>
+      toProposals(
+        await rpc("cockpit_ceo_pay_proposals", {
+          p_month: `${ym.slice(0, 7)}-01`,
+        }),
+        ym,
+      ),
+    decide: async p => {
+      const d: any = await rpc("cockpit_ceo_pay_proposal_decide", {
+        p: { ...p, month: `${p.month.slice(0, 7)}-01` },
+      });
+      return {
+        sentence:
+          typeof d?.sentence === "string" && d.sentence.trim()
+            ? d.sentence.trim()
+            : null,
+        entryMonth:
+          typeof (d?.entryMonth ?? d?.month) === "string"
+            ? String(d.entryMonth ?? d.month).slice(0, 7)
+            : null,
+      };
+    },
+  };
+}
+
+/**
+ * The block above the typed parts: one row per proposal the wins ledger
+ * makes, Confirm and Decline each one press, waiting rows in amber with
+ * their sentence. Nothing pays itself: a confirm writes an ordinary entry.
+ */
+export function ProposedFromWins({
+  api,
+  ym,
+  people,
+  reloadKey = 0,
+  onOn,
+  onDone,
+}: {
+  api: ProposalsApi;
+  ym: string;
+  /** The month's people, for a win whose CSM the card could not match. */
+  people: { personId: number; name: string }[];
+  reloadKey?: number;
+  onOn?: (on: boolean) => void;
+  onDone: (text: string) => Promise<void> | void;
+}) {
+  const [data, setData] = useState<PayProposals | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [asking, setAsking] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+  const [pick, setPick] = useState<Record<string, number>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [said, setSaid] = useState<string | null>(null);
+  const on = useRef(onOn);
+  on.current = onOn;
+  const load = useCallback(async () => {
+    try {
+      const d = await api.read(ym);
+      setData(d);
+      setError(null);
+      on.current?.(d.on);
+    } catch (e) {
+      const msg = String((e as Error)?.message ?? e);
+      setError(/switch-on/i.test(msg) ? PROPOSALS_OFF : msg);
+      on.current?.(false);
+    }
+  }, [api, ym]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reloadKey reads again
+  useEffect(() => {
+    setData(null);
+    void load();
+  }, [load, reloadKey]);
+  const decide = async (r: PayProposal, decision: "confirm" | "decline") => {
+    if (decision === "decline" && reason.trim().length < 3) {
+      setSaid("Say why in 3 to 300 characters.");
+      return;
+    }
+    const personId = r.personId ?? pick[r.key];
+    if (decision === "confirm" && personId === undefined) {
+      setSaid("Pick the person this win pays.");
+      return;
+    }
+    setBusy(r.key);
+    setSaid(null);
+    try {
+      const out = await api.decide({
+        month: ym,
+        key: r.key,
+        decision,
+        ...(personId !== undefined && personId !== null ? { personId } : {}),
+        ...(decision === "decline" ? { reason: reason.trim() } : {}),
+      });
+      const text =
+        out.sentence ??
+        (decision === "confirm"
+          ? confirmedLine(ym, out.entryMonth, data?.approved === true)
+          : "Declined.");
+      setAsking(null);
+      setReason("");
+      setSaid(text);
+      await onDone(text);
+      void load();
+    } catch (e) {
+      setSaid(String((e as Error)?.message ?? e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  let inner: ReactNode;
+  if (error)
+    inner = (
+      <p
+        className="text-sm text-muted-foreground"
+        data-proposals-off={error === PROPOSALS_OFF || undefined}
+      >
+        {error}
+      </p>
+    );
+  else if (!data)
+    inner = (
+      <p className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="size-4 animate-spin" aria-hidden />
+        Reading the wins
+      </p>
+    );
+  else if (!data.on)
+    inner = (
+      <p className="text-sm text-muted-foreground" data-proposals-off>
+        {PROPOSALS_OFF}
+      </p>
+    );
+  else if (!data.rows.length)
+    inner = <p className="text-sm text-muted-foreground">{noWinsFor(ym)}</p>;
+  else
+    inner = (
+      <ul className="grid divide-y">
+        {data.rows.map(r => (
+          <li
+            key={r.key}
+            className="grid gap-1.5 py-2.5 text-sm"
+            data-proposal={r.key}
+            data-state={r.state}
+          >
+            <span className="flex flex-wrap items-center justify-between gap-2">
+              <span className="min-w-0 font-mono text-[13px] tabular-nums">
+                {proposalLine(r)}
+              </span>
+              {r.state === "proposed" ? (
+                <span className="flex flex-wrap items-center gap-2">
+                  {r.personId === null ? (
+                    <select
+                      aria-label="The person this win pays"
+                      className="h-8 rounded-md border bg-background px-2 text-xs"
+                      value={pick[r.key] ?? ""}
+                      onChange={e =>
+                        setPick(x => ({
+                          ...x,
+                          [r.key]: Number(e.target.value),
+                        }))
+                      }
+                    >
+                      <option value="">Pick the person</option>
+                      {people.map(p => (
+                        <option key={p.personId} value={p.personId}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : null}
+                  <Button
+                    size="sm"
+                    disabled={busy === r.key}
+                    onClick={() => void decide(r, "confirm")}
+                  >
+                    Confirm
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy === r.key}
+                    onClick={() => setAsking(r.key)}
+                  >
+                    Decline
+                  </Button>
+                </span>
+              ) : r.state === "confirmed" ? (
+                <StatusChip tone="good" label="Confirmed" />
+              ) : r.state === "declined" ? (
+                <StatusChip tone="neutral" label="Declined" />
+              ) : null}
+            </span>
+            {r.state === "waiting" && r.why ? (
+              <span
+                className="text-xs text-[var(--ceo-warning,var(--warning))]"
+                data-waiting
+              >
+                {r.why}
+              </span>
+            ) : null}
+            {asking === r.key ? (
+              <form
+                className="flex flex-wrap items-end gap-2"
+                onSubmit={e => {
+                  e.preventDefault();
+                  void decide(r, "decline");
+                }}
+              >
+                <label className="grid gap-1 text-xs text-muted-foreground">
+                  Why are you declining it?
+                  <input
+                    className="h-8 rounded-md border bg-background px-2 text-sm"
+                    value={reason}
+                    onChange={e => setReason(e.target.value)}
+                    maxLength={300}
+                  />
+                </label>
+                <Button type="submit" size="sm" variant="outline">
+                  Decline
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setAsking(null)}
+                >
+                  Cancel
+                </Button>
+              </form>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    );
+  return (
+    <section
+      className="grid gap-2 rounded-xl border p-3"
+      data-proposed-from-wins
+      aria-label="Proposed from wins"
+    >
+      <h4 className={KICKER}>Proposed from wins</h4>
+      {inner}
+      {said ? (
+        <p className="text-sm" role="status">
+          {said}
+        </p>
+      ) : null}
     </section>
   );
 }

@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "offer": "website",
+  "example": {
+    "en": "Hosh Design & Build, Example",
+    "ar": "حوش للتصميم والبناء، مثال"
+  },
+  "sourceGrade": "mahara-deep-space-v1.cube, already baked; no second creative grade",
+  "motion": null,
+  "images": [
+    {
+      "id": "hero",
+      "file": "hero.webp",
+      "source": "website-hero-16x9.png",
+      "md5": "966080382b76aa34fe861e67bf00967c",
+      "job": "9ed8eea1-9d90-41d2-b829-eb7355d26306",
+      "treatment": "highlight-cap",
+      "alt": {
+        "en": "Example: a contemporary Gulf villa beside a pool at dusk.",
+        "ar": "مثال: فيلا خليجية معاصرة بجانب مسبح وقت الغروب."
+      },
+      "width": 1920,
+      "height": 1080,
+      "quality": 76,
+      "bytes": 222964,
+      "sha256": "ab04a418280b0b2d10317c288e062c98bbd306df0597bc9c58db08e2b8e9bd1b",
+      "highlightReserve": 20,
+      "maxLuminance": 0.8568303200476577
+    },
+    {
+      "id": "stone",
+      "file": "bg-stone.webp",
+      "source": "website-bg-1.png",
+      "md5": "693619482c9f2950466965fd092c8302",
+      "job": "ea4776a5-cc4a-4d4d-94c1-7b0788e71770",
+      "treatment": "quiet-navy",
+      "alt": {
+        "en": "Example: a stone wall and a narrow pool at dusk.",
+        "ar": "مثال: جدار حجري ومسبح ضيق وقت الغروب."
+      },
+      "width": 1920,
+      "height": 1080,
+      "quality": 88,
+      "bytes": 58296,
+      "sha256": "19b3175d8a8dedfd19999129b99a70e4075b417fbc1f97dda14b4b4b9446a025",
+      "highlightReserve": 12,
+      "maxLuminance": 0.1161537818859285
+    },
+    {
+      "id": "courtyard",
+      "file": "bg-courtyard.webp",
+      "source": "website-bg-2.png",
+      "md5": "9d6809b419a60c67cd6a3a6c2ad58e9a",
+      "job": "4b20dcda-616a-44ba-914f-a65cdfd7e67d",
+      "treatment": "quiet-navy",
+      "alt": {
+        "en": "Example: an empty courtyard with an olive tree and water channel.",
+        "ar": "مثال: فناء هادئ فيه شجرة زيتون ومجرى ماء."
+      },
+      "width": 1920,
+      "height": 1080,
+      "quality": 88,
+      "bytes": 77782,
+      "sha256": "1b9574e739af440c2dcde6721d9e2f573895e722a192160eff90ad2bf28b3950",
+      "highlightReserve": 12,
+      "maxLuminance": 0.13134119502857924
+    },
+    {
+      "id": "interior",
+      "file": "bg-interior.webp",
+      "source": "website-bg-3-spare.png",
+      "md5": "7b2ece824d3a6bee602795bbdbe8fd53",
+      "job": "a76fe6bf-9cee-431a-9213-474fa180d06c",
+      "treatment": "quiet-navy",
+      "alt": {
+        "en": "Example: an empty interior looking onto a pool.",
+        "ar": "مثال: مساحة داخلية تطل على مسبح."
+      },
+      "width": 1920,
+      "height": 1080,
+      "quality": 88,
+      "bytes": 37372,
+      "sha256": "c39c5e5290ff6f41020acca9fa149ff4332318fca0b7fe0d4d2b41727c8a580c",
+      "highlightReserve": 12,
+      "maxLuminance": 0.12169978489707484
+    }
+  ]
+}

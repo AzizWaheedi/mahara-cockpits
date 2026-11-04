@@ -7,8 +7,9 @@ read-only run from elsewhere, over ssh with the script on stdin
 
 What it never returns: a key's value (env files give names and set/empty
 only), a process's arguments (cloudflared carries its tunnel token there;
-only counts, ages and the job each process belongs to), or a prompt from
-the Hermes jobs file. Every part is read in its own try, so one failure
+only counts, ages and the job each process belongs to; gateway runs are the
+one command line it returns, cut to 200 characters), or a prompt from the
+Hermes jobs file. Every part is read in its own try, so one failure
 says "error" for that part and the rest still answer.
 
 Standard library only, Python 3.6 or later.
@@ -116,6 +117,7 @@ def processes(markers):
     me = os.getpid()
     jobs, top, users = [], [], {}
     tunnels = {"n": 0, "rss_kb": 0, "users": {}, "started": {}}
+    gateways = []
     table = {}
     for d in glob.glob("/proc/[0-9]*"):
         pid = int(os.path.basename(d))
@@ -155,6 +157,8 @@ def processes(markers):
             started = int(time.time() - etimes)
             span = tunnels["started"].setdefault(user, [started, started])
             span[0], span[1] = min(span[0], started), max(span[1], started)
+        if "gateway run" in args and os.path.basename(argv[0]) not in ("sh", "bash", "dash"):
+            gateways.append({"pid": pid, "user": user, "args": args[:200]})
         if comm.startswith("python"):
             cwd = None
             for job, spec in markers.items():
@@ -190,7 +194,7 @@ def processes(markers):
                 label = comm + " " + os.path.basename(first)[:40]
         top.append({"user": user, "name": label, "rss_mb": info["rss_kb"] // 1024})
     top.sort(key=lambda r: -r["rss_mb"])
-    return {"jobs": jobs, "top": top[:6], "cloudflared": tunnels, "hz": hz}
+    return {"jobs": jobs, "top": top[:6], "cloudflared": tunnels, "gateways": gateways, "hz": hz}
 
 
 def listeners():

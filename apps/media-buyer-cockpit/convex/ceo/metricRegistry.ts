@@ -692,6 +692,15 @@ export const DEFINITIONS: MetricDefinition[] = [
     "usd",
   ),
   d(
+    "money.logged_unchecked",
+    "money",
+    "Logged, not checked",
+    "Hand-logged payments (bank transfers, cheques) still waiting for finance or the CEO to check them against the bank. Not in cash collected, LTV or pay until checked.",
+    `${TRIAGE} cockpit_manual_payments (check_state logged), through the money refresh's rails.manualLogged`,
+    "usd",
+    "Rejected rows. Rails money (Whop, Tap, Ecom) needs no check.",
+  ),
+  d(
     "money.bank_statement_age_days",
     "money",
     "Days since the last statement",
@@ -883,9 +892,132 @@ export const DEFINITIONS: MetricDefinition[] = [
     "clients.extension_weeks",
     "clients",
     "Extension weeks granted",
-    "Weeks granted through the Client Extension Form in the window.",
-    "Typeform gqBcyK6g",
+    "Weeks granted in the window: each extension given with Give more time on the client page or Extend on the billing sheet, dated by the day it was given.",
+    `${TRIAGE} cockpit_extensions_v (billing events only)`,
     "count",
+    "Voided grants. The Client Extension Form's two answers of 14 Sep were tests, never grants.",
+  ),
+  d(
+    "clients.extensions.granted",
+    "clients",
+    "Extensions given",
+    "Extension grants given in the window, one per Give more time or billing sheet Extend, by the Kuwait day it was given. A grant that replaced a running one counts as a grant of its own.",
+    `${TRIAGE} cockpit_extensions_v (billing events only)`,
+    "count",
+    "Voided grants and anything agreed but never entered in the cockpit. Typed days on the goal sheet add to it there.",
+  ),
+  d(
+    "clients.churn.confirmed",
+    "clients",
+    "Churn confirmed",
+    "Departures on the churn register that a CSM or the CEO confirmed (Client is leaving, or Confirm churn on the tracker) and that count as churn, by the day the client left. A finished term is not churn.",
+    `${TRIAGE} cockpit_churn_departures (confirmed_at set, not removed)`,
+    "count",
+    "A departure logged but not confirmed: it counts in the goal sheet's churned clients and shows there as not confirmed.",
+  ),
+  d(
+    "clients.churn.rate",
+    "clients",
+    "Churn rate (register)",
+    "Departures that count as churn in the month, confirmed or not, over the clients active at the start of the month on the churn register.",
+    `${TRIAGE} cockpit_churn_departures and cockpit_churn_months`,
+    "share",
+    "Withheld when the month has no start count. A finished term is left out of the departures.",
+  ),
+  d(
+    "clients.late_payments",
+    "clients",
+    "Late payments",
+    "Late spells that began in the window: a card stayed Active past its Next Payment Date. Per client, the value is the days late, added up when a client was late twice.",
+    `${TRIAGE} cockpit_late_payments_v (the daily card snapshots)`,
+    "count",
+    "A spell that started before 2026-10-07 has no earlier snapshot, so its first days are not seen. A payment off the rails reads as the date moving.",
+  ),
+  d(
+    "clients.nps",
+    "clients",
+    "NPS",
+    "Net promoter score from the clients' own NPS answers (0 to 10, how likely they are to recommend Mahara) in the window: each client counts once with their latest answer; promoters (9 or 10) minus detractors (0 to 6), over the answers, times 100. No answers in the window is no score, never 0.",
+    `${TRIAGE} cockpit_client_voice_v (answers in the portal or by WhatsApp link), checked against cockpit_form_invite_events (cards with an answered NPS invite)`,
+    "ratio",
+    "Old Typeform answers that could not be matched to a client (the note beside the number gives the count). Canary answers on the test card, the exit survey's recommend score and portal feedback ratings never count.",
+  ),
+  d(
+    "clients.nps.responses",
+    "clients",
+    "NPS answers",
+    "Clients who answered the NPS survey in the window, each once (the n behind clients.nps).",
+    `${TRIAGE} cockpit_client_voice_v`,
+    "count",
+    "A second answer from the same client in the window; old Typeform answers with no client; canary answers.",
+  ),
+  d(
+    "clients.csat",
+    "clients",
+    "Onboarding survey",
+    "Average of the clients' onboarding survey answers (1 to 10, how getting started felt) in the window, shown apart from NPS.",
+    `${TRIAGE} cockpit_client_voice_v (form csat)`,
+    "ratio",
+    "Clients launched more than 60 days ago are not asked. Old Typeform answers with no client; canary answers.",
+  ),
+  // The wins ledger (WAVE56-CONTRACT 4.8, 6.4): counted from cockpit_wins_v by the money refresh, so section money.
+  ...(
+    [
+      ["clients.wins.reviews", "Google reviews", "review"],
+      ["clients.wins.testimonials", "Video testimonials", "video_testimonial"],
+      ["clients.wins.podcasts", "Podcast case studies", "podcast"],
+      ["clients.wins.referrals", "Referrals", "referral"],
+      ["clients.wins.renewals", "Renewals", "renewal"],
+      ["clients.wins.reactivations", "Reactivations", "reactivation"],
+    ] as const
+  ).map(([metric, label, kind]) =>
+    d(
+      metric,
+      // Published by the money section (the money refresh reads cockpit_wins_v), so its definition
+      // sits under money: the publish refuses a value whose definition names another section.
+      "money",
+      label,
+      `Wins of kind ${kind} the CSM or the CEO logged in the cockpit with their proof, by win date in the window; a voided win does not count.`,
+      `${TRIAGE} cockpit_wins_v (the wins ledger, cockpit_csm_wins)`,
+      "count",
+      "Imported Typeform wins (voided history, before the cockpit), voided wins and canary wins on the test card. A win nobody logged is not counted.",
+    ),
+  ),
+  d(
+    "money.upsells.offered",
+    "money",
+    "Upsells offered",
+    "Upsells offered in the window: a sent proposal or a proof link with a price, counted by the day of its offered event, so an upsell that went on to be accepted or paid still counts.",
+    `${TRIAGE} cockpit_wins_v offered_on (the wins ledger's offered event)`,
+    "count",
+    "Drafts never count. Voided upsells and canary wins on the test card.",
+  ),
+  d(
+    "money.upsells.accepted",
+    "money",
+    "Upsells accepted",
+    "Upsells accepted in the window: an agreement linked, counted by the day of its accepted event, so a paid upsell still counts.",
+    `${TRIAGE} cockpit_wins_v accepted_on (the wins ledger's accepted event)`,
+    "count",
+    "A proposal marked accepted with no signed agreement; voided upsells; canary wins.",
+  ),
+  d(
+    "money.upsells.cash",
+    "money",
+    "Upsell cash",
+    "Checked payments the CEO tied to an upsell win, by payment day in the window. Always back end, the card's CSM's, never in front-end cash.",
+    `${TRIAGE} cockpit_wins_v ties (confirmed win ties of cockpit_payment_ties.win_id, checked by cockpit_payment_checked)`,
+    "usd",
+    "A payment proposed but not confirmed by the CEO, a hand-logged transfer not checked yet, a cleared win tie.",
+  ),
+  d(
+    "money.upsells.rate",
+    "money",
+    "Upsell rate",
+    "Upsells accepted over upsells offered, both by event day in the window. Not known when nothing was offered.",
+    `${TRIAGE} cockpit_wins_v offered_on and accepted_on`,
+    "share",
+    "Withheld when no upsell was offered in the window (never 0). Drafts, voided upsells and canary wins.",
   ),
   d(
     "clients.average_retainer",
@@ -1090,6 +1222,122 @@ export function extractMoney(p: MoneyPayload): MetricValue[] {
     v("money.average_retainer", "snapshot", p.book.averageRetainer);
   }
   if (p.bank) v("money.bank_statement_age_days", "snapshot", p.bank.daysSince);
+  // checked-money's rails.manualLogged ({count, usd, oldestDay}); a payload from before it has none, so nothing is written.
+  const logged = (p.rails as { manualLogged?: { usd?: unknown } } | undefined)
+    ?.manualLogged;
+  if (logged) v("money.logged_unchecked", "snapshot", logged.usd);
+  out.push(...winsValues(p));
+  return out;
+}
+
+/** One row of cockpit_wins_v as the money refresh carries it (payload.wins.rows). */
+export type WinRow = {
+  id: string;
+  kind: string;
+  stage: string;
+  wonOn: string;
+  offeredOn: string | null;
+  acceptedOn: string | null;
+  ties: { paidOn: string; usd: number; checked: boolean }[];
+};
+
+/** The wins block of the money payload: read, or why it was not. */
+export type WinsBlock =
+  | { read: true; today: string; rows: WinRow[] }
+  | { read: false; error: string };
+
+const WIN_COUNTS: [string, string][] = [
+  ["clients.wins.reviews", "review"],
+  ["clients.wins.testimonials", "video_testimonial"],
+  ["clients.wins.podcasts", "podcast"],
+  ["clients.wins.referrals", "referral"],
+  ["clients.wins.renewals", "renewal"],
+  ["clients.wins.reactivations", "reactivation"],
+];
+
+/**
+ * The goal actuals and the lock-in's upsell lines over one window (4.8):
+ * googleReviews, referrals, testimonials, upsells (offered + accepted, by
+ * event day), upsellCash (checked tied cash by payment day) and upsellRate
+ * (accepted / offered; null, not known, when nothing was offered). Void and
+ * imported wins are not in the view, so they never count.
+ */
+export function winGoalActuals(rows: WinRow[], from: string, to: string) {
+  const inWin = (day: string | null) => !!day && day >= from && day <= to;
+  const live = rows.filter(w => w.stage !== "void");
+  const count = (kind: string) =>
+    live.filter(w => w.kind === kind && inWin(w.wonOn)).length;
+  const upsells = live.filter(w => w.kind.startsWith("upsell_"));
+  const offered = upsells.filter(w => inWin(w.offeredOn)).length;
+  const accepted = upsells.filter(w => inWin(w.acceptedOn)).length;
+  const cash = upsells.reduce(
+    (sum, w) =>
+      sum +
+      (w.ties ?? [])
+        .filter(t => t.checked && inWin(t.paidOn))
+        .reduce((s, t) => s + t.usd, 0),
+    0,
+  );
+  return {
+    googleReviews: count("review"),
+    referrals: count("referral"),
+    testimonials: count("video_testimonial"),
+    upsellsOffered: offered,
+    upsellsAccepted: accepted,
+    upsells: offered + accepted,
+    upsellCash: Math.round(cash * 100) / 100,
+    upsellRate:
+      offered > 0 ? Math.round((accepted / offered) * 1000) / 1000 : null,
+  };
+}
+
+/**
+ * The wins metrics (WAVE56-CONTRACT 4.8) for this month and last month, from
+ * the money payload's wins block. A block that was not read writes nothing:
+ * missing is never zero. upsellRate is null when nothing was offered.
+ */
+export function winsValues(p: MoneyPayload): MetricValue[] {
+  const wins = (p as { wins?: WinsBlock } | undefined)?.wins;
+  const out: MetricValue[] = [];
+  if (
+    wins?.read !== true ||
+    !Array.isArray(wins.rows) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(wins.today ?? "")
+  )
+    return out;
+  const start = `${wins.today.slice(0, 7)}-01`;
+  const last = new Date(Date.parse(`${start}T00:00:00Z`) - 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+  const windows: Record<string, [string, string]> = {
+    mtd: [start, wins.today],
+    lastMonth: [`${last.slice(0, 7)}-01`, last],
+  };
+  for (const [w, [from, to]] of Object.entries(windows)) {
+    const at = { scope: "company", window: w, windowFrom: from, windowTo: to };
+    const inWin = (day: string | null) => !!day && day >= from && day <= to;
+    for (const [metric, kind] of WIN_COUNTS)
+      out.push({
+        metric,
+        ...at,
+        value: wins.rows.filter(
+          x => x.stage !== "void" && x.kind === kind && inWin(x.wonOn),
+        ).length,
+      });
+    const a = winGoalActuals(wins.rows, from, to);
+    out.push({
+      metric: "money.upsells.offered",
+      ...at,
+      value: a.upsellsOffered,
+    });
+    out.push({
+      metric: "money.upsells.accepted",
+      ...at,
+      value: a.upsellsAccepted,
+    });
+    out.push({ metric: "money.upsells.cash", ...at, value: a.upsellCash });
+    out.push({ metric: "money.upsells.rate", ...at, value: a.upsellRate });
+  }
   return out;
 }
 
@@ -1172,6 +1420,174 @@ export function extractCalls(p: CallsPayload): MetricValue[] {
   return out;
 }
 
+/** The month a Kuwait day falls in and the month before, as [from, to] day pairs. */
+function monthWindows(
+  today: string,
+): Record<"mtd" | "lastMonth", [string, string]> {
+  const start = `${today.slice(0, 7)}-01`;
+  const last = new Date(Date.parse(`${start}T00:00:00Z`) - 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+  return { mtd: [start, today], lastMonth: [`${last.slice(0, 7)}-01`, last] };
+}
+
+type LifecycleDeparture = {
+  taskId: string | null;
+  leftOn: string;
+  counts: boolean;
+  confirmed: boolean;
+};
+type LifecycleLate = { taskId: string; dueOn: string; daysLate: number | null };
+
+/**
+ * The waves 1-2 client metrics (WAVE12-CONTRACT 4.11.4): extensions given from
+ * the grant rows (cockpit_extensions_v), churn confirmed and the register's
+ * churn rate from the departures, late payments from the late spells. A list
+ * the payload does not carry (an older payload, or a read that failed) writes
+ * nothing: missing is never zero.
+ */
+export function lifecycleValues(p: ClientsPayload): MetricValue[] {
+  // `lifecycle` is the Client success adapter's waves 1-2 key.
+  const any = p as any;
+  const out: MetricValue[] = [];
+  const today: string | undefined = p.extensions?.to ?? any?.lifecycle?.today;
+  if (!today || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return out;
+  const windows = monthWindows(today);
+  const inWin = (day: string, [from, to]: [string, string]) =>
+    day >= from && day <= to;
+  const push = (
+    metric: string,
+    window: string,
+    value: number | null,
+    scope = "company",
+    range?: [string, string],
+  ) =>
+    out.push({
+      metric,
+      scope,
+      window,
+      value,
+      ...(range ? { windowFrom: range[0], windowTo: range[1] } : {}),
+    });
+
+  const grants: { day: string }[] | undefined = any?.extensions?.grantRows;
+  if (Array.isArray(grants))
+    for (const [w, range] of Object.entries(windows))
+      push(
+        "clients.extensions.granted",
+        w,
+        grants.filter(g => inWin(g.day, range)).length,
+        "company",
+        range,
+      );
+
+  const life = any?.lifecycle;
+  const departures: LifecycleDeparture[] | null =
+    life?.read !== false && Array.isArray(life?.departures)
+      ? life.departures
+      : null;
+  if (departures) {
+    for (const [w, range] of Object.entries(windows)) {
+      const left = departures.filter(d => d.counts && inWin(d.leftOn, range));
+      push(
+        "clients.churn.confirmed",
+        w,
+        left.filter(d => d.confirmed).length,
+        "company",
+        range,
+      );
+      const month = range[0].slice(0, 7);
+      // The Convex copy of the payload types predates churnRegister.
+      const reg = any?.churnRegister;
+      const months:
+        | { month: string; activeAtStart: number | null }[]
+        | undefined = Array.isArray(reg) ? reg : reg?.months;
+      const start = months?.find(m => m.month === month)?.activeAtStart;
+      push(
+        "clients.churn.rate",
+        w,
+        typeof start === "number" && start > 0 ? r(left.length / start) : null,
+        "company",
+        range,
+      );
+    }
+  }
+  const late: LifecycleLate[] | null =
+    life?.read !== false && Array.isArray(life?.latePayments)
+      ? life.latePayments
+      : null;
+  if (late)
+    for (const [w, range] of Object.entries(windows)) {
+      const opened = late.filter(l => inWin(l.dueOn, range));
+      push("clients.late_payments", w, opened.length, "company", range);
+      // One value per client and window: a client late twice in a month reads its days added up.
+      const days = new Map<string, number>();
+      for (const l of opened)
+        if (typeof l.daysLate === "number")
+          days.set(l.taskId, (days.get(l.taskId) ?? 0) + l.daysLate);
+      for (const [taskId, n] of days)
+        push("clients.late_payments", w, n, `client:${taskId}`, range);
+    }
+  return out;
+}
+
+type VoiceWindow = {
+  from: string;
+  to: string;
+  nps?: { score: number | null; n: number };
+  csat?: { average: number | null; n: number };
+};
+
+/**
+ * The client voice metrics (WAVE34-CONTRACT 4.6.4): clients.nps (NULL when no
+ * client answered: no score, never 0), clients.nps.responses and clients.csat
+ * for each window the refresh summarised. A voice the payload does not carry,
+ * or a read that failed, writes nothing: missing is never zero.
+ */
+export function voiceValues(p: ClientsPayload): MetricValue[] {
+  // `voice` is the Client success adapter's waves 3-4 key.
+  const voice = (p as any)?.voice;
+  const out: MetricValue[] = [];
+  if (
+    voice?.read !== true ||
+    !voice.windows ||
+    typeof voice.windows !== "object"
+  )
+    return out;
+  for (const [w, raw] of Object.entries(
+    voice.windows as Record<string, VoiceWindow>,
+  )) {
+    if (!raw || typeof raw.from !== "string" || typeof raw.to !== "string")
+      continue;
+    const at = { windowFrom: raw.from, windowTo: raw.to };
+    if (raw.nps && typeof raw.nps.n === "number") {
+      out.push({
+        metric: "clients.nps",
+        scope: "company",
+        window: w,
+        value: raw.nps.n > 0 ? r(raw.nps.score) : null,
+        ...at,
+      });
+      out.push({
+        metric: "clients.nps.responses",
+        scope: "company",
+        window: w,
+        value: raw.nps.n,
+        ...at,
+      });
+    }
+    if (raw.csat && typeof raw.csat.n === "number")
+      out.push({
+        metric: "clients.csat",
+        scope: "company",
+        window: w,
+        value: raw.csat.n > 0 ? r(raw.csat.average) : null,
+        ...at,
+      });
+  }
+  return out;
+}
+
 export function extractClients(p: ClientsPayload): MetricValue[] {
   const out: MetricValue[] = [];
   const v = (
@@ -1198,6 +1614,8 @@ export function extractClients(p: ClientsPayload): MetricValue[] {
   v("clients.churn_rate", "mtd", p.churn?.rate);
   v("clients.average_days_to_launch", "all", p.launch?.averageDays);
   v("clients.extension_weeks", "mtd", p.extensions?.totalWeeks);
+  out.push(...lifecycleValues(p));
+  out.push(...voiceValues(p));
   v("clients.average_retainer", "snapshot", p.retainer?.averageUsd);
   for (const row of p.rows ?? []) {
     const scope = `client:${row.clickupTaskId}`;

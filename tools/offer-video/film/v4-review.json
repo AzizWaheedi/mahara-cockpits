@@ -1,0 +1,40 @@
+{
+ "fixed_against_the_proof_stills": {
+  "F1": "lines.json synced to websiteVideo.ts (en-2a, en-3e, ar-2b, ar-3e); en-2a and en-3e keep a 'voiced' field with the draft voice's old words; ANCHOR_WORDS: en link = word 2 (voiced word 1), en before = word 13 (the second 'they'), ar link = «الرابط»; the manifest lists the voice and caption mismatch",
+  "F2": "15.0 s is B's drawing reveal on the 1.25x Kling clip from frame 0, warm graded, no 0.75x clip and no punch-in; it then shrinks into the home page's hero (warm to raw by a dissolve so the hand-over matches the site's hero, the raw frame 77)",
+  "F3": "'30 seconds' is a vertical dimension along the error page's end edge in the screen's plane (extension lines, dimension line, oblique ticks on Deep halos), the words horizontal in the end column, sized from measured widths so 'seconds' ends inside x 1728 at full push",
+  "F4": "the cold grade went past the plan's +0.12 / +0.20 to exposure +0.22, shadows +0.38, contrast +0.12, defocus 0.55: at the plan's values the stone's panel seams still did not read; now they do in the top half",
+  "F5": "the world outside the 4:5 window dims to 62% Deep by 1.5 s",
+  "F6": "the trace is registered by scripts/trace_fit.py: within 2 px on every traced segment that sits on an edge at frames 0 and 15 (80 of 80); at 30 and 39 the two misses (2.5 to 3 px) are already masked away; stubs cut to 16 px overruns (the canopy line now stops at x 1691, not in the palms); walkway remeasured and stopped at y 860; axis lines stop at y 860; no walkway joints (none above y 860 in frame 0); the overlay plays the dolly fitted per frame",
+  "F7": "every word inside x 192 to 1728 and y 108 to 972 (kicker x 192, callouts x 192, 'Example ad' at y 128 beside the window, the tag at its top end corner, the Arabic kicker ends at x 1728); screens, sheets, clouds and marks in the 90% box",
+  "F8": "45 to 52 s is a drawn schedule: square corners, a double rule, 1 px Ink rules at 35%, the view title 'Bill of quantities' / «جدول الكميات» on a 3 px rule with no bubble, Item, Description and Quantity columns, amber dashed fields labelled 'your numbers' / «أرقامكم» landing on 'projects', no price column",
+  "F9": "the label of record breaks after 'Example.' (Arabic «مثال.» set in Plex)",
+  "F10": "the Example tag sits at the top end corner inside the 80% box (x 1728, y 108; Arabic mirrored) to 45 s, then in the schedule's bottom strip to 52 s"
+ },
+ "fixed_in_the_frame_by_frame_pass": [
+  "the reveal's teal rules showed at the piers before 15.24 s: hidden until the wings start",
+  "the label of record crowded the dimension's lower ticks: it sits 30 px above the lower extension line",
+  "Rev A's leader reached the cloud's side before the cloud did: it now lands just after the cloud passes (v3's rule)",
+  "Rev B's cloud and triangle left the 90% box at the top: the screen sits at y 72, the cloud runs 6 px out with smaller scallops, and the B stands beside the cloud's end edge",
+  "the tag touched the beat 4 screen at full push: the screen sits at y 160, the push is 1.01 about the services target, the tag is set at line-height 1",
+  "'Your typical project' broke on three lines: the schedule is 1180 wide with a 204 px thumbnail, two lines",
+  "Arabic: the 3C words and the care line sat on the start side over the sheets and the screen: both now in the end column",
+  "Arabic: the window left at 1.1 s (the script window's 'ad') before the crop marks landed: it leaves at 1.6 s in both cuts",
+  "18 s: 'Six pages' landed over the home page before it had shrunk away: the shrink now leads 'six' by 0.15 s and the words land 0.2 s after it, as 'pages' is said",
+  "28 s: the contact screen and its tracking label lingered as a ghost behind the link phone: the tracking label lands 0.3 s before its word (after the form's label) and the screen leaves 0.1 s after 'link', so the label still holds 1.65 s",
+  "32 s: Rev B's lowest scallops touched the two-line caption: the beat 3 screen sits 4 px higher (y 68)"
+ ],
+ "kept_on_purpose": [
+  "line_unread on the typed firm name: it types letter by letter on the voice, as the script asks",
+  "line_unread on the search result row (about 0.6 s): the same name was typed above it for 1.5 s, and it opens into the error page at 5.0 s",
+  "text_below_floor inside the phone's feed post and the site captures: real UI at real size (the feed is marked as texture)",
+  "the plates behind screens are only lightly defocused: media-treatment's blur glows below about 0.7 and ghosts above 0.8; separation comes from exposure, vignette and contact shadows",
+  "the hook's post is v3's HTML feed rows inside a frameless phone: no capture of a social feed exists, and the contract asks for an example ad, tagged"
+ ],
+ "weakest": [
+  "beat 3's middle (21 to 31 s) is still screens doing things: one scroll, a phone in and out, a link; better than v3, but the frame most likely to read as a product demo",
+  "the close is a placeholder card until the CEO records; it is the flattest 7 s of the film",
+  "the Arabic cut's timing is from the script's windows; it needs one pass on Mohamed's word times"
+ ],
+ "not_checked": "Sound was measured, not heard: the English cut is the draft voice, room tone and two effects; the Arabic cut is room tone and two effects at the English cut's gain. Nobody has watched either cut on a phone speaker or over a real Zoom share yet."
+}

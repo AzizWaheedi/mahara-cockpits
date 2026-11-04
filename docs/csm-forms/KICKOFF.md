@@ -483,6 +483,7 @@ director cockpit has, or copies, each one:
 | `@/lib/onboardingCore` | `FORMS` (the onboarding form's ID); the types `OnboardingRow`, `FormEntry`, `LinkKey` |
 | `@/lib/csmCalls` | the types `Timeline`, `TimelineForm` |
 | `@/present/sources` | the type `DeckSources` (the context's deck read) |
+| `@/lib/saleTie` | the type `SaleView` (the context's tied sale, CEO item 6; a pure file with no React) |
 
 And the CSS the panel's class names need, beyond Tailwind's own:
 
@@ -530,6 +531,8 @@ And the CSS the panel's class names need, beyond Tailwind's own:
 ("test", "CLIENT-DEMO-001"); the record-built ID fixes that. `after.cardDone`:
 the card's Client Happiness or Last POC changed after the send (Make 06,
 route 1).
+
+Superseded: the 1-1 notes are native (PLAN D7, docs/forms/STAGE2-CONTRACT.md).
 
 ---
 
@@ -755,6 +758,16 @@ the first one cannot be fixed:" and the outline **Open a second kickoff
 anyway**, which loads the form. The answers sheet is titled "Kickoff for
 <Client>", and an answer that is a link opens as one. The server marks any
 send after the first as `second`, whatever the browser says.
+
+### 4.5 Open items after the send: a Yes or No (2026-11-02, CEO-7)
+After "Send the kickoff", each open item the kickoff left that maps to a request type shows under the sheet's trail
+as one question with equal **Yes** and **No** pills: funded card No (Card missing for ads), Mahara OS Tech Issue or
+Didn't Receive Access (General tech request), WhatsApp Needs Integrating (WhatsApp connection issue). Yes raises the
+request in one tap, as the ticket form would, with the type's due day and priority; No is recorded. The same items
+show on the client page's Onboarding tab (with "Change it first", which opens the prefilled ticket form) and on Today
+until each is decided, while the client is in onboarding or for 14 days after the kickoff. One decision per card per
+item. Backend: `docs/forms/WAVE56-CONTRACT.md` 4.20 (`20261103d_kickoff_items.sql`); screens: build B7; runbook:
+`RUNBOOK.md`, Kickoff items as requests.
 
 ---
 

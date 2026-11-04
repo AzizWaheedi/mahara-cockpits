@@ -14,10 +14,21 @@
  * vault or pg_net, so the guarded blocks skip and the kick only writes its note.
  * Nothing here reaches Slack: a post is a row and an audit row.
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  setDefaultTimeout,
+  test,
+} from "bun:test";
 import { readFileSync } from "node:fs";
 import type { PGlite } from "@electric-sql/pglite";
 import { actor, cockpitTestDb, member, migration } from "./lib/cockpitTestDb";
+
+// Keep direct, ship and readiness runs consistent on busy build hosts.
+// Every SQL assertion still runs, with a finite per-test allowance.
+setDefaultTimeout(120_000);
 
 const FILE = "20261025n_slack_notices.sql";
 

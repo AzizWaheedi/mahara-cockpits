@@ -1,0 +1,227 @@
+/* Hallmark · component: kickoff items (sheet, page, band) · genre: modern-minimal · theme: the cockpit's own (Geist, --mahara-teal)
+ * states: default · hover · focus-visible · active · disabled · loading · error · success
+ *
+ * WAVE56-CONTRACT.md 5.16. Only the apps' tokens (--mahara-teal, --warning,
+ * --destructive, --foreground, --muted-foreground, --border, --card, --muted,
+ * --font-sans, --font-mono) and formSheet.css's --fs-* mixes of them: no
+ * literal colour, so dark mode comes from the tokens. The rings are
+ * formSheet.css's fs-step and fs-ring, used and not changed. Text at 11, 12,
+ * 13 or 14px; gaps on 4px steps.
+ */
+
+.ki-root {
+  /* The same mixes the sheet's root defines, for the page and Today, where no sheet is around. */
+  --fs-edge: color-mix(in oklab, var(--foreground) 38%, var(--card));
+  --fs-quiet: color-mix(in oklab, var(--muted) 80%, transparent);
+  --fs-on: color-mix(in oklab, var(--mahara-teal) 16%, var(--card));
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  font-family: var(--font-sans);
+}
+.ki-kicker {
+  margin: 0;
+}
+
+/* Page and Today: the rings sit under a 2px warning rule down the left margin,
+   like a reviewer's pencil mark; no rail between them. */
+.ki-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0 0 0 12px;
+  list-style: none;
+  border-inline-start: 2px solid
+    color-mix(in oklab, var(--warning) 60%, transparent);
+}
+.ki-list .fs-step::before {
+  display: none;
+}
+/* The sheet: the items carry on the kickoff's trail, in its own mono rail. */
+.ki-trail {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ki-item {
+  padding-bottom: 16px;
+}
+.ki-item:last-child {
+  padding-bottom: 0;
+}
+.ki-ring {
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+.ki-body {
+  gap: 4px;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+}
+.ki-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ki-line,
+.ki-say,
+.ki-receipt {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+.ki-say[data-tone="critical"],
+.ki-receipt [data-tone="critical"] {
+  color: var(--destructive);
+}
+.ki-receipt [data-tone="warning"] {
+  color: var(--fs-warn);
+}
+.ki-receipt [data-tone="neutral"] {
+  color: var(--muted-foreground);
+}
+.ki-receipt:focus-visible {
+  outline: 2px solid var(--fs-ink);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.ki-receipt-head {
+  font-weight: 500;
+}
+.ki-item[data-state="declined"] .ki-receipt,
+.ki-item[data-state="type_off"] .ki-say {
+  color: var(--muted-foreground);
+}
+.ki-ext {
+  font-size: 14px;
+}
+
+/* The ask and its two equal pills (never a filled Yes: the screen does not lean). */
+.ki-ask {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-top: 4px;
+}
+.ki-ask-words {
+  font-weight: 500;
+}
+.ki-pills {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(72px, auto));
+  gap: 8px;
+}
+.ki-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 8px 16px;
+  border: 1px solid var(--fs-edge);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+.ki-pill:hover:not(:disabled) {
+  background: var(--fs-quiet);
+}
+.ki-pill:focus-visible {
+  outline: 2px solid var(--fs-ink);
+  outline-offset: 2px;
+}
+.ki-pill:active:not(:disabled) {
+  background: var(--muted);
+}
+.ki-pill[aria-pressed="true"] {
+  border-color: var(--fs-ink);
+  background: var(--fs-on);
+  font-weight: 500;
+}
+.ki-pill:disabled {
+  cursor: not-allowed;
+}
+.ki-pill:disabled:not([aria-pressed="true"]) {
+  opacity: 0.55;
+}
+.ki-spin {
+  width: 14px;
+  height: 14px;
+}
+
+/* Where a Yes goes, and a receipt's time: mono capitals, muted. */
+.ki-route {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.ki-sub {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.ki-again {
+  justify-self: start;
+}
+.ki-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+}
+.ki-fail {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--destructive);
+}
+
+/* Phone width: the pills on two equal columns, at least 44px tall, full width. */
+@media (max-width: 767px) {
+  .ki-ask {
+    display: grid;
+    justify-content: stretch;
+  }
+  .ki-pills {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+  .ki-pill {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ki-ring,
+  .ki-pill {
+    transition: none;
+  }
+}

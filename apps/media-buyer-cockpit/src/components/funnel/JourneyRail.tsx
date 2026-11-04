@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   AUTOFILLED,
   isFiltering,
@@ -109,17 +110,60 @@ export function JourneyRail({
   onScreen?: (s: FormScreen) => void;
   className?: string;
 }) {
-  const steps = journey(spec);
+  return (
+    <Rail
+      className={className}
+      active={screen}
+      onPick={onScreen ? id => onScreen(id as FormScreen) : undefined}
+      steps={journey(spec).map(step => ({
+        id: step.screen,
+        name: step.name,
+        on: step.on,
+        detail: step.detail,
+        pickable: step.on,
+      }))}
+    />
+  );
+}
+
+export type RailStep = {
+  id: string;
+  name: string;
+  on: boolean;
+  detail: string;
+  /** Moves the phone when pressed. */
+  pickable: boolean;
+  /** Beside the name: a chip such as "Biggest leak". */
+  badge?: ReactNode;
+  /** On the right: the visits that reached the step. */
+  side?: ReactNode;
+  /** Under the step: its own rows, such as each question on a lead page. */
+  children?: ReactNode;
+};
+
+/** The rail itself, shared by the instant form and the lead page, so both read the same. */
+export function Rail({
+  steps,
+  active,
+  onPick,
+  className,
+}: {
+  steps: RailStep[];
+  active?: string;
+  onPick?: (id: string) => void;
+  className?: string;
+}) {
   return (
     <ol
       className={cn("relative", className)}
       aria-label="What a lead goes through"
     >
       {steps.map((step, i) => {
-        const active = step.on && screen === step.screen;
+        const pressable = step.pickable && Boolean(onPick);
+        const isActive = step.on && active === step.id;
         const last = i === steps.length - 1;
         return (
-          <li key={step.screen} className="relative flex gap-3 pb-4 last:pb-0">
+          <li key={step.id} className="relative flex gap-3 pb-4 last:pb-0">
             {!last && (
               <span
                 aria-hidden
@@ -139,38 +183,45 @@ export function JourneyRail({
                 <span className="size-1.5 rounded-full bg-background" />
               )}
             </span>
-            <button
-              type="button"
-              disabled={!step.on || !onScreen}
-              onClick={() => onScreen?.(step.screen)}
-              aria-current={active ? "step" : undefined}
-              className={cn(
-                "-mx-2 -my-1 min-w-0 flex-1 rounded-md px-2 py-1 text-left transition",
-                step.on && onScreen ? "hover:bg-muted/50" : "cursor-default",
-                active && "bg-muted/60",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              )}
-            >
-              <span className="flex items-baseline gap-2">
-                <span
-                  className={cn(
-                    "text-sm font-medium",
-                    !step.on && "text-muted-foreground",
-                  )}
-                >
-                  {step.name}
-                </span>
-                <span className="font-mono text-[10.5px] uppercase tracking-[0.08em] text-muted-foreground">
-                  {step.on ? "On" : "Off"}
-                </span>
-              </span>
-              <span
-                className="mt-0.5 block text-xs leading-relaxed text-muted-foreground"
-                dir="auto"
+            <div className="min-w-0 flex-1">
+              <button
+                type="button"
+                disabled={!pressable}
+                onClick={() => onPick?.(step.id)}
+                aria-current={isActive ? "step" : undefined}
+                className={cn(
+                  "-mx-2 -my-1 flex w-[calc(100%+1rem)] min-w-0 items-start gap-3 rounded-md px-2 py-1 text-left transition",
+                  pressable ? "hover:bg-muted/50" : "cursor-default",
+                  isActive && "bg-muted/60",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                )}
               >
-                {step.detail}
-              </span>
-            </button>
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                    <span
+                      className={cn(
+                        "text-sm font-medium",
+                        !step.on && "text-muted-foreground",
+                      )}
+                    >
+                      {step.name}
+                    </span>
+                    <span className="font-mono text-[10.5px] uppercase tracking-[0.08em] text-muted-foreground">
+                      {step.on ? "On" : "Off"}
+                    </span>
+                    {step.badge}
+                  </span>
+                  <span
+                    className="mt-0.5 block text-xs leading-relaxed text-muted-foreground"
+                    dir="auto"
+                  >
+                    {step.detail}
+                  </span>
+                </span>
+                {step.side}
+              </button>
+              {step.children}
+            </div>
           </li>
         );
       })}

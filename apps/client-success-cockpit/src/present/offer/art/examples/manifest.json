@@ -1,0 +1,35 @@
+{
+  "purpose": "User-selected website reference. Dated public screenshots, not a claim of authorship or business results. No form or booking submitted.",
+  "captures": [
+    {
+      "id": "joe-and-sera",
+      "name": "Joe & Sera",
+      "url": "https://joeandsera.com/",
+      "device": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "status": 200,
+      "finalUrl": "https://joeandsera.com/",
+      "title": "Joe & Sera",
+      "capturedAt": "2026-10-27T14:23:44.556Z",
+      "file": "joe-and-sera-desktop.webp",
+      "sha256": "c2d17f189099cc61adc41beafd565516f25f579bda6feaf545c9460c764e5300",
+      "bytes": 62278
+    },
+    {
+      "id": "joe-and-sera",
+      "name": "Joe & Sera",
+      "url": "https://joeandsera.com/",
+      "device": "mobile",
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "finalUrl": "https://joeandsera.com/",
+      "title": "Joe & Sera",
+      "capturedAt": "2026-10-27T14:23:52.814Z",
+      "file": "joe-and-sera-mobile.webp",
+      "sha256": "7733a8e30e4f7141007914e078018caf15c082b4cba6d583f45efd4a055244d7",
+      "bytes": 19626
+    }
+  ]
+}

@@ -270,3 +270,11 @@
 .ceo-root input[type="file"]::file-selector-button:hover {
   background: var(--muted);
 }
+
+/* The Goals sheet's sticky bands: solid, because rows scroll under them. */
+.ceo-root .gs-band {
+  background: color-mix(in oklab, var(--card) 91%, var(--foreground) 9%);
+}
+.ceo-root .gs-plan {
+  background: color-mix(in oklab, var(--card) 88%, var(--primary) 12%);
+}

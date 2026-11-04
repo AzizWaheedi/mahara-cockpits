@@ -19,7 +19,9 @@ import {
   kpiBand,
   money,
   plain,
+  REQUEST_TYPE_OPTION,
   refLine,
+  TECH_REQUEST_TYPE,
 } from "./rules";
 
 // Every expectation here was produced by the Convex code itself (convexGolden.ts).
@@ -111,5 +113,25 @@ describe("retry reference line", () => {
     expect(refLine(id)).toBe("Cockpit ref 0f1e2d3c4b");
     expect(refLine(id, "l")).toBe("Cockpit ref 0f1e2d3c4b-l");
     expect(refLine(id)).toBe(refLine(id));
+  });
+});
+
+describe("Request Type options for the cockpit's own tech wordings (contract 4.6, CT section 7)", () => {
+  it("maps the qualification and landing page wordings to their own options, never Connect a New Lead Form", () => {
+    expect(TECH_REQUEST_TYPE["Add qualification questions to the lead form"]).toBe("7fc82c41-7bcd-47f7-bae0-868d4954495b");
+    expect(TECH_REQUEST_TYPE["Switch to a landing page"]).toBe("a2d9483c-2dde-486d-969e-78679e5d27a6");
+    expect(TECH_REQUEST_TYPE["Switch this campaign to a landing page"]).toBe("a2d9483c-2dde-486d-969e-78679e5d27a6");
+    expect(Object.values(TECH_REQUEST_TYPE)).not.toContain("37d99ca0-e53f-4499-90e8-f1be8a21b207");
+  });
+  it("keeps the two tracking wordings on Missing Leads", () => {
+    expect(TECH_REQUEST_TYPE["Landing page or tracking is broken"]).toBe(REQUEST_TYPE_OPTION.missingLeads);
+    expect(TECH_REQUEST_TYPE["Tracking / page is broken"]).toBe("9fd304bb-7078-4485-9b9f-aa19ad47ed98");
+  });
+  it("every option id is one of the folder field's options in request-types.json", () => {
+    const types = JSON.parse(readFileSync(new URL("../../../docs/requests/request-types.json", import.meta.url), "utf8")).types as { request_type_option_id: string; clickup_option_name: string }[];
+    const ids = new Map(types.map(t => [t.request_type_option_id, t.clickup_option_name]));
+    for (const id of Object.values(TECH_REQUEST_TYPE)) expect(ids.has(id)).toBe(true);
+    expect(ids.get(REQUEST_TYPE_OPTION.qualificationQuestions)).toBe("Add Custom Qualification Questions🙋");
+    expect(ids.get(REQUEST_TYPE_OPTION.landingPage)).toBe("Create Landing Page📊");
   });
 });

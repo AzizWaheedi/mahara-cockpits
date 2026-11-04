@@ -19,6 +19,19 @@ describe("the deck's copy", () => {
       expect(line).not.toMatch(/[%٪]/);
   });
 
+  test("the signed project says the client's details are hidden, and promises nothing", () => {
+    const signed = CLOSING_TOUR.find(s => s.key === "signed");
+    expect(signed?.what.en).toContain("client's details hidden");
+    expect(signed?.what.ar).toContain("بيانات العميل مخفية");
+    for (const line of [
+      signed?.what.en,
+      signed?.what.ar,
+      signed?.why.en,
+      signed?.why.ar,
+    ])
+      expect(line).not.toMatch(/[0-9٠-٩%٪]/);
+  });
+
   test("the volume bridge says what it is built for, not a result", () => {
     const volume = PROBLEMS.find(p => p.key === "volume");
     expect(volume?.bridge).toEqual({

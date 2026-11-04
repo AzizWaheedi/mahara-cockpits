@@ -291,6 +291,9 @@ export function boardBookingDaysSql(from, to) {
          to_char(d.day, 'YYYY-MM-DD') as date,
          d.confirmed_bookings as confirmed,
          d.provisional_bookings as provisional,
+         -- The board's CRM ad leads, for client CPL on the CRM (2026-11-02, fix 9). Read 2 Nov 2026:
+         -- all 4,189 stored crm_ad_leads (19 Jun to 2 Nov) sit on rows with a booking count, so this filter loses none.
+         d.crm_ad_leads,
          floor(extract(epoch from d.computed_at) * 1000)::bigint as computed_ms
   from public.cockpit_client_days d
   join public.cockpit_board_clients b on b.location_id = d.location_id
@@ -592,6 +595,7 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
     const canon = (id) => canonical.get(id) ?? id;
     const known = new Set(canonical.keys());
     const days = [];
+    const spendUnknownDays = [];
     const recentCampaigns = new Map();
     const recentFrom3 = addDaysTo(to, -2);
     let frozenRows = 0;
@@ -604,6 +608,9 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
         if (r.spend_usd === null || r.spend_usd === undefined) {
             // Only the snapshot table carries an account currency; no rate, no spend.
             unknown.add(String(r.currency ?? "unknown"));
+            // The client and day it hides, so client CPL on the CRM pairs neither its spend nor its
+            // leads that day: unknown spend is never $0 of spend (review, 2026-11-02, fix 9).
+            spendUnknownDays.push({ clientId: canon(clientId), date: String(r.day) });
             continue;
         }
         const date = String(r.day);
@@ -651,6 +658,8 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
             date: String(r.date),
             confirmed: count(r.confirmed),
             provisional: count(r.provisional),
+            // Null when the board did not store it, never zero (2026-11-02, fix 9).
+            crmAdLeads: count(r.crm_ad_leads),
         };
         bookingDays.push(row);
         // A booking on a client this section has no ad account for (no spend
@@ -719,6 +728,7 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
         sharedAccounts,
         cplTargets,
         unknownCurrencies: [...unknown].sort(),
+        spendUnknownDays,
         media: {
             firstDay: feed.firstDay,
             lastDay: feed.lastDay,

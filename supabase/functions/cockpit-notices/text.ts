@@ -11,10 +11,67 @@
  * string is escaped (& < >), a mention is <@id> only for a real U or W id, and
  * there is never an @channel or @here. `text` (the notification, and what the
  * reconcile searches) always ends with `Ref CN-xxxxxxxx`.
+ *
+ * One exception, named (docs/forms/STAGE2B-CONTRACT.md 4.2): the call grade's
+ * words (its twelve notes and its overall feedback) are read from
+ * `cockpit_form_drafts` by the claim, through `live.grade`, never from the
+ * outbox's facts, and only for a private channel; the grade tags nobody,
+ * whatever mentions are passed, because it is about a person's call.
+ *
+ * The kickoff's open setup items (Stage 4 plan B4): `openItems`, filled by
+ * cockpit_slack_notice_kickoff_facts from the stored kickoff's answers, read
+ * by ref. Each item is printed only when it is one of the fixed phrases below
+ * (KICKOFF_OPEN_FIXED, KICKOFF_OPEN_PICKS: the form's own option labels), so
+ * no typed answer can reach Slack; anything else is counted, never quoted.
+ *
+ * The client lifecycle notices (docs/forms/WAVE12-CONTRACT.md 3.4): names and
+ * dates only, never an amount, a lead count, an email or a phone. A
+ * termination survey that came with no card id is "unmatched": it names the
+ * client as the form gave it and points at the churn tracker, where a CSM
+ * picks the card.
+ *
+ * The client's voice and forms (docs/forms/WAVE34-CONTRACT.md 3.4): a pause
+ * consent signed (or its dates said wrong), an NPS or onboarding survey score,
+ * a low score, the portal's Share feedback and an answer through a retired
+ * Typeform link. Names, dates and scores only: never an answer's words, an
+ * email, a phone, a token or an amount, and only the kind and topic words of
+ * a feedback, from their fixed lists.
+ *
+ * Wins and money (docs/forms/WAVE56-CONTRACT.md 3.9): a win logged or an
+ * upsell moved (its kind words and, for an upsell, the quoted dollars), a
+ * transfer receipt sent by a client (the amount, currency and day it says,
+ * never the file or the reference) and a churned client coming back (the
+ * status and the day they left). Never an email, a name of a person, a link
+ * token or an answer's words.
  */
 
-export type NoticeKind = "kickoff" | "kickoff.updated" | "blueprint.close" | "blueprint.updated" | "blueprint.media" | "blueprint.offer";
-export type Variant = "complete" | "late" | "done" | "reconcile" | "typeform" | "new" | "live" | "thread" | "top";
+export type NoticeKind =
+  | "kickoff"
+  | "kickoff.updated"
+  | "blueprint.close"
+  | "blueprint.updated"
+  | "blueprint.media"
+  | "blueprint.offer"
+  | "checkin.grade"
+  | "checkin.recap_late"
+  | "termination.notice"
+  | "termination.submitted"
+  | "churn.confirmed"
+  | "extension.granted"
+  | "pause.agreed"
+  | "client.resumed"
+  | "pause.consent"
+  | "nps.received"
+  | "csat.received"
+  | "voice.low"
+  | "feedback.received"
+  | "legacy.received"
+  | "win.logged"
+  | "receipt.in"
+  | "client.reactivated";
+export type Variant =
+  | "complete" | "late" | "done" | "reconcile" | "typeform" | "new" | "live" | "thread" | "top" | "grade"
+  | "matched" | "unmatched" | "post" | "signed" | "dates_wrong" | "offered" | "accepted";
 export type TextMention = { label: string; slackId: string | null };
 export type NoticeFacts = Record<string, unknown> & {
   ref: string;
@@ -25,7 +82,58 @@ export type NoticeFacts = Record<string, unknown> & {
 };
 export type SlackBlock = Record<string, unknown>;
 
-export const NOTICE_KINDS: readonly NoticeKind[] = ["kickoff", "kickoff.updated", "blueprint.close", "blueprint.updated", "blueprint.media", "blueprint.offer"];
+export const NOTICE_KINDS: readonly NoticeKind[] = [
+  "kickoff",
+  "kickoff.updated",
+  "blueprint.close",
+  "blueprint.updated",
+  "blueprint.media",
+  "blueprint.offer",
+  "checkin.grade",
+  "checkin.recap_late",
+  "termination.notice",
+  "termination.submitted",
+  "churn.confirmed",
+  "extension.granted",
+  "pause.agreed",
+  "client.resumed",
+  "pause.consent",
+  "nps.received",
+  "csat.received",
+  "voice.low",
+  "feedback.received",
+  "legacy.received",
+  "win.logged",
+  "receipt.in",
+  "client.reactivated",
+];
+
+/** The client lifecycle kinds (waves 1-2, 3.4), in the settings' order. */
+export const LIFECYCLE_KINDS: readonly NoticeKind[] = [
+  "termination.notice",
+  "termination.submitted",
+  "churn.confirmed",
+  "extension.granted",
+  "pause.agreed",
+  "client.resumed",
+];
+
+/** The client's voice and forms (waves 3-4, 3.4), in the settings' order. */
+export const CLIENT_FORM_KINDS: readonly NoticeKind[] = [
+  "pause.consent",
+  "nps.received",
+  "csat.received",
+  "voice.low",
+  "feedback.received",
+  "legacy.received",
+];
+
+/** Wins and money (waves 5-6, 3.9), in the settings' order. */
+export const MONEY_KINDS: readonly NoticeKind[] = [
+  "win.logged",
+  "receipt.in",
+  "client.reactivated",
+];
 
 /** The variants each kind has wording for. */
 export const VARIANTS: Record<NoticeKind, readonly Variant[]> = {
@@ -35,7 +143,88 @@ export const VARIANTS: Record<NoticeKind, readonly Variant[]> = {
   "blueprint.updated": ["thread", "top"],
   "blueprint.media": ["new", "live"],
   "blueprint.offer": ["thread", "top"],
+  "checkin.grade": ["grade"],
+  "checkin.recap_late": ["late"],
+  "termination.notice": ["matched", "unmatched"],
+  "termination.submitted": ["post"],
+  "churn.confirmed": ["post"],
+  "extension.granted": ["post"],
+  "pause.agreed": ["post"],
+  "client.resumed": ["post"],
+  "pause.consent": ["signed", "dates_wrong"],
+  "nps.received": ["post"],
+  "csat.received": ["post"],
+  "voice.low": ["post"],
+  "feedback.received": ["post"],
+  "legacy.received": ["post"],
+  // A win logged; an upsell offered at its quoted price; an upsell accepted.
+  "win.logged": ["post", "offered", "accepted"],
+  "receipt.in": ["post"],
+  "client.reactivated": ["post"],
 };
+
+/** The wins ledger's kinds as a notice says them (contract 3.1's screen words). */
+export const WIN_KIND_WORDS: Record<string, string> = {
+  review: "Google review",
+  video_testimonial: "Video testimonial",
+  podcast: "Podcast case study",
+  referral: "Referral",
+  renewal: "Renewal",
+  reactivation: "Reactivation",
+  upsell_website: "Website",
+  upsell_smm: "Social media management",
+  upsell_backend: "Back-end programme",
+  upsell_seo_geo: "SEO and AI search",
+  upsell_second_campaign: "Second campaign",
+};
+/** An upsell as the middle of a sentence says it ("Acme accepted the website."). */
+export const OFFER_WORDS: Record<string, string> = {
+  upsell_website: "website",
+  upsell_smm: "social media management",
+  upsell_backend: "back-end programme",
+  upsell_seo_geo: "SEO and AI search",
+  upsell_second_campaign: "second campaign",
+};
+/** The two statuses a returning client comes back as (contract 3.5). */
+export const RETURN_STATUSES: readonly string[] = ["Active", "Onboarding Booked"];
+
+/** The portal's Share feedback kinds and topics (mahara-feedback-policy.ts), as a notice says them. */
+export const FEEDBACK_KIND_WORDS: Record<string, string> = {
+  idea: "a new idea",
+  improvement: "a suggestion",
+  problem: "a problem",
+  appreciation: "praise",
+};
+export const FEEDBACK_TOPIC_WORDS: Record<string, string> = {
+  service: "Mahara's service",
+  portal: "the portal",
+  communication: "communication",
+  results: "results",
+  onboarding: "getting started",
+  other: "something else",
+};
+/** The client forms a notice may name. */
+export const FORM_WORDS: Record<string, string> = {
+  nps: "The NPS survey",
+  csat: "The onboarding survey",
+  exit_survey: "The exit survey",
+  pause_request: "The pause request",
+  pause_consent: "The pause consent",
+  kickoff: "The kickoff form",
+  onboarding: "The client onboarding form",
+};
+
+/** The churn register's eight reasons (20261001a): the only reason words a notice ever shows. */
+export const CHURN_REASONS: readonly string[] = [
+  "Cancelled",
+  "Refund",
+  "Chargeback",
+  "Non-payment 14+ days",
+  "Paused past 14 days",
+  "Ghosted",
+  "Completed term, did not renew",
+  "Other",
+];
 
 /** The five main services, as client-success-cockpit/src/present/blueprintBrief.ts SERVICE_LABEL (a test pins them equal). */
 export const SERVICE_LABEL: Record<string, string> = {
@@ -94,12 +283,22 @@ export function cleanStatus(s: string): string {
   return String(s).replace(/[^\p{L}\p{N} -]/gu, " ").replace(/\s+/g, " ").trim();
 }
 
-export function noticeLinks(taskId: string): { cockpit: string; card: string; blueprint: string } {
+export function noticeLinks(taskId: string): {
+  cockpit: string; card: string; blueprint: string; messages: string; client: string; churn: string; billing: string;
+} {
   const id = encodeURIComponent(taskId);
   return {
+    /** The client page (its overview), where the lifecycle acts live. */
+    client: `https://cockpit.maharamedia.com/client-success/clients/${id}`,
+    /** The churn tracker (Money, Churn), where an unmatched survey gets its card. */
+    churn: "https://cockpit.maharamedia.com/client-success/money?tab=churn",
+    /** Billing (Money), where Checks waiting lists a receipt to check. */
+    billing: "https://cockpit.maharamedia.com/client-success/money?tab=billing",
     cockpit: `https://cockpit.maharamedia.com/client-success/clients/${id}?tab=onboarding`,
     card: `https://app.clickup.com/t/${id}`,
     blueprint: `https://cockpit.maharamedia.com/client-success/clients/${id}/present/blueprint?view=prep`,
+    /** The Messages card on the client's overview (Z45). */
+    messages: `https://cockpit.maharamedia.com/client-success/clients/${id}?tab=overview#messages`,
   };
 }
 
@@ -170,10 +369,68 @@ function filledLine(f: NoticeFacts): string {
   return `Filled ${by ? `by ${escapeSlack(by)}` : "in Typeform"} on ${kuwaitWhen(str(f.submittedAt))}.`;
 }
 
+/**
+ * The kickoff's open setup items (Stage 4 plan B4). The yes/no questions and
+ * the lead file print fixed words; each pick prints "<question>: <option>",
+ * the option one of the form's own labels (apps/client-success-cockpit
+ * src/forms/kickoff.ts, KICKOFF_FIELDS; text.test.ts checks them label for
+ * label). An option in `done` is never open, so it is never printed.
+ */
+export const KICKOFF_OPEN_FIXED: readonly string[] = [
+  "funded card not linked", // 8bee68fc answered No
+  "Google Calendar not connected", // 3bebf47d answered No
+  "lead file missing", // dff79b66 and 85d7ebb5 both Yes, 86a6cce0 empty
+];
+export const KICKOFF_OPEN_PICKS: readonly { words: string; ref: string; open: readonly string[]; done: readonly string[] }[] = [
+  { words: "Facebook access", ref: "6fcbd33c-60e9-4df7-bfaa-e76b588dd887", open: ["Requested", "Waiting on Client", "Pending", "Need Tech Help"], done: ["Access Confirmed", "Using Ours", "Their Page Our Ad Acc"] },
+  { words: "WhatsApp CRM sync", ref: "a813378f-06ce-499e-8f0e-14761b89b474", open: ["Requested", "Waiting on Client", "Needs Integrating", "Pending"], done: ["Integrated", "Not Integrating"] },
+  { words: "Mahara OS access", ref: "ad562fc2-6858-4e37-81c5-c4cc2375a330", open: ["Tech Issue", "Didn't Receive Access"], done: ["Logged In", "Doesn't Want To"] },
+  { words: "training course", ref: "c56a7e2d-6f18-4bf9-a9f6-11367eab4c11", open: ["Requested", "Need Tech Help", "Waiting On Client"], done: ["Confirmed"] },
+  { words: "contract", ref: "c0000001-0000-4000-8000-00000000000a", open: ["Sent and waiting on client", "Adjustments requested by client", "Not sent yet"], done: ["Signed", "NA - already signed"] },
+];
+/** At most this many items are named; the rest are counted. One per question is eight, so a real kickoff never reaches it. */
+export const OPEN_ITEMS_SHOWN = 8;
+
+const openKey = (s: string) => s.replace(/[\u2018\u2019]/g, "'").replace(/\s+/g, " ").trim().toLowerCase();
+// Each known phrase to its printed words; a done option to null.
+const OPEN_WORDS: ReadonlyMap<string, string | null> = new Map<string, string | null>([
+  ...KICKOFF_OPEN_FIXED.map(w => [openKey(w), w] as [string, string]),
+  ...KICKOFF_OPEN_PICKS.flatMap(p => [
+    ...p.open.map(o => [openKey(`${p.words}: ${o}`), `${p.words}: ${o}`] as [string, string]),
+    ...p.done.map(o => [openKey(`${p.words}: ${o}`), null] as [string, null]),
+  ]),
+]);
+
+/**
+ * The line after the handoff line in both kickoff variants. No list (no stored
+ * kickoff answers, or a notice queued before B4) leaves the line out. An item
+ * this file does not know is counted and the line points at the cockpit, so a
+ * typed answer is never quoted and an open item is never said to be closed.
+ */
+export function kickoffOpenLine(items: unknown): string | null {
+  if (!Array.isArray(items)) return null;
+  const named: string[] = [];
+  let other = 0;
+  for (const item of items) {
+    const words = typeof item === "string" ? OPEN_WORDS.get(openKey(item)) : undefined;
+    if (words === null) continue;
+    if (words === undefined) other++;
+    else if (!named.includes(words)) named.push(words);
+  }
+  const shown = named.slice(0, OPEN_ITEMS_SHOWN);
+  const more = named.length - shown.length + other;
+  if (!shown.length && !more) return "Nothing open from the kickoff's setup questions.";
+  const parts = shown.map(escapeSlack);
+  if (more) parts.push(`${shown.length ? `${more} more` : `${more} ${more === 1 ? "item" : "items"}`}, see the kickoff in the cockpit`);
+  return `Still open from the kickoff: ${parts.join("; ")}.`;
+}
+
 function kickoff(variant: Variant, f: NoticeFacts, who: Who): Built {
   const client = escapeSlack(f.client);
   const l = noticeLinks(f.taskId);
   const links = [{ url: l.cockpit, words: "Open in the cockpit" }, { url: l.card, words: "Open the ClickUp card" }];
+  // Plan B4: one line after the handoff line, in both variants.
+  const open = kickoffOpenLine(f.openItems);
   if (variant === "complete") {
     const status = cleanStatus(str(f.clientStatus));
     const lines = [
@@ -182,6 +439,7 @@ function kickoff(variant: Variant, f: NoticeFacts, who: Who): Built {
       `The card shows ${status ? escapeSlack(status) : "no client status"}${f.blueprintLink === true ? ", and the Brand Blueprint link" : ""}.`,
       str(f.handoffAt) ? `The Kickoff Handoff comment is on the card (${kuwaitClock(str(f.handoffAt))}).` : "The Kickoff Handoff comment is on the card.",
     ];
+    if (open) lines.push(open);
     if (f.second === true) {
       lines.push("This is the second kickoff for this client. The card has a new Kickoff Handoff comment, so check it for a second Technical and Creative task, and do not send it a third time.");
     }
@@ -207,6 +465,7 @@ function kickoff(variant: Variant, f: NoticeFacts, who: Who): Built {
       who,
     ),
   ];
+  if (open) lines.push(open);
   if (f.second === true) lines.push("This is the second kickoff for this client. Do not send it a third time.");
   return { text: `Kickoff in, card not updated: ${client}. Open the card and check it.`, lines, links, inline: false, footer: "Client success", placed: true };
 }
@@ -323,7 +582,239 @@ function offer(variant: Variant, f: NoticeFacts): Built {
   };
 }
 
+// A 1-1 recap still waiting in the cockpit 24 hours after the call (Z43).
+function recapLate(f: NoticeFacts): Built {
+  const client = escapeSlack(f.client);
+  const day = kuwaitDay(str(f.callAt));
+  return {
+    text: `Recap not sent: ${client}, call ${day}. Open in the cockpit.`,
+    lines: [`*Recap not sent: ${client}*`, `The recap for the call on ${day} is still waiting in the cockpit.`],
+    links: [{ url: noticeLinks(f.taskId).messages, words: "Open in the cockpit" }],
+    inline: false,
+    footer: "Client success",
+    placed: false,
+  };
+}
+
+/** A calendar day ("2026-11-16") or a time, as "Mon 16 Nov"; "a day not recorded" when there is none. */
+function dayWords(v: unknown): string {
+  const s = str(v).trim();
+  if (!s) return "a day not recorded";
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T09:00:00Z` : s;
+  const d = kuwaitDay(day);
+  return d === "an unknown day" ? "a day not recorded" : d;
+}
+
+// The client lifecycle notices (waves 1-2, 3.4). Names and dates only.
+function lifecycle(kind: NoticeKind, variant: Variant, f: NoticeFacts): Built {
+  const client = escapeSlack(f.client);
+  const open = [{ url: noticeLinks(f.taskId).client, words: "Open the client" }];
+  const post = (header: string, sentence: string, links = open): Built => ({
+    text: sentence,
+    lines: [`*${header}*`, sentence],
+    links,
+    inline: false,
+    footer: "Client success",
+    placed: false,
+  });
+  if (kind === "termination.notice") {
+    if (variant === "unmatched") {
+      const named = escapeSlack(str(f.formClientName).trim() || "A client");
+      return post(
+        "Termination notice in, not matched to a card",
+        `${named} sent the termination survey. It is not matched to a card yet: pick the card in the cockpit.`,
+        [{ url: noticeLinks("").churn, words: "Open the churn tracker" }],
+      );
+    }
+    return post(`Termination notice in: ${client}`, `${client} sent the termination survey. Confirm churn or answer the notice in the cockpit.`);
+  }
+  if (kind === "termination.submitted") return post(`Termination survey sent: ${client}`, `${client} sent the termination survey.`);
+  if (kind === "churn.confirmed") {
+    const reason = CHURN_REASONS.includes(str(f.reason)) ? str(f.reason) : "no reason on the register's list";
+    return post(`Client has left: ${client}`, `${client} has left: ${escapeSlack(reason)}.`);
+  }
+  if (kind === "extension.granted") {
+    const n = Number(f.weeks);
+    const weeks = Number.isInteger(n) && n >= 1 && n <= 12 ? `${n}-week` : "an";
+    return post(`Extension given: ${client}`, `${client}: ${weeks} extension to ${dayWords(f.until)}.`);
+  }
+  if (kind === "pause.agreed") {
+    const restart = str(f.restart).trim() ? `, restarts ${dayWords(f.restart)}` : "";
+    return post(`Pause agreed: ${client}`, `${client}: paused from ${dayWords(f.on)}${restart}.`);
+  }
+  return post(`Client resumed: ${client}`, `${client}: resumed ${dayWords(f.on)}.`);
+}
+
+/** A score from 0 to 10 as the facts carry it, or null when it is anything else. */
+function score(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" && /^\d{1,2}$/.test(v) ? Number(v) : Number.NaN;
+  return Number.isInteger(n) && n >= 0 && n <= 10 ? n : null;
+}
+
+// The client's voice and forms (waves 3-4, 3.4). Names, dates and scores only.
+function clientForm(kind: NoticeKind, variant: Variant, f: NoticeFacts): Built {
+  const client = escapeSlack(f.client);
+  const open = [{ url: noticeLinks(f.taskId).client, words: "Open the client" }];
+  const post = (header: string, sentence: string, links: Link[] = open): Built => ({
+    text: sentence,
+    lines: [`*${header}*`, sentence],
+    links,
+    inline: false,
+    footer: "Client success",
+    placed: false,
+  });
+  const s = score(f.score);
+  const scoreWords = s === null ? "a score not recorded" : `${s}/10`;
+  if (kind === "pause.consent") {
+    if (variant === "dates_wrong")
+      return post(`Pause dates wrong: ${client}`, `${client} says the pause dates are wrong. Open the pause in the cockpit.`);
+    return post(`Pause consent signed: ${client}`, `${client} signed the pause consent. Confirm the pause in the cockpit.`);
+  }
+  if (kind === "nps.received") {
+    const r = score(f.results);
+    const results = r === null ? "" : `, ${r}/10 on results so far`;
+    return post(`NPS answer in: ${client}`, `${client}: ${scoreWords} would recommend${results}.`, []);
+  }
+  if (kind === "csat.received") return post(`Onboarding survey answer in: ${client}`, `${client}: ${scoreWords} for getting started.`, []);
+  if (kind === "voice.low") {
+    const survey = f.form === "csat" ? "onboarding survey" : "NPS survey";
+    return post(`Low score: ${client}`, `${client} gave ${scoreWords} on the ${survey}. Call them today.`);
+  }
+  if (kind === "feedback.received") {
+    const what = FEEDBACK_KIND_WORDS[str(f.feedbackKind)] ?? "feedback";
+    const about = FEEDBACK_TOPIC_WORDS[str(f.topic)] ?? "something else";
+    return post(`Portal feedback in: ${client}`, `${client} shared ${what} in the portal about ${about}.`);
+  }
+  // legacy.received: an answer through a retired Typeform link, matched to a card or not.
+  const form = FORM_WORDS[str(f.form)] ?? "A client form";
+  const matched = TASK_ID.test(str(f.taskId)) && f.matched !== false;
+  const who = matched ? client : "a client not matched to a card";
+  const links = matched ? open : str(f.form) === "exit_survey" ? [{ url: noticeLinks("").churn, words: "Open the churn tracker" }] : [];
+  return post(`Old form link used: ${matched ? client : "not matched"}`, `${form} came in through the old link for ${who}. Open it in the cockpit.`, links);
+}
+
+/** Dollars as "$1,500"; null when the facts carry no positive number. */
+function usdWords(v: unknown): string | null {
+  const n = typeof v === "number" ? v : typeof v === "string" && /^\d+(\.\d+)?$/.test(v) ? Number(v) : Number.NaN;
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return `$${n.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+}
+/** An amount in its own currency as "650.5 KWD"; null unless a positive number in USD or KWD. */
+function amountWords(v: unknown, currency: unknown): string | null {
+  const n = typeof v === "number" ? v : typeof v === "string" && /^\d+(\.\d+)?$/.test(v) ? Number(v) : Number.NaN;
+  const c = str(currency);
+  if (!Number.isFinite(n) || n <= 0 || (c !== "USD" && c !== "KWD")) return null;
+  return `${n.toLocaleString("en-US", { maximumFractionDigits: c === "KWD" ? 3 : 2 })} ${c}`;
+}
+
+// Wins and money (waves 5-6, 3.9). Kind words, amounts and days only.
+function money(kind: NoticeKind, variant: Variant, f: NoticeFacts): Built {
+  const client = escapeSlack(f.client);
+  const open = [{ url: noticeLinks(f.taskId).client, words: "Open the client" }];
+  const post = (header: string, sentence: string, links: Link[] = open): Built => ({
+    text: sentence,
+    lines: [`*${header}*`, sentence],
+    links,
+    inline: false,
+    footer: "Client success",
+    placed: false,
+  });
+  if (kind === "win.logged") {
+    // 20261102h sends kind and seatRole; winKind and byRole are this file's first names for them.
+    const winKind = str(f.winKind) || str(f.kind);
+    const words = WIN_KIND_WORDS[winKind] ?? "A win";
+    const offer = OFFER_WORDS[winKind] ?? "upsell";
+    if (variant === "offered")
+      return post(`Upsell offered: ${client}`, `${client}: ${escapeSlack(offer)} offered at ${usdWords(f.usd) ?? "a price not recorded"}.`);
+    if (variant === "accepted") return post(`Upsell accepted: ${client}`, `${client} accepted the ${escapeSlack(offer)}.`);
+    return post(`Win logged: ${client}`, `${client}: ${escapeSlack(words)} logged by ${role(f.byRole ?? f.seatRole, "a team member")}.`);
+  }
+  if (kind === "receipt.in")
+    return post(
+      `Receipt in: ${client}`,
+      `${client} sent a transfer receipt (${amountWords(f.amount, f.currency) ?? "an amount not recorded"}, paid ${dayWords(f.paidOn ?? f.day)}). Check it in the cockpit.`,
+      [{ url: noticeLinks(f.taskId).billing, words: "Open Checks waiting" }],
+    );
+  const status = RETURN_STATUSES.includes(str(f.status)) ? str(f.status) : "back on the books";
+  return post(`Client is back: ${client}`, `${client} is back: ${status}. They left on ${dayWords(f.leftOn)}.`);
+}
+
 const context = (text: string): SlackBlock => ({ type: "context", elements: [{ type: "mrkdwn", text }] });
+
+/** The twelve criteria of the call grade, in its order (cockpit-forms-api/prompts/grade.ts CRITERIA; a test pins them equal). */
+export const CRITERIA = [
+  "Rapport",
+  "Knowledge",
+  "Intro/Outro Execution",
+  "Opportunity",
+  "Confidence",
+  "Professional",
+  "Tonality",
+  "Clear Flow",
+  "Stats",
+  "Problem Solving",
+  "Expectations",
+  "Creating Urgency",
+] as const;
+/** A section's limit, under Slack's 3,000, so the grade is always one message. */
+export const SECTION_MAX = 2900;
+const FATHOM_SHARE = /^https:\/\/fathom\.video\/share\/[A-Za-z0-9_-]{1,200}$/;
+
+/** Cut at a word to `max` characters with an ellipsis; never inside a word or an entity. */
+export function cutAtWord(s: string, max = SECTION_MAX): string {
+  if (s.length <= max) return s;
+  const head = s.slice(0, max - 1);
+  const space = head.search(/\s\S*$/);
+  return `${(space > max / 2 ? head.slice(0, space) : head).trimEnd()}…`;
+}
+
+type GradeOut = { criteria: { name: string; score: number; note: string }[]; overall: string; color: string; score: number | null };
+
+/** The grade as the claim read it from the draft, kept to its known keys. */
+function gradeOf(v: unknown): GradeOut {
+  const g = v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  const criteria = (Array.isArray(g.criteria) ? g.criteria : [])
+    .filter((c): c is Record<string, unknown> => !!c && typeof c === "object")
+    .map(c => ({ name: str(c.name), score: Number(c.score), note: str(c.note) }));
+  const score = typeof g.score === "number" && Number.isFinite(g.score) ? g.score : null;
+  return { criteria, overall: str(g.overall), color: str(g.color), score };
+}
+
+/**
+ * The call grade: three sections (who took the call and the recording; the
+ * twelve criteria in order; the overall feedback), each escaped and then cut
+ * at a word, and the context line. It tags nobody. A test leaves the
+ * recording link out.
+ */
+function gradeBlocks(f: NoticeFacts, ref: string, rehearsal: boolean): { text: string; blocks: SlackBlock[] } {
+  const client = escapeSlack(f.client);
+  const g = gradeOf(f.grade);
+  const score = g.score === null ? "no score" : `${g.score.toFixed(1)}/10`;
+  const color = escapeSlack(g.color.trim() || "no colour");
+  const share = str(f.shareUrl);
+  const link = rehearsal ? null : FATHOM_SHARE.test(share) ? `<${share}|Watch the recording>` : "No recording link was stored.";
+  const first = [
+    `${rehearsal ? "[Rehearsal] " : ""}*Call grade: ${client}*`,
+    `Taken by ${role(f.takenByRole, "a team member")}${kuwait(str(f.callAt)) ? ` on ${kuwaitWhen(str(f.callAt))}` : ""}. Score ${score}, ${color}.`,
+    ...(link ? [link] : []),
+  ];
+  const byName = new Map(g.criteria.map(c => [c.name, c]));
+  const second = CRITERIA.flatMap(name => {
+    const c = byName.get(name);
+    if (!c) return [];
+    const note = escapeSlack(c.note.trim());
+    return [`*${escapeSlack(name)}* ${Number.isFinite(c.score) ? c.score : "?"}/10.${note ? ` ${note}` : ""}`];
+  });
+  const third = ["*Overall*", escapeSlack(g.overall.trim() || "No overall feedback was stored.")];
+  const section = (lines: string[]): SlackBlock => ({ type: "section", text: { type: "mrkdwn", text: cutAtWord(lines.join("\n")) } });
+  const blocks: SlackBlock[] = [section(first)];
+  if (second.length) blocks.push(section(second));
+  blocks.push(section(third));
+  if (rehearsal) blocks.push(context("Links are left out of a test."));
+  blocks.push(context(`Client success · Graded once per call · Ref ${ref}`));
+  const text = `${rehearsal ? "[Rehearsal] " : ""}Call grade: ${client}, ${score}, ${color}. Ref ${ref}`;
+  return { text, blocks };
+}
 
 /**
  * The fallback text and the blocks for one notice. A test (`rehearsal`)
@@ -335,6 +826,8 @@ export function noticeText(kind: NoticeKind, variant: Variant, facts: NoticeFact
   if (!isVariantOf(kind, variant)) throw new Error(`There is no ${String(variant).slice(0, 20)} wording for ${kind}.`);
   const rehearsal = facts.rehearsal === true;
   const f: NoticeFacts = { ...facts, client: str(facts.client).trim() || "an unnamed card", taskId: str(facts.taskId) };
+  // The call grade tags nobody, whatever mentions are passed.
+  if (kind === "checkin.grade") return gradeBlocks(f, cleanRef(facts.ref), rehearsal);
   const who: Who = { mentions: Array.isArray(facts.mentions) ? facts.mentions.filter(m => m && typeof m === "object") : [], rehearsal };
   const built =
     kind === "kickoff" ? kickoff(variant, f, who)
@@ -342,6 +835,10 @@ export function noticeText(kind: NoticeKind, variant: Variant, facts: NoticeFact
     : kind === "blueprint.close" ? close(variant, f, who)
     : kind === "blueprint.media" ? media(variant, f, rehearsal)
     : kind === "blueprint.updated" ? updated(variant, f)
+    : kind === "checkin.recap_late" ? recapLate(f)
+    : (LIFECYCLE_KINDS as readonly string[]).includes(kind) ? lifecycle(kind, variant, f)
+    : (CLIENT_FORM_KINDS as readonly string[]).includes(kind) ? clientForm(kind, variant, f)
+    : (MONEY_KINDS as readonly string[]).includes(kind) ? money(kind, variant, f)
     : offer(variant, f);
   const lines = [...built.lines];
   if (!built.placed && who.mentions.length) lines[lines.length - 1] = tail(lines[lines.length - 1], who);
@@ -374,6 +871,8 @@ export function sampleFacts(kind: NoticeKind, now: Date = new Date()): NoticeFac
     handoffAt: at(-4),
     commentCheck: "found",
     second: false,
+    // The kickoff's open setup items: two of the fixed phrases.
+    openItems: ["funded card not linked", "Facebook access: Waiting on Client"],
     cardUpdatedAt: at(-2),
     source: "cockpit",
     settled: "done",
@@ -387,5 +886,44 @@ export function sampleFacts(kind: NoticeKind, now: Date = new Date()): NoticeFac
     offeredAt: at(0),
     offeredByRole: "the creative director",
     dnaComplete: true,
+    // The 1-1 notes notices: an invented grade and an invented recap reminder.
+    takenByRole: "the CSM",
+    callAt: at(-90),
+    shareUrl: "https://fathom.video/share/sample-recording",
+    recordingShown: true,
+    grade: {
+      criteria: CRITERIA.map((name, i) => ({ name, score: 6 + (i % 4), note: `Sample note on ${name.toLowerCase()}.` })),
+      overall: "Sample overall feedback: a clear call with one next step agreed.",
+      color: "Green",
+      score: 7.5,
+    },
+    dueAt: at(0),
+    // The client lifecycle notices: an invented survey, departure and billing change.
+    responseId: "00000000-0000-4000-8000-000000000000",
+    matched: true,
+    formClientName: "Sample client",
+    noticeOn: at(0).slice(0, 10),
+    reason: "Cancelled",
+    weeks: 2,
+    until: at(14 * 24 * 60).slice(0, 10),
+    on: at(0).slice(0, 10),
+    restart: at(10 * 24 * 60).slice(0, 10),
+    // The client's voice and forms: an invented answer of each kind (scores, words from the lists).
+    score: 9,
+    results: 8,
+    form: "nps",
+    feedbackKind: "idea",
+    topic: "portal",
+    datesWrong: false,
+    // Wins and money: an invented win, receipt and return.
+    winKind: "review",
+    stage: "logged",
+    byRole: "the CSM",
+    usd: 1500,
+    amount: 650,
+    currency: "KWD",
+    paidOn: at(-24 * 60).slice(0, 10),
+    status: "Active",
+    leftOn: at(-30 * 24 * 60).slice(0, 10),
   };
 }

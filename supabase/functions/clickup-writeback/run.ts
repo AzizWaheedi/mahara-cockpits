@@ -1,9 +1,11 @@
-// The three ClickUp writeback jobs, with every dependency injected so the
-// tests can run them end to end without a network.
+// The ClickUp writeback jobs (kpi, log, dosdonts, requests, forms and the
+// three doctors), with every dependency injected so the tests can run them end
+// to end without a network.
 //
-// OUTWARD SAFETY. Three Edge Function secrets open writes to ClickUp, each
+// OUTWARD SAFETY. Seven Edge Function secrets open writes to ClickUp, each
 // only when it is exactly "true":
-//   CLICKUP_WRITEBACK_APPLY              the log and Do's & Don'ts
+//   CLICKUP_WRITEBACK_APPLY              the log and Do's & Don'ts, never a
+//                                        billing edit (waves 1-2 W2)
 //   CLICKUP_WRITEBACK_APPLY_CSM_TICKETS  client success tickets in the log, on
 //                                        their own while the rest of the log
 //                                        stays a dry run (live since 2026-10-12)
@@ -11,6 +13,42 @@
 //                                        only; CLICKUP_WRITEBACK_APPLY does not
 //                                        write them (cost per booking build 2,
 //                                        R12, 22 Oct 2026)
+//   CLICKUP_WRITEBACK_APPLY_REQUESTS     the requests job's two kinds, request and
+//                                        task_action, and nothing else; no other
+//                                        switch opens them (requests.ts requestsGate).
+//                                        CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS narrows
+//                                        it to listed client cards (a canary)
+//   CLICKUP_WRITEBACK_APPLY_FORMS        the 1-1 notes writes (kind form: the to-do
+//                                        comment, Client Happiness, Last POC and Last
+//                                        Check-in Call), and nothing else (forms.ts
+//                                        formsGate). CLICKUP_WRITEBACK_FORMS_ONLY_CARDS
+//                                        narrows it to listed client cards (a canary).
+//                                        CLICKUP_WRITEBACK_FORMS_KEYS lists the lanes whose
+//                                        card writes are on (checkin, kickoff, onboarding,
+//                                        new_client, profile_backfill; checkin when unset,
+//                                        forms.ts formsKeysGate and formLane): a row of
+//                                        another lane is held, never written (Stage 4). A held
+//                                        row keeps its created_at, so as the oldest open row on
+//                                        its card it holds back every later form row there, 1-1
+//                                        notes included (the claim's per-card order, 20261029t).
+//                                        A lane comes out only once none of its rows is queued,
+//                                        sending, retry or unknown: profile_backfill, the Client
+//                                        Profile backfill's one-shot lane, after its last row
+//                                        settles. new_client is listed before
+//                                        forms.sale_tie.fill is turned on.
+//   CLICKUP_WRITEBACK_APPLY_BILLING      billing edits in the log (kind billing), and
+//                                        only those whose event kind is listed in
+//                                        CLICKUP_WRITEBACK_BILLING_KINDS (comma list,
+//                                        empty means none); CLICKUP_WRITEBACK_BILLING_ONLY_CARDS
+//                                        narrows it to listed client cards (the canary
+//                                        86eywg1cq). No other switch opens them (billingGate).
+//   CLICKUP_WRITEBACK_APPLY_RESEARCH     the market research card field and comment (kind
+//                                        research, job research, plan build MI-1b), and only
+//                                        the outputs CLICKUP_WRITEBACK_RESEARCH_KEYS lists
+//                                        (field, comment; none when unset, so every row is
+//                                        held until MI-3 lists them); CLICKUP_WRITEBACK_RESEARCH_ONLY_CARDS
+//                                        narrows it to listed client cards. No other switch
+//                                        opens them (research.ts researchGate).
 // With its switch off a job reads what it needs and records, in
 // cockpit_clickup_writeback_runs (and on each queue item), exactly what it
 // would write: task id, field, old value, new value.
@@ -40,6 +78,51 @@ import {
   type Step,
 } from "./queue.ts";
 import { DOS_DONTS_LIST, dosDontsCandidates, type DosDontsResult, planDosDonts, tidyCard } from "./dosdonts.ts";
+import {
+  doctorChecks,
+  executeRequest,
+  planRequest,
+  REQUEST_SECRETS,
+  type RequestOutcome,
+  type RequestsItem,
+  requestsDb,
+  requestsGate,
+  requestStepKeys,
+  runContext,
+  SAY,
+} from "./requests.ts";
+import { executeTaskAction, planTaskAction, taskActionStepKeys } from "./taskActions.ts";
+import { billingDb, billingDoctorChecks } from "./billing.ts";
+import {
+  cardRefused,
+  checkToken,
+  executeForm,
+  type FormItem,
+  formStep,
+  formLane,
+  formsDb,
+  formsDoctorChecks,
+  formsGate,
+  formsKeysGate,
+  formsWords,
+  frozenStep,
+  planForm,
+  SAY_FORMS,
+} from "./forms.ts";
+import {
+  executeResearch,
+  MARKET_RESEARCH_FIELD,
+  notInstalled,
+  planResearch,
+  researchDb,
+  researchDoctorChecks,
+  researchFrozen,
+  researchGate,
+  type ResearchItem,
+  researchLane,
+  researchStep,
+  SAY_RESEARCH,
+} from "./research.ts";
 
 export type Deps = {
   env: (name: string) => string | undefined;
@@ -50,7 +133,15 @@ export type Deps = {
   uuid: () => string;
   /** Wait between ClickUp calls so a run stays under ClickUp's per-minute limit. */
   pace?: () => Promise<void>;
+  /** Upsert one cockpit_sync_state row by key (the requests doctor's health line). */
+  syncState?: (key: string, row: Row) => Promise<void>;
 };
+
+/** The jobs index.ts runs, in the order the unknown-job sentence names them. */
+export const JOBS = ["kpi", "log", "dosdonts", "doctor", "requests", "requests_doctor", "forms", "forms_doctor", "billing_doctor", "research", "research_doctor"] as const;
+const jobList = `${JOBS.slice(0, -1).join(", ")} or ${JOBS.at(-1)}`;
+export const unknownJobNote = (job: string) => `Unknown job "${job.slice(0, 40)}". Use ${jobList}.`;
+export const noJobNote = `Send a JSON body with a job: ${jobList}.`;
 
 export type JobResult = { ok: boolean; job: string; mode?: string; note: string; counts?: Row };
 
@@ -74,6 +165,38 @@ export function gate(env: Deps["env"]) {
   };
 }
 
+const list = (v: string | undefined) =>
+  new Set(
+    String(v ?? "")
+      .split(",")
+      .map(s => s.trim())
+      .filter(Boolean),
+  );
+
+/**
+ * Billing edits' own gate (waves 1-2 1.4, W2): CLICKUP_WRITEBACK_APPLY_BILLING exactly "true", the event kind in
+ * CLICKUP_WRITEBACK_BILLING_KINDS, and the card in CLICKUP_WRITEBACK_BILLING_ONLY_CARDS when that is set. The
+ * general CLICKUP_WRITEBACK_APPLY never opens a billing item, so card writes for money open one kind at a time.
+ */
+export function billingGate(env: Deps["env"]) {
+  const apply = env("CLICKUP_WRITEBACK_APPLY_BILLING") === "true";
+  const kinds = list(env("CLICKUP_WRITEBACK_BILLING_KINDS"));
+  const only = list(env("CLICKUP_WRITEBACK_BILLING_ONLY_CARDS"));
+  const mode = !apply || kinds.size === 0 ? "dry_run" : only.size ? "apply_limited" : "apply";
+  // What the run reports (cockpit_billing_mode reads it): no kind is open while the switch is off.
+  const open = mode === "dry_run" ? [] : [...kinds].sort();
+  return {
+    apply,
+    kinds,
+    only,
+    mode,
+    open,
+    live: (item: { payload?: Row | null }) =>
+      apply && kinds.has(String(item.payload?.kind ?? "")) && (only.size === 0 || only.has(String(item.payload?.taskId ?? ""))),
+    words: `billing: ${mode} (${open.length ? open.join(", ") : "no kinds"})${mode === "apply_limited" ? ` on ${[...only].join(", ")}` : ""}`,
+  };
+}
+
 /** The KPI columns' own gate: CLICKUP_WRITEBACK_APPLY_KPI exactly "true", narrowed by ONLY_TASKS. */
 export function kpiGate(env: Deps["env"]) {
   const { only } = gate(env);
@@ -94,6 +217,28 @@ export const redact = (s: string) =>
     .slice(0, 300);
 
 const NO_TOKEN = "CLICKUP_API_TOKEN is not set on this Edge Function. Add it under Edge Functions, Secrets, in the Supabase dashboard. Nothing was read or written.";
+
+/** The requests jobs' pace when CLICKUP_REQUESTS_CALLS_PER_MINUTE is not set (or is not a positive number). */
+export const REQUESTS_CALLS_PER_MINUTE = 25;
+/** Every other job's pace when CLICKUP_CALLS_PER_MINUTE is not set (or is not a positive number). */
+export const CALLS_PER_MINUTE = 30;
+/** No setting takes a job above this, nor below the floor. */
+export const CALLS_MAX = 60;
+export const CALLS_MIN = 5;
+
+/**
+ * ClickUp calls a minute for one job. ClickUp Business allows 100 a minute for the one token the Supabase
+ * functions and the VPS workers share, and no job takes more than 60 (docs/requests/CLICKUP-DOWNGRADE.md).
+ * requests and requests_doctor read CLICKUP_REQUESTS_CALLS_PER_MINUTE (25 by default); kpi, log, dosdonts and
+ * doctor read CLICKUP_CALLS_PER_MINUTE (30 by default). A missing, non-numeric or non-positive value gives the
+ * default; the result is always 5 to 60.
+ */
+export function writebackPerMinute(job: string, env: Deps["env"]): number {
+  const requestsJob = job === "requests" || job === "requests_doctor";
+  const set = Number(env(requestsJob ? "CLICKUP_REQUESTS_CALLS_PER_MINUTE" : "CLICKUP_CALLS_PER_MINUTE"));
+  const pace = Number.isFinite(set) && set > 0 ? set : requestsJob ? REQUESTS_CALLS_PER_MINUTE : CALLS_PER_MINUTE;
+  return Math.floor(Math.min(CALLS_MAX, Math.max(CALLS_MIN, pace)));
+}
 
 /** Rolling-window limiter: at most `perMinute` calls in any 60 seconds. */
 export function pacer(perMinute: number, now: () => number = Date.now, sleep = (ms: number) => new Promise(r => setTimeout(r, ms))) {
@@ -272,14 +417,68 @@ export async function runKpi(deps: Deps): Promise<JobResult> {
 
 const stepTasks = (steps: Step[]) => steps.flatMap(s => ("taskId" in s && s.taskId !== "$ticket" ? [s.taskId] : []));
 
+/** Billing items of one log run, for the run note and clickup-writeback:billing. */
+type BillingCounts = { claimed: number; delivered: number; held: number; failed: number };
+
+/**
+ * The billing switch and this run's billing items, saved every log run as cockpit_sync_state
+ * clickup-writeback:billing (cockpit_billing_mode reads it; the guardian warns on heldOpenKind, W20). A failed save
+ * never stops the log: the run note still carries the mode.
+ */
+async function reportBilling(deps: Deps, bg: ReturnType<typeof billingGate>, bc: BillingCounts, note: string): Promise<void> {
+  let held: Row | null = null;
+  try {
+    held = await billingDb(deps.rpc).held(bg.open);
+  } catch {
+    // Before 20261101m is applied there is no count; the row says so instead of a zero.
+  }
+  const heldOpenKind = held && Number.isFinite(Number(held.heldOpenKind)) ? Number(held.heldOpenKind) : null;
+  const at = new Date(deps.now()).toISOString();
+  const waiting =
+    heldOpenKind === null
+      ? " The held count could not be read."
+      : heldOpenKind
+        ? ` ${heldOpenKind} held ${heldOpenKind === 1 ? "edit" : "edits"} of an open kind wait for the review: release or close each one.`
+        : "";
+  try {
+    await deps.syncState?.("clickup-writeback:billing", {
+      last_run_at: at,
+      last_ok_at: at,
+      ok: true,
+      note: `${bg.words[0].toUpperCase()}${bg.words.slice(1)}. ${note}${waiting}`.slice(0, 500),
+      detail: {
+        mode: bg.mode,
+        kinds: bg.open,
+        onlyCards: [...bg.only],
+        ...bc,
+        heldTotal: held && Number.isFinite(Number(held.held)) ? Number(held.held) : null,
+        heldOpenKind,
+        heldByKind: held?.byKind ?? null,
+        at,
+      },
+      updated_at: at,
+    });
+  } catch {
+    // The run's own note and cockpit_clickup_writeback_runs keep the mode when this row cannot be written.
+  }
+}
+
 export async function runLog(deps: Deps, limit = 15): Promise<JobResult> {
   const g = gate(deps.env);
-  if (!deps.env("CLICKUP_API_TOKEN")) return idle(deps, "log", false, NO_TOKEN);
+  const bg = billingGate(deps.env);
+  const bc: BillingCounts = { claimed: 0, delivered: 0, held: 0, failed: 0 };
+  if (!deps.env("CLICKUP_API_TOKEN")) {
+    await reportBilling(deps, bg, bc, "CLICKUP_API_TOKEN is not set, so nothing was read or written.");
+    return idle(deps, "log", false, NO_TOKEN);
+  }
   const enqueued = Number(await deps.rpc("cockpit_clickup_writeback_sweep", {})) || 0;
   const token = deps.uuid();
   const items = ((await deps.rpc("cockpit_clickup_writeback_claim", { p_token: token, p_limit: limit })) ?? []) as QueueItem[];
-  if (!items.length) return idle(deps, "log", true, `The ClickUp log queue is empty${enqueued ? ` after enqueuing ${enqueued}` : ""}.`);
-  const mode = !g.apply && g.csmTickets ? "apply_limited" : g.mode;
+  if (!items.length) {
+    await reportBilling(deps, bg, bc, "No billing edit was waiting.");
+    return idle(deps, "log", true, `The ClickUp log queue is empty${enqueued ? ` after enqueuing ${enqueued}` : ""}.`);
+  }
+  const mode = !g.apply && (g.csmTickets || bg.mode !== "dry_run") ? "apply_limited" : g.mode;
   const run = await deps.rpc("cockpit_clickup_writeback_begin", { p_job: "log", p_mode: mode, p_exclusive: false });
   const counts = { claimed: items.length, delivered: 0, dryRun: 0, skipped: 0, retry: 0, unknown: 0, failed: 0 };
   const planned: Planned[] = [];
@@ -309,13 +508,18 @@ export async function runLog(deps: Deps, limit = 15): Promise<JobResult> {
         const tasks = stepTasks(built.steps);
         const createsTask = built.steps.some(s => s.type === "create_task");
         const csmTicket = item.kind === "decision" && item.payload?.role === "csm";
-        const live =
-          (csmTicket && g.csmTickets) ||
-          (g.apply && tasks.every(t => g.live(t)) && (!createsTask || g.only.size === 0 || tasks.length > 0));
+        const billing = item.kind === "billing";
+        if (billing) bc.claimed += 1;
+        // A billing edit is live only by its own gate (W2); the general switch and ONLY_TASKS never open it.
+        const live = billing
+          ? bg.live(item)
+          : (csmTicket && g.csmTickets) ||
+            (g.apply && tasks.every(t => g.live(t)) && (!createsTask || g.only.size === 0 || tasks.length > 0));
         if (!live) {
           const plan = await planItem(item, built.steps, provider, boardFields, clientFields);
           planned.push(...plan);
           counts.dryRun += 1;
+          if (billing) bc.held += 1;
           await save(item.id, { state: "dry_run", planned: plan, task_id: tasks[0] ?? null });
           continue;
         }
@@ -325,12 +529,14 @@ export async function runLog(deps: Deps, limit = 15): Promise<JobResult> {
         const now = deps.now();
         if (outcome.state === "delivered") {
           counts.delivered += 1;
+          if (billing) bc.delivered += 1;
           await save(item.id, { state: "delivered", progress: outcome.progress, delivered_at: new Date(now).toISOString(), error: null });
         } else if (outcome.state === "skipped") {
           counts.skipped += 1;
           await save(item.id, { state: "skipped", progress: outcome.progress, error: outcome.error ?? null });
         } else if (outcome.state === "failed" || item.attempts > RETRY_MINUTES.length) {
           counts.failed += 1;
+          if (billing) bc.failed += 1;
           await save(item.id, { state: "failed", progress: outcome.progress, error: outcome.error ?? "Gave up after the retry ladder." });
         } else {
           counts[outcome.state] += 1;
@@ -344,15 +550,21 @@ export async function runLog(deps: Deps, limit = 15): Promise<JobResult> {
         await save(item.id, { state: "unknown", error: redact(String(e instanceof Error ? e.message : e)), next_attempt_at: new Date(deps.now() + 60_000).toISOString() }).catch(() => {});
       }
     }
+    const billingNote = `${bg.words[0].toUpperCase()}${bg.words.slice(1)}${bc.claimed ? `: ${bc.delivered} delivered, ${bc.held} held, ${bc.failed} failed` : ""}.`;
+    const stopped = stop ? ` Stopped: ${redact(stop)}` : "";
     const note = g.apply
-      ? `${counts.delivered} delivered, ${counts.retry + counts.unknown} to retry, ${counts.failed} failed, ${counts.skipped} stay in the cockpit${counts.dryRun ? `, ${counts.dryRun} held as dry runs outside the allowed cards` : ""}.${stop ? ` Stopped: ${redact(stop)}` : ""}`
+      ? `${counts.delivered} delivered, ${counts.retry + counts.unknown} to retry, ${counts.failed} failed, ${counts.skipped} stay in the cockpit${counts.dryRun ? `, ${counts.dryRun} held as dry runs outside the allowed cards or kinds` : ""}.${stopped} ${billingNote}`
       : `Dry run: ${counts.dryRun} log entries planned, ${counts.skipped} stay in the cockpit. ${
           g.csmTickets
-            ? `Client success tickets are live: ${counts.delivered} delivered, ${counts.retry + counts.unknown} to retry, ${counts.failed} failed.${stop ? ` Stopped: ${redact(stop)}` : ""}`
-            : "Nothing was written to ClickUp."
-        }`;
-    return finish(deps, run.id, "log", mode, counts.failed === 0 && !stop, note, counts, planned);
+            ? `Client success tickets are live: ${counts.delivered} delivered, ${counts.retry + counts.unknown} to retry, ${counts.failed} failed.${stopped}`
+            : bg.mode !== "dry_run"
+              ? `Only billing edits of the open kinds are written.${stopped}`
+              : "Nothing was written to ClickUp."
+        } ${billingNote}`;
+    await reportBilling(deps, bg, bc, billingNote);
+    return finish(deps, run.id, "log", mode, counts.failed === 0 && !stop, note, { ...counts, billing: bc }, planned);
   } catch (e) {
+    await reportBilling(deps, bg, bc, "The run stopped before it finished.");
     return finish(deps, run.id, "log", g.mode, false, redact(String(e instanceof Error ? e.message : e)), counts, planned);
   }
 }
@@ -392,10 +604,47 @@ export async function runDosDonts(deps: Deps): Promise<JobResult> {
 
 // --- doctor ------------------------------------------------------------------
 
+/** The requests switch in words, for the doctors' notes. */
+function requestsWords(env: Deps["env"]) {
+  const rq = requestsGate(env);
+  const cards = [...rq.onlyCards];
+  return {
+    mode: rq.mode,
+    cards,
+    text: !rq.apply
+      ? "dry run (they are written only when CLICKUP_WRITEBACK_APPLY_REQUESTS is true)"
+      : cards.length
+        ? `apply_limited to the cards ${cards.join(", ")} (CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS)`
+        : "apply",
+  };
+}
+
 /** Configuration and queue health, with no provider call and no write. */
-export async function runDoctor(deps: Deps): Promise<JobResult & { secrets: Row; queue: unknown; kpiMode: string }> {
+export async function runDoctor(deps: Deps): Promise<
+  JobResult & {
+    secrets: Row;
+    queue: unknown;
+    kpiMode: string;
+    requestsMode: string;
+    requestsOnlyCards: string[];
+    formsMode: string;
+    formsOnlyCards: string[];
+    billingMode: string;
+    billingKinds: string[];
+    billingOnlyCards: string[];
+    researchMode: string;
+    researchKeys: string[];
+    researchOnlyCards: string[];
+  }
+> {
   const g = gate(deps.env);
+  const bg = billingGate(deps.env);
   const kpi = kpiGate(deps.env);
+  const rq = requestsWords(deps.env);
+  // The 1-1 notes switch, from the environment only (no database read).
+  const fw = formsWords(deps.env);
+  // The market research switch (MI-1b), from the environment only too.
+  const rw = researchGate(deps.env);
   const secrets = Object.fromEntries(
     ["CLICKUP_API_TOKEN", "META_SYSTEM_TOKEN", "CRON_SECRET", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"].map(k => [k, Boolean(deps.env(k))]),
   );
@@ -406,10 +655,1082 @@ export async function runDoctor(deps: Deps): Promise<JobResult & { secrets: Row;
     job: "doctor",
     mode: g.mode,
     kpiMode: kpi.mode,
+    requestsMode: rq.mode,
+    requestsOnlyCards: rq.cards,
+    formsMode: fw.mode,
+    formsOnlyCards: fw.cards,
+    billingMode: bg.mode,
+    billingKinds: bg.open,
+    billingOnlyCards: [...bg.only],
+    researchMode: rw.mode,
+    researchKeys: rw.open,
+    researchOnlyCards: [...rw.onlyCards],
     note: `${missing.length ? `Missing secrets: ${missing.join(", ")}.` : `Ready. Mode: ${g.mode}.`} KPI columns: ${
       kpi.apply ? kpi.mode : "dry run (they are written only when CLICKUP_WRITEBACK_APPLY_KPI is true)"
-    }.`,
+    }. Requests and task changes: ${rq.text}. 1-1 notes writes: ${fw.text}. Billing edits: ${
+      bg.mode === "dry_run"
+        ? "dry run (written only when CLICKUP_WRITEBACK_APPLY_BILLING is true and the kind is in CLICKUP_WRITEBACK_BILLING_KINDS)"
+        : bg.words.replace(/^billing: /, "")
+    }. Market research writes: ${rw.text}.`,
     secrets,
     queue,
   };
+}
+
+// --- requests ------------------------------------------------------------------
+// Tickets from /requests and presses in the focus views (requests.ts,
+// taskActions.ts; docs/requests/CONTRACT.md section 4). Its own switch, its own
+// claim, its own run rows and its own health key clickup-writeback:requests.
+
+/** A run stops taking new items after this long, so it ends inside the Edge Function's wall clock. */
+export const REQUESTS_RUN_BUDGET_MS = 100_000;
+const HELD = "Held for the next run, so this run ends inside its time limit.";
+const NOT_STARTED = "The requests run could not start, so this waits for the next run.";
+/**
+ * One requests run sends at a time, so CLICKUP_REQUESTS_CALLS_PER_MINUTE is the whole job's pace, not one Edge
+ * Function call's (docs/requests/CLICKUP-DOWNGRADE.md 1.3). Every submit, every focus-view press and the minute
+ * cron each start a run, and runs claim different rows, so without this three runs close together would make
+ * three times the pace. A run that finds another one open hands back what it claimed, its tries untouched.
+ */
+export const BUSY_HELD = "Another requests run is still sending, so this waits for the next run.";
+export const anotherRunNote = (n: number) =>
+  `Another requests run is still sending, so this one handed back the ${n === 1 ? "row" : `${n} rows`} it claimed; the next run takes ${n === 1 ? "it" : "them"}.`;
+/**
+ * A run still open after this many minutes on the Kuwait clock stopped without reporting back (a live run stops
+ * taking rows at 100 s and ends by about 150 s), so it no longer keeps the next one waiting. The database closes
+ * it at 15 minutes (cockpit_clickup_writeback_begin). The requests and forms jobs share this rule, and the forms
+ * kick waits on an open run for the same 4 minutes.
+ */
+export const STALE_RUN_MINUTES = 4;
+/**
+ * Minutes since the open run named in cockpit_clickup_writeback_begin's busy note started ("A requests run that
+ * started at 14:05 Kuwait is still running.", or "A forms run ..."), on the Kuwait clock (UTC+3, no daylight
+ * saving); null when the note does not say.
+ */
+export function openRunMinutes(note: unknown, now: number): number | null {
+  const m = /started at ([01]\d|2[0-3]):([0-5]\d) Kuwait is still running/.exec(String(note ?? ""));
+  if (!m) return null;
+  const kuwait = new Date(now + 3 * 3_600_000);
+  const nowMinute = kuwait.getUTCHours() * 60 + kuwait.getUTCMinutes();
+  return (nowMinute - (Number(m[1]) * 60 + Number(m[2])) + 1440) % 1440;
+}
+const GAVE_UP = "Gave up after the retry ladder.";
+/** A row the switch keeps out of ClickUp is handed back for this long, so the next rows in the queue get their turn. */
+export const HOLD_MS = 5 * 60_000;
+export const WAITING = {
+  dry_run: "Waiting in the queue: requests are a dry run, so nothing goes to ClickUp until CLICKUP_WRITEBACK_APPLY_REQUESTS is true.",
+  apply_limited: "Waiting in the queue: requests are being tested on the canary card only, so this goes when they open to every card.",
+} as const;
+/** Attempts that counted: claims that only held a row back for the switch (progress.held) are not tries. */
+export const triesOf = (item: RequestsItem) => Math.max(0, Number(item.attempts ?? 0) - Math.max(0, Number(item.progress?.held ?? 0) || 0));
+/**
+ * A request part whose ClickUp task exists: ClickUp answered its create with the task's id, or a task was adopted
+ * (review round 3: a create still started with its id counts, so a task whose read-back kept failing for the whole
+ * ladder is delivered with a note, never failed while it sits in ClickUp).
+ */
+export const taskMade = (item: RequestsItem, o: RequestOutcome) =>
+  item.kind === "request" && Boolean(o.taskId || o.progress?.steps?.create?.id);
+/**
+ * A request part whose create may have reached ClickUp with no task the cockpit holds: started and never adopted
+ * (an answer lost or with no id, two tasks matching, a search refused or unanswered). Failed would say nothing
+ * reached ClickUp and invite a second task, so at the end of the ladder it stays unknown for a person (review round 3).
+ */
+export const createInDoubt = (item: RequestsItem, o: RequestOutcome) =>
+  item.kind === "request" && !taskMade(item, o) && o.progress?.steps?.create?.state === "started";
+/** After the ladder, a create in doubt is read again this often (the ladder's last step), until a person settles it. */
+export const DOUBT_MINUTES = RETRY_MINUTES[RETRY_MINUTES.length - 1];
+export const STILL_CHECKING = `The cockpit checks ClickUp again every ${DOUBT_MINUTES / 60} hours.`;
+/** A settled part's note keeps the error's words but no promise of a next run: none follows once it is settled. */
+export const finalWords = (error: string | undefined) =>
+  String(error ?? "")
+    .split(/(?<=\.)\s+/)
+    .filter(s => !/\bnext run\b/i.test(s))
+    .join(" ")
+    .trim();
+
+type Tally = { requests: number; actions: number; checks: number };
+const tally = (): Tally => ({ requests: 0, actions: 0, checks: 0 });
+const tallyKey = (item: RequestsItem): keyof Tally => (item.kind === "request" ? "requests" : item.payload?.op === "verify" ? "checks" : "actions");
+const NOUNS: Record<keyof Tally, [string, string]> = { requests: ["request", "requests"], actions: ["task change", "task changes"], checks: ["owner check", "owner checks"] };
+/** "3 requests", "2 requests and 1 task change"; with none, the noun of the first kind claimed. */
+function itemsWords(t: Tally, claimed: Tally): string {
+  const keys = Object.keys(NOUNS) as (keyof Tally)[];
+  const parts = keys.filter(k => t[k] > 0).map(k => `${t[k]} ${NOUNS[k][t[k] === 1 ? 0 : 1]}`);
+  if (!parts.length) return `0 ${NOUNS[keys.find(k => claimed[k] > 0) ?? "requests"][1]}`;
+  return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0];
+}
+
+export async function runRequests(deps: Deps, limit = 6): Promise<JobResult> {
+  const g = requestsGate(deps.env);
+  const onlyCards = [...g.onlyCards];
+  const db = requestsDb(deps.rpc);
+  const report = (ok: boolean, note: string, counts: Row = {}) => db.state(ok, note, g.mode, onlyCards, counts);
+  if (!deps.env("CLICKUP_API_TOKEN")) {
+    await report(false, SAY.noToken);
+    return { ok: false, job: "requests", mode: g.mode, note: SAY.noToken };
+  }
+  await db.sweep();
+  const token = deps.uuid();
+  const items = ((await db.claim(token, limit)) ?? []) as RequestsItem[];
+  if (!items.length) {
+    await report(true, "Nothing to write.");
+    return { ok: true, job: "requests", mode: g.mode, note: "Nothing to write." };
+  }
+  const counts = { claimed: items.length, delivered: 0, dryRun: 0, skipped: 0, retry: 0, unknown: 0, failed: 0, held: 0 };
+  const claimed = tally(), delivered = tally(), dry = tally();
+  // The old ticket each routing request replaces, so every part checks it before making its task (review R2).
+  // The claim names it on every part (replaces_task_id). On a database that does not send it yet, only the first
+  // part's payload names it, and that serves the parts claimed in the same run.
+  const routes = new Map<string, string>();
+  for (const item of items) {
+    const old = item.kind === "request" ? item.replaces_task_id || item.payload?.replacesTaskId : null;
+    if (old && item.payload?.requestId) routes.set(String(item.payload.requestId), String(old));
+  }
+  const planned: Planned[] = [];
+  const save = (id: string, patch: Row) => deps.rpc("cockpit_clickup_writeback_save", { p_id: id, p_token: token, p_patch: patch });
+  /**
+   * Hand a row this run will not send back to the queue without counting a try: the switch keeps it out of
+   * ClickUp, the run's time is spent, a secret is missing, or another run is sending.
+   * cockpit_clickup_writeback_release puts it back as it was (queued, or retry when it has ClickUp progress)
+   * with the claim's attempt taken off. On a database without it, the row goes to retry with its progress
+   * kept and progress.held counting the claims that were not tries (triesOf), so a row held back never loses
+   * a rung of the retry ladder. `plan` null keeps the row's plan as it is.
+   */
+  const hold = async (item: RequestsItem, plan: Planned[] | null, note: string, waitMs = HOLD_MS) => {
+    const next = new Date(deps.now() + waitMs).toISOString();
+    try {
+      // A null plan reaches the release as JSON null, which keeps the row's plan (migration 20261026r).
+      await db.release(item.id, token, plan as unknown[], note, next);
+      return;
+    } catch {
+      // Not there yet (or refused): the save below keeps the row retryable either way.
+    }
+    const progress = { ...(item.progress ?? {}), held: (Number(item.progress?.held ?? 0) || 0) + 1 };
+    await save(item.id, { state: "retry", ...(plan ? { planned: plan } : {}), progress, error: note, next_attempt_at: next });
+  };
+  let runId: string | null = null;
+  let stop = "";
+  let went = "";
+  try {
+    let run: Row | null = null;
+    try {
+      // Exclusive: one requests run sends at a time, so the pace covers the whole job (BUSY_HELD).
+      run = await deps.rpc("cockpit_clickup_writeback_begin", { p_job: "requests", p_mode: g.mode, p_exclusive: true });
+      const age = run?.id ? null : openRunMinutes(run?.note, deps.now());
+      if (age !== null && age >= STALE_RUN_MINUTES) {
+        // The open run stopped without reporting back: it no longer holds the job up.
+        const since = /started at (\d{2}:\d{2})/.exec(String(run?.note))?.[1] ?? "";
+        run = await deps.rpc("cockpit_clickup_writeback_begin", { p_job: "requests", p_mode: g.mode, p_exclusive: false });
+        went = `A requests run that started at ${since} Kuwait never reported back, so this one went ahead.`;
+      }
+    } catch (e) {
+      run = { note: redact(String(e instanceof Error ? e.message : e)) };
+    }
+    if (!run?.id) {
+      const busy = openRunMinutes(run?.note, deps.now()) !== null;
+      // Nothing was sent: hand every claimed item back at once, its try not counted, instead of leaving it
+      // claimed for ten minutes.
+      for (const item of items) await hold(item, null, busy ? BUSY_HELD : NOT_STARTED, 0).catch(() => {});
+      if (busy) {
+        // Another run is sending: it, or the next minute's run, takes these rows. Not a failure.
+        const note = anotherRunNote(items.length);
+        await report(true, note, { claimed: items.length, handedBack: items.length });
+        return { ok: true, job: "requests", mode: g.mode, note, counts: { claimed: items.length, handedBack: items.length } };
+      }
+      throw new Error(`${NOT_STARTED} ${String(run?.note ?? "")}`.trim());
+    }
+    runId = String(run.id);
+    const started = deps.now();
+    const ctx = runContext(paced(deps.providerFor(runId), deps.pace), deps.now, deps.rpc);
+    for (const item of items) {
+      const kind = tallyKey(item);
+      claimed[kind] += 1;
+      if (stop || deps.now() - started > REQUESTS_RUN_BUDGET_MS) {
+        counts.held += 1;
+        // Back to the queue for the next run, the claim's try taken off: nothing was sent for it. A held item
+        // that cannot be handed back is claimed again after ten minutes; the run goes on.
+        await hold(item, null, stop || HELD, 0).catch(() => {});
+        continue;
+      }
+      try {
+        if (item.source_exists === false) {
+          await save(item.id, { state: "skipped", error: SAY.cancelled });
+          counts.skipped += 1;
+          continue;
+        }
+        // During the canary a request that routes an old form ticket goes only when that ticket's own card is a
+        // canary card, so the rehearsal never closes a real ticket on All Tasks (review round 3, E-CANARY). The
+        // claim keeps the same rule by the mode the writer last reported; this covers the run right after a
+        // switch flip, which still claims by the old mode.
+        const routesOld = item.kind === "request" && Boolean(item.replaces_task_id || routes.get(String(item.payload?.requestId)));
+        const live =
+          item.kind === "task_action" && item.payload?.op === "verify"
+            ? g.apply
+            : g.live(item.payload?.clientTaskId) && (!routesOld || g.live(item.replaces_client_task_id));
+        if (!live) {
+          // A dry run calls no provider: the plan comes from the frozen payload alone. The row is never
+          // settled: it goes back to the queue, its progress untouched, and is sent once the switch lets it.
+          const plan = item.kind === "request" ? planRequest(item) : planTaskAction(item);
+          await hold(item, plan, g.mode === "apply_limited" ? WAITING.apply_limited : WAITING.dry_run);
+          planned.push(...plan);
+          counts.dryRun += 1;
+          dry[kind] += 1;
+          continue;
+        }
+        const keys = item.steps?.length ? item.steps : item.kind === "request" ? requestStepKeys(item.payload) : taskActionStepKeys(item.payload);
+        if (!item.steps?.length) await save(item.id, { steps: keys });
+        const provider = paced(deps.providerFor(item.id), deps.pace);
+        const itemSave = async (patch: Row) => {
+          await save(item.id, patch);
+        };
+        const routed = item.kind === "request" ? item.replaces_task_id || routes.get(String(item.payload?.requestId)) || null : null;
+        const frozen = { ...item, steps: keys, ...(routed ? { replaces_task_id: routed } : {}) };
+        const o: RequestOutcome =
+          item.kind === "request" ? await executeRequest(frozen, provider, itemSave, ctx) : await executeTaskAction(frozen, provider, itemSave, ctx);
+        const now = deps.now();
+        const taskId = o.taskId ? { task_id: o.taskId } : {};
+        const tries = triesOf(item);
+        const gaveUp = o.state !== "delivered" && o.state !== "skipped" && o.state !== "failed" && tries > RETRY_MINUTES.length;
+        const settle =
+          o.state === "delivered"
+            // A note on a delivered item (a field that did not save, a moved task) shows on its request part.
+            ? { state: "delivered", progress: o.progress, delivered_at: new Date(now).toISOString(), error: o.note ? redact(o.note) : null, ...taskId }
+            : o.state === "skipped"
+              ? { state: "skipped", progress: o.progress, error: o.error ? redact(o.error) : null, ...taskId }
+              : gaveUp && taskMade(item, o)
+                // The task is in ClickUp: settling it failed would invite a second one. It is delivered, and
+                // the step that never finished is named on the part.
+                ? { state: "delivered", progress: o.progress, delivered_at: new Date(now).toISOString(), error: redact(`${SAY.unfinished} ${finalWords(o.error)}`.trim()), ...taskId }
+                : gaveUp && createInDoubt(item, o)
+                  // ClickUp may hold the task (two match, or an answer was lost): never "Nothing reached
+                  // ClickUp". It stays unknown, the guardian names it, and it is read again every 4 hours, so a
+                  // person who keeps one task and cancels the other sees it adopted.
+                  ? {
+                      state: "unknown",
+                      progress: o.progress,
+                      error: redact(`${o.error ?? ""} ${STILL_CHECKING}`.trim()),
+                      next_attempt_at: new Date(now + DOUBT_MINUTES * 60_000).toISOString(),
+                    }
+                  : o.state === "failed" || gaveUp
+                    ? { state: "failed", progress: o.progress, error: redact(o.error ?? GAVE_UP), ...taskId }
+                    : {
+                        state: o.state,
+                        progress: o.progress,
+                        error: o.error ? redact(o.error) : null,
+                        next_attempt_at: new Date(now + RETRY_MINUTES[Math.min(Math.max(tries - 1, 0), RETRY_MINUTES.length - 1)] * 60_000).toISOString(),
+                        ...taskId,
+                      };
+        // Counted only once its state is saved: an item whose last save failed is counted as unknown below.
+        await save(item.id, settle);
+        const settled = settle.state as "delivered" | "skipped" | "failed" | "retry" | "unknown";
+        counts[settled] += 1;
+        if (settled === "delivered") delivered[kind] += 1;
+        if ((settled === "retry" || settled === "unknown") && o.stop) stop = redact(o.error ?? "A provider secret is missing.");
+      } catch (e) {
+        // Our own bookkeeping failed. The item may have reached ClickUp, so it is read back next time.
+        counts.unknown += 1;
+        await save(item.id, { state: "unknown", error: redact(String(e instanceof Error ? e.message : e)), next_attempt_at: new Date(deps.now() + 60_000).toISOString() }).catch(() => {});
+      }
+    }
+    const toRetry = counts.retry + counts.unknown;
+    const tail = [
+      counts.skipped ? `${counts.skipped} skipped.` : "",
+      counts.held ? `${counts.held} held for the next run.` : "",
+      stop ? `Stopped: ${stop}` : "",
+      went,
+    ].filter(Boolean).join(" ");
+    const note = !g.apply
+      ? `Dry run: ${itemsWords(dry, claimed)} planned. Nothing was written to ClickUp. ${counts.dryRun === 1 ? "It waits" : "They wait"} in the queue for the switch.`
+      : g.mode === "apply_limited"
+        ? `Testing on the canary card: ${counts.delivered} delivered, ${counts.dryRun} held as a dry run (waiting in the queue).${toRetry || counts.failed ? ` ${toRetry} to retry, ${counts.failed} failed.` : ""}`
+        : `${itemsWords(delivered, claimed)} delivered, ${toRetry} to retry, ${counts.failed} failed.${counts.dryRun ? ` ${counts.dryRun} held as a dry run.` : ""}`;
+    const full = tail ? `${note} ${tail}` : note;
+    const ok = counts.failed === 0 && !stop;
+    await deps.rpc("cockpit_clickup_writeback_finish", { p_run: runId, p_ok: ok, p_note: full, p_counts: counts, p_planned: planned });
+    await report(ok, full, counts);
+    return { ok, job: "requests", mode: g.mode, note: full, counts };
+  } catch (e) {
+    const note = redact(String(e instanceof Error ? e.message : e));
+    if (runId) await deps.rpc("cockpit_clickup_writeback_finish", { p_run: runId, p_ok: false, p_note: note, p_counts: counts, p_planned: planned }).catch(() => {});
+    await report(false, note, counts).catch(() => {});
+    return { ok: false, job: "requests", mode: g.mode, note, counts };
+  }
+}
+
+/**
+ * The requests doctor: reads only. Secrets by name (never a value), the mode,
+ * and every template, Request Type option, field, named owner and done status
+ * the request types rely on. Its result lands in cockpit_sync_state under
+ * clickup-writeback:requests-doctor.
+ */
+export async function runRequestsDoctor(deps: Deps): Promise<JobResult & { problems: string[]; secrets: Row; onlyCards: string[] }> {
+  const rq = requestsWords(deps.env);
+  const secrets = Object.fromEntries(REQUEST_SECRETS.map(k => [k, Boolean(deps.env(k))]));
+  const problems: string[] = [];
+  let counts: Row = {};
+  if (!secrets.CLICKUP_API_TOKEN) problems.push(SAY.noToken);
+  if (!secrets.CRON_SECRET) problems.push("CRON_SECRET is not set on this Edge Function, so the cron cannot start a requests run.");
+  if (secrets.CLICKUP_API_TOKEN) {
+    try {
+      const inputs = await requestsDb(deps.rpc).doctorInputs();
+      const checked = await doctorChecks(inputs ?? {}, paced(deps.providerFor(deps.uuid()), deps.pace));
+      problems.push(...checked.problems);
+      counts = checked.counts;
+    } catch (e) {
+      problems.push(`Could not read the request types: ${redact(String(e instanceof Error ? e.message : e))}`);
+    }
+  }
+  const ok = problems.length === 0;
+  const head = `Requests and task changes: ${rq.text}.`;
+  const note = ok
+    ? `Ready. ${head} ${counts.types ?? 0} request types and ${counts.targets ?? 0} targets checked against ClickUp.`
+    : `${problems.length} ${problems.length === 1 ? "problem" : "problems"}. ${head} ${problems.slice(0, 5).join(" ")}${problems.length > 5 ? ` And ${problems.length - 5} more.` : ""}`;
+  const at = new Date(deps.now()).toISOString();
+  try {
+    await deps.syncState?.("clickup-writeback:requests-doctor", {
+      last_run_at: at,
+      ...(ok ? { last_ok_at: at } : {}),
+      ok,
+      note: note.slice(0, 500),
+      detail: { mode: rq.mode, onlyCards: rq.cards, secrets, problems, counts, at },
+      updated_at: at,
+    });
+  } catch (e) {
+    problems.push(`The doctor's result could not be saved: ${redact(String(e instanceof Error ? e.message : e))}`);
+  }
+  return { ok: ok && problems.length === 0, job: "requests_doctor", mode: rq.mode, note, problems, secrets, onlyCards: rq.cards, counts };
+}
+
+// --- forms ---------------------------------------------------------------------
+// The 1-1 notes writes (forms.ts; docs/forms/STAGE2B-CONTRACT.md build 1): its own
+// switch, its own claim (one lane per client card, the owner gate asked per row),
+// its own run rows and its own health key clickup-writeback:forms.
+
+/** A run stops taking new rows after this long, so it ends inside the Edge Function's wall clock. */
+export const FORMS_RUN_BUDGET_MS = 100_000;
+/**
+ * The forms jobs' pace, CLICKUP_FORMS_CALLS_PER_MINUTE: 10 calls a minute unless set, never more than 60 and never
+ * less than 5, the floor of every other ClickUp pace: below it a run outlasts the Edge wall clock (FORMS_RUN_BUDGET_MS
+ * stops new rows at 100 s, the row in hand still sends, and at 5 a minute the last call is by about 125 s). The Business plan gives the one token every caller shares 100 calls a minute, the callers together
+ * aim at about 80, and no single job takes more than 60 (docs/requests/CLICKUP-DOWNGRADE.md). About 11 calls write
+ * one response's four rows, so the default writes a response in a little over a minute.
+ */
+export const FORMS_CALLS_PER_MINUTE = 10;
+export const FORMS_CALLS_PER_MINUTE_MAX = 60;
+export function formsPerMinute(env: Deps["env"]): number {
+  // writebackPerMinute's shape: tested before it is floored, so 0.5 reads as the floor of 5 and never as the default of 10.
+  const set = Number(env("CLICKUP_FORMS_CALLS_PER_MINUTE"));
+  const pace = Number.isFinite(set) && set > 0 ? set : FORMS_CALLS_PER_MINUTE;
+  return Math.floor(Math.min(FORMS_CALLS_PER_MINUTE_MAX, Math.max(CALLS_MIN, pace)));
+}
+const FORMS_NOT_STARTED = "The 1-1 notes run could not start, so this waits for the next run.";
+const FORMS_SLOW_DOWN = "ClickUp asked the cockpit to slow down (429), so the rest waits for the next run.";
+const FORMS_CHECK_CARD = "An earlier try may have reached the card, so check it in ClickUp.";
+/**
+ * One 1-1 notes run sends at a time, so CLICKUP_FORMS_CALLS_PER_MINUTE is the whole job's pace, not one Edge
+ * Function call's (review round 2; docs/requests/CLICKUP-DOWNGRADE.md 1.3 does the same for requests). The pacer
+ * belongs to one call, a run of 8 rows at 10 a minute sends for about two minutes, and runs claim different cards'
+ * rows, so two runs side by side would send twice the pace on the token every caller shares. The kick posts no run
+ * while one is open (20261029t); a run that still finds another open hands back what it claimed, its tries untouched.
+ */
+export const FORMS_BUSY_HELD = "Another 1-1 notes run is still sending, so this waits for the next run.";
+export const formsAnotherRunNote = (n: number) =>
+  `Another 1-1 notes run is still sending, so this one handed back the ${n === 1 ? "write" : `${n} writes`} it claimed; the next run takes ${n === 1 ? "it" : "them"}.`;
+const writesWord = (n: number) => `${n} ${n === 1 ? "write" : "writes"}`;
+const isoAt = (ms: number) => new Date(ms).toISOString();
+
+/**
+ * What a forms run says when its claim took nothing (review round 3). The claim first settles every open row the
+ * owner gate refuses, in every mode, so a row still open waits for the switch, a later try, or an older call on
+ * its card (one lane per card). "Nothing to write." only when the queue holds no open form row: missing is never
+ * zero, so a count that cannot be read is said, not reported as nothing.
+ */
+export async function formsIdle(db: ReturnType<typeof formsDb>, g: ReturnType<typeof formsGate>, now: number): Promise<{ note: string; counts: Row }> {
+  let open: number | null = null;
+  let next = NaN;
+  try {
+    const inputs = await db.doctorInputs();
+    const byState = inputs?.queue;
+    if (byState && typeof byState === "object" && !Array.isArray(byState)) {
+      open = ["queued", "retry", "unknown"].reduce((n, s) => n + Math.max(0, Math.floor(Number(byState[s]) || 0)), 0);
+      next = Date.parse(String(inputs?.oldestDue ?? ""));
+    }
+  } catch {
+    open = null;
+  }
+  if (open === 0) return { note: "Nothing to write.", counts: { waiting: 0 } };
+  if (open === null) return { note: "Nothing to write now. The 1-1 notes queue could not be counted, so it is not reported as empty.", counts: {} };
+  const rows = `${writesWord(open)} ${open === 1 ? "waits" : "wait"}`;
+  if (!g.apply) return { note: `Nothing written: ${rows} in the queue while the 1-1 notes writer is off.`, counts: { waiting: open } };
+  if (Number.isFinite(next) && next > now) {
+    const k = new Date(next + 3 * 3_600_000);
+    const at = `${String(k.getUTCHours()).padStart(2, "0")}:${String(k.getUTCMinutes()).padStart(2, "0")}`;
+    return { note: `Nothing to write now: ${rows} for a later try, the next at ${at} Kuwait.`, counts: { waiting: open } };
+  }
+  const where = g.mode === "apply_limited" ? "on the other cards, behind an older call on their card, or for the next run" : "behind an older call on their card, or for the next run";
+  return { note: `Nothing to write now: ${rows} ${where}.`, counts: { waiting: open } };
+}
+
+export async function runForms(deps: Deps, limit = 8): Promise<JobResult> {
+  const g = formsGate(deps.env);
+  // Stage 4 (4.13.4): only the forms CLICKUP_WRITEBACK_FORMS_KEYS lists are written; checkin when unset.
+  const fk = formsKeysGate(deps.env);
+  const onlyCards = [...g.onlyCards];
+  const db = formsDb(deps.rpc);
+  // A card list the gate cannot read keeps the writer off, and every answer of this run says so first (the row keeps
+  // 500 characters) and reads not ok: nothing is claimed, but the switch is wrong and someone has to correct it.
+  const said = (ok: boolean, note: string) => ({ ok: ok && !g.error, note: g.error ? `${g.error} ${note}` : note });
+  const report = (ok: boolean, note: string, counts: Row = {}) => {
+    const s = said(ok, note);
+    return db.state(s.ok, s.note, g.mode, onlyCards, counts);
+  };
+  if (!deps.env("CLICKUP_API_TOKEN")) {
+    await report(false, SAY.noToken);
+    return { ...said(false, SAY.noToken), job: "forms", mode: g.mode };
+  }
+  const token = deps.uuid();
+  const items = ((await db.claim(token, limit)) ?? []) as FormItem[];
+  if (!items.length) {
+    const idle = await formsIdle(db, g, deps.now());
+    await report(true, idle.note, idle.counts);
+    return { ...said(true, idle.note), job: "forms", mode: g.mode };
+  }
+  // held = heldOff (the switch keeps the card out) + heldNext (the run's time is spent, or a 429 or a missing secret
+  // stopped it); forms_state and the guardian read held, the note names the two apart.
+  const counts = { claimed: items.length, delivered: 0, skipped: 0, retry: 0, unknown: 0, failed: 0, held: 0, heldOff: 0, heldNext: 0 };
+  const planned: Row[] = [];
+  const save = (id: string, patch: Row) => deps.rpc("cockpit_clickup_writeback_save", { p_id: id, p_token: token, p_patch: patch });
+  /**
+   * Hand a row back to the queue without counting a try (cockpit_clickup_writeback_release): queued, or retry
+   * once its steps hold anything. Never dry_run: a held row is written once its switch lets it. Should the
+   * release be refused, the row goes to retry with the note, still never settled.
+   */
+  const handBack = async (item: FormItem, note: string, waitMs: number) => {
+    const next = isoAt(deps.now() + waitMs);
+    try {
+      await db.release(item.id, token, planForm(item), note, next);
+    } catch {
+      await save(item.id, { state: "retry", error: note, next_attempt_at: next }).catch(() => {});
+    }
+  };
+  let runId: string | null = null;
+  let stop = "";
+  let went = "";
+  // The provider's last wording this run, for the tech lead: the row and its effect carry a plain sentence instead.
+  let lastSaid = "";
+  // One check of the token a run is enough once it answers: further 401s in this run are their own cards'.
+  let tokenAnswers = false;
+  const refusedCards = new Set<string>();
+  try {
+    let run: Row | null = null;
+    try {
+      // Exclusive: one forms run sends at a time, so the pace covers the whole job (FORMS_BUSY_HELD).
+      run = await deps.rpc("cockpit_clickup_writeback_begin", { p_job: "forms", p_mode: g.mode, p_exclusive: true });
+      const age = run?.id ? null : openRunMinutes(run?.note, deps.now());
+      if (age !== null && age >= STALE_RUN_MINUTES) {
+        // The open run stopped without reporting back: it no longer holds the job up.
+        const since = /started at (\d{2}:\d{2})/.exec(String(run?.note))?.[1] ?? "";
+        run = await deps.rpc("cockpit_clickup_writeback_begin", { p_job: "forms", p_mode: g.mode, p_exclusive: false });
+        went = `A 1-1 notes run that started at ${since} Kuwait never reported back, so this one went ahead.`;
+      }
+    } catch (e) {
+      run = { note: redact(String(e instanceof Error ? e.message : e)) };
+    }
+    if (!run?.id) {
+      const busy = openRunMinutes(run?.note, deps.now()) !== null;
+      // Nothing was written: every claimed row goes back at once, its try not counted, instead of staying claimed
+      // for ten minutes.
+      for (const item of items) await handBack(item, busy ? FORMS_BUSY_HELD : FORMS_NOT_STARTED, 0);
+      if (busy) {
+        // Another run is sending: it, or the next run the kick posts, takes these rows. Not a failure.
+        const note = formsAnotherRunNote(items.length);
+        const handed = { claimed: items.length, handedBack: items.length };
+        await report(true, note, handed);
+        return { ...said(true, note), job: "forms", mode: g.mode, counts: handed };
+      }
+      throw new Error(`${FORMS_NOT_STARTED} ${String(run?.note ?? "")}`.trim());
+    }
+    runId = String(run.id);
+    const started = deps.now();
+    for (const item of items) {
+      if (stop || deps.now() - started > FORMS_RUN_BUDGET_MS) {
+        counts.held += 1;
+        counts.heldNext += 1;
+        await handBack(item, stop || HELD, 0);
+        continue;
+      }
+      if (!g.live(item.task_id)) {
+        // The switch keeps this card out of ClickUp: back to the queue, untouched, for when it opens.
+        counts.held += 1;
+        counts.heldOff += 1;
+        planned.push(...planForm(item));
+        await handBack(item, g.error ?? (g.mode === "apply_limited" ? SAY_FORMS.heldLimited : SAY_FORMS.heldOff), HOLD_MS);
+        continue;
+      }
+      // The row's lane: its form, or profile_backfill for a Client Profile backfill row (forms.ts formLane), so
+      // onboarding in the list never opens a backfill row and profile_backfill never opens an onboarding row.
+      const lane = formLane(item.payload);
+      if (!fk.has(lane)) {
+        // This lane's card writes are not switched on: back to the queue, untouched, like a held card.
+        counts.held += 1;
+        counts.heldOff += 1;
+        planned.push(...planForm(item));
+        await handBack(item, SAY_FORMS.heldForm(lane), HOLD_MS);
+        continue;
+      }
+      try {
+        const checked = await formStep(item);
+        const step = "step" in checked ? frozenStep(item, checked.step) : null;
+        if (!step) {
+          await save(item.id, { state: "failed", error: "fail" in checked ? checked.fail : SAY_FORMS.mismatch });
+          counts.failed += 1;
+          continue;
+        }
+        // Freeze the write before the first call, so a retry posts exactly the same text.
+        if (!item.steps?.length) await save(item.id, { steps: [step] });
+        const provider = paced(deps.providerFor(item.id), deps.pace);
+        let o = await executeForm(item, step, provider, async patch => {
+          await save(item.id, patch);
+        }, deps.now);
+        if (o.tokenRefused) {
+          const check = tokenAnswers ? "good" : await checkToken(provider);
+          tokenAnswers = check === "good";
+          if (check !== "good") {
+            // The token, or no way to tell: the row goes back with no try used and every later row waits. This row
+            // waits out HOLD_MS; the rest are due at once. A bad token costs two calls a run (the refused call and the
+            // check), so the mistake reads not ok until someone fixes it.
+            await save(item.id, { progress: o.progress });
+            stop = check === "refused" ? SAY_FORMS.tokenRefused : check === "slow" ? FORMS_SLOW_DOWN : SAY_FORMS.tokenUnsure;
+            lastSaid = redact(o.error ?? "");
+            counts.held += 1;
+            counts.heldNext += 1;
+            await handBack(item, stop, HOLD_MS);
+            continue;
+          }
+          // The token answers, so this card refuses it: the ladder settles the row and the run goes on (forms.ts).
+          o = cardRefused(o, step.key);
+          if (item.task_id) refusedCards.add(item.task_id);
+        }
+        const now = deps.now();
+        const tries = Math.max(0, Number(item.attempts ?? 0));
+        const gaveUp = o.state !== "delivered" && o.state !== "skipped" && o.state !== "failed" && tries > RETRY_MINUTES.length;
+        // The row's error is what the effect's trail prints (3.6). ClickUp's own wording, or the database's when our
+        // save failed, stays out of it: it goes on progress.lastDetail and in the run's note. A retry row's error
+        // reaches no effect, so it keeps the wording. A delivered row keeps its note as its error, as a delivered
+        // request does: card_facts' kept sentence when it wrote some fields and kept others (plan B8). The effect
+        // reads it from receipt.step.note, since the queue trigger gives a delivered effect no reason.
+        const closing = o.state === "failed" || o.state === "unknown" || gaveUp;
+        if (closing && o.plain) lastSaid = redact(o.error ?? "");
+        const progress = closing && o.plain ? { ...o.progress, lastDetail: redact(o.error ?? "") } : o.progress;
+        const settle: Row =
+          o.state === "delivered"
+            ? { state: "delivered", progress, delivered_at: isoAt(now), error: o.note ? redact(o.note) : null }
+            : o.state === "skipped"
+              ? { state: "skipped", progress, error: o.error ? redact(o.error) : null }
+              : o.state === "failed"
+                ? { state: "failed", progress, error: redact(o.plain ?? o.error ?? GAVE_UP) }
+                : gaveUp
+                  ? { state: "failed", progress, error: redact(o.endsAs ?? `${GAVE_UP} ${o.state === "unknown" ? FORMS_CHECK_CARD : ""} ${o.plain ? "" : (o.error ?? "")}`.replace(/\s+/g, " ").trim()) }
+                  : {
+                      state: o.state,
+                      progress,
+                      error: redact((o.state === "unknown" ? o.plain : undefined) ?? o.error ?? "") || null,
+                      next_attempt_at: isoAt(now + RETRY_MINUTES[Math.min(Math.max(tries - 1, 0), RETRY_MINUTES.length - 1)] * 60_000),
+                    };
+        await save(item.id, settle);
+        const settled = settle.state as "delivered" | "skipped" | "failed" | "retry" | "unknown";
+        counts[settled] += 1;
+        // Whatever the row settled as, its last rung included: a 429 on the token every caller shares, or a missing
+        // secret, stops ClickUp calls for the rest of this run.
+        if (o.stop) stop = redact(o.error ?? "A provider secret is missing.");
+        else if (/rejected the request \(429/.test(o.error ?? "")) stop = FORMS_SLOW_DOWN;
+      } catch (e) {
+        // Our own bookkeeping failed. The write may have reached ClickUp, so it is read back next time.
+        counts.unknown += 1;
+        lastSaid = redact(String(e instanceof Error ? e.message : e));
+        await save(item.id, { state: "unknown", error: SAY.bookkeeping, next_attempt_at: isoAt(deps.now() + 60_000) }).catch(() => {});
+      }
+    }
+    const toRetry = counts.retry + counts.unknown;
+    const tail = [
+      counts.skipped ? `${counts.skipped} kept as ClickUp has them.` : "",
+      fk.error ?? "",
+      went,
+      refusedCards.size ? `ClickUp refused the cockpit's token on ${refusedCards.size === 1 ? "card" : "cards"} ${[...refusedCards].join(", ")}.` : "",
+      stop ? `Stopped: ${stop}` : "",
+      lastSaid ? `Last detail: ${lastSaid}` : "",
+    ].filter(Boolean).join(" ");
+    const heldNext = counts.heldNext ? ` ${writesWord(counts.heldNext)} held for the next run.` : "";
+    const note = !g.apply
+      ? `Dry run: ${writesWord(counts.held)} held. Nothing was written to ClickUp: the 1-1 notes writer is off until the switch-over.`
+      : g.mode === "apply_limited"
+        ? `Testing on the test card: ${counts.delivered} written to ClickUp, ${toRetry} to retry, ${counts.failed} failed.${counts.heldOff ? ` ${writesWord(counts.heldOff)} held for the other cards.` : ""}${heldNext}`
+        : `${writesWord(counts.delivered)} reached ClickUp, ${toRetry} to retry, ${counts.failed} failed.${heldNext}`;
+    const full = tail ? `${note} ${tail}` : note;
+    const ok = counts.failed === 0 && !stop;
+    const out = said(ok, full);
+    await deps.rpc("cockpit_clickup_writeback_finish", { p_run: runId, p_ok: out.ok, p_note: out.note, p_counts: counts, p_planned: planned });
+    await report(ok, full, counts);
+    return { ...out, job: "forms", mode: g.mode, counts };
+  } catch (e) {
+    const note = redact(String(e instanceof Error ? e.message : e));
+    if (runId) await deps.rpc("cockpit_clickup_writeback_finish", { p_run: runId, p_ok: false, p_note: note, p_counts: counts, p_planned: planned }).catch(() => {});
+    await report(false, note, counts).catch(() => {});
+    return { ...said(false, note), job: "forms", mode: g.mode, counts };
+  }
+}
+
+/** Secrets the forms jobs read, by name only (never a value). */
+export const FORMS_SECRETS = ["CLICKUP_API_TOKEN", "CRON_SECRET", "CLICKUP_WRITEBACK_APPLY_FORMS", "CLICKUP_WRITEBACK_FORMS_ONLY_CARDS", "CLICKUP_WRITEBACK_FORMS_KEYS"];
+
+/**
+ * The forms doctor: reads only. Secrets by name, the mode, the six Client Happiness options and the two date
+ * fields on Clients - Mahara, and the canary card on that list. Its result lands in cockpit_sync_state under
+ * clickup-writeback:forms-doctor.
+ */
+export async function runFormsDoctor(deps: Deps): Promise<JobResult & { problems: string[]; secrets: Row; onlyCards: string[] }> {
+  const fw = formsWords(deps.env);
+  const fk = formsKeysGate(deps.env);
+  const secrets = Object.fromEntries(FORMS_SECRETS.map(k => [k, Boolean(deps.env(k))]));
+  const problems: string[] = [];
+  let counts: Row = {};
+  let inputs: Row = {};
+  if (!secrets.CLICKUP_API_TOKEN) problems.push(SAY.noToken);
+  if (!secrets.CRON_SECRET) problems.push("CRON_SECRET is not set on this Edge Function, so the cron cannot start a 1-1 notes run.");
+  if (fw.error) problems.push(fw.error);
+  if (fk.error) problems.push(fk.error);
+  try {
+    inputs = (await formsDb(deps.rpc).doctorInputs()) ?? {};
+  } catch (e) {
+    problems.push(`Could not read the 1-1 notes queue: ${redact(String(e instanceof Error ? e.message : e))}`);
+  }
+  if (secrets.CLICKUP_API_TOKEN) {
+    try {
+      const checked = await formsDoctorChecks(inputs, paced(deps.providerFor(deps.uuid()), deps.pace), fw.cards, [...fk.keys]);
+      problems.push(...checked.problems);
+      counts = checked.counts;
+    } catch (e) {
+      problems.push(`Could not check ClickUp: ${redact(String(e instanceof Error ? e.message : e))}`);
+    }
+  }
+  const ok = problems.length === 0;
+  const formsOn = [...fk.keys];
+  const head = `1-1 notes writes: ${fw.text}.${formsOn.join(",") === "checkin" ? "" : ` Forms written: ${formsOn.join(", ")}.`}`;
+  const cards = counts.cards ? ` The test card ${(counts.cards as string[]).join(", ")} is on Clients - Mahara.` : "";
+  const note = ok
+    ? `Ready. ${head} Client Happiness has its six options and Last POC and Last Check-in Call are date fields on Clients - Mahara.${cards}`
+    : `${problems.length} ${problems.length === 1 ? "problem" : "problems"}. ${head} ${problems.slice(0, 5).join(" ")}${problems.length > 5 ? ` And ${problems.length - 5} more.` : ""}`;
+  const at = new Date(deps.now()).toISOString();
+  try {
+    await deps.syncState?.("clickup-writeback:forms-doctor", {
+      last_run_at: at,
+      ...(ok ? { last_ok_at: at } : {}),
+      ok,
+      note: note.slice(0, 500),
+      detail: { mode: fw.mode, onlyCards: fw.cards, forms: [...fk.keys], secrets, problems, counts, owners: inputs.owners ?? null, queue: inputs.queue ?? null, at },
+      updated_at: at,
+    });
+  } catch (e) {
+    problems.push(`The doctor's result could not be saved: ${redact(String(e instanceof Error ? e.message : e))}`);
+  }
+  return { ok: ok && problems.length === 0, job: "forms_doctor", mode: fw.mode, note, problems, secrets, onlyCards: fw.cards, counts };
+}
+
+// --- billing_doctor (waves 1-2 4.1 step 2) ------------------------------------------------------------------
+// Daily at 03:41 UTC (pg_cron mahara-clickup-writeback-billing-doctor, 20261101m). One read of the
+// Clients - Mahara fields through the paced provider (so it lands in the health ledger), stored as the field map
+// (cockpit_clickup_fields_put), then checked against what the billing writes need. Reads ClickUp only; never
+// writes there. A gap is a plain sentence in clickup-writeback:billing-doctor, never a stop: the guardian warns on
+// each one. ok=false only when the read or the save failed.
+
+export async function runBillingDoctor(deps: Deps): Promise<JobResult & { gaps: string[]; churnReasonOptions: string[] }> {
+  const bg = billingGate(deps.env);
+  const problems: string[] = [];
+  let gaps: string[] = [];
+  let churnReasonOptions: string[] = [];
+  let reasonMap: Row = {};
+  let stored: number | null = null;
+  let willNotContinue: string | null = null;
+  if (!deps.env("CLICKUP_API_TOKEN")) problems.push(NO_TOKEN);
+  else {
+    try {
+      const provider = paced(deps.providerFor(deps.uuid()), deps.pace);
+      const fields = (await provider.call("clickup", "GET", `list/${CLIENTS_LIST}/field`)).fields;
+      if (!Array.isArray(fields) || !fields.length) throw new Error("ClickUp returned no fields for Clients - Mahara, so the stored field map was kept.");
+      const checked = billingDoctorChecks(fields as Row[]);
+      ({ gaps, churnReasonOptions, reasonMap, willNotContinue } = checked);
+      try {
+        stored = Number(await billingDb(deps.rpc).putFields(CLIENTS_LIST, fields as Row[])) || 0;
+      } catch (e) {
+        problems.push(`The field map could not be saved: ${redact(String(e instanceof Error ? e.message : e))}`);
+      }
+    } catch (e) {
+      problems.push(`Could not read the Clients - Mahara fields: ${redact(String(e instanceof Error ? e.message : e))}`);
+    }
+  }
+  const ok = problems.length === 0;
+  const head = `Billing edits: ${bg.words.replace(/^billing: /, "")}.`;
+  const reasons = churnReasonOptions.length ? ` Churn Reason options: ${churnReasonOptions.join(", ")}.` : "";
+  const note = !ok
+    ? `${problems.join(" ")} ${head}`
+    : gaps.length
+      ? `${gaps.length} ${gaps.length === 1 ? "gap" : "gaps"} on Clients - Mahara. ${gaps.join(" ")} ${head}${reasons}`
+      : `Ready. ${stored} fields stored. Client Status, Churn Type, Churn Reason, the dates, MRR, LTV and the will-not-continue checkbox are all there. ${head}${reasons}`;
+  const at = new Date(deps.now()).toISOString();
+  try {
+    await deps.syncState?.("clickup-writeback:billing-doctor", {
+      last_run_at: at,
+      ...(ok ? { last_ok_at: at } : {}),
+      ok,
+      note: note.slice(0, 500),
+      detail: { gaps, problems, churnReasonOptions, reasonMap, willNotContinue, stored, mode: bg.mode, kinds: bg.open, at },
+      updated_at: at,
+    });
+  } catch (e) {
+    problems.push(`The doctor's result could not be saved: ${redact(String(e instanceof Error ? e.message : e))}`);
+  }
+  return { ok: ok && problems.length === 0, job: "billing_doctor", mode: bg.mode, note, gaps, churnReasonOptions, counts: { stored, gaps: gaps.length } };
+}
+
+// --- research (next-design plan build MI-1b; docs/forms/WAVE56-CONTRACT.md 4.23.1) ---------------------------------
+// The market research writer (research.ts): the card's Market Research doc and one comment for each published run of
+// hermes/market-intel. Its own switch (CLICKUP_WRITEBACK_APPLY_RESEARCH, _RESEARCH_KEYS, _RESEARCH_ONLY_CARDS), its own
+// claim (cockpit_clickup_writeback_claim_research, which the MI-3 migration adds), its own run rows (job research) and
+// its own health key clickup-writeback:research, which that claim reads back as the second brake. Every row is held
+// until MI-3 lists its outputs. It keeps the forms jobs' pace (CLICKUP_FORMS_CALLS_PER_MINUTE) and run rules: one run
+// sends at a time, a row the switch keeps out is handed back with no try used, and a 429 or a refused token stops it.
+
+export const RESEARCH_BUSY_HELD = "Another market research run is still sending, so this waits for the next run.";
+const RESEARCH_NOT_STARTED = "The market research run could not start, so this waits for the next run.";
+const researchWrites = (n: number) => `${n} market research ${n === 1 ? "write" : "writes"}`;
+export const researchAnotherRunNote = (n: number) =>
+  `Another market research run is still sending, so this one handed back the ${n === 1 ? "write" : `${n} writes`} it claimed; the next run takes ${n === 1 ? "it" : "them"}.`;
+
+/**
+ * Every research run reports its mode, open outputs, canary cards and counts in cockpit_sync_state
+ * clickup-writeback:research; the MI-3 claim takes rows only while this row is fresh and live. A switch that cannot be
+ * read reads not ok, its sentence first. A failed save never stops the run: its own run row keeps the note.
+ */
+async function reportResearch(deps: Deps, g: ReturnType<typeof researchGate>, ok: boolean, note: string, counts: Row = {}) {
+  const at = isoAt(deps.now());
+  const good = ok && !g.error;
+  try {
+    await deps.syncState?.("clickup-writeback:research", {
+      last_run_at: at,
+      ...(good ? { last_ok_at: at } : {}),
+      ok: good,
+      note: (g.error ? `${g.error} ${note}` : note).slice(0, 500),
+      detail: { mode: g.mode, keys: g.open, onlyCards: [...g.onlyCards], counts, at },
+      updated_at: at,
+    });
+  } catch {
+    // The run row (cockpit_clickup_writeback_runs) and the job's answer keep the note.
+  }
+}
+
+/** What a research run says when its claim took nothing: missing is never zero, so a count it cannot read is said. */
+export async function researchIdle(db: ReturnType<typeof researchDb>, g: ReturnType<typeof researchGate>, now: number): Promise<{ note: string; counts: Row }> {
+  let open: number | null = null;
+  let next = NaN;
+  try {
+    const inputs = await db.doctorInputs();
+    const byState = inputs?.queue;
+    if (byState && typeof byState === "object" && !Array.isArray(byState)) {
+      open = ["queued", "retry", "unknown"].reduce((n, s) => n + Math.max(0, Math.floor(Number(byState[s]) || 0)), 0);
+      next = Date.parse(String(inputs?.oldestDue ?? ""));
+    }
+  } catch {
+    open = null;
+  }
+  if (open === 0) return { note: "Nothing to write.", counts: { waiting: 0 } };
+  if (open === null) return { note: "Nothing to write now. The market research queue could not be counted, so it is not reported as empty.", counts: {} };
+  const rows = `${researchWrites(open)} ${open === 1 ? "waits" : "wait"}`;
+  if (g.mode === "dry_run") return { note: `Nothing written: ${rows} in the queue while the market research writer is off.`, counts: { waiting: open } };
+  if (Number.isFinite(next) && next > now) {
+    const k = new Date(next + 3 * 3_600_000);
+    const at = `${String(k.getUTCHours()).padStart(2, "0")}:${String(k.getUTCMinutes()).padStart(2, "0")}`;
+    return { note: `Nothing to write now: ${rows} for a later try, the next at ${at} Kuwait.`, counts: { waiting: open } };
+  }
+  return {
+    note: `Nothing to write now: ${rows} behind an older run on their card, for the setting market_intel.apply_clickup, or for the next run.`,
+    counts: { waiting: open },
+  };
+}
+
+export async function runResearch(deps: Deps, limit = 4): Promise<JobResult> {
+  const g = researchGate(deps.env);
+  const db = researchDb(deps.rpc);
+  const said = (ok: boolean, note: string) => ({ ok: ok && !g.error, note: g.error ? `${g.error} ${note}` : note });
+  const report = (ok: boolean, note: string, counts: Row = {}) => reportResearch(deps, g, ok, note, counts);
+  if (!deps.env("CLICKUP_API_TOKEN")) {
+    await report(false, SAY.noToken);
+    return { ...said(false, SAY.noToken), job: "research", mode: g.mode };
+  }
+  const token = deps.uuid();
+  let items: ResearchItem[];
+  try {
+    items = ((await db.claim(token, limit)) ?? []) as ResearchItem[];
+  } catch (e) {
+    // Before the MI-3 migration there is no research queue: said as such, never as an empty queue.
+    const note = notInstalled(e)
+      ? SAY_RESEARCH.notInstalled
+      : `The market research queue could not be read, so nothing was written: ${redact(String(e instanceof Error ? e.message : e))}`;
+    await report(false, note);
+    return { ...said(false, note), job: "research", mode: g.mode };
+  }
+  if (!items.length) {
+    const quiet = await researchIdle(db, g, deps.now());
+    await report(true, quiet.note, quiet.counts);
+    return { ...said(true, quiet.note), job: "research", mode: g.mode, counts: quiet.counts };
+  }
+  // skipped = a field kept as the card has it (another link there); heldRun = a row whose run went back in progress
+  // after it published: it waits for the run, no try used.
+  const counts = { claimed: items.length, delivered: 0, skipped: 0, retry: 0, unknown: 0, failed: 0, held: 0, heldOff: 0, heldNext: 0, heldRun: 0 };
+  const planned: Row[] = [];
+  const save = (id: string, patch: Row) => deps.rpc("cockpit_clickup_writeback_save", { p_id: id, p_token: token, p_patch: patch });
+  /** Back to the queue with no try counted (cockpit_clickup_writeback_release); retry with the note should it refuse. */
+  const handBack = async (item: ResearchItem, note: string, waitMs: number) => {
+    const next = isoAt(deps.now() + waitMs);
+    try {
+      await db.release(item.id, token, planResearch(item), note, next);
+    } catch {
+      await save(item.id, { state: "retry", error: note, next_attempt_at: next }).catch(() => {});
+    }
+  };
+  let runId: string | null = null;
+  let stop = "";
+  let went = "";
+  let lastSaid = "";
+  let tokenAnswers = false;
+  const refusedCards = new Set<string>();
+  try {
+    let run: Row | null = null;
+    try {
+      // Exclusive: one research run sends at a time, so the pace covers the whole job.
+      run = await deps.rpc("cockpit_clickup_writeback_begin", { p_job: "research", p_mode: g.mode, p_exclusive: true });
+      const age = run?.id ? null : openRunMinutes(run?.note, deps.now());
+      if (age !== null && age >= STALE_RUN_MINUTES) {
+        const since = /started at (\d{2}:\d{2})/.exec(String(run?.note))?.[1] ?? "";
+        run = await deps.rpc("cockpit_clickup_writeback_begin", { p_job: "research", p_mode: g.mode, p_exclusive: false });
+        went = `A market research run that started at ${since} Kuwait never reported back, so this one went ahead.`;
+      }
+    } catch (e) {
+      run = { note: redact(String(e instanceof Error ? e.message : e)) };
+    }
+    if (!run?.id) {
+      const busy = openRunMinutes(run?.note, deps.now()) !== null;
+      for (const item of items) await handBack(item, busy ? RESEARCH_BUSY_HELD : RESEARCH_NOT_STARTED, 0);
+      if (busy) {
+        const note = researchAnotherRunNote(items.length);
+        const handed = { claimed: items.length, handedBack: items.length };
+        await report(true, note, handed);
+        return { ...said(true, note), job: "research", mode: g.mode, counts: handed };
+      }
+      throw new Error(`${RESEARCH_NOT_STARTED} ${String(run?.note ?? "")}`.trim());
+    }
+    runId = String(run.id);
+    const started = deps.now();
+    for (const item of items) {
+      if (stop || deps.now() - started > FORMS_RUN_BUDGET_MS) {
+        counts.held += 1;
+        counts.heldNext += 1;
+        await handBack(item, stop || HELD, 0);
+        continue;
+      }
+      // The switch keeps this card out, or this output is not listed: back to the queue, untouched.
+      const lane = researchLane(item.payload);
+      if (!g.live(item.task_id) || (lane !== null && !g.has(lane))) {
+        counts.held += 1;
+        counts.heldOff += 1;
+        planned.push(...planResearch(item));
+        // As runForms: a switch that cannot be read says so on the row, never a plain "switched off".
+        const why = !g.live(item.task_id)
+          ? (g.error ?? (g.mode === "apply_limited" ? SAY_RESEARCH.heldLimited : SAY_RESEARCH.heldOff))
+          : SAY_RESEARCH.heldLane(String(lane));
+        await handBack(item, why, HOLD_MS);
+        continue;
+      }
+      try {
+        const checked = await researchStep(item);
+        if ("wait" in checked) {
+          // The run went back in progress after it published: back to the queue, untouched, until it publishes again.
+          counts.held += 1;
+          counts.heldRun += 1;
+          planned.push(...planResearch(item));
+          await handBack(item, checked.wait, HOLD_MS);
+          continue;
+        }
+        const step = "step" in checked ? researchFrozen(item, checked.step) : null;
+        if (!step) {
+          await save(item.id, { state: "failed", error: "fail" in checked ? checked.fail : SAY_RESEARCH.mismatch });
+          counts.failed += 1;
+          continue;
+        }
+        // Freeze the write before the first call, so a retry posts exactly the same link and text.
+        if (!item.steps?.length) await save(item.id, { steps: [step] });
+        const provider = paced(deps.providerFor(item.id), deps.pace);
+        let o = await executeResearch(item, step, provider, async patch => {
+          await save(item.id, patch);
+        }, deps.now);
+        if (o.tokenRefused) {
+          const check: Awaited<ReturnType<typeof checkToken>> = tokenAnswers ? "good" : await checkToken(provider);
+          tokenAnswers = check === "good";
+          if (check !== "good") {
+            // The token, or no way to tell: no try used, and every later row waits for the next run.
+            await save(item.id, { progress: o.progress });
+            stop = check === "refused" ? SAY_FORMS.tokenRefused : check === "slow" ? FORMS_SLOW_DOWN : SAY_FORMS.tokenUnsure;
+            lastSaid = redact(o.error ?? "");
+            counts.held += 1;
+            counts.heldNext += 1;
+            await handBack(item, stop, HOLD_MS);
+            continue;
+          }
+          o = cardRefused(o, step.key);
+          if (item.task_id) refusedCards.add(item.task_id);
+        }
+        const now = deps.now();
+        const tries = Math.max(0, Number(item.attempts ?? 0));
+        const gaveUp = o.state !== "delivered" && o.state !== "skipped" && o.state !== "failed" && tries > RETRY_MINUTES.length;
+        const closing = o.state === "failed" || o.state === "unknown" || gaveUp;
+        if (closing && o.plain) lastSaid = redact(o.error ?? "");
+        const progress = closing && o.plain ? { ...o.progress, lastDetail: redact(o.error ?? "") } : o.progress;
+        const settle: Row =
+          o.state === "delivered"
+            ? { state: "delivered", progress, delivered_at: isoAt(now), error: null }
+            : o.state === "skipped"
+              ? { state: "skipped", progress, error: o.error ? redact(o.error) : null }
+              : o.state === "failed"
+                ? { state: "failed", progress, error: redact(o.plain ?? o.error ?? GAVE_UP) }
+                : gaveUp
+                  ? { state: "failed", progress, error: redact(o.endsAs ?? `${GAVE_UP} ${o.state === "unknown" ? FORMS_CHECK_CARD : ""} ${o.plain ? "" : (o.error ?? "")}`.replace(/\s+/g, " ").trim()) }
+                  : {
+                      state: o.state,
+                      progress,
+                      error: redact((o.state === "unknown" ? o.plain : undefined) ?? o.error ?? "") || null,
+                      next_attempt_at: isoAt(now + RETRY_MINUTES[Math.min(Math.max(tries - 1, 0), RETRY_MINUTES.length - 1)] * 60_000),
+                    };
+        await save(item.id, settle);
+        counts[settle.state as "delivered" | "skipped" | "failed" | "retry" | "unknown"] += 1;
+        if (o.stop) stop = redact(o.error ?? "A provider secret is missing.");
+        else if (/rejected the request \(429/.test(o.error ?? "")) stop = FORMS_SLOW_DOWN;
+      } catch (e) {
+        // Our own bookkeeping failed. The write may have reached ClickUp, so it is read back next time.
+        counts.unknown += 1;
+        lastSaid = redact(String(e instanceof Error ? e.message : e));
+        await save(item.id, { state: "unknown", error: SAY.bookkeeping, next_attempt_at: isoAt(deps.now() + 60_000) }).catch(() => {});
+      }
+    }
+    const toRetry = counts.retry + counts.unknown;
+    const tail = [
+      counts.skipped ? `${counts.skipped} kept as the card has ${counts.skipped === 1 ? "it" : "them"}.` : "",
+      went,
+      refusedCards.size ? `ClickUp refused the cockpit's token on ${refusedCards.size === 1 ? "card" : "cards"} ${[...refusedCards].join(", ")}.` : "",
+      stop ? `Stopped: ${stop}` : "",
+      lastSaid ? `Last detail: ${lastSaid}` : "",
+    ].filter(Boolean).join(" ");
+    const heldNext = counts.heldNext ? ` ${researchWrites(counts.heldNext)} held for the next run.` : "";
+    const heldOff = counts.heldOff ? ` ${researchWrites(counts.heldOff)} held by the switch.` : "";
+    const heldRun = counts.heldRun
+      ? ` ${researchWrites(counts.heldRun)} ${counts.heldRun === 1 ? "waits for its run" : "wait for their runs"} to publish again.`
+      : "";
+    const note =
+      g.mode === "dry_run"
+        ? `Dry run: ${researchWrites(counts.held)} held. Nothing was written to ClickUp: market research writes are switched off.`
+        : g.mode === "apply_limited"
+          ? `Testing on the test card: ${counts.delivered} written to ClickUp, ${toRetry} to retry, ${counts.failed} failed.${heldOff}${heldRun}${heldNext}`
+          : `${researchWrites(counts.delivered)} reached ClickUp, ${toRetry} to retry, ${counts.failed} failed.${heldOff}${heldRun}${heldNext}`;
+    const full = tail ? `${note} ${tail}` : note;
+    const ok = counts.failed === 0 && !stop;
+    const out = said(ok, full);
+    await deps.rpc("cockpit_clickup_writeback_finish", { p_run: runId, p_ok: out.ok, p_note: out.note, p_counts: counts, p_planned: planned });
+    await report(ok, full, counts);
+    return { ...out, job: "research", mode: g.mode, counts };
+  } catch (e) {
+    const note = redact(String(e instanceof Error ? e.message : e));
+    if (runId) await deps.rpc("cockpit_clickup_writeback_finish", { p_run: runId, p_ok: false, p_note: note, p_counts: counts, p_planned: planned }).catch(() => {});
+    await report(false, note, counts);
+    return { ...said(false, note), job: "research", mode: g.mode, counts };
+  }
+}
+
+/** Secrets the research jobs read, by name only (never a value). */
+export const RESEARCH_SECRETS = [
+  "CLICKUP_API_TOKEN",
+  "CRON_SECRET",
+  "CLICKUP_WRITEBACK_APPLY_RESEARCH",
+  "CLICKUP_WRITEBACK_RESEARCH_KEYS",
+  "CLICKUP_WRITEBACK_RESEARCH_ONLY_CARDS",
+];
+
+/**
+ * The research doctor: reads only. Secrets by name, the switch, the research queue and the setting's publish brake
+ * from the database (said as not there yet before the MI-3 migration, never as an empty queue), the Market Research
+ * doc on Clients - Mahara as a url field, and the canary card on that list. Its result lands in cockpit_sync_state
+ * clickup-writeback:research-doctor.
+ */
+export async function runResearchDoctor(
+  deps: Deps,
+): Promise<JobResult & { problems: string[]; secrets: Row; onlyCards: string[]; keys: string[] }> {
+  const g = researchGate(deps.env);
+  const secrets = Object.fromEntries(RESEARCH_SECRETS.map(k => [k, Boolean(deps.env(k))]));
+  const problems: string[] = [];
+  const notes: string[] = [];
+  let counts: Row = {};
+  let inputs: Row | null = null;
+  if (!secrets.CLICKUP_API_TOKEN) problems.push(SAY.noToken);
+  if (!secrets.CRON_SECRET) problems.push("CRON_SECRET is not set on this Edge Function, so the cron cannot start a market research run.");
+  if (g.error) problems.push(g.error);
+  try {
+    inputs = (await researchDb(deps.rpc).doctorInputs()) ?? {};
+  } catch (e) {
+    problems.push(
+      notInstalled(e)
+        ? "The market research queue is not in the database yet: it comes with the MI-3 migration (cockpit_clickup_writeback_claim_research and cockpit_clickup_research_doctor_inputs)."
+        : `Could not read the market research queue: ${redact(String(e instanceof Error ? e.message : e))}`,
+    );
+  }
+  if (inputs?.field !== undefined && inputs.field !== MARKET_RESEARCH_FIELD)
+    problems.push("The database and the writer name different ClickUp fields for the Market Research doc.");
+  if (inputs && g.mode !== "dry_run" && inputs.applyClickup !== true)
+    notes.push("The setting market_intel.apply_clickup is off, so the database hands this writer no rows yet.");
+  if (secrets.CLICKUP_API_TOKEN) {
+    try {
+      const checked = await researchDoctorChecks(paced(deps.providerFor(deps.uuid()), deps.pace), [...g.onlyCards]);
+      problems.push(...checked.problems);
+      counts = checked.counts;
+    } catch (e) {
+      problems.push(`Could not check ClickUp: ${redact(String(e instanceof Error ? e.message : e))}`);
+    }
+  }
+  const ok = problems.length === 0;
+  const head = `Market research writes: ${g.text}.`;
+  const cards = Array.isArray(counts.cards) && counts.cards.length ? ` The test card ${counts.cards.join(", ")} is on Clients - Mahara.` : "";
+  const after = notes.length ? ` ${notes.join(" ")}` : "";
+  const note = ok
+    ? `Ready. ${head} Market Research doc is a link field on Clients - Mahara.${cards}${after}`
+    : `${problems.length} ${problems.length === 1 ? "problem" : "problems"}. ${head} ${problems.slice(0, 5).join(" ")}${problems.length > 5 ? ` And ${problems.length - 5} more.` : ""}${after}`;
+  const at = new Date(deps.now()).toISOString();
+  try {
+    await deps.syncState?.("clickup-writeback:research-doctor", {
+      last_run_at: at,
+      ...(ok ? { last_ok_at: at } : {}),
+      ok,
+      note: note.slice(0, 500),
+      detail: {
+        mode: g.mode,
+        keys: g.open,
+        onlyCards: [...g.onlyCards],
+        secrets,
+        problems,
+        counts,
+        queue: inputs?.queue ?? null,
+        applyClickup: inputs?.applyClickup ?? null,
+        at,
+      },
+      updated_at: at,
+    });
+  } catch (e) {
+    problems.push(`The doctor's result could not be saved: ${redact(String(e instanceof Error ? e.message : e))}`);
+  }
+  return { ok: ok && problems.length === 0, job: "research_doctor", mode: g.mode, note, problems, secrets, onlyCards: [...g.onlyCards], keys: g.open, counts };
 }

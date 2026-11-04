@@ -1,5 +1,7 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { TriangleAlert, Upload } from "lucide-react";
-import { type ChangeEvent, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { money, plural } from "@/components/ceo/format";
 import { Kicker } from "@/components/ceo/Kicker";
@@ -9,6 +11,8 @@ import { SectionCard } from "@/components/ceo/SectionCard";
 import { STATUS_COLOR, StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
+import { ALL_CLOSED, type W56Doors } from "@/forms/staff/formSheetCore";
+import { formDoorsW56 } from "@/forms/staff/lifecycleClient";
 import {
   api,
   useAction,
@@ -16,7 +20,7 @@ import {
   useQuery,
   useQueryState,
 } from "@/lib/cockpitApi";
-import { ltvRefusal } from "./ltvRefusal";
+import { LTV_RETIRED, ltvRefusal } from "./ltvRefusal";
 
 // The kit's table look for the hand-built previews: sentence-case headers in
 // muted 12px, hairline rows, no box of their own inside the card.
@@ -656,4 +660,62 @@ export function LtvWriteCard({ order }: { order?: number }) {
       }}
     </SectionCard>
   );
+}
+
+/** Waves 5-6's doors for the CEO cards, read once per page load (WAVE56-CONTRACT.md 3.10). */
+let w56Read: { client: SupabaseClient; read: Promise<W56Doors> } | null = null;
+
+export function useW56Doors(client: SupabaseClient | null): W56Doors | null {
+  const [doors, setDoors] = useState<W56Doors | null>(null);
+  useEffect(() => {
+    if (!client) {
+      setDoors({ ...ALL_CLOSED });
+      return;
+    }
+    if (!w56Read || w56Read.client !== client)
+      w56Read = { client, read: formDoorsW56(client) };
+    let live = true;
+    void w56Read.read.then(d => live && setDoors(d));
+    return () => {
+      live = false;
+    };
+  }, [client]);
+  return doors;
+}
+
+/**
+ * The Money tab's Apply, the one inverse door (WAVE56-CONTRACT.md 5.5, X25):
+ * while cockpit_form_doors().ltv is false the existing card and its Apply
+ * show exactly as before, so a writer exists until the morning writer
+ * starts; once it is true the Apply gives way to one line.
+ */
+export function LtvApplyDoor({
+  order,
+  ltvOpen,
+}: {
+  order?: number;
+  /** cockpit_form_doors().ltv; null while it is read (nothing shows yet). */
+  ltvOpen?: boolean | null;
+}) {
+  const auth = useCockpitAuth();
+  const doors = useW56Doors(ltvOpen === undefined ? auth.client : null);
+  const open =
+    ltvOpen === undefined ? (doors ? doors.ltv.open : null) : ltvOpen;
+  if (open === null) return null;
+  if (open)
+    return (
+      <SectionCard
+        id="money-ltv"
+        kicker="Active and onboarding"
+        title="Lifetime value on the cards"
+        order={order}
+      >
+        {() => (
+          <p className="text-sm text-muted-foreground" data-ltv-retired>
+            {LTV_RETIRED}
+          </p>
+        )}
+      </SectionCard>
+    );
+  return <LtvWriteCard order={order} />;
 }

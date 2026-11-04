@@ -172,7 +172,7 @@ function elsewhereNote(n: number, text: string): Note[] {
 /** Both kinds of cash sit on this tab, so the difference is spelled out every time. */
 const CASH_CLASH_NOTE: Note = {
   level: "warn",
-  text: "Front-end cash is money that landed on signed deals, so it is already inside the cash collected at the top of this tab: never add the two. What the closer typed on the form sits beside it as typed, not money.",
+  text: "Front-end cash is money that landed on signed deals, so it is already inside the cash in, every rail, at the top of this tab: never add the two. What the closer typed on the form sits beside it as typed, not money.",
 };
 
 const COSTS_WINDOW_NOTE: Note = {
@@ -340,7 +340,8 @@ function CallFunnel({ sections, now, day, goTab }: CeoTabProps) {
       <SectionCard
         id="frontend-cash"
         kicker={month(monthKey, { long: true, year: true })}
-        title="Cash collected"
+        // Every rail, not the deal ledger's Cash collected (2026-11-02, fix 14).
+        title={m ? cashHeadline(m).title : "Cash in, every rail"}
         section={moneySection}
         notes={join(
           notes.money.cash,
@@ -445,7 +446,7 @@ function CallFunnel({ sections, now, day, goTab }: CeoTabProps) {
   );
 }
 
-// --- Card 1: cash collected, by rail ---
+// --- Card 1: cash in, every rail, by rail ---
 
 function CashWon({ p, today }: { p: MoneyPayload; today: string }) {
   const headline = cashHeadline(p);
@@ -777,6 +778,7 @@ function CostsBody({
   const prevCostToWin = prev ? COST_TO_WIN.of(prev).value : null;
   // Paid front-end cash (MONEY-ATTRIBUTION.md rule 6); null when not read.
   const fe = paidFrontEnd(w);
+  const roas = ROAS_CASH.of(w);
 
   const windowTiles: Tile[] = [
     {
@@ -789,15 +791,17 @@ function CostsBody({
     },
     {
       label: ROAS_CASH.label,
-      // On paid money only: a payload from before 2026-10-18 divided the typed figure.
-      value: ratio(fe === null ? null : w.roasCash),
+      // Paid money over all Mahara ad spend (2026-11-02, fix 15), worked out
+      // from the window so a payload from before the worker's change reads on
+      // the same rule as the Goals sheet; paid money only, never typed.
+      value: ratio(roas.value),
       delta: delta(
-        fe === null ? null : change(w.roasCash, prev?.roasCash),
+        change(roas.value, prev ? ROAS_CASH.of(prev).value : null),
         "up",
       ),
       sub: `${money(fe)} front-end cash`,
       hint: ROAS_CASH.hint,
-      naHint: ROAS_CASH.naHint,
+      naHint: roas.naHint,
     },
     {
       label: ROAS_CONTRACTED.label,
@@ -995,7 +999,7 @@ function TrendBody({
           unit="money"
           title={cashLabel}
           height={220}
-          ariaLabel={`Cash collected per day over the last ${count(cashDaily.length)} complete days.`}
+          ariaLabel={`Cash in per day, ${m?.rails ? "every rail" : "Whop only"}, over the last ${count(cashDaily.length)} complete days.`}
           emptyText={
             m
               ? "No cash days to plot yet."

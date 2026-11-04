@@ -90,18 +90,18 @@ export function MobileTabBar() {
             active: path === "/dashboard" || path === "/eod",
           },
           {
-            key: "launch",
-            label: "Clients",
-            icon: Users,
-            to: "/clients",
-            active: path === "/clients" || path === "/launch",
-          },
-          {
             key: "ads",
             label: "Ads",
             icon: Megaphone,
             to: "/ads",
             active: path === "/ads",
+          },
+          {
+            key: "launch",
+            label: "Clients",
+            icon: Users,
+            to: "/clients",
+            active: path === "/clients" || path === "/launch",
           },
           {
             key: "library",
@@ -158,9 +158,18 @@ export function MobileTabBar() {
             to: "/team",
             active: path.startsWith("/team"),
           },
+          // Everybody's: Ask a team. The media buyer's bar is full and
+          // reaches it through More.
+          {
+            key: "requests",
+            label: "Requests",
+            icon: COCKPIT_ICON.requests,
+            to: "/requests",
+            active: path.startsWith("/requests"),
+          },
           {
             key: "performance",
-            label: "Clients",
+            label: "Performance",
             icon: COCKPIT_ICON.performance,
             to: "/performance",
             active: path === "/performance",

@@ -128,7 +128,7 @@ describe("Front-end cash is the paid deal ledger (MONEY-ATTRIBUTION.md rule 6)",
       { day: "2026-10-16", taskId: "t-c", client: "Client C", amount: 5750, confirmed: 0, rail: null },
       { day: "2026-10-14", taskId: "t-a", client: "Client A", amount: 5500, confirmed: 5500, rail: "whop" },
     ];
-    const window = { from: "2026-10-01", to: "2026-10-18", spend: 700, frontEndCash: { deposit: 1250, kickoff: 11250, total: null, deals: 3, dealsConfirmed: 1, confirmed: 500, confirmedShare: 0.4 }, roasCash: null };
+    const window = { from: "2026-10-01", to: "2026-10-18", spend: 700, raw: { spend_retargeting: 0 }, frontEndCash: { deposit: 1250, kickoff: 11250, total: null, deals: 3, dealsConfirmed: 1, confirmed: 500, confirmedShare: 0.4 }, roasCash: null };
     const w = withPaid(window, ledger, deals, kickoffs);
     expect(w.frontEndCash.total).toBe(7000);
     expect(w.frontEndCash.paid).toBe(7000);
@@ -181,30 +181,14 @@ describe("Churn from the register (A078)", () => {
   });
 });
 
-describe("The extension field note follows the hourly job (A120, A136)", () => {
-  test("dry run, writing, no run yet, and no field", () => {
+describe("The extension field note names the billing queue (waves 1-2 4.11.3)", () => {
+  test("a field the cockpit found, and no field", () => {
     const at = Date.parse("2026-10-11T12:47:02Z");
-    expect(extensionJobNote({ job: "ceo-extensions-auto", ok: true, error: "Dry run: every card already says what the form says.", at }, true))
-      .toBe("Automatic writes are off (dry run): the hourly job at :47 checks the 'Current extension (weeks)' field against the extension form but writes nothing (last run 2026-10-11 15:47 Kuwait: Dry run: every card already says what the form says.). The button writes it now.");
-    expect(extensionJobNote({ job: "ceo-extensions-auto", ok: true, error: "Wrote 2 cards.", at }, true))
-      .toBe("Kept current every hour at :47 from the extension form (last run 2026-10-11 15:47 Kuwait: Wrote 2 cards.). The button writes it now.");
-    expect(extensionJobNote(null, true)).toContain("has not reported a run yet");
+    const note = extensionJobNote({ job: "ceo-extensions-auto", ok: true, error: "Wrote 2 cards.", at }, true);
+    expect(note).toBe("The billing sheet writes each grant's weeks to the 'Current extension (weeks)' field through the ClickUp billing queue when the grant is given, and the cockpit's daily step sets it to 0 once the grant ends.");
+    expect(extensionJobNote(null, true)).toBe(note);
+    expect(note).not.toMatch(/hourly job|button|extension form/i);
     expect(extensionJobNote(null, false)).toContain("Create a Number field");
-    expect(extensionJobNote({ error: "Dry run" }, true)).not.toContain("never automatically");
-  });
-
-  test("grant rows by day for twelve months, matched to a card, tests left out", () => {
-    const cards = [{ taskId: "t1", name: "Ocean Home" }, { taskId: "t2", name: "Internal Test" }];
-    const rows = grantRowsOf([
-      { client: "ocean home", day: "2026-10-02", weeks: 2, until: "2026-10-16", submittedAt: 0 },
-      { client: "Someone New", day: "2026-09-10", weeks: 1, until: "2026-09-17", submittedAt: 0 },
-      { client: "internal test", day: "2026-10-03", weeks: 4, until: "2026-10-31", submittedAt: 0 },
-      { client: "ocean home", day: "2025-09-01", weeks: 4, until: "2025-09-29", submittedAt: 0 },
-    ], cards, "2026-10-11");
-    expect(rows).toEqual([
-      { day: "2026-09-10", taskId: null, client: "Someone New", weeks: 1, until: "2026-09-17" },
-      { day: "2026-10-02", taskId: "t1", client: "Ocean Home", weeks: 2, until: "2026-10-16" },
-    ]);
   });
 });
 

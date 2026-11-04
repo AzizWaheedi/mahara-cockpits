@@ -8,6 +8,8 @@ import {
   CFB,
   columnsOf,
   CRITICAL_FIELDS,
+  EDIT_EVENT_KINDS,
+  EDIT_EVENT_SOURCES,
   F,
   humanEdits,
   lastPage,
@@ -242,6 +244,47 @@ test("which columns an event holds", () => {
     { ...e("date"), clickup_task_id: "t1", at: "not a time" },
   ]);
   assert.deepEqual(edits.get("t1")?.get("next_payment_date"), { at: Date.parse("2026-10-05T00:00:00Z"), source: "ceo" });
+});
+
+test("waves 1-2 events: a churn holds status and churn date, an MRR edit its MRR, the cockpit's clear only an extension", () => {
+  const e = (kind: string, over: Any = {}) => ({ kind, source: "csm", ...over });
+  assert.deepEqual(columnsOf(e("churn", { detail: { left_on: "2026-10-30" } })), ["client_status", "churn_date"]);
+  assert.deepEqual(columnsOf(e("churn", { source: "ceo", detail: { left_on: "2026-10-30", clear_paused: true } })), ["client_status", "churn_date", "paused_on"]);
+  assert.deepEqual(columnsOf(e("mrr", { from_value: "1500", to_value: "2000" })), ["mrr_usd"]);
+  assert.deepEqual(columnsOf(e("extension", { source: "system", detail: { weeks: 0, reason: "grant ended", grant_id: 7 } })), ["extension_weeks"]);
+  // The cockpit itself never holds anything else on the mirror, and a late or LTV event holds nothing.
+  for (const kind of ["pause", "resume", "churn", "mrr", "date", "ltv", "late"]) assert.deepEqual(columnsOf(e(kind, { source: "system" })), []);
+  assert.deepEqual(columnsOf(e("late", { detail: { due: "2026-10-20" } })), []);
+  // index.ts reads the events with these lists, so the new kinds and the system source reach columnsOf.
+  assert.deepEqual([...EDIT_EVENT_SOURCES], ["ceo", "csm", "maher", "system"]);
+  for (const kind of ["churn", "mrr", "extension", "pause", "resume"]) assert.ok((EDIT_EVENT_KINDS as readonly string[]).includes(kind));
+});
+
+test("waves 3-4 events: the exit survey's comment and NPS Survey Sent hold no mirror column (contract 3.8)", () => {
+  const e = (kind: string, over: Any = {}) => ({ kind, ...over });
+  // As 20261102b writes them (system), and even if a person's row ever carried the kind.
+  for (const source of ["system", "csm", "ceo", "maher"]) {
+    assert.deepEqual(columnsOf(e("nps_sent", { source, detail: { invite_id: "i1", on: "2026-11-03", round: 1 } })), []);
+    assert.deepEqual(columnsOf(e("survey", { source, detail: { form_key: "exit_survey", response_id: "r1", recommend: 5 } })), []);
+  }
+  // index.ts never reads them as edits, so a waiting survey or NPS item never holds a column on the mirror.
+  for (const kind of ["survey", "nps_sent"]) assert.equal((EDIT_EVENT_KINDS as readonly string[]).includes(kind), false);
+  const edits = humanEdits([
+    { kind: "nps_sent", source: "system", clickup_task_id: "t1", at: "2026-11-03T07:00:00Z", detail: { on: "2026-11-03" } },
+    { kind: "survey", source: "system", clickup_task_id: "t1", at: "2026-11-03T07:00:00Z", detail: {} },
+  ], new Set(["1", "2"]));
+  assert.equal(edits.size, 0);
+});
+
+test("a held cockpit clear keeps the mirror's weeks and names the row's source as the sync, never 'system'", () => {
+  // The card still shows 2 weeks; the cockpit cleared the grant and its write waits in the queue.
+  const clear = { id: 9, clickup_task_id: "t1", kind: "extension", source: "system", at: "2026-10-09T07:00:00Z", detail: { weeks: 0, reason: "grant ended", grant_id: 3 } };
+  const existing = [mirror({ extension_weeks: 0, source: "sync" })];
+  assert.equal(accountFromTask(acme({ [F.extension]: "2" }), options, NOW_ISO).extension_weeks, 2);
+  const plan = planMirror([acme({ [F.extension]: "2" })], options, existing, [clear], NOW_ISO, new Set(["9"]));
+  assert.equal(plan.rows[0].row.extension_weeks, 0);
+  assert.deepEqual(plan.held, [{ taskId: "t1", name: "Acme", column: "extension_weeks", mirror: 0, card: 2 }]);
+  assert.equal(plan.rows[0].row.source, "sync");
 });
 
 test("mirror rows the read did not return are reported and left alone", () => {

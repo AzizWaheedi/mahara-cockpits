@@ -30,7 +30,7 @@ import {
   TECH_REQUEST_TYPE,
 } from "./rules.ts";
 import { dropdownLabel, optionId } from "./kpi.ts";
-import { billingRequest, billingSteps, billingVerdict, cardValue, VERDICT_NOTE } from "./billing.ts";
+import { billingRequest, billingSteps, billingVerdict, cardValue, resolveField, softMissing, VERDICT_NOTE } from "./billing.ts";
 
 export interface Provider {
   call(provider: "meta" | "clickup", method: string, path: string, body?: Row): Promise<Row>;
@@ -43,7 +43,19 @@ export type Step =
   | { key: string; type: "ad_status"; taskId: string; metaCampaignId: string }
   // A cockpit billing edit on a Clients - Mahara card (billing.ts). value null clears the field;
   // old is the mirror's value before the edit, when the event recorded it; at is the edit time (ms).
-  | { key: string; type: "billing_field"; taskId: string; fieldId: string; field: string; format: "dropdown" | "date" | "number"; value: string | number | null; old?: string | number | null; at: number };
+  // A checkbox value is "true" or "false". byPrefix: fieldId is a prefix resolved per run (W7).
+  | {
+      key: string;
+      type: "billing_field";
+      taskId: string;
+      fieldId: string;
+      field: string;
+      format: "dropdown" | "date" | "number" | "checkbox";
+      value: string | number | null;
+      old?: string | number | null;
+      byPrefix?: true;
+      at: number;
+    };
 
 export type QueueItem = {
   id: string;
@@ -280,18 +292,26 @@ export async function planItem(
       try {
         const card = await readCard(step.taskId);
         const fields = await clientFields();
-        const now = cardValue(card, step.fieldId, step.format, fields);
-        const verdict = billingVerdict(step, card, now, false);
+        const resolved = resolveField(step, fields);
+        if ("missing" in resolved) {
+          out.push({ ...entry, old: null, note: resolved.missing });
+          continue;
+        }
+        const s = { ...step, fieldId: resolved.fieldId };
+        const now = cardValue(card, s.fieldId, s.format, fields);
+        const verdict = billingVerdict(s, card, now, false);
         let note: string | undefined = verdict === "write" ? undefined : VERDICT_NOTE[verdict];
         if (String(card.list?.id ?? "") !== CLIENTS_LIST) note = NOT_ON_CLIENTS;
         else if (verdict === "write") {
-          try {
-            billingRequest(step, fields);
-          } catch (e) {
-            note = String(e instanceof Error ? e.message : e);
-          }
+          note = softMissing(s, fields) ?? undefined;
+          if (!note)
+            try {
+              billingRequest(s, fields);
+            } catch (e) {
+              note = String(e instanceof Error ? e.message : e);
+            }
         }
-        out.push({ ...entry, old: now, ...(note ? { note } : {}) });
+        out.push({ ...entry, fieldId: s.fieldId, old: now, ...(note ? { note } : {}) });
       } catch (e) {
         out.push({ ...entry, old: null, note: `Could not read the card: ${String(e instanceof Error ? e.message : e).slice(0, 160)}` });
       }
@@ -337,6 +357,13 @@ export async function executeItem(
     if (progress[step.key]?.done) continue;
     const resumed = Boolean(progress[step.key]?.started);
     try {
+      // A billing event's comment says what the card now shows; when ClickUp kept its own values for every
+      // field, the comment would say something the card does not, so it is not posted.
+      if (item.kind === "billing" && step.type === "comment" && step.key === "billing_comment" && billingAllStale(steps, progress)) {
+        progress[step.key] = { done: true, skipped: true, note: "Not posted: ClickUp kept its own values for every field." };
+        await save(progress);
+        continue;
+      }
       if (step.type === "comment") {
         const taskId = resolveTask(step.taskId, progress);
         const text = resolveText(step.text, progress);
@@ -378,14 +405,25 @@ export async function executeItem(
         const card = await readCard(step.taskId);
         if (String(card.list?.id ?? "") !== CLIENTS_LIST) throw new Error(NOT_ON_CLIENTS);
         const fields = await clientFields();
-        const now = cardValue(card, step.fieldId, step.format, fields);
-        const verdict = billingVerdict(step, card, now, ownWrites);
-        if (verdict === "write") {
-          const request = billingRequest(step, fields);
+        const resolved = resolveField(step, fields);
+        if ("missing" in resolved) {
+          // Contract 3.3: only this step is skipped; the rest of the item still runs.
+          progress[step.key] = { done: true, missing: true, note: resolved.missing };
+          await save(progress);
+          continue;
+        }
+        const s = { ...step, fieldId: resolved.fieldId };
+        const now = cardValue(card, s.fieldId, s.format, fields);
+        const verdict = billingVerdict(s, card, now, ownWrites);
+        const soft = verdict === "write" ? softMissing(s, fields) : null;
+        if (soft) {
+          progress[step.key] = { done: true, missing: true, current: now, note: soft };
+        } else if (verdict === "write") {
+          const request = billingRequest(s, fields);
           progress[step.key] = { started: true };
           await save(progress);
-          await provider.call("clickup", request.method, `task/${step.taskId}/field/${step.fieldId}`, request.body);
-          progress[step.key] = { done: true, written: true, from: now, to: step.value };
+          await provider.call("clickup", request.method, `task/${s.taskId}/field/${s.fieldId}`, request.body);
+          progress[step.key] = { done: true, written: true, from: now, to: s.value };
         } else {
           progress[step.key] = { done: true, [verdict]: true, current: now, note: VERDICT_NOTE[verdict] };
         }
@@ -419,9 +457,18 @@ export async function executeItem(
       return { state: "failed", progress, error };
     }
   }
-  if (item.kind === "billing" && steps.every(s => progress[s.key]?.stale))
+  if (item.kind === "billing" && billingAllStale(steps, progress))
     return { state: "skipped", progress, error: "ClickUp changed this card after the cockpit edit, so nothing was written and ClickUp's values stay." };
   return { state: "delivered", progress };
+}
+
+/**
+ * Every field of a billing item was left as ClickUp has it: each one stale (ClickUp changed it after the edit) or
+ * missing from the list, at least one stale. A note-only item has no field and is never "all stale".
+ */
+export function billingAllStale(steps: Step[], progress: Record<string, Row>): boolean {
+  const fields = steps.filter(s => s.type === "billing_field");
+  return fields.length > 0 && fields.every(s => progress[s.key]?.stale || progress[s.key]?.missing) && fields.some(s => progress[s.key]?.stale);
 }
 
 /** A list's field definitions, read once per run when a step needs an option id. */

@@ -11,6 +11,11 @@ NO_META_ACCESS = {'86ex4j8f3'}  # Brillant Touch Company
 # two scans read the same 14:40 result (one after it finished, one before the next run replaced it).
 STALE_READ_MIN = 20
 
+# The worker's own refusal for a client whose ClickUp Client Status is not Active (core.ts validateBinding). Such a
+# client is paused, not unread: the worker reads it again on the first run after the status returns to Active, so its
+# binding stays enabled and nobody has to switch it back on. On 1 Nov 2026 four paused clients paged every scan.
+NOT_ACTIVE = 'Client is not currently Active'
+
 
 def _replaced(ctx, problems):
     """Failed notifications that never went out and that a newer status for the same client has replaced.
@@ -55,10 +60,13 @@ def run(ctx):
     if age is None or not -5 <= age <= 15:
         return fail('Ad billing checks have no completed run within 15 minutes.', urgent=True)
     bindings = ctx.rows('cockpit_ad_billing_bindings',
-                        'client_task_id,client_name,enabled,manual_cutover_verified,error,last_good_at')
+                        'id,client_task_id,client_name,enabled,manual_cutover_verified,error,last_good_at')
     enabled = [b for b in bindings if b.get('enabled')]
+    paused_bindings = [b for b in enabled if (b.get('error') or '').strip() == NOT_ACTIVE]
+    paused = sorted(b.get('client_name') or b.get('client_task_id') or '?' for b in paused_bindings)
+    paused_ids = {b.get('id') for b in paused_bindings if b.get('id')}
     # A crashed run reads no client at all, so it shows here too once it has lasted 20 minutes.
-    stale = [b for b in enabled if _stale(b, ctx.now)]
+    stale = [b for b in enabled if _stale(b, ctx.now) and (b.get('error') or '').strip() != NOT_ACTIVE]
     if stale:
         names = ', '.join(sorted(b.get('client_name') or b.get('client_task_id') or '?' for b in stale))
         return fail(f'Ad billing has not read {len(stale)} client(s) for over {STALE_READ_MIN} minutes: {names}.',
@@ -66,8 +74,14 @@ def run(ctx):
     problems = ctx.rows('cockpit_ad_billing_deliveries', 'id,state,created_at,attempts,provider_id,binding_id',
                         where=[('state', 'in', ['failed', 'unknown', 'queued', 'retry', 'claimed', 'sending'])], limit=250)
     replaced = _replaced(ctx, problems)
+    # A paused client's card update waits unsent: the worker claims nothing for a client that fails its checks, and
+    # once the client is Active again it re-reads the source and drops the outdated card itself. Waiting is not a
+    # delivery problem (1 Nov 2026: 8 internal cards of 4 paused clients paged). A failed or unknown send still pages.
+    def waits_for_pause(r):
+        return r.get('state') == 'queued' and r.get('binding_id') in paused_ids
+
     blocked = [r for r in problems if r.get('id') not in replaced and (r.get('state') in ('failed', 'unknown') or
-               (age_min(r.get('created_at'), ctx.now) or 0) > 15)]
+               (not waits_for_pause(r) and (age_min(r.get('created_at'), ctx.now) or 0) > 15))]
     if blocked:
         return fail('Ad billing notifications need delivery review. Do not resend an unknown result.',
                     evidence={'pending_review': len(blocked)}, urgent=True)
@@ -77,7 +91,9 @@ def run(ctx):
     missing = len([r for r in roster if r.get('client_task_id') not in covered | NO_META_ACCESS])
     if missing:
         return warn('Some active clients lack verified ad billing coverage.', evidence={'missing_clients': missing})
-    return ok('Ad billing checks are current and no delivery is awaiting review.')
+    note = f' Paused (not Active in ClickUp): {", ".join(paused)}.' if paused else ''
+    return ok('Ad billing checks are current and no delivery is awaiting review.' + note,
+              evidence={'paused_clients': len(paused)} if paused else {})
 
 
 CHECKS = (Check('ad-billing-watch', 'workers', 'Ad billing alerts',

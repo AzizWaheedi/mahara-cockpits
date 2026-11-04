@@ -10,10 +10,12 @@ import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AppSidebar } from "./AppSidebar";
 import { CommandPalette } from "./CommandPalette";
 import { HermesChat } from "./HermesChat";
-import { ClientAlerts } from "./launch/ClientAlerts";
+import { useLaunchNotices } from "./launch/ClientAlerts";
 import { MobileTabBar } from "./MobileTabBar";
 import { OfflineBanner } from "./OfflineBanner";
 import { RouteErrorBoundary } from "./RouteErrorBoundary";
+import { AlertsBell } from "./tasks/AlertsBell";
+import { TaskFocusHost } from "./tasks/TaskFocus";
 import { SidebarInset, SidebarProvider, useSidebar } from "./ui/sidebar";
 
 export function AppLayout() {
@@ -28,6 +30,9 @@ export function AppLayout() {
 
 function LayoutContent() {
   const { client } = useCockpitAuth();
+  // The launch notices ride in the shared bell for media buyer, admin and
+  // CEO seats; everyone else's bell carries task alerts only.
+  const launchNotices = useLaunchNotices();
   const outlet = useOutlet();
   const location = useLocation();
   const reduced = useReducedMotion();
@@ -85,7 +90,8 @@ function LayoutContent() {
             it clear of the tab bar. */}
         <main className="flex-1 px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-28 sm:px-6 sm:pt-[max(1.5rem,env(safe-area-inset-top))] lg:px-8 lg:pt-8 lg:pb-12">
           <OfflineBanner />
-          <ClientAlerts />
+          {/* Every seat's task alerts, on every page in the layout. */}
+          <AlertsBell variant="row" extra={launchNotices} />
           <RouteErrorBoundary report={handleReport}>
             <AnimatePresence initial={false} mode="wait">
               <motion.div
@@ -108,6 +114,8 @@ function LayoutContent() {
           </RouteErrorBoundary>
         </main>
         <CommandPalette />
+        {/* One task, in place, wherever the address has ?focus=. */}
+        <TaskFocusHost />
         <HermesChat />
         <MobileTabBar />
       </SidebarInset>

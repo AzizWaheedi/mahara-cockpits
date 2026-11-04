@@ -54,7 +54,8 @@ import offerSheet1 from "./assets/proof/offer-sheet-1.webp";
 import offerSheet2 from "./assets/proof/offer-sheet-2.webp";
 import pcmAcademy from "./assets/proof/pcm-academy.webp";
 import pcmCall from "./assets/proof/pcm-call.webp";
-import pcmLesson from "./assets/proof/pcm-lesson.webp";
+import pcmContract from "./assets/proof/pcm-contract.webp";
+import pcmCourse from "./assets/proof/pcm-course.webp";
 import pcmSheet from "./assets/proof/pcm-sheet.webp";
 import profileInstagram from "./assets/proof/profile-instagram.webp";
 import profileYoutube from "./assets/proof/profile-youtube.webp";
@@ -1291,13 +1292,16 @@ export const CLOSING_TOUR: Stop[] = [
       en: "So you sign more of the people you meet.",
       ar: "عشان توقّع مع عدد أكبر من اللي تقابلهم.",
     },
+    // The course drawn large (the CEO, 2026-10-29: "so it actually shows
+    // that it's a course"): the top of the lesson page, its lessons beside
+    // a video lesson, above the second module's misspelt first title.
     media: {
       kind: "shots",
       items: [
         {
-          src: pcmLesson,
-          alt: "A lesson inside the course",
-          r: 0.799,
+          src: pcmCourse,
+          alt: "The course: its lessons beside a video lesson",
+          r: 1.875,
           w: 1444,
         },
       ],
@@ -1305,7 +1309,7 @@ export const CLOSING_TOUR: Stop[] = [
   },
   {
     key: "checkins",
-    name: { en: "1:1 check-in calls", ar: "مكالمات متابعة ١:١" },
+    name: { en: "1:1 consultant calls", ar: "مكالمات ١:١ مع مستشارك" },
     what: {
       en: "Weekly or every two weeks with your success manager, depending on your plan and how long you've been with us: the numbers, the calls, the next move.",
       ar: "كل أسبوع أو كل أسبوعين مع مدير حسابك، حسب باقتك وشكثر صار لك معانا: الأرقام، المكالمات، والخطوة الياية.",
@@ -1316,11 +1320,11 @@ export const CLOSING_TOUR: Stop[] = [
     },
     media: {
       kind: "shots",
-      items: [{ src: pcmCall, alt: "A check-in call", r: 1.857, w: 1439 }],
+      items: [{ src: pcmCall, alt: "A consultant call", r: 1.857, w: 1439 }],
     },
     more: {
       href: "https://fathom.video/share/giCrmrxkJqc7hpPALMHsHSrevBVvn9wm",
-      label: { en: "Watch a real check-in", ar: "شوف مكالمة حقيقية" },
+      label: { en: "Watch a real consultant call", ar: "شوف مكالمة حقيقية" },
     },
   },
   {
@@ -1344,6 +1348,33 @@ export const CLOSING_TOUR: Stop[] = [
           src: pcmSheet,
           alt: "The follow-up sheet, with the reason for every meeting",
           r: 3.653,
+          w: 1600,
+        },
+      ],
+    },
+  },
+  {
+    // A partner's real contract (the CEO, 2026-10-29: "showing that our
+    // client has signed it"): the signature page of BAYT 22's contract with
+    // its client. Blurred: the client's name and the letterhead's phone
+    // number. The company, both signatures and the stamp stay.
+    key: "signed",
+    name: { en: "A signed project", ar: "مشروع موقّع" },
+    what: {
+      en: "A real contract a partner signed with their own client: both signatures and the company stamp, with the client's details hidden.",
+      ar: "عقد حقيقي وقّعه واحد من شركائنا مع عميله: التوقيعين وختم الشركة.. وبيانات العميل مخفية.",
+    },
+    why: {
+      en: "The course and the calls are all for this moment: the signature.",
+      ar: "الكورس والمكالمات كلها عشان هاللحظة: التوقيع.",
+    },
+    media: {
+      kind: "shots",
+      items: [
+        {
+          src: pcmContract,
+          alt: "A partner's signed contract, the client's details blurred",
+          r: 1.752,
           w: 1600,
         },
       ],

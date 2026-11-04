@@ -4,6 +4,7 @@ import { Link, useLocation } from "react-router";
 import { pageTitle } from "../lib/pages";
 import { useDark } from "../lib/theme";
 import { Avatar } from "./kit";
+import { AlertsBell } from "./tasks/AlertsBell";
 import { Wordmark } from "./Wordmark";
 
 export function MacOSMenuBar({
@@ -103,6 +104,13 @@ export function MacOSMenuBar({
             <span>{owedCount} owed</span>
           </Link>
         ) : null}
+
+        {/* Task alerts: what changed for you in ClickUp (PLAN.md D19). In
+            this 40px bar of 28px controls the bell takes their size
+            (tasks.css .tk-bell-compact), not the phone bar's 40px. */}
+        <span className="tk-bell-compact">
+          <AlertsBell variant="icon" />
+        </span>
 
         <button
           type="button"

@@ -1,0 +1,5 @@
+[{"title": "Cedar Invented Interiors", "categoryName": "Interior designer", "categories": ["Interior designer", "Design agency"],
+  "address": "Block 1, Invented Street, Hawalli", "city": "Hawalli", "countryCode": "KW", "phone": "+965 2200 0123",
+  "phoneUnformatted": "+96522000123", "website": "https://cedar-invented.example/", "url": "https://www.google.com/maps/place/?q=place_id:ChIJcedarInvented",
+  "placeId": "ChIJcedarInvented", "totalScore": 4.6, "reviewsCount": 87, "location": {"lat": 29.33, "lng": 48.02},
+  "openingHours": [{"day": "Saturday", "hours": "9 AM to 6 PM"}], "permanentlyClosed": false}]

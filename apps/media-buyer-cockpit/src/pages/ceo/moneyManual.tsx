@@ -8,12 +8,16 @@ import {
 import {
   type FormEvent,
   type ReactNode,
+  useCallback,
+  useEffect,
   useId,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { toast } from "sonner";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { ChecksWaiting } from "@/components/billing/ChecksWaiting";
 import { type Column, DataTable } from "@/components/ceo/DataTable";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import {
@@ -26,6 +30,7 @@ import {
   pct,
   plural,
   shiftMonth,
+  shortDate,
 } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
@@ -51,8 +56,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { MANUAL_PAYMENTS_CHANGED } from "@/lib/ceoManualPaymentsClient";
 import type { FunctionReturnType, Id } from "@/lib/cockpitApi";
 import { api, ConvexError, useMutation } from "@/lib/cockpitApi";
+import {
+  type CheckResult,
+  checksDoorOpen,
+  type ManualCheckState,
+  manualChecksOf,
+  manualPaymentsToCheck,
+} from "@/lib/paymentChecks";
 import { useManualPaymentQuery } from "@/lib/useManualPaymentQuery";
 import { cn } from "@/lib/utils";
 import type { ManualPaymentRefusal } from "@/types/ceo/manualPayments";
@@ -70,6 +83,12 @@ import type {
  * writes are convex/ceo/manualPayments.ts; the totals come from the money
  * section, which recomputes about a minute after each change, so this file
  * never adds an entry into a total itself.
+ *
+ * Checked money (20261101n; docs/forms/WAVE12-CONTRACT.md 4.2 and 5.6): an
+ * entry is "Logged, not checked" until it is checked against the bank, and
+ * only then is it cash. The form takes the bank reference, which checks the
+ * entry at once; the list says each entry's state ("Checked 1 Nov", "Logged,
+ * not checked", "Rejected"); Checks waiting holds the Check and Reject.
  */
 
 type Currency = "USD" | "KWD";
@@ -228,6 +247,8 @@ type Draft = {
   rail: ManualRail | "";
   deal: string;
   note: string;
+  /** The bank's reference for the transfer: with one the entry is checked at once (20261101n). */
+  reference: string;
 };
 
 type Ready = {
@@ -240,6 +261,7 @@ type Ready = {
   rail: ManualRail;
   deal: number | null;
   note: string | null;
+  reference: string | null;
   /** Preview only: the server converts and stores the real figure. */
   usd: number | null;
   dealUsd: number | null;
@@ -287,6 +309,10 @@ function validate(
   }
   const note = d.note.trim().replace(/\s+/g, " ");
   if (note.length > 500) errors.note = "Keep the note under 500 characters.";
+  const reference = d.reference.trim().replace(/\s+/g, " ");
+  if (reference && (reference.length < 3 || reference.length > 200))
+    errors.reference =
+      "Type the whole bank reference (3 to 200 characters), or leave it empty.";
 
   if (Object.keys(errors).length || typeof amount === "string" || !d.rail)
     return { errors, ready: null };
@@ -310,6 +336,7 @@ function validate(
       rail: d.rail,
       deal,
       note: note || null,
+      reference: reference || null,
       usd: toUsd(amount),
       dealUsd: deal === null ? null : toUsd(deal),
     },
@@ -325,6 +352,7 @@ const blank = (day: string, currency: Currency): Draft => ({
   rail: "",
   deal: "",
   note: "",
+  reference: "",
 });
 
 /** "$1,500", or "460.125 KWD, about $1,500.01" while the rate is known. */
@@ -480,13 +508,17 @@ export function LogPaymentCard({
         ...(confirm.card ? { clickupTaskId: confirm.card.clickupTaskId } : {}),
         ...(confirm.deal !== null ? { dealContracted: confirm.deal } : {}),
         ...(confirm.note ? { note: confirm.note } : {}),
+        ...(confirm.reference ? { reference: confirm.reference } : {}),
         ...(allowRepeat ? { allowRepeat: true } : {}),
       });
       const elsewhere = confirm.day.slice(0, 7) !== day.slice(0, 7);
+      const state = confirm.reference
+        ? "Logged and checked"
+        : "Logged, not checked";
       toast.success(
         elsewhere
-          ? `Logged for ${month(confirm.day, { long: true, year: true })}. Pick that month below. Totals still need reconciliation.`
-          : "Logged. Totals still need reconciliation.",
+          ? `${state} for ${month(confirm.day, { long: true, year: true })}. Pick that month below. Totals still need reconciliation.`
+          : `${state}. Totals still need reconciliation.`,
       );
       setConfirm(null);
       setProblem(null);
@@ -698,6 +730,25 @@ export function LogPaymentCard({
           </FormField>
 
           <FormField
+            id={id("reference")}
+            label="Bank reference (optional)"
+            error={shown.reference}
+            hint="With the bank's reference it is checked at once and counts as cash. Without one it waits under Checks waiting."
+          >
+            <Input
+              id={id("reference")}
+              autoComplete="off"
+              maxLength={200}
+              className="font-mono"
+              placeholder="FT26110042"
+              value={draft.reference}
+              onChange={e => set("reference")(e.target.value)}
+              aria-invalid={Boolean(shown.reference)}
+              aria-describedby={describe("reference")}
+            />
+          </FormField>
+
+          <FormField
             id={id("note")}
             label="Note (optional)"
             error={shown.note}
@@ -750,7 +801,9 @@ export function LogPaymentCard({
                 : "Log this payment?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              It adds to cash collected on the Manual rail
+              {confirm?.reference
+                ? "Checked against the bank reference, it adds to cash in on the Manual rail"
+                : "It waits as logged, not checked: it is not cash until it is checked against the bank"}
               {confirm?.deal !== null && confirm?.deal !== undefined
                 ? ", and the deal value adds to contracted"
                 : ""}
@@ -786,6 +839,13 @@ export function LogPaymentCard({
                       confirm.dealUsd,
                     )}
                   </span>
+                )}
+              </Fact>
+              <Fact label="Bank reference">
+                {confirm.reference ? (
+                  <span className="font-mono">{confirm.reference}</span>
+                ) : (
+                  "None, so it waits on a check"
                 )}
               </Fact>
               {confirm.note ? <Fact label="Note">{confirm.note}</Fact> : null}
@@ -936,6 +996,133 @@ function EntryDialog({
   );
 }
 
+// --- Checked money ---
+
+/** Said once a check lands, so the list's chips change before the next money refresh. */
+const PAYMENT_CHECKED = "cockpit-payment-checked";
+
+/**
+ * Checks waiting on the Money tab: the shared list with Check and Reject
+ * (components/billing/ChecksWaiting.tsx). The CEO checks every logged
+ * payment here, whoever logged it. It hides itself behind a plain line
+ * until 20261101n is live.
+ */
+export function ChecksWaitingCard({ order }: { order: number }) {
+  return (
+    <SectionCard
+      title="Checks waiting"
+      description="Logged by hand, not checked against the bank yet."
+      order={order}
+    >
+      <ChecksWaiting
+        canCheck
+        framed={false}
+        onChecked={(r: CheckResult) => {
+          window.dispatchEvent(new CustomEvent(PAYMENT_CHECKED, { detail: r }));
+          window.dispatchEvent(new Event(MANUAL_PAYMENTS_CHANGED));
+        }}
+      />
+    </SectionCard>
+  );
+}
+
+/**
+ * Each entry's check state, newest first: a check made here this session,
+ * then the live list of payments still waiting (cockpit_manual_payments_to_check),
+ * then what the last money refresh published (payload.manualChecks). Null
+ * while none of them can say; then the list reads as it did before the rule.
+ */
+function useCheckStates(payload: MoneyPayload | null) {
+  const auth = useCockpitAuth();
+  const published = useMemo(() => manualChecksOf(payload), [payload]);
+  const [waiting, setWaiting] = useState<Set<string> | null>(null);
+  const [mine, setMine] = useState<Map<string, ManualCheckState>>(
+    () => new Map(),
+  );
+  useEffect(() => {
+    const client = auth.client;
+    if (!client) return;
+    let live = true;
+    const read = async () => {
+      try {
+        if (!(await checksDoorOpen(client))) {
+          if (live) setWaiting(null);
+          return;
+        }
+        const rows = await manualPaymentsToCheck(client);
+        if (live) setWaiting(new Set(rows.map(r => r.id)));
+      } catch {
+        if (live) setWaiting(null);
+      }
+    };
+    void read();
+    const onChanged = () => void read();
+    const onChecked = (e: Event) => {
+      const r = (e as CustomEvent<CheckResult>).detail;
+      if (!r?.id) return;
+      setMine(m =>
+        new Map(m).set(r.id, {
+          id: r.id,
+          state: r.state,
+          at: r.checkedAt,
+          ref: null,
+        }),
+      );
+    };
+    window.addEventListener(MANUAL_PAYMENTS_CHANGED, onChanged);
+    window.addEventListener(PAYMENT_CHECKED, onChecked);
+    return () => {
+      live = false;
+      window.removeEventListener(MANUAL_PAYMENTS_CHANGED, onChanged);
+      window.removeEventListener(PAYMENT_CHECKED, onChecked);
+    };
+  }, [auth.client]);
+  return useCallback(
+    (id: string): ManualCheckState | "moved" | null => {
+      const here = mine.get(id);
+      if (here) return here;
+      if (waiting?.has(id)) return { id, state: "logged", at: null, ref: null };
+      const last = published.get(id);
+      // Checked or rejected since the refresh: the live list no longer holds it.
+      if (waiting && last?.state === "logged") return "moved";
+      if (last) return last;
+      return waiting ? "moved" : null;
+    },
+    [mine, waiting, published],
+  );
+}
+
+function checkChip(s: ManualCheckState | "moved"): {
+  tone: StatusTone;
+  label: string;
+  hint: string;
+} {
+  if (s === "moved")
+    return {
+      tone: "neutral",
+      label: "Updating",
+      hint: "Its check changed after the last money refresh. The state and the totals pick it up within a minute or two.",
+    };
+  const at = s.at ? shortDate(Date.parse(s.at)) : null;
+  if (s.state === "checked")
+    return {
+      tone: "good",
+      label: at ? `Checked ${at}` : "Checked",
+      hint: `Checked against the bank${s.ref ? `: ${s.ref}` : ""}. It counts as cash.`,
+    };
+  if (s.state === "rejected")
+    return {
+      tone: "neutral",
+      label: "Rejected",
+      hint: `Rejected${at ? ` on ${at}` : ""}${s.ref ? `: ${s.ref}` : ""}. It counts in no total.`,
+    };
+  return {
+    tone: "warning",
+    label: "Logged, not checked",
+    hint: "Waiting on a check against the bank under Checks waiting. It is not in cash, pay or LTV until then.",
+  };
+}
+
 // --- This month's entries ---
 
 type Status = { tone: StatusTone; label: string; hint: string };
@@ -993,7 +1180,7 @@ function entryStatus(
   return {
     tone: "good",
     label: "Counted",
-    hint: "In cash collected on the Manual rail.",
+    hint: "In cash in, every rail, on the Manual rail.",
   };
 }
 
@@ -1049,6 +1236,7 @@ export function ManualEntriesCard({
     return out;
   }, [payload]);
   const tapConnected = payload?.rails?.tap.connected ?? false;
+  const checkOf = useCheckStates(payload);
   const hasFlags =
     payload?.manualEntries !== undefined &&
     manualInfo?.totalsNeedRefresh === false;
@@ -1140,7 +1328,25 @@ export function ManualEntriesCard({
             tapConnected,
             now,
           );
-          return <StatusChip tone={s.tone} label={s.label} hint={s.hint} />;
+          const state = r.deletedAt === null ? checkOf(r.id) : null;
+          if (state === null)
+            return <StatusChip tone={s.tone} label={s.label} hint={s.hint} />;
+          const c = checkChip(state);
+          // A checked entry also says how it counts when that is news (on
+          // Tap now, a possible duplicate); a warning shows on any state.
+          const also =
+            s.tone === "warning" ||
+            (state !== "moved" &&
+              state.state === "checked" &&
+              !["Counted", "Live"].includes(s.label));
+          return (
+            <span className="flex flex-wrap gap-1.5">
+              <StatusChip tone={c.tone} label={c.label} hint={c.hint} />
+              {also ? (
+                <StatusChip tone={s.tone} label={s.label} hint={s.hint} />
+              ) : null}
+            </span>
+          );
         },
         hideBelow: "sm",
       },
@@ -1173,11 +1379,15 @@ export function ManualEntriesCard({
         className: "w-px",
       },
     ],
-    [computed, flags, hasFlags, kinds, now, tapConnected],
+    [checkOf, computed, flags, hasFlags, kinds, now, tapConnected],
   );
 
   const live = (rows ?? []).filter((r: any) => r.deletedAt === null);
   const removedCount = (rows ?? []).length - live.length;
+  const notChecked = live.filter((r: any) => {
+    const s = checkOf(r.id);
+    return s !== null && s !== "moved" && s.state === "logged";
+  }).length;
   const monthRow = payload?.monthly.find(m => m.month === shownMonth);
   const railFigure =
     manualInfo?.totalsNeedRefresh !== false
@@ -1245,7 +1455,7 @@ export function ManualEntriesCard({
               variant="plain"
               label="Live entries"
               value={count(live.length)}
-              sub={`${money(live.reduce((t: any, r: any) => t + r.amountUsd, 0))} as logged`}
+              sub={`${money(live.reduce((t: any, r: any) => t + r.amountUsd, 0))} as logged${notChecked ? ` · ${count(notChecked)} not checked` : ""}`}
             />
             <StatTile
               variant="plain"
@@ -1256,7 +1466,7 @@ export function ManualEntriesCard({
                   ? "As of the last money refresh"
                   : "For the month, as of the last money refresh"
               }
-              hint="Live entries, less any that Tap now shows as its own charge."
+              hint="Checked live entries, less any that Tap or a bank statement line already counts. An entry not checked against the bank is never in it."
               naHint={
                 payload === null
                   ? "The money section has not been computed yet."

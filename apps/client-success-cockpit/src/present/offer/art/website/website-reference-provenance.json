@@ -1,0 +1,24 @@
+[
+  {
+    "file": "stratum-desktop.jpg",
+    "source": "https://stratum.framer.ai/",
+    "capturedAt": "2026-10-28",
+    "sha256": "130629958df013b65162a83d2deec0100f45872e3bd31c80efa6da92d1c053e2",
+    "width": 1470,
+    "height": 662,
+    "scrollY": 0,
+    "method": "Actual Chrome desktop viewport screenshot. Source pixels and text are unaltered.",
+    "purpose": "Website example supplied by Aziz. Illustrates the public site design, not a claim of Mahara authorship or client outcomes."
+  },
+  {
+    "file": "greystone-desktop.jpg",
+    "source": "https://greystonegcc.com/",
+    "capturedAt": "2026-10-28",
+    "sha256": "993188439a2a6bee42fa420362576dd0bad3230bcd4266fe7f38309338e55ed0",
+    "width": 1470,
+    "height": 662,
+    "scrollY": 397,
+    "method": "Actual Chrome desktop viewport screenshot. Source pixels and text are unaltered.",
+    "purpose": "Website example supplied by Aziz. Illustrates the public site design, not a claim of Mahara authorship or client outcomes."
+  }
+]

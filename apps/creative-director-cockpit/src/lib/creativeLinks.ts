@@ -7,11 +7,20 @@
  * Nothing is invented. If a link is not in one of those, it does not belong.
  *
  * Deliberately absent: the CSM's booking, billing, upsell and cancellation
- * forms. Aziz, 2026-09-07: the only forms needed are the video request form
- * and the ClickUp client ticketing form.
+ * forms. Aziz, 2026-09-07: the only two places work is filed are the video
+ * request form and the client ticket. Since 2026-10-29 the ticket is the
+ * cockpit's own "Ask a team" (the portal's Requests page), never the old
+ * ClickUp form (docs/requests/CLICKUP-DOWNGRADE.md).
  */
 
-import { COCKPIT_GUIDES, COCKPIT_SOP } from "./cockpits";
+import {
+  COCKPIT_GUIDES,
+  COCKPIT_SOP,
+  SOP_VIDEOS,
+  type SopVideoInfo,
+  TEAM_GUIDES,
+} from "./cockpits";
+import { portalUrl } from "./portal";
 
 /**
  * A row without a URL is a note: it says where something lives instead,
@@ -22,6 +31,8 @@ export type LinkRow = {
   url?: string;
   note?: string;
   to?: { path: string; label: string };
+  /** A how-to video: the Links page plays it in place (SopVideo). */
+  video?: SopVideoInfo;
 };
 export type LinkGroup = { title: string; blurb: string; rows: LinkRow[] };
 
@@ -34,6 +45,7 @@ export const LINK_GROUPS: LinkGroup[] = [
       {
         label: "Watch the demo",
         url: COCKPIT_GUIDES.creative.video,
+        video: SOP_VIDEOS.creative.demo,
         note: "Two minutes on the real cockpit, step by step",
       },
       {
@@ -53,6 +65,16 @@ export const LINK_GROUPS: LinkGroup[] = [
         url: COCKPIT_SOP.creative,
         note: "The SOP for this cockpit, in ClickUp",
       },
+      {
+        label: "Raise a ticket (the SOP for every team)",
+        url: TEAM_GUIDES.ticket.doc,
+        note: "Ask another team with Ask a team, follow it, and work the tickets assigned to you",
+      },
+      {
+        label: "Raise a ticket and work one (video)",
+        url: TEAM_GUIDES.ticket.video,
+        video: SOP_VIDEOS.team.ticket,
+      },
     ],
   },
   {
@@ -64,6 +86,12 @@ export const LINK_GROUPS: LinkGroup[] = [
         label: "Brand Blueprint call framework (the SOP)",
         url: "https://docs.google.com/document/d/1DUd5Euj4Ke7TNlY1MwAH-YB72-VED8JcILa84GvG528/edit",
         note: "Why the call exists, the 15 minute prep, and the run of the call",
+      },
+      {
+        label: "Brand Blueprint call: run it in this cockpit (video)",
+        url: COCKPIT_GUIDES.creative.howTo.blueprint,
+        video: SOP_VIDEOS.creative.blueprint,
+        note: "Three minutes, silent: from the client's card to the locked offer, the whole call in this cockpit. Watch it before your first one",
       },
       {
         label: "Brand Blueprint booking link",
@@ -80,8 +108,8 @@ export const LINK_GROUPS: LinkGroup[] = [
     ],
   },
   {
-    title: "The only two forms you fill",
-    blurb: "If it is not in a form, it did not happen.",
+    title: "The two places you file work",
+    blurb: "If it is not filed, it did not happen.",
     rows: [
       {
         label: "Video request form",
@@ -89,9 +117,11 @@ export const LINK_GROUPS: LinkGroup[] = [
         note: "Creates the task on the Video Pipeline. The client screen files this for you in one click",
       },
       {
-        label: "Client ticketing form",
-        url: "https://forms.clickup.com/90182518398/f/2kzmr1ky-1178/R1O1N5QXYLUTJOWQ3E",
-        note: "Anything a client needs from tech, media or ads. One ticket each",
+        // The sidebar's own target (AppSidebar.tsx): the portal's Requests
+        // page, cockpit.maharamedia.com/requests in production.
+        label: "Ask a team",
+        url: `${portalUrl()}/requests`,
+        note: "Anything a client needs from tech, ads, client success, the call center or media. One request each; the cockpit files it in ClickUp for you.",
       },
     ],
   },

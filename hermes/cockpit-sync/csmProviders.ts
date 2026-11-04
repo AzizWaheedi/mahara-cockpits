@@ -1,6 +1,6 @@
-import {type Row, callTool, providerFetch, unwrap} from './runtime';
+import {type Row, callTool, providerFetch, unwrap, supabaseQuery} from './runtime';
 import {appointmentRows,summarise,staleRows,byAd,toDate,MONTHS,parseAdded,parseAppt,daysBetween,type Day,type Call,type GhlAccount} from './csmProfileCalculations';
-import type {Extension,CallNote} from './csmCadence';
+import {DEFAULT_LADDER,type Extension,type CallNote,type LadderStep} from './csmCadence';
 
 // The 1-1 form's client: the card id the client page's link carries (hidden task_id), else the typed Client ID.
 // Given the client cards, the same order as the csm-calls worker's checkinClient: a hidden id that is not a
@@ -11,32 +11,197 @@ export function checkinTaskId(item:Row,cards?:ReadonlySet<string>){
  return hidden&&(!cards||cards.has(hidden)||!typed)?hidden:typed;
 }
 
+// The 1-1 notes, read by ref. Typeform's own items and the store's rows (cockpit_csm_call_forms, written by
+// hermes/csm-calls with formAnswers, and the cockpit's native write-through, 20261027h_checkin_plans.sql) carry
+// the same refs, so one rule reads both (docs/forms/STAGE2B-CONTRACT.md 4.4, release N4).
+export const NOTE_REF={additional:'82a6b434-15d9-4a14-8496-c20c94628536',clientNotes:'5d071906-da6a-4413-a729-0c76d0188d91',defcon:'ff7970f7-9fad-4fa5-b12b-4d719dfb7587',priority:'c9f99fb1-fec9-47e7-9baa-c5554733723d'} as const;
+export const NATIVE_FORM_ID='cockpit-checkin';
+const KUWAIT_MS=10800000;
+const kuwaitDay=(ms:number)=>new Date(ms+KUWAIT_MS).toISOString().slice(0,10);
+
+/** A Typeform answer as one value, as hermes/csm-calls stores it (match.ts answerValue): text, choice label, url... */
+function typeformValue(a:Row):unknown{
+ switch(a?.type){
+  case 'text':return a.text;
+  case 'choice':return a.choice?.label??a.choice?.other;
+  case 'choices':return [...(a.choices?.labels??[]),...(a.choices?.other?[a.choices.other]:[])];
+  default:return a?.[a?.type]??a?.text??null;
+ }
+}
+/** ref -> value of a Typeform API item. */
+export function typeformAnswers(item:Row):Map<string,unknown>{
+ const out=new Map<string,unknown>();
+ for(const a of Array.isArray(item?.answers)?item.answers:[]){const ref=a?.field?.ref;if(typeof ref==='string'&&!out.has(ref))out.set(ref,typeformValue(a));}
+ return out;
+}
+/** ref -> value of a stored row's answers ([{ref, type, title, value}]). */
+export function storedAnswers(answers:unknown):Map<string,unknown>{
+ const out=new Map<string,unknown>();
+ for(const a of Array.isArray(answers)?answers as Row[]:[]){const ref=a?.ref;if(typeof ref==='string'&&!out.has(ref))out.set(ref,a.value);}
+ return out;
+}
+const text=(v:unknown)=>typeof v==='string'?v:undefined;
+
+/**
+ * The commitments a note shows. A Typeform note keeps today's rule: up to 4 lines of 20 or more characters from
+ * Additional Notes and Client Notes, split at new lines, bullets and " - ", status words left out. A native note
+ * (the cockpit's write-through) shows its We owe items: the "Mahara: " lines of Additional Notes, label removed,
+ * each whole, at most 4 (Z49).
+ */
+export function commitmentsOf(answers:Map<string,unknown>,native=false):string[]{
+ if(native){
+  const lines=String(text(answers.get(NOTE_REF.additional))??'').split('\n').map(s=>s.trim()).filter(s=>s.startsWith('Mahara: ')).map(s=>s.slice('Mahara: '.length).trim()).filter(Boolean);
+  return [...new Set(lines)].slice(0,4);
+ }
+ const status=/^(done|sent|ok|okay|n\/a|na|none|nothing|fine|good|no|yes|waiting|pending|follow up|followup|noted)\b/i;
+ return [...new Set([text(answers.get(NOTE_REF.additional)),text(answers.get(NOTE_REF.clientNotes))].filter(Boolean).flatMap(t=>String(t).split(/\n|\u2022|(?: - )/).map(s=>s.replace(/^[-*\d.\s]+/,'').trim()).filter(s=>s.length>=20&&!status.test(s))))].slice(0,4);
+}
+/** One note, whichever read it came from. */
+export function noteOf(taskId:string,submittedAt:number,answers:Map<string,unknown>,native=false):CallNote{
+ return {taskId,submitted:kuwaitDay(submittedAt),notes:commitmentsOf(answers,native),defcon:text(answers.get(NOTE_REF.defcon)),priority:text(answers.get(NOTE_REF.priority))};
+}
+
+/** A Postgres or ISO time ("2026-10-27 15:40:20+03", "2026-10-27T12:40:20.5+00:00") in epoch ms, else NaN. */
+export function stampMs(v:unknown):number{
+ const m=/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)(Z|[+-]\d{2}(?::?\d{2})?)$/.exec(String(v??'').trim());
+ if(!m)return NaN;
+ const zone=m[3]==='Z'?'Z':m[3].length===3?`${m[3]}:00`:m[3].includes(':')?m[3]:`${m[3].slice(0,3)}:${m[3].slice(3)}`;
+ return Date.parse(`${m[1]}T${m[2]}${zone}`);
+}
+
+// The three reads of the store, each one select with no limit word: the native transport treats any "limit N" as
+// a coverage cap (transport.ts), and a cap here would hide a client's newest note.
+export const STORE_SQL={
+ newest:"select distinct on (f.task_id) f.task_id, f.token, f.form_id, f.matched_by, f.submitted_at, f.answers from public.cockpit_csm_call_forms f where f.form_kind = 'checkin' and f.task_id is not null order by f.task_id, f.submitted_at desc",
+ marks:"select f.token, f.task_id, f.form_kind, f.matched_by from public.cockpit_csm_call_forms f where f.form_id = 'fRokTITH' and (f.matched_by = 'manual' or f.form_kind = 'checkin_late')",
+ registry:"select provider from public.cockpit_forms where key = 'checkin'",
+} as const;
+
+export type StoredNote=CallNote&{token:string;formId:string;matchedBy:string;submittedAt:number};
+export type TypeformNote=CallNote&{token:string;submittedAt:number};
+export type NoteMark={token:string;taskId:string|null;formKind:string;matchedBy:string};
+export type ParityField='lastNoteOn'|'defcon'|'priority'|'notes';
+export type NoteParity={state:'same'|'explained'|'differs'|'none'|'off';why?:'fresh'|'manual'|'native'|'late';fields?:ParityField[]};
+export type NotesParity={native:boolean;byTask:Record<string,NoteParity>};
+
+/** The store's newest 1-1 note per card, the fRokTITH rows a person placed or the cut-over made late, and the registry. */
+export async function storeNotes():Promise<{newest:StoredNote[];marks:NoteMark[];provider:string}>{
+ const registry=await supabaseQuery(STORE_SQL.registry);
+ if(registry.length!==1||typeof registry[0]?.provider!=='string')throw new Error('The 1-1 notes registry row (cockpit_forms checkin) is missing');
+ const rows=await supabaseQuery(STORE_SQL.newest);
+ const newest:StoredNote[]=rows.map(r=>{
+  const taskId=String(r?.task_id??'').trim(),token=String(r?.token??'').trim(),at=stampMs(r?.submitted_at);
+  if(!taskId||!token||!Number.isFinite(at)||!Array.isArray(r?.answers))throw new Error('A stored 1-1 note lacks its card, token, time or answers');
+  const formId=String(r.form_id??''),native=formId===NATIVE_FORM_ID;
+  return {...noteOf(taskId,at,storedAnswers(r.answers),native),token,formId,matchedBy:String(r.matched_by??''),submittedAt:at};
+ });
+ const marks:NoteMark[]=(await supabaseQuery(STORE_SQL.marks)).map(r=>{
+  const token=String(r?.token??'').trim();if(!token)throw new Error('A stored 1-1 note mark lacks its token');
+  return {token,taskId:r?.task_id?String(r.task_id):null,formKind:String(r?.form_kind??''),matchedBy:String(r?.matched_by??'')};
+ });
+ return {newest,marks,provider:registry[0].provider};
+}
+
+const FRESH_MS=30*60000;
+const sameList=(a:string[],b:string[])=>a.length===b.length&&a.every((x,i)=>x===b[i]);
+function differing(a?:CallNote,b?:CallNote):ParityField[]{
+ const out:ParityField[]=[];
+ if(a?.submitted!==b?.submitted)out.push('lastNoteOn');
+ if(a?.defcon!==b?.defcon)out.push('defcon');
+ if(a?.priority!==b?.priority)out.push('priority');
+ if(!sameList(a?.notes??[],b?.notes??[]))out.push('notes');
+ return out;
+}
+
+/**
+ * Store against Typeform, per card, while Typeform is still the record (Z18). Equal tokens and fields: same. When the
+ * newer side is the store's, a hand match (manual) or a native note explains it; when it is Typeform's, a form the
+ * cut-over made late, one a person placed on another card (manual), or one under 30 minutes old that the 15-minute
+ * read has not stored yet (fresh) explains it. Anything else differs, with the fields that differ.
+ */
+export function notesParity(store:StoredNote[],typeform:TypeformNote[],marks:NoteMark[],now:number):Record<string,NoteParity>{
+ const s=new Map(store.map(n=>[n.taskId,n])),t=new Map<string,TypeformNote>();
+ for(const n of typeform){const seen=t.get(n.taskId);if(!seen||n.submittedAt>seen.submittedAt)t.set(n.taskId,n);}
+ const mark=new Map(marks.map(m=>[m.token,m]));
+ const out:Record<string,NoteParity>={};
+ for(const task of new Set([...s.keys(),...t.keys()])){
+  const a=s.get(task),b=t.get(task);
+  if(a&&b&&a.token===b.token){const fields=differing(a,b);out[task]=fields.length?{state:'differs',fields}:{state:'same'};continue;}
+  const fields=differing(a,b);
+  if(a&&(!b||a.submittedAt>b.submittedAt)){
+   if(a.formId===NATIVE_FORM_ID){out[task]={state:'explained',why:'native'};continue;}
+   if(a.matchedBy==='manual'){out[task]={state:'explained',why:'manual'};continue;}
+  }else if(b&&(!a||b.submittedAt>a.submittedAt)){
+   const m=mark.get(b.token);
+   if(m?.formKind==='checkin_late'){out[task]={state:'explained',why:'late'};continue;}
+   if(m?.matchedBy==='manual'){out[task]={state:'explained',why:'manual'};continue;}
+   if(now-b.submittedAt<FRESH_MS){out[task]={state:'explained',why:'fresh'};continue;}
+  }
+  out[task]={state:'differs',fields};
+ }
+ return out;
+}
+
 // Provider contracts from media-buyer/convex/csmSync.ts and csmProfiles.ts.
 // Any failed authoritative read aborts the plan, rather than substituting zero.
-export async function cadenceInputs(cards?:ReadonlySet<string>){
- const notes:CallNote[]=[],exts:Extension[]=[];
- const weeksByLabel:Record<string,number>={'1 WEEK':1,'2 WEEKS':2,'4 WEEKS':4};
- for(const form of ['fRokTITH','gqBcyK6g']){
-  const response=unwrap(await callTool('pd_typeform_proxy_get',{url:`https://api.typeform.com/forms/${form}/responses?page_size=200`}));
+// Release N4 (docs/forms/STAGE2B-CONTRACT.md 4.4): the 1-1 notes come from the store; while the registry says
+// Typeform still fills them, fRokTITH is read beside them as a comparator, and a failed read still aborts the plan.
+// Waves 1-2 (docs/forms/WAVE12-CONTRACT.md 4.11): extensions are the cockpit's own grants (cockpit_extensions_v,
+// billing events only), keyed by card id, and the overdue ladder is cockpit_client_lifecycle_v's step with the
+// days from cockpit_settings billing.ladder. The Client Extension Form (Typeform gqBcyK6g) is no longer read.
+export const CADENCE_SQL={
+ extensions:"select e.clickup_task_id, e.until::text as until from public.cockpit_extensions_v e where e.state = 'live'",
+ ladder:"select l.clickup_task_id, l.ladder_step, l.days_late from public.cockpit_client_lifecycle_v l where l.ladder_step is distinct from 'none'",
+ ladderDays:"select s.value from public.cockpit_settings s where s.key = 'billing.ladder'",
+} as const;
+const LADDER_STEPS=new Set<LadderStep>(['pause_review','cancel_review','pause_day14']);
+const ISO_DAY=/^\d{4}-\d{2}-\d{2}$/;
+
+/** The days of the overdue steps from billing.ladder; the approved default (4 and 15) when the row is not there. */
+export function ladderDaysOf(rows:Row[]):{pauseReviewDay:number;cancelReviewDay:number}{
+ if(rows.length>1)throw new Error('cockpit_settings billing.ladder is ambiguous');
+ const v=rows[0]?.value,pause=Number(v?.pauseReviewDay),cancel=Number(v?.cancelReviewDay);
+ if(!rows.length)return {...DEFAULT_LADDER};
+ if(!Number.isInteger(pause)||!Number.isInteger(cancel)||pause<1||pause>=cancel||cancel>60)throw new Error('cockpit_settings billing.ladder holds days the ladder cannot use');
+ return {pauseReviewDay:pause,cancelReviewDay:cancel};
+}
+
+/** One billing fact per card: its live grant's end and its overdue step, both by card id. */
+export async function billingFacts():Promise<Extension[]>{
+ const [grants,steps,days]=await Promise.all([supabaseQuery(CADENCE_SQL.extensions),supabaseQuery(CADENCE_SQL.ladder),supabaseQuery(CADENCE_SQL.ladderDays)]);
+ const ladder=ladderDaysOf(days),out=new Map<string,Extension>();
+ const fact=(taskId:string)=>{let f=out.get(taskId);if(!f){f={taskId,until:null};out.set(taskId,f);}return f;};
+ for(const r of grants){
+  const taskId=String(r?.clickup_task_id??'').trim(),until=String(r?.until??'').slice(0,10);
+  if(!taskId||!ISO_DAY.test(until))throw new Error('A live extension grant lacks its card or its end day');
+  const f=fact(taskId);
+  // One open grant per card (W23); a second live row would be a replacement still settling, so the later end wins.
+  if(!f.until||until>f.until)f.until=until;
+ }
+ for(const r of steps){
+  const taskId=String(r?.clickup_task_id??'').trim(),step=String(r?.ladder_step??'') as LadderStep;
+  if(!taskId||!LADDER_STEPS.has(step))throw new Error('A ladder row lacks its card or names an unknown step');
+  const late=r?.days_late==null?null:Number(r.days_late);
+  Object.assign(fact(taskId),{ladderStep:step,daysLate:Number.isFinite(late)?late:null,...ladder});
+ }
+ return [...out.values()];
+}
+
+export async function cadenceInputs(cards?:ReadonlySet<string>,now=Date.now()):Promise<{notes:CallNote[];exts:Extension[];parity:NotesParity}>{
+ const typeform:TypeformNote[]=[];
+ const [store,exts]=await Promise.all([storeNotes(),billingFacts()]);
+ const native=store.provider==='native';
+ if(!native){
+  const response=unwrap(await callTool('pd_typeform_proxy_get',{url:'https://api.typeform.com/forms/fRokTITH/responses?page_size=200'}));
   if(!Array.isArray(response.items))throw new Error('Typeform collection missing');
   for(const item of response.items){
-   const answers:Row[]=item.answers??[];
-   const find=(ref:string)=>answers.find(a=>a.field?.ref===ref);
    const granted=Date.parse(item.submitted_at);if(!Number.isFinite(granted))throw new Error('Typeform submission date missing');
-   if(form==='gqBcyK6g'){
-    const client=String(find('5145ff0c-009b-4f51-b3a9-4651efc908be')?.text??'').trim();
-    const duration=find('278c2f80-88bd-428e-b330-8c6b3175d63f');
-    const weeks=weeksByLabel[String(duration?.choice?.label??duration?.text??'').trim().toUpperCase()];
-    if(client&&weeks)exts.push({client,until:new Date(granted+weeks*7*86400000+10800000).toISOString().slice(0,10)});
-   }else{
-    const taskId=checkinTaskId(item,cards);if(!taskId)continue;
-    const status=/^(done|sent|ok|okay|n\/a|na|none|nothing|fine|good|no|yes|waiting|pending|follow up|followup|noted)\b/i;
-    const commitments=[...new Set([find('82a6b434-15d9-4a14-8496-c20c94628536')?.text,find('5d071906-da6a-4413-a729-0c76d0188d91')?.text].filter(Boolean).flatMap(t=>String(t).split(/\n|\u2022|(?: - )/).map(s=>s.replace(/^[-*\d.\s]+/,'').trim()).filter(s=>s.length>=20&&!status.test(s))))].slice(0,4);
-    notes.push({taskId,submitted:new Date(granted+10800000).toISOString().slice(0,10),notes:commitments,defcon:find('ff7970f7-9fad-4fa5-b12b-4d719dfb7587')?.choice?.label,priority:find('c9f99fb1-fec9-47e7-9baa-c5554733723d')?.choice?.label});
-   }
+   const taskId=checkinTaskId(item,cards);if(!taskId)continue;
+   typeform.push({...noteOf(taskId,granted,typeformAnswers(item)),token:String(item.token??''),submittedAt:granted});
   }
  }
- return {notes,exts};
+ const notes:CallNote[]=store.newest.map(({taskId,submitted,notes,defcon,priority})=>({taskId,submitted,notes,defcon,priority}));
+ return {notes,exts,parity:{native,byTask:native?{}:notesParity(store.newest,typeform,store.marks,now)}};
 }
 
 export async function sheetPerformance(url:unknown,today:Day){
@@ -147,17 +312,40 @@ export async function fathomCalls(sinceArg?: string): Promise<Call[]> {
   throw new Error('Fathom pagination incomplete');
 }
 
-/** Verified legacy bridge contract: discover tab 01; never guess a Summary tab. */
+// The churn register in the old sheet's tab 01 shape (docs/forms/WAVE12-CONTRACT.md 4.11.2): the churn KPIs now
+// read cockpit_churn_months and cockpit_churn_departures instead of the Churn Tracker sheet. One select, no limit.
+export const CHURN_SQL=`select m.month, m.active_at_start, m.lost_before_register,
+ (select count(*) from public.cockpit_churn_departures d where d.removed_at is null and to_char(d.left_on, 'YYYY-MM') = m.month
+   and coalesce(to_jsonb(d)->>'churn_type', case when d.reason = 'Completed term, did not renew' then 'completed' end)
+       is distinct from 'completed') as departed
+ from public.cockpit_churn_months m order by m.month`;
+const MONTH_NAMES=['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+/**
+ * The register as tab 01 read: a header, then one row per month, newest twelve months only (the sheet keyed rows by
+ * month name), [month name, clients at start, clients lost, (blank), churn %]. Lost is the register's departures in
+ * the month, a completed term left out (the confirm's churn type decides; with no type, a finished-term reason;
+ * the same rule as the goal sheet and ceo-refresh), plus the count kept
+ * from before the register. A month with no start count gives no rate, never 0%: parseKpi then says it is not
+ * published. Pure, for the tests.
+ */
+export function churnGrid(rows:Row[]):string[][]{
+ const out:string[][]=[['Month','Clients at start','Clients lost','','Churn']];
+ const months=rows.map(r=>({month:String(r?.month??''),start:r?.active_at_start==null?null:Number(r.active_at_start),before:r?.lost_before_register==null?null:Number(r.lost_before_register),departed:Number(r?.departed??0)}));
+ for(const m of months)if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(m.month)||!Number.isFinite(m.departed))throw new Error('A churn register month lacks its month or its departures');
+ const newest=months.sort((a,b)=>a.month.localeCompare(b.month)).slice(-12);
+ for(const m of newest){
+  const lost=m.departed+(Number.isFinite(m.before)?Number(m.before):0);
+  const start=m.start!==null&&Number.isFinite(m.start)?m.start:null;
+  const rate=start&&start>0?`${(lost/start*100).toFixed(2)}%`:'';
+  out.push([MONTH_NAMES[Number(m.month.slice(5,7))-1],start===null?'':String(start),String(lost),'',rate]);
+ }
+ return out;
+}
+
+/** The churn register in tab 01's shape, so parseKpi and everything after it read it unchanged. */
 export async function churnValues():Promise<string[][]>{
- const sheet='1p8CAd5pL9zKjc1mZ73Gc_hoj4NSWHfFPs4FoC_WuBUU';
- const metadata=unwrap(await callTool('pd_google_sheets_proxy_get',{url:`https://sheets.googleapis.com/v4/spreadsheets/${sheet}?fields=sheets(properties(title,sheetId))`}));
- if(!Array.isArray(metadata.sheets))throw new Error('Churn tracker metadata missing');
- const matching=metadata.sheets.filter((s:Row)=>String(s.properties?.title??'').startsWith('01'));
- if(matching.length!==1)throw new Error('Churn tracker tab 01 is missing or ambiguous');
- const range=`'${String(matching[0].properties.title).replace(/'/g,"''")}'!A1:K20`;
- const grid=unwrap(await callTool('pd_google_sheets_proxy_get',{url:`https://sheets.googleapis.com/v4/spreadsheets/${sheet}/values/${encodeURIComponent(range)}`}));
- if(!Array.isArray(grid.values))throw new Error('Churn tracker range missing');
- return grid.values;
+ return churnGrid(await supabaseQuery(CHURN_SQL));
 }
 
 /** Client-call calendars, ported from ghlCalendar.ts and the finite CSM bridge. */

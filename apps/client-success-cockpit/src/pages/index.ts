@@ -12,6 +12,7 @@ export {
   TodayPage,
 } from "./CsmPage";
 export { FirstSignInPage } from "./FirstSignInPage";
+export { FormsEditorPage } from "./FormsEditorPage";
 export { InboxPage } from "./InboxPage";
 export { LandingPage } from "./LandingPage";
 export { LoginPage } from "./LoginPage";

@@ -252,6 +252,49 @@ unsaved draft it rounds a decimal string half away from zero. Shared vectors:
 | other lines (intros, demos, signed, contract, MRR) | not measured here | — | `not_here`: listed, left out, named in `notPriced` |
 | adjustment (built in) | signed amountUsd with a note (and `fromMonth` when it corrects an approved month) | entries | known |
 
+**Pay proposals from the wins ledger (waves 5-6, E12; `docs/forms/WAVE56-CONTRACT.md` 4.9).**
+`cockpit_win_pay_rows(month)` (migration `20261102h_wins_pay.sql`) derives,
+on read, one proposal per non-void win, part and month for the card's CSM
+(`cockpit_csm_wins.csm_person_id`; unmatched, the CEO picks the person at
+confirm): review → `google_reviews` (1, posted on the win day, the proof as
+evidence), video testimonial → `video_testimonials`, podcast → `podcasts`
+(the win month); referral → `referrals` once the referred deal's first
+active `cockpit_deal_payments` day (that month; until then "The referred
+client has not paid yet."); renewal / reactivation → `renewals` /
+`reactivations` on the win day with an agreement link, else the first tied
+checked payment day ("No agreement link or tied payment yet."); a paid upsell
+→ `upsells` (the checked tied cash of each month, engagement month 1) or, when
+recurring, `recurring` (engagement month = months since the first tied
+payment + 1); "Cash not checked yet." while the month's tied money is not
+checked. A part missing from the person's plan for the month waits ("{part} is
+not in the {role}'s plan for {month}."). The key is
+`win:{id}:{part}:{YYYY-MM}` and the evidence reference `win:{id}`; amounts are
+priced with the plan (per event × quantity, share × the step's rate). Only
+the CEO's decision is stored (`cockpit_pay_proposal_decisions`): **confirm**
+writes an ordinary entry through `cockpit_ceo_pay_entry_save` (its gate,
+rules and audit), **decline** needs a reason. A proposal whose month is
+approved for the person goes into the first open month after their last
+approved one, its note `For {Month YYYY}: {part label}` ("Added to {open
+month}: {month} is approved."), and the key keeps it to one payment. Both RPCs
+refuse while `pay.proposals` is `{"on":false}` ("Pay proposals open after
+their switch-on."). `cockpit_pay_compute` is unchanged: it reads the entries.
+
+**The C7 rule (replaced `cockpit_ceo_pay_entry_save`, only while
+`pay.proposals` is on).** For `google_reviews`, `video_testimonials`,
+`podcasts`, `referrals`, `renewals`, `reactivations`, `upsells` and
+`recurring`, an entry whose `evidenceRef` is not `win:<uuid>` needs
+`outsideLedger` (10 to 300 characters), stored as the note `Outside the wins
+ledger: ...` ("This part comes from the wins ledger. Confirm its proposal, or
+say why it is not in the ledger."); a `win:` reference must name a non-void
+win; a second non-void entry with the same reference and part for the same
+proposal month (its own month, or the month a carried entry's `For` note
+names) is refused ("This win is already paid for {Month YYYY}."). A carried
+entry names its approved month in `forMonth`, which also moves the cleared-date
+check to that month. Adjustments and every other part are byte for byte as
+before; with the switch off the function behaves exactly as the live body of
+2026-11-02. Closer commission stays measured from the deal ledger (rule 1 of
+`docs/money/MONEY-ATTRIBUTION.md`); upsell cash never reaches it (rule 7).
+
 **Confirmations and the month they affect**: `logo_churn`@M affects M+1 for
 people with a `logo_churn_prior` part; `csm_churn:<id>`@M, `qualifying:<id>`@M,
 `owned_creative:<id>`@M, `ramp_start:<id>` (any month: stored under the start

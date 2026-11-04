@@ -9,6 +9,11 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { createContext, type ReactNode, useContext, useMemo } from "react";
+import {
+  clientCplOf,
+  clientCplOfDays,
+  META_FORM_LEADS,
+} from "@/components/ceo/clientCpl";
 import { type Column, DataTable } from "@/components/ceo/DataTable";
 import { Delta } from "@/components/ceo/Delta";
 import { EmptyState } from "@/components/ceo/EmptyState";
@@ -51,6 +56,7 @@ import {
 import { type Timeframe, useTimeframe } from "@/components/ceo/timeframe";
 import type { CeoSections } from "@/components/ceo/useCeo";
 import { range as rangeText } from "@/components/ceo/windows";
+import { YourTasks } from "@/components/tasks/YourTasks";
 import { cn } from "@/lib/utils";
 import type {
   ClientRow,
@@ -180,6 +186,12 @@ export function TodayTab({ sections, now, day, goTab }: CeoTabProps) {
           day={day}
           goTab={goTab}
         />
+
+        {/* Your own ClickUp tasks (PLAN.md D19): /ceo is where the CEO
+            lands, so the card every Today carries sits high, under the
+            company's numbers and before the funnels, not three screens
+            down on a phone. Five rows at most, so it stays quiet. */}
+        <YourTasks />
 
         <div className="grid items-start gap-4 lg:gap-6 @4xl:grid-cols-2">
           <DeliveryFunnelCard
@@ -347,10 +359,11 @@ function CashHero({
   const p = section?.payload ?? null;
   const scopeNote = p ? cashHeadline(p).note : null;
   // "Cash" once: the title names it, the figure's label says only the month
-  // and the rails ("This month, Whop and Tap").
+  // and the rails ("This month, Whop and Tap"). Every rail, not the deal
+  // ledger's Cash collected on the Goals sheet (2026-11-02, fix 14).
   return (
     <SectionCard
-      title="Cash collected"
+      title={p ? cashHeadline(p).title : "Cash in, every rail"}
       section={section}
       notes={[
         ...(scopeNote ? [scopeNote] : []),
@@ -518,7 +531,7 @@ function CashHeroBody({
             sub={
               m.dayOfMonth < 5
                 ? "Early in the month, so the projection still moves a lot."
-                : `${f.money(cash.mtd)} collected so far.`
+                : `${f.money(cash.mtd)} in so far, every rail.`
             }
             className="mb-5 border-b pb-5"
           />
@@ -631,26 +644,24 @@ function KpiRow({
   const c = calls?.payload ?? null;
   const w = win?.w ?? null;
   const own7 = !w || w.range === "7d";
-  const cplSpend = d && w && !own7 ? sumIn(d.daily, w, r => r.spend) : null;
-  const cplLeads = d && w && !own7 ? sumIn(d.daily, w, r => r.leads) : null;
-  const cplWin = own7
-    ? (d?.last7.cpl ?? null)
-    : cplLeads && cplSpend !== null
-      ? cplSpend / cplLeads
-      : null;
+  // CRM ad leads over the spend paired with them, the Goals sheet's client
+  // CPL (2026-11-02, Goals sheet round 2, fix 9); Meta's form leads on a
+  // payload from before the pairing, named as such.
+  const cpl = !d
+    ? null
+    : own7 || !w
+      ? clientCplOf(d.last7)
+      : clientCplOfDays(d.daily, w.from, w.to);
+  const cplWin = cpl?.value ?? null;
   // The comparison the bar names (the same days last month for month to date).
   const prevW = w && !own7 ? (win?.compare ?? previousOf(w)) : null;
-  const prevLeads = d && prevW ? sumIn(d.daily, prevW, r => r.leads) : null;
-  const prevSpend = d && prevW ? sumIn(d.daily, prevW, r => r.spend) : null;
-  const cplPrev = own7
-    ? (d?.prevLast7.cpl ?? null)
-    : prevLeads &&
-        prevSpend !== null &&
-        d &&
-        prevW &&
-        !startsLate(d.daily[0]?.date, prevW)
-      ? prevSpend / prevLeads
-      : null;
+  const cplPrev = !d
+    ? null
+    : own7
+      ? clientCplOf(d.prevLast7).value
+      : prevW && !startsLate(d.daily[0]?.date, prevW)
+        ? clientCplOfDays(d.daily, prevW.from, prevW.to).value
+        : null;
   const pendingD = d ? undefined : "Delivery numbers are not computed yet";
   const pendingC = c ? undefined : "Call numbers are not computed yet";
   // One cost per booking for every tab: confirmed only (./deliveryCost.ts).
@@ -687,7 +698,7 @@ function KpiRow({
         />
         <StatTile
           variant="plain"
-          label="Client leads yesterday"
+          label="Client Meta form leads yesterday"
           value={d ? f.count(d.yesterday.leads) : null}
           naHint={pendingD}
           delta={
@@ -708,14 +719,9 @@ function KpiRow({
               : `Client cost per lead, ${w?.short}`
           }
           value={d ? f.money(cplWin) : null}
-          naHint={
-            pendingD ??
-            (own7
-              ? d?.last7.leads === 0
-                ? "No leads in the last 7 days"
-                : undefined
-              : "No leads in these days")
-          }
+          naHint={pendingD ?? cpl?.naHint}
+          hint={cpl?.hint}
+          sub={cpl?.sub ?? undefined}
           status={
             d ? gateChip(cplWin, d.gates.cpl, "Cost per lead") : undefined
           }
@@ -843,7 +849,8 @@ function DeliveryFunnelCard({
                   leads: d.last7.leads,
                   bookings: cost.confirmed,
                   spend: d.last7.spend,
-                  cpl: d.last7.cpl,
+                  // The Goals sheet's client CPL (2026-11-02, fix 9).
+                  cpl: clientCplOf(d.last7),
                   cpb: cost.value,
                   cpbWhy: cost.why,
                   dwy: doneWithYouLine(doneWithYouOf(d.last7)),
@@ -864,7 +871,8 @@ function DeliveryFunnelCard({
                   leads,
                   bookings: cost.confirmed,
                   spend,
-                  cpl: leads > 0 ? spend / leads : null,
+                  // The Goals sheet's client CPL (2026-11-02, fix 9).
+                  cpl: clientCplOfDays(d.daily, w.from, w.to),
                   cpb: cost.value,
                   cpbWhy: cost.why,
                   dwy: doneWithYouLine(
@@ -877,7 +885,8 @@ function DeliveryFunnelCard({
                 };
               })();
         const steps: FunnelStep[] = [
-          { label: "Leads", value: win7.leads },
+          // Meta's count: the cost per lead below divides by CRM ad leads.
+          { label: META_FORM_LEADS, value: win7.leads },
           // Several dials per lead is normal, so leads to dials is not a conversion.
           {
             label: "Actual calls",
@@ -903,8 +912,15 @@ function DeliveryFunnelCard({
                   value: <Value value={f.money(win7.spend)} />,
                 },
                 {
-                  label: "Cost per lead",
-                  value: <GateValue value={win7.cpl} gate={d.gates.cpl} />,
+                  label:
+                    win7.cpl.basis === "crm"
+                      ? "Cost per lead, CRM ad leads"
+                      : "Cost per lead, Meta form leads",
+                  value: f.isNum(win7.cpl.value) ? (
+                    <GateValue value={win7.cpl.value} gate={d.gates.cpl} />
+                  ) : (
+                    <Value value={null} hint={win7.cpl.naHint} />
+                  ),
                 },
                 {
                   label: CPB_CONFIRMED_LABEL,
@@ -1022,7 +1038,7 @@ function GrowthFunnelCard({
                 label: "Contracted, closer form",
                 value: <Value value={f.money(w.contracted)} />,
               },
-              // What the closer typed at signing, not the cash collected above.
+              // What the closer typed at signing, not the cash in above.
               {
                 label: "Cash typed on the form",
                 value: <Value value={f.money(w.cash)} />,
@@ -1237,9 +1253,11 @@ const DELIVERY_COLUMNS: Column<DeliveryClient>[] = [
     cell: r => f.money(r.spend7d),
     sortValue: r => r.spend7d,
   },
+  // Per client the worker pairs no CRM count, so these stay Meta's, as on
+  // the Client Performance board, and say so (2026-11-02, fix 9).
   {
     key: "leads",
-    header: "Leads",
+    header: "Meta leads",
     numeric: true,
     hideBelow: "sm",
     cell: r => f.count(r.leads7d),
@@ -1247,7 +1265,7 @@ const DELIVERY_COLUMNS: Column<DeliveryClient>[] = [
   },
   {
     key: "cpl",
-    header: "CPL",
+    header: "Meta CPL",
     numeric: true,
     cell: r => <Value value={f.money(r.cpl7d)} />,
     sortValue: r => r.cpl7d,

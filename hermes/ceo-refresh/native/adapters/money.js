@@ -4,6 +4,7 @@ import { bankCanBe, amountGap, coverWithTap, cashDuplicates, dealDuplicates, MAT
 import { groupOf, isOneOffPlan, summariseBilling } from "../billing.js";
 import { linkCtrTargetNote, targetItems } from "../../../../supabase/functions/cockpit-ceo-api/finance/targets.ts";
 import { MEDIA_FEED_SQL, MEDIA_STALE_MS, mediaClientDaysSql, mediaFeedFresh } from "../data/triage.js";
+import { withOptionalReads } from "../tools.js";
 
 const STALE_MS = 60 * 60_000;
 const TAP_STALE_MS = 3 * 60 * 60_000;
@@ -11,6 +12,10 @@ const ECOM_STALE_MS = 60 * 60_000;
 const BANK_STALE_DAYS = 7;
 const MANUAL_CAP = 5000;
 const ROUND2 = value => Math.round(value * 100) / 100;
+/** cockpit_manual_payments.check_state (20261101n). */
+const CHECK_STATES = new Set(["logged", "checked", "rejected"]);
+/** The rails the MRR check sums (contract 3.6): every rail money arrives on, hand-logged money once checked. */
+const MRR_RAILS = new Set(["whop", "tap", "ecom", "manual", "transfer"]);
 
 function failSource(name, reason) {
   throw new Error(`${name} is not confirmed: ${reason}`);
@@ -103,7 +108,44 @@ function normalizeManual(row) {
     addedAt: addedAt ?? 0,
     deletedAt,
     deletedBy: field(row, "deletedBy", "deleted_by") == null ? null : cleanText(field(row, "deletedBy", "deleted_by"), 60),
+    // Checked money (20261101n): logged until finance or the CEO checks it against the bank.
+    // A row without the field (a database before the check rule) is never counted as checked.
+    checkState: CHECK_STATES.has(field(row, "checkState", "check_state")) ? field(row, "checkState", "check_state") : "logged",
+    stateMissing: !CHECK_STATES.has(field(row, "checkState", "check_state")),
+    checkedAt: epoch(field(row, "checkedAt", "checked_at")),
+    checkedRef: field(row, "checkedRef", "checked_ref") == null ? null : cleanText(field(row, "checkedRef", "checked_ref"), 120),
   };
+}
+
+/**
+ * Rail cash per client card over the last two full months (contract 3.6,
+ * payload.mrrCheck): money in the attribution tied to a card, from Whop,
+ * Tap, Ecom, bank transfers and checked hand-logged payments, divided by 2.
+ * money-acts' cockpit_mrr_read compares it with the card's MRR. A card with
+ * no tied money in those months is left out, never 0. Pure, for the tests.
+ */
+export function mrrCheckRows(attributed, today) {
+  const lastMonth = monthShift(today.slice(0, 7), -1);
+  const firstMonth = monthShift(lastMonth, -1);
+  const from = `${firstMonth}-01`;
+  const to = addDays(monthStart(today), -1);
+  const byCard = new Map();
+  for (const row of attributed) {
+    if (!row.clientTaskId || row.day < from || row.day > to || !MRR_RAILS.has(row.rail) || !(row.usd > 0)) continue;
+    const card = byCard.get(row.clientTaskId) ?? { usd: 0, rails: new Set(), payments: 0 };
+    card.usd += row.usd;
+    card.rails.add(row.rail);
+    card.payments += 1;
+    byCard.set(row.clientTaskId, card);
+  }
+  const monthName = month => new Date(`${month}-01T00:00:00Z`).toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+  return [...byCard].sort(([a], [b]) => a.localeCompare(b)).map(([taskId, card]) => ({
+    taskId,
+    railMonthlyUsd: ROUND2(card.usd / 2),
+    months: 2,
+    rails: [...card.rails].sort(),
+    note: `${card.payments === 1 ? "1 payment" : `${card.payments} payments`} tied to this card in ${monthName(firstMonth)} and ${monthName(lastMonth)} ${lastMonth.slice(0, 4)} (${[...card.rails].sort().join(", ")}), hand-logged money only once checked, divided by 2.`,
+  }));
 }
 
 function normalizeBankLine(row) {
@@ -206,6 +248,11 @@ function nameKey(value) {
  * 3. The CEO's tie is read first: a payment tie, then a payer tie, then
  *    Whop's own deal link, the email, the name, the card.
  * 4. A payer tie keys on the email or the exact payer key, never a short name.
+ * 7. A payment whose tie names a win (cockpit_payment_ties.win_id, Q23) is
+ *    back end, the card's CSM's: never the closer's, never in the deal ledger,
+ *    never added to a deal's running contract total or its 120-day cap, even
+ *    inside the deal's term. It is read before rules 1 and 2. A cleared win
+ *    tie is not in the snapshot, so the payment falls back to the rules.
  */
 /** A payment this many days before the form can still be that deal's (the form is filled after the call). */
 export const BEFORE_FORM_DAYS = 7;
@@ -245,6 +292,7 @@ export function normalizeTies(rows) {
     const dealResponseId = text(field(row, "deal_response_id", "dealResponseId"));
     const clickupTaskId = text(field(row, "clickup_task_id", "clickupTaskId"));
     const notClient = field(row, "not_client", "notClient") === true;
+    const winId = text(field(row, "win_id", "winId"));
     const scope = paymentId ? "payment" : payerEmail || payerKey ? "payer" : null;
     if (!scope || !(dealResponseId || clickupTaskId || notClient)) continue;
     const setAt = field(row, "set_at", "setAt");
@@ -252,6 +300,8 @@ export function normalizeTies(rows) {
       id: num(field(row, "id")), scope, paymentId, payerEmail: paymentId ? null : payerEmail, payerKey: paymentId || payerEmail ? null : payerKey,
       dealResponseId, clickupTaskId: dealResponseId ? null : clickupTaskId, notClient: !dealResponseId && !clickupTaskId && notClient,
       note: oneLine(field(row, "note"), 500), setBy: oneLine(field(row, "set_by", "setBy"), 120) || null, setAt: setAt === null || setAt === undefined ? null : String(setAt),
+      // A win tie is a payment tie to the win's card (20261102h); anything else carries no win.
+      winId: paymentId && clickupTaskId && !dealResponseId ? winId : null,
     });
   }
   return ties.sort((a, b) => a.id - b.id);
@@ -287,6 +337,44 @@ function tieReaches(tie, deal, payment) {
   return tie.scope === "payment" || daysFrom(deal.day, payment.day) >= -BEFORE_FORM_DAYS;
 }
 
+/**
+ * An index's value for a key: the exact key, else, for keys CONTAINS_MIN long or longer, the
+ * longest key that contains it or that it contains. Moved out of attributePayments unchanged
+ * (2026-11-02) so the back-end book's card match is attribution's own.
+ */
+function longestMatch(index, key) {
+  if (!key) return null;
+  if (index.has(key)) return index.get(key);
+  if (key.length < CONTAINS_MIN) return null;
+  let best = null;
+  let bestLength = 0;
+  for (const [candidate, value] of index) {
+    if (candidate.length >= CONTAINS_MIN && (key.includes(candidate) || candidate.includes(key)) && candidate.length > bestLength) {
+      best = value;
+      bestLength = candidate.length;
+    }
+  }
+  return best;
+}
+
+/**
+ * The client card a closer-form deal belongs to: its business name on the card's names, else the
+ * form's email on the card's portal logins. attributePayments uses it, and so does the back-end
+ * book (2026-11-02, fix 8), so a deal sits on the same card in both.
+ */
+export function cardForDealOf(cards) {
+  const byEmail = new Map();
+  const byName = new Map();
+  for (const card of cards) {
+    for (const email of card.emails ?? []) if (lowerEmail(email)) byEmail.set(lowerEmail(email), card);
+    for (const name of card.names ?? []) {
+      const key = nameKey(name);
+      if (key.length >= 4) byName.set(key, card);
+    }
+  }
+  return deal => longestMatch(byName, nameKey(deal.business)) ?? (lowerEmail(deal.email) ? byEmail.get(lowerEmail(deal.email)) ?? null : null);
+}
+
 export function attributePayments(payments, deals, cards, tieRows = []) {
   const dealById = new Map();
   const dealsByEmail = new Map();
@@ -313,20 +401,7 @@ export function attributePayments(payments, deals, cards, tieRows = []) {
       if (key.length >= 4) cardByName.set(key, card);
     }
   }
-  const lookup = (index, key) => {
-    if (!key) return null;
-    if (index.has(key)) return index.get(key);
-    if (key.length < CONTAINS_MIN) return null;
-    let best = null;
-    let bestLength = 0;
-    for (const [candidate, value] of index) {
-      if (candidate.length >= CONTAINS_MIN && (key.includes(candidate) || candidate.includes(key)) && candidate.length > bestLength) {
-        best = value;
-        bestLength = candidate.length;
-      }
-    }
-    return best;
-  };
+  const lookup = longestMatch;
   // The deal whose form sits closest to the payment, a form on or before it
   // preferred: gap = payment - deal, as the Edge copy (changed 2026-10-18).
   const nearest = (candidates, day) => candidates.reduce((best, deal) => {
@@ -334,7 +409,8 @@ export function attributePayments(payments, deals, cards, tieRows = []) {
     const score = gap >= 0 ? gap : Math.abs(gap) * 10;
     return !best || score < best.score ? { deal, score } : best;
   }, null)?.deal ?? null;
-  const cardForDeal = deal => lookup(cardByName, nameKey(deal.business)) ?? (lowerEmail(deal.email) ? cardByEmail.get(lowerEmail(deal.email)) ?? null : null);
+  // One card match for a deal, shared with the back-end book (2026-11-02) so both tie a deal to the same card.
+  const cardForDeal = cardForDealOf(cards);
   const dealsByCard = new Map();
   for (const deal of deals) {
     const card = cardForDeal(deal);
@@ -376,7 +452,13 @@ export function attributePayments(payments, deals, cards, tieRows = []) {
     const payer = nameKey(payment.payerName);
     const tie = tieOf(payment);
     if (tie) {
-      const ref = { id: tie.id, scope: tie.scope, note: tie.note, setBy: tie.setBy, setAt: tie.setAt };
+      const ref = { id: tie.id, scope: tie.scope, note: tie.note, setBy: tie.setBy, setAt: tie.setAt, ...(tie.winId ? { winId: tie.winId } : {}) };
+      // Rule 7: an upsell payment tied to a win is the card CSM's back-end money, before rules 1 and 2.
+      if (tie.winId) {
+        const card = cardById.get(tie.clickupTaskId);
+        output.push({ ...payment, side: "back_end", kind: "client", depositUsd: 0, person: card?.csm ?? null, personRole: "csm", dealResponseId: null, dealBusiness: null, clientTaskId: tie.clickupTaskId, clientName: card?.names[0] ?? null, matchedBy: "ceo", tie: ref });
+        continue;
+      }
       const tiedDeal = tie.dealResponseId ? dealById.get(tie.dealResponseId) : undefined;
       if (tiedDeal && tieReaches(tie, tiedDeal, payment)) { output.push(dealRow(payment, tiedDeal, "ceo", ref)); continue; }
       if (tie.clickupTaskId && cardById.has(tie.clickupTaskId)) { output.push(cardRow(payment, cardById.get(tie.clickupTaskId), "ceo", ref)); continue; }
@@ -468,7 +550,7 @@ export function dealLedgerRows(rows) {
 
 /** The attribution rule in words, said beside the figures (the Edge copy says the same). */
 export function attributionRuleText(unattributedCount, unattributedUsd) {
-  return `Every payment in over the last 12 months is given a side. A payment tied to a signed deal (by your tie, Whop's own link, the payer's email, the business name, or a client card whose deal is still in its term) is front end and the closer's, from ${BEFORE_FORM_DAYS} days before the form until the deal's tied cash reaches its contract, at most ${DEAL_TERM_DAYS} days after signing: the deposit up to what the closer typed, then the remainder. Beyond the contract or the ${DEAL_TERM_DAYS} days it is back end, the card's CSM's, and so is a payment matched only to a client (by a portal login, the hand-kept payer mapping, the card's names or the card typed on a hand-logged entry). Your ties are read before any automatic match. ${unattributedCount === 1 ? "1 payment" : `${unattributedCount} payments`} (${usdWords(unattributedUsd)}) match no deal and no client; the Transactions tab lists every payment in and out.`;
+  return `Every payment in over the last 12 months is given a side. A payment tied to a signed deal (by your tie, Whop's own link, the payer's email, the business name, or a client card whose deal is still in its term) is front end and the closer's, from ${BEFORE_FORM_DAYS} days before the form until the deal's tied cash reaches its contract, at most ${DEAL_TERM_DAYS} days after signing: the deposit up to what the closer typed, then the remainder. Beyond the contract or the ${DEAL_TERM_DAYS} days it is back end, the card's CSM's, and so is a payment matched only to a client (by a portal login, the hand-kept payer mapping, the card's names or the card typed on a hand-logged entry). Your ties are read before any automatic match, and a payment you tied to an upsell win is back end, the card's CSM's, even inside a deal's term: it never counts toward the deal's contract or the closer. ${unattributedCount === 1 ? "1 payment" : `${unattributedCount} payments`} (${usdWords(unattributedUsd)}) match no deal and no client; the Transactions tab lists every payment in and out.`;
 }
 
 const TIE_WHY = {
@@ -547,6 +629,134 @@ function matchRuns(lines, payments, lookback, tolerance) {
   return result;
 }
 
+/** The wins ledger reads (20261102h): the view of non-void wins, and the upsells that ended unwon (voided or not now). */
+export const WINS_SQL = {
+  wins: `/* ceo-refresh:money.wins */ SELECT id::text AS id, task_id, client_name, kind, stage, to_char(won_on,'YYYY-MM-DD') AS won_on,
+    to_char(offered_on,'YYYY-MM-DD') AS offered_on, to_char(accepted_on,'YYYY-MM-DD') AS accepted_on, quoted_usd, recurring, monthly_usd, ties
+    FROM public.cockpit_wins_v WHERE source <> 'canary' AND task_id <> '86eywg1cq' ORDER BY won_on, id`,
+  missed: `/* ceo-refresh:money.wins_missed */ SELECT 'voided' AS why_kind, client_name, kind AS what, left(void_reason, 300) AS why,
+    to_char((voided_at AT TIME ZONE 'Asia/Kuwait')::date,'YYYY-MM-DD') AS day
+    FROM public.cockpit_csm_wins WHERE stage = 'void' AND source = 'cockpit' AND kind LIKE 'upsell\\_%' AND voided_at >= now() - interval '120 days'
+    UNION ALL
+    SELECT 'not_now', client_name, offer_key, left(objection, 300), to_char((updated_at AT TIME ZONE 'Asia/Kuwait')::date,'YYYY-MM-DD')
+    FROM public.cockpit_upsell_proposals WHERE status = 'not_now' AND updated_at >= now() - interval '120 days'
+    ORDER BY 5 DESC LIMIT 200`,
+};
+
+/**
+ * The wins block of the money payload (WAVE56-CONTRACT 4.8): every non-void
+ * win with its event days and tied payments, and the upsells that ended unwon
+ * for the lock-in's "why we missed them". A failed read is said, never zero.
+ */
+export async function readWins(read, today) {
+  try {
+    const [rows, missed] = await Promise.all([read(TRIAGE, WINS_SQL.wins), read(TRIAGE, WINS_SQL.missed)]);
+    return {
+      read: true, today,
+      rows: rows.map(row => ({
+        id: String(row.id), taskId: String(row.task_id ?? ""), client: cleanText(row.client_name, 120), kind: String(row.kind), stage: String(row.stage),
+        wonOn: dateText(row.won_on), offeredOn: row.offered_on ? dateText(row.offered_on) : null, acceptedOn: row.accepted_on ? dateText(row.accepted_on) : null,
+        quotedUsd: row.quoted_usd == null ? null : ROUND2(num(row.quoted_usd)), recurring: row.recurring === true,
+        monthlyUsd: row.monthly_usd == null ? null : ROUND2(num(row.monthly_usd)),
+        ties: (Array.isArray(row.ties) ? row.ties : []).map(tie => ({ paidOn: dateText(tie.paidOn), usd: ROUND2(num(tie.usd)), checked: tie.checked === true })),
+      })),
+      missed: missed.map(row => ({ kind: String(row.why_kind), client: cleanText(row.client_name, 120), what: String(row.what ?? ""), why: row.why ? cleanText(row.why, 300) : null, day: dateText(row.day) })),
+    };
+  } catch (error) {
+    return { read: false, error: cleanText(error instanceof Error ? error.message : String(error), 200) };
+  }
+}
+
+/**
+ * A month's refunds (2026-11-02, Goals sheet fix 1): Whop's refunds plus the refunds logged by
+ * hand, the hand-logged part apart as `refundsManual` because Whop cash is already net of its
+ * refunds (net_amount), so revenue takes off refundsManual only and a Whop refund is never taken
+ * off twice. `refundCount` counts both. A hand-logged refund counts while it waits on its check,
+ * as refunds.mtd does: money out is never held back. Pure, for the tests.
+ */
+export function withManualRefunds(row, manualRefunds) {
+  const mine = manualRefunds.filter(item => item.day.slice(0, 7) === row.month);
+  const refundsManual = ROUND2(mine.reduce((sum, item) => sum + item.amountUsd, 0));
+  return { ...row, refunds: ROUND2(row.refunds + refundsManual), refundsManual, refundCount: row.refundCount + mine.length };
+}
+
+/**
+ * The client cards still on their closer-form deal in a month (2026-11-02, Goals sheet fix 8), from
+ * each deal's state at the month's start, never from what was paid during the month: a deal tied
+ * to the card (cardForDealOf, attribution's own match) that was signed in the month, or signed
+ * before it and at the month's start still inside DEAL_TERM_DAYS with its contract not paid in
+ * full. attributePayments makes those cards' payments front-end money, the deal's (new cash, the
+ * closer's), so they owe no back-end MRR that month. `attributedAll` is every attributed payment,
+ * the seed months before the 12 included, so "paid before the month" is the contract's own count.
+ * A term that ends inside the month keeps the card on its deal for that month. Pure, for the tests.
+ */
+export function cardsOnDeals(deals, cardForDeal, attributedAll, month) {
+  const first = `${month}-01`;
+  const last = addDays(monthStart(addDays(first, 32)), -1);
+  const paidBefore = new Map();
+  for (const row of attributedAll) {
+    if (row.dealResponseId && row.day < first) paidBefore.set(row.dealResponseId, (paidBefore.get(row.dealResponseId) ?? 0) + row.usd);
+  }
+  const out = new Set();
+  for (const deal of deals) {
+    if (!deal.day || deal.day > last) continue;
+    const card = cardForDeal(deal);
+    if (!card) continue;
+    const signedInMonth = deal.day >= first;
+    const inTerm = daysFrom(deal.day, first) <= DEAL_TERM_DAYS;
+    const open = !(deal.contracted > 0) || (paidBefore.get(deal.responseId) ?? 0) + 0.01 < deal.contracted;
+    if (signedInMonth || (inTerm && open)) out.add(card.taskId);
+  }
+  return out;
+}
+
+/**
+ * MRR collected and owed on the back end (2026-11-02, Goals sheet fix 8; the CEO's choice: back
+ * end only, as the plan's `mrrCollected` is back-end cash). A recurring card (active, an MRR, a
+ * recurring plan) is a client from before the month, owing back-end MRR, unless it is on its deal
+ * that month (`onDeals`, cardsOnDeals: new in the month, or still paying a deal in its term) or
+ * took front-end money in the month anyway (a payment made up to BEFORE_FORM_DAYS ahead of a later
+ * form). Those cards' money that month is the deal's, new cash, never MRR, so their MRR is left out
+ * of what is owed (`projectedOnDeals`, said beside it) and none of their money is collected.
+ * Deciding it from the deal, not from whether an instalment landed, keeps the rate's base fixed:
+ * an instalment arriving never shrinks what is owed (review, 2026-11-02: the earlier stand-in
+ * moved November's base from 11,333 to 5,333 as Madana, Al Ola and Ardon paid).
+ * `collectedBackEnd` is the back-end payments on the owing cards, so both sides are one set.
+ * October 2026 (live, read 2 Nov): $1,300 (Safad) of $4,999 (Joe and Sera 1,666, Liwan 1,333,
+ * Safad 1,300, Nohod 700) = 26.0%; $10,000 left out on Madana (signed 2 Oct), Al Ola, Ardon,
+ * Castello and Arcturus (each $2,000, all mid-deal). The whole book reads $7,321.20 of $14,999.
+ * Pure, for the tests.
+ */
+export function backEndBook(attributed, recurring, month, onDeals = new Set()) {
+  const inMonth = attributed.filter(row => row.clientTaskId && row.day.slice(0, 7) === month);
+  const newCards = new Set(inMonth.filter(row => row.side === "front_end").map(row => row.clientTaskId));
+  const leftOut = row => onDeals.has(row.taskId) || newCards.has(row.taskId);
+  const existing = recurring.filter(row => !leftOut(row));
+  const ids = new Set(existing.map(row => row.taskId));
+  return {
+    collectedBackEnd: ROUND2(inMonth.filter(row => row.side === "back_end" && ids.has(row.clientTaskId)).reduce((sum, row) => sum + row.usd, 0)),
+    projectedExisting: ROUND2(existing.reduce((sum, row) => sum + num(row.mrrUsd), 0)),
+    projectedOnDeals: ROUND2(recurring.filter(leftOut).reduce((sum, row) => sum + num(row.mrrUsd), 0)),
+  };
+}
+
+/** The recurring cards of a billing snapshot, the book's own rule: active, an MRR, a recurring plan. */
+export function recurringCards(rows) {
+  return rows.filter(row => groupOf(row.stage) === "active" && typeof row.mrrUsd === "number" && Number.isFinite(row.mrrUsd) && row.paymentPlan && !isOneOffPlan(row.paymentPlan));
+}
+
+/**
+ * Each past month's last billing snapshot (cockpit_client_billing_days), for the back-end book of
+ * book.history (2026-11-02, fix 8): a past month's recurring cards are that month's, never today's
+ * (Arcturus stopped on 1 Nov and is in October's book). The table starts on 7 Oct 2026, so earlier
+ * months have no snapshot and read missing, not zero.
+ */
+export function bookMonthEndsSql(from, before) {
+  return `/* ceo-refresh:money.book_month_ends */ SELECT to_char(day,'YYYY-MM') AS month,clickup_task_id,stage,mrr_usd::float8 AS mrr_usd,payment_plan
+    FROM public.cockpit_client_billing_days
+    WHERE day IN (SELECT max(day) FROM public.cockpit_client_billing_days WHERE day>=date '${from}' AND day<date '${before}' GROUP BY date_trunc('month',day))`;
+}
+
 function normalizeDeal(row) {
   return {
     responseId: String(field(row, "response_id", "responseId") ?? ""),
@@ -612,7 +822,12 @@ export function createMoneyAdapter(snapshot) {
       if (!Number.isInteger(sourceRevision) || sourceRevision < 0) failSource("Canonical finance revision", "revision is missing");
       const manual = rowsFor(snapshot, "manual").map(normalizeManual);
       if (manual.length > MANUAL_CAP) failSource("Manual payments", `read limit ${MANUAL_CAP} was reached`);
+      // Checked money (20261101n): a row with no check state is from a database before the
+      // check rule; it waits as logged (never counted by a default) and a note says why.
+      const stateMissing = manual.filter(row => row.stateMissing).length;
       const activeManual = manual.filter(row => row.deletedAt === null && row.day >= dates.from12 && row.day <= today);
+      // A rejected payment is no money anywhere; it stays on the manual list only.
+      const liveManual = activeManual.filter(row => row.checkState !== "rejected");
       const removedThisMonth = manual.filter(row => row.deletedAt !== null && row.day.slice(0, 7) === dates.month);
       const bankInput = {
         bankLines: rowsFor(snapshot, "bank_lines"),
@@ -657,11 +872,12 @@ export function createMoneyAdapter(snapshot) {
       const monthRows = await sql(B2B, `/* ceo-refresh:money.monthly */
         WITH months AS (SELECT generate_series(date '${dates.from12.slice(0, 7)}-01',date '${monthStart(today)}',interval '1 month')::date AS month),
         cash AS (SELECT date_trunc('month',paid_on)::date AS month,sum(net_amount) AS cash FROM public.whop_payments WHERE status='paid' AND currency='usd' AND paid_on>=date '${dates.from12}' GROUP BY 1),
-        refunds AS (SELECT date_trunc('month',(refunded_at AT TIME ZONE 'Asia/Kuwait')::date)::date AS month,sum(refunded_amount) AS refunds FROM public.whop_payments WHERE status='paid' AND currency='usd' AND refunded_amount>0 AND (refunded_at AT TIME ZONE 'Asia/Kuwait')::date>=date '${dates.from12}' GROUP BY 1),
+        refunds AS (SELECT date_trunc('month',(refunded_at AT TIME ZONE 'Asia/Kuwait')::date)::date AS month,sum(refunded_amount) AS refunds,count(*) AS refund_count FROM public.whop_payments WHERE status='paid' AND currency='usd' AND refunded_amount>0 AND (refunded_at AT TIME ZONE 'Asia/Kuwait')::date>=date '${dates.from12}' GROUP BY 1),
         deals AS (SELECT date_trunc('month',(submitted_at AT TIME ZONE 'Asia/Kuwait')::date)::date AS month,count(*) AS deals,sum(contracted_revenue) AS contracted FROM public.closed_deals d WHERE (submitted_at AT TIME ZONE 'Asia/Kuwait')::date>=date '${dates.from12}' AND NOT EXISTS(SELECT 1 FROM public.record_voids rv WHERE rv.entity='closed_deal' AND rv.record_id=d.response_id) GROUP BY 1)
-        SELECT to_char(m.month,'YYYY-MM') AS month,coalesce(c.cash,0) AS cash,coalesce(r.refunds,0) AS refunds,coalesce(d.deals,0) AS deals,coalesce(d.contracted,0) AS contracted
+        SELECT to_char(m.month,'YYYY-MM') AS month,coalesce(c.cash,0) AS cash,coalesce(r.refunds,0) AS refunds,coalesce(r.refund_count,0) AS refund_count,coalesce(d.deals,0) AS deals,coalesce(d.contracted,0) AS contracted
         FROM months m LEFT JOIN cash c USING(month) LEFT JOIN refunds r USING(month) LEFT JOIN deals d USING(month) ORDER BY m.month`);
-      const monthly = monthRows.map(row => ({ month: String(row.month), cash: ROUND2(num(row.cash)), refunds: ROUND2(num(row.refunds)), deals: num(row.deals), contracted: ROUND2(num(row.contracted)) }));
+      // refundCount here is Whop's; monthlyWithManual adds the hand-logged refunds to both (2026-11-02).
+      const monthly = monthRows.map(row => ({ month: String(row.month), cash: ROUND2(num(row.cash)), refunds: ROUND2(num(row.refunds)), refundCount: num(row.refund_count), deals: num(row.deals), contracted: ROUND2(num(row.contracted)) }));
       const byMonth = new Map(monthly.map(row => [row.month, row]));
       const cashByDay = new Map(whopDayRows.map(row => [dateText(row.day), num(row.cash)]));
       const cashDaily = [];
@@ -804,8 +1020,11 @@ export function createMoneyAdapter(snapshot) {
 
       const cards = cardReferences(snapshot, loginRows);
       const book = nameBook(cards.map(card => ({ taskId: card.taskId, names: card.names })));
-      const livePayments = activeManual.filter(row => row.kind !== "refund");
-      const manualRefunds = activeManual.filter(row => row.kind === "refund");
+      // Checked payments first, so a bank line covers a checked entry before a logged one.
+      const livePayments = liveManual.filter(row => row.kind !== "refund")
+        .sort((a, b) => Number(b.checkState === "checked") - Number(a.checkState === "checked"));
+      // A refund logged by hand counts while it waits on a check: money out is never held back.
+      const manualRefunds = liveManual.filter(row => row.kind === "refund");
       const tapCoveredManual = coverWithTap(livePayments, tapCharges, addDays(dates.from180, -MATCH_DAYS));
       const usedBank = new Set();
       let manualCoveredByBank = 0;
@@ -815,33 +1034,49 @@ export function createMoneyAdapter(snapshot) {
           .sort((a, b) => dayGap(entry.day, a.day) - dayGap(entry.day, b.day) || amountGap(entry.amountUsd, a.usd) - amountGap(entry.amountUsd, b.usd));
         if (candidates[0]) { usedBank.add(candidates[0].id); tapCoveredManual.set(entry.id, { chargeDay: candidates[0].day, chargeUsd: candidates[0].usd }); manualCoveredByBank += 1; }
       }
-      const countedManual = livePayments.filter(row => !tapCoveredManual.has(row.id));
+      // Cash counts a hand-logged payment once it is checked; a logged one waits on its own line
+      // (rails.manualLogged) unless a Tap charge or a bank line already counts the money.
+      const countedManual = livePayments.filter(row => !tapCoveredManual.has(row.id) && row.checkState === "checked");
+      const loggedManual = livePayments.filter(row => !tapCoveredManual.has(row.id) && row.checkState === "logged");
       // A Tap payment logged by hand before the 180 days counts once in attribution, as the older Tap charge it matches.
-      const olderTapCovered = coverWithTap(countedManual, tapOlder, dates.from12);
-      for (const row of countedManual) if (!olderTapCovered.has(row.id)) paymentRows.push({
+      const olderTapCovered = coverWithTap([...countedManual, ...loggedManual], tapOlder, dates.from12);
+      const manualPayment = row => ({
         id: `manual:${row.id}`, rail: "manual", day: row.day, usd: row.amountUsd, currency: row.currency, amount: row.amount,
         payerEmail: null, payerName: row.client || null, dealResponseId: null, clickupTaskId: row.clickupTaskId, billingReason: null,
       });
+      for (const row of countedManual) if (!olderTapCovered.has(row.id)) paymentRows.push(manualPayment(row));
+      const loggedPaymentRows = loggedManual.filter(row => !olderTapCovered.has(row.id)).map(manualPayment);
 
       const deals = attributionDeals.map(normalizeDeal).filter(row => row.responseId && row.business);
       // The CEO's ties come through the same fenced snapshot as the payer mapping (contract section 3).
       const tieRows = rowsFor(snapshot, "ties");
       // Every payment read decides each deal's contract; only the 12 months are published (the ledger rewrite covers them).
-      const attributed = attributePayments(paymentRows, deals, cards, tieRows).filter(row => row.day >= dates.from12);
+      // The seed months stay in attributedAll for the back-end book's "paid before the month" (2026-11-02, fix 8).
+      const attributedAll = attributePayments(paymentRows, deals, cards, tieRows);
+      const attributed = attributedAll.filter(row => row.day >= dates.from12);
       const ties = tieSummary(tieRows, attributed, deals, cards);
+      // Pay and front-end cash read the deal ledger, so it holds checked money only.
       const dealPayments = dealLedgerRows(attributed);
+      // A logged payment's own attribution, worked out beside the checked ones so it moves no
+      // checked payment's deposit or side: listed with checked false, summed into nothing.
+      const loggedIds = new Set(loggedPaymentRows.map(row => row.id));
+      const loggedAttributed = loggedPaymentRows.length
+        ? attributePayments([...paymentRows, ...loggedPaymentRows], deals, cards, tieRows).filter(row => loggedIds.has(row.id) && row.day >= dates.from12)
+        : [];
       const transactionRows = [];
-      for (const row of attributed) transactionRows.push({
+      const inRow = (row, checked) => ({
         id: row.id, day: row.day, rail: row.rail, direction: "in", usd: row.usd, currency: row.currency, amount: row.amount,
         payerEmail: row.payerEmail, payerName: row.payerName, side: row.side, kind: row.kind, depositUsd: row.depositUsd, person: row.person,
         personRole: row.personRole, dealResponseId: row.dealResponseId, dealBusiness: row.dealBusiness, clientName: row.clientName, clientTaskId: row.clientTaskId,
-        matchedBy: row.matchedBy, tie: row.tie, detail: row.billingReason,
+        matchedBy: row.matchedBy, tie: row.tie, detail: checked ? row.billingReason : "Logged by hand, not checked against the bank yet", checked,
       });
+      for (const row of attributed) transactionRows.push(inRow(row, true));
+      for (const row of loggedAttributed) transactionRows.push(inRow(row, false));
       for (const row of whopRows) if (num(row.refunded_amount) > 0 && row.refund_day) transactionRows.push({
         id: `whop-refund:${row.payment_id}`, day: dateText(row.refund_day), rail: "whop", direction: "out", usd: ROUND2(num(row.refunded_amount)),
         currency: "USD", amount: ROUND2(num(row.refunded_amount)), payerEmail: row.email ? String(row.email) : null,
         payerName: row.billing ? cleanText(row.billing, 120) : null, side: "out", kind: "refund", person: null, personRole: null,
-        dealBusiness: null, clientName: null, clientTaskId: null, matchedBy: "none", detail: "Whop refund, already netted off the charge it refunds",
+        dealBusiness: null, clientName: null, clientTaskId: null, matchedBy: "none", detail: "Whop refund, already netted off the charge it refunds", checked: true,
       });
       for (const line of bankLines) if (line.kind !== "client_payment") transactionRows.push({
         id: `bankline:${line.id}`, day: line.day, rail: "bank", direction: line.usd < 0 ? "out" : "in", usd: Math.abs(line.usd),
@@ -850,17 +1085,18 @@ export function createMoneyAdapter(snapshot) {
         kind: ["expense", "fee", "excluded"].includes(line.kind) ? "expense" : "none", person: null, personRole: null,
         dealBusiness: null, clientName: null, clientTaskId: null,
         matchedBy: line.kind === "whop_payout" ? (payoutMatches.get(String(line.id)) ? `Whop payments ${payoutMatches.get(String(line.id)).from} to ${payoutMatches.get(String(line.id)).to}` : "none") : "none",
-        detail: `${line.kind}${line.category ? ` · ${line.category}` : ""}${line.note ? ` · ${line.note}` : ""}`, bankKind: line.kind, bankLineId: line.id,
+        detail: `${line.kind}${line.category ? ` · ${line.category}` : ""}${line.note ? ` · ${line.note}` : ""}`, bankKind: line.kind, bankLineId: line.id, checked: true,
       });
       for (const row of manualRefunds) transactionRows.push({
         id: `manual-refund:${row.id}`, day: row.day, rail: "manual", direction: "out", usd: row.amountUsd, currency: row.currency, amount: row.amount,
         payerEmail: null, payerName: row.client || null, side: "out", kind: "refund", person: null, personRole: null,
-        dealBusiness: null, clientName: row.client || null, clientTaskId: row.clickupTaskId, matchedBy: "none", detail: `Refund logged by hand (${row.rail})`,
+        dealBusiness: null, clientName: row.client || null, clientTaskId: row.clickupTaskId, matchedBy: "none",
+        detail: `Refund logged by hand (${row.rail})${row.checkState === "checked" ? "" : ", not checked against the bank yet"}`, checked: row.checkState === "checked",
       });
       const recentExpenseTransactions = expenseRows.map(row => ({
         id: `external-expense:${row.id}`, day: dateText(row.day), rail: "bank", direction: "out", usd: Math.abs(num(row.amount_usd)), currency: "USD", amount: Math.abs(num(row.amount_usd)),
         payerEmail: null, payerName: row.vendor ? cleanText(row.vendor, 100) : null, side: "out", kind: "expense", person: null, personRole: null,
-        dealBusiness: null, clientName: null, clientTaskId: null, matchedBy: "none", detail: row.category ? String(row.category) : null,
+        dealBusiness: null, clientName: null, clientTaskId: null, matchedBy: "none", detail: row.category ? String(row.category) : null, checked: true,
       }));
       transactionRows.push(...recentExpenseTransactions);
       transactionRows.sort((a, b) => b.day.localeCompare(a.day) || a.id.localeCompare(b.id));
@@ -880,7 +1116,9 @@ export function createMoneyAdapter(snapshot) {
         dealLedger: { rows: dealPayments.length, usd: ROUND2(dealPayments.reduce((sum, row) => sum + row.usd, 0)), from: dates.from12 },
         transactions: transactionRows.slice(0, 1500),
       };
-      const clientPayments = attributed.filter(row => row.clientTaskId).map(row => ({
+      // Logged payments go to the client payment store too: the finance refresh marks them not
+      // checked in SQL, so Pending payments can say "Receipt in, not checked" and nothing counts them.
+      const clientPayments = [...attributed, ...loggedAttributed].filter(row => row.clientTaskId).map(row => ({
         payment_id: row.id, clickup_task_id: row.clientTaskId, client_name: row.clientName ?? row.dealBusiness ?? null,
         day: row.day, usd: row.usd, rail: row.rail, side: row.side, kind: row.kind, person: row.person, deal_response_id: row.dealResponseId ?? null,
       }));
@@ -919,6 +1157,12 @@ export function createMoneyAdapter(snapshot) {
       for (let day = dates.from180; day <= today; day = addDays(day, 1)) manualDaily.push({ date: day, value: ROUND2(manualDayTotals.get(day) ?? 0) });
       const manualBetween = (from, to) => ROUND2(countedManual.filter(row => row.day >= from && row.day <= to).reduce((sum, row) => sum + row.amountUsd, 0));
       const manualConnected = activeManual.length > 0;
+      const loggedUsd = ROUND2(loggedManual.reduce((sum, row) => sum + row.amountUsd, 0));
+      const manualLogged = {
+        count: loggedManual.length,
+        usd: loggedUsd,
+        oldestDay: loggedManual.map(row => row.day).sort()[0] ?? null,
+      };
       const manualRail = {
         label: "Manual", connected: manualConnected,
         today: manualConnected ? manualBetween(today, today) : null,
@@ -1018,7 +1262,7 @@ export function createMoneyAdapter(snapshot) {
         ...cashDuplicates(livePayments.filter(row => row.day >= dates.from90 && !tapCoveredManual.has(row.id)),
           whopRows.map(row => ({ day: dateText(row.day), usd: ROUND2(num(row.net_amount)), business: null, matchNames: [row.billing, row.username].filter(Boolean).map(String) })),
           tapCharges, book),
-        ...dealDuplicates(activeManual.filter(row => row.dealContractedUsd !== null), deals.map(row => ({ day: row.day, usd: ROUND2(num(row.contracted)), business: row.business })), book),
+        ...dealDuplicates(liveManual.filter(row => row.dealContractedUsd !== null), deals.map(row => ({ day: row.day, usd: ROUND2(num(row.contracted)), business: row.business })), book),
       ];
       const manualEntries = [...activeManual.filter(row => row.day.slice(0, 7) === dates.month), ...removedThisMonth]
         .sort((a, b) => b.day.localeCompare(a.day) || b.addedAt - a.addedAt)
@@ -1028,9 +1272,9 @@ export function createMoneyAdapter(snapshot) {
         lastMonth: dealsLastMonth?.deals ?? null,
         contractedMtd: dealsThisMonth?.contracted ?? null,
         contractedLastMonth: dealsLastMonth?.contracted ?? null,
-        manualMtd: activeManual.filter(row => row.kind !== "refund" && row.day.slice(0, 7) === dates.month && row.dealContractedUsd !== null).length,
-        manualContractedMtd: ROUND2(activeManual.filter(row => row.day.slice(0, 7) === dates.month && row.dealContractedUsd !== null && !duplicates.some(item => item.manualId === row.id && item.against === "closer_form")).reduce((sum, row) => sum + num(row.dealContractedUsd), 0)),
-        manualContractedLastMonth: ROUND2(activeManual.filter(row => row.day.slice(0, 7) === dates.lastMonth && row.dealContractedUsd !== null && !duplicates.some(item => item.manualId === row.id && item.against === "closer_form")).reduce((sum, row) => sum + num(row.dealContractedUsd), 0)),
+        manualMtd: liveManual.filter(row => row.kind !== "refund" && row.day.slice(0, 7) === dates.month && row.dealContractedUsd !== null).length,
+        manualContractedMtd: ROUND2(liveManual.filter(row => row.day.slice(0, 7) === dates.month && row.dealContractedUsd !== null && !duplicates.some(item => item.manualId === row.id && item.against === "closer_form")).reduce((sum, row) => sum + num(row.dealContractedUsd), 0)),
+        manualContractedLastMonth: ROUND2(liveManual.filter(row => row.day.slice(0, 7) === dates.lastMonth && row.dealContractedUsd !== null && !duplicates.some(item => item.manualId === row.id && item.against === "closer_form")).reduce((sum, row) => sum + num(row.dealContractedUsd), 0)),
         avgContract90d: summary.avg_contract_90 == null ? null : ROUND2(num(summary.avg_contract_90)),
         recent: recentDealRows.map(row => ({ date: row.day, business: row.business || null, closer: row.closer || null, contracted: row.contracted, cash: row.cash, plan: row.plan })),
       };
@@ -1054,7 +1298,7 @@ export function createMoneyAdapter(snapshot) {
       }));
       if (!billingRows.length) failSource("Client billing snapshots", "no canonical billing snapshot is available");
       const billing = summariseBilling(billingRows);
-      const recurring = billingRows.filter(row => groupOf(row.stage) === "active" && typeof row.mrrUsd === "number" && row.paymentPlan && !isOneOffPlan(row.paymentPlan));
+      const recurring = recurringCards(billingRows);
       const projectedMrr = ROUND2(recurring.reduce((sum, row) => sum + num(row.mrrUsd), 0));
       const recurringIds = new Set(recurring.map(row => row.taskId));
       const collected = ROUND2(attributed.filter(row => row.clientTaskId && recurringIds.has(row.clientTaskId) && row.day.slice(0, 7) === dates.month).reduce((sum, row) => sum + row.usd, 0));
@@ -1076,23 +1320,43 @@ export function createMoneyAdapter(snapshot) {
         .map(row => ({ metric: String(field(row, "metric") ?? ""), month: dateText(field(row, "day", "date")).slice(0, 7), value: num(field(row, "value")) }))
         .filter(row => /^\d{4}-\d{2}$/.test(row.month));
       const collectedByMonth = new Map(seriesPoints.filter(row => row.metric === "money.book.collected").map(row => [row.month, row.value]));
+      // Each past month's recurring cards from its last billing snapshot, for the back-end book
+      // (2026-11-02, fix 8). An optional read: on failure the history's back-end fields read missing.
+      const monthEnds = await withOptionalReads(async () => {
+        try { return { rows: await sql(TRIAGE, bookMonthEndsSql(dates.from12, monthStart(today))) }; }
+        catch (error) { return { rows: null, error: cleanText(error instanceof Error ? error.message : String(error), 200) }; }
+      });
+      const monthEndCards = new Map();
+      for (const row of monthEnds.rows ?? []) {
+        const list = monthEndCards.get(String(row.month)) ?? [];
+        list.push({ taskId: String(row.clickup_task_id ?? ""), stage: row.stage ?? null, mrrUsd: row.mrr_usd == null || row.mrr_usd === "" ? undefined : Number(row.mrr_usd), paymentPlan: row.payment_plan ?? undefined });
+        monthEndCards.set(String(row.month), list);
+      }
+      // Which cards are still on their deal in a month, from the deals' state at its start (2026-11-02, fix 8).
+      const cardForDeal = cardForDealOf(cards);
+      const onDealsIn = month => cardsOnDeals(deals, cardForDeal, attributedAll, month);
       const bookHistory = [...new Map(seriesPoints.filter(row => row.metric === "money.book.projected" && row.month !== dates.month).map(row => [row.month, row])).values()]
         .sort((a, b) => a.month.localeCompare(b.month))
         .map(row => {
           const got = collectedByMonth.get(row.month) ?? 0;
-          return { month: row.month, projected: ROUND2(row.value), collected: ROUND2(got), rate: row.value > 0 ? Math.round(got / row.value * 1000) / 1000 : null };
+          const cardsThen = monthEndCards.get(row.month);
+          // No snapshot for the month (before 7 Oct 2026, or the read failed): missing, never zero.
+          const backEnd = cardsThen ? backEndBook(attributed, recurringCards(cardsThen), row.month, onDealsIn(row.month)) : { collectedBackEnd: null, projectedExisting: null, projectedOnDeals: null };
+          return { month: row.month, projected: ROUND2(row.value), collected: ROUND2(got), rate: row.value > 0 ? Math.round(got / row.value * 1000) / 1000 : null, ...backEnd };
         });
       const bookPayload = {
         month: dates.month, projectedMrr, projectedCards: recurring.length, collected,
         collectionRate: projectedMrr > 0 ? Math.round(collected / projectedMrr * 1000) / 1000 : null,
         averageRetainer: recurring.length ? ROUND2(projectedMrr / recurring.length) : null,
+        // Back end only (2026-11-02, fix 8): the Goals sheet's MRR collected and Collections %.
+        ...backEndBook(attributed, recurring, dates.month, onDealsIn(dates.month)),
         history: bookHistory,
       };
       const manualRefundsMtd = ROUND2(manualRefunds.filter(row => row.day >= monthStart(today) && row.day <= today).reduce((sum, row) => sum + row.amountUsd, 0));
       const manualRefunds90 = ROUND2(manualRefunds.filter(row => row.day >= dates.from90 && row.day <= today).reduce((sum, row) => sum + row.amountUsd, 0));
       const bankLatestMonth = bankFacts.latestStatementDay.slice(0, 7);
       const bankMonthLines = bankLines.filter(line => line.day.slice(0, 7) === bankLatestMonth && line.usd < 0 && ["expense", "fee", "excluded"].includes(line.kind));
-      const monthlyWithManual = monthly.map(row => ({ ...row, manualCash: ROUND2(countedManual.filter(item => item.day.slice(0, 7) === row.month).reduce((sum, item) => sum + item.amountUsd, 0)), manualContracted: ROUND2(activeManual.filter(item => item.day.slice(0, 7) === row.month && item.dealContractedUsd !== null).reduce((sum, item) => sum + num(item.dealContractedUsd), 0)) }));
+      const monthlyWithManual = monthly.map(row => ({ ...withManualRefunds(row, manualRefunds), manualCash: ROUND2(countedManual.filter(item => item.day.slice(0, 7) === row.month).reduce((sum, item) => sum + item.amountUsd, 0)), manualContracted: ROUND2(liveManual.filter(item => item.day.slice(0, 7) === row.month && item.dealContractedUsd !== null).reduce((sum, item) => sum + num(item.dealContractedUsd), 0)) }));
       const daily = [
         { date: today, metric: "money.failedCharges.count30d", scope: "company", value: num(summary.failed_count_30) },
         { date: today, metric: "money.failedCharges.amount30d", scope: "company", value: ROUND2(num(summary.failed_amount_30)) },
@@ -1112,18 +1376,29 @@ export function createMoneyAdapter(snapshot) {
           daily.push({ date: today, metric: "money.ltv.card", scope: `client:${row.taskId}`, value: ROUND2(row.ltvUsd) });
         }
       }
+      // Each hand-logged row's check state over the twelve months, for the manual list's chips.
+      const manualChecks = manual.filter(row => row.day >= dates.from12)
+        .map(row => ({ id: row.id, state: row.checkState, at: row.checkedAt === null ? null : new Date(row.checkedAt).toISOString(), ref: row.checkedRef }));
+      // The wins ledger (20261102h): the wins metrics, the goal actuals and the lock-in read it from here.
+      // An optional read: before the migration (or on any failure) Money still publishes and says wins are missing.
+      const wins = await withOptionalReads(() => readWins(sql, today));
       const payload = {
         month: dates.month, dayOfMonth: dates.dayOfMonth, daysInMonth: dates.dim, cash: whopCash,
-        rails: { whop: whopRail, tap: tapRail, ecom: ecomRail, manual: manualRail, bank: bankRail, total: totalRail },
-        manualEntries, possibleDuplicates: duplicates, monthly: monthlyWithManual,
+        // manualLogged sits beside the rails, never in the total (contract 3.6).
+        rails: { whop: whopRail, tap: tapRail, ecom: ecomRail, manual: manualRail, bank: bankRail, total: totalRail, manualLogged },
+        manualEntries, manualChecks, possibleDuplicates: duplicates, monthly: monthlyWithManual,
+        // Rail cash per card over the last two full months, for money-acts' MRR check (contract 3.6).
+        mrrCheck: { asOf: today, rows: mrrCheckRows(attributed, today) },
         refunds: { mtd: ROUND2(num(summary.refunds_mtd) + manualRefundsMtd), last90: ROUND2(num(summary.refunds_90) + manualRefunds90), manualMtd: manualRefundsMtd, manualLast90: manualRefunds90 },
         deals: dealsPayload,
         failedCharges: { count30d: num(summary.failed_count_30), amount30d: ROUND2(num(summary.failed_amount_30)) },
         expenses: { month: bankLatestMonth, total: ROUND2(bankMonthLines.reduce((sum, line) => sum + Math.abs(line.usd), 0)), byCategory: [...new Set(bankMonthLines.map(line => line.category ?? "uncategorised"))].map(category => ({ category, amount: ROUND2(bankMonthLines.filter(line => (line.category ?? "uncategorised") === category).reduce((sum, line) => sum + Math.abs(line.usd), 0)) })) },
-        targets, mrr, attribution, bank: bankBlock, book: bookPayload,
+        targets, mrr, attribution, bank: bankBlock, book: bookPayload, wins,
         collection: { deals: deals.length, contracted: ROUND2(deals.reduce((sum, row) => sum + num(row.contracted), 0)), linkedCash: ROUND2(attributed.filter(row => row.dealResponseId).reduce((sum, row) => sum + row.usd, 0)), dealsWithCash: new Set(attributed.filter(row => row.dealResponseId).map(row => row.dealResponseId)).size, unlinkedCash: ROUND2(attributed.filter(row => !row.dealResponseId).reduce((sum, row) => sum + row.usd, 0)), unlinkedRows: attributed.filter(row => !row.dealResponseId).length, beforeFormCash: 0, formStarted: summary.first_deal_day ? String(summary.first_deal_day).slice(0, 7) : null, byMonth: monthly.map(row => ({ month: row.month, deals: row.deals, contracted: row.contracted, linked: ROUND2(attributed.filter(item => item.dealResponseId && item.day.slice(0, 7) === row.month).reduce((sum, item) => sum + item.usd, 0)) })), unmatched: [] },
         notes: [
-          { level: "info", text: "Cash totals use source-confirmed Whop, Tap, manual, and uploaded bank statement rows. Bank payout and settlement lines are not counted as client cash." },
+          { level: "info", text: "Cash totals use source-confirmed Whop, Tap, Ecom and uploaded bank statement rows, and payments logged by hand once finance or the CEO checks them against the bank. Bank payout and settlement lines are not counted as client cash." },
+          ...(stateMissing ? [{ level: "warn", text: `${stateMissing === 1 ? "1 payment logged by hand carries" : `${stateMissing} payments logged by hand carry`} no check state, so the database is from before the check rule (20261101n): ${stateMissing === 1 ? "it waits" : "they wait"} as logged and ${stateMissing === 1 ? "is" : "are"} not in cash until the migration is applied.` }] : []),
+          ...(manualLogged.count ? [{ level: "warn", text: `${manualLogged.count === 1 ? "1 payment logged by hand waits" : `${manualLogged.count} payments logged by hand wait`} on a check against the bank (${usdWords(manualLogged.usd)}, the oldest received ${manualLogged.oldestDay}), so ${manualLogged.count === 1 ? "it is" : "they are"} not in cash, pay or LTV yet. Check each one under Logged by hand.` }] : []),
           { level: "info", text: attributionRuleText(allTotals.unattributedCount, allTotals.unattributed) },
           ...(ties.notApplied.length || ties.beforeDeal.length ? [{ level: "warn", text: tieNoteText(ties) }] : []),
           { level: "info", text: "Manual payments, human payer mappings, bank classifications, exclusions, and client billing snapshots came from the canonical Creative Triage finance revision." },
@@ -1133,6 +1408,9 @@ export function createMoneyAdapter(snapshot) {
           ...(tapCovered.size ? [{ level: "info", text: `${tapCovered.size} Tap charges are covered by bank settlement lines and were counted once.` }] : []),
           ...(manualCoveredByBank ? [{ level: "info", text: `${manualCoveredByBank} manual payments match bank client-payment lines and were counted once.` }] : []),
           ...(ctrTargetNote ? [ctrTargetNote] : []),
+          ...(wins.read ? [] : [{ level: "warn", text: `The wins ledger could not be read this run (${wins.error}), so wins, upsells and upsell cash are missing, not zero.` }]),
+          ...(monthEnds.rows ? [] : [{ level: "warn", text: `The month-end billing snapshots could not be read this run (${monthEnds.error}), so earlier months' back-end MRR (collected and owed by clients from before the month) is missing, not zero.` }]),
+          ...(monthEnds.rows && bookHistory.some(row => row.projectedExisting === null) ? [{ level: "info", text: `Back-end MRR (collected and owed by clients from before the month) needs the month's last billing snapshot, so it reads missing, not zero, for ${bookHistory.filter(row => row.projectedExisting === null).map(row => row.month).join(", ")}${monthEndCards.size ? `; the snapshots start in ${[...monthEndCards.keys()].sort()[0]}` : ""}.` }] : []),
         ],
       };
       const liveManualStamp = epoch(field(snapshot, "newestManualChange", "newest_manual_change"));

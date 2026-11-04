@@ -119,6 +119,70 @@ export interface CalendarRow {
   rescheduled_at?: string | null;
   rescheduled_from?: string | null;
   rescheduled_by?: string | null;
+  /**
+   * After the call (20261029a_sales_call_outcomes.sql): the lead's quality
+   * from 1 to 10, who rated it and their role, and why a held intro booked
+   * no demo. Optional, as above: a page served before the migration reads none.
+   */
+  lead_quality?: number | null;
+  quality_by?: string | null;
+  quality_role?: string | null;
+  no_demo_reason?: string | null;
+  no_demo_note?: string | null;
+  outcome_at?: string | null;
+  /** An intro's next demo: booked at or after the intro (30 minutes of grace), its start. */
+  demo_after_at?: string | null;
+  /** An intro whose lead signed a New Client Form at or after it (voided ones out). */
+  signed_after?: boolean | null;
+}
+
+/** cockpit_sales_funnel (20261029a): intros to demos for a window. */
+export interface FunnelSide {
+  booked: number;
+  scheduled: number;
+  due: number;
+  shown: number;
+  qualified: number;
+  disqualified: number;
+  noshow: number;
+  cancelled: number;
+  /** Confirmed once past and not marked: counted shown until someone marks it. */
+  unmarked: number;
+  ahead: number;
+  quality: { held: number; rated: number; average: number | null } | null;
+}
+
+export interface Funnel {
+  from: string;
+  to: string;
+  host: string | null;
+  as_of: string;
+  intros: FunnelSide & { advanced: number; signed: number; stalled: number };
+  demos: FunnelSide;
+  reasons: { why: string; n: number }[];
+  disqualified_why: { why: string; n: number }[];
+  others: {
+    note: string | null;
+    start_at: string;
+    contact_id: string | null;
+    contact_name: string | null;
+  }[];
+  missing: {
+    appointment_id: string;
+    contact_id: string | null;
+    contact_name: string | null;
+    start_at: string;
+    status: string | null;
+    host: string | null;
+  }[];
+  quality_by_role: {
+    role: string;
+    call_type: "intro" | "demo";
+    rated: number;
+    average: number | null;
+  }[];
+  /** Team only (null for one host): New Client Forms in the window, voided ones out. */
+  closes: number | null;
 }
 
 export interface Dial {

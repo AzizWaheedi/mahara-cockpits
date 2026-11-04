@@ -42,9 +42,8 @@ import { StatusToggle } from "@/components/StatusToggle";
 import { TodayMeetings } from "@/components/TodayMeetings";
 import { TrackingIssues } from "@/components/TrackingIssues";
 import { PortfolioTrends } from "@/components/Trends";
-import { AnimatedSelect } from "@/components/ui/animated-select";
+import { YourTasks } from "@/components/tasks/YourTasks";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
@@ -1059,7 +1058,6 @@ function Cockpit({ view }: { view: View }) {
   }, [hasSnapshot, view, loadClientLogos, auth.session?.user.id]);
   const run = useAction(api.execute.runAction);
   const addPlanItems = sb.addPlanItems as any;
-  const askForDetail = useAction(api.cockpit.askForDetail);
   const setClientLanguage = useAction(api.cockpit.setClientLanguage);
   const removeDecision = sb.removeDecision as any;
   const saveEod = sb.saveEod as any;
@@ -1208,9 +1206,6 @@ function Cockpit({ view }: { view: View }) {
   const [reason, setReason] = useState(REASONS[0]);
   const [clock, setClock] = useState(CLOCKS[1]);
   const [dump, setDump] = useState("");
-  const [ask, setAsk] = useState<string | null>(null);
-  const [askText, setAskText] = useState("");
-  const [askWho, setAskWho] = useState<string>("");
   // The Payments strip on Today opens the board as /ads?filter=payment. The
   // address is read once and cleared, so a reload does not pin the filter.
   const [filter, setFilter] = useState(() =>
@@ -1233,6 +1228,8 @@ function Cockpit({ view }: { view: View }) {
   const [adsTab, setAdsTab] = useState<"running" | "off" | "nothing">(
     "running",
   );
+  // The board shows three everyday filters; the rest sit behind this toggle.
+  const [moreFilters, setMoreFilters] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatText, setChatText] = useState("");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -1561,6 +1558,52 @@ function Cockpit({ view }: { view: View }) {
       m.set(d.subject, { action: d.action, reroutedTo: d.reroutedTo });
     return m;
   }, [snap]);
+
+  /**
+   * One row per client for the Today header: its 7-day spend, leads and cost
+   * per lead, so its page is one step away. A client whose campaigns report
+   * no leads reads "leads n/a", never 0.
+   */
+  const clientPicks = useMemo(() => {
+    const byClient = new Map<
+      string,
+      { name: string; spend: number | null; leads: number | null }
+    >();
+    for (const c of (snap?.campaigns ?? []) as Campaign[]) {
+      if (c.internal) continue;
+      const name = clientOf(c);
+      const row = byClient.get(name) ?? { name, spend: null, leads: null };
+      const spend = Number(c.spend7d);
+      const leads = Number(c.leads7d);
+      if (Number.isFinite(spend)) row.spend = (row.spend ?? 0) + spend;
+      if (Number.isFinite(leads)) row.leads = (row.leads ?? 0) + leads;
+      byClient.set(name, row);
+    }
+    return [...byClient.values()]
+      .map(r => {
+        const cpl =
+          r.leads !== null && r.leads > 0 && r.spend !== null
+            ? `${moneyOr(r.spend / r.leads)}/lead`
+            : r.leads === null
+              ? null
+              : "no leads yet";
+        const label = [
+          r.name,
+          moneyOr(r.spend),
+          r.leads === null ? "leads n/a" : `${r.leads} leads`,
+          cpl,
+        ]
+          .filter(part => part !== null)
+          .join(" · ");
+        return { name: r.name, spend: r.spend, label };
+      })
+      .sort(
+        (a, b) =>
+          (b.spend ?? Number.NEGATIVE_INFINITY) -
+            (a.spend ?? Number.NEGATIVE_INFINITY) ||
+          a.name.localeCompare(b.name),
+      );
+  }, [snap?.campaigns]);
 
   if (sb.error) {
     return (
@@ -2318,7 +2361,9 @@ function Cockpit({ view }: { view: View }) {
     .slice(0, 3);
   const accounts = (
     <section className={CARD}>
-      <h2 className="text-[15px] font-semibold">Then, the accounts</h2>
+      <h2 className="text-[15px] font-semibold">
+        Accounts to work, in this order
+      </h2>
       <p className="mt-1 text-sm text-muted-foreground">
         Inbox clear? The rest is account work: one block, one client at a time.
         Start with these.
@@ -2354,127 +2399,6 @@ function Cockpit({ view }: { view: View }) {
             </li>
           ))}
         </ol>
-      )}
-      <Button asChild size="sm" className="mt-4">
-        <Link to="/ads">Open Ads management</Link>
-      </Button>
-    </section>
-  );
-
-  const inbox = (snap.inbox ?? []) as {
-    _id: string;
-    url?: string;
-    title: string;
-    body?: string;
-    kind?: string;
-    author?: string;
-    reason?: string;
-    listName?: string;
-    overdue?: boolean;
-    taskId?: string;
-  }[];
-  const tasksCard = (
-    <section className={CARD}>
-      <h2 className="text-[15px] font-semibold">Your ClickUp tasks</h2>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Open work on the Ads Management and Marketing / ADs boards. Ticking it
-        here is not enough: open the task and move it, so the rest of the team
-        sees it.
-      </p>
-      {inbox.length === 0 ? (
-        <p className="mt-4 text-sm text-muted-foreground">Nothing open.</p>
-      ) : (
-        <ul className="mt-4 divide-y">
-          {inbox.map(i => (
-            <li key={i._id} className="py-3 first:pt-0 last:pb-0">
-              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm">
-                <a
-                  href={i.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="min-w-0 hover:underline"
-                >
-                  <span className="font-medium">{i.title}</span>
-                  {i.body && (
-                    <span className="text-muted-foreground"> · {i.body}</span>
-                  )}
-                </a>
-                <span className="basis-full text-xs text-muted-foreground sm:basis-auto">
-                  {i.kind === "mention" ? `${i.author} tagged you` : i.listName}
-                  {i.overdue ? " · overdue" : ""}
-                </span>
-              </div>
-              {ask === i._id ? (
-                <div className="mt-2 space-y-2 rounded-xl bg-muted/40 p-3">
-                  <AnimatedSelect
-                    className="h-8 w-full rounded-lg border bg-background px-2 text-sm"
-                    value={askWho}
-                    onChange={e => setAskWho(e.target.value)}
-                  >
-                    <option value="">Who needs to answer?</option>
-                    {/* biome-ignore lint/suspicious/noExplicitAny: member row */}
-                    {((snap.members ?? []) as any[]).map(m => (
-                      <option key={m.userId} value={String(m.userId)}>
-                        {m.username}
-                      </option>
-                    ))}
-                  </AnimatedSelect>
-                  <Input
-                    value={askText}
-                    placeholder="What is missing? e.g. which landing page should this point to?"
-                    className="h-8 text-sm"
-                    onChange={e => setAskText(e.target.value)}
-                  />
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      disabled={!askText.trim() || !i.taskId}
-                      onClick={async () => {
-                        const who = (
-                          (snap.members ?? []) as {
-                            userId: number;
-                            username: string;
-                          }[]
-                        ).find(m => String(m.userId) === askWho);
-                        await askForDetail({
-                          taskId: i.taskId as string,
-                          question: askText.trim(),
-                          assignee: who?.userId,
-                          assigneeName: who?.username,
-                        });
-                        setAsk(null);
-                        setAskText("");
-                        setAskWho("");
-                        toast.success(
-                          who
-                            ? `Asked ${who.username} on the task`
-                            : "Asked on the task",
-                        );
-                      }}
-                    >
-                      Ask on the task
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => setAsk(null)}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  className="mt-1 text-xs text-primary hover:underline"
-                  onClick={() => setAsk(i._id)}
-                >
-                  Something missing? Ask someone on this task
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
       )}
     </section>
   );
@@ -3402,9 +3326,10 @@ function Cockpit({ view }: { view: View }) {
             )}
             <BuildPanel
               key={`${c.clientTag ?? c.accountName}:${c.metaAccountId}`}
-              clientTag={c.clientTag ?? c.accountName}
+              clientTag={c.clientTag}
               clientName={c.clientName ?? c.accountName}
               accountId={c.metaAccountId}
+              accountName={c.accountName}
               serviceType={c.serviceType}
               language={
                 /[؀-ۿ]/.test(c.clientName ?? c.accountName) ? "ar" : "en"
@@ -3667,6 +3592,14 @@ function Cockpit({ view }: { view: View }) {
               {ADS_FILTERS.map(f => {
                 const reading = Boolean(f.ranged) && rangeReading > 0;
                 const n = running.filter(c => passes(f.label, c)).length;
+                // Keep the everyday filters and the picked one in reach; the
+                // rest wait behind "More filters".
+                const shown =
+                  Boolean(f.primary) ||
+                  moreFilters ||
+                  f.label === filter ||
+                  (f.label === PAYMENT_FILTER && n > 0);
+                if (!shown) return null;
                 if (
                   n === 0 &&
                   !reading &&
@@ -3691,6 +3624,14 @@ function Cockpit({ view }: { view: View }) {
                   </button>
                 );
               })}
+              <button
+                type="button"
+                onClick={() => setMoreFilters(v => !v)}
+                aria-expanded={moreFilters}
+                className={pill(false)}
+              >
+                {moreFilters ? "Fewer filters" : "More filters"}
+              </button>
             </div>
           )}
           {/* The container lets an opened campaign's panel be exactly as wide as
@@ -3892,6 +3833,30 @@ function Cockpit({ view }: { view: View }) {
                                 )}
                               </div>
                             ) : null}
+                            {!c.internal && (
+                              // One click on the row turns the campaign on or
+                              // off, on the same rule the open panel uses.
+                              <span className="mt-1 flex">
+                                <StatusToggle
+                                  metaId={c.metaCampaignId}
+                                  level="campaign"
+                                  name={c.campaignName}
+                                  clientTag={c.clientTag}
+                                  campaignName={c.campaignName}
+                                  compact
+                                  active={
+                                    Boolean(c.justLaunched) ||
+                                    (snap.metaTree ?? []).some(
+                                      (t: Campaign) =>
+                                        t.campaignName === c.campaignName &&
+                                        t.kind === "ad" &&
+                                        (t.effectiveStatus ?? t.status) ===
+                                          "ACTIVE",
+                                    )
+                                  }
+                                />
+                              </span>
+                            )}
                           </td>
                           <td className="px-2 tabular-nums font-semibold">
                             {cell(moneyOr(ok?.spend))}
@@ -4081,12 +4046,36 @@ function Cockpit({ view }: { view: View }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {view === "sod" ? (
-            <Button size="sm" variant="outline" asChild>
-              <Link to="/eod">
-                <MoonStar aria-hidden />
-                End of day
-              </Link>
-            </Button>
+            <>
+              {/* One step to a client's page with its 7-day numbers in view (Muhammed, 1 November 2026). */}
+              <select
+                aria-label="Open a client"
+                defaultValue=""
+                disabled={clientPicks.length === 0}
+                className="h-8 max-w-[22rem] rounded-md border bg-background px-2 text-sm"
+                onChange={e => {
+                  const v = e.target.value;
+                  if (v) navigate(`/ads?account=${encodeURIComponent(v)}`);
+                }}
+              >
+                <option value="">
+                  {clientPicks.length === 0
+                    ? "No clients yet"
+                    : "Open a client…"}
+                </option>
+                {clientPicks.map(p => (
+                  <option key={p.name} value={p.name}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+              <Button size="sm" variant="outline" asChild>
+                <Link to="/eod">
+                  <MoonStar aria-hidden />
+                  End of day
+                </Link>
+              </Button>
+            </>
           ) : null}
           {view === "ads" ? <VerdictPlaybook /> : null}
           {reportProblem}
@@ -4125,51 +4114,51 @@ function Cockpit({ view }: { view: View }) {
           once each. */}
       {view === "sod" && (
         <>
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
-            <div className="min-w-0 space-y-6">
-              {/* Exception alerts (plan 4.1): the clients whose numbers
-                  broke, first, so the day starts where the money is. */}
-              <ExceptionAlerts />
-              {sprint}
-              <div id="tasks" className="scroll-mt-6 space-y-6">
-                <LaunchToday data={launch.data} />
-                <Onboardings
-                  onBuild={name => {
-                    const c = launch.data?.clients.find(
-                      c => c.name.toLowerCase() === name.toLowerCase(),
+          <div className="space-y-6">
+            {/* Exception alerts (plan 4.1): the clients whose numbers
+                broke, first, so the day starts where the money is. */}
+            <ExceptionAlerts />
+            {/* Your tasks (PLAN.md D19): this seat's own open ClickUp
+                tasks, five at most, each opening in place. It holds the
+                #tasks anchor the old /tasks address lands on. */}
+            <YourTasks id="tasks" />
+            {sprint}
+            <div className="space-y-6">
+              <LaunchToday data={launch.data} />
+              <Onboardings
+                onBuild={name => {
+                  const c = launch.data?.clients.find(
+                    c => c.name.toLowerCase() === name.toLowerCase(),
+                  );
+                  if (c)
+                    window.location.assign(
+                      `/clients?client=${encodeURIComponent(c.id)}&tab=launch`,
                     );
-                    if (c)
-                      window.location.assign(
-                        `/clients?client=${encodeURIComponent(c.id)}&tab=launch`,
-                      );
-                    else window.location.assign("/clients");
-                  }}
-                />
-                {tasksCard}
-              </div>
-              <div id="touchpoints" className="scroll-mt-6">
-                {touch}
-              </div>
-              {watch}
-              {accounts}
+                  else window.location.assign("/clients");
+                }}
+              />
             </div>
-            <div className="min-w-0 space-y-6">
+            <div id="touchpoints" className="scroll-mt-6">
+              {touch}
+            </div>
+            {watch}
+            {accounts}
+          </div>
+          {/* The first screen is the work list in the morning order. The rest
+              of today folds here (Muhammed, 1 November 2026). */}
+          <details className="rounded-2xl border px-4 py-3 sm:px-6">
+            <summary className="cursor-pointer text-sm font-medium">
+              More from today: meetings, what you planned, change log, the
+              numbers
+            </summary>
+            <div className="mt-4 space-y-6">
               <TodayMeetings />
               {planned}
               {changeLog}
+              {tiles}
+              <PortfolioTrends />
             </div>
-          </div>
-          {tiles}
-          <PortfolioTrends />
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed px-4 py-4 sm:px-6">
-            <p className="text-sm text-muted-foreground">
-              Before you log off, file your end of day. The numbers and the
-              change log are already in it.
-            </p>
-            <Button size="sm" asChild>
-              <Link to="/eod">File my end of day</Link>
-            </Button>
-          </div>
+          </details>
         </>
       )}
 
@@ -4192,6 +4181,7 @@ function Cockpit({ view }: { view: View }) {
               campaigns={(snap.campaigns as Campaign[]).filter(
                 c => clientOf(c) === accountView,
               )}
+              boardCards={(snap.boardCards ?? []) as Campaign[]}
               tree={((snap.metaTree ?? []) as Campaign[]).filter(t =>
                 (snap.campaigns as Campaign[]).some(
                   c =>

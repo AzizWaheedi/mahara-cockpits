@@ -51,3 +51,27 @@ python3 hermes/cockpit-ask-ai/scripts/askai.py fail <job_id> "<reason>" --lease 
   in `scripts/`. Deploy order: migration, then this worker, then the Edge Function.
 - `assist_copy`, `draft_copy`, and campaign chat relays unmigrated (`SKILL.md:81`).
 - Autonomous third-party provider mutations remain disabled (`SKILL.md:82`, `100`).
+
+## Fast responder (Hermes chat v2, 3 November 2026)
+
+- Files: `scripts/responder.py`, which imports `scripts/askai.py`.
+- Named keys: `COCKPIT_SUPABASE_URL`, `COCKPIT_SUPABASE_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`. It reads them by name from `api-keys.env` under `HERMES_HOME`.
+- Commands:
+```bash
+# Report booleans and the model order only
+/opt/hermes-host/venv/bin/python responder.py doctor
+
+# Dry run: lists what it would claim, writes nothing
+/opt/hermes-host/venv/bin/python responder.py run --seconds 55
+
+# Answer chat jobs for up to 55 seconds
+/opt/hermes-host/venv/bin/python responder.py run --seconds 55 --apply
+
+# Replay finished jobs: rebuild the data, call the model, print the answer
+/opt/hermes-host/venv/bin/python responder.py replay <job_id> [...]
+```
+- What it reads: the campaign board (`cockpit_campaigns`), ad results (`cockpit_media_daily_stats`) by the client's Meta ad accounts from the board and the clients table, comment digests, lead sync status, the ClickUp task mirror, creative requests, the client profile, and linked Google Drive files: images, video thumbnails and Google Docs text.
+- Scope rule: it reads only the clients in the claimed job's scoped profiles.
+- What it writes: only the claim, complete and fail RPCs. Each answer stores the reply, model, sources, client, and engine `responder-v2`.
+- Freshness: `~/.cockpit-ask-ai/heartbeat.json` holds `last_cycle_at` and `last_success_at`, and `responder.log` gets one OK or FAIL line per job and per cycle.
+- Verification so far: on 3 November 2026 a replay of the 15 real chat questions answered 15 of 15, median 11.6 s, slowest 19.9 s. Every model call fell through to `anthropic/claude-sonnet-4-6` because both Codex logins were at their usage limit. Per-ad 7-day spend and leads matched the campaign board exactly for the 6 highest-spend clients.

@@ -4,6 +4,8 @@
  * Sourced from the Client Journey SOP, the Client Exit Process doc and #csm-general —
  * never invented. If a link is not in one of those, it does not belong here.
  * The coaching logs are deliberately absent: those are leadership's own tools, not his.
+ * So is the 1-1 call summary form: since 2026-11-01 the 1-1 notes are written in
+ * the client success cockpit, and the Typeform is closed.
  */
 
 export type LinkRow = { label: string; url: string; note?: string };
@@ -33,22 +35,6 @@ export const LINK_GROUPS: LinkGroup[] = [
         label: "Client check-in call",
         url: "https://api.leadconnectorhq.com/widget/booking/SHjlq0UjeR11maltYNyh",
         note: "The recurring one, weekly for their first month, then every 2 weeks",
-      },
-    ],
-  },
-  {
-    title: "Forms I have to fill",
-    blurb: "If it is not in a form, it did not happen.",
-    rows: [
-      {
-        label: "1-1 call summary form",
-        url: "https://maharamedia.typeform.com/to/fRokTITH",
-        note: "After every client call, same day",
-      },
-      {
-        label: "Client ticketing form",
-        url: "https://forms.clickup.com/90182518398/f/2kzmr1ky-1178/R1O1N5QXYLUTJOWQ3E",
-        note: "Any work a client needs from tech, media or ads, one ticket each",
       },
     ],
   },
@@ -107,13 +93,16 @@ export const LINK_GROUPS: LinkGroup[] = [
     blurb: "The client fills these in, not you.",
     rows: [
       {
-        label: "Onboarding experience survey",
-        url: "https://maharamedia.typeform.com/to/KbcbPA73",
-        note: "Send once onboarding is done",
+        // Waves 3-4 (docs/forms/WAVE34-CONTRACT.md 4.11): the client forms
+        // move into the client success cockpit; this list is reference only.
+        label: "Onboarding survey (in the cockpit)",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Send a form. It goes to their portal, or by WhatsApp link. Opens with the portal forms (after the switch-on). Old form, still live: https://maharamedia.typeform.com/to/KbcbPA73",
       },
       {
-        label: "NPS survey",
-        url: "https://maharamedia.typeform.com/to/fuPgs85S",
+        label: "NPS survey (in the cockpit)",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Send a form. It goes to their portal, or by WhatsApp link. Opens with the portal forms (after the switch-on). Old form, still live: https://maharamedia.typeform.com/to/fuPgs85S",
       },
     ],
   },
@@ -145,20 +134,22 @@ export const LINK_GROUPS: LinkGroup[] = [
   {
     title: "Money, the four Rs",
     blurb:
-      "Refer, resell, renew, review. Fill the form the same day it happens, no form, no commission.",
+      "Refer, resell, renew, review. Log it with Log a win the same day it happens, with its proof: no proof, no commission.",
     rows: [
       {
-        label: "Google review link (send to happy clients)",
+        label: "Google review link (the same ask for every client)",
         url: "https://g.page/r/CeRMcUwFPpe7EAI/review",
-        note: "Then log it in the client review form",
+        note: "Then log it with Log a win on the client's page",
       },
       {
-        label: "Client review form (review or video testimonial)",
-        url: "https://maharamedia.typeform.com/to/ETEynRgb",
+        label: "Log a win: a Google review or a video testimonial",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Log a win. Add the review, screenshot or video link. Until Log a win switches on, the old form stays live: https://maharamedia.typeform.com/to/ETEynRgb",
       },
       {
-        label: "Referral form",
-        url: "https://maharamedia.typeform.com/to/bAmbMKM2",
+        label: "Log a win: a referral",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Log a win, and pick the referred client's signed deal. Until Log a win switches on, the old form stays live: https://maharamedia.typeform.com/to/bAmbMKM2",
       },
       {
         label: "Referral programme, how it works",
@@ -166,43 +157,43 @@ export const LINK_GROUPS: LinkGroup[] = [
         note: "Send or explain this before asking for the referral",
       },
       {
-        label: "Website upsell form",
-        url: "https://maharamedia.typeform.com/to/VP3zmaj2",
+        label: "Log a win: a website upsell",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Log a win, or Mark as offered on the sent proposal. Until Log a win switches on, the old form stays live: https://maharamedia.typeform.com/to/VP3zmaj2",
       },
       {
-        label: "Social media management upsell form",
-        url: "https://maharamedia.typeform.com/to/IVHO9BMC",
+        label: "Log a win: a social media management upsell",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Log a win, or Mark as offered on the sent proposal. Until Log a win switches on, the old form stays live: https://maharamedia.typeform.com/to/IVHO9BMC",
       },
       {
-        label: "Backend program upsell form",
-        url: "https://maharamedia.typeform.com/to/cKItPZVI",
+        label: "Log a win: a back-end programme upsell",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Log a win, or Mark as offered on the sent proposal. Until Log a win switches on, the old form stays live: https://maharamedia.typeform.com/to/cKItPZVI",
       },
     ],
   },
   {
-    title: "Changing a client's plan, pause, extend, reactivate, cancel",
+    title: "Changing a client's plan, pause, extend, cancel",
     blurb:
       "One form per change. Never agree to any of these over WhatsApp, get them on a call first.",
     rows: [
       {
-        label: "Pause request form",
-        url: "https://maharamedia.typeform.com/to/CTUjv6l3",
-        note: "Client wants to freeze. A freeze over 14 days counts as churn",
+        label: "Pause consent (in the cockpit)",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Pause this client. The client signs the consent in their portal or by link. Opens with the portal forms (after the switch-on). Old form, still live: https://maharamedia.typeform.com/to/CTUjv6l3",
       },
       {
-        label: "Client extension form",
-        url: "https://maharamedia.typeform.com/to/gqBcyK6g",
-        note: "Only with a real reason, each extension costs you $50",
+        // The extension Typeform closes at the C1 window: Give more time on the
+        // client's page writes the card itself (WAVE12-CONTRACT.md 4.7.4, Q7).
+        label: "Give more time (in the cockpit)",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Give more time. The ClickUp card updates itself.",
       },
       {
-        label: "Card declined, reactivate their ads",
-        url: "https://maharamedia.typeform.com/to/ecJQ5Z5C",
-        note: "Use when a client's card fails and the ads stop. Admin only, not an earner",
-      },
-      {
-        label: "Contract termination survey (cancellation form)",
-        url: "https://maharamedia.typeform.com/to/knIe4eF3",
-        note: "After the exit call only, never instead of it",
+        label: "Exit survey (in the cockpit)",
+        url: "https://cockpit.maharamedia.com/client-success/clients",
+        note: "Open the client, then Client is leaving or Send a form. Opens with the portal forms (after the switch-on). Old form, still live: https://maharamedia.typeform.com/to/knIe4eF3",
       },
       {
         label: "Client exit process",

@@ -2,6 +2,7 @@ import { CalendarDays, Loader2, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { YourTasks } from "@/components/tasks/YourTasks";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -123,17 +124,25 @@ export function TeamPage() {
     );
   }, [data, filter, dept]);
 
+  // A seat with no cockpit of its own (the call centre) lands here, so its
+  // ClickUp tasks are here too, whether or not the meetings have loaded;
+  // other seats have them on their own Today.
+  const tasks = auth.cockpits.length === 0 ? <YourTasks /> : null;
+
   if (!data)
     return (
-      <div className="mx-auto w-full max-w-6xl p-1">
-        {error ? (
-          <p className="text-sm text-destructive">{error}</p>
-        ) : (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" aria-hidden /> Reading the
-            team's meetings
-          </p>
-        )}
+      <div className="mx-auto grid w-full max-w-6xl gap-6">
+        {tasks}
+        <div className="p-1">
+          {error ? (
+            <p className="text-sm text-destructive">{error}</p>
+          ) : (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" aria-hidden /> Reading
+              the team's meetings
+            </p>
+          )}
+        </div>
       </div>
     );
 
@@ -155,6 +164,8 @@ export function TeamPage() {
           <Plus aria-hidden /> New meeting
         </Button>
       </header>
+
+      {tasks}
 
       {creating ? (
         <NewMeeting

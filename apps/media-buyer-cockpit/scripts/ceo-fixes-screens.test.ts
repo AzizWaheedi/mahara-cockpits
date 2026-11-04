@@ -11,6 +11,13 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  CRM_AD_LEADS,
+  clientCplOf,
+  clientCplOfDays,
+  META_FORM_LEADS,
+} from "../src/components/ceo/clientCpl";
+import { cashHeadline, ROAS_CASH } from "../src/components/ceo/metrics";
+import {
   previousOf,
   startsLate,
   sumIn,
@@ -25,6 +32,7 @@ import {
 import { parseNudge, setNudge } from "../src/lib/ceoHoursClient";
 import { savePerson } from "../src/lib/ceoPeopleClient";
 import { peopleRoster } from "../src/lib/ceoPeopleModel";
+import { confirmedTypeLastMonth } from "../src/pages/ceo/BackendTab";
 import { churnView, registerMonths } from "../src/pages/ceo/churnRegister";
 import { ltvRefusal } from "../src/pages/ceo/ltvRefusal";
 import {
@@ -64,8 +72,12 @@ import {
 } from "../src/types/ceo/costsModel";
 import type {
   ChurnRegisterMonth,
+  ClientsPayload,
+  DeliveryDay,
+  DeliveryWindow,
   FunnelWindow,
   GrowthDay,
+  MoneyPayload,
 } from "../src/types/ceo/payloads";
 
 const say = { money: (v: number) => `$${v}`, count: (v: number) => String(v) };
@@ -569,6 +581,8 @@ describe("A087: kickoff cash beside front-end cash, typed, not money", () => {
     ({
       date,
       spend: 100,
+      // Since 2026-11-02 front-end ROAS divides lead gen plus retargeting.
+      spendRetargeting: 25,
       leads: 1,
       booked: 0,
       closes: 1,
@@ -591,7 +605,8 @@ describe("A087: kickoff cash beside front-end cash, typed, not money", () => {
       kickoffConfirmed: 0,
       kickoffConfirmedShare: 0,
     });
-    expect(w.roasCash).toBe(11.25);
+    // $2,250 paid over $200 lead gen + $50 retargeting.
+    expect(w.roasCash).toBe(9);
   });
   test("days the deal ledger does not cover are not read, never $0 and never the typed sum", () => {
     const w = windowFromDaily(
@@ -912,5 +927,243 @@ describe("A372: the morning Slack note switch", () => {
     } as unknown as SupabaseClient;
     expect((await setNudge(client, { on: true })).on).toBe(true);
     expect(calls).toEqual([["cockpit_ceo_hours_nudge_set", { p_on: true }]]);
+  });
+});
+
+// Goals sheet round 2 (2026-11-02): the other screens say what the sheet
+// says. Labels and two formulas, no new numbers. Every figure is made up.
+describe("Goals sheet round 2: the other screens tie to the sheet", () => {
+  const gday = (date: string, over: Partial<GrowthDay> = {}): GrowthDay =>
+    ({
+      date,
+      spend: 100,
+      spendRetargeting: 20,
+      leads: 2,
+      booked: 0,
+      closes: 0,
+      introsDue: 0,
+      deposit: 0,
+      frontEndPaid: 300,
+      ...over,
+    }) as GrowthDay;
+
+  test("fix 15: a custom range divides front-end cash by lead gen plus retargeting", () => {
+    const w = windowFromDaily(
+      [gday("2026-10-01"), gday("2026-10-02")],
+      "2026-10-01",
+      "2026-10-02",
+    );
+    // $600 paid over $200 lead gen + $40 retargeting, not $600 / $200.
+    expect(w.roasCash).toBe(2.5);
+    expect(w.raw.spend_retargeting).toBe(40);
+    expect(ROAS_CASH.of(w).value).toBe(w.roasCash);
+  });
+
+  test("fix 15: a day without the retargeting figure is not $0 of it", () => {
+    const w = windowFromDaily(
+      [gday("2026-10-01"), gday("2026-10-02", { spendRetargeting: undefined })],
+      "2026-10-01",
+      "2026-10-02",
+    );
+    expect(w.roasCash).toBeNull();
+    expect(w.raw.spend_retargeting).toBeNull();
+    expect(ROAS_CASH.of(w).value).toBeNull();
+    expect(ROAS_CASH.of(w).naHint).toMatch(/no retargeting spend/);
+  });
+
+  test("fix 15: a server window from before the worker's change reads on the new rule", () => {
+    // The old worker published paid / lead-gen spend (8.00); the tile works
+    // it out from the window's own fields instead.
+    const old = {
+      spend: 500,
+      roasCash: 8,
+      raw: { spend_retargeting: 100 },
+      frontEndCash: { paid: 4000 },
+    } as unknown as FunnelWindow;
+    expect(ROAS_CASH.of(old).value).toBe(6.67);
+    const unread = {
+      ...old,
+      frontEndCash: { paid: null },
+    } as unknown as FunnelWindow;
+    expect(ROAS_CASH.of(unread).value).toBeNull();
+    expect(ROAS_CASH.hint).toContain(
+      "over all Mahara ad spend, lead gen and retargeting",
+    );
+    expect(ROAS_CASH.hint).not.toMatch(/over lead-gen ad spend/);
+  });
+
+  test("fix 14: the all-rails headline is Cash in, never Cash collected", () => {
+    const rail = {
+      label: "Total",
+      connected: true,
+      today: 0,
+      yesterday: 0,
+      mtd: 1000,
+      lastMonthToDate: 0,
+      lastMonth: 0,
+      projectedMonth: 0,
+      refundsMtd: 0,
+      daily: [],
+      lastPaymentAt: null,
+    };
+    const railed = cashHeadline({
+      cash: rail,
+      refunds: { mtd: 0 },
+      rails: {
+        total: rail,
+        whop: rail,
+        tap: { ...rail, label: "Tap" },
+        manual: { ...rail, label: "Manual" },
+      },
+    } as unknown as MoneyPayload);
+    expect(railed.title).toBe("Cash in, every rail");
+    expect(railed.label).toBe("Cash in this month, Whop, Tap and hand-logged");
+    const old = cashHeadline({
+      cash: rail,
+      refunds: { mtd: 0 },
+    } as unknown as MoneyPayload);
+    expect(old.title).toBe("Cash in, Whop only");
+    expect(old.label).toBe("Cash in this month, Whop only");
+    for (const f of ["TodayTab.tsx", "MoneyTab.tsx", "FrontendTab.tsx"])
+      expect(src(`../src/pages/ceo/${f}`)).not.toMatch(
+        /title="Cash collected"/,
+      );
+  });
+
+  const dwin = (over: Partial<DeliveryWindow> & Record<string, unknown>) =>
+    ({
+      spend: 1000,
+      leads: 100,
+      cpl: 10,
+      bookings: null,
+      cpb: null,
+      ...over,
+    }) as DeliveryWindow;
+
+  test("fix 9: client CPL divides by CRM ad leads once the worker pairs them", () => {
+    const c = clientCplOf(
+      dwin({
+        crmAdLeads: 80,
+        crmSpend: 960,
+        crmLeftOut: [{ client: "Client Z", spend: 40 }],
+      }),
+    );
+    expect(c.basis).toBe("crm");
+    expect(c.value).toBe(12);
+    expect(c.leadsLabel).toBe(CRM_AD_LEADS);
+    expect(c.sub).toBe("80 CRM ad leads");
+    expect(c.hint).toContain(
+      "It leaves out $40 of spend with no CRM count: Client Z $40.",
+    );
+    expect(c.hint).toContain("Meta form leads for the same days: 100.");
+  });
+
+  test("fix 9: an older payload keeps Meta's figure, named Meta form leads", () => {
+    const c = clientCplOf(dwin({}));
+    expect(c.basis).toBe("meta");
+    expect(c.value).toBe(10);
+    expect(c.leadsLabel).toBe(META_FORM_LEADS);
+    expect(c.sub).toBe("100 Meta form leads");
+  });
+
+  test("fix 9: CRM keys present but unpaired is missing, never zero", () => {
+    const c = clientCplOf(dwin({ crmAdLeads: null, crmSpend: null }));
+    expect(c.basis).toBe("crm");
+    expect(c.value).toBeNull();
+    expect(c.naHint).toContain("On Meta form leads it is $10.");
+  });
+
+  test("fix 9: any run of days sums the paired days and skips the rest", () => {
+    const rows = [
+      {
+        date: "2026-10-01",
+        spend: 300,
+        leads: 30,
+        bookings: 0,
+        crmAdLeads: 20,
+        crmSpend: 250,
+      },
+      {
+        date: "2026-10-02",
+        spend: 200,
+        leads: 20,
+        bookings: 0,
+        crmAdLeads: null,
+        crmSpend: null,
+      },
+      {
+        date: "2026-10-03",
+        spend: 100,
+        leads: 10,
+        bookings: 0,
+        crmAdLeads: 5,
+        crmSpend: 100,
+      },
+    ] as unknown as DeliveryDay[];
+    const c = clientCplOfDays(rows, "2026-10-01", "2026-10-03");
+    expect(c.basis).toBe("crm");
+    // $350 paired spend over 25 CRM ad leads; $250 of spend has no pair.
+    expect(c.value).toBe(14);
+    expect(c.hint).toContain("It leaves out $250 of spend");
+    const none = clientCplOfDays(rows, "2026-10-02", "2026-10-02");
+    expect(none.value).toBeNull();
+    const meta = clientCplOfDays(
+      [{ date: "2026-10-01", spend: 300, leads: 30, bookings: 0 }],
+      "2026-10-01",
+      "2026-10-01",
+    );
+    expect(meta.basis).toBe("meta");
+    expect(meta.value).toBe(10);
+  });
+
+  test("fix 18: last month's departures by the confirm's type sit beside the day-90 figure", () => {
+    const payload = {
+      lifecycle: {
+        read: true,
+        departures: [
+          { leftOn: "2026-10-03", counts: true },
+          { leftOn: "2026-10-09", counts: true },
+          { leftOn: "2026-10-20", counts: false },
+          { leftOn: "2026-11-01", counts: true },
+        ],
+        latePayments: [],
+      },
+      churnRegister: {
+        months: [
+          {
+            month: "2026-10",
+            activeAtStart: 8,
+            newClients: 0,
+            churned: 1,
+            churnPct: 12.5,
+            rolling3Pct: null,
+          },
+        ],
+      },
+    } as unknown as ClientsPayload;
+    expect(confirmedTypeLastMonth(payload, "2026-11-02")).toEqual({
+      count: 2,
+      words: "2 of 8 (25%)",
+    });
+    // Not read is missing, never 0.
+    expect(
+      confirmedTypeLastMonth(
+        {
+          lifecycle: { read: false, departures: [], latePayments: [] },
+        } as unknown as ClientsPayload,
+        "2026-11-02",
+      ),
+    ).toBeNull();
+    expect(
+      confirmedTypeLastMonth({} as ClientsPayload, "2026-11-02"),
+    ).toBeNull();
+  });
+
+  test("fix 16: Marketing names where landing page views are, with no number", () => {
+    const m = src("../src/pages/ceo/MarketingTab.tsx");
+    expect(m).toContain(
+      "Meta records landing page views; the B2B mirror does not store them yet.",
+    );
+    expect(m).not.toContain("No web analytics source is connected");
   });
 });

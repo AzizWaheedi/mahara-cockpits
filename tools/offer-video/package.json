@@ -1,0 +1,24 @@
+{
+  "name": "offer-video",
+  "private": true,
+  "description": "The offer demo videos (website first): the demo firm's site, its captures, and the HyperFrames film. Built and rendered on the VPS only.",
+  "type": "module",
+  "scripts": {
+    "doctor": "bash scripts/doctor.sh",
+    "site": "python3 demo-site/build.py",
+    "capture": "node capture/capture.mjs",
+    "film": "python3 film/v4a.py",
+    "render": "bash scripts/render-v4.sh",
+    "check": "python3 scripts/check.py --mode client-ready",
+    "check:preview": "python3 scripts/check.py --mode internal-preview",
+    "test": "python3 -m unittest discover -s scripts -p '*_test.py'",
+    "manifest": "python3 scripts/manifest_v4.py",
+    "handoff": "python3 scripts/handoff_v4.py"
+  },
+  "dependencies": {
+    "hyperframes": "0.8.203",
+    "geist": "1.8.2",
+    "@fontsource/ibm-plex-sans-arabic": "5.3.0",
+    "@fontsource/ibm-plex-sans": "5.3.0"
+  }
+}

@@ -1,12 +1,12 @@
 import {
   CalendarCheck2,
   ChevronRight,
-  MessageCircleReply,
   PhoneIncoming,
   TriangleAlert,
 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
+import { AfterCallCard } from "../components/AfterCall";
 import { RowButtons, RowPanel } from "../components/CallsCard";
 import { DayLine } from "../components/DayLine";
 import {
@@ -21,7 +21,10 @@ import {
 } from "../components/kit";
 import { MarkControls, type MarkHold } from "../components/MarkControls";
 import { type ScopeView, useScope } from "../components/Scope";
+import { YourTasks } from "../components/tasks/YourTasks";
+import { WaitingReplies } from "../components/WaitingReplies";
 import {
+  useAfterCall,
   useCalendar,
   useLeadsById,
   useMirrorRun,
@@ -29,7 +32,6 @@ import {
   useNow,
   useOwed,
   usePeople,
-  useReplies,
   useScoreRows,
   useSetting,
 } from "../lib/data";
@@ -46,8 +48,9 @@ import {
   when,
 } from "../lib/format";
 import { keepOpenRow } from "../lib/heldRows";
+import { useReadBeforeLate } from "../lib/readBeforeLate";
 import { liveChip } from "../lib/reschedule";
-import type { CalendarRow, InboxRow, Lead, Me } from "../lib/types";
+import type { CalendarRow, Lead, Me } from "../lib/types";
 
 /**
  * One panel open at a time (a Coming up row's picker or Tell them, an owed
@@ -75,8 +78,9 @@ export default function TodayPage({ me }: { me: Me }) {
   const todays = useCalendar(dayStart, dayEnd, mine);
   const coming = useCalendar(new Date(now).toISOString(), soonEnd, mine);
   const owed = useOwed(mine);
+  // Held calls still waiting on the lead's quality or why no demo (2026-10-29).
+  const after = useAfterCall(mine);
   const newLeads = useNewLeads(48);
-  const replies = useReplies(48);
   const mirror = useMirrorRun();
 
   const [open, setOpen] = useState<Open>(null);
@@ -99,6 +103,7 @@ export default function TodayPage({ me }: { me: Me }) {
     coming.reload();
     todays.reload();
     owed.reload();
+    after.reload();
   };
 
   const unlinked = view.kind === "mine" && !me.ghl_user_id;
@@ -165,9 +170,18 @@ export default function TodayPage({ me }: { me: Me }) {
             open={open}
             setOpen={setOpen}
           />
+          <AfterCallCard
+            me={me}
+            rows={after.data}
+            reload={reloadCalls}
+            team={scope === "team"}
+          />
           <WeekCard me={me} view={view} />
         </div>
         <div className="min-w-0 space-y-4 lg:col-span-5 lg:space-y-6">
+          {/* Your tasks (PLAN.md D19): your own open ClickUp tasks, five at
+              most, each opening in place. */}
+          <YourTasks />
           <SectionCard
             title="Coming up"
             side={<span className="muted text-xs">Next 36 hours</span>}
@@ -225,12 +239,7 @@ export default function TodayPage({ me }: { me: Me }) {
               />
             )}
           </SectionCard>
-          <RepliesCard
-            rows={replies.data}
-            error={replies.error}
-            reload={replies.reload}
-            now={now}
-          />
+          <WaitingReplies now={now} />
           <NewLeadsCard
             leads={newLeads.data}
             error={newLeads.error}
@@ -606,6 +615,10 @@ function WeekCard({ me, view }: { me: Me; view: ScopeView }) {
   const readAt = mirror.data?.scorecards_at
     ? Date.parse(mirror.data.scorecards_at)
     : null;
+  useReadBeforeLate(
+    mirror.reload,
+    readAt === null ? null : readAt + 30 * 60_000,
+  );
   const read = readAt !== null && Date.now() - readAt < 30 * 60_000;
   const theirRow = (week.data ?? []).find(r => r.person_key === view.repId);
   const rows =
@@ -682,9 +695,12 @@ function WeekCard({ me, view }: { me: Me; view: ScopeView }) {
     >
       <div className="@container">
         <div className="grid grid-cols-2 gap-4 @lg:grid-cols-4">
+          {/* The same names as the Numbers page (2026-11-02, Goals sheet
+              round 2, fixes 14 and 17): calls by the day of the call, and
+              the deposits typed on the form, not the deal ledger's cash. */}
           <StatTile
             variant="plain"
-            label="Booked"
+            label="Scheduled"
             value={count(sum("calls_scheduled"))}
             status={pace(sum("calls_scheduled"), goals?.booked)}
           />
@@ -702,7 +718,7 @@ function WeekCard({ me, view }: { me: Me; view: ScopeView }) {
           />
           <StatTile
             variant="plain"
-            label="Cash collected"
+            label="Deposits typed"
             value={money(sum("cash_collected"))}
             status={pace(sum("cash_collected"), goals?.cash)}
           />
@@ -712,84 +728,6 @@ function WeekCard({ me, view }: { me: Me; view: ScopeView }) {
         Saturday to today, from the same rep scorecard the CEO cockpit reads. A
         call nobody marked counts as shown until it is marked.
       </p>
-    </SectionCard>
-  );
-}
-
-const CHANNEL_WORDS: [RegExp, string][] = [
-  [/WHATSAPP/i, "WhatsApp"],
-  [/EMAIL/i, "Email"],
-  [/SMS/i, "SMS"],
-  [/FACEBOOK/i, "Facebook"],
-  [/INSTAGRAM/i, "Instagram"],
-];
-
-/** Leads who wrote back and are waiting on us. */
-function RepliesCard({
-  rows,
-  error,
-  reload,
-  now,
-}: {
-  rows: InboxRow[] | null;
-  error: string | null;
-  reload: () => void;
-  now: number;
-}) {
-  const list = rows ?? [];
-  return (
-    <SectionCard
-      title="Replies waiting"
-      side={<span className="muted text-xs">Last 48 hours</span>}
-      flush
-    >
-      {error ? (
-        <div className="p-4">
-          <Failed what="Replies" error={error} retry={reload} />
-        </div>
-      ) : rows === null ? (
-        <Reading what="the replies" className="px-4 py-3 text-sm" />
-      ) : list.length ? (
-        <ul className="divide-y hairline">
-          {list.slice(0, 8).map(r => (
-            <li key={r.conversation_id}>
-              <Link
-                to={r.contact_id ? `/lead/${r.contact_id}` : "/leads"}
-                className="flex gap-3 px-4 py-2.5 hover:bg-[color:var(--secondary)]"
-              >
-                <MessageCircleReply
-                  className="muted mt-0.5 size-4 shrink-0"
-                  aria-hidden
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium" dir="auto">
-                    {r.contact_name ?? "A lead"}
-                  </p>
-                  <p className="muted text-xs">
-                    {CHANNEL_WORDS.find(([re]) =>
-                      re.test(String(r.last_type)),
-                    )?.[1] ?? "Message"}{" "}
-                    · {ago(r.last_message_at, now)}
-                    {r.unread ? ` · ${r.unread} unread` : ""}
-                  </p>
-                  {r.last_body ? (
-                    <p className="muted mt-0.5 line-clamp-2 text-xs" dir="auto">
-                      {r.last_body}
-                    </p>
-                  ) : null}
-                </div>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <EmptyState
-          compact
-          icon={MessageCircleReply}
-          title="Nobody is waiting on a reply"
-          text="When a lead writes back on WhatsApp, email or text it shows here within three minutes."
-        />
-      )}
     </SectionCard>
   );
 }

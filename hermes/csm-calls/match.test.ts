@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import {
   matchAppointment,
   matchMeeting,
@@ -12,8 +13,10 @@ import {
   recordingIn,
   checkinClient,
   CHECKIN_TASK_REF,
+  type Appt,
   type Client,
   type Change,
+  type Row,
   STOPPED_STAGE,
 } from "./match";
 
@@ -71,6 +74,126 @@ describe("fathom", () => {
   test("internal meetings are not client calls", () => {
     expect(matchMeeting({ title: "Team sync", calendar_invitees: [{ is_external: false }] }, [], clients, index).reason).toBe("Internal meeting");
   });
+});
+
+// docs/forms/STAGE2-CONTRACT.md 4.1: rooms are reused on other days, so a room
+// proves the call only within 90 minutes of one client's booking. Rooms are invented.
+describe("fathom: the same room first, bounded", () => {
+  const MIN = 60_000;
+  /** Kuwait wall time on a 2026 day. */
+  const t = (hhmm: string, day = "10-11") => Date.parse(`2026-${day}T${hhmm}:00+03:00`);
+  const ROOM = "zoom:12345678901";
+  const LINK = "https://us05web.zoom.us/j/12345678901?pwd=TEST";
+  const OWNER = "owner@citywood.example";
+  const [inverse, cityWood] = clients.map(c => c.taskId);
+  const noIndex = { emails: new Map<string, string>(), domain: new Map<string, string>() };
+  const appt = (id: number, taskId: string | null, at: number, room: string | null, emails: string[] = []): Appt => ({
+    id,
+    taskId,
+    startsAt: at,
+    emails,
+    room,
+  });
+  /** A recording in a room with only the CSM on the calendar invite, unless the extra says otherwise. */
+  const meeting = (at: number, url: string | null, extra: Row = {}): Row => ({
+    recording_start_time: new Date(at).toISOString(),
+    title: "Impromptu Zoom Meeting",
+    meeting_title: "Impromptu Zoom Meeting",
+    meeting_url: url,
+    calendar_invitees: [{ is_external: false, email: "csm@maharamedia.com" }],
+    ...extra,
+  });
+  const invited = (at: number, url: string | null) => meeting(at, url, { calendar_invitees: [{ is_external: true, email: OWNER }] });
+
+  test("a recording in a booking's room joins that booking: 16 minutes apart as the live pairs are, and up to 90", () => {
+    const appts = [appt(41, cityWood, t("10:00"), ROOM)];
+    for (const gap of [-90, -16, 0, 16, 45, 90])
+      expect(matchMeeting(meeting(t("10:00") + gap * MIN, LINK), appts, clients, noIndex)).toEqual({
+        taskId: cityWood,
+        method: "same_room",
+        confidence: 1,
+        apptId: 41,
+      });
+    for (const gap of [-91, 91]) expect(matchMeeting(meeting(t("10:00") + gap * MIN, LINK), appts, clients, noIndex).taskId).toBeUndefined();
+  });
+
+  test("a booking room reused by another client's recording 3 days later is not same_room", () => {
+    const appts = [appt(41, cityWood, t("10:00"), ROOM)];
+    const later = meeting(t("10:05", "10-14"), LINK, { calendar_invitees: [{ is_external: true, email: "owner@inverse.example" }] });
+    const byEmail = emailIndex([{ email: "owner@inverse.example", clientId: inverse }], new Set(clients.map(c => c.taskId)));
+    expect(matchMeeting(later, appts, clients, byEmail)).toMatchObject({ taskId: inverse, method: "invitee_email" });
+    const unmatched = matchMeeting(later, appts, clients, noIndex);
+    expect(unmatched.taskId).toBeUndefined();
+    expect(unmatched.reason).toBe("No booked call at this time, no known invitee email, no client name in the title");
+  });
+
+  test("one room on two clients' bookings within 90 minutes is not same_room for either, and the chain goes on", () => {
+    const appts = [appt(41, cityWood, t("10:00"), ROOM, [OWNER]), appt(42, inverse, t("11:00"), ROOM)];
+    for (const at of [t("10:20"), t("10:50"), t("11:10")]) {
+      const m = matchMeeting(meeting(at, LINK), appts, clients, noIndex);
+      expect(m.taskId).toBeUndefined();
+      expect(m.method).toBeUndefined();
+    }
+    expect(matchMeeting(invited(t("10:20"), LINK), appts, clients, noIndex)).toMatchObject({
+      taskId: cityWood,
+      method: "appointment_time",
+      apptId: 41,
+    });
+    // Another client's booking in that room more than 90 minutes away proves nothing either way.
+    const apart = [appt(41, cityWood, t("10:00"), ROOM), appt(42, inverse, t("12:00"), ROOM)];
+    expect(matchMeeting(meeting(t("10:20"), LINK), apart, clients, noIndex)).toMatchObject({ taskId: cityWood, method: "same_room", apptId: 41 });
+  });
+
+  test("a booking in the room with no client inside the window makes the room no proof", () => {
+    const appts = [appt(40, null, t("10:00"), ROOM), appt(41, cityWood, t("10:30"), ROOM)];
+    expect(matchMeeting(meeting(t("10:20"), LINK), appts, clients, noIndex).taskId).toBeUndefined();
+    expect(matchMeeting(meeting(t("10:05"), LINK), [appts[0]], clients, noIndex).taskId).toBeUndefined();
+  });
+
+  test("two of one client's bookings in the room: the closest one", () => {
+    const appts = [appt(41, cityWood, t("10:00"), ROOM), appt(43, cityWood, t("11:00"), ROOM)];
+    expect(matchMeeting(meeting(t("10:40"), LINK), appts, clients, noIndex)).toMatchObject({ method: "same_room", apptId: 43 });
+    expect(matchMeeting(meeting(t("10:20"), LINK), appts, clients, noIndex)).toMatchObject({ method: "same_room", apptId: 41 });
+    expect(matchMeeting(meeting(t("10:30"), LINK), appts, clients, noIndex)).toMatchObject({ method: "same_room", apptId: 41 });
+  });
+
+  test("the same room beats the invitee's booked time", () => {
+    // The 10:00 call ran late in its own room; the 11:00 booking has the closer time and the same invitee.
+    const appts = [appt(41, cityWood, t("10:00"), ROOM, [OWNER]), appt(43, cityWood, t("11:00"), "meet:abc-defg-hij", [OWNER])];
+    expect(matchMeeting(invited(t("10:50"), LINK), appts, clients, noIndex)).toMatchObject({ method: "same_room", apptId: 41 });
+    expect(matchMeeting(invited(t("10:50"), null), appts, clients, noIndex)).toMatchObject({ method: "appointment_time", apptId: 43 });
+  });
+
+  test("rooms compare as normalised rooms; a link with no room leaves the chain as it was", () => {
+    const appts = [appt(41, cityWood, t("10:00"), "meet:abc-defg-hij", [OWNER]), appt(44, inverse, t("13:00"), ROOM)];
+    expect(matchMeeting(meeting(t("10:03"), "https://meet.google.com/abc-defg-hij?authuser=0"), appts, clients, noIndex)).toMatchObject({
+      taskId: cityWood,
+      method: "same_room",
+      apptId: 41,
+    });
+    expect(matchMeeting(meeting(t("13:02"), "https://us06web.zoom.us/j/12345678901?pwd=TEST"), appts, clients, noIndex)).toMatchObject({
+      taskId: inverse,
+      method: "same_room",
+      apptId: 44,
+    });
+    const teams = "https://teams.microsoft.com/l/meetup-join/19%3ameeting_TEST%40thread.v2/0";
+    expect(matchMeeting(invited(t("10:03"), teams), appts, clients, noIndex)).toMatchObject({ method: "appointment_time", apptId: 41 });
+    expect(matchMeeting(meeting(t("10:03"), teams), appts, clients, noIndex).taskId).toBeUndefined();
+  });
+
+  test("an unmatched recording in a room matches on a later run once its booking exists", () => {
+    const m = meeting(t("10:05"), LINK);
+    expect(matchMeeting(m, [], clients, noIndex).taskId).toBeUndefined();
+    expect(matchMeeting(m, [appt(41, cityWood, t("10:00"), ROOM)], clients, noIndex)).toMatchObject({ taskId: cityWood, method: "same_room" });
+  });
+});
+
+test("match.ts imports only ./callMatch.ts, with its .ts extension (an Edge Function bundles it)", () => {
+  const src = readFileSync(new URL("./match.ts", import.meta.url), "utf8");
+  const specs = [
+    ...src.matchAll(/^\s*(?:import|export)\b[^'"]*?\bfrom\s*['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]|\brequire\s*\(\s*['"]([^'"]+)['"]/gm),
+  ].map(m => m[1] ?? m[2] ?? m[3]);
+  expect(specs).toEqual(["./callMatch.ts"]);
 });
 
 describe("next and last call", () => {

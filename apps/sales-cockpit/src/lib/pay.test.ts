@@ -5,6 +5,7 @@ import {
   closerNames,
   dialStats,
   elapsedWorkingDays,
+  GOAL_FIELDS,
   goalActual,
   goalPeriod,
   goalsFromForm,
@@ -462,6 +463,16 @@ describe("team total", () => {
     expect(goalActual("cash", c, null)).toBe(4000);
     expect(goalActual("dials", c, 55)).toBe(55);
     expect(goalActual("booked", null, 55)).toBeNull();
+  });
+
+  // 2026-11-02, Goals sheet round 2, fixes 14 and 17: the labels name what
+  // each goal is scored by; the keys stay so saved goals carry over.
+  test("goal labels say what they are scored by", () => {
+    const label = Object.fromEntries(GOAL_FIELDS.map(g => [g.key, g.label]));
+    expect(label.booked).toBe("Scheduled");
+    expect(label.cash).toBe("Deposits typed");
+    expect(Object.values(label)).not.toContain("Cash collected");
+    expect(Object.values(label)).not.toContain("Booked");
   });
 });
 

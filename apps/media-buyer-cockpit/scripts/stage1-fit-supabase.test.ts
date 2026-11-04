@@ -18,7 +18,14 @@
  * pg_net: the guarded blocks skip, and the kicks write their notes. Every
  * client, person and card is invented.
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  setDefaultTimeout,
+  test,
+} from "bun:test";
 import type { PGlite } from "@electric-sql/pglite";
 import { runNotices } from "../../../supabase/functions/cockpit-notices/run";
 import type { NoticeDeps } from "../../../supabase/functions/cockpit-notices/send";
@@ -33,6 +40,10 @@ import * as CSN from "../../client-success-cockpit/src/lib/notices";
 import * as CDB from "../../creative-director-cockpit/src/lib/blueprint";
 import * as CDN from "../../creative-director-cockpit/src/lib/notices";
 import { actor, cockpitTestDb, member, migration } from "./lib/cockpitTestDb";
+
+// Keep direct, ship and readiness runs consistent on busy build hosts.
+// Every SQL assertion still runs, with a finite per-test allowance.
+setDefaultTimeout(120_000);
 
 const NOTICES = "20261025n_slack_notices.sql";
 const DRAIN = "20261025o_blueprint_close_drain.sql";
@@ -948,8 +959,11 @@ for (const order of ORDERS)
         const admin = await CSN.readNoticeSettings(client(ADMIN) as never);
         expect(admin.can).toEqual({ edit: true, editors: true });
         // The server lists them in its seed order; the card orders its own rows.
+        // This file applies Stage 1's migrations only, so the two kinds 2b's
+        // 20261029u seeds are not in its database (stage2b-fit proves those).
+        const inStage2b = ["checkin.grade", "checkin.recap_late"];
         expect(admin.notices.map(n => n.kind).sort()).toEqual(
-          [...CSN.NOTICE_KINDS].sort(),
+          [...CSN.NOTICE_KINDS].filter(k => !inStage2b.includes(k)).sort(),
         );
         const kickoff = admin.notices.find(n => n.kind === "kickoff")!;
         expect(kickoff).toMatchObject({

@@ -7,6 +7,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { useReadBeforeLate } from "@/lib/readBeforeLate";
 import type {
   AssetsPayload,
   B2bAdsPayload,
@@ -174,6 +175,17 @@ export function useCeo(
 
   const raw = data?.sections;
   const sections = useMemo(() => normalize(raw), [raw]);
+  const lateAt = useMemo(() => {
+    let soonest: number | null = null;
+    for (const key of SECTION_KEYS) {
+      const s = sections[key];
+      if (!s || !(s.computedAt > 0) || !Number.isFinite(s.computedAt)) continue;
+      const at = s.computedAt + STALE_AFTER_MS;
+      if (soonest === null || at < soonest) soonest = at;
+    }
+    return soonest;
+  }, [sections]);
+  useReadBeforeLate(fetchCeo, enabled && isCeo ? lateAt : null);
   return {
     loading,
     sections,

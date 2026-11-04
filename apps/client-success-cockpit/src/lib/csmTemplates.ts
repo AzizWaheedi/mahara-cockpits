@@ -34,7 +34,6 @@ export const LINKS = {
     "https://api.leadconnectorhq.com/widget/booking/z1Ne59rohCCj87KhcXoi",
   checkInCall:
     "https://api.leadconnectorhq.com/widget/booking/SHjlq0UjeR11maltYNyh",
-  callSummaryForm: "https://maharamedia.typeform.com/to/fRokTITH",
   // The client's onboarding form is per client (onboardingFormLink, with the
   // card id). The kickoff form is the CSM's, filled on the onboarding call:
   // never send it to a client (BbJy6xg4 was retired on 2026-08-31).
@@ -43,8 +42,6 @@ export const LINKS = {
   referralDoc:
     "https://docs.google.com/document/d/15gPXbB98N9TtNqbTa0Ro7O2odcio8XuW0rL-S_qfHcs/edit",
   content: "https://content.maharamedia.com/",
-  ticketingForm:
-    "https://forms.clickup.com/90182518398/f/2kzmr1ky-1178/R1O1N5QXYLUTJOWQ3E",
   // Run this on any save call: money, results, or the team? Then reset expectations.
   resetCall:
     "https://www.skool.com/maharamedia-8165/classroom/68fc87a8?md=181f7ebf64164828bd0faec51925059c",

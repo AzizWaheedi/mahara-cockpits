@@ -221,6 +221,37 @@ export type MoneyPayload = {
      * transfer a statement line covers, count once, on the bank rail.
      */
     total: CashRail;
+    /**
+     * Hand-logged payments not yet checked against the bank (20261101n):
+     * beside the rails, never in `total`, cash, pay or LTV. Absent on a
+     * payload stored before the checked-money refresh.
+     */
+    manualLogged?: { count: number; usd: number; oldestDay: string | null };
+  };
+  /**
+   * Each hand-logged row's check state over twelve months, for the manual
+   * list's chips (20261101n). Absent on older payloads.
+   */
+  manualChecks?: {
+    id: string;
+    state: "logged" | "checked" | "rejected";
+    at: string | null;
+    ref: string | null;
+  }[];
+  /**
+   * Rail cash per client card over the last two full months (20261101n),
+   * which cockpit_mrr_read compares with the card's MRR. A card with no tied
+   * money is left out, never 0. Absent on older payloads.
+   */
+  mrrCheck?: {
+    asOf: string;
+    rows: {
+      taskId: string;
+      railMonthlyUsd: number;
+      months: number;
+      rails: string[];
+      note: string;
+    }[];
   };
   /**
    * This month's hand-logged payments for the Money tab, newest `day` first,
@@ -606,6 +637,11 @@ export type Transaction = {
   bankKind?: string;
   /** The statement line's own id, so it can be reclassified from the Transactions tab. */
   bankLineId?: number;
+  /**
+   * False for a hand-logged row not checked against the bank yet (20261101n):
+   * shown, never in a total. Absent (or true) for every other row.
+   */
+  checked?: boolean;
 };
 
 export type AttributionTotals = {
@@ -796,7 +832,11 @@ export type FunnelWindow = {
   demoShowRate: number | null;
   /** The dashboard's `intro_show_rate`, the same rule for intro calls. */
   introShowRate: number | null;
-  /** The dashboard's `intro_to_demo`: intros that went on to book a demo, over intros shown. */
+  /**
+   * The dashboard's `intro_to_demo`: intros that went on to book a demo, over
+   * intros shown, 0..1 to three places. A window rebuilt from days divides
+   * the days' `introsAdvanced` by their `introsShown` (since 2026-11-02).
+   */
   introToDemo: number | null;
   /** Past demos in the window still marked confirmed. They count as shown under the dashboard's rule. */
   demosStillConfirmed: number;
@@ -871,6 +911,14 @@ export type FunnelWindow = {
     /** Front-end payments in the window, and the deals they are on. */
     payments?: number | null;
     paidDeals?: number | null;
+    /**
+     * Front-end money paid inside the window on deals whose form was signed
+     * inside the window (growth.js since release goal1102, 2026-11-02): UF
+     * cash % = paidOnWindowDeals / contracted. A month measure, never kept per
+     * day, so a window rebuilt from days leaves it null. Null when the deal
+     * ledger was not read; absent on a payload stored before.
+     */
+    paidOnWindowDeals?: number | null;
     /** `paid` by rail; a bank transfer and a statement line are both bank. */
     byRail?: Record<"whop" | "tap" | "ecom" | "bank" | "manual", number> | null;
     /** `paid` by the deal's closer, biggest first. */
@@ -903,7 +951,15 @@ export type FunnelWindow = {
   cac: number | null;
   /** The dashboard's `roas`: contracted over lead-gen spend. Same as `roasContracted`. */
   roas: number | null;
-  /** Front-end ROAS, the main one: front-end cash over lead-gen spend. */
+  /**
+   * Front-end ROAS, the main one: front-end cash (`frontEndCash.paid`) over
+   * all Mahara ad spend, lead gen and retargeting (`spend` +
+   * `raw.spend_retargeting`, the webinar's left out). Since 2026-11-02
+   * (Goals sheet round 2, fix 15); a window stored before was over lead-gen
+   * spend only, so the tile works it out from the window's own fields
+   * (metrics.ts ROAS_CASH). Null when the deal ledger or retargeting is not
+   * read, or there is no spend.
+   */
   roasCash: number | null;
   /** Contracted ROAS: contracted over lead-gen spend. */
   roasContracted: number | null;
@@ -930,6 +986,12 @@ export type GrowthDay = {
   /** Lead-gen spend. */
   spend: number;
   spendRetargeting?: number;
+  /**
+   * Lead-gen unique link clicks by Meta day, the webinar's left out (growth.js
+   * since release goal1102, 2026-11-02). Null when a lead-gen ad that spent
+   * that day has no unique count: not known, never 0. Absent before.
+   */
+  uniqueLinkClicks?: number | null;
   /** ROAS-tagged leads created that day. */
   leads: number;
   qualified?: number;
@@ -955,6 +1017,15 @@ export type GrowthDay = {
   introsDue?: number;
   demosDue?: number;
   introsShown?: number;
+  /**
+   * Of that day's intros shown, those whose contact has a demo booked at or
+   * after the intro's start: b2b_window_metrics' own intro_handoff rule, so
+   * intro to demo for any run of days is sum(introsAdvanced) /
+   * sum(introsShown) (growth.js since release goal1102, 2026-11-02). Read as
+   * of the refresh, so a day can still rise. Absent on a payload stored
+   * before; such a day is not read, never 0.
+   */
+  introsAdvanced?: number | null;
   demosShown?: number;
   demosQualified?: number;
   introsCancelled?: number;
@@ -1251,6 +1322,22 @@ export type DeliveryWindow = {
    * `notMeasured`. Absent on payloads stored before then.
    */
   doneWithYou?: { client: string; spend: number }[];
+  /**
+   * Client CPL on the CRM (2026-11-02, Goals sheet round 2, fix 9): each
+   * client's CRM ad leads (cockpit_client_days.crm_ad_leads) and its spend on
+   * the same days, paired by client and day, so crmSpend / crmAdLeads is like
+   * for like (src/components/ceo/clientCpl.ts). Both null when no client pairs
+   * in the window or Creative Triage was not read: not measured, never zero.
+   * Absent on payloads stored before release goal1102.
+   */
+  crmAdLeads?: number | null;
+  /** Two decimals. */
+  crmSpend?: number | null;
+  /**
+   * Spend with no CRM count, per client: what the CRM cost per lead leaves
+   * out. Null only when Creative Triage was not read.
+   */
+  crmLeftOut?: { client: string; spend: number }[] | null;
 };
 
 /** A client's funnel rates over a window, the three booking metrics and the Mahara OS outcomes. */
@@ -1304,6 +1391,15 @@ export type DeliveryDay = {
    * `confirmed` or `provisional`. Absent on rows stored before then.
    */
   spendDoneWithYou?: number | null;
+  /**
+   * That day's CRM ad leads and the spend of the clients they pair with
+   * (fix 9, as on DeliveryWindow), so any run of days divides
+   * sum(crmSpend) by sum(crmAdLeads). Null on a day no client pairs; absent
+   * before release goal1102. The left-out list is kept on windows only.
+   */
+  crmAdLeads?: number | null;
+  /** Four decimals. */
+  crmSpend?: number | null;
 };
 
 export type DeliveryPayload = {
@@ -1692,11 +1788,64 @@ export type ClientsPayload = {
    * number to manage against. Absent on payloads stored before 2026-10-11.
    */
   churnRegister?: ChurnRegister | ChurnRegisterMonth[] | null;
+  /**
+   * Waves 1-2 (20261101o, p): every departure with its confirm and every late
+   * spell, read by metrics.ts (lifecycleValues). `read: false` with the error
+   * when the read failed: the lists are then missing, never "none". Absent on
+   * payloads stored before.
+   */
+  lifecycle?: {
+    read: boolean;
+    error?: string;
+    departures: {
+      id: number;
+      taskId: string | null;
+      client: string;
+      leftOn: string;
+      reason: string;
+      churnType: "mid_programme" | "completed" | null;
+      counts: boolean;
+      confirmed: boolean;
+      confirmedOn: string | null;
+    }[];
+    latePayments: {
+      taskId: string;
+      client: string;
+      dueOn: string;
+      endedOn: string | null;
+      closedHow: string;
+      paidOn: string | null;
+      daysLate: number | null;
+      amountUsd: number | null;
+    }[];
+  };
   /** The days `rows[].daily` covers; null when the media history was not read. Absent on older payloads. */
   dailyFrom?: string | null;
   dailyTo?: string | null;
+  /** The client's own scores, NPS and the onboarding survey (WAVE34 4.6.4). Absent on payloads stored before it. */
+  voice?: VoicePayload;
   notes: Note[];
 };
+
+/** The clients section's `voice` (hermes/ceo-refresh/native/voice.js voicePayload). */
+export type VoiceAnswer = {
+  taskId: string;
+  form: string;
+  day: string;
+  at: number;
+  score: number | null;
+  band: string | null;
+};
+export type VoicePayload =
+  | {
+      read: true;
+      today: string;
+      firstDay: string | null;
+      answers: VoiceAnswer[];
+      answered: { taskId: string; day: string }[];
+      daily: { day: string; form: string; issued: number; answered: number }[];
+    }
+  | { read: false; error?: string };
 
 /** One month of the churn register, as churnCore's rollUp returns it. */
 export type ChurnRegisterMonth = {
@@ -1730,6 +1879,16 @@ export type ChurnRegister = {
   months: ChurnRegisterMonth[];
   /** Departures logged on the Churn page (not removed). */
   departures?: number;
+  /**
+   * Each departure's confirm (20261101o), for "n of m confirmed": the day
+   * confirmed, never an address. Absent before the lifecycle read.
+   */
+  departureRows?: {
+    client: string;
+    leftOn: string;
+    confirmedAt: string | null;
+    confirmedRole: string | null;
+  }[];
 };
 
 // --- Team: EODs, activity and a live feed ---

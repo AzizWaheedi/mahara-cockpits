@@ -14,12 +14,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
+  ALL_NOTICE_KINDS,
   addSlackChannel,
   atNoticeWhen,
-  NOTICE_KINDS,
+  CLIENT_FORM_KINDS,
+  LIFECYCLE_KINDS,
+  MONEY_KINDS,
   type NoticeSetting,
   noAccess,
   noticeStop,
+  PRIVATE_ONLY_KINDS,
   readNoticeSettings,
   readProblem,
   rehearseNotice,
@@ -59,6 +63,47 @@ import { cn } from "@/lib/utils";
  * - Copy: plain and active; a refusal is the server's own sentence, under
  *   the control that caused it. Nothing here posts to Slack: a test and a
  *   new channel are rows the sender picks up within a minute.
+ *
+ * Waves 1-2 (docs/forms/WAVE12-CONTRACT.md 3.4, 5.9), the same card extended,
+ * no new pattern: the six client lifecycle notices are their own list under
+ * a mono Kicker, "Client lifecycle", because they are about a client's plan,
+ * not onboarding or a call, and post in a different channel. Each row keeps
+ * the one-sentence signature. A post whose channel the bot is not in yet
+ * (#csm-announcements until the CEO invites it, Q4) says so in the warning
+ * tone under its sentence, with the Dot the stop line uses, so the row never
+ * reads as working when it cannot post. Termination survey sent keeps its
+ * switch; the server refuses it while Make's post still runs, and that
+ * refusal shows under the switch like any other.
+ *
+ * Waves 3-4 (docs/forms/WAVE34-CONTRACT.md 3.4, 5.12), the same card again,
+ * no new pattern and no new token. Design plan (Hallmark, component scope:
+ * a list group inside an existing card). Subject: the client's own voice
+ * reaching the team (a signed pause consent, a survey score, a low score, the
+ * portal's Share feedback, an answer through a retired Typeform). Audience: the
+ * CEO and the editors they add, at a desk. Job: see where each of these posts
+ * and switch it. Tokens are the cockpit's: Geist, --mahara-teal for the
+ * switch, the warning tone only for a channel the bot is not in. Layout: a
+ * third list under its own mono Kicker, "Client forms", after "Client
+ * lifecycle", with one plain line. Signature: unchanged, the one-sentence
+ * row; NPS and onboarding answers say "Posts in #nps-survey-feedback once the
+ * bot is in." until the CEO invites it. States: every row is NoticeRow, which
+ * already draws default, hover, focus, active, disabled (read only), saving,
+ * refused and saved.
+ *
+ * Waves 5-6 (docs/forms/WAVE56-CONTRACT.md 3.9, 5.12), the same card a fourth
+ * time, no new pattern and no new token. Design plan (Hallmark, component
+ * scope: a list group inside an existing card). Subject: the money a client
+ * success manager earns after the sale reaching the team (a win or an upsell
+ * moving, a client's transfer receipt to check, a churned client coming back).
+ * Audience: the CEO and the editors they add, at a desk or on the phone app.
+ * Job: see where each posts and switch it on at its go-live. Tokens are the
+ * cockpit's: Geist, --mahara-teal for the switch, muted for off; the three rows
+ * arrive off, so each reads its plain off sentence until its day. Layout: a
+ * fourth list under its own mono Kicker, "Wins and money", after "Client
+ * forms", with one plain line. Signature: unchanged, the one-sentence row.
+ * Win logged keeps its switch; the server refuses it until Log a win is on
+ * (the old Four Rs posts run in #csm-announcements until then), and that
+ * refusal shows under the switch like any other. States: NoticeRow's, as above.
  */
 
 export type NoticesIO = {
@@ -74,7 +119,7 @@ export type NoticesIO = {
 
 /** Each kind's label and one-line hint (contract 6.3), in the card's order. */
 export const NOTICE_ROWS: Record<
-  (typeof NOTICE_KINDS)[number],
+  (typeof ALL_NOTICE_KINDS)[number],
   { label: string; hint: string }
 > = {
   kickoff: {
@@ -109,7 +154,111 @@ export const NOTICE_ROWS: Record<
     label: "Offer locked",
     hint: "A reply under the close when the offer is locked.",
   },
+  // The 1-1 notes' two (docs/forms/STAGE2B-CONTRACT.md 5.4).
+  "checkin.grade": {
+    label: "Call grade",
+    hint: "The grade of each recorded 1-1 call, posted once per call. Tags nobody.",
+  },
+  "checkin.recap_late": {
+    label: "Recap not sent",
+    hint: "A client recap still not sent 24 hours after the call.",
+  },
+  // The client lifecycle's six (docs/forms/WAVE12-CONTRACT.md 3.4, 5.9).
+  "termination.notice": {
+    label: "Termination notice in",
+    hint: "A client sent the termination survey; the CSM confirms churn or answers the notice in the cockpit.",
+  },
+  "termination.submitted": {
+    label: "Termination survey sent",
+    hint: "Off while the old Make post runs (wave 3 turns it on).",
+  },
+  "churn.confirmed": {
+    label: "Client has left",
+    hint: "Posts in #csm-announcements once the bot is in.",
+  },
+  "extension.granted": {
+    label: "Extension given",
+    hint: "Posts in #csm-announcements once the bot is in.",
+  },
+  "pause.agreed": {
+    label: "Pause agreed",
+    hint: "Posts in #csm-announcements once the bot is in.",
+  },
+  "client.resumed": {
+    label: "Client resumed",
+    hint: "Posts in #csm-announcements once the bot is in.",
+  },
+  // The client's voice and forms (docs/forms/WAVE34-CONTRACT.md 3.4, 5.12).
+  "pause.consent": {
+    label: "Pause consent signed",
+    hint: "The client signed (or said the dates are wrong); the CSM confirms the pause.",
+  },
+  "nps.received": {
+    label: "NPS answer in",
+    hint: "Posts in #nps-survey-feedback once the bot is in.",
+  },
+  "csat.received": {
+    label: "Onboarding survey answer in",
+    hint: "Posts in #nps-survey-feedback once the bot is in.",
+  },
+  "voice.low": {
+    label: "Low score",
+    hint: "A score of 6 or less; the CSM calls the client that day.",
+  },
+  "feedback.received": {
+    label: "Portal feedback in",
+    hint: "The client used Share feedback in their portal.",
+  },
+  "legacy.received": {
+    label: "Old form link used",
+    hint: "An answer came through a retired Typeform; open it in the cockpit.",
+  },
+  // Wins and money (docs/forms/WAVE56-CONTRACT.md 3.9, 5.12).
+  "win.logged": {
+    label: "Win logged",
+    hint: "A CSM logged a win or an upsell moved.",
+  },
+  "receipt.in": {
+    label: "Receipt in",
+    hint: "A client sent a transfer receipt to check.",
+  },
+  "client.reactivated": {
+    label: "Client is back",
+    hint: "A churned client was reopened.",
+  },
 };
+
+/** The lifecycle list's heading and its one line (5.9). */
+export const LIFECYCLE_TITLE = "Client lifecycle";
+export const LIFECYCLE_SUB =
+  "Posts when a client leaves, gets more time, pauses or resumes. Names and dates only.";
+/** The client forms list's heading and its one line (5.12). */
+export const CLIENT_FORMS_TITLE = "Client forms";
+export const CLIENT_FORMS_SUB =
+  "Posts when a client answers a form or shares feedback. Names, dates and scores only, never their words.";
+/** The wins and money list's heading and its one line (WAVE56 5.12). */
+export const MONEY_TITLE = "Wins and money";
+export const MONEY_SUB =
+  "Posts when a CSM logs a win, a client sends a transfer receipt or a churned client comes back. Names, dates and amounts only.";
+
+/**
+ * A post whose channel is not ready, in the words the sender's trail uses
+ * (contract 3.4): null while the channel is ready, the row is off or it
+ * posts nowhere of its own.
+ */
+export function channelWait(
+  n: NoticeSetting,
+  channels: SlackChannel[],
+): string | null {
+  if (n.shape !== "post" || !n.channel || (!n.on && !n.fixedOn)) return null;
+  const c = channels.find(x => x.id === n.channel?.id);
+  if (c?.state === "ok") return null;
+  return `Not posted until the bot is in ${channelName(n.channel)}. Ask the CEO to invite it.`;
+}
+
+/** The Call grade row's line where the tag editor would be (5.4). */
+export const GRADE_TAGS_NOBODY =
+  "Tags nobody. A grade is about a person's call.";
 
 const SAVED = "Saved. The next notice uses it.";
 /** Beside a disabled test while the fold holds a change: the test is built from the saved row. */
@@ -120,7 +269,7 @@ export const NOTICES_PAGE = "/client-success/notices";
 export const NOTICES_PAGE_TITLE = "notices-page-title";
 /** What the card is, under its title (on Settings) or the page's h1. */
 export const NOTICES_SUB =
-  "Where the cockpit posts in Slack when a kickoff or a Brand Blueprint is done, and who it tags. A change applies to the next notice.";
+  "Where the cockpit posts in Slack after a kickoff, a Brand Blueprint or a 1-1 call, and who it tags. A change applies to the next notice.";
 const TEST_SENT =
   "Test on its way. It reaches your Slack direct messages within a minute.";
 const CHANNEL_ID = /^[CG][A-Z0-9]{8,12}$/;
@@ -355,26 +504,82 @@ function Body({
   added: string | null;
   onAdded: (id: string) => void;
 }) {
-  const rows = NOTICE_KINDS.map(k =>
+  const all = ALL_NOTICE_KINDS.map(k =>
     read.notices.find(n => n.kind === k),
   ).filter((n): n is NoticeSetting => Boolean(n));
+  const rows = all.filter(
+    n =>
+      !LIFECYCLE_KINDS.has(n.kind) &&
+      !CLIENT_FORM_KINDS.has(n.kind) &&
+      !MONEY_KINDS.has(n.kind),
+  );
+  const lifecycle = all.filter(n => LIFECYCLE_KINDS.has(n.kind));
+  const clientForms = all.filter(n => CLIENT_FORM_KINDS.has(n.kind));
+  const money = all.filter(n => MONEY_KINDS.has(n.kind));
   const edit = read.can.edit;
+  const list = (items: NoticeSetting[]) => (
+    <ul className="divide-y rounded-xl bg-muted/30">
+      {items.map(n => (
+        <NoticeRow
+          key={n.kind}
+          n={n}
+          read={read}
+          io={io}
+          onRead={onRead}
+          testFor={testFor}
+          onTest={onTest}
+        />
+      ))}
+    </ul>
+  );
   return (
     <div className="mt-4 space-y-6">
-      {rows.length ? (
-        <ul className="divide-y rounded-xl bg-muted/30">
-          {rows.map(n => (
-            <NoticeRow
-              key={n.kind}
-              n={n}
-              read={read}
-              io={io}
-              onRead={onRead}
-              testFor={testFor}
-              onTest={onTest}
-            />
-          ))}
-        </ul>
+      {all.length ? (
+        <>
+          {rows.length ? list(rows) : null}
+          {lifecycle.length ? (
+            <section aria-labelledby="notices-lifecycle" className="space-y-2">
+              <div>
+                <Kicker as="h3">
+                  <span id="notices-lifecycle">{LIFECYCLE_TITLE}</span>
+                </Kicker>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {LIFECYCLE_SUB}
+                </p>
+              </div>
+              {list(lifecycle)}
+            </section>
+          ) : null}
+          {clientForms.length ? (
+            <section
+              aria-labelledby="notices-client-forms"
+              className="space-y-2"
+            >
+              <div>
+                <Kicker as="h3">
+                  <span id="notices-client-forms">{CLIENT_FORMS_TITLE}</span>
+                </Kicker>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {CLIENT_FORMS_SUB}
+                </p>
+              </div>
+              {list(clientForms)}
+            </section>
+          ) : null}
+          {money.length ? (
+            <section aria-labelledby="notices-money" className="space-y-2">
+              <div>
+                <Kicker as="h3">
+                  <span id="notices-money">{MONEY_TITLE}</span>
+                </Kicker>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {MONEY_SUB}
+                </p>
+              </div>
+              {list(money)}
+            </section>
+          ) : null}
+        </>
       ) : (
         <p className="text-sm text-muted-foreground">
           No notice settings came back. Refresh the page; if it stays, tell the
@@ -437,6 +642,7 @@ function NoticeRow({
     hint: "",
   };
   const edit = read.can.edit;
+  const wait = channelWait(n, read.channels);
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
   const changed = n.updatedAt
@@ -503,6 +709,14 @@ function NoticeRow({
           {switchError}
         </p>
       ) : null}
+      {wait ? (
+        <p className="flex gap-1.5 text-xs">
+          <span className="mt-[5px] flex self-start">
+            <Dot tone="warn" />
+          </span>
+          <span className="txt-warn min-w-0">{wait}</span>
+        </p>
+      ) : null}
       <LastStop n={n} now={read.now} />
       {changed ? (
         <p className="text-xs text-muted-foreground">{changed}</p>
@@ -562,9 +776,7 @@ function LastStop({ n, now }: { n: NoticeSetting; now: string }) {
         {stop.href ? (
           <>
             {" "}
-            <ExtLink href={stop.href} className="text-primary-ink">
-              Open in Slack
-            </ExtLink>
+            <ExtLink href={stop.href}>Open in Slack</ExtLink>
           </>
         ) : null}
       </span>
@@ -616,7 +828,12 @@ function Change({
     setPicked(people);
   }, [seen]);
 
-  const ok = read.channels.filter(c => c.state === "ok");
+  // The Call grade lists only channels the cockpit has checked as private,
+  // and tags nobody, so it has no tag editor (STAGE2B-CONTRACT.md 5.4).
+  const privateOnly = PRIVATE_ONLY_KINDS.has(n.kind);
+  const ok = read.channels.filter(
+    c => c.state === "ok" && (!privateOnly || c.private === true),
+  );
   const patch: SettingsPatch = {};
   if (n.shape === "post" && channel && channel !== (n.channel?.id ?? null))
     patch.channel = channel;
@@ -682,7 +899,11 @@ function Change({
         />
         {/* Only a post row has a channel to choose; replies and the kickoff's
             variant lines choose tags only. */}
-        {n.shape === "post" ? "Change where and who" : "Change who"}
+        {privateOnly
+          ? "Change where"
+          : n.shape === "post"
+            ? "Change where and who"
+            : "Change who"}
       </summary>
       <div className="mt-3 space-y-4 border-l pl-3">
         {n.shape === "post" ? (
@@ -704,9 +925,16 @@ function Change({
               </div>
             ) : (
               <p className="text-xs text-muted-foreground">
-                No channel is ready yet. Add one under Channels below.
+                {privateOnly
+                  ? "No private channel is ready yet. Add one under Channels below; the cockpit checks whether it is private."
+                  : "No channel is ready yet. Add one under Channels below."}
               </p>
             )}
+            {privateOnly && ok.length ? (
+              <p className="text-xs text-muted-foreground">
+                Only channels the cockpit has checked as private are listed.
+              </p>
+            ) : null}
           </fieldset>
         ) : (
           <p className="text-xs text-muted-foreground">
@@ -716,70 +944,74 @@ function Change({
           </p>
         )}
 
-        <fieldset className="space-y-1.5">
-          <legend className="text-xs text-muted-foreground">Tags</legend>
-          <div className="flex flex-wrap gap-1.5">
-            {SEAT_RULES.map(r => (
-              <Choice
-                key={r}
-                active={rules.includes(r)}
-                disabled={saving}
-                onClick={() =>
-                  setRules(x =>
-                    x.includes(r) ? x.filter(y => y !== r) : [...x, r],
-                  )
-                }
-              >
-                {SEAT_LABEL[r].replace(/^the /, "The ")}
-              </Choice>
-            ))}
-          </div>
-          {picked.length ? (
-            <ul className="flex flex-wrap gap-1.5" aria-label="Named people">
-              {picked.map(id => (
-                <li key={id}>
-                  <span className="inline-flex h-8 items-center gap-1 rounded-full bg-primary/15 pr-1 pl-3 text-xs font-medium ring-1 ring-inset ring-primary/40">
-                    {byId.get(id) ?? `Person ${id}`}
-                    <button
-                      type="button"
-                      disabled={saving}
-                      aria-label={`Stop tagging ${byId.get(id) ?? `person ${id}`}`}
-                      onClick={() => setPicked(x => x.filter(y => y !== id))}
-                      className="grid size-6 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
-                    >
-                      <X aria-hidden className="size-3.5" />
-                    </button>
-                  </span>
-                </li>
+        {privateOnly ? (
+          <p className="text-xs text-muted-foreground">{GRADE_TAGS_NOBODY}</p>
+        ) : (
+          <fieldset className="space-y-1.5">
+            <legend className="text-xs text-muted-foreground">Tags</legend>
+            <div className="flex flex-wrap gap-1.5">
+              {SEAT_RULES.map(r => (
+                <Choice
+                  key={r}
+                  active={rules.includes(r)}
+                  disabled={saving}
+                  onClick={() =>
+                    setRules(x =>
+                      x.includes(r) ? x.filter(y => y !== r) : [...x, r],
+                    )
+                  }
+                >
+                  {SEAT_LABEL[r].replace(/^the /, "The ")}
+                </Choice>
               ))}
-            </ul>
-          ) : null}
-          {others.length ? (
-            <details className="group/people">
-              <summary className="no-marker inline-flex cursor-pointer items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-                <Plus aria-hidden className="size-3.5" />
-                Tag someone by name
-              </summary>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {others.map(p => (
-                  <Choice
-                    key={p.id}
-                    active={false}
-                    disabled={saving || picked.length >= 10}
-                    onClick={() => setPicked(x => [...x, p.id])}
-                  >
-                    {p.label}
-                  </Choice>
+            </div>
+            {picked.length ? (
+              <ul className="flex flex-wrap gap-1.5" aria-label="Named people">
+                {picked.map(id => (
+                  <li key={id}>
+                    <span className="inline-flex h-8 items-center gap-1 rounded-full bg-primary/15 pr-1 pl-3 text-xs font-medium ring-1 ring-inset ring-primary/40">
+                      {byId.get(id) ?? `Person ${id}`}
+                      <button
+                        type="button"
+                        disabled={saving}
+                        aria-label={`Stop tagging ${byId.get(id) ?? `person ${id}`}`}
+                        onClick={() => setPicked(x => x.filter(y => y !== id))}
+                        className="grid size-6 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
+                      >
+                        <X aria-hidden className="size-3.5" />
+                      </button>
+                    </span>
+                  </li>
                 ))}
-              </div>
-              {picked.length >= 10 ? (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Ten people at most.
-                </p>
-              ) : null}
-            </details>
-          ) : null}
-        </fieldset>
+              </ul>
+            ) : null}
+            {others.length ? (
+              <details className="group/people">
+                <summary className="no-marker inline-flex cursor-pointer items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                  <Plus aria-hidden className="size-3.5" />
+                  Tag someone by name
+                </summary>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {others.map(p => (
+                    <Choice
+                      key={p.id}
+                      active={false}
+                      disabled={saving || picked.length >= 10}
+                      onClick={() => setPicked(x => [...x, p.id])}
+                    >
+                      {p.label}
+                    </Choice>
+                  ))}
+                </div>
+                {picked.length >= 10 ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Ten people at most.
+                  </p>
+                ) : null}
+              </details>
+            ) : null}
+          </fieldset>
+        )}
 
         {error ? (
           <p role="alert" className="txt-bad text-xs">

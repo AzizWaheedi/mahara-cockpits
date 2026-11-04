@@ -309,7 +309,7 @@ left join vd_signed vd on vd.k = w.k`;
  * booking day, closes by form day. b2b_marketing_daily is not used because it
  * adds retargeting spend and counts demos only.
  */
-function dailySql(from, to) {
+export function dailySql(from, to) {
     const f = day(from);
     const t = day(to);
     // Every tile on the growth tabs can be rebuilt for any timeframe from these
@@ -322,7 +322,12 @@ function dailySql(from, to) {
 meta as (
   select s.date as d,
     sum(s.spend) filter (where public.b2b_campaign_type(s.campaign_name) = 'lead_gen' and not ${webbyCampaign("s")}) as spend,
-    sum(s.spend) filter (where public.b2b_campaign_type(s.campaign_name) = 'retargeting' and not ${webbyCampaign("s")}) as spend_rt
+    sum(s.spend) filter (where public.b2b_campaign_type(s.campaign_name) = 'retargeting' and not ${webbyCampaign("s")}) as spend_rt,
+    -- Unique link clicks on exactly the rows lead-gen spend reads, for the
+    -- Goals sheet's Unique link clicks by day (2026-11-02). A lead-gen ad that
+    -- spent with no unique count makes the day unknown, never smaller.
+    sum(s.unique_inline_link_clicks) filter (where public.b2b_campaign_type(s.campaign_name) = 'lead_gen' and not ${webbyCampaign("s")}) as unique_link_clicks,
+    count(*) filter (where public.b2b_campaign_type(s.campaign_name) = 'lead_gen' and not ${webbyCampaign("s")} and s.spend > 0 and s.unique_inline_link_clicks is null) as unique_link_clicks_missing
   from public.meta_ad_snapshots s
   where s.date between ${f} and ${t}
   group by 1
@@ -373,6 +378,13 @@ held as (
     count(*) filter (where call_type = 'intro' and (status = 'showed' or (status in ('confirmed', 'invalid') and start_at <= now()))) as intros_shown,
     count(*) filter (where call_type = 'demo' and (status = 'showed' or (status in ('confirmed', 'invalid') and start_at <= now()))) as demos_shown,
     count(*) filter (where call_type = 'demo' and (status = 'showed' or (status = 'confirmed' and start_at <= now()))) as demos_qualified,
+    -- Intro to demo by day (2026-11-02, Goals sheet fix 7): an intro counted as shown whose
+    -- contact has a demo booked at or after the intro's start, b2b_window_metrics' own
+    -- intro_handoff rule, so any run of days sums to the windows' intros_advanced. It is
+    -- read as of the refresh, so a day can still rise when a demo is booked later.
+    count(*) filter (where call_type = 'intro' and (status = 'showed' or (status in ('confirmed', 'invalid') and start_at <= now())) and exists (
+      select 1 from public.calls d2
+      where d2.contact_id = c.contact_id and d2.call_type = 'demo' and d2.booked_at >= c.start_at)) as intros_advanced,
     count(*) filter (where call_type = 'intro' and status = 'cancelled') as intros_cancelled,
     count(*) filter (where call_type = 'demo' and status = 'cancelled') as demos_cancelled
   from public.calls c
@@ -395,6 +407,8 @@ cl as (
 select days.d::text as date,
   round(coalesce(meta.spend, 0)::numeric, 2) as spend,
   round(coalesce(meta.spend_rt, 0)::numeric, 2) as spend_rt,
+  case when coalesce(meta.unique_link_clicks_missing, 0) > 0 then null
+    else coalesce(meta.unique_link_clicks, 0) end as unique_link_clicks,
   coalesce(ld.n, 0) as leads,
   coalesce(ld.q, 0) as qualified, coalesce(ld.u, 0) as unqualified, coalesce(ld.nr, 0) as not_ready, coalesce(ld.untagged, 0) as untagged,
   coalesce(ld.booked_leads, 0) as booked_leads,
@@ -406,6 +420,7 @@ select days.d::text as date,
   coalesce(held.intros_due, 0) as intros_due, coalesce(held.demos_due, 0) as demos_due,
   coalesce(held.intros_shown, 0) as intros_shown, coalesce(held.demos_shown, 0) as demos_shown,
   coalesce(held.demos_qualified, 0) as demos_qualified,
+  coalesce(held.intros_advanced, 0) as intros_advanced,
   coalesce(held.intros_cancelled, 0) as intros_cancelled, coalesce(held.demos_cancelled, 0) as demos_cancelled,
   coalesce(cl.n, 0) as closes,
   round(coalesce(cl.contracted, 0)::numeric, 2) as contracted,
@@ -417,6 +432,10 @@ left join bk on bk.d = days.d
 left join held on held.d = days.d
 left join cl on cl.d = days.d
 order by days.d`;
+}
+/** A daily row's lead-gen unique link clicks: null when dailySql says the day is unknown, so missing never reads as 0 (2026-11-02). */
+export function uniqueLinkClicksOf(r) {
+    return r.unique_link_clicks === null || r.unique_link_clicks === undefined ? null : num(r.unique_link_clicks);
 }
 /**
  * b2b_rep_scorecard, trimmed to first names and the payload's columns, less
@@ -829,7 +848,7 @@ export function voidedNote(days, windows) {
  * 6) the typed amount is shown beside front-end cash as typed, not money, and
  * never added: front-end cash is the money itself (withPaid).
  *
- * The amount is the kickoff Typeform's (tG7dnxBn) "Payment Amount" field
+ * The amount is the kickoff's "Payment Amount" field, from the Typeform (tG7dnxBn) or the cockpit's native kickoff
  * (ref 75e97e7d-4c19-437a-b4b8-67570c29344f), which the onboarding sync
  * copies to cockpit_client_onboarding.forms.kickoff.payment. It is dated by
  * the day the form was submitted (Kuwait) and read as USD: the field carries
@@ -840,10 +859,17 @@ export function voidedNote(days, windows) {
  * Confirmed: a payment the Money section attributed to the same client card
  * on Whop, Tap or a bank transfer (a transfer row or a bank statement line),
  * within MATCH_DAYS days and MATCH_GAP of the amount (./manualMatch.js), one
- * payment per kickoff. A payment only logged by hand is not a rail. An
- * unconfirmed kickoff is listed under typedNotSeen.
+ * payment per kickoff. A payment only logged by hand is not a rail, and a
+ * payment the client payment store marks not checked (20261101n: hand-logged,
+ * waiting on finance's check) confirms nothing. An unconfirmed kickoff is
+ * listed under typedNotSeen.
  */
 export const KICKOFF_FORM = "tG7dnxBn";
+/**
+ * The kickoff's read-model form ids: the Typeform's, and "native" for a kickoff sent from the cockpit's sheet
+ * since Stage 4 (docs/forms/WAVE56-CONTRACT.md 4.13.2: the same Typeform-shaped entry, payment included).
+ */
+export const KICKOFF_FORMS = [KICKOFF_FORM, "native"];
 export const KICKOFF_READ_FROM = "2026-10-04";
 const KICKOFF_RAILS = new Set(["whop", "tap", "ecom", "transfer"]);
 export const KICKOFF_SQL = `select clickup_task_id, client_name,
@@ -851,7 +877,7 @@ export const KICKOFF_SQL = `select clickup_task_id, client_name,
     forms->'kickoff'->>'payment' as payment,
     floor(extract(epoch from synced_at) * 1000)::bigint as synced_ms
   from public.cockpit_client_onboarding
-  where forms->'kickoff'->>'form_id' = '${KICKOFF_FORM}' and forms->'kickoff'->>'submitted_at' is not null`;
+  where forms->'kickoff'->>'form_id' in (${KICKOFF_FORMS.map(f => `'${f}'`).join(", ")}) and forms->'kickoff'->>'submitted_at' is not null`;
 /** A typed amount as a number: "1500", "1,500", "$1500.50". Null when blank or not a number. */
 export function kickoffAmount(raw) {
     if (raw === null || raw === undefined)
@@ -872,7 +898,7 @@ export function readKickoffs(formRows, paymentRows) {
     const blank = [];
     const used = new Set();
     const rails = paymentRows
-        .filter(p => KICKOFF_RAILS.has(String(p.rail)) && num(p.usd) > 0 && /^\d{4}-\d{2}-\d{2}$/.test(String(p.day)))
+        .filter(p => KICKOFF_RAILS.has(String(p.rail)) && p.checked !== false && num(p.usd) > 0 && /^\d{4}-\d{2}-\d{2}$/.test(String(p.day)))
         .map(p => ({ id: String(p.payment_id), taskId: String(p.clickup_task_id), day: String(p.day), usd: num(p.usd), rail: String(p.rail) }));
     const forms = formRows
         .filter(r => /^\d{4}-\d{2}-\d{2}$/.test(String(r.day)) && String(r.day) >= KICKOFF_READ_FROM)
@@ -940,7 +966,9 @@ export function withKickoff(window, kickoffs) {
  * exclusion. Either way growth runs beside money, not after it, so the figure
  * is the last published attribution: `attributedAt` says when, and a note says
  * when that is over 2 hours old. A ledger not yet written is not read, never
- * zero.
+ * zero. The refresh writes checked money only (20261101n): a payment logged by
+ * hand reaches the ledger once finance or the CEO has checked it, so it is
+ * never front-end cash while it waits.
  */
 export const LEDGER_STALE_MS = 2 * 60 * 60_000;
 /** A deal's money is the closer's this many days after signing (money.js DEAL_TERM_DAYS), so the ledger points at deals this far back. */
@@ -1023,6 +1051,8 @@ export function readDealLedger(sqlRows, dealRows) {
             paymentId: String(r.payment_id), dealId: String(r.deal_response_id), day: dayText, usd,
             rail: LEDGER_RAIL[String(r.rail)] ?? "bank", kind: String(r.kind), depositUsd, matchedBy: r.matched_by ? String(r.matched_by) : null,
             closer: deal?.closer ? String(deal.closer) : null, business: deal?.business ? String(deal.business) : null,
+            // The Riyadh day the deal's form was signed, for paidOnWindowDeals (2026-11-02); null when the form is gone.
+            signedDay: deal?.day ? String(deal.day) : null,
         });
     }
     const agree = ledgerRows === num(section.rows) && Math.abs(round2(ledgerUsd) - num(section.usd)) < 0.01;
@@ -1083,6 +1113,55 @@ export function typedNotSeen(window, ledger, deals, kickoffs) {
     items.sort((a, b) => a.day.localeCompare(b.day) || String(a.business).localeCompare(String(b.business)));
     return { usd: round2(items.reduce((n, i) => n + i.usd, 0)), count: items.length, items: items.slice(0, 20) };
 }
+/**
+ * Front-end money that arrived in [from, to] on deals whose form was signed in [from, to]
+ * (2026-11-02, Goals sheet fix 11, the CEO's choice for UF cash %: "this month's deals only").
+ * The plan's 75% is the share of a deal paid up front, so a remainder on an earlier deal
+ * (October: Al Ola $2,021.20 and Ardon $2,000 of the $24,377.36) is not in it, nor is money paid
+ * ahead of a form signed after the window, nor a payment whose form the closer table no longer
+ * holds (no signing day to place it). Payment and signing both inside the window keeps a closed
+ * month fixed: a remainder paid next month never moves it. Pure, for the tests.
+ */
+export function paidOnWindowDeals(rows, from, to) {
+    return round2(rows
+        .filter(r => r.day >= from && r.day <= to && r.signedDay !== null && r.signedDay !== undefined && r.signedDay >= from && r.signedDay <= to)
+        .reduce((n, r) => n + r.usd, 0));
+}
+/**
+ * paidOnWindowDeals for every calendar month the ledger covers whole (2026-11-02, fix 11), so the
+ * Goals sheet has a month's UF cash % for any month, not only last month and this one. It is a
+ * month measure, never a day one: summed by payment day over the days of a month it is "paid on
+ * deals signed in the same month", which any other run of days (a 7-day or 30-day row, two months)
+ * would add up into something else, so the daily rows carry no such field. The current month runs
+ * to today. A month not listed is missing, never 0 (review, 2026-11-02), so the list starts at the
+ * latest of: the first whole month of the ledger Money published (`ledger.from`), the first whole
+ * month of growth's own payment read (`readFrom`, today-364: on the first cycle of a month Money's
+ * last payload can start a day before it, and that month would read short), and the month of the
+ * first closer-form deal the read holds (`deals`): front-end cash is money on those deals, so a month
+ * before the form was in use is not measured (live: the first deal is 1 Apr 2026, while Whop took
+ * $5,965, $8,467, $2,066 and $8,300 in Dec 2025 to Mar 2026). No deal read, no month. Pure, for the tests.
+ */
+export function frontEndMonths(ledger, today, readFrom, deals) {
+    if (!ledger?.ready || typeof ledger.from !== "string")
+        return [];
+    const signed = (deals ?? []).map(d => String(d?.day ?? "")).filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+    if (!signed.length)
+        return [];
+    // The 1st 32 days on is always in the next month.
+    const nextMonth = (first) => monthStart(addDays(first, 32));
+    // A read that starts mid-month does not hold that month whole, so it starts at the next one.
+    const wholeFrom = (d) => d.endsWith("-01") ? d : nextMonth(monthStart(d));
+    const starts = [wholeFrom(ledger.from), monthStart(signed[0])];
+    if (typeof readFrom === "string")
+        starts.push(wholeFrom(readFrom));
+    const out = [];
+    for (let first = starts.sort()[starts.length - 1]; first <= today; first = nextMonth(first)) {
+        const last = addDays(nextMonth(first), -1);
+        const to = last < today ? last : today;
+        out.push({ month: first.slice(0, 7), paid: paidIn(ledger.rows, first, to).paid, paidOnWindowDeals: paidOnWindowDeals(ledger.rows, first, to) });
+    }
+    return out;
+}
 /** Front-end cash = paid front-end money (rule 6), with the typed amounts beside it. Not read leaves the money null, never zero. */
 export function withPaid(window, ledger, deals, kickoffs) {
     const ratio = (a, b, places = 2) => b > 0 ? Math.round((a / b) * 10 ** places) / 10 ** places : null;
@@ -1091,14 +1170,19 @@ export function withPaid(window, ledger, deals, kickoffs) {
     if (!ledger?.ready)
         return {
             ...window,
-            frontEndCash: { ...fe, total: null, paid: null, paidDeposit: null, paidRemainder: null, payments: null, paidDeals: null, byRail: null, byCloser: null, typed, typedNotSeen: null, attributedAt: ledger?.attributedAt ?? null },
+            frontEndCash: { ...fe, total: null, paid: null, paidDeposit: null, paidRemainder: null, payments: null, paidDeals: null, byRail: null, byCloser: null, paidOnWindowDeals: null, typed, typedNotSeen: null, attributedAt: ledger?.attributedAt ?? null },
             roasCash: null,
         };
     const p = paidIn(ledger.rows, window.from, window.to);
+    // Front-end ROAS over all Mahara ad spend, lead gen and retargeting (2026-11-02, fix 15): the
+    // CEO's 30 Oct rule, so CEO Sales reads the sheet's 13.09x for October, not 14.73x on lead gen
+    // alone. Retargeting comes from the window's B2B raw (webinar out); unread, the ROAS is missing.
+    const retargeting = window.raw?.spend_retargeting;
+    const allSpend = typeof retargeting === "number" && Number.isFinite(retargeting) ? window.spend + retargeting : NaN;
     return {
         ...window,
-        frontEndCash: { ...fe, ...p, total: p.paid, typed, typedNotSeen: typedNotSeen(window, ledger, deals, kickoffs), attributedAt: ledger.attributedAt },
-        roasCash: ratio(p.paid, window.spend),
+        frontEndCash: { ...fe, ...p, total: p.paid, paidOnWindowDeals: paidOnWindowDeals(ledger.rows, window.from, window.to), typed, typedNotSeen: typedNotSeen(window, ledger, deals, kickoffs), attributedAt: ledger.attributedAt },
+        roasCash: ratio(p.paid, allSpend),
     };
 }
 /** Run a secondary read; on failure keep going with a fallback and a warning. */
@@ -1139,7 +1223,7 @@ export const growth = {
         const kickoffRead = await attempt("The kickoff form's cash", notes, null, async () => {
             const [formRows, paymentRows] = await Promise.all([
                 sql(TRIAGE, KICKOFF_SQL),
-                sql(TRIAGE, `select payment_id, clickup_task_id, to_char(day, 'YYYY-MM-DD') as day, usd::float8 as usd, rail
+                sql(TRIAGE, `select payment_id, clickup_task_id, to_char(day, 'YYYY-MM-DD') as day, usd::float8 as usd, rail, checked
            from public.cockpit_client_payments
            where active and day >= ${day(addDays(KICKOFF_READ_FROM, -MATCH_DAYS))}`),
             ]);
@@ -1187,6 +1271,8 @@ export const growth = {
             date: String(r.date),
             spend: num(r.spend),
             spendRetargeting: num(r.spend_rt),
+            // Lead-gen unique link clicks by Meta day, the webinar's left out (the Goals sheet's Unique link clicks, 2026-11-02).
+            uniqueLinkClicks: uniqueLinkClicksOf(r),
             leads: num(r.leads),
             qualified: num(r.qualified),
             unqualified: num(r.unqualified),
@@ -1207,6 +1293,8 @@ export const growth = {
             introsDue: num(r.intros_due),
             demosDue: num(r.demos_due),
             introsShown: num(r.intros_shown),
+            // Shown intros of the day whose contact has booked a demo since (2026-11-02, fix 7).
+            introsAdvanced: num(r.intros_advanced),
             demosShown: num(r.demos_shown),
             demosQualified: num(r.demos_qualified),
             introsCancelled: num(r.intros_cancelled),
@@ -1516,6 +1604,9 @@ export const growth = {
         const payload = {
             windows,
             daily,
+            // Each whole ledger month's front-end money and the part on that month's own deals
+            // (2026-11-02, fix 11): UF cash % for months before last month. Empty when the ledger is not read.
+            frontEndMonths: frontEndMonths(ledger, today, ledgerFrom, ledgerDeals),
             reps,
             topAds,
             leadSources,

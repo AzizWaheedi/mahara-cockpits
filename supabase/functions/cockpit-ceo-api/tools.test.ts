@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
+import { CLICKUP_BUSY } from '../_shared/clickupRetry.ts';
 import { financeSources } from './finance/tools.ts';
-import { googleDirectoryToken, HoursProviderError, hubstaffCall, hubstaffExchange, hubstaffGet, metaGraph, timetasticGet, type HoursReceipt } from './tools.ts';
+import { clickupRequest, googleDirectoryToken, HoursProviderError, hubstaffCall, hubstaffExchange, hubstaffGet, metaGraph, timetasticGet, type HoursReceipt } from './tools.ts';
 
 test('Meta Graph read uses the named system token and records only safe request metadata', async () => {
   const healthRows: Record<string, unknown>[] = [];
@@ -248,4 +249,65 @@ test('the Hubstaff watch reads (screenshots, tool usage, screenshot settings, ti
     await expect(hubstaffGet(HS_TOKEN, health, never, path)).rejects.toMatchObject({ kind: 'invalid' });
   await expect(hubstaffCall('DELETE', HS_TOKEN, health, never, 'organizations/705266/screenshots', {})).rejects.toMatchObject({ kind: 'invalid' });
   expect(requested).toBe(false);
+});
+
+// ClickUp's 429: one more try, always on for clickupRequest (docs/requests/CLICKUP-DOWNGRADE.md 2.2). Both callers,
+// the CEO's Extension write and the hourly extension pass, are low volume.
+function clickupRig(answers: (() => Response)[]) {
+  const sent: { url: string; method: string; body: unknown }[] = [];
+  const rows: Record<string, unknown>[] = [];
+  const slept: number[] = [];
+  let clock = Date.parse('2026-10-29T09:00:00Z');
+  const request = (async (input: string | URL | Request, init?: RequestInit) => {
+    sent.push({ url: String(input), method: String(init?.method), body: init?.body });
+    const next = answers[sent.length - 1];
+    if (!next) throw new Error('No scripted answer left');
+    return next();
+  }) as typeof fetch;
+  const env = (name: string) => (name === 'CLICKUP_API_TOKEN' ? 'pk_fixture_never_printed' : undefined);
+  const health = async (row: Record<string, unknown>) => { rows.push(row); };
+  const options = { now: () => clock, sleep: async (ms: number) => { slept.push(ms); clock += ms; } };
+  return { sent, rows, slept, env, health, request, options };
+}
+const limited = () => new Response(JSON.stringify({ err: 'Rate limit reached', ECODE: 'APP_002' }), { status: 429, headers: { 'Retry-After': '2' } });
+
+test('clickupRequest: a 429 then 200 waits as ClickUp asks and sends the same write again, a pair of rows per try', async () => {
+  const r = clickupRig([limited, () => new Response('{}', { status: 200 })]);
+  await expect(clickupRequest(r.env, r.health, r.request, 'POST', 'task/abc/field/f1', { value: 2 }, 'task/field', r.options)).resolves.toEqual({});
+  expect(r.slept).toEqual([2_000]);
+  expect(r.sent.length).toBe(2);
+  expect(r.sent[0]).toEqual(r.sent[1]);
+  expect(r.sent[0]).toMatchObject({ url: 'https://api.clickup.com/api/v2/task/abc/field/f1', method: 'POST', body: '{"value":2}' });
+  expect(r.rows.map(row => [row.phase, row.http_status ?? null])).toEqual([['intent', null], ['response', 429], ['intent', null], ['response', 200]]);
+  expect(r.rows.every(row => row.resource === 'task/field')).toBe(true);
+  expect(JSON.stringify(r.rows)).not.toContain('pk_fixture_never_printed');
+});
+
+test('clickupRequest: a second 429 throws the old sentence with CLICKUP_BUSY after exactly two calls', async () => {
+  const r = clickupRig([limited, limited]);
+  await expect(clickupRequest(r.env, r.health, r.request, 'GET', 'list/1/field', undefined, undefined, r.options)).rejects.toThrow(
+    new Error(`ClickUp refused the request (429): Rate limit reached. ${CLICKUP_BUSY}`),
+  );
+  expect(r.sent.length).toBe(2);
+  expect(r.slept.length).toBe(1);
+  expect(r.rows.map(row => row.phase)).toEqual(['intent', 'response', 'intent', 'response']);
+});
+
+test('clickupRequest: a 500, a timeout or an unreadable answer is not retried', async () => {
+  const failed = clickupRig([() => new Response('{"err":"Server error"}', { status: 500 })]);
+  await expect(clickupRequest(failed.env, failed.health, failed.request, 'GET', 'list/1/field', undefined, undefined, failed.options)).rejects.toThrow(
+    new Error('ClickUp refused the request (500): Server error.'),
+  );
+  expect(failed.sent.length).toBe(1);
+  expect(failed.slept).toEqual([]);
+  const lost = clickupRig([]);
+  await expect(clickupRequest(lost.env, lost.health, lost.request, 'POST', 'task/abc/field/f1', { value: 2 }, 'task/field', lost.options)).rejects.toThrow(
+    'ClickUp did not confirm the write. Check the card before trying again.',
+  );
+  expect(lost.rows.map(row => row.phase)).toEqual(['intent', 'unknown']);
+  const garbled = clickupRig([() => new Response('<html>', { status: 429 })]);
+  await expect(clickupRequest(garbled.env, garbled.health, garbled.request, 'GET', 'list/1/field', undefined, undefined, garbled.options)).rejects.toThrow(
+    'ClickUp returned an unreadable response (429).',
+  );
+  expect(garbled.sent.length).toBe(1);
 });

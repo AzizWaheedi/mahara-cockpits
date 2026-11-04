@@ -13,12 +13,22 @@
  * Every Slack and ClickUp call is receipted in cockpit_csm_provider_health
  * with run_key = the notice id (or run, doctor, dry-run). A receipt that
  * cannot be saved throws, so no call is made without one.
+ *
+ * The 1-1 notes notices (docs/forms/STAGE2B-CONTRACT.md 4.2): the call grade
+ * reads its words from the claim's live read of the stored grade and tags
+ * nobody, a test of it included; the recap reminder is a plain post.
+ *
+ * The client lifecycle notices (docs/forms/WAVE12-CONTRACT.md 3.4) are plain
+ * posts. Their live rule (cockpit_slack_notice_live) says whether the news is
+ * still true when the claim hands the row over: a survey answered, a churn
+ * confirmed, a departure removed or a billing change voided in between is
+ * settled as not posted with that sentence, never posted.
  */
 import { providerTools, slackTools, type SlackHealthRow, type SlackTools } from "../cockpit-csm-api/tools.ts";
 import type { Rpc } from "../cockpit-hours-sync/db.ts";
 import { slackReceiptConfirmed } from "../_shared/slackReceipt.ts";
 import { cachedLookup, type ClaimMentions, type Mention, mentionsFor, type PersonLooked, personNote, plainLabels, readMention, resolveMentions } from "./mentions.ts";
-import { isNoticeKind, isVariantOf, type NoticeFacts, type NoticeKind, noticeText, sampleFacts, type SlackBlock, type TextMention, type Variant } from "./text.ts";
+import { CLIENT_FORM_KINDS, isNoticeKind, isVariantOf, LIFECYCLE_KINDS, MONEY_KINDS, type NoticeFacts, type NoticeKind, noticeText, sampleFacts, type SlackBlock, type TextMention, type Variant } from "./text.ts";
 
 // ------------------------------------------------------------------ deps and the ledger
 
@@ -174,6 +184,17 @@ const ACTIVE = /^\s*active\s*$/i;
 
 /** The variant for a non-kickoff notice, from its facts, what the claim read now, and whether it has a thread. */
 export function pickVariant(kind: NoticeKind, facts: Record<string, unknown>, live: Record<string, unknown>, threadTs: string | null): Variant {
+  if (kind === "checkin.grade") return "grade";
+  if (kind === "checkin.recap_late") return "late";
+  // A termination survey that came with no card says so in its facts (cockpit_form_record_legacy).
+  if (kind === "termination.notice") return facts.matched === false ? "unmatched" : "matched";
+  if (isLifecycle(kind)) return "post";
+  // A pause consent the client said has the wrong dates (waves 3-4, 3.4) says so in its facts.
+  if (kind === "pause.consent") return facts.datesWrong === true ? "dates_wrong" : "signed";
+  if (isClientForm(kind)) return "post";
+  // Wins and money (waves 5-6, 3.9): an upsell's stage picks its sentence.
+  if (kind === "win.logged") return facts.stage === "quote_given" ? "offered" : facts.stage === "signed" ? "accepted" : "post";
+  if (isMoney(kind)) return "post";
   if (kind === "blueprint.close") return facts.source === "typeform" ? "typeform" : facts.settled === "reconcile" ? "reconcile" : "done";
   if (kind === "blueprint.media") {
     const phase = Number(facts.mapPhase);
@@ -183,9 +204,33 @@ export function pickVariant(kind: NoticeKind, facts: Record<string, unknown>, li
   return threadTs ? "thread" : "top";
 }
 
+/**
+ * Who a notice tags, chosen in one place for the post and its dry run (a
+ * preview is the post): nobody for the call grade, which is about a person's
+ * call; the settings row's main list for the recap reminder, whose "late" is
+ * its own wording, not the late kickoff's list; else the variant's list.
+ */
+export function wantedMentions(kind: NoticeKind, variant: Variant, mentions: ClaimMentions | Mention[] | null | undefined, second: boolean): Mention[] {
+  if (kind === "checkin.grade") return [];
+  return mentionsFor(kind === "checkin.recap_late" ? null : variant, mentions, second);
+}
+
+export const isLifecycle = (kind: NoticeKind): boolean => (LIFECYCLE_KINDS as readonly string[]).includes(kind);
+/** The client's voice and forms (waves 3-4, 3.4): their own live rule, like the lifecycle's. */
+export const isClientForm = (kind: NoticeKind): boolean => (CLIENT_FORM_KINDS as readonly string[]).includes(kind);
+/** Wins and money (waves 5-6, 3.9): their own live rule too. */
+export const isMoney = (kind: NoticeKind): boolean => (MONEY_KINDS as readonly string[]).includes(kind);
+
 /** A test's variant: its facts' variant when it is one the kind has, else the plain one. */
 export function rehearsalVariant(kind: NoticeKind, facts: Record<string, unknown>): Variant {
   if (isVariantOf(kind, facts.variant)) return facts.variant;
+  if (kind === "checkin.grade") return "grade";
+  if (kind === "checkin.recap_late") return "late";
+  if (kind === "termination.notice") return "matched";
+  if (isLifecycle(kind)) return "post";
+  if (kind === "pause.consent") return "signed";
+  if (isClientForm(kind)) return "post";
+  if (isMoney(kind)) return "post";
   return kind === "kickoff" ? "complete" : kind === "blueprint.close" ? "done" : kind === "blueprint.media" ? "new" : "top";
 }
 
@@ -203,6 +248,8 @@ export const NO_SLACK_ID = "No Slack account was found for you. Ask the tech lea
 export const WRONG_BOT = "The cockpit is connected to Slack as the wrong bot, so nothing was posted. Tell the tech lead.";
 export const BAD_TOKEN = "Slack refused the cockpit's connection, so nothing was posted. Tell the tech lead.";
 export const NO_TOKEN = "The cockpit's Slack connection is not set up, so nothing was posted. Tell the tech lead.";
+/** The claim fails a grade with no stored grade first; the sender checks again before it builds a word. */
+export const NO_GRADE = "The call's grade is not in the cockpit, so nothing was posted. Tell the tech lead.";
 const TOKEN_CODES = new Set(["invalid_auth", "not_authed", "token_revoked", "account_inactive", "token_expired"]);
 export const isTokenCode = (code: string) => TOKEN_CODES.has(code);
 
@@ -408,12 +455,20 @@ export async function sendClaimed(ctx: SendContext, row: ClaimedRow): Promise<Se
     variant = pickVariant(kind, row.facts, row.live, row.threadTs);
   }
 
-  // The tags. A test names who it would tag and tags nobody.
+  // A lifecycle, client form or money notice whose news stopped being true after it
+  // was queued (its live rule, read by the claim just now) is not posted, and says why.
+  if (!rehearsal && (isLifecycle(kind) || isClientForm(kind) || isMoney(kind)) && row.live.stillTrue === false) {
+    const why = typeof row.live.why === "string" && row.live.why ? row.live.why : "What it would say is no longer true.";
+    return record(deps, row.id, "failed", { error: `Not posted: ${why.charAt(0).toLowerCase()}${why.slice(1)}`.slice(0, 240) });
+  }
+
+  // The tags. A test names who it would tag and tags nobody. The call grade
+  // tags nobody at all: it is about a person's call.
   let tags: TextMention[];
   if (rehearsal) {
-    tags = plainLabels(await ctx.rehearsalTags(kind, variant));
+    tags = kind === "checkin.grade" ? [] : plainLabels(await ctx.rehearsalTags(kind, variant));
   } else {
-    const wanted = mentionsFor(variant, row.mentions, row.facts.second === true);
+    const wanted = wantedMentions(kind, variant, row.mentions, row.facts.second === true);
     const resolved = await resolveMentions(wanted, lookup);
     tags = resolved.tags;
     await rememberPeople(deps, resolved.looked);
@@ -425,6 +480,8 @@ export async function sendClaimed(ctx: SendContext, row: ClaimedRow): Promise<Se
       return record(deps, row.id, "retry", { error: sentence(e, "The tag check could not be recorded"), detail: { retryAfterSec: 60 } });
     }
   }
+
+  if (!rehearsal && kind === "checkin.grade" && !isObj(row.live.grade)) return record(deps, row.id, "failed", { error: NO_GRADE });
 
   // The text.
   const facts: NoticeFacts = rehearsal
@@ -444,7 +501,15 @@ export async function sendClaimed(ctx: SendContext, row: ClaimedRow): Promise<Se
   } catch (e) {
     return record(deps, row.id, "failed", { error: sentence(e, "The notice text could not be built") });
   }
-  const detail: Detail = { variant, text: built.text, blocks: built.blocks, facts: rehearsal ? undefined : sendFacts, ...detailTarget };
+  // The grade's words stay in its draft: the outbox keeps the grade's one-line text (client, score,
+  // colour, Ref) for the reconcile, never its blocks (Z7: no AI text in an outbox row).
+  const detail: Detail = {
+    variant,
+    text: built.text,
+    blocks: kind === "checkin.grade" ? undefined : built.blocks,
+    facts: rehearsal ? undefined : sendFacts,
+    ...detailTarget,
+  };
   const threadTs = !rehearsal && row.threadTs && /^\d+\.\d+$/.test(row.threadTs) ? row.threadTs : undefined;
 
   // The post.

@@ -132,9 +132,9 @@ function Mark({
 }
 
 /**
- * The foot of the rail: the desk's guide first, then Team meetings and the
- * Client Performance board (the portal's, everybody's), then the other
- * cockpits this person may open.
+ * The foot of the rail: the desk's guide first, then Team meetings, Ask a
+ * team and the Client Performance board (the portal's, everybody's), then
+ * the other cockpits this person may open.
  */
 export function footLinks(
   cockpits: string[],
@@ -148,6 +148,8 @@ export function footLinks(
       inApp: true,
     },
     { key: "team", label: "Team meetings", href: `${portalUrl()}/team` },
+    // Ask another team: the portal's Requests page (2026-10-26).
+    { key: "requests", label: "Ask a team", href: `${portalUrl()}/requests` },
     {
       key: "performance",
       label: "Client performance",

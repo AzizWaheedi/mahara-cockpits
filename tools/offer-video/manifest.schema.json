@@ -1,0 +1,19 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "title":"Offer film delivery manifest",
+  "type":"object",
+  "required":["schemaVersion","version","closing","clientReady","source_fingerprint","not_for_clients_because","cuts","tools","copy_check"],
+  "properties":{
+    "schemaVersion":{"const":1},
+    "version":{"type":"string"},
+    "closing":{"enum":["real","placeholder","mixed","unknown"]},
+    "clientReady":{"type":"boolean"},
+    "source_fingerprint":{"type":"string","pattern":"^[a-f0-9]{64}$"},
+    "not_for_clients_because":{"type":"array","items":{"type":"string"}},
+    "cuts":{"type":"object","required":["en","ar"],"properties":{"en":{"$ref":"#/$defs/cut"},"ar":{"$ref":"#/$defs/cut"}}},
+    "tools":{"type":"object"},
+    "copy_check":{"type":["object","null"]}
+  },
+  "$defs":{"cut":{"type":"object","required":["main","clean","proxy","poster","captions_vtt","narrator","closing","source_fingerprint"],"properties":{"main":{"type":"object"},"clean":{"type":"object"},"proxy":{"type":"object"},"poster":{"type":"string"},"captions_vtt":{"type":"string"},"narrator":{"type":"object"},"closing":{"type":"object"},"source_fingerprint":{"type":["string","null"]}}}},
+  "allOf":[{"if":{"properties":{"clientReady":{"const":true}}},"then":{"properties":{"closing":{"const":"real"},"not_for_clients_because":{"maxItems":0},"copy_check":{"type":"object","properties":{"ok":{"const":true}},"required":["ok"]}}}}]
+}

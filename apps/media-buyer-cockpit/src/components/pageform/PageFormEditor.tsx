@@ -5,6 +5,7 @@ import {
   Plus,
   Trash2,
   TriangleAlert,
+  Undo2,
 } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -73,6 +74,8 @@ export function PageFormEditor({
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Launch questions removed in this draft, with their draft wording, so Add back returns what was there.
+  const [parked, setParked] = useState<Record<string, PageQuestion>>({});
 
   const issues = useMemo(
     () => problems(draft, { photos: page.photos, retired: page.retired }),
@@ -84,6 +87,17 @@ export function PageFormEditor({
     [draft, start, page.bindings],
   );
   const dirty = change !== "No change to the questions";
+  // Questions with their own CRM field that are off the page: the server's list, then the live ones, then the ones removed in this draft.
+  const saved = useMemo(() => {
+    const pool = new Map<string, PageQuestion>();
+    for (const q of page.saved ?? []) pool.set(q.key, q);
+    for (const q of start.questions) {
+      if (page.bindings[q.key]) pool.set(q.key, q);
+    }
+    for (const q of Object.values(parked)) pool.set(q.key, q);
+    const on = new Set(draft.questions.map(q => q.key));
+    return [...pool.values()].filter(q => !on.has(q.key));
+  }, [page, start, parked, draft]);
   const openIndex = draft.questions.findIndex(q => q.key === openKey);
   // The preview follows the open question; the first screen otherwise.
   const screen = openIndex >= 0 ? openIndex + 1 : 0;
@@ -117,6 +131,7 @@ export function PageFormEditor({
     const key = newQuestionKey([
       ...draft.questions.map(q => q.key),
       ...page.retired,
+      ...Object.keys(page.bindings),
     ]);
     edit(d => {
       d.questions.push({
@@ -128,6 +143,13 @@ export function PageFormEditor({
       });
     });
     setOpenKey(key);
+  };
+
+  const addBack = (q: PageQuestion) => {
+    edit(d => {
+      d.questions.push(structuredClone(q));
+    });
+    setOpenKey(q.key);
   };
 
   const publish = async () => {
@@ -191,13 +213,8 @@ export function PageFormEditor({
                     })
                   }
                   onRemove={() => {
-                    if (
-                      page.bindings[q.key] &&
-                      !window.confirm(
-                        `Remove "${q.name || q.label}"? It has its own CRM field, which stops filling. Switching back to ${liveLabel} brings it back.`,
-                      )
-                    )
-                      return;
+                    if (page.bindings[q.key])
+                      setParked(p => ({ ...p, [q.key]: structuredClone(q) }));
                     edit(d => {
                       d.questions.splice(i, 1);
                     });
@@ -219,6 +236,47 @@ export function PageFormEditor({
               <p className="text-xs text-muted-foreground">
                 {LIMITS.questions[1]} questions is the most a page takes.
               </p>
+            )}
+
+            {saved.length > 0 && (
+              <section className="space-y-2 border-t pt-4">
+                <Kicker>Saved questions</Kicker>
+                <p className="text-xs text-muted-foreground">
+                  Off the page, each kept with its own CRM field. Add one back
+                  and it fills that field again.
+                </p>
+                <ul className="space-y-2">
+                  {saved.map(q => (
+                    <li
+                      key={q.key}
+                      className="flex items-center gap-3 rounded-xl border border-dashed bg-card p-2 pl-3"
+                    >
+                      <span className="min-w-0 flex-1 text-left">
+                        <span
+                          className="block truncate text-sm font-medium"
+                          dir="auto"
+                        >
+                          {q.label || q.name}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-muted-foreground">
+                          {q.style === "photo" ? "Photo cards" : "List"} ·{" "}
+                          {q.options.length} answers · Own CRM field
+                        </span>
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => addBack(q)}
+                        disabled={draft.questions.length >= LIMITS.questions[1]}
+                      >
+                        <Undo2 className="mr-1 size-4" aria-hidden />
+                        Add back
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
             )}
 
             <div className="flex flex-col items-center border-t pt-6 md:hidden">
@@ -275,6 +333,7 @@ export function PageFormEditor({
                 onClick={() => {
                   setDraft(structuredClone(start));
                   setError(null);
+                  setParked({});
                 }}
               >
                 Discard changes

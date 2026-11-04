@@ -76,6 +76,7 @@ class Channel {
 (globalThis as Record<string, unknown>).BroadcastChannel = Channel;
 
 mock.module("@/auth/SupabaseAuthProvider", () => ({
+  getCockpitSupabaseClient: () => null,
   useCockpitAuth: () => ({ client: null, name: "Sara", email: "" }),
 }));
 

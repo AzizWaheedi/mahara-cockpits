@@ -35,6 +35,7 @@ import {
   statusRule,
   tooFewNote,
 } from "../src/pages/ceo/deliveryStatus";
+import { buildSheet, readRange } from "../src/pages/ceo/goalsSheetData";
 import type { DeliveryDay, DeliveryWindow } from "../src/types/ceo/payloads";
 import { METRICS, scoreboard } from "../src/types/ceo/scoreboard";
 
@@ -303,8 +304,37 @@ describe("Goals reads the same numbers", () => {
     const delivery = { daily: WEEK } as never;
     const s = scoreboard({ delivery }, "2026-10-14", "2026-10-20");
     expect(s.clientBookings).toBe(49);
-    expect(s.clientCpb).toBe(59.18);
     expect(s.clientSpend).toBe(3306.99);
+    // Since 2026-11-02 the Goals board reads client cost per booking from the
+    // Goals sheet (one rule per key), over the same days and the same rule.
+    expect(s.clientCpb).toBeUndefined();
+    const sheet = buildSheet({
+      today: "2026-10-21",
+      month: "2026-10",
+      plan: null,
+      plans: [],
+      targets: [],
+      metrics: [],
+      cells: [],
+      growthDaily: [],
+      windows: [],
+      cashDaily: [],
+      book: null,
+      refundsMonthly: [],
+      bankThrough: null,
+      deliveryDaily: WEEK,
+      mediaDaily: [],
+      clientDaily: [],
+      churned: [],
+      churnMonths: [],
+      softwareMonthly: null,
+      lockin: [],
+      locked: null,
+      callDaily: null,
+    });
+    expect(
+      readRange(sheet, "clientCpb", "2026-10-14", "2026-10-20")?.value,
+    ).toBeCloseTo(59.18, 2);
     const label = (key: string) => METRICS.find(m => m.key === key)?.label;
     expect(label("clientCpb")).toBe("Client cost per confirmed booking");
     expect(label("clientBookings")).toBe("Client confirmed bookings");

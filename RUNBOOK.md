@@ -33,9 +33,11 @@ last error and this fix next to it.
 | --- | --- | --- | --- |
 | Meta Ads | `Meta 190` invalid token | New system-user token in Business Settings, set `META_SYSTEM_TOKEN` (media buyer deployment) | Aziz |
 | Meta Ads | `Meta 10/200` permission | The client has not shared the ad account with Mahara's business | Media buyer |
+| Launch desk budget (20261103e) | The desk's daily budget opens on a figure the media buyer did not expect, says "No agreed budget yet", or a source reads "...so it is not the default" | The default is the first source in this order: the Ads card's Daily Ad Spend (cockpit-sync's copy in `cockpit_campaigns`, or the live card once the desk reads it), Blueprint part 1 as sent, the kickoff in dollars, then the sale (the card's Daily Budget). Every source found is listed under the field (docs/media-launch/SPEC.md 2.4). "... looks like a month or another currency": the Blueprint, kickoff or sale figure is $1,000 or more, so the CSM checks the sale and corrects the card (the creative director for the Blueprint). "... is too low: twice it is under the desk's $5 floor": the figure is under $2.50; the CSM checks it. "Blueprint part 1 now says ... the change is not sent yet": the creative director sends part 1 again. "No fixed rate for BHD yet": the kickoff was in a currency with no rate in `cockpit_board_usd_rate`; the media buyer types the dollars, or a rate is added (CEO decision, in both rate tables and the three `currency.ts` copies). "Blueprint part 1 ... is not sent yet": the creative director sends part 1. "No agreed budget yet": no source holds a figure, so the $100 cap applies until the kickoff or the Blueprint records one. On the client page, "The agreed budget could not be read just now" means `cockpit_launch_agreed_budget` raised: run `select public.cockpit_launch_agreed_budget('<card id>')` as the owner to see the error. | Media buyer; CSM for the sale figure; tech lead for a read error |
 | Meta Ads | `Meta 4/17/32/613` rate limit | Clears on the next run; nothing to do | nobody |
 | ClickUp | `HTTP 401` | New API token (ClickUp Settings, Apps), set `CLICKUP_API_TOKEN` | Aziz |
 | ClickUp | `HTTP 404` on a list | The list or task was deleted or moved; check ids in SOURCES.md | Client success |
+| ClickUp | `HTTP 429`, or the guardian's "ClickUp calls a minute" warns (a minute over 80) or fails (over 95) | Since the move to ClickUp Business, one token shared by the Supabase functions and the VPS workers may make 100 calls a minute. Read the busiest minute's split in the guardian's evidence. A cockpit job: lower its pacing secret (`CLICKUP_REQUESTS_CALLS_PER_MINUTE` 25, `CLICKUP_CALLS_PER_MINUTE` 30, `CLICKUP_TASKS_CALLS_PER_MINUTE` 30; 60 at most). The native cycle: ask Hermes to pace it. A press in the cockpit tries once more after ClickUp's wait; if ClickUp refuses again it says ClickUp refused that step, and when an earlier step of the same press went through it says to check what that changed before trying again. Background jobs retry by themselves. Plan: `docs/requests/CLICKUP-DOWNGRADE.md` | the systems manager |
 | Google Sheets | `HTTP 403` | Share the sheet with `claude@studied-handler-508106-m5.iam.gserviceaccount.com` | Client success |
 | Google Sheets | `HTTP 429` "Quota exceeded ... Read requests" | The service account is allowed 60 reads a minute and everything (the cockpits, Hermes's morning sheet, Make) shares it. The cockpits now pace their reads (one every 1.3 s) and cache each client sheet for 25 minutes, so a 429 from them should be rare; it clears on the next run. If it keeps happening, raise the quota once: Google Cloud console, project 195153154932, APIs & Services, Google Sheets API, Quotas, "Read requests per minute per user", edit to 300. | Aziz (quota) |
 | Google Docs / Calendar | "API has not been used" | Enable that API on the service account's Google project | Aziz |
@@ -47,7 +49,7 @@ last error and this fix next to it.
 | Media buyer dev deployment | Saved winners, clients or boards in the creative or client success cockpit revert minutes after a sync | A dev deployment was running the crons with production's bridge links (2026-09-27: it wiped the saved winners). `cd apps/media-buyer-cockpit && bunx convex run health:whereJobsRun` must say `jobsRun: false` (`--prod` says true); never set `CREATIVE_BRIDGE_*` / `CSM_BRIDGE_*` on a dev deployment; `RUN_SCHEDULED_JOBS=1` only to test one job on purpose | Whoever deployed |
 | Claude on the VPS | "Failed to authenticate ... OAuth access token has expired" (as an error, or as the text of a streamed answer) | Since 2026-09-27 Salma (captions, words on pictures, read-backs) and the sales desk (drafts, follow-ups, call notes, Vince) write through Aziz's proxy to Claude Code, `openclaw-claude-proxy` on 127.0.0.1:3456, user aziz. SSH in as aziz, run `claude`, then `/login`; both resume by themselves and Salma's health line turns green within ten minutes. `curl -s 127.0.0.1:3456/health` says whether the proxy itself is up | Aziz |
 | OpenAI | `429` credit_balance_exhausted | Only the sales desk's researcher (web search) and anything switched back by `SALMA_TEXT=openai` or `SALES_MODEL_PROVIDER=openai` use it now. Top up at platform.openai.com (Settings, Billing) | Aziz |
-| Hermes / Ask AI (`hermes/cockpit-ask-ai`) | "jobs waiting" or worker error | Run `python3 scripts/askai.py doctor` on the host to check config without revealing secrets. Ask AI jobs live in `cockpit_ask_ai_jobs` (never creative requests); the worker defaults to DRY_RUN=true (use `--apply` to execute). Claims use atomic leases and bounded retries. | Aziz |
+| Hermes / Ask AI (`hermes/cockpit-ask-ai`) | Chat answers take minutes, "jobs waiting", or a FAIL line in `~/.cockpit-ask-ai/responder.log` | Chat is answered by the fast responder (`scripts/responder.py`, hermes crontab every minute under flock, release in `/home/hermes/cockpit-ask-ai-current`). On the host run `/opt/hermes-host/venv/bin/python responder.py doctor` (booleans and the model order only). The model order is the Hermes cron job "Cockpit Ask AI" model, then `fallback_providers` in Hermes config.yaml, through the Hermes login pool. If the responder is down, that cron agent still answers chat within 5 minutes and always answers comment digests and call briefs. Jobs live in `cockpit_ask_ai_jobs`; claims use leases and 3 bounded attempts. | Aziz |
 | Team meeting projections (Supabase candidate; not released) | Projection read/save fails, or client performance facts are missing | The candidate uses `cockpit_csm_projection_read` / `cockpit_csm_projection_edit` with the meeting ID. Release the verified native schema and client together; confirm active membership, current meeting participation, and verified source counts. Performance facts come from `cockpit_client_profiles.kpi`; do not add a fake `performance` column. Booking remains a separate audited `cockpit-csm-api` action. | Hermes |
 | Native identity and personal EOD (Supabase candidate; not released) | Sign-in loses access, revoked Sales seat still opens, or an editor sees someone else's filing | Apply `20261004a_cockpit_staff_identity_adoption.sql` only in the coordinated release. Native admission requires the exact confirmed Auth UID/email linked to an active directory member; stale portal profiles and Auth role metadata cannot admit a seat. Preserve Sales manager subroles separately. Personal editor EOD is filtered by directory author and Kuwait UTC+3 day, independent of the browser's timezone. Same-actor token refresh keeps unsaved drafts mounted while directory access revalidates. | Hermes |
 | Native source bootstrap (Supabase candidate; not released) | Import rejects an export, a provider feed is missing, or history coverage is incomplete | Use the finite importer in default dry-run mode with exact archive checksums, catalog/table counts, complete target inventory and verified file mappings. `_tables` is a validated archive catalog, not business rows. Unsupported tables remain blocked even when empty; do not drop financial, chat, preference or worker history to produce a green readiness claim. A bootstrapped feed is not a successful native provider refresh. | Hermes |
@@ -107,8 +109,9 @@ dashboard, then `scripts/ship.sh media-buyer`.
 
 The client comment watch runs natively since the Convex pause (migration
 `20261009i_ai_comment_watch_call_briefs.sql`). The Edge Function
-`comment-watch` (pg_cron at minute 7, 22, 37 and 52) reads the comments on
-current client cards in Clients - Mahara. Call summaries, kickoff handoffs,
+`comment-watch` (pg_cron at minute 13, 29, 43 and 59 since `20261029q`, off
+the VPS native cycle's runs and every */2, */3 and */5 job) reads the
+comments on current client cards in Clients - Mahara. Call summaries, kickoff handoffs,
 briefs and typed notes go to Hermes as `comment_digest` jobs. The tick
 (`cockpit_ai_watch_tick`, every 5 minutes) puts each digest in the
 clientComments feed, so it shows as "Latest from the ClickUp card" in all three
@@ -571,6 +574,44 @@ Going live (the lead session, in this order):
    deployed and both `20261025n` and `20261025o` are applied, or it reports
    the function and the two jobs missing.
 
+### Call grade and Recap not sent (the 1-1 notes, 2b)
+
+Two more notices from `20261029u_forms_checkin_notices.sql`
+(`docs/forms/STAGE2B-CONTRACT.md` 4.2), both dark until the cut-over hour:
+only the 2b dispatch queues a call grade and only a live response's
+cockpit-owned recap queues a reminder, so while the checkin registry is
+`shadow` neither can exist. Their settings rows are seeded on (Z25); the
+registry owner is the switch.
+
+- **Call grade** (`checkin.grade`): the stored grade of each recorded 1-1 call,
+  once per call (`grade:{recordingId}`), in #client-call-feedback
+  (`C09SVG6FHGU`). It is about a person's call: it tags nobody (Settings
+  refuses tags with `The call grade tags nobody.`) and posts only in a channel
+  the cockpit has checked as private (Settings refuses another; the claim fails
+  it with `The call grade posts only in a private channel. Choose one in
+  Settings, Notices and routing.`). A grade is never regraded or reposted: the
+  grade is the draft's, read at the claim by the draft id in the notice's facts;
+  the outbox keeps only its one-line text, never the twelve notes. The claim
+  skips it when the cockpit no longer owns the grade (`Make owns this again.`)
+  or the recording is no longer a client call, and fails it when no grade is
+  stored (`The call's grade is not in the cockpit, so nothing was posted. Tell
+  the tech lead.`). Only the CEO, an admin or a client success seat sees these
+  notices on a client; a creative-only seat never does.
+- **Recap not sent** (`checkin.recap_late`): a recap the cockpit owns still not
+  sent 24 hours after the later of the call's end and the send, in #csm-general,
+  tagging nobody by default; its link opens the client's Messages card. Queued
+  once by `cockpit_slack_notice_sweep_checkin()` (the kick runs it every
+  minute), for 24 hours only; skipped at the claim once the recap was sent or
+  skipped, or Make owns the recap again.
+
+| Symptom | What to do | Who |
+| --- | --- | --- |
+| A call grade must stop now | Settings, Notices and routing, Call grade: off (later grades are muted, never sent). Or move the registry's `grade_notice` owner back off `cockpit` | the CEO or an editor |
+| Recap reminders must stop | Settings, Notices and routing, Recap not sent: off. Or move the registry's `recap` owner back off `cockpit` | the CEO or an editor |
+| `The call grade posts only in a private channel...` on a grade | The grade's channel turned public or was changed: choose a private, checked channel for Call grade in Settings, then fix the notice with `cockpit_slack_notice_fix(<id>, 'requeue', NULL)` (service key) if the call still needs its grade | the tech lead |
+| `The call's grade is not in the cockpit...` | The grade draft is not `ready` (it failed or never ran): read `cockpit_form_drafts` for the recording; a grade is never regraded by hand | the tech lead |
+| `slack-notices-queue` reads `The recap reminder sweep failed: ...` or `The 1-1 notes sweep failed: ...` | The kick noted it and the Stage 1 notices went on: read the error, fix, and the next minute's kick runs both again | the tech lead |
+
 ## Brand Blueprint press drain
 
 The creative director's three Blueprint presses (Send to media,
@@ -661,6 +702,1071 @@ Going live (the lead session, in this order):
    offers a close route, and the Blueprint card shows refusals and the Slack
    stops.
 
+## 1-1 notes in the cockpit (Stage 2a)
+
+The CSM's 1-1 call notes (Typeform `fRokTITH`) move into the client success
+cockpit, filled from Fathom's own record (`docs/forms/STAGE2-CONTRACT.md`). In
+Stage 2a the cockpit's 1-1 notes window runs only as a shadow run beside the
+Typeform, which stays the record: Make `9209179` and `9523861` still post the
+to-do comment, set Client Happiness and Last POC, grade the call and send the
+recap. A shadow send saves its notes and eight planned effects in the forms
+tables and nothing else: no ClickUp write, no Slack post, no client message, no
+`cockpit_csm_call_forms` row, no change to `cockpit_csm_calls`.
+
+- Migrations `20261027f_forms_core.sql` (the forms registry, responses,
+  effects, drafts, the WhatsApp outbox table and the window's RPCs),
+  `20261027g_fathom_intake.sql` (the Fathom store's class, room and candidate
+  columns, the privacy strip and trigger, the keys in the vault, webhook
+  deliveries, the ingest and the match inputs) and
+  `20261027h_checkin_plans.sql` (the shadow planner).
+- `cockpit_forms` row `checkin`: provider `typeform`, every effect owned by
+  `shadow`. One registry change flips every entry point at the cut-over (2b),
+  never in 2a. Check it: `select key, provider, effects from public.cockpit_forms;`
+  and `select state, count(*) from public.cockpit_form_effects group by 1;`
+  (only `dry_run` and `skipped` in 2a).
+- Edge Functions `cockpit-forms-api` (JWT check on: the window's call list,
+  drafts, transcript and Typeform check, key saves and the doctor) and
+  `fathom-webhook` (JWT check off: Fathom signs each delivery, an unsigned post
+  gets 401).
+- The worker `hermes/csm-calls` keeps the CSM's impromptu client-side
+  recordings as candidates, reads action items and transcripts and keeps sales
+  and team meetings stripped; its rows are in `hermes/csm-calls/RUNBOOK.md`.
+
+**Keys.** They live in the vault; `cockpit_forms_keys` holds metadata only and
+no role can read it. The CEO pastes the Fathom and DeepSeek keys (and the
+Anthropic key, B4) on the CEO cockpit, Client success, Connections for 1-1
+notes; a pasted key is tested, stored on the server and never shown back.
+`scripts/dev/forms_key.py` runs on the VPS, where the keys live:
+
+```sh
+ssh -o ControlMaster=auto -o ControlPath=/Users/abdulazizwaheedi/.ssh/cm-%r@%h-%p -o ControlPersist=20m -o ConnectTimeout=20 187.77.156.166 'python3 - <command>' < scripts/dev/forms_key.py
+```
+
+| Command | Does | Who |
+| --- | --- | --- |
+| `status` | Each key's state, last 4 and when it was saved (Kuwait time), and whether the webhook is registered; never a secret | anyone on duty |
+| `doctor` | The `cockpit-forms-api` doctor as JSON (it holds no secret); exits non-zero unless it answers `ok` true. `ok` needs a saved Fathom key and both Fathom reads good (`fathom.admin`, `fathom.csList`); a missing model key is reported in `models` and the note, not a failure | anyone on duty |
+| `fathom` | Tests `FATHOM_API_KEY` from `/opt/data/bibi/api-keys.env` (the users list, which only an account admin's key reads, then one page of the Customer Success team's last 24 hours, which must hold that team only) and saves it | the CEO, or with his permission |
+| `deepseek` | Tests `DEEPSEEK_API_KEY` from the same file (the model list must hold `deepseek-flash`) and saves it | the CEO, or with his permission |
+| `register-webhook` | Registers `fathom-webhook` with Fathom (`shared_team_recordings`, with transcript, summary and action items) and saves the signing secret it answers with | the CEO, or with his permission |
+| `probe-webhook` | Posts one wrongly signed delivery (expects 401) and one signed `Probe` delivery (expects 200 and a delivery row `ignored`), then marks the webhook key connected | anyone on duty |
+| `unregister-webhook` | Deletes the webhook in Fathom (a 404 counts as already gone) and marks the registration off | the CEO, or with his permission |
+
+Every Fathom and DeepSeek call the script makes writes an intent receipt
+before it and a response or unknown receipt after it into
+`cockpit_csm_provider_health` (`run_key` `forms-key:{uuid}`), and a call whose
+intent receipt cannot be saved is not made
+(`The receipt for {method} {resource} could not be saved, so the call was not made.`).
+A receipt that cannot be saved after its call does not stop the run, because a
+webhook just created must still be saved or deleted; the run then ends non-zero
+with `{n} receipts after a provider call could not be saved; cockpit_csm_provider_health is missing them.`
+The calls to our own functions (`probe-webhook`, `doctor`) write none; the
+doctor writes its own.
+
+**Which Fathom key each path uses.** The VPS holds two different
+`FATHOM_API_KEY` values. The worker (the 15-minute read and its backfills)
+reads the one in the native runtime file
+(`/home/hermes/.cockpit-native-state/runtime-<current>.json`). The Edge path
+(the read when the notes open, the drafts' summary and transcript reads, the
+doctor) uses the vault copy, which `forms_key.py fathom` copies from
+`/opt/data/bibi/api-keys.env` or the CEO pastes in Connections.
+`register-webhook` and `unregister-webhook` use the `api-keys.env` copy itself,
+never the vault's. Heavy reads are limited to 10 a minute per key, so the worker
+and the Edge path never share that budget; the `api-keys.env` copy is also the
+one the editor desk, the sales desk and the webinar pull use.
+
+**The webhook.** Register it only after the new worker's first good run
+(contract section 12, step 12), then run `probe-webhook`. `register-webhook`
+refuses while a registration is on
+(`A webhook is already registered (id ending {last 4}). Run unregister-webhook first.`).
+When Fathom answers with a webhook id but the secret is missing, refused, or
+cannot be saved, the script deletes the webhook at once, prints both statuses
+and exits non-zero; only when that delete fails too does it print
+`Delete the webhook ending {last 4} in Fathom's settings, then run this again.`
+(Fathom has no list call, so a webhook whose id was not saved can only be
+removed from the CEO's login). An answer with no id says
+`Fathom answered without the webhook id. Check Fathom's settings for a new webhook to this function.`,
+and a post Fathom never answers says
+`Fathom did not answer. Check Fathom's settings for a new webhook to this function before you run this again.`
+After a registration replaces an older one, a running copy of the function
+keeps the old secret for up to 5 minutes; a delivery signed with the new one
+gets 401 meanwhile and Fathom retries it. `unregister-webhook` turns the
+registration detail (`cockpit_sync_state` key `fathom-webhook`,
+`detail.registered`) to false, so the guardian stops expecting deliveries.
+Until the webhook is registered, and once it is unregistered, Connections shows
+`Not registered: calls arrive by the 15-minute read and when the notes open.`
+while a Fathom key is saved (in any state), and
+`Not registered: calls arrive by the 15-minute read.` with none (B7 open):
+the notes pull Fathom on open only with a saved key (contract 2.2 and 8.7).
+The guardian's check passes with `Not registered yet: …` or
+`Unregistered at {Kuwait time}: …`. After the CEO rotates his Fathom key, the
+webhook commands need the new key in `api-keys.env`; then run
+`forms_key.py fathom`, `unregister-webhook` (a 404 counts as already gone),
+`register-webhook` and `probe-webhook`. Deliveries, never their bodies:
+
+```sql
+select webhook_id, outcome, reason, recording_id, receipts, first_at, last_at
+  from public.cockpit_fathom_webhook_deliveries order by last_at desc limit 20;
+```
+
+`stored` is a Customer Success recording, now in the store. `ignored` is
+`Not a Customer Success recording.` (another team's call, or one shared with no
+team: nothing of it is kept) or `Not a meeting.` (no recording id in the body).
+`failed` names the step and the database's error code, never a value, as in
+`Failed at the ingest step (22023).`: Fathom retries with the same
+`webhook-id`, and the retry runs again. A `received` row older than 5 minutes
+was cut off before it settled; Fathom's next retry runs it. A delivery refused
+before it is recorded (a wrong method, a missing header, too large, no secret
+or no database, a bad or stale signature) leaves no row, only the function's
+one log line, `fathom-webhook {first 8 of webhook-id} {outcome}`;
+`supabase/functions/fathom-webhook/README.md` lists every step, answer and
+outcome. The latest outcome is also the note of `cockpit_sync_state`
+`fathom-webhook` (`Last delivery {outcome} at {Kuwait time}`).
+
+**The read when the notes open.** With a Fathom key saved, `checkin.calls`
+makes one light Fathom read (the Customer Success team since 00:00 Kuwait
+yesterday) at most once a minute, every 15 seconds after a failure; with none
+it reads only the store (the first row of the table below). A 429 shows
+`Fathom is busy. Check again in a minute.` Any other failure leaves the note
+`Fathom could not be read just now ({status}).`, which the window shows as
+`Fathom could not be read just now: {status}. Check again, paste the Fathom link, or choose No recording.`
+Either way the window still answers from the store. The light list carries no
+summary, so the pull never turns a stored `client` or `candidate` recording
+`internal`: only the worker and the webhook, which see summaries, change a
+stored class.
+`select key, ok, note, detail, rows_seen, last_run_at, last_ok_at from public.cockpit_sync_state where key in ('fathom-pull','fathom-webhook');`
+
+**The store.** The worker's gone pass marks a recording gone when two complete
+reads 60 minutes apart miss it (its summary, action items and transcript are
+cleared; it comes back if Fathom returns it). More than 3 missing, or more than
+10% of the window, marks nothing and turns `csm-fathom` `ok` false with
+`Fathom returned {n} fewer recordings than stored; nothing was marked gone.`
+The store pass runs every worker run: a recording the sales desk has indexed
+since, at any age, becomes `sales`, its call row loses its summary and
+transcript text, and its transcript object is removed, at most 20 objects a run
+(the rest on the next run); `csm-fathom`'s note says
+`{n} stripped, {m} transcript objects removed`. The one-off
+`backfill --source fathom-actions` has no cap and reads, merges and writes each
+meeting's `raw`, so it runs under the run lock. It starts detached, in the
+background with its own log and exit-code file: the lock wait alone can take 10
+minutes, and a run tied to the ssh call dies with it, leaving half its writes
+and no health row (contract section 12, step 7; A8.9). The line first removes
+the last start's exit-code file, inside the same ssh quote, so a second start
+never reads the old code as its own (A7.17):
+
+```sh
+ssh … 'rm -f ~/.csm-calls/actions-<sha8>.rc; nohup sh -c "flock -w 600 -E 75 ~/.csm-calls/run.lock ~/csm-calls-current/hermes/csm-calls/run.sh backfill --source fathom-actions --apply --report ~/.csm-calls/actions-<sha8>.json > ~/.csm-calls/actions-<sha8>.log 2>&1; echo \$? > ~/.csm-calls/actions-<sha8>.rc" >/dev/null 2>&1 </dev/null & echo started'
+ssh … 'cat ~/.csm-calls/actions-<sha8>.rc'
+```
+
+Read the `.rc` with short ssh calls, a minute apart, until it exists, then the
+report and the last lines of the log. `75` means a cron tick held the lock for
+10 minutes and nothing ran: start the whole line again (its `rm -f` clears the
+old `75`). Never start it while the `.rc` is still missing: that run is still
+waiting on the lock or running.
+
+The meetings privacy trigger
+(`cockpit_fathom_meetings_privacy`, before every insert and update) keeps an
+`internal` or `sales` meeting without its summary and without the summary,
+action items, highlights and transcript in `raw`, whoever writes (the worker,
+a rollback release, the ingest, a person with the service key), and gives a
+meeting written without a class one by the rule. It never touches
+`transcript_path`.
+
+**Candidates and the queue.** The CSM's impromptu client-side recording of 5
+minutes or more (or shorter with a summary), shared with a team, is a
+candidate: a call row with `candidate` true and up to 3 hints, and a queue row
+the recorder hosts, with
+`Impromptu recording with no client yet. Put it on its client here, or paste its Fathom link in the 1-1 form.`
+In 2a a pick in the cockpit's window is a shadow run and never puts a recording
+on a client; the 1-1 form's link and the queue do. "This is {client}" puts it on
+the client, links the client's booking (the same room within 90 minutes, else
+the booking within 30 minutes) and takes the booking's kind. "Not a 1-1 call"
+(part of another call, an onboarding call, a Blueprint call, not a client) sets
+it aside: it stays on no client, leaves the queue and the guardian's unmatched
+share, and the worker never matches it again; putting it on a client later
+undoes that. A candidate Fathom no longer has (`gone`) leaves the queue by
+itself.
+
+**Drafts.** We owe and They owe come from Fathom's action items with no model.
+Client notes draft on DeepSeek; the DEFCON and priority suggestions, the call
+grade and the recap draft on Anthropic. Until the CEO pastes an Anthropic key
+(B4), DEFCON and priority say
+`AI drafts are off: no Anthropic key. Pick it yourself.` and the CSM picks them
+by hand, the recap step says `AI drafts are off: no Anthropic key.`, and the
+doctor's note says `No Anthropic key: suggestions, grades and recaps are off.`
+Without the DeepSeek key, client notes say
+`AI drafts are off: no DeepSeek key. Fill this by hand.` Right after a call,
+the model drafts wait for Fathom's summary and transcript (the two
+`still writing` sentences in the table below).
+
+**A refused key and the native monitor.** Before a pasted key is saved,
+`keys.save` tests it and writes those receipts into `cockpit_forms_key_checks`
+(provider, `GET`, the resource, the phase, the status, `run_key` `keys:{uuid}`),
+not into `cockpit_csm_provider_health`, so a mistyped paste never turns the
+native monitor red. A saved key that later fails does: the monitor turns a
+provider red for up to 24 hours on its latest unsuccessful receipt per
+provider and resource (`20261026n:128-157`). Paste a working key, then run
+`forms_key.py doctor`: its good reads clear the reds on
+`api.fathom.ai/external/v1/users`, `.../meetings`, `api.deepseek.com` and
+`api.anthropic.com`. A red on `api.fathom.ai/external/v1/recordings/:id/summary`
+clears only on the next good summary read (the drafts make it), one on
+`.../recordings/:id/transcript` on the worker's next good transcript read.
+
+**The shadow replay.** `apps/media-buyer-cockpit/scripts/checkin-replay.ts`
+plans the last ten real `fRokTITH` responses with the real planner in PGlite and
+compares them with what Make wrote (contract 7.4). Run it on the Mac after the
+action items backfill (deploy step 7):
+
+```sh
+cd apps/media-buyer-cockpit && bun scripts/checkin-replay.ts --live \
+  --fixture /Users/abdulazizwaheedi/mahara-cockpits/notes/stage2/fixtures/replay-10.json \
+  --out /Users/abdulazizwaheedi/mahara-cockpits/notes/stage2/replay
+```
+
+It reads production through `sq.py`, read only and in memory: an address
+leaves the database with its local part hashed, a meeting room hashed, a
+contact name never, and Fathom's action items and the Typeform's client notes
+only as hashes. It
+rebuilds what the matcher knew as of each submit (no form's own link, no
+form-taught match) and writes `replay-report.json` and `replay-report.md`: per
+response the card, the business name, the signal that picked the call, the
+to-do counts and a verdict per effect (same, better, differs, missing), never
+comment text, answer text or a contact. It exits 0 when the passes of 7.4
+hold. `--shadow <response id>,<response id> --out <folder>` compares real
+shadow runs, on calls the CSM also noted in Typeform, with what Make wrote for
+the same cards: one ssh call runs a GET-only script on the VPS with the keys
+by name (`CLICKUP_API_KEY`, `SLACK_BOT_TOKEN` from `/opt/data/bibi/api-keys.env`;
+`--clickup-key` and `--slack-key` name others) and prints shapes only (the
+comment's line counts and whether the recording link is on line 1, the Client
+Happiness option, the Last POC day, the grade's parts in #client-call-feedback,
+which read `not_in_channel` until that bot is in the channel). It writes
+`shadow-report.json` and `shadow-report.md`, and exits 1 on any `differs` or
+`missing`. Gate G3 of 2b needs five such runs with no unexplained difference.
+
+**The worker release and its rollback.** The csm-calls release is its own
+(`hermes/csm-calls/RUNBOOK.md`, Release / rollback; contract section 12, step
+6, as A8 left it). A folder `/home/hermes/.csm-calls-releases-hermes/<sha8>` is
+staged from the commit on main, and its doctor and dry run run with the native
+bun directly (never the staged `run.sh`, which always runs the current
+release). The doctor fails until `20261027f` and `20261027g` are applied. Every
+`csm-*` source already failing is recorded first: a dry run passes when
+`csm-ghl-calls`, `csm-checkin-form`, `csm-forms-history` and `csm-fathom` are
+ok and every other failure is a recorded one with the same cause; with a
+recorded failure it still exits 1 and prints `csm-calls run FAILED`, which is
+expected (A8.2). The run lock is held from step 3 by a `flock -o` holder
+(`nohup flock -o ~/.csm-calls/run.lock sleep 5400 >/dev/null 2>&1 & echo $!`,
+its pid recorded), so cron's `flock -n` skips the old release; with `-o`,
+killing that pid frees the lock (A8.1). Then, on the VPS, each line one short
+ssh call (`ssh … '<line>'`):
+
+```sh
+pgrep -P <pid> -x sleep
+flock -n ~/.csm-calls/run.lock true; echo $?
+D=/home/hermes/.csm-calls-releases-hermes/<sha8> && test -f "$D/hermes/csm-calls/run.sh" && ln -sfn "$D" ~/csm-calls-current.next && mv -T ~/csm-calls-current.next ~/csm-calls-current
+readlink -f ~/csm-calls-current
+pgrep -P <pid> -x sleep && kill <pid>
+flock -n ~/.csm-calls/run.lock true; echo $?
+rm -f ~/.csm-calls/first-<sha8>.rc; nohup sh -c "flock -w 600 -E 75 ~/.csm-calls/run.lock ~/csm-calls-current/hermes/csm-calls/run.sh run --apply --report ~/.csm-calls/first-<sha8>.json > ~/.csm-calls/first-<sha8>.log 2>&1; echo \$? > ~/.csm-calls/first-<sha8>.rc" >/dev/null 2>&1 </dev/null & echo started
+cat ~/.csm-calls/first-<sha8>.rc
+```
+
+The first two lines check the step-3 holder right before the swap: `pgrep`
+prints one pid and `flock -n` prints `1`. If either fails (its 90 minutes ran
+out, or the stop rule or a rollback released it), take a new holder with step
+3's command and both its read-backs, never the apply, and use its pid from
+then on (A8.8). The swap runs while the holder holds, with no flock of its own
+(a `flock -w` would only wait for the holder and time out), and its read-back
+prints `/home/hermes/.csm-calls-releases-hermes/<sha8>`; until it does,
+contract section 12's stop rule holds every later step (A8.4). The holder is
+killed only while `pgrep` still shows its `sleep` (a pid with no `sleep` child
+is never killed), and the read-back after it prints `0` (`1` only if a cron
+tick of the new release has just started). The first run then starts at once,
+detached under `nohup` so that it outlives the ssh call; its line first
+removes an exit-code file left by an earlier try (the `rm -f`, inside the same
+ssh quote), so the read below waits for this run's code (A7.17). Its `.rc`,
+report and log are read with short ssh calls, a minute apart, until the `.rc`
+exists (A8.9). `0`, or `1` with only the recorded failures in the report, is a good
+first run; `75` means a cron tick of the new release held the lock for 10
+minutes, so read that tick's `~/.csm-calls/last-run.json` as the first run.
+Keep the previous release and the rollback folder.
+
+A rollback points the link, under the run lock, at the staged `rollback-<sha8>`
+(release `2cacdca5` plus `hermes/csm-calls/rollback/2cacdca5.patch`), then runs
+its doctor. Never point it at the bare `2cacdca5`: its loops would put
+candidates on a client by a name in their title and download the stripped sales
+transcripts again. The rollback release makes no candidate rows and runs no
+store pass or gone pass, and, like `2cacdca5`, it writes every meeting of its
+window without action items and every meeting with no external invitee,
+candidates included, without its summary. Rolling forward, the new worker's
+first run restores its 7-day window; for older candidates run
+`backfill --source fathom-actions --since <7 days before the rollback> --apply`
+for their action items, under the run lock and detached like the backfill in
+The store (above), and `backfill --source fathom --apply` (heavy, from 1 Jul)
+for their summaries.
+
+**Going live** is contract section 12 (the main session), with these
+decisions (A7.10, A8): the action items backfill runs under the run lock and
+detached, as above; each function's `--extra` is exactly what
+`python3 scripts/dev/fn_extras.py . <function>` lists; the guardian goes to the
+VPS only once `20261027g` and both functions are live (before them
+`csm-calls-unmatched` cannot read the new columns and `edge-functions` misses
+two functions); the production proof stays the PGlite proof plus read-only
+read-backs (A3). `forms_key.py fathom`, `deepseek` and `register-webhook` wait
+for the CEO (A3): B7 asks for his yes in the deploy session's chat before step
+8, with `probe-webhook` right after the registration, and if he would rather
+paste the keys, the ask follows the Connections card, which ships at step 16
+(A8.3, A8.7); whatever of B7 is still open goes in step 18's batch. Until then the window uses the keys pasted in Connections, or
+says which key is missing, and calls arrive without the webhook.
+
+**Rolling back** (contract section 12): `forms_key.py unregister-webhook`
+first, so the guardian stops expecting deliveries; then the worker to the
+rollback release (above). The two functions are new: redeploy nothing, and
+delete them only on the CEO's word. No migration is reverted (the four replaced
+function bodies saved before the apply can be re-applied): the privacy strip
+stays (Fathom still holds the content, and its audit row records what was
+removed), the trigger keeps the rollback release from writing content back onto
+an `internal` or `sales` meeting, and the registry's `checkin` stays
+`typeform`, so the Typeform stays the record. Sites: ship the previous commit.
+
+| Symptom | What to do | Who |
+| --- | --- | --- |
+| The window says `Fathom isn't connected, so calls come only from the 15-minute read.`, then `Paste the Fathom key in CEO > Client success > Connections for 1-1 notes.` for the CEO, or `Ask the CEO to connect it.` for anyone else | The vault has no Fathom key, so the window cannot read Fathom itself. The recordings the worker's 15-minute read stored are still offered (picked, and listed under Recordings since yesterday), and a pasted Fathom link is still found in the store; a call that read has not reached yet waits for it, and Check again shows it once the next read brings it. Paste the key in CEO, Client success, Connections for 1-1 notes, or run `forms_key.py fathom` (the CEO, or with his permission) | the CEO |
+| Connections says `{provider} refused this key. Paste a new one.` | Paste a working key, then run `forms_key.py doctor` so the native monitor's red clears (above) | the CEO, then the tech lead |
+| `Fathom is busy. Check again in a minute.` | A 429 on the vault key; it clears in a minute. If it keeps coming, paste a key of its own in Connections: the `api-keys.env` copy that `forms_key.py fathom` saves is shared with the editor desk, the sales desk and the webinar pull | the CEO |
+| The guardian's "Fathom webhook delivers" warns | Registered, a Customer Success recording first seen in the last 24 hours that holds a summary and is shared with a team (the only ones Fathom pushes), and no stored delivery in that time. The 15-minute read still brings every call. Read the deliveries (above), check the webhook in Fathom's settings, or unregister and register it again | the tech lead; Fathom's settings: the CEO |
+| `forms_key.py` prints `Delete the webhook ending {last 4} in Fathom's settings, then run this again.` | Fathom made a webhook whose secret was not saved, and deleting it failed. Delete it in Fathom's settings, then run `register-webhook` again | the CEO |
+| `csm-fathom` reads `Fathom returned {n} fewer recordings than stored; nothing was marked gone.` | The cap held, so no client lost a call. Check in Fathom whether they were deleted or unshared, or whether the key lost access; the next run marks them one by one once the count is back under the cap | the tech lead |
+| A candidate in the CSM's queue is not a check-in | "Not a 1-1 call", with its reason | the CSM |
+| A recording is on the wrong client | The window lists it disabled with `On {client}. If that is wrong, ask an admin to move it.`, and a save is refused with `That recording is on {client}. If that is wrong, ask an admin to move it.` In 2a an admin fixes the call row's client in SQL, with a `cockpit_csm_match_audit` row; a Move it here button comes in 2b | an admin |
+| `AI drafts are off: no Anthropic key.` | Expected until B4: the CEO pastes an Anthropic key in Connections | the CEO |
+| DEFCON, Client notes or the recap step says `Fathom is still writing this call's summary. Drafts start when it is ready.` or `Fathom is still writing this call's transcript. Drafts start when it is ready.` | Expected for a few minutes after a call: Fathom lists a meeting within seconds, but its summary and transcript come later. We owe and They owe never wait. The window asks again every 60 seconds (the recap step every 15 seconds for 3 minutes, then every 60), up to 15 minutes, and again each time the notes open. A transcript read that gives no text is not repeated for that recording until its wait ends: Fathom's `retry-after`, else `ratelimit-reset` on a 429, else 2 minutes, at most 10 minutes, per recording and per running copy (isolate) of `cockpit-forms-api` (A7.16); meanwhile View transcript answers `No transcript yet. Open the call in Fathom.` without calling Fathom. She can fill the fields by hand and send without waiting. Still waiting after 15 minutes while Fathom shows the summary and transcript: read the receipts on `api.fathom.ai/external/v1/recordings/:id/summary` and `.../transcript` in `cockpit_csm_provider_health` (a run of 429s is the busy key, as in `Fathom is busy.` above) | the CSM; a lasting wait: the tech lead |
+| A row in `cockpit_form_effects` is in any state but `dry_run` or `skipped` | Never in 2a: a table CHECK keeps shadow and Make effects out of every other state. Stop and tell the tech lead | the tech lead |
+
+## 1-1 notes dispatch and the registry
+
+Stage 2b (`docs/forms/STAGE2B-CONTRACT.md` builds 0 and 7; migrations
+`20261029s_forms_registry.sql` and `20261029w_forms_dispatch.sql`). The registry
+row `cockpit_forms` `checkin` says where the 1-1 notes are filled (`provider`)
+and who delivers each of its eight effects (`owner`: `make`, `shadow` or
+`cockpit`). Until the cut-over hour it stays `typeform` with all eight
+`shadow`, and nothing here reaches a card, Slack or a client.
+
+- **The dispatch.** A live check-in's `cockpit` effects become delivery rows:
+  one `cockpit_clickup_writeback_queue` row of kind `form` per card effect (the
+  payload never holds the comment text; the writer reads it from the effect),
+  the `checkin.grade` notice `grade:{recording}` once the recording's grade
+  draft is ready, and one `cockpit_client_messages` draft once the recap draft
+  is ready (its text byte for byte). It runs at the send, when a grade or recap
+  draft leaves drafting, and every minute from the notices kick. Kickoff and
+  Brand Blueprint responses are never dispatched. A failing insert keeps the
+  effect `planned` with the error as its reason; the notes are never rolled back.
+- **The sweep and the kick.** `cockpit_form_effects_kick()` runs from
+  `cockpit_slack_notices_kick()` (no cron of its own). It re-dispatches every
+  planned effect, then 30 minutes after the send fails what is still planned:
+  `No grade: the grader did not answer.`, `No recap: the drafter did not
+  answer.`, or a ClickUp effect's last error. When a grade or recap waits on a
+  draft nobody began, it posts `{"op":"effects.sweep"}` to `cockpit-forms-api`
+  at most every 2 minutes with the vault's `cockpit_notices_cron_secret`. The
+  post waits 150 s, because the door answers only when its sweep ends (up to
+  about 100 s). Its
+  health row is `cockpit_sync_state` `forms-effects-kick`: `Nothing waiting.`,
+  `Asked the drafts for 2 1-1 notes.`, `Waiting for the drafts of ...; asked at
+  HH:MM.`, or not ok with the sentence that names what to fix.
+- **Settling.** Three triggers move each effect from its outbox (the queue, the
+  notice, the message): delivered, failed, skipped or unknown with the outbox's
+  own reason. A move the effects guard refuses is never raised: it writes one
+  `cockpit_audit_log` row `forms.settle_refused` and the outbox's own write
+  commits. A refused WhatsApp recap leaves its effect `queued` (it waits on a
+  person); Skip closes it.
+- **The owner gate.** Every claim and the recap approval ask
+  `cockpit_form_effect_gate(delivery, ref)` first. A write proceeds only while
+  its effect is `queued` or `unknown`, owned by `cockpit`, the registry still
+  says `cockpit`, and the response is live and was sent at or after
+  `cockpit_form_native_since` (Z70; nothing passes while the provider is
+  `typeform`); otherwise the outbox row is settled with
+  `Make owns this again.` (or `This write was settled in the cockpit, so
+  nothing was written.`).
+- **Changing owners.** Settings changes owners through
+  `cockpit_form_registry_set` (the CEO, an admin or a forms editor). Only
+  `checkin` changes in 2b. No effect becomes `cockpit` before its delivery path
+  exists: the refusal reads `{label} cannot move to the cockpit yet:
+  {clause}.` Only the CEO seat moves the provider, and only back to `typeform`;
+  `native` is reached only through the cut-over function.
+- **The cut-over function** (hour step 7b, the owner's SQL; if the classifier
+  refuses it, the CEO runs the same SELECT in the Supabase SQL editor):
+  `select public.cockpit_form_checkin_cutover();` It refuses, writing nothing,
+  when the 1-1 notes already open in the cockpit, when the newest `fRokTITH`
+  row has no client (`Put the newest Typeform notes on their client from the
+  queue first.`), or when a delivery path is missing. Then it closes every
+  open shadow draft and flips the registry to `native` with all eight
+  `cockpit`. Quote its answer in the session note: `voided`, `nativeSince`,
+  `auditId`, `newestTypeform`, and `unlinked14d` (the tokens the CSM checks
+  before step 9). It may run again at a later hour after a rollback. Every
+  audit row it writes reads `cut-over` / `cutover`, each closed draft's
+  `forms.shadow_closed` included, and so do the rows of step 7a's own
+  `select public.cockpit_form_shadow_close('checkin');`.
+- **Two more refusals of the cut-over function.** It also refuses, writing
+  nothing, when the newest `fRokTITH` row is on a card off the client roster,
+  and while the 1-1 notes writer last reported `apply`, fresh or stale, which
+  would write on every client's card. Step 6 leaves the writer at
+  `apply_limited`, which passes, and so does a second hour that starts at step
+  6 again after a rollback. It does not read which cards step 6 named, or the
+  WhatsApp sender's switches: those stay step 6's read-backs.
+- **The rollback** (on the CEO's yes):
+  `select public.cockpit_form_registry_apply('checkin', '{"provider":"typeform","owners":"shadow"}', '{"via":"cutover-rollback","email":"cut-over"}');`
+  It restores the seeded provider, `typeform_id`, version and effects. Queued
+  deliveries are then skipped at their claim, a claimed WhatsApp recap is stopped
+  at intent, planned ones by the next sweep. Shadow notes voided at the flip
+  stay readable and can never be sent.
+- **What a rolled-back hour leaves open** settles through the dry-run claim
+  within a minute for ClickUp rows (the kick counts a refused row as due, Z74).
+  What stays open (a ClickUp row while the token is missing, a draft recap) is
+  settled by the gate at the next hour. Its response was sent before that
+  hour's flip, so it never passes (Z70): the queued row is skipped with
+  `Make owns this again.`, the unknown one fails with `Make owns
+  this again. An earlier try may have reached the card, so check it in
+  ClickUp.` (look at the card), the recap cannot be approved (press Skip), and
+  the grade notice is skipped. Nothing old reaches a card, Slack or a client.
+- **The native window at the dispatch.** The dispatch uses the gate's rule: a
+  planned effect is skipped with `Make owns this again.` unless the registry
+  says `cockpit` and the response was sent at or after
+  `cockpit_form_native_since`. So while the provider is `typeform` (a
+  provider-only rollback, an admin's owner flip) it queues nothing and the kick
+  asks the forms door for no draft, and the same holds for a first-hour
+  response after a rollback and a second cut-over. The waiting list leaves those
+  responses out. A failed recap outside the window stays failed.
+- **What the cut-over function cannot check.** Run as the owner, it reads the
+  database only. Nothing in it knows G1 to G13, B1, B2, Make, the Typeform
+  webhook or step 6's canary switches, and that is by design (owner-run, no role
+  holds it, Z33). People are the only gate on those, so run it only at step 7b,
+  after each earlier read-back holds. Never run the core under it,
+  `cockpit_form_registry_apply` with via `cutover`, by hand: that skips the check
+  on the newest Typeform notes. A mistaken SELECT while the deploy's switches
+  are still off reaches only Slack: Call grade posts to its private channel,
+  while WhatsApp stays dry and ClickUp stays dry. Take it back with the rollback
+  above.
+- **Read-backs.** `select provider, provider_since, effects from cockpit_forms
+  where key = 'checkin'`; the audit row `select action, before->>'provider',
+  after->>'provider', created_at from cockpit_audit_log where entity_type =
+  'cockpit_forms' and entity_id = 'checkin' order by created_at desc limit 1`
+  (`forms.registry_set`, its `created_at` equal to `provider_since`); one
+  response's effects `select effect_key, state, reason, delivery_ref from
+  cockpit_form_effects where response_id = '<id>' order by effect_key`.
+
+| Symptom | What to do | Who |
+| --- | --- | --- |
+| `forms-effects-kick` reads `The vault has no cockpit_notices_cron_secret, so the 1-1 notes sweep did not run. Add it to the vault.` | Add the secret to the vault under that name (the notices kick reads the same one). Planned effects still fail with their sentence after 30 minutes | the tech lead |
+| `forms-effects-kick` reads `The vault has no cockpit_anon_key, so the 1-1 notes sweep did not run. Add it to the vault.` | Add the project's anon key to the vault under that name: `cockpit-forms-api` checks the JWT, so the sweep is not posted without it. The next minute's kick posts. | the tech lead |
+| `forms-effects-kick` reads `The 1-1 notes dispatch failed: ...` | The notes are saved and the sweep tries every minute. Read the error; if it repeats, the effects stay `planned` and fail after 30 minutes with their reason. The row stays not ok every minute any dispatch of the sweep fails, even when the kick also asked for drafts: `detail.sweep.errors` counts the failed dispatches, the note carries the first error, and a missing vault secret shows in `detail.blocked` until the dispatch works. Fix the cause, then the next minute dispatches them and the row reads ok again | the tech lead |
+| An effect stays `planned` with `Waiting for the grade.` or `Waiting for the recap draft.` | Expected while the draft runs. After 30 minutes it fails with `No grade: the grader did not answer.` or `No recap: the drafter did not answer.`; the CSM sends the recap by hand if needed | the CSM |
+| A `forms.settle_refused` audit row | An outbox moved in a way its effect cannot follow (for example a delivered row marked failed later). The outbox's write stands; read both rows, and tell the tech lead if the card or the group shows something else | the tech lead |
+| `{label} cannot move to the cockpit yet: {clause}.` | The named delivery path is not installed or not ready (the ClickUp lane, a private Call grade channel, the recap approval). Install or fix it, then change the owner again | the tech lead |
+| `The store holds no Typeform notes, so the newest cannot be checked. Run the Typeform sync first.` | The cut-over refused and wrote nothing: there is no `fRokTITH` row in `cockpit_csm_call_forms`. Run step 4 of the hour (the `run --only typeform --apply` sync on the VPS), read back the newest row and its `task_id`, then run the cut-over again | the tech lead |
+| `The newest Typeform notes are on card {id}, which is not on the client roster. Refresh the roster, or put the notes on a client on it, then run this again.` | The cut-over refused and wrote nothing. Read that card in `cockpit_csm_sources` (`table_name = 'clients'`). A new client: refresh the native feed. A client who left: that row is not in the unmatched queue, so the tech lead corrects it or decides with the CEO; never go around the function | the tech lead |
+| `Limit the 1-1 notes writer to the test card at step 6 first: it last reported apply, which writes on every client's card.` | The cut-over refused and wrote nothing. Do step 6: set `CLICKUP_WRITEBACK_FORMS_ONLY_CARDS` to the test card, run `select public.cockpit_clickup_forms_kick()`, read back `apply_limited` (up to 10 minutes), then run the function again | the tech lead |
+| `The 1-1 notes open in the cockpit only through the switch-over function at the cut-over hour.` | Expected from Settings: the provider moves to native only through `cockpit_form_checkin_cutover()` at the hour (section 11 of the contract) | the CEO |
+
+## 1-1 notes writer (clickup-writeback job forms)
+
+From the 1-1 notes cut-over (`docs/forms/STAGE2B-CONTRACT.md` build 1), a live
+check-in's four ClickUp effects are written by `clickup-writeback` job `forms`,
+not by Make: on the client's Clients - Mahara card, in Make's order, the to-do
+comment (ending `Cockpit ref F-<first 10 hex of the response id>`), Client
+Happiness, Last POC and Last Check-in Call. Migration
+`20261029t_forms_clickup_writeback.sql` holds the queue kind `form`, the claim
+and the kick; `20261029w` makes one queue row per effect when the cockpit owns
+it. Until the cut-over the registry keeps every check-in effect `shadow`, so no
+`form` row can exist and the job reports `Nothing to write.`.
+
+- Two brakes, both off at deploy. The function secret
+  `CLICKUP_WRITEBACK_APPLY_FORMS` must be exactly `true` (the canary
+  `CLICKUP_WRITEBACK_FORMS_ONLY_CARDS=86eywg1cq` narrows it to the test card;
+  `CLICKUP_WRITEBACK_APPLY`, `_APPLY_REQUESTS` and `_ONLY_TASKS` neither open nor
+  narrow it), and the claim asks the owner gate (`cockpit_form_effect_gate`) for
+  every row: a row Make owns again is settled `skipped` `Make owns this again.`
+  without a call, or `failed` with `Make owns this again. An earlier try may have
+  reached the card, so check it in ClickUp.` when its effect was `unknown`.
+- A canary value with no card id in it, or with anything but card ids (`,`, a
+  space, `86a;86b`), keeps the writer off and never opens every card: mode
+  `dry_run`, no cards, and `clickup-writeback:forms` reads not ok with
+  `CLICKUP_WRITEBACK_FORMS_ONLY_CARDS names something that is not a card id, so
+  nothing is written to ClickUp.` Write card ids separated by commas. Only a
+  removed secret means every card.
+- Pace: `CLICKUP_FORMS_CALLS_PER_MINUTE`, 10 a minute unless set, 60 at most and
+  5 at the least, like every other ClickUp pace: a lower value reads as 5, because
+  a slower run would outlast the Edge Function's 150 seconds (one ClickUp token is
+  shared by every caller on the Business plan). A response
+  takes about 11 calls. A 429 puts its row on the retry ladder (1, 5, 15, 60, 240
+  minutes) and stops the run; the rest go back to the queue uncounted.
+- Budget: the forms job counts inside the shared token's budget, 80 calls a
+  minute for every caller together (ClickUp Business allows 100). If the
+  guardian's `ClickUp calls a minute` warns and `cockpit jobs` is the large part
+  of the busiest minute's split, read `cockpit_clickup_writeback_runs` for a
+  `forms` run open at that minute (`job = 'forms'`, `started_at` to
+  `finished_at`): the split has no part for this job, because `cockpit jobs`
+  holds every cockpit job and press. If one was open, lower
+  `CLICKUP_FORMS_CALLS_PER_MINUTE`; its default of 10 sits
+  beside `CLICKUP_REQUESTS_CALLS_PER_MINUTE` 25, `CLICKUP_CALLS_PER_MINUTE` 30
+  and `CLICKUP_TASKS_CALLS_PER_MINUTE` 30. A forms run and a requests run do not
+  hold each other up: each job has its own exclusive begin, its own kick and its
+  own pace. Plan: `docs/requests/CLICKUP-DOWNGRADE.md`.
+- pg_cron `mahara-clickup-writeback-forms` runs `cockpit_clickup_forms_kick()`
+  every minute. It posts `{"job":"forms"}` (with `cockpit_sync_secret`) only when
+  the claim could take a row: a form row due on a free card lane while the
+  writer last reported `apply` or `apply_limited` (a canary card's row), an open
+  row the owner gate refuses (any mode), or when the writer's last report is
+  older than 10 minutes, and writes `cockpit_sync_state`
+  `clickup-writeback:forms-kick` every minute.
+- Review round 3: the claim asks the owner gate of every open `form` row in
+  every mode, `dry_run` and `unknown` included, any card, due or not, and
+  settles each refusal before it looks at the mode. So after a rollback past
+  cut-over step 7b (the registry back to `shadow`, the writer reporting
+  `dry_run`) the rows still open (the other cards' rows held during the canary,
+  rows waiting on the retry ladder) are settled `skipped` `Make owns this
+  again.` within a minute, never written at a later cut-over; a row whose step
+  had started or was booked done (its write may have landed) is `failed` with
+  the check-the-card sentence. The kick counts such a row as due in any mode (`Posted a 1-1 notes
+  run to settle 2 writes the cockpit no longer sends.`), and counts a row as due
+  only when the claim could take it now: a newer call's row behind an older
+  call's row on the same card posts nothing until that row's next try.
+- A run that claims nothing says `Nothing to write.` only when no `form` row is
+  open. Otherwise it says what waits: `Nothing written: 4 writes wait in the
+  queue while the 1-1 notes writer is off.`, `Nothing to write now: 1 write
+  waits for a later try, the next at 13:05 Kuwait.`, or `Nothing to write now:
+  3 writes wait behind an older call on their card, or for the next run.`
+  (`detail.counts.waiting`). A queue it cannot count is said, never read as 0.
+- A 429 on a read once a step has started (the read-back after a write that
+  went through) settles the row `unknown`, not `retry`: the write may be on the
+  card. The run still stops for the shared token.
+- One run writes at a time, so `CLICKUP_FORMS_CALLS_PER_MINUTE` is the whole
+  job's pace, not one run's. The kick posts nothing while a forms run that
+  started under 4 minutes ago is open (`A 1-1 notes run that started at 14:05
+  Kuwait is still writing, so no second run was posted.`). A run sent by hand
+  while one is open hands back every row it claimed, its try not counted
+  (`Another 1-1 notes run is still sending, so this one handed back the 3 writes
+  it claimed; the next run takes them.`). A run still open after 4 minutes
+  stopped without reporting back: the next one goes ahead and says `A 1-1 notes
+  run that started at 14:05 Kuwait never reported back, so this one went
+  ahead.`; the database closes the old run at 15 minutes.
+- A card read ClickUp does not answer (a 5xx, a timeout, an unreadable body)
+  before anything was written puts the row on the retry ladder, not `unknown`:
+  nothing reached the card. `unknown` means a write started and may have landed.
+- During the canary the run's note names held rows apart: `1 write held for the
+  other cards.` (the switch keeps them out) and `1 write held for the next run.`
+  (the test card's rows that the 100-second budget or a 429 sent back).
+  `detail.counts.held` is their sum (`heldOff` plus `heldNext`).
+- Each run reports `clickup-writeback:forms` (`detail.mode`, `detail.onlyCards`,
+  `detail.counts`); the claim takes rows only while that mode is live and under
+  15 minutes old. A row the switch keeps out goes back to the queue with
+  `Held: the 1-1 notes writer is off until the switch-over.` or `Held: the 1-1
+  notes writer is open only for the test card.`; nothing is ever saved `dry_run`.
+- Dates move forward only, by the Kuwait day: a newer day on the card stays,
+  and the row is `skipped` with `Last POC stays {D Mon}: it is newer than this
+  call.` (or `Last check-in call stays ...`); the same day is no write. Values are
+  noon Kuwait with `value_options.time false`, read back by the Kuwait day
+  (ClickUp keeps them at 03:00Z or 04:00Z). Client Happiness is written unless
+  the card shows it (Make's rule). A card off Clients - Mahara, or gone, is
+  `failed` with `This card is not on the Clients - Mahara list, so nothing was
+  written.` That sentence holds only for a step that has sent nothing. Once the
+  step has started (a resume, or the read-back after a write) the row is `failed`
+  with `This card is not on the Clients - Mahara list now, and a write may have
+  reached it first, so check it in ClickUp.` A missing field or option follows the
+  same rule.
+- The comment text is never in the queue payload or `progress` (both reach
+  `cockpit_audit_log`): it comes from the effect plan, matches the payload's
+  `commentSha256`, and is frozen in the row's `steps` before the first post.
+
+The forms doctor, by hand (reads only; the secret stays in the vault):
+
+```sql
+select net.http_post(url := 'https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/clickup-writeback',
+  headers := jsonb_build_object('Content-Type','application/json','x-cron-secret',(select decrypted_secret from vault.decrypted_secrets where name='cockpit_sync_secret')),
+  body := '{"job":"forms_doctor"}'::jsonb, timeout_milliseconds := 60000);
+select status_code, left(content::text, 3000) from net._http_response where id = <id>;
+```
+
+It checks the secrets by name, the mode, the six Client Happiness options and
+the two date fields on Clients - Mahara, and the canary card on that list, and
+writes `clickup-writeback:forms-doctor` (`Ready. ...` when all is well).
+
+The 1-1 notes sweep's post, by hand (the kick never reads the post's answer, so
+this is how to see a rejected one; with nothing waiting it reaches no provider):
+
+```sql
+select net.http_post(url := 'https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/cockpit-forms-api',
+  headers := jsonb_build_object('Content-Type','application/json',
+    'x-cron-secret',(select decrypted_secret from vault.decrypted_secrets where name='cockpit_notices_cron_secret'),
+    'Authorization','Bearer '||btrim((select decrypted_secret from vault.decrypted_secrets where name='cockpit_anon_key'))),
+  body := '{"op":"effects.sweep"}'::jsonb, timeout_milliseconds := 30000);
+select status_code, left(content::text, 500) from net._http_response where id = <id>;
+```
+
+A healthy door answers 200 `{"ok":true,"begun":0,"skipped":0}` when nothing
+waits. A sweep begins drafts for at most four rows a run; a row that begins
+nothing (a recording with no Fathom summary yet) uses no slot, so it never holds
+up a later call. `begun` and `skipped` count rows, and `skipped` rows stay
+waiting until their 30 minutes end.
+
+What a CSM reads on the trail is the queue row's `error`, so a row settled
+`unknown` or `failed` carries a plain sentence (`ClickUp did not confirm this
+write.`, `ClickUp refused this write.`, or the card-off-the-list sentence).
+ClickUp's own wording is on the row, `progress->>'lastDetail'`, in the run's
+note (`Last detail: ...`) and in the provider ledger. A row still on
+`retry` keeps ClickUp's wording in `error`: it reaches no effect.
+
+| Symptom | What to do | Who |
+| --- | --- | --- |
+| A 1-1 notes effect reads `Still waiting for the card writer.` for more than 15 minutes, or the guardian's "1-1 notes write bound for ClickUp" warns | `select key, ok, note, detail->>'mode', last_run_at from public.cockpit_sync_state where key like 'clickup-writeback:forms%';`. `dry_run` while the registry owns effects: the switch is off; at the hour set `CLICKUP_WRITEBACK_APPLY_FORMS` (cut-over step 6). A kick note naming the vault: add `cockpit_sync_secret`. A report older than 15 minutes: check `mahara-clickup-writeback-forms` in `cron.job` and the function's log | the tech lead |
+| A `form` row in `unknown` | The write may have reached the card. For the 1-1 notes comment, open the card in ClickUp and search its comments for `Cockpit ref F-` and the first 10 hex characters of the response id (without dashes): the next run finds it by that marker and settles it; once ClickUp has answered a comment with its id the cockpit never posts it again. The Stage 4 comments (`handoff_comment`, `raw_answers_comment`) carry Make's text alone, with no ref: look on the card for the comment that opens with `KICKOFF HANDOFF` or `Raw Onboarding Form Answers`, dated after the step's `startedAt`, and follow the row "A Stage 4 comment did not post or read back" (Wins, cash and the client tail); never post one by hand while its row is `unknown` with no `commentId`. For a field, read the card: the next run reads it back by the Kuwait day before any write | the tech lead |
+| A `form` row `failed` with `Gave up after the retry ladder. An earlier try may have reached the card, so check it in ClickUp.` | Check the card before anything else. Written: leave it (the effect stays failed; the trail says so). Not written and still needed: write it by hand in ClickUp (the comment's text is on the effect, `select plan->>'comment_text' from public.cockpit_form_effects where id = '<payload effectId>';`) | the tech lead |
+| A `form` row `failed` with `Gave up after the retry ladder.` and no check-the-card sentence | ClickUp never answered the card read for the whole ladder, so nothing was sent to the card. Once ClickUp answers again, write it by hand in ClickUp if it is still needed (the comment's text is on the effect, as the row above says) | the tech lead |
+| `The 1-1 notes plan for this write does not match its queue row, so nothing was written. Tell the tech lead.` | The row's card, the payload's and the plan's differ, or the comment no longer matches its fingerprint, or a date is not noon Kuwait of its day. Nothing reached ClickUp. Compare the queue row's `payload` with the effect's `plan` (`source_id` is the effect id) and fix the cause before any requeue | the tech lead |
+| `clickup-writeback:forms` reads not ok with `Stopped: ClickUp refused the cockpit's token (401), so the writes wait and use no try. Check CLICKUP_API_TOKEN.` | The token is wrong or was rotated: ClickUp refused a card and then the read of the Clients - Mahara fields. No row fails and no try is used: each run makes two ClickUp calls, holds the refused row 5 minutes and hands the rest back, so writes wait until the token works. Fix the function secret `CLICKUP_API_TOKEN`, then run the forms doctor: the next run writes them | the tech lead |
+| `clickup-writeback:forms` reads not ok with `Stopped: ClickUp refused a card and did not answer the check on the cockpit's token, so the writes wait and use no try. The next run checks again.` | ClickUp answered 401 on a card, then the read of the Clients - Mahara fields came back with something other than the field list (a 5xx, a timeout, a 403 or 404), so the cockpit cannot tell the token from the card. No try is used. Run the forms doctor: its note names what the field read says. If it stays, read `ClickUp` in the provider ledger | the tech lead |
+| The run's note says `ClickUp refused the cockpit's token on card {id}.`, its row is `retry` with `clickup rejected the request (401)` in `error`, or it is `failed` with `ClickUp refused this card to the cockpit's token, so nothing was written.` | The token is good (it just read the Clients - Mahara fields) and ClickUp refuses this one card, for example `Team not authorized`. Each try uses one rung of the ladder (1, 5, 15, 60, 240 minutes); the sixth claim settles the row `failed`, its effect `failed` with that sentence. Newer calls on the same card wait until then, and then move. To save the row: open the card with the token's user and give that user access; the next try writes it. Once `failed`: write it by hand in ClickUp if it is still needed, as the `Gave up` row says | the tech lead |
+| A `form` row `failed` or `unknown` with `ClickUp refused this write.`, `ClickUp refused the read after this write, so check the card in ClickUp.` or `ClickUp did not confirm this write.` | Read `select error, progress->>'lastDetail', state from public.cockpit_clickup_writeback_queue where id = '<id>';` and the provider ledger for what ClickUp answered. `unknown` retries by itself. `failed`: check the card, then write it by hand in ClickUp if it is still needed, as the `Gave up` row says | the tech lead |
+| A `form` row `failed` with `Gave up after the retry ladder.` after a 429 (`progress->>'lastDetail'` names it) | ClickUp kept asking the cockpit to slow down for the whole ladder, and that run stopped at once. Nothing reached the card. Read `ClickUp calls a minute` in the guardian, lower the busiest job's pace, then write it by hand in ClickUp if it is still needed | the tech lead |
+| A `form` row `failed` with `This card is not on the Clients - Mahara list now, and a write may have reached it first, so check it in ClickUp.`, or the same ending after a missing field or option | The card moved list or was deleted, or its field or option went, after this write had started. Check the card before anything else. Written: leave it (the effect stays failed; the trail says so). Not written and still needed: put the card back or fix the field in ClickUp, then write it by hand. A field or option that went: the tech lead runs the forms doctor. | CSM lead, tech lead |
+| The forms doctor names a missing Client Happiness option or a date field of another type | Someone changed the Clients - Mahara fields in ClickUp. Put the option or the field type back, or the 1-1 notes write fails for that DEFCON; re-read `20261027h` (`cockpit_form_happiness_option`) before changing any id | the systems manager |
+
+## Outside writers of the client card's dates
+
+Three writers set a client card's Last POC and Last Check-in Call, and the
+Hermes agent's sync also sets Next POC. They agree because every one of them
+moves the dates forward only, by the Kuwait day (build 6, Z20):
+
+- The 1-1 notes writer above (from the cut-over), and Log a call in the client
+  success cockpit (`cockpit-csm-api`, which writes the CSM's Kuwait today, date
+  only at noon Kuwait with `value_options.time false` since 2b build 5, read back
+  by the Kuwait day). From the deploy of build 5 (D11) every confirmed date act
+  (Log a call, a touchpoint, a booked date, a report sent, and the booking path)
+  also posts one comment on the card with `notify_all` false and reads it back,
+  the same comment a confirmed happiness or stage act already posts: `Call
+  logged`, `Client:`, `Why:` (the client's to-do) and `Note:` (the CSM's typed
+  note, which the Log a call box says goes on the card). Before build 5 the date
+  read-back failed first, so no date act had ever reached this comment (Z90). A
+  rollback of `cockpit-csm-api` stops new ones and leaves those already posted;
+  remove one by hand in ClickUp if it should not stay.
+  An act that ends `reconcile` with `Comment read-back was not confirmed` has its
+  dates and very likely its comment on the card: open the card in ClickUp before
+  anyone logs it again.
+- **The Next POC sync, kept** (Z20): the Hermes agent's scheduled job `Next POC
+  sync (GHL calendars -> ClickUp)`, job `c4d2cc339448` in
+  `/docker/hermes-agent-ff5p/data/cron/jobs.json`, every 15 minutes. It runs
+  `/docker/hermes-agent-ff5p/data/scripts/alert-next_poc_sync.py` (a wrapper:
+  `job_alert.main('next_poc_sync')`), which runs
+  `/docker/hermes-agent-ff5p/data/scripts/next_poc_sync.sh` (`cd
+  /opt/data/bibi/workspace/next-poc-sync && exec python3 next_poc_sync.py --apply
+  --quiet`). Its log is `sync.log` and its state `state.json` in that folder. It
+  sets Next POC to the earliest upcoming live booking (clearing only its own),
+  Last Check-in Call to the latest past `confirmed` or `showed` check-in on
+  calendar `SHjlq0UjeR11maltYNyh`, and Last POC to the latest past `confirmed` or
+  `showed` call on any client calendar or a passed Next POC day, both forward
+  only; it skips `Stopped` and `CANCELLED ONBOARDING` cards, posts `{value: 12:00
+  UTC of the Kuwait day}`, reads back by the Kuwait day, posts no comment and
+  writes no cockpit ledger. It is the only writer keeping Next POC and Last
+  Check-in Call in step with GoHighLevel; stopping it needs a VPS write.
+- Read-only checks: `ssh hermes@187.77.156.166 'grep -A6 c4d2cc339448
+  /docker/hermes-agent-ff5p/data/cron/jobs.json'` (the job and its last run),
+  `tail -20 /opt/data/bibi/workspace/next-poc-sync/sync.log` (the SET lines name
+  the card and the day), and compare those days with the mirror's `lastPoc` and
+  `lastCall` for the same cards (the second source). Cut-over step 5 re-runs
+  these.
+- **Do not schedule** `csm_evening.sh` or `csm_end_of_day.sh` (in the agent's
+  `data/scripts`): either would add a third Last POC writer that also posts a
+  comment on the card.
+- With check-in auto-confirm on (B6), every booked check-in becomes confirmed,
+  and the Next POC sync counts a passed confirmed check-in as held, so Last
+  Check-in Call and Last POC move for a no-show unless it is marked in
+  GoHighLevel.
+
+| Symptom | What to do | Who |
+| --- | --- | --- |
+| Last POC moved back on a card | None of the three writers moves a date back. Read the card's history in ClickUp for who wrote it, the sync's `sync.log` and the 1-1 notes effect's receipt (`select receipt from public.cockpit_form_effects where effect_key='last_poc' and response_id='<id>';`) | the tech lead |
+| A 1-1 notes date effect reads `Last POC stays {D Mon}: it is newer than this call.` | Expected: a later call (often the Next POC sync's) already set a newer day | nobody |
+
+## Moving a recording
+
+When the worker put a recording on the wrong client, an admin or the CEO moves
+it from the 1-1 notes window's Change sheet: the disabled row reads `On {other}.
+If this is {client}'s call, move it here.` and has a Move it here button (2b
+build 11). The move is the browser RPC `cockpit_csm_move_recording` (migration
+`20261029z`): admins and the CEO only, refused for a recording that carries 1-1
+notes on another client, one `cockpit_csm_match_audit` row and one
+`csm.recording_moved` audit row each time, and the worker keeps a `manual` row,
+so it never moves the recording back. Undo it by moving it again.
+
+- The switch is `cockpit_settings` key `forms.move_recording` (`{"on":false}` at
+  deploy; on at cut-over step 9). Every change of a `forms.%` key writes an audit
+  row by trigger. Read it: `select value, updated_by, updated_at from
+  public.cockpit_settings where key = 'forms.move_recording';`. The window offers
+  the button only when `checkin.calls` read the switch as exactly true for an
+  admin's or the CEO's seat.
+- Turn it off: `update public.cockpit_settings set value = '{"on":false}',
+  updated_by = '<who>', updated_at = now() where key = 'forms.move_recording';`
+
+| Symptom | What to do | Who |
+| --- | --- | --- |
+| An admin sees no Move it here button on a recording on the wrong client | The switch is off, the recording has 1-1 notes, or it is gone or a team meeting. With notes on the wrong client too: tell the tech lead (the move refuses with `That recording has 1-1 notes on {client}. ...`) | an admin |
+| `Moving a recording is not switched on yet.` | The switch is off; it goes on at cut-over step 9 | the tech lead |
+
+## Client messages (hermes/client-messages)
+
+The 1-1 recap to a client's WhatsApp group (`docs/forms/STAGE2B-CONTRACT.md`
+4.3; migration `20261029v_forms_client_messages.sql`; the worker's own
+`hermes/client-messages/RUNBOOK.md` has the doctor, the release, G5 and the
+cron line). The CSM (or an admin, or the CEO) approves the exact text on the
+client's Messages card; `hermes/client-messages` on the VPS is the only
+sender. Built and deployed dark: nothing is sent until both switches are on.
+
+- **Two switches.** The recap's owner in the checkin registry (`shadow` at
+  deploy: the database refuses every approval and every claim with `Make still
+  sends 1-1 recaps until the switch-over, so this one is not sent from here.`)
+  and `CLIENT_MESSAGES_APPLY=true` in `~/.client-messages/switches.env` on the
+  VPS, read only from there (`false` at deploy). `CLIENT_MESSAGES_ONLY_CARDS`
+  limits sending to the canary card during the hour.
+- **Read the state.** `select key, ok, note, detail->>'mode' from
+  public.cockpit_sync_state where key = 'client-messages';` (dry: `Nothing
+  approved to send. Sending is off until the switch-over.`). Messages:
+  `select state, count(*) from public.cockpit_client_messages group by 1;`.
+- **Never twice.** One POST a message, never retried; an answer WhatsApp did
+  not confirm is `unknown` and is never sent again. A later run reconciles it
+  by its fingerprint if it is in the group.
+- **An approval lasts 24 hours**, and the approver must still hold the client
+  when it is claimed; otherwise it returns to a draft with a sentence on the
+  card. The owner gate runs again just before the POST.
+
+| Symptom | What to do | Who |
+| --- | --- | --- |
+| `Recap not confirmed: {client}` on Today (an `unknown` message) | Look in the client's WhatsApp group first. Record what you saw with the call in hermes/client-messages/RUNBOOK.md, Recording what a person saw: not there, p_what not_sent, then the CSM presses Try again on the Messages card; there, p_what seen_in_group. The sender finds a recap sent from the cockpit's number by itself for 24 hours after the claim; after that only a person closes it | the CEO or an admin, then the CSM |
+| `No WhatsApp group on Client Data for this card. ...` | Add the group id to Client Data column F, then Try again on the card | the CSM |
+| `The WhatsApp group on the card differs from Client Data. ...` | Fix the group on Client Data or on the ClickUp card, then Try again | the CSM |
+| `This recap was tried three times and did not go. ...` | Send it by hand in the group if it is still needed, then Skip it on the card | the CSM |
+| `ClickUp will not open card {id} (it answered {status}), ...` or `ClickUp does not accept {id} as a card id, ...` | Check the card still exists and its id on Client Data, then Try again on the card. The recap waits here and the other clients' recaps keep going | the CSM |
+| `ClickUp's card {id} has no readable WhatsApp group field, ...` | Fix the group field on the ClickUp card, then Try again on the card | the CSM |
+| `The send could not be recorded first, so nothing was sent. ...` on the Messages card (a `failed` message) | Nothing reached WhatsApp (the worker could not write its ledger receipt before the POST). Press Try again and approve it again. If it repeats, run the client-messages doctor: the database is not taking the receipts | the CSM, then the tech lead |
+| `This recap is from before the latest switch-over, so it is not sent from here. Press Skip.` on Approve | The registry is native again and this recap's response was sent before the window opened, so neither Make nor the cockpit sends it. Press Skip; send it by hand in the group if the client still needs it. | CSM |
+| `client-messages` reads `The cockpit could not read ... Make scenario 9209179 ...` | Run the doctor. `MAKE_ZONE` in `/opt/data/bibi/api-keys.env` must be a bare zone (`eu2`) or a make.com host, and `MAKE_API_KEY` must read the scenario | the tech lead |
+| `client-messages` reads `Make's recap sender is still on (scenario 9523861). ...` with sending on | Make 07 is on: turn it off in Make (cut-over step 3), or turn `CLIENT_MESSAGES_APPLY` back to `false` | the CEO |
+| `client-messages` reads `Client Data's WA GROUP ID column moved. ...` | The sheet changed: check column F before any recap goes | the tech lead |
+| The guardian's `client-messages-read-back-stopped` warns `{n} sent recaps not read back in 24 h, and the sender has stopped trying; ...` | Past 24 hours nothing reads a recap back. The guardian's `client-messages-read-back-stopped` reports it for a day. Look in the group and record `seen_in_group` if it is there; it is never sent again. The call is in `hermes/client-messages/RUNBOOK.md`, Recording what a person saw | the tech lead |
+| Sending must stop now | `CLIENT_MESSAGES_APPLY=false` in `~/.client-messages/switches.env` (the next minute), or the recap's owner back off `cockpit` | the tech lead or the CEO |
+
+## Kickoff and Blueprint records (forms-door, csm-forms-record)
+
+Since Stage 2b (`docs/forms/STAGE2B-CONTRACT.md` 4.8, Z21) every kickoff
+response and every Brand Blueprint press also has a row in the forms tables
+(`cockpit_form_responses`, `cockpit_form_effects`). These are **records
+only**: kickoff and Blueprint keep their Stage 1 path (Y49), so nothing here
+posts a notice, writes a card or sends a message, and a record never becomes a
+delivery.
+
+- **Two ways in, one row.** `hermes/csm-calls` runs `cockpit_form_record_sweep`
+  after the EODs every 15 minutes (health row `csm-forms-record`), which
+  records every stored `tG7dnxBn` response and every Blueprint press that has
+  none yet. Once B3 is done, `forms-door` also records each kickoff the moment
+  Typeform sends it (signed; `supabase/functions/forms-door/README.md`).
+  Whichever comes first writes the row; the other finds it (`repeat`).
+- **No contact details in the forms tables.** Kickoff's hidden fields carry the
+  client's email and phone. The content stays once, in `cockpit_csm_call_forms`;
+  the response holds a pointer (`{source, formId, token}`) and
+  `hidden = {onboarding_client_id}` only.
+- **Effects from Stage 1's outcome.** A `cockpit`-owned effect is `delivered`
+  when its Stage 1 row was sent (notice `posted`, press `done` or
+  `reconcile`), `skipped` with Stage 1's own reason when it ended unsent, and
+  waits while Stage 1 is still working. A notice in `failed` also waits, until
+  48 hours after the response, because a person can requeue it; then it is
+  `skipped` with Stage 1's reason. 48 hours with no Stage 1 row reads
+  `No Stage 1 notice was made for this kickoff.` (or `... for this press.`).
+  `make` and `shadow` effects are `skipped` at once.
+- **The webhook (B3, deploy D17)** is registered from the server with
+  `scripts/dev/forms_key.py typeform-secret kickoff`, `register-typeform
+  kickoff` and `probe-typeform kickoff`; `forms_key.py status` shows the key
+  (last 4 only), whether it is registered and its last delivery. Only the
+  kickoff form has a cockpit webhook in 2b: any other form exits with
+  `Only the kickoff form has a cockpit webhook in 2b.` Typeform's existing
+  webhook to Make (`WHTP3992232`) is read before and after and never touched.
+
+| Symptom | What to do | Who |
+| --- | --- | --- |
+| `csm-forms-record` red with a 404 on `cockpit_form_record_sweep` | `20261029y_forms_records.sql` is not applied. Apply it (deploy D9) before the csm-calls release; ship nothing that calls it before then | the tech lead |
+| `csm-forms-record` red with `The forms record sweep answered without ...` | The sweep's answer changed shape. Compare it with the contract (3.9) before rerunning; the sweep never sends anything, so a rerun (`run.sh run --apply --only forms`) is safe | the tech lead |
+| `csm-forms-record` ok, but its note ends `{n} rows could not be recorded; the next read tries again.` | The sweep left those rows for its next call; once is nothing to act on, and the row stays ok on purpose (Z15). Still above 0 an hour later: find the row it refuses, read only. Stored kickoffs with no response: `select f.token, f.submitted_at from cockpit_csm_call_forms f join cockpit_forms k on k.key = 'kickoff' and f.form_id = k.typeform_id where not exists (select 1 from cockpit_form_responses r where r.form_key = 'kickoff' and r.external_id = f.token)`. Presses with none: `select o.id, o.kind, o.created_at from cockpit_creative_outbox o where o.kind in ('blueprintLaunch', 'blueprintClose', 'blueprintOffer') and not exists (select 1 from cockpit_form_responses r where r.id = o.id)`. A token that is not 8 to 64 letters and digits is never tried and never counted. If neither list names a row, the refused row is an effect: compare the newest kickoffs and presses with their Stage 1 rows | the tech lead |
+| The guardian's `csm-calls-sync` warns `{n} kickoff or Blueprint rows were not recorded in the forms tables on the last read` | The row above, read from the guardian: nothing was sent and the next read tries again. It clears on the first read with no errors. Still there an hour later: run the row above's two queries. `first error {code}` in the sentence is the SQLSTATE of the first refused row, once the sweep gives one | the tech lead |
+| An effect stays waiting on a kickoff or a press | Stage 1 has not finished it. A `failed` notice counts as waiting: requeue it with `cockpit_slack_notice_fix`, or leave it and it closes itself at 48 hours. Look at the Stage 1 row (`cockpit_slack_notices` by `kickoff:{the response's external_id, its Typeform token}`, `cockpit_creative_outbox` by id); after 48 hours with none the effect closes itself with its sentence | the tech lead |
+| `forms-door` answers 503 | No signing key is saved, or the database did not answer. Before B3 this is expected (the 15-minute read records every kickoff). After B3: run `forms_key.py status`, then `typeform-secret` and `register-typeform` again if the key is gone | the tech lead |
+| `forms-door:kickoff` reads `unsigned` | A request without Typeform's signature, or Typeform holds an older key. Run `forms_key.py probe-typeform kickoff`; if the signed probe passes, run `register-typeform kickoff` again so Typeform has the saved key | the tech lead |
+| `forms-door:kickoff` reads `failed`, `The store refused the response (...)` | The record RPC refused a signed kickoff; Typeform retries it and the 15-minute read records it anyway. Read the code against `cockpit_form_record_typeform` (3.9) | the tech lead |
+| The guardian's `forms-kickoff-webhook` warns `Typeform's webhook missed {n} kickoffs in 24 h; the 15-minute read stored them.` | Nothing is lost. Check the webhook on `tG7dnxBn` (`forms_key.py status`, Typeform's webhook settings) and register it again | the tech lead |
+| Undo B3 | `forms_key.py unregister-typeform kickoff`: deletes the `cockpit` webhook, reads the list back, marks the registration off | the tech lead |
+
+## Late Typeform 1-1 notes
+
+After the switch-over (`cockpit_forms.provider` `native`, cut-over step 7b) the
+1-1 notes are written in the cockpit. A Typeform `fRokTITH` response submitted
+at or after `cockpit_forms.provider_since` is **late**
+(`docs/forms/STAGE2B-CONTRACT.md` 4.9, Z14, Z15):
+
+- The database decides it, whoever writes (`20261029x`): the row is stored with
+  `form_kind 'checkin_late'`, keeps no `linked_call_id`, and stays late even if
+  the registry goes back to Typeform. One `csm.checkin_late` audit row marks
+  it, and a late row on a card gets a `legacy` response in the forms tables
+  with no answers and no effects: it never counts as notes (Z48).
+- `hermes/csm-calls` does the same on its side: a late form places no
+  recording, is linked to no call, gets no call of its own and retires nothing.
+  `csm-checkin-form` **stays ok** and its note ends
+  `{n} 1-1 notes arrived in Typeform after the switch-over (newest {day}).`
+- Nothing reaches the client or the card from a late form: Make is off after B2
+  and the cockpit never acts on Typeform any more.
+
+| Symptom | What to do | Who |
+| --- | --- | --- |
+| The guardian's `csm-checkin-form` warns `{n} 1-1 notes arrived in Typeform after the switch-over, newest {Kuwait time}: {clients}. Re-enter them in the 1-1 notes in the cockpit and check that fRokTITH is closed.` | Open the 1-1 notes in the cockpit for each client named and write the notes there (the Typeform text is in `cockpit_csm_call_forms`, by token). Then check in Typeform that `fRokTITH` is closed and its webhook off (B1) | the CSM; the form: the CEO |
+| A late form with no client in the queue: `1-1 notes sent in Typeform after the switch-over, with no client on the board.` | The person who sent it re-enters the notes in the cockpit on the right client; the queue row only records it | the CSM |
+| An older csm-calls release (the `93bbd2d4` rollback) runs after the switch-over | Safe: the trigger keeps its late forms late and unlinked. It may still write a held call row of its own for one; that row is cosmetic and goes when the current release is back | the tech lead |
+
+## Impromptu calls on Today
+
+Since Stage 2b (`docs/forms/STAGE2B-CONTRACT.md` 4.10, Z17), once the 1-1
+notes are native, Today's after-calls card also lists the CSM's own impromptu
+recordings that have no client yet (`candidate` rows of
+`cockpit_csm_unmatched_list` whose host is her). Each row has **Place it**
+(`cockpit_csm_manual_match`, the same gated and audited move as the queue on a
+client page) and **Not a 1-1 call** (`cockpit_csm_candidate_settle`). Before the
+switch-over the card reads nothing new, and no request for the list is made.
+
+A recording placed on its client and then noted in the 1-1 notes stops being a
+candidate (the attach sets `candidate = false`), so a candidate still standing
+after a day has no notes.
+
+| Symptom | What to do | Who |
+| --- | --- | --- |
+| The guardian's `csm-impromptu-notes` warns `{n} impromptu calls older than a day have no client and no 1-1 notes: {Kuwait days}. Put each on its client and write its notes, or mark it Not a 1-1 call.` | Open Today: each impromptu call has Place it and Not a 1-1 call. Place it, then write its 1-1 notes; or set it aside with its reason | the CSM |
+| `csm-impromptu-notes` reads `Counted from the switch-over to 1-1 notes in the cockpit; not switched yet.` | Expected before cut-over step 7b | nobody |
+| A call was placed on the wrong client | An admin or the CEO moves it with Move it here once `forms.move_recording` is on (RUNBOOK, Moving a recording) | an admin |
+
+## The 1-1 notes cut-over hour
+
+The hour the 1-1 notes leave Typeform and Make for the cockpit is written once,
+step by step with its read-backs, in `docs/forms/STAGE2B-CONTRACT.md` section
+11 (11.1 when, 11.2 the ten steps, 11.3 rollback and kill switches, 11.4 the
+links follow-up, 11.5 Stage 2 done). Run it from there, never from memory.
+Everything Stage 2b added is deployed dark until then: the checkin registry
+reads `typeform` with eight `shadow` effects, `CLICKUP_WRITEBACK_APPLY_FORMS`
+is unset, `CLIENT_MESSAGES_APPLY=false` and `forms.move_recording` is off.
+
+Between steps 7b and 9 the Call grade has no canary, and everyone in the hour
+should expect that. Before step 7b, tell the CSM not to send 1-1 notes until
+step 9: the canary switches hold ClickUp and the recap to the test card,
+but the grade follows the registry on every card, so a send on any other card
+posts its grade in #client-call-feedback. If she has to send, turn Call grade
+off in Settings, Notices and routing, only after 7b, because the cut-over
+function refuses while it is off. Every grade is muted while it is off and never
+posts later, the canary's too, so step 8 of the contract says what to read
+instead. Turn it back on before step 9.
+
+Step 7b runs one thing: `select public.cockpit_form_checkin_cutover();`. Never
+move the registry to native another way: `cockpit_form_registry_apply` with
+`via` `cutover` skips its newest-Typeform and writer checks, and a raw
+`UPDATE cockpit_forms` skips every check and leaves shadow drafts open. Both work
+only from the database owner's SQL, so this line is what stops them there. The
+function refuses, writing nothing, while the 1-1 notes writer last reported
+`apply` and when the newest Typeform notes are off the client roster;
+`1-1 notes dispatch and the registry` says what to do for each. The only direct
+call of `cockpit_form_registry_apply` in the hour is the rollback in 11.3.
+
+Never give a recorder outside Customer Success the csm role (A7.14 rule 1; the CEO's decision is open).
+
+| Symptom | What to do | Who |
+| --- | --- | --- |
+| Someone asks whether the hour can run | `python3 scripts/dev/forms_gates.py` prints G1 to G13, one line each (read only; pass `--confirmed` with G2, G3, G4, G8, G9 or G10 only for what the session note records). The hour runs only when all thirteen read green and the CEO says yes to B1 and B2 in the session's chat | the main session |
+| A gate reads `unknown: the read failed` | The report could not read the database: set `COCKPIT_MANAGEMENT_TOKEN` or pass `--env-file`, or connect Composio's Supabase, and run it again. Never read an unknown as zero | the tech lead |
+| G3 reads `the replay explains n of m to-do comment differences` | Re-run the replay (`cd apps/media-buyer-cockpit && bun scripts/checkin-replay.ts --live --fixture <notes/stage2/fixtures/replay-10.json> --out <notes/stage2/replay>`, read only) and read the unexplained `todo_comment` rows in `replay-report.md` | the tech lead |
+| G6 reads `the native feed has not published for over an hour` | The native feed stopped, so nothing was compared with Typeform and those hours do not count. Read `/home/hermes/.cockpit-native-state/native-cron.log` on the VPS for the read that aborted the cycle and follow `1-1 notes from the store (release N4)` in `hermes/cockpit-sync/RUNBOOK.md`. Once the feed publishes again, G6 reads its day count again: a stopped feed raises `native-source-producer` (after 90 minutes), not `csm-notes-parity`, so it does not restart the 7 days | the tech lead |
+| G6 reads `n of m clients do not read their 1-1 notes from the store` | Those clients' rows were published without the store's reading, so G6 holds whatever the comparison says, because section 10 asks for every client. Wait for the next native feed run, then run the report again. If the count stays, read `/home/hermes/.cockpit-native-state/native-cron.log` on the VPS and check that release N4 is the live native link | the tech lead |
+| G4 reads `waiting on people: the session note confirms D1 to D18 and section 8` | The report sees only the eight migrations and four health rows, not the ship, the functions or the guardian copy. Check the session note holds D1 to D16 and D18 read back, D17 read back or recorded refused, and section 8 green, then run the report again with `--confirmed G4`. Never pass it for a step the note does not hold | the main session |
+| A cut-over step's read-back fails | Stop the hour there and follow `docs/forms/STAGE2B-CONTRACT.md` 11.3 for that step | the main session |
+
+## Requests writer (clickup-writeback job requests)
+
+Every request the team sends from `/requests` (or the CSM client page's Ask a
+team) becomes one ClickUp task per part, built from its SOP: the ClickUp
+template object where the type has one, else its SOP steps as a checklist
+(`docs/requests/CONTRACT.md` sections 2 and 4). Migration
+`20261026r_requests.sql` holds the requests, their parts and the queue
+changes; each part is one `cockpit_clickup_writeback_queue` row of kind
+`request`. A tick, comment or Mark done from a cockpit's focus view is a row of
+kind `task_action` (migration `20261026t`), and every delivered part gets a
+`task_action` row with `op = 'verify'` two minutes later (the owner check).
+
+- pg_cron `mahara-clickup-writeback-requests` runs
+  `cockpit_clickup_requests_kick()` every minute. It posts `{"job":"requests"}`
+  to `clickup-writeback` with `x-cron-secret` from the vault's
+  `cockpit_sync_secret` (the one the log job uses), and notes what it did in
+  `cockpit_sync_state` key `clickup-writeback:requests-kick`.
+- Each run reports its mode in `cockpit_sync_state` key
+  `clickup-writeback:requests` (`detail.mode`: `dry_run`, `apply` or
+  `apply_limited`, and `detail.onlyCards`). The form and the focus view read it:
+  older than 15 minutes means "unknown": every seat may still file, and the
+  request is held (since `20261029p`; before it only editors, admins and the
+  CEO could, and everyone else was sent to the ClickUp request form). When the
+  last report was `apply`, or `apply_limited` with the request's card on the
+  canary list (`cockpit_request_writer_silent`, the test the request's own held
+  note uses), the team is told "The requests writer has not
+  reported in the last 15 minutes. What you send is saved and goes to ClickUp
+  by itself when the writer is back."; editors, admins and the CEO are also
+  asked to check it on the Machine tab. A held request says it goes "once the
+  writer runs again", and the focus view says changes "cannot be sent just now"
+  (review round 3); before requests ever opened it says they are not open yet.
+- Nothing reaches ClickUp unless the function secret
+  `CLICKUP_WRITEBACK_APPLY_REQUESTS` is exactly `true`. The canary
+  `CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS` (comma-separated client card ids, the
+  rehearsal uses the internal test card `86eywg1cq`) narrows it to those cards.
+  The general `CLICKUP_WRITEBACK_APPLY` does not open these kinds and this
+  switch opens nothing else. Pace: `CLICKUP_REQUESTS_CALLS_PER_MINUTE` (25;
+  ClickUp Business allows 100 a minute for the shared token).
+- While the writer is a dry run (or on the canary, off its card), every seat
+  may still file, and the request is held: saved, its rows `queued` and never
+  claimed, said plainly on the form and the request ("Saved, not sent yet. It
+  goes to ClickUp once requests open."). No sentence in the cockpit sends
+  anyone to the ClickUp request form (`20261029p`; form 1178 closes with the
+  move to ClickUp Business, `docs/requests/CLICKUP-DOWNGRADE.md`). It goes on
+  its own on the first run after requests open; on the canary card it goes at
+  once. Nothing is ever saved `dry_run` by this job.
+  During the canary a request that routes an old form ticket goes only when
+  that ticket's own card is a canary card, so the rehearsal never closes a real
+  ticket on All Tasks; any other waits until requests open to everyone.
+- Every ClickUp write ends with its marker: `Cockpit ref R-<10 hex>-<part>` on a
+  request's task (and `-card` on the client card's comment, `-old` on a routed
+  old ticket), `Cockpit ref T-<10 hex>` on a focus view comment. The one
+  exception is the task comment (step `task_comment`, the kickoff handoff on
+  each client onboarding task): it carries Make's text alone and is found again
+  by its id, else by its text ("A Stage 4 comment did not post or read back",
+  Wins, cash and the client tail; contract 4.3 step 8).
+- The guardian's "Request or task change bound for ClickUp queue" warns when a
+  `request` or `task_action` row waits over 15 minutes in `sending`, `retry` or
+  `unknown`, or in `queued` while the writer reports mode `apply`, or one failed
+  in 24 hours. Before requests open, a held request is not stuck: the reading
+  says "{n} held until requests open."
+
+Calling the writer's doctor by hand (reads only; the secret stays in the vault):
+
+```sql
+select net.http_post(url := 'https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/clickup-writeback',
+  headers := jsonb_build_object('Content-Type','application/json','x-cron-secret',(select decrypted_secret from vault.decrypted_secrets where name='cockpit_sync_secret')),
+  body := '{"job":"requests_doctor"}'::jsonb, timeout_milliseconds := 60000);
+select status_code, left(content::text, 3000) from net._http_response where id = <id>;
+```
+
+It checks the secrets by name, the mode, every template a type names, every
+Request Type option and field id, every named owner and each list's done
+status, and writes `cockpit_sync_state` key `clickup-writeback:requests-doctor`.
+
+| Symptom | What to do | Who |
+| --- | --- | --- |
+| A request reads "Sending to ClickUp" for more than a few minutes | `select key, ok, note, last_run_at from public.cockpit_sync_state where key like 'clickup-writeback:requests%';`. A kick note naming the vault: add `cockpit_sync_secret`. A mode older than 15 minutes: the runs stopped; check `mahara-clickup-writeback-requests` in `cron.job` and the function's log | the tech lead |
+| A row in `unknown` | ClickUp may have the task. `unknown` also covers a call ClickUp answered whose receipt could not be saved, a timeout and a dropped answer: only ClickUp's own refusal ("rejected the request (NNN)") fails a step. Open the part's list in ClickUp and search for its `Cockpit ref R-...` (the first 10 hex characters of the request id without dashes, then the part). The writer reads back before any new write, so the next run adopts it by the marker; two matches stay `unknown` with "Two tasks match this request in ClickUp. Keep one and cancel the other.": set one to cancelled in ClickUp (never delete), and the next run adopts the other | the tech lead |
+| A part reads "Checking whether it reached ClickUp" for hours, its note ending "The cockpit checks ClickUp again every 4 hours." | Its create may have reached ClickUp, but the cockpit holds no task for it: the answer was lost or had no id, two tasks match, every match is cancelled, or ClickUp refused or never answered the search. After the retry ladder (about 5 hours) it is never settled `failed` (that would invite a second task); it stays `unknown` and is read every 4 hours, and the guardian names it. Look in ClickUp for its `Cockpit ref R-...`. To read it now: `update public.cockpit_clickup_writeback_queue set next_attempt_at=now() where kind='request' and state='unknown' and source_id='<request id>';`. "Two tasks match this request in ClickUp. Keep one and cancel the other.": set one to cancelled. "Every task that matches this request in ClickUp is cancelled. Reopen the one to keep, and the next run adopts it.": reopen the one to keep in ClickUp. "ClickUp refused the search for this request's task, ...": run the requests doctor (the token's access to that list) | the tech lead |
+| A part in doubt that must be settled by hand | The cockpit refuses to cancel a part in `unknown` (`cockpit_request_cancellable`), and one whose create went out and lost its answer while it waits (`queued` or `retry` with a create on record, or handed back `unknown` while requests are not open; review round 3). Check ClickUp first. The task is there: leave the row; the next read adopts it by its Cockpit ref (keep exactly one open match). No task there and it is still needed: requeue it with a fresh plan (the next row). No task there and it is not needed: settle it, as the service role: `update public.cockpit_clickup_writeback_queue set state='failed', error='Settled by hand: no task in ClickUp.' where kind='request' and state in ('unknown','queued','retry') and source_id='<request id>' and payload->>'part'='<part>' and task_id is null;` (one part at a time; the part, the request and the requester's alert follow; the request can then be cancelled or filed again) | the tech lead |
+| A row in `failed` or `dry_run` to send again | First look in ClickUp for its Cockpit ref: a failed create can still have made the task. With no task there, requeue it with a fresh plan, as the service role: `update public.cockpit_clickup_writeback_queue set state='queued', attempts=0, next_attempt_at=now(), planned=null, steps=null, progress='{}'::jsonb where kind='request' and state in ('failed','dry_run') and source_id='<request id>';` (the part and the request follow). With a task there, leave `progress` as it is so the writer adopts it | the tech lead |
+| A delivered part's note: "ClickUp renamed or removed this type's Request Type option, so the cockpit left Request Type empty. ..." (or the requests doctor: "{key}: ClickUp renamed its Request Type option to ..." / "... is not in ClickUp any more ...") | The task is made; only Request Type stays empty. The option's name on the folder field `e9fd8024-...` no longer matches the type, or the option is gone. Rename it back in ClickUp, or turn Set Request Type off for that type in Requests settings. The doctor checks the options only for types that have it on | the systems manager |
+| Request Type is off for a type that had it on | The 2-minute check found ClickUp moved or renamed the task after Request Type was set (a folder rule fired), so the writer turned it off (audit `request_type.request_type_off`). Only a check that runs on time does this (within 15 minutes of its due time); a later one changes nothing and its part's note ends "This check ran too late to tell a ClickUp rule from a person's change, so the cockpit changed nothing.". To turn it back on: Requests settings, Request types, the type, Set Request Type in ClickUp, Save (a new version). Only after a `[TEST]` ticket on that list shows ClickUp keeps the task where it is. Going back to an older version never turns it on, even one that had it on: the toast says "Request Type stays off." | an editor |
+| A routing request reads "The old ticket was already moved or closed in ClickUp, so no new task was made. Check it there." | While the request waited (held until requests open), the team moved, closed or deleted the old form ticket in ClickUp, so the writer made nothing. Open the old ticket (the request panel links it); file a new request only if the work is still needed. Nothing to clean up | the person who asked |
+| An old form ticket is back in its team's queue with "Back in the queue: ..." in its history | The request that routed it was cancelled, or ended failed (or partly) before its step that closes the old ticket. Route it again with Make it a request (a request filed again routes it by itself). An old ticket handled in ClickUp meanwhile never comes back (next row) | the team, or the systems manager |
+| An old form ticket left its team's queue: "Came in through the old ClickUp form. It was moved or closed in ClickUp, so it needs no routing here." (history "Left All Tasks: moved, closed or deleted in ClickUp") | The team dealt with it in ClickUp: the task mirror shows it on another list or done or closed, or a complete hourly read of All Tasks no longer found it open there (`cockpit_requests.import_left_at`, which also covers a ticket deleted in ClickUp; audit `request.import_left`). It is never routed from the cockpit again, and a routing request that waited for it keeps it routed. If it is reopened on All Tasks, the next complete read clears `import_left_at` (history "Back on All Tasks in ClickUp"). A read cut short changes nothing. `select id, imported_task_id, state, import_left_at from public.cockpit_requests where source='import' and import_left_at is not null;` | nobody |
+| A part reads "A ClickUp rule keeps removing the owner" | A list rule unassigns on create. Assign it in ClickUp, and switch that list rule off (C3) | the systems manager |
+| A seat cannot be assigned or see "Assigned to me" | Its seat is not linked to a ClickUp user: Requests settings, People in ClickUp, pick the user (the hourly seats read links by exact email; a hand link is never overwritten) | an editor |
+| The `[TEST]` rehearsal tickets after the check | Set each to cancelled in ClickUp. Never delete them; the requests stay in the cockpit as the record | the systems manager |
+
+## Kickoff items as requests
+
+After a kickoff, each open item that maps to a request type is one question with equal Yes and No pills
+(`docs/forms/WAVE56-CONTRACT.md` 4.20, migration `20261103d_kickoff_items.sql`; the CEO's CEO-7). Yes raises it in
+one tap through the same `cockpit_request_submit` the ticket form uses, with the type's default due day and priority;
+No is recorded; "Change it first" opens the prefilled ticket form and counts its request for the item. It shows in the
+kickoff sheet after the send, as the first card of the client page's Onboarding tab, and on Today as "Kickoff items to
+decide" (screens: build B7). Only the CEO, or a CSM the client gate lets in for the card, decides; one decision per
+card per item, each with an audit row (`kickoff_item.raised`, `.linked`, `.declined`). The items on are the CEO's
+three: funded card No (`card_missing`), Mahara OS Tech Issue or Didn't Receive Access (`general_tech`), WhatsApp Needs
+Integrating (`whatsapp_connection`). An item is offered while the card is in onboarding or for 14 days after its
+kickoff. Nothing here posts by itself: a Yes is a request like any other, sent by the requests writer.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| An item reads "{type} is turned off in Requests settings, so it cannot be raised here. Ask the systems manager." | Its request type is off. Turn it back on in Requests settings, or, if the item should stop, turn it off (next row). The guardian's `kickoff-items` warns with the same sentence | the systems manager |
+| Turn an item on or off, or stop the feature | Only on the CEO's word. `select public.cockpit_kickoff_items_switch(ARRAY['funded_card','mahara_os','whatsapp_sync'], '<who>');` with the keys to keep on (the others: `training_access`, `facebook_access`, `calendar`, `whatsapp_pending`); `'{}'::text[]` stops every item. The settings trigger writes `forms.switch_set`. Decisions already made stay shown. Always use the switch: the setting fails closed, so a deleted row or a hand-written `{"on": false}` also turns every item off, and the guardian's `kickoff-items` warns "forms.kickoff_items: the setting is missing ..." or "... is not a list of items ..." until the switch sets it | the systems manager, on the CEO's go |
+| Yes says "{type} needs answers the kickoff does not have. Raise it with the form." | Someone added a required question to the type in Requests settings (other than client, details, due day and priority), so Yes cannot fill it. The row offers "Raise it with the form". To bring one tap back, make that question optional | the systems manager |
+| A Yes made a task due tomorrow for the CSM | Expected: `card_missing` and `whatsapp_connection` are owned by the card's CSM, due in 1 working day, high priority, with the overdue alert. If the work is not needed, cancel the request in My requests: the item reopens by itself, and the CSM can then press No | the CSM |
+| A wrong No | "Raise it after all" on the row raises it (audit `kickoff_item.raised` with `again`) | the CSM |
+| "The kickoff's answers are not in the cockpit, so its open items cannot show here." | The card holds a kickoff without its answers (an old pointer row). The items are in the card's Kickoff Handoff comment: raise any by the ticket form | the CSM |
+| "This client is not on the cockpit's client list yet, so a request cannot be raised for it here." | The card has no onboarding row, so the requests refuse it. Raise it in ClickUp; a No can still be recorded | the CSM |
+| The guardian's `kickoff-items` warns or fails | It prints the doctor's sentences: a type missing, off or asking more than the kickoff has, or an option the kickoff no longer asks (a kickoff redesign renamed it; update the item catalogue in a migration on a branch). A fail means Yes can no longer reach `cockpit_request_submit` (its 8 arguments or the `client_page` source changed): every Yes fails until `20261103d`'s functions are fixed on a branch. A fail with "The kickoff items doctor could not run: ..." means a function or column the doctor calls changed or is gone (a 42883 or 42703, for example after a later migration changed `cockpit_form_stage4_fields`): the five browser calls likely fail the same way; fix `20261103d`'s functions on a branch. Read it: `select report from public.cockpit_kickoff_items_doctor_v;` (service role) | the systems manager; the tech lead for a fail |
+| Roll it back | Stop the feature: `select public.cockpit_kickoff_items_switch('{}'::text[], '<who>');` (no item is offered; decisions stay shown). To take the screens' calls away too, drop the five browser functions (`cockpit_kickoff_items_read`, `cockpit_kickoff_item_raise`, `cockpit_kickoff_item_link`, `cockpit_kickoff_item_decline`, `cockpit_kickoff_items_due`) in one transaction with `NOTIFY pgrst, 'reload schema'`: PostgREST then answers PGRST202 and the screens say "Kickoff items open after the next cockpit update." The table and its rows stay, and requests already raised stay requests | the tech lead |
+
+## Task mirror and alerts (cockpit-tasks)
+
+"Your tasks" on every Today, the alerts bell in every cockpit and the focus
+view read one mirror of ClickUp (`docs/requests/CONTRACT.md` sections 3 and 5,
+migration `20261026t_task_alerts.sql`, `supabase/functions/cockpit-tasks`).
+
+- `cockpit_task_mirror`: one row per ClickUp task a read has seen. It is a
+  cache; one audit row per run (`task_mirror.run`), never one per task.
+- pg_cron `mahara-task-mirror` (every 2 minutes) and
+  `mahara-task-mirror-seats` (hourly at :11) run
+  `cockpit_task_mirror_kick('delta')` and `('seats')`. They post to
+  `cockpit-tasks` (JWT check off) with `x-cron-secret` from the vault's
+  `cockpit_tasks_cron_secret`, the same value as the function secret
+  `TASKS_CRON_SECRET`, and note what they did in `cockpit_sync_state` key
+  `task-mirror:kick`.
+- The delta reads the workspace's changed tasks since `task-mirror:delta`'s
+  `detail.cursorMs` (less 10 minutes), the new comments on up to 40 of them,
+  and makes the daily due and overdue alerts. The seats read takes the
+  workspace members (seats link by exact email), the request fields and
+  templates, every linked seat's open tasks in full, and the old ClickUp
+  form's tickets on All Tasks (imported as unrouted requests).
+- No alert before the baseline: `task-mirror:seats`'s `detail.baselinedAt`,
+  set once by the first seats run that read every linked seat. Assignment and
+  status alerts come from every read (delta, seats, focus view) through one
+  shared check of what ClickUp itself changed, and a task new to the mirror
+  alerts a seat only when it changed after that seat was linked, so linking a
+  seat never floods its bell. Alerts never go to the person who caused them
+  when that is known, and never for a client card itself except a mention; a
+  card's real subtasks alert, show on Your tasks and take a tick, a comment and
+  Mark done like any task.
+- Every ClickUp call is a GET receipted in `cockpit_media_provider_health`
+  under the run's `action_id`. Nothing here posts to Slack: new assignments
+  already post in the team channels through `hermes/task-assignment-alerts`.
+- Each seat's alert kinds and shift are on Requests settings, Alerts (its own;
+  editors may pick any seat). The shift (from the seat's schedule on Team &
+  payroll, set there, or 10:00 to 18:00 Sunday to Thursday) decides when the
+  daily "due today" and overdue alerts appear. A failed request always alerts.
+
+Calling it by hand, as the writer's doctor above, with url
+`.../functions/v1/cockpit-tasks`, the vault secret `cockpit_tasks_cron_secret`
+and body `{"job":"doctor"}` (or `{"job":"delta"}` / `{"job":"seats"}`, which
+answer 202 and run in the background).
+
+| Symptom | What to do | Who |
+| --- | --- | --- |
+| "Your seat is not linked to a ClickUp user" | That seat has no ClickUp user by email. Requests settings, People in ClickUp: pick the user, or Clear to say it has none. A hand link starts a seats read at once (`cockpit_task_mirror_kick('seats')` from `cockpit_member_clickup_set`; review round 3), so the seat's older open tasks show within a few minutes, not at the next :11; `task-mirror:kick` notes the post. Clear shows on every row with a link or a match result; to move a ClickUp user to another seat, first Clear the seat that holds it (an email match too), because one ClickUp user is linked to one active seat. No editor links their own seat (the CEO may) | an editor |
+| "Your seat has no ClickUp user, so no ClickUp tasks show here." (or "... so only request alerts show here.", "... so you cannot tick, comment or mark done here.") | An editor cleared the seat's link on purpose (People in ClickUp, Clear), so nobody is asked to link it. To give it a ClickUp user later, pick one for that seat in People in ClickUp | an editor |
+| "Task updates are late. Last read at 14:02." | `task-mirror:delta` has not succeeded in 10 minutes. `select key, ok, note, last_run_at, last_ok_at, detail from public.cockpit_sync_state where key like 'task-mirror%';`. A kick note naming the vault: add `cockpit_tasks_cron_secret`. "CLICKUP_API_TOKEN is not set": set the function secret. "More than 1,000 tasks changed in one read": the next run goes on; nothing to do unless it repeats. Otherwise run the doctor | the tech lead |
+| "Your tasks could not be read just now" | The database call itself failed for that seat. Try again; if it repeats, the read functions are missing (apply `20261026t`) or the seat is inactive | the tech lead |
+| No alerts at all after going live | `task-mirror:seats` has no `baselinedAt` yet: a seats run has not read every linked seat (its note names the seats it missed). Fix that seat's link or wait for the next run | the tech lead |
+| A task someone left still shows on their card | The hourly seats read takes them off any task ClickUp no longer lists for them; until then the delta keeps what ClickUp last said | nobody |
+| A focus view press stays "Waiting for ClickUp to confirm." | The writer is off or late (the Requests writer section above); the press is a `task_action` row with `dedupe_key 'task:<action id>'` | the tech lead |
+| The focus view says "Changes from the cockpit cannot be sent just now: the requests writer has not reported in the last 15 minutes." (or the form: "Requests cannot be sent just now: ...") | The writer last reported `apply` and then stopped: read `clickup-writeback:requests` and `clickup-writeback:requests-kick` as in the Requests writer section, and the function's log | the tech lead |
+| Mark done on a client card's subtask fails with "Clients - Mahara has no done status in ClickUp. Mark it done there." | The writer sets the list's status of type done, and Clients - Mahara has none. Add one to that list in ClickUp, or mark the subtask done in ClickUp | the systems manager |
+| The focus view has no Mark done: "Mark done is not offered on Video Pipeline ..." or "... on WhatsApp Reconnection ..." | On purpose: done on Video Pipeline means the video is live, and a status change on WhatsApp Reconnection messages the client. A tick and a comment still work there; move the task in ClickUp | nobody |
+| A comment is refused: "Leave out the words "Cockpit ref". The cockpit adds its own to every comment." | The cockpit names a comment's writer from the marker that ends it, so typed markers are refused. Reword the comment | the person commenting |
+| The guardian's "task-mirror:delta" or "task-mirror:seats" in Cockpit jobs | Late (10 minutes for the delta, 90 for the seats read) or `ok` false: read the note as above | the tech lead |
+
+To stop the mirror:
+`select cron.unschedule(jobid) from cron.job where jobname in ('mahara-task-mirror','mahara-task-mirror-seats');`.
+The cards then say the updates are late; nothing is lost, and the next run
+after they start again reads from the cursor.
+
 ## Sales cockpit
 
 cockpit.maharamedia.com/sales/, for the setters and closers (plan:
@@ -704,7 +1810,7 @@ copy run and the writer's status.
 | Saves or the queue feel slow again | The cockpit asks Supabase to run sales-api beside the database with the header `x-region: eu-west-1` (a save ~0.5 s, the queue ~0.5 s; without it 2â€“3 s). Check `src/lib/api.ts` still sends it and the function's CORS still allows it | Hermes |
 | "Maqsam may still be placing the last call to this lead" | A call Maqsam did not confirm (a timeout or server error, not a refusal) keeps that lead from being called again for two minutes, so a delayed call cannot ring them twice. Check the softphone; the outcome can be saved meanwhile | The rep |
 | A lead who called us is at the top of the queue | Their call went unanswered (Maqsam's "abandoned"): called first within ten minutes, today's work until someone calls them back; it also reopens a closed lead | The rep |
-| Give someone a sales seat without the Admin page | In `apps/media-buyer-cockpit`: `bunx convex run --prod portal:grantSalesSeat '{"email":"â€¦","name":"â€¦","salesRole":"setter"}'` (setter, closer, both or manager). It adds the Sales cockpit to what they already have; then link the seat on the Team page (HighLevel user, Arabic name, pay) | Aziz or Claude |
+| Give someone a sales seat without the Admin page | As an admin or the CEO, call `cockpit_admin_upsert_member(p_email, p_name, p_roles, p_clients, p_sales_role)` with `sales` in the roles and setter, closer, both or manager (20261104a). It writes the member, the seat and the audit rows; then link the seat on the Team page (HighLevel user, Arabic name, pay). A seat with no HighLevel user sees no lead as its own until it is linked | Aziz or Claude |
 | A setter's deal says "Waiting on a manager" | Setter pay counts a deal once it fully closed: paid in full at signing, or a manager presses Fully closed on the setter's pay card (Numbers, their view) once the client paid past the onboarding fee. Not fully closed is the onboarding fee and then nothing (`cockpit_sales_deal_status`, audited) | Aziz |
 | A setter cannot see a lead in the queue | Another working rep owns it: HighLevel's owner is set to the setter who booked the intro, and to the closer from the demo. A manager sees every lead; pausing a seat hands its leads back to the queue | Aziz |
 | A stage move failed with "duplicate opportunity" | Fixed on 2026-09-27: a new lead's opportunity is read from HighLevel before moving. A row in `cockpit_sales_stage_moves` still failing names HighLevel's own reason | Hermes |
@@ -1068,6 +2174,135 @@ Going live (the lead session; contract `MONEY-ATTRIBUTION.md` section 4):
    transactions. Then set `money_ties.state` to `deployed` in
    `docs/preserve/supabase-manifest.json` and run
    `scripts/verify-preserved.py --via composio --problems`.
+
+## Forms and billing rails (waves 1 and 2)
+
+The CSM's money acts and the churn confirm (`docs/forms/WAVE12-CONTRACT.md`):
+"Give more time", Pause and Resume, "Client is leaving", Set MRR, the billing
+sheet's Extend, and the checked-money rule for hand-logged payments. Each act
+is one gated SQL function that saves the record, inserts a billing event and
+queues a notice; the event's trigger queues a ClickUp card write (kind
+`billing`). Card writes for money open kind by kind behind
+`CLICKUP_WRITEBACK_APPLY_BILLING`, `CLICKUP_WRITEBACK_BILLING_KINDS` and
+`CLICKUP_WRITEBACK_BILLING_ONLY_CARDS` (Edge Function secrets of
+`clickup-writeback`); the general `CLICKUP_WRITEBACK_APPLY` never opens them.
+A billing item written while its kind is closed lands `dry_run`, and
+`dry_run` is final for the claim: opening a kind sends nothing already held,
+so every opening runs the held-edit review below. The guardian's
+`forms_billing` checks (billing-writeback, billing-doctor, billing-daily,
+forms-door-exit, notice-unmatched, register-vs-card, extension-vs-card,
+mrr-differs, checks-waiting) report; nothing here is fixed by them.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| Turn a billing kind on | 1. Add the kind to `CLICKUP_WRITEBACK_BILLING_KINDS` with `CLICKUP_WRITEBACK_BILLING_ONLY_CARDS=86eywg1cq` (the test card) and `CLICKUP_WRITEBACK_APPLY_BILLING=true`. 2. `select public.cockpit_billing_canary('<kind>', '{...}')` through Composio; the item reads `delivered` and the card reads every field back; read the card again 10 minutes later (a ClickUp automation can overwrite a date after the read-back). 3. The held-edit review: list the kind's held items (`select id, source_id, task_id, created_at, payload->>'kind' from public.cockpit_clickup_writeback_queue where kind = 'billing' and state = 'dry_run' and payload->>'kind' = '<kind>'`), read each card, then for each item `select public.cockpit_billing_held_release(<event id>, '<how>', '<reason>', '<actor>')` with `replan` when the card is unchanged since the event, `fresh` when it changed since (a new event dated now, so the stale check does not skip it), `close` when the edit no longer applies but stays a record (an extension that already ended), or `void` when it should never have been made. 4. Clear `CLICKUP_WRITEBACK_BILLING_ONLY_CARDS`. `clickup-writeback:billing` then reads the kind open and `heldOpenKind` 0. | Systems manager, on the CEO's go |
+| billing-writeback: "N held edits of an open kind wait for the review" | Run step 3 of the row above for each item it names. Never re-send blindly: read the card first. | Systems manager |
+| A billing write failed (billing-writeback fails: an item retrying, unknown or failed for over 30 minutes) | Read the queue row's `error` and the card on ClickUp. Re-queue only after reading back what the card shows now: a field that already reads the new value needs nothing; a field ClickUp refused (a missing option, a renamed field) is fixed on Clients - Mahara first, then `billing_doctor` is run once and the item re-planned. | Systems manager |
+| billing-doctor names a gap ("The will-not-continue checkbox (9cfdb353) is not on Clients - Mahara", a Churn Reason option missing) | Add or fix the field or option on Clients - Mahara, then post `{"job":"billing_doctor"}` to `clickup-writeback` once. A missing Churn Reason option skips only that step; the rest of the churn write still runs. | Systems manager |
+| Undo a churn confirm | The CEO removes the departure on the churn tracker (Remove, with a reason; the row is kept as removed). If the client is staying, a CSM presses Resume on the client page: the card returns to Active and the pause dates clear. The card's Churn Date, Churn Reason and Churn Type stay as history; the next confirm writes over them. | CEO, then the CSM |
+| Void a held billing edit | `cockpit_billing_event_void(<event id>, '<reason>')` (the CEO or finance; from the cockpit or Composio). It closes the event's unsent item (`skipped`, "Voided in the cockpit: ...") and leaves the event out of `cockpit_extensions_v`. A delivered item cannot be voided: "The card already shows this change; make a new edit instead." | CEO, finance |
+| Check a hand-logged payment | Money tab, Checks waiting (or the billing page): Check opens the bank reference or the statement line; Reject asks for the reason. A logged payment is not in cash collected, LTV, the deal ledger or pay until checked; the CEO's own add with a bank reference lands checked. checks-waiting warns after 7 days. The client-income statement for the month is uploaded by the 3rd so transfers can be checked against a line. | Finance, CEO |
+| Pay shows "Cash not checked yet" on a commission line | A hand-logged payment behind that line's deal is still `logged`. Check it on the Money tab; after the next money refresh the line counts and the person can be approved. | CEO, finance |
+| The exit-survey and pause-request webhooks (forms-door-exit) | On the VPS: `python3 scripts/dev/forms_key.py status`; `probe-typeform exit_survey` (or `pause_request`) answers 401 unsigned, then 200 signed; `unregister-typeform <form>` removes only the cockpit's webhook and reads every other webhook before and after. A quiet form for 21 days is normal (the warning says so); a failed last delivery is not. | Systems manager |
+| notice-unmatched: "A termination survey from ... is not matched to a card" | The survey had no card id in its hidden field. A CSM opens the churn tracker, Termination surveys not matched to a card, and presses Pick the card (a CSM can pick only their own clients). Never guess a client by name. | CSM |
+| register-vs-card or extension-vs-card warns | Read the card. If a ClickUp automation moved Client Status or the Churn Date after the read-back, the person who owns ClickUp automations turns that automation off; the cockpit never edits automations. For an extension, read the grant's billing queue item first: a held item (`dry_run`) explains a card that never got the weeks. | Systems manager |
+| Change the overdue steps | CEO Billing tab, Overdue steps: the pause review day and the cancel review day (1 to 60, pause before cancel), Save → Saved. The cadence ("{n} days past due, pause review"), Reviews due on Today and the billing agent read the same setting (`cockpit_settings` `billing.ladder`). No step ever changes a card or opens a ticket by itself: each review row has its own ticket button. | CEO |
+| Turn the daily billing step off | `update public.cockpit_settings set value = jsonb_set(value, '{on}', 'false') where key = 'billing.daily'` through Composio (the change is audited). The cron `mahara-billing-daily` keeps running and writes `billing-daily` "off"; ended extensions stay on the card until it is on again. | Systems manager |
+| Roll back a migration with screens on it (`20261101n`, `o` or `p`) | In one step: restore the saved function bodies (`notes/forms-w12/deploy/before-<name>.sql`), flip that migration's marker in `cockpit_settings` `forms.doors` to false (`checks`, `churn` or `money`; a restored old function still exists, so the marker is what hides the door), and `vercel rollback` both apps (client-success and media-buyer) to the deployment recorded before D-S1. Read back `cockpit_form_doors()`: the rolled-back door reads false and its place says "Opens after the next cockpit update." Columns and rows stay; nothing is deleted. | Systems manager |
+| Roll back `20261101q` (the readers) | Restore `cockpit_ceo_goal_sheet_context` from its saved body; the goal sheet and lock-in then read as before (no lifecycle lines, no "Logged, not checked"). The November `actual_source` values may stay (a typed target ignores them) or be set back to NULL in a dated corrective migration. Release the previous cockpit-sync, ceo-refresh and csm-calls if they were released with it; csm-calls must not run on a database without the widened `cockpit_csm_call_forms` CHECKs. | Systems manager |
+| The CEO's Client success card reads "The billing sheet writes the extension to the card." where the button was | Expected since waves 1 and 2: the billing queue is the one writer of the card's Current extension (weeks). `ceo-extensions-sync` answers "Retired: the billing sheet writes the extension field." until `mahara-ceo-extensions-auto` is unscheduled in the C1 window. | Nobody |
+
+## Client forms (waves 3 and 4)
+
+The client's own forms (`docs/forms/WAVE34-CONTRACT.md`): the pause consent, the exit survey, NPS and the onboarding
+survey (CSAT), sent to a client's Mahara OS portal first and by a WhatsApp link second (`https://portal.maharamedia.com/f#<token>`),
+answered once, stored in `cockpit_form_responses`. Every form is off for clients until it is in `cockpit_settings`
+`forms.client.live`; the automatic schedule is off until `forms.schedule.on`. Answers queue notices (`nps.received`,
+`csat.received`, `voice.low`, `feedback.received`, `legacy.received`) and never write a card field except NPS Survey Sent
+(billing kind `nps_sent`) and the exit survey's card comment (kind `survey`), both behind `CLICKUP_WRITEBACK_BILLING_KINDS`.
+**NPS and CSAT go live only after the CEO invites the Slack bot to #nps-survey-feedback (D-C5 waits for it)**: until the
+channel row reads `ok`, those notices settle "Not posted: the bot is not in #nps-survey-feedback". The guardian's
+`client_forms` checks (form-schedule, invites-expiry, invite-push, invite-links, token-limits, presence, voice-count,
+low-score-open, hook-failed, legacy-24h, onboarding-webhook, forms-door-make) report; nothing here is fixed by them.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| Turn a client form on or off | Canary first, on the test card only: `select public.cockpit_form_invite_canary('<form>', '<context>'::jsonb)` through Composio, open the URL it answers once, answer it, read back the response (`mode = 'shadow'`) and its muted notices, then void any canary billing event by record. Then `select public.cockpit_form_client_go_live('<form>', true, '<who>')`. Going off (`false`) withdraws every open invite of that form with "Form switched off" and skips its unsent WhatsApp drafts; answers already stored stay. The registry row's Typeform id is kept, so an answer through the old link is still stored (as legacy, with "Old form link used"). | Systems manager, on the CEO's go |
+| Send a form link by WhatsApp | The CSM picks WhatsApp in Send a form; the message waits as a draft until a CSM presses Approve and send (the schedule never approves). The `hermes/client-messages` worker sends it only while `CLIENT_MESSAGES_KINDS` lists `form_invite`, mints the link at send and never stores or logs it (group read-backs mask it to `{form_link}`). An `unknown` means the message may already be in the group: look in the group before anything else; the tech lead settles it. | CSM, tech lead |
+| A client says the link does not work | The link page says why: ended (14 days), already sent, withdrawn, or too many tries (wait a minute). For any of these, open the client, then Forms out, then Send again (it withdraws the old one with "Sent again" and sends a new link). Never read a token from anywhere: the database keeps only its hash. | CSM |
+| Turn the schedule on or off | Dry plan first: `select public.cockpit_form_schedule_run(now(), false)` lists who would get NPS (day 60 after the first launch, then every 90 days) and the onboarding survey (after launch, within 60 days), 3 of each a day, oldest launch first, one form per client a day. Then `update public.cockpit_settings set value = jsonb_set(value, '{on}', 'true') where key = 'forms.schedule'` (audited). Off: the same with `false`; the 07:00 UTC run (`mahara-form-schedule`) then only sweeps (expires invites, withdraws those of clients no longer Active or leaving) and writes `form-schedule` "The schedule is off." | Systems manager |
+| Why did NPS (or the onboarding survey) not go to {client} | `select detail, note from public.cockpit_sync_state where key = 'form-schedule'`: `skipped` counts each reason. `notActive` (Client Status is not Active), `leaving` (an open departure: send the exit survey instead), `noLaunch` (no Launch Date in the daily snapshots), `open` (an invite is already out), `tooSoon` (before day 60, within 90 days of the last NPS invite of any origin, a manual send included, or within 7 days of the last onboarding try), `filled` (already answered the onboarding survey), `tooOld` (launched more than 60 days ago), `waitingForWhatsAppDay` (no portal visit in 14 days: the first try waits to day 3 to go with the WhatsApp link), `noPortal` (no workspace: one WhatsApp link only), `withdrawnBySeat` (a CSM withdrew one: never again), `triesUsed` (4 tries), `cap` (3 a day), `oneFormToday`, `notLive`, `formOff`, `ruleNotSet` (a rule key is missing: the note names it; set it in the forms editor). The CSM can always send it by hand from Send a form. | CSM, systems manager |
+| Low score (low-score-open warns) | A score at or under `voice.low_score.max` (6) on NPS or the onboarding survey puts "Low score: call {client}" on the CSM's Today and posts in #csm-general. The CSM calls the client that day and presses Open the low-score ticket (request type `client_low_score`, added at D-R2; until then open Tickets and pick Client low score). One ticket raised after the answer covers every earlier low score of that client. | CSM |
+| Presence looks wrong (presence warns, or Send a form picks the wrong channel) | The portal's 5-minute cron pushes counts of client sessions per workspace (`portal_form_presence_put`) once `forms.client.presence` is true; read the cron's `form_presence` log line. Before D-PR every form defaults to portal and WhatsApp, which is safe. Off again: set `presence` false; the Send panel says it cannot see portal visits. | Tech lead |
+| The onboarding webhook (onboarding-webhook, forms-door-make) | On the VPS: `forms_key.py status`; `probe-typeform onboarding` answers 401 unsigned, then 200 signed; `unregister-typeform onboarding` removes only the cockpit webhook, reading every other webhook before and after. Make keeps every effect of the onboarding form; the webhook only records the answer and fills `cockpit_client_onboarding.forms.onboarding` when it is empty or older. The 10-minute onboarding read keeps the read model whatever the webhook does. | Systems manager |
+| The New Client Form webhook | Records only (`cockpit_form_record_make`, no notice, no card). `forms_key.py probe-typeform new_client`; `unregister-typeform new_client`. **Never submit the New Client Form to test anything**: Make, HighLevel, Cortana and the B2B all act on every submission. Backfill: `forms_legacy_backfill.py new_client --dry`, then without. | Systems manager |
+| Undo a published form version | Forms editor, the form, Go back to version {n}: it publishes that version's schema as a new version. Open invites keep the version they were sent with. | Admin, CEO |
+| A client answer's follow-up step failed (hook-failed warns) | The answer is stored and its invite closed; a step after it (a notice, the NPS Survey Sent event) raised. `select invite_id, detail from public.cockpit_form_invite_events where event = 'hook_failed' order by at desc` names the hook and the SQL state, never the answer. Fix the cause, then as the owner through Composio `select public.cockpit_form_client_submitted('<response id>')`: each hook's dedupe keys (`nps:`, `csat:`, `low:`, `feedback:` plus the response id) stop a second notice. | Tech lead |
+| The portal's Share feedback did not reach the cockpit | Expected until D-FB: `portal_feedback_record` answers `not_live` and the portal keeps its own copy. After D-FB each feedback is one `portal_feedback` response (`feedback:<id>`, so a retry stores once) and a `feedback.received` notice. Its 1-5 rating never enters NPS. | Tech lead |
+| The CEO's NPS reads "No scores yet" or "Client voice could not be read" | No scores yet: nobody answered in that timeframe (never 0). Could not be read: the CEO refresh's read of `cockpit_client_voice_v` failed; check that `supabase_read_only_user` can select it (20261102c grants it) and the refresh log. A note "Cards with an answered invite x, cards with an answer n" means the two sources disagree; voice-count names it. | Systems manager |
+| Roll back a migration with screens on it (`20261102a` to `d`) | In one step: restore the saved function bodies (`notes/forms-w34/deploy/before-<name>.sql`), flip that migration's marker in `cockpit_settings` `forms.doors` to false (`invites`, `lifecycle`, `voice` or `editor`), and `vercel rollback` both apps to the deployment recorded before D-S1. **For `20261102b` (D-B1)** also set the `pause_consent` registry row to `provider = 'typeform'`, `typeform_id = 'CTUjv6l3'` in the same transaction: the restored live `cockpit_billing_write` refuses every client-request pause while a native `pause_consent` row exists. **For `20261102c`** also unschedule `mahara-form-schedule` (`select cron.unschedule('mahara-form-schedule')`) and release the previous `ceo-refresh` and `csm-calls` (both read what `c` adds). Read back `cockpit_form_doors()`: the rolled-back door reads false and says "Opens after the next cockpit update." Tables, columns and rows stay; nothing is deleted. | Systems manager |
+
+## Sale ties (the New Client Form on its card)
+
+Every New Client Form (the sale) tied to its client card by an exact phone or email, never a name
+(`docs/forms/WAVE56-CONTRACT.md` 4.19, migration `20261103g`). The door (`forms-door`) opens each sale's row with the
+two typed keys' digests; the onboarding sync offers new cards' own Phone Number and Email and sweeps every 10 minutes;
+a person ties the rest under "Sales not on a card". Switches: `cockpit_settings` `forms.sale_tie` `{on, fill,
+salesLink}` (all false at deploy; every change audited). Phones and emails are kept only as digests under the vault's
+`cockpit_sale_tie_pepper`: no screen, count, log or audit row shows one. The guardian's `sale-ties` check reports;
+billing's money tie is never changed by any of this.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| See where every sale stands, before turning ties on | Through the cron secret: `{"job":"saleTies","dryRun":true}` to `onboarding-sync` (dry unless `dryRun` is `false`). Counts only: tied by phone, email or both, which card key matched, ambiguous, conflict, unmatched, void, billing agree or disagree, who would get the card fields, and how many cards carry their own Phone Number and Email. It writes nothing | Systems manager; the CEO reads the counts |
+| Turn ties on, or off | On: `update public.cockpit_settings set value = value \|\| '{"on":true}', updated_by = '<who>' where key = 'forms.sale_tie'` (owner SQL; the trigger writes the audit row), then the job with `"dryRun":false` at once: a sync run in between ties from the onboarding answers alone, and the job settles those ties with every card's own Phone Number, Email and creation time (it re-checks the system's ties that have no card notes planned yet). Off: the same with `false`: ties stop at once; rows already made stay (append-only) and the stored sales keep their card | Systems manager, on the CEO's go |
+| Fill the go-live and handoff notes on the cards | Only after ties are on and B2's gate (`20261103c`) and B1's writer are live (before B2's gate nothing is planned, and the `sale-ties` health row ends "Card notes wait for the forms gate that passes them (20261103c), so none were planned."; a card billing-sync has not listed yet waits for its listing), and **in one step**: `fill` (and `salesLink`) true, and `new_client` added to `CLICKUP_WRITEBACK_FORMS_KEYS` with `CLICKUP_WRITEBACK_FORMS_ONLY_CARDS` set to one in-onboarding card. A `sale_facts` row the writer holds keeps every later form row on its card waiting, so never leave `fill` on with the lane off. The next sweep plans every tie (newest sale per card on the books); read back both fields on the canary card, then remove the only-cards limit. Writes only where the card is empty; never the Closer, Closer Notes, Daily Budget, Country, Email or Phone Number | Systems manager, on the CEO's go |
+| `sale-ties` warns: a delivered sale has no tie row | The door's call failed or was not deployed. While `on`, the next sweep opens the row from what the cockpit stores (B2B's email); while off, deploy `forms-door` from main and read `forms-door:new_client` `detail.tie` | Systems manager |
+| `sale-ties` warns: the door could not open a tie (`detail.tie = 'failed'`) | Read the function log for the code (never a value). The sale is stored; the next sweep opens its row while `on` (while off, deploy `forms-door` and let the next delivery open it). The check warns only while a delivered sale still has no row; the mark itself clears at the next successful delivery | Systems manager |
+| `sale-ties` warns: a sale has waited over 2 hours for its card | The sync has not seen Make's card (a card the sync keeps is a candidate before billing-sync lists it, so billing's overnight gap is not the cause): check `onboarding-sync`'s last run (`cockpit_sync_state onboarding-sync`), that Make's card carries the sale's Phone Number or Email, and Make 10's run for that sale. After 2 days it becomes "unmatched" and goes to a person | Systems manager |
+| `sale-ties` warns: a sale has waited over 3 days for a person | Open the CSM page's "Sales not on a card": **Yes, tie it** (the suggestion), **Another card** (pick), or **Not a client card** (with a reason). A CSM sees only their own clients; the CEO sees all | The CEO, or the client's CSM |
+| A sale is on the wrong card | The CEO picks the right card under "Sales not on a card" (a CSM cannot move a tie whose notes are planned or on a card). A write that has not started is taken back in the same step (queue row and effect `skipped`, audit `factsTakenBack`): nothing reaches the first card. While the write is sending or unknown the move is refused; try again once it settles. If the notes were already written, the audit row names the first card (`factsOnCard`): clear those two fields there by hand. Either way the cockpit writes a sale's notes once, so when the answer carries `handFill`, fill Go-live expectation and Handoff problems on the new card by hand if they are empty | The CEO; the systems manager for the hand fill |
+| `sale-ties` warns: B2B has a sale the cockpit does not store | The New Client Form webhook missed it: `forms_key.py probe-typeform new_client`, then `python3 - new_client --dry < scripts/dev/forms_legacy_backfill.py` on the VPS, then without `--dry` (records it and opens its tie; nothing here submits the form) | Systems manager |
+| Billing ties a sale to another card (information) | The exact tie stands; billing's own tie (`cockpit_billing_deal_assignments`) is unchanged. Read both cards; if the exact tie is wrong, the CEO picks the right card | The CEO |
+| Roll back | `forms.sale_tie` all false (or `fill` false): its trigger takes back every card write that has not started (queue row and effect `skipped`, "Card writes for sales were turned off, so nothing was written."); a write already sending or unknown finishes, so read the effects' trail for where it landed. Those sales' one write is spent: turning `fill` on again does not re-plan them, so their notes are a hand step. Do not take `new_client` out of `CLICKUP_WRITEBACK_FORMS_KEYS` instead: a held row holds back every later form row on its card. Restore `cockpit_form_responses_guard`, `portal_form_onboarding_open` and `cockpit_form_doors` from `notes/forms-w56/deploy/before-<name>.sql`. Ties stay (append-only); fills are only-if-empty and listed in the effects' trail | Systems manager |
+
+## Wins, cash and the client tail (waves 5 and 6)
+
+Waves 5 and 6 (`docs/forms/WAVE56-CONTRACT.md`, migrations `20261102g` to `j`): the daily lifetime value writer,
+Confirm paid moving the next payment date, the billing agent's own login, the wins ledger with upsell stages, ties and
+pay proposals, the client's bank transfer receipt, Client is back (Reactivate), the C9 retire list and Stage 4 (the
+kickoff and the client onboarding native). **Every new writer is dark at deploy** and has one named switch
+(contract 1.4): door markers in `cockpit_settings` `forms.doors` (`wins`, `receipts`, `reactivate`, `agent`, `ltv`),
+`billing.ltv`, `billing.confirm_date`, `pay.proposals`, `forms.stage4`, `bank_receipt` in `forms.client.live`, and the
+billing kinds `win`, `reactivate`, `ltv` in `CLICKUP_WRITEBACK_BILLING_KINDS`. Nothing pays itself, nothing is cash
+until finance or the CEO checks it, and a card changes only through the billing rails. The guardian's `wins_cash`
+checks (ltv-daily, ltv-drift, ltv-second-source, agent-separation, win-ties-open, win-unpaid-accepted, pay-proposals,
+receipts-unchecked, agent-door, retire-quiet, stage4-legacy, stage4-effects, relay) report; nothing here is fixed by them.
+Every SQL below runs as the owner through Composio unless it says a seat does it.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| Turn the LTV writer on or off; release a held jump | On only inside D-LTV, in this order (X25): the billing agent's `log_payment.py` LTV write deleted (skill folder backed up, read back), the `cockpit-media-api` refusal of `ceo.ltv.apply` deployed, then `update public.cockpit_settings set value = jsonb_set(value, '{on}', 'true') where key = 'billing.ltv'` and the `ltv` marker in `forms.doors` true, with kind `ltv` in the billing switch. The 05:10 UTC run (`mahara-billing-daily`) writes one `ltv` event per card whose checked sum moved, at most `maxDeltaUsd` (5,000) at a time; a bigger jump waits in `cockpit_ltv_held` and the CEO releases it on the Billing tab's Lifetime value card ("The amount changed since you looked. Reload it." means a newer run changed it). A run that finds a transaction without its check state refuses the whole run with its sentence: refresh Money first. Off: the same update with `false` and the marker false; the Money tab's Apply comes back (one writer at every moment, never two). `ltv-drift` names cards whose field was edited by hand (the next morning writes it again); `ltv-second-source` names cards where checked payments tied straight to the card exceed the cockpit's sum. | Systems manager; the CEO releases |
+| Why did Confirm paid not move the date | Only with `billing.confirm_date.on` (D-CD), only for a `later` part (a recurring month or the split's later payment) due within `windowDays` (7) of the card's Next Payment Date. It moves to the next unconfirmed later part's due date, else one month on for a monthly plan, else not at all, and says so: "Next payment date stays {date}: there is no later payment on this plan. Set it by hand if they continue." or "...this payment was not the one due on it." Pending payments shows "Next payment moves to {date}" before the press (`dateIfConfirmed`). Withdrawing a confirm reverses the date only while the card still shows the moved date. One date write per save; a checked receipt never moves the date by itself (X29): its Today band opens Confirm paid. | CSM, CEO |
+| The billing agent's key: replace, revoke, what the door refuses, and whether it can still read the old key | The agent (the billing agent on the VPS) authenticates with its own key; only the key's sha256 is stored (`cockpit_agent_keys`), the raw key lives only in the agent's own env file (`MAHARA_AGENT_KEY`, `chmod 600`, never printed). Replace: generate a new key on the VPS (`openssl rand`), write it into that file, send only its sha256 to `select public.cockpit_agent_key_put_owner('billing_agent', '<sha>', '<note>', '<who>')` (it revokes the old one with "Replaced"), then `python3 cockpit_agent.py doctor`. Revoke: the CEO's Billing tab card, or `cockpit_agent_key_revoke`; the agent then cannot write ("This key was revoked."). The door refuses an unknown key ("This key is not known."), a transfer without its evidence link and reference, and more than 60 calls a minute (429); `agent-door` fails on more than 10 refusals in an hour. **D-AG0** lists every file the agent's Unix user can read that holds a Supabase key; while any remains, `billing.agent.separated` stays false, the CEO card says "AG is not achieved: the agent can still read the old key on the server.", and `agent-separation` warns. Separation needs a Unix user of its own for the agent. | Systems manager |
+| Log a win, upsell stages and ties | The CSM logs a win on the client page (Log a win) with its proof link; an upsell is Offered (a sent proposal or a proof link with the price), Accepted (the signed agreement link), Paid (the CEO confirms a tie of a checked payment). A draft proposal never becomes a win. The CSM proposes the tie from the win ("Sent to the CEO to confirm."); the CEO confirms on Money: a logged transfer must be checked first; a payment in the deal ledger needs a reason; one already paid to the closer in an approved month is refused. One payment ties to one win at most; a win tie is cleared only with `cockpit_ceo_win_tie_clear` (the ordinary untie refuses it), which lists the pay entries of open months that came from the win for the CEO to adjust. `win-ties-open` warns on a tie open more than 3 days; `win-unpaid-accepted` on an accepted upsell with no payment after 45 days. | CSM, CEO |
+| Confirm or decline a pay proposal; a typed entry outside the ledger | With `pay.proposals.on` (D-W), Team & payroll lists proposals from the wins ledger (review, video, podcast, referral once the referred deal pays, renewal and reactivation once an agreement or tied payment exists, upsell cash by month); the CEO confirms each one (an ordinary pay entry with the `win:` reference) or declines it with a reason. A proposal for an approved month goes into the first open month with "For {month}" in its note. A typed entry for a win-backed part needs a `win:` reference or "Outside the wins ledger" with its reason (10 to 300 characters); a second entry for the same win, part and month is refused ("This win is already paid for {month}."). `pay-proposals` warns from the 3rd to the 10th on a flat-amount win of last month with no decision. | CEO |
+| Ask a client for a receipt; view it; check it | With `bank_receipt` live (D-BR), Pending payments (Ask for the receipt, on a part) and Checks waiting (Ask the client for the receipt, on a logged transfer without one) open Send a form preset to the bank receipt (origin `billing`; one open request per card: "A receipt request is already out to {client}, sent {date}. Withdraw it to send a new one."). The client uploads a photo or PDF (up to 10 MB, 5 tries a link) to the private bucket `cockpit-form-files` and answers amount, currency, day and reference. The answer attaches to the transfer the CSM named, or to the one logged transfer of the card within 1% and 3 days (the agent's), as a `cockpit_payment_receipts` row; otherwise it becomes one billing inbox row (source `portal`) that ingest takes in as **logged**; if ingest finds an exact twin already logged, the receipt goes on the twin (trigger `cockpit_billing_inbox_portal_twin`). "May be the same transfer as {date} {amount}" on a row means two logged transfers look alike: check one, reject the other. View the receipt signs a 5-minute link (`cockpit-forms-api` `file.url`, never logged); a HEIC photo says Download to view. Nothing is cash, LTV or pay until finance or the CEO checks it (`cockpit_manual_payment_check`); `receipts-unchecked` warns after 2 working days. A canary answer's inbox row is written `rejected` "Canary on the test card". | CSM; finance or the CEO checks |
+| Reopen a churned client | Client is back on the client page (marker `reactivate`, D-RA) needs a confirmed departure that has not returned; a Stopped card without one is refused with "Confirm the churn first with Client is leaving, then reopen." (do that first, with the real day they left). One act writes billing kind `reactivate` (status back, churn fields, Paused On and Resume On cleared, the old churn in the comment, held until D-RA), the departure's `returned_on`, an `mrr` event (reason category `reactivation`) when the MRR they come back on differs, one reactivation win (its pay waits for the agreement link or a tied payment) and "{client} is back" in #csm-announcements. The departure is never removed: the month they left keeps its churn. A wrong reopen: void the `reactivate` and `mrr` events by record (`cockpit_billing_event_voids`), void the win with its reason, and confirm the churn again with Client is leaving (the old departure stays returned in the register). | CSM, CEO |
+| The retire list: switch off, archive after 14 quiet days, undo | `cockpit_retire_items` (Settings, Forms: Old forms and scenarios) holds every Make scenario, Typeform and webhook the CSM work used, with its owner role, replacement and switch-off step. At its deploy step, save the blueprint or definition, switch it off (Make), close it (Typeform) or remove it (webhook), read it back, then `select public.cockpit_retire_item_set('<id>', '{"state":"off","step":"D-C9","backupPath":"<vps path>"}'::jsonb, '<who>')`. Archive only what has been off and quiet 14 days (`retire-quiet` lists the `ready` ones): first re-read the scenario's last execution (`GET /scenarios/{id}/logs?pg[limit]=1`) and the forms-door's last legacy answer; a run or answer inside the 14 days moves it on (`{"quietSince":"<that time>"}`); otherwise move the scenario to the Make folder "09 Archive" (read back) and set `{"state":"archived"}`; a Typeform stays closed and is only marked. Nothing is ever deleted. Undo: switch it back on from the saved copy, then `{"state":"on","note":"<why>","step":"<deploy row>"}` (the registry refuses a rollback without both). `kept` items never move. | Systems manager |
+| Stage 4: the kickoff and onboarding go-live and go-back | Only after D-S4F's parity run prints `PASS` for both forms (every Make effect equal or intended), and on different days. Since the CEO's "Yes, match Make" (contract X37) every text Make writes is equal only byte for byte: the handoff and raw answers comments and the handoff the request writer posts on each onboarding task (step `task_comment`, as Make 12 [18] and [23] do) carry Make's text alone, with no `Cockpit ref` line, and the Client Profile is written whole. **Ship order:** `clickup-writeback` with the `task_comment` step deploys before `20261102o` is applied (D-S4F (2) then (3)): a request part freezes its steps before its first write, so a part frozen by an older writer never posts the comment. Check it at the kickoff canary: `select steps from public.cockpit_clickup_writeback_queue where kind = 'request' and source_id = '<request id>'` lists `task_comment` between `request_type` and `card_comment` on both parts. Since the CEO's "You can even improve what's already there with the data that you have. So you can add more if it gives us better data." (contract X39, 4.16) Make's output is the floor and the cockpit adds on top: a brief in the three tasks' descriptions, `card_facts` (five card fields, only while empty), the notice's open items. The same writer, with `card_facts`, also deploys before `20261102p` (D-S4F (2) then (3b)). This branch's `o` and `p` were first drafted as `m` and `n`; live took `20261102m` and `20261102n` for the goals sheet, so they were renamed on 2026-11-02 (contract 2.1, 11.10). The request types `client_onboarding` and `brand_dna` are seeded with a field `{key: 'details', kind: 'details'}` (D-S4F (9)), or the brief stays out of the tasks. Before each canary, the forms doctor (`{"job":"forms_doctor"}`) with the form's key in the keys reads ok: it checks the five `card_facts` fields and their options on Clients - Mahara. Tell the CSM lead before the kickoff go-live that `card_facts` can fill an empty Onboarding Call Date, which moves `csmCadence`. The onboarding goes live only once the portal release that keeps its answers as typed, takes its version 2 (1,000 and 10,000 characters) and sends Typeform's inputs (revenues as numbers, links with `https://`, phones as E.164; branch `forms-s4-portal`) is live (contract 11.9, 11.10), and the CEO has answered where the market intel job reads the answers (CEO-1, contract section 10). Go-live: `select public.cockpit_form_stage4_go_live('kickoff', true, '<who>')` (or `onboarding`) writes the version-2 effects array (with `card_facts` since `p`: read back `effects` = `cockpit_form_stage4_effects('<form>', 2)`, kickoff 10 entries, onboarding 8), with the form's key in `CLICKUP_WRITEBACK_FORMS_KEYS`, `phase4` (or `phase3`) in `CLIENT_MESSAGES_KINDS` and `FORMS_RELAY_APPLY=true`; then the Make scenario (`8925654` or `8922994`) goes off in the same hour (blueprint saved, read back). The onboarding Typeform `KFRCXPFx` stays open: its answers feed the same native planner through forms-door (X26). Go-back: the same call with `false` restores the version-1 array (the Typeform embed returns), then switch the scenario on from its blueprint and put the keys and kinds back. `stage4-effects` fails on a native answer with no steps after 30 minutes; `stage4-legacy` warns on an old-link answer after the switch. | Systems manager, on the CEO's go |
+| The forms relay | `hermes/forms-relay` (VPS cron every 2 minutes under `flock`) sends the native onboarding's market intel GitHub dispatch from `cockpit_form_relay_outbox`, and only while `FORMS_RELAY_APPLY=true`; with it false a run prints "Nothing to relay." or the counts. It writes nothing to Client Data (`20261102l`; the outbox takes only `github_dispatch`). An `unknown` row is never retried: look for the client's market intel run in the dispatch repository's Actions runs, re-run the dispatch from GitHub if it is missing, and settle the row by hand with `cockpit_form_relay_done` (`hermes/forms-relay/RUNBOOK.md`). `relay` warns on a row claimed for over 15 minutes or any `unknown`. | Tech lead |
+| A parity difference | `scripts/dev/make_parity.py` runs the saved Make blueprints' expressions on the answers the cockpit stored and compares the result with the cockpit's plan, effect by effect: `equal`, `intended` (listed in the contract, such as the phase 3 and 4 messages becoming CSM-approved drafts), `differs` or `setting missing`, plus a fidelity line that checks the evaluated comment against the one ClickUp holds. Since round 4 (contract X39, 4.15.1) each effect prints one line: `equal + intended: <names>` when Make's part is equal and every addition is registered (`request_route`, `brief`, `dna_brief`), `intended: card_facts` for the card fields filled only while empty (with `(receipt not read)` and a summary clause until a run has the writer's receipt to read, before the kickoff canary), and a legend (`intended <name>: <why>`) before `PASS`. An addition never hides a difference in Make's part. `differs: the brief would be dropped (the type has no details field)` means the request type lacks its `{key: 'details', kind: 'details'}` field: add it (D-S4F (9)). `differs: the <name> is N characters, over 3,600` or `the cockpit writes a task description Make does not` (an unregistered header or kind) is fixed in `20261102p` on a branch. `differs: overwrote a card value` (a `card_facts` write over a set field) stops Stage 4. A text Make writes (the handoff, the same handoff on each onboarding task, the raw answers comment, the Client Profile, a phase text) is `equal` only byte for byte; `differs: text, whitespace only` means spaces or new lines alone differ (contract X37). Comments are graded as ClickUp receives them: `nothing posts comment_text on the two tasks` means the script's `TASK_COMMENT_STEP` and the writer's `REQUEST_STEPS` disagree, and `the writer adds a Cockpit ref line Make does not post` means a comment is in `REF_LINE`; both are `task_comment` and empty on the merge, and `test_make_parity.py` fails if the writer's source changes them. A text difference is fixed on a branch, never recorded as intended without the CEO's word. Before a deploy, the private oracle run on the Mac (contract 4.15.5) proves the branch's SQL on the stored answers in PGlite; the VPS run stays the proof of record. Any `differs` (fidelity included) stops Stage 4, and so does `NOT PROVEN`: fix it on a branch, run D-S4F's parity step again, and never switch a Make scenario off on a partial parity. It prints counts and step names only, never a person, an answer or a phone. | Tech lead |
+| The raw answers comment did not post: "The onboarding form's full question titles are not set up yet (onboarding.raw_titles), so the raw answers comment was not posted." or "… have none for {n} answered question(s) …" | Make 13 [47] writes each answered `KFRCXPFx` question under the form's full title, in the form's order, so the cockpit needs every title from `cockpit_settings` `onboarding.raw_titles` (`{"fields":[{"ref":…,"title":…}]}`, set up by `20261102o`) and never guesses one. Fill it at D-S4F from `scripts/dev/forms-deploy/stage4-raw-titles.json` (owner SQL) and read back 36 refs and titles in the file's order. "Have none for {n}" means the form gained a question: save its definition to `~/typeform-backups/` first, then add the question's `{ref, title}` in the form's order to the file (on a branch) and to the setting. An answer planned while a title was missing keeps its `failed` effect: the planner never plans an effect twice. | Tech lead |
+| A Stage 4 comment did not post or read back: "The comment on the new task did not read back. The next run looks for it.", "The kickoff handoff comment did not read back on the card. The next run looks for it." (or "The raw onboarding answers comment …"), "ClickUp answered the … with its id, but the comment is not on the card now. It is not posted again: check the card in ClickUp." (or "… on the task …"), or a delivered onboarding task with the note "The comment did not post on the task in ClickUp. The task itself is there: copy the Kickoff Handoff comment from the client card onto it." | The handoff and raw answers comments, and the handoff on each onboarding task, carry Make's text alone, so the writer finds them again by the id ClickUp answered, else by their text among the comments since the step began (less a minute), compared after `commentKey` (backslash escapes, rule lines and `*` dropped, spaces and new lines folded; contract 4.13.4). A comment ClickUp gave an id is never posted again: open the card or task in ClickUp; if the comment is not there, post it by hand (an onboarding task's text is the Kickoff Handoff comment on the client card). The row stays `unknown`, which is safe: the writer never posts that comment again. After a read-back miss the next run looks again: by the id when ClickUp gave one (never posting again), else by the text, posting again only when no comment matches. So a comment ClickUp gave no id and rewrote in a way `commentKey` does not undo could appear twice: if a card or task shows it twice, or the miss repeats on a comment that is visibly there, tell the tech lead, who fixes the rule on a branch. A refusal names ClickUp's answer; the task stays, so copy the comment onto it. "This request's comment for its task is not text, or is longer than any the cockpit makes" means the payload was built wrong: tell the tech lead. A part whose frozen `steps` lack `task_comment` was frozen before the writer had the step (the ship order was broken): post the comment by hand. The dry run and every saved progress show only the comment's length, never its text. | Tech lead |
+| A card field the form should have filled (`card_facts`): the trail reads "kept: the card already has a value for …", or a field stays empty | `card_facts` (contract 4.13.4, 4.16, 4.21) fills only Consultation Types, ADs Platform, Fathom, Onboarding Call Date and (since `20261103f`) Daily Budget in dollars from a kickoff, and Company Website from an onboarding answer, and only while the card leaves the field empty. "kept: the card already has a value for {fields}" (row `skipped`) is normal: the card had them; "{field} differs from the form, so check it on the card" means the card holds another value than the answer, so the CSM decides which is right and edits the card by hand. A field the plan did not list was not answered in a usable way (the effect's lines say why: a consultation type the card does not have, more than one ad platform, a website that is a social or Google link); nothing is guessed. "ClickUp's {field} has no "{option}" option, so nothing was written. The tech lead runs the forms doctor." means an option changed in ClickUp: run `{"job":"forms_doctor"}`, fix `CARD_FACTS` in `clickup-writeback/forms.ts` on a branch, deploy. A row `unknown` after a read-back miss is read back first on the next run; it never writes over a value that reached the card meanwhile ("kept: another value reached the card during this write"). The receipt (`progress.steps.card_facts.fields`) holds states, never values. Never Country or any other field. | Tech lead; the CSM checks a field that differs |
+| The cockpit brief is missing from a task's description (Technical Onboarding Check, Creative Onboarding or the Brand DNA task) | The brief travels as the request's `details` (contract 2.10). The plan's line "The brief stays out of the task description: the {type} request type has no details field. Add one (key details, kind details) to carry it." means the type lacks that field: add `{key: 'details', kind: 'details'}` to the `fields` of `client_onboarding` or `brand_dna` (`cockpit_request_type_save` with the type's current version; at deploy the types are created with it through `cockpit_request_type_add`); tasks made before stay as they are. The brief opens with "From the onboarding and kickoff forms (cockpit)" (or "For the Brand DNA doc (cockpit)"), is 3,600 characters at most, and drops its longest lines to pointers past that; a line left out is named on "Not in the forms: …", a missing card link reads "not on the card yet". The handoff is each onboarding task's comment, not its description. If the tech kit rewrites a description, it must keep the text under `---`. | Tech lead |
+| The onboarding's hints file (`20261103b`, contract 4.18) stops, or must be undone | It puts `KFRCXPFx`'s hints, its three optional questions, "(in English)" on the Business Name label and the fifth Meta choice (`restricted`, "My Account is restricted") on the native onboarding's version 2, in place, so it applies only while version 2 is `o`'s (md5 `bc89ca36…`) and no answer and no invite uses it, and only once the CEO has approved the English and Arabic in 4.18. "The onboarding form's version 2 is in use (N answers and invites) … put these hints in version 3" means D-S4O's first invite (or a Typeform door delivery after the go-live) came first: never force it; the same wording goes into version 3 (B8). "… changed since 20261102o; stop and re-read it" (version 2, its registry copy or `cockpit_form_stage4_fields`) means something else moved them: read what changed before anything else. Read back after the apply: `select md5(schema::text) from public.cockpit_form_versions where form_key = 'onboarding' and version = 2` is `38d371cd509ced4fef9b7cad6e09fb80`, the fields body md5 (as the drift guards read it) is `eadfda57d24997ad958ec6c68a1f5703`, and one audit row `forms.stage4_v2_hints` (two if the onboarding was already live on version 2). To undo it, only while no answer or invite uses version 2: in one transaction, `o`'s `cockpit_form_stage4_fields` body (from `20261102o`) and the saved version-2 schema (`before-onboarding-v2-hints.json`, saved before the apply; `cockpit_forms` too when live on version 2). After an answer or invite exists, leave it: a stored `restricted` answer needs the fifth choice to print. | Systems manager |
+| The Client Profile backfill (`20261103c`, contract 4.17, deploy D-PB): run it, read it back, cancel it; `Held: profile_backfill card writes are not switched on.`; `kept: the card already has a value for Client Profile` | A one-off for the cards the CEO's "Sure" (CEO-2) covers: in onboarding, a stored Typeform onboarding answer and an empty Client Profile (`7755485f`). On 2026-11-03 that is `86exnk0v4`, `86ey3303x` and `86eyew6mt`, all GHOSTED; the 6 Active cards with an empty profile stay out unless the CEO says so. It needs `clickup-writeback` from build B1 live and Supabase's Edge functions answering. `cockpit_form_profile_backfill` is the service role's only, so through `wsql.py` set the claim in the same statement: `with s as materialized (select set_config('request.jwt.claims','{"role":"service_role"}',true)) select public.cockpit_form_profile_backfill('dry_run', array['86exnk0v4','86ey3303x','86eyew6mt'], null) from s;`. **(1) Dry run:** expect 3 `would_queue`, `answered` 6, 7, 6, `chars` 265, 283, 577, `sha256` `9553c5c35200`, `3e413fc47bfd`, `1854c2482e00`. Log counts and prefixes only, never the text. Anything else: stop and read the card's `reason`; a reason that says "Tell the tech lead" means the stored answer and the client record disagree, so nothing is queued until it is understood. **(2) Stop gate: the CEO re-confirms the scope.** Ask the CEO, in these words: "The three cards your 'Sure' covers are all GHOSTED (no launch date, no kickoff). The three clients actually onboarding now already have Make's Client Profile. Fill the three anyway? The 6 Active clients with an empty profile stay out unless you say so." Go on only after the CEO answers yes to the three; otherwise stop and take nothing further (no FORMS_KEYS change, no apply). Write down who confirmed and the date: both go in the actor at (4) and (5). A yes that also asks for the Active cards is not this runbook: the function refuses them, and adding them is a one-line change and a fresh review. **(3)** Read `CLICKUP_WRITEBACK_FORMS_KEYS` from the forms doctor's `detail.forms` and add `profile_backfill` to that list with `scripts/dev/forms-deploy/secrets.py`. Never replace the list: an unreadable value drops kickoff and onboarding back to checkin. The doctor reads Ready, with Client Profile on Clients - Mahara as a text field. Open the lane before the apply: a held row reads as stuck to the guardian after 15 minutes and holds back every later form row on its card. **(4)** Apply one card: the same statement with `'apply', array['86exnk0v4'], 'CEO-2 approved 2026-11-02 (Sure); scope re-confirmed by the CEO on <YYYY-MM-DD>; D-PB'`, with the date of the yes at (2) (the audit row's actor is the record that the re-confirmation happened; never apply with the 2026-11-02 Sure alone). Within 2 minutes read: the queue row (`dedupe_key = 'profile_backfill:86exnk0v4'`) `delivered`, its `progress->'steps'->'profile_backfill'->'fields'` with the field at `{before: empty, state: written}`, the effect `delivered`, and 3 ClickUp calls in the provider ledger. After the next onboarding-sync (10 minutes or less), the second source, as a boolean and never the text: `select btrim(o.handover->>'client_profile') = btrim(e.plan->'fields'->0->>'value') from public.cockpit_client_onboarding o join public.cockpit_form_responses r on r.task_id = o.clickup_task_id join public.cockpit_form_effects e on e.response_id = r.id and e.effect_key = 'profile_backfill' where o.clickup_task_id = '86exnk0v4';` reads true. **(5)** The other two cards, with the same actor, the same reads. **(6)** Take `profile_backfill` out of FORMS_KEYS once no backfill row is queued, sending, retry or unknown. **(7)** Count again: in onboarding with an answer and an empty profile 0; empty overall 28 of 42. Write the deploy-log line and the session note. `Held: profile_backfill card writes are not switched on.` on a row: the lane is not listed; do (3). `kept: the card already has a value for Client Profile`: someone filled it between the dry run and the write; the card's value stays (never overwritten), the row ends `skipped`, nothing to do. `The 1-1 notes plan for this write does not match its queue row, so nothing was written. Tell the tech lead.`: the plan's text no longer matches its sha256 or Make's seven labels; nothing reached ClickUp, and the row is final (a `clickup_queue` effect has no requeue). Cancel before the writer starts: the same statement with `'cancel', array[<cards>], '<who approved>'`; a row that started, is sending or unknown is left alone (`Not cancelled: a write may have reached the card. Let the writer finish, then read the card.`). Undo after a write: each field was empty before (the receipt says so), so a person clears it in ClickUp, only on the CEO's word. The function takes no card outside onboarding; adding the Active cards is a one-line change and a fresh review | the tech lead |
+| The kickoff amounts file (`20261103f`, contract 4.21) stops, or must be undone | It makes the kickoff's daily budget an amount and a currency and its close rate a whole number, in place on kickoff version 2, so it applies only while no kickoff was sent from the cockpit outside the CEO's canary on the test card and `forms.stage4.kickoff` is off. "The kickoff is live in the cockpit (N sent there outside the test card…) … ask the amount and the close rate in a kickoff version 3" means go-live or a real send came first: never force it; the two questions go into a kickoff version 3 with their own check. "… changed since it was read for 20261103f; stop and re-read it" means one of the five replaced bodies moved: read what changed first. Before the apply run `guard_check.py supabase/migrations/ '20261103f*.sql'` (5 live, 0 after) and tell the media lead that the launch desk then reads the stored Typeform kickoff budgets as dollars (4.21, 7). Read back: the five after md5s in 4.21 and the check's `150 SAR` and `20%`. To undo, only before go-live: restore the five saved bodies (`before-<name>.sql`) in one transaction and drop `cockpit_kickoff_budget_of`, `cockpit_kickoff_budget_read` and `cockpit_kickoff_budget`; a kickoff already stored with the new shape keeps its texts, which every reader takes. | Systems manager |
+| The kickoff's budget is not converted, or the card's Daily Budget was kept | The kickoff stores the amount and currency (`forms.kickoff.budget`) and converts it at the cockpit's fixed rates (`cockpit_board_usd_rate`, the same as `currency.ts`). "the cockpit has no fixed rate for BHD yet" (the `card_facts` line) or `usd` null: BHD and OMR have no rate (with a rate, `usd` null and "less than a cent in dollars" mean the CSM entered a figure like 0.01 QAR: send a corrected kickoff with the real daily budget); the media buyer types the dollars on the launch desk, or the CEO approves a rate and it is added to `cockpit_board_usd_rate` and the three `currency.ts` copies together (B6). "kept: the card already has a value for Daily Budget" is normal: the sale filled it (Make 10 "Add Billing Info"), and the launch desk uses the kickoff's figure anyway; nobody edits the card unless the CSM finds the sale's figure wrong. "ClickUp's Daily Budget is in …, not USD, so nothing was written. The tech lead runs the forms doctor." means the field's currency changed in ClickUp: change it back to USD, never convert. | CSM; media buyer for the launch figure; CEO for a new rate |
+| The kickoff notice's "Still open from the kickoff" line | Since `20261102p` both kickoff notices carry one line after the handoff line, built from the stored kickoff answers by ref (`openItems`): "Still open from the kickoff: funded card not linked; Facebook access: Waiting on Client." or "Nothing open from the kickoff's setup questions." Only the form's fixed labels are printed; an answer that is not one is counted ("{n} more, see the kickoff in the cockpit"), never quoted. No line means no stored kickoff answers, none of the eight setup questions answered, or a notice queued before `p`. The items come from the CSM's answers: to change one, the CSM fixes the kickoff, not the notice. | the CSM |
+| Roll back a migration with screens on it (`20261102g` to `j`, and the Stage 4 fixes `l`, `o` and `p`) | In one step: restore the saved function bodies (`notes/forms-w56/deploy/before-<name>.sql`; for `i` also the lifecycle view from its saved definition), set that migration's marker in `forms.doors` to false (`g`: `agent`, `ltv`; `h`: `wins`; `i`: `receipts` and `reactivate`, and take `bank_receipt` out of `forms.client.live` with `cockpit_form_client_go_live('bank_receipt', false, '<who>')`, which withdraws open requests; `j`: `forms.stage4` both false), take its kinds out of `CLICKUP_WRITEBACK_BILLING_KINDS`, and `vercel rollback` both apps to the deployment recorded before D-S1. **For `20261102g`** also `billing.ltv.on=false` and `billing.confirm_date.on=false` (the Money tab Apply returns with the `ltv` marker false). **For `20261102i`** the restored `cockpit_form_answers_check` refuses file answers again, so withdraw open receipt requests first; the bucket, slots, receipts and retire rows stay. **For `20261102j`** go-back of each native form first (previous row). **For the Stage 4 fixes** (`20261102l`, `20261102o`, `20261102p`, D-S4F): `p` first, its three saved bodies (the builder back to `o`'s, the effects to `l`'s, the kickoff facts to the live one) with the registry `effects` from their saved copies when `p` moved them, in one transaction (its eleven new functions stay; only `p`'s bodies call them); then `o`, its ten saved bodies (the queue's audit trigger keeps its service_role grant) and the saved onboarding version-2 schema (`before-onboarding-v2-schema.json`, only while no answer or invite uses version 2) in one transaction, with `cockpit_form_responses_answers_check` from its saved definition only while no kickoff answer is over 65,536 bytes (`onboarding.raw_titles`, `cockpit_requests.task_comment` and `o`'s five new functions stay; only `o`'s bodies read or call them; the onboarding's answers are folded again and its version 2 is `j`'s; the 2 MB `cockpit_form_effects_plan_check` stays too, since a plan already over 131,072 bytes would refuse the old one), then `l`'s two bodies with both outbox CHECKs and the onboarding registry `effects` from their saved copies, in one transaction. Roll `clickup-writeback` back to its version before D-S4F only after `p` and `o` are rolled back: with `o` live, a part frozen by the older writer never posts its task comment, the Stage 4 comments carry the ref line again and a Client Profile over 5,000 characters is refused; with `p` live, a `card_facts` row fails as a mismatch. `cockpit-notices` and `comment-watch` go back to their previous versions on their own (the notice loses its open-items line, the digest cuts every kind at 12,000). Read back `cockpit_form_doors()`: a rolled-back door reads false and says "Opens after the next cockpit update." Tables, columns and rows stay; nothing is deleted. | Systems manager |
 
 ## Hubstaff watch
 
@@ -1701,6 +2936,45 @@ Functions `hiring-sync` (pg_cron `mahara-hiring-mirror` every 10 minutes,
 | "The careers form import is already running" | A run holds the lock; it frees itself after 7 minutes if the run died | nobody |
 | "Find people for this role" stays at "Asked at …" past 10 minutes | The VPS `pending` cron answers it. `tail ~/.ideation-radar/out/cron.log` on the VPS for `headhunt`; a model failure retries three times, then the tab says why with Ask again | Hermes |
 | Candidate messages | GoHighLevel's 36 workflows send them once the CEO publishes them; the cockpit only drafts and never sends on a schedule. `HIRING_SEND_ENABLED` stays unset | Aziz |
+
+## Market research (hermes/market-intel)
+
+Researches each new client's market from their onboarding answers (contract `docs/forms/WAVE56-CONTRACT.md` 4.23,
+`hermes/market-intel/README.md`). Code does every pull through Apify, ScrapeCreators and direct website reads; Claude
+on the VPS only picks the rivals and writes the findings, with no tools. **MI-1 is dark**: a run writes only to
+Supabase (`cockpit_market_intel_*`, migration `20261103i`) and to its folder `~/.market-intel/runs/<run>/`. Nothing
+is published: no Doc, no Market Research field, no comment, no call guide; the teammate's job keeps doing those until
+the cutover. Switches: `cockpit_settings` `market_intel` (`on`, `mode`, the caps) and the worker's own
+`MARKET_INTEL_APPLY`. The guardian's `mi-stuck`, `mi-missing` and `mi-spend` report; `claude_proxy` watches the engine.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| Turn research on, off, or check it | On (MI-2, the CEO's go and budget): `update public.cockpit_settings set value = jsonb_set(value, '{on}', 'true'), updated_by = '<who>' where key = 'market_intel'` (owner SQL; a trigger writes the audit row with the value before and after, naming `updated_by`, or `cockpit.audit_actor` when the session sets it; the same for the caps and the `apply_*` brakes). Off: the same with `false`; a run in progress stops before its next pull or model call (a batch of actor runs already started finishes), waits as "Market research was turned off...", and resumes from its folder once research is on again; the next claim says "Market research is off". `python3 mi.py doctor` on the VPS names every key by name and must read "No blocker."; `python3 mi.py shadow` lists this month's runs, spend and sentences. | Systems manager, on the CEO's go |
+| `mi-stuck`: a run is pulling, picking or writing and its lease lapsed | The worker stopped mid-run (VPS restart, a killed process). Read `~/.market-intel/cron.log`. Nothing to undo: the next 2-minute tick claims the run again and resumes it from its folder without paying for a finished pull again (an Apify run started before the stop is read again, not started). If the run's folder was deleted, the run ends "This run's local folder is gone..." and a person runs research again. After three tries (an unexpected error or a lost lease; waiting for the engine or the month's spend is not a try) a run ends `failed` with its last sentence. | Systems manager |
+| A run ends `needs_person` | Its sentence says why: a rule the findings broke ("2 claims cite evidence or pages this run never opened", "the Arabic and English editions do not carry the same claims", "too thin to use: only 3 competitors"), or "Research is too thin to write" with the first pull that was refused. Findings that failed the checks are stored for a person but the cockpit never shows them. Read the run folder's `check.json`, `warnings.json` and `not_checked.json`; then run it again from the cockpit (CEO or admin, a reason of 10 to 300 characters) or `python3 mi.py backfill --task <card> --note "<why>"`. A rival that is not one: "Not a competitor" (CEO or admin) and the next run leaves it out. | CSM lead or CEO |
+| A run waits: "The Claude sign-in on the VPS has lapsed", "is at its usage limit", "The Claude proxy ... is not answering" | The run goes back to the queue for an hour (then 2, then 4 hours) and resumes by itself, without pulling again; waiting is not a try. After 24 hours of waiting it ends `needs_person` ("Research waited 24 hours and stopped: ..."): fix the engine, then run research again from the cockpit. Sign Claude Code in again on the VPS (`claude`, then `/login`) or restart the proxy; the guardian's `claude_proxy` check says which. With `MARKET_INTEL_MODEL_PROVIDER=cli`, renew the setup token in `~/.market-intel/env` (`CLAUDE_CODE_OAUTH_TOKEN`). | Systems manager |
+| `mi-spend` warns or fails; a report says "Not checked: ... The month's research budget would pass USD 25.00" | Each pull reserves its cost before it starts, and an actor run holds its whole `maxTotalChargeUsd` until it ends, so runs side by side never add up past a cap; past the run cap (USD 2) or the month cap (USD 25: every run's Apify and ScrapeCreators spend since the 1st, UTC) it is refused and named in the report. Raise `usd_cap_month` in `market_intel` (and `MARKET_INTEL_USD_CAP_MONTH` in the worker's env: the lower wins) on the CEO's word, or wait for the 1st. Reruns and backfills are refused outright once the month is spent. "This month's research spend could not be read" means Supabase did not answer: nothing is pulled and the run waits. | CEO |
+| `mi-missing`: an onboarding answer from over 3 hours ago has no finished research | Only while `market_intel.on`. Look for its run (`python3 mi.py shadow`): queued behind another (one at a time), waiting on the engine, `needs_person` (row above) or none at all (an answer stored before `shadow_since`: queue it with `backfill`). | Systems manager |
+| Go back to the old job, or stop research for good | Research writes nothing outward in MI-1, so turning `market_intel.on` false is the whole go-back; the teammate's job and Make 13 [25] are untouched until the cutover (a later migration, with his agreement). Remove the two `market-intel` crontab lines (backup first) to stop the worker; its rows stay. | Systems manager |
+
+### The card writer (clickup-writeback job `research`, MI-1b)
+
+A published run's Market Research doc link (field `7489dbcc`) and its one card comment are written by `clickup-writeback`
+job `research` (contract 4.23.1), never by the worker. The field is written only while it is empty or holds an earlier
+report of this worker; any other link stays and the row reads "kept: ...". The comment is posted once, not notifying,
+and found again by `Cockpit ref MI-<8 hex>`. **Off until MI-3**: every row is held while
+`CLICKUP_WRITEBACK_RESEARCH_KEYS` lists nothing, and the database adds the research queue only with the MI-3 migration.
+Check: `select key, ok, note, detail->>'mode', detail->'keys', last_run_at from public.cockpit_sync_state where key like 'clickup-writeback:research%';`
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| `clickup-writeback:research` reads "Market research writes open with the MI-3 migration ..." | Expected before MI-3: the queue is not in the database yet. Nothing was read or written. It clears once the MI-3 migration is applied. | Tech lead |
+| A research row reads "Held: ..." | The switch keeps it out, with no try used: `CLICKUP_WRITEBACK_APPLY_RESEARCH` is not `true`, `CLICKUP_WRITEBACK_RESEARCH_KEYS` does not list `field` or `comment`, or the card is outside `CLICKUP_WRITEBACK_RESEARCH_ONLY_CARDS`; a row that starts with a secret's name ("CLICKUP_WRITEBACK_RESEARCH_KEYS names something ...") means that secret cannot be read, so fix its value. Open it at MI-3 (test card first), then run job `research_doctor` until it reads `Ready.` | Tech lead, on the CEO's go |
+| A research row reads "Held: this research run is running again ..." | Right by design: the run published, then went back to the queue (an error, an outage or research turned off) and resumes. The row waits with no try used and is written once the run publishes again. If the run ends `needs_person` or `failed` it is still written while the run keeps its Doc. | Systems manager, only when the run itself needs a person (rows above) |
+| A field row reads "kept: the card's Market Research doc already holds another link" | Right by design: a person's link, today's job's Doc or an old ClickUp doc stays. The new report is in the card comment and the cockpit. To show the new one, paste its link into the field by hand. | CSM |
+| A row reads "... is not on this card", "... not a link" or "not a published run" | The card left Clients - Mahara, the field changed in ClickUp, or the run was a shadow run, was cancelled or ended without its Doc. Nothing was written. Run job `research_doctor`, put the card or the field right in ClickUp, then publish the run again (MI-3's publish; no new pulls). | Tech lead |
+| "ClickUp answered the market research comment with its id, but the comment is not on the card now" | It is never posted twice. Look at the card in ClickUp; if a person deleted it, leave it. | CSM |
+| `Stopped: ClickUp refused the cockpit's token (401) ...` | As the 1-1 notes writer: fix `CLICKUP_API_TOKEN`; no try is used and the rows wait. | Tech lead |
 
 ## What never needs a person
 

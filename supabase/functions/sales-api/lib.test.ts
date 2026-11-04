@@ -21,7 +21,9 @@ import {
   needsPerson,
   refuseMark,
   renderTemplate,
+  directTemplateBody,
   templateLine,
+  templateParams,
   trimMessages,
 } from "./lib.ts";
 
@@ -230,12 +232,44 @@ describe("WhatsApp templates", () => {
   test("a template route needs matching {{n}}, a real workflow before it goes on, and known kinds", () => {
     const base = { key: "line_ar", name: "cockpit_line_ar", language: "ar", purpose: "Any follow-up", preview, variables: [...variables] };
     expect(checkTemplateRoute(base).ok).toBe(true);
-    expect(checkTemplateRoute({ ...base, active: true })).toEqual({ ok: false, error: "Pick the workflow that sends it before switching it on." });
+    expect(checkTemplateRoute({ ...base, active: true })).toEqual({
+      ok: false,
+      error: "Pick the workflow that sends it, or mark it as sent directly, before switching it on.",
+    });
     expect(checkTemplateRoute({ ...base, workflow_id: "c5467d7f-0692-4fef-b0c0-f286011db66b", active: true }).ok).toBe(true);
     expect(checkTemplateRoute({ ...base, variables: ["first_name", "line"] }).ok).toBe(false);
     expect(checkTemplateRoute({ ...base, name: "Cockpit Line" }).ok).toBe(false);
     expect(checkTemplateRoute({ ...base, segments: ["reply", "somewhere"] }).ok).toBe(false);
     expect(checkTemplateRoute({ ...base, workflow_id: "not-an-id" }).ok).toBe(false);
+  });
+
+  test("a template sent directly may go on with no workflow, and a save that does not name it leaves it alone", () => {
+    const base = { key: "line_ar", name: "cockpit_line_ar", language: "ar", purpose: "Any follow-up", preview, variables: [...variables] };
+    const on = checkTemplateRoute({ ...base, active: true, direct: true });
+    expect(on.ok && on.value.direct).toBe(true);
+    expect(on.ok && on.value.workflow_id).toBeNull();
+    expect(checkTemplateRoute({ ...base, active: true })).toEqual({
+      ok: false,
+      error: "Pick the workflow that sends it, or mark it as sent directly, before switching it on.",
+    });
+    const plain = checkTemplateRoute(base);
+    expect(plain.ok && "direct" in plain.value).toBe(false);
+    const off = checkTemplateRoute({ ...base, direct: false });
+    expect(off.ok && off.value.direct).toBe(false);
+  });
+
+  test("template values go in slot order, each on one line", () => {
+    expect(templateParams(["first_name", "rep_name", "line"], { line: "a\nb", first_name: "Omar", rep_name: "Sara" })).toEqual(["Omar", "Sara", "a b"]);
+    expect(templateParams(["first_name", "call_time"], { first_name: "Omar" })).toEqual(["Omar", ""]);
+  });
+
+  test("a direct template goes to HighLevel as a named template with its message and values", () => {
+    expect(directTemplateBody("c1", { name: "new_lead_2", language: "ar" }, "اهلا أحمد", ["أحمد"])).toEqual({
+      type: "WhatsApp",
+      contactId: "c1",
+      message: "اهلا أحمد",
+      whatsapp: { type: "template", template: { name: "new_lead_2", lang: "ar" }, placeholders: { body: ["أحمد"] } },
+    });
   });
 
   test("a ready-made message needs a moment, a language and words", () => {

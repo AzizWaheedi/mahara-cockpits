@@ -24,6 +24,8 @@ import { providerTools } from "../cockpit-csm-api/tools.ts";
 import {
   billingDays,
   CRITICAL_FIELDS,
+  EDIT_EVENT_KINDS,
+  EDIT_EVENT_SOURCES,
   lastPage,
   LIST_ID,
   missingFields,
@@ -170,7 +172,7 @@ Deno.serve(async (req: Request) => {
       db("cockpit_billing_accounts?select=*"),
       db(
         "cockpit_billing_events?select=id,clickup_task_id,kind,from_value,to_value,detail,source,at" +
-          "&source=in.(ceo,csm,maher)&kind=in.(method,plan,amount,date,extension,pause,resume,payment)" +
+          `&source=in.(${EDIT_EVENT_SOURCES.join(",")})&kind=in.(${EDIT_EVENT_KINDS.join(",")})` +
           `&at=gte.${encodeURIComponent(since)}&order=at.desc&limit=5000`,
       ),
       // Edits whose ClickUp write-back (clickup-writeback, 20261009j) has not landed: held whatever the card's clock says.

@@ -28,7 +28,9 @@ import {
   REFERENCE_ASK_STATES,
   renderTemplate,
   type TemplateRoute,
+  directTemplateBody,
   templateLine,
+  templateParams,
   cors,
   crmDecision,
   type CrmSettings,
@@ -45,6 +47,8 @@ import {
   type ThreadMessage,
   toThread,
   whatsappWindow,
+  dmWindow,
+  lastInboundOn,
   EOD_FIELDS,
   type EodRole,
   eodColumns,
@@ -195,6 +199,9 @@ import { bookingUrl, makeScriptNotes } from "./scriptnotes.ts";
 import { makeZoomLinks } from "./zoomlinks.ts";
 import { makeGroups } from "./groups.ts";
 import { makeCallLinks } from "./calllinks.ts";
+import { makeCallOutcomes } from "./callOutcomes.ts";
+import { makeInbox } from "./inbox.ts";
+import { makeInvoices } from "./invoices.ts";
 import {
   clockCountry,
   budgetCap,
@@ -329,6 +336,39 @@ async function svcAll(path: string, cap = 50_000): Promise<Row[]> {
     if (page.length < 1000) break;
   }
   return out;
+}
+
+/**
+ * Each request's own sign-in, kept beside its seat for the few actions whose
+ * database functions must see the person (auth.uid()), never the service key.
+ */
+const userTokens = new WeakMap<Who, string>();
+
+/** A database function called as the signed-in rep; its refusal is passed on as said. */
+async function rpcAsUser(who: Who, fn: string, args: Row): Promise<unknown> {
+  const jwt = userTokens.get(who);
+  if (!jwt) throw new Refusal("Sign in again.", 401);
+  const res = await fetchWithin(`${env("SUPABASE_URL")}/rest/v1/rpc/${fn}`, {
+    method: "POST",
+    headers: {
+      apikey: env("SUPABASE_ANON_KEY"),
+      Authorization: `Bearer ${jwt}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(args),
+  }, SVC_MS, "The database");
+  const text = await res.text();
+  if (!res.ok) {
+    let said = "";
+    try {
+      said = String((JSON.parse(text) as Row)?.message ?? "");
+    } catch {
+      // not JSON
+    }
+    if (res.status >= 500) throw new Error(`the database answered ${res.status}: ${redact(said || text)}`);
+    throw new Refusal(redact(said) || `The database refused it (${res.status}).`, res.status === 401 ? 401 : 409);
+  }
+  return text ? JSON.parse(text) : null;
 }
 
 async function whoami(jwt: string): Promise<Who> {
@@ -1401,8 +1441,15 @@ async function settingSave(who: Who, b: Row) {
 // ---------------------------------------------------------------------------
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-const MAX_CHARS: Record<Channel, number> = { whatsapp: 4096, sms: 1600, email: 10000 };
-const CHANNEL_WORD: Record<Channel, string> = { whatsapp: "WhatsApp", sms: "SMS", email: "email" };
+const MAX_CHARS: Record<Channel, number> = { whatsapp: 4096, sms: 1600, email: 10000, instagram: 1000, facebook: 2000 };
+const CHANNEL_WORD: Record<Channel, string> = {
+  whatsapp: "WhatsApp",
+  sms: "SMS",
+  email: "email",
+  instagram: "Instagram",
+  facebook: "Facebook",
+};
+const isDm = (c: Channel): c is "instagram" | "facebook" => c === "instagram" || c === "facebook";
 
 function agoWords(iso: string | null): string {
   if (!iso) return "never";
@@ -1424,7 +1471,13 @@ function lastWhatsappIn(convs: Row[], thread: ThreadMessage[]): string | null {
 
 async function messagingSwitch(): Promise<Record<Channel, boolean>> {
   const v = (await setting<Row>("messaging")) ?? {};
-  return { whatsapp: v.whatsapp !== false, email: v.email !== false, sms: v.sms === true };
+  return {
+    whatsapp: v.whatsapp !== false,
+    email: v.email !== false,
+    sms: v.sms === true,
+    instagram: v.instagram !== false,
+    facebook: v.facebook !== false,
+  };
 }
 
 /**
@@ -1477,6 +1530,19 @@ async function convoRead(_who: Who, b: Row) {
       whatsapp: { on: switches.whatsapp, dnd: dndFor(c, "whatsapp"), reachable: Boolean(c.phone), window },
       email: { on: switches.email, dnd: dndFor(c, "email"), reachable: Boolean(c.email) },
       sms: { on: switches.sms, dnd: dndFor(c, "sms"), reachable: Boolean(c.phone) },
+      // A DM can only answer one the lead sent: reachable once they wrote there.
+      instagram: {
+        on: switches.instagram,
+        dnd: dndFor(c, "instagram"),
+        reachable: thread.some(m => m.channel === "instagram"),
+        window: dmWindow(lastInboundOn(thread, "instagram"), now),
+      },
+      facebook: {
+        on: switches.facebook,
+        dnd: dndFor(c, "facebook"),
+        reachable: thread.some(m => m.channel === "facebook"),
+        window: dmWindow(lastInboundOn(thread, "facebook"), now),
+      },
     },
     thread,
     cursors: Object.fromEntries(pages.filter(p => p.next).map(p => [p.cid, p.next])),
@@ -1726,7 +1792,7 @@ async function convoSendOnce(who: Who, b: Row, opts: SendOpts, taken: () => void
   const requestId = String(b.request_id ?? "");
   const text = String(b.body ?? "").replace(/\r\n/g, "\n").trim();
   if (!contactId) throw new Refusal("Which lead?");
-  if (!(channel in MAX_CHARS)) throw new Refusal("Send on WhatsApp or by email.");
+  if (!(channel in MAX_CHARS)) throw new Refusal("Send on WhatsApp, by email, or as an Instagram or Facebook reply.");
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId))
     throw new Refusal("Reload the page and send again.");
   if (!text) throw new Refusal("Write the message first.");
@@ -1738,6 +1804,7 @@ async function convoSendOnce(who: Who, b: Row, opts: SendOpts, taken: () => void
   if (channel === "email" && !subject) throw new Refusal("An email needs a subject.");
   const followupId = b.followup_id ? cleanText(b.followup_id, 40) : null;
   const assetId = await assetFor(b.asset_id);
+  if (assetId && isDm(channel)) throw new Refusal("Proof goes on WhatsApp or by email, not in a DM.");
 
   // An earlier try's row HighLevel was never asked about: it never went, so
   // this try sends (stress2 rounds 5 and 6).
@@ -1767,7 +1834,27 @@ async function convoSendOnce(who: Who, b: Row, opts: SendOpts, taken: () => void
   if (dndFor(contact, channel))
     throw new Refusal(`This lead asked not to be contacted by ${CHANNEL_WORD[channel]} (do not disturb is on in HighLevel).`, 409);
   if (channel === "email" && !contact.email) throw new Refusal("This lead has no email address in HighLevel.", 409);
-  if (channel !== "email" && !contact.phone) throw new Refusal("This lead has no phone number in HighLevel.", 409);
+  if ((channel === "whatsapp" || channel === "sms") && !contact.phone)
+    throw new Refusal("This lead has no phone number in HighLevel.", 409);
+  if (isDm(channel)) {
+    // The lead's own last DM decides, read live from every conversation they have.
+    const convs = conversationList(await ghl("GET", `/conversations/search?locationId=${LOCATION}&contactId=${enc(contactId)}&limit=20`));
+    const lists = await Promise.all(
+      convs.slice(0, 6).map(async cv => {
+        const m = (await ghl("GET", `/conversations/${enc(String(cv.id))}/messages?limit=40`)) as Row;
+        const inner = (m.messages ?? {}) as Row;
+        return toThread(Array.isArray(inner.messages) ? inner.messages : m.messages, String(cv.id));
+      }),
+    );
+    const w = dmWindow(lastInboundOn(lists.flat(), channel), Date.now());
+    if (!w.last_inbound_at)
+      throw new Refusal(`This lead has never sent us a ${CHANNEL_WORD[channel]} message, so there is no DM to answer.`, 409);
+    if (!w.open)
+      throw new Refusal(
+        `${CHANNEL_WORD[channel]} only takes a reply within 7 days of the lead's own last message; they last wrote ${agoWords(w.last_inbound_at)}. Use WhatsApp or email instead.`,
+        409,
+      );
+  }
   if (channel === "whatsapp") {
     // An answer with no list is not read (m1 round 2): never "the window is
     // shut" on a gateway's garbage; the send stops before anything went.
@@ -2096,7 +2183,7 @@ async function templateRoute(key: string): Promise<TemplateRoute> {
   // A setup fault, not the lead's: every send of this template waits (code
   // setup, hold_all), so the desk leaves its batch in the queue.
   if (!r) throw new Refusal("That WhatsApp template is not in the cockpit.", 404, { code: "setup", hold_all: true });
-  if (!r.active || !r.workflow_id)
+  if (!r.active || (!r.workflow_id && !r.direct))
     throw new Refusal(
       `The ${r.name} template is not set up yet. A manager picks the HighLevel workflow that sends it, under Follow-ups, WhatsApp library.`,
       409,
@@ -2320,10 +2407,12 @@ async function signatureFor(contactId: string, who: Who, language: "ar" | "en"):
 }
 
 /**
- * Send an approved WhatsApp template to a lead. HighLevel's API cannot send
- * a template itself, so the line and the signature go into the contact's
- * two cockpit fields and the lead is enrolled in the one-step workflow that
- * sends the template with them. Written first (request_id is unique, so a
+ * Send an approved WhatsApp template to a lead. A template marked direct goes
+ * straight through HighLevel's conversations API, by name, with its values
+ * (tested 2026-10-31). The others go through their one-step workflow: the
+ * line and the signature go into the contact's two cockpit fields and the
+ * lead is enrolled in the workflow that sends the template with them.
+ * Written first (request_id is unique, so a
  * retry never sends twice), then read back from the conversation, because a
  * template HighLevel accepts can still fail at Meta.
  */
@@ -2358,6 +2447,13 @@ async function sendTemplateOnce(
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(o.requestId))
     throw new Refusal("Reload the page and send again.");
   const route = await templateRoute(o.key);
+  const direct = route.direct === true;
+  // A URL button's room code travels in a contact field, which only the workflow reads.
+  if (direct && route.button_variable)
+    throw new Refusal("This template has a button and is sent directly; it can only go through its workflow.", 409, {
+      code: "setup",
+      hold_all: true,
+    });
   const needsLine = route.variables.includes("line");
   const line = needsLine ? templateLine(o.line) : "";
   if (needsLine && line.length < 2) throw new Refusal("Write the line that goes in the message.");
@@ -2421,9 +2517,10 @@ async function sendTemplateOnce(
     throw new Refusal("This template's button opens a room, and no room code was given.", 409);
   const text = renderTemplate(route.preview, route.variables, { first_name: firstName, rep_name: signature, line, call_time: callTime });
   const fields = (await setting<{ line?: { id: string }; rep?: { id: string }; join?: { id: string | null }; when?: { id: string | null } }>("wa_fields")) ?? {};
-  if ((needsLine && !fields.line?.id) || (route.variables.includes("rep_name") && !fields.rep?.id))
+  // A direct send writes no contact field, so it needs none of them.
+  if (!direct && ((needsLine && !fields.line?.id) || (route.variables.includes("rep_name") && !fields.rep?.id)))
     throw new Refusal("The cockpit's two HighLevel contact fields are not set (setting wa_fields).", 409, { code: "setup", hold_all: true });
-  if ((button && !fields.join?.id) || (callTime && !fields.when?.id))
+  if (!direct && ((button && !fields.join?.id) || (callTime && !fields.when?.id)))
     throw new Refusal("The HighLevel contact fields for the room code and the call's time are not set (setting wa_fields, join and when).", 409, {
       code: "setup",
       hold_all: true,
@@ -2433,9 +2530,11 @@ async function sendTemplateOnce(
     request_id: o.requestId,
     contact_id: o.contactId,
     channel: "whatsapp",
+    // via stays "workflow" for a direct send too: it marks a template send, and the
+    // per-lead, per-day and monthly ceilings count by it.
     via: "workflow",
     template_key: route.key,
-    workflow_id: route.workflow_id,
+    workflow_id: direct ? null : route.workflow_id,
     body: text,
     source: o.source ?? (o.followupId ? "followup" : "rep"),
     followup_id: o.followupId,
@@ -2496,7 +2595,7 @@ async function sendTemplateOnce(
     ...(callTime ? [{ id: fields.when?.id, field_value: callTime }] : []),
   ];
   try {
-    if (customFields.length) await ghl("PUT", `/contacts/${enc(o.contactId)}`, { customFields }, "2021-07-28");
+    if (!direct && customFields.length) await ghl("PUT", `/contacts/${enc(o.contactId)}`, { customFields }, "2021-07-28");
   } catch (e) {
     return await fail(e, false);
   }
@@ -2510,9 +2609,18 @@ async function sendTemplateOnce(
     throw e;
   }
   const startedAt = Date.now();
+  let sent: Row | null = null;
   try {
-    await ghl("POST", `/contacts/${enc(o.contactId)}/workflow/${enc(String(route.workflow_id))}`,
-      { eventStartTime: new Date(startedAt).toISOString() }, "2021-07-28");
+    if (direct) {
+      // The one call that sends, so a timeout or a 5xx is unclear, never failed.
+      sent = (await ghl("POST", "/conversations/messages",
+        directTemplateBody(o.contactId, route, text,
+          templateParams(route.variables, { first_name: firstName, rep_name: signature, line, call_time: callTime })),
+        "2021-04-15")) as Row;
+    } else {
+      await ghl("POST", `/contacts/${enc(o.contactId)}/workflow/${enc(String(route.workflow_id))}`,
+        { eventStartTime: new Date(startedAt).toISOString() }, "2021-07-28");
+    }
   } catch (e) {
     return await fail(e, true);
   }
@@ -2539,10 +2647,10 @@ async function sendTemplateOnce(
       method: "PATCH",
       body: {
         state,
-        provider_status: seen ? seen.status : "enrolled",
+        provider_status: seen ? seen.status : direct ? "accepted" : "enrolled",
         error: state === "failed" ? (seen?.error ?? "HighLevel marked it failed without a reason") : null,
-        ghl_message_id: seen?.id ?? null,
-        ghl_conversation_id: seen?.conversation_id ?? null,
+        ghl_message_id: seen?.id ?? (direct ? sent?.messageId : null) ?? null,
+        ghl_conversation_id: seen?.conversation_id ?? (direct ? sent?.conversationId : null) ?? null,
         updated_at: new Date().toISOString(),
       },
       prefer: "return=representation",
@@ -2552,7 +2660,7 @@ async function sendTemplateOnce(
     throw new Refusal(`${MAY_HAVE_GONE} (${redact(String((e as Error)?.message ?? e))})`, 502, { unclear: true });
   }
   await audit(who, "wa.template", "cockpit_sales_messages", String(row.id), null,
-    { template: route.key, workflow: route.workflow_id, state, seen: Boolean(seen), followup_id: o.followupId,
+    { template: route.key, workflow: route.workflow_id, direct, state, seen: Boolean(seen), followup_id: o.followupId,
       asset_id: o.assetId ?? null, source: o.source ?? null },
     { lead: lead.name ?? null });
   if (o.assetId && state !== "failed") await assetSent(who, o.assetId, o.contactId, "whatsapp", String(row.id));
@@ -4250,8 +4358,7 @@ async function dialQueue(who: Who, b: Row) {
           list.filter(
             c =>
               (who.manager && !who.ghl_user_id) ||
-              c.demo_rep === who.ghl_user_id ||
-              c.appt?.assigned === who.ghl_user_id ||
+              (who.ghl_user_id && (c.demo_rep === who.ghl_user_id || c.appt?.assigned === who.ghl_user_id)) ||
               c.hot_owner === me,
           ),
           me,
@@ -7275,7 +7382,8 @@ async function pipelineBoard(who: Who, b: Row) {
       continue;
     }
     if (l.opp_status && l.opp_status !== "open") continue;
-    if (mineOnly && l.assigned_to !== who.ghl_user_id && hot?.owner_email !== who.email) continue;
+    // A rep with no HighLevel user yet owns no unowned lead: null never matches null (2026-11-04).
+    if (mineOnly && !(who.ghl_user_id && l.assigned_to === who.ghl_user_id) && hot?.owner_email !== who.email) continue;
     const next = [
       hot?.next_at ? { at: ms(hot.next_at), what: "Hot follow-up" } : null,
       st?.callback_at ? { at: ms(st.callback_at), what: "Call back" } : null,
@@ -8289,6 +8397,10 @@ const zoomLinks = makeZoomLinks({ svc, audit, fetchWithin, env, background });
 const groups = makeGroups({ svc, audit, ghl });
 // A closer links their own sales call to a lead by hand (2026-10-21).
 const callLinks = makeCallLinks({ svc, audit, cockpitLead });
+// After the call (2026-10-29): the lead's quality and why an intro booked no demo.
+const callOutcomes = makeCallOutcomes({ svc, audit });
+const inbox = makeInbox({ svc, ghl, audit });
+const invoices = makeInvoices({ rpcAsUser });
 
 const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   ...rooms.actions,
@@ -8297,6 +8409,9 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   ...zoomLinks.actions,
   ...groups.actions,
   ...callLinks.actions,
+  ...callOutcomes.actions,
+  ...inbox.actions,
+  ...invoices.actions,
   mark,
   "mark.retry": markRetry,
   "note.add": noteAdd,
@@ -8508,6 +8623,7 @@ Deno.serve(async (req: Request) => {
   let who: Who;
   try {
     who = await whoami(jwt);
+    userTokens.set(who, jwt);
   } catch (e) {
     return reply({ ok: false, error: `The seat check failed: ${redact(String(e))}` }, 502);
   }

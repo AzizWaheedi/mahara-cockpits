@@ -1,0 +1,1372 @@
+{
+  "website": {
+    "offerKey": "website",
+    "sort": 1,
+    "parts": [
+      {
+        "key": "build",
+        "cadence": "one_time",
+        "amount": 2000,
+        "hint": 2000
+      },
+      {
+        "key": "care",
+        "cadence": "monthly",
+        "amount": 200,
+        "hint": 200
+      }
+    ],
+    "locked": false,
+    "splitAllowed": false,
+    "splitParts": null,
+    "minMonths": null,
+    "waitsOn": null,
+    "copy": {
+      "en": {
+        "name": "Website",
+        "deckTitle": "Your website",
+        "line": "A site in Arabic and English with your projects, WhatsApp, an enquiry form and tracking, with care each month.",
+        "parts": {
+          "build": "Website, in Arabic and English",
+          "care": "Care plan: hosting, backups and an hour of edits a month"
+        },
+        "terms": "The build is paid in full. The care plan comes with the site and starts the month it goes live.",
+        "timing": "Live two weeks after we have your content.",
+        "get": [
+          {
+            "key": "pages",
+            "text": "Up to six pages, in Arabic and English"
+          },
+          {
+            "key": "portfolio",
+            "text": "Your projects, each shown properly with its photos"
+          },
+          {
+            "key": "whatsapp",
+            "text": "A WhatsApp button, one tap from any page"
+          },
+          {
+            "key": "form",
+            "text": "An enquiry form that comes straight to you"
+          },
+          {
+            "key": "tracking",
+            "text": "Tracking tied to your ads, so we can see what the site does for them"
+          },
+          {
+            "key": "care",
+            "text": "Care each month: hosting, backups and an hour of edits"
+          }
+        ],
+        "need": [
+          {
+            "key": "logo",
+            "text": "Your logo"
+          },
+          {
+            "key": "photos",
+            "text": "Photos of your projects"
+          },
+          {
+            "key": "services",
+            "text": "Your list of services"
+          }
+        ],
+        "steps": [
+          {
+            "key": "content",
+            "text": "You send your logo, project photos and list of services."
+          },
+          {
+            "key": "build",
+            "text": "We build the site in Arabic and English and show you the draft."
+          },
+          {
+            "key": "live",
+            "text": "Two weeks after we have your content, it goes live."
+          },
+          {
+            "key": "care",
+            "text": "From then on, the care plan keeps it hosted, backed up and up to date."
+          }
+        ],
+        "why": [
+          {
+            "key": "no_site",
+            "label": "No site comes up",
+            "text": "When someone sees your ad, they look up your name before they get in touch. Right now there's no site for them to find, so they don't see your work."
+          },
+          {
+            "key": "broken",
+            "label": "The site doesn't open",
+            "text": "The address we have for your site doesn't open a working page today. Anyone who looks you up between the ad and the first meeting lands on that page."
+          },
+          {
+            "key": "thin",
+            "label": "The site doesn't show your work",
+            "text": "Your site is up, but it doesn't show your projects the way your ads do. Someone who liked the ad looks you up expecting to see more of the same."
+          }
+        ],
+        "button": "Yes, let's start",
+        "cta": "Yes, let's start the website.",
+        "close": "Want me to start it this week?",
+        "work": []
+      },
+      "ar": {
+        "name": "الموقع الإلكتروني",
+        "deckTitle": "موقعكم الإلكتروني",
+        "line": "موقع بالعربي والإنجليزي، فيه مشاريعكم وزر واتساب ونموذج استفسار وتتبع، مع عناية كل شهر.",
+        "parts": {
+          "build": "الموقع، بالعربي والإنجليزي",
+          "care": "العناية الشهرية: استضافة، ونسخ احتياطي، وساعة تعديلات بالشهر"
+        },
+        "terms": "البناء دفعة وحدة كاملة. والعناية الشهرية تجي مع الموقع، وتبدي من الشهر اللي ينطلق فيه.",
+        "timing": "ينطلق بعد أسبوعين من وصول المحتوى منكم.",
+        "get": [
+          {
+            "key": "pages",
+            "text": "لغاية ٦ صفحات، بالعربي والإنجليزي"
+          },
+          {
+            "key": "portfolio",
+            "text": "مشاريعكم معروضة صح، كل مشروع بصوره"
+          },
+          {
+            "key": "whatsapp",
+            "text": "زر واتساب، بضغطة من أي صفحة"
+          },
+          {
+            "key": "form",
+            "text": "نموذج استفسار يوصلكم مباشرة"
+          },
+          {
+            "key": "tracking",
+            "text": "تتبع مربوط بإعلاناتكم، عشان نشوف أثر الموقع عليها"
+          },
+          {
+            "key": "care",
+            "text": "عناية كل شهر: استضافة، ونسخ احتياطي، وساعة تعديلات"
+          }
+        ],
+        "need": [
+          {
+            "key": "logo",
+            "text": "شعاركم"
+          },
+          {
+            "key": "photos",
+            "text": "صور مشاريعكم"
+          },
+          {
+            "key": "services",
+            "text": "قائمة خدماتكم"
+          }
+        ],
+        "steps": [
+          {
+            "key": "content",
+            "text": "ترسلون لنا الشعار وصور المشاريع وقائمة الخدمات."
+          },
+          {
+            "key": "build",
+            "text": "نبني الموقع بالعربي والإنجليزي، ونوريكم المسودة."
+          },
+          {
+            "key": "live",
+            "text": "بعد أسبوعين من وصول المحتوى، ينطلق الموقع."
+          },
+          {
+            "key": "care",
+            "text": "وبعدها العناية الشهرية تخليه مستضاف ومحفوظ ومحدّث."
+          }
+        ],
+        "why": [
+          {
+            "key": "no_site",
+            "label": "ما يطلع لكم موقع",
+            "text": "اللي يشوف إعلانكم يدور على اسمكم قبل لا يتواصل معكم. والحين ما فيه موقع يلقاه، فما يشوف شغلكم."
+          },
+          {
+            "key": "broken",
+            "label": "الموقع ما يفتح",
+            "text": "الرابط اللي عندنا لموقعكم ما يفتح صفحة شغالة اليوم. وأي أحد يدور عليكم بين الإعلان وأول اجتماع، يوصل لهذي الصفحة."
+          },
+          {
+            "key": "thin",
+            "label": "الموقع ما يعرض شغلكم",
+            "text": "موقعكم شغال، بس ما يعرض مشاريعكم مثل ما تعرضها إعلاناتكم. واللي عجبه الإعلان يدور عليكم ويتوقع يشوف نفس المستوى."
+          }
+        ],
+        "button": "خلونا نبدي",
+        "cta": "تمام، خلونا نبدي بالموقع.",
+        "close": "نبدي فيه هالأسبوع؟",
+        "work": []
+      }
+    },
+    "revision": 2,
+    "updatedAt": "2026-10-26T10:00:00Z",
+    "updatedBy": "fixture@example.test"
+  },
+  "second_campaign": {
+    "offerKey": "second_campaign",
+    "sort": 2,
+    "parts": [
+      {
+        "key": "monthly",
+        "cadence": "monthly",
+        "amount": 500,
+        "hint": 500
+      }
+    ],
+    "locked": false,
+    "splitAllowed": false,
+    "splitParts": null,
+    "minMonths": null,
+    "waitsOn": null,
+    "copy": {
+      "en": {
+        "name": "Second campaign",
+        "deckTitle": "Your second campaign",
+        "line": "A full campaign for a second service you offer, with its own ads, form and words.",
+        "parts": {
+          "monthly": "Second campaign: its own ads, form and words"
+        },
+        "terms": "Monthly, on top of your current plan.",
+        "timing": "Starts once you approve its ads and form.",
+        "get": [
+          {
+            "key": "ads",
+            "text": "Its own ads, made for the second service"
+          },
+          {
+            "key": "form",
+            "text": "Its own enquiry form and questions"
+          },
+          {
+            "key": "words",
+            "text": "Words written for that service"
+          },
+          {
+            "key": "same",
+            "text": "Everything your first campaign already has"
+          }
+        ],
+        "need": [
+          {
+            "key": "amount",
+            "text": "A daily amount for the new service's ads, paid to Meta from your card"
+          },
+          {
+            "key": "photos",
+            "text": "Photos of the service you want to grow"
+          }
+        ],
+        "steps": [
+          {
+            "key": "agree",
+            "text": "We agree the second service and how to present it."
+          },
+          {
+            "key": "make",
+            "text": "We write its words and make its ads and form."
+          },
+          {
+            "key": "approve",
+            "text": "You approve them, and it runs beside your first campaign."
+          }
+        ],
+        "why": [
+          {
+            "key": "listed",
+            "label": "You listed this service",
+            "text": "You told us at onboarding that you offer more than the service we advertise. Right now none of your ads talk about the others."
+          },
+          {
+            "key": "site",
+            "label": "It's on your site",
+            "text": "Your own site lists a service we don't advertise for you yet. People looking for that service don't see it in your ads."
+          },
+          {
+            "key": "asked",
+            "label": "You asked about it",
+            "text": "You asked about advertising another service. This runs it as its own campaign, with its own ads, form and words."
+          }
+        ],
+        "button": "Yes, let's set it up",
+        "cta": "Yes, let's set up the second campaign.",
+        "close": "Want me to set it up?",
+        "work": []
+      },
+      "ar": {
+        "name": "حملة ثانية",
+        "deckTitle": "حملتكم الثانية",
+        "line": "حملة كاملة لخدمة ثانية عندكم، بإعلاناتها ونموذجها وكلامها.",
+        "parts": {
+          "monthly": "الحملة الثانية: إعلاناتها ونموذجها وكلامها"
+        },
+        "terms": "شهرياً، فوق باقتكم الحالية.",
+        "timing": "تنطلق أول ما توافقون على إعلاناتها ونموذجها.",
+        "get": [
+          {
+            "key": "ads",
+            "text": "إعلانات خاصة فيها، مصممة للخدمة الثانية"
+          },
+          {
+            "key": "form",
+            "text": "نموذج استفسار وأسئلة خاصة فيها"
+          },
+          {
+            "key": "words",
+            "text": "كلام مكتوب لهذي الخدمة بالذات"
+          },
+          {
+            "key": "same",
+            "text": "كل اللي موجود بحملتكم الأولى"
+          }
+        ],
+        "need": [
+          {
+            "key": "amount",
+            "text": "مبلغ يومي لإعلانات الخدمة الجديدة، تدفعونه لميتا من بطاقتكم"
+          },
+          {
+            "key": "photos",
+            "text": "صور من الخدمة اللي تبون تكبرونها"
+          }
+        ],
+        "steps": [
+          {
+            "key": "agree",
+            "text": "نتفق معكم على الخدمة الثانية وطريقة عرضها."
+          },
+          {
+            "key": "make",
+            "text": "نكتب كلامها، ونسوي إعلاناتها ونموذجها."
+          },
+          {
+            "key": "approve",
+            "text": "توافقون عليها، وتمشي جنب حملتكم الأولى."
+          }
+        ],
+        "why": [
+          {
+            "key": "listed",
+            "label": "الخدمة مذكورة عندكم",
+            "text": "ذكرتوا لنا بنموذج التعريف إن عندكم خدمات غير اللي نعلن عنها. والحين ولا إعلان من إعلاناتكم يتكلم عنها."
+          },
+          {
+            "key": "site",
+            "label": "موجودة بموقعكم",
+            "text": "موقعكم نفسه فيه خدمة ما نعلن عنها للحين. واللي يدور على هذي الخدمة ما يشوفها بإعلاناتكم."
+          },
+          {
+            "key": "asked",
+            "label": "سألتوا عنها",
+            "text": "سألتوا عن إعلانات لخدمة ثانية. وهذي تمشيها كحملة مستقلة، بإعلاناتها ونموذجها وكلامها."
+          }
+        ],
+        "button": "خلونا نجهزها",
+        "cta": "تمام، خلونا نجهز الحملة الثانية.",
+        "close": "نجهزها لكم؟",
+        "work": []
+      }
+    },
+    "revision": 2,
+    "updatedAt": "2026-10-26T10:00:00Z",
+    "updatedBy": "fixture@example.test"
+  },
+  "seo_geo": {
+    "offerKey": "seo_geo",
+    "sort": 3,
+    "parts": [
+      {
+        "key": "program",
+        "cadence": "per_90_days",
+        "amount": 5000,
+        "hint": 5000
+      }
+    ],
+    "locked": true,
+    "splitAllowed": true,
+    "splitParts": [2500, 2500],
+    "minMonths": null,
+    "waitsOn": null,
+    "copy": {
+      "en": {
+        "name": "Google and AI search",
+        "deckTitle": "Google and AI answers",
+        "line": "Your site, Google profile and listings set up for search, and pages written for AI answers to quote, over 90 days.",
+        "parts": {
+          "program": "Google and AI search, 90 days"
+        },
+        "terms": "One price for the 90 days. The pages, profile and listings stay yours afterwards. If we build you a site, its monthly care starts on day 91.",
+        "timing": "Runs 90 days from payment.",
+        "get": [
+          {
+            "key": "onpage",
+            "text": "Your site's pages set up for search"
+          },
+          {
+            "key": "profile",
+            "text": "Your Google Business Profile, set up and kept current"
+          },
+          {
+            "key": "citations",
+            "text": "Your firm listed in the directories Google reads"
+          },
+          {
+            "key": "schema",
+            "text": "Structured data, so search engines read your services correctly"
+          },
+          {
+            "key": "pages",
+            "text": "Service and FAQ pages written so AI answers can quote them"
+          },
+          {
+            "key": "report",
+            "text": "A monthly report on where you show in Google and in AI answers"
+          },
+          {
+            "key": "site",
+            "text": "If you have no site, we build one into it"
+          }
+        ],
+        "need": [
+          {
+            "key": "site",
+            "text": "Access to your site"
+          },
+          {
+            "key": "profile",
+            "text": "Access to your Google profile"
+          }
+        ],
+        "steps": [
+          {
+            "key": "check",
+            "text": "We check where you show today, searched from your city."
+          },
+          {
+            "key": "fix",
+            "text": "We set up your site's pages, your Google profile and your listings."
+          },
+          {
+            "key": "write",
+            "text": "We write service and FAQ pages for AI answers to quote."
+          },
+          {
+            "key": "report",
+            "text": "Each month, you get a report on where you show."
+          },
+          {
+            "key": "keep",
+            "text": "After 90 days, everything we built stays yours."
+          }
+        ],
+        "why": [
+          {
+            "key": "not_found",
+            "label": "You don't come up for your service",
+            "text": "We searched for your service in your city and didn't find you. Most people who need a firm like yours search for the service, not your name."
+          },
+          {
+            "key": "ai_answer",
+            "label": "AI answers don't mention you",
+            "text": "We asked an AI assistant for firms like yours in your city, and you weren't in its answer. Google now shows its own AI answer above the links, in Arabic too."
+          },
+          {
+            "key": "name_only",
+            "label": "You come up only for your name",
+            "text": "Your own name comes up, which is good. But people search your name once they already know you. Everyone else searches for what you do."
+          }
+        ],
+        "button": "Yes, let's start",
+        "cta": "Yes, let's start on Google and AI search.",
+        "close": "Shall we start it this month?",
+        "work": []
+      },
+      "ar": {
+        "name": "قوقل والبحث بالذكاء الاصطناعي",
+        "deckTitle": "قوقل وإجابات الذكاء الاصطناعي",
+        "line": "نجهز موقعكم وملفكم على قوقل وقوائمكم للبحث، ونكتب صفحات تقدر إجابات الذكاء الاصطناعي تقتبس منها، لمدة ٩٠ يوم.",
+        "parts": {
+          "program": "قوقل والبحث بالذكاء الاصطناعي، لمدة ٩٠ يوم"
+        },
+        "terms": "سعر واحد لمدة ٩٠ يوم. والصفحات والملف والقوائم تبقى لكم بعدها. وإذا بنينا لكم موقع، تبدي عنايته الشهرية من اليوم ٩١.",
+        "timing": "يمشي ٩٠ يوم من الدفع.",
+        "get": [
+          {
+            "key": "onpage",
+            "text": "صفحات موقعكم مجهزة للبحث"
+          },
+          {
+            "key": "profile",
+            "text": "ملف نشاطكم على قوقل، مجهز ومحدّث"
+          },
+          {
+            "key": "citations",
+            "text": "شركتكم مسجلة بالأدلة اللي يقرأ منها قوقل"
+          },
+          {
+            "key": "schema",
+            "text": "بيانات منظمة، عشان محركات البحث تقرأ خدماتكم صح"
+          },
+          {
+            "key": "pages",
+            "text": "صفحات للخدمات والأسئلة الشائعة، مكتوبة بطريقة تقدر إجابات الذكاء الاصطناعي تقتبس منها"
+          },
+          {
+            "key": "report",
+            "text": "تقرير شهري: وين تطلعون في قوقل وفي إجابات الذكاء الاصطناعي"
+          },
+          {
+            "key": "site",
+            "text": "وإذا ما عندكم موقع، نبنيه لكم ضمنها"
+          }
+        ],
+        "need": [
+          {
+            "key": "site",
+            "text": "صلاحية الدخول لموقعكم"
+          },
+          {
+            "key": "profile",
+            "text": "صلاحية الدخول لملفكم على قوقل"
+          }
+        ],
+        "steps": [
+          {
+            "key": "check",
+            "text": "نشوف وين تطلعون اليوم، بالبحث من مدينتكم."
+          },
+          {
+            "key": "fix",
+            "text": "نجهز صفحات موقعكم، وملفكم على قوقل، وقوائمكم."
+          },
+          {
+            "key": "write",
+            "text": "نكتب صفحات الخدمات والأسئلة الشائعة، عشان تقتبس منها إجابات الذكاء الاصطناعي."
+          },
+          {
+            "key": "report",
+            "text": "كل شهر يوصلكم تقرير: وين تطلعون."
+          },
+          {
+            "key": "keep",
+            "text": "وبعد ٩٠ يوم، كل اللي بنيناه يبقى لكم."
+          }
+        ],
+        "why": [
+          {
+            "key": "not_found",
+            "label": "ما تطلعون لما أحد يدور على خدمتكم",
+            "text": "دورنا على خدمتكم في مدينتكم وما لقيناكم. وأغلب اللي يحتاجون شركة مثلكم يدورون على الخدمة، مو على اسمكم."
+          },
+          {
+            "key": "ai_answer",
+            "label": "إجابات الذكاء الاصطناعي ما تذكركم",
+            "text": "سألنا مساعد ذكاء اصطناعي عن شركات مثلكم في مدينتكم، وما كنتوا بإجابته. وقوقل صار يعرض إجابته بالذكاء الاصطناعي فوق الروابط، وبالعربي بعد."
+          },
+          {
+            "key": "name_only",
+            "label": "تطلعون باسمكم بس",
+            "text": "اسمكم يطلع، وهذا زين. بس الناس تدور باسمكم إذا كانوا يعرفونكم أصلاً. والباقي يدورون على الخدمة نفسها."
+          }
+        ],
+        "button": "خلونا نبدي",
+        "cta": "تمام، خلونا نبدي بشغل قوقل والذكاء الاصطناعي.",
+        "close": "نبدي فيه هالشهر؟",
+        "work": []
+      }
+    },
+    "revision": 2,
+    "updatedAt": "2026-10-26T10:00:00Z",
+    "updatedBy": "fixture@example.test"
+  },
+  "smm": {
+    "offerKey": "smm",
+    "sort": 4,
+    "parts": [
+      {
+        "key": "monthly",
+        "cadence": "monthly",
+        "amount": 1000,
+        "hint": 1000
+      }
+    ],
+    "locked": false,
+    "splitAllowed": false,
+    "splitParts": null,
+    "minMonths": null,
+    "waitsOn": null,
+    "copy": {
+      "en": {
+        "name": "Social media",
+        "deckTitle": "Your social pages",
+        "line": "We run your pages from the footage you already send us: 20+ posts a month, 5 to 6 graphics a week and weekly stories.",
+        "parts": {
+          "monthly": "Social media: posts, graphics and stories each month"
+        },
+        "terms": "Monthly. Reels come only when you send footage for them.",
+        "timing": "Starts once we agree your first month's calendar with you.",
+        "get": [
+          {
+            "key": "posts",
+            "text": "20+ posts a month on your pages"
+          },
+          {
+            "key": "graphics",
+            "text": "5 to 6 graphics a week, made from your project photos"
+          },
+          {
+            "key": "stories",
+            "text": "Stories every week"
+          },
+          {
+            "key": "call",
+            "text": "A monthly call and report"
+          },
+          {
+            "key": "reels",
+            "text": "Reels when you send footage for them: a bonus, never a promise"
+          }
+        ],
+        "need": [
+          {
+            "key": "footage",
+            "text": "The footage you already send us for the ads"
+          }
+        ],
+        "steps": [
+          {
+            "key": "agree",
+            "text": "We agree the look and your first month's calendar."
+          },
+          {
+            "key": "post",
+            "text": "We post from the footage you already send us."
+          },
+          {
+            "key": "review",
+            "text": "Each month, we go over it with you on a call, with a report."
+          }
+        ],
+        "why": [
+          {
+            "key": "quiet",
+            "label": "Your page has gone quiet",
+            "text": "Anyone who sees your ad can tap your page name and land on your page. Right now there isn't much there, while the footage you send us for the ads is good."
+          },
+          {
+            "key": "nobody",
+            "label": "Nobody runs your page",
+            "text": "You told us nobody handles your Instagram right now. We already have your footage for the ads, so the same material can work on your page too."
+          },
+          {
+            "key": "footage",
+            "label": "Good footage, used once",
+            "text": "The footage you send us is working in your ads and sitting unused on your page. Running your pages puts it to work in both places."
+          }
+        ],
+        "button": "Yes, let's start",
+        "cta": "Yes, let's start on our social pages.",
+        "close": "Shall we start on the 1st?",
+        "work": [],
+        "platforms": {
+          "instagram": "Instagram",
+          "tiktok": "TikTok",
+          "snapchat": "Snapchat",
+          "facebook": "Facebook"
+        }
+      },
+      "ar": {
+        "name": "السوشال ميديا",
+        "deckTitle": "صفحاتكم على السوشال ميديا",
+        "line": "ندير صفحاتكم من المواد اللي ترسلونها لنا أصلاً: أكثر من ٢٠ بوست بالشهر، و٥ إلى ٦ تصاميم بالأسبوع، وستوريات كل أسبوع.",
+        "parts": {
+          "monthly": "السوشال ميديا: بوستات وتصاميم وستوريات كل شهر"
+        },
+        "terms": "شهرياً. والريلز تكون بس لما ترسلون لها مواد.",
+        "timing": "تبدي أول ما نتفق معكم على جدول أول شهر.",
+        "get": [
+          {
+            "key": "posts",
+            "text": "أكثر من ٢٠ بوست بالشهر على صفحاتكم"
+          },
+          {
+            "key": "graphics",
+            "text": "٥ إلى ٦ تصاميم بالأسبوع، من صور مشاريعكم"
+          },
+          {
+            "key": "stories",
+            "text": "ستوريات كل أسبوع"
+          },
+          {
+            "key": "call",
+            "text": "مكالمة وتقرير كل شهر"
+          },
+          {
+            "key": "reels",
+            "text": "ريلز لما ترسلون لها مواد، زيادة منا وما نوعد فيها"
+          }
+        ],
+        "need": [
+          {
+            "key": "footage",
+            "text": "نفس المواد اللي ترسلونها لنا للإعلانات"
+          }
+        ],
+        "steps": [
+          {
+            "key": "agree",
+            "text": "نتفق معكم على الشكل وجدول أول شهر."
+          },
+          {
+            "key": "post",
+            "text": "ننشر من المواد اللي ترسلونها لنا أصلاً."
+          },
+          {
+            "key": "review",
+            "text": "وكل شهر نراجعها معكم بمكالمة، مع تقرير."
+          }
+        ],
+        "why": [
+          {
+            "key": "quiet",
+            "label": "صفحتكم هادية",
+            "text": "أي أحد يشوف إعلانكم يقدر يضغط على اسم صفحتكم ويوصل لها. والحين ما فيها شي كثير، مع إن المواد اللي ترسلونها لنا للإعلانات حلوة."
+          },
+          {
+            "key": "nobody",
+            "label": "ما أحد يدير صفحتكم",
+            "text": "قلتوا لنا إن ما أحد يدير الإنستقرام عندكم حالياً. وموادكم عندنا أصلاً للإعلانات، فنفس المواد تقدر تشتغل على صفحتكم بعد."
+          },
+          {
+            "key": "footage",
+            "label": "مواد حلوة تنستخدم مرة وحدة",
+            "text": "المواد اللي ترسلونها لنا شغالة بإعلاناتكم، وواقفة بصفحتكم. ولما ندير صفحاتكم، تشتغل بالمكانين."
+          }
+        ],
+        "button": "خلونا نبدي",
+        "cta": "تمام، خلونا نبدي بصفحاتنا على السوشال ميديا.",
+        "close": "نبدي من أول الشهر؟",
+        "work": [],
+        "platforms": {
+          "instagram": "إنستقرام",
+          "tiktok": "تيك توك",
+          "snapchat": "سناب شات",
+          "facebook": "فيسبوك"
+        }
+      }
+    },
+    "revision": 2,
+    "updatedAt": "2026-10-26T10:00:00Z",
+    "updatedBy": "fixture@example.test"
+  },
+  "cameraman": {
+    "offerKey": "cameraman",
+    "sort": 5,
+    "parts": [
+      {
+        "key": "day",
+        "cadence": "per_day",
+        "amount": 800,
+        "hint": 800
+      }
+    ],
+    "locked": false,
+    "splitAllowed": false,
+    "splitParts": null,
+    "minMonths": null,
+    "waitsOn": null,
+    "copy": {
+      "en": {
+        "name": "Cameraman day",
+        "deckTitle": "A day of filming",
+        "line": "A cameraman on site for a full day: finished work, work in progress and your team. The footage is yours.",
+        "parts": {
+          "day": "A cameraman on site for one day"
+        },
+        "terms": "Paid in full, per day.",
+        "timing": "We book the day once you pick the site and the date.",
+        "get": [
+          {
+            "key": "site",
+            "text": "A full day at a project, your office, or both"
+          },
+          {
+            "key": "work",
+            "text": "Finished projects and work in progress"
+          },
+          {
+            "key": "team",
+            "text": "Your team at work"
+          },
+          {
+            "key": "owner",
+            "text": "You on camera, only if you want to be"
+          },
+          {
+            "key": "footage",
+            "text": "All the footage, yours to keep"
+          },
+          {
+            "key": "aim",
+            "text": "The aim is about three months of ads and posts from one day"
+          }
+        ],
+        "need": [
+          {
+            "key": "site",
+            "text": "A site worth filming"
+          },
+          {
+            "key": "date",
+            "text": "A date that suits you"
+          }
+        ],
+        "steps": [
+          {
+            "key": "pick",
+            "text": "You pick the site and the date."
+          },
+          {
+            "key": "film",
+            "text": "We send a cameraman for the day."
+          },
+          {
+            "key": "use",
+            "text": "The footage goes into your ads and posts over the months after."
+          }
+        ],
+        "why": [
+          {
+            "key": "no_time",
+            "label": "No time to film",
+            "text": "You told us there's no time to film, and that's true for most owners we work with. One day on site gives us material without asking you for footage every week."
+          },
+          {
+            "key": "fresh",
+            "label": "Your newest ad has been running a while",
+            "text": "Your newest ad has been running for a while. One day of filming gives us a stock of fresh footage for the ones after it."
+          }
+        ],
+        "button": "Yes, let's book the day",
+        "cta": "Yes, let's book a day of filming.",
+        "close": "Which site would be worth filming?",
+        "work": []
+      },
+      "ar": {
+        "name": "يوم تصوير",
+        "deckTitle": "يوم تصوير",
+        "line": "مصور بموقعكم يوم كامل: مشاريع منتهية، وشغل قيد التنفيذ، وفريقكم. والمواد تبقى لكم.",
+        "parts": {
+          "day": "مصور بالموقع ليوم واحد"
+        },
+        "terms": "دفعة وحدة كاملة، باليوم.",
+        "timing": "نحجز اليوم أول ما تختارون الموقع والتاريخ.",
+        "get": [
+          {
+            "key": "site",
+            "text": "يوم كامل بمشروع، أو بمكتبكم، أو الاثنين"
+          },
+          {
+            "key": "work",
+            "text": "مشاريع منتهية، وشغل قيد التنفيذ"
+          },
+          {
+            "key": "team",
+            "text": "فريقكم وهو يشتغل"
+          },
+          {
+            "key": "owner",
+            "text": "وأنتم قدام الكاميرا، بس إذا تبون"
+          },
+          {
+            "key": "footage",
+            "text": "كل المواد تبقى لكم"
+          },
+          {
+            "key": "aim",
+            "text": "الهدف: مواد تكفي إعلانات وبوستات لحوالي ٣ شهور من يوم واحد"
+          }
+        ],
+        "need": [
+          {
+            "key": "site",
+            "text": "مشروع يستاهل التصوير"
+          },
+          {
+            "key": "date",
+            "text": "تاريخ يناسبكم"
+          }
+        ],
+        "steps": [
+          {
+            "key": "pick",
+            "text": "تختارون الموقع والتاريخ."
+          },
+          {
+            "key": "film",
+            "text": "نرسل لكم مصور يوم كامل."
+          },
+          {
+            "key": "use",
+            "text": "والمواد تدخل بإعلاناتكم وبوستاتكم بالشهور اللي بعدها."
+          }
+        ],
+        "why": [
+          {
+            "key": "no_time",
+            "label": "ما عندكم وقت تصورون",
+            "text": "قلتوا لنا إن ما عندكم وقت تصورون، وهذا حال أغلب أصحاب الشركات اللي نشتغل معهم. ويوم واحد بالموقع يعطينا مواد بدال ما نطلب منكم كل أسبوع."
+          },
+          {
+            "key": "fresh",
+            "label": "أحدث إعلان صار له فترة",
+            "text": "أحدث إعلان عندكم صار له فترة شغال. ويوم تصوير واحد يعطينا مخزون مواد جديدة للإعلانات اللي بعده."
+          }
+        ],
+        "button": "خلونا نحجز اليوم",
+        "cta": "تمام، خلونا نحجز يوم تصوير.",
+        "close": "أي موقع يستاهل نصوره؟",
+        "work": []
+      }
+    },
+    "revision": 2,
+    "updatedAt": "2026-10-26T10:00:00Z",
+    "updatedBy": "fixture@example.test"
+  },
+  "ugc": {
+    "offerKey": "ugc",
+    "sort": 6,
+    "parts": [
+      {
+        "key": "package",
+        "cadence": "one_time",
+        "amount": 3500,
+        "hint": 3500
+      }
+    ],
+    "locked": false,
+    "splitAllowed": false,
+    "splitParts": null,
+    "minMonths": null,
+    "waitsOn": null,
+    "copy": {
+      "en": {
+        "name": "Presenter videos",
+        "deckTitle": "Videos with a presenter",
+        "line": "Eight videos with a presenter speaking your dialect: five ads and three longer videos you keep.",
+        "parts": {
+          "package": "Eight videos with a presenter"
+        },
+        "terms": "One time, paid in full.",
+        "timing": "We agree the dates once you approve the script.",
+        "get": [
+          {
+            "key": "ads",
+            "text": "Five ads with a presenter"
+          },
+          {
+            "key": "main",
+            "text": "One longer video that explains your offer from start to finish"
+          },
+          {
+            "key": "followups",
+            "text": "Two follow-up videos to send people after they enquire"
+          },
+          {
+            "key": "script",
+            "text": "Scripts we write in your positioning"
+          },
+          {
+            "key": "presenter",
+            "text": "A presenter in your dialect, presenting your firm, never posing as the owner"
+          },
+          {
+            "key": "keep",
+            "text": "The three longer videos are yours to keep"
+          }
+        ],
+        "need": [
+          {
+            "key": "call",
+            "text": "One call to agree the script"
+          }
+        ],
+        "steps": [
+          {
+            "key": "script",
+            "text": "One call to agree the script."
+          },
+          {
+            "key": "film",
+            "text": "We cast a presenter in your dialect and film."
+          },
+          {
+            "key": "review",
+            "text": "You review the eight videos."
+          },
+          {
+            "key": "use",
+            "text": "The five ads run in your campaign. The three longer videos are yours to send."
+          }
+        ],
+        "why": [
+          {
+            "key": "camera",
+            "label": "You'd rather not be on camera",
+            "text": "You told us you'd rather not be on camera, and plenty of owners feel the same. A presenter puts a person in front of your customers without it being you."
+          },
+          {
+            "key": "face",
+            "label": "A face for the brand",
+            "text": "Everything we run for you shows the work. These add a person who speaks for your firm in your dialect, so the brand has a face and a voice."
+          },
+          {
+            "key": "explain",
+            "label": "Explaining the same basics",
+            "text": "Your team explains the basics in every first meeting. The longer videos do that before the meeting, so the first conversation starts on the project."
+          }
+        ],
+        "button": "Yes, let's start",
+        "cta": "Yes, let's start the presenter videos.",
+        "close": "Want to test it?",
+        "work": [
+          {
+            "key": "khalda",
+            "label": "Presenter example 1",
+            "url": "https://maharamedia.wistia.com/medias/qlwysqfu2g"
+          },
+          {
+            "key": "castello",
+            "label": "Presenter example 2",
+            "url": "https://maharamedia.wistia.com/medias/btp2dokvjr"
+          },
+          {
+            "key": "alkhalil",
+            "label": "Presenter example 3",
+            "url": "https://maharamedia.wistia.com/medias/nix1oq0h3a"
+          }
+        ]
+      },
+      "ar": {
+        "name": "فيديوهات بمقدّم",
+        "deckTitle": "فيديوهات بمقدّم يعرّف بشركتكم",
+        "line": "٨ فيديوهات بمقدّم يتكلم بلهجتكم: ٥ إعلانات، و٣ فيديوهات أطول تبقى لكم.",
+        "parts": {
+          "package": "٨ فيديوهات بمقدّم"
+        },
+        "terms": "دفعة وحدة كاملة.",
+        "timing": "نتفق على التواريخ أول ما توافقون على السكربت.",
+        "get": [
+          {
+            "key": "ads",
+            "text": "٥ إعلانات بمقدّم"
+          },
+          {
+            "key": "main",
+            "text": "فيديو أطول يشرح عرضكم من البداية للنهاية"
+          },
+          {
+            "key": "followups",
+            "text": "فيديوين متابعة ترسلونهم للناس بعد ما يستفسرون"
+          },
+          {
+            "key": "script",
+            "text": "سكربتات نكتبها بأسلوبكم وعرضكم"
+          },
+          {
+            "key": "presenter",
+            "text": "مقدّم يتكلم بلهجتكم ويقدم شركتكم، وما يمثل إنه صاحب الشركة"
+          },
+          {
+            "key": "keep",
+            "text": "الثلاث فيديوهات الأطول تبقى لكم"
+          }
+        ],
+        "need": [
+          {
+            "key": "call",
+            "text": "مكالمة وحدة نتفق فيها على السكربت"
+          }
+        ],
+        "steps": [
+          {
+            "key": "script",
+            "text": "مكالمة وحدة نتفق فيها على السكربت."
+          },
+          {
+            "key": "film",
+            "text": "نختار مقدّم بلهجتكم، ونصور."
+          },
+          {
+            "key": "review",
+            "text": "تراجعون الفيديوهات الثمانية."
+          },
+          {
+            "key": "use",
+            "text": "الإعلانات الخمسة تمشي بحملتكم، والفيديوهات الثلاثة الأطول ترسلونها أنتم."
+          }
+        ],
+        "why": [
+          {
+            "key": "camera",
+            "label": "ما تبون تطلعون قدام الكاميرا",
+            "text": "قلتوا لنا إنكم ما تبون تطلعون قدام الكاميرا، وكثير من أصحاب الشركات نفسكم. والمقدّم يحط شخص قدام عملائكم، من غير ما يكون أنتم."
+          },
+          {
+            "key": "face",
+            "label": "وجه للشركة",
+            "text": "كل اللي نشغله لكم الحين يعرض الشغل. وهذي الفيديوهات تضيف شخص يتكلم عن شركتكم بلهجتكم، عشان يصير لشركتكم وجه وصوت."
+          },
+          {
+            "key": "explain",
+            "label": "تشرحون نفس الأساسيات",
+            "text": "فريقكم يشرح الأساسيات بكل اجتماع أول. والفيديوهات الأطول تشرحها قبل الاجتماع، فأول محادثة تبدي من المشروع نفسه."
+          }
+        ],
+        "button": "خلونا نبدي",
+        "cta": "تمام، خلونا نبدي بفيديوهات المقدّم.",
+        "close": "تبون نختبرها؟",
+        "work": [
+          {
+            "key": "khalda",
+            "label": "مثال ١",
+            "url": "https://maharamedia.wistia.com/medias/qlwysqfu2g"
+          },
+          {
+            "key": "castello",
+            "label": "مثال ٢",
+            "url": "https://maharamedia.wistia.com/medias/btp2dokvjr"
+          },
+          {
+            "key": "alkhalil",
+            "label": "مثال ٣",
+            "url": "https://maharamedia.wistia.com/medias/nix1oq0h3a"
+          }
+        ]
+      }
+    },
+    "revision": 2,
+    "updatedAt": "2026-10-26T10:00:00Z",
+    "updatedBy": "fixture@example.test"
+  },
+  "closer": {
+    "offerKey": "closer",
+    "sort": 7,
+    "parts": [
+      {
+        "key": "placement",
+        "cadence": "one_time",
+        "amount": 4000,
+        "hint": 4000
+      },
+      {
+        "key": "management",
+        "cadence": "monthly",
+        "amount": 750,
+        "hint": 750
+      }
+    ],
+    "locked": false,
+    "splitAllowed": false,
+    "splitParts": null,
+    "minMonths": 3,
+    "waitsOn": null,
+    "copy": {
+      "en": {
+        "name": "Closer placement",
+        "deckTitle": "A closer for your team",
+        "line": "We recruit, train and manage a salesperson for your firm, working in your own tools.",
+        "parts": {
+          "placement": "Recruiting and training your closer",
+          "management": "Monthly management, call reviews and coaching"
+        },
+        "terms": "Placement paid in full, then monthly, three months minimum. If the hire doesn't work out within 90 days, we recruit a replacement at no cost.",
+        "timing": "We start the search after payment. Month one is training and ramp-up.",
+        "get": [
+          {
+            "key": "recruit",
+            "text": "We recruit a salesperson for you"
+          },
+          {
+            "key": "train",
+            "text": "Trained on the framework our own team uses"
+          },
+          {
+            "key": "scripts",
+            "text": "Scripts written for your services"
+          },
+          {
+            "key": "month_one",
+            "text": "We run them through the first month with you"
+          },
+          {
+            "key": "manage",
+            "text": "Then monthly management, call reviews and coaching"
+          },
+          {
+            "key": "tools",
+            "text": "They work in your tools and on your phone line"
+          }
+        ],
+        "need": [
+          {
+            "key": "seat",
+            "text": "A desk for them"
+          },
+          {
+            "key": "phone",
+            "text": "A phone line"
+          },
+          {
+            "key": "prices",
+            "text": "Your price list"
+          }
+        ],
+        "steps": [
+          {
+            "key": "agree",
+            "text": "We agree the role and the pay with you."
+          },
+          {
+            "key": "recruit",
+            "text": "We recruit and interview."
+          },
+          {
+            "key": "train",
+            "text": "We train them and write the scripts."
+          },
+          {
+            "key": "month_one",
+            "text": "Month one, we run them with you."
+          },
+          {
+            "key": "manage",
+            "text": "Then monthly reviews and coaching."
+          }
+        ],
+        "why": [
+          {
+            "key": "waiting",
+            "label": "Quotations waiting on a decision",
+            "text": "Your quotations are waiting longer than your usual decision time. A closer's whole job is following them through."
+          },
+          {
+            "key": "hours",
+            "label": "Your hours on sales",
+            "text": "You take every sales call yourself, and you're good at it. A closer takes the first calls, so your hours go back to the projects only you can win."
+          },
+          {
+            "key": "nobody",
+            "label": "Nobody sells full time",
+            "text": "Right now sales sits with the owner or an engineer, on top of their real job. A closer does it as their only job."
+          }
+        ],
+        "button": "Yes, let's start the search",
+        "cta": "Yes, let's start the search for a closer.",
+        "close": "Shall we start the search this week?",
+        "work": []
+      },
+      "ar": {
+        "name": "توظيف مندوب مبيعات",
+        "deckTitle": "مندوب مبيعات لفريقكم",
+        "line": "نوظف لكم مندوب مبيعات وندربه وندير أداءه، ويشتغل على أدواتكم أنتم.",
+        "parts": {
+          "placement": "توظيف المندوب وتدريبه",
+          "management": "إدارة شهرية، ومراجعة المكالمات، والتدريب"
+        },
+        "terms": "التوظيف دفعة وحدة كاملة، وبعدها شهرياً، وأقل مدة ٣ شهور. وإذا المندوب ما ناسب خلال ٩٠ يوم، نوظف بديل بدون تكلفة.",
+        "timing": "نبدي البحث بعد الدفع. وأول شهر للتدريب والتجهيز.",
+        "get": [
+          {
+            "key": "recruit",
+            "text": "نوظف لكم مندوب مبيعات"
+          },
+          {
+            "key": "train",
+            "text": "ندربه على نفس الإطار اللي يشتغل عليه فريقنا"
+          },
+          {
+            "key": "scripts",
+            "text": "سكربتات مكتوبة لخدماتكم"
+          },
+          {
+            "key": "month_one",
+            "text": "نمشيه معكم أول شهر"
+          },
+          {
+            "key": "manage",
+            "text": "وبعدها إدارة شهرية، ومراجعة المكالمات، والتدريب"
+          },
+          {
+            "key": "tools",
+            "text": "يشتغل على أدواتكم وعلى خط التلفون عندكم"
+          }
+        ],
+        "need": [
+          {
+            "key": "seat",
+            "text": "مكان يشتغل فيه"
+          },
+          {
+            "key": "phone",
+            "text": "خط تلفون"
+          },
+          {
+            "key": "prices",
+            "text": "قائمة أسعاركم"
+          }
+        ],
+        "steps": [
+          {
+            "key": "agree",
+            "text": "نتفق معكم على الدور والراتب."
+          },
+          {
+            "key": "recruit",
+            "text": "نبحث ونسوي المقابلات."
+          },
+          {
+            "key": "train",
+            "text": "ندربه ونكتب له السكربتات."
+          },
+          {
+            "key": "month_one",
+            "text": "أول شهر، نمشيه معكم."
+          },
+          {
+            "key": "manage",
+            "text": "وبعدها مراجعة وتدريب كل شهر."
+          }
+        ],
+        "why": [
+          {
+            "key": "waiting",
+            "label": "عروض أسعار تنتظر قرار",
+            "text": "عروض الأسعار عندكم تنتظر أطول من الوقت اللي تاخذه قراراتكم عادةً. وشغل المندوب كله إنه يتابعها لآخرها."
+          },
+          {
+            "key": "hours",
+            "label": "ساعاتكم على المبيعات",
+            "text": "أنتم تاخذون كل مكالمة مبيعات بنفسكم، وأنتم زينين فيها. والمندوب ياخذ المكالمات الأولى، فترجع ساعاتكم للمشاريع اللي ما يقدر يفوز فيها غيركم."
+          },
+          {
+            "key": "nobody",
+            "label": "ما أحد متفرغ للمبيعات",
+            "text": "المبيعات الحين عند صاحب الشركة أو مهندس، فوق شغله الأساسي. والمندوب يسويها كشغله الوحيد."
+          }
+        ],
+        "button": "خلونا نبدي البحث",
+        "cta": "تمام، خلونا نبدي البحث عن مندوب مبيعات.",
+        "close": "نبدي البحث هالأسبوع؟",
+        "work": []
+      }
+    },
+    "revision": 2,
+    "updatedAt": "2026-10-26T10:00:00Z",
+    "updatedBy": "fixture@example.test"
+  }
+}

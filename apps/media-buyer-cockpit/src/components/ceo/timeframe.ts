@@ -142,7 +142,11 @@ export function windowFromDaily(
   const sum = (pick: (d: GrowthDay) => number | undefined) =>
     rows.reduce((t, d) => t + (pick(d) ?? 0), 0);
   const spend = r2(sum(d => d.spend));
-  const spendRt = r2(sum(d => d.spendRetargeting));
+  // Retargeting is read only when every day carries it (2026-11-02): a day
+  // without the field is not $0 of retargeting, so the window's all-spend
+  // figures (front-end ROAS, cost to win) read n/a rather than lead gen alone.
+  const rtRead = rows.length > 0 && rows.every(d => isNum(d.spendRetargeting));
+  const spendRt = rtRead ? r2(sum(d => d.spendRetargeting)) : null;
   const leads = sum(d => d.leads);
   const qualified = sum(d => d.qualified);
   const unqualified = sum(d => d.unqualified);
@@ -155,6 +159,13 @@ export function windowFromDaily(
   const introsDue = sum(d => d.introsDue);
   const demosDue = sum(d => d.demosDue);
   const introsShown = sum(d => d.introsShown);
+  // Intro to demo by day (2026-11-02, Goals sheet round 3): since release
+  // goal1102 every day carries introsAdvanced, b2b_window_metrics' own
+  // intro_handoff rule, so a run of days is sum(introsAdvanced) over
+  // sum(introsShown), as B2B and the Goals sheet work it out. It is read only
+  // when every day carries it: a payload stored before is missing, never 0.
+  const advRead = rows.length > 0 && rows.every(d => isNum(d.introsAdvanced));
+  const introsAdvanced = advRead ? sum(d => d.introsAdvanced ?? 0) : null;
   const demosShown = sum(d => d.demosShown);
   const demosQualified = sum(d => d.demosQualified);
   const introsScheduled = sum(d => d.introsScheduled);
@@ -192,6 +203,8 @@ export function windowFromDaily(
         ? null
         : share(kickoffConfirmed, kickoff),
     paid,
+    // A month measure (paid and signed inside the window), never kept per day.
+    paidOnWindowDeals: null,
     // The split by kind, by rail and by closer is not kept per day.
     paidDeposit: null,
     paidRemainder: null,
@@ -236,8 +249,10 @@ export function windowFromDaily(
     demosDue,
     demoShowRate: share(demosShown, demosDue),
     introShowRate: share(introsShown, introsDue),
-    // Intro to demo needs the contact join the server does; not derivable from days.
-    introToDemo: null,
+    // Three places, as the server's windows carry it (growth.js pct), so
+    // INTRO_TO_DEMO.format prints a range and a preset alike.
+    introToDemo:
+      introsAdvanced === null ? null : share(introsAdvanced, introsShown),
     demosStillConfirmed: 0,
     cancel: {
       intro: share(introsCancelled, introsScheduled),
@@ -261,12 +276,19 @@ export function windowFromDaily(
     frontEndCash: fe,
     cac: closes > 0 ? r2(spend / closes) : null,
     roas: spend > 0 ? r2(contracted / spend) : null,
-    roasCash: paid !== null && spend > 0 ? r2(paid / spend) : null,
+    // Over all Mahara ad spend, lead gen and retargeting (2026-11-02, Goals
+    // sheet round 2, fix 15), the worker's window rule, so a custom range
+    // ties to the sheet's FE ROAS (13.09x for October), not lead gen alone.
+    roasCash:
+      paid !== null && spendRt !== null && spend + spendRt > 0
+        ? r2(paid / (spend + spendRt))
+        : null,
     roasContracted: spend > 0 ? r2(contracted / spend) : null,
     raw: {
       spend,
       spend_retargeting: spendRt,
       intros_shown: introsShown,
+      intros_advanced: introsAdvanced,
       intros_due: introsDue,
       demos_due: demosDue,
       demos_shown: demosShown,

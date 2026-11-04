@@ -1,5 +1,18 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { BillingPayload } from "@/components/billing/BillingSheet";
+import type {
+  BillingPayload,
+  StaffFormsApi,
+} from "@/components/billing/BillingSheet";
+import {
+  formDoors,
+  formPrefill,
+  formTrail,
+  giveMoreTime,
+  mrrRead,
+  pauseClient,
+  resumeClient,
+  setMrr,
+} from "@/forms/staff/lifecycleClient";
 import {
   type BalancesRead,
   buildPending,
@@ -11,10 +24,24 @@ import {
   accountFrom,
   buildSheet,
   type Edit,
+  stepsFrom,
 } from "./billingCore";
 
 // biome-ignore lint/suspicious/noExplicitAny: generic billing payload
 type Any = any;
+
+/** The billing kinds that are the client's voice, not money acts (20261102b/c). */
+export const BILLING_VOICE_KINDS = ["survey", "nps_sent"] as const;
+
+/** Two event reads as one log, newest first (ties keep the money row first). */
+export function mergeNewestFirst<T extends { at?: string | null }>(
+  money: T[],
+  voice: T[],
+): T[] {
+  return [...money, ...voice].sort((a, b) =>
+    String(b.at ?? "").localeCompare(String(a.at ?? "")),
+  );
+}
 
 export async function fetchBillingSheet(
   client: SupabaseClient,
@@ -23,31 +50,50 @@ export async function fetchBillingSheet(
   const [
     { data: accountsData, error: aErr },
     { data: eventsData, error: eErr },
+    { data: voiceData, error: vErr },
     { data: inboxData, error: iErr },
+    ladder,
   ] = await Promise.all([
     client.from("cockpit_billing_accounts").select("*"),
+    // The newest 60 money acts, and the client's voice (an NPS sent, an exit
+    // survey answered) read on its own, so a busy day of surveys never pushes
+    // payments, dates and pauses out of the log (review W34).
     client
       .from("cockpit_billing_events")
       .select("*")
+      .not("kind", "in", `(${BILLING_VOICE_KINDS.join(",")})`)
       .order("at", { ascending: false })
       .limit(60),
+    client
+      .from("cockpit_billing_events")
+      .select("*")
+      .in("kind", [...BILLING_VOICE_KINDS])
+      .order("at", { ascending: false })
+      .limit(20),
     client
       .from("cockpit_billing_inbox")
       .select("*")
       .eq("status", "pending")
       .order("logged_at", { ascending: false })
       .limit(50),
+    // The overdue steps (20261101p). Before that migration, or on any
+    // error, the rows read with the defaults: day 4 and day 15.
+    Promise.resolve(client.rpc("cockpit_billing_ladder_read")).then(
+      r => (r.error ? null : r.data),
+      () => null,
+    ),
   ]);
 
   if (aErr) throw aErr;
   if (eErr) throw eErr;
+  if (vErr) throw vErr;
   if (iErr) throw iErr;
 
   const accounts: Account[] = (accountsData ?? []).map(accountFrom);
-  const events = eventsData ?? [];
+  const events = mergeNewestFirst(eventsData ?? [], voiceData ?? []);
   const inbox = inboxData ?? [];
 
-  const s = buildSheet(accounts, events, inbox);
+  const s = buildSheet(accounts, events, inbox, undefined, stepsFrom(ladder));
 
   if (!allowedClients || allowedClients.length === 0) {
     return s;
@@ -311,7 +357,27 @@ export type ConfirmPaidInput = {
   paidOn: string;
   evidenceUrl?: string | null;
   note?: string | null;
+  /** Waves 5-6 (4.6.5): the part's due day as the list shows it; without it the date never moves. */
+  dueOn?: string | null;
+  /** The next later part of the same deal still to be paid (a split), checked on the server. */
+  nextPartNo?: number | null;
+  nextDueOn?: string | null;
 };
+
+/** The date line a confirm or withdraw carries (20261102g): the server's own sentence, else its reason. */
+function dateLine(out: Any): string | null {
+  const d = out?.date;
+  if (!d || typeof d !== "object") return null;
+  const line =
+    typeof d.sentence === "string" && d.sentence
+      ? d.sentence
+      : typeof d.why === "string"
+        ? d.why
+        : null;
+  // "Confirmed. Next payment Tue 2 Dec." follows the confirm's own sentence: the first word once.
+  const text = line?.replace(/^(Confirmed|Withdrawn)\.\s*/, "").trim();
+  return text ? text : null;
+}
 
 /**
  * Confirm paid: a person's word that a part was paid on Whop, Tap or an Ecom
@@ -334,10 +400,17 @@ export async function confirmPaid(
     paidOn: p.paidOn,
     evidenceUrl: p.evidenceUrl || null,
     note: p.note || null,
+    ...(p.dueOn ? { dueOn: p.dueOn } : {}),
+    ...(p.dueOn && p.nextDueOn && p.nextPartNo
+      ? { nextPartNo: p.nextPartNo, nextDueOn: p.nextDueOn }
+      : {}),
     source,
   });
+  const date = dateLine(out);
   return {
-    sentence: String(out.sentence ?? "Confirmed."),
+    sentence: [String(out.sentence ?? "Confirmed."), date]
+      .filter(Boolean)
+      .join(" · "),
     confirmationId: Number(out.confirmation?.id),
     repeated: out.repeated === true,
   };
@@ -355,7 +428,9 @@ export async function withdrawConfirmation(
     reason: p.reason,
     source,
   });
-  return String(out.sentence ?? "Withdrawn.");
+  return [String(out.sentence ?? "Withdrawn."), dateLine(out)]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 /**
@@ -431,4 +506,29 @@ export async function unexcludePayment(
     source,
   });
   return String(out.sentence ?? "Counted as program money again.");
+}
+
+/**
+ * The billing sheet's staff forms (20261101p): Give more time, Pause,
+ * Resume and Set MRR, through forms/staff/lifecycleClient.ts with this
+ * cockpit's seat. The server gates each send and words each refusal.
+ */
+export function staffForms(
+  client: SupabaseClient,
+  source: "ceo" | "csm",
+): StaffFormsApi {
+  const sends = {
+    extension: giveMoreTime,
+    pause: pauseClient,
+    resume: resumeClient,
+    mrr: setMrr,
+  } as const;
+  return {
+    doors: () => formDoors(client),
+    prefill: (key, taskId) => formPrefill(client, key, taskId),
+    send: (key, taskId, a, requestId, o) =>
+      sends[key](client, taskId, a, requestId, { ...o, source }),
+    trail: ref => formTrail(client, ref),
+    mrr: () => mrrRead(client),
+  };
 }

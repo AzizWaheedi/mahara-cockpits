@@ -25,6 +25,11 @@ EXPECTED_JOBS = (
     "mahara-eod-retry",
     # 20261025n: the Slack notices kick every minute; 20261025o: the Brand Blueprint press drain every 2 minutes.
     "mahara-slack-notices", "mahara-creative-drain",
+    # 20261026r: the requests writer every minute; 20261026t: the task mirror every 2 minutes and its seats read hourly.
+    "mahara-clickup-writeback-requests", "mahara-task-mirror", "mahara-task-mirror-seats",
+    # 20261029t: the 1-1 notes writer every minute (docs/forms/STAGE2B-CONTRACT.md 4.1). This copy lands at deploy D15,
+    # after D5 applied it.
+    "mahara-clickup-writeback-forms",
 )
 
 

@@ -148,9 +148,21 @@ test("account identity accepts exact IDs and trusted Meta URLs only", () => {
     123456,
     "https://evil.test/?act=123456",
     "https://facebook.com.evil.test/?act=123456",
-    "123456, SAR",
+    "123456 SAR extra",
+    "123456, SAR extra",
+    "123456 SAR",
+    "123456, SARS",
+    "123456, 12",
   ])
     expect(accountId(value)).toBeNull();
+});
+test("account identity accepts a number followed by a comma and a currency code", () => {
+  for (const value of [
+    "1988430024784828, SAR",
+    "1988430024784828,SAR",
+    " act_1988430024784828 , sar ",
+  ])
+    expect(accountId(value)).toBe("1988430024784828");
 });
 test("Active is an exact current option; missing field and wrong list are excluded", () => {
   expect(activeTask(client, "client1")).toBe(true);
@@ -836,6 +848,29 @@ test("a renamed account keeps its account and ads tasks; spacing and case do not
     "123456": "madana  Engineering Consulting ",
   });
   expect(p).toMatchObject({ kind: "rename", account: "123456", ref: "Madana Engineering Consulting", adsTasks: ["ads1"] });
+});
+test("Smmim studio replay: a currency added to the Client Data account number plans an automatic rename, not a block", () => {
+  const smmim = {
+    client_name: "Smmim studio",
+    account_id: "1988430024784828",
+    ads_task_ids: ["ads1"],
+    sheet_account_ref: "1988430024784828",
+  };
+  const cell = "1988430024784828, SAR";
+  const smmimClient = { ...client, name: "Smmim studio" };
+  expect(() =>
+    validateBinding({ ...binding, ...smmim }, smmimClient, [adsTask("ads1", "1988430024784828")], clientData(cell)),
+  ).toThrow(IdentityDrift);
+  const p = plan(smmim, cell, [adsTask("ads1", "1988430024784828", true, ["smmim studio"])], {
+    "1988430024784828": "1988430024784828",
+  });
+  expect(p).toMatchObject({
+    kind: "rename",
+    account: "1988430024784828",
+    ref: cell,
+    adsTasks: ["ads1"],
+  });
+  expect(p.kind === "rename" && p.evidence).toContain("its own ID");
 });
 test("a replaced ads task on the same account swaps in the open task that links it", () => {
   expect(plan({}, "123456", [adsTask("ads2", "123456")], {})).toMatchObject({
