@@ -10,7 +10,12 @@ export type HermesBlock =
   | { kind: "paragraph" | "heading"; spans: HermesSpan[] }
   | { kind: "bullets" | "numbered"; items: HermesSpan[][] };
 
-export type AssistantApp = "media-buyer" | "client-success" | "creative";
+export type AssistantApp =
+  | "media-buyer"
+  | "client-success"
+  | "creative"
+  | "sales"
+  | "editor";
 
 export const ASSISTANTS: Record<
   AssistantApp,
@@ -33,6 +38,18 @@ export const ASSISTANTS: Record<
     role: "Creative assistant",
     intro:
       "I'm Lens. I follow creative requests and which ads and hooks work best, and I help you find new angles.",
+  },
+  sales: {
+    name: "Ace",
+    role: "Sales assistant",
+    intro:
+      "I'm Ace. I prep you for calls, keep track of your follow-ups and the leads waiting for a reply, and show your numbers against your goals. Ask me about any lead.",
+  },
+  editor: {
+    name: "Frame",
+    role: "Editing assistant",
+    intro:
+      "I'm Frame. I keep track of your editing jobs: what is due, what needs changes and the review notes on each version.",
   },
 };
 
@@ -149,6 +166,20 @@ export function hermesSuggestions(
           "Summarise this week's client comments",
           "Which clients have lead sync problems?",
         ];
+  }
+  if (app === "sales") {
+    return [
+      "What calls do I have today?",
+      "Which leads are waiting for my reply?",
+      "How am I doing against my goals this month?",
+    ];
+  }
+  if (app === "editor") {
+    return [
+      "What is due today?",
+      "Which of my jobs need changes?",
+      "How do I send a video for review?",
+    ];
   }
   return name
     ? [

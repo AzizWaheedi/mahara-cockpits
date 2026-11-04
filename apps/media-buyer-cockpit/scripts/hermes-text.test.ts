@@ -90,6 +90,24 @@ test("creative suggestions name the client when there is one", () => {
     "Give me 3 hook ideas for a design firm",
   ]);
 });
+test("sales suggestions are the same with or without a client", () => {
+  const expected = [
+    "What calls do I have today?",
+    "Which leads are waiting for my reply?",
+    "How am I doing against my goals this month?",
+  ];
+  expect(hermesSuggestions("sales")).toEqual(expected);
+  expect(hermesSuggestions("sales", "Any client")).toEqual(expected);
+});
+test("editor suggestions are the same with or without a client", () => {
+  const expected = [
+    "What is due today?",
+    "Which of my jobs need changes?",
+    "How do I send a video for review?",
+  ];
+  expect(hermesSuggestions("editor")).toEqual(expected);
+  expect(hermesSuggestions("editor", "Any client")).toEqual(expected);
+});
 test("a blank client string counts as no client", () => {
   expect(hermesSuggestions("media-buyer", "   ")).toEqual(
     hermesSuggestions("media-buyer"),
@@ -101,11 +119,19 @@ test("a blank client string counts as no client", () => {
     hermesSuggestions("creative"),
   );
 });
-const APPS = ["media-buyer", "client-success", "creative"] as const;
+const APPS = [
+  "media-buyer",
+  "client-success",
+  "creative",
+  "sales",
+  "editor",
+] as const;
 test("each cockpit has its own assistant name", () => {
   expect(ASSISTANTS["media-buyer"].name).toBe("Signal");
   expect(ASSISTANTS["client-success"].name).toBe("Anchor");
   expect(ASSISTANTS.creative.name).toBe("Lens");
+  expect(ASSISTANTS.sales.name).toBe("Ace");
+  expect(ASSISTANTS.editor.name).toBe("Frame");
 });
 test("each assistant intro names the assistant itself", () => {
   for (const app of APPS) {

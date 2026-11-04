@@ -221,8 +221,12 @@ done
 
 same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$CS/src/lib/askAiClient.ts"
 same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$CD/src/lib/askAiClient.ts"
+same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$SA/src/lib/askAiClient.ts"
+same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$ED/src/lib/askAiClient.ts"
 same hermesText.ts "$MB/src/lib/hermesText.ts" "$CS/src/lib/hermesText.ts"
 same hermesText.ts "$MB/src/lib/hermesText.ts" "$CD/src/lib/hermesText.ts"
+same hermesText.ts "$MB/src/lib/hermesText.ts" "$SA/src/lib/hermesText.ts"
+same hermesText.ts "$MB/src/lib/hermesText.ts" "$ED/src/lib/hermesText.ts"
 same personalEod.ts "$MB/src/lib/personalEod.ts" "$CS/src/lib/personalEod.ts"
 same personalEod.ts "$MB/src/lib/personalEod.ts" "$CD/src/lib/personalEod.ts"
 same convex/billingCore.ts "$MB/convex/billingCore.ts" "$CS/convex/billingCore.ts"
@@ -311,7 +315,8 @@ for f in $TASK_SET; do
     echo "IMPORTS  $CS/$f may import only react, react-dom, react-router, lucide-react, the Supabase client type, @/lib/taskSeat and the set itself"
     fails=$((fails + 1))
   fi
-  if grep -E "[\"']@supabase/supabase-js[\"']" "$CS/$f" \
+  if tr -d '\r' < "$CS/$f" \
+    | grep -E "[\"']@supabase/supabase-js[\"']" \
     | grep -vqE "^import type \{ SupabaseClient \} from [\"']@supabase/supabase-js[\"'];$"; then
     echo "IMPORTS  $CS/$f may take only the SupabaseClient type from @supabase/supabase-js"
     fails=$((fails + 1))
@@ -358,7 +363,8 @@ form_imports src/forms/staff/FormSheet.tsx 'react|lucide-react|@/components/ui/s
 form_imports src/forms/staff/formDefs.ts '\./formSheetCore'
 form_imports src/forms/staff/lifecycleClient.ts '@supabase/supabase-js|\./formSheetCore'
 if [ -f "$CS/src/forms/staff/lifecycleClient.ts" ] \
-  && grep -E "[\"']@supabase/supabase-js[\"']" "$CS/src/forms/staff/lifecycleClient.ts" \
+  && tr -d '\r' < "$CS/src/forms/staff/lifecycleClient.ts" \
+  | grep -E "[\"']@supabase/supabase-js[\"']" \
   | grep -vqE "^import type \{ SupabaseClient \} from [\"']@supabase/supabase-js[\"'];$"; then
   echo "IMPORTS  $CS/src/forms/staff/lifecycleClient.ts may take only the SupabaseClient type"
   fails=$((fails + 1))

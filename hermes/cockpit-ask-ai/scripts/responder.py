@@ -131,9 +131,14 @@ def ask_model(messages: list[dict[str, Any]], chain: list[tuple[str, str]]) -> t
 # ---------------------------------------------------------------- reads
 
 
+def get_url(rest: str, table: str, query: dict[str, str]) -> str:
+    """The read's URL. The filter syntax stays raw; names and Arabic text are escaped."""
+    return f"{rest}/{table}?{urllib.parse.urlencode(query, safe='(),.*:\'')}"
+
+
 def get(rest: str, key: str, table: str, query: dict[str, str]) -> list[dict[str, Any]] | None:
     """One PostgREST read. None means the source could not be read (never treat it as zero)."""
-    out = askai.call(f"{rest}/{table}?{urllib.parse.urlencode(query, safe='(),.*:')}", key)
+    out = askai.call(get_url(rest, table, query), key)
     return out if isinstance(out, list) else None
 
 
@@ -391,6 +396,12 @@ Ad decisions belong to Signal in the media buyer cockpit and creative work to Le
     "creative": ("Lens", """You are Lens, the creative assistant.
 Lead with creative: open creative requests and their reasons, which ads, hooks and angles have the best cost per lead, and fresh angles to try. Ad numbers support creative choices.
 Budget and campaign decisions belong to Signal in the media buyer cockpit and client relationships to Anchor in the client success cockpit: answer what the DATA shows, then say who covers the rest."""),
+    "sales": ("Ace", """You are Ace, the sales team's assistant.
+Lead with the person's pipeline: call prep for a lead, today's calls, follow-ups due, leads waiting for a reply, and their numbers. You may draft WhatsApp or email follow-ups in natural Gulf Arabic or English; the person sends them.
+Ads belong to Signal in the media buyer cockpit and client accounts to Anchor in the client success cockpit: answer what the DATA shows, then say who covers the rest."""),
+    "editor": ("Frame", """You are Frame, the video editors' assistant.
+Lead with the editor's own jobs: what is due, what needs changes, and the review notes on each version.
+Creative direction belongs to Lens in the creative cockpit: answer what the DATA shows, then say who covers the rest."""),
 }
 DEFAULT_ASSISTANT = ("the cockpit assistant", "You are the cockpit assistant.")
 
@@ -456,6 +467,33 @@ COCKPIT_GUIDE = {
 - Links
 New creative requests from media buyers arrive here from the Ads page "New creative" button in the media buyer cockpit.
 """ + SHARED_GUIDE,
+    "sales": """Sales cockpit menu:
+- Today
+- Calendar
+- Leads
+- Dialer
+- Pipeline
+- Intelligence
+- Proposals
+- Contracts
+- Invoices
+- Numbers
+- Goals
+- End of day
+- Follow-ups
+- Recordings
+- Links
+- Pitch deck
+""" + SHARED_GUIDE,
+    "editor": """Video editor cockpit menu:
+- Jobs
+- Footage
+- Send for review
+- Library
+- Meetings
+- End of day: the button on the Jobs page.
+- How to use this desk
+""" + SHARED_GUIDE,
 }
 
 # The guide files and each cockpit's last month of commit subjects live on
@@ -467,6 +505,8 @@ GUIDE_DIRS = {
     "media-buyer": "apps/media-buyer-cockpit",
     "client-success": "apps/client-success-cockpit",
     "creative": "apps/creative-director-cockpit",
+    "sales": "apps/sales-cockpit",
+    "editor": "apps/video-editor-cockpit",
 }
 GUIDE_TTL_SECONDS = 600
 GUIDE_MAX_CHARS = 40000
@@ -630,12 +670,687 @@ def visible_clients(rest: str, key: str, uid: str | None, profile_names: list[st
     return list(seen.values())
 
 
+# ---------------------------------------------------------------- sales and editor
+
+
+def kuwait_day_bounds(day: Any) -> tuple[str, str]:
+    """Kuwait midnight to the next Kuwait midnight, as UTC ISO strings."""
+    start = datetime(day.year, day.month, day.day, tzinfo=KUWAIT)
+    end = start + timedelta(days=1)
+    return start.astimezone(timezone.utc).isoformat(), end.astimezone(timezone.utc).isoformat()
+
+
+def kuwait_clock(ts: Any) -> str:
+    return kuwait_time(ts)[11:16]
+
+
+def in_list(values: list[Any]) -> str:
+    return "in.(" + ",".join(f'"{v}"' for v in values) + ")"
+
+
+def who_is(rest: str, key: str, uid: str | None, app: str = "sales") -> dict[str, Any]:
+    """The asker's seat in the sales or editor cockpit. Missing rows give empty strings."""
+    out: dict[str, Any] = {"email": "", "roles": [], "name": "", "role": "", "ghl": "", "b2b": "", "maqsam": "", "manager": False}
+    member = get(rest, key, "cockpit_members", {"auth_user_id": f"eq.{uid}", "active": "is.true", "select": "email,roles"}) if uid else None
+    if not member:
+        return out
+    m = member[0]
+    email = str(m.get("email") or "").strip()
+    roles = [str(r) for r in (m.get("roles") or [])]
+    out.update(email=email, roles=roles)
+    if not email:
+        return out
+    if app == "editor":
+        person = get(rest, key, "editor_people", {"email": f"eq.{email}", "select": "name,role"})
+        if person:
+            p = person[0]
+            out.update(name=str(p.get("name") or ""), role=str(p.get("role") or ""))
+        out["manager"] = out["role"] == "admin" or "admin" in roles or email.lower() in CEO_EMAILS
+    else:
+        person = get(rest, key, "cockpit_sales_people", {"email": f"eq.{email}", "select": "name,role,ghl_user_id,b2b_rep_id,maqsam_email,active"})
+        if person:
+            p = person[0]
+            out.update(
+                name=str(p.get("name") or ""),
+                role=str(p.get("role") or ""),
+                ghl=str(p.get("ghl_user_id") or ""),
+                b2b=str(p.get("b2b_rep_id") or ""),
+                maqsam=str(p.get("maqsam_email") or ""),
+            )
+        out["manager"] = out["role"] == "manager" or "admin" in roles or email.lower() in CEO_EMAILS
+    return out
+
+
+def sales_lead(rest: str, key: str, job: dict[str, Any], page: str | None, chain: list[tuple[str, str]]) -> tuple[str | None, str]:
+    """The lead this chat is about: the page id, a phone number, or the model's pick."""
+    found = re.match(r"^/(?:lead|call)/([A-Za-z0-9]+)", page or "")
+    if found:
+        return found.group(1), ""
+    prompt = job.get("prompt") or ""
+    numbers = re.findall(r"\d{8,}", prompt)
+    if numbers:
+        eight = numbers[-1][-8:]
+        rows = get(rest, key, "cockpit_sales_leads", {"phone8": f"eq.{eight}", "select": "contact_id,name,company", "limit": "5"})
+        return (str(rows[0].get("contact_id")), "") if rows else (None, "")
+    history = [h.get("prompt") or "" for h in reversed((job.get("context") or {}).get("history", [])[:3])]
+    said = "\n".join(f"- {t[:300]}" for t in [*history, prompt] if t.strip())
+    msgs = [
+        {"role": "system", "content": "You read a sales rep's chat. Reply with the lead's person name or company name exactly as written in the chat, or NONE when no lead is named."},
+        {"role": "user", "content": f"The chat, oldest first:\n{said}"},
+    ]
+    fast = [c for c in chain if "haiku" in c[1]] + [c for c in chain if "haiku" not in c[1]]
+    try:
+        text, _ = ask_model(msgs, fast)
+    except RuntimeError:
+        return None, ""
+    picked = text.strip().strip('"').strip()
+    if not picked or picked.upper() == "NONE":
+        return None, ""
+    name = " ".join(re.sub(r"[^\w\s]|_", " ", picked).split())[:60]
+    if len(name) < 2:
+        return None, ""
+    rows = get(rest, key, "cockpit_sales_leads", {
+        "or": f"(name.ilike.*{name}*,company.ilike.*{name}*)",
+        "select": "contact_id,name,company", "order": "lead_updated_at.desc", "limit": "6",
+    })
+    if not rows:
+        return None, f'No lead matches "{name}".'
+    if len(rows) == 1:
+        return str(rows[0].get("contact_id")), ""
+    shown = [f"{r.get('name') or 'no name'}" + (f" ({r['company']})" if r.get("company") else "") for r in rows[:5]]
+    return None, f'Several leads match "{name}": ' + ", ".join(shown) + "."
+
+
+def lead_pack(rest: str, key: str, contact_id: str) -> tuple[str, list[str]]:
+    """Everything the cockpit knows about one sales lead, read only."""
+    lines: list[str] = []
+    sources: list[str] = []
+    lead = get(rest, key, "cockpit_sales_leads", {
+        "contact_id": f"eq.{contact_id}", "limit": "1",
+        "select": "name,company,country,source,lead_class,stage_name,pipeline_name,opp_status,monetary_value,readiness,revenue,revenue_goal,decision_maker,challenge,services,grade,setter_name,lead_created_at,ad_name,campaign_name,assigned_to",
+    })
+    if lead is None:
+        lines.append("Lead: could not be read.")
+    elif lead:
+        sources.append("sales lead")
+        row = lead[0]
+        owner = ""
+        if row.get("assigned_to"):
+            people = get(rest, key, "cockpit_sales_people", {"ghl_user_id": f"eq.{row['assigned_to']}", "select": "name"})
+            if people:
+                owner = str(people[0].get("name") or "")
+        bits = [str(row.get("name") or "no name") + (f" ({row['company']})" if row.get("company") else "")]
+        for field, label in (
+            ("country", "country"), ("source", "source"), ("lead_class", "class"), ("stage_name", "stage"),
+            ("pipeline_name", "pipeline"), ("opp_status", "opportunity status"), ("readiness", "readiness"),
+            ("revenue", "revenue"), ("revenue_goal", "revenue goal"), ("decision_maker", "decision maker"),
+            ("challenge", "challenge"), ("services", "services"), ("grade", "grade"), ("setter_name", "setter"),
+            ("ad_name", "ad"), ("campaign_name", "campaign"),
+        ):
+            if row.get(field):
+                bits.append(f"{label} {row[field]}")
+        if row.get("monetary_value") is not None:
+            bits.append("value " + money(num(row["monetary_value"])))
+        if row.get("lead_created_at"):
+            bits.append("created " + kuwait_time(row["lead_created_at"]))
+        if owner:
+            bits.append("owner " + owner)
+        lines.append("Lead: " + "; ".join(bits) + ".")
+
+    appts = get(rest, key, "cockpit_sales_appointments", {
+        "contact_id": f"eq.{contact_id}", "order": "start_at.desc", "limit": "6",
+        "select": "start_at,call_type,status,assigned_user_name",
+    })
+    if appts is None:
+        lines.append("Calls on the calendar: could not be read.")
+    elif appts:
+        sources.append("sales appointments")
+        lines.append("Calls on the calendar, newest first:")
+        for a in appts:
+            rep = f", rep {a['assigned_user_name']}" if a.get("assigned_user_name") else ""
+            lines.append(f"- {kuwait_time(a.get('start_at'))} {a.get('call_type') or 'call'}: {a.get('status') or 'no status'}{rep}")
+
+    call_notes = get(rest, key, "cockpit_sales_call_notes", {
+        "contact_id": f"eq.{contact_id}", "order": "call_at.desc", "limit": "3",
+        "select": "call_type,call_at,rep,notes,verdict,verdict_why",
+    })
+    if call_notes is None:
+        lines.append("Call notes: could not be read.")
+    elif call_notes:
+        sources.append("call notes")
+        lines.append("Call notes, newest first:")
+        for n in call_notes:
+            note = n.get("notes")
+            note_text = note if isinstance(note, str) else json.dumps(note or {}, ensure_ascii=False)
+            lines.append(
+                f"- {kuwait_time(n.get('call_at'))} {n.get('call_type') or 'call'} by {n.get('rep') or 'unknown'}:"
+                f" {note_text[:1200]} (verdict {n.get('verdict') or 'none'}: {(n.get('verdict_why') or '')[:300]})"
+            )
+
+    recordings = get(rest, key, "cockpit_sales_recordings", {
+        "contact_id": f"eq.{contact_id}", "hidden_reason": "is.null", "duplicate_of": "is.null",
+        "order": "started_at.desc", "limit": "3", "select": "title,started_at,summary,action_items",
+    })
+    if recordings is None:
+        lines.append("Recorded calls: could not be read.")
+    elif recordings:
+        sources.append("recorded calls")
+        lines.append("Recorded calls, newest first:")
+        for r in recordings:
+            lines.append(f"- {kuwait_time(r.get('started_at'))} {r.get('title') or 'call'}: {(r.get('summary') or '')[:1500]}".rstrip())
+            if r.get("action_items"):
+                lines.append(f"  Action items: {str(r['action_items'])[:600]}")
+
+    dials = get(rest, key, "cockpit_sales_dials", {
+        "contact_id": f"eq.{contact_id}", "order": "occurred_at.desc", "limit": "5",
+        "select": "occurred_at,agent_name,direction,state,duration_s,summary_en",
+    })
+    if dials is None:
+        lines.append("Dialer calls: could not be read.")
+    elif dials:
+        sources.append("dialer calls")
+        lines.append("Dialer calls, newest first:")
+        for d in dials:
+            lines.append(
+                f"- {kuwait_time(d.get('occurred_at'))} {d.get('agent_name') or 'someone'} {d.get('direction') or ''}"
+                f" {d.get('state') or 'unknown'}, {int(num(d.get('duration_s')))} s: {(d.get('summary_en') or '')[:400]}"
+            )
+
+    messages = get(rest, key, "cockpit_sales_conversation_messages", {
+        "contact_id": f"eq.{contact_id}", "order": "at.desc", "limit": "15",
+        "select": "at,direction,channel,body,automated",
+    })
+    if messages is None:
+        lines.append("Messages: could not be read.")
+    elif messages:
+        sources.append("messages")
+        lines.append("Messages, oldest first:")
+        for m in reversed(messages):
+            auto = " (automated)" if m.get("automated") else ""
+            lines.append(f"- {kuwait_time(m.get('at'))} {m.get('direction') or ''} via {m.get('channel') or ''}{auto}: {(m.get('body') or '')[:400]}")
+
+    followups = get(rest, key, "cockpit_sales_followups", {
+        "contact_id": f"eq.{contact_id}", "order": "created_at.desc", "limit": "3",
+        "select": "status,channel,created_at,final_body,body",
+    })
+    if followups is None:
+        lines.append("Follow-ups: could not be read.")
+    elif followups:
+        sources.append("follow-up drafts")
+        lines.append("Follow-up drafts, newest first:")
+        for f in followups:
+            body = f.get("final_body") or f.get("body") or ""
+            lines.append(f"- {kuwait_time(f.get('created_at'))} {f.get('status') or 'draft'} {f.get('channel') or ''}: {str(body)[:400]}")
+
+    hot = get(rest, key, "cockpit_sales_hot", {
+        "contact_id": f"eq.{contact_id}", "removed_at": "is.null",
+        "select": "heat,status,next_at,next_how,last_objection,note,amount,amount_currency",
+    })
+    if hot is None:
+        lines.append("Hot list: could not be read.")
+    elif hot:
+        sources.append("hot list")
+        lines.append("Hot list:")
+        for h in hot:
+            amount = f"{num(h.get('amount')):,.0f} {h.get('amount_currency') or 'USD'}" if h.get("amount") is not None else "not said"
+            lines.append(
+                f"- {h.get('heat') or 'hot'} {h.get('status') or 'nurturing'}: next {kuwait_time(h.get('next_at'))} by {h.get('next_how') or 'no plan'};"
+                f" objection: {(h.get('last_objection') or 'none')[:300]}; note: {(h.get('note') or '')[:300]}; worth {amount}"
+            )
+
+    deals = get(rest, key, "cockpit_sales_deals", {
+        "contact_id": f"eq.{contact_id}", "voided": "not.is.true", "order": "submitted_at.desc", "limit": "5",
+        "select": "submitted_at,closer,setter,cash_collected,contracted_revenue,new_mrr,agreement_type,payment_structure",
+    })
+    if deals is None:
+        lines.append("Deals: could not be read.")
+    elif deals:
+        sources.append("deals")
+        lines.append("Deals:")
+        for d in deals:
+            lines.append(
+                f"- {kuwait_time(d.get('submitted_at'))} closer {d.get('closer') or 'none'}, setter {d.get('setter') or 'none'}:"
+                f" cash {money(num(d.get('cash_collected')))}, contracted {money(num(d.get('contracted_revenue')))},"
+                f" new MRR {money(num(d.get('new_mrr')))}, {d.get('agreement_type') or 'agreement'}, {d.get('payment_structure') or 'no payment structure'}"
+            )
+
+    proposals = get(rest, key, "cockpit_sales_proposals", {
+        "contact_id": f"eq.{contact_id}", "order": "created_at.desc", "limit": "5",
+        "select": "status,variant,created_at,sent_at",
+    })
+    if proposals is None:
+        lines.append("Proposals: could not be read.")
+    elif proposals:
+        sources.append("proposals")
+        lines.append("Proposals, newest first:")
+        for p in proposals:
+            lines.append(f"- {kuwait_time(p.get('created_at'))} {p.get('status') or 'drafting'}, variant {p.get('variant') or 'none'}, sent {kuwait_time(p.get('sent_at')) if p.get('sent_at') else 'not sent'}")
+
+    contracts = get(rest, key, "cockpit_sales_contracts", {
+        "contact_id": f"eq.{contact_id}", "order": "created_at.desc", "limit": "5",
+        "select": "template_name,status,sent_at,viewed_at,signed_at",
+    })
+    if contracts is None:
+        lines.append("Contracts: could not be read.")
+    elif contracts:
+        sources.append("contracts")
+        lines.append("Contracts, newest first:")
+        for c in contracts:
+            lines.append(
+                f"- {c.get('template_name') or 'contract'}: {c.get('status') or 'draft'},"
+                f" sent {kuwait_time(c.get('sent_at')) if c.get('sent_at') else 'not sent'},"
+                f" viewed {kuwait_time(c.get('viewed_at')) if c.get('viewed_at') else 'not viewed'},"
+                f" signed {kuwait_time(c.get('signed_at')) if c.get('signed_at') else 'not signed'}"
+            )
+
+    research = get(rest, key, "cockpit_sales_research", {
+        "contact_id": f"eq.{contact_id}", "brief": "not.is.null", "order": "requested_at.desc", "limit": "1",
+        "select": "brief,status,requested_at",
+    })
+    if research is None:
+        lines.append("Research: could not be read.")
+    elif research:
+        sources.append("research brief")
+        brief = research[0].get("brief")
+        text = brief if isinstance(brief, str) else json.dumps(brief or {}, ensure_ascii=False)
+        lines.append(f"Research brief ({research[0].get('status') or 'unknown'}, requested {kuwait_time(research[0].get('requested_at'))}): {text[:2000]}")
+    return "\n".join(lines), sources
+
+
+def sales_day(rest: str, key: str, who: dict[str, Any]) -> tuple[str, list[str]]:
+    """The rep's day in Kuwait: calls, drafts, hot leads, replies owed and new leads."""
+    lines: list[str] = []
+    sources: list[str] = []
+    start, end = kuwait_day_bounds(datetime.now(KUWAIT).date())
+    now = datetime.now(timezone.utc).isoformat()
+    manager = bool(who.get("manager"))
+    email = str(who.get("email") or "")
+    ghl = str(who.get("ghl") or "")
+
+    if not manager and not ghl:
+        lines.append("Your seat has no HighLevel user, so your calendar cannot be read.")
+    else:
+        query = {
+            "and": f"(start_at.gte.{start},start_at.lt.{end})", "status": "not.in.(cancelled,invalid)",
+            "select": "start_at,call_type,contact_name,status,assigned_user_name", "order": "start_at.asc", "limit": "200",
+        }
+        if not manager:
+            query["assigned_user_id"] = f"eq.{ghl}"
+        calls = get(rest, key, "cockpit_sales_calendar", query)
+        if calls is None:
+            lines.append("Calls today: could not be read.")
+        elif calls:
+            sources.append("calendar")
+            lines.append("Calls today, Kuwait time:")
+            for c in calls:
+                rep = f" [rep {c['assigned_user_name']}]" if manager and c.get("assigned_user_name") else ""
+                lines.append(f"- {kuwait_clock(c.get('start_at'))} {c.get('call_type') or 'call'} with {c.get('contact_name') or 'a lead'} ({c.get('status') or 'no status'}){rep}")
+
+    query = {"status": "eq.draft", "expires_at": f"gt.{now}", "select": "contact_id,channel,created_at,owner_email", "order": "created_at.desc", "limit": "200"}
+    if not manager:
+        query["owner_email"] = f"eq.{email}"
+    drafts = get(rest, key, "cockpit_sales_followups", query)
+    if drafts is None:
+        lines.append("Follow-up drafts: could not be read.")
+    elif drafts:
+        sources.append("follow-up drafts")
+        lines.append(f"Follow-up drafts waiting: {len(drafts)}.")
+        first = drafts[:5]
+        ids = [str(d.get("contact_id")) for d in first if d.get("contact_id")]
+        names: dict[str, str] = {}
+        if ids:
+            leads = get(rest, key, "cockpit_sales_leads", {"contact_id": in_list(ids), "select": "contact_id,name"})
+            names = {str(l.get("contact_id")): str(l.get("name") or "a lead") for l in (leads or [])}
+        for d in first:
+            rep = f" [rep {d['owner_email']}]" if manager and d.get("owner_email") else ""
+            lines.append(f"- {names.get(str(d.get('contact_id')), 'a lead')} ({d.get('channel') or 'message'}){rep}")
+
+    query = {
+        "removed_at": "is.null", "status": "eq.nurturing", "next_at": f"lt.{end}",
+        "select": "contact_id,next_at,next_how,last_objection,heat,owner_email", "order": "next_at.asc", "limit": "50",
+    }
+    if not manager:
+        query["owner_email"] = f"eq.{email}"
+    hot = get(rest, key, "cockpit_sales_hot", query)
+    if hot is None:
+        lines.append("Hot list: could not be read.")
+    elif hot:
+        sources.append("hot list")
+        lines.append("Hot list due:")
+        ids = [str(h.get("contact_id")) for h in hot if h.get("contact_id")]
+        names = {}
+        if ids:
+            leads = get(rest, key, "cockpit_sales_leads", {"contact_id": in_list(ids), "select": "contact_id,name"})
+            names = {str(l.get("contact_id")): str(l.get("name") or "a lead") for l in (leads or [])}
+        for h in hot:
+            rep = f" [rep {h['owner_email']}]" if manager and h.get("owner_email") else ""
+            lines.append(f"- {names.get(str(h.get('contact_id')), 'a lead')}: next {kuwait_clock(h.get('next_at'))} by {h.get('next_how') or 'no plan'}; last objection: {(h.get('last_objection') or 'none')[:200]}{rep}")
+
+    query = {
+        "needs_reply": "is.true", "select": "contact_id,contact_name,last_in_at,last_in_channel,last_in_body,assigned_to",
+        "order": "last_in_at.asc", "limit": "200",
+    }
+    if not manager:
+        query["assigned_to"] = f"eq.{ghl}"
+    waiting = get(rest, key, "cockpit_sales_conversations", query)
+    if waiting is None:
+        lines.append("Waiting for a reply: could not be read.")
+    elif waiting:
+        sources.append("messages")
+        lines.append(f"Waiting for a reply: {len(waiting)}.")
+        for w in waiting[:10]:
+            rep = f" [rep {w['assigned_to']}]" if manager and w.get("assigned_to") else ""
+            lines.append(
+                f"- {w.get('contact_name') or 'a lead'} on {w.get('last_in_channel') or 'a channel'},"
+                f" waiting since {kuwait_time(w.get('last_in_at'))}: {(w.get('last_in_body') or '')[:160]}{rep}"
+            )
+
+    since = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+    query = {"is_lead": "is.true", "lead_created_at": f"gte.{since}", "select": "contact_id,name,lead_created_at,assigned_to", "order": "lead_created_at.desc", "limit": "50"}
+    if not manager:
+        query["assigned_to"] = f"eq.{ghl}"
+    new_leads = get(rest, key, "cockpit_sales_leads", query)
+    if new_leads is None:
+        lines.append("New leads: could not be read.")
+    elif new_leads:
+        ids = [str(l.get("contact_id")) for l in new_leads if l.get("contact_id")]
+        called = get(rest, key, "cockpit_sales_dials", {"contact_id": in_list(ids), "select": "contact_id"}) if ids else []
+        if called is None:
+            lines.append("New leads: could not check which ones have been called.")
+        else:
+            done = {str(d.get("contact_id")) for d in called}
+            fresh = [l for l in new_leads if str(l.get("contact_id")) not in done]
+            if fresh:
+                sources.append("leads")
+                lines.append(f"New leads not called yet: {len(fresh)}.")
+                for l in fresh:
+                    rep = f" [rep {l['assigned_to']}]" if manager and l.get("assigned_to") else ""
+                    lines.append(f"- {l.get('name') or 'a lead'}, created {kuwait_time(l.get('lead_created_at'))}{rep}")
+    return "\n".join(lines), sources
+
+
+def person_numbers(rest: str, key: str, name: str, role: str, b2b: str, maqsam: str, start: str, end: str, month_first: Any) -> tuple[str, list[str]]:
+    """One seat's month so far, counted the way the sales cockpit's end of day counts it."""
+    lines: list[str] = [f"{name}:"]
+    sources: list[str] = []
+    rep = get(rest, key, "cockpit_sales_reps", {"id": f"eq.{b2b}", "select": "display_name,closer_aliases"})
+    if rep is None:
+        return f"{name}: numbers could not be read.", []
+    names = [str(n).strip().lower() for n in ([rep[0].get("display_name")] + list(rep[0].get("closer_aliases") or []) if rep else []) if str(n or "").strip()]
+    if not names:
+        return f"{name}: the rep roster has no row for this seat, so numbers cannot be counted.", []
+
+    deals = get(rest, key, "cockpit_sales_deals", {
+        "and": f"(submitted_at.gte.{start},submitted_at.lt.{end})", "voided": "not.is.true",
+        "select": "closer,setter,cash_collected,contracted_revenue",
+    })
+    count: int | None = None
+    cash: float | None = None
+    if deals is None:
+        lines.append("Deals: could not be read.")
+    else:
+        field = "setter" if role == "setter" else "closer"
+        mine = [d for d in deals if not d.get("voided") and str(d.get(field) or "").strip().lower() in names]
+        count = len(mine)
+        cash = sum(num(d.get("cash_collected")) for d in mine)
+        contracted = sum(num(d.get("contracted_revenue")) for d in mine)
+        rule = "New Client Forms naming you as the setter, voided ones out" if role == "setter" else "New Client Forms naming you as the closer, voided ones out"
+        lines.append(f"Deals: {count}, cash {money(cash)}, contracted {money(contracted)}, this month so far ({rule}).")
+        sources.append("deals")
+
+    dials_count: int | None = None
+    if role == "setter":
+        maqsam = str(maqsam or "").strip()
+        if maqsam:
+            dials = get(rest, key, "cockpit_sales_dials", {
+                "agent_email": f"eq.{maqsam}", "direction": "eq.outbound",
+                "and": f"(occurred_at.gte.{start},occurred_at.lt.{end})", "select": "state,duration_s", "limit": "5000",
+            })
+            if dials is None:
+                lines.append("Dials: could not be read.")
+            else:
+                answered = [d for d in dials if d.get("state") == "completed"]
+                conversations = [d for d in answered if num(d.get("duration_s")) >= 60]
+                dials_count = len(dials)
+                lines.append(f"Dials: {dials_count}, this month so far (outbound calls from your Maqsam line).")
+                lines.append(f"Answered: {len(answered)}, this month so far (of those dials, the ones someone answered).")
+                lines.append(f"Conversations: {len(conversations)}, this month so far (answered, a minute or longer).")
+                sources.append("dialer calls")
+        else:
+            lines.append("Dials: this seat has no Maqsam address, so calls cannot be counted.")
+
+    goals = get(rest, key, "cockpit_sales_goals", {"person_key": f"eq.{b2b}", "month": f"eq.{month_first.isoformat()}", "select": "metric,goal,forecast"})
+    if goals is None:
+        lines.append("Goals: could not be read.")
+    elif goals:
+        sources.append("goals")
+        actual: dict[str, Any] = {"cash": cash, "closes": count, "dials": dials_count}
+        for g in goals:
+            metric = str(g.get("metric") or "")
+            if metric not in ("cash", "closes", "dials") or g.get("goal") is None:
+                continue
+            goal = num(g.get("goal"))
+            got = actual.get(metric)
+            goal_text = money(goal) if metric == "cash" else f"{int(goal)}"
+            if got is None:
+                lines.append(f"Goal {metric}: {goal_text}; it is not measured this month so far.")
+            else:
+                got_text = money(num(got)) if metric == "cash" else f"{int(num(got))}"
+                lines.append(f"Goal {metric}: {goal_text} against {got_text} this month so far.")
+    return "\n".join(lines), sources
+
+
+def sales_numbers(rest: str, key: str, who: dict[str, Any]) -> tuple[str, list[str]]:
+    """This month so far in Kuwait, for one rep or the whole team."""
+    now = datetime.now(KUWAIT)
+    month_first = now.date().replace(day=1)
+    start = datetime(month_first.year, month_first.month, month_first.day, tzinfo=KUWAIT).astimezone(timezone.utc).isoformat()
+    end = now.astimezone(timezone.utc).isoformat()
+    if who.get("manager"):
+        team = get(rest, key, "cockpit_sales_people", {
+            "active": "is.true", "b2b_rep_id": "not.is.null",
+            "select": "email,name,role,b2b_rep_id,maqsam_email", "order": "name.asc",
+        })
+        if team is None:
+            return "Team numbers: could not be read.", []
+        if not team:
+            return "Numbers: no active sales seat is linked to a sales rep.", []
+        blocks: list[str] = []
+        sources: list[str] = []
+        for p in team:
+            text, src = person_numbers(
+                rest, key, str(p.get("name") or p.get("email") or "someone"), str(p.get("role") or ""),
+                str(p.get("b2b_rep_id") or ""), str(p.get("maqsam_email") or ""), start, end, month_first,
+            )
+            blocks.append(text)
+            sources += [s for s in src if s not in sources]
+        return "\n\n".join(blocks), sources
+    b2b = str(who.get("b2b") or "")
+    if not b2b:
+        return "Numbers: this seat is not linked to a sales rep, so numbers cannot be counted.", []
+    return person_numbers(
+        rest, key, str(who.get("name") or who.get("email") or "you"), str(who.get("role") or ""),
+        b2b, str(who.get("maqsam") or ""), start, end, month_first,
+    )
+
+
+def sales_data(rest: str, key: str, who: dict[str, Any], job: dict[str, Any], page: str | None, chain: list[tuple[str, str]]) -> tuple[str, list[str]]:
+    parts: list[str] = [f"Person: {who.get('name') or who.get('email') or 'someone'} ({who.get('role') or 'none'}), manager: {'yes' if who.get('manager') else 'no'}."]
+    sources: list[str] = []
+    try:
+        lead_id, note = sales_lead(rest, key, job, page, chain)
+    except Exception:
+        lead_id, note = None, ""
+    if note:
+        parts.append(note)
+    if lead_id:
+        try:
+            text, src = lead_pack(rest, key, lead_id)
+            parts.append(text)
+            sources += src
+        except Exception:
+            parts.append("Lead: could not be read.")
+    try:
+        text, src = sales_day(rest, key, who)
+        parts.append(text)
+        sources += src
+    except Exception:
+        parts.append("Today: could not be read.")
+    try:
+        text, src = sales_numbers(rest, key, who)
+        parts.append(text)
+        sources += src
+    except Exception:
+        parts.append("Numbers: could not be read.")
+    return "\n\n".join(p for p in parts if p), sources
+
+
+def editor_pack(rest: str, key: str, who: dict[str, Any], page: str | None) -> tuple[str, list[str]]:
+    """The editor's jobs, the review notes on the next few, and the open job's versions."""
+    lines: list[str] = []
+    sources: list[str] = []
+    editor_filter = ""
+    if not who.get("manager"):
+        editor_filter = 'cs.[{"email":"' + str(who.get("email") or "") + '"}]'
+    query = {"state": "neq.gone", "select": "task_id,name,client,status,due_at,state,missing,url", "order": "due_at.asc.nullslast", "limit": "40"}
+    if editor_filter:
+        query["editors"] = editor_filter
+    jobs = get(rest, key, "editor_jobs", query)
+    if jobs is None:
+        lines.append("Jobs: could not be read.")
+        jobs = []
+    else:
+        jobs = [j for j in jobs if not str(j.get("status") or "").strip().lower().startswith(("cancelled", "live"))]
+    jobs.sort(key=lambda j: (j.get("due_at") is None, str(j.get("due_at") or "")))
+
+    found = re.match(r"^/job/([A-Za-z0-9]+)", page or "")
+    page_id = found.group(1) if found else None
+    page_job = None
+    if page_id:
+        page_job = next((j for j in jobs if str(j.get("task_id")) == page_id), None)
+        if page_job is None:
+            pq = {"task_id": f"eq.{page_id}", "select": "task_id,name,client,status,due_at,state,missing,url", "limit": "1"}
+            if editor_filter:
+                pq["editors"] = editor_filter
+            rows = get(rest, key, "editor_jobs", pq)
+            candidate = rows[0] if rows else None
+            if candidate and not str(candidate.get("status") or "").strip().lower().startswith(("cancelled", "live")):
+                page_job = candidate
+                jobs = [page_job] + jobs
+    if page_job:
+        jobs = [page_job] + [j for j in jobs if str(j.get("task_id")) != page_id]
+
+    if jobs:
+        sources.append("editor jobs")
+        lines.append("Jobs, most urgent first:")
+        now = datetime.now(timezone.utc)
+        for j in jobs:
+            due = "no due date"
+            if j.get("due_at"):
+                due = kuwait_time(j["due_at"])
+                try:
+                    if datetime.fromisoformat(str(j["due_at"]).replace("Z", "+00:00")) < now:
+                        due += " (overdue)"
+                except ValueError:
+                    pass
+            bits = [str(j.get("name") or "untitled job")]
+            if j.get("client"):
+                bits.append(f"client {j['client']}")
+            bits.append(f"status {j.get('status') or 'none'}")
+            bits.append(f"due {due}")
+            if j.get("state"):
+                bits.append(f"state {j['state']}")
+            if j.get("missing"):
+                missing = j["missing"] if isinstance(j["missing"], list) else [j["missing"]]
+                bits.append("missing " + ", ".join(str(x) for x in missing))
+            if j.get("url"):
+                bits.append(str(j["url"]))
+            lines.append("- " + "; ".join(bits))
+
+    urgent = [str(j.get("task_id")) for j in jobs[:10] if j.get("task_id")]
+    if urgent:
+        notes = get(rest, key, "editor_notes", {
+            "task_id": in_list(urgent), "done": "is.false", "order": "at.desc", "limit": "60",
+            "select": "task_id,version,by_name,text,at",
+        })
+        if notes is None:
+            lines.append("Review notes: could not be read.")
+        elif notes:
+            grouped: dict[str, list[dict[str, Any]]] = {}
+            for n in notes:
+                group = grouped.setdefault(str(n.get("task_id")), [])
+                if len(group) < 5:
+                    group.append(n)
+            worth = {tid: group for tid, group in grouped.items() if tid != page_id}
+            if worth:
+                sources.append("review notes")
+                lines.append("Review notes on those jobs (up to 5 each):")
+                for j in jobs[:10]:
+                    tid = str(j.get("task_id"))
+                    if tid in worth:
+                        lines.append(f"- {j.get('name') or tid}:")
+                        for n in worth[tid]:
+                            version = f"v{n['version']} " if n.get("version") is not None else ""
+                            lines.append(f"  - {version}{n.get('by_name') or 'someone'}: {(n.get('text') or '')[:300]}")
+
+    if page_job:
+        lines.append(f"Open page job: {page_job.get('name') or page_id} ({page_job.get('status') or 'no status'}).")
+        page_notes = get(rest, key, "editor_notes", {
+            "task_id": f"eq.{page_id}", "done": "is.false", "order": "at.desc", "limit": "60",
+            "select": "version,by_name,text,at",
+        })
+        if page_notes is None:
+            lines.append("Open notes on this job: could not be read.")
+        elif page_notes:
+            sources.append("page job notes")
+            lines.append("All open notes on this job:")
+            for n in page_notes:
+                version = f"v{n['version']} " if n.get("version") is not None else ""
+                lines.append(f"- {version}{n.get('by_name') or 'someone'}: {(n.get('text') or '')[:300]}")
+        versions = get(rest, key, "editor_versions", {
+            "task_id": f"eq.{page_id}", "order": "n.desc", "limit": "3", "select": "n,name,seconds,passed,at",
+        })
+        if versions is None:
+            lines.append("Versions: could not be read.")
+        elif versions:
+            sources.append("versions")
+            lines.append("Latest versions:")
+            for v in versions:
+                lines.append(f"- v{v.get('n') if v.get('n') is not None else '?'} {v.get('name') or ''}: {v.get('seconds') if v.get('seconds') is not None else '?'} s, {'passed' if v.get('passed') else 'not passed'}, {kuwait_time(v.get('at'))}")
+    return "\n".join(lines), sources
+
+
+def editor_data(rest: str, key: str, who: dict[str, Any], page: str | None) -> tuple[str, list[str]]:
+    parts: list[str] = [f"Person: {who.get('name') or who.get('email') or 'someone'} ({who.get('role') or 'none'}), manager: {'yes' if who.get('manager') else 'no'}."]
+    sources: list[str] = []
+    try:
+        text, src = editor_pack(rest, key, who, page)
+        parts.append(text)
+        sources += src
+    except Exception:
+        parts.append("Jobs: could not be read.")
+    return "\n\n".join(p for p in parts if p), sources
+
+
 def prepare(job: dict[str, Any], e: dict[str, str], rest: str, key: str, chain: list[tuple[str, str]]) -> tuple[list[dict[str, Any]], list[str], str | None]:
     ctx = job.get("context") or {}
     profiles = ctx.get("profiles") or []
     meta = get(rest, key, "cockpit_ask_ai_jobs", {"id": f"eq.{job['id']}", "select": "auth_user_id,page:metadata->request->context->>page"})
     page = (meta[0].get("page") if meta else None) or None
-    names = visible_clients(rest, key, meta[0].get("auth_user_id") if meta else None, [p.get("client_name") for p in profiles if p.get("client_name")])
+    uid = meta[0].get("auth_user_id") if meta else None
+    app = str(job.get("app") or "")
+    if app in ("sales", "editor"):
+        who = who_is(rest, key, uid, app)
+        sources: list[str] = []
+        if app == "sales":
+            data, src = sales_data(rest, key, who, job, page, chain)
+        else:
+            data, src = editor_data(rest, key, who, page)
+        sources += src
+        guide, changes, source = live_guide(e, app)
+        sources.append(f"cockpit guide ({source})")
+        return build_messages(job, data, [], page, guide=guide, changes=changes), sources, None
+    names = visible_clients(rest, key, uid, [p.get("client_name") for p in profiles if p.get("client_name")])
     client = find_client(job, names) or (guess_client(job, names, chain) if names else None)
     parts = [f"Clients this person can see: {', '.join(names) if names else 'none'}."]
     sources: list[str] = []

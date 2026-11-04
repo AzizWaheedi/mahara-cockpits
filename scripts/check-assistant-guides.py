@@ -3,13 +3,16 @@
 usage: python scripts/check-assistant-guides.py [--root DIR] [app_dir_name ...]
 
 Fails (exit 1) when, for an app:
-  1. a menu label in src/components/AppSidebar.tsx is not mentioned in the guide;
-  2. a top-level page address in src/auth/authenticated/AuthenticatedAppRoutes.tsx
-     (for example /eod) is not mentioned in the guide;
+  1. a menu label in its menu file is not mentioned in the guide;
+  2. a top-level page address in its routes file (for example /eod) is not
+     mentioned in the guide;
   3. the guide is under 1500 or over 6000 words;
   4. the guide has an em dash;
   5. a double-quoted string in the guide is not found in the app's src
      (quoted strings must be the exact interface text).
+
+Each app names its own menu and routes files in APP_FILES. An app not in the
+table falls back to the shared AppSidebar and AuthenticatedAppRoutes files.
 
 It also prints one non-blocking NOTE per app when screen files changed after the
 guide was last updated, so a person can check that the guide still matches.
@@ -20,9 +23,34 @@ import re
 import subprocess
 import sys
 
+# Menu labels that are group headings or cockpit names, not places a guide
+# should send a person to.
 SWITCHER = {"Media buyer cockpit", "Media buyer", "Client success", "Creative director", "Editor desk", "Sales"}
-SKIP_ROUTES = {"/", "/*", "/login", "/signup", "/first-sign-in"}
-DEFAULT_APPS = ["media-buyer-cockpit", "client-success-cockpit", "creative-director-cockpit"]
+# Routes for signed-out or public pages, which no guide section describes.
+SKIP_ROUTES = {"/", "/*", "/login", "/signup", "/first-sign-in", "/review"}
+
+# The menu files and the routes file for each cockpit. The three older
+# cockpits share the same pair of files. Sales reads its sidebar and the
+# phone dock. The editor desk reads its sidebar. An app not listed here
+# falls back to the older pair.
+DEFAULT_FILES = (
+    ("src/components/AppSidebar.tsx",),
+    ("src/auth/authenticated/AuthenticatedAppRoutes.tsx",),
+)
+APP_FILES = {
+    "media-buyer-cockpit": DEFAULT_FILES,
+    "client-success-cockpit": DEFAULT_FILES,
+    "creative-director-cockpit": DEFAULT_FILES,
+    "sales-cockpit": (
+        ("src/components/Sidebar.tsx", "src/components/MacOSDock.tsx"),
+        ("src/App.tsx",),
+    ),
+    "video-editor-cockpit": (
+        ("src/components/Sidebar.tsx",),
+        ("src/App.tsx",),
+    ),
+}
+DEFAULT_APPS = list(APP_FILES)
 
 
 def read(path):
@@ -41,13 +69,17 @@ def check_app(app_dir):
     low = guide.lower()
     problems = []
 
-    side = read(app_dir / "src/components/AppSidebar.tsx") or ""
-    labels = {m for m in re.findall(r'label:\s*"([^"]+)"', side)} - SWITCHER
+    menu_files, route_files = APP_FILES.get(app_dir.name, DEFAULT_FILES)
+    labels = set()
+    for name in menu_files:
+        side = read(app_dir / name) or ""
+        labels |= set(re.findall(r'label:\s*"([^"]+)"', side))
+    labels -= SWITCHER
     for label in sorted(labels):
         if label.lower() not in low:
             problems.append(f"menu label not in guide: {label}")
 
-    routes = read(app_dir / "src/auth/authenticated/AuthenticatedAppRoutes.tsx") or ""
+    routes = "\n".join(read(app_dir / name) or "" for name in route_files)
     paths = re.findall(r'path="([^"]+)"', routes)
     tops = {"/" + p.strip("/").split("/")[0] if p.strip("/") else "/" for p in paths} - SKIP_ROUTES
     for top in sorted(tops):
