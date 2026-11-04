@@ -31,6 +31,7 @@ import {
   type UnlinkedRow,
   usdText,
 } from "@/lib/billingBalances";
+import { useReadBeforeLate } from "@/lib/readBeforeLate";
 
 /*
  * Hallmark · component: section · genre: modern-minimal · theme: the cockpit's own
@@ -2300,6 +2301,7 @@ export function PendingPayments({
 }) {
   const headingId = useId();
   const [view, setView] = useState<PendingView | null>(null);
+  const [readAt, setReadAt] = useState<number | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [chipKey, setChipKey] = useState<ChipKey>("notSeen");
@@ -2318,12 +2320,14 @@ export function PendingPayments({
     setError(null);
     try {
       setView(await api.read());
+      setReadAt(Date.now());
     } catch (e) {
       setError(errorText(e));
     } finally {
       setBusy(false);
     }
   }, [api]);
+  useReadBeforeLate(load, readAt === null ? null : readAt + 15 * 60_000);
   useEffect(() => {
     void load();
   }, [load]);

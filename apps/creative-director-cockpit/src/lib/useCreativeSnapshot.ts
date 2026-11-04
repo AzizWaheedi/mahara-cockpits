@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { newestPublish, STALE_MINUTES } from "@/lib/freshness";
+import { useReadBeforeLate } from "@/lib/readBeforeLate";
 import { offerLine, readBlueprints } from "./blueprint";
 import { logClientTouch } from "./clients";
 import { buildSnapshot, snapshotContext } from "./creativeSourceModels";
@@ -306,6 +308,13 @@ export function useCreativeSnapshot(
   useEffect(() => {
     void fetchSnapshot();
   }, [fetchSnapshot]);
+
+  const newest = newestPublish(snap?.source);
+  useReadBeforeLate(
+    fetchSnapshot,
+    newest === null ? null : newest + STALE_MINUTES * 60_000,
+    { minGapMs: 10 * 60_000 },
+  );
 
   const toggleCheck = useCallback(
     async (args: { key: string; done: boolean }) => {
