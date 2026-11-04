@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 /**
  * The campaigns that started spending today, from
- * `cockpit_media_started_today` (migration 20261104a). The cockpit's Ads list
+ * `cockpit_media_started_today` (migration 20261104b). The cockpit's Ads list
  * shows a campaign once it has a full day of spend, so a campaign switched on
  * today is missing from it until after midnight; this read gives it a row
  * straight away with today's figures from Meta's hourly read, and the ClickUp
