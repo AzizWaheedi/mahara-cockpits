@@ -378,6 +378,11 @@ for f in src/components/billing/ChecksWaiting.tsx src/lib/paymentChecks.ts; do
   same "$f" "$MB/$f" "$CS/$f"
 done
 
+# A page re-reads its data before calling it late the same way in every cockpit (4 Nov 2026).
+same readBeforeLate "$MB/src/lib/readBeforeLate.ts" "$CD/src/lib/readBeforeLate.ts"
+same readBeforeLate "$MB/src/lib/readBeforeLate.ts" "$SA/src/lib/readBeforeLate.ts"
+same readBeforeLate "$MB/src/lib/readBeforeLate.ts" "$CS/src/lib/readBeforeLate.ts"
+
 if [ "$fails" -ne 0 ]; then
   echo
   echo "$fails shared file(s) have drifted. Copy the good one over the others:"

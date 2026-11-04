@@ -54,6 +54,14 @@ and a change-triggered fixer (the unattended fixer opens PRs; agents working wit
   clear failure line so the monitor can tell them apart.
 - A new route, cron or worker that matters to users needs a freshness signal (last success timestamp and a stuck/failed count).
 - Never let a health route call providers, write data, or be cached.
+- A screen that says its data is late ("stale", "last checked in N minutes
+  ago", "n/a") must read that time again before it says so. Use
+  `useReadBeforeLate` (`src/lib/readBeforeLate.ts` in the media buyer, creative,
+  sales and client success cockpits; copy it to another cockpit and add it to
+  `scripts/check-shared.sh`), or poll the time more often than
+  its limit. It must also read again when the tab comes back. A time read
+  once at page load and compared with the clock shows a false warning on a
+  page left open. That happened on the invoice banner on 4 November 2026.
 
 ## Tests: run only the files for your change (26 October 2026)
 
