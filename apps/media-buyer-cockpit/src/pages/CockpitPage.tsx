@@ -3777,6 +3777,7 @@ function Cockpit({ view }: { view: View }) {
                             <StartedTodayCells
                               row={c.startedToday}
                               feedAt={c.feedAt}
+                              day={c.day}
                             />
                           </tr>
                         </Fragment>

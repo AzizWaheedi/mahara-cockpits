@@ -53,6 +53,7 @@ export function startedTodayCampaigns(
         metaCampaignId: r.campaignId,
         startedToday: r,
         feedAt: read.feedAt,
+        day: read.day,
       };
     });
 }
@@ -63,15 +64,43 @@ const na = (title: string) => (
   </span>
 );
 
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+export function startedLabel(
+  startedOn: string | null,
+  day: string | null | undefined,
+): string {
+  if (!startedOn || !day || startedOn === day) return "Started today";
+  const [, month, dayOfMonth] = startedOn.split("-");
+  return `Started ${Number(dayOfMonth)} ${MONTHS[Number(month) - 1]}`;
+}
+
 /** The eight cells of a started-today row, in the board's column order. */
 export function StartedTodayCells({
   row,
   feedAt,
+  day,
 }: {
   row: StartedTodayRow;
   feedAt: string | null;
+  day?: string | null;
 }) {
   const at = feedAt ? time.format(new Date(feedAt)) : null;
+  const label = startedLabel(row.startedOn, day);
+  const sinceStart = label !== "Started today";
   const cpl =
     typeof row.spendUsd === "number" && row.leads > 0
       ? usd(row.spendUsd / row.leads, 2)
@@ -85,10 +114,16 @@ export function StartedTodayCells({
         </span>
         <div
           className="text-xs text-muted-foreground"
-          title="The list's 7-day numbers start after a full day of spend, so this row shows today's figures until midnight."
+          title={
+            sinceStart
+              ? "The list's 7-day numbers arrive with the morning sync, so this row shows the figures since the campaign started."
+              : "The list's 7-day numbers start after a full day of spend, so this row shows today's figures until midnight."
+          }
         >
-          Started today
-          {at ? ` · today's figures from Meta at ${at}` : ""}
+          {label}
+          {at
+            ? ` · ${sinceStart ? "figures since then" : "today's figures"} from Meta at ${at}`
+            : ""}
           {row.card?.url ? (
             <>
               {" · "}
