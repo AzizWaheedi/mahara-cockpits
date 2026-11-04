@@ -10,6 +10,7 @@ import {
   page,
   SectionCard,
 } from "../components/kit";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { Prose } from "../components/Prose";
 import { ReviewAsk } from "../components/ReviewAsk";
 import { ReviewCard } from "../components/ReviewCard";
@@ -48,7 +49,7 @@ export default function RecordingPage({ me }: { me: Me }) {
     return (
       <Shell>
         {rec.loading ? (
-          <p className="muted text-sm">Loading the call…</p>
+          <LoadingSkeleton variant="detail" label="Loading the call" />
         ) : (
           <EmptyState
             title="This call is not here"
@@ -246,9 +247,11 @@ export function ReviewOnlyPage() {
       {review.error ? (
         <Failed what="This review" error={review.error} retry={review.reload} />
       ) : !r ? (
-        <p className="muted text-sm">
-          {review.loading ? "Loading the review…" : "This review is not here."}
-        </p>
+        review.loading ? (
+          <LoadingSkeleton variant="detail" label="Loading the review" />
+        ) : (
+          <p className="muted text-sm">This review is not here.</p>
+        )
       ) : (
         <>
           <h1 className="text-2xl font-semibold tracking-tight" dir="auto">

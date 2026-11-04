@@ -2,6 +2,7 @@ import { useState } from "react";
 import { count } from "@/components/ceo/format";
 import { Kicker } from "@/components/ceo/Kicker";
 import { StatusChip } from "@/components/ceo/StatusChip";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { PageFormEditor } from "@/components/pageform/PageFormEditor";
 import { PagePreview } from "@/components/pageform/PageFormParts";
 import { PageVersions } from "@/components/pageform/PageVersions";
@@ -117,25 +118,32 @@ export function LeadPageJourney({
             Edit form
           </Button>
         </div>
-        <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
-          {visits.error
-            ? `The visits could not be read: ${visits.error}`
-            : !visits.data
-              ? "Reading the page's visits…"
-              : `Reached counts visitors from ads in the last ${visits.data.days} days, on ${visits.data.version}, from the page's own records. Each visitor counts once per screen. Meta's clicks above run a little higher: some people leave before the page loads.`}
-          {visits.error && (
-            <>
-              {" "}
-              <button
-                type="button"
-                className="font-medium text-foreground underline"
-                onClick={visits.reload}
-              >
-                Try again
-              </button>
-            </>
-          )}
-        </p>
+        {!visits.data && !visits.error ? (
+          <LoadingSkeleton
+            variant="list"
+            label="Reading the page's visits"
+            rows={2}
+            className="mb-4"
+          />
+        ) : (
+          <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
+            {visits.error
+              ? `The visits could not be read: ${visits.error}`
+              : `Reached counts visitors from ads in the last ${visits.data?.days} days, on ${visits.data?.version}, from the page's own records. Each visitor counts once per screen. Meta's clicks above run a little higher: some people leave before the page loads.`}
+            {visits.error && (
+              <>
+                {" "}
+                <button
+                  type="button"
+                  className="font-medium text-foreground underline"
+                  onClick={visits.reload}
+                >
+                  Try again
+                </button>
+              </>
+            )}
+          </p>
+        )}
         {page.currentUnreadable && (
           <p className="callout-warn mb-4 rounded-lg border px-3 py-2 text-xs">
             {page.currentUnreadable}

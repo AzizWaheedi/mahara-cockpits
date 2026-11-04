@@ -6,6 +6,7 @@ import { Na } from "@/components/ceo/Na";
 import { Notes } from "@/components/ceo/Notes";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip } from "@/components/ceo/StatusChip";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { useQueryState } from "@/lib/cockpitApi";
 import { supabase } from "@/lib/supabase";
 import {
@@ -187,7 +188,7 @@ export function ProposalsCard({ order, now }: { order?: number; now: number }) {
           ]}
         />
       ) : !data ? (
-        <p className="text-xs text-muted-foreground">Reading proposals</p>
+        <LoadingSkeleton variant="table" label="Reading proposals" rows={3} />
       ) : data.rows.length === 0 ? (
         <EmptyState
           icon={FileText}

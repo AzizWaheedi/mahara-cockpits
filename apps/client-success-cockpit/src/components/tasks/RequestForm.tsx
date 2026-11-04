@@ -64,6 +64,7 @@ import {
   useState,
 } from "react";
 import { Link } from "react-router";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import {
   errorWords,
   newRequestId,
@@ -795,7 +796,7 @@ export function RequestForm({
   if (!seat.ready)
     return (
       <div className={root}>
-        <Waiting text="Checking your seat" />
+        <LoadingSkeleton variant="form" label="Checking your seat" rows={4} />
       </div>
     );
   if (!seat.signedIn || !client)
@@ -807,7 +808,11 @@ export function RequestForm({
   if (types.status === "loading")
     return (
       <div className={root}>
-        <Waiting text={REQUEST_SENTENCES.loadingTypes} />
+        <LoadingSkeleton
+          variant="form"
+          label={REQUEST_SENTENCES.loadingTypes}
+          rows={4}
+        />
       </div>
     );
   if (types.status === "error")
@@ -1201,16 +1206,6 @@ function PortalLink({
  */
 function NewTab() {
   return <span className="rq-sr"> (opens in a new tab)</span>;
-}
-
-/** A wait, said politely unless something else speaks for it (`live`). */
-function Waiting({ text, live = true }: { text: string; live?: boolean }) {
-  return (
-    <p className="rq-note" role={live ? "status" : undefined}>
-      <LoaderCircle aria-hidden className="rq-spin" />
-      {text}
-    </p>
-  );
 }
 
 /** The required choices ClickUp lost: nothing can be picked for them. */
@@ -2386,7 +2381,11 @@ function ClientPicker({
             Show stopped clients
           </label>
           {!found || found.status === "loading" ? (
-            <Waiting text="Reading the client cards" live={false} />
+            <LoadingSkeleton
+              variant="list"
+              label="Reading the client cards"
+              rows={4}
+            />
           ) : found.status === "error" ? (
             <p className="rq-error">
               <CircleAlert aria-hidden />

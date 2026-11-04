@@ -18,6 +18,7 @@ import {
   StatusChip,
   type Tone,
 } from "../components/kit";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import {
   CrmLine,
   MarkControls,
@@ -403,7 +404,7 @@ function SpanView({
   if (cal.error)
     body = <Failed what="The calendar" error={cal.error} retry={cal.reload} />;
   else if (!cal.data)
-    body = <p className="muted text-sm">Reading the calendar…</p>;
+    body = <LoadingSkeleton variant="list" label="Reading the calendar" />;
   else if (shown.length)
     body = (
       <Days
@@ -513,7 +514,7 @@ function OwedView({
       <Failed what="The calls to mark" error={owed.error} retry={owed.reload} />
     );
   else if (!owed.data)
-    body = <p className="muted text-sm">Reading the calls to mark…</p>;
+    body = <LoadingSkeleton variant="list" label="Reading the calls to mark" />;
   else if (shown.length)
     body = (
       <Days

@@ -24,6 +24,7 @@ import {
   select,
   type Tone,
 } from "../components/kit";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { WavesCard } from "../components/WavesCard";
 import { useWorkflows, WhatsAppLibrary } from "../components/WhatsAppLibrary";
 import { api } from "../lib/api";
@@ -334,7 +335,7 @@ export default function FollowupsPage({ me }: { me: Me }) {
       ) : rows.error ? (
         <Failed what="The follow-ups" error={rows.error} retry={rows.reload} />
       ) : rows.loading && !all.length ? (
-        <p className="muted text-sm">Reading the drafts…</p>
+        <LoadingSkeleton variant="list" label="Reading the drafts" />
       ) : tab === "waiting" ? (
         waiting.length ? (
           <div className="space-y-4">
@@ -581,7 +582,11 @@ function DraftCard({
             checked. Read the page again.
           </p>
         ) : !templates.data ? (
-          <p className="muted text-xs">Reading the templates…</p>
+          <LoadingSkeleton
+            variant="list"
+            label="Reading the templates"
+            rows={2}
+          />
         ) : template ? (
           <div>
             <p className="muted mb-1 text-xs">

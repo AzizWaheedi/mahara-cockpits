@@ -49,6 +49,9 @@ function AppSkeleton() {
         </SidebarFooter>
       </Sidebar>
       <SidebarInset>
+        <span className="sr-only" role="status" aria-busy="true">
+          Loading the cockpit
+        </span>
         {/* The same shell as AppLayout, so nothing jumps when it swaps in:
             a 56px menu bar below 1024px, no bar at all on the desktop rail. */}
         <header className="sticky top-0 z-30 border-b border-border/60 bg-background/85 px-2 pt-safe backdrop-blur lg:hidden">

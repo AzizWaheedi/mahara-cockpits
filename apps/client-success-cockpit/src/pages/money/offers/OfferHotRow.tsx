@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { supabase } from "@/lib/supabase";
 import {
   OFFER_NAMES,
@@ -53,9 +54,11 @@ export function OfferHotRow({
     );
   if (!data)
     return (
-      <p className="text-sm text-muted-foreground">
-        Reading this month's offer…
-      </p>
+      <LoadingSkeleton
+        variant="list"
+        rows={1}
+        label="Reading this month's offer"
+      />
     );
   const picked = data.offers.find(o => o.key === data.thisMonth);
   const prepare =

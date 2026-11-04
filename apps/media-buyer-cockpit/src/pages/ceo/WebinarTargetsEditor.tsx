@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { dateTime } from "@/components/ceo/format";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -174,7 +175,9 @@ export function WebinarTargetsEditor({
               ? "Used by rounds that begin collecting data after you save. Earlier rounds keep their original targets."
               : "Changes only this round. Earlier revisions remain in the history below."}
           </p>
-          {busy && !state && <p role="status">Loading targets…</p>}
+          {busy && !state && (
+            <LoadingSkeleton variant="form" label="Loading targets" rows={3} />
+          )}
           {error && (
             <p role="alert" className="text-sm text-destructive">
               {error}

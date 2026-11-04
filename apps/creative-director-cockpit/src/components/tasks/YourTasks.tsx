@@ -1,6 +1,7 @@
 import { ChevronRight } from "lucide-react";
 import { type ReactNode, useEffect, useId, useState } from "react";
 import { Link, useLocation } from "react-router";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { useTaskSeat } from "@/lib/taskSeat";
 import {
   focusSearch,
@@ -183,9 +184,7 @@ function CardNote({ state }: { state: CardState }) {
   const feed = useTaskFeed();
   if (state.kind === "reading")
     return (
-      <p className="tk-note" aria-busy="true">
-        Reading your tasks…
-      </p>
+      <LoadingSkeleton variant="list" label="Reading your tasks" rows={3} />
     );
   if (state.kind === "failed")
     return (

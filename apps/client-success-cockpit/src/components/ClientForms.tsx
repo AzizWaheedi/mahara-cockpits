@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { DeliveryLine } from "@/components/DeliveryLine";
 import { KickoffItems } from "@/components/KickoffItems";
 import { Chip, Dot, LINK_INK, SectionCard } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -367,15 +368,18 @@ function SendFormBody({
     return (
       <div className="space-y-2 p-6">
         <SheetTitle className="text-[15px]">Send a form</SheetTitle>
-        <SheetDescription className="text-sm text-muted-foreground">
-          {read.error ? (
+        {read.error ? (
+          <SheetDescription className="text-sm text-muted-foreground">
             <span className="txt-bad" role="alert">
               The client's forms could not be read: {read.error}
             </span>
-          ) : (
-            "Reading the client's portal and forms…"
-          )}
-        </SheetDescription>
+          </SheetDescription>
+        ) : (
+          <LoadingSkeleton
+            variant="form"
+            label="Reading the client's portal and forms"
+          />
+        )}
       </div>
     );
 
@@ -872,10 +876,17 @@ export function AnswerSheet({
               ]
                 .filter(Boolean)
                 .join(" ")
-            : read.error
-              ? ""
-              : "Reading the answer…"}
+            : ""}
         </SheetDescription>
+        {!a && !read.error ? (
+          <div className="mt-4">
+            <LoadingSkeleton
+              variant="detail"
+              label="Reading the answer"
+              rows={4}
+            />
+          </div>
+        ) : null}
         {read.error ? (
           <p className="mt-3 text-sm txt-bad" role="alert">
             The answer could not be read: {read.error}
@@ -1203,9 +1214,9 @@ export function FormsOut({
           </p>
         ) : null}
         {!view && !read.error ? (
-          <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
-            Reading the forms…
-          </p>
+          <div className="px-4 py-4 sm:px-6">
+            <LoadingSkeleton variant="list" label="Reading the forms" />
+          </div>
         ) : null}
         {view && rows.length === 0 ? (
           <p

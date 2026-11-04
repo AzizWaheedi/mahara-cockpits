@@ -26,6 +26,7 @@ import {
   type StatusTone,
 } from "@/components/ceo/StatusChip";
 import { useWidth } from "@/components/ceo/useWidth";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { SECTION_OFFSET } from "@/components/SectionNav";
 import { Button } from "@/components/ui/button";
 import {
@@ -331,23 +332,16 @@ function useAnchor(id: string) {
 
 function Loading() {
   return (
-    <div role="status" aria-live="polite">
-      <p className="flex items-center gap-2 text-sm text-muted-foreground">
-        <LoaderCircle
-          className="size-4 shrink-0 animate-spin motion-reduce:animate-none"
-          aria-hidden
-        />
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">
         Reading the dialer for these dates. It takes a few seconds; the rest of
         the page works meanwhile.
       </p>
-      <div className="mt-4 grid grid-cols-2 gap-3 @2xl:grid-cols-4" aria-hidden>
-        {[0, 1, 2, 3].map(i => (
-          <div
-            key={i}
-            className="h-[104px] animate-pulse rounded-xl bg-muted/40 motion-reduce:animate-none"
-          />
-        ))}
-      </div>
+      <LoadingSkeleton
+        variant="cards"
+        label="Reading the dialer for these dates"
+        rows={4}
+      />
     </div>
   );
 }

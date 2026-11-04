@@ -28,6 +28,7 @@ import { DosDontsList, parseDosDonts } from "@/components/DosDonts";
 import { EditPanel } from "@/components/EditPanel";
 import { ExceptionAlerts } from "@/components/ExceptionAlerts";
 import { FunnelLine } from "@/components/funnel/FunnelSheet";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { LostLeads } from "@/components/LostLeads";
 import {
   JustLaunched,
@@ -53,7 +54,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { VerdictPlaybook } from "@/components/VerdictPlaybook";
 import { ViktorStatus } from "@/components/ViktorStatus";
@@ -1626,10 +1626,11 @@ function Cockpit({ view }: { view: View }) {
 
   if (snap === undefined) {
     return (
-      <div className="flex min-h-[50vh] items-center justify-center gap-2 text-sm text-muted-foreground">
-        <Spinner />
-        Loading today's numbers…
-      </div>
+      <LoadingSkeleton
+        variant="page"
+        label="Loading today's numbers"
+        className="py-4"
+      />
     );
   }
 
@@ -3680,12 +3681,13 @@ function Cockpit({ view }: { view: View }) {
               <tbody>
                 {filterReading && (
                   <tr>
-                    <td
-                      colSpan={8}
-                      className="py-6 text-center text-sm text-muted-foreground"
-                    >
-                      Reading {globalRange.label.toLowerCase()} for every
-                      campaign…
+                    <td colSpan={8} className="px-2 py-6">
+                      <LoadingSkeleton
+                        variant="list"
+                        label={`Reading ${globalRange.label.toLowerCase()} for every campaign`}
+                        rows={1}
+                        className="mx-auto max-w-md"
+                      />
                     </td>
                   </tr>
                 )}

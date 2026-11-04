@@ -39,6 +39,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import {
   Sheet,
   SheetContent,
@@ -424,9 +425,11 @@ export function FormBody(p: BodyProps) {
             }}
           >
             {p.loading ? (
-              <p className="fs-note" role="status">
-                Reading the card and the last calls…
-              </p>
+              <LoadingSkeleton
+                variant="form"
+                label="Reading the card and the last calls"
+                rows={4}
+              />
             ) : null}
             {p.prefillError ? (
               <p className="fs-note fs-note-warn" role="status">

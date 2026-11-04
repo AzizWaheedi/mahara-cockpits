@@ -10,6 +10,7 @@ import {
 } from "react";
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
 import { HermesChat } from "./components/HermesChat";
+import { LoadingSkeleton } from "./components/LoadingSkeleton";
 import { MacOSDock, SALES_DOCK_ITEMS } from "./components/MacOSDock";
 import { MacOSMenuBar } from "./components/MacOSMenuBar";
 import { PageBoundary } from "./components/PageBoundary";
@@ -97,7 +98,7 @@ function Shell() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: closing follows the route
   useEffect(() => setDrawer(false), [location.pathname]);
 
-  if (!ready) return <Waiting text="Opening the sales cockpit…" />;
+  if (!ready) return <AppSkeleton />;
 
   if (!session && !accessError) return <SignInPage />;
 
@@ -136,8 +137,7 @@ function Shell() {
       </div>
     );
 
-  if (allowed && me.loading && !me.data)
-    return <Waiting text="Opening the sales cockpit…" />;
+  if (allowed && me.loading && !me.data) return <AppSkeleton />;
 
   if (!allowed || !me.data?.seat)
     return (
@@ -341,7 +341,13 @@ export function Seated({
         <PageBoundary
           key={pathname.startsWith("/messages/") ? "/messages" : pathname}
         >
-          <Suspense fallback={<Waiting text="Loading…" />}>
+          <Suspense
+            fallback={
+              <div className="p-4 sm:p-6 lg:p-8">
+                <LoadingSkeleton variant="page" label="Loading the page" />
+              </div>
+            }
+          >
             <Routes>
               <Route path="/" element={<TodayPage me={me} />} />
               {/* The portal's door lands on /dashboard in every cockpit. */}
@@ -451,10 +457,10 @@ function TabBar({
   );
 }
 
-function Waiting({ text }: { text: string }) {
+function AppSkeleton() {
   return (
-    <div className="flex min-h-[60vh] items-center justify-center p-6 text-center">
-      <p className="muted text-sm">{text}</p>
+    <div className="mx-auto w-full max-w-5xl p-4 sm:p-6 lg:p-8">
+      <LoadingSkeleton variant="page" label="Opening the sales cockpit" />
     </div>
   );
 }

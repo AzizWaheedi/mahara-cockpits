@@ -1,6 +1,7 @@
 import { CircleAlert, LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { StatusDot } from "@/components/ceo/StatusChip";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import {
   linkHow,
@@ -146,13 +147,11 @@ export function SeatLinks() {
   if (read.status === "loading")
     return (
       <section className="rounded-2xl border bg-card p-4 sm:p-6">
-        <p
-          className="flex items-center gap-2 text-sm text-muted-foreground"
-          role="status"
-        >
-          <LoaderCircle aria-hidden className="size-4 animate-spin" />
-          Reading the seats and the ClickUp workspace
-        </p>
+        <LoadingSkeleton
+          variant="list"
+          label="Reading the seats and the ClickUp workspace"
+          rows={4}
+        />
       </section>
     );
   if (read.status === "error")

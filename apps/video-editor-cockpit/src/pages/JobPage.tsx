@@ -14,11 +14,11 @@ import {
   Problem,
   Prose,
   Section,
-  Spinner,
   StateBadge,
   StatusChip,
 } from "../components/bits";
 import Footage from "../components/Footage";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import MoveCard from "../components/MoveCard";
 import { ReportIssue } from "../components/ReportIssue";
 import { Button, buttonClass } from "../components/ui/button";
@@ -223,7 +223,7 @@ export default function JobPage() {
   if (job.loading && job.data?.task_id !== taskId)
     return (
       <Page>
-        <Spinner what="Opening the job" />
+        <LoadingSkeleton variant="detail" label="Opening the job" />
       </Page>
     );
   if (job.error)
@@ -489,7 +489,7 @@ export default function JobPage() {
 
             <Section title="Footage">
               {assets.loading && !assets.data ? (
-                <Spinner what="Reading the footage" />
+                <LoadingSkeleton variant="media" label="Reading the footage" />
               ) : assets.error ? (
                 <Problem>
                   The footage list could not be read: {assets.error}. Reload the
@@ -530,7 +530,7 @@ export default function JobPage() {
                 ) : null}
 
                 {notes.loading && !notes.data ? (
-                  <Spinner what="Reading the notes" />
+                  <LoadingSkeleton variant="list" label="Reading the notes" />
                 ) : null}
                 {notes.error ? (
                   <Problem>
@@ -600,7 +600,10 @@ export default function JobPage() {
               }
             >
               {client.loading && !c ? (
-                <Spinner what="Reading the client card" />
+                <LoadingSkeleton
+                  variant="detail"
+                  label="Reading the client card"
+                />
               ) : null}
               {client.error ? (
                 <Problem>

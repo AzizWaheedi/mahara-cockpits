@@ -21,6 +21,7 @@ import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { CreativePreview } from "@/components/CreativePreview";
 import { Hint } from "@/components/Hint";
 import { Chip, Dot, Pill, PillRow } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import {
   ResultsNav,
   type ResultsPart,
@@ -295,7 +296,7 @@ function AdsSection({
       </p>
     );
   if (!model)
-    return <p className="text-sm text-muted-foreground">Loading the ads…</p>;
+    return <LoadingSkeleton variant="table" label="Loading the ads" />;
   if (!model.campaigns.length)
     return (
       <p className="text-sm text-muted-foreground">

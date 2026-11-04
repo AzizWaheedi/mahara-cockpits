@@ -2,6 +2,7 @@ import { ArrowUpRight, ChevronRight, Film, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { PageHeader } from "@/components/PageHeader";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
@@ -132,7 +133,7 @@ export function ScriptsPage() {
       </div>
 
       {data === undefined ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <LoadingSkeleton variant="list" label="Loading scripts" rows={6} />
       ) : rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           {q.trim() || client

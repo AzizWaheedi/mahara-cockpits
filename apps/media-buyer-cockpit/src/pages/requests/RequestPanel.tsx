@@ -1,6 +1,7 @@
 import { ArrowUpRight, CircleAlert, LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { StatusChip, StatusDot } from "@/components/ceo/StatusChip";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { TaskPanel } from "@/components/tasks/TaskPanel";
 import { Button } from "@/components/ui/button";
 import { cancelRequest, errorWords, readRequest } from "@/lib/requestsClient";
@@ -264,13 +265,11 @@ export function RequestPanel({
           </div>
         </div>
       ) : !detail ? (
-        <p
-          className="flex items-center gap-2 text-sm text-muted-foreground"
-          role="status"
-        >
-          <LoaderCircle aria-hidden className="size-4 animate-spin" />
-          Reading the request
-        </p>
+        <LoadingSkeleton
+          variant="detail"
+          label="Reading the request"
+          rows={3}
+        />
       ) : (
         // The panel is a portal outside the page, so it carries its own
         // ceo-root for the status colours.

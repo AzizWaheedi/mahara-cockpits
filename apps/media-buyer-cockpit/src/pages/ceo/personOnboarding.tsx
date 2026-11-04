@@ -5,6 +5,7 @@ import { date, dateTime, relative } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip, StatusDot } from "@/components/ceo/StatusChip";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { api, useAction } from "@/lib/cockpitApi";
 import { cn } from "@/lib/utils";
@@ -536,10 +537,11 @@ export function OnboardingPanel({
           <p className="text-sm text-[var(--ceo-critical)]">{error}</p>
         ) : null}
         {busy && !data ? (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" aria-hidden />
-            Reading their onboarding form
-          </p>
+          <LoadingSkeleton
+            variant="form"
+            label="Reading their onboarding form"
+            rows={4}
+          />
         ) : null}
         {forms.length > 1 ? (
           <div className="flex flex-wrap items-center gap-2 text-sm">

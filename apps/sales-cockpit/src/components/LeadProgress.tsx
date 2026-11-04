@@ -5,6 +5,7 @@ import { plainStage } from "../lib/format";
 import { toast } from "../lib/toast";
 import type { CalendarRow, Lead, Me, TeamMember } from "../lib/types";
 import { AnimatedSelect, button, buttonPrimary, field, select } from "./kit";
+import { LoadingSkeleton } from "./LoadingSkeleton";
 
 type Pipe = {
   id: string;
@@ -162,7 +163,11 @@ function PipelineEdit({
   return (
     <div className="space-y-3">
       {!pipes.length && !error ? (
-        <p className="muted text-sm">Reading pipeline stages…</p>
+        <LoadingSkeleton
+          variant="list"
+          label="Reading pipeline stages"
+          rows={2}
+        />
       ) : null}
       {pipes.length ? (
         <div className="grid gap-3 sm:grid-cols-2">
@@ -334,7 +339,11 @@ function DemoEdit({
   return (
     <div className="space-y-3">
       {!plan && !error ? (
-        <p className="muted text-sm">Reading calls and teammates…</p>
+        <LoadingSkeleton
+          variant="list"
+          label="Reading calls and teammates"
+          rows={2}
+        />
       ) : null}
       {pending ? (
         <div className="space-y-3">

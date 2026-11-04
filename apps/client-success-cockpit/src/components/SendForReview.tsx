@@ -8,6 +8,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import {
   checkReviewImportStatus,
@@ -386,7 +387,13 @@ export function SendForReview({ folded = false }: { folded?: boolean }) {
 
       <h3 className="mt-6 text-xs font-medium text-muted-foreground">Sent</h3>
       {rows === null ? (
-        <p className="mt-2 text-xs text-muted-foreground">Loading</p>
+        <div className="mt-2">
+          <LoadingSkeleton
+            variant="list"
+            label="Loading sent reviews"
+            rows={3}
+          />
+        </div>
       ) : rows.length === 0 ? (
         <p className="mt-2 text-xs text-muted-foreground">
           Nothing sent yet. Every link you make stays here with whether the

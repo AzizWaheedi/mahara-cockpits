@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { api, useAction } from "@/lib/cockpitApi";
 import { Button } from "./ui/button";
 
@@ -151,7 +152,11 @@ export function CityPicker({
             </Button>
           </div>
           {!options.length ? (
-            <p className="text-muted-foreground">Loading the board's cities…</p>
+            <LoadingSkeleton
+              variant="list"
+              label="Loading the board's cities"
+              rows={4}
+            />
           ) : (
             <div className="max-h-64 space-y-3 overflow-y-auto pr-1">
               {groups.map(([country, list]) => (

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Dot, Kicker, SectionCard, type Tone } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import {
   BROWSER_CLOCK,
   messageKey,
@@ -198,6 +199,7 @@ export function ClientMessages({
   ]
     .filter(Boolean)
     .join(" ");
+  const announce = read.status === "loading" && !said ? "" : region;
   const cardRef = useRef<HTMLDivElement>(null);
   // Opened from a link to #messages (the reminder, Today, the window): the
   // card comes into view once it has something to show.
@@ -216,9 +218,11 @@ export function ClientMessages({
         flush
       >
         {/* One live region per card: an action's new state is said once. */}
-        <p className="sr-only" role="status" aria-live="polite">
-          {region}
-        </p>
+        {announce ? (
+          <p className="sr-only" role="status" aria-live="polite">
+            {announce}
+          </p>
+        ) : null}
         {read.status === "failed" ? (
           <p className="flex gap-2 px-4 py-3 text-sm sm:px-6" role="note">
             <span className="flex h-5 shrink-0 items-center">
@@ -228,9 +232,9 @@ export function ClientMessages({
           </p>
         ) : null}
         {read.status === "loading" ? (
-          <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
-            Reading the messages…
-          </p>
+          <div className="px-4 py-4 sm:px-6">
+            <LoadingSkeleton variant="list" label="Reading the messages" />
+          </div>
         ) : read.messages.length ? (
           read.messages.map(m => (
             <div key={m.id} className="px-4 py-4 sm:px-6">

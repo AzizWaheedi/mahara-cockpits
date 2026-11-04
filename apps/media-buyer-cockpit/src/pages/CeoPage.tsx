@@ -1,5 +1,5 @@
 import "@/components/ceo/ceo.css";
-import { LoaderCircle, ShieldOff } from "lucide-react";
+import { ShieldOff } from "lucide-react";
 import { type ReactNode, useMemo } from "react";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { panelId, tabId, useTabParam } from "@/components/ceo/CeoTabs";
@@ -10,6 +10,7 @@ import { RefreshButton } from "@/components/ceo/RefreshButton";
 import { TrustPills } from "@/components/ceo/TrustPills";
 import type { CeoSections } from "@/components/ceo/useCeo";
 import { trustSummary, useCeo, useNow } from "@/components/ceo/useCeo";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { AdsTab } from "./ceo/AdsTab";
 import { BackendTab } from "./ceo/BackendTab";
 import { BillingTab } from "./ceo/BillingTab";
@@ -140,7 +141,14 @@ export function CeoPage() {
         </div>
         {tab === "today" ? (
           <p className="mt-2 min-h-5 max-w-3xl text-sm text-muted-foreground sm:text-[15px]">
-            {ready ? sentence : "Loading the numbers."}
+            {ready ? (
+              sentence
+            ) : (
+              <span
+                aria-hidden="true"
+                className="block h-4 w-72 max-w-full rounded bg-muted motion-safe:animate-pulse"
+              />
+            )}
           </p>
         ) : null}
       </header>
@@ -154,13 +162,11 @@ export function CeoPage() {
         {ready ? (
           <View sections={sections} now={now} day={day} goTab={setTab} />
         ) : (
-          <div className="flex items-center justify-center gap-2 py-24 text-sm text-muted-foreground">
-            <LoaderCircle
-              className="ceo-spin size-4 animate-spin text-[color:var(--ceo-emphasis)]"
-              aria-hidden
-            />
-            Loading the cockpit
-          </div>
+          <LoadingSkeleton
+            variant="page"
+            label="Loading the cockpit"
+            className="py-4"
+          />
         )}
       </div>
     </div>

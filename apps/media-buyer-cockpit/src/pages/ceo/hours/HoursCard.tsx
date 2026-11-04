@@ -20,6 +20,7 @@ import { FilterChips } from "@/components/ceo/FilterChips";
 import { kuwaitDay, relative, shiftMonth } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { useNow } from "@/components/ceo/useCeo";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import type { HoursStatus, HoursView, SyncResult } from "@/lib/ceoHoursClient";
 import { api, useAction } from "@/lib/cockpitApi";
@@ -248,10 +249,7 @@ export function HoursAndPay({ order = 1 }: { order?: number }) {
     );
   else if (!shown)
     body = (
-      <p className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" aria-hidden />
-        {`Reading ${mName}`}
-      </p>
+      <LoadingSkeleton variant="list" label={`Reading ${mName}`} rows={4} />
     );
   else if (empty === "nothing_connected" && place.view === "month")
     body = (

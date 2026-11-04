@@ -193,12 +193,21 @@ export function Problem({
 }
 
 /** Rows that stand where the data will be, so the card does not jump. */
-export function RowsSkeleton({ rows = 4 }: { rows?: number }) {
+export function RowsSkeleton({
+  rows = 4,
+  label = "Loading rows",
+}: {
+  rows?: number;
+  label?: string;
+}) {
   return (
-    <div className="space-y-3" aria-hidden>
-      {Array.from({ length: rows }, (_, i) => (
-        <Skeleton key={`row-${i + 1}`} className="h-9 w-full" />
-      ))}
+    <div role="status" aria-busy="true" className="space-y-3">
+      <span className="sr-only">{label}</span>
+      <div aria-hidden="true" className="space-y-3">
+        {Array.from({ length: rows }, (_, i) => (
+          <Skeleton key={`row-${i + 1}`} className="h-9 w-full" />
+        ))}
+      </div>
     </div>
   );
 }

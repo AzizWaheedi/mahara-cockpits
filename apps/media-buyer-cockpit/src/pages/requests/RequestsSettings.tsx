@@ -1,9 +1,10 @@
 // The CEO kit's status colours (StatusChip, StatusDot) live here.
 import "@/components/ceo/ceo.css";
-import { ChevronRight, CircleAlert, LoaderCircle } from "lucide-react";
+import { ChevronRight, CircleAlert } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 import { FilterChips, type FilterOption } from "@/components/ceo/FilterChips";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { errorWords, readRequestTypes } from "@/lib/requestsClient";
 import type { TypesRead } from "@/lib/requestsCore";
@@ -116,13 +117,7 @@ export function RequestsSettings() {
       </header>
 
       {read.status === "loading" ? (
-        <p
-          className="flex items-center gap-2 text-sm text-muted-foreground"
-          role="status"
-        >
-          <LoaderCircle aria-hidden className="size-4 animate-spin" />
-          Reading your seat
-        </p>
+        <LoadingSkeleton variant="form" label="Reading your seat" rows={4} />
       ) : read.status === "error" ? (
         <>
           <div className="flex items-start gap-2 text-sm" role="alert">

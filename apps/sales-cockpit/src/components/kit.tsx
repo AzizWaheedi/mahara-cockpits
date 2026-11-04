@@ -9,6 +9,10 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import {
+  LoadingSkeleton,
+  type LoadingSkeletonVariant,
+} from "./LoadingSkeleton";
 /**
  * The CEO kit's pieces with the same names and the same rules, for an app
  * with no shadcn layer: a section is a card with a header, a number is a
@@ -264,11 +268,22 @@ export function Failed({
 export function Reading({
   what,
   className = "text-sm",
+  variant = "list",
+  rows = 3,
 }: {
   what: string;
   className?: string;
+  variant?: LoadingSkeletonVariant;
+  rows?: number;
 }) {
-  return <p className={`muted ${className}`}>Reading {what}…</p>;
+  return (
+    <LoadingSkeleton
+      variant={variant}
+      label={`Reading ${what}`}
+      rows={rows}
+      className={className}
+    />
+  );
 }
 
 /**

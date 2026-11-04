@@ -1,5 +1,5 @@
-import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import {
   type Book,
   DailyPanel,
@@ -83,10 +83,11 @@ export function ClientSuccessPanel({
             </button>
           </p>
         ) : (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" aria-hidden /> Reading the
-            client success numbers
-          </p>
+          <LoadingSkeleton
+            variant="cards"
+            label="Reading the client success numbers"
+            rows={4}
+          />
         )}
       </section>
     );

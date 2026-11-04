@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import {
   BudgetScopeNote,
   BudgetSources,
@@ -88,10 +89,7 @@ export function LaunchPage() {
   if (loading)
     return (
       <main className="launch-page">
-        <div className="launch-loading" role="status">
-          <LoaderCircle className="animate-spin" size={20} />
-          Loading the client book…
-        </div>
+        <LoadingSkeleton variant="page" label="Loading the client book" />
       </main>
     );
   if (error || !data)
@@ -769,10 +767,11 @@ function LaunchDetail({
                   )}
                 </div>
                 {reading ? (
-                  <p className="launch-inline-loading">
-                    <LoaderCircle size={15} className="animate-spin" />
-                    Reading account health and campaign ownership from Meta…
-                  </p>
+                  <LoadingSkeleton
+                    variant="list"
+                    label="Reading account health and campaign ownership from Meta"
+                    rows={4}
+                  />
                 ) : readError ? (
                   <div role="alert" className="launch-error">
                     <AlertTriangle size={18} />

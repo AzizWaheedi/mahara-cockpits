@@ -1,5 +1,6 @@
-import { ArrowUpRight, LoaderCircle } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Input } from "@/components/ui/input";
 import { launchOperation } from "@/lib/launchClient";
@@ -300,10 +301,11 @@ export function LaunchCardDetails({
     );
   if (!info)
     return (
-      <p className="launch-inline-loading">
-        <LoaderCircle size={15} className="animate-spin" />
-        Reading the last ads card and the campaign…
-      </p>
+      <LoadingSkeleton
+        variant="form"
+        label="Reading the last ads card and the campaign"
+        rows={5}
+      />
     );
   return (
     <LaunchCardForm info={info} value={value} onChange={onChange} {...form} />

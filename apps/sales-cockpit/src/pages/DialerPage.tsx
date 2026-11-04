@@ -50,6 +50,7 @@ import {
 } from "../components/kit";
 import { Answers } from "../components/LeadAnswers";
 import { LeadTimeline, type LiveMessage } from "../components/LeadTimeline";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { ResearchPanel } from "../components/ResearchPanel";
 import { LiveBoundary } from "../components/RoomLine";
 import { RoomPanel } from "../components/RoomPanel";
@@ -921,7 +922,7 @@ export default function DialerPage({ me }: { me: Me }) {
         </div>
       ) : null}
 
-      <Stats q={q} />
+      <Stats q={q} error={error} />
 
       <SavedWorkLine
         items={savedWork}
@@ -1118,17 +1119,33 @@ function LeadWork({
 // The day's numbers and the "call now" strip
 // ---------------------------------------------------------------------------
 
-function Stats({ q }: { q: Queue | null }) {
+function Stats({ q, error }: { q: Queue | null; error: string | null }) {
   const t = q?.today ?? null;
   const line = t?.line ?? null;
   const ready = q ? q.counts.reduce((a, b) => a + b, 0) : null;
+  if (!q) {
+    return error ? (
+      <p className="muted text-sm">
+        Today's numbers could not be read: {error}
+      </p>
+    ) : (
+      <LoadingSkeleton
+        variant="tiles"
+        label="Reading today's numbers"
+        rows={4}
+      />
+    );
+  }
+  if (!t) {
+    return (
+      <p className="muted text-sm">Today's numbers are not in this read.</p>
+    );
+  }
   return (
     <>
       {/* The day in one line until the tiles fit beside the three columns, so Call stays near the top. */}
       <p className="muted text-sm 2xl:hidden">
-        {t && ready !== null
-          ? `Today: ${t.saved} saved · ${t.answered} of ${t.calls} answered · ${t.booked} booked · ${ready} ready`
-          : "Reading today's numbers…"}
+        {`Today: ${t.saved} saved A� ${t.answered} of ${t.calls} answered A� ${t.booked} booked A� ${ready} ready`}
       </p>
       <div className="hidden grid-cols-2 gap-3 lg:grid-cols-4 2xl:grid">
         <StatTile
@@ -1417,7 +1434,13 @@ function QueuePane({
               </li>
             )
           ) : !loaded ? (
-            <li className="muted px-3 py-3 text-xs">Reading the queue…</li>
+            <li className="px-3 py-3">
+              <LoadingSkeleton
+                variant="list"
+                label="Reading the queue"
+                rows={3}
+              />
+            </li>
           ) : list.length ? (
             list.map(i => (
               <li key={i.contact_id}>
@@ -3543,11 +3566,14 @@ function LeadPane({
   if (!l)
     return (
       <div className={`panel p-4 ${className}`}>
-        <p className="muted text-sm">
-          {lead.loading
-            ? "Opening the lead…"
-            : "This lead is not in the cockpit yet. It may have arrived in the last few minutes."}
-        </p>
+        {lead.loading ? (
+          <LoadingSkeleton variant="detail" label="Opening the lead" />
+        ) : (
+          <p className="muted text-sm">
+            This lead is not in the cockpit yet. It may have arrived in the last
+            few minutes.
+          </p>
+        )}
       </div>
     );
 

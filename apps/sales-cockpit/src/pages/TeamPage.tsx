@@ -9,6 +9,7 @@ import {
   SectionCard,
   StatusChip,
 } from "../components/kit";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { RoomsHealthCard } from "../components/RoomsHealth";
 import { TeamSwitch } from "../components/TeamControls";
 import { type GhlUser, TeamSeat } from "../components/TeamSeat";
@@ -121,7 +122,11 @@ export default function TeamPage({ me }: { me: Me }) {
               retry={people.reload}
             />
           ) : !people.data ? (
-            <p className="muted text-sm">Loading the seats…</p>
+            <LoadingSkeleton
+              variant="cards"
+              label="Loading the seats"
+              rows={3}
+            />
           ) : !seats.length ? (
             <section className="panel">
               <EmptyState
@@ -201,7 +206,7 @@ function CrmWritesCard() {
       {s.error ? (
         <Failed what="The setting" error={s.error} retry={s.reload} />
       ) : s.loading && !s.data ? (
-        <p className="muted text-sm">Loading…</p>
+        <LoadingSkeleton variant="form" label="Loading the setting" rows={2} />
       ) : (
         <div className="space-y-4">
           <div className="flex items-start gap-3">
@@ -379,11 +384,17 @@ function SourcesPart({ now }: { now: number }) {
         {s.error ? (
           <Failed what="B2B's sources" error={s.error} retry={s.reload} />
         ) : !s.data ? (
-          <p className="muted text-sm">
-            {s.loading
-              ? "Reading…"
-              : "Not copied yet; the next copy brings it."}
-          </p>
+          s.loading ? (
+            <LoadingSkeleton
+              variant="list"
+              label="Reading B2B's sources"
+              rows={2}
+            />
+          ) : (
+            <p className="muted text-sm">
+              Not copied yet; the next copy brings it.
+            </p>
+          )
         ) : (
           <>
             <ul className="space-y-1 text-xs">
@@ -450,7 +461,11 @@ function UnmarkedPart() {
         {q.error ? (
           <Failed what="The unmarked calls" error={q.error} retry={q.reload} />
         ) : !q.data ? (
-          <p className="muted">Reading…</p>
+          <LoadingSkeleton
+            variant="list"
+            label="Reading the unmarked calls"
+            rows={2}
+          />
         ) : !n ? (
           <p className="muted">Every call of the last 30 days is marked.</p>
         ) : (
@@ -519,7 +534,11 @@ function DialChecksPart() {
         {q.error ? (
           <Failed what="The call check" error={q.error} retry={q.reload} />
         ) : !q.data ? (
-          <p className="muted">Reading…</p>
+          <LoadingSkeleton
+            variant="list"
+            label="Reading the call check"
+            rows={3}
+          />
         ) : !rows.length ? (
           <p className="muted">
             Not checked yet. The sales desk compares them each time it reads
@@ -576,11 +595,17 @@ function HealthCard({ now }: { now: number }) {
             retry={mirror.reload}
           />
         ) : !run ? (
-          <p className="muted text-sm">
-            {mirror.loading
-              ? "Loading…"
-              : "No copy has finished yet. It runs every 3 minutes."}
-          </p>
+          mirror.loading ? (
+            <LoadingSkeleton
+              variant="list"
+              label="Loading the last copy"
+              rows={2}
+            />
+          ) : (
+            <p className="muted text-sm">
+              No copy has finished yet. It runs every 3 minutes.
+            </p>
+          )
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-2">
@@ -629,13 +654,25 @@ function HealthCard({ now }: { now: number }) {
       <DialChecksPart />
 
       <h3 className="mt-5 text-xs font-semibold">The sales desk</h3>
-      <p className="muted mt-1 text-xs">
-        {ai.error
-          ? `Today's AI use could not be read: ${ai.error}.`
-          : ai.data === null
-            ? "Reading today's AI use…"
-            : `AI since midnight: ${Math.round(ai.data / 1000).toLocaleString()} thousand tokens (counted since 26 September, when the meter started). The desk stops calling the model at its daily ceiling, 15 million unless set otherwise on the desk, and starts again at midnight.`}
-      </p>
+      {ai.error ? (
+        <p className="muted mt-1 text-xs">
+          Today's AI use could not be read: {ai.error}.
+        </p>
+      ) : ai.data === null && ai.loading ? (
+        <div className="mt-1">
+          <LoadingSkeleton
+            variant="list"
+            label="Reading today's AI use"
+            rows={1}
+          />
+        </div>
+      ) : ai.data === null ? (
+        <p className="muted mt-1 text-xs">No AI use recorded since midnight.</p>
+      ) : (
+        <p className="muted mt-1 text-xs">
+          {`AI since midnight: ${Math.round(ai.data / 1000).toLocaleString()} thousand tokens (counted since 26 September, when the meter started). The desk stops calling the model at its daily ceiling, 15 million unless set otherwise on the desk, and starts again at midnight.`}
+        </p>
+      )}
       <div className="mt-2">
         {workers.error ? (
           <Failed
@@ -645,7 +682,11 @@ function HealthCard({ now }: { now: number }) {
           />
         ) : !list.length ? (
           workers.loading ? (
-            <p className="muted text-sm">Loading…</p>
+            <LoadingSkeleton
+              variant="list"
+              label="Loading the worker reports"
+              rows={2}
+            />
           ) : (
             <EmptyState compact title="The sales desk has not reported yet." />
           )

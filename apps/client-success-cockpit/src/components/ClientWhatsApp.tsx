@@ -11,6 +11,7 @@ import {
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Chip, Dot, Kicker } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { readClientContact } from "@/lib/checkInClient";
 import {
   clientWaiting,
@@ -708,10 +709,7 @@ export function ClientWhatsApp({
           above.
         </p>
       ) : !data ? (
-        <p className="flex items-center gap-2 text-sm text-muted-foreground">
-          <LoaderCircle aria-hidden className="size-3.5 animate-spin" />
-          Reading today's messages
-        </p>
+        <LoadingSkeleton variant="list" label="Reading today's messages" />
       ) : !client ? null : live.length ? (
         <div className="space-y-4">
           {live.map(t => (

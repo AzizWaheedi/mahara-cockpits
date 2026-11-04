@@ -1,6 +1,7 @@
 import { ArrowRight, Clock3 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Link } from "react-router";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import {
   type LaunchPipeline,
@@ -61,7 +62,11 @@ export function LaunchNothingRunning({
           </Button>
         </div>
       ) : !data ? (
-        <p className="launch-empty">Loading the client book…</p>
+        <LoadingSkeleton
+          variant="list"
+          label="Loading the client book"
+          rows={4}
+        />
       ) : laneClients(data, "nothing").length ? (
         laneClients(data, "nothing").map(c => (
           <LaunchClientRow key={c.id} client={c} />

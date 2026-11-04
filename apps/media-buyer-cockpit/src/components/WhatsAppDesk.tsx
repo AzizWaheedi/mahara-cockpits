@@ -9,6 +9,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { archiveWaThread, fetchWaInbox, sendReply } from "@/lib/comms";
 
 /**
@@ -339,12 +340,7 @@ function WhatsAppDeskContent({ desk }: { desk: Desk }) {
       </p>
     );
   if (threads === null)
-    return (
-      <p className="flex items-center gap-2 text-sm text-muted-foreground">
-        <LoaderCircle className="size-3.5 animate-spin" />
-        Reading WhatsApp
-      </p>
-    );
+    return <LoadingSkeleton variant="list" label="Reading WhatsApp" rows={4} />;
 
   return (
     <section>

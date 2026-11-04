@@ -21,6 +21,7 @@ import { money, plural, shortDate } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { type Door, doorLine } from "@/forms/staff/formSheetCore";
@@ -208,10 +209,7 @@ export function BillingTab({ sections, goTab }: CeoTabProps) {
 
 /** A quiet line while a read is on its way. */
 const Reading = ({ words }: { words: string }) => (
-  <p className="flex items-center gap-2 text-sm text-muted-foreground">
-    <Loader2 className="size-4 animate-spin" aria-hidden />
-    {words}
-  </p>
+  <LoadingSkeleton variant="list" label={words} rows={3} />
 );
 
 /** The client's name as written, Arabic included, without flipping the line. */

@@ -17,6 +17,7 @@ import {
   useState,
 } from "react";
 import { PageHeader } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -378,15 +379,7 @@ export function ProposalBuilder({
       </div>
     );
   if (!proposal || !saved || !bundle)
-    return (
-      <div
-        className="flex items-center gap-2 py-12 text-sm text-muted-foreground"
-        role="status"
-      >
-        <Loader2 className="animate-spin" size={18} />
-        Opening proposal
-      </div>
-    );
+    return <LoadingSkeleton variant="detail" label="Opening proposal" />;
   const p = proposal;
   const disabled = p.status === "archived" || !!busy;
   const warnings = p.warnings ?? [];

@@ -42,6 +42,7 @@ import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { useTimeframe } from "@/components/ceo/timeframe";
 import { rereadCeoSections, STALE_AFTER_MS } from "@/components/ceo/useCeo";
 import { range as rangeText } from "@/components/ceo/windows";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { api, useAction } from "@/lib/cockpitApi";
 import { CPL_GATE } from "@/lib/kpi";
@@ -1188,10 +1189,11 @@ export function AdsTab({ sections, now }: CeoTabProps) {
                 {shown.error}
               </p>
             ) : shown.loading ? (
-              <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" aria-hidden />
-                {`Reading ${label} from the snapshots`}
-              </p>
+              <LoadingSkeleton
+                variant="cards"
+                label={`Reading ${label} from the snapshots`}
+                rows={4}
+              />
             ) : (
               <EmptyState
                 title="Pick both dates"

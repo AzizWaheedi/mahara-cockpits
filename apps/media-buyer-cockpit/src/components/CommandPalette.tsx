@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import {
   CommandDialog,
   CommandEmpty,
@@ -324,10 +325,16 @@ export function CommandPalette() {
             reopen it to try again.
           </p>
         ) : null}
+        {buyer && open && snap === undefined && !result.error ? (
+          <LoadingSkeleton
+            variant="list"
+            label="Reading your campaigns"
+            rows={3}
+            className="px-2 py-2"
+          />
+        ) : null}
         <CommandEmpty>
-          {buyer && open && snap === undefined && !result.error
-            ? "Reading your campaigns…"
-            : "Nothing matches. Try part of a name, in English or Arabic."}
+          Nothing matches. Try part of a name, in English or Arabic.
         </CommandEmpty>
         {clientHits.length ? (
           <CommandGroup heading={typed ? "Clients" : "Biggest spend this week"}>

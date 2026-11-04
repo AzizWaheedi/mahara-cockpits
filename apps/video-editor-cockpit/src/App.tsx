@@ -9,6 +9,7 @@ import {
   useParams,
 } from "react-router";
 import { HermesChat } from "./components/HermesChat";
+import { LoadingSkeleton } from "./components/LoadingSkeleton";
 import { JobsHome, Library } from "./components/Places";
 import { SearchBox } from "./components/SearchBox";
 import Sidebar from "./components/Sidebar";
@@ -114,7 +115,7 @@ function Shell() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: closing follows the route
   useEffect(() => setDrawer(false), [location.pathname]);
 
-  if (!ready) return null;
+  if (!ready) return <AppSkeleton />;
 
   if (!session && !accessError) return <SignInPage />;
 
@@ -332,6 +333,14 @@ function Shell() {
 }
 
 const FOLD_KEY = "mahara-editor-sidebar";
+
+function AppSkeleton() {
+  return (
+    <div className="mx-auto w-full max-w-5xl p-4 sm:p-6 lg:p-8">
+      <LoadingSkeleton variant="page" label="Opening the editor desk" />
+    </div>
+  );
+}
 
 /**
  * The width for the two pages shared with the other cockpits. The layout's

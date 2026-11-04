@@ -8,6 +8,7 @@ import {
   MessageCircle,
 } from "lucide-react";
 import { count, money, pct } from "@/components/ceo/format";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { costText, cplTone } from "@/lib/costTone";
 import {
   alsoRuns,
@@ -63,9 +64,12 @@ export function FunnelSplit({
           affected.
         </p>
       ) : loading ? (
-        <p className="mt-3 text-xs text-muted-foreground">
-          Reading each campaign's funnel…
-        </p>
+        <LoadingSkeleton
+          variant="list"
+          label="Reading each campaign's funnel"
+          rows={3}
+          className="mt-3"
+        />
       ) : lines.length === 0 ? (
         <p className="mt-3 text-xs text-muted-foreground">
           No campaign spent or brought a lead in this range.

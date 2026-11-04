@@ -8,6 +8,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { RequestForm } from "@/components/tasks/RequestForm";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -393,10 +394,11 @@ export function ChecksWaitingView({
     );
   else if (door === null || (door && rows === null))
     body = (
-      <p className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className={`size-4 ${spin}`} aria-hidden />
-        Loading the payments waiting on a check
-      </p>
+      <LoadingSkeleton
+        variant="list"
+        label="Loading the payments waiting on a check"
+        rows={4}
+      />
     );
   else if (!door)
     body = (

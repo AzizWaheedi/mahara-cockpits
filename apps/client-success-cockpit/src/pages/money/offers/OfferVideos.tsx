@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import {
@@ -95,7 +96,7 @@ export function OfferVideos({
           ))}
         </div>
       ) : (
-        <p className="dko-help">Reading recordings…</p>
+        <LoadingSkeleton variant="form" rows={2} label="Reading recordings" />
       )}
     </section>
   );

@@ -1,6 +1,7 @@
 import { ArrowUpRight } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { DateInput } from "@/components/ui/date-input";
 import { api, useAction, useMutation, useQuery } from "@/lib/cockpitApi";
@@ -172,9 +173,7 @@ export function CampaignChangesResults({
         </div>
       )}
       {data === undefined ? (
-        <p className="rounded-xl bg-muted/40 p-3 text-sm text-muted-foreground">
-          Loading changes…
-        </p>
+        <LoadingSkeleton variant="list" label="Loading changes" rows={4} />
       ) : data.changes.length === 0 ? (
         <p className="rounded-xl bg-muted/40 p-3 text-sm text-muted-foreground">
           No campaign changes are available for the last {data.periodDays} days.
@@ -287,7 +286,7 @@ function CreativeLaunchResult({
   if (!request.launched_meta_ad_id) return null;
   if (!result)
     return (
-      <p className="text-xs text-muted-foreground">Loading launch results…</p>
+      <LoadingSkeleton variant="list" label="Loading launch results" rows={2} />
     );
   return (
     <div className="mt-2 space-y-2">
@@ -414,7 +413,7 @@ function CreativeRequests({
       </div>
       {error && <p className="mt-2 text-xs txt-bad">{error}</p>}
       {rows === null && !error && (
-        <p className="mt-2 text-xs text-muted-foreground">Loading requests…</p>
+        <LoadingSkeleton variant="list" label="Loading requests" rows={3} />
       )}
       {rows?.length === 0 && (
         <p className="mt-2 text-xs text-muted-foreground">

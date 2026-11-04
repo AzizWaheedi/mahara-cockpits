@@ -26,6 +26,7 @@ import {
   StatusChip,
   type Tone,
 } from "../components/kit";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { CLIENT_NOTE, isClient } from "../lib/clients";
 import {
   type LeadFilter,
@@ -186,7 +187,7 @@ export default function LeadsPage() {
   if (leads.error)
     body = <Failed what="The leads" error={leads.error} retry={leads.reload} />;
   else if (!leads.data)
-    body = <p className="muted text-sm">Reading the leads…</p>;
+    body = <LoadingSkeleton variant="table" label="Reading the leads" />;
   else if (rows.length)
     body = (
       <section

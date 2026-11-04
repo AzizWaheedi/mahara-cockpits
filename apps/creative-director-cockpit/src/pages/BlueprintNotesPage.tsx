@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useLocation, useParams } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { DeckFrame } from "@/components/DeckFrame";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import {
   blueprintFrame,
@@ -78,9 +79,9 @@ export function BlueprintNotes({
         />
       ) : null}
       {state === "ready" ? null : (
-        <Line>
+        <Line busy={state === "opening"}>
           {state === "opening" ? (
-            <p className="text-sm text-muted-foreground">Opening the notes…</p>
+            <LoadingSkeleton variant="detail" label="Opening the notes" />
           ) : (
             <>
               <p className="text-[15px] font-semibold">
@@ -109,10 +110,16 @@ export function BlueprintNotes({
   );
 }
 
-function Line({ children }: { children: ReactNode }) {
+function Line({
+  children,
+  busy = false,
+}: {
+  children: ReactNode;
+  busy?: boolean;
+}) {
   return (
     <div
-      role="status"
+      role={busy ? undefined : "status"}
       className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background px-6 text-center"
     >
       {children}

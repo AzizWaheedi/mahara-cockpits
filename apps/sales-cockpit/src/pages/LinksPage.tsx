@@ -10,6 +10,7 @@ import {
   page,
   SectionCard,
 } from "../components/kit";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { ReferenceAsks, ReferenceList } from "../components/References";
 import { SopVideo } from "../components/SopVideo";
 import { api } from "../lib/api";
@@ -173,7 +174,7 @@ export default function LinksPage({ me }: { me: Me }) {
   if (links.error)
     body = <Failed what="The links" error={links.error} retry={links.reload} />;
   else if (!links.data)
-    body = <p className="muted text-sm">Reading the links…</p>;
+    body = <LoadingSkeleton variant="list" label="Reading the links" />;
   else if (groups.length)
     body = (
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2 lg:gap-6">

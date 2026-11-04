@@ -19,6 +19,7 @@ import {
   SectionCard,
   StatTile,
 } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { RequestForm } from "@/components/tasks/RequestForm";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
@@ -339,10 +340,11 @@ export function ChurnPage({ embedded = false }: { embedded?: boolean }) {
             {error}
           </p>
         ) : (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" aria-hidden /> Reading the
-            register
-          </p>
+          <LoadingSkeleton
+            variant="table"
+            label="Reading the register"
+            rows={5}
+          />
         )}
       </div>
     );

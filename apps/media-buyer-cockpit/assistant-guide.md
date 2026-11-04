@@ -150,6 +150,12 @@ How to:
 - /data: the leads and appointments view, for admins only. You reach it from "Data" in the menu or from the admin page.
 - /ceo: the CEO cockpit, for the CEO seat only. You reach it from "CEO" in the menu.
 
+## While a page loads
+
+- When a page or section first loads, placeholder blocks show its layout. The blocks are not data and hold no numbers.
+- On a refresh in the background, data you already saw stays on screen. This applies to pages whose data hook keeps the last data.
+- Save, upload and send actions show progress while they run. Wait for the result before you act on it.
+
 ## Everywhere in the cockpit
 
 - Ask a team (address /requests): the page where you ask another team for something. The request becomes a ClickUp task with its steps and an owner. The tabs "Ask a team", "My requests", "Assigned to me", "Team queue" and "All requests" show the form and the lists. The page's own "Settings" link opens the request types, the people and the alerts.

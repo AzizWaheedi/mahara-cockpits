@@ -9,8 +9,8 @@ import {
   PageHeader,
   Problem,
   Prose,
-  Spinner,
 } from "../components/bits";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { useAdStills, useStills, useWinners } from "../lib/data";
 import { day } from "../lib/format";
 import { AD_VIDEOS_BUCKET } from "../lib/supabase";
@@ -218,7 +218,7 @@ export default function WinnersPage() {
         </Problem>
       ) : null}
       {winners.loading && !winners.data ? (
-        <Spinner what="Reading the winners" />
+        <LoadingSkeleton variant="cards" label="Reading the winners" />
       ) : null}
       {!winners.loading && !winners.error && !shown.length ? (
         <Empty>

@@ -9,6 +9,7 @@ import {
   SectionCard,
   StatTile,
 } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -131,9 +132,11 @@ export function MarketResearchCard({
           </Button>
         </div>
       ) : !data ? (
-        <p className="text-sm text-muted-foreground">
-          Loading market research…
-        </p>
+        <LoadingSkeleton
+          variant="cards"
+          rows={1}
+          label="Reading the market research"
+        />
       ) : (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
@@ -412,9 +415,7 @@ export function ResearchDetail({
           </div>
         </SectionCard>
       ) : !data ? (
-        <p className="text-sm text-muted-foreground">
-          Loading market research…
-        </p>
+        <LoadingSkeleton variant="page" label="Reading the market research" />
       ) : (
         <>
           <SectionCard

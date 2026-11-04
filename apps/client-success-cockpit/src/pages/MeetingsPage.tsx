@@ -2,6 +2,7 @@ import { ArrowUpRight } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import {
   fetchMeetingsOverview,
   linkCalendar,
@@ -282,7 +283,8 @@ function MeetingsContent({ embedded = false, part = "all" }: MeetingsProps) {
         {loadError}
       </p>
     );
-  if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (!data)
+    return <LoadingSkeleton variant="page" label="Loading the meetings" />;
   const calendar = part === "all" || part === "calendar";
   const whatsapp = part !== "calendar";
   // The second drafts and their Send: not in the Inbox's fold.

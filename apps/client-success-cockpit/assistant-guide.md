@@ -170,6 +170,12 @@ How to:
 - /churn: an old address. It sends you to the Churn tab of Money.
 - /hotlist: an old address. It sends you to the Hot list tab of Money.
 
+## While a page loads
+
+- When a page or section first loads, placeholder blocks show its layout. The blocks are not data and hold no numbers.
+- On a refresh in the background, data you already saw stays on screen. This applies to pages whose data hook keeps the last data.
+- Save, upload and send actions show progress while they run. Wait for the result before you act on it.
+
 ## Everywhere in the cockpit
 
 - The side rail: Today, Inbox, Clients, Money and Links sit at the top. The bottom group holds "How to use this cockpit", "Team meetings", "Ask a team" and "Client performance", then the doors to other cockpits.

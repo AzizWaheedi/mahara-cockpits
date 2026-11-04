@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { OFFER_NAMES } from "../../../present/offer/kinds";
 import { type OfferClient, readPitchLog } from "../../../present/offer/sources";
 export function PitchLog({ client }: { client: OfferClient }) {
@@ -45,7 +46,7 @@ export function PitchLog({ client }: { client: OfferClient }) {
       {error ? (
         <p role="alert">{error}</p>
       ) : busy ? (
-        <p className="dko-help">Reading the log…</p>
+        <LoadingSkeleton variant="table" label="Reading the log" rows={4} />
       ) : !rows.length ? (
         <p className="dko-help">No offer conversations recorded this month.</p>
       ) : (

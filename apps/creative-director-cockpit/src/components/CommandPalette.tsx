@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import {
   CommandDialog,
   CommandEmpty,
@@ -305,12 +306,19 @@ export function CommandPalette() {
             Could not read clients: {error}. Close search and reopen it to try
             again.
           </p>
-        ) : null}
-        <CommandEmpty>
-          {open && roster === undefined && !error
-            ? "Reading your clients…"
-            : "Nothing matches. Try part of a name, in English or Arabic."}
-        </CommandEmpty>
+        ) : open && roster === undefined ? (
+          <div className="px-1 py-2">
+            <LoadingSkeleton
+              variant="list"
+              rows={4}
+              label="Reading your clients"
+            />
+          </div>
+        ) : (
+          <CommandEmpty>
+            Nothing matches. Try part of a name, in English or Arabic.
+          </CommandEmpty>
+        )}
         {clientHits.length ? (
           <CommandGroup heading="Clients">{clientHits.map(row)}</CommandGroup>
         ) : null}

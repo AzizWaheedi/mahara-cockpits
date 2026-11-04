@@ -13,6 +13,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
@@ -677,10 +678,7 @@ function Panel({
   // while the doors are read, it says so rather than "closed".
   const form = (key: StaffFormKey, open: boolean | undefined) =>
     forms && doors === null ? (
-      <p className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" aria-hidden />
-        Opening the form
-      </p>
+      <LoadingSkeleton variant="form" label="Opening the form" rows={3} />
     ) : forms && open ? (
       <StaffForm formKey={key} row={row} forms={forms} onSaved={onSaved} />
     ) : (
@@ -1702,10 +1700,11 @@ export function BillingSheet({ api }: { api: BillingApi }) {
               </div>
             </div>
           ) : (
-            <p className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" aria-hidden />
-              Reading the billing sheet
-            </p>
+            <LoadingSkeleton
+              variant="table"
+              label="Reading the billing sheet"
+              rows={6}
+            />
           )}
         </div>
         {/* Pending payments loads on its own: the sheet's failure never hides it. */}

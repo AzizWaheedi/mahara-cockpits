@@ -8,6 +8,7 @@ import {
   useConversation,
 } from "../components/Conversation";
 import { Avatar, EmptyState, Failed, field } from "../components/kit";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { api } from "../lib/api";
 import {
   type InboxFilter,
@@ -250,7 +251,13 @@ export default function MessagesPage({ me }: { me: Me }) {
                 />
               </div>
             ) : !list.data ? (
-              <ListSkeleton />
+              <div className="p-4">
+                <LoadingSkeleton
+                  variant="list"
+                  label="Reading the messages"
+                  rows={6}
+                />
+              </div>
             ) : rows.length === 0 ? (
               <EmptyList
                 state={saved.state}
@@ -772,22 +779,6 @@ function rowTime(iso: string | null, now: number): string {
   return day(iso);
 }
 
-function ListSkeleton() {
-  return (
-    <ul aria-label="Reading the messages" className="divide-y hairline">
-      {[0, 1, 2, 3, 4, 5].map(i => (
-        <li key={i} className="flex gap-3 px-4 py-3">
-          <span className="size-9 shrink-0 animate-pulse rounded-full bg-[color:var(--muted)]" />
-          <span className="flex-1 space-y-2 pt-1">
-            <span className="block h-3 w-2/5 animate-pulse rounded bg-[color:var(--muted)]" />
-            <span className="block h-3 w-4/5 animate-pulse rounded bg-[color:var(--muted)]" />
-          </span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 function EmptyList({
   state,
   q,
@@ -969,9 +960,16 @@ function Thread({
   if (!row)
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-        <p className="muted max-w-sm text-sm">
-          {one.problem ?? "Opening the conversation…"}
-        </p>
+        {one.problem ? (
+          <p className="muted max-w-sm text-sm">{one.problem}</p>
+        ) : (
+          <div className="w-full max-w-3xl text-left">
+            <LoadingSkeleton
+              variant="detail"
+              label="Opening the conversation"
+            />
+          </div>
+        )}
         {one.problem ? (
           <div className="flex gap-2">
             <button

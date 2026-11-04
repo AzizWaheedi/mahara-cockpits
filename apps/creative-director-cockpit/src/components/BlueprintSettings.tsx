@@ -2,6 +2,7 @@ import { ArrowUpRight, Presentation } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -93,9 +94,13 @@ export function BlueprintSettings({
         </p>
       </div>
       {settings === null ? (
-        <p className="border-t px-4 py-4 text-sm text-muted-foreground sm:px-6">
-          Reading the Blueprint settings…
-        </p>
+        <div className="border-t px-4 py-4 sm:px-6">
+          <LoadingSkeleton
+            variant="form"
+            label="Reading the Blueprint settings"
+            rows={5}
+          />
+        </div>
       ) : "error" in settings ? (
         <p role="alert" className="border-t px-4 py-4 text-sm sm:px-6">
           The Blueprint settings could not be read: {settings.error}{" "}
@@ -422,32 +427,40 @@ function LaunchBuyer({
       title="Launch media buyer"
       hint="Send to media assigns the new launch task on Marketing/ADs to this person, which posts it to #client-ads-general and notifies them."
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <AnimatedSelect
-          aria-label="Launch media buyer"
-          value={pick}
-          disabled={!canEdit || busy || members === null}
-          onChange={e => setPick(e.target.value)}
-          className="is-compact h-8 min-w-56 rounded-md border bg-transparent px-2 text-xs"
-        >
-          <option value="">Nobody (unassigned)</option>
-          {options.map(m => (
-            <option key={m.id} value={m.id}>
-              {m.name}
-            </option>
-          ))}
-        </AnimatedSelect>
-        {canEdit ? (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy || pick === (current?.id ?? "")}
-            onClick={() => void save()}
+      {canEdit && members === null ? (
+        <LoadingSkeleton
+          variant="form"
+          rows={1}
+          label="Reading the Marketing/ADs members"
+        />
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <AnimatedSelect
+            aria-label="Launch media buyer"
+            value={pick}
+            disabled={!canEdit || busy}
+            onChange={e => setPick(e.target.value)}
+            className="is-compact h-8 min-w-56 rounded-md border bg-transparent px-2 text-xs"
           >
-            {busy ? "Saving…" : "Save"}
-          </Button>
-        ) : null}
-      </div>
+            <option value="">Nobody (unassigned)</option>
+            {options.map(m => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </AnimatedSelect>
+          {canEdit ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy || pick === (current?.id ?? "")}
+              onClick={() => void save()}
+            >
+              {busy ? "Saving…" : "Save"}
+            </Button>
+          ) : null}
+        </div>
+      )}
       <p
         className={cn(
           "text-xs",

@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
@@ -444,10 +445,11 @@ export function SocialCalendarPage() {
 
   if (clients === null)
     return (
-      <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
-        <LoaderCircle className="h-4 w-4 animate-spin" />
-        Loading the calendar
-      </div>
+      <LoadingSkeleton
+        variant="page"
+        label="Loading the calendar"
+        className="py-8"
+      />
     );
 
   const active = clients.filter(c => c.active);
@@ -989,7 +991,7 @@ function DayCell({
       </div>
 
       {loading && !first ? (
-        <span className="pointer-events-none absolute inset-0 animate-pulse bg-muted/40" />
+        <span className="pointer-events-none absolute inset-0 bg-muted/40 motion-safe:animate-pulse" />
       ) : null}
       <span className="sr-only">{day}</span>
     </div>
@@ -1098,10 +1100,7 @@ function DayAgenda({
         ) : null}
       </div>
       {loading ? (
-        <p className="flex items-center gap-2 text-sm text-muted-foreground">
-          <LoaderCircle className="size-4 animate-spin" />
-          Loading the month
-        </p>
+        <LoadingSkeleton variant="list" rows={3} label="Loading the month" />
       ) : posts.length ? (
         <div className="overflow-hidden rounded-2xl border bg-card">
           <DayPosts posts={posts} onOpen={onOpen} />
@@ -1860,10 +1859,13 @@ function PhotoLibrary({ clientId }: { clientId: string }) {
         </label>
       </div>
       {photos === null ? (
-        <p className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-          <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-          Opening the library
-        </p>
+        <div className="mt-2">
+          <LoadingSkeleton
+            variant="cards"
+            rows={3}
+            label="Opening the library"
+          />
+        </div>
       ) : null}
     </div>
   );

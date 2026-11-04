@@ -171,6 +171,12 @@ Every link you open in a day, grouped into cards: how the cockpit works, the Bra
 - Settings, address /settings. You reach it from the account menu at the bottom of the menu. It holds your account, the appearance switch, the Brand Blueprint settings, "Change password" and "Delete account".
 - Old addresses /work, /calendar, /touchpoints and /messages land on the matching part of Today. The old address /profiles lands on the "Worst first" view of Clients. Old bookmarks keep working.
 
+## While a page loads
+
+- When a page or section first loads, placeholder blocks show its layout. The blocks are not data and hold no numbers.
+- On a refresh in the background, data you already saw stays on screen. This applies to pages whose data hook keeps the last data.
+- Save, upload and send actions show progress while they run. Wait for the result before you act on it.
+
 ## Everywhere in the cockpit
 
 - "How to use this cockpit": the menu row near the bottom. It opens the cockpit's written guide in ClickUp in a new tab.

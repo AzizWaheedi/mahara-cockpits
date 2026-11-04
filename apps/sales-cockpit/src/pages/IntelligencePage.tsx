@@ -1,6 +1,7 @@
 import { Lightbulb } from "lucide-react";
 import { useState } from "react";
 import { EmptyState, Failed, SectionCard, SourceNote } from "../components/kit";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { Segmented } from "../components/ScriptParts";
 import { useQuery } from "../lib/data";
 import { ago, day } from "../lib/format";
@@ -91,7 +92,7 @@ export default function IntelligencePage() {
       {digest.error ? (
         <Failed what="The digest" error={digest.error} retry={digest.reload} />
       ) : digest.loading && !d ? (
-        <p className="muted text-sm">Reading the digest…</p>
+        <LoadingSkeleton variant="detail" label="Reading the digest" />
       ) : !d?.calls_used ? (
         <div className="panel">
           <EmptyState
