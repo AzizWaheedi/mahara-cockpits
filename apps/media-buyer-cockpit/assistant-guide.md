@@ -105,7 +105,7 @@ Buttons and actions:
 
 How to:
 - Find a client: type in the search box, or press one of the filters.
-- Launch a campaign for a client: open the client, press "Launch or relaunch", pick a route, set the daily budget, then press "Preview the plan" and review the steps.
+- Launch a campaign for a client: open the client, press "Launch or relaunch", pick a route, set the campaign daily budget, then press "Preview the plan" and review the steps. The kickoff budget covers all of the client's ads; the campaign limit checks this campaign only. Check the combined daily budget across the client's accounts and platforms before switching on. The switched-on list covers only the selected account and may omit some budgets.
 - Check an old launch: open the client's "Activity" tab and read "Campaign and creative log".
 
 ## Library (address /playbook)
