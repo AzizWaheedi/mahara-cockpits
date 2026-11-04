@@ -84,8 +84,8 @@ import {
   StatTile,
   type Tone,
 } from "@/components/kit";
-import { KitSummary, OnboardingKit } from "@/components/OnboardingKit";
 import { MarketResearchCard } from "@/components/MarketResearch";
+import { KitSummary, OnboardingKit } from "@/components/OnboardingKit";
 import { PortalTasksButton } from "@/components/PortalTasks";
 import { ReportIssue } from "@/components/ReportIssue";
 import { CallList } from "@/components/results/CallList";
@@ -3231,7 +3231,11 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               onRefresh={() => void refreshKit(String(c.taskId))}
               kickSend={kickSend}
             />
-            <MarketResearchCard key={String(c.taskId)} client={auth.client} taskId={String(c.taskId)} />
+            <MarketResearchCard
+              key={String(c.taskId)}
+              client={auth.client}
+              taskId={String(c.taskId)}
+            />
             <section className="space-y-3">
               <h2 className="text-[15px] font-semibold">Their links</h2>
               <ClientLinks links={links} />
