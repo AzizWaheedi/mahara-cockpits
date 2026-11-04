@@ -139,8 +139,9 @@ export async function readNativeForms(ctx: Ctx): Promise<{ rows: Row[]; count: R
  * Stage 4 (docs/forms/WAVE56-CONTRACT.md 4.13, 4.14): the native kickoff the CSM sends from the cockpit and the
  * native onboarding the client answers in the portal or by link join the timeline under their own form ids. The
  * Typeform door's onboarding answers after the go-live are not read here: this worker's Typeform read already
- * stores them under KFRCXPFx. The questions' words come from each form's version-2 schema in the cockpit. Needs
- * 20261102j live (the widened form_id CHECK): until forms.stage4 has a form on, nothing is read or written.
+ * stores them under KFRCXPFx. Each answer is read with the questions of its own version (2, or the structured 3 of
+ * 20261104d, 4.22), never the newest one's: the rows are upserted on every run, so a wrong version would rewrite them.
+ * Needs 20261102j live (the widened form_id CHECK): until forms.stage4 has a form on, nothing is read or written.
  */
 export const STAGE4_FORMS: Record<string, string> = { kickoff: "cockpit-kickoff", onboarding: "cockpit-onboarding" };
 const STAGE4_TYPES: Record<string, string> = {
@@ -150,6 +151,8 @@ const STAGE4_TYPES: Record<string, string> = {
   longtext: "long_text",
   number: "number",
   url: "website",
+  rows: "long_text",
+  tick: "multiple_choice",
 };
 
 /** One answer as the timeline shows it: a choice by its English words, a list joined with ", ". */
@@ -164,33 +167,80 @@ function stage4Value(field: Row, value: unknown): unknown {
   return words(value);
 }
 
+/** A cell or answer with nothing in it: missing, null, a blank text, an empty list or an unticked box. */
+const stage4Blank = (v: unknown) =>
+  v === undefined || v === null || v === false || (typeof v === "string" && v.trim() === "") || (Array.isArray(v) && v.length === 0);
+
+/**
+ * A rows answer (version 3's services, FAQs, consultants) as text: one line per row, its filled cells in the
+ * question's column order joined with " - ", a choice by its English words, a ticked box by its column's English
+ * words, white space inside a cell folded to one space.
+ */
+function stage4Rows(field: Row, value: unknown): string {
+  const columns: Row[] = Array.isArray(field.columns) ? field.columns : [];
+  const rows: unknown[] = Array.isArray(value) ? value : [];
+  return rows
+    .map(row =>
+      columns
+        .map(c => {
+          const cell = row && typeof row === "object" ? (row as Row)[String(c.key)] : undefined;
+          if (stage4Blank(cell)) return "";
+          if (c.type === "tick") return cell === true ? String(c.label?.en ?? c.key) : "";
+          const shown = stage4Value(c, cell);
+          return typeof shown === "string" || typeof shown === "number" ? String(shown).replace(/\s+/g, " ").trim() : "";
+        })
+        .filter(Boolean)
+        .join(" - "),
+    )
+    .filter(Boolean)
+    .join("\n");
+}
+
+/** One answer as the timeline shows it, by its question's type. */
+function stage4Shown(field: Row, value: unknown): unknown {
+  if (field.type === "rows") return stage4Rows(field, value);
+  if (field.type === "tick") return value === true ? "Yes" : "";
+  return stage4Value(field, value);
+}
+
 /** The native kickoff and onboarding answers as call-store rows, or none (with the reason in the count) before the go-live. */
 export async function readStage4Forms(ctx: Ctx): Promise<{ rows: Row[]; count: Row }> {
   const stage = await ctx.db.all("cockpit_settings", "select=value&key=eq.forms.stage4");
   const on = Object.keys(STAGE4_FORMS).filter(f => stage[0]?.value?.[f] === true);
   if (!on.length) return { rows: [], count: { total: 0, skipped: "Stage 4 is not live yet (20261102j)." } };
   const versions = await ctx.db.all("cockpit_form_versions", `select=form_key,version,schema&form_key=in.(${on.join(",")})&version=gte.2&order=version.desc`);
-  const fields: Record<string, Row[]> = {};
+  // Every stored version's questions, by form and version: each answer is read with its own.
+  const fields: Record<string, Record<string, Row[]>> = {};
   for (const v of versions)
-    if (!fields[String(v.form_key)])
-      fields[String(v.form_key)] = (Array.isArray(v.schema?.fields) ? v.schema.fields : []).filter((f: Row) => f?.type !== "heading");
+    (fields[String(v.form_key)] ??= {})[String(v.version)] = (Array.isArray(v.schema?.fields) ? v.schema.fields : []).filter(
+      (f: Row) => f?.type !== "heading" && f?.type !== "note",
+    );
   const found = await ctx.db.all(
     "cockpit_form_responses",
-    `select=id,form_key,task_id,submitted_at,answers,answer_meta&form_key=in.(${on.join(",")})&form_version=gte.2&source=in.(cockpit,portal,public)&mode=eq.live&state=in.(submitted,confirmed)&task_id=not.is.null&order=submitted_at.asc`,
+    `select=id,form_key,form_version,task_id,submitted_at,answers,answer_meta&form_key=in.(${on.join(",")})&form_version=gte.2&source=in.(cockpit,portal,public)&mode=eq.live&state=in.(submitted,confirmed)&task_id=not.is.null&order=submitted_at.asc`,
   );
   const valid = new Set(ctx.clients.map(c => c.taskId));
   const rows: Row[] = [];
   const byForm: Record<string, number> = {};
+  let noVersion = 0;
   for (const r of found) {
     const form = String(r.form_key);
     if (!STAGE4_FORMS[form] || r.answer_meta?.canary === true || !r.task_id || !Number.isFinite(Date.parse(r.submitted_at))) continue;
-    const answers = (fields[form] ?? [])
+    // An answer whose version was not read is left as it is (never rewritten with another version's questions).
+    const own = fields[form]?.[String(r.form_version)];
+    if (!own) {
+      noVersion++;
+      continue;
+    }
+    const answers = own
       .filter(f => r.answers?.[f.key] !== undefined && r.answers?.[f.key] !== null && r.answers?.[f.key] !== "")
+      // A rows question with no filled row, or an unticked box, shows nothing (version 3's kinds only).
+      .filter(f => !((f.type === "rows" || f.type === "tick") && stage4Shown(f, r.answers[f.key]) === ""))
       .map(f => ({
         ref: String(f.key),
         type: STAGE4_TYPES[String(f.type)] ?? "short_text",
         title: String(typeof f.label === "object" ? (f.label?.en ?? f.key) : (f.title ?? f.key)),
-        value: stage4Value(f, r.answers[f.key]),
+        value: stage4Shown(f, r.answers[f.key]),
       }));
     rows.push({
       token: `cockpit:${r.id}`,
@@ -207,7 +257,9 @@ export async function readStage4Forms(ctx: Ctx): Promise<{ rows: Row[]; count: R
     });
     byForm[form] = (byForm[form] ?? 0) + 1;
   }
-  return { rows, count: { total: rows.length, onBoard: rows.filter(x => valid.has(String(x.task_id))).length, byForm } };
+  const count: Row = { total: rows.length, onBoard: rows.filter(x => valid.has(String(x.task_id))).length, byForm };
+  if (noVersion) count.noVersion = noVersion;
+  return { rows, count };
 }
 
 const TRANSCRIPT_REF = "0773087f-beda-4e2c-bf50-acdac0dcbe05";
@@ -691,7 +743,11 @@ function stage4Note(stage4: Row | undefined): string {
   if (!stage4 || stage4.skipped) return "";
   const k = Number(stage4.byForm?.kickoff) || 0;
   const o = Number(stage4.byForm?.onboarding) || 0;
-  return ` Sent in the cockpit since Stage 4: ${k} ${k === 1 ? "kickoff" : "kickoffs"} and ${o} onboarding ${o === 1 ? "form" : "forms"}, ${stage4.onBoard} on a client card.`;
+  const lost = Number(stage4.noVersion) || 0;
+  const unread = lost
+    ? ` ${lost} native ${lost === 1 ? "answer was" : "answers were"} not read: ${lost === 1 ? "its" : "their"} form version's questions were not found, so ${lost === 1 ? "it keeps its" : "they keep their"} last timeline row. Check cockpit_form_versions.`
+    : "";
+  return ` Sent in the cockpit since Stage 4: ${k} ${k === 1 ? "kickoff" : "kickoffs"} and ${o} onboarding ${o === 1 ? "form" : "forms"}, ${stage4.onBoard} on a client card.${unread}`;
 }
 
 /** Read and link in one go, for a run of the Typeform source alone (worker.ts runs the Fathom source in between). */

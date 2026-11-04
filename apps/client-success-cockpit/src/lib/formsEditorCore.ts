@@ -661,3 +661,177 @@ export function blankTexts(schema: ClientFormSchema): string[] {
     .filter(t => t.value.trim() === "")
     .map(t => t.path);
 }
+
+// --- The structured onboarding (client form schema version 2), read only here --------------------------------
+// supabase/migrations/20261104d_onboarding_schema_v2.sql (docs/forms/WAVE56-CONTRACT.md 4.22): a form whose newest
+// version is written in schema version 2 is read only in the editor, on the server; its questions change in a
+// migration. The page shows that version's outline from cockpit_form_editor_structured.
+
+/** A show-if of schema version 2: exactly one of equals, in or includes. */
+export type StructuredShowIf = {
+  key: string;
+  equals?: unknown;
+  in?: string[];
+  includes?: string;
+};
+
+export type StructuredColumn = {
+  key: string;
+  type: "text" | "longtext" | "number" | "choice" | "tick";
+  label: Text;
+  hint?: Text | null;
+  required: boolean;
+  options?: FieldOption[];
+};
+
+export type StructuredField = {
+  key: string;
+  type: string;
+  label: Text;
+  hint?: Text | null;
+  required?: boolean;
+  options?: FieldOption[];
+  showIf?: StructuredShowIf | null;
+  columns?: StructuredColumn[];
+  minRows?: number;
+  maxRows?: number;
+  link?: { href: string; label: Text } | null;
+  currencyFrom?: string;
+};
+
+export type StructuredSchema = {
+  v: 2;
+  key: string;
+  title: Text;
+  minutes: number;
+  fields: StructuredField[];
+};
+
+export type StructuredState = "off" | "canary" | "on";
+
+/** cockpit_form_editor_structured: the form's newest version, when it is in schema version 2. */
+export type StructuredRead = {
+  version: number;
+  schema: StructuredSchema;
+  publishedAt: string | null;
+  publishedBy: string;
+  note: string | null;
+  state: StructuredState;
+  issuing: number | null;
+  answers: number;
+  openInvites: number;
+};
+
+/** The server's sentence for the read-only rule (cockpit_form_editor_kind). */
+export const STRUCTURED_WHY =
+  "Its structured questions change in a migration for now.";
+
+/** forms.client.schema_v2, in words, with the tone of its chip. */
+export const STRUCTURED_STATE: Record<
+  StructuredState,
+  { words: string; tone: "neutral" | "warn" | "good" }
+> = {
+  off: { words: "Stored, not live", tone: "neutral" },
+  canary: { words: "On the test card only", tone: "warn" },
+  on: { words: "Live for new invites", tone: "good" },
+};
+
+const STRUCTURED_TYPE: Record<string, string> = {
+  text: "Short answer",
+  longtext: "Long answer",
+  number: "Number",
+  choice: "One choice",
+  multi: "Several choices",
+  tick: "Tick box",
+  scale: "Scale",
+  date: "Date",
+  file: "File",
+};
+
+/** One question's kind: "Rows, 1 to 25", "Several choices (19)", "Note with a link". */
+export function structuredKind(f: StructuredField): string {
+  if (f.type === "rows")
+    return `Rows, ${Math.max(f.required ? 1 : 0, f.minRows ?? 0)} to ${f.maxRows ?? "?"}`;
+  if (f.type === "note") return f.link ? "Note with a link" : "Note";
+  if (f.type === "choice" || f.type === "multi")
+    return `${STRUCTURED_TYPE[f.type]} (${f.options?.length ?? 0})`;
+  if (f.type === "number" && f.currencyFrom)
+    return "Number, read back in the form's currency";
+  return STRUCTURED_TYPE[f.type] ?? f.type;
+}
+
+/** When a question shows, in words, from the earlier question it reads; null when it always shows. */
+export function showIfWords(
+  f: StructuredField,
+  byKey: ReadonlyMap<string, StructuredField>,
+): string | null {
+  const s = f.showIf;
+  if (!s) return null;
+  const src = byKey.get(s.key);
+  const name = src?.label.en || s.key;
+  const opt = (v: unknown) =>
+    src?.options?.find(o => o.value === v)?.label.en ?? String(v);
+  if (s.includes !== undefined)
+    return `Shows when “${name}” includes ${opt(s.includes)}`;
+  if (Array.isArray(s.in))
+    return `Shows when “${name}” is ${s.in.map(opt).join(" or ")}`;
+  if (src?.type === "tick")
+    return `Shows when “${name}” is ${s.equals ? "ticked" : "not ticked"}`;
+  return `Shows when “${name}” is ${opt(s.equals)}`;
+}
+
+export type OutlineItem = {
+  key: string;
+  label: Text;
+  kind: string;
+  required: boolean;
+  note: boolean;
+  shows: string | null;
+  columns: string[];
+};
+export type OutlineSection = { title: Text | null; items: OutlineItem[] };
+
+/** The structured form as its sections (one per heading), each with its questions and notes in order. */
+export function structuredOutline(schema: StructuredSchema): OutlineSection[] {
+  const byKey = new Map(schema.fields.map(f => [f.key, f]));
+  const out: OutlineSection[] = [];
+  let section: OutlineSection | null = null;
+  for (const f of schema.fields) {
+    if (f.type === "heading") {
+      section = { title: f.label, items: [] };
+      out.push(section);
+      continue;
+    }
+    if (!section) {
+      section = { title: null, items: [] };
+      out.push(section);
+    }
+    section.items.push({
+      key: f.key,
+      label: f.label,
+      kind: structuredKind(f),
+      required: Boolean(f.required),
+      note: f.type === "note",
+      shows: showIfWords(f, byKey),
+      columns: (f.columns ?? []).map(c => c.label.en || c.key),
+    });
+  }
+  return out;
+}
+
+/** How many questions a structured form asks (headings and notes are shown, never answered). */
+export const structuredAsked = (schema: StructuredSchema) =>
+  schema.fields.filter(f => f.type !== "heading" && f.type !== "note").length;
+
+/** The line under the state: the version new invites get, and what uses this one. */
+export function structuredUse(r: StructuredRead): string {
+  const issuing =
+    r.issuing === null
+      ? "No version goes to clients yet."
+      : `New invites get version ${r.issuing}.`;
+  if (!r.answers && !r.openInvites)
+    return `${issuing} No answer or open invite uses version ${r.version} yet.`;
+  const plural = (n: number, word: string) =>
+    `${n} ${word}${n === 1 ? "" : "s"}`;
+  return `${issuing} ${plural(r.answers, "answer")} and ${plural(r.openInvites, "open invite")} on version ${r.version}.`;
+}

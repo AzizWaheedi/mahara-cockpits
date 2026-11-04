@@ -1358,6 +1358,69 @@ describe("readStage4Forms: the native kickoff and onboarding join the timeline (
     expect((healths.find(h => h.key === "csm-forms-history") as Health).note)
       .toContain(" Sent in the cockpit since Stage 4: 1 kickoff and 0 onboarding forms, 1 on a client card.");
   });
+
+  // 20261104d stores the structured onboarding as version 3 (4.22): from then on it is the newest version, switch off or on.
+  const v3 = { form_key: "onboarding", version: 3, schema: { v: 2, fields: [
+    { key: "aboutYou", type: "heading", label: { en: "About you", ar: "عنك" } },
+    { key: "metaAccess", type: "note", label: { en: "Give us access in Leadsie", ar: "عطونا الصلاحية" } },
+    { key: "businessName", type: "text", label: { en: "Your business name", ar: "اسم شركتكم" } },
+    { key: "noWebsite", type: "tick", label: { en: "We don't have a website yet", ar: "ما عندنا موقع" } },
+    { key: "noFacebook", type: "tick", label: { en: "We don't have a Facebook page", ar: "ما عندنا صفحة" } },
+    { key: "services", type: "rows", label: { en: "Your services", ar: "خدماتكم" }, columns: [
+      { key: "name", type: "text", label: { en: "Service", ar: "الخدمة" } },
+      { key: "price", type: "number", label: { en: "Price", ar: "السعر" } },
+      { key: "unit", type: "choice", label: { en: "Per", ar: "لكل" },
+        options: [{ value: "project", label: { en: "per project", ar: "للمشروع" } }, { value: "visit", label: { en: "per visit", ar: "للزيارة" } }] },
+      { key: "top", type: "tick", label: { en: "Most profit", ar: "الأكثر ربح" } }] },
+    { key: "faqs", type: "rows", label: { en: "Questions clients ask", ar: "أسئلة العملاء" }, columns: [
+      { key: "question", type: "text", label: { en: "Question", ar: "السؤال" } },
+      { key: "answer", type: "longtext", label: { en: "Answer", ar: "الجواب" } }] },
+    { key: "consultants", type: "rows", label: { en: "Your consultants", ar: "المستشارين" }, columns: [
+      { key: "name", type: "text", label: { en: "Name", ar: "الاسم" } }] }] } };
+  const structured = [
+    { id: "o-3", form_key: "onboarding", form_version: 3, source: "portal", task_id: CITY.taskId, mode: "live", state: "submitted", submitted_at: iso(NOW - HOUR),
+      answers: { businessName: "Cedar Invented", noWebsite: true, noFacebook: false,
+        services: [{ name: "Villa fit out", price: 25000, unit: "project", top: true }, { name: "Kitchen", unit: "visit", top: false }, { name: "", price: null }],
+        faqs: [{ question: "How long  does it take?", answer: "About six weeks.\nLonger in summer." }],
+        consultants: [] }, answer_meta: {} },
+    // A version no row in cockpit_form_versions holds: left as it is, and said.
+    { id: "o-4", form_key: "onboarding", form_version: 4, source: "portal", task_id: CITY.taskId, mode: "live", state: "submitted", submitted_at: iso(NOW),
+      answers: { businessName: "Y" }, answer_meta: {} },
+  ];
+  const seedV3 = () => store(seedOf({ cockpit_settings: [{ key: "forms.doors", value: { voice: true } }, { key: "forms.stage4", value: { kickoff: true, onboarding: true } }],
+    cockpit_form_versions: [...versions, v3], cockpit_form_responses: [...answers, ...structured] }));
+
+  test("with version 3 stored, each answer is read with its own version's questions; rows read as text, one line per row", async () => {
+    const out = await readStage4Forms(ctxOf(seedV3(), emptyTypeform));
+    expect(out.rows.map(r => r.token)).toEqual(["cockpit:k-1", "cockpit:o-1", "cockpit:o-3"]);
+    // The version-2 answer reads exactly as before: version 2's keys and words, not version 3's.
+    expect(out.rows[1].answers).toEqual([
+      { ref: "freeConsults", type: "multiple_choice", title: "Do you offer free consultations?", value: "Yes, we offer free consultations" },
+      { ref: "appointmentTypes", type: "multiple_choice", title: "What types of appointments do you offer?", value: "Online, In your office" },
+      { ref: "businessName", type: "short_text", title: "Business Name", value: "Invented Co" },
+    ]);
+    expect(out.rows[2].answers).toEqual([
+      { ref: "businessName", type: "short_text", title: "Your business name", value: "Cedar Invented" },
+      { ref: "noWebsite", type: "multiple_choice", title: "We don't have a website yet", value: "Yes" },
+      { ref: "services", type: "long_text", title: "Your services", value: "Villa fit out - 25000 - per project - Most profit\nKitchen - per visit" },
+      { ref: "faqs", type: "long_text", title: "Questions clients ask", value: "How long does it take? - About six weeks. Longer in summer." },
+    ]);
+    expect(JSON.stringify(out.rows)).not.toContain("[object Object]");
+    expect(out.count).toEqual({ total: 3, onBoard: 3, byForm: { kickoff: 1, onboarding: 2 }, noVersion: 1 });
+    const healths = await typeformSource(ctxOf(seedV3(), emptyTypeform));
+    expect((healths.find(h => h.key === "csm-forms-history") as Health).note).toContain(
+      " Sent in the cockpit since Stage 4: 1 kickoff and 2 onboarding forms, 3 on a client card. 1 native answer was not read: its form version's questions were not found, so it keeps its last timeline row. Check cockpit_form_versions.",
+    );
+  });
+
+  test("a run with version 3 stored never rewrites a version-2 answer's timeline row with version 3's questions", async () => {
+    const fake = seedV3();
+    const ctx = ctxOf(fake, emptyTypeform);
+    await linkTypeforms(ctx, await readTypeforms(ctx));
+    const stored = fake.rows("cockpit_csm_call_forms").find(r => r.token === "cockpit:o-1");
+    expect(stored?.answers.map((a: Row) => a.ref)).toEqual(["freeConsults", "appointmentTypes", "businessName"]);
+    expect(fake.rows("cockpit_csm_call_forms").some(r => r.token === "cockpit:o-4")).toBe(false);
+  });
 });
 
 describe("typeformSource: the 1-1 form link", () => {

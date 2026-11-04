@@ -1,0 +1,1569 @@
+{
+  "about": "Printer goldens for the structured onboarding (version 3, client form schema v2; docs/forms/WAVE56-CONTRACT.md 4.22). Each case's printed list is what the design's reference printer (next-design/v3_print.py) gives on the answers, with the print map in the order of cockpit_form_stage4_fields('onboarding'), the order and titles a version-2 answer's list has. supabase/migrations/20261104d_onboarding_schema_v2.sql's cockpit_form_stage4_print must give exactly these, and scripts/dev/test_make_parity.py grades the printed lists through make_parity.py's evaluator of Make 13. structured is the read model's sidecar: the answers without the five contact keys, with schemaVersion 3. Every answer is invented.",
+  "version": 3,
+  "cases": [
+    {
+      "name": "the design's synthetic answer: no Facebook page ticked, other booking software, a set distance",
+      "answers": {
+        "fullName": "Test Person",
+        "phone": "+96550000000",
+        "email": "test@example.com",
+        "businessName": "Example Build Co",
+        "noFacebookPage": true,
+        "website": "https://example.com",
+        "instagram": "https://instagram.com/example",
+        "frontDeskPhone": "+96550000001",
+        "personalPhone": "+96550000002",
+        "startYear": 2015,
+        "projectsDone": 120,
+        "facebookAds": "never_ran",
+        "bookingTools": [
+          "whatsapp",
+          "other_software"
+        ],
+        "bookingOther": "Example Booking App",
+        "hoursDays": [
+          "sun",
+          "mon",
+          "tue",
+          "wed",
+          "thu"
+        ],
+        "hoursTimes": "9am to 1pm and 4pm to 9pm",
+        "appointmentTypes": [
+          "office",
+          "onsite"
+        ],
+        "distanceMode": "limit",
+        "maxDistanceKm": 40,
+        "apptMinutes": 60,
+        "bufferMinutes": 15,
+        "consultants": [
+          {
+            "name": "Eng. A",
+            "speciality": "Interior design",
+            "nationality": "Kuwaiti"
+          }
+        ],
+        "freeConsults": "yes",
+        "paymentMethods": [
+          "instalments",
+          "down_payment"
+        ],
+        "paymentDetails": "30% down, then three payments",
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Full villa renovation",
+            "price": 25000,
+            "unit": "starts_from",
+            "topPrice": true
+          },
+          {
+            "name": "Kitchen design",
+            "price": 40,
+            "unit": "sqm",
+            "topProfit": true
+          },
+          {
+            "name": "Consultation visit"
+          }
+        ],
+        "serviceFocus": "Full villa renovation",
+        "idealProject": "A full villa renovation in Hawalli",
+        "faqs": [
+          {
+            "question": "How long does a renovation take?",
+            "answer": "About three months."
+          },
+          {
+            "question": "Do you design and build?",
+            "answer": "Yes."
+          },
+          {
+            "question": "Do you offer instalments?",
+            "answer": "Yes, three payments."
+          }
+        ],
+        "areaCountries": [
+          "kw",
+          "other"
+        ],
+        "areasKW": [
+          "hawalli",
+          "capital"
+        ],
+        "areasOther": "Saudi Arabia: Eastern Province only",
+        "whyJoined": "More projects",
+        "marketingChannels": [
+          "referrals",
+          "instagram"
+        ],
+        "marketing": "Mostly referrals; Instagram posts twice a week.",
+        "challenges": "Few enquiries in summer",
+        "lastRevenue": 350000,
+        "goal90": 120000,
+        "goal12": 800000
+      },
+      "printed": [
+        {
+          "ref": "533f14a0-712f-4de9-9ac7-67e1be6bc0c8",
+          "title": "Full Name",
+          "value": "Test Person"
+        },
+        {
+          "ref": "64f2fb80-b074-4017-b8b7-b7d549947e52",
+          "title": "Phone",
+          "value": "+96550000000"
+        },
+        {
+          "ref": "7994f0d2-baeb-451b-983a-816290873a68",
+          "title": "Email",
+          "value": "test@example.com"
+        },
+        {
+          "ref": "514bfd3f-4ca1-469e-b9e7-87656503f65c",
+          "title": "Business Name",
+          "value": "Example Build Co"
+        },
+        {
+          "ref": "454a425f-2ac6-4d94-92db-cec08618600e",
+          "title": "Website URL",
+          "value": "https://example.com"
+        },
+        {
+          "ref": "adecfe45-5d55-4319-98ff-3761e04bfc9b",
+          "title": "Instagram URL",
+          "value": "https://instagram.com/example"
+        },
+        {
+          "ref": "575d17ed-e26d-4e55-87d3-7cb31cb71939",
+          "title": "Facebook Page URL",
+          "value": "No Facebook page"
+        },
+        {
+          "ref": "ee25f923-d5e1-4d1a-a95f-cd9c17abbe83",
+          "title": "What payment options do you currently offer to your clients (e.g., full payment, installment plans, minimum down payment, in-house financing, third-party financing)?",
+          "value": "Installment plans, Down payment first\n30% down, then three payments"
+        },
+        {
+          "ref": "282dac48-5031-4acb-96b6-ea469e8a5a8b",
+          "title": "Front Desk Phone",
+          "value": "+96550000001"
+        },
+        {
+          "ref": "09d2e62a-51d4-4665-a3a9-30f5279b71bc",
+          "title": "Personal Phone Number",
+          "value": "+96550000002"
+        },
+        {
+          "ref": "ed1ba2fe-2827-4eea-a678-62205f1ce9f5",
+          "title": "How long have you been in business?",
+          "value": "Since 2015"
+        },
+        {
+          "ref": "7a120dbb-0169-4bcc-9193-5c525a470d02",
+          "title": "Current booking software",
+          "value": "WhatsApp, Example Booking App"
+        },
+        {
+          "ref": "ddf2767d-5725-4df2-b200-f0aab77a2db5",
+          "title": "Do you have a facebook business manager or have you ever ran ads on meta (Facebook & Instagram) in the past?",
+          "value": "I Have a Business Account but have never ran ads | لديّ حساب أعمال على فيسبوك لكنني لم أقم بتشغيل إعلانات من قبل"
+        },
+        {
+          "ref": "0a6b5704-c46d-480c-a592-b59108683596",
+          "title": "How many projects has your company completed to date?",
+          "value": "120"
+        },
+        {
+          "ref": "b7873d40-d154-42ac-bf24-cb3b667e84cc",
+          "title": "Business hours - When are you open to schedule?",
+          "value": "Sun, Mon, Tue, Wed, Thu: 9am to 1pm and 4pm to 9pm"
+        },
+        {
+          "ref": "d976036f-6c2e-4d5d-999a-64cf9bb2ef02",
+          "title": "1) What services do you offer list all of them? Also I want to know which ones have the HIGHEST price point and Highest Profit 2) What is the PRICE of the services?",
+          "value": "Full villa renovation: starting from 25,000 KWD (highest price)\nKitchen design: 40 KWD per square metre (most profit)\nConsultation visit"
+        },
+        {
+          "ref": "6271b610-6946-4056-bb08-d03ffc274141",
+          "title": "Out of those what is the #1 service/type of project you want to focus on scaling?",
+          "value": "Full villa renovation"
+        },
+        {
+          "ref": "f2b7bc2b-2a79-4640-9e21-377e7aa39d45",
+          "title": "What are your top five most frequently asked questions and their answers? (Feel free to add more — the more detailed, the better.)",
+          "value": "1. How long does a renovation take?\nAbout three months.\n\n2. Do you design and build?\nYes.\n\n3. Do you offer instalments?\nYes, three payments."
+        },
+        {
+          "ref": "6c819933-3eb9-4db8-bd59-d39be11cb7f0",
+          "title": "Please describe your ideal project in detail.",
+          "value": "A full villa renovation in Hawalli"
+        },
+        {
+          "ref": "fa017616-3fb5-4e64-9fbd-39cea6e26c47",
+          "title": "What service areas do you cover? Please list all cities and neighborhoods you serve so we can target your ads precisely.",
+          "value": "Kuwait: Hawalli, Capital\nOther: Saudi Arabia: Eastern Province only"
+        },
+        {
+          "ref": "b370341c-6ea3-43c9-bd8c-16e278a2d2d5",
+          "title": "What types of appointments do you offer? (Select all that apply)",
+          "value": "في مقرّكم / مكتبكم | In your office, في موقع العميل / في المنزل | Onsite / In-home"
+        },
+        {
+          "ref": "35ea63c3-090a-425d-b75c-e3d183d48cd1",
+          "title": "What's the maximum distance you would travel from your office to do an in-home consultation?",
+          "value": "40 km"
+        },
+        {
+          "ref": "a20cfc1a-0228-413d-80ab-d97fc97574e0",
+          "title": "Appointment length + details + buffer",
+          "value": "60 minutes, 15 minutes between appointments"
+        },
+        {
+          "ref": "0a80a0a8-3a09-4907-a1d1-6c57e57d4c47",
+          "title": "Who are the engineers in your business that will be giving these consultations?",
+          "value": "Eng. A - Interior design - Kuwaiti"
+        },
+        {
+          "ref": "7426c6c5-344f-44c9-9999-3b9daf3a06b8",
+          "title": "What motivated you to join our program? What was the reason you signed up?",
+          "value": "More projects"
+        },
+        {
+          "ref": "ec89854f-d006-402b-958a-91738e2b3e7a",
+          "title": "Do you offer free consultations?",
+          "value": "Yes, we do offer free consultations / نعم، نقدم استشارات مجانية✅"
+        },
+        {
+          "ref": "bf8c7c7b-fff9-463f-b30a-8d8ca8b622f6",
+          "title": "What is your marketing process? In other words... please explain EVERYTHING A-Z that you have in place or have tried to generate new projects",
+          "value": "Channels: Referrals, Instagram\nMostly referrals; Instagram posts twice a week."
+        },
+        {
+          "ref": "7ff5d37a-df7f-4002-8248-d0b4af6c28e8",
+          "title": "Last Calendar Year - How Much Total Revenue did you do?",
+          "value": "350000"
+        },
+        {
+          "ref": "fcf43e6a-cc84-4ae7-9cef-2336069d0280",
+          "title": "What are the TOP 3 challenges that - if we were able to help you with - would make you 100% satisfied with your investment? - Be specific.",
+          "value": "Few enquiries in summer"
+        },
+        {
+          "ref": "791b99b8-c7e9-40a4-96d6-868399e1ae97",
+          "title": "What is your realistic goal revenue in 90 Days?",
+          "value": "120000"
+        },
+        {
+          "ref": "f4b96a9b-bd7c-4398-98b4-6a28a7d3595a",
+          "title": "What is your ideal/stretch revenue goal within the next 12-24 months?",
+          "value": "800000"
+        }
+      ],
+      "structured": {
+        "businessName": "Example Build Co",
+        "noFacebookPage": true,
+        "website": "https://example.com",
+        "instagram": "https://instagram.com/example",
+        "startYear": 2015,
+        "projectsDone": 120,
+        "facebookAds": "never_ran",
+        "bookingTools": [
+          "whatsapp",
+          "other_software"
+        ],
+        "bookingOther": "Example Booking App",
+        "hoursDays": [
+          "sun",
+          "mon",
+          "tue",
+          "wed",
+          "thu"
+        ],
+        "hoursTimes": "9am to 1pm and 4pm to 9pm",
+        "appointmentTypes": [
+          "office",
+          "onsite"
+        ],
+        "distanceMode": "limit",
+        "maxDistanceKm": 40,
+        "apptMinutes": 60,
+        "bufferMinutes": 15,
+        "consultants": [
+          {
+            "name": "Eng. A",
+            "speciality": "Interior design",
+            "nationality": "Kuwaiti"
+          }
+        ],
+        "freeConsults": "yes",
+        "paymentMethods": [
+          "instalments",
+          "down_payment"
+        ],
+        "paymentDetails": "30% down, then three payments",
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "Full villa renovation",
+            "price": 25000,
+            "unit": "starts_from",
+            "topPrice": true
+          },
+          {
+            "name": "Kitchen design",
+            "price": 40,
+            "unit": "sqm",
+            "topProfit": true
+          },
+          {
+            "name": "Consultation visit"
+          }
+        ],
+        "serviceFocus": "Full villa renovation",
+        "idealProject": "A full villa renovation in Hawalli",
+        "faqs": [
+          {
+            "question": "How long does a renovation take?",
+            "answer": "About three months."
+          },
+          {
+            "question": "Do you design and build?",
+            "answer": "Yes."
+          },
+          {
+            "question": "Do you offer instalments?",
+            "answer": "Yes, three payments."
+          }
+        ],
+        "areaCountries": [
+          "kw",
+          "other"
+        ],
+        "areasKW": [
+          "hawalli",
+          "capital"
+        ],
+        "areasOther": "Saudi Arabia: Eastern Province only",
+        "whyJoined": "More projects",
+        "marketingChannels": [
+          "referrals",
+          "instagram"
+        ],
+        "marketing": "Mostly referrals; Instagram posts twice a week.",
+        "challenges": "Few enquiries in summer",
+        "lastRevenue": 350000,
+        "goal90": 120000,
+        "goal12": 800000,
+        "schemaVersion": 3
+      }
+    },
+    {
+      "name": "ticks and gaps: no website ticked, restricted account, anywhere, no time between, empty cells",
+      "answers": {
+        "fullName": "Invented Owner Bee",
+        "phone": "+96650000010",
+        "email": "bee@example.invalid",
+        "businessName": "Invented Fitout Bee",
+        "noWebsite": true,
+        "instagram": "https://instagram.com/invented.bee",
+        "noFacebookPage": false,
+        "facebook": "https://facebook.com/invented.bee",
+        "frontDeskPhone": "+96650000011",
+        "personalPhone": "+96650000012",
+        "startYear": 1998,
+        "facebookAds": "restricted",
+        "bookingTools": [
+          "phone",
+          "whatsapp",
+          "paper_excel"
+        ],
+        "hoursDays": [
+          "sat",
+          "sun",
+          "mon"
+        ],
+        "hoursTimes": "10am to 10pm",
+        "appointmentTypes": [
+          "onsite",
+          "online"
+        ],
+        "distanceMode": "anywhere",
+        "apptMinutes": 45,
+        "bufferMinutes": 0,
+        "apptDetails": "The engineer visits with a sample book.\nBring the floor plan.",
+        "consultants": [
+          {
+            "name": "Eng. Bee",
+            "speciality": "Fit out",
+            "nationality": "",
+            "qualifications": "MSc"
+          },
+          {
+            "name": "Arch. Cee",
+            "speciality": "Landscape"
+          }
+        ],
+        "freeConsults": "open_to_it",
+        "paymentMethods": [
+          "full"
+        ],
+        "currency": "sar",
+        "services": [
+          {
+            "name": "Majlis fit out",
+            "price": 1500,
+            "unit": "sqm"
+          },
+          {
+            "name": "Kitchen",
+            "unit": "project"
+          },
+          {
+            "name": "Design only",
+            "price": 0,
+            "unit": "project",
+            "topPrice": false,
+            "topProfit": true
+          },
+          {
+            "name": "Villa",
+            "price": 1250000,
+            "unit": "project",
+            "topPrice": true
+          }
+        ],
+        "serviceFocus": "Majlis fit out",
+        "idealProject": "A majlis of 80 square metres in Riyadh",
+        "faqs": [
+          {
+            "question": "Do you work on Fridays?",
+            "answer": "No."
+          },
+          {
+            "question": "شكثر ياخذ المشروع؟",
+            "answer": "تقريباً شهرين.\nيعتمد على الحجم."
+          },
+          {
+            "question": "Can we see past work?",
+            "answer": "Yes, in our office."
+          }
+        ],
+        "areaCountries": [
+          "sa",
+          "ae"
+        ],
+        "areasSA": [
+          "riyadh",
+          "khobar",
+          "all_sa"
+        ],
+        "areasAE": [
+          "dubai"
+        ],
+        "areasNote": "Not the old town",
+        "whyJoined": "To fill the calendar",
+        "marketingChannels": [
+          "none_yet"
+        ],
+        "marketing": "Nothing steady yet.",
+        "challenges": "No system for follow-ups",
+        "lastRevenue": 0,
+        "goal90": 50000,
+        "goal12": 2000000,
+        "driveLink": "https://drive.google.com/drive/folders/inventedBee",
+        "additionalInfo": "نبي نبدي بعد رمضان"
+      },
+      "printed": [
+        {
+          "ref": "533f14a0-712f-4de9-9ac7-67e1be6bc0c8",
+          "title": "Full Name",
+          "value": "Invented Owner Bee"
+        },
+        {
+          "ref": "64f2fb80-b074-4017-b8b7-b7d549947e52",
+          "title": "Phone",
+          "value": "+96650000010"
+        },
+        {
+          "ref": "7994f0d2-baeb-451b-983a-816290873a68",
+          "title": "Email",
+          "value": "bee@example.invalid"
+        },
+        {
+          "ref": "514bfd3f-4ca1-469e-b9e7-87656503f65c",
+          "title": "Business Name",
+          "value": "Invented Fitout Bee"
+        },
+        {
+          "ref": "454a425f-2ac6-4d94-92db-cec08618600e",
+          "title": "Website URL",
+          "value": "No website yet"
+        },
+        {
+          "ref": "adecfe45-5d55-4319-98ff-3761e04bfc9b",
+          "title": "Instagram URL",
+          "value": "https://instagram.com/invented.bee"
+        },
+        {
+          "ref": "575d17ed-e26d-4e55-87d3-7cb31cb71939",
+          "title": "Facebook Page URL",
+          "value": "https://facebook.com/invented.bee"
+        },
+        {
+          "ref": "ee25f923-d5e1-4d1a-a95f-cd9c17abbe83",
+          "title": "What payment options do you currently offer to your clients (e.g., full payment, installment plans, minimum down payment, in-house financing, third-party financing)?",
+          "value": "Full payment"
+        },
+        {
+          "ref": "282dac48-5031-4acb-96b6-ea469e8a5a8b",
+          "title": "Front Desk Phone",
+          "value": "+96650000011"
+        },
+        {
+          "ref": "09d2e62a-51d4-4665-a3a9-30f5279b71bc",
+          "title": "Personal Phone Number",
+          "value": "+96650000012"
+        },
+        {
+          "ref": "ed1ba2fe-2827-4eea-a678-62205f1ce9f5",
+          "title": "How long have you been in business?",
+          "value": "Since 1998"
+        },
+        {
+          "ref": "7a120dbb-0169-4bcc-9193-5c525a470d02",
+          "title": "Current booking software",
+          "value": "Phone calls, WhatsApp, Notebook or Excel"
+        },
+        {
+          "ref": "ddf2767d-5725-4df2-b200-f0aab77a2db5",
+          "title": "Do you have a facebook business manager or have you ever ran ads on meta (Facebook & Instagram) in the past?",
+          "value": "My Account is restricted | حسابي مقيّد"
+        },
+        {
+          "ref": "b7873d40-d154-42ac-bf24-cb3b667e84cc",
+          "title": "Business hours - When are you open to schedule?",
+          "value": "Sat, Sun, Mon: 10am to 10pm"
+        },
+        {
+          "ref": "d976036f-6c2e-4d5d-999a-64cf9bb2ef02",
+          "title": "1) What services do you offer list all of them? Also I want to know which ones have the HIGHEST price point and Highest Profit 2) What is the PRICE of the services?",
+          "value": "Majlis fit out: 1,500 SAR per square metre\nKitchen\nDesign only: 0 SAR per project (most profit)\nVilla: 1,250,000 SAR per project (highest price)"
+        },
+        {
+          "ref": "6271b610-6946-4056-bb08-d03ffc274141",
+          "title": "Out of those what is the #1 service/type of project you want to focus on scaling?",
+          "value": "Majlis fit out"
+        },
+        {
+          "ref": "f2b7bc2b-2a79-4640-9e21-377e7aa39d45",
+          "title": "What are your top five most frequently asked questions and their answers? (Feel free to add more — the more detailed, the better.)",
+          "value": "1. Do you work on Fridays?\nNo.\n\n2. شكثر ياخذ المشروع؟\nتقريباً شهرين.\nيعتمد على الحجم.\n\n3. Can we see past work?\nYes, in our office."
+        },
+        {
+          "ref": "6c819933-3eb9-4db8-bd59-d39be11cb7f0",
+          "title": "Please describe your ideal project in detail.",
+          "value": "A majlis of 80 square metres in Riyadh"
+        },
+        {
+          "ref": "fa017616-3fb5-4e64-9fbd-39cea6e26c47",
+          "title": "What service areas do you cover? Please list all cities and neighborhoods you serve so we can target your ads precisely.",
+          "value": "Saudi Arabia: Riyadh, Khobar, All of Saudi Arabia\nUAE: Dubai\nNot the old town"
+        },
+        {
+          "ref": "b370341c-6ea3-43c9-bd8c-16e278a2d2d5",
+          "title": "What types of appointments do you offer? (Select all that apply)",
+          "value": "في موقع العميل / في المنزل | Onsite / In-home, عن بُعد (أونلاين) | Online"
+        },
+        {
+          "ref": "35ea63c3-090a-425d-b75c-e3d183d48cd1",
+          "title": "What's the maximum distance you would travel from your office to do an in-home consultation?",
+          "value": "Anywhere in our service areas"
+        },
+        {
+          "ref": "a20cfc1a-0228-413d-80ab-d97fc97574e0",
+          "title": "Appointment length + details + buffer",
+          "value": "45 minutes, no time between appointments\nThe engineer visits with a sample book.\nBring the floor plan."
+        },
+        {
+          "ref": "0a80a0a8-3a09-4907-a1d1-6c57e57d4c47",
+          "title": "Who are the engineers in your business that will be giving these consultations?",
+          "value": "Eng. Bee - Fit out - MSc\nArch. Cee - Landscape"
+        },
+        {
+          "ref": "7426c6c5-344f-44c9-9999-3b9daf3a06b8",
+          "title": "What motivated you to join our program? What was the reason you signed up?",
+          "value": "To fill the calendar"
+        },
+        {
+          "ref": "ec89854f-d006-402b-958a-91738e2b3e7a",
+          "title": "Do you offer free consultations?",
+          "value": "No, but we're open to considering it / حاليا لا نقدمها، لكن يمكننا مناقشه🤝"
+        },
+        {
+          "ref": "bf8c7c7b-fff9-463f-b30a-8d8ca8b622f6",
+          "title": "What is your marketing process? In other words... please explain EVERYTHING A-Z that you have in place or have tried to generate new projects",
+          "value": "Channels: Nothing yet\nNothing steady yet."
+        },
+        {
+          "ref": "7ff5d37a-df7f-4002-8248-d0b4af6c28e8",
+          "title": "Last Calendar Year - How Much Total Revenue did you do?",
+          "value": "0"
+        },
+        {
+          "ref": "fcf43e6a-cc84-4ae7-9cef-2336069d0280",
+          "title": "What are the TOP 3 challenges that - if we were able to help you with - would make you 100% satisfied with your investment? - Be specific.",
+          "value": "No system for follow-ups"
+        },
+        {
+          "ref": "791b99b8-c7e9-40a4-96d6-868399e1ae97",
+          "title": "What is your realistic goal revenue in 90 Days?",
+          "value": "50000"
+        },
+        {
+          "ref": "f4b96a9b-bd7c-4398-98b4-6a28a7d3595a",
+          "title": "What is your ideal/stretch revenue goal within the next 12-24 months?",
+          "value": "2000000"
+        },
+        {
+          "ref": "41d2d5bb-b023-4fa4-906c-72aeef7a5e46",
+          "title": "Any additional information we should know before starting?",
+          "value": "نبي نبدي بعد رمضان"
+        },
+        {
+          "ref": "64d23c81-1784-4f07-8356-107af764fc95",
+          "title": "Please attach a Google Drive link to all the content you have for your office (See check list below)",
+          "value": "https://drive.google.com/drive/folders/inventedBee"
+        }
+      ],
+      "structured": {
+        "businessName": "Invented Fitout Bee",
+        "noWebsite": true,
+        "instagram": "https://instagram.com/invented.bee",
+        "noFacebookPage": false,
+        "facebook": "https://facebook.com/invented.bee",
+        "startYear": 1998,
+        "facebookAds": "restricted",
+        "bookingTools": [
+          "phone",
+          "whatsapp",
+          "paper_excel"
+        ],
+        "hoursDays": [
+          "sat",
+          "sun",
+          "mon"
+        ],
+        "hoursTimes": "10am to 10pm",
+        "appointmentTypes": [
+          "onsite",
+          "online"
+        ],
+        "distanceMode": "anywhere",
+        "apptMinutes": 45,
+        "bufferMinutes": 0,
+        "apptDetails": "The engineer visits with a sample book.\nBring the floor plan.",
+        "consultants": [
+          {
+            "name": "Eng. Bee",
+            "speciality": "Fit out",
+            "nationality": "",
+            "qualifications": "MSc"
+          },
+          {
+            "name": "Arch. Cee",
+            "speciality": "Landscape"
+          }
+        ],
+        "freeConsults": "open_to_it",
+        "paymentMethods": [
+          "full"
+        ],
+        "currency": "sar",
+        "services": [
+          {
+            "name": "Majlis fit out",
+            "price": 1500,
+            "unit": "sqm"
+          },
+          {
+            "name": "Kitchen",
+            "unit": "project"
+          },
+          {
+            "name": "Design only",
+            "price": 0,
+            "unit": "project",
+            "topPrice": false,
+            "topProfit": true
+          },
+          {
+            "name": "Villa",
+            "price": 1250000,
+            "unit": "project",
+            "topPrice": true
+          }
+        ],
+        "serviceFocus": "Majlis fit out",
+        "idealProject": "A majlis of 80 square metres in Riyadh",
+        "faqs": [
+          {
+            "question": "Do you work on Fridays?",
+            "answer": "No."
+          },
+          {
+            "question": "شكثر ياخذ المشروع؟",
+            "answer": "تقريباً شهرين.\nيعتمد على الحجم."
+          },
+          {
+            "question": "Can we see past work?",
+            "answer": "Yes, in our office."
+          }
+        ],
+        "areaCountries": [
+          "sa",
+          "ae"
+        ],
+        "areasSA": [
+          "riyadh",
+          "khobar",
+          "all_sa"
+        ],
+        "areasAE": [
+          "dubai"
+        ],
+        "areasNote": "Not the old town",
+        "whyJoined": "To fill the calendar",
+        "marketingChannels": [
+          "none_yet"
+        ],
+        "marketing": "Nothing steady yet.",
+        "challenges": "No system for follow-ups",
+        "lastRevenue": 0,
+        "goal90": 50000,
+        "goal12": 2000000,
+        "driveLink": "https://drive.google.com/drive/folders/inventedBee",
+        "additionalInfo": "نبي نبدي بعد رمضان",
+        "schemaVersion": 3
+      }
+    },
+    {
+      "name": "every choice: other software only, all days, office only, every channel and payment option, another country",
+      "answers": {
+        "fullName": "Invented Owner Cee",
+        "phone": "+97450000020",
+        "email": "cee@example.invalid",
+        "businessName": "Invented Studio Cee",
+        "address": "Building 7, Invented Street",
+        "mapsLink": "https://maps.app.goo.gl/inventedCee",
+        "website": "https://cee.example",
+        "instagram": "https://instagram.com/invented.cee",
+        "facebook": "https://facebook.com/invented.cee",
+        "frontDeskPhone": "+97450000021",
+        "personalPhone": "+97450000022",
+        "startYear": 2021,
+        "projectsDone": 35,
+        "facebookAds": "yes",
+        "bookingTools": [
+          "other_software"
+        ],
+        "bookingOther": "Invented Booking",
+        "hoursDays": [
+          "sun",
+          "mon",
+          "tue",
+          "wed",
+          "thu",
+          "fri",
+          "sat"
+        ],
+        "hoursTimes": "Any time by appointment",
+        "appointmentTypes": [
+          "office"
+        ],
+        "landmark": "Next to the invented mall",
+        "apptMinutes": 90,
+        "bufferMinutes": 30,
+        "consultants": [
+          {
+            "name": "Eng. Cee",
+            "speciality": "Architecture",
+            "nationality": "Qatari",
+            "qualifications": "BSc, 10 years"
+          }
+        ],
+        "freeConsults": "no",
+        "paymentMethods": [
+          "full",
+          "instalments",
+          "down_payment",
+          "in_house",
+          "third_party"
+        ],
+        "paymentDetails": "Half at signing.",
+        "currency": "usd",
+        "services": [
+          {
+            "name": "Consultation",
+            "price": 20,
+            "unit": "visit"
+          }
+        ],
+        "serviceFocus": "Consultation",
+        "idealProject": "A small office fit out",
+        "faqs": [
+          {
+            "question": "Q1?",
+            "answer": "A1."
+          },
+          {
+            "question": "Q2?",
+            "answer": "A2."
+          },
+          {
+            "question": "Q3?",
+            "answer": "A3."
+          },
+          {
+            "question": "Q4?",
+            "answer": "A4."
+          }
+        ],
+        "areaCountries": [
+          "other"
+        ],
+        "areasOther": "Iraq: Basra",
+        "whyJoined": "Growth",
+        "marketingChannels": [
+          "referrals",
+          "instagram",
+          "meta_ads",
+          "google",
+          "tiktok",
+          "snapchat",
+          "website",
+          "exhibitions",
+          "whatsapp",
+          "agency",
+          "none_yet"
+        ],
+        "marketing": "We tried everything once.",
+        "challenges": "Too many calls that go nowhere",
+        "lastRevenue": 1500000,
+        "goal90": 400000,
+        "goal12": 3000000,
+        "additionalInfo": "Nothing else."
+      },
+      "printed": [
+        {
+          "ref": "533f14a0-712f-4de9-9ac7-67e1be6bc0c8",
+          "title": "Full Name",
+          "value": "Invented Owner Cee"
+        },
+        {
+          "ref": "64f2fb80-b074-4017-b8b7-b7d549947e52",
+          "title": "Phone",
+          "value": "+97450000020"
+        },
+        {
+          "ref": "7994f0d2-baeb-451b-983a-816290873a68",
+          "title": "Email",
+          "value": "cee@example.invalid"
+        },
+        {
+          "ref": "514bfd3f-4ca1-469e-b9e7-87656503f65c",
+          "title": "Business Name",
+          "value": "Invented Studio Cee"
+        },
+        {
+          "ref": "e5caee43-e9b5-427d-8583-6982c5dd9be8",
+          "title": "Please enter your business address.",
+          "value": "Building 7, Invented Street"
+        },
+        {
+          "ref": "f7f9f2eb-1761-4c28-83ed-a53621c2cf88",
+          "title": "Paste a Google Maps link to your location (optional).",
+          "value": "https://maps.app.goo.gl/inventedCee"
+        },
+        {
+          "ref": "454a425f-2ac6-4d94-92db-cec08618600e",
+          "title": "Website URL",
+          "value": "https://cee.example"
+        },
+        {
+          "ref": "adecfe45-5d55-4319-98ff-3761e04bfc9b",
+          "title": "Instagram URL",
+          "value": "https://instagram.com/invented.cee"
+        },
+        {
+          "ref": "575d17ed-e26d-4e55-87d3-7cb31cb71939",
+          "title": "Facebook Page URL",
+          "value": "https://facebook.com/invented.cee"
+        },
+        {
+          "ref": "ee25f923-d5e1-4d1a-a95f-cd9c17abbe83",
+          "title": "What payment options do you currently offer to your clients (e.g., full payment, installment plans, minimum down payment, in-house financing, third-party financing)?",
+          "value": "Full payment, Installment plans, Down payment first, In-house financing, Third-party financing\nHalf at signing."
+        },
+        {
+          "ref": "282dac48-5031-4acb-96b6-ea469e8a5a8b",
+          "title": "Front Desk Phone",
+          "value": "+97450000021"
+        },
+        {
+          "ref": "09d2e62a-51d4-4665-a3a9-30f5279b71bc",
+          "title": "Personal Phone Number",
+          "value": "+97450000022"
+        },
+        {
+          "ref": "ed1ba2fe-2827-4eea-a678-62205f1ce9f5",
+          "title": "How long have you been in business?",
+          "value": "Since 2021"
+        },
+        {
+          "ref": "7a120dbb-0169-4bcc-9193-5c525a470d02",
+          "title": "Current booking software",
+          "value": "Invented Booking"
+        },
+        {
+          "ref": "ddf2767d-5725-4df2-b200-f0aab77a2db5",
+          "title": "Do you have a facebook business manager or have you ever ran ads on meta (Facebook & Instagram) in the past?",
+          "value": "Yes"
+        },
+        {
+          "ref": "0a6b5704-c46d-480c-a592-b59108683596",
+          "title": "How many projects has your company completed to date?",
+          "value": "35"
+        },
+        {
+          "ref": "b7873d40-d154-42ac-bf24-cb3b667e84cc",
+          "title": "Business hours - When are you open to schedule?",
+          "value": "Sun, Mon, Tue, Wed, Thu, Fri, Sat: Any time by appointment"
+        },
+        {
+          "ref": "d976036f-6c2e-4d5d-999a-64cf9bb2ef02",
+          "title": "1) What services do you offer list all of them? Also I want to know which ones have the HIGHEST price point and Highest Profit 2) What is the PRICE of the services?",
+          "value": "Consultation: 20 USD per visit"
+        },
+        {
+          "ref": "6271b610-6946-4056-bb08-d03ffc274141",
+          "title": "Out of those what is the #1 service/type of project you want to focus on scaling?",
+          "value": "Consultation"
+        },
+        {
+          "ref": "f2b7bc2b-2a79-4640-9e21-377e7aa39d45",
+          "title": "What are your top five most frequently asked questions and their answers? (Feel free to add more — the more detailed, the better.)",
+          "value": "1. Q1?\nA1.\n\n2. Q2?\nA2.\n\n3. Q3?\nA3.\n\n4. Q4?\nA4."
+        },
+        {
+          "ref": "6c819933-3eb9-4db8-bd59-d39be11cb7f0",
+          "title": "Please describe your ideal project in detail.",
+          "value": "A small office fit out"
+        },
+        {
+          "ref": "fa017616-3fb5-4e64-9fbd-39cea6e26c47",
+          "title": "What service areas do you cover? Please list all cities and neighborhoods you serve so we can target your ads precisely.",
+          "value": "Other: Iraq: Basra"
+        },
+        {
+          "ref": "b370341c-6ea3-43c9-bd8c-16e278a2d2d5",
+          "title": "What types of appointments do you offer? (Select all that apply)",
+          "value": "في مقرّكم / مكتبكم | In your office"
+        },
+        {
+          "ref": "b7c403ea-8d66-4814-80cf-7e8d7fdb8d11",
+          "title": "Local Landmark Information (Please type this in the format shown) - Located next to the Burger King down King Saud street on the left hand side.",
+          "value": "Next to the invented mall"
+        },
+        {
+          "ref": "a20cfc1a-0228-413d-80ab-d97fc97574e0",
+          "title": "Appointment length + details + buffer",
+          "value": "90 minutes, 30 minutes between appointments"
+        },
+        {
+          "ref": "0a80a0a8-3a09-4907-a1d1-6c57e57d4c47",
+          "title": "Who are the engineers in your business that will be giving these consultations?",
+          "value": "Eng. Cee - Architecture - Qatari - BSc, 10 years"
+        },
+        {
+          "ref": "7426c6c5-344f-44c9-9999-3b9daf3a06b8",
+          "title": "What motivated you to join our program? What was the reason you signed up?",
+          "value": "Growth"
+        },
+        {
+          "ref": "ec89854f-d006-402b-958a-91738e2b3e7a",
+          "title": "Do you offer free consultations?",
+          "value": "No, we do not offer free consultations / لا، لا نقدم استشارات مجانية❌"
+        },
+        {
+          "ref": "bf8c7c7b-fff9-463f-b30a-8d8ca8b622f6",
+          "title": "What is your marketing process? In other words... please explain EVERYTHING A-Z that you have in place or have tried to generate new projects",
+          "value": "Channels: Referrals, Instagram, Facebook and Instagram ads, Google, TikTok, Snapchat, Website, Exhibitions and events, WhatsApp, A marketing agency, Nothing yet\nWe tried everything once."
+        },
+        {
+          "ref": "7ff5d37a-df7f-4002-8248-d0b4af6c28e8",
+          "title": "Last Calendar Year - How Much Total Revenue did you do?",
+          "value": "1500000"
+        },
+        {
+          "ref": "fcf43e6a-cc84-4ae7-9cef-2336069d0280",
+          "title": "What are the TOP 3 challenges that - if we were able to help you with - would make you 100% satisfied with your investment? - Be specific.",
+          "value": "Too many calls that go nowhere"
+        },
+        {
+          "ref": "791b99b8-c7e9-40a4-96d6-868399e1ae97",
+          "title": "What is your realistic goal revenue in 90 Days?",
+          "value": "400000"
+        },
+        {
+          "ref": "f4b96a9b-bd7c-4398-98b4-6a28a7d3595a",
+          "title": "What is your ideal/stretch revenue goal within the next 12-24 months?",
+          "value": "3000000"
+        },
+        {
+          "ref": "41d2d5bb-b023-4fa4-906c-72aeef7a5e46",
+          "title": "Any additional information we should know before starting?",
+          "value": "Nothing else."
+        }
+      ],
+      "structured": {
+        "businessName": "Invented Studio Cee",
+        "address": "Building 7, Invented Street",
+        "mapsLink": "https://maps.app.goo.gl/inventedCee",
+        "website": "https://cee.example",
+        "instagram": "https://instagram.com/invented.cee",
+        "facebook": "https://facebook.com/invented.cee",
+        "startYear": 2021,
+        "projectsDone": 35,
+        "facebookAds": "yes",
+        "bookingTools": [
+          "other_software"
+        ],
+        "bookingOther": "Invented Booking",
+        "hoursDays": [
+          "sun",
+          "mon",
+          "tue",
+          "wed",
+          "thu",
+          "fri",
+          "sat"
+        ],
+        "hoursTimes": "Any time by appointment",
+        "appointmentTypes": [
+          "office"
+        ],
+        "landmark": "Next to the invented mall",
+        "apptMinutes": 90,
+        "bufferMinutes": 30,
+        "consultants": [
+          {
+            "name": "Eng. Cee",
+            "speciality": "Architecture",
+            "nationality": "Qatari",
+            "qualifications": "BSc, 10 years"
+          }
+        ],
+        "freeConsults": "no",
+        "paymentMethods": [
+          "full",
+          "instalments",
+          "down_payment",
+          "in_house",
+          "third_party"
+        ],
+        "paymentDetails": "Half at signing.",
+        "currency": "usd",
+        "services": [
+          {
+            "name": "Consultation",
+            "price": 20,
+            "unit": "visit"
+          }
+        ],
+        "serviceFocus": "Consultation",
+        "idealProject": "A small office fit out",
+        "faqs": [
+          {
+            "question": "Q1?",
+            "answer": "A1."
+          },
+          {
+            "question": "Q2?",
+            "answer": "A2."
+          },
+          {
+            "question": "Q3?",
+            "answer": "A3."
+          },
+          {
+            "question": "Q4?",
+            "answer": "A4."
+          }
+        ],
+        "areaCountries": [
+          "other"
+        ],
+        "areasOther": "Iraq: Basra",
+        "whyJoined": "Growth",
+        "marketingChannels": [
+          "referrals",
+          "instagram",
+          "meta_ads",
+          "google",
+          "tiktok",
+          "snapchat",
+          "website",
+          "exhibitions",
+          "whatsapp",
+          "agency",
+          "none_yet"
+        ],
+        "marketing": "We tried everything once.",
+        "challenges": "Too many calls that go nowhere",
+        "lastRevenue": 1500000,
+        "goal90": 400000,
+        "goal12": 3000000,
+        "additionalInfo": "Nothing else.",
+        "schemaVersion": 3
+      }
+    },
+    {
+      "name": "edges: empty lists, a country with no areas, other with no text, a set distance with no kilometres",
+      "answers": {
+        "businessName": "Invented Edge Dee",
+        "areaCountries": [
+          "kw",
+          "other"
+        ],
+        "areasKW": [],
+        "services": [],
+        "consultants": [],
+        "faqs": [],
+        "bookingTools": [],
+        "hoursDays": [],
+        "hoursTimes": "Any time",
+        "distanceMode": "limit",
+        "apptDetails": "Only weekends.",
+        "paymentMethods": [],
+        "paymentDetails": "Cash only",
+        "marketingChannels": [],
+        "marketing": "Word of mouth",
+        "noFacebookPage": false,
+        "noWebsite": false,
+        "startYear": 2000
+      },
+      "printed": [
+        {
+          "ref": "514bfd3f-4ca1-469e-b9e7-87656503f65c",
+          "title": "Business Name",
+          "value": "Invented Edge Dee"
+        },
+        {
+          "ref": "ee25f923-d5e1-4d1a-a95f-cd9c17abbe83",
+          "title": "What payment options do you currently offer to your clients (e.g., full payment, installment plans, minimum down payment, in-house financing, third-party financing)?",
+          "value": "Cash only"
+        },
+        {
+          "ref": "ed1ba2fe-2827-4eea-a678-62205f1ce9f5",
+          "title": "How long have you been in business?",
+          "value": "Since 2000"
+        },
+        {
+          "ref": "b7873d40-d154-42ac-bf24-cb3b667e84cc",
+          "title": "Business hours - When are you open to schedule?",
+          "value": "Any time"
+        },
+        {
+          "ref": "a20cfc1a-0228-413d-80ab-d97fc97574e0",
+          "title": "Appointment length + details + buffer",
+          "value": "Only weekends."
+        },
+        {
+          "ref": "bf8c7c7b-fff9-463f-b30a-8d8ca8b622f6",
+          "title": "What is your marketing process? In other words... please explain EVERYTHING A-Z that you have in place or have tried to generate new projects",
+          "value": "Word of mouth"
+        }
+      ],
+      "structured": {
+        "businessName": "Invented Edge Dee",
+        "areaCountries": [
+          "kw",
+          "other"
+        ],
+        "areasKW": [],
+        "services": [],
+        "consultants": [],
+        "faqs": [],
+        "bookingTools": [],
+        "hoursDays": [],
+        "hoursTimes": "Any time",
+        "distanceMode": "limit",
+        "apptDetails": "Only weekends.",
+        "paymentMethods": [],
+        "paymentDetails": "Cash only",
+        "marketingChannels": [],
+        "marketing": "Word of mouth",
+        "noFacebookPage": false,
+        "noWebsite": false,
+        "startYear": 2000,
+        "schemaVersion": 3
+      }
+    },
+    {
+      "name": "Arabic, line breaks and double spaces as stored; a revenue under 1,000; the largest numbers",
+      "answers": {
+        "fullName": "اسم مخترع",
+        "phone": "+96550000030",
+        "email": "ee@example.invalid",
+        "businessName": "شركة مخترعة",
+        "address": "قطعة ٣\nشارع ٢٠، منزل ٧",
+        "website": "https://ee.example",
+        "instagram": "https://instagram.com/invented.ee",
+        "noFacebookPage": true,
+        "frontDeskPhone": "+96550000031",
+        "personalPhone": "+96550000032",
+        "startYear": 2010,
+        "projectsDone": 0,
+        "facebookAds": "unsure",
+        "bookingTools": [
+          "google_calendar",
+          "calendly"
+        ],
+        "hoursDays": [
+          "sun",
+          "thu"
+        ],
+        "hoursTimes": "من ٩ الصبح  لين ٥ العصر",
+        "appointmentTypes": [
+          "online"
+        ],
+        "apptMinutes": 30,
+        "bufferMinutes": 10,
+        "consultants": [
+          {
+            "name": "م. مخترع",
+            "speciality": "تصميم داخلي"
+          }
+        ],
+        "freeConsults": "yes",
+        "paymentMethods": [
+          "third_party",
+          "full"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "تصميم",
+            "price": 999,
+            "unit": "starts_from"
+          }
+        ],
+        "serviceFocus": "تصميم",
+        "idealProject": "فيلا\n\nبالشمال",
+        "faqs": [
+          {
+            "question": "سؤال ١؟",
+            "answer": "جواب ١"
+          },
+          {
+            "question": "سؤال ٢؟",
+            "answer": "جواب  ٢"
+          },
+          {
+            "question": "سؤال ٣؟",
+            "answer": "جواب ٣"
+          }
+        ],
+        "areaCountries": [
+          "kw",
+          "bh",
+          "om",
+          "qa"
+        ],
+        "areasKW": [
+          "all_kw"
+        ],
+        "areasBH": [
+          "capital",
+          "muharraq"
+        ],
+        "areasOM": [
+          "muscat"
+        ],
+        "areasQA": [
+          "doha",
+          "lusail"
+        ],
+        "areasNote": "نركز على حولي",
+        "whyJoined": "نبي نكبر",
+        "marketingChannels": [
+          "whatsapp",
+          "referrals"
+        ],
+        "marketing": "توصيات بس",
+        "challenges": "ماكو مواعيد كافية",
+        "lastRevenue": 950,
+        "goal90": 999999999,
+        "goal12": 1000000000,
+        "driveLink": "https://drive.google.com/drive/folders/inventedEe"
+      },
+      "printed": [
+        {
+          "ref": "533f14a0-712f-4de9-9ac7-67e1be6bc0c8",
+          "title": "Full Name",
+          "value": "اسم مخترع"
+        },
+        {
+          "ref": "64f2fb80-b074-4017-b8b7-b7d549947e52",
+          "title": "Phone",
+          "value": "+96550000030"
+        },
+        {
+          "ref": "7994f0d2-baeb-451b-983a-816290873a68",
+          "title": "Email",
+          "value": "ee@example.invalid"
+        },
+        {
+          "ref": "514bfd3f-4ca1-469e-b9e7-87656503f65c",
+          "title": "Business Name",
+          "value": "شركة مخترعة"
+        },
+        {
+          "ref": "e5caee43-e9b5-427d-8583-6982c5dd9be8",
+          "title": "Please enter your business address.",
+          "value": "قطعة ٣\nشارع ٢٠، منزل ٧"
+        },
+        {
+          "ref": "454a425f-2ac6-4d94-92db-cec08618600e",
+          "title": "Website URL",
+          "value": "https://ee.example"
+        },
+        {
+          "ref": "adecfe45-5d55-4319-98ff-3761e04bfc9b",
+          "title": "Instagram URL",
+          "value": "https://instagram.com/invented.ee"
+        },
+        {
+          "ref": "575d17ed-e26d-4e55-87d3-7cb31cb71939",
+          "title": "Facebook Page URL",
+          "value": "No Facebook page"
+        },
+        {
+          "ref": "ee25f923-d5e1-4d1a-a95f-cd9c17abbe83",
+          "title": "What payment options do you currently offer to your clients (e.g., full payment, installment plans, minimum down payment, in-house financing, third-party financing)?",
+          "value": "Third-party financing, Full payment"
+        },
+        {
+          "ref": "282dac48-5031-4acb-96b6-ea469e8a5a8b",
+          "title": "Front Desk Phone",
+          "value": "+96550000031"
+        },
+        {
+          "ref": "09d2e62a-51d4-4665-a3a9-30f5279b71bc",
+          "title": "Personal Phone Number",
+          "value": "+96550000032"
+        },
+        {
+          "ref": "ed1ba2fe-2827-4eea-a678-62205f1ce9f5",
+          "title": "How long have you been in business?",
+          "value": "Since 2010"
+        },
+        {
+          "ref": "7a120dbb-0169-4bcc-9193-5c525a470d02",
+          "title": "Current booking software",
+          "value": "Google Calendar, Calendly"
+        },
+        {
+          "ref": "ddf2767d-5725-4df2-b200-f0aab77a2db5",
+          "title": "Do you have a facebook business manager or have you ever ran ads on meta (Facebook & Instagram) in the past?",
+          "value": "IM UNSURE | لست متأكدًا"
+        },
+        {
+          "ref": "0a6b5704-c46d-480c-a592-b59108683596",
+          "title": "How many projects has your company completed to date?",
+          "value": "0"
+        },
+        {
+          "ref": "b7873d40-d154-42ac-bf24-cb3b667e84cc",
+          "title": "Business hours - When are you open to schedule?",
+          "value": "Sun, Thu: من ٩ الصبح  لين ٥ العصر"
+        },
+        {
+          "ref": "d976036f-6c2e-4d5d-999a-64cf9bb2ef02",
+          "title": "1) What services do you offer list all of them? Also I want to know which ones have the HIGHEST price point and Highest Profit 2) What is the PRICE of the services?",
+          "value": "تصميم: starting from 999 KWD"
+        },
+        {
+          "ref": "6271b610-6946-4056-bb08-d03ffc274141",
+          "title": "Out of those what is the #1 service/type of project you want to focus on scaling?",
+          "value": "تصميم"
+        },
+        {
+          "ref": "f2b7bc2b-2a79-4640-9e21-377e7aa39d45",
+          "title": "What are your top five most frequently asked questions and their answers? (Feel free to add more — the more detailed, the better.)",
+          "value": "1. سؤال ١؟\nجواب ١\n\n2. سؤال ٢؟\nجواب  ٢\n\n3. سؤال ٣؟\nجواب ٣"
+        },
+        {
+          "ref": "6c819933-3eb9-4db8-bd59-d39be11cb7f0",
+          "title": "Please describe your ideal project in detail.",
+          "value": "فيلا\n\nبالشمال"
+        },
+        {
+          "ref": "fa017616-3fb5-4e64-9fbd-39cea6e26c47",
+          "title": "What service areas do you cover? Please list all cities and neighborhoods you serve so we can target your ads precisely.",
+          "value": "Kuwait: All of Kuwait\nBahrain: Capital (Manama), Muharraq\nOman: Muscat\nQatar: Doha, Lusail\nنركز على حولي"
+        },
+        {
+          "ref": "b370341c-6ea3-43c9-bd8c-16e278a2d2d5",
+          "title": "What types of appointments do you offer? (Select all that apply)",
+          "value": "عن بُعد (أونلاين) | Online"
+        },
+        {
+          "ref": "a20cfc1a-0228-413d-80ab-d97fc97574e0",
+          "title": "Appointment length + details + buffer",
+          "value": "30 minutes, 10 minutes between appointments"
+        },
+        {
+          "ref": "0a80a0a8-3a09-4907-a1d1-6c57e57d4c47",
+          "title": "Who are the engineers in your business that will be giving these consultations?",
+          "value": "م. مخترع - تصميم داخلي"
+        },
+        {
+          "ref": "7426c6c5-344f-44c9-9999-3b9daf3a06b8",
+          "title": "What motivated you to join our program? What was the reason you signed up?",
+          "value": "نبي نكبر"
+        },
+        {
+          "ref": "ec89854f-d006-402b-958a-91738e2b3e7a",
+          "title": "Do you offer free consultations?",
+          "value": "Yes, we do offer free consultations / نعم، نقدم استشارات مجانية✅"
+        },
+        {
+          "ref": "bf8c7c7b-fff9-463f-b30a-8d8ca8b622f6",
+          "title": "What is your marketing process? In other words... please explain EVERYTHING A-Z that you have in place or have tried to generate new projects",
+          "value": "Channels: WhatsApp, Referrals\nتوصيات بس"
+        },
+        {
+          "ref": "7ff5d37a-df7f-4002-8248-d0b4af6c28e8",
+          "title": "Last Calendar Year - How Much Total Revenue did you do?",
+          "value": "950"
+        },
+        {
+          "ref": "fcf43e6a-cc84-4ae7-9cef-2336069d0280",
+          "title": "What are the TOP 3 challenges that - if we were able to help you with - would make you 100% satisfied with your investment? - Be specific.",
+          "value": "ماكو مواعيد كافية"
+        },
+        {
+          "ref": "791b99b8-c7e9-40a4-96d6-868399e1ae97",
+          "title": "What is your realistic goal revenue in 90 Days?",
+          "value": "999999999"
+        },
+        {
+          "ref": "f4b96a9b-bd7c-4398-98b4-6a28a7d3595a",
+          "title": "What is your ideal/stretch revenue goal within the next 12-24 months?",
+          "value": "1000000000"
+        },
+        {
+          "ref": "64d23c81-1784-4f07-8356-107af764fc95",
+          "title": "Please attach a Google Drive link to all the content you have for your office (See check list below)",
+          "value": "https://drive.google.com/drive/folders/inventedEe"
+        }
+      ],
+      "structured": {
+        "businessName": "شركة مخترعة",
+        "address": "قطعة ٣\nشارع ٢٠، منزل ٧",
+        "website": "https://ee.example",
+        "instagram": "https://instagram.com/invented.ee",
+        "noFacebookPage": true,
+        "startYear": 2010,
+        "projectsDone": 0,
+        "facebookAds": "unsure",
+        "bookingTools": [
+          "google_calendar",
+          "calendly"
+        ],
+        "hoursDays": [
+          "sun",
+          "thu"
+        ],
+        "hoursTimes": "من ٩ الصبح  لين ٥ العصر",
+        "appointmentTypes": [
+          "online"
+        ],
+        "apptMinutes": 30,
+        "bufferMinutes": 10,
+        "consultants": [
+          {
+            "name": "م. مخترع",
+            "speciality": "تصميم داخلي"
+          }
+        ],
+        "freeConsults": "yes",
+        "paymentMethods": [
+          "third_party",
+          "full"
+        ],
+        "currency": "kwd",
+        "services": [
+          {
+            "name": "تصميم",
+            "price": 999,
+            "unit": "starts_from"
+          }
+        ],
+        "serviceFocus": "تصميم",
+        "idealProject": "فيلا\n\nبالشمال",
+        "faqs": [
+          {
+            "question": "سؤال ١؟",
+            "answer": "جواب ١"
+          },
+          {
+            "question": "سؤال ٢؟",
+            "answer": "جواب  ٢"
+          },
+          {
+            "question": "سؤال ٣؟",
+            "answer": "جواب ٣"
+          }
+        ],
+        "areaCountries": [
+          "kw",
+          "bh",
+          "om",
+          "qa"
+        ],
+        "areasKW": [
+          "all_kw"
+        ],
+        "areasBH": [
+          "capital",
+          "muharraq"
+        ],
+        "areasOM": [
+          "muscat"
+        ],
+        "areasQA": [
+          "doha",
+          "lusail"
+        ],
+        "areasNote": "نركز على حولي",
+        "whyJoined": "نبي نكبر",
+        "marketingChannels": [
+          "whatsapp",
+          "referrals"
+        ],
+        "marketing": "توصيات بس",
+        "challenges": "ماكو مواعيد كافية",
+        "lastRevenue": 950,
+        "goal90": 999999999,
+        "goal12": 1000000000,
+        "driveLink": "https://drive.google.com/drive/folders/inventedEe",
+        "schemaVersion": 3
+      }
+    }
+  ]
+}

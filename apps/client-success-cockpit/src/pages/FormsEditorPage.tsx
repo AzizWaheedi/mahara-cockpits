@@ -75,6 +75,11 @@ import {
   readsByField,
   removeField,
   ruleProblem,
+  STRUCTURED_STATE,
+  type StructuredRead,
+  structuredAsked,
+  structuredOutline,
+  structuredUse,
   type Text,
   TYPE_LABEL,
   updateField,
@@ -117,6 +122,23 @@ import { cn } from "@/lib/utils";
  *   Published; What changed? (shown in the history); Go back to version {n}
  *   → Restored as version {m}; Open the real preview; refusals are the
  *   server's own sentences with the place they point at; No changes yet.
+ *
+ * The structured onboarding, read only (20261104d; WAVE56-CONTRACT.md 4.22;
+ * frontend-design loaded first). Subject: the CEO or an admin opening the
+ * client onboarding and finding version 3, a structured form stored in the
+ * database and not live yet. Job: see what version 3 asks and how a client
+ * meets it, which version clients get today, and why it is not edited here.
+ * Tokens and type: the plan above, nothing new (Geist Mono for v3, keys and
+ * counts; the state chip's dot carries the tone: neutral stored, warning on
+ * the test card only, success live). Layout: under the read-only sentence,
+ * one strip (v3, Structured, the state) and one line (the version new
+ * invites get, what uses this one), then the form in its sections: each
+ * question one row with its English words, its kind ("Rows, 1 to 25",
+ * "Several choices (19)"), optional when it is, the Arabic right to left
+ * under it, and when it shows in words. One column at every width; chips
+ * wrap; nothing scrolls sideways at 375 px. Signature: a rows question
+ * draws its row's columns as mono chips, the shape of each answer. No Save,
+ * Publish or Go back here: the server refuses them, and the page says why.
  */
 
 const SELECT =
@@ -786,13 +808,36 @@ function OneForm({
           portalBase={portalBase}
         />
       ) : (
-        <ReadOnlyForm one={one} />
+        <ReadOnlyForm one={one} io={io} />
       )}
     </div>
   );
 }
 
-function ReadOnlyForm({ one }: { one: EditorOne }) {
+function ReadOnlyForm({ one, io }: { one: EditorOne; io: FormsEditorIO }) {
+  const [structured, setStructured] = useState<StructuredRead | null>(null);
+  const [structuredError, setStructuredError] = useState<string | null>(null);
+  const read = io.structured;
+  const key = one.form.key;
+  const client = one.form.group === "client";
+  useEffect(() => {
+    if (!read || !client) return;
+    let live = true;
+    read(key).then(
+      s => {
+        if (live) setStructured(s);
+      },
+      e => {
+        if (!live) return;
+        const m = editorError(e).message;
+        // Before 20261104d the read does not exist: the plain read-only view stands alone.
+        setStructuredError(m === COPY.doorClosed ? null : m);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [read, client, key]);
   return (
     <SectionCard
       title={
@@ -802,6 +847,12 @@ function ReadOnlyForm({ one }: { one: EditorOne }) {
       }
       sub={one.form.why}
     >
+      {structured ? <StructuredForm s={structured} /> : null}
+      {structuredError ? (
+        <div className="mb-3">
+          <Refusal message={structuredError} testId="structured" />
+        </div>
+      ) : null}
       <div data-readonly={one.form.key} className="space-y-3">
         <Kicker>Fields on record</Kicker>
         {one.record?.fields.length ? (
@@ -826,6 +877,107 @@ function ReadOnlyForm({ one }: { one: EditorOne }) {
         ) : null}
       </div>
     </SectionCard>
+  );
+}
+
+/** The structured version, read only: its state, who uses it, and its questions in their sections. */
+function StructuredForm({ s }: { s: StructuredRead }) {
+  const outline = useMemo(() => structuredOutline(s.schema), [s.schema]);
+  const state = STRUCTURED_STATE[s.state];
+  const sections = outline.filter(x => x.title).length;
+  return (
+    <section
+      data-structured={s.version}
+      aria-label={`Version ${s.version}, structured`}
+      className="mb-5 space-y-4 border-b pb-5"
+    >
+      <div className="space-y-1.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-mono text-xs">v{s.version}</span>
+          <Chip dot={false}>Structured</Chip>
+          <span data-structured-state={s.state}>
+            <Chip tone={state.tone}>{state.words}</Chip>
+          </span>
+        </div>
+        <p className="text-sm" data-structured-use>
+          {structuredUse(s)}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          <span className="font-mono">{structuredAsked(s.schema)}</span>{" "}
+          questions in <span className="font-mono">{sections}</span> sections ·
+          about <span className="font-mono">{s.schema.minutes}</span> minutes
+          {s.publishedAt
+            ? ` · stored ${kuwaitDay(s.publishedAt)} · ${s.publishedBy}`
+            : ""}
+        </p>
+      </div>
+      {outline.map((section, n) => (
+        <div
+          key={section.title?.en ?? `section-${n}`}
+          className="space-y-2"
+          data-structured-section={n + 1}
+        >
+          {section.title ? (
+            <h3 className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-sm font-medium">
+              <span>{section.title.en}</span>
+              <bdi
+                dir="rtl"
+                lang="ar"
+                className="text-xs font-normal text-muted-foreground"
+              >
+                {section.title.ar}
+              </bdi>
+            </h3>
+          ) : null}
+          <ol className="divide-y rounded-md border">
+            {section.items.map(item => (
+              <li
+                key={item.key}
+                data-structured-question={item.key}
+                className="min-w-0 space-y-0.5 px-3 py-2"
+              >
+                <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                  <span className="min-w-0 break-words text-sm">
+                    {item.label.en}
+                  </span>
+                  <span className="text-xs text-muted-foreground" data-kind>
+                    {item.kind}
+                    {item.note || item.required ? "" : " · optional"}
+                  </span>
+                </div>
+                <bdi
+                  dir="rtl"
+                  lang="ar"
+                  className="block break-words text-xs text-muted-foreground"
+                >
+                  {item.label.ar}
+                </bdi>
+                {item.shows ? (
+                  <p className="text-xs text-muted-foreground" data-shows>
+                    {item.shows}
+                  </p>
+                ) : null}
+                {item.columns.length ? (
+                  <ul
+                    className="flex flex-wrap gap-1 pt-1"
+                    data-columns
+                    aria-label="Each row asks"
+                  >
+                    {item.columns.map(c => (
+                      <li key={c}>
+                        <Chip dot={false} className="font-mono">
+                          {c}
+                        </Chip>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+        </div>
+      ))}
+    </section>
   );
 }
 
