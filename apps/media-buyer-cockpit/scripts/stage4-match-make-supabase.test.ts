@@ -3641,3 +3641,56 @@ describe("20261103b: Typeform's hints, optional questions and fifth Meta choice 
     });
   });
 });
+
+// The wording-only correction remains independent of the unpublished schema-v2 migration.
+describe("20261104c: unused onboarding wording", () => {
+  const correction = "20261104c_onboarding_v2_wording.sql";
+  const corrected = "230653a3d7bd14a79ee7edba40976cb4";
+  const ready = async () => {
+    await db.exec(inTest(B));
+    await setting("forms.stage4", { kickoff: false, onboarding: false });
+    await db.exec("INSERT INTO public.cockpit_forms(key,provider,effects,version,schema) VALUES ('onboarding','typeform','[]',1,'{}') ON CONFLICT (key) DO NOTHING");
+  };
+  test("changes the unused v2 copy once while preserving all form questions and mappings", async () => {
+    await rolledBack(async () => {
+      await ready();
+      const before = await v2Schema();
+      await db.exec(inTest(correction));
+      expect(await v2Md5()).toBe(corrected);
+      const after = await v2Schema();
+      expect(after.fields.map((f: Row) => f.key)).toEqual(before.fields.map((f: Row) => f.key));
+      for (const f of after.fields as Row[]) {
+        const original = (before.fields as Row[]).find((x) => x.key === f.key);
+        if (f.key !== "freeConsults" && f.key !== "challenges") expect(f).toEqual(original);
+      }
+      expect((after.fields as Row[]).find((f) => f.key === "freeConsults")?.hint).toBeNull();
+      await db.exec(inTest(correction));
+      expect(await v2Md5()).toBe(corrected);
+    });
+  });
+  for (const occupied of ["invite", "answer"] as const) {
+    test(`refuses if a v2 ${occupied} exists`, async () => {
+      await rolledBack(async () => {
+        await ready();
+        if (occupied === "invite") await db.exec("INSERT INTO public.cockpit_form_invites(form_key,form_version) VALUES ('onboarding',2)");
+        else await db.exec("INSERT INTO public.cockpit_form_responses(id,form_key,form_version) VALUES (gen_random_uuid(),'onboarding',2)");
+        await db.exec("SAVEPOINT before_correction");
+        const result = await refusal(() => db.exec(inTest(correction)));
+        expect(result.code).toBe("55000");
+        expect(result.message).toContain("version 2 is in use");
+        await db.exec("ROLLBACK TO SAVEPOINT before_correction");
+        expect(await v2Md5()).toBe(V2_B_MD5);
+      });
+    });
+  }
+  test("refuses an enabled native switch or changed schema", async () => {
+    for (const drift of [false, true]) await rolledBack(async () => {
+      await ready();
+      if (drift) await db.exec("UPDATE public.cockpit_form_versions SET schema=jsonb_set(schema,'{minutes}','26') WHERE form_key='onboarding' AND version=2");
+      else await setting("forms.stage4", { kickoff: false, onboarding: true });
+      await db.exec("SAVEPOINT before_correction");
+      expect((await refusal(() => db.exec(inTest(correction)))).code).toBe("55000");
+      await db.exec("ROLLBACK TO SAVEPOINT before_correction");
+    });
+  });
+});
