@@ -773,7 +773,7 @@ export type PendingView = {
   /** CEO only: untied payments that fit a part of a listed row or a deal with no card, best first. Never money. */
   possibleMoney: PossiblePayment[];
   staleConfirmations: StaleConfirmation[];
-  /** The line for the empty "Not seen" chip ("Nothing due is unseen. Next: Ardon, $2,000 on 27 Oct."). */
+  /** The line for the empty "Not seen" chip, with an example client and next amount. */
   nothingDueLine: string;
 };
 
@@ -1868,8 +1868,8 @@ function rowFor(
     // A card date put on a part's own day is the card catching up with the
     // plan, not a move: Pending payments' "Set on the card" writes the next
     // part's day through this same date event, and a later part due near the
-    // card's old date must not be pulled onto it (Ardon: 27 Nov to 27 Oct is
-    // month 2's day, so month 3 stays on 27 Nov). Any part counts, paid ones
+    // card's old date must not be pulled onto it when the card moves onto
+    // month 2's day, so month 3 stays on its original day. Any part counts, paid ones
     // too, so the event never pulls month 3 forward once month 2 is on a
     // rail. Checked after "marked paid", which is the same kind of event.
     if (e.kind === "date" && works.some(w => w.due === to)) continue;

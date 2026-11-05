@@ -279,7 +279,7 @@ export function waitingText(hours: number | null | undefined): string | null {
 // ---------------------------------------------------------------------------
 // The CSM call list
 
-/** The clients waiting for next week, as one line: "MOFAG (2), Rising Najd (1)". */
+/** The clients waiting for next week, as one line: "Example Cedar (2), Example Harbor (1)". */
 export function queuedText(rows: CallRow[]): string | null {
   const queued = rows.filter(r => r.status === "queued");
   return queued.length
