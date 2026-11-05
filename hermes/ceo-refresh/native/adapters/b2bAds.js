@@ -32,7 +32,7 @@ import { NOT_VOIDED, VOIDED, voidedDeals } from "../voids.js";
  * blame the creative for all of them.
  *
  * The ad funnel counts each lead once through intro, confirmed intro and demo.
- * Demo attendance requires an explicit showed status; a non-cancelled demo
+ * Demo attendance counts a past showed or confirmed appointment; a non-cancelled demo
  * also establishes intro progression even when the intro record is missing.
  *
  * Seven days judges freshness and cost. Thirty days judges the funnel, because
@@ -96,7 +96,7 @@ export function treeSql(from7, from30, to) {
     const demo = `exists (select 1 from public.calls d where d.contact_id = l.contact_id and d.call_type = 'demo' and d.booked_at >= l.lead_created_at and (d.booked_at at time zone 'Asia/Riyadh')::date <= ${day(to)} and coalesce(d.status, '') <> 'cancelled')`;
     const intro = `exists (select 1 from public.calls b where b.contact_id = l.contact_id and b.call_type = 'intro' and b.booked_at >= l.lead_created_at and (b.booked_at at time zone 'Asia/Riyadh')::date <= ${day(to)} and coalesce(b.status, '') <> 'cancelled')`;
     const confirmed = `exists (select 1 from public.calls b where b.contact_id = l.contact_id and b.call_type = 'intro' and b.booked_at >= l.lead_created_at and (b.booked_at at time zone 'Asia/Riyadh')::date <= ${day(to)} and (b.start_at at time zone 'Asia/Riyadh')::date <= ${day(to)} and b.start_at <= now() and b.status in ('showed','confirmed'))`;
-    const demoAttended = `exists (select 1 from public.calls d where d.contact_id = l.contact_id and d.call_type = 'demo' and d.booked_at >= l.lead_created_at and (d.booked_at at time zone 'Asia/Riyadh')::date <= ${day(to)} and (d.start_at at time zone 'Asia/Riyadh')::date <= ${day(to)} and d.start_at <= now() and d.status = 'showed')`;
+    const demoAttended = `exists (select 1 from public.calls d where d.contact_id = l.contact_id and d.call_type = 'demo' and d.booked_at >= l.lead_created_at and (d.booked_at at time zone 'Asia/Riyadh')::date <= ${day(to)} and (d.start_at at time zone 'Asia/Riyadh')::date <= ${day(to)} and d.start_at <= now() and d.status in ('showed','confirmed'))`;
     // `status` narrows which of the lead's calls count; null counts every call.
     const leadsBooked = (type, as, status = null) => `count(*) filter (where ${ROAS_LEAD} and exists (select 1 from public.calls b where b.contact_id = l.contact_id and b.call_type = '${type}'${status ? ` and ${status}` : ""} and b.booked_at >= l.lead_created_at and (b.booked_at at time zone 'Asia/Riyadh')::date <= ${day(to)})) as ${as}`;
     const funnel = (from, alias) => `
@@ -119,7 +119,7 @@ export function treeSql(from7, from30, to) {
       -- count once"): a lead with a no-show and a rebooked intro is one intro.
       -- Booked at or after the lead arrived, by the window's last day, on the
       -- lead's own ad. A non-cancelled demo establishes intro progression.
-      -- Attendance counts only demos explicitly marked showed by the end date.
+      -- Attendance counts past demos marked showed or confirmed by the end date.
       count(*) filter (where ${ROAS_LEAD} and (${intro} or ${demo})) as leads_to_intro,
       count(*) filter (where ${ROAS_LEAD} and (${confirmed} or ${demo})) as leads_to_confirmed_intro,
       ${leadsBooked("demo", "leads_to_demo")},
@@ -1071,7 +1071,7 @@ export async function adsPayload(from7, from30, today, nowMs = Date.now()) {
         });
         notes.push({
             level: "info",
-            text: `Every row follows an ad from the first impression to the signed contract, through its leads, their intros and the deals credited to it. Intros are counted once per lead, however often the intro was rebooked: the leads from these days, on their own ad, with an intro or demo booked at or after they came in that was not cancelled. An intro marked invalid still counts. A confirmed intro is one whose intro showed or is still confirmed after its time, or whose non-cancelled demo was booked by the end of the period. A demo establishes intro progression even when the intro record is missing. Demos attended count only an explicit showed status, by the period end. These use current CRM statuses, so later corrections can change past periods. Calls and deals are credited to the ad on the contact's lead record when it is one of this account's ads and was already running when the call was booked or the deal signed; otherwise they keep the ad on the call or deal. An ad switched off before these thirty days still shows here, at $0 spend, when its leads, calls or deals fall inside them. Seven days judges cost and freshness; thirty days judges the funnel, because an intro takes days to be held. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per intro and per confirmed intro have no gate set, so they are shown and never judged. Frequency is Meta's own: impressions ÷ people reached over the window at each level, on Meta's account days (${timeZone}, through ${until}).`,
+            text: `Every row follows an ad from the first impression to the signed contract, through its leads, their intros and the deals credited to it. Intros are counted once per lead, however often the intro was rebooked: the leads from these days, on their own ad, with an intro or demo booked at or after they came in that was not cancelled. An intro marked invalid still counts. A confirmed intro is one whose intro showed or is still confirmed after its time, or whose non-cancelled demo was booked by the end of the period. A demo establishes intro progression even when the intro record is missing. Demos attended count a past demo marked showed or confirmed by the period end; confirmed is an assumption, not proof of attendance. These use current CRM statuses, so later corrections can change past periods. Calls and deals are credited to the ad on the contact's lead record when it is one of this account's ads and was already running when the call was booked or the deal signed; otherwise they keep the ad on the call or deal. An ad switched off before these thirty days still shows here, at $0 spend, when its leads, calls or deals fall inside them. Seven days judges cost and freshness; thirty days judges the funnel, because an intro takes days to be held. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per intro and per confirmed intro have no gate set, so they are shown and never judged. Frequency is Meta's own: impressions ÷ people reached over the window at each level, on Meta's account days (${timeZone}, through ${until}).`,
         });
         notes.push({
             level: "info",
