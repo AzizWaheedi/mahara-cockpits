@@ -113,5 +113,57 @@
       "client_tax_id": "300123456700003"
     },
     "sha256": "2675e176b86b5afda0ddb72639d766443ee947c9cab014bc9dfce73b808337ba"
+  },
+  {
+    "name": "pay online, Ecom link in KWD",
+    "invoiceNo": "INV-2026-099",
+    "invoice": {
+      "id": "00000000-0000-4000-8000-000000000099",
+      "clickup_task_id": "madana01",
+      "client_name": "Madana <Consulting> & \"Engineering\"",
+      "kind": "checkout",
+      "amount_usd": 1500.5,
+      "description": "Days 1-30 of the client's {{AMOUNT}} plan <script>alert(1)</script>",
+      "line_note": "",
+      "client_detail": "Saudi Arabia",
+      "period": "Days 1-30",
+      "pay_note": null,
+      "issue_date": "2026-10-11",
+      "due_date": "2026-11-01",
+      "checkout_url": "https://invoice.ecom.io/Example123",
+      "payments": [],
+      "requested_by": "csm@maharamedia.com",
+      "checkout_source": "ecom",
+      "amount_kwd": "460.500",
+      "kwd_rate": "0.307000"
+    },
+    "sha256": "8eb5cdf1e1556d8043da11efc21d45416d574a549239e212f4f4d53a3113507b"
+  },
+  {
+    "name": "pay online, Tap link in KWD (backup)",
+    "invoiceNo": "INV-2026-099",
+    "invoice": {
+      "id": "00000000-0000-4000-8000-000000000099",
+      "clickup_task_id": "madana01",
+      "client_name": "Madana <Consulting> & \"Engineering\"",
+      "kind": "checkout",
+      "amount_usd": 1500.5,
+      "description": "Days 1-30 of the client's {{AMOUNT}} plan <script>alert(1)</script>",
+      "line_note": "",
+      "client_detail": "Saudi Arabia",
+      "period": "Days 1-30",
+      "pay_note": null,
+      "issue_date": "2026-10-11",
+      "due_date": "2026-11-01",
+      "checkout_url": "https://invoices.tap.company/invoice/inv_Example123456",
+      "payments": [],
+      "requested_by": "csm@maharamedia.com",
+      "checkout_source": "tap",
+      "amount_kwd": "460.500",
+      "kwd_rate": "0.307000",
+      "tap_invoice_id": "inv_Example123456",
+      "client_email": "owner@example.com"
+    },
+    "sha256": "4fe430b5a719a073afead840750f019b36e82cf168879c9e17fbb3e171db5e8b"
   }
 ]

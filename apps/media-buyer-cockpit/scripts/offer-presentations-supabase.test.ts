@@ -185,3 +185,20 @@ describe('approved work examples and migration protections', () => {
     finally { await db.exec('ROLLBACK'); await h.owner(original); }
   });
 });
+
+describe('a Tap invoice link as the offer payment link (20261105v)', () => {
+  test('a live Tap page is accepted beside Ecom and Whop; sandbox and look-alike hosts are refused', async () => {
+    await db.exec(migration('20261105v_offer_payment_link_tap.sql'));
+    // Applying it twice is safe: the guard knows its own version.
+    await db.exec(migration('20261105v_offer_payment_link_tap.sql'));
+    const tap = 'https://invoices.tap.company/invoice/inv_Example123456';
+    await prep('ugc', {payment_link: tap});
+    const s = await h.one(SEATS.CSM_A, STATUS, [TASKS.A]);
+    expect(byKey(s,'ugc').ready.missing).not.toContain('no_payment_link');
+    for (const bad of ['https://invoices.sandbox.tap.company/invoice/inv_1', 'https://evil.example/tap.company/x'])
+      expect((await h.failure(SEATS.CSM_A, PREP, [TASKS.A, 'offer_ugc', JSON.stringify({payment_link: bad})])).message)
+        .toContain('Paste an Ecom invoice link, a Whop checkout link or a Tap invoice link.');
+    await prep('ugc', {payment_link: 'https://invoice.ecom.io/abc'});
+    await prep('ugc', {payment_link: 'https://whop.com/checkout/plan_fixture/'});
+  });
+});

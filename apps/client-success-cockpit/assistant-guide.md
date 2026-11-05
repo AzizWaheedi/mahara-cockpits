@@ -104,7 +104,7 @@ Hot list shows your own follow-up list plus suggestions from live client data.
 Projections shows the week's targets, the renewal window, the history and a library of recorded calls.
 Churn shows the month's churn figure, the register of departures and the rules.
 My money shows your target, your base, retention and commission, and the four Rs.
-Invoices makes a client invoice and shows the page the client receives.
+Invoices makes a client invoice and shows the page the client receives. Pay online invoices get an Ecom link, or a Whop or Tap link as a backup when Ecom does not work for the client.
 Offers holds pitch decks, the price list, offer videos and the pitch log.
 Wins holds your logged wins and the button to add one.
 
@@ -119,7 +119,10 @@ Buttons and actions:
 - "Add a row": adds a blank row to your hot list.
 - "Add to my list": takes a suggested opportunity into your hot list.
 - "Issue invoice": issues the invoice number and sends it to the invoice worker.
-- "Confirm paid", "Copy PDF link", "Copy payment link", "Same invoice with Whop" and "Use a Whop link instead": act on an invoice after it is issued.
+- "Ecom link (KWD)", "Whop link (USD)", "Tap link (KWD)" and "Paste a link": the Pay online link. Tap asks for the "Client email", which Tap shows on its payment page. Tap sends the client nothing.
+- "Confirm paid", "Copy PDF link" and "Copy payment link": act on an invoice after it is issued.
+- "Same invoice with Ecom", "Same invoice with Whop" and "Same invoice with Tap": fill the form with the same invoice and another link, when the client cannot pay the one they have.
+- "Use an Ecom link instead", "Use a Whop link instead" and "Use a Tap link instead": send a failed invoice out with another link, while no link was made for it.
 - "Log a win": records a review, referral, upsell or renewal.
 
 How to:

@@ -151,7 +151,7 @@ The line `-- OFFER_PREP_KEYS: …` in v names them for `src/present/offer/prepKe
 | `opening_price` | `{partKey: dollars}` naming every catalog part |
 | `opening_reason` | text ≤140 |
 | `project_value` | `{amount >0 ≤100,000,000, currency KWD\|SAR\|AED\|QAR\|BHD\|OMR\|USD, from typed\|onboarding, said_on?}` |
-| `payment_link` | `https://whop.com/checkout/<3..80>/` or `https://invoice.ecom.io/…` (≤326) |
+| `payment_link` | `https://invoice.ecom.io/…` (≤326), `https://whop.com/checkout/<3..80>/` or, since 2026-11-05, a live Tap invoice `https://(sub.)tap.company/…` (≤326, never sandbox) |
 | `client_asked` | `{words 3..300, on}` with `on` in the last 30 days |
 | `hidden_slides`, `shown_slides` | the decks' existing rule |
 | `presented_at` | `true` stamps the server's time (first stamp kept), `false` clears |

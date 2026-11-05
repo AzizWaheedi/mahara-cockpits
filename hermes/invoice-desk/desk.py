@@ -27,6 +27,7 @@ from desk.google import Google, service_token
 from desk.supa import Supa
 from desk.whop import Whop
 from desk.ecom import Ecom
+from desk.tap import Tap, TapRefused
 from desk.worker import VERSION, Desk, Ledger, print_pdf
 
 HERE = Path(__file__).resolve().parent
@@ -66,10 +67,34 @@ def ecom_doctor(cfg: Config) -> bool:
         return line(False, "ECOM_LIVE_API_TOKEN or ECOM_LIVE_MID is missing")
     try:
         api = Ecom(cfg.ecom_token, cfg.ecom_mid)
-        http.get_json(f"{api.api}?page=1&take=1", headers=api.headers)
-        return line(True, "Ecom live invoice list is readable (read-only)")
+        rows = (http.get_json(f"{api.api}?page=1&take=1", headers=api.headers) or {}).get("data") or []
     except Exception as exc:
         return line(False, f"Ecom invoice list failed: {http.scrub(exc)[:160]}")
+    if not rows:
+        return line(True, "Ecom live invoice list is readable (read-only); no invoice yet to read back")
+    try:
+        # The read a recorded link gets before it is printed again.
+        one = api.get(str(rows[0].get("id") or ""))
+        if not one or one.get("id") != rows[0].get("id"):
+            return line(False, "Ecom did not read back the newest invoice by its id")
+        return line(True, "Ecom live invoice list and one invoice read back by id (read-only)")
+    except Exception as exc:
+        return line(False, f"Ecom invoice read failed: {http.scrub(exc)[:160]}")
+
+
+def tap_doctor(cfg: Config) -> bool:
+    """Can invoice-tap make live Tap links? Its doctor reads Tap's invoice list
+    and sends Tap an empty invoice it must refuse. Nothing is created."""
+    if not cfg.supabase_url or not cfg.supabase_key:
+        return line(False, "no database key, so the Tap link maker cannot be asked")
+    try:
+        answer = Tap(cfg.supabase_url, cfg.supabase_key).doctor()
+    except (http.HttpError, TapRefused) as e:
+        return line(False, f"the Tap link maker (invoice-tap) did not answer: {http.scrub(e)[:160]}")
+    if answer.get("note"):
+        return line(False, f"Tap: {answer['note']}")
+    return line(bool(answer.get("ok")), f"Tap ({'live' if answer.get('live') else 'not live'}) through invoice-tap: "
+                                          f"read {answer.get('read')}, create {answer.get('create')}")
 
 
 def doctor() -> int:
@@ -96,8 +121,14 @@ def doctor() -> int:
             line(True, "the Whop link columns are there")
         except http.HttpError:
             good = line(False, "the Whop link columns are missing. Apply supabase/migrations/20261015a_cockpit_invoice_whop_links.sql")
+        try:
+            supa.select("cockpit_invoices", "select=tap_invoice_id,tap_started_at,client_email&limit=1")
+            line(True, "the Tap link columns are there")
+        except http.HttpError:
+            good = line(False, "the Tap link columns are missing. Apply supabase/migrations/20261105t_invoice_tap_links.sql")
     good = ecom_doctor(cfg) and good
     good = whop_doctor(cfg) and good
+    good = tap_doctor(cfg) and good
     # os.path.isfile, not Path.is_file: a path in someone else's home answers False, not PermissionError.
     if cfg.google_key_file and os.path.isfile(cfg.google_key_file):
         try:
@@ -153,7 +184,8 @@ def run(limit: int) -> int:
     http.ledger = ledger
     desk = Desk(supa=supa, google=Google(token), cfg=cfg, template=build.TEMPLATE.read_text(encoding="utf-8"),
                 whop_api=Whop(cfg.whop_key, cfg.whop_product) if cfg.whop_key else None,
-                ecom_api=Ecom(cfg.ecom_token, cfg.ecom_mid) if cfg.ecom_token and cfg.ecom_mid else None)
+                ecom_api=Ecom(cfg.ecom_token, cfg.ecom_mid) if cfg.ecom_token and cfg.ecom_mid else None,
+                tap_api=Tap(cfg.supabase_url, cfg.supabase_key))
     results: dict[str, int] = {}
     try:
         for _ in range(limit):

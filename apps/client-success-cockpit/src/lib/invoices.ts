@@ -4,8 +4,8 @@ import type { InvoiceKind, InvoicePayment } from "./invoiceTemplate";
 /**
  * Invoices made from the cockpit. The page only asks: cockpit_invoice_request
  * checks the seat, the client scope and the numbers, and queues the row. The
- * invoice worker (hermes/invoice-desk) numbers it, makes the Ecom or Whop
- * link a Pay online invoice asks for, prints it, files it locked in the
+ * invoice worker (hermes/invoice-desk) numbers it, makes the Ecom, Whop or
+ * Tap link a Pay online invoice asks for, prints it, files it locked in the
  * client's Drive folder and adds it to the invoice register.
  */
 
@@ -17,13 +17,47 @@ export type InvoiceStatus =
   | "cancelled";
 
 /** Where a Pay online invoice's link comes from. */
-export type LinkSource = "pasted" | "whop" | "ecom";
+export type LinkSource = "pasted" | "whop" | "ecom" | "tap";
 
 /**
- * The form's link choice: Ecom (KNET and cards, in KWD) is the usual one,
- * Whop (cards, in USD) the backup when Ecom does not work for the client.
+ * The links the invoice worker makes: Ecom (KNET and cards, in KWD) is the
+ * main one; Whop (cards, in USD) and Tap (KNET and cards, in KWD) are the
+ * backups when Ecom does not work for the client (Aziz, 2026-11-05).
  */
-export type LinkMode = "ecom" | "whop" | "paste";
+export type MadeLink = "ecom" | "whop" | "tap";
+export const MADE_LINKS: MadeLink[] = ["ecom", "whop", "tap"];
+export const LINK_NAME: Record<MadeLink, string> = {
+  ecom: "Ecom",
+  whop: "Whop",
+  tap: "Tap",
+};
+/** "an Ecom link", "a Whop link", "a Tap link". */
+export const aLink = (m: MadeLink) =>
+  `${m === "ecom" ? "an" : "a"} ${LINK_NAME[m]} link`;
+export const isMadeLink = (v: unknown): v is MadeLink =>
+  v === "ecom" || v === "whop" || v === "tap";
+
+/** The switch and copy buttons' exact words (the assistant guides quote them). */
+export const USE_INSTEAD: Record<MadeLink, string> = {
+  ecom: "Use an Ecom link instead",
+  whop: "Use a Whop link instead",
+  tap: "Use a Tap link instead",
+};
+export const SAME_WITH: Record<MadeLink, string> = {
+  ecom: "Same invoice with Ecom",
+  whop: "Same invoice with Whop",
+  tap: "Same invoice with Tap",
+};
+
+/** The form's link choice: one the worker makes, or a pasted one. */
+export type LinkMode = MadeLink | "paste";
+
+/** The rule the database checks on a client email (cockpit_invoices_client_email_check). */
+export const CLIENT_EMAIL = /^[^\s@<>"']+@[^\s@<>"']+\.[a-z]{2,}$/;
+export const emailOk = (typed: string) => {
+  const e = typed.trim().toLowerCase();
+  return e.length <= 254 && CLIENT_EMAIL.test(e);
+};
 
 export type InvoiceRow = {
   id: string;
@@ -40,11 +74,14 @@ export type InvoiceRow = {
   issue_date: string;
   due_date: string | null;
   payments: InvoicePayment[];
-  /** "ecom" is the usual link the worker makes, "whop" the backup, "pasted" one a person had. */
+  /** "ecom" is the usual link the worker makes, "whop" and "tap" the backups, "pasted" one a person had. */
   checkout_source: LinkSource;
   checkout_url: string | null;
   whop_plan_id: string | null;
   ecom_invoice_id: string | null;
+  tap_invoice_id?: string | null;
+  /** Asked for with a Tap link: Tap shows it on its page and sends nothing. */
+  client_email?: string | null;
   amount_kwd: number | null;
   kwd_rate: number | null;
   status: InvoiceStatus;
@@ -57,7 +94,7 @@ export type InvoiceRow = {
   issued_at: string | null;
 };
 
-/** What Ecom says about an invoice's link: PAID, UNPAID, EXPIRED or DELETED. */
+/** What Ecom or Tap says about an invoice's link: PAID, UNPAID, EXPIRED, DELETED or CANCELLED. */
 export type PaymentState = {
   status: string;
   paid_at: string | null;
@@ -101,8 +138,10 @@ export type InvoiceRequest = {
   checkoutUrl?: string;
   /** "Pay online" only: the invoice worker makes the link. */
   createLink?: boolean;
-  /** Which link the worker makes: Ecom (KNET and cards, in KWD) or Whop (cards, in USD). */
-  provider?: "ecom" | "whop";
+  /** Which link the worker makes: Ecom (the main one), Whop or Tap. */
+  provider?: MadeLink;
+  /** Tap only: the client's email, which Tap needs. */
+  clientEmail?: string;
   payments?: { date: string; method: string; amount: string; ref?: string }[];
 };
 
@@ -112,14 +151,14 @@ export type InvoicesData = {
   folders: Record<string, ClientFolder>;
   desk: DeskStatus;
   /**
-   * Ecom's word on each issued Ecom invoice, by invoice id; null when the
+   * Ecom's or Tap's word on each issued Ecom or Tap invoice, by invoice id; null when the
    * lookup failed, so the list says nothing rather than "Not paid yet".
    */
   paid: Record<string, PaymentState> | null;
 };
 
 const COLUMNS =
-  "id,clickup_task_id,client_name,kind,amount_usd,description,line_note,client_detail,client_tax_id,period,pay_note,issue_date,due_date,payments,checkout_source,checkout_url,whop_plan_id,ecom_invoice_id,amount_kwd,kwd_rate,status,invoice_no,drive_url,error,attempts,requested_by,requested_at,issued_at";
+  "id,clickup_task_id,client_name,kind,amount_usd,description,line_note,client_detail,client_tax_id,period,pay_note,issue_date,due_date,payments,checkout_source,checkout_url,whop_plan_id,ecom_invoice_id,tap_invoice_id,client_email,amount_kwd,kwd_rate,status,invoice_no,drive_url,error,attempts,requested_by,requested_at,issued_at";
 
 function fail(error: { message?: string } | null): void {
   if (error) throw new Error(error.message || "The database did not answer.");
@@ -222,8 +261,8 @@ export async function fetchDeskStatus(
 }
 
 /**
- * Whether each issued Ecom link was paid (cockpit_invoice_payments: only the
- * invoices this seat can see; cockpit_ecom_invoices itself is finance-only).
+ * Whether each issued Ecom or Tap link was paid (cockpit_invoice_payments: only
+ * the invoices this seat can see; the Ecom and Tap tables are not for seats).
  * A refusal leaves the list without payment words instead of failing the page.
  */
 async function fetchPaid(
@@ -231,7 +270,7 @@ async function fetchPaid(
   invoices: InvoiceRow[],
 ): Promise<Record<string, PaymentState> | null> {
   const ids = invoices
-    .filter(i => i.checkout_source === "ecom" && i.status === "issued")
+    .filter(i => watched(i) && i.status === "issued")
     .map(i => i.id);
   if (!ids.length) return {};
   const { data, error } = await client.rpc("cockpit_invoice_payments", {
@@ -319,14 +358,18 @@ async function linkWaitingWin(
     }
 }
 
+export type InvoiceAction = "cancel" | "retry" | MadeLink;
+
 export async function changeInvoice(
   client: SupabaseClient,
   id: string,
-  action: "cancel" | "retry" | "whop",
+  action: InvoiceAction,
+  email?: string,
 ): Promise<InvoiceRow> {
   const { data, error } = await client.rpc("cockpit_invoice_change", {
     p_id: id,
     p_action: action,
+    ...(email ? { p_email: email.trim().toLowerCase() } : {}),
   });
   fail(error);
   return data as InvoiceRow;
@@ -389,21 +432,66 @@ export function deskProblem(desk: DeskStatus, now = Date.now()): string | null {
   return null;
 }
 
-/** Can this failed invoice go out again with a Whop link (cockpit_invoice_change 'whop')? */
-export function canSwitchToWhop(i: InvoiceRow): boolean {
-  return (
-    i.status === "failed" &&
-    i.kind === "checkout" &&
-    i.checkout_source === "ecom" &&
-    !i.ecom_invoice_id &&
-    !i.checkout_url
+/** Ecom and Tap answer for their links' payments; Whop and pasted links are not followed. */
+export const watched = (i: InvoiceRow) =>
+  i.checkout_source === "ecom" || i.checkout_source === "tap";
+
+/**
+ * The other links a failed Pay online invoice can go out with
+ * (cockpit_invoice_change 'ecom' | 'whop' | 'tap'): only while no link was
+ * ever made for it, so a client never holds two.
+ */
+/**
+ * The other invoices for the same charge as this one: the same client,
+ * amount, description and period, asked for within two weeks of it, not
+ * cancelled. "Same invoice with ..." copies exactly those fields, so a copy
+ * and its original are one charge; last month's invoice for the same amount
+ * is not (review 2026-11-05).
+ */
+export function sameCharge(i: InvoiceRow, all: InvoiceRow[]): InvoiceRow[] {
+  const at = Date.parse(i.requested_at);
+  return all.filter(
+    c =>
+      c.id !== i.id &&
+      c.kind === "checkout" &&
+      c.status !== "cancelled" &&
+      c.clickup_task_id === i.clickup_task_id &&
+      Number(c.amount_usd) === Number(i.amount_usd) &&
+      c.description.trim() === i.description.trim() &&
+      (c.period ?? "").trim() === (i.period ?? "").trim() &&
+      Math.abs(Date.parse(c.requested_at) - at) <= 14 * 86_400_000,
   );
 }
 
+export function switchTargets(
+  i: InvoiceRow,
+  all: InvoiceRow[] = [],
+): MadeLink[] {
+  if (
+    i.status !== "failed" ||
+    i.kind !== "checkout" ||
+    !isMadeLink(i.checkout_source) ||
+    i.checkout_url ||
+    i.ecom_invoice_id ||
+    i.whop_plan_id ||
+    i.tap_invoice_id
+  )
+    return [];
+  // A processor another invoice for this charge already uses is left out:
+  // the client may hold its link, so a second one would be a second bill.
+  const used = new Set(sameCharge(i, all).map(c => c.checkout_source));
+  return MADE_LINKS.filter(m => m !== i.checkout_source && !used.has(m));
+}
+
+/** Can this failed invoice go out again with a Whop link (cockpit_invoice_change 'whop')? */
+export function canSwitchToWhop(i: InvoiceRow): boolean {
+  return switchTargets(i).includes("whop");
+}
+
 /**
- * Paid, waiting or expired, from Ecom; null when there is nothing to say.
- * Whop payments are not mirrored in the cockpit, so a Whop row says where to
- * look; a pasted link's payment is not tracked at all.
+ * Paid, waiting or expired, from Ecom or Tap; null when there is nothing to
+ * say. Whop payments are not mirrored in the cockpit, so a Whop row says
+ * where to look; a pasted link's payment is not tracked at all.
  */
 export function paymentWord(
   i: InvoiceRow,
@@ -414,51 +502,67 @@ export function paymentWord(
   if (i.kind !== "checkout" || i.status !== "issued") return null;
   if (i.checkout_source === "whop")
     return { text: "Payment shows in Whop", tone: "neutral" };
-  if (i.checkout_source !== "ecom") return null;
+  if (!watched(i)) return null;
   const s = p?.status?.toUpperCase();
   if (s === "PAID") return { text: "Paid", tone: "good" };
   if (s === "EXPIRED") return { text: "Link expired", tone: "warn" };
   if (s === "DELETED") return { text: "Link deleted", tone: "warn" };
+  if (s === "CANCELLED") return { text: "Link cancelled", tone: "warn" };
   return { text: "Not paid yet", tone: "neutral" };
 }
 
-/** Which issued invoice offers "Same invoice with Whop": Ecom, Pay online, not paid. */
+/**
+ * The links an issued, unpaid Ecom or Tap invoice can be made again with
+ * ("Same invoice with ..."): the ones not yet tried for this charge
+ * (sameCharge), so a Tap copy of an Ecom invoice offers Whop, not Ecom again. A
+ * Whop invoice offers none: its payments are not followed here, so the
+ * cockpit cannot tell it is still unpaid.
+ */
+export function redoTargets(
+  i: InvoiceRow,
+  p: PaymentState | undefined,
+  all: InvoiceRow[] = [],
+): MadeLink[] {
+  if (i.kind !== "checkout" || i.status !== "issued" || !watched(i)) return [];
+  if (paymentWord(i, p)?.text === "Paid") return [];
+  const tried = new Set(sameCharge(i, all).map(c => c.checkout_source));
+  return MADE_LINKS.filter(m => m !== i.checkout_source && !tried.has(m));
+}
+
+/** Which issued invoice offers "Same invoice with Whop": Ecom or Tap, Pay online, not paid. */
 export function canRedoWithWhop(
   i: InvoiceRow,
   p: PaymentState | undefined,
 ): boolean {
-  return (
-    i.kind === "checkout" &&
-    i.checkout_source === "ecom" &&
-    i.status === "issued" &&
-    paymentWord(i, p)?.text !== "Paid"
-  );
+  return redoTargets(i, p).includes("whop");
 }
 
 /**
- * The Whop copy already asked for of this Ecom invoice: a later Pay online
- * Whop invoice for the same client and amount that was not cancelled. An
- * issued invoice cannot be cancelled and the server stops a repeat for two
- * minutes only, so while a copy exists the Ecom row offers no second one.
- * The list is newest first, so a copy is on screen whenever its Ecom row is.
+ * The copy already asked for of this invoice with another made link: a later
+ * invoice for the same charge (sameCharge), with a different link. An issued invoice cannot be cancelled and the server
+ * stops a repeat for two minutes only, so while a copy exists the row offers
+ * no second one. The list is newest first, so a copy is on screen whenever
+ * its original is.
  */
+export function copyOf(i: InvoiceRow, all: InvoiceRow[]): InvoiceRow | null {
+  const after = Date.parse(i.requested_at);
+  return (
+    sameCharge(i, all).find(
+      c =>
+        isMadeLink(c.checkout_source) &&
+        c.checkout_source !== i.checkout_source &&
+        Date.parse(c.requested_at) > after,
+    ) ?? null
+  );
+}
+
+/** The Whop copy of this invoice, as copyOf finds it; null when the copy is not Whop. */
 export function whopCopyOf(
   i: InvoiceRow,
   all: InvoiceRow[],
 ): InvoiceRow | null {
-  const after = Date.parse(i.requested_at);
-  return (
-    all.find(
-      c =>
-        c.id !== i.id &&
-        c.kind === "checkout" &&
-        c.checkout_source === "whop" &&
-        c.status !== "cancelled" &&
-        c.clickup_task_id === i.clickup_task_id &&
-        Number(c.amount_usd) === Number(i.amount_usd) &&
-        Date.parse(c.requested_at) > after,
-    ) ?? null
-  );
+  const c = copyOf(i, all);
+  return c?.checkout_source === "whop" ? c : null;
 }
 
 /** The form's fields, refilled from an invoice. */
@@ -474,13 +578,19 @@ export type InvoicePrefill = {
   payNote: string;
   dueDate: string;
   linkMode: LinkMode;
+  clientEmail: string;
 };
 
 /**
- * "Same invoice with Whop": the same client, amount and words, Pay online
- * with a Whop link. A due date already past moves to three days from today.
+ * "Same invoice with Whop" (or Tap, or Ecom): the same client, amount and
+ * words, Pay online with that link. A due date already past moves to three
+ * days from today. The client's email comes along for Tap.
  */
-export function sameWithWhop(i: InvoiceRow, today: string): InvoicePrefill {
+export function sameWith(
+  i: InvoiceRow,
+  today: string,
+  mode: MadeLink,
+): InvoicePrefill {
   return {
     taskId: i.clickup_task_id,
     kind: "checkout",
@@ -495,6 +605,11 @@ export function sameWithWhop(i: InvoiceRow, today: string): InvoicePrefill {
       i.due_date && i.due_date >= today
         ? i.due_date.slice(0, 10)
         : addDays(today, 3),
-    linkMode: "whop",
+    linkMode: mode,
+    clientEmail: i.client_email ?? "",
   };
+}
+
+export function sameWithWhop(i: InvoiceRow, today: string): InvoicePrefill {
+  return sameWith(i, today, "whop");
 }
